@@ -39,6 +39,15 @@ func setupTokenModelMappingAccount() *Account {
 	}
 }
 
+func oauthShortKeyModelMappingAccount() *Account {
+	account := setupTokenModelMappingAccount()
+	account.Type = AccountTypeOAuth
+	account.Credentials["model_mapping"] = map[string]any{
+		"claude-sonnet-4-5": "claude-opus-5-5",
+	}
+	return account
+}
+
 func TestAnthropicOAuthModelMappingAdmissionAndNormalization(t *testing.T) {
 	account := setupTokenModelMappingAccount()
 	svc := &GatewayService{}
@@ -137,6 +146,70 @@ func TestGatewayCountTokensSetupTokenUsesMappedWireModel(t *testing.T) {
 	require.Equal(t, "claude-opus-4-8", gjson.GetBytes(upstream.lastBody, "model").String())
 }
 
+func TestGatewayOAuthShortKeyMappingPrecedesNativeNormalization(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, countTokens := range []bool{false, true} {
+		name, path := "messages", "/v1/messages"
+		if countTokens {
+			name, path = "count_tokens", "/v1/messages/count_tokens"
+		}
+		t.Run(name, func(t *testing.T) {
+			body := []byte(`{"model":"claude-sonnet-4-5","stream":false,"messages":[{"role":"user","content":"hello"}]}`)
+			parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), PlatformAnthropic)
+			require.NoError(t, err)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, path, nil)
+			responseBody := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5-5","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1,"output_tokens":1}}`
+			if countTokens {
+				responseBody = `{"input_tokens":5}`
+			}
+			upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(responseBody)),
+			}}
+			svc := newForwardPartialUsageServiceForTest(upstream)
+			if countTokens {
+				require.NoError(t, svc.ForwardCountTokens(context.Background(), c, oauthShortKeyModelMappingAccount(), parsed))
+			} else {
+				result, err := svc.Forward(context.Background(), c, oauthShortKeyModelMappingAccount(), parsed)
+				require.NoError(t, err)
+				require.Equal(t, "claude-opus-5-5", result.UpstreamModel)
+			}
+			require.Equal(t, "claude-opus-5-5", gjson.GetBytes(upstream.lastBody, "model").String())
+			require.False(t, gjson.GetBytes(upstream.lastBody, "temperature").Exists(), "Opus 5.5 must not receive the mimicry default temperature")
+		})
+	}
+}
+
+func TestGatewayOAuthMappedOpus55InvalidParametersFailBeforeUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, field := range []string{
+		`"thinking":{"type":"enabled","budget_tokens":1024}`,
+		`"tool_choice":{"type":"tool","name":"lookup"}`,
+	} {
+		for _, countTokens := range []bool{false, true} {
+			body := []byte(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hello"}],` + field + `}`)
+			parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), PlatformAnthropic)
+			require.NoError(t, err)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			upstream := &anthropicHTTPUpstreamRecorder{}
+			svc := newForwardPartialUsageServiceForTest(upstream)
+			if countTokens {
+				err = svc.ForwardCountTokens(context.Background(), c, oauthShortKeyModelMappingAccount(), parsed)
+			} else {
+				_, err = svc.Forward(context.Background(), c, oauthShortKeyModelMappingAccount(), parsed)
+			}
+			require.Error(t, err)
+			require.Equal(t, http.StatusBadRequest, rec.Code)
+			require.Contains(t, rec.Body.String(), "invalid_request_error")
+			require.Nil(t, upstream.lastReq, "invalid mapped Opus 5.5 request must not leave the gateway")
+		}
+	}
+}
+
 func TestGatewayBridgeSetupTokenUsesMappedWireModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	account := setupTokenModelMappingAccount()
@@ -190,10 +263,10 @@ func TestGetAvailableModelsMappingWithoutWhitelistIncludesDefaults(t *testing.T)
 	models = svc.GetAvailableModels(context.Background(), nil, PlatformAnthropic)
 	require.Contains(t, models, "claude-sonnet-5")
 	require.NotContains(t, models, "claude-opus-5")
-	account.Credentials["model_mapping"] = map[string]any{"claude-*": "claude-*"}
+	account.Credentials["model_mapping"] = map[string]any{"claude-opus-*": "claude-opus-*"}
 	repo.all = []Account{account}
 	svc.InvalidateAvailableModelsCache(nil, PlatformAnthropic)
 	models = svc.GetAvailableModels(context.Background(), nil, PlatformAnthropic)
-	require.Contains(t, models, "claude-*")
-	require.NotContains(t, models, "claude-opus-4-7", "wildcard identity must not expose unrelated defaults")
+	require.Contains(t, models, "claude-opus-*")
+	require.NotContains(t, models, "claude-haiku-4-5-20251001", "wildcard identity must not expose unrelated defaults")
 }

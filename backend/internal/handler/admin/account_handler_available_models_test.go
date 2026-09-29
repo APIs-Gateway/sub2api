@@ -114,16 +114,19 @@ func TestAccountHandlerGetAvailableModels_AnthropicSetupTokenMappingAdmission(t 
 		{"legacy whitelist", map[string]any{"custom-sonnet": "claude-sonnet-4-6"}, false, false},
 		{"rename with opt in", map[string]any{"custom-sonnet": "claude-sonnet-4-6"}, true, true},
 		{"identity still whitelists", map[string]any{"custom-sonnet": "claude-sonnet-4-6", "claude-opus-4-6": "claude-opus-4-6"}, true, false},
-		{"legacy wildcard identity fails closed", map[string]any{"custom-sonnet": "claude-sonnet-4-6", "claude-*": "claude-*"}, true, false},
+		{"legacy wildcard identity fails closed outside pattern", map[string]any{"custom-sonnet": "claude-sonnet-4-6", "claude-opus-*": "claude-opus-*"}, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			credentials := map[string]any{
-				"model_mapping":                 tc.mapping,
+				"model_mapping":                tc.mapping,
 				"model_mapping_allow_unlisted": tc.allowUnlisted,
 			}
 			account := service.Account{
-				ID: 7544, Platform: service.PlatformAnthropic, Type: service.AccountTypeSetupToken,
-				Status: service.StatusActive, Credentials: credentials,
+				ID:          7544,
+				Platform:    service.PlatformAnthropic,
+				Type:        service.AccountTypeSetupToken,
+				Status:      service.StatusActive,
+				Credentials: credentials,
 			}
 			svc := &availableModelsAdminService{stubAdminService: newStubAdminService(), account: account}
 			router := setupAvailableModelsRouter(svc)
@@ -131,7 +134,9 @@ func TestAccountHandlerGetAvailableModels_AnthropicSetupTokenMappingAdmission(t 
 			router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/7544/models", nil))
 			require.Equal(t, http.StatusOK, rec.Code)
 			var resp struct {
-				Data []struct { ID string `json:"id"` } `json:"data"`
+				Data []struct {
+					ID string `json:"id"`
+				} `json:"data"`
 			}
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 			ids := make([]string, 0, len(resp.Data))
@@ -152,18 +157,27 @@ func TestAccountHandlerGetAvailableModels_AnthropicSetupTokenMappingAdmission(t 
 func TestAccountHandlerGetAvailableModels_OpenAIOAuthMappingOptInPreservesDefaultCatalog(t *testing.T) {
 	mapping := map[string]any{"my-gpt": "gpt-5.4"}
 	svc := &availableModelsAdminService{stubAdminService: newStubAdminService(), account: service.Account{
-		ID: 7545, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
-		Status: service.StatusActive, Credentials: map[string]any{
+		ID:       7545,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Status:   service.StatusActive,
+		Credentials: map[string]any{
 			"model_mapping": mapping, "model_mapping_allow_unlisted": true,
 		},
 	}}
 	rec := httptest.NewRecorder()
 	setupAvailableModelsRouter(svc).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/7545/models", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
-	var resp struct { Data []struct { ID string `json:"id"` } `json:"data"` }
+	var resp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	ids := make([]string, 0, len(resp.Data))
-	for _, model := range resp.Data { ids = append(ids, model.ID) }
+	for _, model := range resp.Data {
+		ids = append(ids, model.ID)
+	}
 	require.Contains(t, ids, "my-gpt")
 	require.Contains(t, ids, "gpt-5.4")
 	require.Equal(t, map[string]any{"my-gpt": "gpt-5.4"}, mapping)
@@ -171,19 +185,28 @@ func TestAccountHandlerGetAvailableModels_OpenAIOAuthMappingOptInPreservesDefaul
 
 func TestAccountHandlerGetAvailableModels_GeminiAPIKeyMappingOptInPreservesDefaultCatalog(t *testing.T) {
 	svc := &availableModelsAdminService{stubAdminService: newStubAdminService(), account: service.Account{
-		ID: 7546, Platform: service.PlatformGemini, Type: service.AccountTypeAPIKey,
-		Status: service.StatusActive, Credentials: map[string]any{
-			"model_mapping": map[string]any{"my-gemini": "gemini-2.5-pro"},
+		ID:       7546,
+		Platform: service.PlatformGemini,
+		Type:     service.AccountTypeAPIKey,
+		Status:   service.StatusActive,
+		Credentials: map[string]any{
+			"model_mapping":                map[string]any{"my-gemini": "gemini-2.5-pro"},
 			"model_mapping_allow_unlisted": true,
 		},
 	}}
 	rec := httptest.NewRecorder()
 	setupAvailableModelsRouter(svc).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/7546/models", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
-	var resp struct { Data []struct { ID string `json:"id"` } `json:"data"` }
+	var resp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	ids := make([]string, 0, len(resp.Data))
-	for _, model := range resp.Data { ids = append(ids, model.ID) }
+	for _, model := range resp.Data {
+		ids = append(ids, model.ID)
+	}
 	require.Contains(t, ids, "my-gemini")
 	require.Contains(t, ids, "gemini-2.5-pro")
 }

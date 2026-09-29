@@ -5179,7 +5179,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	if parsed == nil {
 		return nil, fmt.Errorf("parse request: empty request")
 	}
-	// Opus 5.5 参数校验：API-key 映射后的模型与 OAuth 原生 ID 都在伪装改写前判定。
+	// Validate against the final API-key or OAuth mapped model before mimicry.
 	if err := validateClaudeOpus55ForAccount(account, parsed); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"type": "error", "error": gin.H{"type": "invalid_request_error", "message": err.Error()}})
 		return nil, err
@@ -5217,7 +5217,11 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	// Beta policy: evaluate once; block check + cache filter set for buildUpstreamRequest.
 	// Always overwrite the cache to prevent stale values from a previous retry with a different account.
 	if account.Platform == PlatformAnthropic && c != nil {
-		policy := s.evaluateBetaPolicy(ctx, c.GetHeader("anthropic-beta"), account, parsed.Model)
+		betaModel := parsed.Model
+		if account.IsAnthropicOAuthOrSetupToken() {
+			betaModel, _ = resolveAnthropicOAuthMappedModel(account, betaModel)
+		}
+		policy := s.evaluateBetaPolicy(ctx, c.GetHeader("anthropic-beta"), account, betaModel)
 		if policy.blockErr != nil {
 			return nil, policy.blockErr
 		}
@@ -5259,6 +5263,19 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	// 对于非 Claude Code 的第三方客户端（opencode 等），仍然走完整 mimicry。
 	isClaudeCode := isClaudeCodeForwardRequest(ctx, c, parsed, body)
 	shouldMimicClaudeCode := account.IsOAuth() && !isClaudeCode
+	// Resolve the account mapping before OAuth body normalization. The latter
+	// canonicalizes short model IDs and makes exact short-key mappings invisible;
+	// it also uses the model to decide Opus 5.5 temperature/tool_choice rules.
+	if account.IsAnthropicOAuthOrSetupToken() {
+		mappedModel, _ := resolveAnthropicOAuthMappedModel(account, originalModel)
+		if mappedModel != reqModel {
+			if err := replaceBody(s.replaceModelInBody(body, mappedModel)); err != nil {
+				return nil, err
+			}
+			reqModel = mappedModel
+			parsed.Model = mappedModel
+		}
+	}
 
 	if shouldMimicClaudeCode {
 		// 与 Parrot 对齐：OAuth 账号无条件重写 system（即使客户端已发了 Claude Code
@@ -5349,15 +5366,6 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				mappedModel = normalized
 				mappingSource = "vertex"
 			}
-		}
-	}
-	if account.IsAnthropicOAuthOrSetupToken() {
-		var matched bool
-		mappedModel, matched = resolveAnthropicOAuthMappedModel(account, reqModel)
-		if matched {
-			mappingSource = "account"
-		} else if mappedModel != reqModel {
-			mappingSource = "prefix"
 		}
 	}
 	if mappingSource == "" && account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey && !account.IsAnthropicOAuthOrSetupToken() {
@@ -10605,6 +10613,18 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 	if err := replaceBody(StripEmptyTextBlocks(body)); err != nil {
 		return err
 	}
+	// Resolve from the client model before OAuth normalization changes short IDs.
+	// CountTokens uses the final model for Opus 5.5 body normalization as well.
+	if account.IsAnthropicOAuthOrSetupToken() && reqModel != "" {
+		mappedModel, _ := resolveAnthropicOAuthMappedModel(account, reqModel)
+		if mappedModel != reqModel {
+			if err := replaceBody(s.replaceModelInBody(body, mappedModel)); err != nil {
+				return err
+			}
+			reqModel = mappedModel
+			parsed.Model = mappedModel
+		}
+	}
 
 	isClaudeCodeCT := IsClaudeCodeClient(ctx) || isClaudeCodeClient(c.GetHeader("User-Agent"), parsed.MetadataUserID)
 	shouldMimicClaudeCode := account.IsOAuth() && !isClaudeCodeCT
@@ -10638,15 +10658,6 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 			mappedModel = account.GetMappedModel(reqModel)
 			if mappedModel != reqModel {
 				mappingSource = "account"
-			}
-		}
-		if account.IsAnthropicOAuthOrSetupToken() {
-			var matched bool
-			mappedModel, matched = resolveAnthropicOAuthMappedModel(account, reqModel)
-			if matched {
-				mappingSource = "account"
-			} else if mappedModel != reqModel {
-				mappingSource = "prefix"
 			}
 		}
 		if mappingSource == "" && account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey && !account.IsAnthropicOAuthOrSetupToken() {
@@ -11528,6 +11539,8 @@ func validateClaudeOpus55ForAccount(account *Account, parsed *ParsedRequest) err
 	model := parsed.Model
 	if account.Type == AccountTypeAPIKey {
 		model = account.GetMappedModel(model)
+	} else if account.IsAnthropicOAuthOrSetupToken() {
+		model, _ = resolveAnthropicOAuthMappedModel(account, model)
 	}
 	return validateClaudeOpus55Request(parsed.Body.Bytes(), model)
 }

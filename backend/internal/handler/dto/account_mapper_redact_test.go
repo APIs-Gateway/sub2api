@@ -16,12 +16,12 @@ func TestAccountFromServiceShallow_RedactsSensitiveCredentials(t *testing.T) {
 		Platform: "anthropic",
 		Type:     "oauth",
 		Credentials: map[string]any{
-			"access_token":  "at-secret",
-			"refresh_token": "rt-secret",
-			"id_token":      "id-secret",
-			"api_key":       "sk-secret",
-			"base_url":      "https://api.example.com",
-			"model_mapping": map[string]any{"foo": "bar"},
+			"access_token":                 "at-secret",
+			"refresh_token":                "rt-secret",
+			"id_token":                     "id-secret",
+			"api_key":                      "sk-secret",
+			"base_url":                     "https://api.example.com",
+			"model_mapping":                map[string]any{"foo": "bar"},
 			"model_mapping_allow_unlisted": true,
 		},
 	}
