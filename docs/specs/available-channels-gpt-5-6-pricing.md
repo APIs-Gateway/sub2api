@@ -42,6 +42,13 @@ For the complete request, input, cache read, and cache write are 2× the short
 context rate, while output is 1.5×.  Cache write is 1.25× the corresponding
 uncached input rate.
 
+OpenAI's [Fast mode guide](https://developers.openai.com/api/docs/guides/fast-mode)
+also specifies Sol Fast rates of $8/$40 input/output at short context and
+$16/$60 at long context. The corresponding long-context cached input and
+cache-write rates are $1.60 and $20. The user-facing card here shows Standard
+rates; actual priority/Fast billing must apply both the Fast and long-context
+multipliers for Sol's default price card.
+
 Source: <https://developers.openai.com/api/docs/pricing#flagship-models> and
 the GPT-5.6 Sol, Terra, and Luna model pages.
 

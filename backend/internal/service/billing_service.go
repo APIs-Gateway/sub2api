@@ -1249,7 +1249,9 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 	// 长上下文定价仅在无区间定价时应用（区间定价已包含上下文分层）
 	applyLongCtx := len(resolved.Intervals) == 0
 
-	return s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx), nil
+	stackSolFastLongContext := resolved.Source == PricingSourceLiteLLM &&
+		isOpenAIGPT56SolModel(input.Model) && s.pricingService.usesDefaultPricingCatalog()
+	return s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx, stackSolFastLongContext), nil
 }
 
 // computeTokenBreakdown 是 token 计费的核心逻辑，由 calculateTokenCost 和 calculateCostInternal 共用。
@@ -1257,7 +1259,7 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 func (s *BillingService) computeTokenBreakdown(
 	pricing *ModelPricing, tokens UsageTokens,
 	rateMultiplier float64, serviceTier string,
-	applyLongCtx bool,
+	applyLongCtx bool, stackSolFastLongContext bool,
 ) *CostBreakdown {
 	// 保存时强制 > 0；若仍有负数泄漏，按 0 处理避免按 1x 误扣。
 	if rateMultiplier < 0 {
@@ -1290,21 +1292,25 @@ func (s *BillingService) computeTokenBreakdown(
 		tierMultiplier = serviceTierCostMultiplier(serviceTier)
 	}
 
+	// Sol Fast is 2x the corresponding Standard context tier. Its explicit
+	// above-272K fields are Standard prices, so applying them after selecting
+	// Fast would discard the Fast premium; multiply the selected Fast rates.
+	stackPriorityLongContext := priorityPricingApplied && stackSolFastLongContext
 	if applyLongCtx && s.shouldApplySessionLongContextPricing(tokens, pricing) &&
-		(!priorityPricingApplied || !pricing.PriorityExcludesLongContext) {
-		if pricing.InputPricePerTokenAbove272K > 0 {
+		(!priorityPricingApplied || !pricing.PriorityExcludesLongContext || stackPriorityLongContext) {
+		if pricing.InputPricePerTokenAbove272K > 0 && !stackPriorityLongContext {
 			inputPrice = pricing.InputPricePerTokenAbove272K
 		} else {
 			inputPrice *= pricing.LongContextInputMultiplier
 		}
-		if pricing.OutputPricePerTokenAbove272K > 0 {
+		if pricing.OutputPricePerTokenAbove272K > 0 && !stackPriorityLongContext {
 			outputPrice = pricing.OutputPricePerTokenAbove272K
 		} else {
 			outputPrice *= pricing.LongContextOutputMultiplier
 		}
 		// 缓存读取本质上是输入侧的复用，应与 input 一同应用长上下文倍率；
 		// 否则 cache hit 越多，少计的费用越多（见 #2293）。
-		if pricing.CacheReadPricePerTokenAbove272K > 0 {
+		if pricing.CacheReadPricePerTokenAbove272K > 0 && !stackPriorityLongContext {
 			cacheReadPrice = pricing.CacheReadPricePerTokenAbove272K
 		} else {
 			cacheReadPrice *= pricing.LongContextInputMultiplier
@@ -1312,7 +1318,7 @@ func (s *BillingService) computeTokenBreakdown(
 		// 缓存创建（cache_write）也是输入侧操作，三档价格（标准 / 5m / 1h）
 		// 都通过 computeCacheCreationCost 直接读取 pricing.*，不会经过这里
 		// 的倍率修改，因此显式向下传一个倍率，避免长上下文场景下被漏乘。
-		if pricing.CacheCreationPriceAbove272K > 0 {
+		if pricing.CacheCreationPriceAbove272K > 0 && !stackPriorityLongContext {
 			cacheCreationPrice = pricing.CacheCreationPriceAbove272K
 			cacheCreationUsesExplicitLongContextPrice = true
 		} else {
@@ -1486,7 +1492,8 @@ func (s *BillingService) calculateCostInternal(model string, tokens UsageTokens,
 	}
 
 	// 旧路径始终检查长上下文定价（无区间定价概念）
-	return s.computeTokenBreakdown(pricing, tokens, rateMultiplier, serviceTier, true), nil
+	stackSolFastLongContext := channelPricing == nil && isOpenAIGPT56SolModel(model) && s.pricingService.usesDefaultPricingCatalog()
+	return s.computeTokenBreakdown(pricing, tokens, rateMultiplier, serviceTier, true, stackSolFastLongContext), nil
 }
 
 // applyModelSpecificPricingPolicyEx 应用模型特定定价策略（GPT-5.6 长上下文/缓存写入、

@@ -905,19 +905,27 @@ func (s *PricingService) GetModelPricing(modelName string) (result *LiteLLMModel
 	return nil
 }
 
+const defaultPricingRemoteURL = "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.json"
+
+func (s *PricingService) usesDefaultPricingCatalog() bool {
+	if s == nil || s.cfg == nil {
+		return true
+	}
+	remoteURL := strings.TrimSpace(s.cfg.Pricing.RemoteURL)
+	return remoteURL == "" || remoteURL == defaultPricingRemoteURL
+}
+
+func isOpenAIGPT56SolModel(model string) bool {
+	return normalizeKnownOpenAICodexModel(model) == "gpt-5.6-sol"
+}
+
 // The default remote catalog can lag the official Sol promotion and is loaded
 // ahead of the bundled and hardcoded fallbacks. Correct only its known old rate
 // card; a configured third-party catalog remains operator-controlled. This is
 // a rate review item for 2026-11-21, not an automatic expiration on that date.
 func (s *PricingService) applyGPT56SolPromotionalPricing(model string, pricing *LiteLLMModelPricing) *LiteLLMModelPricing {
-	if pricing == nil || normalizeKnownOpenAICodexModel(model) != "gpt-5.6-sol" {
+	if pricing == nil || !isOpenAIGPT56SolModel(model) || !s.usesDefaultPricingCatalog() {
 		return pricing
-	}
-	if s.cfg != nil {
-		remoteURL := strings.TrimSpace(s.cfg.Pricing.RemoteURL)
-		if remoteURL != "" && remoteURL != "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.json" {
-			return pricing
-		}
 	}
 	if pricing.InputCostPerToken != 5e-6 || pricing.CacheReadInputTokenCost != 0.5e-6 || pricing.OutputCostPerToken != 30e-6 {
 		return pricing

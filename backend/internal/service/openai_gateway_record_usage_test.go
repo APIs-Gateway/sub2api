@@ -2039,6 +2039,41 @@ func TestOpenAIGatewayServiceRecordUsage_GPT56SolPromotionChargesBalanceAndSubsc
 	}
 }
 
+func TestOpenAIGatewayServiceRecordUsage_GPT56SolFastLongContextChargesFullRate(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, nil)
+	svc.billingService.pricingService = &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		"gpt-5.6-sol": {
+			InputCostPerToken: 5e-6, OutputCostPerToken: 30e-6,
+			CacheReadInputTokenCost: 0.5e-6, CacheCreationInputTokenCost: 6.25e-6,
+			InputCostPerTokenPriority: 10e-6, OutputCostPerTokenPriority: 60e-6,
+		},
+	}}
+	serviceTier := "priority"
+	require.NoError(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "resp_gpt56_sol_fast_long",
+			Usage: OpenAIUsage{
+				InputTokens: 273000, CacheReadInputTokens: 270000,
+				CacheCreationInputTokens: 1000, OutputTokens: 100,
+			},
+			Model: "gpt-5.6-sol", ServiceTier: &serviceTier, Duration: time.Second,
+		},
+		APIKey: &APIKey{ID: 101}, User: &User{ID: 201}, Account: &Account{ID: 301},
+	}))
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.InDelta(t, 2000*16e-6, log.InputCost, 1e-12)
+	require.InDelta(t, 270000*1.6e-6, log.CacheReadCost, 1e-12)
+	require.InDelta(t, 1000*20e-6, log.CacheCreationCost, 1e-12)
+	require.InDelta(t, 100*60e-6, log.OutputCost, 1e-12)
+	require.InDelta(t, 0.49, log.TotalCost, 1e-12)
+	require.InDelta(t, 0.49*1.1, log.ActualCost, 1e-12)
+	require.Equal(t, 1, userRepo.deductCalls)
+	require.InDelta(t, log.ActualCost, userRepo.lastAmount, 1e-12)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_SimpleModeSkipsBillingAfterPersist(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}

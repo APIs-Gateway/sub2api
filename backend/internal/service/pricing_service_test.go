@@ -484,7 +484,8 @@ func TestGPT56SolOldDefaultRemoteCatalogUsesPromotionalRates(t *testing.T) {
 		{name: "at threshold", inputTokens: 272000, inputPrice: 4e-6, outputPrice: 20e-6},
 		{name: "above threshold", inputTokens: 272001, inputPrice: 8e-6, outputPrice: 30e-6},
 		{name: "fast at threshold", inputTokens: 272000, tier: "priority", inputPrice: 8e-6, outputPrice: 40e-6},
-		{name: "fast above threshold", inputTokens: 272001, tier: "priority", inputPrice: 8e-6, outputPrice: 40e-6},
+		{name: "fast above threshold", inputTokens: 272001, tier: "priority", inputPrice: 16e-6, outputPrice: 60e-6},
+		{name: "fast alias above threshold", inputTokens: 272001, tier: *extractOpenAIServiceTier(map[string]any{"service_tier": "fast"}), inputPrice: 16e-6, outputPrice: 60e-6},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cost, err := billing.CalculateCostWithServiceTier("gpt-5.6-sol", UsageTokens{InputTokens: tt.inputTokens, OutputTokens: 100}, 1, tt.tier)
@@ -493,11 +494,24 @@ func TestGPT56SolOldDefaultRemoteCatalogUsesPromotionalRates(t *testing.T) {
 			require.InDelta(t, 100*tt.outputPrice, cost.OutputCost, 1e-10)
 		})
 	}
+	fastLong, err := billing.CalculateCostWithServiceTier("gpt-5.6-sol", UsageTokens{
+		InputTokens: 1000, CacheReadTokens: 270001, CacheCreationTokens: 1000, OutputTokens: 100,
+	}, 1, "priority")
+	require.NoError(t, err)
+	require.InDelta(t, 1000*16e-6, fastLong.InputCost, 1e-10)
+	require.InDelta(t, 270001*1.6e-6, fastLong.CacheReadCost, 1e-10)
+	require.InDelta(t, 1000*20e-6, fastLong.CacheCreationCost, 1e-10)
+	require.InDelta(t, 100*60e-6, fastLong.OutputCost, 1e-10)
 
 	cfg := &config.Config{}
 	cfg.Pricing.RemoteURL = "https://pricing.example/custom.json"
 	custom := &PricingService{cfg: cfg, pricingData: map[string]*LiteLLMModelPricing{"gpt-5.6-sol": old}}
 	require.Same(t, old, custom.GetModelPricing("gpt-5.6-sol"), "operator-supplied catalog remains authoritative")
+	customBilling := NewBillingService(cfg, custom)
+	customFastLong, err := customBilling.CalculateCostWithServiceTier("gpt-5.6-sol", UsageTokens{InputTokens: 272001, OutputTokens: 100}, 1, "priority")
+	require.NoError(t, err)
+	require.InDelta(t, 272001*10e-6, customFastLong.InputCost, 1e-10)
+	require.InDelta(t, 100*60e-6, customFastLong.OutputCost, 1e-10)
 }
 
 func TestGetModelPricing_Gpt54MiniUsesDedicatedStaticFallbackWhenRemoteMissing(t *testing.T) {
