@@ -123,13 +123,10 @@ type ModelPricing struct {
 	ImageOutputPriceExplicit           bool    // 是否由渠道定价显式设定（为 true 时即使 == 0 也不回退）
 }
 
-const (
-	solFastLongInput      uint8 = 1 << iota
-	solFastLongOutput
-	solFastLongCacheRead
-	solFastLongCacheWrite
-)
-
+const solFastLongInput uint8 = 1 << 0
+const solFastLongOutput uint8 = 1 << 1
+const solFastLongCacheRead uint8 = 1 << 2
+const solFastLongCacheWrite uint8 = 1 << 3
 const solFastLongAll = solFastLongInput | solFastLongOutput | solFastLongCacheRead | solFastLongCacheWrite
 
 const (

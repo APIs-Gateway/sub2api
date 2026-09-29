@@ -2100,8 +2100,9 @@ func TestOpenAIGatewayServiceRecordUsage_GPT56SolPartialChannelOverrideKeepsDefa
 			},
 			Model: "gpt-5.6-sol", ServiceTier: &serviceTier, Duration: time.Second,
 		},
-		APIKey: &APIKey{ID: 102, GroupID: &groupID, Group: &Group{ID: groupID, RateMultiplier: 1}},
-		User: &User{ID: 202}, Account: &Account{ID: 302},
+		APIKey:  &APIKey{ID: 102, GroupID: &groupID, Group: &Group{ID: groupID, RateMultiplier: 1}},
+		User:    &User{ID: 202},
+		Account: &Account{ID: 302},
 	}))
 	log := usageRepo.lastLog
 	require.NotNil(t, log)
