@@ -200,11 +200,9 @@ func applyToolNameRewriteToBody(body []byte, rw *ToolNameRewrite) []byte {
 			invalidSpan = true
 			return false
 		}
-		quoted, err := json.Marshal(fake)
-		if err != nil {
-			invalidSpan = true
-			return false
-		}
+		// Marshaling a Go string cannot fail; retain JSON escaping for control
+		// characters and Unicode in names supplied by clients.
+		quoted, _ := json.Marshal(fake)
 		replacements = append(replacements, replacement{start: start, end: end, value: quoted})
 		return true
 	}
@@ -225,14 +223,10 @@ func applyToolNameRewriteToBody(body []byte, rw *ToolNameRewrite) []byte {
 			return true
 		})
 	}
-	if invalidSpan {
-		return applyToolNameRewriteToBodyLegacy(body, rw)
-	}
-
 	if choice := gjson.GetBytes(body, "tool_choice"); choice.Exists() && choice.Get("type").String() == "tool" {
 		name := choice.Get("name")
-		if fake, ok := rw.Forward[name.String()]; ok && !collect(name, fake) {
-			return applyToolNameRewriteToBodyLegacy(body, rw)
+		if fake, ok := rw.Forward[name.String()]; ok {
+			collect(name, fake)
 		}
 	}
 

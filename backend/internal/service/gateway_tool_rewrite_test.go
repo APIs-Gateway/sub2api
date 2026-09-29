@@ -157,6 +157,57 @@ func TestApplyToolNameRewriteToBody_EscapedRepeatedNamesAndCacheControl(t *testi
 	require.Equal(t, "sessions_你", gjson.GetBytes(restoreToolNamesInBytes(response, rw), "name").String())
 }
 
+func TestApplyToolNameRewriteToBody_ControlCharactersRemainValidJSON(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"sessions_line\u0001\"quote\"\\tail","input_schema":{}}],"tool_choice":{"type":"tool","name":"sessions_line\u0001\"quote\"\\tail"},"messages":[{"content":[{"type":"tool_use","name":"sessions_line\u0001\"quote\"\\tail"}]}]}`)
+	rw := buildToolNameRewriteFromBody(body)
+	require.NotNil(t, rw)
+	realName := "sessions_line\x01\"quote\"\\tail"
+	fake := rw.Forward[realName]
+	require.Equal(t, "cc_sess_line\x01\"quote\"\\tail", fake)
+	out := applyToolNameRewriteToBody(body, rw)
+	require.True(t, gjson.ValidBytes(out))
+	require.Equal(t, fake, gjson.GetBytes(out, "tools.0.name").String())
+	require.Equal(t, fake, gjson.GetBytes(out, "tool_choice.name").String())
+	require.Equal(t, fake, gjson.GetBytes(out, "messages.0.content.0.name").String())
+	require.Contains(t, string(out), `\u0001\"quote\"\\tail`)
+}
+
+func TestApplyToolNameRewriteToBody_UnmappedAndIncompleteItems(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"sessions_run","input_schema":{}},{"type":"web_search_20250305","name":"sessions_server"},{"name":""},{"name":"ordinary"}],"tool_choice":{"type":"auto","name":"sessions_run"},"messages":[{"content":"plain text"},{"content":[{"type":"tool_use","name":""},{"type":"tool_use","name":"ordinary"},{"type":"text","name":"sessions_run"},{"type":"tool_use","name":"sessions_run"}]}]}`)
+	rw := buildToolNameRewriteFromBody(body)
+	require.NotNil(t, rw)
+	out := applyToolNameRewriteToBody(body, rw)
+	require.True(t, gjson.ValidBytes(out))
+	require.Equal(t, "cc_sess_run", gjson.GetBytes(out, "tools.0.name").String())
+	require.Equal(t, "sessions_server", gjson.GetBytes(out, "tools.1.name").String())
+	require.Equal(t, "", gjson.GetBytes(out, "tools.2.name").String())
+	require.Equal(t, "ordinary", gjson.GetBytes(out, "tools.3.name").String())
+	require.Equal(t, "sessions_run", gjson.GetBytes(out, "tool_choice.name").String())
+	require.Equal(t, "plain text", gjson.GetBytes(out, "messages.0.content").String())
+	require.Equal(t, "ordinary", gjson.GetBytes(out, "messages.1.content.1.name").String())
+	require.Equal(t, "sessions_run", gjson.GetBytes(out, "messages.1.content.2.name").String())
+	require.Equal(t, "cc_sess_run", gjson.GetBytes(out, "messages.1.content.3.name").String())
+	require.Equal(t, "5m", gjson.GetBytes(out, "tools.3.cache_control.ttl").String())
+}
+
+func TestApplyToolNameRewriteToBody_NoApplicableNamesKeepsCacheBreakpoint(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"ordinary","input_schema":{}}],"tool_choice":{"type":"tool","name":"ordinary"},"messages":[{"content":[{"type":"tool_use","name":"ordinary"}]}]}`)
+	want := applyToolsLastCacheBreakpoint(body)
+	for _, rw := range []*ToolNameRewrite{
+		nil,
+		&ToolNameRewrite{Forward: map[string]string{}},
+		&ToolNameRewrite{Forward: map[string]string{"sessions_absent": "cc_sess_absent"}},
+	} {
+		rewritten := applyToolNameRewriteToBody(body, rw)
+		require.Equal(t, want, rewritten)
+		require.Equal(t, "5m", gjson.GetBytes(rewritten, "tools.0.cache_control.ttl").String())
+	}
+
+	malformed := []byte(`{"tools":{},"messages":{"content":"plain text"}}`)
+	rw := &ToolNameRewrite{Forward: map[string]string{"sessions_absent": "cc_sess_absent"}}
+	require.Equal(t, malformed, applyToolNameRewriteToBody(malformed, rw))
+}
+
 func TestApplyToolNameRewriteToBody_AmbiguousAndNonStringNamesMatchPriorBehavior(t *testing.T) {
 	for _, body := range [][]byte{
 		[]byte(`{"tools":[{"name":"sessions_first","name":"sessions_second","input_schema":{}}],"messages":[{"content":[{"type":"tool_use","name":"sessions_first","name":"sessions_second"}]}]}`),
