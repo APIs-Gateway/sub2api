@@ -52,8 +52,9 @@ const (
 	quotaTTLBuffer      = 24 * time.Hour
 	defaultQuotaTTL     = 31*24*time.Hour + quotaTTLBuffer // fallback when no subscription date
 	maxCachedClients    = 100
-	maxTestFailureDetails = 10
 )
+
+const maxTestFailureDetails = 10
 
 // ErrProxyUnavailable indicates the search failed due to a proxy connectivity issue.
 // Callers may use this to trigger account switching instead of direct fallback.
