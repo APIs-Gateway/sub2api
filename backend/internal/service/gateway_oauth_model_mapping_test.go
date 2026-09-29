@@ -100,6 +100,44 @@ func TestModelMappingAllowUnlistedPreservesLegacyAndIdentityWhitelist(t *testing
 	require.False(t, openAI.IsModelSupported("glm-5.3"), "OpenAI OAuth retains its platform admission rule")
 }
 
+func TestAnthropicOAuthCanonicalMappingCooldownExcludesShortAliasFromSelection(t *testing.T) {
+	limited := *setupTokenModelMappingAccount()
+	limited.Type = AccountTypeOAuth
+	limited.Priority = 1
+	limited.Credentials = map[string]any{
+		"access_token":  "limited-token",
+		"model_mapping": map[string]any{"claude-sonnet-4-5-20250929": "claude-opus-5-5"},
+	}
+	resetAt := time.Now().Add(10 * time.Minute).UTC().Format(time.RFC3339)
+	limited.Extra = map[string]any{
+		modelRateLimitsKey: map[string]any{
+			"claude-opus-5-5": map[string]any{"rate_limit_reset_at": resetAt},
+		},
+	}
+	fallback := Account{
+		ID: 7545, Platform: PlatformAnthropic, Type: AccountTypeSetupToken,
+		Status: StatusActive, Schedulable: true, Priority: 2,
+		Credentials: map[string]any{"access_token": "fallback-token"},
+	}
+	repo := &mockAccountRepoForPlatform{
+		accounts:     []Account{limited, fallback},
+		accountsByID: map[int64]*Account{},
+	}
+	for i := range repo.accounts {
+		repo.accountsByID[repo.accounts[i].ID] = &repo.accounts[i]
+	}
+	ctx := context.Background()
+	require.True(t, limited.IsModelSupported("claude-sonnet-4-5"))
+	require.False(t, limited.IsSchedulableForModelWithContext(ctx, "claude-sonnet-4-5"))
+	require.Greater(t, limited.GetModelRateLimitRemainingTimeWithContext(ctx, "claude-sonnet-4-5"), time.Duration(0))
+	require.True(t, fallback.IsSchedulableForModelWithContext(ctx, "claude-sonnet-4-5"))
+
+	svc := &GatewayService{accountRepo: repo, cache: &mockGatewayCacheForPlatform{}, cfg: testConfig()}
+	selected, err := svc.SelectAccountForModel(ctx, nil, "", "claude-sonnet-4-5")
+	require.NoError(t, err)
+	require.Equal(t, fallback.ID, selected.ID, "a final-model cooldown must fail over from the mapped OAuth account")
+}
+
 func TestGatewayForwardSetupTokenUsesMappedWireModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct{ requested, upstream string }{
