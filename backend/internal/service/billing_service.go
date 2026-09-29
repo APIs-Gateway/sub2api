@@ -118,10 +118,19 @@ type ModelPricing struct {
 	LongContextInputMultiplier         float64 // 长上下文整次会话输入倍率
 	LongContextOutputMultiplier        float64 // 长上下文整次会话输出倍率
 	PriorityExcludesLongContext        bool    // priority 有独立价且上游不支持与长上下文叠加时为 true
-	SolFastLongContext                 bool    // 官方 Sol 默认价卡：Fast 须与 >272K 长上下文倍率叠加
+	solFastLongContextFields           uint8   // 官方 Sol 默认价卡中需叠加 Fast 与 >272K 的未覆盖价格字段
 	ImageOutputPricePerToken           float64 // 图片输出 token 价格 (USD)
 	ImageOutputPriceExplicit           bool    // 是否由渠道定价显式设定（为 true 时即使 == 0 也不回退）
 }
+
+const (
+	solFastLongInput      uint8 = 1 << iota
+	solFastLongOutput
+	solFastLongCacheRead
+	solFastLongCacheWrite
+)
+
+const solFastLongAll = solFastLongInput | solFastLongOutput | solFastLongCacheRead | solFastLongCacheWrite
 
 const (
 	openAIGPT54LongContextInputThreshold   = 272000
@@ -516,7 +525,7 @@ func (s *BillingService) initFallbackPricing() {
 	// OpenAI's Sol promotional rate is available at least through 2026-11-21;
 	// recheck the official price before changing it again.
 	s.fallbackPrices["gpt-5.6-sol"] = newOpenAIGPT56FallbackPricing(4e-6, 20e-6, 0.4e-6)
-	s.fallbackPrices["gpt-5.6-sol"].SolFastLongContext = true
+	s.fallbackPrices["gpt-5.6-sol"].solFastLongContextFields = solFastLongAll
 	s.fallbackPrices["gpt-5.6-terra"] = newOpenAIGPT56FallbackPricing(2e-6, 12e-6, 0.2e-6)
 	s.fallbackPrices["gpt-5.6-luna"] = newOpenAIGPT56FallbackPricing(0.2e-6, 1.2e-6, 0.02e-6)
 
@@ -1107,8 +1116,7 @@ func (s *BillingService) getModelPricingAt(model string, pricingAt time.Time) (*
 				LongContextOutputMultiplier:        litellmPricing.LongContextOutputCostMultiplier,
 				ImageInputPricePerToken:            litellmPricing.InputCostPerImageToken,
 				ImageOutputPricePerToken:           litellmPricing.OutputCostPerImageToken,
-				SolFastLongContext:                 isOpenAIGPT56SolModel(model) &&
-					(s.pricingService.usesDefaultPricingCatalog() || litellmPricing == openAIGPT56SolFallbackPricing),
+				solFastLongContextFields:           s.defaultSolFastLongContextFields(model, litellmPricing),
 			}, true, pricingAt), nil
 		}
 	}
@@ -1125,6 +1133,14 @@ func (s *BillingService) getModelPricingAt(model string, pricingAt time.Time) (*
 	return nil, fmt.Errorf("%w for model: %s", ErrModelPricingUnavailable, model)
 }
 
+func (s *BillingService) defaultSolFastLongContextFields(model string, pricing *LiteLLMModelPricing) uint8 {
+	if isOpenAIGPT56SolModel(model) &&
+		(s.pricingService.usesDefaultPricingCatalog() || pricing == openAIGPT56SolFallbackPricing) {
+		return solFastLongAll
+	}
+	return 0
+}
+
 // GetModelPricingWithChannel 获取模型定价，渠道配置的价格覆盖默认值。
 // 未配置的图片输出价保留目录价，显式配置的 0 仍表示免费。
 func (s *BillingService) GetModelPricingWithChannel(model string, channelPricing *ChannelModelPricing) (*ModelPricing, error) {
@@ -1138,9 +1154,17 @@ func (s *BillingService) GetModelPricingWithChannel(model string, channelPricing
 	// 渠道覆盖仅在当前请求生效，不能修改动态目录或 fallback 的共享指针。
 	cloned := *pricing
 	pricing = &cloned
-	if channelPricing.InputPrice != nil || channelPricing.OutputPrice != nil ||
-		channelPricing.CacheWritePrice != nil || channelPricing.CacheReadPrice != nil {
-		pricing.SolFastLongContext = false
+	if channelPricing.InputPrice != nil {
+		pricing.solFastLongContextFields &^= solFastLongInput
+	}
+	if channelPricing.OutputPrice != nil {
+		pricing.solFastLongContextFields &^= solFastLongOutput
+	}
+	if channelPricing.CacheReadPrice != nil {
+		pricing.solFastLongContextFields &^= solFastLongCacheRead
+	}
+	if channelPricing.CacheWritePrice != nil {
+		pricing.solFastLongContextFields &^= solFastLongCacheWrite
 	}
 	if channelPricing.InputPrice != nil {
 		pricing.InputPricePerToken = *channelPricing.InputPrice
@@ -1301,34 +1325,45 @@ func (s *BillingService) computeTokenBreakdown(
 	// Sol Fast is 2x the corresponding Standard context tier. Its explicit
 	// above-272K fields are Standard prices, so applying them after selecting
 	// Fast would discard the Fast premium; multiply the selected Fast rates.
-	stackPriorityLongContext := priorityPricingApplied && pricing.SolFastLongContext
+	stackFields := uint8(0)
+	if priorityPricingApplied {
+		stackFields = pricing.solFastLongContextFields
+	}
 	if applyLongCtx && s.shouldApplySessionLongContextPricing(tokens, pricing) &&
-		(!priorityPricingApplied || !pricing.PriorityExcludesLongContext || stackPriorityLongContext) {
-		if pricing.InputPricePerTokenAbove272K > 0 && !stackPriorityLongContext {
-			inputPrice = pricing.InputPricePerTokenAbove272K
-		} else {
-			inputPrice *= pricing.LongContextInputMultiplier
+		(!priorityPricingApplied || !pricing.PriorityExcludesLongContext || stackFields != 0) {
+		if !priorityPricingApplied || !pricing.PriorityExcludesLongContext || stackFields&solFastLongInput != 0 {
+			if pricing.InputPricePerTokenAbove272K > 0 && stackFields&solFastLongInput == 0 {
+				inputPrice = pricing.InputPricePerTokenAbove272K
+			} else {
+				inputPrice *= pricing.LongContextInputMultiplier
+			}
 		}
-		if pricing.OutputPricePerTokenAbove272K > 0 && !stackPriorityLongContext {
-			outputPrice = pricing.OutputPricePerTokenAbove272K
-		} else {
-			outputPrice *= pricing.LongContextOutputMultiplier
+		if !priorityPricingApplied || !pricing.PriorityExcludesLongContext || stackFields&solFastLongOutput != 0 {
+			if pricing.OutputPricePerTokenAbove272K > 0 && stackFields&solFastLongOutput == 0 {
+				outputPrice = pricing.OutputPricePerTokenAbove272K
+			} else {
+				outputPrice *= pricing.LongContextOutputMultiplier
+			}
 		}
 		// 缓存读取本质上是输入侧的复用，应与 input 一同应用长上下文倍率；
 		// 否则 cache hit 越多，少计的费用越多（见 #2293）。
-		if pricing.CacheReadPricePerTokenAbove272K > 0 && !stackPriorityLongContext {
-			cacheReadPrice = pricing.CacheReadPricePerTokenAbove272K
-		} else {
-			cacheReadPrice *= pricing.LongContextInputMultiplier
+		if !priorityPricingApplied || !pricing.PriorityExcludesLongContext || stackFields&solFastLongCacheRead != 0 {
+			if pricing.CacheReadPricePerTokenAbove272K > 0 && stackFields&solFastLongCacheRead == 0 {
+				cacheReadPrice = pricing.CacheReadPricePerTokenAbove272K
+			} else {
+				cacheReadPrice *= pricing.LongContextInputMultiplier
+			}
 		}
 		// 缓存创建（cache_write）也是输入侧操作，三档价格（标准 / 5m / 1h）
 		// 都通过 computeCacheCreationCost 直接读取 pricing.*，不会经过这里
 		// 的倍率修改，因此显式向下传一个倍率，避免长上下文场景下被漏乘。
-		if pricing.CacheCreationPriceAbove272K > 0 && !stackPriorityLongContext {
-			cacheCreationPrice = pricing.CacheCreationPriceAbove272K
-			cacheCreationUsesExplicitLongContextPrice = true
-		} else {
-			cacheCreationMultiplier = pricing.LongContextInputMultiplier
+		if !priorityPricingApplied || !pricing.PriorityExcludesLongContext || stackFields&solFastLongCacheWrite != 0 {
+			if pricing.CacheCreationPriceAbove272K > 0 && stackFields&solFastLongCacheWrite == 0 {
+				cacheCreationPrice = pricing.CacheCreationPriceAbove272K
+				cacheCreationUsesExplicitLongContextPrice = true
+			} else {
+				cacheCreationMultiplier = pricing.LongContextInputMultiplier
+			}
 		}
 	}
 
