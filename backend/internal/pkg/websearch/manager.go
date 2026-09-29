@@ -54,9 +54,119 @@ const (
 	maxCachedClients    = 100
 )
 
+const maxTestFailureDetails = 10
+
 // ErrProxyUnavailable indicates the search failed due to a proxy connectivity issue.
 // Callers may use this to trigger account switching instead of direct fallback.
 var ErrProxyUnavailable = errors.New("websearch: proxy unavailable")
+
+// ErrTestNoAvailableProvider means the admin test had no configured provider
+// with a key and a non-expired subscription. No request was attempted.
+var ErrTestNoAvailableProvider = errors.New("websearch: no available provider for test")
+
+// TestSearchFailuresError contains only diagnostic data safe for the admin UI.
+// Provider errors can contain API response bodies or proxy credentials and must
+// never be attached as a cause or included in this value.
+type TestSearchFailuresError struct {
+	failures  []testSearchFailure
+	truncated bool
+}
+
+type testSearchFailure struct {
+	Provider   string
+	Category   string
+	HTTPStatus int
+}
+
+func (e *TestSearchFailuresError) Error() string {
+	return "websearch: test failed: " + e.Summary()
+}
+
+// Summary is constructed exclusively from allowlisted names, fixed categories,
+// and numeric HTTP statuses. It contains no provider response or proxy detail.
+func (e *TestSearchFailuresError) Summary() string {
+	if e == nil {
+		return "unknown failure"
+	}
+	parts := make([]string, 0, len(e.failures))
+	for _, failure := range e.failures {
+		part := failure.Provider + ": " + failure.Category
+		if failure.HTTPStatus != 0 {
+			part += fmt.Sprintf(" (HTTP %d)", failure.HTTPStatus)
+		}
+		parts = append(parts, part)
+	}
+	if e.truncated {
+		parts = append(parts, "additional providers failed")
+	}
+	return strings.Join(parts, "; ")
+}
+
+func safeTestProviderName(providerType string) string {
+	switch providerType {
+	case braveProviderName:
+		return "Brave"
+	case tavilyProviderName:
+		return "Tavily"
+	default:
+		return "Provider"
+	}
+}
+
+func safeProviderLogType(providerType string) string {
+	switch providerType {
+	case braveProviderName, tavilyProviderName:
+		return providerType
+	default:
+		return "unknown"
+	}
+}
+
+func safeTestResultProviderType(providerType string) string {
+	if providerType == tavilyProviderName {
+		return tavilyProviderName
+	}
+	// buildProvider falls back to Brave for any unrecognized stored type.
+	return braveProviderName
+}
+
+func classifyTestSearchFailure(cfg ProviderConfig, req SearchRequest, err error) testSearchFailure {
+	failure := testSearchFailure{Provider: safeTestProviderName(cfg.Type), Category: "upstream"}
+	var statusErr *providerHTTPStatusError
+	if errors.As(err, &statusErr) {
+		failure.HTTPStatus = statusErr.status
+		switch statusErr.status {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			failure.Category = "auth"
+		case http.StatusTooManyRequests, 432:
+			failure.Category = "limit"
+		}
+		return failure
+	}
+	var decodeErr *providerDecodeError
+	if errors.As(err, &decodeErr) {
+		failure.Category = "invalid response"
+		return failure
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		failure.Category = "timeout"
+		return failure
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		failure.Category = "timeout"
+		return failure
+	}
+	if cfg.ProxyURL != "" || req.ProxyURL != "" {
+		failure.Category = "proxy"
+		return failure
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		failure.Category = "network"
+	}
+	return failure
+}
 
 // quotaIncrScript atomically increments the counter and sets TTL on first creation.
 var quotaIncrScript = redis.NewScript(`
@@ -82,6 +192,16 @@ func NewManager(configs []ProviderConfig, redisClient *redis.Client) *Manager {
 		redis:       redisClient,
 		clientCache: make(map[string]*http.Client),
 	}
+}
+
+// NewManagerWithHTTPClient preloads a client for providers without a proxy.
+// The regular proxy-specific client creation remains unchanged.
+func NewManagerWithHTTPClient(configs []ProviderConfig, redisClient *redis.Client, client *http.Client) *Manager {
+	m := NewManager(configs, redisClient)
+	if client != nil {
+		m.clientCache[""] = client
+	}
+	return m
 }
 
 // SearchWithBestProvider selects a provider using quota-weighted load balancing,
@@ -115,17 +235,17 @@ func (m *Manager) SearchWithBestProvider(ctx context.Context, req SearchRequest)
 					// Account-level proxy is shared by all providers — no point
 					// trying others with the same broken proxy; signal account switch.
 					slog.Warn("websearch: account proxy error, aborting failover",
-						"provider", cfg.Type, "error", err)
+						"provider", safeProviderLogType(cfg.Type), "error", err)
 					return nil, "", fmt.Errorf("%w: %s", ErrProxyUnavailable, err.Error())
 				}
 				// Provider-specific proxy failed — try the next provider which
 				// may use a different (or no) proxy.
 				slog.Warn("websearch: provider proxy error, trying next provider",
-					"provider", cfg.Type, "error", err)
+					"provider", safeProviderLogType(cfg.Type), "error", err)
 				continue
 			}
 			slog.Warn("websearch: provider search failed",
-				"provider", cfg.Type, "error", err)
+				"provider", safeProviderLogType(cfg.Type), "error", err)
 			continue
 		}
 		return resp, cfg.Type, nil
@@ -144,7 +264,7 @@ func (m *Manager) filterAvailableProviders(ctx context.Context, accountProxyURL 
 		proxyID := resolveProxyID(cfg, accountProxyURL)
 		if proxyID > 0 && !m.isProxyAvailable(ctx, proxyID) {
 			slog.Debug("websearch: proxy marked unavailable, skipping",
-				"provider", cfg.Type, "proxy_id", proxyID)
+				"provider", safeProviderLogType(cfg.Type), "proxy_id", proxyID)
 			continue
 		}
 		out = append(out, cfg)
@@ -233,7 +353,7 @@ func (m *Manager) isProviderAvailable(cfg ProviderConfig) bool {
 	}
 	if cfg.ExpiresAt != nil && time.Now().Unix() > *cfg.ExpiresAt {
 		slog.Info("websearch: provider expired, skipping",
-			"provider", cfg.Type, "expires_at", *cfg.ExpiresAt)
+			"provider", safeProviderLogType(cfg.Type), "expires_at", *cfg.ExpiresAt)
 		return false
 	}
 	return true
@@ -313,7 +433,7 @@ func (m *Manager) tryReserveQuota(ctx context.Context, cfg ProviderConfig) (bool
 		return true, false
 	}
 	if m.redis == nil {
-		slog.Warn("websearch: Redis unavailable, quota check skipped", "provider", cfg.Type)
+		slog.Warn("websearch: Redis unavailable, quota check skipped", "provider", safeProviderLogType(cfg.Type))
 		return true, false
 	}
 	key := quotaRedisKey(cfg.Type)
@@ -321,16 +441,16 @@ func (m *Manager) tryReserveQuota(ctx context.Context, cfg ProviderConfig) (bool
 	newVal, err := quotaIncrScript.Run(ctx, m.redis, []string{key}, ttlSec).Int64()
 	if err != nil {
 		slog.Warn("websearch: quota Lua INCR failed, allowing request",
-			"provider", cfg.Type, "error", err)
+			"provider", safeProviderLogType(cfg.Type), "error", err)
 		return true, false
 	}
 	if newVal > cfg.QuotaLimit {
 		if decrErr := m.redis.Decr(ctx, key).Err(); decrErr != nil {
 			slog.Warn("websearch: quota over-limit DECR failed",
-				"provider", cfg.Type, "error", decrErr)
+				"provider", safeProviderLogType(cfg.Type), "error", decrErr)
 		}
 		slog.Info("websearch: provider quota exhausted",
-			"provider", cfg.Type, "used", newVal, "limit", cfg.QuotaLimit)
+			"provider", safeProviderLogType(cfg.Type), "used", newVal, "limit", cfg.QuotaLimit)
 		return false, false
 	}
 	return true, true
@@ -343,7 +463,7 @@ func (m *Manager) rollbackQuota(ctx context.Context, cfg ProviderConfig) {
 	key := quotaRedisKey(cfg.Type)
 	if err := m.redis.Decr(ctx, key).Err(); err != nil {
 		slog.Warn("websearch: quota rollback DECR failed",
-			"provider", cfg.Type, "error", err)
+			"provider", safeProviderLogType(cfg.Type), "error", err)
 	}
 }
 
@@ -355,17 +475,27 @@ func (m *Manager) TestSearch(ctx context.Context, req SearchRequest) (*SearchRes
 	if strings.TrimSpace(req.Query) == "" {
 		return nil, "", fmt.Errorf("websearch: empty search query")
 	}
+	var failures []testSearchFailure
+	var truncated bool
 	for _, cfg := range m.configs {
 		if !m.isProviderAvailable(cfg) {
 			continue
 		}
 		resp, err := m.executeSearch(ctx, cfg, req)
 		if err != nil {
+			if len(failures) < maxTestFailureDetails {
+				failures = append(failures, classifyTestSearchFailure(cfg, req, err))
+			} else {
+				truncated = true
+			}
 			continue
 		}
-		return resp, cfg.Type, nil
+		return resp, safeTestResultProviderType(cfg.Type), nil
 	}
-	return nil, "", fmt.Errorf("websearch: no available provider")
+	if len(failures) == 0 {
+		return nil, "", ErrTestNoAvailableProvider
+	}
+	return nil, "", &TestSearchFailuresError{failures: failures, truncated: truncated}
 }
 
 func (m *Manager) executeSearch(ctx context.Context, cfg ProviderConfig, req SearchRequest) (*SearchResponse, error) {
@@ -466,7 +596,7 @@ func (m *Manager) buildProvider(cfg ProviderConfig, client *http.Client) Provide
 		return NewTavilyProvider(cfg.APIKey, client)
 	default:
 		slog.Warn("websearch: unknown provider type, falling back to brave",
-			"type", cfg.Type)
+			"type", "unknown")
 		return NewBraveProvider(cfg.APIKey, client)
 	}
 }

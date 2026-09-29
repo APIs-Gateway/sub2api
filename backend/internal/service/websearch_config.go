@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync/atomic"
 	"time"
 
@@ -279,7 +280,7 @@ const testSearchTimeout = 15 * time.Second
 func TestWebSearch(ctx context.Context, query string) (*WebSearchTestResult, error) {
 	mgr := getWebSearchManager()
 	if mgr == nil {
-		return nil, fmt.Errorf("web search: manager not initialized, save config first")
+		return nil, infraerrors.BadRequest("WEB_SEARCH_TEST_NOT_CONFIGURED", "Save Web Search settings before testing.")
 	}
 	testCtx, cancel := context.WithTimeout(ctx, testSearchTimeout)
 	defer cancel()
@@ -288,7 +289,14 @@ func TestWebSearch(ctx context.Context, query string) (*WebSearchTestResult, err
 		MaxResults: webSearchDefaultMaxResults,
 	})
 	if err != nil {
-		return nil, err
+		if errors.Is(err, websearch.ErrTestNoAvailableProvider) {
+			return nil, infraerrors.BadRequest("WEB_SEARCH_TEST_NO_PROVIDER", "No configured Web Search provider is available for testing.")
+		}
+		var failures *websearch.TestSearchFailuresError
+		if errors.As(err, &failures) {
+			return nil, infraerrors.New(http.StatusUnprocessableEntity, "WEB_SEARCH_TEST_FAILED", "Web Search test failed: "+failures.Summary())
+		}
+		return nil, infraerrors.BadRequest("WEB_SEARCH_TEST_INVALID_QUERY", "Enter a Web Search query before testing.")
 	}
 	return &WebSearchTestResult{
 		Provider: providerName,
