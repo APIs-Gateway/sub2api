@@ -147,6 +147,72 @@ func TestOpenAIResponses_PauseWhileQueuedReturnsNoAccount(t *testing.T) {
 	require.Empty(t, usageRepo.created)
 }
 
+func TestOpenAIMessages_PauseWhileQueuedReturnsNoAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &pausedQueuedSlotAccountRepo{accounts: []service.Account{{
+		ID: 1396, Name: "queued-first", Platform: service.PlatformOpenAI,
+		Type: service.AccountTypeAPIKey, Status: service.StatusActive,
+		Schedulable: true, Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-first"},
+	}}}
+	cache := &pausedQueuedSlotCache{concurrencyCacheMock: &concurrencyCacheMock{}, repo: repo}
+	var forwards atomic.Int32
+	upstream := openAIHandlerHTTPUpstreamStub{do: func(*http.Request, string, int64, int) (*http.Response, error) {
+		forwards.Add(1)
+		return nil, nil
+	}}
+	h, usageRepo := newPausedQueuedSlotHandler(t, repo, cache, upstream)
+	c, recorder := newOpenAIFailoverTestContext(t, context.Background(), "/v1/messages", `{"model":"gpt-5.1","stream":false,"messages":[{"role":"user","content":"hello"}]}`, false)
+
+	h.Messages(c)
+
+	require.Equal(t, int32(1), cache.waitCount.Load())
+	require.Equal(t, int32(1), atomic.LoadInt32(&cache.releaseAccountCalled))
+	require.Zero(t, forwards.Load())
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	require.Empty(t, usageRepo.created)
+}
+
+func TestOpenAIOtherHTTPRoutes_PauseWhileQueuedReturnsNoAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name         string
+		path         string
+		body         string
+		allowImages  bool
+		handle       func(*OpenAIGatewayHandler, *gin.Context)
+	}{
+		{name: "embeddings", path: "/v1/embeddings", body: `{"model":"text-embedding-3-small","input":"hello"}`, handle: (*OpenAIGatewayHandler).Embeddings},
+		{name: "images", path: "/v1/images/generations", body: `{"model":"gpt-image-2","prompt":"draw a cat","stream":false}`, allowImages: true, handle: (*OpenAIGatewayHandler).Images},
+		{name: "alpha search", path: "/v1/alpha/search", body: `{"model":"gpt-5.1","id":"search-1396"}`, handle: (*OpenAIGatewayHandler).AlphaSearch},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &pausedQueuedSlotAccountRepo{accounts: []service.Account{{
+				ID: 1396, Name: "queued-first", Platform: service.PlatformOpenAI,
+				Type: service.AccountTypeAPIKey, Status: service.StatusActive,
+				Schedulable: true, Concurrency: 1,
+				Credentials: map[string]any{"api_key": "sk-first"},
+			}}}
+			cache := &pausedQueuedSlotCache{concurrencyCacheMock: &concurrencyCacheMock{}, repo: repo}
+			var forwards atomic.Int32
+			upstream := openAIHandlerHTTPUpstreamStub{do: func(*http.Request, string, int64, int) (*http.Response, error) {
+				forwards.Add(1)
+				return nil, nil
+			}}
+			h, usageRepo := newPausedQueuedSlotHandler(t, repo, cache, upstream)
+			c, recorder := newOpenAIFailoverTestContext(t, context.Background(), tc.path, tc.body, tc.allowImages)
+
+			tc.handle(h, c)
+
+			require.Equal(t, int32(1), cache.waitCount.Load())
+			require.Equal(t, int32(1), atomic.LoadInt32(&cache.releaseAccountCalled))
+			require.Zero(t, forwards.Load())
+			require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+			require.Empty(t, usageRepo.created)
+		})
+	}
+}
+
 func TestOpenAIChatCompletions_PauseWhileQueuedForwardsOnlyToBackup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := &pausedQueuedSlotAccountRepo{
