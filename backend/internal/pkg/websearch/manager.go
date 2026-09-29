@@ -112,6 +112,15 @@ func safeTestProviderName(providerType string) string {
 	}
 }
 
+func safeProviderLogType(providerType string) string {
+	switch providerType {
+	case braveProviderName, tavilyProviderName:
+		return providerType
+	default:
+		return "unknown"
+	}
+}
+
 func classifyTestSearchFailure(cfg ProviderConfig, req SearchRequest, err error) testSearchFailure {
 	failure := testSearchFailure{Provider: safeTestProviderName(cfg.Type), Category: "upstream"}
 	var statusErr *providerHTTPStatusError
@@ -207,17 +216,17 @@ func (m *Manager) SearchWithBestProvider(ctx context.Context, req SearchRequest)
 					// Account-level proxy is shared by all providers — no point
 					// trying others with the same broken proxy; signal account switch.
 					slog.Warn("websearch: account proxy error, aborting failover",
-						"provider", cfg.Type, "error", err)
+						"provider", safeProviderLogType(cfg.Type), "error", err)
 					return nil, "", fmt.Errorf("%w: %s", ErrProxyUnavailable, err.Error())
 				}
 				// Provider-specific proxy failed — try the next provider which
 				// may use a different (or no) proxy.
 				slog.Warn("websearch: provider proxy error, trying next provider",
-					"provider", cfg.Type, "error", err)
+					"provider", safeProviderLogType(cfg.Type), "error", err)
 				continue
 			}
 			slog.Warn("websearch: provider search failed",
-				"provider", cfg.Type, "error", err)
+				"provider", safeProviderLogType(cfg.Type), "error", err)
 			continue
 		}
 		return resp, cfg.Type, nil
@@ -236,7 +245,7 @@ func (m *Manager) filterAvailableProviders(ctx context.Context, accountProxyURL 
 		proxyID := resolveProxyID(cfg, accountProxyURL)
 		if proxyID > 0 && !m.isProxyAvailable(ctx, proxyID) {
 			slog.Debug("websearch: proxy marked unavailable, skipping",
-				"provider", cfg.Type, "proxy_id", proxyID)
+				"provider", safeProviderLogType(cfg.Type), "proxy_id", proxyID)
 			continue
 		}
 		out = append(out, cfg)
@@ -325,7 +334,7 @@ func (m *Manager) isProviderAvailable(cfg ProviderConfig) bool {
 	}
 	if cfg.ExpiresAt != nil && time.Now().Unix() > *cfg.ExpiresAt {
 		slog.Info("websearch: provider expired, skipping",
-			"provider", cfg.Type, "expires_at", *cfg.ExpiresAt)
+			"provider", safeProviderLogType(cfg.Type), "expires_at", *cfg.ExpiresAt)
 		return false
 	}
 	return true
@@ -405,7 +414,7 @@ func (m *Manager) tryReserveQuota(ctx context.Context, cfg ProviderConfig) (bool
 		return true, false
 	}
 	if m.redis == nil {
-		slog.Warn("websearch: Redis unavailable, quota check skipped", "provider", cfg.Type)
+		slog.Warn("websearch: Redis unavailable, quota check skipped", "provider", safeProviderLogType(cfg.Type))
 		return true, false
 	}
 	key := quotaRedisKey(cfg.Type)
@@ -413,16 +422,16 @@ func (m *Manager) tryReserveQuota(ctx context.Context, cfg ProviderConfig) (bool
 	newVal, err := quotaIncrScript.Run(ctx, m.redis, []string{key}, ttlSec).Int64()
 	if err != nil {
 		slog.Warn("websearch: quota Lua INCR failed, allowing request",
-			"provider", cfg.Type, "error", err)
+			"provider", safeProviderLogType(cfg.Type), "error", err)
 		return true, false
 	}
 	if newVal > cfg.QuotaLimit {
 		if decrErr := m.redis.Decr(ctx, key).Err(); decrErr != nil {
 			slog.Warn("websearch: quota over-limit DECR failed",
-				"provider", cfg.Type, "error", decrErr)
+				"provider", safeProviderLogType(cfg.Type), "error", decrErr)
 		}
 		slog.Info("websearch: provider quota exhausted",
-			"provider", cfg.Type, "used", newVal, "limit", cfg.QuotaLimit)
+			"provider", safeProviderLogType(cfg.Type), "used", newVal, "limit", cfg.QuotaLimit)
 		return false, false
 	}
 	return true, true
@@ -435,7 +444,7 @@ func (m *Manager) rollbackQuota(ctx context.Context, cfg ProviderConfig) {
 	key := quotaRedisKey(cfg.Type)
 	if err := m.redis.Decr(ctx, key).Err(); err != nil {
 		slog.Warn("websearch: quota rollback DECR failed",
-			"provider", cfg.Type, "error", err)
+			"provider", safeProviderLogType(cfg.Type), "error", err)
 	}
 }
 

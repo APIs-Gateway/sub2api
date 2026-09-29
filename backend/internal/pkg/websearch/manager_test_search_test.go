@@ -163,6 +163,26 @@ func TestManagerTestSearchSummaryBoundedForMalformedConfig(t *testing.T) {
 	}
 }
 
+func TestManagerTestSearchExpiredMalformedTypeDoesNotLogType(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(previousLogger)
+
+	past := time.Now().Add(-time.Hour).Unix()
+	m := NewManager([]ProviderConfig{{
+		Type:      "unknown-secret-provider",
+		APIKey:    "api-key-secret",
+		ExpiresAt: &past,
+	}}, nil)
+	_, _, err := m.TestSearch(context.Background(), SearchRequest{Query: "test"})
+	require.ErrorIs(t, err, ErrTestNoAvailableProvider)
+	if strings.Contains(logs.String(), "unknown-secret-provider") || strings.Contains(logs.String(), "api-key-secret") {
+		t.Fatal("expired malformed provider leaked its type or key to logs")
+	}
+	require.Contains(t, logs.String(), "provider=unknown")
+}
+
 func TestManagerTestSearchTimeoutSummary(t *testing.T) {
 	m := NewManager([]ProviderConfig{{Type: ProviderTypeBrave, APIKey: "key"}}, nil)
 	m.clientCache[""] = &http.Client{Transport: testSearchRoundTripFunc(func(*http.Request) (*http.Response, error) {
