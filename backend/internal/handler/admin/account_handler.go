@@ -2031,7 +2031,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		}
 		// Return mapped models
 		var models []openai.Model
-		for requestedModel := range modelIDs {
+		for _, requestedModel := range orderedAccountTestModelIDs(modelIDs, openai.DefaultModels, func(model openai.Model) string { return model.ID }) {
 			var found bool
 			for _, dm := range openai.DefaultModels {
 				if dm.ID == requestedModel {
@@ -2086,7 +2086,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			}
 		}
 		var models []geminicli.Model
-		for requestedModel := range modelIDs {
+		for _, requestedModel := range orderedAccountTestModelIDs(modelIDs, geminicli.DefaultModels, func(model geminicli.Model) string { return model.ID }) {
 			var found bool
 			for _, dm := range geminicli.DefaultModels {
 				if dm.ID == requestedModel {
@@ -2176,7 +2176,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Return mapped models (keys of the mapping are the available model IDs)
 	var models []claude.Model
-	for requestedModel := range modelIDs {
+	for _, requestedModel := range orderedAccountTestModelIDs(modelIDs, claude.DefaultModels, func(model claude.Model) string { return model.ID }) {
 		// Try to find display info from default models
 		var found bool
 		for _, dm := range claude.DefaultModels {
@@ -2198,6 +2198,26 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	}
 
 	response.Success(c, models)
+}
+
+// orderedAccountTestModelIDs retains the curated catalog order and appends
+// configured aliases that are absent from the catalog in stable ID order.
+// candidates is a fresh set built by GetAvailableModels and can be consumed.
+func orderedAccountTestModelIDs[T any](candidates map[string]struct{}, defaults []T, modelID func(T) string) []string {
+	ordered := make([]string, 0, len(candidates))
+	for _, model := range defaults {
+		id := modelID(model)
+		if _, ok := candidates[id]; ok {
+			ordered = append(ordered, id)
+			delete(candidates, id)
+		}
+	}
+	aliases := make([]string, 0, len(candidates))
+	for id := range candidates {
+		aliases = append(aliases, id)
+	}
+	sort.Strings(aliases)
+	return append(ordered, aliases...)
 }
 
 // The Antigravity account test chooses Gemini versus Claude from the requested
