@@ -2827,6 +2827,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// Failover retries reuse the same gin.Context; drop the previous attempt's
 	// flatten mapping so a namespace-preserving account never restores with it.
 	clearOpenAIResponsesNamespaceNames(c)
+	clearOpenAIResponsesClientToolMapping(c)
 	s.prepareCodexAccountIdentitySource(c, account)
 	startTime := time.Now()
 
@@ -3692,6 +3693,24 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, wsErr
 	}
 
+	// Default HTTP Forward also reaches third-party native Responses API-key
+	// upstreams. Only Lite carriers without native namespace declarations use
+	// the client-tool adapter here: this fork preserves API-key providers that
+	// round-trip namespace-qualified calls, as well as official OpenAI and
+	// requests with only top-level tools.
+	if account.IsOpenAIApiKey() && !isOfficialOpenAIBaseURL(account.GetOpenAIBaseURL()) && !isOpenAIResponsesCompactPath(c) &&
+		gjson.GetBytes(body, `input.#(type=="additional_tools")`).Exists() &&
+		!hasOpenAIResponsesNamespaceToolDeclaration(body) {
+		adaptedBody, mapping, adaptErr := adaptOpenAIResponsesClientTools(body)
+		if adaptErr != nil {
+			return nil, fmt.Errorf("adapt OpenAI Responses Lite client tools: %w", adaptErr)
+		}
+		body = adaptedBody
+		requestView = newOpenAIRequestView(body)
+		reqBody = nil
+		setOpenAIResponsesClientToolMapping(c, mapping)
+	}
+
 	httpInvalidEncryptedContentRetryTried := false
 	rejectedFieldRetryState := newOpenAIResponsesRejectedFieldRetryState(body)
 	agentTaskRecoveryTried := false
@@ -3839,6 +3858,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			return s.handleErrorResponse(ctx, resp, c, account, body, billingModel)
 		}
 		defer func() { _ = resp.Body.Close() }()
+		// A streaming Responses request is parsed as SSE even when a compatible
+		// upstream omits or mislabels Content-Type. Restore the lowered client
+		// tool events on that path as well as on declared SSE-to-JSON responses.
+		if mapping, ok := openAIResponsesClientToolMapping(c); ok && (reqStream || isEventStreamResponse(resp.Header)) {
+			maxLineSize := defaultMaxLineSize
+			if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+				maxLineSize = s.cfg.Gateway.MaxLineSize
+			}
+			resp.Body = newResponsesClientToolStreamBody(resp.Body, mapping, maxLineSize)
+		}
 
 		reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
 		// 国产模型默认 effort 补充：此处 reqModel 已被 mapping 重写为 billingModel（见
@@ -7496,6 +7525,10 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 			return nil, ferr
 		}
 	}
+	body, err = restoreOpenAIResponsesClientToolPayload(c, body)
+	if err != nil {
+		return nil, err
+	}
 	body, err = restoreOpenAIResponsesNamespacePayload(c, body)
 	if err != nil {
 		return nil, fmt.Errorf("restore OpenAI namespace response: %w", err)
@@ -7564,6 +7597,11 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		body = alignClientVisibleModel(finalResponse, originalModel)
 		// Correct tool calls in final response
 		body = s.correctToolCallsInResponseBody(body)
+		var restoreClientToolErr error
+		body, restoreClientToolErr = restoreOpenAIResponsesClientToolPayload(c, body)
+		if restoreClientToolErr != nil {
+			return nil, restoreClientToolErr
+		}
 		restoredBody, restoreErr := restoreOpenAIResponsesNamespacePayload(c, body)
 		if restoreErr != nil {
 			return nil, fmt.Errorf("restore OpenAI namespace response: %w", restoreErr)
@@ -7591,6 +7629,23 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			}
 		}
 		body = []byte(alignClientVisibleModelInSSEBody(bodyText, originalModel))
+		// The default HTTP path wraps declared SSE before reading it. A native
+		// upstream can also omit or mislabel Content-Type while returning an
+		// incomplete SSE response to a non-streaming request. Restore those
+		// events here, after auditing the original upstream terminal and model.
+		if mapping, mapped := openAIResponsesClientToolMapping(c); mapped && !isEventStreamResponse(resp.Header) {
+			maxLineSize := defaultMaxLineSize
+			if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+				maxLineSize = s.cfg.Gateway.MaxLineSize
+			}
+			restoredStream := newResponsesClientToolStreamBody(io.NopCloser(bytes.NewReader(body)), mapping, maxLineSize)
+			var restoreErr error
+			body, restoreErr = ReadUpstreamResponseBody(restoredStream, s.cfg, c, openAITooLargeError)
+			_ = restoredStream.Close()
+			if restoreErr != nil {
+				return nil, fmt.Errorf("restore OpenAI Responses client tool SSE: %w", restoreErr)
+			}
+		}
 	}
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)

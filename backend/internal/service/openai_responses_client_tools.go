@@ -67,6 +67,9 @@ func needsOpenAIResponsesClientToolAdaptation(body []byte) bool {
 	visit = func(value gjson.Result) bool {
 		if value.IsObject() {
 			switch strings.TrimSpace(value.Get("type").String()) {
+			case "additional_tools":
+				needsAdaptation = true
+				return false
 			case "custom", "custom_tool_call", "custom_tool_call_output",
 				"tool_search", "tool_search_call", "tool_search_output":
 				needsAdaptation = true
@@ -93,9 +96,13 @@ func adaptOpenAIResponsesClientTools(body []byte) ([]byte, apicompat.ResponsesCl
 	if err != nil {
 		return body, apicompat.ResponsesClientToolMapping{}, err
 	}
+	additionalToolsChanged, err := liftResponsesAdditionalTools(requestBody)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("lift OpenAI Responses Lite tools: %w", err)
+	}
 
 	mapping, changed, err := apicompat.AdaptResponsesClientTools(requestBody)
-	if err != nil || !changed {
+	if err != nil || (!changed && !additionalToolsChanged) {
 		return body, mapping, err
 	}
 	rebuilt, err := marshalOpenAIUpstreamJSON(requestBody)
@@ -131,13 +138,17 @@ func adaptOpenAIResponsesClientToolsWithInheritedMapping(
 	if err != nil {
 		return body, apicompat.ResponsesClientToolMapping{}, nil, err
 	}
+	additionalToolsChanged, err := liftResponsesAdditionalTools(requestBody)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, nil, fmt.Errorf("lift OpenAI Responses Lite tools: %w", err)
+	}
 
 	mapping, changed, err := apicompat.AdaptResponsesClientToolsWithInheritedMapping(requestBody, previousMapping, previousLoweredTools)
 	if err != nil {
 		return body, apicompat.ResponsesClientToolMapping{}, nil, err
 	}
 	loweredTools, _ := requestBody["tools"].([]any)
-	if !changed {
+	if !changed && !additionalToolsChanged {
 		return body, mapping, loweredTools, nil
 	}
 	rebuilt, err := marshalOpenAIUpstreamJSON(requestBody)
