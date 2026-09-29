@@ -1917,6 +1917,20 @@ func TestExtractSystemMessagesFromInput(t *testing.T) {
 	})
 }
 
+func requireCodexSystemInput(t *testing.T, reqBody map[string]any) []any {
+	t.Helper()
+	input, ok := reqBody["input"].([]any)
+	require.True(t, ok)
+	return input
+}
+
+func requireCodexSystemItem(t *testing.T, item any) map[string]any {
+	t.Helper()
+	m, ok := item.(map[string]any)
+	require.True(t, ok)
+	return m
+}
+
 func TestExtractSystemMessagesFromInput_StopsPromotionAtFirstNonSystemItem(t *testing.T) {
 	boundaries := []struct {
 		name string
@@ -1941,9 +1955,9 @@ func TestExtractSystemMessagesFromInput_StopsPromotionAtFirstNonSystemItem(t *te
 			}
 			require.True(t, extractSystemMessagesFromInput(reqBody, false))
 			require.Equal(t, "Opening policy.\n\nStable instructions.", reqBody["instructions"])
-			input := reqBody["input"].([]any)
+			input := requireCodexSystemInput(t, reqBody)
 			require.Len(t, input, 3)
-			require.Equal(t, "developer", input[0].(map[string]any)["role"])
+			require.Equal(t, "developer", requireCodexSystemItem(t, input[0])["role"])
 			require.Equal(t, boundary.item, input[1])
 			require.Equal(t, map[string]any{"role": "developer", "content": "Budget: 900.", "metadata": "keep"}, input[2])
 		})
@@ -1967,9 +1981,9 @@ func TestExtractSystemMessagesFromInput_OmitOnlyLeadingLosslessText(t *testing.T
 	}
 	require.True(t, extractSystemMessagesFromInput(reqBody, true))
 	require.Equal(t, "Opening A.\n\nOpening B.\n\nStable instructions.", reqBody["instructions"])
-	input := reqBody["input"].([]any)
+	input := requireCodexSystemInput(t, reqBody)
 	require.Len(t, input, 3)
-	require.Equal(t, "user", input[0].(map[string]any)["role"])
+	require.Equal(t, "user", requireCodexSystemItem(t, input[0])["role"])
 	require.Equal(t, map[string]any{"role": "developer", "content": "Budget: 900.", "metadata": "keep"}, input[1])
 	require.Equal(t, map[string]any{"role": "developer", "content": midContent, "metadata": "keep image"}, input[2])
 }
@@ -1997,10 +2011,10 @@ func TestExtractSystemMessagesFromInput_AppendedReminderPreservesCachedPrefix(t 
 		require.True(t, extractSystemMessagesFromInput(second, omitPromoted))
 		require.Equal(t, "Opening policy.\n\nStable instructions.", first["instructions"])
 		require.Equal(t, first["instructions"], second["instructions"])
-		firstInput := first["input"].([]any)
-		secondInput := second["input"].([]any)
+		firstInput := requireCodexSystemInput(t, first)
+		secondInput := requireCodexSystemInput(t, second)
 		require.Equal(t, firstInput, secondInput[:len(firstInput)])
-		require.Equal(t, "developer", secondInput[len(secondInput)-1].(map[string]any)["role"])
+		require.Equal(t, "developer", requireCodexSystemItem(t, secondInput[len(secondInput)-1])["role"])
 	}
 }
 
@@ -2022,7 +2036,7 @@ func TestExtractSystemMessagesFromInput_NoLeadingSystemKeepsInstructionsAndInput
 	}}
 	require.True(t, extractSystemMessagesFromInput(reqBody, true))
 	require.Equal(t, "Stable.", reqBody["instructions"])
-	input := reqBody["input"].([]any)
+	input := requireCodexSystemInput(t, reqBody)
 	require.Len(t, input, 2)
 	require.Equal(t, map[string]any{"role": "developer", "content": "Late reminder."}, input[1])
 }
@@ -2048,17 +2062,18 @@ func TestApplyCodexOAuthTransform_MidConversationSystemStaysInInput(t *testing.T
 			})
 			require.True(t, result.Modified)
 			require.Equal(t, "Opening policy.\n\nStable instructions.", reqBody["instructions"])
-			input := reqBody["input"].([]any)
+			input := requireCodexSystemInput(t, reqBody)
 			if omitPromoted {
 				require.Len(t, input, 2)
 			} else {
 				require.Len(t, input, 3)
-				require.Equal(t, "developer", input[0].(map[string]any)["role"])
+				require.Equal(t, "developer", requireCodexSystemItem(t, input[0])["role"])
 			}
-			require.Equal(t, "user", input[len(input)-2].(map[string]any)["role"])
-			require.Equal(t, "developer", input[len(input)-1].(map[string]any)["role"])
-			require.Equal(t, "Budget: 900.", input[len(input)-1].(map[string]any)["content"])
-			require.Equal(t, "keep", input[len(input)-1].(map[string]any)["metadata"])
+			require.Equal(t, "user", requireCodexSystemItem(t, input[len(input)-2])["role"])
+			midSystem := requireCodexSystemItem(t, input[len(input)-1])
+			require.Equal(t, "developer", midSystem["role"])
+			require.Equal(t, "Budget: 900.", midSystem["content"])
+			require.Equal(t, "keep", midSystem["metadata"])
 		})
 	}
 }
