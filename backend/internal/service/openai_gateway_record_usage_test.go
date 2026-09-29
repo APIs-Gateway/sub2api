@@ -656,11 +656,13 @@ type openAIRecordUsageSubRepoStub struct {
 
 	incrementCalls int
 	incrementErr   error
+	lastAmount     float64
 	lastCtxErr     error
 }
 
 func (s *openAIRecordUsageSubRepoStub) IncrementUsage(ctx context.Context, id int64, costUSD float64) error {
 	s.incrementCalls++
+	s.lastAmount = costUSD
 	s.lastCtxErr = ctx.Err()
 	return s.incrementErr
 }
@@ -2012,6 +2014,148 @@ func TestOpenAIGatewayServiceRecordUsage_SubscriptionBillingSetsSubscriptionFiel
 	require.Equal(t, subscription.ID, *usageRepo.lastLog.SubscriptionID)
 	require.Equal(t, 1, subRepo.incrementCalls)
 	require.Equal(t, 0, userRepo.deductCalls)
+}
+
+func TestOpenAIGatewayServiceRecordUsage_GPT56SolPromotionChargesBalanceAndSubscription(t *testing.T) {
+	for _, subscription := range []bool{false, true} {
+		name := "balance"
+		if subscription {
+			name = "subscription"
+		}
+		t.Run(name, func(t *testing.T) {
+			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+			userRepo := &openAIRecordUsageUserRepoStub{}
+			subRepo := &openAIRecordUsageSubRepoStub{}
+			svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
+			svc.billingService.pricingService = &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+				"gpt-5.6-sol": {
+					InputCostPerToken: 5e-6, OutputCostPerToken: 30e-6,
+					CacheReadInputTokenCost: 0.5e-6, CacheCreationInputTokenCost: 6.25e-6,
+				},
+			}}
+			input := &OpenAIRecordUsageInput{
+				Result: &OpenAIForwardResult{
+					RequestID: "resp_gpt56_sol_promo_" + name,
+					Usage: OpenAIUsage{
+						InputTokens: 1000, CacheReadInputTokens: 200,
+						CacheCreationInputTokens: 300, OutputTokens: 50,
+					},
+					Model: "gpt-5.6", Duration: time.Second,
+				},
+				APIKey:  &APIKey{ID: 100},
+				User:    &User{ID: 200},
+				Account: &Account{ID: 300},
+			}
+			multiplier := 1.1
+			if subscription {
+				input.APIKey.GroupID = i64p(88)
+				input.APIKey.Group = &Group{ID: 88, SubscriptionType: SubscriptionTypeSubscription, RateMultiplier: 1}
+				input.Subscription = &UserSubscription{ID: 99}
+				multiplier = 1
+			}
+			require.NoError(t, svc.RecordUsage(context.Background(), input))
+			log := usageRepo.lastLog
+			require.NotNil(t, log)
+			require.Equal(t, 500, log.InputTokens)
+			require.Equal(t, 200, log.CacheReadTokens)
+			require.Equal(t, 300, log.CacheCreationTokens)
+			require.InDelta(t, 500*4e-6, log.InputCost, 1e-12)
+			require.InDelta(t, 200*0.4e-6, log.CacheReadCost, 1e-12)
+			require.InDelta(t, 300*5e-6, log.CacheCreationCost, 1e-12)
+			require.InDelta(t, 50*20e-6, log.OutputCost, 1e-12)
+			wantTotal := 500*4e-6 + 200*0.4e-6 + 300*5e-6 + 50*20e-6
+			require.InDelta(t, wantTotal, log.TotalCost, 1e-12)
+			require.InDelta(t, wantTotal*multiplier, log.ActualCost, 1e-12)
+			if subscription {
+				require.Equal(t, BillingTypeSubscription, log.BillingType)
+				require.Equal(t, 1, subRepo.incrementCalls)
+				require.InDelta(t, log.ActualCost, subRepo.lastAmount, 1e-12)
+				require.Zero(t, userRepo.deductCalls)
+			} else {
+				require.Equal(t, BillingTypeBalance, log.BillingType)
+				require.Equal(t, 1, userRepo.deductCalls)
+				require.InDelta(t, log.ActualCost, userRepo.lastAmount, 1e-12)
+				require.Zero(t, subRepo.incrementCalls)
+			}
+		})
+	}
+}
+
+func TestOpenAIGatewayServiceRecordUsage_GPT56SolFastLongContextChargesFullRate(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, nil)
+	svc.billingService.pricingService = &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		"gpt-5.6-sol": {
+			InputCostPerToken: 5e-6, OutputCostPerToken: 30e-6,
+			CacheReadInputTokenCost: 0.5e-6, CacheCreationInputTokenCost: 6.25e-6,
+			InputCostPerTokenPriority: 10e-6, OutputCostPerTokenPriority: 60e-6,
+		},
+	}}
+	serviceTier := "priority"
+	require.NoError(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "resp_gpt56_sol_fast_long",
+			Usage: OpenAIUsage{
+				InputTokens: 273000, CacheReadInputTokens: 270000,
+				CacheCreationInputTokens: 1000, OutputTokens: 100,
+			},
+			Model: "gpt-5.6-sol", ServiceTier: &serviceTier, Duration: time.Second,
+		},
+		APIKey: &APIKey{ID: 101}, User: &User{ID: 201}, Account: &Account{ID: 301},
+	}))
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.InDelta(t, 2000*16e-6, log.InputCost, 1e-12)
+	require.InDelta(t, 270000*1.6e-6, log.CacheReadCost, 1e-12)
+	require.InDelta(t, 1000*20e-6, log.CacheCreationCost, 1e-12)
+	require.InDelta(t, 100*60e-6, log.OutputCost, 1e-12)
+	require.InDelta(t, 0.49, log.TotalCost, 1e-12)
+	require.InDelta(t, 0.49*1.1, log.ActualCost, 1e-12)
+	require.Equal(t, 1, userRepo.deductCalls)
+	require.InDelta(t, log.ActualCost, userRepo.lastAmount, 1e-12)
+}
+
+func TestOpenAIGatewayServiceRecordUsage_GPT56SolPartialChannelOverrideKeepsDefaultFastRates(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, nil)
+	groupID := int64(1398)
+	zero := 0.0
+	cache := newEmptyChannelCache()
+	cache.pricingByGroupModel[channelModelKey{groupID: groupID, model: "gpt-5.6-sol"}] = &ChannelModelPricing{
+		BillingMode: BillingModeToken, InputPrice: &zero,
+	}
+	cache.channelByGroupID[groupID] = &Channel{ID: groupID, Status: StatusActive}
+	cache.groupPlatform[groupID] = ""
+	cache.loadedAt = time.Now()
+	channelService := &ChannelService{}
+	channelService.cache.Store(cache)
+	svc.resolver = NewModelPricingResolver(channelService, svc.billingService)
+	serviceTier := "priority"
+	require.NoError(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "resp_gpt56_sol_partial_channel_fast_long",
+			Usage: OpenAIUsage{
+				InputTokens: 273000, CacheReadInputTokens: 270000,
+				CacheCreationInputTokens: 1000, OutputTokens: 100,
+			},
+			Model: "gpt-5.6-sol", ServiceTier: &serviceTier, Duration: time.Second,
+		},
+		APIKey:  &APIKey{ID: 102, GroupID: &groupID, Group: &Group{ID: groupID, RateMultiplier: 1}},
+		User:    &User{ID: 202},
+		Account: &Account{ID: 302},
+	}))
+	log := usageRepo.lastLog
+	require.NotNil(t, log)
+	require.Zero(t, log.InputCost)
+	require.InDelta(t, 270000*1.6e-6, log.CacheReadCost, 1e-12)
+	require.InDelta(t, 1000*20e-6, log.CacheCreationCost, 1e-12)
+	require.InDelta(t, 100*60e-6, log.OutputCost, 1e-12)
+	require.InDelta(t, 0.458, log.TotalCost, 1e-12)
+	require.InDelta(t, 0.458, log.ActualCost, 1e-12)
+	require.Equal(t, 1, userRepo.deductCalls)
+	require.InDelta(t, log.ActualCost, userRepo.lastAmount, 1e-12)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_SimpleModeSkipsBillingAfterPersist(t *testing.T) {

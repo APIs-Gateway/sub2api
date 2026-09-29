@@ -142,18 +142,18 @@ var (
 		SupportsPromptCaching:               true,
 	}
 	openAIGPT56SolFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                          5e-06,
-		InputCostPerTokenAbove272KTokens:           1e-05,
-		InputCostPerTokenPriority:                  1e-05,
-		OutputCostPerToken:                         3e-05,
-		OutputCostPerTokenAbove272KTokens:          4.5e-05,
-		OutputCostPerTokenPriority:                 6e-05,
-		CacheCreationInputTokenCost:                6.25e-06,
-		CacheCreationInputTokenCostAbove272KTokens: 1.25e-05,
-		CacheCreationInputTokenCostPriority:        1.25e-05,
-		CacheReadInputTokenCost:                    5e-07,
-		CacheReadInputTokenCostAbove272KTokens:     1e-06,
-		CacheReadInputTokenCostPriority:            1e-06,
+		InputCostPerToken:                          4e-06,
+		InputCostPerTokenAbove272KTokens:           8e-06,
+		InputCostPerTokenPriority:                  8e-06,
+		OutputCostPerToken:                         2e-05,
+		OutputCostPerTokenAbove272KTokens:          3e-05,
+		OutputCostPerTokenPriority:                 4e-05,
+		CacheCreationInputTokenCost:                5e-06,
+		CacheCreationInputTokenCostAbove272KTokens: 1e-05,
+		CacheCreationInputTokenCostPriority:        1e-05,
+		CacheReadInputTokenCost:                    4e-07,
+		CacheReadInputTokenCostAbove272KTokens:     8e-07,
+		CacheReadInputTokenCostPriority:            8e-07,
 		LongContextInputTokenThreshold:             gpt56LongContextTokenThreshold,
 		LongContextInputCostMultiplier:             gpt56LongContextInputMultiplier,
 		LongContextOutputCostMultiplier:            gpt56LongContextOutputMultiplier,
@@ -852,6 +852,7 @@ func (s *PricingService) GetModelPricing(modelName string) (result *LiteLLMModel
 	defer s.mu.RUnlock()
 	defer func() {
 		result = applyGPT56CacheWriteFallback(modelName, result)
+		result = s.applyGPT56SolPromotionalPricing(modelName, result)
 	}()
 
 	if modelName == "" {
@@ -902,6 +903,47 @@ func (s *PricingService) GetModelPricing(modelName string) (result *LiteLLMModel
 	}
 
 	return nil
+}
+
+const defaultPricingRemoteURL = "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.json"
+
+func (s *PricingService) usesDefaultPricingCatalog() bool {
+	if s == nil || s.cfg == nil {
+		return true
+	}
+	remoteURL := strings.TrimSpace(s.cfg.Pricing.RemoteURL)
+	return remoteURL == "" || remoteURL == defaultPricingRemoteURL
+}
+
+func isOpenAIGPT56SolModel(model string) bool {
+	return normalizeKnownOpenAICodexModel(model) == "gpt-5.6-sol"
+}
+
+// The default remote catalog can lag the official Sol promotion and is loaded
+// ahead of the bundled and hardcoded fallbacks. Correct only its known old rate
+// card; a configured third-party catalog remains operator-controlled. This is
+// a rate review item for 2026-11-21, not an automatic expiration on that date.
+func (s *PricingService) applyGPT56SolPromotionalPricing(model string, pricing *LiteLLMModelPricing) *LiteLLMModelPricing {
+	if pricing == nil || !isOpenAIGPT56SolModel(model) || !s.usesDefaultPricingCatalog() {
+		return pricing
+	}
+	if pricing.InputCostPerToken != 5e-6 || pricing.CacheReadInputTokenCost != 0.5e-6 || pricing.OutputCostPerToken != 30e-6 {
+		return pricing
+	}
+	cloned := *pricing
+	cloned.InputCostPerToken = 4e-6
+	cloned.InputCostPerTokenAbove272KTokens = 8e-6
+	cloned.InputCostPerTokenPriority = 8e-6
+	cloned.OutputCostPerToken = 20e-6
+	cloned.OutputCostPerTokenAbove272KTokens = 30e-6
+	cloned.OutputCostPerTokenPriority = 40e-6
+	cloned.CacheCreationInputTokenCost = 5e-6
+	cloned.CacheCreationInputTokenCostAbove272KTokens = 10e-6
+	cloned.CacheCreationInputTokenCostPriority = 10e-6
+	cloned.CacheReadInputTokenCost = 0.4e-6
+	cloned.CacheReadInputTokenCostAbove272KTokens = 0.8e-6
+	cloned.CacheReadInputTokenCostPriority = 0.8e-6
+	return &cloned
 }
 
 // applyGPT56CacheWriteFallback keeps stale local catalogs billable until their

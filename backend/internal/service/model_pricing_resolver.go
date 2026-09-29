@@ -176,6 +176,23 @@ func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricin
 
 	// 过滤掉所有价格字段都为空的无效 interval
 	validIntervals := filterValidIntervals(chPricing.Intervals)
+	if resolved.BasePricing != nil {
+		if len(validIntervals) > 0 {
+			resolved.BasePricing.solFastLongContextFields = 0
+		}
+		if chPricing.InputPrice != nil {
+			resolved.BasePricing.solFastLongContextFields &^= solFastLongInput
+		}
+		if chPricing.OutputPrice != nil {
+			resolved.BasePricing.solFastLongContextFields &^= solFastLongOutput
+		}
+		if chPricing.CacheReadPrice != nil {
+			resolved.BasePricing.solFastLongContextFields &^= solFastLongCacheRead
+		}
+		if chPricing.CacheWritePrice != nil {
+			resolved.BasePricing.solFastLongContextFields &^= solFastLongCacheWrite
+		}
+	}
 
 	// 如果有有效的区间定价，使用区间
 	if len(validIntervals) > 0 {

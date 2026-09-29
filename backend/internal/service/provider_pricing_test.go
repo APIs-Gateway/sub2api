@@ -53,13 +53,13 @@ func TestBuildHvoyProviderPricingUsesRechargeMultiplier(t *testing.T) {
 	gpt56Sol := resp.Data.Models[1]
 	require.Equal(t, "gpt-5.6-sol", gpt56Sol.ModelName)
 	require.Equal(t, "codex plus", gpt56Sol.GroupName)
-	require.Equal(t, 10.0, gpt56Sol.InputPrice)
+	require.Equal(t, 8.0, gpt56Sol.InputPrice)
 	require.NotNil(t, gpt56Sol.OutputPrice)
-	require.Equal(t, 60.0, *gpt56Sol.OutputPrice)
+	require.Equal(t, 40.0, *gpt56Sol.OutputPrice)
 	require.NotNil(t, gpt56Sol.CacheInputPrice)
-	require.Equal(t, 1.0, *gpt56Sol.CacheInputPrice)
+	require.Equal(t, 0.8, *gpt56Sol.CacheInputPrice)
 	require.NotNil(t, gpt56Sol.CacheCreatePrice)
-	require.Equal(t, 12.5, *gpt56Sol.CacheCreatePrice)
+	require.Equal(t, 10.0, *gpt56Sol.CacheCreatePrice)
 
 	gpt56Terra := resp.Data.Models[2]
 	require.Equal(t, "gpt-5.6-terra", gpt56Terra.ModelName)
@@ -127,7 +127,7 @@ func TestBuildHvoyProviderPricingUsesStaticFallbackWithoutCatalog(t *testing.T) 
 	require.True(t, resp.Data.Models[1].Enabled)
 	require.Equal(t, "gpt-5.6-sol", resp.Data.Models[1].ModelName)
 	require.Equal(t, "codex plus", resp.Data.Models[1].GroupName)
-	require.Equal(t, 5.0, resp.Data.Models[1].InputPrice)
+	require.Equal(t, 4.0, resp.Data.Models[1].InputPrice)
 	require.True(t, resp.Data.Models[2].Enabled)
 	require.Equal(t, "gpt-5.6-terra", resp.Data.Models[2].ModelName)
 	require.Equal(t, "codex plus", resp.Data.Models[2].GroupName)
@@ -180,10 +180,10 @@ func TestBuildHvoyProviderPricingAppliesGroupRateMultiplier(t *testing.T) {
 	}
 	gpt56Sol := resp.Data.Models[1]
 	require.Equal(t, "gpt-5.6-sol", gpt56Sol.ModelName)
-	require.Equal(t, 14.0, gpt56Sol.InputPrice)
-	require.Equal(t, 84.0, *gpt56Sol.OutputPrice)
-	require.Equal(t, 1.4, *gpt56Sol.CacheInputPrice)
-	require.Equal(t, 17.5, *gpt56Sol.CacheCreatePrice)
+	require.Equal(t, 11.2, gpt56Sol.InputPrice)
+	require.Equal(t, 56.0, *gpt56Sol.OutputPrice)
+	require.Equal(t, 1.12, *gpt56Sol.CacheInputPrice)
+	require.Equal(t, 14.0, *gpt56Sol.CacheCreatePrice)
 	gpt6Astra := resp.Data.Models[4]
 	require.Equal(t, "gpt-6-astra", gpt6Astra.ModelName)
 	require.Equal(t, 28.0, gpt6Astra.InputPrice)
@@ -194,12 +194,12 @@ func TestBuildHvoyProviderPricingFallsBackToOneWhenGroupMultiplierMissing(t *tes
 	svc := NewPricingService(nil, nil)
 
 	missing := svc.BuildHvoyProviderPricing(0.5, nil, "", "", time.Time{})
-	require.Equal(t, 10.0, missing.Data.Models[1].InputPrice)
+	require.Equal(t, 8.0, missing.Data.Models[1].InputPrice)
 	require.Equal(t, "group rate multiplier unavailable", missing.Data.Models[1].Note)
 	require.True(t, missing.Data.Models[1].Enabled)
 
 	invalid := svc.BuildHvoyProviderPricing(0.5, map[string]float64{"codex plus": 0}, "", "", time.Time{})
-	require.Equal(t, 10.0, invalid.Data.Models[1].InputPrice)
+	require.Equal(t, 8.0, invalid.Data.Models[1].InputPrice)
 	require.Equal(t, "group rate multiplier invalid", invalid.Data.Models[1].Note)
 }
 
