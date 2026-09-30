@@ -220,6 +220,24 @@ const canAddMore = computed(() => {
 watch(() => props.enabled, (val) => { notifyEnabled.value = val })
 watch(() => props.threshold, (val) => { customThreshold.value = val })
 watch(() => props.extraEmails, replaceSavedEmails)
+watch(() => authStore.authSessionVersion, () => {
+  savedEmailMutationVersion++
+  savedSendVersion++
+  savedSendingEmail = null
+  sendingSavedCode.value = false
+  clearSavedVerification()
+  verifyingSaved.value = false
+  for (const pe of pendingEmails.value) {
+    if (pe.timer) clearInterval(pe.timer)
+  }
+  pendingEmails.value = []
+  newEmail.value = ''
+  removedSavedEmails.clear()
+  removedAtProfileRefresh.clear()
+  confirmedVerifiedEmails.clear()
+  confirmedAtProfileRefresh.clear()
+  replaceSavedEmails(props.extraEmails)
+})
 watch(() => authStore.profileRefreshVersion, (version) => {
   for (const [key, removedAt] of removedAtProfileRefresh) {
     if (version > removedAt) {
@@ -314,10 +332,11 @@ function addPendingEmail() {
 async function sendCodeFor(idx: number) {
   const pe = pendingEmails.value[idx]
   if (!pe) return
+  const sessionVersion = authStore.authSessionVersion
   pe.sending = true
   try {
     await userAPI.sendNotifyEmailCode(pe.email)
-    if (disposed || !pendingEmails.value.includes(pe)) return
+    if (disposed || sessionVersion !== authStore.authSessionVersion || !pendingEmails.value.includes(pe)) return
     pe.codeSent = true
     pe.countdown = 60
     pe.timer = setInterval(() => {
@@ -329,11 +348,11 @@ async function sendCodeFor(idx: number) {
     }, 1000)
     appStore.showSuccess(t('profile.balanceNotify.codeSent'))
   } catch (err: unknown) {
-    if (!disposed && pendingEmails.value.includes(pe)) {
+    if (!disposed && sessionVersion === authStore.authSessionVersion && pendingEmails.value.includes(pe)) {
       appStore.showError(extractApiErrorMessage(err, t('common.error')))
     }
   } finally {
-    pe.sending = false
+    if (sessionVersion === authStore.authSessionVersion) pe.sending = false
   }
 }
 
@@ -457,12 +476,13 @@ function cancelSavedVerification() {
 
 async function sendCodeForSaved(email: string) {
   if (!hasSavedEmail(email)) return
+  const sessionVersion = authStore.authSessionVersion
   const version = ++savedSendVersion
   savedSendingEmail = email
   sendingSavedCode.value = true
   try {
     await userAPI.sendNotifyEmailCode(email)
-    if (disposed || version !== savedSendVersion || !hasSavedEmail(email)) return
+    if (disposed || sessionVersion !== authStore.authSessionVersion || version !== savedSendVersion || !hasSavedEmail(email)) return
     verifyingEmail.value = email
     verifyCode.value = ''
     verifyCountdown.value = 60
@@ -476,11 +496,11 @@ async function sendCodeForSaved(email: string) {
     }, 1000)
     appStore.showSuccess(t('profile.balanceNotify.codeSent'))
   } catch (err: unknown) {
-    if (!disposed && version === savedSendVersion && hasSavedEmail(email)) {
+    if (!disposed && sessionVersion === authStore.authSessionVersion && version === savedSendVersion && hasSavedEmail(email)) {
       appStore.showError(extractApiErrorMessage(err, t('common.error')))
     }
   } finally {
-    if (version === savedSendVersion) {
+    if (sessionVersion === authStore.authSessionVersion && version === savedSendVersion) {
       sendingSavedCode.value = false
       savedSendingEmail = null
     }

@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { reactive } from 'vue'
 import ProfileView from '@/views/user/ProfileView.vue'
 
 const {
@@ -11,12 +12,14 @@ const {
   refreshUserMock: vi.fn(),
   authState: {
     user: null as Record<string, unknown> | null,
+    authSessionVersion: 0,
     refreshUser: vi.fn()
   }
 }))
+const reactiveAuthState = reactive(authState)
 
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => authState
+  useAuthStore: () => reactiveAuthState
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -44,8 +47,9 @@ describe('ProfileView', () => {
     refreshUserMock.mockReset()
     fetchPublicSettingsMock.mockReset()
     refreshUserMock.mockResolvedValue(undefined)
-    authState.refreshUser = refreshUserMock
-    authState.user = {
+    reactiveAuthState.refreshUser = refreshUserMock
+    reactiveAuthState.authSessionVersion = 0
+    reactiveAuthState.user = {
       id: 1,
       username: 'alice',
       email: 'alice@example.com',
@@ -95,5 +99,37 @@ describe('ProfileView', () => {
     expect(wrapper.get('[data-testid="profile-shell"]').html()).toContain('profile-info-card')
     expect(wrapper.get('[data-testid="profile-shell"]').html()).toContain('profile-password-form')
     expect(wrapper.get('[data-testid="profile-shell"]').html()).toContain('profile-totp-card')
+  })
+
+  it('remounts notification email state when the authenticated session changes', async () => {
+    fetchPublicSettingsMock.mockResolvedValueOnce({ balance_low_notify_enabled: true })
+    let mounts = 0
+    let unmounts = 0
+    const wrapper = mount(ProfileView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          ProfileInfoCard: true,
+          ProfileBalanceNotifyCard: {
+            template: '<div data-testid="profile-balance-notify-card" />',
+            mounted() { mounts++ },
+            unmounted() { unmounts++ }
+          },
+          ProfilePasswordForm: true,
+          ProfileTotpCard: true,
+          Icon: true
+        }
+      }
+    })
+    await flushPromises()
+    expect(mounts).toBe(1)
+
+    // The parent view stays mounted while A is replaced directly by B.
+    reactiveAuthState.user = { ...reactiveAuthState.user!, id: 2, email: 'bob@example.com' }
+    reactiveAuthState.authSessionVersion++
+    await flushPromises()
+    expect(wrapper.get('[data-testid="profile-shell"]').exists()).toBe(true)
+    expect(mounts).toBe(2)
+    expect(unmounts).toBe(1)
   })
 })

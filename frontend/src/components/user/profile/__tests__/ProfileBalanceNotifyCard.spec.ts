@@ -60,6 +60,50 @@ describe('ProfileBalanceNotifyCard', () => {
     vi.useRealTimers()
   })
 
+  it.each([
+    ['pending', 'success'], ['pending', 'failure'],
+    ['saved', 'success'], ['saved', 'failure']
+  ] as const)('drops an old %s send %s after the auth session changes', async (kind, outcome) => {
+    const entry = { email: 'shared@example.com', disabled: false, verified: false }
+    const request = deferred()
+    sendNotifyEmailCode.mockReturnValueOnce(request.promise)
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: {
+        enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '',
+        extraEmails: kind === 'saved' ? [entry] : []
+      }
+    })
+    if (kind === 'pending') {
+      await wrapper.get('input[type="email"]').setValue(entry.email)
+      await button(wrapper, 'common.add').trigger('click')
+      await button(wrapper, 'profile.balanceNotify.sendCode').trigger('click')
+    } else {
+      await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    }
+
+    // Keep this component mounted and reuse the same address for B's saved row.
+    authStore.authSessionVersion++
+    await wrapper.setProps({ extraEmails: kind === 'saved' ? [{ ...entry }] : [] })
+    expect(pendingRows(wrapper)).toHaveLength(0)
+    expect(vi.getTimerCount()).toBe(0)
+
+    if (outcome === 'success') request.resolve()
+    else request.reject(new Error('old send failed'))
+    await flushPromises()
+
+    expect(pendingRows(wrapper)).toHaveLength(0)
+    expect(wrapper.find('input[maxlength="6"]').exists()).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(showSuccess).not.toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
+    if (kind === 'saved') {
+      expect(wrapper.text()).toContain(entry.email)
+      expect(wrapper.text()).toContain('profile.balanceNotify.unverified')
+    } else {
+      expect(wrapper.text()).not.toContain(entry.email)
+    }
+  })
+
   it.each(['success', 'failure'] as const)('ignores a removed pending email\'s late %s', async (outcome) => {
     const request = deferred()
     sendNotifyEmailCode.mockReturnValueOnce(request.promise)
