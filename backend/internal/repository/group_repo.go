@@ -945,15 +945,12 @@ func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool)
 	if len(edits) == 0 {
 		return "", false
 	}
-	var next strings.Builder
-	previous := 0
-	for _, replacement := range edits {
-		next.WriteString(raw[previous:replacement.start])
-		next.WriteString(replacement.value)
-		previous = replacement.end
+	next := raw
+	for i := len(edits) - 1; i >= 0; i-- {
+		replacement := edits[i]
+		next = next[:replacement.start] + replacement.value + next[replacement.end:]
 	}
-	next.WriteString(raw[previous:])
-	return next.String(), true
+	return next, true
 }
 
 type groupAccountCounts struct {
