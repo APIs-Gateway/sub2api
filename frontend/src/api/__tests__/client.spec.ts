@@ -323,6 +323,24 @@ describe('API Client', () => {
       expect(adapter.mock.calls[1][0]._authSessionVersion).toBe(adapter.mock.calls[0][0]._authSessionVersion)
     })
 
+    it('still expires the current /auth/me session on a 401 without a refresh token', async () => {
+      window.history.replaceState({}, '', '/login')
+      localStorage.setItem('auth_token', 'current-token')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+      const adapter = vi.fn((config: InternalAxiosRequestConfig) => Promise.reject({
+        response: { status: 401, data: { code: 'TOKEN_EXPIRED' } },
+        config,
+        code: 'ERR_BAD_REQUEST'
+      }))
+      apiClient.defaults.adapter = adapter
+
+      await expect(apiClient.get('/auth/me')).rejects.toMatchObject({ status: 401, code: 'TOKEN_EXPIRED' })
+      expect(adapter).toHaveBeenCalledOnce()
+      expect(localStorage.getItem('auth_token')).toBeNull()
+      expect(localStorage.getItem('auth_user')).toBeNull()
+      expect(sessionStorage.getItem('auth_expired')).toBe('1')
+    })
+
     it('refresh 请求显式使用 30 秒超时', async () => {
       localStorage.setItem('auth_token', 'expired-token')
       localStorage.setItem('refresh_token', 'refresh-token')
