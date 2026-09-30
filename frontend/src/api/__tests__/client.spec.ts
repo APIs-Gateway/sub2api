@@ -252,6 +252,32 @@ describe('API Client', () => {
   // --- 401 Token 刷新 ---
 
   describe('401 Token 刷新', () => {
+    it('does not erase a new account when an old logout API call finishes late', async () => {
+      localStorage.setItem('auth_token', 'account-a-token')
+      localStorage.setItem('refresh_token', 'account-a-refresh')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+      let finishOldLogout!: (response: unknown) => void
+      const adapter = vi.fn((_config: InternalAxiosRequestConfig) => new Promise((resolve) => {
+        finishOldLogout = resolve
+      }))
+      apiClient.defaults.adapter = adapter
+      const { logout } = await import('@/api/auth')
+      const request = logout()
+      await vi.waitFor(() => expect(adapter).toHaveBeenCalledOnce())
+      const { invalidateAuthSession } = await import('@/utils/authSessionVersion')
+      invalidateAuthSession()
+      localStorage.setItem('auth_token', 'account-b-token')
+      localStorage.setItem('refresh_token', 'account-b-refresh')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 8 }))
+
+      finishOldLogout({ status: 200, data: { code: 0, data: {} }, headers: {},
+        config: adapter.mock.calls[0][0], statusText: 'OK' })
+      await request
+      expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+      expect(localStorage.getItem('refresh_token')).toBe('account-b-refresh')
+      expect(localStorage.getItem('auth_user')).toBe(JSON.stringify({ id: 8 }))
+    })
+
     it.each([false, true])('ignores an old /auth/me 401 after another account signs in (new refresh token: %s)', async (hasNewRefreshToken) => {
       localStorage.setItem('auth_token', 'account-a-token')
       localStorage.setItem('refresh_token', 'account-a-refresh')

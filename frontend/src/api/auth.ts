@@ -92,19 +92,6 @@ export function clearAuthToken(): void {
  */
 export async function login(credentials: LoginRequest): Promise<LoginResponse> {
   const { data } = await apiClient.post<LoginResponse>('/auth/login', credentials)
-
-  // Only store token if 2FA is not required
-  if (!isTotp2FARequired(data)) {
-    setAuthToken(data.access_token)
-    if (data.refresh_token) {
-      setRefreshToken(data.refresh_token)
-    }
-    if (data.expires_in) {
-      setTokenExpiresAt(data.expires_in)
-    }
-    localStorage.setItem('auth_user', JSON.stringify(data.user))
-  }
-
   return data
 }
 
@@ -115,17 +102,6 @@ export async function login(credentials: LoginRequest): Promise<LoginResponse> {
  */
 export async function login2FA(request: TotpLogin2FARequest): Promise<AuthResponse> {
   const { data } = await apiClient.post<AuthResponse>('/auth/login/2fa', request)
-
-  // Store token and user data
-  setAuthToken(data.access_token)
-  if (data.refresh_token) {
-    setRefreshToken(data.refresh_token)
-  }
-  if (data.expires_in) {
-    setTokenExpiresAt(data.expires_in)
-  }
-  localStorage.setItem('auth_user', JSON.stringify(data.user))
-
   return data
 }
 
@@ -136,17 +112,6 @@ export async function login2FA(request: TotpLogin2FARequest): Promise<AuthRespon
  */
 export async function register(userData: RegisterRequest): Promise<AuthResponse> {
   const { data } = await apiClient.post<AuthResponse>('/auth/register', userData)
-
-  // Store token and user data
-  setAuthToken(data.access_token)
-  if (data.refresh_token) {
-    setRefreshToken(data.refresh_token)
-  }
-  if (data.expires_in) {
-    setTokenExpiresAt(data.expires_in)
-  }
-  localStorage.setItem('auth_user', JSON.stringify(data.user))
-
   return data
 }
 
@@ -160,8 +125,7 @@ export async function getCurrentUser() {
 
 /**
  * User logout
- * Clears authentication token and user data from localStorage
- * Optionally revokes the refresh token on the server
+ * Optionally revokes the refresh token on the server. The auth store owns local session clearing.
  */
 export async function logout(): Promise<void> {
   const refreshToken = getRefreshToken()
@@ -174,8 +138,6 @@ export async function logout(): Promise<void> {
       // Ignore errors - we still want to clear local state
     }
   }
-
-  clearAuthToken()
 }
 
 /**

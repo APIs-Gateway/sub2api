@@ -241,8 +241,10 @@ export const useAuthStore = defineStore('auth', () => {
       return
     }
 
+    const sessionVersion = authSessionVersion.value
     try {
       const response = await authAPI.refreshToken()
+      if (sessionVersion !== authSessionVersion.value) return
 
       // Update state
       token.value = response.access_token
@@ -273,8 +275,13 @@ export const useAuthStore = defineStore('auth', () => {
    * @throws Error if login fails
    */
   async function login(credentials: LoginRequest): Promise<LoginResponse> {
+    advanceAuthSession()
+    const sessionVersion = authSessionVersion.value
     try {
       const response = await authAPI.login(credentials)
+      if (sessionVersion !== authSessionVersion.value) {
+        throw { status: 401, code: 'AUTH_SESSION_CHANGED', message: 'Login session changed.' }
+      }
 
       // If 2FA is required, return the response without setting auth state
       if (isTotp2FARequired(response)) {
@@ -287,7 +294,9 @@ export const useAuthStore = defineStore('auth', () => {
       return response
     } catch (error) {
       // Clear any partial state on error
-      clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      if (sessionVersion === authSessionVersion.value) {
+        clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      }
       throw error
     }
   }
@@ -300,12 +309,19 @@ export const useAuthStore = defineStore('auth', () => {
    * @throws Error if 2FA verification fails
    */
   async function login2FA(tempToken: string, totpCode: string): Promise<User> {
+    advanceAuthSession()
+    const sessionVersion = authSessionVersion.value
     try {
       const response = await authAPI.login2FA({ temp_token: tempToken, totp_code: totpCode })
+      if (sessionVersion !== authSessionVersion.value) {
+        throw { status: 401, code: 'AUTH_SESSION_CHANGED', message: 'Login session changed.' }
+      }
       setAuthFromResponse(response)
       return user.value!
     } catch (error) {
-      clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      if (sessionVersion === authSessionVersion.value) {
+        clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      }
       throw error
     }
   }
@@ -316,13 +332,16 @@ export const useAuthStore = defineStore('auth', () => {
    */
   function setAuthFromResponse(response: AuthResponse): void {
     advanceAuthSession()
+    stopTokenRefresh()
     // Store token and user
     token.value = response.access_token
 
     // Store refresh token if present
+    refreshTokenValue.value = response.refresh_token || null
     if (response.refresh_token) {
-      refreshTokenValue.value = response.refresh_token
       localStorage.setItem(REFRESH_TOKEN_KEY, response.refresh_token)
+    } else {
+      localStorage.removeItem(REFRESH_TOKEN_KEY)
     }
 
     // Extract run_mode if present
@@ -343,6 +362,12 @@ export const useAuthStore = defineStore('auth', () => {
     // scheduleTokenRefresh will also store the expiry timestamp
     if (response.refresh_token && response.expires_in) {
       scheduleTokenRefresh(response.expires_in)
+    } else if (response.expires_in) {
+      tokenExpiresAt.value = Date.now() + response.expires_in * 1000
+      localStorage.setItem(TOKEN_EXPIRES_AT_KEY, String(tokenExpiresAt.value))
+    } else {
+      tokenExpiresAt.value = null
+      localStorage.removeItem(TOKEN_EXPIRES_AT_KEY)
     }
   }
 
@@ -353,8 +378,13 @@ export const useAuthStore = defineStore('auth', () => {
    * @throws Error if registration fails
    */
   async function register(userData: RegisterRequest): Promise<User> {
+    advanceAuthSession()
+    const sessionVersion = authSessionVersion.value
     try {
       const response = await authAPI.register(userData)
+      if (sessionVersion !== authSessionVersion.value) {
+        throw { status: 401, code: 'AUTH_SESSION_CHANGED', message: 'Registration session changed.' }
+      }
 
       // Use the common helper to set auth state
       setAuthFromResponse(response)
@@ -362,7 +392,9 @@ export const useAuthStore = defineStore('auth', () => {
       return user.value!
     } catch (error) {
       // Clear any partial state on error
-      clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      if (sessionVersion === authSessionVersion.value) {
+        clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      }
       throw error
     }
   }
@@ -374,6 +406,7 @@ export const useAuthStore = defineStore('auth', () => {
    */
   async function setToken(newToken: string): Promise<User> {
     advanceAuthSession()
+    const sessionVersion = authSessionVersion.value
     // Clear any previous state first (avoid mixing sessions)
     // Note: Don't clear localStorage here as OAuth callback may have set refresh_token
     stopAutoRefresh()
@@ -388,15 +421,14 @@ export const useAuthStore = defineStore('auth', () => {
     const savedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
     const savedExpiresAt = localStorage.getItem(TOKEN_EXPIRES_AT_KEY)
 
-    if (savedRefreshToken) {
-      refreshTokenValue.value = savedRefreshToken
-    }
-    if (savedExpiresAt) {
-      tokenExpiresAt.value = parseInt(savedExpiresAt, 10)
-    }
+    refreshTokenValue.value = savedRefreshToken
+    tokenExpiresAt.value = savedExpiresAt ? parseInt(savedExpiresAt, 10) : null
 
     try {
       const userData = await refreshUser()
+      if (sessionVersion !== authSessionVersion.value) {
+        throw { status: 401, code: 'AUTH_SESSION_CHANGED', message: 'Login session changed.' }
+      }
       startAutoRefresh()
 
       // Start proactive token refresh if we have refresh token and expiry info
@@ -408,7 +440,9 @@ export const useAuthStore = defineStore('auth', () => {
       clearPendingAuthSession()
       return userData
     } catch (error) {
-      clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      if (sessionVersion === authSessionVersion.value) {
+        clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      }
       throw error
     }
   }
@@ -434,6 +468,7 @@ export const useAuthStore = defineStore('auth', () => {
    */
   async function logout(): Promise<void> {
     advanceAuthSession()
+    const sessionVersion = authSessionVersion.value
     try {
       // Call API logout (revokes refresh token on server)
       await authAPI.logout()
@@ -441,7 +476,7 @@ export const useAuthStore = defineStore('auth', () => {
       // A failed server-side revoke must not keep the local session alive.
       console.warn('Logout API call failed, clearing local session anyway', err)
     } finally {
-      clearAuth()
+      if (sessionVersion === authSessionVersion.value) clearAuth()
     }
   }
 
