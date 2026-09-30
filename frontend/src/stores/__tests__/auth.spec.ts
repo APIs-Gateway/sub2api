@@ -187,9 +187,12 @@ describe('useAuthStore', () => {
       expect(localStorage.getItem('token_expires_at')).toBeNull()
       // Cross the previous account's refresh deadline and observe behavior, not timer totals.
       mockGetCurrentUser.mockResolvedValue({ data: fakeAdminUser })
+      const profileReadsBeforeAdvance = mockGetCurrentUser.mock.calls.length
+      const profileVersionBeforeAdvance = store.profileRefreshVersion
       await vi.advanceTimersByTimeAsync(3_600_000)
       expect(mockRefreshToken).not.toHaveBeenCalled()
-      expect(mockGetCurrentUser).toHaveBeenCalled()
+      expect(mockGetCurrentUser.mock.calls.length).toBeGreaterThan(profileReadsBeforeAdvance)
+      expect(store.profileRefreshVersion).toBeGreaterThan(profileVersionBeforeAdvance)
     }
   })
 
