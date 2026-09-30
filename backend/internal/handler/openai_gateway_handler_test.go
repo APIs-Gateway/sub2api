@@ -1026,12 +1026,7 @@ func TestOpenAIResponsesWebSocket_PreviousResponseIDKindLoggedBeforeAcquireFailu
 	cancelWrite()
 	require.NoError(t, err)
 
-	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
-	_, _, err = clientConn.Read(readCtx)
-	cancelRead()
-	require.Error(t, err)
-	var closeErr coderws.CloseError
-	require.ErrorAs(t, err, &closeErr)
+	closeErr := readOpenAIWSRejectionStatus(t, clientConn, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable")
 	require.Equal(t, coderws.StatusInternalError, closeErr.Code)
 	require.Contains(t, strings.ToLower(closeErr.Reason), "failed to acquire user concurrency slot")
 }

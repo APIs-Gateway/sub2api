@@ -623,7 +623,8 @@ func TestWSResponseCreate_IngressBlockSendsErrorEventAndSkipsUpstream(t *testing
 	cancelRead()
 	require.NoError(t, readErr, "first read must succeed and return the error event before any close frame")
 	require.Equal(t, "error", gjson.GetBytes(event, "type").String())
-	require.Equal(t, "invalid_request_error", gjson.GetBytes(event, "error.type").String())
+	require.Equal(t, int64(http.StatusForbidden), gjson.GetBytes(event, "status").Int())
+	require.Equal(t, "permission_error", gjson.GetBytes(event, "error.type").String())
 	// B1 regression: event_id + error.code must be populated.
 	require.Equal(t, "policy_violation", gjson.GetBytes(event, "error.code").String())
 	require.NotEmpty(t, gjson.GetBytes(event, "event_id").String(), "event_id must be present so clients can correlate")
