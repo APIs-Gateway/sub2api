@@ -63,7 +63,7 @@ function mountView() {
   })
 }
 
-describe('admin BackupView S3 step-up gate', () => {
+describe('admin BackupView', () => {
   beforeEach(() => {
     getS3Config.mockReset()
     updateS3Config.mockReset()
@@ -157,5 +157,29 @@ describe('admin BackupView S3 step-up gate', () => {
     expect(open).toHaveBeenCalledWith('https://example.test/backup', '_blank')
     open.mockRestore()
     wrapper.unmount()
+  })
+
+  it.each(['backup', 'restore'])('does not restart %s polling after unmount during initial loading', async (operation) => {
+    vi.useFakeTimers()
+    let finish!: (value: { items: object[] }) => void
+    listBackups.mockImplementationOnce(() => new Promise<{ items: object[] }>(resolve => { finish = resolve }))
+    const wrapper = mountView()
+    try {
+      await flushPromises()
+      wrapper.unmount()
+      finish({
+        items: [{
+          id: 'pending',
+          status: operation === 'backup' ? 'running' : 'completed',
+          restore_status: operation === 'restore' ? 'running' : undefined
+        }]
+      })
+      await flushPromises()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      wrapper.unmount()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
   })
 })
