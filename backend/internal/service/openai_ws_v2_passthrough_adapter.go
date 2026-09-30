@@ -669,11 +669,16 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	if strings.TrimSpace(token) == "" {
 		return errors.New("token is empty")
 	}
+	rejectLocalPayload := func(closeReason, message string, cause error) error {
+		rejection := newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", message, cause)
+		writeOpenAIWSLocalRejectionEvent(ctx, clientConn, rejection)
+		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, closeReason, rejection)
+	}
 	promptCacheKey := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "prompt_cache_key").String())
 	if isOpenAIResponsesLiteWebSocketPayload(firstClientMessage) {
 		liteFirstMessage, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(firstClientMessage, account)
 		if liteErr != nil {
-			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, liteErr.Error(), liteErr)
+			return rejectLocalPayload(liteErr.Error(), liteErr.Error(), liteErr)
 		}
 		firstClientMessage = liteFirstMessage
 	}
@@ -934,7 +939,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			if isResponseCreate {
 				if !turnLifecycle.beginResponseCreate(clientFrameConn.markTurnStarted) {
 					err := errors.New("overlapping response.create is not supported")
-					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, err.Error(), err)
+					return payload, nil, rejectLocalPayload(err.Error(), err.Error(), err)
 				}
 				defer func() {
 					if !acceptedTurn {
@@ -976,7 +981,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			if isResponseCreate && isOpenAIResponsesLiteWebSocketPayload(payload) {
 				litePayload, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(payload, account)
 				if liteErr != nil {
-					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, liteErr.Error(), liteErr)
+					return payload, nil, rejectLocalPayload(liteErr.Error(), liteErr.Error(), liteErr)
 				}
 				payload = litePayload
 			}
@@ -991,7 +996,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			if isResponseCreate || eventType == "session.update" {
 				accountScopedPayload, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(payload, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
 				if scopeErr != nil {
-					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket identity metadata", scopeErr)
+				return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket identity metadata", scopeErr)
 				}
 				if accountScoped {
 					payload = accountScopedPayload

@@ -117,11 +117,17 @@ func TestOpenAIResponsesWebSocket_InvalidLaterTurnHasHTTPStatusWithoutAccountFai
 
 func TestOpenAIResponsesWebSocket_LaterTurnConcurrencyRejectionHasHTTPStatus(t *testing.T) {
 	tests := []struct {
-		name     string
-		slotType string
+		name       string
+		slotType   string
+		acquireErr error
+		status     int
+		errType    string
+		closeCode  coderws.StatusCode
 	}{
-		{name: "user slot", slotType: "user"},
-		{name: "account slot", slotType: "account"},
+		{name: "user slot full", slotType: "user", status: http.StatusTooManyRequests, errType: "rate_limit_error", closeCode: coderws.StatusTryAgainLater},
+		{name: "account slot full", slotType: "account", status: http.StatusTooManyRequests, errType: "rate_limit_error", closeCode: coderws.StatusTryAgainLater},
+		{name: "user slot unavailable", slotType: "user", acquireErr: errors.New("user cache unavailable"), status: http.StatusServiceUnavailable, errType: "api_error", closeCode: coderws.StatusInternalError},
+		{name: "account slot unavailable", slotType: "account", acquireErr: errors.New("account cache unavailable"), status: http.StatusServiceUnavailable, errType: "api_error", closeCode: coderws.StatusInternalError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -130,10 +136,16 @@ func TestOpenAIResponsesWebSocket_LaterTurnConcurrencyRejectionHasHTTPStatus(t *
 			reports := make(chan bool, 1)
 			cache := &concurrencyCacheMock{
 				acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) {
-					return userAcquires.Add(1) == 1 || tc.slotType != "user", nil
+					if userAcquires.Add(1) > 1 && tc.slotType == "user" {
+						return false, tc.acquireErr
+					}
+					return true, nil
 				},
 				acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) {
-					return accountAcquires.Add(1) == 1 || tc.slotType != "account", nil
+					if accountAcquires.Add(1) > 1 && tc.slotType == "account" {
+						return false, tc.acquireErr
+					}
+					return true, nil
 				},
 			}
 			h := newOpenAIResponsesWebSocketAttributionHandlerWithProxy(t, cache,
@@ -152,8 +164,12 @@ func TestOpenAIResponsesWebSocket_LaterTurnConcurrencyRejectionHasHTTPStatus(t *
 			require.NoError(t, err)
 			defer func() { _ = client.CloseNow() }()
 			require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.4","stream":false}`)))
-			closeErr := readOpenAIWSRejectionStatus(t, client, http.StatusTooManyRequests, "rate_limit_error", "Concurrency limit exceeded for "+tc.slotType)
-			require.Equal(t, coderws.StatusTryAgainLater, closeErr.Code)
+			message := "Concurrency limit exceeded for " + tc.slotType
+			if tc.acquireErr != nil {
+				message = "Service temporarily unavailable"
+			}
+			closeErr := readOpenAIWSRejectionStatus(t, client, tc.status, tc.errType, message)
+			require.Equal(t, tc.closeCode, closeErr.Code)
 			select {
 			case <-handlerDone:
 			case <-ctx.Done():

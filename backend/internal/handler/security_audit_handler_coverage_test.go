@@ -198,10 +198,9 @@ func TestWriteSecurityAuditWSErrorWritesPromptGuardEnvelope(t *testing.T) {
 	tests := []struct {
 		name     string
 		decision *securityaudit.Decision
-		errType  string
 	}{
-		{name: "blocked", decision: &securityaudit.Decision{Kind: securityaudit.DecisionBlock, HTTPStatus: http.StatusForbidden, ErrorCode: securityaudit.ErrorCodeBlocked, ClientMessage: "prompt blocked"}, errType: "permission_error"},
-		{name: "unavailable", decision: &securityaudit.Decision{Kind: securityaudit.DecisionUnavailable, HTTPStatus: http.StatusServiceUnavailable, ErrorCode: securityaudit.ErrorCodeUnavailable, ClientMessage: "audit unavailable"}, errType: "api_error"},
+		{name: "blocked", decision: &securityaudit.Decision{Kind: securityaudit.DecisionBlock, HTTPStatus: http.StatusForbidden, ErrorCode: securityaudit.ErrorCodeBlocked, ClientMessage: "prompt blocked"}},
+		{name: "unavailable", decision: &securityaudit.Decision{Kind: securityaudit.DecisionUnavailable, HTTPStatus: http.StatusServiceUnavailable, ErrorCode: securityaudit.ErrorCodeUnavailable, ClientMessage: "audit unavailable"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -224,10 +223,12 @@ func TestWriteSecurityAuditWSErrorWritesPromptGuardEnvelope(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, coderws.MessageText, messageType)
 			require.Equal(t, "error", gjson.GetBytes(payload, "type").String())
-			require.Equal(t, int64(tc.decision.HTTPStatus), gjson.GetBytes(payload, "status").Int())
-			require.Equal(t, tc.errType, gjson.GetBytes(payload, "error.type").String())
-			require.Equal(t, tc.decision.ErrorCode, gjson.GetBytes(payload, "error.code").String())
-			require.Equal(t, tc.decision.ClientMessage, gjson.GetBytes(payload, "error.message").String())
+			httpCtx, recorder := securityAuditErrorTestContext(t)
+			(&GatewayHandler{}).responsesSecurityAuditError(httpCtx, tc.decision)
+			require.Equal(t, int64(recorder.Code), gjson.GetBytes(payload, "status").Int())
+			for _, field := range []string{"type", "code", "message"} {
+				require.Equal(t, gjson.Get(recorder.Body.String(), "error."+field).String(), gjson.GetBytes(payload, "error."+field).String(), field)
+			}
 		})
 	}
 }

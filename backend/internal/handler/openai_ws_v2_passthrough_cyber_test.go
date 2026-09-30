@@ -54,6 +54,7 @@ func TestOpenAIResponsesWebSocketV2PassthroughLaterPolicyRejectionsHaveHTTPStatu
 		setup       func(*openAIWSPassthroughHandlerHarness)
 	}{
 		{name: "message id", payload: `{"type":"response.create","model":"gpt-5.1","previous_response_id":"msg_bad"}`, status: http.StatusBadRequest, errType: "invalid_request_error", message: "previous_response_id must be a response.id", closeReason: "previous_response_id must be a response.id (resp_*), not a message id"},
+		{name: "Lite validation", payload: `{"type":"response.create","model":"gpt-5.1","client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"},"parallel_tool_calls":"invalid"}`, status: http.StatusBadRequest, errType: "invalid_request_error", message: "responses Lite requires parallel_tool_calls to be a boolean", closeReason: "responses Lite requires parallel_tool_calls to be a boolean"},
 		{name: "global image policy", payload: `{"type":"response.create","model":"gpt-5.1","tools":[{"type":"image_generation"}]}`, status: http.StatusBadRequest, errType: "invalid_request_error", message: service.OpenAIResponsesImageGenerationDisabledMessage(), closeReason: service.OpenAIResponsesImageGenerationDisabledMessage(), setup: func(h *openAIWSPassthroughHandlerHarness) {
 			h.cfg.Gateway.DisableOpenAIResponsesImageGeneration = true
 		}},
@@ -78,9 +79,12 @@ func TestOpenAIResponsesWebSocketCtxPoolLaterLocalRejectionsHaveHTTPStatus(t *te
 		closeReason string
 		setup       func(*openAIWSPassthroughHandlerHarness)
 	}{
+		{name: "empty payload", payload: ``, status: http.StatusBadRequest, errType: "invalid_request_error", message: "Failed to parse request body", closeReason: "empty websocket request payload"},
 		{name: "invalid JSON", payload: `{`, status: http.StatusBadRequest, errType: "invalid_request_error", message: "Failed to parse request body", closeReason: "invalid websocket request payload"},
 		{name: "message id", payload: `{"type":"response.create","model":"gpt-5.1","previous_response_id":"msg_bad"}`, status: http.StatusBadRequest, errType: "invalid_request_error", message: "previous_response_id must be a response.id", closeReason: "previous_response_id must be a response.id (resp_*), not a message id"},
+		{name: "Lite validation", payload: `{"type":"response.create","model":"gpt-5.1","client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"},"parallel_tool_calls":"invalid"}`, status: http.StatusBadRequest, errType: "invalid_request_error", message: "responses Lite requires parallel_tool_calls to be a boolean", closeReason: "responses Lite requires parallel_tool_calls to be a boolean"},
 		{name: "response append", payload: `{"type":"response.append","model":"gpt-5.1"}`, status: http.StatusBadRequest, errType: "invalid_request_error", message: "response.append is not supported", closeReason: "response.append is not supported in ws v2; use response.create with previous_response_id"},
+		{name: "unsupported type", payload: `{"type":"response.unknown","model":"gpt-5.1"}`, status: http.StatusBadRequest, errType: "invalid_request_error", message: "unsupported websocket request type: response.unknown", closeReason: "unsupported websocket request type: response.unknown"},
 		{name: "global image policy", payload: `{"type":"response.create","model":"gpt-5.1","tools":[{"type":"image_generation"}]}`, status: http.StatusBadRequest, errType: "invalid_request_error", message: service.OpenAIResponsesImageGenerationDisabledMessage(), closeReason: service.OpenAIResponsesImageGenerationDisabledMessage(), setup: func(h *openAIWSPassthroughHandlerHarness) {
 			h.cfg.Gateway.DisableOpenAIResponsesImageGeneration = true
 		}},
@@ -92,6 +96,66 @@ func TestOpenAIResponsesWebSocketCtxPoolLaterLocalRejectionsHaveHTTPStatus(t *te
 		t.Run(tc.name, func(t *testing.T) {
 			runOpenAIResponsesWebSocketV2PassthroughLocalRejection(t, coderws.MessageText, tc.payload, tc.status, tc.errType, tc.message, tc.closeReason, tc.setup, service.OpenAIWSIngressModeCtxPool)
 		})
+	}
+}
+
+func TestOpenAIResponsesWebSocketV2PassthroughFirstLiteValidationHasHTTPStatus(t *testing.T) {
+	upstreamAttempts := make(chan struct{}, 1)
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamAttempts <- struct{}{}
+		http.Error(w, "unexpected upstream request", http.StatusInternalServerError)
+	}))
+	defer upstreamServer.Close()
+	harness := newOpenAIWSPassthroughHandlerHarness(t, upstreamServer.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, harness.clientConn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"},"parallel_tool_calls":"invalid"}`)))
+	closeErr := readOpenAIWSRejectionStatus(t, harness.clientConn, http.StatusBadRequest, "invalid_request_error", "responses Lite requires parallel_tool_calls to be a boolean")
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+	require.Equal(t, "responses Lite requires parallel_tool_calls to be a boolean", closeErr.Reason)
+	select {
+	case <-upstreamAttempts:
+		t.Fatal("invalid first Lite frame reached upstream")
+	default:
+	}
+}
+
+func TestOpenAIResponsesWebSocketV2PassthroughOverlappingCreateHasHTTPStatus(t *testing.T) {
+	secondUpstreamFrame := make(chan []byte, 1)
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, nil)
+		require.NoError(t, err)
+		defer func() { _ = conn.CloseNow() }()
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		_, _, err = conn.Read(ctx)
+		require.NoError(t, err)
+		require.NoError(t, conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.created","response":{"id":"resp_in_progress"}}`)))
+		if _, second, readErr := conn.Read(ctx); readErr == nil {
+			secondUpstreamFrame <- append([]byte(nil), second...)
+		}
+	}))
+	defer upstreamServer.Close()
+	harness := newOpenAIWSPassthroughHandlerHarness(t, upstreamServer.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, harness.clientConn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"first"}`)))
+	_, firstEvent, err := harness.clientConn.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "response.created", gjson.GetBytes(firstEvent, "type").String())
+	require.NoError(t, harness.clientConn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"second"}`)))
+	closeErr := readOpenAIWSRejectionStatus(t, harness.clientConn, http.StatusBadRequest, "invalid_request_error", "overlapping response.create is not supported")
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+	require.Equal(t, "overlapping response.create is not supported", closeErr.Reason)
+	select {
+	case <-harness.handlerDone:
+	case <-ctx.Done():
+		t.Fatal("websocket handler did not exit")
+	}
+	select {
+	case second := <-secondUpstreamFrame:
+		t.Fatalf("overlapping turn reached upstream: %s", second)
+	default:
 	}
 }
 

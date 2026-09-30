@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	coderws "github.com/coder/websocket"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -146,6 +147,72 @@ func TestOpenAIResponsesWebSocket_ImageGenerationDisabledHasHTTPStatus(t *testin
 	closeErr := readOpenAIWSRejectionStatus(t, conn, http.StatusBadRequest, "invalid_request_error", service.OpenAIResponsesImageGenerationDisabledMessage())
 	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
 	require.Equal(t, service.OpenAIResponsesImageGenerationDisabledMessage(), closeErr.Reason)
+}
+
+func TestOpenAIResponsesWebSocket_GroupImagePermissionHasHTTPStatus(t *testing.T) {
+	h := newOpenAIHandlerForPreviousResponseIDValidation(t, nil)
+	groupID := int64(2)
+	apiKey := &service.APIKey{ID: 101, GroupID: &groupID, Group: &service.Group{AllowImageGeneration: false}, User: &service.User{ID: 1}}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1, Concurrency: 1})
+		c.Next()
+	})
+	router.GET("/openai/v1/responses", h.ResponsesWebSocket)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/openai/v1/responses", nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+	require.NoError(t, conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.5","tools":[{"type":"image_generation"}]}`)))
+	closeErr := readOpenAIWSRejectionStatus(t, conn, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+	require.Equal(t, service.ImageGenerationPermissionMessage(), closeErr.Reason)
+}
+
+func TestOpenAIResponsesWebSocket_BillingEligibilityHasHTTPStatus(t *testing.T) {
+	h := newOpenAIHandlerForPreviousResponseIDValidation(t, nil)
+	h.billingCacheService = service.NewBillingCacheService(nil, &whamUsageUserRepoStub{user: &service.User{ID: 1, Balance: 0}}, nil, nil, nil, nil, &config.Config{}, nil, nil)
+	t.Cleanup(h.billingCacheService.Stop)
+	server := newOpenAIWSHandlerTestServer(t, h, middleware.AuthSubject{UserID: 1, Concurrency: 1})
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/openai/v1/responses", nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+	require.NoError(t, conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.5"}`)))
+	closeErr := readOpenAIWSRejectionStatus(t, conn, http.StatusForbidden, "billing_error", "insufficient balance")
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+	require.Equal(t, "billing check failed", closeErr.Reason)
+}
+
+func TestOpenAIResponsesWebSocket_FirstAccountSlotFullHasHTTPStatus(t *testing.T) {
+	reports := make(chan bool, 1)
+	cache := &concurrencyCacheMock{
+		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return false, nil },
+	}
+	h := newOpenAIResponsesWebSocketAttributionHandlerWithProxy(t, cache, nil, reports, true)
+	server := newOpenAIResponsesWebSocketAttributionServer(t, h)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/openai/v1/responses", nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+	require.NoError(t, conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.4"}`)))
+	closeErr := readOpenAIWSRejectionStatus(t, conn, http.StatusTooManyRequests, "rate_limit_error", "Concurrency limit exceeded for account")
+	require.Equal(t, coderws.StatusTryAgainLater, closeErr.Code)
+	require.Equal(t, "account is busy, please retry later", closeErr.Reason)
+	select {
+	case <-reports:
+		t.Fatal("local account capacity rejection must not lower scheduler health")
+	default:
+	}
 }
 
 func TestOpenAIWSLocalPolicyEventsIncludeHTTPStatus(t *testing.T) {

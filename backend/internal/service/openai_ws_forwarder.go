@@ -3181,7 +3181,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(
 					coderws.StatusPolicyViolation,
 					liteErr.Error(),
-					liteErr,
+					newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", liteErr.Error(), liteErr),
 				)
 			}
 			normalized = litePayload
@@ -3260,7 +3260,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			var imageCfgErr error
 			imageCfg, imageCfgErr := resolveOpenAIResponsesImageBillingConfigDetailedFromBody(normalized, originalModel)
 			if imageCfgErr != nil {
-				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, imageCfgErr.Error(), newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", imageCfgErr.Error(), imageCfgErr))
+				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, imageCfgErr.Error(), imageCfgErr)
 			}
 			imageBillingModel = imageCfg.Model
 			imageSizeTier = imageCfg.SizeTier
