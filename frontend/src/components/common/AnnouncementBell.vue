@@ -342,6 +342,8 @@ const unreadCount = computed(() => announcementStore.unreadCount)
 const isModalOpen = ref(false)
 const detailModalOpen = ref(false)
 const selectedAnnouncement = ref<UserAnnouncement | null>(null)
+const pendingReadRequests = new Map<number, Promise<boolean>>()
+let unmounted = false
 
 // Methods
 function renderMarkdown(content: string): string {
@@ -372,15 +374,31 @@ function closeDetail() {
 }
 
 async function markAsRead(id: number) {
+  const pending = pendingReadRequests.get(id)
+  if (pending) return pending
+
+  const request = (async () => {
+    const isCurrentDetail = () => !unmounted && detailModalOpen.value && selectedAnnouncement.value?.id === id
+    try {
+      const marked = await announcementStore.markAsRead(id)
+      if (!marked && isCurrentDetail()) appStore.showError(t('common.unknownError'))
+      return marked
+    } catch (err: any) {
+      if (isCurrentDetail()) appStore.showError(err?.message || t('common.unknownError'))
+      return false
+    }
+  })()
+  pendingReadRequests.set(id, request)
   try {
-    await announcementStore.markAsRead(id)
-  } catch (err: any) {
-    appStore.showError(err?.message || t('common.unknownError'))
+    return await request
+  } finally {
+    if (pendingReadRequests.get(id) === request) pendingReadRequests.delete(id)
   }
 }
 
 async function markAsReadAndClose(id: number) {
-  await markAsRead(id)
+  if (!await markAsRead(id)) return
+  if (unmounted || !detailModalOpen.value || selectedAnnouncement.value?.id !== id) return
   appStore.showSuccess(t('announcements.markedAsRead'))
   closeDetail()
 }
@@ -409,6 +427,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  unmounted = true
   document.removeEventListener('keydown', handleEscape)
   document.body.style.overflow = ''
 })
