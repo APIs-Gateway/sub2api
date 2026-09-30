@@ -213,7 +213,12 @@ const canAddMore = computed(() => {
 
 watch(() => props.enabled, (val) => { notifyEnabled.value = val })
 watch(() => props.threshold, (val) => { customThreshold.value = val })
-watch(() => props.extraEmails, (val) => { emailEntries.value = [...val] })
+watch(() => props.extraEmails, (val) => {
+  if (savedSendingEmail && !val.some(item => item.email === savedSendingEmail && !item.verified)) {
+    invalidateSavedSend(savedSendingEmail)
+  }
+  emailEntries.value = [...val]
+})
 
 // When list is empty on mount, pre-fill the add input with user's email
 onMounted(() => {
@@ -339,6 +344,10 @@ const handleRemoveEmail = async (email: string) => {
 }
 
 // Verify saved unverified emails
+function hasSavedEmail(email: string) {
+  return emailEntries.value.some(item => item.email === email && !item.verified)
+}
+
 function invalidateSavedSend(email: string) {
   if (savedSendingEmail !== email) return
   savedSendVersion++
@@ -352,14 +361,13 @@ function cancelSavedVerification() {
 }
 
 async function sendCodeForSaved(email: string) {
-  const entry = emailEntries.value.find(item => item.email === email && !item.verified)
-  if (!entry) return
+  if (!hasSavedEmail(email)) return
   const version = ++savedSendVersion
   savedSendingEmail = email
   sendingSavedCode.value = true
   try {
     await userAPI.sendNotifyEmailCode(email)
-    if (disposed || version !== savedSendVersion || !emailEntries.value.includes(entry)) return
+    if (disposed || version !== savedSendVersion || !hasSavedEmail(email)) return
     verifyingEmail.value = email
     verifyCode.value = ''
     verifyCountdown.value = 60
@@ -373,7 +381,7 @@ async function sendCodeForSaved(email: string) {
     }, 1000)
     appStore.showSuccess(t('profile.balanceNotify.codeSent'))
   } catch (err: unknown) {
-    if (!disposed && version === savedSendVersion && emailEntries.value.includes(entry)) {
+    if (!disposed && version === savedSendVersion && hasSavedEmail(email)) {
       appStore.showError(extractApiErrorMessage(err, t('common.error')))
     }
   } finally {

@@ -134,6 +134,39 @@ describe('ProfileBalanceNotifyCard', () => {
     expect(showError).not.toHaveBeenCalled()
   })
 
+  it('keeps a saved send valid when the parent refreshes the same email entry', async () => {
+    const request = deferred()
+    sendNotifyEmailCode.mockReturnValueOnce(request.promise)
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await wrapper.setProps({ extraEmails: [{ ...entry }] })
+    request.resolve()
+    await flushPromises()
+    expect(wrapper.find('input[maxlength="6"]').exists()).toBe(true)
+    expect(vi.getTimerCount()).toBe(1)
+    expect(showSuccess).toHaveBeenCalledWith('profile.balanceNotify.codeSent')
+  })
+
+  it('invalidates a saved send if its email disappears and then reappears via props', async () => {
+    const request = deferred()
+    sendNotifyEmailCode.mockReturnValueOnce(request.promise)
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await wrapper.setProps({ extraEmails: [] })
+    await wrapper.setProps({ extraEmails: [{ ...entry }] })
+    request.resolve()
+    await flushPromises()
+    expect(wrapper.find('input[maxlength="6"]').exists()).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(showSuccess).not.toHaveBeenCalled()
+  })
+
   it.each(['success', 'failure'] as const)('does not reopen cancelled saved email verification after a late resend: %s', async (outcome) => {
     const wrapper = mount(ProfileBalanceNotifyCard, {
       props: {
