@@ -228,20 +228,19 @@ func openAIResponsesRejectedInputIndex(pattern *regexp.Regexp, param string) (in
 	return 0, false
 }
 
+// The rejection identifies one unsupported call type, not every namespace.
+// Clear that type in one pass so long histories fit within the retry budget.
 func removeOpenAIResponsesRejectedNamespaceAtIndex(body []byte, index int) ([]byte, string, bool, error) {
 	itemPath := fmt.Sprintf("input.%d", index)
-	itemType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, itemPath+".type").String()))
-	switch itemType {
-	case "function_call", "tool_call", "custom_tool_call", "mcp_tool_call":
-	default:
+	rejectedType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, itemPath+".type").String()))
+	if !isOpenAIResponsesToolCallItemType(rejectedType) {
 		return nil, "", false, nil
 	}
 
-	namespacePath := itemPath + ".namespace"
-	if !gjson.GetBytes(body, namespacePath).Exists() {
+	if !gjson.GetBytes(body, itemPath+".namespace").Exists() {
 		return nil, "", false, nil
 	}
-	retryBody, err := sjson.DeleteBytes(body, namespacePath)
+	retryBody, err := stripOpenAIResponsesInputNamespacesOfType(body, rejectedType)
 	if err != nil {
 		return nil, "", false, fmt.Errorf("delete rejected namespace at input[%d]: %w", index, err)
 	}
