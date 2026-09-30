@@ -32,6 +32,10 @@ func TestModerationConfigSaveRejectsGroupDeletedAfterValidation(t *testing.T) {
 	})
 	require.NoError(t, settings.SetContentModerationConfig(ctx,
 		fmt.Sprintf(`{"all_groups":false,"group_ids":[%d]}`, group.ID), []int64{group.ID}))
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	require.ErrorIs(t, settings.SetContentModerationConfig(canceledCtx,
+		fmt.Sprintf(`{"all_groups":false,"group_ids":[%d]}`, group.ID), []int64{group.ID}), context.Canceled)
 	require.NoError(t, settings.Set(ctx, key, `{"all_groups":false,"group_ids":[]}`))
 
 	// The writer has already validated a live ID, but must recheck it after
@@ -93,6 +97,9 @@ func (s *SettingRepoSuite) TestSetContentModerationConfigInExistingTransaction()
 	s.Require().ErrorIs(s.repo.SetContentModerationConfig(s.ctx, raw, []int64{0}), service.ErrGroupNotFound)
 	s.Require().ErrorIs(s.repo.SetContentModerationConfig(s.ctx, raw, []int64{-1}), service.ErrGroupNotFound)
 	s.Require().ErrorIs(s.repo.SetContentModerationConfig(s.ctx, raw, []int64{999999999}), service.ErrGroupNotFound)
+	canceledCtx, cancel := context.WithCancel(s.ctx)
+	cancel()
+	s.Require().ErrorIs(s.repo.SetContentModerationConfig(canceledCtx, raw, []int64{group.ID}), context.Canceled)
 	stored, err = s.repo.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
 	s.Require().NoError(err)
 	s.Require().JSONEq(raw, stored)

@@ -874,9 +874,11 @@ func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool)
 	if !json.Valid([]byte(raw)) {
 		return "", false
 	}
+	// Valid JSON read from an in-memory string guarantees that token and value
+	// decoding succeeds; an object also guarantees string member names.
 	decoder := json.NewDecoder(strings.NewReader(raw))
-	opening, err := decoder.Token()
-	if err != nil || opening != json.Delim('{') {
+	opening, _ := decoder.Token()
+	if opening != json.Delim('{') {
 		return "", false
 	}
 	type edit struct {
@@ -886,18 +888,10 @@ func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool)
 	}
 	var edits []edit
 	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return "", false
-		}
-		key, ok := token.(string)
-		if !ok {
-			return "", false
-		}
+		token, _ := decoder.Token()
+		key := token.(string)
 		var rawIDs json.RawMessage
-		if err := decoder.Decode(&rawIDs); err != nil {
-			return "", false
-		}
+		_ = decoder.Decode(&rawIDs)
 		if !strings.EqualFold(key, "group_ids") {
 			continue
 		}
@@ -908,11 +902,11 @@ func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool)
 		if err := json.Unmarshal(rawIDs, &groupIDs); err != nil || groupIDs == nil {
 			return "", false
 		}
-		kept := make([]json.RawMessage, 0, len(groupIDs))
+		kept := make([]string, 0, len(groupIDs))
 		changed := false
 		for _, value := range groupIDs {
 			if strings.TrimSpace(string(value)) == "null" {
-				kept = append(kept, value)
+				kept = append(kept, string(value))
 				continue
 			}
 			var groupID int64
@@ -923,24 +917,18 @@ func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool)
 				changed = true
 				continue
 			}
-			kept = append(kept, value)
+			kept = append(kept, string(value))
 		}
 		if !changed {
 			continue
 		}
-		groups, err := json.Marshal(kept)
-		if err != nil {
-			return "", false
-		}
+		groups := "[" + strings.Join(kept, ",") + "]"
 		end := int(decoder.InputOffset())
-		for end > 0 && (raw[end-1] == ' ' || raw[end-1] == '\n' || raw[end-1] == '\r' || raw[end-1] == '\t') {
-			end--
-		}
 		start := end - len(rawIDs)
-		if start < 0 || raw[start:end] != string(rawIDs) {
+		if start < 0 || end > len(raw) || raw[start:end] != string(rawIDs) {
 			return "", false
 		}
-		edits = append(edits, edit{start: start, end: end, value: string(groups)})
+		edits = append(edits, edit{start: start, end: end, value: groups})
 	}
 	if len(edits) == 0 {
 		return "", false
