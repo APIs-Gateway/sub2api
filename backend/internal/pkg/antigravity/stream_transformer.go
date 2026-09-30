@@ -145,7 +145,10 @@ func (p *StreamingProcessor) ProcessLine(line string) []byte {
 			p.lastFinishReason = finishReason
 			// A stop before substantive content stays buffered until EOF. The
 			// upstream may still send real content, which must precede message_stop.
-			if p.hasContent {
+			if p.hasContent || buildGroundingText(&GeminiGroundingMetadata{
+				WebSearchQueries: p.webSearchQueries,
+				GroundingChunks:  p.groundingChunks,
+			}) != "" {
 				_, _ = result.Write(p.emitFinish(finishReason))
 			} else {
 				// Flush signature-only blocks into the bounded pre-content buffer.
