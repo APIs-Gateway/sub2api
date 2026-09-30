@@ -36,11 +36,12 @@ type StreamingProcessor struct {
 	usageMapHook      UsageMapHook
 
 	// 累计 usage
-	inputTokens       int
-	outputTokens      int
-	cacheReadTokens   int
-	imageOutputTokens int
-	hasContent        bool
+	inputTokens               int
+	outputTokens              int
+	cacheReadTokens           int
+	imageOutputTokens         int
+	hasContent                bool
+	malformedFunctionCallOnly bool
 }
 
 // NewStreamingProcessor 创建流式响应处理器
@@ -139,6 +140,9 @@ func (p *StreamingProcessor) ProcessLine(line string) []byte {
 					log.Printf("[Antigravity] Malformed content: %s", string(b))
 				}
 			}
+			if !p.hasContent {
+				p.malformedFunctionCallOnly = true
+			}
 		}
 		if finishReason != "" {
 			_, _ = result.Write(p.emitFinish(finishReason))
@@ -180,6 +184,13 @@ func (p *StreamingProcessor) MessageStartSent() bool {
 // A message_start, stop reason, or thought signature alone is not a completion.
 func (p *StreamingProcessor) HasContent() bool {
 	return p.hasContent
+}
+
+// MalformedFunctionCallOnly reports a malformed terminal response with no
+// visible text, thinking, or tool call. Replaying the same request on the
+// same account cannot repair a deterministic malformed response.
+func (p *StreamingProcessor) MalformedFunctionCallOnly() bool {
+	return p.malformedFunctionCallOnly && !p.hasContent
 }
 
 // emitMessageStart 发送 message_start 事件

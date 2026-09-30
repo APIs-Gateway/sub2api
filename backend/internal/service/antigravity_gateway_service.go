@@ -3991,6 +3991,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamToNonStreaming(c *gin.Cont
 	var last map[string]any
 	var lastWithParts map[string]any
 	var collectedParts []map[string]any // 收集所有 parts（包括 text、thinking、functionCall、inlineData 等）
+	sawMalformedFunctionCall := false
 
 	type scanEvent struct {
 		line string
@@ -4085,6 +4086,9 @@ func (s *AntigravityGatewayService) handleClaudeStreamToNonStreaming(c *gin.Cont
 			}
 
 			last = parsed
+			if extractGeminiFinishReason(parsed) == "MALFORMED_FUNCTION_CALL" {
+				sawMalformedFunctionCall = true
+			}
 
 			// 保留最后一个有 parts 的响应，并收集所有 parts
 			if parts := extractGeminiParts(parsed); len(parts) > 0 {
@@ -4155,7 +4159,7 @@ returnResponse:
 		}
 	}
 	if !hasContent {
-		return nil, emptyGeminiCompletionFailoverError()
+		return nil, emptyGeminiCompletionFailoverError(sawMalformedFunctionCall)
 	}
 
 	c.Data(http.StatusOK, "application/json", claudeResp)
@@ -4173,11 +4177,15 @@ returnResponse:
 
 const antigravityPreContentBufferLimit = 256 << 10
 
-func emptyGeminiCompletionFailoverError() *UpstreamFailoverError {
+func emptyGeminiCompletionFailoverError(switchAccount bool) *UpstreamFailoverError {
+	responseBody := []byte(`{"error":"empty stream response from upstream"}`)
+	if switchAccount {
+		responseBody = []byte(`{"error":"malformed function call from upstream"}`)
+	}
 	return &UpstreamFailoverError{
 		StatusCode:             http.StatusBadGateway,
-		ResponseBody:           []byte(`{"error":"empty stream response from upstream"}`),
-		RetryableOnSameAccount: true,
+		ResponseBody:           responseBody,
+		RetryableOnSameAccount: !switchAccount,
 	}
 }
 
@@ -4310,7 +4318,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 				finalEvents, agUsage := processor.Finish()
 				if !processor.HasContent() && !cw.Disconnected() && c.Request.Context().Err() == nil {
 					logger.LegacyPrintf("service.antigravity_gateway", "[antigravity-Claude-Stream] empty stream response (no substantive content), triggering failover")
-					return nil, emptyGeminiCompletionFailoverError()
+					return nil, emptyGeminiCompletionFailoverError(processor.MalformedFunctionCallOnly())
 				}
 				if processor.HasContent() && preContent.Len() > 0 && c.Request.Context().Err() == nil {
 					cw.Write(preContent.Bytes())
@@ -4346,7 +4354,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 				if !processor.HasContent() {
 					if preContent.Len()+len(claudeEvents) > antigravityPreContentBufferLimit {
 						logger.LegacyPrintf("service.antigravity_gateway", "[antigravity-Claude-Stream] pre-content buffer exceeded %d bytes, triggering failover", antigravityPreContentBufferLimit)
-						return nil, emptyGeminiCompletionFailoverError()
+						return nil, emptyGeminiCompletionFailoverError(processor.MalformedFunctionCallOnly())
 					}
 					_, _ = preContent.Write(claudeEvents)
 					continue

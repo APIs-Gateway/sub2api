@@ -243,7 +243,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 			return nil, err
 		}
 		if !hasGeminiChatCompletionContent(collected) {
-			return nil, emptyGeminiCompletionFailoverError()
+			return nil, emptyGeminiCompletionFailoverError(extractGeminiFinishReason(collected) == "MALFORMED_FUNCTION_CALL")
 		}
 		collectedBytes, _ := json.Marshal(collected)
 		chatResp, usageObj2, err := geminiResponseToChatCompletions(collected, originalModel, collectedBytes, usageObj)
@@ -459,7 +459,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsNonStreamingResponseF
 		return nil, err
 	}
 	if !hasGeminiChatCompletionContent(geminiResp) {
-		return nil, emptyGeminiCompletionFailoverError()
+		return nil, emptyGeminiCompletionFailoverError(extractGeminiFinishReason(geminiResp) == "MALFORMED_FUNCTION_CALL")
 	}
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -595,6 +595,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 	}
 
 	finishReason := ""
+	sawMalformedFunctionCall := false
 	sawToolUse := false
 	nextBlockIndex := 0
 	openBlockIndex := -1
@@ -648,6 +649,9 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 						}
 						if fr := extractGeminiFinishReason(geminiResp); fr != "" {
 							finishReason = fr
+							if fr == "MALFORMED_FUNCTION_CALL" {
+								sawMalformedFunctionCall = true
+							}
 						}
 						if u := extractGeminiUsage(rawBytes); u != nil {
 							usage = *u
@@ -784,7 +788,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 		if err := c.Request.Context().Err(); err != nil {
 			return nil, err
 		}
-		return nil, emptyGeminiCompletionFailoverError()
+		return nil, emptyGeminiCompletionFailoverError(sawMalformedFunctionCall)
 	}
 
 	if closeOpenBlock() {
