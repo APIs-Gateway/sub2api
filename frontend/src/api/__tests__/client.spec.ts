@@ -646,6 +646,69 @@ describe('API Client', () => {
       expect(localStorage.getItem('refresh_token')).toBe('account-b-refresh')
     })
 
+    it('does not let an old account refresh failure log out the new account', async () => {
+      localStorage.setItem('auth_token', 'account-a-token')
+      localStorage.setItem('refresh_token', 'account-a-refresh')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+      localStorage.setItem('token_expires_at', String(Date.now() - 1))
+      let rejectOldRefresh!: (error: Error) => void
+      let resolveNewRefresh!: (response: unknown) => void
+      const refresh = vi.spyOn(axios, 'post').mockImplementation((_url, body) => new Promise((resolve, reject) => {
+        const token = (body as { refresh_token: string }).refresh_token
+        if (token === 'account-a-refresh') rejectOldRefresh = reject
+        else if (token === 'account-b-refresh') resolveNewRefresh = resolve
+        else reject(new Error(`Unexpected refresh token: ${token}`))
+      }))
+      const adapter = vi.fn((config: InternalAxiosRequestConfig) => {
+        if (config.headers.get('Authorization') === 'Bearer account-b-refreshed') {
+          return Promise.resolve({
+            status: 200, data: { code: 0, data: { message: 'read' } },
+            headers: {}, config, statusText: 'OK',
+          })
+        }
+        return Promise.reject({
+          response: { status: 401, data: { code: 'TOKEN_EXPIRED' } },
+          config,
+          code: 'ERR_BAD_REQUEST',
+        })
+      })
+      apiClient.defaults.adapter = adapter
+      const { createPinia, setActivePinia } = await import('pinia')
+      const { useAnnouncementStore } = await import('@/stores/announcements')
+      const { default: announcementsAPI } = await import('@/api/announcements')
+      setActivePinia(createPinia())
+
+      const oldRequest = announcementsAPI.markRead(17).catch(error => error)
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1))
+      useAnnouncementStore().reset()
+      localStorage.setItem('auth_token', 'account-b-token')
+      localStorage.setItem('refresh_token', 'account-b-refresh')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 8 }))
+      localStorage.setItem('token_expires_at', String(Date.now() - 1))
+
+      const newRequest = announcementsAPI.markRead(17)
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2))
+      expect(refresh.mock.calls.map(call => (call[1] as { refresh_token: string }).refresh_token))
+        .toEqual(['account-a-refresh', 'account-b-refresh'])
+      rejectOldRefresh(new Error('old account refresh failed'))
+      resolveNewRefresh({
+        data: {
+          code: 0,
+          data: {
+            access_token: 'account-b-refreshed', refresh_token: 'account-b-next-refresh',
+            expires_in: 3600, token_type: 'Bearer',
+          },
+        },
+      })
+
+      await expect(newRequest).resolves.toEqual({ message: 'read' })
+      await expect(oldRequest).resolves.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      expect(adapter).toHaveBeenCalledTimes(3)
+      expect(localStorage.getItem('auth_token')).toBe('account-b-refreshed')
+      expect(localStorage.getItem('refresh_token')).toBe('account-b-next-refresh')
+      expect(sessionStorage.getItem('auth_expired')).toBeNull()
+    })
+
     it('still retries an announcement read in the current session', async () => {
       localStorage.setItem('auth_token', 'account-a-token')
       localStorage.setItem('refresh_token', 'account-a-refresh')

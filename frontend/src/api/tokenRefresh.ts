@@ -37,7 +37,11 @@ interface AuthSnapshot {
   userID: number | null
 }
 
-let inFlightRefresh: Promise<RefreshTokenResponse> | null = null
+let inFlightRefresh: {
+  promise: Promise<RefreshTokenResponse>
+  refreshToken: string | null
+  userID: number | null
+} | null = null
 
 function getStoredUserID(): number | null {
   const rawUser = localStorage.getItem(AUTH_USER_KEY)
@@ -229,20 +233,27 @@ async function runRefresh(options: RefreshAuthTokensOptions): Promise<RefreshTok
 /**
  * Refresh and persist the browser session.
  *
- * Calls in the same document share one promise. Web Locks serialize refreshes across tabs, while
- * the token snapshot check adopts a peer's newly rotated token instead of logging the user out.
+ * Calls for the same user and refresh token in one document share one promise. A new login must
+ * never inherit an older session's refresh failure. Web Locks serialize refreshes across tabs,
+ * while the token snapshot check adopts a peer's newly rotated token.
  */
 export function refreshAuthTokens(
   options: RefreshAuthTokensOptions = {}
 ): Promise<RefreshTokenResponse> {
-  if (inFlightRefresh) {
-    return inFlightRefresh
+  const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
+  const userID = getStoredUserID()
+  if (
+    inFlightRefresh &&
+    inFlightRefresh.refreshToken === refreshToken &&
+    inFlightRefresh.userID === userID
+  ) {
+    return inFlightRefresh.promise
   }
 
   const pending = runRefresh(options)
-  inFlightRefresh = pending
+  inFlightRefresh = { promise: pending, refreshToken, userID }
   const clearPending = (): void => {
-    if (inFlightRefresh === pending) {
+    if (inFlightRefresh?.promise === pending) {
       inFlightRefresh = null
     }
   }
