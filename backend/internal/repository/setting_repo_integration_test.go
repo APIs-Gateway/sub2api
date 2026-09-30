@@ -4,11 +4,64 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
+
+func TestModerationConfigSaveRejectsGroupDeletedAfterValidation(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	groups := newGroupRepositoryWithSQL(client, integrationDB)
+	settings := NewSettingRepository(client).(*settingRepository)
+	group := &service.Group{Name: uniqueTestValue(t, "moderation-race"), Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	require.NoError(t, groups.Create(ctx, group))
+	t.Cleanup(func() { _, _ = integrationDB.ExecContext(ctx, "DELETE FROM groups WHERE id = $1", group.ID) })
+	key := service.SettingKeyContentModerationConfig
+	previous, previousErr := settings.GetValue(ctx, key)
+	t.Cleanup(func() {
+		if previousErr == nil {
+			_ = settings.Set(ctx, key, previous)
+		} else {
+			_ = settings.Delete(ctx, key)
+		}
+	})
+	require.NoError(t, settings.Set(ctx, key, `{"all_groups":false,"group_ids":[]}`))
+
+	// The writer has already validated a live ID, but must recheck it after
+	// waiting for the deleter's row lock and before persisting the setting.
+	tx, err := integrationDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	var lockedID int64
+	require.NoError(t, tx.QueryRowContext(ctx, "SELECT id FROM groups WHERE id = $1 FOR UPDATE", group.ID).Scan(&lockedID))
+	finished := make(chan error, 1)
+	go func() {
+		finished <- settings.SetContentModerationConfig(ctx,
+			fmt.Sprintf(`{"all_groups":false,"group_ids":[%d]}`, group.ID), []int64{group.ID})
+	}()
+	select {
+	case err := <-finished:
+		t.Fatalf("config write passed a locked group before deletion: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	_, err = tx.ExecContext(ctx, "UPDATE groups SET deleted_at = NOW() WHERE id = $1", group.ID)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	select {
+	case err := <-finished:
+		require.ErrorIs(t, err, service.ErrGroupNotFound)
+	case <-time.After(5 * time.Second):
+		t.Fatal("config save remained blocked after group deletion")
+	}
+	stored, err := settings.GetValue(ctx, key)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"all_groups":false,"group_ids":[]}`, stored)
+}
 
 type SettingRepoSuite struct {
 	suite.Suite

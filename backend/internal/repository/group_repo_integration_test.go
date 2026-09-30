@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -44,6 +45,56 @@ func (s *GroupRepoSuite) SetupTest() {
 
 func TestGroupRepoSuite(t *testing.T) {
 	suite.Run(t, new(GroupRepoSuite))
+}
+
+func (s *GroupRepoSuite) TestDeleteCascadeRemovesOnlyDeletedModerationGroup() {
+	deleted := &service.Group{Name: "moderation-deleted", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	kept := &service.Group{Name: "moderation-kept", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	s.Require().NoError(s.repo.Create(s.ctx, deleted))
+	s.Require().NoError(s.repo.Create(s.ctx, kept))
+	settings := NewSettingRepository(s.tx.Client())
+	original := fmt.Sprintf(`{"all_groups":false,"group_ids":[%d,%d,%d],"mode":"observe","blocked_keywords":["keep"]}`, kept.ID, deleted.ID, deleted.ID)
+	s.Require().NoError(settings.Set(s.ctx, service.SettingKeyContentModerationConfig, original))
+	_, err := s.repo.DeleteCascade(s.ctx, deleted.ID)
+	s.Require().NoError(err)
+	stored, err := settings.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+	s.Require().NoError(err)
+	s.Require().JSONEq(fmt.Sprintf(`{"all_groups":false,"group_ids":[%d],"mode":"observe","blocked_keywords":["keep"]}`, kept.ID), stored)
+	_, err = s.repo.GetByID(s.ctx, deleted.ID)
+	s.Require().ErrorIs(err, service.ErrGroupNotFound)
+}
+
+func (s *GroupRepoSuite) TestFailedOrDuplicateDeletePreservesModerationConfig() {
+	group := &service.Group{Name: "moderation-delete-once", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	s.Require().NoError(s.repo.Create(s.ctx, group))
+	settings := NewSettingRepository(s.tx.Client())
+	original := fmt.Sprintf(`{"group_ids":[%d],"mode":"observe"}`, group.ID)
+	s.Require().NoError(settings.Set(s.ctx, service.SettingKeyContentModerationConfig, original))
+	_, err := s.repo.DeleteCascade(s.ctx, -1)
+	s.Require().ErrorIs(err, service.ErrGroupNotFound)
+	stored, err := settings.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+	s.Require().NoError(err)
+	s.Require().JSONEq(original, stored)
+	_, err = s.repo.DeleteCascade(s.ctx, group.ID)
+	s.Require().NoError(err)
+	_, err = s.repo.DeleteCascade(s.ctx, group.ID)
+	s.Require().ErrorIs(err, service.ErrGroupNotFound)
+	stored, err = settings.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+	s.Require().NoError(err)
+	s.Require().JSONEq(`{"group_ids":[],"mode":"observe"}`, stored)
+}
+
+func (s *GroupRepoSuite) TestDeleteCascadePreservesMalformedModerationConfig() {
+	group := &service.Group{Name: "moderation-malformed", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	s.Require().NoError(s.repo.Create(s.ctx, group))
+	settings := NewSettingRepository(s.tx.Client())
+	const malformed = `{"group_ids":[oops]}`
+	s.Require().NoError(settings.Set(s.ctx, service.SettingKeyContentModerationConfig, malformed))
+	_, err := s.repo.DeleteCascade(s.ctx, group.ID)
+	s.Require().NoError(err)
+	stored, err := settings.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+	s.Require().NoError(err)
+	s.Require().Equal(malformed, stored)
 }
 
 // --- Create / GetByID / Update / Delete ---
