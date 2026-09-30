@@ -60,6 +60,7 @@ export function useStepUp() {
   }
 
   function onVerified() {
+    if (disposed) return
     visible.value = false
     resolver?.(true)
     resolver = null
@@ -93,7 +94,7 @@ export function useStepUp() {
       }
 
       const verified = await prompt()
-      if (!verified) {
+      if (!verified || disposed) {
         throw new StepUpCancelledError()
       }
 

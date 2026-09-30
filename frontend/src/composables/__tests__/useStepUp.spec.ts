@@ -112,6 +112,32 @@ describe('useStepUp concurrent prompts', () => {
     const results = Promise.allSettled([first, second])
     await vi.waitFor(() => expect(stepUp.visible.value).toBe(true))
     scope.stop()
+    stepUp.onVerified()
+
+    for (const result of await results) {
+      expect(result.status).toBe('rejected')
+      if (result.status === 'rejected') expect(result.reason).toBeInstanceOf(StepUpCancelledError)
+    }
+    expect(calls).toEqual([1, 1])
+    expect(stepUp.visible.value).toBe(false)
+  })
+
+  it('does not retry verified actions when the view is disposed before waiters resume', async () => {
+    const scope = effectScope()
+    const stepUp = scope.run(() => useStepUp())!
+    const calls = [0, 0]
+    const action = (index: number) => async () => {
+      calls[index] += 1
+      if (calls[index] === 1) throw { status: 403, code: 'STEP_UP_REQUIRED' }
+      return `action-${index}`
+    }
+
+    const first = stepUp.run(action(0))
+    const second = stepUp.run(action(1))
+    const results = Promise.allSettled([first, second])
+    await vi.waitFor(() => expect(stepUp.visible.value).toBe(true))
+    stepUp.onVerified()
+    scope.stop()
 
     for (const result of await results) {
       expect(result.status).toBe('rejected')
