@@ -44,6 +44,14 @@ func TestRemoveGroupFromModerationConfigSkipsNullAliasBeforeSelectedGroup(t *tes
 	require.JSONEq(t, `[]`, string(fields["GROUP_IDS"]))
 }
 
+func TestRemoveGroupFromModerationConfigPreservesMemberOrderAndDuplicates(t *testing.T) {
+	const raw = " \n{\"enabled\":true,\"enabled\":null,\"thresholds\":{\"violence\":0.91},\"thresholds\":{\"sexual\":0.82},\"group_ids\" : [7, 9] ,\"group_ids\":[7],\"GROUP_IDS\" : [7],\"all_groups\":false,\"ALL_GROUPS\":true} \n"
+	const expected = " \n{\"enabled\":true,\"enabled\":null,\"thresholds\":{\"violence\":0.91},\"thresholds\":{\"sexual\":0.82},\"group_ids\" : [9] ,\"group_ids\":[],\"GROUP_IDS\" : [],\"all_groups\":false,\"ALL_GROUPS\":true} \n"
+	next, changed := removeGroupFromModerationConfig(raw, 7)
+	require.True(t, changed)
+	require.Equal(t, expected, next)
+}
+
 func TestRemoveGroupFromModerationConfigSkipsUnusableScope(t *testing.T) {
 	for _, raw := range []string{
 		`{"group_ids":[oops]}`,

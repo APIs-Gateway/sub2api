@@ -871,12 +871,33 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 }
 
 func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(raw), &fields); err != nil || fields == nil {
+	if !json.Valid([]byte(raw)) {
 		return "", false
 	}
-	changed := false
-	for key, rawIDs := range fields {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return "", false
+	}
+	type edit struct {
+		start int
+		end   int
+		value string
+	}
+	var edits []edit
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return "", false
+		}
+		key, ok := token.(string)
+		if !ok {
+			return "", false
+		}
+		var rawIDs json.RawMessage
+		if err := decoder.Decode(&rawIDs); err != nil {
+			return "", false
+		}
 		if !strings.EqualFold(key, "group_ids") {
 			continue
 		}
@@ -888,6 +909,7 @@ func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool)
 			return "", false
 		}
 		kept := make([]json.RawMessage, 0, len(groupIDs))
+		changed := false
 		for _, value := range groupIDs {
 			if strings.TrimSpace(string(value)) == "null" {
 				kept = append(kept, value)
@@ -903,20 +925,35 @@ func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool)
 			}
 			kept = append(kept, value)
 		}
+		if !changed {
+			continue
+		}
 		groups, err := json.Marshal(kept)
 		if err != nil {
 			return "", false
 		}
-		fields[key] = groups
+		end := int(decoder.InputOffset())
+		for end > 0 && (raw[end-1] == ' ' || raw[end-1] == '\n' || raw[end-1] == '\r' || raw[end-1] == '\t') {
+			end--
+		}
+		start := end - len(rawIDs)
+		if start < 0 || raw[start:end] != string(rawIDs) {
+			return "", false
+		}
+		edits = append(edits, edit{start: start, end: end, value: string(groups)})
 	}
-	if !changed {
+	if len(edits) == 0 {
 		return "", false
 	}
-	next, err := json.Marshal(fields)
-	if err != nil {
-		return "", false
+	var next strings.Builder
+	previous := 0
+	for _, replacement := range edits {
+		next.WriteString(raw[previous:replacement.start])
+		next.WriteString(replacement.value)
+		previous = replacement.end
 	}
-	return string(next), true
+	next.WriteString(raw[previous:])
+	return next.String(), true
 }
 
 type groupAccountCounts struct {
