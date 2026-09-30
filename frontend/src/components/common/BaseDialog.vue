@@ -44,7 +44,26 @@
 
 <script lang="ts">
 let dialogIdCounter = 0
-const openDialogs = new Set<string>()
+const openDialogs = new Map<string, number>()
+
+const topmostDialogId = () => {
+  let topId: string | undefined
+  let topZIndex = -Infinity
+  let topOverlay: Element | null = null
+  for (const [id, zIndex] of openDialogs) {
+    const overlay = document.getElementById(id)?.closest('.modal-overlay')
+    if (!overlay) continue
+    // Teleport can place a newly shown dialog before a previously shown one.
+    // At equal z-index, the later overlay in the document paints on top.
+    if (!topOverlay || zIndex > topZIndex || (zIndex === topZIndex &&
+      (topOverlay.compareDocumentPosition(overlay) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)) {
+      topId = id
+      topZIndex = zIndex
+      topOverlay = overlay
+    }
+  }
+  return topId
+}
 </script>
 
 <script setup lang="ts">
@@ -111,13 +130,13 @@ const handleClose = () => {
 }
 
 const handleEscape = (event: KeyboardEvent) => {
-  if (props.show && props.closeOnEscape && event.key === 'Escape') {
+  if (props.show && props.closeOnEscape && event.key === 'Escape' && topmostDialogId() === dialogId) {
     emit('close')
   }
 }
 
 const updateScrollLock = (isOpen: boolean) => {
-  if (isOpen) openDialogs.add(dialogId)
+  if (isOpen) openDialogs.set(dialogId, props.zIndex)
   else openDialogs.delete(dialogId)
   document.body.classList.toggle('modal-open', openDialogs.size > 0)
 }
@@ -154,6 +173,10 @@ watch(
   },
   { immediate: true }
 )
+
+watch(() => props.zIndex, (zIndex) => {
+  if (props.show) openDialogs.set(dialogId, zIndex)
+})
 
 onMounted(() => {
   document.addEventListener('keydown', handleEscape)
