@@ -513,8 +513,12 @@ export const useAuthStore = defineStore('auth', () => {
 
     const refreshRequest = ++latestRefreshRequest
     const stateVersion = userStateVersion
+    const sessionVersion = authSessionVersion.value
     try {
       const response = await authAPI.getCurrentUser()
+      if (sessionVersion !== authSessionVersion.value) {
+        throw { status: 401, code: 'AUTH_SESSION_CHANGED', message: 'Authentication session changed while refreshing.' }
+      }
       if (refreshRequest !== latestRefreshRequest || stateVersion !== userStateVersion) {
         if (!user.value) {
           throw new Error('Authenticated user changed while refreshing')
@@ -532,7 +536,8 @@ export const useAuthStore = defineStore('auth', () => {
     } catch (error) {
       // If refresh fails with 401, clear auth state
       if ((error as { status?: number }).status === 401 &&
-        refreshRequest === latestRefreshRequest && stateVersion === userStateVersion) {
+        refreshRequest === latestRefreshRequest && stateVersion === userStateVersion &&
+        sessionVersion === authSessionVersion.value) {
         clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
       }
       throw error

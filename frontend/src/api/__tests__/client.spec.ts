@@ -252,6 +252,65 @@ describe('API Client', () => {
   // --- 401 Token 刷新 ---
 
   describe('401 Token 刷新', () => {
+    it.each([false, true])('keeps a pending account B login after account A /auth/me settles (success: %s)', async (succeeds) => {
+      const { createPinia, setActivePinia } = await import('pinia')
+      const { useAuthStore } = await import('@/stores/auth')
+      setActivePinia(createPinia())
+      const store = useAuthStore()
+      const accountA = { id: 7, username: 'account-a', role: 'user' }
+      const accountB = { id: 8, username: 'account-b', role: 'admin' }
+      let meCount = 0
+      let finishOld!: (response: unknown) => void
+      let rejectOld!: (error: unknown) => void
+      let finishLogin!: (response: unknown) => void
+      const adapter = vi.fn((config: InternalAxiosRequestConfig) => {
+        if (config.url === '/auth/me') {
+          meCount += 1
+          if (meCount === 1) {
+            return Promise.resolve({ status: 200, data: { code: 0, data: accountA },
+              headers: {}, config, statusText: 'OK' })
+          }
+          return new Promise((resolve, reject) => { finishOld = resolve; rejectOld = reject })
+        }
+        if (config.url === '/auth/login') {
+          return new Promise(resolve => { finishLogin = resolve })
+        }
+        if (config.url === '/auth/logout') {
+          return Promise.resolve({ status: 200, data: { code: 0, data: {} },
+            headers: {}, config, statusText: 'OK' })
+        }
+        return Promise.reject(new Error(`Unexpected request: ${config.url}`))
+      })
+      apiClient.defaults.adapter = adapter
+
+      await store.setToken('account-a-token')
+      const oldRefresh = store.refreshUser().catch(error => error)
+      await vi.waitFor(() => expect(meCount).toBe(2))
+      const newLogin = store.login({ email: 'b@example.com', password: 'password' })
+      await vi.waitFor(() => expect(finishLogin).toBeDefined())
+      const pendingSession = store.authSessionVersion
+      const oldConfig = adapter.mock.calls.filter(call => call[0].url === '/auth/me')[1][0]
+      expect(oldConfig.headers.get('Authorization')).toBe('Bearer account-a-token')
+      if (succeeds) {
+        finishOld({ status: 200, data: { code: 0, data: { ...accountA, username: 'stale' } },
+          headers: {}, config: oldConfig, statusText: 'OK' })
+      } else {
+        rejectOld({ response: { status: 401, data: { code: 'TOKEN_EXPIRED' } },
+          config: oldConfig, code: 'ERR_BAD_REQUEST' })
+      }
+      await expect(oldRefresh).resolves.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
+      expect(store.authSessionVersion).toBe(pendingSession)
+      finishLogin({ status: 200, data: { code: 0, data: {
+        access_token: 'account-b-token', token_type: 'Bearer', user: accountB,
+      } }, headers: {}, config: adapter.mock.calls.find(call => call[0].url === '/auth/login')?.[0],
+      statusText: 'OK' })
+      await newLogin
+      expect(store.user?.id).toBe(8)
+      expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+      expect(JSON.parse(localStorage.getItem('auth_user')!).id).toBe(8)
+      await store.logout()
+    })
+
     it('does not erase a new account when an old logout API call finishes late', async () => {
       localStorage.setItem('auth_token', 'account-a-token')
       localStorage.setItem('refresh_token', 'account-a-refresh')

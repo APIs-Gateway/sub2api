@@ -517,6 +517,35 @@ describe('useAuthStore', () => {
   // --- refreshUser ---
 
   describe('refreshUser', () => {
+    it.each([false, true])('does not let account A refresh change pending account B login (old request succeeds: %s)', async (succeeds) => {
+      mockLogin.mockResolvedValueOnce(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      let resolveOld!: (value: { data: typeof fakeUser }) => void
+      let rejectOld!: (reason: unknown) => void
+      mockGetCurrentUser.mockReturnValueOnce(new Promise((resolve, reject) => {
+        resolveOld = resolve
+        rejectOld = reject
+      }))
+      const oldRefresh = store.refreshUser()
+      let finishLogin!: (value: unknown) => void
+      mockLogin.mockReturnValueOnce(new Promise(resolve => { finishLogin = resolve }))
+      const newLogin = store.login({ email: 'admin@example.com', password: '123456' })
+      const pendingSession = store.authSessionVersion
+
+      if (succeeds) resolveOld({ data: { ...fakeUser, username: 'stale' } })
+      else rejectOld({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      await expect(oldRefresh).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
+      expect(store.authSessionVersion).toBe(pendingSession)
+
+      finishLogin({ ...fakeAuthResponse, access_token: 'account-b-token', user: fakeAdminUser })
+      await newLogin
+      expect(store.user?.id).toBe(fakeAdminUser.id)
+      expect(store.token).toBe('account-b-token')
+      expect(JSON.parse(localStorage.getItem('auth_user')!).id).toBe(fakeAdminUser.id)
+    })
+
     it('刷新用户数据并更新 localStorage', async () => {
       mockLogin.mockResolvedValue(fakeAuthResponse)
       const store = useAuthStore()
@@ -670,7 +699,7 @@ describe('useAuthStore', () => {
       await store.logout()
       resolveProfile({ data: fakeUser })
 
-      await expect(refresh).rejects.toThrow('Authenticated user changed while refreshing')
+      await expect(refresh).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
     })
 
     it('ignores an invalid balance update', async () => {
