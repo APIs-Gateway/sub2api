@@ -117,6 +117,7 @@ vi.mock('vue-i18n', () => ({
 
 vi.mock('@/stores', () => ({
   useAuthStore: () => ({
+    authSessionVersion: 0,
     setToken: setTokenMock,
     setPendingAuthSession: setPendingAuthSessionMock,
     clearPendingAuthSession: clearPendingAuthSessionMock,
@@ -1024,9 +1025,10 @@ describe('WechatCallbackView', () => {
       temp_token: 'temp-123',
       totp_code: '123456',
     })
-    expect(setTokenMock).toHaveBeenCalledWith('2fa-access-token')
+    expect(setTokenMock).toHaveBeenCalledWith('2fa-access-token', {
+      refreshToken: '2fa-refresh-token', expiresIn: 3600, expectedSessionVersion: 0
+    })
     expect(replaceMock).toHaveBeenCalledWith('/profile')
-    expect(localStorage.getItem('refresh_token')).toBe('2fa-refresh-token')
   })
 
   it('restarts the current-user bind flow after returning from login', async () => {

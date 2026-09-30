@@ -404,7 +404,15 @@ export const useAuthStore = defineStore('auth', () => {
    * 会自动读取 localStorage 中已设置的 refresh_token 和 token_expires_in
    * @param newToken - 后端签发的 JWT access token
    */
-  async function setToken(newToken: string): Promise<User> {
+  async function setToken(newToken: string, context?: {
+    refreshToken?: string | null
+    expiresIn?: number | null
+    expectedSessionVersion?: number
+  }): Promise<User> {
+    if (context?.expectedSessionVersion !== undefined &&
+      context.expectedSessionVersion !== authSessionVersion.value) {
+      throw { status: 401, code: 'AUTH_SESSION_CHANGED', message: 'Login session changed.' }
+    }
     advanceAuthSession()
     const sessionVersion = authSessionVersion.value
     // Clear any previous state first (avoid mixing sessions)
@@ -416,6 +424,18 @@ export const useAuthStore = defineStore('auth', () => {
 
     token.value = newToken
     localStorage.setItem(AUTH_TOKEN_KEY, newToken)
+
+    // A completed 2FA response is authoritative for this new login. Missing fields must not
+    // inherit the previous account's refresh token or expiry.
+    if (context) {
+      if (context.refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, context.refreshToken)
+      else localStorage.removeItem(REFRESH_TOKEN_KEY)
+      if (context.expiresIn) {
+        localStorage.setItem(TOKEN_EXPIRES_AT_KEY, String(Date.now() + context.expiresIn * 1000))
+      } else {
+        localStorage.removeItem(TOKEN_EXPIRES_AT_KEY)
+      }
+    }
 
     // Read refresh token and expires_at from localStorage if set by OAuth callback
     const savedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)

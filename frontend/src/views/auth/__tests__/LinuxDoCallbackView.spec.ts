@@ -43,6 +43,7 @@ vi.mock('vue-i18n', async () => {
 
 vi.mock('@/stores', () => ({
   useAuthStore: () => ({
+    authSessionVersion: 0,
     setToken,
     setPendingAuthSession,
     clearPendingAuthSession
@@ -702,7 +703,9 @@ describe('LinuxDoCallbackView', () => {
       }
     })
     login2FA.mockResolvedValue({
-      access_token: '2fa-access-token'
+      access_token: '2fa-access-token',
+      refresh_token: '2fa-refresh-token',
+      expires_in: 3600
     })
     setToken.mockResolvedValue({})
 
@@ -734,7 +737,9 @@ describe('LinuxDoCallbackView', () => {
       temp_token: 'temp-123',
       totp_code: '123456'
     })
-    expect(setToken).toHaveBeenCalledWith('2fa-access-token')
+    expect(setToken).toHaveBeenCalledWith('2fa-access-token', {
+      refreshToken: '2fa-refresh-token', expiresIn: 3600, expectedSessionVersion: 0
+    })
     expect(replace).toHaveBeenCalledWith('/profile')
   })
 })

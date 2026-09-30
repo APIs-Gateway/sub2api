@@ -164,6 +164,48 @@ describe('useAuthStore', () => {
     expect(vi.getTimerCount()).toBe(currentTimers)
   })
 
+  it.each([undefined, 'account-b-refresh'])('replaces an old refresh context for 2FA completion (%s)', async (nextRefreshToken) => {
+    const store = useAuthStore()
+    mockLogin.mockResolvedValueOnce(fakeAuthResponse)
+    await store.login({ email: 'account-a@example.com', password: '123456' })
+    const oldSession = store.authSessionVersion
+    mockGetCurrentUser.mockResolvedValueOnce({ data: fakeAdminUser })
+
+    await store.setToken('account-b-token', {
+      refreshToken: nextRefreshToken,
+      expiresIn: nextRefreshToken ? 3600 : undefined,
+      expectedSessionVersion: oldSession
+    })
+
+    expect(store.user?.id).toBe(fakeAdminUser.id)
+    expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+    expect(localStorage.getItem('refresh_token')).toBe(nextRefreshToken ?? null)
+    if (nextRefreshToken) {
+      expect(Number(localStorage.getItem('token_expires_at'))).toBeGreaterThan(Date.now())
+    } else {
+      expect(localStorage.getItem('token_expires_at')).toBeNull()
+      expect(vi.getTimerCount()).toBe(1)
+    }
+  })
+
+  it('rejects a 2FA completion from an obsolete session before replacing its credentials', async () => {
+    const store = useAuthStore()
+    mockLogin.mockResolvedValueOnce(fakeAuthResponse).mockResolvedValueOnce({
+      ...fakeAuthResponse, access_token: 'account-b-token', user: fakeAdminUser
+    })
+    await store.login({ email: 'account-a@example.com', password: '123456' })
+    const oldSession = store.authSessionVersion
+    await store.login({ email: 'admin@example.com', password: '123456' })
+
+    await expect(store.setToken('old-2fa-token', {
+      refreshToken: 'old-2fa-refresh', expiresIn: 3600,
+      expectedSessionVersion: oldSession
+    })).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
+    expect(store.user?.id).toBe(fakeAdminUser.id)
+    expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+    expect(localStorage.getItem('refresh_token')).toBe(fakeAuthResponse.refresh_token)
+  })
+
   it.each(['login', 'login2FA', 'register'] as const)('does not commit an old %s response over account B', async (operation) => {
     const store = useAuthStore()
     let resolveOld!: (value: typeof fakeAuthResponse) => void
