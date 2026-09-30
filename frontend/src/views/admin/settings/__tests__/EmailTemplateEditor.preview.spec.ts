@@ -100,6 +100,22 @@ describe('email template previews', () => {
     expect(previewButton(wrapper).attributes('disabled')).toBeUndefined()
   })
 
+  it('clears an old preview when the newly selected template has no previewable HTML', async () => {
+    const wrapper = await mountEditor()
+    let finishOld!: (value: object) => void
+    previewEmailTemplate.mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }))
+    await previewButton(wrapper).trigger('click')
+    getEmailTemplate.mockResolvedValueOnce({ subject: 'No HTML', html: '' })
+    await wrapper.findAll('select')[0].setValue('auth.password_reset')
+    await flushPromises()
+
+    expect(wrapper.get('iframe').attributes('srcdoc')).toBe('')
+    expect(previewButton(wrapper).text()).toBe('admin.settings.emailTemplates.preview')
+    finishOld({ subject: 'Obsolete', html: '<p>Obsolete</p>' })
+    await flushPromises()
+    expect(wrapper.get('iframe').attributes('srcdoc')).toBe('')
+  })
+
   it('ignores a failed preview after the editor unmounts', async () => {
     const wrapper = await mountEditor()
     let rejectOld!: (error: Error) => void
