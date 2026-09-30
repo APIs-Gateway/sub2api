@@ -175,7 +175,7 @@ func TestOpenAIResponsesWebSocket_GroupImagePermissionHasHTTPStatus(t *testing.T
 
 func TestOpenAIResponsesWebSocket_BillingEligibilityHasHTTPStatus(t *testing.T) {
 	h := newOpenAIHandlerForPreviousResponseIDValidation(t, nil)
-	h.billingCacheService = service.NewBillingCacheService(nil, &whamUsageUserRepoStub{user: &service.User{ID: 1, Balance: 0}}, nil, nil, nil, nil, &config.Config{}, nil, nil)
+	h.billingCacheService = service.NewBillingCacheService(nil, &openAIRecordUsageUserRepoStub795{user: service.User{ID: 1, Balance: 0}}, nil, nil, nil, nil, &config.Config{}, nil, nil)
 	t.Cleanup(h.billingCacheService.Stop)
 	server := newOpenAIWSHandlerTestServer(t, h, middleware.AuthSubject{UserID: 1, Concurrency: 1})
 	defer server.Close()
