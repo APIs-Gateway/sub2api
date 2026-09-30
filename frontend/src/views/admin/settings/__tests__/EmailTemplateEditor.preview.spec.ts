@@ -3,16 +3,23 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import EmailTemplateEditor from '../EmailTemplateEditor.vue'
 
-const { getEmailTemplates, getEmailTemplate, updateEmailTemplate, previewEmailTemplate, showError } = vi.hoisted(() => ({
+const {
+  getEmailTemplates, getEmailTemplate, updateEmailTemplate, restoreOfficialEmailTemplate,
+  previewEmailTemplate, showError, showSuccess,
+} = vi.hoisted(() => ({
   getEmailTemplates: vi.fn(),
   getEmailTemplate: vi.fn(),
   updateEmailTemplate: vi.fn(),
+  restoreOfficialEmailTemplate: vi.fn(),
   previewEmailTemplate: vi.fn(),
   showError: vi.fn(),
+  showSuccess: vi.fn(),
 }))
 
-vi.mock('@/api', () => ({ adminAPI: { settings: { getEmailTemplates, getEmailTemplate, updateEmailTemplate, previewEmailTemplate } } }))
-vi.mock('@/stores', () => ({ useAppStore: () => ({ showError, showSuccess: vi.fn() }) }))
+vi.mock('@/api', () => ({ adminAPI: { settings: {
+  getEmailTemplates, getEmailTemplate, updateEmailTemplate, restoreOfficialEmailTemplate, previewEmailTemplate,
+} } }))
+vi.mock('@/stores', () => ({ useAppStore: () => ({ showError, showSuccess }) }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, locale: ref('en') }) }))
 
 enableAutoUnmount(afterEach)
@@ -178,12 +185,125 @@ describe('email template previews', () => {
 
     expect(showError).toHaveBeenCalledWith('template load failed')
     expect(previewButton(wrapper).text()).toBe('admin.settings.emailTemplates.preview')
-    expect(previewButton(wrapper).attributes('disabled')).toBeUndefined()
+    expect(previewButton(wrapper).attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button.btn-primary').attributes('disabled')).toBeDefined()
+    expect((wrapper.get('#email-template-subject').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.get('#email-template-html').element as HTMLTextAreaElement).value).toBe('')
 
     finishOld({ subject: 'Obsolete', html: '<p>Obsolete</p>' })
     await flushPromises()
     expect(wrapper.get('iframe').attributes('srcdoc')).not.toBe('<p>Obsolete</p>')
-    expect(previewButton(wrapper).attributes('disabled')).toBeUndefined()
+    expect(previewButton(wrapper).attributes('disabled')).toBeDefined()
+    expect(updateEmailTemplate).not.toHaveBeenCalled()
+  })
+
+  it('can restore the selected official template after its load fails', async () => {
+    const wrapper = await mountEditor()
+    getEmailTemplate.mockRejectedValueOnce(new Error('template load failed'))
+    await wrapper.findAll('select')[0].setValue('auth.password_reset')
+    await flushPromises()
+    expect(wrapper.get('button.btn-primary').attributes('disabled')).toBeDefined()
+
+    restoreOfficialEmailTemplate.mockResolvedValueOnce({
+      subject: 'Restored password reset', html: '<p>Restored password reset</p>',
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    try {
+      const restore = wrapper.findAll('button').find(button =>
+        button.text() === 'admin.settings.emailTemplates.restoreOfficial'
+      )
+      if (!restore) throw new Error('Restore button not found')
+      await restore.trigger('click')
+      await flushPromises()
+    } finally {
+      confirm.mockRestore()
+    }
+
+    expect(restoreOfficialEmailTemplate).toHaveBeenCalledWith('auth.password_reset', 'en')
+    expect((wrapper.get('#email-template-subject').element as HTMLInputElement).value).toBe('Restored password reset')
+    expect(wrapper.get('button.btn-primary').attributes('disabled')).toBeUndefined()
+    expect(showSuccess).toHaveBeenCalledWith('admin.settings.emailTemplates.restoreSuccess')
+  })
+
+  it.each([
+    ['save', 'success'], ['save', 'failure'],
+    ['restore', 'success'], ['restore', 'failure'],
+  ] as const)('ignores an old %s %s after selecting another template', async (action, outcome) => {
+    const wrapper = await mountEditor()
+    const pending = deferred<{ subject: string; html: string }>()
+    previewEmailTemplate.mockImplementation(({ event }: { event: string }) =>
+      Promise.resolve({ subject: event, html: `<p>${event}</p>` })
+    )
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    try {
+      if (action === 'save') {
+        updateEmailTemplate.mockReturnValueOnce(pending.promise)
+        await wrapper.get('button.btn-primary').trigger('click')
+        expect(updateEmailTemplate).toHaveBeenCalledWith(
+          'auth.verify_code', 'en',
+          { subject: 'auth.verify_code', html: '<p>auth.verify_code</p>' },
+        )
+      } else {
+        restoreOfficialEmailTemplate.mockReturnValueOnce(pending.promise)
+        const restore = wrapper.findAll('button').find(button =>
+          button.text() === 'admin.settings.emailTemplates.restoreOfficial'
+        )
+        if (!restore) throw new Error('Restore button not found')
+        await restore.trigger('click')
+        expect(restoreOfficialEmailTemplate).toHaveBeenCalledWith('auth.verify_code', 'en')
+      }
+
+      await wrapper.findAll('select')[0].setValue('auth.password_reset')
+      await flushPromises()
+      expect(wrapper.get('iframe').attributes('srcdoc')).toBe('<p>auth.password_reset</p>')
+      expect(wrapper.get('button.btn-primary').attributes('disabled')).toBeUndefined()
+
+      if (outcome === 'success') pending.resolve({ subject: 'Old verification', html: '<p>Old verification</p>' })
+      else pending.reject(new Error('old action failed'))
+      await flushPromises()
+      expect((wrapper.get('#email-template-subject').element as HTMLInputElement).value).toBe('auth.password_reset')
+      expect((wrapper.get('#email-template-html').element as HTMLTextAreaElement).value).toBe('<p>auth.password_reset</p>')
+      expect(wrapper.get('iframe').attributes('srcdoc')).toBe('<p>auth.password_reset</p>')
+      expect(previewEmailTemplate).toHaveBeenCalledTimes(2)
+      expect(showSuccess).not.toHaveBeenCalled()
+      expect(showError).not.toHaveBeenCalled()
+    } finally {
+      confirm.mockRestore()
+    }
+  })
+
+  it.each(['save', 'restore'] as const)('reports a current %s failure and releases its busy state', async action => {
+    const wrapper = await mountEditor()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    try {
+      if (action === 'save') {
+        updateEmailTemplate.mockRejectedValueOnce(new Error('current action failed'))
+        await wrapper.get('button.btn-primary').trigger('click')
+      } else {
+        restoreOfficialEmailTemplate.mockRejectedValueOnce(new Error('current action failed'))
+        const restore = wrapper.findAll('button').find(button =>
+          button.text() === 'admin.settings.emailTemplates.restoreOfficial'
+        )
+        if (!restore) throw new Error('Restore button not found')
+        await restore.trigger('click')
+      }
+      await flushPromises()
+      expect(showError).toHaveBeenCalledWith('current action failed')
+      expect(wrapper.get('button.btn-primary').attributes('disabled')).toBeUndefined()
+    } finally {
+      confirm.mockRestore()
+    }
+  })
+
+  it('suppresses a template-list failure after the editor unmounts', async () => {
+    const pending = deferred<{ events: string[]; locales: string[] }>()
+    getEmailTemplates.mockReturnValueOnce(pending.promise)
+    const wrapper = mount(EmailTemplateEditor)
+    wrapper.unmount()
+    pending.reject(new Error('obsolete list failure'))
+    await flushPromises()
+    expect(showError).not.toHaveBeenCalled()
+    expect(getEmailTemplate).not.toHaveBeenCalled()
   })
 
   it('clears an old preview when the newly selected template has no previewable HTML', async () => {

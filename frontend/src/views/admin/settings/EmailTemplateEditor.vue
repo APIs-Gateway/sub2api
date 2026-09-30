@@ -23,7 +23,7 @@
         <button
           type="button"
           class="btn btn-secondary btn-sm"
-          :disabled="loadingTemplate || restoring || !selectedEvent || !selectedLocale"
+          :disabled="loadingTemplate || restoring || saving || !selectedEvent || !selectedLocale"
           @click="restoreOfficial"
         >
           {{ restoring ? t("admin.settings.emailTemplates.restoring") : t("admin.settings.emailTemplates.restoreOfficial") }}
@@ -31,7 +31,7 @@
         <button
           type="button"
           class="btn btn-primary btn-sm"
-          :disabled="loadingTemplate || saving || !canSave"
+          :disabled="loadingTemplate || saving || restoring || !canSave"
           @click="saveTemplate"
         >
           {{ saving ? t("admin.settings.emailTemplates.saving") : t("admin.settings.emailTemplates.save") }}
@@ -145,7 +145,7 @@
                 v-model="subject"
                 type="text"
                 class="input"
-                :disabled="loadingTemplate"
+                :disabled="loadingTemplate || saving || restoring"
                 :placeholder="t('admin.settings.emailTemplates.subjectPlaceholder')"
               />
             </div>
@@ -159,7 +159,7 @@
                 v-model="html"
                 rows="18"
                 class="input min-h-[28rem] resize-y font-mono text-sm leading-6"
-                :disabled="loadingTemplate"
+                :disabled="loadingTemplate || saving || restoring"
                 :placeholder="t('admin.settings.emailTemplates.htmlPlaceholder')"
               ></textarea>
             </div>
@@ -328,14 +328,19 @@ const placeholders = ref<string[]>([]);
 const previewSubject = ref("");
 const previewHtml = ref("");
 const initializingSelection = ref(false);
+const loadedSelection = ref<{ event: string; locale: string } | null>(null);
 let previewRequestId = 0;
 let templateRequestId = 0;
+let saveRequestId = 0;
+let restoreRequestId = 0;
 let disposed = false;
 
 onBeforeUnmount(() => {
   disposed = true;
   previewRequestId++;
   templateRequestId++;
+  saveRequestId++;
+  restoreRequestId++;
 });
 
 interface EventDisplayMeta {
@@ -556,15 +561,20 @@ function formatPlaceholder(placeholder: string): string {
   return `{{${trimmed}}}`;
 }
 
+const currentTemplateLoaded = computed(() =>
+  loadedSelection.value?.event === selectedEvent.value &&
+  loadedSelection.value?.locale === selectedLocale.value,
+);
+
 const canSave = computed(
   () =>
-    Boolean(selectedEvent.value && selectedLocale.value) &&
+    currentTemplateLoaded.value &&
     subject.value.trim().length > 0 &&
     html.value.trim().length > 0,
 );
 
 const canPreview = computed(
-  () => Boolean(selectedEvent.value && selectedLocale.value) && html.value.trim().length > 0,
+  () => currentTemplateLoaded.value && html.value.trim().length > 0,
 );
 
 function formatLocale(locale: string): string {
@@ -606,19 +616,32 @@ function applyTemplate(template: {
   placeholders.value = template.placeholders || [];
 }
 
+function isCurrentSelection(event: string, language: string, generation: number): boolean {
+  return !disposed &&
+    generation === templateRequestId &&
+    event === selectedEvent.value &&
+    language === selectedLocale.value;
+}
+
 async function loadTemplate() {
   const event = selectedEvent.value;
   const selectedLanguage = selectedLocale.value;
   if (disposed || !event || !selectedLanguage) return;
   const requestId = ++templateRequestId;
-  const isCurrentRequest = () =>
-    !disposed &&
-    requestId === templateRequestId &&
-    event === selectedEvent.value &&
-    selectedLanguage === selectedLocale.value;
+  const isCurrentRequest = () => isCurrentSelection(event, selectedLanguage, requestId);
   loadingTemplate.value = true;
+  loadedSelection.value = null;
+  subject.value = "";
+  html.value = "";
+  isCustomTemplate.value = false;
   previewRequestId++;
+  saveRequestId++;
+  restoreRequestId++;
   previewing.value = false;
+  saving.value = false;
+  restoring.value = false;
+  previewSubject.value = "";
+  previewHtml.value = "";
   try {
     const template = await adminAPI.settings.getEmailTemplate(
       event,
@@ -626,6 +649,7 @@ async function loadTemplate() {
     );
     if (!isCurrentRequest()) return;
     applyTemplate(template);
+    loadedSelection.value = { event, locale: selectedLanguage };
     await refreshPreview();
   } catch (err: unknown) {
     if (!isCurrentRequest()) return;
@@ -639,6 +663,7 @@ async function loadTemplateList() {
   loadingList.value = true;
   try {
     const response = await adminAPI.settings.getEmailTemplates();
+    if (disposed) return;
     eventOptions.value = response.events.map(normalizeEventOption);
     localeOptions.value = response.locales;
     placeholders.value = response.placeholders || [];
@@ -648,41 +673,59 @@ async function loadTemplateList() {
     await loadTemplate();
     initializingSelection.value = false;
   } catch (err: unknown) {
+    if (disposed) return;
     initializingSelection.value = false;
     appStore.showError(extractApiErrorMessage(err, t("common.error")));
   } finally {
-    loadingList.value = false;
+    if (!disposed) loadingList.value = false;
   }
 }
 
 async function saveTemplate() {
+  if (saving.value || restoring.value) return;
   if (!canSave.value) {
     appStore.showError(t("admin.settings.emailTemplates.validationRequired"));
     return;
   }
+  const event = selectedEvent.value;
+  const selectedLanguage = selectedLocale.value;
+  const templateGeneration = templateRequestId;
+  const requestId = ++saveRequestId;
+  const isCurrentRequest = () =>
+    requestId === saveRequestId &&
+    isCurrentSelection(event, selectedLanguage, templateGeneration);
   saving.value = true;
   try {
     const template = await adminAPI.settings.updateEmailTemplate(
-      selectedEvent.value,
-      selectedLocale.value,
+      event,
+      selectedLanguage,
       {
         subject: subject.value,
         html: html.value,
       },
     );
+    if (!isCurrentRequest()) return;
     applyTemplate(template);
     await refreshPreview();
+    if (!isCurrentRequest()) return;
     appStore.showSuccess(t("admin.settings.emailTemplates.saveSuccess"));
   } catch (err: unknown) {
+    if (!isCurrentRequest()) return;
     appStore.showError(extractApiErrorMessage(err, t("common.error")));
   } finally {
-    saving.value = false;
+    if (isCurrentRequest()) saving.value = false;
   }
 }
 
 async function refreshPreview() {
   if (disposed) return;
   const requestId = ++previewRequestId;
+  const event = selectedEvent.value;
+  const selectedLanguage = selectedLocale.value;
+  const templateGeneration = templateRequestId;
+  const isCurrentRequest = () =>
+    requestId === previewRequestId &&
+    isCurrentSelection(event, selectedLanguage, templateGeneration);
   if (!canPreview.value) {
     previewing.value = false;
     previewSubject.value = "";
@@ -692,39 +735,51 @@ async function refreshPreview() {
   previewing.value = true;
   try {
     const preview = await adminAPI.settings.previewEmailTemplate({
-      event: selectedEvent.value,
-      locale: selectedLocale.value,
+      event,
+      locale: selectedLanguage,
       subject: subject.value,
       html: html.value,
     });
-    if (requestId !== previewRequestId) return;
+    if (!isCurrentRequest()) return;
     previewSubject.value = preview.subject;
     previewHtml.value = preview.html;
   } catch (err: unknown) {
-    if (requestId !== previewRequestId) return;
+    if (!isCurrentRequest()) return;
     appStore.showError(extractApiErrorMessage(err, t("common.error")));
   } finally {
-    if (requestId === previewRequestId) previewing.value = false;
+    if (isCurrentRequest()) previewing.value = false;
   }
 }
 
 async function restoreOfficial() {
   if (!selectedEvent.value || !selectedLocale.value) return;
+  if (saving.value || restoring.value) return;
   if (!window.confirm(t("admin.settings.emailTemplates.restoreConfirm"))) return;
 
+  const event = selectedEvent.value;
+  const selectedLanguage = selectedLocale.value;
+  const templateGeneration = templateRequestId;
+  const requestId = ++restoreRequestId;
+  const isCurrentRequest = () =>
+    requestId === restoreRequestId &&
+    isCurrentSelection(event, selectedLanguage, templateGeneration);
   restoring.value = true;
   try {
     const template = await adminAPI.settings.restoreOfficialEmailTemplate(
-      selectedEvent.value,
-      selectedLocale.value,
+      event,
+      selectedLanguage,
     );
+    if (!isCurrentRequest()) return;
     applyTemplate(template);
+    loadedSelection.value = { event, locale: selectedLanguage };
     await refreshPreview();
+    if (!isCurrentRequest()) return;
     appStore.showSuccess(t("admin.settings.emailTemplates.restoreSuccess"));
   } catch (err: unknown) {
+    if (!isCurrentRequest()) return;
     appStore.showError(extractApiErrorMessage(err, t("common.error")));
   } finally {
-    restoring.value = false;
+    if (isCurrentRequest()) restoring.value = false;
   }
 }
 
