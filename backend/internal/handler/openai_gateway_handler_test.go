@@ -984,6 +984,12 @@ func TestOpenAIResponsesWebSocket_RejectsMessageIDAsPreviousResponseID(t *testin
 	require.NoError(t, err)
 
 	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+	_, payload, err := clientConn.Read(readCtx)
+	require.NoError(t, err)
+	require.Equal(t, "error", gjson.GetBytes(payload, "type").String())
+	require.Equal(t, int64(http.StatusBadRequest), gjson.GetBytes(payload, "status").Int())
+	require.Equal(t, "invalid_request_error", gjson.GetBytes(payload, "error.type").String())
+	require.Contains(t, gjson.GetBytes(payload, "error.message").String(), "previous_response_id")
 	_, _, err = clientConn.Read(readCtx)
 	cancelRead()
 	require.Error(t, err)
@@ -1249,6 +1255,7 @@ func TestOpenAIResponsesWebSocket_ContentModerationBlocksFirstFrame(t *testing.T
 	if readErr == nil {
 		require.Contains(t, string(payload), "content_policy_violation")
 		require.Contains(t, string(payload), "内容审计测试阻断")
+		require.Equal(t, int64(http.StatusForbidden), gjson.GetBytes(payload, "status").Int())
 	} else {
 		var closeErr coderws.CloseError
 		require.ErrorAs(t, readErr, &closeErr)

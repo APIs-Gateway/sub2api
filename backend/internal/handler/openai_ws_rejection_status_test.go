@@ -1,0 +1,127 @@
+package handler
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	coderws "github.com/coder/websocket"
+	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
+)
+
+func readOpenAIWSRejectionStatus(t *testing.T, conn *coderws.Conn, status int, errType, message string) coderws.CloseError {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	messageType, payload, err := conn.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, coderws.MessageText, messageType)
+	require.Equal(t, "error", gjson.GetBytes(payload, "type").String())
+	require.Equal(t, int64(status), gjson.GetBytes(payload, "status").Int(), string(payload))
+	require.Equal(t, errType, gjson.GetBytes(payload, "error.type").String())
+	require.Contains(t, gjson.GetBytes(payload, "error.message").String(), message)
+	_, _, err = conn.Read(ctx)
+	var closeErr coderws.CloseError
+	require.ErrorAs(t, err, &closeErr)
+	return closeErr
+}
+
+func TestOpenAIWSBillingRejectionUsesForkHTTPClassification(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		status  int
+		errType string
+	}{
+		{name: "forbidden", err: errors.New("billing denied"), status: http.StatusForbidden, errType: "billing_error"},
+		{name: "rate limited", err: service.ErrAPIKeyRateLimit5hExceeded, status: http.StatusTooManyRequests, errType: "rate_limit_exceeded"},
+		{name: "billing unavailable", err: service.ErrBillingServiceUnavailable, status: http.StatusServiceUnavailable, errType: "billing_service_error"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := coderws.Accept(w, r, nil)
+				if err != nil {
+					t.Errorf("accept websocket: %v", err)
+					return
+				}
+				defer func() { _ = conn.CloseNow() }()
+				writeOpenAIWSBillingRejection(r.Context(), conn, tc.err)
+				closeOpenAIClientWS(conn, coderws.StatusPolicyViolation, "billing check failed")
+			}))
+			defer server.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+			require.NoError(t, err)
+			defer func() { _ = conn.CloseNow() }()
+			closeErr := readOpenAIWSRejectionStatus(t, conn, tc.status, tc.errType, "")
+			require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+			require.Equal(t, "billing check failed", closeErr.Reason)
+		})
+	}
+}
+
+func TestOpenAIResponsesWebSocket_ImageGenerationDisabledHasHTTPStatus(t *testing.T) {
+	h := newOpenAIHandlerForPreviousResponseIDValidation(t, nil)
+	h.cfg = &config.Config{}
+	h.cfg.Gateway.DisableOpenAIResponsesImageGeneration = true
+	server := newOpenAIWSHandlerTestServer(t, h, middleware.AuthSubject{UserID: 1, Concurrency: 1})
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/openai/v1/responses", nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+	require.NoError(t, conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.5","tools":[{"type":"image_generation"}]}`)))
+	closeErr := readOpenAIWSRejectionStatus(t, conn, http.StatusBadRequest, "invalid_request_error", service.OpenAIResponsesImageGenerationDisabledMessage())
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+	require.Equal(t, service.OpenAIResponsesImageGenerationDisabledMessage(), closeErr.Reason)
+}
+
+func TestOpenAIWSLocalPolicyEventsIncludeHTTPStatus(t *testing.T) {
+	tests := []struct {
+		name    string
+		write   func(context.Context, *coderws.Conn)
+		status  int
+		errType string
+	}{
+		{name: "content moderation", write: func(ctx context.Context, conn *coderws.Conn) {
+			writeContentModerationWSError(ctx, conn, &service.ContentModerationDecision{StatusCode: http.StatusUnprocessableEntity, Message: "moderation blocked"})
+		}, status: http.StatusUnprocessableEntity, errType: "invalid_request_error"},
+		{name: "cyber session", write: writeCyberSessionBlockedWSError, status: http.StatusForbidden, errType: "permission_error"},
+		{name: "Codex client restriction", write: func(ctx context.Context, conn *coderws.Conn) {
+			writeCodexClientRestrictedWSError(ctx, conn, service.CodexOfficialClientsOnlyMessage)
+		}, status: http.StatusForbidden, errType: "forbidden_error"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := coderws.Accept(w, r, nil)
+				if err != nil {
+					t.Errorf("accept websocket: %v", err)
+					return
+				}
+				defer func() { _ = conn.CloseNow() }()
+				tc.write(r.Context(), conn)
+				closeOpenAIClientWS(conn, coderws.StatusPolicyViolation, "rejected")
+			}))
+			defer server.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+			require.NoError(t, err)
+			defer func() { _ = conn.CloseNow() }()
+			closeErr := readOpenAIWSRejectionStatus(t, conn, tc.status, tc.errType, "")
+			require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+		})
+	}
+}

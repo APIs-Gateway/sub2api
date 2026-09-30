@@ -15,6 +15,7 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 type blockedPromptEngine struct{}
@@ -216,4 +217,5 @@ func TestWriteSecurityAuditWSErrorWritesPromptGuardEnvelope(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, coderws.MessageText, messageType)
 	require.Contains(t, string(payload), securityaudit.ErrorCodeBlocked)
+	require.Equal(t, int64(securityAuditStatus(decision)), gjson.GetBytes(payload, "status").Int())
 }

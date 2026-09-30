@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
@@ -43,6 +44,7 @@ func TestOpenAIResponsesWebSocket_CodexClientRestrictionWritesForbiddenEventWith
 	_, payload, err := client.Read(ctx)
 	require.NoError(t, err)
 	require.Equal(t, "error", gjson.GetBytes(payload, "type").String())
+	require.Equal(t, int64(http.StatusForbidden), gjson.GetBytes(payload, "status").Int())
 	require.Equal(t, "forbidden_error", gjson.GetBytes(payload, "error.type").String())
 	require.Equal(t, service.CodexOfficialClientsOnlyMessage, gjson.GetBytes(payload, "error.message").String())
 
