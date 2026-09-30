@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { effectScope } from 'vue'
 import {
   isStepUpBlocked,
   isStepUpCancelled,
@@ -94,6 +95,46 @@ describe('useStepUp concurrent prompts', () => {
       if (result.status === 'rejected') expect(result.reason).toBeInstanceOf(StepUpCancelledError)
     }
     expect(calls).toEqual([1, 1])
+    expect(stepUp.visible.value).toBe(false)
+  })
+
+  it('cancels both waiting actions when the owning view scope is disposed', async () => {
+    const scope = effectScope()
+    const stepUp = scope.run(() => useStepUp())!
+    const calls = [0, 0]
+    const action = (index: number) => async () => {
+      calls[index] += 1
+      throw { status: 403, code: 'STEP_UP_REQUIRED' }
+    }
+
+    const first = stepUp.run(action(0))
+    const second = stepUp.run(action(1))
+    const results = Promise.allSettled([first, second])
+    await vi.waitFor(() => expect(stepUp.visible.value).toBe(true))
+    scope.stop()
+
+    for (const result of await results) {
+      expect(result.status).toBe('rejected')
+      if (result.status === 'rejected') expect(result.reason).toBeInstanceOf(StepUpCancelledError)
+    }
+    expect(calls).toEqual([1, 1])
+    expect(stepUp.visible.value).toBe(false)
+  })
+
+  it('cancels a step-up response that arrives after its view scope is disposed', async () => {
+    const scope = effectScope()
+    const stepUp = scope.run(() => useStepUp())!
+    let rejectAction!: (reason: unknown) => void
+    const action = vi.fn(() => new Promise<string>((_resolve, reject) => {
+      rejectAction = reject
+    }))
+    const pending = stepUp.run(action)
+
+    scope.stop()
+    rejectAction({ status: 403, code: 'STEP_UP_REQUIRED' })
+
+    await expect(pending).rejects.toBeInstanceOf(StepUpCancelledError)
+    expect(action).toHaveBeenCalledTimes(1)
     expect(stepUp.visible.value).toBe(false)
   })
 })
