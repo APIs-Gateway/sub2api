@@ -4426,7 +4426,7 @@
       poolModeRetryStatusCodesHint: '仅在池模式下生效。以英文逗号分隔的 HTTP 状态码（100-599），命中时触发同账号重试。留空使用默认值（{default}）。',
       customErrorCodes: '自定义错误码',
       customErrorCodesHint: '仅对选中的错误码停止调度',
-      customErrorCodesWarning: '仅选中的错误码会停止调度，其他错误将返回 500。',
+      customErrorCodesWarning: '自定义错误码用于筛选非 429 上游错误的常规账号状态处理。即使未列入列表，HTTP 429 仍可能触发限流处理。此列表本身不决定是否重试或切换账号；返回客户端的状态码取决于网关路径及错误透传规则，并非统一为 500。列表为空时不做筛选。',
       headerOverride: {
         title: '请求头覆写',
         hint: '为兼容的 API Key 上游账号设置静态请求头。',

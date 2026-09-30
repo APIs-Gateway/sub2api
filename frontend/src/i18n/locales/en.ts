@@ -4354,7 +4354,7 @@
       customErrorCodes: 'Custom Error Codes',
       customErrorCodesHint: 'Only stop scheduling for selected error codes',
       customErrorCodesWarning:
-        'Only selected error codes will stop scheduling. Other errors will return 500.',
+        'Custom error codes filter ordinary account-state handling for non-429 upstream errors. HTTP 429 can still trigger rate-limit handling when it is not listed. This list does not by itself determine retries or account switches. The client-visible status depends on the gateway path and error-passthrough rules; it is not always 500. An empty list applies no filtering.',
       headerOverride: {
         title: 'Request Header Override',
         hint: 'Set static request headers for compatible API key upstream accounts.',
