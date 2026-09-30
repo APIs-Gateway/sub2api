@@ -60,7 +60,7 @@
               id="email-template-event"
               v-model="selectedEvent"
               class="input"
-              :disabled="loadingTemplate || eventOptions.length === 0"
+              :disabled="eventOptions.length === 0"
             >
               <option
                 v-for="option in eventOptions"
@@ -79,7 +79,7 @@
               id="email-template-locale"
               v-model="selectedLocale"
               class="input"
-              :disabled="loadingTemplate || localeOptions.length === 0"
+              :disabled="localeOptions.length === 0"
             >
               <option
                 v-for="localeOption in localeOptions"

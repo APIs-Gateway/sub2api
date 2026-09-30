@@ -70,7 +70,15 @@ describe('email template previews', () => {
 
     const eventSelect = wrapper.findAll('select')[0]
     await eventSelect.setValue('auth.password_reset')
+    expect(eventSelect.attributes('disabled')).toBeUndefined()
+    expect(getEmailTemplate).toHaveBeenLastCalledWith('auth.password_reset', 'en')
     await eventSelect.setValue('subscription.purchase_success')
+    expect(eventSelect.element).toHaveProperty('value', 'subscription.purchase_success')
+    expect(getEmailTemplate).toHaveBeenCalledTimes(3)
+    expect(getEmailTemplate).toHaveBeenLastCalledWith('subscription.purchase_success', 'en')
+    expect(wrapper.get('button.btn-primary').attributes('disabled')).toBeDefined()
+    expect(previewButton(wrapper).attributes('disabled')).toBeDefined()
+    expect(wrapper.get('#email-template-subject').attributes('disabled')).toBeDefined()
     current.resolve({ subject: 'Current subscription', html: '<p>Current subscription</p>' })
     await flushPromises()
     expect((wrapper.get('#email-template-subject').element as HTMLInputElement).value).toBe('Current subscription')
@@ -106,11 +114,18 @@ describe('email template previews', () => {
 
     const eventSelect = wrapper.findAll('select')[0]
     await eventSelect.setValue('auth.password_reset')
+    expect(eventSelect.attributes('disabled')).toBeUndefined()
+    expect(getEmailTemplate).toHaveBeenLastCalledWith('auth.password_reset', 'en')
     await eventSelect.setValue('subscription.purchase_success')
+    expect(eventSelect.element).toHaveProperty('value', 'subscription.purchase_success')
+    expect(getEmailTemplate).toHaveBeenCalledTimes(3)
+    expect(getEmailTemplate).toHaveBeenLastCalledWith('subscription.purchase_success', 'en')
     old.reject(new Error('obsolete template failure'))
     await flushPromises()
     expect(showError).not.toHaveBeenCalled()
     expect(wrapper.get('button.btn-primary').attributes('disabled')).toBeDefined()
+    expect(previewButton(wrapper).attributes('disabled')).toBeDefined()
+    expect(wrapper.get('#email-template-subject').attributes('disabled')).toBeDefined()
 
     current.resolve({ subject: 'Current subscription', html: '<p>Current subscription</p>' })
     await flushPromises()
