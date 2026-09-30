@@ -322,21 +322,14 @@ func newOpenAIWSLocalRejection(status int, errType, code, message string, cause 
 	return &OpenAIWSLocalRejection{HTTPStatus: status, ErrorType: errType, Code: code, Message: message, Cause: cause}
 }
 
+// Callers pass an accepted relay connection, its request context, and a
+// constructed rejection. All event fields are JSON-safe scalars.
 func writeOpenAIWSLocalRejectionEvent(ctx context.Context, conn *coderws.Conn, rejection *OpenAIWSLocalRejection) {
-	if conn == nil || rejection == nil {
-		return
-	}
 	errorObject := map[string]any{"type": rejection.ErrorType, "message": rejection.Message}
 	if rejection.Code != "" {
 		errorObject["code"] = rejection.Code
 	}
-	payload, err := json.Marshal(map[string]any{"type": "error", "status": rejection.HTTPStatus, "error": errorObject})
-	if err != nil {
-		return
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	payload, _ := json.Marshal(map[string]any{"type": "error", "status": rejection.HTTPStatus, "error": errorObject})
 	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_ = conn.Write(writeCtx, coderws.MessageText, payload)

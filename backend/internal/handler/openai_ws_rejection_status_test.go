@@ -215,6 +215,38 @@ func TestOpenAIResponsesWebSocket_FirstAccountSlotFullHasHTTPStatus(t *testing.T
 	}
 }
 
+func TestOpenAIResponsesWebSocket_FirstAccountSlotCacheFailureHasHTTPStatus(t *testing.T) {
+	reports := make(chan bool, 1)
+	schedulerCache := &concurrencyCacheMock{
+		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return false, nil },
+	}
+	h := newOpenAIResponsesWebSocketAttributionHandlerWithProxy(t, schedulerCache, nil, reports, true)
+	handlerCache := &concurrencyCacheMock{
+		acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) {
+			return false, errors.New("account cache unavailable")
+		},
+	}
+	h.concurrencyHelper = NewConcurrencyHelper(service.NewConcurrencyService(handlerCache), SSEPingFormatNone, time.Second)
+	server := newOpenAIResponsesWebSocketAttributionServer(t, h)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/openai/v1/responses", nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+	require.NoError(t, conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.4"}`)))
+	closeErr := readOpenAIWSRejectionStatus(t, conn, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable")
+	require.Equal(t, coderws.StatusInternalError, closeErr.Code)
+	require.Equal(t, "failed to acquire account concurrency slot", closeErr.Reason)
+	select {
+	case <-reports:
+		t.Fatal("local account cache failure must not lower scheduler health")
+	default:
+	}
+}
+
 func TestOpenAIWSLocalPolicyEventsIncludeHTTPStatus(t *testing.T) {
 	tests := []struct {
 		name    string

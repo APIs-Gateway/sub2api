@@ -3100,21 +3100,14 @@ func closeOpenAIClientWS(conn *coderws.Conn, status coderws.StatusCode, reason s
 // writeOpenAIWSRejection gives the client the same HTTP error classification
 // before the existing WebSocket close. A statusless close can be retried as a
 // transport failure even when the gateway has permanently rejected the turn.
+// Callers pass the accepted connection and its request context. The payload
+// contains only JSON-safe scalar fields, so marshaling cannot fail.
 func writeOpenAIWSRejection(ctx context.Context, conn *coderws.Conn, status int, errType, code, message string) {
-	if conn == nil {
-		return
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	errorObject := gin.H{"type": errType, "message": message}
 	if code != "" {
 		errorObject["code"] = code
 	}
-	payload, err := json.Marshal(gin.H{"type": "error", "status": status, "error": errorObject})
-	if err != nil {
-		return
-	}
+	payload, _ := json.Marshal(gin.H{"type": "error", "status": status, "error": errorObject})
 	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_ = conn.Write(writeCtx, coderws.MessageText, payload)
