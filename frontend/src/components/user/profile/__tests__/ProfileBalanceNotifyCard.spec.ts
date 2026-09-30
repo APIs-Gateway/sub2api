@@ -226,6 +226,10 @@ describe('ProfileBalanceNotifyCard', () => {
     removal.resolve()
     await flushPromises()
     expect(wrapper.text()).not.toContain(entry.email)
+    // An older parent profile refresh must not restore the confirmed deletion.
+    await wrapper.setProps({ extraEmails: [{ ...entry }] })
+    expect(wrapper.text()).not.toContain(entry.email)
+    expect(button(wrapper, 'profile.balanceNotify.verify')).toBeUndefined()
     showSuccess.mockClear()
 
     send.resolve()
@@ -237,6 +241,39 @@ describe('ProfileBalanceNotifyCard', () => {
 
     finishProfile({ balance_notify_extra_emails: [] })
     await flushPromises()
+    await wrapper.setProps({ extraEmails: [{ ...entry }] })
+    expect(wrapper.text()).not.toContain(entry.email)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('allows a deliberately re-added email through the pending verification flow', async () => {
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    const verified = { ...entry, verified: true }
+    let finishOldProfile!: (value: { balance_notify_extra_emails: typeof entry[] }) => void
+    const oldProfile = new Promise<{ balance_notify_extra_emails: typeof entry[] }>(resolve => { finishOldProfile = resolve })
+    getProfile.mockReturnValueOnce(oldProfile)
+      .mockResolvedValueOnce({ balance_notify_extra_emails: [verified] })
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.removeEmail').trigger('click')
+    await flushPromises()
+    await wrapper.get('input[type="email"]').setValue(entry.email)
+    await button(wrapper, 'common.add').trigger('click')
+    await button(wrapper, 'profile.balanceNotify.sendCode').trigger('click')
+    await flushPromises()
+    await pendingRows(wrapper)[0]!.get('input').setValue('123456')
+    await pendingRows(wrapper)[0]!.findAll('button').find(item => item.text() === 'profile.balanceNotify.verify')!.trigger('click')
+    await flushPromises()
+
+    expect(pendingRows(wrapper)).toHaveLength(0)
+    expect(wrapper.text()).toContain(entry.email)
+    expect(wrapper.text()).toContain('profile.balanceNotify.verified')
+
+    finishOldProfile({ balance_notify_extra_emails: [] })
+    await flushPromises()
+    expect(wrapper.text()).toContain(entry.email)
+    expect(wrapper.text()).toContain('profile.balanceNotify.verified')
   })
 
   it('clears an active saved verification when parent props remove and re-add its email', async () => {

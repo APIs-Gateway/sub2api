@@ -206,6 +206,8 @@ let verifyTimer: ReturnType<typeof setInterval> | null = null
 let disposed = false
 let savedSendVersion = 0
 let savedSendingEmail: string | null = null
+const removedSavedEmails = new Set<string>()
+let savedEmailMutationVersion = 0
 
 const canAddMore = computed(() => {
   return emailEntries.value.length + pendingEmails.value.length < maxTotalEmails
@@ -213,15 +215,7 @@ const canAddMore = computed(() => {
 
 watch(() => props.enabled, (val) => { notifyEnabled.value = val })
 watch(() => props.threshold, (val) => { customThreshold.value = val })
-watch(() => props.extraEmails, (val) => {
-  if (savedSendingEmail && !val.some(item => item.email === savedSendingEmail && !item.verified)) {
-    invalidateSavedSend(savedSendingEmail)
-  }
-  if (verifyingEmail.value && !val.some(item => item.email === verifyingEmail.value && !item.verified)) {
-    clearSavedVerification()
-  }
-  emailEntries.value = [...val]
-})
+watch(() => props.extraEmails, replaceSavedEmails)
 
 // When list is empty on mount, pre-fill the add input with user's email
 onMounted(() => {
@@ -267,8 +261,9 @@ async function handleEmailToggle(entry: NotifyEmailEntry) {
   const newDisabled = !entry.disabled
   try {
     const updated = await userAPI.toggleNotifyEmail(entry.email, newDisabled)
+    savedEmailMutationVersion++
     authStore.user = updated
-    emailEntries.value = [...updated.balance_notify_extra_emails]
+    replaceSavedEmails(updated.balance_notify_extra_emails)
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   }
@@ -320,12 +315,15 @@ async function verifyPending(idx: number) {
   pe.verifying = true
   try {
     await userAPI.verifyNotifyEmail(pe.email, pe.code)
+    const version = ++savedEmailMutationVersion
     if (pe.timer) clearInterval(pe.timer)
     pendingEmails.value = pendingEmails.value.filter(entry => entry !== pe)
     appStore.showSuccess(t('profile.balanceNotify.verifySuccess'))
     const updated = await userAPI.getProfile()
+    if (version !== savedEmailMutationVersion) return
+    removedSavedEmails.delete(savedEmailKey(pe.email))
     authStore.user = updated
-    emailEntries.value = [...updated.balance_notify_extra_emails]
+    replaceSavedEmails(updated.balance_notify_extra_emails)
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {
@@ -336,19 +334,35 @@ async function verifyPending(idx: number) {
 const handleRemoveEmail = async (email: string) => {
   try {
     await userAPI.removeNotifyEmail(email)
-    invalidateSavedSend(email)
-    if (verifyingEmail.value === email) clearSavedVerification()
-    emailEntries.value = emailEntries.value.filter(item => item.email !== email)
+    const version = ++savedEmailMutationVersion
+    removedSavedEmails.add(savedEmailKey(email))
+    replaceSavedEmails(emailEntries.value)
     appStore.showSuccess(t('profile.balanceNotify.removeSuccess'))
     const updated = await userAPI.getProfile()
+    if (version !== savedEmailMutationVersion) return
     authStore.user = updated
-    emailEntries.value = [...updated.balance_notify_extra_emails]
+    replaceSavedEmails(updated.balance_notify_extra_emails)
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   }
 }
 
 // Verify saved unverified emails
+function savedEmailKey(email: string) {
+  return email.trim().toLowerCase()
+}
+
+function replaceSavedEmails(entries: NotifyEmailEntry[]) {
+  const visible = entries.filter(item => !removedSavedEmails.has(savedEmailKey(item.email)))
+  if (savedSendingEmail && !visible.some(item => item.email === savedSendingEmail && !item.verified)) {
+    invalidateSavedSend(savedSendingEmail)
+  }
+  if (verifyingEmail.value && !visible.some(item => item.email === verifyingEmail.value && !item.verified)) {
+    clearSavedVerification()
+  }
+  emailEntries.value = [...visible]
+}
+
 function hasSavedEmail(email: string) {
   return emailEntries.value.some(item => item.email === email && !item.verified)
 }
@@ -409,11 +423,13 @@ async function verifySavedEmail(email: string) {
   verifyingSaved.value = true
   try {
     await userAPI.verifyNotifyEmail(email, verifyCode.value)
+    const version = ++savedEmailMutationVersion
     clearSavedVerification()
     appStore.showSuccess(t('profile.balanceNotify.verifySuccess'))
     const updated = await userAPI.getProfile()
+    if (version !== savedEmailMutationVersion) return
     authStore.user = updated
-    emailEntries.value = [...updated.balance_notify_extra_emails]
+    replaceSavedEmails(updated.balance_notify_extra_emails)
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {
