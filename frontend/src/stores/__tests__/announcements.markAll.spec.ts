@@ -80,7 +80,7 @@ describe('mark all announcements read', () => {
     expect(store.unreadCount).toBe(1)
     markRead.mockClear().mockResolvedValue(undefined)
     await store.markAllAsRead()
-    expect(markRead.mock.calls).toEqual([[2]])
+    expect(markRead.mock.calls).toEqual([[2, store.sessionGeneration]])
     expect(store.unreadCount).toBe(0)
   })
 
@@ -107,9 +107,10 @@ describe('mark all announcements read', () => {
     markRead.mockImplementation(() => new Promise<void>(resolve => { finish = resolve }))
     const result = store.markAllAsRead()
     store.announcements.push(announcement(2))
+    await flushPromises()
     finish()
     await result
-    expect(markRead.mock.calls).toEqual([[1]])
+    expect(markRead.mock.calls).toEqual([[1, store.sessionGeneration]])
     expect(store.announcements[0].read_at).toBeTruthy()
     expect(store.announcements[1].read_at).toBeFalsy()
   })
