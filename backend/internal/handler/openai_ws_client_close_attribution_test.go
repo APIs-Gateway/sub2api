@@ -186,6 +186,92 @@ func TestOpenAIResponsesWebSocket_LaterTurnConcurrencyRejectionHasHTTPStatus(t *
 	}
 }
 
+func TestOpenAIResponsesWebSocket_PrewarmFailoverUserSlotReacquireHasHTTPStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		acquireErr error
+		status     int
+		errType    string
+		closeCode  coderws.StatusCode
+	}{
+		{name: "capacity", status: http.StatusTooManyRequests, errType: "rate_limit_error", closeCode: coderws.StatusTryAgainLater},
+		{name: "cache failure", acquireErr: errors.New("user cache unavailable"), status: http.StatusServiceUnavailable, errType: "api_error", closeCode: coderws.StatusInternalError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var userAcquires atomic.Int32
+			cache := &concurrencyCacheMock{
+				acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) {
+					if userAcquires.Add(1) == 1 {
+						return true, nil
+					}
+					return false, tc.acquireErr
+				},
+				acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+			}
+			reports := make(chan bool, 1)
+			h := newOpenAIResponsesWebSocketAttributionHandlerWithProxy(t, cache,
+				func(_ context.Context, _ *gin.Context, _ *coderws.Conn, _ *service.Account, _ string, _ []byte, hooks *service.OpenAIWSIngressHooks) error {
+					if hooks == nil || hooks.AfterLocalPrewarm == nil {
+						return errors.New("missing local prewarm hook")
+					}
+					hooks.AfterLocalPrewarm(1)
+					return &service.UpstreamFailoverError{StatusCode: http.StatusInternalServerError}
+				}, reports, true)
+			h.maxAccountSwitches = 1
+			handlerDone := make(chan struct{})
+			server := newOpenAIResponsesWebSocketAttributionServerWithDone(t, h, handlerDone)
+			defer server.Close()
+			client := dialAndSendFirstResponseCreate(t, server.URL)
+			defer func() { _ = client.CloseNow() }()
+			message := "Concurrency limit exceeded for user"
+			if tc.acquireErr != nil {
+				message = "Service temporarily unavailable"
+			}
+			closeErr := readOpenAIWSRejectionStatus(t, client, tc.status, tc.errType, message)
+			require.Equal(t, tc.closeCode, closeErr.Code)
+			select {
+			case <-handlerDone:
+			case <-time.After(3 * time.Second):
+				t.Fatal("websocket handler did not exit after local reacquire rejection")
+			}
+			require.Equal(t, int32(2), userAcquires.Load())
+			require.GreaterOrEqual(t, atomic.LoadInt32(&cache.releaseUserCalled), int32(1))
+		})
+	}
+}
+
+func TestOpenAIResponsesWebSocket_LaterCyberGuardBeforeTurnWritesEvent(t *testing.T) {
+	reports := make(chan bool, 1)
+	h := newOpenAIResponsesWebSocketAttributionHandlerWithProxy(t, &concurrencyCacheMock{
+		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+	}, func(_ context.Context, c *gin.Context, _ *coderws.Conn, _ *service.Account, _ string, _ []byte, hooks *service.OpenAIWSIngressHooks) error {
+		if hooks == nil || hooks.AfterTurn == nil || hooks.BeforeTurn == nil {
+			return errors.New("missing turn hooks")
+		}
+		service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "blocked", UpstreamStatus: http.StatusOK})
+		hooks.AfterTurn(1, nil, nil)
+		return hooks.BeforeTurn(2)
+	}, reports, true)
+	handlerDone := make(chan struct{})
+	server := newOpenAIResponsesWebSocketAttributionServerWithDone(t, h, handlerDone)
+	defer server.Close()
+	client := dialAndSendFirstResponseCreate(t, server.URL)
+	defer func() { _ = client.CloseNow() }()
+	closeErr := readOpenAIWSRejectionStatus(t, client, http.StatusForbidden, "permission_error", "session is blocked by cyber-security policy")
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+	select {
+	case <-handlerDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("websocket handler did not exit after cyber guard")
+	}
+	select {
+	case <-reports:
+		t.Fatal("local cyber guard must not lower account scheduler health")
+	default:
+	}
+}
+
 func TestOpenAIResponsesWebSocket_FastPolicyBlockKeepsAccountHealthyAndSingleEvent(t *testing.T) {
 	reports := make(chan bool, 1)
 	h := newOpenAIResponsesWebSocketAttributionHandlerWithProxy(t, &concurrencyCacheMock{
