@@ -84,7 +84,11 @@ func TestOpenAIResponsesWebSocket_BeforeTurnAdmissionRejectionIsNotAccountFailur
 			client := dialAndSendFirstResponseCreate(t, server.URL)
 			defer func() { _ = client.CloseNow() }()
 
-			closeErr := readClientCloseError(t, client)
+			slotType := "account"
+			if tt.rejectUser {
+				slotType = "user"
+			}
+			closeErr := readOpenAIWSRejectionStatus(t, client, 429, "rate_limit_error", "Concurrency limit exceeded for "+slotType)
 			require.Equal(t, tt.wantStatus, closeErr.Code)
 			require.Equal(t, tt.wantReason, closeErr.Reason)
 

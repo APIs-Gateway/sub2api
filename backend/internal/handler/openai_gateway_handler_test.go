@@ -984,6 +984,12 @@ func TestOpenAIResponsesWebSocket_RejectsMessageIDAsPreviousResponseID(t *testin
 	require.NoError(t, err)
 
 	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+	_, payload, err := clientConn.Read(readCtx)
+	require.NoError(t, err)
+	require.Equal(t, "error", gjson.GetBytes(payload, "type").String())
+	require.Equal(t, int64(http.StatusBadRequest), gjson.GetBytes(payload, "status").Int())
+	require.Equal(t, "invalid_request_error", gjson.GetBytes(payload, "error.type").String())
+	require.Contains(t, gjson.GetBytes(payload, "error.message").String(), "previous_response_id")
 	_, _, err = clientConn.Read(readCtx)
 	cancelRead()
 	require.Error(t, err)
@@ -1020,12 +1026,7 @@ func TestOpenAIResponsesWebSocket_PreviousResponseIDKindLoggedBeforeAcquireFailu
 	cancelWrite()
 	require.NoError(t, err)
 
-	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
-	_, _, err = clientConn.Read(readCtx)
-	cancelRead()
-	require.Error(t, err)
-	var closeErr coderws.CloseError
-	require.ErrorAs(t, err, &closeErr)
+	closeErr := readOpenAIWSRejectionStatus(t, clientConn, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable")
 	require.Equal(t, coderws.StatusInternalError, closeErr.Code)
 	require.Contains(t, strings.ToLower(closeErr.Reason), "failed to acquire user concurrency slot")
 }
@@ -1245,16 +1246,17 @@ func TestOpenAIResponsesWebSocket_ContentModerationBlocksFirstFrame(t *testing.T
 
 	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
 	_, payload, readErr := clientConn.Read(readCtx)
+	require.NoError(t, readErr)
+	require.Equal(t, "error", gjson.GetBytes(payload, "type").String())
+	require.Equal(t, int64(http.StatusForbidden), gjson.GetBytes(payload, "status").Int())
+	require.Equal(t, "content_policy_violation", gjson.GetBytes(payload, "error.code").String())
+	require.Contains(t, gjson.GetBytes(payload, "error.message").String(), "内容审计测试阻断")
+	_, _, readErr = clientConn.Read(readCtx)
 	cancelRead()
-	if readErr == nil {
-		require.Contains(t, string(payload), "content_policy_violation")
-		require.Contains(t, string(payload), "内容审计测试阻断")
-	} else {
-		var closeErr coderws.CloseError
-		require.ErrorAs(t, readErr, &closeErr)
-		require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
-		require.Contains(t, closeErr.Reason, "内容审计测试阻断")
-	}
+	var closeErr coderws.CloseError
+	require.ErrorAs(t, readErr, &closeErr)
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+	require.Contains(t, closeErr.Reason, "内容审计测试阻断")
 	var logs []service.ContentModerationLog
 	require.Eventually(t, func() bool {
 		logs = repo.logSnapshot()

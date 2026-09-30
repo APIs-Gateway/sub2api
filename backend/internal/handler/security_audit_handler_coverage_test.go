@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 type blockedPromptEngine struct{}
@@ -23,6 +25,18 @@ func (blockedPromptEngine) EffectiveMode() securityaudit.Mode                   
 func (blockedPromptEngine) Enqueue(context.Context, securityaudit.Request) error { return nil }
 func (blockedPromptEngine) Evaluate(context.Context, securityaudit.Request) (*securityaudit.PromptDecision, error) {
 	return &securityaudit.PromptDecision{Kind: securityaudit.DecisionBlock, ErrorCode: securityaudit.ErrorCodeBlocked}, nil
+}
+
+type unavailablePromptEngine struct{}
+
+func (unavailablePromptEngine) EffectiveMode() securityaudit.Mode {
+	return securityaudit.ModeBlocking
+}
+func (unavailablePromptEngine) Enqueue(context.Context, securityaudit.Request) error {
+	return nil
+}
+func (unavailablePromptEngine) Evaluate(context.Context, securityaudit.Request) (*securityaudit.PromptDecision, error) {
+	return nil, errors.New("prompt guard unavailable")
 }
 
 func newBlockedOpenAIHandler() *OpenAIGatewayHandler {
@@ -193,27 +207,45 @@ func TestPromptAuditNilReceiverAndLegacyCompatibilityBranches(t *testing.T) {
 	require.Equal(t, "content_policy_violation", securityAuditWSCloseReason(&securityaudit.Decision{}))
 }
 
-func TestWriteSecurityAuditWSErrorWritesPromptGuardEnvelope(t *testing.T) {
-	decision := promptGuardDecision(securityaudit.DecisionBlock)
-	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := coderws.Accept(w, r, nil)
-		if err != nil {
-			t.Errorf("accept websocket: %v", err)
-			return
-		}
-		defer func() { _ = conn.CloseNow() }()
-		writeSecurityAuditWSError(context.TODO(), conn, decision)
-	}))
-	defer wsServer.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	clientConn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
-	require.NoError(t, err)
-	defer func() { _ = clientConn.CloseNow() }()
-
-	messageType, payload, err := clientConn.Read(ctx)
-	require.NoError(t, err)
-	require.Equal(t, coderws.MessageText, messageType)
-	require.Contains(t, string(payload), securityaudit.ErrorCodeBlocked)
+func TestOpenAIResponsesWebSocketPromptGuardMatchesHTTP(t *testing.T) {
+	tests := []struct {
+		name      string
+		engine    securityaudit.PromptEngine
+		status    int
+		errType   string
+		closeCode coderws.StatusCode
+	}{
+		{name: "blocked", engine: blockedPromptEngine{}, status: http.StatusForbidden, errType: "permission_error", closeCode: coderws.StatusCode(4403)},
+		{name: "unavailable", engine: unavailablePromptEngine{}, status: http.StatusServiceUnavailable, errType: "api_error", closeCode: coderws.StatusTryAgainLater},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newOpenAIHandlerForPreviousResponseIDValidation(t, nil)
+			h.securityAuditCoordinator = securityaudit.NewCoordinator(nil, tc.engine)
+			httpCtx, recorder := newPromptAuditBlockedContext("/v1/responses", `{"model":"gpt-5.5","input":"prompt"}`)
+			h.Responses(httpCtx)
+			require.Equal(t, tc.status, recorder.Code)
+			require.Equal(t, tc.errType, gjson.Get(recorder.Body.String(), "error.type").String())
+			wsServer := newOpenAIWSHandlerTestServer(t, h, middleware2.AuthSubject{UserID: 7, Concurrency: 1})
+			defer wsServer.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			clientConn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(wsServer.URL, "http")+"/openai/v1/responses", nil)
+			require.NoError(t, err)
+			defer func() { _ = clientConn.CloseNow() }()
+			require.NoError(t, clientConn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.5","input":"prompt"}`)))
+			messageType, payload, err := clientConn.Read(ctx)
+			require.NoError(t, err)
+			require.Equal(t, coderws.MessageText, messageType)
+			require.Equal(t, "error", gjson.GetBytes(payload, "type").String())
+			require.Equal(t, int64(recorder.Code), gjson.GetBytes(payload, "status").Int())
+			for _, field := range []string{"type", "code", "message"} {
+				require.Equal(t, gjson.Get(recorder.Body.String(), "error."+field).String(), gjson.GetBytes(payload, "error."+field).String(), field)
+			}
+			_, _, err = clientConn.Read(ctx)
+			var closeErr coderws.CloseError
+			require.ErrorAs(t, err, &closeErr)
+			require.Equal(t, tc.closeCode, closeErr.Code)
+		})
+	}
 }
