@@ -16,6 +16,153 @@ type ResponsesClientToolMapping struct {
 	NamespaceTools map[string]ResponsesNamespaceName
 }
 
+// AdaptDeepSeekResponsesNamespaceCustomTools handles the Codex Lite shape that
+// DeepSeek accepts in input.additional_tools without actually registering its
+// tools. DeepSeek also rejects a native namespace containing custom children.
+// The caller must lift additional_tools first and restrict this adapter to the
+// official DeepSeek Responses endpoint.
+func AdaptDeepSeekResponsesNamespaceCustomTools(req map[string]any) (ResponsesClientToolMapping, bool, error) {
+	tools, ok := req["tools"].([]any)
+	if !ok || len(tools) == 0 {
+		return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses Lite tools require a non-empty tools array")
+	}
+	customNames := make(map[string]ResponsesNamespaceName)
+	topLevel := make(map[string]bool)
+	validated := make([]map[string]any, 0, len(tools))
+	for _, raw := range tools {
+		tool, ok := raw.(map[string]any)
+		if !ok {
+			return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses tool declaration must be an object")
+		}
+		validated = append(validated, tool)
+		typ := strings.TrimSpace(stringValue(tool["type"]))
+		name := strings.TrimSpace(stringValue(tool["name"]))
+		if typ != "function" && typ != "custom" && typ != "namespace" && typ != "tool_search" {
+			return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses tool declaration has an unsupported type")
+		}
+		if typ == "function" || typ == "custom" {
+			if name == "" {
+				return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses %s tool requires a name", typ)
+			}
+			if topLevel[name] {
+				return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses tool %q has a duplicate name", name)
+			}
+			topLevel[name] = true
+		}
+	}
+	flatNames := make(map[string]ResponsesNamespaceName)
+	for _, tool := range validated {
+		if strings.TrimSpace(stringValue(tool["type"])) != "namespace" {
+			continue
+		}
+		namespace := strings.TrimSpace(stringValue(tool["name"]))
+		if _, hasTools := tool["tools"]; hasTools {
+			if _, valid := tool["tools"].([]any); !valid {
+				return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses namespace tools must be an array")
+			}
+		}
+		if _, hasChildren := tool["children"]; hasChildren {
+			if _, valid := tool["children"].([]any); !valid {
+				return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses namespace children must be an array")
+			}
+			if _, hasTools := tool["tools"]; hasTools {
+				return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses namespace cannot declare both tools and children")
+			}
+		}
+		children := namespaceChildren(tool)
+		if namespace == "" || len(children) == 0 {
+			return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses namespace requires a name and children")
+		}
+		for _, rawChild := range children {
+			child, ok := rawChild.(map[string]any)
+			if !ok {
+				return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses namespace child must be an object")
+			}
+			typ := strings.TrimSpace(stringValue(child["type"]))
+			name := strings.TrimSpace(stringValue(child["name"]))
+			if (typ != "function" && typ != "custom") || name == "" {
+				return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses namespace child requires a function/custom type and name")
+			}
+			flat := flattenNamespaceToolName(namespace, name)
+			if topLevel[flat] {
+				return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses namespace tool %q conflicts with a top-level tool", flat)
+			}
+			if _, exists := flatNames[flat]; exists {
+				return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses namespace tool %q has a duplicate flattened name", flat)
+			}
+			entry := ResponsesNamespaceName{Namespace: namespace, Name: name}
+			flatNames[flat] = entry
+			if typ == "custom" {
+				customNames[flat] = entry
+				child["type"] = "function"
+				child["parameters"] = json.RawMessage(customToolInputSchema)
+				delete(child, "format")
+			}
+		}
+	}
+	if err := rewriteDeepSeekNamespacedCustomHistory(req["input"], customNames); err != nil {
+		return ResponsesClientToolMapping{}, false, err
+	}
+	if choice, ok := req["tool_choice"].(map[string]any); ok && strings.TrimSpace(stringValue(choice["type"])) == "custom" {
+		if namespace := strings.TrimSpace(stringValue(choice["namespace"])); namespace != "" {
+			name := strings.TrimSpace(stringValue(choice["name"]))
+			flat := flattenNamespaceToolName(namespace, name)
+			if entry, exists := customNames[flat]; !exists || entry.Namespace != namespace || entry.Name != name {
+				return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses tool_choice refers to an undeclared namespace custom tool")
+			}
+			choice["name"] = flat
+			delete(choice, "namespace")
+		}
+	}
+	mapping, changed, err := AdaptResponsesClientTools(req)
+	if err != nil {
+		return ResponsesClientToolMapping{}, false, err
+	}
+	if len(customNames) == 0 {
+		return mapping, changed, nil
+	}
+	if mapping.CustomTools == nil {
+		mapping.CustomTools = make(map[string]bool)
+	}
+	for flat := range customNames {
+		mapping.CustomTools[flat] = true
+	}
+	if _, err := rewriteClientToolHistory(req["input"], &mapping); err != nil {
+		return ResponsesClientToolMapping{}, false, err
+	}
+	rewriteClientToolChoice(req, &mapping)
+	return mapping, true, nil
+}
+
+func rewriteDeepSeekNamespacedCustomHistory(value any, names map[string]ResponsesNamespaceName) error {
+	switch typed := value.(type) {
+	case []any:
+		for _, child := range typed {
+			if err := rewriteDeepSeekNamespacedCustomHistory(child, names); err != nil {
+				return err
+			}
+		}
+	case map[string]any:
+		if strings.TrimSpace(stringValue(typed["type"])) == "custom_tool_call" {
+			if namespace := strings.TrimSpace(stringValue(typed["namespace"])); namespace != "" {
+				name := strings.TrimSpace(stringValue(typed["name"]))
+				flat := flattenNamespaceToolName(namespace, name)
+				if entry, exists := names[flat]; !exists || entry.Namespace != namespace || entry.Name != name {
+					return fmt.Errorf("DeepSeek Responses history refers to an undeclared namespace custom tool")
+				}
+				typed["name"] = flat
+				delete(typed, "namespace")
+			}
+		}
+		for _, child := range typed {
+			if err := rewriteDeepSeekNamespacedCustomHistory(child, names); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // AdaptResponsesClientTools lowers Codex client-only tools in req to
 // ordinary function tools. It mutates req and returns the mapping required to
 // restore the upstream response.
@@ -609,7 +756,12 @@ func restoreClientToolValue(value any, adapter *ResponsesClientToolMapping) bool
 				retypeResponsesToolCallItemID(typed, "custom_tool_call")
 				typed["input"] = extractCustomToolCallInput(rawObjectString(typed["arguments"]))
 				delete(typed, "arguments")
-				delete(typed, "namespace")
+				if entry, ok := adapter.NamespaceTools[name]; ok {
+					typed["name"] = entry.Name
+					typed["namespace"] = entry.Namespace
+				} else {
+					delete(typed, "namespace")
+				}
 				changed = true
 			} else if adapter.ToolSearch && name == toolSearchProxyName {
 				typed["type"] = "tool_search_call"
@@ -640,8 +792,10 @@ type ResponsesClientToolStreamRestorer struct {
 }
 
 type responsesClientToolStreamCall struct {
-	kind string
-	name string
+	kind         string
+	name         string
+	namespace    string
+	upstreamName string
 	// callID and itemID stay as the upstream sent them so later upstream
 	// events keep matching this call; clientItemID is what we emit.
 	callID       string
@@ -680,7 +834,7 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 				event.Item.Type = "custom_tool_call"
 				event.Item.Input = ""
 				event.Item.Arguments = ""
-				event.Item.Namespace = ""
+				event.Item.Name, event.Item.Namespace = call.name, call.namespace
 			} else {
 				event.Item.Type = "tool_search_call"
 				event.Item.Name = ""
@@ -709,7 +863,7 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 				if input != "" {
 					emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.delta", OutputIndex: call.outputIdx, ItemID: call.clientItemID, Delta: input})
 				}
-				emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.done", OutputIndex: call.outputIdx, ItemID: call.clientItemID, CallID: call.callID, Name: call.name, Input: input})
+				emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.done", OutputIndex: call.outputIdx, ItemID: call.clientItemID, CallID: call.callID, Name: call.name, Namespace: call.namespace, Input: input})
 			}
 			return out
 		}
@@ -720,7 +874,7 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 				event.Item.Type = "custom_tool_call"
 				event.Item.Input = extractCustomToolCallInput(call.arguments.String())
 				event.Item.Arguments = ""
-				event.Item.Namespace = ""
+				event.Item.Name, event.Item.Namespace = call.name, call.namespace
 			} else {
 				event.Item.Type = "tool_search_call"
 				event.Item.Name = ""
@@ -898,9 +1052,15 @@ func (r *ResponsesClientToolStreamRestorer) recordItem(event ResponsesStreamEven
 	}
 	call := r.calls[key]
 	if call == nil {
+		clientName, namespace := name, ""
+		if entry, ok := r.adapter.NamespaceTools[name]; ok && kind == "custom" {
+			clientName, namespace = entry.Name, entry.Namespace
+		}
 		call = &responsesClientToolStreamCall{
 			kind:         kind,
-			name:         name,
+			name:         clientName,
+			namespace:    namespace,
+			upstreamName: name,
 			callID:       event.Item.CallID,
 			itemID:       event.Item.ID,
 			clientItemID: retypedResponsesToolCallItemID(event.Item.ID, responsesClientToolItemType(kind)),
@@ -927,7 +1087,7 @@ func (r *ResponsesClientToolStreamRestorer) callFor(event ResponsesStreamEvent) 
 		return call
 	}
 	for _, call := range r.calls {
-		if (event.CallID != "" && call.callID == event.CallID) || (event.ItemID == "" && event.Name != "" && call.name == event.Name) {
+		if (event.CallID != "" && call.callID == event.CallID) || (event.ItemID == "" && event.Name != "" && call.upstreamName == event.Name) {
 			return call
 		}
 	}
@@ -958,11 +1118,16 @@ func restoreResponsesOutputClientTools(outputs []ResponsesOutput, adapter *Respo
 			continue
 		}
 		if adapter.CustomTools[output.Name] {
+			entry, namespaced := adapter.NamespaceTools[output.Name]
 			output.Type = "custom_tool_call"
 			output.ID = retypedResponsesToolCallItemID(output.ID, output.Type)
 			output.Input = extractCustomToolCallInput(output.Arguments)
 			output.Arguments = ""
-			output.Namespace = ""
+			if namespaced {
+				output.Name, output.Namespace = entry.Name, entry.Namespace
+			} else {
+				output.Namespace = ""
+			}
 		} else if adapter.ToolSearch && output.Name == toolSearchProxyName {
 			output.Type = "tool_search_call"
 			output.ID = retypedResponsesToolCallItemID(output.ID, output.Type)

@@ -3735,12 +3735,17 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		needsOpenAIResponsesClientToolAdaptation(body)
 	liteClientTools := account.IsOpenAIApiKey() && !isOfficialOpenAIBaseURL(account.GetOpenAIBaseURL()) &&
 		gjson.GetBytes(body, `input.#(type=="additional_tools")`).Exists()
-	if !isOpenAIResponsesCompactPath(c) && !hasOpenAIResponsesNamespaceToolDeclaration(body) &&
+	deepSeekNamespaceLite := liteClientTools && isOfficialDeepSeekResponsesBaseURL(account.GetOpenAIBaseURL()) &&
+		hasOpenAIResponsesNamespaceToolDeclaration(body)
+	if !isOpenAIResponsesCompactPath(c) &&
+		(!hasOpenAIResponsesNamespaceToolDeclaration(body) || deepSeekNamespaceLite) &&
 		(commandCodeClientTools || liteClientTools) {
 		var adaptedBody []byte
 		var mapping apicompat.ResponsesClientToolMapping
 		var adaptErr error
-		if commandCodeClientTools {
+		if deepSeekNamespaceLite {
+			adaptedBody, mapping, adaptErr = adaptDeepSeekResponsesLiteClientTools(body)
+		} else if commandCodeClientTools {
 			adaptedBody, mapping, adaptErr = adaptCommandCodeResponsesClientTools(body)
 		} else {
 			adaptedBody, mapping, adaptErr = adaptOpenAIResponsesClientTools(body)
@@ -4150,7 +4155,16 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	// 拒绝或静默丢弃，客户端侧表现为工具调用整体不可用。出站前降级，回程再还原。
 	if account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey &&
 		!isOpenAIResponsesCompactPath(c) {
-		adaptedBody, mapping, adaptErr := adaptOpenAIResponsesClientTools(body)
+		var adaptedBody []byte
+		var mapping apicompat.ResponsesClientToolMapping
+		var adaptErr error
+		if isOfficialDeepSeekResponsesBaseURL(account.GetOpenAIBaseURL()) &&
+			gjson.GetBytes(body, `input.#(type=="additional_tools")`).Exists() &&
+			hasOpenAIResponsesNamespaceToolDeclaration(body) {
+			adaptedBody, mapping, adaptErr = adaptDeepSeekResponsesLiteClientTools(body)
+		} else {
+			adaptedBody, mapping, adaptErr = adaptOpenAIResponsesClientTools(body)
+		}
 		if adaptErr != nil {
 			return nil, adaptErr
 		}
@@ -4211,7 +4225,8 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if mapping, ok := openAIResponsesClientToolMapping(c); ok && isEventStreamResponse(resp.Header) {
+	if mapping, ok := openAIResponsesClientToolMapping(c); ok &&
+		(isEventStreamResponse(resp.Header) || (reqStream && isOfficialDeepSeekResponsesBaseURL(account.GetOpenAIBaseURL()))) {
 		maxLineSize := defaultMaxLineSize
 		if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 			maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -5653,7 +5668,23 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	// Some upstreams (e.g. other sub2api instances) may return SSE even when
 	// stream=false was requested. Without this conversion the client would
 	// receive raw SSE text or a terminal event with empty output.
-	if isEventStreamResponse(resp.Header) {
+	declaredSSE := isEventStreamResponse(resp.Header)
+	mapping, mapped := openAIResponsesClientToolMapping(c)
+	headerlessDeepSeekSSE := !declaredSSE && mapped && isOfficialDeepSeekResponsesBaseURL(account.GetOpenAIBaseURL()) &&
+		looksLikeOpenAIResponseSSE(body)
+	if declaredSSE || headerlessDeepSeekSSE {
+		if !declaredSSE {
+			maxLineSize := defaultMaxLineSize
+			if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+				maxLineSize = s.cfg.Gateway.MaxLineSize
+			}
+			restoredStream := newResponsesClientToolStreamBody(io.NopCloser(bytes.NewReader(body)), mapping, maxLineSize)
+			body, err = ReadUpstreamResponseBody(restoredStream, s.cfg, c, openAITooLargeError)
+			_ = restoredStream.Close()
+			if err != nil {
+				return nil, fmt.Errorf("restore OpenAI passthrough client tool SSE: %w", err)
+			}
+		}
 		return s.handlePassthroughSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
 
@@ -5704,6 +5735,19 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 		imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
 		imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
 	}, nil
+}
+
+func looksLikeOpenAIResponseSSE(body []byte) bool {
+	for _, line := range bytes.Split(body, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || bytes.HasPrefix(line, []byte(":")) ||
+			bytes.HasPrefix(line, []byte("event:")) || bytes.HasPrefix(line, []byte("id:")) ||
+			bytes.HasPrefix(line, []byte("retry:")) {
+			continue
+		}
+		return bytes.HasPrefix(line, []byte("data:"))
+	}
+	return false
 }
 
 // handlePassthroughSSEToJSON converts an SSE response body into a JSON
@@ -5768,10 +5812,8 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 
 	contentType := "application/json; charset=utf-8"
 	if !ok {
-		contentType = resp.Header.Get("Content-Type")
-		if contentType == "" {
-			contentType = "text/event-stream"
-		}
+		contentType = "text/event-stream"
+		c.Writer.Header().Set("Content-Type", contentType)
 	}
 	restoredBody, restoreErr := restoreOpenAIResponsesClientToolPayload(c, body)
 	if restoreErr != nil {
