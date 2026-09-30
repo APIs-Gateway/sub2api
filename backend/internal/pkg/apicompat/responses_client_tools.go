@@ -28,11 +28,13 @@ func AdaptDeepSeekResponsesNamespaceCustomTools(req map[string]any) (ResponsesCl
 	}
 	customNames := make(map[string]ResponsesNamespaceName)
 	topLevel := make(map[string]bool)
+	validated := make([]map[string]any, 0, len(tools))
 	for _, raw := range tools {
 		tool, ok := raw.(map[string]any)
 		if !ok {
 			return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses tool declaration must be an object")
 		}
+		validated = append(validated, tool)
 		typ := strings.TrimSpace(stringValue(tool["type"]))
 		name := strings.TrimSpace(stringValue(tool["name"]))
 		if typ != "function" && typ != "custom" && typ != "namespace" && typ != "tool_search" {
@@ -49,8 +51,7 @@ func AdaptDeepSeekResponsesNamespaceCustomTools(req map[string]any) (ResponsesCl
 		}
 	}
 	flatNames := make(map[string]ResponsesNamespaceName)
-	for _, raw := range tools {
-		tool := raw.(map[string]any) // Validated in the first pass.
+	for _, tool := range validated {
 		if strings.TrimSpace(stringValue(tool["type"])) != "namespace" {
 			continue
 		}
