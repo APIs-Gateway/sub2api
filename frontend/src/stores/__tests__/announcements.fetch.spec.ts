@@ -3,8 +3,8 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useAnnouncementStore } from '../announcements'
 import type { UserAnnouncement } from '@/types'
 
-const list = vi.hoisted(() => vi.fn())
-vi.mock('@/api', () => ({ announcementsAPI: { list } }))
+const { list, markRead } = vi.hoisted(() => ({ list: vi.fn(), markRead: vi.fn() }))
+vi.mock('@/api', () => ({ announcementsAPI: { list, markRead } }))
 
 const notice = (id: number): UserAnnouncement => ({
   id, title: `Notice ${id}`, content: 'Content', notify_mode: 'popup',
@@ -21,11 +21,62 @@ function pendingList() {
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.resetAllMocks()
+  markRead.mockResolvedValue({ message: 'ok' })
   vi.spyOn(console, 'error').mockImplementation(() => {})
 })
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
 
 describe('announcement fetch ownership', () => {
+  it('does not let an old dismissal timer replace a new session popup', async () => {
+    vi.useFakeTimers()
+    const store = useAnnouncementStore()
+    list.mockResolvedValueOnce([notice(1), notice(2)]).mockResolvedValueOnce([notice(3), notice(4)])
+    await store.fetchAnnouncements(true)
+    expect(store.currentPopup?.id).toBe(1)
+    await store.dismissPopup()
+    expect(store.currentPopup).toBeNull()
+
+    store.reset()
+    await store.fetchAnnouncements(true)
+    expect(store.currentPopup?.id).toBe(3)
+    await vi.advanceTimersByTimeAsync(300)
+    expect(store.currentPopup?.id).toBe(3)
+  })
+
+  it('does not let an old timer replace a popup opened by a same-session refresh', async () => {
+    vi.useFakeTimers()
+    const store = useAnnouncementStore()
+    list.mockResolvedValueOnce([notice(1), notice(2)]).mockResolvedValueOnce([notice(2), notice(3)])
+    await store.fetchAnnouncements(true)
+    await store.dismissPopup()
+    await store.fetchAnnouncements(true)
+    expect(store.currentPopup?.id).toBe(2)
+
+    await vi.advanceTimersByTimeAsync(300)
+    expect(store.currentPopup?.id).toBe(2)
+  })
+
+  it('waits for the latest dismissal when two popup timers overlap', async () => {
+    vi.useFakeTimers()
+    const store = useAnnouncementStore()
+    list.mockResolvedValueOnce([notice(1), notice(2), notice(3)])
+      .mockResolvedValueOnce([notice(2), notice(3)])
+    await store.fetchAnnouncements(true)
+    await store.dismissPopup()
+    await vi.advanceTimersByTimeAsync(100)
+    await store.fetchAnnouncements(true)
+    expect(store.currentPopup?.id).toBe(2)
+    await store.dismissPopup()
+
+    await vi.advanceTimersByTimeAsync(200)
+    expect(store.currentPopup).toBeNull()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(store.currentPopup?.id).toBe(3)
+  })
+
   it('does not restore announcements or popups after logout resets the store', async () => {
     const store = useAnnouncementStore()
     const old = pendingList()
