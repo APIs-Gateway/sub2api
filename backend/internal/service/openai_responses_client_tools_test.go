@@ -107,6 +107,32 @@ func TestOfficialDeepSeekResponsesBaseURL(t *testing.T) {
 	}
 }
 
+func TestAdaptDeepSeekResponsesLiteClientToolsRejectsInvalidCarrier(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"invalid JSON", `{"model":`, "decode OpenAI Responses client tools"},
+		{"malformed carrier", `{"model":"deepseek-chat","input":[{"type":"additional_tools","tools":"invalid"}]}`, "additional_tools.tools must be an array"},
+		{"missing carrier", `{"model":"deepseek-chat","tools":[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"}]}]}`, "require an additional_tools carrier"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := []byte(tc.body)
+			adapted, mapping, err := adaptDeepSeekResponsesLiteClientTools(original)
+			require.ErrorContains(t, err, tc.want)
+			require.Equal(t, original, adapted)
+			require.Empty(t, mapping.CustomTools)
+			require.Empty(t, mapping.NamespaceTools)
+		})
+	}
+}
+
+func TestLooksLikeOpenAIResponseSSESkipsProtocolPreamble(t *testing.T) {
+	require.True(t, looksLikeOpenAIResponseSSE([]byte(": keepalive\nretry: 1000\nevent: response.completed\nid: 1\ndata: {\"type\":\"response.completed\"}\n\n")))
+	require.False(t, looksLikeOpenAIResponseSSE([]byte(": keepalive\nretry: 1000\nevent: response.completed\n")))
+}
+
 func TestOpenAIForward_DeepSeekNamespacedCustomLiteJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"gpt-5.6-sol","stream":false,"tool_choice":{"type":"custom","namespace":"functions","name":"exec"},"input":[
@@ -366,6 +392,29 @@ func TestOpenAIForward_DeepSeekNamespacedCustomLitePassthroughUnlabeledSSE(t *te
 			}
 		})
 	}
+}
+
+func TestOpenAIForward_DeepSeekPassthroughHeaderlessSSELineLimitBeforeOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"deepseek-chat","stream":false,"input":[{"type":"additional_tools","tools":[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"}]}]}]}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+	sse := `data: {"type":"response.completed","response":{"id":"resp_large","model":"deepseek-chat","status":"completed","detail":"` + strings.Repeat("x", 70*1024) + `"}}` + "\n\n"
+	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(sse))}}
+	svc := openAIClientToolsTestService(upstream)
+	svc.cfg.Gateway.MaxLineSize = 65 * 1024
+	account := &Account{ID: 7677, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "test-key", "base_url": "https://api.deepseek.com"},
+		Extra:       map[string]any{"openai_responses_supported": true, "openai_passthrough": true}}
+
+	result, err := svc.Forward(context.Background(), c, account, body)
+
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "token too long")
+	require.NotNil(t, upstream.lastReq)
+	require.Empty(t, recorder.Body.String(), "an invalid restored SSE response must not be partially sent")
 }
 
 func TestOpenAIForward_DeepSeekNamespacedCustomMappingClearedAcrossAccounts(t *testing.T) {

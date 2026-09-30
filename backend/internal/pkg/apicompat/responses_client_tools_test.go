@@ -70,18 +70,53 @@ func TestAdaptDeepSeekResponsesNamespaceCustomToolsRejectsAmbiguousDeclarations(
 	for _, tc := range []struct {
 		name  string
 		tools []any
+		want  string
 	}{
-		{"flat collides with direct", []any{map[string]any{"type": "function", "name": "functions__exec"}, map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "custom", "name": "exec"}}}}},
-		{"duplicate child", []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "custom", "name": "exec"}, map[string]any{"type": "function", "name": "exec"}}}}},
-		{"duplicate direct", []any{map[string]any{"type": "custom", "name": "exec"}, map[string]any{"type": "function", "name": "exec"}}},
-		{"missing child name", []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "custom"}}}}},
-		{"malformed children", []any{map[string]any{"type": "namespace", "name": "functions", "tools": "not-an-array"}}},
+		{"empty declarations", []any{}, "non-empty tools array"},
+		{"non-object declaration", []any{"exec"}, "declaration must be an object"},
+		{"unsupported type", []any{map[string]any{"type": "remote_mcp", "name": "exec"}}, "unsupported type"},
+		{"unnamed direct custom", []any{map[string]any{"type": "custom"}}, "requires a name"},
+		{"flat collides with direct", []any{map[string]any{"type": "function", "name": "functions__exec"}, map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "custom", "name": "exec"}}}}, "conflicts with a top-level tool"},
+		{"duplicate child", []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "custom", "name": "exec"}, map[string]any{"type": "function", "name": "exec"}}}}, "duplicate flattened name"},
+		{"duplicate direct", []any{map[string]any{"type": "custom", "name": "exec"}, map[string]any{"type": "function", "name": "exec"}}, "duplicate name"},
+		{"missing child name", []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "custom"}}}}, "child requires a function/custom type and name"},
+		{"non-object child", []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{"exec"}}}, "child must be an object"},
+		{"unnamed namespace", []any{map[string]any{"type": "namespace", "tools": []any{map[string]any{"type": "custom", "name": "exec"}}}}, "namespace requires a name and children"},
+		{"malformed tools", []any{map[string]any{"type": "namespace", "name": "functions", "tools": "not-an-array"}}, "namespace tools must be an array"},
+		{"malformed children", []any{map[string]any{"type": "namespace", "name": "functions", "children": "not-an-array"}}, "namespace children must be an array"},
+		{"ambiguous child arrays", []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "custom", "name": "exec"}}, "children": []any{map[string]any{"type": "custom", "name": "exec"}}}}, "cannot declare both tools and children"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := AdaptDeepSeekResponsesNamespaceCustomTools(map[string]any{"tools": tc.tools})
-			require.Error(t, err)
+			require.ErrorContains(t, err, tc.want)
 		})
 	}
+}
+
+func TestAdaptDeepSeekResponsesNamespaceFunctionOnlyKeepsFunctionType(t *testing.T) {
+	req := map[string]any{"tools": []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "function", "name": "wait", "parameters": map[string]any{"type": "object"}}}}}}
+	mapping, changed, err := AdaptDeepSeekResponsesNamespaceCustomTools(req)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Empty(t, mapping.CustomTools)
+	require.Equal(t, ResponsesNamespaceName{Namespace: "functions", Name: "wait"}, mapping.NamespaceTools["functions__wait"])
+	tools := requireResponsesClientToolValue[[]any](t, req["tools"])
+	require.Equal(t, "function", requireResponsesClientToolValue[map[string]any](t, tools[0])["type"])
+}
+
+func TestDeepSeekNamespacedCustomTypedOutputRestoresNamespace(t *testing.T) {
+	mapping := ResponsesClientToolMapping{
+		CustomTools:    map[string]bool{"functions__exec": true},
+		NamespaceTools: map[string]ResponsesNamespaceName{"functions__exec": {Namespace: "functions", Name: "exec"}},
+	}
+	output := []ResponsesOutput{{Type: "function_call", ID: "fc_1", CallID: "call_1", Name: "functions__exec", Arguments: `{"input":"pwd"}`}}
+	restoreResponsesOutputClientTools(output, &mapping)
+	require.Equal(t, "custom_tool_call", output[0].Type)
+	require.Equal(t, "ctc_1", output[0].ID)
+	require.Equal(t, "functions", output[0].Namespace)
+	require.Equal(t, "exec", output[0].Name)
+	require.Equal(t, "pwd", output[0].Input)
+	require.Empty(t, output[0].Arguments)
 }
 
 func TestDeepSeekNamespacedCustomStreamRestoresEveryLifecycleEvent(t *testing.T) {
