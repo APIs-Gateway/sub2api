@@ -59,6 +59,31 @@ afterEach(() => {
 })
 
 describe('announcement read confirmation', () => {
+  it.each(['success', 'failure'])('does not toast for a previous session mark-all %s', async outcome => {
+    const oldRead = deferred()
+    markRead.mockReturnValueOnce(oldRead.promise)
+    const wrapper = mount(AnnouncementBell, {
+      global: { stubs: { Teleport: true, Transition: true, Icon: true } }
+    })
+    await wrapper.get('button').trigger('click')
+    const markAll = wrapper.findAll('button').find(item => item.text() === 'announcements.markAllRead')
+    if (!markAll) throw new Error('Mark-all button not found')
+    await markAll.trigger('click')
+    await flushPromises()
+    expect(markRead).toHaveBeenCalledTimes(1)
+
+    const store = useAnnouncementStore()
+    store.reset()
+    store.announcements = [announcement(2)]
+    if (outcome === 'success') oldRead.resolve()
+    else oldRead.reject(new Error('old session offline'))
+    await flushPromises()
+
+    expect(store.unreadCount).toBe(1)
+    expect(showSuccess).not.toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
+  })
+
   it('keeps a failed confirmation open and reports success only after a successful retry', async () => {
     markRead.mockRejectedValue(new Error('offline'))
     const wrapper = mount(AnnouncementBell, {

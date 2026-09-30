@@ -423,10 +423,10 @@ async function markAsReadAndClose(id: number) {
 
 async function markAllAsRead() {
   try {
-    await announcementStore.markAllAsRead()
-    appStore.showSuccess(t('announcements.allMarkedAsRead'))
+    const marked = await announcementStore.markAllAsRead()
+    if (marked && !unmounted) appStore.showSuccess(t('announcements.allMarkedAsRead'))
   } catch (err: any) {
-    appStore.showError(err?.message || t('common.unknownError'))
+    if (!unmounted) appStore.showError(err?.message || t('common.unknownError'))
   }
 }
 
