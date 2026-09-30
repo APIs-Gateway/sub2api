@@ -8,8 +8,16 @@ import type { ApiResponse } from '@/types'
 import { getLocale } from '@/i18n'
 import { API_BASE_URL, refreshAuthTokens, type RefreshTokenResponse } from './tokenRefresh'
 import { getAdminComplianceSessionVersion } from '@/utils/adminComplianceSession'
+import { getAnnouncementReadSessionVersion } from '@/utils/announcementReadSession'
 
-type ComplianceRequestConfig = InternalAxiosRequestConfig & { _complianceSessionVersion?: number }
+type SessionRequestConfig = InternalAxiosRequestConfig & {
+  _complianceSessionVersion?: number
+  _announcementReadSessionVersion?: number
+}
+
+function isAnnouncementReadRequest(url: string): boolean {
+  return /^\/announcements\/\d+\/read(?:$|\?)/.test(url)
+}
 
 // ==================== Axios Instance Configuration ====================
 
@@ -71,19 +79,29 @@ const getUserTimezone = (): string => {
 
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
-    const complianceRequest = config as ComplianceRequestConfig
+    const sessionRequest = config as SessionRequestConfig
     // Keep the original version on retries so an old acceptance cannot use a new session's token.
-    if (complianceRequest._complianceSessionVersion === undefined) {
-      complianceRequest._complianceSessionVersion = getAdminComplianceSessionVersion()
+    if (sessionRequest._complianceSessionVersion === undefined) {
+      sessionRequest._complianceSessionVersion = getAdminComplianceSessionVersion()
     }
     if (
       /^\/admin\/compliance(?:\/|$|\?)/.test(String(config.url || '')) &&
-      complianceRequest._complianceSessionVersion !== getAdminComplianceSessionVersion()
+      sessionRequest._complianceSessionVersion !== getAdminComplianceSessionVersion()
     ) {
       return Promise.reject({
         status: 401,
         code: 'AUTH_SESSION_CHANGED',
         message: 'Authentication session changed before sending the compliance request.'
+      })
+    }
+    if (
+      isAnnouncementReadRequest(String(config.url || '')) &&
+      sessionRequest._announcementReadSessionVersion !== getAnnouncementReadSessionVersion()
+    ) {
+      return Promise.reject({
+        status: 401,
+        code: 'AUTH_SESSION_CHANGED',
+        message: 'Authentication session changed before sending the announcement read request.'
       })
     }
     // Attach token from localStorage
@@ -146,7 +164,7 @@ apiClient.interceptors.response.use(
       return Promise.reject(error)
     }
 
-    const originalRequest = error.config as ComplianceRequestConfig & { _retry?: boolean }
+    const originalRequest = error.config as SessionRequestConfig & { _retry?: boolean }
 
     // Handle common errors
     if (error.response) {
@@ -156,10 +174,17 @@ apiClient.interceptors.response.use(
       const staleComplianceRequest = () =>
         isComplianceRequest &&
         originalRequest?._complianceSessionVersion !== getAdminComplianceSessionVersion()
+      const staleAnnouncementReadRequest = () =>
+        isAnnouncementReadRequest(url) &&
+        originalRequest?._announcementReadSessionVersion !== getAnnouncementReadSessionVersion()
       const sessionChangedError = {
         status: 401,
         code: 'AUTH_SESSION_CHANGED',
         message: 'Authentication session changed while refreshing.'
+      }
+
+      if (staleAnnouncementReadRequest()) {
+        return Promise.reject(sessionChangedError)
       }
 
       // Validate `data` shape to avoid HTML error pages breaking our error handling.
@@ -239,7 +264,7 @@ apiClient.interceptors.response.use(
             refreshPromise = refreshAuthTokens({ failedAccessToken })
             const tokens = await refreshPromise
 
-            if (staleComplianceRequest()) {
+            if (staleComplianceRequest() || staleAnnouncementReadRequest()) {
               return Promise.reject(sessionChangedError)
             }
 

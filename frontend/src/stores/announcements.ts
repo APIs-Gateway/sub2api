@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { announcementsAPI } from '@/api'
 import type { UserAnnouncement } from '@/types'
+import { getAnnouncementReadSessionVersion, invalidateAnnouncementReadSession } from '@/utils/announcementReadSession'
 
 const THROTTLE_MS = 20 * 60 * 1000 // 20 minutes
 
@@ -16,7 +17,7 @@ export const useAnnouncementStore = defineStore('announcements', () => {
   // Session-scoped dedup set — not reactive, used as plain lookup only
   let shownPopupIds = new Set<number>()
   let fetchGeneration = 0
-  const sessionGeneration = ref(0)
+  const sessionGeneration = ref(getAnnouncementReadSessionVersion())
   const pendingReadRequests = new Map<number, Promise<void>>()
 
   // Getters
@@ -97,7 +98,10 @@ export const useAnnouncementStore = defineStore('announcements', () => {
 
     const generation = sessionGeneration.value
     const request = Promise.resolve()
-      .then(() => announcementsAPI.markRead(id))
+      .then(() => {
+        if (generation !== sessionGeneration.value) return
+        return announcementsAPI.markRead(id, generation)
+      })
       .then(() => {
         if (generation !== sessionGeneration.value) return
         const ann = announcements.value.find((a) => a.id === id)
@@ -145,7 +149,7 @@ export const useAnnouncementStore = defineStore('announcements', () => {
 
   function reset() {
     fetchGeneration++
-    sessionGeneration.value++
+    sessionGeneration.value = invalidateAnnouncementReadSession()
     pendingReadRequests.clear()
     announcements.value = []
     lastFetchTime.value = 0
