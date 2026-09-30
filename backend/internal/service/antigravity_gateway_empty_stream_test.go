@@ -92,6 +92,43 @@ func TestHandleClaudeStreamingResponse_MalformedThenEmptyStopRetriesSameAccount(
 	require.False(t, c.Writer.Written())
 }
 
+func TestHandleClaudeStreamingResponse_MalformedThenContentKeepsEventOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		firstPayload string
+		payload      string
+		want         string
+	}{
+		{"text", geminiMalformedFunctionCall, `{"response":{"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}]}}`, `"text":"answer"`},
+		{"tool", geminiMalformedFunctionCall, `{"response":{"candidates":[{"content":{"parts":[{"functionCall":{"name":"lookup","args":{}}}]},"finishReason":"STOP"}]}}`, `"name":"lookup"`},
+		{"thinking signature", `{"response":{"candidates":[{"content":{"parts":[{"text":"","thought":true,"thoughtSignature":"sig"}]},"finishReason":"MALFORMED_FUNCTION_CALL"}]}}`, `{"response":{"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}]}}`, `"text":"answer"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}})
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			resp := antigravityEmptyStreamTestResponse(tc.firstPayload, tc.payload)
+
+			result, err := svc.handleClaudeStreamingResponse(c, resp, time.Now(), "gemini-3.8-flash")
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			body := rec.Body.String()
+			require.Contains(t, body, "event: message_start")
+			require.Contains(t, body, tc.want)
+			require.Contains(t, body, "event: message_stop")
+			require.Less(t, strings.Index(body, "event: message_start"), strings.Index(body, tc.want))
+			require.Less(t, strings.Index(body, tc.want), strings.Index(body, "event: message_stop"))
+			if tc.name == "thinking signature" {
+				require.Contains(t, body, "signature_delta")
+				require.Less(t, strings.Index(body, "signature_delta"), strings.Index(body, tc.want))
+			}
+			require.Equal(t, 1, strings.Count(body, "event: message_stop"))
+		})
+	}
+}
+
 func TestHandleClaudeStreamingResponse_PreludeFlushesBeforeFirstContent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}})

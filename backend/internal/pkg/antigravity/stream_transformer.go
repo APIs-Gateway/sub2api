@@ -27,6 +27,7 @@ type StreamingProcessor struct {
 	blockIndex        int
 	messageStartSent  bool
 	messageStopSent   bool
+	lastFinishReason  string
 	usedTool          bool
 	pendingSignature  string
 	trailingSignature string
@@ -36,12 +37,11 @@ type StreamingProcessor struct {
 	usageMapHook      UsageMapHook
 
 	// 累计 usage
-	inputTokens               int
-	outputTokens              int
-	cacheReadTokens           int
-	imageOutputTokens         int
-	hasContent                bool
-	malformedFunctionCallOnly bool
+	inputTokens       int
+	outputTokens      int
+	cacheReadTokens   int
+	imageOutputTokens int
+	hasContent        bool
 }
 
 // NewStreamingProcessor 创建流式响应处理器
@@ -142,8 +142,19 @@ func (p *StreamingProcessor) ProcessLine(line string) []byte {
 			}
 		}
 		if finishReason != "" {
-			p.malformedFunctionCallOnly = finishReason == "MALFORMED_FUNCTION_CALL"
-			_, _ = result.Write(p.emitFinish(finishReason))
+			p.lastFinishReason = finishReason
+			// A stop before substantive content stays buffered until EOF. The
+			// upstream may still send real content, which must precede message_stop.
+			if p.hasContent {
+				_, _ = result.Write(p.emitFinish(finishReason))
+			} else {
+				// Flush signature-only blocks into the bounded pre-content buffer.
+				_, _ = result.Write(p.endBlock())
+				if p.trailingSignature != "" {
+					_, _ = result.Write(p.emitEmptyThinkingWithSignature(p.trailingSignature))
+					p.trailingSignature = ""
+				}
+			}
 		}
 	}
 
@@ -167,7 +178,7 @@ func (p *StreamingProcessor) Finish() ([]byte, *ClaudeUsage) {
 
 	var result bytes.Buffer
 	if !p.messageStopSent {
-		_, _ = result.Write(p.emitFinish(""))
+		_, _ = result.Write(p.emitFinish(p.lastFinishReason))
 	}
 
 	return result.Bytes(), usage
@@ -188,7 +199,7 @@ func (p *StreamingProcessor) HasContent() bool {
 // visible text, thinking, or tool call. Replaying the same request on the
 // same account cannot repair a deterministic malformed response.
 func (p *StreamingProcessor) MalformedFunctionCallOnly() bool {
-	return p.malformedFunctionCallOnly && !p.hasContent
+	return p.lastFinishReason == "MALFORMED_FUNCTION_CALL" && !p.hasContent
 }
 
 // emitMessageStart 发送 message_start 事件

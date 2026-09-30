@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -176,6 +178,50 @@ func TestGeminiChatCompletionsBufferedOAuth_MalformedThenEmptyStopRetriesSameAcc
 	require.ErrorAs(t, err, &failoverErr)
 	require.True(t, failoverErr.RetryableOnSameAccount)
 	require.Empty(t, rec.Body.String())
+}
+
+func TestGeminiChatCompletionsBufferedOAuth_ContentBeforeMalformedIsPreserved(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		payload     string
+		wantTool    string
+		wantContent string
+	}{
+		{"function call", `{"response":{"candidates":[{"content":{"parts":[{"functionCall":{"name":"lookup","args":{"id":1}}}]}}]}}`, "lookup", ""},
+		{"inline image", `{"response":{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"aGVsbG8="}}]}}]}}`, "", "![image](data:image/png;base64,aGVsbG8=)"},
+		{"text", `{"response":{"candidates":[{"content":{"parts":[{"text":"answer"}]}}]}}`, "", "answer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			upstream := &geminiCompatHTTPUpstreamStub{response: antigravityEmptyStreamTestResponse(tc.payload, geminiMalformedFunctionCall, "[DONE]")}
+			svc := &GeminiMessagesCompatService{tokenProvider: &GeminiTokenProvider{}, httpUpstream: upstream, cfg: &config.Config{}}
+			account := &Account{
+				ID: 101, Platform: PlatformGemini, Type: AccountTypeOAuth, Concurrency: 1,
+				Credentials: map[string]any{"access_token": "ya29.test-token", "project_id": "project-1"},
+			}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			body := []byte(`{"model":"gemini-3.8-flash","messages":[{"role":"user","content":"hi"}]}`)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+
+			result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, http.StatusOK, rec.Code)
+			var got apicompat.ChatCompletionsResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+			require.Len(t, got.Choices, 1)
+			if tc.wantTool != "" {
+				require.Len(t, got.Choices[0].Message.ToolCalls, 1)
+				require.Equal(t, tc.wantTool, got.Choices[0].Message.ToolCalls[0].Function.Name)
+			}
+			if tc.wantContent != "" {
+				var content string
+				require.NoError(t, json.Unmarshal(got.Choices[0].Message.Content, &content))
+				require.Contains(t, content, tc.wantContent)
+			}
+		})
+	}
 }
 
 func TestHasGeminiChatCompletionContent(t *testing.T) {
