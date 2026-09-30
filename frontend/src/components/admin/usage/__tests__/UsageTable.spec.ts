@@ -114,6 +114,30 @@ describe('admin UsageTable tooltip', () => {
     } as DOMRect)
   })
 
+  it.each([
+    [0, '0.0x'],
+    [0.5, '0.50x'],
+    [undefined, '1.00x'],
+  ])('shows the stored user rate %s without changing billed amounts', async (rate, expected) => {
+    const wrapper = mount(UsageTable, {
+      props: { data: [{ ...baseImageRow, rate_multiplier: rate, actual_cost: rate === 0 ? 0 : 0.4 }], loading: false, columns: [] },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    const triggers = wrapper.findAll('.group.relative')
+    await triggers[triggers.length - 1].trigger('mouseenter')
+
+    const costDetails = wrapper.get('.fixed')
+    const rateLabel = costDetails.findAll('span').find(span => span.text() === 'Rate')!
+    expect(rateLabel.element.parentElement?.textContent).toContain(expected)
+    const accountRateLabel = costDetails.findAll('span').find(span => span.text() === 'Account rate')!
+    expect(accountRateLabel.element.parentElement?.textContent).toContain('1.00x')
+    const originalLabel = costDetails.findAll('span').find(span => span.text() === 'Original')!
+    expect(originalLabel.element.parentElement?.textContent).toContain('$0.40000000')
+    const userBilledLabel = costDetails.findAll('span').find(span => span.text() === 'User billed')!
+    expect(userBilledLabel.element.parentElement?.textContent).toContain(rate === 0 ? '$0.00000000' : '$0.40000000')
+    wrapper.unmount()
+  })
+
   it('shows service tier and billing breakdown in cost tooltip', async () => {
     const row = {
       request_id: 'req-admin-1',
