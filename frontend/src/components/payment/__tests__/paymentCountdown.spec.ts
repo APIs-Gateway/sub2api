@@ -201,8 +201,23 @@ it.each(['dialog', 'panel'] as const)('%s verifies a pending built-in QR payment
   expect(wrapper.text()).not.toContain('payment.qr.expired')
 })
 
-it.each(['dialog', 'panel'] as const)('%s retries a failed initial-expiry provider verification before showing a later payment', async kind => {
-  pollOrderStatus.mockResolvedValue(order('PENDING'))
+it.each(['dialog', 'panel'] as const)('%s restores a database-expired QR payment after a missed notification', async kind => {
+  pollOrderStatus.mockResolvedValue(order('EXPIRED'))
+  verifyOrder.mockResolvedValue({ data: order('PAID') })
+  const wrapper = await open(kind, 'wxpay', new Date(Date.now() - 1000).toISOString())
+  await flushPromises()
+
+  expect(pollOrderStatus).toHaveBeenCalledTimes(1)
+  expect(verifyOrder).toHaveBeenCalledWith('payment-42')
+  expect(wrapper.emitted('success')).toHaveLength(1)
+  expect(wrapper.text()).not.toContain('payment.qr.expired')
+})
+
+it.each([
+  ['dialog', 'PENDING'], ['dialog', 'EXPIRED'],
+  ['panel', 'PENDING'], ['panel', 'EXPIRED'],
+] as const)('%s retries a failed verification of a %s QR payment', async (kind, status) => {
+  pollOrderStatus.mockResolvedValue(order(status))
   verifyOrder.mockRejectedValueOnce(new Error('provider unavailable'))
     .mockResolvedValueOnce({ data: order('PAID') })
   const wrapper = await open(kind, 'wxpay', new Date(Date.now() - 1000).toISOString())

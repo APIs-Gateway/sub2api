@@ -222,9 +222,9 @@ async function tryRecoverPendingOrder(order: PaymentOrder, forceVerify = false):
   const outTradeNo = String(order.out_trade_no || '').trim()
   if (!outTradeNo) return order
   const normalizedStatus = String(order.status || '').trim().toUpperCase()
-  if (normalizedStatus !== 'PENDING') return order
+  if (normalizedStatus !== 'PENDING' && normalizedStatus !== 'EXPIRED') return order
   const now = Date.now()
-  if (!forceVerify && (verifyAttempts >= VERIFY_RETRY_MAX_ATTEMPTS || now - lastVerifyAt < VERIFY_RETRY_INTERVAL_MS)) {
+  if (normalizedStatus === 'PENDING' && !forceVerify && (verifyAttempts >= VERIFY_RETRY_MAX_ATTEMPTS || now - lastVerifyAt < VERIFY_RETRY_INTERVAL_MS)) {
     return order
   }
 
@@ -235,7 +235,7 @@ async function tryRecoverPendingOrder(order: PaymentOrder, forceVerify = false):
     return result.data ?? order
   } catch {
     // A failed deadline reconciliation is not evidence that the order expired.
-    return forceVerify ? null : order
+    return forceVerify || normalizedStatus === 'EXPIRED' ? null : order
   }
 }
 
