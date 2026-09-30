@@ -329,9 +329,13 @@ const previewSubject = ref("");
 const previewHtml = ref("");
 const initializingSelection = ref(false);
 let previewRequestId = 0;
+let templateRequestId = 0;
+let disposed = false;
 
 onBeforeUnmount(() => {
+  disposed = true;
   previewRequestId++;
+  templateRequestId++;
 });
 
 interface EventDisplayMeta {
@@ -603,21 +607,31 @@ function applyTemplate(template: {
 }
 
 async function loadTemplate() {
-  if (!selectedEvent.value || !selectedLocale.value) return;
+  const event = selectedEvent.value;
+  const selectedLanguage = selectedLocale.value;
+  if (disposed || !event || !selectedLanguage) return;
+  const requestId = ++templateRequestId;
+  const isCurrentRequest = () =>
+    !disposed &&
+    requestId === templateRequestId &&
+    event === selectedEvent.value &&
+    selectedLanguage === selectedLocale.value;
   loadingTemplate.value = true;
   previewRequestId++;
   previewing.value = false;
   try {
     const template = await adminAPI.settings.getEmailTemplate(
-      selectedEvent.value,
-      selectedLocale.value,
+      event,
+      selectedLanguage,
     );
+    if (!isCurrentRequest()) return;
     applyTemplate(template);
     await refreshPreview();
   } catch (err: unknown) {
+    if (!isCurrentRequest()) return;
     appStore.showError(extractApiErrorMessage(err, t("common.error")));
   } finally {
-    loadingTemplate.value = false;
+    if (isCurrentRequest()) loadingTemplate.value = false;
   }
 }
 
@@ -667,6 +681,7 @@ async function saveTemplate() {
 }
 
 async function refreshPreview() {
+  if (disposed) return;
   const requestId = ++previewRequestId;
   if (!canPreview.value) {
     previewing.value = false;
