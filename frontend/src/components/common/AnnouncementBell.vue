@@ -387,11 +387,13 @@ async function markAsRead(id: number, generation = detailGeneration) {
       selectedAnnouncement.value?.id === id
     try {
       const marked = await announcementStore.markAsRead(id)
-      if (!marked && isCurrentDetail()) appStore.showError(t('common.unknownError'))
-      return marked
+      const alreadyRead = Boolean(announcements.value.find(item => item.id === id)?.read_at)
+      if (!marked && !alreadyRead && isCurrentDetail()) appStore.showError(t('common.unknownError'))
+      return marked || alreadyRead
     } catch (err: any) {
-      if (isCurrentDetail()) appStore.showError(err?.message || t('common.unknownError'))
-      return false
+      const alreadyRead = Boolean(announcements.value.find(item => item.id === id)?.read_at)
+      if (!alreadyRead && isCurrentDetail()) appStore.showError(err?.message || t('common.unknownError'))
+      return alreadyRead
     }
   })()
   pendingReadRequests.set(id, { generation, promise: request })

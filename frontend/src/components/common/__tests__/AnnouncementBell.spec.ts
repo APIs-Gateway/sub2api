@@ -141,6 +141,38 @@ describe('announcement read confirmation', () => {
     expect(useAnnouncementStore().unreadCount).toBe(0)
   })
 
+  it('reconciles a failed new confirmation when an older request has already marked the item read', async () => {
+    const oldRead = deferred()
+    const newRead = deferred()
+    markRead.mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(newRead.promise)
+    const wrapper = mount(AnnouncementBell, {
+      global: { stubs: { Teleport: true, Transition: true, Icon: true } }
+    })
+    await wrapper.get('button').trigger('click')
+    await wrapper.get('.group.relative').trigger('click')
+    await confirmButton(wrapper).trigger('click')
+
+    const close = wrapper.findAll('button').find(item => item.text() === 'common.close')
+    if (!close) throw new Error('Detail close button not found')
+    await close.trigger('click')
+    await wrapper.get('.group.relative').trigger('click')
+    await confirmButton(wrapper).trigger('click')
+    expect(markRead).toHaveBeenCalledTimes(2)
+
+    oldRead.resolve()
+    await flushPromises()
+    expect(useAnnouncementStore().unreadCount).toBe(0)
+    expect(wrapper.get('.markdown-body').text()).toContain('Details 1')
+    expect(showSuccess).not.toHaveBeenCalled()
+
+    newRead.reject(new Error('new request failed'))
+    await flushPromises()
+    expect(showError).not.toHaveBeenCalled()
+    expect(showSuccess).toHaveBeenCalledTimes(1)
+    expect(showSuccess).toHaveBeenCalledWith('announcements.markedAsRead')
+    expect(wrapper.find('.markdown-body').exists()).toBe(false)
+  })
+
   it('does not show a read failure after unmount', async () => {
     const pending = deferred()
     markRead.mockReturnValueOnce(pending.promise)
