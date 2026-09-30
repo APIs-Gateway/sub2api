@@ -51,6 +51,59 @@ func TestBuildSchedulerMetadataAccount_KeepsMappingAdmissionFlagWithoutSecrets(t
 	require.True(t, got.IsModelSupported("claude-haiku-4-5"))
 }
 
+func TestBuildSchedulerMetadataAccount_PreservesOpenAIEndpointCapabilities(t *testing.T) {
+	cases := []struct {
+		name         string
+		capabilities any
+		configured   bool
+		chat         bool
+		embeddings   bool
+		responses    bool
+	}{
+		{name: "embeddings only", capabilities: []any{"embeddings"}, configured: true, embeddings: true},
+		{name: "chat only", capabilities: []string{"chat_completions"}, configured: true, chat: true, responses: true},
+		{name: "both", capabilities: map[string]any{"chat_completions": true, "embeddings": true}, configured: true, chat: true, embeddings: true, responses: true},
+		{name: "legacy unrestricted", chat: true, embeddings: true, responses: true},
+		{name: "empty capabilities unrestricted", capabilities: []any{}, configured: true, chat: true, embeddings: true, responses: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			account := service.Account{
+				ID:       25,
+				Platform: service.PlatformOpenAI,
+				Type:     service.AccountTypeAPIKey,
+				Extra:    map[string]any{"openai_responses_supported": true},
+				Credentials: map[string]any{
+					"api_key":       "sk-test",
+					"access_token":  "secret-token",
+					"refresh_token": "secret-refresh",
+				},
+			}
+			if tc.configured {
+				account.Credentials["openai_capabilities"] = tc.capabilities
+			}
+
+			metadata := buildSchedulerMetadataAccount(account)
+			payload, err := json.Marshal(metadata)
+			require.NoError(t, err)
+			var cached service.Account
+			require.NoError(t, json.Unmarshal(payload, &cached))
+			require.NotContains(t, cached.Credentials, "access_token")
+			require.NotContains(t, cached.Credentials, "refresh_token")
+
+			for capability, want := range map[service.OpenAIEndpointCapability]bool{
+				service.OpenAIEndpointCapabilityChatCompletions: tc.chat,
+				service.OpenAIEndpointCapabilityEmbeddings:      tc.embeddings,
+				service.OpenAIEndpointCapabilityResponses:       tc.responses,
+			} {
+				require.Equal(t, want, account.SupportsOpenAIEndpointCapability(capability), "full account: %s", capability)
+				require.Equal(t, want, cached.SupportsOpenAIEndpointCapability(capability), "cached metadata: %s", capability)
+			}
+		})
+	}
+}
+
 func TestBuildSchedulerMetadataAccount_KeepsOpenAIWSFlags(t *testing.T) {
 	account := service.Account{
 		ID:       42,
