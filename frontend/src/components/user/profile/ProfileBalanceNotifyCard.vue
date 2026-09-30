@@ -217,6 +217,9 @@ watch(() => props.extraEmails, (val) => {
   if (savedSendingEmail && !val.some(item => item.email === savedSendingEmail && !item.verified)) {
     invalidateSavedSend(savedSendingEmail)
   }
+  if (verifyingEmail.value && !val.some(item => item.email === verifyingEmail.value && !item.verified)) {
+    clearSavedVerification()
+  }
   emailEntries.value = [...val]
 })
 
@@ -334,6 +337,7 @@ const handleRemoveEmail = async (email: string) => {
   invalidateSavedSend(email)
   try {
     await userAPI.removeNotifyEmail(email)
+    if (verifyingEmail.value === email) clearSavedVerification()
     appStore.showSuccess(t('profile.balanceNotify.removeSuccess'))
     const updated = await userAPI.getProfile()
     authStore.user = updated
@@ -355,9 +359,16 @@ function invalidateSavedSend(email: string) {
   sendingSavedCode.value = false
 }
 
+function clearSavedVerification() {
+  verifyingEmail.value = ''
+  verifyCode.value = ''
+  verifyCountdown.value = 0
+  if (verifyTimer) { clearInterval(verifyTimer); verifyTimer = null }
+}
+
 function cancelSavedVerification() {
   invalidateSavedSend(verifyingEmail.value)
-  verifyingEmail.value = ''
+  clearSavedVerification()
 }
 
 async function sendCodeForSaved(email: string) {
@@ -397,9 +408,7 @@ async function verifySavedEmail(email: string) {
   verifyingSaved.value = true
   try {
     await userAPI.verifyNotifyEmail(email, verifyCode.value)
-    verifyingEmail.value = ''
-    verifyCode.value = ''
-    if (verifyTimer) { clearInterval(verifyTimer); verifyTimer = null }
+    clearSavedVerification()
     appStore.showSuccess(t('profile.balanceNotify.verifySuccess'))
     const updated = await userAPI.getProfile()
     authStore.user = updated

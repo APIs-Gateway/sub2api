@@ -167,6 +167,63 @@ describe('ProfileBalanceNotifyCard', () => {
     expect(showSuccess).not.toHaveBeenCalled()
   })
 
+  it('clears an active saved verification after removal and same-address re-add', async () => {
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+    await wrapper.get('input[maxlength="6"]').setValue('123456')
+    expect(vi.getTimerCount()).toBe(1)
+
+    await button(wrapper, 'profile.balanceNotify.removeEmail').trigger('click')
+    await flushPromises()
+    expect(vi.getTimerCount()).toBe(0)
+    await wrapper.setProps({ extraEmails: [] })
+    await wrapper.setProps({ extraEmails: [{ ...entry }] })
+    expect(wrapper.find('input[maxlength="6"]').exists()).toBe(false)
+    expect(button(wrapper, 'profile.balanceNotify.verify').exists()).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('clears an active saved verification when parent props remove and re-add its email', async () => {
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+    await wrapper.get('input[maxlength="6"]').setValue('123456')
+    expect(vi.getTimerCount()).toBe(1)
+
+    await wrapper.setProps({ extraEmails: [] })
+    expect(vi.getTimerCount()).toBe(0)
+    await wrapper.setProps({ extraEmails: [{ ...entry }] })
+    expect(wrapper.find('input[maxlength="6"]').exists()).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('clears the active saved verification timer and code on cancel', async () => {
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+    await wrapper.get('input[maxlength="6"]').setValue('123456')
+    expect(vi.getTimerCount()).toBe(1)
+
+    await button(wrapper, 'common.cancel').trigger('click')
+    expect(wrapper.find('input[maxlength="6"]').exists()).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+    expect((wrapper.get('input[maxlength="6"]').element as HTMLInputElement).value).toBe('')
+    expect(vi.getTimerCount()).toBe(1)
+  })
+
   it.each(['success', 'failure'] as const)('does not reopen cancelled saved email verification after a late resend: %s', async (outcome) => {
     const wrapper = mount(ProfileBalanceNotifyCard, {
       props: {
