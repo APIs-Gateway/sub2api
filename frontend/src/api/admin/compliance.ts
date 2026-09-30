@@ -1,4 +1,13 @@
 import { apiClient } from '@/api/client'
+import type { AxiosRequestConfig } from 'axios'
+import { getAdminComplianceSessionVersion } from '@/utils/adminComplianceSession'
+
+type ComplianceRequestConfig = AxiosRequestConfig & { _complianceSessionVersion: number }
+
+function complianceRequestConfig(): ComplianceRequestConfig {
+  // Capture this before Axios schedules its request interceptor.
+  return { _complianceSessionVersion: getAdminComplianceSessionVersion() }
+}
 
 export interface AdminComplianceAcknowledgement {
   version: string
@@ -29,12 +38,16 @@ export interface AcceptAdminComplianceRequest {
 
 export const adminComplianceAPI = {
   async getStatus(): Promise<AdminComplianceStatus> {
-    const { data } = await apiClient.get<AdminComplianceStatus>('/admin/compliance')
+    const { data } = await apiClient.get<AdminComplianceStatus>('/admin/compliance', complianceRequestConfig())
     return data
   },
 
   async accept(payload: AcceptAdminComplianceRequest): Promise<AdminComplianceStatus> {
-    const { data } = await apiClient.post<AdminComplianceStatus>('/admin/compliance/accept', payload)
+    const { data } = await apiClient.post<AdminComplianceStatus>(
+      '/admin/compliance/accept',
+      payload,
+      complianceRequestConfig()
+    )
     return data
   }
 }

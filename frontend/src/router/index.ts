@@ -795,6 +795,11 @@ router.beforeEach(async (to, _from, next) => {
   // Check if route requires authentication
   const requiresAuth = to.meta.requiresAuth !== false // Default to true
   const requiresAdmin = to.meta.requiresAdmin === true
+  const protectedSessionVersion = getAdminComplianceSessionVersion()
+  const isCurrentProtectedSession = () =>
+    protectedSessionVersion === getAdminComplianceSessionVersion() &&
+    authStore.isAuthenticated &&
+    (!requiresAdmin || authStore.isAdmin)
 
   if (to.path === '/setup') {
     try {
@@ -854,7 +859,6 @@ router.beforeEach(async (to, _from, next) => {
   if (requiresAdmin && authStore.isAdmin) {
     const adminComplianceStore = useAdminComplianceStore()
     if (!adminComplianceStore.initialized) {
-      const complianceSessionVersion = getAdminComplianceSessionVersion()
       try {
         await adminComplianceStore.fetchStatus()
       } catch (error) {
@@ -862,12 +866,14 @@ router.beforeEach(async (to, _from, next) => {
         if (
           err.status === 423 &&
           err.code === 'ADMIN_COMPLIANCE_ACK_REQUIRED' &&
-          complianceSessionVersion === getAdminComplianceSessionVersion() &&
-          authStore.isAuthenticated &&
-          authStore.isAdmin
+          isCurrentProtectedSession()
         ) {
           adminComplianceStore.requireAcknowledgement(err.metadata)
         }
+      }
+      if (!isCurrentProtectedSession()) {
+        next(false)
+        return
       }
     }
   }
@@ -878,6 +884,10 @@ router.beforeEach(async (to, _from, next) => {
       await appStore.fetchPublicSettings()
     } catch (error) {
       console.warn('Failed to load public settings in route guard', error)
+    }
+    if (!isCurrentProtectedSession()) {
+      next(false)
+      return
     }
   }
 

@@ -376,6 +376,147 @@ describe('API Client', () => {
       expect(adapter.mock.calls[1][0].headers.get('Authorization')).toBe('Bearer new-token')
     })
 
+    it('never retries an old compliance acceptance with a new administrator token', async () => {
+      localStorage.setItem('auth_token', 'old-admin-token')
+      localStorage.setItem('refresh_token', 'old-admin-refresh')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+      let requestConfig!: InternalAxiosRequestConfig
+      let rejectRequest!: (error: unknown) => void
+      const adapter = vi.fn((config: InternalAxiosRequestConfig) => {
+        requestConfig = config
+        return new Promise<never>((_resolve, reject) => {
+          rejectRequest = reject
+        })
+      })
+      apiClient.defaults.adapter = adapter
+      const refresh = vi.spyOn(axios, 'post').mockRejectedValue(new Error('must not refresh'))
+
+      const request = apiClient.post('/admin/compliance/accept', { phrase: 'old phrase' })
+      await vi.waitFor(() => expect(adapter).toHaveBeenCalledOnce())
+      const { createPinia, setActivePinia } = await import('pinia')
+      const { useAdminComplianceStore } = await import('@/stores/adminCompliance')
+      setActivePinia(createPinia())
+      useAdminComplianceStore().reset()
+      localStorage.setItem('auth_token', 'new-admin-token')
+      localStorage.setItem('refresh_token', 'new-admin-refresh')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 8 }))
+
+      rejectRequest({
+        response: { status: 401, data: { code: 'TOKEN_EXPIRED' } },
+        config: requestConfig,
+        code: 'ERR_BAD_REQUEST',
+      })
+      await expect(request).rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      expect(adapter).toHaveBeenCalledOnce()
+      expect(refresh).not.toHaveBeenCalled()
+      expect(localStorage.getItem('auth_token')).toBe('new-admin-token')
+    })
+
+    it('does not send an old acceptance if reset precedes the request interceptor', async () => {
+      localStorage.setItem('auth_token', 'old-admin-token')
+      const adapter = vi.fn().mockResolvedValue({
+        status: 200,
+        data: { code: 0, data: { required: false } },
+        headers: {},
+        config: {},
+        statusText: 'OK',
+      })
+      apiClient.defaults.adapter = adapter
+      const { createPinia, setActivePinia } = await import('pinia')
+      const { useAdminComplianceStore } = await import('@/stores/adminCompliance')
+      const { adminComplianceAPI } = await import('@/api/admin/compliance')
+      setActivePinia(createPinia())
+
+      const request = adminComplianceAPI.accept({ phrase: 'old phrase', language: 'en' })
+      useAdminComplianceStore().reset()
+      localStorage.setItem('auth_token', 'new-admin-token')
+
+      await expect(request).rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      expect(adapter).not.toHaveBeenCalled()
+    })
+
+    it('does not retry compliance acceptance when reset occurs during token refresh', async () => {
+      localStorage.setItem('auth_token', 'old-admin-token')
+      localStorage.setItem('refresh_token', 'old-admin-refresh')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+      localStorage.setItem('token_expires_at', String(Date.now() - 1))
+      let resolveRefresh!: (response: unknown) => void
+      const refresh = vi.spyOn(axios, 'post').mockImplementation(() => new Promise((resolve) => {
+        resolveRefresh = resolve
+      }))
+      const adapter = vi.fn((config: InternalAxiosRequestConfig) => Promise.reject({
+        response: { status: 401, data: { code: 'TOKEN_EXPIRED' } },
+        config,
+        code: 'ERR_BAD_REQUEST',
+      }))
+      apiClient.defaults.adapter = adapter
+
+      const request = apiClient.post('/admin/compliance/accept', { phrase: 'old phrase' })
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce())
+      const { createPinia, setActivePinia } = await import('pinia')
+      const { useAdminComplianceStore } = await import('@/stores/adminCompliance')
+      setActivePinia(createPinia())
+      useAdminComplianceStore().reset()
+      localStorage.setItem('auth_token', 'new-admin-token')
+      localStorage.setItem('refresh_token', 'new-admin-refresh')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+      localStorage.setItem('token_expires_at', String(Date.now() + 3600_000))
+      resolveRefresh({
+        data: {
+          code: 0,
+          data: {
+            access_token: 'old-refresh-result',
+            refresh_token: 'old-next-refresh',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          },
+        },
+      })
+
+      await expect(request).rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      expect(adapter).toHaveBeenCalledOnce()
+      expect(localStorage.getItem('auth_token')).toBe('new-admin-token')
+    })
+
+    it('still retries current-session compliance acceptance with its original session version', async () => {
+      localStorage.setItem('auth_token', 'current-admin-token')
+      localStorage.setItem('refresh_token', 'current-admin-refresh')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+      localStorage.setItem('token_expires_at', String(Date.now() - 1))
+      vi.spyOn(axios, 'post').mockResolvedValue({
+        data: {
+          code: 0,
+          data: {
+            access_token: 'refreshed-admin-token',
+            refresh_token: 'refreshed-admin-refresh',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          },
+        },
+      })
+      const adapter = vi.fn()
+        .mockImplementationOnce((config: InternalAxiosRequestConfig) => Promise.reject({
+          response: { status: 401, data: { code: 'TOKEN_EXPIRED' } },
+          config,
+          code: 'ERR_BAD_REQUEST',
+        }))
+        .mockImplementationOnce((config: InternalAxiosRequestConfig) => Promise.resolve({
+          status: 200,
+          data: { code: 0, data: { required: false } },
+          headers: {},
+          config,
+          statusText: 'OK',
+        }))
+      apiClient.defaults.adapter = adapter
+
+      await expect(apiClient.post('/admin/compliance/accept', { phrase: 'current phrase' }))
+        .resolves.toMatchObject({ data: { required: false } })
+      expect(adapter).toHaveBeenCalledTimes(2)
+      expect(adapter.mock.calls[1][0].headers.get('Authorization')).toBe('Bearer refreshed-admin-token')
+      expect(adapter.mock.calls[1][0]._complianceSessionVersion)
+        .toBe(adapter.mock.calls[0][0]._complianceSessionVersion)
+    })
+
     it.each([429, 500, 503, 0])('刷新暂时失败（%s）时保留会话并返回实际状态', async (status) => {
       localStorage.setItem('auth_token', 'expired-token')
       localStorage.setItem('refresh_token', 'refresh-token')
