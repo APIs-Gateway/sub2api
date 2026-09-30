@@ -3,6 +3,7 @@ package openai
 
 import (
 	_ "embed"
+	"fmt"
 	"strings"
 )
 
@@ -20,6 +21,7 @@ type Model struct {
 var DefaultModels = []Model{
 	{ID: "gpt-6-astra", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Astra"},
 	{ID: "gpt-6", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 (Astra)"},
+	{ID: "gpt-6.1-sol", Object: "model", Created: 1790640000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6.1 Sol"},
 	{ID: "gpt-6-sol", Object: "model", Created: 1790035200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Sol"},
 	{ID: "gpt-6-luna", Object: "model", Created: 1790035200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Luna"},
 	{ID: "gpt-5.6", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 (Sol)"},
@@ -79,6 +81,12 @@ var instructionsGPT55 string
 //go:embed instructions_gpt6_astra.txt
 var instructionsGPT6Astra string
 
+// Source: openai/codex codex-rs/models-manager/models.json at b1e72963c3b7
+// (gpt-6.1-sol model_messages.instructions_template).
+//
+//go:embed instructions_gpt6_1_sol.txt
+var instructionsGPT61Sol string
+
 // latestCodexInstructions 返回当前已知最新版本的 Codex base instructions，
 // 若 GPT-5.5 prompt 意外为空则回退到 DefaultInstructions，保证非空。
 func latestCodexInstructions() string {
@@ -130,6 +138,7 @@ func CanonicalizeOpenAIModelAliasSpelling(model string) string {
 }
 
 // CodexBaseInstructionsForModel 按模型返回最匹配的真实 Codex base instructions：
+//   - gpt-6.1-sol（含 effort / compact / 日期后缀写法）→ GPT-6.1 Sol prompt
 //   - gpt-6 / gpt-6-astra（含供应商前缀与日期变体）→ GPT-6 Astra prompt
 //   - 含 "codex" 的模型（gpt-5-codex / gpt-5.x-codex / codex-max / spark 等）→ GPT-5-Codex prompt
 //   - gpt-5.5 系非 codex 模型 → GPT-5.5 prompt
@@ -141,6 +150,10 @@ func CanonicalizeOpenAIModelAliasSpelling(model string) string {
 func CodexBaseInstructionsForModel(model string) string {
 	canonical := CanonicalizeOpenAIModelAliasSpelling(model)
 	switch {
+	case IsGPT61SolModelSpelling(canonical):
+		if v := strings.TrimSpace(instructionsGPT61Sol); v != "" {
+			return instructionsGPT61Sol
+		}
 	case canonical == "gpt-6" || canonical == "gpt-6-astra" || strings.HasPrefix(canonical, "gpt-6-astra-"):
 		if v := strings.TrimSpace(instructionsGPT6Astra); v != "" {
 			return instructionsGPT6Astra
@@ -189,6 +202,45 @@ func IsGPT6SolOrLunaModelSpelling(model string) bool {
 		}
 	}
 	return false
+}
+
+// IsGPT61SolModelSpelling recognizes gpt-6.1-sol and its local effort/compact
+// and date snapshot spellings, with the same provider-prefix and separator
+// tolerance as IsGPT6SolOrLunaModelSpelling. none/minimal suffixes are still
+// recognized so request validation can reject them explicitly.
+func IsGPT61SolModelSpelling(model string) bool {
+	canonical := strings.ToLower(strings.TrimSpace(model))
+	if idx := strings.LastIndex(canonical, "/"); idx >= 0 {
+		canonical = strings.TrimSpace(canonical[idx+1:])
+	}
+	canonical = strings.ReplaceAll(canonical, "_", "-")
+	canonical = strings.Join(strings.Fields(canonical), "-")
+	if canonical == "gpt-6.1-sol" {
+		return true
+	}
+	suffix, ok := strings.CutPrefix(canonical, "gpt-6.1-sol-")
+	if !ok {
+		return false
+	}
+	switch suffix {
+	case "none", "minimal", "low", "medium", "high", "xhigh", "max", "openai-compact":
+		return true
+	}
+	return isDateSnapshotSuffix(suffix)
+}
+
+// ValidateGPT61SolReasoningEffort rejects disabled reasoning for GPT-6.1 Sol,
+// which only supports low/medium/high/xhigh/max, instead of silently raising
+// the client's requested effort on compatibility paths.
+func ValidateGPT61SolReasoningEffort(model, effort string) error {
+	if !IsGPT61SolModelSpelling(model) {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "none", "minimal":
+		return fmt.Errorf("gpt-6.1-sol does not support reasoning effort %q; use low, medium, high, xhigh or max", effort)
+	}
+	return nil
 }
 
 // isDateSnapshotSuffix reports whether suffix has the YYYY-MM-DD shape.

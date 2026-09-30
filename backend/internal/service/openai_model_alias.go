@@ -40,8 +40,11 @@ func normalizeKnownOpenAICodexModel(model string) string {
 		}
 	}
 
-	// GPT-6 Sol/Luna 必须先于下面的 Contains 族匹配，且只认官方 ID 与已知
+	// GPT-6.1 Sol / GPT-6 Sol/Luna 必须先于下面的 Contains 族匹配，且只认官方 ID 与已知
 	// effort/compact 后缀，避免 gpt-6-solitude 之类未知型号被误归族。
+	if openai.IsGPT61SolModelSpelling(normalized) {
+		return "gpt-6.1-sol"
+	}
 	if openai.IsGPT6SolOrLunaModelSpelling(normalized) {
 		if strings.HasPrefix(normalized, "gpt-6-sol") {
 			return "gpt-6-sol"
@@ -100,9 +103,9 @@ func isOpenAIGPT6AstraModel(model string) bool {
 	return normalized == "gpt-6" || normalized == "gpt-6-astra"
 }
 
-// isOpenAIGPT6Model 判断是否 GPT-6 家族（Astra 及其裸别名 gpt-6、Sol、Luna）。
+// isOpenAIGPT6Model 判断是否 GPT-6 家族（Astra 及其裸别名 gpt-6、Sol、Luna、6.1 Sol）。
 func isOpenAIGPT6Model(model string) bool {
-	return isOpenAIGPT6AstraModel(model) || openai.IsGPT6SolOrLunaModelSpelling(model)
+	return isOpenAIGPT6AstraModel(model) || openai.IsGPT6SolOrLunaModelSpelling(model) || openai.IsGPT61SolModelSpelling(model)
 }
 
 func appendUsageBillingModelCandidate(candidates []string, seen map[string]struct{}, model string) []string {
@@ -151,11 +154,11 @@ func firstUsageBillingModel(candidates []string) string {
 	return ""
 }
 
-// normalizeGPT6ResponsesSampling removes parameters GPT-6 Sol/Luna reject while
-// reasoning (temperature, top_p, top_logprobs, logprobs and the
+// normalizeGPT6ResponsesSampling removes parameters GPT-6 Sol/Luna and GPT-6.1
+// Sol reject while reasoning (temperature, top_p, top_logprobs, logprobs and the
 // message.output_text.logprobs include). reasoning.effort=none keeps them.
 func normalizeGPT6ResponsesSampling(body []byte, model string) ([]byte, bool, error) {
-	if !openai.IsGPT6SolOrLunaModelSpelling(model) || gjson.GetBytes(body, "reasoning.effort").String() == "none" {
+	if (!openai.IsGPT6SolOrLunaModelSpelling(model) && !openai.IsGPT61SolModelSpelling(model)) || gjson.GetBytes(body, "reasoning.effort").String() == "none" {
 		return body, false, nil
 	}
 	out := body
