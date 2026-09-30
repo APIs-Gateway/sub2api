@@ -82,7 +82,7 @@ export const useAuthStore = defineStore('auth', () => {
   let userStateVersion = 0
   let latestRefreshRequest = 0
   const profileRefreshVersion = ref(0)
-  const profileRefreshRequestVersion = ref(0)
+  const authSessionVersion = ref(0)
 
   function setCurrentUser(nextUser: User | null): void {
     user.value = nextUser
@@ -93,7 +93,15 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  function applyUserProfile(nextUser: User): void {
+  function applyUserProfile(nextUser: User, expectedSessionVersion: number, allowNewerRefresh = false): void {
+    if (expectedSessionVersion !== authSessionVersion.value || !user.value || user.value.id !== nextUser.id) return
+    if (allowNewerRefresh) {
+      // The caller already invalidated requests started before its mutation.
+      // Let a later profile refresh supersede this snapshot if it succeeds.
+      user.value = nextUser
+      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(nextUser))
+      return
+    }
     setCurrentUser(nextUser)
   }
 
@@ -122,6 +130,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Also starts auto-refresh and immediately fetches latest user data
    */
   function checkAuth(): void {
+    authSessionVersion.value += 1
     const savedToken = localStorage.getItem(AUTH_TOKEN_KEY)
     const savedUser = localStorage.getItem(AUTH_USER_KEY)
     const savedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
@@ -301,6 +310,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Internal helper function
    */
   function setAuthFromResponse(response: AuthResponse): void {
+    authSessionVersion.value += 1
     // Store token and user
     token.value = response.access_token
 
@@ -358,6 +368,7 @@ export const useAuthStore = defineStore('auth', () => {
    * @param newToken - 后端签发的 JWT access token
    */
   async function setToken(newToken: string): Promise<User> {
+    authSessionVersion.value += 1
     // Clear any previous state first (avoid mixing sessions)
     // Note: Don't clear localStorage here as OAuth callback may have set refresh_token
     stopAutoRefresh()
@@ -417,6 +428,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Clears all authentication state and persisted data
    */
   async function logout(): Promise<void> {
+    authSessionVersion.value += 1
     try {
       // Call API logout (revokes refresh token on server)
       await authAPI.logout()
@@ -440,7 +452,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     const refreshRequest = ++latestRefreshRequest
-    profileRefreshRequestVersion.value = refreshRequest
     const stateVersion = userStateVersion
     try {
       const response = await authAPI.getCurrentUser()
@@ -481,6 +492,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Internal helper function
    */
   function clearAuth(options?: { preservePendingAuthSession?: boolean }): void {
+    authSessionVersion.value += 1
     // Stop auto-refresh
     stopAutoRefresh()
     // Stop token refresh
@@ -513,7 +525,7 @@ export const useAuthStore = defineStore('auth', () => {
     runMode: readonly(runMode),
     pendingAuthSession: readonly(pendingAuthSession),
     profileRefreshVersion: readonly(profileRefreshVersion),
-    profileRefreshRequestVersion: readonly(profileRefreshRequestVersion),
+    authSessionVersion: readonly(authSessionVersion),
 
     // Computed
     isAuthenticated,

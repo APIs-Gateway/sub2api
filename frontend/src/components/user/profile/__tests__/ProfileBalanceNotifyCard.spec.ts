@@ -18,9 +18,10 @@ vi.mock('@/api', () => ({
 const authStore = reactive({
   user: null,
   profileRefreshVersion: 0,
-  profileRefreshRequestVersion: 0,
+  authSessionVersion: 0,
   applyUserProfile: vi.fn(),
-  invalidateUserRefresh: vi.fn()
+  invalidateUserRefresh: vi.fn(),
+  refreshUser: vi.fn()
 })
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => authStore }))
 vi.mock('@/stores/app', () => ({
@@ -48,7 +49,7 @@ describe('ProfileBalanceNotifyCard', () => {
     vi.useFakeTimers()
     vi.resetAllMocks()
     authStore.profileRefreshVersion = 0
-    authStore.profileRefreshRequestVersion = 0
+    authStore.authSessionVersion = 0
     sendNotifyEmailCode.mockResolvedValue({})
     getProfile.mockResolvedValue({ balance_notify_extra_emails: [] })
     removeNotifyEmail.mockResolvedValue({})
@@ -364,7 +365,6 @@ describe('ProfileBalanceNotifyCard', () => {
     expect(wrapper.text()).toContain('profile.balanceNotify.verified')
 
     // Another tab removes A; its later auth request completes before ours.
-    authStore.profileRefreshRequestVersion++
     await wrapper.setProps({ extraEmails: [] })
     authStore.profileRefreshVersion++
     await flushPromises()
@@ -375,6 +375,101 @@ describe('ProfileBalanceNotifyCard', () => {
     expect(wrapper.text()).not.toContain(entry.email)
     expect(authStore.applyUserProfile).not.toHaveBeenCalled()
   })
+
+  it('uses a successful verification profile after a newer auth refresh fails', async () => {
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    const verified = { ...entry, verified: true }
+    let finishProfile!: (value: { balance_notify_extra_emails: typeof entry[] }) => void
+    getProfile.mockReturnValueOnce(new Promise(resolve => { finishProfile = resolve }))
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+    await wrapper.get('input[maxlength="6"]').setValue('123456')
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+
+    // An auth refresh started later but failed, so it never became authority.
+    authStore.refreshUser.mockRejectedValueOnce(new Error('offline'))
+    await expect(authStore.refreshUser()).rejects.toThrow('offline')
+    finishProfile({ balance_notify_extra_emails: [verified] })
+    await flushPromises()
+    expect(authStore.applyUserProfile).toHaveBeenCalledWith(
+      { balance_notify_extra_emails: [verified] }, 0, true
+    )
+    expect(wrapper.text()).toContain('profile.balanceNotify.verified')
+  })
+
+  it('ignores an old account verification profile after a new login', async () => {
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    let finishOldProfile!: (value: { balance_notify_extra_emails: typeof entry[] }) => void
+    getProfile.mockReturnValueOnce(new Promise(resolve => { finishOldProfile = resolve }))
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+    await wrapper.get('input[maxlength="6"]').setValue('123456')
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+
+    authStore.authSessionVersion++
+    await wrapper.setProps({ extraEmails: [] })
+    finishOldProfile({ balance_notify_extra_emails: [{ ...entry, verified: true }] })
+    await flushPromises()
+    expect(authStore.applyUserProfile).not.toHaveBeenCalled()
+  })
+
+  it('ignores a verification profile that resolves after unmount', async () => {
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    let finishOldProfile!: (value: { balance_notify_extra_emails: typeof entry[] }) => void
+    getProfile.mockReturnValueOnce(new Promise(resolve => { finishOldProfile = resolve }))
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+    await wrapper.get('input[maxlength="6"]').setValue('123456')
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+
+    wrapper.unmount()
+    finishOldProfile({ balance_notify_extra_emails: [{ ...entry, verified: true }] })
+    await flushPromises()
+    expect(authStore.applyUserProfile).not.toHaveBeenCalled()
+  })
+
+  it.each(['pending verification', 'saved removal'] as const)(
+    'ignores an old account profile after %s and a new login', async (operation) => {
+      const entry = { email: 'saved@example.com', disabled: false, verified: false }
+      let finishOldProfile!: (value: { balance_notify_extra_emails: typeof entry[] }) => void
+      getProfile.mockReturnValueOnce(new Promise(resolve => { finishOldProfile = resolve }))
+      const wrapper = mount(ProfileBalanceNotifyCard, {
+        props: {
+          enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '',
+          extraEmails: operation === 'saved removal' ? [entry] : []
+        }
+      })
+      if (operation === 'pending verification') {
+        await wrapper.get('input[type="email"]').setValue(entry.email)
+        await button(wrapper, 'common.add').trigger('click')
+        await button(wrapper, 'profile.balanceNotify.sendCode').trigger('click')
+        await flushPromises()
+        await pendingRows(wrapper)[0]!.get('input').setValue('123456')
+        await pendingRows(wrapper)[0]!.findAll('button').find(item => item.text() === 'profile.balanceNotify.verify')!.trigger('click')
+      } else {
+        await button(wrapper, 'profile.balanceNotify.removeEmail').trigger('click')
+      }
+      await flushPromises()
+
+      authStore.authSessionVersion++
+      await wrapper.setProps({ extraEmails: [] })
+      finishOldProfile({ balance_notify_extra_emails: [{ ...entry, verified: true }] })
+      await flushPromises()
+      expect(authStore.applyUserProfile).not.toHaveBeenCalled()
+    }
+  )
 
   it('ignores an old parent profile after a newer empty list confirmed deletion', async () => {
     const entry = { email: 'saved@example.com', disabled: false, verified: false }
@@ -429,7 +524,6 @@ describe('ProfileBalanceNotifyCard', () => {
     await flushPromises()
     expect(wrapper.text()).not.toContain(entry.email)
 
-    authStore.profileRefreshRequestVersion++
     await wrapper.setProps({ extraEmails: [{ ...entry }] })
     authStore.profileRefreshVersion++
     await flushPromises()
