@@ -46,6 +46,30 @@ describe('PendingOAuthCreateAccountForm', () => {
     })
   })
 
+  it('does not restart the code cooldown after switching away during a send', async () => {
+    vi.useFakeTimers()
+    let finish!: (value: { countdown: number }) => void
+    sendPendingOAuthVerifyCode.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const wrapper = mount(PendingOAuthCreateAccountForm, {
+      props: { testIdPrefix: 'oidc', initialEmail: 'user@example.com', isSubmitting: false },
+      global: { stubs: { TurnstileWidget: true } }
+    })
+    try {
+      await flushPromises()
+      await wrapper.get('[data-testid="oidc-create-account-send-code"]').trigger('click')
+      await flushPromises()
+      expect(sendPendingOAuthVerifyCode).toHaveBeenCalledTimes(1)
+      wrapper.unmount()
+      finish({ countdown: 60 })
+      await flushPromises()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      wrapper.unmount()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+
   it('emits trimmed email, password, and verify code on submit', async () => {
     const wrapper = mount(PendingOAuthCreateAccountForm, {
       props: {

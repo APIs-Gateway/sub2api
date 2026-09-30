@@ -132,6 +132,7 @@ const turnstileToken = ref('')
 const turnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null)
 
 let countdownTimer: ReturnType<typeof setInterval> | null = null
+let disposed = false
 
 watch(
   () => props.initialEmail,
@@ -227,6 +228,7 @@ async function handleSendCode() {
       email: trimmedEmail,
       turnstile_token: turnstileEnabled.value ? turnstileToken.value : undefined
     })
+    if (disposed) return
     sendCodeSuccess.value = true
     startCountdown(response.countdown)
     if (turnstileEnabled.value) {
@@ -273,6 +275,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposed = true
   clearCountdown()
 })
 </script>
