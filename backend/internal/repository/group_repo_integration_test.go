@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -125,6 +126,25 @@ func (s *GroupRepoSuite) TestDeleteCascadeWithMissingOrNonArrayModerationSetting
 			}
 		})
 	}
+}
+
+func (s *GroupRepoSuite) TestDeleteCascadePreservesJSONTextRejectedByJSONB() {
+	deleted := &service.Group{Name: "moderation-text-deleted", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	kept := &service.Group{Name: "moderation-text-kept", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	s.Require().NoError(s.repo.Create(s.ctx, deleted))
+	s.Require().NoError(s.repo.Create(s.ctx, kept))
+	settings := NewSettingRepository(s.tx.Client())
+	raw := fmt.Sprintf(`{"group_ids":[%d,%d],"blocked_keywords":["\u0000"],"very_large_number":1e1000000}`, deleted.ID, kept.ID)
+	s.Require().NoError(settings.Set(s.ctx, service.SettingKeyContentModerationConfig, raw))
+	_, err := s.repo.DeleteCascade(s.ctx, deleted.ID)
+	s.Require().NoError(err)
+	stored, err := settings.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+	s.Require().NoError(err)
+	var fields map[string]json.RawMessage
+	s.Require().NoError(json.Unmarshal([]byte(stored), &fields))
+	s.Require().JSONEq(fmt.Sprintf(`[%d]`, kept.ID), string(fields["group_ids"]))
+	s.Require().Equal(`["\u0000"]`, string(fields["blocked_keywords"]))
+	s.Require().Equal(`1e1000000`, string(fields["very_large_number"]))
 }
 
 // --- Create / GetByID / Update / Delete ---

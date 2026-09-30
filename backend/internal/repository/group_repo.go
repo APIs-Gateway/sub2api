@@ -846,19 +846,15 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	// Preserve malformed legacy settings: their unrelated repair must not block
-	// group deletion or replace administrator data with a default config.
-	if err == nil && json.Valid([]byte(moderationValue)) {
-		if _, err := exec.ExecContext(ctx, `UPDATE settings
-			SET value = jsonb_set(value::jsonb, '{group_ids}',
-				(SELECT COALESCE(jsonb_agg(group_id ORDER BY ord), '[]'::jsonb)
-				 FROM jsonb_array_elements(value::jsonb->'group_ids') WITH ORDINALITY AS ids(group_id, ord)
-				 WHERE group_id <> to_jsonb($2::bigint)))::text,
-				updated_at = NOW()
-			WHERE key = $1 AND jsonb_typeof(value::jsonb->'group_ids') = 'array'
-				AND value::jsonb->'group_ids' @> jsonb_build_array($2::bigint)`,
-			service.SettingKeyContentModerationConfig, id); err != nil {
-			return nil, err
+	// The TEXT config can contain valid JSON that PostgreSQL JSONB rejects
+	// (for example, an escaped NUL in a keyword). Only decode the group array
+	// in Go and keep every unrelated field as raw JSON.
+	if err == nil {
+		if next, changed := removeGroupFromModerationConfig(moderationValue, id); changed {
+			if _, err := exec.ExecContext(ctx, `UPDATE settings SET value = $1, updated_at = NOW() WHERE key = $2`,
+				next, service.SettingKeyContentModerationConfig); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -872,6 +868,46 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 	}
 
 	return affectedUserIDs, nil
+}
+
+func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil || fields == nil {
+		return "", false
+	}
+	var groupIDs []json.RawMessage
+	if err := json.Unmarshal(fields["group_ids"], &groupIDs); err != nil || groupIDs == nil {
+		return "", false
+	}
+	kept := make([]json.RawMessage, 0, len(groupIDs))
+	changed := false
+	for _, value := range groupIDs {
+		var groupID int64
+		if strings.TrimSpace(string(value)) == "null" {
+			return "", false
+		}
+		if err := json.Unmarshal(value, &groupID); err != nil {
+			return "", false
+		}
+		if groupID == deletedID {
+			changed = true
+			continue
+		}
+		kept = append(kept, value)
+	}
+	if !changed {
+		return "", false
+	}
+	groups, err := json.Marshal(kept)
+	if err != nil {
+		return "", false
+	}
+	fields["group_ids"] = groups
+	next, err := json.Marshal(fields)
+	if err != nil {
+		return "", false
+	}
+	return string(next), true
 }
 
 type groupAccountCounts struct {

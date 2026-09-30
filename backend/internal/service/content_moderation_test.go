@@ -36,7 +36,7 @@ func (r *contentModerationWriterSettingRepo) SetContentModerationConfig(ctx cont
 	if r.saveErr != nil {
 		return r.saveErr
 	}
-	return r.contentModerationTestSettingRepo.Set(ctx, SettingKeyContentModerationConfig, value)
+	return r.Set(ctx, SettingKeyContentModerationConfig, value)
 }
 
 func (r *contentModerationTestSettingRepo) Get(ctx context.Context, key string) (*Setting, error) {
@@ -1017,9 +1017,9 @@ func TestContentModerationUpdateConfig_TransactionalWriterAndErrorMapping(t *tes
 	raw, err := json.Marshal(cfg)
 	require.NoError(t, err)
 	for _, tc := range []struct {
-		name   string
+		name    string
 		saveErr error
-		reason string
+		reason  string
 	}{
 		{name: "saved"},
 		{name: "deleted group", saveErr: ErrGroupNotFound, reason: "INVALID_CONTENT_MODERATION_GROUP"},
