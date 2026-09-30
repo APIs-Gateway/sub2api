@@ -49,11 +49,17 @@ const openDialogs = new Map<string, number>()
 const topmostDialogId = () => {
   let topId: string | undefined
   let topZIndex = -Infinity
+  let topOverlay: Element | null = null
   for (const [id, zIndex] of openDialogs) {
-    // Map iteration preserves opening order, so the latest wins a z-index tie.
-    if (zIndex >= topZIndex) {
+    const overlay = document.getElementById(id)?.closest('.modal-overlay')
+    if (!overlay) continue
+    // Teleport can place a newly shown dialog before a previously shown one.
+    // At equal z-index, the later overlay in the document paints on top.
+    if (!topOverlay || zIndex > topZIndex || (zIndex === topZIndex &&
+      (topOverlay.compareDocumentPosition(overlay) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)) {
       topId = id
       topZIndex = zIndex
+      topOverlay = overlay
     }
   }
   return topId

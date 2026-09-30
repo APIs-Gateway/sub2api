@@ -6,7 +6,7 @@ enableAutoUnmount(afterEach)
 
 const pressEscape = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
 
-function openDialog(title: string, options: { closeOnEscape?: boolean; zIndex?: number } = {}) {
+function openDialog(title: string, options: { show?: boolean; closeOnEscape?: boolean; zIndex?: number } = {}) {
   return mount(BaseDialog, {
     props: { show: true, title, ...options },
     global: { stubs: { Icon: true } }
@@ -38,6 +38,23 @@ describe('stacked BaseDialog Escape handling', () => {
     child.unmount()
     pressEscape()
     expect(parent.emitted('close')).toHaveLength(1)
+  })
+
+  it('uses Teleport DOM order when an earlier mounted dialog opens later at the same z-index', async () => {
+    const earlier = openDialog('Earlier mounted', { show: false })
+    const later = openDialog('Later mounted')
+
+    await earlier.setProps({ show: true })
+    const titles = [...document.body.querySelectorAll('.modal-overlay h3')].map(title => title.textContent)
+    expect(titles).toEqual(['Earlier mounted', 'Later mounted'])
+
+    pressEscape()
+    expect(later.emitted('close')).toHaveLength(1)
+    expect(earlier.emitted('close')).toBeUndefined()
+
+    await later.setProps({ show: false })
+    pressEscape()
+    expect(earlier.emitted('close')).toHaveLength(1)
   })
 
   it('does not dismiss a newer dialog behind an older protected high-z-index dialog', () => {
