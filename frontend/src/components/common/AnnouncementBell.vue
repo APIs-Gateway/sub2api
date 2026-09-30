@@ -342,7 +342,9 @@ const unreadCount = computed(() => announcementStore.unreadCount)
 const isModalOpen = ref(false)
 const detailModalOpen = ref(false)
 const selectedAnnouncement = ref<UserAnnouncement | null>(null)
-const pendingReadRequests = new Map<number, { generation: number; promise: Promise<boolean> }>()
+type ReadOutcome = { marked: boolean; error?: unknown }
+const pendingReadRequests = new Map<number, Promise<ReadOutcome>>()
+let reportedReadFailure: { generation: number; request: Promise<ReadOutcome> } | null = null
 let detailGeneration = 0
 let unmounted = false
 
@@ -376,32 +378,39 @@ function closeDetail() {
   selectedAnnouncement.value = null
 }
 
-async function markAsRead(id: number, generation = detailGeneration) {
+function readRequest(id: number): Promise<ReadOutcome> {
   const pending = pendingReadRequests.get(id)
-  if (pending?.generation === generation) return pending.promise
+  if (pending) return pending
 
-  const request = (async () => {
-    const isCurrentDetail = () => !unmounted &&
-      generation === detailGeneration &&
-      detailModalOpen.value &&
-      selectedAnnouncement.value?.id === id
+  const request: Promise<ReadOutcome> = (async () => {
     try {
-      const marked = await announcementStore.markAsRead(id)
-      const alreadyRead = Boolean(announcements.value.find(item => item.id === id)?.read_at)
-      if (!marked && !alreadyRead && isCurrentDetail()) appStore.showError(t('common.unknownError'))
-      return marked || alreadyRead
-    } catch (err: any) {
-      const alreadyRead = Boolean(announcements.value.find(item => item.id === id)?.read_at)
-      if (!alreadyRead && isCurrentDetail()) appStore.showError(err?.message || t('common.unknownError'))
-      return alreadyRead
+      return { marked: await announcementStore.markAsRead(id) }
+    } catch (error: unknown) {
+      return { marked: false, error }
     }
   })()
-  pendingReadRequests.set(id, { generation, promise: request })
-  try {
-    return await request
-  } finally {
-    if (pendingReadRequests.get(id)?.promise === request) pendingReadRequests.delete(id)
+  pendingReadRequests.set(id, request)
+  void request.then(() => {
+    if (pendingReadRequests.get(id) === request) pendingReadRequests.delete(id)
+  })
+  return request
+}
+
+async function markAsRead(id: number, generation = detailGeneration) {
+  const request = readRequest(id)
+  const outcome = await request
+  const marked = outcome.marked || Boolean(announcements.value.find(item => item.id === id)?.read_at)
+  const isCurrentDetail = !unmounted &&
+    generation === detailGeneration &&
+    detailModalOpen.value &&
+    selectedAnnouncement.value?.id === id
+  if (!marked && isCurrentDetail &&
+    (reportedReadFailure?.generation !== generation || reportedReadFailure?.request !== request)) {
+    reportedReadFailure = { generation, request }
+    const message = (outcome.error as { message?: string } | undefined)?.message
+    appStore.showError(message || t('common.unknownError'))
   }
+  return marked
 }
 
 async function markAsReadAndClose(id: number) {

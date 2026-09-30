@@ -110,10 +110,9 @@ describe('announcement read confirmation', () => {
     expect(showError).not.toHaveBeenCalled()
   })
 
-  it.each(['success', 'failure'])('ignores an old %s after closing and reopening the same detail', async outcome => {
-    const oldRead = deferred()
-    const currentRead = deferred()
-    markRead.mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(currentRead.promise)
+  it.each(['success', 'failure'])('shares a pending read across same-ID reopen and handles %s in the current detail', async outcome => {
+    const sharedRead = deferred()
+    markRead.mockReturnValueOnce(sharedRead.promise)
     const wrapper = mount(AnnouncementBell, {
       global: { stubs: { Teleport: true, Transition: true, Icon: true } }
     })
@@ -126,51 +125,32 @@ describe('announcement read confirmation', () => {
     if (!close) throw new Error('Detail close button not found')
     await close.trigger('click')
     await wrapper.get('.group.relative').trigger('click')
-    expect(markRead).toHaveBeenCalledTimes(2)
-
-    if (outcome === 'success') oldRead.resolve()
-    else oldRead.reject(new Error('old read failed'))
-    await flushPromises()
-    expect(wrapper.get('.markdown-body').text()).toContain('Details 1')
-    expect(showSuccess).not.toHaveBeenCalled()
-    expect(showError).not.toHaveBeenCalled()
-
-    currentRead.resolve()
-    await flushPromises()
-    expect(wrapper.get('.markdown-body').text()).toContain('Details 1')
-    expect(useAnnouncementStore().unreadCount).toBe(0)
-  })
-
-  it('reconciles a failed new confirmation when an older request has already marked the item read', async () => {
-    const oldRead = deferred()
-    const newRead = deferred()
-    markRead.mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(newRead.promise)
-    const wrapper = mount(AnnouncementBell, {
-      global: { stubs: { Teleport: true, Transition: true, Icon: true } }
-    })
-    await wrapper.get('button').trigger('click')
-    await wrapper.get('.group.relative').trigger('click')
     await confirmButton(wrapper).trigger('click')
+    expect(markRead).toHaveBeenCalledTimes(1)
 
-    const close = wrapper.findAll('button').find(item => item.text() === 'common.close')
-    if (!close) throw new Error('Detail close button not found')
-    await close.trigger('click')
-    await wrapper.get('.group.relative').trigger('click')
-    await confirmButton(wrapper).trigger('click')
-    expect(markRead).toHaveBeenCalledTimes(2)
-
-    oldRead.resolve()
+    if (outcome === 'success') sharedRead.resolve()
+    else sharedRead.reject(new Error('shared read failed'))
     await flushPromises()
-    expect(useAnnouncementStore().unreadCount).toBe(0)
-    expect(wrapper.get('.markdown-body').text()).toContain('Details 1')
-    expect(showSuccess).not.toHaveBeenCalled()
+    if (outcome === 'success') {
+      expect(useAnnouncementStore().unreadCount).toBe(0)
+      expect(showError).not.toHaveBeenCalled()
+      expect(showSuccess).toHaveBeenCalledTimes(1)
+      expect(showSuccess).toHaveBeenCalledWith('announcements.markedAsRead')
+      expect(wrapper.find('.markdown-body').exists()).toBe(false)
+    } else {
+      expect(useAnnouncementStore().unreadCount).toBe(1)
+      expect(showError).toHaveBeenCalledTimes(1)
+      expect(showSuccess).not.toHaveBeenCalled()
+      expect(wrapper.get('.markdown-body').text()).toContain('Details 1')
 
-    newRead.reject(new Error('new request failed'))
-    await flushPromises()
-    expect(showError).not.toHaveBeenCalled()
-    expect(showSuccess).toHaveBeenCalledTimes(1)
-    expect(showSuccess).toHaveBeenCalledWith('announcements.markedAsRead')
-    expect(wrapper.find('.markdown-body').exists()).toBe(false)
+      markRead.mockResolvedValueOnce(undefined)
+      await confirmButton(wrapper).trigger('click')
+      await flushPromises()
+      expect(markRead).toHaveBeenCalledTimes(2)
+      expect(showSuccess).toHaveBeenCalledWith('announcements.markedAsRead')
+      expect(wrapper.find('.markdown-body').exists()).toBe(false)
+      expect(useAnnouncementStore().unreadCount).toBe(0)
+    }
   })
 
   it('does not show a read failure after unmount', async () => {
