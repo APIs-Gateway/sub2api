@@ -3,6 +3,10 @@ import { computed, ref } from 'vue'
 import adminComplianceAPI, { type AdminComplianceStatus } from '@/api/admin/compliance'
 import { getLocale } from '@/i18n'
 import { isChineseLocale } from '@/i18n/localeUtils'
+import {
+  getAdminComplianceSessionVersion,
+  invalidateAdminComplianceSession
+} from '@/utils/adminComplianceSession'
 
 const FALLBACK_ZH_PHRASE = '我已阅读、理解并同意 Sub2API 部署与运营合规承诺'
 const FALLBACK_EN_PHRASE = 'I have read, understood, and agree to the Sub2API Deployment and Operation Compliance Commitment'
@@ -25,30 +29,34 @@ export const useAdminComplianceStore = defineStore('adminCompliance', () => {
   })
 
   async function fetchStatus(): Promise<AdminComplianceStatus> {
+    const version = getAdminComplianceSessionVersion()
     loading.value = true
     try {
       const nextStatus = await adminComplianceAPI.getStatus()
+      if (version !== getAdminComplianceSessionVersion()) return nextStatus
       status.value = nextStatus
       initialized.value = true
       forceVisible.value = nextStatus.required
       return nextStatus
     } finally {
-      loading.value = false
+      if (version === getAdminComplianceSessionVersion()) loading.value = false
     }
   }
 
   async function accept(phrase: string): Promise<AdminComplianceStatus> {
+    const version = getAdminComplianceSessionVersion()
     submitting.value = true
     try {
       const nextStatus = await adminComplianceAPI.accept({
         phrase,
         language: currentLocale.value
       })
+      if (version !== getAdminComplianceSessionVersion()) return nextStatus
       status.value = nextStatus
       forceVisible.value = nextStatus.required
       return nextStatus
     } finally {
-      submitting.value = false
+      if (version === getAdminComplianceSessionVersion()) submitting.value = false
     }
   }
 
@@ -69,6 +77,7 @@ export const useAdminComplianceStore = defineStore('adminCompliance', () => {
   }
 
   function reset(): void {
+    invalidateAdminComplianceSession()
     status.value = null
     loading.value = false
     submitting.value = false

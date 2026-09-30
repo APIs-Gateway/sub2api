@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
 import { useAdminComplianceStore } from '@/stores/adminCompliance'
+import { getAdminComplianceSessionVersion } from '@/utils/adminComplianceSession'
 import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { recoverFromChunkLoadError } from '@/utils/chunkLoadRecovery'
@@ -794,6 +795,11 @@ router.beforeEach(async (to, _from, next) => {
   // Check if route requires authentication
   const requiresAuth = to.meta.requiresAuth !== false // Default to true
   const requiresAdmin = to.meta.requiresAdmin === true
+  const protectedSessionVersion = getAdminComplianceSessionVersion()
+  const isCurrentProtectedSession = () =>
+    protectedSessionVersion === getAdminComplianceSessionVersion() &&
+    authStore.isAuthenticated &&
+    (!requiresAdmin || authStore.isAdmin)
 
   if (to.path === '/setup') {
     try {
@@ -857,9 +863,17 @@ router.beforeEach(async (to, _from, next) => {
         await adminComplianceStore.fetchStatus()
       } catch (error) {
         const err = error as { status?: number; code?: string; metadata?: Record<string, string> }
-        if (err.status === 423 && err.code === 'ADMIN_COMPLIANCE_ACK_REQUIRED') {
+        if (
+          err.status === 423 &&
+          err.code === 'ADMIN_COMPLIANCE_ACK_REQUIRED' &&
+          isCurrentProtectedSession()
+        ) {
           adminComplianceStore.requireAcknowledgement(err.metadata)
         }
+      }
+      if (!isCurrentProtectedSession()) {
+        next(false)
+        return
       }
     }
   }
@@ -870,6 +884,10 @@ router.beforeEach(async (to, _from, next) => {
       await appStore.fetchPublicSettings()
     } catch (error) {
       console.warn('Failed to load public settings in route guard', error)
+    }
+    if (!isCurrentProtectedSession()) {
+      next(false)
+      return
     }
   }
 

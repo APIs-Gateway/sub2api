@@ -7,6 +7,9 @@ import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig, AxiosResp
 import type { ApiResponse } from '@/types'
 import { getLocale } from '@/i18n'
 import { API_BASE_URL, refreshAuthTokens, type RefreshTokenResponse } from './tokenRefresh'
+import { getAdminComplianceSessionVersion } from '@/utils/adminComplianceSession'
+
+type ComplianceRequestConfig = InternalAxiosRequestConfig & { _complianceSessionVersion?: number }
 
 // ==================== Axios Instance Configuration ====================
 
@@ -68,6 +71,21 @@ const getUserTimezone = (): string => {
 
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    const complianceRequest = config as ComplianceRequestConfig
+    // Keep the original version on retries so an old acceptance cannot use a new session's token.
+    if (complianceRequest._complianceSessionVersion === undefined) {
+      complianceRequest._complianceSessionVersion = getAdminComplianceSessionVersion()
+    }
+    if (
+      /^\/admin\/compliance(?:\/|$|\?)/.test(String(config.url || '')) &&
+      complianceRequest._complianceSessionVersion !== getAdminComplianceSessionVersion()
+    ) {
+      return Promise.reject({
+        status: 401,
+        code: 'AUTH_SESSION_CHANGED',
+        message: 'Authentication session changed before sending the compliance request.'
+      })
+    }
     // Attach token from localStorage
     const token = localStorage.getItem('auth_token')
     if (token && config.headers) {
@@ -119,18 +137,30 @@ apiClient.interceptors.response.use(
     return response
   },
   async (error: AxiosError<ApiResponse<unknown>>) => {
+    if (error.code === 'AUTH_SESSION_CHANGED') {
+      return Promise.reject(error)
+    }
     // Request cancellation: keep the original axios cancellation error so callers can ignore it.
     // Otherwise we'd misclassify it as a generic "network error".
     if (error.code === 'ERR_CANCELED' || axios.isCancel(error)) {
       return Promise.reject(error)
     }
 
-    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
+    const originalRequest = error.config as ComplianceRequestConfig & { _retry?: boolean }
 
     // Handle common errors
     if (error.response) {
       const { status, data } = error.response
       const url = String(error.config?.url || '')
+      const isComplianceRequest = /^\/admin\/compliance(?:\/|$|\?)/.test(url)
+      const staleComplianceRequest = () =>
+        isComplianceRequest &&
+        originalRequest?._complianceSessionVersion !== getAdminComplianceSessionVersion()
+      const sessionChangedError = {
+        status: 401,
+        code: 'AUTH_SESSION_CHANGED',
+        message: 'Authentication session changed while refreshing.'
+      }
 
       // Validate `data` shape to avoid HTML error pages breaking our error handling.
       const apiData = (typeof data === 'object' && data !== null ? data : {}) as Record<string, any>
@@ -162,12 +192,14 @@ apiClient.interceptors.response.use(
       }
 
       if (status === 423 && apiData.code === 'ADMIN_COMPLIANCE_ACK_REQUIRED') {
-        try {
-          window.dispatchEvent(new CustomEvent('admin-compliance-required', {
-            detail: apiData.metadata || {}
-          }))
-        } catch {
-          // ignore event failures
+        if (originalRequest?._complianceSessionVersion === getAdminComplianceSessionVersion()) {
+          try {
+            window.dispatchEvent(new CustomEvent('admin-compliance-required', {
+              detail: apiData.metadata || {}
+            }))
+          } catch {
+            // ignore event failures
+          }
         }
 
         return Promise.reject({
@@ -176,6 +208,10 @@ apiClient.interceptors.response.use(
           message: apiData.message || error.message,
           metadata: apiData.metadata,
         })
+      }
+
+      if (status === 401 && staleComplianceRequest()) {
+        return Promise.reject(sessionChangedError)
       }
 
       // 401: Try to refresh the token if we have a refresh token
@@ -202,6 +238,10 @@ apiClient.interceptors.response.use(
             // (and with other tabs) so a rotating refresh token is never submitted twice.
             refreshPromise = refreshAuthTokens({ failedAccessToken })
             const tokens = await refreshPromise
+
+            if (staleComplianceRequest()) {
+              return Promise.reject(sessionChangedError)
+            }
 
             // Retry the original request with the refreshed token
             if (originalRequest.headers) {

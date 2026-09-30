@@ -64,6 +64,7 @@ function onVisibilityChange() {
 }
 
 function onAdminComplianceRequired(event: Event) {
+  if (!authStore.isAuthenticated || !authStore.isAdmin) return
   const detail = (event as CustomEvent<Record<string, string>>).detail || {}
   adminComplianceStore.requireAcknowledgement(detail)
 }
