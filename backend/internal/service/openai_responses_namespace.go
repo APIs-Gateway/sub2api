@@ -200,6 +200,9 @@ func flattenOpenAIResponsesNamespaces(c *gin.Context, body []byte) ([]byte, erro
 // namespace，让 Codex 调用能按上游要求原样回传；判定见
 // shouldKeepOpenAIResponsesToolCallNamespaces。
 func stripOpenAIResponsesInputNamespaces(body []byte, keepToolCallNamespaces bool) ([]byte, error) {
+	if !bytes.Contains(body, []byte(`"namespace"`)) {
+		return body, nil
+	}
 	return stripOpenAIResponsesInputNamespacesWhere(body, func(item gjson.Result) bool {
 		return !keepToolCallNamespaces || !isOpenAIResponsesToolCallItemType(item.Get("type").String())
 	})
@@ -215,9 +218,6 @@ func stripOpenAIResponsesInputNamespacesOfType(body []byte, itemType string) ([]
 }
 
 func stripOpenAIResponsesInputNamespacesWhere(body []byte, shouldStrip func(item gjson.Result) bool) ([]byte, error) {
-	if !bytes.Contains(body, []byte(`"namespace"`)) {
-		return body, nil
-	}
 	input := gjson.GetBytes(body, "input")
 	if !input.IsArray() {
 		return body, nil

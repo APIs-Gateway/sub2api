@@ -149,6 +149,31 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsRejectedCallTypeInO
 	require.Equal(t, "keep-custom", gjson.GetBytes(retryBody, "input.9.namespace").String())
 }
 
+func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsEscapedNamespaceKeys(t *testing.T) {
+	items := make([]string, 0, 9)
+	for i := 0; i < 8; i++ {
+		items = append(items, fmt.Sprintf(`{"type":"function_call","na\u006despace":"drop-%d","arguments":"{}","meta":{"na\u006despace":"keep-nested"}}`, i))
+	}
+	items = append(items, `{"type":"custom_tool_call","na\u006despace":"keep-custom","input":"{}"}`)
+	body := []byte(`{"input":[` + strings.Join(items, ",") + `]}`)
+	responseBody := []byte(`{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'input[3].namespace'.","param":"input[3].namespace"}}`)
+	require.NotContains(t, string(body), `"namespace"`)
+	state := newOpenAIResponsesRejectedFieldRetryState(body)
+
+	retryBody, _, changed, err := normalizeOpenAIResponsesRejectedFieldRetryBody(http.StatusBadRequest, body, responseBody)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.NotEqual(t, string(body), string(retryBody))
+	require.True(t, state.Allow(retryBody))
+	for i := 0; i < 8; i++ {
+		itemPath := fmt.Sprintf("input.%d", i)
+		require.False(t, gjson.GetBytes(retryBody, itemPath+".namespace").Exists())
+		require.Equal(t, "keep-nested", gjson.GetBytes(retryBody, itemPath+".meta.namespace").String())
+	}
+	require.Equal(t, "keep-custom", gjson.GetBytes(retryBody, "input.8.namespace").String())
+}
+
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyDoesNotTreatMaxOutputTokensSuggestionAsRejection(t *testing.T) {
 	body := []byte(`{"max_tokens":4096,"max_output_tokens":2048}`)
 	responseBody := []byte(`{"error":{"code":"unknown_parameter","message":"Unknown parameter: max_tokens. Use max_output_tokens instead."}}`)
