@@ -15,6 +15,7 @@
         <!-- Payment in progress (shared by recharge and subscription) -->
         <template v-if="paymentPhase === 'paying'">
           <PaymentStatusPanel
+            :key="paymentState.orderId"
             :order-id="paymentState.orderId"
             :qr-code="paymentState.qrCode"
             :expires-at="paymentState.expiresAt"
