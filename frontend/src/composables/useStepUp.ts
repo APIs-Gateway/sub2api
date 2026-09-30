@@ -1,7 +1,7 @@
 /**
  * Wrap a sensitive action with a short-lived TOTP step-up grant.
  */
-import { ref } from 'vue'
+import { getCurrentScope, onScopeDispose, ref } from 'vue'
 import { extractApiErrorCode } from '@/utils/apiError'
 
 const STEP_UP_REQUIRED = 'STEP_UP_REQUIRED'
@@ -46,24 +46,39 @@ export function useStepUp() {
   const visible = ref(false)
   const blockedReason = ref('')
   let resolver: ((verified: boolean) => void) | null = null
+  let pendingPrompt: Promise<boolean> | null = null
+  let disposed = false
 
   function prompt(): Promise<boolean> {
+    if (disposed) return Promise.resolve(false)
+    if (pendingPrompt) return pendingPrompt
     visible.value = true
-    return new Promise<boolean>((resolve) => {
+    pendingPrompt = new Promise<boolean>((resolve) => {
       resolver = resolve
     })
+    return pendingPrompt
   }
 
   function onVerified() {
+    if (disposed) return
     visible.value = false
     resolver?.(true)
     resolver = null
+    pendingPrompt = null
   }
 
   function onCancel() {
     visible.value = false
     resolver?.(false)
     resolver = null
+    pendingPrompt = null
+  }
+
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      disposed = true
+      if (pendingPrompt) onCancel()
+    })
   }
 
   async function run<T>(action: () => Promise<T>): Promise<T> {
@@ -79,7 +94,7 @@ export function useStepUp() {
       }
 
       const verified = await prompt()
-      if (!verified) {
+      if (!verified || disposed) {
         throw new StepUpCancelledError()
       }
 
