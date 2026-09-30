@@ -276,6 +276,11 @@ func TestOpenAIResponsesWebSocketV2PassthroughCyberMarkIsConsumedAfterTurn(t *te
 	require.NoError(t, err)
 
 	readCtx, cancelRead = context.WithTimeout(context.Background(), 3*time.Second)
+	_, rejection, err := harness.clientConn.Read(readCtx)
+	require.NoError(t, err)
+	require.Equal(t, "error", gjson.GetBytes(rejection, "type").String())
+	require.Equal(t, int64(http.StatusForbidden), gjson.GetBytes(rejection, "status").Int())
+	require.Equal(t, "session_blocked_by_cyber_policy", gjson.GetBytes(rejection, "error.code").String())
 	_, _, err = harness.clientConn.Read(readCtx)
 	cancelRead()
 	var closeErr coderws.CloseError

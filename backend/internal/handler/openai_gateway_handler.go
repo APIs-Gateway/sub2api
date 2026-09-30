@@ -2206,10 +2206,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				c.Set(securityAuditWSTurnContextKey, turn)
 				// Enforce the connection-level cyber session gate before any audit side
 				// effects. Both native and passthrough ingress visit this hook first and
-				// get the same side-effect-free close error; the BeforeTurn guard remains
-				// as defense in depth. Gateway-side rejection, not an account failure.
-				if isCyberBlockedThisConn() {
-					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
+			// get the same side-effect-free close error; the BeforeTurn guard remains
+			// as defense in depth. Gateway-side rejection, not an account failure.
+			if isCyberBlockedThisConn() {
+				writeCyberSessionBlockedWSError(ctx, wsConn)
+				return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
 				}
 				if turn == 1 {
 					return nil
@@ -2234,9 +2235,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			BeforeTurn: func(turn int) error {
 				// native 与 ws_v2 passthrough ingress 都会在后续 turn 写入上游前回调本钩子，
 				// 用于重新抢占上一 turn 在 AfterTurn 中释放的并发槽位。
-				// turn==1 的会话屏蔽已由握手层检查覆盖；连接内 flag 只拦截后续 turn。
-				if isCyberBlockedThisConn() {
-					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
+			// turn==1 的会话屏蔽已由握手层检查覆盖；连接内 flag 只拦截后续 turn。
+			if isCyberBlockedThisConn() {
+				writeCyberSessionBlockedWSError(ctx, wsConn)
+				return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
 				}
 				if turn == 1 {
 					return nil
