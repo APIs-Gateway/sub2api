@@ -63,7 +63,7 @@ function mountView() {
   })
 }
 
-describe('admin BackupView S3 step-up gate', () => {
+describe('admin BackupView', () => {
   beforeEach(() => {
     getS3Config.mockReset()
     updateS3Config.mockReset()
@@ -157,5 +157,57 @@ describe('admin BackupView S3 step-up gate', () => {
     expect(open).toHaveBeenCalledWith('https://example.test/backup', '_blank')
     open.mockRestore()
     wrapper.unmount()
+  })
+
+  it.each(['backup', 'restore'])('does not restart %s polling after unmount during initial loading', async (operation) => {
+    vi.useFakeTimers()
+    let finish!: (value: { items: object[] }) => void
+    listBackups.mockImplementationOnce(() => new Promise<{ items: object[] }>(resolve => { finish = resolve }))
+    const wrapper = mountView()
+    try {
+      await flushPromises()
+      wrapper.unmount()
+      finish({
+        items: [{
+          id: 'pending',
+          status: operation === 'backup' ? 'running' : 'completed',
+          restore_status: operation === 'restore' ? 'running' : undefined
+        }]
+      })
+      await flushPromises()
+      const vm = wrapper.vm as unknown as { creatingBackup: boolean; restoringId: string }
+      if (operation === 'backup') {
+        expect(vm.creatingBackup).toBe(true)
+      } else {
+        expect(vm.restoringId).toBe('pending')
+      }
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      wrapper.unmount()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['backup', 'restore'])('starts active %s polling while mounted and stops it on unmount', async (operation) => {
+    vi.useFakeTimers()
+    listBackups.mockResolvedValueOnce({
+      items: [{
+        id: 'active',
+        status: operation === 'backup' ? 'running' : 'completed',
+        restore_status: operation === 'restore' ? 'running' : undefined
+      }]
+    })
+    const wrapper = mountView()
+    try {
+      await flushPromises()
+      expect(vi.getTimerCount()).toBe(1)
+      wrapper.unmount()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      wrapper.unmount()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
   })
 })
