@@ -3735,12 +3735,17 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		needsOpenAIResponsesClientToolAdaptation(body)
 	liteClientTools := account.IsOpenAIApiKey() && !isOfficialOpenAIBaseURL(account.GetOpenAIBaseURL()) &&
 		gjson.GetBytes(body, `input.#(type=="additional_tools")`).Exists()
-	if !isOpenAIResponsesCompactPath(c) && !hasOpenAIResponsesNamespaceToolDeclaration(body) &&
+	deepSeekNamespaceLite := liteClientTools && isOfficialDeepSeekResponsesBaseURL(account.GetOpenAIBaseURL()) &&
+		hasOpenAIResponsesNamespaceToolDeclaration(body)
+	if !isOpenAIResponsesCompactPath(c) &&
+		(!hasOpenAIResponsesNamespaceToolDeclaration(body) || deepSeekNamespaceLite) &&
 		(commandCodeClientTools || liteClientTools) {
 		var adaptedBody []byte
 		var mapping apicompat.ResponsesClientToolMapping
 		var adaptErr error
-		if commandCodeClientTools {
+		if deepSeekNamespaceLite {
+			adaptedBody, mapping, adaptErr = adaptDeepSeekResponsesLiteClientTools(body)
+		} else if commandCodeClientTools {
 			adaptedBody, mapping, adaptErr = adaptCommandCodeResponsesClientTools(body)
 		} else {
 			adaptedBody, mapping, adaptErr = adaptOpenAIResponsesClientTools(body)
@@ -4150,7 +4155,16 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	// 拒绝或静默丢弃，客户端侧表现为工具调用整体不可用。出站前降级，回程再还原。
 	if account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey &&
 		!isOpenAIResponsesCompactPath(c) {
-		adaptedBody, mapping, adaptErr := adaptOpenAIResponsesClientTools(body)
+		var adaptedBody []byte
+		var mapping apicompat.ResponsesClientToolMapping
+		var adaptErr error
+		if isOfficialDeepSeekResponsesBaseURL(account.GetOpenAIBaseURL()) &&
+			gjson.GetBytes(body, `input.#(type=="additional_tools")`).Exists() &&
+			hasOpenAIResponsesNamespaceToolDeclaration(body) {
+			adaptedBody, mapping, adaptErr = adaptDeepSeekResponsesLiteClientTools(body)
+		} else {
+			adaptedBody, mapping, adaptErr = adaptOpenAIResponsesClientTools(body)
+		}
 		if adaptErr != nil {
 			return nil, adaptErr
 		}

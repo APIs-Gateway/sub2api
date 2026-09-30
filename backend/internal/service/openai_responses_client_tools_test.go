@@ -98,6 +98,221 @@ func TestAdaptOpenAIResponsesClientToolsLeavesNamespaceOnlyBodyUnchanged(t *test
 	require.False(t, mapping.ToolSearch)
 }
 
+func TestOfficialDeepSeekResponsesBaseURL(t *testing.T) {
+	for _, raw := range []string{"https://api.deepseek.com", "https://api.deepseek.com/", "https://api.deepseek.com/v1", "https://api.deepseek.com:443/v1/"} {
+		require.True(t, isOfficialDeepSeekResponsesBaseURL(raw), raw)
+	}
+	for _, raw := range []string{"", "http://api.deepseek.com", "https://api.deepseek.com.evil.test", "https://user@api.deepseek.com", "https://api.deepseek.com:444", "https://api.deepseek.com/proxy", "https://api.deepseek.com///v1///", "https://api.deepseek.com/%2f", "https://api.deepseek.com?x=1", "https://api.deepseek.com#fragment"} {
+		require.False(t, isOfficialDeepSeekResponsesBaseURL(raw), raw)
+	}
+}
+
+func TestOpenAIForward_DeepSeekNamespacedCustomLiteJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"deepseek-chat","stream":false,"tool_choice":{"type":"custom","namespace":"functions","name":"exec"},"input":[
+		{"type":"additional_tools","role":"developer","tools":[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec","format":{"type":"text"}}]}]},
+		{"type":"custom_tool_call","id":"ctc_old","call_id":"call_old","namespace":"functions","name":"exec","input":"ls"},
+		{"type":"custom_tool_call_output","call_id":"call_old","output":"ok"},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"run pwd"}]}
+	]}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set(responsesLiteHeader, "true")
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{"id":"resp_ds_custom","model":"deepseek-chat","status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"functions__exec","arguments":"{\"input\":\"pwd\"}"}],"usage":{"input_tokens":2,"output_tokens":3}}`)),
+	}}
+	svc := openAIClientToolsTestService(upstream)
+	account := &Account{ID: 7666, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "test-key", "base_url": "https://api.deepseek.com"}, Extra: openAIResponsesSupportedTestExtra()}
+	result, err := svc.Forward(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "deepseek-chat", result.Model)
+	require.Equal(t, "deepseek-chat", result.BillingModel)
+	require.Equal(t, "deepseek-chat", result.UpstreamModel)
+	require.Equal(t, "function", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
+	require.Equal(t, "functions__exec", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
+	require.Equal(t, "string", gjson.GetBytes(upstream.lastBody, "tools.0.parameters.properties.input.type").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools")`).Exists())
+	require.Equal(t, "function", gjson.GetBytes(upstream.lastBody, "tool_choice.type").String())
+	require.Equal(t, "functions__exec", gjson.GetBytes(upstream.lastBody, "tool_choice.name").String())
+	require.Equal(t, "function_call", gjson.GetBytes(upstream.lastBody, "input.0.type").String())
+	require.Equal(t, "functions__exec", gjson.GetBytes(upstream.lastBody, "input.0.name").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "input.0.namespace").Exists())
+	require.Equal(t, "custom_tool_call", gjson.Get(recorder.Body.String(), "output.0.type").String())
+	require.Equal(t, "functions", gjson.Get(recorder.Body.String(), "output.0.namespace").String())
+	require.Equal(t, "exec", gjson.Get(recorder.Body.String(), "output.0.name").String())
+	require.Equal(t, "pwd", gjson.Get(recorder.Body.String(), "output.0.input").String())
+}
+
+func TestOpenAIForward_DeepSeekNamespacedCustomLiteInvalidBeforeOutbound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tools := range []string{
+		`[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"},{"type":"custom","name":"exec"}]}]`,
+		`[{"type":"function","name":"functions__exec"},{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"}]}]`,
+		`[{"type":"namespace","name":"functions","tools":[{"type":"custom"}]}]`,
+	} {
+		body := []byte(`{"model":"deepseek-chat","stream":false,"input":[{"type":"additional_tools","tools":` + tools + `},{"type":"message","role":"user","content":"hi"}]}`)
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+		upstream := &httpUpstreamRecorder{}
+		svc := openAIClientToolsTestService(upstream)
+		account := &Account{ID: 7667, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "test-key", "base_url": "https://api.deepseek.com"}, Extra: openAIResponsesSupportedTestExtra()}
+		_, err := svc.Forward(context.Background(), c, account, body)
+		require.Error(t, err)
+		require.Nil(t, upstream.lastReq)
+		require.Empty(t, recorder.Body.String())
+	}
+}
+
+func TestOpenAIForward_DeepSeekNamespacedCustomLiteSSE(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"deepseek-chat","stream":true,"input":[{"type":"additional_tools","tools":[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"}]}]},{"type":"message","role":"user","content":"run pwd"}]}`)
+	sse := strings.Join([]string{
+		`data: {"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"functions__exec","status":"in_progress"}}`,
+		`data: {"type":"response.function_call_arguments.done","sequence_number":1,"output_index":0,"item_id":"fc_1","call_id":"call_1","name":"functions__exec","arguments":"{\"input\":\"pwd\"}"}`,
+		`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"functions__exec","arguments":"{\"input\":\"pwd\"}","status":"completed"}}`,
+		`data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp_ds_stream","model":"deepseek-chat","status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"functions__exec","arguments":"{\"input\":\"pwd\"}"}],"usage":{"input_tokens":2,"output_tokens":3}}}`,
+	}, "\n\n") + "\n\n"
+	for _, contentType := range []string{"text/event-stream", ""} {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+		headers := make(http.Header)
+		if contentType != "" {
+			headers.Set("Content-Type", contentType)
+		}
+		upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: headers, Body: io.NopCloser(strings.NewReader(sse))}}
+		svc := openAIClientToolsTestService(upstream)
+		account := &Account{ID: 7668, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "test-key", "base_url": "https://api.deepseek.com"}, Extra: openAIResponsesSupportedTestExtra()}
+		result, err := svc.Forward(context.Background(), c, account, body)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, "deepseek-chat", result.Model)
+		require.Equal(t, "deepseek-chat", result.UpstreamModel)
+		require.Equal(t, "deepseek-chat", result.BillingModel)
+		require.Equal(t, "functions__exec", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
+		output := recorder.Body.String()
+		require.Contains(t, output, `"type":"response.custom_tool_call_input.done"`)
+		require.Contains(t, output, `"name":"exec"`)
+		require.Contains(t, output, `"namespace":"functions"`)
+		require.NotContains(t, output, `"name":"functions__exec"`)
+	}
+}
+
+func TestOpenAIForward_NativeNamespaceLiteCarrierPreservedOutsideOfficialDeepSeek(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"test-model","stream":false,"input":[{"type":"additional_tools","tools":[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"}]}]},{"type":"message","role":"user","content":"hi"}]}`)
+	for _, baseURL := range []string{"https://relay.example", "https://api.deepseek.com/proxy", "https://api.openai.com"} {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+		upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK,
+			Header: http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"id":"resp_native","model":"test-model","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`))}}
+		svc := openAIClientToolsTestService(upstream)
+		account := &Account{ID: 7669, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "test-key", "base_url": baseURL}, Extra: openAIResponsesSupportedTestExtra()}
+		_, err := svc.Forward(context.Background(), c, account, body)
+		require.NoError(t, err, baseURL)
+		require.True(t, gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools")`).Exists(), baseURL)
+		require.False(t, gjson.GetBytes(upstream.lastBody, "tools").Exists(), baseURL)
+	}
+}
+
+func TestOpenAIForward_DeepSeekNamespacedCustomLitePassthrough(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, stream := range []bool{false, true} {
+		streamText := "false"
+		if stream {
+			streamText = "true"
+		}
+		body := []byte(`{"model":"deepseek-chat","stream":` + streamText + `,"input":[{"type":"additional_tools","tools":[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"}]}]},{"type":"message","role":"user","content":"run pwd"}]}`)
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+		responseBody := `{"id":"resp_ds_passthrough","model":"deepseek-chat","status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"functions__exec","arguments":"{\"input\":\"pwd\"}"}],"usage":{"input_tokens":1,"output_tokens":1}}`
+		contentType := "application/json"
+		if stream {
+			contentType = "text/event-stream"
+			responseBody = strings.Join([]string{
+				`data: {"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"functions__exec","status":"in_progress"}}`,
+				`data: {"type":"response.function_call_arguments.done","sequence_number":1,"output_index":0,"item_id":"fc_1","call_id":"call_1","name":"functions__exec","arguments":"{\"input\":\"pwd\"}"}`,
+				`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"functions__exec","arguments":"{\"input\":\"pwd\"}","status":"completed"}}`,
+				`data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp_ds_passthrough","model":"deepseek-chat","status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"functions__exec","arguments":"{\"input\":\"pwd\"}"}],"usage":{"input_tokens":1,"output_tokens":1}}}`,
+			}, "\n\n") + "\n\n"
+		}
+		upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK,
+			Header: http.Header{"Content-Type": []string{contentType}}, Body: io.NopCloser(strings.NewReader(responseBody))}}
+		svc := openAIClientToolsTestService(upstream)
+		account := &Account{ID: 7670, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "test-key", "base_url": "https://api.deepseek.com"},
+			Extra: map[string]any{"openai_responses_supported": true, "openai_passthrough": true}}
+		result, err := svc.Forward(context.Background(), c, account, body)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, "deepseek-chat", result.Model)
+		require.Equal(t, "deepseek-chat", result.UpstreamModel)
+		require.Empty(t, result.BillingModel)
+		require.Equal(t, "functions__exec", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
+		require.False(t, gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools")`).Exists())
+		output := recorder.Body.String()
+		require.Contains(t, output, `"type":"custom_tool_call"`)
+		require.Contains(t, output, `"namespace":"functions"`)
+		require.Contains(t, output, `"name":"exec"`)
+		require.NotContains(t, output, `"name":"functions__exec"`)
+	}
+}
+
+func TestOpenAIForward_DeepSeekNamespacedCustomMappingClearedAcrossAccounts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	firstBody := []byte(`{"model":"deepseek-chat","stream":false,"input":[{"type":"additional_tools","tools":[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"}]}]},{"type":"message","role":"user","content":"run"}]}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(firstBody))
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+	firstUpstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK,
+		Header: http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{"id":"resp_first","model":"deepseek-chat","status":"completed","output":[{"type":"function_call","call_id":"call_1","name":"functions__exec","arguments":"{\"input\":\"pwd\"}"}],"usage":{}}`))}}
+	svc := openAIClientToolsTestService(firstUpstream)
+	deepSeek := &Account{ID: 7671, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "test-key", "base_url": "https://api.deepseek.com"}, Extra: openAIResponsesSupportedTestExtra()}
+	_, err := svc.Forward(context.Background(), c, deepSeek, firstBody)
+	require.NoError(t, err)
+	require.Equal(t, "custom_tool_call", gjson.Get(recorder.Body.String(), "output.0.type").String())
+	_, mapped := openAIResponsesClientToolMapping(c)
+	require.True(t, mapped)
+	firstLen := recorder.Body.Len()
+
+	secondBody := []byte(`{"model":"test-model","stream":false,"tools":[{"type":"function","name":"functions__exec","parameters":{"type":"object"}}],"input":"continue"}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(secondBody))
+	secondUpstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK,
+		Header: http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{"id":"resp_second","model":"test-model","status":"completed","output":[{"type":"function_call","call_id":"call_2","name":"functions__exec","arguments":"{}"}],"usage":{}}`))}}
+	svc.httpUpstream = secondUpstream
+	relay := &Account{ID: 7672, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "test-key", "base_url": "https://relay.example"}, Extra: openAIResponsesSupportedTestExtra()}
+	_, err = svc.Forward(context.Background(), c, relay, secondBody)
+	require.NoError(t, err)
+	_, mapped = openAIResponsesClientToolMapping(c)
+	require.False(t, mapped)
+	secondOutput := recorder.Body.String()[firstLen:]
+	require.Equal(t, "function_call", gjson.Get(secondOutput, "output.0.type").String())
+	require.Equal(t, "functions__exec", gjson.Get(secondOutput, "output.0.name").String())
+	require.False(t, gjson.Get(secondOutput, "output.0.namespace").Exists())
+}
+
 func TestAdaptOpenAIResponsesClientToolsLowersCustomTools(t *testing.T) {
 	body := openAIClientToolsRequest(false)
 

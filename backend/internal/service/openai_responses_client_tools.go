@@ -122,6 +122,45 @@ func isOfficialCommandCodeResponsesBaseURL(raw string) bool {
 	return parsed.Port() == "" || parsed.Port() == "443"
 }
 
+func isOfficialDeepSeekResponsesBaseURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.User != nil || parsed.Opaque != "" || parsed.RawPath != "" ||
+		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" ||
+		!strings.EqualFold(parsed.Scheme, "https") || !strings.EqualFold(parsed.Hostname(), "api.deepseek.com") ||
+		(parsed.Port() != "" && parsed.Port() != "443") {
+		return false
+	}
+	switch parsed.Path {
+	case "", "/", "/v1", "/v1/":
+		return true
+	default:
+		return false
+	}
+}
+
+func adaptDeepSeekResponsesLiteClientTools(body []byte) ([]byte, apicompat.ResponsesClientToolMapping, error) {
+	requestBody, err := decodeOpenAIResponsesClientToolsRequestBody(body)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, err
+	}
+	changed, err := liftResponsesAdditionalTools(requestBody)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("lift DeepSeek Responses Lite tools: %w", err)
+	}
+	if !changed {
+		return body, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("DeepSeek Responses Lite tools require an additional_tools carrier")
+	}
+	mapping, _, err := apicompat.AdaptDeepSeekResponsesNamespaceCustomTools(requestBody)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, err
+	}
+	rebuilt, err := marshalOpenAIUpstreamJSON(requestBody)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("encode DeepSeek Responses Lite tools: %w", err)
+	}
+	return rebuilt, mapping, nil
+}
+
 // Command Code's native Responses endpoint needs the normal client-tool
 // adapter for declared tools. A follow-up with no tools field can still carry
 // tool_search history; lower only those history items without inserting a
