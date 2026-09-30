@@ -59,6 +59,24 @@ afterEach(() => {
 })
 
 describe('announcement read confirmation', () => {
+  it('does not toast when a no-op mark-all resolves after reset', async () => {
+    const store = useAnnouncementStore()
+    const wrapper = mount(AnnouncementBell, {
+      global: { stubs: { Teleport: true, Transition: true, Icon: true } }
+    })
+    await wrapper.get('button').trigger('click')
+    const markAll = wrapper.findAll('button').find(item => item.text() === 'announcements.markAllRead')
+    if (!markAll) throw new Error('Mark-all button not found')
+    store.announcements[0].read_at = '2026-09-30T00:00:00Z'
+    const click = markAll.trigger('click')
+    store.reset()
+    await click
+    await flushPromises()
+
+    expect(showSuccess).not.toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
+  })
+
   it.each(['success', 'failure'])('starts a new same-ID read after reset and ignores the old %s', async outcome => {
     const oldRead = deferred()
     const newRead = deferred()

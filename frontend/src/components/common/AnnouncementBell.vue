@@ -426,11 +426,16 @@ async function markAsReadAndClose(id: number) {
 }
 
 async function markAllAsRead() {
+  const session = announcementStore.sessionGeneration
   try {
     const marked = await announcementStore.markAllAsRead()
-    if (marked && !unmounted) appStore.showSuccess(t('announcements.allMarkedAsRead'))
+    if (marked && !unmounted && session === announcementStore.sessionGeneration) {
+      appStore.showSuccess(t('announcements.allMarkedAsRead'))
+    }
   } catch (err: any) {
-    if (!unmounted) appStore.showError(err?.message || t('common.unknownError'))
+    if (!unmounted && session === announcementStore.sessionGeneration) {
+      appStore.showError(err?.message || t('common.unknownError'))
+    }
   }
 }
 
