@@ -675,13 +675,15 @@ func TestOpenAIGatewayService_Forward_HTTPThinkingSignatureRecoveryGuards(t *tes
 		name, code, message, input string
 		status                     int
 		wantAttempts               int
+		stream                     bool
 	}{
-		{"unrelated signature", "thinking_signature_invalid", "Invalid signature", staleInput, http.StatusBadRequest, 1},
-		{"missing decryption detail", "thinking_signature_invalid", "The encrypted content abc could not be verified.", staleInput, http.StatusBadRequest, 1},
-		{"other error code", "invalid_request_error", matchingMessage, staleInput, http.StatusBadRequest, 1},
-		{"other status", "thinking_signature_invalid", matchingMessage, staleInput, http.StatusUnprocessableEntity, 1},
-		{"no encrypted reasoning", "thinking_signature_invalid", matchingMessage, `[{"type":"message","content":"hello"}]`, http.StatusBadRequest, 1},
-		{"retry only once", "thinking_signature_invalid", matchingMessage, staleInput, http.StatusBadRequest, 2},
+		{"unrelated signature", "thinking_signature_invalid", "Invalid signature", staleInput, http.StatusBadRequest, 1, false},
+		{"missing decryption detail", "thinking_signature_invalid", "The encrypted content abc could not be verified.", staleInput, http.StatusBadRequest, 1, false},
+		{"other error code", "invalid_request_error", matchingMessage, staleInput, http.StatusBadRequest, 1, false},
+		{"other status", "thinking_signature_invalid", matchingMessage, staleInput, http.StatusUnprocessableEntity, 1, false},
+		{"no encrypted reasoning", "thinking_signature_invalid", matchingMessage, `[{"type":"message","content":"hello"}]`, http.StatusBadRequest, 1, false},
+		{"retry only once", "thinking_signature_invalid", matchingMessage, staleInput, http.StatusBadRequest, 2, false},
+		{"streaming retry only once", "thinking_signature_invalid", matchingMessage, staleInput, http.StatusBadRequest, 2, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			upstream := &httpUpstreamRecorder{resp: &http.Response{
@@ -707,8 +709,15 @@ func TestOpenAIGatewayService_Forward_HTTPThinkingSignatureRecoveryGuards(t *tes
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
 			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
-			_, _ = svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5","stream":false,"input":`+tc.input+`}`))
+			stream := "false"
+			if tc.stream {
+				stream = "true"
+			}
+			_, _ = svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5","stream":`+stream+`,"input":`+tc.input+`}`))
 			require.Len(t, upstream.bodies, tc.wantAttempts)
+			if tc.stream {
+				require.False(t, gjson.GetBytes(upstream.bodies[1], "input.0.encrypted_content").Exists())
+			}
 		})
 	}
 }
