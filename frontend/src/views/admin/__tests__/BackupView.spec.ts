@@ -175,6 +175,34 @@ describe('admin BackupView', () => {
         }]
       })
       await flushPromises()
+      const vm = wrapper.vm as unknown as { creatingBackup: boolean; restoringId: string }
+      if (operation === 'backup') {
+        expect(vm.creatingBackup).toBe(true)
+      } else {
+        expect(vm.restoringId).toBe('pending')
+      }
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      wrapper.unmount()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['backup', 'restore'])('starts active %s polling while mounted and stops it on unmount', async (operation) => {
+    vi.useFakeTimers()
+    listBackups.mockResolvedValueOnce({
+      items: [{
+        id: 'active',
+        status: operation === 'backup' ? 'running' : 'completed',
+        restore_status: operation === 'restore' ? 'running' : undefined
+      }]
+    })
+    const wrapper = mountView()
+    try {
+      await flushPromises()
+      expect(vi.getTimerCount()).toBe(1)
+      wrapper.unmount()
       expect(vi.getTimerCount()).toBe(0)
     } finally {
       wrapper.unmount()
