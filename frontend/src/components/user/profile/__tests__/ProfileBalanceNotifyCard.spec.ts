@@ -276,6 +276,21 @@ describe('ProfileBalanceNotifyCard', () => {
     expect(wrapper.text()).toContain('profile.balanceNotify.verified')
   })
 
+  it('accepts a later parent re-add after profile and parent confirmed the deletion', async () => {
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.removeEmail').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain(entry.email)
+
+    await wrapper.setProps({ extraEmails: [] })
+    await wrapper.setProps({ extraEmails: [{ ...entry }] })
+    expect(wrapper.text()).toContain(entry.email)
+    expect(button(wrapper, 'profile.balanceNotify.verify')).toBeDefined()
+  })
+
   it('clears an active saved verification when parent props remove and re-add its email', async () => {
     const entry = { email: 'saved@example.com', disabled: false, verified: false }
     const wrapper = mount(ProfileBalanceNotifyCard, {
