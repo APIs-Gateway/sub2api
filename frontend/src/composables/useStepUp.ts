@@ -46,24 +46,29 @@ export function useStepUp() {
   const visible = ref(false)
   const blockedReason = ref('')
   let resolver: ((verified: boolean) => void) | null = null
+  let pendingPrompt: Promise<boolean> | null = null
 
   function prompt(): Promise<boolean> {
+    if (pendingPrompt) return pendingPrompt
     visible.value = true
-    return new Promise<boolean>((resolve) => {
+    pendingPrompt = new Promise<boolean>((resolve) => {
       resolver = resolve
     })
+    return pendingPrompt
   }
 
   function onVerified() {
     visible.value = false
     resolver?.(true)
     resolver = null
+    pendingPrompt = null
   }
 
   function onCancel() {
     visible.value = false
     resolver?.(false)
     resolver = null
+    pendingPrompt = null
   }
 
   async function run<T>(action: () => Promise<T>): Promise<T> {

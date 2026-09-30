@@ -29,6 +29,75 @@ describe('useStepUp error classification', () => {
   })
 })
 
+describe('useStepUp concurrent prompts', () => {
+  it.each([
+    ['verification', true],
+    ['cancellation', false],
+  ] as const)('settles all waiters after %s and starts a fresh prompt', async (_outcome, verified) => {
+    const stepUp = useStepUp()
+    const first = stepUp.prompt()
+    const second = stepUp.prompt()
+    expect(second).toBe(first)
+    expect(stepUp.visible.value).toBe(true)
+
+    if (verified) stepUp.onVerified()
+    else stepUp.onCancel()
+
+    await expect(first).resolves.toBe(verified)
+    await expect(second).resolves.toBe(verified)
+    expect(stepUp.visible.value).toBe(false)
+
+    const next = stepUp.prompt()
+    expect(next).not.toBe(first)
+    expect(stepUp.visible.value).toBe(true)
+    stepUp.onCancel()
+    await expect(next).resolves.toBe(false)
+  })
+
+  it('retries each concurrent sensitive action once after shared verification', async () => {
+    const stepUp = useStepUp()
+    const calls = [0, 0]
+    const action = (index: number) => async () => {
+      calls[index] += 1
+      if (calls[index] === 1) throw { status: 403, code: 'STEP_UP_REQUIRED' }
+      return `action-${index}`
+    }
+
+    const first = stepUp.run(action(0))
+    const second = stepUp.run(action(1))
+    await vi.waitFor(() => expect(stepUp.visible.value).toBe(true))
+    stepUp.onVerified()
+
+    await expect(Promise.all([first, second])).resolves.toEqual(['action-0', 'action-1'])
+    expect(calls).toEqual([2, 2])
+    expect(stepUp.visible.value).toBe(false)
+  })
+
+  it('cancels each concurrent sensitive action without retrying it', async () => {
+    const stepUp = useStepUp()
+    const calls = [0, 0]
+    const action = (index: number) => async () => {
+      calls[index] += 1
+      throw { status: 403, code: 'STEP_UP_REQUIRED' }
+    }
+
+    const first = stepUp.run(action(0))
+    const second = stepUp.run(action(1))
+    const results = Promise.allSettled([first, second])
+    await vi.waitFor(() => expect(stepUp.visible.value).toBe(true))
+    stepUp.onCancel()
+
+    const settled = await results
+    expect(settled).toHaveLength(2)
+    for (const result of settled) {
+      expect(result.status).toBe('rejected')
+      if (result.status === 'rejected') expect(result.reason).toBeInstanceOf(StepUpCancelledError)
+    }
+    expect(calls).toEqual([1, 1])
+    expect(stepUp.visible.value).toBe(false)
+  })
+})
+
 describe('useStepUp.run', () => {
   it('returns the action result directly on success', async () => {
     const stepUp = useStepUp()
