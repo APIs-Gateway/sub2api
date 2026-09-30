@@ -21,6 +21,18 @@ func TestRemoveGroupFromModerationConfigPreservesOtherJSON(t *testing.T) {
 	require.JSONEq(t, `{"nested":[true,null]}`, string(fields["unknown"]))
 }
 
+func TestRemoveGroupFromModerationConfigHandlesNullAndCaseVariants(t *testing.T) {
+	const raw = `{"GROUP_IDS":[7,null],"Group_Ids":[9,7],"group_ids":[7,11],"unknown":"keep"}`
+	next, changed := removeGroupFromModerationConfig(raw, 7)
+	require.True(t, changed)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal([]byte(next), &fields))
+	require.JSONEq(t, `[null]`, string(fields["GROUP_IDS"]))
+	require.JSONEq(t, `[9]`, string(fields["Group_Ids"]))
+	require.JSONEq(t, `[11]`, string(fields["group_ids"]))
+	require.Equal(t, `"keep"`, string(fields["unknown"]))
+}
+
 func TestRemoveGroupFromModerationConfigSkipsUnusableScope(t *testing.T) {
 	for _, raw := range []string{
 		`{"group_ids":[oops]}`,
@@ -29,8 +41,8 @@ func TestRemoveGroupFromModerationConfigSkipsUnusableScope(t *testing.T) {
 		`{"group_ids":"7"}`,
 		`{"group_ids":null}`,
 		`{"group_ids":[7,"bad"]}`,
-		`{"group_ids":[7,null]}`,
 		`{"group_ids":[7,1.0]}`,
+		`{"group_ids":[7],"GROUP_IDS":["bad"]}`,
 		`{"group_ids":[9],"unknown":true}`,
 	} {
 		next, changed := removeGroupFromModerationConfig(raw, 7)

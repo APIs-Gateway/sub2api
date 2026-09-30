@@ -147,6 +147,28 @@ func (s *GroupRepoSuite) TestDeleteCascadePreservesJSONTextRejectedByJSONB() {
 	s.Require().Equal(`1e1000000`, string(fields["very_large_number"]))
 }
 
+func (s *GroupRepoSuite) TestDeleteCascadeCleansAllCaseVariantsAndNullScopeEntries() {
+	deleted := &service.Group{Name: "moderation-case-deleted", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	kept := &service.Group{Name: "moderation-case-kept", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	s.Require().NoError(s.repo.Create(s.ctx, deleted))
+	s.Require().NoError(s.repo.Create(s.ctx, kept))
+	settings := NewSettingRepository(s.tx.Client())
+	raw := fmt.Sprintf(`{"GROUP_IDS":[%d,null],"group_ids":[%d,%d],"mode":"observe"}`, deleted.ID, deleted.ID, kept.ID)
+	s.Require().NoError(settings.Set(s.ctx, service.SettingKeyContentModerationConfig, raw))
+	_, err := s.repo.DeleteCascade(s.ctx, deleted.ID)
+	s.Require().NoError(err)
+	stored, err := settings.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+	s.Require().NoError(err)
+	var fields map[string]json.RawMessage
+	s.Require().NoError(json.Unmarshal([]byte(stored), &fields))
+	s.Require().JSONEq(`[null]`, string(fields["GROUP_IDS"]))
+	s.Require().JSONEq(fmt.Sprintf(`[%d]`, kept.ID), string(fields["group_ids"]))
+	moderation := service.NewContentModerationService(settings, nil, nil, nil, nil, nil, nil, nil)
+	view, err := moderation.GetConfig(s.ctx)
+	s.Require().NoError(err)
+	s.Require().Equal([]int64{kept.ID}, view.GroupIDs)
+}
+
 // --- Create / GetByID / Update / Delete ---
 
 func (s *GroupRepoSuite) TestCreate() {

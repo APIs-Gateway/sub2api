@@ -1028,8 +1028,8 @@ func TestContentModerationUpdateConfig_TransactionalWriterAndErrorMapping(t *tes
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &contentModerationWriterSettingRepo{
 				contentModerationTestSettingRepo: &contentModerationTestSettingRepo{values: map[string]string{SettingKeyContentModerationConfig: string(raw)}},
-				saveErr: tc.saveErr,
 			}
+			repo.saveErr = tc.saveErr
 			svc := NewContentModerationService(repo, nil, nil, nil, nil, nil, nil, nil)
 			_, err := svc.UpdateConfig(context.Background(), UpdateContentModerationConfigInput{})
 			require.Equal(t, 1, repo.writerCalls)

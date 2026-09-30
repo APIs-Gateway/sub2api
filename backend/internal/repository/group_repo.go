@@ -875,34 +875,40 @@ func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool)
 	if err := json.Unmarshal([]byte(raw), &fields); err != nil || fields == nil {
 		return "", false
 	}
-	var groupIDs []json.RawMessage
-	if err := json.Unmarshal(fields["group_ids"], &groupIDs); err != nil || groupIDs == nil {
-		return "", false
-	}
-	kept := make([]json.RawMessage, 0, len(groupIDs))
 	changed := false
-	for _, value := range groupIDs {
-		var groupID int64
-		if strings.TrimSpace(string(value)) == "null" {
-			return "", false
-		}
-		if err := json.Unmarshal(value, &groupID); err != nil {
-			return "", false
-		}
-		if groupID == deletedID {
-			changed = true
+	for key, rawIDs := range fields {
+		if !strings.EqualFold(key, "group_ids") {
 			continue
 		}
-		kept = append(kept, value)
+		var groupIDs []json.RawMessage
+		if err := json.Unmarshal(rawIDs, &groupIDs); err != nil || groupIDs == nil {
+			return "", false
+		}
+		kept := make([]json.RawMessage, 0, len(groupIDs))
+		for _, value := range groupIDs {
+			if strings.TrimSpace(string(value)) == "null" {
+				kept = append(kept, value)
+				continue
+			}
+			var groupID int64
+			if err := json.Unmarshal(value, &groupID); err != nil {
+				return "", false
+			}
+			if groupID == deletedID {
+				changed = true
+				continue
+			}
+			kept = append(kept, value)
+		}
+		groups, err := json.Marshal(kept)
+		if err != nil {
+			return "", false
+		}
+		fields[key] = groups
 	}
 	if !changed {
 		return "", false
 	}
-	groups, err := json.Marshal(kept)
-	if err != nil {
-		return "", false
-	}
-	fields["group_ids"] = groups
 	next, err := json.Marshal(fields)
 	if err != nil {
 		return "", false
