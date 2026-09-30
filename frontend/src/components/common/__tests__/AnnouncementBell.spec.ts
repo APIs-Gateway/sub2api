@@ -110,6 +110,37 @@ describe('announcement read confirmation', () => {
     expect(showError).not.toHaveBeenCalled()
   })
 
+  it.each(['success', 'failure'])('ignores an old %s after closing and reopening the same detail', async outcome => {
+    const oldRead = deferred()
+    const currentRead = deferred()
+    markRead.mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(currentRead.promise)
+    const wrapper = mount(AnnouncementBell, {
+      global: { stubs: { Teleport: true, Transition: true, Icon: true } }
+    })
+    await wrapper.get('button').trigger('click')
+    await wrapper.get('.group.relative').trigger('click')
+    await confirmButton(wrapper).trigger('click')
+    expect(markRead).toHaveBeenCalledTimes(1)
+
+    const close = wrapper.findAll('button').find(item => item.text() === 'common.close')
+    if (!close) throw new Error('Detail close button not found')
+    await close.trigger('click')
+    await wrapper.get('.group.relative').trigger('click')
+    expect(markRead).toHaveBeenCalledTimes(2)
+
+    if (outcome === 'success') oldRead.resolve()
+    else oldRead.reject(new Error('old read failed'))
+    await flushPromises()
+    expect(wrapper.get('.markdown-body').text()).toContain('Details 1')
+    expect(showSuccess).not.toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
+
+    currentRead.resolve()
+    await flushPromises()
+    expect(wrapper.get('.markdown-body').text()).toContain('Details 1')
+    expect(useAnnouncementStore().unreadCount).toBe(0)
+  })
+
   it('does not show a read failure after unmount', async () => {
     const pending = deferred()
     markRead.mockReturnValueOnce(pending.promise)

@@ -342,7 +342,8 @@ const unreadCount = computed(() => announcementStore.unreadCount)
 const isModalOpen = ref(false)
 const detailModalOpen = ref(false)
 const selectedAnnouncement = ref<UserAnnouncement | null>(null)
-const pendingReadRequests = new Map<number, Promise<boolean>>()
+const pendingReadRequests = new Map<number, { generation: number; promise: Promise<boolean> }>()
+let detailGeneration = 0
 let unmounted = false
 
 // Methods
@@ -361,6 +362,7 @@ function closeModal() {
 }
 
 function openDetail(announcement: UserAnnouncement) {
+  detailGeneration++
   selectedAnnouncement.value = announcement
   detailModalOpen.value = true
   if (!announcement.read_at) {
@@ -369,16 +371,20 @@ function openDetail(announcement: UserAnnouncement) {
 }
 
 function closeDetail() {
+  detailGeneration++
   detailModalOpen.value = false
   selectedAnnouncement.value = null
 }
 
-async function markAsRead(id: number) {
+async function markAsRead(id: number, generation = detailGeneration) {
   const pending = pendingReadRequests.get(id)
-  if (pending) return pending
+  if (pending?.generation === generation) return pending.promise
 
   const request = (async () => {
-    const isCurrentDetail = () => !unmounted && detailModalOpen.value && selectedAnnouncement.value?.id === id
+    const isCurrentDetail = () => !unmounted &&
+      generation === detailGeneration &&
+      detailModalOpen.value &&
+      selectedAnnouncement.value?.id === id
     try {
       const marked = await announcementStore.markAsRead(id)
       if (!marked && isCurrentDetail()) appStore.showError(t('common.unknownError'))
@@ -388,17 +394,18 @@ async function markAsRead(id: number) {
       return false
     }
   })()
-  pendingReadRequests.set(id, request)
+  pendingReadRequests.set(id, { generation, promise: request })
   try {
     return await request
   } finally {
-    if (pendingReadRequests.get(id) === request) pendingReadRequests.delete(id)
+    if (pendingReadRequests.get(id)?.promise === request) pendingReadRequests.delete(id)
   }
 }
 
 async function markAsReadAndClose(id: number) {
-  if (!await markAsRead(id)) return
-  if (unmounted || !detailModalOpen.value || selectedAnnouncement.value?.id !== id) return
+  const generation = detailGeneration
+  if (!await markAsRead(id, generation)) return
+  if (unmounted || generation !== detailGeneration || !detailModalOpen.value || selectedAnnouncement.value?.id !== id) return
   appStore.showSuccess(t('announcements.markedAsRead'))
   closeDetail()
 }
