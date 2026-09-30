@@ -44,7 +44,20 @@
 
 <script lang="ts">
 let dialogIdCounter = 0
-const openDialogs = new Set<string>()
+const openDialogs = new Map<string, number>()
+
+const topmostDialogId = () => {
+  let topId: string | undefined
+  let topZIndex = -Infinity
+  for (const [id, zIndex] of openDialogs) {
+    // Map iteration preserves opening order, so the latest wins a z-index tie.
+    if (zIndex >= topZIndex) {
+      topId = id
+      topZIndex = zIndex
+    }
+  }
+  return topId
+}
 </script>
 
 <script setup lang="ts">
@@ -111,13 +124,13 @@ const handleClose = () => {
 }
 
 const handleEscape = (event: KeyboardEvent) => {
-  if (props.show && props.closeOnEscape && event.key === 'Escape' && [...openDialogs].pop() === dialogId) {
+  if (props.show && props.closeOnEscape && event.key === 'Escape' && topmostDialogId() === dialogId) {
     emit('close')
   }
 }
 
 const updateScrollLock = (isOpen: boolean) => {
-  if (isOpen) openDialogs.add(dialogId)
+  if (isOpen) openDialogs.set(dialogId, props.zIndex)
   else openDialogs.delete(dialogId)
   document.body.classList.toggle('modal-open', openDialogs.size > 0)
 }
@@ -154,6 +167,10 @@ watch(
   },
   { immediate: true }
 )
+
+watch(() => props.zIndex, (zIndex) => {
+  if (props.show) openDialogs.set(dialogId, zIndex)
+})
 
 onMounted(() => {
   document.addEventListener('keydown', handleEscape)
