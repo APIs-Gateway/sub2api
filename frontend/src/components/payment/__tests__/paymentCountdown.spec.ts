@@ -4,9 +4,10 @@ import PaymentQRDialog from '../PaymentQRDialog.vue'
 import PaymentStatusPanel from '../PaymentStatusPanel.vue'
 import PaymentQRCodeView from '@/views/user/PaymentQRCodeView.vue'
 
-const { pollOrderStatus, verifyOrder, cancelOrder, routerPush, routeQuery } = vi.hoisted(() => ({
+const { pollOrderStatus, verifyOrder, cancelOrder, routerPush, routeQuery, showError } = vi.hoisted(() => ({
   pollOrderStatus: vi.fn(), verifyOrder: vi.fn(), cancelOrder: vi.fn(), routerPush: vi.fn(),
   routeQuery: { order_id: '42', expires_at: '' },
+  showError: vi.fn(),
 }))
 
 function deferred<T>() {
@@ -29,7 +30,7 @@ vi.mock('@/components/layout/AppLayout.vue', () => ({
 vi.mock('@/stores/payment', () => ({
   usePaymentStore: () => ({ pollOrderStatus }),
 }))
-vi.mock('@/stores', () => ({ useAppStore: () => ({ showError: vi.fn() }) }))
+vi.mock('@/stores', () => ({ useAppStore: () => ({ showError }) }))
 vi.mock('@/api/payment', () => ({ paymentAPI: { verifyOrder, cancelOrder } }))
 vi.mock('qrcode', () => ({ default: { toCanvas: vi.fn() } }))
 vi.mock('vue-router', () => ({
@@ -45,6 +46,7 @@ beforeEach(() => {
   verifyOrder.mockReset()
   cancelOrder.mockReset().mockResolvedValue(undefined)
   routerPush.mockReset()
+  showError.mockReset()
   routeQuery.expires_at = new Date(Date.now() + 120_000).toISOString()
 })
 afterEach(() => vi.useRealTimers())
@@ -174,6 +176,28 @@ describe.each(['dialog', 'panel', 'page'] as const)('payment expiry reconciliati
       expect(wrapper.emitted('close')).toHaveLength(1)
     }
   })
+
+  it('keeps the order active after cancellation fails and accepts a later paid retry', async () => {
+    pollOrderStatus.mockResolvedValueOnce(null).mockResolvedValueOnce(order('PAID'))
+    cancelOrder.mockRejectedValueOnce(new Error('cancel unavailable'))
+    const wrapper = await open(kind)
+    vi.setSystemTime(Date.now() + 121_000)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(pollOrderStatus).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).not.toContain('payment.qr.expired')
+
+    await wrapper.find('button.btn-secondary').trigger('click')
+    await flushPromises()
+    expect(showError).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(wrapper.emitted('settled')).toBeUndefined()
+    expect(routerPush).not.toHaveBeenCalledWith('/purchase')
+
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(pollOrderStatus).toHaveBeenCalledTimes(2)
+    if (kind === 'page') expect(routerPush).toHaveBeenCalledWith({ path: '/payment/result', query: { order_id: '42', status: 'success' } })
+    else expect(wrapper.emitted('success')).toHaveLength(1)
+  })
 })
 
 it.each(['dialog', 'panel'] as const)('%s verifies a pending built-in QR payment at expiry despite the retry interval', async kind => {
@@ -262,4 +286,20 @@ it('does not let the old dialog final query settle a newly opened order', async 
   expect(wrapper.emitted('success')).toBeUndefined()
   expect(wrapper.text()).toContain('02:00')
   expect(wrapper.text()).not.toContain('payment.qr.expired')
+})
+
+it('ignores an old cancellation response after the dialog switches to a new order', async () => {
+  const oldCancel = deferred<undefined>()
+  cancelOrder.mockReturnValue(oldCancel.promise)
+  const wrapper = await open('dialog')
+  await wrapper.find('button.btn-secondary').trigger('click')
+  expect(cancelOrder).toHaveBeenCalledWith(42)
+
+  await wrapper.setProps({ orderId: 43, expiresAt: new Date(Date.now() + 120_000).toISOString() })
+  oldCancel.resolve(undefined)
+  await flushPromises()
+
+  expect(wrapper.emitted('close')).toBeUndefined()
+  expect(wrapper.text()).toContain('02:00')
+  expect(wrapper.find('button.btn-secondary').attributes('disabled')).toBeUndefined()
 })

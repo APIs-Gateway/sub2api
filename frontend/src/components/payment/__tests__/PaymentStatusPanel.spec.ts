@@ -174,6 +174,10 @@ describe('PaymentStatusPanel', () => {
 
   it.each(['EXPIRED', 'FAILED'])('settles %s orders as expired and stops polling', async (status) => {
     pollOrderStatus.mockResolvedValue(orderFactory(status))
+    if (status === 'EXPIRED') {
+      // An expired built-in order is terminal only after the provider check succeeds.
+      verifyOrder.mockResolvedValue({ data: orderFactory('EXPIRED') })
+    }
 
     const wrapper = mount(PaymentStatusPanel, {
       props: {
@@ -190,6 +194,8 @@ describe('PaymentStatusPanel', () => {
 
     expect(wrapper.text()).toContain('payment.qr.expired')
     expect(wrapper.emitted('settled')).toEqual([['expired']])
+    if (status === 'EXPIRED') expect(verifyOrder).toHaveBeenCalledWith('sub2_20260420abcd1234')
+    else expect(verifyOrder).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(9000)
     expect(pollOrderStatus).toHaveBeenCalledTimes(1)
