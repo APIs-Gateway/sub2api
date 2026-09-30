@@ -1894,12 +1894,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 	if !gjson.ValidBytes(firstMessage) {
+		writeOpenAIWSRejection(ctx, wsConn, http.StatusBadRequest, "invalid_request_error", "", "Failed to parse request body")
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "invalid JSON payload")
 		return
 	}
 
 	reqModel := strings.TrimSpace(gjson.GetBytes(firstMessage, "model").String())
 	if reqModel == "" {
+		writeOpenAIWSRejection(ctx, wsConn, http.StatusBadRequest, "invalid_request_error", "", "model is required")
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
 		return
 	}
@@ -2042,10 +2044,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKey(ctx, subject.UserID, subject.Concurrency, apiKey.ID)
 	if err != nil {
 		reqLog.Warn("openai.websocket_user_slot_acquire_failed", zap.Error(err))
+		writeOpenAIWSConcurrencyRejection(ctx, wsConn, err, "user")
 		closeOpenAIClientWS(wsConn, coderws.StatusInternalError, "failed to acquire user concurrency slot")
 		return
 	}
 	if !userAcquired {
+		writeOpenAIWSConcurrencyRejection(ctx, wsConn, nil, "user")
 		closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "too many concurrent requests, please retry later")
 		return
 	}
@@ -2057,10 +2061,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKey(ctx, subject.UserID, subject.Concurrency, apiKey.ID)
 		if err != nil {
 			reqLog.Warn("openai.websocket_user_slot_reacquire_failed", zap.Error(err))
+			writeOpenAIWSConcurrencyRejection(ctx, wsConn, err, "user")
 			closeOpenAIClientWS(wsConn, coderws.StatusInternalError, "failed to acquire user concurrency slot")
 			return false
 		}
 		if !userAcquired {
+			writeOpenAIWSConcurrencyRejection(ctx, wsConn, nil, "user")
 			closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "too many concurrent requests, please retry later")
 			return false
 		}
@@ -2132,6 +2138,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		accountReleaseFunc := selection.ReleaseFunc
 		if !selection.Acquired {
 			if selection.WaitPlan == nil {
+				writeOpenAIWSConcurrencyRejection(ctx, wsConn, nil, "account")
 				closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account is busy, please retry later")
 				return
 			}
@@ -2142,10 +2149,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			)
 			if err != nil {
 				reqLog.Warn("openai.websocket_account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+				writeOpenAIWSConcurrencyRejection(ctx, wsConn, err, "account")
 				closeOpenAIClientWS(wsConn, coderws.StatusInternalError, "failed to acquire account concurrency slot")
 				return
 			}
 			if !fastAcquired {
+				writeOpenAIWSConcurrencyRejection(ctx, wsConn, nil, "account")
 				closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account is busy, please retry later")
 				return
 			}
@@ -2206,16 +2215,17 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				c.Set(securityAuditWSTurnContextKey, turn)
 				// Enforce the connection-level cyber session gate before any audit side
 				// effects. Both native and passthrough ingress visit this hook first and
-			// get the same side-effect-free close error; the BeforeTurn guard remains
-			// as defense in depth. Gateway-side rejection, not an account failure.
-			if isCyberBlockedThisConn() {
-				writeCyberSessionBlockedWSError(ctx, wsConn)
-				return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
+				// get the same side-effect-free close error; the BeforeTurn guard remains
+				// as defense in depth. Gateway-side rejection, not an account failure.
+				if isCyberBlockedThisConn() {
+					writeCyberSessionBlockedWSError(ctx, wsConn)
+					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
 				}
 				if turn == 1 {
 					return nil
 				}
 				if !gjson.ValidBytes(payload) {
+					writeOpenAIWSRejection(ctx, wsConn, http.StatusBadRequest, "invalid_request_error", "", "Failed to parse request body")
 					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json"))
 				}
 				model := strings.TrimSpace(originalModel)
@@ -2235,10 +2245,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			BeforeTurn: func(turn int) error {
 				// native 与 ws_v2 passthrough ingress 都会在后续 turn 写入上游前回调本钩子，
 				// 用于重新抢占上一 turn 在 AfterTurn 中释放的并发槽位。
-			// turn==1 的会话屏蔽已由握手层检查覆盖；连接内 flag 只拦截后续 turn。
-			if isCyberBlockedThisConn() {
-				writeCyberSessionBlockedWSError(ctx, wsConn)
-				return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
+				// turn==1 的会话屏蔽已由握手层检查覆盖；连接内 flag 只拦截后续 turn。
+				if isCyberBlockedThisConn() {
+					writeCyberSessionBlockedWSError(ctx, wsConn)
+					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
 				}
 				if turn == 1 {
 					return nil
@@ -2260,9 +2270,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 非首轮 turn 需要重新抢占并发槽位，避免长连接空闲占槽。
 				userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKey(ctx, subject.UserID, subject.Concurrency, apiKey.ID)
 				if err != nil {
+					writeOpenAIWSConcurrencyRejection(ctx, wsConn, err, "user")
 					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusInternalError, "failed to acquire user concurrency slot", err)
 				}
 				if !userAcquired {
+					writeOpenAIWSConcurrencyRejection(ctx, wsConn, nil, "user")
 					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusTryAgainLater, "too many concurrent requests, please retry later", nil)
 				}
 				accountReleaseFunc, accountAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(ctx, account.ID, accountMaxConcurrency)
@@ -2270,12 +2282,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					if userReleaseFunc != nil {
 						userReleaseFunc()
 					}
+					writeOpenAIWSConcurrencyRejection(ctx, wsConn, err, "account")
 					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusInternalError, "failed to acquire account concurrency slot", err)
 				}
 				if !accountAcquired {
 					if userReleaseFunc != nil {
 						userReleaseFunc()
 					}
+					writeOpenAIWSConcurrencyRejection(ctx, wsConn, nil, "account")
 					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusTryAgainLater, "account is busy, please retry later", nil)
 				}
 				if !storeTurnSlots(wrapReleaseOnDone(ctx, userReleaseFunc), wrapReleaseOnDone(ctx, accountReleaseFunc)) {
@@ -2483,6 +2497,20 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			// contacted upstream. Keep the account's scheduler health unchanged.
 			if hasClientCloseErr && errors.Is(err, service.ErrCodexClientRestricted) {
 				writeCodexClientRestrictedWSError(ctx, wsConn, closeErr.Reason())
+				closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
+				return
+			}
+			var fastBlocked *service.OpenAIFastBlockedError
+			if hasClientCloseErr && errors.As(err, &fastBlocked) {
+				// The service already wrote one policy error event before returning.
+				closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
+				return
+			}
+			var localRejection *service.OpenAIWSLocalRejection
+			if hasClientCloseErr && errors.As(err, &localRejection) {
+				if !turnPassthrough.Load() {
+					writeOpenAIWSRejection(ctx, wsConn, localRejection.HTTPStatus, localRejection.ErrorType, localRejection.Code, localRejection.Message)
+				}
 				closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
 				return
 			}
@@ -3095,6 +3123,17 @@ func writeOpenAIWSRejection(ctx context.Context, conn *coderws.Conn, status int,
 func writeOpenAIWSBillingRejection(ctx context.Context, conn *coderws.Conn, err error) {
 	status, code, message, _ := billingErrorDetails(err)
 	writeOpenAIWSRejection(ctx, conn, status, code, "", message)
+}
+
+func writeOpenAIWSConcurrencyRejection(ctx context.Context, conn *coderws.Conn, err error, slotType string) {
+	if err == nil {
+		err = &ConcurrencyError{SlotType: slotType}
+	}
+	status, errType, message := concurrencyErrorResponse(err, slotType)
+	if status == statusClientClosedRequest {
+		return
+	}
+	writeOpenAIWSRejection(ctx, conn, status, errType, "", message)
 }
 
 func openAIWSNextAttemptMessage(current, retryPayload []byte, retryCurrentTurn bool) ([]byte, bool) {

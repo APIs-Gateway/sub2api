@@ -67,6 +67,143 @@ func TestOpenAIResponsesWebSocket_CodexClientRestrictionWritesForbiddenEventWith
 	}
 }
 
+func TestOpenAIResponsesWebSocket_InvalidLaterTurnHasHTTPStatusWithoutAccountFailure(t *testing.T) {
+	reports := make(chan bool, 1)
+	upstreamForwarded := make(chan struct{}, 1)
+	cache := &concurrencyCacheMock{
+		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+	}
+	h := newOpenAIResponsesWebSocketAttributionHandlerWithProxy(t, cache,
+		func(_ context.Context, _ *gin.Context, _ *coderws.Conn, _ *service.Account, _ string, _ []byte, hooks *service.OpenAIWSIngressHooks) error {
+			if hooks == nil || hooks.BeforeRequest == nil {
+				return errors.New("missing ingress validation hook")
+			}
+			if err := hooks.BeforeRequest(2, []byte(`{`), ""); err != nil {
+				return err
+			}
+			upstreamForwarded <- struct{}{}
+			return nil
+		}, reports, true)
+	handlerDone := make(chan struct{})
+	server := newOpenAIResponsesWebSocketAttributionServerWithDone(t, h, handlerDone)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/openai/v1/responses", nil)
+	require.NoError(t, err)
+	defer func() { _ = client.CloseNow() }()
+	require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.4","stream":false}`)))
+	closeErr := readOpenAIWSRejectionStatus(t, client, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+	require.Equal(t, "invalid websocket request payload", closeErr.Reason)
+	select {
+	case <-handlerDone:
+	case <-ctx.Done():
+		t.Fatal("websocket handler did not exit")
+	}
+	select {
+	case <-upstreamForwarded:
+		t.Fatal("invalid later turn reached upstream forwarding")
+	default:
+	}
+	select {
+	case <-reports:
+		t.Fatal("local payload rejection must not lower account scheduler health")
+	default:
+	}
+}
+
+func TestOpenAIResponsesWebSocket_LaterTurnConcurrencyRejectionHasHTTPStatus(t *testing.T) {
+	tests := []struct {
+		name     string
+		slotType string
+	}{
+		{name: "user slot", slotType: "user"},
+		{name: "account slot", slotType: "account"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var userAcquires atomic.Int32
+			var accountAcquires atomic.Int32
+			reports := make(chan bool, 1)
+			cache := &concurrencyCacheMock{
+				acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) {
+					return userAcquires.Add(1) == 1 || tc.slotType != "user", nil
+				},
+				acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) {
+					return accountAcquires.Add(1) == 1 || tc.slotType != "account", nil
+				},
+			}
+			h := newOpenAIResponsesWebSocketAttributionHandlerWithProxy(t, cache,
+				func(_ context.Context, _ *gin.Context, _ *coderws.Conn, _ *service.Account, _ string, _ []byte, hooks *service.OpenAIWSIngressHooks) error {
+					if hooks == nil || hooks.BeforeTurn == nil {
+						return errors.New("missing turn admission hook")
+					}
+					return hooks.BeforeTurn(2)
+				}, reports, true)
+			handlerDone := make(chan struct{})
+			server := newOpenAIResponsesWebSocketAttributionServerWithDone(t, h, handlerDone)
+			defer server.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			client, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/openai/v1/responses", nil)
+			require.NoError(t, err)
+			defer func() { _ = client.CloseNow() }()
+			require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.4","stream":false}`)))
+			closeErr := readOpenAIWSRejectionStatus(t, client, http.StatusTooManyRequests, "rate_limit_error", "Concurrency limit exceeded for "+tc.slotType)
+			require.Equal(t, coderws.StatusTryAgainLater, closeErr.Code)
+			select {
+			case <-handlerDone:
+			case <-ctx.Done():
+				t.Fatal("websocket handler did not exit")
+			}
+			require.GreaterOrEqual(t, atomic.LoadInt32(&cache.releaseUserCalled), int32(1))
+			require.GreaterOrEqual(t, atomic.LoadInt32(&cache.releaseAccountCalled), int32(1))
+			select {
+			case <-reports:
+				t.Fatal("local concurrency rejection must not lower account scheduler health")
+			default:
+			}
+		})
+	}
+}
+
+func TestOpenAIResponsesWebSocket_FastPolicyBlockKeepsAccountHealthyAndSingleEvent(t *testing.T) {
+	reports := make(chan bool, 1)
+	h := newOpenAIResponsesWebSocketAttributionHandlerWithProxy(t, &concurrencyCacheMock{
+		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+	}, func(ctx context.Context, _ *gin.Context, conn *coderws.Conn, _ *service.Account, _ string, _ []byte, _ *service.OpenAIWSIngressHooks) error {
+		if err := conn.Write(ctx, coderws.MessageText, []byte(`{"type":"error","status":403,"error":{"type":"permission_error","code":"policy_violation","message":"fast policy blocked"}}`)); err != nil {
+			return err
+		}
+		return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "fast policy blocked", &service.OpenAIFastBlockedError{Message: "fast policy blocked"})
+	}, reports, true)
+	handlerDone := make(chan struct{})
+	server := newOpenAIResponsesWebSocketAttributionServerWithDone(t, h, handlerDone)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/openai/v1/responses", nil)
+	require.NoError(t, err)
+	defer func() { _ = client.CloseNow() }()
+	require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.4"}`)))
+	closeErr := readOpenAIWSRejectionStatus(t, client, http.StatusForbidden, "permission_error", "fast policy blocked")
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+	select {
+	case <-handlerDone:
+	case <-ctx.Done():
+		t.Fatal("websocket handler did not exit")
+	}
+	select {
+	case <-reports:
+		t.Fatal("local Fast Policy rejection must not lower account scheduler health")
+	default:
+	}
+}
+
 func TestOpenAIResponsesWebSocket_LocalPrewarmReleasesSlotsWhileConnectionStaysOpen(t *testing.T) {
 	cache := &concurrencyCacheMock{
 		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },

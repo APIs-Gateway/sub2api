@@ -944,10 +944,34 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			}
 			if err := s.rejectOpenAIResponsesWebSocketImageGenerationFrame(msgType, payload); err != nil {
 				MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
+				var rejection *OpenAIWSLocalRejection
+				if errors.As(err, &rejection) {
+					writeOpenAIWSLocalRejectionEvent(ctx, clientConn, rejection)
+				}
 				return payload, nil, err
 			}
 			if msgType != coderws.MessageText && msgType != coderws.MessageBinary {
 				return payload, nil, nil
+			}
+			if !gjson.ValidBytes(payload) {
+				rejection := newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", "Failed to parse request body", ErrOpenAIWSInvalidJSONPayload)
+				writeOpenAIWSLocalRejectionEvent(ctx, clientConn, rejection)
+				return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", rejection)
+			}
+			if isResponseCreate {
+				previousResponseID := strings.TrimSpace(gjson.GetBytes(payload, "previous_response_id").String())
+				if previousResponseID != "" && ClassifyOpenAIPreviousResponseIDKind(previousResponseID) == OpenAIPreviousResponseIDKindMessageID {
+					message := "previous_response_id must be a response.id (resp_*), not a message id"
+					rejection := newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", message, nil)
+					writeOpenAIWSLocalRejectionEvent(ctx, clientConn, rejection)
+					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, message, rejection)
+				}
+				if apiKey := getAPIKeyFromContext(c); apiKey != nil && IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(payload) && !GroupAllowsImageGeneration(apiKey.Group) {
+					message := ImageGenerationPermissionMessage()
+					rejection := newOpenAIWSLocalRejection(http.StatusForbidden, "permission_error", "", message, nil)
+					writeOpenAIWSLocalRejectionEvent(ctx, clientConn, rejection)
+					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, message, rejection)
+				}
 			}
 			if isResponseCreate && isOpenAIResponsesLiteWebSocketPayload(payload) {
 				litePayload, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(payload, account)

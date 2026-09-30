@@ -223,7 +223,8 @@ func TestBuildOpenAIFastPolicyBlockedWSEvent_HasEventIDAndCode(t *testing.T) {
 	require.NotNil(t, bytes)
 
 	require.Equal(t, "error", gjson.GetBytes(bytes, "type").String())
-	require.Equal(t, "invalid_request_error", gjson.GetBytes(bytes, "error.type").String())
+	require.Equal(t, int64(http.StatusForbidden), gjson.GetBytes(bytes, "status").Int())
+	require.Equal(t, "permission_error", gjson.GetBytes(bytes, "error.type").String())
 	require.Equal(t, "policy_violation", gjson.GetBytes(bytes, "error.code").String())
 	require.Equal(t, "blocked because reasons", gjson.GetBytes(bytes, "error.message").String())
 

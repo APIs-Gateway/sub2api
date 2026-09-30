@@ -26,6 +26,122 @@ type openAIWSPassthroughHandlerHarness struct {
 	gatewayCache   service.GatewayCache
 	accountRepo    *openAIWSTurnHandlerAccountRepo
 	apiKey         *service.APIKey
+	cfg            *config.Config
+}
+
+func TestOpenAIResponsesWebSocketV2PassthroughInvalidLaterJSONIsLocal400(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		messageType coderws.MessageType
+	}{
+		{name: "text", messageType: coderws.MessageText},
+		{name: "binary", messageType: coderws.MessageBinary},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runOpenAIResponsesWebSocketV2PassthroughLocalRejection(t, tc.messageType, `{`, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body", "invalid websocket request payload", nil)
+		})
+	}
+}
+
+func TestOpenAIResponsesWebSocketV2PassthroughLaterPolicyRejectionsHaveHTTPStatus(t *testing.T) {
+	tests := []struct {
+		name        string
+		payload     string
+		status      int
+		errType     string
+		message     string
+		closeReason string
+		setup       func(*openAIWSPassthroughHandlerHarness)
+	}{
+		{name: "message id", payload: `{"type":"response.create","model":"gpt-5.1","previous_response_id":"msg_bad"}`, status: http.StatusBadRequest, errType: "invalid_request_error", message: "previous_response_id must be a response.id", closeReason: "previous_response_id must be a response.id (resp_*), not a message id"},
+		{name: "global image policy", payload: `{"type":"response.create","model":"gpt-5.1","tools":[{"type":"image_generation"}]}`, status: http.StatusBadRequest, errType: "invalid_request_error", message: service.OpenAIResponsesImageGenerationDisabledMessage(), closeReason: service.OpenAIResponsesImageGenerationDisabledMessage(), setup: func(h *openAIWSPassthroughHandlerHarness) {
+			h.cfg.Gateway.DisableOpenAIResponsesImageGeneration = true
+		}},
+		{name: "group image permission", payload: `{"type":"response.create","model":"gpt-5.1","tools":[{"type":"image_generation"}]}`, status: http.StatusForbidden, errType: "permission_error", message: service.ImageGenerationPermissionMessage(), closeReason: service.ImageGenerationPermissionMessage(), setup: func(h *openAIWSPassthroughHandlerHarness) {
+			h.apiKey.Group = &service.Group{AllowImageGeneration: false}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runOpenAIResponsesWebSocketV2PassthroughLocalRejection(t, coderws.MessageText, tc.payload, tc.status, tc.errType, tc.message, tc.closeReason, tc.setup)
+		})
+	}
+}
+
+func TestOpenAIResponsesWebSocketCtxPoolLaterLocalRejectionsHaveHTTPStatus(t *testing.T) {
+	tests := []struct {
+		name        string
+		payload     string
+		status      int
+		errType     string
+		message     string
+		closeReason string
+		setup       func(*openAIWSPassthroughHandlerHarness)
+	}{
+		{name: "invalid JSON", payload: `{`, status: http.StatusBadRequest, errType: "invalid_request_error", message: "Failed to parse request body", closeReason: "invalid websocket request payload"},
+		{name: "message id", payload: `{"type":"response.create","model":"gpt-5.1","previous_response_id":"msg_bad"}`, status: http.StatusBadRequest, errType: "invalid_request_error", message: "previous_response_id must be a response.id", closeReason: "previous_response_id must be a response.id (resp_*), not a message id"},
+		{name: "response append", payload: `{"type":"response.append","model":"gpt-5.1"}`, status: http.StatusBadRequest, errType: "invalid_request_error", message: "response.append is not supported", closeReason: "response.append is not supported in ws v2; use response.create with previous_response_id"},
+		{name: "global image policy", payload: `{"type":"response.create","model":"gpt-5.1","tools":[{"type":"image_generation"}]}`, status: http.StatusBadRequest, errType: "invalid_request_error", message: service.OpenAIResponsesImageGenerationDisabledMessage(), closeReason: service.OpenAIResponsesImageGenerationDisabledMessage(), setup: func(h *openAIWSPassthroughHandlerHarness) {
+			h.cfg.Gateway.DisableOpenAIResponsesImageGeneration = true
+		}},
+		{name: "group image permission", payload: `{"type":"response.create","model":"gpt-5.1","tools":[{"type":"image_generation"}]}`, status: http.StatusForbidden, errType: "permission_error", message: service.ImageGenerationPermissionMessage(), closeReason: service.ImageGenerationPermissionMessage(), setup: func(h *openAIWSPassthroughHandlerHarness) {
+			h.apiKey.Group = &service.Group{AllowImageGeneration: false}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runOpenAIResponsesWebSocketV2PassthroughLocalRejection(t, coderws.MessageText, tc.payload, tc.status, tc.errType, tc.message, tc.closeReason, tc.setup, service.OpenAIWSIngressModeCtxPool)
+		})
+	}
+}
+
+func runOpenAIResponsesWebSocketV2PassthroughLocalRejection(t *testing.T, messageType coderws.MessageType, payload string, status int, errType, message, closeReason string, setup func(*openAIWSPassthroughHandlerHarness), ingressModes ...string) {
+	upstreamDone := make(chan struct{})
+	secondUpstreamFrame := make(chan []byte, 1)
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(upstreamDone)
+		conn, err := coderws.Accept(w, r, nil)
+		require.NoError(t, err)
+		defer func() { _ = conn.CloseNow() }()
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		_, _, err = conn.Read(ctx)
+		require.NoError(t, err)
+		require.NoError(t, conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.completed","response":{"id":"resp_turn_1","model":"gpt-5.1","usage":{"input_tokens":2,"output_tokens":1}}}`)))
+		if _, second, readErr := conn.Read(ctx); readErr == nil {
+			secondUpstreamFrame <- append([]byte(nil), second...)
+		}
+	}))
+	defer upstreamServer.Close()
+	harness := newOpenAIWSPassthroughHandlerHarness(t, upstreamServer.URL, ingressModes...)
+	if setup != nil {
+		setup(harness)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, harness.clientConn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"first"}`)))
+	_, firstEvent, err := harness.clientConn.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "resp_turn_1", gjson.GetBytes(firstEvent, "response.id").String())
+	require.NoError(t, harness.clientConn.Write(ctx, messageType, []byte(payload)))
+	closeErr := readOpenAIWSRejectionStatus(t, harness.clientConn, status, errType, message)
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+	require.Equal(t, closeReason, closeErr.Reason)
+	select {
+	case <-harness.handlerDone:
+	case <-ctx.Done():
+		t.Fatal("websocket handler did not exit")
+	}
+	select {
+	case <-upstreamDone:
+	case <-ctx.Done():
+		t.Fatal("upstream websocket did not exit")
+	}
+	select {
+	case second := <-secondUpstreamFrame:
+		t.Fatalf("invalid later turn reached upstream: %s", second)
+	default:
+	}
 }
 
 type openAIWSTurnHandlerAccountRepo struct {
@@ -41,9 +157,13 @@ func (r *openAIWSTurnHandlerAccountRepo) GetByID(ctx context.Context, id int64) 
 	return account, err
 }
 
-func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string) *openAIWSPassthroughHandlerHarness {
+func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string, ingressModes ...string) *openAIWSPassthroughHandlerHarness {
 	t.Helper()
 	gatewayCache := testutil.NewRedisGatewayCache(t)
+	ingressMode := service.OpenAIWSIngressModePassthrough
+	if len(ingressModes) > 0 {
+		ingressMode = ingressModes[0]
+	}
 
 	settingRepo := &contentModerationHandlerSettingRepo{values: map[string]string{
 		service.SettingKeyRiskControlEnabled:          "true",
@@ -66,7 +186,7 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string) *ope
 		Credentials: map[string]any{"api_key": "sk-test", "base_url": upstreamURL},
 		Extra: map[string]any{
 			"openai_apikey_responses_websockets_v2_enabled": true,
-			"openai_apikey_responses_websockets_v2_mode":    service.OpenAIWSIngressModePassthrough,
+			"openai_apikey_responses_websockets_v2_mode":    ingressMode,
 		},
 	}
 	cfg := &config.Config{}
@@ -137,6 +257,7 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string) *ope
 		gatewayCache:   gatewayCache,
 		accountRepo:    accountRepo,
 		apiKey:         apiKey,
+		cfg:            cfg,
 	}
 }
 

@@ -195,27 +195,39 @@ func TestPromptAuditNilReceiverAndLegacyCompatibilityBranches(t *testing.T) {
 }
 
 func TestWriteSecurityAuditWSErrorWritesPromptGuardEnvelope(t *testing.T) {
-	decision := promptGuardDecision(securityaudit.DecisionBlock)
-	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := coderws.Accept(w, r, nil)
-		if err != nil {
-			t.Errorf("accept websocket: %v", err)
-			return
-		}
-		defer func() { _ = conn.CloseNow() }()
-		writeSecurityAuditWSError(context.TODO(), conn, decision)
-	}))
-	defer wsServer.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	clientConn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
-	require.NoError(t, err)
-	defer func() { _ = clientConn.CloseNow() }()
-
-	messageType, payload, err := clientConn.Read(ctx)
-	require.NoError(t, err)
-	require.Equal(t, coderws.MessageText, messageType)
-	require.Contains(t, string(payload), securityaudit.ErrorCodeBlocked)
-	require.Equal(t, int64(securityAuditStatus(decision)), gjson.GetBytes(payload, "status").Int())
+	tests := []struct {
+		name     string
+		decision *securityaudit.Decision
+		errType  string
+	}{
+		{name: "blocked", decision: &securityaudit.Decision{Kind: securityaudit.DecisionBlock, HTTPStatus: http.StatusForbidden, ErrorCode: securityaudit.ErrorCodeBlocked, ClientMessage: "prompt blocked"}, errType: "permission_error"},
+		{name: "unavailable", decision: &securityaudit.Decision{Kind: securityaudit.DecisionUnavailable, HTTPStatus: http.StatusServiceUnavailable, ErrorCode: securityaudit.ErrorCodeUnavailable, ClientMessage: "audit unavailable"}, errType: "api_error"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := coderws.Accept(w, r, nil)
+				if err != nil {
+					t.Errorf("accept websocket: %v", err)
+					return
+				}
+				defer func() { _ = conn.CloseNow() }()
+				writeSecurityAuditWSError(r.Context(), conn, tc.decision)
+			}))
+			defer wsServer.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			clientConn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
+			require.NoError(t, err)
+			defer func() { _ = clientConn.CloseNow() }()
+			messageType, payload, err := clientConn.Read(ctx)
+			require.NoError(t, err)
+			require.Equal(t, coderws.MessageText, messageType)
+			require.Equal(t, "error", gjson.GetBytes(payload, "type").String())
+			require.Equal(t, int64(tc.decision.HTTPStatus), gjson.GetBytes(payload, "status").Int())
+			require.Equal(t, tc.errType, gjson.GetBytes(payload, "error.type").String())
+			require.Equal(t, tc.decision.ErrorCode, gjson.GetBytes(payload, "error.code").String())
+			require.Equal(t, tc.decision.ClientMessage, gjson.GetBytes(payload, "error.message").String())
+		})
+	}
 }

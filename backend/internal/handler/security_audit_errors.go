@@ -134,9 +134,13 @@ func writeSecurityAuditWSError(ctx context.Context, conn *coderws.Conn, decision
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	errType := "api_error"
+	if decision.Kind == securityaudit.DecisionBlock {
+		errType = "permission_error"
+	}
 	payload, err := json.Marshal(gin.H{
 		"event_id": "evt_prompt_guard_rejected", "type": "error", "status": securityAuditStatus(decision),
-		"error": gin.H{"type": "invalid_request_error", "code": securityAuditErrorCode(decision), "message": securityAuditMessage(decision)},
+		"error": gin.H{"type": errType, "code": securityAuditErrorCode(decision), "message": securityAuditMessage(decision)},
 	})
 	if err != nil {
 		return

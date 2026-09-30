@@ -10449,8 +10449,9 @@ func buildOpenAIFastPolicyBlockedWSEvent(err *OpenAIFastBlockedError) []byte {
 	payload, mErr := json.Marshal(map[string]any{
 		"event_id": eventID,
 		"type":     "error",
+		"status":   http.StatusForbidden,
 		"error": map[string]any{
-			"type":    "invalid_request_error",
+			"type":    "permission_error",
 			"code":    "policy_violation",
 			"message": err.Message,
 		},
@@ -10458,7 +10459,7 @@ func buildOpenAIFastPolicyBlockedWSEvent(err *OpenAIFastBlockedError) []byte {
 	if mErr != nil {
 		// Fallback to a minimal hand-rolled payload; Marshal of the literal
 		// shape above should never fail in practice.
-		return []byte(`{"event_id":"` + eventID + `","type":"error","error":{"type":"invalid_request_error","code":"policy_violation","message":"openai fast policy blocked this request"}}`)
+		return []byte(`{"event_id":"` + eventID + `","type":"error","status":403,"error":{"type":"permission_error","code":"policy_violation","message":"openai fast policy blocked this request"}}`)
 	}
 	return payload
 }

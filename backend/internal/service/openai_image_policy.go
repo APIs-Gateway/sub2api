@@ -1,6 +1,8 @@
 package service
 
 import (
+	"net/http"
+
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	coderws "github.com/coder/websocket"
 	"github.com/tidwall/gjson"
@@ -95,7 +97,7 @@ func (s *OpenAIGatewayService) rejectOpenAIResponsesWebSocketImageGeneration(fra
 		return NewOpenAIWSClientCloseError(
 			coderws.StatusPolicyViolation,
 			OpenAIResponsesImageGenerationDisabledMessage(),
-			nil,
+			newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", OpenAIResponsesImageGenerationDisabledMessage(), nil),
 		)
 	}
 	return nil

@@ -289,6 +289,59 @@ var ErrOpenAIWSPrewarmModelChanged = errors.New("openai ws http bridge prewarm m
 // ErrOpenAIWSPrewarmPayloadInvalid is a local replay preparation rejection.
 var ErrOpenAIWSPrewarmPayloadInvalid = errors.New("openai ws http bridge prewarm payload invalid")
 
+// ErrOpenAIWSInvalidJSONPayload identifies a malformed client frame rejected
+// locally before any upstream attempt.
+var ErrOpenAIWSInvalidJSONPayload = errors.New("openai ws client payload is invalid json")
+
+// OpenAIWSLocalRejection carries the HTTP classification for a client frame
+// rejected before dispatch. The handler or passthrough relay writes one error
+// event before retaining the existing WebSocket close status and reason.
+type OpenAIWSLocalRejection struct {
+	HTTPStatus int
+	ErrorType  string
+	Code       string
+	Message    string
+	Cause      error
+}
+
+func (e *OpenAIWSLocalRejection) Error() string {
+	if e == nil {
+		return "local websocket rejection"
+	}
+	return e.Message
+}
+
+func (e *OpenAIWSLocalRejection) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+func newOpenAIWSLocalRejection(status int, errType, code, message string, cause error) *OpenAIWSLocalRejection {
+	return &OpenAIWSLocalRejection{HTTPStatus: status, ErrorType: errType, Code: code, Message: message, Cause: cause}
+}
+
+func writeOpenAIWSLocalRejectionEvent(ctx context.Context, conn *coderws.Conn, rejection *OpenAIWSLocalRejection) {
+	if conn == nil || rejection == nil {
+		return
+	}
+	errorObject := map[string]any{"type": rejection.ErrorType, "message": rejection.Message}
+	if rejection.Code != "" {
+		errorObject["code"] = rejection.Code
+	}
+	payload, err := json.Marshal(map[string]any{"type": "error", "status": rejection.HTTPStatus, "error": errorObject})
+	if err != nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_ = conn.Write(writeCtx, coderws.MessageText, payload)
+}
+
 // ErrOpenAIWSPrewarmLateStart rejects a later first prewarm with a different
 // client model that cannot reuse the connection's first-turn billing mapping.
 var ErrOpenAIWSPrewarmLateStart = errors.New("openai ws http bridge prewarm started after upstream turn")
@@ -3047,10 +3100,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	parseClientPayload := func(raw []byte) (openAIWSClientPayload, error) {
 		trimmed := bytes.TrimSpace(raw)
 		if len(trimmed) == 0 {
-			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "empty websocket request payload", nil)
+			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "empty websocket request payload", newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", "Failed to parse request body", ErrOpenAIWSInvalidJSONPayload))
 		}
 		if !gjson.ValidBytes(trimmed) {
-			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json"))
+			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", "Failed to parse request body", ErrOpenAIWSInvalidJSONPayload))
 		}
 
 		values := gjson.GetManyBytes(trimmed, "type", "model", "prompt_cache_key", "previous_response_id")
@@ -3069,13 +3122,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(
 				coderws.StatusPolicyViolation,
 				"response.append is not supported in ws v2; use response.create with previous_response_id",
-				nil,
+				newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", "response.append is not supported in ws v2; use response.create with previous_response_id", nil),
 			)
 		default:
+			message := fmt.Sprintf("unsupported websocket request type: %s", eventType)
 			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(
 				coderws.StatusPolicyViolation,
-				fmt.Sprintf("unsupported websocket request type: %s", eventType),
-				nil,
+				message,
+				newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", message, nil),
 			)
 		}
 
@@ -3092,7 +3146,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(
 					coderws.StatusPolicyViolation,
 					"model is required in response.create payload",
-					nil,
+					newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", "model is required", nil),
 				)
 			}
 		}
@@ -3103,7 +3157,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(
 				coderws.StatusPolicyViolation,
 				"previous_response_id must be a response.id (resp_*), not a message id",
-				nil,
+				newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", "previous_response_id must be a response.id (resp_*), not a message id", nil),
 			)
 		}
 		if turnMetadata := strings.TrimSpace(c.GetHeader(openAIWSTurnMetadataHeader)); turnMetadata != "" {
@@ -3194,10 +3248,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		imageIntent := IsImageGenerationIntent(openAIResponsesEndpoint, originalModel, normalized)
 		if imageIntent && s.openAIResponsesImageGenerationDisabled() {
-			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, OpenAIResponsesImageGenerationDisabledMessage(), nil)
+			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, OpenAIResponsesImageGenerationDisabledMessage(), newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", OpenAIResponsesImageGenerationDisabledMessage(), nil))
 		}
 		if imageIntent && !imageGenerationAllowed {
-			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, ImageGenerationPermissionMessage(), nil)
+			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, ImageGenerationPermissionMessage(), newOpenAIWSLocalRejection(http.StatusForbidden, "permission_error", "", ImageGenerationPermissionMessage(), nil))
 		}
 		imageBillingModel := ""
 		imageSizeTier := ""
@@ -3206,7 +3260,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			var imageCfgErr error
 			imageCfg, imageCfgErr := resolveOpenAIResponsesImageBillingConfigDetailedFromBody(normalized, originalModel)
 			if imageCfgErr != nil {
-				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, imageCfgErr.Error(), imageCfgErr)
+				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, imageCfgErr.Error(), newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", imageCfgErr.Error(), imageCfgErr))
 			}
 			imageBillingModel = imageCfg.Model
 			imageSizeTier = imageCfg.SizeTier

@@ -70,6 +70,67 @@ func TestOpenAIWSBillingRejectionUsesForkHTTPClassification(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponsesWebSocket_InvalidFirstFrameHasHTTPStatus(t *testing.T) {
+	tests := []struct {
+		name        string
+		payload     string
+		message     string
+		closeReason string
+	}{
+		{name: "invalid JSON", payload: `{`, message: "Failed to parse request body", closeReason: "invalid JSON payload"},
+		{name: "missing model", payload: `{"type":"response.create"}`, message: "model is required", closeReason: "model is required in first response.create payload"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newOpenAIHandlerForPreviousResponseIDValidation(t, nil)
+			server := newOpenAIWSHandlerTestServer(t, h, middleware.AuthSubject{UserID: 1, Concurrency: 1})
+			defer server.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/openai/v1/responses", nil)
+			require.NoError(t, err)
+			defer func() { _ = conn.CloseNow() }()
+			require.NoError(t, conn.Write(ctx, coderws.MessageText, []byte(tc.payload)))
+			closeErr := readOpenAIWSRejectionStatus(t, conn, http.StatusBadRequest, "invalid_request_error", tc.message)
+			require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+			require.Equal(t, tc.closeReason, closeErr.Reason)
+		})
+	}
+}
+
+func TestOpenAIResponsesWebSocket_FirstUserSlotRejectionHasHTTPStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		acquireErr error
+		acquired   bool
+		status     int
+		errType    string
+		message    string
+		closeCode  coderws.StatusCode
+	}{
+		{name: "limited", acquired: false, status: http.StatusTooManyRequests, errType: "rate_limit_error", message: "Concurrency limit exceeded for user", closeCode: coderws.StatusTryAgainLater},
+		{name: "cache failure", acquireErr: errors.New("redis unavailable"), status: http.StatusServiceUnavailable, errType: "api_error", message: "Service temporarily unavailable", closeCode: coderws.StatusInternalError},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := &concurrencyCacheMock{acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) {
+				return tc.acquired, tc.acquireErr
+			}}
+			h := newOpenAIHandlerForPreviousResponseIDValidation(t, cache)
+			server := newOpenAIWSHandlerTestServer(t, h, middleware.AuthSubject{UserID: 1, Concurrency: 1})
+			defer server.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/openai/v1/responses", nil)
+			require.NoError(t, err)
+			defer func() { _ = conn.CloseNow() }()
+			require.NoError(t, conn.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.5"}`)))
+			closeErr := readOpenAIWSRejectionStatus(t, conn, tc.status, tc.errType, tc.message)
+			require.Equal(t, tc.closeCode, closeErr.Code)
+		})
+	}
+}
+
 func TestOpenAIResponsesWebSocket_ImageGenerationDisabledHasHTTPStatus(t *testing.T) {
 	h := newOpenAIHandlerForPreviousResponseIDValidation(t, nil)
 	h.cfg = &config.Config{}
