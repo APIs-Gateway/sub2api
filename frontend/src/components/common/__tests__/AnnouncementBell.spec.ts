@@ -59,6 +59,43 @@ afterEach(() => {
 })
 
 describe('announcement read confirmation', () => {
+  it.each(['success', 'failure'])('starts a new same-ID read after reset and ignores the old %s', async outcome => {
+    const oldRead = deferred()
+    const newRead = deferred()
+    markRead.mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(newRead.promise)
+    const store = useAnnouncementStore()
+    const wrapper = mount(AnnouncementBell, {
+      global: { stubs: { Teleport: true, Transition: true, Icon: true } }
+    })
+    await wrapper.get('button').trigger('click')
+    await wrapper.get('.group.relative').trigger('click')
+    await confirmButton(wrapper).trigger('click')
+    expect(markRead).toHaveBeenCalledTimes(1)
+
+    store.reset()
+    store.announcements = [announcement(1)]
+    await flushPromises()
+    expect(wrapper.find('.markdown-body').exists()).toBe(false)
+    await wrapper.get('button').trigger('click')
+    await wrapper.get('.group.relative').trigger('click')
+    await confirmButton(wrapper).trigger('click')
+    expect(markRead).toHaveBeenCalledTimes(2)
+
+    if (outcome === 'success') oldRead.resolve()
+    else oldRead.reject(new Error('old session offline'))
+    await flushPromises()
+    expect(store.unreadCount).toBe(1)
+    expect(wrapper.get('.markdown-body').text()).toContain('Details 1')
+    expect(showError).not.toHaveBeenCalled()
+    expect(showSuccess).not.toHaveBeenCalled()
+
+    newRead.resolve()
+    await flushPromises()
+    expect(store.unreadCount).toBe(0)
+    expect(showSuccess).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.markdown-body').exists()).toBe(false)
+  })
+
   it.each(['success', 'failure'])('does not toast for a previous session mark-all %s', async outcome => {
     const oldRead = deferred()
     markRead.mockReturnValueOnce(oldRead.promise)

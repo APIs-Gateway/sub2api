@@ -343,7 +343,7 @@ const isModalOpen = ref(false)
 const detailModalOpen = ref(false)
 const selectedAnnouncement = ref<UserAnnouncement | null>(null)
 type ReadOutcome = { marked: boolean; error?: unknown }
-const pendingReadRequests = new Map<number, Promise<ReadOutcome>>()
+const pendingReadRequests = new Map<number, { session: number; request: Promise<ReadOutcome> }>()
 let reportedReadFailure: { generation: number; request: Promise<ReadOutcome> } | null = null
 let detailGeneration = 0
 let unmounted = false
@@ -379,8 +379,9 @@ function closeDetail() {
 }
 
 function readRequest(id: number): Promise<ReadOutcome> {
+  const session = announcementStore.sessionGeneration
   const pending = pendingReadRequests.get(id)
-  if (pending) return pending
+  if (pending?.session === session) return pending.request
 
   const request: Promise<ReadOutcome> = (async () => {
     try {
@@ -389,16 +390,18 @@ function readRequest(id: number): Promise<ReadOutcome> {
       return { marked: false, error }
     }
   })()
-  pendingReadRequests.set(id, request)
+  pendingReadRequests.set(id, { session, request })
   void request.then(() => {
-    if (pendingReadRequests.get(id) === request) pendingReadRequests.delete(id)
+    if (pendingReadRequests.get(id)?.request === request) pendingReadRequests.delete(id)
   })
   return request
 }
 
 async function markAsRead(id: number, generation = detailGeneration) {
+  const session = announcementStore.sessionGeneration
   const request = readRequest(id)
   const outcome = await request
+  if (session !== announcementStore.sessionGeneration) return false
   const marked = outcome.marked || Boolean(announcements.value.find(item => item.id === id)?.read_at)
   const isCurrentDetail = !unmounted &&
     generation === detailGeneration &&
@@ -415,8 +418,9 @@ async function markAsRead(id: number, generation = detailGeneration) {
 
 async function markAsReadAndClose(id: number) {
   const generation = detailGeneration
+  const session = announcementStore.sessionGeneration
   if (!await markAsRead(id, generation)) return
-  if (unmounted || generation !== detailGeneration || !detailModalOpen.value || selectedAnnouncement.value?.id !== id) return
+  if (unmounted || session !== announcementStore.sessionGeneration || generation !== detailGeneration || !detailModalOpen.value || selectedAnnouncement.value?.id !== id) return
   appStore.showSuccess(t('announcements.markedAsRead'))
   closeDetail()
 }
@@ -449,6 +453,17 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleEscape)
   document.body.style.overflow = ''
 })
+
+watch(
+  () => announcementStore.sessionGeneration,
+  () => {
+    closeDetail()
+    closeModal()
+    pendingReadRequests.clear()
+    reportedReadFailure = null
+  },
+  { flush: 'sync' }
+)
 
 watch(
   [isModalOpen, detailModalOpen, () => announcementStore.currentPopup],
