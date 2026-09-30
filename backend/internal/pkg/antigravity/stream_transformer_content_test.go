@@ -35,6 +35,7 @@ func TestStreamingProcessor_HasContentExcludesProtocolOnlyEvents(t *testing.T) {
 func TestStreamingProcessor_MalformedFunctionCallOnly(t *testing.T) {
 	malformed := `{"response":{"candidates":[{"content":{"parts":[{"thoughtSignature":"sig"}]},"finishReason":"MALFORMED_FUNCTION_CALL"}]}}`
 	text := `{"response":{"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}]}}`
+	stop := `{"response":{"candidates":[{"finishReason":"STOP"}]}}`
 	for _, tc := range []struct {
 		name     string
 		payloads []string
@@ -45,6 +46,7 @@ func TestStreamingProcessor_MalformedFunctionCallOnly(t *testing.T) {
 		{"usage-only", []string{`{"response":{"usageMetadata":{"promptTokenCount":2}}}`}, false},
 		{"signature-only stop", []string{`{"response":{"candidates":[{"content":{"parts":[{"thoughtSignature":"sig"}]},"finishReason":"STOP"}]}}`}, false},
 		{"malformed with text", []string{`{"response":{"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"MALFORMED_FUNCTION_CALL"}]}}`}, false},
+		{"malformed followed by empty stop", []string{malformed, stop}, false},
 		{"malformed followed by text", []string{malformed, text}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

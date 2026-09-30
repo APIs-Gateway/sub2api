@@ -64,6 +64,26 @@ func TestGeminiChatCompletionsStream_OtherEmptyStreamsRetrySameAccount(t *testin
 	}
 }
 
+func TestGeminiChatCompletionsStream_MalformedThenEmptyStopRetriesSameAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &GeminiMessagesCompatService{cfg: &config.Config{}}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	resp := antigravityEmptyStreamTestResponse(
+		geminiMalformedFunctionCall,
+		`{"response":{"candidates":[{"finishReason":"STOP"}]}}`,
+	)
+
+	result, err := svc.handleChatCompletionsStreamingResponseFromGemini(c, resp, time.Now(), "gemini-3.8-flash", true, false)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.Empty(t, rec.Body.String())
+	require.False(t, c.Writer.Written())
+}
+
 func TestGeminiChatCompletionsStream_CancelWinsOverEmptyResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &GeminiMessagesCompatService{cfg: &config.Config{}}
@@ -130,6 +150,31 @@ func TestGeminiChatCompletionsBufferedOAuth_SignatureOnlyDoesNotReturn200(t *tes
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.Empty(t, rec.Body.String())
+}
+
+func TestGeminiChatCompletionsBufferedOAuth_MalformedThenEmptyStopRetriesSameAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := &geminiCompatHTTPUpstreamStub{response: antigravityEmptyStreamTestResponse(
+		geminiMalformedFunctionCall,
+		`{"response":{"candidates":[{"finishReason":"STOP"}]}}`,
+		"[DONE]",
+	)}
+	svc := &GeminiMessagesCompatService{tokenProvider: &GeminiTokenProvider{}, httpUpstream: upstream, cfg: &config.Config{}}
+	account := &Account{
+		ID: 101, Platform: PlatformGemini, Type: AccountTypeOAuth, Concurrency: 1,
+		Credentials: map[string]any{"access_token": "ya29.test-token", "project_id": "project-1"},
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"gemini-3.8-flash","messages":[{"role":"user","content":"hi"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.True(t, failoverErr.RetryableOnSameAccount)
 	require.Empty(t, rec.Body.String())
 }
 

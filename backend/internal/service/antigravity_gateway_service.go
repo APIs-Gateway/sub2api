@@ -3991,7 +3991,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamToNonStreaming(c *gin.Cont
 	var last map[string]any
 	var lastWithParts map[string]any
 	var collectedParts []map[string]any // 收集所有 parts（包括 text、thinking、functionCall、inlineData 等）
-	sawMalformedFunctionCall := false
+	lastFinishReason := ""
 
 	type scanEvent struct {
 		line string
@@ -4086,8 +4086,8 @@ func (s *AntigravityGatewayService) handleClaudeStreamToNonStreaming(c *gin.Cont
 			}
 
 			last = parsed
-			if extractGeminiFinishReason(parsed) == "MALFORMED_FUNCTION_CALL" {
-				sawMalformedFunctionCall = true
+			if finishReason := extractGeminiFinishReason(parsed); finishReason != "" {
+				lastFinishReason = finishReason
 			}
 
 			// 保留最后一个有 parts 的响应，并收集所有 parts
@@ -4159,7 +4159,7 @@ returnResponse:
 		}
 	}
 	if !hasContent {
-		return nil, emptyGeminiCompletionFailoverError(sawMalformedFunctionCall)
+		return nil, emptyGeminiCompletionFailoverError(lastFinishReason == "MALFORMED_FUNCTION_CALL")
 	}
 
 	c.Data(http.StatusOK, "application/json", claudeResp)
@@ -4354,7 +4354,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 				if !processor.HasContent() {
 					if preContent.Len()+len(claudeEvents) > antigravityPreContentBufferLimit {
 						logger.LegacyPrintf("service.antigravity_gateway", "[antigravity-Claude-Stream] pre-content buffer exceeded %d bytes, triggering failover", antigravityPreContentBufferLimit)
-						return nil, emptyGeminiCompletionFailoverError(processor.MalformedFunctionCallOnly())
+						return nil, emptyGeminiCompletionFailoverError(false)
 					}
 					_, _ = preContent.Write(claudeEvents)
 					continue

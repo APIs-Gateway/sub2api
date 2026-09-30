@@ -140,11 +140,9 @@ func (p *StreamingProcessor) ProcessLine(line string) []byte {
 					log.Printf("[Antigravity] Malformed content: %s", string(b))
 				}
 			}
-			if !p.hasContent {
-				p.malformedFunctionCallOnly = true
-			}
 		}
 		if finishReason != "" {
+			p.malformedFunctionCallOnly = finishReason == "MALFORMED_FUNCTION_CALL"
 			_, _ = result.Write(p.emitFinish(finishReason))
 		}
 	}

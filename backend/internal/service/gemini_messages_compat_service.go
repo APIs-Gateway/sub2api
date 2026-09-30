@@ -2339,10 +2339,11 @@ func collectGeminiSSE(body io.Reader, isOAuth bool) (map[string]any, *ClaudeUsag
 	return collected, usage, err
 }
 
-// geminiSSECollectStats 记录一次 SSE 聚合读到的 data 事件数，以及非 data 行的兜底内容。
+// geminiSSECollectStats 记录 SSE 聚合中的 data 事件数、兜底内容与最后一个非空结束原因。
 type geminiSSECollectStats struct {
-	dataEvents int
-	fallback   *geminiSSEFallbackBody
+	dataEvents       int
+	fallback         *geminiSSEFallbackBody
+	lastFinishReason string
 }
 
 // collectGeminiSSEObserved 在聚合的同时把每个解包后的事件原文交给 observe（可为 nil）。
@@ -2391,6 +2392,9 @@ func collectGeminiSSEObserved(body io.Reader, isOAuth bool, observe func(rawByte
 					}
 					if parsed != nil {
 						last = parsed
+						if finishReason := extractGeminiFinishReason(parsed); finishReason != "" {
+							stats.lastFinishReason = finishReason
+						}
 						if u := extractGeminiUsage(rawBytes); u != nil {
 							usage = u
 						}

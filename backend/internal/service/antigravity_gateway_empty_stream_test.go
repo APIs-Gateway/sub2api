@@ -72,6 +72,26 @@ func TestHandleClaudeStreamingResponse_OtherEmptyStreamsRetrySameAccount(t *test
 	}
 }
 
+func TestHandleClaudeStreamingResponse_MalformedThenEmptyStopRetriesSameAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}})
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	resp := antigravityEmptyStreamTestResponse(
+		geminiMalformedFunctionCall,
+		`{"response":{"candidates":[{"finishReason":"STOP"}]}}`,
+	)
+
+	result, err := svc.handleClaudeStreamingResponse(c, resp, time.Now(), "gemini-3.8-flash")
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.Empty(t, rec.Body.String())
+	require.False(t, c.Writer.Written())
+}
+
 func TestHandleClaudeStreamingResponse_PreludeFlushesBeforeFirstContent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}})
@@ -107,6 +127,7 @@ func TestHandleClaudeStreamingResponse_PreContentBufferIsBounded(t *testing.T) {
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Empty(t, rec.Body.String())
+	require.True(t, failoverErr.RetryableOnSameAccount)
 }
 
 func TestHandleClaudeStreamingResponse_GroundingAtEOFReleasesPrelude(t *testing.T) {
@@ -199,6 +220,25 @@ func TestHandleClaudeStreamToNonStreaming_OtherEmptyRetriesSameAccount(t *testin
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	resp := antigravityEmptyStreamTestResponse(`{"response":{"candidates":[{"content":{"parts":[{"thoughtSignature":"sig"}]},"finishReason":"STOP"}]}}`)
+
+	result, err := svc.handleClaudeStreamToNonStreaming(c, resp, time.Now(), "gemini-3.8-flash")
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.Empty(t, rec.Body.String())
+}
+
+func TestHandleClaudeStreamToNonStreaming_MalformedThenEmptyStopRetriesSameAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}})
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	resp := antigravityEmptyStreamTestResponse(
+		geminiMalformedFunctionCall,
+		`{"response":{"candidates":[{"finishReason":"STOP"}]}}`,
+	)
 
 	result, err := svc.handleClaudeStreamToNonStreaming(c, resp, time.Now(), "gemini-3.8-flash")
 	require.Nil(t, result)
