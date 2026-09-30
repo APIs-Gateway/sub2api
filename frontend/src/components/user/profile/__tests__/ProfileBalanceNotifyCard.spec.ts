@@ -18,6 +18,7 @@ vi.mock('@/api', () => ({
 const authStore = reactive({
   user: null,
   profileRefreshVersion: 0,
+  profileRefreshRequestVersion: 0,
   applyUserProfile: vi.fn(),
   invalidateUserRefresh: vi.fn()
 })
@@ -47,6 +48,7 @@ describe('ProfileBalanceNotifyCard', () => {
     vi.useFakeTimers()
     vi.resetAllMocks()
     authStore.profileRefreshVersion = 0
+    authStore.profileRefreshRequestVersion = 0
     sendNotifyEmailCode.mockResolvedValue({})
     getProfile.mockResolvedValue({ balance_notify_extra_emails: [] })
     removeNotifyEmail.mockResolvedValue({})
@@ -346,6 +348,34 @@ describe('ProfileBalanceNotifyCard', () => {
     expect(remounted.text()).not.toContain(entry.email)
   })
 
+  it('does not restore an email from verification profile data older than a fresh auth request', async () => {
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    const verified = { ...entry, verified: true }
+    let finishOldProfile!: (value: { balance_notify_extra_emails: typeof entry[] }) => void
+    getProfile.mockReturnValueOnce(new Promise(resolve => { finishOldProfile = resolve }))
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+    await wrapper.get('input[maxlength="6"]').setValue('123456')
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('profile.balanceNotify.verified')
+
+    // Another tab removes A; its later auth request completes before ours.
+    authStore.profileRefreshRequestVersion++
+    await wrapper.setProps({ extraEmails: [] })
+    authStore.profileRefreshVersion++
+    await flushPromises()
+    expect(wrapper.text()).not.toContain(entry.email)
+
+    finishOldProfile({ balance_notify_extra_emails: [verified] })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain(entry.email)
+    expect(authStore.applyUserProfile).not.toHaveBeenCalled()
+  })
+
   it('ignores an old parent profile after a newer empty list confirmed deletion', async () => {
     const entry = { email: 'saved@example.com', disabled: false, verified: false }
     const wrapper = mount(ProfileBalanceNotifyCard, {
@@ -386,6 +416,29 @@ describe('ProfileBalanceNotifyCard', () => {
     await flushPromises()
     expect(wrapper.text()).toContain(entry.email)
     expect(wrapper.text()).toContain('profile.balanceNotify.unverified')
+  })
+
+  it('does not hide a fresh external readdition with an older removal profile response', async () => {
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    let finishOldProfile!: (value: { balance_notify_extra_emails: typeof entry[] }) => void
+    getProfile.mockReturnValueOnce(new Promise(resolve => { finishOldProfile = resolve }))
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.removeEmail').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain(entry.email)
+
+    authStore.profileRefreshRequestVersion++
+    await wrapper.setProps({ extraEmails: [{ ...entry }] })
+    authStore.profileRefreshVersion++
+    await flushPromises()
+    expect(wrapper.text()).toContain(entry.email)
+
+    finishOldProfile({ balance_notify_extra_emails: [] })
+    await flushPromises()
+    expect(wrapper.text()).toContain(entry.email)
+    expect(authStore.applyUserProfile).not.toHaveBeenCalled()
   })
 
   it('clears an active saved verification when parent props remove and re-add its email', async () => {

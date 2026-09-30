@@ -388,6 +388,7 @@ describe('useAuthStore', () => {
       let resolveOld!: (value: { data: typeof fakeUser }) => void
       mockGetCurrentUser.mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve }))
       const oldRefresh = store.refreshUser()
+      expect(store.profileRefreshRequestVersion).toBe(1)
       store.invalidateUserRefresh()
       store.applyUserProfile({ ...fakeUser, username: 'confirmed' })
       resolveOld({ data: { ...fakeUser, username: 'stale' } })
@@ -400,6 +401,7 @@ describe('useAuthStore', () => {
       await store.refreshUser()
       expect(store.user?.username).toBe('current')
       expect(store.profileRefreshVersion).toBe(1)
+      expect(store.profileRefreshRequestVersion).toBe(2)
     })
 
     it('does not log out for a stale 401 after a local email mutation', async () => {

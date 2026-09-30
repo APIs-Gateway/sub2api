@@ -82,6 +82,7 @@ export const useAuthStore = defineStore('auth', () => {
   let userStateVersion = 0
   let latestRefreshRequest = 0
   const profileRefreshVersion = ref(0)
+  const profileRefreshRequestVersion = ref(0)
 
   function setCurrentUser(nextUser: User | null): void {
     user.value = nextUser
@@ -439,6 +440,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     const refreshRequest = ++latestRefreshRequest
+    profileRefreshRequestVersion.value = refreshRequest
     const stateVersion = userStateVersion
     try {
       const response = await authAPI.getCurrentUser()
@@ -511,6 +513,7 @@ export const useAuthStore = defineStore('auth', () => {
     runMode: readonly(runMode),
     pendingAuthSession: readonly(pendingAuthSession),
     profileRefreshVersion: readonly(profileRefreshVersion),
+    profileRefreshRequestVersion: readonly(profileRefreshRequestVersion),
 
     // Computed
     isAuthenticated,

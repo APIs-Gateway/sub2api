@@ -346,8 +346,9 @@ async function verifyPending(idx: number) {
     authStore.invalidateUserRefresh()
     appStore.showSuccess(t('profile.balanceNotify.verifySuccess'))
     try {
+      const refreshRequestVersion = authStore.profileRefreshRequestVersion
       const updated = await userAPI.getProfile()
-      if (version !== savedEmailMutationVersion) return
+      if (version !== savedEmailMutationVersion || refreshRequestVersion !== authStore.profileRefreshRequestVersion) return
       confirmedVerifiedEmails.delete(key)
       confirmedAtProfileRefresh.delete(key)
       authStore.applyUserProfile(updated)
@@ -374,8 +375,9 @@ const handleRemoveEmail = async (email: string) => {
     replaceSavedEmails(emailEntries.value)
     authStore.invalidateUserRefresh()
     appStore.showSuccess(t('profile.balanceNotify.removeSuccess'))
+    const refreshRequestVersion = authStore.profileRefreshRequestVersion
     const updated = await userAPI.getProfile()
-    if (version !== savedEmailMutationVersion) return
+    if (version !== savedEmailMutationVersion || refreshRequestVersion !== authStore.profileRefreshRequestVersion) return
     authStore.applyUserProfile(updated)
     replaceSavedEmails(updated.balance_notify_extra_emails)
   } catch (err: unknown) {
@@ -483,8 +485,9 @@ async function verifySavedEmail(email: string) {
     clearSavedVerification()
     appStore.showSuccess(t('profile.balanceNotify.verifySuccess'))
     try {
+      const refreshRequestVersion = authStore.profileRefreshRequestVersion
       const updated = await userAPI.getProfile()
-      if (version !== savedEmailMutationVersion) return
+      if (version !== savedEmailMutationVersion || refreshRequestVersion !== authStore.profileRefreshRequestVersion) return
       confirmedVerifiedEmails.delete(key)
       confirmedAtProfileRefresh.delete(key)
       authStore.applyUserProfile(updated)
