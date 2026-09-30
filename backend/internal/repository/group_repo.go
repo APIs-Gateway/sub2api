@@ -869,7 +869,7 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 				updated_at = NOW()
 			WHERE key = $1 AND jsonb_typeof(value::jsonb->'group_ids') = 'array'
 				AND value::jsonb->'group_ids' @> jsonb_build_array($2::bigint)`,
-				service.SettingKeyContentModerationConfig, id); err != nil {
+			service.SettingKeyContentModerationConfig, id); err != nil {
 			return nil, err
 		}
 	}
