@@ -63,7 +63,9 @@ const paymentType = ref('')
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
-let pollInFlight = false
+let pollInFlight: Promise<Awaited<ReturnType<typeof paymentStore.pollOrderStatus>>> | null = null
+let finalCheckInProgress = false
+let generation = 0
 
 const countdownDisplay = computed(() => {
   const m = Math.floor(remainingSeconds.value / 60)
@@ -134,63 +136,101 @@ async function renderQR() {
 }
 
 async function pollStatus() {
-  if (!orderId.value) return
-  if (pollInFlight) return
-
-  pollInFlight = true
-  try {
-    const order = await paymentStore.pollOrderStatus(orderId.value)
-    if (!order || !pollTimer) return
+  if (!orderId.value || expired.value || cancelling.value) return null
+  if (pollInFlight) return pollInFlight
+  const currentGeneration = generation
+  const currentOrderId = orderId.value
+  const request = (async () => {
+    const order = await paymentStore.pollOrderStatus(currentOrderId)
+    if (!order || generation !== currentGeneration || orderId.value !== currentOrderId || cancelling.value) return null
 
     if (order.status === 'COMPLETED' || order.status === 'PAID') {
       cleanup()
-      router.push({ path: '/payment/result', query: { order_id: String(orderId.value), status: 'success' } })
+      router.push({ path: '/payment/result', query: { order_id: String(currentOrderId), status: 'success' } })
     } else if (order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'FAILED') {
       cleanup()
       expired.value = true
     }
-  } finally {
-    pollInFlight = false
-  }
+    return order
+  })()
+  pollInFlight = request
+  try { return await request } finally { if (pollInFlight === request) pollInFlight = null }
 }
 
 function startCountdown(seconds: number) {
   remainingSeconds.value = Math.max(0, seconds)
+  const deadline = Date.now() + remainingSeconds.value * 1000
   if (remainingSeconds.value <= 0) {
-    expired.value = true
+    void checkExpiry()
     return
   }
   countdownTimer = setInterval(() => {
-    remainingSeconds.value--
+    remainingSeconds.value = Math.max(0, Math.ceil((deadline - Date.now()) / 1000))
     if (remainingSeconds.value <= 0) {
-      expired.value = true
-      cleanup()
+      void checkExpiry()
     }
   }, 1000)
 }
 
+async function checkExpiry() {
+  if (finalCheckInProgress || expired.value) return
+  finalCheckInProgress = true
+  if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  const currentGeneration = generation
+  const currentOrderId = orderId.value
+  try {
+    if (pollInFlight) await pollInFlight
+    if (generation !== currentGeneration || orderId.value !== currentOrderId || cancelling.value || expired.value) return
+    const order = await pollStatus()
+    if (generation !== currentGeneration || orderId.value !== currentOrderId || cancelling.value || expired.value) return
+    if (order) { expired.value = true; cleanup() }
+    else scheduleFinalRetry()
+  } finally {
+    if (generation === currentGeneration) finalCheckInProgress = false
+  }
+}
+
+function scheduleFinalRetry() {
+  if (!pollTimer && !expired.value) pollTimer = setInterval(() => { void checkExpiry() }, 3000)
+}
+
 async function handleCancel() {
   if (!orderId.value || cancelling.value) return
+  const currentGeneration = generation
+  const currentOrderId = orderId.value
   cancelling.value = true
   try {
-    await paymentAPI.cancelOrder(orderId.value)
+    await paymentAPI.cancelOrder(currentOrderId)
+    if (generation !== currentGeneration || orderId.value !== currentOrderId) return
     cleanup()
     router.push('/purchase')
   } catch (err: unknown) {
-    appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+    if (generation === currentGeneration && orderId.value === currentOrderId) {
+      appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+    }
   } finally {
-    cancelling.value = false
+    if (generation === currentGeneration && orderId.value === currentOrderId) {
+      cancelling.value = false
+      if (!countdownTimer && remainingSeconds.value <= 0) scheduleFinalRetry()
+    }
   }
 }
 
 function cleanup() {
+  generation += 1
+  finalCheckInProgress = false
+  pollInFlight = null
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null }
 }
 
 watch(qrUrl, () => renderQR())
 
-onMounted(() => {
+function initFromRoute() {
+  cleanup()
+  expired.value = false
+  cancelling.value = false
   orderId.value = Number(route.query.order_id) || 0
   qrUrl.value = String(route.query.qr || '')
   payUrl.value = String(route.query.pay_url || '')
@@ -205,9 +245,12 @@ onMounted(() => {
     seconds = Math.floor((expiresAt.getTime() - now.getTime()) / 1000)
   }
   startCountdown(seconds)
-  pollTimer = setInterval(pollStatus, 3000)
+  if (remainingSeconds.value > 0) pollTimer = setInterval(pollStatus, 3000)
   renderQR()
-})
+}
+
+onMounted(initFromRoute)
+watch(() => route.query.order_id, () => initFromRoute())
 
 onUnmounted(() => cleanup())
 </script>

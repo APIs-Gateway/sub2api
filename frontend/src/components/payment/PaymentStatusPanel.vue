@@ -182,6 +182,9 @@ let countdownTimer: ReturnType<typeof setInterval> | null = null
 let verifyAttempts = 0
 let lastVerifyAt = 0
 let alipayLauncher: AlipayDeepLinkLauncher | null = null
+let generation = 0
+let pollInFlight: Promise<PaymentOrder | null> | null = null
+let finalCheckInProgress = false
 
 const VERIFY_RETRY_INTERVAL_MS = 15000
 const VERIFY_RETRY_MAX_ATTEMPTS = 6
@@ -259,14 +262,14 @@ async function renderQR() {
   })
 }
 
-async function tryRecoverPendingOrder(order: PaymentOrder): Promise<PaymentOrder> {
+async function tryRecoverPendingOrder(order: PaymentOrder, forceVerify = false): Promise<PaymentOrder | null> {
   if (!isWxpay.value && !isAlipay.value) return order
   const outTradeNo = String(order.out_trade_no || '').trim()
   if (!outTradeNo) return order
   const normalizedStatus = String(order.status || '').trim().toUpperCase()
-  if (normalizedStatus !== 'PENDING') return order
+  if (normalizedStatus !== 'PENDING' && normalizedStatus !== 'EXPIRED') return order
   const now = Date.now()
-  if (verifyAttempts >= VERIFY_RETRY_MAX_ATTEMPTS || now - lastVerifyAt < VERIFY_RETRY_INTERVAL_MS) {
+  if (normalizedStatus === 'PENDING' && !forceVerify && (verifyAttempts >= VERIFY_RETRY_MAX_ATTEMPTS || now - lastVerifyAt < VERIFY_RETRY_INTERVAL_MS)) {
     return order
   }
 
@@ -276,23 +279,21 @@ async function tryRecoverPendingOrder(order: PaymentOrder): Promise<PaymentOrder
     const result = await paymentAPI.verifyOrder(outTradeNo)
     return result.data ?? order
   } catch {
-    return order
+    return forceVerify || normalizedStatus === 'EXPIRED' ? null : order
   }
 }
 
-let pollInFlight = false
+async function pollStatus(forceVerify = false): Promise<PaymentOrder | null> {
+  if (!props.orderId || outcome.value || cancelling.value) return null
+  if (pollInFlight) return pollInFlight
+  const currentGeneration = generation
+  const currentOrderId = props.orderId
+  const request = (async () => {
+    let order = await paymentStore.pollOrderStatus(currentOrderId)
+    if (!order || generation !== currentGeneration || props.orderId !== currentOrderId || outcome.value || cancelling.value) return null
 
-async function pollStatus() {
-  if (!props.orderId || outcome.value) return
-  if (pollInFlight) return
-
-  pollInFlight = true
-  try {
-    let order = await paymentStore.pollOrderStatus(props.orderId)
-    if (!order || outcome.value) return
-
-    order = await tryRecoverPendingOrder(order)
-    if (outcome.value) return
+    order = await tryRecoverPendingOrder(order, forceVerify)
+    if (generation !== currentGeneration || props.orderId !== currentOrderId || outcome.value || cancelling.value || !order) return null
 
     if (isSuccessStatus(order.status)) {
       cleanup()
@@ -306,37 +307,73 @@ async function pollStatus() {
       cleanup()
       setOutcome('expired')
     }
-  } finally {
-    pollInFlight = false
-  }
+    return order
+  })()
+  pollInFlight = request
+  try { return await request } finally { if (pollInFlight === request) pollInFlight = null }
 }
 
 function startCountdown(seconds: number) {
   remainingSeconds.value = Math.max(0, seconds)
-  if (remainingSeconds.value <= 0) { setOutcome('expired'); return }
+  const deadline = Date.now() + remainingSeconds.value * 1000
+  if (remainingSeconds.value <= 0) { void checkExpiry(); return }
   countdownTimer = setInterval(() => {
-    remainingSeconds.value--
-    if (remainingSeconds.value <= 0) { setOutcome('expired'); cleanup() }
+    remainingSeconds.value = Math.max(0, Math.ceil((deadline - Date.now()) / 1000))
+    if (remainingSeconds.value <= 0) { void checkExpiry() }
   }, 1000)
+}
+
+async function checkExpiry() {
+  if (finalCheckInProgress || outcome.value) return
+  finalCheckInProgress = true
+  if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  const currentGeneration = generation
+  const currentOrderId = props.orderId
+  try {
+    if (pollInFlight) await pollInFlight
+    if (generation !== currentGeneration || props.orderId !== currentOrderId || outcome.value || cancelling.value) return
+    const order = await pollStatus(true)
+    if (generation !== currentGeneration || props.orderId !== currentOrderId || outcome.value || cancelling.value) return
+    if (order) { cleanup(); setOutcome('expired') }
+    else scheduleFinalRetry()
+  } finally {
+    if (generation === currentGeneration) finalCheckInProgress = false
+  }
+}
+
+function scheduleFinalRetry() {
+  if (!pollTimer && !outcome.value) pollTimer = setInterval(() => { void checkExpiry() }, 3000)
 }
 
 async function handleCancel() {
   if (!props.orderId || cancelling.value) return
+  const currentGeneration = generation
+  const currentOrderId = props.orderId
   cancelling.value = true
   try {
-    await paymentAPI.cancelOrder(props.orderId)
+    await paymentAPI.cancelOrder(currentOrderId)
+    if (generation !== currentGeneration || props.orderId !== currentOrderId) return
     cleanup()
     setOutcome('cancelled')
   } catch (err: unknown) {
-    appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+    if (generation === currentGeneration && props.orderId === currentOrderId) {
+      appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+    }
   } finally {
-    cancelling.value = false
+    if (generation === currentGeneration && props.orderId === currentOrderId) {
+      cancelling.value = false
+      if (!countdownTimer && remainingSeconds.value <= 0) scheduleFinalRetry()
+    }
   }
 }
 
 function handleDone() { cleanup(); emit('done') }
 
 function cleanup() {
+  generation += 1
+  finalCheckInProgress = false
+  pollInFlight = null
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null }
   alipayLauncher?.dispose()
@@ -352,7 +389,7 @@ if (props.expiresAt) {
   seconds = Math.floor((new Date(props.expiresAt).getTime() - Date.now()) / 1000)
 }
 startCountdown(seconds)
-pollTimer = setInterval(pollStatus, 3000)
+if (remainingSeconds.value > 0) pollTimer = setInterval(pollStatus, 3000)
 renderQR()
 
 watch([() => qrUrl.value, showQRCode], () => renderQR())
