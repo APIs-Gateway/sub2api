@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
 import { useAdminComplianceStore } from '@/stores/adminCompliance'
+import { getAdminComplianceSessionVersion } from '@/utils/adminComplianceSession'
 import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { recoverFromChunkLoadError } from '@/utils/chunkLoadRecovery'
@@ -853,11 +854,18 @@ router.beforeEach(async (to, _from, next) => {
   if (requiresAdmin && authStore.isAdmin) {
     const adminComplianceStore = useAdminComplianceStore()
     if (!adminComplianceStore.initialized) {
+      const complianceSessionVersion = getAdminComplianceSessionVersion()
       try {
         await adminComplianceStore.fetchStatus()
       } catch (error) {
         const err = error as { status?: number; code?: string; metadata?: Record<string, string> }
-        if (err.status === 423 && err.code === 'ADMIN_COMPLIANCE_ACK_REQUIRED') {
+        if (
+          err.status === 423 &&
+          err.code === 'ADMIN_COMPLIANCE_ACK_REQUIRED' &&
+          complianceSessionVersion === getAdminComplianceSessionVersion() &&
+          authStore.isAuthenticated &&
+          authStore.isAdmin
+        ) {
           adminComplianceStore.requireAcknowledgement(err.metadata)
         }
       }

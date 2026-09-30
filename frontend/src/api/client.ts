@@ -7,6 +7,9 @@ import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig, AxiosResp
 import type { ApiResponse } from '@/types'
 import { getLocale } from '@/i18n'
 import { API_BASE_URL, refreshAuthTokens, type RefreshTokenResponse } from './tokenRefresh'
+import { getAdminComplianceSessionVersion } from '@/utils/adminComplianceSession'
+
+type ComplianceRequestConfig = InternalAxiosRequestConfig & { _complianceSessionVersion?: number }
 
 // ==================== Axios Instance Configuration ====================
 
@@ -68,6 +71,8 @@ const getUserTimezone = (): string => {
 
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    const complianceRequest = config as ComplianceRequestConfig
+    complianceRequest._complianceSessionVersion = getAdminComplianceSessionVersion()
     // Attach token from localStorage
     const token = localStorage.getItem('auth_token')
     if (token && config.headers) {
@@ -125,7 +130,7 @@ apiClient.interceptors.response.use(
       return Promise.reject(error)
     }
 
-    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
+    const originalRequest = error.config as ComplianceRequestConfig & { _retry?: boolean }
 
     // Handle common errors
     if (error.response) {
@@ -162,12 +167,14 @@ apiClient.interceptors.response.use(
       }
 
       if (status === 423 && apiData.code === 'ADMIN_COMPLIANCE_ACK_REQUIRED') {
-        try {
-          window.dispatchEvent(new CustomEvent('admin-compliance-required', {
-            detail: apiData.metadata || {}
-          }))
-        } catch {
-          // ignore event failures
+        if (originalRequest?._complianceSessionVersion === getAdminComplianceSessionVersion()) {
+          try {
+            window.dispatchEvent(new CustomEvent('admin-compliance-required', {
+              detail: apiData.metadata || {}
+            }))
+          } catch {
+            // ignore event failures
+          }
         }
 
         return Promise.reject({

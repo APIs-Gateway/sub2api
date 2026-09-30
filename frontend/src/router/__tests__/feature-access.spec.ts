@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { invalidateAdminComplianceSession } from '@/utils/adminComplianceSession'
 
 type NavigationGuard = (
   to: Record<string, unknown>,
@@ -30,6 +31,12 @@ const appStore = vi.hoisted(() => ({
   fetchPublicSettings: vi.fn(),
 }))
 
+const complianceStore = vi.hoisted(() => ({
+  initialized: true,
+  fetchStatus: vi.fn(),
+  requireAcknowledgement: vi.fn(),
+}))
+
 vi.mock('vue-router', () => ({
   createWebHistory: vi.fn(() => ({})),
   createRouter: vi.fn(() => ({
@@ -54,11 +61,7 @@ vi.mock('@/stores/adminSettings', () => ({
 }))
 
 vi.mock('@/stores/adminCompliance', () => ({
-  useAdminComplianceStore: () => ({
-    initialized: true,
-    fetchStatus: vi.fn(),
-    requireAcknowledgement: vi.fn(),
-  }),
+  useAdminComplianceStore: () => complianceStore,
 }))
 
 vi.mock('@/composables/useNavigationLoading', () => ({
@@ -117,6 +120,9 @@ describe('feature route guard', () => {
     appStore.publicSettingsLoaded = false
     appStore.cachedPublicSettings = null
     appStore.fetchPublicSettings.mockReset()
+    complianceStore.initialized = true
+    complianceStore.fetchStatus.mockReset()
+    complianceStore.requireAcknowledgement.mockReset()
   })
 
   it.each([
@@ -202,5 +208,42 @@ describe('feature route guard', () => {
     await navigation
     expect(next).toHaveBeenCalledOnce()
     expect(next).toHaveBeenCalledWith('/dashboard')
+  })
+
+  it.each([false, true])('ignores an old 423 after compliance reset (new admin: %s)', async (newAdmin) => {
+    authStore.isAdmin = true
+    complianceStore.initialized = false
+    let rejectRequest!: (error: unknown) => void
+    complianceStore.fetchStatus.mockImplementation(() => new Promise((_resolve, reject) => {
+      rejectRequest = reject
+    }))
+
+    const { navigation } = runGuard({ requiresAdmin: true }, '/admin/dashboard')
+    await vi.waitFor(() => expect(complianceStore.fetchStatus).toHaveBeenCalledOnce())
+    invalidateAdminComplianceSession()
+    authStore.isAuthenticated = newAdmin
+    authStore.isAdmin = newAdmin
+    rejectRequest({
+      status: 423,
+      code: 'ADMIN_COMPLIANCE_ACK_REQUIRED',
+      metadata: { version: 'old-admin-version' },
+    })
+
+    await navigation
+    expect(complianceStore.requireAcknowledgement).not.toHaveBeenCalled()
+  })
+
+  it('still accepts a 423 from the current admin session', async () => {
+    authStore.isAdmin = true
+    complianceStore.initialized = false
+    complianceStore.fetchStatus.mockRejectedValue({
+      status: 423,
+      code: 'ADMIN_COMPLIANCE_ACK_REQUIRED',
+      metadata: { version: 'current-admin-version' },
+    })
+
+    const { navigation } = runGuard({ requiresAdmin: true }, '/admin/dashboard')
+    await navigation
+    expect(complianceStore.requireAcknowledgement).toHaveBeenCalledWith({ version: 'current-admin-version' })
   })
 })

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import axios from 'axios'
-import type { AxiosInstance } from 'axios'
+import type { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
 
 // 需要在导入 client 之前设置 mock
 vi.mock('@/i18n', () => ({
@@ -164,25 +164,24 @@ describe('API Client', () => {
       const listener = vi.fn()
       window.addEventListener('admin-compliance-required', listener)
 
-      const adapter = vi.fn().mockRejectedValue({
-        response: {
-          status: 423,
-          data: {
-            code: 'ADMIN_COMPLIANCE_ACK_REQUIRED',
-            message: 'administrator compliance acknowledgement is required',
-            metadata: {
-              version: 'v2026.06.10',
-              document_path_zh: 'docs/legal/admin-compliance.zh.md',
-              document_path_en: 'docs/legal/admin-compliance.en.md',
+      const adapter = vi.fn((config: InternalAxiosRequestConfig) =>
+        Promise.reject({
+          response: {
+            status: 423,
+            data: {
+              code: 'ADMIN_COMPLIANCE_ACK_REQUIRED',
+              message: 'administrator compliance acknowledgement is required',
+              metadata: {
+                version: 'v2026.06.10',
+                document_path_zh: 'docs/legal/admin-compliance.zh.md',
+                document_path_en: 'docs/legal/admin-compliance.en.md',
+              },
             },
           },
-        },
-        config: {
-          url: '/admin/users',
-          headers: { Authorization: 'Bearer admin-token' },
-        },
-        code: 'ERR_BAD_REQUEST',
-      })
+          config,
+          code: 'ERR_BAD_REQUEST',
+        })
+      )
       apiClient.defaults.adapter = adapter
 
       await expect(apiClient.get('/admin/users')).rejects.toEqual(
@@ -203,6 +202,49 @@ describe('API Client', () => {
       )
       expect(localStorage.getItem('auth_token')).toBe('admin-token')
 
+      window.removeEventListener('admin-compliance-required', listener)
+    })
+
+    it.each([false, true])('does not broadcast a pre-logout 423 after reset (new session: %s)', async (newSession) => {
+      localStorage.setItem('auth_token', 'old-admin-token')
+      const listener = vi.fn()
+      window.addEventListener('admin-compliance-required', listener)
+      let requestConfig!: InternalAxiosRequestConfig
+      let rejectRequest!: (error: unknown) => void
+      apiClient.defaults.adapter = vi.fn((config: InternalAxiosRequestConfig) => {
+        requestConfig = config
+        return new Promise<never>((_resolve, reject) => {
+          rejectRequest = reject
+        })
+      })
+
+      const request = apiClient.get('/admin/users')
+      await vi.waitFor(() => expect(requestConfig).toBeDefined())
+      const { createPinia, setActivePinia } = await import('pinia')
+      const { useAdminComplianceStore } = await import('@/stores/adminCompliance')
+      setActivePinia(createPinia())
+      useAdminComplianceStore().reset()
+      localStorage.removeItem('auth_token')
+      if (newSession) localStorage.setItem('auth_token', 'new-admin-token')
+
+      rejectRequest({
+        response: {
+          status: 423,
+          data: {
+            code: 'ADMIN_COMPLIANCE_ACK_REQUIRED',
+            metadata: { version: 'old-admin-version' },
+          },
+        },
+        config: requestConfig,
+        code: 'ERR_BAD_REQUEST',
+      })
+
+      await expect(request).rejects.toMatchObject({
+        status: 423,
+        code: 'ADMIN_COMPLIANCE_ACK_REQUIRED',
+        metadata: { version: 'old-admin-version' },
+      })
+      expect(listener).not.toHaveBeenCalled()
       window.removeEventListener('admin-compliance-required', listener)
     })
   })
