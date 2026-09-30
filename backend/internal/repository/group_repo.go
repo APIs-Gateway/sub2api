@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -837,6 +838,25 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 	if _, err := txClient.Group.Delete().Where(group.IDEQ(id)).Exec(ctx); err != nil {
 		return nil, err
 	}
+	// Keep the selected moderation groups in sync with the soft delete. Locking
+	// the setting after the group row matches the lock order used by config saves.
+	var moderationValue string
+	err = scanSingleRow(ctx, exec, "SELECT value FROM settings WHERE key = $1 FOR UPDATE",
+		[]any{service.SettingKeyContentModerationConfig}, &moderationValue)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	// The TEXT config can contain valid JSON that PostgreSQL JSONB rejects
+	// (for example, an escaped NUL in a keyword). Only decode the group array
+	// in Go and keep every unrelated field as raw JSON.
+	if err == nil {
+		if next, changed := removeGroupFromModerationConfig(moderationValue, id); changed {
+			if _, err := exec.ExecContext(ctx, `UPDATE settings SET value = $1, updated_at = NOW() WHERE key = $2`,
+				next, service.SettingKeyContentModerationConfig); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	if tx != nil {
 		if err := tx.Commit(); err != nil {
@@ -848,6 +868,83 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 	}
 
 	return affectedUserIDs, nil
+}
+
+func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool) {
+	if !json.Valid([]byte(raw)) {
+		return "", false
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return "", false
+	}
+	type edit struct {
+		start int
+		end   int
+		value string
+	}
+	var edits []edit
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return "", false
+		}
+		key, ok := token.(string)
+		if !ok {
+			return "", false
+		}
+		var rawIDs json.RawMessage
+		if err := decoder.Decode(&rawIDs); err != nil {
+			return "", false
+		}
+		if !strings.EqualFold(key, "group_ids") {
+			continue
+		}
+		if strings.TrimSpace(string(rawIDs)) == "null" {
+			continue
+		}
+		var groupIDs []json.RawMessage
+		if err := json.Unmarshal(rawIDs, &groupIDs); err != nil || groupIDs == nil {
+			return "", false
+		}
+		kept := make([]string, 0, len(groupIDs))
+		changed := false
+		for _, value := range groupIDs {
+			if strings.TrimSpace(string(value)) == "null" {
+				kept = append(kept, string(value))
+				continue
+			}
+			var groupID int64
+			if err := json.Unmarshal(value, &groupID); err != nil {
+				return "", false
+			}
+			if groupID == deletedID {
+				changed = true
+				continue
+			}
+			kept = append(kept, string(value))
+		}
+		if !changed {
+			continue
+		}
+		groups := "[" + strings.Join(kept, ",") + "]"
+		end := int(decoder.InputOffset())
+		start := end - len(rawIDs)
+		if start < 0 || end > len(raw) || raw[start:end] != string(rawIDs) {
+			return "", false
+		}
+		edits = append(edits, edit{start: start, end: end, value: groups})
+	}
+	if len(edits) == 0 {
+		return "", false
+	}
+	next := raw
+	for i := len(edits) - 1; i >= 0; i-- {
+		replacement := edits[i]
+		next = next[:replacement.start] + replacement.value + next[replacement.end:]
+	}
+	return next, true
 }
 
 type groupAccountCounts struct {

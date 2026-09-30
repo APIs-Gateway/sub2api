@@ -2,12 +2,57 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"sort"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/setting"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
+
+// SetContentModerationConfig serializes config writes with group deletion.
+// Both operations lock live group rows before the moderation setting row, so
+// a validated group cannot disappear and be written back by a concurrent save.
+func (r *settingRepository) SetContentModerationConfig(ctx context.Context, value string, groupIDs []int64) error {
+	client := clientFromContext(ctx, r.client)
+	tx, err := client.Tx(ctx)
+	if err != nil && !errors.Is(err, ent.ErrTxStarted) {
+		return err
+	}
+	if err == nil {
+		defer func() { _ = tx.Rollback() }()
+		client = tx.Client()
+	}
+	ids := append([]int64(nil), groupIDs...)
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for i, id := range ids {
+		if id <= 0 {
+			return service.ErrGroupNotFound
+		}
+		if i > 0 && id == ids[i-1] {
+			continue
+		}
+		var liveID int64
+		if err := scanSingleRow(ctx, client, "SELECT id FROM groups WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+			[]any{id}, &liveID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return service.ErrGroupNotFound
+			}
+			return err
+		}
+	}
+	if err := client.Setting.Create().SetKey(service.SettingKeyContentModerationConfig).
+		SetValue(value).SetUpdatedAt(time.Now()).OnConflictColumns(setting.FieldKey).
+		UpdateNewValues().Exec(ctx); err != nil {
+		return err
+	}
+	if tx != nil {
+		return tx.Commit()
+	}
+	return nil
+}
 
 type settingRepository struct {
 	client *ent.Client

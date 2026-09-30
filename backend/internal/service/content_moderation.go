@@ -739,12 +739,31 @@ func (s *ContentModerationService) UpdateConfig(ctx context.Context, input Updat
 	if err := s.validateConfig(ctx, cfg); err != nil {
 		return nil, err
 	}
+	if cfg.AllGroups {
+		// A global scope has no selected IDs. Do not re-persist an obsolete ID
+		// from a config read just before that group was deleted.
+		cfg.GroupIDs = []int64{}
+	}
 	cfg.normalize()
 	raw, err := common.Marshal(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal content moderation config: %w", err)
 	}
-	if err := s.settingRepo.Set(ctx, SettingKeyContentModerationConfig, string(raw)); err != nil {
+	var saveErr error
+	if writer, ok := s.settingRepo.(interface {
+		SetContentModerationConfig(context.Context, string, []int64) error
+	}); ok {
+		// The production repository rechecks and locks these rows in the same
+		// transaction as the write, closing the validation/deletion race.
+		saveErr = writer.SetContentModerationConfig(ctx, string(raw), cfg.GroupIDs)
+		if errors.Is(saveErr, ErrGroupNotFound) {
+			return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_GROUP", "审计分组不存在")
+		}
+	} else {
+		// In-memory setting stores used by unit tests keep their existing path.
+		saveErr = s.settingRepo.Set(ctx, SettingKeyContentModerationConfig, string(raw))
+	}
+	if err := saveErr; err != nil {
 		return nil, fmt.Errorf("save content moderation config: %w", err)
 	}
 	s.replaceRuntimeConfig(cfg, raw)
