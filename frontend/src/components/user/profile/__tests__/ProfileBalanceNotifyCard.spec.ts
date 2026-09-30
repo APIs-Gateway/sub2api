@@ -167,7 +167,7 @@ describe('ProfileBalanceNotifyCard', () => {
     expect(showSuccess).not.toHaveBeenCalled()
   })
 
-  it('clears an active saved verification after removal and same-address re-add', async () => {
+  it('clears an active saved verification and ignores a stale same-address parent row', async () => {
     const entry = { email: 'saved@example.com', disabled: false, verified: false }
     const wrapper = mount(ProfileBalanceNotifyCard, {
       props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
@@ -183,7 +183,7 @@ describe('ProfileBalanceNotifyCard', () => {
     await wrapper.setProps({ extraEmails: [] })
     await wrapper.setProps({ extraEmails: [{ ...entry }] })
     expect(wrapper.find('input[maxlength="6"]').exists()).toBe(false)
-    expect(button(wrapper, 'profile.balanceNotify.verify').exists()).toBe(true)
+    expect(button(wrapper, 'profile.balanceNotify.verify')).toBeUndefined()
     expect(vi.getTimerCount()).toBe(0)
   })
 
@@ -276,7 +276,7 @@ describe('ProfileBalanceNotifyCard', () => {
     expect(wrapper.text()).toContain('profile.balanceNotify.verified')
   })
 
-  it('accepts a later parent re-add after profile and parent confirmed the deletion', async () => {
+  it('ignores an old parent profile after a newer empty list confirmed deletion', async () => {
     const entry = { email: 'saved@example.com', disabled: false, verified: false }
     const wrapper = mount(ProfileBalanceNotifyCard, {
       props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
@@ -287,8 +287,15 @@ describe('ProfileBalanceNotifyCard', () => {
 
     await wrapper.setProps({ extraEmails: [] })
     await wrapper.setProps({ extraEmails: [{ ...entry }] })
-    expect(wrapper.text()).toContain(entry.email)
-    expect(button(wrapper, 'profile.balanceNotify.verify')).toBeDefined()
+    expect(wrapper.text()).not.toContain(entry.email)
+    expect(button(wrapper, 'profile.balanceNotify.verify')).toBeUndefined()
+    expect(vi.getTimerCount()).toBe(0)
+
+    wrapper.unmount()
+    const remounted = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [{ ...entry }] }
+    })
+    expect(remounted.text()).toContain(entry.email)
   })
 
   it('clears an active saved verification when parent props remove and re-add its email', async () => {
