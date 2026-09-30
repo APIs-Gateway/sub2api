@@ -342,6 +342,11 @@ const unreadCount = computed(() => announcementStore.unreadCount)
 const isModalOpen = ref(false)
 const detailModalOpen = ref(false)
 const selectedAnnouncement = ref<UserAnnouncement | null>(null)
+type ReadOutcome = { marked: boolean; error?: unknown }
+const pendingReadRequests = new Map<number, { session: number; request: Promise<ReadOutcome> }>()
+let reportedReadFailure: { generation: number; request: Promise<ReadOutcome> } | null = null
+let detailGeneration = 0
+let unmounted = false
 
 // Methods
 function renderMarkdown(content: string): string {
@@ -359,6 +364,7 @@ function closeModal() {
 }
 
 function openDetail(announcement: UserAnnouncement) {
+  detailGeneration++
   selectedAnnouncement.value = announcement
   detailModalOpen.value = true
   if (!announcement.read_at) {
@@ -367,30 +373,69 @@ function openDetail(announcement: UserAnnouncement) {
 }
 
 function closeDetail() {
+  detailGeneration++
   detailModalOpen.value = false
   selectedAnnouncement.value = null
 }
 
-async function markAsRead(id: number) {
-  try {
-    await announcementStore.markAsRead(id)
-  } catch (err: any) {
-    appStore.showError(err?.message || t('common.unknownError'))
+function readRequest(id: number): Promise<ReadOutcome> {
+  const session = announcementStore.sessionGeneration
+  const pending = pendingReadRequests.get(id)
+  if (pending?.session === session) return pending.request
+
+  const request: Promise<ReadOutcome> = (async () => {
+    try {
+      return { marked: await announcementStore.markAsRead(id) }
+    } catch (error: unknown) {
+      return { marked: false, error }
+    }
+  })()
+  pendingReadRequests.set(id, { session, request })
+  void request.then(() => {
+    if (pendingReadRequests.get(id)?.request === request) pendingReadRequests.delete(id)
+  })
+  return request
+}
+
+async function markAsRead(id: number, generation = detailGeneration) {
+  const session = announcementStore.sessionGeneration
+  const request = readRequest(id)
+  const outcome = await request
+  if (session !== announcementStore.sessionGeneration) return false
+  const marked = outcome.marked || Boolean(announcements.value.find(item => item.id === id)?.read_at)
+  const isCurrentDetail = !unmounted &&
+    generation === detailGeneration &&
+    detailModalOpen.value &&
+    selectedAnnouncement.value?.id === id
+  if (!marked && isCurrentDetail &&
+    (reportedReadFailure?.generation !== generation || reportedReadFailure?.request !== request)) {
+    reportedReadFailure = { generation, request }
+    const message = (outcome.error as { message?: string } | undefined)?.message
+    appStore.showError(message || t('common.unknownError'))
   }
+  return marked
 }
 
 async function markAsReadAndClose(id: number) {
-  await markAsRead(id)
+  const generation = detailGeneration
+  const session = announcementStore.sessionGeneration
+  if (!await markAsRead(id, generation)) return
+  if (unmounted || session !== announcementStore.sessionGeneration || generation !== detailGeneration || !detailModalOpen.value || selectedAnnouncement.value?.id !== id) return
   appStore.showSuccess(t('announcements.markedAsRead'))
   closeDetail()
 }
 
 async function markAllAsRead() {
+  const session = announcementStore.sessionGeneration
   try {
-    await announcementStore.markAllAsRead()
-    appStore.showSuccess(t('announcements.allMarkedAsRead'))
+    const marked = await announcementStore.markAllAsRead()
+    if (marked && !unmounted && session === announcementStore.sessionGeneration) {
+      appStore.showSuccess(t('announcements.allMarkedAsRead'))
+    }
   } catch (err: any) {
-    appStore.showError(err?.message || t('common.unknownError'))
+    if (!unmounted && session === announcementStore.sessionGeneration) {
+      appStore.showError(err?.message || t('common.unknownError'))
+    }
   }
 }
 
@@ -409,9 +454,21 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  unmounted = true
   document.removeEventListener('keydown', handleEscape)
   document.body.style.overflow = ''
 })
+
+watch(
+  () => announcementStore.sessionGeneration,
+  () => {
+    closeDetail()
+    closeModal()
+    pendingReadRequests.clear()
+    reportedReadFailure = null
+  },
+  { flush: 'sync' }
+)
 
 watch(
   [isModalOpen, detailModalOpen, () => announcementStore.currentPopup],

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { announcementsAPI } from '@/api'
 import type { UserAnnouncement } from '@/types'
+import { getAnnouncementReadSessionVersion, invalidateAnnouncementReadSession } from '@/utils/announcementReadSession'
 
 const THROTTLE_MS = 20 * 60 * 1000 // 20 minutes
 
@@ -16,6 +17,10 @@ export const useAnnouncementStore = defineStore('announcements', () => {
   // Session-scoped dedup set — not reactive, used as plain lookup only
   let shownPopupIds = new Set<number>()
   let fetchGeneration = 0
+  const sessionGeneration = ref(getAnnouncementReadSessionVersion())
+  const pendingReadRequests = new Map<number, Promise<void>>()
+  let nextPopupTimer: ReturnType<typeof setTimeout> | null = null
+  let popupAdvanceVersion = 0
 
   // Getters
   const unreadCount = computed(() =>
@@ -84,45 +89,83 @@ export const useAnnouncementStore = defineStore('announcements', () => {
     markAsRead(id)
 
     // Show next popup after a short delay
+    popupAdvanceVersion++
+    if (nextPopupTimer) clearTimeout(nextPopupTimer)
+    nextPopupTimer = null
     if (popupQueue.value.length > 0) {
-      setTimeout(() => showNextPopup(), 300)
+      const session = sessionGeneration.value
+      const version = popupAdvanceVersion
+      const timer = setTimeout(() => {
+        if (nextPopupTimer === timer) nextPopupTimer = null
+        if (session !== sessionGeneration.value || version !== popupAdvanceVersion || currentPopup.value) return
+        showNextPopup()
+      }, 300)
+      nextPopupTimer = timer
     }
   }
 
+  function markReadRequest(id: number): Promise<void> {
+    const pending = pendingReadRequests.get(id)
+    if (pending) return pending
+
+    const generation = sessionGeneration.value
+    const request = Promise.resolve()
+      .then(() => {
+        if (generation !== sessionGeneration.value) return
+        return announcementsAPI.markRead(id, generation)
+      })
+      .then(() => {
+        if (generation !== sessionGeneration.value) return
+        const ann = announcements.value.find((a) => a.id === id)
+        if (ann) ann.read_at = new Date().toISOString()
+      })
+    pendingReadRequests.set(id, request)
+    void request.then(
+      () => { if (pendingReadRequests.get(id) === request) pendingReadRequests.delete(id) },
+      () => { if (pendingReadRequests.get(id) === request) pendingReadRequests.delete(id) }
+    )
+    return request
+  }
+
   async function markAsRead(id: number) {
+    const generation = sessionGeneration.value
     try {
-      await announcementsAPI.markRead(id)
-      const ann = announcements.value.find((a) => a.id === id)
-      if (ann) {
-        ann.read_at = new Date().toISOString()
-      }
+      await markReadRequest(id)
+      return generation === sessionGeneration.value
     } catch (err: any) {
-      console.error('Failed to mark announcement as read:', err)
+      if (generation === sessionGeneration.value) console.error('Failed to mark announcement as read:', err)
+      return false
     }
   }
 
   async function markAllAsRead() {
+    const generation = sessionGeneration.value
     const unread = announcements.value.filter((a) => !a.read_at)
-    if (unread.length === 0) return
+    if (unread.length === 0) return true
 
     try {
       loading.value = true
-      const results = await Promise.allSettled(unread.map(async (a) => {
-        await announcementsAPI.markRead(a.id)
-        a.read_at = new Date().toISOString()
-      }))
+      const results = await Promise.allSettled(unread.map((a) => markReadRequest(a.id)))
+      if (generation !== sessionGeneration.value) return false
       const failure = results.find((result) => result.status === 'rejected')
       if (failure) throw failure.reason
+      return true
     } catch (err: any) {
+      if (generation !== sessionGeneration.value) return false
       console.error('Failed to mark all as read:', err)
       throw err
     } finally {
-      loading.value = false
+      if (generation === sessionGeneration.value) loading.value = false
     }
   }
 
   function reset() {
     fetchGeneration++
+    sessionGeneration.value = invalidateAnnouncementReadSession()
+    popupAdvanceVersion++
+    if (nextPopupTimer) clearTimeout(nextPopupTimer)
+    nextPopupTimer = null
+    pendingReadRequests.clear()
     announcements.value = []
     lastFetchTime.value = 0
     shownPopupIds = new Set()
@@ -135,6 +178,7 @@ export const useAnnouncementStore = defineStore('announcements', () => {
     // State
     announcements,
     loading,
+    sessionGeneration,
     currentPopup,
     // Getters
     unreadCount,

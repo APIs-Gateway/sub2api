@@ -183,10 +183,11 @@ describe('PaymentQRCodeView', () => {
     wrapper.unmount()
   })
 
-  it('expires at countdown zero and clears the pending poll timer', async () => {
+  it('queries the order at countdown zero before showing expiry', async () => {
     const now = new Date('2026-04-20T12:00:00.000Z')
     vi.setSystemTime(now)
     routeState.query.expires_at = new Date(now.getTime() + 1000).toISOString()
+    pollOrderStatus.mockResolvedValue({ status: 'PENDING' })
 
     const wrapper = mount(PaymentQRCodeView, {
       global: {
@@ -198,6 +199,6 @@ describe('PaymentQRCodeView', () => {
 
     expect(wrapper.text()).toContain('payment.qr.expired')
     await vi.advanceTimersByTimeAsync(6000)
-    expect(pollOrderStatus).not.toHaveBeenCalled()
+    expect(pollOrderStatus).toHaveBeenCalledTimes(1)
   })
 })
