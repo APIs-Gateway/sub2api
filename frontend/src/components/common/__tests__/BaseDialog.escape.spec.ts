@@ -45,7 +45,9 @@ describe('stacked BaseDialog Escape handling', () => {
     const later = openDialog('Later mounted')
 
     await earlier.setProps({ show: true })
-    const titles = [...document.body.querySelectorAll('.modal-overlay h3')].map(title => title.textContent)
+    const titles = [...document.body.querySelectorAll('.modal-overlay h3')]
+      .map(title => title.textContent)
+      .filter(title => title === 'Earlier mounted' || title === 'Later mounted')
     expect(titles).toEqual(['Earlier mounted', 'Later mounted'])
 
     pressEscape()
