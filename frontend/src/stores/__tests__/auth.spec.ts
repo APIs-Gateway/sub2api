@@ -168,6 +168,7 @@ describe('useAuthStore', () => {
     const store = useAuthStore()
     mockLogin.mockResolvedValueOnce(fakeAuthResponse)
     await store.login({ email: 'account-a@example.com', password: '123456' })
+    const timersWithAccountA = vi.getTimerCount()
     const oldSession = store.authSessionVersion
     mockGetCurrentUser.mockResolvedValueOnce({ data: fakeAdminUser })
 
@@ -184,7 +185,8 @@ describe('useAuthStore', () => {
       expect(Number(localStorage.getItem('token_expires_at'))).toBeGreaterThan(Date.now())
     } else {
       expect(localStorage.getItem('token_expires_at')).toBeNull()
-      expect(vi.getTimerCount()).toBe(1)
+      // This suite has other stores' fake timers; only A's proactive refresh timer should vanish.
+      expect(vi.getTimerCount()).toBe(timersWithAccountA - 1)
     }
   })
 
