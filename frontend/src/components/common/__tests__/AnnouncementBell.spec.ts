@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import AnnouncementBell from '../AnnouncementBell.vue'
+import AnnouncementPopup from '../AnnouncementPopup.vue'
 import { useAnnouncementStore } from '@/stores/announcements'
 
 const { markRead, showError, showSuccess } = vi.hoisted(() => ({
@@ -151,6 +152,67 @@ describe('announcement read confirmation', () => {
       expect(wrapper.find('.markdown-body').exists()).toBe(false)
       expect(useAnnouncementStore().unreadCount).toBe(0)
     }
+  })
+
+  it.each(['success', 'failure'])('shares a popup dismissal with the bell and handles %s consistently', async outcome => {
+    const sharedRead = deferred()
+    markRead.mockReturnValueOnce(sharedRead.promise)
+    const store = useAnnouncementStore()
+    store.announcements = [{ ...announcement(1), notify_mode: 'popup' }]
+    store.currentPopup = store.announcements[0]
+    const global = { stubs: { Teleport: true, Transition: true, Icon: true } }
+    const popup = mount(AnnouncementPopup, { global })
+    await popup.get('button').trigger('click')
+    await flushPromises()
+    expect(store.currentPopup).toBeNull()
+
+    const bell = mount(AnnouncementBell, { global })
+    await bell.get('button').trigger('click')
+    await bell.get('.group.relative').trigger('click')
+    await confirmButton(bell).trigger('click')
+    expect(markRead).toHaveBeenCalledTimes(1)
+
+    if (outcome === 'success') sharedRead.resolve()
+    else sharedRead.reject(new Error('shared read failed'))
+    await flushPromises()
+    if (outcome === 'success') {
+      expect(store.unreadCount).toBe(0)
+      expect(showError).not.toHaveBeenCalled()
+      expect(showSuccess).toHaveBeenCalledWith('announcements.markedAsRead')
+      expect(bell.find('.markdown-body').exists()).toBe(false)
+    } else {
+      expect(store.unreadCount).toBe(1)
+      expect(showError).toHaveBeenCalledTimes(1)
+      expect(showSuccess).not.toHaveBeenCalled()
+      expect(bell.get('.markdown-body').text()).toContain('Details 1')
+
+      markRead.mockResolvedValueOnce(undefined)
+      await confirmButton(bell).trigger('click')
+      await flushPromises()
+      expect(markRead).toHaveBeenCalledTimes(2)
+      expect(store.unreadCount).toBe(0)
+      expect(showSuccess).toHaveBeenCalledWith('announcements.markedAsRead')
+      expect(bell.find('.markdown-body').exists()).toBe(false)
+    }
+  })
+
+  it('does not reuse a pending read from a reset session', async () => {
+    const staleRead = deferred()
+    markRead.mockReturnValueOnce(staleRead.promise).mockRejectedValueOnce(new Error('new session failed'))
+    const store = useAnnouncementStore()
+    const oldResult = store.markAsRead(1)
+    await flushPromises()
+
+    store.reset()
+    store.announcements = [announcement(1)]
+    const currentResult = store.markAsRead(1)
+    await flushPromises()
+    expect(markRead).toHaveBeenCalledTimes(2)
+
+    staleRead.resolve()
+    expect(await oldResult).toBe(false)
+    expect(await currentResult).toBe(false)
+    expect(store.unreadCount).toBe(1)
   })
 
   it('does not show a read failure after unmount', async () => {

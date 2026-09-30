@@ -20,6 +20,23 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks() })
 
 describe('mark all announcements read', () => {
+  it('shares an in-flight individual read with mark-all', async () => {
+    const store = useAnnouncementStore()
+    store.announcements = [announcement(1)]
+    let finish!: () => void
+    markRead.mockImplementation(() => new Promise<void>(resolve => { finish = resolve }))
+
+    const individual = store.markAsRead(1)
+    const all = store.markAllAsRead()
+    await flushPromises()
+    expect(markRead).toHaveBeenCalledTimes(1)
+
+    finish()
+    expect(await individual).toBe(true)
+    await all
+    expect(store.unreadCount).toBe(0)
+  })
+
   it('keeps successful results and retries only failed announcements', async () => {
     const store = useAnnouncementStore()
     store.announcements = [announcement(1), announcement(2)]

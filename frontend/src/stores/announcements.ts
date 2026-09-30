@@ -16,6 +16,8 @@ export const useAnnouncementStore = defineStore('announcements', () => {
   // Session-scoped dedup set — not reactive, used as plain lookup only
   let shownPopupIds = new Set<number>()
   let fetchGeneration = 0
+  let readGeneration = 0
+  const pendingReadRequests = new Map<number, Promise<void>>()
 
   // Getters
   const unreadCount = computed(() =>
@@ -89,16 +91,33 @@ export const useAnnouncementStore = defineStore('announcements', () => {
     }
   }
 
+  function markReadRequest(id: number): Promise<void> {
+    const pending = pendingReadRequests.get(id)
+    if (pending) return pending
+
+    const generation = readGeneration
+    const request = Promise.resolve()
+      .then(() => announcementsAPI.markRead(id))
+      .then(() => {
+        if (generation !== readGeneration) return
+        const ann = announcements.value.find((a) => a.id === id)
+        if (ann) ann.read_at = new Date().toISOString()
+      })
+    pendingReadRequests.set(id, request)
+    void request.then(
+      () => { if (pendingReadRequests.get(id) === request) pendingReadRequests.delete(id) },
+      () => { if (pendingReadRequests.get(id) === request) pendingReadRequests.delete(id) }
+    )
+    return request
+  }
+
   async function markAsRead(id: number) {
+    const generation = readGeneration
     try {
-      await announcementsAPI.markRead(id)
-      const ann = announcements.value.find((a) => a.id === id)
-      if (ann) {
-        ann.read_at = new Date().toISOString()
-      }
-      return true
+      await markReadRequest(id)
+      return generation === readGeneration
     } catch (err: any) {
-      console.error('Failed to mark announcement as read:', err)
+      if (generation === readGeneration) console.error('Failed to mark announcement as read:', err)
       return false
     }
   }
@@ -109,10 +128,7 @@ export const useAnnouncementStore = defineStore('announcements', () => {
 
     try {
       loading.value = true
-      const results = await Promise.allSettled(unread.map(async (a) => {
-        await announcementsAPI.markRead(a.id)
-        a.read_at = new Date().toISOString()
-      }))
+      const results = await Promise.allSettled(unread.map((a) => markReadRequest(a.id)))
       const failure = results.find((result) => result.status === 'rejected')
       if (failure) throw failure.reason
     } catch (err: any) {
@@ -125,6 +141,8 @@ export const useAnnouncementStore = defineStore('announcements', () => {
 
   function reset() {
     fetchGeneration++
+    readGeneration++
+    pendingReadRequests.clear()
     announcements.value = []
     lastFetchTime.value = 0
     shownPopupIds = new Set()
