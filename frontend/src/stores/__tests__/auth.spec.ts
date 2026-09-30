@@ -165,6 +165,7 @@ describe('useAuthStore', () => {
   })
 
   it.each([undefined, 'account-b-refresh'])('replaces an old refresh context for 2FA completion (%s)', async (nextRefreshToken) => {
+    vi.clearAllTimers()
     const store = useAuthStore()
     mockLogin.mockResolvedValueOnce(fakeAuthResponse)
     await store.login({ email: 'account-a@example.com', password: '123456' })
@@ -187,6 +188,10 @@ describe('useAuthStore', () => {
       expect(localStorage.getItem('token_expires_at')).toBeNull()
       // This suite has other stores' fake timers; only A's proactive refresh timer should vanish.
       expect(vi.getTimerCount()).toBe(timersWithAccountA - 1)
+      mockGetCurrentUser.mockResolvedValue({ data: fakeAdminUser })
+      await vi.advanceTimersByTimeAsync(3_600_000)
+      expect(mockRefreshToken).not.toHaveBeenCalled()
+      expect(mockGetCurrentUser).toHaveBeenCalled()
     }
   })
 
