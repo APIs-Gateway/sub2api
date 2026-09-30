@@ -974,6 +974,24 @@ func TestContentModerationUpdateConfig_SavesCustomThresholds(t *testing.T) {
 	require.NotContains(t, saved.Thresholds, "unknown")
 }
 
+func TestContentModerationUpdateConfig_AllGroupsClearsObsoleteSelectedIDs(t *testing.T) {
+	cfg := defaultContentModerationConfig()
+	cfg.AllGroups = true
+	cfg.GroupIDs = []int64{12345}
+	raw, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	repo := &contentModerationTestSettingRepo{values: map[string]string{
+		SettingKeyContentModerationConfig: string(raw),
+	}}
+	svc := NewContentModerationService(repo, nil, nil, nil, nil, nil, nil, nil)
+	view, err := svc.UpdateConfig(context.Background(), UpdateContentModerationConfigInput{})
+	require.NoError(t, err)
+	require.Empty(t, view.GroupIDs)
+	var saved ContentModerationConfig
+	require.NoError(t, json.Unmarshal([]byte(repo.values[SettingKeyContentModerationConfig]), &saved))
+	require.Empty(t, saved.GroupIDs)
+}
+
 func TestExtractContentModerationInput_AnthropicImageSourceOnlyParticipatesInMemory(t *testing.T) {
 	body := []byte(`{
 		"messages": [
