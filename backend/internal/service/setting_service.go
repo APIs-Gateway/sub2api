@@ -62,7 +62,10 @@ var (
 	)
 )
 
-const defaultLocaleFallback = "zh-HK"
+const (
+	defaultLocaleFallback = "zh-HK"
+	defaultSiteName       = "API Gateway"
+)
 
 func normalizeDefaultLocale(value string) string {
 	switch strings.TrimSpace(value) {
@@ -1024,7 +1027,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		LoginAgreementDocuments:          loginAgreementDocuments,
 		TurnstileEnabled:                 settings[SettingKeyTurnstileEnabled] == "true",
 		TurnstileSiteKey:                 settings[SettingKeyTurnstileSiteKey],
-		SiteName:                         s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
+		SiteName:                         s.getStringOrDefault(settings, SettingKeySiteName, defaultSiteName),
 		SiteLogo:                         settings[SettingKeySiteLogo],
 		SiteSubtitle:                     s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
 		DefaultLocale:                    normalizeDefaultLocale(settings[SettingKeyDefaultLocale]),
@@ -2973,7 +2976,7 @@ func (s *SettingService) IsTotpEncryptionKeyConfigured() bool {
 func (s *SettingService) GetSiteName(ctx context.Context) string {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeySiteName)
 	if err != nil || value == "" {
-		return "Sub2API"
+		return defaultSiteName
 	}
 	return value
 }
@@ -3171,7 +3174,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyLoginAgreementDocuments:                   loginAgreementDocumentsJSON,
 		SettingKeyAPIKeyACLTrustForwardedIP:                 "false",
 		SettingKeyForwardedClientIPHeaders:                  "[]",
-		SettingKeySiteName:                                  "Sub2API",
+		SettingKeySiteName:                                  defaultSiteName,
 		SettingKeySiteLogo:                                  "",
 		SettingKeyDefaultLocale:                             defaultLocaleFallback,
 		SettingKeyPurchaseSubscriptionEnabled:               "false",
@@ -3400,7 +3403,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		TurnstileSecretKeyConfigured:     settings[SettingKeyTurnstileSecretKey] != "",
 		APIKeyACLTrustForwardedIP:        apiKeyACLTrustForwardedIP,
 		ForwardedClientIPHeaders:         forwardedClientIPHeaders,
-		SiteName:                         s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
+		SiteName:                         s.getStringOrDefault(settings, SettingKeySiteName, defaultSiteName),
 		SiteLogo:                         settings[SettingKeySiteLogo],
 		SiteSubtitle:                     s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
 		DefaultLocale:                    normalizeDefaultLocale(settings[SettingKeyDefaultLocale]),

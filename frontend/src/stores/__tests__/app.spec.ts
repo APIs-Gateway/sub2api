@@ -429,6 +429,16 @@ describe('useAppStore', () => {
       expect(store.cachedPublicSettings?.default_locale).toBe('zh-HK')
     })
 
+    it('注入配置未设置站点名时使用中性默认名', () => {
+      const windowAny = window as any
+      windowAny.__APP_CONFIG__ = { site_name: '' }
+
+      const store = useAppStore()
+
+      expect(store.initFromInjectedConfig()).toBe(true)
+      expect(store.siteName).toBe('API Gateway')
+    })
+
     it('无注入配置时返回 false', () => {
       const store = useAppStore()
       const result = store.initFromInjectedConfig()

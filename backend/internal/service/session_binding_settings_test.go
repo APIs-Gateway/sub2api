@@ -83,3 +83,10 @@ func TestInitializeDefaultSettingsDisablesSecuritySwitches(t *testing.T) {
 	require.Equal(t, "false", repo.updates[SettingKeySessionBindingEnabled])
 	require.Equal(t, "false", repo.updates[SettingKeyStepUpEnabled])
 }
+
+func TestInitializeDefaultSettingsUsesNeutralSiteName(t *testing.T) {
+	repo := &defaultSecuritySettingsRepoStub{}
+
+	require.NoError(t, NewSettingService(repo, &config.Config{}).InitializeDefaultSettings(context.Background()))
+	require.Equal(t, "API Gateway", repo.updates[SettingKeySiteName])
+}

@@ -4,8 +4,9 @@ import adminComplianceAPI, { type AdminComplianceStatus } from '@/api/admin/comp
 import { getLocale } from '@/i18n'
 import { isChineseLocale } from '@/i18n/localeUtils'
 
-const FALLBACK_ZH_PHRASE = '我已阅读、理解并同意 Sub2API 部署与运营合规承诺'
-const FALLBACK_EN_PHRASE = 'I have read, understood, and agree to the Sub2API Deployment and Operation Compliance Commitment'
+const FALLBACK_ZH_PHRASE = '我已阅读、理解并同意本服务部署与运营合规承诺'
+const FALLBACK_EN_PHRASE = 'I have read, understood, and agree to this service\'s Deployment and Operation Compliance Commitment'
+const ADMIN_COMPLIANCE_DOCUMENT_URL = '/legal/admin-compliance'
 
 export const useAdminComplianceStore = defineStore('adminCompliance', () => {
   const status = ref<AdminComplianceStatus | null>(null)
@@ -55,11 +56,11 @@ export const useAdminComplianceStore = defineStore('adminCompliance', () => {
   function requireAcknowledgement(partialStatus?: Partial<AdminComplianceStatus>): void {
     status.value = {
       required: true,
-      version: partialStatus?.version || status.value?.version || 'v2026.06.10',
+      version: partialStatus?.version || status.value?.version || 'v2026.09.22',
       document_path_zh: partialStatus?.document_path_zh || status.value?.document_path_zh || 'docs/legal/admin-compliance.zh.md',
       document_path_en: partialStatus?.document_path_en || status.value?.document_path_en || 'docs/legal/admin-compliance.en.md',
-      document_url_zh: partialStatus?.document_url_zh || status.value?.document_url_zh || 'https://github.com/Wei-Shaw/sub2api/blob/main/docs/legal/admin-compliance.zh.md',
-      document_url_en: partialStatus?.document_url_en || status.value?.document_url_en || 'https://github.com/Wei-Shaw/sub2api/blob/main/docs/legal/admin-compliance.en.md',
+      document_url_zh: partialStatus?.document_url_zh || status.value?.document_url_zh || ADMIN_COMPLIANCE_DOCUMENT_URL,
+      document_url_en: partialStatus?.document_url_en || status.value?.document_url_en || ADMIN_COMPLIANCE_DOCUMENT_URL,
       ack_phrase_zh: partialStatus?.ack_phrase_zh || status.value?.ack_phrase_zh || FALLBACK_ZH_PHRASE,
       ack_phrase_en: partialStatus?.ack_phrase_en || status.value?.ack_phrase_en || FALLBACK_EN_PHRASE,
       acknowledgement: status.value?.acknowledgement

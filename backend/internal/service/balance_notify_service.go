@@ -21,8 +21,6 @@ const (
 	quotaDimDaily  = "daily"
 	quotaDimWeekly = "weekly"
 	quotaDimTotal  = "total"
-
-	defaultSiteName = "Sub2API"
 )
 
 // AccountQuotaReader provides read access to account quota data.
