@@ -334,10 +334,11 @@ async function verifyPending(idx: number) {
 }
 
 const handleRemoveEmail = async (email: string) => {
-  invalidateSavedSend(email)
   try {
     await userAPI.removeNotifyEmail(email)
+    invalidateSavedSend(email)
     if (verifyingEmail.value === email) clearSavedVerification()
+    emailEntries.value = emailEntries.value.filter(item => item.email !== email)
     appStore.showSuccess(t('profile.balanceNotify.removeSuccess'))
     const updated = await userAPI.getProfile()
     authStore.user = updated

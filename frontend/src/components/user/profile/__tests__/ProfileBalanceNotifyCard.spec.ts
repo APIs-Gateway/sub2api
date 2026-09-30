@@ -187,6 +187,58 @@ describe('ProfileBalanceNotifyCard', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it('keeps an in-flight saved send valid when removing its email fails', async () => {
+    const request = deferred()
+    sendNotifyEmailCode.mockReturnValueOnce(request.promise)
+    removeNotifyEmail.mockRejectedValueOnce(new Error('remove failed'))
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await button(wrapper, 'profile.balanceNotify.removeEmail').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('saved@example.com')
+
+    request.resolve()
+    await flushPromises()
+    expect(wrapper.find('input[maxlength="6"]').exists()).toBe(true)
+    expect(vi.getTimerCount()).toBe(1)
+    expect(showSuccess).toHaveBeenCalledWith('profile.balanceNotify.codeSent')
+  })
+
+  it('ignores a saved send started while removal is pending after removal succeeds', async () => {
+    const removal = deferred()
+    const send = deferred()
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    let finishProfile!: (value: { balance_notify_extra_emails: typeof entry[] }) => void
+    const profile = new Promise<{ balance_notify_extra_emails: typeof entry[] }>(resolve => { finishProfile = resolve })
+    removeNotifyEmail.mockReturnValueOnce(removal.promise)
+    sendNotifyEmailCode.mockReturnValueOnce(send.promise)
+    getProfile.mockReturnValueOnce(profile)
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.removeEmail').trigger('click')
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    expect(sendNotifyEmailCode).toHaveBeenCalledWith(entry.email)
+
+    removal.resolve()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain(entry.email)
+    showSuccess.mockClear()
+
+    send.resolve()
+    await flushPromises()
+    expect(wrapper.find('input[maxlength="6"]').exists()).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(showSuccess).not.toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
+
+    finishProfile({ balance_notify_extra_emails: [] })
+    await flushPromises()
+  })
+
   it('clears an active saved verification when parent props remove and re-add its email', async () => {
     const entry = { email: 'saved@example.com', disabled: false, verified: false }
     const wrapper = mount(ProfileBalanceNotifyCard, {
