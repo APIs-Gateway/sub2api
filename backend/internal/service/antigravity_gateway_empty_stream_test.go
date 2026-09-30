@@ -25,7 +25,7 @@ func antigravityEmptyStreamTestResponse(payloads ...string) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body.String()))}
 }
 
-func TestHandleClaudeStreamingResponse_OnlySignatureIsRetryableEmptyStream(t *testing.T) {
+func TestHandleClaudeStreamingResponse_MalformedSignatureSwitchesAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}})
 	rec := httptest.NewRecorder()
@@ -38,9 +38,95 @@ func TestHandleClaudeStreamingResponse_OnlySignatureIsRetryableEmptyStream(t *te
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
-	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.Contains(t, string(failoverErr.ResponseBody), "malformed function call")
 	require.Empty(t, rec.Body.String(), "failed attempt must not commit a 200 stream before failover")
 	require.False(t, c.Writer.Written())
+}
+
+func TestHandleClaudeStreamingResponse_OtherEmptyStreamsRetrySameAccount(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload string
+	}{
+		{"usage-only", `{"response":{"usageMetadata":{"promptTokenCount":10}}}`},
+		{"unparseable", "not json"},
+		{"signature-only stop", `{"response":{"candidates":[{"content":{"parts":[{"thoughtSignature":"sig"}]},"finishReason":"STOP"}]}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}})
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			resp := antigravityEmptyStreamTestResponse(tc.payload)
+
+			result, err := svc.handleClaudeStreamingResponse(c, resp, time.Now(), "gemini-3.8-flash")
+			require.Nil(t, result)
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.True(t, failoverErr.RetryableOnSameAccount)
+			require.Empty(t, rec.Body.String())
+			require.False(t, c.Writer.Written())
+		})
+	}
+}
+
+func TestHandleClaudeStreamingResponse_MalformedThenEmptyStopRetriesSameAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}})
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	resp := antigravityEmptyStreamTestResponse(
+		geminiMalformedFunctionCall,
+		`{"response":{"candidates":[{"finishReason":"STOP"}]}}`,
+	)
+
+	result, err := svc.handleClaudeStreamingResponse(c, resp, time.Now(), "gemini-3.8-flash")
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.Empty(t, rec.Body.String())
+	require.False(t, c.Writer.Written())
+}
+
+func TestHandleClaudeStreamingResponse_MalformedThenContentKeepsEventOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		firstPayload string
+		payload      string
+		want         string
+	}{
+		{"text", geminiMalformedFunctionCall, `{"response":{"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}]}}`, `"text":"answer"`},
+		{"tool", geminiMalformedFunctionCall, `{"response":{"candidates":[{"content":{"parts":[{"functionCall":{"name":"lookup","args":{}}}]},"finishReason":"STOP"}]}}`, `"name":"lookup"`},
+		{"thinking signature", `{"response":{"candidates":[{"content":{"parts":[{"text":"","thought":true,"thoughtSignature":"sig"}]},"finishReason":"MALFORMED_FUNCTION_CALL"}]}}`, `{"response":{"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}]}}`, `"text":"answer"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}})
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			resp := antigravityEmptyStreamTestResponse(tc.firstPayload, tc.payload)
+
+			result, err := svc.handleClaudeStreamingResponse(c, resp, time.Now(), "gemini-3.8-flash")
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			body := rec.Body.String()
+			require.Contains(t, body, "event: message_start")
+			require.Contains(t, body, tc.want)
+			require.Contains(t, body, "event: message_stop")
+			require.Less(t, strings.Index(body, "event: message_start"), strings.Index(body, tc.want))
+			require.Less(t, strings.Index(body, tc.want), strings.Index(body, "event: message_stop"))
+			if tc.name == "thinking signature" {
+				require.Contains(t, body, "signature_delta")
+				require.Less(t, strings.Index(body, "signature_delta"), strings.Index(body, tc.want))
+			}
+			require.Equal(t, 1, strings.Count(body, "event: message_stop"))
+		})
+	}
 }
 
 func TestHandleClaudeStreamingResponse_PreludeFlushesBeforeFirstContent(t *testing.T) {
@@ -78,6 +164,7 @@ func TestHandleClaudeStreamingResponse_PreContentBufferIsBounded(t *testing.T) {
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Empty(t, rec.Body.String())
+	require.True(t, failoverErr.RetryableOnSameAccount)
 }
 
 func TestHandleClaudeStreamingResponse_GroundingAtEOFReleasesPrelude(t *testing.T) {
@@ -127,6 +214,7 @@ func TestHandleClaudeStreamingResponse_KeepaliveDoesNotCommitEmptyStream(t *test
 	require.ErrorAs(t, err, &failoverErr)
 	require.Empty(t, rec.Body.String(), "pre-content keepalive must not commit HTTP 200")
 	require.False(t, c.Writer.Written())
+	require.False(t, failoverErr.RetryableOnSameAccount)
 }
 
 func TestHandleClaudeStreamingResponse_CanceledEmptyStreamDoesNotFailover(t *testing.T) {
@@ -146,7 +234,7 @@ func TestHandleClaudeStreamingResponse_CanceledEmptyStreamDoesNotFailover(t *tes
 	require.Empty(t, rec.Body.String())
 }
 
-func TestHandleClaudeStreamToNonStreaming_OnlySignatureIsRetryableEmptyStream(t *testing.T) {
+func TestHandleClaudeStreamToNonStreaming_MalformedSignatureSwitchesAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}})
 	rec := httptest.NewRecorder()
@@ -158,6 +246,42 @@ func TestHandleClaudeStreamToNonStreaming_OnlySignatureIsRetryableEmptyStream(t 
 	require.Nil(t, result)
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
+	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.Empty(t, rec.Body.String())
+}
+
+func TestHandleClaudeStreamToNonStreaming_OtherEmptyRetriesSameAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}})
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	resp := antigravityEmptyStreamTestResponse(`{"response":{"candidates":[{"content":{"parts":[{"thoughtSignature":"sig"}]},"finishReason":"STOP"}]}}`)
+
+	result, err := svc.handleClaudeStreamToNonStreaming(c, resp, time.Now(), "gemini-3.8-flash")
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.Empty(t, rec.Body.String())
+}
+
+func TestHandleClaudeStreamToNonStreaming_MalformedThenEmptyStopRetriesSameAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}})
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	resp := antigravityEmptyStreamTestResponse(
+		geminiMalformedFunctionCall,
+		`{"response":{"candidates":[{"finishReason":"STOP"}]}}`,
+	)
+
+	result, err := svc.handleClaudeStreamToNonStreaming(c, resp, time.Now(), "gemini-3.8-flash")
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.True(t, failoverErr.RetryableOnSameAccount)
 	require.Empty(t, rec.Body.String())
 }
 

@@ -235,15 +235,25 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		usage = streamRes.usage
 		firstTokenMs = streamRes.firstTokenMs
 	} else if useUpstreamStream {
-		collected, usageObj, err := collectGeminiSSE(resp.Body, account.Type == AccountTypeOAuth)
+		var collectedParts []map[string]any
+		collected, usageObj, collectStats, err := collectGeminiSSEObserved(resp.Body, account.Type == AccountTypeOAuth, func(rawBytes []byte) {
+			var parsed map[string]any
+			if json.Unmarshal(rawBytes, &parsed) == nil {
+				collectedParts = append(collectedParts, extractGeminiParts(parsed)...)
+			}
+		})
 		if err != nil {
 			return nil, s.writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		// The generic collector keeps only the last frame with parts and merges
+		// text. Keep earlier tool calls and images before classifying an empty
+		// completion, even when a later signature-only frame is malformed.
+		collected = mergeCollectedPartsToResponse(collected, collectedParts)
 		if !hasGeminiChatCompletionContent(collected) {
-			return nil, emptyGeminiCompletionFailoverError()
+			return nil, emptyGeminiCompletionFailoverError(collectStats.lastFinishReason == "MALFORMED_FUNCTION_CALL")
 		}
 		collectedBytes, _ := json.Marshal(collected)
 		chatResp, usageObj2, err := geminiResponseToChatCompletions(collected, originalModel, collectedBytes, usageObj)
@@ -459,7 +469,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsNonStreamingResponseF
 		return nil, err
 	}
 	if !hasGeminiChatCompletionContent(geminiResp) {
-		return nil, emptyGeminiCompletionFailoverError()
+		return nil, emptyGeminiCompletionFailoverError(extractGeminiFinishReason(geminiResp) == "MALFORMED_FUNCTION_CALL")
 	}
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -784,7 +794,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 		if err := c.Request.Context().Err(); err != nil {
 			return nil, err
 		}
-		return nil, emptyGeminiCompletionFailoverError()
+		return nil, emptyGeminiCompletionFailoverError(finishReason == "MALFORMED_FUNCTION_CALL")
 	}
 
 	if closeOpenBlock() {

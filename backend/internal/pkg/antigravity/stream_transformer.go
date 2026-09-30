@@ -27,6 +27,7 @@ type StreamingProcessor struct {
 	blockIndex        int
 	messageStartSent  bool
 	messageStopSent   bool
+	lastFinishReason  string
 	usedTool          bool
 	pendingSignature  string
 	trailingSignature string
@@ -141,7 +142,22 @@ func (p *StreamingProcessor) ProcessLine(line string) []byte {
 			}
 		}
 		if finishReason != "" {
-			_, _ = result.Write(p.emitFinish(finishReason))
+			p.lastFinishReason = finishReason
+			// A stop before substantive content stays buffered until EOF. The
+			// upstream may still send real content, which must precede message_stop.
+			if p.hasContent || buildGroundingText(&GeminiGroundingMetadata{
+				WebSearchQueries: p.webSearchQueries,
+				GroundingChunks:  p.groundingChunks,
+			}) != "" {
+				_, _ = result.Write(p.emitFinish(finishReason))
+			} else {
+				// Flush signature-only blocks into the bounded pre-content buffer.
+				_, _ = result.Write(p.endBlock())
+				if p.trailingSignature != "" {
+					_, _ = result.Write(p.emitEmptyThinkingWithSignature(p.trailingSignature))
+					p.trailingSignature = ""
+				}
+			}
 		}
 	}
 
@@ -165,7 +181,7 @@ func (p *StreamingProcessor) Finish() ([]byte, *ClaudeUsage) {
 
 	var result bytes.Buffer
 	if !p.messageStopSent {
-		_, _ = result.Write(p.emitFinish(""))
+		_, _ = result.Write(p.emitFinish(p.lastFinishReason))
 	}
 
 	return result.Bytes(), usage
@@ -180,6 +196,13 @@ func (p *StreamingProcessor) MessageStartSent() bool {
 // A message_start, stop reason, or thought signature alone is not a completion.
 func (p *StreamingProcessor) HasContent() bool {
 	return p.hasContent
+}
+
+// MalformedFunctionCallOnly reports a malformed terminal response with no
+// visible text, thinking, or tool call. Replaying the same request on the
+// same account cannot repair a deterministic malformed response.
+func (p *StreamingProcessor) MalformedFunctionCallOnly() bool {
+	return p.lastFinishReason == "MALFORMED_FUNCTION_CALL" && !p.hasContent
 }
 
 // emitMessageStart 发送 message_start 事件
