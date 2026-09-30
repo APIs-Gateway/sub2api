@@ -276,6 +276,36 @@ describe('ProfileBalanceNotifyCard', () => {
     expect(wrapper.text()).toContain('profile.balanceNotify.verified')
   })
 
+  it('keeps an explicitly re-verified address visible when the follow-up profile refresh fails', async () => {
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    getProfile.mockResolvedValueOnce({ balance_notify_extra_emails: [] })
+      .mockRejectedValueOnce(new Error('profile offline'))
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.removeEmail').trigger('click')
+    await flushPromises()
+    await wrapper.get('input[type="email"]').setValue(entry.email)
+    await button(wrapper, 'common.add').trigger('click')
+    await button(wrapper, 'profile.balanceNotify.sendCode').trigger('click')
+    await flushPromises()
+    await pendingRows(wrapper)[0]!.get('input').setValue('123456')
+    await pendingRows(wrapper)[0]!.findAll('button').find(item => item.text() === 'profile.balanceNotify.verify')!.trigger('click')
+    await flushPromises()
+
+    expect(pendingRows(wrapper)).toHaveLength(0)
+    expect(wrapper.text()).toContain(entry.email)
+    expect(wrapper.text()).toContain('profile.balanceNotify.verified')
+    expect(showSuccess).toHaveBeenCalledWith('profile.balanceNotify.verifySuccess')
+    expect(showError).not.toHaveBeenCalled()
+
+    await wrapper.setProps({ extraEmails: [] })
+    expect(wrapper.text()).toContain('profile.balanceNotify.verified')
+    await wrapper.setProps({ extraEmails: [{ ...entry }] })
+    expect(wrapper.text()).toContain('profile.balanceNotify.verified')
+    expect(button(wrapper, 'profile.balanceNotify.verify')).toBeUndefined()
+  })
+
   it('ignores an old parent profile after a newer empty list confirmed deletion', async () => {
     const entry = { email: 'saved@example.com', disabled: false, verified: false }
     const wrapper = mount(ProfileBalanceNotifyCard, {

@@ -209,6 +209,7 @@ let savedSendingEmail: string | null = null
 // A parent profile request started before deletion can return stale data even
 // after a newer empty list. Only explicit re-verification or remount clears this.
 const removedSavedEmails = new Set<string>()
+const confirmedVerifiedEmails = new Map<string, NotifyEmailEntry>()
 let savedEmailMutationVersion = 0
 
 const canAddMore = computed(() => {
@@ -318,14 +319,21 @@ async function verifyPending(idx: number) {
   try {
     await userAPI.verifyNotifyEmail(pe.email, pe.code)
     const version = ++savedEmailMutationVersion
+    const key = savedEmailKey(pe.email)
+    removedSavedEmails.delete(key)
+    confirmedVerifiedEmails.set(key, { email: pe.email, disabled: false, verified: true })
     if (pe.timer) clearInterval(pe.timer)
     pendingEmails.value = pendingEmails.value.filter(entry => entry !== pe)
+    replaceSavedEmails(emailEntries.value)
     appStore.showSuccess(t('profile.balanceNotify.verifySuccess'))
-    const updated = await userAPI.getProfile()
-    if (version !== savedEmailMutationVersion) return
-    removedSavedEmails.delete(savedEmailKey(pe.email))
-    authStore.user = updated
-    replaceSavedEmails(updated.balance_notify_extra_emails)
+    try {
+      const updated = await userAPI.getProfile()
+      if (version !== savedEmailMutationVersion) return
+      authStore.user = updated
+      replaceSavedEmails(updated.balance_notify_extra_emails)
+    } catch (err: unknown) {
+      console.error('Failed to refresh profile after verifying notification email:', err)
+    }
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {
@@ -337,7 +345,9 @@ const handleRemoveEmail = async (email: string) => {
   try {
     await userAPI.removeNotifyEmail(email)
     const version = ++savedEmailMutationVersion
-    removedSavedEmails.add(savedEmailKey(email))
+    const key = savedEmailKey(email)
+    confirmedVerifiedEmails.delete(key)
+    removedSavedEmails.add(key)
     replaceSavedEmails(emailEntries.value)
     appStore.showSuccess(t('profile.balanceNotify.removeSuccess'))
     const updated = await userAPI.getProfile()
@@ -355,7 +365,20 @@ function savedEmailKey(email: string) {
 }
 
 function replaceSavedEmails(entries: NotifyEmailEntry[]) {
-  const visible = entries.filter(item => !removedSavedEmails.has(savedEmailKey(item.email)))
+  const visible = entries
+    .filter(item => !removedSavedEmails.has(savedEmailKey(item.email)))
+    .map(item => {
+      const key = savedEmailKey(item.email)
+      const confirmed = confirmedVerifiedEmails.get(key)
+      if (confirmed && !item.verified) return confirmed
+      if (confirmed) confirmedVerifiedEmails.set(key, item)
+      return item
+    })
+  for (const [key, item] of confirmedVerifiedEmails) {
+    if (!removedSavedEmails.has(key) && !visible.some(entry => savedEmailKey(entry.email) === key)) {
+      visible.push(item)
+    }
+  }
   if (savedSendingEmail && !visible.some(item => item.email === savedSendingEmail && !item.verified)) {
     invalidateSavedSend(savedSendingEmail)
   }
@@ -426,12 +449,22 @@ async function verifySavedEmail(email: string) {
   try {
     await userAPI.verifyNotifyEmail(email, verifyCode.value)
     const version = ++savedEmailMutationVersion
+    const key = savedEmailKey(email)
+    const entry = emailEntries.value.find(item => savedEmailKey(item.email) === key)
+    if (entry) {
+      confirmedVerifiedEmails.set(key, { ...entry, verified: true })
+      replaceSavedEmails(emailEntries.value)
+    }
     clearSavedVerification()
     appStore.showSuccess(t('profile.balanceNotify.verifySuccess'))
-    const updated = await userAPI.getProfile()
-    if (version !== savedEmailMutationVersion) return
-    authStore.user = updated
-    replaceSavedEmails(updated.balance_notify_extra_emails)
+    try {
+      const updated = await userAPI.getProfile()
+      if (version !== savedEmailMutationVersion) return
+      authStore.user = updated
+      replaceSavedEmails(updated.balance_notify_extra_emails)
+    } catch (err: unknown) {
+      console.error('Failed to refresh profile after verifying notification email:', err)
+    }
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {
