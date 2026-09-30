@@ -19,6 +19,8 @@ export const useAnnouncementStore = defineStore('announcements', () => {
   let fetchGeneration = 0
   const sessionGeneration = ref(getAnnouncementReadSessionVersion())
   const pendingReadRequests = new Map<number, Promise<void>>()
+  let nextPopupTimer: ReturnType<typeof setTimeout> | null = null
+  let popupAdvanceVersion = 0
 
   // Getters
   const unreadCount = computed(() =>
@@ -87,8 +89,18 @@ export const useAnnouncementStore = defineStore('announcements', () => {
     markAsRead(id)
 
     // Show next popup after a short delay
+    popupAdvanceVersion++
+    if (nextPopupTimer) clearTimeout(nextPopupTimer)
+    nextPopupTimer = null
     if (popupQueue.value.length > 0) {
-      setTimeout(() => showNextPopup(), 300)
+      const session = sessionGeneration.value
+      const version = popupAdvanceVersion
+      const timer = setTimeout(() => {
+        if (nextPopupTimer === timer) nextPopupTimer = null
+        if (session !== sessionGeneration.value || version !== popupAdvanceVersion || currentPopup.value) return
+        showNextPopup()
+      }, 300)
+      nextPopupTimer = timer
     }
   }
 
@@ -150,6 +162,9 @@ export const useAnnouncementStore = defineStore('announcements', () => {
   function reset() {
     fetchGeneration++
     sessionGeneration.value = invalidateAnnouncementReadSession()
+    popupAdvanceVersion++
+    if (nextPopupTimer) clearTimeout(nextPopupTimer)
+    nextPopupTimer = null
     pendingReadRequests.clear()
     announcements.value = []
     lastFetchTime.value = 0
