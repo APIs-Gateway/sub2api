@@ -201,7 +201,7 @@ async function pollStatus(forceVerify = false): Promise<PaymentOrder | null> {
     let order = await paymentStore.pollOrderStatus(currentOrderId)
     if (generation !== currentGeneration || props.orderId !== currentOrderId || !props.show || cancelling.value || !order) return null
     order = await tryRecoverPendingOrder(order, forceVerify)
-    if (generation !== currentGeneration || props.orderId !== currentOrderId || !props.show || cancelling.value) return null
+    if (generation !== currentGeneration || props.orderId !== currentOrderId || !props.show || cancelling.value || !order) return null
     if (order.status === 'COMPLETED' || order.status === 'PAID') {
       cleanup()
       paidOrder.value = order
@@ -217,7 +217,7 @@ async function pollStatus(forceVerify = false): Promise<PaymentOrder | null> {
   try { return await request } finally { if (pollInFlight === request) pollInFlight = null }
 }
 
-async function tryRecoverPendingOrder(order: PaymentOrder, forceVerify = false): Promise<PaymentOrder> {
+async function tryRecoverPendingOrder(order: PaymentOrder, forceVerify = false): Promise<PaymentOrder | null> {
   if (!isWxpay.value) return order
   const outTradeNo = String(order.out_trade_no || '').trim()
   if (!outTradeNo) return order
@@ -234,7 +234,8 @@ async function tryRecoverPendingOrder(order: PaymentOrder, forceVerify = false):
     const result = await paymentAPI.verifyOrder(outTradeNo)
     return result.data ?? order
   } catch {
-    return order
+    // A failed deadline reconciliation is not evidence that the order expired.
+    return forceVerify ? null : order
   }
 }
 
@@ -337,7 +338,7 @@ function init() {
     seconds = Math.floor((expiresAt.getTime() - Date.now()) / 1000)
   }
   startCountdown(seconds)
-  pollTimer = setInterval(pollStatus, 3000)
+  if (remainingSeconds.value > 0) pollTimer = setInterval(pollStatus, 3000)
   renderQR()
 }
 

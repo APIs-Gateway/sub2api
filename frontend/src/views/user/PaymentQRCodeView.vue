@@ -245,7 +245,7 @@ function initFromRoute() {
     seconds = Math.floor((expiresAt.getTime() - now.getTime()) / 1000)
   }
   startCountdown(seconds)
-  pollTimer = setInterval(pollStatus, 3000)
+  if (remainingSeconds.value > 0) pollTimer = setInterval(pollStatus, 3000)
   renderQR()
 }
 

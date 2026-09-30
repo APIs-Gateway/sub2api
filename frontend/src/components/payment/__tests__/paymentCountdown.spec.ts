@@ -4,8 +4,9 @@ import PaymentQRDialog from '../PaymentQRDialog.vue'
 import PaymentStatusPanel from '../PaymentStatusPanel.vue'
 import PaymentQRCodeView from '@/views/user/PaymentQRCodeView.vue'
 
-const { pollOrderStatus, verifyOrder, cancelOrder, routerPush } = vi.hoisted(() => ({
+const { pollOrderStatus, verifyOrder, cancelOrder, routerPush, routeQuery } = vi.hoisted(() => ({
   pollOrderStatus: vi.fn(), verifyOrder: vi.fn(), cancelOrder: vi.fn(), routerPush: vi.fn(),
+  routeQuery: { order_id: '42', expires_at: '' },
 }))
 
 function deferred<T>() {
@@ -32,7 +33,7 @@ vi.mock('@/stores', () => ({ useAppStore: () => ({ showError: vi.fn() }) }))
 vi.mock('@/api/payment', () => ({ paymentAPI: { verifyOrder, cancelOrder } }))
 vi.mock('qrcode', () => ({ default: { toCanvas: vi.fn() } }))
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ query: { order_id: '42', expires_at: new Date(Date.now() + 120_000).toISOString() } }),
+  useRoute: () => ({ query: routeQuery }),
   useRouter: () => ({ push: routerPush }),
 }))
 
@@ -44,14 +45,15 @@ beforeEach(() => {
   verifyOrder.mockReset()
   cancelOrder.mockReset().mockResolvedValue(undefined)
   routerPush.mockReset()
+  routeQuery.expires_at = new Date(Date.now() + 120_000).toISOString()
 })
 afterEach(() => vi.useRealTimers())
 
-async function open(kind: 'dialog' | 'panel' | 'page', paymentType = 'custom') {
+async function open(kind: 'dialog' | 'panel' | 'page', paymentType = 'custom', expiresAt = new Date(Date.now() + 120_000).toISOString()) {
   const props = {
     orderId: 42,
     qrCode: '',
-    expiresAt: new Date(Date.now() + 120_000).toISOString(),
+    expiresAt,
     paymentType,
   }
   const global = { stubs: {
@@ -59,7 +61,10 @@ async function open(kind: 'dialog' | 'panel' | 'page', paymentType = 'custom') {
     AppLayout: { template: '<div><slot /></div>' },
     BaseDialog: { props: ['show'], template: '<div v-if="show"><slot /><slot name="footer" /></div>' },
   } }
-  if (kind === 'page') return mount(PaymentQRCodeView, { global })
+  if (kind === 'page') {
+    routeQuery.expires_at = expiresAt
+    return mount(PaymentQRCodeView, { global })
+  }
   if (kind === 'panel') return mount(PaymentStatusPanel, { props, global })
   const wrapper = mount(PaymentQRDialog, { props: { ...props, show: false }, global })
   await wrapper.setProps({ show: true })
@@ -194,6 +199,39 @@ it.each(['dialog', 'panel'] as const)('%s verifies a pending built-in QR payment
   await flushPromises()
   expect(wrapper.emitted('success')).toHaveLength(1)
   expect(wrapper.text()).not.toContain('payment.qr.expired')
+})
+
+it.each(['dialog', 'panel'] as const)('%s retries a failed initial-expiry provider verification before showing a later payment', async kind => {
+  pollOrderStatus.mockResolvedValue(order('PENDING'))
+  verifyOrder.mockRejectedValueOnce(new Error('provider unavailable'))
+    .mockResolvedValueOnce({ data: order('PAID') })
+  const wrapper = await open(kind, 'wxpay', new Date(Date.now() - 1000).toISOString())
+  await flushPromises()
+
+  expect(pollOrderStatus).toHaveBeenCalledTimes(1)
+  expect(verifyOrder).toHaveBeenCalledTimes(1)
+  expect(wrapper.text()).not.toContain('payment.qr.expired')
+  expect(vi.getTimerCount()).toBe(1)
+
+  await vi.advanceTimersByTimeAsync(3000)
+  expect(pollOrderStatus).toHaveBeenCalledTimes(2)
+  expect(verifyOrder).toHaveBeenCalledTimes(2)
+  expect(wrapper.emitted('success')).toHaveLength(1)
+  expect(wrapper.text()).not.toContain('payment.qr.expired')
+})
+
+it('retries an unavailable initial-expiry QR page status and accepts a later paid order', async () => {
+  pollOrderStatus.mockResolvedValueOnce(null).mockResolvedValueOnce(order('PAID'))
+  const wrapper = await open('page', 'custom', new Date(Date.now() - 1000).toISOString())
+  await flushPromises()
+
+  expect(pollOrderStatus).toHaveBeenCalledTimes(1)
+  expect(wrapper.text()).not.toContain('payment.qr.expired')
+  expect(vi.getTimerCount()).toBe(1)
+
+  await vi.advanceTimersByTimeAsync(3000)
+  expect(pollOrderStatus).toHaveBeenCalledTimes(2)
+  expect(routerPush).toHaveBeenCalledWith({ path: '/payment/result', query: { order_id: '42', status: 'success' } })
 })
 
 it('does not let the old dialog final query settle a newly opened order', async () => {

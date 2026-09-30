@@ -262,7 +262,7 @@ async function renderQR() {
   })
 }
 
-async function tryRecoverPendingOrder(order: PaymentOrder, forceVerify = false): Promise<PaymentOrder> {
+async function tryRecoverPendingOrder(order: PaymentOrder, forceVerify = false): Promise<PaymentOrder | null> {
   if (!isWxpay.value && !isAlipay.value) return order
   const outTradeNo = String(order.out_trade_no || '').trim()
   if (!outTradeNo) return order
@@ -279,7 +279,7 @@ async function tryRecoverPendingOrder(order: PaymentOrder, forceVerify = false):
     const result = await paymentAPI.verifyOrder(outTradeNo)
     return result.data ?? order
   } catch {
-    return order
+    return forceVerify ? null : order
   }
 }
 
@@ -293,7 +293,7 @@ async function pollStatus(forceVerify = false): Promise<PaymentOrder | null> {
     if (!order || generation !== currentGeneration || props.orderId !== currentOrderId || outcome.value || cancelling.value) return null
 
     order = await tryRecoverPendingOrder(order, forceVerify)
-    if (generation !== currentGeneration || props.orderId !== currentOrderId || outcome.value || cancelling.value) return null
+    if (generation !== currentGeneration || props.orderId !== currentOrderId || outcome.value || cancelling.value || !order) return null
 
     if (isSuccessStatus(order.status)) {
       cleanup()
@@ -389,7 +389,7 @@ if (props.expiresAt) {
   seconds = Math.floor((new Date(props.expiresAt).getTime() - Date.now()) / 1000)
 }
 startCountdown(seconds)
-pollTimer = setInterval(pollStatus, 3000)
+if (remainingSeconds.value > 0) pollTimer = setInterval(pollStatus, 3000)
 renderQR()
 
 watch([() => qrUrl.value, showQRCode], () => renderQR())
