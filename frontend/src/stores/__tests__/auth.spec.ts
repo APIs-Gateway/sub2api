@@ -379,6 +379,43 @@ describe('useAuthStore', () => {
       const store = useAuthStore()
       await expect(store.refreshUser()).rejects.toThrow('Not authenticated')
     })
+
+    it('does not restore a profile fetched before a local email mutation', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      let resolveOld!: (value: { data: typeof fakeUser }) => void
+      mockGetCurrentUser.mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve }))
+      const oldRefresh = store.refreshUser()
+      store.invalidateUserRefresh()
+      store.applyUserProfile({ ...fakeUser, username: 'confirmed' })
+      resolveOld({ data: { ...fakeUser, username: 'stale' } })
+      await oldRefresh
+      expect(store.user?.username).toBe('confirmed')
+      expect(JSON.parse(localStorage.getItem('auth_user')!).username).toBe('confirmed')
+      expect(store.profileRefreshVersion).toBe(0)
+
+      mockGetCurrentUser.mockResolvedValueOnce({ data: { ...fakeUser, username: 'current' } })
+      await store.refreshUser()
+      expect(store.user?.username).toBe('current')
+      expect(store.profileRefreshVersion).toBe(1)
+    })
+
+    it('does not log out for a stale 401 after a local email mutation', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      let rejectOld!: (reason: { status: number }) => void
+      mockGetCurrentUser.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectOld = reject }))
+      const oldRefresh = store.refreshUser()
+      store.invalidateUserRefresh()
+      rejectOld({ status: 401 })
+      await expect(oldRefresh).rejects.toEqual({ status: 401 })
+      expect(store.isAuthenticated).toBe(true)
+      expect(store.user?.id).toBe(fakeUser.id)
+    })
   })
 
   describe('setBalance', () => {

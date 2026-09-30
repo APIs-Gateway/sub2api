@@ -210,6 +210,7 @@ let savedSendingEmail: string | null = null
 // after a newer empty list. Only explicit re-verification or remount clears this.
 const removedSavedEmails = new Set<string>()
 const confirmedVerifiedEmails = new Map<string, NotifyEmailEntry>()
+const confirmedAtProfileRefresh = new Map<string, number>()
 let savedEmailMutationVersion = 0
 
 const canAddMore = computed(() => {
@@ -219,6 +220,15 @@ const canAddMore = computed(() => {
 watch(() => props.enabled, (val) => { notifyEnabled.value = val })
 watch(() => props.threshold, (val) => { customThreshold.value = val })
 watch(() => props.extraEmails, replaceSavedEmails)
+watch(() => authStore.profileRefreshVersion, (version) => {
+  for (const [key, confirmedAt] of confirmedAtProfileRefresh) {
+    if (version > confirmedAt) {
+      confirmedVerifiedEmails.delete(key)
+      confirmedAtProfileRefresh.delete(key)
+    }
+  }
+  replaceSavedEmails(props.extraEmails)
+})
 
 // When list is empty on mount, pre-fill the add input with user's email
 onMounted(() => {
@@ -239,7 +249,7 @@ onUnmounted(() => {
 const handleToggle = async () => {
   try {
     const updated = await userAPI.updateProfile({ balance_notify_enabled: notifyEnabled.value })
-    authStore.user = updated
+    authStore.applyUserProfile(updated)
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
     notifyEnabled.value = !notifyEnabled.value
@@ -251,7 +261,7 @@ const handleThresholdUpdate = async () => {
   try {
     const threshold = customThreshold.value && customThreshold.value > 0 ? customThreshold.value : 0
     const updated = await userAPI.updateProfile({ balance_notify_threshold: threshold })
-    authStore.user = updated
+    authStore.applyUserProfile(updated)
     appStore.showSuccess(t('common.saved'))
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
@@ -265,7 +275,7 @@ async function handleEmailToggle(entry: NotifyEmailEntry) {
   try {
     const updated = await userAPI.toggleNotifyEmail(entry.email, newDisabled)
     savedEmailMutationVersion++
-    authStore.user = updated
+    authStore.applyUserProfile(updated)
     replaceSavedEmails(updated.balance_notify_extra_emails)
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
@@ -322,14 +332,18 @@ async function verifyPending(idx: number) {
     const key = savedEmailKey(pe.email)
     removedSavedEmails.delete(key)
     confirmedVerifiedEmails.set(key, { email: pe.email, disabled: false, verified: true })
+    confirmedAtProfileRefresh.set(key, authStore.profileRefreshVersion)
     if (pe.timer) clearInterval(pe.timer)
     pendingEmails.value = pendingEmails.value.filter(entry => entry !== pe)
     replaceSavedEmails(emailEntries.value)
+    authStore.invalidateUserRefresh()
     appStore.showSuccess(t('profile.balanceNotify.verifySuccess'))
     try {
       const updated = await userAPI.getProfile()
       if (version !== savedEmailMutationVersion) return
-      authStore.user = updated
+      confirmedVerifiedEmails.delete(key)
+      confirmedAtProfileRefresh.delete(key)
+      authStore.applyUserProfile(updated)
       replaceSavedEmails(updated.balance_notify_extra_emails)
     } catch (err: unknown) {
       console.error('Failed to refresh profile after verifying notification email:', err)
@@ -347,12 +361,14 @@ const handleRemoveEmail = async (email: string) => {
     const version = ++savedEmailMutationVersion
     const key = savedEmailKey(email)
     confirmedVerifiedEmails.delete(key)
+    confirmedAtProfileRefresh.delete(key)
     removedSavedEmails.add(key)
     replaceSavedEmails(emailEntries.value)
+    authStore.invalidateUserRefresh()
     appStore.showSuccess(t('profile.balanceNotify.removeSuccess'))
     const updated = await userAPI.getProfile()
     if (version !== savedEmailMutationVersion) return
-    authStore.user = updated
+    authStore.applyUserProfile(updated)
     replaceSavedEmails(updated.balance_notify_extra_emails)
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
@@ -371,7 +387,6 @@ function replaceSavedEmails(entries: NotifyEmailEntry[]) {
       const key = savedEmailKey(item.email)
       const confirmed = confirmedVerifiedEmails.get(key)
       if (confirmed && !item.verified) return confirmed
-      if (confirmed) confirmedVerifiedEmails.set(key, item)
       return item
     })
   for (const [key, item] of confirmedVerifiedEmails) {
@@ -453,14 +468,18 @@ async function verifySavedEmail(email: string) {
     const entry = emailEntries.value.find(item => savedEmailKey(item.email) === key)
     if (entry) {
       confirmedVerifiedEmails.set(key, { ...entry, verified: true })
+      confirmedAtProfileRefresh.set(key, authStore.profileRefreshVersion)
       replaceSavedEmails(emailEntries.value)
+      authStore.invalidateUserRefresh()
     }
     clearSavedVerification()
     appStore.showSuccess(t('profile.balanceNotify.verifySuccess'))
     try {
       const updated = await userAPI.getProfile()
       if (version !== savedEmailMutationVersion) return
-      authStore.user = updated
+      confirmedVerifiedEmails.delete(key)
+      confirmedAtProfileRefresh.delete(key)
+      authStore.applyUserProfile(updated)
       replaceSavedEmails(updated.balance_notify_extra_emails)
     } catch (err: unknown) {
       console.error('Failed to refresh profile after verifying notification email:', err)

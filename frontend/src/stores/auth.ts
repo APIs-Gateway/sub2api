@@ -81,6 +81,7 @@ export const useAuthStore = defineStore('auth', () => {
   let tokenRefreshTimeoutId: ReturnType<typeof setTimeout> | null = null
   let userStateVersion = 0
   let latestRefreshRequest = 0
+  const profileRefreshVersion = ref(0)
 
   function setCurrentUser(nextUser: User | null): void {
     user.value = nextUser
@@ -89,6 +90,14 @@ export const useAuthStore = defineStore('auth', () => {
     if (nextUser) {
       localStorage.setItem(AUTH_USER_KEY, JSON.stringify(nextUser))
     }
+  }
+
+  function applyUserProfile(nextUser: User): void {
+    setCurrentUser(nextUser)
+  }
+
+  function invalidateUserRefresh(): void {
+    userStateVersion += 1
   }
 
   // ==================== Computed ====================
@@ -429,9 +438,9 @@ export const useAuthStore = defineStore('auth', () => {
       throw new Error('Not authenticated')
     }
 
+    const refreshRequest = ++latestRefreshRequest
+    const stateVersion = userStateVersion
     try {
-      const refreshRequest = ++latestRefreshRequest
-      const stateVersion = userStateVersion
       const response = await authAPI.getCurrentUser()
       if (refreshRequest !== latestRefreshRequest || stateVersion !== userStateVersion) {
         if (!user.value) {
@@ -444,11 +453,13 @@ export const useAuthStore = defineStore('auth', () => {
       }
       const { run_mode: _run_mode, ...userData } = response.data
       setCurrentUser(userData)
+      profileRefreshVersion.value += 1
 
       return userData
     } catch (error) {
       // If refresh fails with 401, clear auth state
-      if ((error as { status?: number }).status === 401) {
+      if ((error as { status?: number }).status === 401 &&
+        refreshRequest === latestRefreshRequest && stateVersion === userStateVersion) {
         clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
       }
       throw error
@@ -499,6 +510,7 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     runMode: readonly(runMode),
     pendingAuthSession: readonly(pendingAuthSession),
+    profileRefreshVersion: readonly(profileRefreshVersion),
 
     // Computed
     isAuthenticated,
@@ -515,6 +527,8 @@ export const useAuthStore = defineStore('auth', () => {
     checkAuth,
     refreshUser,
     setBalance,
+    applyUserProfile,
+    invalidateUserRefresh,
     setPendingAuthSession,
     clearPendingAuthSession
   }

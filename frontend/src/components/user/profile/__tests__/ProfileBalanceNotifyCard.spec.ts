@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { reactive } from 'vue'
 import ProfileBalanceNotifyCard from '../ProfileBalanceNotifyCard.vue'
 
 const { sendNotifyEmailCode, verifyNotifyEmail, getProfile, removeNotifyEmail, showSuccess, showError } = vi.hoisted(() => ({
@@ -14,7 +15,13 @@ const { sendNotifyEmailCode, verifyNotifyEmail, getProfile, removeNotifyEmail, s
 vi.mock('@/api', () => ({
   userAPI: { sendNotifyEmailCode, verifyNotifyEmail, getProfile, removeNotifyEmail }
 }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: null }) }))
+const authStore = reactive({
+  user: null,
+  profileRefreshVersion: 0,
+  applyUserProfile: vi.fn(),
+  invalidateUserRefresh: vi.fn()
+})
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => authStore }))
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({ showSuccess, showError })
 }))
@@ -39,6 +46,7 @@ describe('ProfileBalanceNotifyCard', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.resetAllMocks()
+    authStore.profileRefreshVersion = 0
     sendNotifyEmailCode.mockResolvedValue({})
     getProfile.mockResolvedValue({ balance_notify_extra_emails: [] })
     removeNotifyEmail.mockResolvedValue({})
@@ -304,6 +312,38 @@ describe('ProfileBalanceNotifyCard', () => {
     await wrapper.setProps({ extraEmails: [{ ...entry }] })
     expect(wrapper.text()).toContain('profile.balanceNotify.verified')
     expect(button(wrapper, 'profile.balanceNotify.verify')).toBeUndefined()
+
+    // The next successful auth refresh is authoritative, even if another tab removed A.
+    await wrapper.setProps({ extraEmails: [] })
+    authStore.profileRefreshVersion++
+    await flushPromises()
+    expect(wrapper.text()).not.toContain(entry.email)
+    expect(button(wrapper, 'common.add').exists()).toBe(true)
+  })
+
+  it('drops a confirmed email after a later authoritative removal', async () => {
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    const verified = { ...entry, verified: true }
+    getProfile.mockResolvedValueOnce({ balance_notify_extra_emails: [verified] })
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+    await wrapper.get('input[maxlength="6"]').setValue('123456')
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('profile.balanceNotify.verified')
+
+    await wrapper.setProps({ extraEmails: [] })
+    expect(wrapper.text()).not.toContain(entry.email)
+    expect(button(wrapper, 'common.add').exists()).toBe(true)
+
+    wrapper.unmount()
+    const remounted = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [] }
+    })
+    expect(remounted.text()).not.toContain(entry.email)
   })
 
   it('ignores an old parent profile after a newer empty list confirmed deletion', async () => {
