@@ -7,6 +7,7 @@ import { defineStore } from 'pinia'
 import { ref, computed, readonly } from 'vue'
 import { authAPI, isTotp2FARequired, type LoginResponse } from '@/api'
 import type { User, LoginRequest, RegisterRequest, AuthResponse } from '@/types'
+import { getAuthSessionVersion, invalidateAuthSession } from '@/utils/authSessionVersion'
 
 const AUTH_TOKEN_KEY = 'auth_token'
 const AUTH_USER_KEY = 'auth_user'
@@ -82,7 +83,11 @@ export const useAuthStore = defineStore('auth', () => {
   let userStateVersion = 0
   let latestRefreshRequest = 0
   const profileRefreshVersion = ref(0)
-  const authSessionVersion = ref(0)
+  const authSessionVersion = ref(getAuthSessionVersion())
+
+  function advanceAuthSession(): void {
+    authSessionVersion.value = invalidateAuthSession()
+  }
 
   function setCurrentUser(nextUser: User | null): void {
     user.value = nextUser
@@ -130,7 +135,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Also starts auto-refresh and immediately fetches latest user data
    */
   function checkAuth(): void {
-    authSessionVersion.value += 1
+    advanceAuthSession()
     const savedToken = localStorage.getItem(AUTH_TOKEN_KEY)
     const savedUser = localStorage.getItem(AUTH_USER_KEY)
     const savedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
@@ -310,7 +315,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Internal helper function
    */
   function setAuthFromResponse(response: AuthResponse): void {
-    authSessionVersion.value += 1
+    advanceAuthSession()
     // Store token and user
     token.value = response.access_token
 
@@ -368,7 +373,7 @@ export const useAuthStore = defineStore('auth', () => {
    * @param newToken - 后端签发的 JWT access token
    */
   async function setToken(newToken: string): Promise<User> {
-    authSessionVersion.value += 1
+    advanceAuthSession()
     // Clear any previous state first (avoid mixing sessions)
     // Note: Don't clear localStorage here as OAuth callback may have set refresh_token
     stopAutoRefresh()
@@ -428,7 +433,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Clears all authentication state and persisted data
    */
   async function logout(): Promise<void> {
-    authSessionVersion.value += 1
+    advanceAuthSession()
     try {
       // Call API logout (revokes refresh token on server)
       await authAPI.logout()
@@ -492,7 +497,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Internal helper function
    */
   function clearAuth(options?: { preservePendingAuthSession?: boolean }): void {
-    authSessionVersion.value += 1
+    advanceAuthSession()
     // Stop auto-refresh
     stopAutoRefresh()
     // Stop token refresh

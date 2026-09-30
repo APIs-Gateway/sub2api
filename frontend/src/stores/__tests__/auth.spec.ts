@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
+import { getAuthSessionVersion } from '@/utils/authSessionVersion'
 
 // Mock authAPI
 const mockLogin = vi.fn()
@@ -453,11 +454,13 @@ describe('useAuthStore', () => {
       const store = useAuthStore()
       await store.login({ email: 'test@example.com', password: '123456' })
       const oldSession = store.authSessionVersion
+      expect(getAuthSessionVersion()).toBe(oldSession)
       await store.logout()
       await store.login({ email: 'admin@example.com', password: '123456' })
 
       store.applyUserProfile({ ...fakeUser, username: 'old-response' }, oldSession)
       expect(store.authSessionVersion).toBeGreaterThan(oldSession)
+      expect(getAuthSessionVersion()).toBe(store.authSessionVersion)
       expect(store.user?.id).toBe(fakeAdminUser.id)
       expect(JSON.parse(localStorage.getItem('auth_user')!).id).toBe(fakeAdminUser.id)
     })
