@@ -253,13 +253,14 @@ watch(() => props.disabled, (disabled) => {
 })
 
 const selectOption = (value: number | null) => {
+  if (props.disabled || !isOpen.value) return
   emit('update:modelValue', value)
   isOpen.value = false
   searchQuery.value = ''
 }
 
 const handleTestProxy = async (proxy: Proxy) => {
-  if (testingProxyIds.has(proxy.id)) return
+  if (props.disabled || !isOpen.value || testingProxyIds.has(proxy.id)) return
 
   testingProxyIds.add(proxy.id)
   try {
@@ -276,7 +277,7 @@ const handleTestProxy = async (proxy: Proxy) => {
 }
 
 const handleBatchTest = async () => {
-  if (batchTesting.value || props.proxies.length === 0) return
+  if (props.disabled || !isOpen.value || batchTesting.value || props.proxies.length === 0) return
 
   batchTesting.value = true
 

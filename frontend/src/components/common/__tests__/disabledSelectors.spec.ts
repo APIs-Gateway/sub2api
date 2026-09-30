@@ -5,10 +5,26 @@ import Select from '../Select.vue'
 import ProxySelector from '../ProxySelector.vue'
 import type { Proxy } from '@/types'
 
+const testProxy = vi.hoisted(() => vi.fn())
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
-vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { testProxy: vi.fn() } } }))
+vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { testProxy } } }))
 enableAutoUnmount(afterEach)
-afterEach(() => { document.body.innerHTML = '' })
+afterEach(() => {
+  document.body.innerHTML = ''
+  document.querySelector('.selector-leave-test-style')?.remove()
+  vi.clearAllMocks()
+})
+
+const proxies = [1, 2].map(id => ({
+  id, name: `Proxy ${id}`, host: 'localhost', port: 8080, protocol: 'http'
+} as Proxy))
+
+function enableRealLeaveTransition() {
+  const style = document.createElement('style')
+  style.className = 'selector-leave-test-style'
+  style.textContent = '.select-dropdown-leave-active { transition: opacity 0.2s; }'
+  document.head.appendChild(style)
+}
 
 describe('selectors disabled while open', () => {
   it('closes a teleported Select, clears its search, and reopens only when enabled', async () => {
@@ -42,9 +58,6 @@ describe('selectors disabled while open', () => {
   })
 
   it('closes a ProxySelector and clears its search until reenabled', async () => {
-    const proxies = [1, 2].map(id => ({
-      id, name: `Proxy ${id}`, host: 'localhost', port: 8080, protocol: 'http'
-    } as Proxy))
     const wrapper = mount(ProxySelector, {
       props: { modelValue: null, proxies },
       global: { stubs: { Transition: true } }
@@ -64,5 +77,49 @@ describe('selectors disabled while open', () => {
     await wrapper.get('.select-trigger').trigger('click')
     expect(wrapper.get('.select-search-input').element).toHaveProperty('value', '')
     expect(wrapper.findAll('.select-option')).toHaveLength(3)
+  })
+
+  it('ignores Select option clicks and keyboard selection during the real leave transition', async () => {
+    enableRealLeaveTransition()
+    const wrapper = mount(Select, {
+      attachTo: document.body,
+      props: {
+        modelValue: 1,
+        options: [{ value: 1, label: 'One' }, { value: 2, label: 'Two' }]
+      },
+      global: { stubs: { Transition: false, Teleport: false } }
+    })
+
+    await wrapper.get('.select-trigger').trigger('click')
+    const dropdown = document.body.querySelector<HTMLElement>('[role="listbox"]')!
+    const option = dropdown.querySelector<HTMLElement>('[role="option"]')!
+    await wrapper.setProps({ disabled: true })
+    expect(dropdown.isConnected).toBe(true)
+    option.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    dropdown.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    dropdown.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    expect(wrapper.emitted('change')).toBeUndefined()
+  })
+
+  it('ignores ProxySelector options and test buttons during the real leave transition', async () => {
+    enableRealLeaveTransition()
+    const wrapper = mount(ProxySelector, {
+      attachTo: document.body,
+      props: { modelValue: null, proxies },
+      global: { stubs: { Transition: false } }
+    })
+
+    await wrapper.get('.select-trigger').trigger('click')
+    const option = wrapper.findAll('.select-option')[1].element
+    const testButton = wrapper.get('.test-btn').element
+    const batchButton = wrapper.get('.batch-test-btn').element
+    await wrapper.setProps({ disabled: true })
+    expect(option.isConnected).toBe(true)
+    option.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    testButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    batchButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    expect(testProxy).not.toHaveBeenCalled()
   })
 })
