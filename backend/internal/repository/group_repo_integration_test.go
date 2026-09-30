@@ -153,7 +153,7 @@ func (s *GroupRepoSuite) TestDeleteCascadeCleansAllCaseVariantsAndNullScopeEntri
 	s.Require().NoError(s.repo.Create(s.ctx, deleted))
 	s.Require().NoError(s.repo.Create(s.ctx, kept))
 	settings := NewSettingRepository(s.tx.Client())
-	raw := fmt.Sprintf(`{"GROUP_IDS":[%d,null],"group_ids":[%d,%d],"mode":"observe"}`, deleted.ID, deleted.ID, kept.ID)
+	raw := fmt.Sprintf(`{"GROUP_IDS":[%d,null],"Group_Ids":null,"group_ids":[%d,%d],"mode":"observe"}`, deleted.ID, deleted.ID, kept.ID)
 	s.Require().NoError(settings.Set(s.ctx, service.SettingKeyContentModerationConfig, raw))
 	_, err := s.repo.DeleteCascade(s.ctx, deleted.ID)
 	s.Require().NoError(err)
@@ -162,6 +162,7 @@ func (s *GroupRepoSuite) TestDeleteCascadeCleansAllCaseVariantsAndNullScopeEntri
 	var fields map[string]json.RawMessage
 	s.Require().NoError(json.Unmarshal([]byte(stored), &fields))
 	s.Require().JSONEq(`[null]`, string(fields["GROUP_IDS"]))
+	s.Require().Equal(`null`, string(fields["Group_Ids"]))
 	s.Require().JSONEq(fmt.Sprintf(`[%d]`, kept.ID), string(fields["group_ids"]))
 	moderation := service.NewContentModerationService(settings, nil, nil, nil, nil, nil, nil, nil)
 	view, err := moderation.GetConfig(s.ctx)

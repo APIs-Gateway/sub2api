@@ -880,6 +880,9 @@ func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool)
 		if !strings.EqualFold(key, "group_ids") {
 			continue
 		}
+		if strings.TrimSpace(string(rawIDs)) == "null" {
+			continue
+		}
 		var groupIDs []json.RawMessage
 		if err := json.Unmarshal(rawIDs, &groupIDs); err != nil || groupIDs == nil {
 			return "", false
