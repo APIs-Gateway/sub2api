@@ -4423,7 +4423,7 @@
       poolModeRetryStatusCodesHint: '僅在池模式下生效。以英文逗號分隔的 HTTP 狀態碼（100-599），命中時觸發同帳號重試。留空使用預設值（{default}）。',
       customErrorCodes: '自定義錯誤碼',
       customErrorCodesHint: '僅對選中的錯誤碼停止調度',
-      customErrorCodesWarning: '僅選中的錯誤碼會停止調度，其他錯誤將返回 500。',
+      customErrorCodesWarning: '自訂錯誤碼僅用於篩選一般帳號錯誤處理（例如停止調度或標記限流），不會直接決定請求是否重試或切換帳號。未選中的錯誤仍可能觸發重試或切換帳號；客戶端最終收到的狀態碼取決於網關路徑及錯誤透傳規則，並非一律為 500。列表為空時不進行篩選。',
       headerOverride: {
         title: '請求頭覆寫',
         hint: '為兼容的 API Key 上游帳號設置靜態請求頭。',

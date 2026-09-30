@@ -4354,7 +4354,7 @@
       customErrorCodes: 'Custom Error Codes',
       customErrorCodesHint: 'Only stop scheduling for selected error codes',
       customErrorCodesWarning:
-        'Only selected error codes will stop scheduling. Other errors will return 500.',
+        'Custom error codes only filter normal account-error handling (such as stopping scheduling or marking rate limits). They do not directly determine whether a request is retried or switched to another account. Unselected errors may still trigger a retry or account switch. The status returned to the client depends on the gateway path and error-passthrough rules; it is not always 500. An empty list applies no filtering.',
       headerOverride: {
         title: 'Request Header Override',
         hint: 'Set static request headers for compatible API key upstream accounts.',
