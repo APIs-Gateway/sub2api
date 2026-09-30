@@ -25,8 +25,10 @@ type openAIWSPassthroughHandlerHarness struct {
 	moderationRepo *contentModerationHandlerTestRepo
 	gatewayCache   service.GatewayCache
 	accountRepo    *openAIWSTurnHandlerAccountRepo
+	usageRepo      *openAIWSUsageHandlerUsageLogRepoStub
 	apiKey         *service.APIKey
 	cfg            *config.Config
+	accountFailed  *atomic.Bool
 }
 
 func TestOpenAIResponsesWebSocketV2PassthroughInvalidLaterJSONIsLocal400(t *testing.T) {
@@ -61,12 +63,24 @@ func TestOpenAIResponsesWebSocketV2PassthroughLaterPolicyRejectionsHaveHTTPStatu
 		{name: "group image permission", payload: `{"type":"response.create","model":"gpt-5.1","tools":[{"type":"image_generation"}]}`, status: http.StatusForbidden, errType: "permission_error", message: service.ImageGenerationPermissionMessage(), closeReason: service.ImageGenerationPermissionMessage(), setup: func(h *openAIWSPassthroughHandlerHarness) {
 			h.apiKey.Group = &service.Group{AllowImageGeneration: false}
 		}},
+		{name: "group image permission via session update", payload: `{"type":"session.update","session":{"model":"gpt-5.1","tools":[{"type":"image_generation"}]}}`, status: http.StatusForbidden, errType: "permission_error", message: service.ImageGenerationPermissionMessage(), closeReason: service.ImageGenerationPermissionMessage(), setup: func(h *openAIWSPassthroughHandlerHarness) {
+			h.apiKey.Group = &service.Group{AllowImageGeneration: false}
+		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			runOpenAIResponsesWebSocketV2PassthroughLocalRejection(t, coderws.MessageText, tc.payload, tc.status, tc.errType, tc.message, tc.closeReason, tc.setup)
 		})
 	}
+}
+
+func TestOpenAIResponsesWebSocketV2PassthroughBinarySessionUpdateImagePermission(t *testing.T) {
+	runOpenAIResponsesWebSocketV2PassthroughLocalRejection(t, coderws.MessageBinary,
+		`{"type":"session.update","session":{"tool_choice":{"type":"image_generation"}}}`,
+		http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage(), service.ImageGenerationPermissionMessage(),
+		func(h *openAIWSPassthroughHandlerHarness) {
+			h.apiKey.Group = &service.Group{AllowImageGeneration: false}
+		})
 }
 
 func TestOpenAIResponsesWebSocketCtxPoolLaterLocalRejectionsHaveHTTPStatus(t *testing.T) {
@@ -206,6 +220,8 @@ func runOpenAIResponsesWebSocketV2PassthroughLocalRejection(t *testing.T, messag
 		t.Fatalf("invalid later turn reached upstream: %s", second)
 	default:
 	}
+	require.False(t, harness.accountFailed.Load(), "local rejection must not lower account scheduler health")
+	require.LessOrEqual(t, len(harness.usageRepo.created), 1, "rejected frame must not add a billable turn")
 }
 
 type openAIWSTurnHandlerAccountRepo struct {
@@ -279,12 +295,18 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string, ingr
 		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
 		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
 	}
+	accountFailed := &atomic.Bool{}
 	h := &OpenAIGatewayHandler{
 		gatewayService:           gatewaySvc,
 		billingCacheService:      billingCacheSvc,
 		apiKeyService:            &service.APIKeyService{},
 		contentModerationService: moderationSvc,
 		concurrencyHelper:        NewConcurrencyHelper(service.NewConcurrencyService(concurrencyCache), SSEPingFormatNone, time.Second),
+	}
+	h.onOpenAIAccountScheduleResult = func(_ int64, success bool) {
+		if !success {
+			accountFailed.Store(true)
+		}
 	}
 
 	apiKey := &service.APIKey{
@@ -320,8 +342,10 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string, ingr
 		moderationRepo: moderationRepo,
 		gatewayCache:   gatewayCache,
 		accountRepo:    accountRepo,
+		usageRepo:      usageRepo,
 		apiKey:         apiKey,
 		cfg:            cfg,
+		accountFailed:  accountFailed,
 	}
 }
 

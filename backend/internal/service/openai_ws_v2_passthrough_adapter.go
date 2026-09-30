@@ -971,7 +971,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					writeOpenAIWSLocalRejectionEvent(ctx, clientConn, rejection)
 					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, message, rejection)
 				}
-				if apiKey := getAPIKeyFromContext(c); apiKey != nil && IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(payload) && !GroupAllowsImageGeneration(apiKey.Group) {
+			}
+			if (isResponseCreate || eventType == "session.update") && IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(payload) {
+				if apiKey := getAPIKeyFromContext(c); apiKey != nil && !GroupAllowsImageGeneration(apiKey.Group) {
 					message := ImageGenerationPermissionMessage()
 					rejection := newOpenAIWSLocalRejection(http.StatusForbidden, "permission_error", "", message, nil)
 					writeOpenAIWSLocalRejectionEvent(ctx, clientConn, rejection)

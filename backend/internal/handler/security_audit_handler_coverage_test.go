@@ -29,8 +29,12 @@ func (blockedPromptEngine) Evaluate(context.Context, securityaudit.Request) (*se
 
 type unavailablePromptEngine struct{}
 
-func (unavailablePromptEngine) EffectiveMode() securityaudit.Mode { return securityaudit.ModeBlocking }
-func (unavailablePromptEngine) Enqueue(context.Context, securityaudit.Request) error { return nil }
+func (unavailablePromptEngine) EffectiveMode() securityaudit.Mode {
+	return securityaudit.ModeBlocking
+}
+func (unavailablePromptEngine) Enqueue(context.Context, securityaudit.Request) error {
+	return nil
+}
 func (unavailablePromptEngine) Evaluate(context.Context, securityaudit.Request) (*securityaudit.PromptDecision, error) {
 	return nil, errors.New("prompt guard unavailable")
 }
