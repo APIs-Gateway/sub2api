@@ -206,9 +206,9 @@ let verifyTimer: ReturnType<typeof setInterval> | null = null
 let disposed = false
 let savedSendVersion = 0
 let savedSendingEmail: string | null = null
-// A parent profile request started before deletion can return stale data even
-// after a newer empty list. Only explicit re-verification or remount clears this.
+// Keep a confirmed deletion hidden until a later authoritative profile refresh.
 const removedSavedEmails = new Set<string>()
+const removedAtProfileRefresh = new Map<string, number>()
 const confirmedVerifiedEmails = new Map<string, NotifyEmailEntry>()
 const confirmedAtProfileRefresh = new Map<string, number>()
 let savedEmailMutationVersion = 0
@@ -221,6 +221,12 @@ watch(() => props.enabled, (val) => { notifyEnabled.value = val })
 watch(() => props.threshold, (val) => { customThreshold.value = val })
 watch(() => props.extraEmails, replaceSavedEmails)
 watch(() => authStore.profileRefreshVersion, (version) => {
+  for (const [key, removedAt] of removedAtProfileRefresh) {
+    if (version > removedAt) {
+      removedSavedEmails.delete(key)
+      removedAtProfileRefresh.delete(key)
+    }
+  }
   for (const [key, confirmedAt] of confirmedAtProfileRefresh) {
     if (version > confirmedAt) {
       confirmedVerifiedEmails.delete(key)
@@ -331,6 +337,7 @@ async function verifyPending(idx: number) {
     const version = ++savedEmailMutationVersion
     const key = savedEmailKey(pe.email)
     removedSavedEmails.delete(key)
+    removedAtProfileRefresh.delete(key)
     confirmedVerifiedEmails.set(key, { email: pe.email, disabled: false, verified: true })
     confirmedAtProfileRefresh.set(key, authStore.profileRefreshVersion)
     if (pe.timer) clearInterval(pe.timer)
@@ -363,6 +370,7 @@ const handleRemoveEmail = async (email: string) => {
     confirmedVerifiedEmails.delete(key)
     confirmedAtProfileRefresh.delete(key)
     removedSavedEmails.add(key)
+    removedAtProfileRefresh.set(key, authStore.profileRefreshVersion)
     replaceSavedEmails(emailEntries.value)
     authStore.invalidateUserRefresh()
     appStore.showSuccess(t('profile.balanceNotify.removeSuccess'))

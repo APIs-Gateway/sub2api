@@ -368,6 +368,26 @@ describe('ProfileBalanceNotifyCard', () => {
     expect(remounted.text()).toContain(entry.email)
   })
 
+  it('shows an externally re-added address only after a fresh profile refresh', async () => {
+    const entry = { email: 'saved@example.com', disabled: false, verified: false }
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '', extraEmails: [entry] }
+    })
+    await button(wrapper, 'profile.balanceNotify.removeEmail').trigger('click')
+    await flushPromises()
+    expect(authStore.invalidateUserRefresh).toHaveBeenCalled()
+
+    // An old parent snapshot cannot undo the confirmed deletion.
+    await wrapper.setProps({ extraEmails: [{ ...entry }] })
+    expect(wrapper.text()).not.toContain(entry.email)
+
+    // A later successful auth refresh is current server state, so A can reappear.
+    authStore.profileRefreshVersion++
+    await flushPromises()
+    expect(wrapper.text()).toContain(entry.email)
+    expect(wrapper.text()).toContain('profile.balanceNotify.unverified')
+  })
+
   it('clears an active saved verification when parent props remove and re-add its email', async () => {
     const entry = { email: 'saved@example.com', disabled: false, verified: false }
     const wrapper = mount(ProfileBalanceNotifyCard, {
