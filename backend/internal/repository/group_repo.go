@@ -874,11 +874,9 @@ func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool)
 	if !json.Valid([]byte(raw)) {
 		return "", false
 	}
-	// Valid JSON read from an in-memory string guarantees that token and value
-	// decoding succeeds; an object also guarantees string member names.
 	decoder := json.NewDecoder(strings.NewReader(raw))
-	opening, _ := decoder.Token()
-	if opening != json.Delim('{') {
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
 		return "", false
 	}
 	type edit struct {
@@ -888,8 +886,14 @@ func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool)
 	}
 	var edits []edit
 	for decoder.More() {
-		token, _ := decoder.Token()
-		key := token.(string)
+		token, err := decoder.Token()
+		if err != nil {
+			return "", false
+		}
+		key, ok := token.(string)
+		if !ok {
+			return "", false
+		}
 		var rawIDs json.RawMessage
 		if err := decoder.Decode(&rawIDs); err != nil {
 			return "", false
