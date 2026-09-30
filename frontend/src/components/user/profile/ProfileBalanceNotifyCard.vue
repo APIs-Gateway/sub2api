@@ -79,7 +79,7 @@
                     <button v-else @click="sendCodeForSaved(entry.email)" :disabled="sendingSavedCode" class="text-xs text-gray-500 hover:text-gray-700">
                       {{ t('profile.balanceNotify.resend') }}
                     </button>
-                    <button @click="verifyingEmail = ''" class="text-xs text-gray-400 hover:text-gray-600">
+                    <button @click="cancelSavedVerification" class="text-xs text-gray-400 hover:text-gray-600">
                       {{ t('common.cancel') }}
                     </button>
                   </template>
@@ -203,6 +203,9 @@ const verifyingSaved = ref(false)
 const sendingSavedCode = ref(false)
 const verifyCountdown = ref(0)
 let verifyTimer: ReturnType<typeof setInterval> | null = null
+let disposed = false
+let savedSendVersion = 0
+let savedSendingEmail: string | null = null
 
 const canAddMore = computed(() => {
   return emailEntries.value.length + pendingEmails.value.length < maxTotalEmails
@@ -220,6 +223,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  disposed = true
+  savedSendVersion++
   for (const pe of pendingEmails.value) {
     if (pe.timer) clearInterval(pe.timer)
   }
@@ -281,6 +286,7 @@ async function sendCodeFor(idx: number) {
   pe.sending = true
   try {
     await userAPI.sendNotifyEmailCode(pe.email)
+    if (disposed || !pendingEmails.value.includes(pe)) return
     pe.codeSent = true
     pe.countdown = 60
     pe.timer = setInterval(() => {
@@ -292,7 +298,9 @@ async function sendCodeFor(idx: number) {
     }, 1000)
     appStore.showSuccess(t('profile.balanceNotify.codeSent'))
   } catch (err: unknown) {
-    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    if (!disposed && pendingEmails.value.includes(pe)) {
+      appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    }
   } finally {
     pe.sending = false
   }
@@ -318,6 +326,7 @@ async function verifyPending(idx: number) {
 }
 
 const handleRemoveEmail = async (email: string) => {
+  invalidateSavedSend(email)
   try {
     await userAPI.removeNotifyEmail(email)
     appStore.showSuccess(t('profile.balanceNotify.removeSuccess'))
@@ -330,10 +339,27 @@ const handleRemoveEmail = async (email: string) => {
 }
 
 // Verify saved unverified emails
+function invalidateSavedSend(email: string) {
+  if (savedSendingEmail !== email) return
+  savedSendVersion++
+  savedSendingEmail = null
+  sendingSavedCode.value = false
+}
+
+function cancelSavedVerification() {
+  invalidateSavedSend(verifyingEmail.value)
+  verifyingEmail.value = ''
+}
+
 async function sendCodeForSaved(email: string) {
+  const entry = emailEntries.value.find(item => item.email === email && !item.verified)
+  if (!entry) return
+  const version = ++savedSendVersion
+  savedSendingEmail = email
   sendingSavedCode.value = true
   try {
     await userAPI.sendNotifyEmailCode(email)
+    if (disposed || version !== savedSendVersion || !emailEntries.value.includes(entry)) return
     verifyingEmail.value = email
     verifyCode.value = ''
     verifyCountdown.value = 60
@@ -347,9 +373,14 @@ async function sendCodeForSaved(email: string) {
     }, 1000)
     appStore.showSuccess(t('profile.balanceNotify.codeSent'))
   } catch (err: unknown) {
-    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    if (!disposed && version === savedSendVersion && emailEntries.value.includes(entry)) {
+      appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    }
   } finally {
-    sendingSavedCode.value = false
+    if (version === savedSendVersion) {
+      sendingSavedCode.value = false
+      savedSendingEmail = null
+    }
   }
 }
 

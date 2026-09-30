@@ -2,18 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import ProfileBalanceNotifyCard from '../ProfileBalanceNotifyCard.vue'
 
-const { sendNotifyEmailCode, verifyNotifyEmail, getProfile } = vi.hoisted(() => ({
+const { sendNotifyEmailCode, verifyNotifyEmail, getProfile, removeNotifyEmail, showSuccess, showError } = vi.hoisted(() => ({
   sendNotifyEmailCode: vi.fn(),
   verifyNotifyEmail: vi.fn(),
-  getProfile: vi.fn()
+  getProfile: vi.fn(),
+  removeNotifyEmail: vi.fn(),
+  showSuccess: vi.fn(),
+  showError: vi.fn()
 }))
 
 vi.mock('@/api', () => ({
-  userAPI: { sendNotifyEmailCode, verifyNotifyEmail, getProfile }
+  userAPI: { sendNotifyEmailCode, verifyNotifyEmail, getProfile, removeNotifyEmail }
 }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: null }) }))
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({ showSuccess: vi.fn(), showError: vi.fn() })
+  useAppStore: () => ({ showSuccess, showError })
 }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 
@@ -21,8 +24,9 @@ enableAutoUnmount(afterEach)
 
 const deferred = () => {
   let resolve!: () => void
-  const promise = new Promise<void>((done) => { resolve = done })
-  return { promise, resolve }
+  let reject!: (error: Error) => void
+  const promise = new Promise<void>((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
 }
 
 const pendingRows = (wrapper: VueWrapper) => wrapper.findAll('.bg-yellow-50')
@@ -37,11 +41,124 @@ describe('ProfileBalanceNotifyCard', () => {
     vi.resetAllMocks()
     sendNotifyEmailCode.mockResolvedValue({})
     getProfile.mockResolvedValue({ balance_notify_extra_emails: [] })
+    removeNotifyEmail.mockResolvedValue({})
   })
 
   afterEach(() => {
     vi.clearAllTimers()
     vi.useRealTimers()
+  })
+
+  it.each(['success', 'failure'] as const)('ignores a removed pending email\'s late %s', async (outcome) => {
+    const request = deferred()
+    sendNotifyEmailCode.mockReturnValueOnce(request.promise)
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, extraEmails: [], systemDefaultThreshold: 5, userEmail: '' }
+    })
+    await wrapper.get('input[type="email"]').setValue('new@example.com')
+    await button(wrapper, 'common.add').trigger('click')
+    await button(wrapper, 'profile.balanceNotify.sendCode').trigger('click')
+    await button(wrapper, 'profile.balanceNotify.removeEmail').trigger('click')
+    // Reusing the address must not let the old request mutate its new row.
+    await wrapper.get('input[type="email"]').setValue('new@example.com')
+    await button(wrapper, 'common.add').trigger('click')
+
+    if (outcome === 'success') request.resolve()
+    else request.reject(new Error('obsolete send'))
+    await flushPromises()
+    expect(button(wrapper, 'profile.balanceNotify.sendCode').exists()).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(showSuccess).not.toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
+  })
+
+  it.each(['success', 'failure'] as const)('ignores a pending email send after unmount: %s', async (outcome) => {
+    const request = deferred()
+    sendNotifyEmailCode.mockReturnValueOnce(request.promise)
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, extraEmails: [], systemDefaultThreshold: 5, userEmail: '' }
+    })
+    await wrapper.get('input[type="email"]').setValue('new@example.com')
+    await button(wrapper, 'common.add').trigger('click')
+    await button(wrapper, 'profile.balanceNotify.sendCode').trigger('click')
+    wrapper.unmount()
+
+    if (outcome === 'success') request.resolve()
+    else request.reject(new Error('obsolete send'))
+    await flushPromises()
+    expect(vi.getTimerCount()).toBe(0)
+    expect(showSuccess).not.toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
+  })
+
+  it.each(['success', 'failure'] as const)('ignores a saved email send after removal: %s', async (outcome) => {
+    const request = deferred()
+    sendNotifyEmailCode.mockReturnValueOnce(request.promise)
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: {
+        enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '',
+        extraEmails: [{ email: 'saved@example.com', disabled: false, verified: false }]
+      }
+    })
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await button(wrapper, 'profile.balanceNotify.removeEmail').trigger('click')
+    await flushPromises()
+    showSuccess.mockClear()
+    showError.mockClear()
+
+    if (outcome === 'success') request.resolve()
+    else request.reject(new Error('obsolete send'))
+    await flushPromises()
+    expect(vi.getTimerCount()).toBe(0)
+    expect(showSuccess).not.toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
+  })
+
+  it.each(['success', 'failure'] as const)('ignores a saved email send after unmount: %s', async (outcome) => {
+    const request = deferred()
+    sendNotifyEmailCode.mockReturnValueOnce(request.promise)
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: {
+        enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '',
+        extraEmails: [{ email: 'saved@example.com', disabled: false, verified: false }]
+      }
+    })
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    wrapper.unmount()
+
+    if (outcome === 'success') request.resolve()
+    else request.reject(new Error('obsolete send'))
+    await flushPromises()
+    expect(vi.getTimerCount()).toBe(0)
+    expect(showSuccess).not.toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
+  })
+
+  it.each(['success', 'failure'] as const)('does not reopen cancelled saved email verification after a late resend: %s', async (outcome) => {
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: {
+        enabled: true, threshold: null, systemDefaultThreshold: 5, userEmail: '',
+        extraEmails: [{ email: 'saved@example.com', disabled: false, verified: false }]
+      }
+    })
+    await button(wrapper, 'profile.balanceNotify.verify').trigger('click')
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(60_000)
+    await flushPromises()
+    const request = deferred()
+    sendNotifyEmailCode.mockReturnValueOnce(request.promise)
+    showSuccess.mockClear()
+    showError.mockClear()
+    await button(wrapper, 'profile.balanceNotify.resend').trigger('click')
+    await button(wrapper, 'common.cancel').trigger('click')
+
+    if (outcome === 'success') request.resolve()
+    else request.reject(new Error('obsolete resend'))
+    await flushPromises()
+    expect(wrapper.find('input[maxlength="6"]').exists()).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(showSuccess).not.toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
   })
 
   it.each([0, 1])('removes only verified emails when request %i finishes first', async (first) => {
