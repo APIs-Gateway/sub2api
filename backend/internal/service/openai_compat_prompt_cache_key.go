@@ -17,7 +17,7 @@ func shouldAutoInjectPromptCacheKeyForCompat(model string) bool {
 	canonical := canonicalizeOpenAIModelAliasSpelling(trimmed)
 	// GPT-6 is the public alias for Astra; GPT-6 Sol/Luna share the same
 	// Responses cache identity contract. Unknown GPT-6 spellings stay excluded.
-	if canonical == "gpt-6" || canonical == "gpt-6-astra" || openai.IsGPT6SolOrLunaModelSpelling(canonical) {
+	if canonical == "gpt-6" || canonical == "gpt-6-astra" || openai.IsGPT6SolOrLunaModelSpelling(canonical) || openai.IsGPT61SolModelSpelling(canonical) {
 		return true
 	}
 	// 仅对 Responses 兼容路径支持的 GPT-5 族开启自动注入，避免 normalizeCodexModel

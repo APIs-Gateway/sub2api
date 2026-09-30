@@ -108,6 +108,24 @@ var (
 		Mode:                                "chat",
 		SupportsPromptCaching:               true,
 	}
+	// GPT-6.1 Sol（同步自上游 9688571a8）：与 GPT-6 Sol 同价，仅 cache read 减半。
+	openAIGPT61SolFallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                   2e-06,
+		InputCostPerTokenPriority:           4e-06,
+		OutputCostPerToken:                  1e-05,
+		OutputCostPerTokenPriority:          2e-05,
+		CacheCreationInputTokenCost:         2.5e-06,
+		CacheCreationInputTokenCostPriority: 5e-06,
+		CacheReadInputTokenCost:             1e-07,
+		CacheReadInputTokenCostPriority:     2e-07,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		LiteLLMProvider:                     "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
 	openAIGPT6LunaFallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken:                   1e-07,
 		InputCostPerTokenPriority:           2e-07,
@@ -1038,9 +1056,9 @@ func normalizeModelNameForPricing(model string) string {
 		if canonical == "gpt-6" {
 			return "gpt-6-astra"
 		}
-		// gpt-6-sol-max / gpt-6-luna-openai-compact 等本地后缀写法归一到官方 ID，
-		// 让目录里的 gpt-6-sol / gpt-6-luna 条目（含自定义覆盖）优先命中。
-		if openai.IsGPT6SolOrLunaModelSpelling(canonical) {
+		// gpt-6-sol-max / gpt-6-luna-openai-compact / gpt-6.1-sol-max 等本地后缀写法归一到官方 ID，
+		// 让目录里的 gpt-6-sol / gpt-6-luna / gpt-6.1-sol 条目（含自定义覆盖）优先命中。
+		if openai.IsGPT6SolOrLunaModelSpelling(canonical) || openai.IsGPT61SolModelSpelling(canonical) {
 			return normalizeKnownOpenAICodexModel(canonical)
 		}
 		// Mirror normalizeKnownOpenAICodexModel's bare "gpt-5.6" -> "gpt-5.6-sol"
@@ -1234,8 +1252,14 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 		}
 	}
 
-	// GPT-6 Sol / Luna 必须在基础版本号回退之前处理：generateOpenAIModelVariants
+	// GPT-6.1 Sol / GPT-6 Sol / Luna 必须在基础版本号回退之前处理：generateOpenAIModelVariants
 	// 会把 gpt-6-sol 截成 gpt-6，从而错误命中 Astra（gpt-6 别名）的价格。
+	if openai.IsGPT61SolModelSpelling(model) {
+		if pricing, ok := s.pricingData["gpt-6.1-sol"]; ok {
+			return pricing
+		}
+		return openAIGPT61SolFallbackPricing
+	}
 	if openai.IsGPT6SolOrLunaModelSpelling(model) {
 		base := normalizeKnownOpenAICodexModel(model)
 		if pricing, ok := s.pricingData[base]; ok {
