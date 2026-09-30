@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"sort"
 	"time"
@@ -33,19 +34,13 @@ func (r *settingRepository) SetContentModerationConfig(ctx context.Context, valu
 		if i > 0 && id == ids[i-1] {
 			continue
 		}
-		rows, err := client.QueryContext(ctx, "SELECT id FROM groups WHERE id = $1 AND deleted_at IS NULL FOR UPDATE", id)
-		if err != nil {
+		var liveID int64
+		if err := scanSingleRow(ctx, client, "SELECT id FROM groups WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+			[]any{id}, &liveID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return service.ErrGroupNotFound
+			}
 			return err
-		}
-		found := rows.Next()
-		if err := rows.Close(); err != nil {
-			return err
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		if !found {
-			return service.ErrGroupNotFound
 		}
 	}
 	if err := client.Setting.Create().SetKey(service.SettingKeyContentModerationConfig).

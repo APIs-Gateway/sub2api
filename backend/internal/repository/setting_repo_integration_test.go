@@ -30,6 +30,8 @@ func TestModerationConfigSaveRejectsGroupDeletedAfterValidation(t *testing.T) {
 			_ = settings.Delete(ctx, key)
 		}
 	})
+	require.NoError(t, settings.SetContentModerationConfig(ctx,
+		fmt.Sprintf(`{"all_groups":false,"group_ids":[%d]}`, group.ID), []int64{group.ID}))
 	require.NoError(t, settings.Set(ctx, key, `{"all_groups":false,"group_ids":[]}`))
 
 	// The writer has already validated a live ID, but must recheck it after
@@ -77,6 +79,23 @@ func (s *SettingRepoSuite) SetupTest() {
 
 func TestSettingRepoSuite(t *testing.T) {
 	suite.Run(t, new(SettingRepoSuite))
+}
+
+func (s *SettingRepoSuite) TestSetContentModerationConfigInExistingTransaction() {
+	group := &service.Group{Name: "moderation-valid-save", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	groups := newGroupRepositoryWithSQL(s.repo.client, s.repo.client)
+	s.Require().NoError(groups.Create(s.ctx, group))
+	raw := fmt.Sprintf(`{"all_groups":false,"group_ids":[%d]}`, group.ID)
+	s.Require().NoError(s.repo.SetContentModerationConfig(s.ctx, raw, []int64{group.ID, group.ID}))
+	stored, err := s.repo.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+	s.Require().NoError(err)
+	s.Require().JSONEq(raw, stored)
+	s.Require().ErrorIs(s.repo.SetContentModerationConfig(s.ctx, raw, []int64{0}), service.ErrGroupNotFound)
+	s.Require().ErrorIs(s.repo.SetContentModerationConfig(s.ctx, raw, []int64{-1}), service.ErrGroupNotFound)
+	s.Require().ErrorIs(s.repo.SetContentModerationConfig(s.ctx, raw, []int64{999999999}), service.ErrGroupNotFound)
+	stored, err = s.repo.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+	s.Require().NoError(err)
+	s.Require().JSONEq(raw, stored)
 }
 
 func (s *SettingRepoSuite) TestSetAndGetValue() {

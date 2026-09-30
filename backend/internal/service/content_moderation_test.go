@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,12 +14,29 @@ import (
 	"testing"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/stretchr/testify/require"
 )
 
 type contentModerationTestSettingRepo struct {
 	values map[string]string
+}
+
+type contentModerationWriterSettingRepo struct {
+	*contentModerationTestSettingRepo
+	saveErr      error
+	writerCalls  int
+	writtenGroup []int64
+}
+
+func (r *contentModerationWriterSettingRepo) SetContentModerationConfig(ctx context.Context, value string, groupIDs []int64) error {
+	r.writerCalls++
+	r.writtenGroup = append([]int64(nil), groupIDs...)
+	if r.saveErr != nil {
+		return r.saveErr
+	}
+	return r.contentModerationTestSettingRepo.Set(ctx, SettingKeyContentModerationConfig, value)
 }
 
 func (r *contentModerationTestSettingRepo) Get(ctx context.Context, key string) (*Setting, error) {
@@ -990,6 +1008,44 @@ func TestContentModerationUpdateConfig_AllGroupsClearsObsoleteSelectedIDs(t *tes
 	var saved ContentModerationConfig
 	require.NoError(t, json.Unmarshal([]byte(repo.values[SettingKeyContentModerationConfig]), &saved))
 	require.Empty(t, saved.GroupIDs)
+}
+
+func TestContentModerationUpdateConfig_TransactionalWriterAndErrorMapping(t *testing.T) {
+	cfg := defaultContentModerationConfig()
+	cfg.AllGroups = false
+	cfg.GroupIDs = []int64{42}
+	raw, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name   string
+		saveErr error
+		reason string
+	}{
+		{name: "saved"},
+		{name: "deleted group", saveErr: ErrGroupNotFound, reason: "INVALID_CONTENT_MODERATION_GROUP"},
+		{name: "database failure", saveErr: errors.New("setting write failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &contentModerationWriterSettingRepo{
+				contentModerationTestSettingRepo: &contentModerationTestSettingRepo{values: map[string]string{SettingKeyContentModerationConfig: string(raw)}},
+				saveErr: tc.saveErr,
+			}
+			svc := NewContentModerationService(repo, nil, nil, nil, nil, nil, nil, nil)
+			_, err := svc.UpdateConfig(context.Background(), UpdateContentModerationConfigInput{})
+			require.Equal(t, 1, repo.writerCalls)
+			require.Equal(t, []int64{42}, repo.writtenGroup)
+			if tc.saveErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				if tc.reason != "" {
+					require.Equal(t, tc.reason, infraerrors.Reason(err))
+				} else {
+					require.ErrorContains(t, err, "save content moderation config")
+				}
+			}
+		})
+	}
 }
 
 func TestExtractContentModerationInput_AnthropicImageSourceOnlyParticipatesInMemory(t *testing.T) {

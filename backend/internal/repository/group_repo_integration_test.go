@@ -97,6 +97,36 @@ func (s *GroupRepoSuite) TestDeleteCascadePreservesMalformedModerationConfig() {
 	s.Require().Equal(malformed, stored)
 }
 
+func (s *GroupRepoSuite) TestDeleteCascadeWithMissingOrNonArrayModerationSetting() {
+	settings := NewSettingRepository(s.tx.Client())
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "missing"},
+		{name: "non-array", raw: `{"group_ids":"legacy","mode":"observe"}`},
+	} {
+		s.Run(tc.name, func() {
+			group := &service.Group{Name: "moderation-" + tc.name, Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+			s.Require().NoError(s.repo.Create(s.ctx, group))
+			if tc.raw == "" {
+				s.Require().NoError(settings.Delete(s.ctx, service.SettingKeyContentModerationConfig))
+			} else {
+				s.Require().NoError(settings.Set(s.ctx, service.SettingKeyContentModerationConfig, tc.raw))
+			}
+			_, err := s.repo.DeleteCascade(s.ctx, group.ID)
+			s.Require().NoError(err)
+			stored, err := settings.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+			if tc.raw == "" {
+				s.Require().ErrorIs(err, service.ErrSettingNotFound)
+			} else {
+				s.Require().NoError(err)
+				s.Require().JSONEq(tc.raw, stored)
+			}
+		})
+	}
+}
+
 // --- Create / GetByID / Update / Delete ---
 
 func (s *GroupRepoSuite) TestCreate() {
