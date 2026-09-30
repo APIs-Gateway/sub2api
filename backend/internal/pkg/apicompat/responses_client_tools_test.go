@@ -68,7 +68,7 @@ func TestAdaptDeepSeekResponsesNamespaceCustomToolsRoundTrip(t *testing.T) {
 
 func TestAdaptDeepSeekResponsesNamespaceCustomToolsRejectsAmbiguousDeclarations(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name  string
 		tools []any
 	}{
 		{"flat collides with direct", []any{map[string]any{"type": "function", "name": "functions__exec"}, map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "custom", "name": "exec"}}}}},
@@ -86,7 +86,7 @@ func TestAdaptDeepSeekResponsesNamespaceCustomToolsRejectsAmbiguousDeclarations(
 
 func TestDeepSeekNamespacedCustomStreamRestoresEveryLifecycleEvent(t *testing.T) {
 	mapping := ResponsesClientToolMapping{
-		CustomTools: map[string]bool{"functions__exec": true},
+		CustomTools:    map[string]bool{"functions__exec": true},
 		NamespaceTools: map[string]ResponsesNamespaceName{"functions__exec": {Namespace: "functions", Name: "exec"}},
 	}
 	restorer := NewResponsesClientToolStreamRestorer(mapping)

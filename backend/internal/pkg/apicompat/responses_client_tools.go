@@ -50,7 +50,10 @@ func AdaptDeepSeekResponsesNamespaceCustomTools(req map[string]any) (ResponsesCl
 	}
 	flatNames := make(map[string]ResponsesNamespaceName)
 	for _, raw := range tools {
-		tool := raw.(map[string]any)
+		tool, ok := raw.(map[string]any)
+		if !ok {
+			return ResponsesClientToolMapping{}, false, fmt.Errorf("DeepSeek Responses tool declaration must be an object")
+		}
 		if strings.TrimSpace(stringValue(tool["type"])) != "namespace" {
 			continue
 		}
