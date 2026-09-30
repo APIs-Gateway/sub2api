@@ -891,7 +891,9 @@ func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool)
 		token, _ := decoder.Token()
 		key := token.(string)
 		var rawIDs json.RawMessage
-		_ = decoder.Decode(&rawIDs)
+		if err := decoder.Decode(&rawIDs); err != nil {
+			return "", false
+		}
 		if !strings.EqualFold(key, "group_ids") {
 			continue
 		}
