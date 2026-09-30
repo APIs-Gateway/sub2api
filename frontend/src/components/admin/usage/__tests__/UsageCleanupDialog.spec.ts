@@ -108,6 +108,34 @@ describe('cleanup task pagination', () => {
     expect(wrapper.text()).toContain('#3')
   })
 
+  it('does not replace a slow request across consecutive polling ticks', async () => {
+    const interval = vi.spyOn(window, 'setInterval')
+    const wrapper = await openDialog()
+    expect(interval).toHaveBeenCalledWith(expect.any(Function), 10000)
+    const poll = interval.mock.calls.find(([, delay]) => delay === 10000)?.[0] as () => void
+
+    const slow = deferredPage()
+    listCleanupTasks.mockImplementationOnce(() => slow.promise)
+    wrapper.findComponent(Pagination).vm.$emit('update:page', 2)
+    await flushPromises()
+
+    poll()
+    poll()
+    await flushPromises()
+    expect(listCleanupTasks).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('admin.usage.cleanup.loadingTasks')
+
+    slow.resolve(page(2))
+    await flushPromises()
+    expect(wrapper.text()).toContain('#2')
+    expect(wrapper.text()).not.toContain('admin.usage.cleanup.loadingTasks')
+
+    listCleanupTasks.mockResolvedValueOnce(page(2))
+    poll()
+    await flushPromises()
+    expect(listCleanupTasks).toHaveBeenCalledTimes(3)
+  })
+
   it('ignores a pending response after the dialog is closed and reopened', async () => {
     const wrapper = await openDialog()
     const obsolete = deferredPage()

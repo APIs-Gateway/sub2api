@@ -172,7 +172,7 @@ const resetFilters = () => {
 const startPolling = () => {
   stopPolling()
   pollTimer = window.setInterval(() => {
-    loadTasks()
+    if (!tasksLoading.value) loadTasks()
   }, 10000)
 }
 
