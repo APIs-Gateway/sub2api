@@ -617,6 +617,7 @@ var ProviderSet = wire.NewSet(
 	NewProxyService,
 	NewRedeemService,
 	NewCheckinService,
+	NewGroupRouteService, // Key 级分组回退链（PR1：仅注册，尚无消费方）
 	NewLegacyInviteService,
 	ProvideLegacyInviteOptions,
 	NewPromoService,

@@ -41,6 +41,10 @@ type UsageLog struct {
 	UpstreamModelMismatch bool `json:"upstream_model_mismatch,omitempty"`
 	// 上游响应体 model 原文（仅不一致时记录）
 	UpstreamResponseModel *string `json:"upstream_response_model,omitempty"`
+	// 实际服务分组 ID（仅回退时写入）
+	ServedGroupID *int64 `json:"served_group_id,omitempty"`
+	// 回退来源：1=用户链 2=管理员链，NULL=主分组
+	ServedRouteSource *int16 `json:"served_route_source,omitempty"`
 	// 渠道 ID
 	ChannelID *int64 `json:"channel_id,omitempty"`
 	// 模型映射链
@@ -198,7 +202,7 @@ func (*UsageLog) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case usagelog.FieldInputCost, usagelog.FieldOutputCost, usagelog.FieldCacheCreationCost, usagelog.FieldCacheReadCost, usagelog.FieldTotalCost, usagelog.FieldActualCost, usagelog.FieldRateMultiplier, usagelog.FieldAccountRateMultiplier:
 			values[i] = new(sql.NullFloat64)
-		case usagelog.FieldID, usagelog.FieldUserID, usagelog.FieldAPIKeyID, usagelog.FieldAccountID, usagelog.FieldChannelID, usagelog.FieldGroupID, usagelog.FieldSubscriptionID, usagelog.FieldInputTokens, usagelog.FieldOutputTokens, usagelog.FieldCacheCreationTokens, usagelog.FieldCacheReadTokens, usagelog.FieldCacheCreation5mTokens, usagelog.FieldCacheCreation1hTokens, usagelog.FieldBillingType, usagelog.FieldDurationMs, usagelog.FieldFirstTokenMs, usagelog.FieldImageCount:
+		case usagelog.FieldID, usagelog.FieldUserID, usagelog.FieldAPIKeyID, usagelog.FieldAccountID, usagelog.FieldServedGroupID, usagelog.FieldServedRouteSource, usagelog.FieldChannelID, usagelog.FieldGroupID, usagelog.FieldSubscriptionID, usagelog.FieldInputTokens, usagelog.FieldOutputTokens, usagelog.FieldCacheCreationTokens, usagelog.FieldCacheReadTokens, usagelog.FieldCacheCreation5mTokens, usagelog.FieldCacheCreation1hTokens, usagelog.FieldBillingType, usagelog.FieldDurationMs, usagelog.FieldFirstTokenMs, usagelog.FieldImageCount:
 			values[i] = new(sql.NullInt64)
 		case usagelog.FieldRequestID, usagelog.FieldModel, usagelog.FieldRequestedModel, usagelog.FieldUpstreamModel, usagelog.FieldUpstreamResponseModel, usagelog.FieldModelMappingChain, usagelog.FieldBillingTier, usagelog.FieldBillingMode, usagelog.FieldUserAgent, usagelog.FieldIPAddress, usagelog.FieldImageSize, usagelog.FieldImageInputSize, usagelog.FieldImageOutputSize, usagelog.FieldImageSizeSource:
 			values[i] = new(sql.NullString)
@@ -281,6 +285,20 @@ func (_m *UsageLog) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.UpstreamResponseModel = new(string)
 				*_m.UpstreamResponseModel = value.String
+			}
+		case usagelog.FieldServedGroupID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field served_group_id", values[i])
+			} else if value.Valid {
+				_m.ServedGroupID = new(int64)
+				*_m.ServedGroupID = value.Int64
+			}
+		case usagelog.FieldServedRouteSource:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field served_route_source", values[i])
+			} else if value.Valid {
+				_m.ServedRouteSource = new(int16)
+				*_m.ServedRouteSource = int16(value.Int64)
 			}
 		case usagelog.FieldChannelID:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -595,6 +613,16 @@ func (_m *UsageLog) String() string {
 	if v := _m.UpstreamResponseModel; v != nil {
 		builder.WriteString("upstream_response_model=")
 		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.ServedGroupID; v != nil {
+		builder.WriteString("served_group_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.ServedRouteSource; v != nil {
+		builder.WriteString("served_route_source=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
 	if v := _m.ChannelID; v != nil {

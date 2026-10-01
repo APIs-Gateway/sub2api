@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"os"
 	"reflect"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,6 +98,8 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			createdAt,
 			log.UpstreamModelMismatch,
 			sqlmock.AnyArg(), // upstream_response_model
+			nil,              // served_group_id：PR1 不写，保持 NULL
+			nil,              // served_route_source：PR1 不写，保持 NULL
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
 
@@ -182,6 +187,8 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			createdAt,
 			log.UpstreamModelMismatch,
 			sqlmock.AnyArg(), // upstream_response_model
+			nil,              // served_group_id：PR1 不写，保持 NULL
+			nil,              // served_route_source：PR1 不写，保持 NULL
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
 
@@ -703,6 +710,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			now,
 			false,            // upstream_model_mismatch
 			sql.NullString{}, // upstream_response_model
+			sql.NullInt64{},  // served_group_id
+			sql.NullInt16{},  // served_route_source
 		}})
 		require.NoError(t, err)
 		require.Equal(t, 2, log.ImageCount)
@@ -775,6 +784,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			now,
 			false,            // upstream_model_mismatch
 			sql.NullString{}, // upstream_response_model
+			sql.NullInt64{},  // served_group_id
+			sql.NullInt16{},  // served_route_source
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
@@ -830,6 +841,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			now,
 			false,            // upstream_model_mismatch
 			sql.NullString{}, // upstream_response_model
+			sql.NullInt64{},  // served_group_id
+			sql.NullInt16{},  // served_route_source
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
@@ -885,10 +898,96 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			now,
 			false,            // upstream_model_mismatch
 			sql.NullString{}, // upstream_response_model
+			sql.NullInt64{},  // served_group_id
+			sql.NullInt16{},  // served_route_source
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
 		require.Equal(t, "priority", *log.ServiceTier)
 	})
 
+}
+
+// PR1 不写 served 列：prepareUsageLogInsert 对未设置的字段必须产出 NULL，
+// 并且参数个数始终与 usageLogInsertArgTypes 对齐（列数不匹配会让线上写 usage 失败）。
+func TestPrepareUsageLogInsert_ServedColumns(t *testing.T) {
+	base := &service.UsageLog{
+		UserID: 1, APIKeyID: 2, AccountID: 3, RequestID: "req-served", Model: "gpt-5",
+		CreatedAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+	}
+	n := len(usageLogInsertArgTypes)
+
+	prepared := prepareUsageLogInsert(base)
+	require.Len(t, prepared.args, n)
+	require.Equal(t, "bigint", usageLogInsertArgTypes[n-2])
+	require.Equal(t, "smallint", usageLogInsertArgTypes[n-1])
+	require.Equal(t, sql.NullInt64{}, prepared.args[n-2], "served_group_id must stay NULL by default")
+	require.Equal(t, sql.NullInt16{}, prepared.args[n-1], "served_route_source must stay NULL by default")
+
+	groupID := int64(21)
+	source := int16(1)
+	withServed := *base
+	withServed.ServedGroupID = &groupID
+	withServed.ServedRouteSource = &source
+	prepared = prepareUsageLogInsert(&withServed)
+	require.Len(t, prepared.args, n)
+	require.Equal(t, sql.NullInt64{Int64: 21, Valid: true}, prepared.args[n-2])
+	require.Equal(t, sql.NullInt16{Int16: 1, Valid: true}, prepared.args[n-1])
+}
+
+// zeroValueScanner 把每个目标填成零值，再按下标覆盖，用来验证 scanUsageLog 的列数与 select 列表对齐。
+type zeroValueScanner struct {
+	override map[int]any
+	gotDest  int
+}
+
+func (s *zeroValueScanner) Scan(dest ...any) error {
+	s.gotDest = len(dest)
+	for i := range dest {
+		dv := reflect.ValueOf(dest[i]).Elem()
+		if v, ok := s.override[i]; ok {
+			dv.Set(reflect.ValueOf(v))
+			continue
+		}
+		dv.Set(reflect.Zero(dv.Type()))
+	}
+	return nil
+}
+
+func TestScanUsageLog_ServedColumns(t *testing.T) {
+	cols := strings.Split(usageLogSelectColumns, ", ")
+	n := len(cols)
+	require.Equal(t, "served_group_id", cols[n-2])
+	require.Equal(t, "served_route_source", cols[n-1])
+
+	// 老行：两列为 NULL => 字段保持 nil
+	sc := &zeroValueScanner{}
+	log, err := scanUsageLog(sc)
+	require.NoError(t, err)
+	require.Equal(t, n, sc.gotDest, "scanUsageLog must scan exactly the selected columns")
+	require.Nil(t, log.ServedGroupID)
+	require.Nil(t, log.ServedRouteSource)
+
+	// 回退行
+	sc = &zeroValueScanner{override: map[int]any{
+		n - 2: sql.NullInt64{Int64: 21, Valid: true},
+		n - 1: sql.NullInt16{Int16: 2, Valid: true},
+	}}
+	log, err = scanUsageLog(sc)
+	require.NoError(t, err)
+	require.NotNil(t, log.ServedGroupID)
+	require.Equal(t, int64(21), *log.ServedGroupID)
+	require.NotNil(t, log.ServedRouteSource)
+	require.Equal(t, int16(2), *log.ServedRouteSource)
+}
+
+// 8 个 INSERT / CTE 变体必须同时列出两个新列、占位符覆盖 56 列：漏一个会让线上写 usage 失败。
+func TestUsageLogInsertSQL_ServedColumnsInAllVariants(t *testing.T) {
+	src, err := os.ReadFile("usage_log_repo.go")
+	require.NoError(t, err)
+	text := string(src)
+	require.Len(t, regexp.MustCompile(`(?m)^\t+served_group_id,$`).FindAllString(text, -1), 8)
+	require.Len(t, regexp.MustCompile(`(?m)^\t+served_route_source$`).FindAllString(text, -1), 8)
+	require.Equal(t, 2, strings.Count(text, "$53, $54, $55, $56"))
+	require.Len(t, usageLogInsertArgTypes, 56)
 }

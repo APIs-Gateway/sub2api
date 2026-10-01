@@ -100,6 +100,16 @@ func UpstreamResponseModel(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldUpstreamResponseModel, v))
 }
 
+// ServedGroupID applies equality check predicate on the "served_group_id" field. It's identical to ServedGroupIDEQ.
+func ServedGroupID(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldServedGroupID, v))
+}
+
+// ServedRouteSource applies equality check predicate on the "served_route_source" field. It's identical to ServedRouteSourceEQ.
+func ServedRouteSource(v int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldServedRouteSource, v))
+}
+
 // ChannelID applies equality check predicate on the "channel_id" field. It's identical to ChannelIDEQ.
 func ChannelID(v int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldChannelID, v))
@@ -688,6 +698,106 @@ func UpstreamResponseModelEqualFold(v string) predicate.UsageLog {
 // UpstreamResponseModelContainsFold applies the ContainsFold predicate on the "upstream_response_model" field.
 func UpstreamResponseModelContainsFold(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldContainsFold(FieldUpstreamResponseModel, v))
+}
+
+// ServedGroupIDEQ applies the EQ predicate on the "served_group_id" field.
+func ServedGroupIDEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldServedGroupID, v))
+}
+
+// ServedGroupIDNEQ applies the NEQ predicate on the "served_group_id" field.
+func ServedGroupIDNEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldServedGroupID, v))
+}
+
+// ServedGroupIDIn applies the In predicate on the "served_group_id" field.
+func ServedGroupIDIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldServedGroupID, vs...))
+}
+
+// ServedGroupIDNotIn applies the NotIn predicate on the "served_group_id" field.
+func ServedGroupIDNotIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldServedGroupID, vs...))
+}
+
+// ServedGroupIDGT applies the GT predicate on the "served_group_id" field.
+func ServedGroupIDGT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldServedGroupID, v))
+}
+
+// ServedGroupIDGTE applies the GTE predicate on the "served_group_id" field.
+func ServedGroupIDGTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldServedGroupID, v))
+}
+
+// ServedGroupIDLT applies the LT predicate on the "served_group_id" field.
+func ServedGroupIDLT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldServedGroupID, v))
+}
+
+// ServedGroupIDLTE applies the LTE predicate on the "served_group_id" field.
+func ServedGroupIDLTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldServedGroupID, v))
+}
+
+// ServedGroupIDIsNil applies the IsNil predicate on the "served_group_id" field.
+func ServedGroupIDIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldServedGroupID))
+}
+
+// ServedGroupIDNotNil applies the NotNil predicate on the "served_group_id" field.
+func ServedGroupIDNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldServedGroupID))
+}
+
+// ServedRouteSourceEQ applies the EQ predicate on the "served_route_source" field.
+func ServedRouteSourceEQ(v int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldServedRouteSource, v))
+}
+
+// ServedRouteSourceNEQ applies the NEQ predicate on the "served_route_source" field.
+func ServedRouteSourceNEQ(v int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldServedRouteSource, v))
+}
+
+// ServedRouteSourceIn applies the In predicate on the "served_route_source" field.
+func ServedRouteSourceIn(vs ...int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldServedRouteSource, vs...))
+}
+
+// ServedRouteSourceNotIn applies the NotIn predicate on the "served_route_source" field.
+func ServedRouteSourceNotIn(vs ...int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldServedRouteSource, vs...))
+}
+
+// ServedRouteSourceGT applies the GT predicate on the "served_route_source" field.
+func ServedRouteSourceGT(v int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldServedRouteSource, v))
+}
+
+// ServedRouteSourceGTE applies the GTE predicate on the "served_route_source" field.
+func ServedRouteSourceGTE(v int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldServedRouteSource, v))
+}
+
+// ServedRouteSourceLT applies the LT predicate on the "served_route_source" field.
+func ServedRouteSourceLT(v int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldServedRouteSource, v))
+}
+
+// ServedRouteSourceLTE applies the LTE predicate on the "served_route_source" field.
+func ServedRouteSourceLTE(v int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldServedRouteSource, v))
+}
+
+// ServedRouteSourceIsNil applies the IsNil predicate on the "served_route_source" field.
+func ServedRouteSourceIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldServedRouteSource))
+}
+
+// ServedRouteSourceNotNil applies the NotNil predicate on the "served_route_source" field.
+func ServedRouteSourceNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldServedRouteSource))
 }
 
 // ChannelIDEQ applies the EQ predicate on the "channel_id" field.

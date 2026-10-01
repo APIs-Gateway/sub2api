@@ -30,7 +30,7 @@ import (
 	gocache "github.com/patrickmn/go-cache"
 )
 
-const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, image_input_tokens, image_input_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, service_tier, reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, created_at, upstream_model_mismatch, upstream_response_model"
+const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, image_input_tokens, image_input_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, service_tier, reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, created_at, upstream_model_mismatch, upstream_response_model, served_group_id, served_route_source"
 
 // usageLogInsertArgTypes must stay in the same order as:
 //  1. prepareUsageLogInsert().args
@@ -94,6 +94,8 @@ var usageLogInsertArgTypes = [...]string{
 	"timestamptz", // created_at
 	"boolean",     // upstream_model_mismatch
 	"text",        // upstream_response_model
+	"bigint",      // served_group_id
+	"smallint",    // served_route_source
 }
 
 const rawUsageLogModelColumn = "model"
@@ -424,7 +426,9 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			account_stats_cost,
 			created_at,
 			upstream_model_mismatch,
-			upstream_response_model
+			upstream_response_model,
+			served_group_id,
+			served_route_source
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
 			$8, $9,
@@ -432,7 +436,7 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			$14, $15, $16, $17,
 			$18, $19, $20, $21, $22, $23,
 			$24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52,
-			$53, $54
+			$53, $54, $55, $56
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 		RETURNING id, created_at
@@ -875,10 +879,12 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 			account_stats_cost,
 			created_at,
 			upstream_model_mismatch,
-			upstream_response_model
+			upstream_response_model,
+			served_group_id,
+			served_route_source
 		) AS (VALUES `)
 
-	args := make([]any, 0, len(keys)*54)
+	args := make([]any, 0, len(keys)*56)
 	argPos := 1
 	for idx, key := range keys {
 		if idx > 0 {
@@ -960,7 +966,9 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 				account_stats_cost,
 				created_at,
 				upstream_model_mismatch,
-				upstream_response_model
+				upstream_response_model,
+				served_group_id,
+				served_route_source
 			)
 			SELECT
 				user_id,
@@ -1016,7 +1024,9 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 				account_stats_cost,
 				created_at,
 				upstream_model_mismatch,
-				upstream_response_model
+				upstream_response_model,
+				served_group_id,
+				served_route_source
 			FROM input
 			ON CONFLICT (request_id, api_key_id) DO NOTHING
 			RETURNING request_id, api_key_id, id, created_at
@@ -1112,10 +1122,12 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			account_stats_cost,
 			created_at,
 			upstream_model_mismatch,
-			upstream_response_model
+			upstream_response_model,
+			served_group_id,
+			served_route_source
 		) AS (VALUES `)
 
-	args := make([]any, 0, len(preparedList)*54)
+	args := make([]any, 0, len(preparedList)*56)
 	argPos := 1
 	for idx, prepared := range preparedList {
 		if idx > 0 {
@@ -1194,7 +1206,9 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			account_stats_cost,
 			created_at,
 			upstream_model_mismatch,
-			upstream_response_model
+			upstream_response_model,
+			served_group_id,
+			served_route_source
 		)
 		SELECT
 			user_id,
@@ -1250,7 +1264,9 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			account_stats_cost,
 			created_at,
 			upstream_model_mismatch,
-			upstream_response_model
+			upstream_response_model,
+			served_group_id,
+			served_route_source
 		FROM input
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 	`)
@@ -1314,7 +1330,9 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			account_stats_cost,
 			created_at,
 			upstream_model_mismatch,
-			upstream_response_model
+			upstream_response_model,
+			served_group_id,
+			served_route_source
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
 			$8, $9,
@@ -1322,7 +1340,7 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			$14, $15, $16, $17,
 			$18, $19, $20, $21, $22, $23,
 			$24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52,
-			$53, $54
+			$53, $54, $55, $56
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 	`, prepared.args...)
@@ -1432,6 +1450,8 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 			createdAt,
 			log.UpstreamModelMismatch,
 			nullString(log.UpstreamResponseModel), // upstream_response_model
+			nullInt64(log.ServedGroupID),          // served_group_id
+			nullInt16(log.ServedRouteSource),      // served_route_source
 		},
 	}
 }
@@ -4323,6 +4343,8 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		createdAt             time.Time
 		upstreamModelMismatch bool
 		upstreamResponseModel sql.NullString
+		servedGroupID         sql.NullInt64
+		servedRouteSource     sql.NullInt16
 	)
 
 	if err := scanner.Scan(
@@ -4381,6 +4403,8 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		&createdAt,
 		&upstreamModelMismatch,
 		&upstreamResponseModel,
+		&servedGroupID,
+		&servedRouteSource,
 	); err != nil {
 		return nil, err
 	}
@@ -4491,6 +4515,14 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 	}
 	if upstreamResponseModel.Valid {
 		log.UpstreamResponseModel = &upstreamResponseModel.String
+	}
+	if servedGroupID.Valid {
+		v := servedGroupID.Int64
+		log.ServedGroupID = &v
+	}
+	if servedRouteSource.Valid {
+		v := servedRouteSource.Int16
+		log.ServedRouteSource = &v
 	}
 	if accountStatsCost.Valid {
 		log.AccountStatsCost = &accountStatsCost.Float64
@@ -4614,6 +4646,13 @@ func nullInt64(v *int64) sql.NullInt64 {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: *v, Valid: true}
+}
+
+func nullInt16(v *int16) sql.NullInt16 {
+	if v == nil {
+		return sql.NullInt16{}
+	}
+	return sql.NullInt16{Int16: *v, Valid: true}
 }
 
 func nullInt(v *int) sql.NullInt64 {

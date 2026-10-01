@@ -32,6 +32,10 @@ const (
 	FieldUpstreamModelMismatch = "upstream_model_mismatch"
 	// FieldUpstreamResponseModel holds the string denoting the upstream_response_model field in the database.
 	FieldUpstreamResponseModel = "upstream_response_model"
+	// FieldServedGroupID holds the string denoting the served_group_id field in the database.
+	FieldServedGroupID = "served_group_id"
+	// FieldServedRouteSource holds the string denoting the served_route_source field in the database.
+	FieldServedRouteSource = "served_route_source"
 	// FieldChannelID holds the string denoting the channel_id field in the database.
 	FieldChannelID = "channel_id"
 	// FieldModelMappingChain holds the string denoting the model_mapping_chain field in the database.
@@ -161,6 +165,8 @@ var Columns = []string{
 	FieldUpstreamModel,
 	FieldUpstreamModelMismatch,
 	FieldUpstreamResponseModel,
+	FieldServedGroupID,
+	FieldServedRouteSource,
 	FieldChannelID,
 	FieldModelMappingChain,
 	FieldBillingTier,
@@ -327,6 +333,16 @@ func ByUpstreamModelMismatch(opts ...sql.OrderTermOption) OrderOption {
 // ByUpstreamResponseModel orders the results by the upstream_response_model field.
 func ByUpstreamResponseModel(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUpstreamResponseModel, opts...).ToFunc()
+}
+
+// ByServedGroupID orders the results by the served_group_id field.
+func ByServedGroupID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldServedGroupID, opts...).ToFunc()
+}
+
+// ByServedRouteSource orders the results by the served_route_source field.
+func ByServedRouteSource(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldServedRouteSource, opts...).ToFunc()
 }
 
 // ByChannelID orders the results by the channel_id field.

@@ -247,3 +247,52 @@ func TestUsageLogFromServiceAdmin_IncludesUpstreamModelMismatchFields(t *testing
 func f64Ptr(value float64) *float64 {
 	return &value
 }
+
+func TestUsageLogFromService_ServedGroupHiddenUnlessUserChain(t *testing.T) {
+	t.Parallel()
+
+	served := int64(21)
+	i16 := func(v int16) *int16 { return &v }
+	cases := []struct {
+		name       string
+		groupID    *int64
+		source     *int16
+		wantUser   *int64
+		wantAdmin  *int64
+		wantSource *int16
+	}{
+		{"no fallback", nil, nil, nil, nil, nil},
+		{"user chain", &served, i16(1), &served, &served, i16(1)},
+		{"admin hidden chain is hidden from users", &served, i16(2), nil, &served, i16(2)},
+		{"unknown source is hidden from users", &served, i16(9), nil, &served, i16(9)},
+		{"served without source is hidden from users", &served, nil, nil, &served, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &service.UsageLog{RequestID: "req", Model: "gpt-5", ServedGroupID: tc.groupID, ServedRouteSource: tc.source}
+
+			userDTO := UsageLogFromService(log)
+			require.Equal(t, tc.wantUser, userDTO.ServedGroupID)
+			userJSON, err := json.Marshal(userDTO)
+			require.NoError(t, err)
+			require.NotContains(t, string(userJSON), "served_route_source")
+			if tc.wantUser == nil {
+				require.NotContains(t, string(userJSON), "served_group_id")
+			} else {
+				require.Contains(t, string(userJSON), `"served_group_id":21`)
+			}
+
+			adminDTO := UsageLogFromServiceAdmin(log)
+			require.Equal(t, tc.wantAdmin, adminDTO.ServedGroupID)
+			require.Equal(t, tc.wantSource, adminDTO.ServedRouteSource)
+			adminJSON, err := json.Marshal(adminDTO)
+			require.NoError(t, err)
+			if tc.wantAdmin != nil {
+				require.Contains(t, string(adminJSON), `"served_group_id":21`)
+			}
+			if tc.wantSource != nil {
+				require.Contains(t, string(adminJSON), `"served_route_source"`)
+			}
+		})
+	}
+}

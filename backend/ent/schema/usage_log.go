@@ -55,6 +55,10 @@ func (UsageLog) Fields() []ent.Field {
 			Nillable(),
 		field.Bool("upstream_model_mismatch").Default(false).Comment("上游返回模型与实际发送模型不一致"),
 		field.String("upstream_response_model").MaxLen(100).Optional().Nillable().Comment("上游响应体 model 原文（仅不一致时记录）"),
+		// served_group_id / served_route_source：Key 级分组回退链实际服务本次请求的分组与来源。
+		// 两列仅在 served != 主分组时写入；NULL = 主分组/未回退。group_id 仍是主分组。
+		field.Int64("served_group_id").Optional().Nillable().Comment("实际服务分组 ID（仅回退时写入）"),
+		field.Int16("served_route_source").Optional().Nillable().Comment("回退来源：1=用户链 2=管理员链，NULL=主分组"),
 		field.Int64("channel_id").Optional().Nillable().Comment("渠道 ID"),
 		field.String("model_mapping_chain").MaxLen(500).Optional().Nillable().Comment("模型映射链"),
 		field.String("billing_tier").MaxLen(50).Optional().Nillable().Comment("计费层级标签"),

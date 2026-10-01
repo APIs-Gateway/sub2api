@@ -35896,6 +35896,10 @@ type UsageLogMutation struct {
 	upstream_model              *string
 	upstream_model_mismatch     *bool
 	upstream_response_model     *string
+	served_group_id             *int64
+	addserved_group_id          *int64
+	served_route_source         *int16
+	addserved_route_source      *int16
 	channel_id                  *int64
 	addchannel_id               *int64
 	model_mapping_chain         *string
@@ -36422,6 +36426,146 @@ func (m *UsageLogMutation) UpstreamResponseModelCleared() bool {
 func (m *UsageLogMutation) ResetUpstreamResponseModel() {
 	m.upstream_response_model = nil
 	delete(m.clearedFields, usagelog.FieldUpstreamResponseModel)
+}
+
+// SetServedGroupID sets the "served_group_id" field.
+func (m *UsageLogMutation) SetServedGroupID(i int64) {
+	m.served_group_id = &i
+	m.addserved_group_id = nil
+}
+
+// ServedGroupID returns the value of the "served_group_id" field in the mutation.
+func (m *UsageLogMutation) ServedGroupID() (r int64, exists bool) {
+	v := m.served_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldServedGroupID returns the old "served_group_id" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldServedGroupID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldServedGroupID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldServedGroupID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldServedGroupID: %w", err)
+	}
+	return oldValue.ServedGroupID, nil
+}
+
+// AddServedGroupID adds i to the "served_group_id" field.
+func (m *UsageLogMutation) AddServedGroupID(i int64) {
+	if m.addserved_group_id != nil {
+		*m.addserved_group_id += i
+	} else {
+		m.addserved_group_id = &i
+	}
+}
+
+// AddedServedGroupID returns the value that was added to the "served_group_id" field in this mutation.
+func (m *UsageLogMutation) AddedServedGroupID() (r int64, exists bool) {
+	v := m.addserved_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearServedGroupID clears the value of the "served_group_id" field.
+func (m *UsageLogMutation) ClearServedGroupID() {
+	m.served_group_id = nil
+	m.addserved_group_id = nil
+	m.clearedFields[usagelog.FieldServedGroupID] = struct{}{}
+}
+
+// ServedGroupIDCleared returns if the "served_group_id" field was cleared in this mutation.
+func (m *UsageLogMutation) ServedGroupIDCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldServedGroupID]
+	return ok
+}
+
+// ResetServedGroupID resets all changes to the "served_group_id" field.
+func (m *UsageLogMutation) ResetServedGroupID() {
+	m.served_group_id = nil
+	m.addserved_group_id = nil
+	delete(m.clearedFields, usagelog.FieldServedGroupID)
+}
+
+// SetServedRouteSource sets the "served_route_source" field.
+func (m *UsageLogMutation) SetServedRouteSource(i int16) {
+	m.served_route_source = &i
+	m.addserved_route_source = nil
+}
+
+// ServedRouteSource returns the value of the "served_route_source" field in the mutation.
+func (m *UsageLogMutation) ServedRouteSource() (r int16, exists bool) {
+	v := m.served_route_source
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldServedRouteSource returns the old "served_route_source" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldServedRouteSource(ctx context.Context) (v *int16, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldServedRouteSource is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldServedRouteSource requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldServedRouteSource: %w", err)
+	}
+	return oldValue.ServedRouteSource, nil
+}
+
+// AddServedRouteSource adds i to the "served_route_source" field.
+func (m *UsageLogMutation) AddServedRouteSource(i int16) {
+	if m.addserved_route_source != nil {
+		*m.addserved_route_source += i
+	} else {
+		m.addserved_route_source = &i
+	}
+}
+
+// AddedServedRouteSource returns the value that was added to the "served_route_source" field in this mutation.
+func (m *UsageLogMutation) AddedServedRouteSource() (r int16, exists bool) {
+	v := m.addserved_route_source
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearServedRouteSource clears the value of the "served_route_source" field.
+func (m *UsageLogMutation) ClearServedRouteSource() {
+	m.served_route_source = nil
+	m.addserved_route_source = nil
+	m.clearedFields[usagelog.FieldServedRouteSource] = struct{}{}
+}
+
+// ServedRouteSourceCleared returns if the "served_route_source" field was cleared in this mutation.
+func (m *UsageLogMutation) ServedRouteSourceCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldServedRouteSource]
+	return ok
+}
+
+// ResetServedRouteSource resets all changes to the "served_route_source" field.
+func (m *UsageLogMutation) ResetServedRouteSource() {
+	m.served_route_source = nil
+	m.addserved_route_source = nil
+	delete(m.clearedFields, usagelog.FieldServedRouteSource)
 }
 
 // SetChannelID sets the "channel_id" field.
@@ -38409,7 +38553,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 43)
+	fields := make([]string, 0, 45)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -38436,6 +38580,12 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.upstream_response_model != nil {
 		fields = append(fields, usagelog.FieldUpstreamResponseModel)
+	}
+	if m.served_group_id != nil {
+		fields = append(fields, usagelog.FieldServedGroupID)
+	}
+	if m.served_route_source != nil {
+		fields = append(fields, usagelog.FieldServedRouteSource)
 	}
 	if m.channel_id != nil {
 		fields = append(fields, usagelog.FieldChannelID)
@@ -38565,6 +38715,10 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.UpstreamModelMismatch()
 	case usagelog.FieldUpstreamResponseModel:
 		return m.UpstreamResponseModel()
+	case usagelog.FieldServedGroupID:
+		return m.ServedGroupID()
+	case usagelog.FieldServedRouteSource:
+		return m.ServedRouteSource()
 	case usagelog.FieldChannelID:
 		return m.ChannelID()
 	case usagelog.FieldModelMappingChain:
@@ -38660,6 +38814,10 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldUpstreamModelMismatch(ctx)
 	case usagelog.FieldUpstreamResponseModel:
 		return m.OldUpstreamResponseModel(ctx)
+	case usagelog.FieldServedGroupID:
+		return m.OldServedGroupID(ctx)
+	case usagelog.FieldServedRouteSource:
+		return m.OldServedRouteSource(ctx)
 	case usagelog.FieldChannelID:
 		return m.OldChannelID(ctx)
 	case usagelog.FieldModelMappingChain:
@@ -38799,6 +38957,20 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUpstreamResponseModel(v)
+		return nil
+	case usagelog.FieldServedGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetServedGroupID(v)
+		return nil
+	case usagelog.FieldServedRouteSource:
+		v, ok := value.(int16)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetServedRouteSource(v)
 		return nil
 	case usagelog.FieldChannelID:
 		v, ok := value.(int64)
@@ -39046,6 +39218,12 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 // this mutation.
 func (m *UsageLogMutation) AddedFields() []string {
 	var fields []string
+	if m.addserved_group_id != nil {
+		fields = append(fields, usagelog.FieldServedGroupID)
+	}
+	if m.addserved_route_source != nil {
+		fields = append(fields, usagelog.FieldServedRouteSource)
+	}
 	if m.addchannel_id != nil {
 		fields = append(fields, usagelog.FieldChannelID)
 	}
@@ -39111,6 +39289,10 @@ func (m *UsageLogMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
+	case usagelog.FieldServedGroupID:
+		return m.AddedServedGroupID()
+	case usagelog.FieldServedRouteSource:
+		return m.AddedServedRouteSource()
 	case usagelog.FieldChannelID:
 		return m.AddedChannelID()
 	case usagelog.FieldInputTokens:
@@ -39158,6 +39340,20 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case usagelog.FieldServedGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddServedGroupID(v)
+		return nil
+	case usagelog.FieldServedRouteSource:
+		v, ok := value.(int16)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddServedRouteSource(v)
+		return nil
 	case usagelog.FieldChannelID:
 		v, ok := value.(int64)
 		if !ok {
@@ -39308,6 +39504,12 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldUpstreamResponseModel) {
 		fields = append(fields, usagelog.FieldUpstreamResponseModel)
 	}
+	if m.FieldCleared(usagelog.FieldServedGroupID) {
+		fields = append(fields, usagelog.FieldServedGroupID)
+	}
+	if m.FieldCleared(usagelog.FieldServedRouteSource) {
+		fields = append(fields, usagelog.FieldServedRouteSource)
+	}
 	if m.FieldCleared(usagelog.FieldChannelID) {
 		fields = append(fields, usagelog.FieldChannelID)
 	}
@@ -39378,6 +39580,12 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldUpstreamResponseModel:
 		m.ClearUpstreamResponseModel()
+		return nil
+	case usagelog.FieldServedGroupID:
+		m.ClearServedGroupID()
+		return nil
+	case usagelog.FieldServedRouteSource:
+		m.ClearServedRouteSource()
 		return nil
 	case usagelog.FieldChannelID:
 		m.ClearChannelID()
@@ -39461,6 +39669,12 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldUpstreamResponseModel:
 		m.ResetUpstreamResponseModel()
+		return nil
+	case usagelog.FieldServedGroupID:
+		m.ResetServedGroupID()
+		return nil
+	case usagelog.FieldServedRouteSource:
+		m.ResetServedRouteSource()
 		return nil
 	case usagelog.FieldChannelID:
 		m.ResetChannelID()

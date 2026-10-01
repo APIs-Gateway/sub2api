@@ -176,6 +176,60 @@ func (_u *UsageLogUpdate) ClearUpstreamResponseModel() *UsageLogUpdate {
 	return _u
 }
 
+// SetServedGroupID sets the "served_group_id" field.
+func (_u *UsageLogUpdate) SetServedGroupID(v int64) *UsageLogUpdate {
+	_u.mutation.ResetServedGroupID()
+	_u.mutation.SetServedGroupID(v)
+	return _u
+}
+
+// SetNillableServedGroupID sets the "served_group_id" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableServedGroupID(v *int64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetServedGroupID(*v)
+	}
+	return _u
+}
+
+// AddServedGroupID adds value to the "served_group_id" field.
+func (_u *UsageLogUpdate) AddServedGroupID(v int64) *UsageLogUpdate {
+	_u.mutation.AddServedGroupID(v)
+	return _u
+}
+
+// ClearServedGroupID clears the value of the "served_group_id" field.
+func (_u *UsageLogUpdate) ClearServedGroupID() *UsageLogUpdate {
+	_u.mutation.ClearServedGroupID()
+	return _u
+}
+
+// SetServedRouteSource sets the "served_route_source" field.
+func (_u *UsageLogUpdate) SetServedRouteSource(v int16) *UsageLogUpdate {
+	_u.mutation.ResetServedRouteSource()
+	_u.mutation.SetServedRouteSource(v)
+	return _u
+}
+
+// SetNillableServedRouteSource sets the "served_route_source" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableServedRouteSource(v *int16) *UsageLogUpdate {
+	if v != nil {
+		_u.SetServedRouteSource(*v)
+	}
+	return _u
+}
+
+// AddServedRouteSource adds value to the "served_route_source" field.
+func (_u *UsageLogUpdate) AddServedRouteSource(v int16) *UsageLogUpdate {
+	_u.mutation.AddServedRouteSource(v)
+	return _u
+}
+
+// ClearServedRouteSource clears the value of the "served_route_source" field.
+func (_u *UsageLogUpdate) ClearServedRouteSource() *UsageLogUpdate {
+	_u.mutation.ClearServedRouteSource()
+	return _u
+}
+
 // SetChannelID sets the "channel_id" field.
 func (_u *UsageLogUpdate) SetChannelID(v int64) *UsageLogUpdate {
 	_u.mutation.ResetChannelID()
@@ -1069,6 +1123,24 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.UpstreamResponseModelCleared() {
 		_spec.ClearField(usagelog.FieldUpstreamResponseModel, field.TypeString)
 	}
+	if value, ok := _u.mutation.ServedGroupID(); ok {
+		_spec.SetField(usagelog.FieldServedGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedServedGroupID(); ok {
+		_spec.AddField(usagelog.FieldServedGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.ServedGroupIDCleared() {
+		_spec.ClearField(usagelog.FieldServedGroupID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.ServedRouteSource(); ok {
+		_spec.SetField(usagelog.FieldServedRouteSource, field.TypeInt16, value)
+	}
+	if value, ok := _u.mutation.AddedServedRouteSource(); ok {
+		_spec.AddField(usagelog.FieldServedRouteSource, field.TypeInt16, value)
+	}
+	if _u.mutation.ServedRouteSourceCleared() {
+		_spec.ClearField(usagelog.FieldServedRouteSource, field.TypeInt16)
+	}
 	if value, ok := _u.mutation.ChannelID(); ok {
 		_spec.SetField(usagelog.FieldChannelID, field.TypeInt64, value)
 	}
@@ -1567,6 +1639,60 @@ func (_u *UsageLogUpdateOne) SetNillableUpstreamResponseModel(v *string) *UsageL
 // ClearUpstreamResponseModel clears the value of the "upstream_response_model" field.
 func (_u *UsageLogUpdateOne) ClearUpstreamResponseModel() *UsageLogUpdateOne {
 	_u.mutation.ClearUpstreamResponseModel()
+	return _u
+}
+
+// SetServedGroupID sets the "served_group_id" field.
+func (_u *UsageLogUpdateOne) SetServedGroupID(v int64) *UsageLogUpdateOne {
+	_u.mutation.ResetServedGroupID()
+	_u.mutation.SetServedGroupID(v)
+	return _u
+}
+
+// SetNillableServedGroupID sets the "served_group_id" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableServedGroupID(v *int64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetServedGroupID(*v)
+	}
+	return _u
+}
+
+// AddServedGroupID adds value to the "served_group_id" field.
+func (_u *UsageLogUpdateOne) AddServedGroupID(v int64) *UsageLogUpdateOne {
+	_u.mutation.AddServedGroupID(v)
+	return _u
+}
+
+// ClearServedGroupID clears the value of the "served_group_id" field.
+func (_u *UsageLogUpdateOne) ClearServedGroupID() *UsageLogUpdateOne {
+	_u.mutation.ClearServedGroupID()
+	return _u
+}
+
+// SetServedRouteSource sets the "served_route_source" field.
+func (_u *UsageLogUpdateOne) SetServedRouteSource(v int16) *UsageLogUpdateOne {
+	_u.mutation.ResetServedRouteSource()
+	_u.mutation.SetServedRouteSource(v)
+	return _u
+}
+
+// SetNillableServedRouteSource sets the "served_route_source" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableServedRouteSource(v *int16) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetServedRouteSource(*v)
+	}
+	return _u
+}
+
+// AddServedRouteSource adds value to the "served_route_source" field.
+func (_u *UsageLogUpdateOne) AddServedRouteSource(v int16) *UsageLogUpdateOne {
+	_u.mutation.AddServedRouteSource(v)
+	return _u
+}
+
+// ClearServedRouteSource clears the value of the "served_route_source" field.
+func (_u *UsageLogUpdateOne) ClearServedRouteSource() *UsageLogUpdateOne {
+	_u.mutation.ClearServedRouteSource()
 	return _u
 }
 
@@ -2492,6 +2618,24 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if _u.mutation.UpstreamResponseModelCleared() {
 		_spec.ClearField(usagelog.FieldUpstreamResponseModel, field.TypeString)
+	}
+	if value, ok := _u.mutation.ServedGroupID(); ok {
+		_spec.SetField(usagelog.FieldServedGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedServedGroupID(); ok {
+		_spec.AddField(usagelog.FieldServedGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.ServedGroupIDCleared() {
+		_spec.ClearField(usagelog.FieldServedGroupID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.ServedRouteSource(); ok {
+		_spec.SetField(usagelog.FieldServedRouteSource, field.TypeInt16, value)
+	}
+	if value, ok := _u.mutation.AddedServedRouteSource(); ok {
+		_spec.AddField(usagelog.FieldServedRouteSource, field.TypeInt16, value)
+	}
+	if _u.mutation.ServedRouteSourceCleared() {
+		_spec.ClearField(usagelog.FieldServedRouteSource, field.TypeInt16)
 	}
 	if value, ok := _u.mutation.ChannelID(); ok {
 		_spec.SetField(usagelog.FieldChannelID, field.TypeInt64, value)

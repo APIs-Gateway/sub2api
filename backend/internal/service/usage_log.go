@@ -114,6 +114,12 @@ type UsageLog struct {
 	UpstreamModelMismatch bool
 	// UpstreamResponseModel 上游响应体 model 原文（最长 100 字节）；nil = 一致
 	UpstreamResponseModel *string
+	// ServedGroupID 实际服务本次请求的分组（Key 级分组回退链）。仅当 served != 主分组时写入；
+	// nil = 主分组/未回退。GroupID 仍是主分组。
+	ServedGroupID *int64
+	// ServedRouteSource 回退来源：1=用户链 2=管理员链；nil = 主分组。
+	// 用户端 DTO 只在来源为 1 时透出 ServedGroupID，来源为 2（隐藏链）一律按主分组展示。
+	ServedRouteSource *int16
 	// ChannelID 渠道 ID
 	ChannelID *int64
 	// ModelMappingChain 模型映射链，如 "a→b→c"
