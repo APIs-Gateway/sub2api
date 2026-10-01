@@ -109,6 +109,27 @@ describe('useAuthStore', () => {
   // --- login2FA ---
 
   describe('login2FA', () => {
+    it('keeps an access-token-only 2FA expiry without inheriting the previous refresh token', async () => {
+      mockLogin.mockResolvedValueOnce(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+      mockLogin2FA.mockResolvedValueOnce({
+        ...fakeAuthResponse,
+        access_token: 'account-b-token',
+        refresh_token: undefined,
+        expires_in: 1800,
+        user: fakeAdminUser,
+      })
+      const expectedExpiry = Date.now() + 1800_000
+
+      await store.login2FA('account-b-temp-token', '123456')
+
+      expect(store.user?.id).toBe(fakeAdminUser.id)
+      expect(localStorage.getItem('refresh_token')).toBeNull()
+      expect(localStorage.getItem('token_expires_at')).toBe(String(expectedExpiry))
+      expect(store.token).toBe('account-b-token')
+    })
+
     it('2FA 验证成功后设置认证状态', async () => {
       mockLogin2FA.mockResolvedValue(fakeAuthResponse)
       const store = useAuthStore()

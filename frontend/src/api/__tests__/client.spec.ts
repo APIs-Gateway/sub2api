@@ -252,6 +252,22 @@ describe('API Client', () => {
   // --- 401 Token 刷新 ---
 
   describe('401 Token 刷新', () => {
+    it('blocks an old /auth/me before the request interceptor can send it with a new account token', async () => {
+      localStorage.setItem('auth_token', 'account-a-token')
+      const adapter = vi.fn().mockResolvedValue({ status: 200, data: { code: 0, data: { id: 7 } },
+        headers: {}, config: {}, statusText: 'OK' })
+      apiClient.defaults.adapter = adapter
+      const { invalidateAuthSession } = await import('@/utils/authSessionVersion')
+
+      const request = apiClient.get('/auth/me')
+      invalidateAuthSession()
+      localStorage.setItem('auth_token', 'account-b-token')
+
+      await expect(request).rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      expect(adapter).not.toHaveBeenCalled()
+      expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+    })
+
     it.each([false, true])('keeps a pending account B login after account A /auth/me settles (success: %s)', async (succeeds) => {
       const { createPinia, setActivePinia } = await import('pinia')
       const { useAuthStore } = await import('@/stores/auth')

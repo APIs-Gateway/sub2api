@@ -3,17 +3,19 @@ import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from '@vue/t
 import { reactive } from 'vue'
 import ProfileBalanceNotifyCard from '../ProfileBalanceNotifyCard.vue'
 
-const { sendNotifyEmailCode, verifyNotifyEmail, getProfile, removeNotifyEmail, showSuccess, showError } = vi.hoisted(() => ({
+const { sendNotifyEmailCode, verifyNotifyEmail, getProfile, removeNotifyEmail, updateProfile, toggleNotifyEmail, showSuccess, showError } = vi.hoisted(() => ({
   sendNotifyEmailCode: vi.fn(),
   verifyNotifyEmail: vi.fn(),
   getProfile: vi.fn(),
   removeNotifyEmail: vi.fn(),
+  updateProfile: vi.fn(),
+  toggleNotifyEmail: vi.fn(),
   showSuccess: vi.fn(),
   showError: vi.fn()
 }))
 
 vi.mock('@/api', () => ({
-  userAPI: { sendNotifyEmailCode, verifyNotifyEmail, getProfile, removeNotifyEmail }
+  userAPI: { sendNotifyEmailCode, verifyNotifyEmail, getProfile, removeNotifyEmail, updateProfile, toggleNotifyEmail }
 }))
 const authStore = reactive({
   user: null,
@@ -101,6 +103,47 @@ describe('ProfileBalanceNotifyCard', () => {
       expect(wrapper.text()).toContain('profile.balanceNotify.unverified')
     } else {
       expect(wrapper.text()).not.toContain(entry.email)
+    }
+  })
+
+  it.each([
+    ['enable toggle', 'success'], ['enable toggle', 'failure'],
+    ['threshold save', 'success'], ['threshold save', 'failure'],
+    ['saved email toggle', 'success'], ['saved email toggle', 'failure'],
+  ] as const)('ignores an old %s %s after account B replaces A', async (operation, outcome) => {
+    const oldEntry = { email: 'account-a@example.com', disabled: false, verified: true }
+    const newEntry = { email: 'account-b@example.com', disabled: false, verified: true }
+    const request = deferred()
+    if (operation === 'saved email toggle') toggleNotifyEmail.mockReturnValueOnce(request.promise)
+    else updateProfile.mockReturnValueOnce(request.promise)
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: 5, systemDefaultThreshold: 5, userEmail: '', extraEmails: [oldEntry] }
+    })
+
+    if (operation === 'enable toggle') {
+      await wrapper.findAll('input[type="checkbox"]')[0]!.setValue(false)
+      expect(updateProfile).toHaveBeenCalledWith({ balance_notify_enabled: false })
+    } else if (operation === 'threshold save') {
+      await wrapper.get('input[type="number"]').setValue('9')
+      await button(wrapper, 'common.save').trigger('click')
+      expect(updateProfile).toHaveBeenCalledWith({ balance_notify_threshold: 9 })
+    } else {
+      await wrapper.findAll('input[type="checkbox"]')[1]!.setValue(false)
+      expect(toggleNotifyEmail).toHaveBeenCalledWith(oldEntry.email, true)
+    }
+
+    authStore.authSessionVersion++
+    await wrapper.setProps({ extraEmails: [newEntry], threshold: 11 })
+    if (outcome === 'success') request.resolve()
+    else request.reject(new Error('old account request failed'))
+    await flushPromises()
+
+    expect(authStore.applyUserProfile).not.toHaveBeenCalled()
+    expect(showSuccess).not.toHaveBeenCalled()
+    expect(showError).not.toHaveBeenCalled()
+    if (operation !== 'enable toggle') {
+      expect(wrapper.text()).toContain(newEntry.email)
+      expect(wrapper.text()).not.toContain(oldEntry.email)
     }
   })
 
