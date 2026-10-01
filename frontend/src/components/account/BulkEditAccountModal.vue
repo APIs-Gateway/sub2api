@@ -495,6 +495,155 @@
         </div>
       </div>
 
+      <!-- Pool mode (API Key / Bedrock only) -->
+      <div v-if="allPoolModeCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label
+              id="bulk-edit-pool-mode-label"
+              class="input-label mb-0"
+              for="bulk-edit-pool-mode-enabled"
+            >
+              {{ t('admin.accounts.poolMode') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.poolModeHint') }}
+            </p>
+          </div>
+          <input
+            v-model="enablePoolMode"
+            id="bulk-edit-pool-mode-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-pool-mode-body"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div
+          id="bulk-edit-pool-mode-body"
+          :class="!enablePoolMode && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-pool-mode-label"
+        >
+          <button
+            id="bulk-edit-pool-mode-toggle"
+            type="button"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              poolModeEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            @click="poolModeEnabled = !poolModeEnabled"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                poolModeEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+          <template v-if="poolModeEnabled">
+            <div class="mt-3 rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
+              <p class="text-xs text-blue-700 dark:text-blue-400">
+                <Icon name="exclamationCircle" size="sm" class="mr-1 inline" :stroke-width="2" />
+                {{ t('admin.accounts.poolModeInfo') }}
+              </p>
+            </div>
+            <div class="mt-3">
+              <label class="input-label" for="bulk-edit-pool-mode-retry-count">{{ t('admin.accounts.poolModeRetryCount') }}</label>
+              <input
+                v-model.number="poolModeRetryCount"
+                id="bulk-edit-pool-mode-retry-count"
+                type="number"
+                min="0"
+                :max="MAX_POOL_MODE_RETRY_COUNT"
+                step="1"
+                class="input"
+              />
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{
+                  t('admin.accounts.poolModeRetryCountHint', {
+                    default: DEFAULT_POOL_MODE_RETRY_COUNT,
+                    max: MAX_POOL_MODE_RETRY_COUNT
+                  })
+                }}
+              </p>
+            </div>
+            <div class="mt-3">
+              <label class="input-label" for="bulk-edit-pool-mode-retry-status-codes">{{ t('admin.accounts.poolModeRetryStatusCodes') }}</label>
+              <input
+                v-model="poolModeRetryStatusCodesInput"
+                id="bulk-edit-pool-mode-retry-status-codes"
+                type="text"
+                class="input"
+                :placeholder="DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ')"
+              />
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.bulkEdit.poolModeRetryStatusCodesHint') }}
+              </p>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Temp unschedulable rules -->
+      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label
+              id="bulk-edit-temp-unsched-label"
+              class="input-label mb-0"
+              for="bulk-edit-temp-unsched-enabled"
+            >
+              {{ t('admin.accounts.tempUnschedulable.title') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.tempUnschedulable.hint') }}
+            </p>
+          </div>
+          <input
+            v-model="enableTempUnsched"
+            id="bulk-edit-temp-unsched-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-temp-unsched-body"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div
+          id="bulk-edit-temp-unsched-body"
+          :class="!enableTempUnsched && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-temp-unsched-label"
+        >
+          <button
+            id="bulk-edit-temp-unsched-toggle"
+            type="button"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              tempUnschedEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            @click="tempUnschedEnabled = !tempUnschedEnabled"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                tempUnschedEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+          <p
+            v-if="!tempUnschedEnabled"
+            class="mt-2 text-xs text-gray-500 dark:text-gray-400"
+          >
+            {{ t('admin.accounts.bulkEdit.tempUnschedOffHint') }}
+          </p>
+          <div v-else class="mt-3 space-y-3">
+            <p class="text-xs text-amber-600 dark:text-amber-400">
+              {{ t('admin.accounts.bulkEdit.tempUnschedReplaceHint') }}
+            </p>
+            <TempUnschedRulesEditor v-model="tempUnschedRules" />
+          </div>
+        </div>
+      </div>
+
       <!-- Intercept warmup requests (Anthropic only) -->
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="flex items-center justify-between">
@@ -732,6 +881,87 @@
             :options="statusOptions"
             aria-labelledby="bulk-edit-status-label"
           />
+        </div>
+      </div>
+
+      <!-- Expires at -->
+      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between">
+          <label
+            id="bulk-edit-expires-at-label"
+            class="input-label mb-0"
+            for="bulk-edit-expires-at-enabled"
+          >
+            {{ t('admin.accounts.expiresAt') }}
+          </label>
+          <input
+            v-model="enableExpiresAt"
+            id="bulk-edit-expires-at-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-expires-at"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <input
+          v-model="expiresAtInput"
+          id="bulk-edit-expires-at"
+          type="datetime-local"
+          :disabled="!enableExpiresAt"
+          class="input"
+          :class="!enableExpiresAt && 'cursor-not-allowed opacity-50'"
+          aria-labelledby="bulk-edit-expires-at-label"
+        />
+        <p class="input-hint">
+          {{ t('admin.accounts.bulkEdit.expiresAtClearNotice') }}
+          {{ t('admin.accounts.expiresAtTimezoneHint', { timezone: browserTimeZone }) }}
+        </p>
+      </div>
+
+      <!-- Auto pause on expired -->
+      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label
+              id="bulk-edit-auto-pause-label"
+              class="input-label mb-0"
+              for="bulk-edit-auto-pause-enabled"
+            >
+              {{ t('admin.accounts.autoPauseOnExpired') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.autoPauseOnExpiredDesc') }}
+            </p>
+          </div>
+          <input
+            v-model="enableAutoPauseOnExpired"
+            id="bulk-edit-auto-pause-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-auto-pause-body"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div
+          id="bulk-edit-auto-pause-body"
+          :class="!enableAutoPauseOnExpired && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-auto-pause-label"
+        >
+          <button
+            id="bulk-edit-auto-pause-toggle"
+            type="button"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              autoPauseOnExpired ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            @click="autoPauseOnExpired = !autoPauseOnExpired"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                autoPauseOnExpired ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
         </div>
       </div>
 
@@ -1185,6 +1415,50 @@
           />
         </div>
         <div id="bulk-edit-groups" :class="!enableGroups && 'pointer-events-none opacity-50'">
+          <!-- 分组修改方式：默认追加，避免冲掉账号原有的分组 -->
+          <div
+            class="mb-2 flex gap-2"
+            role="radiogroup"
+            :aria-label="t('admin.accounts.bulkEdit.groupModeLabel')"
+          >
+            <button
+              v-for="option in groupModeOptions"
+              :key="option.value"
+              type="button"
+              role="radio"
+              :aria-checked="groupMode === option.value"
+              :data-testid="`bulk-edit-group-mode-${option.value}`"
+              :class="[
+                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+                groupMode === option.value
+                  ? option.value === 'replace'
+                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                    : 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+              ]"
+              @click="groupMode = option.value"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+            {{ groupModeHint }}
+          </p>
+          <div
+            v-if="groupMode === 'replace'"
+            class="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-700/40 dark:bg-amber-900/20"
+            data-testid="bulk-edit-group-replace-warning"
+            role="alert"
+          >
+            <p class="text-sm font-medium text-amber-700 dark:text-amber-400">
+              <Icon name="exclamationTriangle" size="sm" class="mr-1 inline" :stroke-width="2" />
+              {{
+                groupIds.length === 0
+                  ? t('admin.accounts.bulkEdit.groupModeReplaceEmptyWarning')
+                  : t('admin.accounts.bulkEdit.groupModeReplaceWarning')
+              }}
+            </p>
+          </div>
           <GroupSelector
             v-model="groupIds"
             :groups="groups"
@@ -1257,19 +1531,28 @@ import Select from '@/components/common/Select.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
+import TempUnschedRulesEditor from '@/components/account/TempUnschedRulesEditor.vue'
 import Icon from '@/components/icons/Icon.vue'
 import {
   buildModelMappingObject as buildModelMappingPayload,
   getPresetMappingsByPlatform
 } from '@/composables/useModelWhitelist'
 import {
+  DEFAULT_POOL_MODE_RETRY_COUNT,
+  DEFAULT_POOL_MODE_RETRY_STATUS_CODES,
   HEADER_OVERRIDE_ENABLED_CREDENTIAL_KEY,
   HEADER_OVERRIDES_CREDENTIAL_KEY,
+  MAX_POOL_MODE_RETRY_COUNT,
+  buildBulkPoolModeCredentials,
+  buildBulkTempUnschedCredentials,
   buildHeaderOverridesObject,
+  buildTempUnschedRules,
   isHeaderOverridePlatform,
   validateHeaderOverrideRows,
-  type HeaderOverrideRow
+  type HeaderOverrideRow,
+  type TempUnschedRuleForm
 } from '@/components/account/credentialsBuilder'
+import { getBrowserTimeZone, parseDateTimeLocalInput } from '@/utils/format'
 import {
   OPENAI_WS_MODE_CTX_POOL,
   OPENAI_WS_MODE_OFF,
@@ -1346,6 +1629,14 @@ const allHeaderOverrideCapable = computed(() => {
   )
 })
 
+// 池模式只对 API Key / Bedrock 账号生效
+const allPoolModeCapable = computed(() => {
+  return (
+    targetSelectedTypes.value.length > 0 &&
+    targetSelectedTypes.value.every(type => type === 'apikey' || type === 'bedrock')
+  )
+})
+
 // 是否全部为 Anthropic OAuth/SetupToken（RPM 配置仅在此条件下显示）
 const allAnthropicOAuthOrSetupToken = computed(() => {
   return (
@@ -1400,6 +1691,10 @@ const enableCodexCLIOnlyAllowClaudeCode = ref(false)
 const enableOpenAICompactMode = ref(false)
 const enableOpenAICompactModelMapping = ref(false)
 const enableRpmLimit = ref(false)
+const enablePoolMode = ref(false)
+const enableTempUnsched = ref(false)
+const enableExpiresAt = ref(false)
+const enableAutoPauseOnExpired = ref(false)
 
 // State - field values
 const submitting = ref(false)
@@ -1422,6 +1717,17 @@ const priority = ref(1)
 const rateMultiplier = ref(1)
 const status = ref<'active' | 'inactive'>('active')
 const groupIds = ref<number[]>([])
+// 分组修改方式：缺省追加，不会冲掉账号原有的分组
+type GroupMode = 'append' | 'remove' | 'replace'
+const groupMode = ref<GroupMode>('append')
+const poolModeEnabled = ref(false)
+const poolModeRetryCount = ref(DEFAULT_POOL_MODE_RETRY_COUNT)
+const poolModeRetryStatusCodesInput = ref('')
+const tempUnschedEnabled = ref(false)
+const tempUnschedRules = ref<TempUnschedRuleForm[]>([])
+const expiresAtInput = ref('')
+const autoPauseOnExpired = ref(false)
+const browserTimeZone = getBrowserTimeZone()
 const openaiPassthroughEnabled = ref(false)
 // Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
@@ -1457,6 +1763,21 @@ const statusOptions = computed(() => [
   { value: 'active', label: t('common.active') },
   { value: 'inactive', label: t('common.inactive') }
 ])
+const groupModeOptions = computed<{ value: GroupMode; label: string }[]>(() => [
+  { value: 'append', label: t('admin.accounts.bulkEdit.groupModeAppend') },
+  { value: 'remove', label: t('admin.accounts.bulkEdit.groupModeRemove') },
+  { value: 'replace', label: t('admin.accounts.bulkEdit.groupModeReplace') }
+])
+const groupModeHint = computed(() => {
+  switch (groupMode.value) {
+    case 'remove':
+      return t('admin.accounts.bulkEdit.groupModeRemoveHint')
+    case 'replace':
+      return t('admin.accounts.bulkEdit.groupModeReplaceHint')
+    default:
+      return t('admin.accounts.bulkEdit.groupModeAppendHint')
+  }
+})
 const isOpenAIModelRestrictionDisabled = computed(
   () =>
     allOpenAIPassthroughCapable.value &&
@@ -1615,6 +1936,17 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
 
   if (enableGroups.value) {
     updates.group_ids = groupIds.value
+    // 总是显式发送 group_mode，不依赖后端缺省值（缺省是 replace）
+    updates.group_mode = groupMode.value
+  }
+
+  if (enableExpiresAt.value) {
+    // 留空表示清除过期时间（后端约定 <= 0 清除）
+    updates.expires_at = parseDateTimeLocalInput(expiresAtInput.value) ?? 0
+  }
+
+  if (enableAutoPauseOnExpired.value) {
+    updates.auto_pause_on_expired = autoPauseOnExpired.value
   }
 
   if (enableUpstreamBillingAutoProbe.value) {
@@ -1666,6 +1998,30 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     credentials.custom_error_codes_enabled = true
     credentials.custom_error_codes = [...selectedErrorCodes.value]
     credentialsChanged = true
+  }
+
+  // 同时校验可见性：勾选后又改了目标筛选条件时，不应把池模式写到 OAuth 等不支持的账号上
+  if (enablePoolMode.value && allPoolModeCapable.value) {
+    Object.assign(
+      credentials,
+      buildBulkPoolModeCredentials(
+        poolModeEnabled.value,
+        poolModeRetryCount.value,
+        poolModeRetryStatusCodesInput.value
+      )
+    )
+    credentialsChanged = true
+  }
+
+  if (enableTempUnsched.value) {
+    const tempUnsched = buildBulkTempUnschedCredentials(
+      tempUnschedEnabled.value,
+      tempUnschedRules.value
+    )
+    if (tempUnsched) {
+      Object.assign(credentials, tempUnsched)
+      credentialsChanged = true
+    }
   }
 
   if (enableInterceptWarmup.value) {
@@ -1757,6 +2113,7 @@ const mixedChannelConfirmed = ref(false)
 // 多平台混合的情况由 submitBulkUpdate 的 409 catch 兜底
 const canPreCheck = () =>
   enableGroups.value &&
+  groupMode.value !== 'remove' &&
   groupIds.value.length > 0 &&
   targetSelectedPlatforms.value.length === 1 &&
   (targetSelectedPlatforms.value[0] === 'antigravity' || targetSelectedPlatforms.value[0] === 'anthropic')
@@ -1820,10 +2177,29 @@ const handleSubmit = async () => {
     enableOpenAICompactMode.value ||
     enableOpenAICompactModelMapping.value ||
     enableRpmLimit.value ||
+    enablePoolMode.value ||
+    enableTempUnsched.value ||
+    enableExpiresAt.value ||
+    enableAutoPauseOnExpired.value ||
     userMsgQueueMode.value !== null
 
   if (!hasAnyFieldEnabled) {
     appStore.showError(t('admin.accounts.bulkEdit.noFieldsSelected'))
+    return
+  }
+
+  // 追加/移除必须指定分组；替换允许留空（清空这些账号的全部分组，界面上已有醒目提示）
+  if (enableGroups.value && groupMode.value !== 'replace' && groupIds.value.length === 0) {
+    appStore.showError(t('admin.accounts.bulkEdit.groupsRequired'))
+    return
+  }
+
+  if (
+    enableTempUnsched.value &&
+    tempUnschedEnabled.value &&
+    buildTempUnschedRules(tempUnschedRules.value).length === 0
+  ) {
+    appStore.showError(t('admin.accounts.tempUnschedulable.rulesInvalid'))
     return
   }
 
@@ -1938,6 +2314,10 @@ watch(
       enableOpenAICompactMode.value = false
       enableOpenAICompactModelMapping.value = false
       enableRpmLimit.value = false
+      enablePoolMode.value = false
+      enableTempUnsched.value = false
+      enableExpiresAt.value = false
+      enableAutoPauseOnExpired.value = false
 
       // Reset all values
       baseUrl.value = ''
@@ -1958,6 +2338,14 @@ watch(
       rateMultiplier.value = 1
       status.value = 'active'
       groupIds.value = []
+      groupMode.value = 'append'
+      poolModeEnabled.value = false
+      poolModeRetryCount.value = DEFAULT_POOL_MODE_RETRY_COUNT
+      poolModeRetryStatusCodesInput.value = ''
+      tempUnschedEnabled.value = false
+      tempUnschedRules.value = []
+      expiresAtInput.value = ''
+      autoPauseOnExpired.value = false
       openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       upstreamBillingAutoProbeMode.value = 'enabled'

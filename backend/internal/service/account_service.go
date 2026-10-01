@@ -39,6 +39,9 @@ type AccountRepository interface {
 
 	List(ctx context.Context, params pagination.PaginationParams) ([]Account, *pagination.PaginationResult, error)
 	ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, *pagination.PaginationResult, error)
+	// ListIDsWithFilters 返回与 ListWithFilters 相同筛选条件命中的账号 ID（按 ID 升序）。
+	// 命中数超过 limit 时不返回 ID，只返回 Total，由调用方决定如何处理。
+	ListIDsWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string, limit int) (*AccountIDList, error)
 	ListByGroup(ctx context.Context, groupID int64) ([]Account, error)
 	ListActive(ctx context.Context) ([]Account, error)
 	ListOAuthRefreshCandidates(ctx context.Context) ([]Account, error)
@@ -51,6 +54,9 @@ type AccountRepository interface {
 	SetSchedulable(ctx context.Context, id int64, schedulable bool) error
 	AutoPauseExpiredAccounts(ctx context.Context, now time.Time) (int64, error)
 	BindGroups(ctx context.Context, accountID int64, groupIDs []int64) error
+	// BulkBindGroups 在同一个事务内对多个账号批量变更分组绑定：
+	// append 只补充缺少的绑定，remove 只移除列出的分组，replace 整体替换。
+	BulkBindGroups(ctx context.Context, accountIDs []int64, groupIDs []int64, mode AccountGroupBindMode) error
 
 	ListSchedulable(ctx context.Context) ([]Account, error)
 	ListSchedulableByGroupID(ctx context.Context, groupID int64) ([]Account, error)
@@ -99,6 +105,9 @@ type AccountBulkUpdate struct {
 	Credentials    map[string]any
 	Extra          map[string]any
 	ProbeEnabled   *bool
+	// ExpiresAt 为 Unix 秒时间戳；<= 0 表示清除过期时间（与单账号编辑一致）。
+	ExpiresAt          *int64
+	AutoPauseOnExpired *bool
 }
 
 // CreateAccountRequest 创建账号请求

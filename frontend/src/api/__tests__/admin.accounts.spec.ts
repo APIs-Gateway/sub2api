@@ -16,6 +16,7 @@ vi.mock('@/api/client', () => ({
 
 import {
   getUpstreamBillingProbeSettings,
+  listIds,
   probeUpstreamBilling,
   probeUpstreamBillingBatch,
   refreshCredentials,
@@ -109,5 +110,15 @@ describe('admin accounts api', () => {
     expect(post).toHaveBeenLastCalledWith('/admin/accounts/17/reauth/codex-session', {
       content: '{"tokens":{"access_token":"at"}}'
     })
+  })
+
+  it('lists matching account ids with the same filters as the list endpoint', async () => {
+    const result = { ids: [1, 2, 3], total: 3, platforms: ['openai'], types: ['apikey'] }
+    get.mockResolvedValue({ data: result })
+    const filters = { platform: 'openai', type: 'apikey', status: 'active', group: '12', search: 'relay', privacy_mode: '' }
+
+    await expect(listIds(filters)).resolves.toEqual(result)
+
+    expect(get).toHaveBeenCalledWith('/admin/accounts/ids', { params: filters, signal: undefined })
   })
 })

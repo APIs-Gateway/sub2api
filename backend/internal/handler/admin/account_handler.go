@@ -154,9 +154,12 @@ type BulkUpdateAccountsRequest struct {
 	Status                  string                    `json:"status" binding:"omitempty,oneof=active inactive error"`
 	Schedulable             *bool                     `json:"schedulable"`
 	GroupIDs                *[]int64                  `json:"group_ids"`
+	GroupMode               string                    `json:"group_mode"` // append | remove | replace，缺省按 replace 处理
 	Credentials             map[string]any            `json:"credentials"`
 	Extra                   map[string]any            `json:"extra"`
 	ProbeEnabled            *bool                     `json:"upstream_billing_probe_enabled"`
+	ExpiresAt               *int64                    `json:"expires_at"`                 // Unix 秒；<= 0 表示清除
+	AutoPauseOnExpired      *bool                     `json:"auto_pause_on_expired"`      // 过期后自动暂停调度
 	ConfirmMixedChannelRisk *bool                     `json:"confirm_mixed_channel_risk"` // 用户确认混合渠道风险
 }
 
@@ -232,43 +235,96 @@ func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, ac
 	return item
 }
 
+// accountListFilters 是账号列表和「选中全部筛选结果」共用的筛选条件。
+type accountListFilters struct {
+	platform    string
+	accountType string
+	status      string
+	search      string
+	privacyMode string
+	groupID     int64
+}
+
+// parseAccountListFilters 解析账号列表的筛选查询参数。List 和 ListIDs 共用它，
+// 保证「列表里看到的」和「选中全部结果」使用完全相同的筛选条件。
+func parseAccountListFilters(c *gin.Context) (accountListFilters, error) {
+	filters := accountListFilters{
+		platform:    c.Query("platform"),
+		accountType: c.Query("type"),
+		status:      c.Query("status"),
+		privacyMode: strings.TrimSpace(c.Query("privacy_mode")),
+		// 标准化和验证 search 参数
+		search: strings.TrimSpace(c.Query("search")),
+	}
+	if len(filters.search) > 100 {
+		filters.search = filters.search[:100]
+	}
+
+	if groupIDStr := c.Query("group"); groupIDStr != "" {
+		if groupIDStr == accountListGroupUngroupedQueryValue {
+			filters.groupID = service.AccountListGroupUngrouped
+		} else {
+			parsedGroupID, parseErr := strconv.ParseInt(groupIDStr, 10, 64)
+			if parseErr != nil || parsedGroupID < 0 {
+				return accountListFilters{}, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter")
+			}
+			filters.groupID = parsedGroupID
+		}
+	}
+	return filters, nil
+}
+
+// AccountIDListResponse 是 ListIDs 的响应体。
+type AccountIDListResponse struct {
+	IDs       []int64  `json:"ids"`
+	Total     int64    `json:"total"`
+	Platforms []string `json:"platforms"`
+	Types     []string `json:"types"`
+}
+
+// ListIDs returns the IDs of every account matching the list filters (at most service.AccountIDsMaxLimit).
+// Used by "select all filtered results" so bulk operations can act on more than one page.
+// GET /api/v1/admin/accounts/ids
+func (h *AccountHandler) ListIDs(c *gin.Context) {
+	filters, err := parseAccountListFilters(c)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	list, err := h.adminService.ListAccountIDs(c.Request.Context(), filters.platform, filters.accountType, filters.status, filters.search, filters.groupID, filters.privacyMode)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	resp := AccountIDListResponse{IDs: list.IDs, Total: list.Total, Platforms: list.Platforms, Types: list.Types}
+	if resp.IDs == nil {
+		resp.IDs = []int64{}
+	}
+	if resp.Platforms == nil {
+		resp.Platforms = []string{}
+	}
+	if resp.Types == nil {
+		resp.Types = []string{}
+	}
+	response.Success(c, resp)
+}
+
 // List handles listing all accounts with pagination
 // GET /api/v1/admin/accounts
 func (h *AccountHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
-	platform := c.Query("platform")
-	accountType := c.Query("type")
-	status := c.Query("status")
-	search := c.Query("search")
-	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
+	filters, err := parseAccountListFilters(c)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	sortBy := c.DefaultQuery("sort_by", "name")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
-	// 标准化和验证 search 参数
-	search = strings.TrimSpace(search)
-	if len(search) > 100 {
-		search = search[:100]
-	}
 	lite := parseBoolQueryWithDefault(c.Query("lite"), false)
 
-	var groupID int64
-	if groupIDStr := c.Query("group"); groupIDStr != "" {
-		if groupIDStr == accountListGroupUngroupedQueryValue {
-			groupID = service.AccountListGroupUngrouped
-		} else {
-			parsedGroupID, parseErr := strconv.ParseInt(groupIDStr, 10, 64)
-			if parseErr != nil {
-				response.ErrorFrom(c, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter"))
-				return
-			}
-			if parsedGroupID < 0 {
-				response.ErrorFrom(c, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter"))
-				return
-			}
-			groupID = parsedGroupID
-		}
-	}
-
-	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
+	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, filters.platform, filters.accountType, filters.status, filters.search, filters.groupID, filters.privacyMode, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -390,7 +446,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		result[i] = item
 	}
 
-	etag := buildAccountsListETag(result, total, page, pageSize, platform, accountType, status, search, lite)
+	etag := buildAccountsListETag(result, total, page, pageSize, filters.platform, filters.accountType, filters.status, filters.search, lite)
 	if etag != "" {
 		c.Header("ETag", etag)
 		c.Header("Vary", "If-None-Match")
@@ -1551,6 +1607,19 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		response.BadRequest(c, "account_ids or filters is required")
 		return
 	}
+	groupMode, err := service.ParseAccountGroupBindMode(req.GroupMode)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if req.GroupIDs == nil && strings.TrimSpace(req.GroupMode) != "" {
+		response.ErrorFrom(c, service.ErrAccountGroupIDsRequired)
+		return
+	}
+	if req.GroupIDs != nil && groupMode != service.AccountGroupBindModeReplace && len(*req.GroupIDs) == 0 {
+		response.ErrorFrom(c, service.ErrAccountGroupIDsRequired)
+		return
+	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
 
@@ -1568,7 +1637,9 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		req.GroupIDs != nil ||
 		len(req.Credentials) > 0 ||
 		len(req.Extra) > 0 ||
-		req.ProbeEnabled != nil
+		req.ProbeEnabled != nil ||
+		req.ExpiresAt != nil ||
+		req.AutoPauseOnExpired != nil
 
 	if !hasUpdates {
 		response.BadRequest(c, "No updates provided")
@@ -1587,9 +1658,12 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		Status:                req.Status,
 		Schedulable:           req.Schedulable,
 		GroupIDs:              req.GroupIDs,
+		GroupMode:             groupMode,
 		Credentials:           req.Credentials,
 		Extra:                 req.Extra,
 		ProbeEnabled:          req.ProbeEnabled,
+		ExpiresAt:             req.ExpiresAt,
+		AutoPauseOnExpired:    req.AutoPauseOnExpired,
 		SkipMixedChannelCheck: skipCheck,
 	})
 	if err != nil {

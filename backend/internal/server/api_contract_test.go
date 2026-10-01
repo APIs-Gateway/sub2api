@@ -1842,6 +1842,14 @@ func (s *stubAccountRepo) BindGroups(ctx context.Context, accountID int64, group
 	return errors.New("not implemented")
 }
 
+func (s *stubAccountRepo) BulkBindGroups(ctx context.Context, accountIDs []int64, groupIDs []int64, mode service.AccountGroupBindMode) error {
+	return errors.New("not implemented")
+}
+
+func (s *stubAccountRepo) ListIDsWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string, limit int) (*service.AccountIDList, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (s *stubAccountRepo) ListSchedulable(ctx context.Context) ([]service.Account, error) {
 	return nil, errors.New("not implemented")
 }

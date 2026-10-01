@@ -409,11 +409,9 @@ func (r *accountRepository) List(ctx context.Context, params pagination.Paginati
 	return r.ListWithFilters(ctx, params, "", "", "", "", 0, "")
 }
 
-func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, *pagination.PaginationResult, error) {
-	if err := validateAccountListSort(strings.ToLower(strings.TrimSpace(params.SortBy)), r.client.Driver().Dialect()); err != nil {
-		return nil, nil, err
-	}
-
+// accountListQuery 构造账号列表的筛选查询（不含排序和分页）。
+// ListWithFilters 和 ListIDsWithFilters 共用它，保证「列表看到的」和「选中全部结果」命中同一批账号。
+func (r *accountRepository) accountListQuery(platform, accountType, status, search string, groupID int64, privacyMode string) *dbent.AccountQuery {
 	q := r.client.Account.Query()
 
 	if platform != "" {
@@ -483,8 +481,8 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 			q = q.Where(dbaccount.StatusEQ(status))
 		}
 	}
-	if search != "" {
-		q = q.Where(dbaccount.NameContainsFold(search))
+	if predicate := accountSearchPredicate(search); predicate != nil {
+		q = q.Where(predicate)
 	}
 	if groupID == service.AccountListGroupUngrouped {
 		q = q.Where(dbaccount.Not(dbaccount.HasAccountGroups()))
@@ -505,6 +503,56 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 			}
 		}))
 	}
+
+	return q
+}
+
+// ListIDsWithFilters 返回与 ListWithFilters 相同筛选条件命中的账号 ID（按 ID 升序）以及平台、类型汇总。
+// 命中数超过 limit 时只返回 Total，不读取 ID。
+func (r *accountRepository) ListIDsWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string, limit int) (*service.AccountIDList, error) {
+	q := r.accountListQuery(platform, accountType, status, search, groupID, privacyMode)
+
+	total, err := q.Clone().Count(ctx)
+	if err != nil {
+		return nil, err
+	}
+	list := &service.AccountIDList{
+		IDs:       []int64{},
+		Total:     int64(total),
+		Platforms: []string{},
+		Types:     []string{},
+	}
+	if limit > 0 && total > limit {
+		return list, nil
+	}
+
+	rows, err := q.
+		Order(dbent.Asc(dbaccount.FieldID)).
+		Select(dbaccount.FieldID, dbaccount.FieldPlatform, dbaccount.FieldType).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	platforms := make(map[string]struct{})
+	types := make(map[string]struct{})
+	list.IDs = make([]int64, 0, len(rows))
+	for _, row := range rows {
+		list.IDs = append(list.IDs, row.ID)
+		platforms[row.Platform] = struct{}{}
+		types[row.Type] = struct{}{}
+	}
+	list.Platforms = sortedAccountStringSet(platforms)
+	list.Types = sortedAccountStringSet(types)
+	return list, nil
+}
+
+func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, *pagination.PaginationResult, error) {
+	if err := validateAccountListSort(strings.ToLower(strings.TrimSpace(params.SortBy)), r.client.Driver().Dialect()); err != nil {
+		return nil, nil, err
+	}
+
+	q := r.accountListQuery(platform, accountType, status, search, groupID, privacyMode)
 
 	// Count may receive interceptor predicates. Clone first so the list query
 	// remains unchanged when it is reused below.
@@ -1140,6 +1188,182 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 	return nil
 }
 
+// BulkBindGroups 在同一个事务内对多个账号批量变更分组绑定。
+//
+//   - append：只插入缺少的绑定（ON CONFLICT DO NOTHING），账号原有的其他分组保持不变。
+//     新绑定的 priority 接在账号现有最大值之后，按 groupIDs 顺序连续递增；
+//     账号原本没有分组时得到 1..n，与单账号编辑（BindGroups 按顺序写 i+1）一致。
+//   - remove：只删除列出的分组绑定，未绑定的分组被忽略。
+//   - replace：先删除账号全部绑定再按 groupIDs 顺序重建（priority 为 1..n），与 BindGroups 的结果一致。
+//
+// 不存在或已删除的账号会被跳过。调度器只收到一条批量事件，分组 ID 里带上被移除的分组，
+// 保证对应分组的调度快照被重建。
+func (r *accountRepository) BulkBindGroups(ctx context.Context, accountIDs []int64, groupIDs []int64, mode service.AccountGroupBindMode) error {
+	accountIDs = uniquePositiveInt64s(accountIDs)
+	groupIDs = uniquePositiveInt64s(groupIDs)
+	if len(accountIDs) == 0 {
+		return nil
+	}
+	switch mode {
+	case service.AccountGroupBindModeAppend, service.AccountGroupBindModeRemove:
+		if len(groupIDs) == 0 {
+			return nil
+		}
+	case service.AccountGroupBindModeReplace:
+	default:
+		return service.ErrInvalidAccountGroupMode
+	}
+
+	contextTx := dbent.TxFromContext(ctx)
+	exec := r.sql
+	var tx *dbent.Tx
+	if contextTx != nil {
+		exec = contextTx.Client()
+	} else if r.client != nil {
+		var txErr error
+		tx, txErr = r.client.Tx(ctx)
+		if txErr != nil && !errors.Is(txErr, dbent.ErrTxStarted) {
+			return txErr
+		}
+		if tx != nil {
+			defer func() { _ = tx.Rollback() }()
+			exec = tx.Client()
+		}
+	}
+	if exec == nil {
+		return errors.New("account repository SQL executor not configured")
+	}
+
+	// 需要让调度器重建快照的分组：本次涉及的分组，replace 时再加上账号原有的分组。
+	affectedGroupIDs := groupIDs
+	var changed int64
+
+	switch mode {
+	case service.AccountGroupBindModeRemove:
+		result, err := exec.ExecContext(ctx,
+			"DELETE FROM account_groups WHERE account_id = ANY($1) AND group_id = ANY($2)",
+			pq.Array(accountIDs), pq.Array(groupIDs),
+		)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		changed = rows
+
+	case service.AccountGroupBindModeAppend:
+		// 只为尚未绑定的 (账号, 分组) 生成新行；priority 在账号现有最大值之后按 groupIDs 顺序连续递增。
+		// ON CONFLICT 兜底并发下的重复插入。
+		result, err := exec.ExecContext(ctx, `
+			INSERT INTO account_groups (account_id, group_id, priority, created_at)
+			SELECT n.account_id,
+			       n.group_id,
+			       COALESCE((SELECT MAX(ag.priority) FROM account_groups ag WHERE ag.account_id = n.account_id), 0)
+			         + (ROW_NUMBER() OVER (PARTITION BY n.account_id ORDER BY n.pos))::int,
+			       NOW()
+			FROM (
+				SELECT a.id AS account_id, g.group_id, g.pos
+				FROM accounts a
+				CROSS JOIN unnest($2::bigint[]) WITH ORDINALITY AS g(group_id, pos)
+				WHERE a.id = ANY($1)
+				  AND a.deleted_at IS NULL
+				  AND NOT EXISTS (
+					SELECT 1 FROM account_groups x
+					WHERE x.account_id = a.id AND x.group_id = g.group_id
+				  )
+			) n
+			ON CONFLICT (account_id, group_id) DO NOTHING
+		`, pq.Array(accountIDs), pq.Array(groupIDs))
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		changed = rows
+
+	default: // replace
+		previousGroupIDs, err := loadGroupIDsByAccountIDs(ctx, exec, accountIDs)
+		if err != nil {
+			return err
+		}
+		affectedGroupIDs = mergeGroupIDs(previousGroupIDs, groupIDs)
+
+		deleted, err := exec.ExecContext(ctx,
+			"DELETE FROM account_groups WHERE account_id = ANY($1)",
+			pq.Array(accountIDs),
+		)
+		if err != nil {
+			return err
+		}
+		deletedRows, err := deleted.RowsAffected()
+		if err != nil {
+			return err
+		}
+		changed = deletedRows
+
+		if len(groupIDs) > 0 {
+			inserted, err := exec.ExecContext(ctx, `
+				INSERT INTO account_groups (account_id, group_id, priority, created_at)
+				SELECT a.id, g.group_id, g.pos::int, NOW()
+				FROM accounts a
+				CROSS JOIN unnest($2::bigint[]) WITH ORDINALITY AS g(group_id, pos)
+				WHERE a.id = ANY($1) AND a.deleted_at IS NULL
+			`, pq.Array(accountIDs), pq.Array(groupIDs))
+			if err != nil {
+				return err
+			}
+			insertedRows, err := inserted.RowsAffected()
+			if err != nil {
+				return err
+			}
+			changed += insertedRows
+		}
+	}
+
+	if changed > 0 {
+		payload := map[string]any{"account_ids": accountIDs}
+		if len(affectedGroupIDs) > 0 {
+			payload["group_ids"] = affectedGroupIDs
+		}
+		if err := enqueueSchedulerOutbox(ctx, exec, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, payload); err != nil {
+			return err
+		}
+	}
+	if tx != nil {
+		return tx.Commit()
+	}
+	return nil
+}
+
+// loadGroupIDsByAccountIDs 返回一批账号当前绑定的全部分组 ID（去重，按 ID 升序）。
+func loadGroupIDsByAccountIDs(ctx context.Context, exec sqlExecutor, accountIDs []int64) ([]int64, error) {
+	rows, err := exec.QueryContext(ctx,
+		"SELECT DISTINCT group_id FROM account_groups WHERE account_id = ANY($1) ORDER BY group_id",
+		pq.Array(accountIDs),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var groupIDs []int64
+	for rows.Next() {
+		var groupID int64
+		if err := rows.Scan(&groupID); err != nil {
+			return nil, err
+		}
+		groupIDs = append(groupIDs, groupID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return groupIDs, nil
+}
+
 func (r *accountRepository) ListSchedulable(ctx context.Context) ([]service.Account, error) {
 	accounts, err := r.schedulableAccountsQuery(time.Now()).All(ctx)
 	if err != nil {
@@ -1739,6 +1963,21 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	if updates.Schedulable != nil {
 		setClauses = append(setClauses, "schedulable = $"+itoa(idx))
 		args = append(args, *updates.Schedulable)
+		idx++
+	}
+	if updates.ExpiresAt != nil {
+		// <= 0 表示清除过期时间（与单账号编辑一致）。
+		if *updates.ExpiresAt <= 0 {
+			setClauses = append(setClauses, "expires_at = NULL")
+		} else {
+			setClauses = append(setClauses, "expires_at = $"+itoa(idx))
+			args = append(args, time.Unix(*updates.ExpiresAt, 0))
+			idx++
+		}
+	}
+	if updates.AutoPauseOnExpired != nil {
+		setClauses = append(setClauses, "auto_pause_on_expired = $"+itoa(idx))
+		args = append(args, *updates.AutoPauseOnExpired)
 		idx++
 	}
 	if updates.ProbeEnabled != nil {

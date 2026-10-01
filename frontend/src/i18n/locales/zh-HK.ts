@@ -4256,7 +4256,13 @@
         probeUpstreamBilling: '批量探測上游倍率',
         resetStatusSuccess: '已成功重置 {count} 個帳號狀態',
         refreshTokenSuccess: '已成功刷新 {count} 個帳號令牌',
-        partialSuccess: '操作部分完成：{success} 成功，{failed} 失敗'
+        partialSuccess: '操作部分完成：{success} 成功，{failed} 失敗',
+        pageSelected: '已選本頁 {count} 個，',
+        selectAllFiltered: '選中全部篩選結果 {total} 個？',
+        allFilteredSelected: '已選中全部 {count} 個篩選結果',
+        selectAllFilteredTooMany: '篩選結果共 {total} 個帳號，超過一次最多可選的 {limit} 個，請縮小篩選範圍後再試',
+        selectAllFilteredFailed: '獲取篩選結果失敗',
+        confirmCount: '確定對選中的 {count} 個帳號執行此操作嗎？'
       },
       bulkEdit: {
         title: '批量編輯帳號',
@@ -4270,7 +4276,21 @@
         failed: '批量更新失敗',
         noSelection: '請選擇要編輯的帳號',
         noFieldsSelected: '請至少選擇一個要更新的字段',
-        mixedPlatformWarning: '所選帳號跨越多個平台（{platforms}）。顯示的模型映射預設為合并結果——請確保映射對每個平台都適用。'
+        mixedPlatformWarning: '所選帳號跨越多個平台（{platforms}）。顯示的模型映射預設為合并結果——請確保映射對每個平台都適用。',
+        groupModeLabel: '分組修改方式',
+        groupModeAppend: '追加到分組',
+        groupModeRemove: '從分組移除',
+        groupModeReplace: '替換全部分組',
+        groupModeAppendHint: '為帳號加入所選分組，帳號原有的其他分組保持不變。',
+        groupModeRemoveHint: '只把帳號從所選分組中移除，其他分組保持不變。',
+        groupModeReplaceHint: '把每個帳號的分組整體設置為所選分組。',
+        groupModeReplaceWarning: '會移除這些帳號原有的其他分組',
+        groupModeReplaceEmptyWarning: '未選擇任何分組：會清空所選帳號的全部分組',
+        groupsRequired: '請至少選擇一個分組',
+        poolModeRetryStatusCodesHint: '留空則保持各帳號原有設置',
+        tempUnschedOffHint: '關閉臨時不可調度規則；各帳號已保存的規則會保留。',
+        tempUnschedReplaceHint: '下列規則會覆蓋所選帳號上已有的全部規則。',
+        expiresAtClearNotice: '留空表示清除所選帳號的過期時間。'
       },
       bulkDeleteTitle: '批量刪除帳號',
       bulkDeleteConfirm: '確定要刪除選中的 {count} 個帳號嗎？此操作無法撤銷。',

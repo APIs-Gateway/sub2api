@@ -4259,7 +4259,13 @@
         probeUpstreamBilling: '批量探测上游倍率',
         resetStatusSuccess: '已成功重置 {count} 个账号状态',
         refreshTokenSuccess: '已成功刷新 {count} 个账号令牌',
-        partialSuccess: '操作部分完成：{success} 成功，{failed} 失败'
+        partialSuccess: '操作部分完成：{success} 成功，{failed} 失败',
+        pageSelected: '已选本页 {count} 个，',
+        selectAllFiltered: '选中全部筛选结果 {total} 个？',
+        allFilteredSelected: '已选中全部 {count} 个筛选结果',
+        selectAllFilteredTooMany: '筛选结果共 {total} 个账号，超过一次最多可选的 {limit} 个，请缩小筛选范围后再试',
+        selectAllFilteredFailed: '获取筛选结果失败',
+        confirmCount: '确定对选中的 {count} 个账号执行此操作吗？'
       },
       bulkEdit: {
         title: '批量编辑账号',
@@ -4273,7 +4279,21 @@
         failed: '批量更新失败',
         noSelection: '请选择要编辑的账号',
         noFieldsSelected: '请至少选择一个要更新的字段',
-        mixedPlatformWarning: '所选账号跨越多个平台（{platforms}）。显示的模型映射预设为合并结果——请确保映射对每个平台都适用。'
+        mixedPlatformWarning: '所选账号跨越多个平台（{platforms}）。显示的模型映射预设为合并结果——请确保映射对每个平台都适用。',
+        groupModeLabel: '分组修改方式',
+        groupModeAppend: '追加到分组',
+        groupModeRemove: '从分组移除',
+        groupModeReplace: '替换全部分组',
+        groupModeAppendHint: '为账号加入所选分组，账号原有的其他分组保持不变。',
+        groupModeRemoveHint: '只把账号从所选分组中移除，其他分组保持不变。',
+        groupModeReplaceHint: '把每个账号的分组整体设置为所选分组。',
+        groupModeReplaceWarning: '会移除这些账号原有的其他分组',
+        groupModeReplaceEmptyWarning: '未选择任何分组：会清空所选账号的全部分组',
+        groupsRequired: '请至少选择一个分组',
+        poolModeRetryStatusCodesHint: '留空则保持各账号原有设置',
+        tempUnschedOffHint: '关闭临时不可调度规则；各账号已保存的规则会保留。',
+        tempUnschedReplaceHint: '下列规则会覆盖所选账号上已有的全部规则。',
+        expiresAtClearNotice: '留空表示清除所选账号的过期时间。'
       },
       bulkDeleteTitle: '批量删除账号',
       bulkDeleteConfirm: '确定要删除选中的 {count} 个账号吗？此操作无法撤销。',

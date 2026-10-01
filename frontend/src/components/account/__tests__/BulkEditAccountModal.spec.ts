@@ -2,7 +2,9 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import BulkEditAccountModal from '../BulkEditAccountModal.vue'
 import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
+import GroupSelector from '@/components/common/GroupSelector.vue'
 import { adminAPI } from '@/api/admin'
+import { parseDateTimeLocalInput } from '@/utils/format'
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
@@ -421,6 +423,273 @@ describe('BulkEditAccountModal', () => {
         privacy_mode: 'training_set_cf_blocked'
       },
       status: 'active'
+    })
+  })
+
+  describe('分组修改方式', () => {
+    async function enableGroupsWith(wrapper: ReturnType<typeof mountModal>, ids: number[]) {
+      await wrapper.get('#bulk-edit-groups-enabled').setValue(true)
+      wrapper.findComponent(GroupSelector).vm.$emit('update:modelValue', ids)
+      await flushPromises()
+    }
+
+    async function submit(wrapper: ReturnType<typeof mountModal>) {
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+    }
+
+    it('默认选中追加，并显式发送 group_mode=append', async () => {
+      const wrapper = mountModal()
+
+      expect(wrapper.get('[data-testid="bulk-edit-group-mode-append"]').attributes('aria-checked')).toBe('true')
+      expect(wrapper.get('[data-testid="bulk-edit-group-mode-replace"]').attributes('aria-checked')).toBe('false')
+      expect(wrapper.find('[data-testid="bulk-edit-group-replace-warning"]').exists()).toBe(false)
+
+      await enableGroupsWith(wrapper, [5, 6])
+      await submit(wrapper)
+
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        group_ids: [5, 6],
+        group_mode: 'append'
+      })
+    })
+
+    it('切换到移除后发送 group_mode=remove', async () => {
+      const wrapper = mountModal()
+      await enableGroupsWith(wrapper, [5])
+      await wrapper.get('[data-testid="bulk-edit-group-mode-remove"]').trigger('click')
+      await submit(wrapper)
+
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        group_ids: [5],
+        group_mode: 'remove'
+      })
+    })
+
+    it('替换模式显示醒目提示，并发送 group_mode=replace', async () => {
+      const wrapper = mountModal()
+      await enableGroupsWith(wrapper, [5])
+      await wrapper.get('[data-testid="bulk-edit-group-mode-replace"]').trigger('click')
+
+      const warning = wrapper.get('[data-testid="bulk-edit-group-replace-warning"]')
+      expect(warning.text()).toContain('admin.accounts.bulkEdit.groupModeReplaceWarning')
+
+      await submit(wrapper)
+
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        group_ids: [5],
+        group_mode: 'replace'
+      })
+    })
+
+    it('替换且未选分组时提示会清空全部分组，仍允许提交', async () => {
+      const wrapper = mountModal()
+      await wrapper.get('#bulk-edit-groups-enabled').setValue(true)
+      await wrapper.get('[data-testid="bulk-edit-group-mode-replace"]').trigger('click')
+
+      expect(wrapper.get('[data-testid="bulk-edit-group-replace-warning"]').text()).toContain(
+        'admin.accounts.bulkEdit.groupModeReplaceEmptyWarning'
+      )
+
+      await submit(wrapper)
+
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        group_ids: [],
+        group_mode: 'replace'
+      })
+    })
+
+    it('追加或移除时未选分组不提交', async () => {
+      const wrapper = mountModal()
+      await wrapper.get('#bulk-edit-groups-enabled').setValue(true)
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+
+      await wrapper.get('[data-testid="bulk-edit-group-mode-remove"]').trigger('click')
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+    })
+
+    it('没勾选分组时不发送 group_ids 和 group_mode', async () => {
+      const wrapper = mountModal()
+      await wrapper.get('#bulk-edit-status-enabled').setValue(true)
+      await submit(wrapper)
+
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { status: 'active' })
+    })
+
+    it('关闭弹窗后分组方式恢复为追加', async () => {
+      const wrapper = mountModal()
+      await wrapper.get('[data-testid="bulk-edit-group-mode-replace"]').trigger('click')
+      expect(wrapper.get('[data-testid="bulk-edit-group-mode-replace"]').attributes('aria-checked')).toBe('true')
+
+      await wrapper.setProps({ show: false })
+      await wrapper.setProps({ show: true })
+
+      expect(wrapper.get('[data-testid="bulk-edit-group-mode-append"]').attributes('aria-checked')).toBe('true')
+    })
+
+    it('移除分组不做混合渠道预检，追加分组才做', async () => {
+      const wrapper = mountModal({
+        selectedPlatforms: ['anthropic'],
+        selectedTypes: ['apikey']
+      })
+      await enableGroupsWith(wrapper, [5])
+
+      await wrapper.get('[data-testid="bulk-edit-group-mode-remove"]').trigger('click')
+      await submit(wrapper)
+      expect(adminAPI.accounts.checkMixedChannelRisk).not.toHaveBeenCalled()
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+
+      await wrapper.get('[data-testid="bulk-edit-group-mode-append"]').trigger('click')
+      await submit(wrapper)
+      expect(adminAPI.accounts.checkMixedChannelRisk).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('池模式', () => {
+    it('目标账号含 OAuth 账号时不显示池模式', () => {
+      const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['apikey', 'oauth'] })
+      expect(wrapper.find('#bulk-edit-pool-mode-enabled').exists()).toBe(false)
+    })
+
+    it('勾选但保持关闭时只发送 pool_mode=false', async () => {
+      const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['apikey'] })
+      await wrapper.get('#bulk-edit-pool-mode-enabled').setValue(true)
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        credentials: { pool_mode: false }
+      })
+    })
+
+    it('开启后发送重试次数和状态码', async () => {
+      const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['apikey', 'bedrock'] })
+      await wrapper.get('#bulk-edit-pool-mode-enabled').setValue(true)
+      await wrapper.get('#bulk-edit-pool-mode-toggle').trigger('click')
+      await wrapper.get('#bulk-edit-pool-mode-retry-count').setValue('5')
+      await wrapper.get('#bulk-edit-pool-mode-retry-status-codes').setValue('429, 401, 999, 401')
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        credentials: {
+          pool_mode: true,
+          pool_mode_retry_count: 5,
+          pool_mode_retry_status_codes: [401, 429]
+        }
+      })
+    })
+
+    it('状态码留空时不发送，保持各账号原有设置', async () => {
+      const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['apikey'] })
+      await wrapper.get('#bulk-edit-pool-mode-enabled').setValue(true)
+      await wrapper.get('#bulk-edit-pool-mode-toggle').trigger('click')
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        credentials: { pool_mode: true, pool_mode_retry_count: 3 }
+      })
+    })
+
+    it('没勾选「是否修改」时不发送池模式', async () => {
+      const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['apikey'] })
+      await wrapper.get('#bulk-edit-pool-mode-toggle').trigger('click')
+      await wrapper.get('#bulk-edit-status-enabled').setValue(true)
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { status: 'active' })
+    })
+  })
+
+  describe('临时不可调度', () => {
+    it('勾选但保持关闭时只发送 temp_unschedulable_enabled=false', async () => {
+      const wrapper = mountModal()
+      await wrapper.get('#bulk-edit-temp-unsched-enabled').setValue(true)
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        credentials: { temp_unschedulable_enabled: false }
+      })
+    })
+
+    it('开启但没有可用规则时不提交', async () => {
+      const wrapper = mountModal()
+      await wrapper.get('#bulk-edit-temp-unsched-enabled').setValue(true)
+      await wrapper.get('#bulk-edit-temp-unsched-toggle').trigger('click')
+      await wrapper.get('[data-testid="temp-unsched-add-rule"]').trigger('click')
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+
+      expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+    })
+
+    it('开启并添加预设规则后发送规则', async () => {
+      const wrapper = mountModal()
+      await wrapper.get('#bulk-edit-temp-unsched-enabled').setValue(true)
+      await wrapper.get('#bulk-edit-temp-unsched-toggle').trigger('click')
+      await wrapper.get('[data-testid="temp-unsched-preset-1"]').trigger('click')
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        credentials: {
+          temp_unschedulable_enabled: true,
+          temp_unschedulable_rules: [
+            {
+              error_code: 429,
+              keywords: ['rate limit', 'too many requests'],
+              duration_minutes: 10,
+              description: 'admin.accounts.tempUnschedulable.presets.rateLimitDesc'
+            }
+          ]
+        }
+      })
+    })
+  })
+
+  describe('过期时间', () => {
+    it('勾选后留空表示清除过期时间', async () => {
+      const wrapper = mountModal()
+      await wrapper.get('#bulk-edit-expires-at-enabled').setValue(true)
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { expires_at: 0 })
+    })
+
+    it('填写时间后发送秒级时间戳', async () => {
+      const wrapper = mountModal()
+      await wrapper.get('#bulk-edit-expires-at-enabled').setValue(true)
+      await wrapper.get('#bulk-edit-expires-at').setValue('2030-01-02T03:04')
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        expires_at: parseDateTimeLocalInput('2030-01-02T03:04')
+      })
+    })
+
+    it('过期后自动暂停需单独勾选才发送', async () => {
+      const wrapper = mountModal()
+      await wrapper.get('#bulk-edit-auto-pause-toggle').trigger('click')
+      await wrapper.get('#bulk-edit-status-enabled').setValue(true)
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenLastCalledWith([1, 2], { status: 'active' })
+
+      await wrapper.get('#bulk-edit-auto-pause-enabled').setValue(true)
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenLastCalledWith([1, 2], {
+        status: 'active',
+        auto_pause_on_expired: true
+      })
     })
   })
 })

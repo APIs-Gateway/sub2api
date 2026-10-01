@@ -4179,7 +4179,13 @@
         probeUpstreamBilling: 'Probe Upstream Rate',
         resetStatusSuccess: 'Successfully reset {count} account(s) status',
         refreshTokenSuccess: 'Successfully refreshed {count} account(s) token',
-        partialSuccess: 'Partially completed: {success} succeeded, {failed} failed'
+        partialSuccess: 'Partially completed: {success} succeeded, {failed} failed',
+        pageSelected: '{count} on this page selected.',
+        selectAllFiltered: 'Select all {total} matching accounts?',
+        allFilteredSelected: 'All {count} matching accounts are selected.',
+        selectAllFilteredTooMany: '{total} accounts match, more than the {limit} that can be selected at once. Narrow the filters and try again.',
+        selectAllFilteredFailed: 'Failed to load the matching accounts',
+        confirmCount: 'Run this on the {count} selected account(s)?'
       },
       bulkEdit: {
         title: 'Bulk Edit Accounts',
@@ -4194,7 +4200,21 @@
         failed: 'Bulk update failed',
         noSelection: 'Please select accounts to edit',
         noFieldsSelected: 'Select at least one field to update',
-        mixedPlatformWarning: 'Selected accounts span multiple platforms ({platforms}). Model mapping presets shown are combined — ensure mappings are appropriate for each platform.'
+        mixedPlatformWarning: 'Selected accounts span multiple platforms ({platforms}). Model mapping presets shown are combined — ensure mappings are appropriate for each platform.',
+        groupModeLabel: 'How to change groups',
+        groupModeAppend: 'Add to groups',
+        groupModeRemove: 'Remove from groups',
+        groupModeReplace: 'Replace all groups',
+        groupModeAppendHint: 'Adds the selected groups. Each account keeps the groups it already has.',
+        groupModeRemoveHint: 'Removes only the selected groups. Other groups on each account are kept.',
+        groupModeReplaceHint: 'Sets each account to exactly the selected groups.',
+        groupModeReplaceWarning: 'This removes every other group these accounts currently belong to.',
+        groupModeReplaceEmptyWarning: 'No group selected: this removes all groups from the selected accounts.',
+        groupsRequired: 'Select at least one group',
+        poolModeRetryStatusCodesHint: 'Leave empty to keep each account\'s current status codes.',
+        tempUnschedOffHint: 'Turns off temporary unschedulable rules. Rules already saved on each account are kept.',
+        tempUnschedReplaceHint: 'The rules below replace the existing rules on every selected account.',
+        expiresAtClearNotice: 'Leave empty to clear the expiry time of the selected accounts.'
       },
       bulkDeleteTitle: 'Bulk Delete Accounts',
       bulkDeleteConfirm: 'Delete the selected {count} account(s)? This action cannot be undone.',
