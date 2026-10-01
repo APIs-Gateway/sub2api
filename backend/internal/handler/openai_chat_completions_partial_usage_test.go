@@ -27,6 +27,37 @@ type delayedChatSSEReader struct {
 	delayed bool
 }
 
+// Accept metadata, then fail the semantic text write.
+type failSemanticChatBodyWrite struct {
+	header           http.Header
+	successfulWrites int
+	failedPayload    string
+	shortWrite       bool
+}
+
+func (w *failSemanticChatBodyWrite) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *failSemanticChatBodyWrite) WriteHeader(int) {}
+
+func (w *failSemanticChatBodyWrite) Flush() {}
+
+func (w *failSemanticChatBodyWrite) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "not delivered") {
+		w.failedPayload = string(p)
+		if w.shortWrite {
+			return 1, nil
+		}
+		return 0, io.ErrClosedPipe
+	}
+	w.successfulWrites++
+	return len(p), nil
+}
+
 func (r *delayedChatSSEReader) Read(p []byte) (int, error) {
 	if !r.delayed {
 		r.delayed = true
@@ -47,16 +78,18 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cases := []struct {
-		name             string
-		mode             openai_compat.ResponsesSupportMode
-		payload          string
-		readError        bool
-		fixedPrice       bool
-		wantBilling      bool
-		wantInput        int
-		wantOutput       int
-		status           int
-		pauseBeforeError bool
+		name              string
+		mode              openai_compat.ResponsesSupportMode
+		payload           string
+		readError         bool
+		fixedPrice        bool
+		wantBilling       bool
+		wantInput         int
+		wantOutput        int
+		status            int
+		pauseBeforeError  bool
+		failSemanticWrite bool
+		shortWrite        bool
 	}{
 		{
 			name: "raw chat error frame with usage",
@@ -102,6 +135,33 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 				"__PAUSE__" +
 				"data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_metadata\",\"model\":\"gpt-5.1\",\"status\":\"failed\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0},\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"never delivered\"}]}],\"error\":{\"code\":\"upstream_error\",\"message\":\"stream failed\"}}}\n\n",
 			fixedPrice: true, pauseBeforeError: true,
+		},
+		{
+			name: "raw semantic write fails after metadata at a fixed per-request price",
+			mode: openai_compat.ResponsesSupportModeForceChatCompletions,
+			payload: "data: {\"id\":\"chatcmpl_write_fail\",\"model\":\"gpt-5.1\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}\n\n" +
+				"data: {\"id\":\"chatcmpl_write_fail\",\"model\":\"gpt-5.1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"not delivered\"}}]}\n\n" +
+				"event: error\n" +
+				"data: {\"error\":{\"type\":\"api_error\",\"message\":\"stream failed\"},\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0,\"total_tokens\":0}}\n\n",
+			fixedPrice: true, failSemanticWrite: true,
+		},
+		{
+			name: "raw semantic short write at a fixed per-request price",
+			mode: openai_compat.ResponsesSupportModeForceChatCompletions,
+			payload: "data: {\"id\":\"chatcmpl_short_write\",\"model\":\"gpt-5.1\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}\n\n" +
+				"data: {\"id\":\"chatcmpl_short_write\",\"model\":\"gpt-5.1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"not delivered\"}}]}\n\n" +
+				"event: error\n" +
+				"data: {\"error\":{\"type\":\"api_error\",\"message\":\"stream failed\"},\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0,\"total_tokens\":0}}\n\n",
+			fixedPrice: true, failSemanticWrite: true, shortWrite: true,
+		},
+		{
+			name: "converted semantic write fails after metadata at a fixed per-request price",
+			mode: openai_compat.ResponsesSupportModeForceResponses,
+			payload: "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_write_fail\",\"model\":\"gpt-5.1\",\"status\":\"in_progress\",\"output\":[]}}\n\n" +
+				"__PAUSE__" +
+				"data: {\"type\":\"response.output_text.delta\",\"delta\":\"not delivered\"}\n\n" +
+				"data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_write_fail\",\"model\":\"gpt-5.1\",\"status\":\"failed\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0},\"error\":{\"code\":\"upstream_error\",\"message\":\"stream failed\"}}}\n\n",
+			fixedPrice: true, pauseBeforeError: true, failSemanticWrite: true,
 		},
 		{
 			name:    "pre-output 429 failover has no billing",
@@ -196,7 +256,17 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-5.1","messages":[{"role":"user","content":"hello"}],"stream":true}`))
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
-			router.ServeHTTP(rec, req)
+			var writer http.ResponseWriter = rec
+			var failingWriter *failSemanticChatBodyWrite
+			if tc.failSemanticWrite {
+				failingWriter = &failSemanticChatBodyWrite{shortWrite: tc.shortWrite}
+				writer = failingWriter
+			}
+			router.ServeHTTP(writer, req)
+			if failingWriter != nil {
+				require.Positive(t, failingWriter.successfulWrites, "metadata must be written before the semantic output fails")
+				require.Contains(t, failingWriter.failedPayload, "not delivered", "failed write must carry the semantic text")
+			}
 			if tc.name == "raw chat error frame with usage" {
 				require.Contains(t, rec.Body.String(), "upstream stream interrupted")
 			}

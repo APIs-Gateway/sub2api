@@ -143,6 +143,12 @@ func (d *openAIChatSilentRefusalDetector) HasSemanticOutput() bool {
 	return d != nil && d.semanticOutput
 }
 
+func openAIChatChunkHasSemanticOutput(chunk apicompat.ChatCompletionsChunk) bool {
+	d := newOpenAIChatSilentRefusalDetector(0)
+	d.ObserveChatChunk(chunk)
+	return d.HasSemanticOutput()
+}
+
 func (d *openAIChatSilentRefusalDetector) IsSilentRefusal() bool {
 	if d == nil || !d.enabled {
 		return false

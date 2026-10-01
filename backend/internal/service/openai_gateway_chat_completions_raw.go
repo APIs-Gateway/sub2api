@@ -319,8 +319,10 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	var firstTokenMs *int
 	clientDisconnected := false
 	clientOutputStarted := false
+	semanticOutputDelivered := false
 	var outputBeforeError *bool
 	pendingLines := make([]string, 0, 8)
+	pendingSemanticEnd := make([]bool, 0, 8)
 	pendingBytes := 0
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	// 上游模型不一致只在首个带 model 的 chunk 上比对一次。
@@ -336,13 +338,18 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			return
 		}
 		writeStreamHeaders()
-		for _, pending := range pendingLines {
-			if _, err := c.Writer.WriteString(pending + "\n"); err != nil {
+		for i, pending := range pendingLines {
+			n, err := c.Writer.WriteString(pending + "\n")
+			if err != nil || n != len(pending)+1 {
 				clientDisconnected = true
 				break
 			}
+			if pendingSemanticEnd[i] {
+				semanticOutputDelivered = true
+			}
 		}
 		pendingLines = pendingLines[:0]
+		pendingSemanticEnd = pendingSemanticEnd[:0]
 		pendingBytes = 0
 		clientOutputStarted = !clientDisconnected
 		if !clientDisconnected {
@@ -350,12 +357,13 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 	}
 
-	writeLine := func(line string) {
+	writeLine := func(line string, semanticEnd bool) {
 		if clientDisconnected || suppressOutput {
 			return
 		}
 		if !clientOutputStarted && (holdPreDataLines || !refusalDetector.ShouldReleaseClientOutput()) {
 			pendingLines = append(pendingLines, line)
+			pendingSemanticEnd = append(pendingSemanticEnd, semanticEnd)
 			pendingBytes += len(line) + 1
 			return
 		}
@@ -365,12 +373,20 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				return
 			}
 		}
-		if _, werr := c.Writer.WriteString(line + "\n"); werr != nil {
+		n, werr := c.Writer.WriteString(line + "\n")
+		if werr == nil && n != len(line)+1 {
+			werr = io.ErrShortWrite
+		}
+		if werr != nil {
 			clientDisconnected = true
 			logger.L().Debug("openai chat_completions raw: client disconnected, continuing to drain upstream for billing",
 				zap.Error(werr),
 				zap.String("request_id", requestID),
 			)
+			return
+		}
+		if semanticEnd {
+			semanticOutputDelivered = true
 		}
 	}
 	emitLateSilentRefusal := func() {
@@ -397,12 +413,20 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	frameTooLarge := false
 	processFrame := func() *UpstreamFailoverError {
 		payload := strings.Join(frameData, "\n")
+		frameSemantic := false
 		if len(frameData) > 0 && !frameTooLarge {
 			payloadBytes := []byte(payload)
+			frameDetector := newOpenAIChatSilentRefusalDetector(0)
+			frameDetector.ObservePayload(payloadBytes)
+			frameSemantic = frameDetector.HasSemanticOutput()
 			payloadType := strings.TrimSpace(gjson.Get(payload, "type").String())
 			isError := gjson.Get(payload, "error").IsObject() || payloadType == "response.failed" || frameEvent == "error" || frameEvent == "response.failed"
+			if isError {
+				// A failed frame can carry output that was never emitted as a chat chunk.
+				frameSemantic = false
+			}
 			if isError && streamError == nil {
-				beforeError := clientOutputStarted && refusalDetector.HasSemanticOutput()
+				beforeError := semanticOutputDelivered
 				outputBeforeError = &beforeError
 				message := extractOpenAISSEErrorMessage(payloadBytes)
 				shouldFailover := openAIStreamErrorEventShouldFailover(payloadBytes, message)
@@ -417,6 +441,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				// Discard the pre-error role and metadata without dropping the error frame.
 				if !clientOutputStarted {
 					pendingLines = pendingLines[:0]
+					pendingSemanticEnd = pendingSemanticEnd[:0]
 					pendingBytes = 0
 				}
 				refusalDetector.sawError = true
@@ -478,14 +503,16 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 					streamError = errors.New(message)
 					suppressOutput = true
 					pendingLines = nil
+					pendingSemanticEnd = nil
 					pendingBytes = 0
 					return nil
 				}
 				flushPending()
 			}
-			for _, line := range frameLines {
+			for i, line := range frameLines {
+				semanticEnd := frameSemantic && i == len(frameLines)-1 && line == ""
 				line = stripEmptyChatToolCallIdentityFromSSELine(alignClientVisibleModelInSSELine(line, originalModel))
-				writeLine(line)
+				writeLine(line, semanticEnd)
 			}
 			if streamError != nil {
 				suppressOutput = true
@@ -626,7 +653,7 @@ streamDone:
 	}
 
 	resultWithUsage := func() *OpenAIForwardResult {
-		partialOutputDelivered := clientOutputStarted && refusalDetector.HasSemanticOutput()
+		partialOutputDelivered := semanticOutputDelivered
 		if outputBeforeError != nil {
 			partialOutputDelivered = *outputBeforeError
 		}
@@ -700,21 +727,7 @@ streamDone:
 			return nil, newOpenAISilentRefusalFailoverError(c, account, requestID)
 		}
 		if len(pendingLines) > 0 {
-			writeStreamHeaders()
-			for _, pending := range pendingLines {
-				if _, werr := c.Writer.WriteString(pending + "\n"); werr != nil {
-					clientDisconnected = true
-					logger.L().Debug("openai chat_completions raw: client disconnected during final flush",
-						zap.Error(werr),
-						zap.String("request_id", requestID),
-					)
-					break
-				}
-			}
-			if !clientDisconnected {
-				c.Writer.Flush()
-				clientOutputStarted = true
-			}
+			flushPending()
 		}
 	}
 

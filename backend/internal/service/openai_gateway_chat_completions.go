@@ -639,8 +639,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	firstChunk := true
 	clientDisconnected := false
 	clientOutputStarted := false
+	semanticOutputDelivered := false
 	var outputBeforeError *bool
 	pendingSSE := make([]string, 0, 4)
+	pendingSemantic := make([]bool, 0, 4)
 	pendingSSEBytes := 0
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var streamFailoverErr *UpstreamFailoverError
@@ -670,7 +672,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	}
 
 	resultWithUsage := func() *OpenAIForwardResult {
-		partialOutputDelivered := clientOutputStarted && refusalDetector.HasSemanticOutput()
+		partialOutputDelivered := semanticOutputDelivered
 		if outputBeforeError != nil {
 			partialOutputDelivered = *outputBeforeError
 		}
@@ -687,18 +689,29 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			PartialOutputDelivered: partialOutputDelivered,
 		}
 	}
+	writeChatSSE := func(sse string, semantic bool) bool {
+		n, err := fmt.Fprint(c.Writer, sse)
+		if err != nil || n != len(sse) {
+			clientDisconnected = true
+			return false
+		}
+		if semantic {
+			semanticOutputDelivered = true
+		}
+		return true
+	}
 	flushPendingSSE := func() {
 		if clientDisconnected || clientOutputStarted {
 			return
 		}
 		writeStreamHeaders()
-		for _, pending := range pendingSSE {
-			if _, err := fmt.Fprint(c.Writer, pending); err != nil {
-				clientDisconnected = true
+		for i, pending := range pendingSSE {
+			if !writeChatSSE(pending, pendingSemantic[i]) {
 				break
 			}
 		}
 		pendingSSE = pendingSSE[:0]
+		pendingSemantic = pendingSemantic[:0]
 		pendingSSEBytes = 0
 		clientOutputStarted = !clientDisconnected
 		if !clientDisconnected {
@@ -723,7 +736,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 		// Save semantic output before observing this event: response.failed can
 		// contain output that was never emitted to the client.
-		semanticOutputBeforePayload := clientOutputStarted && refusalDetector.HasSemanticOutput()
+		semanticOutputBeforePayload := semanticOutputDelivered
 		refusalDetector.ObservePayload([]byte(payload))
 
 		isTerminalEvent := isOpenAICompatResponsesTerminalEvent(event.Type)
@@ -832,6 +845,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		if !clientDisconnected {
 			for _, chunk := range chunks {
 				refusalDetector.ObserveChatChunk(chunk)
+				semantic := openAIChatChunkHasSemanticOutput(chunk)
 				sse, err := apicompat.ChatChunkToSSE(chunk)
 				if err != nil {
 					logger.L().Warn("openai chat_completions stream: failed to marshal chunk",
@@ -842,6 +856,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				}
 				if !clientOutputStarted && !refusalDetector.ShouldReleaseClientOutput() {
 					pendingSSE = append(pendingSSE, sse)
+					pendingSemantic = append(pendingSemantic, semantic)
 					pendingSSEBytes += len(sse)
 					if pendingSSEBytes < openAIChatPreambleMaxBytes {
 						continue
@@ -855,9 +870,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				}
 				if !clientOutputStarted {
 					writeStreamHeaders()
-					for _, pending := range pendingSSE {
-						if _, err := fmt.Fprint(c.Writer, pending); err != nil {
-							clientDisconnected = true
+					for i, pending := range pendingSSE {
+						if !writeChatSSE(pending, pendingSemantic[i]) {
 							logger.L().Info("openai chat_completions stream: client disconnected while flushing pending chunks",
 								zap.String("request_id", requestID),
 							)
@@ -865,13 +879,13 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 						}
 					}
 					pendingSSE = pendingSSE[:0]
+					pendingSemantic = pendingSemantic[:0]
 					clientOutputStarted = !clientDisconnected
 					if clientDisconnected {
 						break
 					}
 				}
-				if _, err := fmt.Fprint(c.Writer, sse); err != nil {
-					clientDisconnected = true
+				if !writeChatSSE(sse, semantic) {
 					logger.L().Info("openai chat_completions stream: client disconnected, continuing to drain upstream for billing",
 						zap.String("request_id", requestID),
 					)
@@ -910,19 +924,20 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		if finalChunks := apicompat.FinalizeResponsesChatStream(state); len(finalChunks) > 0 && !clientDisconnected {
 			for _, chunk := range finalChunks {
 				refusalDetector.ObserveChatChunk(chunk)
+				semantic := openAIChatChunkHasSemanticOutput(chunk)
 				sse, err := apicompat.ChatChunkToSSE(chunk)
 				if err != nil {
 					continue
 				}
 				if !clientOutputStarted && !refusalDetector.ShouldReleaseClientOutput() {
 					pendingSSE = append(pendingSSE, sse)
+					pendingSemantic = append(pendingSemantic, semantic)
 					continue
 				}
 				if !clientOutputStarted {
 					writeStreamHeaders()
-					for _, pending := range pendingSSE {
-						if _, err := fmt.Fprint(c.Writer, pending); err != nil {
-							clientDisconnected = true
+					for i, pending := range pendingSSE {
+						if !writeChatSSE(pending, pendingSemantic[i]) {
 							logger.L().Info("openai chat_completions stream: client disconnected during pending final flush",
 								zap.String("request_id", requestID),
 							)
@@ -930,13 +945,13 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 						}
 					}
 					pendingSSE = pendingSSE[:0]
+					pendingSemantic = pendingSemantic[:0]
 					clientOutputStarted = !clientDisconnected
 					if clientDisconnected {
 						break
 					}
 				}
-				if _, err := fmt.Fprint(c.Writer, sse); err != nil {
-					clientDisconnected = true
+				if !writeChatSSE(sse, semantic) {
 					logger.L().Info("openai chat_completions stream: client disconnected during final flush",
 						zap.String("request_id", requestID),
 					)
@@ -950,9 +965,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			if len(pendingSSE) > 0 {
 				writeStreamHeaders()
-				for _, pending := range pendingSSE {
-					if _, err := fmt.Fprint(c.Writer, pending); err != nil {
-						clientDisconnected = true
+				for i, pending := range pendingSSE {
+					if !writeChatSSE(pending, pendingSemantic[i]) {
 						logger.L().Info("openai chat_completions stream: client disconnected during final pending flush",
 							zap.String("request_id", requestID),
 						)
@@ -960,6 +974,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					}
 				}
 				pendingSSE = pendingSSE[:0]
+				pendingSemantic = pendingSemantic[:0]
 				clientOutputStarted = !clientDisconnected
 			}
 		}
