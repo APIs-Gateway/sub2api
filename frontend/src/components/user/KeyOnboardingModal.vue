@@ -12,25 +12,25 @@
       <!-- 线路：站点配了备用地址才出现。选哪个，下面所有页签生成的内容就用哪个；和使用文档页共用同一个选择 -->
       <div v-if="endpointOptions.length > 1" class="onb-lines" data-test="endpoints">
         <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <span :id="`${uid}-endpoints-label`" class="onb-lines-label">{{ t('keys.endpoints.title') }}</span>
-        <div
-          class="flex flex-wrap gap-2"
-          role="radiogroup"
-          :aria-labelledby="`${uid}-endpoints-label`"
-          :aria-describedby="`${uid}-endpoints-hint`"
-        >
-          <label v-for="opt in endpointOptions" :key="opt.id" class="onb-chip onb-line" :class="{ 'onb-chip-active': activeEndpoint.id === opt.id }">
-            <input
-              v-model="endpointChoice"
-              type="radio"
-              class="sr-only"
-              :name="`${uid}-endpoint`"
-              :value="opt.id"
-              :data-test="`endpoint-${opt.isDefault ? 'default' : opt.id}`"
-            />
-            {{ opt.isDefault ? t('keys.endpoints.default') : opt.name }}
-          </label>
-        </div>
+          <span :id="`${uid}-endpoints-label`" class="onb-lines-label">{{ t('keys.endpoints.title') }}</span>
+          <div
+            class="flex flex-wrap gap-2"
+            role="radiogroup"
+            :aria-labelledby="`${uid}-endpoints-label`"
+            :aria-describedby="`${uid}-endpoints-hint`"
+          >
+            <label v-for="opt in endpointOptions" :key="opt.id" class="onb-chip onb-line" :class="{ 'onb-chip-active': activeEndpoint.id === opt.id }">
+              <input
+                v-model="endpointChoice"
+                type="radio"
+                class="sr-only"
+                :name="`${uid}-endpoint`"
+                :value="opt.id"
+                :data-test="`endpoint-${opt.isDefault ? 'default' : opt.id}`"
+              />
+              {{ opt.isDefault ? t('keys.endpoints.default') : opt.name }}
+            </label>
+          </div>
         </div>
         <p class="onb-lines-detail" data-test="endpoint-detail">
           <span v-if="activeEndpoint.description" class="text-gray-600 dark:text-dark-300">{{ activeEndpoint.description }}</span>
@@ -337,6 +337,7 @@ import {
   codexProviderId,
   endpointFor,
   scriptTargetPath,
+  shQuote,
   tutorialHref,
   type AiClient,
   type CodexInstallMode,
@@ -394,6 +395,10 @@ const endpointChoice = computed({
 })
 // 所有页签生成内容用的地址（不带结尾的 / 和 /v1）
 const base = computed(() => activeEndpoint.value.base)
+// CC Switch 导入链接要的地址：每个客户端各取它自己需要的那种，和改动前（1a4a797f6）一致。
+// - Codex（openai 平台）：沿用管理员配置的地址（root 就是 root，带 /v1 就带 /v1），ccswitchImport.ts 的约定；
+// - Claude / Gemini / antigravity：API 根地址。客户端自己会拼 /v1/messages，所以不能带结尾的 /v1。
+const ccsBaseUrl = computed(() => (platform.value === 'openai' ? activeEndpoint.value.configured : activeEndpoint.value.base))
 const fullKey = computed(() => props.apiKey?.key || '')
 const platform = computed(() => props.apiKey?.group?.platform || null)
 const siteName = computed(() => (props.siteName || '').trim() || 'sub2api')
@@ -643,7 +648,7 @@ const ccsDefaultName = computed(() => `${siteName.value} - ${CCS_LABELS[ccsClien
 
 const deeplink = computed(() =>
   buildCcSwitchImportDeeplink({
-    baseUrl: base.value,
+    baseUrl: ccsBaseUrl.value,
     platform: platform.value as never,
     clientType: ccsClient.value === 'gemini' ? 'gemini' : 'claude',
     providerName: ccsCustomName.value.trim() || ccsDefaultName.value,
@@ -669,7 +674,11 @@ const manualRows = computed(() => [
 ])
 
 function tomlQuote(v: string): string {
-  return `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+  return `"${v
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)}"`
 }
 
 const snippets = computed(() => {
@@ -683,7 +692,7 @@ const snippets = computed(() => {
         id: 'claude',
         title: CLIENT_LABELS.claude,
         files: [
-          { label: t('keyOnboarding.manual.envVars'), code: `export ANTHROPIC_BASE_URL="${url}"\nexport ANTHROPIC_AUTH_TOKEN="${key}"` },
+          { label: t('keyOnboarding.manual.envVars'), code: `export ANTHROPIC_BASE_URL=${shQuote(url)}\nexport ANTHROPIC_AUTH_TOKEN=${shQuote(key)}` },
           {
             label: '~/.claude/settings.json',
             path: true,
@@ -719,7 +728,7 @@ const snippets = computed(() => {
         id: 'gemini',
         title: CLIENT_LABELS.gemini,
         files: [
-          { label: t('keyOnboarding.manual.envVars'), code: `export GOOGLE_GEMINI_BASE_URL="${url}"\nexport GEMINI_API_KEY="${key}"` }
+          { label: t('keyOnboarding.manual.envVars'), code: `export GOOGLE_GEMINI_BASE_URL=${shQuote(url)}\nexport GEMINI_API_KEY=${shQuote(key)}` }
         ]
       })
     }

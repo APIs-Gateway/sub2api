@@ -64,4 +64,32 @@ describe('apiEndpoints', () => {
     saveEndpointId(DEFAULT_ENDPOINT_ID)
     expect(localStorage.getItem('docs_api_endpoint')).toBeNull()
   })
+
+  it('自定义端点：带 $、反引号、引号、空白、反斜杠、尖括号、查询串、片段、用户名密码的都丢弃', () => {
+    const bad = [
+      'https://a.example/$(id)',
+      'https://a.example/?x=`id`',
+      'https://a.example/"x',
+      "https://a.example/it's",
+      'https://a.example/a b',
+      'https://a.example/a\nb',
+      'https://a.example/a\\b',
+      'https://a.example/<x>',
+      'https://a.example/?k=1',
+      'https://a.example/#f',
+      'https://u:p@a.example/',
+      'https://u@a.example/'
+    ]
+    const opts = resolveEndpointOptions('https://api.example', [...bad.map((endpoint) => ({ name: 'x', endpoint })), { name: 'ok', endpoint: 'https://ok.example/path/' }], ORIGIN)
+    expect(opts.map((o) => o.id)).toEqual(['default', 'https://ok.example/path'])
+  })
+
+  it('configured：保留管理员写的 /v1，只去首尾空白与结尾 /', () => {
+    const opts = resolveEndpointOptions(' https://api.example/v1/ ', [{ name: 'a', endpoint: 'https://a.example/v1/' }, { name: 'b', endpoint: 'https://b.example' }], ORIGIN)
+    expect(opts.map((o) => [o.configured, o.base])).toEqual([
+      ['https://api.example/v1', 'https://api.example'],
+      ['https://a.example/v1', 'https://a.example'],
+      ['https://b.example', 'https://b.example']
+    ])
+  })
 })

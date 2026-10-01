@@ -148,4 +148,57 @@ describe('KeyOnboardingModal 线路选择', () => {
     await w.setProps({ show: true })
     expect((w.get(`[data-test="endpoint-${CDN}"]`).element as HTMLInputElement).checked).toBe(true)
   })
+
+  describe('手动配置页的命令不能被地址里的特殊字符利用', () => {
+    // 默认 api_base_url 本身没有校验，所以也要在生成命令时转义；自定义端点在 resolveEndpointOptions 里就被丢弃
+    const NASTY = "https://a.example/$(id)`id`\"x'y\nz"
+    const manual = async (platform: string) => {
+      const w = await mountModal({ baseUrl: NASTY, customEndpoints: [], apiKey: key(platform) })
+      await w.get('[data-test="tab-manual"]').trigger('click')
+      await flushPromises()
+      return w.get('[data-test="panel-manual"]').text()
+    }
+
+    it('claude：export 行用单引号转义，没有双引号包裹的地址', async () => {
+      const text = await manual('anthropic')
+      expect(text).toContain("export ANTHROPIC_BASE_URL='https://a.example/$(id)`id`\"x'\\''y\nz'")
+      expect(text).not.toContain('ANTHROPIC_BASE_URL="')
+    })
+
+    it('gemini：export 行用单引号转义', async () => {
+      const text = await manual('gemini')
+      expect(text).toContain("export GOOGLE_GEMINI_BASE_URL='https://a.example/$(id)`id`\"x'\\''y\nz'")
+      expect(text).not.toContain('GOOGLE_GEMINI_BASE_URL="')
+    })
+
+    it('codex：TOML 字符串里换行等控制字符被转义，不会拆行', async () => {
+      const text = await manual('openai')
+      const line = text.split('\n').find((l) => l.startsWith('base_url = '))
+      expect(line).toBeTruthy()
+      expect(line).toContain('\\u000a')
+      expect(line!.endsWith('"')).toBe(true)
+    })
+
+    it('一键安装脚本里地址只出现在单引号字面量中', async () => {
+      const w = await mountModal({ baseUrl: NASTY, customEndpoints: [], apiKey: key('anthropic') })
+      for (const b of w.findAll('button.onb-tile')) {
+        clipboard.writeText.mockClear()
+        await b.trigger('click')
+        await flushPromises()
+        const script = String(clipboard.writeText.mock.calls[0]?.[0])
+        for (const line of script.split('\n').filter((l) => l.includes('$(id)'))) {
+          expect(line).toMatch(/^(export SUB_ENDPOINT='|\$SubEndpoint = ')/)
+        }
+      }
+    })
+  })
+
+  it('手动配置页：api_base_url 以 /v1 结尾时，OpenAI 兼容地址不再是 /v1/v1（旧值是 bug），原生地址与旧版一致', async () => {
+    const w = await mountModal({ baseUrl: 'https://api.example.com/v1', customEndpoints: [], apiKey: key('anthropic') })
+    await w.get('[data-test="tab-manual"]').trigger('click')
+    await flushPromises()
+    const text = w.get('[data-test="panel-manual"]').text()
+    expect(text).not.toContain('/v1/v1')
+    expect(text).toContain("export ANTHROPIC_BASE_URL='https://api.example.com'")
+  })
 })

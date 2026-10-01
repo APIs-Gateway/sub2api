@@ -34,11 +34,32 @@ export const ENDPOINT_STORAGE_KEY = 'docs_api_endpoint'
 
 export interface EndpointOption extends ApiBases {
   id: string
+  /** 管理员配置的地址原样（只去首尾空白和结尾的 /，保留结尾的 /v1）。CC Switch 导入 Codex 时沿用它，见 ccswitchImport.ts。 */
+  configured: string
   /** 管理员填的名称，原样显示。默认地址没有名称，由界面补「默认」。 */
   name: string
   /** 管理员填的说明，原样显示。 */
   description: string
   isDefault: boolean
+}
+
+function withoutTrailingSlashes(raw: string): string {
+  return raw.replace(/\/+$/, '')
+}
+
+/**
+ * 自定义端点只允许「协议 + 主机 + 路径」的纯地址：
+ * 带用户名密码、查询串、片段的，拼上 /v1 会得到坏地址；含空白、引号、$、反引号、反斜杠、尖括号的，
+ * 粘进终端或写进配置文件有被当成命令的风险（生成命令时另有引号转义，这里是第二道防线）。
+ */
+export function isPlainEndpointUrl(url: string): boolean {
+  if (/[\s"'`$\\<>]/.test(url)) return false
+  try {
+    const u = new URL(url)
+    return !u.username && !u.password && !u.search && !u.hash
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -51,17 +72,25 @@ export function resolveEndpointOptions(
   fallbackOrigin: string
 ): EndpointOption[] {
   const options: EndpointOption[] = [
-    { id: DEFAULT_ENDPOINT_ID, name: '', description: '', isDefault: true, ...resolveApiBases(apiBaseUrl, fallbackOrigin) },
+    {
+      id: DEFAULT_ENDPOINT_ID,
+      name: '',
+      description: '',
+      isDefault: true,
+      configured: withoutTrailingSlashes((apiBaseUrl || '').trim() || fallbackOrigin),
+      ...resolveApiBases(apiBaseUrl, fallbackOrigin)
+    },
   ]
   const seen = new Set([options[0].base])
   for (const item of customEndpoints ?? []) {
     const url = sanitizeUrl(item.endpoint ?? '')
-    if (!url) continue
+    if (!url || !isPlainEndpointUrl(url) || !isPlainEndpointUrl((item.endpoint ?? '').trim())) continue // 原文也要查：URL 解析会把空白、尖括号等悄悄编码掉
     const bases = resolveApiBases(url, fallbackOrigin)
     if (seen.has(bases.base)) continue
     seen.add(bases.base)
     options.push({
       id: bases.base,
+      configured: withoutTrailingSlashes(url),
       name: (item.name ?? '').trim() || new URL(url).host,
       description: (item.description ?? '').trim(),
       isDefault: false,
