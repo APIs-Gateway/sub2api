@@ -252,31 +252,19 @@ describe('API Client', () => {
   // --- 401 Token 刷新 ---
 
   describe('401 Token 刷新', () => {
-    it('binds /auth/me to the calling session before account B replaces A', async () => {
+    it('blocks an old /auth/me before the request interceptor can send it with a new account token', async () => {
       localStorage.setItem('auth_token', 'account-a-token')
-      let finishOld!: (response: unknown) => void
-      let oldConfig!: InternalAxiosRequestConfig
-      const adapter = vi.fn((config: InternalAxiosRequestConfig) => new Promise(resolve => {
-        oldConfig = config
-        finishOld = resolve
-      }))
+      const adapter = vi.fn().mockResolvedValue({ status: 200, data: { code: 0, data: { id: 7 } },
+        headers: {}, config: {}, statusText: 'OK' })
       apiClient.defaults.adapter = adapter
-      const { getAuthSessionVersion, invalidateAuthSession } = await import('@/utils/authSessionVersion')
-      const oldSession = getAuthSessionVersion()
+      const { invalidateAuthSession } = await import('@/utils/authSessionVersion')
 
       const request = apiClient.get('/auth/me')
-      expect(adapter).toHaveBeenCalledOnce()
-      expect(adapter.mock.calls[0][0].headers.get('Authorization')).toBe('Bearer account-a-token')
       invalidateAuthSession()
       localStorage.setItem('auth_token', 'account-b-token')
 
-      finishOld({ status: 200, data: { code: 0, data: { id: 7 } },
-        headers: {}, config: oldConfig, statusText: 'OK' })
-      await expect(request).resolves.toMatchObject({ data: { id: 7 } })
-      await expect(apiClient.request({ url: '/auth/me', method: 'get',
-        _authSessionVersion: oldSession } as InternalAxiosRequestConfig))
-        .rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
-      expect(adapter).toHaveBeenCalledOnce()
+      await expect(request).rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      expect(adapter).not.toHaveBeenCalled()
       expect(localStorage.getItem('auth_token')).toBe('account-b-token')
     })
 
@@ -614,7 +602,7 @@ describe('API Client', () => {
       expect(localStorage.getItem('auth_token')).toBe('new-admin-token')
     })
 
-    it('does not send a retried acceptance after its compliance session resets', async () => {
+    it('does not send an old acceptance if reset precedes the request interceptor', async () => {
       localStorage.setItem('auth_token', 'old-admin-token')
       const adapter = vi.fn().mockResolvedValue({
         status: 200,
@@ -626,16 +614,14 @@ describe('API Client', () => {
       apiClient.defaults.adapter = adapter
       const { createPinia, setActivePinia } = await import('pinia')
       const { useAdminComplianceStore } = await import('@/stores/adminCompliance')
-      const { getAdminComplianceSessionVersion } = await import('@/utils/adminComplianceSession')
+      const { adminComplianceAPI } = await import('@/api/admin/compliance')
       setActivePinia(createPinia())
 
-      const oldVersion = getAdminComplianceSessionVersion()
+      const request = adminComplianceAPI.accept({ phrase: 'old phrase', language: 'en' })
       useAdminComplianceStore().reset()
       localStorage.setItem('auth_token', 'new-admin-token')
 
-      await expect(apiClient.post('/admin/compliance/accept', { phrase: 'old phrase', language: 'en' },
-        { _complianceSessionVersion: oldVersion } as InternalAxiosRequestConfig))
-        .rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      await expect(request).rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
       expect(adapter).not.toHaveBeenCalled()
     })
 
@@ -788,7 +774,7 @@ describe('API Client', () => {
       expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'admin-compliance-required' }))
     })
 
-    it('blocks a retried announcement read after its store resets', async () => {
+    it('blocks an old announcement read before its request interceptor runs', async () => {
       localStorage.setItem('auth_token', 'account-a-token')
       const adapter = vi.fn().mockResolvedValue({
         status: 200, data: { code: 0, data: { message: 'ok' } },
@@ -798,14 +784,12 @@ describe('API Client', () => {
       const { createPinia, setActivePinia } = await import('pinia')
       const { useAnnouncementStore } = await import('@/stores/announcements')
       const { default: announcementsAPI } = await import('@/api/announcements')
-      const { getAnnouncementReadSessionVersion } = await import('@/utils/announcementReadSession')
       setActivePinia(createPinia())
 
-      const oldVersion = getAnnouncementReadSessionVersion()
+      const request = announcementsAPI.markRead(17)
       useAnnouncementStore().reset()
       localStorage.setItem('auth_token', 'account-b-token')
-      await expect(announcementsAPI.markRead(17, oldVersion))
-        .rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      await expect(request).rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
       expect(adapter).not.toHaveBeenCalled()
     })
 

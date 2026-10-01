@@ -82,16 +82,12 @@ const getUserTimezone = (): string => {
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const sessionRequest = config as SessionRequestConfig
-    // A retry must retain the session that sent the original request.
-    if (sessionRequest._authSessionVersion === undefined) {
-      sessionRequest._authSessionVersion = getAuthSessionVersion()
-    }
     if (sessionRequest._authSessionVersion !== getAuthSessionVersion()) {
-      throw {
+      return Promise.reject({
         status: 401,
         code: 'AUTH_SESSION_CHANGED',
         message: 'Authentication session changed before sending the request.'
-      }
+      })
     }
     // Keep the original version on retries so an old acceptance cannot use a new session's token.
     if (sessionRequest._complianceSessionVersion === undefined) {
@@ -101,21 +97,21 @@ apiClient.interceptors.request.use(
       /^\/admin\/compliance(?:\/|$|\?)/.test(String(config.url || '')) &&
       sessionRequest._complianceSessionVersion !== getAdminComplianceSessionVersion()
     ) {
-      throw {
+      return Promise.reject({
         status: 401,
         code: 'AUTH_SESSION_CHANGED',
         message: 'Authentication session changed before sending the compliance request.'
-      }
+      })
     }
     if (
       isAnnouncementReadRequest(String(config.url || '')) &&
       sessionRequest._announcementReadSessionVersion !== getAnnouncementReadSessionVersion()
     ) {
-      throw {
+      return Promise.reject({
         status: 401,
         code: 'AUTH_SESSION_CHANGED',
         message: 'Authentication session changed before sending the announcement read request.'
-      }
+      })
     }
     // Attach token from localStorage
     const token = localStorage.getItem('auth_token')
@@ -141,7 +137,19 @@ apiClient.interceptors.request.use(
   (error) => {
     return Promise.reject(error)
   },
-  { synchronous: true }
+  {
+    // Axios runs runWhen synchronously while assembling its asynchronous interceptor chain.
+    // Capture the caller's session now, so a session switch before the interceptor runs
+    // rejects the old request without sending it with the new account's token. Retries
+    // keep their original version.
+    runWhen: (config) => {
+      const sessionRequest = config as SessionRequestConfig
+      if (sessionRequest._authSessionVersion === undefined) {
+        sessionRequest._authSessionVersion = getAuthSessionVersion()
+      }
+      return true
+    }
+  }
 )
 
 // ==================== Response Interceptor ====================
