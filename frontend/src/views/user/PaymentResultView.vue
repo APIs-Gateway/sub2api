@@ -57,7 +57,7 @@
             </div>
             <div v-if="hasAmountFields(order) && order.amount !== order.pay_amount" class="flex justify-between">
               <span class="text-gray-600 dark:text-gray-400">{{ t('payment.orders.creditedAmount') }}</span>
-              <span class="num-secondary text-gray-900 dark:text-white">{{ order.order_type === 'balance' ? formatUsdAmount(order.amount) : formatGatewayAmount(order.amount) }}</span>
+              <span class="num-secondary text-gray-900 dark:text-white">{{ order.order_type === 'balance' ? formatWallet(order.amount) : formatGatewayAmount(order.amount) }}</span>
             </div>
             <div v-if="hasPaymentType(order)" class="flex justify-between">
               <span class="text-gray-600 dark:text-gray-400">{{ t('payment.orders.paymentMethod') }}</span>
@@ -112,11 +112,12 @@ import { paymentAPI } from '@/api/payment'
 import type { PublicOrderVerifyResult } from '@/api/payment'
 import type { OrderStatus, PaymentOrder } from '@/types/payment'
 import { formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
-import { formatUsdAmount } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import { normalizePaymentMethodForDisplay, paymentMethodI18nKey } from './paymentUx'
 
 const i18n = useI18n()
 const { t } = i18n
+const { formatWallet } = useCurrencyDisplay()
 const route = useRoute()
 const router = useRouter()
 const paymentStore = usePaymentStore()

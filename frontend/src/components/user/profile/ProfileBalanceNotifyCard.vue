@@ -26,14 +26,14 @@
             <span class="text-xs text-gray-400 ml-2">{{ t('profile.balanceNotify.thresholdHint') }}</span>
           </label>
           <div class="flex items-center gap-2">
-            <span class="text-gray-500">$</span>
+            <span class="text-gray-500">{{ currencySymbol }}</span>
             <input
-              v-model.number="customThreshold"
+              v-model.number="thresholdModel"
               type="number"
               min="0"
-              step="0.01"
+              :step="isFiat ? 'any' : '0.01'"
               class="input flex-1"
-              :placeholder="systemDefaultThreshold > 0 ? `${t('profile.balanceNotify.systemDefault')} $${systemDefaultThreshold}` : t('profile.balanceNotify.thresholdPlaceholder')"
+              :placeholder="thresholdPlaceholder"
             />
             <button
               @click="handleThresholdUpdate"
@@ -162,6 +162,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import { userAPI } from '@/api'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import type { NotifyEmailEntry } from '@/types'
 
@@ -188,9 +189,33 @@ const props = defineProps<{
 const { t } = useI18n()
 const authStore = useAuthStore()
 const appStore = useAppStore()
+const { isFiat, rechargeMultiplier, formatFiat, formatWallet } = useCurrencyDisplay()
 
 const notifyEnabled = ref(props.enabled)
+// 阈值始终以余额额度保存和提交；人民币模式只在输入框里换算显示，没改动时原样提交，避免四舍五入往返。
 const customThreshold = ref<number | null>(props.threshold)
+
+const currencySymbol = computed(() => (isFiat.value ? formatFiat(0).replace(/[0-9.,\s-]/g, '') : '$'))
+const THRESHOLD_ROUNDING = 1e4
+const thresholdModel = computed<number | null>({
+  get() {
+    const value = customThreshold.value
+    if (typeof value !== 'number' || !Number.isFinite(value) || !isFiat.value) return value
+    return Math.round((value / rechargeMultiplier.value) * THRESHOLD_ROUNDING) / THRESHOLD_ROUNDING
+  },
+  set(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || !isFiat.value) {
+      customThreshold.value = value
+      return
+    }
+    customThreshold.value = Math.round(value * rechargeMultiplier.value * THRESHOLD_ROUNDING) / THRESHOLD_ROUNDING
+  }
+})
+const thresholdPlaceholder = computed(() =>
+  props.systemDefaultThreshold > 0
+    ? `${t('profile.balanceNotify.systemDefault')} ${formatWallet(props.systemDefaultThreshold)}`
+    : t('profile.balanceNotify.thresholdPlaceholder')
+)
 const emailEntries = ref<NotifyEmailEntry[]>([...props.extraEmails])
 const pendingEmails = ref<PendingEmail[]>([])
 const newEmail = ref('')

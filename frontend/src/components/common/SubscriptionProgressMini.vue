@@ -88,7 +88,7 @@
                     ></div>
                   </div>
                   <span class="num w-28 flex-shrink-0 text-right text-[10px] text-gray-700 dark:text-gray-300">
-                    {{ formatUsage(w.used, w.limit) }}
+                    {{ formatUsage(subscription, w.used, w.limit) }}
                   </span>
                 </div>
               </template>
@@ -117,9 +117,10 @@ import Icon from '@/components/icons/Icon.vue'
 import { useSubscriptionStore } from '@/stores'
 import type { UserSubscription } from '@/types'
 import { getExpirationDateRelation } from '@/utils/subscriptionQuota'
-import { formatUsdAmount } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 
 const { t } = useI18n()
+const { isFiat, formatSubscription } = useCurrencyDisplay()
 
 const subscriptionStore = useSubscriptionStore()
 
@@ -200,9 +201,14 @@ function getProgressWidth(used: number | undefined, limit: number | null | undef
   return `${percentage}%`
 }
 
-function formatUsage(used: number | undefined, limit: number | null | undefined): string {
-  const usedValue = formatUsdAmount(used || 0)
-  const limitValue = limit == null ? '$∞' : formatUsdAmount(limit)
+function formatUsage(
+  sub: UserSubscription,
+  used: number | undefined,
+  limit: number | null | undefined
+): string {
+  const usedValue = formatSubscription(used || 0, sub.fiat_per_credit)
+  const limitValue =
+    limit == null ? (isFiat.value ? '∞' : '$∞') : formatSubscription(limit, sub.fiat_per_credit)
   return `${usedValue}/${limitValue}`
 }
 

@@ -45,7 +45,7 @@
           </div>
           <div class="flex justify-between">
             <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.amount') }}</span>
-            <span class="num-secondary text-gray-900 dark:text-white">{{ paidOrder.order_type === 'balance' ? formatUsdAmount(paidOrder.amount) : formatCnyAmount(paidOrder.amount) }}</span>
+            <span class="num-secondary text-gray-900 dark:text-white">{{ paidOrder.order_type === 'balance' ? formatWallet(paidOrder.amount) : formatCnyAmount(paidOrder.amount) }}</span>
           </div>
           <div class="flex justify-between">
             <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</span>
@@ -75,7 +75,8 @@ import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { formatCnyAmount, formatUsdAmount } from '@/utils/numberFormat'
+import { formatCnyAmount } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import { usePaymentStore } from '@/stores/payment'
 import { useAppStore } from '@/stores'
 import { paymentAPI } from '@/api/payment'
@@ -102,6 +103,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const { formatWallet } = useCurrencyDisplay()
 const paymentStore = usePaymentStore()
 const appStore = useAppStore()
 

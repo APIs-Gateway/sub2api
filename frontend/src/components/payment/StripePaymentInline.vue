@@ -23,7 +23,7 @@
               </div>
               <div v-if="amount > 0" class="flex justify-between">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.amount') }}</span>
-                <span class="num-secondary text-gray-900 dark:text-white">{{ orderType === 'balance' ? formatUsdAmount(amount) : formatCnyAmount(amount) }}</span>
+                <span class="num-secondary text-gray-900 dark:text-white">{{ orderType === 'balance' ? formatWallet(amount) : formatCnyAmount(amount) }}</span>
               </div>
               <div class="flex justify-between">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</span>
@@ -74,7 +74,8 @@ import { getPaymentPopupFeatures } from '@/components/payment/providerConfig'
 import type { Stripe, StripeElements } from '@stripe/stripe-js'
 import Icon from '@/components/icons/Icon.vue'
 import NumText from '@/components/common/NumText.vue'
-import { formatCnyAmount, formatUsdAmount } from '@/utils/numberFormat'
+import { formatCnyAmount } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 
 // Stripe payment methods that open a popup (redirect or QR code)
 const POPUP_METHODS = new Set(['alipay', 'wechat_pay'])
@@ -91,6 +92,7 @@ const props = defineProps<{
 const emit = defineEmits<{ success: []; done: []; back: []; redirect: [orderId: number, payUrl: string] }>()
 
 const { t } = useI18n()
+const { formatWallet } = useCurrencyDisplay()
 const router = useRouter()
 const appStore = useAppStore()
 

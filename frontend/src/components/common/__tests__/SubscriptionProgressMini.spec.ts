@@ -2,6 +2,8 @@ import { enableAutoUnmount, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SubscriptionProgressMini from '../SubscriptionProgressMini.vue'
 const store = vi.hoisted(() => ({ activeSubscriptions: [] as unknown[], hasActiveSubscriptions: true, fetchActiveSubscriptions: vi.fn().mockResolvedValue(undefined) }))
+// 金额口径依赖 app store；未配置充值倍率时按美元展示（旧行为）。
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ cachedPublicSettings: null }) }))
 vi.mock('@/stores', () => ({ useSubscriptionStore: () => store }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 enableAutoUnmount(afterEach)

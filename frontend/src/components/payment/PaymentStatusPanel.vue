@@ -22,7 +22,7 @@
               </div>
               <div class="flex justify-between">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.amount') }}</span>
-                <span class="font-medium text-gray-900 dark:text-white">{{ paidOrder.order_type === 'balance' ? formatUsdAmount(paidOrder.amount) : formatGatewayAmount(paidOrder.amount) }}</span>
+                <span class="font-medium text-gray-900 dark:text-white">{{ paidOrder.order_type === 'balance' ? formatWallet(paidOrder.amount) : formatGatewayAmount(paidOrder.amount) }}</span>
               </div>
               <div class="flex justify-between">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</span>
@@ -137,7 +137,7 @@ import alipayIcon from '@/assets/icons/alipay.svg'
 import wxpayIcon from '@/assets/icons/wxpay.svg'
 import { createAlipayDeepLinkLauncher, type AlipayDeepLinkLauncher } from './alipayDeepLink'
 import paymentIcon from '@/assets/icons/payment.svg'
-import { formatUsdAmount } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 
 const props = defineProps<{
   orderId: number
@@ -156,6 +156,7 @@ const emit = defineEmits<{ done: []; success: []; settled: [outcome: PaymentOutc
 
 const i18n = useI18n()
 const { t } = i18n
+const { formatWallet } = useCurrencyDisplay()
 const paymentStore = usePaymentStore()
 const appStore = useAppStore()
 

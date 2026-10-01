@@ -37,7 +37,7 @@
             <div class="card p-5">
               <p class="text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('payment.rechargeAccount') }}</p>
               <p class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ user?.username || '' }}</p>
-              <p class="mt-0.5 text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('payment.currentBalance') }}: <span class="num-secondary text-gray-900 dark:text-white">{{ formatMoneyNumber(user?.balance) }}</span></p>
+              <p class="mt-0.5 text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('payment.currentBalance') }}: <NumText tier="secondary" class="text-gray-900 dark:text-white" :text="formatWallet(user?.balance)" /></p>
             </div>
             <div v-if="enabledMethods.length === 0" class="card py-16 text-center">
               <p class="text-gray-500 dark:text-gray-400">{{ t('payment.notAvailable') }}</p>
@@ -52,7 +52,7 @@
                 :currency-label="selectedCurrency"
                 :prefix="selectedCurrencySymbol"
               />
-              <p v-if="balanceRechargeMultiplier !== 1" class="mt-3 text-xs font-medium text-gray-600 dark:text-gray-400">
+              <p v-if="balanceRechargeMultiplier !== 1 && !isFiat" class="mt-3 text-xs font-medium text-gray-600 dark:text-gray-400">
                 {{ t('payment.rechargeMultiplier', { currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
               </p>
               <p v-if="amountError" class="mt-2 text-xs text-primary-700 dark:text-primary-400">{{ amountError }}</p>
@@ -80,10 +80,10 @@
                   <NumText tier="secondary" :text="formatSelectedPaymentAmount(totalAmount)" />
                 </div>
                 <div v-if="balanceRechargeMultiplier !== 1" class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': feeRate <= 0 }">
-                  <span class="text-gray-600 dark:text-gray-400">{{ t('payment.creditedBalanceWithCurrency', { currency: 'USD' }) }}</span>
-                  <span class="num-secondary text-gray-900 dark:text-white">{{ formatUSDValue(creditedAmount) }}</span>
+                  <span class="text-gray-600 dark:text-gray-400">{{ isFiat ? t('payment.creditedBalance') : t('payment.creditedBalanceWithCurrency', { currency: 'USD' }) }}</span>
+                  <NumText tier="secondary" class="text-gray-900 dark:text-white" :text="isFiat ? formatWallet(creditedAmount) : formatUSDValue(creditedAmount)" />
                 </div>
-                <p v-if="balanceRechargeMultiplier !== 1" class="border-t border-gray-200 pt-2 text-xs text-gray-600 dark:border-dark-600 dark:text-gray-400">
+                <p v-if="balanceRechargeMultiplier !== 1 && !isFiat" class="border-t border-gray-200 pt-2 text-xs text-gray-600 dark:border-dark-600 dark:text-gray-400">
                   {{ t('payment.rechargeRatePreview', { currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
                 </p>
               </div>
@@ -114,13 +114,13 @@
                   </span>
                 </div>
                 <div class="mt-3 grid grid-cols-2 gap-3">
-                  <div>
+                  <div v-if="!isFiat">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ lifecycleOrder.intent === 'renew' ? t('userSubscriptions.lifecycle.renewValue') : t('userSubscriptions.lifecycle.changeDiffValue') }}</span>
                     <div class="num-secondary text-base text-gray-900 dark:text-white">{{ formatUSDValue(lifecycleOrder.amount) }}</div>
                   </div>
-                  <div>
+                  <div v-if="!isFiat || lifecycleFiatPerCredit">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.dailyAmount') }}</span>
-                    <div class="num-secondary text-base text-gray-900 dark:text-white">{{ formatUSDValue(lifecycleOrder.dailyAmountUsd) }}</div>
+                    <div class="num-secondary text-base text-gray-900 dark:text-white">{{ isFiat ? formatSubscription(lifecycleOrder.dailyAmountUsd, lifecycleFiatPerCredit) : formatUSDValue(lifecycleOrder.dailyAmountUsd) }}</div>
                   </div>
                   <div>
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.validity') }}</span>
@@ -190,25 +190,34 @@
                 </p>
                 <!-- Rate + Limits grid -->
                 <div class="mt-3 grid grid-cols-2 gap-3">
-                  <div>
+                  <div v-if="!isFiat">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.rate') }}</span>
                     <div class="flex items-baseline">
                       <span class="num-secondary text-lg text-gray-900 dark:text-white">×{{ selectedPlan.rate_multiplier ?? 1 }}</span>
                     </div>
                   </div>
-                  <div v-if="selectedPlan.daily_limit_usd != null">
+                  <div v-if="selectedPlan.daily_limit_usd != null && (!isFiat || selectedPlanFiatPerCredit)">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.dailyLimit') }}</span>
-                    <div class="num-secondary text-base text-gray-900 dark:text-white">{{ formatUSDValue(selectedPlan.daily_limit_usd) }}</div>
+                    <div class="flex items-baseline gap-1">
+                      <span class="num-secondary text-base text-gray-900 dark:text-white">{{ formatPlanQuota(selectedPlan.daily_limit_usd) }}</span>
+                      <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+                    </div>
                   </div>
-                  <div v-if="selectedPlan.weekly_limit_usd != null">
+                  <div v-if="selectedPlan.weekly_limit_usd != null && (!isFiat || selectedPlanFiatPerCredit)">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.weeklyLimit') }}</span>
-                    <div class="num-secondary text-base text-gray-900 dark:text-white">{{ formatUSDValue(selectedPlan.weekly_limit_usd) }}</div>
+                    <div class="flex items-baseline gap-1">
+                      <span class="num-secondary text-base text-gray-900 dark:text-white">{{ formatPlanQuota(selectedPlan.weekly_limit_usd) }}</span>
+                      <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+                    </div>
                   </div>
-                  <div v-if="selectedPlan.monthly_limit_usd != null">
+                  <div v-if="selectedPlan.monthly_limit_usd != null && (!isFiat || selectedPlanFiatPerCredit)">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.monthlyLimit') }}</span>
-                    <div class="num-secondary text-base text-gray-900 dark:text-white">{{ formatUSDValue(selectedPlan.monthly_limit_usd) }}</div>
+                    <div class="flex items-baseline gap-1">
+                      <span class="num-secondary text-base text-gray-900 dark:text-white">{{ formatPlanQuota(selectedPlan.monthly_limit_usd) }}</span>
+                      <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+                    </div>
                   </div>
-                  <div>
+                  <div v-if="!isFiat">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.subscriptionValueWithCurrency', { currency: 'USD' }) }}</span>
                     <div class="num-secondary text-base text-gray-900 dark:text-white">{{ formatUSDValue(selectedPlan.price) }}</div>
                   </div>
@@ -362,6 +371,8 @@ import { platformBadgeClass, platformLabel } from '@/utils/platformColors'
 import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
 import NumText from '@/components/common/NumText.vue'
 import { formatMoneyNumber } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { planFiatPerCredit } from '@/utils/subscriptionFiat'
 import BillingRulesCard from '@/components/common/BillingRulesCard.vue'
 import PaymentStatusPanel from '@/components/payment/PaymentStatusPanel.vue'
 import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency, paymentCurrencySymbol } from '@/components/payment/currency'
@@ -378,6 +389,7 @@ const authStore = useAuthStore()
 const paymentStore = usePaymentStore()
 const subscriptionStore = useSubscriptionStore()
 const appStore = useAppStore()
+const { isFiat, formatWallet, formatSubscription } = useCurrencyDisplay()
 
 const user = computed(() => authStore.user)
 const activeSubscriptions = computed(() => subscriptionStore.activeSubscriptions)
@@ -670,6 +682,12 @@ function formatUSDValue(value: number): string {
   return `USD ${formatMoneyNumber(value)}`
 }
 
+/** 固定套餐的额度（日/周/月限额）：人民币模式按这个套餐的实付价折算。 */
+function formatPlanQuota(credits: number): string {
+  if (!isFiat.value) return formatUSDValue(credits)
+  return formatSubscription(credits, selectedPlanFiatPerCredit.value)
+}
+
 function subscriptionValueToPaymentAmount(value: number): number {
   if (value <= 0) return 0
   return ceilPaymentAmount(value / subscriptionPaymentMultiplier.value, selectedCurrency.value)
@@ -761,6 +779,9 @@ const subFeeAmount = computed(() => {
 const selectedPlanPaymentAmount = computed(() =>
   subscriptionValueToPaymentAmount(selectedPlan.value?.price ?? 0)
 )
+const selectedPlanFiatPerCredit = computed(() =>
+  selectedPlan.value ? planFiatPerCredit(selectedPlan.value, selectedPlanPaymentAmount.value) : null
+)
 const selectedPlanOriginalPaymentAmount = computed(() =>
   subscriptionValueToPaymentAmount(selectedPlan.value?.original_price ?? 0)
 )
@@ -790,7 +811,20 @@ const lifecycleOrder = ref<null | {
   dailyAmountUsd: number
   validityDays: number
   amount: number // 预估实收（续费=价，转套餐=差价）；后端权威重算。
+  unitPrice?: number // 新卡单价 u(D)，仅用于人民币模式下把每日额度写成金额。
 }>(null)
+
+// 这笔订单的新卡 1 个额度值多少人民币；续费缺单价时沿用当前生效卡，转套餐缺单价则不显示每日额度。
+const lifecycleFiatPerCredit = computed(() => {
+  const order = lifecycleOrder.value
+  if (!order) return null
+  if (typeof order.unitPrice === 'number' && order.unitPrice > 0) {
+    return order.unitPrice / subscriptionPaymentMultiplier.value
+  }
+  if (order.intent !== 'renew') return null
+  const card = activeSubscriptions.value.find((sub) => sub.status === 'active')
+  return typeof card?.fiat_per_credit === 'number' && card.fiat_per_credit > 0 ? card.fiat_per_credit : null
+})
 
 const lifecycleFeeAmount = computed(() => {
   const amt = lifecyclePaymentAmount.value
@@ -1347,7 +1381,14 @@ onMounted(async () => {
       const tt = Number(route.query.validity_days)
       const charge = Number(route.query.charge)
       if (d > 0 && tt > 0 && Number.isFinite(charge) && charge > 0) {
-        lifecycleOrder.value = { intent: lifecycleIntent, dailyAmountUsd: d, validityDays: tt, amount: Math.round((charge + Number.EPSILON) * 100) / 100 }
+        const unitPrice = Number(route.query.unit_price)
+        lifecycleOrder.value = {
+          intent: lifecycleIntent,
+          dailyAmountUsd: d,
+          validityDays: tt,
+          amount: Math.round((charge + Number.EPSILON) * 100) / 100,
+          unitPrice: Number.isFinite(unitPrice) && unitPrice > 0 ? unitPrice : undefined,
+        }
         // 清掉 query，避免刷新/返回重复进入结账。
         await router.replace({ path: route.path, query: { tab: 'subscription' } })
       }

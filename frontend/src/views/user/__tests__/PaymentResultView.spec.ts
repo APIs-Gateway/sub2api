@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 
 const routeState = vi.hoisted(() => ({
@@ -54,6 +55,7 @@ vi.mock('@/api/payment', () => ({
 import PaymentResultView from '../PaymentResultView.vue'
 import { PAYMENT_RECOVERY_STORAGE_KEY } from '@/components/payment/paymentFlow'
 import { formatPaymentAmount } from '@/components/payment/currency'
+import { useAppStore } from '@/stores/app'
 
 const orderFactory = (status: string) => ({
   id: 42,
@@ -634,6 +636,23 @@ describe('PaymentResultView', () => {
     expect(wrapper.text()).toContain(formatPaymentAmount(103, 'HKD'))
   })
 
+  it('充值订单的到账金额按人民币展示，和实付一致', async () => {
+    // 倍率 13：实付 ¥100 到账 1300 个额度，展示时折回 ¥100。
+    useAppStore().cachedPublicSettings = { balance_recharge_multiplier: 13 } as never
+    routeState.query = { resume_token: 'resume-fiat', order_id: '42', status: 'success' }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: { ...orderFactory('COMPLETED'), amount: 1300, pay_amount: 100, fee_rate: 0 },
+    })
+
+    const wrapper = mount(PaymentResultView, { global: { stubs: { OrderStatusBadge: true } } })
+    await flushPromises()
+    const text = wrapper.text().replace(/\s+/g, '')
+
+    expect(text).toContain('payment.orders.creditedAmount¥100.00')
+    expect(text).not.toContain('$')
+    expect(text).not.toContain('1,300')
+  })
+
   it('normalizes aliased payment methods before rendering the label', async () => {
     routeState.query = {
       resume_token: 'resume-88',
@@ -658,4 +677,9 @@ describe('PaymentResultView', () => {
     expect(wrapper.text()).toContain('payment.methods.alipay')
     expect(wrapper.text()).not.toContain('payment.methods.alipay_direct')
   })
+})
+
+// 组件里用到的金额口径依赖 app store；未配置充值倍率时按美元展示（旧行为）。
+beforeEach(() => {
+  setActivePinia(createPinia())
 })

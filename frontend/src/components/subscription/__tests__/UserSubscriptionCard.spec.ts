@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { shallowMount } from '@vue/test-utils'
 import UserSubscriptionCard from '../UserSubscriptionCard.vue'
 import type { UserSubscription } from '@/types'
@@ -96,6 +97,59 @@ describe('UserSubscriptionCard lifecycle checkout', () => {
   })
 })
 
+describe('UserSubscriptionCard lifecycle checkout unit price', () => {
+  beforeEach(() => {
+    routerPush.mockReset()
+  })
+
+  async function mountAndOpen() {
+    const wrapper = shallowMount(UserSubscriptionCard, {
+      props: { subscription: activeSubscriptionFixture() },
+      global: { stubs: { ConfirmDialog: true } },
+    })
+    const changeButton = wrapper.findAll('button').find(button => button.text() === 'userSubscriptions.lifecycle.changeTitle')
+    await changeButton!.trigger('click')
+    return wrapper
+  }
+
+  it('带了报价单价就写进结账 query，供结账页把每日额度写成人民币', async () => {
+    const wrapper = await mountAndOpen()
+    wrapper.findComponent({ name: 'SubscriptionLifecycleDialog' }).vm.$emit('purchase', {
+      intent: 'renew',
+      dailyAmountUsd: 90,
+      validityDays: 30,
+      charge: 121.5,
+      unitPrice: 0.045,
+    })
+
+    expect(routerPush).toHaveBeenCalledWith({
+      path: '/purchase',
+      query: {
+        tab: 'subscription',
+        intent: 'renew',
+        daily_amount_usd: '90',
+        validity_days: '30',
+        charge: '121.50',
+        unit_price: '0.045',
+      },
+    })
+  })
+
+  it('单价缺失或为 0 时不带 unit_price', async () => {
+    const wrapper = await mountAndOpen()
+    wrapper.findComponent({ name: 'SubscriptionLifecycleDialog' }).vm.$emit('purchase', {
+      intent: 'renew',
+      dailyAmountUsd: 90,
+      validityDays: 30,
+      charge: 121.5,
+      unitPrice: 0,
+    })
+
+    const query = routerPush.mock.calls[0][0].query
+    expect(query).not.toHaveProperty('unit_price')
+  })
+})
+
 describe('UserSubscriptionCard expiry labels', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
@@ -155,4 +209,9 @@ describe('UserSubscriptionCard expiry labels', () => {
     expect(text).not.toContain('common.today')
     expect(text).not.toContain('common.tomorrow')
   })
+})
+
+// 组件里用到的金额口径依赖 app store；未配置充值倍率时按美元展示（旧行为）。
+beforeEach(() => {
+  setActivePinia(createPinia())
 })
