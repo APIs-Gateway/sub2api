@@ -17,7 +17,7 @@
 - provider 前缀：去掉 `provider/` 前缀（`lastOpenAIModelSegment`）后再做上面两条比对，`openai/gpt-5.6-sol` 与 `gpt-5.6-sol` 互相回显视为一致；前缀不掩盖真正的换模（`openai/gpt-5.6-sol` vs `gpt-6-sol`、`gpt-5.6-sol` vs `anthropic/gpt-5.6-sol-mini` 仍拦截）。
 - codex 别名，只认升级方向：`A` 是精确别名表（`codexModelMap`）里的键且 `B` 正是它的目标才放行（`gpt-5.3 → gpt-5.3-codex`、`gpt-5.1 → gpt-5.4`、`gpt-5.4-high → gpt-5.4`）；反向不放行，`A = gpt-5.4` 收到 `gpt-5-mini` / `gpt-5` / `gpt-5.4` 收到别的降级仍拦截。
 - 同族 reasoning / 日期后缀剥离：任一方去掉已知后缀（`codexVersionModelPrefixes` + `isKnownCodexModelSuffix`，即 `none/minimal/low/medium/high/xhigh` 与 `YYYY-MM-DD`）后等于另一方放行（`gpt-5.4 ↔ gpt-5.4-high`）。不用任何 `Contains` 启发式，`gpt-5.6-sol-mini`、`gpt-5.8 → gpt-5.4` 都不会被折叠放行。
-- Codex 自动路由放行（只看请求侧）：`A`（去掉 provider 前缀后）为 `codex-auto-review` 时一律视为一致——用户让平台自己选模型，上游回显任何模型都正常，不拦截、不打标、照常计费（lly 2026-09-14 拍板）。`B` 为 `codex-auto-review` 而 `A` 是具体模型时**不放行**：那是中转把请求改成了自动路由，按偷换处理；客户端可见的 `model` 仍按「客户端可见 model 对齐」改回请求名。集合见 `upstreamAutoRoutedModels`。
+- Codex 自动路由放行（只看请求侧）：`A`（去掉 provider 前缀后）为 `codex-auto-review` 时一律视为一致——用户让平台自己选模型，上游回显任何模型都正常，不拦截、不打标、照常计费（产品决策，2026-09-14）。`B` 为 `codex-auto-review` 而 `A` 是具体模型时**不放行**：那是中转把请求改成了自动路由，按偷换处理；客户端可见的 `model` 仍按「客户端可见 model 对齐」改回请求名。集合见 `upstreamAutoRoutedModels`。
 - grok 只记录不拦截：`A` 以 `grok` 开头时不一致只打标（`Blocked=false`）、照常透传、照常计费（见「计费口径」）。xAI 用带日期的模型名（如 `grok-4.3-0709`），上述豁免覆盖不了，真实回显尚未验证，先观察。
 
 ## 拦截行为
@@ -50,15 +50,15 @@
 ## 运维口径：如何判断某个上游是否掺假
 
 - 只能用线上 `usage_logs` / ops 日志做被动统计：同一凭据、足够长窗口内的不一致比例（后台用量页「仅不一致」筛选，或 `upstream_model_mismatch = true` 按 `account_id` 聚合）。
-- 不能靠发探测请求：一次探测只是账号池里某个节点的样本。同一凭据一次探测 24/24 全不一致、同一小时线上 127 次全部正常，两者曾同时出现过——探测抽到了池里的坏节点。这也是池模式账号先同账号重试而不是立刻切号的依据。
+- 不能靠发探测请求：一次探测只是账号池里某个节点的样本。同一凭据的一次探测全部不一致、同一小时的线上请求却全部正常，两者曾同时出现过——探测抽到了池里的坏节点。这也是池模式账号先同账号重试而不是立刻切号的依据。
 - 只有一家的全部凭据在足够长的窗口里持续不一致，才谈得上平台级重定向，再考虑对该上游做账号级处置。
-- 向 a6（New API）追责时注意其 request id 的时间戳前缀是 UTC：去对方后台按时间搜要把北京时间减 8 小时。
+- 向 New API 系中转追责时注意其 request id 的时间戳前缀是 UTC：去对方后台按时间搜要把北京时间减 8 小时。
 - New API 系中转的 request id 常只在错误体里（`error.request_id` / 顶层 `request_id` / `error.message` 末尾的 `request_id: …`），响应头里没有；`appendOpsUpstreamError` 已兜底从错误体提取进 `upstream_errors[].upstream_request_id`（头里有值不覆盖）。
 - 不一致相关的 `usage_logs` 行（审计行与观察模式行）必写 `upstream_model`（A），即使与 `model` 相等；普通行仍只在两者不同时写。
 
 ## 上游 request id 与上游头指纹
 
-- 上游 request id 头名兼容：第三方中转不一定发 `x-request-id`（one-api / new-api 系如 a6api、rivoapi 发 `x-oneapi-request-id`，rix-api 系如 platform.ephone.chat 发 `x-rixapi-request-id`，Bedrock 发 `x-amzn-requestid`，过 Cloudflare 的有 `cf-ray`）。service 层统一用 `upstreamRequestIDFromHeader` 按 `x-request-id` → `x-oneapi-request-id` → `x-rixapi-request-id` → `x-amzn-requestid` → `cf-ray` 的顺序取第一个非空值，写入 `ops_error_logs.upstream_errors[].upstream_request_id`、`OpenAIForwardResult.RequestID` 等；只作用于读上游响应头，回写给客户端的 `x-request-id` 响应头只回显上游同名头（不会把 cf-ray / oneapi id 顶替进去），客户端请求头也不变。取到的值会进入 `OpenAIForwardResult.RequestID` / `ForwardResult.RequestID`，进而在 ctx 没有 request id 时（或 WS 模式）写入 `usage_logs.request_id`——对只发 cf-ray 的上游，该列从 `generated:<uuid>` 变为 cf-ray 形态（每请求唯一，不撞唯一索引）。
+- 上游 request id 头名兼容：第三方中转不一定发 `x-request-id`（one-api / new-api 系中转发 `x-oneapi-request-id`，rix-api 系中转发 `x-rixapi-request-id`，Bedrock 发 `x-amzn-requestid`，过 Cloudflare 的有 `cf-ray`）。service 层统一用 `upstreamRequestIDFromHeader` 按 `x-request-id` → `x-oneapi-request-id` → `x-rixapi-request-id` → `x-amzn-requestid` → `cf-ray` 的顺序取第一个非空值，写入 `ops_error_logs.upstream_errors[].upstream_request_id`、`OpenAIForwardResult.RequestID` 等；只作用于读上游响应头，回写给客户端的 `x-request-id` 响应头只回显上游同名头（不会把 cf-ray / oneapi id 顶替进去），客户端请求头也不变。取到的值会进入 `OpenAIForwardResult.RequestID` / `ForwardResult.RequestID`，进而在 ctx 没有 request id 时（或 WS 模式）写入 `usage_logs.request_id`——对只发 cf-ray 的上游，该列从 `generated:<uuid>` 变为 cf-ray 形态（每请求唯一，不撞唯一索引）。
 - 上游头指纹：模型不一致的 ops 事件带 `upstream_headers`（白名单 `server`、`x-new-api-version`、`cf-ray`、`x-oneapi-request-id`、`x-rixapi-request-id`、`x-request-id`、`x-amzn-requestid`、`via`；只取非空，值截到 128 字节；WS 路径没有 HTTP 响应头，不带该字段），用于识别中转实现与向厂商追责。不含 cookie / 凭证类头。
 
 ## 开关
@@ -67,7 +67,7 @@
 
 开关只有配置文件 / 环境变量两种来源，没有后台设置项，不做热加载：改完必须重启容器（`docker compose up -d` 重建或 `docker restart`）才生效。
 
-`gateway.upstream_model_mismatch_observe_account_ids`（`[]int64`，默认空）：账号级观察名单。名单内账号命中不一致时行为与全局观察模式完全一致（打标、写 `upstream_response_model`、不拦截、照常计费、不记 ops upstream error 事件），名单外账号不受影响仍拦截；`AccountID = 0`（无账号）永不豁免。用途是强制单账号路由（`openai_forced_account_routes`）的专线用户：拦截后切号无处可切，客户端直接收到 502，比不拦更糟——例如用户 513 的专线账号 3214（platform.ephone.chat）会把 `gpt-5.6-terra` 回显成 `gpt-5.6-terra-DataZone`。同样只有配置文件 / 环境变量来源、不热加载。
+`gateway.upstream_model_mismatch_observe_account_ids`（`[]int64`，默认空）：账号级观察名单。名单内账号命中不一致时行为与全局观察模式完全一致（打标、写 `upstream_response_model`、不拦截、照常计费、不记 ops upstream error 事件），名单外账号不受影响仍拦截；`AccountID = 0`（无账号）永不豁免。用途是强制单账号路由（`openai_forced_account_routes`）的专线用户：拦截后切号无处可切，客户端直接收到 502，比不拦更糟——例如某条专线账号的上游会把 `gpt-5.6-terra` 回显成 `gpt-5.6-terra-DataZone`（带区域后缀的变体）。具体是哪个用户、哪个账号、哪家上游，见私有运维仓。同样只有配置文件 / 环境变量来源、不热加载。
 
 ## 已知边界
 

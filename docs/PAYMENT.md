@@ -161,7 +161,7 @@ Crypto Pay reuses the existing recharge/subscription order flow: users select an
 
 | Parameter | Description | Required |
 |-----------|-------------|----------|
-| **BEpusdt Internal URL** | URL used by the Sub2API server to reach BEpusdt, for example `http://127.0.0.1:18090` | Yes |
+| **BEpusdt Internal URL** | URL used by the Sub2API server to reach BEpusdt, for example `http://127.0.0.1:<PORT>` | Yes |
 | **BEpusdt Public URL** | HTTPS checkout URL users open, for example `https://pay.example.com` | Yes |
 | **Sub2API Callback URL** | Public Sub2API URL that receives BEpusdt callbacks, for example `https://codex.example.com` | Yes |
 | **BEpusdt Host** | Set when the reverse proxy routes by Host; normally the payment domain | No |

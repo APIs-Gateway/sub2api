@@ -45,7 +45,7 @@ func IsUpstreamModelMismatchErrorBody(body []byte) bool {
 }
 
 // upstreamModelMismatchMessage 只用于内部记录（ops 事件 / 日志），会再拼上 sent=… got=…。
-// upstreamAutoRoutedModels：Codex 平台的自动路由模型名（lly 2026-09-14 拍板）。
+// upstreamAutoRoutedModels：Codex 平台的自动路由模型名（产品决策，2026-09-14）。
 // 只豁免请求侧：用户请求 codex-auto-review 就是让平台自己选模型，上游回显任何模型都不是偷换，
 // 不拦截、不打标、照常计费。响应侧不豁免：用户请求 luna/sol 却收到 codex-auto-review，
 // 是中转把请求改成了自动路由，按偷换处理。客户端可见的 model 仍按对齐规则改回请求名。

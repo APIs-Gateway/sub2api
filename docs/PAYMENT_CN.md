@@ -169,7 +169,7 @@ Sub2API 内置支付系统，支持用户自助充值，无需部署独立的支
 
 | 参数 | 说明 | 必填 |
 |------|------|------|
-| **BEpusdt 内部地址** | Sub2API 服务器访问 BEpusdt 的地址，例如 `http://127.0.0.1:18090` | 是 |
+| **BEpusdt 内部地址** | Sub2API 服务器访问 BEpusdt 的地址，例如 `http://127.0.0.1:<PORT>` | 是 |
 | **BEpusdt 公网地址** | 用户打开收银台的 HTTPS 地址，例如 `https://pay.example.com` | 是 |
 | **Sub2API 回调地址** | 接收 BEpusdt 回调的 Sub2API 公网地址，例如 `https://codex.example.com` | 是 |
 | **BEpusdt Host** | 反向代理按 Host 路由时填写；通常是支付域名 | 否 |
