@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/url"
@@ -27,7 +28,8 @@ const (
 	AuditAuthKindAdminToken   = "admin_token"
 	AuditAuthKindLegacyAPIKey = "legacy_api_key"
 
-	auditRequestBodyMaxBytes     = 16 * 1024
+	// auditRequestBodyMaxBytes caps the redacted request body stored per row.
+	auditRequestBodyMaxBytes     = 8 * 1024
 	auditRedactMaxDepth          = 24
 	auditCredentialPrefixBytes   = 6
 	auditCredentialSuffixBytes   = 4
@@ -67,6 +69,28 @@ type AuditLog struct {
 	StatusCode       int            `json:"status_code"`
 	LatencyMs        int64          `json:"latency_ms"`
 	Extra            map[string]any `json:"extra,omitempty"`
+
+	// Admin audit fields (audit_logs migration 194). For admin requests
+	// LatencyMs is the request duration.
+
+	// ActorLabel says who acted: "jwt:<email>", "token:<name>#<id>" or
+	// "legacy_api_key".
+	ActorLabel string `json:"actor_label"`
+	// AuthKind is AuditAuthKindJWT, AuditAuthKindAdminToken or
+	// AuditAuthKindLegacyAPIKey.
+	AuthKind string `json:"auth_kind"`
+	// TokenID is the admin token that made the request, if any.
+	TokenID *int64 `json:"token_id,omitempty"`
+	// Route is the gin route template, e.g. /api/v1/admin/users/:id/balance.
+	Route string `json:"route"`
+	// TargetType and TargetID identify the object addressed by the route.
+	TargetType string `json:"target_type"`
+	TargetID   string `json:"target_id"`
+	// Reason is the caller supplied X-Reason.
+	Reason string `json:"reason"`
+	// Before and After are reserved for state snapshots and are currently left empty.
+	Before json.RawMessage `json:"before,omitempty"`
+	After  json.RawMessage `json:"after,omitempty"`
 }
 
 // AuditLogFilter contains bounded, parameterized list filters.
@@ -86,6 +110,18 @@ type AuditLogFilter struct {
 	Success *bool
 	// Query matches path, action, or actor email.
 	Query string
+
+	// AuthKind is AuditAuthKindJWT, AuditAuthKindAdminToken or AuditAuthKindLegacyAPIKey.
+	AuthKind string
+	// TokenID matches rows written for one admin token.
+	TokenID *int64
+	// RoutePrefix matches the beginning of the route template.
+	RoutePrefix string
+	TargetType  string
+	TargetID    string
+	// StatusMin and StatusMax bound status_code (inclusive).
+	StatusMin *int
+	StatusMax *int
 }
 
 type AuditLogList struct {
@@ -117,18 +153,15 @@ func normalizeAuditBodyKey(key string) string {
 	return builder.String()
 }
 
+// auditSensitiveBodyExactKeys are matched against the whole normalized key.
+// They are short words that would over-match as substrings ("code" is in
+// "barcode", "pin" in "spinner") but are credentials when they stand alone.
 var auditSensitiveBodyExactKeys = func() map[string]struct{} {
 	builtin := []string{
-		"authorization",
 		"code",
 		"codes",
-		"cookie",
 		"cvv",
-		"key",
 		"pin",
-		"x-api-key",
-		"proxy_key",
-		"custom_key",
 	}
 	sensitive := make(map[string]struct{}, len(builtin)+len(SensitiveCredentialKeys)+16)
 	for _, key := range builtin {
@@ -145,22 +178,29 @@ var auditSensitiveBodyExactKeys = func() map[string]struct{} {
 	return sensitive
 }()
 
+// auditSensitiveKeySubstrings are matched against the normalized key (lower
+// case, with "_", "-", "." and spaces removed), so "API-Key", "apiKey" and
+// "api_key" are all caught by "key" / "apikey". The list is deliberately
+// broad: over-redacting a harmless field costs a little detail in the audit
+// trail, under-redacting leaks a credential into it.
 var auditSensitiveKeySubstrings = []string{
-	"accesskey",
-	"apikey",
-	"credentialvalue",
 	"password",
 	"passwd",
-	"privatekey",
 	"secret",
-	"serviceaccount",
-	"sessionkey",
 	"token",
+	"apikey",
+	"key",
+	"credential",
+	"cookie",
+	"authorization",
+	"private",
+	"serviceaccount",
 	"totp",
 	"otp",
 }
 
-const auditRedactedPlaceholder = "***"
+// auditRedactedPlaceholder replaces the value of a sensitive key.
+const auditRedactedPlaceholder = "[REDACTED]"
 
 func isAuditSensitiveKey(key string) bool {
 	normalized := normalizeAuditBodyKey(key)
@@ -168,7 +208,7 @@ func isAuditSensitiveKey(key string) bool {
 		return true
 	}
 	for _, substring := range auditSensitiveKeySubstrings {
-		if strings.Contains(normalized, normalizeAuditBodyKey(substring)) {
+		if strings.Contains(normalized, substring) {
 			return true
 		}
 	}
@@ -176,7 +216,18 @@ func isAuditSensitiveKey(key string) bool {
 }
 
 // RedactAuditBody removes secrets before a request body is eligible for audit
-// storage. Non-JSON data is omitted because format-specific parsing is unsafe.
+// storage and caps the result at 8KB.
+//
+//   - JSON bodies (by content type, or sniffed when the content type is
+//     missing or generic, as with "curl -d") are parsed and every value whose
+//     key looks sensitive (password, secret, token, key, credential, cookie,
+//     authorization, private, ...) is replaced by "[REDACTED]", recursively
+//     through objects and arrays. A sensitive key hides its whole value, so
+//     account "credentials" objects never appear in the audit trail.
+//   - Anything else (multipart, form, binary) is not parsed: only its size
+//     and content type are recorded.
+//
+// Numbers are preserved verbatim, not round-tripped through float64.
 func RedactAuditBody(raw []byte, contentType string) string {
 	if len(raw) == 0 {
 		return ""
@@ -185,19 +236,37 @@ func RedactAuditBody(raw []byte, contentType string) string {
 		return "<body omitted: exceeds " + strconv.Itoa(AuditRequestBodyCaptureLimit) + " bytes>"
 	}
 
-	if !strings.Contains(strings.ToLower(contentType), "json") || !json.Valid(raw) {
+	if !auditBodyIsJSON(raw, contentType) {
 		return auditNonJSONBodyMarker(len(raw), contentType)
 	}
 
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
 	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
+	if err := decoder.Decode(&value); err != nil {
 		return "<unparsable body omitted>"
 	}
-	encoded, err := json.Marshal(redactAuditValue(value, 0))
-	if err != nil {
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(redactAuditValue(value, 0)); err != nil {
 		return "<redacted body omitted>"
 	}
-	return truncateAuditString(string(encoded), auditRequestBodyMaxBytes)
+	return truncateAuditString(strings.TrimRight(out.String(), "\n"), auditRequestBodyMaxBytes)
+}
+
+// auditBodyIsJSON reports whether raw should be treated as JSON: the content
+// type says so, or it is generic/missing and the body is a valid JSON object
+// or array.
+func auditBodyIsJSON(raw []byte, contentType string) bool {
+	if !json.Valid(raw) {
+		return false
+	}
+	if strings.Contains(strings.ToLower(contentType), "json") {
+		return true
+	}
+	trimmed := bytes.TrimLeft(raw, " \t\r\n")
+	return len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[')
 }
 
 func auditNonJSONBodyMarker(size int, contentType string) string {

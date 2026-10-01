@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -21,7 +22,12 @@ func NewAuditLogRepository(db *sql.DB) service.AuditLogRepository {
 
 const auditLogInsertColumns = `created_at, actor_user_id, actor_email, actor_role, auth_method,
 credential_masked, action, method, path, request_id, client_ip, user_agent,
-request_body, status_code, latency_ms, extra`
+request_body, status_code, latency_ms, extra,
+actor_label, auth_kind, token_id, route, target_type, target_id, reason, "before", "after"`
+
+// auditLogInsertColumnCount must match auditLogInsertColumns and the values
+// returned by auditLogInsertValues.
+const auditLogInsertColumnCount = 25
 
 const auditLogSelectColumns = `
   l.id,
@@ -40,7 +46,16 @@ const auditLogSelectColumns = `
   COALESCE(l.request_body, ''),
   l.status_code,
   l.latency_ms,
-  COALESCE(l.extra::text, '{}')`
+  COALESCE(l.extra::text, '{}'),
+  COALESCE(l.actor_label, ''),
+  COALESCE(l.auth_kind, ''),
+  l.token_id,
+  COALESCE(l.route, ''),
+  COALESCE(l.target_type, ''),
+  COALESCE(l.target_id, ''),
+  COALESCE(l.reason, ''),
+  l."before"::text,
+  l."after"::text`
 
 func auditLogInsertValues(entry *service.AuditLog) ([]any, error) {
 	if entry == nil {
@@ -53,7 +68,7 @@ func auditLogInsertValues(entry *service.AuditLog) ([]any, error) {
 
 	extraJSON := "{}"
 	if len(entry.Extra) > 0 {
-		encoded, err := json.Marshal(entry.Extra)
+		encoded, err := json.Marshal(sanitizeAuditExtra(entry.Extra))
 		if err != nil {
 			return nil, fmt.Errorf("marshal audit log extra: %w", err)
 		}
@@ -62,6 +77,10 @@ func auditLogInsertValues(entry *service.AuditLog) ([]any, error) {
 	var actorUserID any
 	if entry.ActorUserID != nil {
 		actorUserID = *entry.ActorUserID
+	}
+	var tokenID any
+	if entry.TokenID != nil {
+		tokenID = *entry.TokenID
 	}
 	return []any{
 		createdAt.UTC(),
@@ -76,10 +95,19 @@ func auditLogInsertValues(entry *service.AuditLog) ([]any, error) {
 		truncateAuditField(entry.RequestID, 128),
 		truncateAuditField(entry.ClientIP, 64),
 		truncateAuditField(entry.UserAgent, 512),
-		entry.RequestBody,
+		sanitizeAuditText(entry.RequestBody),
 		entry.StatusCode,
 		entry.LatencyMs,
 		extraJSON,
+		truncateAuditField(entry.ActorLabel, 255),
+		truncateAuditField(entry.AuthKind, 32),
+		tokenID,
+		truncateAuditField(entry.Route, 512),
+		truncateAuditField(entry.TargetType, 64),
+		truncateAuditField(entry.TargetID, 128),
+		truncateAuditField(entry.Reason, auditReasonMaxRunes),
+		auditJSONSnapshot(entry.Before),
+		auditJSONSnapshot(entry.After),
 	}, nil
 }
 
@@ -94,7 +122,7 @@ func buildAuditLogInsertQuery(entries []*service.AuditLog) (string, []any, int, 
 		return "", nil, 0, nil
 	}
 
-	args := make([]any, 0, len(valid)*16)
+	args := make([]any, 0, len(valid)*auditLogInsertColumnCount)
 	rows := make([]string, 0, len(valid))
 	for _, entry := range valid {
 		values, err := auditLogInsertValues(entry)
@@ -184,6 +212,27 @@ func buildAuditLogsWhere(filter *service.AuditLogFilter) (string, []any) {
 	if value := strings.TrimSpace(filter.ClientIP); value != "" {
 		clauses = append(clauses, add("l.client_ip = $%d", value))
 	}
+	if value := strings.TrimSpace(filter.AuthKind); value != "" {
+		clauses = append(clauses, add("l.auth_kind = $%d", value))
+	}
+	if filter.TokenID != nil {
+		clauses = append(clauses, add("l.token_id = $%d", *filter.TokenID))
+	}
+	if value := strings.TrimSpace(filter.RoutePrefix); value != "" {
+		clauses = append(clauses, add("l.route LIKE $%d ESCAPE '\\'", escapeLikePattern(value)+"%"))
+	}
+	if value := strings.TrimSpace(filter.TargetType); value != "" {
+		clauses = append(clauses, add("l.target_type = $%d", value))
+	}
+	if value := strings.TrimSpace(filter.TargetID); value != "" {
+		clauses = append(clauses, add("l.target_id = $%d", value))
+	}
+	if filter.StatusMin != nil {
+		clauses = append(clauses, add("l.status_code >= $%d", *filter.StatusMin))
+	}
+	if filter.StatusMax != nil {
+		clauses = append(clauses, add("l.status_code <= $%d", *filter.StatusMax))
+	}
 	if filter.Success != nil {
 		if *filter.Success {
 			clauses = append(clauses, "l.status_code < 400")
@@ -259,7 +308,9 @@ func (r *auditLogRepository) List(ctx context.Context, filter *service.AuditLogF
 func scanAuditLogRow(scan func(dest ...any) error) (*service.AuditLog, error) {
 	entry := &service.AuditLog{}
 	var actorUserID sql.NullInt64
+	var tokenID sql.NullInt64
 	var extraRaw string
+	var before, after sql.NullString
 	if err := scan(
 		&entry.ID,
 		&entry.CreatedAt,
@@ -278,12 +329,31 @@ func scanAuditLogRow(scan func(dest ...any) error) (*service.AuditLog, error) {
 		&entry.StatusCode,
 		&entry.LatencyMs,
 		&extraRaw,
+		&entry.ActorLabel,
+		&entry.AuthKind,
+		&tokenID,
+		&entry.Route,
+		&entry.TargetType,
+		&entry.TargetID,
+		&entry.Reason,
+		&before,
+		&after,
 	); err != nil {
 		return nil, err
 	}
 	if actorUserID.Valid {
 		value := actorUserID.Int64
 		entry.ActorUserID = &value
+	}
+	if tokenID.Valid {
+		value := tokenID.Int64
+		entry.TokenID = &value
+	}
+	if before.Valid && before.String != "" {
+		entry.Before = json.RawMessage(before.String)
+	}
+	if after.Valid && after.String != "" {
+		entry.After = json.RawMessage(after.String)
 	}
 	if extra := strings.TrimSpace(extraRaw); extra != "" && extra != "null" && extra != "{}" {
 		entry.Extra = make(map[string]any)
@@ -319,13 +389,72 @@ WHERE id IN (
 	return result.RowsAffected()
 }
 
+// auditReasonMaxRunes bounds the stored X-Reason.
+const auditReasonMaxRunes = 2000
+
+// truncateAuditField cuts value to maxRunes runes after making it safe for a
+// PostgreSQL text column.
 func truncateAuditField(value string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return ""
 	}
+	value = sanitizeAuditText(value)
 	runes := []rune(value)
 	if len(runes) <= maxRunes {
 		return value
 	}
 	return string(runes[:maxRunes])
+}
+
+// sanitizeAuditText removes what PostgreSQL text columns reject (NUL bytes and
+// invalid UTF-8). One such value would otherwise fail the whole batch insert
+// and lose every other audit row in it.
+func sanitizeAuditText(value string) string {
+	if strings.IndexByte(value, 0) >= 0 {
+		value = strings.ReplaceAll(value, "\x00", "")
+	}
+	if !utf8.ValidString(value) {
+		value = strings.ToValidUTF8(value, "\uFFFD")
+	}
+	return value
+}
+
+// sanitizeAuditExtra returns a copy of the extra map whose strings are safe
+// for a JSONB column (which, unlike text, rejects the \u0000 escape).
+func sanitizeAuditExtra(extra map[string]any) map[string]any {
+	out := make(map[string]any, len(extra))
+	for key, value := range extra {
+		out[sanitizeAuditText(key)] = sanitizeAuditExtraValue(value)
+	}
+	return out
+}
+
+func sanitizeAuditExtraValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return sanitizeAuditText(typed)
+	case map[string]any:
+		return sanitizeAuditExtra(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for index, item := range typed {
+			out[index] = sanitizeAuditExtraValue(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+// auditJSONSnapshot turns an optional JSON snapshot into a JSONB parameter:
+// NULL when empty or not valid JSON (an invalid document would fail the insert).
+func auditJSONSnapshot(raw json.RawMessage) any {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return nil
+	}
+	text := string(raw)
+	if strings.Contains(text, "\\u0000") {
+		return nil
+	}
+	return text
 }

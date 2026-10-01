@@ -34,6 +34,9 @@ func RegisterAdminRoutes(
 		// 管理令牌（机器凭证）：只允许 JWT 登录的人类管理员管理
 		registerAdminTokenRoutes(admin, h)
 
+		// 管理操作审计日志（只读）
+		registerAuditLogRoutes(admin, h)
+
 		// 仪表盘
 		registerDashboardRoutes(admin, h)
 
@@ -137,6 +140,11 @@ func registerAdminTokenRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		tokens.POST("", h.Admin.AdminToken.Create)
 		tokens.DELETE("/:id", h.Admin.AdminToken.Revoke)
 	}
+}
+
+// registerAuditLogRoutes 注册管理操作审计日志查询（read 作用域即可）。
+func registerAuditLogRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	admin.GET("/audit-logs", h.Admin.AuditLog.List)
 }
 
 func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers) {

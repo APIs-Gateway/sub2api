@@ -17,6 +17,7 @@ func TestProvideAdminHandlersIncludesPromptAuditHandler(t *testing.T) {
 		nil,
 		nil, // pricingQuoteHandler
 		nil, // adminTokenHandler
+		nil, // auditLogHandler
 	)
 
 	require.Same(t, promptAudit, adminHandlers.PromptAudit)

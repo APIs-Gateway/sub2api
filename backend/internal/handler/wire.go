@@ -48,6 +48,7 @@ func ProvideAdminHandlers(
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
 	pricingQuoteHandler *admin.PricingQuoteHandler,
 	adminTokenHandler *admin.AdminTokenHandler,
+	auditLogHandler *admin.AuditLogHandler,
 ) *AdminHandlers {
 	if accountHandler != nil {
 		accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
@@ -89,6 +90,7 @@ func ProvideAdminHandlers(
 		PromptAudit:            promptAuditHandler,
 		PricingQuote:           pricingQuoteHandler,
 		AdminToken:             adminTokenHandler,
+		AuditLog:               auditLogHandler,
 	}
 }
 
@@ -279,6 +281,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewPointsHandler,
 	admin.NewPricingQuoteHandler,
 	admin.NewAdminTokenHandler,
+	admin.NewAuditLogHandler,
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,

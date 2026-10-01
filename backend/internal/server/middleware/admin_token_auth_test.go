@@ -5,8 +5,10 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -128,6 +130,10 @@ type adminTokenTestEnv struct {
 	adminUser   *service.User
 	lastKeys    map[string]any
 	reached     int
+	sink        *adminAuditTestSink
+	tokenSvc    *service.AdminTokenService
+	userSvc     *service.UserService
+	settingSvc  *service.SettingService
 }
 
 func newAdminTokenTestEnv(t *testing.T) *adminTokenTestEnv {
@@ -153,9 +159,12 @@ func newAdminTokenTestEnv(t *testing.T) *adminTokenTestEnv {
 
 	env := &adminTokenTestEnv{
 		tokens: repo, users: users, authService: authService, adminUser: adminUser,
+		sink: &adminAuditTestSink{accept: true}, tokenSvc: tokenService, userSvc: userService, settingSvc: settingService,
 	}
 
 	router := gin.New()
+	// A panicking handler must still reach the project's recovery middleware.
+	router.Use(Recovery())
 	// Use the connection address only, never X-Forwarded-For, for client IP.
 	require.NoError(t, router.SetTrustedProxies(nil))
 	router.Use(func(c *gin.Context) {
@@ -181,9 +190,20 @@ func newAdminTokenTestEnv(t *testing.T) *adminTokenTestEnv {
 	}
 
 	admin := router.Group("/api/v1/admin")
-	admin.Use(gin.HandlerFunc(ProvideAdminAuthMiddleware(authService, userService, settingService, tokenService)))
-	admin.GET("/things", handler)                           // read
-	admin.POST("/things", handler)                          // write
+	admin.Use(withAdminAudit(adminAuth(authService, userService, settingService, tokenService), env.sink))
+	admin.GET("/things", handler)              // read
+	admin.POST("/things", handler)             // write
+	admin.POST("/things/:id/notes", handler)   // write, with a path parameter
+	admin.POST("/fail", func(c *gin.Context) { // write, handler answers an error
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"code": "NOPE"})
+	})
+	admin.POST("/boom", func(c *gin.Context) { // write, handler panics
+		panic("kaboom")
+	})
+	admin.POST("/echo", func(c *gin.Context) { // write, handler reads the whole body
+		n, _ := io.Copy(io.Discard, c.Request.Body)
+		c.String(http.StatusOK, "%d", n)
+	})
 	admin.DELETE("/users/:id", handler)                     // danger (see adminDangerRules)
 	admin.GET("/admin-tokens", RequireAdminJWT(), handler)  // danger + JWT only
 	admin.POST("/admin-tokens", RequireAdminJWT(), handler) // danger + JWT only
@@ -233,12 +253,22 @@ type adminTokenTestRequest struct {
 	path       string
 	header     map[string]string
 	remoteAddr string
+	body       string
+	// omitReason leaves out the X-Reason that do() adds to state-changing requests.
+	omitReason bool
 }
 
 func (e *adminTokenTestEnv) do(req adminTokenTestRequest) *httptest.ResponseRecorder {
-	r := httptest.NewRequest(req.method, req.path, nil)
+	var body io.Reader
+	if req.body != "" {
+		body = strings.NewReader(req.body)
+	}
+	r := httptest.NewRequest(req.method, req.path, body)
 	for k, v := range req.header {
 		r.Header.Set(k, v)
+	}
+	if !req.omitReason && !isAdminReadOnlyMethod(req.method) && r.Header.Get(AdminReasonHeader) == "" {
+		r.Header.Set(AdminReasonHeader, "integration test change")
 	}
 	if req.remoteAddr != "" {
 		r.RemoteAddr = req.remoteAddr

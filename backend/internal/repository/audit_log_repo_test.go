@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -54,7 +55,7 @@ func TestBuildAuditLogInsertQuery_RejectsInvalidExtraAndSkipsNil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
 	require.Contains(t, query, "INSERT INTO audit_logs")
-	require.Len(t, args, 16)
+	require.Len(t, args, auditLogInsertColumnCount)
 	require.Equal(t, createdAt, args[0])
 	require.Equal(t, userID, args[1])
 	actorEmail, ok := args[2].(string)
@@ -97,7 +98,8 @@ func TestAuditLogRepositoryList_ClampsPageAndScansNullableActor(t *testing.T) {
 		"id", "created_at", "actor_user_id", "actor_email", "actor_role",
 		"auth_method", "credential_masked", "action", "method", "path",
 		"request_id", "client_ip", "user_agent", "request_body", "status_code",
-		"latency_ms", "extra",
+		"latency_ms", "extra", "actor_label", "auth_kind", "token_id", "route",
+		"target_type", "target_id", "reason", "before", "after",
 	}).AddRow(
 		int64(1),
 		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC),
@@ -116,6 +118,15 @@ func TestAuditLogRepositoryList_ClampsPageAndScansNullableActor(t *testing.T) {
 		200,
 		int64(12),
 		"{\"source\":\"test\"}",
+		"jwt:admin@example.com",
+		service.AuditAuthKindJWT,
+		nil,
+		"/api/v1/admin/users/:id",
+		"users",
+		"1",
+		"",
+		nil,
+		nil,
 	)
 	mock.ExpectQuery("(?s)SELECT .* FROM audit_logs l WHERE 1=1 ORDER BY l.created_at DESC, l.id DESC OFFSET \\$1 LIMIT \\$2").
 		WithArgs(200, 200).
@@ -129,6 +140,14 @@ func TestAuditLogRepositoryList_ClampsPageAndScansNullableActor(t *testing.T) {
 	require.Equal(t, service.AuditLogMaxPageSize, result.PageSize)
 	require.Len(t, result.Logs, 1)
 	require.Nil(t, result.Logs[0].ActorUserID)
+	require.Nil(t, result.Logs[0].TokenID)
+	require.Equal(t, "jwt:admin@example.com", result.Logs[0].ActorLabel)
+	require.Equal(t, service.AuditAuthKindJWT, result.Logs[0].AuthKind)
+	require.Equal(t, "/api/v1/admin/users/:id", result.Logs[0].Route)
+	require.Equal(t, "users", result.Logs[0].TargetType)
+	require.Equal(t, "1", result.Logs[0].TargetID)
+	require.Empty(t, result.Logs[0].Before)
+	require.Empty(t, result.Logs[0].After)
 	require.Equal(t, map[string]any{"source": "test"}, result.Logs[0].Extra)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -138,7 +157,7 @@ func TestAuditLogRepositoryBatchInsertAndDeleteBefore(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	args := make([]driver.Value, 32)
+	args := make([]driver.Value, 2*auditLogInsertColumnCount)
 	for index := range args {
 		args[index] = sqlmock.AnyArg()
 	}
@@ -162,4 +181,93 @@ func TestAuditLogRepositoryBatchInsertAndDeleteBefore(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 3, deleted)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBuildAuditLogsWhere_AdminAuditFilters(t *testing.T) {
+	tokenID := int64(9)
+	statusMin, statusMax := 400, 499
+	filter := &service.AuditLogFilter{
+		AuthKind:    service.AuditAuthKindAdminToken,
+		TokenID:     &tokenID,
+		RoutePrefix: "/api/v1/admin/users_%",
+		TargetType:  "users",
+		TargetID:    "42",
+		StatusMin:   &statusMin,
+		StatusMax:   &statusMax,
+	}
+
+	where, args := buildAuditLogsWhere(filter)
+	require.Contains(t, where, "l.auth_kind = $1")
+	require.Contains(t, where, "l.token_id = $2")
+	require.Contains(t, where, "l.route LIKE $3 ESCAPE '\\'")
+	require.Contains(t, where, "l.target_type = $4")
+	require.Contains(t, where, "l.target_id = $5")
+	require.Contains(t, where, "l.status_code >= $6")
+	require.Contains(t, where, "l.status_code <= $7")
+	require.Equal(t, []any{
+		service.AuditAuthKindAdminToken, tokenID, "/api/v1/admin/users\\_\\%%",
+		"users", "42", 400, 499,
+	}, args)
+}
+
+func TestBuildAuditLogInsertQuery_AdminAuditColumns(t *testing.T) {
+	tokenID := int64(7)
+	entry := &service.AuditLog{
+		CreatedAt:  time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC),
+		ActorLabel: "token:ops-bot#7",
+		AuthKind:   service.AuditAuthKindAdminToken,
+		TokenID:    &tokenID,
+		Route:      "/api/v1/admin/users/:id/balance",
+		TargetType: "users",
+		TargetID:   "42",
+		Reason:     "补偿 2026-09 故障",
+	}
+
+	query, args, count, err := buildAuditLogInsertQuery([]*service.AuditLog{entry})
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+	require.Contains(t, query, `actor_label, auth_kind, token_id, route, target_type, target_id, reason, "before", "after"`)
+	require.Len(t, args, auditLogInsertColumnCount)
+	require.Equal(t, "token:ops-bot#7", args[16])
+	require.Equal(t, service.AuditAuthKindAdminToken, args[17])
+	require.Equal(t, tokenID, args[18])
+	require.Equal(t, "/api/v1/admin/users/:id/balance", args[19])
+	require.Equal(t, "users", args[20])
+	require.Equal(t, "42", args[21])
+	require.Equal(t, "补偿 2026-09 故障", args[22])
+	require.Nil(t, args[23], "before is left NULL")
+	require.Nil(t, args[24], "after is left NULL")
+
+	// Without a token the column is NULL, not zero.
+	_, args, _, err = buildAuditLogInsertQuery([]*service.AuditLog{{Action: "x"}})
+	require.NoError(t, err)
+	require.Nil(t, args[18])
+}
+
+func TestBuildAuditLogInsertQuery_MakesValuesSafeForPostgres(t *testing.T) {
+	entry := &service.AuditLog{
+		Path:        "/api/v1/admin/x\x00y",
+		UserAgent:   "agent-\xff-end",
+		RequestBody: "{\"a\":\"b\x00\"}",
+		Reason:      "r\x00s",
+		Extra:       map[string]any{"panic": "boom\x00!", "nested": map[string]any{"k": "v\x00"}},
+		Before:      []byte("not json"),
+		After:       []byte(`{"ok":true}`),
+	}
+
+	_, args, count, err := buildAuditLogInsertQuery([]*service.AuditLog{entry})
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	for index, arg := range args {
+		if text, ok := arg.(string); ok {
+			require.NotContains(t, text, "\x00", "argument %d contains a NUL byte", index)
+			require.True(t, utf8.ValidString(text), "argument %d is not valid UTF-8", index)
+		}
+	}
+	require.Equal(t, "/api/v1/admin/xy", args[8])
+	require.Equal(t, "rs", args[22])
+	require.Equal(t, `{"nested":{"k":"v"},"panic":"boom!"}`, args[15])
+	require.Nil(t, args[23], "invalid JSON snapshot is dropped, not sent to jsonb")
+	require.Equal(t, `{"ok":true}`, args[24])
 }

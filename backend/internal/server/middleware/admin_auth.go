@@ -21,14 +21,21 @@ func NewAdminAuthMiddleware(
 	return AdminAuthMiddleware(adminAuth(authService, userService, settingService, nil))
 }
 
-// ProvideAdminAuthMiddleware 创建管理员认证中间件（wire 使用），额外支持 admin token。
+// ProvideAdminAuthMiddleware 创建管理员认证中间件（wire 使用），额外支持 admin token，
+// 并为所有写请求记录审计日志（见 admin_audit.go）。auditWriter 为 nil 时不记录审计。
 func ProvideAdminAuthMiddleware(
 	authService *service.AuthService,
 	userService *service.UserService,
 	settingService *service.SettingService,
 	adminTokens *service.AdminTokenService,
+	auditWriter *service.AdminAuditWriter,
 ) AdminAuthMiddleware {
-	return AdminAuthMiddleware(adminAuth(authService, userService, settingService, adminTokens))
+	// 避免把 nil 指针装进接口后被误判为"已配置"。
+	var sink AdminAuditSink
+	if auditWriter != nil {
+		sink = auditWriter
+	}
+	return AdminAuthMiddleware(withAdminAudit(adminAuth(authService, userService, settingService, adminTokens), sink))
 }
 
 // adminAuth 管理员认证中间件实现
@@ -38,7 +45,7 @@ func ProvideAdminAuthMiddleware(
 //  3. JWT Token: `Authorization: Bearer <jwt-token>`（需要管理员角色）
 //
 // admin token 通过后会依次完成：吊销/过期/IP 白名单校验（在 service 中）、acting 管理员校验、
-// 作用域校验（见 admin_token_scope.go）。
+// 作用域校验（见 admin_token_scope.go）、写请求的 X-Reason 校验（见 admin_reason.go）。
 func adminAuth(
 	authService *service.AuthService,
 	userService *service.UserService,
@@ -308,5 +315,9 @@ func authenticateAdminToken(
 	c.Set("auth_method", service.AuditAuthMethodAdminToken)
 	setAdminIdentity(c, service.AuditAuthKindAdminToken, actor.ID, adminTokenLabel(token), actor.Email, token.TokenPrefix)
 
-	return enforceAdminTokenScope(c, token.Scope)
+	if !enforceAdminTokenScope(c, token.Scope) {
+		return false
+	}
+	// 只有 admin token 发起的写请求强制要求 X-Reason；JWT 与旧 key 不强制（有则只记录）。
+	return enforceAdminReason(c)
 }
