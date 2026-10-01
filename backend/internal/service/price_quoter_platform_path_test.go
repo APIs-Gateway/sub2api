@@ -203,27 +203,66 @@ func TestPriceQuoter_LegacyPathMatchesCalculateCost(t *testing.T) {
 	}
 }
 
-// 渠道定价命中时，任何平台都走 Unified（resolveChannelPricing 非空）。
-func TestPriceQuoter_ChannelPricingUsesUnifiedOnAnyPlatform(t *testing.T) {
-	channels := quoteTestChannel(ChannelModelPricing{
-		Platform:    PlatformAnthropic,
-		Models:      []string{"glm-4.6"},
-		BillingMode: BillingModeToken,
-		InputPrice:  float64Ptr(5e-7),
-		OutputPrice: float64Ptr(1e-6),
-	})
-	f := newQuoteTestFixture(nil, channels, []*Group{quoteTestGroupOn(PlatformAnthropic, 1)}, nil)
-	quote, err := f.quoter.Quote(context.Background(), QuoteRequest{Model: "glm-4.6", GroupID: quoteTestGroupID, ServiceTier: "flex"})
+// 渠道定价命中时，任何平台都走 Unified；但只有 OpenAI 网关（openai / grok 分组）把 service tier 传进去。
+// 依据：openai_gateway_service.go calculateOpenAIRecordUsageTokenCost 传 ServiceTier；
+// gateway_service.go calculateTokenCost 的渠道价分支调用 CalculateCostUnified 时不传 ServiceTier。
+func TestPriceQuoter_ChannelPricingServiceTierPerGateway(t *testing.T) {
+	usage := QuoteUsage{Tokens: UsageTokens{InputTokens: 1_000_000, OutputTokens: 1_000_000}}
+	// 渠道价：1M 输入 × $0.5 + 1M 输出 × $1 = 1.5。
+	cases := []struct {
+		platform string
+		wantMode string
+		want     float64
+	}{
+		// OpenAI 网关：flex ×0.5 → 0.75
+		{PlatformOpenAI, "multiplier", 0.75},
+		{PlatformGrok, "multiplier", 0.75},
+		// 其它网关：忽略档位 → 1.5（网关实际扣费）
+		{PlatformAnthropic, "ignored", 1.5},
+		{PlatformGemini, "ignored", 1.5},
+		{PlatformAntigravity, "ignored", 1.5},
+	}
+	for _, tc := range cases {
+		t.Run(tc.platform, func(t *testing.T) {
+			channels := quoteTestChannel(ChannelModelPricing{
+				Platform:    tc.platform,
+				Models:      []string{"glm-4.6"},
+				BillingMode: BillingModeToken,
+				InputPrice:  float64Ptr(5e-7),
+				OutputPrice: float64Ptr(1e-6),
+			})
+			f := newQuoteTestFixture(nil, channels, []*Group{quoteTestGroupOn(tc.platform, 1)}, nil)
+			quote, err := f.quoter.Quote(context.Background(), QuoteRequest{Model: "glm-4.6", GroupID: quoteTestGroupID, ServiceTier: "flex"})
+			require.NoError(t, err)
+			require.Equal(t, QuoteSourceChannel, quote.Source)
+			require.Equal(t, QuotePricingPathUnified, quote.PricingPath)
+			require.Equal(t, tc.wantMode, quote.ServiceTier.Mode)
+			// 展示单价与扣费同口径：输入价 $0.5/MTok 在忽略档位时不打折。
+			wantInput := 5e-7
+			if tc.wantMode == "multiplier" {
+				wantInput = 2.5e-7
+			}
+			require.InDelta(t, wantInput, quote.Prices.PerToken.Input, 1e-15)
+			got, err := quote.Cost(context.Background(), usage)
+			require.NoError(t, err)
+			require.InDelta(t, tc.want, got.ActualCost, 1e-9)
+		})
+	}
+}
+
+// Grok 分组由 OpenAI 网关计费（server/routes/gateway.go isOpenAICompatibleGatewayPlatform），
+// 与 OpenAI 分组一样走 Unified 并按 service tier 计价；没有渠道价时也不会掉进 legacy 路径。
+func TestPriceQuoter_GrokGroupBilledByOpenAIGateway(t *testing.T) {
+	f := newQuoteTestFixture(nil, nil, []*Group{quoteTestGroupOn(PlatformGrok, 1)}, nil)
+	quote, err := f.quoter.Quote(context.Background(), QuoteRequest{Model: "gpt-5.5", GroupID: quoteTestGroupID, ServiceTier: "priority"})
 	require.NoError(t, err)
-	require.Equal(t, QuoteSourceChannel, quote.Source)
 	require.Equal(t, QuotePricingPathUnified, quote.PricingPath)
-	require.Equal(t, "multiplier", quote.ServiceTier.Mode, "unified 路径按档位计价")
-	// 1M 输入 × $0.5 + 1M 输出 × $1，flex ×0.5 = 0.75
-	got, err := quote.Cost(context.Background(), QuoteUsage{Tokens: UsageTokens{InputTokens: 1_000_000, OutputTokens: 1_000_000}})
+	require.Nil(t, quote.GatewayLongContext)
+	require.Equal(t, "priority_card", quote.ServiceTier.Mode)
+	// gpt-5.5 priority 100K：(6.25+37.5+0.625)×0.1 = 4.4375（与 OpenAI 分组相同，价格来源见 TestPriceQuoter_AbsoluteCosts）
+	got, err := quote.Cost(context.Background(), QuoteUsage{Tokens: quoteUsageEven(100_000)})
 	require.NoError(t, err)
-	require.InDelta(t, 0.75, got.ActualCost, 1e-9)
-	// 渠道自定义价不套官方价卡标记。
-	require.False(t, quote.Policy.DeepSeekOfficialCard)
+	require.InDelta(t, 4.4375, got.ActualCost, 1e-9)
 }
 
 func TestPriceQuoter_DeepSeekOfficialCardFlagExcludesChannelPricing(t *testing.T) {
@@ -242,57 +281,84 @@ func TestPriceQuoter_DeepSeekOfficialCardFlagExcludesChannelPricing(t *testing.T
 	require.False(t, quote.Policy.DeepSeekPeak)
 }
 
-// 渠道图片请求：OpenAI 网关只有按次/图片模式才走渠道价，且不传 token；其它网关命中渠道（任意模式）都走渠道价并传 token。
+// 渠道图片请求。依据：
+//   - 渠道是 token 模式：两个网关都按普通 token 请求计费（token 倍率、完整 token、不看图片倍率与张数）。
+//     OpenAI：openai_gateway_service.go calculateOpenAIRecordUsageCost（resolved != nil 时不 return，落到 token 循环）；
+//     其它：gateway_service.go calculateRecordUsageCost（Mode == Token 走 calculateTokenCost）。
+//   - 渠道是按次/图片模式：Unified，RequestCount=张数 × 尺寸档 × 图片倍率；OpenAI 不传 token，其它网关只传 input/output/image output。
 func TestPriceQuoter_ChannelImageRequestPathsPerGateway(t *testing.T) {
-	channels := func(platform string) []Channel {
-		return quoteTestChannel(ChannelModelPricing{
-			Platform:    platform,
-			Models:      []string{"quote-test-image"},
-			BillingMode: BillingModeToken,
-			InputPrice:  float64Ptr(1e-6),
-			OutputPrice: float64Ptr(2e-6),
-		})
-	}
 	imageCatalog := map[string]*LiteLLMModelPricing{
 		"quote-test-image": {Mode: "image_generation", OutputCostPerImage: 0.2},
+	}
+	tokenChannel := func(platform string) []Channel {
+		return quoteTestChannel(ChannelModelPricing{
+			Platform:       platform,
+			Models:         []string{"quote-test-image"},
+			BillingMode:    BillingModeToken,
+			InputPrice:     float64Ptr(1e-6),
+			OutputPrice:    float64Ptr(2e-6),
+			CacheReadPrice: float64Ptr(0.5e-6),
+		})
+	}
+	perRequestChannel := func(platform string) []Channel {
+		return quoteTestChannel(ChannelModelPricing{
+			Platform:        platform,
+			Models:          []string{"quote-test-image"},
+			BillingMode:     BillingModeImage,
+			PerRequestPrice: float64Ptr(0.1),
+			Intervals: []PricingInterval{
+				{TierLabel: "1K", PerRequestPrice: float64Ptr(0.1)},
+				{TierLabel: "2K", PerRequestPrice: float64Ptr(0.25)},
+			},
+		})
 	}
 	usage := QuoteUsage{
 		Tokens:     UsageTokens{InputTokens: 1000, OutputTokens: 2000, CacheReadTokens: 500},
 		ImageCount: 2,
 		ImageSize:  "2K",
 	}
+	// 图片倍率独立于 token 倍率：token 倍率 1.5，图片倍率 0.3，用来区分两条路径用的是哪个倍率。
+	group := func(platform string) *Group {
+		g := quoteTestGroupOn(platform, 1.5)
+		g.ImageRateIndependent = true
+		g.ImageRateMultiplier = 0.3
+		return g
+	}
 
-	t.Run("openai_token_mode_channel_falls_back_to_image_price", func(t *testing.T) {
-		f := newQuoteTestFixture(imageCatalog, channels(PlatformOpenAI), []*Group{quoteTestGroupOn(PlatformOpenAI, 1.5)}, nil)
-		quote, err := f.quoter.Quote(context.Background(), QuoteRequest{Model: "quote-test-image", GroupID: quoteTestGroupID})
-		require.NoError(t, err)
-		require.NotNil(t, quote.ImageRequest, "OpenAI 网关在渠道是 token 模式时图片请求仍按 CalculateImageCost")
-		got, err := quote.Cost(context.Background(), usage)
-		require.NoError(t, err)
-		want := f.billing.CalculateImageCost("quote-test-image", "2K", 2, &ImagePriceConfig{}, 1.5)
-		require.Equal(t, *want, *got)
-	})
-
-	t.Run("anthropic_channel_uses_unified_with_image_tokens", func(t *testing.T) {
-		f := newQuoteTestFixture(imageCatalog, channels(PlatformAnthropic), []*Group{quoteTestGroupOn(PlatformAnthropic, 1.5)}, nil)
-		quote, err := f.quoter.Quote(context.Background(), QuoteRequest{Model: "quote-test-image", GroupID: quoteTestGroupID})
-		require.NoError(t, err)
-		require.Nil(t, quote.ImageRequest)
-		got, err := quote.Cost(context.Background(), usage)
-		require.NoError(t, err)
-
-		gid := quoteTestGroupID
-		want, err := f.billing.CalculateCostUnified(CostInput{
-			Ctx:            context.Background(),
-			Model:          "quote-test-image",
-			GroupID:        &gid,
-			Tokens:         UsageTokens{InputTokens: 1000, OutputTokens: 2000}, // 网关不传缓存 token
-			RequestCount:   2,
-			SizeTier:       NormalizeImageBillingTierOrDefault("2K"),
-			RateMultiplier: 1.5,
-			Resolver:       f.resolver,
+	for _, platform := range []string{PlatformOpenAI, PlatformGrok, PlatformAnthropic} {
+		t.Run(platform+"/token_mode_channel_bills_as_tokens", func(t *testing.T) {
+			f := newQuoteTestFixture(imageCatalog, tokenChannel(platform), []*Group{group(platform)}, nil)
+			quote, err := f.quoter.Quote(context.Background(), QuoteRequest{Model: "quote-test-image", GroupID: quoteTestGroupID})
+			require.NoError(t, err)
+			require.Nil(t, quote.ImageRequest, "渠道价生效时不展示 CalculateImageCost 的分档价")
+			got, err := quote.Cost(context.Background(), usage)
+			require.NoError(t, err)
+			// 手算：1000×1e-6 + 2000×2e-6 + 500×0.5e-6 = 0.001 + 0.004 + 0.00025 = 0.00525；× token 倍率 1.5 = 0.007875
+			require.InDelta(t, 0.007875, got.ActualCost, 1e-12)
 		})
+
+		t.Run(platform+"/per_request_channel_bills_by_image_count", func(t *testing.T) {
+			f := newQuoteTestFixture(imageCatalog, perRequestChannel(platform), []*Group{group(platform)}, nil)
+			quote, err := f.quoter.Quote(context.Background(), QuoteRequest{Model: "quote-test-image", GroupID: quoteTestGroupID})
+			require.NoError(t, err)
+			got, err := quote.Cost(context.Background(), usage)
+			require.NoError(t, err)
+			// 手算：2K 档 $0.25 × 2 张 × 图片倍率 0.3 = 0.15；token 不计费
+			require.InDelta(t, 0.15, got.ActualCost, 1e-12)
+		})
+	}
+
+	t.Run("no_channel_uses_calculate_image_cost", func(t *testing.T) {
+		price2K := 0.31
+		g := group(PlatformOpenAI)
+		g.ImagePrice2K = &price2K
+		f := newQuoteTestFixture(imageCatalog, nil, []*Group{g}, nil)
+		quote, err := f.quoter.Quote(context.Background(), QuoteRequest{Model: "quote-test-image", GroupID: quoteTestGroupID})
 		require.NoError(t, err)
-		require.Equal(t, *want, *got)
+		require.NotNil(t, quote.ImageRequest)
+		got, err := quote.Cost(context.Background(), usage)
+		require.NoError(t, err)
+		// 手算：分组 2K 图片价 $0.31（getImageUnitPrice 分组价优先）× 2 张 × 图片倍率 0.3 = 0.186
+		require.InDelta(t, 0.186, got.ActualCost, 1e-12)
 	})
 }
