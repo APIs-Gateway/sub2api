@@ -184,6 +184,14 @@ type AnthropicStreamEvent struct {
 
 	// message_delta
 	Usage *AnthropicUsage `json:"usage,omitempty"`
+
+	// error
+	Error *AnthropicSSEError `json:"error,omitempty"`
+}
+
+type AnthropicSSEError struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
 }
 
 // AnthropicDelta carries incremental content in streaming events.

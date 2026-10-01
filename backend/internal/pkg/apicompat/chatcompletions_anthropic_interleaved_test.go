@@ -93,6 +93,7 @@ func assertInterleavedLifecycleWithSetup(t *testing.T, chunks []string, setup fu
 		case "content_block_start":
 			require.NotNil(t, event.Index)
 			require.Equal(t, started, *event.Index)
+			require.Empty(t, openBlocks, "Anthropic content blocks must not overlap")
 			require.False(t, openBlocks[*event.Index])
 			openBlocks[*event.Index] = true
 			started++
@@ -247,14 +248,15 @@ func TestEarlierMessageDoneDoesNotCloseLaterToolBlock(t *testing.T) {
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.created", Response: &ResponsesResponse{ID: "r"}}, state)
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_text.delta", OutputIndex: 0, Delta: "first"}, state)
 	toolStart := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 1, Item: &ResponsesOutput{Type: "function_call", Name: "Write", CallID: "call_1"}}, state)
-	require.Len(t, toolStart, 1)
-	toolIndex := *toolStart[0].Index
+	require.Empty(t, toolStart)
+	toolIndex := state.OutputIndexToBlockIdx[1]
 	messageDone := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.done", OutputIndex: 0, Item: &ResponsesOutput{Type: "message", Content: []ResponsesContentPart{{Type: "output_text", Text: "first"}}}}, state)
 	for _, event := range messageDone {
 		if event.Type == "content_block_stop" {
 			require.NotEqual(t, toolIndex, *event.Index)
 		}
 	}
+	require.Equal(t, "content_block_start", messageDone[len(messageDone)-1].Type)
 	toolDelta := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.delta", OutputIndex: 1, Delta: `{"path":"x"}`}, state)
 	require.Len(t, toolDelta, 1)
 	require.Equal(t, toolIndex, *toolDelta[0].Index)
@@ -271,25 +273,31 @@ func TestInterleavedReadSanitizationAndLateReasoningSignature(t *testing.T) {
 	readStart := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 0, Item: &ResponsesOutput{Type: "function_call", Name: "Read", CallID: "call_read"}}, state)
 	otherStart := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 1, Item: &ResponsesOutput{Type: "function_call", Name: "Write", CallID: "call_write"}}, state)
 	thinkingStart := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 2, Item: &ResponsesOutput{Type: "reasoning"}}, state)
-	readIndex, otherIndex, thinkingIndex := *readStart[0].Index, *otherStart[0].Index, *thinkingStart[0].Index
+	require.Empty(t, otherStart)
+	require.Empty(t, thinkingStart)
+	readIndex, otherIndex, thinkingIndex := *readStart[0].Index, state.OutputIndexToBlockIdx[1], state.OutputIndexToBlockIdx[2]
 	require.Empty(t, ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.delta", OutputIndex: 0, Delta: `{"file_path":"a",`}, state))
 	otherDelta := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.delta", OutputIndex: 1, Delta: `{}`}, state)
-	require.Equal(t, otherIndex, *otherDelta[0].Index)
+	require.Empty(t, otherDelta)
 	readDelta := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.delta", OutputIndex: 0, Delta: `"pages":""}`}, state)
 	require.Len(t, readDelta, 1)
 	require.Equal(t, readIndex, *readDelta[0].Index)
 	require.JSONEq(t, `{"file_path":"a"}`, readDelta[0].Delta.PartialJSON)
-	require.Equal(t, readIndex, *ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.done", OutputIndex: 0, Arguments: `{"file_path":"a","pages":""}`}, state)[0].Index)
+	readDone := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.done", OutputIndex: 0, Arguments: `{"file_path":"a","pages":""}`}, state)
+	require.Equal(t, readIndex, *readDone[0].Index)
+	require.Equal(t, otherIndex, *readDone[1].Index)
+	require.Equal(t, otherIndex, *readDone[2].Index)
 	thinkingDelta := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.reasoning_summary_text.delta", OutputIndex: 2, Delta: "thought"}, state)
-	require.Equal(t, thinkingIndex, *thinkingDelta[0].Index)
+	require.Empty(t, thinkingDelta)
 	thinkingDone := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.done", OutputIndex: 2, Item: &ResponsesOutput{Type: "reasoning", EncryptedContent: "late-signature"}}, state)
-	require.Len(t, thinkingDone, 2)
-	require.Equal(t, "signature_delta", thinkingDone[0].Delta.Type)
-	require.Equal(t, "late-signature", thinkingDone[0].Delta.Signature)
-	require.Equal(t, thinkingIndex, *thinkingDone[1].Index)
+	require.Empty(t, thinkingDone)
 	otherDone := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.done", OutputIndex: 1, Arguments: `{}`}, state)
-	require.Len(t, otherDone, 1)
+	require.Len(t, otherDone, 5)
 	require.Equal(t, otherIndex, *otherDone[0].Index)
+	require.Equal(t, thinkingIndex, *otherDone[1].Index)
+	require.Equal(t, "signature_delta", otherDone[3].Delta.Type)
+	require.Equal(t, "late-signature", otherDone[3].Delta.Signature)
+	require.Equal(t, thinkingIndex, *otherDone[4].Index)
 }
 
 func TestToolOwnerRecoversSuffixFromItemDoneWithoutArgumentsDone(t *testing.T) {
@@ -297,16 +305,19 @@ func TestToolOwnerRecoversSuffixFromItemDoneWithoutArgumentsDone(t *testing.T) {
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.created", Response: &ResponsesResponse{ID: "r"}}, state)
 	first := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 3, Item: &ResponsesOutput{Type: "function_call", ID: "fc_a", CallID: "call_a", Name: "Write"}}, state)
 	second := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 4, Item: &ResponsesOutput{Type: "function_call", ID: "fc_b", CallID: "call_b", Name: "Write"}}, state)
-	firstIndex, secondIndex := *first[0].Index, *second[0].Index
+	require.Empty(t, second)
+	firstIndex, secondIndex := *first[0].Index, state.OutputIndexToBlockIdx[4]
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.delta", OutputIndex: 3, Delta: `{"x":`}, state)
 	require.Empty(t, ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.done", OutputIndex: 3, Item: &ResponsesOutput{Type: "function_call", ID: "fc_other", CallID: "call_other", Arguments: `{"x":9}`}}, state))
 	require.True(t, state.blocksByOutput[3].open)
 	done := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.done", OutputIndex: 3, Item: &ResponsesOutput{Type: "function_call", ID: "fc_a", CallID: "call_a", Arguments: `{"x":1}`}}, state)
-	require.Len(t, done, 2)
+	require.Len(t, done, 3)
 	require.Equal(t, "1}", done[0].Delta.PartialJSON)
 	require.Equal(t, firstIndex, *done[0].Index)
 	require.Equal(t, "content_block_stop", done[1].Type)
 	require.Equal(t, firstIndex, *done[1].Index)
+	require.Equal(t, "content_block_start", done[2].Type)
+	require.Equal(t, secondIndex, *done[2].Index)
 	require.True(t, state.blocksByOutput[4].open)
 	secondDone := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.done", OutputIndex: 4, Arguments: `{}`}, state)
 	require.Equal(t, secondIndex, *secondDone[0].Index)
