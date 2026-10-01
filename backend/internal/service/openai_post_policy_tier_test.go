@@ -249,7 +249,7 @@ func TestOpenAICompatibilityBillingKeepsCustomPriceAndUserRate(t *testing.T) {
 			groupID := int64(1465)
 			channelInputPrice := 4e-6
 			cache := newEmptyChannelCache()
-			cache.pricingByGroupModel[channelModelKey{groupID: groupID, model: "gpt-5.4"}] = &ChannelModelPricing{
+			cache.pricingByGroupModel[channelModelKey{groupID: groupID, platform: "openai", model: "gpt-5.4"}] = &ChannelModelPricing{
 				BillingMode: BillingModeToken, InputPrice: &channelInputPrice,
 			}
 			cache.channelByGroupID[groupID] = &Channel{ID: groupID, Status: StatusActive}
