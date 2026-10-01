@@ -620,6 +620,7 @@ var ProviderSet = wire.NewSet(
 	NewRedeemService,
 	NewCheckinService,
 	NewGroupRouteService, // Key 级分组回退链
+	NewGroupChainBreaker, // Key 级分组回退链熔断（PR2a 第 1 段：仅注册，尚无注入点）
 	NewGroupRouteKeyHooks,
 	NewKeyEditorPriceService,
 	NewKeyFallbackService,

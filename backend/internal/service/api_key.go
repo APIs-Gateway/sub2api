@@ -50,6 +50,12 @@ type APIKey struct {
 	User               *User
 	Group              *Group
 
+	// HomeGroupID / RouteSource 仅由回退链的影子 Key（handler.NewServedAPIKey）在运行时填充：
+	// HomeGroupID 是原 Key 的主分组，RouteSource 是该跳的来源（primary / user / admin）。
+	// 不持久化、不进 auth cache；零值表示这不是影子 Key，行为与改动前完全一致。
+	HomeGroupID *int64 `json:"-"`
+	RouteSource string `json:"-"`
+
 	// Quota fields
 	Quota     float64    // Quota limit in USD (0 = unlimited)
 	QuotaUsed float64    // Used quota amount
