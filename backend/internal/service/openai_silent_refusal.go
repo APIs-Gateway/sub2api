@@ -33,6 +33,7 @@ type openAIChatSilentRefusalDetector struct {
 	sawUsage        bool
 	sawError        bool
 	sawReasoning    bool
+	semanticOutput  bool // Non-empty text, tool name/arguments, or reasoning text.
 	sawFinish       bool
 	finishReason    string
 }
@@ -104,12 +105,24 @@ func (d *openAIChatSilentRefusalDetector) ObserveChatChunk(chunk apicompat.ChatC
 		delta := choice.Delta
 		if delta.Content != nil && *delta.Content != "" {
 			d.sawContent = true
+			d.semanticOutput = true
 		}
 		if delta.ReasoningContent != nil {
 			d.sawReasoning = true
+			if *delta.ReasoningContent != "" {
+				d.semanticOutput = true
+			}
+		}
+		if delta.Reasoning != nil && *delta.Reasoning != "" {
+			d.semanticOutput = true
 		}
 		if len(delta.ToolCalls) > 0 {
 			d.sawToolCall = true
+			for _, call := range delta.ToolCalls {
+				if call.Function.Name != "" || call.Function.Arguments != "" {
+					d.semanticOutput = true
+				}
+			}
 		}
 	}
 }
@@ -122,6 +135,18 @@ func (d *openAIChatSilentRefusalDetector) ShouldReleaseClientOutput() bool {
 		return true
 	}
 	return d.sawFinish && d.finishReason != "" && d.finishReason != "stop"
+}
+
+// HasSemanticOutput excludes role/metadata and usage-only chunks. Releasing
+// those chunks to the client does not mean the model delivered content.
+func (d *openAIChatSilentRefusalDetector) HasSemanticOutput() bool {
+	return d != nil && d.semanticOutput
+}
+
+func openAIChatChunkHasSemanticOutput(chunk apicompat.ChatCompletionsChunk) bool {
+	d := newOpenAIChatSilentRefusalDetector(0)
+	d.ObserveChatChunk(chunk)
+	return d.HasSemanticOutput()
 }
 
 func (d *openAIChatSilentRefusalDetector) IsSilentRefusal() bool {
@@ -175,17 +200,29 @@ func (d *openAIChatSilentRefusalDetector) observeChatChoicesPayload(payload []by
 		}
 		if content := delta.Get("content"); content.Exists() && content.String() != "" {
 			d.sawContent = true
+			d.semanticOutput = true
 		}
 		if delta.Get("tool_calls").Exists() {
 			d.sawToolCall = true
+			for _, call := range delta.Get("tool_calls").Array() {
+				if call.Get("function.name").String() != "" || call.Get("function.arguments").String() != "" {
+					d.semanticOutput = true
+				}
+			}
 		}
 		if delta.Get("function_call").Exists() {
 			d.sawFunctionCall = true
+			if delta.Get("function_call.name").String() != "" || delta.Get("function_call.arguments").String() != "" {
+				d.semanticOutput = true
+			}
 		}
 		if delta.Get("reasoning").Exists() ||
 			delta.Get("reasoning_content").Exists() ||
 			delta.Get("reasoning_summary").Exists() {
 			d.sawReasoning = true
+			if delta.Get("reasoning").String() != "" || delta.Get("reasoning_content").String() != "" || delta.Get("reasoning_summary").String() != "" {
+				d.semanticOutput = true
+			}
 		}
 	}
 }
@@ -195,18 +232,28 @@ func (d *openAIChatSilentRefusalDetector) observeResponsesPayload(payload []byte
 	case "response.output_text.delta":
 		if gjson.GetBytes(payload, "delta").String() != "" {
 			d.sawContent = true
+			d.semanticOutput = true
 		}
 	case "response.output_item.added":
 		switch strings.TrimSpace(gjson.GetBytes(payload, "item.type").String()) {
 		case "function_call":
 			d.sawToolCall = true
+			if gjson.GetBytes(payload, "item.name").String() != "" || gjson.GetBytes(payload, "item.arguments").String() != "" {
+				d.semanticOutput = true
+			}
 		case "reasoning":
 			d.sawReasoning = true
 		}
 	case "response.function_call_arguments.delta":
 		d.sawToolCall = true
+		if gjson.GetBytes(payload, "delta").String() != "" {
+			d.semanticOutput = true
+		}
 	case "response.reasoning_summary_text.delta", "response.reasoning_summary_text.done":
 		d.sawReasoning = true
+		if gjson.GetBytes(payload, "delta").String() != "" || gjson.GetBytes(payload, "text").String() != "" {
+			d.semanticOutput = true
+		}
 	case "response.completed", "response.done":
 		d.observeFinishReason("stop")
 	case "response.incomplete":
