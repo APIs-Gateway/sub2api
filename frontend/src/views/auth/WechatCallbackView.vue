@@ -959,12 +959,16 @@ async function handleSubmitTotpChallenge() {
 
   isSubmitting.value = true
   try {
+    const sessionVersion = authStore.authSessionVersion
     const completion = await login2FA({
       temp_token: totpTempToken.value,
       totp_code: code
     })
-    persistOAuthTokenContext(completion)
-    await authStore.setToken(completion.access_token)
+    await authStore.setToken(completion.access_token, {
+      refreshToken: completion.refresh_token,
+      expiresIn: completion.expires_in,
+      expectedSessionVersion: sessionVersion
+    })
     clearAllAffiliateReferralCodes()
     appStore.showSuccess(t('auth.loginSuccess'))
     await router.replace(redirectTo.value)

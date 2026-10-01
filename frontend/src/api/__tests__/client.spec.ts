@@ -252,6 +252,196 @@ describe('API Client', () => {
   // --- 401 Token 刷新 ---
 
   describe('401 Token 刷新', () => {
+    it('blocks an old /auth/me before the request interceptor can send it with a new account token', async () => {
+      localStorage.setItem('auth_token', 'account-a-token')
+      const adapter = vi.fn().mockResolvedValue({ status: 200, data: { code: 0, data: { id: 7 } },
+        headers: {}, config: {}, statusText: 'OK' })
+      apiClient.defaults.adapter = adapter
+      const { invalidateAuthSession } = await import('@/utils/authSessionVersion')
+
+      const request = apiClient.get('/auth/me')
+      invalidateAuthSession()
+      localStorage.setItem('auth_token', 'account-b-token')
+
+      await expect(request).rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      expect(adapter).not.toHaveBeenCalled()
+      expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+    })
+
+    it.each([false, true])('keeps a pending account B login after account A /auth/me settles (success: %s)', async (succeeds) => {
+      const { createPinia, setActivePinia } = await import('pinia')
+      const { useAuthStore } = await import('@/stores/auth')
+      setActivePinia(createPinia())
+      const store = useAuthStore()
+      const accountA = { id: 7, username: 'account-a', role: 'user' }
+      const accountB = { id: 8, username: 'account-b', role: 'admin' }
+      let meCount = 0
+      let finishOld!: (response: unknown) => void
+      let rejectOld!: (error: unknown) => void
+      let finishLogin!: (response: unknown) => void
+      const adapter = vi.fn((config: InternalAxiosRequestConfig) => {
+        if (config.url === '/auth/me') {
+          meCount += 1
+          if (meCount === 1) {
+            return Promise.resolve({ status: 200, data: { code: 0, data: accountA },
+              headers: {}, config, statusText: 'OK' })
+          }
+          return new Promise((resolve, reject) => { finishOld = resolve; rejectOld = reject })
+        }
+        if (config.url === '/auth/login') {
+          return new Promise(resolve => { finishLogin = resolve })
+        }
+        if (config.url === '/auth/logout') {
+          return Promise.resolve({ status: 200, data: { code: 0, data: {} },
+            headers: {}, config, statusText: 'OK' })
+        }
+        return Promise.reject(new Error(`Unexpected request: ${config.url}`))
+      })
+      apiClient.defaults.adapter = adapter
+
+      await store.setToken('account-a-token')
+      const oldRefresh = store.refreshUser().catch(error => error)
+      await vi.waitFor(() => expect(meCount).toBe(2))
+      const newLogin = store.login({ email: 'b@example.com', password: 'password' })
+      await vi.waitFor(() => expect(finishLogin).toBeDefined())
+      const pendingSession = store.authSessionVersion
+      const oldConfig = adapter.mock.calls.filter(call => call[0].url === '/auth/me')[1][0]
+      expect(oldConfig.headers.get('Authorization')).toBe('Bearer account-a-token')
+      if (succeeds) {
+        finishOld({ status: 200, data: { code: 0, data: { ...accountA, username: 'stale' } },
+          headers: {}, config: oldConfig, statusText: 'OK' })
+      } else {
+        rejectOld({ response: { status: 401, data: { code: 'TOKEN_EXPIRED' } },
+          config: oldConfig, code: 'ERR_BAD_REQUEST' })
+      }
+      await expect(oldRefresh).resolves.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
+      expect(store.authSessionVersion).toBe(pendingSession)
+      finishLogin({ status: 200, data: { code: 0, data: {
+        access_token: 'account-b-token', token_type: 'Bearer', user: accountB,
+      } }, headers: {}, config: adapter.mock.calls.find(call => call[0].url === '/auth/login')?.[0],
+      statusText: 'OK' })
+      await newLogin
+      expect(store.user?.id).toBe(8)
+      expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+      expect(JSON.parse(localStorage.getItem('auth_user')!).id).toBe(8)
+      await store.logout()
+    })
+
+    it('does not erase a new account when an old logout API call finishes late', async () => {
+      localStorage.setItem('auth_token', 'account-a-token')
+      localStorage.setItem('refresh_token', 'account-a-refresh')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+      let finishOldLogout!: (response: unknown) => void
+      const adapter = vi.fn((_config: InternalAxiosRequestConfig) => new Promise((resolve) => {
+        finishOldLogout = resolve
+      }))
+      apiClient.defaults.adapter = adapter
+      const { logout } = await import('@/api/auth')
+      const request = logout()
+      await vi.waitFor(() => expect(adapter).toHaveBeenCalledOnce())
+      const { invalidateAuthSession } = await import('@/utils/authSessionVersion')
+      invalidateAuthSession()
+      localStorage.setItem('auth_token', 'account-b-token')
+      localStorage.setItem('refresh_token', 'account-b-refresh')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 8 }))
+
+      finishOldLogout({ status: 200, data: { code: 0, data: {} }, headers: {},
+        config: adapter.mock.calls[0][0], statusText: 'OK' })
+      await request
+      expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+      expect(localStorage.getItem('refresh_token')).toBe('account-b-refresh')
+      expect(localStorage.getItem('auth_user')).toBe(JSON.stringify({ id: 8 }))
+    })
+
+    it.each([false, true])('ignores an old /auth/me 401 after another account signs in (new refresh token: %s)', async (hasNewRefreshToken) => {
+      localStorage.setItem('auth_token', 'account-a-token')
+      localStorage.setItem('refresh_token', 'account-a-refresh')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+      let rejectOldRequest!: (error: unknown) => void
+      let oldConfig!: InternalAxiosRequestConfig
+      const adapter = vi.fn((config: InternalAxiosRequestConfig) => {
+        oldConfig = config
+        return new Promise<never>((_resolve, reject) => { rejectOldRequest = reject })
+      })
+      apiClient.defaults.adapter = adapter
+      const refresh = vi.spyOn(axios, 'post').mockRejectedValue(new Error('old request must not refresh'))
+
+      const request = apiClient.get('/auth/me')
+      await vi.waitFor(() => expect(adapter).toHaveBeenCalledOnce())
+      const { invalidateAuthSession } = await import('@/utils/authSessionVersion')
+      invalidateAuthSession()
+      localStorage.setItem('auth_token', 'account-b-token')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 8 }))
+      if (hasNewRefreshToken) {
+        localStorage.setItem('refresh_token', 'account-b-refresh')
+      } else {
+        localStorage.removeItem('refresh_token')
+      }
+
+      rejectOldRequest({
+        response: { status: 401, data: { code: 'TOKEN_EXPIRED' } },
+        config: oldConfig,
+        code: 'ERR_BAD_REQUEST'
+      })
+
+      await expect(request).rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      expect(adapter).toHaveBeenCalledOnce()
+      expect(refresh).not.toHaveBeenCalled()
+      expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+      expect(localStorage.getItem('refresh_token')).toBe(hasNewRefreshToken ? 'account-b-refresh' : null)
+      expect(localStorage.getItem('auth_user')).toBe(JSON.stringify({ id: 8 }))
+      expect(sessionStorage.getItem('auth_expired')).toBeNull()
+    })
+
+    it('still refreshes and retries /auth/me when its 401 belongs to the current session', async () => {
+      localStorage.setItem('auth_token', 'account-a-token')
+      localStorage.setItem('refresh_token', 'account-a-refresh')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+      localStorage.setItem('token_expires_at', String(Date.now() - 1))
+      const adapter = vi.fn()
+        .mockImplementationOnce((config: InternalAxiosRequestConfig) => Promise.reject({
+          response: { status: 401, data: { code: 'TOKEN_EXPIRED' } },
+          config,
+          code: 'ERR_BAD_REQUEST'
+        }))
+        .mockImplementationOnce((config: InternalAxiosRequestConfig) => Promise.resolve({
+          status: 200,
+          data: { code: 0, data: { id: 7 } },
+          headers: {}, config, statusText: 'OK'
+        }))
+      apiClient.defaults.adapter = adapter
+      const refresh = vi.spyOn(axios, 'post').mockResolvedValue({
+        data: { code: 0, data: {
+          access_token: 'account-a-next-token', refresh_token: 'account-a-next-refresh',
+          expires_in: 3600, token_type: 'Bearer'
+        } }
+      })
+
+      await expect(apiClient.get('/auth/me')).resolves.toMatchObject({ data: { id: 7 } })
+      expect(refresh).toHaveBeenCalledOnce()
+      expect(adapter).toHaveBeenCalledTimes(2)
+      expect(adapter.mock.calls[1][0].headers.get('Authorization')).toBe('Bearer account-a-next-token')
+      expect(adapter.mock.calls[1][0]._authSessionVersion).toBe(adapter.mock.calls[0][0]._authSessionVersion)
+    })
+
+    it('still expires the current /auth/me session on a 401 without a refresh token', async () => {
+      window.history.replaceState({}, '', '/login')
+      localStorage.setItem('auth_token', 'current-token')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+      const adapter = vi.fn((config: InternalAxiosRequestConfig) => Promise.reject({
+        response: { status: 401, data: { code: 'TOKEN_EXPIRED' } },
+        config,
+        code: 'ERR_BAD_REQUEST'
+      }))
+      apiClient.defaults.adapter = adapter
+
+      await expect(apiClient.get('/auth/me')).rejects.toMatchObject({ status: 401, code: 'TOKEN_EXPIRED' })
+      expect(adapter).toHaveBeenCalledOnce()
+      expect(localStorage.getItem('auth_token')).toBeNull()
+      expect(localStorage.getItem('auth_user')).toBeNull()
+      expect(sessionStorage.getItem('auth_expired')).toBe('1')
+    })
+
     it('refresh 请求显式使用 30 秒超时', async () => {
       localStorage.setItem('auth_token', 'expired-token')
       localStorage.setItem('refresh_token', 'refresh-token')

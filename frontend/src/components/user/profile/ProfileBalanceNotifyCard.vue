@@ -79,7 +79,7 @@
                     <button v-else @click="sendCodeForSaved(entry.email)" :disabled="sendingSavedCode" class="text-xs text-gray-500 hover:text-gray-700">
                       {{ t('profile.balanceNotify.resend') }}
                     </button>
-                    <button @click="verifyingEmail = ''" class="text-xs text-gray-400 hover:text-gray-600">
+                    <button @click="cancelSavedVerification" class="text-xs text-gray-400 hover:text-gray-600">
                       {{ t('common.cancel') }}
                     </button>
                   </template>
@@ -203,6 +203,15 @@ const verifyingSaved = ref(false)
 const sendingSavedCode = ref(false)
 const verifyCountdown = ref(0)
 let verifyTimer: ReturnType<typeof setInterval> | null = null
+let disposed = false
+let savedSendVersion = 0
+let savedSendingEmail: string | null = null
+// Keep a confirmed deletion hidden until a later authoritative profile refresh.
+const removedSavedEmails = new Set<string>()
+const removedAtProfileRefresh = new Map<string, number>()
+const confirmedVerifiedEmails = new Map<string, NotifyEmailEntry>()
+const confirmedAtProfileRefresh = new Map<string, number>()
+let savedEmailMutationVersion = 0
 
 const canAddMore = computed(() => {
   return emailEntries.value.length + pendingEmails.value.length < maxTotalEmails
@@ -210,7 +219,40 @@ const canAddMore = computed(() => {
 
 watch(() => props.enabled, (val) => { notifyEnabled.value = val })
 watch(() => props.threshold, (val) => { customThreshold.value = val })
-watch(() => props.extraEmails, (val) => { emailEntries.value = [...val] })
+watch(() => props.extraEmails, replaceSavedEmails)
+watch(() => authStore.authSessionVersion, () => {
+  savedEmailMutationVersion++
+  savedSendVersion++
+  savedSendingEmail = null
+  sendingSavedCode.value = false
+  clearSavedVerification()
+  verifyingSaved.value = false
+  for (const pe of pendingEmails.value) {
+    if (pe.timer) clearInterval(pe.timer)
+  }
+  pendingEmails.value = []
+  newEmail.value = ''
+  removedSavedEmails.clear()
+  removedAtProfileRefresh.clear()
+  confirmedVerifiedEmails.clear()
+  confirmedAtProfileRefresh.clear()
+  replaceSavedEmails(props.extraEmails)
+})
+watch(() => authStore.profileRefreshVersion, (version) => {
+  for (const [key, removedAt] of removedAtProfileRefresh) {
+    if (version > removedAt) {
+      removedSavedEmails.delete(key)
+      removedAtProfileRefresh.delete(key)
+    }
+  }
+  for (const [key, confirmedAt] of confirmedAtProfileRefresh) {
+    if (version > confirmedAt) {
+      confirmedVerifiedEmails.delete(key)
+      confirmedAtProfileRefresh.delete(key)
+    }
+  }
+  replaceSavedEmails(props.extraEmails)
+})
 
 // When list is empty on mount, pre-fill the add input with user's email
 onMounted(() => {
@@ -220,6 +262,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  disposed = true
+  savedSendVersion++
   for (const pe of pendingEmails.value) {
     if (pe.timer) clearInterval(pe.timer)
   }
@@ -227,23 +271,29 @@ onUnmounted(() => {
 })
 
 const handleToggle = async () => {
+  const sessionVersion = authStore.authSessionVersion
   try {
     const updated = await userAPI.updateProfile({ balance_notify_enabled: notifyEnabled.value })
-    authStore.user = updated
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    authStore.applyUserProfile(updated, sessionVersion)
   } catch (err: unknown) {
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
     notifyEnabled.value = !notifyEnabled.value
   }
 }
 
 const handleThresholdUpdate = async () => {
+  const sessionVersion = authStore.authSessionVersion
   savingThreshold.value = true
   try {
     const threshold = customThreshold.value && customThreshold.value > 0 ? customThreshold.value : 0
     const updated = await userAPI.updateProfile({ balance_notify_threshold: threshold })
-    authStore.user = updated
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    authStore.applyUserProfile(updated, sessionVersion)
     appStore.showSuccess(t('common.saved'))
   } catch (err: unknown) {
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {
     savingThreshold.value = false
@@ -251,12 +301,16 @@ const handleThresholdUpdate = async () => {
 }
 
 async function handleEmailToggle(entry: NotifyEmailEntry) {
+  const sessionVersion = authStore.authSessionVersion
   const newDisabled = !entry.disabled
   try {
     const updated = await userAPI.toggleNotifyEmail(entry.email, newDisabled)
-    authStore.user = updated
-    emailEntries.value = [...updated.balance_notify_extra_emails]
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    savedEmailMutationVersion++
+    authStore.applyUserProfile(updated, sessionVersion)
+    replaceSavedEmails(updated.balance_notify_extra_emails)
   } catch (err: unknown) {
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   }
 }
@@ -278,9 +332,11 @@ function addPendingEmail() {
 async function sendCodeFor(idx: number) {
   const pe = pendingEmails.value[idx]
   if (!pe) return
+  const sessionVersion = authStore.authSessionVersion
   pe.sending = true
   try {
     await userAPI.sendNotifyEmailCode(pe.email)
+    if (disposed || sessionVersion !== authStore.authSessionVersion || !pendingEmails.value.includes(pe)) return
     pe.codeSent = true
     pe.countdown = 60
     pe.timer = setInterval(() => {
@@ -292,25 +348,49 @@ async function sendCodeFor(idx: number) {
     }, 1000)
     appStore.showSuccess(t('profile.balanceNotify.codeSent'))
   } catch (err: unknown) {
-    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    if (!disposed && sessionVersion === authStore.authSessionVersion && pendingEmails.value.includes(pe)) {
+      appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    }
   } finally {
-    pe.sending = false
+    if (sessionVersion === authStore.authSessionVersion) pe.sending = false
   }
 }
 
 async function verifyPending(idx: number) {
   const pe = pendingEmails.value[idx]
   if (!pe || !pe.code || pe.code.length !== 6) return
+  const sessionVersion = authStore.authSessionVersion
   pe.verifying = true
   try {
     await userAPI.verifyNotifyEmail(pe.email, pe.code)
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    const version = ++savedEmailMutationVersion
+    const key = savedEmailKey(pe.email)
+    removedSavedEmails.delete(key)
+    removedAtProfileRefresh.delete(key)
+    confirmedVerifiedEmails.set(key, { email: pe.email, disabled: false, verified: true })
+    confirmedAtProfileRefresh.set(key, authStore.profileRefreshVersion)
     if (pe.timer) clearInterval(pe.timer)
     pendingEmails.value = pendingEmails.value.filter(entry => entry !== pe)
+    replaceSavedEmails(emailEntries.value)
+    authStore.invalidateUserRefresh()
     appStore.showSuccess(t('profile.balanceNotify.verifySuccess'))
-    const updated = await userAPI.getProfile()
-    authStore.user = updated
-    emailEntries.value = [...updated.balance_notify_extra_emails]
+    try {
+      const refreshVersion = authStore.profileRefreshVersion
+      const updated = await userAPI.getProfile()
+      if (disposed || sessionVersion !== authStore.authSessionVersion ||
+        version !== savedEmailMutationVersion || refreshVersion !== authStore.profileRefreshVersion) return
+      confirmedVerifiedEmails.delete(key)
+      confirmedAtProfileRefresh.delete(key)
+      authStore.applyUserProfile(updated, sessionVersion, true)
+      replaceSavedEmails(updated.balance_notify_extra_emails)
+    } catch (err: unknown) {
+      if (!disposed && sessionVersion === authStore.authSessionVersion) {
+        console.error('Failed to refresh profile after verifying notification email:', err)
+      }
+    }
   } catch (err: unknown) {
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {
     pe.verifying = false
@@ -318,22 +398,91 @@ async function verifyPending(idx: number) {
 }
 
 const handleRemoveEmail = async (email: string) => {
+  const sessionVersion = authStore.authSessionVersion
   try {
     await userAPI.removeNotifyEmail(email)
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    const version = ++savedEmailMutationVersion
+    const key = savedEmailKey(email)
+    confirmedVerifiedEmails.delete(key)
+    confirmedAtProfileRefresh.delete(key)
+    removedSavedEmails.add(key)
+    removedAtProfileRefresh.set(key, authStore.profileRefreshVersion)
+    replaceSavedEmails(emailEntries.value)
+    authStore.invalidateUserRefresh()
     appStore.showSuccess(t('profile.balanceNotify.removeSuccess'))
+    const refreshVersion = authStore.profileRefreshVersion
     const updated = await userAPI.getProfile()
-    authStore.user = updated
-    emailEntries.value = [...updated.balance_notify_extra_emails]
+    if (disposed || sessionVersion !== authStore.authSessionVersion ||
+      version !== savedEmailMutationVersion || refreshVersion !== authStore.profileRefreshVersion) return
+    authStore.applyUserProfile(updated, sessionVersion, true)
+    replaceSavedEmails(updated.balance_notify_extra_emails)
   } catch (err: unknown) {
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   }
 }
 
 // Verify saved unverified emails
+function savedEmailKey(email: string) {
+  return email.trim().toLowerCase()
+}
+
+function replaceSavedEmails(entries: NotifyEmailEntry[]) {
+  const visible = entries
+    .filter(item => !removedSavedEmails.has(savedEmailKey(item.email)))
+    .map(item => {
+      const key = savedEmailKey(item.email)
+      const confirmed = confirmedVerifiedEmails.get(key)
+      if (confirmed && !item.verified) return confirmed
+      return item
+    })
+  for (const [key, item] of confirmedVerifiedEmails) {
+    if (!removedSavedEmails.has(key) && !visible.some(entry => savedEmailKey(entry.email) === key)) {
+      visible.push(item)
+    }
+  }
+  if (savedSendingEmail && !visible.some(item => item.email === savedSendingEmail && !item.verified)) {
+    invalidateSavedSend(savedSendingEmail)
+  }
+  if (verifyingEmail.value && !visible.some(item => item.email === verifyingEmail.value && !item.verified)) {
+    clearSavedVerification()
+  }
+  emailEntries.value = [...visible]
+}
+
+function hasSavedEmail(email: string) {
+  return emailEntries.value.some(item => item.email === email && !item.verified)
+}
+
+function invalidateSavedSend(email: string) {
+  if (savedSendingEmail !== email) return
+  savedSendVersion++
+  savedSendingEmail = null
+  sendingSavedCode.value = false
+}
+
+function clearSavedVerification() {
+  verifyingEmail.value = ''
+  verifyCode.value = ''
+  verifyCountdown.value = 0
+  if (verifyTimer) { clearInterval(verifyTimer); verifyTimer = null }
+}
+
+function cancelSavedVerification() {
+  invalidateSavedSend(verifyingEmail.value)
+  clearSavedVerification()
+}
+
 async function sendCodeForSaved(email: string) {
+  if (!hasSavedEmail(email)) return
+  const sessionVersion = authStore.authSessionVersion
+  const version = ++savedSendVersion
+  savedSendingEmail = email
   sendingSavedCode.value = true
   try {
     await userAPI.sendNotifyEmailCode(email)
+    if (disposed || sessionVersion !== authStore.authSessionVersion || version !== savedSendVersion || !hasSavedEmail(email)) return
     verifyingEmail.value = email
     verifyCode.value = ''
     verifyCountdown.value = 60
@@ -347,25 +496,51 @@ async function sendCodeForSaved(email: string) {
     }, 1000)
     appStore.showSuccess(t('profile.balanceNotify.codeSent'))
   } catch (err: unknown) {
-    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    if (!disposed && sessionVersion === authStore.authSessionVersion && version === savedSendVersion && hasSavedEmail(email)) {
+      appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    }
   } finally {
-    sendingSavedCode.value = false
+    if (sessionVersion === authStore.authSessionVersion && version === savedSendVersion) {
+      sendingSavedCode.value = false
+      savedSendingEmail = null
+    }
   }
 }
 
 async function verifySavedEmail(email: string) {
   if (!verifyCode.value || verifyCode.value.length !== 6) return
+  const sessionVersion = authStore.authSessionVersion
   verifyingSaved.value = true
   try {
     await userAPI.verifyNotifyEmail(email, verifyCode.value)
-    verifyingEmail.value = ''
-    verifyCode.value = ''
-    if (verifyTimer) { clearInterval(verifyTimer); verifyTimer = null }
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    const version = ++savedEmailMutationVersion
+    const key = savedEmailKey(email)
+    const entry = emailEntries.value.find(item => savedEmailKey(item.email) === key)
+    if (entry) {
+      confirmedVerifiedEmails.set(key, { ...entry, verified: true })
+      confirmedAtProfileRefresh.set(key, authStore.profileRefreshVersion)
+      replaceSavedEmails(emailEntries.value)
+      authStore.invalidateUserRefresh()
+    }
+    clearSavedVerification()
     appStore.showSuccess(t('profile.balanceNotify.verifySuccess'))
-    const updated = await userAPI.getProfile()
-    authStore.user = updated
-    emailEntries.value = [...updated.balance_notify_extra_emails]
+    try {
+      const refreshVersion = authStore.profileRefreshVersion
+      const updated = await userAPI.getProfile()
+      if (disposed || sessionVersion !== authStore.authSessionVersion ||
+        version !== savedEmailMutationVersion || refreshVersion !== authStore.profileRefreshVersion) return
+      confirmedVerifiedEmails.delete(key)
+      confirmedAtProfileRefresh.delete(key)
+      authStore.applyUserProfile(updated, sessionVersion, true)
+      replaceSavedEmails(updated.balance_notify_extra_emails)
+    } catch (err: unknown) {
+      if (!disposed && sessionVersion === authStore.authSessionVersion) {
+        console.error('Failed to refresh profile after verifying notification email:', err)
+      }
+    }
   } catch (err: unknown) {
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {
     verifyingSaved.value = false

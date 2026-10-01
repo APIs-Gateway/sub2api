@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
+import { getAuthSessionVersion } from '@/utils/authSessionVersion'
 
 // Mock authAPI
 const mockLogin = vi.fn()
@@ -108,6 +109,27 @@ describe('useAuthStore', () => {
   // --- login2FA ---
 
   describe('login2FA', () => {
+    it('keeps an access-token-only 2FA expiry without inheriting the previous refresh token', async () => {
+      mockLogin.mockResolvedValueOnce(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+      mockLogin2FA.mockResolvedValueOnce({
+        ...fakeAuthResponse,
+        access_token: 'account-b-token',
+        refresh_token: undefined,
+        expires_in: 1800,
+        user: fakeAdminUser,
+      })
+      const expectedExpiry = Date.now() + 1800_000
+
+      await store.login2FA('account-b-temp-token', '123456')
+
+      expect(store.user?.id).toBe(fakeAdminUser.id)
+      expect(localStorage.getItem('refresh_token')).toBeNull()
+      expect(localStorage.getItem('token_expires_at')).toBe(String(expectedExpiry))
+      expect(store.token).toBe('account-b-token')
+    })
+
     it('2FA 验证成功后设置认证状态', async () => {
       mockLogin2FA.mockResolvedValue(fakeAuthResponse)
       const store = useAuthStore()
@@ -133,9 +155,165 @@ describe('useAuthStore', () => {
     })
   })
 
+  it.each([false, true])('keeps account B when account A setToken /auth/me finishes late (success: %s)', async (succeeds) => {
+    const store = useAuthStore()
+    let resolveOld!: (value: { data: typeof fakeUser }) => void
+    let rejectOld!: (reason: unknown) => void
+    mockGetCurrentUser.mockReturnValueOnce(new Promise((resolve, reject) => {
+      resolveOld = resolve
+      rejectOld = reject
+    }))
+    const oldLogin = store.setToken('account-a-token')
+    mockLogin.mockResolvedValueOnce({
+      ...fakeAuthResponse, access_token: 'account-b-token', refresh_token: 'account-b-refresh',
+      user: fakeAdminUser
+    })
+    await store.login({ email: 'admin@example.com', password: '123456' })
+    const currentTimers = vi.getTimerCount()
+
+    if (succeeds) resolveOld({ data: fakeUser })
+    else rejectOld({ status: 401, code: 'TOKEN_EXPIRED' })
+    await expect(oldLogin).rejects.toMatchObject(succeeds
+      ? { code: 'AUTH_SESSION_CHANGED' }
+      : { status: 401, code: 'TOKEN_EXPIRED' })
+
+    expect(store.user?.id).toBe(fakeAdminUser.id)
+    expect(store.token).toBe('account-b-token')
+    expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+    expect(JSON.parse(localStorage.getItem('auth_user')!).id).toBe(fakeAdminUser.id)
+    expect(localStorage.getItem('refresh_token')).toBe('account-b-refresh')
+    expect(vi.getTimerCount()).toBe(currentTimers)
+  })
+
+  it.each([undefined, 'account-b-refresh'])('replaces an old refresh context for 2FA completion (%s)', async (nextRefreshToken) => {
+    vi.clearAllTimers()
+    const store = useAuthStore()
+    mockLogin.mockResolvedValueOnce(fakeAuthResponse)
+    await store.login({ email: 'account-a@example.com', password: '123456' })
+    const oldSession = store.authSessionVersion
+    mockGetCurrentUser.mockResolvedValueOnce({ data: fakeAdminUser })
+
+    await store.setToken('account-b-token', {
+      refreshToken: nextRefreshToken,
+      expiresIn: nextRefreshToken ? 3600 : undefined,
+      expectedSessionVersion: oldSession
+    })
+
+    expect(store.user?.id).toBe(fakeAdminUser.id)
+    expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+    expect(localStorage.getItem('refresh_token')).toBe(nextRefreshToken ?? null)
+    if (nextRefreshToken) {
+      expect(Number(localStorage.getItem('token_expires_at'))).toBeGreaterThan(Date.now())
+    } else {
+      expect(localStorage.getItem('token_expires_at')).toBeNull()
+      // Cross the previous account's refresh deadline and observe behavior, not timer totals.
+      mockGetCurrentUser.mockResolvedValue({ data: fakeAdminUser })
+      const profileReadsBeforeAdvance = mockGetCurrentUser.mock.calls.length
+      const profileVersionBeforeAdvance = store.profileRefreshVersion
+      await vi.advanceTimersByTimeAsync(3_600_000)
+      expect(mockRefreshToken).not.toHaveBeenCalled()
+      expect(mockGetCurrentUser.mock.calls.length).toBeGreaterThan(profileReadsBeforeAdvance)
+      expect(store.profileRefreshVersion).toBeGreaterThan(profileVersionBeforeAdvance)
+    }
+  })
+
+  it('rejects a 2FA completion from an obsolete session before replacing its credentials', async () => {
+    const store = useAuthStore()
+    mockLogin.mockResolvedValueOnce(fakeAuthResponse).mockResolvedValueOnce({
+      ...fakeAuthResponse, access_token: 'account-b-token', user: fakeAdminUser
+    })
+    await store.login({ email: 'account-a@example.com', password: '123456' })
+    const oldSession = store.authSessionVersion
+    await store.login({ email: 'admin@example.com', password: '123456' })
+
+    await expect(store.setToken('old-2fa-token', {
+      refreshToken: 'old-2fa-refresh', expiresIn: 3600,
+      expectedSessionVersion: oldSession
+    })).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
+    expect(store.user?.id).toBe(fakeAdminUser.id)
+    expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+    expect(localStorage.getItem('refresh_token')).toBe(fakeAuthResponse.refresh_token)
+  })
+
+  it.each(['login', 'login2FA', 'register'] as const)('does not commit an old %s response over account B', async (operation) => {
+    const store = useAuthStore()
+    let resolveOld!: (value: typeof fakeAuthResponse) => void
+    const oldResponse = new Promise<typeof fakeAuthResponse>((resolve) => { resolveOld = resolve })
+    let oldAttempt: Promise<unknown>
+    if (operation === 'login') {
+      mockLogin.mockReturnValueOnce(oldResponse).mockResolvedValueOnce({
+        ...fakeAuthResponse, access_token: 'account-b-token', user: fakeAdminUser
+      })
+      oldAttempt = store.login({ email: 'account-a@example.com', password: '123456' })
+    } else if (operation === 'login2FA') {
+      mockLogin2FA.mockReturnValueOnce(oldResponse)
+      oldAttempt = store.login2FA('old-temp-token', '123456')
+    } else {
+      mockRegister.mockReturnValueOnce(oldResponse)
+      oldAttempt = store.register({ email: 'account-a@example.com', password: '123456' })
+    }
+    if (operation !== 'login') {
+      mockLogin.mockResolvedValueOnce({
+        ...fakeAuthResponse, access_token: 'account-b-token', user: fakeAdminUser
+      })
+    }
+    await store.login({ email: 'admin@example.com', password: '123456' })
+
+    resolveOld(fakeAuthResponse)
+    await expect(oldAttempt).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
+    expect(store.user?.id).toBe(fakeAdminUser.id)
+    expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+    expect(JSON.parse(localStorage.getItem('auth_user')!).id).toBe(fakeAdminUser.id)
+  })
+
+  it('does not schedule an old proactive refresh result into a new account', async () => {
+    const store = useAuthStore()
+    let resolveOldRefresh!: (value: { access_token: string; refresh_token: string; expires_in: number; token_type: string }) => void
+    mockRefreshToken.mockReturnValueOnce(new Promise((resolve) => { resolveOldRefresh = resolve }))
+    mockLogin.mockResolvedValueOnce({ ...fakeAuthResponse, expires_in: 60 })
+      .mockResolvedValueOnce({
+        ...fakeAuthResponse, access_token: 'account-b-token', refresh_token: 'account-b-refresh',
+        user: fakeAdminUser
+      })
+    await store.login({ email: 'account-a@example.com', password: '123456' })
+    await store.login({ email: 'admin@example.com', password: '123456' })
+    const bExpiry = localStorage.getItem('token_expires_at')
+    const bTimers = vi.getTimerCount()
+
+    resolveOldRefresh({ access_token: 'old-refreshed-token', refresh_token: 'old-refreshed-refresh',
+      expires_in: 60, token_type: 'Bearer' })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(store.token).toBe('account-b-token')
+    expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+    expect(localStorage.getItem('refresh_token')).toBe('account-b-refresh')
+    expect(localStorage.getItem('token_expires_at')).toBe(bExpiry)
+    expect(vi.getTimerCount()).toBe(bTimers)
+  })
+
   // --- logout ---
 
   describe('logout', () => {
+    it('does not clear account B when account A logout completes late', async () => {
+      const store = useAuthStore()
+      mockLogin.mockResolvedValueOnce(fakeAuthResponse).mockResolvedValueOnce({
+        ...fakeAuthResponse, access_token: 'account-b-token', user: fakeAdminUser
+      })
+      await store.login({ email: 'account-a@example.com', password: '123456' })
+      let resolveLogout!: () => void
+      mockLogout.mockReturnValueOnce(new Promise<void>((resolve) => { resolveLogout = resolve }))
+      const oldLogout = store.logout()
+      await store.login({ email: 'admin@example.com', password: '123456' })
+
+      resolveLogout()
+      await oldLogout
+      expect(store.user?.id).toBe(fakeAdminUser.id)
+      expect(store.token).toBe('account-b-token')
+      expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+      expect(JSON.parse(localStorage.getItem('auth_user')!).id).toBe(fakeAdminUser.id)
+    })
+
     it('注销后清除所有状态和 localStorage', async () => {
       mockLogin.mockResolvedValue(fakeAuthResponse)
       mockLogout.mockResolvedValue(undefined)
@@ -360,6 +538,35 @@ describe('useAuthStore', () => {
   // --- refreshUser ---
 
   describe('refreshUser', () => {
+    it.each([false, true])('does not let account A refresh change pending account B login (old request succeeds: %s)', async (succeeds) => {
+      mockLogin.mockResolvedValueOnce(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      let resolveOld!: (value: { data: typeof fakeUser }) => void
+      let rejectOld!: (reason: unknown) => void
+      mockGetCurrentUser.mockReturnValueOnce(new Promise((resolve, reject) => {
+        resolveOld = resolve
+        rejectOld = reject
+      }))
+      const oldRefresh = store.refreshUser()
+      let finishLogin!: (value: unknown) => void
+      mockLogin.mockReturnValueOnce(new Promise(resolve => { finishLogin = resolve }))
+      const newLogin = store.login({ email: 'admin@example.com', password: '123456' })
+      const pendingSession = store.authSessionVersion
+
+      if (succeeds) resolveOld({ data: { ...fakeUser, username: 'stale' } })
+      else rejectOld({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      await expect(oldRefresh).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
+      expect(store.authSessionVersion).toBe(pendingSession)
+
+      finishLogin({ ...fakeAuthResponse, access_token: 'account-b-token', user: fakeAdminUser })
+      await newLogin
+      expect(store.user?.id).toBe(fakeAdminUser.id)
+      expect(store.token).toBe('account-b-token')
+      expect(JSON.parse(localStorage.getItem('auth_user')!).id).toBe(fakeAdminUser.id)
+    })
+
     it('刷新用户数据并更新 localStorage', async () => {
       mockLogin.mockResolvedValue(fakeAuthResponse)
       const store = useAuthStore()
@@ -378,6 +585,90 @@ describe('useAuthStore', () => {
     it('未认证时抛出错误', async () => {
       const store = useAuthStore()
       await expect(store.refreshUser()).rejects.toThrow('Not authenticated')
+    })
+
+    it('does not restore a profile fetched before a local email mutation', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      let resolveOld!: (value: { data: typeof fakeUser }) => void
+      mockGetCurrentUser.mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve }))
+      const oldRefresh = store.refreshUser()
+      store.invalidateUserRefresh()
+      store.applyUserProfile({ ...fakeUser, username: 'confirmed' }, store.authSessionVersion)
+      resolveOld({ data: { ...fakeUser, username: 'stale' } })
+      await oldRefresh
+      expect(store.user?.username).toBe('confirmed')
+      expect(JSON.parse(localStorage.getItem('auth_user')!).username).toBe('confirmed')
+      expect(store.profileRefreshVersion).toBe(0)
+
+      mockGetCurrentUser.mockResolvedValueOnce({ data: { ...fakeUser, username: 'current' } })
+      await store.refreshUser()
+      expect(store.user?.username).toBe('current')
+      expect(store.profileRefreshVersion).toBe(1)
+    })
+
+    it('does not log out for a stale 401 after a local email mutation', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      let rejectOld!: (reason: { status: number }) => void
+      mockGetCurrentUser.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectOld = reject }))
+      const oldRefresh = store.refreshUser()
+      store.invalidateUserRefresh()
+      rejectOld({ status: 401 })
+      await expect(oldRefresh).rejects.toEqual({ status: 401 })
+      expect(store.isAuthenticated).toBe(true)
+      expect(store.user?.id).toBe(fakeUser.id)
+    })
+
+    it('keeps the current session when a newer refresh fails', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+      const refreshVersion = store.profileRefreshVersion
+      mockGetCurrentUser.mockRejectedValueOnce(new Error('offline'))
+
+      await expect(store.refreshUser()).rejects.toThrow('offline')
+      expect(store.profileRefreshVersion).toBe(refreshVersion)
+      expect(store.isAuthenticated).toBe(true)
+    })
+
+    it('lets a newer in-flight refresh replace an earlier confirmed profile read', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+      store.invalidateUserRefresh()
+
+      let resolveNew!: (value: { data: typeof fakeUser }) => void
+      mockGetCurrentUser.mockReturnValueOnce(new Promise(resolve => { resolveNew = resolve }))
+      const newerRefresh = store.refreshUser()
+      store.applyUserProfile({ ...fakeUser, username: 'read-result' }, store.authSessionVersion, true)
+      expect(store.user?.username).toBe('read-result')
+
+      resolveNew({ data: { ...fakeUser, username: 'newer-result' } })
+      await newerRefresh
+      expect(store.user?.username).toBe('newer-result')
+      expect(JSON.parse(localStorage.getItem('auth_user')!).username).toBe('newer-result')
+    })
+
+    it('rejects an old profile update after logout and a new login', async () => {
+      mockLogin.mockResolvedValueOnce(fakeAuthResponse)
+        .mockResolvedValueOnce({ ...fakeAuthResponse, access_token: 'new-token', user: fakeAdminUser })
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+      const oldSession = store.authSessionVersion
+      expect(getAuthSessionVersion()).toBe(oldSession)
+      await store.logout()
+      await store.login({ email: 'admin@example.com', password: '123456' })
+
+      store.applyUserProfile({ ...fakeUser, username: 'old-response' }, oldSession)
+      expect(store.authSessionVersion).toBeGreaterThan(oldSession)
+      expect(getAuthSessionVersion()).toBe(store.authSessionVersion)
+      expect(store.user?.id).toBe(fakeAdminUser.id)
+      expect(JSON.parse(localStorage.getItem('auth_user')!).id).toBe(fakeAdminUser.id)
     })
   })
 
@@ -429,7 +720,7 @@ describe('useAuthStore', () => {
       await store.logout()
       resolveProfile({ data: fakeUser })
 
-      await expect(refresh).rejects.toThrow('Authenticated user changed while refreshing')
+      await expect(refresh).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
     })
 
     it('ignores an invalid balance update', async () => {

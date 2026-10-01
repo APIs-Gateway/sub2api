@@ -9,8 +9,10 @@ import { getLocale } from '@/i18n'
 import { API_BASE_URL, refreshAuthTokens, type RefreshTokenResponse } from './tokenRefresh'
 import { getAdminComplianceSessionVersion } from '@/utils/adminComplianceSession'
 import { getAnnouncementReadSessionVersion } from '@/utils/announcementReadSession'
+import { getAuthSessionVersion } from '@/utils/authSessionVersion'
 
 type SessionRequestConfig = InternalAxiosRequestConfig & {
+  _authSessionVersion?: number
   _complianceSessionVersion?: number
   _announcementReadSessionVersion?: number
 }
@@ -80,6 +82,13 @@ const getUserTimezone = (): string => {
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const sessionRequest = config as SessionRequestConfig
+    if (sessionRequest._authSessionVersion !== getAuthSessionVersion()) {
+      return Promise.reject({
+        status: 401,
+        code: 'AUTH_SESSION_CHANGED',
+        message: 'Authentication session changed before sending the request.'
+      })
+    }
     // Keep the original version on retries so an old acceptance cannot use a new session's token.
     if (sessionRequest._complianceSessionVersion === undefined) {
       sessionRequest._complianceSessionVersion = getAdminComplianceSessionVersion()
@@ -127,6 +136,19 @@ apiClient.interceptors.request.use(
   },
   (error) => {
     return Promise.reject(error)
+  },
+  {
+    // Axios runs runWhen synchronously while assembling its asynchronous interceptor chain.
+    // Capture the caller's session now, so a session switch before the interceptor runs
+    // rejects the old request without sending it with the new account's token. Retries
+    // keep their original version.
+    runWhen: (config) => {
+      const sessionRequest = config as SessionRequestConfig
+      if (sessionRequest._authSessionVersion === undefined) {
+        sessionRequest._authSessionVersion = getAuthSessionVersion()
+      }
+      return true
+    }
   }
 )
 
@@ -165,6 +187,16 @@ apiClient.interceptors.response.use(
     }
 
     const originalRequest = error.config as SessionRequestConfig & { _retry?: boolean }
+    const staleAuthRequest = () =>
+      originalRequest?._authSessionVersion !== undefined &&
+      originalRequest._authSessionVersion !== getAuthSessionVersion()
+    if (staleAuthRequest()) {
+      return Promise.reject({
+        status: 401,
+        code: 'AUTH_SESSION_CHANGED',
+        message: 'Authentication session changed while the request was in flight.'
+      })
+    }
 
     // Handle common errors
     if (error.response) {
@@ -264,7 +296,7 @@ apiClient.interceptors.response.use(
             refreshPromise = refreshAuthTokens({ failedAccessToken })
             const tokens = await refreshPromise
 
-            if (staleComplianceRequest() || staleAnnouncementReadRequest()) {
+            if (staleAuthRequest() || staleComplianceRequest() || staleAnnouncementReadRequest()) {
               return Promise.reject(sessionChangedError)
             }
 
@@ -274,6 +306,9 @@ apiClient.interceptors.response.use(
             }
             return apiClient(originalRequest)
           } catch (refreshError) {
+            if (staleAuthRequest()) {
+              return Promise.reject(sessionChangedError)
+            }
             // Another request awaiting the same failed refresh already cleared the session and
             // redirected; keep rejecting with this request's own 401 error.
             if (refreshPromise && expiredSessionRefreshes.has(refreshPromise)) {
