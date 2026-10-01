@@ -106,3 +106,28 @@ func (c *userRPMCacheImpl) GetUserRPM(ctx context.Context, userID int64) (int, e
 	}
 	return val, nil
 }
+
+// userGroupRPMDecrScript 只在 key 存在且大于 0 时递减，避免过期或并发后出现负数。
+var userGroupRPMDecrScript = redis.NewScript(`
+local v = redis.call('GET', KEYS[1])
+if v and tonumber(v) > 0 then
+  return redis.call('DECR', KEYS[1])
+end
+return 0
+`)
+
+var _ service.UserGroupRPMDecrementer = (*userRPMCacheImpl)(nil)
+
+// DecrementUserGroupRPM 把 (user, group) 当前分钟计数减 1（回退链某一跳以回退结束时使用）。
+// 用的是「当前」分钟：跨分钟时会减到新分钟的计数上，属于尽力而为，Lua 保证不会减到负数。
+func (c *userRPMCacheImpl) DecrementUserGroupRPM(ctx context.Context, userID, groupID int64) error {
+	minute, err := c.minuteTS(ctx)
+	if err != nil {
+		return err
+	}
+	key := fmt.Sprintf("%s%d:%d:%d", userGroupRPMKeyPrefix, userID, groupID, minute)
+	if err := userGroupRPMDecrScript.Run(ctx, c.rdb, []string{key}).Err(); err != nil && err != redis.Nil {
+		return fmt.Errorf("user group rpm decrement: %w", err)
+	}
+	return nil
+}

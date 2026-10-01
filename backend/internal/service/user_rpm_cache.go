@@ -23,3 +23,11 @@ type UserRPMCache interface {
 	// GetUserRPM 获取用户当前分钟已用 RPM（只读，不递增）。
 	GetUserRPM(ctx context.Context, userID int64) (count int, err error)
 }
+
+// UserGroupRPMDecrementer 是 UserRPMCache 的可选扩展：把 (user, group) 当前分钟计数退回一次。
+// 回退链的某一跳以「回退」结束（没有真正服务）时使用；做成独立接口，是为了不强迫已有实现与测试替身新增方法，
+// 调用方用类型断言判断是否支持，不支持就静默跳过（只是少退一次计数，偏保守）。
+type UserGroupRPMDecrementer interface {
+	// DecrementUserGroupRPM 尽力而为地把 (user, group) 当前分钟计数减 1，不会减到负数。
+	DecrementUserGroupRPM(ctx context.Context, userID, groupID int64) error
+}

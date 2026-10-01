@@ -71,7 +71,60 @@ func (h *OpenAIGatewayHandler) checkSecurityAuditStage(c *gin.Context, reqLog *z
 	return runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, apiKey, subject, protocol, model, body, stage)
 }
 
+// checkSecurityAuditForChain / checkSecurityAuditStageForChain 是有回退链时的审计入口：
+// 按链上所有存活跳的分组集合审一次（并集，设计 3.4 第 0 项）。chain 为空时与无链版本完全相同。
+// 审计拦截是终止条件，调用方不得继续尝试下一跳。
+func (h *GatewayHandler) checkSecurityAuditForChain(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, chain []service.ChainHop) *securityaudit.Decision {
+	if h == nil {
+		return nil
+	}
+	return runSecurityAuditForChain(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, apiKey, subject, protocol, model, body, "http", chain)
+}
+
+func (h *OpenAIGatewayHandler) checkSecurityAuditForChain(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, chain []service.ChainHop) *securityaudit.Decision {
+	return h.checkSecurityAuditStageForChain(c, reqLog, apiKey, subject, protocol, model, body, "http", chain)
+}
+
+func (h *OpenAIGatewayHandler) checkSecurityAuditStageForChain(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, stage string, chain []service.ChainHop) *securityaudit.Decision {
+	if h == nil {
+		return nil
+	}
+	return runSecurityAuditForChain(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, apiKey, subject, protocol, model, body, stage, chain)
+}
+
+// recordSecurityAuditServedGroup 在请求结束后补记实际服务的分组（设计 Q18）。
+// 审计事件里的分组是触发审计的那一跳；这里把实际服务的分组按 request_id 补记上去。
+// coordinator 未配置 recorder 时是空操作；失败只打日志，不影响响应。
+func recordSecurityAuditServedGroup(c *gin.Context, reqLog *zap.Logger, coordinator *securityaudit.Coordinator, servedGroupID int64) {
+	if c == nil || c.Request == nil || coordinator == nil || servedGroupID <= 0 {
+		return
+	}
+	requestID := contentModerationRequestID(c.Request.Context())
+	if err := coordinator.RecordServedGroup(c.Request.Context(), requestID, servedGroupID); err != nil && reqLog != nil {
+		reqLog.Warn("security_audit.record_served_group_failed", zap.String("request_id", requestID), zap.Int64("served_group_id", servedGroupID), zap.Error(err))
+	}
+}
+
+func (h *GatewayHandler) recordSecurityAuditServedGroup(c *gin.Context, reqLog *zap.Logger, servedGroupID int64) {
+	if h == nil {
+		return
+	}
+	recordSecurityAuditServedGroup(c, reqLog, h.securityAuditCoordinator, servedGroupID)
+}
+
+func (h *OpenAIGatewayHandler) recordSecurityAuditServedGroup(c *gin.Context, reqLog *zap.Logger, servedGroupID int64) {
+	if h == nil {
+		return
+	}
+	recordSecurityAuditServedGroup(c, reqLog, h.securityAuditCoordinator, servedGroupID)
+}
+
 func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securityaudit.Coordinator, legacy *service.ContentModerationService, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, stage string) *securityaudit.Decision {
+	return runSecurityAuditForChain(c, reqLog, coordinator, legacy, apiKey, subject, protocol, model, body, stage, nil)
+}
+
+// runSecurityAuditForChain 是 runSecurityAudit 的实现；chain 为空时（无链）行为与改动前逐行一致。
+func runSecurityAuditForChain(c *gin.Context, reqLog *zap.Logger, coordinator *securityaudit.Coordinator, legacy *service.ContentModerationService, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, stage string, chain []service.ChainHop) *securityaudit.Decision {
 	if c == nil || c.Request == nil {
 		return nil
 	}
@@ -79,7 +132,7 @@ func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securitya
 		return nil
 	}
 	if coordinator == nil {
-		legacyDecision := runContentModeration(c, reqLog, legacy, apiKey, subject, protocol, model, body)
+		legacyDecision := runContentModerationForChain(c, reqLog, legacy, apiKey, subject, protocol, model, body, chain)
 		if legacyDecision == nil {
 			return nil
 		}
@@ -98,6 +151,12 @@ func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securitya
 		return &decision
 	}
 	request := buildSecurityAuditRequest(c, apiKey, subject, protocol, model, body, stage)
+	if len(chain) > 0 {
+		request.ChainGroups = chainSecurityAuditGroups(chain)
+		if reqLog != nil {
+			reqLog.Info("security_audit.chain_scope", zap.String("request_id", request.RequestID), zap.Int("chain_groups", len(request.ChainGroups)))
+		}
+	}
 	if isSecurityAuditWebSocketStage(request.Stage) {
 		if turnNo, ok := securityAuditWSTurn(c); ok {
 			bodyHash := sha256.Sum256(body)
@@ -203,6 +262,19 @@ func securityAuditMessage(decision *securityaudit.Decision) string {
 		return decision.ClientMessage
 	}
 	return "Request blocked by content policy"
+}
+
+// chainSecurityAuditGroups 提取链上各跳的分组（含主分组），保持链的顺序。
+func chainSecurityAuditGroups(chain []service.ChainHop) []securityaudit.ChainGroup {
+	groups := chainModerationGroups(chain)
+	if len(groups) == 0 {
+		return nil
+	}
+	out := make([]securityaudit.ChainGroup, 0, len(groups))
+	for _, g := range groups {
+		out = append(out, securityaudit.ChainGroup{ID: g.ID, Name: g.Name})
+	}
+	return out
 }
 
 func cloneSecurityAuditGroupID(value *int64) *int64 {

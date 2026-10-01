@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 16 // v16: simple-mode default image eligibility
+const apiKeyAuthSnapshotVersion = 17 // v17: has_group_routes（回退链标志）；v16: simple-mode default image eligibility；v15: per-key stable_priority_enabled
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -228,6 +228,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		RateLimit1d:           apiKey.RateLimit1d,
 		RateLimit7d:           apiKey.RateLimit7d,
 		StablePriorityEnabled: apiKey.StablePriorityEnabled,
+		HasGroupRoutes:        apiKey.HasGroupRoutes,
 		User: APIKeyAuthUserSnapshot{
 			ID:                         apiKey.User.ID,
 			Status:                     apiKey.User.Status,
@@ -315,6 +316,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 		RateLimit1d:           snapshot.RateLimit1d,
 		RateLimit7d:           snapshot.RateLimit7d,
 		StablePriorityEnabled: snapshot.StablePriorityEnabled,
+		HasGroupRoutes:        snapshot.HasGroupRoutes,
 		User: &User{
 			ID:                         snapshot.User.ID,
 			Status:                     snapshot.User.Status,

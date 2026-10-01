@@ -324,6 +324,17 @@ type ContentModerationCheckInput struct {
 	Model      string
 	Protocol   string
 	Body       []byte
+
+	// ChainGroups 有回退链时，链上所有存活跳的分组（入口解析并固定下来的那份，含主分组）。
+	// 非空时，Check 按「并集」判定审核范围：只要任一跳在范围内就审核，并把 GroupID/GroupName
+	// 改为命中的那一跳（审计日志因此记录的是触发审核的分组）。为空（无链）时行为与改动前完全一致。
+	ChainGroups []ContentModerationChainGroup
+}
+
+// ContentModerationChainGroup 是回退链上的一跳分组（只含审核需要的字段）。
+type ContentModerationChainGroup struct {
+	ID   int64
+	Name string
 }
 
 type ContentModerationInput struct {
@@ -872,6 +883,10 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		return allow, nil
 	}
 	cfg := runtimeSnapshot.config
+	if len(input.ChainGroups) > 0 {
+		// 回退链：按链上所有存活跳的并集判定（审查 B1），命中则把输入分组换成命中的那一跳。
+		input = cfg.scopeInputToChain(input)
+	}
 	inGroupScope := cfg.includesGroup(input.GroupID)
 	inModelScope := cfg.includesModel(input.Model)
 	slog.Info("content_moderation.config_loaded",
@@ -2240,6 +2255,49 @@ func (cfg *ContentModerationConfig) includesGroup(groupID *int64) bool {
 		}
 	}
 	return false
+}
+
+// IncludesAnyGroup 回退链用：groupIDs 中任一分组在审核范围内就返回 true（范围并集，严格优先）。
+// 审核配置全局只有一份、范围只有「在 / 不在」两种状态，所以取并集就是最严的口径。
+func (cfg *ContentModerationConfig) IncludesAnyGroup(groupIDs []int64) bool {
+	_, ok := cfg.firstIncludedGroupID(groupIDs)
+	return ok
+}
+
+// firstIncludedGroupID 按传入顺序返回第一个在审核范围内的分组。
+func (cfg *ContentModerationConfig) firstIncludedGroupID(groupIDs []int64) (int64, bool) {
+	if cfg == nil {
+		return 0, false
+	}
+	for _, id := range groupIDs {
+		gid := id
+		if cfg.includesGroup(&gid) {
+			return id, true
+		}
+	}
+	return 0, false
+}
+
+// scopeInputToChain 在输入带有回退链分组时，把 GroupID/GroupName 换成第一个命中审核范围的那一跳；
+// 没有任何一跳命中时原样返回（后续按原输入分组判定，同样会得出「不在范围内」）。
+func (cfg *ContentModerationConfig) scopeInputToChain(input ContentModerationCheckInput) ContentModerationCheckInput {
+	ids := make([]int64, 0, len(input.ChainGroups))
+	for _, g := range input.ChainGroups {
+		ids = append(ids, g.ID)
+	}
+	hit, ok := cfg.firstIncludedGroupID(ids)
+	if !ok {
+		return input
+	}
+	for _, g := range input.ChainGroups {
+		if g.ID == hit {
+			id := g.ID
+			input.GroupID = &id
+			input.GroupName = g.Name
+			break
+		}
+	}
+	return input
 }
 
 func (cfg *ContentModerationConfig) includesModel(model string) bool {

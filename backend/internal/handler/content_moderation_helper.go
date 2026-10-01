@@ -28,6 +28,55 @@ func runContentModeration(c *gin.Context, reqLog *zap.Logger, svc *service.Conte
 		return nil
 	}
 	input := buildContentModerationInput(c, apiKey, subject, protocol, model, body)
+	return checkContentModerationInput(c, reqLog, svc, input, body)
+}
+
+// runContentModerationForChain 是有回退链时的审核入口：按链上所有存活跳的分组集合审一次（设计 3.4 第 0 项，审查 B1）。
+//
+//   - chain 必须是入口解析出的那份有效链，后续迭代用的也是同一份；不得在循环里重新解析（B1 不变式）。
+//   - 任一跳在审核范围内就审核；命中时审核输入的分组换成命中的那一跳，日志因此记录触发审核的分组。
+//   - 拦截是终止条件：调用方拿到 Blocked 的决定后必须直接结束，不得继续尝试下一跳。
+//   - chain 为空（无链、开关关闭）时与 runContentModeration 完全相同。
+func runContentModerationForChain(c *gin.Context, reqLog *zap.Logger, svc *service.ContentModerationService, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol string, model string, body []byte, chain []service.ChainHop) *service.ContentModerationDecision {
+	if len(chain) == 0 {
+		return runContentModeration(c, reqLog, svc, apiKey, subject, protocol, model, body)
+	}
+	if svc == nil || c == nil || c.Request == nil {
+		return nil
+	}
+	input := buildContentModerationInput(c, apiKey, subject, protocol, model, body)
+	input.ChainGroups = chainModerationGroups(chain)
+	if reqLog != nil {
+		reqLog.Info("content_moderation.chain_scope", zap.String("request_id", input.RequestID), zap.Int("chain_groups", len(input.ChainGroups)))
+	}
+	return checkContentModerationInput(c, reqLog, svc, input, body)
+}
+
+// chainModerationGroups 提取链上各跳的分组（含主分组），保持链的顺序；分组缺失的跳忽略。
+func chainModerationGroups(chain []service.ChainHop) []service.ContentModerationChainGroup {
+	if len(chain) == 0 {
+		return nil
+	}
+	out := make([]service.ContentModerationChainGroup, 0, len(chain))
+	for _, hop := range chain {
+		id := hop.GroupID
+		name := ""
+		if hop.Group != nil {
+			if id <= 0 {
+				id = hop.Group.ID
+			}
+			name = hop.Group.Name
+		}
+		if id <= 0 {
+			continue
+		}
+		out = append(out, service.ContentModerationChainGroup{ID: id, Name: name})
+	}
+	return out
+}
+
+// checkContentModerationInput 是 runContentModeration 的后半段（日志 + Check），供有链 / 无链两条入口共用。
+func checkContentModerationInput(c *gin.Context, reqLog *zap.Logger, svc *service.ContentModerationService, input service.ContentModerationCheckInput, body []byte) *service.ContentModerationDecision {
 	if reqLog != nil {
 		reqLog.Info("content_moderation.gateway_check_start",
 			zap.String("request_id", input.RequestID),

@@ -36,8 +36,11 @@ type APIKey struct {
 	Status  string
 	// StablePriorityEnabled per-key 稳定优先开关；调度时与用户级开关取或生效。
 	StablePriorityEnabled bool
-	IPWhitelist           []string
-	IPBlacklist           []string
+	// HasGroupRoutes 该 Key 是否配置了回退链（user 或 admin 来源任一项）。
+	// 来自鉴权查询的 EXISTS 与鉴权快照；只是「有没有」的标志，链明细按需另读。不对外序列化。
+	HasGroupRoutes bool `json:"-"`
+	IPWhitelist    []string
+	IPBlacklist    []string
 	// 预编译的 IP 规则，用于认证热路径避免重复 ParseIP/ParseCIDR。
 	CompiledIPWhitelist *ip.CompiledIPRules `json:"-"`
 	CompiledIPBlacklist *ip.CompiledIPRules `json:"-"`

@@ -20,6 +20,29 @@ type PromptEngine interface {
 type Coordinator struct {
 	legacy LegacyEngine
 	prompt PromptEngine
+	served ServedGroupRecorder
+}
+
+// ServedGroupRecorder 是「请求结束后补记实际服务分组」的接口（设计 Q18）：
+// 有回退链时审计事件里的分组是触发审计的那一跳，请求结束后由入口把实际服务的分组补记到同一 request_id 的事件上。
+// 本段只留接口，没有默认实现（未设置时 RecordServedGroup 是空操作）；落库实现在后续分段按需提供。
+type ServedGroupRecorder interface {
+	RecordServedGroup(ctx context.Context, requestID string, servedGroupID int64) error
+}
+
+// SetServedGroupRecorder 设置补记实现；传 nil 表示不补记。
+func (c *Coordinator) SetServedGroupRecorder(r ServedGroupRecorder) {
+	if c != nil {
+		c.served = r
+	}
+}
+
+// RecordServedGroup 在请求结束后补记实际服务分组；未设置 recorder、参数无效时为空操作，错误由调用方决定是否记录。
+func (c *Coordinator) RecordServedGroup(ctx context.Context, requestID string, servedGroupID int64) error {
+	if c == nil || c.served == nil || requestID == "" || servedGroupID <= 0 {
+		return nil
+	}
+	return c.served.RecordServedGroup(ctx, requestID, servedGroupID)
 }
 
 func NewCoordinator(legacy LegacyEngine, prompt PromptEngine) *Coordinator {

@@ -79,10 +79,21 @@ type Request struct {
 	Model      string
 	Body       []byte
 	Stage      string
+
+	// ChainGroups 有回退链时，链上所有存活跳的分组（含主分组）。非空时审计范围按并集判定，
+	// 命中后 GroupID / GroupName 会被换成触发审计的那一跳（见 ActiveConfig.ScopeRequest）。无链时为空。
+	ChainGroups []ChainGroup
+}
+
+// ChainGroup 是回退链上的一跳分组。
+type ChainGroup struct {
+	ID   int64
+	Name string
 }
 
 func (r Request) Clone() Request {
 	r.Body = append([]byte(nil), r.Body...)
+	r.ChainGroups = append([]ChainGroup(nil), r.ChainGroups...)
 	if r.GroupID != nil {
 		id := *r.GroupID
 		r.GroupID = &id

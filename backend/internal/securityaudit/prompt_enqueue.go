@@ -25,6 +25,9 @@ func (e *Enqueuer) Enqueue(ctx context.Context, req Request) error {
 		return errors.New("prompt audit enqueuer unavailable")
 	}
 	cfg, ok := e.config.Active()
+	if ok {
+		req = cfg.ScopeRequest(req)
+	}
 	baseFields := requestLogFields(req)
 	if !ok || cfg.EffectiveMode() != ModeAsync {
 		LogInfo(EventEnqueueSkipped, mergeLogFields(baseFields, map[string]any{"status": "skipped", "error_code": "mode_not_async"}))

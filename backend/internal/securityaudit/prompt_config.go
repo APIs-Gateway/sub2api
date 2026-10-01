@@ -365,6 +365,50 @@ func (cfg ActiveConfig) IncludesGroup(groupID *int64) bool {
 	return i < len(cfg.GroupIDs) && cfg.GroupIDs[i] == *groupID
 }
 
+// IncludesAnyGroup 回退链用：groupIDs 中任一分组在审计范围内就返回 true（范围并集，严格优先）。
+// 审计配置只有一份，范围只有「在 / 不在」两种状态，取并集就是最严的口径。
+func (cfg ActiveConfig) IncludesAnyGroup(groupIDs []int64) bool {
+	_, ok := cfg.firstIncludedGroup(groupIDs)
+	return ok
+}
+
+func (cfg ActiveConfig) firstIncludedGroup(groupIDs []int64) (int64, bool) {
+	for _, id := range groupIDs {
+		gid := id
+		if cfg.IncludesGroup(&gid) {
+			return id, true
+		}
+	}
+	return 0, false
+}
+
+// ScopeRequest 在请求带有回退链分组（req.ChainGroups）时，把 req.GroupID / GroupName 换成
+// 第一个命中审计范围的那一跳，使审计事件记录的是「触发审计的 hop 分组」（设计 Q18）。
+// 没有任何一跳命中时原样返回，后续的 IncludesGroup 判定同样得出「不在范围内」。
+// 无链（ChainGroups 为空）时原样返回，行为与改动前完全一致。
+func (cfg ActiveConfig) ScopeRequest(req Request) Request {
+	if len(req.ChainGroups) == 0 {
+		return req
+	}
+	ids := make([]int64, 0, len(req.ChainGroups))
+	for _, g := range req.ChainGroups {
+		ids = append(ids, g.ID)
+	}
+	hit, ok := cfg.firstIncludedGroup(ids)
+	if !ok {
+		return req
+	}
+	for _, g := range req.ChainGroups {
+		if g.ID == hit {
+			id := g.ID
+			req.GroupID = &id
+			req.GroupName = g.Name
+			break
+		}
+	}
+	return req
+}
+
 func (cfg ActiveConfig) EnabledEndpoints() []ActiveEndpoint {
 	result := make([]ActiveEndpoint, 0, len(cfg.Endpoints))
 	for _, ep := range cfg.Endpoints {

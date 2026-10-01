@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 
@@ -212,7 +213,29 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	out := apiKeyEntityToService(m)
+	out.HasGroupRoutes = r.keyHasGroupRoutes(ctx, m.ID)
+	return out, nil
+}
+
+// keyHasGroupRoutes 判断 Key 是否配置了回退链（api_key_group_routes 里有任意一行）。
+//
+// 只在鉴权缓存未命中时执行一次（结果随快照缓存）。走 uq_agr_key_source_group
+// (api_key_id, source, group_id) 的前缀索引做 EXISTS，不会扫表。
+// 失败时返回 false（等同于「没有链」，即功能关闭时的现状行为）并记日志，
+// 不能因为这个可选特性让鉴权失败。
+func (r *apiKeyRepository) keyHasGroupRoutes(ctx context.Context, keyID int64) bool {
+	if r.sql == nil || keyID <= 0 {
+		return false
+	}
+	var exists bool
+	if err := scanSingleRow(ctx, r.sql,
+		"SELECT EXISTS (SELECT 1 FROM api_key_group_routes WHERE api_key_id = $1)",
+		[]any{keyID}, &exists); err != nil {
+		logger.LegacyPrintf("repository.api_key", "[GroupRoutes] exists check failed: api_key=%d err=%v", keyID, err)
+		return false
+	}
+	return exists
 }
 
 func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey) error {
