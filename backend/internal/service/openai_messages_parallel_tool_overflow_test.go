@@ -80,3 +80,34 @@ func TestAnthropicParallelToolOverflowDrainFailureKeepsOriginalError(t *testing.
 		}
 	}
 }
+
+func TestAnthropicParallelToolOverflowStalledDrainHasDeadline(t *testing.T) {
+	prefix := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_overflow","model":"gpt-5.6-sol"}}`,
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"a","name":"first"}}`,
+		`data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"b","name":"second"}}`,
+		`data: {"type":"response.function_call_arguments.delta","output_index":1,"item_id":"b","delta":"` + strings.Repeat("x", 1<<20) + `"}`,
+	}, "\n\n") + "\n\n"
+	for _, keepalive := range []int{0, 1} {
+		t.Run(map[int]string{0: "synchronous", 1: "keepalive"}[keepalive], func(t *testing.T) {
+			reader, writer := io.Pipe()
+			defer reader.Close()
+			defer writer.Close()
+			go func() { _, _ = writer.Write([]byte(prefix)) }()
+			c, rec := newUpstreamModelMismatchPathContext(t, "/v1/messages", nil)
+			resp := upstreamModelMismatchHTTPResponse("text/event-stream", "rid_overflow", "")
+			resp.Body = reader
+			cfg := rawChatCompletionsTestConfig()
+			cfg.Gateway.StreamKeepaliveInterval = keepalive
+			svc := &OpenAIGatewayService{cfg: cfg}
+			start := time.Now()
+			result, err := svc.handleAnthropicStreamingResponse(resp, c, upstreamModelMismatchTestAccount(),
+				"gpt-5.6-sol", "gpt-5.6-sol", "gpt-5.6-sol", start)
+			require.ErrorContains(t, err, "buffering limits")
+			require.NotNil(t, result)
+			require.Less(t, time.Since(start), openAIChatErrorDrainMaxWait+3*time.Second)
+			require.Equal(t, 1, strings.Count(rec.Body.String(), "event: error"))
+			require.NotContains(t, rec.Body.String(), "event: message_stop")
+		})
+	}
+}

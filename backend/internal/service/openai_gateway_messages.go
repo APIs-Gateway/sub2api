@@ -1055,7 +1055,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			if evt.Type == "error" && evt.Error != nil {
 				streamNonFailoverErr = fmt.Errorf("responses to anthropic stream conversion failed: %s", evt.Error.Message)
 				drainReader.start()
-				conversionDrainTimer = time.AfterFunc(10*time.Second, func() { _ = resp.Body.Close() })
+				conversionDrainTimer = time.AfterFunc(openAIChatErrorDrainMaxWait, func() { _ = resp.Body.Close() })
 				break
 			}
 		}
