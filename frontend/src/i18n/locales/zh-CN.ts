@@ -850,9 +850,7 @@
     subscription: '订阅',
     rateMultiplierTip: '「Nx 倍率」是该分组相对官方价的扣额度速度：数字越大、池子越稳定，同样的用量扣得也越多；它是系统扣费的系数，不是最终价格。叠加套餐折扣后你实际相当于官方价几折，见分组描述。'
     ,
-    rateMultiplierLabel: '{rate}x 倍率',
-    fiatRateLabel: '官方 $1 ≈ {price}',
-    fiatRateTip: '按余额付费时，模型官方价每 $1 实际花费的人民币；已计入你的专属倍率。'
+    rateMultiplierLabel: '{rate}x 倍率'
   },
 
   // 密钥接入弹窗：一键安装 / 交给 AI / CC Switch / 手动配置

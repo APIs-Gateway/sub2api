@@ -851,9 +851,7 @@
     subscription: 'Sub',
     rateMultiplierTip: 'The "Nx rate" is how fast this group burns your balance relative to official pricing: a higher number means a more stable pool but also more balance consumed for the same usage. It is the billing coefficient, not the final price. See the group description for your effective fraction of official pricing after the plan discount.'
     ,
-    rateMultiplierLabel: '{rate}x rate',
-    fiatRateLabel: 'Official $1 ≈ {price}',
-    fiatRateTip: 'What each $1 of official model price costs you in CNY when paying from balance; your custom rate is included.'
+    rateMultiplierLabel: '{rate}x rate'
   },
 
   // Key connect dialog: one-click install / hand it to an AI / CC Switch / manual setup
