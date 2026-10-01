@@ -1,0 +1,102 @@
+# 接入说明（给 AI 助手读）
+
+> 这是本站的接入说明，写给帮用户配置客户端的 AI 助手。
+> 文中的 `<站点地址>` 指用户当前打开本站时浏览器地址栏里的地址，`<API 地址>` 指用户在本站「使用文档」页 (/docs) 顶部看到的地址。
+> 静态文件里没法写死域名，请以用户实际看到的地址为准，不确定就直接问用户。
+
+## 给 AI 助手的规则
+
+- 不要向用户索要真实密钥，也不要让用户把密钥贴进对话。示例里一律用 `sk-你的密钥` 占位，告诉用户把它换成自己的密钥。
+- 密钥以 `sk-` 开头，用户在站内「API 密钥」页 (/keys) 创建，在同一页点「接入」还有一键安装、CC Switch 导入等方式。
+- OpenAI 兼容客户端（OpenAI SDK、Codex、Cursor 和大多数聊天客户端）的 Base URL 是 `<API 地址>/v1`，带 /v1。
+- Anthropic 兼容客户端（Claude Code 等）的 Base URL 是 `<API 地址>`，不带 /v1。
+- 鉴权：`Authorization: Bearer <密钥>`；Anthropic 格式也可以用 `x-api-key`；Gemini 格式用 `x-goog-api-key`。不要把密钥放进网址参数。
+- Claude Code 的密钥变量是 `ANTHROPIC_AUTH_TOKEN`，不是 `ANTHROPIC_API_KEY`。
+- 模型名以站内「价格与计费」页 (/available-channels) 为准，登录后可见。不要凭记忆写模型名；用户能用哪些模型由密钥所在的分组决定。
+- 回复较长的请求建议开流式（`stream: true`），否则等待太久可能被中途断开（524）。
+- 不清楚用户用什么工具、什么系统，先问用户。
+- 完整的图文说明在 `<站点地址>/docs`，各节有锚点，例如 `/docs#codex`、`/docs#errors`。
+
+## 可用接口
+
+所有接口共用同一个地址和同一个密钥，路径接在 `<API 地址>` 后面：
+
+- POST /v1/responses：OpenAI Responses 格式，Codex 使用
+- POST /v1/chat/completions：OpenAI Chat Completions 格式
+- POST /v1/messages：Anthropic Messages 格式，Claude Code 使用
+- GET /v1/models：当前密钥能用的模型
+- POST /v1/embeddings、POST /v1/images/generations、POST /v1/images/edits、POST /v1/messages/count_tokens：按密钥所在分组开放，不可用时返回 404
+- /v1beta/models/...：Gemini 原生格式，仅 Gemini 分组可用
+
+## 验证密钥
+
+```bash
+curl <API 地址>/v1/models -H "Authorization: Bearer sk-你的密钥"
+```
+
+返回一段含模型名的 JSON 就说明密钥和地址没问题。
+
+## Codex CLI / Codex Desktop
+
+写 `~/.codex/config.toml`（Windows 是 `%USERPROFILE%\.codex\config.toml`），模型名换成价格页上的模型：
+
+```toml
+model_provider = "OpenAI"
+model = "<价格页上的模型名>"
+
+[model_providers.OpenAI]
+name = "OpenAI"
+base_url = "<API 地址>/v1"
+wire_api = "responses"
+requires_openai_auth = true
+```
+
+再写 `~/.codex/auth.json`：
+
+```json
+{ "OPENAI_API_KEY": "sk-你的密钥" }
+```
+
+如果较新版本的 Codex 一直 401，把 `requires_openai_auth` 改成 false，并在同一段里加 `experimental_bearer_token = "sk-你的密钥"`。
+改完要完全退出 Codex 再新建会话。
+
+## Claude Code
+
+写 `~/.claude/settings.json`：
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "<API 地址>",
+    "ANTHROPIC_AUTH_TOKEN": "sk-你的密钥"
+  }
+}
+```
+
+用过官方账号登录的，先运行 `claude /logout`。验证：启动后输入 `/status`，看 Anthropic base URL 是否是 `<API 地址>`。
+只有开放了 Claude Code 的分组才能用；返回 403 且提示分组不允许 /v1/messages 时，让用户在「API 密钥」页给密钥换分组。
+
+## 其他 OpenAI 兼容客户端
+
+选「OpenAI Compatible」，Base URL 填 `<API 地址>/v1`，API Key 填 `sk-你的密钥`，模型填价格页上的模型名。
+Cherry Studio 的 API 地址填 `<API 地址>`（它会自己补 /v1）。Cursor 在 Models 页打开 Override OpenAI Base URL，填 `<API 地址>/v1`。
+
+## 环境变量
+
+```bash
+export OPENAI_BASE_URL="<API 地址>/v1"
+export OPENAI_API_KEY="sk-你的密钥"
+export ANTHROPIC_BASE_URL="<API 地址>"
+export ANTHROPIC_AUTH_TOKEN="sk-你的密钥"
+```
+
+## 常见错误
+
+- 401 `Invalid API key`：密钥没复制完整或已删除；Claude Code 还要检查有没有残留的 `ANTHROPIC_API_KEY`。
+- 403 `insufficient balance`：余额不足，到「充值/订阅」页充值。
+- 429 `usage limit exceeded`：套餐的日、周、月额度用完，且余额也不够。
+- 429 `api key 额度已用完` 或各种「限额已用完」：这个密钥自己的额度或限额用完，到「API 密钥」页调整。
+- 403 提示分组不可用或未分配分组：在「API 密钥」页给密钥换分组。
+- 404 `model_not_found`：模型名写错，或所在分组没有这个模型。
+- 429 `requests-per-minute limit exceeded`：请求太频繁，按响应里的 `Retry-After` 等待。
+- 524 或连接中断：请求等太久，改用流式。
