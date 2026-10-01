@@ -258,8 +258,12 @@ func TestOpenAIMessages_ResponsesClientCancelDuringReadErrorRecordsUsageWithoutF
 		nil, // groupRepo
 	)
 	cache := &concurrencyCacheMock{
-		acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
-		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireUserSlotFn: func(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) {
+			return true, nil
+		},
+		acquireAccountSlotFn: func(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
+			return true, nil
+		},
 	}
 	h := &OpenAIGatewayHandler{
 		gatewayService:      gatewaySvc,
