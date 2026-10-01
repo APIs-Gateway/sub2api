@@ -239,6 +239,15 @@ type ResponsesEventToAnthropicState struct {
 	ResponseID string
 	Model      string
 	Created    int64
+
+	// Responses may stream several output items at once. Anthropic requires a
+	// content block to finish before the next one starts on the wire.
+	serialNextBlock  int
+	serialWireOpen   bool
+	serialPending    map[int][]AnthropicStreamEvent
+	serialBlockBytes map[int]int
+	serialTotalBytes int
+	serialFailed     bool
 }
 
 // NewResponsesEventToAnthropicState returns an initialised stream state.
@@ -250,6 +259,8 @@ func NewResponsesEventToAnthropicState() *ResponsesEventToAnthropicState {
 		openBlocks:            make(map[int]*responsesAnthropicBlock),
 		announcedTextParts:    make(map[responsesTextPart]bool),
 		textByPart:            make(map[responsesTextPart]*strings.Builder),
+		serialPending:         make(map[int][]AnthropicStreamEvent),
+		serialBlockBytes:      make(map[int]int),
 		Created:               time.Now().Unix(),
 	}
 }
@@ -260,6 +271,13 @@ func ResponsesEventToAnthropicEvents(
 	evt *ResponsesStreamEvent,
 	state *ResponsesEventToAnthropicState,
 ) []AnthropicStreamEvent {
+	if state.serialFailed {
+		return nil
+	}
+	return state.serializeResponsesAnthropicEvents(responsesEventToAnthropicEvents(evt, state))
+}
+
+func responsesEventToAnthropicEvents(evt *ResponsesStreamEvent, state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
 	switch evt.Type {
 	case "response.created":
 		return resToAnthHandleCreated(evt, state)
@@ -305,7 +323,7 @@ func ResponsesEventToAnthropicEvents(
 // FinalizeResponsesAnthropicStream emits synthetic termination events if the
 // stream ended without a proper completion event.
 func FinalizeResponsesAnthropicStream(state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
-	if !state.MessageStartSent || state.MessageStopSent {
+	if !state.MessageStartSent || state.MessageStopSent || state.serialFailed {
 		return nil
 	}
 
@@ -333,7 +351,96 @@ func FinalizeResponsesAnthropicStream(state *ResponsesEventToAnthropicState) []A
 		AnthropicStreamEvent{Type: "message_stop"},
 	)
 	state.MessageStopSent = true
-	return events
+	return state.serializeResponsesAnthropicEvents(events)
+}
+
+// serializeResponsesAnthropicEvents only delays blocks created after a still
+// open earlier block. It leaves the per-output converter and its tool input,
+// reasoning, and terminal reconciliation unchanged.
+func (state *ResponsesEventToAnthropicState) serializeResponsesAnthropicEvents(events []AnthropicStreamEvent) []AnthropicStreamEvent {
+	var ready []AnthropicStreamEvent
+	for _, event := range events {
+		if event.Index == nil {
+			// Terminal events must follow every content block, including buffered ones.
+			if event.Type == "message_delta" || event.Type == "message_stop" {
+				ready = append(ready, state.drainResponsesAnthropicBlocks()...)
+				if state.serialWireOpen || len(state.serialPending) != 0 || state.serialNextBlock != state.ContentBlockIndex {
+					return state.failResponsesAnthropicSerialization(ready)
+				}
+			}
+			ready = append(ready, event)
+			continue
+		}
+		index := *event.Index
+		if index < state.serialNextBlock {
+			continue
+		}
+		if index == state.serialNextBlock {
+			ready = append(ready, event)
+			if event.Type == "content_block_start" {
+				state.serialWireOpen = true
+			} else if event.Type == "content_block_stop" {
+				state.serialWireOpen = false
+				state.serialNextBlock++
+				ready = append(ready, state.drainResponsesAnthropicBlocks()...)
+			}
+			continue
+		}
+		size := responsesAnthropicEventSize(event)
+		if state.serialBlockBytes[index]+size > 1<<20 || state.serialTotalBytes+size > 4<<20 || len(state.serialPending) >= 128 && state.serialPending[index] == nil {
+			return state.failResponsesAnthropicSerialization(ready)
+		}
+		state.serialPending[index] = append(state.serialPending[index], event)
+		state.serialBlockBytes[index] += size
+		state.serialTotalBytes += size
+	}
+	return ready
+}
+
+func (state *ResponsesEventToAnthropicState) drainResponsesAnthropicBlocks() []AnthropicStreamEvent {
+	var ready []AnthropicStreamEvent
+	for {
+		pending := state.serialPending[state.serialNextBlock]
+		if len(pending) == 0 {
+			break
+		}
+		state.serialTotalBytes -= state.serialBlockBytes[state.serialNextBlock]
+		delete(state.serialBlockBytes, state.serialNextBlock)
+		delete(state.serialPending, state.serialNextBlock)
+		closed := false
+		for _, event := range pending {
+			ready = append(ready, event)
+			if event.Type == "content_block_start" {
+				state.serialWireOpen = true
+			} else if event.Type == "content_block_stop" {
+				state.serialWireOpen = false
+				closed = true
+			}
+		}
+		if !closed {
+			break
+		}
+		state.serialNextBlock++
+	}
+	return ready
+}
+
+func (state *ResponsesEventToAnthropicState) failResponsesAnthropicSerialization(ready []AnthropicStreamEvent) []AnthropicStreamEvent {
+	state.serialFailed = true
+	state.serialPending = nil
+	state.serialBlockBytes = nil
+	return append(ready, AnthropicStreamEvent{Type: "error", Error: &AnthropicSSEError{Type: "api_error", Message: "Upstream content block stream exceeds buffering limits"}})
+}
+
+func responsesAnthropicEventSize(event AnthropicStreamEvent) int {
+	size := 128
+	if event.ContentBlock != nil {
+		size += len(event.ContentBlock.ID) + len(event.ContentBlock.Name) + len(event.ContentBlock.Text) + len(event.ContentBlock.Thinking) + len(event.ContentBlock.Input) + len(event.ContentBlock.Content)
+	}
+	if event.Delta != nil {
+		size += len(event.Delta.Text) + len(event.Delta.PartialJSON) + len(event.Delta.Thinking) + len(event.Delta.Signature)
+	}
+	return size
 }
 
 // ResponsesAnthropicEventToSSE formats an AnthropicStreamEvent as an SSE line pair.

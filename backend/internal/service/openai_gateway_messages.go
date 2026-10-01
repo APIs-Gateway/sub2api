@@ -1001,6 +1001,12 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 
 		// Convert to Anthropic events
 		events := apicompat.ResponsesEventToAnthropicEvents(&event, state)
+		for _, evt := range events {
+			if evt.Type == "error" && evt.Error != nil {
+				streamNonFailoverErr = fmt.Errorf("responses to anthropic stream conversion failed: %s", evt.Error.Message)
+				break
+			}
+		}
 		if !clientDisconnected {
 			for _, evt := range events {
 				sse, err := apicompat.ResponsesAnthropicEventToSSE(evt)
@@ -1025,7 +1031,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		if len(events) > 0 && !clientDisconnected {
 			c.Writer.Flush()
 		}
-		return isTerminalEvent
+		return isTerminalEvent || streamNonFailoverErr != nil
 	}
 
 	// finalizeStream sends any remaining Anthropic events and returns the result.
