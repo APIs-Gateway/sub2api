@@ -271,6 +271,56 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		if err == nil && result != nil && result.FirstTokenMs != nil {
 			service.SetOpsLatencyMs(c, service.OpsTimeToFirstTokenMsKey, int64(*result.FirstTokenMs))
 		}
+		userAgent := c.GetHeader("User-Agent")
+		clientIP := ip.GetClientIP(c)
+		inboundEndpoint := GetInboundEndpoint(c)
+		upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account)
+		// 稳定优先方案 Y：兜底时按实际服务档位组倍率计费（normal 态为 0，不影响正常计费）。
+		stableServedGroupID := scheduleDecision.StableServedGroupID
+		stableServedRate := scheduleDecision.StableServedRateMultiplier
+		stableServedImageIndependent := scheduleDecision.StableServedImageRateIndependent
+		stableServedImageRate := scheduleDecision.StableServedImageRateMultiplier
+		stableServedImagePrice1K := scheduleDecision.StableServedImagePrice1K
+		stableServedImagePrice2K := scheduleDecision.StableServedImagePrice2K
+		stableServedImagePrice4K := scheduleDecision.StableServedImagePrice4K
+
+		cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+		submitChatUsage := func(result *service.OpenAIForwardResult) {
+			h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
+				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+					Result:                           result,
+					APIKey:                           apiKey,
+					User:                             apiKey.User,
+					Account:                          account,
+					Subscription:                     subscription,
+					InboundEndpoint:                  inboundEndpoint,
+					UpstreamEndpoint:                 upstreamEndpoint,
+					UserAgent:                        userAgent,
+					IPAddress:                        clientIP,
+					APIKeyService:                    h.apiKeyService,
+					ChannelUsageFields:               effectiveMapping.ToUsageFields(reqModel, result.UpstreamModel),
+					CyberBlocked:                     cyberBlocked,
+					UpstreamResponseModel:            upstreamResponseModel,
+					StableServedGroupID:              stableServedGroupID,
+					StableServedRateMultiplier:       stableServedRate,
+					StableServedImageRateIndependent: stableServedImageIndependent,
+					StableServedImageRateMultiplier:  stableServedImageRate,
+					StableServedImagePrice1K:         stableServedImagePrice1K,
+					StableServedImagePrice2K:         stableServedImagePrice2K,
+					StableServedImagePrice4K:         stableServedImagePrice4K,
+			}); err != nil {
+				logger.L().With(
+					zap.String("component", "handler.openai_gateway.chat_completions"),
+					zap.Int64("user_id", subject.UserID),
+					zap.Int64("api_key_id", apiKey.ID),
+					zap.Any("group_id", apiKey.GroupID),
+					zap.String("model", reqModel),
+					zap.Int64("account_id", account.ID),
+				).Error("openai_chat_completions.record_usage_failed", zap.Error(err))
+			}
+			})
+		}
+
 		if err != nil {
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai_chat_completions.forward_partial_error_with_image_result",
@@ -331,6 +381,17 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					)
 					continue
 				}
+				// A partial stream may carry metered usage even when the terminal
+				// event or upstream read fails. Cyber policy already records its
+				// own usage above; a failover never reaches this branch.
+				if result != nil && service.GetOpsCyberPolicy(c) == nil &&
+					(result.PartialOutputDelivered || result.Usage != (service.OpenAIUsage{})) {
+					submitChatUsage(result)
+				}
+				clientGone := (result != nil && result.ClientDisconnect) || failoverClientGone(c)
+				if clientGone {
+					return
+				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
@@ -355,53 +416,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil, account.GetMappedModel(reqModel))
 		}
 
-		userAgent := c.GetHeader("User-Agent")
-		clientIP := ip.GetClientIP(c)
-		inboundEndpoint := GetInboundEndpoint(c)
-		upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account)
-		// 稳定优先方案 Y：兜底时按实际服务档位组倍率计费（normal 态为 0，不影响正常计费）。
-		stableServedGroupID := scheduleDecision.StableServedGroupID
-		stableServedRate := scheduleDecision.StableServedRateMultiplier
-		stableServedImageIndependent := scheduleDecision.StableServedImageRateIndependent
-		stableServedImageRate := scheduleDecision.StableServedImageRateMultiplier
-		stableServedImagePrice1K := scheduleDecision.StableServedImagePrice1K
-		stableServedImagePrice2K := scheduleDecision.StableServedImagePrice2K
-		stableServedImagePrice4K := scheduleDecision.StableServedImagePrice4K
-
-		cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
-			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-				Result:                           result,
-				APIKey:                           apiKey,
-				User:                             apiKey.User,
-				Account:                          account,
-				Subscription:                     subscription,
-				InboundEndpoint:                  inboundEndpoint,
-				UpstreamEndpoint:                 upstreamEndpoint,
-				UserAgent:                        userAgent,
-				IPAddress:                        clientIP,
-				APIKeyService:                    h.apiKeyService,
-				ChannelUsageFields:               effectiveMapping.ToUsageFields(reqModel, result.UpstreamModel),
-				CyberBlocked:                     cyberBlocked,
-				UpstreamResponseModel:            upstreamResponseModel,
-				StableServedGroupID:              stableServedGroupID,
-				StableServedRateMultiplier:       stableServedRate,
-				StableServedImageRateIndependent: stableServedImageIndependent,
-				StableServedImageRateMultiplier:  stableServedImageRate,
-				StableServedImagePrice1K:         stableServedImagePrice1K,
-				StableServedImagePrice2K:         stableServedImagePrice2K,
-				StableServedImagePrice4K:         stableServedImagePrice4K,
-			}); err != nil {
-				logger.L().With(
-					zap.String("component", "handler.openai_gateway.chat_completions"),
-					zap.Int64("user_id", subject.UserID),
-					zap.Int64("api_key_id", apiKey.ID),
-					zap.Any("group_id", apiKey.GroupID),
-					zap.String("model", reqModel),
-					zap.Int64("account_id", account.ID),
-				).Error("openai_chat_completions.record_usage_failed", zap.Error(err))
-			}
-		})
+		submitChatUsage(result)
 		reqLog.Debug("openai_chat_completions.request_completed",
 			zap.Int64("account_id", account.ID),
 			zap.Int("switch_count", switchCount),

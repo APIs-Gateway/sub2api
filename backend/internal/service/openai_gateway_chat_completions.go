@@ -639,6 +639,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	firstChunk := true
 	clientDisconnected := false
 	clientOutputStarted := false
+	var outputBeforeError *bool
 	pendingSSE := make([]string, 0, 4)
 	pendingSSEBytes := 0
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
@@ -669,6 +670,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	}
 
 	resultWithUsage := func() *OpenAIForwardResult {
+		partialOutputDelivered := clientOutputStarted
+		if outputBeforeError != nil {
+			partialOutputDelivered = *outputBeforeError
+		}
 		return &OpenAIForwardResult{
 			RequestID:     requestID,
 			Usage:         usage,
@@ -678,6 +683,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			Stream:        true,
 			Duration:      time.Since(startTime),
 			FirstTokenMs:  firstTokenMs,
+			ClientDisconnect: clientDisconnected,
+			PartialOutputDelivered: partialOutputDelivered,
 		}
 	}
 	flushPendingSSE := func() {
@@ -726,6 +733,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 		}
 		if event.Type == "response.failed" || event.Type == "error" || gjson.Get(payload, "error").IsObject() {
+			beforeError := clientOutputStarted
+			outputBeforeError = &beforeError
 			payloadBytes := []byte(payload)
 			message := extractOpenAISSEErrorMessage(payloadBytes)
 			if hit, code, msg := detectOpenAICyberPolicy(payloadBytes); hit {

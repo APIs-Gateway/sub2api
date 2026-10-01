@@ -319,6 +319,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	var firstTokenMs *int
 	clientDisconnected := false
 	clientOutputStarted := false
+	var outputBeforeError *bool
 	pendingLines := make([]string, 0, 8)
 	pendingBytes := 0
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
@@ -401,6 +402,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			payloadType := strings.TrimSpace(gjson.Get(payload, "type").String())
 			isError := gjson.Get(payload, "error").IsObject() || payloadType == "response.failed" || frameEvent == "error" || frameEvent == "response.failed"
 			if isError && streamError == nil {
+				beforeError := clientOutputStarted
+				outputBeforeError = &beforeError
 				message := extractOpenAISSEErrorMessage(payloadBytes)
 				shouldFailover := openAIStreamErrorEventShouldFailover(payloadBytes, message)
 				if payloadType == "response.failed" || frameEvent == "response.failed" {
@@ -623,6 +626,10 @@ streamDone:
 	}
 
 	resultWithUsage := func() *OpenAIForwardResult {
+		partialOutputDelivered := clientOutputStarted
+		if outputBeforeError != nil {
+			partialOutputDelivered = *outputBeforeError
+		}
 		return &OpenAIForwardResult{
 			RequestID:       requestID,
 			Usage:           usage,
@@ -634,6 +641,8 @@ streamDone:
 			Stream:          true,
 			Duration:        time.Since(startTime),
 			FirstTokenMs:    firstTokenMs,
+			ClientDisconnect: clientDisconnected,
+			PartialOutputDelivered: partialOutputDelivered,
 		}
 	}
 	if streamError != nil {
