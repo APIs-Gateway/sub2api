@@ -52,14 +52,14 @@
 - 只能用线上 `usage_logs` / ops 日志做被动统计：同一凭据、足够长窗口内的不一致比例（后台用量页「仅不一致」筛选，或 `upstream_model_mismatch = true` 按 `account_id` 聚合）。
 - 不能靠发探测请求：一次探测只是账号池里某个节点的样本。同一凭据的一次探测全部不一致、同一小时的线上请求却全部正常，两者曾同时出现过——探测抽到了池里的坏节点。这也是池模式账号先同账号重试而不是立刻切号的依据。
 - 只有一家的全部凭据在足够长的窗口里持续不一致，才谈得上平台级重定向，再考虑对该上游做账号级处置。
-- 向 New API 系中转追责时注意其 request id 的时间戳前缀是 UTC：去对方后台按时间搜要把北京时间减 8 小时。
-- New API 系中转的 request id 常只在错误体里（`error.request_id` / 顶层 `request_id` / `error.message` 末尾的 `request_id: …`），响应头里没有；`appendOpsUpstreamError` 已兜底从错误体提取进 `upstream_errors[].upstream_request_id`（头里有值不覆盖）。
+- 向中转方追责时注意其 request id 的时间戳前缀可能是 UTC：去对方后台按时间搜要先换算时区（北京时间 = UTC + 8 小时）。
+- 部分中转实现的 request id 常只在错误体里（`error.request_id` / 顶层 `request_id` / `error.message` 末尾的 `request_id: …`），响应头里没有；`appendOpsUpstreamError` 已兜底从错误体提取进 `upstream_errors[].upstream_request_id`（头里有值不覆盖）。
 - 不一致相关的 `usage_logs` 行（审计行与观察模式行）必写 `upstream_model`（A），即使与 `model` 相等；普通行仍只在两者不同时写。
 
 ## 上游 request id 与上游头指纹
 
-- 上游 request id 头名兼容：第三方中转不一定发 `x-request-id`（one-api / new-api 系中转发 `x-oneapi-request-id`，rix-api 系中转发 `x-rixapi-request-id`，Bedrock 发 `x-amzn-requestid`，过 Cloudflare 的有 `cf-ray`）。service 层统一用 `upstreamRequestIDFromHeader` 按 `x-request-id` → `x-oneapi-request-id` → `x-rixapi-request-id` → `x-amzn-requestid` → `cf-ray` 的顺序取第一个非空值，写入 `ops_error_logs.upstream_errors[].upstream_request_id`、`OpenAIForwardResult.RequestID` 等；只作用于读上游响应头，回写给客户端的 `x-request-id` 响应头只回显上游同名头（不会把 cf-ray / oneapi id 顶替进去），客户端请求头也不变。取到的值会进入 `OpenAIForwardResult.RequestID` / `ForwardResult.RequestID`，进而在 ctx 没有 request id 时（或 WS 模式）写入 `usage_logs.request_id`——对只发 cf-ray 的上游，该列从 `generated:<uuid>` 变为 cf-ray 形态（每请求唯一，不撞唯一索引）。
-- 上游头指纹：模型不一致的 ops 事件带 `upstream_headers`（白名单 `server`、`x-new-api-version`、`cf-ray`、`x-oneapi-request-id`、`x-rixapi-request-id`、`x-request-id`、`x-amzn-requestid`、`via`；只取非空，值截到 128 字节；WS 路径没有 HTTP 响应头，不带该字段），用于识别中转实现与向厂商追责。不含 cookie / 凭证类头。
+- 上游 request id 头名兼容：第三方中转不一定发标准的 `x-request-id`，不同中转实现、云厂商和 CDN 各有自己的 request id 响应头。service 层统一用 `upstreamRequestIDFromHeader` 按固定优先级取第一个非空值（头名清单与顺序以该函数为准），写入 `ops_error_logs.upstream_errors[].upstream_request_id`、`OpenAIForwardResult.RequestID` 等；只作用于读上游响应头，回写给客户端的 `x-request-id` 响应头只回显上游同名头（不会把其他来源的 id 顶替进去），客户端请求头也不变。取到的值会进入 `OpenAIForwardResult.RequestID` / `ForwardResult.RequestID`，进而在 ctx 没有 request id 时（或 WS 模式）写入 `usage_logs.request_id`——对只带 CDN 请求标识的上游，该列从 `generated:<uuid>` 变为该标识形态（每请求唯一，不撞唯一索引）。
+- 上游头指纹：部分中转实现会在响应头里带上实现标识，模型不一致的 ops 事件带 `upstream_headers`（只取白名单内的非空头，值截到 128 字节；白名单见 `opsUpstreamHeaderFingerprintNames`，摘取逻辑见 `opsUpstreamHeaderFingerprint`；WS 路径没有 HTTP 响应头，不带该字段），用于识别中转实现与向厂商追责。不含 cookie / 凭证类头。
 
 ## 开关
 
