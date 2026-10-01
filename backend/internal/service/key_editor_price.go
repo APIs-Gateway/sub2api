@@ -158,7 +158,9 @@ func (s *KeyEditorPriceService) ReferenceModel(ctx context.Context, platform, ov
 	return s.ReferenceModels(ctx)[platform]
 }
 
-// SetReferenceModels 保存管理员设置的参考模型（按平台）。空模型名表示删除该平台的覆盖、回到默认值。
+// SetReferenceModels 保存管理员设置的参考模型（按平台）。
+// 语义是整体替换：传入的映射就是保存后的全部覆盖，没传的平台会被清掉、回到内置默认；
+// 值为空串的平台同样不保存覆盖，所以调用方要保留某个平台的覆盖，就必须带上完整映射。
 func (s *KeyEditorPriceService) SetReferenceModels(ctx context.Context, models map[string]string) (map[string]string, error) {
 	if s == nil || s.settings == nil {
 		return nil, infraerrors.ServiceUnavailable("SETTINGS_UNAVAILABLE", "settings are not available")

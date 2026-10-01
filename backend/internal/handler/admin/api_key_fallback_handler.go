@@ -46,7 +46,8 @@ type ReplaceHiddenFallbackChainRequest struct {
 	Note string `json:"note"`
 }
 
-// SetKeyEditorReferenceModelsRequest 是保存参考模型的请求体。值为空串表示删除该平台的覆盖、回到内置默认。
+// SetKeyEditorReferenceModelsRequest 是保存参考模型的请求体。
+// Models 整体替换已保存的覆盖：没出现的平台、值为空串的平台都回到内置默认，所以要保留的平台必须一并提交。
 type SetKeyEditorReferenceModelsRequest struct {
 	Models map[string]string `json:"models"`
 }
@@ -129,7 +130,7 @@ func (h *APIKeyFallbackHandler) GetReferenceModels(c *gin.Context) {
 	response.Success(c, KeyEditorReferenceModelsResponse{Models: h.svc.AdminReferenceModels(c.Request.Context())})
 }
 
-// SetReferenceModels 保存各平台的参考模型。
+// SetReferenceModels 保存各平台的参考模型（整体替换，没提交的平台回到内置默认）。
 // PUT /api/v1/admin/key-editor/reference-models   body: {"models":{"openai":"gpt-5.6-sol"}}
 func (h *APIKeyFallbackHandler) SetReferenceModels(c *gin.Context) {
 	var req SetKeyEditorReferenceModelsRequest
