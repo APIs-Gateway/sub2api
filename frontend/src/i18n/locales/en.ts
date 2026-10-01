@@ -147,6 +147,45 @@
   },
 
   // Key Usage Query Page
+  docs: {
+    title: 'Docs',
+    intro: 'How to connect your tools to {site}. Every step comes with a config you can copy.',
+    contentNotice: 'The guide below is currently available in Simplified Chinese only.',
+    menu: 'Contents',
+    tocTitle: 'Documentation contents',
+    onThisPage: 'On this page',
+    copy: 'Copy',
+    copied: 'Copied',
+    groups: {
+      start: 'Get started',
+      clients: 'Client setup',
+      developers: 'For developers',
+      reference: 'Reference'
+    },
+    connect: {
+      openai: 'OpenAI-compatible URL',
+      anthropic: 'Anthropic-compatible URL',
+      key: 'API key',
+      keyPlaceholder: 'sk-your-key',
+      createKey: 'Create a key'
+    },
+    ai: {
+      tabs: {
+        general: 'Any tool',
+        claudeCode: 'Claude Code',
+        codex: 'Codex',
+        chat: 'Chat clients'
+      },
+      copyPrompt: 'Copy prompt',
+      openChatgpt: 'Open in ChatGPT',
+      openClaude: 'Open in Claude'
+    },
+    models: {
+      open: 'Open Pricing and billing to see available models',
+      loginHint: 'Sign in to see the models and prices available to you.',
+      login: 'Sign in'
+    }
+  },
   keyUsage: {
     title: 'API Key Usage',
     subtitle: 'Enter your API Key to view real-time spending and usage status',
@@ -451,6 +490,7 @@
     groups: 'Groups',
     channels: 'Channels',
     availableChannels: 'Pricing & Billing',
+    usageDocs: 'Docs',
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
     proxies: 'Proxies',

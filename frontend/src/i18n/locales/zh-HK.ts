@@ -147,6 +147,45 @@
   },
 
   // Key Usage Query Page
+  docs: {
+    title: '使用文件',
+    intro: '如何把你的工具接入 {site}。每一步都附有可直接複製的設定。',
+    contentNotice: '文件正文目前只有簡體中文版本。',
+    menu: '目錄',
+    tocTitle: '文件目錄',
+    onThisPage: '本頁內容',
+    copy: '複製',
+    copied: '已複製',
+    groups: {
+      start: '開始',
+      clients: '接入客戶端',
+      developers: '開發者',
+      reference: '參考'
+    },
+    connect: {
+      openai: 'OpenAI 相容位址',
+      anthropic: 'Anthropic 相容位址',
+      key: 'API 金鑰',
+      keyPlaceholder: 'sk-你的密钥',
+      createKey: '前往建立金鑰'
+    },
+    ai: {
+      tabs: {
+        general: '通用',
+        claudeCode: 'Claude Code',
+        codex: 'Codex',
+        chat: '聊天客戶端'
+      },
+      copyPrompt: '複製提示詞',
+      openChatgpt: '在 ChatGPT 中開啟',
+      openClaude: '在 Claude 中開啟'
+    },
+    models: {
+      open: '開啟價格與計費頁，查看可用模型',
+      loginHint: '登入後可以查看你能用的模型和價格。',
+      login: '前往登入'
+    }
+  },
   keyUsage: {
     title: 'API Key 用量查詢',
     subtitle: '輸入您的 API Key 以查看實時消費金額與使用狀態',
@@ -451,6 +490,7 @@
     groups: '分組管理',
     channels: '渠道管理',
     availableChannels: '價格與計費',
+    usageDocs: '使用文件',
     subscriptions: '訂閱管理',
     accounts: '帳號管理',
     proxies: 'IP管理',

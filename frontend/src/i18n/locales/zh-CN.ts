@@ -147,6 +147,45 @@
   },
 
   // Key Usage Query Page
+  docs: {
+    title: '使用文档',
+    intro: '怎样把你的工具接入 {site}。每一步都附了可以直接复制的配置。',
+    contentNotice: '文档正文目前只有简体中文版本。',
+    menu: '目录',
+    tocTitle: '文档目录',
+    onThisPage: '本页内容',
+    copy: '复制',
+    copied: '已复制',
+    groups: {
+      start: '开始',
+      clients: '接入客户端',
+      developers: '开发者',
+      reference: '参考'
+    },
+    connect: {
+      openai: 'OpenAI 兼容地址',
+      anthropic: 'Anthropic 兼容地址',
+      key: 'API 密钥',
+      keyPlaceholder: 'sk-你的密钥',
+      createKey: '去创建密钥'
+    },
+    ai: {
+      tabs: {
+        general: '通用',
+        claudeCode: 'Claude Code',
+        codex: 'Codex',
+        chat: '聊天客户端'
+      },
+      copyPrompt: '复制提示词',
+      openChatgpt: '在 ChatGPT 中打开',
+      openClaude: '在 Claude 中打开'
+    },
+    models: {
+      open: '打开价格与计费页，查看可用模型',
+      loginHint: '登录后可以查看你能用的模型和价格。',
+      login: '去登录'
+    }
+  },
   keyUsage: {
     title: 'API Key 用量查询',
     subtitle: '输入您的 API Key 以查看实时消费金额与使用状态',
@@ -451,6 +490,7 @@
     groups: '分组管理',
     channels: '渠道管理',
     availableChannels: '价格与计费',
+    usageDocs: '使用文档',
     subscriptions: '订阅管理',
     accounts: '账号管理',
     proxies: 'IP管理',
