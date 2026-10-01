@@ -113,6 +113,34 @@ func (_c *UsageLogCreate) SetNillableUpstreamResponseModel(v *string) *UsageLogC
 	return _c
 }
 
+// SetServedGroupID sets the "served_group_id" field.
+func (_c *UsageLogCreate) SetServedGroupID(v int64) *UsageLogCreate {
+	_c.mutation.SetServedGroupID(v)
+	return _c
+}
+
+// SetNillableServedGroupID sets the "served_group_id" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableServedGroupID(v *int64) *UsageLogCreate {
+	if v != nil {
+		_c.SetServedGroupID(*v)
+	}
+	return _c
+}
+
+// SetServedRouteSource sets the "served_route_source" field.
+func (_c *UsageLogCreate) SetServedRouteSource(v int16) *UsageLogCreate {
+	_c.mutation.SetServedRouteSource(v)
+	return _c
+}
+
+// SetNillableServedRouteSource sets the "served_route_source" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableServedRouteSource(v *int16) *UsageLogCreate {
+	if v != nil {
+		_c.SetServedRouteSource(*v)
+	}
+	return _c
+}
+
 // SetChannelID sets the "channel_id" field.
 func (_c *UsageLogCreate) SetChannelID(v int64) *UsageLogCreate {
 	_c.mutation.SetChannelID(v)
@@ -923,6 +951,14 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 		_spec.SetField(usagelog.FieldUpstreamResponseModel, field.TypeString, value)
 		_node.UpstreamResponseModel = &value
 	}
+	if value, ok := _c.mutation.ServedGroupID(); ok {
+		_spec.SetField(usagelog.FieldServedGroupID, field.TypeInt64, value)
+		_node.ServedGroupID = &value
+	}
+	if value, ok := _c.mutation.ServedRouteSource(); ok {
+		_spec.SetField(usagelog.FieldServedRouteSource, field.TypeInt16, value)
+		_node.ServedRouteSource = &value
+	}
 	if value, ok := _c.mutation.ChannelID(); ok {
 		_spec.SetField(usagelog.FieldChannelID, field.TypeInt64, value)
 		_node.ChannelID = &value
@@ -1311,6 +1347,54 @@ func (u *UsageLogUpsert) UpdateUpstreamResponseModel() *UsageLogUpsert {
 // ClearUpstreamResponseModel clears the value of the "upstream_response_model" field.
 func (u *UsageLogUpsert) ClearUpstreamResponseModel() *UsageLogUpsert {
 	u.SetNull(usagelog.FieldUpstreamResponseModel)
+	return u
+}
+
+// SetServedGroupID sets the "served_group_id" field.
+func (u *UsageLogUpsert) SetServedGroupID(v int64) *UsageLogUpsert {
+	u.Set(usagelog.FieldServedGroupID, v)
+	return u
+}
+
+// UpdateServedGroupID sets the "served_group_id" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateServedGroupID() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldServedGroupID)
+	return u
+}
+
+// AddServedGroupID adds v to the "served_group_id" field.
+func (u *UsageLogUpsert) AddServedGroupID(v int64) *UsageLogUpsert {
+	u.Add(usagelog.FieldServedGroupID, v)
+	return u
+}
+
+// ClearServedGroupID clears the value of the "served_group_id" field.
+func (u *UsageLogUpsert) ClearServedGroupID() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldServedGroupID)
+	return u
+}
+
+// SetServedRouteSource sets the "served_route_source" field.
+func (u *UsageLogUpsert) SetServedRouteSource(v int16) *UsageLogUpsert {
+	u.Set(usagelog.FieldServedRouteSource, v)
+	return u
+}
+
+// UpdateServedRouteSource sets the "served_route_source" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateServedRouteSource() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldServedRouteSource)
+	return u
+}
+
+// AddServedRouteSource adds v to the "served_route_source" field.
+func (u *UsageLogUpsert) AddServedRouteSource(v int16) *UsageLogUpsert {
+	u.Add(usagelog.FieldServedRouteSource, v)
+	return u
+}
+
+// ClearServedRouteSource clears the value of the "served_route_source" field.
+func (u *UsageLogUpsert) ClearServedRouteSource() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldServedRouteSource)
 	return u
 }
 
@@ -2109,6 +2193,62 @@ func (u *UsageLogUpsertOne) UpdateUpstreamResponseModel() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearUpstreamResponseModel() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearUpstreamResponseModel()
+	})
+}
+
+// SetServedGroupID sets the "served_group_id" field.
+func (u *UsageLogUpsertOne) SetServedGroupID(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetServedGroupID(v)
+	})
+}
+
+// AddServedGroupID adds v to the "served_group_id" field.
+func (u *UsageLogUpsertOne) AddServedGroupID(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddServedGroupID(v)
+	})
+}
+
+// UpdateServedGroupID sets the "served_group_id" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateServedGroupID() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateServedGroupID()
+	})
+}
+
+// ClearServedGroupID clears the value of the "served_group_id" field.
+func (u *UsageLogUpsertOne) ClearServedGroupID() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearServedGroupID()
+	})
+}
+
+// SetServedRouteSource sets the "served_route_source" field.
+func (u *UsageLogUpsertOne) SetServedRouteSource(v int16) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetServedRouteSource(v)
+	})
+}
+
+// AddServedRouteSource adds v to the "served_route_source" field.
+func (u *UsageLogUpsertOne) AddServedRouteSource(v int16) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddServedRouteSource(v)
+	})
+}
+
+// UpdateServedRouteSource sets the "served_route_source" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateServedRouteSource() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateServedRouteSource()
+	})
+}
+
+// ClearServedRouteSource clears the value of the "served_route_source" field.
+func (u *UsageLogUpsertOne) ClearServedRouteSource() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearServedRouteSource()
 	})
 }
 
@@ -3174,6 +3314,62 @@ func (u *UsageLogUpsertBulk) UpdateUpstreamResponseModel() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearUpstreamResponseModel() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearUpstreamResponseModel()
+	})
+}
+
+// SetServedGroupID sets the "served_group_id" field.
+func (u *UsageLogUpsertBulk) SetServedGroupID(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetServedGroupID(v)
+	})
+}
+
+// AddServedGroupID adds v to the "served_group_id" field.
+func (u *UsageLogUpsertBulk) AddServedGroupID(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddServedGroupID(v)
+	})
+}
+
+// UpdateServedGroupID sets the "served_group_id" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateServedGroupID() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateServedGroupID()
+	})
+}
+
+// ClearServedGroupID clears the value of the "served_group_id" field.
+func (u *UsageLogUpsertBulk) ClearServedGroupID() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearServedGroupID()
+	})
+}
+
+// SetServedRouteSource sets the "served_route_source" field.
+func (u *UsageLogUpsertBulk) SetServedRouteSource(v int16) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetServedRouteSource(v)
+	})
+}
+
+// AddServedRouteSource adds v to the "served_route_source" field.
+func (u *UsageLogUpsertBulk) AddServedRouteSource(v int16) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddServedRouteSource(v)
+	})
+}
+
+// UpdateServedRouteSource sets the "served_route_source" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateServedRouteSource() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateServedRouteSource()
+	})
+}
+
+// ClearServedRouteSource clears the value of the "served_route_source" field.
+func (u *UsageLogUpsertBulk) ClearServedRouteSource() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearServedRouteSource()
 	})
 }
 

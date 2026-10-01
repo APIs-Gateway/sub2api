@@ -452,7 +452,10 @@ type UsageLog struct {
 	// UpstreamEndpoint is the normalized upstream endpoint path, e.g. /v1/responses.
 	UpstreamEndpoint *string `json:"upstream_endpoint,omitempty"`
 
-	GroupID        *int64 `json:"group_id"`
+	GroupID *int64 `json:"group_id"`
+	// ServedGroupID 实际服务本次请求的兜底分组。用户端仅当该行来自用户自己配置的回退链时才有值；
+	// 管理员隐藏链的行在用户端不返回（按主分组展示）。
+	ServedGroupID  *int64 `json:"served_group_id,omitempty"`
 	SubscriptionID *int64 `json:"subscription_id"`
 
 	InputTokens         int `json:"input_tokens"`
@@ -527,6 +530,9 @@ type AdminUsageLog struct {
 	UpstreamModelMismatch bool `json:"upstream_model_mismatch"`
 	// UpstreamResponseModel 上游响应体 model 原文，仅不一致时有值。
 	UpstreamResponseModel *string `json:"upstream_response_model,omitempty"`
+
+	// ServedRouteSource 回退来源：1=用户链 2=管理员链；缺省表示主分组。仅管理员可见。
+	ServedRouteSource *int16 `json:"served_route_source,omitempty"`
 
 	// ChannelID 渠道 ID
 	ChannelID *int64 `json:"channel_id,omitempty"`

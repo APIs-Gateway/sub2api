@@ -578,6 +578,21 @@ func AccountSummaryFromService(a *service.Account) *AccountSummary {
 	}
 }
 
+// servedRouteSourceUserChain 对应 usage_logs.served_route_source = 1（用户自己配置的回退链）。
+const servedRouteSourceUserChain int16 = 1
+
+// userVisibleServedGroupID 只在来源为用户链时返回 served 分组；
+// 管理员隐藏链（来源 2）或来源未知一律返回 nil，用户端按主分组展示，避免暴露隐藏链。
+func userVisibleServedGroupID(l *service.UsageLog) *int64 {
+	if l == nil || l.ServedGroupID == nil || l.ServedRouteSource == nil {
+		return nil
+	}
+	if *l.ServedRouteSource != servedRouteSourceUserChain {
+		return nil
+	}
+	return l.ServedGroupID
+}
+
 func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 	// 普通用户 DTO：严禁包含管理员字段（例如 account_rate_multiplier、ip_address、account）。
 	requestType := l.EffectiveRequestType()
@@ -598,6 +613,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		InboundEndpoint:       l.InboundEndpoint,
 		UpstreamEndpoint:      l.UpstreamEndpoint,
 		GroupID:               l.GroupID,
+		ServedGroupID:         userVisibleServedGroupID(l),
 		SubscriptionID:        l.SubscriptionID,
 		InputTokens:           l.InputTokens,
 		OutputTokens:          l.OutputTokens,
@@ -656,8 +672,12 @@ func UsageLogFromServiceAdmin(l *service.UsageLog) *AdminUsageLog {
 	if l == nil {
 		return nil
 	}
+	base := usageLogFromServiceUser(l)
+	// 管理端始终返回真实的 served 分组，不受用户端「隐藏链不外露」过滤影响。
+	base.ServedGroupID = l.ServedGroupID
 	return &AdminUsageLog{
-		UsageLog:              usageLogFromServiceUser(l),
+		UsageLog:              base,
+		ServedRouteSource:     l.ServedRouteSource,
 		UpstreamModel:         l.UpstreamModel,
 		UpstreamModelMismatch: l.UpstreamModelMismatch,
 		UpstreamResponseModel: l.UpstreamResponseModel,
