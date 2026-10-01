@@ -23,7 +23,7 @@ type chatPartialBillingRepo struct {
 }
 
 type delayedChatSSEReader struct {
-	reader *strings.Reader
+	reader  *strings.Reader
 	delayed bool
 }
 
@@ -47,15 +47,15 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cases := []struct {
-		name string
-		mode openai_compat.ResponsesSupportMode
-		payload string
-		readError bool
-		fixedPrice bool
-		wantBilling bool
-		wantInput int
-		wantOutput int
-		status int
+		name             string
+		mode             openai_compat.ResponsesSupportMode
+		payload          string
+		readError        bool
+		fixedPrice       bool
+		wantBilling      bool
+		wantInput        int
+		wantOutput       int
+		status           int
 		pauseBeforeError bool
 	}{
 		{
@@ -75,21 +75,22 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 			wantBilling: true, wantInput: 11, wantOutput: 5,
 		},
 		{
-			name: "raw delivered output at a fixed per-request price",
-			mode: openai_compat.ResponsesSupportModeForceChatCompletions,
-			payload: "data: {\"id\":\"chatcmpl_fixed_partial\",\"model\":\"gpt-5.1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"}}]}\n\n",
+			name:      "raw delivered output at a fixed per-request price",
+			mode:      openai_compat.ResponsesSupportModeForceChatCompletions,
+			payload:   "data: {\"id\":\"chatcmpl_fixed_partial\",\"model\":\"gpt-5.1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"}}]}\n\n",
 			readError: true, fixedPrice: true, wantBilling: true,
 		},
 		{
-			name: "converted pre-output failure at a fixed per-request price",
-			mode: openai_compat.ResponsesSupportModeForceResponses,
-			payload: "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_fixed_failed\",\"model\":\"gpt-5.1\",\"status\":\"failed\",\"error\":{\"code\":\"upstream_error\",\"message\":\"stream failed\"}}}\n\n",
+			name:       "converted pre-output failure at a fixed per-request price",
+			mode:       openai_compat.ResponsesSupportModeForceResponses,
+			payload:    "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_fixed_failed\",\"model\":\"gpt-5.1\",\"status\":\"failed\",\"error\":{\"code\":\"upstream_error\",\"message\":\"stream failed\"}}}\n\n",
 			fixedPrice: true,
 		},
 		{
 			name: "raw usage-only then error at a fixed per-request price",
 			mode: openai_compat.ResponsesSupportModeForceChatCompletions,
-			payload: "data: {\"id\":\"chatcmpl_usage_only\",\"model\":\"gpt-5.1\",\"choices\":[],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0,\"total_tokens\":0}}\n\n" +
+			payload: "data: {\"id\":\"chatcmpl_empty_fields\",\"model\":\"gpt-5.1\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[],\"reasoning_content\":\"\"}}]}\n\n" +
+				"data: {\"id\":\"chatcmpl_usage_only\",\"model\":\"gpt-5.1\",\"choices\":[],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0,\"total_tokens\":0}}\n\n" +
 				"event: error\n" +
 				"data: {\"error\":{\"type\":\"api_error\",\"message\":\"upstream stream interrupted\"}}\n\n",
 			fixedPrice: true,
@@ -99,14 +100,14 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 			mode: openai_compat.ResponsesSupportModeForceResponses,
 			payload: "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_metadata\",\"model\":\"gpt-5.1\",\"status\":\"in_progress\",\"output\":[]}}\n\n" +
 				"__PAUSE__" +
-				"data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_metadata\",\"model\":\"gpt-5.1\",\"status\":\"failed\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0},\"error\":{\"code\":\"upstream_error\",\"message\":\"stream failed\"}}}\n\n",
+				"data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_metadata\",\"model\":\"gpt-5.1\",\"status\":\"failed\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0},\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"never delivered\"}]}],\"error\":{\"code\":\"upstream_error\",\"message\":\"stream failed\"}}}\n\n",
 			fixedPrice: true, pauseBeforeError: true,
 		},
 		{
-			name: "pre-output 429 failover has no billing",
-			mode: openai_compat.ResponsesSupportModeForceChatCompletions,
+			name:    "pre-output 429 failover has no billing",
+			mode:    openai_compat.ResponsesSupportModeForceChatCompletions,
 			payload: `{"error":{"message":"rate limited","type":"rate_limit_error"}}`,
-			status: http.StatusTooManyRequests,
+			status:  http.StatusTooManyRequests,
 		},
 	}
 
@@ -117,7 +118,7 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 				if status == 0 {
 					status = http.StatusOK
 				}
-				var body io.ReadCloser = io.NopCloser(strings.NewReader(tc.payload))
+				body := io.NopCloser(strings.NewReader(tc.payload))
 				if tc.pauseBeforeError {
 					parts := strings.SplitN(tc.payload, "__PAUSE__", 2)
 					body = io.NopCloser(io.MultiReader(strings.NewReader(parts[0]), &delayedChatSSEReader{reader: strings.NewReader(parts[1])}))
@@ -127,8 +128,8 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 				}
 				return &http.Response{
 					StatusCode: status,
-					Header: http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{"rid_chat_partial"}},
-					Body: body,
+					Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{"rid_chat_partial"}},
+					Body:       body,
 				}, nil
 			}}
 
@@ -138,7 +139,7 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 				Type: service.AccountTypeAPIKey, Status: service.StatusActive,
 				Schedulable: true, Concurrency: 1, GroupIDs: []int64{groupID},
 				Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.openai.example"},
-				Extra: map[string]any{openai_compat.ExtraKeyResponsesMode: string(tc.mode)},
+				Extra:       map[string]any{openai_compat.ExtraKeyResponsesMode: string(tc.mode)},
 			}
 			cfg := &config.Config{}
 			cfg.Default.RateMultiplier = 1
@@ -172,17 +173,17 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 				&service.DeferredService{}, nil, nil, resolver, channelService, nil, nil, nil, nil, nil,
 			)
 			cache := &concurrencyCacheMock{
-				acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+				acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
 				acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
 			}
 			h := &OpenAIGatewayHandler{
 				gatewayService: gateway, billingCacheService: billingCache,
-				apiKeyService: &service.APIKeyService{},
+				apiKeyService:     &service.APIKeyService{},
 				concurrencyHelper: NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
 			}
 			apiKey := &service.APIKey{
 				ID: 181466, GroupID: &groupID,
-				User: &service.User{ID: 171466, Status: service.StatusActive},
+				User:  &service.User{ID: 171466, Status: service.StatusActive},
 				Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive, RateMultiplier: 1},
 			}
 			router := gin.New()

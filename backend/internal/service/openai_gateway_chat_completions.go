@@ -675,15 +675,15 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			partialOutputDelivered = *outputBeforeError
 		}
 		return &OpenAIForwardResult{
-			RequestID:     requestID,
-			Usage:         usage,
-			Model:         originalModel,
-			BillingModel:  billingModel,
-			UpstreamModel: upstreamModel,
-			Stream:        true,
-			Duration:      time.Since(startTime),
-			FirstTokenMs:  firstTokenMs,
-			ClientDisconnect: clientDisconnected,
+			RequestID:              requestID,
+			Usage:                  usage,
+			Model:                  originalModel,
+			BillingModel:           billingModel,
+			UpstreamModel:          upstreamModel,
+			Stream:                 true,
+			Duration:               time.Since(startTime),
+			FirstTokenMs:           firstTokenMs,
+			ClientDisconnect:       clientDisconnected,
 			PartialOutputDelivered: partialOutputDelivered,
 		}
 	}
@@ -721,6 +721,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			)
 			return false
 		}
+		// Save semantic output before observing this event: response.failed can
+		// contain output that was never emitted to the client.
+		semanticOutputBeforePayload := clientOutputStarted && refusalDetector.HasSemanticOutput()
 		refusalDetector.ObservePayload([]byte(payload))
 
 		isTerminalEvent := isOpenAICompatResponsesTerminalEvent(event.Type)
@@ -733,7 +736,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 		}
 		if event.Type == "response.failed" || event.Type == "error" || gjson.Get(payload, "error").IsObject() {
-			beforeError := clientOutputStarted && refusalDetector.HasSemanticOutput()
+			beforeError := semanticOutputBeforePayload
 			outputBeforeError = &beforeError
 			payloadBytes := []byte(payload)
 			message := extractOpenAISSEErrorMessage(payloadBytes)
