@@ -6,6 +6,8 @@
 import { apiClient } from '../client'
 import type {
   Account,
+  AccountPlatform,
+  AccountType,
   CreateAccountRequest,
   UpdateAccountRequest,
   PaginatedResponse,
@@ -55,6 +57,39 @@ export async function list(
       page_size: pageSize,
       ...filters
     },
+    signal: options?.signal
+  })
+  return data
+}
+
+export interface AccountIdListResult {
+  /** 命中的全部账号 ID（升序） */
+  ids: number[]
+  total: number
+  /** 命中账号涉及的平台和类型，批量编辑据此判断哪些字段可用 */
+  platforms: AccountPlatform[]
+  types: AccountType[]
+}
+
+/**
+ * List the IDs of every account matching the filters (same filters as `list`).
+ * The backend rejects the request (reason ACCOUNT_IDS_LIMIT_EXCEEDED, metadata total/limit) when too many accounts match.
+ */
+export async function listIds(
+  filters?: {
+    platform?: string
+    type?: string
+    status?: string
+    group?: string
+    search?: string
+    privacy_mode?: string
+  },
+  options?: {
+    signal?: AbortSignal
+  }
+): Promise<AccountIdListResult> {
+  const { data } = await apiClient.get<AccountIdListResult>('/admin/accounts/ids', {
+    params: filters,
     signal: options?.signal
   })
   return data
@@ -834,6 +869,7 @@ export async function probeUpstreamBillingBatch(accountIds: number[]): Promise<U
 export const accountsAPI = {
   list,
   listWithEtag,
+  listIds,
   getById,
   create,
   update,

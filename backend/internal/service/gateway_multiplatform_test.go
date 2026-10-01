@@ -128,6 +128,9 @@ func (m *mockAccountRepoForPlatform) BindGroups(ctx context.Context, accountID i
 func (m *mockAccountRepoForPlatform) BulkBindGroups(ctx context.Context, accountIDs []int64, groupIDs []int64, mode AccountGroupBindMode) error {
 	return nil
 }
+func (m *mockAccountRepoForPlatform) ListIDsWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string, limit int) (*AccountIDList, error) {
+	return &AccountIDList{}, nil
+}
 func (m *mockAccountRepoForPlatform) ListSchedulable(ctx context.Context) ([]Account, error) {
 	return nil, nil
 }

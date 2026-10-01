@@ -409,11 +409,9 @@ func (r *accountRepository) List(ctx context.Context, params pagination.Paginati
 	return r.ListWithFilters(ctx, params, "", "", "", "", 0, "")
 }
 
-func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, *pagination.PaginationResult, error) {
-	if err := validateAccountListSort(strings.ToLower(strings.TrimSpace(params.SortBy)), r.client.Driver().Dialect()); err != nil {
-		return nil, nil, err
-	}
-
+// accountListQuery 构造账号列表的筛选查询（不含排序和分页）。
+// ListWithFilters 和 ListIDsWithFilters 共用它，保证「列表看到的」和「选中全部结果」命中同一批账号。
+func (r *accountRepository) accountListQuery(platform, accountType, status, search string, groupID int64, privacyMode string) *dbent.AccountQuery {
 	q := r.client.Account.Query()
 
 	if platform != "" {
@@ -483,8 +481,8 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 			q = q.Where(dbaccount.StatusEQ(status))
 		}
 	}
-	if search != "" {
-		q = q.Where(dbaccount.NameContainsFold(search))
+	if predicate := accountSearchPredicate(search); predicate != nil {
+		q = q.Where(predicate)
 	}
 	if groupID == service.AccountListGroupUngrouped {
 		q = q.Where(dbaccount.Not(dbaccount.HasAccountGroups()))
@@ -505,6 +503,56 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 			}
 		}))
 	}
+
+	return q
+}
+
+// ListIDsWithFilters 返回与 ListWithFilters 相同筛选条件命中的账号 ID（按 ID 升序）以及平台、类型汇总。
+// 命中数超过 limit 时只返回 Total，不读取 ID。
+func (r *accountRepository) ListIDsWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string, limit int) (*service.AccountIDList, error) {
+	q := r.accountListQuery(platform, accountType, status, search, groupID, privacyMode)
+
+	total, err := q.Clone().Count(ctx)
+	if err != nil {
+		return nil, err
+	}
+	list := &service.AccountIDList{
+		IDs:       []int64{},
+		Total:     int64(total),
+		Platforms: []string{},
+		Types:     []string{},
+	}
+	if limit > 0 && total > limit {
+		return list, nil
+	}
+
+	rows, err := q.
+		Order(dbent.Asc(dbaccount.FieldID)).
+		Select(dbaccount.FieldID, dbaccount.FieldPlatform, dbaccount.FieldType).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	platforms := make(map[string]struct{})
+	types := make(map[string]struct{})
+	list.IDs = make([]int64, 0, len(rows))
+	for _, row := range rows {
+		list.IDs = append(list.IDs, row.ID)
+		platforms[row.Platform] = struct{}{}
+		types[row.Type] = struct{}{}
+	}
+	list.Platforms = sortedAccountStringSet(platforms)
+	list.Types = sortedAccountStringSet(types)
+	return list, nil
+}
+
+func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, *pagination.PaginationResult, error) {
+	if err := validateAccountListSort(strings.ToLower(strings.TrimSpace(params.SortBy)), r.client.Driver().Dialect()); err != nil {
+		return nil, nil, err
+	}
+
+	q := r.accountListQuery(platform, accountType, status, search, groupID, privacyMode)
 
 	// Count may receive interceptor predicates. Clone first so the list query
 	// remains unchanged when it is reused below.

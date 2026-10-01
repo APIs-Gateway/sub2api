@@ -177,6 +177,11 @@
       <template #table>
         <AccountBulkActionsBar
           :selected-ids="selIds"
+          :page-selected-count="pageSelectedCount"
+          :total-count="pagination.total"
+          :can-select-all-filtered="canSelectAllFiltered"
+          :all-filtered-selected="allFilteredSelected"
+          :selecting-all-filtered="selectingAllFiltered"
           @delete="handleBulkDelete"
           @reset-status="handleBulkResetStatus"
           @refresh-token="handleBulkRefreshToken"
@@ -185,6 +190,7 @@
           @edit-filtered="openBulkEditFiltered"
           @clear="clearSelection"
           @select-page="selectPage"
+          @select-all-filtered="selectAllFilteredResults"
           @toggle-schedulable="handleBulkToggleSchedulable"
         />
         <div ref="accountTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -503,12 +509,20 @@ type AccountBulkEditTarget =
       selectedPlatforms: AccountPlatform[]
       selectedTypes: AccountType[]
     }
+// 「选中全部筛选结果」后，后端返回的平台/类型汇总：跨页选中的账号不在当前页里，批量编辑要靠它判断哪些字段可用
+const selectAllFilteredSummary = ref<{ platforms: AccountPlatform[]; types: AccountType[] } | null>(null)
+// 选中全部筛选结果时的筛选条件和账号数，用来判断当前选择是否仍然等于「全部筛选结果」
+const selectAllFilteredSnapshot = ref<{ key: string; total: number } | null>(null)
+const selectingAllFiltered = ref(false)
+const ACCOUNT_IDS_LIMIT_EXCEEDED_REASON = 'ACCOUNT_IDS_LIMIT_EXCEEDED'
 const selPlatforms = computed<AccountPlatform[]>(() => {
   const platforms = new Set(
     accounts.value
       .filter(a => isSelected(a.id))
       .map(a => a.platform)
   )
+  // 跨页选中的账号不在当前页里，平台来自「选中全部筛选结果」时后端返回的汇总
+  selectAllFilteredSummary.value?.platforms.forEach(platform => platforms.add(platform))
   return [...platforms]
 })
 const selTypes = computed<AccountType[]>(() => {
@@ -517,6 +531,7 @@ const selTypes = computed<AccountType[]>(() => {
       .filter(a => isSelected(a.id))
       .map(a => a.type)
   )
+  selectAllFilteredSummary.value?.types.forEach(type => types.add(type))
   return [...types]
 })
 const showCreate = ref(false)
@@ -822,7 +837,7 @@ const {
   select,
   deselect,
   toggle: toggleSel,
-  clear: clearSelection,
+  clear: clearSelectionBase,
   removeMany: removeSelectedAccounts,
   toggleVisible,
   selectVisible: selectPage,
@@ -831,6 +846,84 @@ const {
   rows: accounts,
   getId: (account) => account.id
 })
+
+const clearSelection = () => {
+  selectAllFilteredSummary.value = null
+  selectAllFilteredSnapshot.value = null
+  clearSelectionBase()
+}
+
+// 选择清空后，之前「选中全部筛选结果」留下的汇总不再有意义
+watch(
+  () => selIds.value.length,
+  (count) => {
+    if (count === 0) {
+      selectAllFilteredSummary.value = null
+      selectAllFilteredSnapshot.value = null
+    }
+  }
+)
+
+const currentFilterKey = computed(() =>
+  JSON.stringify([
+    params.platform || '',
+    params.type || '',
+    params.status || '',
+    params.group || '',
+    params.privacy_mode || '',
+    params.search || ''
+  ])
+)
+const pageSelectedCount = computed(() => accounts.value.filter(account => isSelected(account.id)).length)
+const allFilteredSelected = computed(() => {
+  const snapshot = selectAllFilteredSnapshot.value
+  return (
+    snapshot !== null &&
+    snapshot.key === currentFilterKey.value &&
+    selIds.value.length === snapshot.total
+  )
+})
+// 表头全选已勾上，但筛选结果不止当前页：给出「选中全部筛选结果」入口
+const canSelectAllFiltered = computed(
+  () =>
+    !allFilteredSelected.value &&
+    allVisibleSelected.value &&
+    pagination.total > accounts.value.length
+)
+
+const selectAllFilteredResults = async () => {
+  if (selectingAllFiltered.value) return
+  const filterKey = currentFilterKey.value
+  selectingAllFiltered.value = true
+  try {
+    const result = await adminAPI.accounts.listIds({
+      platform: params.platform || '',
+      type: params.type || '',
+      status: params.status || '',
+      group: params.group || '',
+      privacy_mode: params.privacy_mode || '',
+      search: params.search || ''
+    })
+    // 请求期间筛选条件变了：结果已经不对应当前列表，丢弃
+    if (currentFilterKey.value !== filterKey) return
+    setSelectedIds(result.ids)
+    selectAllFilteredSummary.value = { platforms: result.platforms, types: result.types }
+    selectAllFilteredSnapshot.value = { key: filterKey, total: result.ids.length }
+  } catch (error: any) {
+    if (error?.reason === ACCOUNT_IDS_LIMIT_EXCEEDED_REASON) {
+      appStore.showError(
+        t('admin.accounts.bulkActions.selectAllFilteredTooMany', {
+          total: error.metadata?.total ?? pagination.total,
+          limit: error.metadata?.limit ?? ''
+        })
+      )
+    } else {
+      appStore.showError(error?.message || t('admin.accounts.bulkActions.selectAllFilteredFailed'))
+    }
+  } finally {
+    selectingAllFiltered.value = false
+  }
+}
 
 const swipeVirtualContext: SwipeSelectVirtualContext = {
   getVirtualizer: () => dataTableRef.value?.virtualizer ?? null,
@@ -1305,9 +1398,46 @@ const toggleSelectAllVisible = (event: Event) => {
   const target = event.target as HTMLInputElement
   toggleVisible(target.checked)
 }
-const handleBulkDelete = async () => { if(!confirm(t('common.confirm'))) return; try { await Promise.all(selIds.value.map(id => adminAPI.accounts.delete(id))); clearSelection(); reload() } catch (error) { console.error('Failed to bulk delete accounts:', error) } }
+const BULK_DELETE_CONCURRENCY = 20
+const bulkDeleting = ref(false)
+const handleBulkDelete = async () => {
+  if (bulkDeleting.value) return
+  const accountIds = [...selIds.value]
+  if (accountIds.length === 0) return
+  if (!confirm(t('admin.accounts.bulkDeleteConfirm', { count: accountIds.length }))) return
+
+  bulkDeleting.value = true
+  const failedIds: number[] = []
+  try {
+    // 没有批量删除接口，逐个删除；跨页选中最多 5000 个，限制并发避免一次发出几千个请求
+    for (let start = 0; start < accountIds.length; start += BULK_DELETE_CONCURRENCY) {
+      const chunk = accountIds.slice(start, start + BULK_DELETE_CONCURRENCY)
+      const results = await Promise.allSettled(chunk.map(id => adminAPI.accounts.delete(id)))
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          console.error('Failed to delete account:', chunk[index], result.reason)
+          failedIds.push(chunk[index])
+        }
+      })
+    }
+
+    const successCount = accountIds.length - failedIds.length
+    if (failedIds.length === 0) {
+      appStore.showSuccess(t('admin.accounts.bulkDeleteSuccess', { count: successCount }))
+      clearSelection()
+    } else if (successCount > 0) {
+      appStore.showError(t('admin.accounts.bulkDeletePartial', { success: successCount, failed: failedIds.length }))
+      setSelectedIds(failedIds)
+    } else {
+      appStore.showError(t('admin.accounts.bulkDeleteFailed'))
+    }
+    reload()
+  } finally {
+    bulkDeleting.value = false
+  }
+}
 const handleBulkResetStatus = async () => {
-  if (!confirm(t('common.confirm'))) return
+  if (!confirm(t('admin.accounts.bulkActions.confirmCount', { count: selIds.value.length }))) return
   try {
     const result = await adminAPI.accounts.batchClearError(selIds.value)
     if (result.failed > 0) {
@@ -1323,7 +1453,7 @@ const handleBulkResetStatus = async () => {
   }
 }
 const handleBulkRefreshToken = async () => {
-  if (!confirm(t('common.confirm'))) return
+  if (!confirm(t('admin.accounts.bulkActions.confirmCount', { count: selIds.value.length }))) return
   const accountIds = [...selIds.value]
   try {
     const result = await adminAPI.accounts.batchRefresh(accountIds)
@@ -1547,7 +1677,16 @@ const accountMatchesCurrentFilters = (account: Account) => {
     }
   }
   const search = String(filters.search || '').trim().toLowerCase()
-  if (search && !account.name.toLowerCase().includes(search)) return false
+  if (search) {
+    // 与后端搜索一致：名称、备注、credentials.base_url 包含搜索词，或搜索词是纯数字且等于账号 ID
+    const baseUrl = typeof account.credentials?.base_url === 'string' ? account.credentials.base_url.toLowerCase() : ''
+    const matched =
+      account.name.toLowerCase().includes(search) ||
+      (account.notes ?? '').toLowerCase().includes(search) ||
+      baseUrl.includes(search) ||
+      (/^\d+$/.test(search) && Number(search) === account.id)
+    if (!matched) return false
+  }
   return true
 }
 const mergeRuntimeFields = (oldAccount: Account, updatedAccount: Account): Account => ({
@@ -1671,7 +1810,8 @@ const handleExportData = async () => {
   exportingData.value = true
   try {
     const dataPayload = await adminAPI.accounts.exportData(
-      selIds.value.length > 0
+      // 选中了全部筛选结果时按筛选条件导出：ids 走 GET 查询串，几千个 ID 会超出 URL 长度上限
+      selIds.value.length > 0 && !allFilteredSelected.value
         ? { ids: selIds.value, includeProxies: includeProxyOnExport.value }
         : {
             includeProxies: includeProxyOnExport.value,

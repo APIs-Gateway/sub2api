@@ -235,43 +235,96 @@ func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, ac
 	return item
 }
 
+// accountListFilters 是账号列表和「选中全部筛选结果」共用的筛选条件。
+type accountListFilters struct {
+	platform    string
+	accountType string
+	status      string
+	search      string
+	privacyMode string
+	groupID     int64
+}
+
+// parseAccountListFilters 解析账号列表的筛选查询参数。List 和 ListIDs 共用它，
+// 保证「列表里看到的」和「选中全部结果」使用完全相同的筛选条件。
+func parseAccountListFilters(c *gin.Context) (accountListFilters, error) {
+	filters := accountListFilters{
+		platform:    c.Query("platform"),
+		accountType: c.Query("type"),
+		status:      c.Query("status"),
+		privacyMode: strings.TrimSpace(c.Query("privacy_mode")),
+		// 标准化和验证 search 参数
+		search: strings.TrimSpace(c.Query("search")),
+	}
+	if len(filters.search) > 100 {
+		filters.search = filters.search[:100]
+	}
+
+	if groupIDStr := c.Query("group"); groupIDStr != "" {
+		if groupIDStr == accountListGroupUngroupedQueryValue {
+			filters.groupID = service.AccountListGroupUngrouped
+		} else {
+			parsedGroupID, parseErr := strconv.ParseInt(groupIDStr, 10, 64)
+			if parseErr != nil || parsedGroupID < 0 {
+				return accountListFilters{}, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter")
+			}
+			filters.groupID = parsedGroupID
+		}
+	}
+	return filters, nil
+}
+
+// AccountIDListResponse 是 ListIDs 的响应体。
+type AccountIDListResponse struct {
+	IDs       []int64  `json:"ids"`
+	Total     int64    `json:"total"`
+	Platforms []string `json:"platforms"`
+	Types     []string `json:"types"`
+}
+
+// ListIDs returns the IDs of every account matching the list filters (at most service.AccountIDsMaxLimit).
+// Used by "select all filtered results" so bulk operations can act on more than one page.
+// GET /api/v1/admin/accounts/ids
+func (h *AccountHandler) ListIDs(c *gin.Context) {
+	filters, err := parseAccountListFilters(c)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	list, err := h.adminService.ListAccountIDs(c.Request.Context(), filters.platform, filters.accountType, filters.status, filters.search, filters.groupID, filters.privacyMode)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	resp := AccountIDListResponse{IDs: list.IDs, Total: list.Total, Platforms: list.Platforms, Types: list.Types}
+	if resp.IDs == nil {
+		resp.IDs = []int64{}
+	}
+	if resp.Platforms == nil {
+		resp.Platforms = []string{}
+	}
+	if resp.Types == nil {
+		resp.Types = []string{}
+	}
+	response.Success(c, resp)
+}
+
 // List handles listing all accounts with pagination
 // GET /api/v1/admin/accounts
 func (h *AccountHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
-	platform := c.Query("platform")
-	accountType := c.Query("type")
-	status := c.Query("status")
-	search := c.Query("search")
-	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
+	filters, err := parseAccountListFilters(c)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	sortBy := c.DefaultQuery("sort_by", "name")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
-	// 标准化和验证 search 参数
-	search = strings.TrimSpace(search)
-	if len(search) > 100 {
-		search = search[:100]
-	}
 	lite := parseBoolQueryWithDefault(c.Query("lite"), false)
 
-	var groupID int64
-	if groupIDStr := c.Query("group"); groupIDStr != "" {
-		if groupIDStr == accountListGroupUngroupedQueryValue {
-			groupID = service.AccountListGroupUngrouped
-		} else {
-			parsedGroupID, parseErr := strconv.ParseInt(groupIDStr, 10, 64)
-			if parseErr != nil {
-				response.ErrorFrom(c, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter"))
-				return
-			}
-			if parsedGroupID < 0 {
-				response.ErrorFrom(c, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter"))
-				return
-			}
-			groupID = parsedGroupID
-		}
-	}
-
-	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
+	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, filters.platform, filters.accountType, filters.status, filters.search, filters.groupID, filters.privacyMode, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -393,7 +446,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		result[i] = item
 	}
 
-	etag := buildAccountsListETag(result, total, page, pageSize, platform, accountType, status, search, lite)
+	etag := buildAccountsListETag(result, total, page, pageSize, filters.platform, filters.accountType, filters.status, filters.search, lite)
 	if etag != "" {
 		c.Header("ETag", etag)
 		c.Header("Vary", "If-None-Match")

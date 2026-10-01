@@ -79,6 +79,8 @@ type AdminService interface {
 
 	// Account management
 	ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]Account, int64, error)
+	// ListAccountIDs 返回筛选条件命中的全部账号 ID，最多 AccountIDsMaxLimit 个，超过时返回错误。
+	ListAccountIDs(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) (*AccountIDList, error)
 	GetAccount(ctx context.Context, id int64) (*Account, error)
 	GetAccountsByIDs(ctx context.Context, ids []int64) ([]*Account, error)
 	CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error)
@@ -2797,6 +2799,20 @@ func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int,
 		return nil, 0, err
 	}
 	return accounts, result.Total, nil
+}
+
+func (s *adminServiceImpl) ListAccountIDs(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) (*AccountIDList, error) {
+	list, err := s.accountRepo.ListIDsWithFilters(ctx, platform, accountType, status, search, groupID, privacyMode, AccountIDsMaxLimit)
+	if err != nil {
+		return nil, err
+	}
+	if list == nil {
+		return &AccountIDList{}, nil
+	}
+	if list.Total > AccountIDsMaxLimit || len(list.IDs) > AccountIDsMaxLimit {
+		return nil, NewAccountIDsLimitExceededError(list.Total)
+	}
+	return list, nil
 }
 
 func (s *adminServiceImpl) GetAccount(ctx context.Context, id int64) (*Account, error) {

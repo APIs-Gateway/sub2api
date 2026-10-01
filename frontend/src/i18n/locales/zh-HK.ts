@@ -4197,7 +4197,13 @@
         probeUpstreamBilling: '批量探測上游倍率',
         resetStatusSuccess: '已成功重置 {count} 個帳號狀態',
         refreshTokenSuccess: '已成功刷新 {count} 個帳號令牌',
-        partialSuccess: '操作部分完成：{success} 成功，{failed} 失敗'
+        partialSuccess: '操作部分完成：{success} 成功，{failed} 失敗',
+        pageSelected: '已選本頁 {count} 個，',
+        selectAllFiltered: '選中全部篩選結果 {total} 個？',
+        allFilteredSelected: '已選中全部 {count} 個篩選結果',
+        selectAllFilteredTooMany: '篩選結果共 {total} 個帳號，超過一次最多可選的 {limit} 個，請縮小篩選範圍後再試',
+        selectAllFilteredFailed: '獲取篩選結果失敗',
+        confirmCount: '確定對選中的 {count} 個帳號執行此操作嗎？'
       },
       bulkEdit: {
         title: '批量編輯帳號',

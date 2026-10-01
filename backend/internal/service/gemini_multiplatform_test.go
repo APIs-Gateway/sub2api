@@ -113,6 +113,9 @@ func (m *mockAccountRepoForGemini) BindGroups(ctx context.Context, accountID int
 func (m *mockAccountRepoForGemini) BulkBindGroups(ctx context.Context, accountIDs []int64, groupIDs []int64, mode AccountGroupBindMode) error {
 	return nil
 }
+func (m *mockAccountRepoForGemini) ListIDsWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string, limit int) (*AccountIDList, error) {
+	return &AccountIDList{}, nil
+}
 func (m *mockAccountRepoForGemini) ListSchedulable(ctx context.Context) ([]Account, error) {
 	return nil, nil
 }

@@ -4200,7 +4200,13 @@
         probeUpstreamBilling: '批量探测上游倍率',
         resetStatusSuccess: '已成功重置 {count} 个账号状态',
         refreshTokenSuccess: '已成功刷新 {count} 个账号令牌',
-        partialSuccess: '操作部分完成：{success} 成功，{failed} 失败'
+        partialSuccess: '操作部分完成：{success} 成功，{failed} 失败',
+        pageSelected: '已选本页 {count} 个，',
+        selectAllFiltered: '选中全部筛选结果 {total} 个？',
+        allFilteredSelected: '已选中全部 {count} 个筛选结果',
+        selectAllFilteredTooMany: '筛选结果共 {total} 个账号，超过一次最多可选的 {limit} 个，请缩小筛选范围后再试',
+        selectAllFilteredFailed: '获取筛选结果失败',
+        confirmCount: '确定对选中的 {count} 个账号执行此操作吗？'
       },
       bulkEdit: {
         title: '批量编辑账号',

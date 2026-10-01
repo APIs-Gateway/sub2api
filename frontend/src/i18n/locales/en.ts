@@ -4120,7 +4120,13 @@
         probeUpstreamBilling: 'Probe Upstream Rate',
         resetStatusSuccess: 'Successfully reset {count} account(s) status',
         refreshTokenSuccess: 'Successfully refreshed {count} account(s) token',
-        partialSuccess: 'Partially completed: {success} succeeded, {failed} failed'
+        partialSuccess: 'Partially completed: {success} succeeded, {failed} failed',
+        pageSelected: '{count} on this page selected.',
+        selectAllFiltered: 'Select all {total} matching accounts?',
+        allFilteredSelected: 'All {count} matching accounts are selected.',
+        selectAllFilteredTooMany: '{total} accounts match, more than the {limit} that can be selected at once. Narrow the filters and try again.',
+        selectAllFilteredFailed: 'Failed to load the matching accounts',
+        confirmCount: 'Run this on the {count} selected account(s)?'
       },
       bulkEdit: {
         title: 'Bulk Edit Accounts',
