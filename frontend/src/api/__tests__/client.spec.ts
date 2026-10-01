@@ -614,7 +614,7 @@ describe('API Client', () => {
       expect(localStorage.getItem('auth_token')).toBe('new-admin-token')
     })
 
-    it('does not send an old acceptance if reset precedes the request interceptor', async () => {
+    it('does not send a retried acceptance after its compliance session resets', async () => {
       localStorage.setItem('auth_token', 'old-admin-token')
       const adapter = vi.fn().mockResolvedValue({
         status: 200,
@@ -626,14 +626,16 @@ describe('API Client', () => {
       apiClient.defaults.adapter = adapter
       const { createPinia, setActivePinia } = await import('pinia')
       const { useAdminComplianceStore } = await import('@/stores/adminCompliance')
-      const { adminComplianceAPI } = await import('@/api/admin/compliance')
+      const { getAdminComplianceSessionVersion } = await import('@/utils/adminComplianceSession')
       setActivePinia(createPinia())
 
-      const request = adminComplianceAPI.accept({ phrase: 'old phrase', language: 'en' })
+      const oldVersion = getAdminComplianceSessionVersion()
       useAdminComplianceStore().reset()
       localStorage.setItem('auth_token', 'new-admin-token')
 
-      await expect(request).rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      await expect(apiClient.post('/admin/compliance/accept', { phrase: 'old phrase', language: 'en' },
+        { _complianceSessionVersion: oldVersion } as InternalAxiosRequestConfig))
+        .rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
       expect(adapter).not.toHaveBeenCalled()
     })
 
@@ -786,7 +788,7 @@ describe('API Client', () => {
       expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'admin-compliance-required' }))
     })
 
-    it('blocks an old announcement read before its request interceptor runs', async () => {
+    it('blocks a retried announcement read after its store resets', async () => {
       localStorage.setItem('auth_token', 'account-a-token')
       const adapter = vi.fn().mockResolvedValue({
         status: 200, data: { code: 0, data: { message: 'ok' } },
@@ -796,12 +798,14 @@ describe('API Client', () => {
       const { createPinia, setActivePinia } = await import('pinia')
       const { useAnnouncementStore } = await import('@/stores/announcements')
       const { default: announcementsAPI } = await import('@/api/announcements')
+      const { getAnnouncementReadSessionVersion } = await import('@/utils/announcementReadSession')
       setActivePinia(createPinia())
 
-      const request = announcementsAPI.markRead(17)
+      const oldVersion = getAnnouncementReadSessionVersion()
       useAnnouncementStore().reset()
       localStorage.setItem('auth_token', 'account-b-token')
-      await expect(request).rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      await expect(announcementsAPI.markRead(17, oldVersion))
+        .rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
       expect(adapter).not.toHaveBeenCalled()
     })
 
