@@ -4,9 +4,13 @@
  */
 import { Marked } from 'marked'
 import DOMPurify from 'dompurify'
+import { OPENAI_CC_SWITCH_CODEX_MODEL } from '@/utils/ccswitchImport'
 
-/** 示例里用的模型名。配置文件必须写一个具体值，真正可用的模型以价格页为准。 */
-export const EXAMPLE_MODEL = 'gpt-5.5'
+/**
+ * 示例里用的模型名。配置文件必须写一个具体值，真正可用的模型以价格页为准。
+ * 直接引用 CC Switch 导入用的 Codex 默认模型，两处不会各改各的。
+ */
+export const EXAMPLE_MODEL = OPENAI_CC_SWITCH_CODEX_MODEL
 
 export interface DocVars {
   /** API 根地址，不带 /v1 */
@@ -45,8 +49,33 @@ export function resolveApiBases(apiBaseUrl: string | undefined | null, fallbackO
   return { base, v1: `${base}/v1` }
 }
 
+/**
+ * Codex 的 provider id：由站点名派生，只含小写字母、数字、下划线，且不与内置 provider 重名。
+ * 规则与「接入密钥」弹窗的一键安装一致。
+ */
+export function codexProviderId(siteName?: string): string {
+  const raw = (siteName || '').toLowerCase().replace(/[^a-z0-9_]/g, '')
+  const id = raw || 'sub2api'
+  return ['openai', 'ollama', 'lmstudio'].includes(id) ? `${id}_site` : id
+}
+
+/** 写进 TOML 双引号字符串的站点名：换行和控制字符换成空格，反斜杠和双引号转义。 */
+export function codexProviderName(siteName?: string): string {
+  // eslint-disable-next-line no-control-regex
+  const name = (siteName || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim() || 'sub2api'
+  return name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+/**
+ * 替换文档里的占位符。除了 DocVars 里的取值，还有两个由站点名派生的占位符：
+ * {{provider}} 是 Codex 配置里的 provider id，{{providerName}} 是写进 TOML 的显示名。
+ */
 export function fillVars(text: string, vars: DocVars): string {
-  return text.replace(/\{\{(base|v1|site|model|llms)\}\}/g, (_, key: keyof DocVars) => vars[key])
+  return text.replace(/\{\{(base|v1|site|model|llms|provider|providerName)\}\}/g, (_, key: string) => {
+    if (key === 'provider') return codexProviderId(vars.site)
+    if (key === 'providerName') return codexProviderName(vars.site)
+    return vars[key as keyof DocVars]
+  })
 }
 
 function escapeHtml(value: string): string {

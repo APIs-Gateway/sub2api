@@ -146,7 +146,7 @@
     }
   },
 
-  // Key Usage Query Page
+  // Docs Page
   docs: {
     title: '使用文件',
     intro: '如何把你的工具接入 {site}。每一步都附有可直接複製的設定。',
@@ -163,10 +163,10 @@
       reference: '參考'
     },
     connect: {
-      openai: 'OpenAI 相容位址',
-      anthropic: 'Anthropic 相容位址',
+      openai: 'OpenAI 相容地址',
+      anthropic: 'Anthropic 相容地址',
       key: 'API 金鑰',
-      keyPlaceholder: 'sk-你的密钥',
+      keyPlaceholder: 'sk-你的密鑰',
       createKey: '前往建立金鑰'
     },
     ai: {
@@ -186,6 +186,8 @@
       login: '前往登入'
     }
   },
+
+  // Key Usage Query Page
   keyUsage: {
     title: 'API Key 用量查詢',
     subtitle: '輸入您的 API Key 以查看實時消費金額與使用狀態',

@@ -6,7 +6,7 @@ Claude Code 是 Anthropic 官方的命令行编程助手。它用的是 Anthropi
 
 ## 安装 {#claude-code-install}
 
-需要 Node.js 18 或更高版本。
+需要 Node.js 22 或更高版本。
 
 ```bash
 npm install -g @anthropic-ai/claude-code

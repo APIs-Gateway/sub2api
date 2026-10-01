@@ -19,7 +19,7 @@
 - `x-api-key: sk-你的密钥`，Anthropic SDK 默认用这种。
 - `x-goog-api-key: sk-你的密钥`，Gemini 客户端用这种。
 
-不要把密钥放进网址参数。带 `?key=` 的请求会直接返回 400。
+不要把密钥放进网址参数。在 `/v1` 接口上，带 `?key=` 的请求会返回 400。
 
 ## 验证密钥可用 {#api-info-verify}
 

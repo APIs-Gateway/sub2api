@@ -6,11 +6,23 @@ import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 
 import zhCN from '@/i18n/locales/zh-CN'
+import { OPENAI_CC_SWITCH_CODEX_MODEL } from '@/utils/ccswitchImport'
 import DocsView from '../DocsView.vue'
 import DocsAiPrompts from '../DocsAiPrompts.vue'
 import { DOC_GROUPS } from '../sections'
 import aiPromptsRaw from '../ai-prompts.md?raw'
-import { parseAiPrompts, renderSection, resolveApiBases, type DocVars } from '../docsRender'
+import {
+  EXAMPLE_MODEL,
+  codexProviderId,
+  codexProviderName,
+  fillVars,
+  parseAiPrompts,
+  renderSection,
+  resolveApiBases,
+  type DocVars,
+} from '../docsRender'
+
+const llmsRaw = readFileSync(resolve(__dirname, '../../../../public/llms.txt'), 'utf8')
 
 const { getPublicSettings, currentLocale } = vi.hoisted(() => ({
   getPublicSettings: vi.fn(),
@@ -119,7 +131,7 @@ describe('DocsView', () => {
       const sources = [
         ...DOC_GROUPS.flatMap((g) => g.sections.map((s) => s.raw)),
         aiPromptsRaw,
-        readFileSync(resolve(__dirname, '../../../../public/llms.txt'), 'utf8'),
+        llmsRaw,
       ]
       const allowedHosts = ['github.com', 'nodejs.org', 'cherry-ai.com']
       for (const source of sources) {
@@ -128,6 +140,56 @@ describe('DocsView', () => {
           expect(allowedHosts).toContain(match[1])
         }
       }
+    })
+  })
+
+  describe('example content', () => {
+    it('uses the same example model as the CC Switch import', async () => {
+      expect(EXAMPLE_MODEL).toBe(OPENAI_CC_SWITCH_CODEX_MODEL)
+
+      const wrapper = await mountDocs('https://api.first.test')
+      expect(wrapper.get('#codex').text()).toContain(`model = "${OPENAI_CC_SWITCH_CODEX_MODEL}"`)
+      wrapper.unmount()
+    })
+
+    it('writes Codex as a single config.toml with a provider derived from the site name', async () => {
+      const wrapper = await mountDocs('https://api.first.test')
+      const codex = wrapper.get('#codex').text()
+
+      expect(codex).toContain('model_provider = "hiyo"')
+      expect(codex).toContain('[model_providers.hiyo]')
+      expect(codex).toContain('name = "Hiyo"')
+      expect(codex).toContain('base_url = "https://api.first.test/v1"')
+      expect(codex).toContain('wire_api = "responses"')
+      expect(codex).toContain('requires_openai_auth = false')
+      expect(codex).toContain('experimental_bearer_token = "sk-你的密钥"')
+      expect(codex).not.toContain('auth.json')
+      expect(codex).not.toContain('{{')
+      wrapper.unmount()
+    })
+
+    it('never tells the reader to delete the whole Codex config file', async () => {
+      const wrapper = await mountDocs('https://api.first.test')
+      const codex = wrapper.get('#codex').text()
+
+      expect(codex).not.toMatch(/rm -f|Remove-Item/)
+      expect(codex).toContain('[model_providers.hiyo]')
+      wrapper.unmount()
+    })
+
+    it('does not quote internal error text or name infrastructure', async () => {
+      const wrapper = await mountDocs('https://api.first.test')
+      const article = wrapper.get('[data-testid="docs-article"]')
+      const rendered = [article.text(), article.html()]
+      const sources = [...DOC_GROUPS.flatMap((g) => g.sections.map((s) => s.raw)), aiPromptsRaw, llmsRaw]
+
+      for (const banned of ['No available accounts', 'Cloudflare']) {
+        for (const text of [...rendered, ...sources]) {
+          expect(text).not.toContain(banned)
+        }
+      }
+      expect(article.text()).toContain('Service temporarily unavailable')
+      wrapper.unmount()
     })
   })
 
@@ -241,6 +303,13 @@ describe('AI prompts', () => {
     }
   })
 
+  it('states the connection address in every prompt', () => {
+    const prompts = parseAiPrompts(aiPromptsRaw, vars)
+    for (const prompt of Object.values(prompts)) {
+      expect(prompt).toContain('接入地址是 https://api.first.test（OpenAI 兼容客户端用 https://api.first.test/v1）')
+    }
+  })
+
   it('builds the ChatGPT and Claude links from the prompt text', () => {
     setActivePinia(createPinia())
     const prompts = parseAiPrompts(aiPromptsRaw, vars)
@@ -290,5 +359,65 @@ describe('renderSection', () => {
     const vars: DocVars = { base: 'https://a.test', v1: 'https://a.test/v1', site: '<img src=x onerror=alert(1)>', model: 'm', llms: 'x' }
     const rendered = renderSection('demo', '# T\n\n欢迎使用 {{site}}\n', vars, { copy: 'c', copied: 'd' })
     expect(rendered.html).not.toContain('onerror')
+  })
+
+  it('keeps a quote or backslash in the site name from breaking the TOML example', () => {
+    const vars: DocVars = { base: 'https://a.test', v1: 'https://a.test/v1', site: 'My "Site" \\ 1', model: 'm', llms: 'x' }
+    const rendered = renderSection('demo', '# T\n\n```toml\nname = "{{providerName}}"\n```\n', vars, { copy: 'c', copied: 'd' })
+    const container = document.createElement('div')
+    container.innerHTML = rendered.html
+    expect(container.textContent).toContain('name = "My \\"Site\\" \\\\ 1"')
+  })
+
+})
+
+describe('Codex provider placeholders', () => {
+  const vars: DocVars = { base: 'https://a.test', v1: 'https://a.test/v1', site: 'Hiyo', model: 'm', llms: 'x' }
+
+  it('derives the provider id from the site name using lowercase letters, digits and underscores only', () => {
+    expect(codexProviderId('Hiyo')).toBe('hiyo')
+    expect(codexProviderId('My Site-2_x!')).toBe('mysite2_x')
+  })
+
+  it('falls back to sub2api when nothing usable is left', () => {
+    expect(codexProviderId('')).toBe('sub2api')
+    expect(codexProviderId(undefined)).toBe('sub2api')
+    expect(codexProviderId('我的站点')).toBe('sub2api')
+  })
+
+  it('never uses a built-in provider id', () => {
+    for (const reserved of ['openai', 'OpenAI', 'ollama', 'lmstudio']) {
+      expect(codexProviderId(reserved)).toBe(`${reserved.toLowerCase()}_site`)
+    }
+  })
+
+  it('escapes the display name for a TOML string and flattens line breaks', () => {
+    expect(codexProviderName('A "B" \\ C\nD')).toBe('A \\"B\\" \\\\ C D')
+    expect(codexProviderName(' \n ')).toBe('sub2api')
+    expect(codexProviderName(undefined)).toBe('sub2api')
+  })
+
+  it('fills {{provider}} and {{providerName}} from the site name', () => {
+    expect(fillVars('[model_providers.{{provider}}] name = "{{providerName}}"', vars)).toBe(
+      '[model_providers.hiyo] name = "Hiyo"'
+    )
+    expect(fillVars('{{site}} {{v1}}', { ...vars, site: 'OpenAI' })).toBe('OpenAI https://a.test/v1')
+    expect(fillVars('{{provider}}', { ...vars, site: 'OpenAI' })).toBe('openai_site')
+  })
+})
+
+describe('llms.txt', () => {
+  it('writes Codex as a single config.toml with placeholders only', () => {
+    expect(llmsRaw).toContain('experimental_bearer_token = "sk-你的密钥"')
+    expect(llmsRaw).toContain('requires_openai_auth = false')
+    expect(llmsRaw).toContain('base_url = "<API 地址>/v1"')
+    expect(llmsRaw).not.toContain('~/.codex/auth.json')
+    expect(llmsRaw).not.toContain('OPENAI_API_KEY": ')
+  })
+
+  it('does not send the reader to the /docs page, which is not readable without scripts', () => {
+    expect(llmsRaw).not.toContain('<站点地址>')
+    expect(llmsRaw).not.toContain('完整的图文说明')
+    expect(llmsRaw).not.toContain('/docs#')
   })
 })

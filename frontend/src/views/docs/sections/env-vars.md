@@ -7,7 +7,7 @@
 把下面的内容加到 `~/.zshrc` 或 `~/.bashrc`，保存后运行 `source ~/.zshrc`（或重新打开终端）：
 
 ```bash title="~/.zshrc 或 ~/.bashrc"
-# OpenAI 兼容的工具：Codex、Aider、LangChain 等
+# 读取这两个变量的 OpenAI 兼容工具：Aider、LangChain 等
 export OPENAI_BASE_URL="{{v1}}"
 export OPENAI_API_KEY="sk-你的密钥"
 
@@ -18,16 +18,23 @@ export ANTHROPIC_AUTH_TOKEN="sk-你的密钥"
 
 两组变量互不影响，只用其中一种工具的话，只写那一组。注意 Anthropic 的地址不带 `/v1`。
 
+Codex 不读取 `OPENAI_BASE_URL`，设了也不会生效。Codex 请按「Codex CLI 与 Codex Desktop」一节写 `config.toml`。
+
 ## Windows PowerShell {#env-vars-windows}
 
 下面的命令把变量永久写入当前用户的环境：
 
 ```powershell title="Windows PowerShell"
+# 读取这两个变量的 OpenAI 兼容工具：Aider、LangChain 等
 [System.Environment]::SetEnvironmentVariable("OPENAI_BASE_URL", "{{v1}}", "User")
 [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "sk-你的密钥", "User")
+
+# Anthropic 兼容的工具：Claude Code 等
 [System.Environment]::SetEnvironmentVariable("ANTHROPIC_BASE_URL", "{{base}}", "User")
 [System.Environment]::SetEnvironmentVariable("ANTHROPIC_AUTH_TOKEN", "sk-你的密钥", "User")
 ```
+
+Codex 不读取 `OPENAI_BASE_URL`，请按「Codex CLI 与 Codex Desktop」一节写 `config.toml`。
 
 设置完要关闭并重新打开终端才生效。只想在当前窗口临时用，可以这样写：
 

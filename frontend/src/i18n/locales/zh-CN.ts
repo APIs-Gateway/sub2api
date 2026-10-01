@@ -146,7 +146,7 @@
     }
   },
 
-  // Key Usage Query Page
+  // Docs Page
   docs: {
     title: '使用文档',
     intro: '怎样把你的工具接入 {site}。每一步都附了可以直接复制的配置。',
@@ -186,6 +186,8 @@
       login: '去登录'
     }
   },
+
+  // Key Usage Query Page
   keyUsage: {
     title: 'API Key 用量查询',
     subtitle: '输入您的 API Key 以查看实时消费金额与使用状态',

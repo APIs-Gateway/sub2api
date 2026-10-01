@@ -1,13 +1,13 @@
 # 接入说明（给 AI 助手读）
 
 > 这是本站的接入说明，写给帮用户配置客户端的 AI 助手。
-> 文中的 `<站点地址>` 指用户当前打开本站时浏览器地址栏里的地址，`<API 地址>` 指用户在本站「使用文档」页 (/docs) 顶部看到的地址。
+> 文中的 `<API 地址>` 指用户提示词里给出的接入地址（不带 /v1），用户也可以在本站「使用文档」页 (/docs) 顶部看到。
 > 静态文件里没法写死域名，请以用户实际看到的地址为准，不确定就直接问用户。
 
 ## 给 AI 助手的规则
 
 - 不要向用户索要真实密钥，也不要让用户把密钥贴进对话。示例里一律用 `sk-你的密钥` 占位，告诉用户把它换成自己的密钥。
-- 密钥以 `sk-` 开头，用户在站内「API 密钥」页 (/keys) 创建，在同一页点「接入」还有一键安装、CC Switch 导入等方式。
+- 密钥以 `sk-` 开头，用户在站内「API 密钥」页 (/keys) 创建，在同一页点「接入」，弹窗里还有「一键安装」「交给 AI」「CC Switch」「手动配置」几种方式。
 - OpenAI 兼容客户端（OpenAI SDK、Codex、Cursor 和大多数聊天客户端）的 Base URL 是 `<API 地址>/v1`，带 /v1。
 - Anthropic 兼容客户端（Claude Code 等）的 Base URL 是 `<API 地址>`，不带 /v1。
 - 鉴权：`Authorization: Bearer <密钥>`；Anthropic 格式也可以用 `x-api-key`；Gemini 格式用 `x-goog-api-key`。不要把密钥放进网址参数。
@@ -15,7 +15,6 @@
 - 模型名以站内「价格与计费」页 (/available-channels) 为准，登录后可见。不要凭记忆写模型名；用户能用哪些模型由密钥所在的分组决定。
 - 回复较长的请求建议开流式（`stream: true`），否则等待太久可能被中途断开（524）。
 - 不清楚用户用什么工具、什么系统，先问用户。
-- 完整的图文说明在 `<站点地址>/docs`，各节有锚点，例如 `/docs#codex`、`/docs#errors`。
 
 ## 可用接口
 
@@ -25,8 +24,8 @@
 - POST /v1/chat/completions：OpenAI Chat Completions 格式
 - POST /v1/messages：Anthropic Messages 格式，Claude Code 使用
 - GET /v1/models：当前密钥能用的模型
-- POST /v1/embeddings、POST /v1/images/generations、POST /v1/images/edits、POST /v1/messages/count_tokens：按密钥所在分组开放，不可用时返回 404
-- /v1beta/models/...：Gemini 原生格式，仅 Gemini 分组可用
+- POST /v1/embeddings、POST /v1/images/generations、POST /v1/images/edits、POST /v1/messages/count_tokens：按密钥所在分组开放，不可用时返回 404 或 403
+- /v1beta/models/...：Gemini 原生格式，仅 Gemini 分组可用，非 Gemini 分组返回 400
 
 ## 验证密钥
 
@@ -38,26 +37,22 @@ curl <API 地址>/v1/models -H "Authorization: Bearer sk-你的密钥"
 
 ## Codex CLI / Codex Desktop
 
-写 `~/.codex/config.toml`（Windows 是 `%USERPROFILE%\.codex\config.toml`），模型名换成价格页上的模型：
+只写 `~/.codex/config.toml` 一个文件（Windows 是 `%USERPROFILE%\.codex\config.toml`），密钥直接写在里面，不需要 auth.json。
+如果文件已经存在，先备份，再把下面的内容合并进去，不要整个覆盖。`model_provider` 和 `model` 两行必须放在文件顶部，在所有 `[表]` 之前。模型名换成价格页上的模型：
 
 ```toml
-model_provider = "OpenAI"
+model_provider = "<供应商名>"
 model = "<价格页上的模型名>"
 
-[model_providers.OpenAI]
-name = "OpenAI"
+[model_providers.<供应商名>]
+name = "<站点名>"
 base_url = "<API 地址>/v1"
 wire_api = "responses"
-requires_openai_auth = true
+requires_openai_auth = false
+experimental_bearer_token = "sk-你的密钥"
 ```
 
-再写 `~/.codex/auth.json`：
-
-```json
-{ "OPENAI_API_KEY": "sk-你的密钥" }
-```
-
-如果较新版本的 Codex 一直 401，把 `requires_openai_auth` 改成 false，并在同一段里加 `experimental_bearer_token = "sk-你的密钥"`。
+`<站点名>` 是用户所在站点的名称。`<供应商名>` 由站点名生成，只能含小写字母、数字和下划线，不能用 `openai`、`ollama`、`lmstudio`；`model_provider` 和 `[model_providers.…]` 里要写同一个名字。
 改完要完全退出 Codex 再新建会话。
 
 ## Claude Code
@@ -89,6 +84,8 @@ export OPENAI_API_KEY="sk-你的密钥"
 export ANTHROPIC_BASE_URL="<API 地址>"
 export ANTHROPIC_AUTH_TOKEN="sk-你的密钥"
 ```
+
+Codex 不读取 `OPENAI_BASE_URL`，请按上面「Codex CLI / Codex Desktop」一节写 `config.toml`。
 
 ## 常见错误
 

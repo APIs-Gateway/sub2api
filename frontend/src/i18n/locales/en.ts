@@ -146,7 +146,7 @@
     }
   },
 
-  // Key Usage Query Page
+  // Docs Page
   docs: {
     title: 'Docs',
     intro: 'How to connect your tools to {site}. Every step comes with a config you can copy.',
@@ -186,6 +186,8 @@
       login: 'Sign in'
     }
   },
+
+  // Key Usage Query Page
   keyUsage: {
     title: 'API Key Usage',
     subtitle: 'Enter your API Key to view real-time spending and usage status',
