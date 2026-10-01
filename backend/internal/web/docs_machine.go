@@ -479,9 +479,11 @@ func machineCodexProviderName(siteName string) string {
 // machineEndpointQuery 生成 ?endpoint=… 查询串。冒号和斜杠不转义，链接读起来像地址；
 // 和前端 endpointQuery 同规则。
 func machineEndpointQuery(base string) string {
-	escaped := url.QueryEscape(base)
-	escaped = strings.ReplaceAll(escaped, "%3A", ":")
-	escaped = strings.ReplaceAll(escaped, "%2F", "/")
+	// url.QueryEscape 把空格写成 +、并转义 !*'()；encodeURIComponent 写 %20 且保留这五个字符，这里对齐。
+	escaped := strings.ReplaceAll(url.QueryEscape(base), "+", "%20")
+	for from, to := range map[string]string{"%3A": ":", "%2F": "/", "%21": "!", "%2A": "*", "%27": "'", "%28": "(", "%29": ")"} {
+		escaped = strings.ReplaceAll(escaped, from, to)
+	}
 	return "?" + machineEndpointParam + "=" + escaped
 }
 
