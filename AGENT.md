@@ -2,6 +2,8 @@
 
 本仓库的协作约定。供自动化编码 agent 及贡献者遵循。
 
+AI 代理接手本项目先读 [docs/ai/README.md](docs/ai/README.md)：仓库地图、代码入口、工程规矩，以及 `ops/skills/` 下的 bugfix / deploy / incident 流程。
+
 每条只留**一句话钩子**，细节进 `docs/notes/` 的独立文件，用超链接点进去看。
 
 ## 开发流程（spec 驱动）
