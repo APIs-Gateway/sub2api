@@ -154,9 +154,12 @@ type BulkUpdateAccountsRequest struct {
 	Status                  string                    `json:"status" binding:"omitempty,oneof=active inactive error"`
 	Schedulable             *bool                     `json:"schedulable"`
 	GroupIDs                *[]int64                  `json:"group_ids"`
+	GroupMode               string                    `json:"group_mode"` // append | remove | replace，缺省按 replace 处理
 	Credentials             map[string]any            `json:"credentials"`
 	Extra                   map[string]any            `json:"extra"`
 	ProbeEnabled            *bool                     `json:"upstream_billing_probe_enabled"`
+	ExpiresAt               *int64                    `json:"expires_at"`                 // Unix 秒；<= 0 表示清除
+	AutoPauseOnExpired      *bool                     `json:"auto_pause_on_expired"`      // 过期后自动暂停调度
 	ConfirmMixedChannelRisk *bool                     `json:"confirm_mixed_channel_risk"` // 用户确认混合渠道风险
 }
 
@@ -1551,6 +1554,19 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		response.BadRequest(c, "account_ids or filters is required")
 		return
 	}
+	groupMode, err := service.ParseAccountGroupBindMode(req.GroupMode)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if req.GroupIDs == nil && strings.TrimSpace(req.GroupMode) != "" {
+		response.ErrorFrom(c, service.ErrAccountGroupIDsRequired)
+		return
+	}
+	if req.GroupIDs != nil && groupMode != service.AccountGroupBindModeReplace && len(*req.GroupIDs) == 0 {
+		response.ErrorFrom(c, service.ErrAccountGroupIDsRequired)
+		return
+	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
 
@@ -1568,7 +1584,9 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		req.GroupIDs != nil ||
 		len(req.Credentials) > 0 ||
 		len(req.Extra) > 0 ||
-		req.ProbeEnabled != nil
+		req.ProbeEnabled != nil ||
+		req.ExpiresAt != nil ||
+		req.AutoPauseOnExpired != nil
 
 	if !hasUpdates {
 		response.BadRequest(c, "No updates provided")
@@ -1587,9 +1605,12 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		Status:                req.Status,
 		Schedulable:           req.Schedulable,
 		GroupIDs:              req.GroupIDs,
+		GroupMode:             groupMode,
 		Credentials:           req.Credentials,
 		Extra:                 req.Extra,
 		ProbeEnabled:          req.ProbeEnabled,
+		ExpiresAt:             req.ExpiresAt,
+		AutoPauseOnExpired:    req.AutoPauseOnExpired,
 		SkipMixedChannelCheck: skipCheck,
 	})
 	if err != nil {

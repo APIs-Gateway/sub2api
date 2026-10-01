@@ -342,9 +342,15 @@ type BulkUpdateAccountsInput struct {
 	Status         string
 	Schedulable    *bool
 	GroupIDs       *[]int64
-	Credentials    map[string]any
-	Extra          map[string]any
-	ProbeEnabled   *bool
+	// GroupMode 决定 GroupIDs 如何作用于账号已有的分组：append / remove / replace。
+	// 空值按 replace 处理，保持旧调用方的行为。
+	GroupMode    AccountGroupBindMode
+	Credentials  map[string]any
+	Extra        map[string]any
+	ProbeEnabled *bool
+	// ExpiresAt 为 Unix 秒时间戳；<= 0 表示清除过期时间（与单账号编辑一致）。
+	ExpiresAt          *int64
+	AutoPauseOnExpired *bool
 	// SkipMixedChannelCheck skips the mixed channel risk check when binding groups.
 	// This should only be set when the caller has explicitly confirmed the risk.
 	SkipMixedChannelCheck bool
@@ -3071,6 +3077,17 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 // BulkUpdateAccounts updates multiple accounts in one request.
 // It merges credentials/extra keys instead of overwriting the whole object.
 func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUpdateAccountsInput) (*BulkUpdateAccountsResult, error) {
+	groupMode, err := ParseAccountGroupBindMode(string(input.GroupMode))
+	if err != nil {
+		return nil, err
+	}
+	if input.GroupIDs == nil && input.GroupMode != "" {
+		return nil, ErrAccountGroupIDsRequired
+	}
+	if input.GroupIDs != nil && groupMode != AccountGroupBindModeReplace && len(*input.GroupIDs) == 0 {
+		return nil, ErrAccountGroupIDsRequired
+	}
+
 	if len(input.AccountIDs) == 0 && input.Filters != nil {
 		accountIDs, err := s.resolveBulkUpdateTargetIDs(ctx, input.Filters)
 		if err != nil {
@@ -3088,7 +3105,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if len(input.AccountIDs) == 0 {
 		return result, nil
 	}
-	if input.GroupIDs != nil {
+	// remove 只会解除绑定：列出的分组即使已不存在也只是无事可做，不需要校验存在性和混合渠道风险。
+	bindsGroups := input.GroupIDs != nil && groupMode != AccountGroupBindModeRemove
+	if bindsGroups {
 		if err := s.validateGroupIDsExist(ctx, *input.GroupIDs); err != nil {
 			return nil, err
 		}
@@ -3099,7 +3118,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		return nil, err
 	}
 
-	needMixedChannelCheck := input.GroupIDs != nil && !input.SkipMixedChannelCheck
+	needMixedChannelCheck := bindsGroups && !input.SkipMixedChannelCheck
 
 	// 预加载账号平台信息（混合渠道检查/探测账号校验/OpenAI 专属设置校验共用，避免多次 DB 查询）。
 	platformByID := map[int64]string{}
@@ -3203,25 +3222,33 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if input.Schedulable != nil {
 		repoUpdates.Schedulable = input.Schedulable
 	}
+	if input.ExpiresAt != nil {
+		repoUpdates.ExpiresAt = input.ExpiresAt
+	}
+	if input.AutoPauseOnExpired != nil {
+		repoUpdates.AutoPauseOnExpired = input.AutoPauseOnExpired
+	}
 
 	// Run bulk update for column/jsonb fields first.
 	if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
 		return nil, err
 	}
 
-	// Handle group bindings per account (requires individual operations).
+	// 分组绑定在同一个事务内一次完成：要么所有账号都改好，要么都不改。
+	var bindErr error
+	if input.GroupIDs != nil {
+		bindErr = s.accountRepo.BulkBindGroups(ctx, input.AccountIDs, *input.GroupIDs, groupMode)
+	}
+
 	for _, accountID := range input.AccountIDs {
 		entry := BulkUpdateAccountResult{AccountID: accountID}
-
-		if input.GroupIDs != nil {
-			if err := s.accountRepo.BindGroups(ctx, accountID, *input.GroupIDs); err != nil {
-				entry.Success = false
-				entry.Error = err.Error()
-				result.Failed++
-				result.FailedIDs = append(result.FailedIDs, accountID)
-				result.Results = append(result.Results, entry)
-				continue
-			}
+		if bindErr != nil {
+			entry.Success = false
+			entry.Error = bindErr.Error()
+			result.Failed++
+			result.FailedIDs = append(result.FailedIDs, accountID)
+			result.Results = append(result.Results, entry)
+			continue
 		}
 
 		entry.Success = true

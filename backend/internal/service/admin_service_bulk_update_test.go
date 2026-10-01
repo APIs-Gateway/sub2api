@@ -14,6 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type bulkBindCall struct {
+	accountIDs []int64
+	groupIDs   []int64
+	mode       AccountGroupBindMode
+}
+
 type accountRepoStubForBulkUpdate struct {
 	accountRepoStub
 	bulkUpdateErr    error
@@ -21,8 +27,8 @@ type accountRepoStubForBulkUpdate struct {
 	bulkUpdateInput  AccountBulkUpdate
 	createErr        error
 	createdAccount   *Account
-	bindGroupErrByID map[int64]error
-	bindGroupsCalls  []int64
+	bulkBindErr      error
+	bulkBindCalls    []bulkBindCall
 	getByIDsAccounts []*Account
 	getByIDsErr      error
 	getByIDsCalled   bool
@@ -65,12 +71,13 @@ func (s *accountRepoStubForBulkUpdate) BulkUpdate(_ context.Context, ids []int64
 	return int64(len(ids)), nil
 }
 
-func (s *accountRepoStubForBulkUpdate) BindGroups(_ context.Context, accountID int64, _ []int64) error {
-	s.bindGroupsCalls = append(s.bindGroupsCalls, accountID)
-	if err, ok := s.bindGroupErrByID[accountID]; ok {
-		return err
-	}
-	return nil
+func (s *accountRepoStubForBulkUpdate) BulkBindGroups(_ context.Context, accountIDs []int64, groupIDs []int64, mode AccountGroupBindMode) error {
+	s.bulkBindCalls = append(s.bulkBindCalls, bulkBindCall{
+		accountIDs: append([]int64{}, accountIDs...),
+		groupIDs:   append([]int64{}, groupIDs...),
+		mode:       mode,
+	})
+	return s.bulkBindErr
 }
 
 func (s *accountRepoStubForBulkUpdate) GetByIDs(_ context.Context, ids []int64) ([]*Account, error) {
@@ -141,13 +148,10 @@ func TestAdminService_BulkUpdateAccounts_AllSuccessIDs(t *testing.T) {
 	require.Len(t, result.Results, 3)
 }
 
-// TestAdminService_BulkUpdateAccounts_PartialFailureIDs 验证部分失败时 success_ids/failed_ids 正确。
-func TestAdminService_BulkUpdateAccounts_PartialFailureIDs(t *testing.T) {
-	repo := &accountRepoStubForBulkUpdate{
-		bindGroupErrByID: map[int64]error{
-			2: errors.New("bind failed"),
-		},
-	}
+// TestAdminService_BulkUpdateAccounts_GroupBindFailureFailsAllAccounts 验证分组绑定在同一个事务内完成：
+// 事务失败时整批账号都记为失败，而不是只有其中一个账号失败。
+func TestAdminService_BulkUpdateAccounts_GroupBindFailureFailsAllAccounts(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{bulkBindErr: errors.New("bind failed")}
 	svc := &adminServiceImpl{
 		accountRepo: repo,
 		groupRepo:   &groupRepoStubForAdmin{getByID: &Group{ID: 10, Name: "g10"}},
@@ -164,11 +168,16 @@ func TestAdminService_BulkUpdateAccounts_PartialFailureIDs(t *testing.T) {
 
 	result, err := svc.BulkUpdateAccounts(context.Background(), input)
 	require.NoError(t, err)
-	require.Equal(t, 2, result.Success)
-	require.Equal(t, 1, result.Failed)
-	require.ElementsMatch(t, []int64{1, 3}, result.SuccessIDs)
-	require.ElementsMatch(t, []int64{2}, result.FailedIDs)
+	require.Equal(t, 0, result.Success)
+	require.Equal(t, 3, result.Failed)
+	require.Empty(t, result.SuccessIDs)
+	require.ElementsMatch(t, []int64{1, 2, 3}, result.FailedIDs)
 	require.Len(t, result.Results, 3)
+	for _, entry := range result.Results {
+		require.False(t, entry.Success)
+		require.Equal(t, "bind failed", entry.Error)
+	}
+	require.Len(t, repo.bulkBindCalls, 1, "分组绑定应只调用一次批量接口")
 }
 
 func TestAdminService_BulkUpdateAccounts_NilGroupRepoReturnsError(t *testing.T) {
@@ -215,8 +224,234 @@ func TestAdminService_BulkUpdateAccounts_MixedChannelPreCheckBlocksOnExistingCon
 	require.Nil(t, result)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "mixed channel")
-	// No BindGroups should have been called since the check runs before any write.
-	require.Empty(t, repo.bindGroupsCalls)
+	// No group binding should have been attempted since the check runs before any write.
+	require.Empty(t, repo.bulkBindCalls)
+}
+
+func TestAdminService_BulkUpdateAccounts_GroupModeDefaultsToReplace(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{}
+	svc := &adminServiceImpl{
+		accountRepo: repo,
+		groupRepo:   &groupRepoStubForAdmin{getByID: &Group{ID: 10, Name: "g10"}},
+	}
+
+	groupIDs := []int64{10, 11}
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs:            []int64{1, 2},
+		GroupIDs:              &groupIDs,
+		SkipMixedChannelCheck: true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Success)
+	require.Len(t, repo.bulkBindCalls, 1)
+	require.Equal(t, AccountGroupBindModeReplace, repo.bulkBindCalls[0].mode, "未带 group_mode 时必须按 replace 处理")
+	require.Equal(t, []int64{1, 2}, repo.bulkBindCalls[0].accountIDs)
+	require.Equal(t, []int64{10, 11}, repo.bulkBindCalls[0].groupIDs)
+}
+
+func TestAdminService_BulkUpdateAccounts_GroupModePassedToRepo(t *testing.T) {
+	for _, mode := range []AccountGroupBindMode{
+		AccountGroupBindModeAppend,
+		AccountGroupBindModeRemove,
+		AccountGroupBindModeReplace,
+	} {
+		t.Run(string(mode), func(t *testing.T) {
+			repo := &accountRepoStubForBulkUpdate{}
+			svc := &adminServiceImpl{
+				accountRepo: repo,
+				groupRepo:   &groupRepoStubForAdmin{getByID: &Group{ID: 10, Name: "g10"}},
+			}
+
+			groupIDs := []int64{10}
+			result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+				AccountIDs:            []int64{1, 2, 3},
+				GroupIDs:              &groupIDs,
+				GroupMode:             mode,
+				SkipMixedChannelCheck: true,
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, 3, result.Success)
+			require.Equal(t, 0, result.Failed)
+			require.Len(t, repo.bulkBindCalls, 1)
+			require.Equal(t, mode, repo.bulkBindCalls[0].mode)
+			require.Equal(t, []int64{1, 2, 3}, repo.bulkBindCalls[0].accountIDs)
+			require.Equal(t, []int64{10}, repo.bulkBindCalls[0].groupIDs)
+		})
+	}
+}
+
+func TestAdminService_BulkUpdateAccounts_RemoveModeSkipsGroupValidation(t *testing.T) {
+	// 没有配置 groupRepo：append/replace 会因为校验分组存在性而报错，remove 不应该走校验。
+	repo := &accountRepoStubForBulkUpdate{}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	groupIDs := []int64{10}
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{1, 2},
+		GroupIDs:   &groupIDs,
+		GroupMode:  AccountGroupBindModeRemove,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Success)
+	require.False(t, repo.getByIDsCalled, "remove 不需要加载账号做混合渠道检查")
+	require.Len(t, repo.bulkBindCalls, 1)
+	require.Equal(t, AccountGroupBindModeRemove, repo.bulkBindCalls[0].mode)
+}
+
+func TestAdminService_BulkUpdateAccounts_AppendModeStillChecksMixedChannel(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{
+		getByIDsAccounts: []*Account{
+			{ID: 1, Platform: PlatformAntigravity},
+		},
+		listByGroupData: map[int64][]Account{
+			10: {{ID: 99, Platform: PlatformAnthropic}},
+		},
+	}
+	svc := &adminServiceImpl{
+		accountRepo: repo,
+		groupRepo:   &groupRepoStubForAdmin{getByID: &Group{ID: 10, Name: "target-group"}},
+	}
+
+	groupIDs := []int64{10}
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{1},
+		GroupIDs:   &groupIDs,
+		GroupMode:  AccountGroupBindModeAppend,
+	})
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "mixed channel")
+	require.Empty(t, repo.bulkBindCalls)
+}
+
+func TestAdminService_BulkUpdateAccounts_InvalidGroupModeRejectedBeforeWrite(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{}
+	svc := &adminServiceImpl{
+		accountRepo: repo,
+		groupRepo:   &groupRepoStubForAdmin{getByID: &Group{ID: 10, Name: "g10"}},
+	}
+
+	groupIDs := []int64{10}
+	schedulable := true
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs:  []int64{1},
+		GroupIDs:    &groupIDs,
+		GroupMode:   AccountGroupBindMode("merge"),
+		Schedulable: &schedulable,
+	})
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.Equal(t, "INVALID_GROUP_MODE", infraerrors.Reason(err))
+	require.Equal(t, 400, infraerrors.Code(err))
+	require.Empty(t, repo.bulkUpdateIDs, "非法 group_mode 不应写入任何字段")
+	require.Empty(t, repo.bulkBindCalls)
+}
+
+func TestAdminService_BulkUpdateAccounts_AppendAndRemoveRequireGroups(t *testing.T) {
+	for _, mode := range []AccountGroupBindMode{AccountGroupBindModeAppend, AccountGroupBindModeRemove} {
+		t.Run(string(mode), func(t *testing.T) {
+			repo := &accountRepoStubForBulkUpdate{}
+			svc := &adminServiceImpl{accountRepo: repo}
+
+			empty := []int64{}
+			result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+				AccountIDs: []int64{1},
+				GroupIDs:   &empty,
+				GroupMode:  mode,
+			})
+
+			require.Nil(t, result)
+			require.Equal(t, "GROUP_IDS_REQUIRED", infraerrors.Reason(err))
+			require.Empty(t, repo.bulkBindCalls)
+		})
+	}
+}
+
+func TestAdminService_BulkUpdateAccounts_GroupModeWithoutGroupIDsRejected(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	schedulable := true
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs:  []int64{1},
+		GroupMode:   AccountGroupBindModeAppend,
+		Schedulable: &schedulable,
+	})
+
+	require.Nil(t, result)
+	require.Equal(t, "GROUP_IDS_REQUIRED", infraerrors.Reason(err))
+	require.Empty(t, repo.bulkUpdateIDs)
+}
+
+func TestAdminService_BulkUpdateAccounts_ReplaceWithEmptyGroupsClearsGroups(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	empty := []int64{}
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{1, 2},
+		GroupIDs:   &empty,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Success)
+	require.Len(t, repo.bulkBindCalls, 1)
+	require.Equal(t, AccountGroupBindModeReplace, repo.bulkBindCalls[0].mode)
+	require.Empty(t, repo.bulkBindCalls[0].groupIDs)
+}
+
+func TestAdminService_BulkUpdateAccounts_PassesExpiryFieldsToRepo(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	expiresAt := int64(1893456000)
+	autoPause := true
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs:         []int64{1, 2},
+		ExpiresAt:          &expiresAt,
+		AutoPauseOnExpired: &autoPause,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Success)
+	require.NotNil(t, repo.bulkUpdateInput.ExpiresAt)
+	require.Equal(t, expiresAt, *repo.bulkUpdateInput.ExpiresAt)
+	require.NotNil(t, repo.bulkUpdateInput.AutoPauseOnExpired)
+	require.True(t, *repo.bulkUpdateInput.AutoPauseOnExpired)
+	require.Empty(t, repo.bulkBindCalls, "没有 group_ids 时不应触碰分组绑定")
+}
+
+func TestParseAccountGroupBindMode(t *testing.T) {
+	tests := []struct {
+		raw     string
+		want    AccountGroupBindMode
+		wantErr bool
+	}{
+		{raw: "", want: AccountGroupBindModeReplace},
+		{raw: "   ", want: AccountGroupBindModeReplace},
+		{raw: "append", want: AccountGroupBindModeAppend},
+		{raw: " remove ", want: AccountGroupBindModeRemove},
+		{raw: "replace", want: AccountGroupBindModeReplace},
+		{raw: "APPEND", wantErr: true},
+		{raw: "merge", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			got, err := ParseAccountGroupBindMode(tt.raw)
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Equal(t, "INVALID_GROUP_MODE", infraerrors.Reason(err))
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestAdminServiceBulkUpdateAccounts_ResolvesIDsFromFilters(t *testing.T) {
