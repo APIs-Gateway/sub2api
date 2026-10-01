@@ -27,7 +27,8 @@ export const AI_TOOLS: AiTool[] = [
   { id: 'gemini-cli', section: 'gemini-cli', name: 'Gemini CLI' },
   { id: 'opencode', section: 'opencode', name: 'OpenCode' },
   { id: 'cursor', section: 'cursor', name: 'Cursor' },
-  { id: 'chat', section: 'other-clients' },
+  // 聊天客户端有好几个，各有各的章节：指向索引，让 AI 问清楚用的是哪个再挑对应章节。
+  { id: 'chat' },
   { id: 'code', section: 'openai-sdk' },
 ]
 

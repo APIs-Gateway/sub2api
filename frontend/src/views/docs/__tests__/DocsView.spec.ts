@@ -559,7 +559,7 @@ describe('AI prompts', () => {
     'gemini-cli': '请按这份文档，帮我把 Gemini CLI 接入 Hiyo：https://site.test/docs/gemini-cli.md',
     opencode: '请按这份文档，帮我把 OpenCode 接入 Hiyo：https://site.test/docs/opencode.md',
     cursor: '请按这份文档，帮我把 Cursor 接入 Hiyo：https://site.test/docs/cursor.md',
-    chat: '请按这份文档，帮我把聊天客户端接入 Hiyo：https://site.test/docs/other-clients.md',
+    chat: '请按这份文档，帮我把聊天客户端接入 Hiyo：https://site.test/llms.txt',
     code: '请按这份文档，帮我在代码里调用 Hiyo：https://site.test/docs/openai-sdk.md',
   }
 

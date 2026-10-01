@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import zhCN from '@/i18n/locales/zh-CN'
+import renderCases from './fixtures/machine-render-cases.json'
 import { EXAMPLE_MODEL } from '../docsRender'
 import { DOC_GROUPS, type DocGroup } from '../sections'
 import {
@@ -121,7 +122,8 @@ describe('llms.txt', () => {
     for (const group of DOC_GROUPS) {
       expect(text).toContain(`## ${GROUP_LABELS[group.id]}\n`)
     }
-    for (const section of allSections) {
+    // 「让 AI 帮你接入」不进索引（见下面的用例），其余每节各链一次。
+    for (const section of allSections.filter((s) => s.id !== 'ai-assist')) {
       const matches = text.match(new RegExp(`\\]\\(https://hiyo\\.test/docs/${section.id}\\.md\\)`, 'g'))
       expect(matches, section.id).toHaveLength(1)
     }
@@ -158,6 +160,12 @@ describe('llms.txt', () => {
     expect(withEndpoints).not.toContain('?endpoint=')
   })
 
+  it('does not list the “让 AI 帮你接入” section, same as llms-full.txt', () => {
+    expect(text).not.toContain('ai-assist.md')
+    expect(text).not.toContain('让 AI 帮你接入')
+    expect(buildMachineFiles()['docs/ai-assist.md']).toContain('# 让 AI 帮你接入')
+  })
+
   it('lets a request pick one of the listed endpoints, and ignores anything else', () => {
     const customEndpoints = [{ name: 'CDN', endpoint: 'https://cdn.second.test', description: '' }]
     const picked = fillMachineText(llmsIndex(), { ...baseCtx, customEndpoints, requestedEndpoint: 'https://cdn.second.test' })
@@ -177,6 +185,26 @@ describe('llms.txt', () => {
     expect(bare).toContain('# Sub2API 接入文档')
     expect(bare).toContain('Base URL 是 `https://hiyo.test/v1`')
   })
+})
+
+describe('shared render cases (the backend test reads the same file)', () => {
+  it('has cases', () => {
+    expect(renderCases.cases.length).toBeGreaterThan(20)
+  })
+
+  for (const item of renderCases.cases) {
+    it(item.name, () => {
+      expect(
+        fillMachineText(item.template, {
+          site: item.settings.site_name,
+          apiBaseUrl: item.settings.api_base_url,
+          customEndpoints: item.settings.custom_endpoints,
+          origin: item.origin,
+          requestedEndpoint: item.requested,
+        })
+      ).toBe(item.expected)
+    })
+  }
 })
 
 describe('llms-full.txt', () => {

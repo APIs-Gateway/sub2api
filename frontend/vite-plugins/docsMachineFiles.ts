@@ -57,7 +57,13 @@ export function docsMachineFiles(options: { root: string; backendUrl: string }):
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const url = new URL(req.url || '/', 'http://localhost')
-        const path = decodeURIComponent(url.pathname).replace(/^\/+/, '')
+        let path: string
+        try {
+          path = decodeURIComponent(url.pathname).replace(/^\/+/, '')
+        } catch {
+          // 非法的 % 编码不是机器文件，交给后面的中间件，别让 dev server 报 500
+          return next()
+        }
         if ((req.method !== 'GET' && req.method !== 'HEAD') || !isMachinePath(path)) return next()
         try {
           const mod = (await server.ssrLoadModule(MACHINE_MODULE)) as MachineModule

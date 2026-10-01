@@ -4,6 +4,9 @@ package web
 
 import (
 	"encoding/json"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -56,14 +59,79 @@ func TestParseMachineSettings(t *testing.T) {
 }
 
 func TestMachineOrigin(t *testing.T) {
-	assert.Equal(t, "https://docs.test", machineOrigin("https", false, "docs.test"))
-	assert.Equal(t, "https://docs.test", machineOrigin("", true, "docs.test"))
-	assert.Equal(t, "http://localhost:5173", machineOrigin("", false, "localhost:5173"))
-	assert.Equal(t, "https://docs.test", machineOrigin("https, http", false, "docs.test"))
-	assert.Equal(t, "http://docs.test", machineOrigin("ftp", false, "docs.test"), "unknown proto is ignored")
-	assert.Equal(t, "https://[::1]:8080", machineOrigin("https", false, "[::1]:8080"))
-	for _, host := range []string{"", "  ", "evil.test/x", "a b", "a.test\r\nX: y", "a.test?x=1", "a@b.test"} {
-		assert.Equal(t, "", machineOrigin("https", false, host), host)
+	t.Run("a TLS connection is https", func(t *testing.T) {
+		assert.Equal(t, "https://docs.test", machineOrigin("docs.test", true, "", false, ""))
+		assert.Equal(t, "https://docs.test", machineOrigin("docs.test", true, "http", true, ""))
+	})
+
+	t.Run("X-Forwarded-Proto counts only from a trusted proxy", func(t *testing.T) {
+		assert.Equal(t, "http://docs.test", machineOrigin("docs.test", false, "http", true, ""))
+		assert.Equal(t, "https://docs.test", machineOrigin("docs.test", false, "https, http", true, ""))
+		assert.Equal(t, "https://docs.test", machineOrigin("docs.test", false, "ftp", true, ""), "unknown proto is ignored")
+		assert.Equal(t, "https://docs.test", machineOrigin("docs.test", false, "http", false, ""), "an untrusted client cannot downgrade the links")
+	})
+
+	t.Run("without TLS or a trusted header the scheme follows api_base_url on the same host", func(t *testing.T) {
+		assert.Equal(t, "http://docs.test", machineOrigin("docs.test", false, "", false, "http://DOCS.test/v1"))
+		assert.Equal(t, "https://docs.test", machineOrigin("docs.test", false, "", false, "https://docs.test"))
+		assert.Equal(t, "https://docs.test", machineOrigin("docs.test", false, "", false, "http://api.test"), "another host does not decide the scheme")
+	})
+
+	t.Run("otherwise local hosts and IPs are http, domains are https", func(t *testing.T) {
+		for _, host := range []string{"localhost", "localhost:5173", "app.localhost", "127.0.0.1:8080", "10.0.0.2", "[::1]:8080"} {
+			assert.Equal(t, "http://"+host, machineOrigin(host, false, "", false, ""), host)
+		}
+		assert.Equal(t, "https://hiyo.test", machineOrigin("hiyo.test", false, "", false, ""))
+		assert.Equal(t, "https://hiyo.test:8443", machineOrigin("hiyo.test:8443", false, "", false, ""))
+	})
+
+	t.Run("a Host with characters that do not belong in one gives no origin", func(t *testing.T) {
+		for _, host := range []string{"", "  ", "evil.test/x", "a b", "a.test\r\nX: y", "a.test?x=1", "a@b.test"} {
+			assert.Equal(t, "", machineOrigin(host, false, "https", true, ""), host)
+		}
+	})
+}
+
+func TestMachineTrustedProxies(t *testing.T) {
+	nets := parseMachineTrustedProxies([]string{"10.0.0.0/8", " 192.168.1.5 ", "::1", "", "not-an-ip"})
+	require.Len(t, nets, 3)
+	for _, ip := range []string{"10.1.2.3", "192.168.1.5", "::1"} {
+		assert.True(t, machineProxyTrusted(nets, ip), ip)
+	}
+	for _, ip := range []string{"8.8.8.8", "192.168.1.6", "", "garbage"} {
+		assert.False(t, machineProxyTrusted(nets, ip), ip)
+	}
+	assert.False(t, machineProxyTrusted(nil, "10.1.2.3"), "no trusted proxies configured trusts nobody")
+	assert.Equal(t, []*net.IPNet(nil), parseMachineTrustedProxies(nil))
+}
+
+func TestCanonicalizeEndpointURL(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://x.com:443":          "https://x.com/",
+		"http://x.com:80/v1":         "http://x.com/v1",
+		"http://x.com:8080":          "http://x.com:8080/",
+		"HTTPS://X.COM/A/../b":       "https://x.com/b",
+		"https://x.com/a/./b/.":      "https://x.com/a/b/",
+		"https://x.com/a/%2e%2e/b":   "https://x.com/b",
+		"https://例え.test":            "https://xn--r8jz45g.test/",
+		"https://x.com?a=1":          "https://x.com/?a=1",
+		"http:///x.com/y":            "http://x.com/y",
+		`https://good.com\@evil.com`: "https://good.com/@evil.com",
+		"  https://x.com/\t\n  ":     "https://x.com/",
+		"https://[::1]:8080/v1":      "https://[::1]:8080/v1",
+		"https://u:p@x.com/":         "https://u:p@x.com/",
+		"https://x.com/#frag":        "https://x.com/#frag",
+	} {
+		got, ok := canonicalizeEndpointURL(raw)
+		assert.True(t, ok, raw)
+		assert.Equal(t, want, got.String, raw)
+	}
+	for _, raw := range []string{
+		"", "x.com", "ftp://x.com", "javascript:alert(1)", "//x.com", "https://", "https:///", "https://x.com:99999",
+		"https://x.com:abc", "https://a b.test", "https://x.com/\x01", "https://a.test ;touch",
+	} {
+		_, ok := canonicalizeEndpointURL(raw)
+		assert.False(t, ok, raw)
 	}
 }
 
@@ -105,7 +173,10 @@ func TestResolveMachineEndpoints(t *testing.T) {
 
 func TestMachineCodexProvider(t *testing.T) {
 	assert.Equal(t, "hiyo", machineCodexProviderID("Hiyo"))
-	assert.Equal(t, "my_site2", machineCodexProviderID("My Site-2!"))
+	// 只保留 [a-z0-9_]，其余字符直接丢掉，不换成下划线。规则和前端 docsRender.ts 的 codexProviderId 一致，
+	// 同一站点名在文档页和 llms.txt 里给出的 Codex provider id 必须相同（共享用例里也有）。
+	assert.Equal(t, "mysite2", machineCodexProviderID("My Site-2!"))
+	assert.Equal(t, "my_site2", machineCodexProviderID("my_site-2"))
 	assert.Equal(t, "sub2api", machineCodexProviderID("站点"))
 	for _, reserved := range []string{"openai", "OpenAI", "ollama", "lmstudio"} {
 		assert.Equal(t, strings.ToLower(reserved)+"_site", machineCodexProviderID(reserved))
@@ -117,63 +188,42 @@ func TestMachineCodexProvider(t *testing.T) {
 func TestMachineEndpointQuery(t *testing.T) {
 	assert.Equal(t, "?endpoint=https://cdn.second.test", machineEndpointQuery("https://cdn.second.test"))
 	assert.Equal(t, "?endpoint=http://h.test:8080/a%3Fb%26c", machineEndpointQuery("http://h.test:8080/a?b&c"))
+	// encodeURIComponent 不转义 ! * ' ( )，前端生成的链接里它们是原样的。
+	assert.Equal(t, "?endpoint=https://h.test/a(b)!*'", machineEndpointQuery("https://h.test/a(b)!*'"))
 }
 
-func TestRenderMachineDoc(t *testing.T) {
-	cfg := machineSettings{
-		SiteName:   "Hiyo",
-		APIBaseURL: "https://api.first.test",
-		CustomEndpoints: []machineCustomEndpoint{
-			{Name: "CDN 加速域名", Endpoint: "https://cdn.second.test", Description: "全球支持"},
-		},
+// machineRenderCase 是前后端共用的占位符替换用例，前端 docsMachine.spec.ts 读同一份文件。
+type machineRenderCase struct {
+	Name     string `json:"name"`
+	Settings struct {
+		SiteName        string                  `json:"site_name"`
+		APIBaseURL      string                  `json:"api_base_url"`
+		CustomEndpoints []machineCustomEndpoint `json:"custom_endpoints"`
+	} `json:"settings"`
+	Origin    string `json:"origin"`
+	Requested string `json:"requested"`
+	Template  string `json:"template"`
+	Expected  string `json:"expected"`
+}
+
+func TestRenderMachineDocSharedCases(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "frontend", "src", "views", "docs", "__tests__", "fixtures", "machine-render-cases.json")
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var file struct {
+		Cases []machineRenderCase `json:"cases"`
 	}
-	const origin = "https://hiyo.test"
+	require.NoError(t, json.Unmarshal(raw, &file))
+	require.Greater(t, len(file.Cases), 20)
 
-	t.Run("fills every placeholder with the default address", func(t *testing.T) {
-		template := "{{site}}|{{base}}|{{v1}}|{{origin}}|{{llms}}|{{provider}}|{{providerName}}|{{q}}|"
-		assert.Equal(t,
-			"Hiyo|https://api.first.test|https://api.first.test/v1|https://hiyo.test|https://hiyo.test/llms.txt|hiyo|Hiyo||",
-			renderMachineDoc(template, cfg, origin, ""))
-	})
-
-	t.Run("a requested custom endpoint replaces the address and is carried in links", func(t *testing.T) {
-		got := renderMachineDoc("{{v1}} {{origin}}/docs/codex.md{{q}}", cfg, origin, "https://cdn.second.test")
-		assert.Equal(t, "https://cdn.second.test/v1 https://hiyo.test/docs/codex.md?endpoint=https://cdn.second.test", got)
-	})
-
-	t.Run("an endpoint that is not in the settings is ignored", func(t *testing.T) {
-		for _, requested := range []string{"https://evil.test", "https://api.first.test", "cdn.second.test", "https://cdn.second.test/v1"} {
-			got := renderMachineDoc("{{base}}{{q}}", cfg, origin, requested)
-			assert.Equal(t, "https://api.first.test", got, requested)
-		}
-	})
-
-	t.Run("lists the custom endpoints once in the endpoints section", func(t *testing.T) {
-		got := renderMachineDoc("A\n\n{{endpoints}}B", cfg, origin, "")
-		assert.Equal(t, "A\n\n## 备用地址\n\n管理员还提供了下面的备用地址，访问慢时可以换用，密钥通用。用户选用备用地址时，把文档里的接入地址换成它（OpenAI 兼容客户端再加 /v1）：\n\n- CDN 加速域名：`https://cdn.second.test`，全球支持\n\nB", got)
-	})
-
-	t.Run("the endpoints section is empty without custom endpoints", func(t *testing.T) {
-		got := renderMachineDoc("A\n\n{{endpoints}}B", machineSettings{SiteName: "Hiyo"}, origin, "")
-		assert.Equal(t, "A\n\nB", got)
-	})
-
-	t.Run("falls back to the request origin and the default site name", func(t *testing.T) {
-		got := renderMachineDoc("{{site}} {{base}} {{provider}}", machineSettings{}, origin, "")
-		assert.Equal(t, "Sub2API https://hiyo.test sub2api", got)
-	})
-
-	t.Run("a site name with line breaks and quotes cannot break the Codex config", func(t *testing.T) {
-		got := renderMachineDoc(`name = "{{providerName}}" [model_providers.{{provider}}]`, machineSettings{SiteName: "A\"B\nC"}, origin, "")
-		assert.Equal(t, `name = "A\"B C" [model_providers.abc]`, got)
-	})
-
-	t.Run("substituted values are not scanned again", func(t *testing.T) {
-		got := renderMachineDoc("{{site}}", machineSettings{SiteName: "{{base}}"}, origin, "")
-		assert.Equal(t, "{{base}}", got)
-	})
-
-	t.Run("leaves unknown placeholders alone", func(t *testing.T) {
-		assert.Equal(t, "{{nope}}", renderMachineDoc("{{nope}}", cfg, origin, ""))
-	})
+	for _, item := range file.Cases {
+		t.Run(item.Name, func(t *testing.T) {
+			cfg := machineSettings{
+				SiteName:        item.Settings.SiteName,
+				APIBaseURL:      item.Settings.APIBaseURL,
+				CustomEndpoints: item.Settings.CustomEndpoints,
+			}
+			assert.Equal(t, item.Expected, renderMachineDoc(item.Template, cfg, item.Origin, item.Requested))
+		})
+	}
 }

@@ -159,7 +159,7 @@
     groups: {
       start: '開始',
       clients: '命令行工具',
-      editors: '編輯器與外掛',
+      editors: '編輯器與插件',
       chat: '聊天與翻譯',
       developers: '開發者',
       reference: '參考'

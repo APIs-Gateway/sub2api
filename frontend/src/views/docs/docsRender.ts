@@ -46,9 +46,40 @@ export interface RenderedSection {
   headings: DocHeading[]
 }
 
-/** 从公开设置的 api_base_url 推出两个常用地址。留空时退回当前站点的来源。 */
+/**
+ * 空白的判定和后端 Go 的 unicode.IsSpace 一致，不用 JS 的 \s（它多一个 U+FEFF、少一个 U+0085）。
+ * 前后端对站点名、地址做同样的清理，页面和 llms.txt 里才不会出现两个样子。
+ */
+const SPACE_CLASS = '[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]'
+const SPACE_RUN = new RegExp(`${SPACE_CLASS}+`, 'g')
+const SPACE_EDGES = new RegExp(`^${SPACE_CLASS}+|${SPACE_CLASS}+$`, 'g')
+
+/** 去掉首尾空白，等同 Go 的 strings.TrimSpace。 */
+export function trimSpace(value: string): string {
+  return value.replace(SPACE_EDGES, '')
+}
+
+/** 把任意空白（含换行）压成单个空格并去掉首尾空白，等同 Go 的 strings.Fields 再用空格连起来。 */
+export function oneLine(value: string): string {
+  return trimSpace(value.replace(SPACE_RUN, ' '))
+}
+
+/**
+ * 验证并规范化备用地址：只接受 http(s) 绝对地址，返回浏览器 URL 解析后的写法，其余返回空串。
+ * 后端 docs_machine.go 的 canonicalizeEndpointURL 要算出同样的结果，页面生成的 ?endpoint= 链接后端才认得出来；
+ * 两边共用的用例在 __tests__/fixtures/machine-render-cases.json。
+ * 先去掉制表符和换行（浏览器解析 URL 时也会去掉），其余控制字符一律拒绝。
+ */
+export function sanitizeEndpointUrl(raw: string): string {
+  const stripped = trimSpace(raw).replace(/[\t\n\r]/g, '')
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(stripped)) return ''
+  return sanitizeUrl(stripped)
+}
+
+/** 从公开设置的 api_base_url 推出两个常用地址。留空或不是 http(s) 地址时退回当前站点的来源。 */
 export function resolveApiBases(apiBaseUrl: string | undefined | null, fallbackOrigin: string): Pick<DocVars, 'base' | 'v1'> {
-  const raw = (apiBaseUrl || '').trim() || fallbackOrigin
+  const raw = sanitizeEndpointUrl(apiBaseUrl || '') || fallbackOrigin
   const base = raw.replace(/\/+$/, '').replace(/\/v1$/, '')
   return { base, v1: `${base}/v1` }
 }
@@ -84,15 +115,15 @@ export function resolveEndpointOptions(
   ]
   const seen = new Set([options[0].base])
   for (const item of customEndpoints ?? []) {
-    const url = sanitizeUrl(item.endpoint ?? '')
+    const url = sanitizeEndpointUrl(item.endpoint ?? '')
     if (!url) continue
     const bases = resolveApiBases(url, fallbackOrigin)
     if (seen.has(bases.base)) continue
     seen.add(bases.base)
     options.push({
       id: bases.base,
-      name: (item.name ?? '').trim() || new URL(url).host,
-      description: (item.description ?? '').trim(),
+      name: trimSpace(item.name ?? '') || new URL(url).host,
+      description: trimSpace(item.description ?? ''),
       isDefault: false,
       ...bases,
     })
@@ -135,7 +166,7 @@ export function codexProviderId(siteName?: string): string {
 /** 写进 TOML 双引号字符串的站点名：换行和控制字符换成空格，反斜杠和双引号转义。 */
 export function codexProviderName(siteName?: string): string {
   // eslint-disable-next-line no-control-regex
-  const name = (siteName || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim() || 'sub2api'
+  const name = trimSpace((siteName || '').replace(/[\u0000-\u001f\u007f]+/g, ' ')) || 'sub2api'
   return name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
 }
 
