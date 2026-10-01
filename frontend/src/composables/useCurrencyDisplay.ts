@@ -178,6 +178,27 @@ export function useCurrencyDisplay() {
     return formatFiat(fiat)
   }
 
+  /**
+   * 官方价展示汇率（后台设置 OFFICIAL_PRICE_CNY_RATE）：只用来把模型官方美元价
+   * 换算成人民币给用户对照，与扣费无关。缺省 / 无效时为 0，表示不提供。
+   */
+  const officialCnyRate = computed(() => {
+    const raw = appStore.cachedPublicSettings?.official_price_cny_rate
+    return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : 0
+  })
+
+  /**
+   * 官方价（美元）的展示。人民币模式下按官方价展示汇率换成 ¥，让全站只有一种货币；
+   * 后端未提供汇率时返回 null，调用方应隐藏这一项，而不是混排一个 $。
+   * 美元模式下保持原样。
+   */
+  function formatOfficial(usd: number | null | undefined, fractionDigits = 4): string | null {
+    if (!isFiat.value) return formatUsd(usd, fractionDigits)
+    if (!officialCnyRate.value) return null
+    const value = typeof usd === 'number' && Number.isFinite(usd) ? usd : 0
+    return formatFiat(value * officialCnyRate.value)
+  }
+
   /** 钱包里 1 个额度值多少人民币：充值时 1 元买 m 个额度。 */
   const walletFiatPerCredit = computed(() => 1 / rechargeMultiplier.value)
 
@@ -264,6 +285,8 @@ export function useCurrencyDisplay() {
     formatUsd,
     formatAmount,
     walletFiatPerCredit,
+    officialCnyRate,
+    formatOfficial,
     formatWallet,
     formatSubscription,
     formatMixed,
