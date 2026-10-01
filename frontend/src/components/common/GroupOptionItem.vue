@@ -25,8 +25,10 @@
     <!-- Right: rate pill + checkmark (vertically centered to first row) -->
     <div class="flex shrink-0 items-center gap-2 pt-0.5">
       <!-- Rate pill (platform color) -->
-      <span v-if="rateMultiplier !== undefined" :title="t('groups.rateMultiplierTip')" :class="['inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold', ratePillClass]">
-        <template v-if="hasCustomRate">
+      <span v-if="rateMultiplier !== undefined" :title="showFiatRate ? t('groups.fiatRateTip') : t('groups.rateMultiplierTip')" :class="['inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold', ratePillClass]">
+        <!-- 人民币口径：把倍率翻译成「官方价 $1 用余额付多少元」，专属倍率已计入 -->
+        <template v-if="showFiatRate">{{ fiatRateLabel }}</template>
+        <template v-else-if="hasCustomRate">
           <span class="mr-1 line-through opacity-50">{{ rateMultiplier }}x</span>
           <span class="font-bold">{{ userRateMultiplier }}x</span>
         </template>
@@ -53,6 +55,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GroupBadge from './GroupBadge.vue'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import type { SubscriptionType, GroupPlatform } from '@/types'
 
 interface Props {
@@ -61,6 +64,8 @@ interface Props {
   subscriptionType?: SubscriptionType
   rateMultiplier?: number
   userRateMultiplier?: number | null
+  /** 用户侧传入：人民币模式下把倍率显示成人民币价格。后台不传，保持倍率。 */
+  fiatRate?: boolean
   description?: string | null
   selected?: boolean
   showCheckmark?: boolean
@@ -70,10 +75,24 @@ const props = withDefaults(defineProps<Props>(), {
   subscriptionType: 'standard',
   selected: false,
   showCheckmark: true,
-  userRateMultiplier: null
+  userRateMultiplier: null,
+  fiatRate: false
 })
 
 const { t } = useI18n()
+
+// 只有用户侧（fiatRate）才接入计价口径；后台用法不依赖 store
+const currency = props.fiatRate ? useCurrencyDisplay() : null
+const showFiatRate = computed(() => !!currency?.isFiat.value && props.rateMultiplier !== undefined)
+const fiatRateLabel = computed(() =>
+  currency
+    ? t('groups.fiatRateLabel', {
+        price: currency.formatFiat(
+          (props.userRateMultiplier ?? props.rateMultiplier ?? 0) / currency.rechargeMultiplier.value
+        )
+      })
+    : ''
+)
 
 // Whether user has a custom rate different from default
 const hasCustomRate = computed(() => {

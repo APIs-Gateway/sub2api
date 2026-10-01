@@ -850,7 +850,9 @@
     subscription: '訂閱',
     rateMultiplierTip: '「Nx 倍率」是該分組相對官方價的扣額度速度：數字越大、池子越穩定，同樣的用量扣得也越多；它是系統扣費的系數，不是最終價格。疊加套餐折扣後你實際相當於官方價幾折，見分組描述。'
     ,
-    rateMultiplierLabel: '{rate}x 倍率'
+    rateMultiplierLabel: '{rate}x 倍率',
+    fiatRateLabel: '官方 $1 ≈ {price}',
+    fiatRateTip: '按餘額付費時，模型官方價每 $1 實際花費的人民幣；已計入你的專屬倍率。'
   },
 
   // 金鑰接入彈窗：一鍵安裝 / 交給 AI / CC Switch / 手動設定
@@ -1370,6 +1372,15 @@
 
   // Available Channels (user-facing)
   billingRules: {
+    fiat: {
+      intro: '本站按量計費，所有價格都已換算成人民幣，就是你實際要付的錢。',
+      pricesHere: '每個模型的價格見下方：「餘額價」是使用餘額時的價格，「套餐價」是使用套餐額度時的價格。',
+      pricesLink: '每個模型的人民幣價格可在「價格與計費」頁查看。',
+      balance: '餘額：充值多少元就到賬多少元餘額，按模型的餘額價扣費。',
+      plan: '套餐：開通後優先從套餐額度扣費，單價比餘額價更低。',
+      group: '分組：不同分組的線路穩定性不同，價格也不同，可切換分組比較。',
+      switch: '想對照模型官方美元價，可點擊右上角切換到 $。'
+    },
     title: '計費規則',
     intro: '本站按量計費，實時從你的餘額（USD）或套餐額度中扣除。',
     formulaLabel: '實際扣費',
@@ -1381,6 +1392,15 @@
   },
 
   availableChannels: {
+    fiat: {
+      balancePrice: '餘額價',
+      subscriptionPrice: '套餐價（隨套餐檔位變化）',
+      yourSubscriptionPrice: '你的套餐價',
+      officialPrice: '官方價',
+      firstTierHint: '階梯定價，此處為首檔價格；切換到 $ 可查看全部檔位。',
+      payHint: '官方價每 $1：用餘額付 {balance}，用套餐付 {subscription}',
+      payHintBalanceOnly: '官方價每 $1：用餘額付 {balance}'
+    },
     title: '價格與計費',
     description: '模型價格與計費規則；查看你可用的模型、單價與各分組倍率',
     searchPlaceholder: '搜索模型或線路...',

@@ -18,6 +18,50 @@
 
     <div v-if="!model.pricing" class="text-xs text-gray-400">{{ noPricingLabel }}</div>
 
+    <!--
+      人民币模式：直接给出用户真正付的钱。余额价 = 官方价 × 分组倍率 ÷ 充值倍率；
+      套餐价 = 官方价 × 分组倍率 × 套餐卡单价 u(D)。官方美元价降为一行灰色参考。
+    -->
+    <template v-else-if="isFiat">
+      <div class="mb-1 flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500">
+        <span>{{ t('availableChannels.fiat.balancePrice') }}</span>
+        <span>{{ fiatUnit }}</span>
+      </div>
+      <div class="space-y-1.5 text-sm" data-test="balance-prices">
+        <div v-for="row in fiatRows" :key="row.key" class="flex justify-between gap-2">
+          <span class="text-gray-500 dark:text-gray-400">{{ row.label }}</span>
+          <span class="font-mono font-medium text-gray-900 dark:text-white">{{ formatFiatPrice(row.price, balanceFactor) }}</span>
+        </div>
+      </div>
+
+      <p v-if="hasIntervals" class="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+        {{ t('availableChannels.fiat.firstTierHint') }}
+      </p>
+
+      <div
+        v-if="subscriptionRange"
+        class="mt-3 rounded-lg bg-gray-50 px-2.5 py-2 dark:bg-dark-900/30"
+        data-test="subscription-prices"
+      >
+        <div class="mb-1 text-[10px] font-medium text-gray-500 dark:text-gray-400">
+          {{ subscriptionRange.exact ? t('availableChannels.fiat.yourSubscriptionPrice') : t('availableChannels.fiat.subscriptionPrice') }}
+        </div>
+        <div class="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-700 dark:text-gray-300">
+          <span v-for="row in fiatRows" :key="row.key">
+            <span class="text-gray-400 dark:text-gray-500">{{ row.label }}</span> {{ formatSubscriptionPrice(row.price) }}
+          </span>
+        </div>
+      </div>
+
+      <p class="mt-2 text-[10px] text-gray-400 dark:text-gray-500" data-test="official-prices">
+        {{ t('availableChannels.fiat.officialPrice') }}
+        <template v-for="(row, idx) in fiatRows" :key="row.key">
+          <span v-if="idx > 0"> · </span>{{ row.label }} {{ formatScaled(row.price, priceScale) }}
+        </template>
+        {{ fiatUnitPlain }}
+      </p>
+    </template>
+
     <template v-else>
       <!-- 官方单价 -->
       <div class="space-y-1.5 text-sm">
@@ -103,6 +147,14 @@ import { formatScaled } from '@/utils/pricing'
 import { BILLING_MODE_TOKEN, BILLING_MODE_PER_REQUEST, BILLING_MODE_IMAGE } from '@/constants/channel'
 import type { UserPricingInterval, UserSupportedModel } from '@/api/channels'
 import type { GroupPlatform } from '@/types'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+
+/** 套餐卡单价 u（1 个额度值多少人民币）。exact 表示是用户当前那张卡，否则是可购买的区间。 */
+export interface SubscriptionUnitRange {
+  min: number
+  max: number
+  exact: boolean
+}
 
 const props = withDefaults(
   defineProps<{
@@ -111,11 +163,14 @@ const props = withDefaults(
     rateMultiplier?: number
     platformHint?: string
     noPricingLabel?: string
+    /** 人民币模式下的套餐价；缺省时只展示余额价。 */
+    subscriptionUnit?: SubscriptionUnitRange | null
   }>(),
-  { rateMultiplier: 1, platformHint: '', noPricingLabel: '' },
+  { rateMultiplier: 1, platformHint: '', noPricingLabel: '', subscriptionUnit: null },
 )
 
 const { t } = useI18n()
+const { isFiat, rechargeMultiplier, formatFiat } = useCurrencyDisplay()
 
 const perMillionScale = 1_000_000
 const perMillionUnit = computed(() => t('availableChannels.pricing.unitPerMillion'))
@@ -187,6 +242,65 @@ function intervalPriceRows(iv: UserPricingInterval, mult: number): IntervalPrice
       value: formatScaled(field.price! * mult, perMillionScale),
     }))
 }
+
+// ---- 人民币模式 ----
+
+interface FiatRow {
+  key: string
+  label: string
+  price: number
+}
+
+/** 按 token 计费按每百万 token 展示，按次 / 按图按每次展示。 */
+const priceScale = computed(() => (isToken.value ? perMillionScale : 1))
+const fiatUnit = computed(() => (isToken.value ? perMillionUnit.value : perRequestUnit.value))
+const fiatUnitPlain = computed(() => fiatUnit.value)
+
+/** 1 美元官方价用余额要付多少人民币。 */
+const balanceFactor = computed(() => props.rateMultiplier / rechargeMultiplier.value)
+
+/**
+ * 要展示的价格项。阶梯定价按第一档展示（绝大多数请求落在第一档），
+ * 完整阶梯切到美元口径查看。
+ */
+const fiatRows = computed<FiatRow[]>(() => {
+  const p = props.model.pricing
+  if (!p) return []
+  if (!isToken.value) {
+    const v = p.billing_mode === BILLING_MODE_IMAGE ? p.image_output_price : p.per_request_price
+    const label =
+      p.billing_mode === BILLING_MODE_IMAGE
+        ? t('availableChannels.pricing.imageOutputPrice')
+        : t('availableChannels.pricing.perRequestPrice')
+    return v != null && v > 0 ? [{ key: 'unit', label, price: v }] : []
+  }
+  const first = hasIntervals.value ? p.intervals![0] : null
+  const fields: Array<{ key: string; label: string; price: number | null | undefined }> = [
+    { key: 'input', label: t('availableChannels.pricing.inputPrice'), price: first?.input_price ?? p.input_price },
+    { key: 'output', label: t('availableChannels.pricing.outputPrice'), price: first?.output_price ?? p.output_price },
+    { key: 'cache-read', label: t('availableChannels.pricing.cacheReadPrice'), price: first?.cache_read_price ?? p.cache_read_price },
+    { key: 'cache-write', label: t('availableChannels.pricing.cacheWritePrice'), price: first?.cache_write_price ?? p.cache_write_price },
+  ]
+  return fields
+    .filter((f): f is { key: string; label: string; price: number } => show(f.price))
+})
+
+function formatFiatPrice(usdPrice: number, factor: number): string {
+  return formatFiat(Number((usdPrice * priceScale.value * factor).toPrecision(10)))
+}
+
+function formatSubscriptionPrice(usdPrice: number): string {
+  const range = props.subscriptionUnit
+  if (!range) return '-'
+  const low = formatFiatPrice(usdPrice, props.rateMultiplier * range.min)
+  if (range.exact || Math.abs(range.max - range.min) < 1e-12) return low
+  return `${low}–${formatFiatPrice(usdPrice, props.rateMultiplier * range.max)}`
+}
+
+const subscriptionRange = computed(() => {
+  const r = props.subscriptionUnit
+  return r && r.min > 0 && r.max > 0 && fiatRows.value.length > 0 ? r : null
+})
 
 function formatRate(r: number): string {
   return Number(r.toPrecision(10)).toString()

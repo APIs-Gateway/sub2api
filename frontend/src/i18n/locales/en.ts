@@ -851,7 +851,9 @@
     subscription: 'Sub',
     rateMultiplierTip: 'The "Nx rate" is how fast this group burns your balance relative to official pricing: a higher number means a more stable pool but also more balance consumed for the same usage. It is the billing coefficient, not the final price. See the group description for your effective fraction of official pricing after the plan discount.'
     ,
-    rateMultiplierLabel: '{rate}x rate'
+    rateMultiplierLabel: '{rate}x rate',
+    fiatRateLabel: 'Official $1 ≈ {price}',
+    fiatRateTip: 'What each $1 of official model price costs you in CNY when paying from balance; your custom rate is included.'
   },
 
   // Key connect dialog: one-click install / hand it to an AI / CC Switch / manual setup
@@ -1366,6 +1368,15 @@
 
   // Available Channels (user-facing)
   billingRules: {
+    fiat: {
+      intro: 'Usage-based billing. All prices are shown in CNY — exactly what you pay.',
+      pricesHere: 'Prices for each model are below: "balance price" applies when paying from your balance, "plan price" when paying from plan quota.',
+      pricesLink: 'CNY prices for each model are on the "Pricing & Billing" page.',
+      balance: 'Balance: every ¥1 you top up becomes ¥1 of balance, charged at the balance price.',
+      plan: 'Plan: once active, usage is charged to plan quota first, at a lower unit price than balance.',
+      group: 'Groups: groups differ in stability and price — switch groups to compare.',
+      switch: 'To compare with official USD prices, switch to $ in the top-right corner.'
+    },
     title: 'Billing rules',
     intro: 'This site bills by usage, deducted in real time from your balance (USD) or plan quota.',
     formulaLabel: 'Amount charged',
@@ -1377,6 +1388,15 @@
   },
 
   availableChannels: {
+    fiat: {
+      balancePrice: 'Balance price',
+      subscriptionPrice: 'Plan price (varies by plan tier)',
+      yourSubscriptionPrice: 'Your plan price',
+      officialPrice: 'Official',
+      firstTierHint: 'Tiered pricing; first tier shown. Switch to $ to see all tiers.',
+      payHint: 'Per $1 of official price: {balance} from balance, {subscription} from plan',
+      payHintBalanceOnly: 'Per $1 of official price: {balance} from balance'
+    },
     title: 'Pricing & Billing',
     description: 'Model prices and billing rules; see the models you can use, their unit prices, and each group rate',
     searchPlaceholder: 'Search models or lines...',

@@ -17,6 +17,22 @@
 
       <div class="min-w-0 flex-1 space-y-2">
         <h3 class="text-sm font-bold text-gray-900 dark:text-white">{{ t('billingRules.title') }}</h3>
+
+        <!--
+          人民币模式：用户只需要知道「付多少钱」，不需要理解官方价、分组倍率、充值倍率
+          三层换算。价格已经在下方/价格页换算好，这里只说明余额和套餐两种扣法。
+        -->
+        <template v-if="isFiat">
+          <p class="text-xs leading-relaxed text-gray-600 dark:text-gray-300">{{ t('billingRules.fiat.intro') }}</p>
+          <ul class="space-y-1 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+            <li v-for="key in fiatBullets" :key="key" class="flex gap-1.5">
+              <span class="select-none text-gray-400 dark:text-gray-500">•</span>
+              <span>{{ t(key) }}</span>
+            </li>
+          </ul>
+        </template>
+
+        <template v-else>
         <p class="text-xs leading-relaxed text-gray-600 dark:text-gray-300">{{ t('billingRules.intro') }}</p>
 
         <div
@@ -40,15 +56,28 @@
             <span>{{ t('billingRules.plan') }}</span>
           </li>
         </ul>
+        </template>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-withDefaults(defineProps<{ modelsBelow?: boolean }>(), { modelsBelow: false })
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+
+const props = withDefaults(defineProps<{ modelsBelow?: boolean }>(), { modelsBelow: false })
 
 const { t } = useI18n()
+const { isFiat } = useCurrencyDisplay()
+
+const fiatBullets = computed(() => [
+  props.modelsBelow ? 'billingRules.fiat.pricesHere' : 'billingRules.fiat.pricesLink',
+  'billingRules.fiat.balance',
+  'billingRules.fiat.plan',
+  'billingRules.fiat.group',
+  'billingRules.fiat.switch',
+])
 </script>

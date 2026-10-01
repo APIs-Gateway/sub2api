@@ -11,7 +11,9 @@
     <span class="truncate">{{ name }}</span>
     <!-- Right side label -->
     <span v-if="showLabel" :class="labelClass">
-      <template v-if="hasCustomRate">
+      <!-- 人民币口径：把倍率翻译成「官方价 $1 用余额付多少元」，专属倍率已计入 -->
+      <template v-if="showFiatRate">{{ fiatRateLabel }}</template>
+      <template v-else-if="hasCustomRate">
         <!-- 原倍率删除线 + 专属倍率高亮 -->
         <span class="line-through opacity-50 mr-0.5">{{ rateMultiplier }}x</span>
         <span class="font-bold">{{ userRateMultiplier }}x</span>
@@ -28,6 +30,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { SubscriptionType, GroupPlatform } from '@/types'
 import PlatformIcon from './PlatformIcon.vue'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 
 interface Props {
   name: string
@@ -43,6 +46,8 @@ interface Props {
    * 只关心费率、不关心有效期的场景）。
    */
   alwaysShowRate?: boolean
+  /** 用户侧传入：人民币模式下把倍率显示成人民币价格。后台不传，保持倍率。 */
+  fiatRate?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -50,12 +55,30 @@ const props = withDefaults(defineProps<Props>(), {
   showRate: true,
   daysRemaining: null,
   userRateMultiplier: null,
-  alwaysShowRate: false
+  alwaysShowRate: false,
+  fiatRate: false
 })
 
 const { t } = useI18n()
 
 const isSubscription = computed(() => props.subscriptionType === 'subscription')
+
+// 只有用户侧（fiatRate）才接入计价口径；后台用法不依赖 store
+const currency = props.fiatRate ? useCurrencyDisplay() : null
+const effectiveRate = computed(() => props.userRateMultiplier ?? props.rateMultiplier)
+const showFiatRate = computed(
+  () =>
+    !!currency?.isFiat.value &&
+    effectiveRate.value !== undefined &&
+    (!isSubscription.value || props.alwaysShowRate)
+)
+const fiatRateLabel = computed(() =>
+  currency
+    ? t('groups.fiatRateLabel', {
+        price: currency.formatFiat((effectiveRate.value ?? 0) / currency.rechargeMultiplier.value)
+      })
+    : ''
+)
 
 // 是否有专属倍率（且与默认倍率不同）
 const hasCustomRate = computed(() => {

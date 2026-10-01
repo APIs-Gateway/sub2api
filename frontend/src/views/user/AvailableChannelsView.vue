@@ -40,14 +40,15 @@
         >
           <PlatformIcon v-if="g.platform" :platform="(g.platform as GroupPlatform)" size="xs" />
           <span class="font-medium">{{ g.name }}</span>
-          <span class="rounded bg-black/10 px-1.5 py-0.5 text-[10px] font-semibold dark:bg-white/10">{{ formatRate(g.rate) }}x</span>
+          <span v-if="!isFiat" class="rounded bg-black/10 px-1.5 py-0.5 text-[10px] font-semibold dark:bg-white/10">{{ formatRate(g.rate) }}x</span>
         </button>
       </div>
 
       <!-- 选中分组的说明 + 实付提示 -->
       <p v-if="selectedGroup" class="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
         <span v-if="selectedGroup.description">{{ selectedGroup.description }}</span>
-        <span class="text-gray-400 dark:text-gray-500">{{ t('availableChannels.payHint') }} {{ formatRate(selectedGroup.rate) }}x</span>
+        <span v-if="isFiat" class="text-gray-400 dark:text-gray-500" data-test="fiat-pay-hint">{{ fiatPayHint }}</span>
+        <span v-else class="text-gray-400 dark:text-gray-500">{{ t('availableChannels.payHint') }} {{ formatRate(selectedGroup.rate) }}x</span>
       </p>
 
       <!-- 该分组的模型卡 -->
@@ -59,6 +60,7 @@
           :rate-multiplier="selectedGroup?.rate ?? 1"
           :platform-hint="selectedGroup?.platform"
           :no-pricing-label="t('availableChannels.noPricing')"
+          :subscription-unit="subscriptionUnit"
         />
       </div>
       <div v-else class="rounded-xl border border-dashed border-gray-200 py-12 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400">
@@ -87,9 +89,45 @@ import userGroupsAPI from '@/api/groups'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import type { GroupPlatform } from '@/types'
+import type { SubscriptionUnitRange } from '@/components/channels/ModelPriceCard.vue'
+import subscriptionsAPI, { type SubscriptionPricingBounds } from '@/api/subscriptions'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { useSubscriptionStore } from '@/stores/subscriptions'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const subscriptionStore = useSubscriptionStore()
+const { isFiat, rechargeMultiplier, formatFiat } = useCurrencyDisplay()
+const pricingBounds = ref<SubscriptionPricingBounds | null>(null)
+
+/**
+ * 套餐价用的卡单价：用户有生效中的卡就用那张卡的 u(D)（精确），
+ * 否则给出可购买套餐的单价区间（u 随每日额度变化）。
+ * 订阅扣费与分组无关——有卡时任何分组的用量都先从卡里扣。
+ */
+const subscriptionUnit = computed<SubscriptionUnitRange | null>(() => {
+  for (const sub of subscriptionStore.activeSubscriptions) {
+    const rate = sub.fiat_per_credit
+    if (sub.status === 'active' && typeof rate === 'number' && Number.isFinite(rate) && rate > 0) {
+      return { min: rate, max: rate, exact: true }
+    }
+  }
+  const b = pricingBounds.value
+  if (!b || !(b.u_min > 0) || !(b.u_max > 0)) return null
+  return { min: Math.min(b.u_min, b.u_max), max: Math.max(b.u_min, b.u_max), exact: false }
+})
+
+/** 「官方价每 $1：用余额实付 ¥x，用套餐实付 ¥a–¥b」——把分组倍率翻译成人民币。 */
+const fiatPayHint = computed(() => {
+  const g = selectedGroup.value
+  if (!g) return ''
+  const balance = formatFiat(g.rate / rechargeMultiplier.value)
+  const unit = subscriptionUnit.value
+  if (!unit) return t('availableChannels.fiat.payHintBalanceOnly', { balance })
+  const low = formatFiat(g.rate * unit.min)
+  const subscription = unit.exact || unit.max === unit.min ? low : `${low}–${formatFiat(g.rate * unit.max)}`
+  return t('availableChannels.fiat.payHint', { balance, subscription })
+})
 
 const channels = ref<UserAvailableChannel[]>([])
 const userGroupRates = ref<Record<number, number>>({})
@@ -177,6 +215,15 @@ async function loadChannels() {
     ])
     channels.value = list
     userGroupRates.value = rates
+    // 套餐单价区间只是展示增强，取不到时只展示余额价
+    if (rechargeMultiplier.value !== 1 && !pricingBounds.value) {
+      subscriptionsAPI
+        .getSubscriptionPricing()
+        .then((b) => {
+          pricingBounds.value = b
+        })
+        .catch(() => {})
+    }
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {

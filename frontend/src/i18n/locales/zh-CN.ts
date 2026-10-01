@@ -850,7 +850,9 @@
     subscription: '订阅',
     rateMultiplierTip: '「Nx 倍率」是该分组相对官方价的扣额度速度：数字越大、池子越稳定，同样的用量扣得也越多；它是系统扣费的系数，不是最终价格。叠加套餐折扣后你实际相当于官方价几折，见分组描述。'
     ,
-    rateMultiplierLabel: '{rate}x 倍率'
+    rateMultiplierLabel: '{rate}x 倍率',
+    fiatRateLabel: '官方 $1 ≈ {price}',
+    fiatRateTip: '按余额付费时，模型官方价每 $1 实际花费的人民币；已计入你的专属倍率。'
   },
 
   // 密钥接入弹窗：一键安装 / 交给 AI / CC Switch / 手动配置
@@ -1373,6 +1375,15 @@
 
   // Available Channels (user-facing)
   billingRules: {
+    fiat: {
+      intro: '本站按量计费，所有价格都已换算成人民币，就是你实际要付的钱。',
+      pricesHere: '每个模型的价格见下方：「余额价」是用余额时的价格，「套餐价」是用套餐额度时的价格。',
+      pricesLink: '每个模型的人民币价格可在「价格与计费」页查看。',
+      balance: '余额：充值多少元就到账多少元余额，按模型的余额价扣费。',
+      plan: '套餐：开通后优先从套餐额度扣费，单价比余额价更低。',
+      group: '分组：不同分组的线路稳定性不同，价格也不同，可切换分组对比。',
+      switch: '想对照模型官方美元价，可点击右上角切换到 $。'
+    },
     title: '计费规则',
     intro: '本站按量计费，实时从你的余额（USD）或套餐额度中扣除。',
     formulaLabel: '实际扣费',
@@ -1384,6 +1395,15 @@
   },
 
   availableChannels: {
+    fiat: {
+      balancePrice: '余额价',
+      subscriptionPrice: '套餐价（随套餐档位变化）',
+      yourSubscriptionPrice: '你的套餐价',
+      officialPrice: '官方价',
+      firstTierHint: '阶梯定价，此处为首档价格；切换到 $ 可查看全部档位。',
+      payHint: '官方价每 $1：用余额付 {balance}，用套餐付 {subscription}',
+      payHintBalanceOnly: '官方价每 $1：用余额付 {balance}'
+    },
     title: '价格与计费',
     description: '模型价格与计费规则；查看你可用的模型、单价与各分组倍率',
     searchPlaceholder: '搜索模型或线路...',

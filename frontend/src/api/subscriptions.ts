@@ -154,6 +154,8 @@ export interface SubscriptionPricingBounds {
   t_max: number
   /** 有效天数步长：T 必须为该值整数倍（默认 30，即按整月购买 30/60/90…） */
   t_step: number
+  /** 单价降到 u_min 时的每日额度 D；D 在 [d_min, d_floor] 间单价线性下降，之后保持 u_min */
+  d_floor?: number
 }
 
 /** 自定义购买报价：按 D+T 算售价 + 派生周/月封顶（金额由后端公式决定，前端只展示）。 */
