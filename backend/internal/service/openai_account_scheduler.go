@@ -316,6 +316,17 @@ func (b *openAISelectionProbeBudget) recordRecheck() bool {
 	return true
 }
 
+// exhausted 报告探测预算是否已用尽：开启了上限，且 acquire 或 DB 复核次数已达上限。
+// 用尽意味着选号顺序里排在后面的候选可能一次都没有尝试过，调用方不能据此证明「整组满」。
+// 用 >= 偏保守：恰好用满、且全部试过的情形也按用尽处理，只会少下一次「整组满」的结论，不会多下。
+// 没有开启上限（默认，无链请求）时恒为 false。
+func (b *openAISelectionProbeBudget) exhausted() bool {
+	if b == nil || !b.limited {
+		return false
+	}
+	return b.acquires >= openAIAccountSelectionProbeLimit || b.rechecks >= openAIAccountSelectionProbeLimit
+}
+
 type openAIStickyEscapeConfig struct {
 	enabled   bool
 	ttftMs    float64
@@ -1290,6 +1301,12 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		return result, candidateCount, topK, loadSkew, nil
 	}
 
+	// 第一轮是否撞到探测预算上限（只有成本感知开启时预算才有上限，默认不开）。撞上限时，selectionOrder
+	// 里排在后面的候选一次都没有尝试过，而 satTried 仍把整份 selectionOrder 算作「已尝试」，
+	// 补试会错误地证明整组满，把还有空号的主分组送去回退（BK-2）。
+	// 只看第一轮：fresh 那一轮是对同一批候选重试，第一轮没撞上限就说明每个候选至少试过一次。
+	mainTruncated := req.ProbeGroupSaturation && budget.exhausted()
+
 	if s.service.concurrencyService != nil {
 		if freshLoadMap, loadErr := s.service.concurrencyService.GetAccountsLoadBatchFresh(ctx, loadReq); loadErr == nil {
 			freshPlan := s.buildOpenAIAccountLoadPlan(ctx, req, filtered, freshLoadMap)
@@ -1321,13 +1338,19 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	if req.ProbeGroupSaturation {
 		probed, probeBlocked, saturated, probeErr := s.probeUntriedForGroupSaturation(ctx, req, satPlan, satTried)
 		if probeErr != nil {
-			return nil, candidateCount, topK, loadSkew, probeErr
+			// 补试是附加动作：无链请求在同样的场景下拿到的是 WaitPlan，不是错误。补试遇到瞬时的 Redis
+			// 错误时不能让有链请求反而失败（Redis 错误属于「不回退」的终止条件，用户会直接收到错误），
+			// 按「没有证明整组满」继续走后面的 WaitPlan 流程。主流程自己的 acquireErr 仍照原样返回。
+			slog.Warn("openai_group_saturation_probe_failed",
+				"group_id", derefGroupID(req.GroupID),
+				"error", probeErr)
+			saturated = false
 		}
 		if probed != nil {
 			return probed, satPlan.candidateCount, satPlan.topK, satPlan.loadSkew, nil
 		}
 		compactBlocked = compactBlocked || probeBlocked
-		groupSaturated = saturated
+		groupSaturated = saturated && !mainTruncated
 	}
 
 	cfg := s.service.schedulingConfig()
@@ -1372,7 +1395,11 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 // LoadRate<100 且此前没有尝试过的候选按评分顺序补试一遍：
 //   - 补试成功：返回选中结果（组内有空位，不应跨组回退）；
 //   - 全部失败：saturated=true，调用方把 WaitPlan.GroupSaturated 置 true；
-//   - 补试中途因探测预算用尽被截断：saturated=false（没有证明整组满），按单账号等待处理。
+//   - 补试中途因探测预算用尽被截断：saturated=false（没有证明整组满），按单账号等待处理；
+//   - 补试自己出错：返回 err，由调用方按「没有证明整组满」处理，不让有链请求因此失败（S3）。
+//
+// tried 里的候选一律视为已尝试：调用方必须保证它们真的试过。主流程的探测预算被截断时这一点不成立，
+// 由调用方（selectByLoadBalance 的 mainTruncated）否决 saturated（BK-2）。
 //
 // 补试使用独立的、已开启上限的探测预算（最多 openAIAccountSelectionProbeLimit 次 acquire 和
 // DB 复核），不消耗也不改变主流程的预算，随后 WaitPlan 循环的行为与改动前一致。
@@ -1416,8 +1443,7 @@ func (s *defaultOpenAIAccountScheduler) probeUntriedForGroupSaturation(
 	if err != nil || result != nil {
 		return result, compactBlocked, false, err
 	}
-	truncated := budget.acquires >= openAIAccountSelectionProbeLimit || budget.rechecks >= openAIAccountSelectionProbeLimit
-	return nil, compactBlocked, !truncated, nil
+	return nil, compactBlocked, !budget.exhausted(), nil
 }
 
 func (s *defaultOpenAIAccountScheduler) isAccountTransportCompatible(account *Account, requiredTransport OpenAIUpstreamTransport) bool {

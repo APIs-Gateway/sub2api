@@ -19,7 +19,9 @@ type openAIHopSlotPolicy struct {
 	BusyWait time.Duration
 	// StickyWait 粘性单账号首次等待的上限（sticky_wait_ms）。
 	StickyWait time.Duration
-	// Deadline 为本次回退总时间预算的截止时刻，零值表示不限制。等待时长不得超过它（设计 3.5 / 复核）。
+	// Deadline 为本次回退总时间预算的截止时刻。等待时长不得超过它（设计 3.5 / 复核）。
+	// newOpenAIHopSlotPolicy 总会设置它（剩余预算 <= 0 时等于创建时刻，即「已用完」）；
+	// 只有测试里手工构造的策略才会是零值，零值表示不限制。
 	Deadline time.Time
 
 	reselectUsed bool
@@ -32,14 +34,17 @@ func newOpenAIHopSlotPolicy(info service.HopInfo, settings service.GroupFallback
 	if !info.HasChain || info.IsLast {
 		return nil
 	}
-	p := &openAIHopSlotPolicy{
+	// 剩余预算 <= 0 表示总预算已用完：Deadline 取 now，waitFor 会算出 0 时长，不再排队等槽；
+	// 不能当成「不限时」（S1）。runner 在 i>0 时已先检查过预算，这里只是兜住竞态和异常输入。
+	remaining := info.TimeRemaining
+	if remaining < 0 {
+		remaining = 0
+	}
+	return &openAIHopSlotPolicy{
 		BusyWait:   time.Duration(settings.BusyWaitMS) * time.Millisecond,
 		StickyWait: time.Duration(settings.StickyWaitMS) * time.Millisecond,
+		Deadline:   now.Add(remaining),
 	}
-	if info.TimeRemaining > 0 {
-		p.Deadline = now.Add(info.TimeRemaining)
-	}
-	return p
 }
 
 // selectionContext 给选号用的 ctx 打上「补试整组饱和」标记；p 为 nil（无链 / 末跳）时原样返回 ctx。

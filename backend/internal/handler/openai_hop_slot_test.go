@@ -29,6 +29,17 @@ func (c *hopSlotCache) IncrementAccountWaitCount(ctx context.Context, accountID 
 	return !c.queueFull, nil
 }
 
+// hopSlotAccountRepo 对任意账号 ID 的「抢槽后复核」都放行。
+// RecheckAccountSchedulableAfterSlot 优先走 GetSchedulabilityByID（生产仓储的单查询投影也是这条路径）；
+// 测试里要在同一个 env 里用到 7001、7002 等多个账号，不能用只认识一个账号的 openAIWSUsageHandlerAccountRepoStub，
+// 否则复核对其余账号得到 nil 而返回 accountSlotRetrySelection（BK-1）。
+// 内嵌的 AccountRepository 为 nil：本文件的用例不会调用到其他方法，调用了会直接 panic，便于发现误用。
+type hopSlotAccountRepo struct{ service.AccountRepository }
+
+func (hopSlotAccountRepo) GetSchedulabilityByID(context.Context, int64) (bool, error) {
+	return true, nil
+}
+
 type hopSlotEnv struct {
 	h        *OpenAIGatewayHandler
 	cache    *hopSlotCache
@@ -39,15 +50,6 @@ type hopSlotEnv struct {
 func newHopSlotEnv(t *testing.T, queueFull bool, acquireFn func(accountID int64) bool) *hopSlotEnv {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	account := service.Account{
-		ID:          7001,
-		Platform:    service.PlatformOpenAI,
-		Type:        service.AccountTypeAPIKey,
-		Status:      service.StatusActive,
-		Schedulable: true,
-		Concurrency: 1,
-	}
-	repo := &openAIWSUsageHandlerAccountRepoStub{account: account}
 	mock := &concurrencyCacheMock{
 		acquireAccountSlotFn: func(_ context.Context, accountID int64, _ int, _ string) (bool, error) {
 			if acquireFn == nil {
@@ -58,7 +60,7 @@ func newHopSlotEnv(t *testing.T, queueFull bool, acquireFn func(accountID int64)
 	}
 	cache := &hopSlotCache{concurrencyCacheMock: mock, queueFull: queueFull}
 	svc := service.NewOpenAIGatewayService(
-		repo, nil, nil, nil, nil, nil, nil, &config.Config{}, nil, nil,
+		hopSlotAccountRepo{}, nil, nil, nil, nil, nil, nil, &config.Config{}, nil, nil,
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	h := &OpenAIGatewayHandler{
@@ -117,8 +119,16 @@ func TestNewOpenAIHopSlotPolicy_OnlyForChainedNonLastHop(t *testing.T) {
 	require.Equal(t, now.Add(10*time.Second), p.Deadline)
 	require.False(t, p.ReselectUsed())
 
-	noDeadline := newOpenAIHopSlotPolicy(service.HopInfo{HasChain: true}, settings, now)
-	require.True(t, noDeadline.Deadline.IsZero())
+	// S1：剩余预算 <= 0 表示「已用完」，不是「不限时」：Deadline 等于创建时刻，waitFor 算出 0 时长。
+	plan := &service.AccountWaitPlan{Timeout: 30 * time.Second}
+	sticky := service.OpenAIAccountScheduleDecision{StickySessionHit: true, Layer: "session_hash"}
+	for name, remaining := range map[string]time.Duration{"零": 0, "负数": -time.Second} {
+		exhausted := newOpenAIHopSlotPolicy(service.HopInfo{HasChain: true, TimeRemaining: remaining}, settings, now)
+		require.NotNil(t, exhausted, name)
+		require.False(t, exhausted.Deadline.IsZero(), "剩余预算%s：Deadline 必须设置，不能留零值（零值表示不限时）", name)
+		require.True(t, exhausted.Deadline.Equal(now), "剩余预算%s：Deadline 取创建时刻", name)
+		require.Zero(t, exhausted.waitFor(plan, sticky), "剩余预算%s：不再排队等槽", name)
+	}
 
 	var nilPolicy *openAIHopSlotPolicy
 	require.False(t, nilPolicy.ReselectUsed())
@@ -306,6 +316,19 @@ func TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse(t *testing.T) {
 		require.Empty(t, e.recorder.Body.String())
 	})
 
+	t.Run("构造器给出的剩余预算为 0：同样不排队（S1），而不是不限时", func(t *testing.T) {
+		e := newHopSlotEnv(t, false, nil)
+		settings := service.DefaultGroupFallbackSettings()
+		hop := newOpenAIHopSlotPolicy(service.HopInfo{HasChain: true, TimeRemaining: 0}, settings, time.Now())
+		require.NotNil(t, hop)
+		start := time.Now()
+		_, status := e.acquire(hopSlotSelection(7001, 30*time.Second, false), balance, hop)
+		require.Equal(t, accountSlotRetrySelection, status)
+		require.Less(t, time.Since(start), time.Second, "不能按 sticky_wait_ms / WaitPlan.Timeout 去等")
+		require.Zero(t, atomic.LoadInt32(&e.cache.waitIncCalls), "预算用完不应占用排队计数")
+		require.Empty(t, e.recorder.Body.String())
+	})
+
 	t.Run("有链也能直接抢到槽：不受影响", func(t *testing.T) {
 		e := newHopSlotEnv(t, false, func(int64) bool { return true })
 		hop := hopSlotPolicy(time.Second, time.Second)
@@ -393,6 +416,7 @@ func TestAcquireSlotForHop_ReselectOutcomes(t *testing.T) {
 		b := hopSlotSelection(7002, 30*time.Second, false)
 		got := e.drive(hop, balance, a, b)
 		require.Equal(t, accountSlotAcquired, got.status)
+		require.Equal(t, 2, got.attempts, "第一次是忙号 A 的等待超时，第二次是重选到的 B")
 		require.Equal(t, map[int64]struct{}{7001: {}}, got.failedAccountID)
 		require.Zero(t, got.switchCount)
 		require.True(t, hop.ReselectUsed())
@@ -442,6 +466,10 @@ func TestAcquireSlotForHop_ReselectOutcomes(t *testing.T) {
 		b := hopSlotSelection(7002, 30*time.Second, false)
 		got := e.drive(hop, service.OpenAIAccountScheduleDecision{Layer: "load_balance"}, a, b)
 		require.Equal(t, accountSlotAcquired, got.status)
+		require.Equal(t, 2, got.attempts)
+		require.Equal(t, map[int64]struct{}{7001: {}}, got.failedAccountID)
+		require.True(t, hop.ReselectUsed())
+		require.Empty(t, e.recorder.Body.String())
 	})
 }
 

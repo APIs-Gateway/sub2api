@@ -2387,6 +2387,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		return nil, true, nil
 	}
 
+	// saturationUnconfirmed 只在有链非末跳（ProbeGroupSaturation）时可能为 true：缓存负载显示全满、
+	// 一次抢槽都没试，而 fresh load 又取不到时，没有证据证明整组满，Layer 3 不能置 GroupSaturated（S2）。
+	saturationUnconfirmed := false
 	loadMap, err := s.concurrencyService.GetAccountsLoadBatch(ctx, accountLoads)
 	if err != nil {
 		ordered := append([]*Account(nil), candidates...)
@@ -2431,13 +2434,18 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			return nil, selectErr
 		} else if selection != nil {
 			return selection, nil
-		} else if attempted {
+		} else if attempted || openAIGroupSaturationProbeEnabled(ctx) {
+			// attempted=false 表示缓存负载（TTL 约 200ms）里所有候选都已满，一次抢槽都没试过。
+			// 无链请求保持原样：不再取 fresh load。有链非末跳的请求不能只凭缓存就让 Layer 3 下
+			// 「整组满」的结论，所以也取一次 fresh load 再试一轮（S2）。
 			if freshLoadMap, loadErr := s.concurrencyService.GetAccountsLoadBatchFresh(ctx, accountLoads); loadErr == nil {
 				if selection, _, selectErr := tryAcquireFromLoadMap(freshLoadMap); selectErr != nil {
 					return nil, selectErr
 				} else if selection != nil {
 					return selection, nil
 				}
+			} else if !attempted {
+				saturationUnconfirmed = true
 			}
 		}
 	}
@@ -2474,7 +2482,8 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			MaxWaiting:     cfg.FallbackMaxWaiting,
 			// Layer 2 用 tryAcquireFromLoadMap 按序尝试了全部 LoadRate<100 的候选（没有 top-K 截断），
 			// 失败后又用 fresh load 重试一轮，走到这里即整组满（设计 3.5 表 #4）。
-			GroupSaturated: true,
+			// 唯一的例外是 saturationUnconfirmed：只有缓存负载、fresh load 取不到（见上）。
+			GroupSaturated: !saturationUnconfirmed,
 		})
 	}
 
