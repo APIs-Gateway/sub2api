@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/gin-gonic/gin"
@@ -85,11 +86,14 @@ func postPolicyTierSettings(action, tier string) *OpenAIFastPolicySettings {
 	}}}
 }
 
-func postPolicyTierStringValue(value *string) string {
-	if value == nil {
-		return ""
+func requirePostPolicyTier(t *testing.T, value *string, want string) {
+	t.Helper()
+	if want == "" {
+		require.Nil(t, value, "filtered tier must be absent from billing and usage log")
+		return
 	}
-	return *value
+	require.NotNil(t, value)
+	require.Equal(t, want, *value)
 }
 
 // These requests pass through the production forwarders and then the
@@ -183,7 +187,7 @@ func TestOpenAICompatibilityBillingUsesFinalOutboundTier(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.Equal(t, tc.want, gjson.GetBytes(upstream.lastBody, "service_tier").String())
-			require.Equal(t, tc.want, postPolicyTierStringValue(result.ServiceTier))
+			requirePostPolicyTier(t, result.ServiceTier, tc.want)
 			require.Equal(t, 5, result.Usage.InputTokens)
 			require.Equal(t, 2, result.Usage.OutputTokens)
 
@@ -198,13 +202,91 @@ func TestOpenAICompatibilityBillingUsesFinalOutboundTier(t *testing.T) {
 			})
 			require.NoError(t, err)
 			require.NotNil(t, usageRepo.lastLog)
-			require.Equal(t, tc.want, postPolicyTierStringValue(usageRepo.lastLog.ServiceTier))
+			requirePostPolicyTier(t, usageRepo.lastLog.ServiceTier, tc.want)
 			expected, err := billing.billingService.CalculateCostWithServiceTier("gpt-5.4", UsageTokens{
 				InputTokens: 5, OutputTokens: 2,
 			}, 1.1, tc.want)
 			require.NoError(t, err)
 			require.InDelta(t, expected.ActualCost, usageRepo.lastLog.ActualCost, 1e-12)
 			require.InDelta(t, usageRepo.lastLog.ActualCost, userRepo.lastAmount, 1e-12)
+		})
+	}
+}
+
+// A group channel price and user-specific multiplier must use the same final
+// tier as the upstream body. The explicit amounts distinguish Standard from
+// Priority; computing the expectation through the billing service would hide
+// a pricing or multiplier regression.
+func TestOpenAICompatibilityBillingKeepsCustomPriceAndUserRate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name, incomingTier, action, rule, wantTier string
+		wantOutputCost, wantTotalCost float64
+	}{
+		{"filter uses standard output price", "priority", BetaPolicyActionFilter, "priority", "", 2 * 3e-6, 26e-6},
+		{"force uses priority output price", "flex", OpenAIFastPolicyActionForcePriority, "all", "priority", 2 * 9e-6, 38e-6},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(fmt.Sprintf(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"service_tier":%q,"stream":false}`, tc.incomingTier))
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			account := rawChatCompletionsTestAccount()
+			upstream := &httpUpstreamRecorder{resp: postPolicyTierResponse(true, false)}
+			forward := newOpenAIGatewayServiceWithSettings(t, postPolicyTierSettings(tc.action, tc.rule))
+			forward.cfg = rawChatCompletionsTestConfig()
+			forward.httpUpstream = upstream
+			result, err := forward.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, tc.wantTier, gjson.GetBytes(upstream.lastBody, "service_tier").String())
+			requirePostPolicyTier(t, result.ServiceTier, tc.wantTier)
+			require.Equal(t, 5, result.Usage.InputTokens)
+			require.Equal(t, 2, result.Usage.OutputTokens)
+
+			groupID := int64(1465)
+			channelInputPrice := 4e-6
+			cache := newEmptyChannelCache()
+			cache.pricingByGroupModel[channelModelKey{groupID: groupID, model: "gpt-5.4"}] = &ChannelModelPricing{
+				BillingMode: BillingModeToken, InputPrice: &channelInputPrice,
+			}
+			cache.channelByGroupID[groupID] = &Channel{ID: groupID, Status: StatusActive}
+			cache.groupPlatform[groupID] = "openai"
+			cache.loadedAt = time.Now()
+			channelService := &ChannelService{}
+			channelService.cache.Store(cache)
+			userRate := 1.7
+			rateRepo := &openAIUserGroupRateRepoStub{rate: &userRate}
+			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+			userRepo := &openAIRecordUsageUserRepoStub{}
+			billing := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, rateRepo)
+			billing.billingService.pricingService = &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+				"gpt-5.4": {
+					InputCostPerToken: 1e-6, InputCostPerTokenPriority: 2e-6,
+					OutputCostPerToken: 3e-6, OutputCostPerTokenPriority: 9e-6,
+				},
+			}}
+			billing.channelService = channelService
+			billing.resolver = NewModelPricingResolver(channelService, billing.billingService)
+			apiKey := &APIKey{
+				ID: 1465, User: &User{ID: 1465}, GroupID: &groupID,
+				Group: &Group{ID: groupID, RateMultiplier: 1.3},
+			}
+			require.NoError(t, billing.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+				Result: result, APIKey: apiKey, User: apiKey.User, Account: account,
+			}))
+			require.Equal(t, 1, rateRepo.calls)
+			require.NotNil(t, usageRepo.lastLog)
+			requirePostPolicyTier(t, usageRepo.lastLog.ServiceTier, tc.wantTier)
+			require.InDelta(t, 4e-6*5, usageRepo.lastLog.InputCost, 1e-12)
+			require.InDelta(t, tc.wantOutputCost, usageRepo.lastLog.OutputCost, 1e-12)
+			require.InDelta(t, tc.wantTotalCost, usageRepo.lastLog.TotalCost, 1e-12)
+			require.InDelta(t, userRate, usageRepo.lastLog.RateMultiplier, 1e-12)
+			require.InDelta(t, tc.wantTotalCost*userRate, usageRepo.lastLog.ActualCost, 1e-12)
+			require.Equal(t, 1, userRepo.deductCalls)
+			require.InDelta(t, tc.wantTotalCost*userRate, userRepo.lastAmount, 1e-12)
 		})
 	}
 }
@@ -220,7 +302,7 @@ func TestOpenAICompatibilityPartialUsageKeepsFinalOutboundTier(t *testing.T) {
 		action     string
 		rule       string
 		want       string
-		readError bool
+		readError  bool
 	}{
 		{"cc oauth force failed event", "cc", "flex", OpenAIFastPolicyActionForcePriority, "all", "priority", false},
 		{"messages oauth filter failed event", "messages", "priority", BetaPolicyActionFilter, "priority", "", false},
@@ -287,7 +369,7 @@ func TestOpenAICompatibilityPartialUsageKeepsFinalOutboundTier(t *testing.T) {
 			require.NotNil(t, result)
 			require.Greater(t, result.Usage.InputTokens, 0)
 			require.Equal(t, tc.want, gjson.GetBytes(upstream.lastBody, "service_tier").String())
-			require.Equal(t, tc.want, postPolicyTierStringValue(result.ServiceTier))
+			requirePostPolicyTier(t, result.ServiceTier, tc.want)
 
 			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 			userRepo := &openAIRecordUsageUserRepoStub{}
@@ -297,7 +379,7 @@ func TestOpenAICompatibilityPartialUsageKeepsFinalOutboundTier(t *testing.T) {
 				User: &User{ID: 1465}, Account: account,
 			}))
 			require.NotNil(t, usageRepo.lastLog)
-			require.Equal(t, tc.want, postPolicyTierStringValue(usageRepo.lastLog.ServiceTier))
+			requirePostPolicyTier(t, usageRepo.lastLog.ServiceTier, tc.want)
 			require.Greater(t, usageRepo.lastLog.ActualCost, 0.0)
 			require.InDelta(t, usageRepo.lastLog.ActualCost, userRepo.lastAmount, 1e-12)
 		})
