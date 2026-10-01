@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
@@ -961,4 +962,109 @@ func BenchmarkFrontendServerServeIndexHTML(b *testing.B) {
 
 		server.serveIndexHTML(c)
 	}
+}
+
+func TestFrontendServer_MachineDocs(t *testing.T) {
+	const llmsTemplate = "# {{site}}\n\n- [Codex]({{origin}}/docs/codex.md{{q}})\n\n{{endpoints}}base {{base}}\n"
+	const codexTemplate = "# Codex\n\nbase_url = \"{{v1}}\"\n"
+
+	newServer := func(t *testing.T, settings any, err error) *FrontendServer {
+		t.Helper()
+		server, newErr := NewFrontendServer(&mockSettingsProvider{settings: settings, err: err})
+		require.NoError(t, newErr)
+		server.overrideDir = t.TempDir()
+		server.distFS = fstest.MapFS{
+			"index.html":    {Data: []byte("<html></html>")},
+			"llms.txt":      {Data: []byte(llmsTemplate)},
+			"llms-full.txt": {Data: []byte(codexTemplate)},
+			"docs/codex.md": {Data: []byte(codexTemplate)},
+		}
+		return server
+	}
+	get := func(server *FrontendServer, method, target string, headers map[string]string) *httptest.ResponseRecorder {
+		router := gin.New()
+		router.Use(server.Middleware())
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(method, target, nil)
+		req.Host = "hiyo.test"
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		router.ServeHTTP(w, req)
+		return w
+	}
+	settings := map[string]any{
+		"site_name":        "Hiyo",
+		"api_base_url":     "https://api.hiyo.test",
+		"custom_endpoints": []map[string]string{{"name": "CDN", "endpoint": "https://cdn.hiyo.test", "description": "全球"}},
+	}
+
+	t.Run("fills the placeholders from the public settings", func(t *testing.T) {
+		w := get(newServer(t, settings, nil), http.MethodGet, "/docs/codex.md", map[string]string{"X-Forwarded-Proto": "https"})
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "text/markdown; charset=utf-8", w.Header().Get("Content-Type"))
+		assert.Equal(t, "no-cache", w.Header().Get("Cache-Control"))
+		assert.Equal(t, "# Codex\n\nbase_url = \"https://api.hiyo.test/v1\"\n", w.Body.String())
+	})
+
+	t.Run("llms.txt gets links on this site and lists the custom endpoints", func(t *testing.T) {
+		w := get(newServer(t, settings, nil), http.MethodGet, "/llms.txt", map[string]string{"X-Forwarded-Proto": "https"})
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "text/plain; charset=utf-8", w.Header().Get("Content-Type"))
+		body := w.Body.String()
+		assert.Contains(t, body, "# Hiyo")
+		assert.Contains(t, body, "(https://hiyo.test/docs/codex.md)")
+		assert.Contains(t, body, "- CDN：`https://cdn.hiyo.test`，全球")
+		assert.Contains(t, body, "base https://api.hiyo.test")
+		assert.NotContains(t, body, "{{")
+	})
+
+	t.Run("a listed endpoint can be selected with ?endpoint=", func(t *testing.T) {
+		w := get(newServer(t, settings, nil), http.MethodGet, "/docs/codex.md?endpoint=https://cdn.hiyo.test", nil)
+		assert.Contains(t, w.Body.String(), `base_url = "https://cdn.hiyo.test/v1"`)
+
+		w = get(newServer(t, settings, nil), http.MethodGet, "/docs/codex.md?endpoint=https%3A%2F%2Fevil.test", nil)
+		assert.Contains(t, w.Body.String(), `base_url = "https://api.hiyo.test/v1"`)
+	})
+
+	t.Run("still serves when the settings cannot be read", func(t *testing.T) {
+		w := get(newServer(t, nil, assert.AnError), http.MethodGet, "/docs/codex.md", nil)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), `base_url = "http://hiyo.test/v1"`)
+	})
+
+	t.Run("a settings change shows up after the cache is invalidated", func(t *testing.T) {
+		provider := &mockSettingsProvider{settings: settings}
+		server := newServer(t, nil, nil)
+		server.settings = provider
+
+		get(server, http.MethodGet, "/docs/codex.md", nil)
+		get(server, http.MethodGet, "/docs/codex.md", nil)
+		assert.Equal(t, 1, provider.called, "settings are cached between requests")
+
+		provider.settings = map[string]any{"api_base_url": "https://new.hiyo.test"}
+		server.InvalidateCache()
+		w := get(server, http.MethodGet, "/docs/codex.md", nil)
+		assert.Contains(t, w.Body.String(), `base_url = "https://new.hiyo.test/v1"`)
+	})
+
+	t.Run("answers HEAD", func(t *testing.T) {
+		w := get(newServer(t, settings, nil), http.MethodHead, "/llms.txt", nil)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("a section that does not exist is a 404, not the app shell", func(t *testing.T) {
+		w := get(newServer(t, settings, nil), http.MethodGet, "/docs/nope.md", nil)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.NotContains(t, w.Body.String(), "<html>")
+	})
+
+	t.Run("a file in the override directory wins", func(t *testing.T) {
+		server := newServer(t, settings, nil)
+		require.NoError(t, os.WriteFile(filepath.Join(server.overrideDir, "llms.txt"), []byte("custom {{site}}"), 0o644))
+		w := get(server, http.MethodGet, "/llms.txt", nil)
+		assert.Equal(t, "custom {{site}}", w.Body.String())
+	})
 }

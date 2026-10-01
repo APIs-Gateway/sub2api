@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/common"
@@ -43,6 +44,12 @@ type FrontendServer struct {
 	cache       *HTMLCache
 	settings    PublicSettingsProvider
 	overrideDir string // local file override directory
+
+	// machineCfg caches the public settings used to fill the placeholders in
+	// llms.txt, llms-full.txt and docs/<id>.md (see docs_machine.go).
+	machineMu  sync.Mutex
+	machineCfg *machineSettings
+	machineAt  time.Time
 }
 
 // NewFrontendServer creates a new frontend server with settings injection
@@ -82,6 +89,11 @@ func (s *FrontendServer) InvalidateCache() {
 	if s != nil && s.cache != nil {
 		s.cache.Invalidate()
 	}
+	if s != nil {
+		s.machineMu.Lock()
+		s.machineCfg = nil
+		s.machineMu.Unlock()
+	}
 }
 
 // Middleware returns the Gin middleware handler
@@ -110,6 +122,13 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 		// build. Deployments keep the previous release's hashed assets here so
 		// tabs that are still running the old entry bundle can finish loading.
 		if s.tryServeOverride(c, cleanPath) {
+			return
+		}
+
+		// llms.txt, llms-full.txt and docs/<id>.md are built as templates with
+		// placeholders; fill in this site's address and name per request.
+		if s.shouldServeMachineDoc(c, cleanPath) {
+			s.serveMachineDoc(c, cleanPath)
 			return
 		}
 
