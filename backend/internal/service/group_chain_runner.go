@@ -133,6 +133,9 @@ type HopTrace struct {
 	// SkippedBy 非空表示该跳没有被尝试：breaker_open / breaker_probe_busy / attempt_skipped。
 	SkippedBy string
 	Attempts  int
+	// BreakerBypassed 为 true 表示这是「兜底重试」：整条链没有任何一跳真正发出过上游请求，
+	// runner 忽略熔断，对最后一个被熔断跳过的跳补跑了一次。
+	BreakerBypassed bool
 }
 
 // ChainRunResult 是 Run 的结果。
@@ -145,6 +148,8 @@ type ChainRunResult struct {
 	StoppedBy string
 	// ErrorFlushed 为 true 表示 runner 调用了暂存的 WriteFinalError。
 	ErrorFlushed bool
+	// BreakerBypassRetried 为 true 表示触发了「兜底重试」（见 HopTrace.BreakerBypassed），便于排查日志。
+	BreakerBypassRetried bool
 }
 
 // GroupChainRunner 逐跳执行回退链。Settings 通常取自 SettingService.GetGroupFallbackSettings；零值设置会回落到默认值。
@@ -212,6 +217,9 @@ func (r *GroupChainRunner) Run(ctx context.Context, in ChainRunInput, attempt Ch
 
 	var pending *pendingBreakerFailure
 	var flush func()
+	// 兜底重试：没有任何一跳真正发出过上游请求时，对最后一个被熔断跳过的跳再跑一次。
+	anyAttempted := false
+	lastBreakerSkipped := -1
 
 	// resolvePending 在「下一跳实际尝试」有了结果后调用：成功才把暂记的 5xx 正式计入熔断。
 	resolvePending := func(confirm bool) {
@@ -284,6 +292,7 @@ func (r *GroupChainRunner) Run(ctx context.Context, in ChainRunInput, attempt Ch
 					trace.SkippedBy = "breaker_probe_busy"
 				}
 				res.Trace = append(res.Trace, trace)
+				lastBreakerSkipped = i
 				continue
 			}
 			probeToken = adm.ProbeToken
@@ -310,6 +319,9 @@ func (r *GroupChainRunner) Run(ctx context.Context, in ChainRunInput, attempt Ch
 		trace.Outcome = result.Outcome
 		trace.Reason = result.Reason
 		trace.Attempts = result.Attempts
+		if result.Outcome != HopOutcomeSkipped {
+			anyAttempted = true
+		}
 
 		switch result.Outcome {
 		case HopOutcomeDone:
@@ -378,6 +390,84 @@ func (r *GroupChainRunner) Run(ctx context.Context, in ChainRunInput, attempt Ch
 			res.Trace = append(res.Trace, trace)
 			resolvePending(false)
 			releaseProbe(bkey, probeToken)
+			res.Status = ChainRunTerminal
+			return res
+		}
+	}
+
+	// 兜底重试：整条链没有任何一跳真正发出过上游请求，而有跳是因为熔断被跳过的。
+	// 熔断只是尽力而为的优化，不能让用户一次真实尝试都得不到：忽略熔断，对最后一个被熔断跳过的跳补跑一次。
+	// 仍受总时间预算与总尝试次数约束；结果照常上报熔断器（相当于一次额外的探测）。
+	if !anyAttempted && lastBreakerSkipped >= 0 && ctx.Err() == nil && !in.Output.Committed() &&
+		r.now().Sub(start) < budget && attemptsUsed < maxAttempts {
+		hop := chain[lastBreakerSkipped]
+		bkey := BreakerKey{}
+		if r.Breaker != nil {
+			if fam := ModelFamily(r.hopModel(in, hop)); fam != "" && hop.Group != nil {
+				bkey = BreakerKey{Platform: hop.Group.Platform, GroupID: hop.GroupID, Family: fam}
+			}
+		}
+		info := HopInfo{
+			Index:             lastBreakerSkipped,
+			Hop:               hop,
+			HasChain:          hasChain,
+			DeferFinalError:   true,
+			HeartbeatOnly:     in.Output.HeartbeatOnly(),
+			AttemptsRemaining: maxAttempts - attemptsUsed,
+			TimeRemaining:     budget - r.now().Sub(start),
+			MaxSwitches:       maxSwitches,
+		}
+		result := attempt(ctx, info)
+		if result.Attempts > 0 {
+			attemptsUsed += result.Attempts
+		}
+		res.BreakerBypassRetried = true
+		trace := HopTrace{Index: lastBreakerSkipped, GroupID: hop.GroupID, Outcome: result.Outcome,
+			Reason: result.Reason, Attempts: result.Attempts, BreakerBypassed: true}
+		if result.Outcome == HopOutcomeSkipped {
+			trace.SkippedBy = "attempt_skipped"
+		}
+		res.Trace = append(res.Trace, trace)
+
+		switch result.Outcome {
+		case HopOutcomeDone:
+			resolvePending(false)
+			res.Status = ChainRunServed
+			res.ServedIndex = lastBreakerSkipped
+			return res
+		case HopOutcomeFallbackWorthy:
+			if ctx.Err() != nil {
+				resolvePending(false)
+				res.Status = ChainRunClientGone
+				return res
+			}
+			if in.Output.Committed() {
+				resolvePending(false)
+				if !result.ErrorWritten {
+					flush = result.WriteFinalError
+					flushError()
+				}
+				res.Status = ChainRunTerminal
+				return res
+			}
+			if bkey.Valid() && result.Breaker == BreakerSignalCount {
+				r.Breaker.RecordFailure(ctx, bkey, breakerCfg, in.UserID, "")
+			}
+			if result.ErrorWritten {
+				resolvePending(false)
+				res.Status = ChainRunExhausted
+				return res
+			}
+			// 前面跳已暂存的错误（例如最后一跳因 RPM 超限要写的 429）优先，没有才用本跳的。
+			if flush == nil {
+				flush = result.WriteFinalError
+			}
+		case HopOutcomeSkipped:
+			if result.WriteFinalError != nil && flush == nil {
+				flush = result.WriteFinalError
+			}
+		default: // Terminal 及未知值
+			resolvePending(false)
 			res.Status = ChainRunTerminal
 			return res
 		}

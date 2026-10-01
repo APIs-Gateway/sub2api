@@ -644,6 +644,61 @@ func TestRunner_AllNonLastSkippedByBreakerStillRunsLast(t *testing.T) {
 	require.Equal(t, []string{"err:3"}, fa.written, "最后一跳输出原始错误")
 }
 
+func TestRunner_BreakerBypassRetriesWhenNothingWasAttempted(t *testing.T) {
+	// 链 [A, B]：A 熔断打开被跳过，B 因资格检查被跳过 -> 没有任何上游请求，A 必须兜底尝试一次。
+	gate := &fakeBreakerGate{admissions: map[int64]BreakerAdmission{1: {Allowed: false, State: BreakerStateOpen}}}
+	fa := &fakeAttempt{scripts: map[int64]hopScript{1: {done: true, attempts: 1}, 2: {skip: true}}}
+	res := newTestRunner(gate).Run(context.Background(), runnerInput(1, 2), fa.fn())
+
+	require.Equal(t, ChainRunServed, res.Status)
+	require.Equal(t, 0, res.ServedIndex)
+	require.True(t, res.BreakerBypassRetried)
+	require.Equal(t, []int64{2, 1}, fa.calledGroups())
+	require.False(t, fa.calls[1].IsLast)
+	require.True(t, fa.calls[1].DeferFinalError)
+	last := res.Trace[len(res.Trace)-1]
+	require.True(t, last.BreakerBypassed)
+	require.EqualValues(t, 1, last.GroupID)
+	require.Len(t, gate.admitted, 1, "兜底重试不再查询熔断")
+}
+
+func TestRunner_BreakerBypassFailureIsReportedToBreaker(t *testing.T) {
+	gate := &fakeBreakerGate{admissions: map[int64]BreakerAdmission{1: {Allowed: false, State: BreakerStateOpen}}}
+	fa := &fakeAttempt{scripts: map[int64]hopScript{1: {failure: exhausted(429), attempts: 1}, 2: {skip: true, skipErr: true}}}
+	res := newTestRunner(gate).Run(context.Background(), runnerInput(1, 2), fa.fn())
+
+	require.Equal(t, ChainRunExhausted, res.Status)
+	require.Equal(t, []int64{1}, gate.failedGroups(), "兜底尝试的结果照常上报熔断器")
+	require.Equal(t, []string{"skip-err:2"}, fa.written, "优先写前面跳暂存的错误，且只写一次")
+}
+
+func TestRunner_NoBreakerBypassWhenAnotherHopWasAttempted(t *testing.T) {
+	// A 熔断打开，B 真正尝试过并失败：不兜底。
+	gate := &fakeBreakerGate{admissions: map[int64]BreakerAdmission{1: {Allowed: false, State: BreakerStateOpen}}}
+	fa := &fakeAttempt{scripts: map[int64]hopScript{1: {done: true}, 2: {failure: noAccount(), attempts: 1}}}
+	res := newTestRunner(gate).Run(context.Background(), runnerInput(1, 2), fa.fn())
+
+	require.Equal(t, ChainRunExhausted, res.Status)
+	require.False(t, res.BreakerBypassRetried)
+	require.Equal(t, []int64{2}, fa.calledGroups())
+}
+
+func TestRunner_NoBreakerBypassWhenBudgetExhausted(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	gate := &fakeBreakerGate{admissions: map[int64]BreakerAdmission{1: {Allowed: false, State: BreakerStateOpen}}}
+	r := newTestRunner(gate)
+	r.Now = func() time.Time { return now }
+	fa := &fakeAttempt{scripts: map[int64]hopScript{
+		1: {done: true},
+		2: {skip: true, onCall: func() { now = now.Add(26 * time.Second) }},
+	}}
+	res := r.Run(context.Background(), runnerInput(1, 2), fa.fn())
+
+	require.False(t, res.BreakerBypassRetried)
+	require.Equal(t, []int64{2}, fa.calledGroups())
+	require.Equal(t, ChainRunUnresolved, res.Status)
+}
+
 func TestRunner_ModelFamilyMissSkipsBreaker(t *testing.T) {
 	gate := &fakeBreakerGate{}
 	fa := &fakeAttempt{scripts: map[int64]hopScript{1: {failure: exhausted(429)}, 2: {done: true}}}
