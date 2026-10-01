@@ -2,6 +2,8 @@
 
 Codex Desktop 和 Codex CLI 共用同一份配置文件，配一次两个都能用。
 
+> 不想手动改文件，可以在「API 密钥」页点密钥的「接入」，选「一键安装」，脚本会写好下面这份配置。
+
 ## 安装 {#codex-install}
 
 Codex CLI 需要较新版本的 Node.js（16 或更高）。终端里运行 `node --version` 确认。没有的话到 [nodejs.org](https://nodejs.org) 下载 LTS 版本。
@@ -10,7 +12,7 @@ Codex CLI 需要较新版本的 Node.js（16 或更高）。终端里运行 `nod
 npm install -g @openai/codex
 ```
 
-Codex Desktop 从 OpenAI 官网下载安装即可。
+用 Homebrew 的 macOS 用户也可以运行 `brew install --cask codex`。Codex Desktop 从 OpenAI 官网下载安装即可。
 
 ## 写配置文件 {#codex-config}
 
@@ -43,6 +45,14 @@ experimental_bearer_token = "sk-你的密钥"
 完全退出 Codex Desktop（macOS 按 Cmd+Q，只关窗口不算），或结束正在运行的 CLI，再重新打开并新建会话。旧会话不会读取新配置。
 
 在会话里发一句「你好」，能正常回复就接入成功了。回到「使用记录」页，能看到刚才这次请求。
+
+## 常见问题 {#codex-faq}
+
+- **返回 401**：多半是密钥填错。到「API 密钥」页用复制按钮复制，不要手打，容易把 `l` 和 `1`、`O` 和 `0` 看错。粘贴后确认以 `sk-` 开头，前后没有空格，也没有换行。
+- **改了配置没生效**：确认 `model_provider` 和 `model` 在文件最顶部，并且完全退出后重新打开、新建会话。
+- **提示模型不可用**：能用哪些模型由密钥所在的分组决定，`model` 要填价格与计费页上这个分组列出的名字。
+- **提示要登录官方账号，或要配置 `OPENAI_API_KEY`**：多半是没有完全退出，或者还在用旧会话。Windows 版的 Codex Desktop 要从任务栏托盘里退出，只关窗口不算；退出后重新打开并新建会话。
+- **想临时换模型**：在会话里输入 `/model` 选择；要长期换，改 `config.toml` 里的 `model`。
 
 ## 切回官方账号 {#codex-revert}
 

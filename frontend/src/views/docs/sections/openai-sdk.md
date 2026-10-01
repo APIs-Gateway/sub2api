@@ -54,51 +54,39 @@ const resp = await client.responses.create({
 console.log(resp.output_text);
 ```
 
-## 流式输出 {#openai-sdk-stream}
+> 当前版本的 openai 包要求 Node.js 22 或更高。
 
-请求里加上 `stream: true`，内容会边生成边返回。
+curl、流式输出、Anthropic 格式和多轮对话的完整示例见「API 调用示例」一节。
 
-```python
-stream = client.chat.completions.create(
-    model="{{model}}",
-    messages=[{"role": "user", "content": "写一首四行的短诗"}],
-    stream=True,
-)
-for chunk in stream:
-    if chunk.choices and chunk.choices[0].delta.content:
-        print(chunk.choices[0].delta.content, end="", flush=True)
-```
+## 用环境变量配置 {#openai-sdk-env}
 
-回复比较长的请求，建议一律用流式。非流式请求要等全部生成完才返回，等待太久会被中途断开，见「错误排查」里的 524。
-
-## curl {#openai-sdk-curl}
+官方 SDK 会自动读取 `OPENAI_API_KEY` 和 `OPENAI_BASE_URL`。设置好之后，代码里直接 `OpenAI()`（Node 是 `new OpenAI()`）就行，不用再把密钥写进代码：
 
 ```bash title="macOS / Linux"
-curl {{v1}}/chat/completions \
-  -H "Authorization: Bearer sk-你的密钥" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "{{model}}",
-    "messages": [{"role": "user", "content": "你好"}]
-  }'
+export OPENAI_API_KEY="sk-你的密钥"
+export OPENAI_BASE_URL="{{v1}}"
 ```
 
-## Anthropic SDK {#openai-sdk-anthropic}
-
-如果密钥所在的分组开放了 Anthropic 格式，也可以用 Anthropic 官方 SDK。地址不带 `/v1`：
-
-```python title="hello_anthropic.py"
-import anthropic
-
-client = anthropic.Anthropic(
-    base_url="{{base}}",
-    api_key="sk-你的密钥",
-)
-
-msg = client.messages.create(
-    model="价格页上的模型名",
-    max_tokens=1024,
-    messages=[{"role": "user", "content": "你好"}],
-)
-print(msg.content[0].text)
+```powershell title="Windows PowerShell"
+$env:OPENAI_API_KEY = "sk-你的密钥"
+$env:OPENAI_BASE_URL = "{{v1}}"
 ```
+
+很多基于 OpenAI SDK 的第三方框架和脚本也认这两个变量。
+
+## 查看可用模型 {#openai-sdk-models}
+
+能用哪些模型由密钥所在的分组决定。想在代码里动态读取：
+
+```python
+for m in client.models.list():
+    print(m.id)
+```
+
+## 常见问题 {#openai-sdk-faq}
+
+**报 404。** 多半是 `base_url` 少了 `/v1`。OpenAI SDK 用 `{{v1}}`，Anthropic SDK 用 `{{base}}`（不带 `/v1`）。
+
+**报 401 或 403。** 密钥没复制完整、密钥所在分组不能用这个接口或这个模型，见「错误排查」。
+
+**模型不存在。** 模型名以「价格与计费」页为准，并且要是密钥所在分组能用的模型。

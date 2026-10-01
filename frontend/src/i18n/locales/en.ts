@@ -158,7 +158,9 @@
     copied: 'Copied',
     groups: {
       start: 'Get started',
-      clients: 'Client setup',
+      clients: 'Command-line tools',
+      editors: 'Editors and extensions',
+      chat: 'Chat and translation',
       developers: 'For developers',
       reference: 'Reference'
     },

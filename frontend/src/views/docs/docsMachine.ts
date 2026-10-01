@@ -45,7 +45,9 @@ const AI_NOTE =
  */
 export const GROUP_LABELS: Record<DocGroup['id'], string> = {
   start: '开始',
-  clients: '接入客户端',
+  clients: '命令行工具',
+  editors: '编辑器与插件',
+  chat: '聊天与翻译',
   developers: '开发者',
   reference: '参考',
 }
@@ -118,10 +120,14 @@ export function sectionMarkdown(id: string, raw: string): string {
   ).split('{{model}}').join(EXAMPLE_MODEL)
 }
 
-/** 全部章节合在一起，不含开头的通用说明。 */
+/** 不放进 llms-full.txt 的章节：这一节是给人挑工具、生成提示语用的，对 AI 是噪音。它自己的 docs/<id>.md 照常生成。 */
+const FULL_DOC_EXCLUDED = new Set(['ai-assist'])
+
+/** 全部章节合在一起，不含开头的通用说明和 FULL_DOC_EXCLUDED 里的章节。 */
 function allSectionsMarkdown(groups: DocGroup[]): string {
   return groups
     .flatMap((g) => g.sections)
+    .filter((s) => !FULL_DOC_EXCLUDED.has(s.id))
     .map((s) => {
       const { title, body } = splitSection(s.raw)
       return `# ${title}\n\n${stripAnchors(body).trim()}\n`

@@ -23,11 +23,18 @@ const extraGroups: DocGroup[] = [
     id: 'clients',
     sections: [
       {
-        id: 'windsurf',
-        raw: '# Windsurf\n\nWindsurf 是 AI 代码编辑器，支持自定义地址。后面是步骤。\n\n## 配置 {#windsurf-setup}\n\n填 `{{v1}}`，站点 {{site}}。\n',
+        id: 'sample-tool',
+        raw: '# Sample Tool\n\nSample Tool 是 AI 代码编辑器，支持自定义地址。后面是步骤。\n\n## 配置 {#sample-tool-setup}\n\n填 `{{v1}}`，站点 {{site}}。\n',
       },
     ],
   },
+]
+
+const ALLOWED_HOSTS = [
+  'api.first.test', 'hiyo.test', 'github.com', 'nodejs.org', 'cherry-ai.com',
+  'aider.chat', 'chatboxai.app', 'claude.ai', 'cline.bot', 'continue.dev', 'docs.openclaw.ai',
+  'immersivetranslate.com', 'kiro.dev', 'lobehub.com', 'openclaw.ai', 'opencode.ai',
+  'openwebui.com', 'roocode.com', 'windsurf.com',
 ]
 
 const baseCtx = { site: 'Hiyo', apiBaseUrl: 'https://api.first.test', origin: 'https://hiyo.test' }
@@ -43,9 +50,9 @@ describe('machine files', () => {
 
   it('picks up a section added to the list with no other change', () => {
     const extra = buildMachineFiles(extraGroups)
-    expect(Object.keys(extra)).toContain('docs/windsurf.md')
-    expect(extra['docs/windsurf.md']).toContain('# Windsurf')
-    expect(extra['llms.txt']).toContain('- [Windsurf]({{origin}}/docs/windsurf.md{{q}})：Windsurf 是 AI 代码编辑器，支持自定义地址。')
+    expect(Object.keys(extra)).toContain('docs/sample-tool.md')
+    expect(extra['docs/sample-tool.md']).toContain('# Sample Tool')
+    expect(extra['llms.txt']).toContain('- [Sample Tool]({{origin}}/docs/sample-tool.md{{q}})：Sample Tool 是 AI 代码编辑器，支持自定义地址。')
     expect(extra['llms-full.txt']).toContain('## 配置\n\n填 `{{v1}}`')
     expect(Object.keys(extra)).toHaveLength(Object.keys(files).length + 1)
   })
@@ -66,7 +73,7 @@ describe('machine files', () => {
       expect(text, path).not.toMatch(/\{#[\w-]+\}/)
       expect(text, path).not.toContain('<API 地址>')
       for (const match of text.matchAll(/https?:\/\/([^/\s)`"'：，]+)/g)) {
-        expect(['api.first.test', 'hiyo.test', 'github.com', 'nodejs.org', 'cherry-ai.com'], `${path}: ${match[0]}`).toContain(match[1])
+        expect(ALLOWED_HOSTS, `${path}: ${match[0]}`).toContain(match[1])
       }
     }
   })
@@ -178,12 +185,17 @@ describe('llms-full.txt', () => {
   it('has the rules and every section, in page order', () => {
     expect(text).toContain('## 给 AI 助手的规则')
     let last = -1
-    for (const section of allSections) {
+    for (const section of allSections.filter((s) => s.id !== 'ai-assist')) {
       const title = section.raw.match(/^#\s+(.+?)\s*\n/)![1]
       const at = text.indexOf(`\n# ${title}\n`)
       expect(at, title).toBeGreaterThan(last)
       last = at
     }
+  })
+
+  it('leaves out the “让 AI 帮你接入” section, which only has its own docs/ai-assist.md', () => {
+    expect(text).not.toContain('# 让 AI 帮你接入')
+    expect(buildMachineFiles()['docs/ai-assist.md']).toContain('# 让 AI 帮你接入')
   })
 
   it('does not list alternative addresses itself', () => {

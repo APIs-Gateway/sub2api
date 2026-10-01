@@ -24,6 +24,8 @@ export const AI_TOOLS: AiTool[] = [
   { id: 'any' },
   { id: 'claude-code', section: 'claude-code', name: 'Claude Code' },
   { id: 'codex', section: 'codex', name: 'Codex' },
+  { id: 'gemini-cli', section: 'gemini-cli', name: 'Gemini CLI' },
+  { id: 'opencode', section: 'opencode', name: 'OpenCode' },
   { id: 'cursor', section: 'cursor', name: 'Cursor' },
   { id: 'chat', section: 'other-clients' },
   { id: 'code', section: 'openai-sdk' },

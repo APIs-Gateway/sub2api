@@ -158,7 +158,9 @@
     copied: '已复制',
     groups: {
       start: '开始',
-      clients: '接入客户端',
+      clients: '命令行工具',
+      editors: '编辑器与插件',
+      chat: '聊天与翻译',
       developers: '开发者',
       reference: '参考'
     },

@@ -145,7 +145,12 @@ describe('DocsView', () => {
         aiPromptsRaw,
         ...machineFiles,
       ]
-      const allowedHosts = ['github.com', 'nodejs.org', 'cherry-ai.com']
+      const allowedHosts = [
+        'github.com', 'nodejs.org', 'cherry-ai.com',
+        'aider.chat', 'chatboxai.app', 'claude.ai', 'cline.bot', 'continue.dev', 'docs.openclaw.ai',
+        'immersivetranslate.com', 'kiro.dev', 'lobehub.com', 'openclaw.ai', 'opencode.ai',
+        'openwebui.com', 'roocode.com', 'windsurf.com',
+      ]
       for (const source of sources) {
         expect(source).not.toMatch(/hiyo\.top/)
         for (const match of source.matchAll(/https?:\/\/([^/\s)`"']+)/g)) {
@@ -551,6 +556,8 @@ describe('AI prompts', () => {
     any: '请按这份文档，帮我把正在用的工具接入 Hiyo：https://site.test/llms.txt',
     'claude-code': '请按这份文档，帮我把 Claude Code 接入 Hiyo：https://site.test/docs/claude-code.md',
     codex: '请按这份文档，帮我把 Codex 接入 Hiyo：https://site.test/docs/codex.md',
+    'gemini-cli': '请按这份文档，帮我把 Gemini CLI 接入 Hiyo：https://site.test/docs/gemini-cli.md',
+    opencode: '请按这份文档，帮我把 OpenCode 接入 Hiyo：https://site.test/docs/opencode.md',
     cursor: '请按这份文档，帮我把 Cursor 接入 Hiyo：https://site.test/docs/cursor.md',
     chat: '请按这份文档，帮我把聊天客户端接入 Hiyo：https://site.test/docs/other-clients.md',
     code: '请按这份文档，帮我在代码里调用 Hiyo：https://site.test/docs/openai-sdk.md',
@@ -568,7 +575,7 @@ describe('AI prompts', () => {
       expect(new Set(inputs.map((i) => i.element.name)).size).toBe(1)
       expect(inputs[0].element.checked).toBe(true)
       expect(group.findAll('label').map((l) => l.text())).toEqual([
-        '任意工具', 'Claude Code', 'Codex', 'Cursor', '聊天客户端', '写代码调用',
+        '任意工具', 'Claude Code', 'Codex', 'Gemini CLI', 'OpenCode', 'Cursor', '聊天客户端', '写代码调用',
       ])
     })
 
@@ -709,9 +716,10 @@ describe('AI prompts', () => {
       expect(copied).toBe(
         fillMachineText(fullMarkdown(), { site: 'Hiyo', apiBaseUrl: 'https://api.first.test', origin: window.location.origin })
       )
-      for (const section of DOC_GROUPS.flatMap((g) => g.sections)) {
+      for (const section of DOC_GROUPS.flatMap((g) => g.sections).filter((s) => s.id !== 'ai-assist')) {
         expect(copied).toContain(`# ${splitSection(section.raw).title}`)
       }
+      expect(copied).not.toContain('# 让 AI 帮你接入')
       expect(copied).toContain('base_url = "https://api.first.test/v1"')
       expect(copied).toContain('model_provider = "hiyo"')
       expect(copied).not.toMatch(/\{\{|\}\}/)
