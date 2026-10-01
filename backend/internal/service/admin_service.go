@@ -3097,9 +3097,6 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if err != nil {
 		return nil, err
 	}
-	if input.GroupIDs == nil && input.GroupMode != "" {
-		return nil, ErrAccountGroupIDsRequired
-	}
 	// handler 会把缺省模式规整成 replace，所以 replace 在没传 GroupIDs 时表示「不改分组」，不能报错；
 	// append/remove 没有分组可操作才是调用方遗漏。
 	if input.GroupIDs == nil && groupMode != AccountGroupBindModeReplace {
