@@ -7,6 +7,15 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
+// 折算依赖的 store：倍率缺失（= 1）时按美元展示，与历史断言保持一致。
+vi.mock('@/stores/app', () => ({
+  useAppStore: () => ({ cachedPublicSettings: null }),
+}))
+
+vi.mock('@/i18n', () => ({
+  getLocale: () => 'zh-CN',
+}))
+
 vi.mock('@/utils/format', () => ({
   formatDateTime: () => '2026-07-10 12:00',
 }))

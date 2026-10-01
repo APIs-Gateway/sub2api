@@ -59,7 +59,14 @@ export function useCurrencyDisplay() {
   /** 倍率为 1 时两个币种是同一个数，展示切换没有意义，隐藏切换器。 */
   const canSwitch = computed(() => rechargeMultiplier.value !== 1)
 
-  const isFiat = computed(() => mode.value === 'fiat')
+  /**
+   * 实际生效的展示口径。倍率为 1（free 站，没有充值）时额度就按美元计价，
+   * 没有「付了多少人民币」可言，强制按美元展示——否则会把美元数字直接
+   * 套上 ¥ 符号显示出来。
+   */
+  const effectiveMode = computed<CurrencyMode>(() => (canSwitch.value ? mode.value : 'usd'))
+
+  const isFiat = computed(() => effectiveMode.value === 'fiat')
 
   function setMode(next: CurrencyMode) {
     mode.value = next
@@ -135,8 +142,81 @@ export function useCurrencyDisplay() {
     return formatFiat(fiat)
   }
 
+  /** 钱包里 1 个额度值多少人民币：充值时 1 元买 m 个额度。 */
+  const walletFiatPerCredit = computed(() => 1 / rechargeMultiplier.value)
+
+  function isPositiveNumber(value: unknown): value is number {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0
+  }
+
+  /**
+   * 钱包类金额：余额、充值到账、兑换码、签到奖励、余额提醒阈值等。
+   * 这些额度全部是按充值倍率买来的，÷ m 是精确值。
+   */
+  function formatWallet(credits: number | null | undefined, fractionDigits = 2): string {
+    if (!isFiat.value) return formatUsd(credits, fractionDigits)
+    return formatFiat(usdToFiat(credits))
+  }
+
+  /**
+   * 订阅卡金额：日/周/月额度与已用量。按该卡的单价 u(D)（后端 fiat_per_credit）折算。
+   * 拿不到单价时宁可按美元展示，也不要按钱包单价猜——那会高估将近一倍。
+   */
+  function formatSubscription(
+    credits: number | null | undefined,
+    fiatPerCredit: number | null | undefined,
+    fractionDigits = 2
+  ): string {
+    if (!isFiat.value || !isPositiveNumber(fiatPerCredit)) return formatUsd(credits, fractionDigits)
+    const value = typeof credits === 'number' && Number.isFinite(credits) ? credits : 0
+    return formatFiat(value * fiatPerCredit)
+  }
+
+  /**
+   * 混合来源的花费汇总（今日/累计、按 Key、按模型、趋势）。钱包和订阅卡扣的额度
+   * 单价不同，只能用服务端分桶折算好的人民币值（*_fiat 字段）。
+   *
+   * 后端的 *_fiat 字段带 omitempty：额度为 0 时人民币字段缺省，按 ¥0 处理；
+   * 额度非 0 却没有人民币值，说明后端没有提供（旧版本或查询失败），回落到美元，
+   * 不按充值倍率估算。
+   */
+  function formatMixed(
+    credits: number | null | undefined,
+    fiatValue: number | null | undefined,
+    fractionDigits = 4
+  ): string {
+    if (!isFiat.value) return formatUsd(credits, fractionDigits)
+    if (typeof fiatValue === 'number' && Number.isFinite(fiatValue)) return formatFiat(fiatValue)
+    if (!credits) return formatFiat(0)
+    return formatUsd(credits, fractionDigits)
+  }
+
+  /** 混合金额在当前口径下是否能精确给出人民币值（图表等需要纯数字的地方用）。 */
+  function hasMixedFiat(credits: number | null | undefined, fiatValue: number | null | undefined): boolean {
+    if (!isFiat.value) return false
+    return (typeof fiatValue === 'number' && Number.isFinite(fiatValue)) || !credits
+  }
+
+  /**
+   * 把用户填的人民币换算回额度（输入框提交前用）。
+   * @param fiatPerCredit 1 个额度值多少人民币；缺省时按钱包单价 1/m。
+   */
+  function creditsFromFiat(fiat: number, fiatPerCredit?: number | null): number {
+    if (!Number.isFinite(fiat)) return 0
+    const rate = isPositiveNumber(fiatPerCredit) ? fiatPerCredit : walletFiatPerCredit.value
+    return fiat / rate
+  }
+
+  /** creditsFromFiat 的反向：额度 × 单价。 */
+  function fiatFromCredits(credits: number | null | undefined, fiatPerCredit?: number | null): number {
+    if (typeof credits !== 'number' || !Number.isFinite(credits)) return 0
+    const rate = isPositiveNumber(fiatPerCredit) ? fiatPerCredit : walletFiatPerCredit.value
+    return credits * rate
+  }
+
   return {
     mode,
+    effectiveMode,
     isFiat,
     canSwitch,
     fiatCurrency: FIAT_CURRENCY,
@@ -146,6 +226,13 @@ export function useCurrencyDisplay() {
     usdToFiat,
     formatFiat,
     formatUsd,
-    formatAmount
+    formatAmount,
+    walletFiatPerCredit,
+    formatWallet,
+    formatSubscription,
+    formatMixed,
+    hasMixedFiat,
+    creditsFromFiat,
+    fiatFromCredits
   }
 }

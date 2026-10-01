@@ -73,8 +73,30 @@ vi.mock('@/api', () => ({
   },
 }))
 
+// 可变的假设置与订阅卡：测试里改它们就能模拟不同的充值倍率和扣费来源。
+const publicSettings: { value: Record<string, unknown> | null } = { value: null }
+const activeSubscriptions: { value: Array<Record<string, unknown>> } = { value: [] }
+
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({ showError, showSuccess }),
+  useAppStore: () => ({
+    showError,
+    showSuccess,
+    get cachedPublicSettings() {
+      return publicSettings.value
+    },
+  }),
+}))
+
+vi.mock('@/stores/subscriptions', () => ({
+  useSubscriptionStore: () => ({
+    get activeSubscriptions() {
+      return activeSubscriptions.value
+    },
+  }),
+}))
+
+vi.mock('@/i18n', () => ({
+  getLocale: () => 'zh-CN',
 }))
 
 vi.mock('@/stores/onboarding', () => ({
@@ -187,6 +209,8 @@ const getButtonByText = (wrapper: VueWrapper, text: string) => {
 describe('user KeysView column settings', () => {
   beforeEach(() => {
     localStorage.clear()
+    publicSettings.value = null
+    activeSubscriptions.value = []
     updateKey.mockReset()
     listKeys.mockResolvedValue({
       items: [createApiKey()],
@@ -296,5 +320,77 @@ describe('user KeysView column settings', () => {
     expect(visibleColumnKeys(wrapper)).toContain('id')
     expect(localStorage.getItem('api-key-hidden-columns')).toBe(JSON.stringify(['group']))
     expect(localStorage.getItem('api-key-column-settings-version')).toBe('3')
+  })
+})
+
+// 方案 K2：人民币模式下额度上限按「当前扣费来源」单价填写与回显，提交时换算回额度。
+describe('user KeysView fiat limit input', () => {
+  const FIAT_INPUT = 'input[placeholder="keys.quotaAmountPlaceholderFiat"]'
+
+  beforeEach(() => {
+    localStorage.clear()
+    updateKey.mockReset()
+    publicSettings.value = { balance_recharge_multiplier: 10 }
+    activeSubscriptions.value = []
+    getPublicSettings.mockResolvedValue({})
+    getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
+    getAvailableGroups.mockResolvedValue([])
+    getUserGroupRates.mockResolvedValue({})
+    isCurrentStep.mockReturnValue(false)
+  })
+
+  async function editKeyWithQuota(quota: number) {
+    const key: ApiKey = { ...createApiKey(), group_id: 1, quota }
+    listKeys.mockResolvedValue({ items: [key], total: 1, page: 1, page_size: 20, pages: 1 })
+    updateKey.mockResolvedValue(key)
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    await nextTick()
+    return { wrapper, key }
+  }
+
+  it('无订阅卡时按余额单价 1/m 回显人民币；未修改则原样提交额度', async () => {
+    const { wrapper, key } = await editKeyWithQuota(100)
+
+    const input = wrapper.get(FIAT_INPUT).element as HTMLInputElement
+    expect(Number(input.value)).toBe(10)
+
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    expect(updateKey).toHaveBeenCalledWith(key.id, expect.objectContaining({ quota: 100 }))
+    wrapper.unmount()
+  })
+
+  it('用户填人民币时按余额单价换算回额度', async () => {
+    const { wrapper, key } = await editKeyWithQuota(100)
+
+    await wrapper.get(FIAT_INPUT).setValue('20')
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    expect(updateKey).toHaveBeenCalledWith(key.id, expect.objectContaining({ quota: 200 }))
+    wrapper.unmount()
+  })
+
+  it('有生效中的订阅卡时按该卡单价折算', async () => {
+    activeSubscriptions.value = [{ status: 'active', fiat_per_credit: 0.05 }]
+    const { wrapper, key } = await editKeyWithQuota(100)
+
+    expect(Number((wrapper.get(FIAT_INPUT).element as HTMLInputElement).value)).toBe(5)
+    await wrapper.get(FIAT_INPUT).setValue('6')
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    expect(updateKey).toHaveBeenCalledWith(key.id, expect.objectContaining({ quota: 120 }))
+    wrapper.unmount()
+  })
+
+  it('倍率为 1 时仍按额度填写，不做换算', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 1 }
+    const { wrapper, key } = await editKeyWithQuota(100)
+
+    expect(wrapper.find(FIAT_INPUT).exists()).toBe(false)
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    expect(updateKey).toHaveBeenCalledWith(key.id, expect.objectContaining({ quota: 100 }))
+    wrapper.unmount()
   })
 })

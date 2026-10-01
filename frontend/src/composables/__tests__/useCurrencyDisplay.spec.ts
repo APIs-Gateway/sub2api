@@ -126,4 +126,55 @@ describe('useCurrencyDisplay', () => {
     expect(b.isFiat.value).toBe(false)
     expect(b.mode.value).toBe('usd')
   })
+
+  it('倍率为 1 时强制按美元展示，不会把美元数字套上 ¥', () => {
+    publicSettings.value = { balance_recharge_multiplier: 1 }
+    const { isFiat, effectiveMode, mode, formatWallet, formatMixed, formatAmount } = useCurrencyDisplay()
+
+    // 用户偏好仍然是 fiat，只是在这个站点上不生效。
+    expect(mode.value).toBe('fiat')
+    expect(effectiveMode.value).toBe('usd')
+    expect(isFiat.value).toBe(false)
+    expect(formatWallet(5)).toBe('$5.00')
+    expect(formatMixed(5, 0.25)).toBe('$5.0000')
+    expect(formatAmount(5)).toBe('$5.0000')
+  })
+
+  it('钱包金额按 1/m 精确折算', () => {
+    const { formatWallet, setMode } = useCurrencyDisplay()
+
+    expect(normalize(formatWallet(130))).toContain('10.00')
+    setMode('usd')
+    expect(formatWallet(130)).toBe('$130.00')
+  })
+
+  it('订阅金额按卡单价折算；缺单价时回落到美元，绝不按钱包单价猜', () => {
+    const { formatSubscription } = useCurrencyDisplay()
+
+    expect(normalize(formatSubscription(100, 0.045))).toContain('4.50')
+    // 按钱包单价会得到 ¥7.69，高估将近一倍。
+    expect(formatSubscription(100, undefined)).toBe('$100.00')
+    expect(formatSubscription(100, 0)).toBe('$100.00')
+  })
+
+  it('混合金额只用服务端分桶值；额度为 0 缺字段按 ¥0，非 0 缺字段回落美元', () => {
+    const { formatMixed, hasMixedFiat } = useCurrencyDisplay()
+
+    expect(normalize(formatMixed(5, 0.25))).toContain('0.250')
+    expect(normalize(formatMixed(0, undefined))).toContain('0.00')
+    expect(formatMixed(5, undefined)).toBe('$5.0000')
+    expect(hasMixedFiat(5, 0.25)).toBe(true)
+    expect(hasMixedFiat(0, undefined)).toBe(true)
+    expect(hasMixedFiat(5, undefined)).toBe(false)
+  })
+
+  it('人民币与额度互换：缺单价按钱包 1/m，有单价按单价', () => {
+    const { creditsFromFiat, fiatFromCredits } = useCurrencyDisplay()
+
+    expect(creditsFromFiat(10)).toBeCloseTo(130, 10)
+    expect(creditsFromFiat(4.5, 0.045)).toBeCloseTo(100, 10)
+    expect(fiatFromCredits(130)).toBeCloseTo(10, 10)
+    expect(fiatFromCredits(100, 0.045)).toBeCloseTo(4.5, 10)
+    expect(creditsFromFiat(Number.NaN)).toBe(0)
+  })
 })

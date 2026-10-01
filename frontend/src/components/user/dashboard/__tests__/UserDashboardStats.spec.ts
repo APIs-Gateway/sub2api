@@ -13,6 +13,14 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
+// 折算依赖的 store：默认倍率缺失（= 1，按美元展示），与历史断言保持一致。
+vi.mock('@/stores/app', () => ({
+  useAppStore: () => ({ cachedPublicSettings: null }),
+}))
+vi.mock('@/stores/subscriptions', () => ({
+  useSubscriptionStore: () => ({ activeSubscriptions: [] }),
+}))
+
 import UserDashboardStats from '../UserDashboardStats.vue'
 import type { UserDashboardStats as UserStatsType, PlatformDashboardStats } from '@/api/usage'
 import type { PlatformQuotaItem } from '@/types'

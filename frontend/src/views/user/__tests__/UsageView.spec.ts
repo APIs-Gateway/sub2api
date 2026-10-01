@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
 import UsageView from '../UsageView.vue'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 
@@ -72,7 +73,6 @@ const messages: Record<string, string> = {
   'usage.balanceDeducted': 'Balance deducted',
   'usage.subscriptionDeducted': 'Plan quota deducted',
   'usage.yourSpend': 'Your spend',
-  'usage.fiatTotalApprox': 'estimated at top-up rate',
   'usage.currencyFiat': '¥',
   'usage.currencyUsd': '$',
   'usage.currencySwitchLabel': 'Switch display unit',
@@ -806,7 +806,7 @@ describe('user UsageView currency display', () => {
     }
   })
 
-  async function mountView() {
+  async function mountView(stats: Record<string, unknown> = { total_actual_cost_fiat: 0.25 }) {
     query.mockResolvedValue({ items: [subscriptionRow], total: 1, pages: 1 })
     getStatsByDateRange.mockResolvedValue({
       total_requests: 1,
@@ -814,6 +814,7 @@ describe('user UsageView currency display', () => {
       total_cost: 1.666667,
       total_actual_cost: 5,
       avg_duration_ms: 1,
+      ...stats,
     })
     list.mockResolvedValue({ items: [] })
 
@@ -835,7 +836,7 @@ describe('user UsageView currency display', () => {
     await flushPromises()
     await nextTick()
     // 展示口径是模块级单例，跨用例会串味，每次挂载后显式复位成默认的法币口径。
-    ;(wrapper.vm as any).$?.setupState?.setCurrencyMode('fiat')
+    useCurrencyDisplay().setMode('fiat')
     await nextTick()
     return wrapper
   }
@@ -851,25 +852,41 @@ describe('user UsageView currency display', () => {
     const text = plain(wrapper)
     // 明细：服务端按这张卡的 u(D)=0.05 算出 ¥0.25，是真实花费。
     expect(text).toContain('0.250')
-    // 总计：本轮走聚合 SQL，仍按充值价 1/13 估算成 ¥0.385，并显式标注为估算。
-    // 两个数并存是当前的已知取舍，不是 bug——所以这里断言标注必须在。
-    expect(text).toContain('estimated at top-up rate')
+    // 总计：服务端分桶折算的 total_actual_cost_fiat，与明细同口径，
+    // 不再出现按充值价 1/13 估算的 ¥0.385。
+    expect(text).not.toContain('0.385')
+  })
+
+  it('总计缺少服务端人民币值时回落到美元，不按充值倍率估算', async () => {
+    const wrapper = await mountView({})
+
+    const text = plain(wrapper)
+    expect(text).toContain('$5.0000')
+    expect(text).not.toContain('0.385')
   })
 
   it('切到美元口径后展示原始美元金额', async () => {
     const wrapper = await mountView()
 
-    ;(wrapper.vm as any).$?.setupState?.setCurrencyMode('usd')
+    useCurrencyDisplay().setMode('usd')
     await nextTick()
 
     expect(wrapper.text()).toContain('5.000000')
   })
 
-  it('倍率为 1 时隐藏切换器——两个口径数字相同', async () => {
+  it('倍率为 1 时隐藏切换器，且全部按美元展示、不出现「你的花费」', async () => {
     publicSettings.value = { balance_recharge_multiplier: 1 }
-    const wrapper = await mountView()
+    const wrapper = await mountView({})
+    const setupState = (wrapper.vm as any).$?.setupState
 
     expect(wrapper.find('[role="group"]').exists()).toBe(false)
+
+    setupState.tooltipData = subscriptionRow
+    setupState.tooltipVisible = true
+    await nextTick()
+    const text = plain(wrapper)
+    expect(text).not.toContain('Your spend')
+    expect(text).not.toContain('¥')
   })
 
   it('倍率不为 1 时渲染切换器', async () => {
@@ -919,8 +936,7 @@ describe('user UsageView currency display', () => {
     const wrapper = await mountView()
     const setupState = (wrapper.vm as any).$?.setupState
 
-    // 用 3.9 额度而不是 5，是为了让回落值 0.300 与总计卡片的估算值 0.385 区分开，
-    // 否则断言会被总计那个数「假通过」。
+    // 用 3.9 额度而不是 5，是为了让回落值 0.300 与其他位置出现的数字区分开。
     setupState.tooltipData = { ...subscriptionRow, actual_cost: 3.9, fiat_cost: undefined }
     setupState.tooltipVisible = true
     await nextTick()
