@@ -204,6 +204,21 @@ func registerAdminAPIKeyRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	apiKeys := admin.Group("/api-keys")
 	{
 		apiKeys.PUT("/:id", h.Admin.APIKey.UpdateGroup)
+
+		// Key 级分组回退链：有效链 dry-run / 隐藏链读写（写接口 scope 应登记为 danger，见 PR4a REPORT）
+		apiKeys.GET("/:id/fallback-chain", h.Admin.APIKeyFallback.GetChain)
+		apiKeys.PUT("/:id/hidden-fallback-chain", h.Admin.APIKeyFallback.ReplaceHiddenChain)
+		apiKeys.DELETE("/:id/hidden-fallback-chain", h.Admin.APIKeyFallback.ClearHiddenChain)
+	}
+
+	// 反查：哪些 Key 的链里放了某分组
+	admin.GET("/groups/:id/fallback-routes", h.Admin.APIKeyFallback.ListRoutesByGroup)
+
+	// 编辑器参考模型（每个平台一个默认值）
+	keyEditor := admin.Group("/key-editor")
+	{
+		keyEditor.GET("/reference-models", h.Admin.APIKeyFallback.GetReferenceModels)
+		keyEditor.PUT("/reference-models", h.Admin.APIKeyFallback.SetReferenceModels)
 	}
 }
 

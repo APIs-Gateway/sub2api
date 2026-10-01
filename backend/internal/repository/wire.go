@@ -82,7 +82,8 @@ var ProviderSet = wire.NewSet(
 	NewUsageLogRepository,
 	NewUsageBillingRepository,
 	NewIdempotencyRepository,
-	NewAPIKeyGroupRouteRepository, // Key 级分组回退链（PR1：仅注册，尚无消费方）
+	NewAPIKeyGroupRouteRepository, // Key 级分组回退链
+	NewAPIKeyGroupRouteExtras,
 	NewUsageCleanupRepository,
 	NewDashboardAggregationRepository,
 	NewSettingRepository,

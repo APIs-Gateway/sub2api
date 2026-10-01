@@ -597,10 +597,12 @@ func ProvideAPIKeyService(
 	cfg *config.Config,
 	billingCacheService *BillingCacheService,
 	concurrencyService *ConcurrencyService,
+	groupRouteHooks *GroupRouteKeyHooks,
 ) *APIKeyService {
 	svc := NewAPIKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, userGroupRateRepo, cache, cfg)
 	svc.SetRateLimitCacheInvalidator(billingCacheService)
 	svc.SetConcurrencyService(concurrencyService)
+	svc.SetGroupRouteHooks(groupRouteHooks)
 	return svc
 }
 
@@ -617,7 +619,10 @@ var ProviderSet = wire.NewSet(
 	NewProxyService,
 	NewRedeemService,
 	NewCheckinService,
-	NewGroupRouteService, // Key 级分组回退链（PR1：仅注册，尚无消费方）
+	NewGroupRouteService, // Key 级分组回退链
+	NewGroupRouteKeyHooks,
+	NewKeyEditorPriceService,
+	NewKeyFallbackService,
 	NewLegacyInviteService,
 	ProvideLegacyInviteOptions,
 	NewPromoService,

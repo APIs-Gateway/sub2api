@@ -296,7 +296,7 @@ func TestAPIKeyService_GetByIDFillsCurrentConcurrency(t *testing.T) {
 
 func TestProvideAPIKeyServiceSetsConcurrencyService(t *testing.T) {
 	concurrency := NewConcurrencyService(&stubConcurrencyCacheForTest{})
-	svc := ProvideAPIKeyService(nil, nil, nil, nil, nil, nil, &config.Config{}, nil, concurrency)
+	svc := ProvideAPIKeyService(nil, nil, nil, nil, nil, nil, &config.Config{}, nil, concurrency, nil)
 	require.Same(t, concurrency, svc.concurrencyService)
 }
 
