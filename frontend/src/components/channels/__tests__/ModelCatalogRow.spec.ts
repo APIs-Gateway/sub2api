@@ -90,13 +90,13 @@ describe('ModelCatalogRow', () => {
   it('shows the cheapest group balance price in the collapsed row', () => {
     const w = mount(ModelCatalogRow, { props: { model: model() } })
     // 1e-6 * 1e6 * 0.65 / 13 = 0.05
-    expect(w.get('[data-test="start-prices"]').text()).toContain('¥0.050')
+    expect(w.get('[data-test="start-prices"]').text()).toContain('¥0.05')
     expect(w.find('[data-test="catalog-panel"]').exists()).toBe(false)
   })
 
   it('expands to hero prices, struck-through official price, and the group table with lowest tag', () => {
     const w = mount(ModelCatalogRow, { props: { model: model(), expanded: true, subscriptionUnit: unit } })
-    expect(w.get('[data-test="hero-prices"]').text()).toContain('¥0.050')
+    expect(w.get('[data-test="hero-prices"]').text()).toContain('¥0.05')
     // 官方价 1 美元 * 7 = ¥7.00，高于展示价，所以加删除线
     const official = w.get('[data-test="official-price"]')
     expect(official.text()).toContain('Official price')
@@ -109,7 +109,7 @@ describe('ModelCatalogRow', () => {
     expect(rows[0].attributes('data-lowest')).toBe('true')
     expect(rows[1].text()).not.toContain('Lowest')
     // 套餐价区间：0.65 * 0.05 = 0.0325 ~ 0.065
-    expect(rows[0].get('[data-test="plan-cell"]').text()).toContain('¥0.033–¥0.065')
+    expect(rows[0].get('[data-test="plan-cell"]').text()).toContain('¥0.0325–¥0.065')
   })
 
   it('hides official price when the backend does not provide a rate', () => {
@@ -154,7 +154,7 @@ describe('ModelCatalogRow', () => {
     expect(tier.text()).toContain('Up to 200K')
     expect(tier.text()).toContain('Over 200K')
     // 2e-6*1e6*0.65/13 = 0.1
-    expect(tier.text()).toContain('¥0.100')
+    expect(tier.text()).toContain('¥0.10')
   })
 
   it('shows a per-request model that only has interval pricing', () => {
@@ -198,7 +198,7 @@ describe('ModelCatalogRow', () => {
     publicSettings.value = null
     const w = mount(ModelCatalogRow, { props: { model: model(), expanded: true } })
     // 最低倍率 0.65：展示价 $0.65，官方价 $1 更高
-    expect(w.get('[data-test="official-price"] .line-through').text()).toBe('$1')
+    expect(w.get('[data-test="official-price"] .line-through').text()).toBe('$1.00')
   })
 
   it('shows the cache write price in the hero, group table and tier table only when configured', () => {
@@ -227,14 +227,14 @@ describe('ModelCatalogRow', () => {
     // 2.6e-6 * 1e6 * 0.65 / 13 = 0.13
     const hero = w.get('[data-test="hero-prices"]').text()
     expect(hero).toContain('Cache write')
-    expect(hero).toContain('¥0.130')
+    expect(hero).toContain('¥0.13')
     const groupHeaders = w.findAll('[data-test="group-table"] thead th').map((th) => th.text())
     expect(groupHeaders).toContain('Cache write')
-    expect(w.findAll('[data-test="group-table"] tbody tr')[0].text()).toContain('¥0.130')
+    expect(w.findAll('[data-test="group-table"] tbody tr')[0].text()).toContain('¥0.13')
     const tierHeaders = w.findAll('[data-test="tier-table"] thead th').map((th) => th.text())
     expect(tierHeaders).toContain('Cache write')
     // 第二档 5.2e-6 * 1e6 * 0.65 / 13 = 0.26
-    expect(w.get('[data-test="tier-table"]').text()).toContain('¥0.260')
+    expect(w.get('[data-test="tier-table"]').text()).toContain('¥0.26')
 
     const none = mount(ModelCatalogRow, { props: { model: model(), expanded: true } })
     expect(none.text()).not.toContain('Cache write')
@@ -343,8 +343,8 @@ describe('ModelCatalogRow', () => {
     const freeUsd = mount(ModelCatalogRow, {
       props: { model: model({ billing_mode: 'per_request', input_price: null, output_price: null, cache_read_price: null, per_request_price: 0 }) },
     })
-    expect(freeUsd.get('[data-test="start-prices"]').text()).toContain('$0')
-    expect(freeUsd.get('[data-test="start-prices"]').text()).not.toContain('$0.')
+    expect(freeUsd.get('[data-test="start-prices"]').text()).toContain('$0.00')
+    expect(freeUsd.text()).not.toContain('No pricing')
   })
 
   it('binds aria-controls only while the panel is rendered', () => {

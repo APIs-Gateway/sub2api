@@ -27,8 +27,9 @@
           <LoadingSpinner size="md" />
         </div>
         <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">{{ t('dashboard.modelDistribution') }}</h3>
-        <div class="flex flex-col items-center gap-4 sm:flex-row sm:gap-6">
-          <div class="h-48 w-48 shrink-0">
+        <!-- 官方价列出现时（美元口径）表格有 5 列，横排放不下，环形图改到表格上方 -->
+        <div :class="['flex flex-col items-center gap-4', showOfficial ? '' : 'sm:flex-row']">
+          <div class="h-36 w-36 shrink-0">
             <Doughnut v-if="modelData" :data="modelData" :options="doughnutOptions" />
             <div v-else class="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400">{{ t('dashboard.noDataAvailable') }}</div>
           </div>
@@ -37,19 +38,19 @@
               <thead>
                 <tr class="text-gray-500 dark:text-gray-400">
                   <th class="pb-2 text-left">{{ t('dashboard.model') }}</th>
-                  <th class="pb-2 text-right">{{ t('dashboard.requests') }}</th>
-                  <th class="pb-2 text-right">{{ t('dashboard.tokens') }}</th>
-                  <th class="pb-2 text-right">{{ t('dashboard.actual') }}</th>
-                  <th v-if="showOfficial" class="pb-2 text-right">{{ t('dashboard.standard') }}</th>
+                  <th class="whitespace-nowrap pb-2 pl-2.5 text-right">{{ t('dashboard.requests') }}</th>
+                  <th class="whitespace-nowrap pb-2 pl-2.5 text-right">{{ t('dashboard.tokens') }}</th>
+                  <th class="whitespace-nowrap pb-2 pl-2.5 text-right">{{ t('dashboard.actual') }}</th>
+                  <th v-if="showOfficial" class="whitespace-nowrap pb-2 pl-2.5 text-right">{{ t('dashboard.standard') }}</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="model in models" :key="model.model" class="border-t border-gray-100 dark:border-gray-700">
-                  <td class="max-w-[100px] truncate py-1.5 font-medium text-gray-900 dark:text-white" :title="model.model">{{ model.model }}</td>
-                  <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">{{ formatNumber(model.requests) }}</td>
-                  <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">{{ formatTokens(model.total_tokens) }}</td>
-                  <td class="py-1.5 text-right text-green-600 dark:text-green-400">{{ formatMixed(model.actual_cost, model.actual_cost_fiat) }}</td>
-                  <td v-if="showOfficial" class="py-1.5 text-right text-gray-400 dark:text-gray-500">{{ formatStandard(model.cost) }}</td>
+                  <td class="max-w-[84px] truncate py-1.5 font-medium text-gray-900 dark:text-white" :title="model.model">{{ model.model }}</td>
+                  <td class="num-secondary whitespace-nowrap py-1.5 pl-2.5 text-right text-gray-600 dark:text-gray-400">{{ formatNumber(model.requests) }}</td>
+                  <td class="num-secondary whitespace-nowrap py-1.5 pl-2.5 text-right text-gray-600 dark:text-gray-400" :title="formatNumber(model.total_tokens)">{{ formatTokens(model.total_tokens) }}</td>
+                  <td class="num-secondary whitespace-nowrap py-1.5 pl-2.5 text-right text-green-600 dark:text-green-400" :title="formatMixed(model.actual_cost, model.actual_cost_fiat, EXACT_DIGITS)">{{ formatMixed(model.actual_cost, model.actual_cost_fiat) }}</td>
+                  <td v-if="showOfficial" class="num-secondary whitespace-nowrap py-1.5 pl-2.5 text-right font-normal text-gray-400 dark:text-gray-500" :title="formatStandard(model.cost, EXACT_DIGITS)">{{ formatStandard(model.cost) }}</td>
                 </tr>
               </tbody>
             </table>
@@ -58,7 +59,7 @@
       </div>
 
       <!-- Token Usage Trend Chart -->
-      <TokenUsageTrend :trend-data="trend" :loading="loading" :format-actual-cost="formatTrendActualCost" :format-standard-cost="formatTrendStandardCost" />
+      <TokenUsageTrend :trend-data="trend" :loading="loading" unified-typography :format-actual-cost="formatTrendActualCost" :format-standard-cost="formatTrendStandardCost" />
     </div>
   </div>
 </template>
@@ -71,9 +72,10 @@ import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import Select from '@/components/common/Select.vue'
 import { Doughnut } from 'vue-chartjs'
 import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
-import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { EXACT_DIGITS, type MoneyDigits, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import type { TrendDataPoint, ModelStat } from '@/types'
-import { formatCostFixed as formatCost, formatNumberLocaleString as formatNumber, formatTokensK as formatTokens } from '@/utils/format'
+import { formatCount as formatNumber, formatCompactCount } from '@/utils/numberFormat'
+import { CHART_FONT_FAMILY } from '@/utils/chartTypography'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Title, Tooltip, Legend, Filler } from 'chart.js'
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Title, Tooltip, Legend, Filler)
 
@@ -84,7 +86,7 @@ const { t } = useI18n()
 // 后端没提供汇率时整列隐藏，不混排 $。
 const { formatMixed, isFiat, officialCnyRate, formatOfficial } = useCurrencyDisplay()
 const showOfficial = computed(() => !isFiat.value || officialCnyRate.value > 0)
-const formatStandard = (usd: number) => (isFiat.value ? (formatOfficial(usd) ?? '') : `$${formatCost(usd)}`)
+const formatStandard = (usd: number, digits?: MoneyDigits) => formatOfficial(usd, digits) ?? ''
 const formatTrendStandardCost = (point: TrendDataPoint) => (showOfficial.value ? formatStandard(point.cost) : null)
 const formatTrendActualCost = (point: TrendDataPoint) => formatMixed(point.actual_cost, point.actual_cost_fiat)
 
@@ -96,7 +98,10 @@ const modelData = computed(() => !props.models?.length ? null : {
   }]
 })
 
+const formatTokens = (value: number) => formatCompactCount(value, { allowBillions: false })
+
 const doughnutOptions = {
+  font: { family: CHART_FONT_FAMILY },
   responsive: true,
   maintainAspectRatio: false,
   plugins: {

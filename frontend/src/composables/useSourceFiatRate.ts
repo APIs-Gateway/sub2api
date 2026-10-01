@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 
-import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { useCurrencyDisplay, type MoneyDigits } from '@/composables/useCurrencyDisplay'
 import { useSubscriptionStore } from '@/stores/subscriptions'
 
 /**
@@ -37,9 +37,9 @@ export function useSourceFiatRate() {
   const usesSubscriptionRate = computed(() => activeCardRate.value !== null)
 
   /** 额度上限的展示：人民币模式下是「≈¥x」，美元模式下是原始额度。 */
-  function formatLimit(credits: number | null | undefined, fractionDigits = 2): string {
-    if (!isFiat.value) return formatUsd(credits, fractionDigits)
-    return `≈${formatFiat(fiatFromCredits(credits, sourceFiatPerCredit.value))}`
+  function formatLimit(credits: number | null | undefined, digits?: MoneyDigits): string {
+    if (!isFiat.value) return formatUsd(credits, digits)
+    return `≈${formatFiat(fiatFromCredits(credits, sourceFiatPerCredit.value), digits)}`
   }
 
   /** 输入框：用户填的人民币按当前来源单价换算回额度。 */

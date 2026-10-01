@@ -32,14 +32,14 @@
               class="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-1 border-t border-gray-100 px-4 py-2.5 dark:border-dark-800"
               data-test="overview-stats"
             >
-              <p class="text-sm text-gray-600 dark:text-dark-400" data-test="overview-enabled">
+              <p class="num text-sm text-gray-600 dark:text-dark-400" data-test="overview-enabled">
                 {{ overview.partial
                   ? t('keys.overview.enabledList', { active: overview.enabled, shown: apiKeys.length })
                   : t('keys.overview.enabled', { active: overview.enabled, total: pagination.total }) }}
               </p>
-              <p class="text-sm text-gray-600 dark:text-dark-400">
+              <p class="num text-sm text-gray-600 dark:text-dark-400">
                 {{ overview.partial ? t('keys.overview.spentList') : t('keys.overview.spent') }}
-                <span class="ml-1 font-serif text-base tabular-nums text-gray-900 dark:text-white" data-test="overview-spent">{{ overview.spent }}</span>
+                <NumText class="ml-1 font-medium" data-test="overview-spent" :text="overview.spent" />
               </p>
             </div>
           </section>
@@ -126,7 +126,7 @@
           @sort="handleSort"
         >
           <template #cell-id="{ value }">
-            <span class="font-mono text-xs text-gray-500 dark:text-gray-400">#{{ value }}</span>
+            <span class="num text-xs text-gray-500 dark:text-gray-400">#{{ value }}</span>
           </template>
 
           <template #cell-key="{ value, row }">
@@ -229,18 +229,18 @@
                   <span
                     data-test="row-used"
                     :class="[
-                      'font-mono tabular-nums font-medium',
+                      'num-secondary',
                       row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' : 'text-gray-900 dark:text-white'
                     ]"
-                  >{{ formatLimit(row.quota_used, 2) }}</span>
+                  >{{ formatLimit(row.quota_used) }}</span>
                   <span class="text-gray-400 dark:text-dark-500">/</span>
                   <span
                     data-test="row-limit"
                     :class="[
-                      'font-mono tabular-nums',
+                      'num',
                       row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' : 'text-gray-600 dark:text-gray-400'
                     ]"
-                  >{{ formatLimit(row.quota, 2) }}</span>
+                  >{{ formatLimit(row.quota) }}</span>
                 </div>
                 <div class="mt-1.5 h-1.5 w-full max-w-[12rem] overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
                   <div
@@ -253,13 +253,13 @@
                 </div>
                 <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   {{ t('keys.total') }}
-                  <span class="font-mono tabular-nums" data-test="row-recent">{{ recentSpent(row.id) }}</span>
+                  <span class="num" data-test="row-recent">{{ recentSpent(row.id) }}</span>
                 </div>
               </template>
               <!-- 无上限：只有近 30 天消费，旁边直接标出不限额 -->
               <div v-else class="flex flex-wrap items-baseline gap-x-1.5">
                 <span class="text-gray-600 dark:text-gray-400">{{ t('keys.total') }}</span>
-                <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white" data-test="row-recent">{{ recentSpent(row.id) }}</span>
+                <span class="num-secondary text-gray-900 dark:text-white" data-test="row-recent">{{ recentSpent(row.id) }}</span>
                 <span
                   class="rounded-md border border-gray-200 px-1.5 py-px text-xs text-gray-600 dark:border-dark-700 dark:text-gray-400"
                   data-test="row-limit"
@@ -267,7 +267,7 @@
               </div>
               <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 {{ t('keys.today') }}
-                <span class="font-mono tabular-nums">
+                <span class="num">
                   {{ formatMixed(usageStats[row.id]?.today_actual_cost ?? 0, usageStats[row.id]?.today_actual_cost_fiat) }}
                 </span>
               </div>
@@ -281,11 +281,11 @@
                 <div class="flex items-center justify-between text-xs">
                   <span class="text-gray-600 dark:text-gray-400">5h</span>
                   <span :class="[
-                    'font-mono font-medium tabular-nums',
+                    'num-secondary',
                     row.usage_5h >= row.rate_limit_5h ? 'text-primary-700 dark:text-primary-400' :
                     'text-gray-700 dark:text-gray-300'
                   ]">
-                    {{ formatLimit(row.usage_5h, 2) }}/{{ formatLimit(row.rate_limit_5h, 2) }}
+                    {{ formatLimit(row.usage_5h) }}/{{ formatLimit(row.rate_limit_5h) }}
                   </span>
                 </div>
                 <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
@@ -307,11 +307,11 @@
                 <div class="flex items-center justify-between text-xs">
                   <span class="text-gray-600 dark:text-gray-400">1d</span>
                   <span :class="[
-                    'font-mono font-medium tabular-nums',
+                    'num-secondary',
                     row.usage_1d >= row.rate_limit_1d ? 'text-primary-700 dark:text-primary-400' :
                     'text-gray-700 dark:text-gray-300'
                   ]">
-                    {{ formatLimit(row.usage_1d, 2) }}/{{ formatLimit(row.rate_limit_1d, 2) }}
+                    {{ formatLimit(row.usage_1d) }}/{{ formatLimit(row.rate_limit_1d) }}
                   </span>
                 </div>
                 <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
@@ -333,11 +333,11 @@
                 <div class="flex items-center justify-between text-xs">
                   <span class="text-gray-600 dark:text-gray-400">7d</span>
                   <span :class="[
-                    'font-mono font-medium tabular-nums',
+                    'num-secondary',
                     row.usage_7d >= row.rate_limit_7d ? 'text-primary-700 dark:text-primary-400' :
                     'text-gray-700 dark:text-gray-300'
                   ]">
-                    {{ formatLimit(row.usage_7d, 2) }}/{{ formatLimit(row.rate_limit_7d, 2) }}
+                    {{ formatLimit(row.usage_7d) }}/{{ formatLimit(row.rate_limit_7d) }}
                   </span>
                 </div>
                 <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
@@ -682,13 +682,13 @@
             <div v-if="showEditModal && selectedKey && selectedKey.quota > 0">
               <label class="input-label">{{ t('keys.quotaUsed') }}</label>
               <div class="flex items-center gap-2">
-                <div class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800">
-                  <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">
-                    {{ formatLimit(selectedKey.quota_used, 4) }}
+                <div :title="formatLimit(selectedKey.quota_used, EXACT_DIGITS)" class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800">
+                  <span class="num-secondary text-gray-900 dark:text-white">
+                    {{ formatLimit(selectedKey.quota_used) }}
                   </span>
                   <span class="mx-2 text-gray-400">/</span>
-                  <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
-                    {{ formatLimit(selectedKey.quota, 2) }}
+                  <span class="num text-gray-600 dark:text-gray-400">
+                    {{ formatLimit(selectedKey.quota) }}
                   </span>
                 </div>
                 <button
@@ -745,17 +745,17 @@
               <!-- Usage info (edit mode only) -->
               <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_5h > 0" class="mt-2">
                 <div class="flex items-center gap-2">
-                  <div class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
+                  <div :title="formatLimit(selectedKey.usage_5h, EXACT_DIGITS)" class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
                     <span :class="[
-                      'font-mono tabular-nums font-medium',
+                      'num-secondary',
                       selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'text-primary-700 dark:text-primary-400' :
                       'text-gray-900 dark:text-white'
                     ]">
-                      {{ formatLimit(selectedKey.usage_5h, 4) }}
+                      {{ formatLimit(selectedKey.usage_5h) }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
-                    <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
-                      {{ formatLimit(selectedKey.rate_limit_5h, 2) }}
+                    <span class="num text-gray-600 dark:text-gray-400">
+                      {{ formatLimit(selectedKey.rate_limit_5h) }}
                     </span>
                   </div>
                 </div>
@@ -789,17 +789,17 @@
               <!-- Usage info (edit mode only) -->
               <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_1d > 0" class="mt-2">
                 <div class="flex items-center gap-2">
-                  <div class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
+                  <div :title="formatLimit(selectedKey.usage_1d, EXACT_DIGITS)" class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
                     <span :class="[
-                      'font-mono tabular-nums font-medium',
+                      'num-secondary',
                       selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'text-primary-700 dark:text-primary-400' :
                       'text-gray-900 dark:text-white'
                     ]">
-                      {{ formatLimit(selectedKey.usage_1d, 4) }}
+                      {{ formatLimit(selectedKey.usage_1d) }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
-                    <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
-                      {{ formatLimit(selectedKey.rate_limit_1d, 2) }}
+                    <span class="num text-gray-600 dark:text-gray-400">
+                      {{ formatLimit(selectedKey.rate_limit_1d) }}
                     </span>
                   </div>
                 </div>
@@ -833,17 +833,17 @@
               <!-- Usage info (edit mode only) -->
               <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_7d > 0" class="mt-2">
                 <div class="flex items-center gap-2">
-                  <div class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
+                  <div :title="formatLimit(selectedKey.usage_7d, EXACT_DIGITS)" class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
                     <span :class="[
-                      'font-mono tabular-nums font-medium',
+                      'num-secondary',
                       selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'text-primary-700 dark:text-primary-400' :
                       'text-gray-900 dark:text-white'
                     ]">
-                      {{ formatLimit(selectedKey.usage_7d, 4) }}
+                      {{ formatLimit(selectedKey.usage_7d) }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
-                    <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
-                      {{ formatLimit(selectedKey.rate_limit_7d, 2) }}
+                    <span class="num text-gray-600 dark:text-gray-400">
+                      {{ formatLimit(selectedKey.rate_limit_7d) }}
                     </span>
                   </div>
                 </div>
@@ -1038,7 +1038,7 @@
     <ConfirmDialog
       :show="showResetQuotaDialog"
       :title="t('keys.resetQuotaTitle')"
-      :message="t('keys.resetQuotaConfirmMessage', { name: selectedKey?.name, used: formatLimit(selectedKey?.quota_used, 4) })"
+      :message="t('keys.resetQuotaConfirmMessage', { name: selectedKey?.name, used: formatLimit(selectedKey?.quota_used) })"
       :confirm-text="t('keys.reset')"
       :cancel-text="t('common.cancel')"
       :danger="true"
@@ -1144,7 +1144,8 @@
 	import { useOnboardingStore } from '@/stores/onboarding'
 	import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
-import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { EXACT_DIGITS, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import NumText from '@/components/common/NumText.vue'
 import { useSourceFiatRate } from '@/composables/useSourceFiatRate'
 
 const { t } = useI18n()

@@ -19,15 +19,15 @@
             <div class="space-y-2 text-sm">
               <div class="flex justify-between">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.orderId') }}</span>
-                <span class="font-medium text-gray-900 dark:text-white">#{{ orderId }}</span>
+                <span class="num-secondary text-gray-900 dark:text-white">#{{ orderId }}</span>
               </div>
               <div v-if="amount > 0" class="flex justify-between">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.amount') }}</span>
-                <span class="font-medium text-gray-900 dark:text-white">{{ orderType === 'balance' ? '$' : '¥' }}{{ amount.toFixed(2) }}</span>
+                <span class="num-secondary text-gray-900 dark:text-white">{{ orderType === 'balance' ? formatUsdAmount(amount) : formatCnyAmount(amount) }}</span>
               </div>
               <div class="flex justify-between">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</span>
-                <span class="font-medium text-gray-900 dark:text-white">¥{{ payAmount.toFixed(2) }}</span>
+                <span class="num-secondary text-gray-900 dark:text-white">{{ formatCnyAmount(payAmount) }}</span>
               </div>
             </div>
           </div>
@@ -40,7 +40,7 @@
       <div class="card overflow-hidden">
         <div class="bg-gradient-to-br from-[#635bff] to-[#4f46e5] px-6 py-5 text-center">
           <p class="text-sm font-medium text-indigo-200">{{ t('payment.actualPay') }}</p>
-          <p class="mt-1 text-3xl font-bold text-white">¥{{ payAmount.toFixed(2) }}</p>
+          <NumText tier="primary" class="mt-1 block text-white" :text="formatCnyAmount(payAmount)" />
         </div>
       </div>
       <!-- Stripe Payment Element -->
@@ -73,6 +73,8 @@ import { useAppStore } from '@/stores'
 import { getPaymentPopupFeatures } from '@/components/payment/providerConfig'
 import type { Stripe, StripeElements } from '@stripe/stripe-js'
 import Icon from '@/components/icons/Icon.vue'
+import NumText from '@/components/common/NumText.vue'
+import { formatCnyAmount, formatUsdAmount } from '@/utils/numberFormat'
 
 // Stripe payment methods that open a popup (redirect or QR code)
 const POPUP_METHODS = new Set(['alipay', 'wechat_pay'])

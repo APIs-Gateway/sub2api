@@ -14,22 +14,22 @@
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div class="card p-5">
             <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('points.stats.available') }}</p>
-            <p class="mt-2 text-2xl font-semibold font-mono tabular-nums text-gray-900 dark:text-white">{{ overview.account.available.toLocaleString() }}</p>
+            <NumText tier="primary" class="mt-2 block" :text="formatCount(overview.account.available)" />
           </div>
           <div class="card p-5">
             <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('points.stats.frozen') }}</p>
-            <p class="mt-2 text-2xl font-semibold font-mono tabular-nums text-gray-900 dark:text-white">{{ overview.account.frozen.toLocaleString() }}</p>
+            <NumText tier="primary" class="mt-2 block" :text="formatCount(overview.account.frozen)" />
           </div>
           <div class="card p-5">
             <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('points.stats.lifetime') }}</p>
-            <p class="mt-2 text-2xl font-semibold font-mono tabular-nums text-gray-900 dark:text-white">{{ overview.account.lifetime_earned.toLocaleString() }}</p>
+            <NumText tier="primary" class="mt-2 block" :text="formatCount(overview.account.lifetime_earned)" />
           </div>
           <div class="card p-5">
             <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('points.stats.effectiveRate') }}</p>
-            <p class="mt-2 text-2xl font-semibold font-mono tabular-nums text-gray-900 dark:text-white">{{ formatPercent(firstPaymentRate) }}</p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">{{ t('points.stats.firstPaymentRate', { rate: formatPercent(firstPaymentRate) }) }}</p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">{{ t('points.stats.repeatPaymentRate', { rate: formatPercent(repeatPaymentRate) }) }}</p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">{{ t('points.stats.pegValue', { value: formatCurrency(overview.config.peg, 'CNY') }) }}</p>
+            <NumText tier="primary" class="mt-2 block" :text="formatPercent(firstPaymentRate)" />
+            <p class="num-aux mt-1">{{ t('points.stats.firstPaymentRate', { rate: formatPercent(firstPaymentRate) }) }}</p>
+            <p class="num-aux mt-1">{{ t('points.stats.repeatPaymentRate', { rate: formatPercent(repeatPaymentRate) }) }}</p>
+            <p class="num-aux mt-1">{{ t('points.stats.pegValue', { value: formatCurrency(overview.config.peg, 'CNY') }) }}</p>
           </div>
         </div>
 
@@ -57,7 +57,7 @@
             </div>
           </div>
           <p class="mt-4 text-sm text-gray-600 dark:text-gray-400">
-            {{ t('points.invite.count') }}: <span class="font-mono tabular-nums">{{ overview.affiliate.aff_count.toLocaleString() }}</span>
+            {{ t('points.invite.count') }}: <span class="num">{{ formatCount(overview.affiliate.aff_count) }}</span>
           </p>
           <div class="mt-4 rounded-md bg-gray-50 px-4 py-3 text-sm text-gray-700 dark:bg-dark-900 dark:text-gray-300">
             <template v-if="repeatPaymentRate > 0">
@@ -65,8 +65,8 @@
               <p class="mt-1">
                 {{ t('points.invite.rewardExample', {
                   amount: formatCurrency(inviteExampleAmount, 'CNY'),
-                  firstPoints: inviteFirstExamplePoints.toLocaleString(),
-                  repeatPoints: inviteRepeatExamplePoints.toLocaleString(),
+                  firstPoints: formatCount(inviteFirstExamplePoints),
+                  repeatPoints: formatCount(inviteRepeatExamplePoints),
                 }) }}
               </p>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">
@@ -144,10 +144,10 @@
                 </div>
               </template>
               <div class="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-dark-900 dark:text-gray-400 space-y-1">
-                <div v-if="withdrawMethod === 'usdt'" class="flex justify-between"><span>{{ t('points.withdraw.usdtRate') }}</span><span class="font-mono">{{ withdrawUSDCNYEffectiveRate.toFixed(2) }}</span></div>
-                <div class="flex justify-between"><span>{{ t('points.withdraw.gross') }}</span><span class="font-mono">{{ formatWithdrawCurrency(withdrawGross) }}</span></div>
-                <div class="flex justify-between"><span>{{ t('points.withdraw.fee') }} ({{ overview.config.withdraw_fee_percent }}%)</span><span class="font-mono">-{{ formatWithdrawCurrency(withdrawFee) }}</span></div>
-                <div class="flex justify-between font-semibold text-gray-900 dark:text-white"><span>{{ t('points.withdraw.net') }}</span><span class="font-mono">{{ formatWithdrawCurrency(withdrawNet) }}</span></div>
+                <div v-if="withdrawMethod === 'usdt'" class="flex justify-between"><span>{{ t('points.withdraw.usdtRate') }}</span><span class="num">{{ withdrawUSDCNYEffectiveRate.toFixed(2) }}</span></div>
+                <div class="flex justify-between"><span>{{ t('points.withdraw.gross') }}</span><span class="num">{{ formatWithdrawCurrency(withdrawGross) }}</span></div>
+                <div class="flex justify-between"><span>{{ t('points.withdraw.fee') }} ({{ overview.config.withdraw_fee_percent }}%)</span><span class="num">-{{ formatWithdrawCurrency(withdrawFee) }}</span></div>
+                <div class="flex justify-between font-semibold text-gray-900 dark:text-white"><span>{{ t('points.withdraw.net') }}</span><span class="num">{{ formatWithdrawCurrency(withdrawNet) }}</span></div>
               </div>
             </div>
             <button class="btn btn-primary w-full" :disabled="busy || !withdrawPoints" @click="onWithdraw">{{ t('points.withdraw.submit') }}</button>
@@ -198,15 +198,15 @@
               <div v-if="selectedPlan" class="rounded-md bg-gray-50 px-3 py-3 text-sm text-gray-700 dark:bg-dark-900 dark:text-gray-300">
                 <div class="flex items-center justify-between gap-3">
                   <span>{{ selectedPlanActionLabel }}</span>
-                  <span class="font-mono tabular-nums text-gray-900 dark:text-white">
+                  <span class="num-secondary text-gray-900 dark:text-white">
                     <template v-if="planQuoteLoading">{{ t('points.redeemPlan.quoteLoading') }}</template>
-                    <template v-else>{{ selectedPlanPointsPrice.toLocaleString() }} {{ t('points.unit') }}</template>
+                    <template v-else>{{ formatCount(selectedPlanPointsPrice) }} {{ t('points.unit') }}</template>
                   </span>
                 </div>
                 <p v-if="planQuoteError" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ planQuoteError }}</p>
                 <div class="mt-1 flex items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-500">
                   <span>{{ t('points.redeemPlan.capSummary') }}</span>
-                  <span class="font-mono tabular-nums">{{ formatCurrency(selectedPlan.weekly_cap_usd) }} / {{ formatCurrency(selectedPlan.monthly_cap_usd) }}</span>
+                  <span class="num">{{ formatCurrency(selectedPlan.weekly_cap_usd) }} / {{ formatCurrency(selectedPlan.monthly_cap_usd) }}</span>
                 </div>
               </div>
               <button
@@ -240,8 +240,8 @@
                 <tr v-for="row in ledger" :key="row.id">
                   <td class="text-gray-600 dark:text-gray-400">{{ formatDateTime(row.created_at) }}</td>
                   <td>{{ kindLabel(row.kind) }}</td>
-                  <td class="text-right font-mono tabular-nums" :class="row.points >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-900 dark:text-white'">{{ row.points >= 0 ? '+' : '' }}{{ row.points.toLocaleString() }}</td>
-                  <td class="text-right font-mono tabular-nums text-gray-500">{{ row.available_after != null ? row.available_after.toLocaleString() : '—' }}</td>
+                  <td class="num-secondary text-right" :class="row.points >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-900 dark:text-white'">{{ row.points >= 0 ? '+' : '' }}{{ formatCount(row.points) }}</td>
+                  <td class="num text-right text-gray-500">{{ row.available_after != null ? formatCount(row.available_after) : '—' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -275,7 +275,9 @@ import { useAppStore } from '@/stores/app'
 import { useSubscriptionStore } from '@/stores/subscriptions'
 import { useClipboard } from '@/composables/useClipboard'
 import { extractApiErrorMessage } from '@/utils/apiError'
-import { formatCurrency, formatDateTime } from '@/utils/format'
+import { formatDateTime } from '@/utils/format'
+import { formatCount, formatCurrencyAmount as formatCurrency } from '@/utils/numberFormat'
+import NumText from '@/components/common/NumText.vue'
 import type { UserSubscription } from '@/types'
 
 const { t } = useI18n()
@@ -481,7 +483,7 @@ async function onRedeemPlan(plan: PointsPlanOption): Promise<void> {
   const planName = t('points.redeemPlan.planTitle', { d: plan.daily_amount_usd })
   if (!window.confirm(t('points.redeemPlan.confirm', {
     action: selectedPlanSubmitLabel.value,
-    points: selectedPlanPointsPrice.value.toLocaleString(),
+    points: formatCount(selectedPlanPointsPrice.value),
     plan: planName,
   }))) return
   busy.value = true

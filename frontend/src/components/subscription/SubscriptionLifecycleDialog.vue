@@ -20,7 +20,7 @@
           <label class="input-label">{{ t('userSubscriptions.lifecycle.dailyAmount') }}</label>
           <!-- 续费：D 固定为当前卡，只读展示 -->
           <div v-if="mode === 'renew'" class="input flex items-center justify-between bg-gray-50 dark:bg-dark-800/40">
-            <span class="font-mono tabular-nums">${{ dailyAmount }}</span>
+            <NumText tier="secondary" :text="formatPlanValue(dailyAmount)" />
             <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.perDay') }}（{{ t('userSubscriptions.lifecycle.dFixed') }}）</span>
           </div>
           <!-- 转套餐：D 可改 -->
@@ -40,7 +40,7 @@
               :min="dailyAmountMin"
               :max="dailyAmountMax"
               :step="dailyAmountStep"
-              class="input w-24 text-right font-mono tabular-nums"
+              class="input num w-24 text-right"
               @change="clampDailyAndQuote"
             />
           </div>
@@ -76,7 +76,7 @@
           <template v-else-if="mode === 'renew' && renewQuoteData">
             <div class="flex items-baseline justify-between">
               <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.renewPrice') }}</span>
-              <span class="text-lg font-bold text-gray-900 dark:text-white">{{ formatPaymentValue(renewQuoteData.price) }}</span>
+              <NumText tier="secondary" :text="formatPaymentValue(renewQuoteData.price)" />
             </div>
             <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('userSubscriptions.lifecycle.renewValue') }}: {{ formatPlanValue(renewQuoteData.price) }}
@@ -85,7 +85,7 @@
           <template v-else-if="mode === 'change' && changeQuoteData">
             <div class="flex items-baseline justify-between">
               <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.changeDiff') }}</span>
-              <span class="text-lg font-bold text-gray-900 dark:text-white">{{ formatPaymentValue(changeQuoteData.diff) }}</span>
+              <NumText tier="secondary" :text="formatPaymentValue(changeQuoteData.diff)" />
             </div>
             <div class="mt-1 space-y-0.5 text-xs text-gray-500 dark:text-gray-400">
               <div>{{ t('userSubscriptions.lifecycle.changeDiffValue') }}: {{ formatPlanValue(changeQuoteData.diff) }}</div>
@@ -129,6 +129,8 @@ import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from
 import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 import type { UserSubscription } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import NumText from '@/components/common/NumText.vue'
+import { formatUsdAmount } from '@/utils/numberFormat'
 
 const props = withDefaults(defineProps<{
   show: boolean
@@ -214,7 +216,7 @@ function roundMoney(value: number): number {
 }
 
 function formatPlanValue(value: number): string {
-  return `$${roundMoney(value).toFixed(2)}`
+  return formatUsdAmount(roundMoney(value))
 }
 
 function formatPaymentValue(value: number): string {

@@ -17,7 +17,7 @@
         <div v-if="order" class="card overflow-hidden">
           <div class="border-b border-gray-200 bg-white px-6 py-6 text-center dark:border-dark-700 dark:bg-dark-800">
             <p class="text-sm font-medium text-gray-600 dark:text-gray-400">{{ t('payment.actualPay') }}</p>
-            <p class="mt-1 font-mono tabular-nums text-3xl font-bold text-gray-900 dark:text-white">{{ formatGatewayAmount(order.pay_amount) }}</p>
+            <p class="num-primary mt-1">{{ formatGatewayAmount(order.pay_amount) }}</p>
           </div>
         </div>
 

@@ -9,9 +9,11 @@
         <Icon :name="primaryIcon" size="xs" />
         <span>{{ primaryLabel }}</span>
       </div>
-      <div class="mt-1.5 text-lg font-bold font-mono tabular-nums text-gray-900 dark:text-gray-100">
-        {{ primaryValue }}<span class="text-xs font-normal text-gray-400 ml-0.5">{{ primaryUnit }}</span>
-      </div>
+      <NumText
+        tier="secondary"
+        class="mt-1.5 block text-lg text-gray-900 dark:text-gray-100"
+        :text="primaryUnit ? `${primaryValue} ${primaryUnit}` : primaryValue"
+      />
     </div>
     <div
       class="rounded-xl p-3 bg-gray-50/80 dark:bg-dark-900/40 border border-gray-100 dark:border-dark-700/50"
@@ -22,15 +24,18 @@
         <Icon :name="secondaryIcon" size="xs" />
         <span>{{ secondaryLabel }}</span>
       </div>
-      <div class="mt-1.5 text-lg font-bold font-mono tabular-nums text-gray-900 dark:text-gray-100">
-        {{ secondaryValue }}<span class="text-xs font-normal text-gray-400 ml-0.5">{{ secondaryUnit }}</span>
-      </div>
+      <NumText
+        tier="secondary"
+        class="mt-1.5 block text-lg text-gray-900 dark:text-gray-100"
+        :text="secondaryUnit ? `${secondaryValue} ${secondaryUnit}` : secondaryValue"
+      />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import Icon from '@/components/icons/Icon.vue'
+import NumText from '@/components/common/NumText.vue'
 
 defineProps<{
   primaryLabel: string

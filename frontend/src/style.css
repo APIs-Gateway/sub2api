@@ -30,7 +30,8 @@
     font-feature-settings: 'tnum' 1, 'zero' 1;
   }
 
-  /* 记录之声：Fraunces 衬线数字走等宽 + 衬线 lining，使英雄数字也能进列 */
+  /* 衬线只用于标题：标题里偶尔出现的数字走 lining，不出现在行高之外。
+     数字内容本身不要用衬线，见下方 .num-* 数字排印。 */
   .font-serif {
     font-feature-settings: 'lnum' 1, 'tnum' 1;
   }
@@ -257,21 +258,80 @@
     @apply text-xs font-medium text-gray-600 dark:text-dark-400;
   }
 
-  .metric-value {
-    /* 机器之声：等宽表格数字承载所有次级数据 */
-    @apply font-mono text-lg font-medium tabular-nums text-gray-900 dark:text-gray-100;
+  /* ============ 数字排印（全站统一） ============
+     数字一律用无衬线（Space Grotesk）+ 表格数字：不用等宽、不用衬线。
+     等宽只留给密钥、代码、命令；衬线只留给标题。
+     三档层级：
+       .num-primary   主指标：卡片里的大数字，所有卡片同字号同字重，不单独放大任何一个
+       .num-secondary 次级数值：表格、列表、明细行里的数（字号随所在行，字重 500）
+       .num-aux       辅助数字：副标题、说明行里的数
+     货币符号与单位（¥ $ M s RPM %）由 <NumText> 拆出来套 .num-unit：同族字体，
+     字号略小、颜色略浅，与数字的间距各档一致。 */
+  .num,
+  .num-primary,
+  .num-secondary,
+  .num-aux {
+    @apply font-sans;
+    font-variant-numeric: tabular-nums lining-nums;
+    font-feature-settings: 'tnum' 1, 'lnum' 1;
   }
 
-  /* 唯一的英雄数字：Fraunces + 黏土，每屏至多一个 */
-  .metric-hero {
-    @apply font-serif tabular-nums text-primary-700 dark:text-primary-400;
-    @apply text-4xl font-medium leading-none;
-    font-feature-settings: 'lnum' 1, 'tnum' 1;
+  .num-primary {
+    @apply text-[1.625rem] font-medium leading-tight text-gray-900 dark:text-white;
+    letter-spacing: -0.015em;
+    --num-unit-size: 0.58em;
+  }
+
+  .num-secondary {
+    /* 字号跟随所在表格 / 列表行（表格 text-sm，密集明细行 text-xs），只统一字体和字重 */
+    @apply font-medium;
+    --num-unit-size: 0.86em;
+  }
+
+  .num-aux {
+    @apply text-xs text-gray-500 dark:text-gray-400;
+    --num-unit-size: 0.92em;
+  }
+
+  .num-unit {
+    font-size: var(--num-unit-size, 0.86em);
+    font-weight: 400;
+    letter-spacing: 0;
+    opacity: 0.68;
+  }
+
+  /* 辅助数字本身已是 gray-500 小字，单位再淡到 0.68 对比度不够，这里抬高 */
+  .num-aux .num-unit {
+    opacity: 0.88;
+  }
+
+  /* 符号在前、单位在后，与数字的间距固定（随各档字号等比缩放） */
+  .num-unit-pre {
+    margin-right: 0.04em;
+    /* 默认（secondary / aux / 句中行内）：符号与数字同字号、同颜色、同字重，紧贴数字 */
+    font-size: inherit;
+    font-weight: inherit;
+    opacity: 1;
+  }
+
+  /* 只有卡片主数字里的符号略小、略淡 */
+  .num-primary .num-unit-pre {
+    font-size: var(--num-unit-size);
+    font-weight: 400;
+    opacity: 0.68;
+  }
+
+  .num-unit-post {
+    margin-left: 0.22em;
+  }
+
+  .metric-value {
+    /* 主指标：与 .num-primary 同一档，仪表盘每格同字号同字重 */
+    @apply num-primary;
   }
 
   .stat-value {
-    /* 通用统计值收归机器之声（等宽），不再用衬线大字 */
-    @apply font-mono text-2xl font-medium tabular-nums text-gray-900 dark:text-white truncate;
+    @apply num-primary truncate;
   }
 
   .stat-label {
@@ -321,10 +381,10 @@
     @apply hover:bg-gray-100 dark:hover:bg-dark-800/40;
   }
 
-  /* 数字单元格：右对齐等宽，承载小数点对齐 */
+  /* 数字单元格：无衬线表格数字，小数点对齐（不再用等宽） */
   .table .num,
   .data {
-    @apply font-mono tabular-nums;
+    @apply font-sans tabular-nums;
   }
 
   /* ============ 徽章样式（发丝标签 / 点+词，去彩虹） ============ */

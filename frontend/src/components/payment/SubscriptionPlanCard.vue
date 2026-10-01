@@ -26,7 +26,7 @@
         </div>
         <div class="shrink-0 text-right">
           <div class="flex items-baseline gap-1">
-            <span :class="['text-2xl font-extrabold tracking-tight', textClass]">{{ formattedPlanPrice }}</span>
+            <NumText tier="primary" :class="textClass" :text="formattedPlanPrice" />
             <span v-if="plan.currency" class="text-xs font-medium text-gray-400 dark:text-dark-500">{{ plan.currency }}</span>
           </div>
           <div class="flex items-center justify-end gap-1">
@@ -36,7 +36,7 @@
             <span class="text-[11px] text-gray-400 dark:text-dark-500">/ {{ validitySuffix }}</span>
           </div>
           <div v-if="plan.original_price" class="mt-0.5 flex items-center justify-end gap-1.5">
-            <span class="text-xs text-gray-400 line-through dark:text-dark-500">{{ formattedOriginalPrice }}</span>
+            <span class="num text-xs text-gray-400 line-through dark:text-dark-500">{{ formattedOriginalPrice }}</span>
             <span v-if="plan.currency" class="text-xs text-gray-400 dark:text-dark-500">{{ plan.currency }}</span>
             <span :class="['rounded px-1 py-0.5 text-[10px] font-semibold', discountClass]">{{ discountText }}</span>
           </div>
@@ -47,23 +47,23 @@
       <div class="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-dark-700/50">
         <div class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.rate') }}</span>
-          <span class="font-medium text-gray-700 dark:text-gray-300">{{ rateDisplay }}</span>
+          <span class="num-secondary text-gray-700 dark:text-gray-300">{{ rateDisplay }}</span>
         </div>
         <div v-if="plan.daily_amount_usd != null && plan.daily_amount_usd > 0" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.dailyAmount') }}</span>
-          <span class="font-medium text-gray-700 dark:text-gray-300">${{ plan.daily_amount_usd }}</span>
+          <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatUsdAmount(plan.daily_amount_usd)" />
         </div>
         <div v-if="planConcurrency > 0" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.concurrency') }}</span>
-          <span class="font-medium text-gray-700 dark:text-gray-300">{{ planConcurrency }}</span>
+          <span class="num-secondary text-gray-700 dark:text-gray-300">{{ planConcurrency }}</span>
         </div>
         <div v-if="plan.weekly_limit_usd != null" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.weeklyLimit') }}</span>
-          <span class="font-medium text-gray-700 dark:text-gray-300">${{ plan.weekly_limit_usd }}</span>
+          <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatUsdAmount(plan.weekly_limit_usd)" />
         </div>
         <div v-if="plan.monthly_limit_usd != null" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.monthlyLimit') }}</span>
-          <span class="font-medium text-gray-700 dark:text-gray-300">${{ plan.monthly_limit_usd }}</span>
+          <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatUsdAmount(plan.monthly_limit_usd)" />
         </div>
         <div v-if="(plan.daily_amount_usd == null || plan.daily_amount_usd <= 0) && plan.weekly_limit_usd == null && plan.monthly_limit_usd == null" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.quota') }}</span>
@@ -120,6 +120,8 @@ import { useI18n } from 'vue-i18n'
 import type { SubscriptionPlan } from '@/types/payment'
 import type { UserSubscription } from '@/types'
 import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
+import NumText from '@/components/common/NumText.vue'
+import { formatUsdAmount } from '@/utils/numberFormat'
 import { planValiditySuffix } from '@/components/payment/validity'
 import {
   platformAccentBarClass,

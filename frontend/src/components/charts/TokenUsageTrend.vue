@@ -35,6 +35,8 @@ import {
 import { Line } from 'vue-chartjs'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import type { TrendDataPoint } from '@/types'
+import { CHART_FONT_FAMILY } from '@/utils/chartTypography'
+import { formatCompactCount, formatCount, formatUsdAmount } from '@/utils/numberFormat'
 
 ChartJS.register(
   CategoryScale,
@@ -59,6 +61,11 @@ const props = defineProps<{
   formatActualCost?: (point: TrendDataPoint) => string
   /** 官方价（Standard）的展示；返回 null 表示当前口径下无法给出，tooltip 中隐藏该项。后台不传。 */
   formatStandardCost?: (point: TrendDataPoint) => string | null
+  /**
+   * 用户端数字排印：坐标轴用统一缩写、tooltip 用完整千分位、金额走统一金额规则、字体与站点一致。
+   * 后台不传，保持原来的缩写、金额写法和 Chart.js 默认字体。
+   */
+  unifiedTypography?: boolean
 }>()
 
 const isDarkMode = computed(() => {
@@ -137,6 +144,8 @@ const lineOptions = computed(() => ({
     intersect: false,
     mode: 'index' as const
   },
+  // 只对本图表生效，不改 Chart.defaults（那是全局的，会连带后台图表）。
+  ...(props.unifiedTypography ? { font: { family: CHART_FONT_FAMILY } } : {}),
   plugins: {
     legend: {
       position: 'top' as const,
@@ -156,7 +165,7 @@ const lineOptions = computed(() => ({
           if (context.dataset.yAxisID === 'yPercent') {
             return `${context.dataset.label}: ${context.raw.toFixed(1)}%`
           }
-          return `${context.dataset.label}: ${formatTokens(context.raw)}`
+          return `${context.dataset.label}: ${formatTooltipTokens(context.raw)}`
         },
         footer: (tooltipItems: any) => {
           const dataIndex = tooltipItems[0]?.dataIndex
@@ -164,10 +173,10 @@ const lineOptions = computed(() => ({
             const data = props.trendData[dataIndex]
             const actual = props.formatActualCost
               ? props.formatActualCost(data)
-              : `$${formatCost(data.actual_cost)}`
+              : formatCost(data.actual_cost)
             const standard = props.formatStandardCost
               ? props.formatStandardCost(data)
-              : `$${formatCost(data.cost)}`
+              : formatCost(data.cost)
             return standard == null ? `Actual: ${actual}` : `Actual: ${actual} | Standard: ${standard}`
           }
           return ''
@@ -218,6 +227,7 @@ const lineOptions = computed(() => ({
 }))
 
 const formatTokens = (value: number): string => {
+  if (props.unifiedTypography) return formatCompactCount(value)
   if (value >= 1_000_000_000) {
     return `${(value / 1_000_000_000).toFixed(2)}B`
   } else if (value >= 1_000_000) {
@@ -228,14 +238,20 @@ const formatTokens = (value: number): string => {
   return value.toLocaleString()
 }
 
+// tooltip 是看明细的地方：统一排印下给完整千分位，不用缩写吞掉位数。
+const formatTooltipTokens = (value: number): string =>
+  props.unifiedTypography ? formatCount(value) : formatTokens(value)
+
+// 美元金额（含 $）。统一排印走全站金额规则，否则保持后台原来的写法。
 const formatCost = (value: number): string => {
+  if (props.unifiedTypography) return formatUsdAmount(value)
   if (value >= 1000) {
-    return (value / 1000).toFixed(2) + 'K'
+    return `$${(value / 1000).toFixed(2)}K`
   } else if (value >= 1) {
-    return value.toFixed(2)
+    return `$${value.toFixed(2)}`
   } else if (value >= 0.01) {
-    return value.toFixed(3)
+    return `$${value.toFixed(3)}`
   }
-  return value.toFixed(4)
+  return `$${value.toFixed(4)}`
 }
 </script>

@@ -89,9 +89,12 @@
         <div v-for="w in configuredWindows" :key="w.key" class="space-y-2">
           <div class="flex items-center justify-between">
             <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ w.label }}</span>
-            <span class="font-mono tabular-nums text-sm text-gray-900 dark:text-white">
-              ${{ (w.used || 0).toFixed(2) }} / ${{ (w.limit ?? 0).toFixed(2) }}
-            </span>
+            <NumText
+              tier="secondary"
+              class="text-sm text-gray-900 dark:text-white"
+              :text="`${formatUsdAmount(w.used || 0)} / ${formatUsdAmount(w.limit ?? 0)}`"
+              :title="`${formatUsdAmount(w.used || 0, EXACT_DIGITS)} / ${formatUsdAmount(w.limit ?? 0, EXACT_DIGITS)}`"
+            />
           </div>
           <div class="relative h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
             <div
@@ -112,7 +115,7 @@
         class="flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 py-6 dark:border-dark-700 dark:bg-dark-800/40"
       >
         <div class="flex items-center gap-3">
-          <span class="font-mono text-4xl text-gray-900 dark:text-white">∞</span>
+          <span class="text-4xl text-gray-900 dark:text-white">∞</span>
           <div>
             <p class="text-sm font-medium text-gray-900 dark:text-white">
               {{ t('userSubscriptions.unlimited') }}
@@ -162,6 +165,9 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import SubscriptionLifecycleDialog from '@/components/subscription/SubscriptionLifecycleDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import NumText from '@/components/common/NumText.vue'
+import { EXACT_DIGITS } from '@/composables/useCurrencyDisplay'
+import { formatUsdAmount } from '@/utils/numberFormat'
 import subscriptionsAPI from '@/api/subscriptions'
 import { useAppStore } from '@/stores'
 import type { UserSubscription } from '@/types'
@@ -394,8 +400,7 @@ function platformAccentDotClass(_p: string): string {
 }
 
 function formatUSD(value: number): string {
-  const rounded = Math.round(value * 100) / 100
-  return `$${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(2)}`
+  return formatUsdAmount(value)
 }
 
 function daysRemaining(expiresAt: string): number {
@@ -447,9 +452,9 @@ function getExpirationClass(expiresAt: string): string {
   const diff = expires.getTime() - now.getTime()
   const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
 
-  if (diff <= 0) return 'font-mono tabular-nums text-primary-700 dark:text-primary-300 font-medium'
-  if (days <= 3) return 'font-mono tabular-nums text-primary-700 dark:text-primary-300'
-  return 'font-mono tabular-nums text-gray-700 dark:text-gray-300'
+  if (diff <= 0) return 'num text-primary-700 dark:text-primary-300 font-medium'
+  if (days <= 3) return 'num text-primary-700 dark:text-primary-300'
+  return 'num text-gray-700 dark:text-gray-300'
 }
 
 function formatDurationParts(parts: RemainingDurationParts): string {

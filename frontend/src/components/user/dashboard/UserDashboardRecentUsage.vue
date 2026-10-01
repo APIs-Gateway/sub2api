@@ -23,11 +23,22 @@
             </div>
           </div>
           <div class="text-right">
-            <p class="text-sm font-semibold">
-              <span class="text-green-600 dark:text-green-400" :title="t('dashboard.actual')">{{ formatMixed(log.actual_cost, log.fiat_cost) }}</span>
-              <span v-if="!isFiat" class="font-normal text-gray-400 dark:text-gray-500" :title="t('dashboard.standard')"> / ${{ formatCost(log.total_cost) }}</span>
+            <p class="text-sm">
+              <NumText
+                tier="secondary"
+                class="text-green-600 dark:text-green-400"
+                :text="formatMixed(log.actual_cost, log.fiat_cost)"
+                :title="`${t('dashboard.actual')}: ${formatMixed(log.actual_cost, log.fiat_cost, EXACT_DIGITS)}`"
+              />
+              <NumText
+                v-if="!isFiat"
+                tier="secondary"
+                class="ml-1 font-normal text-gray-400 dark:text-gray-500"
+                :text="`/ ${formatUsd(log.total_cost)}`"
+                :title="`${t('dashboard.standard')}: ${formatUsd(log.total_cost, EXACT_DIGITS)}`"
+              />
             </p>
-            <p class="text-xs text-gray-500 dark:text-dark-400">{{ totalTokens(log).toLocaleString() }} tokens</p>
+            <p class="num-aux">{{ formatCount(totalTokens(log)) }} tokens</p>
           </div>
         </div>
 
@@ -47,7 +58,9 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { formatDateTime } from '@/utils/format'
 import type { UsageLog } from '@/types'
-import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import NumText from '@/components/common/NumText.vue'
+import { EXACT_DIGITS, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { formatCount } from '@/utils/numberFormat'
 
 defineProps<{
   data: UsageLog[]
@@ -55,8 +68,7 @@ defineProps<{
 }>()
 const { t } = useI18n()
 // 每条用量的人民币用服务端下发的 fiat_cost（按扣费来源精确折算）
-const { isFiat, formatMixed } = useCurrencyDisplay()
-const formatCost = (c: number) => c.toFixed(4)
+const { isFiat, formatMixed, formatUsd } = useCurrencyDisplay()
 
 const totalTokens = (log: UsageLog): number =>
   (log.input_tokens ?? 0) +

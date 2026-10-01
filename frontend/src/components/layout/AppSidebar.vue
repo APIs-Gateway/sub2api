@@ -182,7 +182,7 @@
         :title="t('common.clickToCopy')"
       >
         <span class="block text-xs text-gray-500 dark:text-dark-400">{{ t('nav.supportQqGroup') }}</span>
-        <span class="block font-mono text-sm tabular-nums text-gray-700 dark:text-gray-300">{{ qqCopied ? `${t('common.copied')} ✓` : QQ_GROUP }}</span>
+        <span class="block num text-sm text-gray-700 dark:text-gray-300">{{ qqCopied ? `${t('common.copied')} ✓` : QQ_GROUP }}</span>
       </button>
     </div>
   </aside>
