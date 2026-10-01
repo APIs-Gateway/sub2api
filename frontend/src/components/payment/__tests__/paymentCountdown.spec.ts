@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import PaymentQRDialog from '../PaymentQRDialog.vue'
 import PaymentStatusPanel from '../PaymentStatusPanel.vue'
@@ -302,4 +303,9 @@ it('ignores an old cancellation response after the dialog switches to a new orde
   expect(wrapper.emitted('close')).toBeUndefined()
   expect(wrapper.text()).toContain('02:00')
   expect(wrapper.find('button.btn-secondary').attributes('disabled')).toBeUndefined()
+})
+
+// 组件里用到的金额口径依赖 app store；未配置充值倍率时按美元展示（旧行为）。
+beforeEach(() => {
+  setActivePinia(createPinia())
 })

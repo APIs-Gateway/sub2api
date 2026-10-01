@@ -26,7 +26,7 @@
           ({{ t('payment.orders.fee') }} {{ row.fee_rate }}%)
         </span>
         <div v-if="row.amount !== row.pay_amount" class="mt-0.5 text-xs text-stone-500 dark:text-gray-400">
-          {{ t('payment.orders.creditedAmount') }}: {{ row.order_type === 'balance' ? formatUsdAmount(row.amount) : formatCnyAmount(row.amount) }}
+          {{ t('payment.orders.creditedAmount') }}: {{ row.order_type === 'balance' ? formatWallet(row.amount) : formatCnyAmount(row.amount) }}
         </div>
       </div>
     </template>
@@ -52,10 +52,12 @@ import type { PaymentOrder } from '@/types/payment'
 import type { Column } from '@/components/common/types'
 import DataTable from '@/components/common/DataTable.vue'
 import NumText from '@/components/common/NumText.vue'
-import { formatCnyAmount, formatUsdAmount } from '@/utils/numberFormat'
+import { formatCnyAmount } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import OrderStatusBadge from '@/components/payment/OrderStatusBadge.vue'
 
 const { t } = useI18n()
+const { formatWallet } = useCurrencyDisplay()
 
 const props = defineProps<{
   orders: PaymentOrder[]

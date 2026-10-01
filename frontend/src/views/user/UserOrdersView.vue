@@ -133,9 +133,11 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import OrderTable from '@/components/payment/OrderTable.vue'
-import { formatCnyAmount, formatUsdAmount } from '@/utils/numberFormat'
+import { formatCnyAmount } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 
 const { t } = useI18n()
+const { formatWallet } = useCurrencyDisplay()
 const router = useRouter()
 const appStore = useAppStore()
 
@@ -161,7 +163,7 @@ const statusFilters = computed(() => [
 const refundOrderAmountText = computed(() => {
   if (!refundTarget.value) return ''
   const { order_type, amount } = refundTarget.value
-  return order_type === 'balance' ? formatUsdAmount(amount) : formatCnyAmount(amount)
+  return order_type === 'balance' ? formatWallet(amount) : formatCnyAmount(amount)
 })
 
 const refundGatewayBase = computed(() => roundCurrency(refundTarget.value?.pay_amount || refundTarget.value?.amount || 0))
