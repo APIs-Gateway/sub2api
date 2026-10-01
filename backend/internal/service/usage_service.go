@@ -54,6 +54,7 @@ type UsageStats struct {
 	TotalCost                float64 `json:"total_cost"`
 	TotalActualCost          float64 `json:"total_actual_cost"`
 	AverageDurationMs        float64 `json:"average_duration_ms"`
+	TotalActualCostFiat      float64 `json:"total_actual_cost_fiat,omitempty"` // 按扣费来源分别折算的法币合计；不可用时省略
 }
 
 // UsageService 使用统计服务
@@ -411,14 +412,24 @@ func (s *UsageService) BuildCreditFiatRate(
 	cfg SubscriptionPricingConfig,
 	logs []UsageLog,
 ) *CreditFiatRate {
+	return s.buildCreditFiatRateForSubscriptions(ctx, userID, multiplier, cfg, collectSubscriptionIDs(logs))
+}
+
+// buildCreditFiatRateForSubscriptions 按一组订阅卡 ID 构造折算器，供逐条记录
+// （BuildCreditFiatRate）和分桶合计（CreditFiatTotals）共用同一套查卡与回落规则。
+func (s *UsageService) buildCreditFiatRateForSubscriptions(
+	ctx context.Context,
+	userID int64,
+	multiplier float64,
+	cfg SubscriptionPricingConfig,
+	ids []int64,
+) *CreditFiatRate {
 	rate := NewCreditFiatRate(multiplier)
 	if s == nil || s.entClient == nil || userID <= 0 {
 		return rate
 	}
-
-	ids := collectSubscriptionIDs(logs)
 	if len(ids) == 0 {
-		// 整页都是钱包扣费——不查库，这是常见情况，不该白付一次往返。
+		// 全是钱包扣费——不查库，这是常见情况，不该白付一次往返。
 		return rate
 	}
 

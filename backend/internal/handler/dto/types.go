@@ -624,6 +624,7 @@ type UserSubscription struct {
 	ConsumptionDay  float64    `json:"consumption_day"` // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
 	CalendarDay     int        `json:"calendar_day"`    // 自激活起经过的东八区自然日数，用于订阅实际服务进度
 	ActivatedAt     *time.Time `json:"activated_at,omitempty"`
+	FiatPerCredit   float64    `json:"fiat_per_credit,omitempty"` // 1 个额度的法币单价 u(D)，供前端折算人民币；不可用时省略
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
