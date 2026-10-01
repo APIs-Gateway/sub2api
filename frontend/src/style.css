@@ -300,6 +300,11 @@
     opacity: 0.68;
   }
 
+  /* 辅助数字本身已是 gray-500 小字，单位再淡到 0.68 对比度不够，这里抬高 */
+  .num-aux .num-unit {
+    opacity: 0.88;
+  }
+
   /* 符号在前、单位在后，与数字的间距固定（随各档字号等比缩放） */
   .num-unit-pre {
     margin-right: 0.18em;

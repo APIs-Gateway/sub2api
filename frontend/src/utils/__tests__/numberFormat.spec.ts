@@ -3,6 +3,7 @@ import {
   formatCnyAmount,
   formatCompactCount,
   formatCount,
+  formatCurrencyAmount,
   formatDurationMs,
   formatFixed,
   formatMoneyNumber,
@@ -75,12 +76,31 @@ describe('formatMoneyNumber：金额统一规则', () => {
     expect(formatMoneyNumber(17717.0912346, { exact: true })).toBe('17,717.091235')
   })
 
-  it('单价（unitPrice）：≥ 1 保留到 4 位小数，1.875 不被写成 1.88', () => {
+  it('单价（unitPrice）：不论 ≥ 1 还是 < 1，最多 6 位小数、去尾零、至少两位，不丢精度', () => {
+    expect(formatMoneyNumber(0.015625, { unitPrice: true })).toBe('0.015625')
+    expect(formatMoneyNumber(0.0390625, { unitPrice: true })).toBe('0.039063')
+    expect(formatMoneyNumber(12.34567, { unitPrice: true })).toBe('12.34567')
+    expect(formatMoneyNumber(3, { unitPrice: true })).toBe('3.00')
+    expect(formatMoneyNumber(0.5, { unitPrice: true })).toBe('0.50')
+    expect(formatMoneyNumber(1234.5, { unitPrice: true })).toBe('1,234.50')
+    expect(formatMoneyNumber(2.769230769, { unitPrice: true })).toBe('2.769231')
+    expect(formatUsdAmount(0.015625, { unitPrice: true })).toBe('$0.015625')
+  })
+
+  it('单价（unitPrice）：1.875 不被写成 1.88', () => {
     expect(formatMoneyNumber(1.875, { unitPrice: true })).toBe('1.875')
     expect(formatMoneyNumber(2.5, { unitPrice: true })).toBe('2.50')
     expect(formatMoneyNumber(18.75, { unitPrice: true })).toBe('18.75')
     expect(formatMoneyNumber(0.0375, { unitPrice: true })).toBe('0.0375')
     expect(formatMoneyNumber(0, { unitPrice: true })).toBe('0.00')
+  })
+})
+
+describe('formatCurrencyAmount', () => {
+  it('USD / CNY 走统一规则，大小写不敏感', () => {
+    expect(formatCurrencyAmount(1234.5, 'usd')).toBe('$1,234.50')
+    expect(formatCurrencyAmount(0.0004, 'CNY')).toBe('¥0.0004')
+    expect(formatCurrencyAmount(null)).toBe('$0.00')
   })
 })
 

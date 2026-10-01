@@ -656,7 +656,7 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { EXACT_DIGITS, type MoneyDigits, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import CurrencyModeSwitch from '@/components/common/CurrencyModeSwitch.vue'
 import NumText from '@/components/common/NumText.vue'
-import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
+import { formatMultiplier } from '@/utils/formatters'
 import { formatCompactCount, formatCount, formatDurationMs } from '@/utils/numberFormat'
 import { calculateTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
@@ -698,6 +698,9 @@ const {
 // 官方价：人民币模式按后台汇率换成 ¥；后端没提供汇率时整块官方价隐藏，不混排 $。
 const officialAvailable = computed(() => !isFiat.value || officialCnyRate.value > 0)
 // 汇总卡等位置按统一规则收口（缺省）；费用明细 tooltip 是对账用的，用精确值保留全部精度。
+/** 缓存 token：K / M 缩写，缩写后带千分位（用户端统一计数规则）。 */
+const formatCacheTokens = (tokens: number): string => formatCompactCount(tokens, { allowBillions: false })
+
 function officialCost(usd: number, digits?: MoneyDigits): string {
   return formatOfficial(usd, digits) ?? ''
 }

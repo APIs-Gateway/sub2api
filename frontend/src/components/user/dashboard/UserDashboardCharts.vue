@@ -59,7 +59,7 @@
       </div>
 
       <!-- Token Usage Trend Chart -->
-      <TokenUsageTrend :trend-data="trend" :loading="loading" :format-actual-cost="formatTrendActualCost" :format-standard-cost="formatTrendStandardCost" />
+      <TokenUsageTrend :trend-data="trend" :loading="loading" unified-typography :format-actual-cost="formatTrendActualCost" :format-standard-cost="formatTrendStandardCost" />
     </div>
   </div>
 </template>
@@ -74,11 +74,10 @@ import { Doughnut } from 'vue-chartjs'
 import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import { EXACT_DIGITS, type MoneyDigits, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import type { TrendDataPoint, ModelStat } from '@/types'
-import { formatNumberLocaleString as formatNumber, formatTokensK as formatTokens } from '@/utils/format'
-import { applyChartTypography } from '@/utils/chartTypography'
+import { formatCount as formatNumber, formatCompactCount } from '@/utils/numberFormat'
+import { CHART_FONT_FAMILY } from '@/utils/chartTypography'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Title, Tooltip, Legend, Filler } from 'chart.js'
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Title, Tooltip, Legend, Filler)
-applyChartTypography(ChartJS)
 
 const props = defineProps<{ loading: boolean, startDate: string, endDate: string, granularity: string, trend: TrendDataPoint[], models: ModelStat[] }>()
 defineEmits(['update:startDate', 'update:endDate', 'update:granularity', 'dateRangeChange', 'granularityChange', 'refresh'])
@@ -99,7 +98,10 @@ const modelData = computed(() => !props.models?.length ? null : {
   }]
 })
 
+const formatTokens = (value: number) => formatCompactCount(value, { allowBillions: false })
+
 const doughnutOptions = {
+  font: { family: CHART_FONT_FAMILY },
   responsive: true,
   maintainAspectRatio: false,
   plugins: {

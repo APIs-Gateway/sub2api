@@ -26,7 +26,7 @@
     <!-- Today Cost：悬停给出精确值（界面上按统一规则收口，不丢信息） -->
     <div class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.todayCost') }}</span>
-      <span class="flex items-baseline gap-2">
+      <span class="flex flex-wrap items-baseline gap-x-2">
         <NumText
           tier="primary"
           :text="formatMixed(stats?.today_actual_cost || 0, stats?.today_actual_cost_fiat)"

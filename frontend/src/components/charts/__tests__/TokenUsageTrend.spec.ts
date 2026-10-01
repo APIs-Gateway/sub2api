@@ -126,6 +126,37 @@ describe('TokenUsageTrend', () => {
     expect(hitRateDataset.data[0]).toBe(50)
   })
 
+  describe('token formatting', () => {
+    const point = {
+      date: '2026-05-08',
+      requests: 1,
+      input_tokens: 1,
+      output_tokens: 1,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      cost: 0.0123,
+      actual_cost: 0.5,
+    }
+
+    function opts(props: Record<string, unknown>) {
+      mount(TokenUsageTrend, { props: { trendData: [point], ...props }, global: { stubs: { LoadingSpinner: true } } })
+      return (globalThis as any).__lastLineOptions
+    }
+
+    it('admin keeps the 2-decimal axis labels and the default chart font', () => {
+      const o = opts({})
+      expect(o.scales.y.ticks.callback(1_230_000)).toBe('1.23M')
+      expect(o.font).toBeUndefined()
+    })
+
+    it('user side uses 1-decimal axis labels, full tooltip counts and the site font', () => {
+      const o = opts({ unifiedTypography: true })
+      expect(o.scales.y.ticks.callback(1_230_000)).toBe('1.2M')
+      expect(o.plugins.tooltip.callbacks.label({ dataset: { label: 'Input', yAxisID: 'y' }, raw: 1_234_567 })).toBe('Input: 1,234,567')
+      expect(o.font.family).toContain('Space Grotesk')
+    })
+  })
+
   describe('tooltip footer', () => {
     const point = {
       date: '2026-05-08',
@@ -145,7 +176,11 @@ describe('TokenUsageTrend', () => {
     }
 
     it('keeps the USD standard price when no formatter is passed (admin)', () => {
-      expect(footer({})).toBe('Actual: $0.50 | Standard: $0.0123')
+      expect(footer({})).toBe('Actual: $0.500 | Standard: $0.012')
+    })
+
+    it('unified typography (user side) uses the shared money rule, admin default unchanged', () => {
+      expect(footer({ unifiedTypography: true })).toBe('Actual: $0.50 | Standard: $0.0123')
     })
 
     it('uses the user-side formatter for the standard price', () => {

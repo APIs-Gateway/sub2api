@@ -19,6 +19,8 @@ const SIGNIFICANT_DIGITS = 4
 const MAX_FRACTION_DIGITS = 12
 /** 金额至少显示的小数位。 */
 const MIN_MONEY_FRACTION_DIGITS = 2
+/** 单价的小数位上限：足以还原常见报价（如 0.015625），再多没有展示意义。 */
+const UNIT_PRICE_MAX_FRACTION_DIGITS = 6
 /** 精确值（title / tooltip）的小数位上限。 */
 const EXACT_MAX_FRACTION_DIGITS = 6
 
@@ -105,7 +107,8 @@ export interface MoneyDigitsOptions {
   exact?: boolean
   /**
    * 单价（每百万 Token / 每次请求）：价目表上的数字是报价，不能被四舍五入吞掉信息。
-   * 绝对值 ≥ 1 时保留到 4 位小数、不补尾随 0（至少两位），如 1.875 不会被写成 1.88。
+   * 不分大小，一律保留到 6 位小数、去掉多余尾随 0（至少两位小数）：
+   * 1.875 → "1.875"，0.015625 → "0.015625"，3 → "3.00"。
    */
   unitPrice?: boolean
 }
@@ -129,6 +132,7 @@ export function formatMoneyNumber(value: number | null | undefined, options: Mon
 function formatMoneyDigits(abs: number, options: MoneyDigitsOptions): string {
   if (isFiniteNumber(options.fractionDigits)) return formatFixed(abs, options.fractionDigits)
   if (abs === 0) return '0.00'
+  if (options.unitPrice) return groupedFormatter(MIN_MONEY_FRACTION_DIGITS, UNIT_PRICE_MAX_FRACTION_DIGITS).format(abs)
 
   // 用 toExponential 取 4 位有效数字后的指数：它已经处理了进位，
   // 0.99996 会得到 1.000e+0，直接落进「≥ 1」分支，不会写成 1.0000。
@@ -140,8 +144,7 @@ function formatMoneyDigits(abs: number, options: MoneyDigitsOptions): string {
   }
 
   if (exponent >= 0) {
-    const maxDigits = options.unitPrice ? 4 : MIN_MONEY_FRACTION_DIGITS
-    return groupedFormatter(MIN_MONEY_FRACTION_DIGITS, maxDigits).format(abs)
+    return groupedFormatter(MIN_MONEY_FRACTION_DIGITS, MIN_MONEY_FRACTION_DIGITS).format(abs)
   }
 
   const maxDigits = Math.min(-exponent + SIGNIFICANT_DIGITS - 1, MAX_FRACTION_DIGITS)
@@ -165,6 +168,17 @@ export function formatUsdAmount(value: number | null | undefined, options?: Mone
 /** 人民币金额：`¥17,717.09`。 */
 export function formatCnyAmount(value: number | null | undefined, options?: MoneyDigitsOptions): string {
   return withSymbol(FIAT_SYMBOL, formatMoneyNumber(value, options))
+}
+
+/**
+ * 按币种代码展示金额：USD / CNY 走统一金额规则，其他币种按 Intl 的币种习惯（en-US）。
+ * 供用户端使用；后台沿用 utils/format 的 formatCurrency。
+ */
+export function formatCurrencyAmount(value: number | null | undefined, currency: string = 'USD'): string {
+  const code = currency.toUpperCase()
+  if (code === 'USD') return formatUsdAmount(value)
+  if (code === 'CNY') return formatCnyAmount(value)
+  return new Intl.NumberFormat(LOCALE, { style: 'currency', currency: code }).format(isFiniteNumber(value) ? value : 0)
 }
 
 /** 耗时：< 1s 显示毫秒，否则显示秒（两位小数）。 */
