@@ -32,14 +32,14 @@
               class="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-1 border-t border-gray-100 px-4 py-2.5 dark:border-dark-800"
               data-test="overview-stats"
             >
-              <p class="text-sm text-gray-600 dark:text-dark-400" data-test="overview-enabled">
+              <p class="num text-sm text-gray-600 dark:text-dark-400" data-test="overview-enabled">
                 {{ overview.partial
                   ? t('keys.overview.enabledList', { active: overview.enabled, shown: apiKeys.length })
                   : t('keys.overview.enabled', { active: overview.enabled, total: pagination.total }) }}
               </p>
-              <p class="text-sm text-gray-600 dark:text-dark-400">
+              <p class="num text-sm text-gray-600 dark:text-dark-400">
                 {{ overview.partial ? t('keys.overview.spentList') : t('keys.overview.spent') }}
-                <NumText tier="secondary" class="ml-1 text-base text-gray-900 dark:text-white" data-test="overview-spent" :text="overview.spent" />
+                <NumText class="ml-1 font-medium" data-test="overview-spent" :text="overview.spent" />
               </p>
             </div>
           </section>

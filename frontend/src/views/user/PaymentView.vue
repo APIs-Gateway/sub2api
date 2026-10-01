@@ -77,7 +77,7 @@
                 </div>
                 <div v-if="feeRate > 0" class="flex justify-between border-t border-gray-200 pt-2 dark:border-dark-600">
                   <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('payment.actualPay') }}</span>
-                  <NumText tier="secondary" class="text-lg text-gray-900 dark:text-white" :text="formatSelectedPaymentAmount(totalAmount)" />
+                  <NumText tier="secondary" :text="formatSelectedPaymentAmount(totalAmount)" />
                 </div>
                 <div v-if="balanceRechargeMultiplier !== 1" class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': feeRate <= 0 }">
                   <span class="text-gray-600 dark:text-gray-400">{{ t('payment.creditedBalanceWithCurrency', { currency: 'USD' }) }}</span>
@@ -153,7 +153,7 @@
                   </div>
                   <div class="flex justify-between border-t border-gray-200 pt-2 dark:border-dark-600">
                     <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('payment.actualPay') }}</span>
-                    <NumText tier="secondary" class="text-lg text-gray-900 dark:text-white" :text="formatSelectedPaymentAmount(lifecycleTotalAmount)" />
+                    <NumText tier="secondary" :text="formatSelectedPaymentAmount(lifecycleTotalAmount)" />
                   </div>
                 </div>
               </div>
@@ -242,7 +242,7 @@
                   </div>
                   <div class="flex justify-between border-t border-gray-200 pt-2 dark:border-dark-600">
                     <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('payment.actualPay') }}</span>
-                    <NumText tier="secondary" class="text-lg text-gray-900 dark:text-white" :text="formatSelectedPaymentAmount(subTotalAmount)" />
+                    <NumText tier="secondary" :text="formatSelectedPaymentAmount(subTotalAmount)" />
                   </div>
                 </div>
               </div>

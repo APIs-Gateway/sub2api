@@ -307,7 +307,18 @@
 
   /* 符号在前、单位在后，与数字的间距固定（随各档字号等比缩放） */
   .num-unit-pre {
-    margin-right: 0.18em;
+    margin-right: 0.04em;
+    /* 默认（secondary / aux / 句中行内）：符号与数字同字号、同颜色、同字重，紧贴数字 */
+    font-size: inherit;
+    font-weight: inherit;
+    opacity: 1;
+  }
+
+  /* 只有卡片主数字里的符号略小、略淡 */
+  .num-primary .num-unit-pre {
+    font-size: var(--num-unit-size);
+    font-weight: 400;
+    opacity: 0.68;
   }
 
   .num-unit-post {

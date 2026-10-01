@@ -76,7 +76,7 @@
           <template v-else-if="mode === 'renew' && renewQuoteData">
             <div class="flex items-baseline justify-between">
               <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.renewPrice') }}</span>
-              <NumText tier="secondary" class="text-lg text-gray-900 dark:text-white" :text="formatPaymentValue(renewQuoteData.price)" />
+              <NumText tier="secondary" :text="formatPaymentValue(renewQuoteData.price)" />
             </div>
             <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('userSubscriptions.lifecycle.renewValue') }}: {{ formatPlanValue(renewQuoteData.price) }}
@@ -85,7 +85,7 @@
           <template v-else-if="mode === 'change' && changeQuoteData">
             <div class="flex items-baseline justify-between">
               <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.changeDiff') }}</span>
-              <NumText tier="secondary" class="text-lg text-gray-900 dark:text-white" :text="formatPaymentValue(changeQuoteData.diff)" />
+              <NumText tier="secondary" :text="formatPaymentValue(changeQuoteData.diff)" />
             </div>
             <div class="mt-1 space-y-0.5 text-xs text-gray-500 dark:text-gray-400">
               <div>{{ t('userSubscriptions.lifecycle.changeDiffValue') }}: {{ formatPlanValue(changeQuoteData.diff) }}</div>
