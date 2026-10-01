@@ -17,7 +17,7 @@ vi.mock('@/i18n', () => ({
   getLocale: () => 'zh-CN'
 }))
 
-import { useCurrencyDisplay } from '../useCurrencyDisplay'
+import { reportMixedFiat, resetFiatDataMissingForTest, useCurrencyDisplay } from '../useCurrencyDisplay'
 
 /** 去掉 Intl 可能插入的不间断空格，断言只关心数字和币种符号。 */
 function normalize(text: string): string {
@@ -28,6 +28,7 @@ describe('useCurrencyDisplay', () => {
   beforeEach(() => {
     publicSettings.value = { balance_recharge_multiplier: 13 }
     window.localStorage.clear()
+    resetFiatDataMissingForTest()
     // mode 是模块级单例，逐个用例显式复位，避免相互串味。
     useCurrencyDisplay().setMode('fiat')
   })
@@ -176,5 +177,19 @@ describe('useCurrencyDisplay', () => {
     expect(fiatFromCredits(130)).toBeCloseTo(10, 10)
     expect(fiatFromCredits(100, 0.045)).toBeCloseTo(4.5, 10)
     expect(creditsFromFiat(Number.NaN)).toBe(0)
+  })
+
+  it('后端缺混合金额的人民币值时整站退回美元并隐藏切换器，避免 ¥ $ 混排', () => {
+    const { isFiat, canSwitch, formatWallet } = useCurrencyDisplay()
+
+    // 额度为 0 时人民币字段按 omitempty 省略，属于正常情况
+    reportMixedFiat(0, undefined)
+    reportMixedFiat(5, 0.25)
+    expect(isFiat.value).toBe(true)
+
+    reportMixedFiat(5, undefined)
+    expect(isFiat.value).toBe(false)
+    expect(canSwitch.value).toBe(false)
+    expect(formatWallet(130)).toBe('$130.00')
   })
 })

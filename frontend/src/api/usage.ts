@@ -4,6 +4,7 @@
  */
 
 import { apiClient } from './client'
+import { reportMixedFiat } from '@/composables/useCurrencyDisplay'
 import type {
   UsageLog,
   UsageQueryParams,
@@ -160,6 +161,7 @@ export async function getStats(
   const { data } = await apiClient.get<UsageStatsResponse>('/usage/stats', {
     params
   })
+  reportMixedFiat(data.total_actual_cost, data.total_actual_cost_fiat)
   return data
 }
 
@@ -187,6 +189,7 @@ export async function getStatsByDateRange(
   const { data } = await apiClient.get<UsageStatsResponse>('/usage/stats', {
     params
   })
+  reportMixedFiat(data.total_actual_cost, data.total_actual_cost_fiat)
   return data
 }
 
@@ -237,6 +240,7 @@ export async function getById(id: number): Promise<UsageLog> {
  */
 export async function getDashboardStats(): Promise<UserDashboardStats> {
   const { data } = await apiClient.get<UserDashboardStats>('/usage/dashboard/stats')
+  reportMixedFiat(data.total_actual_cost, data.total_actual_cost_fiat)
   return data
 }
 
@@ -313,6 +317,9 @@ export async function getDashboardApiKeysUsage(
       signal: options?.signal
     }
   )
+  for (const stat of Object.values(data.stats ?? {})) {
+    reportMixedFiat(stat.total_actual_cost, stat.total_actual_cost_fiat)
+  }
   return data
 }
 

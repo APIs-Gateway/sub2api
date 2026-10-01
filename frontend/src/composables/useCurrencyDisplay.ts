@@ -1,6 +1,5 @@
 import { computed, ref } from 'vue'
 
-import { getLocale } from '@/i18n'
 import { useAppStore } from '@/stores/app'
 
 /**
@@ -27,6 +26,16 @@ const DEFAULT_MODE: CurrencyMode = 'fiat'
  */
 const FIAT_CURRENCY = 'CNY'
 
+/**
+ * 金额格式化用的语言。读 <html lang>（i18n 切换语言时会同步设置），而不是 import
+ * '@/i18n'：后者在模块加载时就执行 createI18n，会让所有间接引用本 composable 的
+ * 模块（接口层、GroupBadge 等）都背上整个 i18n 实例。
+ */
+function currentLocale(): string {
+  if (typeof document === 'undefined') return 'zh-CN'
+  return document.documentElement.getAttribute('lang') || 'zh-CN'
+}
+
 function readPersistedMode(): CurrencyMode {
   if (typeof window === 'undefined') return DEFAULT_MODE
   try {
@@ -44,6 +53,30 @@ function readPersistedMode(): CurrencyMode {
  */
 const mode = ref<CurrencyMode>(readPersistedMode())
 
+/**
+ * 后端是否缺少混合金额的人民币值（*_fiat 字段）。
+ *
+ * 余额这类钱包金额前端能精确折算，但今日/累计花费这类混合金额只能用后端分桶值。
+ * 后端缺字段时（旧版本、查询失败），如果只把缺的那几项回落成 $，同一页上就会
+ * ¥ 和 $ 混排。所以一旦发现缺失，整站退回按美元展示，并隐藏切换器。
+ */
+const fiatDataMissing = ref(false)
+
+/**
+ * 接口层拿到混合金额后调用：额度非 0 却没有人民币值，说明后端不支持，整站退回美元。
+ * 额度为 0 时后端按 omitempty 省略人民币字段，属于正常情况。
+ */
+export function reportMixedFiat(credits: number | null | undefined, fiat: number | null | undefined) {
+  if (fiatDataMissing.value) return
+  if (typeof fiat === 'number' && Number.isFinite(fiat)) return
+  if (typeof credits === 'number' && credits !== 0) fiatDataMissing.value = true
+}
+
+/** 仅供测试复位。 */
+export function resetFiatDataMissingForTest() {
+  fiatDataMissing.value = false
+}
+
 export function useCurrencyDisplay() {
   const appStore = useAppStore()
 
@@ -56,8 +89,11 @@ export function useCurrencyDisplay() {
     return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : 1
   })
 
-  /** 倍率为 1 时两个币种是同一个数，展示切换没有意义，隐藏切换器。 */
-  const canSwitch = computed(() => rechargeMultiplier.value !== 1)
+  /**
+   * 倍率为 1 时两个币种是同一个数，展示切换没有意义，隐藏切换器；
+   * 后端缺人民币数据时只能按美元展示，同样隐藏。
+   */
+  const canSwitch = computed(() => rechargeMultiplier.value !== 1 && !fiatDataMissing.value)
 
   /**
    * 实际生效的展示口径。倍率为 1（free 站，没有充值）时额度就按美元计价，
@@ -105,7 +141,7 @@ export function useCurrencyDisplay() {
     if (abs > 0 && abs < 0.01) fractionDigits = 4
     else if (abs > 0 && abs < 1) fractionDigits = 3
 
-    return new Intl.NumberFormat(getLocale(), {
+    return new Intl.NumberFormat(currentLocale(), {
       style: 'currency',
       currency: FIAT_CURRENCY,
       minimumFractionDigits: fractionDigits,
