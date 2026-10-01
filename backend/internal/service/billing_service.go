@@ -1262,31 +1262,11 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 	// All three count toward an interval's context threshold.
 	totalContext := input.Tokens.InputTokens + input.Tokens.CacheReadTokens + input.Tokens.CacheCreationTokens
 
-	pricing := input.Resolver.GetIntervalPricing(resolved, totalContext)
-	if pricing == nil {
-		return nil, fmt.Errorf("no pricing available for model: %s: %w", input.Model, ErrModelPricingUnavailable)
-	}
-
-	// 默认价卡（Source=LiteLLM）应用 DeepSeek 官方价强制覆盖（幂等，GetModelPricing
-	// 内部已强制过）；分组/渠道自定义定价保留运营者配置，不强制覆盖官方价。
-	// 计费时点：优先请求级 PricingAt（用户计费与账号统计成本同源，DeepSeek 峰谷与
-	// pro→Flash 切换判定共用），零值回退 deepseekNowFunc()。
-	pricingAt := deepseekPricingAt(input.PricingAt)
-
-	pricing = s.applyModelSpecificPricingPolicyEx(input.Model, pricing, resolved.Source == PricingSourceLiteLLM, pricingAt)
-
-	// DeepSeek 模型默认价卡按官方峰谷口径调整：高峰时段（01:00–04:00 与
-	// 06:00–10:00 UTC，仅工作日；北京时间周末全天低谷）按 2× 低谷价计费。
-	// 仅作用于默认价卡（Source=LiteLLM，无分组/渠道自定义定价）——分组/渠道
-	// 自定义定价保持运营者语义，不叠加。先克隆再乘，避免污染共享 fallbackPrices 指针。
-	if resolved.Source == PricingSourceLiteLLM && isDeepSeekModel(input.Model) {
-		if mult := deepseekPeakMultiplierAt(pricingAt); mult > 1 {
-			cloned := *pricing
-			cloned.InputPricePerToken *= mult
-			cloned.OutputPricePerToken *= mult
-			cloned.CacheReadPricePerToken *= mult
-			pricing = &cloned
-		}
+	// 取价（区间 → 官方价卡策略 → DeepSeek 峰谷）抽到 effectiveTokenPricing（price_quoter.go），
+	// 与 PriceQuoter 共用同一个函数。
+	pricing, _, err := s.effectiveTokenPricing(input.Resolver, resolved, input.Model, totalContext, input.PricingAt)
+	if err != nil {
+		return nil, err
 	}
 
 	// 长上下文定价仅在无区间定价时应用（区间定价已包含上下文分层）

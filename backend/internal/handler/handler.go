@@ -41,6 +41,7 @@ type AdminHandlers struct {
 	Compliance             *admin.ComplianceHandler
 	Points                 *admin.PointsHandler
 	PromptAudit            *securityaudit.PromptEventAdminHandler
+	PricingQuote           *admin.PricingQuoteHandler
 }
 
 // Handlers contains all HTTP handlers
