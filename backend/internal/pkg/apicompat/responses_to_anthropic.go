@@ -274,7 +274,11 @@ func ResponsesEventToAnthropicEvents(
 	if state.serialFailed {
 		return nil
 	}
-	return state.serializeResponsesAnthropicEvents(responsesEventToAnthropicEvents(evt, state))
+	events := responsesEventToAnthropicEvents(evt, state)
+	if state.serialFailed {
+		return events
+	}
+	return state.serializeResponsesAnthropicEvents(events)
 }
 
 func responsesEventToAnthropicEvents(evt *ResponsesStreamEvent, state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
@@ -660,6 +664,9 @@ func resToAnthHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 		return nil
 	}
 	if block.toolType == "function_call" && block.name == "Read" {
+		if block.args.Len()+len(evt.Delta) > 1<<20 {
+			return state.failResponsesAnthropicSerialization(nil)
+		}
 		_, _ = block.args.WriteString(evt.Delta)
 		if block.hadDelta || !json.Valid([]byte(block.args.String())) {
 			return nil

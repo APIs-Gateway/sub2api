@@ -119,6 +119,18 @@ func TestResponsesAnthropicBufferCountsNestedBlockPayloads(t *testing.T) {
 	}
 }
 
+func TestResponsesAnthropicReadToolArgumentsAreBounded(t *testing.T) {
+	state := NewResponsesEventToAnthropicState()
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.created", Response: &ResponsesResponse{ID: "r"}}, state)
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.output_item.added", OutputIndex: 0, Item: &ResponsesOutput{Type: "function_call", Name: "Read"}}, state)
+	require.Empty(t, ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.delta", OutputIndex: 0, Delta: strings.Repeat("x", 1<<20)}, state))
+	events := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.function_call_arguments.delta", OutputIndex: 0, Delta: "x"}, state)
+	require.Len(t, events, 1)
+	require.Equal(t, "error", events[0].Type)
+	require.Empty(t, ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{Type: "response.completed", Response: &ResponsesResponse{Status: "completed"}}, state))
+	require.Empty(t, FinalizeResponsesAnthropicStream(state))
+}
+
 func responsesAnthropicEventTypes(events []AnthropicStreamEvent) []string {
 	types := make([]string, 0, len(events))
 	for _, event := range events {

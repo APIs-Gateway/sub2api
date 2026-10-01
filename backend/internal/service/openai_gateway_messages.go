@@ -645,6 +645,37 @@ type openAICompatBufferedReadError struct {
 func (e *openAICompatBufferedReadError) Error() string { return e.cause.Error() }
 func (e *openAICompatBufferedReadError) Unwrap() error { return e.cause }
 
+// A converter error has already terminated the client stream. Allow a small,
+// bounded read window for terminal usage without letting a broken upstream
+// retain a connection indefinitely or stream unbounded data into the scanner.
+type messagesConversionDrainReader struct {
+	reader    io.Reader
+	remaining atomic.Int64
+	active    atomic.Bool
+}
+
+func (r *messagesConversionDrainReader) Read(p []byte) (int, error) {
+	if r.active.Load() {
+		remaining := r.remaining.Load()
+		if remaining <= 0 {
+			return 0, io.EOF
+		}
+		if int64(len(p)) > remaining {
+			p = p[:int(remaining)]
+		}
+	}
+	n, err := r.reader.Read(p)
+	if r.active.Load() {
+		r.remaining.Add(-int64(n))
+	}
+	return n, err
+}
+
+func (r *messagesConversionDrainReader) start() {
+	r.remaining.Store(4 << 20)
+	r.active.Store(true)
+}
+
 func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 	resp *http.Response,
 	logPrefix string,
@@ -850,7 +881,14 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	// 上游模型不一致只在首个带 model 的事件上比对一次（通常是 response.created）。
 	upstreamModelChecked := false
 
-	scanner := bufio.NewScanner(resp.Body)
+	drainReader := &messagesConversionDrainReader{reader: resp.Body}
+	scanner := bufio.NewScanner(drainReader)
+	var conversionDrainTimer *time.Timer
+	defer func() {
+		if conversionDrainTimer != nil {
+			conversionDrainTimer.Stop()
+		}
+	}()
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -931,18 +969,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			// do not emit another error or a successful message_stop.
 			if streamNonFailoverErr != nil {
 				if eventType == "response.failed" || isBareErrorEvent {
-					if hit, code, msg := detectOpenAICyberPolicy([]byte(payload)); hit {
-						MarkOpsCyberPolicy(c, CyberPolicyMark{
-							Code:                     code,
-							Message:                  msg,
-							Body:                     truncateString(payload, 4096),
-							UpstreamStatus:           http.StatusOK,
-							UpstreamInTok:            usage.InputTokens,
-							UpstreamOutTok:           usage.OutputTokens,
-							UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
-							UpstreamCacheReadTok:     usage.CacheReadInputTokens,
-						})
-					}
+					markOpenAICyberPolicyEvent(c, []byte(payload), http.StatusOK, &usage)
 				}
 				return true
 			}
@@ -1027,6 +1054,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		for _, evt := range events {
 			if evt.Type == "error" && evt.Error != nil {
 				streamNonFailoverErr = fmt.Errorf("responses to anthropic stream conversion failed: %s", evt.Error.Message)
+				drainReader.start()
+				conversionDrainTimer = time.AfterFunc(10*time.Second, func() { _ = resp.Body.Close() })
 				break
 			}
 		}
@@ -1101,6 +1130,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		return c.Request != nil && c.Request.Context().Err() != nil
 	}
 	streamReadErr := func(err error) (*OpenAIForwardResult, error) {
+		if streamNonFailoverErr != nil {
+			return resultWithUsage(), streamNonFailoverErr
+		}
 		if clientRequestCanceled() {
 			clientDisconnected = true
 		} else {
@@ -1116,6 +1148,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
 	}
 	missingTerminalErr := func() (*OpenAIForwardResult, error) {
+		if streamNonFailoverErr != nil {
+			return resultWithUsage(), streamNonFailoverErr
+		}
 		if clientRequestCanceled() {
 			clientDisconnected = true
 		}
@@ -1176,7 +1211,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		line string
 		err  error
 	}
-	events := make(chan scanEvent, 16)
+	events := make(chan scanEvent)
+	lineProcessed := make(chan struct{})
 	done := make(chan struct{})
 	var lastReadAt int64
 	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
@@ -1193,6 +1229,13 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		for scanner.Scan() {
 			atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 			if !sendEvent(scanEvent{line: scanner.Text()}) {
+				return
+			}
+			// Do not read ahead of the converter: after a buffering error the
+			// reader must enforce its drain limit before the next SSE line.
+			select {
+			case <-lineProcessed:
+			case <-done:
 				return
 			}
 		}
@@ -1239,9 +1282,12 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			}
 			frame, ok := parser.AddLine(line)
 			if !ok {
+				lineProcessed <- struct{}{}
 				continue
 			}
-			if processFrame(frame) {
+			terminal := processFrame(frame)
+			lineProcessed <- struct{}{}
+			if terminal {
 				return finalizeStream()
 			}
 

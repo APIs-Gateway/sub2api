@@ -1048,7 +1048,11 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			cyberBlockKeyMsg = service.CyberSessionBlockKey(apiKey.ID, c, body)
 		}
 		requestPayloadHash := service.HashUsageRequestPayload(body)
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockKeyMsg, channelMappingMsg.ToUsageFields(reqModel, ""), requestPayloadHash)
+		// A failed stream may still return terminal usage. Record it through the
+		// normal Messages path once; use the cyber-policy usage fallback only
+		// when there is no usable result to submit.
+		cyberUsageFallback := err != nil && service.GetOpsCyberPolicy(c) != nil && (result == nil || result.Usage == (service.OpenAIUsage{}))
+		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, cyberUsageFallback, cyberBlockKeyMsg, channelMappingMsg.ToUsageFields(reqModel, ""), requestPayloadHash)
 		// 上游模型不一致：先读 B（成功路径 RecordUsage 透传），再记审计行并清标（下一次尝试可重新打标）。
 		upstreamResponseModel := ""
 		if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
@@ -1069,7 +1073,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		// 计量的 usage）也要正常入账；failover 错误由上方 failover 分支 continue/return，
 		// 不会调用本闭包（流式路径已写出后 result 可能非 nil），不会重复计费。
 		submitMessagesUsage := func(res *service.OpenAIForwardResult) {
-			if res == nil {
+			if res == nil || cyberUsageFallback {
 				return
 			}
 			userAgent := c.GetHeader("User-Agent")
@@ -3435,8 +3439,9 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 
 // recordCyberPolicyIfMarked 在 gateway forward 返回后检查 cyber 标记，异步写风控日志/邮件，
 // 并在 forward 返回错误时写一条 tokens=0 用量行。标记由 gateway 服务层在透传 cyber 后设置；
-// 当前请求已发给用户，本方法只做事后记录，不影响响应。forwardErrored 为 true 时才写用量行，
-// 避免与正常 RecordUsage(forward 成功路径)重复。每请求至多记录一次。
+// 当前请求已发给用户，本方法只做事后记录，不影响响应。forwardErrored 为 true 时才写用量行；
+// Messages 错误路径若已有可提交的 terminal usage 会传 false，改走正常 RecordUsage，
+// 避免两条路径重复计费。每请求至多记录一次。
 // stable 为可选的稳定优先调度结果：仅 chat_completions stable 兜底路径传入，
 // 用于让 cyber 计费行按"实际服务档位组"计费（其余调用点不传，零值=按 home 组计费）。
 func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockKey string, channelFields service.ChannelUsageFields, requestPayloadHash string, stable ...service.OpenAIAccountScheduleDecision) {
