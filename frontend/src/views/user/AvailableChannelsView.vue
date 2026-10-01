@@ -2,69 +2,65 @@
   <AppLayout>
     <BillingRulesCard :models-below="true" class="mb-4" />
 
-    <!-- Toolbar -->
-    <div class="mb-4 flex flex-wrap items-center gap-3">
+    <!-- 搜索 + 平台筛选 -->
+    <div class="mb-3 flex flex-wrap items-center gap-3">
       <div class="relative w-full sm:w-80">
         <Icon name="search" size="md" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500" />
         <input
           v-model="searchQuery"
-          type="text"
+          type="search"
           :placeholder="t('availableChannels.searchPlaceholder')"
+          :aria-label="t('availableChannels.searchPlaceholder')"
           class="input pl-10"
         />
       </div>
+      <div class="flex-1" />
       <RouterLink to="/payment" class="btn btn-primary shrink-0">{{ t('availableChannels.buyPlans') }}</RouterLink>
       <button @click="loadChannels" :disabled="loading" class="btn btn-secondary shrink-0" :title="t('common.refresh', 'Refresh')">
         <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
       </button>
     </div>
 
-    <div v-if="loading" class="flex justify-center py-16">
+    <div v-if="loading && catalog.length === 0" class="flex justify-center py-16">
       <div class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
     </div>
 
-    <template v-else-if="groupTabs.length > 0">
-      <!-- 分组 tab 切换 -->
-      <div class="mb-3 flex gap-2 overflow-x-auto pb-1">
+    <template v-else-if="catalog.length > 0">
+      <div class="mb-3 flex gap-2 overflow-x-auto pb-1" role="group" :aria-label="t('availableChannels.platform')">
         <button
-          v-for="g in groupTabs"
-          :key="g.id"
+          v-for="chip in platformChips"
+          :key="chip.value"
           type="button"
-          @click="selectedGroupId = g.id"
+          :aria-pressed="platformFilter === chip.value"
           :class="[
-            'flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors',
-            selectedGroup && selectedGroup.id === g.id
+            'flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+            platformFilter === chip.value
               ? 'border-gray-400 bg-gray-100 font-semibold text-gray-900 dark:border-dark-500 dark:bg-dark-700 dark:text-white'
               : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300 dark:hover:bg-dark-700',
           ]"
+          @click="platformFilter = chip.value"
         >
-          <PlatformIcon v-if="g.platform" :platform="(g.platform as GroupPlatform)" size="xs" />
-          <span class="font-medium">{{ g.name }}</span>
-          <span v-if="!isFiat" class="rounded bg-black/10 px-1.5 py-0.5 text-[10px] font-semibold dark:bg-white/10">{{ formatRate(g.rate) }}x</span>
+          <span>{{ chip.label }}</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400">{{ chip.count }}</span>
         </button>
       </div>
 
-      <!-- 选中分组的说明 + 实付提示 -->
-      <p v-if="selectedGroup" class="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
-        <span v-if="selectedGroup.description">{{ selectedGroup.description }}</span>
-        <span v-if="isFiat" class="text-gray-400 dark:text-gray-500" data-test="fiat-pay-hint">{{ fiatPayHint }}</span>
-        <span v-else class="text-gray-400 dark:text-gray-500">{{ t('availableChannels.payHint') }} {{ formatRate(selectedGroup.rate) }}x</span>
-      </p>
-
-      <!-- 该分组的模型卡 -->
-      <div v-if="displayModels.length > 0" class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <ModelPriceCard
-          v-for="m in displayModels"
-          :key="m.name"
+      <ul
+        v-if="visibleModels.length > 0"
+        class="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800"
+        data-test="model-list"
+      >
+        <ModelCatalogRow
+          v-for="m in visibleModels"
+          :key="m.key"
           :model="m"
-          :rate-multiplier="selectedGroup?.rate ?? 1"
-          :platform-hint="selectedGroup?.platform"
-          :no-pricing-label="t('availableChannels.noPricing')"
+          :expanded="expandedKeys.has(m.key)"
           :subscription-unit="subscriptionUnit"
+          @toggle="toggleModel(m.key)"
         />
-      </div>
+      </ul>
       <div v-else class="rounded-xl border border-dashed border-gray-200 py-12 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400">
-        {{ t('availableChannels.noModels') }}
+        {{ t('availableChannels.noResults') }}
       </div>
     </template>
 
@@ -81,126 +77,63 @@ import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
-import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import BillingRulesCard from '@/components/common/BillingRulesCard.vue'
-import ModelPriceCard from '@/components/channels/ModelPriceCard.vue'
-import userChannelsAPI, { type UserAvailableChannel, type UserSupportedModel } from '@/api/channels'
+import ModelCatalogRow from '@/components/channels/ModelCatalogRow.vue'
+import userChannelsAPI, { type UserAvailableChannel } from '@/api/channels'
 import userGroupsAPI from '@/api/groups'
-import { useAppStore } from '@/stores/app'
-import { extractApiErrorMessage } from '@/utils/apiError'
-import type { GroupPlatform } from '@/types'
-import type { SubscriptionUnitRange } from '@/components/channels/ModelPriceCard.vue'
 import subscriptionsAPI, { type SubscriptionPricingBounds } from '@/api/subscriptions'
-import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { useAppStore } from '@/stores/app'
 import { useSubscriptionStore } from '@/stores/subscriptions'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { extractApiErrorMessage } from '@/utils/apiError'
+import { platformLabel } from '@/utils/platformColors'
+import { buildCatalog, resolveSubscriptionUnit, type SubscriptionUnitRange } from '@/utils/modelCatalog'
 
 const { t } = useI18n()
 const appStore = useAppStore()
 const subscriptionStore = useSubscriptionStore()
-const { isFiat, rechargeMultiplier, formatFiat } = useCurrencyDisplay()
+const { rechargeMultiplier } = useCurrencyDisplay()
 const pricingBounds = ref<SubscriptionPricingBounds | null>(null)
 
-/**
- * 套餐价用的卡单价：用户有生效中的卡就用那张卡的 u(D)（精确），
- * 否则给出可购买套餐的单价区间（u 随每日额度变化）。
- * 订阅扣费与分组无关——有卡时任何分组的用量都先从卡里扣。
- */
-const subscriptionUnit = computed<SubscriptionUnitRange | null>(() => {
-  for (const sub of subscriptionStore.activeSubscriptions) {
-    const rate = sub.fiat_per_credit
-    if (sub.status === 'active' && typeof rate === 'number' && Number.isFinite(rate) && rate > 0) {
-      return { min: rate, max: rate, exact: true }
-    }
-  }
-  const b = pricingBounds.value
-  if (!b || !(b.u_min > 0) || !(b.u_max > 0)) return null
-  return { min: Math.min(b.u_min, b.u_max), max: Math.max(b.u_min, b.u_max), exact: false }
-})
-
-/** 「官方价每 $1：用余额实付 ¥x，用套餐实付 ¥a–¥b」——把分组倍率翻译成人民币。 */
-const fiatPayHint = computed(() => {
-  const g = selectedGroup.value
-  if (!g) return ''
-  const balance = formatFiat(g.rate / rechargeMultiplier.value)
-  const unit = subscriptionUnit.value
-  if (!unit) return t('availableChannels.fiat.payHintBalanceOnly', { balance })
-  const low = formatFiat(g.rate * unit.min)
-  const subscription = unit.exact || unit.max === unit.min ? low : `${low}–${formatFiat(g.rate * unit.max)}`
-  return t('availableChannels.fiat.payHint', { balance, subscription })
-})
+/** 套餐价用的卡单价：有生效卡取那张卡（精确），否则取可购买套餐的区间。 */
+const subscriptionUnit = computed<SubscriptionUnitRange | null>(() =>
+  resolveSubscriptionUnit(subscriptionStore.activeSubscriptions, pricingBounds.value),
+)
 
 const channels = ref<UserAvailableChannel[]>([])
 const userGroupRates = ref<Record<number, number>>({})
 const loading = ref(false)
 const searchQuery = ref('')
-const selectedGroupId = ref<number | null>(null)
+const platformFilter = ref('all')
+const expandedKeys = ref<Set<string>>(new Set())
 
-interface GroupTab {
-  id: number
-  name: string
-  platform: string
-  subscriptionType: string
-  rate: number
-  description: string
-  models: UserSupportedModel[]
-}
+const catalog = computed(() => buildCatalog(channels.value, userGroupRates.value))
 
-// 以分组为外层：每个分组聚合其所在所有渠道-平台 section 的模型(按名去重)。
-const groupTabs = computed<GroupTab[]>(() => {
-  const map = new Map<
-    number,
-    { id: number; name: string; platform: string; subscriptionType: string; rate: number; description: string; models: Map<string, UserSupportedModel> }
-  >()
-  for (const ch of channels.value) {
-    for (const sec of ch.platforms) {
-      for (const g of sec.groups) {
-        let e = map.get(g.id)
-        if (!e) {
-          e = {
-            id: g.id,
-            name: g.name,
-            platform: g.platform || sec.platform,
-            subscriptionType: g.subscription_type,
-            rate: userGroupRates.value[g.id] ?? g.rate_multiplier,
-            description: g.description || '',
-            models: new Map<string, UserSupportedModel>(),
-          }
-          map.set(g.id, e)
-        }
-        for (const m of sec.supported_models) {
-          const cur = e.models.get(m.name)
-          if (!cur || (!cur.pricing && m.pricing)) e.models.set(m.name, m)
-        }
-      }
-    }
-  }
-  return Array.from(map.values())
-    .map((e) => ({ ...e, models: Array.from(e.models.values()) }))
-    .sort(
-      (a, b) =>
-        (a.subscriptionType === 'subscription' ? 1 : 0) - (b.subscriptionType === 'subscription' ? 1 : 0) ||
-        a.rate - b.rate ||
-        a.name.localeCompare(b.name),
-    )
-})
-
-// 选中分组：未选或失效时回退第一个 tab。
-const selectedGroup = computed<GroupTab | null>(() => {
-  const tabs = groupTabs.value
-  if (tabs.length === 0) return null
-  return tabs.find((tab) => tab.id === selectedGroupId.value) ?? tabs[0]
-})
-
-const displayModels = computed<UserSupportedModel[]>(() => {
-  const g = selectedGroup.value
-  if (!g) return []
+const searchedModels = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  const models = q ? g.models.filter((m) => m.name.toLowerCase().includes(q)) : g.models
-  return [...models].sort((a, b) => a.name.localeCompare(b.name))
+  return q ? catalog.value.filter((m) => m.name.toLowerCase().includes(q)) : catalog.value
 })
 
-function formatRate(r: number): string {
-  return Number(r.toPrecision(10)).toString()
+const platformChips = computed(() => {
+  const counts = new Map<string, number>()
+  for (const m of searchedModels.value) counts.set(m.platform, (counts.get(m.platform) ?? 0) + 1)
+  const chips = [{ value: 'all', label: t('availableChannels.allPlatforms'), count: searchedModels.value.length }]
+  for (const [value, count] of [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    chips.push({ value, label: platformLabel(value), count })
+  }
+  return chips
+})
+
+const visibleModels = computed(() =>
+  platformFilter.value === 'all'
+    ? searchedModels.value
+    : searchedModels.value.filter((m) => m.platform === platformFilter.value),
+)
+
+function toggleModel(key: string) {
+  const next = new Set(expandedKeys.value)
+  if (!next.delete(key)) next.add(key)
+  expandedKeys.value = next
 }
 
 async function loadChannels() {
@@ -215,7 +148,7 @@ async function loadChannels() {
     ])
     channels.value = list
     userGroupRates.value = rates
-    // 套餐单价区间只是展示增强，取不到时只展示余额价
+    // 套餐单价区间只是展示增强，取不到时不显示套餐价
     if (rechargeMultiplier.value !== 1 && !pricingBounds.value) {
       subscriptionsAPI
         .getSubscriptionPricing()
