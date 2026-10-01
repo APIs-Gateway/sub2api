@@ -2,7 +2,7 @@
  * 使用文档的渲染工具：占位符替换、Markdown 渲染、章节解析。
  * 文档里的地址一律用占位符，渲染时按站点的 api_base_url 填入，不写死域名。
  */
-import { Marked } from 'marked'
+import { Marked, Renderer } from 'marked'
 import DOMPurify from 'dompurify'
 import { OPENAI_CC_SWITCH_CODEX_MODEL } from '@/utils/ccswitchImport'
 
@@ -125,7 +125,7 @@ export function renderSection(id: string, raw: string, vars: DocVars, labels: Do
         const { lang: language, title: caption } = parseFenceInfo(lang)
         const label = caption ? `<span class="docs-code-title">${escapeHtml(caption)}</span>` : '<span></span>'
         return (
-          '<figure class="docs-code">' +
+          `<figure class="docs-code${caption ? '' : ' docs-code-plain'}">` +
           `<figcaption>${label}` +
           `<button type="button" class="docs-copy" data-docs-copy>` +
           `<span class="docs-copy-idle">${escapeHtml(labels.copy)}</span>` +
@@ -134,6 +134,10 @@ export function renderSection(id: string, raw: string, vars: DocVars, labels: Do
           `<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ''}>${escapeHtml(text)}</code></pre>` +
           '</figure>\n'
         )
+      },
+      // 表格外面包一层，比阅读栏宽的表格靠它在窄屏上横向滚动
+      table(token) {
+        return `<div class="docs-table">${Renderer.prototype.table.call(this, token)}</div>\n`
       },
       link({ href, title, tokens }) {
         const inner = this.parser.parseInline(tokens)

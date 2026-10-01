@@ -1,36 +1,24 @@
 <template>
   <div class="docs-ai">
-    <div class="flex flex-wrap gap-x-5 gap-y-1 border-b border-gray-200 dark:border-dark-700" role="tablist">
+    <div class="docs-ai-tabs" role="tablist">
       <button
         v-for="tab in tabs"
         :key="tab.id"
         type="button"
         role="tab"
         :aria-selected="active === tab.id"
-        class="-mb-px border-b-2 py-2 text-sm font-medium transition-colors"
-        :class="
-          active === tab.id
-            ? 'border-primary-600 text-primary-700 dark:border-primary-400 dark:text-primary-300'
-            : 'border-transparent text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
-        "
+        class="docs-ai-tab"
+        :class="{ 'is-active': active === tab.id }"
         @click="active = tab.id"
       >
         {{ tab.label }}
       </button>
     </div>
 
-    <p
-      class="mt-4 whitespace-pre-line rounded-md bg-gray-100 px-4 py-3 text-[15px] leading-7 text-gray-800 dark:bg-dark-800 dark:text-dark-100"
-      data-testid="docs-ai-prompt"
-    >{{ currentPrompt }}</p>
+    <p class="docs-ai-prompt" data-testid="docs-ai-prompt">{{ currentPrompt }}</p>
 
-    <div class="mt-3 flex flex-wrap items-center gap-2">
-      <button
-        type="button"
-        class="inline-flex items-center rounded-md bg-primary-600 px-3.5 py-1.5 text-sm font-medium text-white transition hover:bg-primary-700"
-        data-testid="docs-ai-copy"
-        @click="copyPrompt"
-      >
+    <div class="docs-ai-actions">
+      <button type="button" class="docs-ai-primary" data-testid="docs-ai-copy" @click="copyPrompt">
         {{ copied ? t('docs.copied') : t('docs.ai.copyPrompt') }}
       </button>
       <a
@@ -91,7 +79,71 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* 颜色变量由 DocsView 的 .docs-page 提供，和正文一起随明暗模式切换 */
+.docs-ai-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.5rem;
+  border-bottom: 1px solid var(--d-rule);
+}
+.docs-ai-tab {
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  padding-block: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--d-muted);
+  transition: color 0.15s, border-color 0.15s;
+}
+.docs-ai-tab:hover {
+  color: var(--d-ink);
+}
+.docs-ai-tab.is-active {
+  border-bottom-color: var(--d-ink);
+  color: var(--d-ink);
+}
+.docs-ai-prompt {
+  margin-top: 1rem;
+  white-space: pre-line;
+  border: 1px solid var(--d-rule);
+  border-radius: 0.25rem;
+  background: var(--d-wash);
+  padding: 1rem 1.125rem;
+  font-size: 0.9375rem;
+  line-height: 1.85;
+  color: var(--d-text);
+}
+.docs-ai-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.875rem;
+}
+.docs-ai-primary,
 .docs-ai-link {
-  @apply inline-flex items-center rounded-md border border-gray-300 px-3.5 py-1.5 text-sm font-medium text-gray-800 transition hover:bg-gray-100 dark:border-dark-600 dark:text-dark-100 dark:hover:bg-dark-800;
+  display: inline-flex;
+  height: 2.25rem;
+  align-items: center;
+  border-radius: 9999px;
+  padding-inline: 1.125rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+}
+.docs-ai-primary {
+  background: var(--d-pill-bg);
+  color: var(--d-pill-fg);
+}
+.docs-ai-primary:hover {
+  opacity: 0.86;
+}
+.docs-ai-link {
+  border: 1px solid var(--d-rule);
+  color: var(--d-text);
+}
+.docs-ai-link:hover {
+  border-color: var(--d-muted);
+  color: var(--d-ink);
 }
 </style>

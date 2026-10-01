@@ -268,6 +268,54 @@ describe('DocsView', () => {
     })
   })
 
+  describe('hero and edge rail', () => {
+    it('lists the groups in the hero, each linking to the first section of its group', async () => {
+      const wrapper = await mountDocs('https://api.first.test')
+
+      const links = wrapper.findAll('.docs-hero-toc a')
+      expect(links).toHaveLength(DOC_GROUPS.length)
+      links.forEach((link, index) => {
+        expect(link.attributes('href')).toBe(`#${DOC_GROUPS[index].sections[0].id}`)
+        expect(link.text()).toContain(zhCN.docs.groups[DOC_GROUPS[index].id])
+      })
+      expect(wrapper.get('h1').text()).toBe(`Hiyo ${zhCN.docs.title}`)
+
+      await links[1].trigger('click')
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
+      expect(window.location.hash).toBe(`#${DOC_GROUPS[1].sections[0].id}`)
+      wrapper.unmount()
+    })
+
+    it('labels the edge rail and gives every tick a readable section name', async () => {
+      const wrapper = await mountDocs('https://api.first.test')
+      const rail = wrapper.get('[data-testid="docs-toc"]')
+
+      expect(rail.attributes('aria-label')).toBe(zhCN.docs.tocTitle)
+      for (const link of rail.findAll('[data-toc-id]')) {
+        expect(link.text().length).toBeGreaterThan(0)
+      }
+      wrapper.unmount()
+    })
+
+    it('marks the section that has scrolled to the top as current', async () => {
+      const wrapper = await mountDocs('https://api.first.test')
+      const reached = 4
+      vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+        const index = allSectionIds.indexOf(this.id)
+        const top = index === -1 ? 0 : index <= reached ? -300 + index * 50 : 600 + index * 40
+        return { top, bottom: top, left: 0, right: 0, width: 0, height: 0, x: 0, y: top, toJSON: () => ({}) } as DOMRect
+      })
+
+      window.dispatchEvent(new Event('scroll'))
+      await vi.waitFor(() => {
+        const current = wrapper.findAll('[data-testid="docs-toc"] [aria-current="true"]')
+        expect(current).toHaveLength(1)
+        expect(current[0].attributes('data-toc-id')).toBe(allSectionIds[reached])
+      })
+      wrapper.unmount()
+    })
+  })
+
   describe('language', () => {
     it('shows a Chinese-only notice outside zh-CN', async () => {
       currentLocale.value = 'en'
@@ -340,6 +388,24 @@ describe('AI prompts', () => {
 })
 
 describe('renderSection', () => {
+  it('wraps tables in a scroll container and keeps title-less code blocks plain', () => {
+    const vars: DocVars = { base: 'https://a.test', v1: 'https://a.test/v1', site: 'S', model: 'm', llms: 'x' }
+    const rendered = renderSection(
+      'demo',
+      '# 标题\n\n| 方法 | 路径 |\n|---|---|\n| GET | `/v1/models` |\n\n```bash\nls\n```\n\n```bash title="终端"\nls\n```\n',
+      vars,
+      { copy: '复制', copied: '已复制' }
+    )
+    const container = document.createElement('div')
+    container.innerHTML = rendered.html
+
+    expect(container.querySelectorAll('.docs-table > table')).toHaveLength(1)
+    const blocks = container.querySelectorAll('figure.docs-code')
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].classList.contains('docs-code-plain')).toBe(true)
+    expect(blocks[1].classList.contains('docs-code-plain')).toBe(false)
+  })
+
   it('turns fenced code into a block with a title and a copy button', () => {
     const vars: DocVars = { base: 'https://a.test', v1: 'https://a.test/v1', site: 'S', model: 'm', llms: 'x' }
     const rendered = renderSection(
