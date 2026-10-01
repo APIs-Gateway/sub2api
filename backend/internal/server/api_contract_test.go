@@ -880,6 +880,7 @@ func TestAPIContracts(t *testing.T) {
 					"custom_menu_items": [],
 					"custom_endpoints": [],
 					"payment_enabled": false,
+					"payment_official_price_cny_rate": 0,
 					"payment_min_amount": 0,
 					"payment_max_amount": 0,
 					"payment_daily_limit": 0,
@@ -1158,6 +1159,7 @@ func TestAPIContracts(t *testing.T) {
 						"rules": []
 					},
 					"payment_enabled": false,
+					"payment_official_price_cny_rate": 0,
 					"payment_min_amount": 0,
 					"payment_max_amount": 0,
 					"payment_daily_limit": 0,
