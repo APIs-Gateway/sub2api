@@ -57,9 +57,17 @@ func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader s
 		return true
 	}
 
-	if c.GetString("auth_method") == service.AuditAuthMethodAdminAPIKey {
+	switch c.GetString("auth_method") {
+	case service.AuditAuthMethodAdminAPIKey:
 		AbortWithError(c, 403, "STEP_UP_ADMIN_API_KEY_FORBIDDEN",
 			"Admin API key cannot access this endpoint; a two-factor verified admin session is required")
+		return false
+	case service.AuditAuthMethodAdminToken:
+		// An admin token acts as an administrator but has no interactive
+		// session; without this it would fall through to the user-scoped
+		// "u<id>" grant key and could ride on a grant earned by a human.
+		AbortWithError(c, 403, "STEP_UP_ADMIN_TOKEN_FORBIDDEN",
+			"Admin tokens cannot access this endpoint; a two-factor verified admin session is required")
 		return false
 	}
 

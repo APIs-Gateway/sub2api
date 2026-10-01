@@ -12,10 +12,20 @@ import (
 )
 
 const (
-	// AuditAuthMethodJWT and AuditAuthMethodAdminAPIKey match the values written
-	// by the existing authentication middleware.
+	// AuditAuthMethodJWT, AuditAuthMethodAdminAPIKey and AuditAuthMethodAdminToken
+	// are the values the admin authentication middleware stores in the gin
+	// context under "auth_method" (the legacy global admin API key keeps its
+	// historical "admin_api_key" value so existing checks behave as before).
 	AuditAuthMethodJWT         = "jwt"
 	AuditAuthMethodAdminAPIKey = "admin_api_key"
+	AuditAuthMethodAdminToken  = "admin_token"
+
+	// AuditAuthKind* classify how an admin request authenticated. They are the
+	// values persisted in audit_logs.auth_kind and accepted by the audit-log
+	// filter of the same name.
+	AuditAuthKindJWT          = "jwt"
+	AuditAuthKindAdminToken   = "admin_token"
+	AuditAuthKindLegacyAPIKey = "legacy_api_key"
 
 	auditRequestBodyMaxBytes     = 16 * 1024
 	auditRedactMaxDepth          = 24
