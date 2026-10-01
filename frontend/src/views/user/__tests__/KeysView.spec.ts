@@ -168,7 +168,7 @@ const DataTableStub = {
   `,
 }
 
-const mountView = async () => {
+const mountView = async (table: object = DataTableStub) => {
   const wrapper = mount(KeysView, {
     global: {
       stubs: {
@@ -176,7 +176,7 @@ const mountView = async () => {
         TablePageLayout: {
           template: '<div><slot name="filters" /><slot name="actions" /><slot name="table" /><slot name="pagination" /></div>',
         },
-        DataTable: DataTableStub,
+        DataTable: table,
         Pagination: true,
         BaseDialog: {
           props: ['show'],
@@ -481,6 +481,228 @@ describe('user KeysView fiat limit input', () => {
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
     expect(updateKey).toHaveBeenLastCalledWith(b.id, expect.objectContaining({ quota: 300 }))
+    wrapper.unmount()
+  })
+})
+
+// 概览与行内接入入口
+describe('user KeysView overview and connect actions', () => {
+  const RowsTableStub = {
+    props: ['columns', 'data'],
+    template: `
+      <div>
+        <div v-for="row in data" :key="row.id" :data-row="row.id">
+          <slot name="cell-usage" :row="row" />
+          <slot name="cell-actions" :row="row" />
+        </div>
+      </div>
+    `,
+  }
+
+  const keyA: ApiKey = { ...createApiKey(), id: 1, name: 'a', status: 'active', group_id: 1, quota: 100, quota_used: 40 }
+  const keyB: ApiKey = { ...createApiKey(), id: 2, name: 'b', status: 'inactive', group_id: 1 }
+
+  beforeEach(() => {
+    localStorage.clear()
+    publicSettings.value = { balance_recharge_multiplier: 10 }
+    activeSubscriptions.value = []
+    useCurrencyDisplay().setMode('fiat')
+    listKeys.mockResolvedValue({ items: [keyA, keyB], total: 2, page: 1, page_size: 20, pages: 1 })
+    getPublicSettings.mockResolvedValue({ api_base_url: 'https://codex.hiyo.top' })
+    getDashboardApiKeysUsage.mockResolvedValue({
+      stats: {
+        1: { api_key_id: 1, today_actual_cost: 1, total_actual_cost: 20, today_actual_cost_fiat: 0.1, total_actual_cost_fiat: 2 },
+        2: { api_key_id: 2, today_actual_cost: 0, total_actual_cost: 15, today_actual_cost_fiat: 0, total_actual_cost_fiat: 1.5 },
+      },
+    })
+    getAvailableGroups.mockResolvedValue([])
+    getUserGroupRates.mockResolvedValue({})
+    isCurrentStep.mockReturnValue(false)
+  })
+
+  it('概览：已启用数、近 30 天消费合计、接入地址', async () => {
+    const wrapper = await mountView(RowsTableStub)
+    expect(wrapper.get('[data-test="overview-address"]').text()).toBe('https://codex.hiyo.top')
+    expect(wrapper.get('[data-test="overview-enabled"]').text()).toBe('keys.overview.enabled')
+    expect(wrapper.get('[data-test="overview-spent"]').text()).toBe('¥3.50')
+    wrapper.unmount()
+  })
+
+  it('概览：美元口径下按额度合计', async () => {
+    useCurrencyDisplay().setMode('usd')
+    const wrapper = await mountView(RowsTableStub)
+    expect(wrapper.get('[data-test="overview-spent"]').text()).toBe('$35.0000')
+    wrapper.unmount()
+    useCurrencyDisplay().setMode('fiat')
+  })
+
+  it('概览：有 Key 缺人民币值时不拿部分合计冒充总数', async () => {
+    getDashboardApiKeysUsage.mockResolvedValue({
+      stats: {
+        1: { api_key_id: 1, today_actual_cost: 0, total_actual_cost: 20, total_actual_cost_fiat: 2 },
+        2: { api_key_id: 2, today_actual_cost: 0, total_actual_cost: 15 },
+      },
+    })
+    const wrapper = await mountView(RowsTableStub)
+    expect(wrapper.get('[data-test="overview-spent"]').text()).toBe('$35.0000')
+    wrapper.unmount()
+  })
+
+  it('概览：分页后只覆盖当前页，标签写明', async () => {
+    listKeys.mockResolvedValue({ items: [keyA, keyB], total: 30, page: 1, page_size: 2, pages: 15 })
+    const wrapper = await mountView(RowsTableStub)
+    expect(wrapper.get('[data-test="overview-enabled"]').text()).toBe('keys.overview.enabledList')
+    expect(wrapper.get('[data-test="overview-stats"]').text()).toContain('keys.overview.spentList')
+    wrapper.unmount()
+  })
+
+  it('概览：没有筛选、只有一页时按全部密钥统计', async () => {
+    const wrapper = await mountView(RowsTableStub)
+    expect(wrapper.get('[data-test="overview-enabled"]').text()).toBe('keys.overview.enabled')
+    expect(wrapper.get('[data-test="overview-stats"]').text()).not.toContain('keys.overview.spentList')
+    wrapper.unmount()
+  })
+
+  // 带筛选条件时，列表只是全部密钥的一部分：即使结果不超过一页，也不能写成「共 N 个密钥」
+  describe('概览：带筛选条件时按当前列表统计', () => {
+    const filterSelect = (wrapper: VueWrapper, firstLabel: string) =>
+      wrapper.findAllComponents({ name: 'Select' }).find((select) => select.props('options')?.[0]?.label === firstLabel)!
+
+    const expectListLabels = (wrapper: VueWrapper) => {
+      expect(wrapper.get('[data-test="overview-enabled"]').text()).toBe('keys.overview.enabledList')
+      expect(wrapper.get('[data-test="overview-stats"]').text()).toContain('keys.overview.spentList')
+    }
+
+    it('状态筛选', async () => {
+      const wrapper = await mountView(RowsTableStub)
+      expect(wrapper.get('[data-test="overview-enabled"]').text()).toBe('keys.overview.enabled')
+      filterSelect(wrapper, 'All Status').vm.$emit('update:modelValue', 'active')
+      await flushPromises()
+      expect(listKeys).toHaveBeenLastCalledWith(1, expect.any(Number), expect.objectContaining({ status: 'active' }), expect.anything())
+      expectListLabels(wrapper)
+      wrapper.unmount()
+    })
+
+    it('分组筛选，包括「无分组」（值为 0）', async () => {
+      const wrapper = await mountView(RowsTableStub)
+      filterSelect(wrapper, 'All Groups').vm.$emit('update:modelValue', 0)
+      await flushPromises()
+      expect(listKeys).toHaveBeenLastCalledWith(1, expect.any(Number), expect.objectContaining({ group_id: 0 }), expect.anything())
+      expectListLabels(wrapper)
+      wrapper.unmount()
+    })
+
+    it('搜索', async () => {
+      const wrapper = await mountView(RowsTableStub)
+      const search = wrapper.findComponent({ name: 'SearchInput' })
+      search.vm.$emit('update:modelValue', 'abc')
+      search.vm.$emit('search')
+      await flushPromises()
+      expect(listKeys).toHaveBeenLastCalledWith(1, expect.any(Number), expect.objectContaining({ search: 'abc' }), expect.anything())
+      expectListLabels(wrapper)
+      wrapper.unmount()
+    })
+
+    it('筛选条件清掉后恢复成全部密钥的统计', async () => {
+      const wrapper = await mountView(RowsTableStub)
+      const status = filterSelect(wrapper, 'All Status')
+      status.vm.$emit('update:modelValue', 'active')
+      await flushPromises()
+      expectListLabels(wrapper)
+      status.vm.$emit('update:modelValue', '')
+      await flushPromises()
+      expect(wrapper.get('[data-test="overview-enabled"]').text()).toBe('keys.overview.enabled')
+      wrapper.unmount()
+    })
+  })
+
+  it('复制接入地址', async () => {
+    copyToClipboard.mockResolvedValue(true)
+    const wrapper = await mountView(RowsTableStub)
+    await wrapper.get('[data-test="overview-copy"]').trigger('click')
+    expect(copyToClipboard).toHaveBeenCalledWith('https://codex.hiyo.top', 'keys.endpoints.copied')
+    await flushPromises()
+    expect(wrapper.get('[data-test="overview-copy"]').text()).toBe('keys.overview.copied')
+    wrapper.unmount()
+  })
+
+  it('每行（有上限）：已用和上限同口径，都是额度折算；近 30 天消费单独一行', async () => {
+    const wrapper = await mountView(RowsTableStub)
+    const rowA = wrapper.get('[data-row="1"]')
+    // quota=100、quota_used=40、倍率 10：已用 ≈¥4.00，上限 ≈¥10.00（不是近 30 天消费 ¥2.00）
+    expect(rowA.get('[data-test="row-used"]').text()).toBe('≈¥4.00')
+    expect(rowA.get('[data-test="row-limit"]').text()).toBe('≈¥10.00')
+    expect(rowA.get('[data-test="row-recent"]').text()).toBe('¥2.00')
+    // 「近 30 天」「今日」标签直接写在行里，不靠悬停提示
+    expect(rowA.text()).toContain('keys.total')
+    expect(rowA.text()).toContain('keys.today')
+    expect(rowA.findAll('[title]').map((el) => el.attributes('title'))).not.toContain('keys.total')
+    wrapper.unmount()
+  })
+
+  it('每行：近 30 天消费与 quota_used 不同时，已用仍取 quota_used，近 30 天取用量统计', async () => {
+    getDashboardApiKeysUsage.mockResolvedValue({
+      stats: {
+        1: { api_key_id: 1, today_actual_cost: 5, total_actual_cost: 999, today_actual_cost_fiat: 0.5, total_actual_cost_fiat: 99.9 },
+        2: { api_key_id: 2, today_actual_cost: 0, total_actual_cost: 0, today_actual_cost_fiat: 0, total_actual_cost_fiat: 0 },
+      },
+    })
+    const wrapper = await mountView(RowsTableStub)
+    const rowA = wrapper.get('[data-row="1"]')
+    expect(rowA.get('[data-test="row-used"]').text()).toBe('≈¥4.00')
+    expect(rowA.get('[data-test="row-recent"]').text()).toBe('¥99.90')
+    wrapper.unmount()
+  })
+
+  it('每行：额度用完时已用和上限一起变色', async () => {
+    const full: ApiKey = { ...keyA, quota: 100, quota_used: 100 }
+    listKeys.mockResolvedValue({ items: [full, keyB], total: 2, page: 1, page_size: 20, pages: 1 })
+    const wrapper = await mountView(RowsTableStub)
+    const rowA = wrapper.get('[data-row="1"]')
+    expect(rowA.get('[data-test="row-used"]').text()).toBe('≈¥10.00')
+    expect(rowA.get('[data-test="row-used"]').classes()).toContain('text-primary-700')
+    expect(rowA.get('[data-test="row-limit"]').classes()).toContain('text-primary-700')
+    wrapper.unmount()
+  })
+
+  it('每行：美元口径下已用和上限都是额度', async () => {
+    useCurrencyDisplay().setMode('usd')
+    const wrapper = await mountView(RowsTableStub)
+    const rowA = wrapper.get('[data-row="1"]')
+    expect(rowA.get('[data-test="row-used"]').text()).toBe('$40.00')
+    expect(rowA.get('[data-test="row-limit"]').text()).toBe('$100.00')
+    expect(rowA.get('[data-test="row-recent"]').text()).toBe('$20.0000')
+    wrapper.unmount()
+    useCurrencyDisplay().setMode('fiat')
+  })
+
+  it('每行（无上限）：写近 30 天消费并标明不限额，不写「已用 x / 不限」', async () => {
+    const wrapper = await mountView(RowsTableStub)
+    const rowB = wrapper.get('[data-row="2"]')
+    expect(rowB.find('[data-test="row-used"]').exists()).toBe(false)
+    expect(rowB.get('[data-test="row-recent"]').text()).toBe('¥1.50')
+    expect(rowB.get('[data-test="row-limit"]').text()).toBe('keys.unlimited')
+    expect(rowB.text()).toContain('keys.total')
+    expect(rowB.text()).not.toContain('keys.usedLabel')
+    wrapper.unmount()
+  })
+
+  it('「接入」打开一键安装页签，「CC Switch」打开 CC Switch 页签', async () => {
+    const wrapper = await mountView(RowsTableStub)
+    const modal = () => wrapper.findComponent({ name: 'KeyOnboardingModal' })
+    expect(modal().props('show')).toBe(false)
+
+    await wrapper.get('[data-row="1"] [data-test="action-ccswitch"]').trigger('click')
+    expect(modal().props('show')).toBe(true)
+    expect(modal().props('initialTab')).toBe('ccswitch')
+    expect(modal().props('apiKey')).toMatchObject({ id: 1 })
+    expect(modal().props('baseUrl')).toBe('https://codex.hiyo.top')
+
+    modal().vm.$emit('close')
+    await nextTick()
+    await wrapper.get('[data-row="2"] [data-test="action-connect"]').trigger('click')
+    expect(modal().props('initialTab')).toBe('install')
+    expect(modal().props('apiKey')).toMatchObject({ id: 2 })
     wrapper.unmount()
   })
 })

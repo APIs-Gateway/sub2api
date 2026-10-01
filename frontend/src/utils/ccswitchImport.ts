@@ -17,6 +17,8 @@ export interface CcSwitchImportDeeplinkInput {
   providerName: string
   apiKey: string
   usageScript: string
+  /** 指定主模型；缺省时沿用该平台的默认值（目前只有 Codex 有默认模型）。 */
+  model?: string
 }
 
 // CC Switch substitutes its stored provider endpoint for {{baseUrl}} before
@@ -90,8 +92,9 @@ export function buildCcSwitchImportDeeplink(input: CcSwitchImportDeeplinkInput):
     ['usageAutoInterval', '30']
   ]
 
-  if (config.model) {
-    entries.splice(2, 0, ['model', config.model])
+  const model = input.model?.trim() || config.model
+  if (model) {
+    entries.splice(2, 0, ['model', model])
   }
 
   return `ccswitch://v1/import?${new URLSearchParams(entries).toString()}`

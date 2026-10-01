@@ -3,6 +3,46 @@
     <TablePageLayout>
       <template #filters>
         <div class="flex flex-col gap-3">
+          <!-- 概览：接入地址是主角，数字只是一行说明 -->
+          <section class="rounded-md border border-gray-200 dark:border-dark-700" data-test="keys-overview">
+            <div class="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div class="flex min-w-0 items-center gap-3">
+                <span class="shrink-0 text-sm text-gray-600 dark:text-dark-400">{{ t('keys.overview.address') }}</span>
+                <code
+                  class="min-w-0 truncate font-mono text-sm text-gray-900 dark:text-gray-100"
+                  data-test="overview-address"
+                >{{ apiBaseUrl }}</code>
+                <button
+                  type="button"
+                  class="shrink-0 rounded-md border border-gray-200 px-2 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:border-dark-700 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                  data-test="overview-copy"
+                  @click="copyAddress"
+                >
+                  {{ addressCopied ? t('keys.overview.copied') : t('keys.overview.copy') }}
+                </button>
+              </div>
+              <EndpointPopover
+                v-if="(publicSettings?.custom_endpoints?.length ?? 0) > 0"
+                api-base-url=""
+                :custom-endpoints="publicSettings?.custom_endpoints || []"
+              />
+            </div>
+            <div
+              v-if="pagination.total > 0"
+              class="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-1 border-t border-gray-100 px-4 py-2.5 dark:border-dark-800"
+              data-test="overview-stats"
+            >
+              <p class="text-sm text-gray-600 dark:text-dark-400" data-test="overview-enabled">
+                {{ overview.partial
+                  ? t('keys.overview.enabledList', { active: overview.enabled, shown: apiKeys.length })
+                  : t('keys.overview.enabled', { active: overview.enabled, total: pagination.total }) }}
+              </p>
+              <p class="text-sm text-gray-600 dark:text-dark-400">
+                {{ overview.partial ? t('keys.overview.spentList') : t('keys.overview.spent') }}
+                <span class="ml-1 font-serif text-base tabular-nums text-gray-900 dark:text-white" data-test="overview-spent">{{ overview.spent }}</span>
+              </p>
+            </div>
+          </section>
           <div class="flex flex-wrap items-center gap-3">
             <SearchInput
               v-model="filterSearch"
@@ -23,11 +63,6 @@
               @update:model-value="onStatusFilterChange"
             />
           </div>
-          <EndpointPopover
-            v-if="publicSettings?.api_base_url || (publicSettings?.custom_endpoints?.length ?? 0) > 0"
-            :api-base-url="publicSettings?.api_base_url || ''"
-            :custom-endpoints="publicSettings?.custom_endpoints || []"
-          />
         </div>
       </template>
 
@@ -131,6 +166,21 @@
                 :title="t('keys.ipRestrictionEnabled')"
               />
             </div>
+            <!-- 窄屏下操作列在表格右侧，需要横向滚动；接入入口在这里再放一份 -->
+            <div class="mt-1.5 flex gap-1.5 lg:hidden">
+              <button
+                type="button"
+                class="inline-flex items-center rounded-md bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-white dark:bg-gray-100 dark:text-gray-900"
+                data-test="name-connect"
+                @click="openOnboarding(row, 'install')"
+              >{{ t('keys.connect') }}</button>
+              <button
+                type="button"
+                class="inline-flex items-center rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 dark:border-dark-600 dark:text-gray-200"
+                data-test="name-ccswitch"
+                @click="openOnboarding(row, 'ccswitch')"
+              >CC Switch</button>
+            </div>
           </template>
 
           <template #cell-group="{ row }">
@@ -172,40 +222,54 @@
 
           <template #cell-usage="{ row }">
             <div class="text-sm">
-              <div class="flex items-center gap-1.5">
-                <span class="text-gray-600 dark:text-gray-400">{{ t('keys.today') }}:</span>
-                <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">
-                  {{ formatMixed(usageStats[row.id]?.today_actual_cost ?? 0, usageStats[row.id]?.today_actual_cost_fiat) }}
-                </span>
-              </div>
-              <div class="mt-0.5 flex items-center gap-1.5">
-                <span class="text-gray-600 dark:text-gray-400">{{ t('keys.total') }}:</span>
-                <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">
-                  {{ formatMixed(usageStats[row.id]?.total_actual_cost ?? 0, usageStats[row.id]?.total_actual_cost_fiat) }}
-                </span>
-              </div>
-              <!-- Quota progress (if quota is set) -->
-              <div v-if="row.quota > 0" class="mt-1.5">
-                <div class="flex items-center gap-1.5">
-                  <span class="text-gray-600 dark:text-gray-400">{{ t('keys.quota') }}:</span>
-                  <span :class="[
-                    'font-mono tabular-nums font-medium',
-                    row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' :
-                    'text-gray-900 dark:text-white'
-                  ]">
-                    {{ formatLimit(row.quota_used, 2) }} / {{ formatLimit(row.quota, 2) }}
-                  </span>
+              <!-- 有上限：已用与上限同一口径（都是额度折算），与进度条、超额变色一致 -->
+              <template v-if="row.quota > 0">
+                <div class="flex flex-wrap items-baseline gap-x-1.5">
+                  <span class="text-gray-600 dark:text-gray-400">{{ t('keys.usedLabel') }}</span>
+                  <span
+                    data-test="row-used"
+                    :class="[
+                      'font-mono tabular-nums font-medium',
+                      row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' : 'text-gray-900 dark:text-white'
+                    ]"
+                  >{{ formatLimit(row.quota_used, 2) }}</span>
+                  <span class="text-gray-400 dark:text-dark-500">/</span>
+                  <span
+                    data-test="row-limit"
+                    :class="[
+                      'font-mono tabular-nums',
+                      row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' : 'text-gray-600 dark:text-gray-400'
+                    ]"
+                  >{{ formatLimit(row.quota, 2) }}</span>
                 </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
+                <div class="mt-1.5 h-1.5 w-full max-w-[12rem] overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
                   <div
                     :class="[
                       'h-full rounded-md transition-all',
-                      row.quota_used >= row.quota ? 'bg-primary-600' :
-                      'bg-gray-900 dark:bg-gray-100'
+                      row.quota_used >= row.quota ? 'bg-primary-600' : 'bg-gray-900 dark:bg-gray-100'
                     ]"
                     :style="{ width: Math.min((row.quota_used / row.quota) * 100, 100) + '%' }"
                   />
                 </div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('keys.total') }}
+                  <span class="font-mono tabular-nums" data-test="row-recent">{{ recentSpent(row.id) }}</span>
+                </div>
+              </template>
+              <!-- 无上限：只有近 30 天消费，旁边直接标出不限额 -->
+              <div v-else class="flex flex-wrap items-baseline gap-x-1.5">
+                <span class="text-gray-600 dark:text-gray-400">{{ t('keys.total') }}</span>
+                <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white" data-test="row-recent">{{ recentSpent(row.id) }}</span>
+                <span
+                  class="rounded-md border border-gray-200 px-1.5 py-px text-xs text-gray-600 dark:border-dark-700 dark:text-gray-400"
+                  data-test="row-limit"
+                >{{ t('keys.unlimited') }}</span>
+              </div>
+              <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('keys.today') }}
+                <span class="font-mono tabular-nums">
+                  {{ formatMixed(usageStats[row.id]?.today_actual_cost ?? 0, usageStats[row.id]?.today_actual_cost_fiat) }}
+                </span>
               </div>
             </div>
           </template>
@@ -349,14 +413,23 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1.5">
-              <!-- 一键接入（突出的主操作：扁平墨黑按钮） -->
+              <!-- 接入入口：窄屏在名称列里，这里只在宽屏显示 -->
               <button
-                @click="openOnboarding(row)"
-                class="inline-flex items-center gap-1.5 rounded-md bg-gray-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
-                :title="t('keys.quickConnect')"
+                type="button"
+                class="hidden items-center gap-1.5 rounded-md bg-gray-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-gray-800 lg:inline-flex dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+                data-test="action-connect"
+                @click="openOnboarding(row, 'install')"
               >
                 <Icon name="bolt" size="sm" />
-                {{ t('keys.quickConnect') }}
+                {{ t('keys.connect') }}
+              </button>
+              <button
+                type="button"
+                class="hidden items-center rounded-md border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 lg:inline-flex dark:border-dark-600 dark:text-gray-200 dark:hover:bg-dark-800"
+                data-test="action-ccswitch"
+                @click="openOnboarding(row, 'ccswitch')"
+              >
+                CC Switch
               </button>
               <!-- Toggle Status Button -->
               <button
@@ -989,7 +1062,9 @@
     <KeyOnboardingModal
       :show="showOnboardingModal"
       :api-key="onboardingKey"
-      :base-url="publicSettings?.api_base_url || ''"
+      :initial-tab="onboardingTab"
+      :base-url="apiBaseUrl"
+      :custom-endpoints="publicSettings?.custom_endpoints || []"
       :site-name="publicSettings?.site_name || ''"
       :doc-url="publicSettings?.doc_url || ''"
       @close="closeOnboarding"
@@ -1075,7 +1150,7 @@ import { useSourceFiatRate } from '@/composables/useSourceFiatRate'
 const { t } = useI18n()
 // 今日/累计花费用服务端分桶折算的人民币；额度上限与限额按当前扣费来源近似折算
 const { isFiat: currencyIsFiat, formatMixed } = useCurrencyDisplay()
-const { sourceFiatPerCredit, usesSubscriptionRate, formatLimit } = useSourceFiatRate()
+const { sourceFiatPerCredit, formatLimit } = useSourceFiatRate()
 import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -1224,6 +1299,43 @@ let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
 const userGroupRates = ref<Record<number, number>>({})
 
+// 站点接入地址：公开设置里没配时退回当前站点
+const apiBaseUrl = computed(() => (publicSettings.value?.api_base_url || '').trim() || window.location.origin)
+const addressCopied = ref(false)
+let addressCopiedTimer: ReturnType<typeof setTimeout> | null = null
+const copyAddress = async () => {
+  const ok = await clipboardCopy(apiBaseUrl.value, t('keys.endpoints.copied'))
+  if (!ok) return
+  addressCopied.value = true
+  if (addressCopiedTimer) clearTimeout(addressCopiedTimer)
+  addressCopiedTimer = setTimeout(() => (addressCopied.value = false), 1500)
+}
+
+// 每行「近 30 天」消费（与额度上限口径不同，页面上分开标注）
+const recentSpent = (keyId: number) =>
+  formatMixed(usageStats.value[keyId]?.total_actual_cost ?? 0, usageStats.value[keyId]?.total_actual_cost_fiat)
+
+// 概览：已启用数、近 30 天消费合计。统计只覆盖当前列表：分页后只有当前页，带筛选条件时只有命中的密钥。
+const overview = computed(() => {
+  let credits = 0
+  let fiat = 0
+  let fiatMissing = false
+  for (const key of apiKeys.value) {
+    const stat = usageStats.value[key.id]
+    const c = stat?.total_actual_cost ?? 0
+    credits += c
+    const f = stat?.total_actual_cost_fiat
+    if (typeof f === 'number' && Number.isFinite(f)) fiat += f
+    else if (c) fiatMissing = true
+  }
+  return {
+    enabled: apiKeys.value.filter((k) => k.status === 'active').length,
+    partial: listFiltered.value || pagination.value.total > apiKeys.value.length,
+    // 有 Key 缺人民币值时不能拿部分合计冒充总数，交给 formatMixed 回落到美元
+    spent: formatMixed(credits, fiatMissing ? undefined : fiat)
+  }
+})
+
 const pagination = ref({
   page: 1,
   page_size: getPersistedPageSize(),
@@ -1239,6 +1351,8 @@ const sortState = ref({
 const filterSearch = ref('')
 const filterStatus = ref('')
 const filterGroupId = ref<string | number>('')
+// 当前列表数据是否按筛选条件请求的（以请求时为准，输入框里还没生效的内容不算）
+const listFiltered = ref(false)
 
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
@@ -1248,6 +1362,7 @@ const showResetRateLimitDialog = ref(false)
 const showColumnDropdown = ref(false)
 const showOnboardingModal = ref(false)
 const onboardingKey = ref<ApiKey | null>(null)
+const onboardingTab = ref<'install' | 'ai' | 'ccswitch' | 'manual'>('install')
 const selectedKey = ref<ApiKey | null>(null)
 const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
@@ -1307,22 +1422,16 @@ type LimitField = 'quota' | 'rate_limit_5h' | 'rate_limit_1d' | 'rate_limit_7d'
 const limitInputFiat = ref(false)
 // 回显和提交用同一个单价：弹窗打开后订阅卡数据才加载回来时，也不会前后口径不一致
 const limitInputRate = ref(0)
-const limitInputUsesSubscription = ref(false)
 const limitInputSymbol = computed(() => (limitInputFiat.value ? '¥' : '$'))
 // 编辑时记下每个字段回显的人民币值和原始额度：用户没改的字段原样提交额度，
 // 避免「额度 → 人民币（四舍五入）→ 额度」往返一次就把上限改掉几分。
 const limitOriginals = new Map<LimitField, { input: number; credits: number }>()
 
-const limitFiatHint = computed(() =>
-  t('keys.limitFiatHint', {
-    source: limitInputUsesSubscription.value ? t('keys.limitFiatSourceSubscription') : t('keys.limitFiatSourceWallet')
-  })
-)
+const limitFiatHint = computed(() => t('keys.limitEstimateHint'))
 
 function beginLimitInput() {
   limitInputFiat.value = currencyIsFiat.value
   limitInputRate.value = sourceFiatPerCredit.value
-  limitInputUsesSubscription.value = usesSubscriptionRate.value
   limitOriginals.clear()
 }
 
@@ -1467,6 +1576,7 @@ const loadApiKeys = async () => {
     })
     if (signal.aborted) return
     apiKeys.value = response.items
+    listFiltered.value = filters.search !== undefined || filters.status !== undefined || filters.group_id !== undefined
     pagination.value.total = response.total
     pagination.value.pages = response.pages
 
@@ -1519,8 +1629,9 @@ const loadPublicSettings = async () => {
   }
 }
 
-const openOnboarding = (key: ApiKey) => {
+const openOnboarding = (key: ApiKey, tab: 'install' | 'ccswitch' = 'install') => {
   onboardingKey.value = key
+  onboardingTab.value = tab
   showOnboardingModal.value = true
 }
 
@@ -1872,6 +1983,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', closeGroupSelector)
+  if (addressCopiedTimer) clearTimeout(addressCopiedTimer)
   if (resetTimer) clearInterval(resetTimer)
 })
 </script>

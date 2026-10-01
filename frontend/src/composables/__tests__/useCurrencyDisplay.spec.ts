@@ -192,4 +192,17 @@ describe('useCurrencyDisplay', () => {
     expect(canSwitch.value).toBe(false)
     expect(formatWallet(130)).toBe('$130.00')
   })
+
+  it('官方价人民币模式按展示汇率换成 ¥；没有汇率时返回 null 由调用方隐藏', () => {
+    publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7.2 }
+    const { formatOfficial, setMode } = useCurrencyDisplay()
+
+    expect(normalize(formatOfficial(10) ?? '')).toContain('72.00')
+    setMode('usd')
+    expect(formatOfficial(10)).toBe('$10.0000')
+    setMode('fiat')
+
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    expect(useCurrencyDisplay().formatOfficial(10)).toBeNull()
+  })
 })
