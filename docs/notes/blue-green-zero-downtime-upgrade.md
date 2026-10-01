@@ -3,32 +3,43 @@
 适用于「一台机器、nginx 反代、每个站一个 sub2api 容器」的部署形态。目标是升级镜像时
 **不出现 502、不砍掉正在生成的流式请求**。
 
+> 本文只写通用方法。站点相关的值（端口、目录、compose 服务名、域名、中间代理的环境文件）
+> 一律写成 `<占位符>`，真实值见私有运维仓。
+
+## 占位符
+
+| 占位符 | 含义 |
+|---|---|
+| `<site_conf>` | 该站的 nginx 站点配置文件（含 `proxy_pass` 的那个 server 块所在文件） |
+| `<blue_port>` / `<green_port>` | sub2api 蓝/绿实例的监听端口，约定 `<green_port>` = `<blue_port>` + 10 |
+| `<proxy_blue_port>` / `<proxy_green_port>` | 中间代理层（如有）蓝/绿实例的监听端口，同样 +10 |
+| `<sub2api_service>` / `<sub2api_green_service>` | compose 里蓝/绿 sub2api 服务名 |
+| `<proxy_service>` / `<proxy_green_service>` | compose 里蓝/绿中间代理服务名（没有中间代理则忽略） |
+| `<deploy_dir>` | compose 文件和数据目录所在目录 |
+| `<version>` | 本次升级的版本标识，用于备份文件名 |
+
 ## 为什么不能直接 `docker compose up -d`
 
-直接换镜像重建容器，每个站会有 10–20 秒的 502，而且正在生成的请求会被砍掉：
+直接换镜像重建容器，每个站会有十几秒的 502，而且正在生成的请求会被砍掉：
 
 - sub2api 收到 SIGTERM 后 `app.Server.Shutdown(ctx)` 只等 **5 秒**（`backend/cmd/server/main.go`），
-  compose 的 `stop_grace_period` 也只有 10 秒；Codex 一次响应动辄几分钟，等不完。
+  `deploy/docker-compose.yml` 没有设置 `stop_grace_period`，沿用 Docker 默认的 10 秒；
+  Codex 一次响应动辄几分钟，等不完。
 - 新容器要跑迁移、过 healthcheck 才能接流量，这段时间上游没有实例。
 
-## 现有链路
+## 链路与切换点
 
-每个站都是 nginx → session-recorder-proxy → sub2api 三层：
+典型链路是 nginx →（可选的中间代理层）→ sub2api。若中间代理的上游地址写死在它自己的
+环境文件里，改它必须重启代理，同样会断流。所以**切换点只能放在 nginx**：
+`nginx -s reload` 是平滑的，老 worker 把手里的连接（含正在流式输出的）跑完才退出，
+新连接全部走新配置。
 
-| 站 | nginx `proxy_pass` | recorder-proxy 监听 | sub2api 监听 |
-|---|---|---|---|
-| codex 站 | `127.0.0.1:18080`（少数 location 直连 `:8080`） | `:18080`，host 网络 | `:8080`，host 网络 |
-| free 站 | `127.0.0.1:18081`（少数 location 直连 `:8081`） | `:18081`，host 网络 | `:8081`，docker-proxy 映射到容器 8080 |
+sub2api 可以是 host 网络（直接监听 `SERVER_PORT`），也可以是端口映射
+（`ports: 127.0.0.1:<port>:8080`）。下面两种形态的区别只在第 1 步改哪个字段。
 
-recorder-proxy 的上游写死在 `/etc/default/session-recorder-proxy-<站>` 的
-`SESSION_RECORDER_UPSTREAM_URL` 里，改它必须重启 proxy，同样会断流。
-所以**切换点只能放在 nginx**：`nginx -s reload` 是平滑的，老 worker 把手里的连接
-（含正在流式输出的）跑完才退出，新连接全部走新配置。
+## 步骤（逐站做；有多个站时先做流量小的）
 
-## 步骤（逐站做，先 free 后 codex）
-
-约定：老实例叫「蓝」，新实例叫「绿」。绿实例端口在老端口上 +10：
-sub2api `8080→8090` / `8081→8091`，recorder-proxy `18080→18090` / `18081→18091`。
+约定：老实例叫「蓝」，新实例叫「绿」。
 
 ### 0. 改前探测（留底）
 
@@ -37,7 +48,7 @@ sub2api `8080→8090` / `8081→8091`，recorder-proxy `18080→18090` / `18081�
 ```bash
 for p in /health "/v1/responses" "/v1/models?client_version=0.1.0" "/v1/usage" /login; do
   printf '%-40s %s\n' "$p" "$(curl -s -o /dev/null -w '%{http_code} %{content_type}' \
-    -H 'Authorization: Bearer sk-invalid' "http://127.0.0.1:8080$p")"
+    -H 'Authorization: Bearer sk-invalid' "http://127.0.0.1:<blue_port>$p")"
 done
 ```
 
@@ -45,18 +56,17 @@ done
 
 ### 1. 起绿实例（对线上零影响）
 
-绿 sub2api 用同一个库、同一个 data 目录，只是换端口；绿 recorder-proxy 指向它，
-`SESSION_RECORDER_URL` 仍是同一个 recorder，录制不受影响。
+绿 sub2api 用同一个库、同一个 data 目录，只是换端口；绿中间代理（如有）指向它，
+其余环境变量（如录制/审计的后端地址）与蓝实例保持一致。
 
-- codex 站（host 网络）：复制 compose 里的 `sub2api` 服务为 `sub2api-green`，
-  镜像换新，`environment` 加 `SERVER_PORT=8090`；复制 `session-recorder-proxy-sub2api`
-  为 `-green`，env 文件另存一份，只改 `PROXY_ADDR=127.0.0.1:18090`、
-  `UPSTREAM_URL=http://127.0.0.1:8090`。
-- free 站（端口映射）：同上，`ports` 改成 `127.0.0.1:8091:8080`。
+- host 网络：复制 compose 里的 `<sub2api_service>` 为 `<sub2api_green_service>`，
+  镜像换新，`environment` 加 `SERVER_PORT=<green_port>`；中间代理同理复制一份，
+  环境文件另存一份，只改监听地址和上游地址。
+- 端口映射：同上，`ports` 改成 `127.0.0.1:<green_port>:8080`。
 
 ```bash
-docker compose up -d sub2api-green session-recorder-proxy-green
-until curl -fsS http://127.0.0.1:8090/health >/dev/null; do sleep 2; done
+docker compose up -d <sub2api_green_service> <proxy_green_service>
+until curl -fsS http://127.0.0.1:<green_port>/health >/dev/null; do sleep 2; done
 ```
 
 绿实例启动时会把新版本的迁移跑掉。**升级前先确认新增迁移都是加列/加表这类
@@ -65,32 +75,36 @@ until curl -fsS http://127.0.0.1:8090/health >/dev/null; do sleep 2; done
 
 ### 2. 改后探测（打绿实例）
 
-用第 0 步同一组探测打 `:8090`，和留底逐行对比。**只允许版本号不同**；其他任何差异
+用第 0 步同一组探测打 `<green_port>`，和留底逐行对比。**只允许版本号不同**；其他任何差异
 都视为回滚条件，直接停掉绿实例，线上什么都没变。
 
 ### 3. nginx 切流
 
+切流前确认已经保留上一版前端 assets（见 `ops/skills/deploy`），否则切流后部署前就开着的
+旧标签页会因旧 chunk 404 而白屏。
+
 ```bash
 ts=$(date -u +%Y%m%dT%H%M%SZ)
-cp /etc/nginx/sites-enabled/<站>.conf /etc/nginx/sites-enabled/<站>.conf.bak-before-<版本>-$ts
-sed -i 's/127\.0\.0\.1:18080/127.0.0.1:18090/g; s/127\.0\.0\.1:8080/127.0.0.1:8090/g' \
-  /etc/nginx/sites-enabled/<站>.conf
+cp <site_conf> <site_conf>.bak-before-<version>-$ts
+# 只改这个站的 server 块里的端口；用编辑器或有备份的 sed 改，改完必须目视 diff
+sed -i 's/127\.0\.0\.1:<proxy_blue_port>/127.0.0.1:<proxy_green_port>/g; s/127\.0\.0\.1:<blue_port>/127.0.0.1:<green_port>/g' <site_conf>
 nginx -t && nginx -s reload
 ```
 
-只改这一个站的 server 块里的端口，其他站的 location、限流、日志一概不碰。
+备份文件**不要**留在 nginx 会加载的目录里（`sites-enabled/` 下的 `.bak*` 如果被 include
+通配到，会被当成配置加载）。其他站的 location、限流、日志一概不碰。
 reload 后再打一遍公网域名的探测，应与留底一致。
 
 ### 4. 等蓝实例排空再停
 
 ```bash
-watch -n 5 "ss -tn state established '( sport = :8080 )' | tail -n +2 | wc -l"
+watch -n 5 "ss -tn state established '( sport = :<blue_port> )' | tail -n +2 | wc -l"
 ```
 
 降到 0（或只剩 keepalive 空闲连接）后：
 
 ```bash
-docker compose stop sub2api session-recorder-proxy-sub2api
+docker compose stop <sub2api_service> <proxy_service>
 ```
 
 健康判据只看 `/health`、容器不反复重启、错误计数不涨；**不要用请求量判断**，
@@ -106,15 +120,14 @@ docker compose stop sub2api session-recorder-proxy-sub2api
 蓝实例在第 4 步之前一直活着，所以回滚只有一条命令：
 
 ```bash
-cp /etc/nginx/sites-enabled/<站>.conf.bak-before-<版本>-<ts> /etc/nginx/sites-enabled/<站>.conf \
-  && nginx -t && nginx -s reload
+cp <site_conf>.bak-before-<version>-<ts> <site_conf> && nginx -t && nginx -s reload
 ```
 
 秒级切回，之后再停绿实例。
 
 ## 不在本方案范围内
 
-- 把 recorder-proxy 的上游改成可热切换（就不用在 nginx 层绕了）。
+- 把中间代理的上游改成可热切换（就不用在 nginx 层绕了）。
 - 给 sub2api 加更长的优雅退出时间（让普通重启也能等完流式请求）。
 
 这两项能让以后的升级更省事，但改的是别的东西，单独提。
