@@ -22,6 +22,19 @@ type chatPartialBillingRepo struct {
 	applied chan *service.UsageBillingCommand
 }
 
+type delayedChatSSEReader struct {
+	reader *strings.Reader
+	delayed bool
+}
+
+func (r *delayedChatSSEReader) Read(p []byte) (int, error) {
+	if !r.delayed {
+		r.delayed = true
+		time.Sleep(9 * time.Second) // Let the converted path flush role metadata at its 8s preamble limit.
+	}
+	return r.reader.Read(p)
+}
+
 func (s *chatPartialBillingRepo) Apply(_ context.Context, cmd *service.UsageBillingCommand) (*service.UsageBillingApplyResult, error) {
 	s.applied <- cmd
 	return &service.UsageBillingApplyResult{Applied: true}, nil
@@ -43,6 +56,7 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 		wantInput int
 		wantOutput int
 		status int
+		pauseBeforeError bool
 	}{
 		{
 			name: "raw chat error frame with usage",
@@ -73,6 +87,22 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 			fixedPrice: true,
 		},
 		{
+			name: "raw usage-only then error at a fixed per-request price",
+			mode: openai_compat.ResponsesSupportModeForceChatCompletions,
+			payload: "data: {\"id\":\"chatcmpl_usage_only\",\"model\":\"gpt-5.1\",\"choices\":[],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0,\"total_tokens\":0}}\n\n" +
+				"event: error\n" +
+				"data: {\"error\":{\"type\":\"api_error\",\"message\":\"upstream stream interrupted\"}}\n\n",
+			fixedPrice: true,
+		},
+		{
+			name: "converted metadata flushed before error at a fixed per-request price",
+			mode: openai_compat.ResponsesSupportModeForceResponses,
+			payload: "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_metadata\",\"model\":\"gpt-5.1\",\"status\":\"in_progress\",\"output\":[]}}\n\n" +
+				"__PAUSE__" +
+				"data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_metadata\",\"model\":\"gpt-5.1\",\"status\":\"failed\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0},\"error\":{\"code\":\"upstream_error\",\"message\":\"stream failed\"}}}\n\n",
+			fixedPrice: true, pauseBeforeError: true,
+		},
+		{
 			name: "pre-output 429 failover has no billing",
 			mode: openai_compat.ResponsesSupportModeForceChatCompletions,
 			payload: `{"error":{"message":"rate limited","type":"rate_limit_error"}}`,
@@ -88,6 +118,10 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 					status = http.StatusOK
 				}
 				var body io.ReadCloser = io.NopCloser(strings.NewReader(tc.payload))
+				if tc.pauseBeforeError {
+					parts := strings.SplitN(tc.payload, "__PAUSE__", 2)
+					body = io.NopCloser(io.MultiReader(strings.NewReader(parts[0]), &delayedChatSSEReader{reader: strings.NewReader(parts[1])}))
+				}
 				if tc.readError {
 					body = io.NopCloser(io.MultiReader(strings.NewReader(tc.payload), erroringReaderGW795{err: io.ErrUnexpectedEOF}))
 				}

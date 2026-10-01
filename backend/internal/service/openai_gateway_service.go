@@ -255,9 +255,9 @@ type OpenAIForwardResult struct {
 	Duration           time.Duration
 	FirstTokenMs       *int
 	ClientDisconnect   bool
-	// PartialOutputDelivered excludes error frames and keepalives. A partial
-	// error with zero usage is billable at a per-request price only when
-	// upstream output was already delivered to the client.
+	// PartialOutputDelivered excludes error frames, keepalives, role metadata,
+	// and usage-only chunks. A zero-usage partial error is billable at a
+	// per-request price only after semantic output reached the client.
 	PartialOutputDelivered bool
 	ImageCount         int
 	ImageSize          string

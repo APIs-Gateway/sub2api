@@ -670,7 +670,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	}
 
 	resultWithUsage := func() *OpenAIForwardResult {
-		partialOutputDelivered := clientOutputStarted
+		partialOutputDelivered := clientOutputStarted && refusalDetector.HasSemanticOutput()
 		if outputBeforeError != nil {
 			partialOutputDelivered = *outputBeforeError
 		}
@@ -733,7 +733,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 		}
 		if event.Type == "response.failed" || event.Type == "error" || gjson.Get(payload, "error").IsObject() {
-			beforeError := clientOutputStarted
+			beforeError := clientOutputStarted && refusalDetector.HasSemanticOutput()
 			outputBeforeError = &beforeError
 			payloadBytes := []byte(payload)
 			message := extractOpenAISSEErrorMessage(payloadBytes)

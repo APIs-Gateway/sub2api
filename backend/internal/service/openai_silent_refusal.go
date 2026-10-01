@@ -124,6 +124,12 @@ func (d *openAIChatSilentRefusalDetector) ShouldReleaseClientOutput() bool {
 	return d.sawFinish && d.finishReason != "" && d.finishReason != "stop"
 }
 
+// HasSemanticOutput excludes role/metadata and usage-only chunks. Releasing
+// those chunks to the client does not mean the model delivered content.
+func (d *openAIChatSilentRefusalDetector) HasSemanticOutput() bool {
+	return d != nil && (d.sawContent || d.sawToolCall || d.sawFunctionCall || d.sawReasoning)
+}
+
 func (d *openAIChatSilentRefusalDetector) IsSilentRefusal() bool {
 	if d == nil || !d.enabled {
 		return false

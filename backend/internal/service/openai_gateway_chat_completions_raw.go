@@ -402,7 +402,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			payloadType := strings.TrimSpace(gjson.Get(payload, "type").String())
 			isError := gjson.Get(payload, "error").IsObject() || payloadType == "response.failed" || frameEvent == "error" || frameEvent == "response.failed"
 			if isError && streamError == nil {
-				beforeError := clientOutputStarted
+				beforeError := clientOutputStarted && refusalDetector.HasSemanticOutput()
 				outputBeforeError = &beforeError
 				message := extractOpenAISSEErrorMessage(payloadBytes)
 				shouldFailover := openAIStreamErrorEventShouldFailover(payloadBytes, message)
@@ -626,7 +626,7 @@ streamDone:
 	}
 
 	resultWithUsage := func() *OpenAIForwardResult {
-		partialOutputDelivered := clientOutputStarted
+		partialOutputDelivered := clientOutputStarted && refusalDetector.HasSemanticOutput()
 		if outputBeforeError != nil {
 			partialOutputDelivered = *outputBeforeError
 		}
