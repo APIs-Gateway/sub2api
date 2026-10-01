@@ -26,7 +26,7 @@
           ({{ t('payment.orders.fee') }} {{ row.fee_rate }}%)
         </span>
         <div v-if="row.amount !== row.pay_amount" class="mt-0.5 text-xs text-stone-500 dark:text-gray-400">
-          {{ t('payment.orders.creditedAmount') }}: {{ row.order_type === 'balance' ? formatWallet(row.amount) : formatCnyAmount(row.amount) }}
+          {{ t('payment.orders.creditedAmount') }}: {{ row.order_type === 'balance' ? formatBalanceCredited(row.amount) : formatCnyAmount(row.amount) }}
         </div>
       </div>
     </template>
@@ -52,7 +52,7 @@ import type { PaymentOrder } from '@/types/payment'
 import type { Column } from '@/components/common/types'
 import DataTable from '@/components/common/DataTable.vue'
 import NumText from '@/components/common/NumText.vue'
-import { formatCnyAmount } from '@/utils/numberFormat'
+import { formatCnyAmount, formatUsdAmount } from '@/utils/numberFormat'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import OrderStatusBadge from '@/components/payment/OrderStatusBadge.vue'
 
@@ -64,6 +64,11 @@ const props = defineProps<{
   loading: boolean
   showUser?: boolean
 }>()
+
+// 后台（showUser）保持美元账本口径；币种切换在后台被隐藏，不跟随用户端的人民币显示。
+function formatBalanceCredited(credits: number): string {
+  return props.showUser ? formatUsdAmount(credits) : formatWallet(credits)
+}
 
 function formatDate(dateStr: string) { return new Date(dateStr).toLocaleString() }
 
