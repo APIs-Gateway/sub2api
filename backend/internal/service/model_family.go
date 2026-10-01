@@ -94,25 +94,48 @@ func familyBaseMatches(model, base string) bool {
 	return knownFamilySuffix(suffix)
 }
 
-// knownFamilySuffix 接受由 effort 词、openai-compact、YYYY-MM-DD 日期用 "-" 连接而成的后缀。
+// knownFamilySuffix 接受「至多一个 effort 词 + 至多一个 YYYY-MM-DD 日期 + 可选一个 openai-compact」，顺序不限，
+// 用 "-" 连接；不接受重复、空段或结尾的 "-"（与网关 isKnownCodexModelSuffix 一样严格，避免可编造的命中写法）。
 func knownFamilySuffix(s string) bool {
+	var seenEffort, seenDate, seenCompact bool
 	for s != "" {
+		var rest string
 		switch {
 		case s == "openai-compact" || strings.HasPrefix(s, "openai-compact-"):
-			s = strings.TrimPrefix(strings.TrimPrefix(s, "openai-compact"), "-")
+			if seenCompact {
+				return false
+			}
+			seenCompact = true
+			rest = strings.TrimPrefix(s, "openai-compact")
 		case len(s) >= 10 && isCodexDateSuffix(s[:10]) && (len(s) == 10 || s[10] == '-'):
-			s = strings.TrimPrefix(s[10:], "-")
+			if seenDate {
+				return false
+			}
+			seenDate = true
+			rest = s[10:]
 		default:
-			tok, rest, _ := strings.Cut(s, "-")
+			tok, _, _ := strings.Cut(s, "-")
 			switch tok {
 			case "none", "minimal", "low", "medium", "high", "xhigh", "max":
 			default:
 				return false
 			}
-			s = rest
+			if seenEffort {
+				return false
+			}
+			seenEffort = true
+			rest = s[len(tok):]
 		}
+		if rest == "" {
+			return true
+		}
+		// 后面必须还有内容：以 "-" 开头且 "-" 之后非空。
+		if rest[0] != '-' || len(rest) == 1 {
+			return false
+		}
+		s = rest[1:]
 	}
-	return true
+	return false
 }
 
 var (

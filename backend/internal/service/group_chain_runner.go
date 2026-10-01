@@ -64,6 +64,7 @@ type HopResult struct {
 	// 只有 DeferFinalError=false 的那一跳（链上最后一跳）允许这样做。
 	ErrorWritten bool
 	// WriteFinalError 把本跳的原始错误按原样写给客户端（流式场景按流式格式收尾）。
+	// 闭包必须在被调用时才判断用流式还是 JSON 格式（读取当时的 tracker 状态），不要用创建闭包时的状态。
 	// FallbackWorthy 且 ErrorWritten=false 时必须提供：如果之后没有任何后续跳能运行（预算用尽、
 	// 后续跳全被跳过、真实内容已输出），runner 会调用它，保证客户端总能收到原始错误。
 	// Skipped 也可以提供，用来覆盖前面跳的错误（例如最后一跳因 RPM 超限被跳过，要写 429）。
@@ -146,7 +147,7 @@ type ChainRunResult struct {
 	ErrorFlushed bool
 }
 
-// GroupChainRunner 逐跳执行回退链。零值不可用，Settings 通常取自 SettingService.GetGroupFallbackSettings。
+// GroupChainRunner 逐跳执行回退链。Settings 通常取自 SettingService.GetGroupFallbackSettings；零值设置会回落到默认值。
 type GroupChainRunner struct {
 	Settings GroupFallbackSettings
 	// Breaker 可为 nil，此时不做熔断。
@@ -274,7 +275,7 @@ func (r *GroupChainRunner) Run(ctx context.Context, in ChainRunInput, attempt Ch
 				bkey = BreakerKey{Platform: hop.Group.Platform, GroupID: hop.GroupID, Family: fam}
 			}
 		}
-		if bkey.valid() && !isLast {
+		if bkey.Valid() && !isLast {
 			adm := r.Breaker.Admit(ctx, bkey, breakerCfg)
 			if !adm.Allowed {
 				trace.Outcome = HopOutcomeSkipped
@@ -345,9 +346,8 @@ func (r *GroupChainRunner) Run(ctx context.Context, in ChainRunInput, attempt Ch
 			if in.Output.Committed() {
 				releaseProbe(bkey, probeToken)
 				if !result.ErrorWritten {
-					if result.WriteFinalError != nil {
-						flush = result.WriteFinalError
-					}
+					// 只用本跳的闭包：不能执行前面跳暂存的旧错误（本跳已写出真实内容）。
+					flush = result.WriteFinalError
 					flushError()
 				}
 				res.Status = ChainRunTerminal
@@ -355,7 +355,7 @@ func (r *GroupChainRunner) Run(ctx context.Context, in ChainRunInput, attempt Ch
 			}
 
 			switch {
-			case !bkey.valid() || result.Breaker == BreakerSignalNone:
+			case !bkey.Valid() || result.Breaker == BreakerSignalNone:
 				releaseProbe(bkey, probeToken)
 			case result.Breaker == BreakerSignalCount:
 				r.Breaker.RecordFailure(ctx, bkey, breakerCfg, in.UserID, probeToken)
@@ -369,7 +369,9 @@ func (r *GroupChainRunner) Run(ctx context.Context, in ChainRunInput, attempt Ch
 				res.Status = ChainRunExhausted
 				return res
 			}
-			flush = result.WriteFinalError
+			if result.WriteFinalError != nil {
+				flush = result.WriteFinalError // nil 不覆盖前面跳已暂存的错误
+			}
 			continue
 
 		default: // HopOutcomeTerminal 及未知值一律按不可回退处理
@@ -516,26 +518,38 @@ func ClassifyHopFailure(f HopFailure) HopResult {
 // ---------------------------------------------------------------------------
 
 // OutputCommitted 是统一的判定函数：字节数一律扣除心跳后再判断。
-// totalWritten 为响应已写出的总字节数，keepaliveWritten 为其中心跳 / ping / 保活的字节数，
-// streamStarted 为真实内容流已开始（跨跳传递，不随 attempt 重置）。
-func OutputCommitted(totalWritten, keepaliveWritten int64, streamStarted bool) bool {
-	if streamStarted {
+// totalWritten 为响应已写出的总字节数，keepaliveWritten 为其中心跳 / ping / 保活的字节数（二者都是请求级累计值），
+// contentStarted 为「真实模型内容已写出」。
+//
+// 注意：contentStarted 不是 handler 里现有的 streamStarted。现有的 streamStarted 表示「响应头已按 200 流式提交」，
+// 只写过心跳时也会置 true；把它传进来会让只写过心跳的请求被误判为已输出、无法回退。
+func OutputCommitted(totalWritten, keepaliveWritten int64, contentStarted bool) bool {
+	if contentStarted {
 		return true
 	}
 	return totalWritten-keepaliveWritten > 0
 }
 
-// OutputTracker 是请求级的输出状态，跨跳共享。入口把 c.Writer.Size() 与各路径的保活字节数喂给它。
-// nil 接收者视为什么都没写。
+// OutputTracker 是请求级的输出状态，跨跳共享。nil 接收者视为什么都没写。
+//
+// 区分两个概念：
+//   - 流式已提交（MarkStreamCommitted，或 total > 0）：响应头已发出，最终错误必须按流式格式收尾；只影响 HeartbeatOnly。
+//   - 真实内容已输出（MarkContentStarted，或 total-keepalive > 0）：不能再换组；即 Committed()。
+//
+// 入口接入时机：handler 在把第一个真实模型输出（首个非心跳的数据事件 / 非流式的响应体）写给客户端之后，
+// 调用 MarkContentStarted；写心跳或提交流式响应头时只调用 MarkStreamCommitted，绝不能标记真实内容。
 type OutputTracker struct {
-	mu            sync.Mutex
-	total         int64
-	keepalive     int64
-	streamStarted bool
+	mu              sync.Mutex
+	total           int64
+	keepalive       int64
+	contentStarted  bool
+	streamCommitted bool
 }
 
-// Observe 记录最新观测值（单调不减）。
-func (t *OutputTracker) Observe(totalWritten, keepaliveWritten int64, streamStarted bool) {
+// Observe 记录最新观测值（单调不减）。totalWritten 与 keepaliveWritten 必须是请求级累计值，
+// 不能是每跳的计数：keepalive 传小了会把心跳误算成真实内容（偏保守），传大了会把真实内容误算成心跳（危险方向）。
+// contentStarted 只在真实模型输出已写出时才传 true，不得传入 handler 现有的 streamStarted。
+func (t *OutputTracker) Observe(totalWritten, keepaliveWritten int64, contentStarted bool) {
 	if t == nil {
 		return
 	}
@@ -547,9 +561,29 @@ func (t *OutputTracker) Observe(totalWritten, keepaliveWritten int64, streamStar
 	if keepaliveWritten > t.keepalive {
 		t.keepalive = keepaliveWritten
 	}
-	if streamStarted {
-		t.streamStarted = true
+	if contentStarted {
+		t.contentStarted = true
 	}
+}
+
+// MarkContentStarted 标记真实模型内容已写出（之后不可回退）。
+func (t *OutputTracker) MarkContentStarted() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.contentStarted = true
+}
+
+// MarkStreamCommitted 标记响应头已按流式提交（例如已写过心跳）。不影响 Committed()，只让 HeartbeatOnly() 为真。
+func (t *OutputTracker) MarkStreamCommitted() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.streamCommitted = true
 }
 
 // Committed 即 outputCommitted：真实内容已输出，不能再换组。
@@ -559,15 +593,15 @@ func (t *OutputTracker) Committed() bool {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return OutputCommitted(t.total, t.keepalive, t.streamStarted)
+	return OutputCommitted(t.total, t.keepalive, t.contentStarted)
 }
 
-// HeartbeatOnly 表示写过东西但全是心跳：允许换组，最终错误必须按流式格式收尾。
+// HeartbeatOnly 表示响应头已按流式提交但没有真实内容（全是心跳）：允许换组，最终错误必须按流式格式收尾。
 func (t *OutputTracker) HeartbeatOnly() bool {
 	if t == nil {
 		return false
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return !OutputCommitted(t.total, t.keepalive, t.streamStarted) && t.total > 0
+	return !OutputCommitted(t.total, t.keepalive, t.contentStarted) && (t.total > 0 || t.streamCommitted)
 }

@@ -289,7 +289,7 @@ func TestOutputCommitted_SubtractsKeepalive(t *testing.T) {
 	require.False(t, OutputCommitted(0, 0, false))
 	require.False(t, OutputCommitted(30, 30, false), "只有心跳")
 	require.True(t, OutputCommitted(31, 30, false), "心跳之外还有字节")
-	require.True(t, OutputCommitted(0, 0, true), "streamStarted 跨跳传递")
+	require.True(t, OutputCommitted(0, 0, true), "contentStarted 跨跳传递")
 
 	var nilTracker *OutputTracker
 	require.False(t, nilTracker.Committed())
@@ -306,6 +306,50 @@ func TestOutputCommitted_SubtractsKeepalive(t *testing.T) {
 	tr.Observe(0, 0, true)
 	require.True(t, tr.Committed())
 	require.False(t, tr.HeartbeatOnly())
+}
+
+func TestOutputTracker_StreamCommittedWithoutContentIsHeartbeatOnly(t *testing.T) {
+	// 响应头已按流式提交（例如 handler 的 streamStarted），但没有任何真实内容：可以回退。
+	tr := &OutputTracker{}
+	tr.MarkStreamCommitted()
+	require.False(t, tr.Committed())
+	require.True(t, tr.HeartbeatOnly())
+
+	// 写过真实内容之后不可回退，也不再是「只有心跳」。
+	tr.MarkContentStarted()
+	require.True(t, tr.Committed())
+	require.False(t, tr.HeartbeatOnly())
+
+	var nilTracker *OutputTracker
+	nilTracker.MarkStreamCommitted()
+	nilTracker.MarkContentStarted()
+}
+
+func TestRunner_StreamCommittedHeartbeatOnlyFallsBackButContentDoesNot(t *testing.T) {
+	// 只写过心跳（流式已提交、没有真实内容）：可以回退。
+	hb := &OutputTracker{}
+	fa := &fakeAttempt{scripts: map[int64]hopScript{
+		1: {onCall: func() { hb.MarkStreamCommitted(); hb.Observe(12, 12, false) }, failure: noAccount()},
+		2: {done: true},
+	}}
+	in := runnerInput(1, 2)
+	in.Output = hb
+	res := newTestRunner(nil).Run(context.Background(), in, fa.fn())
+	require.Equal(t, ChainRunServed, res.Status)
+	require.Equal(t, []int64{1, 2}, fa.calledGroups())
+	require.True(t, fa.calls[1].HeartbeatOnly)
+
+	// 写过真实内容：不可回退。
+	content := &OutputTracker{}
+	fb := &fakeAttempt{scripts: map[int64]hopScript{
+		1: {onCall: func() { content.MarkStreamCommitted(); content.MarkContentStarted() }, failure: noAccount()},
+		2: {done: true},
+	}}
+	in2 := runnerInput(1, 2)
+	in2.Output = content
+	res2 := newTestRunner(nil).Run(context.Background(), in2, fb.fn())
+	require.Equal(t, ChainRunTerminal, res2.Status)
+	require.Equal(t, []int64{1}, fb.calledGroups())
 }
 
 // ---------------------------------------------------------------------------
@@ -368,6 +412,33 @@ func TestRunner_SkippedHopCanOverrideFinalError(t *testing.T) {
 	res := newTestRunner(nil).Run(context.Background(), runnerInput(1, 2), fa.fn())
 	require.Equal(t, ChainRunExhausted, res.Status)
 	require.Equal(t, []string{"skip-err:2"}, fa.written)
+}
+
+func TestRunner_WorthyWithoutWriterKeepsEarlierStagedError(t *testing.T) {
+	// 后一跳返回 FallbackWorthy 但没有 WriteFinalError：不能用 nil 覆盖前面跳已暂存的错误。
+	fa := &fakeAttempt{scripts: map[int64]hopScript{
+		1: {failure: noAccount()},
+		2: {override: &HopResult{Outcome: HopOutcomeFallbackWorthy, Reason: FallbackReasonBusy}},
+	}}
+	in := runnerInput(1, 2, 3)
+	fa.scripts[3] = hopScript{skip: true}
+	res := newTestRunner(nil).Run(context.Background(), in, fa.fn())
+	require.Equal(t, ChainRunExhausted, res.Status)
+	require.Equal(t, []string{"err:1"}, fa.written)
+}
+
+func TestRunner_CommittedGuardDoesNotFlushEarlierHopError(t *testing.T) {
+	// 本跳已写出真实内容且没有自己的 WriteFinalError：不能执行前面跳暂存的旧错误。
+	tracker := &OutputTracker{}
+	fa := &fakeAttempt{scripts: map[int64]hopScript{
+		1: {failure: noAccount()},
+		2: {override: &HopResult{Outcome: HopOutcomeFallbackWorthy, Reason: FallbackReasonBusy}, onCall: func() { tracker.MarkContentStarted() }},
+	}}
+	in := runnerInput(1, 2, 3)
+	in.Output = tracker
+	res := newTestRunner(nil).Run(context.Background(), in, fa.fn())
+	require.Equal(t, ChainRunTerminal, res.Status)
+	require.Empty(t, fa.written)
 }
 
 func TestRunner_UnresolvedWhenNothingRanAndNothingToWrite(t *testing.T) {
