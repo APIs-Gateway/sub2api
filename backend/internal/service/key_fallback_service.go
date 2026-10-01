@@ -742,7 +742,7 @@ func (s *KeyFallbackService) AdminRoutesByGroup(ctx context.Context, groupID int
 		view.Truncated = true
 	}
 	for _, r := range refs {
-		view.Items = append(view.Items, KeyFallbackRouteRefView{KeyID: r.KeyID, UserID: r.UserID, Source: r.Source, Placement: r.Placement})
+		view.Items = append(view.Items, KeyFallbackRouteRefView(r))
 	}
 	return view, nil
 }
