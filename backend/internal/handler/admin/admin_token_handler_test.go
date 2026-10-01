@@ -82,6 +82,9 @@ func (r *adminTokenHandlerRepo) TouchLastUsed(context.Context, int64, time.Time,
 type adminTokenHandlerEnv struct {
 	router *gin.Engine
 	repo   *adminTokenHandlerRepo
+	// lastKeys is a copy of the gin context keys after the latest request, to
+	// look at what the handler told the audit middleware.
+	lastKeys map[string]any
 }
 
 func newAdminTokenHandlerEnv(t *testing.T) *adminTokenHandlerEnv {
@@ -103,16 +106,22 @@ func newAdminTokenHandlerEnv(t *testing.T) *adminTokenHandlerEnv {
 	})
 	handler := NewAdminTokenHandler(tokenService)
 
+	env := &adminTokenHandlerEnv{repo: repo}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		// Stand-in for the admin auth middleware: the signed-in administrator is user 1.
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1})
 		c.Next()
+		env.lastKeys = make(map[string]any, len(c.Keys))
+		for key, value := range c.Keys {
+			env.lastKeys[key] = value
+		}
 	})
 	router.POST("/admin-tokens", handler.Create)
 	router.GET("/admin-tokens", handler.List)
 	router.DELETE("/admin-tokens/:id", handler.Revoke)
-	return &adminTokenHandlerEnv{router: router, repo: repo}
+	env.router = router
+	return env
 }
 
 func (e *adminTokenHandlerEnv) do(method, path string, body any) *httptest.ResponseRecorder {
@@ -302,4 +311,36 @@ func TestAdminTokenHandlerRevoke(t *testing.T) {
 		bad := env.do(http.MethodDelete, "/admin-tokens/"+id, nil)
 		require.Equal(t, http.StatusBadRequest, bad.Code, id)
 	}
+}
+
+// The audit row of a token creation must show who created which token for
+// whom, without the plaintext.
+func TestAdminTokenHandlerCreateRecordsCreatorAndTargetForAudit(t *testing.T) {
+	env := newAdminTokenHandlerEnv(t)
+
+	body := validCreateBody()
+	body["acting_user_id"] = 2
+	w := env.do(http.MethodPost, "/admin-tokens", body)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	var created struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal(decodeEnvelope(t, w).Data, &created))
+
+	target, ok := env.lastKeys[string(middleware.ContextKeyAdminAuditTarget)].(middleware.AdminAuditTarget)
+	require.True(t, ok, "the handler sets the audit target")
+	require.Equal(t, middleware.AdminAuditTarget{Type: "admin-tokens", ID: "1"}, target)
+
+	extra, ok := env.lastKeys[string(middleware.ContextKeyAdminAuditExtra)].(map[string]any)
+	require.True(t, ok, "the handler sets audit extras")
+	require.EqualValues(t, 1, extra["created_token_id"])
+	require.Equal(t, "ops-bot", extra["created_token_name"])
+	require.Equal(t, "write", extra["created_token_scope"])
+	require.EqualValues(t, 2, extra["created_token_acting_user_id"], "acting_user_id may be another active administrator")
+	require.EqualValues(t, 1, extra["created_by_user_id"], "the creator is the signed-in administrator")
+
+	stored, err := json.Marshal(extra)
+	require.NoError(t, err)
+	require.NotContains(t, string(stored), created.Token, "the plaintext never reaches the audit trail")
 }

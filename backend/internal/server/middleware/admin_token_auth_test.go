@@ -191,9 +191,24 @@ func newAdminTokenTestEnv(t *testing.T) *adminTokenTestEnv {
 
 	admin := router.Group("/api/v1/admin")
 	admin.Use(withAdminAudit(adminAuth(authService, userService, settingService, tokenService), env.sink))
-	admin.GET("/things", handler)              // read
-	admin.POST("/things", handler)             // write
-	admin.POST("/things/:id/notes", handler)   // write, with a path parameter
+	admin.GET("/things", handler)  // read
+	admin.POST("/things", handler) // write
+	// A handler that, like a real one, consumes the request body (the audit
+	// middleware records the body as the handler reads it).
+	readBodyThenHandle := func(c *gin.Context) {
+		_, _ = io.Copy(io.Discard, c.Request.Body)
+		handler(c)
+	}
+	admin.POST("/things/:id/notes", readBodyThenHandle) // write, with a path parameter
+	// Routes whose bodies carry credentials (see admin_audit_body_policy.go).
+	admin.POST("/accounts/import/codex-session", readBodyThenHandle)
+	admin.POST("/accounts/:id/reauth/codex-session", readBodyThenHandle)
+	// A handler that adds its own audit facts, like POST /admin-tokens.
+	admin.POST("/things/:id/spawn", func(c *gin.Context) {
+		SetAdminAuditTarget(c, "things", "99")
+		SetAdminAuditExtra(c, "spawned_name", "child")
+		handler(c)
+	})
 	admin.POST("/fail", func(c *gin.Context) { // write, handler answers an error
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"code": "NOPE"})
 	})

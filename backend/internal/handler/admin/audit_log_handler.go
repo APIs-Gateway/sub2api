@@ -13,12 +13,27 @@ import (
 
 // AuditLogHandler serves the admin audit trail (audit_logs).
 type AuditLogHandler struct {
-	repo service.AuditLogRepository
+	repo   service.AuditLogRepository
+	writer *service.AdminAuditWriter
 }
 
-// NewAuditLogHandler creates the handler.
-func NewAuditLogHandler(repo service.AuditLogRepository) *AuditLogHandler {
-	return &AuditLogHandler{repo: repo}
+// NewAuditLogHandler creates the handler. writer may be nil (the stats
+// endpoint then reports zeros).
+func NewAuditLogHandler(repo service.AuditLogRepository, writer *service.AdminAuditWriter) *AuditLogHandler {
+	return &AuditLogHandler{repo: repo, writer: writer}
+}
+
+// Stats returns the audit writer's counters, so an administrator can tell
+// whether audit rows are being lost: queue depth, rows enqueued / written /
+// dropped (queue full, shutdown, database errors), failed writes and
+// state-changing requests that carried no usable credential.
+//
+// GET /api/v1/admin/audit-logs/stats
+//
+// The same counters are logged every few minutes whenever dropped, failed or
+// unidentified moved. Read scope is enough: it exposes counts only.
+func (h *AuditLogHandler) Stats(c *gin.Context) {
+	response.Success(c, h.writer.Stats())
 }
 
 // List returns audit rows, newest first.

@@ -126,6 +126,18 @@ func (h *AdminTokenHandler) Create(c *gin.Context) {
 		return
 	}
 
+	// Make the audit row of this request say who created which token, for
+	// whom (the route has no :id, and the redacted body has no result).
+	// Never the plaintext.
+	middleware.SetAdminAuditTarget(c, "admin-tokens", strconv.FormatInt(token.ID, 10))
+	middleware.SetAdminAuditExtra(c, "created_token_id", token.ID)
+	middleware.SetAdminAuditExtra(c, "created_token_name", token.Name)
+	middleware.SetAdminAuditExtra(c, "created_token_scope", token.Scope)
+	middleware.SetAdminAuditExtra(c, "created_token_acting_user_id", token.ActingUserID)
+	middleware.SetAdminAuditExtra(c, "created_token_expires_at", token.ExpiresAt.UTC().Format(time.RFC3339))
+	middleware.SetAdminAuditExtra(c, "created_token_ip_allowlist", token.IPAllowlist)
+	middleware.SetAdminAuditExtra(c, "created_by_user_id", subject.UserID)
+
 	// The plaintext must not be cached by anything between us and the caller.
 	c.Header("Cache-Control", "no-store")
 	response.Created(c, CreatedAdminTokenDTO{
@@ -164,5 +176,7 @@ func (h *AdminTokenHandler) Revoke(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	middleware.SetAdminAuditExtra(c, "revoked_token_name", token.Name)
+	middleware.SetAdminAuditExtra(c, "revoked_token_acting_user_id", token.ActingUserID)
 	response.Success(c, adminTokenToDTO(token, time.Now()))
 }

@@ -30,7 +30,13 @@ import (
 //
 // Requests with no recognisable credential (missing, unknown or malformed) are
 // not recorded: they identify nobody, and recording them would let anyone on
-// the internet fill the table.
+// the internet fill the table. They are counted instead, and logged (rate
+// limited) with client IP, route and user agent, via AdminAuditUnidentifiedReporter.
+//
+// Request bodies are stored redacted (service.RedactAuditBody). Routes that
+// submit credentials (Codex auth.json import, account credential edits, OAuth
+// code exchange, proxy passwords, settings, ...) do not store a body at all,
+// only "body_omitted" and its length: see admin_audit_body_policy.go.
 //
 // Auditing never changes the outcome of the request. The row is only handed to
 // a bounded asynchronous queue (service.AdminAuditWriter), outside any database
@@ -41,6 +47,14 @@ import (
 type AdminAuditSink interface {
 	// Enqueue must not block. It reports whether the row was accepted.
 	Enqueue(entry *service.AuditLog) bool
+}
+
+// AdminAuditUnidentifiedReporter is optionally implemented by an
+// AdminAuditSink. The middleware calls it for state-changing requests that no
+// administrator credential could be attributed to, so the sink can count them
+// and log them without writing a row. It must not block.
+type AdminAuditUnidentifiedReporter interface {
+	RecordUnidentified(clientIP, route, userAgent string)
 }
 
 // withAdminAudit wraps next (the admin auth middleware, which runs the rest of
@@ -56,9 +70,14 @@ func withAdminAudit(next gin.HandlerFunc, sink AdminAuditSink) gin.HandlerFunc {
 		}
 
 		start := time.Now()
-		capture := newAuditBodyCapture(c.Request.Body)
-		if capture != nil {
-			c.Request.Body = capture
+		// Credential-submitting routes never have their body captured, so
+		// the secrets are not even held in the audit buffer.
+		var capture *auditBodyCapture
+		if !adminAuditBodyOmitted(c.Request.Method, c.FullPath()) {
+			capture = newAuditBodyCapture(c.Request.Body)
+			if capture != nil {
+				c.Request.Body = capture
+			}
 		}
 
 		finished := false
@@ -67,29 +86,39 @@ func withAdminAudit(next gin.HandlerFunc, sink AdminAuditSink) gin.HandlerFunc {
 				return
 			}
 			// The handler chain is panicking (or exiting the goroutine). Record
-			// it and let the panic carry on to the recovery middleware. There is
-			// deliberately no recover() here or below this point: it must not
-			// swallow the panic.
-			enqueueAdminAudit(c, sink, start, capture, true)
+			// it and let the panic carry on to the recovery middleware. The
+			// helper only recovers a panic raised while recording, never the
+			// handler's own panic (recover() in a function that merely runs
+			// during unwinding does not catch the panic being unwound).
+			safeEnqueueAdminAudit(c, sink, start, capture, true)
 		}()
 
 		next(c)
 		finished = true
 
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("admin audit: failed to record request", "panic", r)
-				}
-			}()
-			enqueueAdminAudit(c, sink, start, capture, false)
-		}()
+		safeEnqueueAdminAudit(c, sink, start, capture, false)
 	}
+}
+
+// safeEnqueueAdminAudit records the request and swallows (but logs) any panic
+// raised by the recording itself, so a bug in auditing can neither fail the
+// request nor replace the original panic of a crashing handler.
+func safeEnqueueAdminAudit(c *gin.Context, sink AdminAuditSink, start time.Time, capture *auditBodyCapture, panicked bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("admin audit: failed to record request", "panic", r)
+		}
+	}()
+	enqueueAdminAudit(c, sink, start, capture, panicked)
 }
 
 func enqueueAdminAudit(c *gin.Context, sink AdminAuditSink, start time.Time, capture *auditBodyCapture, panicked bool) {
 	entry := buildAdminAuditEntry(c, start, capture, panicked)
 	if entry == nil {
+		// Nobody was identified: no row, but make the attempt visible.
+		if reporter, ok := sink.(AdminAuditUnidentifiedReporter); ok {
+			reporter.RecordUnidentified(SecurityClientIP(c), c.FullPath(), c.Request.UserAgent())
+		}
 		return
 	}
 	// A dropped row is counted (and logged, rate limited) by the sink.
@@ -125,6 +154,11 @@ func buildAdminAuditEntry(c *gin.Context, start time.Time, capture *auditBodyCap
 		path += "?" + query
 	}
 	targetType, targetID := adminAuditTarget(route, c.Params)
+	if override, ok := c.Get(string(ContextKeyAdminAuditTarget)); ok {
+		if target, ok := override.(AdminAuditTarget); ok {
+			targetType, targetID = target.Type, target.ID
+		}
+	}
 
 	authMethod := c.GetString("auth_method")
 	if authMethod == "" {
@@ -162,6 +196,13 @@ func buildAdminAuditEntry(c *gin.Context, start time.Time, capture *auditBodyCap
 	}
 
 	extra := map[string]any{}
+	if handlerExtra, ok := c.Get(string(ContextKeyAdminAuditExtra)); ok {
+		if values, ok := handlerExtra.(map[string]any); ok {
+			for key, value := range values {
+				extra[key] = value
+			}
+		}
+	}
 	if code := c.GetString(string(ContextKeyAdminRejectCode)); code != "" {
 		extra["reject_code"] = code
 	}
@@ -178,7 +219,13 @@ func buildAdminAuditEntry(c *gin.Context, start time.Time, capture *auditBodyCap
 		entry.Reason = reason
 	}
 
-	if capture != nil {
+	if adminAuditBodyOmitted(c.Request.Method, c.FullPath()) {
+		// The route submits credentials: the body is deliberately not stored.
+		extra["body_omitted"] = true
+		if c.Request.ContentLength > 0 {
+			extra["body_bytes"] = c.Request.ContentLength
+		}
+	} else if capture != nil {
 		body, total := capture.snapshot()
 		entry.RequestBody = service.RedactAuditBody(body, c.GetHeader("Content-Type"))
 		if total > 0 {
@@ -259,7 +306,7 @@ func (a *auditBodyCapture) Read(p []byte) (int, error) {
 			if n < room {
 				room = n
 			}
-			a.buf.Write(p[:room])
+			_, _ = a.buf.Write(p[:room])
 		}
 		a.mu.Unlock()
 	}
@@ -274,4 +321,46 @@ func (a *auditBodyCapture) snapshot() ([]byte, int64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]byte(nil), a.buf.Bytes()...), a.total
+}
+
+// ContextKeyAdminAuditExtra holds extra key/values a handler wants recorded in
+// the audit row's "extra" column (see SetAdminAuditExtra).
+const ContextKeyAdminAuditExtra ContextKey = "admin_audit_extra"
+
+// ContextKeyAdminAuditTarget holds a target override set by a handler (see
+// SetAdminAuditTarget).
+const ContextKeyAdminAuditTarget ContextKey = "admin_audit_target"
+
+// AdminAuditTarget is the object a request acted on, as recorded in
+// audit_logs.target_type / target_id.
+type AdminAuditTarget struct {
+	Type string
+	ID   string
+}
+
+// SetAdminAuditExtra lets a handler attach a value to the audit row of the
+// current request, for facts that are not visible in the route or the
+// (redacted) body: for example the id of an object the request created. Never
+// pass secrets. It is a no-op outside the admin audit middleware.
+func SetAdminAuditExtra(c *gin.Context, key string, value any) {
+	if c == nil || key == "" {
+		return
+	}
+	values, _ := c.Get(string(ContextKeyAdminAuditExtra))
+	extra, ok := values.(map[string]any)
+	if !ok {
+		extra = map[string]any{}
+		c.Set(string(ContextKeyAdminAuditExtra), extra)
+	}
+	extra[key] = value
+}
+
+// SetAdminAuditTarget overrides the target_type/target_id derived from the
+// route, for requests that create the object they address (POST /admin-tokens
+// has no :id in the route).
+func SetAdminAuditTarget(c *gin.Context, targetType, targetID string) {
+	if c == nil {
+		return
+	}
+	c.Set(string(ContextKeyAdminAuditTarget), AdminAuditTarget{Type: targetType, ID: targetID})
 }

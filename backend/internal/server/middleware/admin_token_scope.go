@@ -89,6 +89,11 @@ var adminDangerRules = []AdminRouteRule{
 	{http.MethodPut, "/users/:id", "updates role, balance, password, status and per-user group rates"},
 	{http.MethodDelete, "/users/:id", "delete user"},
 	{http.MethodPost, "/users/:id/auth-identities", "binds a login identity to a user (account takeover)"},
+	{http.MethodPost, "/users/:id/replace-group", "moves a user between groups (changes what they are charged)"},
+	{http.MethodPost, "/users/batch-concurrency", "changes limits for many users"},
+	{http.MethodPost, "/users/batch-limits", "changes limits for many users"},
+	{http.MethodPut, "/users/:id/platform-quotas", "changes a user's usage quotas"},
+	{http.MethodPut, "/api-keys/:id", "moves a customer's API key to another group (changes pricing)"},
 
 	// --- Groups and accounts: deletion and group pricing -----------------
 	{http.MethodDelete, "/groups/:id", "delete group"},
@@ -96,6 +101,13 @@ var adminDangerRules = []AdminRouteRule{
 	{http.MethodPut, "/groups/:id/rate-multipliers", "pricing (per-user group multipliers)"},
 	{http.MethodDelete, "/groups/:id/rate-multipliers", "pricing (clears per-user group multipliers)"},
 	{http.MethodDelete, "/accounts/:id", "delete account"},
+	{http.MethodPut, "/accounts/:id", "edits an account, including its upstream credentials"},
+	{http.MethodPost, "/accounts/bulk-update", "edits many accounts at once, including credentials"},
+	{http.MethodPost, "/accounts/batch-update-credentials", "overwrites upstream credentials of many accounts"},
+	{http.MethodPost, "/accounts/:id/apply-oauth-credentials", "overwrites an account's upstream credentials"},
+	{http.MethodPost, "/accounts/:id/reauth/codex-session", "overwrites an account's upstream credentials"},
+	{http.MethodPost, "/accounts/import/codex-session", "imports Codex sessions; update_existing overwrites credentials"},
+	{http.MethodPost, "/accounts/data", "imports accounts (credentials) and can overwrite existing ones"},
 
 	// --- Pricing, rebates, payment configuration -------------------------
 	{http.MethodPost, "/channels", "channel pricing / routing"},
@@ -200,6 +212,21 @@ var adminReviewedWriteRules = []AdminRouteRule{
 	{http.MethodDelete, "/tls-fingerprint-profiles/:id", "fingerprint template"},
 	{http.MethodDelete, "/user-attributes/:id", "attribute definition"},
 
+	// batch / bulk / import / group in the name, but low impact.
+	{http.MethodPut, "/groups/sort-order", "display order of groups"},
+	{http.MethodPost, "/groups", "creates a group; nobody is charged through it until it is assigned"},
+	{http.MethodPost, "/groups/:id/duplicate", "copies a group; nobody is charged through it until it is assigned"},
+	{http.MethodPut, "/groups/:id/rpm-overrides", "per-user request-rate overrides (limits, not prices)"},
+	{http.MethodPost, "/accounts/batch", "creates accounts (no existing account is changed)"},
+	{http.MethodPost, "/accounts/batch-refresh", "refreshes upstream tokens"},
+	{http.MethodPost, "/accounts/batch-refresh-tier", "re-reads the subscription tier from upstream"},
+	{http.MethodPost, "/accounts/batch-clear-error", "clears error marks"},
+	{http.MethodPost, "/accounts/today-stats/batch", "read-only statistics (POST only to carry a long id list)"},
+	{http.MethodPost, "/accounts/upstream-billing-probe/batch", "runs probes; persists nothing sensitive"},
+	{http.MethodPost, "/proxies/batch", "creates proxies (no existing proxy is changed)"},
+	{http.MethodPost, "/proxies/data", "imports proxies"},
+	{http.MethodPost, "/user-attributes/batch", "read-only lookup (POST only to carry a long id list)"},
+
 	// "rate" in the name (rate limits, "generate"), but not about money.
 	{http.MethodPost, "/accounts/:id/clear-rate-limit", "clears an upstream rate-limit mark on one account"},
 	{http.MethodPost, "/accounts/generate-auth-url", "OAuth helper that only returns a URL ('rate' is part of 'generate')"},
@@ -224,11 +251,10 @@ var adminReviewedReadRules = []AdminRouteRule{
 	{http.MethodGet, "/redeem-codes/stats", "counters only"},
 }
 
-var (
-	adminDangerRouteSet        = buildAdminRouteSet(adminDangerRules)
-	adminReviewedWriteRouteSet = buildAdminRouteSet(adminReviewedWriteRules)
-	adminReviewedReadRouteSet  = buildAdminRouteSet(adminReviewedReadRules)
-)
+// adminDangerRouteSet is the lookup form of adminDangerRules. The reviewed
+// lists are only consumed by the route coverage tests (through the accessors
+// below), so they have no lookup set.
+var adminDangerRouteSet = buildAdminRouteSet(adminDangerRules)
 
 func buildAdminRouteSet(rules []AdminRouteRule) map[string]string {
 	set := make(map[string]string, len(rules))

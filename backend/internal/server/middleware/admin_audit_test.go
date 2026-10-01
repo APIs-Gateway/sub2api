@@ -25,6 +25,21 @@ type adminAuditTestSink struct {
 	entries []*service.AuditLog
 	accept  bool // value Enqueue returns
 	panics  bool // Enqueue panics
+
+	unidentified []string // "ip route ua" of every RecordUnidentified call
+}
+
+// RecordUnidentified makes the sink an AdminAuditUnidentifiedReporter.
+func (s *adminAuditTestSink) RecordUnidentified(clientIP, route, userAgent string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.unidentified = append(s.unidentified, clientIP+" "+route+" "+userAgent)
+}
+
+func (s *adminAuditTestSink) unidentifiedCalls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.unidentified...)
 }
 
 func (s *adminAuditTestSink) Enqueue(entry *service.AuditLog) bool {
@@ -242,18 +257,40 @@ func TestAdminAuditSkipsReadsAndUnidentifiedCallers(t *testing.T) {
 	}
 
 	// Callers that identify nobody are not audited either (they could otherwise
-	// fill the table from the open internet).
-	for name, req := range map[string]adminTokenTestRequest{
-		"no credentials":    {method: http.MethodPost, path: "/api/v1/admin/things"},
-		"unknown token":     {method: http.MethodPost, path: "/api/v1/admin/things", header: apiKey("s2a_" + strings.Repeat("A", 43))},
-		"malformed token":   {method: http.MethodPost, path: "/api/v1/admin/things", header: apiKey("s2a_nope")},
-		"wrong legacy key":  {method: http.MethodPost, path: "/api/v1/admin/things", header: apiKey("admin-wrong")},
-		"garbage jwt":       {method: http.MethodPost, path: "/api/v1/admin/things", header: bearer("not-a-jwt")},
-		"options preflight": {method: http.MethodOptions, path: "/api/v1/admin/things", header: apiKey(plaintext)},
-	} {
+	// fill the table from the open internet). They are reported to the sink
+	// instead, which counts them and logs them rate limited.
+	unidentified := map[string]adminTokenTestRequest{
+		"no credentials":   {method: http.MethodPost, path: "/api/v1/admin/things"},
+		"unknown token":    {method: http.MethodPost, path: "/api/v1/admin/things", header: apiKey("s2a_" + strings.Repeat("A", 43))},
+		"malformed token":  {method: http.MethodPost, path: "/api/v1/admin/things", header: apiKey("s2a_nope")},
+		"wrong legacy key": {method: http.MethodPost, path: "/api/v1/admin/things", header: apiKey("admin-wrong")},
+		"garbage jwt":      {method: http.MethodPost, path: "/api/v1/admin/things", header: bearer("not-a-jwt")},
+	}
+	for name, req := range unidentified {
+		req.remoteAddr = "203.0.113.9:4000"
+		req.header = withHeader(req.header, "User-Agent", "scanner/1.0")
 		_ = env.do(req)
 		require.Empty(t, env.sink.all(), name)
 	}
+	calls := env.sink.unidentifiedCalls()
+	require.Len(t, calls, len(unidentified), "every unidentified write attempt is reported")
+	for _, call := range calls {
+		require.Equal(t, "203.0.113.9 /api/v1/admin/things scanner/1.0", call)
+	}
+
+	// An OPTIONS request is not a state-changing request: neither audited nor reported.
+	_ = env.do(adminTokenTestRequest{method: http.MethodOptions, path: "/api/v1/admin/things", header: apiKey(plaintext)})
+	require.Empty(t, env.sink.all())
+	require.Len(t, env.sink.unidentifiedCalls(), len(unidentified))
+}
+
+func withHeader(header map[string]string, key, value string) map[string]string {
+	out := make(map[string]string, len(header)+1)
+	for k, v := range header {
+		out[k] = v
+	}
+	out[key] = value
+	return out
 }
 
 func TestAdminAuditRecordsLegacyKeyAndJWTWrites(t *testing.T) {
@@ -382,6 +419,15 @@ func TestAdminAuditNeverChangesTheOutcome(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 		require.Equal(t, before+1, env.reached)
 	})
+
+	t.Run("sink panics while the handler panics: the handler's panic still wins", func(t *testing.T) {
+		env.sink.accept = true
+		env.sink.panics = true
+		w := env.do(adminTokenTestRequest{method: http.MethodPost, path: "/api/v1/admin/boom", header: apiKey(plaintext)})
+		// The recovery middleware answered, so the original panic was neither
+		// swallowed nor replaced by the sink's panic.
+		require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+	})
 }
 
 func TestAdminAuditWithoutSinkIsTransparent(t *testing.T) {
@@ -413,7 +459,7 @@ func TestProvideAdminAuthMiddlewareWritesAuditThroughTheRealWriter(t *testing.T)
 	w := env.do(req)
 	require.Equal(t, http.StatusNoContent, w.Code)
 
-	writer.Stop() // flushes the queue
+	writer.Stop(context.Background()) // flushes the queue
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
 	require.Len(t, repo.rows, 1)

@@ -263,8 +263,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	adminTokenService := service.ProvideAdminTokenService(adminTokenRepository, userService)
 	adminTokenHandler := admin.NewAdminTokenHandler(adminTokenService)
 	auditLogRepository := repository.NewAuditLogRepository(db)
-	auditLogHandler := admin.NewAuditLogHandler(auditLogRepository)
 	adminAuditWriter := service.ProvideAdminAuditWriter(auditLogRepository)
+	auditLogHandler := admin.NewAuditLogHandler(auditLogRepository, adminAuditWriter)
 	adminHandlers := handler.ProvideAdminHandlers(dashboardHandler, adminUserHandler, groupHandler, accountHandler, adminAnnouncementHandler, dataManagementHandler, backupHandler, oAuthHandler, openAIOAuthHandler, geminiOAuthHandler, antigravityOAuthHandler, grokOAuthHandler, proxyHandler, adminRedeemHandler, promoHandler, settingHandler, opsHandler, systemHandler, adminSubscriptionHandler, adminUsageHandler, userAttributeHandler, errorPassthroughHandler, tlsFingerprintProfileHandler, adminAPIKeyHandler, scheduledTestHandler, channelHandler, channelMonitorHandler, channelMonitorRequestTemplateHandler, contentModerationHandler, paymentHandler, affiliateHandler, complianceHandler, pointsHandler, promptEventAdminHandler, upstreamBillingProbeService, pricingQuoteHandler, adminTokenHandler, auditLogHandler)
 	usageRecordWorkerPool := service.NewUsageRecordWorkerPool(configConfig)
 	userMsgQueueCache := repository.NewUserMsgQueueCache(redisClient)
@@ -582,7 +582,7 @@ func provideCleanup(
 			{"AdminAuditWriter", func() error {
 				// 先于数据库连接关闭：把队列里剩余的审计日志写完。
 				if adminAuditWriter != nil {
-					adminAuditWriter.Stop()
+					adminAuditWriter.Stop(ctx)
 				}
 				return nil
 			}},

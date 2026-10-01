@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -162,6 +163,12 @@ var auditSensitiveBodyExactKeys = func() map[string]struct{} {
 		"codes",
 		"cvv",
 		"pin",
+		// Free-form payloads that carry whole credential files: the Codex
+		// session import/re-auth routes submit a pasted auth.json as
+		// "content"/"contents". The routes themselves are also on the
+		// body-omitted list; this is the second line of defence.
+		"content",
+		"contents",
 	}
 	sensitive := make(map[string]struct{}, len(builtin)+len(SensitiveCredentialKeys)+16)
 	for _, key := range builtin {
@@ -202,17 +209,94 @@ var auditSensitiveKeySubstrings = []string{
 // auditRedactedPlaceholder replaces the value of a sensitive key.
 const auditRedactedPlaceholder = "[REDACTED]"
 
+// auditSafeKeyExactNames and auditSafeKeySuffixes list keys that contain
+// "key" but are identifiers or public values, not secrets ("api_key_id",
+// "key_prefix", "public_key", "group_key"). Without them the broad "key"
+// substring match would blank harmless ids and make the audit trail useless
+// for API-key and group operations. They are compared against the normalized
+// key and only exempt it from the "key"/"apikey" substring match: a key that
+// also contains "secret", "token", "password", ... is still redacted.
+var (
+	auditSafeKeyExactNames = map[string]struct{}{
+		"keyprefix": {},
+		"publickey": {},
+		"groupkey":  {},
+		"sortkey":   {},
+	}
+	auditSafeKeySuffixes = []string{"keyid", "keyids", "keyname", "keyprefix", "keycount"}
+)
+
+func isAuditSafeKeyName(normalized string) bool {
+	if _, ok := auditSafeKeyExactNames[normalized]; ok {
+		return true
+	}
+	for _, suffix := range auditSafeKeySuffixes {
+		if strings.HasSuffix(normalized, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 func isAuditSensitiveKey(key string) bool {
 	normalized := normalizeAuditBodyKey(key)
 	if _, ok := auditSensitiveBodyExactKeys[normalized]; ok {
 		return true
 	}
+	safeKey := isAuditSafeKeyName(normalized)
 	for _, substring := range auditSensitiveKeySubstrings {
+		if safeKey && (substring == "key" || substring == "apikey") {
+			continue
+		}
 		if strings.Contains(normalized, substring) {
 			return true
 		}
 	}
 	return false
+}
+
+// auditCredentialValuePatterns recognise credentials by their shape, so that
+// one pasted into a field with an innocent name (or into free text) is still
+// masked: JWTs (access/id tokens), OpenAI refresh tokens ("rt_"), API keys
+// ("sk-", which also covers "sk-ant-..."), admin tokens ("s2a_") and the
+// legacy global admin API key ("admin-").
+var auditCredentialValuePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*`),
+	regexp.MustCompile(`\brt_[A-Za-z0-9._-]{8,}`),
+	regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}`),
+	regexp.MustCompile(`\bs2a_[A-Za-z0-9_-]{8,}`),
+	regexp.MustCompile(`\badmin-[A-Za-z0-9_-]{8,}`),
+}
+
+// maskAuditCredentialValues replaces every credential-shaped substring.
+func maskAuditCredentialValues(value string) string {
+	for _, pattern := range auditCredentialValuePatterns {
+		value = pattern.ReplaceAllString(value, auditRedactedPlaceholder)
+	}
+	return value
+}
+
+// redactAuditString redacts a JSON string value. A string that itself holds a
+// JSON document (a pasted auth.json, for example) is parsed and redacted
+// recursively by key; every other string is scanned for credential-shaped
+// substrings.
+func redactAuditString(value string, depth int) string {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) > 1 && (trimmed[0] == '{' || trimmed[0] == '[') && json.Valid([]byte(trimmed)) {
+		decoder := json.NewDecoder(strings.NewReader(trimmed))
+		decoder.UseNumber()
+		var nested any
+		if err := decoder.Decode(&nested); err == nil {
+			var out bytes.Buffer
+			encoder := json.NewEncoder(&out)
+			encoder.SetEscapeHTML(false)
+			if err := encoder.Encode(redactAuditValue(nested, depth+1)); err == nil {
+				return strings.TrimRight(out.String(), "\n")
+			}
+		}
+		return auditRedactedPlaceholder
+	}
+	return maskAuditCredentialValues(value)
 }
 
 // RedactAuditBody removes secrets before a request body is eligible for audit
@@ -224,6 +308,11 @@ func isAuditSensitiveKey(key string) bool {
 //     authorization, private, ...) is replaced by "[REDACTED]", recursively
 //     through objects and arrays. A sensitive key hides its whole value, so
 //     account "credentials" objects never appear in the audit trail.
+//   - String values are inspected too: a string that holds a JSON document is
+//     parsed and redacted the same way, and credential-shaped substrings (JWTs,
+//     rt_/sk-/s2a_/admin- prefixed secrets) are masked wherever they appear.
+//   - The admin audit middleware does not store the body at all for routes
+//     that submit credentials (see adminAuditBodyOmitted).
 //   - Anything else (multipart, form, binary) is not parsed: only its size
 //     and content type are recorded.
 //
@@ -295,6 +384,8 @@ func redactAuditValue(value any, depth int) any {
 			out[index] = redactAuditValue(item, depth+1)
 		}
 		return out
+	case string:
+		return redactAuditString(typed, depth)
 	default:
 		return value
 	}

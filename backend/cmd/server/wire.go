@@ -305,7 +305,7 @@ func provideCleanup(
 			{"AdminAuditWriter", func() error {
 				// 先于数据库连接关闭：把队列里剩余的审计日志写完。
 				if adminAuditWriter != nil {
-					adminAuditWriter.Stop()
+					adminAuditWriter.Stop(ctx)
 				}
 				return nil
 			}},

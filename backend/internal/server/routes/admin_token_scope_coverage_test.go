@@ -171,6 +171,7 @@ func TestAdminScopeListsAreWellFormed(t *testing.T) {
 // are always sensitive.
 var sensitiveWriteKeywords = []string{
 	"refund", "compensat", "balance", "delete", "price", "pricing", "rate", "settings",
+	"batch", "bulk", "import", "credential", "group",
 }
 
 // Keywords that make a GET route look like it could reveal a secret.
@@ -216,7 +217,8 @@ func TestSensitiveAdminRoutesAreClassified(t *testing.T) {
 				unclassified = append(unclassified, key)
 			}
 		default:
-			sensitive := method == http.MethodDelete
+			// "/data" routes import or export whole files (accounts, proxies).
+			sensitive := method == http.MethodDelete || strings.HasSuffix(lower, "/data")
 			for _, keyword := range sensitiveWriteKeywords {
 				if strings.Contains(lower, keyword) {
 					sensitive = true
@@ -230,6 +232,65 @@ func TestSensitiveAdminRoutesAreClassified(t *testing.T) {
 	require.Empty(t, unclassified,
 		"sensitive-looking admin routes must be added to the danger list or to the reviewed-as-write/read lists in "+
 			"internal/server/middleware/admin_token_scope.go")
+}
+
+// (c) Every route on the explicit "body not stored" list must exist, and the
+// routes that submit credentials must be covered by it (explicitly or by the
+// keyword rules), whatever shape their body has.
+func TestAdminAuditBodyOmittedRoutesExistAndCoverCredentialRoutes(t *testing.T) {
+	_, protected := adminProtectedRoutes(t)
+
+	var stale []string
+	for _, key := range routeKeys(middleware.AdminAuditBodyOmittedRules()) {
+		if _, ok := protected[key]; !ok {
+			stale = append(stale, key)
+		}
+	}
+	require.Empty(t, stale, "body-omitted list has entries that are not real admin routes")
+
+	mustOmit := []string{
+		// the Codex auth.json routes the review called out
+		"POST /api/v1/admin/accounts/import/codex-session",
+		"POST /api/v1/admin/accounts/:id/reauth/codex-session",
+		"POST /api/v1/admin/accounts/data",
+		// account credential edits
+		"POST /api/v1/admin/accounts",
+		"PUT /api/v1/admin/accounts/:id",
+		"POST /api/v1/admin/accounts/batch-update-credentials",
+		"POST /api/v1/admin/accounts/:id/apply-oauth-credentials",
+		// OAuth and cookie exchanges
+		"POST /api/v1/admin/accounts/exchange-code",
+		"POST /api/v1/admin/accounts/cookie-auth",
+		"POST /api/v1/admin/openai/exchange-code",
+		"POST /api/v1/admin/openai/refresh-token",
+		"POST /api/v1/admin/openai/create-from-oauth",
+		"POST /api/v1/admin/gemini/oauth/exchange-code",
+		"POST /api/v1/admin/grok/oauth/create-from-oauth",
+		// proxies, users, settings, storage, payment
+		"POST /api/v1/admin/proxies",
+		"PUT /api/v1/admin/proxies/:id",
+		"POST /api/v1/admin/users",
+		"PUT /api/v1/admin/users/:id",
+		"PUT /api/v1/admin/settings",
+		"PUT /api/v1/admin/payment/config",
+		"POST /api/v1/admin/payment/providers",
+		"PUT /api/v1/admin/payment/providers/:id",
+		"POST /api/v1/admin/data-management/s3/profiles",
+		"PUT /api/v1/admin/data-management/sources/:source_type/profiles/:profile_id",
+		"PUT /api/v1/admin/backups/s3-config",
+	}
+	for _, key := range mustOmit {
+		method, path, _ := strings.Cut(key, " ")
+		_, exists := protected[key]
+		require.Truef(t, exists, "%s is not a real admin route", key)
+		require.Truef(t, middleware.AdminAuditBodyOmitted(method, path), "%s submits credentials; its body must not be audited", key)
+	}
+
+	// An ordinary route keeps its (redacted) body.
+	require.False(t, middleware.AdminAuditBodyOmitted("POST", "/api/v1/admin/announcements"))
+	require.False(t, middleware.AdminAuditBodyOmitted("POST", "/api/v1/admin/users/:id/balance"))
+	// An empty route fails closed.
+	require.True(t, middleware.AdminAuditBodyOmitted("POST", ""))
 }
 
 // The categories the task calls out must be on the danger list: refunds,
@@ -260,6 +321,16 @@ func TestAdminDangerListCoversRequiredCategories(t *testing.T) {
 		"POST /api/v1/admin/redeem-codes/batch-delete",
 		// subscription card void
 		"DELETE /api/v1/admin/subscriptions/:id",
+		// credentials, bulk edits, group moves (review round 1)
+		"POST /api/v1/admin/accounts/bulk-update",
+		"POST /api/v1/admin/accounts/import/codex-session",
+		"POST /api/v1/admin/accounts/data",
+		"PUT /api/v1/admin/accounts/:id",
+		"PUT /api/v1/admin/api-keys/:id",
+		"POST /api/v1/admin/users/:id/replace-group",
+		"POST /api/v1/admin/users/batch-concurrency",
+		"POST /api/v1/admin/users/batch-limits",
+		"PUT /api/v1/admin/users/:id/platform-quotas",
 	}
 	for _, key := range required {
 		method, path, _ := strings.Cut(key, " ")

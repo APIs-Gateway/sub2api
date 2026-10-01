@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -38,7 +39,7 @@ func (r *auditLogHandlerRepo) DeleteBefore(context.Context, time.Time, int) (int
 func newAuditLogHandlerRouter(repo *auditLogHandlerRepo) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.GET("/api/v1/admin/audit-logs", NewAuditLogHandler(repo).List)
+	router.GET("/api/v1/admin/audit-logs", NewAuditLogHandler(repo, nil).List)
 	return router
 }
 
@@ -118,4 +119,36 @@ func TestAuditLogHandlerRejectsBadFilters(t *testing.T) {
 			require.Zero(t, repo.calls, "an invalid filter must not reach the repository")
 		})
 	}
+}
+
+func TestAuditLogStatsReportsWriterCounters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	writer := service.NewAdminAuditWriter(&auditLogHandlerRepo{}, 8)
+	writer.RecordUnidentified("203.0.113.9", "/api/v1/admin/things", "scanner/1.0")
+	require.True(t, writer.Enqueue(&service.AuditLog{Action: "POST /x"}))
+
+	router := gin.New()
+	router.GET("/api/v1/admin/audit-logs/stats", NewAuditLogHandler(&auditLogHandlerRepo{}, writer).Stats)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit-logs/stats", nil))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var body struct {
+		Data service.AdminAuditStats `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
+	require.Equal(t, uint64(1), body.Data.Enqueued)
+	require.Equal(t, uint64(1), body.Data.Unidentified)
+	require.Equal(t, 8, body.Data.QueueCapacity)
+}
+
+func TestAuditLogStatsWithoutWriterReportsZeros(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/v1/admin/audit-logs/stats", NewAuditLogHandler(&auditLogHandlerRepo{}, nil).Stats)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit-logs/stats", nil))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }

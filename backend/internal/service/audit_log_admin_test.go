@@ -103,3 +103,108 @@ func TestRedactAuditBody_TruncatesToEightKilobytes(t *testing.T) {
 	require.LessOrEqual(t, len(cjk), 8*1024)
 	require.True(t, strings.ToValidUTF8(cjk, "") == cjk, "truncation must not split a rune")
 }
+
+const auditTestCodexAuthJSON = `{"OPENAI_API_KEY":null,"tokens":{` +
+	`"id_token":"eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEifQ.c2lnbmF0dXJlLWlk",` +
+	`"access_token":"eyJhbGciOiJSUzI1NiJ9.eyJzY3AiOlsib3BlbmlkIl19.YWNjZXNzLXNpZw",` +
+	`"refresh_token":"rt_9f8e7d6c5b4a39281706f5e4d3c2b1a0"},"last_refresh":"2026-10-01T00:00:00Z"}`
+
+func requireNoCodexSecrets(t *testing.T, out string) {
+	t.Helper()
+	for _, secret := range []string{
+		"eyJhbGciOiJSUzI1NiJ9", "eyJzdWIiOiJ1c2VyLTEifQ", "c2lnbmF0dXJlLWlk", "YWNjZXNzLXNpZw",
+		"rt_9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+	} {
+		require.NotContains(t, out, secret)
+	}
+}
+
+func marshalAuditTestBody(t *testing.T, value any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	require.NoError(t, err)
+	return raw
+}
+
+func TestRedactAuditBody_ContentAndContentsAreSensitiveKeys(t *testing.T) {
+	out := RedactAuditBody(marshalAuditTestBody(t, map[string]any{
+		"content":  auditTestCodexAuthJSON,
+		"contents": []string{auditTestCodexAuthJSON},
+		"title":    "visible",
+	}), "application/json")
+	requireNoCodexSecrets(t, out)
+	require.Contains(t, out, `"content":"[REDACTED]"`)
+	require.Contains(t, out, `"contents":"[REDACTED]"`)
+	require.Contains(t, out, `"title":"visible"`)
+}
+
+func TestRedactAuditBody_AuthJSONAsAStringUnderAnInnocentKey(t *testing.T) {
+	out := RedactAuditBody(marshalAuditTestBody(t, map[string]any{
+		"payload": auditTestCodexAuthJSON,
+		"items":   []string{auditTestCodexAuthJSON},
+	}), "application/json")
+	requireNoCodexSecrets(t, out)
+	require.Contains(t, out, "last_refresh", "the string was parsed and only its secrets were removed")
+	require.Contains(t, out, "[REDACTED]")
+
+	// A top-level JSON string works too.
+	out = RedactAuditBody(marshalAuditTestBody(t, auditTestCodexAuthJSON), "application/json")
+	requireNoCodexSecrets(t, out)
+
+	// JSON inside JSON inside JSON.
+	nested := string(marshalAuditTestBody(t, map[string]any{"inner": auditTestCodexAuthJSON}))
+	out = RedactAuditBody(marshalAuditTestBody(t, map[string]any{"outer": nested}), "application/json")
+	requireNoCodexSecrets(t, out)
+}
+
+func TestRedactAuditBody_MasksCredentialShapedValues(t *testing.T) {
+	cases := map[string]string{
+		"jwt":           "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEifQ.c2lnbmF0dXJlLWlk",
+		"refresh token": "rt_9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+		"openai key":    "sk-proj-abcdefghijklmnop",
+		"anthropic key": "sk-ant-api03-abcdefghijklmnop",
+		"admin token":   "s2a_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"legacy key":    "admin-0123456789abcdef0123456789abcdef",
+	}
+	for name, secret := range cases {
+		t.Run(name, func(t *testing.T) {
+			out := RedactAuditBody(marshalAuditTestBody(t, map[string]any{
+				"remark": "pasted: " + secret + " (end)",
+				"list":   []string{secret},
+			}), "application/json")
+			require.NotContains(t, out, secret)
+			require.Contains(t, out, "pasted: [REDACTED] (end)")
+		})
+	}
+
+	// Ordinary words that merely resemble a prefix are left alone.
+	plain := RedactAuditBody([]byte(`{"a":"start_of_the_story","b":"task-force-assignments","c":"short sk-1"}`), "application/json")
+	require.Contains(t, plain, "start_of_the_story")
+	require.Contains(t, plain, "task-force-assignments")
+	require.Contains(t, plain, "short sk-1")
+}
+
+func TestRedactAuditBody_SafeKeyNamesAreKeptButSecretsStayRedacted(t *testing.T) {
+	out := RedactAuditBody([]byte(`{
+		"api_key_id": 12,
+		"group_key": "pro",
+		"key_prefix": "sk-abcd",
+		"public_key": "ssh-ed25519 AAAA",
+		"user_key_ids": [1,2],
+		"api_key": "k1",
+		"key": "k2",
+		"secret_key_id": "s1",
+		"token_key_prefix": "t1"
+	}`), "application/json")
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &parsed), out)
+
+	require.EqualValues(t, 12, parsed["api_key_id"])
+	require.Equal(t, "pro", parsed["group_key"])
+	require.Equal(t, "sk-abcd", parsed["key_prefix"])
+	require.Equal(t, "ssh-ed25519 AAAA", parsed["public_key"])
+	require.NotEqual(t, "[REDACTED]", parsed["user_key_ids"])
+	for _, key := range []string{"api_key", "key", "secret_key_id", "token_key_prefix"} {
+		require.Equal(t, "[REDACTED]", parsed[key], key)
+	}
+}

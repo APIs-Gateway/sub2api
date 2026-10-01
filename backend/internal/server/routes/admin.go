@@ -145,6 +145,7 @@ func registerAdminTokenRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 // registerAuditLogRoutes 注册管理操作审计日志查询（read 作用域即可）。
 func registerAuditLogRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.GET("/audit-logs", h.Admin.AuditLog.List)
+	admin.GET("/audit-logs/stats", h.Admin.AuditLog.Stats)
 }
 
 func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers) {

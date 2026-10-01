@@ -26,6 +26,15 @@ server:
   frontend_url: ""
   # Trusted proxies for X-Forwarded-For parsing (CIDR/IP). Empty disables trusted proxies.
   # 信任的代理地址（CIDR/IP 格式），用于解析 X-Forwarded-For 头。留空则禁用代理信任。
+  #
+  # Admin tokens (s2a_...) with an ip_allowlist, and the admin audit trail, use the client IP resolved
+  # from this list. Behind nginx / a load balancer, put the proxy's address here; otherwise the
+  # IP seen is the proxy's own, so an allowlist either rejects every call or (if it contains the
+  # proxy address) accepts every client. security.trust_forwarded_ip_for_api_key_acl does not
+  # affect this path.
+  # 管理令牌（s2a_ 开头）的 IP 白名单和管理审计日志使用这里解析出的客户端 IP。部署在 nginx / 负载均衡之后时，
+  # 必须把代理地址写在这里，否则看到的是代理自身 IP：白名单会拒绝所有请求，或在白名单含代理地址时放行所有客户端。
+  # security.trust_forwarded_ip_for_api_key_acl 不影响这条路径。
   trusted_proxies: []
   # Global max request body size in bytes (default: 256MB)
   # 全局最大请求体大小（字节，默认 256MB）
