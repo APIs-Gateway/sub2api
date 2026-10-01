@@ -1,0 +1,27 @@
+/*
+ * 接入弹窗各个组件共用的样式。每个用到的组件用 <style scoped src="./shared.css"> 引入：
+ * 样式会各自带上组件自己的 scoped 标记，只作用在该组件模板里的元素上（和拆分前全部写在弹窗一个文件里的效果一致）。
+ * 只放两个以上组件都用的类；某个页签独有的样式写在那个页签自己的 <style scoped> 里。
+ */
+
+/* 面板与卡片：浅底圆角，里面的控件是白底 */
+.onb-card {
+  @apply rounded-xl border border-gray-200 bg-gray-50 p-4 sm:p-5;
+  @apply dark:border-dark-700 dark:bg-dark-900/40;
+}
+
+/* 单选小胶囊（线路选择、交给 AI 和 CC Switch 里选客户端） */
+.onb-chip:focus-visible {
+  outline: 2px solid theme('colors.primary.500');
+  outline-offset: 2px;
+}
+.onb-chip {
+  @apply rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm text-gray-600 transition-colors duration-150;
+  @apply hover:bg-gray-50 hover:text-gray-900;
+  @apply dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300 dark:hover:bg-dark-700 dark:hover:text-white;
+}
+.onb-chip-active,
+.onb-chip-active:hover {
+  @apply border-gray-400 bg-gray-100 font-medium text-gray-900;
+  @apply dark:border-dark-400 dark:bg-dark-700 dark:text-white dark:hover:bg-dark-700;
+}
