@@ -255,6 +255,7 @@ func TestOpenAIResponsesWebSocket_LaterCyberTurnBillsCurrentGroupOnce(t *testing
 	}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Writer.Header().Set("X-Request-Id", "req_ws_cyber_billing")
 		c.Set(string(middleware.ContextKeyAPIKey), connectionKey)
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: connectionKey.User.ID, Concurrency: 1})
 		c.Next()
