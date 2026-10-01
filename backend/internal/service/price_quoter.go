@@ -22,7 +22,17 @@ import (
 //   - 费用算术：BillingService.computeTokenBreakdown / CalculateCostUnified / CalculateImageCost；
 //   - 倍率：userGroupRateResolver.Resolve（用户专属倍率替换分组倍率）+ resolveImageRateMultiplierFromFields。
 //
-// 因此 Quote.Cost 给出的费用与网关用同样入参调用计费函数得到的费用逐位相同。
+// 计费有两条路径，Quoter 按分组平台与是否命中渠道定价选路（QuotePricingPath），分别调用对应网关实际使用的函数：
+//
+//   - unified：OpenAI 网关的全部 token 请求，以及任何网关命中渠道定价时 → CalculateCostUnified；
+//   - legacy：非 OpenAI 网关（Anthropic / Gemini / Antigravity 等）且没有渠道定价时 →
+//     CalculateCost（Gemini 分组再按网关实现走 CalculateCostWithLongContext，200K 阈值、超出部分 2 倍）。
+//     这条路径与 unified 不同：不叠加 DeepSeek 峰时倍率，忽略 service tier。
+//
+// 因此 Quote.Cost 给出的费用与对应网关用同样入参调用计费函数得到的费用逐位相同。
+//
+// 注意：QuoteSourceFallback 的含义是「用了 BillingService.fallbackPrices 里的兜底价」，
+// 与 ModelPricingResolver 的 PricingSourceFallback（同为字符串 "fallback"，表示「没有任何价格」）意思相反，别混用。
 type PriceQuoter struct {
 	resolver *ModelPricingResolver
 	billing  *BillingService
@@ -73,10 +83,22 @@ const (
 	QuoteSourceChannel QuoteSource = "channel"
 	// QuoteSourceLiteLLM 动态价格目录（LiteLLM JSON）。
 	QuoteSourceLiteLLM QuoteSource = "litellm"
-	// QuoteSourceFallback BillingService.fallbackPrices 里硬编码的兜底价。
+	// QuoteSourceFallback BillingService.fallbackPrices 里硬编码的兜底价（有价，只是来自代码里写死的表）。
+	// 注意：ModelPricingResolver 的 PricingSourceFallback 字符串也是 "fallback"，但它表示「没有任何价格」，意思相反。
 	QuoteSourceFallback QuoteSource = "fallback"
 	// QuoteSourceCardPolicy 代码里的官方价卡策略强制覆盖了目录价（目前是 DeepSeek）。
 	QuoteSourceCardPolicy QuoteSource = "card_policy"
+)
+
+// QuotePricingPath 标明 Quote.Cost 复现的是哪条网关计费路径。
+type QuotePricingPath string
+
+const (
+	// QuotePricingPathUnified：CalculateCostUnified。OpenAI 网关的 token 请求，或任何网关命中渠道定价时。
+	QuotePricingPathUnified QuotePricingPath = "unified"
+	// QuotePricingPathLegacy：CalculateCost / CalculateCostWithLongContext。非 OpenAI 网关且无渠道定价时；
+	// 不叠加 DeepSeek 峰时倍率，忽略 service tier。
+	QuotePricingPathLegacy QuotePricingPath = "legacy"
 )
 
 // QuoteRequest 是 PriceQuoter.Quote 的入参。
@@ -177,6 +199,14 @@ type QuoteImageRequest struct {
 	Tiers []QuoteImageTier `json:"tiers"`
 }
 
+// QuoteGatewayLongContext 是网关自己的长上下文加价（目前只有 Gemini 原生接口：RecordUsageWithLongContext，
+// 阈值 200K、倍率 2.0）。输入 + 缓存读取合计超过阈值后，超出部分的输入与缓存读取按 ExtraMultiplier 倍计费，
+// 输出和缓存写入不加价。与 QuoteLongContext（价卡自带规则）是两回事。
+type QuoteGatewayLongContext struct {
+	ThresholdTokens int     `json:"threshold_tokens"`
+	ExtraMultiplier float64 `json:"extra_multiplier"`
+}
+
 // QuotePolicyFlags 标记取价过程中套用了哪些价卡策略。
 type QuotePolicyFlags struct {
 	// DeepSeekOfficialCard：DeepSeek 模型的单价被强制成官方价卡，不看目录里写的价。
@@ -217,6 +247,9 @@ type Quote struct {
 	Intervals   []QuoteTokenInterval `json:"intervals,omitempty"`
 	LongContext *QuoteLongContext    `json:"long_context,omitempty"`
 	ServiceTier *QuoteServiceTier    `json:"service_tier,omitempty"`
+	// PricingPath 是 Cost 复现的网关计费路径；GatewayLongContext 仅 legacy 路径下的 Gemini 分组有值。
+	PricingPath        QuotePricingPath         `json:"pricing_path"`
+	GatewayLongContext *QuoteGatewayLongContext `json:"gateway_long_context,omitempty"`
 
 	PerRequest   *QuotePerRequest   `json:"per_request,omitempty"`
 	ImageRequest *QuoteImageRequest `json:"image_request,omitempty"`
@@ -236,6 +269,7 @@ type Quote struct {
 	serviceTier    string
 	pricingGroupID int64
 	imageConfig    *ImagePriceConfig
+	platform       string
 }
 
 // QuoteUsage 是 Quote.Cost 要估算的一次请求用量。
@@ -293,6 +327,7 @@ func (q *PriceQuoter) Quote(ctx context.Context, req QuoteRequest) (*Quote, erro
 		resolved:            resolved,
 		serviceTier:         tier,
 		pricingGroupID:      pg.ID,
+		platform:            pg.Platform,
 		imageConfig: &ImagePriceConfig{
 			Price1K: pg.ImagePrice1K,
 			Price2K: pg.ImagePrice2K,
@@ -302,6 +337,19 @@ func (q *PriceQuoter) Quote(ctx context.Context, req QuoteRequest) (*Quote, erro
 	if req.UserID > 0 && rateMultiplier != pg.RateMultiplier {
 		userMultiplier := rateMultiplier
 		quote.UserMultiplier = &userMultiplier
+	}
+
+	// 选路：与两个网关一致。OpenAI 网关 token 请求一律走 CalculateCostUnified；
+	// 其它平台只有命中渠道定价才走 Unified，否则走 CalculateCost（legacy）。
+	quote.PricingPath = QuotePricingPathUnified
+	if quote.usesLegacyTokenPath() {
+		quote.PricingPath = QuotePricingPathLegacy
+		if pg.Platform == PlatformGemini {
+			quote.GatewayLongContext = &QuoteGatewayLongContext{
+				ThresholdTokens: geminiGatewayLongContextThreshold,
+				ExtraMultiplier: geminiGatewayLongContextMultiplier,
+			}
+		}
 	}
 
 	if resolved.Source == PricingSourceChannel {
@@ -322,6 +370,20 @@ func (q *PriceQuoter) Quote(ctx context.Context, req QuoteRequest) (*Quote, erro
 	}
 	q.fillImageRequestQuote(quote)
 	return quote, nil
+}
+
+// Gemini 原生接口（handler/gemini_v1beta_handler.go）调用 RecordUsageWithLongContext 时写死的参数。
+// Quote 只对 Gemini 平台分组应用它；Antigravity 分组经 Gemini 原生接口访问时网关也会加价，
+// 但 Quoter 不知道请求走的是哪个入口，不在这里猜。
+const (
+	geminiGatewayLongContextThreshold  = 200000
+	geminiGatewayLongContextMultiplier = 2.0
+)
+
+// usesLegacyTokenPath 判断 token 计费是否走 CalculateCost 路径：
+// 非 OpenAI 网关且没有渠道定价（GatewayService.calculateTokenCost 里 resolveChannelPricing 返回 nil 的情形）。
+func (qt *Quote) usesLegacyTokenPath() bool {
+	return qt.platform != PlatformOpenAI && qt.resolved.Source != PricingSourceChannel
 }
 
 // pricingGroup 决定用哪个分组计价：稳定优先兜底到服务组时按服务组计价
@@ -353,7 +415,19 @@ func (q *PriceQuoter) pricingGroup(ctx context.Context, req QuoteRequest) (*Grou
 // fillTokenQuote 填 token 计费模式的报价。
 func (q *PriceQuoter) fillTokenQuote(quote *Quote) {
 	resolved := quote.resolved
-	pricing, trace, err := q.billing.effectiveTokenPricing(q.resolver, resolved, quote.Model, quoteReferenceContextTokens, quote.At)
+	legacy := quote.PricingPath == QuotePricingPathLegacy
+	// legacy 路径忽略 service tier（CalculateCost 不带档位），展示与计费同样按标准档。
+	tier := quote.serviceTier
+	var pricing *ModelPricing
+	var trace tokenPricingTrace
+	var err error
+	if legacy {
+		// CalculateCost → GetModelPricing：按当前时刻（不是 req.At）判定 DeepSeek pro→Flash，不叠加峰时倍率。
+		pricing, err = q.billing.GetModelPricing(quote.Model)
+		tier = ""
+	} else {
+		pricing, trace, err = q.billing.effectiveTokenPricing(q.resolver, resolved, quote.Model, quoteReferenceContextTokens, quote.At)
+	}
 	if err != nil {
 		// 与计费一致：取不到价格时计费返回 ErrModelPricingUnavailable。
 		quote.Source = QuoteSourceNone
@@ -364,13 +438,15 @@ func (q *PriceQuoter) fillTokenQuote(quote *Quote) {
 	// 长上下文定价仅在无区间定价时应用（与 calculateTokenCost 一致）。
 	applyLongCtx := len(resolved.Intervals) == 0
 
-	prices := q.tokenPriceSet(pricing, quote.serviceTier, applyLongCtx, 1)
-	finalPrices := q.tokenPriceSet(pricing, quote.serviceTier, applyLongCtx, quote.EffectiveMultiplier)
+	prices := q.tokenPriceSet(pricing, tier, applyLongCtx, 1)
+	finalPrices := q.tokenPriceSet(pricing, tier, applyLongCtx, quote.EffectiveMultiplier)
 	quote.Prices = &prices
 	quote.FinalPrices = &finalPrices
 
 	for i := range resolved.Intervals {
 		iv := resolved.Intervals[i]
+		// 边角情况：用 MinTokens+1 探价。渠道区间若有重叠或没按下限排序，这里显示的可能是命中
+		// 另一个区间的价；计费时同样取第一个命中的区间，所以这只是展示上的歧义，不影响扣费。
 		ivPricing, _, ivErr := q.billing.effectiveTokenPricing(q.resolver, resolved, quote.Model, iv.MinTokens+1, quote.At)
 		if ivErr != nil {
 			continue
@@ -383,7 +459,7 @@ func (q *PriceQuoter) fillTokenQuote(quote *Quote) {
 		quote.Intervals = append(quote.Intervals, QuoteTokenInterval{
 			MinTokens: iv.MinTokens,
 			MaxTokens: maxTokens,
-			Prices:    q.tokenPriceSet(ivPricing, quote.serviceTier, false, 1),
+			Prices:    q.tokenPriceSet(ivPricing, tier, false, 1),
 		})
 	}
 
@@ -392,7 +468,12 @@ func (q *PriceQuoter) fillTokenQuote(quote *Quote) {
 	}
 
 	serviceTier := &QuoteServiceTier{Requested: quote.serviceTier, Mode: "standard", Multiplier: 1}
-	if usePriorityServiceTierPricing(quote.serviceTier, pricing) {
+	if legacy {
+		// 请求了档位但本网关路径不按档位收费：如实标出，免得调用方以为会乘倍率。
+		if quote.serviceTier != "" {
+			serviceTier.Mode = "ignored"
+		}
+	} else if usePriorityServiceTierPricing(quote.serviceTier, pricing) {
 		serviceTier.Mode = "priority_card"
 	} else if multiplier := serviceTierCostMultiplier(quote.serviceTier); multiplier != 1 {
 		serviceTier.Mode = "multiplier"
@@ -400,9 +481,14 @@ func (q *PriceQuoter) fillTokenQuote(quote *Quote) {
 	}
 	quote.ServiceTier = serviceTier
 
+	// 官方价卡只在渠道没有自定义价时才强制（渠道定价保留运营者配置）。
 	isDeepSeek := isDeepSeekModel(quote.Model)
-	quote.Policy.DeepSeekOfficialCard = isDeepSeek
-	quote.Policy.DeepSeekProBilledAsFlash = isDeepSeek && isDeepSeekProModel(quote.Model) && deepseekProBilledAsFlash(quote.At)
+	quote.Policy.DeepSeekOfficialCard = isDeepSeek && resolved.Source != PricingSourceChannel
+	proAt := quote.At
+	if legacy {
+		proAt = deepseekPricingAt(time.Time{}) // 与上面 GetModelPricing 同口径：当前时刻
+	}
+	quote.Policy.DeepSeekProBilledAsFlash = isDeepSeek && isDeepSeekProModel(quote.Model) && deepseekProBilledAsFlash(proAt)
 	if trace.DeepSeekPeakMultiplier > 1 {
 		quote.Policy.DeepSeekPeak = true
 		quote.Policy.DeepSeekPeakMultiplier = trace.DeepSeekPeakMultiplier
@@ -468,9 +554,14 @@ func (q *PriceQuoter) fillRequestQuote(quote *Quote) {
 }
 
 // fillImageRequestQuote 填无渠道定价时图片生成请求的单价。
-// 渠道定价生效时图片请求走渠道的按次/图片价或 token 价（见 Quote.Cost），不走 CalculateImageCost。
+// 图片请求走渠道价（Unified）还是 CalculateImageCost 与网关一致：非 OpenAI 网关命中渠道即走渠道；
+// OpenAI 网关只有渠道是按次/图片模式才走渠道（见 Quote.Cost），渠道是 token 模式时仍走 CalculateImageCost。
 func (q *PriceQuoter) fillImageRequestQuote(quote *Quote) {
-	if quote.resolved.Source == PricingSourceChannel || !q.billing.quoteModelImageCapable(quote.Model) {
+	if quote.resolved.Source == PricingSourceChannel &&
+		(quote.platform != PlatformOpenAI || quote.resolved.Mode == BillingModePerRequest || quote.resolved.Mode == BillingModeImage) {
+		return
+	}
+	if !q.billing.quoteModelImageCapable(quote.Model) {
 		return
 	}
 	imageRequest := &QuoteImageRequest{}
@@ -484,24 +575,63 @@ func (q *PriceQuoter) fillImageRequestQuote(quote *Quote) {
 	quote.ImageRequest = imageRequest
 }
 
-// Cost 估算一次请求的费用。它把 Quote 里已解析好的价格和倍率交给网关实际使用的计费函数，
-// 分支与两个网关一致：
+// Cost 估算一次请求的费用。它把 Quote 里已解析好的价格和倍率交给对应网关实际使用的计费函数，
+// 分支与网关一致（图片倍率一律用 ImageMultiplier，token 倍率用 EffectiveMultiplier）：
 //
-//   - 图片请求且无渠道定价：CalculateImageCost（分组图片价 → 目录价 → 默认价），乘 ImageMultiplier；
-//   - 图片请求且渠道是按次/图片模式：CalculateCostUnified，按尺寸层级 × 张数，乘 ImageMultiplier；
-//   - 其余（token 计费、按次计费的普通请求、渠道 token 价的图片请求）：CalculateCostUnified，乘 EffectiveMultiplier。
+// 图片请求（ImageCount > 0）：
+//   - OpenAI 网关：渠道是按次/图片模式 → CalculateCostUnified，按尺寸层级 × 张数，不传 token
+//     （openai_gateway_service.go calculateOpenAIImageCost）；其余 → CalculateImageCost；
+//   - 其它网关：命中渠道定价（任意模式）→ CalculateCostUnified，传入图片请求的 input/output/image output token
+//     （gateway_service.go calculateImageCost）；其余 → CalculateImageCost。
+//
+// token 请求：
+//   - legacy 路径（非 OpenAI 网关且无渠道定价）：CalculateCost；Gemini 分组走 CalculateCostWithLongContext。
+//     忽略 service tier，不叠加 DeepSeek 峰时倍率，定价时点是调用时刻而不是 Quote.At；
+//   - 其余：CalculateCostUnified。
 func (qt *Quote) Cost(ctx context.Context, usage QuoteUsage) (*CostBreakdown, error) {
 	if qt == nil || qt.quoter == nil || qt.resolved == nil {
 		return nil, ErrPriceQuoterUnavailable
 	}
 	billing := qt.quoter.billing
 	channelPriced := qt.resolved.Source == PricingSourceChannel
-	if usage.ImageCount > 0 && !channelPriced {
+	gid := qt.pricingGroupID
+
+	if usage.ImageCount > 0 {
+		perRequestMode := qt.resolved.Mode == BillingModePerRequest || qt.resolved.Mode == BillingModeImage
+		openAI := qt.platform == PlatformOpenAI
+		if channelPriced && (!openAI || perRequestMode) {
+			tokens := UsageTokens{}
+			if !openAI {
+				tokens = UsageTokens{
+					InputTokens:       usage.Tokens.InputTokens,
+					OutputTokens:      usage.Tokens.OutputTokens,
+					ImageOutputTokens: usage.Tokens.ImageOutputTokens,
+				}
+			}
+			return billing.CalculateCostUnified(CostInput{
+				Ctx:            ctx,
+				Model:          qt.Model,
+				GroupID:        &gid,
+				Tokens:         tokens,
+				RequestCount:   usage.ImageCount,
+				SizeTier:       NormalizeImageBillingTierOrDefault(usage.ImageSize),
+				RateMultiplier: qt.ImageMultiplier,
+				Resolver:       qt.quoter.resolver,
+				Resolved:       qt.resolved,
+			})
+		}
 		return billing.CalculateImageCost(qt.Model, usage.ImageSize, usage.ImageCount, qt.imageConfig, qt.ImageMultiplier), nil
 	}
 
-	gid := qt.pricingGroupID
-	input := CostInput{
+	if qt.PricingPath == QuotePricingPathLegacy {
+		if qt.GatewayLongContext != nil {
+			return billing.CalculateCostWithLongContext(qt.Model, usage.Tokens, qt.EffectiveMultiplier,
+				qt.GatewayLongContext.ThresholdTokens, qt.GatewayLongContext.ExtraMultiplier)
+		}
+		return billing.CalculateCost(qt.Model, usage.Tokens, qt.EffectiveMultiplier)
+	}
+
+	return billing.CalculateCostUnified(CostInput{
 		Ctx:            ctx,
 		Model:          qt.Model,
 		GroupID:        &gid,
@@ -512,13 +642,7 @@ func (qt *Quote) Cost(ctx context.Context, usage QuoteUsage) (*CostBreakdown, er
 		PricingAt:      qt.At,
 		Resolver:       qt.quoter.resolver,
 		Resolved:       qt.resolved,
-	}
-	if usage.ImageCount > 0 && (qt.resolved.Mode == BillingModePerRequest || qt.resolved.Mode == BillingModeImage) {
-		input.RequestCount = usage.ImageCount
-		input.SizeTier = NormalizeImageBillingTierOrDefault(usage.ImageSize)
-		input.RateMultiplier = qt.ImageMultiplier
-	}
-	return billing.CalculateCostUnified(input)
+	})
 }
 
 // tokenPricingTrace 记录 effectiveTokenPricing 取价时套用的价卡策略，只供报价展示，不参与计费。

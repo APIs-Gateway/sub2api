@@ -317,7 +317,9 @@ func TestPriceQuoter_TokenCostZeroDiffVsBilling(t *testing.T) {
 			wantRate: 1,
 			checkQuot: func(t *testing.T, q *Quote) {
 				require.Equal(t, "priority", q.ServiceTier.Requested)
-				require.NotEqual(t, "standard", q.ServiceTier.Mode)
+				require.Equal(t, "priority_card", q.ServiceTier.Mode)
+				// gpt-5.5 兜底价：priority 输入价 = 标准 2.5e-6 × 2.5（newOpenAIGPT55FallbackPricing）。
+				require.InDelta(t, 6.25e-6, q.Prices.PerToken.Input, 1e-15)
 			},
 		},
 		{
