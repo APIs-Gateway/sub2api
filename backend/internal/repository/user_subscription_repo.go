@@ -569,19 +569,19 @@ func (r *userSubscriptionRepository) translateConditionalWindowReset(ctx context
 // IncrementUsage 原子性地累加订阅用量。
 // 限额检查已在请求前由 BillingCacheService.CheckBillingEligibility 完成，
 // 此处仅负责记录实际消费，确保消费数据的完整性。
+//
+// 不关联 groups：卡的 group_id 只是历史来源快照（自定义/转套餐卡为 NULL，所属分组也可能已被
+// 软删，删除分组不再连带删卡），记账只看卡本身是否未软删。
 func (r *userSubscriptionRepository) IncrementUsage(ctx context.Context, id int64, costUSD float64) error {
 	const updateSQL = `
-		UPDATE user_subscriptions us
+		UPDATE user_subscriptions
 		SET
-			daily_usage_usd = us.daily_usage_usd + $1,
-			weekly_usage_usd = us.weekly_usage_usd + $1,
-			monthly_usage_usd = us.monthly_usage_usd + $1,
+			daily_usage_usd = daily_usage_usd + $1,
+			weekly_usage_usd = weekly_usage_usd + $1,
+			monthly_usage_usd = monthly_usage_usd + $1,
 			updated_at = NOW()
-		FROM groups g
-		WHERE us.id = $2
-			AND us.deleted_at IS NULL
-			AND us.group_id = g.id
-			AND g.deleted_at IS NULL
+		WHERE id = $2
+			AND deleted_at IS NULL
 	`
 
 	client := clientFromContext(ctx, r.client)

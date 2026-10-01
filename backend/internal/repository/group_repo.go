@@ -798,33 +798,11 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 		return nil, service.ErrGroupNotFound
 	}
 
-	// per-day：订阅与 group 类型解耦，任何分组都可能挂有 user_subscriptions（卡的 group_id
-	// 仅作路由快照），删除分组时一律软删其下订阅并收集受影响用户。
-	var affectedUserIDs []int64
-	// 只查询未软删除的订阅，避免通知已取消订阅的用户
-	rows, err = exec.QueryContext(ctx, "SELECT user_id FROM user_subscriptions WHERE group_id = $1 AND deleted_at IS NULL", id)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var userID int64
-		if scanErr := rows.Scan(&userID); scanErr != nil {
-			_ = rows.Close()
-			return nil, scanErr
-		}
-		affectedUserIDs = append(affectedUserIDs, userID)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	// 软删除订阅：设置 deleted_at 而非硬删除
-	if _, err := exec.ExecContext(ctx, "UPDATE user_subscriptions SET deleted_at = NOW() WHERE group_id = $1 AND deleted_at IS NULL", id); err != nil {
-		return nil, err
-	}
+	// 订阅卡不随分组删除：per-day / 三窗口模型下卡归用户所有、可在任意 group 下使用，
+	// 卡上的 group_id 只是历史来源快照，不构成权限约束（见 ent/schema/user_subscription.go）。
+	// 分组软删后卡原样保留（group_id 保持原值，WithGroup 读到的 Group 边为 nil），
+	// 用户的剩余天数和额度不受影响。因此这里不查询、不软删 user_subscriptions，
+	// 返回的受影响用户列表恒为空。
 
 	// 2. Remove the group id from user_allowed_groups join table.
 	// Legacy users.allowed_groups 列已弃用，不再同步。
@@ -873,7 +851,8 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group cascade delete failed: group=%d err=%v", id, err)
 	}
 
-	return affectedUserIDs, nil
+	// 订阅卡未被改动，没有需要失效订阅缓存的用户。
+	return nil, nil
 }
 
 func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool) {

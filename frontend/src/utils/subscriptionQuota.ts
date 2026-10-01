@@ -1,4 +1,5 @@
 import type { UserSubscription } from '@/types'
+import { formatUsdAmount } from '@/utils/numberFormat'
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 
@@ -88,4 +89,23 @@ export function getRemainingExpiryDuration(
     hours: Math.floor(totalMinutes / 60),
     minutes: totalMinutes % 60
   }
+}
+
+type SubscriptionNameSource = Pick<UserSubscription, 'group' | 'daily_amount_usd' | 'daily_limit_usd'>
+
+/**
+ * 订阅卡的展示名。分组只是卡的历史来源：自定义卡没有分组，来源分组被后台删除后卡仍保留、
+ * 但读不到分组。这两种情况都回退到与「我的订阅」卡片标题一致的「每日 $X」
+ * （没有日额度则为「无限制」），不要把分组 ID 展示出来。
+ */
+export function subscriptionDisplayName(
+  subscription: SubscriptionNameSource,
+  t: (key: string) => string
+): string {
+  const groupName = subscription.group?.name?.trim()
+  if (groupName) return groupName
+
+  const dailyAmount = subscription.daily_amount_usd ?? subscription.daily_limit_usd ?? 0
+  if (dailyAmount > 0) return `${t('userSubscriptions.daily')} ${formatUsdAmount(dailyAmount)}`
+  return t('userSubscriptions.unlimited')
 }

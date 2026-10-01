@@ -2838,9 +2838,8 @@
       sortOrderHint: '拖拽分组调整显示顺序，排在前面的分组会优先显示',
       sortOrderUpdated: '排序已更新',
       failedToUpdateSortOrder: '更新排序失败',
-      deleteConfirm: "确定要删除分组 '{name}' 吗？所有关联的 API 密钥将不再属于任何分组。",
-      deleteConfirmSubscription:
-        "确定要删除订阅分组 '{name}' 吗？此操作会让所有绑定此订阅的用户的 API Key 失效，并删除所有相关的订阅记录。此操作无法撤销。",
+      deleteConfirm:
+        "确定要删除分组 '{name}' 吗？该分组下的账号绑定会被清除（账号本身保留）；绑定了该分组的 API 密钥将无法继续使用，需要用户改选其他分组。用户已有的订阅卡不受影响。仍绑定该分组的套餐将无法购买，请先下架。此操作无法撤销。",
       columns: {
         name: '名称',
         platform: '平台',
