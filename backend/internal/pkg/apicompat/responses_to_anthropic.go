@@ -377,9 +377,10 @@ func (state *ResponsesEventToAnthropicState) serializeResponsesAnthropicEvents(e
 		}
 		if index == state.serialNextBlock {
 			ready = append(ready, event)
-			if event.Type == "content_block_start" {
+			switch event.Type {
+			case "content_block_start":
 				state.serialWireOpen = true
-			} else if event.Type == "content_block_stop" {
+			case "content_block_stop":
 				state.serialWireOpen = false
 				state.serialNextBlock++
 				ready = append(ready, state.drainResponsesAnthropicBlocks()...)
@@ -410,9 +411,10 @@ func (state *ResponsesEventToAnthropicState) drainResponsesAnthropicBlocks() []A
 		closed := false
 		for _, event := range pending {
 			ready = append(ready, event)
-			if event.Type == "content_block_start" {
+			switch event.Type {
+			case "content_block_start":
 				state.serialWireOpen = true
-			} else if event.Type == "content_block_stop" {
+			case "content_block_stop":
 				state.serialWireOpen = false
 				closed = true
 			}
@@ -435,7 +437,15 @@ func (state *ResponsesEventToAnthropicState) failResponsesAnthropicSerialization
 func responsesAnthropicEventSize(event AnthropicStreamEvent) int {
 	size := 128
 	if event.ContentBlock != nil {
-		size += len(event.ContentBlock.ID) + len(event.ContentBlock.Name) + len(event.ContentBlock.Text) + len(event.ContentBlock.Thinking) + len(event.ContentBlock.Input) + len(event.ContentBlock.Content)
+		block := event.ContentBlock
+		size += len(block.Type) + len(block.Text) + len(block.Thinking) + len(block.Signature) + len(block.Data)
+		size += len(block.ID) + len(block.Name) + len(block.Input) + len(block.ToolUseID) + len(block.Content)
+		if block.Source != nil {
+			size += len(block.Source.Type) + len(block.Source.MediaType) + len(block.Source.Data)
+		}
+		if block.CacheControl != nil {
+			size += len(block.CacheControl.Type) + len(block.CacheControl.TTL)
+		}
 	}
 	if event.Delta != nil {
 		size += len(event.Delta.Text) + len(event.Delta.PartialJSON) + len(event.Delta.Thinking) + len(event.Delta.Signature)

@@ -926,6 +926,26 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			if event.Usage != nil {
 				usage = copyOpenAIUsageFromResponsesUsage(event.Usage)
 			}
+			// A converter error has already been sent to the client. Continue
+			// draining the upstream stream until its terminal usage arrives, but
+			// do not emit another error or a successful message_stop.
+			if streamNonFailoverErr != nil {
+				if eventType == "response.failed" || isBareErrorEvent {
+					if hit, code, msg := detectOpenAICyberPolicy([]byte(payload)); hit {
+						MarkOpsCyberPolicy(c, CyberPolicyMark{
+							Code:                     code,
+							Message:                  msg,
+							Body:                     truncateString(payload, 4096),
+							UpstreamStatus:           http.StatusOK,
+							UpstreamInTok:            usage.InputTokens,
+							UpstreamOutTok:           usage.OutputTokens,
+							UpstreamCacheCreationTok: usage.CacheCreationInputTokens,
+							UpstreamCacheReadTok:     usage.CacheReadInputTokens,
+						})
+					}
+				}
+				return true
+			}
 			// cyber_policy 致命不可重试：标记供 handler 事后记录；以 Anthropic SSE error 事件
 			// 回写让客户端感知并停止重试（F4），丢弃后续转换输出。
 			if eventType == "response.failed" || isBareErrorEvent {
@@ -985,6 +1005,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				return true
 			}
 		}
+		if streamNonFailoverErr != nil {
+			return false
+		}
 
 		// 上游模型不一致拦截：必须在事件转成 Anthropic SSE 并写出之前比对。
 		// 客户端尚无输出时按 failover 切号，零泄漏；已有输出时仅打标不中断。
@@ -1031,7 +1054,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		if len(events) > 0 && !clientDisconnected {
 			c.Writer.Flush()
 		}
-		return isTerminalEvent || streamNonFailoverErr != nil
+		return isTerminalEvent
 	}
 
 	// finalizeStream sends any remaining Anthropic events and returns the result.
