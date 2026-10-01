@@ -47,7 +47,7 @@ description: 修 sub2api 的 bug 的标准流程。用户报「某功能不对 /
    - 纯逻辑：单测，必须带 `-tags unit`（漏了会「没有测试可跑」，假绿）；
    - 涉及 SQL、NULL 行、并发、幂等、迁移、钱：用真实 PostgreSQL / Redis 的集成测试
      （`-tags integration`，位于 `backend/internal/repository`，testcontainers）。
-3. 能几秒跑完的定向单测可以本地跑：`cd backend && go test -tags unit -run <名字> ./internal/<包>/`。
+3. 只跑单个包、几秒内能跑完的定向单测可以本地跑（跑不完就交给 CI）：`cd backend && go test -tags unit -run <名字> ./internal/<包>/`。
    需要容器的集成测试交给 CI。
 4. 修复涉及的行要被测试覆盖，否则 `codecov/patch` 会红。
 

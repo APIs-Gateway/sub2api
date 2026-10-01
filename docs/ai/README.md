@@ -145,4 +145,4 @@ done
 - 想用复制：`cp -r ops/skills/<名字> .claude/skills/`，之后 `ops/skills` 有更新要重新复制。
 - 仓库的 `.gitignore` 已忽略 `.claude`，启用动作不会进提交。
 - 启用后在当前会话里没看到，重开一个会话。
-- 站点私有的 skill 不在本仓，见私有运维仓，需要时同样放进 `.claude/skills/`。
+- 站点私有的 skill 不在本仓（如 `ops`：连服务器、看日志、连库），见私有运维仓，需要时同样放进 `.claude/skills/`。

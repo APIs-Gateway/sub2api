@@ -14,6 +14,7 @@ description: 把 sub2api 新版本发布到生产环境的标准流程：构建�
 | `<data_dir>` | 宿主机上挂载到容器 `/app/data` 的目录（compose 里 `volumes:` 中映射到 `/app/data` 的那一项的宿主机侧；不一定在 `<deploy_dir>` 下） |
 | `<compose_file>` / `<service>` / `<container>` | compose 文件、服务名、容器名 |
 | `<image>` / `<old_tag>` / `<new_tag>` | 镜像名、现役 tag、新 tag |
+| `<old_commit>` / `<new_commit>` | 现役版本与待上线版本的 commit |
 | `<backup_dir>` | 备份目录，**不能**放在 nginx 或 compose 会扫描加载的目录里 |
 | `<site_host>` | 各站点域名（有多个站点时逐个验证） |
 
@@ -30,6 +31,10 @@ description: 把 sub2api 新版本发布到生产环境的标准流程：构建�
 
 ## 1. 构建镜像 tag
 
+> 本节是出生产产物的步骤，不属于日常开发的本地编译（日常开发按 `docs/ai/README.md` 的「CI 是编译器」，不在本地全量编译）。
+> 仓库的 tag 发布流程（`.github/workflows/release.yml`，goreleaser）产出的是 `BuildType=release` 的发布产物和镜像；
+> 自建生产部署需要 `BuildType=source`，所以按下面的流程在现役镜像上叠层，而不是直接用 CI 的发布产物。
+
 1. 从干净的 `origin/main`（新 worktree 或 clone）构建，避免带上本地脏改动。
 2. 前端先构建，产物落到 `backend/internal/web/dist`，再 embed 进二进制。
    手工交叉编译**必须带 `-tags embed`**，否则二进制不含前端，整站返回
@@ -44,8 +49,8 @@ description: 把 sub2api 新版本发布到生产环境的标准流程：构建�
    否则面板可能把发布源的新版本当成可更新版本。
 4. 验证前端真的进了二进制：`strings bin/server-linux-amd64 | grep -c 'index-<hash>'`
    （`<hash>` 取自 `backend/internal/web/dist/index.html`）。
-5. 构建镜像。**不能直接用仓库的 `Dockerfile` 出生产镜像**：根目录 `Dockerfile:86`
-   和 `deploy/Dockerfile:71` 都把 `-X main.BuildType=release` 写死，没有 ARG 可以改，
+5. 构建镜像。**不能直接用仓库的 `Dockerfile` 出生产镜像**：根目录 `Dockerfile`
+   和 `deploy/Dockerfile` 里的 `-X main.BuildType=release` 那一行都是写死的，没有 ARG 可以改，
    直接构建出来的二进制和上面第 3 条的要求矛盾。两种做法选一种：
    - 叠层（推荐）：在现役镜像上只叠一层替换二进制，二进制用本节第 2 条的命令构建
      （`-X main.BuildType=source`）；`FROM <image>:<old_tag>` + `COPY`，entrypoint、workdir、env 原样继承；
@@ -74,7 +79,7 @@ description: 把 sub2api 新版本发布到生产环境的标准流程：构建�
 
 ## 4. 配置 diff
 
-1. `git diff <旧commit>..<新commit> -- deploy/config.example.yaml backend/internal/config/` 列出新增、改名、移除的配置项。
+1. `git diff <old_commit>..<new_commit> -- deploy/config.example.yaml backend/internal/config/` 列出新增、改名、移除的配置项。
 2. 对照线上 `<deploy_dir>` 下的配置文件和 compose，决定哪些要改。
 3. 只有配置文件 / 环境变量来源的开关，改完必须重启才生效。
 4. 改之前备份原文件；密钥不要贴进聊天、日志或 PR。
