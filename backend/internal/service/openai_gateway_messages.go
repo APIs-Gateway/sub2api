@@ -71,12 +71,17 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, err
 	}
 	promptCacheKey = strings.TrimSpace(promptCacheKey)
+	// Only a client session or the existing metadata session can identify a
+	// continuation. Cache-control anchors and message digests may be shared by
+	// different conversation branches.
+	compatSessionIdentityKnown := promptCacheKey != ""
 	apiKeyID := getAPIKeyIDFromContext(c)
 	anthropicDigestChain := ""
 	anthropicMatchedDigestChain := ""
 	compatPromptCacheInjected := false
 	if promptCacheKey == "" && shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
 		promptCacheKey = promptCacheKeyFromAnthropicMetadataSession(&anthropicReq)
+		compatSessionIdentityKnown = promptCacheKey != ""
 		if promptCacheKey == "" {
 			promptCacheKey = deriveAnthropicCacheControlPromptCacheKey(&anthropicReq)
 		}
@@ -91,24 +96,17 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		}
 		compatPromptCacheInjected = promptCacheKey != ""
 	}
-	compatReplayTrimmed := false
 	compatReplayGuardEnabled := shouldAutoInjectPromptCacheKeyForCompat(upstreamModel)
-	compatContinuationEnabled := openAICompatContinuationEnabled(account, upstreamModel)
+	compatContinuationEnabled := compatSessionIdentityKnown && openAICompatContinuationEnabled(account, upstreamModel)
 	previousResponseID := ""
 	if compatContinuationEnabled {
 		previousResponseID = s.getOpenAICompatSessionResponseID(ctx, c, account, promptCacheKey)
 	}
-	compatContinuationDisabled := compatContinuationEnabled &&
-		s.isOpenAICompatSessionContinuationDisabled(ctx, c, account, promptCacheKey)
 	compatTurnState := ""
-	// OAuth/Plus relies on session_id + x-codex-turn-state; trimming to a
-	// sliding 12-message window makes the cached prefix stall at system/tools.
-	// Keep full replay there so upstream prompt caching can grow turn by turn.
-	if compatReplayGuardEnabled && account.Type != AccountTypeOAuth && previousResponseID == "" && !compatContinuationDisabled {
-		compatReplayTrimmed = applyAnthropicCompatFullReplayGuard(&anthropicReq)
-	}
 
-	// 3. Convert Anthropic → Responses after compatibility-only replay guard.
+	// Without a valid previous response, the upstream needs the complete
+	// history. Prompt caching does not restore messages omitted from input.
+	// 3. Convert Anthropic → Responses.
 	// Convert against the final upstream model so model-specific sampling rules
 	// follow account/group mapping instead of the client-facing alias.
 	anthropicReq.Model = upstreamModel
@@ -154,12 +152,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		logFields = append(logFields,
 			zap.Bool("compat_prompt_cache_key_injected", true),
 			zap.String("compat_prompt_cache_key_sha256", hashSensitiveValueForLog(promptCacheKey)),
-		)
-	}
-	if compatReplayTrimmed {
-		logFields = append(logFields,
-			zap.Bool("compat_full_replay_trimmed", true),
-			zap.Int("compat_messages_after_trim", len(anthropicReq.Messages)),
 		)
 	}
 	if previousResponseID != "" {
