@@ -106,6 +106,7 @@ func TestResponsesAnthropicBufferCountsNestedBlockPayloads(t *testing.T) {
 		{name: "image source", block: AnthropicContentBlock{Type: "image", Source: &AnthropicImageSource{Type: "base64", Data: large}}},
 		{name: "thinking signature", block: AnthropicContentBlock{Type: "thinking", Signature: large}},
 		{name: "redacted thinking data", block: AnthropicContentBlock{Type: "redacted_thinking", Data: large}},
+		{name: "cache control", block: AnthropicContentBlock{Type: "text", CacheControl: &AnthropicCacheControl{Type: "ephemeral", TTL: large}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			state := NewResponsesEventToAnthropicState()
@@ -117,6 +118,27 @@ func TestResponsesAnthropicBufferCountsNestedBlockPayloads(t *testing.T) {
 			require.Equal(t, "error", events[0].Type)
 		})
 	}
+}
+
+func TestResponsesAnthropicSerialTerminalRejectsUnclosedBlock(t *testing.T) {
+	state := NewResponsesEventToAnthropicState()
+	state.ContentBlockIndex = 1
+	first := 0
+	require.Equal(t, []string{"content_block_start"}, responsesAnthropicEventTypes(state.serializeResponsesAnthropicEvents([]AnthropicStreamEvent{{Type: "content_block_start", Index: &first}})))
+	events := state.serializeResponsesAnthropicEvents([]AnthropicStreamEvent{{Type: "message_delta"}, {Type: "message_stop"}})
+	require.Equal(t, []string{"error"}, responsesAnthropicEventTypes(events), "terminal events must not advertise success with an open block")
+	require.True(t, state.serialFailed)
+}
+
+func TestResponsesAnthropicSerialIgnoresLateClosedBlockEvent(t *testing.T) {
+	state := NewResponsesEventToAnthropicState()
+	state.ContentBlockIndex = 1
+	first := 0
+	require.Equal(t, []string{"content_block_start", "content_block_stop"}, responsesAnthropicEventTypes(state.serializeResponsesAnthropicEvents([]AnthropicStreamEvent{
+		{Type: "content_block_start", Index: &first}, {Type: "content_block_stop", Index: &first},
+	})))
+	require.Empty(t, state.serializeResponsesAnthropicEvents([]AnthropicStreamEvent{{Type: "content_block_delta", Index: &first, Delta: &AnthropicDelta{Text: "late"}}}))
+	require.Equal(t, 1, state.serialNextBlock)
 }
 
 func TestResponsesAnthropicReadToolArgumentsAreBounded(t *testing.T) {

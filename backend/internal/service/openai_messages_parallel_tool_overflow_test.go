@@ -20,6 +20,7 @@ func TestAnthropicParallelToolOverflowDrainsTerminalUsage(t *testing.T) {
 				`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"a","call_id":"call_a","name":"first"}}`,
 				`data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"b","call_id":"call_b","name":"second"}}`,
 				`data: {"type":"response.function_call_arguments.delta","output_index":1,"item_id":"b","delta":"` + strings.Repeat("x", 1<<20) + `"}`,
+				`data: {"type":"response.function_call_arguments.delta","output_index":0,"item_id":"a","delta":"must-not-leak-after-overflow"}`,
 				`data: {"type":"response.completed","response":{"id":"resp_overflow","status":"completed","usage":{"input_tokens":13,"output_tokens":5,"input_tokens_details":{"cached_tokens":2}}}}`,
 			}, "\n\n") + "\n\n"
 			c, rec := newUpstreamModelMismatchPathContext(t, "/v1/messages", nil)
@@ -38,6 +39,7 @@ func TestAnthropicParallelToolOverflowDrainsTerminalUsage(t *testing.T) {
 			require.Equal(t, 5, result.Usage.OutputTokens)
 			require.Equal(t, 2, result.Usage.CacheReadInputTokens)
 			require.Equal(t, 1, strings.Count(rec.Body.String(), "event: error"))
+			require.NotContains(t, rec.Body.String(), "must-not-leak-after-overflow")
 			require.NotContains(t, rec.Body.String(), "event: message_stop")
 		})
 	}
