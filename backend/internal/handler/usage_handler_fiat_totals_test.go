@@ -159,9 +159,7 @@ func (e *fiatTotalsEnv) do(t *testing.T, method, target, body string) (int, map[
 
 func dataOf(t *testing.T, body map[string]any) map[string]any {
 	t.Helper()
-	data, ok := body["data"].(map[string]any)
-	require.True(t, ok, "response data should be an object: %v", body)
-	return data
+	return asObj(t, body["data"])
 }
 
 func walletBucket(key string, cost, since float64) usagestats.CreditCostBucket {
@@ -292,16 +290,16 @@ func TestUsageHandler_DashboardStats_FillsTotalsTodayAndPlatforms(t *testing.T) 
 	require.InDelta(t, 3.0, data["total_actual_cost_fiat"], 1e-9)
 	require.InDelta(t, 1.0, data["today_actual_cost_fiat"], 1e-9)
 
-	platforms := data["by_platform"].([]any)
+	platforms := asList(t, data["by_platform"])
 	require.Len(t, platforms, 3)
-	openai := platforms[0].(map[string]any)
+	openai := asObj(t, platforms[0])
 	require.InDelta(t, 2.0, openai["total_actual_cost_fiat"], 1e-9)
 	require.InDelta(t, 1.0, openai["today_actual_cost_fiat"], 1e-9)
-	anthropic := platforms[1].(map[string]any)
+	anthropic := asObj(t, platforms[1])
 	require.InDelta(t, 1.0, anthropic["total_actual_cost_fiat"], 1e-9)
 	require.NotContains(t, anthropic, "today_actual_cost_fiat")
 	// 没有分桶的平台保持 0（字段缺省），不会串用别的平台的值。
-	require.NotContains(t, platforms[2].(map[string]any), "total_actual_cost_fiat")
+	require.NotContains(t, asObj(t, platforms[2]), "total_actual_cost_fiat")
 
 	require.Len(t, repo.bucketFilters, 2)
 	require.False(t, repo.bucketFilters[0].SplitAt.IsZero())
@@ -344,7 +342,7 @@ func TestUsageHandler_DashboardStats_PlatformQueryFailureKeepsTotals(t *testing.
 	require.Equal(t, http.StatusOK, code)
 	data := dataOf(t, body)
 	require.InDelta(t, 1.0, data["total_actual_cost_fiat"], 1e-9)
-	require.NotContains(t, data["by_platform"].([]any)[0].(map[string]any), "total_actual_cost_fiat")
+	require.NotContains(t, asObj(t, asList(t, data["by_platform"])[0]), "total_actual_cost_fiat")
 }
 
 // 倍率为 1 时仪表盘不填任何法币字段。
@@ -378,11 +376,11 @@ func TestUsageHandler_DashboardTrend_FillsFiatPerDate(t *testing.T) {
 	code, body := env.do(t, http.MethodGet, "/dashboard/trend?granularity=day&start_date=2026-09-01&end_date=2026-09-03", "")
 
 	require.Equal(t, http.StatusOK, code)
-	points := dataOf(t, body)["trend"].([]any)
+	points := asList(t, dataOf(t, body)["trend"])
 	require.Len(t, points, 3)
-	require.InDelta(t, 1.0, points[0].(map[string]any)["actual_cost_fiat"], 1e-9)
-	require.InDelta(t, 1.0, points[1].(map[string]any)["actual_cost_fiat"], 1e-9)
-	require.NotContains(t, points[2].(map[string]any), "actual_cost_fiat")
+	require.InDelta(t, 1.0, asObj(t, points[0])["actual_cost_fiat"], 1e-9)
+	require.InDelta(t, 1.0, asObj(t, points[1])["actual_cost_fiat"], 1e-9)
+	require.NotContains(t, asObj(t, points[2]), "actual_cost_fiat")
 
 	require.Len(t, repo.bucketFilters, 1)
 	require.Equal(t, usagestats.CreditBucketDate, repo.bucketFilters[0].Dimension)
@@ -413,9 +411,9 @@ func TestUsageHandler_DashboardModels_FillsFiatPerModel(t *testing.T) {
 	code, body := env.do(t, http.MethodGet, "/dashboard/models", "")
 
 	require.Equal(t, http.StatusOK, code)
-	models := dataOf(t, body)["models"].([]any)
-	require.InDelta(t, 2.0, models[0].(map[string]any)["actual_cost_fiat"], 1e-9)
-	require.NotContains(t, models[1].(map[string]any), "actual_cost_fiat")
+	models := asList(t, dataOf(t, body)["models"])
+	require.InDelta(t, 2.0, asObj(t, models[0])["actual_cost_fiat"], 1e-9)
+	require.NotContains(t, asObj(t, models[1]), "actual_cost_fiat")
 
 	require.Len(t, repo.bucketFilters, 1)
 	require.Equal(t, usagestats.CreditBucketModel, repo.bucketFilters[0].Dimension)
@@ -452,11 +450,11 @@ func TestUsageHandler_DashboardAPIKeysUsage_FillsFiatPerKey(t *testing.T) {
 	code, body := env.do(t, http.MethodPost, "/dashboard/api-keys-usage", `{"api_key_ids":[11,12,99]}`)
 
 	require.Equal(t, http.StatusOK, code)
-	stats := dataOf(t, body)["stats"].(map[string]any)
-	k11 := stats["11"].(map[string]any)
+	stats := asObj(t, dataOf(t, body)["stats"])
+	k11 := asObj(t, stats["11"])
 	require.InDelta(t, 2.0, k11["total_actual_cost_fiat"], 1e-9)
 	require.InDelta(t, 1.0, k11["today_actual_cost_fiat"], 1e-9)
-	k12 := stats["12"].(map[string]any)
+	k12 := asObj(t, stats["12"])
 	require.InDelta(t, 1.0, k12["total_actual_cost_fiat"], 1e-9)
 	require.NotContains(t, k12, "today_actual_cost_fiat")
 
@@ -482,10 +480,10 @@ func TestUsageHandler_GetMyAPIKeyDailyUsage_FillsFiatPerDay(t *testing.T) {
 	code, body := env.do(t, http.MethodGet, "/keys/11/daily?days=2", "")
 
 	require.Equal(t, http.StatusOK, code)
-	items := dataOf(t, body)["items"].([]any)
+	items := asList(t, dataOf(t, body)["items"])
 	require.Len(t, items, 2)
-	require.NotContains(t, items[0].(map[string]any), "actual_cost_fiat")
-	require.InDelta(t, 3.0, items[1].(map[string]any)["actual_cost_fiat"], 1e-9)
+	require.NotContains(t, asObj(t, items[0]), "actual_cost_fiat")
+	require.InDelta(t, 3.0, asObj(t, items[1])["actual_cost_fiat"], 1e-9)
 
 	require.Len(t, repo.bucketFilters, 1)
 	f := repo.bucketFilters[0]
@@ -520,4 +518,18 @@ func TestUsageHandler_FillDashboardStatsFiat_NilStats(t *testing.T) {
 	h := NewUsageHandler(nil, nil, nil, nil)
 
 	require.NotPanics(t, func() { h.fillDashboardStatsFiat(newCreditFiatContext(), 7, nil) })
+}
+
+func asObj(t *testing.T, v any) map[string]any {
+	t.Helper()
+	m, ok := v.(map[string]any)
+	require.True(t, ok, "expected JSON object, got %T", v)
+	return m
+}
+
+func asList(t *testing.T, v any) []any {
+	t.Helper()
+	l, ok := v.([]any)
+	require.True(t, ok, "expected JSON array, got %T", v)
+	return l
 }
