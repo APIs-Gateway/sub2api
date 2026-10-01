@@ -279,11 +279,6 @@ func finitePrice(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0
 }
 
-func roundTo(v float64, places int) float64 {
-	scale := math.Pow10(places)
-	return math.Round(v*scale) / scale
-}
-
 func roundedPtr(v float64, places int) *float64 {
 	r := roundTo(v, places)
 	return &r
