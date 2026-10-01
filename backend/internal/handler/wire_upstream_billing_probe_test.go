@@ -17,6 +17,7 @@ func TestProvideAdminHandlersAttachesUpstreamBillingProbe(t *testing.T) {
 		nil, // grokOAuthHandler
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, probe,
+		nil, // pricingQuoteHandler
 	)
 
 	require.Same(t, accountHandler, adminHandlers.Account)

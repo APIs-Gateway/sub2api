@@ -117,6 +117,9 @@ func RegisterAdminRoutes(
 
 		// 邀请返利积分制（issue #11）
 		registerPointsRoutes(admin, h)
+
+		// 价格报价（只读）
+		registerPricingRoutes(admin, h)
 	}
 }
 
@@ -138,6 +141,15 @@ func registerPointsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		points.POST("/withdrawals/:id/approve", h.Admin.Points.ApproveWithdrawal)
 		points.POST("/withdrawals/:id/reject", h.Admin.Points.RejectWithdrawal)
 		points.GET("/ledger", h.Admin.Points.ListLedger)
+	}
+}
+
+// registerPricingRoutes 注册价格报价的管理端路由。全部是只读 GET：
+// 返回任意「模型 × 分组（× 用户）」按当前配置计费时的最终价格，与网关计费同源。
+func registerPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	pricing := admin.Group("/pricing")
+	{
+		pricing.GET("/quote", h.Admin.PricingQuote.Quote)
 	}
 }
 
