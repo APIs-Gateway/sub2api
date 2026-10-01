@@ -17,7 +17,7 @@ vi.mock('@/i18n', () => ({
   getLocale: () => 'zh-CN'
 }))
 
-import { reportMixedFiat, resetFiatDataMissingForTest, useCurrencyDisplay } from '../useCurrencyDisplay'
+import { EXACT_DIGITS, reportMixedFiat, resetFiatDataMissingForTest, useCurrencyDisplay } from '../useCurrencyDisplay'
 
 /** 去掉 Intl 可能插入的不间断空格，断言只关心数字和币种符号。 */
 function normalize(text: string): string {
@@ -65,23 +65,24 @@ describe('useCurrencyDisplay', () => {
     expect(useCurrencyDisplay().canSwitch.value).toBe(false)
   })
 
-  it('小额消费按量级提高小数位，不会被截成 ¥0.00', () => {
+  it('小额消费按 4 位有效数字展示，不会被截成 ¥0.00', () => {
     const { formatFiat } = useCurrencyDisplay()
 
     // 0.003 元这种量级如果固定两位小数就全变成 0 了。
-    expect(normalize(formatFiat(0.003))).toContain('0.0030')
-    expect(normalize(formatFiat(0.25))).toContain('0.250')
+    expect(normalize(formatFiat(0.003))).toContain('0.003')
+    expect(normalize(formatFiat(0.25))).toContain('0.25')
     expect(normalize(formatFiat(12.5))).toContain('12.50')
     expect(normalize(formatFiat(null))).toContain('0.00')
   })
 
-  it('美元保持定宽小数并显式带 $，便于逐条对账', () => {
+  it('美元按统一规则（≥ 1 两位小数）并显式带 $；指定小数位时仍可定宽对账', () => {
     const { formatUsd } = useCurrencyDisplay()
 
-    expect(formatUsd(5)).toBe('$5.0000')
+    expect(formatUsd(5)).toBe('$5.00')
     expect(formatUsd(5, 6)).toBe('$5.000000')
-    expect(formatUsd(null)).toBe('$0.0000')
-    expect(formatUsd(Number.NaN)).toBe('$0.0000')
+    expect(formatUsd(52.4361, EXACT_DIGITS)).toBe('$52.4361')
+    expect(formatUsd(null)).toBe('$0.00')
+    expect(formatUsd(Number.NaN)).toBe('$0.00')
   })
 
   it('法币模式优先用服务端算好的精确值，而不是按充值倍率估算', () => {
@@ -89,11 +90,11 @@ describe('useCurrencyDisplay', () => {
 
     // 订阅扣费：服务端给的 0.25 才是真实花费，按 1/13 估算会得到 0.385。
     const withExact = normalize(formatAmount(5, 0.25))
-    expect(withExact).toContain('0.250')
-    expect(withExact).not.toContain('0.385')
+    expect(withExact).toContain('0.25')
+    expect(withExact).not.toContain('0.3846')
 
     // 缺精确值时回落到按充值倍率估算。
-    expect(normalize(formatAmount(5))).toContain('0.385')
+    expect(normalize(formatAmount(5))).toContain('0.3846')
   })
 
   it('美元模式下展示原始美元金额，不做任何折算', () => {
@@ -137,8 +138,8 @@ describe('useCurrencyDisplay', () => {
     expect(effectiveMode.value).toBe('usd')
     expect(isFiat.value).toBe(false)
     expect(formatWallet(5)).toBe('$5.00')
-    expect(formatMixed(5, 0.25)).toBe('$5.0000')
-    expect(formatAmount(5)).toBe('$5.0000')
+    expect(formatMixed(5, 0.25)).toBe('$5.00')
+    expect(formatAmount(5)).toBe('$5.00')
   })
 
   it('钱包金额按 1/m 精确折算', () => {
@@ -161,9 +162,9 @@ describe('useCurrencyDisplay', () => {
   it('混合金额只用服务端分桶值；额度为 0 缺字段按 ¥0，非 0 缺字段回落美元', () => {
     const { formatMixed, hasMixedFiat } = useCurrencyDisplay()
 
-    expect(normalize(formatMixed(5, 0.25))).toContain('0.250')
+    expect(normalize(formatMixed(5, 0.25))).toContain('0.25')
     expect(normalize(formatMixed(0, undefined))).toContain('0.00')
-    expect(formatMixed(5, undefined)).toBe('$5.0000')
+    expect(formatMixed(5, undefined)).toBe('$5.00')
     expect(hasMixedFiat(5, 0.25)).toBe(true)
     expect(hasMixedFiat(0, undefined)).toBe(true)
     expect(hasMixedFiat(5, undefined)).toBe(false)
@@ -199,7 +200,7 @@ describe('useCurrencyDisplay', () => {
 
     expect(normalize(formatOfficial(10) ?? '')).toContain('72.00')
     setMode('usd')
-    expect(formatOfficial(10)).toBe('$10.0000')
+    expect(formatOfficial(10)).toBe('$10.00')
     setMode('fiat')
 
     publicSettings.value = { balance_recharge_multiplier: 13 }

@@ -1,10 +1,10 @@
+import { formatCompactCount } from '@/utils/numberFormat'
+
 /**
  * 格式化缓存 token 数量（1K/1M 缩写）
  */
 export function formatCacheTokens(tokens: number): string {
-  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
-  return tokens.toLocaleString()
+  return formatCompactCount(tokens, { allowBillions: false })
 }
 
 /**

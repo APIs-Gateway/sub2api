@@ -4,6 +4,12 @@
  */
 
 import { i18n, getLocale } from '@/i18n'
+import {
+  formatCnyAmount,
+  formatCompactCount,
+  formatCount,
+  formatUsdAmount
+} from '@/utils/numberFormat'
 
 /**
  * 格式化相对时间
@@ -53,25 +59,21 @@ export function formatNumber(num: number | null | undefined): string {
 }
 
 /**
- * 格式化货币金额
+ * 格式化货币金额。USD / CNY 走全站统一的金额规则（见 utils/numberFormat：
+ * ≥ 1 两位小数，< 1 四位有效数字，千分位）；其他币种按 Intl 的币种习惯展示。
  * @param amount 金额
  * @param currency 货币代码，默认 USD
- * @returns 格式化后的字符串，如 "$1.25"
+ * @returns 格式化后的字符串，如 "$1.25"、"¥0.0032"
  */
 export function formatCurrency(amount: number | null | undefined, currency: string = 'USD'): string {
-  if (amount === null || amount === undefined) return '$0.00'
+  const code = currency.toUpperCase()
+  if (code === 'USD') return formatUsdAmount(amount)
+  if (code === 'CNY') return formatCnyAmount(amount)
 
-  const locale = getLocale()
-
-  // For very small amounts, show more decimals
-  const fractionDigits = amount > 0 && amount < 0.01 ? 6 : 2
-
-  return new Intl.NumberFormat(locale, {
+  return new Intl.NumberFormat(getLocale(), {
     style: 'currency',
-    currency: currency,
-    minimumFractionDigits: fractionDigits,
-    maximumFractionDigits: fractionDigits
-  }).format(amount)
+    currency
+  }).format(typeof amount === 'number' && Number.isFinite(amount) ? amount : 0)
 }
 
 /**
@@ -300,7 +302,7 @@ export function formatTime(date: string | Date | null | undefined): string {
  * @returns 格式化后的字符串，如 "12,345"
  */
 export function formatNumberLocaleString(num: number): string {
-  return num.toLocaleString()
+  return formatCount(num)
 }
 
 /**
@@ -314,18 +316,16 @@ export function formatCostFixed(amount: number, fractionDigits: number = 4): str
 }
 
 /**
- * 格式化 token 数量（>=1M 显示为 M，>=1K 显示为 K，保留 1 位小数）
+ * 格式化 token 数量（>=1M 显示为 M，>=1K 显示为 K，保留 1 位小数，缩写后带千分位）
  * @param tokens token 数量
- * @returns 格式化后的字符串，如 "950", "1.2K", "3.5M"
+ * @returns 格式化后的字符串，如 "950", "1.2K", "74,935.4M"
  */
 export function formatTokensK(tokens: number): string {
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
-  return tokens.toString()
+  return formatCompactCount(tokens, { allowBillions: false })
 }
 
 /**
- * 格式化大数字（K/M/B，保留 1 位小数）
+ * 格式化大数字（K/M/B，保留 1 位小数，缩写后带千分位）
  * @param num 数字
  * @param options allowBillions=false 时最高只显示到 M
  */
@@ -333,15 +333,7 @@ export function formatCompactNumber(
   num: number | null | undefined,
   options?: { allowBillions?: boolean }
 ): string {
-  if (num === null || num === undefined) return '0'
-
-  const abs = Math.abs(num)
-  const allowBillions = options?.allowBillions !== false
-
-  if (allowBillions && abs >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(1)}B`
-  if (abs >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`
-  if (abs >= 1_000) return `${(num / 1_000).toFixed(1)}K`
-  return num.toString()
+  return formatCompactCount(num, options)
 }
 
 /**

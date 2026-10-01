@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 
 import { useAppStore } from '@/stores/app'
+import { formatCnyAmount, formatUsdAmount, type MoneyDigitsOptions } from '@/utils/numberFormat'
 
 /**
  * 用量金额的展示口径。
@@ -25,16 +26,6 @@ const DEFAULT_MODE: CurrencyMode = 'fiat'
  * 所以折算结果的单位必然是它，不能跟着支付时选的币种走。
  */
 const FIAT_CURRENCY = 'CNY'
-
-/**
- * 金额格式化用的语言。读 <html lang>（i18n 切换语言时会同步设置），而不是 import
- * '@/i18n'：后者在模块加载时就执行 createI18n，会让所有间接引用本 composable 的
- * 模块（接口层、GroupBadge 等）都背上整个 i18n 实例。
- */
-function currentLocale(): string {
-  if (typeof document === 'undefined') return 'zh-CN'
-  return document.documentElement.getAttribute('lang') || 'zh-CN'
-}
 
 function readPersistedMode(): CurrencyMode {
   if (typeof window === 'undefined') return DEFAULT_MODE
@@ -75,6 +66,25 @@ export function reportMixedFiat(credits: number | null | undefined, fiat: number
 /** 仅供测试复位。 */
 export function resetFiatDataMissingForTest() {
   fiatDataMissing.value = false
+}
+
+/**
+ * 金额格式化的第三个参数：
+ * - 缺省：统一规则（≥ 1 两位小数，< 1 四位有效数字，千分位）；
+ * - 数字：精确值场景（title / tooltip / 对账）固定小数位；
+ * - 对象：指定 unitPrice 等选项。
+ */
+export type MoneyDigits = number | MoneyDigitsOptions
+
+/**
+ * 精确值（title / tooltip）：界面上按统一规则收口后，把原来的 4 位小数精度放进悬停提示，
+ * 不丢信息。用法：formatMixed(credits, fiat, EXACT_DIGITS)。
+ */
+export const EXACT_DIGITS: MoneyDigitsOptions = { exact: true }
+
+function toDigitOptions(digits: MoneyDigits | undefined): MoneyDigitsOptions {
+  if (digits === undefined) return {}
+  return typeof digits === 'number' ? { fractionDigits: digits } : digits
 }
 
 export function useCurrencyDisplay() {
@@ -131,31 +141,21 @@ export function useCurrencyDisplay() {
   }
 
   /**
-   * 格式化人民币金额。小额消费低至 0.003 元，固定两位小数会把它们全部显示成
-   * ¥0.00，所以按量级动态调整小数位。
+   * 格式化人民币金额，规则见 utils/numberFormat：≥ 1 两位小数，< 1 保留 4 位有效数字，
+   * 0 显示 0.00，带千分位。小额消费低至 0.003 元，所以 < 1 的部分不能固定两位小数。
+   *
+   * 传数字表示精确值场景（title / tooltip）下的固定小数位；传对象可指定 unitPrice 等选项。
    */
-  function formatFiat(amount: number | null | undefined): string {
-    const value = typeof amount === 'number' && Number.isFinite(amount) ? amount : 0
-    const abs = Math.abs(value)
-    let fractionDigits = 2
-    if (abs > 0 && abs < 0.01) fractionDigits = 4
-    else if (abs > 0 && abs < 1) fractionDigits = 3
-
-    return new Intl.NumberFormat(currentLocale(), {
-      style: 'currency',
-      currency: FIAT_CURRENCY,
-      minimumFractionDigits: fractionDigits,
-      maximumFractionDigits: fractionDigits
-    }).format(value)
+  function formatFiat(amount: number | null | undefined, digits?: MoneyDigits): string {
+    return formatCnyAmount(amount, toDigitOptions(digits))
   }
 
   /**
-   * 格式化美元金额。保持既有的定宽小数方便逐条对账，并显式带上 $——
+   * 格式化美元金额。规则同 formatFiat，并显式带上 $——
    * 这个数就是以美元计价的，去掉符号反而会让人以为是另一种单位。
    */
-  function formatUsd(usd: number | null | undefined, fractionDigits = 4): string {
-    const value = typeof usd === 'number' && Number.isFinite(usd) ? usd : 0
-    return `$${value.toFixed(fractionDigits)}`
+  function formatUsd(usd: number | null | undefined, digits?: MoneyDigits): string {
+    return formatUsdAmount(usd, toDigitOptions(digits))
   }
 
   /**
@@ -168,14 +168,14 @@ export function useCurrencyDisplay() {
   function formatAmount(
     usd: number | null | undefined,
     fiatValue?: number | null,
-    fractionDigits = 4
+    digits?: MoneyDigits
   ): string {
-    if (!isFiat.value) return formatUsd(usd, fractionDigits)
+    if (!isFiat.value) return formatUsd(usd, digits)
     const fiat =
       typeof fiatValue === 'number' && Number.isFinite(fiatValue) && fiatValue !== 0
         ? fiatValue
         : usdToFiat(usd)
-    return formatFiat(fiat)
+    return formatFiat(fiat, digits)
   }
 
   /**
@@ -192,11 +192,11 @@ export function useCurrencyDisplay() {
    * 后端未提供汇率时返回 null，调用方应隐藏这一项，而不是混排一个 $。
    * 美元模式下保持原样。
    */
-  function formatOfficial(usd: number | null | undefined, fractionDigits = 4): string | null {
-    if (!isFiat.value) return formatUsd(usd, fractionDigits)
+  function formatOfficial(usd: number | null | undefined, digits?: MoneyDigits): string | null {
+    if (!isFiat.value) return formatUsd(usd, digits)
     if (!officialCnyRate.value) return null
     const value = typeof usd === 'number' && Number.isFinite(usd) ? usd : 0
-    return formatFiat(value * officialCnyRate.value)
+    return formatFiat(value * officialCnyRate.value, digits)
   }
 
   /** 钱包里 1 个额度值多少人民币：充值时 1 元买 m 个额度。 */
@@ -210,9 +210,9 @@ export function useCurrencyDisplay() {
    * 钱包类金额：余额、充值到账、兑换码、签到奖励、余额提醒阈值等。
    * 这些额度全部是按充值倍率买来的，÷ m 是精确值。
    */
-  function formatWallet(credits: number | null | undefined, fractionDigits = 2): string {
-    if (!isFiat.value) return formatUsd(credits, fractionDigits)
-    return formatFiat(usdToFiat(credits))
+  function formatWallet(credits: number | null | undefined, digits?: MoneyDigits): string {
+    if (!isFiat.value) return formatUsd(credits, digits)
+    return formatFiat(usdToFiat(credits), digits)
   }
 
   /**
@@ -222,11 +222,11 @@ export function useCurrencyDisplay() {
   function formatSubscription(
     credits: number | null | undefined,
     fiatPerCredit: number | null | undefined,
-    fractionDigits = 2
+    digits?: MoneyDigits
   ): string {
-    if (!isFiat.value || !isPositiveNumber(fiatPerCredit)) return formatUsd(credits, fractionDigits)
+    if (!isFiat.value || !isPositiveNumber(fiatPerCredit)) return formatUsd(credits, digits)
     const value = typeof credits === 'number' && Number.isFinite(credits) ? credits : 0
-    return formatFiat(value * fiatPerCredit)
+    return formatFiat(value * fiatPerCredit, digits)
   }
 
   /**
@@ -240,12 +240,12 @@ export function useCurrencyDisplay() {
   function formatMixed(
     credits: number | null | undefined,
     fiatValue: number | null | undefined,
-    fractionDigits = 4
+    digits?: MoneyDigits
   ): string {
-    if (!isFiat.value) return formatUsd(credits, fractionDigits)
-    if (typeof fiatValue === 'number' && Number.isFinite(fiatValue)) return formatFiat(fiatValue)
-    if (!credits) return formatFiat(0)
-    return formatUsd(credits, fractionDigits)
+    if (!isFiat.value) return formatUsd(credits, digits)
+    if (typeof fiatValue === 'number' && Number.isFinite(fiatValue)) return formatFiat(fiatValue, digits)
+    if (!credits) return formatFiat(0, digits)
+    return formatUsd(credits, digits)
   }
 
   /** 混合金额在当前口径下是否能精确给出人民币值（图表等需要纯数字的地方用）。 */
