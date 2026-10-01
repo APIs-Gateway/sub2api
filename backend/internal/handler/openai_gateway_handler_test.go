@@ -1454,13 +1454,20 @@ func newOpenAIWSHandlerTestServer(t *testing.T, h *OpenAIGatewayHandler, subject
 }
 
 type openAIResponsesWSUsageLogCase struct {
-	firstPayload   string
-	userAgent      *string
-	channelMapping map[string]string
+	firstPayload     string
+	secondPayload    string
+	afterFirstResponse func() error
+	apiKeyService    *service.APIKeyService
+	apiKeyCredential string
+	ingressMode      string
+	billingRepo      service.UsageBillingRepository
+	userAgent        *string
+	channelMapping   map[string]string
 }
 
 type openAIResponsesWSUsageLogResult struct {
 	log                  *service.UsageLog
+	logs                 []*service.UsageLog
 	upstreamFirstPayload []byte
 }
 
@@ -2223,14 +2230,33 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		}
 		upstreamPayloadCh <- payload
 
-		writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
-		writeErr := conn.Write(writeCtx, coderws.MessageText, []byte(
-			`{"type":"response.completed","response":{"id":"resp_usage_e2e","model":"gpt-5.4","usage":{"input_tokens":2,"output_tokens":1}}}`,
-		))
-		cancelWrite()
-		if writeErr != nil {
-			upstreamErrCh <- writeErr
-			return
+		turns := 1
+		if tc.secondPayload != "" {
+			turns = 2
+		}
+		for turn := 1; turn <= turns; turn++ {
+			if turn == 2 {
+				readCtx, cancelRead = context.WithTimeout(r.Context(), 3*time.Second)
+				_, _, readErr = conn.Read(readCtx)
+				cancelRead()
+				if readErr != nil {
+					upstreamErrCh <- readErr
+					return
+				}
+			}
+			responseID := "resp_usage_e2e_1"
+			if turn == 2 {
+				responseID = "resp_usage_e2e_2"
+			}
+			writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
+			writeErr := conn.Write(writeCtx, coderws.MessageText, []byte(
+				`{"type":"response.completed","response":{"id":"`+responseID+`","model":"gpt-5.4","usage":{"input_tokens":2,"output_tokens":1}}}`,
+			))
+			cancelWrite()
+			if writeErr != nil {
+				upstreamErrCh <- writeErr
+				return
+			}
 		}
 		_ = conn.Close(coderws.StatusNormalClosure, "done")
 		upstreamErrCh <- nil
@@ -2255,6 +2281,9 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 			"openai_apikey_responses_websockets_v2_mode":    service.OpenAIWSIngressModePassthrough,
 		},
 	}
+	if tc.ingressMode != "" {
+		account.Extra["openai_apikey_responses_websockets_v2_mode"] = tc.ingressMode
+	}
 
 	cfg := &config.Config{}
 	cfg.RunMode = config.RunModeSimple
@@ -2270,7 +2299,11 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 
 	accountRepo := &openAIWSUsageHandlerAccountRepoStub{account: account}
-	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, 1)}
+	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, 2)}
+	billingCfg := *cfg
+	if tc.billingRepo != nil {
+		billingCfg.RunMode = config.RunModeStandard
+	}
 
 	var channelSvc *service.ChannelService
 	if len(tc.channelMapping) > 0 {
@@ -2290,15 +2323,15 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	gatewaySvc := service.NewOpenAIGatewayService(
 		accountRepo,
 		usageRepo,
+		tc.billingRepo,
 		nil,
 		nil,
 		nil,
 		nil,
+		&billingCfg,
 		nil,
-		cfg,
 		nil,
-		nil,
-		service.NewBillingService(cfg, nil),
+		service.NewBillingService(&billingCfg, nil),
 		nil,
 		billingCacheSvc,
 		nil,
@@ -2333,6 +2366,12 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		ID:      1801,
 		GroupID: &groupID,
 		User:    &service.User{ID: 1701, Status: service.StatusActive},
+	}
+	if tc.apiKeyService != nil {
+		h.apiKeyService = tc.apiKeyService
+		authKey, authErr := tc.apiKeyService.GetByKey(context.Background(), tc.apiKeyCredential)
+		require.NoError(t, authErr)
+		apiKey = authKey
 	}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -2370,7 +2409,6 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	cancelRead()
 	require.NoError(t, err)
 	require.Equal(t, "response.completed", gjson.GetBytes(event, "type").String())
-	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 
 	var usageLog *service.UsageLog
 	select {
@@ -2379,6 +2417,28 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	case <-time.After(3 * time.Second):
 		t.Fatal("等待 WebSocket usage log 写入超时")
 	}
+	logs := []*service.UsageLog{usageLog}
+	if tc.secondPayload != "" {
+		if tc.afterFirstResponse != nil {
+			require.NoError(t, tc.afterFirstResponse())
+		}
+		writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
+		err = clientConn.Write(writeCtx, coderws.MessageText, []byte(tc.secondPayload))
+		cancelWrite()
+		require.NoError(t, err)
+		readCtx, cancelRead = context.WithTimeout(context.Background(), 3*time.Second)
+		_, event, err = clientConn.Read(readCtx)
+		cancelRead()
+		require.NoError(t, err)
+		require.Equal(t, "response.completed", gjson.GetBytes(event, "type").String())
+		select {
+		case usageLog = <-usageRepo.created:
+			logs = append(logs, usageLog)
+		case <-time.After(3 * time.Second):
+			t.Fatal("等待 WebSocket 第二轮 usage log 写入超时")
+		}
+	}
+	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 
 	var upstreamFirstPayload []byte
 	select {
@@ -2395,7 +2455,8 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	}
 
 	return openAIResponsesWSUsageLogResult{
-		log:                  usageLog,
+		log:                  logs[0],
+		logs:                 logs,
 		upstreamFirstPayload: upstreamFirstPayload,
 	}
 }
