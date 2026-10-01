@@ -306,7 +306,7 @@ func TestOpenAICompatibilityPartialUsageKeepsFinalOutboundTier(t *testing.T) {
 	}{
 		{"cc oauth force failed event", "cc", "flex", OpenAIFastPolicyActionForcePriority, "all", "priority", false},
 		{"messages oauth filter failed event", "messages", "priority", BetaPolicyActionFilter, "priority", "", false},
-		{"cc raw filter read error", "raw", "priority", BetaPolicyActionFilter, "priority", "", true},
+		{"cc raw filter error frame with usage", "raw", "priority", BetaPolicyActionFilter, "priority", "", true},
 		{"responses raw force read error", "responses-raw", "flex", OpenAIFastPolicyActionForcePriority, "all", "priority", true},
 	}
 	for _, tc := range cases {
@@ -349,7 +349,21 @@ func TestOpenAICompatibilityPartialUsageKeepsFinalOutboundTier(t *testing.T) {
 					`data: {"id":"chatcmpl_partial","object":"chat.completion.chunk","model":"gpt-5.4","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}`,
 					"",
 				}, "\n")
-				resp.Body = io.NopCloser(&chatFallbackReadError{reader: strings.NewReader(payload), err: io.ErrUnexpectedEOF})
+				if tc.route == "raw" {
+					// For raw CC, the usage chunk itself is a terminal signal.
+					// A later read error is intentionally treated as success, so
+					// put usage in a genuine error frame after content instead.
+					payload = strings.Join([]string{
+						`data: {"id":"chatcmpl_partial","object":"chat.completion.chunk","model":"gpt-5.4","choices":[{"index":0,"delta":{"content":"ok"}}]}`,
+						"",
+						"event: error",
+						`data: {"error":{"type":"api_error","message":"upstream stream interrupted"},"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}`,
+						"",
+					}, "\n")
+					resp.Body = io.NopCloser(strings.NewReader(payload))
+				} else {
+					resp.Body = io.NopCloser(&chatFallbackReadError{reader: strings.NewReader(payload), err: io.ErrUnexpectedEOF})
+				}
 			}
 			upstream := &httpUpstreamRecorder{resp: resp}
 			svc := newOpenAIGatewayServiceWithSettings(t, postPolicyTierSettings(tc.action, tc.rule))
