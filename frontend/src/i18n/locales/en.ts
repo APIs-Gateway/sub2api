@@ -146,6 +146,66 @@
     }
   },
 
+  // Docs Page
+  docs: {
+    title: 'Docs',
+    intro: 'How to connect your tools to {site}. Every step comes with a config you can copy.',
+    contentNotice: 'The guide below is currently available in Simplified Chinese only.',
+    menu: 'Contents',
+    tocTitle: 'Documentation contents',
+    onThisPage: 'On this page',
+    copy: 'Copy',
+    copied: 'Copied',
+    groups: {
+      start: 'Get started',
+      clients: 'Command-line tools',
+      editors: 'Editors and extensions',
+      chat: 'Chat and translation',
+      developers: 'For developers',
+      reference: 'Reference'
+    },
+    connect: {
+      openai: 'OpenAI-compatible URL',
+      anthropic: 'Anthropic-compatible URL',
+      key: 'API key',
+      keyPlaceholder: 'sk-your-key',
+      createKey: 'Create a key',
+      endpointHint: 'If access is slow, switch to another address. Your API key works with all of them.'
+    },
+    ai: {
+      iWant: 'I want to connect:',
+      sentenceNamed: 'Follow this guide to connect {tool} to {site}: {url}',
+      tools: {
+        any: {
+          label: 'Any tool',
+          sentence: 'Follow this guide to connect the tool I use to {site}: {url}'
+        },
+        chat: {
+          label: 'Chat clients',
+          sentence: 'Follow this guide to connect my chat client to {site}: {url}'
+        },
+        code: {
+          label: 'Call from code',
+          sentence: 'Follow this guide to call {site} from my code: {url}'
+        }
+      },
+      copySentence: 'Copy',
+      copyFull: 'Copy the full guide',
+      more: 'More options',
+      hint: 'AI can’t open the link? Choose “Copy the full guide” and paste the whole text to it. AI tools can also read {url} directly.',
+      moreTitle: 'Full prompt',
+      moreDesc: 'The address and instructions are written into the prompt, so it works even when the AI can’t open links.',
+      copyPrompt: 'Copy prompt',
+      openChatgpt: 'Open in ChatGPT',
+      openClaude: 'Open in Claude'
+    },
+    models: {
+      open: 'Open Pricing and billing to see available models',
+      loginHint: 'Sign in to see the models and prices available to you.',
+      login: 'Sign in'
+    }
+  },
+
   // Key Usage Query Page
   keyUsage: {
     title: 'API Key Usage',
@@ -451,6 +511,7 @@
     groups: 'Groups',
     channels: 'Channels',
     availableChannels: 'Pricing & Billing',
+    usageDocs: 'Docs',
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
     proxies: 'Proxies',

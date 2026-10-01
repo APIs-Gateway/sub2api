@@ -10,11 +10,13 @@ import (
 	htmlpkg "html"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/common"
@@ -43,6 +45,16 @@ type FrontendServer struct {
 	cache       *HTMLCache
 	settings    PublicSettingsProvider
 	overrideDir string // local file override directory
+
+	// machineCfg caches the public settings used to fill the placeholders in
+	// llms.txt, llms-full.txt and docs/<id>.md (see docs_machine.go).
+	machineMu  sync.Mutex
+	machineCfg *machineSettings
+	machineAt  time.Time
+
+	// trustedProxies are the server.trusted_proxies networks. Only requests
+	// coming from them may set the scheme of the links in those files.
+	trustedProxies []*net.IPNet
 }
 
 // NewFrontendServer creates a new frontend server with settings injection
@@ -82,6 +94,11 @@ func (s *FrontendServer) InvalidateCache() {
 	if s != nil && s.cache != nil {
 		s.cache.Invalidate()
 	}
+	if s != nil {
+		s.machineMu.Lock()
+		s.machineCfg = nil
+		s.machineMu.Unlock()
+	}
 }
 
 // Middleware returns the Gin middleware handler
@@ -110,6 +127,13 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 		// build. Deployments keep the previous release's hashed assets here so
 		// tabs that are still running the old entry bundle can finish loading.
 		if s.tryServeOverride(c, cleanPath) {
+			return
+		}
+
+		// llms.txt, llms-full.txt and docs/<id>.md are built as templates with
+		// placeholders; fill in this site's address and name per request.
+		if s.shouldServeMachineDoc(cleanPath) {
+			s.serveMachineDoc(c, cleanPath)
 			return
 		}
 
@@ -154,13 +178,12 @@ func looksLikeStaticAsset(cleanPath string) bool {
 	return strings.IndexByte(base, '.') >= 0
 }
 
+// fileExists reports whether path is a regular file in the embedded build.
+// Directories do not count: "docs" is a directory (docs/<id>.md) but also the
+// /docs page route, and http.FileServer would answer it with a 301 to "docs/"
+// instead of letting the SPA shell render.
 func (s *FrontendServer) fileExists(path string) bool {
-	file, err := s.distFS.Open(path)
-	if err != nil {
-		return false
-	}
-	_ = file.Close()
-	return true
+	return regularFileExists(s.distFS, path)
 }
 
 // tryServeOverride checks if a local override file exists and serves it.
@@ -336,7 +359,9 @@ func replaceNoncePlaceholder(html []byte, nonce string) []byte {
 }
 
 // ServeEmbeddedFrontend returns a middleware for serving embedded frontend
-// This is the legacy function for backward compatibility when no settings provider is available
+// This is the legacy function for backward compatibility when no settings provider is available.
+// It does not fill llms.txt, llms-full.txt or docs/<id>.md (they are templates
+// with placeholders), so those paths answer 404 here.
 func ServeEmbeddedFrontend() gin.HandlerFunc {
 	distFS, err := fs.Sub(frontendFS, "dist")
 	if err != nil {
@@ -358,8 +383,13 @@ func ServeEmbeddedFrontend() gin.HandlerFunc {
 			cleanPath = "index.html"
 		}
 
-		if file, err := distFS.Open(cleanPath); err == nil {
-			_ = file.Close()
+		if isMachineDocPath(cleanPath) {
+			c.Status(http.StatusNotFound)
+			c.Abort()
+			return
+		}
+
+		if regularFileExists(distFS, cleanPath) {
 			// Try local override first
 			if tryServeOverrideFile(c, overrideDir, cleanPath) {
 				return
@@ -371,6 +401,17 @@ func ServeEmbeddedFrontend() gin.HandlerFunc {
 
 		serveIndexHTML(c, distFS)
 	}
+}
+
+// regularFileExists reports whether path is a regular file (not a directory) in fsys.
+func regularFileExists(fsys fs.FS, path string) bool {
+	file, err := fsys.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	return err == nil && !info.IsDir()
 }
 
 // tryServeOverrideFile is a standalone version of tryServeOverride for legacy usage.

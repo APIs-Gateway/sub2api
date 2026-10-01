@@ -146,6 +146,66 @@
     }
   },
 
+  // Docs Page
+  docs: {
+    title: '使用文档',
+    intro: '怎样把你的工具接入 {site}。每一步都附了可以直接复制的配置。',
+    contentNotice: '文档正文目前只有简体中文版本。',
+    menu: '目录',
+    tocTitle: '文档目录',
+    onThisPage: '本页内容',
+    copy: '复制',
+    copied: '已复制',
+    groups: {
+      start: '开始',
+      clients: '命令行工具',
+      editors: '编辑器与插件',
+      chat: '聊天与翻译',
+      developers: '开发者',
+      reference: '参考'
+    },
+    connect: {
+      openai: 'OpenAI 兼容地址',
+      anthropic: 'Anthropic 兼容地址',
+      key: 'API 密钥',
+      keyPlaceholder: 'sk-你的密钥',
+      createKey: '去创建密钥',
+      endpointHint: '访问慢时可以换用其他地址，密钥通用。'
+    },
+    ai: {
+      iWant: '我要接入：',
+      sentenceNamed: '请按这份文档，帮我把 {tool} 接入 {site}：{url}',
+      tools: {
+        any: {
+          label: '任意工具',
+          sentence: '请按这份文档，帮我把正在用的工具接入 {site}：{url}'
+        },
+        chat: {
+          label: '聊天客户端',
+          sentence: '请按这份文档，帮我把聊天客户端接入 {site}：{url}'
+        },
+        code: {
+          label: '写代码调用',
+          sentence: '请按这份文档，帮我在代码里调用 {site}：{url}'
+        }
+      },
+      copySentence: '一键复制',
+      copyFull: '复制整份文档',
+      more: '更多方式',
+      hint: 'AI 打不开网页？点「复制整份文档」，把全文直接粘贴给它。AI 工具也可以直接读取 {url}。',
+      moreTitle: '完整提示词',
+      moreDesc: '把接入地址和要求都写在提示词里，AI 打不开链接时也能用。',
+      copyPrompt: '复制提示词',
+      openChatgpt: '在 ChatGPT 中打开',
+      openClaude: '在 Claude 中打开'
+    },
+    models: {
+      open: '打开价格与计费页，查看可用模型',
+      loginHint: '登录后可以查看你能用的模型和价格。',
+      login: '去登录'
+    }
+  },
+
   // Key Usage Query Page
   keyUsage: {
     title: 'API Key 用量查询',
@@ -451,6 +511,7 @@
     groups: '分组管理',
     channels: '渠道管理',
     availableChannels: '价格与计费',
+    usageDocs: '使用文档',
     subscriptions: '订阅管理',
     accounts: '账号管理',
     proxies: 'IP管理',

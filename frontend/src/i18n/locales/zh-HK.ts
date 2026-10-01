@@ -146,6 +146,66 @@
     }
   },
 
+  // Docs Page
+  docs: {
+    title: '使用文件',
+    intro: '如何把你的工具接入 {site}。每一步都附有可直接複製的設定。',
+    contentNotice: '文件正文目前只有簡體中文版本。',
+    menu: '目錄',
+    tocTitle: '文件目錄',
+    onThisPage: '本頁內容',
+    copy: '複製',
+    copied: '已複製',
+    groups: {
+      start: '開始',
+      clients: '命令行工具',
+      editors: '編輯器與插件',
+      chat: '聊天與翻譯',
+      developers: '開發者',
+      reference: '參考'
+    },
+    connect: {
+      openai: 'OpenAI 相容地址',
+      anthropic: 'Anthropic 相容地址',
+      key: 'API 金鑰',
+      keyPlaceholder: 'sk-你的密鑰',
+      createKey: '前往建立金鑰',
+      endpointHint: '訪問慢時可以換用其他地址，金鑰通用。'
+    },
+    ai: {
+      iWant: '我要接入：',
+      sentenceNamed: '請按這份文件，幫我把 {tool} 接入 {site}：{url}',
+      tools: {
+        any: {
+          label: '任意工具',
+          sentence: '請按這份文件，幫我把正在用的工具接入 {site}：{url}'
+        },
+        chat: {
+          label: '聊天客戶端',
+          sentence: '請按這份文件，幫我把聊天客戶端接入 {site}：{url}'
+        },
+        code: {
+          label: '寫程式碼調用',
+          sentence: '請按這份文件，幫我在程式碼裡調用 {site}：{url}'
+        }
+      },
+      copySentence: '一鍵複製',
+      copyFull: '複製整份文件',
+      more: '更多方式',
+      hint: 'AI 打不開網頁？點「複製整份文件」，把全文直接貼給它。AI 工具也可以直接讀取 {url}。',
+      moreTitle: '完整提示詞',
+      moreDesc: '把接入地址和要求都寫在提示詞裡，AI 打不開連結時也能用。',
+      copyPrompt: '複製提示詞',
+      openChatgpt: '在 ChatGPT 中開啟',
+      openClaude: '在 Claude 中開啟'
+    },
+    models: {
+      open: '開啟價格與計費頁，查看可用模型',
+      loginHint: '登入後可以查看你能用的模型和價格。',
+      login: '前往登入'
+    }
+  },
+
   // Key Usage Query Page
   keyUsage: {
     title: 'API Key 用量查詢',
@@ -451,6 +511,7 @@
     groups: '分組管理',
     channels: '渠道管理',
     availableChannels: '價格與計費',
+    usageDocs: '使用文件',
     subscriptions: '訂閱管理',
     accounts: '帳號管理',
     proxies: 'IP管理',
