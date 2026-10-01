@@ -23,8 +23,11 @@ func newAnthropicHistoryGateway(responses ...*http.Response) (*OpenAIGatewayServ
 		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
 	}
 	account := &Account{
-		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
-		Extra: openAICompatResponsesExtra(),
+		ID:          1,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Extra:       openAICompatResponsesExtra(),
 		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.openai.com/v1"},
 	}
 	return svc, upstream, account

@@ -262,30 +262,6 @@ func (s *OpenAIGatewayService) disableOpenAICompatSessionContinuation(_ context.
 	s.openaiCompatSessionResponses.Store(key, binding)
 }
 
-func (s *OpenAIGatewayService) isOpenAICompatSessionContinuationDisabled(_ context.Context, c *gin.Context, account *Account, promptCacheKey string) bool {
-	if s == nil {
-		return false
-	}
-	key := openAICompatSessionResponseKey(c, account, promptCacheKey)
-	if key == "" {
-		return false
-	}
-	raw, ok := s.openaiCompatSessionResponses.Load(key)
-	if !ok {
-		return false
-	}
-	binding, ok := raw.(openAICompatSessionResponseBinding)
-	if !ok {
-		s.openaiCompatSessionResponses.Delete(key)
-		return false
-	}
-	if !binding.ExpiresAt.IsZero() && time.Now().After(binding.ExpiresAt) {
-		s.openaiCompatSessionResponses.Delete(key)
-		return false
-	}
-	return binding.ContinuationDisabled
-}
-
 func (s *OpenAIGatewayService) getOpenAICompatSessionTurnState(_ context.Context, c *gin.Context, account *Account, promptCacheKey string) string {
 	if s == nil {
 		return ""
