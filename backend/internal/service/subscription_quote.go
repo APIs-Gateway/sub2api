@@ -9,13 +9,14 @@ import (
 // SubscriptionPricingBounds 暴露给前端的自定义购买区间（滑块/输入框范围）。
 // 当前为 DefaultSubscriptionPricingConfig 的默认值；后续若支持管理员配置，仅需在此换源。
 type SubscriptionPricingBounds struct {
-	DMin  float64 `json:"d_min"`  // 每日额度下限
-	DMax  float64 `json:"d_max"`  // 每日额度上限
-	UMin  float64 `json:"u_min"`  // 最便宜单价（最大档）
-	UMax  float64 `json:"u_max"`  // 最贵单价（最小档）
-	TMin  int     `json:"t_min"`  // 最短有效天数
-	TMax  int     `json:"t_max"`  // 最长有效天数
-	TStep int     `json:"t_step"` // 天数步长：T 必须为该值整数倍（默认 30，按整月购买）
+	DMin   float64 `json:"d_min"`   // 每日额度下限
+	DMax   float64 `json:"d_max"`   // 每日额度上限
+	UMin   float64 `json:"u_min"`   // 最便宜单价（最大档）
+	UMax   float64 `json:"u_max"`   // 最贵单价（最小档）
+	TMin   int     `json:"t_min"`   // 最短有效天数
+	TMax   int     `json:"t_max"`   // 最长有效天数
+	TStep  int     `json:"t_step"`  // 天数步长：T 必须为该值整数倍（默认 30，按整月购买）
+	DFloor float64 `json:"d_floor"` // 单价降到 UMin 的每日额度：D ≤ DFloor 时单价线性下降，之后保持 UMin
 }
 
 // SubscriptionQuoteResult 自定义购买报价（实时预览与下单冻结同源）：D/T/u/售价 + 派生周/月封顶。
@@ -35,7 +36,7 @@ func (s *SubscriptionService) PricingBounds(ctx context.Context) SubscriptionPri
 	return SubscriptionPricingBounds{
 		DMin: c.DMin, DMax: c.DMax,
 		UMin: c.UMin, UMax: c.UMax,
-		TMin: c.TMin, TMax: c.TMax, TStep: c.TStep,
+		TMin: c.TMin, TMax: c.TMax, TStep: c.TStep, DFloor: c.DFloor,
 	}
 }
 
@@ -57,6 +58,11 @@ func (s *SubscriptionService) QuoteSubscription(ctx context.Context, d float64, 
 		MonthlyCapUSD:  monthly,
 		FormulaVersion: q.FormulaVersion,
 	}, nil
+}
+
+// PricingConfig 返回当前生效的订阅定价配置（展示层折算订阅卡额度用）。
+func (s *SubscriptionService) PricingConfig(ctx context.Context) SubscriptionPricingConfig {
+	return s.subscriptionPricingConfig(ctx)
 }
 
 func (s *SubscriptionService) subscriptionPricingConfig(ctx context.Context) SubscriptionPricingConfig {
