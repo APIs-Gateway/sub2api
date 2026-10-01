@@ -1366,20 +1366,19 @@
 
   // Available Channels (user-facing)
   billingRules: {
+    title: 'Billing rules',
+    intro: 'Billed by actual usage, deducted from your balance or plan.',
+    modelPriceHere: 'Click a model to see input / output / cache prices for each group.',
+    modelPriceLink: 'Model prices are on the "Pricing & Billing" page.',
+    rate: 'Group rate: groups have different rates, already included in the prices. A lower rate costs less.',
+    plan: 'Plans: once active, usage is charged to the plan first, at a better price.',
     fiat: {
-      intro: 'Billed by actual usage, paid from your balance or a plan.',
+      intro: 'Billed by actual usage, deducted from your balance or plan.',
+      pricesLink: 'Model prices are on the "Pricing & Billing" page.',
       balance: 'Balance price: what you pay when using balance.',
       plan: 'Plan price: once you have a plan, usage is charged to it first at a lower price.',
       group: 'Groups: the same model costs different amounts in different groups. Expand a model to compare.'
-    },
-    title: 'Billing rules',
-    intro: 'This site bills by usage, deducted in real time from your balance (USD) or plan quota.',
-    formulaLabel: 'Amount charged',
-    formula: 'official model price × usage × group rate',
-    modelPriceHere: 'Click a model to see input / output / cache prices for each group.',
-    modelPriceLink: 'Official model price: same as the provider. Check input / output / cache prices for each model on the "Pricing & Billing" page.',
-    rate: 'Group rate (Nx): how fast your chosen group consumes balance relative to official pricing. A higher number means a more stable pool but more consumed for the same usage.',
-    plan: 'Monthly plan: a low price gets you a large "official-price quota" (for example, ¥39 grants $2700 of quota); with a plan your effective price drops to a fraction of official pricing — the "0.X" shown in each group description.'
+    }
   },
 
   availableChannels: {
