@@ -12,7 +12,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
-	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
