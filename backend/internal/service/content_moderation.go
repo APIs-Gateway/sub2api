@@ -326,9 +326,24 @@ type ContentModerationCheckInput struct {
 	Body       []byte
 
 	// ChainGroups 有回退链时，链上所有存活跳的分组（入口解析并固定下来的那份，含主分组）。
-	// 非空时，Check 按「并集」判定审核范围：只要任一跳在范围内就审核，并把 GroupID/GroupName
-	// 改为命中的那一跳（审计日志因此记录的是触发审核的分组）。为空（无链）时行为与改动前完全一致。
+	// 非空时，Check 按「并集」判定审核范围：只要任一跳在范围内就审核。GroupID/GroupName 始终保持
+	// 用户 Key 的主分组（它们会进入发给用户的违规邮件），触发审核的那一跳另存在 ScopeGroupID/ScopeGroupName。
+	// 为空（无链）时行为与改动前完全一致。
 	ChainGroups []ContentModerationChainGroup
+
+	// ScopeGroupID / ScopeGroupName 由 Check 在并集判定后填写，只给管理端看：当主分组不在审核范围、
+	// 而链上某一跳（可能是管理员隐藏链的分组）在范围内时，记录触发审核的那一跳。绝不能进入任何用户可见的
+	// 内容（邮件、响应）。主分组自己在范围内、或无链时为空。
+	ScopeGroupID   *int64
+	ScopeGroupName string
+}
+
+// scopeGroup 返回判定审核范围时使用的分组：并集命中了其它跳就是那一跳，否则就是输入分组本身。
+func (in ContentModerationCheckInput) scopeGroup() *int64 {
+	if in.ScopeGroupID != nil {
+		return in.ScopeGroupID
+	}
+	return in.GroupID
 }
 
 // ContentModerationChainGroup 是回退链上的一跳分组（只含审核需要的字段）。
@@ -429,6 +444,11 @@ type ContentModerationLog struct {
 	UserStatus        string             `json:"user_status"`
 	QueueDelayMS      *int               `json:"queue_delay_ms,omitempty"`
 	CreatedAt         time.Time          `json:"created_at"`
+
+	// ScopeGroupID / ScopeGroupName 仅管理端：回退链并集命中的那一跳（可能是隐藏链分组），
+	// 不入库、不进任何用户可见内容（邮件变量只读 GroupName）。
+	ScopeGroupID   *int64 `json:"scope_group_id,omitempty"`
+	ScopeGroupName string `json:"scope_group_name,omitempty"`
 }
 
 type ContentModerationLogFilter struct {
@@ -884,10 +904,18 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 	}
 	cfg := runtimeSnapshot.config
 	if len(input.ChainGroups) > 0 {
-		// 回退链：按链上所有存活跳的并集判定（审查 B1），命中则把输入分组换成命中的那一跳。
+		// 回退链：按链上所有存活跳的并集判定（审查 B1）；GroupID/GroupName 不变，触发的那一跳记在 ScopeGroup*（审查 BK-1）。
 		input = cfg.scopeInputToChain(input)
+		if input.ScopeGroupID != nil {
+			slog.Info("content_moderation.chain_scope_hit",
+				"user_id", input.UserID,
+				"api_key_id", input.APIKeyID,
+				"group_id", contentModerationLogGroupID(input.GroupID),
+				"scope_group_id", contentModerationLogGroupID(input.ScopeGroupID),
+				"scope_group_name", input.ScopeGroupName)
+		}
 	}
-	inGroupScope := cfg.includesGroup(input.GroupID)
+	inGroupScope := cfg.includesGroup(input.scopeGroup())
 	inModelScope := cfg.includesModel(input.Model)
 	slog.Info("content_moderation.config_loaded",
 		"user_id", input.UserID,
@@ -1304,7 +1332,7 @@ func (s *ContentModerationService) worker(id int) {
 			if !cfg.Enabled || cfg.Mode == ContentModerationModeOff || len(cfg.apiKeys()) == 0 {
 				return
 			}
-			if !cfg.includesGroup(task.input.GroupID) {
+			if !cfg.includesGroup(task.input.scopeGroup()) {
 				return
 			}
 			if !cfg.includesModel(task.input.Model) {
@@ -1902,6 +1930,8 @@ func (s *ContentModerationService) buildLog(input ContentModerationCheckInput, c
 		APIKeyName:        input.APIKeyName,
 		GroupID:           cloneInt64Ptr(input.GroupID),
 		GroupName:         input.GroupName,
+		ScopeGroupID:      cloneInt64Ptr(input.ScopeGroupID),
+		ScopeGroupName:    input.ScopeGroupName,
 		Endpoint:          input.Endpoint,
 		Provider:          input.Provider,
 		Model:             input.Model,
@@ -2278,9 +2308,14 @@ func (cfg *ContentModerationConfig) firstIncludedGroupID(groupIDs []int64) (int6
 	return 0, false
 }
 
-// scopeInputToChain 在输入带有回退链分组时，把 GroupID/GroupName 换成第一个命中审核范围的那一跳；
-// 没有任何一跳命中时原样返回（后续按原输入分组判定，同样会得出「不在范围内」）。
+// scopeInputToChain 在输入带有回退链分组时，找出触发审核的那一跳，记入 ScopeGroupID/ScopeGroupName。
+// 主分组自己在审核范围内时优先取主分组（此时不需要额外记录）；否则取链顺序里第一个在范围内的跳。
+// GroupID/GroupName 始终不变：它们会进入发给用户的违规邮件，而链上的分组可能是管理员隐藏链的分组
+// （审查 BK-1 / B5）。没有任何一跳命中时原样返回（后续按原输入分组判定，同样得出「不在范围内」）。
 func (cfg *ContentModerationConfig) scopeInputToChain(input ContentModerationCheckInput) ContentModerationCheckInput {
+	if cfg.includesGroup(input.GroupID) {
+		return input
+	}
 	ids := make([]int64, 0, len(input.ChainGroups))
 	for _, g := range input.ChainGroups {
 		ids = append(ids, g.ID)
@@ -2292,8 +2327,8 @@ func (cfg *ContentModerationConfig) scopeInputToChain(input ContentModerationChe
 	for _, g := range input.ChainGroups {
 		if g.ID == hit {
 			id := g.ID
-			input.GroupID = &id
-			input.GroupName = g.Name
+			input.ScopeGroupID = &id
+			input.ScopeGroupName = g.Name
 			break
 		}
 	}

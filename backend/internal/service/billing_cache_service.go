@@ -640,23 +640,32 @@ func (s *BillingCacheService) IncrementUserPlatformQuotaUsage(userID int64, plat
 // 订阅模式：检查缓存用量未超过限额（Group限额从参数传入）
 // platform 为请求的目标平台（如 "anthropic"），传空串 "" 时跳过 user × platform quota 检查。
 func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user *User, apiKey *APIKey, group *Group, subscription *UserSubscription, platform string) error {
-	return s.checkBillingEligibility(ctx, user, apiKey, group, subscription, platform, false)
+	_, err := s.checkBillingEligibility(ctx, user, apiKey, group, subscription, platform, false)
+	return err
 }
 
-// CheckBillingEligibilityForChain 是有回退链的请求使用的入口准入：除 RPM 外与 CheckBillingEligibility 完全相同，
-// RPM 只检查「用户层」（user.rpm_limit，整个请求只计一次）；分组层 RPM 由每一跳单独调用
-// CheckGroupRPMForHop 计数并检查（设计 3.4 第 8 项，审查 B2）。无链的请求不得调用本方法。
-func (s *BillingCacheService) CheckBillingEligibilityForChain(ctx context.Context, user *User, apiKey *APIKey, group *Group, subscription *UserSubscription, platform string) error {
-	return s.checkBillingEligibility(ctx, user, apiKey, group, subscription, platform, true)
+// CheckBillingEligibilityForChain 是有回退链的请求使用的入口准入：除 RPM 外与 CheckBillingEligibility 完全相同。
+// RPM 的顺序与无链时一致：先「首跳分组层」，后「用户层」（整个请求只计一次）。
+// 首跳（有效链第 0 项）的分组层在这里计数，返回的 ticket 交给逐跳循环用于第 0 跳结束后的退回，
+// 循环里第 0 跳不得再调用 CheckGroupRPMForHop，其余各跳照常调用（设计 3.4 第 8 项，审查 B2 / S1）。
+//
+//   - firstHop 为 nil、首跳没有分组限额、override=0 免检、Redis 故障（fail-open）时 ticket 为 nil；
+//   - 首跳分组层超限返回 ErrGroupRPMExceeded，且此时用户层不计数（与无链一致）；
+//     ticket 仍会随错误返回，但首跳超限保持计数不变，调用方不要 Release；
+//   - 用户层超限返回 ErrUserRPMExceeded，ticket 同样随错误返回（分组层计数保持，与无链一致）。
+//
+// 无链的请求不得调用本方法。
+func (s *BillingCacheService) CheckBillingEligibilityForChain(ctx context.Context, user *User, apiKey *APIKey, firstHop *Group, subscription *UserSubscription, platform string) (*GroupRPMTicket, error) {
+	return s.checkBillingEligibility(ctx, user, apiKey, firstHop, subscription, platform, true)
 }
 
-func (s *BillingCacheService) checkBillingEligibility(ctx context.Context, user *User, apiKey *APIKey, group *Group, subscription *UserSubscription, platform string, chainMode bool) error {
+func (s *BillingCacheService) checkBillingEligibility(ctx context.Context, user *User, apiKey *APIKey, group *Group, subscription *UserSubscription, platform string, chainMode bool) (*GroupRPMTicket, error) {
 	// 简易模式：跳过所有计费检查
 	if s.cfg.RunMode == config.RunModeSimple {
-		return nil
+		return nil, nil
 	}
 	if s.circuitBreaker != nil && !s.circuitBreaker.Allow() {
-		return ErrBillingServiceUnavailable
+		return nil, ErrBillingServiceUnavailable
 	}
 
 	// 三窗口准入统一走 checkBalanceEligibility（Admit：订阅三窗口 || 钱包）。
@@ -664,37 +673,46 @@ func (s *BillingCacheService) checkBillingEligibility(ctx context.Context, user 
 	subscriptionMode := isActiveSubscriptionForBilling(subscription)
 	loadedSubscriptionMode, err := s.checkBalanceEligibility(ctx, user)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	subscriptionMode = subscriptionMode || loadedSubscriptionMode
 
 	// user × platform quota：订阅模式豁免（恢复 upstream 口径）；无卡用户继续受 platform quota 约束。
 	if !subscriptionMode {
 		if err := s.checkUserPlatformQuotaEligibility(ctx, user.ID, platform); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	// Check API Key rate limits (applies to both billing modes)
 	if apiKey != nil && apiKey.HasRateLimits() {
 		if err := s.checkAPIKeyRateLimits(ctx, apiKey); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	// RPM 限流：级联回落（Override → Group → User），放在最后以避免为注定失败的请求增加计数。
 	if chainMode {
-		// 有链：只做用户层，分组层由各跳自己计数（见 CheckGroupRPMForHop）。
-		if err := s.checkUserRPMLayer(ctx, user); err != nil {
-			return err
-		}
-		return nil
+		// 有链：先首跳分组层，再用户层（与无链的顺序一致）；其余各跳的分组层由循环逐跳计数。
+		return s.checkChainEntryRPM(ctx, user, group)
 	}
 	if err := s.checkRPM(ctx, user, group); err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return nil, nil
+}
+
+// checkChainEntryRPM 是有链入口的 RPM：首跳分组层 → 用户层。分组层超限时用户层不计数。
+func (s *BillingCacheService) checkChainEntryRPM(ctx context.Context, user *User, firstHop *Group) (*GroupRPMTicket, error) {
+	ticket, err := s.CheckGroupRPMForHop(ctx, user, firstHop)
+	if err != nil {
+		return ticket, err
+	}
+	if err := s.checkUserRPMLayer(ctx, user); err != nil {
+		return ticket, err
+	}
+	return ticket, nil
 }
 
 // checkRPM 执行并行 RPM 限流，所有适用的限制同时生效，任一超限即拒绝：
@@ -720,7 +738,8 @@ func (s *BillingCacheService) checkRPM(ctx context.Context, user *User, group *G
 		} else {
 			override = s.lookupRPMOverrideFromDB(ctx, user.ID, group.ID)
 		}
-		if _, err := s.checkGroupRPMLayer(ctx, user, group, override); err != nil {
+		// track=false：无链路径只用 IncrementUserGroupRPM，计数方式与改动前一字不差。
+		if _, err := s.checkGroupRPMLayer(ctx, user, group, override, false); err != nil {
 			return err
 		}
 	}
@@ -746,14 +765,39 @@ func (s *BillingCacheService) lookupRPMOverrideFromDB(ctx context.Context, userI
 	return dbOverride
 }
 
+// groupRPMCount 描述 checkGroupRPMLayer 对 (user, group) 计数器做过的递增，供回退链在该跳没有真正服务时退回。
+type groupRPMCount struct {
+	// counted 为 true 表示确实成功递增过一次（不论是否超限）。Redis 故障 fail-open 时为 false。
+	counted bool
+	// hasSlot 为 true 时 slot 是这次递增落在的分钟槽，退回只对这个槽减 1（审查 S5）。
+	// 仅 track=true 且缓存实现了 UserGroupRPMSlotCounter 时才有。
+	hasSlot bool
+	slot    int64
+}
+
+// incrementGroupRPM 对 (user, group) 分钟计数递增一次。
+// track=false 时就是原来的 IncrementUserGroupRPM 调用（无链路径）；
+// track=true 且缓存支持 UserGroupRPMSlotCounter 时改用带分钟槽的版本，让退回对准递增时的那一分钟。
+func (s *BillingCacheService) incrementGroupRPM(ctx context.Context, userID, groupID int64, track bool) (count int, slot int64, hasSlot bool, err error) {
+	if track {
+		if sc, ok := s.userRPMCache.(UserGroupRPMSlotCounter); ok {
+			count, slot, err = sc.IncrementUserGroupRPMSlot(ctx, userID, groupID)
+			return count, slot, err == nil, err
+		}
+	}
+	count, err = s.userRPMCache.IncrementUserGroupRPM(ctx, userID, groupID)
+	return count, 0, false, err
+}
+
 // checkGroupRPMLayer 是 checkRPM 的分组层：override 命中则按 override，否则按 group.rpm_limit。
-// counted 表示本次确实对 (user, group) 计数器做了一次成功的递增（不论是否超限），
+// 返回值记录本次是否对 (user, group) 计数器做了一次成功的递增（不论是否超限），
 // 供回退链在该跳以「回退」结束时退回一次计数。Redis 故障 fail-open（counted=false）。
-func (s *BillingCacheService) checkGroupRPMLayer(ctx context.Context, user *User, group *Group, override *int) (counted bool, err error) {
+// track 只影响计数用哪个缓存方法（见 incrementGroupRPM），不改变任何判断。
+func (s *BillingCacheService) checkGroupRPMLayer(ctx context.Context, user *User, group *Group, override *int, track bool) (groupRPMCount, error) {
 	if override != nil {
 		// override=0 → 该用户在该分组免检（但 user 级仍会在调用方检查）。
 		if *override > 0 {
-			count, incErr := s.userRPMCache.IncrementUserGroupRPM(ctx, user.ID, group.ID)
+			count, slot, hasSlot, incErr := s.incrementGroupRPM(ctx, user.ID, group.ID, track)
 			if incErr != nil {
 				logger.LegacyPrintf(
 					"service.billing_cache",
@@ -762,17 +806,17 @@ func (s *BillingCacheService) checkGroupRPMLayer(ctx context.Context, user *User
 				)
 				// fail-open
 			} else if count > *override {
-				return true, ErrGroupRPMExceeded
+				return groupRPMCount{counted: true, hasSlot: hasSlot, slot: slot}, ErrGroupRPMExceeded
 			} else {
-				return true, nil
+				return groupRPMCount{counted: true, hasSlot: hasSlot, slot: slot}, nil
 			}
 		}
 		// override 命中后跳过 group.rpm_limit（override 替代 group），但不 return——调用方继续检查 user 级。
-		return false, nil
+		return groupRPMCount{}, nil
 	}
 	if group.RPMLimit > 0 {
 		// 无 override，检查 group.rpm_limit。
-		count, incErr := s.userRPMCache.IncrementUserGroupRPM(ctx, user.ID, group.ID)
+		count, slot, hasSlot, incErr := s.incrementGroupRPM(ctx, user.ID, group.ID, track)
 		if incErr != nil {
 			logger.LegacyPrintf(
 				"service.billing_cache",
@@ -780,14 +824,15 @@ func (s *BillingCacheService) checkGroupRPMLayer(ctx context.Context, user *User
 				user.ID, group.ID, incErr,
 			)
 			// fail-open
-			return false, nil
+			return groupRPMCount{}, nil
 		}
+		counted := groupRPMCount{counted: true, hasSlot: hasSlot, slot: slot}
 		if count > group.RPMLimit {
-			return true, ErrGroupRPMExceeded
+			return counted, ErrGroupRPMExceeded
 		}
-		return true, nil
+		return counted, nil
 	}
-	return false, nil
+	return groupRPMCount{}, nil
 }
 
 // checkUserRPMLayer 是 checkRPM 的用户层：user.rpm_limit 全局硬上限。Redis 故障 fail-open。
@@ -812,33 +857,39 @@ func (s *BillingCacheService) checkUserRPMLayer(ctx context.Context, user *User)
 	return nil
 }
 
-// GroupRPMTicket 记录某一跳对 (user, group) 分钟计数器做过的一次递增，用于「该跳以回退结束时退回一次」。
+// GroupRPMTicket 记录某一跳对 (user, group) 分钟计数器做过的一次递增，用于「该跳没有真正服务时退回一次」。
+// 退回只对递增时的那个分钟槽减 1（审查 S5）；缓存没有报告分钟槽时无法精确退回，Release 静默不退。
 // nil 安全；Release 幂等。
 type GroupRPMTicket struct {
 	svc     *BillingCacheService
 	userID  int64
 	groupID int64
+	slot    int64
+	hasSlot bool
 	done    atomic.Bool
 }
 
-// Release 尽力退回一次计数（DECR，Redis 故障或缓存不支持时静默忽略）。
-// 只应在该跳没有真正服务该请求（回退、被 RPM 跳过）时调用；成功服务或不可回退的结束保持计数不变。
+// Release 尽力退回一次计数（对递增时的分钟槽 DECR，Redis 故障或缓存不支持时静默忽略）。
+// 只应在该跳没有真正服务该请求时调用（具体规则见 handler.ReleaseHopGroupRPMIfNotServed）；成功服务或不可回退的结束保持计数不变。
 func (t *GroupRPMTicket) Release(ctx context.Context) {
 	if t == nil || t.svc == nil || !t.done.CompareAndSwap(false, true) {
 		return
 	}
-	dec, ok := t.svc.userRPMCache.(UserGroupRPMDecrementer)
+	if !t.hasSlot {
+		return
+	}
+	dec, ok := t.svc.userRPMCache.(UserGroupRPMSlotCounter)
 	if !ok {
 		return
 	}
 	// 退回计数不应因客户端断开（ctx 已取消）而丢失，但也不能无限等待。
 	decCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	if err := dec.DecrementUserGroupRPM(decCtx, t.userID, t.groupID); err != nil {
+	if err := dec.DecrementUserGroupRPMSlot(decCtx, t.userID, t.groupID, t.slot); err != nil {
 		logger.LegacyPrintf(
 			"service.billing_cache",
-			"Warning: rpm decrement (group) failed for user=%d group=%d: %v",
-			t.userID, t.groupID, err,
+			"Warning: rpm decrement (group) failed for user=%d group=%d slot=%d: %v",
+			t.userID, t.groupID, t.slot, err,
 		)
 	}
 }
@@ -854,11 +905,16 @@ func (s *BillingCacheService) CheckGroupRPMForHop(ctx context.Context, user *Use
 	if s == nil || s.userRPMCache == nil || user == nil || group == nil {
 		return nil, nil
 	}
+	// 简易模式与无链路径一致：整个 RPM 都不检查（审查 BK-3）。
+	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		return nil, nil
+	}
 	override := s.lookupRPMOverrideFromDB(ctx, user.ID, group.ID)
-	counted, err := s.checkGroupRPMLayer(ctx, user, group, override)
+	// track=true：记下递增落在的分钟槽，退回时对准同一个槽（审查 S5）。
+	c, err := s.checkGroupRPMLayer(ctx, user, group, override, true)
 	var ticket *GroupRPMTicket
-	if counted {
-		ticket = &GroupRPMTicket{svc: s, userID: user.ID, groupID: group.ID}
+	if c.counted {
+		ticket = &GroupRPMTicket{svc: s, userID: user.ID, groupID: group.ID, slot: c.slot, hasSlot: c.hasSlot}
 	}
 	return ticket, err
 }

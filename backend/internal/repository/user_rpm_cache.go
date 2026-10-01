@@ -116,16 +116,32 @@ end
 return 0
 `)
 
-var _ service.UserGroupRPMDecrementer = (*userRPMCacheImpl)(nil)
+var _ service.UserGroupRPMSlotCounter = (*userRPMCacheImpl)(nil)
 
-// DecrementUserGroupRPM 把 (user, group) 当前分钟计数减 1（回退链某一跳以回退结束时使用）。
-// 用的是「当前」分钟：跨分钟时会减到新分钟的计数上，属于尽力而为，Lua 保证不会减到负数。
-func (c *userRPMCacheImpl) DecrementUserGroupRPM(ctx context.Context, userID, groupID int64) error {
+// userGroupRPMSlotKey 是 (user, group) 在某个分钟槽上的计数 key，格式与 IncrementUserGroupRPM 一致。
+func userGroupRPMSlotKey(userID, groupID, minute int64) string {
+	return fmt.Sprintf("%s%d:%d:%d", userGroupRPMKeyPrefix, userID, groupID, minute)
+}
+
+// IncrementUserGroupRPMSlot 递增 (user, group) 分钟计数，并返回这次递增落在的分钟槽，
+// 供回退链的 ticket 在该跳没有真正服务时对同一个槽退回一次（审查 S5）。
+func (c *userRPMCacheImpl) IncrementUserGroupRPMSlot(ctx context.Context, userID, groupID int64) (int, int64, error) {
 	minute, err := c.minuteTS(ctx)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
-	key := fmt.Sprintf("%s%d:%d:%d", userGroupRPMKeyPrefix, userID, groupID, minute)
+	count, err := c.atomicIncr(ctx, userGroupRPMSlotKey(userID, groupID, minute))
+	if err != nil {
+		return 0, 0, err
+	}
+	return count, minute, nil
+}
+
+// DecrementUserGroupRPMSlot 把 (user, group) 在指定分钟槽的计数减 1。
+// 只动传入的槽，不读取当前时间：跨分钟结束的一跳不会减到新一分钟的计数上。
+// Lua 保证 key 不存在或计数为 0 时不递减（不会出现负数，也不会新建没有 TTL 的 key）。
+func (c *userRPMCacheImpl) DecrementUserGroupRPMSlot(ctx context.Context, userID, groupID, slot int64) error {
+	key := userGroupRPMSlotKey(userID, groupID, slot)
 	if err := userGroupRPMDecrScript.Run(ctx, c.rdb, []string{key}).Err(); err != nil && err != redis.Nil {
 		return fmt.Errorf("user group rpm decrement: %w", err)
 	}

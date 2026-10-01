@@ -214,7 +214,10 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 		return nil, err
 	}
 	out := apiKeyEntityToService(m)
-	out.HasGroupRoutes = r.keyHasGroupRoutes(ctx, m.ID)
+	// 没有绑定主分组的 Key 不可能有回退链（保存链要求 Key 已绑定分组），省一次查询。
+	if m.GroupID != nil {
+		out.HasGroupRoutes, out.HasGroupRoutesUnknown = r.keyHasGroupRoutes(ctx, m.ID)
+	}
 	return out, nil
 }
 
@@ -222,20 +225,21 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 //
 // 只在鉴权缓存未命中时执行一次（结果随快照缓存）。走 uq_agr_key_source_group
 // (api_key_id, source, group_id) 的前缀索引做 EXISTS，不会扫表。
-// 失败时返回 false（等同于「没有链」，即功能关闭时的现状行为）并记日志，
-// 不能因为这个可选特性让鉴权失败。
-func (r *apiKeyRepository) keyHasGroupRoutes(ctx context.Context, keyID int64) bool {
+// 查询失败时返回 (false, true)：本次按「没有链」处理（等同于功能关闭时的现状行为）并记日志，
+// 不能因为这个可选特性让鉴权失败；unknown=true 告诉调用方这个 false 不可信，不要写进鉴权缓存
+// （否则一次瞬时错误会让链在整个缓存 TTL 内失效，审查 S4）。
+func (r *apiKeyRepository) keyHasGroupRoutes(ctx context.Context, keyID int64) (has bool, unknown bool) {
 	if r.sql == nil || keyID <= 0 {
-		return false
+		return false, false
 	}
 	var exists bool
 	if err := scanSingleRow(ctx, r.sql,
 		"SELECT EXISTS (SELECT 1 FROM api_key_group_routes WHERE api_key_id = $1)",
 		[]any{keyID}, &exists); err != nil {
 		logger.LegacyPrintf("repository.api_key", "[GroupRoutes] exists check failed: api_key=%d err=%v", keyID, err)
-		return false
+		return false, true
 	}
-	return exists
+	return exists, false
 }
 
 func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey) error {

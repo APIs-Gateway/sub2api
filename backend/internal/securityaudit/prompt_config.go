@@ -382,12 +382,17 @@ func (cfg ActiveConfig) firstIncludedGroup(groupIDs []int64) (int64, bool) {
 	return 0, false
 }
 
-// ScopeRequest 在请求带有回退链分组（req.ChainGroups）时，把 req.GroupID / GroupName 换成
-// 第一个命中审计范围的那一跳，使审计事件记录的是「触发审计的 hop 分组」（设计 Q18）。
-// 没有任何一跳命中时原样返回，后续的 IncludesGroup 判定同样得出「不在范围内」。
+// ScopeRequest 在请求带有回退链分组（req.ChainGroups）时，找出触发审计的那一跳，记入
+// req.ScopeGroupID / ScopeGroupName（设计 Q18，只给管理端）。主分组自己在范围内时优先取主分组（不需要额外记录）；
+// 否则取链顺序里第一个在范围内的跳。GroupID / GroupName 始终保持主分组：链上的分组可能是管理员隐藏链的分组，
+// 不能进入任何用户可见的内容（审查 BK-1 / B5）。调用方判定范围必须用 req.scopeGroup()。
+// 没有任何一跳命中时原样返回，后续的范围判定同样得出「不在范围内」。
 // 无链（ChainGroups 为空）时原样返回，行为与改动前完全一致。
 func (cfg ActiveConfig) ScopeRequest(req Request) Request {
 	if len(req.ChainGroups) == 0 {
+		return req
+	}
+	if cfg.IncludesGroup(req.GroupID) {
 		return req
 	}
 	ids := make([]int64, 0, len(req.ChainGroups))
@@ -401,12 +406,17 @@ func (cfg ActiveConfig) ScopeRequest(req Request) Request {
 	for _, g := range req.ChainGroups {
 		if g.ID == hit {
 			id := g.ID
-			req.GroupID = &id
-			req.GroupName = g.Name
+			req.ScopeGroupID = &id
+			req.ScopeGroupName = g.Name
 			break
 		}
 	}
 	return req
+}
+
+// InScope 报告请求（先经 ScopeRequest）的分组是否在审计范围内，并集语义。
+func (cfg ActiveConfig) InScope(req Request) bool {
+	return cfg.IncludesGroup(req.scopeGroup())
 }
 
 func (cfg ActiveConfig) EnabledEndpoints() []ActiveEndpoint {

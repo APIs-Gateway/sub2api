@@ -188,6 +188,12 @@ func (s *APIKeyService) loadAuthCacheEntry(ctx context.Context, key, cacheKey st
 		return nil, fmt.Errorf("get api key: %w", ErrAPIKeyNotFound)
 	}
 	entry := &APIKeyAuthCacheEntry{Snapshot: snapshot}
+	if apiKey.HasGroupRoutesUnknown {
+		// 回退链的 EXISTS 查询失败：本次按无链处理，但不缓存，下一次请求回源重查，
+		// 避免一次瞬时错误让有链的 Key 在整个缓存 TTL 内失去回退（审查 S4）。
+		slog.Warn("api_key_auth_cache.skip_write_group_routes_unknown", "api_key_id", apiKey.ID)
+		return entry, nil
+	}
 	s.setAuthCacheEntry(ctx, cacheKey, entry, s.authCfg.l2TTL)
 	return entry, nil
 }

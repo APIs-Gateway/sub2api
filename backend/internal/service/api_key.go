@@ -41,6 +41,9 @@ type APIKey struct {
 	HasGroupRoutes bool `json:"-"`
 	IPWhitelist    []string
 	IPBlacklist    []string
+	// HasGroupRoutesUnknown 为 true 表示鉴权查询里检查回退链的 EXISTS 失败了，HasGroupRoutes 的 false 不可信：
+	// 本次请求按无链处理，但鉴权缓存不得保存这个结果（审查 S4）。不持久化、不进快照。
+	HasGroupRoutesUnknown bool `json:"-"`
 	// 预编译的 IP 规则，用于认证热路径避免重复 ParseIP/ParseCIDR。
 	CompiledIPWhitelist *ip.CompiledIPRules `json:"-"`
 	CompiledIPBlacklist *ip.CompiledIPRules `json:"-"`

@@ -5,22 +5,54 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
-// userRPMDecrCacheStub 在 userRPMCacheStub 之上实现可选的 UserGroupRPMDecrementer。
+// userRPMDecrCacheStub 在 userRPMCacheStub 之上实现可选的 UserGroupRPMSlotCounter：
+// 带槽递增复用 userRPMCacheStub 的计数序列，并返回当前的 slot；退回时记录收到的槽。
 type userRPMDecrCacheStub struct {
 	*userRPMCacheStub
-	decrCalls int32
-	decrErr   error
+	decrCalls     int32
+	slotIncrCalls int32
+	decrErr       error
+
+	mu        sync.Mutex
+	slot      int64   // 下一次带槽递增落在的分钟槽，测试可修改以模拟跨分钟
+	decrSlots []int64 // 每次退回收到的槽
 }
 
-func (s *userRPMDecrCacheStub) DecrementUserGroupRPM(_ context.Context, _, _ int64) error {
+func (s *userRPMDecrCacheStub) IncrementUserGroupRPMSlot(ctx context.Context, userID, groupID int64) (int, int64, error) {
+	atomic.AddInt32(&s.slotIncrCalls, 1)
+	count, err := s.userRPMCacheStub.IncrementUserGroupRPM(ctx, userID, groupID)
+	s.mu.Lock()
+	slot := s.slot
+	s.mu.Unlock()
+	return count, slot, err
+}
+
+func (s *userRPMDecrCacheStub) DecrementUserGroupRPMSlot(_ context.Context, _, _ int64, slot int64) error {
 	atomic.AddInt32(&s.decrCalls, 1)
+	s.mu.Lock()
+	s.decrSlots = append(s.decrSlots, slot)
+	s.mu.Unlock()
 	return s.decrErr
+}
+
+func (s *userRPMDecrCacheStub) setSlot(slot int64) {
+	s.mu.Lock()
+	s.slot = slot
+	s.mu.Unlock()
+}
+
+func (s *userRPMDecrCacheStub) releasedSlots() []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]int64(nil), s.decrSlots...)
 }
 
 func newDecrStub(counts ...int) *userRPMDecrCacheStub {
@@ -233,4 +265,156 @@ func TestChainRPM_TicketReleaseOnceAndSafe(t *testing.T) {
 
 	var nilTicket *GroupRPMTicket
 	require.NotPanics(t, func() { nilTicket.Release(context.Background()) })
+}
+
+// S5：退回对准递增时的分钟槽，而不是退回时的当前分钟；退回不再依赖「当前分钟」。
+func TestChainRPM_TicketReleaseTargetsIncrementSlot(t *testing.T) {
+	cache := newDecrStub(1)
+	cache.setSlot(28_333_334)
+	svc := newBillingServiceForRPM(t, cache, &rpmOverrideRepoStub{})
+
+	ticket, err := svc.CheckGroupRPMForHop(context.Background(), &User{ID: 1}, &Group{ID: 20, RPMLimit: 5})
+	require.NoError(t, err)
+	require.NotNil(t, ticket)
+
+	// 之后时间走到了下一分钟：新的递增会落在新槽，但这张 ticket 的退回必须仍对准旧槽。
+	cache.setSlot(28_333_335)
+	ticket.Release(context.Background())
+	require.Equal(t, []int64{28_333_334}, cache.releasedSlots())
+}
+
+// S5：首跳在入口计数时同样记下分钟槽。
+func TestChainRPM_EntryTicketReleaseTargetsIncrementSlot(t *testing.T) {
+	cache := newDecrStub(1)
+	cache.setSlot(100)
+	svc := newBillingServiceForRPM(t, cache, &rpmOverrideRepoStub{})
+
+	ticket, err := svc.checkChainEntryRPM(context.Background(), &User{ID: 1}, &Group{ID: 10, RPMLimit: 5})
+	require.NoError(t, err)
+	require.NotNil(t, ticket)
+	cache.setSlot(101)
+	ticket.Release(context.Background())
+	require.Equal(t, []int64{100}, cache.releasedSlots())
+}
+
+// S5：无链路径（checkRPM）仍只用原来的 IncrementUserGroupRPM，不走带槽的版本；有链路径才走带槽版本。
+func TestChainRPM_OnlyChainPathUsesSlotIncrement(t *testing.T) {
+	cache := newDecrStub(1, 1)
+	svc := newBillingServiceForRPM(t, cache, &rpmOverrideRepoStub{})
+	group := &Group{ID: 10, RPMLimit: 5}
+
+	require.NoError(t, svc.checkRPM(context.Background(), &User{ID: 1}, group))
+	require.EqualValues(t, 1, atomic.LoadInt32(&cache.userGroupCalls))
+	require.EqualValues(t, 0, atomic.LoadInt32(&cache.slotIncrCalls), "无链路径不得使用带槽递增")
+
+	_, err := svc.CheckGroupRPMForHop(context.Background(), &User{ID: 1}, group)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, atomic.LoadInt32(&cache.slotIncrCalls))
+}
+
+// S5：带槽递增失败（Redis 故障）时 fail-open，不产生 ticket，也就不会有退回。
+func TestChainRPM_SlotIncrementErrorFailsOpenWithoutTicket(t *testing.T) {
+	cache := &userRPMDecrCacheStub{userRPMCacheStub: &userRPMCacheStub{userGroupErr: errors.New("redis down")}}
+	svc := newBillingServiceForRPM(t, cache, &rpmOverrideRepoStub{})
+	ticket, err := svc.CheckGroupRPMForHop(context.Background(), &User{ID: 1}, &Group{ID: 20, RPMLimit: 1})
+	require.NoError(t, err)
+	require.Nil(t, ticket)
+}
+
+// ---- 入口 RPM（S1）：首跳分组层先于用户层，与无链 checkRPM 的顺序一致 ----
+
+// 首跳分组层超限：用户层不计数（与无链一致），ticket 随错误返回但不退回。
+func TestChainRPM_EntryFirstHopExceededDoesNotCountUserLayer(t *testing.T) {
+	cache := newDecrStub(2)
+	svc := newBillingServiceForRPM(t, cache, &rpmOverrideRepoStub{})
+	user := &User{ID: 1, RPMLimit: 100}
+
+	ticket, err := svc.checkChainEntryRPM(context.Background(), user, &Group{ID: 10, RPMLimit: 1})
+	require.ErrorIs(t, err, ErrGroupRPMExceeded)
+	require.NotNil(t, ticket)
+	require.EqualValues(t, 1, atomic.LoadInt32(&cache.userGroupCalls))
+	require.EqualValues(t, 0, atomic.LoadInt32(&cache.userCalls), "首跳分组超限时用户层不得计数")
+	require.EqualValues(t, 0, atomic.LoadInt32(&cache.decrCalls), "首跳超限保持计数，与无链一致")
+}
+
+// 首跳通过、用户层超限：返回 ErrUserRPMExceeded，首跳 ticket 一并返回，分组层计数保持（与无链一致）。
+func TestChainRPM_EntryUserLayerExceededKeepsGroupCount(t *testing.T) {
+	cache := &userRPMDecrCacheStub{userRPMCacheStub: &userRPMCacheStub{userGroupCounts: []int{1}, userCounts: []int{2}}}
+	svc := newBillingServiceForRPM(t, cache, &rpmOverrideRepoStub{})
+
+	ticket, err := svc.checkChainEntryRPM(context.Background(), &User{ID: 1, RPMLimit: 1}, &Group{ID: 10, RPMLimit: 5})
+	require.ErrorIs(t, err, ErrUserRPMExceeded)
+	require.NotNil(t, ticket)
+	require.EqualValues(t, 1, atomic.LoadInt32(&cache.userGroupCalls))
+	require.EqualValues(t, 1, atomic.LoadInt32(&cache.userCalls))
+	require.EqualValues(t, 0, atomic.LoadInt32(&cache.decrCalls))
+}
+
+// 全部通过：首跳计一次、用户层计一次，返回首跳 ticket，用于第 0 跳结束后的退回。
+func TestChainRPM_EntryPassesReturnsFirstHopTicket(t *testing.T) {
+	cache := newDecrStub(1)
+	svc := newBillingServiceForRPM(t, cache, &rpmOverrideRepoStub{})
+	ticket, err := svc.checkChainEntryRPM(context.Background(), &User{ID: 1, RPMLimit: 5}, &Group{ID: 10, RPMLimit: 5})
+	require.NoError(t, err)
+	require.NotNil(t, ticket)
+	require.EqualValues(t, 1, atomic.LoadInt32(&cache.userGroupCalls))
+	require.EqualValues(t, 1, atomic.LoadInt32(&cache.userCalls))
+	ticket.Release(context.Background())
+	require.EqualValues(t, 1, atomic.LoadInt32(&cache.decrCalls))
+}
+
+// firstHop 为 nil 或没有分组限额：只做用户层，ticket 为 nil。
+func TestChainRPM_EntryNoFirstHopLimitOnlyUserLayer(t *testing.T) {
+	cache := newDecrStub()
+	svc := newBillingServiceForRPM(t, cache, &rpmOverrideRepoStub{})
+	user := &User{ID: 1, RPMLimit: 5}
+
+	ticket, err := svc.checkChainEntryRPM(context.Background(), user, nil)
+	require.NoError(t, err)
+	require.Nil(t, ticket)
+	ticket, err = svc.checkChainEntryRPM(context.Background(), user, &Group{ID: 10})
+	require.NoError(t, err)
+	require.Nil(t, ticket)
+	require.EqualValues(t, 0, atomic.LoadInt32(&cache.userGroupCalls))
+	require.EqualValues(t, 2, atomic.LoadInt32(&cache.userCalls))
+}
+
+// 与无链 checkRPM 的计数序列逐项一致（首跳 = 主分组、无 admin head 时）。
+func TestChainRPM_EntryCountingMatchesNoChainCheckRPM(t *testing.T) {
+	group := &Group{ID: 10, RPMLimit: 2}
+	user := &User{ID: 1, RPMLimit: 100}
+
+	noChain := newDecrStub(1, 2, 3)
+	svcA := newBillingServiceForRPM(t, noChain, &rpmOverrideRepoStub{})
+	chain := newDecrStub(1, 2, 3)
+	svcB := newBillingServiceForRPM(t, chain, &rpmOverrideRepoStub{})
+
+	for i := 0; i < 3; i++ {
+		errA := svcA.checkRPM(context.Background(), user, group)
+		_, errB := svcB.checkChainEntryRPM(context.Background(), user, group)
+		require.Equal(t, errA, errB, "第 %d 次", i)
+	}
+	require.Equal(t, atomic.LoadInt32(&noChain.userGroupCalls), atomic.LoadInt32(&chain.userGroupCalls))
+	require.Equal(t, atomic.LoadInt32(&noChain.userCalls), atomic.LoadInt32(&chain.userCalls))
+}
+
+// ---- BK-3：简易模式不检查任何 RPM ----
+
+func TestChainRPM_SimpleModeSkipsAllRPMChecks(t *testing.T) {
+	cache := newDecrStub(9, 9)
+	svc := NewBillingCacheService(nil, nil, nil, nil, cache, &rpmOverrideRepoStub{}, &config.Config{RunMode: config.RunModeSimple}, nil, nil)
+	t.Cleanup(svc.Stop)
+	user := &User{ID: 1, RPMLimit: 1}
+	group := &Group{ID: 10, RPMLimit: 1}
+
+	ticket, err := svc.CheckGroupRPMForHop(context.Background(), user, group)
+	require.NoError(t, err, "simple 模式下分组层不得返回 429")
+	require.Nil(t, ticket)
+	require.EqualValues(t, 0, atomic.LoadInt32(&cache.userGroupCalls))
+
+	ticket, err = svc.CheckBillingEligibilityForChain(context.Background(), user, nil, group, nil, "")
+	require.NoError(t, err)
+	require.Nil(t, ticket)
+	require.EqualValues(t, 0, atomic.LoadInt32(&cache.userGroupCalls))
+	require.EqualValues(t, 0, atomic.LoadInt32(&cache.userCalls))
 }

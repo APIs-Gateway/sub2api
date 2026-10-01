@@ -24,7 +24,8 @@ type Coordinator struct {
 }
 
 // ServedGroupRecorder 是「请求结束后补记实际服务分组」的接口（设计 Q18）：
-// 有回退链时审计事件里的分组是触发审计的那一跳，请求结束后由入口把实际服务的分组补记到同一 request_id 的事件上。
+// 有回退链时审计事件里的 group_id / group_name 始终是用户 Key 的主分组（触发审计的那一跳另记在只给管理端的 ScopeGroup* 字段），
+// 请求结束后由入口把实际服务的分组补记到同一 request_id 的事件上。
 // 本段只留接口，没有默认实现（未设置时 RecordServedGroup 是空操作）；落库实现在后续分段按需提供。
 type ServedGroupRecorder interface {
 	RecordServedGroup(ctx context.Context, requestID string, servedGroupID int64) error

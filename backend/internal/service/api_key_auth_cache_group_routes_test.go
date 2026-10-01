@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -101,4 +102,42 @@ func TestAPIKeyAuthSnapshot_DoesNotCarryShadowKeyFields(t *testing.T) {
 	require.NotContains(t, string(rawKey), "HomeGroupID")
 	require.NotContains(t, string(rawKey), "RouteSource")
 	require.NotContains(t, string(rawKey), "HasGroupRoutes")
+}
+
+// S4：回退链的 EXISTS 查询失败（HasGroupRoutesUnknown）时，本次按无链处理，但不得写入 L1/L2 鉴权缓存；
+// 正常结果照常写入。
+func TestAPIKeyService_GetByKey_DoesNotCacheWhenGroupRoutesCheckFailed(t *testing.T) {
+	cfg := &config.Config{APIKeyAuth: config.APIKeyAuthCacheConfig{L1Size: 100, L1TTLSeconds: 60, L2TTLSeconds: 60}}
+
+	cache := &authCacheStub{}
+	var calls int32
+	repo := &authRepoStub{getByKeyForAuth: func(context.Context, string) (*APIKey, error) {
+		atomic.AddInt32(&calls, 1)
+		k := routesSnapshotTestAPIKey(false)
+		k.HasGroupRoutesUnknown = true
+		return k, nil
+	}}
+	svc := NewAPIKeyService(repo, nil, nil, nil, nil, cache, cfg)
+
+	for i := 0; i < 2; i++ {
+		got, err := svc.GetByKey(context.Background(), "k-routes")
+		require.NoError(t, err)
+		require.False(t, got.HasGroupRoutes, "本次按无链处理")
+		if svc.authCacheL1 != nil {
+			svc.authCacheL1.Wait() // ristretto 的写入是异步缓冲的，等它落地后再断言 L1 里确实没有
+		}
+	}
+	require.EqualValues(t, 2, atomic.LoadInt32(&calls), "没有缓存，每次都回源重查（L1 也不能缓存）")
+	require.Empty(t, cache.setAuthKeys, "EXISTS 失败的结果不得写入 L2")
+
+	// 对照：查询成功时照常写缓存。
+	cache2 := &authCacheStub{}
+	repo2 := &authRepoStub{getByKeyForAuth: func(context.Context, string) (*APIKey, error) {
+		return routesSnapshotTestAPIKey(true), nil
+	}}
+	svc2 := NewAPIKeyService(repo2, nil, nil, nil, nil, cache2, cfg)
+	got, err := svc2.GetByKey(context.Background(), "k-routes")
+	require.NoError(t, err)
+	require.True(t, got.HasGroupRoutes)
+	require.Len(t, cache2.setAuthKeys, 1)
 }

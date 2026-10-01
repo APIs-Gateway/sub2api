@@ -22,7 +22,7 @@ import (
 
 // ---- 测试替身 ----
 
-// scopedPromptEngine 模拟真实 PromptService 的范围判定：先 ScopeRequest（并集），再 IncludesGroup；范围内一律拦截。
+// scopedPromptEngine 模拟真实 PromptService 的范围判定：先 ScopeRequest（并集），再 InScope；范围内一律拦截。
 type scopedPromptEngine struct {
 	cfg  securityaudit.ActiveConfig
 	mu   sync.Mutex
@@ -38,7 +38,7 @@ func (e *scopedPromptEngine) Evaluate(_ context.Context, req securityaudit.Reque
 	e.mu.Lock()
 	e.seen = append(e.seen, req)
 	e.mu.Unlock()
-	if !e.cfg.IncludesGroup(req.GroupID) {
+	if !e.cfg.InScope(req) {
 		return &securityaudit.PromptDecision{Kind: securityaudit.DecisionAllow, AllowNextStage: true}, nil
 	}
 	return &securityaudit.PromptDecision{Kind: securityaudit.DecisionBlock, AllowNextStage: false}, nil
@@ -51,6 +51,15 @@ func (e *scopedPromptEngine) lastGroupID() int64 {
 		return 0
 	}
 	return *e.seen[len(e.seen)-1].GroupID
+}
+
+func (e *scopedPromptEngine) lastScopeGroupID() int64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.seen) == 0 || e.seen[len(e.seen)-1].ScopeGroupID == nil {
+		return 0
+	}
+	return *e.seen[len(e.seen)-1].ScopeGroupID
 }
 
 type chainModSettingRepo struct {
@@ -111,10 +120,43 @@ func (chainModRepo) UpdateLogEmailSent(context.Context, int64, bool) error { ret
 
 func newChainModerationService(t *testing.T, groupIDs ...int64) *service.ContentModerationService {
 	t.Helper()
+	return newChainModerationServiceWith(t, chainModRepo{}, false, groupIDs...)
+}
+
+// chainModLogRepo 在 chainModRepo 之上记录写入的审核日志。
+type chainModLogRepo struct {
+	chainModRepo
+	mu   sync.Mutex
+	logs []service.ContentModerationLog
+}
+
+func (r *chainModLogRepo) CreateLog(_ context.Context, log *service.ContentModerationLog) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if log != nil {
+		r.logs = append(r.logs, *log)
+	}
+	return nil
+}
+
+func (r *chainModLogRepo) waitLogs(t *testing.T, want int) []service.ContentModerationLog {
+	t.Helper()
+	var logs []service.ContentModerationLog
+	require.Eventually(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		logs = append([]service.ContentModerationLog(nil), r.logs...)
+		return len(logs) == want
+	}, time.Second, 10*time.Millisecond)
+	return logs
+}
+
+func newChainModerationServiceWith(t *testing.T, repo service.ContentModerationRepository, allGroups bool, groupIDs ...int64) *service.ContentModerationService {
+	t.Helper()
 	raw, err := json.Marshal(map[string]any{
 		"enabled":               true,
 		"mode":                  service.ContentModerationModePreBlock,
-		"all_groups":            false,
+		"all_groups":            allGroups,
 		"group_ids":             groupIDs,
 		"blocked_keywords":      []string{"secret-token"},
 		"keyword_blocking_mode": service.ContentModerationKeywordModeKeywordOnly,
@@ -127,7 +169,7 @@ func newChainModerationService(t *testing.T, groupIDs ...int64) *service.Content
 			service.SettingKeyRiskControlEnabled:      "true",
 			service.SettingKeyContentModerationConfig: string(raw),
 		}},
-		chainModRepo{}, nil, nil, nil, nil, nil, nil,
+		repo, nil, nil, nil, nil, nil, nil,
 	)
 }
 
@@ -165,7 +207,8 @@ func TestRunSecurityAuditForChain_FallbackGroupInScopeBlocksRequest(t *testing.T
 	require.NotNil(t, decision)
 	require.Equal(t, securityaudit.DecisionBlock, decision.Kind, "主分组不在范围、兜底分组在范围，必须拦截")
 	require.False(t, decision.AllowNextStage)
-	require.EqualValues(t, 42, engine.lastGroupID(), "审计请求里的分组是触发审计的那一跳")
+	require.EqualValues(t, 1, engine.lastGroupID(), "用户可见的分组保持主分组")
+	require.EqualValues(t, 42, engine.lastScopeGroupID(), "触发审计的那一跳另存在只给管理端的字段")
 	_, completed := ctx.Get(securityAuditCompletedContextKey)
 	require.False(t, completed, "被拦截时不得标记审计已完成")
 }
@@ -228,6 +271,54 @@ func TestRunSecurityAuditForChain_ModerationLegacyPathBlocksFallbackScope(t *tes
 	decision = runSecurityAudit(ctx2, nil, nil, moderation, apiKey2, subject2, service.ContentModerationProtocolOpenAIChat, "gpt-test", chainAuditBody, "http")
 	require.NotNil(t, decision)
 	require.Equal(t, securityaudit.DecisionAllow, decision.Kind)
+}
+
+// BK-1（入口层）：链上有管理员隐藏的 head 分组、审核范围是全部分组时，
+// 审核日志里用户可见的分组仍是用户 Key 的主分组，隐藏分组的名字不出现在日志里（含序列化后的内容）。
+func TestRunSecurityAuditForChain_AdminHeadNeverReplacesPrimaryGroupInModerationLog(t *testing.T) {
+	ctx, apiKey, subject := newChainAuditContext()
+	repo := &chainModLogRepo{}
+	moderation := newChainModerationServiceWith(t, repo, true)
+	hops := []service.ChainHop{
+		{GroupID: 99, Group: &service.Group{ID: 99, Name: "hidden-head", Platform: service.PlatformOpenAI}, RouteSource: service.RouteSourceAdmin},
+		{GroupID: 1, Group: &service.Group{ID: 1, Name: "primary", Platform: service.PlatformOpenAI}, RouteSource: service.RouteSourcePrimary},
+	}
+
+	decision := runSecurityAuditForChain(ctx, nil, nil, moderation, apiKey, subject, service.ContentModerationProtocolOpenAIChat, "gpt-test", chainAuditBody, "http", hops)
+	require.NotNil(t, decision)
+	require.Equal(t, securityaudit.DecisionBlock, decision.Kind)
+
+	logs := repo.waitLogs(t, 1)
+	require.NotNil(t, logs[0].GroupID)
+	require.EqualValues(t, 1, *logs[0].GroupID)
+	require.Equal(t, "primary", logs[0].GroupName)
+	raw, err := json.Marshal(logs[0])
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "hidden-head")
+}
+
+// BK-1（防御）：即使入口误把某一跳的影子 Key 传进审核 / 审计，用户可见的分组也只能是主分组，
+// 影子 Key 上隐藏分组的名字不会进入审核输入。
+func TestBuildContentModerationInput_ShadowKeyNeverCarriesHopGroupName(t *testing.T) {
+	ctx, apiKey, subject := newChainAuditContext()
+	hidden := service.ChainHop{GroupID: 99, Group: &service.Group{ID: 99, Name: "hidden-head", Platform: service.PlatformOpenAI}, RouteSource: service.RouteSourceAdmin}
+	shadow := NewServedAPIKey(apiKey, hidden)
+	require.Equal(t, "hidden-head", shadow.Group.Name, "前提：影子 Key 的 Group 是被服务那一跳")
+
+	input := buildContentModerationInput(ctx, shadow, subject, service.ContentModerationProtocolOpenAIChat, "gpt-test", chainAuditBody)
+	require.NotNil(t, input.GroupID)
+	require.EqualValues(t, 1, *input.GroupID, "分组 ID 回到主分组")
+	require.NotContains(t, input.GroupName, "hidden-head")
+
+	request := buildSecurityAuditRequest(ctx, shadow, subject, service.ContentModerationProtocolOpenAIChat, "gpt-test", chainAuditBody, "http")
+	require.NotNil(t, request.GroupID)
+	require.EqualValues(t, 1, *request.GroupID)
+	require.NotContains(t, request.GroupName, "hidden-head")
+
+	// 非影子 Key 不受影响。
+	plain := buildContentModerationInput(ctx, apiKey, subject, service.ContentModerationProtocolOpenAIChat, "gpt-test", chainAuditBody)
+	require.EqualValues(t, 1, *plain.GroupID)
+	require.Equal(t, "primary", plain.GroupName)
 }
 
 func TestRunContentModerationForChain_EmptyChainIsLegacyBehavior(t *testing.T) {
@@ -372,8 +463,19 @@ func (c *hopRPMCache) IncrementUserGroupRPM(context.Context, int64, int64) (int,
 func (c *hopRPMCache) IncrementUserRPM(context.Context, int64) (int, error)       { return 1, nil }
 func (c *hopRPMCache) GetUserGroupRPM(context.Context, int64, int64) (int, error) { return 0, nil }
 func (c *hopRPMCache) GetUserRPM(context.Context, int64) (int, error)             { return 0, nil }
-func (c *hopRPMCache) DecrementUserGroupRPM(context.Context, int64, int64) error {
-	atomic.AddInt32(&c.decr, 1)
+
+// 实现可选的 service.UserGroupRPMSlotCounter：带槽递增复用计数序列，槽固定为 hopRPMSlot；退回只计次数。
+const hopRPMSlot int64 = 7
+
+func (c *hopRPMCache) IncrementUserGroupRPMSlot(ctx context.Context, userID, groupID int64) (int, int64, error) {
+	count, err := c.IncrementUserGroupRPM(ctx, userID, groupID)
+	return count, hopRPMSlot, err
+}
+
+func (c *hopRPMCache) DecrementUserGroupRPMSlot(_ context.Context, _, _, slot int64) error {
+	if slot == hopRPMSlot {
+		atomic.AddInt32(&c.decr, 1)
+	}
 	return nil
 }
 
@@ -401,8 +503,9 @@ func TestCheckHopGroupRPM_FirstHopExceededRejectsWithoutRelease(t *testing.T) {
 	cache := &hopRPMCache{counts: []int{2}}
 	billing := newHopRPMBilling(t, cache)
 
-	verdict, ticket := CheckHopGroupRPM(context.Background(), billing, &service.User{ID: 1}, hopWithRPMLimit(10, 1), 0)
+	verdict, ticket, err := CheckHopGroupRPM(context.Background(), billing, &service.User{ID: 1}, hopWithRPMLimit(10, 1), 0)
 	require.Equal(t, GroupRPMReject, verdict, "首跳超限：429，不回退")
+	require.ErrorIs(t, err, service.ErrGroupRPMExceeded)
 	require.NotNil(t, ticket)
 	require.EqualValues(t, 0, atomic.LoadInt32(&cache.decr), "首跳超限保持计数不变，与无链现状一致")
 }
@@ -411,47 +514,75 @@ func TestCheckHopGroupRPM_NonFirstHopExceededSkipsAndReleases(t *testing.T) {
 	cache := &hopRPMCache{counts: []int{2}}
 	billing := newHopRPMBilling(t, cache)
 
-	verdict, ticket := CheckHopGroupRPM(context.Background(), billing, &service.User{ID: 1}, hopWithRPMLimit(20, 1), 1)
+	verdict, ticket, err := CheckHopGroupRPM(context.Background(), billing, &service.User{ID: 1}, hopWithRPMLimit(20, 1), 1)
 	require.Equal(t, GroupRPMSkip, verdict, "非首跳超限：跳过")
+	require.ErrorIs(t, err, service.ErrGroupRPMExceeded, "超限时把错误一并返回，入口可直接写 429")
 	require.Nil(t, ticket)
 	require.EqualValues(t, 1, atomic.LoadInt32(&cache.decr), "被跳过的这一跳不应占用 RPM 额度")
 }
 
-func TestCheckHopGroupRPM_ProceedAndReleaseByOutcome(t *testing.T) {
+// BK-2 / S3：退回规则按 (Outcome, IsLast, ErrorWritten, Attempts) 决定。
+func TestReleaseHopGroupRPMIfNotServed_Rules(t *testing.T) {
 	for _, tc := range []struct {
-		outcome      service.HopOutcome
+		name         string
+		info         service.HopInfo
+		result       service.HopResult
 		wantReleased int32
 	}{
-		{service.HopOutcomeDone, 0},
-		{service.HopOutcomeTerminal, 0},
-		{service.HopOutcomeFallbackWorthy, 1},
-		{service.HopOutcomeSkipped, 1},
+		{"done", service.HopInfo{}, service.HopResult{Outcome: service.HopOutcomeDone}, 0},
+		{"terminal", service.HopInfo{}, service.HopResult{Outcome: service.HopOutcomeTerminal}, 0},
+		{"non-last fallback never reached upstream", service.HopInfo{}, service.HopResult{Outcome: service.HopOutcomeFallbackWorthy}, 1},
+		{"non-last fallback reached upstream keeps count", service.HopInfo{}, service.HopResult{Outcome: service.HopOutcomeFallbackWorthy, Attempts: 2}, 0},
+		{"last hop fallback error written keeps count", service.HopInfo{IsLast: true}, service.HopResult{Outcome: service.HopOutcomeFallbackWorthy, ErrorWritten: true}, 0},
+		{"last hop fallback keeps count even without ErrorWritten", service.HopInfo{IsLast: true}, service.HopResult{Outcome: service.HopOutcomeFallbackWorthy}, 0},
+		{"non-last fallback with error written keeps count", service.HopInfo{}, service.HopResult{Outcome: service.HopOutcomeFallbackWorthy, ErrorWritten: true}, 0},
+		{"skipped", service.HopInfo{}, service.HopResult{Outcome: service.HopOutcomeSkipped}, 1},
+		{"skipped last hop", service.HopInfo{IsLast: true}, service.HopResult{Outcome: service.HopOutcomeSkipped}, 1},
 	} {
 		cache := &hopRPMCache{counts: []int{1}}
 		billing := newHopRPMBilling(t, cache)
-		verdict, ticket := CheckHopGroupRPM(context.Background(), billing, &service.User{ID: 1}, hopWithRPMLimit(10, 5), 0)
-		require.Equal(t, GroupRPMProceed, verdict)
-		require.NotNil(t, ticket)
-		ReleaseHopGroupRPMIfNotServed(context.Background(), ticket, tc.outcome)
-		require.Equal(t, tc.wantReleased, atomic.LoadInt32(&cache.decr), "outcome=%v", tc.outcome)
+		verdict, ticket, err := CheckHopGroupRPM(context.Background(), billing, &service.User{ID: 1}, hopWithRPMLimit(10, 5), 1)
+		require.Equal(t, GroupRPMProceed, verdict, tc.name)
+		require.NoError(t, err, tc.name)
+		require.NotNil(t, ticket, tc.name)
+		ReleaseHopGroupRPMIfNotServed(context.Background(), ticket, tc.info, tc.result)
+		require.Equal(t, tc.wantReleased, atomic.LoadInt32(&cache.decr), tc.name)
 	}
+}
+
+// BK-3：简易模式下整个 RPM 都不检查，有链的每一跳也不得因分组 RPM 返回 429、不得计数。
+func TestCheckHopGroupRPM_SimpleModeNeverLimits(t *testing.T) {
+	cache := &hopRPMCache{counts: []int{9, 9}}
+	svc := service.NewBillingCacheService(nil, nil, nil, nil, cache, &hopRateRepo{}, &config.Config{RunMode: config.RunModeSimple}, nil, nil)
+	t.Cleanup(svc.Stop)
+
+	for _, idx := range []int{0, 1} {
+		verdict, ticket, err := CheckHopGroupRPM(context.Background(), svc, &service.User{ID: 1}, hopWithRPMLimit(10, 1), idx)
+		require.Equal(t, GroupRPMProceed, verdict, "idx=%d", idx)
+		require.NoError(t, err)
+		require.Nil(t, ticket)
+	}
+	require.EqualValues(t, 0, atomic.LoadInt32(&cache.incr), "simple 模式不计数")
 }
 
 func TestCheckHopGroupRPM_NoLimitOrNilInputsProceed(t *testing.T) {
 	cache := &hopRPMCache{}
 	billing := newHopRPMBilling(t, cache)
 
-	verdict, ticket := CheckHopGroupRPM(context.Background(), billing, &service.User{ID: 1}, hopWithRPMLimit(10, 0), 0)
+	verdict, ticket, err := CheckHopGroupRPM(context.Background(), billing, &service.User{ID: 1}, hopWithRPMLimit(10, 0), 0)
 	require.Equal(t, GroupRPMProceed, verdict)
+	require.NoError(t, err)
 	require.Nil(t, ticket)
 	require.EqualValues(t, 0, atomic.LoadInt32(&cache.incr), "没有分组限额不计数")
 
-	verdict, ticket = CheckHopGroupRPM(context.Background(), nil, &service.User{ID: 1}, hopWithRPMLimit(10, 1), 0)
+	verdict, ticket, _ = CheckHopGroupRPM(context.Background(), nil, &service.User{ID: 1}, hopWithRPMLimit(10, 1), 0)
 	require.Equal(t, GroupRPMProceed, verdict)
 	require.Nil(t, ticket)
-	verdict, _ = CheckHopGroupRPM(context.Background(), billing, nil, hopWithRPMLimit(10, 1), 0)
+	verdict, _, _ = CheckHopGroupRPM(context.Background(), billing, nil, hopWithRPMLimit(10, 1), 0)
 	require.Equal(t, GroupRPMProceed, verdict)
-	verdict, _ = CheckHopGroupRPM(context.Background(), billing, &service.User{ID: 1}, service.ChainHop{GroupID: 3}, 0)
+	verdict, _, _ = CheckHopGroupRPM(context.Background(), billing, &service.User{ID: 1}, service.ChainHop{GroupID: 3}, 0)
 	require.Equal(t, GroupRPMProceed, verdict)
-	require.NotPanics(t, func() { ReleaseHopGroupRPMIfNotServed(context.Background(), nil, service.HopOutcomeFallbackWorthy) })
+	require.NotPanics(t, func() {
+		ReleaseHopGroupRPMIfNotServed(context.Background(), nil, service.HopInfo{}, service.HopResult{Outcome: service.HopOutcomeFallbackWorthy})
+	})
 }

@@ -93,7 +93,7 @@ func (h *OpenAIGatewayHandler) checkSecurityAuditStageForChain(c *gin.Context, r
 }
 
 // recordSecurityAuditServedGroup 在请求结束后补记实际服务的分组（设计 Q18）。
-// 审计事件里的分组是触发审计的那一跳；这里把实际服务的分组按 request_id 补记上去。
+// 审计事件里的分组始终是主分组（触发审计的那一跳另记在只给管理端的 ScopeGroup* 字段）；这里把实际服务的分组按 request_id 补记上去。
 // coordinator 未配置 recorder 时是空操作；失败只打日志，不影响响应。
 func recordSecurityAuditServedGroup(c *gin.Context, reqLog *zap.Logger, coordinator *securityaudit.Coordinator, servedGroupID int64) {
 	if c == nil || c.Request == nil || coordinator == nil || servedGroupID <= 0 {

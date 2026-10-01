@@ -442,6 +442,13 @@ func ProvideOpsScheduledReportService(
 	return svc
 }
 
+// ProvideGroupRouteService 提供 Key 级分组回退链服务，并用「保存链后失效这把 Key 的鉴权缓存」的钩子包装
+// （设计 2.5 / 审查 BK-4、N4）：鉴权快照里的 has_group_routes 靠它在保存 / 清空链、主分组变更之后立刻重算，
+// 所有消费方（用户端 PUT、管理端隐藏链、主分组变更、PR5 迁移工具）通过依赖注入拿到的都是这个包装后的实现。
+func ProvideGroupRouteService(repo APIKeyGroupRouteRepository, groupRepo GroupRepository, settingService *SettingService, apiKeyService *APIKeyService) GroupRouteService {
+	return NewAuthCacheInvalidatingGroupRouteService(NewGroupRouteService(repo, groupRepo, settingService), apiKeyService)
+}
+
 // ProvideAPIKeyAuthCacheInvalidator 提供 API Key 认证缓存失效能力
 func ProvideAPIKeyAuthCacheInvalidator(apiKeyService *APIKeyService) APIKeyAuthCacheInvalidator {
 	// Start Pub/Sub subscriber for L1 cache invalidation across instances
@@ -619,7 +626,8 @@ var ProviderSet = wire.NewSet(
 	NewProxyService,
 	NewRedeemService,
 	NewCheckinService,
-	NewGroupRouteService, // Key 级分组回退链
+	// Key 级分组回退链（PR1 注册，尚无消费方；PR2a 起带「保存链后失效鉴权缓存」的钩子，审查 BK-4）
+	ProvideGroupRouteService,
 	NewGroupRouteKeyHooks,
 	NewKeyEditorPriceService,
 	NewKeyFallbackService,
