@@ -1,0 +1,299 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { defineComponent, h } from 'vue'
+
+import { useAppStore } from '@/stores/app'
+import type { KeyFallbackChain, KeyFallbackChainItem } from '@/types'
+
+const { getChain, replaceChain } = vi.hoisted(() => ({ getChain: vi.fn(), replaceChain: vi.fn() }))
+
+// 测试环境用的是 vue-i18n 的 runtime 构建，不能现场编译消息；
+// 这里直接按 zh-CN 语言包的点路径取文案并替换 {占位符}，断言的是用户真正看到的字。
+vi.mock('vue-i18n', async () => {
+  const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
+  const { default: zhCN } = await import('@/i18n/locales/zh-CN')
+  const translate = (key: string, params: Record<string, unknown> = {}) => {
+    const hit = key.split('.').reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], zhCN)
+    if (typeof hit !== 'string') return key
+    return hit.replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? `{${name}}`))
+  }
+  return { ...actual, useI18n: () => ({ t: translate }) }
+})
+
+vi.mock('@/api/keyFallback', () => ({
+  keyFallbackAPI: { getChain, replaceChain, listChains: vi.fn() }
+}))
+
+// jsdom 里 SortableJS 拖不起来：用一个会把 v-model / end 事件透出来的替身，
+// 测试里直接触发这两个事件，等价于用户拖完一次。
+vi.mock('vue-draggable-plus', () => ({
+  VueDraggable: defineComponent({
+    name: 'VueDraggable',
+    props: { modelValue: { type: Array, default: () => [] }, disabled: Boolean },
+    emits: ['update:modelValue', 'end'],
+    setup(_, { slots }) {
+      return () => h('div', { 'data-stub': 'draggable' }, slots.default?.())
+    }
+  })
+}))
+
+import KeyFallbackChainEditor from '../KeyFallbackChainEditor.vue'
+
+// cny 是服务端按余额价口径给的人民币价（这里取美元价 / 7.2），前端不再自己换算
+const price = (input: number, output: number) => ({
+  priced: true,
+  input_usd_per_mtok: input,
+  output_usd_per_mtok: output,
+  cny: { input_per_mtok: +(input / 7.2).toFixed(4), output_per_mtok: +(output / 7.2).toFixed(4) }
+})
+
+function item(
+  id: number,
+  name: string,
+  position: number,
+  extra: Partial<KeyFallbackChainItem> = {}
+): KeyFallbackChainItem {
+  return {
+    group_id: id,
+    name,
+    role: position === 0 ? 'primary' : 'fallback',
+    position,
+    status: 'active',
+    usable: true,
+    rate_multiplier: 1,
+    user_rate_multiplier: null,
+    effective_multiplier: 1,
+    reference_price: price(1.25, 10),
+    ...extra
+  }
+}
+
+function makeChain(overrides: Partial<KeyFallbackChain> = {}): KeyFallbackChain {
+  return {
+    key_id: 7,
+    platform: 'openai',
+    reference_model: 'gpt-5.5',
+    max_fallbacks: 5,
+    items: [
+      item(16, 'Codex Plus', 0),
+      item(21, 'Codex 稳定', 1, { rate_multiplier: 1.8, user_rate_multiplier: 1.5, reference_price: price(1.875, 15) }),
+      item(22, 'Codex 备用', 2, { status: 'disabled', usable: false }),
+      item(23, 'Codex 专属', 3, { status: 'unavailable', usable: false, reference_price: { priced: false } })
+    ],
+    available: [
+      { group_id: 30, name: 'Codex Pro', status: 'active', rate_multiplier: 3, effective_multiplier: 3, reference_price: price(3.75, 30) },
+      { group_id: 31, name: 'Codex Max', status: 'active', rate_multiplier: 5, effective_multiplier: 5, reference_price: { priced: false } }
+    ],
+    ...overrides
+  }
+}
+
+/** 按 groupIds 重建服务端的返回：主分组 + 这些兜底分组 */
+function replyFor(base: KeyFallbackChain, ids: number[]): KeyFallbackChain {
+  const all = [...base.items, ...base.available.map((a) => item(a.group_id, a.name, 9, a))]
+  return {
+    ...base,
+    items: [
+      base.items[0],
+      ...ids.map((id, i) => ({ ...all.find((x) => x.group_id === id)!, role: 'fallback' as const, position: i + 1 }))
+    ],
+    available: base.available.filter((a) => !ids.includes(a.group_id))
+  }
+}
+
+function setRecharge(multiplier: number) {
+  const store = useAppStore()
+  store.cachedPublicSettings = { balance_recharge_multiplier: multiplier } as never
+}
+
+async function mountEditor(chain = makeChain()) {
+  getChain.mockResolvedValue(chain)
+  const wrapper = mount(KeyFallbackChainEditor, {
+    props: { keyId: 7 },
+    global: { stubs: { GroupBadge: { props: ['name', 'rateMultiplier', 'userRateMultiplier'], template: '<span data-test="badge">{{ name }} {{ userRateMultiplier ?? rateMultiplier }}x</span>' } } }
+  })
+  await flushPromises()
+  return wrapper
+}
+
+const draggable = (w: ReturnType<typeof mount>) => w.findComponent({ name: 'VueDraggable' })
+const ids = (w: ReturnType<typeof mount>) =>
+  w.findAll('[data-test^="fallback-item-"]').map((n) => Number(n.attributes('data-test')!.replace('fallback-item-', '')))
+
+describe('KeyFallbackChainEditor', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    getChain.mockReset()
+    replaceChain.mockReset()
+    setRecharge(7.2)
+  })
+
+  it('第一项是主要分组：标「主要」，没有拖动手柄和删除按钮', async () => {
+    const w = await mountEditor()
+    const primary = w.get('[data-test="primary-item"]')
+    expect(primary.text()).toContain('Codex Plus')
+    expect(primary.text()).toContain('主要')
+    expect(primary.find('[data-test="drag-handle"]').exists()).toBe(false)
+    expect(primary.find('[data-test="remove"]').exists()).toBe(false)
+    // 兜底项才有
+    expect(w.findAll('[data-test="drag-handle"]')).toHaveLength(3)
+    expect(w.findAll('[data-test="remove"]')).toHaveLength(3)
+  })
+
+  it('每项显示分组徽标、人民币参考价和状态', async () => {
+    const w = await mountEditor()
+    expect(w.get('[data-test="reference-model"]').text()).toContain('gpt-5.5')
+    // 1.875 / 7.2 = 0.260，15 / 7.2 = 2.08
+    const row = w.get('[data-test="fallback-item-21"]')
+    expect(row.get('[data-test="badge"]').text()).toContain('Codex 稳定')
+    expect(row.get('[data-test="price"]').text()).toBe('输入 ¥0.260 / 输出 ¥2.08')
+    expect(row.get('[data-test="status"]').text()).toContain('可用')
+  })
+
+  it('不可用的项仍然展示，带状态和原因，并且可以删除', async () => {
+    const w = await mountEditor()
+    const disabled = w.get('[data-test="fallback-item-22"]')
+    expect(disabled.get('[data-test="status"]').text()).toContain('已停用')
+    expect(disabled.get('[data-test="reason"]').text()).toContain('该分组已停用')
+    const gone = w.get('[data-test="fallback-item-23"]')
+    expect(gone.get('[data-test="status"]').text()).toContain('不可用')
+    expect(gone.get('[data-test="reason"]').text()).toContain('已无权使用')
+    expect(gone.get('[data-test="price"]').text()).toBe('未定价')
+
+    replaceChain.mockImplementation((_id: number, g: number[]) => Promise.resolve(replyFor(makeChain(), g)))
+    await gone.get('[data-test="remove"]').trigger('click')
+    await flushPromises()
+    expect(replaceChain).toHaveBeenCalledWith(7, [21, 22])
+  })
+
+  it('充值倍率为 1（free 站）时跟着全站口径显示美元', async () => {
+    setRecharge(1)
+    const w = await mountEditor()
+    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 $1.875 / 输出 $15.000')
+    expect(w.text()).not.toContain('¥')
+  })
+
+  it('人民币价只读服务端给的 cny，不自己乘倍率或汇率', async () => {
+    const chain = makeChain()
+    chain.items[1].reference_price = { priced: true, input_usd_per_mtok: 9, output_usd_per_mtok: 9, cny: { input_per_mtok: 0.5, output_per_mtok: 4 } }
+    const w = await mountEditor(chain)
+    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 ¥0.500 / 输出 ¥4.00')
+  })
+
+  it('没有 cny 时回落到同一价格的美元口径，不拿美元数字套 ¥', async () => {
+    const chain = makeChain()
+    chain.items[1].reference_price = { priced: true, input_usd_per_mtok: 1.875, output_usd_per_mtok: 15 }
+    const w = await mountEditor(chain)
+    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 $1.875 / 输出 $15.000')
+  })
+
+  it('总开关关着（enabled=false）时编辑器照常工作，不出现任何开关提示', async () => {
+    const w = await mountEditor(makeChain({ enabled: false }))
+    expect(w.find('[data-test="add-button"]').attributes('disabled')).toBeUndefined()
+    expect(w.text()).not.toMatch(/未开启|关闭|功能/)
+  })
+
+  it('拖拽排序后整条替换，顺序按新位置提交', async () => {
+    const w = await mountEditor()
+    replaceChain.mockImplementation((_id: number, g: number[]) => Promise.resolve(replyFor(makeChain(), g)))
+    const d = draggable(w)
+    const list = (d.props('modelValue') as KeyFallbackChainItem[]).map((i) => i)
+    d.vm.$emit('update:modelValue', [list[2], list[0], list[1]])
+    await flushPromises()
+    d.vm.$emit('end')
+    await flushPromises()
+    expect(replaceChain).toHaveBeenCalledTimes(1)
+    expect(replaceChain).toHaveBeenCalledWith(7, [23, 21, 22])
+    expect(ids(w)).toEqual([23, 21, 22])
+  })
+
+  it('拖了一圈又回到原位置时不发请求', async () => {
+    const w = await mountEditor()
+    const d = draggable(w)
+    d.vm.$emit('end')
+    await flushPromises()
+    expect(replaceChain).not.toHaveBeenCalled()
+  })
+
+  it('在手柄上按方向键也能调整顺序', async () => {
+    const w = await mountEditor()
+    replaceChain.mockImplementation((_id: number, g: number[]) => Promise.resolve(replyFor(makeChain(), g)))
+    await w.get('[data-test="fallback-item-21"] [data-test="drag-handle"]').trigger('keydown', { key: 'ArrowDown' })
+    await flushPromises()
+    expect(replaceChain).toHaveBeenCalledWith(7, [22, 21, 23])
+  })
+
+  it('添加：从选择列表挑一个分组，追加到链末尾', async () => {
+    const w = await mountEditor()
+    replaceChain.mockImplementation((_id: number, g: number[]) => Promise.resolve(replyFor(makeChain(), g)))
+    expect(w.find('[data-test="picker"]').exists()).toBe(false)
+    await w.get('[data-test="add-button"]').trigger('click')
+    const picker = w.get('[data-test="picker"]')
+    expect(picker.text()).toContain('Codex Pro')
+    expect(picker.text()).toContain('Codex Max')
+    // 参考价 3.75/7.2 = 0.521
+    expect(picker.get('[data-test="pick-30"]').text()).toContain('输入 ¥0.521')
+    await picker.get('[data-test="pick-30"]').trigger('click')
+    await flushPromises()
+    expect(replaceChain).toHaveBeenCalledWith(7, [21, 22, 23, 30])
+    expect(w.find('[data-test="picker"]').exists()).toBe(false)
+    expect(ids(w)).toEqual([21, 22, 23, 30])
+  })
+
+  it('删除一项后按剩余顺序整条替换', async () => {
+    const w = await mountEditor()
+    replaceChain.mockImplementation((_id: number, g: number[]) => Promise.resolve(replyFor(makeChain(), g)))
+    await w.get('[data-test="fallback-item-21"] [data-test="remove"]').trigger('click')
+    await flushPromises()
+    expect(replaceChain).toHaveBeenCalledWith(7, [22, 23])
+    expect(ids(w)).toEqual([22, 23])
+  })
+
+  it('达到上限时添加按钮禁用，并说明原因', async () => {
+    const base = makeChain({ max_fallbacks: 3 })
+    const w = await mountEditor(base)
+    const btn = w.get('[data-test="add-button"]')
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(w.get('[data-test="add-hint"]').text()).toBe('最多添加 3 个兜底分组，请先移除一个')
+    expect(btn.attributes('aria-describedby')).toBe(w.get('[data-test="add-hint"]').attributes('id'))
+    await btn.trigger('click')
+    expect(w.find('[data-test="picker"]').exists()).toBe(false)
+  })
+
+  it('没有更多可添加的分组时按钮禁用并说明', async () => {
+    const w = await mountEditor(makeChain({ available: [] }))
+    expect(w.get('[data-test="add-button"]').attributes('disabled')).toBeDefined()
+    expect(w.get('[data-test="add-hint"]').text()).toBe('没有更多可添加的分组')
+  })
+
+  it('保存失败：恢复原顺序，并按错误码给出用户能看懂的提示', async () => {
+    const w = await mountEditor()
+    replaceChain.mockRejectedValue({ status: 400, code: 400, reason: 'FALLBACK_GROUP_NOT_ALLOWED', message: 'internal detail' })
+    await w.get('[data-test="fallback-item-21"] [data-test="remove"]').trigger('click')
+    await flushPromises()
+    expect(w.get('[data-test="action-error"]').text()).toBe('你没有该分组的使用权限')
+    expect(w.text()).not.toContain('internal detail')
+    expect(ids(w)).toEqual([21, 22, 23])
+  })
+
+  it('未知错误统一提示保存失败，不透出后端 message', async () => {
+    const w = await mountEditor()
+    replaceChain.mockRejectedValue({ status: 500, message: 'pq: deadlock detected' })
+    await w.get('[data-test="fallback-item-21"] [data-test="remove"]').trigger('click')
+    await flushPromises()
+    expect(w.get('[data-test="action-error"]').text()).toBe('保存失败，请稍后重试')
+    expect(w.text()).not.toContain('deadlock')
+  })
+
+  it('加载失败时显示提示，可以重试', async () => {
+    getChain.mockRejectedValueOnce({ status: 500, message: 'boom' })
+    const w = mount(KeyFallbackChainEditor, { props: { keyId: 7 },  })
+    await flushPromises()
+    expect(w.get('[data-test="editor-load-error"]').text()).toContain('加载失败，请重试')
+    getChain.mockResolvedValue(makeChain())
+    await w.get('[data-test="editor-load-error"] button').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-test="primary-item"]').exists()).toBe(true)
+  })
+})

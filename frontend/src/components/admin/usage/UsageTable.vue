@@ -89,10 +89,22 @@
         </template>
 
         <template #cell-group="{ row }">
-          <span v-if="row.group" class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
-            {{ row.group.name }}
-          </span>
-          <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+          <div class="flex flex-col items-start gap-1">
+            <span v-if="row.group" class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+              {{ row.group.name }}
+            </span>
+            <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+            <!-- 实际服务本次请求的兜底分组及来源（统计口径仍按上面的主分组） -->
+            <span
+              v-if="row.served_group || row.served_group_id"
+              class="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+              data-test="served-group"
+            >
+              <span aria-hidden="true">&rarr;</span>
+              {{ row.served_group?.name || `#${row.served_group_id}` }}
+              <span class="opacity-70" data-test="served-source">{{ servedSourceLabel(row.served_route_source) }}</span>
+            </span>
+          </div>
         </template>
 
         <template #cell-stream="{ row }">
@@ -508,6 +520,14 @@ defineEmits<{
   sort: [key: string, order: 'asc' | 'desc']
 }>()
 const { t } = useI18n()
+
+// served_route_source：1 = 用户自己的兜底链，2 = 管理员隐藏链
+const servedSourceLabel = (source?: number | null): string =>
+  source === 1
+    ? t('keyFallback.usage.sourceUser')
+    : source === 2
+      ? t('keyFallback.usage.sourceAdmin')
+      : ''
 
 // Tooltip state - cost
 const tooltipVisible = ref(false)

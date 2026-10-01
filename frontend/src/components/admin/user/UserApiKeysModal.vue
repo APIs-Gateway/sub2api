@@ -38,12 +38,29 @@
                 <svg v-else class="h-3 w-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 15L12 18.75 15.75 15m-7.5-6L12 5.25 15.75 9" /></svg>
               </button>
             </div>
+            <div v-if="key.group_id" class="flex items-center gap-1">
+              <button
+                type="button"
+                class="-mx-1 rounded-md px-1 py-0.5 text-primary-600 transition-colors hover:bg-gray-100 dark:text-primary-400 dark:hover:bg-dark-700"
+                data-test="hidden-chain-entry"
+                @click="openHiddenChain(key)"
+              >
+                {{ t('keyFallback.admin.entry') }}
+              </button>
+            </div>
             <div class="flex items-center gap-1"><span>{{ t('admin.users.columns.created') }}: {{ formatDateTime(key.created_at) }}</span></div>
           </div>
         </div>
       </div>
     </div>
   </BaseDialog>
+
+  <KeyHiddenChainDialog
+    :show="hiddenChainKey !== null"
+    :api-key="hiddenChainKey"
+    :groups="allGroups || []"
+    @close="hiddenChainKey = null"
+  />
 
   <!-- Group Selector Dropdown -->
   <Teleport to="body">
@@ -107,6 +124,7 @@ import type { AdminUser, AdminGroup, ApiKey } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+import KeyHiddenChainDialog from '@/components/admin/user/KeyHiddenChainDialog.vue'
 
 const props = defineProps<{ show: boolean; user: AdminUser | null }>()
 const emit = defineEmits(['close'])
@@ -119,6 +137,11 @@ const loading = ref(false)
 let requestVersion = 0
 const updatingKeyIds = ref(new Set<number>())
 const groupSelectorKeyId = ref<number | null>(null)
+const hiddenChainKey = ref<ApiKey | null>(null)
+const openHiddenChain = (key: ApiKey) => {
+  closeGroupSelector()
+  hiddenChainKey.value = key
+}
 const dropdownPosition = ref<{ top: number; left: number } | null>(null)
 const dropdownRef = ref<HTMLElement | null>(null)
 const scrollContainerRef = ref<HTMLElement | null>(null)
@@ -241,6 +264,7 @@ const handleClickOutside = (event: MouseEvent) => {
 }
 
 const handleClose = () => {
+  hiddenChainKey.value = null
   closeGroupSelector()
   emit('close')
 }
