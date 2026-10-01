@@ -109,6 +109,7 @@ func provideCleanup(
 	opsIngressRejectAggregator *service.OpsIngressRejectAggregator,
 	promptAudit *securityaudit.PromptService,
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
+	adminAuditWriter *service.AdminAuditWriter,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -298,6 +299,13 @@ func provideCleanup(
 			{"UpstreamBillingProbeService", func() error {
 				if upstreamBillingProbe != nil {
 					upstreamBillingProbe.Stop()
+				}
+				return nil
+			}},
+			{"AdminAuditWriter", func() error {
+				// 先于数据库连接关闭：把队列里剩余的审计日志写完。
+				if adminAuditWriter != nil {
+					adminAuditWriter.Stop(ctx)
 				}
 				return nil
 			}},

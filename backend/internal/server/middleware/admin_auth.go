@@ -4,6 +4,7 @@ package middleware
 import (
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -11,23 +12,45 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// NewAdminAuthMiddleware 创建管理员认证中间件
+// NewAdminAuthMiddleware 创建管理员认证中间件（不支持 admin token，保持原有三参签名供测试和旧调用点使用）
 func NewAdminAuthMiddleware(
 	authService *service.AuthService,
 	userService *service.UserService,
 	settingService *service.SettingService,
 ) AdminAuthMiddleware {
-	return AdminAuthMiddleware(adminAuth(authService, userService, settingService))
+	return AdminAuthMiddleware(adminAuth(authService, userService, settingService, nil))
+}
+
+// ProvideAdminAuthMiddleware 创建管理员认证中间件（wire 使用），额外支持 admin token，
+// 并为所有写请求记录审计日志（见 admin_audit.go）。auditWriter 为 nil 时不记录审计。
+func ProvideAdminAuthMiddleware(
+	authService *service.AuthService,
+	userService *service.UserService,
+	settingService *service.SettingService,
+	adminTokens *service.AdminTokenService,
+	auditWriter *service.AdminAuditWriter,
+) AdminAuthMiddleware {
+	// 避免把 nil 指针装进接口后被误判为"已配置"。
+	var sink AdminAuditSink
+	if auditWriter != nil {
+		sink = auditWriter
+	}
+	return AdminAuthMiddleware(withAdminAudit(adminAuth(authService, userService, settingService, adminTokens), sink))
 }
 
 // adminAuth 管理员认证中间件实现
-// 支持两种认证方式（通过不同的 header 区分）：
-// 1. Admin API Key: x-api-key: <admin-api-key>
-// 2. JWT Token: Authorization: Bearer <jwt-token> (需要管理员角色)
+// 支持三种认证方式：
+//  1. Admin Token: `x-api-key: s2a_...` 或 `Authorization: Bearer s2a_...`（以 s2a_ 开头即走 admin token 逻辑）
+//  2. 旧的全局 Admin API Key: `x-api-key: <admin-api-key>`（行为不变，视为 danger 作用域，记为 legacy_api_key）
+//  3. JWT Token: `Authorization: Bearer <jwt-token>`（需要管理员角色）
+//
+// admin token 通过后会依次完成：吊销/过期/IP 白名单校验（在 service 中）、acting 管理员校验、
+// 作用域校验（见 admin_token_scope.go）、写请求的 X-Reason 校验（见 admin_reason.go）。
 func adminAuth(
 	authService *service.AuthService,
 	userService *service.UserService,
 	settingService *service.SettingService,
+	adminTokens *service.AdminTokenService,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// WebSocket upgrade requests cannot set Authorization headers in browsers.
@@ -44,9 +67,16 @@ func adminAuth(
 			}
 		}
 
-		// 检查 x-api-key header（Admin API Key 认证）
+		// 检查 x-api-key header（Admin Token 或旧的 Admin API Key 认证）
 		apiKey := c.GetHeader("x-api-key")
 		if apiKey != "" {
+			if service.IsAdminTokenCandidate(apiKey) {
+				if !authenticateAdminToken(c, apiKey, userService, adminTokens) {
+					return
+				}
+				c.Next()
+				return
+			}
 			if !validateAdminAPIKey(c, apiKey, settingService, userService) {
 				return
 			}
@@ -54,7 +84,7 @@ func adminAuth(
 			return
 		}
 
-		// 检查 Authorization header（JWT 认证）
+		// 检查 Authorization header（Admin Token 或 JWT 认证）
 		authHeader := c.GetHeader("Authorization")
 		if authHeader != "" {
 			parts := strings.SplitN(authHeader, " ", 2)
@@ -62,6 +92,13 @@ func adminAuth(
 				token := strings.TrimSpace(parts[1])
 				if token == "" {
 					AbortWithError(c, 401, "UNAUTHORIZED", "Authorization required")
+					return
+				}
+				if service.IsAdminTokenCandidate(token) {
+					if !authenticateAdminToken(c, token, userService, adminTokens) {
+						return
+					}
+					c.Next()
 					return
 				}
 				if !validateJWTForAdmin(c, token, authService, userService) {
@@ -146,7 +183,10 @@ func validateAdminAPIKey(
 		Concurrency: admin.Concurrency,
 	})
 	c.Set(string(ContextKeyUserRole), admin.Role)
-	c.Set("auth_method", "admin_api_key")
+	c.Set("auth_method", service.AuditAuthMethodAdminAPIKey)
+	// 旧的全局 key 不受作用域限制，等价于 danger；审计里记为 legacy_api_key。
+	setAdminIdentity(c, service.AuditAuthKindLegacyAPIKey, admin.ID, service.AuditAuthKindLegacyAPIKey, admin.Email, service.MaskAuditCredential(key))
+	c.Set(string(ContextKeyAdminTokenScope), service.AdminTokenScopeDanger)
 	return true
 }
 
@@ -203,7 +243,81 @@ func validateJWTForAdmin(
 	})
 	c.Set(string(ContextKeyUserRole), user.Role)
 	c.Set(string(ContextKeySessionID), claims.SessionID)
-	c.Set("auth_method", "jwt")
+	c.Set("auth_method", service.AuditAuthMethodJWT)
+	setAdminIdentity(c, service.AuditAuthKindJWT, user.ID, "jwt:"+user.Email, user.Email, "")
 
 	return true
+}
+
+// adminTokenLabel is the actor label recorded for an admin token: "token:<name>#<id>".
+func adminTokenLabel(token *service.AdminToken) string {
+	return fmt.Sprintf("token:%s#%d", token.Name, token.ID)
+}
+
+// authenticateAdminToken 校验 admin token（吊销/过期/IP 白名单在 service 中完成），
+// 然后确认 acting 管理员仍然有效，最后做作用域校验。失败时响应已写好，返回 false。
+//
+// 与旧 key / JWT 一致，成功后 ContextKeyUser 是 acting 管理员；另外在 context 里记下
+// token_id、scope 和 auth kind，供后续作用域/审计使用。
+func authenticateAdminToken(
+	c *gin.Context,
+	credential string,
+	userService *service.UserService,
+	adminTokens *service.AdminTokenService,
+) bool {
+	if adminTokens == nil || userService == nil {
+		abortAdminAuth(c, 401, "ADMIN_TOKEN_INVALID", "Invalid admin token")
+		return false
+	}
+
+	token, err := adminTokens.Authenticate(c.Request.Context(), credential, SecurityClientIP(c))
+	if token != nil {
+		// 即使 token 随后被拒绝，也记下是哪把（供审计归因）；此时不设置 ContextKeyUser。
+		setAdminIdentity(c, service.AuditAuthKindAdminToken, token.ActingUserID, adminTokenLabel(token), "", token.TokenPrefix)
+		c.Set(string(ContextKeyAdminTokenID), token.ID)
+		c.Set(string(ContextKeyAdminTokenScope), token.Scope)
+	}
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrAdminTokenInvalid):
+			abortAdminAuth(c, 401, "ADMIN_TOKEN_INVALID", "Invalid admin token")
+		case errors.Is(err, service.ErrAdminTokenRevoked):
+			abortAdminAuth(c, 401, "ADMIN_TOKEN_REVOKED", "Admin token has been revoked")
+		case errors.Is(err, service.ErrAdminTokenExpired):
+			abortAdminAuth(c, 401, "ADMIN_TOKEN_EXPIRED", "Admin token has expired")
+		case errors.Is(err, service.ErrAdminTokenIPNotAllowed):
+			abortAdminAuth(c, 403, "ADMIN_TOKEN_IP_NOT_ALLOWED", "Client IP is not allowed for this admin token")
+		default:
+			abortAdminAuth(c, 500, "INTERNAL_ERROR", "Internal server error")
+		}
+		return false
+	}
+
+	actor, err := userService.GetByID(c.Request.Context(), token.ActingUserID)
+	if err != nil {
+		if errors.Is(err, service.ErrUserNotFound) {
+			abortAdminAuth(c, 403, "ADMIN_TOKEN_ACTING_USER_INVALID", "The administrator this token acts as no longer exists")
+		} else {
+			abortAdminAuth(c, 500, "INTERNAL_ERROR", "Failed to load user")
+		}
+		return false
+	}
+	if !actor.IsActive() || !actor.IsAdmin() {
+		abortAdminAuth(c, 403, "ADMIN_TOKEN_ACTING_USER_INVALID", "The administrator this token acts as is disabled or is no longer an administrator")
+		return false
+	}
+
+	c.Set(string(ContextKeyUser), AuthSubject{
+		UserID:      actor.ID,
+		Concurrency: actor.Concurrency,
+	})
+	c.Set(string(ContextKeyUserRole), actor.Role)
+	c.Set("auth_method", service.AuditAuthMethodAdminToken)
+	setAdminIdentity(c, service.AuditAuthKindAdminToken, actor.ID, adminTokenLabel(token), actor.Email, token.TokenPrefix)
+
+	if !enforceAdminTokenScope(c, token.Scope) {
+		return false
+	}
+	// 只有 admin token 发起的写请求强制要求 X-Reason；JWT 与旧 key 不强制（有则只记录）。
+	return enforceAdminReason(c)
 }

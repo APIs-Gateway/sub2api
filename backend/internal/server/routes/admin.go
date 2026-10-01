@@ -31,6 +31,12 @@ func RegisterAdminRoutes(
 		// Prompt Audit 事件只读查询
 		registerPromptAuditRoutes(admin, h)
 
+		// 管理令牌（机器凭证）：只允许 JWT 登录的人类管理员管理
+		registerAdminTokenRoutes(admin, h)
+
+		// 管理操作审计日志（只读）
+		registerAuditLogRoutes(admin, h)
+
 		// 仪表盘
 		registerDashboardRoutes(admin, h)
 
@@ -121,6 +127,25 @@ func RegisterAdminRoutes(
 		// 价格报价（只读）
 		registerPricingRoutes(admin, h)
 	}
+}
+
+// registerAdminTokenRoutes 注册管理令牌的增删查接口。
+// 整组强制 JWT：机器凭证（任何作用域的 admin token、旧的全局 admin API key）都不能签发或吊销令牌，
+// 否则机器可以自行扩权。
+func registerAdminTokenRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	tokens := admin.Group("/admin-tokens")
+	tokens.Use(middleware.RequireAdminJWT())
+	{
+		tokens.GET("", h.Admin.AdminToken.List)
+		tokens.POST("", h.Admin.AdminToken.Create)
+		tokens.DELETE("/:id", h.Admin.AdminToken.Revoke)
+	}
+}
+
+// registerAuditLogRoutes 注册管理操作审计日志查询（read 作用域即可）。
+func registerAuditLogRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	admin.GET("/audit-logs", h.Admin.AuditLog.List)
+	admin.GET("/audit-logs/stats", h.Admin.AuditLog.Stats)
 }
 
 func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers) {

@@ -26,6 +26,21 @@ server:
   frontend_url: ""
   # Trusted proxies for X-Forwarded-For parsing (CIDR/IP). Empty disables trusted proxies.
   # 信任的代理地址（CIDR/IP 格式），用于解析 X-Forwarded-For 头。留空则禁用代理信任。
+  #
+  # Admin tokens (s2a_...) with an ip_allowlist, and the admin audit trail, use the "security client IP"
+  # chosen globally by SessionBindingContext. It depends on security.trust_forwarded_ip_for_api_key_acl:
+  #   - false: the IP resolved through this trusted_proxies list. Behind nginx / a load balancer, put the
+  #     proxy's address here; otherwise the IP seen is the proxy's own, so an allowlist either rejects
+  #     every call or (if it contains the proxy address) accepts every client.
+  #   - true: forwarded headers (custom headers, CF-Connecting-IP, X-Real-IP, X-Forwarded-For) are
+  #     trusted and trusted_proxies is bypassed. Only enable it when every request really passes through
+  #     a proxy that overwrites those headers; otherwise a client can forge its IP and defeat the allowlist.
+  # 管理令牌（s2a_ 开头）的 IP 白名单和管理审计日志使用全局 SessionBindingContext 选出的“安全客户端 IP”，
+  # 由 security.trust_forwarded_ip_for_api_key_acl 决定：
+  #   - false：按本 trusted_proxies 列表解析。部署在 nginx / 负载均衡之后时必须把代理地址写在这里，
+  #     否则看到的是代理自身 IP：白名单会拒绝所有请求，或在白名单含代理地址时放行所有客户端。
+  #   - true：直接信任转发头（自定义头、CF-Connecting-IP、X-Real-IP、X-Forwarded-For），绕过 trusted_proxies。
+  #     只有所有请求都经过会覆盖这些头的代理时才能开，否则客户端可伪造 IP 绕过白名单。
   trusted_proxies: []
   # Global max request body size in bytes (default: 256MB)
   # 全局最大请求体大小（字节，默认 256MB）

@@ -110,6 +110,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // opsIngressRejectAggregator
 		nil, // promptAudit
 		nil, // upstreamBillingProbe
+		nil, // adminAuditWriter
 	)
 
 	require.NotPanics(t, func() {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -54,6 +55,18 @@ type UpdateProxyRequest struct {
 	ExpiryWarnDays *int                   `json:"expiry_warn_days" binding:"omitempty,min=0"`
 }
 
+// proxyPasswordHidden reports whether proxy passwords must be blanked in
+// responses to this caller. Interactive administrators (JWT), the legacy admin
+// API key and danger-scope admin tokens see them, as before; an admin token
+// below danger scope (read, write) does not, so a read token cannot be used to
+// harvest the credentials of the proxies the accounts egress through.
+func proxyPasswordHidden(c *gin.Context) bool {
+	if middleware.AdminAuthKindFromContext(c) != service.AuditAuthKindAdminToken {
+		return false
+	}
+	return service.AdminTokenScopeRank(middleware.AdminScopeFromContext(c)) < service.AdminTokenScopeRank(service.AdminTokenScopeDanger)
+}
+
 // List handles listing all proxies with pagination
 // GET /api/v1/admin/proxies
 func (h *ProxyHandler) List(c *gin.Context) {
@@ -79,6 +92,11 @@ func (h *ProxyHandler) List(c *gin.Context) {
 	for i := range proxies {
 		out = append(out, *dto.ProxyWithAccountCountFromServiceAdmin(&proxies[i]))
 	}
+	if proxyPasswordHidden(c) {
+		for i := range out {
+			out[i].Password = ""
+		}
+	}
 	response.Paginated(c, out, total, page, pageSize)
 }
 
@@ -98,6 +116,11 @@ func (h *ProxyHandler) GetAll(c *gin.Context) {
 		for i := range proxies {
 			out = append(out, *dto.ProxyWithAccountCountFromServiceAdmin(&proxies[i]))
 		}
+		if proxyPasswordHidden(c) {
+			for i := range out {
+				out[i].Password = ""
+			}
+		}
 		response.Success(c, out)
 		return
 	}
@@ -111,6 +134,11 @@ func (h *ProxyHandler) GetAll(c *gin.Context) {
 	out := make([]dto.AdminProxy, 0, len(proxies))
 	for i := range proxies {
 		out = append(out, *dto.ProxyFromServiceAdmin(&proxies[i]))
+	}
+	if proxyPasswordHidden(c) {
+		for i := range out {
+			out[i].Password = ""
+		}
 	}
 	response.Success(c, out)
 }
@@ -130,7 +158,11 @@ func (h *ProxyHandler) GetByID(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, dto.ProxyFromServiceAdmin(proxy))
+	out := dto.ProxyFromServiceAdmin(proxy)
+	if out != nil && proxyPasswordHidden(c) {
+		out.Password = ""
+	}
+	response.Success(c, out)
 }
 
 // Create handles creating a new proxy
