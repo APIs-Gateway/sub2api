@@ -2472,6 +2472,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			MaxConcurrency: fresh.Concurrency,
 			Timeout:        cfg.FallbackWaitTimeout,
 			MaxWaiting:     cfg.FallbackMaxWaiting,
+			// Layer 2 用 tryAcquireFromLoadMap 按序尝试了全部 LoadRate<100 的候选（没有 top-K 截断），
+			// 失败后又用 fresh load 重试一轮，走到这里即整组满（设计 3.5 表 #4）。
+			GroupSaturated: true,
 		})
 	}
 
