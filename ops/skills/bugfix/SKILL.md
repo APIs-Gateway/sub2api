@@ -16,7 +16,9 @@ description: 修 sub2api 的 bug 的标准流程。用户报「某功能不对 /
 
 ## 0. 准备
 
-1. `git fetch --all --prune`，再 `git switch -c fix/<简述> origin/main`。并行 agent 各用自己的 worktree。
+1. `git fetch --all --prune`，再 `git switch -c fix/<简述> --no-track origin/main`
+   （不加 `--no-track` 会把上游设成 `origin/main`，裸 `git push` 有误推 main 的风险）。
+   首次推送用 `git push -u origin fix/<简述>`。并行 agent 各用自己的 worktree。
 2. 先读相关的 `docs/notes/`、`docs/specs/`，用 `docs/ai/README.md` 第 3 节定位入口文件。
 
 ## 1. 复现
@@ -60,7 +62,8 @@ description: 修 sub2api 的 bug 的标准流程。用户报「某功能不对 /
 ## 5. 本地静态检查（不做全量编译）
 
 ```bash
-gofmt -l backend                                   # 有输出先格式化
+# 仓库根目录运行，只查自己改过的 .go（新文件先 git add）；有输出先格式化。不要对整个 backend 跑，见 docs/ai/README.md
+git diff --name-only --diff-filter=AM origin/main -- '*.go' | xargs -r gofmt -l
 pnpm --dir frontend run typecheck                  # 改了前端时
 pnpm --dir frontend run lint:check
 pnpm --dir frontend exec vitest run <相关 spec>

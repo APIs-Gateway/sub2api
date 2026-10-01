@@ -10,7 +10,8 @@ description: 把 sub2api 新版本发布到生产环境的标准流程：构建�
 | 占位符 | 含义 |
 |---|---|
 | `<ssh_target>` | 登录生产机的 SSH 目标 |
-| `<deploy_dir>` | compose 文件、配置、数据目录所在目录 |
+| `<deploy_dir>` | compose 文件、配置所在目录 |
+| `<data_dir>` | 宿主机上挂载到容器 `/app/data` 的目录（compose 里 `volumes:` 中映射到 `/app/data` 的那一项的宿主机侧；不一定在 `<deploy_dir>` 下） |
 | `<compose_file>` / `<service>` / `<container>` | compose 文件、服务名、容器名 |
 | `<image>` / `<old_tag>` / `<new_tag>` | 镜像名、现役 tag、新 tag |
 | `<backup_dir>` | 备份目录，**不能**放在 nginx 或 compose 会扫描加载的目录里 |
@@ -39,11 +40,19 @@ description: 把 sub2api 新版本发布到生产环境的标准流程：构建�
      -o bin/server-linux-amd64 ./cmd/server
    ```
 3. `BuildType` 会暴露给后台的版本/更新面板（`backend/internal/service/update_service.go`）。
-   仓库 `Dockerfile` 写死 `release`；自建部署用 `source`，否则面板可能把发布源的新版本当成可更新版本。
+   仓库的 Dockerfile 都把它写死成 `release`（见本节第 5 条）；自建部署必须用 `source`，
+   否则面板可能把发布源的新版本当成可更新版本。
 4. 验证前端真的进了二进制：`strings bin/server-linux-amd64 | grep -c 'index-<hash>'`
    （`<hash>` 取自 `backend/internal/web/dist/index.html`）。
-5. 构建镜像：用仓库 Dockerfile，或在现役镜像上只叠一层替换二进制
-   （`FROM <image>:<old_tag>` + `COPY`，entrypoint、workdir、env 原样继承）。
+5. 构建镜像。**不能直接用仓库的 `Dockerfile` 出生产镜像**：根目录 `Dockerfile:86`
+   和 `deploy/Dockerfile:71` 都把 `-X main.BuildType=release` 写死，没有 ARG 可以改，
+   直接构建出来的二进制和上面第 3 条的要求矛盾。两种做法选一种：
+   - 叠层（推荐）：在现役镜像上只叠一层替换二进制，二进制用本节第 2 条的命令构建
+     （`-X main.BuildType=source`）；`FROM <image>:<old_tag>` + `COPY`，entrypoint、workdir、env 原样继承；
+   - 手工改 Dockerfile：在工作树里把该行的 `-X main.BuildType=release` 临时改成 `source` 再构建，
+     这个改动不要提交。
+   `--version` 的输出不含 BuildType，不能用它判断。部署后用管理员身份请求
+   `GET /api/v1/admin/system/check-updates?force=true`，返回的 `build_type` 必须是 `source`。
 6. **tag 用新名字**（如 `<version>-<用途>-<日期>`），不覆盖现役 tag，旧镜像不要删，它就是回滚路径。
 7. 上传大文件用 `rsync --partial --inplace`，传完比对 sha256（本地、远端、镜像内三处）；
    工具超时被杀不代表没传完，先比字节数。
@@ -74,12 +83,26 @@ description: 把 sub2api 新版本发布到生产环境的标准流程：构建�
 
 前端文件名带 hash，换版必换 hash。部署前就开着页面的标签页还会去请求旧 chunk，
 旧 chunk 随旧版本消失 -> 404 -> 白屏。
-`backend/internal/web/embed_on.go` 的 `tryServeOverride` 会先查覆盖目录 `data/public`
-（容器内 `/app/data/public`，对应宿主机 `<deploy_dir>/public`）。
+`backend/internal/web/embed_on.go` 的 `tryServeOverride` 会先查覆盖目录 `data/public`。
+这是相对进程工作目录的路径，不受 `DATA_DIR` 影响；镜像的 `WORKDIR` 是 `/app`，
+所以容器内是 `/app/data/public`，对应宿主机上的 `<data_dir>/public`。
 
-1. 换版**之前**，把当前线上版本的 `dist/assets/*` 放进 `<deploy_dir>/public/assets/`，让新旧 hash 并存。
-2. 缺失的 hash 资源后端返回 `no-store`，事后补文件也立即生效。
-3. 探活 chunk 时，提取文件名的正则不能强制以点开头（vite 会产出名字中间带点的文件），
+1. 先弄到旧资源。**线上容器里没有 dist**：前端是 embed 进二进制的，容器里只有 `/app/sub2api`，
+   不能从容器里拷。旧资源要从**上一版（现役版本）commit 的构建产物**
+   `backend/internal/web/dist/assets` 取（前端构建输出目录见 `frontend/vite.config.ts` 的 `outDir`，
+   Dockerfile 的前端阶段也产出到同一路径）。
+   - 上一版构建时存档过 `dist/assets` 就直接用；以后每次构建都顺手存一份，下次换版就是它。
+   - 没存档：在干净 worktree 里 checkout 现役 commit，
+     `cd frontend && pnpm install --frozen-lockfile && pnpm run build`，取 `backend/internal/web/dist/assets`。
+     重建后核对：文件名（`index-<hash>` 等）必须和线上当前页面引用的一致；
+     不一致说明重建环境和线上构建不同，这份资源不能用。
+2. 换版**之前**，把旧资源放进 `<data_dir>/public/assets/`，让新旧 hash 并存。
+3. **验证放对了位置**：`docker exec <container> ls /app/data/public/assets | head`，
+   必须能看到刚放进去的旧文件名。
+   **目录放错不会报错**（例如放进了 `<deploy_dir>/public`，而它并没有挂载到 `/app/data`）：
+   服务照常启动，机制却静默失效，等换版后旧标签页才白屏。所以这一步不能省，也不能只看宿主机目录里有文件。
+4. 缺失的 hash 资源后端返回 `no-store`，事后补文件也立即生效。
+5. 探活 chunk 时，提取文件名的正则不能强制以点开头（vite 会产出名字中间带点的文件），
    否则会误报「N 个 chunk 缺失」；下结论前先去 `dist/assets` 里 `ls` 核对。
 
 ## 6. 更新 compose
@@ -98,6 +121,7 @@ description: 把 sub2api 新版本发布到生产环境的标准流程：构建�
 3. 查 `usage_logs` 新增行：`total_cost`、`actual_cost` 大于 0（免费分组或零价格模型除外），
    余额或订阅用量随之变化。**零计费是严重故障，立刻按回滚条件处理。**
 4. 对每个 `<site_host>` 分别用 Host 头请求，防止站点串错；打开页面确认前端资源无 404。
+   管理端 `GET /api/v1/admin/system/check-updates?force=true` 返回的 `build_type` 应为 `source`（见第 1 步第 5 条）。
 5. 验证产生的测试数据用完清理。
 
 ## 8. 回滚预案（部署前写好并让人确认）

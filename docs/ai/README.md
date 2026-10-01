@@ -75,7 +75,11 @@ repository 反向依赖 handler。
 
 1. **CI 是编译器，本地不全量编译。** 改完就 commit、push、开 PR，让 CI 编译和跑测试，
    用 CI 输出驱动下一轮修复。本地只跑便宜的静态检查：
-   - 后端：`gofmt -l backend`（有输出就先格式化）；
+   - 后端：只检查自己改过的文件，在仓库根目录运行
+     `git diff --name-only --diff-filter=AM origin/main -- '*.go' | xargs -r gofmt -l`
+     （新文件先 `git add`，否则 `git diff` 看不到；有输出就先格式化那几个文件）。
+     **不要对整个 `backend` 跑 `gofmt -l`，更不要顺手 `gofmt -w` 全改**：树上本来就有未格式化的
+     测试文件，全改会把无关的大片格式化噪音混进 PR；
    - 前端：`pnpm --dir frontend run typecheck`（vue-tsc）、`pnpm --dir frontend run lint:check`（eslint）、
      相关 spec 的 `pnpm --dir frontend exec vitest run <spec>`；
    - 仓库根：`make secret-scan`。
@@ -83,10 +87,13 @@ repository 反向依赖 handler。
    `DEV_GUIDE.md` 的提交前清单是人工全量验证的口径；AI 代理按本条执行。CI 里的 required
    检查包括 `codecov/patch`（见 `codecov.yml`，改动行覆盖率有下限），新代码要带测试。
 2. **`main` 受保护，只走 PR。** 不要 `git push origin main`。新分支一律先
-   `git fetch --all --prune`，再 `git switch -c <分支> origin/main`，不要用裸 `git checkout -b`。
+   `git fetch --all --prune`，再 `git switch -c <分支> --no-track origin/main`，不要用裸
+   `git checkout -b`。必须带 `--no-track`：不带的话新分支的上游会被设成 `origin/main`，
+   之后裸 `git push` 有误推 main 的风险。首次推送用 `git push -u origin <分支>`，建立同名上游。
    PR 的合并交给人，AI 不自行合并，除非被明确授权。
 3. **并行 agent 用 worktree 隔离。** 每个 agent 一个 worktree、一个分支：
-   `git worktree add -b <分支> <路径> origin/main`。多个 agent 写同一个工作树和分支会互相
+   `git worktree add --no-track -b <分支> <路径> origin/main`（同样要 `--no-track`，
+   推送同样用 `git push -u origin <分支>`）。多个 agent 写同一个工作树和分支会互相
    amend、推送不相关文件。提交和推送前先看 `git status` 和 `git log --oneline -5`，
    发现意外的提交或文件就停下来问人。
 4. **新模型的价格有两条路径，都要改。**
@@ -119,3 +126,23 @@ repository 反向依赖 handler。
 
 新增流程时，在 `ops/skills/<名字>/SKILL.md` 里写一个短文件（frontmatter 带 `name` 和
 `description`，`description` 写清楚什么时候该用），并在上表登记一行。
+
+### 如何启用 `ops/skills`
+
+Claude Code 只从 `.claude/skills/` 自动发现 skill，不会扫描 `ops/skills/`，
+所以光把文件放在 `ops/skills/` 里，会话里是看不到这些 skill 的。要启用，
+把它们复制或软链接到当前工作树的 `<工作树>/.claude/skills/`：
+
+```bash
+# 在工作树根目录运行；软链接优先，ops/skills 更新后不用重新复制
+mkdir -p .claude/skills
+for s in bugfix deploy incident; do
+  ln -sfn "../../ops/skills/$s" ".claude/skills/$s"
+done
+```
+
+- 每个工作树各做一次（并行 agent 的 worktree 也一样）；软链接指向各自工作树里的 `ops/skills`。
+- 想用复制：`cp -r ops/skills/<名字> .claude/skills/`，之后 `ops/skills` 有更新要重新复制。
+- 仓库的 `.gitignore` 已忽略 `.claude`，启用动作不会进提交。
+- 启用后在当前会话里没看到，重开一个会话。
+- 站点私有的 skill 不在本仓，见私有运维仓，需要时同样放进 `.claude/skills/`。

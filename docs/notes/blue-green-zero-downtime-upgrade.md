@@ -16,6 +16,7 @@
 | `<sub2api_service>` / `<sub2api_green_service>` | compose 里蓝/绿 sub2api 服务名 |
 | `<proxy_service>` / `<proxy_green_service>` | compose 里蓝/绿中间代理服务名（没有中间代理则忽略） |
 | `<deploy_dir>` | compose 文件和数据目录所在目录 |
+| `<backup_dir>` | 备份目录，**不能**放在 nginx 会加载的目录里（含 `sites-enabled/`、`conf.d/` 这类 `include` 通配的目录） |
 | `<version>` | 本次升级的版本标识，用于备份文件名 |
 
 ## 为什么不能直接 `docker compose up -d`
@@ -85,14 +86,15 @@ until curl -fsS http://127.0.0.1:<green_port>/health >/dev/null; do sleep 2; don
 
 ```bash
 ts=$(date -u +%Y%m%dT%H%M%SZ)
-cp <site_conf> <site_conf>.bak-before-<version>-$ts
+cp <site_conf> <backup_dir>/$(basename <site_conf>).bak-before-<version>-$ts
 # 只改这个站的 server 块里的端口；用编辑器或有备份的 sed 改，改完必须目视 diff
 sed -i 's/127\.0\.0\.1:<proxy_blue_port>/127.0.0.1:<proxy_green_port>/g; s/127\.0\.0\.1:<blue_port>/127.0.0.1:<green_port>/g' <site_conf>
 nginx -t && nginx -s reload
 ```
 
 备份文件**不要**留在 nginx 会加载的目录里（`sites-enabled/` 下的 `.bak*` 如果被 include
-通配到，会被当成配置加载）。其他站的 location、限流、日志一概不碰。
+通配到，会被当成配置加载），所以上面备份写到 `<backup_dir>`，回滚也从那里恢复。
+其他站的 location、限流、日志一概不碰。
 reload 后再打一遍公网域名的探测，应与留底一致。
 
 ### 4. 等蓝实例排空再停
@@ -120,7 +122,7 @@ docker compose stop <sub2api_service> <proxy_service>
 蓝实例在第 4 步之前一直活着，所以回滚只有一条命令：
 
 ```bash
-cp <site_conf>.bak-before-<version>-<ts> <site_conf> && nginx -t && nginx -s reload
+cp <backup_dir>/$(basename <site_conf>).bak-before-<version>-<ts> <site_conf> && nginx -t && nginx -s reload
 ```
 
 秒级切回，之后再停绿实例。
