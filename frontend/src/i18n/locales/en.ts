@@ -861,6 +861,7 @@
     copy: 'Copy',
     copied: 'Copied',
     noGroup: 'Choose a group for this key before connecting it.',
+    endpointHint: 'If access is slow, switch to another address. Your API key works with all of them.',
     tabs: {
       install: 'Install',
       ai: 'Ask an AI',

@@ -9,6 +9,36 @@
         <code class="font-mono text-xs tabular-nums text-gray-500 dark:text-dark-400">{{ maskedKey }}</code>
       </p>
 
+      <!-- 线路：站点配了备用地址才出现。选哪个，下面所有页签生成的内容就用哪个；和使用文档页共用同一个选择 -->
+      <div v-if="endpointOptions.length > 1" class="onb-lines" data-test="endpoints">
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span :id="`${uid}-endpoints-label`" class="onb-lines-label">{{ t('keys.endpoints.title') }}</span>
+        <div
+          class="flex flex-wrap gap-2"
+          role="radiogroup"
+          :aria-labelledby="`${uid}-endpoints-label`"
+          :aria-describedby="`${uid}-endpoints-hint`"
+        >
+          <label v-for="opt in endpointOptions" :key="opt.id" class="onb-chip onb-line" :class="{ 'onb-chip-active': activeEndpoint.id === opt.id }">
+            <input
+              v-model="endpointChoice"
+              type="radio"
+              class="sr-only"
+              :name="`${uid}-endpoint`"
+              :value="opt.id"
+              :data-test="`endpoint-${opt.isDefault ? 'default' : opt.id}`"
+            />
+            {{ opt.isDefault ? t('keys.endpoints.default') : opt.name }}
+          </label>
+        </div>
+        </div>
+        <p class="onb-lines-detail" data-test="endpoint-detail">
+          <span v-if="activeEndpoint.description" class="text-gray-600 dark:text-dark-300">{{ activeEndpoint.description }}</span>
+          <code class="font-mono tabular-nums">{{ activeEndpoint.base }}</code>
+        </p>
+        <p :id="`${uid}-endpoints-hint`" class="onb-lines-hint">{{ t('keyOnboarding.endpointHint') }}</p>
+      </div>
+
       <!-- 页签 -->
       <div
         ref="tablistRef"
@@ -277,6 +307,13 @@ import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
+import type { CustomEndpoint } from '@/types'
+import {
+  loadSavedEndpointId,
+  pickEndpoint,
+  resolveEndpointOptions,
+  saveEndpointId
+} from '@/utils/apiEndpoints'
 import { userChannelsAPI } from '@/api/channels'
 import type { UserAvailableChannel } from '@/api/channels'
 import {
@@ -321,11 +358,13 @@ const props = withDefaults(
     show: boolean
     apiKey: OnboardingKey | null
     baseUrl: string
+    /** 站点配置的备用线路（公开设置的 custom_endpoints）；为空时不显示线路选择 */
+    customEndpoints?: CustomEndpoint[]
     siteName?: string
     docUrl?: string
     initialTab?: OnboardingTab
   }>(),
-  { initialTab: 'install' }
+  { initialTab: 'install', customEndpoints: () => [] }
 )
 
 const emit = defineEmits<{ close: [] }>()
@@ -341,7 +380,20 @@ const CCS_LABELS: Record<CcSwitchClientType | 'codex', string> = {
   gemini: 'Gemini'
 }
 
-const base = computed(() => (props.baseUrl || '').trim().replace(/\/+$/, ''))
+// ===== 线路 =====
+const endpointOptions = computed(() => resolveEndpointOptions(props.baseUrl, props.customEndpoints, window.location.origin))
+const savedEndpointId = ref(loadSavedEndpointId())
+// 已选线路被站点删掉时 pickEndpoint 回落到默认地址
+const activeEndpoint = computed(() => pickEndpoint(endpointOptions.value, savedEndpointId.value))
+const endpointChoice = computed({
+  get: () => activeEndpoint.value.id,
+  set: (id: string) => {
+    savedEndpointId.value = id
+    saveEndpointId(id)
+  }
+})
+// 所有页签生成内容用的地址（不带结尾的 / 和 /v1）
+const base = computed(() => activeEndpoint.value.base)
 const fullKey = computed(() => props.apiKey?.key || '')
 const platform = computed(() => props.apiKey?.group?.platform || null)
 const siteName = computed(() => (props.siteName || '').trim() || 'sub2api')
@@ -436,6 +488,8 @@ watch(
   () => props.show,
   (v) => {
     if (v) {
+      // 文档页可能在这期间改过选择
+      savedEndpointId.value = loadSavedEndpointId()
       active.value = props.initialTab
       copiedId.value = ''
       void loadModels()
@@ -787,6 +841,27 @@ const CodeBlock = defineComponent({
 .onb-card {
   @apply rounded-xl border border-gray-200 bg-gray-50 p-4 sm:p-5;
   @apply dark:border-dark-700 dark:bg-dark-900/40;
+}
+
+/* 线路选择：小胶囊 + 当前线路的说明与地址 */
+.onb-lines {
+  @apply space-y-1.5;
+}
+.onb-lines-label {
+  @apply text-sm text-gray-600 dark:text-dark-300;
+}
+.onb-line {
+  @apply cursor-pointer;
+}
+.onb-line:has(input:focus-visible) {
+  outline: 2px solid theme('colors.primary.500');
+  outline-offset: 2px;
+}
+.onb-lines-detail {
+  @apply flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs text-gray-500 dark:text-dark-400;
+}
+.onb-lines-hint {
+  @apply text-xs text-gray-500 dark:text-dark-400;
 }
 
 /* 复制瓦片：整块可点，右侧图标复制后变勾 */

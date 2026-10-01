@@ -1,5 +1,6 @@
+/* eslint-disable */
+// 改动前（1a4a797f6）的 keyOnboarding.ts 原样副本，只用于「默认线路逐字节一致」的回归对比。不要修改。
 import type { GroupPlatform } from '@/types'
-import { normalizeApiBase } from '@/utils/apiEndpoints'
 import { OPENAI_CC_SWITCH_CODEX_MODEL } from '@/utils/ccswitchImport'
 
 /**
@@ -76,8 +77,9 @@ export function clientsForPlatform(
 
 // ---------------------------------------------------------------- 地址
 
-// 地址归一化与文档页、接入弹窗的线路选择共用一套（utils/apiEndpoints.ts）
-const rootUrl = normalizeApiBase
+function rootUrl(baseUrl: string): string {
+  return (baseUrl || '').trim().replace(/\/+$/, '').replace(/\/v1$/, '')
+}
 
 function withV1(root: string): string {
   return `${root}/v1`

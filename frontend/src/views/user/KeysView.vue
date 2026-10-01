@@ -1064,6 +1064,7 @@
       :api-key="onboardingKey"
       :initial-tab="onboardingTab"
       :base-url="apiBaseUrl"
+      :custom-endpoints="publicSettings?.custom_endpoints || []"
       :site-name="publicSettings?.site_name || ''"
       :doc-url="publicSettings?.doc_url || ''"
       @close="closeOnboarding"

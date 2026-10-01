@@ -860,6 +860,7 @@
     copy: '複製',
     copied: '已複製',
     noGroup: '先為這個金鑰選擇分組，再來接入。',
+    endpointHint: '訪問慢時可以換用其他地址，金鑰通用。',
     tabs: {
       install: '一鍵安裝',
       ai: '交給 AI',
