@@ -853,48 +853,78 @@
     rateMultiplierLabel: '{rate}x 倍率'
   },
 
-  // 金鑰一鍵接入彈窗（原先寫死在 KeyOnboardingModal.vue 內，已收歸 i18n）
+  // 金鑰接入彈窗：一鍵安裝 / 交給 AI / CC Switch / 手動設定
   keyOnboarding: {
-    title: '一鍵接入',
-    currentKey: '當前金鑰',
-    endpoint: 'API 端點',
+    title: '接入金鑰',
     copy: '複製',
     copied: '已複製',
-    intro: '推薦用 CC Switch 一鍵導入，自動完成各客戶端配置；也可手動配置或用腳本。',
-    recommended: '推薦',
-    envVars: '環境變量',
-    genericSdk: '通用 OpenAI SDK（任意兼容客戶端）',
-    methodScript: '一鍵腳本',
-    methodManual: '手動 / 排障',
-    ccsIntro: 'CC Switch 是客戶端配置管理器：點擊下方按鈕即可把本金鑰與端點一鍵導入，自動寫好配置，最省心。',
-    ccsSupports: '支持導入：',
-    ccsImport: '導入到 CC Switch',
-    ccsHint: '若未彈出 CC Switch，說明尚未安裝或未關聯協議；先安裝 CC Switch，或複製下方連結手動導入。',
-    ccsManualLink: '導入連結',
-    claudeIntro: 'Claude Code 是 Anthropic 官方命令行客戶端。配置好端點與金鑰後即可使用：',
-    claudeStep1: '把下面的環境變量寫入終端，或儲存到 ~/.claude/settings.json。',
-    claudeStep2: '重啟終端 / 客戶端，讓配置生效。',
-    claudeStep3: '在項目目錄運行 claude 開始對話。',
-    claudeHint: '提示：settings.json 方式無需每次設置環境變量；修改後需重啟客戶端。',
-    codexIntro: 'Codex CLI 推薦用 CC Switch 一鍵導入（見上面的「CC Switch」標籤）。若要手動配置，寫入 ~/.codex/config.toml 並設置金鑰環境變量：',
-    codexStep1: '把下面內容寫入 ~/.codex/config.toml（自定義模型供應商指向本端點）。',
-    codexStep2: '設置環境變量 OPENAI_API_KEY 為你的金鑰。',
-    codexStep3: '重啟終端後運行 codex 即可。',
-    scriptIntro: '複製下面這段腳本到終端執行，自動寫入本地配置（腳本完全可見、不聯網下載）。',
-    scriptHint: '執行後重啟客戶端即可。腳本僅寫入本地配置文件，可先通讀再運行。',
-    scriptCommentCodex: '寫入 Codex 配置 + 金鑰環境變量',
-    scriptDoneCodex: 'Codex 已配置，運行 codex 開始',
-    scriptDoneClaude: 'Claude Code 已配置完成，請重啟客戶端',
-    manualIntro: '以上方式都不行？用下面的原始值手動填寫客戶端配置，並對照排障清單。',
-    troubleshootTitle: '排障清單',
-    troubleshoot1: '確認 base_url 完整且無多餘斜杠，OpenAI 系客戶端通常需要帶 /v1。',
-    troubleshoot2: '確認金鑰完整複製（以 sk- 開頭），無空格或換行。',
-    troubleshoot3: '修改環境變量或配置文件後，需重啟客戶端使其生效。',
-    troubleshoot4: '檢查本地網絡 / 代理是否能訪問該端點。',
-    troubleshoot5: '確認客戶端為較新版本，舊版本可能不支持自定義端點。',
-    viewDocs: '查看文檔',
-    model: '推薦模型',
-    apiKeyFull: 'API 金鑰'
+    noGroup: '先為這個金鑰選擇分組，再來接入。',
+    tabs: {
+      install: '一鍵安裝',
+      ai: '交給 AI',
+      ccswitch: 'CC Switch',
+      manual: '手動設定'
+    },
+    install: {
+      intro: '腳本會寫入地址和金鑰，並在修改前備份原設定。貼到終端機執行，完成後重新啟動客戶端。',
+      copyUnix: '複製 macOS / Linux 指令',
+      copyWindows: '複製 Windows 指令',
+      viewScript: '查看腳本內容',
+      scriptDone: '{client} 已設定完成，重新啟動後即可使用。'
+    },
+    ai: {
+      intro: '選好要用的軟件，把下面這句話發給 AI 助手，它會帶着你設定。',
+      clientLabel: '客戶端',
+      clients: {
+        claude: 'Claude Code',
+        codex: 'Codex',
+        cursor: 'Cursor',
+        chat: '聊天客戶端',
+        code: '寫程式呼叫',
+        other: '其他'
+      },
+      copyDetail: '複製詳細版',
+      openChatgpt: '在 ChatGPT 中開啟',
+      openClaude: '在 Claude 中開啟',
+      keyNote: '這句話裏沒有你的金鑰，設定時請自己填寫。',
+      short: '請帶我把「{client}」接入 {site}。接入地址是 {url}，介面格式是 {protocol}。{hint}金鑰我會自己填，請不要向我索取。',
+      detailIntro: '請帶我一步步把「{client}」接入 {site}。',
+      detailUrl: '- 接入地址：{url}',
+      detailProtocol: '- 介面格式：{protocol}',
+      detailKey: '- 金鑰：我會自己填寫，請不要向我索取，也不要讓我把金鑰發在聊天裏。',
+      detailModels: '- 可用模型：{models}',
+      detailSteps: '請先問我用的是甚麼系統，再告訴我要改哪個檔案、怎麼改。改之前提醒我備份原設定，設定好後教我用一條簡單的指令驗證。',
+      docLine: '參考文件：{url}',
+      hint: {
+        claude: '需要設定環境變數 ANTHROPIC_BASE_URL（填接入地址）和 ANTHROPIC_AUTH_TOKEN（填金鑰），也可以寫進 ~/.claude/settings.json 的 env 裏。',
+        codex: '需要在 ~/.codex/config.toml 裏加入一個自訂模型提供方：base_url 填接入地址，wire_api 用 "responses"，並填入金鑰。',
+        cursor: '需要在 Cursor 的模型設定裏啟用自訂 {protocol} 介面，填寫接入地址和金鑰，並手動加入要用的模型名稱。',
+        chat: '需要在軟件設定裏加入自訂服務商，類型選 {protocol} 相容，填寫接入地址和金鑰，並手動加入要用的模型名稱。',
+        code: '需要使用 {protocol} 官方 SDK 或直接發 HTTP 請求，把 base URL 改成接入地址，金鑰放在請求標頭裏。',
+        other: '需要在這個軟件的自訂介面設定裏填寫接入地址和金鑰。'
+      }
+    },
+    ccs: {
+      client: '客戶端',
+      name: '設定名稱',
+      model: '模型',
+      modelDefault: '預設',
+      open: '開啟 CC Switch',
+      copyLink: '複製匯入連結',
+      notInstalled: '點了沒反應？請先安裝 CC Switch，再點一次。',
+      download: '下載 CC Switch'
+    },
+    manual: {
+      address: '接入地址',
+      openaiAddress: 'OpenAI 相容地址',
+      envVars: '環境變數',
+      troubleshootTitle: '連不上時檢查',
+      troubleshoot1: '地址不要多帶斜線；OpenAI 相容的客戶端要用以 /v1 結尾的地址。',
+      troubleshoot2: '金鑰要完整複製，前後不能有空格或換行。',
+      troubleshoot3: '改完設定後重新啟動客戶端。',
+      troubleshoot4: '確認網絡或代理可以連到接入地址；客戶端版本太舊時先升級。',
+      viewDocs: '查看文件'
+    }
   },
 
   // API Keys

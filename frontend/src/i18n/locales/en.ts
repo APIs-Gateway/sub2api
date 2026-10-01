@@ -854,48 +854,78 @@
     rateMultiplierLabel: '{rate}x rate'
   },
 
-  // Key onboarding dialog (previously hardcoded in KeyOnboardingModal.vue)
+  // Key connect dialog: one-click install / hand it to an AI / CC Switch / manual setup
   keyOnboarding: {
-    title: 'Quick connect',
-    currentKey: 'Current key',
-    endpoint: 'API endpoint',
+    title: 'Connect a key',
     copy: 'Copy',
     copied: 'Copied',
-    intro: 'Recommended: import via CC Switch for automatic per-client setup — or configure manually / via script.',
-    recommended: 'Recommended',
-    envVars: 'Environment variables',
-    genericSdk: 'Generic OpenAI SDK (any compatible client)',
-    methodScript: 'Script',
-    methodManual: 'Manual',
-    ccsIntro: 'CC Switch is a client config manager: click below to import this key and endpoint in one click — it writes the config for you. Easiest option.',
-    ccsSupports: 'Imports into:',
-    ccsImport: 'Import to CC Switch',
-    ccsHint: 'If CC Switch did not open, it may not be installed or the protocol is unregistered — install CC Switch, or copy the link below to import manually.',
-    ccsManualLink: 'Import link',
-    claudeIntro: 'Claude Code is Anthropic’s official CLI. After pointing it at the endpoint and key:',
-    claudeStep1: 'Set the env vars below, or save them to ~/.claude/settings.json.',
-    claudeStep2: 'Restart your terminal / client so the config takes effect.',
-    claudeStep3: 'Run claude in your project to start.',
-    claudeHint: 'Tip: settings.json avoids exporting env vars each time; restart the client after editing.',
-    codexIntro: 'For Codex CLI we recommend CC Switch (see the “CC Switch” tab). To configure manually, write ~/.codex/config.toml and set the key env var:',
-    codexStep1: 'Write the block below to ~/.codex/config.toml (a custom model provider pointing at this endpoint).',
-    codexStep2: 'Set the OPENAI_API_KEY env var to your key.',
-    codexStep3: 'Restart your terminal, then run codex.',
-    scriptIntro: 'Copy this script into your terminal to write the local config (fully visible, no network download).',
-    scriptHint: 'Restart your client afterwards. The script only writes a local config file — read it before running.',
-    scriptCommentCodex: 'Write Codex config + key env var',
-    scriptDoneCodex: 'Codex configured — run codex to start',
-    scriptDoneClaude: 'Claude Code configured — please restart the client',
-    manualIntro: 'None of the above worked? Fill your client config manually with the raw values and follow the checklist.',
-    troubleshootTitle: 'Troubleshooting',
-    troubleshoot1: 'Confirm base_url is complete with no trailing slash; OpenAI-style clients usually need /v1.',
-    troubleshoot2: 'Confirm the key is copied in full (starts with sk-), no spaces or line breaks.',
-    troubleshoot3: 'Restart the client after changing env vars or config files.',
-    troubleshoot4: 'Check that your local network / proxy can reach the endpoint.',
-    troubleshoot5: 'Make sure the client is up to date; older versions may not support custom endpoints.',
-    viewDocs: 'View docs',
-    model: 'Suggested model',
-    apiKeyFull: 'API key'
+    noGroup: 'Choose a group for this key before connecting it.',
+    tabs: {
+      install: 'Install',
+      ai: 'Ask an AI',
+      ccswitch: 'CC Switch',
+      manual: 'Manual'
+    },
+    install: {
+      intro: 'The command writes the endpoint and key, and backs up your existing config first. Paste it into a terminal, then restart the client.',
+      copyUnix: 'Copy macOS / Linux command',
+      copyWindows: 'Copy Windows command',
+      viewScript: 'View script',
+      scriptDone: '{client} is set up. Restart it to start using it.'
+    },
+    ai: {
+      intro: 'Pick the app you want to use and send this message to an AI assistant. It will walk you through the setup.',
+      clientLabel: 'Client',
+      clients: {
+        claude: 'Claude Code',
+        codex: 'Codex',
+        cursor: 'Cursor',
+        chat: 'Chat app',
+        code: 'Calling from code',
+        other: 'Other'
+      },
+      copyDetail: 'Copy detailed version',
+      openChatgpt: 'Open in ChatGPT',
+      openClaude: 'Open in Claude',
+      keyNote: 'Your key is not in this message. Enter it yourself when you set things up.',
+      short: 'Please help me connect "{client}" to {site}. The endpoint is {url} and the API format is {protocol}. {hint} I will enter the key myself, so please do not ask me to send it to you.',
+      detailIntro: 'Please walk me through connecting "{client}" to {site}, step by step.',
+      detailUrl: '- Endpoint: {url}',
+      detailProtocol: '- API format: {protocol}',
+      detailKey: '- Key: I will enter it myself. Do not ask me for it or have me paste it into the chat.',
+      detailModels: '- Available models: {models}',
+      detailSteps: 'First ask which operating system I use, then tell me which file to change and how. Remind me to back up the existing config before changing it, and show me one simple command to check that it works.',
+      docLine: 'Docs: {url}',
+      hint: {
+        claude: 'It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json.',
+        codex: 'It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to "responses", and the key filled in.',
+        cursor: 'It needs a custom {protocol} endpoint enabled in Cursor\'s model settings, with the endpoint and key filled in and the model names added by hand.',
+        chat: 'It needs a custom provider added in the app\'s settings, using the {protocol}-compatible type, with the endpoint and key filled in and the model names added by hand.',
+        code: 'It needs the official {protocol} SDK or plain HTTP requests, with the base URL set to the endpoint and the key sent in the request header.',
+        other: 'It needs the endpoint and key entered in the custom API settings of that app.'
+      }
+    },
+    ccs: {
+      client: 'Client',
+      name: 'Profile name',
+      model: 'Model',
+      modelDefault: 'Default',
+      open: 'Open CC Switch',
+      copyLink: 'Copy import link',
+      notInstalled: 'Nothing happened? Install CC Switch first, then click again.',
+      download: 'Download CC Switch'
+    },
+    manual: {
+      address: 'Endpoint',
+      openaiAddress: 'OpenAI-compatible endpoint',
+      envVars: 'Environment variables',
+      troubleshootTitle: 'If it will not connect',
+      troubleshoot1: 'Do not add extra slashes to the address. OpenAI-compatible clients need an address ending in /v1.',
+      troubleshoot2: 'Copy the whole key, with no spaces or line breaks around it.',
+      troubleshoot3: 'Restart the client after changing its config.',
+      troubleshoot4: 'Check that your network or proxy can reach the endpoint, and update the client if it is old.',
+      viewDocs: 'View docs'
+    }
   },
 
   // API Keys

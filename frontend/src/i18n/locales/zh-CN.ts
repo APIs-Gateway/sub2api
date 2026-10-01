@@ -853,48 +853,78 @@
     rateMultiplierLabel: '{rate}x 倍率'
   },
 
-  // 密钥一键接入弹窗（原先写死在 KeyOnboardingModal.vue 内，已收归 i18n）
+  // 密钥接入弹窗：一键安装 / 交给 AI / CC Switch / 手动配置
   keyOnboarding: {
-    title: '一键接入',
-    currentKey: '当前密钥',
-    endpoint: 'API 端点',
+    title: '接入密钥',
     copy: '复制',
     copied: '已复制',
-    intro: '推荐用 CC Switch 一键导入，自动完成各客户端配置；也可手动配置或用脚本。',
-    recommended: '推荐',
-    envVars: '环境变量',
-    genericSdk: '通用 OpenAI SDK（任意兼容客户端）',
-    methodScript: '一键脚本',
-    methodManual: '手动 / 排障',
-    ccsIntro: 'CC Switch 是客户端配置管理器：点击下方按钮即可把本密钥与端点一键导入，自动写好配置，最省心。',
-    ccsSupports: '支持导入：',
-    ccsImport: '导入到 CC Switch',
-    ccsHint: '若未弹出 CC Switch，说明尚未安装或未关联协议；先安装 CC Switch，或复制下方链接手动导入。',
-    ccsManualLink: '导入链接',
-    claudeIntro: 'Claude Code 是 Anthropic 官方命令行客户端。配置好端点与密钥后即可使用：',
-    claudeStep1: '把下面的环境变量写入终端，或保存到 ~/.claude/settings.json。',
-    claudeStep2: '重启终端 / 客户端，让配置生效。',
-    claudeStep3: '在项目目录运行 claude 开始对话。',
-    claudeHint: '提示：settings.json 方式无需每次设置环境变量；修改后需重启客户端。',
-    codexIntro: 'Codex CLI 推荐用 CC Switch 一键导入（见上面的「CC Switch」标签）。若要手动配置，写入 ~/.codex/config.toml 并设置密钥环境变量：',
-    codexStep1: '把下面内容写入 ~/.codex/config.toml（自定义模型供应商指向本端点）。',
-    codexStep2: '设置环境变量 OPENAI_API_KEY 为你的密钥。',
-    codexStep3: '重启终端后运行 codex 即可。',
-    scriptIntro: '复制下面这段脚本到终端执行，自动写入本地配置（脚本完全可见、不联网下载）。',
-    scriptHint: '执行后重启客户端即可。脚本仅写入本地配置文件，可先通读再运行。',
-    scriptCommentCodex: '写入 Codex 配置 + 密钥环境变量',
-    scriptDoneCodex: 'Codex 已配置，运行 codex 开始',
-    scriptDoneClaude: 'Claude Code 已配置完成，请重启客户端',
-    manualIntro: '以上方式都不行？用下面的原始值手动填写客户端配置，并对照排障清单。',
-    troubleshootTitle: '排障清单',
-    troubleshoot1: '确认 base_url 完整且无多余斜杠，OpenAI 系客户端通常需要带 /v1。',
-    troubleshoot2: '确认密钥完整复制（以 sk- 开头），无空格或换行。',
-    troubleshoot3: '修改环境变量或配置文件后，需重启客户端使其生效。',
-    troubleshoot4: '检查本地网络 / 代理是否能访问该端点。',
-    troubleshoot5: '确认客户端为较新版本，老版本可能不支持自定义端点。',
-    viewDocs: '查看文档',
-    model: '推荐模型',
-    apiKeyFull: 'API 密钥'
+    noGroup: '先给这个密钥选择分组，再来接入。',
+    tabs: {
+      install: '一键安装',
+      ai: '交给 AI',
+      ccswitch: 'CC Switch',
+      manual: '手动配置'
+    },
+    install: {
+      intro: '脚本会写入地址和密钥，并在修改前备份原配置。粘贴到终端运行，完成后重启客户端。',
+      copyUnix: '复制 macOS / Linux 命令',
+      copyWindows: '复制 Windows 命令',
+      viewScript: '查看脚本内容',
+      scriptDone: '{client} 已配置完成，重启后即可使用。'
+    },
+    ai: {
+      intro: '选好要用的软件，把下面这句话发给 AI 助手，它会带着你配置。',
+      clientLabel: '客户端',
+      clients: {
+        claude: 'Claude Code',
+        codex: 'Codex',
+        cursor: 'Cursor',
+        chat: '聊天客户端',
+        code: '写代码调用',
+        other: '其他'
+      },
+      copyDetail: '复制详细版',
+      openChatgpt: '在 ChatGPT 中打开',
+      openClaude: '在 Claude 中打开',
+      keyNote: '这句话里没有你的密钥，配置时请自己填写。',
+      short: '请带我把「{client}」接入 {site}。接入地址是 {url}，接口格式是 {protocol}。{hint}密钥我会自己填，请不要向我索要。',
+      detailIntro: '请带我一步步把「{client}」接入 {site}。',
+      detailUrl: '- 接入地址：{url}',
+      detailProtocol: '- 接口格式：{protocol}',
+      detailKey: '- 密钥：我会自己填写，请不要向我索要，也不要让我把密钥发在聊天里。',
+      detailModels: '- 可用模型：{models}',
+      detailSteps: '请先问我用的是什么系统，再告诉我要改哪个文件、怎么改。改之前提醒我备份原配置，配好后教我用一条简单的命令验证。',
+      docLine: '参考文档：{url}',
+      hint: {
+        claude: '需要设置环境变量 ANTHROPIC_BASE_URL（填接入地址）和 ANTHROPIC_AUTH_TOKEN（填密钥），也可以写进 ~/.claude/settings.json 的 env 里。',
+        codex: '需要在 ~/.codex/config.toml 里添加一个自定义模型提供方：base_url 填接入地址，wire_api 用 "responses"，并填入密钥。',
+        cursor: '需要在 Cursor 的模型设置里启用自定义 {protocol} 接口，填写接入地址和密钥，并手动添加要用的模型名。',
+        chat: '需要在软件设置里添加自定义服务商，类型选 {protocol} 兼容，填写接入地址和密钥，并手动添加要用的模型名。',
+        code: '需要使用 {protocol} 官方 SDK 或直接发 HTTP 请求，把 base URL 改成接入地址，密钥放在请求头里。',
+        other: '需要在这个软件的自定义接口设置里填写接入地址和密钥。'
+      }
+    },
+    ccs: {
+      client: '客户端',
+      name: '配置名称',
+      model: '模型',
+      modelDefault: '默认',
+      open: '打开 CC Switch',
+      copyLink: '复制导入链接',
+      notInstalled: '点了没反应？请先安装 CC Switch，再点一次。',
+      download: '下载 CC Switch'
+    },
+    manual: {
+      address: '接入地址',
+      openaiAddress: 'OpenAI 兼容地址',
+      envVars: '环境变量',
+      troubleshootTitle: '连不上时检查',
+      troubleshoot1: '地址不要多带斜杠；OpenAI 兼容的客户端要用以 /v1 结尾的地址。',
+      troubleshoot2: '密钥要完整复制，前后不能有空格或换行。',
+      troubleshoot3: '改完配置后重启客户端。',
+      troubleshoot4: '确认网络或代理可以访问接入地址；客户端版本太旧时先升级。',
+      viewDocs: '查看文档'
+    }
   },
 
   // API Keys

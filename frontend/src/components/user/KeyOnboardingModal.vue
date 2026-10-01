@@ -1,114 +1,195 @@
 <template>
-  <BaseDialog :show="show" :title="tx.title" width="wide" @close="emit('close')">
+  <BaseDialog :show="show" :title="t('keyOnboarding.title')" width="wide" @close="emit('close')">
     <div v-if="apiKey" class="space-y-5">
-      <!-- 当前密钥 + 端点 -->
-      <div class="grid gap-3 sm:grid-cols-2">
-        <div class="rounded-md border border-gray-200 px-4 py-3 dark:border-dark-700">
-          <p class="text-xs font-medium text-gray-600 dark:text-dark-400">{{ tx.currentKey }}</p>
-          <div class="mt-1 flex items-center gap-2">
-            <code class="truncate font-mono text-sm tabular-nums text-gray-900 dark:text-gray-100">{{ maskedKey }}</code>
-            <button class="copy-btn" :title="tx.copy" @click="copy(apiKey.key, 'key')">
-              <span class="text-xs">{{ copiedId === 'key' ? tx.copied : tx.copy }}</span>
-            </button>
-          </div>
-        </div>
-        <div class="rounded-md border border-gray-200 px-4 py-3 dark:border-dark-700">
-          <p class="text-xs font-medium text-gray-600 dark:text-dark-400">{{ tx.endpoint }}</p>
-          <div class="mt-1 flex items-center gap-2">
-            <code class="truncate font-mono text-sm text-gray-900 dark:text-gray-100">{{ base }}</code>
-            <button class="copy-btn" :title="tx.copy" @click="copy(base, 'base')">
-              <span class="text-xs">{{ copiedId === 'base' ? tx.copied : tx.copy }}</span>
-            </button>
-          </div>
-        </div>
+      <!-- 当前密钥 -->
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span class="font-serif text-base text-gray-900 dark:text-white">{{ apiKey.name || t('keys.apiKey') }}</span>
+        <code class="font-mono text-xs tabular-nums text-gray-500 dark:text-dark-400">{{ maskedKey }}</code>
       </div>
 
-      <p class="text-sm text-gray-600 dark:text-dark-400">{{ tx.intro }}</p>
-
-      <!-- 方式选择（下划线 tab） -->
-      <div class="tabs flex-wrap">
+      <!-- 页签 -->
+      <div class="tabs flex-wrap" role="tablist">
         <button
-          v-for="m in methods"
-          :key="m.id"
+          v-for="tab in tabs"
+          :key="tab.id"
+          type="button"
+          role="tab"
           class="tab"
-          :class="{ 'tab-active': active === m.id }"
-          @click="active = m.id"
+          :class="{ 'tab-active': active === tab.id }"
+          :aria-selected="active === tab.id"
+          :data-test="`tab-${tab.id}`"
+          @click="active = tab.id"
         >
-          {{ m.label }}
-          <span
-            v-if="m.id === recommended"
-            class="ml-1.5 rounded-md border border-primary-300 px-1.5 py-0.5 text-[10px] font-medium text-primary-700 dark:border-primary-900/50 dark:text-primary-400"
-          >{{ tx.recommended }}</span>
+          {{ tab.label }}
         </button>
       </div>
 
-      <!-- ===== CC Switch（推荐） ===== -->
-      <div v-if="active === 'ccswitch'" class="space-y-4">
-        <p class="text-sm text-gray-600 dark:text-dark-400">{{ tx.ccsIntro }}</p>
-        <!-- 支持导入的客户端 -->
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="text-xs text-gray-500 dark:text-dark-400">{{ tx.ccsSupports }}</span>
-          <span
-            v-for="c in ccsClients"
-            :key="c"
-            class="rounded-md border border-gray-200 px-2 py-0.5 text-xs font-medium text-gray-700 dark:border-dark-700 dark:text-gray-300"
-          >{{ c }}</span>
+      <!-- 没有分组 -->
+      <p
+        v-if="!platform && active !== 'manual'"
+        class="rounded-md border border-primary-200 bg-primary-50 px-3 py-2 text-sm text-primary-800 dark:border-primary-500/40 dark:bg-primary-500/10 dark:text-primary-300"
+        data-test="no-group"
+      >
+        {{ t('keyOnboarding.noGroup') }}
+      </p>
+
+      <!-- ===== 一键安装 ===== -->
+      <div v-else-if="active === 'install'" class="space-y-1" data-test="panel-install">
+        <p class="text-sm text-gray-600 dark:text-dark-400">{{ t('keyOnboarding.install.intro') }}</p>
+        <div class="divide-y divide-gray-100 dark:divide-dark-800">
+          <section v-for="c in clients" :key="c" class="py-4" :data-test="`client-${c}`">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div class="min-w-0">
+                <h4 class="font-serif text-base text-gray-900 dark:text-white">{{ CLIENT_LABELS[c] }}</h4>
+                <p class="mt-0.5 truncate font-mono text-xs text-gray-500 dark:text-dark-400">{{ scriptTargetPath(c, 'unix') }}</p>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  :data-test="`copy-${c}-unix`"
+                  @click="copy(installScript(c, 'unix'), `${c}-unix`)"
+                >
+                  {{ copiedId === `${c}-unix` ? t('keyOnboarding.copied') : t('keyOnboarding.install.copyUnix') }}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  :data-test="`copy-${c}-windows`"
+                  @click="copy(installScript(c, 'windows'), `${c}-windows`)"
+                >
+                  {{ copiedId === `${c}-windows` ? t('keyOnboarding.copied') : t('keyOnboarding.install.copyWindows') }}
+                </button>
+              </div>
+            </div>
+            <details class="group mt-2">
+              <summary class="inline-flex cursor-pointer select-none items-center gap-1 text-xs text-gray-500 hover:text-gray-900 dark:text-dark-400 dark:hover:text-white">
+                {{ t('keyOnboarding.install.viewScript') }}
+              </summary>
+              <div class="mt-2 space-y-2">
+                <ScriptBlock label="macOS / Linux" :code="installScript(c, 'unix')" />
+                <ScriptBlock label="Windows PowerShell" :code="installScript(c, 'windows')" />
+              </div>
+            </details>
+          </section>
         </div>
-        <button class="btn btn-primary" @click="openDeeplink">
-          {{ tx.ccsImport }}
-        </button>
-        <p class="text-xs text-gray-500 dark:text-dark-400">{{ tx.ccsHint }}</p>
-        <CodeBlock :label="tx.ccsManualLink" :code="deeplink" :copied="copiedId === 'deeplink'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(deeplink, 'deeplink')" />
       </div>
 
-      <!-- ===== Claude Code ===== -->
-      <div v-else-if="active === 'claude'" class="space-y-4">
-        <p class="text-sm text-gray-600 dark:text-dark-400">{{ tx.claudeIntro }}</p>
-        <ol class="space-y-1.5 text-sm text-gray-700 dark:text-gray-300">
-          <li v-for="(s, i) in tx.claudeSteps" :key="i" class="flex gap-2">
-            <span class="font-mono text-xs text-clay-num">{{ String(i + 1).padStart(2, '0') }}</span><span>{{ s }}</span>
-          </li>
-        </ol>
-        <CodeBlock :label="tx.envVars" :code="claudeEnv" :copied="copiedId === 'claudeEnv'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(claudeEnv, 'claudeEnv')" />
-        <CodeBlock :label="'~/.claude/settings.json'" :code="claudeJson" :copied="copiedId === 'claudeJson'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(claudeJson, 'claudeJson')" />
-        <p class="text-xs text-gray-500 dark:text-dark-400">{{ tx.claudeHint }}</p>
+      <!-- ===== 交给 AI ===== -->
+      <div v-else-if="active === 'ai'" class="space-y-4" data-test="panel-ai">
+        <p class="text-sm text-gray-600 dark:text-dark-400">{{ t('keyOnboarding.ai.intro') }}</p>
+        <div class="flex flex-wrap gap-2" role="radiogroup" :aria-label="t('keyOnboarding.ai.clientLabel')">
+          <button
+            v-for="c in AI_CLIENTS"
+            :key="c"
+            type="button"
+            role="radio"
+            class="rounded-md border px-3 py-1.5 text-sm transition-colors"
+            :class="
+              aiClient === c
+                ? 'border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900'
+                : 'border-gray-200 text-gray-700 hover:bg-gray-100 dark:border-dark-700 dark:text-gray-300 dark:hover:bg-dark-800'
+            "
+            :aria-checked="aiClient === c"
+            :data-test="`ai-client-${c}`"
+            @click="aiClient = c"
+          >
+            {{ t(`keyOnboarding.ai.clients.${c}`) }}
+          </button>
+        </div>
+        <textarea
+          readonly
+          rows="5"
+          class="input w-full resize-none text-sm leading-relaxed"
+          data-test="ai-prompt"
+          :value="aiShort"
+          @focus="($event.target as HTMLTextAreaElement).select()"
+        />
+        <div class="flex flex-wrap gap-2">
+          <button type="button" class="btn btn-primary btn-sm" data-test="ai-copy" @click="copy(aiShort, 'ai-short')">
+            {{ copiedId === 'ai-short' ? t('keyOnboarding.copied') : t('keyOnboarding.copy') }}
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" data-test="ai-copy-detail" @click="copy(aiDetailed, 'ai-detail')">
+            {{ copiedId === 'ai-detail' ? t('keyOnboarding.copied') : t('keyOnboarding.ai.copyDetail') }}
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" @click="openExternal(chatgptUrl(aiShort))">
+            {{ t('keyOnboarding.ai.openChatgpt') }}
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" data-test="ai-open-claude" @click="openExternal(claudeUrl(aiShort))">
+            {{ t('keyOnboarding.ai.openClaude') }}
+          </button>
+        </div>
+        <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('keyOnboarding.ai.keyNote') }}</p>
       </div>
 
-      <!-- ===== Codex / OpenAI SDK ===== -->
-      <div v-else-if="active === 'openai'" class="space-y-4">
-        <p class="text-sm text-gray-600 dark:text-dark-400">{{ tx.codexIntro }}</p>
-        <ol class="space-y-1.5 text-sm text-gray-700 dark:text-gray-300">
-          <li v-for="(s, i) in tx.codexSteps" :key="i" class="flex gap-2">
-            <span class="font-mono text-xs text-clay-num">{{ String(i + 1).padStart(2, '0') }}</span><span>{{ s }}</span>
-          </li>
-        </ol>
-        <CodeBlock label="~/.codex/config.toml" :code="codexToml" :copied="copiedId === 'codexToml'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(codexToml, 'codexToml')" />
-        <CodeBlock :label="tx.envVars" :code="openaiEnv" :copied="copiedId === 'openaiEnv'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(openaiEnv, 'openaiEnv')" />
-        <p class="pt-1 text-xs font-medium text-gray-600 dark:text-dark-400">{{ tx.genericSdk }}</p>
-        <CodeBlock label="Python" :code="openaiPy" :copied="copiedId === 'openaiPy'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(openaiPy, 'openaiPy')" />
-        <CodeBlock label="curl" :code="openaiCurl" :copied="copiedId === 'openaiCurl'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(openaiCurl, 'openaiCurl')" />
+      <!-- ===== CC Switch ===== -->
+      <div v-else-if="active === 'ccswitch'" class="space-y-4" data-test="panel-ccswitch">
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div v-if="ccsClients.length > 1">
+            <label class="input-label">{{ t('keyOnboarding.ccs.client') }}</label>
+            <div class="flex flex-wrap gap-2" role="radiogroup">
+              <button
+                v-for="c in ccsClients"
+                :key="c"
+                type="button"
+                role="radio"
+                class="rounded-md border px-3 py-1.5 text-sm transition-colors"
+                :class="
+                  ccsClient === c
+                    ? 'border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900'
+                    : 'border-gray-200 text-gray-700 hover:bg-gray-100 dark:border-dark-700 dark:text-gray-300 dark:hover:bg-dark-800'
+                "
+                :aria-checked="ccsClient === c"
+                :data-test="`ccs-client-${c}`"
+                @click="ccsClient = c"
+              >
+                {{ CCS_LABELS[c] }}
+              </button>
+            </div>
+          </div>
+          <div :class="ccsClients.length > 1 ? '' : 'sm:col-span-2'">
+            <label class="input-label" for="ccs-name">{{ t('keyOnboarding.ccs.name') }}</label>
+            <input id="ccs-name" v-model="ccsCustomName" type="text" class="input" :placeholder="ccsDefaultName" data-test="ccs-name" />
+          </div>
+          <div v-if="models.length > 0" class="sm:col-span-2">
+            <label class="input-label" for="ccs-model">{{ t('keyOnboarding.ccs.model') }}</label>
+            <select id="ccs-model" v-model="ccsModel" class="input" data-test="ccs-model">
+              <option value="">{{ t('keyOnboarding.ccs.modelDefault') }}</option>
+              <option v-for="m in models" :key="m" :value="m">{{ m }}</option>
+            </select>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" class="btn btn-primary" data-test="ccs-open" @click="openDeeplink">
+            {{ t('keyOnboarding.ccs.open') }}
+          </button>
+          <button type="button" class="btn btn-secondary" data-test="ccs-copy-link" @click="copy(deeplink, 'deeplink')">
+            {{ copiedId === 'deeplink' ? t('keyOnboarding.copied') : t('keyOnboarding.ccs.copyLink') }}
+          </button>
+        </div>
+        <p class="text-sm text-gray-600 dark:text-dark-400">
+          {{ t('keyOnboarding.ccs.notInstalled') }}
+          <a
+            :href="CC_SWITCH_RELEASES"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400"
+          >{{ t('keyOnboarding.ccs.download') }}</a>
+        </p>
       </div>
 
-      <!-- ===== 一键脚本 ===== -->
-      <div v-else-if="active === 'script'" class="space-y-4">
-        <p class="text-sm text-gray-600 dark:text-dark-400">{{ tx.scriptIntro }}</p>
-        <CodeBlock label="macOS / Linux" :code="script" :copied="copiedId === 'script'" :copy-label="tx.copy" :copied-label="tx.copied" @copy="copy(script, 'script')" />
-        <p class="text-xs text-gray-500 dark:text-dark-400">{{ tx.scriptHint }}</p>
-      </div>
-
-      <!-- ===== 手动配置 / 排障（兜底） ===== -->
-      <div v-else-if="active === 'manual'" class="space-y-4">
-        <p class="text-sm text-gray-600 dark:text-dark-400">{{ tx.manualIntro }}</p>
+      <!-- ===== 手动配置 ===== -->
+      <div v-else-if="active === 'manual'" class="space-y-5" data-test="panel-manual">
         <div class="overflow-hidden rounded-md border border-gray-200 dark:border-dark-700">
           <table class="w-full text-sm">
             <tbody>
-              <tr v-for="(item, idx) in manualRows" :key="item.k" :class="idx > 0 ? 'border-t border-gray-100 dark:border-dark-800' : ''">
-                <td class="w-40 px-4 py-2.5 text-gray-600 dark:text-dark-400">{{ item.k }}</td>
+              <tr v-for="(row, idx) in manualRows" :key="row.id" :class="idx > 0 ? 'border-t border-gray-100 dark:border-dark-800' : ''">
+                <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">{{ row.label }}</td>
                 <td class="px-4 py-2.5">
                   <div class="flex items-center gap-2">
-                    <code class="truncate font-mono text-sm text-gray-900 dark:text-gray-100">{{ item.v }}</code>
-                    <button class="copy-btn shrink-0" @click="copy(item.v, 'm' + idx)">
-                      <span class="text-xs">{{ copiedId === 'm' + idx ? tx.copied : tx.copy }}</span>
+                    <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">{{ row.shown }}</code>
+                    <button type="button" class="copy-btn shrink-0" @click="copy(row.value, `m-${row.id}`)">
+                      <span class="text-xs">{{ copiedId === `m-${row.id}` ? t('keyOnboarding.copied') : t('keyOnboarding.copy') }}</span>
                     </button>
                   </div>
                 </td>
@@ -116,13 +197,29 @@
             </tbody>
           </table>
         </div>
+
+        <div v-if="snippets.length > 0" class="space-y-2">
+          <details v-for="s in snippets" :key="s.id" class="rounded-md border border-gray-200 px-4 py-2.5 dark:border-dark-700">
+            <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">{{ s.title }}</summary>
+            <div class="mt-3 space-y-2">
+              <CodeBlock
+                v-for="f in s.files"
+                :key="f.label"
+                :label="f.label"
+                :code="f.code"
+                :copied="copiedId === `${s.id}-${f.label}`"
+                :copy-label="t('keyOnboarding.copy')"
+                :copied-label="t('keyOnboarding.copied')"
+                @copy="copy(f.code, `${s.id}-${f.label}`)"
+              />
+            </div>
+          </details>
+        </div>
+
         <div>
-          <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">{{ tx.troubleshootTitle }}</p>
-          <ul class="space-y-1.5 text-sm text-gray-600 dark:text-dark-400">
-            <li v-for="(t, i) in tx.troubleshoot" :key="i" class="flex gap-2">
-              <span class="font-mono text-xs text-gray-400">{{ String(i + 1).padStart(2, '0') }}</span>
-              <span>{{ t }}</span>
-            </li>
+          <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">{{ t('keyOnboarding.manual.troubleshootTitle') }}</p>
+          <ul class="list-disc space-y-1.5 pl-5 text-sm text-gray-600 marker:text-gray-300 dark:text-dark-400 dark:marker:text-dark-600">
+            <li v-for="n in 4" :key="n">{{ t(`keyOnboarding.manual.troubleshoot${n}`) }}</li>
           </ul>
         </div>
         <a
@@ -132,7 +229,7 @@
           rel="noopener noreferrer"
           class="inline-flex text-sm font-medium text-primary-700 hover:underline dark:text-primary-400"
         >
-          {{ tx.viewDocs }} →
+          {{ t('keyOnboarding.manual.viewDocs') }}
         </a>
       </div>
     </div>
@@ -140,92 +237,69 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, h, defineComponent } from 'vue'
+import { ref, computed, watch, h, defineComponent, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import { userChannelsAPI } from '@/api/channels'
+import type { UserAvailableChannel } from '@/api/channels'
 import {
   CC_SWITCH_USAGE_SCRIPT,
+  OPENAI_CC_SWITCH_CODEX_MODEL,
   buildCcSwitchImportDeeplink,
   type CcSwitchClientType
 } from '@/utils/ccswitchImport'
+import {
+  AI_CLIENTS,
+  CLIENT_LABELS,
+  buildAiPrompt,
+  buildInstallScript,
+  chatgptUrl,
+  claudeUrl,
+  clientsForPlatform,
+  codexProviderId,
+  endpointFor,
+  scriptTargetPath,
+  type AiClient,
+  type OnboardingClient,
+  type ScriptOs
+} from '@/utils/keyOnboarding'
+
+export type OnboardingTab = 'install' | 'ai' | 'ccswitch' | 'manual'
 
 interface OnboardingKey {
   key: string
   name?: string
-  group?: { platform?: string | null } | null
+  group_id?: number | null
+  group?: { id?: number; platform?: string | null; allow_messages_dispatch?: boolean } | null
 }
 
-const props = defineProps<{
-  show: boolean
-  apiKey: OnboardingKey | null
-  baseUrl: string
-  siteName?: string
-  docUrl?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    show: boolean
+    apiKey: OnboardingKey | null
+    baseUrl: string
+    siteName?: string
+    docUrl?: string
+    initialTab?: OnboardingTab
+  }>(),
+  { initialTab: 'install' }
+)
 
 const emit = defineEmits<{ close: [] }>()
 
 const { t } = useI18n()
 
-// 接入指引文案（i18n: keyOnboarding.*）
-const tx = computed(() => ({
-  title: t('keyOnboarding.title'),
-  currentKey: t('keyOnboarding.currentKey'),
-  endpoint: t('keyOnboarding.endpoint'),
-  copy: t('keyOnboarding.copy'),
-  copied: t('keyOnboarding.copied'),
-  intro: t('keyOnboarding.intro'),
-  recommended: t('keyOnboarding.recommended'),
-  envVars: t('keyOnboarding.envVars'),
-  genericSdk: t('keyOnboarding.genericSdk'),
-  ccsIntro: t('keyOnboarding.ccsIntro'),
-  ccsSupports: t('keyOnboarding.ccsSupports'),
-  ccsImport: t('keyOnboarding.ccsImport'),
-  ccsHint: t('keyOnboarding.ccsHint'),
-  ccsManualLink: t('keyOnboarding.ccsManualLink'),
-  claudeIntro: t('keyOnboarding.claudeIntro'),
-  claudeSteps: [
-    t('keyOnboarding.claudeStep1'),
-    t('keyOnboarding.claudeStep2'),
-    t('keyOnboarding.claudeStep3'),
-  ],
-  claudeHint: t('keyOnboarding.claudeHint'),
-  codexIntro: t('keyOnboarding.codexIntro'),
-  codexSteps: [
-    t('keyOnboarding.codexStep1'),
-    t('keyOnboarding.codexStep2'),
-    t('keyOnboarding.codexStep3'),
-  ],
-  scriptIntro: t('keyOnboarding.scriptIntro'),
-  scriptHint: t('keyOnboarding.scriptHint'),
-  manualIntro: t('keyOnboarding.manualIntro'),
-  troubleshootTitle: t('keyOnboarding.troubleshootTitle'),
-  troubleshoot: [
-    t('keyOnboarding.troubleshoot1'),
-    t('keyOnboarding.troubleshoot2'),
-    t('keyOnboarding.troubleshoot3'),
-    t('keyOnboarding.troubleshoot4'),
-    t('keyOnboarding.troubleshoot5'),
-  ],
-  viewDocs: t('keyOnboarding.viewDocs'),
-  model: t('keyOnboarding.model'),
-  apiKeyFull: t('keyOnboarding.apiKeyFull'),
-}))
+const CC_SWITCH_RELEASES = 'https://github.com/farion1231/cc-switch/releases'
+const CCS_LABELS: Record<CcSwitchClientType | 'codex', string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  gemini: 'Gemini'
+}
 
-const base = computed(() => (props.baseUrl || '').replace(/\/+$/, ''))
-const openaiBase = computed(() => `${base.value}/v1`)
+const base = computed(() => (props.baseUrl || '').trim().replace(/\/+$/, ''))
 const fullKey = computed(() => props.apiKey?.key || '')
-const platform = computed(() => props.apiKey?.group?.platform || 'anthropic')
-
-// CC Switch 为推荐方式
-const recommended = 'ccswitch'
-const ccsClients = ['Claude Code', 'Codex', 'OpenClaw', 'Hermes']
-
-// 供应商 id（用于 config.toml 的表名，需为安全标识符）
-const providerId = computed(() => {
-  const raw = (props.siteName || 'sub2api').toLowerCase().replace(/[^a-z0-9_]/g, '')
-  return raw || 'sub2api'
-})
+const platform = computed(() => props.apiKey?.group?.platform || null)
+const siteName = computed(() => (props.siteName || '').trim() || 'sub2api')
 
 const maskedKey = computed(() => {
   const k = fullKey.value
@@ -233,62 +307,146 @@ const maskedKey = computed(() => {
   return `${k.slice(0, 6)}…${k.slice(-4)}`
 })
 
-const methods = computed(() => [
-  { id: 'ccswitch', label: 'CC Switch' },
-  { id: 'claude', label: 'Claude Code' },
-  { id: 'openai', label: 'Codex / OpenAI SDK' },
-  { id: 'script', label: t('keyOnboarding.methodScript') },
-  { id: 'manual', label: t('keyOnboarding.methodManual') },
+// ===== 页签 =====
+const tabs = computed<{ id: OnboardingTab; label: string }[]>(() => [
+  { id: 'install', label: t('keyOnboarding.tabs.install') },
+  { id: 'ai', label: t('keyOnboarding.tabs.ai') },
+  { id: 'ccswitch', label: t('keyOnboarding.tabs.ccswitch') },
+  { id: 'manual', label: t('keyOnboarding.tabs.manual') }
 ])
 
-const active = ref<string>('ccswitch')
+const active = ref<OnboardingTab>(props.initialTab)
+const copiedId = ref<string>('')
+
+// ===== 分组可用模型 =====
+const channels = ref<UserAvailableChannel[] | null>(null)
+let loadingModels = false
+async function loadModels() {
+  if (channels.value || loadingModels) return
+  loadingModels = true
+  try {
+    channels.value = await userChannelsAPI.getAvailable()
+  } catch {
+    channels.value = []
+  } finally {
+    loadingModels = false
+  }
+}
+
+const models = computed<string[]>(() => {
+  const groupId = props.apiKey?.group?.id ?? props.apiKey?.group_id
+  if (!groupId || !channels.value) return []
+  const names = new Set<string>()
+  for (const channel of channels.value) {
+    for (const section of channel.platforms || []) {
+      if (!(section.groups || []).some((g) => g.id === groupId)) continue
+      for (const m of section.supported_models || []) {
+        if (m?.name) names.add(m.name)
+      }
+    }
+  }
+  return [...names]
+})
+
 watch(
   () => props.show,
   (v) => {
-    if (v) active.value = recommended
+    if (v) {
+      active.value = props.initialTab
+      copiedId.value = ''
+      void loadModels()
+    }
   },
   { immediate: true }
 )
-
-// ===== Snippets =====
-const claudeEnv = computed(
-  () => `export ANTHROPIC_BASE_URL="${base.value}"\nexport ANTHROPIC_AUTH_TOKEN="${fullKey.value}"`
-)
-const claudeJson = computed(
-  () => `{\n  "env": {\n    "ANTHROPIC_BASE_URL": "${base.value}",\n    "ANTHROPIC_AUTH_TOKEN": "${fullKey.value}"\n  }\n}`
-)
-const codexToml = computed(
-  () =>
-    `model = "gpt-5.6-sol"\nmodel_provider = "${providerId.value}"\n\n[model_providers.${providerId.value}]\nname = "${(props.siteName || 'sub2api').trim() || 'sub2api'}"\nbase_url = "${openaiBase.value}"\nwire_api = "chat"`
-)
-const openaiEnv = computed(
-  () => `export OPENAI_BASE_URL="${openaiBase.value}"\nexport OPENAI_API_KEY="${fullKey.value}"`
-)
-const openaiPy = computed(
-  () =>
-    `from openai import OpenAI\n\nclient = OpenAI(\n    base_url="${openaiBase.value}",\n    api_key="${fullKey.value}",\n)\nresp = client.chat.completions.create(\n    model="gpt-5.6-sol",\n    messages=[{"role": "user", "content": "你好"}],\n)\nprint(resp.choices[0].message.content)`
-)
-const openaiCurl = computed(
-  () =>
-    `curl ${openaiBase.value}/chat/completions \\\n  -H "Authorization: Bearer ${fullKey.value}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"你好"}]}'`
-)
-
-const script = computed(() => {
-  if (platform.value === 'openai') {
-    return `# ${t('keyOnboarding.scriptCommentCodex')}\nmkdir -p ~/.codex\ncat > ~/.codex/config.toml <<'EOF'\nmodel = "gpt-5.6-sol"\nmodel_provider = "${providerId.value}"\n\n[model_providers.${providerId.value}]\nname = "${(props.siteName || 'sub2api').trim() || 'sub2api'}"\nbase_url = "${openaiBase.value}"\nwire_api = "chat"\nEOF\ncat >> ~/.zshrc <<'EOF'\nexport OPENAI_API_KEY="${fullKey.value}"\nEOF\nsource ~/.zshrc\necho "✓ ${t('keyOnboarding.scriptDoneCodex')}"`
+// 弹窗已打开时，行内的另一个入口再次点击也要能切换页签
+watch(
+  () => props.initialTab,
+  (v) => {
+    if (props.show) active.value = v
   }
-  return `mkdir -p ~/.claude\ncat > ~/.claude/settings.json <<'EOF'\n{\n  "env": {\n    "ANTHROPIC_BASE_URL": "${base.value}",\n    "ANTHROPIC_AUTH_TOKEN": "${fullKey.value}"\n  }\n}\nEOF\necho "✓ ${t('keyOnboarding.scriptDoneClaude')}"`
-})
+)
 
-const ccsClientType = computed<CcSwitchClientType>(() => (platform.value === 'gemini' ? 'gemini' : 'claude'))
+// ===== 一键安装 =====
+const clients = computed<OnboardingClient[]>(() =>
+  clientsForPlatform(platform.value, { allowMessagesDispatch: props.apiKey?.group?.allow_messages_dispatch })
+)
+
+function installScript(client: OnboardingClient, os: ScriptOs): string {
+  return buildInstallScript(client, os, {
+    baseUrl: base.value,
+    apiKey: fullKey.value,
+    platform: platform.value,
+    siteName: siteName.value,
+    doneMessage: t('keyOnboarding.install.scriptDone', { client: CLIENT_LABELS[client] })
+  })
+}
+
+// ===== 交给 AI =====
+const aiClient = ref<AiClient>('claude')
+// 注意：这里刻意不传密钥
+function aiPrompt(detailed: boolean): string {
+  return buildAiPrompt({
+    t: (key, params) => t(key, params ?? {}),
+    client: aiClient.value,
+    clientLabel: t(`keyOnboarding.ai.clients.${aiClient.value}`),
+    baseUrl: base.value,
+    platform: platform.value,
+    siteName: siteName.value,
+    models: models.value,
+    docUrl: props.docUrl,
+    detailed
+  })
+}
+const aiShort = computed(() => aiPrompt(false))
+const aiDetailed = computed(() => aiPrompt(true))
+
+function openExternal(url: string) {
+  try {
+    window.open(url, '_blank', 'noopener,noreferrer')
+  } catch {
+    /* 用户可手动复制 */
+  }
+}
+
+// ===== CC Switch =====
+const ccsClients = computed<(CcSwitchClientType | 'codex')[]>(() => {
+  switch (platform.value) {
+    case 'openai':
+      return ['codex']
+    case 'gemini':
+      return ['gemini']
+    case 'antigravity':
+      return ['claude', 'gemini']
+    default:
+      return ['claude']
+  }
+})
+const ccsClient = ref<CcSwitchClientType | 'codex'>('claude')
+watch(
+  ccsClients,
+  (list) => {
+    if (!list.includes(ccsClient.value)) ccsClient.value = list[0]
+  },
+  { immediate: true }
+)
+const ccsCustomName = ref('')
+const ccsModel = ref('')
+watch([() => props.show, () => props.apiKey?.group?.id], () => {
+  ccsCustomName.value = ''
+  ccsModel.value = ''
+})
+const ccsDefaultName = computed(() => `${siteName.value} - ${CCS_LABELS[ccsClient.value]}`)
+
 const deeplink = computed(() =>
   buildCcSwitchImportDeeplink({
     baseUrl: base.value,
     platform: platform.value as never,
-    clientType: ccsClientType.value,
-    providerName: (props.siteName || 'sub2api').trim() || 'sub2api',
+    clientType: ccsClient.value === 'gemini' ? 'gemini' : 'claude',
+    providerName: ccsCustomName.value.trim() || ccsDefaultName.value,
     apiKey: fullKey.value,
     usageScript: CC_SWITCH_USAGE_SCRIPT,
+    model: ccsModel.value || undefined
   })
 )
 
@@ -300,49 +458,151 @@ function openDeeplink() {
   }
 }
 
+// ===== 手动配置 =====
 const manualRows = computed(() => [
-  { k: 'base_url', v: base.value },
-  { k: 'OpenAI base_url', v: openaiBase.value },
-  { k: tx.value.apiKeyFull, v: fullKey.value },
-  { k: tx.value.model, v: 'gpt-5.6-sol' },
+  { id: 'base', label: t('keyOnboarding.manual.address'), shown: base.value, value: base.value },
+  { id: 'v1', label: t('keyOnboarding.manual.openaiAddress'), shown: `${base.value}/v1`, value: `${base.value}/v1` },
+  { id: 'key', label: t('keys.apiKey'), shown: maskedKey.value, value: fullKey.value }
 ])
 
-// ===== Copy =====
-const copiedId = ref<string>('')
-let copyTimer: ReturnType<typeof setTimeout> | null = null
-function copy(text: string, id: string) {
-  navigator.clipboard?.writeText(text).then(() => {
-    copiedId.value = id
-    if (copyTimer) clearTimeout(copyTimer)
-    copyTimer = setTimeout(() => (copiedId.value = ''), 1500)
-  })
+function tomlQuote(v: string): string {
+  return `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
 
-// 轻量内联代码块组件（带复制按钮）
+const snippets = computed(() => {
+  const list: { id: string; title: string; files: { label: string; code: string }[] }[] = []
+  const key = fullKey.value
+  for (const c of clients.value) {
+    const url = endpointFor(c, platform.value, base.value)
+    if (c === 'claude') {
+      list.push({
+        id: 'claude',
+        title: CLIENT_LABELS.claude,
+        files: [
+          { label: t('keyOnboarding.manual.envVars'), code: `export ANTHROPIC_BASE_URL="${url}"\nexport ANTHROPIC_AUTH_TOKEN="${key}"` },
+          {
+            label: '~/.claude/settings.json',
+            code: JSON.stringify({ env: { ANTHROPIC_BASE_URL: url, ANTHROPIC_AUTH_TOKEN: key } }, null, 2)
+          }
+        ]
+      })
+    } else if (c === 'codex') {
+      const id = codexProviderId(siteName.value)
+      list.push({
+        id: 'codex',
+        title: CLIENT_LABELS.codex,
+        files: [
+          {
+            label: '~/.codex/config.toml',
+            code: [
+              `model_provider = ${tomlQuote(id)}`,
+              `model = ${tomlQuote(OPENAI_CC_SWITCH_CODEX_MODEL)}`,
+              '',
+              `[model_providers.${id}]`,
+              `name = ${tomlQuote(siteName.value)}`,
+              `base_url = ${tomlQuote(url)}`,
+              'wire_api = "responses"',
+              'requires_openai_auth = false',
+              `experimental_bearer_token = ${tomlQuote(key)}`
+            ].join('\n')
+          }
+        ]
+      })
+    } else if (c === 'gemini') {
+      list.push({
+        id: 'gemini',
+        title: CLIENT_LABELS.gemini,
+        files: [
+          { label: t('keyOnboarding.manual.envVars'), code: `export GOOGLE_GEMINI_BASE_URL="${url}"\nexport GEMINI_API_KEY="${key}"` }
+        ]
+      })
+    }
+  }
+  return list
+})
+
+// ===== 复制 =====
+let copyTimer: ReturnType<typeof setTimeout> | null = null
+
+async function writeClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    /* 落到下面的兜底 */
+  }
+  try {
+    const el = document.createElement('textarea')
+    el.value = text
+    el.setAttribute('readonly', '')
+    el.style.position = 'fixed'
+    el.style.opacity = '0'
+    document.body.appendChild(el)
+    el.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(el)
+    return ok
+  } catch {
+    return false
+  }
+}
+
+async function copy(text: string, id: string) {
+  if (!(await writeClipboard(text))) return
+  copiedId.value = id
+  if (copyTimer) clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => (copiedId.value = ''), 1800)
+}
+
+onBeforeUnmount(() => {
+  if (copyTimer) clearTimeout(copyTimer)
+})
+
+// 脚本预览（只读，可选中）
+const ScriptBlock = defineComponent({
+  name: 'OnboardingScriptBlock',
+  props: {
+    label: { type: String, default: '' },
+    code: { type: String, default: '' }
+  },
+  setup(p) {
+    return () =>
+      h('div', { class: 'overflow-hidden rounded-md border border-gray-200 dark:border-dark-700' }, [
+        h('div', { class: 'border-b border-gray-100 px-3 py-1.5 text-xs text-gray-500 dark:border-dark-800 dark:text-dark-400' }, p.label),
+        h('pre', { class: 'max-h-64 overflow-auto bg-gray-900 px-4 py-3 text-[12px] leading-relaxed text-gray-100 dark:bg-dark-950' }, [
+          h('code', { class: 'font-mono' }, p.code)
+        ])
+      ])
+  }
+})
+
+// 带复制按钮的代码块
 const CodeBlock = defineComponent({
   name: 'OnboardingCodeBlock',
   props: {
     label: { type: String, default: '' },
     code: { type: String, default: '' },
     copied: { type: Boolean, default: false },
-    copyLabel: { type: String, default: 'Copy' },
-    copiedLabel: { type: String, default: 'Copied' },
+    copyLabel: { type: String, default: '' },
+    copiedLabel: { type: String, default: '' }
   },
   emits: ['copy'],
-  setup(props, { emit }) {
+  setup(p, { emit }) {
     return () =>
-      h('div', { class: 'rounded-md border border-gray-200 dark:border-dark-700 overflow-hidden' }, [
+      h('div', { class: 'overflow-hidden rounded-md border border-gray-200 dark:border-dark-700' }, [
         h('div', { class: 'flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800' }, [
-          h('span', { class: 'font-mono text-xs text-gray-500 dark:text-dark-400' }, props.label),
-          h('button', { class: 'copy-btn', onClick: () => emit('copy') }, [
-            h('span', { class: 'text-xs' }, props.copied ? props.copiedLabel : props.copyLabel),
-          ]),
+          h('span', { class: 'font-mono text-xs text-gray-500 dark:text-dark-400' }, p.label),
+          h('button', { type: 'button', class: 'copy-btn', onClick: () => emit('copy') }, [
+            h('span', { class: 'text-xs' }, p.copied ? p.copiedLabel : p.copyLabel)
+          ])
         ]),
         h('pre', { class: 'overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950' }, [
-          h('code', { class: 'font-mono' }, props.code),
-        ]),
+          h('code', { class: 'font-mono' }, p.code)
+        ])
       ])
-  },
+  }
 })
 </script>
 
@@ -360,6 +620,10 @@ const CodeBlock = defineComponent({
   background-color: theme('colors.gray.100');
   color: theme('colors.gray.900');
 }
+.copy-btn:focus-visible {
+  outline: 2px solid theme('colors.primary.500');
+  outline-offset: 2px;
+}
 :global(.dark) .copy-btn {
   border-color: theme('colors.dark.700');
   color: theme('colors.gray.400');
@@ -367,8 +631,5 @@ const CodeBlock = defineComponent({
 :global(.dark) .copy-btn:hover {
   background-color: theme('colors.dark.800');
   color: #fff;
-}
-.text-clay-num {
-  color: theme('colors.primary.500');
 }
 </style>
