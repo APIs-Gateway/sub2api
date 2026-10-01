@@ -987,3 +987,25 @@ func TestAdminServiceBulkUpdateAccounts_ValidatesFilterResolvedOpenAITargets(t *
 	require.Equal(t, []int64{7}, repo.getByIDsIDs)
 	require.Empty(t, repo.bulkUpdateIDs)
 }
+
+func TestAdminService_BulkUpdateAccounts_NoGroupIDsWithReplaceModeSkipsGroups(t *testing.T) {
+	// handler 会把缺省 group_mode 规整成 replace 再传下来；只改其它字段时不能因此报 GROUP_IDS_REQUIRED。
+	for _, mode := range []AccountGroupBindMode{"", AccountGroupBindModeReplace} {
+		t.Run("mode="+string(mode), func(t *testing.T) {
+			repo := &accountRepoStubForBulkUpdate{}
+			svc := &adminServiceImpl{accountRepo: repo}
+
+			schedulable := false
+			result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+				AccountIDs:  []int64{1, 2},
+				GroupMode:   mode,
+				Schedulable: &schedulable,
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, 2, result.Success)
+			require.Equal(t, []int64{1, 2}, repo.bulkUpdateIDs)
+			require.Empty(t, repo.bulkBindCalls)
+		})
+	}
+}
