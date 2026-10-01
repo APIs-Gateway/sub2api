@@ -5,6 +5,22 @@
 
 import { apiClient } from './client'
 import type { UserSubscription, SubscriptionProgress } from '@/types'
+import { reportMixedFiat } from '@/composables/useCurrencyDisplay'
+
+/**
+ * 有额度限制的生效卡里，一张带 fiat_per_credit 的都没有，说明后端不支持人民币折算
+ * （旧版本），整站退回按美元展示。个别卡单价缺失（旧数据）只影响那张卡，不触发退回。
+ */
+function reportCardsFiat(cards: UserSubscription[] | null | undefined) {
+  const limited = (cards ?? []).filter(
+    (c) =>
+      c.status === 'active' &&
+      [c.daily_limit_usd, c.weekly_limit_usd, c.monthly_limit_usd].some((v) => typeof v === 'number' && v > 0)
+  )
+  if (limited.length === 0) return
+  const hasRate = limited.some((c) => typeof c.fiat_per_credit === 'number' && c.fiat_per_credit > 0)
+  if (!hasRate) reportMixedFiat(1, undefined)
+}
 
 /**
  * Subscription summary for user dashboard
@@ -28,6 +44,7 @@ export interface SubscriptionSummary {
  */
 export async function getMySubscriptions(): Promise<UserSubscription[]> {
   const response = await apiClient.get<UserSubscription[]>('/subscriptions')
+  reportCardsFiat(response.data)
   return response.data
 }
 
@@ -36,6 +53,7 @@ export async function getMySubscriptions(): Promise<UserSubscription[]> {
  */
 export async function getActiveSubscriptions(): Promise<UserSubscription[]> {
   const response = await apiClient.get<UserSubscription[]>('/subscriptions/active')
+  reportCardsFiat(response.data)
   return response.data
 }
 

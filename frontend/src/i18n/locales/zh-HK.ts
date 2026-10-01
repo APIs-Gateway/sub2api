@@ -8049,6 +8049,8 @@
       changeDiffValue: '補差額度價值',
       newPlanPrice: '新套餐額度價值',
       oldRemainingValue: '舊卡剩餘額度價值',
+      newPlanPriceFiat: '新套餐價格',
+      oldRemainingValueFiat: '舊套餐剩餘價值',
       caps: '周封頂 {weekly} · 月封頂 {monthly}',
       quoteFailed: '報價獲取失敗，請調整額度/時長後重試',
       loadFailed: '加載失敗，請關閉後重試',

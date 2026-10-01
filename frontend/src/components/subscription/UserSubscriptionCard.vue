@@ -92,8 +92,8 @@
             <NumText
               tier="secondary"
               class="text-sm text-gray-900 dark:text-white"
-              :text="`${formatUsdAmount(w.used || 0)} / ${formatUsdAmount(w.limit ?? 0)}`"
-              :title="`${formatUsdAmount(w.used || 0, EXACT_DIGITS)} / ${formatUsdAmount(w.limit ?? 0, EXACT_DIGITS)}`"
+              :text="`${formatCardAmount(w.used || 0)} / ${formatCardAmount(w.limit ?? 0)}`"
+              :title="`${formatCardAmount(w.used || 0, EXACT_DIGITS)} / ${formatCardAmount(w.limit ?? 0, EXACT_DIGITS)}`"
             />
           </div>
           <div class="relative h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
@@ -166,8 +166,7 @@ import { useRouter } from 'vue-router'
 import SubscriptionLifecycleDialog from '@/components/subscription/SubscriptionLifecycleDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import NumText from '@/components/common/NumText.vue'
-import { EXACT_DIGITS } from '@/composables/useCurrencyDisplay'
-import { formatUsdAmount } from '@/utils/numberFormat'
+import { EXACT_DIGITS, useCurrencyDisplay, type MoneyDigits } from '@/composables/useCurrencyDisplay'
 import subscriptionsAPI from '@/api/subscriptions'
 import { useAppStore } from '@/stores'
 import type { UserSubscription } from '@/types'
@@ -194,6 +193,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const { formatSubscription } = useCurrencyDisplay()
 const appStore = useAppStore()
 const router = useRouter()
 
@@ -206,7 +206,7 @@ const planConcurrency = computed(() =>
   dailyAmount.value > 0 ? Math.max(1, Math.ceil(dailyAmount.value / 10)) : 0
 )
 const planTitle = computed(() => {
-  if (dailyAmount.value > 0) return `${t('userSubscriptions.daily')} ${formatUSD(dailyAmount.value)}`
+  if (dailyAmount.value > 0) return `${t('userSubscriptions.daily')} ${formatCardAmount(dailyAmount.value)}`
   return t('userSubscriptions.unlimited')
 })
 const planBadges = computed(() => {
@@ -221,10 +221,10 @@ const planBadges = computed(() => {
 const planDescription = computed(() => {
   const parts: string[] = []
   if (props.subscription.weekly_limit_usd != null && props.subscription.weekly_limit_usd > 0) {
-    parts.push(`${t('userSubscriptions.weekly')} ${formatUSD(props.subscription.weekly_limit_usd)}`)
+    parts.push(`${t('userSubscriptions.weekly')} ${formatCardAmount(props.subscription.weekly_limit_usd)}`)
   }
   if (props.subscription.monthly_limit_usd != null && props.subscription.monthly_limit_usd > 0) {
-    parts.push(`${t('userSubscriptions.monthly')} ${formatUSD(props.subscription.monthly_limit_usd)}`)
+    parts.push(`${t('userSubscriptions.monthly')} ${formatCardAmount(props.subscription.monthly_limit_usd)}`)
   }
   if (parts.length === 0 && dailyAmount.value <= 0) parts.push(t('userSubscriptions.unlimitedDesc'))
   return parts.join(' · ')
@@ -245,7 +245,7 @@ function formatPaymentQueryAmount(value: number): string {
 
 // 续费/转套餐改走法币支付网关：弹窗确认后带「意图 + D/T + 预估金额」跳到支付页结账（选支付方式 → 下单 → 跳 pay_url）。
 // 支付成功由后端回调履约（延长/换卡），不在此同步扣费。
-function onLifecyclePurchase(payload: { intent: 'renew' | 'change_plan'; dailyAmountUsd: number; validityDays: number; charge: number }) {
+function onLifecyclePurchase(payload: { intent: 'renew' | 'change_plan'; dailyAmountUsd: number; validityDays: number; charge: number; unitPrice?: number }) {
   showLifecycle.value = false
   router.push({
     path: '/purchase',
@@ -255,6 +255,8 @@ function onLifecyclePurchase(payload: { intent: 'renew' | 'change_plan'; dailyAm
       daily_amount_usd: String(payload.dailyAmountUsd),
       validity_days: String(payload.validityDays),
       charge: formatPaymentQueryAmount(payload.charge),
+      // 仅用于结账页把每日额度写成人民币，实际金额以后端报价为准。
+      ...(payload.unitPrice && payload.unitPrice > 0 ? { unit_price: String(payload.unitPrice) } : {}),
     },
   })
 }
@@ -399,8 +401,9 @@ function platformAccentDotClass(_p: string): string {
   return 'bg-gray-400 dark:bg-dark-500'
 }
 
-function formatUSD(value: number): string {
-  return formatUsdAmount(value)
+/** 卡上的额度金额：人民币模式按这张卡自己的单价折算，拿不到单价时回落到美元。 */
+function formatCardAmount(value: number, digits?: MoneyDigits): string {
+  return formatSubscription(value, props.subscription.fiat_per_credit, digits)
 }
 
 function daysRemaining(expiresAt: string): number {

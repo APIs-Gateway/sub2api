@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { shallowMount } from '@vue/test-utils'
 import UserSubscriptionCard from '../UserSubscriptionCard.vue'
 import type { UserSubscription } from '@/types'
@@ -155,4 +156,9 @@ describe('UserSubscriptionCard expiry labels', () => {
     expect(text).not.toContain('common.today')
     expect(text).not.toContain('common.tomorrow')
   })
+})
+
+// 组件里用到的金额口径依赖 app store；未配置充值倍率时按美元展示（旧行为）。
+beforeEach(() => {
+  setActivePinia(createPinia())
 })

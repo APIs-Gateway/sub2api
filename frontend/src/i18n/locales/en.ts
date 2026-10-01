@@ -8055,6 +8055,8 @@
       changeDiffValue: 'Difference quota value',
       newPlanPrice: 'New plan quota value',
       oldRemainingValue: 'Current card remaining quota value',
+      newPlanPriceFiat: 'New plan price',
+      oldRemainingValueFiat: 'Remaining value of current plan',
       caps: 'Weekly cap {weekly} · Monthly cap {monthly}',
       quoteFailed: 'Failed to get a quote; adjust amount/duration and retry.',
       loadFailed: 'Failed to load; please close and retry.',

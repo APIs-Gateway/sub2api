@@ -21,9 +21,15 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
+// 可变的假设置：默认没有充值倍率（按美元展示，旧行为）；人民币用例里改成 13。
+const publicSettings = vi.hoisted(() => ({ value: {} as Record<string, unknown> }))
+
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError,
+    get cachedPublicSettings() {
+      return publicSettings.value
+    },
   }),
 }))
 
@@ -51,6 +57,8 @@ function subscriptionFixture(): UserSubscription {
 
 describe('SubscriptionLifecycleDialog', () => {
   beforeEach(() => {
+    publicSettings.value = {}
+    window.localStorage.clear()
     getSubscriptionPricing.mockReset().mockResolvedValue({
       d_min: 30,
       d_max: 300,
@@ -97,5 +105,86 @@ describe('SubscriptionLifecycleDialog', () => {
     expect(wrapper.text()).toContain('¥7.26')
     expect(wrapper.text()).toContain('$72.60')
     expect(wrapper.text()).not.toContain('USD 72.60')
+  })
+  function mountDialog(mode: 'renew' | 'change') {
+    return mount(SubscriptionLifecycleDialog, {
+      props: {
+        show: true,
+        mode,
+        subscription: { ...subscriptionFixture(), fiat_per_credit: 0.045 } as UserSubscription,
+        paymentCurrency: 'CNY',
+        subscriptionPaymentMultiplier: 1,
+        locale: 'zh-CN',
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<section><slot /><footer><slot name="footer" /></footer></section>',
+          },
+          NumText: false,
+        },
+      },
+    })
+  }
+
+  const changeQuote = {
+    diff: 72.6,
+    new_plan_price: 2700,
+    old_remaining_value: 2627.4,
+    weekly_cap_usd: 630,
+    monthly_cap_usd: 2700,
+    unit_price: 0.045,
+  }
+
+  it('人民币模式下转套餐的每日额度、封顶都写成人民币，不再出现美元和额度价值行', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    changePlanQuote.mockResolvedValue(changeQuote)
+    const wrapper = mountDialog('change')
+    await flushPromises()
+    await flushPromises()
+    const text = wrapper.text().replace(/\s+/g, '')
+
+    // 每日 90 × 0.045 = 4.05；封顶 630 × 0.045 = 28.35、2700 × 0.045 = 121.50。
+    expect(text).toContain('¥4.05')
+    expect(text).toContain('caps¥28.35¥121.50')
+    expect(text).toContain('¥72.60')
+    expect(text).not.toContain('$')
+    expect(text).not.toContain('USD')
+    expect(text).not.toContain('userSubscriptions.lifecycle.changeDiffValue')
+    expect(wrapper.find('input[type="number"]').exists()).toBe(false)
+  })
+
+  it('人民币模式下续费的每日额度按当前卡单价折算，且不显示额度价值行', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    renewQuote.mockResolvedValue({
+      subscription_id: 376,
+      daily_amount_usd: 90,
+      added_days: 30,
+      price: 121.5,
+      unit_price: 0.045,
+      group_id: 1,
+    })
+    const wrapper = mountDialog('renew')
+    await flushPromises()
+    await flushPromises()
+    const text = wrapper.text().replace(/\s+/g, '')
+
+    expect(text).toContain('¥4.05')
+    expect(text).toContain('¥121.50')
+    expect(text).not.toContain('$')
+    expect(text).not.toContain('userSubscriptions.lifecycle.renewValue')
+  })
+
+  it('free 站（倍率 1）保持美元和额度输入框', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 1 }
+    changePlanQuote.mockResolvedValue(changeQuote)
+    const wrapper = mountDialog('change')
+    await flushPromises()
+    await flushPromises()
+    const text = wrapper.text().replace(/\s+/g, '')
+
+    expect(text).toContain('caps$630.00$2,700.00')
+    expect(text).not.toContain('¥4.05')
+    expect(wrapper.find('input[type="number"]').exists()).toBe(true)
   })
 })
