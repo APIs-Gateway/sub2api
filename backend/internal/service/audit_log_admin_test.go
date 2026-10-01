@@ -202,7 +202,10 @@ func TestRedactAuditBody_SafeKeyNamesAreKeptButSecretsStayRedacted(t *testing.T)
 	require.EqualValues(t, 12, parsed["api_key_id"])
 	require.Equal(t, "pro", parsed["group_key"])
 	require.Equal(t, "sk-abcd", parsed["key_prefix"])
-	require.Equal(t, "ssh-ed25519 AAAA", parsed["public_key"])
+	// public_key is on the payment providers' sensitive config list
+	// (Alipay publicKey), which takes precedence over the safe-name list, so it
+	// stays redacted: over-redacting is the intended failure mode here.
+	require.Equal(t, "[REDACTED]", parsed["public_key"])
 	require.NotEqual(t, "[REDACTED]", parsed["user_key_ids"])
 	for _, key := range []string{"api_key", "key", "secret_key_id", "token_key_prefix"} {
 		require.Equal(t, "[REDACTED]", parsed[key], key)
