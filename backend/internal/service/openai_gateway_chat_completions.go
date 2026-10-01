@@ -262,6 +262,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	// Apply the GPT compatibility rule after final model mapping and the OAuth
 	// transform, so an alias cannot leave unsupported explicit cache hints.
 	responsesBody, _ = sanitizeGPTPromptCacheHints(responsesBody, upstreamModel)
+	// Bill the tier that will be sent upstream, not the pre-policy request tier.
+	// filter removes it and force_priority may replace it.
+	serviceTier := extractOpenAIServiceTierFromBody(responsesBody)
 
 	// 5. Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
@@ -377,13 +380,11 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		return nil, handleErr
 	}
 
-	// Propagate ServiceTier and ReasoningEffort to result for billing
-	if handleErr == nil && result != nil {
-		if responsesReq.ServiceTier != "" {
-			st := responsesReq.ServiceTier
-			result.ServiceTier = &st
-		}
-		if responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
+	// Partial streams can return usage alongside an error. Bill that usage with
+	// the same outbound tier as a completed stream.
+	if result != nil {
+		result.ServiceTier = serviceTier
+		if handleErr == nil && responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
 			re := responsesReq.Reasoning.Effort
 			result.ReasoningEffort = &re
 		}

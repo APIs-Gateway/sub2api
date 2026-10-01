@@ -78,9 +78,6 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	}
 	clientStream := gjson.GetBytes(body, "stream").Bool()
 
-	// 1b. Extract service tier from the raw body before any transformation.
-	serviceTier := extractOpenAIServiceTierFromBody(body)
-
 	// 2. Resolve model mapping (same as ForwardAsChatCompletions)
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
@@ -179,6 +176,9 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		return nil, err
 	}
 	upstreamBody = ensureDeepSeekChatReasoningPlaceholders(targetURL, upstreamBody)
+	// Use the tier in the final outbound body. The Fast policy may have removed
+	// or replaced the client's requested tier before this point.
+	serviceTier := extractOpenAIServiceTierFromBody(upstreamBody)
 
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(upstreamBody))
