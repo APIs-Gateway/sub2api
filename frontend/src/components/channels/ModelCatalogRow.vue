@@ -14,11 +14,11 @@
           <span class="block truncate text-sm font-semibold text-gray-900 dark:text-white" :title="model.name">{{ model.name }}</span>
           <span class="block text-xs text-gray-500 dark:text-gray-400">{{ platformLabel(model.platform) }}</span>
         </span>
-        <span v-if="startRows.length > 0" class="mt-1 flex flex-wrap items-baseline gap-x-4 gap-y-0.5 text-sm tabular-nums sm:mt-0" data-test="start-prices">
+        <span v-if="startRows.length > 0" class="mt-1 flex flex-wrap items-baseline gap-x-4 gap-y-0.5 text-sm sm:mt-0" data-test="start-prices">
           <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('availableChannels.startingFrom') }}</span>
           <span v-for="row in startRows" :key="row.key">
             <span class="text-xs text-gray-500 dark:text-gray-400">{{ row.label }}</span>
-            <span class="ml-1 font-medium text-gray-900 dark:text-white">{{ row.price }}</span>
+            <NumText tier="secondary" class="ml-1 text-gray-900 dark:text-white" :text="row.price" />
           </span>
           <span class="text-xs text-gray-500 dark:text-gray-400">{{ unitLabel }}</span>
         </span>
@@ -35,12 +35,12 @@
     </button>
 
     <div v-if="expandable && expanded" :id="panelId" class="px-3 pb-5 pt-1 sm:px-4 sm:pl-12" data-test="catalog-panel">
-      <!-- 起价：整页唯一醒目的地方 -->
+      <!-- 起价：主指标一档，与全站卡片里的大数字同字号同字重 -->
       <div class="flex flex-wrap items-start gap-x-10 gap-y-4" data-test="hero-prices">
         <div v-for="row in heroRows" :key="row.key">
-          <div class="catalog-hero">{{ row.price }}</div>
+          <NumText tier="primary" class="block" :text="row.price" />
           <div class="mt-1 text-xs text-gray-600 dark:text-gray-300">{{ row.label }}</div>
-          <div v-if="row.official" class="text-xs text-gray-500 dark:text-gray-400" data-test="official-price">
+          <div v-if="row.official" class="num-aux" data-test="official-price">
             {{ t('availableChannels.officialPrice') }}
             <span :class="row.officialStruck ? 'text-gray-400 line-through dark:text-gray-500' : ''">{{ row.official }}</span>
           </div>
@@ -87,10 +87,10 @@
                   >{{ t('availableChannels.lowest') }}</span>
                 </th>
                 <template v-if="isToken">
-                  <td v-for="col in groupColumns" :key="col" class="px-3 py-2 text-right tabular-nums">{{ row.cells[col] }}</td>
+                  <td v-for="col in groupColumns" :key="col" class="px-3 py-2 text-right"><NumText tier="secondary" :text="row.cells[col]" /></td>
                 </template>
-                <td v-else class="px-3 py-2 text-right tabular-nums">{{ row.cells.unit }}</td>
-                <td v-if="showPlan" class="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-300" data-test="plan-cell">{{ row.plan }}</td>
+                <td v-else class="px-3 py-2 text-right"><NumText tier="secondary" :text="row.cells.unit" /></td>
+                <td v-if="showPlan" class="px-3 py-2 text-right text-gray-700 dark:text-gray-300" data-test="plan-cell"><NumText tier="secondary" :text="row.plan" /></td>
               </tr>
             </tbody>
           </table>
@@ -117,9 +117,9 @@
               <tr v-for="(tier, idx) in tierRows" :key="idx" class="border-b border-gray-100 last:border-b-0 dark:border-dark-700/60">
                 <th scope="row" class="px-3 py-2 text-left font-normal text-gray-700 dark:text-gray-300">{{ tier.label }}</th>
                 <template v-if="isToken">
-                  <td v-for="col in tierColumns" :key="col" class="px-3 py-2 text-right tabular-nums">{{ tier.cells[col] }}</td>
+                  <td v-for="col in tierColumns" :key="col" class="px-3 py-2 text-right"><NumText tier="secondary" :text="tier.cells[col]" /></td>
                 </template>
-                <td v-else class="px-3 py-2 text-right tabular-nums">{{ tier.cells.unit }}</td>
+                <td v-else class="px-3 py-2 text-right"><NumText tier="secondary" :text="tier.cells.unit" /></td>
               </tr>
             </tbody>
           </table>
@@ -134,6 +134,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
+import NumText from '@/components/common/NumText.vue'
 import { platformLabel } from '@/utils/platformColors'
 import { BILLING_MODE_IMAGE, BILLING_MODE_PER_REQUEST } from '@/constants/channel'
 import {
@@ -164,7 +165,7 @@ const props = withDefaults(
 const emit = defineEmits<{ (e: 'toggle'): void }>()
 
 const { t } = useI18n()
-const { isFiat, rechargeMultiplier, officialCnyRate, formatFiat, formatOfficial } = useCurrencyDisplay()
+const { isFiat, rechargeMultiplier, officialCnyRate, formatFiat, formatUsd, formatOfficial } = useCurrencyDisplay()
 
 const unit = computed(() => (isFiat.value ? props.subscriptionUnit : null))
 const ctx = computed<PricingContext>(() => ({
@@ -181,16 +182,17 @@ const unitLabel = computed(() =>
   isToken.value ? t('availableChannels.pricing.perMillion') : t('availableChannels.pricing.perRequest'),
 )
 
-/** 美元模式展示的额度价 / 官方价：去掉多余的尾零。 */
-function usd(n: number): string {
-  return `$${Number(n.toPrecision(10)).toString()}`
-}
+/**
+ * 价目表上的都是单价（每百万 Token / 每次请求）：金额统一规则之外，≥ 1 的价格
+ * 保留到 4 位小数（1.875 不会被写成 1.88），< 1 保留 4 位有效数字。
+ */
+const UNIT_PRICE = { unitPrice: true } as const
 function money(n: number): string {
-  return isFiat.value ? formatFiat(n) : usd(n)
+  return isFiat.value ? formatFiat(n, UNIT_PRICE) : formatUsd(n, UNIT_PRICE)
 }
 function formatPlan(p: PlanPrice | null): string {
   if (!p) return '-'
-  return p.exact ? formatFiat(p.min) : `${formatFiat(p.min)}–${formatFiat(p.max)}`
+  return p.exact ? formatFiat(p.min, UNIT_PRICE) : `${formatFiat(p.min, UNIT_PRICE)}–${formatFiat(p.max, UNIT_PRICE)}`
 }
 
 /** token 计费可能出现的价格列，按展示顺序排列。 */
@@ -262,7 +264,7 @@ function linesOf(entry: GroupPrice | null): PriceLine[] {
       const balance = balancePrice(d.v, rate, kind.value, ctx.value)
       const price = money(balance)
       const official = officialPrice(d.v, kind.value)
-      const officialText = isFiat.value ? formatOfficial(official) : usd(official)
+      const officialText = formatOfficial(official, UNIT_PRICE)
       // 与展示价同一币种下比较；展示出来的数字相同时不算「更高」。
       const officialAmount = isFiat.value ? official * officialCnyRate.value : official
       return {
@@ -338,11 +340,3 @@ const tierHeader = computed(() => {
   return t('availableChannels.context')
 })
 </script>
-
-<style scoped>
-/* 页面唯一的衬线大数字：Fraunces + 陶土色 */
-.catalog-hero {
-  @apply font-serif text-2xl font-medium leading-none text-primary-700 dark:text-primary-400 sm:text-3xl;
-  font-variant-numeric: lining-nums tabular-nums;
-}
-</style>

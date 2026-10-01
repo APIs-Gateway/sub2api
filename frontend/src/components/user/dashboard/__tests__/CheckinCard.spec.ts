@@ -190,6 +190,6 @@ describe('CheckinCard', () => {
     const toast = String(showSuccess.mock.calls[0]?.[0]).replace(/[\u00a0\u202f]/g, ' ')
     expect(toast).toContain('checkin.claimedToast:')
     expect(toast).toContain('¥')
-    expect(toast).toContain('0.250')
+    expect(toast).toContain('0.25')
   })
 })

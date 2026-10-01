@@ -17,7 +17,7 @@
             :class="getProgressDotClass(sub)"
           ></div>
         </div>
-        <span class="font-mono text-xs font-medium tabular-nums text-gray-900 dark:text-white">
+        <span class="num-secondary text-xs text-gray-900 dark:text-white">
           {{ activeSubscriptions.length }}
         </span>
       </div>
@@ -50,7 +50,7 @@
               </span>
               <span
                 v-if="subscription.expires_at"
-                class="font-mono text-xs tabular-nums"
+                class="num text-xs"
                 :class="getDaysRemainingClass(subscription.expires_at)"
               >
                 {{ formatDaysRemaining(subscription.expires_at) }}
@@ -64,7 +64,7 @@
                 v-if="isUnlimited(subscription)"
                 class="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 dark:border-dark-700 dark:bg-dark-800/40"
               >
-                <span class="font-mono text-lg text-gray-700 dark:text-gray-300">∞</span>
+                <span class="text-lg text-gray-700 dark:text-gray-300">∞</span>
                 <span class="text-xs font-medium text-gray-600 dark:text-gray-400">
                   {{ t('subscriptionProgress.unlimited') }}
                 </span>
@@ -87,7 +87,7 @@
                       :style="{ width: getProgressWidth(w.used, w.limit) }"
                     ></div>
                   </div>
-                  <span class="w-24 flex-shrink-0 text-right font-mono text-[10px] tabular-nums text-gray-700 dark:text-gray-300">
+                  <span class="num w-28 flex-shrink-0 text-right text-[10px] text-gray-700 dark:text-gray-300">
                     {{ formatUsage(w.used, w.limit) }}
                   </span>
                 </div>
@@ -117,6 +117,7 @@ import Icon from '@/components/icons/Icon.vue'
 import { useSubscriptionStore } from '@/stores'
 import type { UserSubscription } from '@/types'
 import { getExpirationDateRelation } from '@/utils/subscriptionQuota'
+import { formatUsdAmount } from '@/utils/numberFormat'
 
 const { t } = useI18n()
 
@@ -200,9 +201,9 @@ function getProgressWidth(used: number | undefined, limit: number | null | undef
 }
 
 function formatUsage(used: number | undefined, limit: number | null | undefined): string {
-  const usedValue = (used || 0).toFixed(2)
-  const limitValue = limit?.toFixed(2) || '∞'
-  return `$${usedValue}/$${limitValue}`
+  const usedValue = formatUsdAmount(used || 0)
+  const limitValue = limit == null ? '$∞' : formatUsdAmount(limit)
+  return `${usedValue}/${limitValue}`
 }
 
 function formatDaysRemaining(expiresAt: string): string {

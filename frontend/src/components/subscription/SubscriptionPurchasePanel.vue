@@ -35,7 +35,7 @@
             :min="dailyAmountMin"
             :max="dailyAmountMax"
             :step="dailyAmountStep"
-            class="input w-24 text-right font-mono tabular-nums"
+            class="input num w-24 text-right"
             @change="clampInputs"
           />
         </div>
@@ -92,28 +92,28 @@
             </span>
             <span
               data-testid="subscription-purchase-price-value"
-              class="block w-full max-w-full min-w-0 break-all text-right font-mono text-xl font-semibold leading-tight tabular-nums text-gray-900 dark:text-white sm:w-auto sm:flex-1 sm:text-2xl sm:text-right"
+              class="block w-full max-w-full min-w-0 break-all text-right sm:w-auto sm:flex-1 sm:text-right"
             >
               <span v-if="quoting" class="text-base text-gray-400">{{ t('subscriptionPurchase.quoting') }}</span>
-              <span v-else>{{ formattedPayableAmount }}</span>
+              <NumText v-else tier="primary" :text="formattedPayableAmount" />
             </span>
           </div>
           <dl class="mt-3 grid grid-cols-2 gap-2 border-t border-gray-200 pt-3 text-center dark:border-dark-700 sm:grid-cols-4">
             <div>
               <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.unitPrice') }}</dt>
-              <dd class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">×{{ (quote?.unit_price ?? 0).toFixed(4) }}</dd>
+              <dd class="num-secondary text-sm text-gray-900 dark:text-white">×{{ (quote?.unit_price ?? 0).toFixed(4) }}</dd>
             </div>
             <div>
               <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.concurrency') }}</dt>
-              <dd class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">{{ subscriptionConcurrency }}</dd>
+              <dd class="num-secondary text-sm text-gray-900 dark:text-white">{{ subscriptionConcurrency }}</dd>
             </div>
             <div>
               <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.weeklyCap') }}</dt>
-              <dd class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">{{ formatUSDValue(quote?.weekly_cap_usd ?? 0) }}</dd>
+              <dd class="text-sm text-gray-900 dark:text-white"><NumText tier="secondary" :text="formatUSDValue(quote?.weekly_cap_usd ?? 0)" /></dd>
             </div>
             <div>
               <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.monthlyCap') }}</dt>
-              <dd class="font-mono text-sm tabular-nums text-gray-900 dark:text-white">{{ formatUSDValue(quote?.monthly_cap_usd ?? 0) }}</dd>
+              <dd class="text-sm text-gray-900 dark:text-white"><NumText tier="secondary" :text="formatUSDValue(quote?.monthly_cap_usd ?? 0)" /></dd>
             </div>
           </dl>
         </template>
@@ -139,6 +139,8 @@ import subscriptionsAPI, {
   type SubscriptionQuote
 } from '@/api/subscriptions'
 import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
+import NumText from '@/components/common/NumText.vue'
+import { formatMoneyNumber } from '@/utils/numberFormat'
 
 const emit = defineEmits<{
   // 购买意向：把校验过的 D/T 与当前报价交给父组件去走下单流程（订单创建/支付）。
@@ -188,7 +190,7 @@ const formattedPayableAmount = computed(() =>
 )
 
 function formatUSDValue(value: number): string {
-  return `USD ${Number.isFinite(value) ? value.toFixed(2) : '0.00'}`
+  return `USD ${formatMoneyNumber(value)}`
 }
 
 const validityOptions = computed(() => {

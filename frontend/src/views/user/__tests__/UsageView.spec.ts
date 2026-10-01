@@ -249,7 +249,7 @@ describe('user UsageView tooltip', () => {
     expect(text).toContain('¥43.75 / 1M tokens')
     expect(text).toContain('Cache read price')
     expect(text).toContain('¥1.75 / 1M tokens')
-    expect(text).not.toContain('$5.0000')
+    expect(text).not.toContain('$5.00')
   })
 
   it('exports csv with input and output unit price columns', async () => {
@@ -855,7 +855,7 @@ describe('user UsageView currency display', () => {
 
     const text = plain(wrapper)
     // 明细：服务端按这张卡的 u(D)=0.05 算出 ¥0.25，是真实花费。
-    expect(text).toContain('0.250')
+    expect(text).toContain('0.25')
     // 总计：服务端分桶折算的 total_actual_cost_fiat，与明细同口径，
     // 不再出现按充值价 1/13 估算的 ¥0.385。
     expect(text).not.toContain('0.385')
@@ -865,7 +865,7 @@ describe('user UsageView currency display', () => {
     const wrapper = await mountView({})
 
     const text = plain(wrapper)
-    expect(text).toContain('$5.0000')
+    expect(text).toContain('$5.00')
     expect(text).not.toContain('0.385')
   })
 
@@ -875,7 +875,7 @@ describe('user UsageView currency display', () => {
     useCurrencyDisplay().setMode('usd')
     await nextTick()
 
-    expect(wrapper.text()).toContain('5.000000')
+    expect(wrapper.text()).toContain('$5.00')
   })
 
   it('倍率为 1 时隐藏切换器，且全部按美元展示、不出现「你的花费」', async () => {
@@ -946,8 +946,8 @@ describe('user UsageView currency display', () => {
     expect(text).toContain('Plan quota deducted')
     expect(text).toContain('Your spend')
     expect(text).toContain('¥11.67')
-    expect(text).toContain('5.000000')
-    expect(text).toContain('0.250')
+    expect(text).toContain('$5.00')
+    expect(text).toContain('0.25')
   })
 
   describe('缺少官方价汇率时的费用明细', () => {
@@ -1030,7 +1030,7 @@ describe('user UsageView currency display', () => {
     await nextTick()
 
     // 3.9 ÷ 13 = 0.3
-    expect(plain(wrapper)).toContain('0.300')
+    expect(plain(wrapper)).toContain('0.30')
   })
 })
 

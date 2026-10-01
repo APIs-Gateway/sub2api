@@ -1,7 +1,7 @@
 <template>
   <DataTable :columns="columns" :data="orders" :loading="loading">
     <template #cell-id="{ value }">
-      <span class="font-mono text-xs text-stone-500 dark:text-gray-400">#{{ value }}</span>
+      <span class="num text-xs text-stone-500 dark:text-gray-400">#{{ value }}</span>
     </template>
     <template #cell-out_trade_no="{ value }">
       <span class="block max-w-[18rem] truncate font-mono text-xs text-stone-700 dark:text-gray-300" :title="value">
@@ -21,12 +21,12 @@
     </template>
     <template #cell-pay_amount="{ value, row }">
       <div class="text-sm leading-snug">
-        <span class="font-mono font-medium tabular-nums text-stone-900 dark:text-gray-100">¥{{ value.toFixed(2) }}</span>
+        <NumText tier="secondary" class="text-stone-900 dark:text-gray-100" :text="formatCnyAmount(value)" />
         <span v-if="row.fee_rate > 0" class="ml-1 text-xs text-stone-400" :title="t('payment.orders.fee') + ': ' + row.fee_rate + '%'">
           ({{ t('payment.orders.fee') }} {{ row.fee_rate }}%)
         </span>
         <div v-if="row.amount !== row.pay_amount" class="mt-0.5 text-xs text-stone-500 dark:text-gray-400">
-          {{ t('payment.orders.creditedAmount') }}: {{ row.order_type === 'balance' ? '$' : '¥' }}{{ row.amount.toFixed(2) }}
+          {{ t('payment.orders.creditedAmount') }}: {{ row.order_type === 'balance' ? formatUsdAmount(row.amount) : formatCnyAmount(row.amount) }}
         </div>
       </div>
     </template>
@@ -51,6 +51,8 @@ import { useI18n } from 'vue-i18n'
 import type { PaymentOrder } from '@/types/payment'
 import type { Column } from '@/components/common/types'
 import DataTable from '@/components/common/DataTable.vue'
+import NumText from '@/components/common/NumText.vue'
+import { formatCnyAmount, formatUsdAmount } from '@/utils/numberFormat'
 import OrderStatusBadge from '@/components/payment/OrderStatusBadge.vue'
 
 const { t } = useI18n()

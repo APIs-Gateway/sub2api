@@ -10,12 +10,10 @@
             <Icon name="creditCard" size="xl" class="text-white" />
           </div>
           <p class="text-sm font-medium text-gray-300">{{ t('redeem.currentBalance') }}</p>
-          <p class="mt-2 text-4xl font-semibold font-mono tabular-nums text-white">
-            ${{ user?.balance?.toFixed(2) || '0.00' }}
-          </p>
+          <NumText tier="primary" class="mt-2 block text-white" :text="formatUsdAmount(user?.balance || 0)" />
           <p class="mt-2 text-sm text-gray-300">
             {{ t('redeem.concurrency') }}:
-            <span class="font-mono tabular-nums">{{ user?.concurrency || 0 }}</span>
+            <span class="num">{{ user?.concurrency || 0 }}</span>
             {{ t('redeem.requests') }}
           </p>
         </div>
@@ -102,13 +100,11 @@
                   <div class="mt-3 space-y-1">
                     <p v-if="redeemResult.type === 'balance'" class="font-medium">
                       {{ t('redeem.added') }}:
-                      <span class="font-mono tabular-nums"
-                        >${{ redeemResult.value.toFixed(2) }}</span
-                      >
+                      <span class="num">{{ formatUsdAmount(redeemResult.value) }}</span>
                     </p>
                     <p v-else-if="redeemResult.type === 'concurrency'" class="font-medium">
                       {{ t('redeem.added') }}:
-                      <span class="font-mono tabular-nums">{{ redeemResult.value }}</span>
+                      <span class="num">{{ redeemResult.value }}</span>
                       {{ t('redeem.concurrentRequests') }}
                     </p>
                     <p v-else-if="redeemResult.type === 'subscription'" class="font-medium">
@@ -122,13 +118,11 @@
                     </p>
                     <p v-if="redeemResult.new_balance !== undefined">
                       {{ t('redeem.newBalance') }}:
-                      <span class="font-semibold font-mono tabular-nums"
-                        >${{ redeemResult.new_balance.toFixed(2) }}</span
-                      >
+                      <span class="num font-semibold">{{ formatUsdAmount(redeemResult.new_balance) }}</span>
                     </p>
                     <p v-if="redeemResult.new_concurrency !== undefined">
                       {{ t('redeem.newConcurrency') }}:
-                      <span class="font-semibold font-mono tabular-nums">{{
+                      <span class="num font-semibold">{{
                         redeemResult.new_concurrency
                       }}</span>
                       {{ t('redeem.requests') }}
@@ -278,13 +272,13 @@
               </div>
               <div class="text-right">
                 <p
-                  class="text-sm font-semibold font-mono tabular-nums text-gray-900 dark:text-white"
+                  class="num-secondary text-sm text-gray-900 dark:text-white"
                 >
                   {{ formatHistoryValue(item) }}
                 </p>
                 <p
                   v-if="!isAdminAdjustment(item.type)"
-                  class="font-mono tabular-nums text-xs text-gray-600 dark:text-gray-400"
+                  class="font-mono text-xs text-gray-600 dark:text-gray-400"
                 >
                   {{ item.code.slice(0, 8) }}...
                 </p>
@@ -329,7 +323,9 @@ import { useSubscriptionStore } from '@/stores/subscriptions'
 import { redeemAPI, authAPI, type RedeemHistoryItem } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import NumText from '@/components/common/NumText.vue'
 import { formatDateTime } from '@/utils/format'
+import { formatUsdAmount } from '@/utils/numberFormat'
 
 const { t } = useI18n()
 const authStore = useAuthStore()
@@ -387,7 +383,7 @@ const getHistoryItemTitle = (item: RedeemHistoryItem) => {
 const formatHistoryValue = (item: RedeemHistoryItem) => {
   if (isBalanceType(item.type)) {
     const sign = item.value >= 0 ? '+' : ''
-    return `${sign}$${item.value.toFixed(2)}`
+    return `${sign}${formatUsdAmount(item.value)}`
   } else if (isSubscriptionType(item.type)) {
     // 订阅类型显示有效天数和分组名称
     const days = item.validity_days || Math.round(item.value)

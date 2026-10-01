@@ -418,6 +418,7 @@ import { isChineseLocale } from '@/i18n/localeUtils'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeUrl } from '@/utils/url'
+import { formatCount, formatUsdAmount } from '@/utils/numberFormat'
 
 const { t, locale } = useI18n()
 const appStore = useAppStore()
@@ -824,12 +825,12 @@ const showDailyUsage = computed(() => Boolean(resultData.value && Array.isArray(
 
 function usd(value: number | null | undefined): string {
   if (value == null || value < 0) return '-'
-  return '$' + Number(value).toFixed(2)
+  return formatUsdAmount(value)
 }
 
 function fmtNum(val: number | null | undefined): string {
   if (val == null) return '-'
-  return val.toLocaleString()
+  return formatCount(val)
 }
 
 function formatDate(iso: string | null | undefined): string {

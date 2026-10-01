@@ -531,7 +531,7 @@ describe('user KeysView overview and connect actions', () => {
   it('概览：美元口径下按额度合计', async () => {
     useCurrencyDisplay().setMode('usd')
     const wrapper = await mountView(RowsTableStub)
-    expect(wrapper.get('[data-test="overview-spent"]').text()).toBe('$35.0000')
+    expect(wrapper.get('[data-test="overview-spent"]').text()).toBe('$35.00')
     wrapper.unmount()
     useCurrencyDisplay().setMode('fiat')
   })
@@ -544,7 +544,7 @@ describe('user KeysView overview and connect actions', () => {
       },
     })
     const wrapper = await mountView(RowsTableStub)
-    expect(wrapper.get('[data-test="overview-spent"]').text()).toBe('$35.0000')
+    expect(wrapper.get('[data-test="overview-spent"]').text()).toBe('$35.00')
     wrapper.unmount()
   })
 
@@ -671,7 +671,7 @@ describe('user KeysView overview and connect actions', () => {
     const rowA = wrapper.get('[data-row="1"]')
     expect(rowA.get('[data-test="row-used"]').text()).toBe('$40.00')
     expect(rowA.get('[data-test="row-limit"]').text()).toBe('$100.00')
-    expect(rowA.get('[data-test="row-recent"]').text()).toBe('$20.0000')
+    expect(rowA.get('[data-test="row-recent"]').text()).toBe('$20.00')
     wrapper.unmount()
     useCurrencyDisplay().setMode('fiat')
   })

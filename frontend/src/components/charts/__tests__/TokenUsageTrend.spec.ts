@@ -145,7 +145,7 @@ describe('TokenUsageTrend', () => {
     }
 
     it('keeps the USD standard price when no formatter is passed (admin)', () => {
-      expect(footer({})).toBe('Actual: $0.500 | Standard: $0.012')
+      expect(footer({})).toBe('Actual: $0.50 | Standard: $0.0123')
     })
 
     it('uses the user-side formatter for the standard price', () => {

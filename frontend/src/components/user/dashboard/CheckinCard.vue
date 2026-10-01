@@ -28,11 +28,11 @@
           </p>
         </div>
         <div v-else-if="status.spend_per_extra > 0" class="hidden text-right sm:block">
-          <p class="font-mono text-xs text-gray-500 dark:text-gray-400">
+          <p class="num-aux">
             {{ t('checkin.todaySpend') }}
-            <span class="text-gray-700 dark:text-gray-300">{{ formatLimit(status.today_spend) }}</span>
+            <span class="num-secondary text-gray-700 dark:text-gray-300">{{ formatLimit(status.today_spend) }}</span>
           </p>
-          <p class="text-[11px] text-gray-400 dark:text-gray-500">
+          <p class="num-aux text-[11px] text-gray-400 dark:text-gray-500">
             {{ t('checkin.nextBonusHint', { amount: formatLimit(status.spend_to_next_bonus) }) }}
           </p>
         </div>

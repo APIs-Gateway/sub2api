@@ -5,9 +5,9 @@
     >
       <!-- Amount + Order ID -->
       <div v-if="amount" class="text-center">
-        <p class="font-mono tabular-nums text-3xl font-bold text-gray-900 dark:text-white">¥{{ amount }}</p>
+        <p class="num-primary">¥{{ amount }}</p>
         <p v-if="orderId" class="mt-1 text-sm text-gray-600 dark:text-gray-400">
-          {{ t('payment.orders.orderId') }}: <span class="font-mono tabular-nums">{{ orderId }}</span>
+          {{ t('payment.orders.orderId') }}: <span class="num">{{ orderId }}</span>
         </p>
       </div>
 

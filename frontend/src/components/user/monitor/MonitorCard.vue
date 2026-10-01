@@ -21,7 +21,7 @@
           >
             {{ providerLabel(item.provider) }}
           </span>
-          <span class="font-mono tabular-nums text-xs truncate text-gray-600 dark:text-gray-400">
+          <span class="num text-xs truncate text-gray-600 dark:text-gray-400">
             {{ item.primary_model }}
           </span>
           <span

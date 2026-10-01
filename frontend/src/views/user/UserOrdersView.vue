@@ -80,25 +80,25 @@
         <div class="rounded-md bg-gray-50 p-4 dark:bg-dark-800">
           <div class="flex justify-between text-sm">
             <span class="text-gray-600 dark:text-gray-400">{{ t('payment.orders.orderId') }}</span>
-            <span class="font-mono tabular-nums text-gray-900 dark:text-white">#{{ refundTarget.id }}</span>
+            <span class="num-secondary text-gray-900 dark:text-white">#{{ refundTarget.id }}</span>
           </div>
           <div class="mt-2 flex justify-between text-sm">
             <span class="text-gray-600 dark:text-gray-400">{{ t('payment.orders.amount') }}</span>
-            <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ refundOrderAmountText }}</span>
+            <span class="num-secondary text-gray-900 dark:text-white">{{ refundOrderAmountText }}</span>
           </div>
         </div>
         <div class="rounded-md border border-gray-200 bg-white p-4 text-sm dark:border-dark-700 dark:bg-dark-900">
           <div class="flex justify-between">
             <span class="text-gray-600 dark:text-gray-400">{{ t('payment.refundGatewayBase') }}</span>
-            <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ refundGatewayBaseText }}</span>
+            <span class="num-secondary text-gray-900 dark:text-white">{{ refundGatewayBaseText }}</span>
           </div>
           <div class="mt-2 flex justify-between">
             <span class="text-gray-600 dark:text-gray-400">{{ t('payment.refundFee') }} ({{ refundFeeRate.toFixed(2) }}%)</span>
-            <span class="font-mono tabular-nums text-amber-700 dark:text-amber-300">{{ refundFeeText }}</span>
+            <span class="num-secondary text-amber-700 dark:text-amber-300">{{ refundFeeText }}</span>
           </div>
           <div class="mt-2 flex justify-between font-medium">
             <span class="text-gray-700 dark:text-gray-300">{{ t('payment.refundUserReceives') }}</span>
-            <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ refundUserReceivesText }}</span>
+            <span class="num-secondary text-gray-900 dark:text-white">{{ refundUserReceivesText }}</span>
           </div>
           <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
             {{ refundTarget.order_type === 'subscription' ? t('payment.subscriptionRefundNote') : t('payment.balanceRefundNote') }}
@@ -133,6 +133,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import OrderTable from '@/components/payment/OrderTable.vue'
+import { formatCnyAmount, formatUsdAmount } from '@/utils/numberFormat'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -159,16 +160,16 @@ const statusFilters = computed(() => [
 
 const refundOrderAmountText = computed(() => {
   if (!refundTarget.value) return ''
-  const symbol = refundTarget.value.order_type === 'balance' ? '$' : '¥'
-  return `${symbol}${refundTarget.value.amount.toFixed(2)}`
+  const { order_type, amount } = refundTarget.value
+  return order_type === 'balance' ? formatUsdAmount(amount) : formatCnyAmount(amount)
 })
 
 const refundGatewayBase = computed(() => roundCurrency(refundTarget.value?.pay_amount || refundTarget.value?.amount || 0))
 const refundFee = computed(() => roundCurrencyUp(refundGatewayBase.value * Math.min(Math.max(refundFeeRate.value, 0), 100) / 100))
 const refundUserReceives = computed(() => Math.max(0, roundCurrency(refundGatewayBase.value - refundFee.value)))
-const refundGatewayBaseText = computed(() => `¥${refundGatewayBase.value.toFixed(2)}`)
-const refundFeeText = computed(() => `¥${refundFee.value.toFixed(2)}`)
-const refundUserReceivesText = computed(() => `¥${refundUserReceives.value.toFixed(2)}`)
+const refundGatewayBaseText = computed(() => formatCnyAmount(refundGatewayBase.value))
+const refundFeeText = computed(() => formatCnyAmount(refundFee.value))
+const refundUserReceivesText = computed(() => formatCnyAmount(refundUserReceives.value))
 
 async function fetchOrders() {
   loading.value = true

@@ -35,6 +35,8 @@ import {
 import { Line } from 'vue-chartjs'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import type { TrendDataPoint } from '@/types'
+import { applyChartTypography } from '@/utils/chartTypography'
+import { formatCompactCount, formatUsdAmount } from '@/utils/numberFormat'
 
 ChartJS.register(
   CategoryScale,
@@ -46,6 +48,7 @@ ChartJS.register(
   Legend,
   Filler
 )
+applyChartTypography(ChartJS)
 
 const { t } = useI18n()
 
@@ -164,10 +167,10 @@ const lineOptions = computed(() => ({
             const data = props.trendData[dataIndex]
             const actual = props.formatActualCost
               ? props.formatActualCost(data)
-              : `$${formatCost(data.actual_cost)}`
+              : formatCost(data.actual_cost)
             const standard = props.formatStandardCost
               ? props.formatStandardCost(data)
-              : `$${formatCost(data.cost)}`
+              : formatCost(data.cost)
             return standard == null ? `Actual: ${actual}` : `Actual: ${actual} | Standard: ${standard}`
           }
           return ''
@@ -217,25 +220,7 @@ const lineOptions = computed(() => ({
   }
 }))
 
-const formatTokens = (value: number): string => {
-  if (value >= 1_000_000_000) {
-    return `${(value / 1_000_000_000).toFixed(2)}B`
-  } else if (value >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(2)}M`
-  } else if (value >= 1_000) {
-    return `${(value / 1_000).toFixed(2)}K`
-  }
-  return value.toLocaleString()
-}
+const formatTokens = (value: number): string => formatCompactCount(value)
 
-const formatCost = (value: number): string => {
-  if (value >= 1000) {
-    return (value / 1000).toFixed(2) + 'K'
-  } else if (value >= 1) {
-    return value.toFixed(2)
-  } else if (value >= 0.01) {
-    return value.toFixed(3)
-  }
-  return value.toFixed(4)
-}
+const formatCost = (value: number): string => formatUsdAmount(value)
 </script>
