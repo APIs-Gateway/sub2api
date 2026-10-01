@@ -33,6 +33,39 @@ type openAICompatFailingWriter struct {
 	writes    int
 }
 
+type openAICompatErrorEventFailingWriter struct {
+	gin.ResponseWriter
+	attempted bool
+}
+
+func (w *openAICompatErrorEventFailingWriter) Write(p []byte) (int, error) {
+	if bytes.HasPrefix(p, []byte("event: error\n")) {
+		w.attempted = true
+		return 0, errors.New("client disconnected during error event")
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+type openAICompatPayloadThenErrorReadCloser struct {
+	reader  *bytes.Reader
+	err     error
+	onError func()
+}
+
+func (r *openAICompatPayloadThenErrorReadCloser) Read(p []byte) (int, error) {
+	if r.reader.Len() > 0 {
+		return r.reader.Read(p)
+	}
+	if r.onError != nil {
+		onError := r.onError
+		r.onError = nil
+		onError()
+	}
+	return 0, r.err
+}
+
+func (r *openAICompatPayloadThenErrorReadCloser) Close() error { return nil }
+
 func (w *openAICompatFailingWriter) Write(p []byte) (int, error) {
 	if w.writes >= w.failAfter {
 		return 0, errors.New("write failed: client disconnected")
@@ -2139,6 +2172,8 @@ func TestForwardAsAnthropic_MissingTerminalAfterOutputRecordsOpsWithoutFailover(
 	require.True(t, c.Writer.Written())
 	require.Contains(t, rec.Body.String(), "event: message_start")
 	require.Contains(t, rec.Body.String(), "partial")
+	require.Contains(t, rec.Body.String(), "event: error\n")
+	require.NotContains(t, rec.Body.String(), "event: message_stop\n")
 
 	events := openAICompatOpsEvents(t, c)
 	require.Len(t, events, 1)
@@ -2147,6 +2182,159 @@ func TestForwardAsAnthropic_MissingTerminalAfterOutputRecordsOpsWithoutFailover(
 	require.Equal(t, int64(1), events[0].AccountID)
 	require.Equal(t, "rid_partial_missing_terminal", events[0].UpstreamRequestID)
 	require.Contains(t, events[0].Message, "terminal event")
+}
+
+func TestForwardAsAnthropic_IncompleteAfterOutputSendsErrorSSE(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, keepalive := range []bool{false, true} {
+		for _, tool := range []bool{false, true} {
+			for _, termination := range []string{"eof", "done", "read_error"} {
+				name := fmt.Sprintf("keepalive=%t/tool=%t/%s", keepalive, tool, termination)
+				t.Run(name, func(t *testing.T) {
+					rec := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(rec)
+					body := []byte(`{"model":"gpt-5.4","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
+					c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+
+					upstreamBody := `data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.4","status":"in_progress","output":[]}}` + "\n\n"
+					if tool {
+						upstreamBody += `data: {"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","name":"Edit","call_id":"call_1","arguments":""}}` + "\n\n"
+						upstreamBody += `data: {"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc_1","delta":"{\"path\":\"partial"}` + "\n\n"
+					} else {
+						upstreamBody += `data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"partial output"}` + "\n\n"
+					}
+					if termination == "done" {
+						upstreamBody += "data: [DONE]\n\n"
+					}
+					upstreamReader := io.NopCloser(strings.NewReader(upstreamBody))
+					if termination == "read_error" {
+						upstreamReader = &openAICompatPayloadThenErrorReadCloser{reader: bytes.NewReader([]byte(upstreamBody)), err: io.ErrUnexpectedEOF}
+					}
+
+					var cfg *config.Config
+					if keepalive {
+						cfg = &config.Config{Gateway: config.GatewayConfig{StreamKeepaliveInterval: 1}}
+					}
+					svc := &OpenAIGatewayService{
+						cfg: cfg,
+						httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
+							StatusCode: http.StatusOK,
+							Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+							Body:       upstreamReader,
+						}},
+					}
+					account := &Account{
+						ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
+						Credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"},
+					}
+
+					result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+					if termination == "read_error" {
+						require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+					} else {
+						require.ErrorContains(t, err, "missing terminal event")
+					}
+					require.NotNil(t, result)
+					require.False(t, result.ClientDisconnect)
+					stream := rec.Body.String()
+					require.Contains(t, stream, "event: message_start\n")
+					require.Contains(t, stream, "partial")
+					require.NotContains(t, stream, "event: message_stop\n")
+					require.Equal(t, 1, strings.Count(stream, "event: error\n"))
+					require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
+					for _, frame := range strings.Split(stream, "\n\n") {
+						if !strings.HasPrefix(frame, "event: error\ndata: ") {
+							continue
+						}
+						payload := strings.TrimPrefix(frame, "event: error\ndata: ")
+						require.True(t, gjson.Valid(payload))
+						require.Equal(t, "error", gjson.Get(payload, "type").String())
+						require.Equal(t, "api_error", gjson.Get(payload, "error.type").String())
+						if termination == "read_error" {
+							require.Contains(t, gjson.Get(payload, "error.message").String(), "interrupted")
+						} else {
+							require.Contains(t, gjson.Get(payload, "error.message").String(), "terminal event")
+						}
+					}
+					events := openAICompatOpsEvents(t, c)
+					require.Len(t, events, 1)
+					if termination == "read_error" {
+						require.Equal(t, "stream_read_error", events[0].Kind)
+					} else {
+						require.Equal(t, "stream_missing_terminal", events[0].Kind)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestForwardAsAnthropic_MissingTerminalErrorWriteFailureMarksDisconnect(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	writer := &openAICompatErrorEventFailingWriter{ResponseWriter: c.Writer}
+	c.Writer = writer
+	body := []byte(`{"model":"gpt-5.4","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	upstreamBody := `data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.4","status":"in_progress","output":[]}}` + "\n\n" +
+		`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"partial"}` + "\n\n"
+	svc := &OpenAIGatewayService{httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}}
+	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
+		Credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"}}
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+	require.ErrorContains(t, err, "missing terminal event")
+	require.True(t, writer.attempted, "the final error event write must reach the failing writer")
+	require.NotNil(t, result)
+	require.True(t, result.ClientDisconnect)
+	require.Contains(t, rec.Body.String(), "partial")
+	require.NotContains(t, rec.Body.String(), "event: error\n")
+	require.NotContains(t, rec.Body.String(), "event: message_stop\n")
+}
+
+func TestForwardAsAnthropic_CanceledClientDuringIncompleteStreamSkipsUpstreamError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, readFailure := range []bool{false, true} {
+		t.Run(fmt.Sprintf("read_failure=%t", readFailure), func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			requestCtx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			body := []byte(`{"model":"gpt-5.4","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"stream":true}`)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body)).WithContext(requestCtx)
+			upstreamBody := `data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.4","status":"in_progress","output":[]}}` + "\n\n" +
+				`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"partial"}` + "\n\n"
+			upstreamReader := &openAICompatPayloadThenErrorReadCloser{reader: bytes.NewReader([]byte(upstreamBody)), err: io.EOF, onError: cancel}
+			if readFailure {
+				upstreamReader.err = io.ErrUnexpectedEOF
+			}
+			svc := &OpenAIGatewayService{httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       upstreamReader,
+			}}}
+			account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
+				Credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"}}
+
+			result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+			require.Error(t, err)
+			require.NotNil(t, result)
+			require.True(t, result.ClientDisconnect)
+			require.Contains(t, rec.Body.String(), "partial")
+			require.NotContains(t, rec.Body.String(), "event: error\n")
+			require.NotContains(t, rec.Body.String(), "event: message_stop\n")
+			_, hasOps := c.Get(OpsUpstreamErrorsKey)
+			require.False(t, hasOps, "client cancellation must not be attributed to upstream")
+		})
+	}
 }
 
 func TestForwardAsAnthropic_MissingTerminalAfterClientDisconnectSkipsOpsAndFailover(t *testing.T) {
