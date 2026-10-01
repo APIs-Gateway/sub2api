@@ -1454,15 +1454,16 @@ func newOpenAIWSHandlerTestServer(t *testing.T, h *OpenAIGatewayHandler, subject
 }
 
 type openAIResponsesWSUsageLogCase struct {
-	firstPayload     string
-	secondPayload    string
+	firstPayload       string
+	secondPayload      string
 	afterFirstResponse func() error
-	apiKeyService    *service.APIKeyService
-	apiKeyCredential string
-	ingressMode      string
-	billingRepo      service.UsageBillingRepository
-	userAgent        *string
-	channelMapping   map[string]string
+	apiKeyService      *service.APIKeyService
+	apiKeyCredential   string
+	ingressMode        string
+	billingRepo        service.UsageBillingRepository
+	userGroupRateRepo  service.UserGroupRateRepository
+	userAgent          *string
+	channelMapping     map[string]string
 }
 
 type openAIResponsesWSUsageLogResult struct {
@@ -2272,6 +2273,7 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		Status:      service.StatusActive,
 		Schedulable: true,
 		Concurrency: 1,
+		GroupIDs:    []int64{groupID},
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
 			"base_url": upstreamServer.URL,
@@ -2326,7 +2328,7 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		tc.billingRepo,
 		nil,
 		nil,
-		nil,
+		tc.userGroupRateRepo,
 		nil,
 		&billingCfg,
 		nil,

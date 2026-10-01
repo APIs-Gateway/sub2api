@@ -2145,6 +2145,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	failedAccountIDs := make(map[int64]struct{})
 	var lastFailoverErr *service.UpstreamFailoverError
 	wsAttemptMessage := append([]byte(nil), firstMessage...)
+	// A later turn can be replayed as turn 1 when a different account is selected.
+	// Keep its already chosen group price across those account attempts.
+	var replayBillingKey *service.APIKey
 
 	for {
 		reqLog.Debug("openai.websocket_account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
@@ -2256,6 +2259,18 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		var turnClientModel atomic.Pointer[string]
 		var turnPassthrough atomic.Bool
 		var turnBillingKeys openAIWSTurnBillingKeys
+		var attemptLastTurn atomic.Int64
+		noteAttemptTurn := func(turn int) {
+			for {
+				previous := attemptLastTurn.Load()
+				if int64(turn) <= previous || attemptLastTurn.CompareAndSwap(previous, int64(turn)) {
+					return
+				}
+			}
+		}
+		if replayBillingKey != nil {
+			turnBillingKeys.set(1, replayBillingKey)
+		}
 		hooks := &service.OpenAIWSIngressHooks{
 			InitialRequestModel: reqModel,
 			OnIngressModeResolved: func(passthrough bool) {
@@ -2296,6 +2311,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				return nil
 			},
 			BeforeTurn: func(turn int) error {
+				noteAttemptTurn(turn)
 				// native 与 ws_v2 passthrough ingress 都会在后续 turn 写入上游前回调本钩子，
 				// 用于重新抢占上一 turn 在 AfterTurn 中释放的并发槽位。
 				// turn==1 的会话屏蔽已由握手层检查覆盖；连接内 flag 只拦截后续 turn。
@@ -2369,6 +2385,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
+				noteAttemptTurn(turn)
 				// 每次 attempt 都清 cyber mark；failover 链结束前保留 recorded guard，
 				// 避免同一逻辑 turn 换号后重复落风控。CyberBlocked 必须在 submit 前
 				// 同步预捕获（task 闭包由 worker 池异步执行，届时 mark 已清除）。
@@ -2489,6 +2506,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				wsAttemptMessage = nextAttemptMessage
 				if retryCurrentTurn {
+					if turn := int(attemptLastTurn.Load()); turn > 1 {
+						replayBillingKey = turnBillingKeys.forTurn(turn, apiKey)
+					}
 					previousResponseID = ""
 					reqLog.Warn("openai.websocket_current_turn_failover_retry",
 						zap.Int64("account_id", account.ID),
