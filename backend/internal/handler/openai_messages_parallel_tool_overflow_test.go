@@ -19,6 +19,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type messagesOverflowUsageBillingRepo struct {
+	commands chan *service.UsageBillingCommand
+}
+
+func (r *messagesOverflowUsageBillingRepo) Apply(_ context.Context, cmd *service.UsageBillingCommand) (*service.UsageBillingApplyResult, error) {
+	r.commands <- cmd
+	debit := cmd.BalanceCost
+	return &service.UsageBillingApplyResult{Applied: true, WalletDebit: &debit}, nil
+}
+
 func TestOpenAIMessagesParallelOverflowCyberBillsOnce(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := strings.Join([]string{
@@ -35,20 +45,23 @@ func TestOpenAIMessagesParallelOverflowCyberBillsOnce(t *testing.T) {
 	account := service.Account{
 		ID: 9971, Name: "openai-responses-overflow-cyber", Platform: service.PlatformOpenAI,
 		Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, Concurrency: 1,
+		GroupIDs: []int64{groupID},
 		Credentials: map[string]any{"api_key": "sk-test"},
 		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
 	}
 	cfg := &config.Config{}
-	cfg.RunMode = config.RunModeSimple
+	cfg.RunMode = config.RunModeStandard
 	cfg.Default.RateMultiplier = 1
 	cfg.Security.URLAllowlist.Enabled = false
 	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
 	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, 2)}
-	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
+	billingRepo := &messagesOverflowUsageBillingRepo{commands: make(chan *service.UsageBillingCommand, 2)}
+	userRepo := &openAIRecordUsageUserRepoStub795Msg{user: service.User{ID: 1771, Balance: 1000, Status: service.StatusActive}}
+	billingCacheSvc := service.NewBillingCacheService(nil, userRepo, nil, nil, nil, nil, cfg, nil, nil)
 	defer billingCacheSvc.Stop()
 	gatewaySvc := service.NewOpenAIGatewayService(
 		&openAIWSUsageHandlerAccountRepoStub{account: account}, usageRepo,
-		nil, nil, nil, nil, nil, cfg, nil, nil,
+		billingRepo, userRepo, nil, nil, nil, cfg, nil, nil,
 		service.NewBillingService(cfg, nil), nil, billingCacheSvc, httpUpstream,
 		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
@@ -81,12 +94,28 @@ func TestOpenAIMessagesParallelOverflowCyberBillsOnce(t *testing.T) {
 	require.Equal(t, 1, strings.Count(rec.Body.String(), "event: error"))
 	require.NotContains(t, rec.Body.String(), "event: message_stop")
 	select {
+	case cmd := <-billingRepo.commands:
+		require.Equal(t, 13, cmd.InputTokens)
+		require.Equal(t, 5, cmd.OutputTokens)
+		const expectedCost = 13*2.5e-6 + 5*15e-6
+		require.InDelta(t, expectedCost, cmd.BalanceCost, 1e-8, "wallet debit must match delivered terminal usage")
+		require.InDelta(t, expectedCost, cmd.OfficialCost, 1e-8)
+	case <-time.After(3 * time.Second):
+		t.Fatal("terminal cyber usage was not billed")
+	}
+	select {
 	case usageLog := <-usageRepo.created:
 		require.Equal(t, 13, usageLog.InputTokens)
 		require.Equal(t, 5, usageLog.OutputTokens)
 		require.Equal(t, service.RequestTypeCyberBlocked, usageLog.RequestType)
+		require.InDelta(t, 13*2.5e-6+5*15e-6, usageLog.ActualCost, 1e-8)
 	case <-time.After(3 * time.Second):
 		t.Fatal("terminal cyber usage was not recorded")
+	}
+	select {
+	case <-billingRepo.commands:
+		t.Fatal("overflow cyber usage was charged twice")
+	case <-time.After(2 * time.Second):
 	}
 	select {
 	case <-usageRepo.created:
