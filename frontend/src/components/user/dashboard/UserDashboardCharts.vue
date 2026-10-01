@@ -40,7 +40,7 @@
                   <th class="pb-2 text-right">{{ t('dashboard.requests') }}</th>
                   <th class="pb-2 text-right">{{ t('dashboard.tokens') }}</th>
                   <th class="pb-2 text-right">{{ t('dashboard.actual') }}</th>
-                  <th class="pb-2 text-right">{{ t('dashboard.standard') }}</th>
+                  <th v-if="showOfficial" class="pb-2 text-right">{{ t('dashboard.standard') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -49,7 +49,7 @@
                   <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">{{ formatNumber(model.requests) }}</td>
                   <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">{{ formatTokens(model.total_tokens) }}</td>
                   <td class="py-1.5 text-right text-green-600 dark:text-green-400">{{ formatMixed(model.actual_cost, model.actual_cost_fiat) }}</td>
-                  <td class="py-1.5 text-right text-gray-400 dark:text-gray-500">${{ formatCost(model.cost) }}</td>
+                  <td v-if="showOfficial" class="py-1.5 text-right text-gray-400 dark:text-gray-500">{{ formatStandard(model.cost) }}</td>
                 </tr>
               </tbody>
             </table>
@@ -58,7 +58,7 @@
       </div>
 
       <!-- Token Usage Trend Chart -->
-      <TokenUsageTrend :trend-data="trend" :loading="loading" :format-actual-cost="formatTrendActualCost" />
+      <TokenUsageTrend :trend-data="trend" :loading="loading" :format-actual-cost="formatTrendActualCost" :format-standard-cost="formatTrendStandardCost" />
     </div>
   </div>
 </template>
@@ -80,8 +80,12 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcEleme
 const props = defineProps<{ loading: boolean, startDate: string, endDate: string, granularity: string, trend: TrendDataPoint[], models: ModelStat[] }>()
 defineEmits(['update:startDate', 'update:endDate', 'update:granularity', 'dateRangeChange', 'granularityChange', 'refresh'])
 const { t } = useI18n()
-// 实扣列用服务端分桶折算的人民币；官方价（standard）列是美元对照值，保持 $
-const { formatMixed } = useCurrencyDisplay()
+// 实扣列用服务端分桶折算的人民币；官方价（standard）列在人民币模式下按官方价汇率换成 ¥，
+// 后端没提供汇率时整列隐藏，不混排 $。
+const { formatMixed, isFiat, officialCnyRate, formatOfficial } = useCurrencyDisplay()
+const showOfficial = computed(() => !isFiat.value || officialCnyRate.value > 0)
+const formatStandard = (usd: number) => (isFiat.value ? (formatOfficial(usd) ?? '') : `$${formatCost(usd)}`)
+const formatTrendStandardCost = (point: TrendDataPoint) => (showOfficial.value ? formatStandard(point.cost) : null)
 const formatTrendActualCost = (point: TrendDataPoint) => formatMixed(point.actual_cost, point.actual_cost_fiat)
 
 const modelData = computed(() => !props.models?.length ? null : {

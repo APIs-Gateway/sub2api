@@ -157,6 +157,8 @@ describe('user UsageView tooltip', () => {
   })
 
   it('shows fast service tier and unit prices in user tooltip', async () => {
+    // 官方价按后台汇率 7 换成人民币展示
+    publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7 }
     query.mockResolvedValue({
       items: [
         {
@@ -240,12 +242,13 @@ describe('user UsageView tooltip', () => {
     // 这条 fixture 没有 billing_type，按钱包扣费展示。
     expect(text).toContain('Balance deducted')
     expect(text).toContain('$0.092883')
-    expect(text).toContain('$5.0000 / 1M tokens')
-    expect(text).toContain('$30.0000 / 1M tokens')
+    expect(text).toContain('¥35.00 / 1M tokens')
+    expect(text).toContain('¥210.00 / 1M tokens')
     expect(text).toContain('Cache write price')
-    expect(text).toContain('$6.2500 / 1M tokens')
+    expect(text).toContain('¥43.75 / 1M tokens')
     expect(text).toContain('Cache read price')
-    expect(text).toContain('$0.2500 / 1M tokens')
+    expect(text).toContain('¥1.75 / 1M tokens')
+    expect(text).not.toContain('$5.0000')
   })
 
   it('exports csv with input and output unit price columns', async () => {
@@ -913,7 +916,21 @@ describe('user UsageView currency display', () => {
     expect(walletText).not.toContain('Plan quota deducted')
   })
 
+  it('官方价在人民币模式下按官方价汇率展示，缺汇率时整项隐藏而不是混排 $', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    const hidden = await mountView()
+    expect(hidden.find('[data-test="official-total"]').exists()).toBe(false)
+    expect(plain(hidden)).not.toContain('1.6667')
+
+    publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7 }
+    const shown = await mountView()
+    // 1.666667 * 7 = 11.666669
+    expect(shown.get('[data-test="official-total"]').text()).toContain('¥11.67')
+    expect(plain(shown)).not.toContain('$1.6667')
+  })
+
   it('tooltip 把官方价、扣除金额、你的花费拆成三行', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7 }
     const wrapper = await mountView()
     const setupState = (wrapper.vm as any).$?.setupState
 
@@ -927,7 +944,7 @@ describe('user UsageView currency display', () => {
     expect(text).toContain('Official price')
     expect(text).toContain('Plan quota deducted')
     expect(text).toContain('Your spend')
-    expect(text).toContain('1.666667')
+    expect(text).toContain('¥11.67')
     expect(text).toContain('5.000000')
     expect(text).toContain('0.250')
   })

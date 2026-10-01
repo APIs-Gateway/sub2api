@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { watchEffect } from 'vue'
 
 import TokenUsageTrend from '../TokenUsageTrend.vue'
 
@@ -21,6 +22,13 @@ vi.mock('vue-i18n', async () => {
 vi.mock('vue-chartjs', () => ({
   Line: {
     props: ['data', 'options'],
+    setup(props: { options: unknown }) {
+      const g = globalThis as any
+      watchEffect(() => {
+        g.__lastLineOptions = props.options
+      })
+      return {}
+    },
     template: '<div class="chart-data">{{ JSON.stringify(data) }}</div>',
   },
 }))
@@ -116,5 +124,38 @@ describe('TokenUsageTrend', () => {
     )
     // Hit rate = 500 / (200 + 500 + 300) * 100 = 50%
     expect(hitRateDataset.data[0]).toBe(50)
+  })
+
+  describe('tooltip footer', () => {
+    const point = {
+      date: '2026-05-08',
+      requests: 1,
+      input_tokens: 1,
+      output_tokens: 1,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      cost: 0.0123,
+      actual_cost: 0.5,
+    }
+
+    function footer(props: Record<string, unknown>): string {
+      mount(TokenUsageTrend, { props: { trendData: [point], ...props }, global: { stubs: { LoadingSpinner: true } } })
+      const opts = (globalThis as any).__lastLineOptions
+      return opts.plugins.tooltip.callbacks.footer([{ dataIndex: 0 }])
+    }
+
+    it('keeps the USD standard price when no formatter is passed (admin)', () => {
+      expect(footer({})).toBe('Actual: $0.500 | Standard: $0.012')
+    })
+
+    it('uses the user-side formatter for the standard price', () => {
+      expect(footer({ formatActualCost: () => '¥0.04', formatStandardCost: () => '¥0.09' })).toBe(
+        'Actual: ¥0.04 | Standard: ¥0.09',
+      )
+    })
+
+    it('drops the standard price when the formatter cannot provide one', () => {
+      expect(footer({ formatActualCost: () => '¥0.04', formatStandardCost: () => null })).toBe('Actual: ¥0.04')
+    })
   })
 })
