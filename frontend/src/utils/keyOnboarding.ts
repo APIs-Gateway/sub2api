@@ -7,7 +7,8 @@ import { OPENAI_CC_SWITCH_CODEX_MODEL } from '@/utils/ccswitchImport'
  * 约定：
  * - 脚本完全内联，不联网下载；所有取值都先放进单引号字面量（再经环境变量/变量传给
  *   解释器），不拼进 JSON / TOML 源码，所以地址和密钥里有引号、空格、$ 等字符也不会破坏脚本。
- * - 修改任何已有配置文件之前，先复制一份带时间戳的备份（<文件>.bak-<时间戳>）。
+ * - 修改任何已有配置文件之前，先复制一份带时间戳的备份（<文件>.bak-<时间戳>）；同一秒内重复运行时
+ *   在文件名后加序号（-2、-3……），不会覆盖更早的备份。
  * - 脚本里不使用反引号（PowerShell 的转义符，粘贴时也容易被聊天软件改写）。
  * - 「交给 AI」文本永远不包含密钥。
  */
@@ -122,6 +123,29 @@ export function codexProviderId(siteName?: string): string {
 
 // ---------------------------------------------------------------- 脚本
 
+/** 脚本里 {path} / {error} 会在运行时替换成实际的文件路径 / 错误信息。 */
+export const SCRIPT_PATH_TOKEN = '{path}'
+export const SCRIPT_ERROR_TOKEN = '{error}'
+
+/** 脚本在终端里打印给用户看的话。 */
+export interface ScriptMessages {
+  /** 找不到 python3 */
+  pythonMissing: string
+  /** macOS 没装命令行开发工具（此时 /usr/bin/python3 只是个会弹安装窗口的占位程序） */
+  xcodeMissing: string
+  backup: string
+  updated: string
+  failed: string
+}
+
+export const DEFAULT_SCRIPT_MESSAGES: ScriptMessages = {
+  pythonMissing: 'python3 is required to update the config file.',
+  xcodeMissing: 'The macOS command line developer tools are not installed. Use the CC Switch or Manual option instead.',
+  backup: `Backup: ${SCRIPT_PATH_TOKEN}`,
+  updated: `Updated: ${SCRIPT_PATH_TOKEN}`,
+  failed: `Failed: ${SCRIPT_ERROR_TOKEN}`
+}
+
 export interface InstallScriptInput {
   baseUrl: string
   apiKey: string
@@ -129,6 +153,8 @@ export interface InstallScriptInput {
   siteName?: string
   /** 脚本运行结束时打印的一行话（默认英文）。 */
   doneMessage?: string
+  /** 终端里的其余提示（默认英文），由调用方按界面语言传入。 */
+  messages?: Partial<ScriptMessages>
 }
 
 /** 脚本会写入的配置文件（界面上展示用）。 */
@@ -155,7 +181,45 @@ interface ScriptParams {
   model: string
   opencodeProvider: string
   done: string
+  msg: ScriptMessages
 }
+
+function resolveMessages(custom: Partial<ScriptMessages> | undefined): ScriptMessages {
+  const out = { ...DEFAULT_SCRIPT_MESSAGES }
+  for (const key of Object.keys(out) as (keyof ScriptMessages)[]) {
+    const text = oneLine(custom?.[key] || '')
+    if (text) out[key] = text
+  }
+  return out
+}
+
+/** 把「前缀{占位符}后缀」拆成前后两段；没有占位符时整句当前缀，值接在后面。 */
+function splitTemplate(template: string, token: string): [string, string] {
+  const at = template.indexOf(token)
+  return at < 0 ? [`${template} `, ''] : [template.slice(0, at), template.slice(at + token.length)]
+}
+
+/** bash：打印「前缀 + 变量值 + 后缀」，文字都走单引号字面量，翻译里有引号或 $ 也不会破坏脚本。 */
+function shPrint(template: string, token: string, valueExpr: string): string {
+  const [pre, post] = splitTemplate(template, token)
+  return `printf '%s%s%s\\n' ${shQuote(pre)} ${valueExpr} ${shQuote(post)}`
+}
+
+/** PowerShell：同上，返回一个字符串拼接表达式。 */
+function psJoin(template: string, token: string, valueExpr: string): string {
+  const [pre, post] = splitTemplate(template, token)
+  return `(${psQuote(pre)} + ${valueExpr} + ${psQuote(post)})`
+}
+
+/** Claude Code 的 env 里可能残留、会盖掉或干扰新写入地址和密钥的旧变量；写入前先删掉。 */
+const CLAUDE_STALE_ENV = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_MODEL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'ANTHROPIC_SMALL_FAST_MODEL'
+]
 
 function scriptParams(client: OnboardingClient, input: InstallScriptInput): ScriptParams {
   const platform = input.platform || 'anthropic'
@@ -166,7 +230,8 @@ function scriptParams(client: OnboardingClient, input: InstallScriptInput): Scri
     providerName: oneLine(input.siteName || '') || 'sub2api',
     model: OPENAI_CC_SWITCH_CODEX_MODEL,
     opencodeProvider: platform === 'gemini' ? 'google' : platform === 'openai' ? 'openai' : 'anthropic',
-    done: oneLine(input.doneMessage || '') || 'Done. Restart the client to apply.'
+    done: oneLine(input.doneMessage || '') || 'Done. Restart the client to apply.',
+    msg: resolveMessages(input.messages)
   }
 }
 
@@ -189,6 +254,8 @@ env = data.get('env')
 if not isinstance(env, dict):
     env = {}
     data['env'] = env
+for k in (${CLAUDE_STALE_ENV.map((k) => `'${k}'`).join(', ')}):
+    env.pop(k, None)
 env['ANTHROPIC_BASE_URL'] = os.environ['SUB_ENDPOINT']
 env['ANTHROPIC_AUTH_TOKEN'] = os.environ['SUB_KEY']
 env['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'] = '1'
@@ -305,8 +372,10 @@ function buildUnixScript(client: OnboardingClient, input: InstallScriptInput): s
     lines.push(`export SUB_PROVIDER=${shQuote(p.opencodeProvider)}`)
   }
   lines.push(
+    // macOS 没装命令行开发工具时，/usr/bin/python3 只是个占位程序：command -v 找得到，一调用就弹安装窗口
+    `if [ "$(uname -s)" = "Darwin" ] && ! xcode-select -p >/dev/null 2>&1; then echo ${shQuote(p.msg.xcodeMissing)}; exit 1; fi`,
     'PY="$(command -v python3 || command -v python || true)"',
-    'if [ -z "$PY" ]; then echo "python3 is required to update the config file."; exit 1; fi',
+    `if [ -z "$PY" ]; then echo ${shQuote(p.msg.pythonMissing)}; exit 1; fi`,
     'TS="$(date +%Y%m%d-%H%M%S)"'
   )
   if (client === 'opencode') {
@@ -325,30 +394,34 @@ function buildUnixScript(client: OnboardingClient, input: InstallScriptInput): s
     `os.chmod(os.environ['OUT'], 0o600)`,
     'PY',
     'if [ -e "$TARGET" ]; then',
-    '  cp -p "$TARGET" "$TARGET.bak-$TS"',
-    '  echo "Backup: $TARGET.bak-$TS"',
+    '  B="$TARGET.bak-$TS"; N=1',
+    '  while [ -e "$B" ]; do N=$((N+1)); B="$TARGET.bak-$TS-$N"; done',
+    '  cp -p "$TARGET" "$B"',
+    `  ${shPrint(p.msg.backup, SCRIPT_PATH_TOKEN, '"$B"')}`,
     '  cat "$OUT" > "$TARGET"',
     '  rm -f "$OUT"',
     'else',
     '  mv "$OUT" "$TARGET"',
     'fi',
-    'echo "Updated: $TARGET"',
+    shPrint(p.msg.updated, SCRIPT_PATH_TOKEN, '"$TARGET"'),
     `echo ${shQuote(p.done)}`,
     UNIX_EOF
   )
   return lines.join('\n')
 }
 
-const PS_COMMON = `$ErrorActionPreference = 'Stop'
+function psCommon(backupTemplate: string): string {
+  return `$ErrorActionPreference = 'Stop'
 $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 function Read-Text($p) { if (Test-Path -LiteralPath $p) { [System.IO.File]::ReadAllText($p) } else { '' } }
-function Backup-File($p) { if (Test-Path -LiteralPath $p) { $b = $p + '.bak-' + $ts; Copy-Item -LiteralPath $p -Destination $b; Write-Host ('Backup: ' + $b) } }
+function Backup-File($p) { if (Test-Path -LiteralPath $p) { $b = $p + '.bak-' + $ts; $n = 1; while (Test-Path -LiteralPath $b) { $n++; $b = $p + '.bak-' + $ts + '-' + $n }; Copy-Item -LiteralPath $p -Destination $b; Write-Host ${psJoin(backupTemplate, SCRIPT_PATH_TOKEN, '$b')} } }
 function Save-Text($p, $text) { [System.IO.File]::WriteAllText($p, $text, $utf8) }
 function Set-Prop($o, $n, $v) { if ($o.PSObject.Properties[$n]) { $o.$n = $v } else { $o | Add-Member -NotePropertyName $n -NotePropertyValue $v } }
 function Get-Child($o, $n) { $c = $o.PSObject.Properties[$n]; if ($c -and $c.Value -is [System.Management.Automation.PSCustomObject]) { return $c.Value }; $new = New-Object PSObject; Set-Prop $o $n $new; return $new }
 function Load-Json($p) { $raw = Read-Text $p; if ($raw.Trim().Length -eq 0) { return (New-Object PSObject) }; $o = $raw | ConvertFrom-Json; if ($o -isnot [System.Management.Automation.PSCustomObject]) { throw ($p + ' is not a JSON object') }; return $o }
 function Quote-Toml($v) { return '"' + $v.Replace('\\', '\\\\').Replace('"', '\\"') + '"' }`
+}
 
 function psBody(client: OnboardingClient): { dir: string; file: string; code: string } {
   switch (client) {
@@ -358,6 +431,7 @@ function psBody(client: OnboardingClient): { dir: string; file: string; code: st
         file: 'settings.json',
         code: `$cfg = Load-Json $target
 $envObj = Get-Child $cfg 'env'
+foreach ($k in @(${CLAUDE_STALE_ENV.map((k) => `'${k}'`).join(', ')})) { $envObj.PSObject.Properties.Remove($k) }
 Set-Prop $envObj 'ANTHROPIC_BASE_URL' $SubEndpoint
 Set-Prop $envObj 'ANTHROPIC_AUTH_TOKEN' $SubKey
 Set-Prop $envObj 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC' '1'
@@ -447,7 +521,7 @@ function buildWindowsScript(client: OnboardingClient, input: InstallScriptInput)
 
   return [
     '& {',
-    PS_COMMON,
+    psCommon(p.msg.backup),
     ...vars,
     'try {',
     `$dir = ${body.dir}`,
@@ -456,10 +530,10 @@ function buildWindowsScript(client: OnboardingClient, input: InstallScriptInput)
     body.code,
     'Backup-File $target',
     'Save-Text $target $out',
-    `Write-Host ('Updated: ' + $target)`,
+    `Write-Host ${psJoin(p.msg.updated, SCRIPT_PATH_TOKEN, '$target')}`,
     `Write-Host ${psQuote(p.done)}`,
     '} catch {',
-    `Write-Host ('Failed: ' + $_.Exception.Message) -ForegroundColor Red`,
+    `Write-Host ${psJoin(p.msg.failed, SCRIPT_ERROR_TOKEN, '$_.Exception.Message')} -ForegroundColor Red`,
     '}',
     '}'
   ].join('\n')

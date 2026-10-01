@@ -1,11 +1,17 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ref } from 'vue'
 
 import KeyOnboardingModal from '../KeyOnboardingModal.vue'
 
-const { getAvailable } = vi.hoisted(() => ({ getAvailable: vi.fn() }))
+const { getAvailable, showError, i18nState } = vi.hoisted(() => ({
+  getAvailable: vi.fn(),
+  showError: vi.fn(),
+  // 测试里可以切到中文，检查脚本里的提示是否跟随界面语言
+  i18nState: { lang: 'en' as 'en' | 'zh-CN' }
+}))
 vi.mock('@/api/channels', () => ({ userChannelsAPI: { getAvailable } }))
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError }) }))
 
 const SECRET = 'sk-SECRET-1234567890abcdef'
 
@@ -13,8 +19,9 @@ const SECRET = 'sk-SECRET-1234567890abcdef'
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   const { default: en } = await import('@/i18n/locales/en')
+  const { default: zhCN } = await import('@/i18n/locales/zh-CN')
   const lookup = (key: string): string | undefined => {
-    let cur: unknown = en
+    let cur: unknown = i18nState.lang === 'zh-CN' ? zhCN : en
     for (const seg of key.split('.')) {
       if (typeof cur !== 'object' || cur === null) return undefined
       cur = (cur as Record<string, unknown>)[seg]
@@ -53,9 +60,10 @@ const channels = [
   }
 ]
 
-async function mountModal(props: Record<string, unknown> = {}) {
+async function mountModal(props: Record<string, unknown> = {}, attachTo?: HTMLElement) {
   const wrapper = mount(KeyOnboardingModal, {
     props: { show: true, apiKey: apiKey(), baseUrl: 'https://codex.hiyo.top/', siteName: 'Hiyo', docUrl: '', ...props } as never,
+    attachTo,
     global: {
       stubs: { BaseDialog: { props: ['show', 'title'], template: '<div v-if="show"><slot /></div>' } }
     }
@@ -70,7 +78,10 @@ describe('KeyOnboardingModal', () => {
   beforeEach(() => {
     getAvailable.mockReset()
     getAvailable.mockResolvedValue(channels)
-    clipboard.writeText.mockClear()
+    showError.mockReset()
+    i18nState.lang = 'en'
+    clipboard.writeText.mockReset()
+    clipboard.writeText.mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { value: clipboard, configurable: true })
   })
 
@@ -119,6 +130,201 @@ describe('KeyOnboardingModal', () => {
     expect(copied).toContain('https://codex.hiyo.top/v1')
     expect(copied).toContain('bak-')
     expect(w.get('[data-test="copy-codex-unix"]').text()).toBe('Copied')
+  })
+
+  describe('页签的无障碍', () => {
+    const IDS = ['install', 'ai', 'ccswitch', 'manual'] as const
+
+    it('每个页签通过 aria-controls 指向内容区，内容区是 tabpanel 并回指页签', async () => {
+      const w = await mountModal()
+      for (const id of IDS) {
+        const tab = w.get(`[data-test="tab-${id}"]`)
+        expect(tab.attributes('id')).toBeTruthy()
+        expect(tab.attributes('aria-controls')).toBeTruthy()
+        expect(tab.attributes('tabindex')).toBe(id === 'install' ? '0' : '-1')
+      }
+      const install = w.get('[data-test="tab-install"]')
+      let panel = w.get('[data-test="panel-install"]')
+      expect(panel.attributes('role')).toBe('tabpanel')
+      expect(panel.attributes('id')).toBe(install.attributes('aria-controls'))
+      expect(panel.attributes('aria-labelledby')).toBe(install.attributes('id'))
+
+      await w.get('[data-test="tab-manual"]').trigger('click')
+      panel = w.get('[data-test="panel-manual"]')
+      expect(panel.attributes('role')).toBe('tabpanel')
+      expect(panel.attributes('id')).toBe(w.get('[data-test="tab-manual"]').attributes('aria-controls'))
+      expect(panel.attributes('aria-labelledby')).toBe(w.get('[data-test="tab-manual"]').attributes('id'))
+      expect(w.get('[data-test="tab-manual"]').attributes('tabindex')).toBe('0')
+      expect(install.attributes('tabindex')).toBe('-1')
+    })
+
+    it('没有分组时的提示也是当前页签的内容区', async () => {
+      const w = await mountModal({ apiKey: { key: SECRET, name: 'k', group_id: null, group: null } })
+      const hint = w.get('[data-test="no-group"]')
+      expect(hint.attributes('role')).toBe('tabpanel')
+      expect(hint.attributes('aria-labelledby')).toBe(w.get('[data-test="tab-install"]').attributes('id'))
+    })
+
+    describe('键盘', () => {
+      let host: HTMLElement
+      beforeEach(() => {
+        host = document.createElement('div')
+        document.body.appendChild(host)
+      })
+      afterEach(() => host.remove())
+
+      const press = async (w: VueWrapper, from: string, key: string) => {
+        await w.get(`[data-test="tab-${from}"]`).trigger('keydown', { key })
+        await flushPromises()
+      }
+      const activeTab = (w: VueWrapper) => w.findAll('[role="tab"]').find((t) => t.attributes('aria-selected') === 'true')!.attributes('data-test')
+
+      it('左右、上下方向键切换页签并移动焦点，首尾循环', async () => {
+        const w = await mountModal({}, host)
+        await press(w, 'install', 'ArrowRight')
+        expect(activeTab(w)).toBe('tab-ai')
+        expect(document.activeElement).toBe(w.get('[data-test="tab-ai"]').element)
+        await press(w, 'ai', 'ArrowDown')
+        expect(activeTab(w)).toBe('tab-ccswitch')
+        await press(w, 'ccswitch', 'ArrowLeft')
+        expect(activeTab(w)).toBe('tab-ai')
+        await press(w, 'ai', 'ArrowUp')
+        expect(activeTab(w)).toBe('tab-install')
+        // 第一个再往前回到最后一个，最后一个再往后回到第一个
+        await press(w, 'install', 'ArrowLeft')
+        expect(activeTab(w)).toBe('tab-manual')
+        expect(document.activeElement).toBe(w.get('[data-test="tab-manual"]').element)
+        await press(w, 'manual', 'ArrowRight')
+        expect(activeTab(w)).toBe('tab-install')
+        w.unmount()
+      })
+
+      it('Home 回到第一个，End 到最后一个，内容区跟着切换', async () => {
+        const w = await mountModal({ initialTab: 'ai' }, host)
+        await press(w, 'ai', 'End')
+        expect(activeTab(w)).toBe('tab-manual')
+        expect(w.find('[data-test="panel-manual"]').exists()).toBe(true)
+        expect(document.activeElement).toBe(w.get('[data-test="tab-manual"]').element)
+        await press(w, 'manual', 'Home')
+        expect(activeTab(w)).toBe('tab-install')
+        expect(w.find('[data-test="panel-install"]').exists()).toBe(true)
+        w.unmount()
+      })
+
+      it('其他按键不处理', async () => {
+        const w = await mountModal({}, host)
+        const ev = new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true })
+        w.get('[data-test="tab-install"]').element.dispatchEvent(ev)
+        await flushPromises()
+        expect(ev.defaultPrevented).toBe(false)
+        expect(activeTab(w)).toBe('tab-install')
+        w.unmount()
+      })
+    })
+  })
+
+  it('CC Switch 的客户端单选组有名称，标签与它关联', async () => {
+    const w = await mountModal({ initialTab: 'ccswitch', apiKey: apiKey('antigravity') })
+    const group = w.get('[role="radiogroup"]')
+    expect(group.attributes('aria-label')).toBe('Client')
+    const labelId = group.attributes('aria-labelledby')!
+    expect(labelId).toBeTruthy()
+    const label = w.get(`[id="${labelId}"]`)
+    expect(label.text()).toBe('Client')
+    expect(label.element.tagName).toBe('SPAN')
+    // 名称、模型这类有输入框的标签仍然用 for 关联到控件
+    expect(w.get('label[for="ccs-name"]').exists()).toBe(true)
+  })
+
+  describe('复制反馈', () => {
+    it('复制成功后用 aria-live 区域播报，到时间后清空', async () => {
+      vi.useFakeTimers()
+      try {
+        const w = await mountModal()
+        const status = w.get('[data-test="copy-status"]')
+        expect(status.attributes('role')).toBe('status')
+        expect(status.attributes('aria-live')).toBe('polite')
+        expect(status.text()).toBe('')
+        await w.get('[data-test="copy-codex-unix"]').trigger('click')
+        await flushPromises()
+        expect(w.get('[data-test="copy-status"]').text()).toBe('Copied')
+        await vi.advanceTimersByTimeAsync(2000)
+        await flushPromises()
+        expect(w.get('[data-test="copy-status"]').text()).toBe('')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('复制失败时弹出提示，按钮不显示已复制', async () => {
+      clipboard.writeText.mockRejectedValue(new Error('denied'))
+      const w = await mountModal()
+      await w.get('[data-test="copy-codex-unix"]').trigger('click')
+      await flushPromises()
+      expect(showError).toHaveBeenCalledTimes(1)
+      expect(showError).toHaveBeenCalledWith('Failed to copy')
+      expect(w.get('[data-test="copy-codex-unix"]').text()).not.toBe('Copied')
+      expect(w.get('[data-test="copy-status"]').text()).toBe('')
+    })
+
+    it('复制成功时不弹错误提示', async () => {
+      const w = await mountModal()
+      await w.get('[data-test="copy-codex-unix"]').trigger('click')
+      await flushPromises()
+      expect(showError).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('手动配置里的代码块标签', () => {
+    it('只有路径用等宽字体，「环境变量」这类普通文字用正常字体', async () => {
+      const w = await mountModal({ initialTab: 'manual', apiKey: apiKey('anthropic') })
+      const labelOf = (text: string) => w.findAll('details span').find((el) => el.text() === text)!
+      const path = labelOf('~/.claude/settings.json')
+      const plain = labelOf('Environment variables')
+      expect(path.classes()).toContain('font-mono')
+      expect(plain.classes()).not.toContain('font-mono')
+    })
+
+    it('codex 的配置文件路径用等宽字体', async () => {
+      const w = await mountModal({ initialTab: 'manual' })
+      const path = w.findAll('details span').find((el) => el.text() === '~/.codex/config.toml')!
+      expect(path.classes()).toContain('font-mono')
+    })
+  })
+
+  describe('脚本里的终端提示跟随界面语言', () => {
+    const copyScript = async (w: VueWrapper, os: 'unix' | 'windows') => {
+      await w.get(`[data-test="copy-codex-${os}"]`).trigger('click')
+      await flushPromises()
+      const calls = clipboard.writeText.mock.calls
+      return calls[calls.length - 1][0] as string
+    }
+
+    it('英文界面：英文提示', async () => {
+      const w = await mountModal()
+      const unix = await copyScript(w, 'unix')
+      expect(unix).toContain("'Backup: '")
+      expect(unix).toContain("'Updated: '")
+      expect(unix).toContain('command line developer tools')
+      expect(unix).toContain('Python 3 is required')
+      const win = await copyScript(w, 'windows')
+      expect(win).toContain("('Failed: ' + $_.Exception.Message + '')")
+    })
+
+    it('中文界面：提示、备份、更新、失败都是中文', async () => {
+      i18nState.lang = 'zh-CN'
+      const w = await mountModal()
+      const unix = await copyScript(w, 'unix')
+      expect(unix).toContain("'已备份：'")
+      expect(unix).toContain("'已更新：'")
+      expect(unix).toContain('这台 Mac 还没有命令行开发工具，请改用「CC Switch」或「手动配置」页签。')
+      expect(unix).toContain('更新配置文件需要 Python 3。')
+      expect(unix).not.toContain("'Backup: '")
+      const win = await copyScript(w, 'windows')
+      expect(win).toContain("('失败：' + $_.Exception.Message + '')")
+      expect(win).toContain("('已备份：' + $b + '')")
+      expect(win).not.toContain('Failed:')
+    })
   })
 
   it('没有分组时给出提示，不展示客户端', async () => {

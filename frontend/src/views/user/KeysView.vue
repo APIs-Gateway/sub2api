@@ -34,11 +34,11 @@
             >
               <p class="text-sm text-gray-600 dark:text-dark-400" data-test="overview-enabled">
                 {{ overview.partial
-                  ? t('keys.overview.enabledPage', { active: overview.enabled, total: pagination.total })
+                  ? t('keys.overview.enabledList', { active: overview.enabled, shown: apiKeys.length })
                   : t('keys.overview.enabled', { active: overview.enabled, total: pagination.total }) }}
               </p>
               <p class="text-sm text-gray-600 dark:text-dark-400">
-                {{ overview.partial ? t('keys.overview.spentPage') : t('keys.overview.spent') }}
+                {{ overview.partial ? t('keys.overview.spentList') : t('keys.overview.spent') }}
                 <span class="ml-1 font-serif text-base tabular-nums text-gray-900 dark:text-white" data-test="overview-spent">{{ overview.spent }}</span>
               </p>
             </div>
@@ -222,30 +222,48 @@
 
           <template #cell-usage="{ row }">
             <div class="text-sm">
-              <div class="flex flex-wrap items-baseline gap-x-1.5" :title="t('keys.total')">
-                <span class="text-gray-600 dark:text-gray-400">{{ t('keys.usedLabel') }}</span>
-                <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white" data-test="row-used">
-                  {{ formatMixed(usageStats[row.id]?.total_actual_cost ?? 0, usageStats[row.id]?.total_actual_cost_fiat) }}
-                </span>
-                <span class="text-gray-400 dark:text-dark-500">/</span>
+              <!-- 有上限：已用与上限同一口径（都是额度折算），与进度条、超额变色一致 -->
+              <template v-if="row.quota > 0">
+                <div class="flex flex-wrap items-baseline gap-x-1.5">
+                  <span class="text-gray-600 dark:text-gray-400">{{ t('keys.usedLabel') }}</span>
+                  <span
+                    data-test="row-used"
+                    :class="[
+                      'font-mono tabular-nums font-medium',
+                      row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' : 'text-gray-900 dark:text-white'
+                    ]"
+                  >{{ formatLimit(row.quota_used, 2) }}</span>
+                  <span class="text-gray-400 dark:text-dark-500">/</span>
+                  <span
+                    data-test="row-limit"
+                    :class="[
+                      'font-mono tabular-nums',
+                      row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' : 'text-gray-600 dark:text-gray-400'
+                    ]"
+                  >{{ formatLimit(row.quota, 2) }}</span>
+                </div>
+                <div class="mt-1.5 h-1.5 w-full max-w-[12rem] overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
+                  <div
+                    :class="[
+                      'h-full rounded-md transition-all',
+                      row.quota_used >= row.quota ? 'bg-primary-600' : 'bg-gray-900 dark:bg-gray-100'
+                    ]"
+                    :style="{ width: Math.min((row.quota_used / row.quota) * 100, 100) + '%' }"
+                  />
+                </div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('keys.total') }}
+                  <span class="font-mono tabular-nums" data-test="row-recent">{{ recentSpent(row.id) }}</span>
+                </div>
+              </template>
+              <!-- 无上限：只有近 30 天消费，旁边直接标出不限额 -->
+              <div v-else class="flex flex-wrap items-baseline gap-x-1.5">
+                <span class="text-gray-600 dark:text-gray-400">{{ t('keys.total') }}</span>
+                <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white" data-test="row-recent">{{ recentSpent(row.id) }}</span>
                 <span
-                  v-if="row.quota > 0"
+                  class="rounded-md border border-gray-200 px-1.5 py-px text-xs text-gray-600 dark:border-dark-700 dark:text-gray-400"
                   data-test="row-limit"
-                  :class="[
-                    'font-mono tabular-nums',
-                    row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' : 'text-gray-600 dark:text-gray-400'
-                  ]"
-                >{{ formatLimit(row.quota, 2) }}</span>
-                <span v-else class="text-gray-600 dark:text-gray-400" data-test="row-limit">{{ t('keys.unlimited') }}</span>
-              </div>
-              <div v-if="row.quota > 0" class="mt-1.5 h-1.5 w-full max-w-[12rem] overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
-                <div
-                  :class="[
-                    'h-full rounded-md transition-all',
-                    row.quota_used >= row.quota ? 'bg-primary-600' : 'bg-gray-900 dark:bg-gray-100'
-                  ]"
-                  :style="{ width: Math.min((row.quota_used / row.quota) * 100, 100) + '%' }"
-                />
+                >{{ t('keys.unlimited') }}</span>
               </div>
               <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 {{ t('keys.today') }}
@@ -1292,7 +1310,11 @@ const copyAddress = async () => {
   addressCopiedTimer = setTimeout(() => (addressCopied.value = false), 1500)
 }
 
-// 概览：已启用数、近 30 天消费合计。统计只覆盖当前页（分页/筛选后不是全部密钥）。
+// 每行「近 30 天」消费（与额度上限口径不同，页面上分开标注）
+const recentSpent = (keyId: number) =>
+  formatMixed(usageStats.value[keyId]?.total_actual_cost ?? 0, usageStats.value[keyId]?.total_actual_cost_fiat)
+
+// 概览：已启用数、近 30 天消费合计。统计只覆盖当前列表：分页后只有当前页，带筛选条件时只有命中的密钥。
 const overview = computed(() => {
   let credits = 0
   let fiat = 0
@@ -1307,7 +1329,7 @@ const overview = computed(() => {
   }
   return {
     enabled: apiKeys.value.filter((k) => k.status === 'active').length,
-    partial: pagination.value.total > apiKeys.value.length,
+    partial: listFiltered.value || pagination.value.total > apiKeys.value.length,
     // 有 Key 缺人民币值时不能拿部分合计冒充总数，交给 formatMixed 回落到美元
     spent: formatMixed(credits, fiatMissing ? undefined : fiat)
   }
@@ -1328,6 +1350,8 @@ const sortState = ref({
 const filterSearch = ref('')
 const filterStatus = ref('')
 const filterGroupId = ref<string | number>('')
+// 当前列表数据是否按筛选条件请求的（以请求时为准，输入框里还没生效的内容不算）
+const listFiltered = ref(false)
 
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
@@ -1551,6 +1575,7 @@ const loadApiKeys = async () => {
     })
     if (signal.aborted) return
     apiKeys.value = response.items
+    listFiltered.value = filters.search !== undefined || filters.status !== undefined || filters.group_id !== undefined
     pagination.value.total = response.total
     pagination.value.pages = response.pages
 

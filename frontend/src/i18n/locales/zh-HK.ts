@@ -870,7 +870,14 @@
       copyUnix: '複製 macOS / Linux 指令',
       copyWindows: '複製 Windows 指令',
       viewScript: '查看腳本內容',
-      scriptDone: '{client} 已設定完成，重新啟動後即可使用。'
+      scriptDone: '{client} 已設定完成，重新啟動後即可使用。',
+      script: {
+        pythonMissing: '更新設定檔需要 Python 3。',
+        xcodeMissing: '這部 Mac 還沒有命令列開發工具，請改用「CC Switch」或「手動設定」頁籤。',
+        backup: '已備份：{path}',
+        updated: '已更新：{path}',
+        failed: '失敗：{error}'
+      }
     },
     ai: {
       intro: '選好要用的軟件，把下面這句話發給 AI 助手，它會帶着你設定。',
@@ -991,21 +998,20 @@
     usage: '用量',
     today: '今日',
     total: '近30天',
-    quota: '額度',
     lastUsedAt: '上次使用時間',
     lastUsedIP: '最近使用 IP',
     useKey: '使用金鑰',
     connect: '接入',
     usedLabel: '已用',
-    unlimited: '不限',
+    unlimited: '不限額',
     overview: {
       address: '接入地址',
       copy: '複製',
       copied: '已複製',
       enabled: '已啟用 {active} 個，共 {total} 個金鑰',
-      enabledPage: '本頁已啟用 {active} 個，共 {total} 個金鑰',
+      enabledList: '目前列表的 {shown} 個金鑰中已啟用 {active} 個',
       spent: '近 30 天已用',
-      spentPage: '本頁金鑰近 30 天已用'
+      spentList: '目前列表金鑰近 30 天已用'
     },
     useKeyModal: {
       title: '使用 API 金鑰',

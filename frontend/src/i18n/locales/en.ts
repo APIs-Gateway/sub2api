@@ -871,7 +871,14 @@
       copyUnix: 'Copy macOS / Linux command',
       copyWindows: 'Copy Windows command',
       viewScript: 'View script',
-      scriptDone: '{client} is set up. Restart it to start using it.'
+      scriptDone: '{client} is set up. Restart it to start using it.',
+      script: {
+        pythonMissing: 'Python 3 is required to update the config file.',
+        xcodeMissing: 'This Mac does not have the command line developer tools yet. Use the CC Switch or Manual tab instead.',
+        backup: 'Backup: {path}',
+        updated: 'Updated: {path}',
+        failed: 'Failed: {error}'
+      }
     },
     ai: {
       intro: 'Pick the app you want to use and send this message to an AI assistant. It will walk you through the setup.',
@@ -992,7 +999,6 @@
     usage: 'Usage',
     today: 'Today',
     total: 'Last 30d',
-    quota: 'Quota',
     lastUsedAt: 'Last Used',
     lastUsedIP: 'Last Used IP',
     useKey: 'Use Key',
@@ -1004,9 +1010,9 @@
       copy: 'Copy',
       copied: 'Copied',
       enabled: '{active} of {total} keys enabled',
-      enabledPage: '{active} enabled on this page, {total} keys in total',
+      enabledList: '{active} of the {shown} keys in the current list are enabled',
       spent: 'Used in the last 30 days',
-      spentPage: 'Used in the last 30 days by keys on this page'
+      spentList: 'Used in the last 30 days by keys in the current list'
     },
     useKeyModal: {
       title: 'Use API Key',

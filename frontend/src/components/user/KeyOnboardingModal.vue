@@ -1,5 +1,7 @@
 <template>
   <BaseDialog :show="show" :title="t('keyOnboarding.title')" width="wide" @close="emit('close')">
+    <!-- 复制成功后向读屏软件播报 -->
+    <p class="sr-only" role="status" aria-live="polite" data-test="copy-status">{{ copiedId ? t('keyOnboarding.copied') : '' }}</p>
     <div v-if="apiKey" class="space-y-5">
       <!-- 当前密钥 -->
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -8,15 +10,18 @@
       </div>
 
       <!-- 页签 -->
-      <div class="tabs flex-wrap" role="tablist">
+      <div ref="tablistRef" class="tabs flex-wrap" role="tablist" @keydown="onTabKeydown">
         <button
           v-for="tab in tabs"
+          :id="tabId(tab.id)"
           :key="tab.id"
           type="button"
           role="tab"
           class="tab"
           :class="{ 'tab-active': active === tab.id }"
           :aria-selected="active === tab.id"
+          :aria-controls="panelId(tab.id)"
+          :tabindex="active === tab.id ? 0 : -1"
           :data-test="`tab-${tab.id}`"
           @click="active = tab.id"
         >
@@ -27,6 +32,7 @@
       <!-- 没有分组 -->
       <p
         v-if="!platform && active !== 'manual'"
+        v-bind="panelAttrs"
         class="rounded-md border border-primary-200 bg-primary-50 px-3 py-2 text-sm text-primary-800 dark:border-primary-500/40 dark:bg-primary-500/10 dark:text-primary-300"
         data-test="no-group"
       >
@@ -34,7 +40,7 @@
       </p>
 
       <!-- ===== 一键安装 ===== -->
-      <div v-else-if="active === 'install'" class="space-y-1" data-test="panel-install">
+      <div v-else-if="active === 'install'" v-bind="panelAttrs" class="space-y-1" data-test="panel-install">
         <p class="text-sm text-gray-600 dark:text-dark-400">{{ t('keyOnboarding.install.intro') }}</p>
         <div class="divide-y divide-gray-100 dark:divide-dark-800">
           <section v-for="c in clients" :key="c" class="py-4" :data-test="`client-${c}`">
@@ -76,7 +82,7 @@
       </div>
 
       <!-- ===== 交给 AI ===== -->
-      <div v-else-if="active === 'ai'" class="space-y-4" data-test="panel-ai">
+      <div v-else-if="active === 'ai'" v-bind="panelAttrs" class="space-y-4" data-test="panel-ai">
         <p class="text-sm text-gray-600 dark:text-dark-400">{{ t('keyOnboarding.ai.intro') }}</p>
         <div class="flex flex-wrap gap-2" role="radiogroup" :aria-label="t('keyOnboarding.ai.clientLabel')">
           <button
@@ -123,11 +129,16 @@
       </div>
 
       <!-- ===== CC Switch ===== -->
-      <div v-else-if="active === 'ccswitch'" class="space-y-4" data-test="panel-ccswitch">
+      <div v-else-if="active === 'ccswitch'" v-bind="panelAttrs" class="space-y-4" data-test="panel-ccswitch">
         <div class="grid gap-4 sm:grid-cols-2">
           <div v-if="ccsClients.length > 1">
-            <label class="input-label">{{ t('keyOnboarding.ccs.client') }}</label>
-            <div class="flex flex-wrap gap-2" role="radiogroup">
+            <span :id="ccsClientLabelId" class="input-label">{{ t('keyOnboarding.ccs.client') }}</span>
+            <div
+              class="flex flex-wrap gap-2"
+              role="radiogroup"
+              :aria-label="t('keyOnboarding.ccs.client')"
+              :aria-labelledby="ccsClientLabelId"
+            >
               <button
                 v-for="c in ccsClients"
                 :key="c"
@@ -179,7 +190,7 @@
       </div>
 
       <!-- ===== 手动配置 ===== -->
-      <div v-else-if="active === 'manual'" class="space-y-5" data-test="panel-manual">
+      <div v-else-if="active === 'manual'" v-bind="panelAttrs" class="space-y-5" data-test="panel-manual">
         <div class="overflow-hidden rounded-md border border-gray-200 dark:border-dark-700">
           <table class="w-full text-sm">
             <tbody>
@@ -206,6 +217,7 @@
                 v-for="f in s.files"
                 :key="f.label"
                 :label="f.label"
+                :mono-label="f.path"
                 :code="f.code"
                 :copied="copiedId === `${s.id}-${f.label}`"
                 :copy-label="t('keyOnboarding.copy')"
@@ -236,10 +248,16 @@
   </BaseDialog>
 </template>
 
+<script lang="ts">
+// 同一页上多个实例时，页签和面板的 id 不能撞
+let onboardingUid = 0
+</script>
+
 <script setup lang="ts">
-import { ref, computed, watch, h, defineComponent, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, h, defineComponent, nextTick, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import { useAppStore } from '@/stores/app'
 import { userChannelsAPI } from '@/api/channels'
 import type { UserAvailableChannel } from '@/api/channels'
 import {
@@ -251,6 +269,8 @@ import {
 import {
   AI_CLIENTS,
   CLIENT_LABELS,
+  SCRIPT_ERROR_TOKEN,
+  SCRIPT_PATH_TOKEN,
   buildAiPrompt,
   buildInstallScript,
   chatgptUrl,
@@ -288,6 +308,8 @@ const props = withDefaults(
 const emit = defineEmits<{ close: [] }>()
 
 const { t } = useI18n()
+const appStore = useAppStore()
+const uid = `onboarding-${++onboardingUid}`
 
 const CC_SWITCH_RELEASES = 'https://github.com/farion1231/cc-switch/releases'
 const CCS_LABELS: Record<CcSwitchClientType | 'codex', string> = {
@@ -317,6 +339,45 @@ const tabs = computed<{ id: OnboardingTab; label: string }[]>(() => [
 
 const active = ref<OnboardingTab>(props.initialTab)
 const copiedId = ref<string>('')
+
+const tabId = (id: OnboardingTab) => `${uid}-tab-${id}`
+const panelId = (id: OnboardingTab) => `${uid}-panel-${id}`
+// 当前内容区：与对应页签互相关联
+const panelAttrs = computed(() => ({
+  role: 'tabpanel',
+  id: panelId(active.value),
+  'aria-labelledby': tabId(active.value)
+}))
+
+const tablistRef = ref<HTMLElement | null>(null)
+// 方向键、Home、End 在页签间移动，焦点跟着走
+function onTabKeydown(e: KeyboardEvent) {
+  const list = tabs.value
+  const current = list.findIndex((tab) => tab.id === active.value)
+  let next: number
+  switch (e.key) {
+    case 'ArrowRight':
+    case 'ArrowDown':
+      next = (current + 1) % list.length
+      break
+    case 'ArrowLeft':
+    case 'ArrowUp':
+      next = (current - 1 + list.length) % list.length
+      break
+    case 'Home':
+      next = 0
+      break
+    case 'End':
+      next = list.length - 1
+      break
+    default:
+      return
+  }
+  e.preventDefault()
+  const target = list[next].id
+  active.value = target
+  void nextTick(() => tablistRef.value?.querySelector<HTMLElement>(`[id="${tabId(target)}"]`)?.focus())
+}
 
 // ===== 分组可用模型 =====
 const channels = ref<UserAvailableChannel[] | null>(null)
@@ -372,13 +433,25 @@ const clients = computed<OnboardingClient[]>(() =>
   clientsForPlatform(platform.value, { allowMessagesDispatch: props.apiKey?.group?.allow_messages_dispatch })
 )
 
+// 脚本在终端里打印的话，跟随当前界面语言；{path} / {error} 留给脚本运行时填
+function scriptMessages() {
+  return {
+    pythonMissing: t('keyOnboarding.install.script.pythonMissing'),
+    xcodeMissing: t('keyOnboarding.install.script.xcodeMissing'),
+    backup: t('keyOnboarding.install.script.backup', { path: SCRIPT_PATH_TOKEN }),
+    updated: t('keyOnboarding.install.script.updated', { path: SCRIPT_PATH_TOKEN }),
+    failed: t('keyOnboarding.install.script.failed', { error: SCRIPT_ERROR_TOKEN })
+  }
+}
+
 function installScript(client: OnboardingClient, os: ScriptOs): string {
   return buildInstallScript(client, os, {
     baseUrl: base.value,
     apiKey: fullKey.value,
     platform: platform.value,
     siteName: siteName.value,
-    doneMessage: t('keyOnboarding.install.scriptDone', { client: CLIENT_LABELS[client] })
+    doneMessage: t('keyOnboarding.install.scriptDone', { client: CLIENT_LABELS[client] }),
+    messages: scriptMessages()
   })
 }
 
@@ -422,6 +495,7 @@ const ccsClients = computed<(CcSwitchClientType | 'codex')[]>(() => {
       return ['claude']
   }
 })
+const ccsClientLabelId = `${uid}-ccs-client`
 const ccsClient = ref<CcSwitchClientType | 'codex'>('claude')
 watch(
   ccsClients,
@@ -470,7 +544,8 @@ function tomlQuote(v: string): string {
 }
 
 const snippets = computed(() => {
-  const list: { id: string; title: string; files: { label: string; code: string }[] }[] = []
+  // path：标签是文件路径（用等宽字体）；其余标签是普通文字
+  const list: { id: string; title: string; files: { label: string; code: string; path?: boolean }[] }[] = []
   const key = fullKey.value
   for (const c of clients.value) {
     const url = endpointFor(c, platform.value, base.value)
@@ -482,6 +557,7 @@ const snippets = computed(() => {
           { label: t('keyOnboarding.manual.envVars'), code: `export ANTHROPIC_BASE_URL="${url}"\nexport ANTHROPIC_AUTH_TOKEN="${key}"` },
           {
             label: '~/.claude/settings.json',
+            path: true,
             code: JSON.stringify({ env: { ANTHROPIC_BASE_URL: url, ANTHROPIC_AUTH_TOKEN: key } }, null, 2)
           }
         ]
@@ -494,6 +570,7 @@ const snippets = computed(() => {
         files: [
           {
             label: '~/.codex/config.toml',
+            path: true,
             code: [
               `model_provider = ${tomlQuote(id)}`,
               `model = ${tomlQuote(OPENAI_CC_SWITCH_CODEX_MODEL)}`,
@@ -550,7 +627,10 @@ async function writeClipboard(text: string): Promise<boolean> {
 }
 
 async function copy(text: string, id: string) {
-  if (!(await writeClipboard(text))) return
+  if (!(await writeClipboard(text))) {
+    appStore.showError(t('common.copyFailed'))
+    return
+  }
   copiedId.value = id
   if (copyTimer) clearTimeout(copyTimer)
   copyTimer = setTimeout(() => (copiedId.value = ''), 1800)
@@ -583,6 +663,8 @@ const CodeBlock = defineComponent({
   name: 'OnboardingCodeBlock',
   props: {
     label: { type: String, default: '' },
+    /** 标签是文件路径时用等宽字体，普通文字用正常字体 */
+    monoLabel: { type: Boolean, default: false },
     code: { type: String, default: '' },
     copied: { type: Boolean, default: false },
     copyLabel: { type: String, default: '' },
@@ -593,7 +675,7 @@ const CodeBlock = defineComponent({
     return () =>
       h('div', { class: 'overflow-hidden rounded-md border border-gray-200 dark:border-dark-700' }, [
         h('div', { class: 'flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800' }, [
-          h('span', { class: 'font-mono text-xs text-gray-500 dark:text-dark-400' }, p.label),
+          h('span', { class: [p.monoLabel ? 'font-mono' : '', 'text-xs text-gray-500 dark:text-dark-400'] }, p.label),
           h('button', { type: 'button', class: 'copy-btn', onClick: () => emit('copy') }, [
             h('span', { class: 'text-xs' }, p.copied ? p.copiedLabel : p.copyLabel)
           ])
