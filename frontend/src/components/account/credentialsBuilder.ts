@@ -106,7 +106,8 @@ export function applyHeaderOverride(
 
 // ---------------------------------------------------------------------------
 // 池模式（pool_mode*）与临时不可调度（temp_unschedulable_*）
-// 单账号编辑与批量编辑共用同一套规则，键名与后端 Account.IsPoolMode / GetTempUnschedulableRules 对应。
+// 池模式规则由创建、单账号编辑与批量编辑共用；临时不可调度的构造函数目前仅批量编辑使用。
+// 键名与后端 Account.IsPoolMode / GetTempUnschedulableRules 对应。
 // ---------------------------------------------------------------------------
 
 export const DEFAULT_POOL_MODE_RETRY_COUNT = 3
