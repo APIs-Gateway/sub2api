@@ -399,7 +399,15 @@ func TestPriceQuoter_TokenCostZeroDiffVsBilling(t *testing.T) {
 			// 原价（Prices）= 倍率 1 下的计费结果。
 			refTier := quote.ServiceTier.Requested
 			require.Equal(t, f.referenceTokenCost(t, tc.model, tc.wantRate, UsageTokens{InputTokens: 1}, refTier, quote.At).ActualCost, quote.FinalPrices.PerToken.Input)
-			require.Equal(t, f.referenceTokenCost(t, tc.model, tc.wantRate, UsageTokens{OutputTokens: 1}, refTier, quote.At).ActualCost, quote.FinalPrices.PerToken.Output)
+			if len(quote.Intervals) > 0 {
+				// 区间定价按「输入+缓存」判定档位，只有 1 个输出 token 时上下文为 0，不落入任何区间；
+				// 所以输出价用「1 输入 + 1 输出」减「1 输入」得到，与报价探针的参考上下文（1）一致。
+				withOut := f.referenceTokenCost(t, tc.model, tc.wantRate, UsageTokens{InputTokens: 1, OutputTokens: 1}, refTier, quote.At).ActualCost
+				inOnly := f.referenceTokenCost(t, tc.model, tc.wantRate, UsageTokens{InputTokens: 1}, refTier, quote.At).ActualCost
+				require.InDelta(t, withOut-inOnly, quote.FinalPrices.PerToken.Output, 1e-15)
+			} else {
+				require.Equal(t, f.referenceTokenCost(t, tc.model, tc.wantRate, UsageTokens{OutputTokens: 1}, refTier, quote.At).ActualCost, quote.FinalPrices.PerToken.Output)
+			}
 			require.Equal(t, f.referenceTokenCost(t, tc.model, tc.wantRate, UsageTokens{CacheReadTokens: 1}, refTier, quote.At).ActualCost, quote.FinalPrices.PerToken.CacheRead)
 			require.Equal(t, f.referenceTokenCost(t, tc.model, tc.wantRate, UsageTokens{CacheCreationTokens: 1}, refTier, quote.At).ActualCost, quote.FinalPrices.PerToken.CacheWrite)
 			require.Equal(t, f.referenceTokenCost(t, tc.model, 1, UsageTokens{InputTokens: 1}, refTier, quote.At).ActualCost, quote.Prices.PerToken.Input)
