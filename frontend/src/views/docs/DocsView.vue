@@ -116,6 +116,31 @@
 
         <!-- 接入信息：地址随站点设置变化，点一下复制 -->
         <dl class="docs-connect" data-testid="docs-connect">
+          <!-- 站点配了备用地址才出现。选哪个，下面的地址和全页示例就用哪个 -->
+          <div v-if="endpointOptions.length > 1" class="docs-connect-row docs-connect-lines">
+            <dt id="docs-endpoints-label">{{ t('keys.endpoints.title') }}</dt>
+            <dd>
+              <div class="docs-lines-body">
+                <div
+                  class="docs-lines"
+                  role="radiogroup"
+                  aria-labelledby="docs-endpoints-label"
+                  aria-describedby="docs-endpoints-hint"
+                  data-testid="docs-endpoints"
+                >
+                  <label v-for="opt in endpointOptions" :key="opt.id" class="docs-line">
+                    <input v-model="endpointChoice" type="radio" name="docs-endpoint" class="docs-line-radio" :value="opt.id" />
+                    <span class="docs-line-head">
+                      <span class="docs-line-name">{{ opt.isDefault ? t('keys.endpoints.default') : opt.name }}</span>
+                      <span v-if="opt.description" class="docs-line-desc">{{ opt.description }}</span>
+                    </span>
+                    <code class="docs-line-url">{{ opt.base }}</code>
+                  </label>
+                </div>
+                <p id="docs-endpoints-hint" class="docs-lines-hint">{{ t('docs.connect.endpointHint') }}</p>
+              </div>
+            </dd>
+          </div>
           <div v-for="row in connectRows" :key="row.id" class="docs-connect-row">
             <dt>{{ row.label }}</dt>
             <dd>
@@ -188,9 +213,12 @@ import aiPromptsRaw from './ai-prompts.md?raw'
 import {
   EXAMPLE_MODEL,
   copyText,
+  loadSavedEndpointId,
   parseAiPrompts,
+  pickEndpoint,
   renderSection,
-  resolveApiBases,
+  resolveEndpointOptions,
+  saveEndpointId,
   splitSection,
   type DocVars,
 } from './docsRender'
@@ -212,8 +240,25 @@ const isChineseUi = computed(() => locale.value === 'zh-CN')
 
 // ---- 地址和占位符 ----
 const origin = typeof window !== 'undefined' ? window.location.origin : ''
+
+// 默认地址加上管理员配的备用地址（比如 CDN 加速域名）。读者选哪个，全页的示例和提示词就用哪个。
+const endpointOptions = computed(() =>
+  resolveEndpointOptions(settings.value?.api_base_url, settings.value?.custom_endpoints, origin)
+)
+const savedEndpointId = ref(loadSavedEndpointId())
+/** 保存的那个地址已经不在站点设置里时，自动回到默认地址，但不改写已存的值：设置还没加载完时也是这个状态。 */
+const activeEndpoint = computed(() => pickEndpoint(endpointOptions.value, savedEndpointId.value))
+const endpointChoice = computed({
+  get: () => activeEndpoint.value.id,
+  set: (id: string) => {
+    savedEndpointId.value = id
+    saveEndpointId(id)
+  },
+})
+
 const vars = computed<DocVars>(() => ({
-  ...resolveApiBases(settings.value?.api_base_url, origin),
+  base: activeEndpoint.value.base,
+  v1: activeEndpoint.value.v1,
   site: siteName.value,
   model: EXAMPLE_MODEL,
   llms: `${origin}/llms.txt`,
@@ -414,7 +459,7 @@ onBeforeUnmount(() => {
   --d-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
 }
 
-.docs-page :where(a, button):focus-visible {
+.docs-page :where(a, button, input):focus-visible {
   outline: 2px solid var(--d-accent);
   outline-offset: 2px;
 }
@@ -870,6 +915,88 @@ onBeforeUnmount(() => {
 .docs-copy-inline[data-copied='true'] {
   border-color: var(--d-accent-line);
   color: var(--d-accent);
+}
+
+/* 接入信息里的地址选择：一组单选，每项写名称、说明和地址 */
+.docs-connect-row.docs-connect-lines {
+  align-items: flex-start;
+}
+.docs-connect-lines dt {
+  padding-top: 0.3125rem;
+}
+.docs-lines-body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.docs-lines {
+  display: flex;
+  flex-direction: column;
+}
+.docs-line {
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr);
+  column-gap: 0.75rem;
+  row-gap: 0.125rem;
+  cursor: pointer;
+  padding-block: 0.3125rem;
+}
+.docs-line-radio {
+  appearance: none;
+  box-sizing: border-box;
+  height: 1rem;
+  width: 1rem;
+  margin: 0.1875rem 0 0;
+  border: 1px solid var(--d-faint);
+  border-radius: 9999px;
+  background: transparent;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.docs-line:hover .docs-line-radio {
+  border-color: var(--d-muted);
+}
+.docs-line-radio:checked {
+  border-color: var(--d-ink);
+  background: var(--d-ink);
+  box-shadow: inset 0 0 0 3px var(--d-paper);
+}
+.docs-line-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+}
+.docs-line-name {
+  font-weight: 500;
+  color: var(--d-muted);
+  transition: color 0.15s;
+}
+.docs-line:hover .docs-line-name,
+.docs-line-radio:checked ~ .docs-line-head .docs-line-name {
+  color: var(--d-ink);
+}
+.docs-line-desc {
+  font-size: 0.8125rem;
+  color: var(--d-faint);
+}
+.docs-line-url {
+  grid-column: 2;
+  overflow-wrap: anywhere;
+  font-family: theme('fontFamily.mono');
+  font-size: 0.875rem;
+  color: var(--d-muted);
+  transition: color 0.15s;
+}
+.docs-line-radio:checked ~ .docs-line-url {
+  color: var(--d-ink);
+}
+.docs-lines-hint {
+  margin-top: 0.625rem;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--d-muted);
 }
 
 /* 章节 */

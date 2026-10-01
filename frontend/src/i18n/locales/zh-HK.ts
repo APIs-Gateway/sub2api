@@ -167,7 +167,8 @@
       anthropic: 'Anthropic 相容地址',
       key: 'API 金鑰',
       keyPlaceholder: 'sk-你的密鑰',
-      createKey: '前往建立金鑰'
+      createKey: '前往建立金鑰',
+      endpointHint: '訪問慢時可以換用其他地址，金鑰通用。'
     },
     ai: {
       tabs: {

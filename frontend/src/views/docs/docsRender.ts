@@ -4,7 +4,9 @@
  */
 import { Marked, Renderer } from 'marked'
 import DOMPurify from 'dompurify'
+import type { CustomEndpoint } from '@/types'
 import { OPENAI_CC_SWITCH_CODEX_MODEL } from '@/utils/ccswitchImport'
+import { sanitizeUrl } from '@/utils/url'
 
 /**
  * 示例里用的模型名。配置文件必须写一个具体值，真正可用的模型以价格页为准。
@@ -47,6 +49,75 @@ export function resolveApiBases(apiBaseUrl: string | undefined | null, fallbackO
   const raw = (apiBaseUrl || '').trim() || fallbackOrigin
   const base = raw.replace(/\/+$/, '').replace(/\/v1$/, '')
   return { base, v1: `${base}/v1` }
+}
+
+/** 默认地址在 localStorage 和选项列表里的 id。自定义端点的 id 就是它归一化后的 API 根地址。 */
+export const DEFAULT_ENDPOINT_ID = 'default'
+
+/** 读者选中的地址存在这里；选回默认地址时直接删掉这一项。 */
+export const ENDPOINT_STORAGE_KEY = 'docs_api_endpoint'
+
+export interface EndpointOption {
+  id: string
+  /** 管理员填的名称，原样显示。默认地址没有名称，由界面补「默认」。 */
+  name: string
+  /** 管理员填的说明，原样显示。 */
+  description: string
+  isDefault: boolean
+  base: string
+  v1: string
+}
+
+/**
+ * 默认地址加上管理员配置的自定义端点，每个都按 resolveApiBases 的规则去掉结尾的 / 和 /v1。
+ * 不是 http(s) 绝对地址的端点、和前面某个地址重复的端点会被丢掉，免得出现两个选不出区别的选项。
+ */
+export function resolveEndpointOptions(
+  apiBaseUrl: string | undefined | null,
+  customEndpoints: ReadonlyArray<Partial<CustomEndpoint>> | undefined | null,
+  fallbackOrigin: string
+): EndpointOption[] {
+  const options: EndpointOption[] = [
+    { id: DEFAULT_ENDPOINT_ID, name: '', description: '', isDefault: true, ...resolveApiBases(apiBaseUrl, fallbackOrigin) },
+  ]
+  const seen = new Set([options[0].base])
+  for (const item of customEndpoints ?? []) {
+    const url = sanitizeUrl(item.endpoint ?? '')
+    if (!url) continue
+    const bases = resolveApiBases(url, fallbackOrigin)
+    if (seen.has(bases.base)) continue
+    seen.add(bases.base)
+    options.push({
+      id: bases.base,
+      name: (item.name ?? '').trim() || new URL(url).host,
+      description: (item.description ?? '').trim(),
+      isDefault: false,
+      ...bases,
+    })
+  }
+  return options
+}
+
+/** 按保存的 id 选地址。保存的那个已经不在选项里（站点删掉了），就回到默认地址。 */
+export function pickEndpoint(options: EndpointOption[], savedId: string): EndpointOption {
+  return options.find((o) => o.id === savedId) ?? options[0]
+}
+
+export function loadSavedEndpointId(): string {
+  try {
+    return localStorage.getItem(ENDPOINT_STORAGE_KEY) || DEFAULT_ENDPOINT_ID
+  } catch {
+    return DEFAULT_ENDPOINT_ID
+  }
+}
+
+export function saveEndpointId(id: string): void {
+  try {
+    if (id === DEFAULT_ENDPOINT_ID) localStorage.removeItem(ENDPOINT_STORAGE_KEY)
+    else localStorage.setItem(ENDPOINT_STORAGE_KEY, id)
+  } catch {
+    // 隐私模式等写不进去的情况：这次访问内照常切换，只是下次不会记住
+  }
 }
 
 /**

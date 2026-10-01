@@ -167,7 +167,8 @@
       anthropic: 'Anthropic-compatible URL',
       key: 'API key',
       keyPlaceholder: 'sk-your-key',
-      createKey: 'Create a key'
+      createKey: 'Create a key',
+      endpointHint: 'If access is slow, switch to another address. Your API key works with all of them.'
     },
     ai: {
       tabs: {

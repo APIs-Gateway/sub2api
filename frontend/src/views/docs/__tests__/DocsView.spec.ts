@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 
+import { useAppStore } from '@/stores'
 import zhCN from '@/i18n/locales/zh-CN'
 import { OPENAI_CC_SWITCH_CODEX_MODEL } from '@/utils/ccswitchImport'
 import DocsView from '../DocsView.vue'
@@ -12,6 +13,7 @@ import DocsAiPrompts from '../DocsAiPrompts.vue'
 import { DOC_GROUPS } from '../sections'
 import aiPromptsRaw from '../ai-prompts.md?raw'
 import {
+  ENDPOINT_STORAGE_KEY,
   EXAMPLE_MODEL,
   codexProviderId,
   codexProviderName,
@@ -19,6 +21,7 @@ import {
   parseAiPrompts,
   renderSection,
   resolveApiBases,
+  resolveEndpointOptions,
   type DocVars,
 } from '../docsRender'
 
@@ -57,17 +60,24 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: pushMock }),
 }))
 
-function settingsWith(apiBaseUrl: string) {
+interface EndpointInput {
+  name: string
+  endpoint: string
+  description: string
+}
+
+function settingsWith(apiBaseUrl: string, customEndpoints?: EndpointInput[]) {
   return {
     site_name: 'Hiyo',
     site_logo: '',
     api_base_url: apiBaseUrl,
+    ...(customEndpoints ? { custom_endpoints: customEndpoints } : {}),
     login_agreement_documents: [],
   }
 }
 
-async function mountDocs(apiBaseUrl: string): Promise<VueWrapper> {
-  getPublicSettings.mockResolvedValue(settingsWith(apiBaseUrl))
+async function mountDocs(apiBaseUrl: string, customEndpoints?: EndpointInput[]): Promise<VueWrapper> {
+  getPublicSettings.mockResolvedValue(settingsWith(apiBaseUrl, customEndpoints))
   const wrapper = mount(DocsView, {
     attachTo: document.body,
     global: {
@@ -85,6 +95,7 @@ describe('DocsView', () => {
     setActivePinia(createPinia())
     currentLocale.value = 'zh-CN'
     pushMock.mockReset()
+    localStorage.clear()
     Element.prototype.scrollIntoView = vi.fn()
     delete (window as { __APP_CONFIG__?: unknown }).__APP_CONFIG__
   })
@@ -140,6 +151,172 @@ describe('DocsView', () => {
           expect(allowedHosts).toContain(match[1])
         }
       }
+    })
+  })
+
+  describe('custom endpoints', () => {
+    const cdn: EndpointInput = { name: 'CDN 加速域名', endpoint: 'https://cdn.second.test', description: '全球支持' }
+    const backup: EndpointInput = { name: '备用线路', endpoint: 'https://backup.second.test/v1', description: '' }
+
+    function radios(wrapper: VueWrapper) {
+      return wrapper.findAll<HTMLInputElement>('[data-testid="docs-endpoints"] input[type="radio"]')
+    }
+
+    it('shows no switch when the site has no custom endpoints', async () => {
+      for (const customEndpoints of [undefined, []]) {
+        const wrapper = await mountDocs('https://api.first.test', customEndpoints)
+        expect(wrapper.find('[data-testid="docs-endpoints"]').exists()).toBe(false)
+        expect(wrapper.find('input[type="radio"]').exists()).toBe(false)
+        wrapper.unmount()
+      }
+    })
+
+    it('shows no switch when every custom endpoint is unusable or repeats the default address', async () => {
+      const wrapper = await mountDocs('https://api.first.test', [
+        { name: '重复', endpoint: 'https://api.first.test/v1/', description: '' },
+        { name: '不是地址', endpoint: 'javascript:alert(1)', description: '' },
+        { name: '空', endpoint: '  ', description: '' },
+      ])
+      expect(wrapper.find('[data-testid="docs-endpoints"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('lists the default address and every custom endpoint with the name and description as configured', async () => {
+      const wrapper = await mountDocs('https://api.first.test', [cdn, backup])
+      const group = wrapper.get('[data-testid="docs-endpoints"]')
+
+      expect(group.attributes('role')).toBe('radiogroup')
+      expect(wrapper.get(`#${group.attributes('aria-labelledby')}`).text()).toBe(zhCN.keys.endpoints.title)
+      expect(wrapper.get(`#${group.attributes('aria-describedby')}`).text()).toBe('访问慢时可以换用其他地址，密钥通用。')
+
+      const items = group.findAll('label')
+      expect(items).toHaveLength(3)
+      expect(items[0].text()).toContain(zhCN.keys.endpoints.default)
+      expect(items[0].text()).toContain('https://api.first.test')
+      expect(items[1].text()).toContain('CDN 加速域名')
+      expect(items[1].text()).toContain('全球支持')
+      expect(items[1].text()).toContain('https://cdn.second.test')
+      expect(items[2].text()).toContain('备用线路')
+      expect(items[2].text()).toContain('https://backup.second.test')
+      expect(items[2].text()).not.toContain('/v1')
+
+      const inputs = radios(wrapper)
+      expect(inputs.map((i) => i.element.checked)).toEqual([true, false, false])
+      expect(new Set(inputs.map((i) => i.attributes('name'))).size).toBe(1)
+      expect(wrapper.get('[data-testid="docs-connect-openai"]').text()).toBe('https://api.first.test/v1')
+      wrapper.unmount()
+    })
+
+    it('moves the connect addresses, every example, the prompts and the copy buttons to the chosen address', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+      Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
+
+      const wrapper = await mountDocs('https://api.first.test', [cdn])
+      expect(wrapper.get('[data-testid="docs-article"]').html()).toContain('https://api.first.test/v1')
+
+      await radios(wrapper)[1].setValue(true)
+
+      expect(radios(wrapper).map((i) => i.element.checked)).toEqual([false, true])
+      expect(wrapper.get('[data-testid="docs-connect-openai"]').text()).toBe('https://cdn.second.test/v1')
+      expect(wrapper.get('[data-testid="docs-connect-anthropic"]').text()).toBe('https://cdn.second.test')
+
+      const article = wrapper.get('[data-testid="docs-article"]').html()
+      expect(article).toContain('https://cdn.second.test/v1')
+      expect(article).not.toContain('api.first.test')
+      expect(wrapper.get('#codex').text()).toContain('base_url = "https://cdn.second.test/v1"')
+      expect(wrapper.get('#api-info').text()).toContain('curl https://cdn.second.test/v1/models')
+
+      await wrapper.get('[data-testid="docs-ai-copy"]').trigger('click')
+      await flushPromises()
+      expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining('接入地址是 https://cdn.second.test（OpenAI 兼容客户端用 https://cdn.second.test/v1）'))
+      expect(writeText.mock.calls.at(-1)![0]).not.toContain('api.first.test')
+
+      const figure = wrapper.get('#api-info .docs-code')
+      await figure.get('[data-docs-copy]').trigger('click')
+      await flushPromises()
+      expect(writeText.mock.calls.at(-1)![0]).toContain('https://cdn.second.test/v1/models')
+
+      await wrapper.get('[data-testid="docs-connect"] .docs-copy-inline').trigger('click')
+      await flushPromises()
+      expect(writeText).toHaveBeenLastCalledWith('https://cdn.second.test/v1')
+
+      await radios(wrapper)[0].setValue(true)
+      expect(wrapper.get('[data-testid="docs-article"]').html()).not.toContain('cdn.second.test')
+      expect(wrapper.get('[data-testid="docs-connect-openai"]').text()).toBe('https://api.first.test/v1')
+      wrapper.unmount()
+    })
+
+    it('remembers the choice in localStorage and clears it when the default is chosen again', async () => {
+      const first = await mountDocs('https://api.first.test', [cdn, backup])
+      await radios(first)[2].setValue(true)
+      expect(localStorage.getItem(ENDPOINT_STORAGE_KEY)).toBe('https://backup.second.test')
+      first.unmount()
+      document.body.innerHTML = ''
+
+      const second = await mountDocs('https://api.first.test', [cdn, backup])
+      expect(radios(second).map((i) => i.element.checked)).toEqual([false, false, true])
+      expect(second.get('[data-testid="docs-connect-openai"]').text()).toBe('https://backup.second.test/v1')
+      expect(second.get('#codex').text()).toContain('base_url = "https://backup.second.test/v1"')
+
+      await radios(second)[0].setValue(true)
+      expect(localStorage.getItem(ENDPOINT_STORAGE_KEY)).toBeNull()
+      second.unmount()
+    })
+
+    it('falls back to the default address when the saved endpoint is gone from the site settings', async () => {
+      localStorage.setItem(ENDPOINT_STORAGE_KEY, 'https://removed.second.test')
+
+      const wrapper = await mountDocs('https://api.first.test', [cdn])
+      expect(radios(wrapper).map((i) => i.element.checked)).toEqual([true, false])
+      expect(wrapper.get('[data-testid="docs-connect-openai"]').text()).toBe('https://api.first.test/v1')
+      expect(wrapper.get('[data-testid="docs-article"]').html()).not.toContain('removed.second.test')
+      wrapper.unmount()
+    })
+
+    it('falls back live when the chosen endpoint is deleted while the page is open', async () => {
+      const wrapper = await mountDocs('https://api.first.test', [cdn])
+      await radios(wrapper)[1].setValue(true)
+      expect(wrapper.get('[data-testid="docs-connect-openai"]').text()).toBe('https://cdn.second.test/v1')
+
+      const appStore = useAppStore()
+      appStore.cachedPublicSettings = { ...appStore.cachedPublicSettings!, custom_endpoints: [] }
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="docs-endpoints"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="docs-connect-openai"]').text()).toBe('https://api.first.test/v1')
+      expect(wrapper.get('[data-testid="docs-article"]').html()).not.toContain('cdn.second.test')
+      wrapper.unmount()
+    })
+
+    it('strips a trailing slash and /v1 from every address, then adds /v1 once', async () => {
+      const wrapper = await mountDocs('https://free.first.test/', [
+        { name: '加速', endpoint: 'https://fast.second.test/', description: '' },
+        { name: '带版本', endpoint: 'https://v1.second.test/v1/', description: '' },
+      ])
+
+      const shown = wrapper.findAll('.docs-line-url').map((c) => c.text())
+      expect(shown).toEqual(['https://free.first.test', 'https://fast.second.test', 'https://v1.second.test'])
+      expect(wrapper.get('[data-testid="docs-connect-openai"]').text()).toBe('https://free.first.test/v1')
+
+      await radios(wrapper)[1].setValue(true)
+      expect(wrapper.get('[data-testid="docs-connect-openai"]').text()).toBe('https://fast.second.test/v1')
+      expect(wrapper.get('[data-testid="docs-connect-anthropic"]').text()).toBe('https://fast.second.test')
+      expect(wrapper.get('[data-testid="docs-article"]').html()).not.toContain('second.test//')
+
+      await radios(wrapper)[2].setValue(true)
+      expect(wrapper.get('[data-testid="docs-connect-openai"]').text()).toBe('https://v1.second.test/v1')
+      expect(wrapper.get('[data-testid="docs-article"]').html()).not.toContain('/v1/v1')
+      wrapper.unmount()
+    })
+
+    it('can be operated from the keyboard: the choices are native radios in one group', async () => {
+      const wrapper = await mountDocs('https://api.first.test', [cdn])
+      const inputs = radios(wrapper)
+      expect(inputs.every((i) => i.element.tagName === 'INPUT' && i.element.type === 'radio')).toBe(true)
+      expect(inputs.every((i) => i.element.closest('label') !== null)).toBe(true)
+      expect(new Set(inputs.map((i) => i.element.name)).size).toBe(1)
+      wrapper.unmount()
     })
   })
 
@@ -485,5 +662,50 @@ describe('llms.txt', () => {
     expect(llmsRaw).not.toContain('<站点地址>')
     expect(llmsRaw).not.toContain('完整的图文说明')
     expect(llmsRaw).not.toContain('/docs#')
+  })
+})
+
+describe('resolveEndpointOptions', () => {
+  it('puts the default address first and normalizes every address with resolveApiBases', () => {
+    const options = resolveEndpointOptions(
+      'https://free.first.test/',
+      [{ name: ' CDN 加速域名 ', endpoint: 'https://fast.second.test/v1/', description: ' 全球支持 ' }],
+      'https://site.test'
+    )
+    expect(options).toEqual([
+      { id: 'default', name: '', description: '', isDefault: true, base: 'https://free.first.test', v1: 'https://free.first.test/v1' },
+      {
+        id: 'https://fast.second.test',
+        name: 'CDN 加速域名',
+        description: '全球支持',
+        isDefault: false,
+        base: 'https://fast.second.test',
+        v1: 'https://fast.second.test/v1',
+      },
+    ])
+  })
+
+  it('uses the current origin as the default address when api_base_url is empty', () => {
+    expect(resolveEndpointOptions('', undefined, 'https://site.test')).toEqual([
+      { id: 'default', name: '', description: '', isDefault: true, base: 'https://site.test', v1: 'https://site.test/v1' },
+    ])
+  })
+
+  it('drops non-http addresses and repeats, and falls back to the host when the name is blank', () => {
+    const options = resolveEndpointOptions(
+      'https://api.first.test',
+      [
+        { name: 'a', endpoint: 'ftp://nope.test' },
+        { name: 'b', endpoint: '' },
+        { name: 'c', endpoint: 'https://api.first.test/' },
+        { name: ' ', endpoint: 'https://one.second.test' },
+        { name: 'd', endpoint: 'https://one.second.test/v1' },
+      ],
+      'https://site.test'
+    )
+    expect(options.map((o) => [o.id, o.name])).toEqual([
+      ['default', ''],
+      ['https://one.second.test', 'one.second.test'],
+    ])
   })
 })
