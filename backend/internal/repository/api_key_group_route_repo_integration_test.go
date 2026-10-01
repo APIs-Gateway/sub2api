@@ -37,6 +37,7 @@ func (s *APIKeyGroupRouteRepoSuite) SetupTest() {
 	s.repo = NewAPIKeyGroupRouteRepository(integrationDB)
 	client := testEntClient(s.T())
 
+	// tag 含套件名和用例名，用作分组名 / Key 名，上限都是 100 个字符：用例名别起得太长（含 "-gN" 后缀）。
 	tag := uniqueTestValue(s.T(), "agr")
 	user := mustCreateUser(s.T(), client, &service.User{Email: tag + "@example.com"})
 	s.userID = user.ID
@@ -271,7 +272,8 @@ func (s *APIKeyGroupRouteRepoSuite) TestApplyPrimaryGroupChange_RemovesNewPrimar
 	s.Require().NoError(s.repo.ApplyPrimaryGroupChange(s.ctx, s.keyID, s.groups[2], "openai"))
 }
 
-func (s *APIKeyGroupRouteRepoSuite) TestApplyPrimaryGroupChange_PlatformChangeClearsUserChainKeepsAdmin() {
+// 主分组换平台：清空用户链，管理员链保留（运行时再按 invalid_platform 判定）。
+func (s *APIKeyGroupRouteRepoSuite) TestApplyPrimaryGroupChange_PlatformChangeClearsUserChain() {
 	s.Require().NoError(s.repo.ReplaceChain(s.ctx, service.ReplaceRoutesParams{
 		APIKeyID: s.keyID, Source: "user", Items: s.items("user", "tail", s.groups[1]),
 	}))
