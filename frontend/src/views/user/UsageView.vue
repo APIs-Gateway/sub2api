@@ -501,8 +501,8 @@
         class="whitespace-nowrap rounded-lg border border-gray-700 bg-gray-900 px-3 py-2.5 text-xs text-white shadow-xl dark:border-gray-600 dark:bg-gray-800"
       >
         <div class="space-y-1.5">
-          <!-- Cost Breakdown -->
-          <div class="mb-2 border-b border-gray-700 pb-1.5">
+          <!-- Cost Breakdown：没有可显示的行时整块隐藏，避免只剩一条底边框 -->
+          <div v-if="showCostBreakdown" class="mb-2 border-b border-gray-700 pb-1.5" data-test="cost-breakdown">
             <div v-if="officialAvailable" class="text-xs font-semibold text-gray-300 mb-1">{{ t('usage.costDetails') }}</div>
             <div v-if="officialAvailable && tooltipData && tooltipData.input_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.inputCost') }}</span>
@@ -574,7 +574,7 @@
                 <span class="font-mono tabular-nums font-medium text-white">{{ officialCost(tooltipData.total_cost ?? 0) }}</span>
               </div>
             </template>
-            <div v-else class="flex items-center justify-between gap-4">
+            <div v-else-if="officialAvailable" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('usage.unitPrice') }}</span>
               <span class="font-mono tabular-nums font-medium text-white">{{ officialCost(tooltipData?.total_cost ?? 0) }}</span>
             </div>
@@ -711,6 +711,14 @@ const tooltipVisible = ref(false)
 const tooltipPosition = ref({ x: 0, y: 0 })
 
 const tooltipData = ref<UsageLog | null>(null)
+
+/**
+ * 费用明细块有没有行可显示：金额行都受 officialAvailable 控制，
+ * 只有图片计费的尺寸 / 张数等元信息不带价格，缺汇率时也要显示。
+ */
+const showCostBreakdown = computed(
+  () => officialAvailable.value || (tooltipData.value != null && isImageUsage(tooltipData.value))
+)
 
 /**
  * 这笔用量的法币花费。优先用服务端下发的 fiat_cost（按额度来源精确折算），

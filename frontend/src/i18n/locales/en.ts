@@ -1377,7 +1377,8 @@
       pricesLink: 'Model prices are on the "Pricing & Billing" page.',
       balance: 'Balance price: what you pay when using balance.',
       plan: 'Plan price: once you have a plan, usage is charged to it first at a lower price.',
-      group: 'Groups: the same model costs different amounts in different groups. Expand a model to compare.'
+      group: 'Groups: the same model costs different amounts in different groups. Expand a model to compare.',
+      groupBrief: 'Groups: the same model costs different amounts in different groups.'
     }
   },
 
@@ -1392,16 +1393,18 @@
     collapse: 'Hide',
     group: 'Group',
     byGroup: 'By group',
-    cache: 'Cache',
     price: 'Price',
+    officialPrice: 'Official price',
     lowest: 'Lowest',
     planPrice: 'Plan price',
     yourPlanPrice: 'Your plan price',
     inOut: 'Input / Output',
-    rateTooltip: 'Billing multiplier relative to the official price, already included in the prices',
-    rateTooltipCustom: 'Your custom rate (default {base}x), already included in the prices',
+    rateNote: 'Each rate is a multiple of the official price and is already included in the prices',
+    rateCustom: 'Your rate, default {base}x',
     tiersFor: 'Tiered prices ({group})',
     context: 'Context length',
+    tierName: 'Tier',
+    resolution: 'Resolution',
     tierUpTo: 'Up to {n}',
     tierAbove: 'Over {n}',
     tierBetween: '{min} to {max}',

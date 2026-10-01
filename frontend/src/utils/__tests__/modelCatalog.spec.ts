@@ -4,6 +4,7 @@ import {
   balancePrice,
   buildCatalog,
   creditPrice,
+  exceeds,
   formatTokenCount,
   normalizePricing,
   officialPrice,
@@ -72,10 +73,82 @@ describe('normalizePricing', () => {
     expect(n?.first.unit).toBe(0.04)
   })
 
-  it('uses image output price for image models and returns null without prices', () => {
-    expect(normalizePricing(pricing({ billing_mode: 'image', image_output_price: 0.1 }))?.first.unit).toBe(0.1)
+  it('uses image output price for image models', () => {
+    // 后端按次 / 按图计费不读 image_output_price；只配了它时按「按 token 的图片输出价」展示。
+    const n = normalizePricing(pricing({ billing_mode: 'image', image_output_price: 0.1 }))
+    expect(n?.kind).toBe('token')
+    expect(n?.mode).toBe('image')
+    expect(n?.first).toMatchObject({ imageOutput: 0.1, unit: null, input: null, output: null })
+    expect(n?.tiers).toEqual([])
+  })
+
+  it('returns null for per-request models without any price', () => {
     expect(normalizePricing(pricing({ billing_mode: 'per_request' }))).toBeNull()
+    expect(normalizePricing(pricing({ billing_mode: 'image' }))).toBeNull()
     expect(normalizePricing(null)).toBeNull()
+  })
+
+  it('never uses image_output_price as the per-request price', () => {
+    const base = normalizePricing(pricing({ billing_mode: 'image', image_output_price: 0.1, per_request_price: 0.04 }))
+    expect(base?.kind).toBe('request')
+    expect(base?.first.unit).toBe(0.04)
+    expect(base?.first.imageOutput).toBeNull()
+
+    const tiered = normalizePricing(
+      pricing({
+        billing_mode: 'image',
+        image_output_price: 0.1,
+        per_request_price: 0.04,
+        intervals: [{ min_tokens: 0, max_tokens: null, tier_label: '2K', input_price: null, output_price: null, cache_read_price: null, cache_write_price: null, per_request_price: 0.07 }],
+      }),
+    )
+    expect(tiered?.first.unit).toBe(0.07)
+  })
+
+  it('takes the first interval as the per-request headline and falls back to the base price', () => {
+    const iv = (min: number, max: number | null, price: number | null, label?: string) => ({
+      min_tokens: min,
+      max_tokens: max,
+      tier_label: label,
+      input_price: null,
+      output_price: null,
+      cache_read_price: null,
+      cache_write_price: null,
+      per_request_price: price,
+    })
+    const tiered = normalizePricing(
+      pricing({
+        billing_mode: 'per_request',
+        per_request_price: 0.5,
+        intervals: [iv(0, 200000, 0.04, 'HD'), iv(200000, null, 0.08)],
+      }),
+    )
+    expect(tiered?.mode).toBe('per_request')
+    expect(tiered?.first.unit).toBe(0.04)
+    expect(tiered?.tiers.map((t) => t.prices.unit)).toEqual([0.04, 0.08])
+    expect(tiered?.tiers[0].range.label).toBe('HD')
+
+    // 首档没配价格时回退到基础价，和 token 模型的取值规则一致。
+    const fallback = normalizePricing(
+      pricing({ billing_mode: 'per_request', per_request_price: 0.5, intervals: [iv(0, 200000, null), iv(200000, null, 0.08)] }),
+    )
+    expect(fallback?.first.unit).toBe(0.5)
+    expect(fallback?.tiers.map((t) => t.prices.unit)).toEqual([0.5, 0.08])
+  })
+
+  it('treats 0 as free and only null as not configured', () => {
+    const free = normalizePricing(pricing({ input_price: 0, output_price: 0, cache_read_price: 0 }))
+    expect(free?.first).toMatchObject({ input: 0, output: 0, cacheRead: 0, cacheWrite: null })
+
+    const freeRequest = normalizePricing(pricing({ billing_mode: 'per_request', per_request_price: 0 }))
+    expect(freeRequest?.kind).toBe('request')
+    expect(freeRequest?.first.unit).toBe(0)
+
+    const freeImage = normalizePricing(pricing({ billing_mode: 'image', image_output_price: 0 }))
+    expect(freeImage?.first.imageOutput).toBe(0)
+
+    expect(normalizePricing(pricing({ input_price: null, output_price: null }))).toBeNull()
+    expect(normalizePricing(pricing({ input_price: -1, output_price: null }))).toBeNull()
   })
 })
 
@@ -100,6 +173,14 @@ describe('price math', () => {
 
   it('m=1 keeps the credit price in fiat context', () => {
     expect(balancePrice(1e-6, 2, 'token', { ...fiat, rechargeMultiplier: 1 })).toBe(2)
+  })
+
+  it('exceeds ignores floating point noise', () => {
+    expect(exceeds(7, 5)).toBe(true)
+    expect(exceeds(5, 7)).toBe(false)
+    expect(exceeds(5, 5)).toBe(false)
+    expect(exceeds(7.000000000001, 7)).toBe(false)
+    expect(exceeds(0, 0)).toBe(false)
   })
 })
 
@@ -163,6 +244,28 @@ describe('buildCatalog', () => {
     expect(m.cheapest?.group).toMatchObject({ name: 'Stable', rate: 0.2, baseRate: 1.4, hasCustomRate: true })
     const plain = buildCatalog(channels, { 1: 1.4 }).find((x) => x.name === 'gpt-x')!
     expect(plain.entries.find((e) => e.group.id === 1)?.group.hasCustomRate).toBe(false)
+  })
+
+  it('ranks an image-output-only model by its image output price', () => {
+    const imageChannels: UserAvailableChannel[] = [
+      {
+        name: 'I',
+        description: '',
+        platforms: [
+          {
+            platform: 'openai',
+            groups: [group(1, 'Stable', 2), group(2, 'Cheap', 1)],
+            supported_models: [
+              { name: 'img-x', platform: 'openai', pricing: pricing({ billing_mode: 'image', image_output_price: 40e-6 }) },
+            ],
+          },
+        ],
+      },
+    ]
+    const m = buildCatalog(imageChannels)[0]
+    expect(m.kind).toBe('token')
+    expect(m.cheapest?.group.name).toBe('Cheap')
+    expect(m.cheapest?.pricing.first.imageOutput).toBe(40e-6)
   })
 
   it('keeps models without pricing but with no entries', () => {

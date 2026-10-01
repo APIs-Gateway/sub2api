@@ -12,7 +12,7 @@ import type {
   UserPricingInterval,
   UserSupportedModelPricing,
 } from '@/api/channels'
-import { BILLING_MODE_IMAGE, BILLING_MODE_TOKEN } from '@/constants/channel'
+import { BILLING_MODE_TOKEN, type BillingMode } from '@/constants/channel'
 
 export const TOKEN_SCALE = 1_000_000
 
@@ -25,6 +25,8 @@ export interface PriceSet {
   output: number | null
   cacheRead: number | null
   cacheWrite: number | null
+  /** 图片输出（按 token）。只出现在只配了图片输出价的模型上。 */
+  imageOutput: number | null
   unit: number | null
 }
 
@@ -42,6 +44,8 @@ export interface ModelTier {
 
 export interface ModelPricing {
   kind: PriceKind
+  /** 后端的计费方式，阶梯表首列表头按它区分。 */
+  mode: BillingMode
   /** 首档（无阶梯时就是基础价）。 */
   first: PriceSet
   /** 完整阶梯；只有一档或没有阶梯时为空数组。 */
@@ -94,12 +98,9 @@ export interface PlanPrice {
   exact: boolean
 }
 
-function positive(v: number | null | undefined): v is number {
-  return typeof v === 'number' && Number.isFinite(v) && v > 0
-}
-
+/** 0 表示免费，是有效价格；只有 null / 非法值才算未配置。 */
 function pick(v: number | null | undefined): number | null {
-  return positive(v) ? v : null
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null
 }
 
 function clean(n: number): number {
@@ -112,12 +113,13 @@ function tokenSet(iv: UserPricingInterval | undefined, p: UserSupportedModelPric
     output: pick(iv?.output_price ?? p.output_price),
     cacheRead: pick(iv?.cache_read_price ?? p.cache_read_price),
     cacheWrite: pick(iv?.cache_write_price ?? p.cache_write_price),
+    imageOutput: null,
     unit: null,
   }
 }
 
 function unitSet(unit: number | null): PriceSet {
-  return { input: null, output: null, cacheRead: null, cacheWrite: null, unit }
+  return { input: null, output: null, cacheRead: null, cacheWrite: null, imageOutput: null, unit }
 }
 
 /** 把接口里的定价规整成「首档 + 阶梯」。没有任何有效价格时返回 null。 */
@@ -135,26 +137,33 @@ export function normalizePricing(p: UserSupportedModelPricing | null | undefined
             prices: tokenSet(iv, p),
           }))
         : []
-    return { kind: 'token', first, tiers }
+    return { kind: 'token', mode: p.billing_mode, first, tiers }
   }
 
-  // 按次 / 按图：基础价为空时回退到阶梯首档（只配了阶梯价的模型）。
-  const base = p.billing_mode === BILLING_MODE_IMAGE ? p.image_output_price : p.per_request_price
-  const unit = pick(base) ?? pick(p.per_request_price) ?? pick(p.image_output_price) ?? pick(intervals[0]?.per_request_price)
-  if (unit == null) return null
+  // 按次 / 按图：后端只看阶梯价和 per_request_price（calculatePerRequestCost）。
+  // 首档和 token 模型一样取 intervals[0]，缺省再回退到基础价；
+  // image_output_price 是按 token 的单价，不能当每次价格。
+  const perRequest = (iv: UserPricingInterval | undefined) => pick(iv?.per_request_price ?? p.per_request_price)
+  const unit = perRequest(intervals[0])
+  if (unit == null) {
+    // 没有每次价格、只配了图片输出价：按 token 计费的图片输出价展示。
+    const imageOutput = pick(p.image_output_price)
+    if (imageOutput == null) return null
+    return { kind: 'token', mode: p.billing_mode, first: { ...unitSet(null), imageOutput }, tiers: [] }
+  }
   const tiers: ModelTier[] =
     intervals.length > 1
       ? intervals.map((iv) => ({
           range: { label: iv.tier_label || undefined, min: iv.min_tokens, max: iv.max_tokens },
-          prices: unitSet(pick(iv.per_request_price)),
+          prices: unitSet(perRequest(iv)),
         }))
       : []
-  return { kind: 'request', first: unitSet(unit), tiers }
+  return { kind: 'request', mode: p.billing_mode, first: unitSet(unit), tiers }
 }
 
-/** 排序 / 比较用的官方价基准：输入价优先，其次按次价，再次输出价。 */
+/** 排序 / 比较用的官方价基准：输入价优先，其次按次价，再次输出价、图片输出价。 */
 function rankBase(set: PriceSet): number {
-  return set.input ?? set.unit ?? set.output ?? Number.POSITIVE_INFINITY
+  return set.input ?? set.unit ?? set.output ?? set.imageOutput ?? Number.POSITIVE_INFINITY
 }
 
 export function creditPriceOf(entry: GroupPrice): number {
@@ -220,6 +229,11 @@ export function buildCatalog(
 
 export function scaleOf(kind: PriceKind): number {
   return kind === 'token' ? TOKEN_SCALE : 1
+}
+
+/** a 是否高于 b。先按 10 位有效数字去掉浮点噪声，避免 7.000000000001 > 7 这类误判。 */
+export function exceeds(a: number, b: number): boolean {
+  return clean(a) > clean(b)
 }
 
 /** 官方价（USD），按展示单位缩放。 */

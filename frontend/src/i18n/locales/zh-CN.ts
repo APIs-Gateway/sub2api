@@ -1384,7 +1384,8 @@
       pricesLink: '各模型价格可在「价格与计费」页查看。',
       balance: '余额价：用余额支付时的价格。',
       plan: '套餐价：开通套餐后优先从套餐扣费，价格更低。',
-      group: '分组：同一个模型在不同分组下价格不同，展开模型即可对比。'
+      group: '分组：同一个模型在不同分组下价格不同，展开模型即可对比。',
+      groupBrief: '分组：同一个模型在不同分组下价格不同。'
     }
   },
 
@@ -1399,16 +1400,18 @@
     collapse: '收起',
     group: '分组',
     byGroup: '按分组',
-    cache: '缓存',
     price: '价格',
+    officialPrice: '官方价',
     lowest: '最低',
     planPrice: '套餐价',
     yourPlanPrice: '你的套餐价',
     inOut: '输入 / 输出',
-    rateTooltip: '相对官方价的计费倍数，已包含在价格中',
-    rateTooltipCustom: '你的专属倍率（默认 {base}x），已包含在价格中',
+    rateNote: '倍率是相对官方价的计费倍数，已包含在价格中',
+    rateCustom: '专属倍率，默认 {base}x',
     tiersFor: '分档价格（{group}）',
     context: '上下文长度',
+    tierName: '档位',
+    resolution: '分辨率',
     tierUpTo: '不超过 {n}',
     tierAbove: '超过 {n}',
     tierBetween: '{min} 至 {max}',

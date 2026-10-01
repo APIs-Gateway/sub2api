@@ -57,7 +57,8 @@ const fiatBullets = computed(() => [
   ...(props.modelsBelow ? [] : [t('billingRules.fiat.pricesLink')]),
   t('billingRules.fiat.balance'),
   t('billingRules.fiat.plan'),
-  t('billingRules.fiat.group'),
+  // 支付页没有模型列表可展开，只说明分组价格不同。
+  props.modelsBelow ? t('billingRules.fiat.group') : t('billingRules.fiat.groupBrief'),
 ])
 const usdBullets = computed(() => [
   props.modelsBelow ? t('billingRules.modelPriceHere') : t('billingRules.modelPriceLink'),
