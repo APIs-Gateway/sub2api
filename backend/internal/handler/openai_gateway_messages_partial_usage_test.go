@@ -190,9 +190,8 @@ func (r cancelingReadErrorGW1464) Read([]byte) (int, error) {
 }
 
 // A client cancellation that arrives after partial output and concurrently
-// with a reader error must take the disconnect branch in Messages(). The
-// ordinary error branch reports a scheduler account failure and writes a
-// fallback error event to the already disconnected client.
+// with a reader error must take the disconnect branch in Messages(), without
+// sending a fallback error event or dropping the partial usage.
 func TestOpenAIMessages_ResponsesClientCancelDuringReadErrorRecordsUsageWithoutFallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -233,9 +232,30 @@ func TestOpenAIMessages_ResponsesClientCancelDuringReadErrorRecordsUsageWithoutF
 	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
 	defer billingCacheSvc.Stop()
 	gatewaySvc := service.NewOpenAIGatewayService(
-		accountRepo, usageRepo, nil, nil, nil, nil, nil, cfg, nil, nil,
-		service.NewBillingService(cfg, nil), nil, billingCacheSvc, httpUpstream,
-		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil,
+		accountRepo,
+		usageRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		cfg,
+		nil,
+		nil,
+		service.NewBillingService(cfg, nil),
+		nil,
+		billingCacheSvc,
+		httpUpstream,
+		&service.DeferredService{},
+		nil, // openAITokenProvider
+		nil, // grokTokenProvider
+		nil, // resolver
+		nil, // channelService
+		nil, // balanceNotifyService
+		nil, // settingService
+		nil, // userPlatformQuotaRepo
+		nil, // stableStore
+		nil, // groupRepo
 	)
 	cache := &concurrencyCacheMock{
 		acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
