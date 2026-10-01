@@ -43,9 +43,10 @@ func TestRegisterUserRoutesIncludesKeyFallbackChain(t *testing.T) {
 	}
 }
 
-// 管理端回退链路由。这些路由在 feat/admin-tokens-audit 合入后需要登记 scope：
-// PUT/DELETE hidden-fallback-chain 与 PUT reference-models 登记为 danger，
-// GET fallback-chain 登记到 adminReviewedReadRules（路径含 api-keys）。
+// 管理端回退链路由。这些路由的 scope 已在 middleware/admin_token_scope.go 登记：
+// PUT/DELETE hidden-fallback-chain 与 PUT reference-models 为 danger，
+// GET fallback-chain 在 adminReviewedReadRules（路径含 api-keys）；
+// 覆盖由 admin_token_scope_coverage_test.go 保证。
 //
 // 与既有的 /admin/groups/:id 等路由放在同一棵路由树里注册：注册成功本身就证明没有路由冲突。
 func TestRegisterAdminRoutesIncludesKeyFallbackChain(t *testing.T) {

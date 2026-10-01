@@ -389,7 +389,7 @@ func (s *KeyFallbackService) userItems(ctx context.Context, user *User, primary 
 		EffectiveMultiplier: eff,
 	})
 
-	for i, it := range chain {
+	for _, it := range chain {
 		g, err := s.groups.GetByIDLite(ctx, it.GroupID)
 		if err != nil {
 			if errors.Is(err, ErrGroupNotFound) {
@@ -405,7 +405,7 @@ func (s *KeyFallbackService) userItems(ctx context.Context, user *User, primary 
 			GroupID:             g.ID,
 			Name:                g.Name,
 			Role:                KeyFallbackRoleFallback,
-			Position:            i + 1,
+			Position:            len(items),
 			Status:              status,
 			Usable:              usable,
 			RateMultiplier:      rate,

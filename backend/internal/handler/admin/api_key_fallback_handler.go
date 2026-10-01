@@ -35,7 +35,8 @@ func NewAPIKeyFallbackHandler(svc *service.KeyFallbackService) *APIKeyFallbackHa
 	return &APIKeyFallbackHandler{svc: svc}
 }
 
-// ReplaceHiddenFallbackChainRequest 是写隐藏链的请求体。head 与 tail 至少给出一个（空数组表示清空该段）。
+// ReplaceHiddenFallbackChainRequest 是写隐藏链的请求体。head 与 tail 两个字段都必须出现（空数组表示清空该段）；
+// 只给其中一个会被拒绝，避免整体替换时悄悄清空没写的那一段。
 type ReplaceHiddenFallbackChainRequest struct {
 	// Head 排在 Key 主分组之前的分组，仅管理员可写。
 	Head *[]int64 `json:"head"`
@@ -80,18 +81,11 @@ func (h *APIKeyFallbackHandler) ReplaceHiddenChain(c *gin.Context) {
 		return
 	}
 	var req ReplaceHiddenFallbackChainRequest
-	if err := c.ShouldBindJSON(&req); err != nil || (req.Head == nil && req.Tail == nil) {
+	if err := c.ShouldBindJSON(&req); err != nil || req.Head == nil || req.Tail == nil {
 		response.ErrorFrom(c, errFallbackAdminInvalidRequest)
 		return
 	}
-	var head, tail []int64
-	if req.Head != nil {
-		head = *req.Head
-	}
-	if req.Tail != nil {
-		tail = *req.Tail
-	}
-	view, err := h.svc.AdminReplaceHiddenChain(c.Request.Context(), adminActorID(c), keyID, head, tail, req.Note)
+	view, err := h.svc.AdminReplaceHiddenChain(c.Request.Context(), adminActorID(c), keyID, *req.Head, *req.Tail, req.Note)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -136,7 +130,7 @@ func (h *APIKeyFallbackHandler) GetReferenceModels(c *gin.Context) {
 }
 
 // SetReferenceModels 保存各平台的参考模型。
-// PUT /api/v1/admin/key-editor/reference-models   body: {"models":{"openai":"gpt-5.5"}}
+// PUT /api/v1/admin/key-editor/reference-models   body: {"models":{"openai":"gpt-5.6-sol"}}
 func (h *APIKeyFallbackHandler) SetReferenceModels(c *gin.Context) {
 	var req SetKeyEditorReferenceModelsRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.Models == nil {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/stretchr/testify/require"
 )
@@ -363,6 +364,146 @@ func TestKeyFallback_ErrorCodesDoNotDependOnHiddenChain(t *testing.T) {
 				require.Equal(t, []int64{9}, routeGroupIDs(env.route.repo.bySource(100, RouteSourceUser)))
 			})
 		}
+	}
+}
+
+// fbErrGroupID 取校验错误 metadata 里的 group_id。
+func fbErrGroupID(t *testing.T, err error) string {
+	t.Helper()
+	require.Error(t, err)
+	var appErr *infraerrors.ApplicationError
+	require.True(t, errors.As(err, &appErr))
+	return appErr.Metadata["group_id"]
+}
+
+// 链里原来就有、后来才变得不可用的分组：整条重新提交（例如拖动其他项排序）时可以保留。
+func TestKeyFallback_PutKeepsExistingItemsThatBecameUnusable(t *testing.T) {
+	ctx := context.Background()
+	env := newFBEnv(true)
+	env.seedUser(100, 2, 0)
+	env.seedUser(100, 21, 1) // 后来被停用
+	env.seedUser(100, 20, 2) // 专属，用户已失去授权
+	env.seedUser(100, 22, 3) // 平台与主分组不一致
+	env.seedUser(100, 3, 4)
+
+	// 拖动：把 3 和 2 换到前面，不可用的三项原样带着。
+	view, err := env.svc.ReplaceUserChain(ctx, 1, 100, []int64{3, 2, 21, 20, 22}, "")
+	require.NoError(t, err)
+	require.Equal(t, []int64{1, 3, 2, 21, 20, 22}, fbItemIDs(view.Items))
+	require.Equal(t, []int64{3, 2, 21, 20, 22}, routeGroupIDs(env.route.repo.bySource(100, RouteSourceUser)))
+	got := map[int64]bool{}
+	for _, it := range view.Items {
+		got[it.GroupID] = it.Usable
+	}
+	require.True(t, got[3] && got[2])
+	require.False(t, got[21] || got[20] || got[22], "不可用的项照常展示，运行时跳过")
+
+	// 保留的豁免只放宽「停用 / 失去授权 / 平台不一致」：重复、含主分组、超长仍然严格。
+	_, err = env.svc.ReplaceUserChain(ctx, 1, 100, []int64{21, 21}, "")
+	require.Equal(t, "FALLBACK_GROUP_DUPLICATE", routeCode(t, err))
+	_, err = env.svc.ReplaceUserChain(ctx, 1, 100, []int64{1, 21}, "")
+	require.Equal(t, "FALLBACK_GROUP_IS_PRIMARY", routeCode(t, err))
+	_, err = env.svc.ReplaceUserChain(ctx, 1, 100, []int64{3, 2, 21, 20, 22, 4}, "")
+	require.Equal(t, "FALLBACK_CHAIN_TOO_LONG", routeCode(t, err))
+}
+
+// 新加一个已停用（或没有授权、跨平台）的分组仍然被拒；原来链里没有它，就不在豁免之列。
+func TestKeyFallback_PutRejectsNewlyAddedUnusableGroups(t *testing.T) {
+	ctx := context.Background()
+	env := newFBEnv(true)
+	env.seedUser(100, 2, 0)
+	env.seedUser(100, 21, 1) // 原来就有，后来停用
+
+	for _, tc := range []struct {
+		name string
+		ids  []int64
+		want string
+		gid  string
+	}{
+		{"new platform mismatch", []int64{2, 21, 22}, "FALLBACK_GROUP_PLATFORM_MISMATCH", "22"},
+		{"new exclusive without grant", []int64{2, 21, 20}, "FALLBACK_GROUP_NOT_ALLOWED", "20"},
+		{"new missing", []int64{2, 21, 999}, "FALLBACK_GROUP_NOT_FOUND", "999"},
+	} {
+		_, err := env.svc.ReplaceUserChain(ctx, 1, 100, tc.ids, "")
+		require.Equal(t, tc.want, routeCode(t, err), tc.name)
+		require.Equal(t, tc.gid, fbErrGroupID(t, err), tc.name)
+	}
+
+	// 一条新加的已停用分组：另一把没有该项的 Key 上直接被拒，metadata 指向它。
+	env.route.groups.groups[23] = &Group{ID: 23, Name: "off2", Platform: PlatformOpenAI, Status: StatusDisabled}
+	_, err := env.svc.ReplaceUserChain(ctx, 1, 100, []int64{2, 21, 23}, "")
+	require.Equal(t, "FALLBACK_GROUP_UNAVAILABLE", routeCode(t, err))
+	require.Equal(t, "23", fbErrGroupID(t, err))
+	require.Equal(t, []int64{2, 21}, routeGroupIDs(env.route.repo.bySource(100, RouteSourceUser)), "失败不改库")
+
+	// 把原来的停用项删掉之后再加回去，就成了「新增」，被拒。
+	_, err = env.svc.ReplaceUserChain(ctx, 1, 100, []int64{2}, "")
+	require.NoError(t, err)
+	_, err = env.svc.ReplaceUserChain(ctx, 1, 100, []int64{2, 21}, "")
+	require.Equal(t, "FALLBACK_GROUP_UNAVAILABLE", routeCode(t, err))
+	require.Equal(t, "21", fbErrGroupID(t, err))
+}
+
+// 「原来就有」只以用户链为准：分组恰好在隐藏链里时，响应（成功或错误，含 metadata）与没有隐藏链时完全一致。
+func TestKeyFallback_PutExemptionNeverConsultsHiddenChain(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		ids  []int64
+		want string
+	}{
+		{"hidden disabled group", []int64{21}, "FALLBACK_GROUP_UNAVAILABLE"},
+		{"hidden exclusive group without grant", []int64{20}, "FALLBACK_GROUP_NOT_ALLOWED"},
+		{"hidden cross platform group", []int64{22}, "FALLBACK_GROUP_PLATFORM_MISMATCH"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plain := newFBEnv(true)
+			hidden := newFBEnv(true)
+			hidden.seedAdmin(100, 21, RoutePlacementHead, 0, "pinned")
+			hidden.seedAdmin(100, 20, RoutePlacementTail, 0, "pinned")
+			hidden.seedAdmin(100, 22, RoutePlacementTail, 1, "pinned")
+
+			_, errPlain := plain.svc.ReplaceUserChain(ctx, 1, 100, tc.ids, "")
+			_, errHidden := hidden.svc.ReplaceUserChain(ctx, 1, 100, tc.ids, "")
+			require.Equal(t, tc.want, routeCode(t, errPlain))
+			require.Equal(t, tc.want, routeCode(t, errHidden))
+			require.Equal(t, fbErrGroupID(t, errPlain), fbErrGroupID(t, errHidden))
+			require.Equal(t, fmt.Sprint(tc.ids[0]), fbErrGroupID(t, errHidden))
+			require.Empty(t, hidden.route.repo.bySource(100, RouteSourceUser), "隐藏链不能让保存成功")
+		})
+	}
+
+	// 只在隐藏链里的可用分组：照常保存，响应与普通成功逐字节一致。
+	plain := newFBEnv(true)
+	hidden := newFBEnv(true)
+	hidden.seedAdmin(100, 3, RoutePlacementTail, 0, "pinned")
+	okPlain, err := plain.svc.ReplaceUserChain(ctx, 1, 100, []int64{3}, "")
+	require.NoError(t, err)
+	okHidden, err := hidden.svc.ReplaceUserChain(ctx, 1, 100, []int64{3}, "")
+	require.NoError(t, err)
+	require.Equal(t, fbJSON(t, okPlain), fbJSON(t, okHidden))
+}
+
+// 校验失败的错误 metadata 只带用户自己提交的那个分组 ID。
+func TestKeyFallback_ValidationErrorsCarryGroupID(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		ids  []int64
+		want string
+		gid  string
+	}{
+		{[]int64{2, 3, 2}, "FALLBACK_GROUP_DUPLICATE", "2"},
+		{[]int64{2, 1}, "FALLBACK_GROUP_IS_PRIMARY", "1"},
+		{[]int64{2, 22}, "FALLBACK_GROUP_PLATFORM_MISMATCH", "22"},
+		{[]int64{2, 20}, "FALLBACK_GROUP_NOT_ALLOWED", "20"},
+		{[]int64{2, 21}, "FALLBACK_GROUP_UNAVAILABLE", "21"},
+		{[]int64{2, 999}, "FALLBACK_GROUP_NOT_FOUND", "999"},
+		{[]int64{2, 0}, "FALLBACK_GROUP_NOT_FOUND", "0"},
+	} {
+		env := newFBEnv(true)
+		_, err := env.svc.ReplaceUserChain(ctx, 1, 100, tc.ids, "")
+		require.Equal(t, tc.want, routeCode(t, err))
+		require.Equal(t, tc.gid, fbErrGroupID(t, err), tc.want)
 	}
 }
 
@@ -747,7 +888,8 @@ func TestKeyFallback_AuditBodyKeepsFallbackFieldNames(t *testing.T) {
 	require.JSONEq(t, userBody, redacted)
 
 	// 反例：含 apikey 的字段名会被整体脱敏，所以接口契约里不能用。
-	require.Contains(t, RedactAuditBody([]byte(`{"api_key_ids":[1]}`), "application/json"), auditRedactedPlaceholder)
+	// 用 api_key（精确命中脱敏表，与 #1483 的「keyids 等安全后缀」放行规则无关）。
+	require.Contains(t, RedactAuditBody([]byte(`{"api_key":"x"}`), "application/json"), auditRedactedPlaceholder)
 
 	// feat/admin-tokens-audit 合入后脱敏子串表会更宽（含 key / credential / private 等）：
 	// 这里按那张更宽的表再核对一遍，字段名在两版里都不能命中。

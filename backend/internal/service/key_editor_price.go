@@ -16,13 +16,14 @@ import (
 // Key 编辑器（回退链）的参考价。
 //
 // 参考模型由管理员设置项 key_editor_reference_model 决定（按平台一个默认值，值是 JSON 对象
-// {"openai":"gpt-5.5",...}），接口可用 ?model= 覆盖。报价复用 PriceQuoter（与网关计费同源）。
+// {"openai":"gpt-5.6-sol",...}），接口可用 ?model= 覆盖。报价复用 PriceQuoter（与网关计费同源）。
 //
-// 人民币有两套口径，响应里同时给出（口径取舍见 PR4a REPORT.md，待 cxw 拍板）：
-//   - cny（默认）：余额价 = 官方价 × 有效倍率 ÷ 充值倍率，与价格页的「余额价」一致，
-//     也就是用户用钱包余额实际要付的人民币；
-//   - cny_official_rate：官方价 × 有效倍率 × OFFICIAL_PRICE_CNY_RATE（#1478），
-//     把额度当作美元按官方汇率对照，不是实付金额。
+// 人民币只给一个口径 cny：余额价 = 官方价 × 有效倍率 ÷ 充值倍率，与价格页的「余额价」一致，
+// 也就是用户用钱包余额实际要付的人民币。官方汇率（OFFICIAL_PRICE_CNY_RATE）只能乘在未乘倍率的
+// 官方价上，不能乘在这里的额度价上（#1478），所以不在本接口里换算；前端要显示官方价的人民币对照，
+// 用 official_*_usd_per_mtok 乘公开设置里的汇率。
+//
+// 前端在 m==1（free 站）或用户切到美元模式时不应使用 cny，而应显示 USD 价（与价格页的 isFiat 一致）。
 const SettingKeyEditorReferenceModel = "key_editor_reference_model"
 
 // keyEditorPriceCacheTTL 是单项报价的缓存时间（设计 4.3：编辑器一次要 N 项，不能每次都查库）。
@@ -42,11 +43,11 @@ var ErrKeyEditorInvalidModel = infraerrors.BadRequest("FALLBACK_INVALID_MODEL", 
 // defaultKeyEditorReferenceModels 是每个平台的默认参考模型；管理员设置项优先。
 // 模型没有定价时接口降级为 priced=false，不会报错。
 var defaultKeyEditorReferenceModels = map[string]string{
-	PlatformOpenAI:      "gpt-5.5",
-	PlatformAnthropic:   "claude-sonnet-4",
-	PlatformGemini:      "gemini-3.1-pro",
-	PlatformAntigravity: "gemini-3.1-pro",
-	PlatformGrok:        "grok-4",
+	PlatformOpenAI:      "gpt-5.6-sol",
+	PlatformAnthropic:   "claude-sonnet-5",
+	PlatformGemini:      "gemini-3.1-pro-preview",
+	PlatformAntigravity: "gemini-3.1-pro-high",
+	PlatformGrok:        "grok-4.3",
 }
 
 // KeyEditorCNYPrice 是每百万 token 的人民币价。
@@ -64,10 +65,8 @@ type KeyEditorReferencePrice struct {
 	// OfficialInputUSDPerMTok / OfficialOutputUSDPerMTok：未乘倍率的官方价。
 	OfficialInputUSDPerMTok  *float64 `json:"official_input_usd_per_mtok,omitempty"`
 	OfficialOutputUSDPerMTok *float64 `json:"official_output_usd_per_mtok,omitempty"`
-	// CNY 余额价口径（默认展示）。
+	// CNY 余额价口径：额度价 ÷ 充值倍率，与价格页的「余额价」一致。
 	CNY *KeyEditorCNYPrice `json:"cny,omitempty"`
-	// CNYOfficialRate 官方价汇率口径（#1478 的 OFFICIAL_PRICE_CNY_RATE），备选。
-	CNYOfficialRate *KeyEditorCNYPrice `json:"cny_official_rate,omitempty"`
 }
 
 type keyEditorQuoter interface {
@@ -80,9 +79,8 @@ type keyEditorPriceCacheEntry struct {
 }
 
 type keyEditorRates struct {
-	officialCNYRate float64
-	rechargeMult    float64
-	expires         time.Time
+	rechargeMult float64
+	expires      time.Time
 }
 
 // KeyEditorPriceService 给 Key 编辑器出参考价，并管理参考模型设置。
@@ -193,29 +191,28 @@ func (s *KeyEditorPriceService) SetReferenceModels(ctx context.Context, models m
 	return s.ReferenceModels(ctx), nil
 }
 
-// loadRates 读取两个人民币汇率（30 秒缓存）。读取失败回落默认值（官方汇率 7.2，充值倍率 1）。
-func (s *KeyEditorPriceService) loadRates(ctx context.Context) (officialCNYRate, rechargeMult float64) {
+// loadRechargeMult 读取充值倍率（30 秒缓存）。读取失败回落默认值 1。
+func (s *KeyEditorPriceService) loadRechargeMult(ctx context.Context) float64 {
 	now := s.now()
 	s.mu.Lock()
 	if now.Before(s.rates.expires) {
-		o, r := s.rates.officialCNYRate, s.rates.rechargeMult
+		r := s.rates.rechargeMult
 		s.mu.Unlock()
-		return o, r
+		return r
 	}
 	s.mu.Unlock()
 
-	officialCNYRate, rechargeMult = DefaultOfficialPriceCNYRate, defaultBalanceRechargeMultiplier
+	rechargeMult := defaultBalanceRechargeMultiplier
 	if s.settings != nil {
-		vals, err := s.settings.GetMultiple(ctx, []string{SettingOfficialPriceCNYRate, SettingBalanceRechargeMult})
+		vals, err := s.settings.GetMultiple(ctx, []string{SettingBalanceRechargeMult})
 		if err == nil {
-			officialCNYRate = normalizeOfficialPriceCNYRate(pcParseFloat(vals[SettingOfficialPriceCNYRate], DefaultOfficialPriceCNYRate))
 			rechargeMult = normalizeBalanceRechargeMultiplier(pcParseFloat(vals[SettingBalanceRechargeMult], defaultBalanceRechargeMultiplier))
 		}
 	}
 	s.mu.Lock()
-	s.rates = keyEditorRates{officialCNYRate: officialCNYRate, rechargeMult: rechargeMult, expires: now.Add(keyEditorPriceCacheTTL)}
+	s.rates = keyEditorRates{rechargeMult: rechargeMult, expires: now.Add(keyEditorPriceCacheTTL)}
 	s.mu.Unlock()
-	return officialCNYRate, rechargeMult
+	return rechargeMult
 }
 
 // ReferencePrice 返回「主分组 primaryGroupID 的 Key 经 groupID 服务」时参考模型的参考价。
@@ -261,7 +258,7 @@ func (s *KeyEditorPriceService) quoteReferencePrice(ctx context.Context, model s
 	if !finitePrice(finalIn) || !finitePrice(finalOut) || !finitePrice(officialIn) || !finitePrice(officialOut) {
 		return KeyEditorReferencePrice{}
 	}
-	officialRate, rechargeMult := s.loadRates(ctx)
+	rechargeMult := s.loadRechargeMult(ctx)
 
 	return KeyEditorReferencePrice{
 		Priced:                   true,
@@ -272,10 +269,6 @@ func (s *KeyEditorPriceService) quoteReferencePrice(ctx context.Context, model s
 		CNY: &KeyEditorCNYPrice{
 			InputPerMTok:  roundTo(finalIn/rechargeMult, 4),
 			OutputPerMTok: roundTo(finalOut/rechargeMult, 4),
-		},
-		CNYOfficialRate: &KeyEditorCNYPrice{
-			InputPerMTok:  roundTo(finalIn*officialRate, 4),
-			OutputPerMTok: roundTo(finalOut*officialRate, 4),
 		},
 	}
 }

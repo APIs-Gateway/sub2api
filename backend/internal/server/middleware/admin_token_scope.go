@@ -94,6 +94,9 @@ var adminDangerRules = []AdminRouteRule{
 	{http.MethodPost, "/users/batch-limits", "changes limits for many users"},
 	{http.MethodPut, "/users/:id/platform-quotas", "changes a user's usage quotas"},
 	{http.MethodPut, "/api-keys/:id", "moves a customer's API key to another group (changes pricing)"},
+	{http.MethodPut, "/api-keys/:id/hidden-fallback-chain", "rewrites the hidden fallback chain of a customer's key (changes which group it is billed against)"},
+	{http.MethodDelete, "/api-keys/:id/hidden-fallback-chain", "clears the hidden fallback chain of a customer's key (changes which group it is billed against)"},
+	{http.MethodPut, "/key-editor/reference-models", "changes the reference model used for the prices customers see in the fallback editor"},
 
 	// --- Groups and accounts: deletion and group pricing -----------------
 	{http.MethodDelete, "/groups/:id", "delete group"},
@@ -249,6 +252,7 @@ var adminReviewedReadRules = []AdminRouteRule{
 	{http.MethodGet, "/dashboard/api-keys-trend", "aggregate usage numbers per API key id/name"},
 	{http.MethodGet, "/usage/search-api-keys", "id and name only; never the key"},
 	{http.MethodGet, "/redeem-codes/stats", "counters only"},
+	{http.MethodGet, "/api-keys/:id/fallback-chain", "group ids, notes and dry-run only; never the key"},
 }
 
 // adminDangerRouteSet is the lookup form of adminDangerRules. The reviewed

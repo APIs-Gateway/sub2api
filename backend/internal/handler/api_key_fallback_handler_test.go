@@ -48,10 +48,11 @@ func (s *stubKeyFallbackUserService) ListUserChains(_ context.Context, userID in
 }
 
 type fallbackEnvelope struct {
-	Code    int             `json:"code"`
-	Message string          `json:"message"`
-	Reason  string          `json:"reason"`
-	Data    json.RawMessage `json:"data"`
+	Code     int               `json:"code"`
+	Message  string            `json:"message"`
+	Reason   string            `json:"reason"`
+	Metadata map[string]string `json:"metadata"`
+	Data     json.RawMessage   `json:"data"`
 }
 
 func doFallbackRequest(t *testing.T, stub *stubKeyFallbackUserService, withSubject bool, method, target, body string) (*httptest.ResponseRecorder, fallbackEnvelope) {
@@ -100,6 +101,15 @@ func TestAPIKeyFallbackHandler_GetChain(t *testing.T) {
 	require.Equal(t, int64(7), stub.getKey)
 	require.Equal(t, "gpt-5.4", stub.getModel)
 	require.Contains(t, string(env.Data), `"key_id":7`)
+}
+
+// 校验失败时 metadata.group_id 标明出错的分组（前端据此把错误标在那一项上）。
+func TestAPIKeyFallbackHandler_ValidationErrorCarriesGroupIDMetadata(t *testing.T) {
+	stub := &stubKeyFallbackUserService{err: service.ErrFallbackGroupUnavailable.WithMetadata(map[string]string{"group_id": "21"})}
+	rec, env := doFallbackRequest(t, stub, true, http.MethodPut, "/api/v1/keys/7/fallback-chain", `{"group_ids":[2,21]}`)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Equal(t, "FALLBACK_GROUP_UNAVAILABLE", env.Reason)
+	require.Equal(t, "21", env.Metadata["group_id"])
 }
 
 func TestAPIKeyFallbackHandler_ErrorsUseServiceCodes(t *testing.T) {

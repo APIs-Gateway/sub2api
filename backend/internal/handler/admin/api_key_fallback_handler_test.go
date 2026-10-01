@@ -121,8 +121,8 @@ func TestAdminAPIKeyFallbackHandler_ReplaceHiddenChain(t *testing.T) {
 	require.Empty(t, stub.tail)
 	require.Equal(t, "513 专属号替代 openai_forced_account_routes", stub.note)
 
-	// 只给 tail 也可以；缺省的 head 视为清空 head。
-	rec, _ = doAdminFallbackRequest(t, stub, http.MethodPut, "/api/v1/admin/api-keys/1908/hidden-fallback-chain", `{"tail":[5,6]}`)
+	// head 与 tail 都出现才算：空数组表示清空该段，head 给空数组、tail 给值是合法的。
+	rec, _ = doAdminFallbackRequest(t, stub, http.MethodPut, "/api/v1/admin/api-keys/1908/hidden-fallback-chain", `{"head":[],"tail":[5,6],"note":""}`)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Empty(t, stub.head)
 	require.Equal(t, []int64{5, 6}, stub.tail)
@@ -133,6 +133,10 @@ func TestAdminAPIKeyFallbackHandler_ReplaceHiddenChainRejectsBodiesThatWouldSile
 		"empty object":  `{}`,
 		"only note":     `{"note":"x"}`,
 		"null both":     `{"head":null,"tail":null}`,
+		"only tail":     `{"tail":[5,6],"note":"abcd"}`,
+		"only head":     `{"head":[88],"note":"abcd"}`,
+		"null head":     `{"head":null,"tail":[5],"note":"abcd"}`,
+		"null tail":     `{"head":[88],"tail":null,"note":"abcd"}`,
 		"wrong type":    `{"head":"88"}`,
 		"not json":      `head=88`,
 		"string member": `{"tail":["a"]}`,
@@ -168,7 +172,7 @@ func TestAdminAPIKeyFallbackHandler_ErrorsUseServiceCodes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.wantReason, func(t *testing.T) {
 			stub := &stubKeyFallbackAdminService{err: tc.err}
-			rec, env := doAdminFallbackRequest(t, stub, http.MethodPut, "/api/v1/admin/api-keys/1/hidden-fallback-chain", `{"head":[1],"note":"abcd"}`)
+			rec, env := doAdminFallbackRequest(t, stub, http.MethodPut, "/api/v1/admin/api-keys/1/hidden-fallback-chain", `{"head":[1],"tail":[],"note":"abcd"}`)
 			require.Equal(t, tc.wantStatus, rec.Code)
 			require.Equal(t, tc.wantReason, env.Reason)
 		})

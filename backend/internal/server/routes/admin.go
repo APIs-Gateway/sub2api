@@ -205,7 +205,7 @@ func registerAdminAPIKeyRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		apiKeys.PUT("/:id", h.Admin.APIKey.UpdateGroup)
 
-		// Key 级分组回退链：有效链 dry-run / 隐藏链读写（写接口 scope 应登记为 danger，见 PR4a REPORT）
+		// Key 级分组回退链：有效链 dry-run / 隐藏链读写（scope 已在 middleware/admin_token_scope.go 登记：写接口 danger，GET 为 reviewed read）
 		apiKeys.GET("/:id/fallback-chain", h.Admin.APIKeyFallback.GetChain)
 		apiKeys.PUT("/:id/hidden-fallback-chain", h.Admin.APIKeyFallback.ReplaceHiddenChain)
 		apiKeys.DELETE("/:id/hidden-fallback-chain", h.Admin.APIKeyFallback.ClearHiddenChain)

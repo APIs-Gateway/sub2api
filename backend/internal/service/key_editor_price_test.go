@@ -97,7 +97,7 @@ func newKeyEditorTestService(quoter keyEditorQuoter, settings SettingRepository)
 	return newKeyEditorPriceService(quoter, settings, func() time.Time { return now }), &now
 }
 
-func TestKeyEditorReferencePrice_BothCNYBasesAndNoMixing(t *testing.T) {
+func TestKeyEditorReferencePrice_BalancePriceCNY(t *testing.T) {
 	settings := &keyEditorSettingRepo{values: map[string]string{
 		SettingOfficialPriceCNYRate: "7.2",
 		SettingBalanceRechargeMult:  "13",
@@ -117,9 +117,10 @@ func TestKeyEditorReferencePrice_BothCNYBasesAndNoMixing(t *testing.T) {
 	// 余额价口径：额度价 ÷ 充值倍率，与价格页一致。
 	require.InDelta(t, 1.875/13, got.CNY.InputPerMTok, 1e-4)
 	require.InDelta(t, 15.0/13, got.CNY.OutputPerMTok, 1e-4)
-	// 官方汇率口径：额度价 × OFFICIAL_PRICE_CNY_RATE。两个汇率各用各的，不互相混用。
-	require.InDelta(t, 1.875*7.2, got.CNYOfficialRate.InputPerMTok, 1e-4)
-	require.InDelta(t, 15.0*7.2, got.CNYOfficialRate.OutputPerMTok, 1e-4)
+	// 官方汇率只能乘在未乘倍率的官方价上，本接口不做这个换算：响应里不再有 cny_official_rate。
+	raw, err := json.Marshal(got)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "cny_official_rate")
 
 	require.Len(t, quoter.calls, 1)
 	require.Equal(t, QuoteRequest{Model: "gpt-5.5", GroupID: 16, ServedGroupID: 21, UserID: 7}, quoter.calls[0])
@@ -132,9 +133,8 @@ func TestKeyEditorReferencePrice_DefaultRatesWhenSettingsMissing(t *testing.T) {
 	got := svc.ReferencePrice(context.Background(), "gpt-5.5", 16, 16, 7)
 
 	require.True(t, got.Priced)
-	// 汇率默认 7.2，充值倍率默认 1。
+	// 充值倍率默认 1。
 	require.InDelta(t, 2.0, got.CNY.InputPerMTok, 1e-9)
-	require.InDelta(t, 2*DefaultOfficialPriceCNYRate, got.CNYOfficialRate.InputPerMTok, 1e-9)
 }
 
 func TestKeyEditorReferencePrice_DegradesToUnpriced(t *testing.T) {
@@ -210,18 +210,20 @@ func TestKeyEditorReferenceModel_SettingOverridesDefaultAndQueryOverridesBoth(t 
 	settings := &keyEditorSettingRepo{}
 	svc, _ := newKeyEditorTestService(&stubKeyEditorQuoter{}, settings)
 
+	// OpenAI 平台的内置默认是产品示例模型 gpt-5.6-sol。
+	require.Equal(t, "gpt-5.6-sol", defaultKeyEditorReferenceModels[PlatformOpenAI])
 	require.Equal(t, defaultKeyEditorReferenceModels[PlatformOpenAI], svc.ReferenceModel(ctx, PlatformOpenAI, ""))
 
-	_, err := svc.SetReferenceModels(ctx, map[string]string{PlatformOpenAI: "gpt-5.6-sol"})
+	_, err := svc.SetReferenceModels(ctx, map[string]string{PlatformOpenAI: "gpt-5.5"})
 	require.NoError(t, err)
-	require.Equal(t, "gpt-5.6-sol", svc.ReferenceModel(ctx, PlatformOpenAI, ""))
+	require.Equal(t, "gpt-5.5", svc.ReferenceModel(ctx, PlatformOpenAI, ""))
 	// 其它平台仍是内置默认。
 	require.Equal(t, defaultKeyEditorReferenceModels[PlatformAnthropic], svc.ReferenceModel(ctx, PlatformAnthropic, ""))
 	// ?model= 覆盖一切。
 	require.Equal(t, "gpt-5.4", svc.ReferenceModel(ctx, PlatformOpenAI, " gpt-5.4 "))
 
 	// 存储的是 JSON 对象，键为 key_editor_reference_model。
-	require.JSONEq(t, `{"openai":"gpt-5.6-sol"}`, settings.values[SettingKeyEditorReferenceModel])
+	require.JSONEq(t, `{"openai":"gpt-5.5"}`, settings.values[SettingKeyEditorReferenceModel])
 
 	// 空串删除覆盖。
 	_, err = svc.SetReferenceModels(ctx, map[string]string{PlatformOpenAI: ""})

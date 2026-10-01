@@ -3,9 +3,12 @@ package service
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 // groupRouteCacheTTL 是链明细的进程内缓存时间；写入后本实例主动失效，多实例最长陈旧一个 TTL。
@@ -174,7 +177,20 @@ func (s *groupRouteService) ReplaceUserChain(ctx context.Context, user *User, ke
 	if err != nil {
 		return err
 	}
-	if err := s.validateGroupIDs(ctx, primary, groupIDs, user); err != nil {
+	// 「原来就有」的分组只以用户链（SQL 层 source='user'）为准，绝不参考隐藏链，
+	// 否则「只在隐藏链里」的分组会因豁免而保存成功，成功与否会暴露隐藏链的内容。
+	var keep map[int64]struct{}
+	if len(groupIDs) > 0 {
+		existing, err := s.GetUserChain(ctx, key.ID)
+		if err != nil {
+			return err
+		}
+		keep = make(map[int64]struct{}, len(existing))
+		for _, it := range existing {
+			keep[it.GroupID] = struct{}{}
+		}
+	}
+	if err := s.validateGroupIDs(ctx, primary, groupIDs, user, keep); err != nil {
 		return err
 	}
 
@@ -223,7 +239,7 @@ func (s *groupRouteService) ReplaceHiddenChain(ctx context.Context, adminID int6
 	all := make([]int64, 0, len(head)+len(tail))
 	all = append(all, head...)
 	all = append(all, tail...)
-	if err := s.validateGroupIDs(ctx, primary, all, nil); err != nil {
+	if err := s.validateGroupIDs(ctx, primary, all, nil, nil); err != nil {
 		return err
 	}
 
@@ -259,39 +275,52 @@ func (s *groupRouteService) ReplaceHiddenChain(ctx context.Context, adminID int6
 }
 
 // validateGroupIDs 校验一组兜底分组。user 非 nil 时额外要求 CanBindGroup（admin 项传 nil 豁免）。
-// 错误只取决于本次提交的分组本身，不读取、不依赖另一个 source 的行。
-func (s *groupRouteService) validateGroupIDs(ctx context.Context, primary *Group, ids []int64, user *User) error {
+// 错误只取决于本次提交的分组本身，不读取、不依赖另一个 source 的行；错误的 metadata.group_id 是出错的那个分组。
+//
+// keep 是调用方已有的分组集合（用户端传用户链上原有的分组，admin 路径传 nil）：这些分组后来才变得
+// 不可用（停用、失去专属授权、平台不一致）时可以保留，运行时会跳过它们；只有新增的分组才严格校验。
+// 豁免只放宽这三项，重复、等于主分组、不存在、数量上限仍然严格。
+func (s *groupRouteService) validateGroupIDs(ctx context.Context, primary *Group, ids []int64, user *User, keep map[int64]struct{}) error {
 	seen := make(map[int64]struct{}, len(ids))
 	for _, gid := range ids {
 		if gid <= 0 {
-			return ErrFallbackGroupNotFound
+			return fallbackGroupError(ErrFallbackGroupNotFound, gid)
 		}
 		if gid == primary.ID {
-			return ErrFallbackGroupIsPrimary
+			return fallbackGroupError(ErrFallbackGroupIsPrimary, gid)
 		}
 		if _, dup := seen[gid]; dup {
-			return ErrFallbackGroupDup
+			return fallbackGroupError(ErrFallbackGroupDup, gid)
 		}
 		seen[gid] = struct{}{}
 
 		g, err := s.groups.GetByIDLite(ctx, gid)
 		if err != nil {
 			if errors.Is(err, ErrGroupNotFound) {
-				return ErrFallbackGroupNotFound
+				return fallbackGroupError(ErrFallbackGroupNotFound, gid)
 			}
 			return err
 		}
+		if _, existing := keep[gid]; existing {
+			continue
+		}
 		if !g.IsActive() {
-			return ErrFallbackGroupUnavailable
+			return fallbackGroupError(ErrFallbackGroupUnavailable, gid)
 		}
 		if g.Platform != primary.Platform {
-			return ErrFallbackPlatformMismatch
+			return fallbackGroupError(ErrFallbackPlatformMismatch, gid)
 		}
 		if user != nil && !user.CanBindGroup(g.ID, g.IsExclusive) {
-			return ErrFallbackGroupNotAllowed
+			return fallbackGroupError(ErrFallbackGroupNotAllowed, gid)
 		}
 	}
 	return nil
+}
+
+// fallbackGroupError 在校验错误上带 metadata.group_id，告诉前端是哪一项出错。
+// 只回显调用方自己提交的 ID，内容不依赖任何隐藏链数据。
+func fallbackGroupError(base *infraerrors.ApplicationError, groupID int64) error {
+	return base.WithMetadata(map[string]string{"group_id": strconv.FormatInt(groupID, 10)})
 }
 
 func (s *groupRouteService) OnPrimaryGroupChanged(ctx context.Context, key *APIKey, newGroup *Group) error {
