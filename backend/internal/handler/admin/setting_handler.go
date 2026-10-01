@@ -310,6 +310,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		PaymentBalanceDisabled:                 paymentCfg.BalanceDisabled,
 		PaymentBalanceRechargeMultiplier:       paymentCfg.BalanceRechargeMultiplier,
 		PaymentSubscriptionPayMultiplier:       paymentCfg.SubscriptionPayMultiplier,
+		PaymentOfficialPriceCNYRate:            paymentCfg.OfficialPriceCNYRate,
 		PaymentRechargeFeeRate:                 paymentCfg.RechargeFeeRate,
 		PaymentCryptoRechargeFeeRate:           paymentCfg.CryptoRechargeFeeRate,
 		PaymentRefundFeeRate:                   paymentCfg.RefundFeeRate,
@@ -685,6 +686,7 @@ type UpdateSettingsRequest struct {
 	PaymentBalanceDisabled                *bool    `json:"payment_balance_disabled"`
 	PaymentBalanceRechargeMultiplier      *float64 `json:"payment_balance_recharge_multiplier"`
 	PaymentSubscriptionPayMultiplier      *float64 `json:"payment_subscription_payment_multiplier"`
+	PaymentOfficialPriceCNYRate           *float64 `json:"payment_official_price_cny_rate"`
 	PaymentRechargeFeeRate                *float64 `json:"payment_recharge_fee_rate"`
 	PaymentCryptoRechargeFeeRate          *float64 `json:"payment_crypto_recharge_fee_rate"`
 	PaymentRefundFeeRate                  *float64 `json:"payment_refund_fee_rate"`
@@ -2137,6 +2139,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			BalanceDisabled:                req.PaymentBalanceDisabled,
 			BalanceRechargeMultiplier:      req.PaymentBalanceRechargeMultiplier,
 			SubscriptionPayMultiplier:      req.PaymentSubscriptionPayMultiplier,
+			OfficialPriceCNYRate:           req.PaymentOfficialPriceCNYRate,
 			RechargeFeeRate:                req.PaymentRechargeFeeRate,
 			CryptoRechargeFeeRate:          req.PaymentCryptoRechargeFeeRate,
 			RefundFeeRate:                  req.PaymentRefundFeeRate,
@@ -2376,6 +2379,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentBalanceDisabled:                 updatedPaymentCfg.BalanceDisabled,
 		PaymentBalanceRechargeMultiplier:       updatedPaymentCfg.BalanceRechargeMultiplier,
 		PaymentSubscriptionPayMultiplier:       updatedPaymentCfg.SubscriptionPayMultiplier,
+		PaymentOfficialPriceCNYRate:            updatedPaymentCfg.OfficialPriceCNYRate,
 		PaymentRechargeFeeRate:                 updatedPaymentCfg.RechargeFeeRate,
 		PaymentCryptoRechargeFeeRate:           updatedPaymentCfg.CryptoRechargeFeeRate,
 		PaymentRefundFeeRate:                   updatedPaymentCfg.RefundFeeRate,
@@ -2614,7 +2618,7 @@ func hasPaymentFields(req UpdateSettingsRequest) bool {
 		req.PaymentEnabledTypes != nil || req.PaymentBalanceDisabled != nil ||
 		req.PaymentBalanceRechargeMultiplier != nil || req.PaymentRechargeFeeRate != nil || req.PaymentCryptoRechargeFeeRate != nil ||
 		req.PaymentRefundFeeRate != nil ||
-		req.PaymentSubscriptionPayMultiplier != nil ||
+		req.PaymentSubscriptionPayMultiplier != nil || req.PaymentOfficialPriceCNYRate != nil ||
 		req.PaymentSubscriptionMinDaily != nil || req.PaymentSubscriptionMinRatioStartDaily != nil || req.PaymentSubscriptionMaxDaily != nil ||
 		req.PaymentSubscriptionMaxDays != nil ||
 		req.PaymentSubscriptionMinPlanRatio != nil || req.PaymentSubscriptionMaxPlanRatio != nil ||

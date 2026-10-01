@@ -6962,6 +6962,8 @@
         balanceRechargePreview: '预览：1 CNY = {usd} USD',
         subscriptionPaymentMultiplier: '订阅付款倍率',
         subscriptionPaymentMultiplierHint: '订阅应付金额 = 套餐美元价值 ÷ 该倍率',
+        officialPriceCnyRate: '官方价换算汇率',
+        officialPriceCnyRateHint: '用户端按人民币显示时，模型官方美元价按这个汇率换算成人民币对照价。只影响显示，不影响扣费。',
         subscriptionMinDaily: '最低套餐每日额度',
         subscriptionMaxDaily: '最高套餐每日额度',
         subscriptionMinRatioStartDaily: '最低倍率生效额度（USD/天）',

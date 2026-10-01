@@ -929,6 +929,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyBalanceLowNotifyRechargeURL,
 		SettingKeyAccountQuotaNotifyEnabled,
 		SettingBalanceRechargeMult,
+		SettingOfficialPriceCNYRate,
 		SettingKeyChannelMonitorEnabled,
 		SettingKeyChannelMonitorDefaultIntervalSeconds,
 		SettingKeyAvailableChannelsEnabled,
@@ -1005,6 +1006,10 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 	if v, err := strconv.ParseFloat(settings[SettingBalanceRechargeMult], 64); err == nil {
 		balanceRechargeMultiplier = normalizeBalanceRechargeMultiplier(v)
 	}
+	officialPriceCNYRate := DefaultOfficialPriceCNYRate
+	if v, err := strconv.ParseFloat(settings[SettingOfficialPriceCNYRate], 64); err == nil {
+		officialPriceCNYRate = normalizeOfficialPriceCNYRate(v)
+	}
 
 	return &PublicSettings{
 		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
@@ -1056,6 +1061,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		BalanceLowNotifyThreshold:        balanceLowNotifyThreshold,
 		BalanceLowNotifyRechargeURL:      settings[SettingKeyBalanceLowNotifyRechargeURL],
 		BalanceRechargeMultiplier:        balanceRechargeMultiplier,
+		OfficialPriceCNYRate:             officialPriceCNYRate,
 
 		ChannelMonitorEnabled:                !isFalseSettingValue(settings[SettingKeyChannelMonitorEnabled]),
 		ChannelMonitorDefaultIntervalSeconds: parseChannelMonitorInterval(settings[SettingKeyChannelMonitorDefaultIntervalSeconds]),
@@ -1390,6 +1396,7 @@ type PublicSettingsInjectionPayload struct {
 	BalanceLowNotifyThreshold        float64                  `json:"balance_low_notify_threshold"`
 	BalanceLowNotifyRechargeURL      string                   `json:"balance_low_notify_recharge_url"`
 	BalanceRechargeMultiplier        float64                  `json:"balance_recharge_multiplier"`
+	OfficialPriceCNYRate             float64                  `json:"official_price_cny_rate"`
 
 	// Feature flags — MUST match the opt-in/opt-out registry in
 	// frontend/src/utils/featureFlags.ts. Missing a field here is the bug
@@ -1461,6 +1468,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		BalanceLowNotifyThreshold:        settings.BalanceLowNotifyThreshold,
 		BalanceLowNotifyRechargeURL:      settings.BalanceLowNotifyRechargeURL,
 		BalanceRechargeMultiplier:        settings.BalanceRechargeMultiplier,
+		OfficialPriceCNYRate:             settings.OfficialPriceCNYRate,
 
 		ChannelMonitorEnabled:                settings.ChannelMonitorEnabled,
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,

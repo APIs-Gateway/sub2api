@@ -233,6 +233,7 @@ type SystemSettings struct {
 	PaymentBalanceDisabled                bool     `json:"payment_balance_disabled"`
 	PaymentBalanceRechargeMultiplier      float64  `json:"payment_balance_recharge_multiplier"`
 	PaymentSubscriptionPayMultiplier      float64  `json:"payment_subscription_payment_multiplier"`
+	PaymentOfficialPriceCNYRate           float64  `json:"payment_official_price_cny_rate"`
 	PaymentRechargeFeeRate                float64  `json:"payment_recharge_fee_rate"`
 	PaymentCryptoRechargeFeeRate          float64  `json:"payment_crypto_recharge_fee_rate"`
 	PaymentRefundFeeRate                  float64  `json:"payment_refund_fee_rate"`
@@ -358,6 +359,8 @@ type PublicSettings struct {
 
 	// BalanceRechargeMultiplier 让前端把站内额度折算回法币展示（额度 ÷ 倍率）。
 	BalanceRechargeMultiplier float64 `json:"balance_recharge_multiplier"`
+	// OfficialPriceCNYRate 让前端把模型官方美元价换算成人民币对照价（仅展示）。
+	OfficialPriceCNYRate float64 `json:"official_price_cny_rate"`
 
 	ChannelMonitorEnabled                bool `json:"channel_monitor_enabled"`
 	ChannelMonitorDefaultIntervalSeconds int  `json:"channel_monitor_default_interval_seconds"`

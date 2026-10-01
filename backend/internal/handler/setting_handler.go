@@ -96,6 +96,7 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		// 前端靠这个倍率把站内额度折算成法币展示；漏赋值会序列化成 0，
 		// 前端归一化后退化为「1 额度 = 1 法币」，双口径切换器会整个消失。
 		BalanceRechargeMultiplier: settings.BalanceRechargeMultiplier,
+		OfficialPriceCNYRate:      settings.OfficialPriceCNYRate,
 
 		ChannelMonitorEnabled:                settings.ChannelMonitorEnabled,
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,

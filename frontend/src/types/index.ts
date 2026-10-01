@@ -235,6 +235,7 @@ export interface PublicSettings {
   balance_low_notify_threshold: number
   /** 1 单位法币充值可兑多少站内额度，用于把额度折算回法币展示。缺省/损坏为 1（不折算）。 */
   balance_recharge_multiplier?: number
+  official_price_cny_rate?: number
   channel_monitor_enabled: boolean
   channel_monitor_default_interval_seconds: number
   available_channels_enabled: boolean
