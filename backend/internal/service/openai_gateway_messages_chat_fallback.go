@@ -110,12 +110,6 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	convertedEffort := openAICompatAnthropicReasoningEffort(&anthropicReq, upstreamModel, baseEffort)
 	reasoningEffort := &convertedEffort
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
-	var serviceTier *string
-	if chatReq.ServiceTier != "" {
-		st := chatReq.ServiceTier
-		serviceTier = &st
-	}
-
 	chatBody, err := json.Marshal(chatReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat completions request: %w", err)
@@ -133,9 +127,6 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 		return nil, policyErr
 	}
 	chatBody = updatedBody
-	if serviceTier == nil {
-		serviceTier = extractOpenAIServiceTierFromBody(chatBody)
-	}
 
 	logger.L().Debug("openai messages: forwarding via raw chat completions",
 		zap.Int64("account_id", account.ID),
@@ -159,6 +150,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	}
 	targetURL := buildOpenAIChatCompletionsURL(validatedURL)
 	chatBody = ensureDeepSeekChatReasoningPlaceholders(targetURL, chatBody)
+	serviceTier := extractOpenAIServiceTierFromBody(chatBody)
 
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(chatBody))

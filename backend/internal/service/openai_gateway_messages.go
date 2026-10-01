@@ -267,6 +267,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, policyErr
 	}
 	responsesBody = updatedBody
+	// Billing follows the tier sent upstream after the Fast policy, including
+	// a removed tier when an Anthropic Fast request is filtered.
+	serviceTier := extractOpenAIServiceTierFromBody(responsesBody)
 
 	// 5. Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
@@ -411,17 +414,18 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, handleErr
 	}
 
-	// Propagate ServiceTier and ReasoningEffort to result for billing
+	// Partial streams can return usage alongside an error. Keep their billing
+	// tier aligned with the outbound body, even when the stream is incomplete.
+	if result != nil {
+		result.ServiceTier = serviceTier
+	}
+	// Preserve success-only compatibility side effects and effort propagation.
 	if handleErr == nil && result != nil {
 		if compatContinuationEnabled && promptCacheKey != "" && result.ResponseID != "" {
 			s.bindOpenAICompatSessionResponseID(ctx, c, account, promptCacheKey, result.ResponseID)
 		}
 		if promptCacheKey != "" && anthropicDigestChain != "" {
 			s.bindOpenAICompatAnthropicDigestPromptCacheKey(account, apiKeyID, anthropicDigestChain, promptCacheKey, anthropicMatchedDigestChain)
-		}
-		if responsesReq.ServiceTier != "" {
-			st := responsesReq.ServiceTier
-			result.ServiceTier = &st
 		}
 		if responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
 			re := responsesReq.Reasoning.Effort
