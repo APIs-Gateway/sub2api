@@ -128,11 +128,24 @@ describe('KeyHiddenChainDialog', () => {
         { hop: 0, group_id: 88, source: 'admin_head', eligible: true },
         { hop: 1, group_id: 16, source: 'primary', eligible: true }
       ],
-      skipped: [{ group_id: 21, source: 'user', skip_reason: 'group_disabled' }]
+      skipped: [
+        { group_id: 21, source: 'user', skip_reason: 'group_inactive' },
+        { group_id: 22, source: 'user', skip_reason: 'not_allowed' },
+        { group_id: 23, source: 'admin', skip_reason: 'group_missing' },
+        { group_id: 24, source: 'user', skip_reason: 'invalid_platform' },
+        { group_id: 25, source: 'user', skip_reason: 'some_future_reason' }
+      ]
     })
     expect((w.get('[data-test="note"]').element as HTMLTextAreaElement).value).toBe('513 专属号')
     expect(w.get('[data-test="head-item-88"]').text()).toContain('hovy-513')
-    expect(w.get('[data-test="skipped"]').text()).toContain('已跳过：group_disabled')
+    const skipped = w.get('[data-test="skipped"]').text()
+    expect(skipped).toContain('已跳过：分组已停用')
+    expect(skipped).toContain('已跳过：用户无权使用')
+    expect(skipped).toContain('已跳过：分组已删除')
+    expect(skipped).toContain('已跳过：与主分组平台不一致')
+    // 未知值回落到通用文案，不显示原始代码
+    expect(skipped).toContain('已跳过：不可用')
+    expect(skipped).not.toMatch(/group_|not_allowed|invalid_platform|some_future_reason/)
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     deleteChain.mockResolvedValue(undefined)
     await w.get('[data-test="clear"]').trigger('click')

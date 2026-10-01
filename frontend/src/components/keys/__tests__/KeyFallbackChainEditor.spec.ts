@@ -277,6 +277,150 @@ describe('KeyFallbackChainEditor', () => {
     expect(ids(w)).toEqual([21, 22, 23])
   })
 
+  it('链里有不可用项时，拖动其他项照常整条提交，不会悄悄丢掉不可用项', async () => {
+    const w = await mountEditor()
+    replaceChain.mockImplementation((_id: number, g: number[]) => Promise.resolve(replyFor(makeChain(), g)))
+    const d = draggable(w)
+    const list = d.props('modelValue') as KeyFallbackChainItem[]
+    d.vm.$emit('update:modelValue', [list[1], list[0], list[2]])
+    await flushPromises()
+    d.vm.$emit('end')
+    await flushPromises()
+    // 22（已停用）、23（不可用）都还在提交里
+    expect(replaceChain).toHaveBeenCalledWith(7, [22, 21, 23])
+    expect(w.find('[data-test="action-error"]').exists()).toBe(false)
+    expect(w.find('[data-test="item-error"]').exists()).toBe(false)
+    expect(ids(w)).toEqual([22, 21, 23])
+  })
+
+  it('不可用项有明确的「移除」入口，点了才移除；可用项没有', async () => {
+    const w = await mountEditor()
+    expect(w.find('[data-test="fallback-item-21"] [data-test="remove-unusable"]').exists()).toBe(false)
+    expect(w.get('[data-test="fallback-item-22"] [data-test="reason"]').text()).toContain('建议移除')
+    expect(replaceChain).not.toHaveBeenCalled()
+    replaceChain.mockImplementation((_id: number, g: number[]) => Promise.resolve(replyFor(makeChain(), g)))
+    await w.get('[data-test="fallback-item-22"] [data-test="remove-unusable"]').trigger('click')
+    await flushPromises()
+    expect(replaceChain).toHaveBeenCalledWith(7, [21, 23])
+  })
+
+  it('后端在错误里带 group_id 时，原因标在对应那一项上，不出现整体提示', async () => {
+    const w = await mountEditor()
+    replaceChain.mockRejectedValue({
+      status: 404,
+      reason: 'FALLBACK_GROUP_UNAVAILABLE',
+      message: 'internal detail',
+      metadata: { group_id: '22' }
+    })
+    await w.get('[data-test="fallback-item-21"] [data-test="remove"]').trigger('click')
+    await flushPromises()
+    expect(w.get('[data-test="fallback-item-22"] [data-test="item-error"]').text()).toBe('该分组已停用')
+    expect(w.find('[data-test="fallback-item-21"] [data-test="item-error"]').exists()).toBe(false)
+    expect(w.find('[data-test="fallback-item-23"] [data-test="item-error"]').exists()).toBe(false)
+    expect(w.find('[data-test="action-error"]').exists()).toBe(false)
+    // 不替用户删：链仍是服务器上的 21、22、23
+    expect(ids(w)).toEqual([21, 22, 23])
+    // 下一次保存成功后错误消失
+    replaceChain.mockImplementation((_id: number, g: number[]) => Promise.resolve(replyFor(makeChain(), g)))
+    await w.get('[data-test="fallback-item-22"] [data-test="remove-unusable"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-test="item-error"]').exists()).toBe(false)
+  })
+
+  it('错误没有 group_id、或 group_id 不在链里（刚加的被拒）时，退回整体提示', async () => {
+    const w = await mountEditor()
+    replaceChain.mockRejectedValue({ status: 404, reason: 'FALLBACK_GROUP_UNAVAILABLE', metadata: { group_id: 30 } })
+    await w.get('[data-test="add-button"]').trigger('click')
+    await w.get('[data-test="pick-30"]').trigger('click')
+    await flushPromises()
+    expect(w.get('[data-test="action-error"]').text()).toBe('该分组已停用')
+    expect(w.find('[data-test="item-error"]').exists()).toBe(false)
+
+    replaceChain.mockRejectedValue({ status: 403, reason: 'FALLBACK_GROUP_NOT_ALLOWED' })
+    await w.get('[data-test="fallback-item-21"] [data-test="remove"]').trigger('click')
+    await flushPromises()
+    expect(w.get('[data-test="action-error"]').text()).toBe('你没有该分组的使用权限')
+    expect(w.find('[data-test="item-error"]').exists()).toBe(false)
+  })
+
+  it('保存失败后向服务器重新拉取真实的链：请求其实已落库时界面跟着服务器走', async () => {
+    const w = await mountEditor()
+    expect(getChain).toHaveBeenCalledTimes(1)
+    replaceChain.mockRejectedValue({ status: 0, message: 'Network error' })
+    // 服务器上其实已经删掉了 21
+    getChain.mockResolvedValueOnce(replyFor(makeChain(), [22, 23]))
+    await w.get('[data-test="fallback-item-21"] [data-test="remove"]').trigger('click')
+    await flushPromises()
+    expect(getChain).toHaveBeenCalledTimes(2)
+    expect(ids(w)).toEqual([22, 23])
+    expect(w.get('[data-test="action-error"]').text()).toBe('保存失败，请稍后重试')
+    // 静默刷新：没有骨架屏
+    expect(w.find('[data-test="editor-loading"]').exists()).toBe(false)
+  })
+
+  it('拖动保存失败：回到服务器上的顺序', async () => {
+    const w = await mountEditor()
+    replaceChain.mockRejectedValue({ status: 500, message: 'boom' })
+    const d = draggable(w)
+    const list = d.props('modelValue') as KeyFallbackChainItem[]
+    d.vm.$emit('update:modelValue', [list[2], list[0], list[1]])
+    await flushPromises()
+    d.vm.$emit('end')
+    await flushPromises()
+    expect(getChain).toHaveBeenCalledTimes(2)
+    expect(ids(w)).toEqual([21, 22, 23])
+  })
+
+  it('409 主分组被改：重新拉 Key 和链，主分组以服务器为准，并提示已刷新', async () => {
+    const w = await mountEditor()
+    replaceChain.mockRejectedValue({ status: 409, reason: 'FALLBACK_KEY_CHANGED', message: 'key changed' })
+    const fresh = makeChain({
+      items: [item(40, 'Codex Team', 0), item(21, 'Codex 稳定', 1)],
+      available: [{ group_id: 30, name: 'Codex Pro', status: 'active', rate_multiplier: 3, effective_multiplier: 3, reference_price: price(3.75, 30) }]
+    })
+    getChain.mockResolvedValueOnce(fresh)
+    await w.get('[data-test="fallback-item-21"] [data-test="remove"]').trigger('click')
+    await flushPromises()
+    expect(getChain).toHaveBeenCalledTimes(2)
+    expect(w.get('[data-test="primary-item"]').text()).toContain('Codex Team')
+    expect(w.get('[data-test="primary-item"]').text()).not.toContain('Codex Plus')
+    expect(ids(w)).toEqual([21])
+    expect(w.get('[data-test="action-error"]').text()).toBe('密钥刚刚被修改，已为你刷新，请重试')
+    // 之后的保存基于新的主分组继续可用
+    replaceChain.mockResolvedValue(replyFor(fresh, []))
+    await w.get('[data-test="fallback-item-21"] [data-test="remove"]').trigger('click')
+    await flushPromises()
+    expect(replaceChain).toHaveBeenLastCalledWith(7, [])
+  })
+
+  it('刷新本身失败时保持本地快照，仍给出错误提示', async () => {
+    const w = await mountEditor()
+    replaceChain.mockRejectedValue({ status: 409, reason: 'FALLBACK_KEY_CHANGED' })
+    getChain.mockRejectedValueOnce({ status: 500, message: 'boom' })
+    await w.get('[data-test="fallback-item-21"] [data-test="remove"]').trigger('click')
+    await flushPromises()
+    expect(ids(w)).toEqual([21, 22, 23])
+    expect(w.get('[data-test="action-error"]').text()).toBe('密钥刚刚被修改，请重新打开后再试')
+  })
+
+  it('保存进行中再次触发，不会发出第二个请求', async () => {
+    const w = await mountEditor()
+    let resolve!: (v: KeyFallbackChain) => void
+    replaceChain.mockReturnValue(new Promise<KeyFallbackChain>((r) => (resolve = r)))
+    await w.get('[data-test="fallback-item-21"] [data-test="remove"]').trigger('click')
+    await w.get('[data-test="fallback-item-22"] [data-test="remove"]').trigger('click')
+    expect(replaceChain).toHaveBeenCalledTimes(1)
+    resolve(replyFor(makeChain(), [22, 23]))
+    await flushPromises()
+  })
+
+  it('priced=true 但缺美元价时按「未定价」显示，不出现 $0.000', async () => {
+    const chain = makeChain()
+    chain.items[1].reference_price = { priced: true }
+    const w = await mountEditor(chain)
+    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('未定价')
+  })
+
   it('未知错误统一提示保存失败，不透出后端 message', async () => {
     const w = await mountEditor()
     replaceChain.mockRejectedValue({ status: 500, message: 'pq: deadlock detected' })

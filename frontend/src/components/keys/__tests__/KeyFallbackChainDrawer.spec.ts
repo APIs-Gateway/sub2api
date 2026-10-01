@@ -56,7 +56,7 @@ describe('KeyFallbackChainDrawer', () => {
     expect(w.find('[data-test="platform-anthropic"]').exists()).toBe(false)
     expect(w.get('[data-test="key-1"] [data-test="key-summary"]').text()).toBe('1 个兜底分组')
     expect(w.get('[data-test="key-2"] [data-test="key-summary"]').text()).toBe('未设置兜底')
-    expect(w.get('[data-test="intro"]').text()).toContain('按哪个分组的价格计费')
+    expect(w.get('[data-test="intro"]').text()).toContain('就按该分组的价格计费')
   })
 
   it('从行内入口打开时直接展开那把 Key，点别的 Key 切换', async () => {

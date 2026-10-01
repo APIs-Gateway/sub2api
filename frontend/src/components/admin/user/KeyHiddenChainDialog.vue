@@ -177,7 +177,7 @@
             class="text-xs text-amber-700 dark:text-amber-400"
           >
             {{ groupName(sk.group_id) }}
-            {{ t('keyFallback.admin.skipped', { reason: sk.skip_reason }) }}
+            {{ t('keyFallback.admin.skipped', { reason: skipReasonText(sk.skip_reason) }) }}
           </li>
         </ul>
       </section>
@@ -260,6 +260,10 @@ const groupMap = computed(() => new Map(props.groups.map((g) => [g.id, g])))
 const groupName = (id: number) =>
   groupMap.value.get(id)?.name ?? t('keyFallback.admin.unknownGroup', { id })
 const groupRate = (id: number) => groupMap.value.get(id)?.rate_multiplier ?? 1
+/** 后端 skip_reason 只有这四个值；其余（含将来新增的）一律显示「不可用」 */
+const KNOWN_SKIP_REASONS = ['group_missing', 'group_inactive', 'invalid_platform', 'not_allowed']
+const skipReasonText = (reason: string) =>
+  t(`keyFallback.admin.skipReason.${KNOWN_SKIP_REASONS.includes(reason) ? reason : 'unknown'}`)
 const rateText = (rate: number) => `${rate}x`
 
 const primaryRate = computed(() =>

@@ -133,6 +133,29 @@
               </div>
               <PriceLine :item="item" />
               <ReasonLine :item="item" />
+              <div
+                v-if="!item.usable"
+                class="mt-1.5"
+              >
+                <button
+                  type="button"
+                  class="text-xs font-medium text-amber-800 underline underline-offset-2 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 dark:text-amber-300"
+                  :disabled="saving"
+                  :aria-label="t('keyFallback.editor.remove', { name: item.name })"
+                  data-test="remove-unusable"
+                  @click="removeItem(item.group_id)"
+                >
+                  {{ t('keyFallback.editor.removeUnusable') }}
+                </button>
+              </div>
+              <p
+                v-if="itemErrors[item.group_id]"
+                class="mt-1.5 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300"
+                role="alert"
+                data-test="item-error"
+              >
+                {{ itemErrors[item.group_id] }}
+              </p>
             </div>
           </div>
         </VueDraggable>
@@ -206,14 +229,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, ref, watch, type PropType } from 'vue'
+import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { keyFallbackAPI } from '@/api/keyFallback'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
-import { fallbackErrorMessage } from '@/utils/keyFallbackError'
+import { extractApiErrorCode, extractApiErrorMetadata } from '@/utils/apiError'
+import { fallbackErrorMessage, REFRESH_ON_ERROR } from '@/utils/keyFallbackError'
 import type {
   KeyFallbackAvailableGroup,
   KeyFallbackChain,
@@ -235,6 +259,8 @@ const loadError = ref('')
 const saving = ref(false)
 const justSaved = ref(false)
 const actionError = ref('')
+/** 后端指明了出错分组时，错误标在对应那一项上（key 为 group_id） */
+const itemErrors = ref<Record<number, string>>({})
 const pickerOpen = ref(false)
 const localFallbacks = ref<KeyFallbackChainItem[]>([])
 const addHintId = `fallback-add-hint-${props.keyId}`
@@ -291,6 +317,7 @@ async function load() {
 }
 
 onMounted(load)
+onBeforeUnmount(() => clearTimeout(savedTimer))
 watch(
   () => props.keyId,
   () => {
@@ -298,15 +325,34 @@ watch(
     localFallbacks.value = []
     pickerOpen.value = false
     actionError.value = ''
+    itemErrors.value = {}
     load()
   }
 )
 
-/** 整条替换；失败时恢复到上一次成功保存的状态并提示原因 */
+/** 失败后静默重新读取这把 Key 的真实链状态；不显示骨架屏，读取失败就保持当前界面 */
+async function refreshSilently(): Promise<KeyFallbackChain | null> {
+  const version = ++loadVersion
+  try {
+    const res = await keyFallbackAPI.getChain(props.keyId)
+    if (version !== loadVersion) return null
+    chain.value = res
+    syncLocal(res)
+    return res
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 整条替换：照常提交整条链，不替用户删掉不可用项。
+ * 失败时先回到本地快照，再向服务器重新拉一次真实状态（请求可能已落库，或主分组已被改）。
+ */
 async function persist(nextIds: number[]) {
   if (saving.value || !chain.value) return
   saving.value = true
   actionError.value = ''
+  itemErrors.value = {}
   justSaved.value = false
   clearTimeout(savedTimer)
   try {
@@ -318,7 +364,23 @@ async function persist(nextIds: number[]) {
     emit('changed', res)
   } catch (err) {
     syncLocal(chain.value)
-    actionError.value = fallbackErrorMessage(err, t, 'keyFallback.editor.saveFailed')
+    const fresh = await refreshSilently()
+    if (fresh) emit('changed', fresh)
+    const code = extractApiErrorCode(err)
+    const message = fallbackErrorMessage(
+      err,
+      t,
+      'keyFallback.editor.saveFailed',
+      fresh && code && REFRESH_ON_ERROR.has(code) ? 'refreshed' : undefined
+    )
+    // 后端在 metadata 里带了 group_id：标在对应那一项上；那一项已不在链里（比如刚加的被拒）或没有 group_id，就用整体提示
+    const raw = extractApiErrorMetadata(err)?.group_id
+    const gid = raw == null ? NaN : Number(raw)
+    if (Number.isFinite(gid) && localFallbacks.value.some((i) => i.group_id === gid)) {
+      itemErrors.value = { [gid]: message }
+    } else {
+      actionError.value = message
+    }
   } finally {
     saving.value = false
   }
@@ -398,14 +460,15 @@ const PriceLine = defineComponent({
       // 选择列表里整行是一个 button，里面只能放短语内容，所以用 span
       const tag = p.bare ? 'span' : 'p'
       const cls = ['text-xs tabular-nums text-gray-500 dark:text-gray-400', p.bare ? 'block' : 'mt-1.5']
-      if (!price || !price.priced) {
+      const hasUsd = typeof price?.input_usd_per_mtok === 'number' && typeof price?.output_usd_per_mtok === 'number'
+      if (!price || !price.priced || !hasUsd) {
         return h(tag, { class: cls, 'data-test': 'price' }, t('keyFallback.editor.unpriced'))
       }
       // 人民币用服务端给的余额价口径（cny），不在前端自己乘倍率或汇率；
       // 全站切到美元（含 free 站）或没有 cny 时，显示同一价格的美元口径。
       const useFiat = isFiat.value && !!price.cny
-      const input = useFiat ? formatFiat(price.cny!.input_per_mtok) : formatUsd(price.input_usd_per_mtok, 3)
-      const output = useFiat ? formatFiat(price.cny!.output_per_mtok) : formatUsd(price.output_usd_per_mtok, 3)
+      const input = useFiat ? formatFiat(price.cny!.input_per_mtok) : formatUsd(price.input_usd_per_mtok!, 3)
+      const output = useFiat ? formatFiat(price.cny!.output_per_mtok) : formatUsd(price.output_usd_per_mtok!, 3)
       return h(tag, { class: cls, 'data-test': 'price' }, [
         t('keyFallback.editor.input', { price: input }),
         h('span', { class: 'text-gray-300 dark:text-dark-500', 'aria-hidden': 'true' }, ' / '),
@@ -514,8 +577,8 @@ const ReasonLine = defineComponent({
 }
 .chain-icon-btn {
   display: inline-flex;
-  height: 2rem;
-  width: 2rem;
+  height: 2.5rem;
+  width: 2.5rem;
   align-items: center;
   justify-content: center;
   border-radius: 0.375rem;
