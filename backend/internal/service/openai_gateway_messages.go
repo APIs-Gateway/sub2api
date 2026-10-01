@@ -1072,14 +1072,17 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			)
 		}
 	}
+	clientRequestCanceled := func() bool {
+		return c.Request != nil && c.Request.Context().Err() != nil
+	}
 	streamReadErr := func(err error) (*OpenAIForwardResult, error) {
-		handleScanErr(err)
+		if clientRequestCanceled() {
+			clientDisconnected = true
+		} else {
+			handleScanErr(err)
+		}
 		if !clientDisconnected && clientOutputStarted {
-			var requestCtx context.Context
-			if c.Request != nil {
-				requestCtx = c.Request.Context()
-			}
-			if shouldClassifyOpenAIUpstreamStreamReadError(err, requestCtx) {
+			if shouldClassifyOpenAIUpstreamStreamReadError(err) {
 				message := "Upstream response stream was interrupted"
 				s.recordOpenAIMessagesStreamUpstreamError(c, account, requestID, "stream_read_error", message)
 				writeIncompleteStreamError(message)
@@ -1088,6 +1091,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
 	}
 	missingTerminalErr := func() (*OpenAIForwardResult, error) {
+		if clientRequestCanceled() {
+			clientDisconnected = true
+		}
 		if clientDisconnected {
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete: missing terminal event")
 		}
