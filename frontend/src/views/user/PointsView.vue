@@ -89,13 +89,14 @@
           <div v-if="overview.config.redeem_balance_on" class="card p-6 space-y-4">
             <div>
               <h3 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('points.redeemBalance.title') }}</h3>
-              <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">{{ t('points.redeemBalance.desc') }}</p>
+              <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">{{ isFiat ? t('points.redeemBalance.descFiat') : t('points.redeemBalance.desc') }}</p>
             </div>
             <div class="space-y-2">
               <label class="input-label">{{ t('points.redeemBalance.points') }}</label>
               <input v-model.number="redeemBalancePoints" type="number" min="1" class="input" />
-              <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.estimate', { amount: formatCurrency(redeemBalanceEstimate) }) }}</p>
-              <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.rateHint', { peg: formatCurrency(peg, 'CNY'), rate: balanceRedeemRate.toFixed(2) }) }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.estimate', { amount: formatWallet(redeemBalanceEstimate) }) }}</p>
+              <p v-if="isFiat" class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.rateHintFiat', { peg: formatCurrency(peg, 'CNY') }) }}</p>
+              <p v-else class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.rateHint', { peg: formatCurrency(peg, 'CNY'), rate: balanceRedeemRate.toFixed(2) }) }}</p>
             </div>
             <button class="btn btn-primary w-full" :disabled="busy || !redeemBalancePoints" @click="onRedeemBalance">{{ t('points.redeemBalance.submit') }}</button>
           </div>
@@ -175,7 +176,7 @@
                     :aria-pressed="selectedPlanDaily === amount"
                     @click="selectedPlanDaily = amount"
                   >
-                    {{ t('points.redeemPlan.dailyOption', { d: amount }) }}
+                    {{ isFiat ? formatPlanQuota(amount, dailyUnitPrice(amount)) : t('points.redeemPlan.dailyOption', { d: amount }) }}
                   </button>
                 </div>
               </div>
@@ -206,7 +207,7 @@
                 <p v-if="planQuoteError" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ planQuoteError }}</p>
                 <div class="mt-1 flex items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-500">
                   <span>{{ t('points.redeemPlan.capSummary') }}</span>
-                  <span class="num">{{ formatCurrency(selectedPlan.weekly_cap_usd) }} / {{ formatCurrency(selectedPlan.monthly_cap_usd) }}</span>
+                  <span class="num">{{ formatPlanQuota(selectedPlan.weekly_cap_usd, selectedPlan.unit_price) }} / {{ formatPlanQuota(selectedPlan.monthly_cap_usd, selectedPlan.unit_price) }}</span>
                 </div>
               </div>
               <button
@@ -277,6 +278,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { formatDateTime } from '@/utils/format'
 import { formatCount, formatCurrencyAmount as formatCurrency } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import NumText from '@/components/common/NumText.vue'
 import type { UserSubscription } from '@/types'
 
@@ -284,6 +286,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const subscriptionStore = useSubscriptionStore()
 const { copyToClipboard } = useClipboard()
+const { isFiat, formatWallet, formatSubscription, formatUsd } = useCurrencyDisplay()
 
 const loading = ref(true)
 const busy = ref(false)
@@ -367,6 +370,16 @@ const inviteLink = computed(() => {
   if (typeof window === 'undefined') return `/register?aff=${encodeURIComponent(code)}`
   return `${window.location.origin}/register?aff=${encodeURIComponent(code)}`
 })
+
+/** 套餐额度金额：人民币模式按该档套餐的单价折算，美元模式沿用原来的美元额度。 */
+function formatPlanQuota(credits: number, unitPrice: number): string {
+  return isFiat.value ? formatSubscription(credits, unitPrice) : formatUsd(credits)
+}
+
+/** 某个每日额度档位的单价（同一档不同有效期单价相同）。 */
+function dailyUnitPrice(daily: number): number {
+  return plans.value.find((plan) => plan.daily_amount_usd === daily)?.unit_price ?? 0
+}
 
 function formatPercent(value: number): string {
   const rounded = Math.round(Number(value || 0) * 100) / 100
@@ -480,7 +493,9 @@ async function onRedeemPlan(plan: PointsPlanOption): Promise<void> {
     appStore.showError(planQuoteError.value)
     return
   }
-  const planName = t('points.redeemPlan.planTitle', { d: plan.daily_amount_usd })
+  const planName = isFiat.value
+    ? t('points.redeemPlan.planTitleFiat', { d: formatPlanQuota(plan.daily_amount_usd, plan.unit_price) })
+    : t('points.redeemPlan.planTitle', { d: plan.daily_amount_usd })
   if (!window.confirm(t('points.redeemPlan.confirm', {
     action: selectedPlanSubmitLabel.value,
     points: formatCount(selectedPlanPointsPrice.value),

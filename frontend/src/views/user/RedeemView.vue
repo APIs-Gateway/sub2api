@@ -10,7 +10,7 @@
             <Icon name="creditCard" size="xl" class="text-white" />
           </div>
           <p class="text-sm font-medium text-gray-300">{{ t('redeem.currentBalance') }}</p>
-          <NumText tier="primary" class="mt-2 block text-white" :text="formatUsdAmount(user?.balance || 0)" />
+          <NumText tier="primary" class="mt-2 block text-white" :text="formatWallet(user?.balance || 0)" />
           <p class="mt-2 text-sm text-gray-300">
             {{ t('redeem.concurrency') }}:
             <span class="num">{{ user?.concurrency || 0 }}</span>
@@ -100,7 +100,7 @@
                   <div class="mt-3 space-y-1">
                     <p v-if="redeemResult.type === 'balance'" class="font-medium">
                       {{ t('redeem.added') }}:
-                      <span class="num">{{ formatUsdAmount(redeemResult.value) }}</span>
+                      <span class="num">{{ formatWallet(redeemResult.value) }}</span>
                     </p>
                     <p v-else-if="redeemResult.type === 'concurrency'" class="font-medium">
                       {{ t('redeem.added') }}:
@@ -118,7 +118,7 @@
                     </p>
                     <p v-if="redeemResult.new_balance !== undefined">
                       {{ t('redeem.newBalance') }}:
-                      <span class="num font-semibold">{{ formatUsdAmount(redeemResult.new_balance) }}</span>
+                      <span class="num font-semibold">{{ formatWallet(redeemResult.new_balance) }}</span>
                     </p>
                     <p v-if="redeemResult.new_concurrency !== undefined">
                       {{ t('redeem.newConcurrency') }}:
@@ -325,9 +325,10 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import NumText from '@/components/common/NumText.vue'
 import { formatDateTime } from '@/utils/format'
-import { formatUsdAmount } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 
 const { t } = useI18n()
+const { formatWallet } = useCurrencyDisplay()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 const subscriptionStore = useSubscriptionStore()
@@ -383,7 +384,7 @@ const getHistoryItemTitle = (item: RedeemHistoryItem) => {
 const formatHistoryValue = (item: RedeemHistoryItem) => {
   if (isBalanceType(item.type)) {
     const sign = item.value >= 0 ? '+' : ''
-    return `${sign}${formatUsdAmount(item.value)}`
+    return `${sign}${formatWallet(item.value)}`
   } else if (isSubscriptionType(item.type)) {
     // 订阅类型显示有效天数和分组名称
     const days = item.validity_days || Math.round(item.value)

@@ -180,7 +180,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import NumText from '@/components/common/NumText.vue'
-import { formatCount, formatUsdAmount } from '@/utils/numberFormat'
+import { formatCount } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import ProfileAvatarCard from '@/components/user/profile/ProfileAvatarCard.vue'
 import ProfileEditForm from '@/components/user/profile/ProfileEditForm.vue'
 import ProfileIdentityBindingsSection from '@/components/user/profile/ProfileIdentityBindingsSection.vue'
@@ -206,6 +207,7 @@ const props = withDefaults(defineProps<{
 })
 
 const { t } = useI18n()
+const { formatWallet } = useCurrencyDisplay()
 
 function normalizeBindingStatus(binding: boolean | UserAuthBindingStatus | undefined): boolean | null {
   if (typeof binding === 'boolean') {
@@ -271,7 +273,7 @@ const providerLabels = computed<Record<UserAuthProvider, string>>(() => ({
 }))
 
 function formatCurrency(value: number): string {
-  return formatUsdAmount(value)
+  return formatWallet(value)
 }
 
 function normalizeProvider(value: string): UserAuthProvider | null {
