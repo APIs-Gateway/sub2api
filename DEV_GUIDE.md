@@ -263,19 +263,25 @@ psql -U sub2api -h 127.0.0.1 -d sub2api -f migration.sql
 
 ### Git 操作
 
+`main` 是受保护分支，只能通过 PR 合入，**不要直接 `git push origin main`**。
+新建分支一律先取最新远端，再显式从 `origin/main` 创建，不要用裸 `git checkout -b` / `git switch -c`
+（它们会从当前 HEAD 起分支，可能带上无关提交）。
+
 ```bash
-# 同步上游
-git fetch upstream
-git checkout main
+# 同步上游：在分支上做，推分支、开 PR，不要直接改 main。
+# 上游改动量大时按 docs/specs/upstream-sync-phase0.md 分批做小 PR，不要整体合并。
+git fetch --all --prune
+git switch -c sync/upstream-<日期> origin/main
 git merge upstream/main
-git push origin main
+git push -u origin sync/upstream-<日期>
 
 # 创建功能分支
-git checkout -b feature/xxx
+git fetch --all --prune
+git switch -c feature/xxx origin/main
 
 # Rebase 到最新 main
-git fetch upstream
-git rebase upstream/main
+git fetch --all --prune
+git rebase origin/main
 ```
 
 ### 前端操作
