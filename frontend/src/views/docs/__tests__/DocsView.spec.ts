@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 
@@ -11,6 +9,8 @@ import { OPENAI_CC_SWITCH_CODEX_MODEL } from '@/utils/ccswitchImport'
 import DocsView from '../DocsView.vue'
 import DocsAiPrompts from '../DocsAiPrompts.vue'
 import { DOC_GROUPS } from '../sections'
+import { AI_TOOLS, aiToolUrl } from '../aiTools'
+import { buildMachineFiles, fillMachineText, fullMarkdown } from '../docsMachine'
 import aiPromptsRaw from '../ai-prompts.md?raw'
 import {
   ENDPOINT_STORAGE_KEY,
@@ -22,10 +22,11 @@ import {
   renderSection,
   resolveApiBases,
   resolveEndpointOptions,
+  splitSection,
   type DocVars,
 } from '../docsRender'
 
-const llmsRaw = readFileSync(resolve(__dirname, '../../../../public/llms.txt'), 'utf8')
+const machineFiles = Object.values(buildMachineFiles())
 
 const { getPublicSettings, currentLocale } = vi.hoisted(() => ({
   getPublicSettings: vi.fn(),
@@ -142,7 +143,7 @@ describe('DocsView', () => {
       const sources = [
         ...DOC_GROUPS.flatMap((g) => g.sections.map((s) => s.raw)),
         aiPromptsRaw,
-        llmsRaw,
+        ...machineFiles,
       ]
       const allowedHosts = ['github.com', 'nodejs.org', 'cherry-ai.com']
       for (const source of sources) {
@@ -166,7 +167,7 @@ describe('DocsView', () => {
       for (const customEndpoints of [undefined, []]) {
         const wrapper = await mountDocs('https://api.first.test', customEndpoints)
         expect(wrapper.find('[data-testid="docs-endpoints"]').exists()).toBe(false)
-        expect(wrapper.find('input[type="radio"]').exists()).toBe(false)
+        expect(wrapper.find('input[name="docs-endpoint"]').exists()).toBe(false)
         wrapper.unmount()
       }
     })
@@ -227,7 +228,20 @@ describe('DocsView', () => {
       expect(wrapper.get('#codex').text()).toContain('base_url = "https://cdn.second.test/v1"')
       expect(wrapper.get('#api-info').text()).toContain('curl https://cdn.second.test/v1/models')
 
+      // 「让 AI 帮你接入」：一句话里带着所选地址，复制整份文档、完整提示词里的地址也跟着变
       await wrapper.get('[data-testid="docs-ai-copy"]').trigger('click')
+      await flushPromises()
+      expect(writeText.mock.calls.at(-1)![0]).toContain('/llms.txt?endpoint=https://cdn.second.test')
+
+      await wrapper.get('[data-testid="docs-ai-copy-full"]').trigger('click')
+      await flushPromises()
+      const fullDoc = writeText.mock.calls.at(-1)![0] as string
+      expect(fullDoc).toContain('base_url = "https://cdn.second.test/v1"')
+      expect(fullDoc).not.toContain('api.first.test')
+      expect(fullDoc).not.toContain('{{')
+
+      await wrapper.get('[data-testid="docs-ai-more-toggle"]').trigger('click')
+      await wrapper.get('[data-testid="docs-ai-copy-prompt"]').trigger('click')
       await flushPromises()
       expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining('接入地址是 https://cdn.second.test（OpenAI 兼容客户端用 https://cdn.second.test/v1）'))
       expect(writeText.mock.calls.at(-1)![0]).not.toContain('api.first.test')
@@ -358,7 +372,7 @@ describe('DocsView', () => {
       const wrapper = await mountDocs('https://api.first.test')
       const article = wrapper.get('[data-testid="docs-article"]')
       const rendered = [article.text(), article.html()]
-      const sources = [...DOC_GROUPS.flatMap((g) => g.sections.map((s) => s.raw)), aiPromptsRaw, llmsRaw]
+      const sources = [...DOC_GROUPS.flatMap((g) => g.sections.map((s) => s.raw)), aiPromptsRaw, ...machineFiles]
 
       for (const banned of ['No available accounts', 'Cloudflare']) {
         for (const text of [...rendered, ...sources]) {
@@ -516,51 +530,202 @@ describe('AI prompts', () => {
     site: 'Hiyo',
     model: 'example-model',
     llms: 'https://site.test/llms.txt',
+    origin: 'https://site.test',
   }
 
-  it('never contains anything that looks like a real key', () => {
-    const prompts = parseAiPrompts(aiPromptsRaw, vars)
-    expect(Object.keys(prompts).sort()).toEqual(['chat', 'claude-code', 'codex', 'general'])
-    for (const prompt of Object.values(prompts)) {
-      expect(prompt).not.toMatch(/sk-[A-Za-z0-9_-]{8,}/)
-      expect(prompt).toContain('sk-你的密钥')
-      expect(prompt).toContain('https://site.test/llms.txt')
-    }
-  })
-
-  it('states the connection address in every prompt', () => {
-    const prompts = parseAiPrompts(aiPromptsRaw, vars)
-    for (const prompt of Object.values(prompts)) {
-      expect(prompt).toContain('接入地址是 https://api.first.test（OpenAI 兼容客户端用 https://api.first.test/v1）')
-    }
-  })
-
-  it('builds the ChatGPT and Claude links from the prompt text', () => {
-    setActivePinia(createPinia())
-    const prompts = parseAiPrompts(aiPromptsRaw, vars)
-    const wrapper = mount(DocsAiPrompts, { props: { prompts } })
-
-    const chatgpt = wrapper.get('[data-testid="docs-ai-chatgpt"]').attributes('href')!
-    const claude = wrapper.get('[data-testid="docs-ai-claude"]').attributes('href')!
-    expect(chatgpt.startsWith('https://chatgpt.com/?q=')).toBe(true)
-    expect(claude.startsWith('https://claude.ai/new?q=')).toBe(true)
-    expect(decodeURIComponent(chatgpt.split('?q=')[1])).toBe(prompts.general)
-    expect(decodeURIComponent(claude.split('?q=')[1])).toBe(prompts.general)
-  })
-
-  it('copies the selected prompt', async () => {
+  const clipboard = () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
     Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
-    const prompts = parseAiPrompts(aiPromptsRaw, vars)
-    const wrapper = mount(DocsAiPrompts, { props: { prompts } })
+    return writeText
+  }
 
-    await wrapper.findAll('[role="tab"]')[1].trigger('click')
-    await wrapper.get('[data-testid="docs-ai-copy"]').trigger('click')
-    await flushPromises()
+  function mountAi(extra: { endpoint?: string; getFullDoc?: () => string } = {}) {
+    return mount(DocsAiPrompts, {
+      props: { vars, promptsRaw: aiPromptsRaw, getFullDoc: () => 'FULL DOC', ...extra },
+      global: { stubs: { Icon: true } },
+    })
+  }
 
-    expect(writeText).toHaveBeenCalledWith(prompts['claude-code'])
-    expect(wrapper.get('[data-testid="docs-ai-copy"]').text()).toBe('已复制')
+  const expectedSentences: Record<string, string> = {
+    any: '请按这份文档，帮我把正在用的工具接入 Hiyo：https://site.test/llms.txt',
+    'claude-code': '请按这份文档，帮我把 Claude Code 接入 Hiyo：https://site.test/docs/claude-code.md',
+    codex: '请按这份文档，帮我把 Codex 接入 Hiyo：https://site.test/docs/codex.md',
+    cursor: '请按这份文档，帮我把 Cursor 接入 Hiyo：https://site.test/docs/cursor.md',
+    chat: '请按这份文档，帮我把聊天客户端接入 Hiyo：https://site.test/docs/other-clients.md',
+    code: '请按这份文档，帮我在代码里调用 Hiyo：https://site.test/docs/openai-sdk.md',
+  }
+
+  describe('tool buttons', () => {
+    it('lists the tools from the config as one group of native radios, any tool first', () => {
+      const wrapper = mountAi()
+      const group = wrapper.get('[data-testid="docs-ai-tools"]')
+      expect(group.attributes('role')).toBe('radiogroup')
+      expect(wrapper.get(`#${group.attributes('aria-labelledby')}`).text()).toBe('我要接入：')
+
+      const inputs = group.findAll<HTMLInputElement>('input[type="radio"]')
+      expect(inputs.map((i) => i.element.value)).toEqual(AI_TOOLS.map((tool) => tool.id))
+      expect(new Set(inputs.map((i) => i.element.name)).size).toBe(1)
+      expect(inputs[0].element.checked).toBe(true)
+      expect(group.findAll('label').map((l) => l.text())).toEqual([
+        '任意工具', 'Claude Code', 'Codex', 'Cursor', '聊天客户端', '写代码调用',
+      ])
+    })
+
+    it('writes the sentence for every button with the site name and that tool’s document link', async () => {
+      const wrapper = mountAi()
+      expect(Object.keys(expectedSentences).sort()).toEqual(AI_TOOLS.map((tool) => tool.id).sort())
+      for (const tool of AI_TOOLS) {
+        await wrapper.get(`input[value="${tool.id}"]`).setValue(true)
+        expect(wrapper.get('[data-testid="docs-ai-sentence"]').text()).toBe(expectedSentences[tool.id])
+      }
+    })
+
+    it('points every button at a document that exists', () => {
+      const ids = new Set(DOC_GROUPS.flatMap((g) => g.sections.map((s) => s.id)))
+      for (const tool of AI_TOOLS) {
+        if (tool.section) expect(ids.has(tool.section), tool.id).toBe(true)
+      }
+      expect(aiToolUrl({ id: 'x' }, 'https://s.test')).toBe('https://s.test/llms.txt')
+      expect(aiToolUrl({ id: 'x', section: 'codex' }, 'https://s.test')).toBe('https://s.test/docs/codex.md')
+    })
+
+    it('carries the chosen custom endpoint in the link, always on the site’s own origin', async () => {
+      const wrapper = mountAi({ endpoint: 'https://cdn.second.test' })
+      const suffix = '?endpoint=https://cdn.second.test'
+      expect(wrapper.get('[data-testid="docs-ai-sentence"]').text()).toBe(`${expectedSentences.any}${suffix}`)
+      await wrapper.get('input[value="codex"]').setValue(true)
+      expect(wrapper.get('[data-testid="docs-ai-sentence"]').text()).toBe(`${expectedSentences.codex}${suffix}`)
+    })
+
+    it('has no placeholders and no key-like text in any sentence', async () => {
+      const wrapper = mountAi()
+      for (const tool of AI_TOOLS) {
+        await wrapper.get(`input[value="${tool.id}"]`).setValue(true)
+        const text = wrapper.get('[data-testid="docs-ai-sentence"]').text()
+        expect(text).not.toContain('{')
+        expect(text).not.toMatch(/sk-/)
+      }
+    })
+  })
+
+  describe('copy buttons', () => {
+    it('copies the sentence of the selected tool', async () => {
+      const writeText = clipboard()
+      const wrapper = mountAi()
+      await wrapper.get('input[value="claude-code"]').setValue(true)
+      await wrapper.get('[data-testid="docs-ai-copy"]').trigger('click')
+      await flushPromises()
+
+      expect(writeText).toHaveBeenCalledWith(expectedSentences['claude-code'])
+      expect(wrapper.get('[data-testid="docs-ai-copy"]').text()).toBe('已复制')
+      expect(wrapper.get('[data-testid="docs-ai-copy-full"]').text()).toBe('复制整份文档')
+    })
+
+    it('copies the whole document, and only builds it when asked', async () => {
+      const writeText = clipboard()
+      const getFullDoc = vi.fn(() => 'FULL DOC')
+      const wrapper = mountAi({ getFullDoc })
+      expect(getFullDoc).not.toHaveBeenCalled()
+
+      await wrapper.get('[data-testid="docs-ai-copy-full"]').trigger('click')
+      await flushPromises()
+      expect(getFullDoc).toHaveBeenCalledTimes(1)
+      expect(writeText).toHaveBeenCalledWith('FULL DOC')
+      expect(wrapper.get('[data-testid="docs-ai-copy-full"]').text()).toBe('已复制')
+    })
+
+    it('tells the reader what to do when the AI cannot open the link', () => {
+      const text = mountAi().get('.docs-ai-hint').text()
+      expect(text).toContain('复制整份文档')
+      expect(text).toContain('https://site.test/llms.txt')
+    })
+  })
+
+  describe('more options', () => {
+    it('is collapsed until asked for, and the toggle says what it controls', async () => {
+      const wrapper = mountAi()
+      const toggle = wrapper.get('[data-testid="docs-ai-more-toggle"]')
+      expect(wrapper.find('[data-testid="docs-ai-more"]').exists()).toBe(false)
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+
+      await toggle.trigger('click')
+      expect(toggle.attributes('aria-expanded')).toBe('true')
+      expect(wrapper.get(`#${toggle.attributes('aria-controls')}`).exists()).toBe(true)
+    })
+
+    it('has a full prompt for every tool, with the address and the tool’s document link', async () => {
+      const wrapper = mountAi()
+      await wrapper.get('[data-testid="docs-ai-more-toggle"]').trigger('click')
+      for (const tool of AI_TOOLS) {
+        await wrapper.get(`input[value="${tool.id}"]`).setValue(true)
+        const prompt = wrapper.get('[data-testid="docs-ai-prompt"]').text()
+        expect(prompt, tool.id).toContain(aiToolUrl(tool, 'https://site.test'))
+        expect(prompt, tool.id).toContain('接入地址是 https://api.first.test（OpenAI 兼容客户端用 https://api.first.test/v1）')
+        expect(prompt, tool.id).toContain('sk-你的密钥')
+        expect(prompt, tool.id).not.toMatch(/sk-[A-Za-z0-9_-]{8,}/)
+      }
+    })
+
+    it('has one prompt per tool in ai-prompts.md and nothing left over', () => {
+      const prompts = parseAiPrompts(aiPromptsRaw, vars)
+      expect(Object.keys(prompts).sort()).toEqual(AI_TOOLS.map((tool) => tool.id).sort())
+    })
+
+    it('builds the ChatGPT and Claude links from the prompt text', async () => {
+      const wrapper = mountAi()
+      await wrapper.get('[data-testid="docs-ai-more-toggle"]').trigger('click')
+      await wrapper.get('input[value="codex"]').setValue(true)
+      const prompt = wrapper.get('[data-testid="docs-ai-prompt"]').text()
+
+      const chatgpt = wrapper.get('[data-testid="docs-ai-chatgpt"]').attributes('href')!
+      const claude = wrapper.get('[data-testid="docs-ai-claude"]').attributes('href')!
+      expect(chatgpt.startsWith('https://chatgpt.com/?q=')).toBe(true)
+      expect(claude.startsWith('https://claude.ai/new?q=')).toBe(true)
+      expect(decodeURIComponent(chatgpt.split('?q=')[1]).replace(/\s+/g, ' ')).toBe(prompt.replace(/\s+/g, ' '))
+      expect(decodeURIComponent(claude.split('?q=')[1]).replace(/\s+/g, ' ')).toBe(prompt.replace(/\s+/g, ' '))
+    })
+
+    it('copies the full prompt of the selected tool', async () => {
+      const writeText = clipboard()
+      const wrapper = mountAi()
+      await wrapper.get('[data-testid="docs-ai-more-toggle"]').trigger('click')
+      await wrapper.get('input[value="codex"]').setValue(true)
+      await wrapper.get('[data-testid="docs-ai-copy-prompt"]').trigger('click')
+      await flushPromises()
+
+      expect(writeText).toHaveBeenCalledWith(parseAiPrompts(aiPromptsRaw, { ...vars, llms: 'https://site.test/docs/codex.md' }).codex)
+    })
+  })
+
+  describe('inside the docs page', () => {
+    it('copies the whole document with the current address, including every section', async () => {
+      const writeText = clipboard()
+      const wrapper = await mountDocs('https://api.first.test')
+      await wrapper.get('[data-testid="docs-ai-copy-full"]').trigger('click')
+      await flushPromises()
+
+      const copied = writeText.mock.calls.at(-1)![0] as string
+      expect(copied).toBe(
+        fillMachineText(fullMarkdown(), { site: 'Hiyo', apiBaseUrl: 'https://api.first.test', origin: window.location.origin })
+      )
+      for (const section of DOC_GROUPS.flatMap((g) => g.sections)) {
+        expect(copied).toContain(`# ${splitSection(section.raw).title}`)
+      }
+      expect(copied).toContain('base_url = "https://api.first.test/v1"')
+      expect(copied).toContain('model_provider = "hiyo"')
+      expect(copied).not.toMatch(/\{\{|\}\}/)
+      expect(copied).not.toContain('{#')
+      wrapper.unmount()
+    })
+
+    it('shows the sentence with this site’s name and its own origin', async () => {
+      const wrapper = await mountDocs('https://api.first.test')
+      expect(wrapper.get('[data-testid="docs-ai-sentence"]').text()).toBe(
+        `请按这份文档，帮我把正在用的工具接入 Hiyo：${window.location.origin}/llms.txt`
+      )
+      wrapper.unmount()
+    })
   })
 })
 
@@ -646,22 +811,6 @@ describe('Codex provider placeholders', () => {
     )
     expect(fillVars('{{site}} {{v1}}', { ...vars, site: 'OpenAI' })).toBe('OpenAI https://a.test/v1')
     expect(fillVars('{{provider}}', { ...vars, site: 'OpenAI' })).toBe('openai_site')
-  })
-})
-
-describe('llms.txt', () => {
-  it('writes Codex as a single config.toml with placeholders only', () => {
-    expect(llmsRaw).toContain('experimental_bearer_token = "sk-你的密钥"')
-    expect(llmsRaw).toContain('requires_openai_auth = false')
-    expect(llmsRaw).toContain('base_url = "<API 地址>/v1"')
-    expect(llmsRaw).not.toContain('~/.codex/auth.json')
-    expect(llmsRaw).not.toContain('OPENAI_API_KEY": ')
-  })
-
-  it('does not send the reader to the /docs page, which is not readable without scripts', () => {
-    expect(llmsRaw).not.toContain('<站点地址>')
-    expect(llmsRaw).not.toContain('完整的图文说明')
-    expect(llmsRaw).not.toContain('/docs#')
   })
 })
 

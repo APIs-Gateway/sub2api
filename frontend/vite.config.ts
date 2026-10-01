@@ -2,6 +2,7 @@ import { defineConfig, loadEnv, Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import checker from 'vite-plugin-checker'
 import { resolve } from 'path'
+import { docsMachineFiles } from './vite-plugins/docsMachineFiles'
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -89,7 +90,8 @@ export default defineConfig(({ mode }) => {
       checker({
         vueTsc: true
       }),
-      injectPublicSettings(backendUrl)
+      injectPublicSettings(backendUrl),
+      docsMachineFiles({ root: __dirname, backendUrl })
     ],
   resolve: {
     alias: {

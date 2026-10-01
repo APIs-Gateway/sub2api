@@ -171,12 +171,28 @@
       endpointHint: '访问慢时可以换用其他地址，密钥通用。'
     },
     ai: {
-      tabs: {
-        general: '通用',
-        claudeCode: 'Claude Code',
-        codex: 'Codex',
-        chat: '聊天客户端'
+      iWant: '我要接入：',
+      sentenceNamed: '请按这份文档，帮我把 {tool} 接入 {site}：{url}',
+      tools: {
+        any: {
+          label: '任意工具',
+          sentence: '请按这份文档，帮我把正在用的工具接入 {site}：{url}'
+        },
+        chat: {
+          label: '聊天客户端',
+          sentence: '请按这份文档，帮我把聊天客户端接入 {site}：{url}'
+        },
+        code: {
+          label: '写代码调用',
+          sentence: '请按这份文档，帮我在代码里调用 {site}：{url}'
+        }
       },
+      copySentence: '一键复制',
+      copyFull: '复制整份文档',
+      more: '更多方式',
+      hint: 'AI 打不开网页？点「复制整份文档」，把全文直接粘贴给它。AI 工具也可以直接读取 {url}。',
+      moreTitle: '完整提示词',
+      moreDesc: '把接入地址和要求都写在提示词里，AI 打不开链接时也能用。',
       copyPrompt: '复制提示词',
       openChatgpt: '在 ChatGPT 中打开',
       openClaude: '在 Claude 中打开'

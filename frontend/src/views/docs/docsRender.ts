@@ -25,6 +25,8 @@ export interface DocVars {
   model: string
   /** 给 AI 读的说明文件地址 */
   llms: string
+  /** 站点地址（页面所在的来源）。只在生成给 AI 读的文件时用到，页面渲染里可以不填。 */
+  origin?: string
 }
 
 export interface DocLabels {
@@ -140,12 +142,14 @@ export function codexProviderName(siteName?: string): string {
 /**
  * 替换文档里的占位符。除了 DocVars 里的取值，还有两个由站点名派生的占位符：
  * {{provider}} 是 Codex 配置里的 provider id，{{providerName}} 是写进 TOML 的显示名。
+ * {{origin}} 是站点地址，只有给 AI 读的文件用得到。
  */
 export function fillVars(text: string, vars: DocVars): string {
-  return text.replace(/\{\{(base|v1|site|model|llms|provider|providerName)\}\}/g, (_, key: string) => {
+  return text.replace(/\{\{(base|v1|site|model|llms|origin|provider|providerName)\}\}/g, (match: string, key: string) => {
     if (key === 'provider') return codexProviderId(vars.site)
     if (key === 'providerName') return codexProviderName(vars.site)
-    return vars[key as keyof DocVars]
+    // origin 没提供时保持原样，免得悄悄变成空串
+    return vars[key as keyof DocVars] ?? match
   })
 }
 

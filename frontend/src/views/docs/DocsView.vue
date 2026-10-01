@@ -181,7 +181,14 @@
             <h2 class="docs-h2">{{ s.title }}</h2>
             <div class="docs-prose" v-html="s.html"></div>
 
-            <DocsAiPrompts v-if="s.id === 'ai-assist'" class="mt-8" :prompts="aiPrompts" />
+            <DocsAiPrompts
+              v-if="s.id === 'ai-assist'"
+              class="mt-8"
+              :vars="vars"
+              :endpoint="activeEndpoint.isDefault ? undefined : activeEndpoint.base"
+              :prompts-raw="aiPromptsRaw"
+              :get-full-doc="getFullDoc"
+            />
 
             <p v-if="s.id === 'models'" class="docs-models-link" data-testid="docs-models-link">
               <template v-if="isAuthenticated">
@@ -209,12 +216,12 @@ import { useAppStore, useAuthStore } from '@/stores'
 import { sanitizeUrl } from '@/utils/url'
 import DocsAiPrompts from './DocsAiPrompts.vue'
 import { DOC_GROUPS } from './sections'
+import { fillMachineText, fullMarkdown } from './docsMachine'
 import aiPromptsRaw from './ai-prompts.md?raw'
 import {
   EXAMPLE_MODEL,
   copyText,
   loadSavedEndpointId,
-  parseAiPrompts,
   pickEndpoint,
   renderSection,
   resolveEndpointOptions,
@@ -262,13 +269,22 @@ const vars = computed<DocVars>(() => ({
   site: siteName.value,
   model: EXAMPLE_MODEL,
   llms: `${origin}/llms.txt`,
+  origin,
 }))
 
 const sections = computed(() => {
   const labels = { copy: t('docs.copy'), copied: t('docs.copied') }
   return DOC_GROUPS.flatMap((g) => g.sections).map((s) => renderSection(s.id, s.raw, vars.value, labels))
 })
-const aiPrompts = computed(() => parseAiPrompts(aiPromptsRaw, vars.value))
+
+/** 「复制整份文档」：和 /llms-full.txt 同一份内容，占位符换成当前选中的地址。 */
+function getFullDoc(): string {
+  return fillMachineText(fullMarkdown(), {
+    site: siteName.value,
+    apiBaseUrl: activeEndpoint.value.base,
+    origin,
+  })
+}
 
 // ---- 目录 ----
 const groups = computed(() =>
