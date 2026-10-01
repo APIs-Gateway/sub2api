@@ -252,19 +252,31 @@ describe('API Client', () => {
   // --- 401 Token 刷新 ---
 
   describe('401 Token 刷新', () => {
-    it('blocks an old /auth/me before the request interceptor can send it with a new account token', async () => {
+    it('binds /auth/me to the calling session before account B replaces A', async () => {
       localStorage.setItem('auth_token', 'account-a-token')
-      const adapter = vi.fn().mockResolvedValue({ status: 200, data: { code: 0, data: { id: 7 } },
-        headers: {}, config: {}, statusText: 'OK' })
+      let finishOld!: (response: unknown) => void
+      let oldConfig!: InternalAxiosRequestConfig
+      const adapter = vi.fn((config: InternalAxiosRequestConfig) => new Promise(resolve => {
+        oldConfig = config
+        finishOld = resolve
+      }))
       apiClient.defaults.adapter = adapter
-      const { invalidateAuthSession } = await import('@/utils/authSessionVersion')
+      const { getAuthSessionVersion, invalidateAuthSession } = await import('@/utils/authSessionVersion')
+      const oldSession = getAuthSessionVersion()
 
       const request = apiClient.get('/auth/me')
+      expect(adapter).toHaveBeenCalledOnce()
+      expect(adapter.mock.calls[0][0].headers.get('Authorization')).toBe('Bearer account-a-token')
       invalidateAuthSession()
       localStorage.setItem('auth_token', 'account-b-token')
 
-      await expect(request).rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
-      expect(adapter).not.toHaveBeenCalled()
+      finishOld({ status: 200, data: { code: 0, data: { id: 7 } },
+        headers: {}, config: oldConfig, statusText: 'OK' })
+      await expect(request).resolves.toMatchObject({ data: { id: 7 } })
+      await expect(apiClient.request({ url: '/auth/me', method: 'get',
+        _authSessionVersion: oldSession } as InternalAxiosRequestConfig))
+        .rejects.toMatchObject({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      expect(adapter).toHaveBeenCalledOnce()
       expect(localStorage.getItem('auth_token')).toBe('account-b-token')
     })
 
