@@ -45,25 +45,25 @@
 
       <!-- Group quota info (compact) -->
       <div class="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-dark-700/50">
-        <div class="flex items-center justify-between">
+        <div v-if="!isFiat" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.rate') }}</span>
           <span class="num-secondary text-gray-700 dark:text-gray-300">{{ rateDisplay }}</span>
         </div>
-        <div v-if="plan.daily_amount_usd != null && plan.daily_amount_usd > 0" class="flex items-center justify-between">
+        <div v-if="plan.daily_amount_usd != null && plan.daily_amount_usd > 0 && showQuota" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.dailyAmount') }}</span>
-          <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatUsdAmount(plan.daily_amount_usd)" />
+          <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.daily_amount_usd)" />
         </div>
         <div v-if="planConcurrency > 0" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.concurrency') }}</span>
           <span class="num-secondary text-gray-700 dark:text-gray-300">{{ planConcurrency }}</span>
         </div>
-        <div v-if="plan.weekly_limit_usd != null" class="flex items-center justify-between">
+        <div v-if="plan.weekly_limit_usd != null && showQuota" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.weeklyLimit') }}</span>
-          <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatUsdAmount(plan.weekly_limit_usd)" />
+          <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.weekly_limit_usd)" />
         </div>
-        <div v-if="plan.monthly_limit_usd != null" class="flex items-center justify-between">
+        <div v-if="plan.monthly_limit_usd != null && showQuota" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.monthlyLimit') }}</span>
-          <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatUsdAmount(plan.monthly_limit_usd)" />
+          <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.monthly_limit_usd)" />
         </div>
         <div v-if="(plan.daily_amount_usd == null || plan.daily_amount_usd <= 0) && plan.weekly_limit_usd == null && plan.monthly_limit_usd == null" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.quota') }}</span>
@@ -121,7 +121,8 @@ import type { SubscriptionPlan } from '@/types/payment'
 import type { UserSubscription } from '@/types'
 import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
 import NumText from '@/components/common/NumText.vue'
-import { formatUsdAmount } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { planFiatPerCredit } from '@/utils/subscriptionFiat'
 import { planValiditySuffix } from '@/components/payment/validity'
 import {
   platformAccentBarClass,
@@ -148,6 +149,7 @@ const props = withDefaults(defineProps<{
 })
 const emit = defineEmits<{ select: [plan: SubscriptionPlan] }>()
 const { t } = useI18n()
+const { isFiat, formatSubscription, formatUsd } = useCurrencyDisplay()
 
 const platform = computed(() => props.plan.group_platform || '')
 // 用户是否已持有该套餐所属分组的有效订阅。注意 subscription_plans.group_id 非唯一
@@ -196,6 +198,13 @@ const formattedPlanPrice = computed(() =>
 const formattedOriginalPrice = computed(() =>
   formatPaymentAmount(planValueToPaymentAmount(props.plan.original_price || 0), paymentCurrency.value, props.locale)
 )
+
+// 人民币模式下按这个套餐的实付价折算额度；套餐没有每日额度或有效期时无法折算，隐藏额度行而不是混入美元。
+const fiatPerCredit = computed(() => planFiatPerCredit(props.plan, planValueToPaymentAmount(props.plan.price)))
+const showQuota = computed(() => !isFiat.value || fiatPerCredit.value !== null)
+function formatQuota(credits: number): string {
+  return isFiat.value ? formatSubscription(credits, fiatPerCredit.value) : formatUsd(credits)
+}
 
 const discountText = computed(() => {
   if (!props.plan.original_price || props.plan.original_price <= 0) return ''

@@ -18,7 +18,7 @@
       <div>
         <label class="input-label">
           {{ t('subscriptionPurchase.dailyAmount') }}
-          <span class="font-normal text-gray-500 dark:text-dark-400">({{ t('subscriptionPurchase.dailyAmountUnit') }})</span>
+          <span v-if="!isFiat" class="font-normal text-gray-500 dark:text-dark-400">({{ t('subscriptionPurchase.dailyAmountUnit') }})</span>
         </label>
         <div class="flex items-center gap-3">
           <input
@@ -29,7 +29,13 @@
             :step="dailyAmountStep"
             class="h-2 flex-1 accent-gray-900 dark:accent-gray-100"
           />
+          <!-- 人民币模式下每日额度直接写成每天可用的金额，滑块只负责档位。 -->
+          <div v-if="isFiat" data-testid="subscription-purchase-daily-fiat" class="w-28 text-right">
+            <NumText tier="secondary" :text="dailyFiatText" />
+            <span class="ml-1 text-xs text-gray-500 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.perDay') }}</span>
+          </div>
           <input
+            v-else
             v-model.number="dailyAmount"
             type="number"
             :min="dailyAmountMin"
@@ -69,13 +75,15 @@
 
       <p class="input-hint">
         {{
-          t('subscriptionPurchase.rangeHint', {
-            dMin: dailyAmountMin,
-            dMax: dailyAmountMax,
-            tMin: pricing.t_min,
-            tMax: pricing.t_max,
-            tStep: tStep
-          })
+          isFiat
+            ? t('subscriptionPurchase.rangeHintFiat', { tMin: pricing.t_min, tMax: pricing.t_max, tStep: tStep })
+            : t('subscriptionPurchase.rangeHint', {
+                dMin: dailyAmountMin,
+                dMax: dailyAmountMax,
+                tMin: pricing.t_min,
+                tMax: pricing.t_max,
+                tStep: tStep
+              })
         }}
       </p>
 
@@ -99,7 +107,11 @@
             </span>
           </div>
           <dl class="mt-3 grid grid-cols-2 gap-2 border-t border-gray-200 pt-3 text-center dark:border-dark-700 sm:grid-cols-4">
-            <div>
+            <div v-if="isFiat">
+              <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.dailyAmount') }}</dt>
+              <dd class="text-sm text-gray-900 dark:text-white"><NumText tier="secondary" :text="dailyFiatText" /></dd>
+            </div>
+            <div v-else>
               <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.unitPrice') }}</dt>
               <dd class="num-secondary text-sm text-gray-900 dark:text-white">×{{ (quote?.unit_price ?? 0).toFixed(4) }}</dd>
             </div>
@@ -109,11 +121,11 @@
             </div>
             <div>
               <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.weeklyCap') }}</dt>
-              <dd class="text-sm text-gray-900 dark:text-white"><NumText tier="secondary" :text="formatUSDValue(quote?.weekly_cap_usd ?? 0)" /></dd>
+              <dd class="text-sm text-gray-900 dark:text-white"><NumText tier="secondary" :text="formatCap(quote?.weekly_cap_usd ?? 0)" /></dd>
             </div>
             <div>
               <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.monthlyCap') }}</dt>
-              <dd class="text-sm text-gray-900 dark:text-white"><NumText tier="secondary" :text="formatUSDValue(quote?.monthly_cap_usd ?? 0)" /></dd>
+              <dd class="text-sm text-gray-900 dark:text-white"><NumText tier="secondary" :text="formatCap(quote?.monthly_cap_usd ?? 0)" /></dd>
             </div>
           </dl>
         </template>
@@ -140,6 +152,7 @@ import subscriptionsAPI, {
 } from '@/api/subscriptions'
 import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
 import NumText from '@/components/common/NumText.vue'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import { formatMoneyNumber } from '@/utils/numberFormat'
 
 const emit = defineEmits<{
@@ -158,6 +171,7 @@ const props = withDefaults(defineProps<{
 })
 
 const { t } = useI18n()
+const { isFiat, formatFiat, formatSubscription } = useCurrencyDisplay()
 
 const pricing = ref<SubscriptionPricingBounds | null>(null)
 const loadError = ref(false)
@@ -192,6 +206,20 @@ const formattedPayableAmount = computed(() =>
 function formatUSDValue(value: number): string {
   return `USD ${formatMoneyNumber(value)}`
 }
+
+// 这张卡 1 个额度值多少人民币：报价的 u(D) 按订阅付款倍率折成实付币种。报价回来之前为 null。
+const fiatPerCredit = computed(() => {
+  const unit = quote.value?.unit_price
+  return typeof unit === 'number' && unit > 0 ? unit / subscriptionPaymentMultiplier.value : null
+})
+
+/** 周/月封顶：人民币模式按报价单价折算；报价未出来时显示 0，不回落到美元。 */
+function formatCap(credits: number): string {
+  if (!isFiat.value) return formatUSDValue(credits)
+  return fiatPerCredit.value ? formatSubscription(credits, fiatPerCredit.value) : formatFiat(0)
+}
+
+const dailyFiatText = computed(() => formatCap(dailyAmount.value))
 
 const validityOptions = computed(() => {
   const options = [

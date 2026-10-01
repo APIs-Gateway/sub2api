@@ -8111,6 +8111,7 @@
     validityYear: 'Yearly',
     capHint: '',
     rangeHint: 'Daily {dMin}–{dMax}, in 30 USD steps; validity {tMin}–{tMax} days',
+    rangeHintFiat: 'Validity {tMin}–{tMax} days, in steps of {tStep} days',
     buy: 'Buy',
     quoting: 'Calculating…',
     quoteFailed: 'Quote failed — adjust the daily amount or validity',

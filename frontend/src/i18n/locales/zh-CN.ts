@@ -8108,6 +8108,7 @@
     validityYear: '年',
     capHint: '',
     rangeHint: '每日额度 {dMin}–{dMax}，每 30 刀一档；有效期 {tMin}–{tMax} 天',
+    rangeHintFiat: '有效期 {tMin}–{tMax} 天，按 {tStep} 天为一档',
     buy: '购买',
     quoting: '计算中…',
     quoteFailed: '报价失败，请调整每日额度或有效期',

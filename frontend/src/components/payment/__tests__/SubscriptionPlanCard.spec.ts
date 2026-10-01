@@ -1,5 +1,6 @@
 import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia';
 import { createI18n } from "vue-i18n";
 import SubscriptionPlanCard from "../SubscriptionPlanCard.vue";
 
@@ -144,3 +145,8 @@ describe("SubscriptionPlanCard", () => {
     expect(suffixSpan?.textContent?.trim().startsWith("/")).toBe(true);
   });
 });
+
+// 组件里用到的金额口径依赖 app store；未配置充值倍率时按美元展示（旧行为）。
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
