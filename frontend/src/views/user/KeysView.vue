@@ -1075,7 +1075,7 @@ import { useSourceFiatRate } from '@/composables/useSourceFiatRate'
 const { t } = useI18n()
 // 今日/累计花费用服务端分桶折算的人民币；额度上限与限额按当前扣费来源近似折算
 const { isFiat: currencyIsFiat, formatMixed } = useCurrencyDisplay()
-const { usesSubscriptionRate, formatLimit, limitCreditsFromFiat, limitFiatFromCredits } = useSourceFiatRate()
+const { sourceFiatPerCredit, usesSubscriptionRate, formatLimit } = useSourceFiatRate()
 import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -1305,6 +1305,8 @@ const formData = ref({
  */
 type LimitField = 'quota' | 'rate_limit_5h' | 'rate_limit_1d' | 'rate_limit_7d'
 const limitInputFiat = ref(false)
+// 回显和提交用同一个单价：弹窗打开后订阅卡数据才加载回来时，也不会前后口径不一致
+const limitInputRate = ref(0)
 const limitInputSymbol = computed(() => (limitInputFiat.value ? '¥' : '$'))
 // 编辑时记下每个字段回显的人民币值和原始额度：用户没改的字段原样提交额度，
 // 避免「额度 → 人民币（四舍五入）→ 额度」往返一次就把上限改掉几分。
@@ -1318,23 +1320,28 @@ const limitFiatHint = computed(() =>
 
 function beginLimitInput() {
   limitInputFiat.value = currencyIsFiat.value
+  limitInputRate.value = sourceFiatPerCredit.value
   limitOriginals.clear()
 }
 
 function limitToInput(field: LimitField, credits: number | null | undefined): number | null {
   if (!credits || credits <= 0) return null
   if (!limitInputFiat.value) return credits
-  const input = Math.round(limitFiatFromCredits(credits) * 100) / 100
+  const fiat = credits * limitInputRate.value
+  // 一般保留到分；极小的上限四舍五入会变成 0（看起来像「不限」），改为保留 3 位有效数字
+  let input = Math.round(fiat * 100) / 100
+  if (input === 0) input = Number(fiat.toPrecision(3))
   limitOriginals.set(field, { input, credits })
   return input
 }
 
 function limitFromInput(field: LimitField, input: number | null): number {
+  // 先看原值：用户没改的字段原样提交原始额度，不经过任何换算或「≤0 视为不限」的判断
+  const original = limitInputFiat.value ? limitOriginals.get(field) : undefined
+  if (original && original.input === input) return original.credits
   if (!input || input <= 0) return 0
   if (!limitInputFiat.value) return input
-  const original = limitOriginals.get(field)
-  if (original && original.input === input) return original.credits
-  return Math.round(limitCreditsFromFiat(input) * 1e8) / 1e8
+  return Math.round((input / limitInputRate.value) * 1e8) / 1e8
 }
 
 watch(showCreateModal, (open) => {
