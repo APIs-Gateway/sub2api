@@ -996,7 +996,18 @@
     lastUsedAt: 'Last Used',
     lastUsedIP: 'Last Used IP',
     useKey: 'Use Key',
-    quickConnect: 'Quick connect',
+    connect: 'Connect',
+    usedLabel: 'Used',
+    unlimited: 'No limit',
+    overview: {
+      address: 'Endpoint',
+      copy: 'Copy',
+      copied: 'Copied',
+      enabled: '{active} of {total} keys enabled',
+      enabledPage: '{active} enabled on this page, {total} keys in total',
+      spent: 'Used in the last 30 days',
+      spentPage: 'Used in the last 30 days by keys on this page'
+    },
     useKeyModal: {
       title: 'Use API Key',
       description:
@@ -1069,9 +1080,7 @@
     quotaAmount: 'Quota Amount (USD)',
     quotaAmountPlaceholder: 'Enter quota limit in USD',
     quotaAmountPlaceholderFiat: 'Enter a spending cap in CNY',
-    limitFiatHint: 'Converted to quota at the {source} and saved; usage is counted in quota, so the CNY figure is approximate.',
-    limitFiatSourceSubscription: 'current plan quota rate',
-    limitFiatSourceWallet: 'balance rate',
+    limitEstimateHint: 'Estimated at current prices.',
     quotaAmountHint: 'Set the maximum amount this key can spend. 0 = unlimited.',
     quotaUsed: 'Quota Used',
     reset: 'Reset',
