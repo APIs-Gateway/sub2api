@@ -8484,6 +8484,7 @@
       rate: '倍率',
       dailyLimit: '日限额',
       dailyAmount: '每日额度',
+      equivalentCny: '等效人民币',
       concurrency: '并发',
       weeklyLimit: '周限额',
       monthlyLimit: '月限额',

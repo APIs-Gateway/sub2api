@@ -198,15 +198,24 @@
                   </div>
                   <div v-if="selectedPlan.daily_limit_usd != null && (!isFiat || selectedPlanFiatPerCredit)">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.dailyLimit') }}</span>
-                    <div class="num-secondary text-base text-gray-900 dark:text-white">{{ formatPlanQuota(selectedPlan.daily_limit_usd) }}</div>
+                    <div class="flex items-baseline gap-1">
+                      <span class="num-secondary text-base text-gray-900 dark:text-white">{{ formatPlanQuota(selectedPlan.daily_limit_usd) }}</span>
+                      <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+                    </div>
                   </div>
                   <div v-if="selectedPlan.weekly_limit_usd != null && (!isFiat || selectedPlanFiatPerCredit)">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.weeklyLimit') }}</span>
-                    <div class="num-secondary text-base text-gray-900 dark:text-white">{{ formatPlanQuota(selectedPlan.weekly_limit_usd) }}</div>
+                    <div class="flex items-baseline gap-1">
+                      <span class="num-secondary text-base text-gray-900 dark:text-white">{{ formatPlanQuota(selectedPlan.weekly_limit_usd) }}</span>
+                      <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+                    </div>
                   </div>
                   <div v-if="selectedPlan.monthly_limit_usd != null && (!isFiat || selectedPlanFiatPerCredit)">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.monthlyLimit') }}</span>
-                    <div class="num-secondary text-base text-gray-900 dark:text-white">{{ formatPlanQuota(selectedPlan.monthly_limit_usd) }}</div>
+                    <div class="flex items-baseline gap-1">
+                      <span class="num-secondary text-base text-gray-900 dark:text-white">{{ formatPlanQuota(selectedPlan.monthly_limit_usd) }}</span>
+                      <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+                    </div>
                   </div>
                   <div v-if="!isFiat">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.subscriptionValueWithCurrency', { currency: 'USD' }) }}</span>

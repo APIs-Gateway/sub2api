@@ -51,7 +51,10 @@
         </div>
         <div v-if="plan.daily_amount_usd != null && plan.daily_amount_usd > 0 && showQuota" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.dailyAmount') }}</span>
-          <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.daily_amount_usd)" />
+          <span class="inline-flex items-baseline gap-1">
+            <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.daily_amount_usd)" />
+            <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+          </span>
         </div>
         <div v-if="planConcurrency > 0" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.concurrency') }}</span>
@@ -59,11 +62,17 @@
         </div>
         <div v-if="plan.weekly_limit_usd != null && showQuota" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.weeklyLimit') }}</span>
-          <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.weekly_limit_usd)" />
+          <span class="inline-flex items-baseline gap-1">
+            <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.weekly_limit_usd)" />
+            <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+          </span>
         </div>
         <div v-if="plan.monthly_limit_usd != null && showQuota" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.monthlyLimit') }}</span>
-          <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.monthly_limit_usd)" />
+          <span class="inline-flex items-baseline gap-1">
+            <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.monthly_limit_usd)" />
+            <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+          </span>
         </div>
         <div v-if="(plan.daily_amount_usd == null || plan.daily_amount_usd <= 0) && plan.weekly_limit_usd == null && plan.monthly_limit_usd == null" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.quota') }}</span>

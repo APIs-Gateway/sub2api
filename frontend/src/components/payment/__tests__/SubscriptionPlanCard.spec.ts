@@ -2,6 +2,8 @@ import { mount } from "@vue/test-utils";
 import { describe, expect, it, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia';
 import { createI18n } from "vue-i18n";
+import { resetFiatDataMissingForTest, useCurrencyDisplay } from "@/composables/useCurrencyDisplay";
+import { useAppStore } from "@/stores/app";
 import SubscriptionPlanCard from "../SubscriptionPlanCard.vue";
 
 const i18n = createI18n({
@@ -150,3 +152,40 @@ describe("SubscriptionPlanCard", () => {
 beforeEach(() => {
   setActivePinia(createPinia())
 })
+
+describe("SubscriptionPlanCard equivalent CNY marker", () => {
+  const fixedPlan = {
+    id: 2,
+    group_id: 10,
+    group_platform: "openai",
+    name: "Fixed",
+    price: 90,
+    features: [],
+    rate_multiplier: 1,
+    validity_days: 30,
+    validity_unit: "day",
+    daily_amount_usd: 100,
+    weekly_limit_usd: 700,
+    monthly_limit_usd: 3000,
+    is_active: true,
+  };
+  const mountFixed = (multiplier: number, mode: "fiat" | "usd") => {
+    useAppStore().cachedPublicSettings = { balance_recharge_multiplier: multiplier } as never;
+    resetFiatDataMissingForTest();
+    useCurrencyDisplay().setMode(mode);
+    return mount(SubscriptionPlanCard, { props: { plan: fixedPlan }, global: { plugins: [i18n] } });
+  };
+
+  it("marks each quota amount in CNY mode", () => {
+    const wrapper = mountFixed(13, "fiat");
+    expect(wrapper.text().match(/payment\.planCard\.equivalentCny/g)).toHaveLength(3);
+  });
+
+  it("shows no marker in USD mode", () => {
+    expect(mountFixed(13, "usd").text()).not.toContain("payment.planCard.equivalentCny");
+  });
+
+  it("shows no marker on the free site (m=1)", () => {
+    expect(mountFixed(1, "fiat").text()).not.toContain("payment.planCard.equivalentCny");
+  });
+});

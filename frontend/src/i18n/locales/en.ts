@@ -8460,6 +8460,7 @@
       rate: 'Rate',
       dailyLimit: 'Daily',
       dailyAmount: 'Daily Amount',
+      equivalentCny: 'CNY equivalent',
       concurrency: 'Concurrency',
       weeklyLimit: 'Weekly',
       monthlyLimit: 'Monthly',
