@@ -10,18 +10,18 @@ import (
 // Key 级分组回退链的设置项。全部经 SettingService 读取，不加 config.yaml 项。
 // PR1 只定义键、默认值与读取函数：开关默认关闭，且没有任何运行时代码读取它来改变行为。
 const (
-	SettingKeyGroupFallbackEnabled              = "group_fallback.enabled"
-	SettingKeyGroupFallbackBusyWaitMS           = "group_fallback.busy_wait_ms"
-	SettingKeyGroupFallbackStickyWaitMS         = "group_fallback.sticky_wait_ms"
-	SettingKeyGroupFallbackStickyQueueShare     = "group_fallback.sticky_queue_share"
-	SettingKeyGroupFallbackBreakerWindowMS      = "group_fallback.breaker.window_ms"
-	SettingKeyGroupFallbackBreakerThreshold     = "group_fallback.breaker.threshold"
-	SettingKeyGroupFallbackBreakerOpenTTLMS     = "group_fallback.breaker.open_ttl_ms"
-	SettingKeyGroupFallbackBreakerMinUsers      = "group_fallback.breaker.min_distinct_users"
-	SettingKeyGroupFallbackTotalBudgetNonStream = "group_fallback.total_budget_ms_nonstream"
-	SettingKeyGroupFallbackTotalBudgetStream    = "group_fallback.total_budget_ms_stream"
-	SettingKeyGroupFallbackMaxTotalAttempts     = "group_fallback.max_total_attempts"
-	SettingKeyGroupFallbackMaxPerHopSwitches    = "group_fallback.max_per_hop_switches"
+	SettingKeyGroupFallbackEnabled              = "group_fallback_enabled"
+	SettingKeyGroupFallbackBusyWaitMS           = "group_fallback_busy_wait_ms"
+	SettingKeyGroupFallbackStickyWaitMS         = "group_fallback_sticky_wait_ms"
+	SettingKeyGroupFallbackStickyQueueShare     = "group_fallback_sticky_queue_share"
+	SettingKeyGroupFallbackBreakerWindowMS      = "group_fallback_breaker_window_ms"
+	SettingKeyGroupFallbackBreakerThreshold     = "group_fallback_breaker_threshold"
+	SettingKeyGroupFallbackBreakerOpenTTLMS     = "group_fallback_breaker_open_ttl_ms"
+	SettingKeyGroupFallbackBreakerMinUsers      = "group_fallback_breaker_min_distinct_users"
+	SettingKeyGroupFallbackTotalBudgetNonStream = "group_fallback_total_budget_ms_nonstream"
+	SettingKeyGroupFallbackTotalBudgetStream    = "group_fallback_total_budget_ms_stream"
+	SettingKeyGroupFallbackMaxTotalAttempts     = "group_fallback_max_total_attempts"
+	SettingKeyGroupFallbackMaxPerHopSwitches    = "group_fallback_max_per_hop_switches"
 )
 
 // GroupFallbackSettings 是回退链的运行参数。

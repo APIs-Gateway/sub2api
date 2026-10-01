@@ -106,7 +106,7 @@ type APIKeyGroupRouteRepository interface {
 	// ListByKey 读取某把 Key 的链项；source 为空表示全部。
 	// 已软删除的 Key、已软删除的分组不会返回（外键 CASCADE 只对物理删除生效）。
 	ListByKey(ctx context.Context, keyID int64, source string) ([]RouteItem, error)
-	// ReplaceChain 在单个事务内先 SELECT ... FOR UPDATE 锁住 api_keys 行，再先删后插，
+	// ReplaceChain 在单个事务内先 SELECT ... FOR NO KEY UPDATE 锁住 api_keys 行，再先删后插，
 	// 避免两个并发替换互相撞位置唯一约束。Key 不存在或已软删除返回 ErrAPIKeyNotFound。
 	ReplaceChain(ctx context.Context, params ReplaceRoutesParams) error
 	// ApplyPrimaryGroupChange 在同一事务内处理「Key 主分组被改」：

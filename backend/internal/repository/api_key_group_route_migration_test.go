@@ -21,6 +21,7 @@ func TestAPIKeyGroupRoutesMigrationShape(t *testing.T) {
 	sqlText := readMigrationForTest(t, "195_api_key_group_routes.sql")
 
 	require.Contains(t, sqlText, "CREATE TABLE IF NOT EXISTS api_key_group_routes")
+	require.Contains(t, sqlText, "SET LOCAL lock_timeout")
 	require.Contains(t, sqlText, "platform    VARCHAR(32) NOT NULL")
 	require.Contains(t, sqlText, "source      VARCHAR(16) NOT NULL DEFAULT 'user'")
 	require.Contains(t, sqlText, "UNIQUE (api_key_id, source, group_id)")

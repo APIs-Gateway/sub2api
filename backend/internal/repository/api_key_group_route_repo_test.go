@@ -54,7 +54,7 @@ func TestAPIKeyGroupRouteRepo_ReplaceChain_LocksThenReplaces(t *testing.T) {
 	by := int64(5)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT group_id FROM api_keys WHERE id = \$1 AND deleted_at IS NULL FOR UPDATE`).
+	mock.ExpectQuery(`SELECT group_id FROM api_keys WHERE id = \$1 AND deleted_at IS NULL FOR NO KEY UPDATE`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(int64(1)))
 	mock.ExpectExec(`DELETE FROM api_key_group_routes WHERE api_key_id = \$1 AND source = \$2`).
@@ -85,21 +85,21 @@ func TestAPIKeyGroupRouteRepo_ReplaceChain_KeyMissingOrChanged(t *testing.T) {
 
 	// Key 不存在 / 已软删除
 	mock.ExpectBegin()
-	mock.ExpectQuery(`FOR UPDATE`).WithArgs(int64(7)).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`FOR NO KEY UPDATE`).WithArgs(int64(7)).WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 	err := repo.ReplaceChain(context.Background(), service.ReplaceRoutesParams{APIKeyID: 7, Source: "user"})
 	require.ErrorIs(t, err, service.ErrAPIKeyNotFound)
 
 	// 主分组被并发修改：不得写入
 	mock.ExpectBegin()
-	mock.ExpectQuery(`FOR UPDATE`).WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(int64(9)))
+	mock.ExpectQuery(`FOR NO KEY UPDATE`).WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(int64(9)))
 	mock.ExpectRollback()
 	err = repo.ReplaceChain(context.Background(), service.ReplaceRoutesParams{APIKeyID: 7, Source: "user", ExpectedPrimaryGroupID: 1})
 	require.ErrorIs(t, err, service.ErrFallbackKeyChanged)
 
 	// Key 被取消分组
 	mock.ExpectBegin()
-	mock.ExpectQuery(`FOR UPDATE`).WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(nil))
+	mock.ExpectQuery(`FOR NO KEY UPDATE`).WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(nil))
 	mock.ExpectRollback()
 	err = repo.ReplaceChain(context.Background(), service.ReplaceRoutesParams{APIKeyID: 7, Source: "user", ExpectedPrimaryGroupID: 1})
 	require.ErrorIs(t, err, service.ErrFallbackKeyChanged)
@@ -111,7 +111,7 @@ func TestAPIKeyGroupRouteRepo_ReplaceChain_InsertErrorRollsBack(t *testing.T) {
 	repo := NewAPIKeyGroupRouteRepository(db)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`FOR UPDATE`).WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(int64(1)))
+	mock.ExpectQuery(`FOR NO KEY UPDATE`).WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(int64(1)))
 	mock.ExpectExec(`DELETE FROM api_key_group_routes`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`INSERT INTO api_key_group_routes`).WillReturnError(errors.New("unique violation"))
 	mock.ExpectRollback()
@@ -136,7 +136,7 @@ func TestAPIKeyGroupRouteRepo_ApplyPrimaryGroupChange(t *testing.T) {
 		db, mock := newSQLMock(t)
 		repo := NewAPIKeyGroupRouteRepository(db)
 		mock.ExpectBegin()
-		mock.ExpectQuery(`FOR UPDATE`).WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(int64(2)))
+		mock.ExpectQuery(`FOR NO KEY UPDATE`).WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(int64(2)))
 		mock.ExpectQuery(`FROM api_key_group_routes WHERE api_key_id = \$1 ORDER BY id`).WithArgs(int64(7)).WillReturnRows(selectRows())
 		mock.ExpectExec(`DELETE FROM api_key_group_routes WHERE api_key_id = \$1`).WithArgs(int64(7)).WillReturnResult(sqlmock.NewResult(0, 2))
 		// 剩下的 group 3 压实到 position 0，并保留原 created_at
@@ -152,7 +152,7 @@ func TestAPIKeyGroupRouteRepo_ApplyPrimaryGroupChange(t *testing.T) {
 		db, mock := newSQLMock(t)
 		repo := NewAPIKeyGroupRouteRepository(db)
 		mock.ExpectBegin()
-		mock.ExpectQuery(`FOR UPDATE`).WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(int64(9)))
+		mock.ExpectQuery(`FOR NO KEY UPDATE`).WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(int64(9)))
 		mock.ExpectQuery(`FROM api_key_group_routes WHERE api_key_id`).WithArgs(int64(7)).WillReturnRows(selectRows())
 		mock.ExpectCommit()
 		require.NoError(t, repo.ApplyPrimaryGroupChange(context.Background(), 7, 9, "openai"))
@@ -163,7 +163,7 @@ func TestAPIKeyGroupRouteRepo_ApplyPrimaryGroupChange(t *testing.T) {
 		db, mock := newSQLMock(t)
 		repo := NewAPIKeyGroupRouteRepository(db)
 		mock.ExpectBegin()
-		mock.ExpectQuery(`FOR UPDATE`).WithArgs(int64(7)).WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery(`FOR NO KEY UPDATE`).WithArgs(int64(7)).WillReturnError(sql.ErrNoRows)
 		mock.ExpectRollback()
 		require.ErrorIs(t, repo.ApplyPrimaryGroupChange(context.Background(), 7, 9, "openai"), service.ErrAPIKeyNotFound)
 	})

@@ -38,9 +38,11 @@ type routeTestRepo struct {
 	nextID    int64
 	primary   map[int64]int64
 	listCalls int
-	listErr   error
-	replaceFn func(ReplaceRoutesParams) error
-	applied   []applyCall
+	// listSources 记录每次 ListByKey 的 source 参数。
+	listSources []string
+	listErr     error
+	replaceFn   func(ReplaceRoutesParams) error
+	applied     []applyCall
 }
 
 type applyCall struct {
@@ -52,6 +54,7 @@ func (r *routeTestRepo) ListByKey(_ context.Context, keyID int64, source string)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.listCalls++
+	r.listSources = append(r.listSources, source)
 	if r.listErr != nil {
 		return nil, r.listErr
 	}
@@ -407,14 +410,14 @@ func TestOnPrimaryGroupChanged_DelegatesAndInvalidates(t *testing.T) {
 	env := newRouteTestEnv(true)
 	key := routeTestKey(100, 9, 1)
 	env.repo.seed(RouteItem{APIKeyID: 100, GroupID: 2, Platform: PlatformOpenAI, Source: RouteSourceUser, Placement: RoutePlacementTail})
-	_, err := env.svc.GetUserChain(context.Background(), 100) // 填缓存
+	_, err := env.svc.listCached(context.Background(), 100) // 填缓存
 	require.NoError(t, err)
 
 	require.NoError(t, env.svc.OnPrimaryGroupChanged(context.Background(), key, &Group{ID: 2, Platform: PlatformOpenAI}))
 	require.Equal(t, []applyCall{{100, 2, PlatformOpenAI}}, env.repo.applied)
 
 	before := env.repo.listCalls
-	_, err = env.svc.GetUserChain(context.Background(), 100)
+	_, err = env.svc.listCached(context.Background(), 100)
 	require.NoError(t, err)
 	require.Equal(t, before+1, env.repo.listCalls, "cache must be invalidated")
 
@@ -477,16 +480,37 @@ func TestResolveEffectiveChain_MergeOrder(t *testing.T) {
 	)
 	chain, err := env.svc.ResolveEffectiveChain(context.Background(), routeTestKey(100, 9, 1), &User{ID: 9}, ResolveOptions{})
 	require.NoError(t, err)
-	// 候选 8 项：admin.head(4,5) + 主分组(1) + user.tail(2,3) + admin.tail(7,8)，截断到前 6 项
-	require.Equal(t, []int64{4, 5, 1, 2, 3, 7}, hopIDs(chain))
-	require.True(t, chain.Truncated, "8 candidates must be truncated to 6")
-	require.Equal(t, []string{RouteSourceAdmin, RouteSourceAdmin, RouteSourcePrimary, RouteSourceUser, RouteSourceUser, RouteSourceAdmin}, hopSources(chain))
+	// 候选 7 项：admin.head(4,5) + 主分组(1) + user.tail(2,3) + admin.tail(7,8)，超出上限 6：
+	// 先丢 user 链尾部（3），优先保留 admin 项。
+	require.Equal(t, []int64{4, 5, 1, 2, 7, 8}, hopIDs(chain))
+	require.True(t, chain.Truncated, "7 candidates must be truncated to 6")
+	require.Equal(t, []string{RouteSourceAdmin, RouteSourceAdmin, RouteSourcePrimary, RouteSourceUser, RouteSourceAdmin, RouteSourceAdmin}, hopSources(chain))
 	require.Equal(t, RoutePlacementHead, chain.Hops[0].Placement)
 	require.NotNil(t, chain.Hops[3].Group)
 	require.Equal(t, int64(2), chain.Hops[3].Group.ID)
 
 	require.Equal(t, int16(ServedRouteSourceAdminChain), *chain.Hops[0].ServedRouteSourceValue())
 	require.Equal(t, int16(ServedRouteSourceUserChain), *chain.Hops[3].ServedRouteSourceValue())
+}
+
+func TestTruncateHops_DropsUserTailThenTail(t *testing.T) {
+	mk := func(id int64, src string) ChainHop { return ChainHop{GroupID: id, RouteSource: src} }
+	ids := func(h []ChainHop) []int64 {
+		out := make([]int64, 0, len(h))
+		for _, x := range h {
+			out = append(out, x.GroupID)
+		}
+		return out
+	}
+	// 未超限：原样返回
+	in := []ChainHop{mk(1, RouteSourcePrimary), mk(2, RouteSourceUser)}
+	require.Equal(t, []int64{1, 2}, ids(truncateHops(in, 6)))
+	// user 项足够丢：只丢 user 尾部
+	in = []ChainHop{mk(4, RouteSourceAdmin), mk(1, RouteSourcePrimary), mk(2, RouteSourceUser), mk(3, RouteSourceUser), mk(5, RouteSourceUser), mk(7, RouteSourceAdmin), mk(8, RouteSourceAdmin)}
+	require.Equal(t, []int64{4, 1, 2, 3, 7, 8}, ids(truncateHops(in, 6)))
+	// user 项丢完仍超长：再从末尾截
+	in = []ChainHop{mk(10, RouteSourceAdmin), mk(11, RouteSourceAdmin), mk(1, RouteSourcePrimary), mk(2, RouteSourceUser), mk(20, RouteSourceAdmin), mk(21, RouteSourceAdmin), mk(22, RouteSourceAdmin), mk(23, RouteSourceAdmin)}
+	require.Equal(t, []int64{10, 11, 1, 20, 21, 22}, ids(truncateHops(in, 6)))
 }
 
 func TestResolveEffectiveChain_NotTruncatedWithinLimit(t *testing.T) {
@@ -580,6 +604,10 @@ func TestResolveEffectiveChain_PrimaryDedupeAndErrors(t *testing.T) {
 	chain, err := env.svc.ResolveEffectiveChain(context.Background(), routeTestKey(100, 9, 1), &User{ID: 9}, ResolveOptions{})
 	require.NoError(t, err)
 	require.Equal(t, []int64{1}, hopIDs(chain))
+	// 主分组那一跳永远是 primary 来源，残留项不得把它标成 admin
+	require.Equal(t, []string{RouteSourcePrimary}, hopSources(chain))
+	require.Nil(t, chain.Hops[0].ServedRouteSourceValue())
+	require.Empty(t, chain.Skipped)
 
 	// 主分组读取失败 / 链读取失败：返回错误，由调用方走原逻辑
 	_, err = env.svc.ResolveEffectiveChain(context.Background(), routeTestKey(100, 9, 404), &User{ID: 9}, ResolveOptions{})
@@ -609,15 +637,15 @@ func TestResolveEffectiveChain_CacheTTL(t *testing.T) {
 func TestGroupRouteCache_BoundedAndCopySafe(t *testing.T) {
 	env := newRouteTestEnv(true)
 	env.repo.seed(RouteItem{APIKeyID: 100, GroupID: 2, Platform: PlatformOpenAI, Source: RouteSourceUser, Placement: RoutePlacementTail})
-	got, err := env.svc.GetUserChain(context.Background(), 100)
+	got, err := env.svc.listCached(context.Background(), 100)
 	require.NoError(t, err)
 	got[0].GroupID = 999 // 修改返回值不得污染缓存
-	again, err := env.svc.GetUserChain(context.Background(), 100)
+	again, err := env.svc.listCached(context.Background(), 100)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), again[0].GroupID)
 
 	for i := int64(0); i < groupRouteCacheMaxEntries+5; i++ {
-		_, err := env.svc.GetUserChain(context.Background(), 1000+i)
+		_, err := env.svc.listCached(context.Background(), 1000+i)
 		require.NoError(t, err)
 	}
 	require.LessOrEqual(t, len(env.svc.cache), groupRouteCacheMaxEntries)
@@ -629,4 +657,90 @@ func TestNewGroupRouteService_NilSettingServiceDisabled(t *testing.T) {
 	chain, err := svc.ResolveEffectiveChain(context.Background(), routeTestKey(100, 9, 1), &User{ID: 9}, ResolveOptions{})
 	require.NoError(t, err)
 	require.Empty(t, chain.Hops)
+}
+
+// 用户端读取直连仓储并在 SQL 层限定 source='user'，不经缓存。
+func TestGetUserChain_QueriesUserSourceWithoutCache(t *testing.T) {
+	env := newRouteTestEnv(true)
+	env.repo.seed(
+		RouteItem{APIKeyID: 100, GroupID: 2, Platform: PlatformOpenAI, Source: RouteSourceUser, Placement: RoutePlacementTail},
+		RouteItem{APIKeyID: 100, GroupID: 7, Platform: PlatformOpenAI, Source: RouteSourceAdmin, Placement: RoutePlacementTail},
+	)
+	for i := 0; i < 2; i++ {
+		got, err := env.svc.GetUserChain(context.Background(), 100)
+		require.NoError(t, err)
+		require.Equal(t, []int64{2}, routeGroupIDs(got))
+	}
+	require.Equal(t, []string{RouteSourceUser, RouteSourceUser}, env.repo.listSources)
+}
+
+// 读库期间发生失效：本次读到的旧链不得回填缓存。
+type routeRacyRepo struct {
+	*routeTestRepo
+	onList func()
+}
+
+func (r *routeRacyRepo) ListByKey(ctx context.Context, keyID int64, source string) ([]RouteItem, error) {
+	items, err := r.routeTestRepo.ListByKey(ctx, keyID, source)
+	if r.onList != nil {
+		r.onList()
+	}
+	return items, err
+}
+
+func TestListCached_InvalidateDuringReadSkipsBackfill(t *testing.T) {
+	env := newRouteTestEnv(true)
+	env.repo.seed(RouteItem{APIKeyID: 100, GroupID: 2, Platform: PlatformOpenAI, Source: RouteSourceUser, Placement: RoutePlacementTail})
+	racy := &routeRacyRepo{routeTestRepo: env.repo}
+	env.svc.repo = racy
+
+	// A 读到旧链之后、回填之前，B 保存并失效。
+	racy.onList = func() {
+		racy.onList = nil
+		env.svc.invalidate(100)
+	}
+	got, err := env.svc.listCached(context.Background(), 100)
+	require.NoError(t, err)
+	require.Equal(t, []int64{2}, routeGroupIDs(got))
+
+	env.svc.mu.Lock()
+	_, cached := env.svc.cache[100]
+	env.svc.mu.Unlock()
+	require.False(t, cached, "stale read must not be written back after invalidate")
+
+	// 之后的正常读取照常回填。
+	_, err = env.svc.listCached(context.Background(), 100)
+	require.NoError(t, err)
+	env.svc.mu.Lock()
+	_, cached = env.svc.cache[100]
+	env.svc.mu.Unlock()
+	require.True(t, cached)
+}
+
+// 并发回填：多个读者与失效交错，-race 下不得有数据竞争，且最终缓存内容与库一致。
+func TestListCached_ConcurrentReadInvalidate(t *testing.T) {
+	env := newRouteTestEnv(true)
+	env.repo.seed(RouteItem{APIKeyID: 100, GroupID: 2, Platform: PlatformOpenAI, Source: RouteSourceUser, Placement: RoutePlacementTail})
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				if _, err := env.svc.listCached(context.Background(), 100); err != nil {
+					t.Errorf("listCached: %v", err)
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				env.svc.invalidate(100)
+			}
+		}()
+	}
+	wg.Wait()
+	got, err := env.svc.listCached(context.Background(), 100)
+	require.NoError(t, err)
+	require.Equal(t, []int64{2}, routeGroupIDs(got))
 }

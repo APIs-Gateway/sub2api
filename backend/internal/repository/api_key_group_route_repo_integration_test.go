@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// 回退链仓储的集成测试。ReplaceChain 自己开事务（SELECT ... FOR UPDATE），
+// 回退链仓储的集成测试。ReplaceChain 自己开事务（SELECT ... FOR NO KEY UPDATE），
 // 所以夹具必须真实提交，结束时手工清理，不能套外层回滚事务。
 type APIKeyGroupRouteRepoSuite struct {
 	suite.Suite

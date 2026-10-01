@@ -50,6 +50,10 @@ type groupRouteService struct {
 
 	mu    sync.Mutex
 	cache map[int64]groupRouteCacheEntry
+	// gen 是按 Key 的代际计数：invalidate 时加一，listCached 回填前比对，
+	// 读库期间发生过失效就不写回，避免把读到的旧链回填成缓存。
+	// 条目只随写入过链的 Key 增长，不随 cache 的整体清空而清空（否则会丢失失效信号）。
+	gen map[int64]uint64
 }
 
 // NewGroupRouteService 创建回退链服务。settingService 为 nil 时视为开关关闭。
@@ -71,13 +75,15 @@ func newGroupRouteService(repo APIKeyGroupRouteRepository, groupRepo GroupReposi
 		settings: settings,
 		now:      now,
 		cache:    make(map[int64]groupRouteCacheEntry),
+		gen:      make(map[int64]uint64),
 	}
 }
 
 // --- 读 ---
 
 func (s *groupRouteService) GetUserChain(ctx context.Context, keyID int64) ([]RouteItem, error) {
-	items, err := s.listCached(ctx, keyID)
+	// 用户端读取不走缓存：SQL 层强制 source='user'，隐藏链不会经由缓存或过滤逻辑泄露。
+	items, err := s.repo.ListByKey(ctx, keyID, RouteSourceUser)
 	if err != nil {
 		return nil, err
 	}
@@ -103,6 +109,7 @@ func (s *groupRouteService) listCached(ctx context.Context, keyID int64) ([]Rout
 		s.mu.Unlock()
 		return out, nil
 	}
+	gen := s.gen[keyID]
 	s.mu.Unlock()
 
 	items, err := s.repo.ListByKey(ctx, keyID, "")
@@ -111,10 +118,13 @@ func (s *groupRouteService) listCached(ctx context.Context, keyID int64) ([]Rout
 	}
 
 	s.mu.Lock()
-	if len(s.cache) >= groupRouteCacheMaxEntries {
-		s.cache = make(map[int64]groupRouteCacheEntry)
+	// 读库期间该 Key 被失效过：本次读到的可能是旧链，只返回、不回填。
+	if s.gen[keyID] == gen {
+		if len(s.cache) >= groupRouteCacheMaxEntries {
+			s.cache = make(map[int64]groupRouteCacheEntry)
+		}
+		s.cache[keyID] = groupRouteCacheEntry{items: append([]RouteItem(nil), items...), expires: now.Add(groupRouteCacheTTL)}
 	}
-	s.cache[keyID] = groupRouteCacheEntry{items: append([]RouteItem(nil), items...), expires: now.Add(groupRouteCacheTTL)}
 	s.mu.Unlock()
 	return items, nil
 }
@@ -122,6 +132,7 @@ func (s *groupRouteService) listCached(ctx context.Context, keyID int64) ([]Rout
 func (s *groupRouteService) invalidate(keyID int64) {
 	s.mu.Lock()
 	delete(s.cache, keyID)
+	s.gen[keyID]++
 	s.mu.Unlock()
 }
 
@@ -347,6 +358,11 @@ func (s *groupRouteService) ResolveEffectiveChain(ctx context.Context, key *APIK
 	var hops []ChainHop
 	for _, c := range cands {
 		var group *Group
+		// 脏数据：链里残留了主分组本身（改主分组与 ApplyPrimaryGroupChange 之间的窗口）。
+		// 直接丢弃，保证主分组那一跳永远是 primary 来源。
+		if !c.isPrimary && c.item.GroupID == primary.ID {
+			continue
+		}
 		if c.isPrimary {
 			group = primary
 		} else {
@@ -368,7 +384,7 @@ func (s *groupRouteService) ResolveEffectiveChain(ctx context.Context, key *APIK
 	}
 
 	if len(hops) > MaxEffectiveChainLen {
-		hops = hops[:MaxEffectiveChainLen]
+		hops = truncateHops(hops, MaxEffectiveChainLen)
 		chain.Truncated = true
 	}
 	chain.Hops = hops
@@ -395,4 +411,29 @@ func (s *groupRouteService) eligibleGroup(ctx context.Context, primary *Group, c
 		return nil, RouteSkipNotAllowed, nil
 	}
 	return g, "", nil
+}
+
+// truncateHops 把链截到 limit 项（设计 2.2）：优先保留 admin 项，先从 user 链尾部开始丢；
+// user 项丢完仍超长，再从整条链末尾截。
+func truncateHops(hops []ChainHop, limit int) []ChainHop {
+	excess := len(hops) - limit
+	if excess <= 0 {
+		return hops
+	}
+	drop := make(map[int]struct{}, excess)
+	for i := len(hops) - 1; i >= 0 && len(drop) < excess; i-- {
+		if hops[i].RouteSource == RouteSourceUser {
+			drop[i] = struct{}{}
+		}
+	}
+	out := make([]ChainHop, 0, limit)
+	for i, h := range hops {
+		if _, ok := drop[i]; !ok {
+			out = append(out, h)
+		}
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }

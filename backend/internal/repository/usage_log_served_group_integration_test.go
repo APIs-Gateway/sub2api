@@ -27,7 +27,8 @@ func TestUsageLogRepo_ServedColumnsRoundTrip(t *testing.T) {
 	_, err := repo.Create(ctx, plain)
 	require.NoError(t, err)
 	var gid, src *int64
-	require.NoError(t, tx.QueryRowContext(ctx, `SELECT served_group_id, served_route_source FROM usage_logs WHERE id = $1`, plain.ID).Scan(&gid, &src))
+	// ent.Tx 没有 QueryRowContext，用同包的 scanSingleRow（与 usage_log_repo 一致）保留裸 SQL 断言。
+	require.NoError(t, scanSingleRow(ctx, tx, `SELECT served_group_id, served_route_source FROM usage_logs WHERE id = $1`, []any{plain.ID}, &gid, &src))
 	require.Nil(t, gid)
 	require.Nil(t, src)
 	got, err := repo.GetByID(ctx, plain.ID)

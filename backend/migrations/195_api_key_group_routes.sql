@@ -12,6 +12,11 @@
 --
 -- 主分组不得出现在链里、不跨平台这两条无法在数据库层 CHECK，由服务层保证。
 -- 本特性默认关闭，迁移本身不改变任何现有行为。
+-- 带外键的 CREATE TABLE 会在 api_keys / groups 上取 SHARE ROW EXCLUSIVE 锁；等不到锁就失败重试，
+-- 不能排队挡住请求路径上对这两张表的写入（照 145、196）。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '10min';
+
 CREATE TABLE IF NOT EXISTS api_key_group_routes (
     id          BIGSERIAL PRIMARY KEY,
     api_key_id  BIGINT      NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,

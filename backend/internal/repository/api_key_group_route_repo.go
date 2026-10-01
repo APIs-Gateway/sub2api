@@ -82,7 +82,7 @@ func scanAPIKeyGroupRoute(rows *sql.Rows) (service.RouteItem, error) {
 func lockAPIKeyRow(ctx context.Context, tx *sql.Tx, keyID int64) (sql.NullInt64, error) {
 	var groupID sql.NullInt64
 	err := tx.QueryRowContext(ctx,
-		`SELECT group_id FROM api_keys WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, keyID,
+		`SELECT group_id FROM api_keys WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE`, keyID,
 	).Scan(&groupID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return groupID, service.ErrAPIKeyNotFound
