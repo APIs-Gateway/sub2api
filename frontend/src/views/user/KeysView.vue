@@ -595,7 +595,7 @@
                 <input
                   v-model.number="formData.quota"
                   type="number"
-                  step="0.01"
+                  step="any"
                   min="0"
                   class="input pl-7"
                   :placeholder="limitInputFiat ? t('keys.quotaAmountPlaceholderFiat') : t('keys.quotaAmountPlaceholder')"
@@ -663,7 +663,7 @@
                 <input
                   v-model.number="formData.rate_limit_5h"
                   type="number"
-                  step="0.01"
+                  step="any"
                   min="0"
                   class="input pl-7"
                   :placeholder="'0'"
@@ -707,7 +707,7 @@
                 <input
                   v-model.number="formData.rate_limit_1d"
                   type="number"
-                  step="0.01"
+                  step="any"
                   min="0"
                   class="input pl-7"
                   :placeholder="'0'"
@@ -751,7 +751,7 @@
                 <input
                   v-model.number="formData.rate_limit_7d"
                   type="number"
-                  step="0.01"
+                  step="any"
                   min="0"
                   class="input pl-7"
                   :placeholder="'0'"
@@ -1307,6 +1307,7 @@ type LimitField = 'quota' | 'rate_limit_5h' | 'rate_limit_1d' | 'rate_limit_7d'
 const limitInputFiat = ref(false)
 // 回显和提交用同一个单价：弹窗打开后订阅卡数据才加载回来时，也不会前后口径不一致
 const limitInputRate = ref(0)
+const limitInputUsesSubscription = ref(false)
 const limitInputSymbol = computed(() => (limitInputFiat.value ? '¥' : '$'))
 // 编辑时记下每个字段回显的人民币值和原始额度：用户没改的字段原样提交额度，
 // 避免「额度 → 人民币（四舍五入）→ 额度」往返一次就把上限改掉几分。
@@ -1314,13 +1315,14 @@ const limitOriginals = new Map<LimitField, { input: number; credits: number }>()
 
 const limitFiatHint = computed(() =>
   t('keys.limitFiatHint', {
-    source: usesSubscriptionRate.value ? t('keys.limitFiatSourceSubscription') : t('keys.limitFiatSourceWallet')
+    source: limitInputUsesSubscription.value ? t('keys.limitFiatSourceSubscription') : t('keys.limitFiatSourceWallet')
   })
 )
 
 function beginLimitInput() {
   limitInputFiat.value = currencyIsFiat.value
   limitInputRate.value = sourceFiatPerCredit.value
+  limitInputUsesSubscription.value = usesSubscriptionRate.value
   limitOriginals.clear()
 }
 
