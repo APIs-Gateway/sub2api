@@ -1,27 +1,32 @@
 import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import en from '@/i18n/locales/en'
 import {
   AI_CLIENTS,
+  CODEX_MIN_NODE_MAJOR,
   buildAiPrompt,
   buildInstallScript,
   chatgptUrl,
   claudeUrl,
   clientsForPlatform,
   codexProviderId,
+  docsSectionFor,
   endpointFor,
   psQuote,
   shQuote,
+  tutorialHref,
+  type CodexInstallMode,
   type OnboardingClient,
   type ScriptMessages
 } from '../keyOnboarding'
 
 const hasPython = spawnSync('python3', ['--version']).status === 0
 const hasBash = spawnSync('bash', ['--version']).status === 0
+const hasPwsh = spawnSync('pwsh', ['-NoProfile', '-Command', '1']).status === 0
 
 // 带特殊字符的地址和密钥：引号、空格、$、反引号、反斜杠
 const NASTY_KEY = `sk-a'b"c $HOME \`x\` \\ d`
@@ -72,6 +77,23 @@ describe('clients and endpoints', () => {
     expect(endpointFor('claude', 'antigravity', 'https://x.io')).toBe('https://x.io/antigravity')
     expect(endpointFor('codex', 'openai', 'https://x.io/v1')).toBe('https://x.io/v1')
     expect(endpointFor('opencode', 'gemini', 'https://x.io')).toBe('https://x.io/v1beta')
+  })
+})
+
+describe('教程链接', () => {
+  it('每个客户端对应站内文档的小节；没有对应小节的返回 null', () => {
+    expect(docsSectionFor('claude')).toBe('claude-code')
+    expect(docsSectionFor('codex')).toBe('codex')
+    expect(docsSectionFor('opencode')).toBe('other-clients')
+    expect(docsSectionFor('gemini')).toBeNull()
+  })
+
+  it('链接是站内 /docs 加小节锚点，跟随站点部署前缀', () => {
+    expect(tutorialHref('codex')).toBe('/docs#codex')
+    expect(tutorialHref('claude', '/')).toBe('/docs#claude-code')
+    expect(tutorialHref('opencode', '/app/')).toBe('/app/docs#other-clients')
+    expect(tutorialHref('opencode', '/app')).toBe('/app/docs#other-clients')
+    expect(tutorialHref('gemini')).toBeNull()
   })
 })
 
@@ -197,6 +219,132 @@ describe('install scripts: text', () => {
   it('codex 的 wire_api 用 responses', () => {
     expect(buildInstallScript('codex', 'unix', { ...input, platform: 'openai' })).toContain('wire_api = "responses"')
     expect(buildInstallScript('codex', 'windows', { ...input, platform: 'openai' })).toContain('wire_api = "responses"')
+  })
+})
+
+describe('codex：完整安装与只刷新配置', () => {
+  const input = { baseUrl: 'https://x.io', apiKey: 'sk-plain', platform: 'openai', siteName: 'Hiyo' }
+  const make = (os: 'unix' | 'windows', mode?: CodexInstallMode) => buildInstallScript('codex', os, { ...input, mode })
+
+  it('不指定模式就是只刷新配置：没有 npm，也不检查 Node.js', () => {
+    for (const os of ['unix', 'windows'] as const) {
+      const script = make(os)
+      expect(script).not.toMatch(/npm/i)
+      expect(script).not.toMatch(/node/i)
+      expect(make(os, 'refresh')).toBe(script)
+    }
+  })
+
+  it('只刷新配置：只写 config.toml，写之前先备份', () => {
+    const unix = make('unix', 'refresh')
+    expect(unix).toContain('$HOME/.codex/config.toml')
+    expect(unix.indexOf('cp -p "$TARGET" "$B"')).toBeGreaterThan(-1)
+    expect(unix.indexOf('cp -p "$TARGET" "$B"')).toBeLessThan(unix.indexOf('cat "$OUT" > "$TARGET"'))
+    const win = make('windows', 'refresh')
+    expect(win.indexOf('Backup-File $target')).toBeGreaterThan(-1)
+    expect(win.indexOf('Backup-File $target')).toBeLessThan(win.indexOf('Save-Text $target $out'))
+  })
+
+  it('完整安装（unix）：先检查 Node.js 和 npm，再 npm install -g，最后写配置', () => {
+    const script = make('unix', 'full')
+    expect(script).toContain('npm install -g @openai/codex@latest')
+    const at = (needle: string) => {
+      const i = script.indexOf(needle)
+      expect(i, needle).toBeGreaterThan(-1)
+      return i
+    }
+    // 先找 python（写配置要用），再查 Node，再查 npm，再装，最后才动配置文件
+    expect(at('command -v python3')).toBeLessThan(at('command -v node'))
+    expect(at('command -v node')).toBeLessThan(at('node --version'))
+    expect(at('node --version')).toBeLessThan(at('command -v npm'))
+    expect(at('command -v npm')).toBeLessThan(at('npm install -g'))
+    expect(at('npm install -g')).toBeLessThan(at('TS="$(date'))
+    expect(at('npm install -g')).toBeLessThan(at('mkdir -p'))
+    expect(at('npm install -g')).toBeLessThan(at('cp -p "$TARGET" "$B"'))
+    expect(script).toContain(`-lt ${CODEX_MIN_NODE_MAJOR}`)
+  })
+
+  it('完整安装（Windows）：先检查 Node.js 和 npm，再 npm.cmd install -g，最后写配置', () => {
+    const script = make('windows', 'full')
+    expect(script).toContain("& npm.cmd install -g '@openai/codex@latest'")
+    const at = (needle: string) => {
+      const i = script.indexOf(needle)
+      expect(i, needle).toBeGreaterThan(-1)
+      return i
+    }
+    expect(at('Get-Command node')).toBeLessThan(at('node --version'))
+    expect(at('node --version')).toBeLessThan(at('Get-Command npm.cmd'))
+    expect(at('Get-Command npm.cmd')).toBeLessThan(at('npm.cmd install -g'))
+    expect(at('npm.cmd install -g')).toBeLessThan(at('$dir = '))
+    expect(at('npm.cmd install -g')).toBeLessThan(at('Backup-File $target'))
+    expect(script).toContain(`$nodeMajor -lt ${CODEX_MIN_NODE_MAJOR}`)
+    // 原生命令往 stderr 写字（npm 的警告）时，5.1 在 Stop 模式下会当成错误；调用期间要放宽
+    expect(at("$ErrorActionPreference = 'Continue'")).toBeLessThan(at('npm.cmd install -g'))
+    expect(at('npm.cmd install -g')).toBeLessThan(at('$ErrorActionPreference = $prevEap'))
+  })
+
+  it('完整安装的写配置部分与只刷新配置完全相同', () => {
+    const unixFull = make('unix', 'full')
+    const unixRefresh = make('unix', 'refresh')
+    expect(unixFull.slice(unixFull.indexOf('TS="$(date'))).toBe(unixRefresh.slice(unixRefresh.indexOf('TS="$(date')))
+    const winFull = make('windows', 'full')
+    const winRefresh = make('windows', 'refresh')
+    expect(winFull.slice(winFull.indexOf('$dir = '))).toBe(winRefresh.slice(winRefresh.indexOf('$dir = ')))
+    // 前半段（变量、检查）除了多出来的安装步骤，其余也一样
+    expect(unixFull.slice(0, unixFull.indexOf('NODE_VER=""'))).toBe(unixRefresh.slice(0, unixRefresh.indexOf('TS="$(date')))
+  })
+
+  it('完整安装不替用户装 Node.js，也不用 sudo、不下载任何东西，脚本里没有反引号', () => {
+    for (const os of ['unix', 'windows'] as const) {
+      const script = make(os, 'full')
+      expect(script).not.toMatch(/\bsudo\b/i)
+      expect(script).not.toMatch(/\b(curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr|irm|brew|winget|choco|nvm install)\b/i)
+      expect(script).not.toContain('`')
+      // 唯一的安装命令是 Codex 自己
+      expect(script.match(/npm(\.cmd)? install/g)).toHaveLength(1)
+    }
+  })
+
+  it('完整安装的 PowerShell 兼容 5.1：没有 5.1 不支持的语法，也没有同名自动变量赋值', () => {
+    const script = make('windows', 'full')
+    expect(script).not.toMatch(/-AsHashtable|\?\.|\?\?| \? .* : /)
+    expect(script).not.toMatch(/\$(pid|home|host|input|args|error|matches)\s*=/i)
+    // 5.1 默认执行策略会拒绝 npm.ps1，所以调用 npm.cmd
+    expect(script).not.toMatch(/&\s+npm\s/)
+  })
+
+  it('其他客户端忽略 mode', () => {
+    for (const client of ['claude', 'gemini', 'opencode'] as const) {
+      for (const os of ['unix', 'windows'] as const) {
+        const plain = buildInstallScript(client, os, input)
+        expect(buildInstallScript(client, os, { ...input, mode: 'full' })).toBe(plain)
+        expect(plain).not.toMatch(/npm/i)
+      }
+    }
+  })
+
+  it('提示可按界面语言替换；{version} 取运行时的 Node.js 版本，文字都走引号字面量', () => {
+    const messages: Partial<ScriptMessages> = {
+      nodeMissing: "需要 Node.js。it's \"x\" $HOME",
+      nodeTooOld: "Node.js {version} 太旧（it's）",
+      npmMissing: '没有 npm',
+      npmInstalling: '安装中',
+      npmPermission: '没有权限',
+      npmFailed: '安装失败'
+    }
+    const unix = buildInstallScript('codex', 'unix', { ...input, mode: 'full', messages })
+    expect(unix).toContain(`echo ${shQuote(messages.nodeMissing!)}`)
+    expect(unix).toContain(`printf '%s%s%s\\n' 'Node.js ' "$NODE_VER" ${shQuote(' 太旧（it\'s）')}`)
+    expect(unix).toContain(`echo ${shQuote('没有 npm')}`)
+    expect(unix).toContain(`echo ${shQuote('安装中')}`)
+    expect(unix).toContain(`echo ${shQuote('没有权限')}`)
+    expect(unix).toContain(`echo ${shQuote('安装失败')}`)
+    expect(unix).not.toContain('Installing Codex CLI')
+    const win = buildInstallScript('codex', 'windows', { ...input, mode: 'full', messages })
+    expect(win).toContain(`Write-Host ${psQuote(messages.nodeMissing!)} -ForegroundColor Red`)
+    expect(win).toContain("('Node.js ' + $nodeVer + ' 太旧（it''s）')")
+    expect(win).toContain(`Write-Host ${psQuote('没有权限')} -ForegroundColor Red`)
+    expect(win).not.toContain('Installing Codex CLI')
   })
 })
 
@@ -505,6 +653,355 @@ describe.skipIf(!hasPython || !hasBash)('install scripts: run on unix', () => {
       expect(backups(dir, 'opencode.json')).toHaveLength(1)
     } finally {
       rmSync(home, { recursive: true, force: true })
+    }
+  })
+})
+
+describe.skipIf(!hasPython || !hasBash)('install scripts: codex full install on unix', () => {
+  // 受限的 PATH：只放脚本用到的系统命令，再按需放假的 node / npm，这样「没装 Node」这种情况才能稳定复现
+  const SYSTEM_TOOLS = ['bash', 'sh', 'env', 'dirname', 'date', 'mkdir', 'cat', 'rm', 'cp', 'mv', 'mktemp', 'tee', 'grep', 'chmod', 'python3']
+  const resolveTool = (name: string) => spawnSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf-8' }).stdout.trim()
+  const tools = Object.fromEntries(SYSTEM_TOOLS.map((n) => [n, resolveTool(n)]))
+  const hasTools = Object.values(tools).every(Boolean)
+  const messages: Partial<ScriptMessages> = {
+    nodeMissing: 'NO-NODE: install Node first',
+    nodeTooOld: 'OLD-NODE {version}: upgrade',
+    npmMissing: 'NO-NPM: reinstall Node',
+    npmInstalling: 'INSTALLING',
+    npmPermission: 'NPM-PERMISSION: use nvm or fix the prefix',
+    npmFailed: 'NPM-FAILED: see above'
+  }
+
+  function runFull(opts: { node?: string; npm?: string; mode?: CodexInstallMode; files?: Record<string, string> }) {
+    const home = mkdtempSync(join(tmpdir(), 'keyonb-home-'))
+    const bin = mkdtempSync(join(tmpdir(), 'keyonb-bin-'))
+    const log = join(bin, 'npm-args.log')
+    for (const [rel, content] of Object.entries(opts.files ?? {})) {
+      const full = join(home, rel)
+      mkdirSync(join(full, '..'), { recursive: true })
+      writeFileSync(full, content)
+    }
+    for (const [name, real] of Object.entries(tools)) symlinkSync(real, join(bin, name))
+    const fake = (name: string, body: string) => {
+      writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`)
+      chmodSync(join(bin, name), 0o755)
+    }
+    // 固定成 Linux：macOS 上的命令行开发工具检查另有测试
+    fake('uname', 'echo Linux')
+    if (opts.node !== undefined) fake('node', opts.node)
+    if (opts.npm !== undefined) fake('npm', opts.npm.replace('$LOG', log))
+    const script = buildInstallScript('codex', 'unix', {
+      baseUrl: 'https://x.io',
+      apiKey: 'sk-plain',
+      platform: 'openai',
+      siteName: 'Hiyo',
+      mode: opts.mode ?? 'full',
+      messages
+    })
+    const res = spawnSync(tools.bash, ['-c', script], { env: { PATH: bin, HOME: home }, encoding: 'utf-8' })
+    const npmArgs = existsSync(log) ? readFileSync(log, 'utf-8').trim() : null
+    const cleanup = () => {
+      rmSync(home, { recursive: true, force: true })
+      rmSync(bin, { recursive: true, force: true })
+    }
+    return { home, res, npmArgs, cleanup }
+  }
+  const NPM_OK = 'echo "$@" > "$LOG"; echo "added 1 package"'
+  const original = 'model = "old"\n\n[projects."/tmp/x"]\ntrust_level = "trusted"\n'
+
+  it.skipIf(!hasTools)('没装 Node.js：提示并退出，不装、不碰配置', () => {
+    const { home, res, npmArgs, cleanup } = runFull({ npm: NPM_OK, files: { '.codex/config.toml': original } })
+    try {
+      expect(res.status).toBe(1)
+      expect(res.stdout).toContain('NO-NODE: install Node first')
+      expect(npmArgs).toBeNull()
+      expect(readFileSync(join(home, '.codex/config.toml'), 'utf-8')).toBe(original)
+      expect(readdirSync(join(home, '.codex'))).toEqual(['config.toml'])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it.skipIf(!hasTools)('Node.js 版本太低：提示当前版本并退出', () => {
+    const { home, res, npmArgs, cleanup } = runFull({ node: 'echo v14.21.3', npm: NPM_OK })
+    try {
+      expect(res.status).toBe(1)
+      expect(res.stdout).toContain('OLD-NODE v14.21.3: upgrade')
+      expect(npmArgs).toBeNull()
+      expect(existsSync(join(home, '.codex'))).toBe(false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it.skipIf(!hasTools)('版本号读不出来时按没装处理', () => {
+    const { res, npmArgs, cleanup } = runFull({ node: 'exit 1', npm: NPM_OK })
+    try {
+      expect(res.status).toBe(1)
+      expect(res.stdout).toContain('NO-NODE')
+      expect(npmArgs).toBeNull()
+    } finally {
+      cleanup()
+    }
+  })
+
+  it.skipIf(!hasTools)('刚好满足最低版本：继续安装', () => {
+    const { res, npmArgs, cleanup } = runFull({ node: `echo v${CODEX_MIN_NODE_MAJOR}.0.0`, npm: NPM_OK })
+    try {
+      expect(res.status, res.stdout + res.stderr).toBe(0)
+      expect(npmArgs).toBe('install -g @openai/codex@latest')
+    } finally {
+      cleanup()
+    }
+  })
+
+  it.skipIf(!hasTools)('有 Node.js 没有 npm：提示并退出，不碰配置', () => {
+    const { home, res, cleanup } = runFull({ node: 'echo v20.11.0' })
+    try {
+      expect(res.status).toBe(1)
+      expect(res.stdout).toContain('NO-NPM: reinstall Node')
+      expect(existsSync(join(home, '.codex'))).toBe(false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it.skipIf(!hasTools)('npm 装成功：先装，再备份并写入配置，输出里有 npm 的进度', () => {
+    const { home, res, npmArgs, cleanup } = runFull({ node: 'echo v20.11.0', npm: NPM_OK, files: { '.codex/config.toml': original } })
+    try {
+      expect(res.status, res.stdout + res.stderr).toBe(0)
+      expect(npmArgs).toBe('install -g @openai/codex@latest')
+      const dir = join(home, '.codex')
+      const toml = readFileSync(join(dir, 'config.toml'), 'utf-8')
+      expect(toml).toContain('model_provider = "hiyo"')
+      expect(toml).toContain('experimental_bearer_token = "sk-plain"')
+      expect(toml).toContain('[projects."/tmp/x"]')
+      expect(toml).not.toContain('model = "old"')
+      const bak = readdirSync(dir).filter((f) => f.startsWith('config.toml.bak-'))
+      expect(bak).toHaveLength(1)
+      expect(readFileSync(join(dir, bak[0]), 'utf-8')).toBe(original)
+      const out = res.stdout
+      expect(out.indexOf('INSTALLING')).toBeGreaterThan(-1)
+      expect(out.indexOf('INSTALLING')).toBeLessThan(out.indexOf('added 1 package'))
+      expect(out.indexOf('added 1 package')).toBeLessThan(out.indexOf('Backup:'))
+      expect(out.indexOf('Backup:')).toBeLessThan(out.indexOf('Updated:'))
+    } finally {
+      cleanup()
+    }
+  })
+
+  it.skipIf(!hasTools)('npm 没有权限：给出处理办法并退出，不自动 sudo，不改配置', () => {
+    const { home, res, cleanup } = runFull({
+      node: 'echo v20.11.0',
+      npm: 'echo "npm error code EACCES" >&2; echo "npm error path /usr/local/lib/node_modules" >&2; exit 243',
+      files: { '.codex/config.toml': original }
+    })
+    try {
+      expect(res.status).toBe(1)
+      // npm 自己的报错照常显示在终端里
+      expect(res.stdout).toContain('npm error code EACCES')
+      expect(res.stdout).toContain('NPM-PERMISSION: use nvm or fix the prefix')
+      expect(res.stdout).not.toContain('NPM-FAILED')
+      expect(res.stdout).not.toContain('Updated:')
+      expect(readFileSync(join(home, '.codex/config.toml'), 'utf-8')).toBe(original)
+      expect(readdirSync(join(home, '.codex'))).toEqual(['config.toml'])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it.skipIf(!hasTools)('npm 因其他原因失败：提示看上面的报错，不改配置', () => {
+    const { home, res, cleanup } = runFull({ node: 'echo v20.11.0', npm: 'echo "npm error code E404" >&2; exit 1' })
+    try {
+      expect(res.status).toBe(1)
+      expect(res.stdout).toContain('npm error code E404')
+      expect(res.stdout).toContain('NPM-FAILED: see above')
+      expect(res.stdout).not.toContain('NPM-PERMISSION')
+      expect(existsSync(join(home, '.codex'))).toBe(false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it.skipIf(!hasTools)('npm 不读脚本的标准输入：不会吞掉后面的脚本内容', () => {
+    // 如果 npm 读走了脚本本身，后面的写配置就不会执行
+    const { home, res, cleanup } = runFull({ node: 'echo v20.11.0', npm: 'cat >/dev/null; echo done' })
+    try {
+      expect(res.status, res.stdout + res.stderr).toBe(0)
+      expect(existsSync(join(home, '.codex/config.toml'))).toBe(true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it.skipIf(!hasTools)('只刷新配置：没有 Node.js 和 npm 也能运行，和以前一样', () => {
+    const { home, res, npmArgs, cleanup } = runFull({ mode: 'refresh', files: { '.codex/config.toml': original } })
+    try {
+      expect(res.status, res.stdout + res.stderr).toBe(0)
+      expect(npmArgs).toBeNull()
+      expect(res.stdout).not.toContain('INSTALLING')
+      expect(readFileSync(join(home, '.codex/config.toml'), 'utf-8')).toContain('model_provider = "hiyo"')
+      expect(readdirSync(join(home, '.codex')).filter((f) => f.startsWith('config.toml.bak-'))).toHaveLength(1)
+    } finally {
+      cleanup()
+    }
+  })
+})
+
+describe.skipIf(!hasPwsh)('install scripts: PowerShell 语法', { timeout: 30_000 }, () => {
+  it.each(['claude', 'codex', 'gemini', 'opencode'] as const)('%s 的 Windows 脚本能被 PowerShell 解析', (client) => {
+    for (const mode of client === 'codex' ? (['refresh', 'full'] as const) : ([undefined] as const)) {
+      const script = buildInstallScript(client, 'windows', {
+        baseUrl: NASTY_BASE,
+        apiKey: NASTY_KEY,
+        platform: 'openai',
+        siteName: "O'Neil Site",
+        mode
+      })
+      const dir = mkdtempSync(join(tmpdir(), 'keyonb-ps-'))
+      try {
+        const file = join(dir, 'script.ps1')
+        writeFileSync(file, script)
+        const res = spawnSync(
+          'pwsh',
+          [
+            '-NoProfile',
+            '-Command',
+            '$e = $null; $t = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($env:KEYONB_PS_FILE, [ref]$t, [ref]$e); if ($e.Count -gt 0) { $e | ForEach-Object { $_.Message }; exit 1 }'
+          ],
+          { encoding: 'utf-8', env: { ...process.env, KEYONB_PS_FILE: file } }
+        )
+        expect(res.status, res.stdout + res.stderr).toBe(0)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  })
+})
+
+// 用 pwsh（7.x）加假的 node / npm.cmd 跑一遍 Windows 版完整安装的流程。
+// 只能验证流程和判断；Windows PowerShell 5.1 自身的细节差异在这里验证不到。
+describe.skipIf(!hasPwsh || process.platform === 'win32')('install scripts: codex full install in PowerShell', { timeout: 30_000 }, () => {
+  const pwsh = spawnSync('sh', ['-c', 'command -v pwsh'], { encoding: 'utf-8' }).stdout.trim()
+  const messages: Partial<ScriptMessages> = {
+    nodeMissing: 'NO-NODE: install Node first',
+    nodeTooOld: 'OLD-NODE {version}: upgrade',
+    npmMissing: 'NO-NPM: reinstall Node',
+    npmInstalling: 'INSTALLING',
+    npmPermission: 'NPM-PERMISSION: use nvm or fix the prefix',
+    npmFailed: 'NPM-FAILED: see above'
+  }
+  const original = 'model = "old"\n\n[projects."/tmp/x"]\ntrust_level = "trusted"\n'
+
+  function runPs(opts: { node?: string; npm?: string; mode?: CodexInstallMode }) {
+    const home = mkdtempSync(join(tmpdir(), 'keyonb-pshome-'))
+    const bin = mkdtempSync(join(tmpdir(), 'keyonb-psbin-'))
+    const log = join(bin, 'npm-args.log')
+    mkdirSync(join(home, '.codex'), { recursive: true })
+    writeFileSync(join(home, '.codex', 'config.toml'), original)
+    const fake = (name: string, body: string) => {
+      writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`)
+      chmodSync(join(bin, name), 0o755)
+    }
+    if (opts.node !== undefined) fake('node', opts.node)
+    if (opts.npm !== undefined) fake('npm.cmd', `echo "$@" > "${log}"\n${opts.npm}`)
+    const script = buildInstallScript('codex', 'windows', {
+      baseUrl: 'https://x.io',
+      apiKey: 'sk-plain',
+      platform: 'openai',
+      siteName: 'Hiyo',
+      mode: opts.mode ?? 'full',
+      messages
+    })
+    const file = join(bin, 'script.ps1')
+    writeFileSync(file, script)
+    const res = spawnSync(pwsh, ['-NoProfile', '-File', file], {
+      // PATH 只留假命令，真实机器上装了 Node 也不影响「没装」这种情况
+      env: { PATH: bin, USERPROFILE: home, HOME: home, DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1' },
+      encoding: 'utf-8'
+    })
+    const dir = join(home, '.codex')
+    return {
+      out: res.stdout + res.stderr,
+      npmArgs: existsSync(log) ? readFileSync(log, 'utf-8').trim() : null,
+      toml: readFileSync(join(dir, 'config.toml'), 'utf-8'),
+      backups: readdirSync(dir).filter((f) => f.startsWith('config.toml.bak-')),
+      cleanup: () => {
+        rmSync(home, { recursive: true, force: true })
+        rmSync(bin, { recursive: true, force: true })
+      }
+    }
+  }
+
+  it('没装 Node.js：提示并停止，不装、不碰配置', () => {
+    const r = runPs({ npm: 'echo ok' })
+    try {
+      expect(r.out).toContain('NO-NODE: install Node first')
+      expect(r.npmArgs).toBeNull()
+      expect(r.toml).toBe(original)
+      expect(r.backups).toHaveLength(0)
+    } finally {
+      r.cleanup()
+    }
+  })
+
+  it('Node.js 版本太低、或没有 npm：提示并停止', () => {
+    const old = runPs({ node: 'echo v14.21.3', npm: 'echo ok' })
+    const noNpm = runPs({ node: 'echo v20.11.0' })
+    try {
+      expect(old.out).toContain('OLD-NODE v14.21.3: upgrade')
+      expect(old.npmArgs).toBeNull()
+      expect(old.toml).toBe(original)
+      expect(noNpm.out).toContain('NO-NPM: reinstall Node')
+      expect(noNpm.toml).toBe(original)
+    } finally {
+      old.cleanup()
+      noNpm.cleanup()
+    }
+  })
+
+  it('装成功：先 npm.cmd install -g，再备份并写入配置', () => {
+    const r = runPs({ node: 'echo v20.11.0', npm: 'echo "added 1 package"' })
+    try {
+      expect(r.npmArgs).toBe('install -g @openai/codex@latest')
+      expect(r.toml).toContain('model_provider = "hiyo"')
+      expect(r.toml).toContain('experimental_bearer_token = "sk-plain"')
+      expect(r.toml).toContain('[projects."/tmp/x"]')
+      expect(r.backups).toHaveLength(1)
+      expect(r.out.indexOf('INSTALLING')).toBeLessThan(r.out.indexOf('added 1 package'))
+      expect(r.out.indexOf('added 1 package')).toBeLessThan(r.out.indexOf('Backup:'))
+    } finally {
+      r.cleanup()
+    }
+  })
+
+  it('npm 没有权限：给出处理办法并停止；其他失败：提示看报错；两种都不改配置', () => {
+    const denied = runPs({ node: 'echo v20.11.0', npm: 'echo "npm error code EACCES" >&2; exit 243' })
+    const other = runPs({ node: 'echo v20.11.0', npm: 'echo "npm error code E404" >&2; exit 1' })
+    try {
+      expect(denied.out).toContain('npm error code EACCES')
+      expect(denied.out).toContain('NPM-PERMISSION: use nvm or fix the prefix')
+      expect(denied.out).not.toContain('NPM-FAILED')
+      expect(denied.toml).toBe(original)
+      expect(other.out).toContain('npm error code E404')
+      expect(other.out).toContain('NPM-FAILED: see above')
+      expect(other.out).not.toContain('NPM-PERMISSION')
+      expect(other.toml).toBe(original)
+      expect(denied.backups.length + other.backups.length).toBe(0)
+    } finally {
+      denied.cleanup()
+      other.cleanup()
+    }
+  })
+
+  it('只刷新配置：不检查也不调用 npm', () => {
+    const r = runPs({ mode: 'refresh' })
+    try {
+      expect(r.npmArgs).toBeNull()
+      expect(r.toml).toContain('model_provider = "hiyo"')
+      expect(r.backups).toHaveLength(1)
+    } finally {
+      r.cleanup()
     }
   })
 })

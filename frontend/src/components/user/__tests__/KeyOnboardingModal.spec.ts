@@ -111,25 +111,174 @@ describe('KeyOnboardingModal', () => {
     expect(w.find('[data-test="panel-ccswitch"]').exists()).toBe(true)
   })
 
-  it('一键安装按平台分块，每块有 macOS/Linux 和 Windows 两个复制按钮', async () => {
-    const w = await mountModal()
-    expect(w.find('[data-test="client-codex"]').exists()).toBe(true)
-    expect(w.find('[data-test="client-opencode"]').exists()).toBe(true)
-    expect(w.find('[data-test="client-claude"]').exists()).toBe(false)
-    expect(w.get('[data-test="copy-codex-unix"]').text()).toContain('macOS / Linux')
-    expect(w.get('[data-test="copy-codex-windows"]').text()).toContain('Windows')
+  describe('一键安装：卡片', () => {
+    const tilesOf = (w: VueWrapper, client: string) => w.findAll(`[data-test="client-${client}"] button.onb-tile`)
+
+    it('每个客户端一张卡片；Claude Code、OpenCode 等只有 macOS / Linux 和 Windows 两块瓦片', async () => {
+      const w = await mountModal({ apiKey: apiKey('anthropic') })
+      expect(w.find('[data-test="client-claude"]').exists()).toBe(true)
+      expect(w.find('[data-test="client-opencode"]').exists()).toBe(true)
+      expect(w.find('[data-test="client-codex"]').exists()).toBe(false)
+      for (const c of ['claude', 'opencode']) {
+        const tiles = tilesOf(w, c)
+        expect(tiles.map((t) => t.text())).toEqual(['macOS / Linux', 'Windows'])
+      }
+      expect(w.get('[data-test="copy-claude-unix"]').exists()).toBe(true)
+      expect(w.get('[data-test="copy-claude-windows"]').exists()).toBe(true)
+    })
+
+    it('没有分组可用的客户端时不渲染卡片', async () => {
+      const w = await mountModal({ apiKey: { key: SECRET, name: 'k', group_id: 3, group: { id: 3, platform: 'unknown' } } })
+      expect(w.findAll('[data-test^="client-"]')).toHaveLength(0)
+    })
+
+    it('Codex 卡片有两行瓦片：完整安装、只刷新配置，各有 macOS / Linux 和 Windows', async () => {
+      const w = await mountModal()
+      expect(w.find('[data-test="client-claude"]').exists()).toBe(false)
+      expect(tilesOf(w, 'codex').map((t) => t.text())).toEqual([
+        'Full install · macOS / Linux',
+        'Full install · Windows',
+        'Refresh config only · macOS / Linux',
+        'Refresh config only · Windows'
+      ])
+      expect(tilesOf(w, 'opencode').map((t) => t.text())).toEqual(['macOS / Linux', 'Windows'])
+      for (const id of ['full', 'refresh']) {
+        for (const os of ['unix', 'windows']) expect(w.find(`[data-test="copy-codex-${id}-${os}"]`).exists()).toBe(true)
+      }
+      // 说明两种模式的区别，并带出 Node.js 版本要求
+      expect(w.get('[data-test="codex-modes"]').text()).toContain('Node.js 16')
+    })
+
+    it('瓦片上只显示平台名和一个复制图标，不显示脚本', async () => {
+      const w = await mountModal({ apiKey: apiKey('anthropic') })
+      const tile = w.get('[data-test="copy-claude-unix"]')
+      expect(tile.text()).toBe('macOS / Linux')
+      expect(tile.find('svg').exists()).toBe(true)
+      expect(tile.find('[data-test="icon-copy"]').exists()).toBe(true)
+      expect(tile.attributes('aria-label')).toBe('Copy command: Claude Code, macOS / Linux')
+    })
+
+    it('弹窗头：副标题带密钥名，底部说明带站点名', async () => {
+      const w = await mountModal()
+      expect(w.get('[data-test="subtitle"]').text()).toContain('Connect "my-key" to your client')
+      expect(w.get('[data-test="install-footnote"]').text()).toContain('The script writes the Hiyo endpoint and key')
+      expect(w.get('[data-test="install-footnote"]').text()).toContain('backs up your existing config first')
+    })
+
+    it('页签带图标，选中的页签有选中样式', async () => {
+      const w = await mountModal()
+      for (const id of ['install', 'ai', 'ccswitch', 'manual']) {
+        expect(w.get(`[data-test="tab-${id}"] svg`).exists()).toBe(true)
+      }
+      expect(w.get('[data-test="tab-install"]').classes()).toContain('onb-tab-active')
+      expect(w.get('[data-test="tab-ai"]').classes()).not.toContain('onb-tab-active')
+      await w.get('[data-test="tab-ai"]').trigger('click')
+      expect(w.get('[data-test="tab-ai"]').classes()).toContain('onb-tab-active')
+    })
   })
 
-  it('点复制：写入剪贴板的是完整脚本，按钮变成已复制', async () => {
-    const w = await mountModal()
-    await w.get('[data-test="copy-codex-unix"]').trigger('click')
-    await flushPromises()
-    expect(clipboard.writeText).toHaveBeenCalledTimes(1)
-    const copied = clipboard.writeText.mock.calls[0][0] as string
-    expect(copied).toContain(SECRET)
-    expect(copied).toContain('https://codex.hiyo.top/v1')
-    expect(copied).toContain('bak-')
-    expect(w.get('[data-test="copy-codex-unix"]').text()).toBe('Copied')
+  describe('一键安装：教程链接', () => {
+    it('指向站内文档的对应小节，新标签页打开', async () => {
+      const w = await mountModal({ apiKey: apiKey('anthropic') })
+      const claude = w.get('[data-test="tutorial-claude"]')
+      expect(claude.attributes('href')).toBe('/docs#claude-code')
+      expect(claude.attributes('target')).toBe('_blank')
+      expect(claude.attributes('rel')).toContain('noopener')
+      expect(claude.text()).toContain('View guide')
+      expect(w.get('[data-test="tutorial-opencode"]').attributes('href')).toBe('/docs#other-clients')
+    })
+
+    it('Codex 卡片指向 codex 小节', async () => {
+      const w = await mountModal()
+      expect(w.get('[data-test="tutorial-codex"]').attributes('href')).toBe('/docs#codex')
+    })
+
+    it('没有对应小节的客户端不显示链接', async () => {
+      const w = await mountModal({ apiKey: apiKey('gemini') })
+      expect(w.find('[data-test="client-gemini"]').exists()).toBe(true)
+      expect(w.find('[data-test="tutorial-gemini"]').exists()).toBe(false)
+      expect(w.find('[data-test="tutorial-opencode"]').exists()).toBe(true)
+    })
+  })
+
+  describe('一键安装：查看脚本', () => {
+    it('每张卡片保留折叠的脚本预览，里面是与复制相同的脚本', async () => {
+      const w = await mountModal({ apiKey: apiKey('anthropic') })
+      const details = w.get('[data-test="script-claude"]')
+      expect(details.element.tagName).toBe('DETAILS')
+      expect(details.attributes('open')).toBeUndefined()
+      expect(details.text()).toContain('View script')
+      await w.get('[data-test="copy-claude-unix"]').trigger('click')
+      await flushPromises()
+      const copied = clipboard.writeText.mock.calls[0][0] as string
+      const shown = details.findAll('pre').map((p) => p.text())
+      expect(shown).toHaveLength(2)
+      expect(shown).toContain(copied)
+    })
+
+    it('Codex 的预览包含完整安装和只刷新配置的四份脚本', async () => {
+      const w = await mountModal()
+      const blocks = w.get('[data-test="script-codex"]').findAll('pre').map((p) => p.text())
+      expect(blocks).toHaveLength(4)
+      // 只有完整安装的两份（macOS / Linux 和 Windows）带 npm 安装
+      expect(blocks.filter((b) => b.includes('npm install -g') || b.includes('npm.cmd install -g'))).toHaveLength(2)
+    })
+  })
+
+  describe('一键安装：复制', () => {
+    const copiedTexts = () => clipboard.writeText.mock.calls.map((c) => c[0] as string)
+
+    it('点瓦片：写入剪贴板的是完整脚本，图标变成勾', async () => {
+      const w = await mountModal()
+      const tile = w.get('[data-test="copy-codex-refresh-unix"]')
+      expect(tile.find('[data-test="icon-copy"]').exists()).toBe(true)
+      await tile.trigger('click')
+      await flushPromises()
+      expect(clipboard.writeText).toHaveBeenCalledTimes(1)
+      const copied = copiedTexts()[0]
+      expect(copied).toContain(SECRET)
+      expect(copied).toContain('https://codex.hiyo.top/v1')
+      expect(copied).toContain('bak-')
+      expect(w.get('[data-test="copy-codex-refresh-unix"]').find('[data-test="icon-check"]').exists()).toBe(true)
+      expect(w.get('[data-test="copy-codex-refresh-unix"]').find('[data-test="icon-copy"]').exists()).toBe(false)
+      expect(w.get('[data-test="copy-codex-refresh-unix"]').attributes('data-copied')).toBe('true')
+      // 其他瓦片不受影响
+      expect(w.get('[data-test="copy-codex-full-unix"]').attributes('data-copied')).toBe('false')
+    })
+
+    it('每块瓦片复制各自平台、各自模式的脚本', async () => {
+      const w = await mountModal()
+      for (const id of ['codex-full-unix', 'codex-full-windows', 'codex-refresh-unix', 'codex-refresh-windows']) {
+        await w.get(`[data-test="copy-${id}"]`).trigger('click')
+      }
+      await flushPromises()
+      const [fullUnix, fullWin, refreshUnix, refreshWin] = copiedTexts()
+      expect(fullUnix.startsWith("bash <<'SUB2API_INSTALL_EOF'")).toBe(true)
+      expect(fullUnix).toContain('npm install -g @openai/codex@latest')
+      expect(fullWin.startsWith('& {')).toBe(true)
+      expect(fullWin).toContain("npm.cmd install -g '@openai/codex@latest'")
+      expect(refreshUnix.startsWith("bash <<'SUB2API_INSTALL_EOF'")).toBe(true)
+      expect(refreshUnix).not.toContain('npm')
+      expect(refreshWin.startsWith('& {')).toBe(true)
+      expect(refreshWin).not.toContain('npm')
+      // 四份都写同一个配置文件，密钥都在
+      for (const text of [fullUnix, fullWin, refreshUnix, refreshWin]) {
+        expect(text).toContain(SECRET)
+        expect(text).toContain('wire_api = "responses"')
+      }
+    })
+
+    it('其他客户端的瓦片复制各自的脚本，不含 npm 安装', async () => {
+      const w = await mountModal({ apiKey: apiKey('anthropic') })
+      await w.get('[data-test="copy-claude-windows"]').trigger('click')
+      await w.get('[data-test="copy-opencode-unix"]').trigger('click')
+      await flushPromises()
+      const [claudeWin, opencodeUnix] = copiedTexts()
+      expect(claudeWin).toContain('ANTHROPIC_AUTH_TOKEN')
+      expect(claudeWin).not.toContain('npm')
+      expect(opencodeUnix).toContain('opencode.json')
+      expect(opencodeUnix).not.toContain('npm')
+    })
   })
 
   describe('页签的无障碍', () => {
@@ -245,31 +394,36 @@ describe('KeyOnboardingModal', () => {
         expect(status.attributes('role')).toBe('status')
         expect(status.attributes('aria-live')).toBe('polite')
         expect(status.text()).toBe('')
-        await w.get('[data-test="copy-codex-unix"]').trigger('click')
+        await w.get('[data-test="copy-codex-refresh-unix"]').trigger('click')
         await flushPromises()
         expect(w.get('[data-test="copy-status"]').text()).toBe('Copied')
+        expect(w.find('[data-test="copy-codex-refresh-unix"] [data-test="icon-check"]').exists()).toBe(true)
         await vi.advanceTimersByTimeAsync(2000)
         await flushPromises()
         expect(w.get('[data-test="copy-status"]').text()).toBe('')
+        // 勾变回复制图标
+        expect(w.find('[data-test="copy-codex-refresh-unix"] [data-test="icon-check"]').exists()).toBe(false)
+        expect(w.find('[data-test="copy-codex-refresh-unix"] [data-test="icon-copy"]').exists()).toBe(true)
       } finally {
         vi.useRealTimers()
       }
     })
 
-    it('复制失败时弹出提示，按钮不显示已复制', async () => {
+    it('复制失败时弹出提示，图标不变成勾', async () => {
       clipboard.writeText.mockRejectedValue(new Error('denied'))
       const w = await mountModal()
-      await w.get('[data-test="copy-codex-unix"]').trigger('click')
+      await w.get('[data-test="copy-codex-refresh-unix"]').trigger('click')
       await flushPromises()
       expect(showError).toHaveBeenCalledTimes(1)
       expect(showError).toHaveBeenCalledWith('Failed to copy')
-      expect(w.get('[data-test="copy-codex-unix"]').text()).not.toBe('Copied')
+      expect(w.find('[data-test="copy-codex-refresh-unix"] [data-test="icon-check"]').exists()).toBe(false)
+      expect(w.get('[data-test="copy-codex-refresh-unix"]').attributes('data-copied')).toBe('false')
       expect(w.get('[data-test="copy-status"]').text()).toBe('')
     })
 
     it('复制成功时不弹错误提示', async () => {
       const w = await mountModal()
-      await w.get('[data-test="copy-codex-unix"]').trigger('click')
+      await w.get('[data-test="copy-codex-refresh-unix"]').trigger('click')
       await flushPromises()
       expect(showError).not.toHaveBeenCalled()
     })
@@ -294,7 +448,7 @@ describe('KeyOnboardingModal', () => {
 
   describe('脚本里的终端提示跟随界面语言', () => {
     const copyScript = async (w: VueWrapper, os: 'unix' | 'windows') => {
-      await w.get(`[data-test="copy-codex-${os}"]`).trigger('click')
+      await w.get(`[data-test="copy-codex-refresh-${os}"]`).trigger('click')
       await flushPromises()
       const calls = clipboard.writeText.mock.calls
       return calls[calls.length - 1][0] as string
@@ -331,6 +485,47 @@ describe('KeyOnboardingModal', () => {
     const w = await mountModal({ apiKey: { key: SECRET, name: 'k', group_id: null, group: null } })
     expect(w.find('[data-test="no-group"]').exists()).toBe(true)
     expect(w.find('[data-test="panel-install"]').exists()).toBe(false)
+  })
+
+  describe('完整安装脚本里的终端提示跟随界面语言', () => {
+    const copyFull = async (w: VueWrapper, os: 'unix' | 'windows') => {
+      await w.get(`[data-test="copy-codex-full-${os}"]`).trigger('click')
+      await flushPromises()
+      const calls = clipboard.writeText.mock.calls
+      return calls[calls.length - 1][0] as string
+    }
+
+    it('英文界面：英文提示，版本要求来自同一个常量', async () => {
+      const w = await mountModal()
+      const unix = await copyFull(w, 'unix')
+      expect(unix).toContain('Node.js 16 or newer is required')
+      expect(unix).toContain("'Node.js ' \"$NODE_VER\" ' is too old. Install Node.js 16 or newer")
+      expect(unix).toContain('npm was not found')
+      expect(unix).toContain('Installing Codex CLI with npm...')
+      expect(unix).toContain('npm does not have permission to install global packages')
+      expect(unix).toContain('Codex CLI could not be installed')
+      const win = await copyFull(w, 'windows')
+      expect(win).toContain("('Node.js ' + $nodeVer + ' is too old. Install Node.js 16 or newer")
+      expect(win).toContain('npm does not have permission to install global packages')
+    })
+
+    it('中文界面：Node、npm 的提示都是中文，教大家怎么处理', async () => {
+      i18nState.lang = 'zh-CN'
+      const w = await mountModal()
+      const unix = await copyFull(w, 'unix')
+      expect(unix).toContain('需要先安装 Node.js 16 或更高版本')
+      expect(unix).toContain("'Node.js ' \"$NODE_VER\" ' 版本过低，需要 16 或更高版本")
+      expect(unix).toContain('没有找到 npm')
+      expect(unix).toContain('正在用 npm 安装 Codex CLI…')
+      expect(unix).toContain('nvm')
+      expect(unix).toContain('npm config set prefix')
+      expect(unix).not.toContain('sudo')
+      expect(unix).not.toContain('Node.js 16 or newer')
+      const win = await copyFull(w, 'windows')
+      expect(win).toContain('npm 没有权限全局安装')
+      expect(win).toContain("('Node.js ' + $nodeVer + ' 版本过低，需要 16 或更高版本")
+      expect(win).not.toContain('sudo')
+    })
   })
 
   describe('交给 AI', () => {

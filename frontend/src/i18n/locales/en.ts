@@ -857,6 +857,7 @@
   // Key connect dialog: one-click install / hand it to an AI / CC Switch / manual setup
   keyOnboarding: {
     title: 'Connect a key',
+    subtitle: 'Connect "{name}" to your client',
     copy: 'Copy',
     copied: 'Copied',
     noGroup: 'Choose a group for this key before connecting it.',
@@ -867,9 +868,12 @@
       manual: 'Manual'
     },
     install: {
-      intro: 'The command writes the endpoint and key, and backs up your existing config first. Paste it into a terminal, then restart the client.',
-      copyUnix: 'Copy macOS / Linux command',
-      copyWindows: 'Copy Windows command',
+      tutorial: 'View guide',
+      modeFull: 'Full install',
+      modeRefresh: 'Refresh config only',
+      copyTile: 'Copy command: {client}, {label}',
+      codexModes: 'Full install sets up Codex CLI first (Node.js {min} or newer required). If it is already installed, choose "Refresh config only".',
+      footnote: 'Click to copy a command, paste it into a terminal, then restart the client. The script writes the {site} endpoint and key, and backs up your existing config first.',
       viewScript: 'View script',
       scriptDone: '{client} is set up. Restart it to start using it.',
       script: {
@@ -877,7 +881,13 @@
         xcodeMissing: 'This Mac does not have the command line developer tools yet. Use the CC Switch or Manual tab instead.',
         backup: 'Backup: {path}',
         updated: 'Updated: {path}',
-        failed: 'Failed: {error}'
+        failed: 'Failed: {error}',
+        nodeMissing: 'Node.js {min} or newer is required. Install the LTS version from nodejs.org, then run this again.',
+        nodeTooOld: 'Node.js {version} is too old. Install Node.js {min} or newer (the LTS version from nodejs.org), then run this again.',
+        npmMissing: 'npm was not found. It comes with Node.js, so reinstall Node.js from nodejs.org, then run this again.',
+        npmInstalling: 'Installing Codex CLI with npm...',
+        npmPermission: 'npm does not have permission to install global packages. Install Node.js with a version manager such as nvm, or set the npm prefix to a folder you own (npm config set prefix), then run this again.',
+        npmFailed: 'Codex CLI could not be installed. Check the error above, then run this again.'
       }
     },
     ai: {

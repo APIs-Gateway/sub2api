@@ -10,17 +10,47 @@ import { OPENAI_CC_SWITCH_CODEX_MODEL } from '@/utils/ccswitchImport'
  * - 修改任何已有配置文件之前，先复制一份带时间戳的备份（<文件>.bak-<时间戳>）；同一秒内重复运行时
  *   在文件名后加序号（-2、-3……），不会覆盖更早的备份。
  * - 脚本里不使用反引号（PowerShell 的转义符，粘贴时也容易被聊天软件改写）。
+ * - Codex 有两种脚本：「刷新配置」只写 config.toml；「完整安装」先检查 Node.js / npm 并用 npm 装好
+ *   Codex CLI，再执行同一段写配置的逻辑。脚本从不替用户安装 Node.js，也不使用 sudo。
  * - 「交给 AI」文本永远不包含密钥。
  */
 
 export type OnboardingClient = 'claude' | 'codex' | 'gemini' | 'opencode'
 export type ScriptOs = 'unix' | 'windows'
+/** Codex 的脚本类型：full 先装 CLI 再写配置，refresh 只写配置（默认）。其他客户端忽略。 */
+export type CodexInstallMode = 'full' | 'refresh'
 
 export const CLIENT_LABELS: Record<OnboardingClient, string> = {
   claude: 'Claude Code',
   codex: 'Codex CLI',
   gemini: 'Gemini CLI',
   opencode: 'OpenCode'
+}
+
+/** 完整安装要求的 Node.js 主版本号，与使用文档 codex 小节一致（16 或更高）。 */
+export const CODEX_MIN_NODE_MAJOR = 16
+export const CODEX_NPM_PACKAGE = '@openai/codex@latest'
+
+/**
+ * 站内使用文档（/docs）里各客户端对应的小节 id，以文档页 sections.ts 为准。
+ * 没有对应小节的客户端（目前是 Gemini CLI）不显示教程链接；OpenCode 归在「其他兼容 OpenAI 的客户端」。
+ */
+const DOCS_SECTIONS: Partial<Record<OnboardingClient, string>> = {
+  claude: 'claude-code',
+  codex: 'codex',
+  opencode: 'other-clients'
+}
+
+export function docsSectionFor(client: OnboardingClient): string | null {
+  return DOCS_SECTIONS[client] ?? null
+}
+
+/** 教程链接：站内文档页的对应小节；没有对应小节时返回 null。basePath 是站点的部署前缀（默认根路径）。 */
+export function tutorialHref(client: OnboardingClient, basePath = '/'): string | null {
+  const section = docsSectionFor(client)
+  if (!section) return null
+  const root = (basePath || '/').replace(/\/?$/, '/')
+  return `${root}docs#${section}`
 }
 
 /** 各平台的分组能用的客户端；没有分组（platform 为空）时没有可用客户端。 */
@@ -123,9 +153,10 @@ export function codexProviderId(siteName?: string): string {
 
 // ---------------------------------------------------------------- 脚本
 
-/** 脚本里 {path} / {error} 会在运行时替换成实际的文件路径 / 错误信息。 */
+/** 脚本里 {path} / {error} / {version} 会在运行时替换成实际的文件路径 / 错误信息 / Node.js 版本。 */
 export const SCRIPT_PATH_TOKEN = '{path}'
 export const SCRIPT_ERROR_TOKEN = '{error}'
+export const SCRIPT_VERSION_TOKEN = '{version}'
 
 /** 脚本在终端里打印给用户看的话。 */
 export interface ScriptMessages {
@@ -136,14 +167,34 @@ export interface ScriptMessages {
   backup: string
   updated: string
   failed: string
+  // 以下只用于 Codex 的「完整安装」
+  /** 没装 Node.js */
+  nodeMissing?: string
+  /** Node.js 版本低于要求；{version} 是当前版本 */
+  nodeTooOld?: string
+  /** 有 Node.js 但找不到 npm */
+  npmMissing?: string
+  /** 开始用 npm 安装 */
+  npmInstalling?: string
+  /** npm 没有全局安装的权限 */
+  npmPermission?: string
+  /** npm 安装因其他原因失败 */
+  npmFailed?: string
 }
 
-export const DEFAULT_SCRIPT_MESSAGES: ScriptMessages = {
+export const DEFAULT_SCRIPT_MESSAGES: Required<ScriptMessages> = {
   pythonMissing: 'python3 is required to update the config file.',
   xcodeMissing: 'The macOS command line developer tools are not installed. Use the CC Switch or Manual option instead.',
   backup: `Backup: ${SCRIPT_PATH_TOKEN}`,
   updated: `Updated: ${SCRIPT_PATH_TOKEN}`,
-  failed: `Failed: ${SCRIPT_ERROR_TOKEN}`
+  failed: `Failed: ${SCRIPT_ERROR_TOKEN}`,
+  nodeMissing: `Node.js ${CODEX_MIN_NODE_MAJOR} or newer is required. Install the LTS version from nodejs.org, then run this again.`,
+  nodeTooOld: `Node.js ${SCRIPT_VERSION_TOKEN} is too old. Install Node.js ${CODEX_MIN_NODE_MAJOR} or newer (the LTS version from nodejs.org), then run this again.`,
+  npmMissing: 'npm was not found. It comes with Node.js, so reinstall Node.js from nodejs.org, then run this again.',
+  npmInstalling: 'Installing Codex CLI with npm...',
+  npmPermission:
+    'npm does not have permission to install global packages. Install Node.js with a version manager such as nvm, or set the npm prefix to a folder you own (npm config set prefix), then run this again.',
+  npmFailed: 'Codex CLI could not be installed. Check the error above, then run this again.'
 }
 
 export interface InstallScriptInput {
@@ -151,6 +202,8 @@ export interface InstallScriptInput {
   apiKey: string
   platform?: GroupPlatform | string | null
   siteName?: string
+  /** Codex 的脚本类型，默认 refresh（只写配置）；其他客户端忽略。 */
+  mode?: CodexInstallMode
   /** 脚本运行结束时打印的一行话（默认英文）。 */
   doneMessage?: string
   /** 终端里的其余提示（默认英文），由调用方按界面语言传入。 */
@@ -180,11 +233,13 @@ interface ScriptParams {
   providerName: string
   model: string
   opencodeProvider: string
+  /** 只有 Codex 的完整安装会先装 CLI */
+  installCli: boolean
   done: string
-  msg: ScriptMessages
+  msg: Required<ScriptMessages>
 }
 
-function resolveMessages(custom: Partial<ScriptMessages> | undefined): ScriptMessages {
+function resolveMessages(custom: Partial<ScriptMessages> | undefined): Required<ScriptMessages> {
   const out = { ...DEFAULT_SCRIPT_MESSAGES }
   for (const key of Object.keys(out) as (keyof ScriptMessages)[]) {
     const text = oneLine(custom?.[key] || '')
@@ -230,6 +285,7 @@ function scriptParams(client: OnboardingClient, input: InstallScriptInput): Scri
     providerName: oneLine(input.siteName || '') || 'sub2api',
     model: OPENAI_CC_SWITCH_CODEX_MODEL,
     opencodeProvider: platform === 'gemini' ? 'google' : platform === 'openai' ? 'openai' : 'anthropic',
+    installCli: client === 'codex' && input.mode === 'full',
     done: oneLine(input.doneMessage || '') || 'Done. Restart the client to apply.',
     msg: resolveMessages(input.messages)
   }
@@ -352,6 +408,34 @@ out = '\\n'.join(out_lines) + '\\n'`
   }
 }
 
+/**
+ * Codex 完整安装（bash）：检查 Node.js 和 npm，没有或版本太低就提示并退出（不替用户装 Node.js），
+ * 然后 npm install -g。权限不足时告诉用户怎么处理，不自动 sudo。放在「找 python」之后、动任何文件之前，
+ * 所以前置条件不满足时不会留下半成品。
+ */
+function unixCodexInstall(p: ScriptParams): string[] {
+  return [
+    'NODE_VER=""',
+    'if command -v node >/dev/null 2>&1; then NODE_VER="$(node --version 2>/dev/null || true)"; fi',
+    `if [ -z "$NODE_VER" ]; then echo ${shQuote(p.msg.nodeMissing)}; exit 1; fi`,
+    // node --version 形如 v18.19.0
+    'NODE_MAJOR="${NODE_VER#v}"; NODE_MAJOR="${NODE_MAJOR%%.*}"',
+    'case "$NODE_MAJOR" in *[!0-9]*|"") NODE_MAJOR=0 ;; esac',
+    `if [ "$NODE_MAJOR" -lt ${CODEX_MIN_NODE_MAJOR} ]; then ${shPrint(p.msg.nodeTooOld, SCRIPT_VERSION_TOKEN, '"$NODE_VER"')}; exit 1; fi`,
+    `if ! command -v npm >/dev/null 2>&1; then echo ${shQuote(p.msg.npmMissing)}; exit 1; fi`,
+    `echo ${shQuote(p.msg.npmInstalling)}`,
+    'NPM_LOG="$(mktemp)"',
+    // 一边显示 npm 的输出，一边留一份用来判断是不是权限问题；</dev/null 避免 npm 读走脚本本身的标准输入
+    'set -o pipefail',
+    `if ! npm install -g ${CODEX_NPM_PACKAGE} </dev/null 2>&1 | tee "$NPM_LOG"; then`,
+    `  if grep -qE 'EACCES|EPERM' "$NPM_LOG"; then echo ${shQuote(p.msg.npmPermission)}; else echo ${shQuote(p.msg.npmFailed)}; fi`,
+    '  rm -f "$NPM_LOG"',
+    '  exit 1',
+    'fi',
+    'rm -f "$NPM_LOG"'
+  ]
+}
+
 function buildUnixScript(client: OnboardingClient, input: InstallScriptInput): string {
   const p = scriptParams(client, input)
   const { target, code } = unixPython(client)
@@ -375,9 +459,10 @@ function buildUnixScript(client: OnboardingClient, input: InstallScriptInput): s
     // macOS 没装命令行开发工具时，/usr/bin/python3 只是个占位程序：command -v 找得到，一调用就弹安装窗口
     `if [ "$(uname -s)" = "Darwin" ] && ! xcode-select -p >/dev/null 2>&1; then echo ${shQuote(p.msg.xcodeMissing)}; exit 1; fi`,
     'PY="$(command -v python3 || command -v python || true)"',
-    `if [ -z "$PY" ]; then echo ${shQuote(p.msg.pythonMissing)}; exit 1; fi`,
-    'TS="$(date +%Y%m%d-%H%M%S)"'
+    `if [ -z "$PY" ]; then echo ${shQuote(p.msg.pythonMissing)}; exit 1; fi`
   )
+  if (p.installCli) lines.push(...unixCodexInstall(p))
+  lines.push('TS="$(date +%Y%m%d-%H%M%S)"')
   if (client === 'opencode') {
     lines.push('if [ -n "$XDG_CONFIG_HOME" ]; then CONFIG_HOME="$XDG_CONFIG_HOME"; else CONFIG_HOME="$HOME/.config"; fi')
   }
@@ -503,6 +588,37 @@ $out = ($kept -join [Environment]::NewLine) + [Environment]::NewLine`
   }
 }
 
+/**
+ * Codex 完整安装（PowerShell 5.1）：与 unixCodexInstall 同样的流程。
+ * - 出错用 return 退出外层脚本块，不动任何文件。
+ * - 调用 npm.cmd 而不是 npm：默认执行策略下 PowerShell 会拒绝加载 npm.ps1。
+ * - 5.1 里 $ErrorActionPreference = 'Stop' 会把原生命令写到 stderr 的内容（npm 的 WARN）当成终止错误，
+ *   所以调用 npm 期间临时改回 Continue，用退出码判断成败。
+ */
+function windowsCodexInstall(p: ScriptParams): string[] {
+  return [
+    "$nodeVer = ''",
+    'if (Get-Command node -ErrorAction SilentlyContinue) { $nodeVer = ((& node --version) | Out-String).Trim() }',
+    `if ($nodeVer.Length -eq 0) { Write-Host ${psQuote(p.msg.nodeMissing)} -ForegroundColor Red; return }`,
+    '$nodeMajor = 0',
+    "$nodeMatch = [regex]::Match($nodeVer, '^v?(\\d+)')",
+    'if ($nodeMatch.Success) { $nodeMajor = [int]$nodeMatch.Groups[1].Value }',
+    `if ($nodeMajor -lt ${CODEX_MIN_NODE_MAJOR}) { Write-Host ${psJoin(p.msg.nodeTooOld, SCRIPT_VERSION_TOKEN, '$nodeVer')} -ForegroundColor Red; return }`,
+    `if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) { Write-Host ${psQuote(p.msg.npmMissing)} -ForegroundColor Red; return }`,
+    `Write-Host ${psQuote(p.msg.npmInstalling)}`,
+    '$prevEap = $ErrorActionPreference',
+    "$ErrorActionPreference = 'Continue'",
+    '$npmOut = $null',
+    `& npm.cmd install -g ${psQuote(CODEX_NPM_PACKAGE)} 2>&1 | ForEach-Object { $_.ToString() } | Tee-Object -Variable npmOut | Out-Host`,
+    '$npmCode = $LASTEXITCODE',
+    '$ErrorActionPreference = $prevEap',
+    'if ($npmCode -ne 0) {',
+    `  if (($npmOut | Out-String) -match 'EACCES|EPERM') { Write-Host ${psQuote(p.msg.npmPermission)} -ForegroundColor Red } else { Write-Host ${psQuote(p.msg.npmFailed)} -ForegroundColor Red }`,
+    '  return',
+    '}'
+  ]
+}
+
 function buildWindowsScript(client: OnboardingClient, input: InstallScriptInput): string {
   const p = scriptParams(client, input)
   const body = psBody(client)
@@ -524,6 +640,7 @@ function buildWindowsScript(client: OnboardingClient, input: InstallScriptInput)
     psCommon(p.msg.backup),
     ...vars,
     'try {',
+    ...(p.installCli ? windowsCodexInstall(p) : []),
     `$dir = ${body.dir}`,
     'New-Item -ItemType Directory -Force -Path $dir | Out-Null',
     `$target = Join-Path $dir '${body.file}'`,

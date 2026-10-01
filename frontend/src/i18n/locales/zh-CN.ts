@@ -856,6 +856,7 @@
   // 密钥接入弹窗：一键安装 / 交给 AI / CC Switch / 手动配置
   keyOnboarding: {
     title: '接入密钥',
+    subtitle: '把「{name}」接入你的客户端',
     copy: '复制',
     copied: '已复制',
     noGroup: '先给这个密钥选择分组，再来接入。',
@@ -866,9 +867,12 @@
       manual: '手动配置'
     },
     install: {
-      intro: '脚本会写入地址和密钥，并在修改前备份原配置。粘贴到终端运行，完成后重启客户端。',
-      copyUnix: '复制 macOS / Linux 命令',
-      copyWindows: '复制 Windows 命令',
+      tutorial: '查看教程',
+      modeFull: '完整安装',
+      modeRefresh: '只刷新配置',
+      copyTile: '复制命令：{client}，{label}',
+      codexModes: '完整安装会先装好 Codex CLI（需要 Node.js {min} 或更高版本）。已经装过的话，选「只刷新配置」。',
+      footnote: '点击复制命令，粘贴到终端运行，完成后重启客户端。脚本会写入 {site} 地址和密钥，并在修改前备份原配置。',
       viewScript: '查看脚本内容',
       scriptDone: '{client} 已配置完成，重启后即可使用。',
       script: {
@@ -876,7 +880,13 @@
         xcodeMissing: '这台 Mac 还没有命令行开发工具，请改用「CC Switch」或「手动配置」页签。',
         backup: '已备份：{path}',
         updated: '已更新：{path}',
-        failed: '失败：{error}'
+        failed: '失败：{error}',
+        nodeMissing: '需要先安装 Node.js {min} 或更高版本。到 nodejs.org 下载 LTS 版本，装好后再运行一次。',
+        nodeTooOld: 'Node.js {version} 版本过低，需要 {min} 或更高版本。到 nodejs.org 下载 LTS 版本，装好后再运行一次。',
+        npmMissing: '没有找到 npm。npm 随 Node.js 一起安装，请重新安装 Node.js（nodejs.org），再运行一次。',
+        npmInstalling: '正在用 npm 安装 Codex CLI…',
+        npmPermission: 'npm 没有权限全局安装。请改用 nvm 之类的版本管理工具安装 Node.js，或把 npm 的 prefix 设到你自己的目录（npm config set prefix），再运行一次。',
+        npmFailed: 'Codex CLI 安装失败，请看上面的错误信息，处理后再运行一次。'
       }
     },
     ai: {
