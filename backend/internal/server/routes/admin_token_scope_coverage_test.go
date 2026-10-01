@@ -343,7 +343,7 @@ func TestAdminRouteRequiredScopeDefaults(t *testing.T) {
 	require.Equal(t, service.AdminTokenScopeRead, middleware.AdminRouteRequiredScope("GET", "/api/v1/admin/dashboard/stats"))
 	require.Equal(t, service.AdminTokenScopeRead, middleware.AdminRouteRequiredScope("HEAD", "/api/v1/admin/dashboard/stats"))
 	require.Equal(t, service.AdminTokenScopeWrite, middleware.AdminRouteRequiredScope("POST", "/api/v1/admin/accounts"))
-	require.Equal(t, service.AdminTokenScopeWrite, middleware.AdminRouteRequiredScope("PUT", "/api/v1/admin/accounts/:id"))
+	require.Equal(t, service.AdminTokenScopeWrite, middleware.AdminRouteRequiredScope("PUT", "/api/v1/admin/proxies/:id"))
 	require.Equal(t, service.AdminTokenScopeWrite, middleware.AdminRouteRequiredScope("DELETE", "/api/v1/admin/proxies/:id"))
 	// A route the table has never heard of defaults by method, but an empty
 	// route (should be impossible behind adminAuth) fails closed.

@@ -48,7 +48,8 @@ func marshalBody(t *testing.T, fields map[string]string) string {
 
 func TestAdminAuditNeverStoresTheBodyOfCredentialRoutes(t *testing.T) {
 	env := newAdminTokenTestEnv(t)
-	plaintext, _ := env.mint(t, "ops-bot", service.AdminTokenScopeWrite, nil)
+	// The codex-session routes are on the danger list.
+	plaintext, _ := env.mint(t, "ops-bot", service.AdminTokenScopeDanger, nil)
 
 	for _, tc := range []struct{ name, path, field string }{
 		{"codex import, content", "/api/v1/admin/accounts/import/codex-session", "content"},
