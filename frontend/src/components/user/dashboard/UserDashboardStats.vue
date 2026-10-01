@@ -4,7 +4,7 @@
     <!-- Balance（唯一英雄数字：Fraunces 黏土） -->
     <div v-if="!isSimple" class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.balance') }}</span>
-      <span class="metric-hero">${{ formatBalance(balance) }}</span>
+      <span class="metric-hero">{{ isFiat ? formatFiat(usdToFiat(balance)) : `$${formatBalance(balance)}` }}</span>
       <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('common.available') }}</span>
     </div>
 
@@ -26,11 +26,12 @@
     <div class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.todayCost') }}</span>
       <span class="metric-value" :title="t('dashboard.actual')">
-        ${{ formatCost(stats?.today_actual_cost || 0) }}
-        <span class="font-mono text-sm font-normal text-gray-400 dark:text-gray-500" :title="t('dashboard.standard')">/ ${{ formatCost(stats?.today_cost || 0) }}</span>
+        {{ formatMixed(stats?.today_actual_cost || 0, stats?.today_actual_cost_fiat) }}
+        <!-- 官方价是美元口径的对照值，人民币模式下与实付并列只会让人误读，只在美元模式展示 -->
+        <span v-if="!isFiat" class="font-mono text-sm font-normal text-gray-400 dark:text-gray-500" :title="t('dashboard.standard')">/ ${{ formatCost(stats?.today_cost || 0) }}</span>
       </span>
       <span class="text-xs text-gray-500 dark:text-gray-400">
-        {{ t('common.total') }}: <span class="text-gray-700 dark:text-gray-300">${{ formatCost(stats?.total_actual_cost || 0) }}</span>
+        {{ t('common.total') }}: <span class="text-gray-700 dark:text-gray-300">{{ formatMixed(stats?.total_actual_cost || 0, stats?.total_actual_cost_fiat) }}</span>
       </span>
     </div>
   </div>
@@ -95,13 +96,13 @@
             {{ item.isOther ? t('dashboard.platformOther') : platformLabel(item.platform) }}
           </span>
           <span class="font-mono text-sm tabular-nums text-gray-900 dark:text-white" :title="t('dashboard.actual')">
-            ${{ formatCost(item.total_actual_cost) }}
+            {{ formatMixed(item.total_actual_cost, item.total_actual_cost_fiat) }}
           </span>
         </div>
         <div class="mt-2 space-y-1 text-xs">
           <div class="flex items-center justify-between">
             <span class="text-gray-500 dark:text-gray-400">{{ t('dashboard.todayCost') }}</span>
-            <span class="font-mono tabular-nums text-gray-900 dark:text-white">${{ formatCost(item.today_actual_cost) }}</span>
+            <span class="font-mono tabular-nums text-gray-900 dark:text-white">{{ formatMixed(item.today_actual_cost, item.today_actual_cost_fiat) }}</span>
           </div>
           <div class="flex items-center justify-between">
             <span class="text-gray-500 dark:text-gray-400">{{ t('dashboard.requests') }}</span>
@@ -139,7 +140,8 @@
                 <div class="flex items-center justify-between text-xs">
                   <span class="text-gray-600 dark:text-gray-300">{{ t(`dashboard.platformQuota.${w}`) }}</span>
                   <span class="font-mono tabular-nums text-gray-700 dark:text-gray-200">
-                    ${{ formatUsd((quotaVal(item.quota, `${w}_usage_usd`) as number) ?? 0) }} / ${{ formatUsd(quotaVal(item.quota, `${w}_limit_usd`) as number) }}
+                    <template v-if="isFiat">{{ formatLimit((quotaVal(item.quota, `${w}_usage_usd`) as number) ?? 0) }} / {{ formatLimit(quotaVal(item.quota, `${w}_limit_usd`) as number) }}</template>
+                    <template v-else>${{ formatUsd((quotaVal(item.quota, `${w}_usage_usd`) as number) ?? 0) }} / ${{ formatUsd(quotaVal(item.quota, `${w}_limit_usd`) as number) }}</template>
                   </span>
                 </div>
                 <div class="h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700">
@@ -167,11 +169,16 @@ import { useI18n } from 'vue-i18n'
 import type { PlatformDashboardStats, UserDashboardStats as UserStatsType } from '@/api/usage'
 import type { PlatformQuotaItem } from '@/types'
 import CheckinCard from '@/components/user/dashboard/CheckinCard.vue'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { useSourceFiatRate } from '@/composables/useSourceFiatRate'
 
 interface FusedPlatformCard {
   platform: string
   total_actual_cost: number
   today_actual_cost: number
+  // 服务端分桶折算的人民币值；缺省表示后端未提供（formatMixed 会回落到美元）
+  total_actual_cost_fiat?: number
+  today_actual_cost_fiat?: number
   total_requests: number
   total_tokens: number
   isOther?: boolean
@@ -185,6 +192,9 @@ const props = defineProps<{
   platformQuotas?: PlatformQuotaItem[] | null
 }>()
 const { t } = useI18n()
+const { isFiat, usdToFiat, formatFiat, formatMixed } = useCurrencyDisplay()
+// 平台限额统计的是额度（钱包和订阅卡混扣），只能按当前扣费来源近似折算
+const { formatLimit } = useSourceFiatRate()
 
 const PLATFORM_LABELS: Record<string, string> = {
   anthropic: 'Claude',
@@ -226,6 +236,8 @@ const platformCards = computed<FusedPlatformCard[]>(() => {
       platform: p,
       total_actual_cost: stat?.total_actual_cost ?? 0,
       today_actual_cost: stat?.today_actual_cost ?? 0,
+      total_actual_cost_fiat: knownFiat(stat?.total_actual_cost, stat?.total_actual_cost_fiat),
+      today_actual_cost_fiat: knownFiat(stat?.today_actual_cost, stat?.today_actual_cost_fiat),
       total_requests: stat?.total_requests ?? 0,
       total_tokens: stat?.total_tokens ?? 0,
       quota: byQuota.get(p),
@@ -255,6 +267,15 @@ const platformCards = computed<FusedPlatformCard[]>(() => {
       platform: '__other__',
       total_actual_cost: diffTotal,
       today_actual_cost: diffToday,
+      // 人民币同样按「总值 − 各平台之和」补差；任何一方缺人民币值就整体缺省
+      total_actual_cost_fiat: fiatDiff(
+        knownFiat(total, props.stats?.total_actual_cost_fiat),
+        cards.map((c) => c.total_actual_cost_fiat)
+      ),
+      today_actual_cost_fiat: fiatDiff(
+        knownFiat(today, props.stats?.today_actual_cost_fiat),
+        cards.map((c) => c.today_actual_cost_fiat)
+      ),
       total_requests: 0,
       total_tokens: 0,
       isOther: true,
@@ -263,6 +284,21 @@ const platformCards = computed<FusedPlatformCard[]>(() => {
 
   return cards
 })
+
+/**
+ * 后端人民币字段带 omitempty：额度为 0 时字段缺省，此时人民币就是 0；
+ * 额度非 0 却缺字段，说明后端没提供，返回 undefined。
+ */
+function knownFiat(credits: number | undefined, fiat: number | undefined): number | undefined {
+  if (typeof fiat === 'number' && Number.isFinite(fiat)) return fiat
+  return credits ? undefined : 0
+}
+
+/** 「其他」卡的人民币 = 总值 − 各平台之和；任何一项未知就整体未知。 */
+function fiatDiff(total: number | undefined, parts: Array<number | undefined>): number | undefined {
+  if (total === undefined || parts.some((p) => p === undefined)) return undefined
+  return Math.max(0, total - parts.reduce<number>((sum, p) => sum + (p ?? 0), 0))
+}
 
 // 标题右侧的平台计数 = 实际渲染的平台卡片数，不含"其他"差额卡。
 const platformCount = computed(() => platformCards.value.filter((c) => !c.isOther).length)

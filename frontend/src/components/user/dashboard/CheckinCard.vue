@@ -30,10 +30,10 @@
         <div v-else-if="status.spend_per_extra > 0" class="hidden text-right sm:block">
           <p class="font-mono text-xs text-gray-500 dark:text-gray-400">
             {{ t('checkin.todaySpend') }}
-            <span class="text-gray-700 dark:text-gray-300">${{ formatUsd(status.today_spend) }}</span>
+            <span class="text-gray-700 dark:text-gray-300">{{ formatLimit(status.today_spend) }}</span>
           </p>
           <p class="text-[11px] text-gray-400 dark:text-gray-500">
-            {{ t('checkin.nextBonusHint', { amount: formatUsd(status.spend_to_next_bonus) }) }}
+            {{ t('checkin.nextBonusHint', { amount: formatLimit(status.spend_to_next_bonus) }) }}
           </p>
         </div>
         <button
@@ -70,6 +70,8 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { getCheckinStatus, claimCheckin, type CheckinStatus } from '@/api/user'
 import TurnstileWidget from '@/components/TurnstileWidget.vue'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { useSourceFiatRate } from '@/composables/useSourceFiatRate'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -92,7 +94,10 @@ const claimDisabled = computed(
     (turnstileEnabled.value && !!turnstileSiteKey.value && !turnstileToken.value)
 )
 
-const formatUsd = (v: number) => (Number.isFinite(v) ? v : 0).toFixed(2)
+// 签到奖励直接进钱包，按钱包单价精确折算；「今日消费」和解锁门槛统计的是
+// 钱包与订阅卡混扣的额度，只能按当前扣费来源近似折算（带 ≈）。
+const { formatWallet } = useCurrencyDisplay()
+const { formatLimit } = useSourceFiatRate()
 
 // notActive：基础签到被"当日活跃度门槛"拦住（未领、当日 Token 未达标、且无其他可领项）。
 const notActive = computed(() => {
@@ -105,8 +110,8 @@ const subtitle = computed(() => {
   if (!s) return ''
   if (s.can_claim) {
     return t('checkin.rewardRange', {
-      min: formatUsd(s.amount_min),
-      max: formatUsd(s.amount_max)
+      min: formatWallet(s.amount_min),
+      max: formatWallet(s.amount_max)
     })
   }
   if (notActive.value) {
@@ -175,7 +180,7 @@ async function claim() {
         console.warn('Failed to refresh user after successful checkin:', error)
       })
     }
-    appStore.showSuccess(t('checkin.claimedToast', { amount: formatUsd(res.amount) }))
+    appStore.showSuccess(t('checkin.claimedToast', { amount: formatWallet(res.amount) }))
   } catch (error) {
     console.warn('Checkin claim failed:', error)
     // POST 可能已在服务端提交，只是成功响应在弱网或重启时丢失。先回查

@@ -52,6 +52,11 @@ const { t } = useI18n()
 const props = defineProps<{
   trendData: TrendDataPoint[]
   loading?: boolean
+  /**
+   * 用户侧传入：实扣金额按当前计价口径展示（人民币模式用服务端分桶折算的
+   * actual_cost_fiat）。后台不传，保持原来的额度展示。
+   */
+  formatActualCost?: (point: TrendDataPoint) => string
 }>()
 
 const isDarkMode = computed(() => {
@@ -155,7 +160,10 @@ const lineOptions = computed(() => ({
           const dataIndex = tooltipItems[0]?.dataIndex
           if (dataIndex !== undefined && props.trendData[dataIndex]) {
             const data = props.trendData[dataIndex]
-            return `Actual: $${formatCost(data.actual_cost)} | Standard: $${formatCost(data.cost)}`
+            const actual = props.formatActualCost
+              ? props.formatActualCost(data)
+              : `$${formatCost(data.actual_cost)}`
+            return `Actual: ${actual} | Standard: $${formatCost(data.cost)}`
           }
           return ''
         }

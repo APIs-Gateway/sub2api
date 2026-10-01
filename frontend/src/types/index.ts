@@ -1517,6 +1517,8 @@ export interface UsageStatsResponse {
   total_tokens: number
   total_cost: number // 标准计费
   total_actual_cost: number // 实际扣除
+  // 服务端按扣费来源分桶折算的人民币金额；倍率为 1 或后端未提供时缺省
+  total_actual_cost_fiat?: number
   average_duration_ms: number
   models?: Record<string, number>
 }
@@ -1533,6 +1535,7 @@ export interface TrendDataPoint {
   total_tokens: number
   cost: number // 标准计费
   actual_cost: number // 实际扣除
+  actual_cost_fiat?: number
 }
 
 export interface ModelStat {
@@ -1545,6 +1548,7 @@ export interface ModelStat {
   total_tokens: number
   cost: number // 标准计费
   actual_cost: number // 实际扣除
+  actual_cost_fiat?: number
   account_cost: number // 账号成本
 }
 
@@ -1670,6 +1674,8 @@ export interface UserSubscription {
   // remaining_overdraft_uses/can_enable_overdraft）已退役：三窗口模型改用用户级月度透支
   // （monthly_overdraft_remaining + POST /subscriptions/overdraft）。
   activated_at?: string | null
+  // 这张卡 1 个额度值多少人民币（u(D)）；倍率为 1 或卡数据无效时缺省
+  fiat_per_credit?: number
   created_at: string
   updated_at: string
   expires_at: string | null

@@ -62,28 +62,7 @@
               {{ t('usage.totalCost') }}
             </p>
             <!-- 切换器就放在最容易被误读的那个数字旁边，而不是藏进设置页 -->
-            <div
-              v-if="currencyCanSwitch"
-              class="flex items-center gap-0.5 rounded-md bg-gray-100 p-0.5 dark:bg-dark-700"
-              role="group"
-              :aria-label="t('usage.currencySwitchLabel')"
-            >
-              <button
-                v-for="opt in currencyOptions"
-                :key="opt.value"
-                type="button"
-                class="rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors"
-                :class="
-                  currencyMode === opt.value
-                    ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-600 dark:text-white'
-                    : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
-                "
-                :aria-pressed="currencyMode === opt.value"
-                @click="setCurrencyMode(opt.value)"
-              >
-                {{ opt.label }}
-              </button>
-            </div>
+            <CurrencyModeSwitch v-if="currencyCanSwitch" size="sm" />
             <Icon
               v-else
               name="dollar"
@@ -92,13 +71,9 @@
               :stroke-width="1.5"
             />
           </div>
+          <!-- 合计用服务端分桶折算的人民币值：钱包与订阅卡单价不同，不能整体 ÷ 充值倍率 -->
           <p class="text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
-            <template v-if="currencyIsFiat">
-              ≈{{ formatFiat(usdToFiat(usageStats?.total_actual_cost || 0)) }}
-            </template>
-            <template v-else>
-              {{ formatUsd(usageStats?.total_actual_cost || 0) }}
-            </template>
+            {{ formatMixed(usageStats?.total_actual_cost || 0, usageStats?.total_actual_cost_fiat) }}
           </p>
           <!--
             官方价这一行以前是加删除线的「标准价」。但站内扣费是官方价 × 分组倍率，
@@ -106,7 +81,6 @@
             这里改成中性标注：官方价是可以对照模型官网的外部锚点，不是被优惠掉的原价。
           -->
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            <template v-if="currencyIsFiat">{{ t('usage.fiatTotalApprox') }} · </template>
             {{ t('usage.officialPrice') }} ${{ (usageStats?.total_cost || 0).toFixed(4) }}
           </p>
         </div>
@@ -680,6 +654,7 @@ import type { Column } from '@/components/common/types'
 import { formatDateTime, formatReasoningEffort } from '@/utils/format'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import CurrencyModeSwitch from '@/components/common/CurrencyModeSwitch.vue'
 import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
@@ -707,14 +682,12 @@ const { t } = useI18n()
 const appStore = useAppStore()
 // 解构出来的 ref 在模板里会自动 unwrap，比 currency.isFiat.value 这种写法干净。
 const {
-  isFiat: currencyIsFiat,
   canSwitch: currencyCanSwitch,
-  mode: currencyMode,
-  setMode: setCurrencyMode,
   usdToFiat,
   formatFiat,
   formatUsd,
-  formatAmount
+  formatAmount,
+  formatMixed
 } = useCurrencyDisplay()
 
 let abortController: AbortController | null = null
@@ -722,10 +695,6 @@ let abortController: AbortController | null = null
 // Tooltip state
 const tooltipVisible = ref(false)
 const tooltipPosition = ref({ x: 0, y: 0 })
-const currencyOptions = computed(() => [
-  { value: 'fiat' as const, label: t('usage.currencyFiat') },
-  { value: 'usd' as const, label: t('usage.currencyUsd') }
-])
 
 const tooltipData = ref<UsageLog | null>(null)
 
@@ -735,7 +704,8 @@ const tooltipData = ref<UsageLog | null>(null)
  */
 const tooltipFiatCost = computed<number | null>(() => {
   const row = tooltipData.value
-  if (!row) return null
+  // 倍率为 1（free 站）时没有「付了多少人民币」可言，不展示这一行。
+  if (!row || !currencyCanSwitch.value) return null
   if (typeof row.fiat_cost === 'number' && Number.isFinite(row.fiat_cost) && row.fiat_cost !== 0) {
     return row.fiat_cost
   }

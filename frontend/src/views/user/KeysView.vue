@@ -175,13 +175,13 @@
               <div class="flex items-center gap-1.5">
                 <span class="text-gray-600 dark:text-gray-400">{{ t('keys.today') }}:</span>
                 <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">
-                  ${{ (usageStats[row.id]?.today_actual_cost ?? 0).toFixed(4) }}
+                  {{ formatMixed(usageStats[row.id]?.today_actual_cost ?? 0, usageStats[row.id]?.today_actual_cost_fiat) }}
                 </span>
               </div>
               <div class="mt-0.5 flex items-center gap-1.5">
                 <span class="text-gray-600 dark:text-gray-400">{{ t('keys.total') }}:</span>
                 <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">
-                  ${{ (usageStats[row.id]?.total_actual_cost ?? 0).toFixed(4) }}
+                  {{ formatMixed(usageStats[row.id]?.total_actual_cost ?? 0, usageStats[row.id]?.total_actual_cost_fiat) }}
                 </span>
               </div>
               <!-- Quota progress (if quota is set) -->
@@ -193,7 +193,7 @@
                     row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' :
                     'text-gray-900 dark:text-white'
                   ]">
-                    ${{ row.quota_used?.toFixed(2) || '0.00' }} / ${{ row.quota?.toFixed(2) }}
+                    {{ formatLimit(row.quota_used, 2) }} / {{ formatLimit(row.quota, 2) }}
                   </span>
                 </div>
                 <div class="mt-1 h-1.5 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
@@ -221,7 +221,7 @@
                     row.usage_5h >= row.rate_limit_5h ? 'text-primary-700 dark:text-primary-400' :
                     'text-gray-700 dark:text-gray-300'
                   ]">
-                    ${{ row.usage_5h?.toFixed(2) || '0.00' }}/${{ row.rate_limit_5h?.toFixed(2) }}
+                    {{ formatLimit(row.usage_5h, 2) }}/{{ formatLimit(row.rate_limit_5h, 2) }}
                   </span>
                 </div>
                 <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
@@ -247,7 +247,7 @@
                     row.usage_1d >= row.rate_limit_1d ? 'text-primary-700 dark:text-primary-400' :
                     'text-gray-700 dark:text-gray-300'
                   ]">
-                    ${{ row.usage_1d?.toFixed(2) || '0.00' }}/${{ row.rate_limit_1d?.toFixed(2) }}
+                    {{ formatLimit(row.usage_1d, 2) }}/{{ formatLimit(row.rate_limit_1d, 2) }}
                   </span>
                 </div>
                 <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
@@ -273,7 +273,7 @@
                     row.usage_7d >= row.rate_limit_7d ? 'text-primary-700 dark:text-primary-400' :
                     'text-gray-700 dark:text-gray-300'
                   ]">
-                    ${{ row.usage_7d?.toFixed(2) || '0.00' }}/${{ row.rate_limit_7d?.toFixed(2) }}
+                    {{ formatLimit(row.usage_7d, 2) }}/{{ formatLimit(row.rate_limit_7d, 2) }}
                   </span>
                 </div>
                 <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
@@ -591,17 +591,18 @@
           <div class="space-y-4">
             <div>
               <div class="relative">
-                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
                 <input
                   v-model.number="formData.quota"
                   type="number"
-                  step="0.01"
+                  step="any"
                   min="0"
                   class="input pl-7"
-                  :placeholder="t('keys.quotaAmountPlaceholder')"
+                  :placeholder="limitInputFiat ? t('keys.quotaAmountPlaceholderFiat') : t('keys.quotaAmountPlaceholder')"
                 />
               </div>
               <p class="input-hint">{{ t('keys.quotaAmountHint') }}</p>
+              <p v-if="limitInputFiat" class="input-hint">{{ limitFiatHint }}</p>
             </div>
 
             <!-- Quota used display (only in edit mode) -->
@@ -610,11 +611,11 @@
               <div class="flex items-center gap-2">
                 <div class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800">
                   <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">
-                    ${{ selectedKey.quota_used?.toFixed(4) || '0.0000' }}
+                    {{ formatLimit(selectedKey.quota_used, 4) }}
                   </span>
                   <span class="mx-2 text-gray-400">/</span>
                   <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
-                    ${{ selectedKey.quota?.toFixed(2) || '0.00' }}
+                    {{ formatLimit(selectedKey.quota, 2) }}
                   </span>
                 </div>
                 <button
@@ -653,15 +654,16 @@
 
           <div v-if="formData.enable_rate_limit" class="space-y-4 pt-2">
             <p class="input-hint -mt-2">{{ t('keys.rateLimitHint') }}</p>
+            <p v-if="limitInputFiat" class="input-hint -mt-2">{{ limitFiatHint }}</p>
             <!-- 5-Hour Limit -->
             <div>
               <label class="input-label">{{ t('keys.rateLimit5h') }}</label>
               <div class="relative">
-                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
                 <input
                   v-model.number="formData.rate_limit_5h"
                   type="number"
-                  step="0.01"
+                  step="any"
                   min="0"
                   class="input pl-7"
                   :placeholder="'0'"
@@ -676,11 +678,11 @@
                       selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'text-primary-700 dark:text-primary-400' :
                       'text-gray-900 dark:text-white'
                     ]">
-                      ${{ selectedKey.usage_5h?.toFixed(4) || '0.0000' }}
+                      {{ formatLimit(selectedKey.usage_5h, 4) }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
                     <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
-                      ${{ selectedKey.rate_limit_5h?.toFixed(2) || '0.00' }}
+                      {{ formatLimit(selectedKey.rate_limit_5h, 2) }}
                     </span>
                   </div>
                 </div>
@@ -701,11 +703,11 @@
             <div>
               <label class="input-label">{{ t('keys.rateLimit1d') }}</label>
               <div class="relative">
-                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
                 <input
                   v-model.number="formData.rate_limit_1d"
                   type="number"
-                  step="0.01"
+                  step="any"
                   min="0"
                   class="input pl-7"
                   :placeholder="'0'"
@@ -720,11 +722,11 @@
                       selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'text-primary-700 dark:text-primary-400' :
                       'text-gray-900 dark:text-white'
                     ]">
-                      ${{ selectedKey.usage_1d?.toFixed(4) || '0.0000' }}
+                      {{ formatLimit(selectedKey.usage_1d, 4) }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
                     <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
-                      ${{ selectedKey.rate_limit_1d?.toFixed(2) || '0.00' }}
+                      {{ formatLimit(selectedKey.rate_limit_1d, 2) }}
                     </span>
                   </div>
                 </div>
@@ -745,11 +747,11 @@
             <div>
               <label class="input-label">{{ t('keys.rateLimit7d') }}</label>
               <div class="relative">
-                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
                 <input
                   v-model.number="formData.rate_limit_7d"
                   type="number"
-                  step="0.01"
+                  step="any"
                   min="0"
                   class="input pl-7"
                   :placeholder="'0'"
@@ -764,11 +766,11 @@
                       selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'text-primary-700 dark:text-primary-400' :
                       'text-gray-900 dark:text-white'
                     ]">
-                      ${{ selectedKey.usage_7d?.toFixed(4) || '0.0000' }}
+                      {{ formatLimit(selectedKey.usage_7d, 4) }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
                     <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
-                      ${{ selectedKey.rate_limit_7d?.toFixed(2) || '0.00' }}
+                      {{ formatLimit(selectedKey.rate_limit_7d, 2) }}
                     </span>
                   </div>
                 </div>
@@ -963,7 +965,7 @@
     <ConfirmDialog
       :show="showResetQuotaDialog"
       :title="t('keys.resetQuotaTitle')"
-      :message="t('keys.resetQuotaConfirmMessage', { name: selectedKey?.name, used: selectedKey?.quota_used?.toFixed(4) })"
+      :message="t('keys.resetQuotaConfirmMessage', { name: selectedKey?.name, used: formatLimit(selectedKey?.quota_used, 4) })"
       :confirm-text="t('keys.reset')"
       :cancel-text="t('common.cancel')"
       :danger="true"
@@ -1061,14 +1063,19 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, reactive, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+	import { ref, reactive, computed, watch, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
 	import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { useSourceFiatRate } from '@/composables/useSourceFiatRate'
 
 const { t } = useI18n()
+// 今日/累计花费用服务端分桶折算的人民币；额度上限与限额按当前扣费来源近似折算
+const { isFiat: currencyIsFiat, formatMixed } = useCurrencyDisplay()
+const { sourceFiatPerCredit, usesSubscriptionRate, formatLimit } = useSourceFiatRate()
 import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -1289,6 +1296,60 @@ const formData = ref({
   expiration_date: ''
 })
 
+/*
+ * 额度上限 / 5h·1d·7d 限额的输入单位（方案 K2）。
+ *
+ * 这些计数器累加的是额度，钱包和订阅卡混扣，没有精确的人民币值。人民币模式下
+ * 让用户直接填人民币，提交时按「当前扣费来源」单价换算回额度保存。
+ * 单位在弹窗打开时定格：弹窗开着时切换计价口径，不会把已填的数字按另一种单位解读。
+ */
+type LimitField = 'quota' | 'rate_limit_5h' | 'rate_limit_1d' | 'rate_limit_7d'
+const limitInputFiat = ref(false)
+// 回显和提交用同一个单价：弹窗打开后订阅卡数据才加载回来时，也不会前后口径不一致
+const limitInputRate = ref(0)
+const limitInputUsesSubscription = ref(false)
+const limitInputSymbol = computed(() => (limitInputFiat.value ? '¥' : '$'))
+// 编辑时记下每个字段回显的人民币值和原始额度：用户没改的字段原样提交额度，
+// 避免「额度 → 人民币（四舍五入）→ 额度」往返一次就把上限改掉几分。
+const limitOriginals = new Map<LimitField, { input: number; credits: number }>()
+
+const limitFiatHint = computed(() =>
+  t('keys.limitFiatHint', {
+    source: limitInputUsesSubscription.value ? t('keys.limitFiatSourceSubscription') : t('keys.limitFiatSourceWallet')
+  })
+)
+
+function beginLimitInput() {
+  limitInputFiat.value = currencyIsFiat.value
+  limitInputRate.value = sourceFiatPerCredit.value
+  limitInputUsesSubscription.value = usesSubscriptionRate.value
+  limitOriginals.clear()
+}
+
+function limitToInput(field: LimitField, credits: number | null | undefined): number | null {
+  if (!credits || credits <= 0) return null
+  if (!limitInputFiat.value) return credits
+  const fiat = credits * limitInputRate.value
+  // 一般保留到分；极小的上限四舍五入会变成 0（看起来像「不限」），改为保留 3 位有效数字
+  let input = Math.round(fiat * 100) / 100
+  if (input === 0) input = Number(fiat.toPrecision(3))
+  limitOriginals.set(field, { input, credits })
+  return input
+}
+
+function limitFromInput(field: LimitField, input: number | null): number {
+  // 先看原值：用户没改的字段原样提交原始额度，不经过任何换算或「≤0 视为不限」的判断
+  const original = limitInputFiat.value ? limitOriginals.get(field) : undefined
+  if (original && original.input === input) return original.credits
+  if (!input || input <= 0) return 0
+  if (!limitInputFiat.value) return input
+  return Math.round((input / limitInputRate.value) * 1e8) / 1e8
+}
+
+watch(showCreateModal, (open) => {
+  if (open) beginLimitInput()
+})
+
 // 自定义Key验证
 const customKeyError = computed(() => {
   if (!formData.value.use_custom_key || !formData.value.custom_key) {
@@ -1488,6 +1549,7 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
 
 const editKey = (key: ApiKey) => {
   selectedKey.value = key
+  beginLimitInput()
   const hasIPRestriction = (key.ip_whitelist?.length > 0) || (key.ip_blacklist?.length > 0)
   const hasExpiration = !!key.expires_at
   formData.value = {
@@ -1500,11 +1562,11 @@ const editKey = (key: ApiKey) => {
     ip_whitelist: (key.ip_whitelist || []).join('\n'),
     ip_blacklist: (key.ip_blacklist || []).join('\n'),
     enable_quota: key.quota > 0,
-    quota: key.quota > 0 ? key.quota : null,
+    quota: limitToInput('quota', key.quota),
     enable_rate_limit: (key.rate_limit_5h > 0) || (key.rate_limit_1d > 0) || (key.rate_limit_7d > 0),
-    rate_limit_5h: key.rate_limit_5h || null,
-    rate_limit_1d: key.rate_limit_1d || null,
-    rate_limit_7d: key.rate_limit_7d || null,
+    rate_limit_5h: limitToInput('rate_limit_5h', key.rate_limit_5h),
+    rate_limit_1d: limitToInput('rate_limit_1d', key.rate_limit_1d),
+    rate_limit_7d: limitToInput('rate_limit_7d', key.rate_limit_7d),
     stable_priority_enabled: key.stable_priority_enabled,
     enable_expiration: hasExpiration,
     expiration_preset: 'custom',
@@ -1599,7 +1661,7 @@ const handleSubmit = async () => {
   const ipBlacklist = formData.value.enable_ip_restriction ? parseIPList(formData.value.ip_blacklist) : []
 
   // Calculate quota value (null/empty/0 = unlimited, stored as 0)
-  const quota = formData.value.quota && formData.value.quota > 0 ? formData.value.quota : 0
+  const quota = limitFromInput('quota', formData.value.quota)
 
   // Calculate expiration
   let expiresInDays: number | undefined
@@ -1622,9 +1684,9 @@ const handleSubmit = async () => {
 
   // Calculate rate limit values (send 0 when toggle is off)
   const rateLimitData = formData.value.enable_rate_limit ? {
-    rate_limit_5h: formData.value.rate_limit_5h && formData.value.rate_limit_5h > 0 ? formData.value.rate_limit_5h : 0,
-    rate_limit_1d: formData.value.rate_limit_1d && formData.value.rate_limit_1d > 0 ? formData.value.rate_limit_1d : 0,
-    rate_limit_7d: formData.value.rate_limit_7d && formData.value.rate_limit_7d > 0 ? formData.value.rate_limit_7d : 0,
+    rate_limit_5h: limitFromInput('rate_limit_5h', formData.value.rate_limit_5h),
+    rate_limit_1d: limitFromInput('rate_limit_1d', formData.value.rate_limit_1d),
+    rate_limit_7d: limitFromInput('rate_limit_7d', formData.value.rate_limit_7d),
   } : { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }
 
   submitting.value = true

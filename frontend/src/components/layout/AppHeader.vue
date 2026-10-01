@@ -41,6 +41,9 @@
         <!-- Language Switcher -->
         <LocaleSwitcher />
 
+        <!-- 计价单位切换（¥ 实付 / $ 官方价口径）；倍率为 1 的站点不渲染 -->
+        <CurrencyModeSwitch v-if="showCurrencySwitch" class="hidden sm:flex" />
+
         <!-- Subscription Progress (for users with active subscriptions) -->
         <SubscriptionProgressMini v-if="user" />
 
@@ -86,6 +89,15 @@
                   <Icon name="key" size="sm" />
                   {{ t('nav.apiKeys') }}
                 </router-link>
+
+                <!-- 窄屏顶栏放不下切换器，收进用户菜单 -->
+                <div
+                  v-if="showCurrencySwitch && currencyCanSwitch"
+                  class="flex items-center justify-between px-4 py-2 text-sm text-gray-700 dark:text-gray-300 sm:hidden"
+                >
+                  <span>{{ t('usage.currencySwitchLabel') }}</span>
+                  <CurrencyModeSwitch size="sm" />
+                </div>
 
               </div>
 
@@ -163,6 +175,8 @@ import { useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
+import CurrencyModeSwitch from '@/components/common/CurrencyModeSwitch.vue'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeUrl } from '@/utils/url'
@@ -176,11 +190,15 @@ const adminSettingsStore = useAdminSettingsStore()
 const onboardingStore = useOnboardingStore()
 
 const user = computed(() => authStore.user)
+const { canSwitch: currencyCanSwitch } = useCurrencyDisplay()
 const dropdownOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
 const contactInfo = computed(() => appStore.contactInfo)
 const docUrl = computed(() => sanitizeUrl(appStore.docUrl))
 const avatarUrl = computed(() => user.value?.avatar_url?.trim() || '')
+
+// 计价单位只影响用户侧页面；后台页面一律按额度展示，不放切换器免得误以为能切。
+const showCurrencySwitch = computed(() => !!user.value && !route.path.startsWith('/admin'))
 
 // 只在标准模式的管理员下显示新手引导按钮
 const showOnboardingButton = computed(() => {
