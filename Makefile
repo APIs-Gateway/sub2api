@@ -1,4 +1,4 @@
-.PHONY: build build-backend build-frontend build-datamanagementd dev-db dev-local test test-backend test-frontend test-frontend-critical test-datamanagementd secret-scan
+.PHONY: build build-backend build-frontend dev-db dev-local test test-backend test-frontend test-frontend-critical secret-scan
 
 FRONTEND_CRITICAL_VITEST := \
 	src/i18n/__tests__/localeKeyCompleteness.spec.ts \
@@ -29,10 +29,6 @@ build-backend:
 build-frontend:
 	@pnpm --dir frontend run build
 
-# 编译 datamanagementd（宿主机数据管理进程）
-build-datamanagementd:
-	@cd datamanagement && go build -o datamanagementd ./cmd/datamanagementd
-
 # 只启动真实 PostgreSQL/Redis，不构建应用镜像，适合本地热开发。
 dev-db:
 	@tools/dev_local.sh db
@@ -54,9 +50,6 @@ test-frontend:
 
 test-frontend-critical:
 	@pnpm --dir frontend exec vitest run $(FRONTEND_CRITICAL_VITEST)
-
-test-datamanagementd:
-	@cd datamanagement && go test ./...
 
 secret-scan:
 	@python3 tools/secret_scan.py
