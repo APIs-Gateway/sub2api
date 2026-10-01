@@ -28,8 +28,8 @@ func (s *chatPartialBillingRepo) Apply(_ context.Context, cmd *service.UsageBill
 }
 
 // This exercises the real ChatCompletions handler, forwarding service,
-// RecordUsage and billing command. The raw path ends with a read error after
-// upstream usage; the converted path ends in response.failed with usage.
+// RecordUsage and billing command. The raw path receives a genuine error
+// frame carrying usage; the converted path ends in response.failed with usage.
 func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -45,11 +45,11 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 		status int
 	}{
 		{
-			name: "raw chat read error",
+			name: "raw chat error frame with usage",
 			mode: openai_compat.ResponsesSupportModeForceChatCompletions,
 			payload: "data: {\"id\":\"chatcmpl_partial\",\"model\":\"gpt-5.1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"}}]}\n\n" +
-				"data: {\"id\":\"chatcmpl_partial\",\"model\":\"gpt-5.1\",\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":5,\"total_tokens\":16}}\n\n",
-			readError: true,
+				"event: error\n" +
+				"data: {\"error\":{\"type\":\"api_error\",\"message\":\"upstream stream interrupted\"},\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":5,\"total_tokens\":16}}\n\n",
 			wantBilling: true, wantInput: 11, wantOutput: 5,
 		},
 		{
@@ -162,6 +162,9 @@ func TestOpenAIChatCompletions_PartialStreamUsageReachesBilling(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, req)
+			if tc.name == "raw chat error frame with usage" {
+				require.Contains(t, rec.Body.String(), "upstream stream interrupted")
+			}
 
 			if !tc.wantBilling {
 				require.Empty(t, billingRepo.applied, "pre-output failure must not charge a per-request price")
