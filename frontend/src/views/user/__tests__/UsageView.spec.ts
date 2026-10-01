@@ -66,6 +66,7 @@ const messages: Record<string, string> = {
   'usage.imageSizeUnknown': 'unknown',
   'usage.imageUnitPrice': 'Per-image price',
   'usage.imageTotalPrice': 'Image total price',
+  'usage.unitPrice': 'Unit price',
   'admin.usage.billingModeToken': 'Token',
   'admin.usage.billingModePerRequest': 'Per request',
   'admin.usage.billingModeImage': 'Image',
@@ -157,6 +158,8 @@ describe('user UsageView tooltip', () => {
   })
 
   it('shows fast service tier and unit prices in user tooltip', async () => {
+    // 官方价按后台汇率 7 换成人民币展示
+    publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7 }
     query.mockResolvedValue({
       items: [
         {
@@ -240,12 +243,13 @@ describe('user UsageView tooltip', () => {
     // 这条 fixture 没有 billing_type，按钱包扣费展示。
     expect(text).toContain('Balance deducted')
     expect(text).toContain('$0.092883')
-    expect(text).toContain('$5.0000 / 1M tokens')
-    expect(text).toContain('$30.0000 / 1M tokens')
+    expect(text).toContain('¥35.00 / 1M tokens')
+    expect(text).toContain('¥210.00 / 1M tokens')
     expect(text).toContain('Cache write price')
-    expect(text).toContain('$6.2500 / 1M tokens')
+    expect(text).toContain('¥43.75 / 1M tokens')
     expect(text).toContain('Cache read price')
-    expect(text).toContain('$0.2500 / 1M tokens')
+    expect(text).toContain('¥1.75 / 1M tokens')
+    expect(text).not.toContain('$5.0000')
   })
 
   it('exports csv with input and output unit price columns', async () => {
@@ -913,7 +917,21 @@ describe('user UsageView currency display', () => {
     expect(walletText).not.toContain('Plan quota deducted')
   })
 
+  it('官方价在人民币模式下按官方价汇率展示，缺汇率时整项隐藏而不是混排 $', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    const hidden = await mountView()
+    expect(hidden.find('[data-test="official-total"]').exists()).toBe(false)
+    expect(plain(hidden)).not.toContain('1.6667')
+
+    publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7 }
+    const shown = await mountView()
+    // 1.666667 * 7 = 11.666669
+    expect(shown.get('[data-test="official-total"]').text()).toContain('¥11.67')
+    expect(plain(shown)).not.toContain('$1.6667')
+  })
+
   it('tooltip 把官方价、扣除金额、你的花费拆成三行', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7 }
     const wrapper = await mountView()
     const setupState = (wrapper.vm as any).$?.setupState
 
@@ -927,9 +945,79 @@ describe('user UsageView currency display', () => {
     expect(text).toContain('Official price')
     expect(text).toContain('Plan quota deducted')
     expect(text).toContain('Your spend')
-    expect(text).toContain('1.666667')
+    expect(text).toContain('¥11.67')
     expect(text).toContain('5.000000')
     expect(text).toContain('0.250')
+  })
+
+  describe('缺少官方价汇率时的费用明细', () => {
+    const perRequestRow = { ...subscriptionRow, billing_mode: 'per_request' }
+
+    async function openTooltip(wrapper: Awaited<ReturnType<typeof mountView>>, row: Record<string, unknown>) {
+      const setupState = (wrapper.vm as any).$?.setupState
+      setupState.tooltipData = row
+      setupState.tooltipVisible = true
+      await nextTick()
+    }
+
+    it('按次计费的单价行跟着官方价一起隐藏，空的明细块整体不渲染', async () => {
+      publicSettings.value = { balance_recharge_multiplier: 13 }
+      const wrapper = await mountView()
+      await openTooltip(wrapper, perRequestRow)
+
+      expect(wrapper.text()).not.toContain('Unit price')
+      expect(wrapper.find('[data-test="cost-breakdown"]').exists()).toBe(false)
+      // 其余信息不受影响
+      expect(plain(wrapper)).toContain('Plan quota deducted')
+      expect(plain(wrapper)).toContain('Your spend')
+    })
+
+    it('token 计费同样没有可显示的行时整体隐藏', async () => {
+      publicSettings.value = { balance_recharge_multiplier: 13 }
+      const wrapper = await mountView()
+      await openTooltip(wrapper, subscriptionRow)
+
+      expect(wrapper.find('[data-test="cost-breakdown"]').exists()).toBe(false)
+    })
+
+    it('图片计费的尺寸信息不带价格，缺汇率时仍保留明细块，但不出现金额行', async () => {
+      publicSettings.value = { balance_recharge_multiplier: 13 }
+      const wrapper = await mountView()
+      await openTooltip(wrapper, {
+        ...subscriptionRow,
+        image_count: 2,
+        image_size: '4K',
+        image_output_size: '3840x2160',
+        image_size_source: 'output',
+        image_size_breakdown: { '4K': 2 },
+      })
+
+      expect(wrapper.get('[data-test="cost-breakdown"]').text()).toContain('Image count')
+      expect(wrapper.text()).not.toContain('Per-image price')
+      expect(wrapper.text()).not.toContain('Image total price')
+    })
+
+    it('有官方价汇率时显示单价行和明细块', async () => {
+      publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7 }
+      const wrapper = await mountView()
+      await openTooltip(wrapper, perRequestRow)
+
+      const breakdown = wrapper.get('[data-test="cost-breakdown"]').text()
+      expect(breakdown).toContain('Unit price')
+      // 1.666667 * 7 = 11.666669
+      expect(breakdown).toContain('¥11.67')
+    })
+
+    it('美元口径不依赖汇率，单价行照常显示', async () => {
+      publicSettings.value = { balance_recharge_multiplier: 13 }
+      const wrapper = await mountView()
+      useCurrencyDisplay().setMode('usd')
+      await openTooltip(wrapper, perRequestRow)
+
+      const breakdown = wrapper.get('[data-test="cost-breakdown"]').text()
+      expect(breakdown).toContain('Unit price')
+      expect(breakdown).toContain('$1.666667')
+    })
   })
 
   it('缺少服务端折算值时回落到按充值倍率估算', async () => {

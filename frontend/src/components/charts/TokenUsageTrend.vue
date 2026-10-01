@@ -57,6 +57,8 @@ const props = defineProps<{
    * actual_cost_fiat）。后台不传，保持原来的额度展示。
    */
   formatActualCost?: (point: TrendDataPoint) => string
+  /** 官方价（Standard）的展示；返回 null 表示当前口径下无法给出，tooltip 中隐藏该项。后台不传。 */
+  formatStandardCost?: (point: TrendDataPoint) => string | null
 }>()
 
 const isDarkMode = computed(() => {
@@ -163,7 +165,10 @@ const lineOptions = computed(() => ({
             const actual = props.formatActualCost
               ? props.formatActualCost(data)
               : `$${formatCost(data.actual_cost)}`
-            return `Actual: ${actual} | Standard: $${formatCost(data.cost)}`
+            const standard = props.formatStandardCost
+              ? props.formatStandardCost(data)
+              : `$${formatCost(data.cost)}`
+            return standard == null ? `Actual: ${actual}` : `Actual: ${actual} | Standard: ${standard}`
           }
           return ''
         }

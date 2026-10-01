@@ -80,8 +80,8 @@
             倍率 >1 时被划掉的数反而比实扣更小，删除线等于在暗示用户占了便宜。
             这里改成中性标注：官方价是可以对照模型官网的外部锚点，不是被优惠掉的原价。
           -->
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('usage.officialPrice') }} ${{ (usageStats?.total_cost || 0).toFixed(4) }}
+          <p v-if="officialAvailable" class="mt-1 text-xs text-gray-500 dark:text-gray-400" data-test="official-total">
+            {{ t('usage.officialPrice') }} {{ officialCost(usageStats?.total_cost || 0, 4) }}
           </p>
         </div>
 
@@ -501,42 +501,42 @@
         class="whitespace-nowrap rounded-lg border border-gray-700 bg-gray-900 px-3 py-2.5 text-xs text-white shadow-xl dark:border-gray-600 dark:bg-gray-800"
       >
         <div class="space-y-1.5">
-          <!-- Cost Breakdown -->
-          <div class="mb-2 border-b border-gray-700 pb-1.5">
-            <div class="text-xs font-semibold text-gray-300 mb-1">{{ t('usage.costDetails') }}</div>
-            <div v-if="tooltipData && tooltipData.input_cost > 0" class="flex items-center justify-between gap-4">
+          <!-- Cost Breakdown：没有可显示的行时整块隐藏，避免只剩一条底边框 -->
+          <div v-if="showCostBreakdown" class="mb-2 border-b border-gray-700 pb-1.5" data-test="cost-breakdown">
+            <div v-if="officialAvailable" class="text-xs font-semibold text-gray-300 mb-1">{{ t('usage.costDetails') }}</div>
+            <div v-if="officialAvailable && tooltipData && tooltipData.input_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.inputCost') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData.input_cost.toFixed(6) }}</span>
+              <span class="font-mono tabular-nums font-medium text-white">{{ officialCost(tooltipData.input_cost) }}</span>
             </div>
-            <div v-if="tooltipData && tooltipData.output_cost > 0" class="flex items-center justify-between gap-4">
+            <div v-if="officialAvailable && tooltipData && tooltipData.output_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.outputCost') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData.output_cost.toFixed(6) }}</span>
+              <span class="font-mono tabular-nums font-medium text-white">{{ officialCost(tooltipData.output_cost) }}</span>
             </div>
-            <div v-if="tooltipData && hasImageOutputCost(tooltipData)" class="flex items-center justify-between gap-4">
+            <div v-if="officialAvailable && tooltipData && hasImageOutputCost(tooltipData)" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('usage.imageOutputCost') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData.image_output_cost.toFixed(6) }}</span>
+              <span class="font-mono tabular-nums font-medium text-white">{{ officialCost(tooltipData.image_output_cost) }}</span>
             </div>
             <!-- Token billing: show unit prices per 1M tokens -->
             <template v-if="tooltipData && !isImageUsage(tooltipData) && (!tooltipData.billing_mode || tooltipData.billing_mode === BILLING_MODE_TOKEN)">
-              <div v-if="tooltipData && tooltipData.input_tokens > 0" class="flex items-center justify-between gap-4">
+              <div v-if="officialAvailable && tooltipData && tooltipData.input_tokens > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.inputTokenPrice') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.input_cost, tooltipData.input_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="font-mono tabular-nums font-medium text-white">{{ officialPerMillion(tooltipData.input_cost, tooltipData.input_tokens) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
-              <div v-if="tooltipData && tooltipData.output_cost > 0 && textOutputTokens(tooltipData) > 0" class="flex items-center justify-between gap-4">
+              <div v-if="officialAvailable && tooltipData && tooltipData.output_cost > 0 && textOutputTokens(tooltipData) > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.outputTokenPrice') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.output_cost, textOutputTokens(tooltipData)) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="font-mono tabular-nums font-medium text-white">{{ officialPerMillion(tooltipData.output_cost, textOutputTokens(tooltipData)) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
-              <div v-if="tooltipData && tooltipData.cache_creation_tokens > 0" class="flex items-center justify-between gap-4">
+              <div v-if="officialAvailable && tooltipData && tooltipData.cache_creation_tokens > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.cacheWriteTokenPrice') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.cache_creation_cost, tooltipData.cache_creation_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="font-mono tabular-nums font-medium text-white">{{ officialPerMillion(tooltipData.cache_creation_cost, tooltipData.cache_creation_tokens) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
-              <div v-if="tooltipData && tooltipData.cache_read_tokens > 0" class="flex items-center justify-between gap-4">
+              <div v-if="officialAvailable && tooltipData && tooltipData.cache_read_tokens > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.cacheReadTokenPrice') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.cache_read_cost, tooltipData.cache_read_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="font-mono tabular-nums font-medium text-white">{{ officialPerMillion(tooltipData.cache_read_cost, tooltipData.cache_read_tokens) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
-              <div v-if="tooltipData && hasImageOutputTokens(tooltipData)" class="flex items-center justify-between gap-4">
+              <div v-if="officialAvailable && tooltipData && hasImageOutputTokens(tooltipData)" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageOutputTokenPrice') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.image_output_cost ?? 0, tooltipData.image_output_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="font-mono tabular-nums font-medium text-white">{{ officialPerMillion(tooltipData.image_output_cost ?? 0, tooltipData.image_output_tokens) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
             </template>
             <!-- Per-image billing: show image metadata and unit price -->
@@ -565,26 +565,26 @@
                 <span class="text-gray-400">{{ t('usage.imageSizeBreakdown') }}</span>
                 <span class="font-medium text-white">{{ formatImageSizeBreakdown(tooltipData) }}</span>
               </div>
-              <div class="flex items-center justify-between gap-4">
+              <div v-if="officialAvailable" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageUnitPrice') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">${{ imageUnitPrice(tooltipData).toFixed(6) }}</span>
+                <span class="font-mono tabular-nums font-medium text-white">{{ officialCost(imageUnitPrice(tooltipData)) }}</span>
               </div>
-              <div class="flex items-center justify-between gap-4">
+              <div v-if="officialAvailable" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageTotalPrice') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData.total_cost?.toFixed(6) || '0.000000' }}</span>
+                <span class="font-mono tabular-nums font-medium text-white">{{ officialCost(tooltipData.total_cost ?? 0) }}</span>
               </div>
             </template>
-            <div v-else class="flex items-center justify-between gap-4">
+            <div v-else-if="officialAvailable" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('usage.unitPrice') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData?.total_cost?.toFixed(6) || '0.000000' }}</span>
+              <span class="font-mono tabular-nums font-medium text-white">{{ officialCost(tooltipData?.total_cost ?? 0) }}</span>
             </div>
-            <div v-if="tooltipData && tooltipData.cache_creation_cost > 0" class="flex items-center justify-between gap-4">
+            <div v-if="officialAvailable && tooltipData && tooltipData.cache_creation_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.cacheCreationCost') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData.cache_creation_cost.toFixed(6) }}</span>
+              <span class="font-mono tabular-nums font-medium text-white">{{ officialCost(tooltipData.cache_creation_cost) }}</span>
             </div>
-            <div v-if="tooltipData && tooltipData.cache_read_cost > 0" class="flex items-center justify-between gap-4">
+            <div v-if="officialAvailable && tooltipData && tooltipData.cache_read_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.cacheReadCost') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData.cache_read_cost.toFixed(6) }}</span>
+              <span class="font-mono tabular-nums font-medium text-white">{{ officialCost(tooltipData.cache_read_cost) }}</span>
             </div>
           </div>
           <!-- Rate and Summary -->
@@ -604,10 +604,10 @@
             美元计价）→ 你的花费（真金白银的人民币）。以前只有中间那一行，所以
             「扣了 $5」会被读成「花了三十多块」，实际只有几毛钱。
           -->
-          <div class="flex items-center justify-between gap-6">
+          <div v-if="officialAvailable" class="flex items-center justify-between gap-6">
             <span class="text-gray-400">{{ t('usage.officialPrice') }}</span>
             <span class="font-mono tabular-nums font-medium text-white"
-              >${{ tooltipData?.total_cost.toFixed(6) }}</span
+              >{{ officialCost(tooltipData?.total_cost ?? 0) }}</span
             >
           </div>
           <div class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5">
@@ -656,7 +656,7 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import CurrencyModeSwitch from '@/components/common/CurrencyModeSwitch.vue'
 import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
-import { formatTokenPricePerMillion } from '@/utils/usagePricing'
+import { calculateTokenPricePerMillion, formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
 import {
@@ -687,8 +687,22 @@ const {
   formatFiat,
   formatUsd,
   formatAmount,
-  formatMixed
+  formatMixed,
+  isFiat,
+  officialCnyRate,
+  formatOfficial
 } = useCurrencyDisplay()
+
+// 官方价：人民币模式按后台汇率换成 ¥；后端没提供汇率时整块官方价隐藏，不混排 $。
+const officialAvailable = computed(() => !isFiat.value || officialCnyRate.value > 0)
+function officialCost(usd: number, fractionDigits = 6): string {
+  return formatOfficial(usd, fractionDigits) ?? ''
+}
+function officialPerMillion(cost: number | null | undefined, tokens: number | null | undefined): string {
+  if (!isFiat.value) return formatTokenPricePerMillion(cost, tokens)
+  const perMillion = calculateTokenPricePerMillion(cost, tokens)
+  return perMillion == null ? '-' : (formatOfficial(perMillion) ?? '-')
+}
 
 let abortController: AbortController | null = null
 
@@ -697,6 +711,14 @@ const tooltipVisible = ref(false)
 const tooltipPosition = ref({ x: 0, y: 0 })
 
 const tooltipData = ref<UsageLog | null>(null)
+
+/**
+ * 费用明细块有没有行可显示：金额行都受 officialAvailable 控制，
+ * 只有图片计费的尺寸 / 张数等元信息不带价格，缺汇率时也要显示。
+ */
+const showCostBreakdown = computed(
+  () => officialAvailable.value || (tooltipData.value != null && isImageUsage(tooltipData.value))
+)
 
 /**
  * 这笔用量的法币花费。优先用服务端下发的 fiat_cost（按额度来源精确折算），

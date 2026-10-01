@@ -17,38 +17,52 @@
 
       <div class="min-w-0 flex-1 space-y-2">
         <h3 class="text-sm font-bold text-gray-900 dark:text-white">{{ t('billingRules.title') }}</h3>
-        <p class="text-xs leading-relaxed text-gray-600 dark:text-gray-300">{{ t('billingRules.intro') }}</p>
 
-        <div
-          class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-white px-3 py-2 dark:bg-dark-900/40"
-        >
-          <span class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('billingRules.formulaLabel') }}</span>
-          <span class="text-xs font-semibold text-gray-800 dark:text-gray-200">= {{ t('billingRules.formula') }}</span>
-        </div>
+        <template v-if="isFiat">
+          <p class="text-xs leading-relaxed text-gray-600 dark:text-gray-300">{{ t('billingRules.fiat.intro') }}</p>
+          <ul class="space-y-1 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+            <li v-for="text in fiatBullets" :key="text" class="flex gap-1.5">
+              <span class="select-none text-gray-400 dark:text-gray-500">•</span>
+              <span>{{ text }}</span>
+            </li>
+          </ul>
+        </template>
 
-        <ul class="space-y-1 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
-          <li class="flex gap-1.5">
-            <span class="select-none text-gray-400 dark:text-gray-500">•</span>
-            <span>{{ modelsBelow ? t('billingRules.modelPriceHere') : t('billingRules.modelPriceLink') }}</span>
-          </li>
-          <li class="flex gap-1.5">
-            <span class="select-none text-gray-400 dark:text-gray-500">•</span>
-            <span>{{ t('billingRules.rate') }}</span>
-          </li>
-          <li class="flex gap-1.5">
-            <span class="select-none text-gray-400 dark:text-gray-500">•</span>
-            <span>{{ t('billingRules.plan') }}</span>
-          </li>
-        </ul>
+        <template v-else>
+          <p class="text-xs leading-relaxed text-gray-600 dark:text-gray-300">{{ t('billingRules.intro') }}</p>
+          <ul class="space-y-1 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+            <li v-for="text in usdBullets" :key="text" class="flex gap-1.5">
+              <span class="select-none text-gray-400 dark:text-gray-500">•</span>
+              <span>{{ text }}</span>
+            </li>
+          </ul>
+        </template>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-withDefaults(defineProps<{ modelsBelow?: boolean }>(), { modelsBelow: false })
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+
+const props = withDefaults(defineProps<{ modelsBelow?: boolean }>(), { modelsBelow: false })
 
 const { t } = useI18n()
+const { isFiat } = useCurrencyDisplay()
+
+const fiatBullets = computed(() => [
+  ...(props.modelsBelow ? [] : [t('billingRules.fiat.pricesLink')]),
+  t('billingRules.fiat.balance'),
+  t('billingRules.fiat.plan'),
+  // 支付页没有模型列表可展开，只说明分组价格不同。
+  props.modelsBelow ? t('billingRules.fiat.group') : t('billingRules.fiat.groupBrief'),
+])
+const usdBullets = computed(() => [
+  props.modelsBelow ? t('billingRules.modelPriceHere') : t('billingRules.modelPriceLink'),
+  t('billingRules.rate'),
+  t('billingRules.plan'),
+])
 </script>
