@@ -7,7 +7,7 @@ vi.mock('@/stores/app', () => ({
   useAppStore: () => ({ cachedPublicSettings: { balance_recharge_multiplier: 13 } })
 }))
 
-import { getActiveSubscriptions } from '../subscriptions'
+import { getActiveSubscriptions, getMySubscriptions } from '../subscriptions'
 import { resetFiatDataMissingForTest, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 
 function card(overrides: Record<string, unknown> = {}) {
@@ -40,6 +40,22 @@ describe('订阅接口的人民币数据保护', () => {
   it('没有限额的卡不带单价属于正常情况', async () => {
     apiGet.mockResolvedValue({ data: [card({ daily_limit_usd: null })] })
     await getActiveSubscriptions()
+
+    expect(useCurrencyDisplay().isFiat.value).toBe(true)
+  })
+
+  it('我的订阅列表同样做保护：有限额的生效卡都没有单价时退回美元', async () => {
+    apiGet.mockResolvedValue({ data: [card()] })
+    const cards = await getMySubscriptions()
+
+    expect(cards).toHaveLength(1)
+    expect(apiGet).toHaveBeenCalledWith('/subscriptions')
+    expect(useCurrencyDisplay().isFiat.value).toBe(false)
+  })
+
+  it('我的订阅列表里非生效的卡缺单价不触发退回', async () => {
+    apiGet.mockResolvedValue({ data: [card({ status: 'expired' }), card({ id: 2, fiat_per_credit: 0.045 })] })
+    await getMySubscriptions()
 
     expect(useCurrencyDisplay().isFiat.value).toBe(true)
   })

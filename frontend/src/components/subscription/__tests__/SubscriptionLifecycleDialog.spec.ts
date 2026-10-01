@@ -187,4 +187,69 @@ describe('SubscriptionLifecycleDialog', () => {
     expect(text).not.toContain('¥4.05')
     expect(wrapper.find('input[type="number"]').exists()).toBe(true)
   })
+
+  async function confirmAndGetPayload(wrapper: ReturnType<typeof mountDialog>) {
+    const goPay = wrapper.findAll('button').find((b) => b.text() === 'userSubscriptions.lifecycle.goPay')
+    expect(goPay!.attributes('disabled')).toBeUndefined()
+    await goPay!.trigger('click')
+    return wrapper.emitted('purchase')![0][0] as Record<string, unknown>
+  }
+
+  it('转套餐去结账时把报价单价带给结账页，额度仍是额度单位', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    changePlanQuote.mockResolvedValue(changeQuote)
+    const wrapper = mountDialog('change')
+    await flushPromises()
+    await flushPromises()
+
+    const payload = await confirmAndGetPayload(wrapper)
+    expect(payload).toMatchObject({ intent: 'change_plan', dailyAmountUsd: 90, charge: 72.6, unitPrice: 0.045 })
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('续费去结账时把报价单价带给结账页', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    renewQuote.mockResolvedValue({
+      subscription_id: 376,
+      daily_amount_usd: 90,
+      added_days: 30,
+      price: 121.5,
+      unit_price: 0.045,
+      group_id: 1,
+    })
+    const wrapper = mountDialog('renew')
+    await flushPromises()
+    await flushPromises()
+
+    const payload = await confirmAndGetPayload(wrapper)
+    expect(payload).toMatchObject({ intent: 'renew', dailyAmountUsd: 90, charge: 121.5, unitPrice: 0.045 })
+  })
+
+  it('报价没有单价且当前卡也没有单价时，每日额度先显示 ¥0.00 而不是美元', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    changePlanQuote.mockResolvedValue({ ...changeQuote, unit_price: undefined })
+    const wrapper = mount(SubscriptionLifecycleDialog, {
+      props: {
+        show: true,
+        mode: 'change',
+        subscription: subscriptionFixture(),
+        paymentCurrency: 'CNY',
+        subscriptionPaymentMultiplier: 1,
+        locale: 'zh-CN',
+      },
+      global: {
+        stubs: {
+          BaseDialog: { template: '<section><slot /><footer><slot name="footer" /></footer></section>' },
+          NumText: false,
+        },
+      },
+    })
+    await flushPromises()
+    await flushPromises()
+    const text = wrapper.text().replace(/\s+/g, '')
+
+    expect(text).toContain('¥0.00')
+    expect(text).not.toContain('$')
+    expect(text).not.toContain('¥4.05')
+  })
 })

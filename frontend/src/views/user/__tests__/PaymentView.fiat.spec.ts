@@ -9,6 +9,8 @@ const createOrder = vi.hoisted(() => vi.fn())
 const getCheckoutInfo = vi.hoisted(() => vi.fn())
 // 可变的假设置：改它就能模拟 codex 站（倍率 13）和 free 站（倍率 1）。
 const publicSettings = vi.hoisted(() => ({ value: {} as Record<string, unknown> }))
+// 当前生效的订阅卡：续费缺单价时回落到它的 fiat_per_credit。
+const activeSubs = vi.hoisted(() => ({ value: [] as Array<Record<string, unknown>> }))
 
 vi.mock('vue-router', async () => {
   const actual = await vi.importActual<typeof import('vue-router')>('vue-router')
@@ -27,7 +29,12 @@ vi.mock('@/stores/auth', () => ({
 }))
 vi.mock('@/stores/payment', () => ({ usePaymentStore: () => ({ createOrder }) }))
 vi.mock('@/stores/subscriptions', () => ({
-  useSubscriptionStore: () => ({ activeSubscriptions: [], fetchActiveSubscriptions: vi.fn().mockResolvedValue(undefined) }),
+  useSubscriptionStore: () => ({
+    get activeSubscriptions() {
+      return activeSubs.value
+    },
+    fetchActiveSubscriptions: vi.fn().mockResolvedValue(undefined),
+  }),
 }))
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
@@ -42,7 +49,7 @@ vi.mock('@/stores', () => ({
 vi.mock('@/api/payment', () => ({ paymentAPI: { getCheckoutInfo } }))
 vi.mock('@/utils/device', () => ({ isMobileDevice: () => false }))
 
-function checkoutInfo(multiplier: number, feeRate = 0) {
+function checkoutInfo(multiplier: number, feeRate = 0, plans: unknown[] = []) {
   return {
     data: {
       methods: {
@@ -59,7 +66,7 @@ function checkoutInfo(multiplier: number, feeRate = 0) {
       },
       global_min: 0,
       global_max: 0,
-      plans: [],
+      plans,
       balance_disabled: false,
       balance_recharge_multiplier: multiplier,
       subscription_payment_multiplier: 1,
@@ -112,6 +119,8 @@ beforeEach(() => {
   resetFiatDataMissingForTest()
   // 展示口径是模块级单例，逐个用例复位。
   useCurrencyDisplay().setMode('fiat')
+  activeSubs.value = []
+  routeState.query = {}
   createOrder.mockReset().mockRejectedValue(new Error('stop after payload'))
 })
 
@@ -222,5 +231,165 @@ describe('续费/转套餐结账页按人民币展示', () => {
 
     expect(text).toContain('USD90.00')
     expect(text).not.toContain('¥4.05')
+  })
+})
+
+describe('续费/转套餐结账页：每日额度的单价来源', () => {
+  async function mountLifecycle(query: Record<string, string>) {
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    routeState.query = { tab: 'subscription', daily_amount_usd: '90', validity_days: '30', charge: '72.60', ...query }
+    getCheckoutInfo.mockResolvedValue(checkoutInfo(13))
+    const wrapper = mount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          PaymentMethodSelector: true,
+          CryptoNetworkSelector: true,
+          SubscriptionPurchasePanel: true,
+          PaymentStatusPanel: true,
+          BillingRulesCard: true,
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    await flushPromises()
+    return { wrapper, text: plain(wrapper.text()) }
+  }
+
+  it('续费缺单价时沿用当前生效卡的单价：90 × 0.05 = ¥4.50', async () => {
+    activeSubs.value = [{ id: 1, status: 'active', fiat_per_credit: 0.05 }]
+    const { text } = await mountLifecycle({ intent: 'renew' })
+
+    expect(text).toContain('userSubscriptions.lifecycle.renewTitle')
+    expect(text).toContain('userSubscriptions.lifecycle.dailyAmount')
+    expect(text).toContain('¥4.50')
+    expect(text).not.toContain('USD')
+  })
+
+  it('续费缺单价且当前卡也没有单价时不显示每日额度', async () => {
+    activeSubs.value = [{ id: 1, status: 'active' }]
+    const { text } = await mountLifecycle({ intent: 'renew' })
+
+    expect(text).toContain('¥72.60')
+    expect(text).not.toContain('userSubscriptions.lifecycle.dailyAmount')
+    expect(text).not.toContain('USD')
+  })
+
+  it('转套餐缺单价时不显示每日额度，也不借用当前卡的单价', async () => {
+    activeSubs.value = [{ id: 1, status: 'active', fiat_per_credit: 0.05 }]
+    const { text } = await mountLifecycle({ intent: 'change_plan' })
+
+    expect(text).toContain('userSubscriptions.lifecycle.changeTitle')
+    expect(text).not.toContain('userSubscriptions.lifecycle.dailyAmount')
+    expect(text).not.toContain('¥4.50')
+  })
+
+  it('无效的 unit_price 按缺失处理，续费回落到当前卡单价', async () => {
+    activeSubs.value = [{ id: 1, status: 'active', fiat_per_credit: 0.05 }]
+    const { text } = await mountLifecycle({ intent: 'renew', unit_price: 'abc' })
+
+    expect(text).toContain('¥4.50')
+  })
+
+  it('提交续费订单时额度仍按额度单位（90）上报，不会变成人民币', async () => {
+    activeSubs.value = [{ id: 1, status: 'active', fiat_per_credit: 0.05 }]
+    const { wrapper } = await mountLifecycle({ intent: 'renew', unit_price: '0.045' })
+    expect(plain(wrapper.text())).toContain('¥4.05')
+
+    const submit = wrapper.findAll('button').find((button) => button.text().startsWith('payment.createOrder'))
+    await submit!.trigger('click')
+    await flushPromises()
+
+    expect(createOrder).toHaveBeenCalledTimes(1)
+    expect(createOrder.mock.calls[0][0]).toMatchObject({
+      amount: 72.6,
+      order_type: 'subscription',
+      subscription_intent: 'renew',
+      daily_amount_usd: 90,
+      validity_days: 30,
+    })
+  })
+})
+
+describe('固定套餐详情按人民币展示', () => {
+  function plan(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 7,
+      group_id: 3,
+      name: 'Starter',
+      description: '',
+      price: 90,
+      original_price: 0,
+      validity_days: 30,
+      validity_unit: 'day',
+      rate_multiplier: 2,
+      daily_amount_usd: 10,
+      daily_limit_usd: 10,
+      weekly_limit_usd: 70,
+      monthly_limit_usd: 300,
+      features: [],
+      group_platform: 'openai',
+      sort_order: 1,
+      for_sale: true,
+      group_name: 'OpenAI',
+      ...overrides,
+    }
+  }
+
+  async function mountPlan(multiplier: number, planOverrides: Record<string, unknown> = {}) {
+    publicSettings.value = { balance_recharge_multiplier: multiplier }
+    routeState.query = { tab: 'subscription', group: '3' }
+    getCheckoutInfo.mockResolvedValue(checkoutInfo(multiplier, 0, [plan(planOverrides)]))
+    const wrapper = mount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          PaymentMethodSelector: true,
+          CryptoNetworkSelector: true,
+          SubscriptionPurchasePanel: true,
+          PaymentStatusPanel: true,
+          BillingRulesCard: true,
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    await flushPromises()
+    return plain(wrapper.text())
+  }
+
+  it('日/周/月限额按套餐实付折算成人民币并标注等效，不显示倍率和美元价值', async () => {
+    const text = await mountPlan(13)
+
+    // 实付 ¥90 ÷（每日 10 × 30 天）= ¥0.3 / 额度。
+    expect(text).toContain('¥3.00')
+    expect(text).toContain('¥21.00')
+    expect(text).toContain('¥90.00')
+    expect(text).toContain('payment.planCard.equivalentCny')
+    expect(text).not.toContain('payment.planCard.rate')
+    expect(text).not.toContain('payment.subscriptionValueWithCurrency')
+    expect(text).not.toContain('USD')
+  })
+
+  it('套餐没有每日额度无法折算时隐藏各项限额，不混入美元', async () => {
+    const text = await mountPlan(13, { daily_amount_usd: null, daily_limit_usd: null })
+
+    expect(text).not.toContain('payment.planCard.weeklyLimit')
+    expect(text).not.toContain('payment.planCard.monthlyLimit')
+    expect(text).not.toContain('payment.planCard.equivalentCny')
+    expect(text).not.toContain('USD')
+  })
+
+  it('free 站（倍率 1）保持美元额度和倍率', async () => {
+    useCurrencyDisplay().setMode('usd')
+    const text = await mountPlan(1)
+
+    expect(text).toContain('USD10.00')
+    expect(text).toContain('USD70.00')
+    expect(text).toContain('payment.planCard.rate')
+    expect(text).not.toContain('payment.planCard.equivalentCny')
   })
 })
