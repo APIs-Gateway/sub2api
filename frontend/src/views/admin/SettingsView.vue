@@ -6919,6 +6919,28 @@
                   </div>
                   <div>
                     <label class="input-label">{{
+                      t("admin.settings.payment.officialPriceCnyRate")
+                    }}</label>
+                    <input
+                      :value="form.payment_official_price_cny_rate || ''"
+                      @input="
+                        form.payment_official_price_cny_rate =
+                          parseFloat(
+                            ($event.target as HTMLInputElement).value,
+                          ) || 7.2
+                      "
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      max="100"
+                      class="input"
+                    />
+                    <p class="mt-0.5 text-xs text-gray-400">
+                      {{ t("admin.settings.payment.officialPriceCnyRateHint") }}
+                    </p>
+                  </div>
+                  <div>
+                    <label class="input-label">{{
                       '普通充值手续费率'
                     }}</label>
                     <div class="relative">
@@ -8807,6 +8829,7 @@ const form = reactive<SettingsForm>({
   payment_balance_disabled: false,
   payment_balance_recharge_multiplier: 1,
   payment_subscription_payment_multiplier: 1,
+  payment_official_price_cny_rate: 7.2,
   payment_recharge_fee_rate: 0,
   payment_crypto_recharge_fee_rate: 0,
   payment_refund_fee_rate: 0,
@@ -10190,6 +10213,8 @@ async function saveSettings() {
         Number(form.payment_balance_recharge_multiplier) || 1,
       payment_subscription_payment_multiplier:
         Number(form.payment_subscription_payment_multiplier) || 1,
+      payment_official_price_cny_rate:
+        Number(form.payment_official_price_cny_rate) || 7.2,
       payment_recharge_fee_rate: Number(form.payment_recharge_fee_rate) || 0,
       payment_crypto_recharge_fee_rate: Number(form.payment_crypto_recharge_fee_rate) || 0,
       payment_refund_fee_rate: Number(form.payment_refund_fee_rate) || 0,

@@ -6959,6 +6959,8 @@
         balanceRechargePreview: 'Preview: 1 CNY = {usd} USD',
         subscriptionPaymentMultiplier: 'Subscription Payment Multiplier',
         subscriptionPaymentMultiplierHint: 'Subscription payable amount = plan USD value divided by this multiplier',
+        officialPriceCnyRate: 'Official price CNY rate',
+        officialPriceCnyRateHint: 'When users view prices in CNY, official USD model prices are converted at this rate for reference. Display only; billing is unaffected.',
         subscriptionMinDaily: 'Minimum Plan Daily Amount',
         subscriptionMaxDaily: 'Maximum Plan Daily Amount',
         subscriptionMinRatioStartDaily: 'Minimum Ratio Start Daily Amount',

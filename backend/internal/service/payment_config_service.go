@@ -26,6 +26,7 @@ const (
 	SettingBalancePayDisabled             = "BALANCE_PAYMENT_DISABLED"
 	SettingBalanceRechargeMult            = "BALANCE_RECHARGE_MULTIPLIER"
 	SettingSubscriptionPayMult            = "SUBSCRIPTION_PAYMENT_MULTIPLIER"
+	SettingOfficialPriceCNYRate           = "OFFICIAL_PRICE_CNY_RATE"
 	SettingRechargeFeeRate                = "RECHARGE_FEE_RATE"
 	SettingCryptoRechargeFeeRate          = "CRYPTO_RECHARGE_FEE_RATE"
 	SettingRefundFeeRate                  = "REFUND_FEE_RATE"
@@ -66,6 +67,7 @@ type PaymentConfig struct {
 	BalanceDisabled                bool     `json:"balance_disabled"`
 	BalanceRechargeMultiplier      float64  `json:"balance_recharge_multiplier"`
 	SubscriptionPayMultiplier      float64  `json:"subscription_payment_multiplier"`
+	OfficialPriceCNYRate           float64  `json:"official_price_cny_rate"`
 	RechargeFeeRate                float64  `json:"recharge_fee_rate"`
 	CryptoRechargeFeeRate          float64  `json:"crypto_recharge_fee_rate"`
 	RefundFeeRate                  float64  `json:"refund_fee_rate"`
@@ -106,6 +108,7 @@ type UpdatePaymentConfigRequest struct {
 	BalanceDisabled                *bool    `json:"balance_disabled"`
 	BalanceRechargeMultiplier      *float64 `json:"balance_recharge_multiplier"`
 	SubscriptionPayMultiplier      *float64 `json:"subscription_payment_multiplier"`
+	OfficialPriceCNYRate           *float64 `json:"official_price_cny_rate"`
 	RechargeFeeRate                *float64 `json:"recharge_fee_rate"`
 	CryptoRechargeFeeRate          *float64 `json:"crypto_recharge_fee_rate"`
 	RefundFeeRate                  *float64 `json:"refund_fee_rate"`
@@ -257,6 +260,7 @@ func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentCo
 		SettingPaymentEnabled, SettingMinRechargeAmount, SettingMaxRechargeAmount,
 		SettingDailyRechargeLimit, SettingOrderTimeoutMinutes, SettingMaxPendingOrders,
 		SettingEnabledPaymentTypes, SettingBalancePayDisabled, SettingBalanceRechargeMult, SettingSubscriptionPayMult, SettingRechargeFeeRate, SettingCryptoRechargeFeeRate, SettingRefundFeeRate, SettingLoadBalanceStrategy,
+		SettingOfficialPriceCNYRate,
 		SettingSubscriptionMinDaily, SettingSubscriptionMinRatioStartDaily, SettingSubscriptionMaxDaily, SettingSubscriptionMaxDays,
 		SettingSubscriptionMinRatio, SettingSubscriptionMaxRatio,
 		SettingProductNamePrefix, SettingProductNameSuffix,
@@ -289,6 +293,7 @@ func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *Payme
 		BalanceDisabled:                vals[SettingBalancePayDisabled] == "true",
 		BalanceRechargeMultiplier:      normalizeBalanceRechargeMultiplier(pcParseFloat(vals[SettingBalanceRechargeMult], defaultBalanceRechargeMultiplier)),
 		SubscriptionPayMultiplier:      normalizeBalanceRechargeMultiplier(pcParseFloat(vals[SettingSubscriptionPayMult], defaultBalanceRechargeMultiplier)),
+		OfficialPriceCNYRate:           normalizeOfficialPriceCNYRate(pcParseFloat(vals[SettingOfficialPriceCNYRate], DefaultOfficialPriceCNYRate)),
 		RechargeFeeRate:                pcParseFloat(vals[SettingRechargeFeeRate], 0),
 		CryptoRechargeFeeRate:          pcParseFloat(vals[SettingCryptoRechargeFeeRate], 0),
 		RefundFeeRate:                  pcParseFloat(vals[SettingRefundFeeRate], 0),
@@ -375,6 +380,11 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 	if req.SubscriptionPayMultiplier != nil {
 		if math.IsNaN(*req.SubscriptionPayMultiplier) || math.IsInf(*req.SubscriptionPayMultiplier, 0) || *req.SubscriptionPayMultiplier <= 0 {
 			return infraerrors.BadRequest("INVALID_SUBSCRIPTION_PAYMENT_MULTIPLIER", "subscription payment multiplier must be greater than 0")
+		}
+	}
+	if req.OfficialPriceCNYRate != nil {
+		if v := *req.OfficialPriceCNYRate; math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 || v > maxOfficialPriceCNYRate {
+			return infraerrors.BadRequest("INVALID_OFFICIAL_PRICE_CNY_RATE", "official price CNY rate must be greater than 0 and at most 100")
 		}
 	}
 	if req.RechargeFeeRate != nil {
@@ -488,6 +498,9 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 	if req.SubscriptionPayMultiplier != nil {
 		m[SettingSubscriptionPayMult] = formatPositiveFloat(req.SubscriptionPayMultiplier)
 	}
+	if req.OfficialPriceCNYRate != nil {
+		m[SettingOfficialPriceCNYRate] = formatPositiveFlexibleFloat(req.OfficialPriceCNYRate)
+	}
 	if req.RechargeFeeRate != nil {
 		m[SettingRechargeFeeRate] = formatNonNegativeFloat(req.RechargeFeeRate)
 	}
@@ -578,6 +591,20 @@ func formatBoolOrEmpty(v *bool) string {
 		return ""
 	}
 	return strconv.FormatBool(*v)
+}
+
+// DefaultOfficialPriceCNYRate 是「官方美元价换算成人民币」时用的默认汇率。
+// 这个汇率只用于用户端把模型官方价显示成人民币（划线对照价），不参与任何扣费或结算。
+const DefaultOfficialPriceCNYRate = 7.2
+
+// maxOfficialPriceCNYRate 是汇率上限，用来拦住明显填错的值。
+const maxOfficialPriceCNYRate = 100.0
+
+func normalizeOfficialPriceCNYRate(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 || v > maxOfficialPriceCNYRate {
+		return DefaultOfficialPriceCNYRate
+	}
+	return v
 }
 
 func formatPositiveFloat(v *float64) string {

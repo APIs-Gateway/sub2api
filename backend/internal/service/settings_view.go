@@ -333,6 +333,10 @@ type PublicSettings struct {
 	// 公开出来是为了让前端能把额度折算回法币展示。
 	BalanceRechargeMultiplier float64
 
+	// OfficialPriceCNYRate 是用户端把模型官方美元价显示成人民币时用的汇率
+	// （OFFICIAL_PRICE_CNY_RATE），只用于展示，不参与扣费。
+	OfficialPriceCNYRate float64
+
 	// Channel Monitor feature
 	ChannelMonitorEnabled                bool `json:"channel_monitor_enabled"`
 	ChannelMonitorDefaultIntervalSeconds int  `json:"channel_monitor_default_interval_seconds"`
