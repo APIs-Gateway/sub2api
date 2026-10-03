@@ -221,6 +221,8 @@ func (s *SubscriptionExpiryService) sendExpiryReminderIfDue(ctx context.Context,
 		SourceType:     "user_subscription",
 		SourceID:       strconv.FormatInt(sub.ID, 10),
 		ReminderKey:    fmt.Sprintf("%dd", daysRemaining),
+		// 标记里记下卡当前的到期时间：续费延期后到期时间变了，同一档提醒在新周期里可以再发一次。
+		ReminderExpiresAt: sub.ExpiresAt,
 		Variables: map[string]string{
 			// 无分组名时传空串，由通知服务按收件人 locale 回退为「当前 / 目前 / current」，读作「您的当前订阅」。
 			"subscription_group": subscriptionGroupDisplayName(sub.Group),
