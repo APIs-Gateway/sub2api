@@ -99,6 +99,7 @@
                   class="input"
                   :placeholder="t('profile.authBindings.emailPlaceholder')"
                   :disabled="isSendingEmailCode || isBindingEmail"
+                  @input="isEmailBindingFormDirty = true"
                 />
                 <button
                   data-testid="profile-binding-email-send-code"
@@ -122,6 +123,7 @@
                   class="input"
                   :placeholder="t('profile.authBindings.codePlaceholder')"
                   :disabled="isBindingEmail"
+                  @input="isEmailBindingFormDirty = true"
                 />
                 <input
                   v-model="emailBindingForm.password"
@@ -130,6 +132,7 @@
                   class="input"
                   :placeholder="emailPasswordPlaceholder"
                   :disabled="isBindingEmail"
+                  @input="isEmailBindingFormDirty = true"
                 />
                 <button
                   data-testid="profile-binding-email-submit"
@@ -193,7 +196,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import {
@@ -247,6 +250,9 @@ const authStore = useAuthStore()
 const localUser = ref<User | null>(null)
 const isSendingEmailCode = ref(false)
 const isBindingEmail = ref(false)
+const isEmailBindingFormDirty = ref(false)
+let emailFormVersion = 0
+let disposed = false
 const isEmailFormExpanded = ref(!props.compact)
 const unbindingProvider = ref<BindableProvider | null>(null)
 const emailBindingForm = reactive({
@@ -255,19 +261,48 @@ const emailBindingForm = reactive({
   password: '',
 })
 
+function resetEmailBindingForm(user: User | null): void {
+  emailBindingForm.email =
+    typeof user?.email === 'string' && !user.email.endsWith('.invalid') ? user.email : ''
+  emailBindingForm.verifyCode = ''
+  emailBindingForm.password = ''
+  isEmailBindingFormDirty.value = false
+}
+
 watch(
-  () => props.user,
-  (user) => {
-    localUser.value = null
-    if (!user) {
-      return
+  () => [props.user, authStore.authSessionVersion, authStore.user?.id] as const,
+  ([user, sessionVersion, authUserId], previous) => {
+    const identityChanged = !previous || user?.id !== previous[0]?.id ||
+      sessionVersion !== previous[1] || authUserId !== previous[2]
+    if (identityChanged || user !== previous?.[0]) localUser.value = null
+    if (identityChanged) {
+      emailFormVersion++
+      isSendingEmailCode.value = false
+      isBindingEmail.value = false
     }
-    if (typeof user.email === 'string' && !user.email.endsWith('.invalid')) {
-      emailBindingForm.email = user.email
+    // Polling replaces the user object; it must not change the code recipient.
+    if (identityChanged || !isEmailBindingFormDirty.value) {
+      resetEmailBindingForm(user && user.id !== authUserId ? authStore.user : user)
     }
   },
-  { immediate: true }
+  { immediate: true, flush: 'sync' }
 )
+
+onBeforeUnmount(() => { disposed = true })
+
+function emailRequestContext() {
+  return {
+    userId: props.user?.id,
+    sessionVersion: authStore.authSessionVersion,
+    formVersion: emailFormVersion,
+  }
+}
+
+function isCurrentEmailRequest(context: ReturnType<typeof emailRequestContext>): boolean {
+  return !disposed && context.userId !== undefined &&
+    context.userId === props.user?.id && context.userId === authStore.user?.id &&
+    context.sessionVersion === authStore.authSessionVersion && context.formVersion === emailFormVersion
+}
 
 watch(
   () => props.compact,
@@ -612,26 +647,35 @@ function validateEmailBindingForm(requireCode: boolean): boolean {
 }
 
 async function sendEmailCode(): Promise<void> {
+  const context = emailRequestContext()
+  if (isSendingEmailCode.value || isBindingEmail.value || !isCurrentEmailRequest(context)) return
   if (!validateEmailBindingForm(false)) {
     return
   }
 
+  const email = emailBindingForm.email
+  isEmailBindingFormDirty.value = true
   isSendingEmailCode.value = true
   try {
-    await sendEmailBindingCode(emailBindingForm.email)
-    appStore.showSuccess(t('profile.authBindings.codeSentTo', { email: emailBindingForm.email }))
+    await sendEmailBindingCode(email)
+    if (!isCurrentEmailRequest(context)) return
+    appStore.showSuccess(t('profile.authBindings.codeSentTo', { email }))
   } catch (error) {
+    if (!isCurrentEmailRequest(context)) return
     appStore.showError((error as { message?: string }).message || t('auth.sendCodeFailed'))
   } finally {
-    isSendingEmailCode.value = false
+    if (isCurrentEmailRequest(context)) isSendingEmailCode.value = false
   }
 }
 
 async function bindEmail(): Promise<void> {
+  const context = emailRequestContext()
+  if (isBindingEmail.value || !isCurrentEmailRequest(context)) return
   if (!validateEmailBindingForm(true)) {
     return
   }
 
+  isEmailBindingFormDirty.value = true
   isBindingEmail.value = true
   try {
     const user = await bindEmailIdentity({
@@ -639,10 +683,11 @@ async function bindEmail(): Promise<void> {
       verify_code: emailBindingForm.verifyCode,
       password: emailBindingForm.password,
     })
+    if (!isCurrentEmailRequest(context) || user.id !== context.userId) return
     const replacingBoundEmail = emailBound.value
-    applyUpdatedUser(user)
-    emailBindingForm.verifyCode = ''
-    emailBindingForm.password = ''
+    localUser.value = user
+    authStore.applyUserProfile(user, context.sessionVersion)
+    resetEmailBindingForm(user)
     if (compact.value) {
       isEmailFormExpanded.value = false
     }
@@ -652,9 +697,10 @@ async function bindEmail(): Promise<void> {
         : t('profile.authBindings.bindSuccess')
     )
   } catch (error) {
+    if (!isCurrentEmailRequest(context)) return
     appStore.showError((error as { message?: string }).message || t('common.tryAgain'))
   } finally {
-    isBindingEmail.value = false
+    if (isCurrentEmailRequest(context)) isBindingEmail.value = false
   }
 }
 </script>
