@@ -265,7 +265,10 @@ type OpenAIWSIngressHooks struct {
 	// BeforeImagePermission reads authoritative permissions before image gates or injection.
 	BeforeImagePermission func() (*Group, error)
 	BeforeTurn            func(turn int) error
-	BeforeRequest         func(turn int, payload []byte, originalModel string) error
+	// BeforeUpstreamTurn runs after request rewriting, for every actual provider
+	// turn (including the first turn and retries, excluding local prewarms).
+	BeforeUpstreamTurn func(turn int, payload []byte, originalModel string) error
+	BeforeRequest      func(turn int, payload []byte, originalModel string) error
 	// AfterLocalPrewarm releases the connection's initial concurrency slots
 	// after a synthetic HTTP bridge response, without recording usage.
 	AfterLocalPrewarm func(turn int)
@@ -3637,8 +3640,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if prewarmTurns > 0 && hooks != nil && hooks.BeforeBridgeUpstreamTurn != nil {
 				beforeUpstream = func(body []byte) { hooks.BeforeBridgeUpstreamTurn(turn, body) }
 			}
+			bridgeCtx := ctx
+			if hooks != nil && hooks.BeforeUpstreamTurn != nil {
+				bridgeCtx = context.WithValue(ctx, openAIWSBeforeUpstreamTurnKey{}, func(body []byte) error {
+					return hooks.BeforeUpstreamTurn(turn, body, currentBridgePayload.originalModel)
+				})
+			}
 			result, bridgeErr := s.proxyOpenAIWSHTTPBridgeTurn(
-				ctx,
+				bridgeCtx,
 				c,
 				account,
 				token,
@@ -4725,6 +4734,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			)
 		}
 
+		if hooks != nil && hooks.BeforeUpstreamTurn != nil {
+			if err := hooks.BeforeUpstreamTurn(turn, currentPayload, currentOriginalModel); err != nil {
+				return err
+			}
+		}
 		result, relayErr := sendAndRelay(turn, sessionLease, currentPayload, currentPayloadBytes, currentOriginalModel, currentImageBillingModel, currentImageSizeTier, currentImageInputSize)
 		if relayErr != nil {
 			lastTurnClean = false

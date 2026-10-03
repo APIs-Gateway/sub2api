@@ -9688,10 +9688,12 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	billingCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
 
+	stageBillingInflight(billingCtx, cmd)
 	result, err := repo.Apply(billingCtx, cmd)
 	if err != nil {
 		return false, err
 	}
+	CompleteBillingInflightTask(ctx)
 
 	if result == nil || !result.Applied {
 		deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)

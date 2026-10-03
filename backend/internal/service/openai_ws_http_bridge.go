@@ -393,6 +393,8 @@ func buildOpenAIWSHTTPBridgeErrorEvent(statusCode int, message string, sequenceN
 	return body
 }
 
+type openAIWSBeforeUpstreamTurnKey struct{}
+
 func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	ctx context.Context,
 	c *gin.Context,
@@ -475,6 +477,15 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			return nil, bodyErr
 		}
 		beforeUpstream[0](auditBody)
+	}
+	if admit, ok := ctx.Value(openAIWSBeforeUpstreamTurnKey{}).(func([]byte) error); ok && admit != nil {
+		finalBody, err := openAIWSHTTPBridgeBodyForAudit(upstreamReq, body)
+		if err != nil {
+			return nil, err
+		}
+		if err := admit(finalBody); err != nil {
+			return nil, err
+		}
 	}
 
 	proxyURL := ""
