@@ -463,7 +463,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -497,6 +497,22 @@ const loadingResults = ref(false)
 const plans = ref<ScheduledTestPlan[]>([])
 const results = ref<ScheduledTestResult[]>([])
 const expandedPlanId = ref<number | null>(null)
+let panelGeneration = 0
+let plansRequestId = 0
+let resultsRequestId = 0
+const isCurrentPanel = (generation: number) => generation === panelGeneration && props.show && props.accountId != null
+const invalidateResults = () => {
+  resultsRequestId++
+  results.value = []
+  loadingResults.value = false
+  expandedResultIds.clear()
+}
+watch(expandedPlanId, invalidateResults, { flush: 'sync' })
+onBeforeUnmount(() => {
+  panelGeneration++
+  plansRequestId++
+  resultsRequestId++
+})
 const expandedResultIds = reactive(new Set<number>())
 const showAddForm = ref(false)
 const showDeleteConfirm = ref(false)
@@ -527,37 +543,47 @@ const resetNewPlan = () => {
   newPlan.auto_recover = false
 }
 
-// Load plans when dialog opens
-watch(
-  () => props.show,
-  async (visible) => {
-    if (visible && props.accountId) {
-      await loadPlans()
-    } else {
-      plans.value = []
-      results.value = []
-      expandedPlanId.value = null
-      expandedResultIds.clear()
-      showAddForm.value = false
-      showDeleteConfirm.value = false
-    }
-  }
-)
-
 const loadPlans = async () => {
-  if (!props.accountId) return
+  if (!props.show || !props.accountId) return
+  const generation = panelGeneration
+  const accountId = props.accountId
+  const requestId = ++plansRequestId
+  expandedPlanId.value = null
+  invalidateResults()
   loading.value = true
   try {
-    plans.value = await adminAPI.scheduledTests.listByAccount(props.accountId)
+    const data = await adminAPI.scheduledTests.listByAccount(accountId)
+    if (!isCurrentPanel(generation) || requestId !== plansRequestId) return
+    plans.value = data
   } catch (error: any) {
+    if (!isCurrentPanel(generation) || requestId !== plansRequestId) return
     appStore.showError(error?.message || 'Failed to load plans')
   } finally {
-    loading.value = false
+    if (isCurrentPanel(generation) && requestId === plansRequestId) loading.value = false
   }
 }
 
+// Each opening/account owns its reads and mutation feedback.
+watch(() => [props.show, props.accountId] as const, () => {
+  panelGeneration++
+  plansRequestId++
+  plans.value = []
+  expandedPlanId.value = null
+  invalidateResults()
+  loading.value = false
+  creating.value = false
+  updating.value = false
+  editingPlanId.value = null
+  deletingPlan.value = null
+  showAddForm.value = false
+  showDeleteConfirm.value = false
+  resetNewPlan()
+  if (props.show && props.accountId) void loadPlans()
+}, { immediate: true, flush: 'sync' })
+
 const handleCreate = async () => {
-  if (!props.accountId || !newPlan.model_id || !newPlan.cron_expression) return
+  if (!props.show || !props.accountId || creating.value || !newPlan.model_id || !newPlan.cron_expression) return
+  const generation = panelGeneration
   creating.value = true
   try {
     const maxResults = Number(newPlan.max_results) || 100
@@ -569,26 +595,34 @@ const handleCreate = async () => {
       max_results: maxResults,
       auto_recover: newPlan.auto_recover
     })
+    if (!isCurrentPanel(generation)) return
     appStore.showSuccess(t('admin.scheduledTests.createSuccess'))
     showAddForm.value = false
     resetNewPlan()
     await loadPlans()
   } catch (error: any) {
+    if (!isCurrentPanel(generation)) return
     appStore.showError(error?.message || 'Failed to create plan')
   } finally {
-    creating.value = false
+    if (isCurrentPanel(generation)) creating.value = false
   }
 }
 
 const handleToggleEnabled = async (plan: ScheduledTestPlan, enabled: boolean) => {
+  if (!props.show || !props.accountId) return
+  const generation = panelGeneration
+  if (expandedPlanId.value === plan.id) invalidateResults()
   try {
     const updated = await adminAPI.scheduledTests.update(plan.id, { enabled })
+    if (!isCurrentPanel(generation)) return
+    if (expandedPlanId.value === plan.id) expandedPlanId.value = null
     const index = plans.value.findIndex((p) => p.id === plan.id)
     if (index !== -1) {
       plans.value[index] = updated
     }
     appStore.showSuccess(t('admin.scheduledTests.updateSuccess'))
   } catch (error: any) {
+    if (!isCurrentPanel(generation)) return
     appStore.showError(error?.message || 'Failed to update plan')
   }
 }
@@ -607,26 +641,32 @@ const cancelEdit = () => {
 }
 
 const handleEdit = async () => {
-  if (!editingPlanId.value || !editForm.model_id || !editForm.cron_expression) return
+  if (!props.show || !props.accountId || updating.value || !editingPlanId.value || !editForm.model_id || !editForm.cron_expression) return
+  const generation = panelGeneration
+  const planId = editingPlanId.value
+  if (expandedPlanId.value === planId) invalidateResults()
   updating.value = true
   try {
-    const updated = await adminAPI.scheduledTests.update(editingPlanId.value, {
+    const updated = await adminAPI.scheduledTests.update(planId, {
       model_id: editForm.model_id,
       cron_expression: editForm.cron_expression,
       max_results: Number(editForm.max_results) || 100,
       enabled: editForm.enabled,
       auto_recover: editForm.auto_recover
     })
-    const index = plans.value.findIndex((p) => p.id === editingPlanId.value)
+    if (!isCurrentPanel(generation)) return
+    if (expandedPlanId.value === planId) expandedPlanId.value = null
+    const index = plans.value.findIndex((p) => p.id === planId)
     if (index !== -1) {
       plans.value[index] = updated
     }
     appStore.showSuccess(t('admin.scheduledTests.updateSuccess'))
-    editingPlanId.value = null
+    if (editingPlanId.value === planId) editingPlanId.value = null
   } catch (error: any) {
+    if (!isCurrentPanel(generation)) return
     appStore.showError(error?.message || 'Failed to update plan')
   } finally {
-    updating.value = false
+    if (isCurrentPanel(generation)) updating.value = false
   }
 }
 
@@ -636,24 +676,32 @@ const confirmDeletePlan = (plan: ScheduledTestPlan) => {
 }
 
 const handleDelete = async () => {
-  if (!deletingPlan.value) return
+  if (!props.show || !props.accountId || !deletingPlan.value) return
+  const generation = panelGeneration
+  const planId = deletingPlan.value.id
+  if (expandedPlanId.value === planId) invalidateResults()
   try {
-    await adminAPI.scheduledTests.delete(deletingPlan.value.id)
+    await adminAPI.scheduledTests.delete(planId)
+    if (!isCurrentPanel(generation)) return
     appStore.showSuccess(t('admin.scheduledTests.deleteSuccess'))
-    plans.value = plans.value.filter((p) => p.id !== deletingPlan.value!.id)
-    if (expandedPlanId.value === deletingPlan.value.id) {
+    plans.value = plans.value.filter((p) => p.id !== planId)
+    if (expandedPlanId.value === planId) {
       expandedPlanId.value = null
       results.value = []
     }
   } catch (error: any) {
+    if (!isCurrentPanel(generation)) return
     appStore.showError(error?.message || 'Failed to delete plan')
   } finally {
-    showDeleteConfirm.value = false
-    deletingPlan.value = null
+    if (isCurrentPanel(generation) && deletingPlan.value?.id === planId) {
+      showDeleteConfirm.value = false
+      deletingPlan.value = null
+    }
   }
 }
 
 const toggleExpand = async (planId: number) => {
+  if (!props.show || !props.accountId || !plans.value.some(plan => plan.id === planId)) return
   if (expandedPlanId.value === planId) {
     expandedPlanId.value = null
     results.value = []
@@ -664,13 +712,18 @@ const toggleExpand = async (planId: number) => {
   expandedPlanId.value = planId
   expandedResultIds.clear()
   loadingResults.value = true
+  const generation = panelGeneration
+  const requestId = resultsRequestId
   try {
-    results.value = await adminAPI.scheduledTests.listResults(planId, 20)
+    const data = await adminAPI.scheduledTests.listResults(planId, 20)
+    if (!isCurrentPanel(generation) || requestId !== resultsRequestId) return
+    results.value = data
   } catch (error: any) {
+    if (!isCurrentPanel(generation) || requestId !== resultsRequestId) return
     appStore.showError(error?.message || 'Failed to load results')
     results.value = []
   } finally {
-    loadingResults.value = false
+    if (isCurrentPanel(generation) && requestId === resultsRequestId) loadingResults.value = false
   }
 }
 
