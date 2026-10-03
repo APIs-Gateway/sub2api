@@ -87,7 +87,13 @@ func TestAccountHandlerModelPreviewDraft(t *testing.T) {
 			require.Nil(t, upstream.profile, "API-key TLS fingerprint eligibility must stay unchanged")
 			if strings.Contains(tc.payload, "account_id") {
 				require.Equal(t, 3, upstream.concurrency)
-				require.Equal(t, []string{"kept"}, upstream.req.Header["x-preview"])
+				var previewHeaders []string
+				for name, values := range upstream.req.Header {
+					if strings.EqualFold(name, "X-Preview") {
+						previewHeaders = values
+					}
+				}
+				require.Equal(t, []string{"kept"}, previewHeaders)
 			}
 			after, err := json.Marshal(svc.account)
 			require.NoError(t, err)

@@ -8,7 +8,10 @@ const mocks = vi.hoisted(() => ({ preview: vi.fn(), create: vi.fn(), showInfo: v
 const auth = reactive({ isSimpleMode: true, authSessionVersion: 0, user: { id: 1 } })
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => mocks }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async () => ({
+  ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'),
+  useI18n: () => ({ t: (key: string) => key })
+}))
 vi.mock('@/api/admin/accounts', () => ({
   accountsAPI: { syncUpstreamModelsPreview: mocks.preview },
   getAntigravityDefaultModelMapping: vi.fn().mockResolvedValue({})
@@ -24,16 +27,19 @@ const ProxySelector = defineComponent({
   name: 'ProxySelector', props: ['modelValue'], emits: ['update:modelValue'],
   template: '<select data-testid="proxy" :value="modelValue ?? 0" @change="$emit(\'update:modelValue\', Number($event.target.value) || null)"><option value="0">direct</option><option value="8">proxy</option></select>'
 })
-const openCreate = async (platform = 'anthropic') => {
-  const wrapper = mount(CreateAccountModal, { props: { show: true, proxies: [], groups: [] }, global: { stubs: {
+const mountCreate = () => mount(CreateAccountModal, { props: { show: true, proxies: [], groups: [] }, global: { stubs: {
     BaseDialog, ProxySelector, Select: true, Toggle: true, Icon: true, PlatformIcon: true, ModelIcon: true,
     GroupSelector: true, QuotaLimitCard: true, OAuthAuthorizationFlow: true, ConfirmDialog: true, ProxyAdBanner: true
   } } })
+const openCreate = async (platform = 'anthropic') => {
+  const wrapper = mountCreate()
   if (platform !== 'anthropic') await wrapper.get('[data-tour="account-form-platform"]').findAll('button')
     .find(button => button.text().toLowerCase() === platform)!.trigger('click')
   await wrapper.get('[data-tour="account-form-type"]').findAll('button')
-    .find(button => button.text().includes('admin.accounts.apiKey') || button.text().includes('accountType.apiKeyTitle'))!.trigger('click')
+    .find(button => button.text().includes('admin.accounts.apiKey') || button.text().includes('accountType.apiKeyTitle') || button.text().includes('API Key'))!.trigger('click')
   await wrapper.get('input[type="password"]').setValue('draft-key')
+  const whitelist = wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelWhitelist')
+  if (whitelist) await whitelist.trigger('click')
   return wrapper
 }
 const syncButton = (wrapper: Awaited<ReturnType<typeof openCreate>>) => wrapper.findAll('button')
@@ -48,7 +54,7 @@ const deferred = () => {
 describe('CreateAccountModal real model preview', () => {
   beforeEach(() => { vi.clearAllMocks(); mocks.preview.mockReset(); auth.authSessionVersion = invalidateAuthSession() })
 
-  for (const platform of ['anthropic', 'openai', 'gemini', 'grok']) {
+  for (const platform of ['anthropic', 'openai', 'gemini']) {
     it(`sends the selected and cleared draft proxy for ${platform} without saving`, async () => {
       mocks.preview.mockResolvedValue({ models: ['draft-model'] })
       const wrapper = await openCreate(platform)
@@ -64,6 +70,15 @@ describe('CreateAccountModal real model preview', () => {
       wrapper.unmount()
     })
   }
+
+  it('keeps Grok creation on OAuth without a draft API-key preview', async () => {
+    const wrapper = mountCreate()
+    await wrapper.get('[data-tour="account-form-platform"]').findAll('button').find(button => button.text() === 'Grok')!.trigger('click')
+    expect(wrapper.find('input[type="password"]').exists()).toBe(false)
+    expect(syncButton(wrapper)).toBeUndefined()
+    expect(mocks.preview).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
 
   for (const result of ['success', 'error'] as const) {
     it(`ignores old ${result} after clearing the proxy and keeps the new preview busy`, async () => {
