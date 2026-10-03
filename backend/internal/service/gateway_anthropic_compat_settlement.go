@@ -130,7 +130,9 @@ func (s *GatewayService) anthropicCompatProviderError(ctx context.Context, resp 
 	status := http.StatusForbidden
 	if eligible && gjson.GetBytes(body, "error.type").String() == "overloaded_error" {
 		status = 529
-		s.handleFailoverSideEffects(ctx, &http.Response{StatusCode: status, Header: resp.Header.Clone(), Body: io.NopCloser(bytes.NewReader(body))}, account, model)
+		if s.rateLimitService != nil {
+			s.handleFailoverSideEffects(ctx, &http.Response{StatusCode: status, Header: resp.Header.Clone(), Body: io.NopCloser(bytes.NewReader(body))}, account, model)
+		}
 	}
 	detail := ""
 	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {

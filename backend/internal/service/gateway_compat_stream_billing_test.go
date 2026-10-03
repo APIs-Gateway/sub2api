@@ -385,3 +385,14 @@ func TestCompatProviderSSEErrorAfterMeteringCannotReplay(t *testing.T) {
 		})
 	}
 }
+
+func TestCompatProviderSSEErrorSupportsOptionalRateLimitService(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	err := &sseStreamErrorEventError{RawData: `{"type":"error","error":{"type":"overloaded_error"}}`}
+	result, gotErr := (&GatewayService{}).anthropicCompatProviderError(context.Background(), &http.Response{Header: http.Header{}}, c, &Account{ID: 7901, Platform: PlatformAnthropic}, "claude-sonnet-4-5", nil, err)
+	require.Nil(t, result)
+	var failover *UpstreamFailoverError
+	require.ErrorAs(t, gotErr, &failover)
+	require.Equal(t, 529, failover.StatusCode)
+	require.False(t, failover.RetryableOnSameAccount)
+}
