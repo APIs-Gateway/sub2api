@@ -174,6 +174,10 @@ func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	out, err = normalizeGrokResponsesReasoningEffort(out, upstreamModel)
+	if err != nil {
+		return nil, err
+	}
 	out, err = convertOpenAICompactInputsForGrok(out)
 	if err != nil {
 		return nil, err
