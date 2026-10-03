@@ -3,13 +3,13 @@
     <p class="text-sm text-gray-600 dark:text-dark-400">{{ t('keyOnboarding.ai.intro') }}</p>
     <div class="flex flex-wrap gap-2" role="radiogroup" :aria-label="t('keyOnboarding.ai.clientLabel')">
       <button
-        v-for="c in AI_CLIENTS"
+        v-for="c in available"
         :key="c"
         type="button"
         role="radio"
         class="onb-chip"
-        :class="{ 'onb-chip-active': client === c }"
-        :aria-checked="client === c"
+        :class="{ 'onb-chip-active': current === c }"
+        :aria-checked="current === c"
         :data-test="`ai-client-${c}`"
         @click="client = c"
       >
@@ -46,11 +46,12 @@
 /**
  * 「交给 AI」页签：生成一段不含密钥的提示词，可以复制、或在 ChatGPT / Claude 里打开。
  * 选中的客户端用 v-model:client 放在外壳里，这样切到别的页签再回来、关闭再打开弹窗都还在。
+ * 能选哪些工具由分组决定（aiClientsForPlatform），选中的不在其中时改成第一个可用的。
  */
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { EndpointOption } from '@/utils/apiEndpoints'
-import { AI_CLIENTS, buildAiPrompt, chatgptUrl, claudeUrl, type AiClient, type OnboardingClient } from '@/utils/keyOnboarding'
+import { aiClientsForPlatform, buildAiPrompt, chatgptUrl, claudeUrl, type AiClient, type OnboardingClient } from '@/utils/keyOnboarding'
 
 // 根元素要接住外壳传来的 tabpanel 属性（role / id / aria-labelledby），所以关掉自动继承、手动放在根上
 defineOptions({ inheritAttrs: false })
@@ -84,12 +85,25 @@ const client = defineModel<AiClient>('client', { required: true })
 
 const { t } = useI18n()
 
+/** 这个分组能选的工具，界面上的单选就是它 */
+const available = computed(() => aiClientsForPlatform(props.platform, { allowMessagesDispatch: props.allowMessagesDispatch }))
+/** 当前选中的工具：外壳里记着的那个不在可选范围内（第一次打开时的默认值、换了分组）时，用第一个可用的 */
+const current = computed<AiClient>(() => (available.value.includes(client.value) ? client.value : (available.value[0] ?? client.value)))
+// 把修正后的选择交回外壳，切走再回来时不会又变回去
+watch(
+  [current, client],
+  () => {
+    if (current.value !== client.value) client.value = current.value
+  },
+  { immediate: true }
+)
+
 // 注意：这里刻意不传密钥
 function aiPrompt(detailed: boolean): string {
   return buildAiPrompt({
     t: (key, params) => t(key, params ?? {}),
-    client: client.value,
-    clientLabel: t(`keyOnboarding.ai.clients.${client.value}`),
+    client: current.value,
+    clientLabel: t(`keyOnboarding.ai.clients.${current.value}`),
     baseUrl: props.endpoint.base,
     platform: props.platform,
     siteName: props.siteName,

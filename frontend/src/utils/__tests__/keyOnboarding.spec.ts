@@ -8,6 +8,7 @@ import en from '@/i18n/locales/en'
 import {
   AI_CLIENTS,
   CODEX_MIN_NODE_MAJOR,
+  aiClientsForPlatform,
   buildAiPrompt,
   buildInstallScript,
   chatgptUrl,
@@ -19,6 +20,7 @@ import {
   psQuote,
   shQuote,
   tutorialHref,
+  type AiClient,
   type CodexInstallMode,
   type OnboardingClient,
   type ScriptMessages
@@ -1006,6 +1008,56 @@ describe.skipIf(!hasPwsh || process.platform === 'win32')('install scripts: code
   })
 })
 
+describe('交给 AI 的工具按分组过滤', () => {
+  const PLATFORMS = ['openai', 'anthropic', 'grok', 'gemini', 'antigravity'] as const
+  const ALWAYS: AiClient[] = ['chat', 'code', 'other']
+
+  it.each([
+    ['openai', false, ['codex', 'cursor', ...ALWAYS]],
+    ['openai', true, ['claude', 'codex', 'cursor', ...ALWAYS]],
+    ['anthropic', false, ['claude', 'cursor', ...ALWAYS]],
+    ['grok', false, ['claude', 'cursor', ...ALWAYS]],
+    ['gemini', false, ALWAYS],
+    ['antigravity', false, ['claude', ...ALWAYS]]
+  ] as [string, boolean, AiClient[]][])('%s 分组（开了调度：%s）：%j', (platform, allowMessagesDispatch, expected) => {
+    expect(aiClientsForPlatform(platform, { allowMessagesDispatch })).toEqual(expected)
+  })
+
+  it('调度开关只对 openai 分组有影响', () => {
+    for (const p of PLATFORMS.filter((x) => x !== 'openai')) {
+      expect(aiClientsForPlatform(p, { allowMessagesDispatch: true })).toEqual(aiClientsForPlatform(p, { allowMessagesDispatch: false }))
+    }
+    expect(aiClientsForPlatform('openai')).toEqual(aiClientsForPlatform('openai', { allowMessagesDispatch: false }))
+  })
+
+  it('没有分组时一个都没有；不认识的平台只有任何分组都能用的三个', () => {
+    expect(aiClientsForPlatform(null)).toEqual([])
+    expect(aiClientsForPlatform(undefined)).toEqual([])
+    expect(aiClientsForPlatform('')).toEqual([])
+    expect(aiClientsForPlatform('unknown')).toEqual(ALWAYS)
+  })
+
+  it('顺序同 AI_CLIENTS，第一个就是默认选中的；每个分组至少有一个可选', () => {
+    for (const p of PLATFORMS) for (const allowMessagesDispatch of [false, true]) {
+      const list = aiClientsForPlatform(p, { allowMessagesDispatch })
+      expect(list.length).toBeGreaterThan(0)
+      expect(list).toEqual(AI_CLIENTS.filter((c) => list.includes(c)))
+    }
+    expect(aiClientsForPlatform('openai')[0]).toBe('codex')
+    expect(aiClientsForPlatform('anthropic')[0]).toBe('claude')
+    expect(aiClientsForPlatform('gemini')[0]).toBe('chat')
+  })
+
+  it('Claude Code 和 Codex 是否可选，与一键安装里的客户端一致', () => {
+    for (const p of [...PLATFORMS, 'unknown', null]) for (const allowMessagesDispatch of [false, true]) {
+      const install = clientsForPlatform(p, { allowMessagesDispatch })
+      const ai = aiClientsForPlatform(p, { allowMessagesDispatch })
+      expect(ai.includes('claude'), `${p} claude`).toBe(install.includes('claude'))
+      expect(ai.includes('codex'), `${p} codex`).toBe(install.includes('codex'))
+    }
+  })
+})
+
 describe('交给 AI 的文本', () => {
   const SECRET = 'sk-SECRET-1234567890abcdef'
   const base = {
@@ -1022,10 +1074,65 @@ describe('交给 AI 的文本', () => {
       const text = buildAiPrompt({ ...base, client, clientLabel: client, detailed })
       expect(text).not.toContain(SECRET)
       expect(text).not.toContain('sk-')
-      expect(text).toContain('https://codex.hiyo.top/v1')
+      // Claude Code 用 API 根地址，其他工具在 openai 分组下用 /v1 地址
+      expect(text).toContain(client === 'claude' ? 'https://codex.hiyo.top' : 'https://codex.hiyo.top/v1')
       expect(text).toContain('Hiyo')
       expect(text).not.toMatch(/\{\w+\}/)
     }
+  })
+
+  describe('地址、接口格式和要设置的变量互相对得上', () => {
+    const urlLine = (text: string) => /endpoint is (\S+) and/.exec(text)?.[1]
+    const formatOf = (text: string) => /API format is (\w+)\./.exec(text)?.[1]
+
+    it('openai 分组选 Claude Code（分组开了调度）：根地址 + Anthropic，不能是 /v1 + OpenAI', () => {
+      const short = buildAiPrompt({ ...base, client: 'claude', clientLabel: 'Claude Code' })
+      expect(urlLine(short)).toBe('https://codex.hiyo.top')
+      expect(formatOf(short)).toBe('Anthropic')
+      expect(short).toContain('ANTHROPIC_BASE_URL')
+      expect(short).not.toContain('/v1')
+      expect(short).not.toContain('OpenAI')
+
+      const detailed = buildAiPrompt({ ...base, client: 'claude', clientLabel: 'Claude Code', detailed: true })
+      expect(detailed).toContain('- Endpoint: https://codex.hiyo.top\n')
+      expect(detailed).toContain('- API format: Anthropic')
+      expect(detailed).not.toContain('/v1')
+    })
+
+    it('openai 分组选 Codex：/v1 地址 + OpenAI', () => {
+      const short = buildAiPrompt({ ...base, client: 'codex', clientLabel: 'Codex' })
+      expect(urlLine(short)).toBe('https://codex.hiyo.top/v1')
+      expect(formatOf(short)).toBe('OpenAI')
+      expect(short).toContain('wire_api')
+    })
+
+    it.each([
+      ['anthropic', 'https://codex.hiyo.top'],
+      ['grok', 'https://codex.hiyo.top'],
+      ['antigravity', 'https://codex.hiyo.top/antigravity']
+    ])('%s 分组选 Claude Code：%s + Anthropic', (platform, url) => {
+      const short = buildAiPrompt({ ...base, platform, client: 'claude', clientLabel: 'Claude Code' })
+      expect(urlLine(short)).toBe(url)
+      expect(formatOf(short)).toBe('Anthropic')
+    })
+
+    it('Claude Code 的地址跟着选中的线路走：根地址不带结尾的 / 和 /v1', () => {
+      for (const baseUrl of ['https://cdn.example.com/', 'https://cdn.example.com/v1', ' https://cdn.example.com// ']) {
+        const short = buildAiPrompt({ ...base, baseUrl, client: 'claude', clientLabel: 'Claude Code' })
+        expect(urlLine(short)).toBe('https://cdn.example.com')
+      }
+    })
+
+    it('其他工具不受影响：按分组平台的原生接口', () => {
+      for (const client of ['cursor', 'chat', 'code', 'other'] as const) {
+        const openai = buildAiPrompt({ ...base, client, clientLabel: client })
+        expect(urlLine(openai)).toBe('https://codex.hiyo.top/v1')
+        expect(formatOf(openai)).toBe('OpenAI')
+        const gemini = buildAiPrompt({ ...base, platform: 'gemini', client, clientLabel: client })
+        expect(urlLine(gemini)).toBe('https://codex.hiyo.top')
+        expect(formatOf(gemini)).toBe('Gemini')
+      }
+    })
   })
 
   it('详细版带模型列表、文档地址和配置要点', () => {

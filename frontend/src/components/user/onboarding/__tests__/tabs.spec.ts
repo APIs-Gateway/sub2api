@@ -95,24 +95,84 @@ describe('AiTab', () => {
         models: ['gpt-5.6-sol', 'gpt-5.6-luna'],
         docUrl: 'https://docs.example.com',
         copiedId: '',
-        client: 'claude',
+        client: 'codex',
         ...props
       } as never,
       attrs: panelAttrs
     })
+  const chips = (w: ReturnType<typeof mountTab>) =>
+    w.findAll('[data-test^="ai-client-"]').map((c) => c.attributes('data-test')!.replace('ai-client-', ''))
+  const text = (w: ReturnType<typeof mountTab>) => (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
 
   it('选客户端走 v-model:client；提示词随 client 变化，不含密钥', async () => {
     const w = mountTab()
-    const text = () => (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
-    const claude = text()
-    expect(claude).toContain('https://api.example.com/v1')
+    const codex = text(w)
+    expect(codex).toContain('https://api.example.com/v1')
     await w.get('[data-test="ai-client-cursor"]').trigger('click')
     expect(w.emitted('update:client')![0]).toEqual(['cursor'])
     // 外壳把新值传回来之后，提示词跟着变
     await w.setProps({ client: 'cursor' })
-    expect(text()).toContain('Cursor')
-    expect(text()).not.toBe(claude)
-    expect(text()).not.toContain('sk-')
+    expect(text(w)).toContain('Cursor')
+    expect(text(w)).not.toBe(codex)
+    expect(text(w)).not.toContain('sk-')
+  })
+
+  describe('工具按分组过滤', () => {
+    it.each([
+      ['openai', false, ['codex', 'cursor', 'chat', 'code', 'other']],
+      ['openai', true, ['claude', 'codex', 'cursor', 'chat', 'code', 'other']],
+      ['anthropic', false, ['claude', 'cursor', 'chat', 'code', 'other']],
+      ['gemini', false, ['chat', 'code', 'other']],
+      ['antigravity', false, ['claude', 'chat', 'code', 'other']]
+    ] as [string, boolean, string[]][])('%s 分组（开了调度：%s）只显示 %j', (platform, allowMessagesDispatch, expected) => {
+      const w = mountTab({ platform, allowMessagesDispatch, client: expected[0] })
+      expect(chips(w)).toEqual(expected)
+    })
+
+    it('选中的工具不在可选范围里（旧的默认值 Claude Code）：用第一个可用的，并交回外壳', async () => {
+      const w = mountTab({ client: 'claude' })
+      expect(chips(w)).not.toContain('claude')
+      expect(w.emitted('update:client')![0]).toEqual(['codex'])
+      expect(w.get('[data-test="ai-client-codex"]').attributes('aria-checked')).toBe('true')
+      expect(w.findAll('[role="radio"][aria-checked="true"]')).toHaveLength(1)
+      // 提示词用的是 Codex，不是 Claude Code：地址、接口格式、要设置的内容一致
+      expect(text(w)).toContain('Codex')
+      expect(text(w)).toContain('https://api.example.com/v1')
+      expect(text(w)).toContain('OpenAI')
+      expect(text(w)).not.toContain('ANTHROPIC')
+    })
+
+    it('选中的工具可用时保持不变，不多发更新', () => {
+      const w = mountTab({ client: 'cursor' })
+      expect(w.emitted('update:client')).toBeUndefined()
+      expect(w.get('[data-test="ai-client-cursor"]').attributes('aria-checked')).toBe('true')
+    })
+
+    it('openai 分组开了调度：Claude Code 可选，提示词是根地址 + Anthropic', () => {
+      const w = mountTab({ allowMessagesDispatch: true, client: 'claude' })
+      expect(chips(w)[0]).toBe('claude')
+      expect(w.emitted('update:client')).toBeUndefined()
+      expect(text(w)).toContain('Claude Code')
+      expect(text(w)).toContain('The endpoint is https://api.example.com and')
+      expect(text(w)).toContain('API format is Anthropic')
+      expect(text(w)).toContain('ANTHROPIC_BASE_URL')
+    })
+
+    it('换了分组：选中的工具在新分组里没有，就改成第一个可用的', async () => {
+      const w = mountTab({ platform: 'anthropic', client: 'cursor' })
+      expect(w.emitted('update:client')).toBeUndefined()
+      await w.setProps({ platform: 'gemini' })
+      expect(chips(w)).toEqual(['chat', 'code', 'other'])
+      expect(w.emitted('update:client')!.at(-1)).toEqual(['chat'])
+      expect(w.get('[data-test="ai-client-chat"]').attributes('aria-checked')).toBe('true')
+    })
+
+    it('分组开关调度之后立刻更新可选工具', async () => {
+      const w = mountTab({ allowMessagesDispatch: false })
+      expect(chips(w)).not.toContain('claude')
+      await w.setProps({ allowMessagesDispatch: true })
+      expect(chips(w)[0]).toBe('claude')
+    })
   })
 
   it('复制简短版和详细版通过 copy 交出，按钮 id 固定', async () => {
@@ -126,10 +186,10 @@ describe('AiTab', () => {
     expect(detail.length).toBeGreaterThan(short.length)
   })
 
-  it('allowMessagesDispatch、clients、modelsLoading 先只是声明，不改变页面，也不会漏到根元素上', () => {
+  it('clients、modelsLoading 先只是声明，不改变页面，也不会漏到根元素上', () => {
     const plain = mountTab()
-    const w = mountTab({ allowMessagesDispatch: true, clients: ['codex', 'claude', 'opencode'], modelsLoading: true })
-    for (const attr of ['allow-messages-dispatch', 'clients', 'models-loading']) expect(w.attributes(attr)).toBeUndefined()
+    const w = mountTab({ clients: ['codex', 'opencode'], modelsLoading: true })
+    for (const attr of ['clients', 'models-loading']) expect(w.attributes(attr)).toBeUndefined()
     expect(w.html()).toBe(plain.html())
   })
 
