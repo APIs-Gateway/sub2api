@@ -302,6 +302,7 @@ type PricingService struct {
 	remoteClient PricingRemoteClient
 	mu           sync.RWMutex
 	pricingData  map[string]*LiteLLMModelPricing
+	pricingKeys  []string // pricingData 键的有序副本（sortedPricingKeys），只能经 setPricingDataLocked 与 pricingData 一起替换
 	lastUpdated  time.Time
 	localHash    string
 
@@ -560,7 +561,7 @@ func (s *PricingService) downloadPricingDataWithContext(ctx context.Context, wai
 
 	// 更新内存数据
 	s.mu.Lock()
-	s.pricingData = data
+	s.setPricingDataLocked(data)
 	s.lastUpdated = time.Now()
 	s.localHash = syncHash
 	s.mu.Unlock()
@@ -699,7 +700,7 @@ func (s *PricingService) loadPricingData(filePath string) error {
 	hashStr := hex.EncodeToString(hash[:])
 
 	s.mu.Lock()
-	s.pricingData = pricingData
+	s.setPricingDataLocked(pricingData)
 	s.localHash = hashStr
 
 	info, _ := os.Stat(filePath)
@@ -864,6 +865,65 @@ func (s *PricingService) validatePricingURL(raw string) (string, error) {
 	return normalized, nil
 }
 
+// pricingKeyScopePattern 匹配带厂商或区域前缀的键，如 us.anthropic.claude-...、anthropic.claude-...。
+// 目录里的版本号小数点（gpt-5.2、claude-opus-4.5、kimi-k2.5）前面是字母数字和连字符、后面是数字，不会被误判。
+var pricingKeyScopePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*\.[a-z]`)
+
+// isScopedPricingKey 判断键是否带厂商或区域前缀（bedrock/…、vertex_ai/…、us.anthropic.… 这类）。
+// 这类键的价格可能是区域价，模糊匹配时排在无前缀键之后。
+func isScopedPricingKey(key string) bool {
+	return strings.Contains(key, "/") || pricingKeyScopePattern.MatchString(strings.ToLower(key))
+}
+
+// sortedPricingKeys 返回价格目录全部键的确定顺序，供两处模糊匹配（GetModelPricing 第 3 步的
+// 基名匹配、matchByModelFamily 第 3 阶段的系列匹配）遍历，使多个键同时命中时的结果不再
+// 取决于 Go map 的随机遍历顺序。顺序依次为：
+//  1. 不带 "/"、不带厂商或区域前缀的键在前；
+//  2. 键更短的在前；
+//  3. 字节序字典序。
+func sortedPricingKeys(data map[string]*LiteLLMModelPricing) []string {
+	type rankedKey struct {
+		key    string
+		scoped bool
+	}
+	ranked := make([]rankedKey, 0, len(data))
+	for key := range data {
+		ranked = append(ranked, rankedKey{key: key, scoped: isScopedPricingKey(key)})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		a, b := ranked[i], ranked[j]
+		if a.scoped != b.scoped {
+			return !a.scoped
+		}
+		if len(a.key) != len(b.key) {
+			return len(a.key) < len(b.key)
+		}
+		return a.key < b.key
+	})
+	keys := make([]string, len(ranked))
+	for i, r := range ranked {
+		keys[i] = r.key
+	}
+	return keys
+}
+
+// setPricingDataLocked 替换价格目录，同时重建排好序的键切片，保证两者永远成对出现
+// （热更新时不会出现新 map 配旧切片）。调用方必须持有 s.mu 的写锁。
+func (s *PricingService) setPricingDataLocked(data map[string]*LiteLLMModelPricing) {
+	s.pricingData = data
+	s.pricingKeys = sortedPricingKeys(data)
+}
+
+// pricingKeyOrderLocked 返回模糊匹配使用的键顺序，调用方必须持有 s.mu（读锁即可）。
+// 正式路径下 pricingKeys 由 setPricingDataLocked 与 pricingData 一起维护；不经加载函数、
+// 直接给 pricingData 赋值的构造方式（主要是测试）键数对不上，此时现算一份，顺序规则相同。
+func (s *PricingService) pricingKeyOrderLocked() []string {
+	if len(s.pricingKeys) == len(s.pricingData) {
+		return s.pricingKeys
+	}
+	return sortedPricingKeys(s.pricingData)
+}
+
 // GetModelPricing 获取模型价格（带模糊匹配）
 func (s *PricingService) GetModelPricing(modelName string) (result *LiteLLMModelPricing) {
 	s.mu.RLock()
@@ -902,12 +962,25 @@ func (s *PricingService) GetModelPricing(modelName string) (result *LiteLLMModel
 
 	// 3. 尝试模糊匹配（去掉版本号后缀）
 	// claude-opus-4-5-20251101 -> claude-opus-4.5
+	// 多个键基名相同时，键名恰好等于基名的优先，其余按 sortedPricingKeys 的顺序取第一个，
+	// 结果与 map 遍历顺序无关。
 	baseName := s.extractBaseName(lookupCandidates[0])
-	for key, pricing := range s.pricingData {
-		keyBase := s.extractBaseName(strings.ToLower(key))
-		if keyBase == baseName {
-			return pricing
+	baseMatchKey := ""
+	for _, key := range s.pricingKeyOrderLocked() {
+		keyLower := strings.ToLower(key)
+		if s.extractBaseName(keyLower) != baseName {
+			continue
 		}
+		if keyLower == baseName {
+			baseMatchKey = key
+			break
+		}
+		if baseMatchKey == "" {
+			baseMatchKey = key
+		}
+	}
+	if baseMatchKey != "" {
+		return s.pricingData[baseMatchKey]
 	}
 
 	// 4. 基于模型系列匹配（Claude）
@@ -1218,15 +1291,17 @@ func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
 	if lookups == nil {
 		lookups = matched.match
 	}
+	// 同一个 pattern 命中多个键时按 sortedPricingKeys 的顺序取第一个，结果与 map 遍历顺序无关。
+	keys := s.pricingKeyOrderLocked()
 	for _, pattern := range lookups {
-		for key, pricing := range s.pricingData {
+		for _, key := range keys {
 			keyLower := strings.ToLower(key)
 			if matched.name == "opus-5" && claude.IsOpus55(keyLower) {
 				continue
 			}
 			if strings.Contains(keyLower, pattern) {
 				logger.LegacyPrintf("service.pricing", "[Pricing] Fuzzy matched %s -> %s", model, key)
-				return pricing
+				return s.pricingData[key]
 			}
 		}
 	}
