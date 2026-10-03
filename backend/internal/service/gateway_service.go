@@ -5010,6 +5010,11 @@ func collectCacheControlPaths(body []byte) (invalidThinking []cacheControlPath, 
 // enforceCacheControlLimit 强制执行 cache_control 块数量限制（最多 4 个）
 // 超限时优先移除工具断点，再移除 messages 断点，最后才移除 system 断点。
 func enforceCacheControlLimit(body []byte) []byte {
+	return normalizeAnthropicCacheTTLOrder(enforceCacheControlBlockLimit(body))
+}
+
+// Preserve the fork's existing removal priorities before normalizing surviving TTLs.
+func enforceCacheControlBlockLimit(body []byte) []byte {
 	if len(body) == 0 {
 		return body
 	}
