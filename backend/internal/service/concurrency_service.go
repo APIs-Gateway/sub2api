@@ -87,9 +87,6 @@ func (s *ConcurrencyService) CleanupStaleProcessSlots(ctx context.Context) error
 	if s == nil || s.cache == nil {
 		return nil
 	}
-	if err := s.heartbeatProcess(ctx); err != nil {
-		return err
-	}
 	return s.cache.CleanupStaleProcessSlots(ctx, RequestIDPrefix())
 }
 

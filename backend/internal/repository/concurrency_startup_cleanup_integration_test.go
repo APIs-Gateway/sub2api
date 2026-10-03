@@ -3,8 +3,6 @@
 package repository
 
 import (
-	"time"
-
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -12,11 +10,6 @@ import (
 func (s *ConcurrencyCacheSuite) TestStartupCleanupPreservesPeerCapacityOnRedis() {
 	blue := NewConcurrencyCache(s.rdb, testSlotTTLMinutes, 120).(*concurrencyCache)
 	green := NewConcurrencyCache(s.rdb, testSlotTTLMinutes, 120).(*concurrencyCache)
-	require.NoError(s.T(), blue.HeartbeatProcess(s.ctx, "rblue"))
-	require.NoError(s.T(), green.HeartbeatProcess(s.ctx, "rgreen"))
-	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, processHeartbeatKey, redis.Z{
-		Score: float64(time.Now().Unix() - processHeartbeatWindowSeconds - 1), Member: "rdead",
-	}).Err())
 	for _, prefix := range []string{"rblue", "rlegacy", "rdead"} {
 		acquired, err := blue.AcquireAccountSlot(s.ctx, 4901, 3, prefix+"-1")
 		require.NoError(s.T(), err)
@@ -35,6 +28,18 @@ func (s *ConcurrencyCacheSuite) TestStartupCleanupPreservesPeerCapacityOnRedis()
 		queued, err := blue.IncrementWaitCount(s.ctx, id, 1)
 		require.NoError(s.T(), err)
 		require.True(s.T(), queued)
+	}
+	// Existing score/TTL is the only atomically verifiable expiration signal.
+	now, err := s.rdb.Time(s.ctx).Result()
+	require.NoError(s.T(), err)
+	for _, key := range []string{accountSlotKey(4901), userSlotKey(4902), apiKeySlotKey(4903)} {
+		members, readErr := s.rdb.ZRange(s.ctx, key, 0, -1).Result()
+		require.NoError(s.T(), readErr)
+		for _, member := range members {
+			if len(member) >= 6 && member[:6] == "rdead-" {
+				require.NoError(s.T(), s.rdb.ZAdd(s.ctx, key, redis.Z{Score: float64(now.Unix()) - testSlotTTL.Seconds(), Member: member}).Err())
+			}
+		}
 	}
 	require.NoError(s.T(), green.CleanupStaleProcessSlots(s.ctx, "rgreen"))
 	for _, entry := range []struct {

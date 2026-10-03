@@ -287,17 +287,16 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots() {
 	accountWaitKey := fmt.Sprintf("%s%d", accountWaitKeyPrefix, accountID)
 
 	now := time.Now().Unix()
-	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, processHeartbeatKey, redis.Z{Score: float64(now - processHeartbeatWindowSeconds - 1), Member: "oldproc"}).Err())
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountKey,
-		redis.Z{Score: float64(now), Member: "oldproc-1"},
+		redis.Z{Score: float64(now) - testSlotTTL.Seconds(), Member: "oldproc-1"},
 		redis.Z{Score: float64(now), Member: "keep-1"},
 	).Err())
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, userKey,
-		redis.Z{Score: float64(now), Member: "oldproc-2"},
+		redis.Z{Score: float64(now) - testSlotTTL.Seconds(), Member: "oldproc-2"},
 		redis.Z{Score: float64(now), Member: "keep-2"},
 	).Err())
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, apiKeyKey,
-		redis.Z{Score: float64(now), Member: "oldproc-3"},
+		redis.Z{Score: float64(now) - testSlotTTL.Seconds(), Member: "oldproc-3"},
 		redis.Z{Score: float64(now), Member: "keep-3"},
 	).Err())
 	require.NoError(s.T(), s.rdb.Set(s.ctx, userWaitKey, 3, time.Minute).Err())
@@ -475,7 +474,7 @@ func (s *ConcurrencyCacheSuite) TestCleanupExpiredAccountSlots_NoExpired() {
 	require.Equal(s.T(), 2, cur)
 }
 
-func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_RemovesKnownDeadPrefixesPreservesWaitCounters() {
+func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_RemovesExpiredSlotsPreservesWaitCounters() {
 	accountID := int64(901)
 	userID := int64(902)
 	accountSlotKey := fmt.Sprintf("%s%d", accountSlotKeyPrefix, accountID)
@@ -484,14 +483,13 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_RemovesKnownDeadPre
 	accountWaitKey := fmt.Sprintf("%s%d", accountWaitKeyPrefix, accountID)
 
 	now := float64(time.Now().Unix())
-	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, processHeartbeatKey, redis.Z{Score: now - processHeartbeatWindowSeconds - 1, Member: "oldproc"}).Err())
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountSlotKey,
-		redis.Z{Score: now, Member: "oldproc-1"},
+		redis.Z{Score: now - testSlotTTL.Seconds(), Member: "oldproc-1"},
 		redis.Z{Score: now, Member: "activeproc-1"},
 	).Err())
 	require.NoError(s.T(), s.rdb.Expire(s.ctx, accountSlotKey, testSlotTTL).Err())
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, userSlotKey,
-		redis.Z{Score: now, Member: "oldproc-2"},
+		redis.Z{Score: now - testSlotTTL.Seconds(), Member: "oldproc-2"},
 		redis.Z{Score: now, Member: "activeproc-2"},
 	).Err())
 	require.NoError(s.T(), s.rdb.Expire(s.ctx, userSlotKey, testSlotTTL).Err())
@@ -521,8 +519,7 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_RemovesKnownDeadPre
 func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_DeletesEmptySlotKeys() {
 	accountID := int64(903)
 	accountSlotKey := fmt.Sprintf("%s%d", accountSlotKeyPrefix, accountID)
-	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, processHeartbeatKey, redis.Z{Score: float64(time.Now().Unix() - processHeartbeatWindowSeconds - 1), Member: "oldproc"}).Err())
-	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountSlotKey, redis.Z{Score: float64(time.Now().Unix()), Member: "oldproc-1"}).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountSlotKey, redis.Z{Score: float64(time.Now().Unix()) - testSlotTTL.Seconds(), Member: "oldproc-1"}).Err())
 	require.NoError(s.T(), s.rdb.Expire(s.ctx, accountSlotKey, testSlotTTL).Err())
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountActiveIndexKey, redis.Z{Score: float64(time.Now().Unix() + 60), Member: strconv.FormatInt(accountID, 10)}).Err())
 
