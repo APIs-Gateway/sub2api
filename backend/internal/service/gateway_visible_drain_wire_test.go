@@ -22,6 +22,7 @@ func visibleDrainEvent(kind, data string) string {
 }
 func TestGatewayVisibleDrain_ActualNativeAttempt(t *testing.T) {
 	start := visibleDrainEvent("message_start", `{"type":"message_start","message":{"usage":{"input_tokens":11,"cache_read_input_tokens":7}}}`)
+	zeroStart := visibleDrainEvent("message_start", `{"type":"message_start","message":{"usage":{"input_tokens":0,"output_tokens":0}}}`)
 	stop := visibleDrainEvent("message_stop", `{"type":"message_stop"}`)
 	text := visibleDrainEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"answer"}}`)
 	tool := visibleDrainEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"probe","input":{}}}`)
@@ -36,18 +37,25 @@ func TestGatewayVisibleDrain_ActualNativeAttempt(t *testing.T) {
 		output         int
 		visible        string
 	}{
-		{"empty_terminal", start + stop, true, true, 0, ""},
-		{"thinking_only", start + thinking + stop, true, true, 0, ""},
-		{"server_tool_only", start + server + toolStop + stop, true, true, 0, ""},
-		{"incomplete_client_tool", start + tool + stop, true, true, 0, ""},
+		{"unmetered_empty_terminal", zeroStart + stop, true, true, 0, ""},
+		{"unmetered_thinking_only", zeroStart + thinking + stop, true, true, 0, ""},
+		{"unmetered_server_tool_only", zeroStart + server + toolStop + stop, true, true, 0, ""},
+		{"unmetered_incomplete_client_tool", zeroStart + tool + stop, true, true, 0, ""},
+		{"unmetered_error_before_visible", zeroStart + providerErr, true, true, 0, ""},
+		{"unmetered_buffer_limit", zeroStart + visibleDrainEvent("ping", `{"type":"ping","opaque":"`+strings.Repeat("x", 9*1024*1024)+`"}`), true, true, 0, ""},
+		{"metered_empty_terminal", start + stop, false, true, 0, ""},
+		{"metered_thinking_only", start + thinking + stop, false, true, 0, ""},
+		{"metered_server_tool_only", start + server + toolStop + stop, false, true, 0, ""},
+		{"metered_incomplete_client_tool", start + tool + stop, false, true, 0, ""},
 		{"complete_empty_client_tool", start + tool + toolStop + stop, false, false, 0, "probe"},
 		{"visible_text_and_late_usage", start + text + stop + delta, false, false, 27, "answer"},
+		{"visible_stop_cached_alias", start + text + stop + visibleDrainEvent("message_stop", `{"type":"message_stop","usage":{"input_tokens":11,"output_tokens":27,"cached_tokens":17,"cache_creation_input_tokens":5,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":3}}}`), false, false, 27, "answer"},
 		{"text_in_block_start", start + visibleDrainEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"start answer"}}`) + toolStop + stop, false, false, 0, "start answer"},
 		{"large_line_after_visible", start + text + visibleDrainEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"`+strings.Repeat("z", 9*1024*1024)+`"}}`) + stop, false, false, 0, "answer"},
 		{"explicit_error_after_stop", start + text + delta + stop + providerErr, false, true, 27, "answer"},
 		{"explicit_error_before_stop", start + text + delta + providerErr, false, true, 27, "answer"},
-		{"explicit_error_before_visible", start + providerErr, true, true, 0, ""},
-		{"buffer_limit", start + visibleDrainEvent("ping", `{"type":"ping","opaque":"`+strings.Repeat("x", 9*1024*1024)+`"}`), true, true, 0, ""},
+		{"metered_explicit_error_before_visible", start + providerErr, false, true, 0, ""},
+		{"metered_buffer_limit", start + visibleDrainEvent("ping", `{"type":"ping","opaque":"`+strings.Repeat("x", 9*1024*1024)+`"}`), false, true, 0, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, rec := newPartialUsageTestContext(t)
@@ -66,7 +74,7 @@ func TestGatewayVisibleDrain_ActualNativeAttempt(t *testing.T) {
 			}
 			var retry *UpstreamFailoverError
 			require.Equal(t, tc.retry, errors.As(err, &retry))
-			if tc.name == "explicit_error_before_visible" {
+			if tc.name == "metered_explicit_error_before_visible" || tc.name == "unmetered_error_before_visible" {
 				require.Equal(t, []int64{account.ID}, policyRepo.overloaded)
 			} else {
 				require.Empty(t, policyRepo.overloaded)
@@ -78,11 +86,25 @@ func TestGatewayVisibleDrain_ActualNativeAttempt(t *testing.T) {
 			} else {
 				require.NotNil(t, result)
 				require.Equal(t, 11, result.Usage.InputTokens)
-				require.Equal(t, 7, result.Usage.CacheReadInputTokens)
+				if tc.name == "visible_stop_cached_alias" {
+					require.Equal(t, 17, result.Usage.CacheReadInputTokens)
+					require.Equal(t, 5, result.Usage.CacheCreationInputTokens)
+					require.Equal(t, 2, result.Usage.CacheCreation5mTokens)
+					require.Equal(t, 3, result.Usage.CacheCreation1hTokens)
+					require.Contains(t, rec.Body.String(), `"cache_read_input_tokens":17`)
+				} else {
+					require.Equal(t, 7, result.Usage.CacheReadInputTokens)
+				}
 				require.Equal(t, tc.output, result.Usage.OutputTokens)
-				require.NotNil(t, result.FirstTokenMs)
-				require.Contains(t, rec.Body.String(), tc.visible)
-				if tc.failure {
+				if tc.visible == "" {
+					require.Nil(t, result.FirstTokenMs)
+					require.Empty(t, rec.Body.String(), "metered partial failure must not leak staged content or replay")
+					require.Empty(t, rec.Header().Get("X-Request-Id"))
+				} else {
+					require.NotNil(t, result.FirstTokenMs)
+					require.Contains(t, rec.Body.String(), tc.visible)
+				}
+				if tc.failure && tc.visible != "" {
 					require.Equal(t, 1, strings.Count(rec.Body.String(), "event: error\n"))
 					require.Contains(t, rec.Body.String(), "overloaded_error")
 				}

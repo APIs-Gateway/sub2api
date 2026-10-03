@@ -5931,7 +5931,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					truncateString(sseErr.RawData, 1000),
 				)
 
-				if !sseErr.SafeToFailoverAfterWrite && (c.Writer.Size() != writerSizeBeforeStream || (streamResult != nil && streamResult.clientDisconnect)) {
+				if !sseErr.SafeToFailoverAfterWrite && (c.Writer.Size() != writerSizeBeforeStream || (streamResult != nil && (streamResult.clientDisconnect || streamResult.usage.hasObservedTokens()))) {
 					// A committed stream cannot be replayed; retain its metered usage and explicit failure.
 					return partialStreamUsageResult(resp, streamResult, originalModel, mappedModel, startTime, err), err
 				}
@@ -8835,6 +8835,11 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		if clientDisconnected || anthropicCompatClientGone(c) {
 			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after client cancellation: %s", reason)
 		}
+		if usage.hasObservedTokens() {
+			// A transport-only response still owes the upstream-metered cost.
+			// Keep this attempt and its partial usage; replay would lose its bill.
+			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("metered stream failed before client-visible output: %s", reason)
+		}
 		body, _ := json.Marshal(map[string]any{
 			"type":  "error",
 			"error": map[string]string{"type": reason, "message": message},
@@ -8954,7 +8959,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				}
 			}
 		}
-		if eventType == "message_delta" {
+		if eventType == "message_delta" || eventType == "message_stop" {
 			if u, ok := event["usage"].(map[string]any); ok {
 				eventChanged = reconcileCachedTokens(u) || eventChanged
 			}
@@ -8970,7 +8975,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					}
 				}
 			}
-			if eventType == "message_delta" {
+			if eventType == "message_delta" || eventType == "message_stop" {
 				if u, ok := event["usage"].(map[string]any); ok {
 					eventChanged = rewriteCacheCreationJSON(u, overrideTarget) || eventChanged
 				}
@@ -9108,7 +9113,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				if err != nil {
 					var streamErr *sseStreamErrorEventError
 					if errors.As(err, &streamErr) {
-						streamErr.SafeToFailoverAfterWrite = !visibleOutput.visible && !clientDisconnected && !anthropicCompatClientGone(c)
+						streamErr.SafeToFailoverAfterWrite = !visibleOutput.visible && !usage.hasObservedTokens() && !clientDisconnected && !anthropicCompatClientGone(c)
 					}
 					if clientDisconnected || anthropicCompatClientGone(c) {
 						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, err
@@ -9126,6 +9131,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 						}
 						connected := sendErrorEvent(reason, message)
 						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: !connected}, err
+					}
+					if usage.hasObservedTokens() {
+						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, err
 					}
 					return nil, err
 				}

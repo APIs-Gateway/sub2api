@@ -49,6 +49,16 @@ func (b *visibleRetryDelayedBody) Read(p []byte) (int, error) {
 }
 func (b *visibleRetryDelayedBody) Close() error { b.once.Do(func() { close(b.closed) }); return nil }
 
+type visibleRetryAccountRepo struct {
+	compatPartialAccountRepo
+	overloaded []int64
+}
+
+func (r *visibleRetryAccountRepo) SetOverloaded(_ context.Context, id int64, _ time.Time) error {
+	r.overloaded = append(r.overloaded, id)
+	return nil
+}
+
 type visibleRetryUpstream struct {
 	calls       int
 	accounts    []int64
@@ -65,10 +75,14 @@ func (u *visibleRetryUpstream) DoWithTLS(_ *http.Request, _ string, id int64, _ 
 	payload := compatPartialMessageStartSSE + "event: message_delta\ndata: " + `{"type":"message_delta","usage":{"output_tokens":15}}` + "\n\n"
 	header := "success-attempt"
 	if u.mode == "comment_retry" && u.calls == 1 {
-		payload = "event: message_start\ndata: " + `{"type":"message_start","message":{"usage":{"input_tokens":99,"output_tokens":88}}}` + "\n\nevent: message_stop\ndata: " + `{"type":"message_stop"}` + "\n\n"
+		payload = "event: message_start\ndata: " + `{"type":"message_start","message":{"usage":{"input_tokens":0,"output_tokens":0}}}` + "\n\nevent: message_stop\ndata: " + `{"type":"message_stop"}` + "\n\n"
 		header = "failed-attempt"
 	}
-	if u.mode == "committed_error" {
+	if strings.HasPrefix(u.mode, "metered_") {
+		payload = "event: message_start\ndata: " + `{"type":"message_start","message":{"usage":{"input_tokens":99,"output_tokens":88}}}` + "\n\n"
+		header = "metered-attempt"
+	}
+	if u.mode == "committed_error" || u.mode == "metered_sse_error" {
 		payload += "event: error\ndata: " + `{"type":"error","error":{"type":"overloaded_error","message":"fixture"}}` + "\n\n"
 	} else {
 		payload += "event: message_stop\ndata: " + `{"type":"message_stop"}` + "\n\n"
@@ -77,7 +91,7 @@ func (u *visibleRetryUpstream) DoWithTLS(_ *http.Request, _ string, id int64, _ 
 		payload = "event: message_start\ndata: " + `{"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}` + "\n\nevent: message_delta\ndata: " + `{"type":"message_delta","usage":{"output_tokens":15}}` + "\n\n"
 	}
 	var body io.ReadCloser = io.NopCloser(strings.NewReader(payload))
-	if (u.mode == "comment_retry" && u.calls == 1) || strings.HasPrefix(u.mode, "comment_write_failed_") {
+	if (u.mode == "comment_retry" && u.calls == 1) || u.mode == "metered_empty" || strings.HasPrefix(u.mode, "comment_write_failed_") {
 		u.delayedBody = &visibleRetryDelayedBody{reader: strings.NewReader(payload), delay: true, closed: make(chan struct{})}
 		if u.mode == "comment_write_failed_read_error" {
 			u.delayedBody.readErr = io.ErrUnexpectedEOF
@@ -88,7 +102,7 @@ func (u *visibleRetryUpstream) DoWithTLS(_ *http.Request, _ string, id int64, _ 
 }
 func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, mode := range []string{"comment_retry", "committed_error", "comment_write_failed_eof", "comment_write_failed_read_error"} {
+	for _, mode := range []string{"comment_retry", "committed_error", "metered_empty", "metered_sse_error", "comment_write_failed_eof", "comment_write_failed_read_error"} {
 		t.Run(mode, func(t *testing.T) {
 			gid := int64(9152)
 			group := &service.Group{ID: gid, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive, RateMultiplier: 1}
@@ -104,7 +118,7 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 			billingRepo := &compatPartialBillingRepo{}
 			billingCache := service.NewBillingCacheService(nil, userRepo, nil, nil, nil, nil, cfg, nil, nil)
 			t.Cleanup(billingCache.Stop)
-			accountRepo := &compatPartialAccountRepo{}
+			accountRepo := &visibleRetryAccountRepo{}
 			snapshot := service.NewSchedulerSnapshotService(&fakeSchedulerCache{accounts: accounts}, nil, nil, nil, nil)
 			gateway := service.NewGatewayService(
 				accountRepo, &fakeGroupRepo{group: group}, usage, billingRepo, userRepo, nil, nil, &forceCacheBillingGatewayCache{accountID: 9252}, cfg,
@@ -132,6 +146,11 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: key.UserID, Concurrency: 10})
 			h.Messages(c)
 			pool.Stop()
+			if mode == "metered_sse_error" {
+				require.Equal(t, []int64{upstream.accounts[0]}, accountRepo.overloaded, "preserve pre-visible provider 529 attribution despite forbidding metered replay")
+			} else {
+				require.Empty(t, accountRepo.overloaded)
+			}
 			if failedWriter != nil {
 				require.NoError(t, c.Request.Context().Err(), "write failure must not cancel request context to hide generic fallback")
 				require.True(t, failedWriter.failed, "delayed upstream must force pre-visible comment write failure")
@@ -144,6 +163,14 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 				case <-upstream.delayedBody.closed:
 				default:
 					t.Fatal("failed-write upstream body not closed")
+				}
+			} else if strings.HasPrefix(mode, "metered_") {
+				require.Equal(t, 1, upstream.calls, "upstream-metered empty response must not replay or lose its cost")
+				require.NotContains(t, rec.Body.String(), "partial")
+				require.Contains(t, rec.Body.String(), "error")
+				require.Empty(t, rec.Header().Get("X-Request-Id"))
+				if mode == "metered_sse_error" {
+					require.Contains(t, rec.Body.String(), "error")
 				}
 			} else {
 				require.Contains(t, rec.Body.String(), "partial")
@@ -181,11 +208,17 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 				if mode == "comment_retry" {
 					require.Zero(t, log.InputTokens)
 					require.Equal(t, 10, log.CacheReadTokens, "preserve fork sticky-failover force-cache billing")
+				} else if strings.HasPrefix(mode, "metered_") {
+					require.Equal(t, 99, log.InputTokens)
+					require.Equal(t, 88, log.OutputTokens)
+					require.Zero(t, log.CacheReadTokens)
 				} else {
 					require.Equal(t, 10, log.InputTokens)
 					require.Zero(t, log.CacheReadTokens)
 				}
-				require.Equal(t, 15, log.OutputTokens)
+				if !strings.HasPrefix(mode, "metered_") {
+					require.Equal(t, 15, log.OutputTokens)
+				}
 				require.Equal(t, upstream.accounts[len(upstream.accounts)-1], log.AccountID)
 			default:
 				t.Fatal("missing real handler partial/success usage")
@@ -194,11 +227,17 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 			cmd := billingRepo.commands[0]
 			require.Equal(t, key.ID, cmd.APIKeyID)
 			require.Equal(t, upstream.accounts[len(upstream.accounts)-1], cmd.AccountID)
-			require.Equal(t, 15, cmd.OutputTokens)
+			if strings.HasPrefix(mode, "metered_") {
+				require.Equal(t, 99, cmd.InputTokens)
+				require.Equal(t, 88, cmd.OutputTokens)
+				require.Zero(t, cmd.CacheReadTokens)
+			} else {
+				require.Equal(t, 15, cmd.OutputTokens)
+			}
 			if mode == "comment_retry" {
 				require.Zero(t, cmd.InputTokens)
 				require.Equal(t, 10, cmd.CacheReadTokens)
-			} else {
+			} else if !strings.HasPrefix(mode, "metered_") {
 				require.Equal(t, 10, cmd.InputTokens)
 				require.Zero(t, cmd.CacheReadTokens)
 			}
