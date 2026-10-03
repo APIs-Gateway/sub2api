@@ -954,6 +954,7 @@
         disabled: "This group is disabled, so requests skip it. Consider removing it.",
         unavailable: "This group was deleted or you no longer have access, so requests skip it. Consider removing it.",
         notUsable: "This group cannot be used right now, so requests skip it. Consider removing it.",
+        primary: "The main group is disabled. Change it when you edit the key.",
       },
       add: "+ Add fallback group",
       pickTitle: "Choose a group to add",

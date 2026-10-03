@@ -68,7 +68,7 @@
               <StatusMark :item="primary" />
             </div>
             <PriceLine :item="primary" />
-            <ReasonLine :item="primary" />
+            <ReasonLine :item="primary" is-primary />
           </div>
         </div>
 
@@ -479,12 +479,17 @@ const PriceLine = defineComponent({
 })
 
 const ReasonLine = defineComponent({
-  props: { item: { type: Object as PropType<KeyFallbackChainItem>, required: true } },
+  props: {
+    item: { type: Object as PropType<KeyFallbackChainItem>, required: true },
+    // 主分组不能在这里移除，不能让它显示「建议移除」，改成指引去编辑密钥
+    isPrimary: { type: Boolean, default: false }
+  },
   setup(p) {
     return () => {
       if (p.item.usable && p.item.status === 'active') return null
-      const key =
-        p.item.status === 'disabled'
+      const key = p.isPrimary
+        ? 'primary'
+        : p.item.status === 'disabled'
           ? 'disabled'
           : p.item.status === 'unavailable'
             ? 'unavailable'

@@ -167,6 +167,18 @@ describe('KeyFallbackChainEditor', () => {
     expect(replaceChain).toHaveBeenCalledWith(7, [21, 22])
   })
 
+  it('主分组被停用时给单独一句指引，不说「建议移除」（主分组不能移除）', async () => {
+    const chain = makeChain()
+    chain.items[0] = item(16, 'Codex Plus', 0, { status: 'disabled', usable: false })
+    const w = await mountEditor(chain)
+    const primary = w.get('[data-test="primary-item"]')
+    expect(primary.get('[data-test="reason"]').text()).toBe('主分组已停用，请在编辑密钥时更换')
+    expect(primary.text()).not.toContain('建议移除')
+    expect(primary.find('[data-test="remove"]').exists()).toBe(false)
+    // 兜底项的原因文案不受影响
+    expect(w.get('[data-test="fallback-item-22"] [data-test="reason"]').text()).toContain('建议移除')
+  })
+
   it('充值倍率为 1（free 站）时跟着全站口径显示美元', async () => {
     setRecharge(1)
     const w = await mountEditor()
