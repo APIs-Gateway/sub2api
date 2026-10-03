@@ -884,6 +884,44 @@ export interface OpsSystemLogSinkHealth {
   last_error?: string
 }
 
+// Ingress rejects are minute-bucketed counters. The backend deliberately stores
+// only sanitized dimensions: client_ip is already a masked network prefix and no
+// credentials, headers, or request bodies are exposed by this endpoint.
+export interface OpsIngressRejectAggregate {
+  id: number
+  bucket_start: string
+  reject_reason: string
+  route_family: string
+  protocol: string
+  client_ip: string
+  user_id?: number | null
+  api_key_id?: number | null
+  request_count: number
+  first_seen: string
+  last_seen: string
+}
+
+export interface OpsIngressRejectListResponse {
+  items: OpsIngressRejectAggregate[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface OpsIngressRejectQuery {
+  page?: number
+  page_size?: number
+  time_range?: '5m' | '30m' | '1h' | '6h' | '24h' | '7d' | '30d'
+  start_time?: string
+  end_time?: string
+  reason?: string
+  route_family?: string
+  protocol?: string
+  client_ip?: string
+  user_id?: number
+  api_key_id?: number
+}
+
 export interface OpsErrorLog {
   id: number
   created_at: string
@@ -1277,6 +1315,11 @@ export async function getSystemLogSinkHealth(): Promise<OpsSystemLogSinkHealth> 
   return data
 }
 
+export async function listIngressRejects(params: OpsIngressRejectQuery): Promise<OpsIngressRejectListResponse> {
+  const { data } = await apiClient.get<OpsIngressRejectListResponse>('/admin/ops/ingress-rejections', { params })
+  return data
+}
+
 // Advanced settings (DB-backed)
 export async function getAdvancedSettings(): Promise<OpsAdvancedSettings> {
   const { data } = await apiClient.get<OpsAdvancedSettings>('/admin/ops/advanced-settings')
@@ -1349,7 +1392,8 @@ export const opsAPI = {
   updateMetricThresholds,
   listSystemLogs,
   cleanupSystemLogs,
-  getSystemLogSinkHealth
+  getSystemLogSinkHealth,
+  listIngressRejects
 }
 
 export default opsAPI
