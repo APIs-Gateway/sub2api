@@ -185,6 +185,9 @@ func TestGatewayCompatibleHandlersPreservePartialUsage(t *testing.T) {
 					if ending == "complete" || ending == "failover" {
 						require.Equal(t, http.StatusOK, recorder.Code)
 						require.Contains(t, recorder.Body.String(), "partial")
+					} else if ending == "before_start" {
+						require.Equal(t, http.StatusServiceUnavailable, recorder.Code, "provider overload retains native 529-to-503 policy")
+						require.Contains(t, recorder.Body.String(), "overloaded_error")
 					} else {
 						require.Equal(t, http.StatusBadGateway, recorder.Code, "a truncated upstream must not answer a buffered client with success; response=%s", recorder.Body.String())
 						require.NotContains(t, recorder.Body.String(), "partial")

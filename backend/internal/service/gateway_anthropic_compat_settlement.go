@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -84,7 +85,7 @@ func anthropicCompatIncompleteStream(c *gin.Context, result *ForwardResult, read
 	if !c.Writer.Written() {
 		c.Writer.Header().Del("Content-Type")
 	}
-	if readErr != nil && !observed && !c.Writer.Written() && !result.ClientDisconnect && !anthropicCompatClientGone(c) {
+	if readErr != nil && !errors.Is(readErr, bufio.ErrTooLong) && !errors.Is(readErr, context.Canceled) && !errors.Is(readErr, context.DeadlineExceeded) && !observed && !c.Writer.Written() && !result.ClientDisconnect && !anthropicCompatClientGone(c) {
 		var streamError *sseStreamErrorEventError
 		if errors.As(readErr, &streamError) {
 			return nil, streamError

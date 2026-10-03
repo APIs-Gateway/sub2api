@@ -3,9 +3,11 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -395,4 +397,42 @@ func TestCompatProviderSSEErrorSupportsOptionalRateLimitService(t *testing.T) {
 	require.ErrorAs(t, gotErr, &failover)
 	require.Equal(t, 529, failover.StatusCode)
 	require.False(t, failover.RetryableOnSameAccount)
+}
+
+func TestCompatReadersOversizedLineNeverFailsOver(t *testing.T) {
+	handlers := map[string]compatStreamHandler{}
+	for name, handle := range compatStreamHandlers() {
+		handlers["stream/"+name] = handle
+	}
+	for name, handle := range compatBufferedHandlers() {
+		handlers["buffered/"+name] = handle
+	}
+	for name, handle := range handlers {
+		for _, metered := range []bool{false, true} {
+			t.Run(name+fmt.Sprintf("/metered=%t", metered), func(t *testing.T) {
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				payload := ""
+				if metered {
+					payload = strings.SplitAfter(compatAnthropicStream(false), "\n\n")[0]
+				}
+				payload += "event: content_block_delta\ndata: " + strings.Repeat("x", 128*1024) + "\n\n"
+				svc := &GatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: 64 * 1024}}}
+				result, err := handle(svc, &http.Response{Header: http.Header{}, Body: io.NopCloser(strings.NewReader(payload))}, c)
+				require.ErrorIs(t, err, bufio.ErrTooLong)
+				var failover *UpstreamFailoverError
+				require.False(t, errors.As(err, &failover), "an oversized frame must not replay or ban a healthy account")
+				if metered {
+					require.NotNil(t, result)
+					require.Equal(t, 10, result.Usage.InputTokens)
+				} else {
+					require.Nil(t, result)
+				}
+				if strings.HasPrefix(name, "buffered/") {
+					require.Equal(t, http.StatusBadGateway, rec.Code)
+					require.NotEmpty(t, compatBufferedErrorMessage(t, rec.Body.Bytes()))
+				}
+			})
+		}
+	}
 }
