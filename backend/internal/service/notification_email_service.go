@@ -555,6 +555,13 @@ func (s *NotificationEmailService) runtimeVariables(ctx context.Context, event, 
 	for key, value := range input.Variables {
 		variables[key] = value
 	}
+	if event == NotificationEmailEventSubscriptionPurchaseSuccess || event == NotificationEmailEventSubscriptionExpiryReminder {
+		// 订阅卡可能没有分组名（自定义卡、转套餐卡、来源分组已删除）。调用方传空串或不传时，
+		// 按收件人 locale 回退，既不把预览样例值（Claude Pro）发给用户，也不写死某一种语言。
+		if strings.TrimSpace(input.Variables["subscription_group"]) == "" {
+			variables["subscription_group"] = notificationEmailSubscriptionFallbackName(locale)
+		}
+	}
 	if event == NotificationEmailEventOpsScheduledReport {
 		// Scheduled reports may be sent by integrations that only provide report_html.
 		// Do not let preview sample values appear in a live email in that case.
@@ -843,6 +850,18 @@ func normalizeNotificationLocaleHint(raw string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// notificationEmailSubscriptionFallbackName 是订阅卡没有分组名时，邮件里代替分组名的通用称呼。
+func notificationEmailSubscriptionFallbackName(locale string) string {
+	switch normalizeNotificationLocale(locale) {
+	case notificationEmailLocaleSimplifiedChinese:
+		return "订阅"
+	case notificationEmailLocaleTraditionalChinese:
+		return "訂閱"
+	default:
+		return "Subscription"
+	}
 }
 
 func isNotificationChineseLocale(locale string) bool {
