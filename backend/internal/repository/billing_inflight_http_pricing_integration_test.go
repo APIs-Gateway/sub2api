@@ -109,7 +109,11 @@ func TestBillingInflightHTTP_RealFreeTextAndPaidImageFunding(t *testing.T) {
 			close(turn.release)
 			rec := inflightRealResponsesDone(t, done)
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-			f.waitUsage(t, 1)
+			require.Eventually(t, func() bool {
+				var count int
+				err := integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&count)
+				return err == nil && count == 1 && f.held(t) == amount
+			}, 10*time.Second, 20*time.Millisecond, "free completion keeps the separate paid/exclusive owner's hold intact")
 			require.InDelta(t, .75, f.wallet(t), 1e-9)
 			require.NoError(t, repo.ReleaseBillingInflight(context.Background(), f.userID, owner))
 			done = inflightRealResponsesRequest(f, `{"model":"gpt-5.4","input":"draw","tools":[{"type":"image_generation","model":"gpt-image-2","size":"1024x1024"}]}`)
@@ -124,6 +128,44 @@ func TestBillingInflightHTTP_RealFreeTextAndPaidImageFunding(t *testing.T) {
 			f.waitUsage(t, 2)
 			require.InDelta(t, .25, f.wallet(t), 1e-9)
 			require.Zero(t, f.held(t))
+		})
+	}
+}
+
+func TestBillingInflightHTTP_RealPaidCardSharesAllWindowFunding(t *testing.T) {
+	for _, limitingWindow := range []string{"daily", "weekly", "monthly"} {
+		t.Run(limitingWindow, func(t *testing.T) {
+			f := newWSInflightFixture(t, "bridge", service.BillingModelSourceUpstream, map[string]float64{"gpt-5.4": .5})
+			_, err := integrationDB.Exec(`UPDATE users SET balance=0 WHERE id=$1`, f.userID)
+			require.NoError(t, err)
+			d, w, m := 10.0, 100.0, 1000.0
+			switch limitingWindow {
+			case "daily":
+				d = .75
+			case "weekly":
+				w = .75
+			case "monthly":
+				m = .75
+			}
+			admissionCard(t, testEntClient(t), f.userID, 0, d, w, m, 0, 0, 0)
+			require.NoError(t, f.billing.InvalidateUserBalance(context.Background(), f.userID))
+			done := inflightRealResponsesRequest(f, `{"model":"gpt-5.4","input":"card paid request"}`)
+			turn := f.provider.next(t)
+			require.InDelta(t, .5, f.held(t), 1e-9)
+			second := inflightRealResponsesDone(t, inflightRealResponsesRequest(f, `{"model":"gpt-5.4","input":"same user another card funded request"}`))
+			require.Equal(t, http.StatusForbidden, second.Code, second.Body.String())
+			require.EqualValues(t, 1, f.provider.calls.Load())
+			close(turn.release)
+			first := inflightRealResponsesDone(t, done)
+			require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+			f.waitUsage(t, 1)
+			require.Zero(t, f.wallet(t))
+			require.Zero(t, f.held(t))
+			var du, wu, mu float64
+			require.NoError(t, integrationDB.QueryRow(`SELECT daily_usage_usd,weekly_usage_usd,monthly_usage_usd FROM user_subscriptions WHERE user_id=$1 AND status='active'`, f.userID).Scan(&du, &wu, &mu))
+			require.InDelta(t, .5, du, 1e-9)
+			require.InDelta(t, .5, wu, 1e-9)
+			require.InDelta(t, .5, mu, 1e-9)
 		})
 	}
 }
