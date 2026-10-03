@@ -559,7 +559,7 @@ func (s *NotificationEmailService) runtimeVariables(ctx context.Context, event, 
 		// 订阅卡可能没有分组名（自定义卡、转套餐卡、来源分组已删除）。调用方传空串或不传时，
 		// 按收件人 locale 回退，既不把预览样例值（Claude Pro）发给用户，也不写死某一种语言。
 		if strings.TrimSpace(input.Variables["subscription_group"]) == "" {
-			variables["subscription_group"] = notificationEmailSubscriptionFallbackName(locale)
+			variables["subscription_group"] = notificationEmailSubscriptionFallbackName(event, locale)
 		}
 	}
 	if event == NotificationEmailEventOpsScheduledReport {
@@ -852,15 +852,22 @@ func normalizeNotificationLocaleHint(raw string) (string, bool) {
 	return "", false
 }
 
-// notificationEmailSubscriptionFallbackName 是订阅卡没有分组名时，邮件里代替分组名的通用称呼。
-func notificationEmailSubscriptionFallbackName(locale string) string {
+// notificationEmailSubscriptionFallbackName 是订阅卡没有分组名时，邮件里代替分组名的称呼。
+// 官方模板把变量放在「您的 {{subscription_group}} 订阅…」「Your {{subscription_group}} subscription…」里，
+// 所以用修饰语「当前 / 目前 / current」，读起来是「您的当前订阅」「Your current subscription」，
+// 而不是「您的订阅订阅」。英文购买成功模板把变量放在「Your subscription for {{subscription_group}}」
+// 的末尾，「for current」不成句，单独用「this plan」。
+func notificationEmailSubscriptionFallbackName(event, locale string) string {
 	switch normalizeNotificationLocale(locale) {
 	case notificationEmailLocaleSimplifiedChinese:
-		return "订阅"
+		return "当前"
 	case notificationEmailLocaleTraditionalChinese:
-		return "訂閱"
+		return "目前"
 	default:
-		return "Subscription"
+		if event == NotificationEmailEventSubscriptionPurchaseSuccess {
+			return "this plan"
+		}
+		return "current"
 	}
 }
 

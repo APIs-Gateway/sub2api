@@ -222,7 +222,7 @@ func (s *SubscriptionExpiryService) sendExpiryReminderIfDue(ctx context.Context,
 		SourceID:       strconv.FormatInt(sub.ID, 10),
 		ReminderKey:    fmt.Sprintf("%dd", daysRemaining),
 		Variables: map[string]string{
-			// 无分组名时传空串，由通知服务按收件人 locale 回退为「订阅 / 訂閱 / Subscription」。
+			// 无分组名时传空串，由通知服务按收件人 locale 回退为「当前 / 目前 / current」，读作「您的当前订阅」。
 			"subscription_group": subscriptionGroupDisplayName(sub.Group),
 			"expiry_time":        sub.ExpiresAt.Format("2006-01-02 15:04"),
 			"days_remaining":     strconv.Itoa(daysRemaining),
@@ -235,7 +235,7 @@ func (s *SubscriptionExpiryService) sendExpiryReminderIfDue(ctx context.Context,
 // subscriptionGroupDisplayName 取订阅卡来源分组名用于通知展示。
 // 自定义 D+T 卡、转套餐卡无 group 归属（group_id NULL 或 0 → Group==nil），来源分组被软删后同样读不到分组。
 // 这些情况返回空串，不在这里写死某一种语言：locale 在 NotificationEmailService.Send 里才确定，
-// 空值会在那里回退为 notificationEmailSubscriptionFallbackName(locale)。
+// 空值会在那里回退为 notificationEmailSubscriptionFallbackName(event, locale)。
 func subscriptionGroupDisplayName(g *Group) string {
 	if g == nil {
 		return ""

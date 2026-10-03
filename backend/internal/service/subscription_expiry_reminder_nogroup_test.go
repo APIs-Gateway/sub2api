@@ -79,20 +79,20 @@ func expiryReminderDeliveryKey(subID int64, reminderKey string) string {
 }
 
 // 部分卡没有可用的分组（自定义卡、转套餐卡、来源分组已删除），以前会在 sub.Group == nil 时被静默跳过，
-// 现在必须和有分组的卡一样收到提醒；分组名位置改用通用称呼。
+// 现在必须和有分组的卡一样收到提醒；分组名位置改用「current」，读作「Your current subscription」。
 func TestSubscriptionExpiryService_SendsReminderRegardlessOfGroup(t *testing.T) {
 	const twoAndHalfDays = 60 * time.Hour // DaysRemaining() == 3
 
 	cases := []struct {
-		name    string
-		groupID int64
-		group   *Group
-		want    string
+		name      string
+		groupID   int64
+		group     *Group
+		wantGroup string
 	}{
-		{name: "normal group", groupID: 7, group: &Group{ID: 7, Name: "Codex Pro"}, want: "<strong>Codex Pro</strong>"},
-		{name: "custom card without group", groupID: 0, group: nil, want: "<strong>Subscription</strong>"},
-		{name: "source group deleted", groupID: 7, group: nil, want: "<strong>Subscription</strong>"},
-		{name: "blank group name", groupID: 7, group: &Group{ID: 7, Name: "  "}, want: "<strong>Subscription</strong>"},
+		{name: "normal group", groupID: 7, group: &Group{ID: 7, Name: "Codex Pro"}, wantGroup: "Codex Pro"},
+		{name: "custom card without group", groupID: 0, group: nil, wantGroup: "current"},
+		{name: "source group deleted", groupID: 7, group: nil, wantGroup: "current"},
+		{name: "blank group name", groupID: 7, group: &Group{ID: 7, Name: "  "}, wantGroup: "current"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -104,23 +104,36 @@ func TestSubscriptionExpiryService_SendsReminderRegardlessOfGroup(t *testing.T) 
 
 			require.Equal(t, int64(1), h.smtp.messageCount())
 			body := h.smtp.lastMessageBody(t)
-			require.Contains(t, body, tc.want)
-			require.Contains(t, body, "<strong>3</strong> day(s)")
+			require.Contains(t, body, "Your <strong>"+tc.wantGroup+"</strong> subscription will expire in <strong>3</strong> day(s).")
 			require.NotContains(t, body, "Claude Pro", "不能把预览样例值发给用户")
 		})
 	}
 }
 
-// 分组名位置的通用称呼必须跟收件人的邮件 locale 走：zh-CN「订阅」、zh-HK「訂閱」、en「Subscription」。
+// 分组名位置的称呼必须跟收件人的邮件 locale 走，并且套进官方模板后是通顺的整句：
+// zh-CN「您的 当前 订阅将在 3 天后到期。」、zh-HK「您的 目前 訂閱將在 3 天後到期。」、
+// en「Your current subscription will expire in 3 day(s).」（空格来自模板，变量部分加粗）。
 func TestSubscriptionExpiryService_NoGroupPlaceholderFollowsRecipientLocale(t *testing.T) {
 	cases := []struct {
 		locale string
 		want   string
 		not    []string
 	}{
-		{locale: "zh-CN", want: "<strong>订阅</strong>", not: []string{"<strong>訂閱</strong>", "<strong>Subscription</strong>"}},
-		{locale: "zh-HK", want: "<strong>訂閱</strong>", not: []string{"<strong>订阅</strong>", "<strong>Subscription</strong>"}},
-		{locale: "en", want: "<strong>Subscription</strong>", not: []string{"<strong>订阅</strong>", "<strong>訂閱</strong>"}},
+		{
+			locale: "zh-CN",
+			want:   "您的 <strong>当前</strong> 订阅将在 <strong>3</strong> 天后到期。",
+			not:    []string{"目前", "current"},
+		},
+		{
+			locale: "zh-HK",
+			want:   "您的 <strong>目前</strong> 訂閱將在 <strong>3</strong> 天後到期。",
+			not:    []string{"当前", "current"},
+		},
+		{
+			locale: "en",
+			want:   "Your <strong>current</strong> subscription will expire in <strong>3</strong> day(s).",
+			not:    []string{"当前", "目前"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.locale, func(t *testing.T) {
@@ -187,17 +200,28 @@ func TestSubscriptionExpiryService_NoGroupCardSkipsOffTierAndAlreadySent(t *test
 }
 
 func TestNotificationEmailSubscriptionFallbackName(t *testing.T) {
-	cases := map[string]string{
-		"zh-CN":   "订阅",
-		"zh":      "订阅",
-		"zh-Hans": "订阅",
-		"zh-HK":   "訂閱",
-		"zh-TW":   "訂閱",
-		"en":      "Subscription",
-		"en-US":   "Subscription",
+	expiry := NotificationEmailEventSubscriptionExpiryReminder
+	purchase := NotificationEmailEventSubscriptionPurchaseSuccess
+	cases := []struct {
+		event  string
+		locale string
+		want   string
+	}{
+		{expiry, "zh-CN", "当前"},
+		{expiry, "zh", "当前"},
+		{expiry, "zh-Hans", "当前"},
+		{expiry, "zh-HK", "目前"},
+		{expiry, "zh-TW", "目前"},
+		{expiry, "en", "current"},
+		{expiry, "en-US", "current"},
+		{purchase, "zh-CN", "当前"},
+		{purchase, "zh-HK", "目前"},
+		// 英文购买成功模板是「Your subscription for {{subscription_group}} …」，变量在介词后面。
+		{purchase, "en", "this plan"},
+		{purchase, "en-US", "this plan"},
 	}
-	for locale, want := range cases {
-		require.Equal(t, want, notificationEmailSubscriptionFallbackName(locale), locale)
+	for _, tc := range cases {
+		require.Equal(t, tc.want, notificationEmailSubscriptionFallbackName(tc.event, tc.locale), tc.event+"/"+tc.locale)
 	}
 }
 
@@ -205,13 +229,12 @@ func TestNotificationEmailSubscriptionFallbackName(t *testing.T) {
 func TestNotificationEmailRuntimeVariablesSubscriptionGroupFallback(t *testing.T) {
 	ctx := context.Background()
 	svc := NewNotificationEmailService(newNotificationEmailMemorySettingRepo(), nil)
-	events := []string{
-		NotificationEmailEventSubscriptionExpiryReminder,
-		NotificationEmailEventSubscriptionPurchaseSuccess,
+	events := map[string]map[string]string{
+		NotificationEmailEventSubscriptionExpiryReminder:  {"zh-CN": "当前", "zh-HK": "目前", "en": "current"},
+		NotificationEmailEventSubscriptionPurchaseSuccess: {"zh-CN": "当前", "zh-HK": "目前", "en": "this plan"},
 	}
-	fallbacks := map[string]string{"zh-CN": "订阅", "zh-HK": "訂閱", "en": "Subscription"}
 
-	for _, event := range events {
+	for event, fallbacks := range events {
 		for locale, fallback := range fallbacks {
 			t.Run(event+"/"+locale, func(t *testing.T) {
 				for _, variables := range []map[string]string{
@@ -233,41 +256,52 @@ func TestNotificationEmailRuntimeVariablesSubscriptionGroupFallback(t *testing.T
 	}
 }
 
-// S-6：购买成功邮件拿不到分组名时（自定义卡、分组已删除），以前固定写英文 Subscription，现在按收件人 locale 回退。
+// S-6：购买成功邮件拿不到分组名时（自定义卡、分组已删除），以前固定写英文 Subscription，现在按收件人 locale 回退，
+// 并且套进官方模板后是通顺的整句：
+// zh-CN「您的 当前 订阅已成功开通，有效期 30 天。」、zh-HK「您的 目前 訂閱已成功開通，有效期 30 天。」、
+// en「Your subscription for this plan has been activated for 30 days.」
 func TestSubscriptionPurchaseSuccessNotification_NoGroupNameUsesLocaleFallback(t *testing.T) {
 	groupID := int64(7)
 	days := 30
-	cases := []struct {
+	orders := []struct {
 		name    string
 		groupID *int64
 	}{
 		{name: "order without group", groupID: nil},
 		{name: "group lookup unavailable", groupID: &groupID},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
-			settings := newNotificationEmailMemorySettingRepo()
-			smtpServer := startNotificationEmailTestSMTPServer(t)
-			require.NoError(t, settings.SetMultiple(ctx, smtpServer.settings()))
-			notifier := NewNotificationEmailService(settings, NewEmailService(settings, nil))
-			notifier.RememberRecipientLocale(ctx, expiryReminderTestUserID, expiryReminderTestEmail, "zh-HK")
-			svc := &PaymentService{notificationEmailService: notifier}
+	locales := []struct {
+		locale string
+		want   string
+	}{
+		{locale: "zh-CN", want: "您的 <strong>当前</strong> 订阅已成功开通，有效期 <strong>30</strong> 天。"},
+		{locale: "zh-HK", want: "您的 <strong>目前</strong> 訂閱已成功開通，有效期 <strong>30</strong> 天。"},
+		{locale: "en", want: "Your subscription for <strong>this plan</strong> has been activated for <strong>30</strong> days."},
+	}
+	for _, order := range orders {
+		for _, lc := range locales {
+			t.Run(order.name+"/"+lc.locale, func(t *testing.T) {
+				ctx := context.Background()
+				settings := newNotificationEmailMemorySettingRepo()
+				smtpServer := startNotificationEmailTestSMTPServer(t)
+				require.NoError(t, settings.SetMultiple(ctx, smtpServer.settings()))
+				notifier := NewNotificationEmailService(settings, NewEmailService(settings, nil))
+				notifier.RememberRecipientLocale(ctx, expiryReminderTestUserID, expiryReminderTestEmail, lc.locale)
+				svc := &PaymentService{notificationEmailService: notifier}
 
-			err := svc.sendSubscriptionPurchaseSuccessNotification(ctx, &dbent.PaymentOrder{
-				ID:                  99,
-				UserID:              expiryReminderTestUserID,
-				UserEmail:           expiryReminderTestEmail,
-				UserName:            "Alice",
-				SubscriptionDays:    &days,
-				SubscriptionGroupID: tc.groupID,
+				err := svc.sendSubscriptionPurchaseSuccessNotification(ctx, &dbent.PaymentOrder{
+					ID:                  99,
+					UserID:              expiryReminderTestUserID,
+					UserEmail:           expiryReminderTestEmail,
+					UserName:            "Alice",
+					SubscriptionDays:    &days,
+					SubscriptionGroupID: order.groupID,
+				})
+
+				require.NoError(t, err)
+				require.Equal(t, int64(1), smtpServer.messageCount())
+				require.Contains(t, smtpServer.lastMessageBody(t), lc.want)
 			})
-
-			require.NoError(t, err)
-			require.Equal(t, int64(1), smtpServer.messageCount())
-			body := smtpServer.lastMessageBody(t)
-			require.Contains(t, body, "<strong>訂閱</strong>")
-			require.NotContains(t, body, "<strong>Subscription</strong>")
-		})
+		}
 	}
 }
