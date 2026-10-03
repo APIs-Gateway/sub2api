@@ -1674,6 +1674,12 @@ func (s *BillingService) CalculateCostWithLongContext(model string, tokens Usage
 // 区别只在每一段的计价入口：这里经 CalculateCostUnified（带 Resolver 与 PricingAt），
 // 使 DeepSeek 默认价卡的峰时倍率与 pro→Flash 切换按计费时点生效。
 // input.Tokens 与 input.RateMultiplier 是整次请求的用量与倍率，拆段后由本函数逐段覆盖。
+//
+// 适用范围：只适用于无渠道价的 token 计费（价卡来自默认价表，没有按次、图片或区间定价）。
+// 拆段后每一段都会各自 Resolve 并各自计价：遇到按次计费的渠道价，两段各收一次按次费用，
+// 会重复收费；遇到按上下文区间定价的渠道价，区间按「这一段」的长度选取，也会选错。
+// 调用方必须先确认没有命中渠道价，目前只有 GatewayService.calculateTokenCost 的无渠道价
+// DeepSeek 分支与 PriceQuoter 的同一条件会走到这里。
 func (s *BillingService) CalculateCostWithLongContextUnified(input CostInput, threshold int, extraMultiplier float64) (*CostBreakdown, error) {
 	return calculateCostWithLongContextSplit(input.Tokens, input.RateMultiplier, threshold, extraMultiplier,
 		func(segment UsageTokens, segmentMultiplier float64) (*CostBreakdown, error) {

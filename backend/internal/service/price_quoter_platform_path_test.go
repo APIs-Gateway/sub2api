@@ -291,6 +291,76 @@ func TestPriceQuoter_DeepSeekOnNonOpenAIGatewayMatchesUnifiedBilling(t *testing.
 	}
 }
 
+// Quoter 报价与网关实际入口 GatewayService.calculateRecordUsageCost 直接对比：同一份 fixture（同一个
+// BillingService / ModelPricingResolver）、同样的用量、倍率与计费时点，两边 require.Equal 整个费用明细。
+// 上面的用例参照的是测试里手写的计费入参，网关分支以后改了入参（比如开始传 ServiceTier）它们抓不到，
+// 这个用例会抓到。覆盖 DeepSeek（无渠道价，叠加峰时倍率）与非 DeepSeek（原有 legacy 分支）。
+func TestPriceQuoter_CostMatchesGatewayCalculateRecordUsageCost(t *testing.T) {
+	// 周六北京时间 10:00（UTC 02:00）：UTC 小时落在高峰窗口，但北京时间周末全天低谷。
+	saturdayPeakHours := time.Date(2026, 10, 10, 2, 0, 0, 0, time.UTC)
+	slots := []struct {
+		name string
+		at   time.Time
+	}{
+		{"peak", quoteTestAtPeak},
+		{"low", quoteTestAtLow},
+		{"weekend", saturdayPeakHours},
+	}
+	usages := []UsageTokens{
+		quoteUsageEven(1_000_000),
+		quoteUsageEven(300_000),
+		quoteUsageEven(50_000),
+		{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 200, CacheCreationTokens: 100},
+	}
+	rate := 1.3
+	ctx := context.Background()
+	for _, platform := range []string{PlatformAnthropic, PlatformAntigravity, PlatformGemini} {
+		// Gemini 原生入口写死 200K 阈值、超出部分 2 倍（与 handler 一致）；其余入口没有网关级长上下文加价。
+		opts := &recordUsageOpts{}
+		if platform == PlatformGemini {
+			opts = &recordUsageOpts{LongContextThreshold: 200000, LongContextMultiplier: 2.0}
+		}
+		for _, model := range []string{"deepseek-v4-flash", "deepseek-v4-pro", "glm-4.6", "gpt-5.5"} {
+			for _, slot := range slots {
+				t.Run(platform+"/"+model+"/"+slot.name, func(t *testing.T) {
+					f := newQuoteTestFixture(nil, nil, []*Group{quoteTestGroupOn(platform, rate)}, nil)
+					gateway := &GatewayService{billingService: f.billing, resolver: f.resolver}
+					gid := quoteTestGroupID
+					apiKey := &APIKey{ID: 1, GroupID: &gid, Group: quoteTestGroupOn(platform, rate)}
+
+					quote, err := f.quoter.Quote(ctx, QuoteRequest{
+						Model: model, GroupID: quoteTestGroupID, ServiceTier: "priority", At: slot.at,
+					})
+					require.NoError(t, err)
+					if platform == PlatformGemini {
+						require.NotNil(t, quote.GatewayLongContext)
+						require.Equal(t, opts.LongContextThreshold, quote.GatewayLongContext.ThresholdTokens)
+						require.Equal(t, opts.LongContextMultiplier, quote.GatewayLongContext.ExtraMultiplier)
+					} else {
+						require.Nil(t, quote.GatewayLongContext)
+					}
+
+					for _, tokens := range usages {
+						got, err := quote.Cost(ctx, QuoteUsage{Tokens: tokens})
+						require.NoError(t, err)
+						want := gateway.calculateRecordUsageCost(ctx, &ForwardResult{
+							Model: model,
+							Usage: ClaudeUsage{
+								InputTokens:              tokens.InputTokens,
+								OutputTokens:             tokens.OutputTokens,
+								CacheCreationInputTokens: tokens.CacheCreationTokens,
+								CacheReadInputTokens:     tokens.CacheReadTokens,
+							},
+						}, apiKey, model, rate, 1.0, opts, slot.at)
+						require.NotNil(t, want)
+						require.Equal(t, *want, *got)
+					}
+				})
+			}
+		}
+	}
+}
+
 // 渠道定价命中时，任何平台都走 Unified；但只有 OpenAI 网关（openai / grok 分组）把 service tier 传进去。
 // 依据：openai_gateway_service.go calculateOpenAIRecordUsageTokenCost 传 ServiceTier；
 // gateway_service.go calculateTokenCost 的渠道价分支调用 CalculateCostUnified 时不传 ServiceTier。
