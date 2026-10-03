@@ -681,10 +681,18 @@ func TestBillingInflightWS_CanonicalBridgeAuthRefusalReleasesItsTurn(t *testing.
 			f := newWSInflightFixture(t, "bridge", service.BillingModelSourceUpstream, map[string]float64{"gpt-5.4": .5})
 			f.addAccount(t)
 			conn := f.dial(t)
-			wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","generate":false,"input":[]}`)
+			// A local prewarm is excluded from the upstream ordinal. Finish
+			// one actual healthy turn to exercise a terminal turn-two refusal.
+			wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","input":"healthy first upstream turn"}`)
+			healthy := f.provider.next(t)
+			require.InDelta(t, .5, f.held(t), 1e-9)
+			close(healthy.release)
 			wsInflightReadCompleted(t, conn)
-			require.Zero(t, f.held(t))
-			require.EqualValues(t, 0, f.provider.calls.Load())
+			f.waitUsage(t, 1)
+			require.InDelta(t, .25, f.wallet(t), 1e-9)
+			_, err := integrationDB.Exec(`UPDATE users SET balance=balance+0.5 WHERE id=$1`, f.userID)
+			require.NoError(t, err)
+			require.NoError(t, f.billing.InvalidateUserBalance(context.Background(), f.userID))
 			f.provider.fault.Store(failure)
 			wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","input":"rejected authentication"}`)
 			first := f.provider.next(t)
@@ -702,10 +710,10 @@ func TestBillingInflightWS_CanonicalBridgeAuthRefusalReleasesItsTurn(t *testing.
 			}
 			require.Eventually(t, func() bool { return f.held(t) == 0 }, 5*time.Second, 20*time.Millisecond, "complete canonical authentication rejection must release this WS turn lease")
 			require.InDelta(t, .75, f.wallet(t), 1e-9)
-			require.Zero(t, f.billingRepo.calls.Load())
+			require.EqualValues(t, 1, f.billingRepo.calls.Load(), "rejected turn must not add a billing command")
 			var logs int
 			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&logs))
-			require.Zero(t, logs)
+			require.Equal(t, 1, logs, "only the preceding successful turn has usage")
 			f.provider.fault.Store("")
 			done := make(chan *httptest.ResponseRecorder, 1)
 			go func() {
@@ -725,7 +733,7 @@ func TestBillingInflightWS_CanonicalBridgeAuthRefusalReleasesItsTurn(t *testing.
 			case <-time.After(5 * time.Second):
 				t.Fatal("independent HTTP request did not finish")
 			}
-			f.waitUsage(t, 1)
+			f.waitUsage(t, 2)
 			require.InDelta(t, .25, f.wallet(t), 1e-9)
 		})
 	}
