@@ -20,6 +20,7 @@ import (
 // This converts Responses API requests to Anthropic format, forwards to Anthropic
 // upstream, and converts responses back to Responses format.
 func (h *GatewayHandler) Responses(c *gin.Context) {
+	defer finishBillingInflightHTTP(c)
 	streamStarted := false
 
 	requestStart := time.Now()
@@ -222,6 +223,10 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if channelMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
+		if !reserveBillingInflightHTTP(c, h.gatewayService, service.BillingInflightRequest{APIKey: apiKey, Account: account, Model: reqModel, Body: forwardBody, ChannelUsageFields: channelMapping.ToUsageFields(reqModel, "")}, accountReleaseFunc, func(status int, code, message string) { h.responsesErrorResponse(c, status, code, message) }) {
+			return
+		}
+		requestCtx = billingInflightForwardContext(c, requestCtx)
 		result, err := h.gatewayService.ForwardAsResponses(requestCtx, c, account, forwardBody, parsedReq)
 
 		if accountReleaseFunc != nil {
@@ -231,6 +236,9 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
+				if result == nil && service.IsBillingInflightNoChargeError(err) && c.Writer.Size() == writerSizeBeforeForward {
+					service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+				}
 				// Can't failover if streaming content already sent
 				if c.Writer.Size() != writerSizeBeforeForward {
 					h.handleResponsesFailoverExhausted(c, failoverErr, true)

@@ -80,6 +80,9 @@ func (s *SubscriptionService) ApplyRenewFromOrder(ctx context.Context, subscript
 		}
 		userID = sub.UserID
 		groupID = sub.GroupID
+		if err := s.lockSubscriptionOwnerForUpdate(txCtx, userID); err != nil {
+			return fmt.Errorf("lock renewal user: %w", err)
+		}
 		if _, _, err := s.userSubRepo.GrantSubscriptionDays(txCtx, subscriptionID, addDays, now, now); err != nil {
 			return fmt.Errorf("grant renew days: %w", err)
 		}

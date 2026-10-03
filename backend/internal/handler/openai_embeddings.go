@@ -21,6 +21,7 @@ import (
 // Embeddings handles the OpenAI-compatible Embeddings API.
 // POST /v1/embeddings
 func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
+	defer finishBillingInflightHTTP(c)
 	streamStarted := false
 	requestStart := time.Now()
 
@@ -170,6 +171,9 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
 		writerSizeBeforeForward := c.Writer.Size()
+		if !reserveBillingInflightHTTP(c, h.gatewayService, service.BillingInflightRequest{APIKey: apiKey, Account: account, Model: reqModel, Body: forwardBody, Embeddings: true, ChannelUsageFields: channelMapping.ToUsageFields(reqModel, "")}, accountReleaseFunc, func(status int, code, message string) { h.errorResponse(c, status, code, message) }) {
+			return
+		}
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
@@ -190,6 +194,9 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
+				if result == nil && service.IsBillingInflightNoChargeError(err) && c.Writer.Size() == writerSizeBeforeForward {
+					service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+				}
 				if c.Writer.Size() != writerSizeBeforeForward {
 					h.handleFailoverExhausted(c, failoverErr, true)
 					return
