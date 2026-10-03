@@ -2093,7 +2093,6 @@ export interface KeyFallbackCnyPrice {
  * 参考模型每百万 Token 的价格。priced=false 时其余字段都不出现。
  * cny 是余额价口径（和价格页一致，已含分组倍率与用户专属倍率），是用户端人民币展示的唯一来源；
  * input/output_usd_per_mtok 是同一价格的美元口径，供全站切到美元或 free 站时使用。
- * 不要用 cny_official_rate（官方汇率口径）。
  */
 export interface KeyFallbackReferencePrice {
   priced: boolean
@@ -2102,7 +2101,6 @@ export interface KeyFallbackReferencePrice {
   official_input_usd_per_mtok?: number
   official_output_usd_per_mtok?: number
   cny?: KeyFallbackCnyPrice
-  cny_official_rate?: KeyFallbackCnyPrice
 }
 
 export interface KeyFallbackChainItem {
