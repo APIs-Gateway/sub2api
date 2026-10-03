@@ -197,16 +197,19 @@ var (
 		return 1
 	`)
 
-	// startupCleanupSlotScript 清理单个槽位 key 中非当前进程前缀的成员。
+	// startupCleanupSlotScript only removes prefixes with known expired heartbeats.
 	// 单 key 脚本保持 Redis Cluster 兼容；返回剩余成员数供 Go 侧维护索引。
 	startupCleanupSlotScript = redis.NewScript(`
 		local key = KEYS[1]
-		local activePrefix = ARGV[1]
-		local slotTTL = tonumber(ARGV[2])
+		local slotTTL = tonumber(ARGV[1])
 		local members = redis.call('ZRANGE', key, 0, -1)
 		for _, member in ipairs(members) do
-			if string.sub(member, 1, string.len(activePrefix)) ~= activePrefix then
-				redis.call('ZREM', key, member)
+			for i = 2, #ARGV do
+				local prefix = ARGV[i] .. '-'
+				if string.sub(member, 1, string.len(prefix)) == prefix then
+					redis.call('ZREM', key, member)
+					break
+				end
 			end
 		end
 		local remaining = redis.call('ZCARD', key)
@@ -672,17 +675,26 @@ func (c *concurrencyCache) CleanupStaleProcessSlots(ctx context.Context, activeR
 	if activeRequestPrefix == "" {
 		return nil
 	}
+	stalePrefixes, err := c.staleProcessPrefixes(ctx, activeRequestPrefix)
+	if err != nil {
+		return err
+	}
 
-	if err := c.cleanupStaleProcessSlotsForIndex(ctx, accountActiveIndex, activeRequestPrefix); err != nil {
+	if err := c.cleanupStaleProcessSlotsForIndex(ctx, accountActiveIndex, stalePrefixes); err != nil {
 		return err
 	}
-	if err := c.cleanupStaleProcessSlotsForIndex(ctx, userActiveIndex, activeRequestPrefix); err != nil {
+	if err := c.cleanupStaleProcessSlotsForIndex(ctx, userActiveIndex, stalePrefixes); err != nil {
 		return err
 	}
-	return c.cleanupStaleProcessSlotsForIndex(ctx, apiKeyActiveIndex, activeRequestPrefix)
+	return c.cleanupStaleProcessSlotsForIndex(ctx, apiKeyActiveIndex, stalePrefixes)
 }
 
-func (c *concurrencyCache) cleanupStaleProcessSlotsForIndex(ctx context.Context, spec activeIndexSpec, activePrefix string) error {
+func (c *concurrencyCache) cleanupStaleProcessSlotsForIndex(ctx context.Context, spec activeIndexSpec, stalePrefixes []string) error {
+	args := make([]any, 0, 1+len(stalePrefixes))
+	args = append(args, c.slotTTLSeconds)
+	for _, prefix := range stalePrefixes {
+		args = append(args, prefix)
+	}
 	members, err := c.rdb.ZRange(ctx, spec.indexKey, 0, -1).Result()
 	if err != nil {
 		return fmt.Errorf("read active index %s: %w", spec.indexKey, err)
@@ -693,14 +705,11 @@ func (c *concurrencyCache) cleanupStaleProcessSlotsForIndex(ctx context.Context,
 			_ = c.rdb.ZRem(ctx, spec.indexKey, member).Err()
 			continue
 		}
-		if _, err := startupCleanupSlotScript.Run(ctx, c.rdb, []string{spec.slotKey(id)}, activePrefix, c.slotTTLSeconds).Result(); err != nil {
+		if _, err := startupCleanupSlotScript.Run(ctx, c.rdb, []string{spec.slotKey(id)}, args...).Result(); err != nil {
 			return fmt.Errorf("cleanup stale slot %s: %w", spec.slotKey(id), err)
 		}
-		if spec.waitKey != nil {
-			if err := c.rdb.Del(ctx, spec.waitKey(id)).Err(); err != nil {
-				return fmt.Errorf("delete stale wait key %s: %w", spec.waitKey(id), err)
-			}
-		}
+		// Wait counters have no process ownership. A peer may only be waiting
+		// here, or enqueue after the slot scan. Preserve them for their TTL.
 		c.refreshActiveIndex(ctx, spec, id)
 	}
 	return nil
