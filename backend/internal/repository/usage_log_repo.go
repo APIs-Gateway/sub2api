@@ -4163,6 +4163,11 @@ func (r *usageLogRepository) hydrateUsageLogAssociations(ctx context.Context, lo
 				logs[i].Group = group
 			}
 		}
+		if logs[i].ServedGroupID != nil {
+			if group, ok := groups[*logs[i].ServedGroupID]; ok {
+				logs[i].ServedGroup = group
+			}
+		}
 		if logs[i].SubscriptionID != nil {
 			if sub, ok := subs[*logs[i].SubscriptionID]; ok {
 				logs[i].Subscription = sub
@@ -4195,6 +4200,9 @@ func collectUsageLogIDs(logs []service.UsageLog) usageLogIDs {
 		accountIDs[logs[i].AccountID] = struct{}{}
 		if logs[i].GroupID != nil {
 			groupIDs[*logs[i].GroupID] = struct{}{}
+		}
+		if logs[i].ServedGroupID != nil {
+			groupIDs[*logs[i].ServedGroupID] = struct{}{}
 		}
 		if logs[i].SubscriptionID != nil {
 			subscriptionIDs[*logs[i].SubscriptionID] = struct{}{}

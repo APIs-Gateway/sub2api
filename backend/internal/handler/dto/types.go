@@ -515,6 +515,7 @@ type UsageLog struct {
 	User         *User             `json:"user,omitempty"`
 	APIKey       *APIKey           `json:"api_key,omitempty"`
 	Group        *Group            `json:"group,omitempty"`
+	ServedGroup  *Group            `json:"served_group,omitempty"` // 用户端仅当来源是用户链时才有值
 	Subscription *UserSubscription `json:"subscription,omitempty"`
 }
 

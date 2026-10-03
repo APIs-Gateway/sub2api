@@ -79,6 +79,11 @@ func RegisterUserRoutes(
 			keys.POST("", h.APIKey.Create)
 			keys.PUT("/:id", h.APIKey.Update)
 			keys.DELETE("/:id", h.APIKey.Delete)
+
+			// Key 级分组回退链（用户端；归属校验在 handler/service，别人的 Key 返回 404）
+			keys.GET("/fallback-chains", h.APIKeyFallback.ListChains)
+			keys.GET("/:id/fallback-chain", h.APIKeyFallback.GetChain)
+			keys.PUT("/:id/fallback-chain", h.APIKeyFallback.ReplaceChain)
 		}
 
 		// 用户可用分组（非管理员接口）

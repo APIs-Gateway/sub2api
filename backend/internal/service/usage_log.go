@@ -194,6 +194,7 @@ type UsageLog struct {
 	APIKey       *APIKey
 	Account      *Account
 	Group        *Group
+	ServedGroup  *Group // ServedGroupID 对应的分组，仅在读取时由 hydrateUsageLogAssociations 填充
 	Subscription *UserSubscription
 }
 

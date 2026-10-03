@@ -49,6 +49,7 @@ func ProvideAdminHandlers(
 	pricingQuoteHandler *admin.PricingQuoteHandler,
 	adminTokenHandler *admin.AdminTokenHandler,
 	auditLogHandler *admin.AuditLogHandler,
+	apiKeyFallbackHandler *admin.APIKeyFallbackHandler,
 ) *AdminHandlers {
 	if accountHandler != nil {
 		accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
@@ -91,6 +92,7 @@ func ProvideAdminHandlers(
 		PricingQuote:           pricingQuoteHandler,
 		AdminToken:             adminTokenHandler,
 		AuditLog:               auditLogHandler,
+		APIKeyFallback:         apiKeyFallbackHandler,
 	}
 }
 
@@ -195,6 +197,7 @@ func ProvideHandlers(
 	checkinHandler *CheckinHandler,
 	pointsHandler *PointsHandler,
 	legacyInviteHandler *LegacyInviteHandler,
+	apiKeyFallbackHandler *APIKeyFallbackHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 ) *Handlers {
@@ -219,6 +222,7 @@ func ProvideHandlers(
 		Checkin:          checkinHandler,
 		Points:           pointsHandler,
 		LegacyInvite:     legacyInviteHandler,
+		APIKeyFallback:   apiKeyFallbackHandler,
 	}
 }
 
@@ -244,6 +248,7 @@ var ProviderSet = wire.NewSet(
 	NewCheckinHandler,
 	NewPointsHandler,
 	NewLegacyInviteHandler,
+	NewAPIKeyFallbackHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,
@@ -282,6 +287,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewPricingQuoteHandler,
 	admin.NewAdminTokenHandler,
 	admin.NewAuditLogHandler,
+	admin.NewAPIKeyFallbackHandler,
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,

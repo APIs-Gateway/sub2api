@@ -595,6 +595,8 @@ type adminServiceImpl struct {
 	// 分组 platform 变更后用来失效渠道缓存；可为 nil（缓存会在 TTL 到期后自然重建）。
 	// 构造完成后通过 AttachChannelCacheInvalidator 旁路注入，见下方注释。
 	channelCacheInvalidator ChannelCacheInvalidator
+	// Key 级分组回退链联动（管理员改 Key 主分组时）；可为 nil。
+	groupRouteHooks groupRouteKeyHooks
 }
 
 // ChannelCacheInvalidator 失效渠道缓存。
@@ -645,6 +647,7 @@ func NewAdminService(
 	userSubRepo UserSubscriptionRepository,
 	privacyClientFactory PrivacyClientFactory,
 	runtimeBlocker AccountRuntimeBlocker,
+	groupRouteHooks *GroupRouteKeyHooks,
 ) AdminService {
 	s := &adminServiceImpl{
 		userRepo:             userRepo,
@@ -665,6 +668,9 @@ func NewAdminService(
 		userSubRepo:          userSubRepo,
 		privacyClientFactory: privacyClientFactory,
 		runtimeBlocker:       runtimeBlocker,
+	}
+	if groupRouteHooks != nil {
+		s.groupRouteHooks = groupRouteHooks
 	}
 	return s
 }
@@ -2629,6 +2635,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 	}
 
 	result := &AdminUpdateAPIKeyGroupIDResult{}
+	previousGroupID := apiKey.GroupID
 
 	if *groupID == 0 {
 		// 0 表示解绑分组（不修改 user_allowed_groups，避免影响用户其他 Key）
@@ -2685,6 +2692,9 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 			if s.authCacheInvalidator != nil {
 				s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 			}
+			if previousGroupID == nil || *previousGroupID != gid {
+				notifyPrimaryGroupChanged(ctx, s.groupRouteHooks, apiKey, group)
+			}
 
 			result.APIKey = apiKey
 			return result, nil
@@ -2699,6 +2709,11 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 	// 失效认证缓存
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+	}
+	// 绑定到新的主分组（不含解绑）：联动回退链。解绑时链项原样保留（运行时对未绑分组的 Key 不启用链，
+	// 重新绑定时再由这里按新主分组清理重复项 / 换平台清空用户链）。
+	if apiKey.Group != nil && (previousGroupID == nil || *previousGroupID != apiKey.Group.ID) {
+		notifyPrimaryGroupChanged(ctx, s.groupRouteHooks, apiKey, apiKey.Group)
 	}
 
 	result.APIKey = apiKey

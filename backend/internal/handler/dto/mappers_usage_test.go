@@ -296,3 +296,43 @@ func TestUsageLogFromService_ServedGroupHiddenUnlessUserChain(t *testing.T) {
 		})
 	}
 }
+
+func TestUsageLogFromService_ServedGroupObjectFollowsSameVisibilityRule(t *testing.T) {
+	t.Parallel()
+
+	served := int64(21)
+	i16 := func(v int16) *int16 { return &v }
+	group := &service.Group{ID: 21, Name: "fallback-group", Platform: "openai", Status: "active"}
+
+	// 用户链：用户端与管理端都带 served_group 对象。
+	userChain := &service.UsageLog{RequestID: "req", Model: "gpt-5", ServedGroupID: &served, ServedRouteSource: i16(1), ServedGroup: group}
+	userDTO := UsageLogFromService(userChain)
+	require.NotNil(t, userDTO.ServedGroup)
+	require.Equal(t, "fallback-group", userDTO.ServedGroup.Name)
+	userJSON, err := json.Marshal(userDTO)
+	require.NoError(t, err)
+	require.Contains(t, string(userJSON), `"served_group":{`)
+
+	// 管理员隐藏链：用户端 JSON 里不得出现 served_group 的任何痕迹（包括分组名）；管理端始终带。
+	hidden := &service.UsageLog{RequestID: "req", Model: "gpt-5", ServedGroupID: &served, ServedRouteSource: i16(2), ServedGroup: group}
+	hiddenUser := UsageLogFromService(hidden)
+	require.Nil(t, hiddenUser.ServedGroup)
+	hiddenJSON, err := json.Marshal(hiddenUser)
+	require.NoError(t, err)
+	require.NotContains(t, string(hiddenJSON), "served_group")
+	require.NotContains(t, string(hiddenJSON), "fallback-group")
+	hiddenAdmin := UsageLogFromServiceAdmin(hidden)
+	require.NotNil(t, hiddenAdmin.ServedGroup)
+	require.Equal(t, "fallback-group", hiddenAdmin.ServedGroup.Name)
+	require.Equal(t, i16(2), hiddenAdmin.ServedRouteSource)
+
+	// 没有回退：两端都没有 served_group。
+	plain := &service.UsageLog{RequestID: "req", Model: "gpt-5"}
+	require.Nil(t, UsageLogFromService(plain).ServedGroup)
+	require.Nil(t, UsageLogFromServiceAdmin(plain).ServedGroup)
+
+	// 来源是用户链但 served 分组没加载出来（例如分组刚被删除）：不报错，字段缺省。
+	unloaded := &service.UsageLog{RequestID: "req", Model: "gpt-5", ServedGroupID: &served, ServedRouteSource: i16(1)}
+	require.Nil(t, UsageLogFromService(unloaded).ServedGroup)
+	require.Equal(t, &served, UsageLogFromService(unloaded).ServedGroupID)
+}

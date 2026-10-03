@@ -593,6 +593,14 @@ func userVisibleServedGroupID(l *service.UsageLog) *int64 {
 	return l.ServedGroupID
 }
 
+// userVisibleServedGroup 与 userVisibleServedGroupID 同一条件：只有来源为用户链时才返回 served 分组对象。
+func userVisibleServedGroup(l *service.UsageLog) *Group {
+	if userVisibleServedGroupID(l) == nil {
+		return nil
+	}
+	return GroupFromServiceShallow(l.ServedGroup)
+}
+
 func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 	// 普通用户 DTO：严禁包含管理员字段（例如 account_rate_multiplier、ip_address、account）。
 	requestType := l.EffectiveRequestType()
@@ -652,6 +660,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		User:                  UserFromServiceShallow(l.User),
 		APIKey:                APIKeyFromService(l.APIKey),
 		Group:                 GroupFromServiceShallow(l.Group),
+		ServedGroup:           userVisibleServedGroup(l),
 		Subscription:          UserSubscriptionFromService(l.Subscription),
 	}
 }
@@ -675,6 +684,7 @@ func UsageLogFromServiceAdmin(l *service.UsageLog) *AdminUsageLog {
 	base := usageLogFromServiceUser(l)
 	// 管理端始终返回真实的 served 分组，不受用户端「隐藏链不外露」过滤影响。
 	base.ServedGroupID = l.ServedGroupID
+	base.ServedGroup = GroupFromServiceShallow(l.ServedGroup)
 	return &AdminUsageLog{
 		UsageLog:              base,
 		ServedRouteSource:     l.ServedRouteSource,
