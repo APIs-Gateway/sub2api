@@ -237,6 +237,8 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
 describe('EditAccountModal model preview', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    syncSavedMock.mockReset()
+    syncPreviewMock.mockReset()
     loginState.authSessionVersion = invalidateAuthSession()
     loginState.user = { id: 1 }
   })
@@ -297,6 +299,7 @@ describe('EditAccountModal model preview', () => {
         syncPreviewMock.mockReturnValueOnce(old.promise).mockReturnValueOnce(latest.promise)
         const wrapper = mountModal(apiKeyAG())
         await button(wrapper).trigger('click')
+        expect(syncPreviewMock).toHaveBeenCalledTimes(1)
         if (change === 'account') await wrapper.setProps({ account: { ...apiKeyAG(), id: 4 } })
         if (change === 'close/reopen') { await wrapper.setProps({ show: false }); await wrapper.setProps({ show: true }) }
         if (change === 'close event') await wrapper.findAll('button').find(item => item.text() === 'common.cancel')!.trigger('click')
@@ -305,7 +308,8 @@ describe('EditAccountModal model preview', () => {
         if (change === 'proxy') wrapper.findComponent({ name: 'ProxySelector' }).vm.$emit('update:modelValue', 8)
         if (change === 'login session') loginState.authSessionVersion = invalidateAuthSession()
         if (change === 'unmount') wrapper.unmount()
-        else await button(wrapper).trigger('click')
+        else { await wrapper.vm.$nextTick(); await button(wrapper).trigger('click') }
+        if (change !== 'unmount') expect(syncPreviewMock).toHaveBeenCalledTimes(2)
         if (result === 'success') old.resolve({ models: ['stale-ag'] })
         else old.reject(new Error('stale failure'))
         await flushPromises()

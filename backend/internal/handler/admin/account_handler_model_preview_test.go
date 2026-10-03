@@ -19,6 +19,13 @@ type previewAdminService struct {
 	*availableModelsAdminService
 }
 
+func (s *previewAdminService) GetAccount(ctx context.Context, id int64) (*service.Account, error) {
+	if id != s.account.ID {
+		return nil, errors.New("unknown account")
+	}
+	return s.availableModelsAdminService.GetAccount(ctx, id)
+}
+
 func (s *previewAdminService) GetProxy(_ context.Context, id int64) (*service.Proxy, error) {
 	if id == 7 || id == 8 {
 		return &service.Proxy{ID: id, Protocol: "http", Host: "proxy.example", Port: int(8000 + id)}, nil
@@ -80,7 +87,7 @@ func TestAccountHandlerModelPreviewDraft(t *testing.T) {
 			require.Nil(t, upstream.profile, "API-key TLS fingerprint eligibility must stay unchanged")
 			if strings.Contains(tc.payload, "account_id") {
 				require.Equal(t, 3, upstream.concurrency)
-				require.Equal(t, "kept", upstream.req.Header.Get("X-Preview"))
+				require.Equal(t, []string{"kept"}, upstream.req.Header["x-preview"])
 			}
 			after, err := json.Marshal(svc.account)
 			require.NoError(t, err)
@@ -117,4 +124,46 @@ func TestAccountHandlerModelPreviewRejectsUnsafeFallback(t *testing.T) {
 			require.NotContains(t, rec.Body.String(), "saved-secret")
 		})
 	}
+}
+
+func TestAccountHandlerModelPreviewPreservesPlatformAuthentication(t *testing.T) {
+	for _, tc := range []struct {
+		platform, baseURL, scheme, header, value, absent string
+	}{
+		{"anthropic", "https://saved.example", "authorization_bearer", "Authorization", "Bearer saved-secret", "X-Api-Key"},
+		{"anthropic", "https://saved.example", "x_api_key", "X-Api-Key", "saved-secret", "Authorization"},
+		{"gemini", "https://saved.example", "", "X-Goog-Api-Key", "saved-secret", "Authorization"},
+		{"grok", "https://saved.example", "", "Authorization", "Bearer saved-secret", "X-Api-Key"},
+		{"antigravity", "https://saved.example/antigravity", "", "X-Api-Key", "saved-secret", "Authorization"},
+	} {
+		t.Run(tc.platform+tc.scheme, func(t *testing.T) {
+			svc := &previewAdminService{&availableModelsAdminService{stubAdminService: newStubAdminService(), account: service.Account{
+				ID: 42, Platform: tc.platform, Type: "apikey",
+				Credentials: map[string]any{"api_key": "saved-secret", "base_url": tc.baseURL},
+				Extra:       map[string]any{"anthropic_apikey_auth_scheme": tc.scheme},
+			}}}
+			upstream := &previewUpstream{}
+			router := setupSyncUpstreamModelsRouter(svc, upstream)
+			rec := httptest.NewRecorder()
+			payload := `{"account_id":42,"platform":"` + tc.platform + `","type":"apikey","api_key":""}`
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/models/sync-upstream-preview", strings.NewReader(payload)))
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			require.Equal(t, tc.value, upstream.req.Header.Get(tc.header))
+			require.Empty(t, upstream.req.Header.Get(tc.absent))
+			require.NotContains(t, rec.Body.String(), "saved-secret")
+		})
+	}
+}
+
+func TestAccountHandlerModelPreviewUpstreamFailureIsSafe(t *testing.T) {
+	svc := &previewAdminService{&availableModelsAdminService{stubAdminService: newStubAdminService(), account: service.Account{
+		ID: 42, Platform: "openai", Type: "apikey", Credentials: map[string]any{"api_key": "saved-secret", "base_url": "https://saved.example"},
+	}}}
+	upstream := &previewUpstream{err: errors.New("transport failed: saved-secret")}
+	router := setupSyncUpstreamModelsRouter(svc, upstream)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/models/sync-upstream-preview", strings.NewReader(`{"account_id":42,"platform":"openai","type":"apikey"}`)))
+	require.Equal(t, http.StatusBadGateway, rec.Code, rec.Body.String())
+	require.NotContains(t, rec.Body.String(), "saved-secret")
+	require.NotContains(t, rec.Body.String(), "transport failed")
 }

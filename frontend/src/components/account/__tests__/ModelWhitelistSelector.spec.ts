@@ -46,6 +46,8 @@ const deferred = () => {
 describe('ModelWhitelistSelector draft preview lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.syncUpstreamModels.mockReset()
+    mocks.syncUpstreamModelsPreview.mockReset()
     authState.user = { id: 1 }
     authState.authSessionVersion = invalidateAuthSession()
   })
@@ -69,6 +71,7 @@ describe('ModelWhitelistSelector draft preview lifecycle', () => {
       const credentials = { account_id: 42, platform: 'openai', type: 'apikey', base_url: 'https://old.example', api_key: '', proxy_id: 7 }
       const wrapper = mountSelector({ accountId: 42, syncCredentials: credentials })
       await syncButton(wrapper).trigger('click')
+      expect(mocks.syncUpstreamModelsPreview).toHaveBeenCalledTimes(1)
       await wrapper.setProps({ syncCredentials: { ...credentials, [field]: field === 'proxy_id' ? 8 : 'new-value' } })
       await syncButton(wrapper).trigger('click')
       old.resolve({ models: ['stale'] })
@@ -90,6 +93,7 @@ describe('ModelWhitelistSelector draft preview lifecycle', () => {
         mocks.syncUpstreamModels.mockReturnValueOnce(pending.promise).mockReturnValueOnce(latest.promise)
         const wrapper = mountSelector({ accountId: 42, active: true, syncContext: 1 })
         await syncButton(wrapper).trigger('click')
+        expect(mocks.syncUpstreamModels).toHaveBeenCalledTimes(1)
         if (change === 'account') await wrapper.setProps({ accountId: 43 })
         if (change === 'close/reopen') {
           await wrapper.setProps({ active: false, syncContext: 2 })
@@ -97,7 +101,8 @@ describe('ModelWhitelistSelector draft preview lifecycle', () => {
         }
         if (change === 'unmount') wrapper.unmount()
         if (change === 'login session') authState.authSessionVersion = invalidateAuthSession()
-        if (change !== 'unmount') await syncButton(wrapper).trigger('click')
+        if (change !== 'unmount') { await wrapper.vm.$nextTick(); await syncButton(wrapper).trigger('click') }
+        if (change !== 'unmount') expect(mocks.syncUpstreamModels).toHaveBeenCalledTimes(2)
         if (result === 'success') pending.resolve({ models: ['stale'] })
         else pending.reject(new Error('stale failure'))
         await flushPromises()
@@ -145,7 +150,7 @@ describe('ModelWhitelistSelector draft preview lifecycle', () => {
 const openaiModel = 'gpt-6'
 
 describe('ModelWhitelistSelector mapping conflicts', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => { vi.clearAllMocks(); mocks.syncUpstreamModels.mockReset(); mocks.syncUpstreamModelsPreview.mockReset() })
 
   it('rejects a conflicting custom model and explains the mapping target', async () => {
     const wrapper = mountSelector({ modelMappings: [{ from: 'gpt-latest', to: 'deepseek-chat' }] })

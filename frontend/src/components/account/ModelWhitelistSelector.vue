@@ -141,7 +141,7 @@ import { allModels, findModelMappingConflict, getModelsByPlatform } from '@/comp
 
 const { t } = useI18n()
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: string[]
   modelMappings?: { from: string; to: string }[]
   platform?: string
@@ -150,7 +150,7 @@ const props = defineProps<{
   syncCredentials?: SyncUpstreamPreviewParams
   syncContext?: number
   active?: boolean
-}>()
+}>(), { active: true })
 
 const emit = defineEmits<{
   'update:modelValue': [value: string[]]
