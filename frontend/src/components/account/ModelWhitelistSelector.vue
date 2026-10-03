@@ -134,25 +134,23 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { accountsAPI } from '@/api/admin/accounts'
 import type { SyncUpstreamPreviewParams } from '@/api/admin/accounts'
+import { useModelSyncRequest } from '@/composables/useModelSyncRequest'
 import ModelIcon from '@/components/common/ModelIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { allModels, findModelMappingConflict, getModelsByPlatform } from '@/composables/useModelWhitelist'
 
 const { t } = useI18n()
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: string[]
   modelMappings?: { from: string; to: string }[]
   platform?: string
   platforms?: string[]
   accountId?: number
-  syncCredentials?: {
-    platform: string
-    type: string
-    base_url?: string
-    api_key: string
-  }
-}>()
+  syncCredentials?: SyncUpstreamPreviewParams
+  syncContext?: number
+  active?: boolean
+}>(), { active: true })
 
 const emit = defineEmits<{
   'update:modelValue': [value: string[]]
@@ -164,7 +162,9 @@ const showDropdown = ref(false)
 const searchQuery = ref('')
 const customModel = ref('')
 const isComposing = ref(false)
-const isSyncingUpstream = ref(false)
+const { busy: isSyncingUpstream, begin: beginSync } = useModelSyncRequest(() =>
+  JSON.stringify([props.active, props.syncContext, props.accountId, props.platform, props.platforms, props.syncCredentials])
+)
 const normalizedPlatforms = computed(() => {
   const rawPlatforms =
     props.platforms && props.platforms.length > 0
@@ -286,20 +286,23 @@ const fillRelated = () => {
 }
 
 const syncUpstreamModels = async () => {
-  if (isSyncingUpstream.value) return
+  if (props.active === false) return
   if (!props.accountId && !props.syncCredentials) return
-
-  isSyncingUpstream.value = true
+  const request = beginSync()
+  if (!request) return
+  const credentials = props.syncCredentials ? { ...props.syncCredentials } : undefined
+  const accountId = props.accountId
   try {
     let result
-    if (props.accountId) {
-      result = await accountsAPI.syncUpstreamModels(props.accountId)
-    } else if (props.syncCredentials) {
-      result = await accountsAPI.syncUpstreamModelsPreview(props.syncCredentials as SyncUpstreamPreviewParams)
+    if (credentials) {
+      result = await accountsAPI.syncUpstreamModelsPreview(credentials)
+    } else if (accountId) {
+      result = await accountsAPI.syncUpstreamModels(accountId)
     } else {
       return
     }
 
+    if (!request.current()) return
     const upstreamModels = result.models.map(model => model.trim()).filter(Boolean)
     if (upstreamModels.length === 0) {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsEmpty'))
@@ -329,10 +332,11 @@ const syncUpstreamModels = async () => {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
     }
   } catch (error) {
+    if (!request.current()) return
     const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
     appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
   } finally {
-    isSyncingUpstream.value = false
+    request.finish()
   }
 }
 

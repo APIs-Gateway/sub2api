@@ -541,14 +541,16 @@ export async function syncUpstreamModels(id: number): Promise<SyncUpstreamModels
 }
 
 export interface SyncUpstreamPreviewParams {
+  account_id?: number
   platform: string
   type: string
   base_url?: string
   api_key: string
+  proxy_id?: number
 }
 
 /**
- * Preview upstream models without a saved account (create-flow)
+ * Preview a draft connection, optionally keeping a saved account's secret.
  * @param params - Connection credentials
  * @returns List of model IDs returned by the upstream
  */

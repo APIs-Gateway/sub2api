@@ -3583,7 +3583,8 @@ const syncPreviewCredentials = computed(() => {
     platform: form.platform,
     type: form.type,
     base_url: apiKeyBaseUrl.value || undefined,
-    api_key: apiKeyValue.value
+    api_key: apiKeyValue.value,
+    proxy_id: form.proxy_id ?? 0
   }
 })
 
