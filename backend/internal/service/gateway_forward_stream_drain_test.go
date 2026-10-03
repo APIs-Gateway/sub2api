@@ -443,11 +443,11 @@ func TestGatewayForwardStreamDrain_FinalizeWriteFailureSuppressesRemainingOutput
 	gin.SetMode(gin.TestMode)
 	for name, handle := range gatewayForwardDrainHandlers() {
 		t.Run(name, func(t *testing.T) {
-			// 保留原有 EOF finalize 语义，但必须复用相同的写失败保护。
+			// 有效 message_stop 后 finalize 必须复用相同的写失败保护。
 			// 两种协议都先写一个初始 chunk，再在 EOF 写 completion。
 			writer := &gatewayForwardDrainFailWriter{ResponseRecorder: httptest.NewRecorder(), failAt: 2, failedCh: make(chan struct{})}
 			c, _ := gin.CreateTestContext(writer)
-			resp := &http.Response{Body: io.NopCloser(strings.NewReader(gatewayForwardDrainStart + gatewayForwardDrainDelta))}
+			resp := &http.Response{Body: io.NopCloser(strings.NewReader(gatewayForwardDrainStart + gatewayForwardDrainDelta + gatewayForwardDrainStop))}
 			result, err := runGatewayForwardDrainHandler(t, handle, &GatewayService{}, resp, c)
 			require.NoError(t, err)
 			require.True(t, writer.failed, "fixture must fail during final output")
@@ -555,6 +555,25 @@ func TestGatewayForwardStreamDrain_ErrorEventStopsDrain(t *testing.T) {
 			require.Zero(t, writer.writesAfterFailure)
 			require.Zero(t, writer.flushAfterFailure)
 			requireGatewayForwardDrainBodyStopped(t, body)
+		})
+	}
+}
+
+func TestGatewayForwardStreamDrain_LateTruncatedStopReason(t *testing.T) {
+	for name, handle := range gatewayForwardDrainHandlers() {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			late := "event: message_delta\ndata: " + `{"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":29}}` + "\n\n"
+			result, err := runGatewayForwardDrainHandler(t, handle, &GatewayService{}, &http.Response{Body: io.NopCloser(strings.NewReader(gatewayForwardDrainStart + gatewayForwardDrainStop + late))}, c)
+			require.NoError(t, err)
+			require.Equal(t, 29, result.Usage.OutputTokens)
+			if name == "responses" {
+				require.Contains(t, rec.Body.String(), `"status":"incomplete"`)
+				require.Contains(t, rec.Body.String(), `"reason":"max_output_tokens"`)
+			} else {
+				require.Contains(t, rec.Body.String(), `"finish_reason":"length"`)
+			}
 		})
 	}
 }

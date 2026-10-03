@@ -453,6 +453,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		// c 可能持有请求侧注入的 ToolNameRewrite；无则仅做静态前缀还原。
 		out := string(reverseToolNamesIfPresent(c, []byte(sse)))
 		if _, err := fmt.Fprint(c.Writer, out); err != nil {
+			MarkResponseCommitted(c)
 			clientDisconnected = true
 			compatDrain.start()
 			return true // client disconnected
@@ -478,7 +479,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		}
 
 		// Extract usage from message_delta
-		if event.Type == "message_delta" && event.Usage != nil {
+		if event.Usage != nil {
 			mergeAnthropicUsage(&usage, *event.Usage)
 			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "usage"), &usage)
 		}
@@ -486,6 +487,9 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		if event.Type == "message_start" && event.Message != nil {
 			mergeAnthropicUsage(&usage, event.Message.Usage)
 			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "message.usage"), &usage)
+		}
+		if event.Type == "message_delta" && event.Delta != nil && event.Delta.StopReason != "" {
+			anthState.StopReason = event.Delta.StopReason
 		}
 		if event.Type == "message_stop" {
 			sawMessageStop = true
@@ -610,6 +614,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	// Write [DONE] marker
 	if !clientDisconnected {
 		if _, err := fmt.Fprint(c.Writer, "data: [DONE]\n\n"); err != nil {
+			MarkResponseCommitted(c)
 			clientDisconnected = true
 		}
 		if !clientDisconnected {

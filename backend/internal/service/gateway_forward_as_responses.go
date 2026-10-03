@@ -550,7 +550,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		}
 
 		// Extract usage from message_delta
-		if event.Type == "message_delta" && event.Usage != nil {
+		if event.Usage != nil {
 			mergeAnthropicUsage(&usage, *event.Usage)
 			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "usage"), &usage)
 		}
@@ -560,6 +560,9 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "message.usage"), &usage)
 		}
 
+		if event.Type == "message_delta" && event.Delta != nil && event.Delta.StopReason != "" {
+			state.StopReason = event.Delta.StopReason
+		}
 		if event.Type == "message_stop" {
 			sawMessageStop = true
 		}
@@ -600,6 +603,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			for _, restored := range payloads {
 				eventType := gjson.GetBytes(restored, "type").String()
 				if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, restored); err != nil {
+					MarkResponseCommitted(c)
 					logger.L().Info("forward_as_responses stream: client disconnected",
 						zap.String("request_id", requestID),
 					)
@@ -628,6 +632,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 				}
 				out := string(reverseToolNamesIfPresent(c, []byte(sse)))
 				if _, err := fmt.Fprint(c.Writer, out); err != nil {
+					MarkResponseCommitted(c)
 					clientDisconnected = true
 					break
 				}

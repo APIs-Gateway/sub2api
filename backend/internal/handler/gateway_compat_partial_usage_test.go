@@ -101,6 +101,7 @@ func TestGatewayCompatibleHandlersPreservePartialUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, endpoint := range []string{"chat/completions", "responses"} {
 		for _, ending := range []string{"complete", "truncated", "disconnected_truncated", "before_start", "failover",
+			"write_failed_late_error", "write_failed_pre_stop_error",
 			"buffered/complete", "buffered/truncated", "buffered/disconnected_truncated", "buffered/before_start", "buffered/failover"} {
 			t.Run(endpoint+"/"+ending, func(t *testing.T) {
 				clientStream := !strings.HasPrefix(ending, "buffered/")
@@ -119,6 +120,12 @@ func TestGatewayCompatibleHandlersPreservePartialUsage(t *testing.T) {
 					payload += "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 				case "before_start":
 					payload = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Unavailable\"}}\n\n"
+				}
+				if ending == "write_failed_late_error" {
+					payload += "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+				}
+				if strings.HasPrefix(ending, "write_failed_") {
+					payload += "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"fixture\"}}\n\n"
 				}
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
@@ -164,7 +171,13 @@ func TestGatewayCompatibleHandlersPreservePartialUsage(t *testing.T) {
 					body = fmt.Sprintf(`{"model":"claude-sonnet-4-5","input":"hello","stream":%t}`, clientStream)
 				}
 				recorder := httptest.NewRecorder()
-				c, _ := gin.CreateTestContext(recorder)
+				var writeFailed *compatLiveFailedWriter
+				var downstream http.ResponseWriter = recorder
+				if strings.HasPrefix(ending, "write_failed_") {
+					writeFailed = &compatLiveFailedWriter{ResponseRecorder: recorder}
+					downstream = writeFailed
+				}
+				c, _ := gin.CreateTestContext(downstream)
 				c.Request = httptest.NewRequest(http.MethodPost, "/v1/"+endpoint, strings.NewReader(body)).WithContext(context.WithValue(ctx, ctxkey.Group, group))
 				c.Request.Header.Set("Content-Type", "application/json")
 				c.Set(string(middleware.ContextKeyAPIKey), apiKey)
@@ -175,6 +188,13 @@ func TestGatewayCompatibleHandlersPreservePartialUsage(t *testing.T) {
 					h.ChatCompletions(c)
 				}
 				pool.Stop()
+				if writeFailed != nil {
+					require.NoError(t, ctx.Err(), "write failure fixture must leave request context live")
+					require.True(t, writeFailed.failed)
+					require.Zero(t, writeFailed.afterWrites)
+					require.Zero(t, writeFailed.afterFlushes)
+					require.NotContains(t, recorder.Body.String(), "[DONE]")
+				}
 				if ending == "failover" {
 					require.Equal(t, 2, upstream.calls, "unmetered pre-output failure must switch to a successful account")
 					require.NotEqual(t, upstream.accounts[0], upstream.accounts[1])
@@ -214,4 +234,26 @@ func TestGatewayCompatibleHandlersPreservePartialUsage(t *testing.T) {
 			})
 		}
 	}
+}
+
+type compatLiveFailedWriter struct {
+	*httptest.ResponseRecorder
+	failed       bool
+	afterWrites  int
+	afterFlushes int
+}
+
+func (w *compatLiveFailedWriter) Write(p []byte) (int, error) {
+	if w.failed {
+		w.afterWrites++
+		return 0, io.ErrClosedPipe
+	}
+	w.failed = true
+	return 0, io.ErrClosedPipe
+}
+func (w *compatLiveFailedWriter) Flush() {
+	if w.failed {
+		w.afterFlushes++
+	}
+	w.ResponseRecorder.Flush()
 }

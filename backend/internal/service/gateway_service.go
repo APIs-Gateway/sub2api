@@ -8797,6 +8797,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			// json.Marshal 不可能在已知 string-only 输入上失败，保守 fallback
 			body = []byte(fmt.Sprintf(`{"type":"error","error":{"type":%q,"message":%q}}`, reason, message))
 		}
+		MarkResponseCommitted(c)
 		if _, err := fmt.Fprintf(w, "event: error\ndata: %s\n\n", body); err != nil {
 			return false
 		}
@@ -9100,9 +9101,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				if err != nil {
 					var streamErr *sseStreamErrorEventError
 					if errors.As(err, &streamErr) {
-						streamErr.SafeToFailoverAfterWrite = !visibleOutput.visible && !clientDisconnected
+						streamErr.SafeToFailoverAfterWrite = !visibleOutput.visible && !clientDisconnected && !anthropicCompatClientGone(c)
 					}
-					if clientDisconnected {
+					if clientDisconnected || anthropicCompatClientGone(c) {
 						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, err
 					}
 					if visibleOutput.visible {
@@ -9124,6 +9125,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 
 				if usagePatch != nil {
 					mergeSSEUsagePatch(usage, usagePatch)
+				}
+				if anthropicCompatClientGone(c) {
+					clientDisconnected = true
 				}
 				if firstTokenMs == nil && visibleOutput.visible {
 					ms := int(time.Since(startTime).Milliseconds())
@@ -9149,6 +9153,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					}
 					restored := reverseToolNamesIfPresent(c, []byte(out))
 					if _, werr := w.Write(restored); werr != nil {
+						MarkResponseCommitted(c)
 						clientDisconnected = true
 						logger.LegacyPrintf("service.gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
 					} else {
@@ -9198,6 +9203,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
+			if anthropicCompatClientGone(c) {
+				clientDisconnected = true
+			}
 			if clientDisconnected {
 				continue
 			}
@@ -9297,7 +9305,7 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 		}
 		return patch
 
-	case "message_delta":
+	case "message_delta", "message_stop":
 		usageObj, _ := event["usage"].(map[string]any)
 		if len(usageObj) == 0 {
 			return nil

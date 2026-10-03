@@ -5,11 +5,15 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func visibleDrainEvent(kind, data string) string {
@@ -49,6 +53,8 @@ func TestGatewayVisibleDrain_ActualNativeAttempt(t *testing.T) {
 			upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"X-Request-Id": []string{"attempt-private"}, "Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(tc.body))}}
 			svc := newForwardPartialUsageServiceForTest(upstream)
 			svc.cfg.Gateway.MaxLineSize = 16 * 1024 * 1024
+			policyRepo := &compatProviderPolicyRepo{}
+			svc.rateLimitService = NewRateLimitService(policyRepo, nil, svc.cfg, nil, nil)
 			account := newAnthropicAPIKeyAccountForPartialUsageTest()
 			body := []byte(`{"model":"claude-3-5-sonnet-latest","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
 			result, err := svc.Forward(context.Background(), c, account, &ParsedRequest{Body: NewRequestBodyRef(body), Model: "claude-3-5-sonnet-latest", Stream: true})
@@ -59,6 +65,11 @@ func TestGatewayVisibleDrain_ActualNativeAttempt(t *testing.T) {
 			}
 			var retry *UpstreamFailoverError
 			require.Equal(t, tc.retry, errors.As(err, &retry))
+			if tc.name == "explicit_error_before_visible" {
+				require.Equal(t, []int64{account.ID}, policyRepo.overloaded)
+			} else {
+				require.Empty(t, policyRepo.overloaded)
+			}
 			if tc.retry {
 				require.Nil(t, result)
 				require.Empty(t, rec.Body.String())
@@ -74,6 +85,74 @@ func TestGatewayVisibleDrain_ActualNativeAttempt(t *testing.T) {
 					require.Equal(t, 1, strings.Count(rec.Body.String(), "event: error\n"))
 					require.Contains(t, rec.Body.String(), "overloaded_error")
 				}
+			}
+		})
+	}
+}
+
+type visibleDrainCancelWriter struct {
+	*httptest.ResponseRecorder
+	ctx          context.Context
+	cancel       context.CancelFunc
+	afterWrites  int
+	afterFlushes int
+}
+
+func (w *visibleDrainCancelWriter) Write(p []byte) (int, error) {
+	if w.ctx.Err() != nil {
+		w.afterWrites++
+	}
+	return w.ResponseRecorder.Write(p)
+}
+func (w *visibleDrainCancelWriter) Flush() {
+	if w.ctx.Err() != nil {
+		w.afterFlushes++
+	}
+	w.ResponseRecorder.Flush()
+	w.cancel()
+}
+func TestGatewayVisibleDrain_RealCancellationPreservesUsage(t *testing.T) {
+	for _, visible := range []bool{false, true} {
+		t.Run(fmt.Sprint(visible), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			writer := &visibleDrainCancelWriter{ResponseRecorder: httptest.NewRecorder(), ctx: ctx, cancel: cancel}
+			c, _ := gin.CreateTestContext(writer)
+			c.Request = httptest.NewRequest("POST", "/v1/messages", nil).WithContext(ctx)
+			reader, pipeWriter := io.Pipe()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				defer pipeWriter.Close()
+				prefix := visibleDrainEvent("message_start", `{"type":"message_start","message":{"usage":{"input_tokens":11}}}`)
+				if visible {
+					prefix += visibleDrainEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"answer"}}`)
+				}
+				_, _ = io.WriteString(pipeWriter, prefix)
+				if visible {
+					<-ctx.Done()
+				} else {
+					cancel()
+				}
+				_, _ = io.WriteString(pipeWriter, visibleDrainEvent("error", `{"type":"error","error":{"type":"overloaded_error","message":"fixture"}}`))
+			}()
+			upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: reader}}
+			svc := newForwardPartialUsageServiceForTest(upstream)
+			svc.rateLimitService = NewRateLimitService(&compatProviderPolicyRepo{}, nil, svc.cfg, nil, nil)
+			result, err := svc.Forward(context.Background(), c, newAnthropicAPIKeyAccountForPartialUsageTest(), &ParsedRequest{Body: NewRequestBodyRef([]byte(`{"model":"claude-sonnet-4-5","stream":true,"messages":[{"role":"user","content":"hi"}]}`)), Model: "claude-sonnet-4-5", Stream: true})
+			require.Error(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, 11, result.Usage.InputTokens)
+			require.True(t, result.ClientDisconnect)
+			var failover *UpstreamFailoverError
+			require.False(t, errors.As(err, &failover))
+			require.Zero(t, writer.afterWrites)
+			require.Zero(t, writer.afterFlushes)
+			require.NotContains(t, writer.Body.String(), "event: error")
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("upstream reader producer leaked")
 			}
 		})
 	}

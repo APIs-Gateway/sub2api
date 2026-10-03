@@ -93,7 +93,7 @@ func (d *gatewayForwardStreamDrain) stop() {
 	}
 }
 
-var errGatewayForwardStreamIdle = errors.New("upstream stream idle timeout")
+var errGatewayForwardStreamIdle = errors.New("stream data interval timeout")
 
 type gatewayForwardLineEvent struct {
 	line string
