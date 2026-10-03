@@ -63,12 +63,12 @@ describe('alert rule whole-minute durations', () => {
       const wrapper = await openRule(mode)
       await wrapper.get(selector).setValue(value)
       const message = `admin.ops.alertRules.validation.${error}`
-      expect(wrapper.text()).toContain(message)
       await button(wrapper, 'common.save').trigger('click')
       await flushPromises()
-      expect(showError).toHaveBeenCalledWith(message)
       expect(createAlertRule).not.toHaveBeenCalled()
       expect(updateAlertRule).not.toHaveBeenCalled()
+      expect(showError).toHaveBeenCalledWith(message)
+      expect(wrapper.text()).toContain(message)
     })
   }
 
