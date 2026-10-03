@@ -144,10 +144,10 @@ describe('KeyFallbackChainEditor', () => {
   it('每项显示分组徽标、人民币参考价和状态', async () => {
     const w = await mountEditor()
     expect(w.get('[data-test="reference-model"]').text()).toContain('gpt-5.5')
-    // 1.875 / 7.2 = 0.2604（小于 1 取 4 位有效数字），15 / 7.2 = 2.08
+    // 服务端给的 cny：1.875 / 7.2 = 0.2604，15 / 7.2 = 2.0833，按单价规则原样保留，不再收成两位
     const row = w.get('[data-test="fallback-item-21"]')
     expect(row.get('[data-test="badge"]').text()).toContain('Codex 稳定')
-    expect(row.get('[data-test="price"]').text()).toBe('输入 ¥0.2604 / 输出 ¥2.08')
+    expect(row.get('[data-test="price"]').text()).toBe('输入 ¥0.2604 / 输出 ¥2.0833')
     expect(row.get('[data-test="status"]').text()).toContain('可用')
   })
 
@@ -182,7 +182,7 @@ describe('KeyFallbackChainEditor', () => {
   it('充值倍率为 1（free 站）时跟着全站口径显示美元', async () => {
     setRecharge(1)
     const w = await mountEditor()
-    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 $1.88 / 输出 $15.00')
+    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 $1.875 / 输出 $15.00')
     expect(w.text()).not.toContain('¥')
   })
 
@@ -197,17 +197,17 @@ describe('KeyFallbackChainEditor', () => {
     const chain = makeChain()
     chain.items[1].reference_price = { priced: true, input_usd_per_mtok: 1.875, output_usd_per_mtok: 15 }
     const w = await mountEditor(chain)
-    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 $1.88 / 输出 $15.00')
+    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 $1.875 / 输出 $15.00')
   })
 
-  it('美元价沿用全站统一金额规则：≥ 1 两位小数，< 1 取 4 位有效数字，不固定 3 位小数', async () => {
+  it('美元价按单价规则显示：不固定 3 位小数，也不把 ≥ 1 的价格收成两位', async () => {
     setRecharge(1)
     const chain = makeChain()
-    // 0.0375 固定 3 位会被写成 $0.038；12.3456 固定 3 位会是 $12.346。
+    // 固定 3 位会把 0.0375 写成 $0.038、12.3456 写成 $12.346；统一金额规则又会把 12.3456 收成 $12.35。
     chain.items[1].reference_price = { priced: true, input_usd_per_mtok: 0.0375, output_usd_per_mtok: 12.3456 }
     chain.items[2].reference_price = { priced: true, input_usd_per_mtok: 0.5, output_usd_per_mtok: 1234.5 }
     const w = await mountEditor(chain)
-    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 $0.0375 / 输出 $12.35')
+    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 $0.0375 / 输出 $12.3456')
     expect(w.get('[data-test="fallback-item-22"] [data-test="price"]').text()).toBe('输入 $0.50 / 输出 $1,234.50')
   })
 

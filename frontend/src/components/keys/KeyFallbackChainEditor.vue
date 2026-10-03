@@ -449,6 +449,9 @@ const StatusMark = defineComponent({
   }
 })
 
+// 每百万 Token 单价的金额选项（见 utils/numberFormat 的 unitPrice）。
+const UNIT_PRICE = { unitPrice: true } as const
+
 const PriceLine = defineComponent({
   props: {
     item: { type: Object as PropType<PriceLike>, required: true },
@@ -462,17 +465,18 @@ const PriceLine = defineComponent({
       const cls = ['text-xs tabular-nums text-gray-500 dark:text-gray-400', p.bare ? 'block' : 'mt-1.5']
       // 人民币用服务端给的余额价口径（cny），不在前端自己乘倍率或汇率；
       // 全站切到美元（含 free 站）或没有 cny 时，显示同一价格的美元口径。
-      // 两条路径都走全站统一的金额规则（≥ 1 两位小数，< 1 取 4 位有效数字），不自己定小数位。
+      // 每百万 Token 价格是报价，两条路径都按单价规则显示（不被四舍五入吞掉第三、四位小数），
+      // 与模型目录、用量页的同类单价一致，不自己定小数位。
       // 哪条路径要的字段齐全才走哪条：人民币只看 cny，美元只看两个 usd 字段。
       let input: string | null = null
       let output: string | null = null
       if (price?.priced) {
         if (isFiat.value && price.cny) {
-          input = formatFiat(price.cny.input_per_mtok)
-          output = formatFiat(price.cny.output_per_mtok)
+          input = formatFiat(price.cny.input_per_mtok, UNIT_PRICE)
+          output = formatFiat(price.cny.output_per_mtok, UNIT_PRICE)
         } else if (typeof price.input_usd_per_mtok === 'number' && typeof price.output_usd_per_mtok === 'number') {
-          input = formatUsd(price.input_usd_per_mtok)
-          output = formatUsd(price.output_usd_per_mtok)
+          input = formatUsd(price.input_usd_per_mtok, UNIT_PRICE)
+          output = formatUsd(price.output_usd_per_mtok, UNIT_PRICE)
         }
       }
       if (input === null || output === null) {
