@@ -85,3 +85,48 @@ func TestStartupCleanupPreservesPeerAfterStaleHeartbeatRefresh(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, acquired)
 }
+
+func TestStartupCleanupPropagatesEachIndexErrorWithoutDeletingPeerCapacity(t *testing.T) {
+	for _, failedSpec := range []activeIndexSpec{accountActiveIndex, userActiveIndex, apiKeyActiveIndex} {
+		t.Run(failedSpec.indexKey, func(t *testing.T) {
+			ctx := context.Background()
+			cache, client := newConcurrencyCacheMiniRedis(t)
+			acquired, err := cache.AcquireAccountSlot(ctx, 10, 1, "peer-1")
+			require.NoError(t, err)
+			require.True(t, acquired)
+			acquired, err = cache.AcquireUserSlot(ctx, 10, 1, "peer-2")
+			require.NoError(t, err)
+			require.True(t, acquired)
+			require.NoError(t, cache.TrackAPIKeySlot(ctx, 10, "peer-3"))
+			queued, err := cache.IncrementAccountWaitCount(ctx, 10, 1)
+			require.NoError(t, err)
+			require.True(t, queued)
+			queued, err = cache.IncrementWaitCount(ctx, 10, 1)
+			require.NoError(t, err)
+			require.True(t, queued)
+			// A broken index must return an actionable error, including when
+			// preceding indexes were already visited. Valid slots/waits stay.
+			require.NoError(t, client.Set(ctx, failedSpec.indexKey, "wrong-type", 0).Err())
+			err = cache.CleanupStaleProcessSlots(ctx, "new")
+			require.ErrorContains(t, err, "read active index "+failedSpec.indexKey)
+			require.ErrorContains(t, err, "WRONGTYPE")
+			for _, entry := range []struct {
+				key    string
+				member string
+			}{
+				{accountSlotKey(10), "peer-1"},
+				{userSlotKey(10), "peer-2"},
+				{apiKeySlotKey(10), "peer-3"},
+			} {
+				members, readErr := client.ZRange(ctx, entry.key, 0, -1).Result()
+				require.NoError(t, readErr)
+				require.Equal(t, []string{entry.member}, members)
+			}
+			for _, key := range []string{accountWaitKey(10), waitQueueKey(10)} {
+				waiting, readErr := client.Get(ctx, key).Int()
+				require.NoError(t, readErr)
+				require.Equal(t, 1, waiting)
+			}
+		})
+	}
+}
