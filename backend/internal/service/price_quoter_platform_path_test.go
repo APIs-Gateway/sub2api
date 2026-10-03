@@ -42,7 +42,7 @@ func TestPriceQuoter_AbsoluteCosts(t *testing.T) {
 	// 价格来源：
 	//   deepseek-v4-flash 官方低谷价（billing_service.go deepseekFlashOffPeak*）：
 	//     input $0.15/MTok、output $0.60/MTok、cache read $0.003/MTok，无 cache write。
-	//     峰时 ×2（deepseekPeakMultiplierAt，仅 unified 路径叠加）。
+	//     峰时 ×2（deepseekPeakMultiplierAt，unified 路径叠加；非 OpenAI 网关上无渠道价的 DeepSeek 也走 unified）。
 	//   gpt-5.5 兜底价（newOpenAIGPT55FallbackPricing）：
 	//     标准 input $2.5 / output $15 / cache read $0.25 每 MTok；
 	//     priority = 标准 × 2.5（input 6.25、output 37.5、cache read 0.625）；
@@ -59,10 +59,11 @@ func TestPriceQuoter_AbsoluteCosts(t *testing.T) {
 		// 低谷对照：1M = 0.753
 		{name: "deepseek_low_openai_1M", model: "deepseek-v4-flash", group: quoteTestGroupOn(PlatformOpenAI, 1), at: quoteTestAtLow, tokens: quoteUsageEven(1_000_000), want: 0.753, path: QuotePricingPathUnified},
 
-		// ---- DeepSeek 高峰，Anthropic 分组（legacy，CalculateCost 不叠加峰时倍率，高峰也是低谷价）----
-		// 1M：0.753；300K：0.753×0.3 = 0.2259
-		{name: "deepseek_peak_anthropic_1M", model: "deepseek-v4-flash", group: quoteTestGroupOn(PlatformAnthropic, 1), at: quoteTestAtPeak, tokens: quoteUsageEven(1_000_000), want: 0.753, path: QuotePricingPathLegacy},
-		{name: "deepseek_peak_anthropic_300K", model: "deepseek-v4-flash", group: quoteTestGroupOn(PlatformAnthropic, 1), at: quoteTestAtPeak, tokens: quoteUsageEven(300_000), want: 0.2259, path: QuotePricingPathLegacy},
+		// ---- DeepSeek，Anthropic 分组（无渠道价的 DeepSeek 走 unified，与 OpenAI 分组同样叠加峰时 ×2）----
+		// 高峰 1M：0.753×2 = 1.506；300K：0.753×0.3×2 = 0.4518；低谷 1M：0.753
+		{name: "deepseek_peak_anthropic_1M", model: "deepseek-v4-flash", group: quoteTestGroupOn(PlatformAnthropic, 1), at: quoteTestAtPeak, tokens: quoteUsageEven(1_000_000), want: 1.506, path: QuotePricingPathUnified},
+		{name: "deepseek_peak_anthropic_300K", model: "deepseek-v4-flash", group: quoteTestGroupOn(PlatformAnthropic, 1), at: quoteTestAtPeak, tokens: quoteUsageEven(300_000), want: 0.4518, path: QuotePricingPathUnified},
+		{name: "deepseek_low_anthropic_1M", model: "deepseek-v4-flash", group: quoteTestGroupOn(PlatformAnthropic, 1), at: quoteTestAtLow, tokens: quoteUsageEven(1_000_000), want: 0.753, path: QuotePricingPathUnified},
 
 		// ---- gpt-5.5 长上下文，OpenAI 分组 ----
 		// 1M：输入侧 2M > 272K → input 2.5×2=5、output 15×1.5=22.5、cache read 0.25×2=0.5 → 28.0
@@ -157,26 +158,20 @@ func TestPriceQuoter_GeminiGatewayLongContextAbsoluteCost(t *testing.T) {
 	require.InDelta(t, 1.5, got.ActualCost, 1e-9)
 }
 
-// 参照侧用 CalculateCost（Anthropic 网关无渠道价的实际路径）：Quote 的单价、策略标记、费用都要与之一致。
+// 参照侧用 CalculateCost（Anthropic 网关对非 DeepSeek 模型、无渠道价的实际路径）：Quote 的单价、策略标记、费用都要与之一致。
+// DeepSeek 不在这里：它在网关里走 CalculateCostUnified，见 TestPriceQuoter_DeepSeekOnNonOpenAIGatewayMatchesUnifiedBilling。
 func TestPriceQuoter_LegacyPathMatchesCalculateCost(t *testing.T) {
-	flashJunkCatalog := map[string]*LiteLLMModelPricing{
-		"deepseek-v4-flash": {InputCostPerToken: 1e-6, OutputCostPerToken: 2e-6},
-	}
 	rate := 1.3
-	for _, model := range []string{"deepseek-v4-flash", "gpt-5.5", "glm-4.6"} {
+	for _, model := range []string{"gpt-5.5", "glm-4.6"} {
 		for _, tier := range []string{"", "priority", "flex"} {
 			t.Run(model+"/"+tier, func(t *testing.T) {
-				catalog := flashJunkCatalog
-				if model != "deepseek-v4-flash" {
-					catalog = nil
-				}
-				f := newQuoteTestFixture(catalog, nil, []*Group{quoteTestGroupOn(PlatformAnthropic, rate)}, nil)
+				f := newQuoteTestFixture(nil, nil, []*Group{quoteTestGroupOn(PlatformAnthropic, rate)}, nil)
 				quote, err := f.quoter.Quote(context.Background(), QuoteRequest{
 					Model: model, GroupID: quoteTestGroupID, ServiceTier: tier, At: quoteTestAtPeak,
 				})
 				require.NoError(t, err)
 				require.Equal(t, QuotePricingPathLegacy, quote.PricingPath)
-				require.False(t, quote.Policy.DeepSeekPeak, "legacy 路径不叠加峰时倍率")
+				require.False(t, quote.Policy.DeepSeekPeak, "非 DeepSeek 模型没有峰时倍率")
 				if tier != "" {
 					require.Equal(t, "ignored", quote.ServiceTier.Mode)
 					require.Equal(t, 1.0, quote.ServiceTier.Multiplier)
@@ -200,6 +195,99 @@ func TestPriceQuoter_LegacyPathMatchesCalculateCost(t *testing.T) {
 				require.Equal(t, wantIn.ActualCost, quote.FinalPrices.PerToken.Input)
 			})
 		}
+	}
+}
+
+// 非 OpenAI 网关上无渠道价的 DeepSeek：gateway_service.go calculateTokenCost 走 CalculateCostUnified 并传 PricingAt
+// （叠加峰时倍率，不传 ServiceTier），Gemini 分组再按原生入口走 CalculateCostWithLongContextUnified。
+// Quote 的路径、策略标记、单价、费用都要与之逐位一致；参照侧自己 Resolve、自己调计费函数，不经过 Quoter。
+func TestPriceQuoter_DeepSeekOnNonOpenAIGatewayMatchesUnifiedBilling(t *testing.T) {
+	flashJunkCatalog := map[string]*LiteLLMModelPricing{
+		"deepseek-v4-flash": {InputCostPerToken: 1e-6, OutputCostPerToken: 2e-6},
+	}
+	// 周六北京时间 10:00（UTC 02:00）：UTC 小时落在高峰窗口，但北京时间周末全天低谷。
+	saturdayPeakHours := time.Date(2026, 10, 10, 2, 0, 0, 0, time.UTC)
+	slots := []struct {
+		name     string
+		at       time.Time
+		wantPeak bool
+	}{
+		{"peak", quoteTestAtPeak, true},
+		{"low", quoteTestAtLow, false},
+		{"weekend", saturdayPeakHours, false},
+	}
+	rate := 1.3
+	for _, platform := range []string{PlatformAnthropic, PlatformAntigravity, PlatformGemini} {
+		for _, slot := range slots {
+			t.Run(platform+"/"+slot.name, func(t *testing.T) {
+				f := newQuoteTestFixture(flashJunkCatalog, nil, []*Group{quoteTestGroupOn(platform, rate)}, nil)
+				quote, err := f.quoter.Quote(context.Background(), QuoteRequest{
+					Model: "deepseek-v4-flash", GroupID: quoteTestGroupID, ServiceTier: "priority", At: slot.at,
+				})
+				require.NoError(t, err)
+				require.Equal(t, QuotePricingPathUnified, quote.PricingPath)
+				require.Equal(t, slot.wantPeak, quote.Policy.DeepSeekPeak)
+				require.Equal(t, "ignored", quote.ServiceTier.Mode, "非 OpenAI 网关不按 service tier 计费")
+				if platform == PlatformGemini {
+					require.NotNil(t, quote.GatewayLongContext)
+				} else {
+					require.Nil(t, quote.GatewayLongContext)
+				}
+
+				gid := quoteTestGroupID
+				reference := func(tokens UsageTokens) *CostBreakdown {
+					input := CostInput{
+						Ctx: context.Background(), Model: "deepseek-v4-flash", GroupID: &gid, Tokens: tokens,
+						RequestCount: 1, RateMultiplier: rate, PricingAt: slot.at, Resolver: f.resolver,
+					}
+					var cost *CostBreakdown
+					var refErr error
+					if platform == PlatformGemini {
+						cost, refErr = f.billing.CalculateCostWithLongContextUnified(input, 200000, 2.0)
+					} else {
+						cost, refErr = f.billing.CalculateCostUnified(input)
+					}
+					require.NoError(t, refErr)
+					return cost
+				}
+				for _, tokens := range []UsageTokens{
+					quoteUsageEven(1_000_000),
+					quoteUsageEven(300_000),
+					quoteUsageEven(50_000),
+					{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 200, CacheCreationTokens: 100},
+				} {
+					got, err := quote.Cost(context.Background(), QuoteUsage{Tokens: tokens})
+					require.NoError(t, err)
+					require.Equal(t, *reference(tokens), *got)
+				}
+
+				// 1 token 探针得到的单价与计费函数逐位相同。
+				require.Equal(t, reference(UsageTokens{InputTokens: 1}).ActualCost, quote.FinalPrices.PerToken.Input)
+			})
+		}
+	}
+
+	// 手算绝对值（官方 flash 低谷价：input $0.15 / output $0.60 / cache read $0.003 每 MTok，目录里的旧价被覆盖），倍率 1。
+	// Anthropic 分组 100K：0.753×0.1 = 0.0753；高峰 ×2 = 0.1506。
+	// Gemini 分组 300K 输入 + 300K 输出：范围内输入 200K 0.03、范围外输入 100K ×2 0.03、输出 0.18，合计 0.24；高峰 ×2 = 0.48。
+	absolute := []struct {
+		platform string
+		at       time.Time
+		tokens   UsageTokens
+		want     float64
+	}{
+		{PlatformAnthropic, quoteTestAtLow, quoteUsageEven(100_000), 0.0753},
+		{PlatformAnthropic, quoteTestAtPeak, quoteUsageEven(100_000), 0.1506},
+		{PlatformGemini, quoteTestAtLow, UsageTokens{InputTokens: 300_000, OutputTokens: 300_000}, 0.24},
+		{PlatformGemini, quoteTestAtPeak, UsageTokens{InputTokens: 300_000, OutputTokens: 300_000}, 0.48},
+	}
+	for _, tc := range absolute {
+		f := newQuoteTestFixture(flashJunkCatalog, nil, []*Group{quoteTestGroupOn(tc.platform, 1)}, nil)
+		quote, err := f.quoter.Quote(context.Background(), QuoteRequest{Model: "deepseek-v4-flash", GroupID: quoteTestGroupID, At: tc.at})
+		require.NoError(t, err)
+		got, err := quote.Cost(context.Background(), QuoteUsage{Tokens: tc.tokens})
+		require.NoError(t, err)
+		require.InDelta(t, tc.want, got.ActualCost, 1e-9, "%s %s", tc.platform, tc.at)
 	}
 }
 
