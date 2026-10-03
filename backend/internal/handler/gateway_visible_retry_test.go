@@ -5,6 +5,8 @@ package handler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	middleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -76,15 +78,28 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 	for _, mode := range []string{"comment_retry", "committed_error"} {
 		t.Run(mode, func(t *testing.T) {
 			gid := int64(9152)
-			group := &service.Group{ID: gid, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive}
+			group := &service.Group{ID: gid, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive, RateMultiplier: 1}
 			accounts := []*service.Account{}
 			for _, id := range []int64{9252, 9253} {
 				accounts = append(accounts, &service.Account{ID: id, Name: "native-visible", Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey, Credentials: map[string]any{"api_key": "local", "pool_mode": true, "pool_mode_retry_count": 0}, Concurrency: 1, Priority: 1, Status: service.StatusActive, Schedulable: true, AccountGroups: []service.AccountGroup{{AccountID: id, GroupID: gid}}})
 			}
 			upstream := &visibleRetryUpstream{mode: mode}
 			usage := &partialUsageBillingUsageLogRepo{created: make(chan *service.UsageLog, 4)}
-			h, cleanup := newPartialUsageBillingGatewayHandler(t, group, accounts, upstream, &forceCacheBillingGatewayCache{accountID: 9252}, usage)
-			defer cleanup()
+			cfg := &config.Config{}
+			cfg.Default.RateMultiplier = 1
+			userRepo := &openAIRecordUsageUserRepoStub795{user: service.User{ID: 9452, Balance: 100, Status: service.StatusActive}}
+			billingRepo := &compatPartialBillingRepo{}
+			billingCache := service.NewBillingCacheService(nil, userRepo, nil, nil, nil, nil, cfg, nil, nil)
+			t.Cleanup(billingCache.Stop)
+			accountRepo := &compatPartialAccountRepo{}
+			snapshot := service.NewSchedulerSnapshotService(&fakeSchedulerCache{accounts: accounts}, nil, nil, nil, nil)
+			gateway := service.NewGatewayService(
+				accountRepo, &fakeGroupRepo{group: group}, usage, billingRepo, userRepo, nil, nil, &forceCacheBillingGatewayCache{accountID: 9252}, cfg,
+				snapshot, nil, service.NewBillingService(cfg, nil), service.NewRateLimitService(accountRepo, nil, cfg, nil, nil), billingCache, nil, upstream,
+				&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+			)
+			h := &GatewayHandler{maxAccountSwitches: 1, gatewayService: gateway, billingCacheService: billingCache, cfg: cfg,
+				concurrencyHelper: NewConcurrencyHelper(service.NewConcurrencyService(&fakeConcurrencyCache{}), SSEPingFormatClaude, 0)}
 			h.cfg.Gateway.StreamKeepaliveInterval = 1
 			h.cfg.Gateway.StreamDataIntervalTimeout = 3
 			pool := newUsageRecordTestPool(t)
@@ -110,6 +125,22 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 				require.Equal(t, 1, upstream.calls)
 				require.Equal(t, 1, strings.Count(rec.Body.String(), "event: error\n"))
 				require.Contains(t, rec.Body.String(), "overloaded_error")
+				errorFrames := 0
+				for _, line := range strings.Split(rec.Body.String(), "\n") {
+					if !strings.HasPrefix(line, "data:") {
+						continue
+					}
+					var frame struct {
+						Type  string          `json:"type"`
+						Error json.RawMessage `json:"error"`
+					}
+					require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &frame))
+					if frame.Type == "error" || len(frame.Error) > 0 {
+						errorFrames++
+					}
+				}
+				require.Equal(t, 1, errorFrames, "count tagged and untagged SSE error payloads; generic handler fallback must not append a second error")
+				require.NotContains(t, rec.Body.String(), "Upstream request failed")
 			}
 			select {
 			case log := <-usage.created:
@@ -125,6 +156,20 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 			default:
 				t.Fatal("missing real handler partial/success usage")
 			}
+			require.Len(t, billingRepo.commands, 1, "normal mode must atomically bill exactly the successful/committed attempt once")
+			cmd := billingRepo.commands[0]
+			require.Equal(t, key.ID, cmd.APIKeyID)
+			require.Equal(t, upstream.accounts[len(upstream.accounts)-1], cmd.AccountID)
+			require.Equal(t, 15, cmd.OutputTokens)
+			if mode == "comment_retry" {
+				require.Zero(t, cmd.InputTokens)
+				require.Equal(t, 10, cmd.CacheReadTokens)
+			} else {
+				require.Equal(t, 10, cmd.InputTokens)
+				require.Zero(t, cmd.CacheReadTokens)
+			}
+			require.Positive(t, cmd.OfficialCost)
+			require.Positive(t, cmd.BalanceCost)
 			select {
 			case extra := <-usage.created:
 				t.Fatalf("duplicate usage: %+v", extra)

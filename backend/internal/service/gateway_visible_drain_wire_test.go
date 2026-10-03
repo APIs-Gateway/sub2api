@@ -206,7 +206,29 @@ func TestGatewayVisibleDrain_CanceledNonErrorEventExit(t *testing.T) {
 				body := &visibleDrainCancelExitBody{payload: strings.NewReader(payload), cancel: cancel, ending: ending, closed: make(chan struct{})}
 				upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: body}}
 				svc := newForwardPartialUsageServiceForTest(upstream)
-				result, err := svc.Forward(context.Background(), c, newAnthropicAPIKeyAccountForPartialUsageTest(), &ParsedRequest{Body: NewRequestBodyRef([]byte(`{"model":"claude-sonnet-4-5","stream":true,"messages":[{"role":"user","content":"hi"}]}`)), Model: "claude-sonnet-4-5", Stream: true})
+				defer body.Close()
+				type outcome struct {
+					result *ForwardResult
+					err    error
+				}
+				finished := make(chan outcome, 1)
+				go func() {
+					result, err := svc.Forward(context.Background(), c, newAnthropicAPIKeyAccountForPartialUsageTest(), &ParsedRequest{Body: NewRequestBodyRef([]byte(`{"model":"claude-sonnet-4-5","stream":true,"messages":[{"role":"user","content":"hi"}]}`)), Model: "claude-sonnet-4-5", Stream: true})
+					finished <- outcome{result, err}
+				}()
+				var got outcome
+				select {
+				case got = <-finished:
+				case <-time.After(3 * time.Second):
+					_ = body.Close()
+					select {
+					case <-finished:
+					case <-time.After(time.Second):
+						t.Fatal("forward and reader did not stop after body close")
+					}
+					t.Fatal("canceled terminal tail did not return within 3 seconds")
+				}
+				result, err := got.result, got.err
 				if visible && ending == "terminal_tail" {
 					require.NoError(t, err)
 				} else {
