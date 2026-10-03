@@ -28,6 +28,7 @@ type View = {
   newPlan: { model_id: string; cron_expression: string }; plans: ReturnType<typeof plan>[]
   editingPlanId: number | null; showDeleteConfirm: boolean; showAddForm: boolean
   editForm: { model_id: string }
+  results: ReturnType<typeof result>[]; loadingResults: boolean; expandedPlanId: number | null
 }
 function mountPanel(show = false) {
   return shallowMount(ScheduledTestsPanel, {
@@ -176,7 +177,7 @@ describe('scheduled test mutations keep their account and plan identity', () => 
     if (operation === 'delete') { vm.confirmDeletePlan(plan(1)); return vm.handleDelete() }
     return vm.handleToggleEnabled(plan(1), false)
   }
-  it.each(['create', 'edit', 'delete', 'toggle'])('%s invalidates prior selected results', async operation => {
+  it.each(['edit', 'delete', 'toggle'])('%s invalidates prior selected results', async operation => {
     const old = deferred<ReturnType<typeof result>[]>()
     api.listResults.mockReturnValueOnce(old.promise)
     const w = await openPanel()
@@ -187,6 +188,35 @@ describe('scheduled test mutations keep their account and plan identity', () => 
     expect(w.text()).not.toContain('11ms')
     expect(showSuccess).toHaveBeenCalledTimes(1)
     if (operation === 'delete') expect(view(w).plans.map(p => p.id)).toEqual([2])
+  })
+
+  it.each(['loaded', 'loading'] as const)('create preserves unrelated current plan B while its results are %s', async state => {
+    const createPending = deferred<ReturnType<typeof plan>>()
+    const oldResults = deferred<ReturnType<typeof result>[]>()
+    const currentResults = deferred<ReturnType<typeof result>[]>()
+    api.create.mockReturnValueOnce(createPending.promise)
+    api.listResults.mockReturnValueOnce(oldResults.promise).mockReturnValueOnce(currentResults.promise)
+    const w = await openPanel()
+    await expand(w)
+    const creating = mutate(w, 'create')
+    expect(api.create).toHaveBeenCalledTimes(1)
+    await expand(w, 1)
+    if (state === 'loaded') currentResults.resolve([result(22)])
+    await flushPromises()
+    createPending.resolve(plan(3))
+    await creating
+    await flushPromises()
+    expect(view(w).expandedPlanId).toBe(2)
+    expect(view(w).loadingResults).toBe(state === 'loading')
+    expect(view(w).results).toEqual(state === 'loaded' ? [result(22)] : [])
+    expect(api.listResults.mock.calls).toEqual([[1, 20], [2, 20]])
+    oldResults.resolve([result(11)])
+    if (state === 'loading') currentResults.resolve([result(22)])
+    await flushPromises()
+    expect(w.text()).toContain('22ms')
+    expect(w.text()).not.toContain('11ms')
+    expect(view(w).expandedPlanId).toBe(2)
+    expect(showSuccess).toHaveBeenCalledTimes(1)
   })
 
   for (const operation of ['create', 'edit', 'delete', 'toggle']) {

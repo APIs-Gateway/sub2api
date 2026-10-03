@@ -546,20 +546,19 @@ const resetNewPlan = () => {
   newPlan.auto_recover = false
 }
 
-const loadPlans = async (invalidateSelection = false) => {
+const loadPlans = async () => {
   if (!props.show || !props.accountId) return
   const generation = panelGeneration
   const accountId = props.accountId
   const requestId = ++plansRequestId
-  if (invalidateSelection) {
-    expandedPlanId.value = null
-    invalidateResults()
-  }
   loading.value = true
   try {
     const data = await adminAPI.scheduledTests.listByAccount(accountId)
     if (!isCurrentPanel(generation) || requestId !== plansRequestId) return
     plans.value = data
+    if (expandedPlanId.value != null && !data.some(plan => plan.id === expandedPlanId.value)) {
+      expandedPlanId.value = null
+    }
   } catch (error: any) {
     if (!isCurrentPanel(generation) || requestId !== plansRequestId) return
     appStore.showError(error?.message || 'Failed to load plans')
@@ -608,7 +607,7 @@ const handleCreate = async () => {
       showAddForm.value = false
       resetNewPlan()
     }
-    await loadPlans(sameEditor)
+    await loadPlans()
   } catch (error: any) {
     if (!isCurrentPanel(generation)) return
     appStore.showError(error?.message || 'Failed to create plan')
