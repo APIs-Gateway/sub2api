@@ -417,10 +417,8 @@ func (r *GroupChainRunner) Run(ctx context.Context, in ChainRunInput, attempt Ch
 			TimeRemaining:     budget - r.now().Sub(start),
 			MaxSwitches:       maxSwitches,
 		}
+		// 兜底是最后一次尝试，之后不再读取 attemptsUsed，所以这里不累加。
 		result := attempt(ctx, info)
-		if result.Attempts > 0 {
-			attemptsUsed += result.Attempts
-		}
 		res.BreakerBypassRetried = true
 		trace := HopTrace{Index: lastBreakerSkipped, GroupID: hop.GroupID, Outcome: result.Outcome,
 			Reason: result.Reason, Attempts: result.Attempts, BreakerBypassed: true}
