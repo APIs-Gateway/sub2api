@@ -381,11 +381,11 @@ function backToList() {
 }
 
 // --- data fetch ---
-async function fetchTemplates(isCurrentOperation: () => boolean = () => true) {
+async function fetchTemplates() {
   const generation = dialogGeneration
   if (!isCurrentDialog(generation)) return false
   const requestId = ++listRequestId
-  const isCurrentRequest = () => isCurrentDialog(generation) && requestId === listRequestId && isCurrentOperation()
+  const isCurrentRequest = () => isCurrentDialog(generation) && requestId === listRequestId
   loading.value = true
   try {
     const { items } = await adminAPI.channelMonitorTemplate.list()
@@ -424,7 +424,7 @@ async function handleSubmit() {
         body_override: form.body_override,
         response_format: form.response_format,
       })
-      if (!isCurrentSubmit()) return
+      if (!isCurrentDialog(generation)) return
       appStore.showSuccess(t('admin.channelMonitor.template.createSuccess'))
     } else if (typeof editing.value === 'number') {
       await adminAPI.channelMonitorTemplate.update(editing.value, {
@@ -436,12 +436,15 @@ async function handleSubmit() {
         body_override: form.body_override,
         response_format: form.response_format,
       })
-      if (!isCurrentSubmit()) return
+      if (!isCurrentDialog(generation)) return
       appStore.showSuccess(t('admin.channelMonitor.template.updateSuccess'))
     }
-    if (!await fetchTemplates(isCurrentSubmit) || !isCurrentSubmit()) return
+    // A committed mutation still belongs to this opening, even if Back
+    // selected another editor. Reconcile the list and parent independently.
+    await fetchTemplates()
+    if (!isCurrentDialog(generation)) return
     emit('updated')
-    editing.value = null
+    if (isCurrentSubmit()) editing.value = null
   } catch (err: unknown) {
     if (isCurrentSubmit()) appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {

@@ -296,12 +296,12 @@ describe('real nested apply and editor ownership', () => {
       expect(wrapper.get('input').element.value).toBe('new-editor-B')
       expect(wrapper.get('button.btn-primary').attributes('disabled')).toBeDefined()
       expect(mocks.showError).not.toHaveBeenCalled()
-      expect(mocks.showSuccess).not.toHaveBeenCalled()
-      expect(wrapper.emitted('updated')).toBeUndefined()
-      expect(mocks.list).toHaveBeenCalledTimes(1)
+      expect(mocks.showSuccess).toHaveBeenCalledTimes(outcome === 'resolve' ? 1 : 0)
+      expect(wrapper.emitted('updated')?.length ?? 0).toBe(outcome === 'resolve' ? 1 : 0)
+      expect(mocks.list).toHaveBeenCalledTimes(outcome === 'resolve' ? 2 : 1)
       current.resolve(response('saved-B').items[0])
       await flushPromises()
-      expect(wrapper.emitted('updated')).toEqual([[]])
+      expect(wrapper.emitted('updated')?.length).toBe(outcome === 'resolve' ? 2 : 1)
     })
     it(`keeps draft B when ${action} A's refresh finishes later`, async () => {
       const refresh = deferred<ListResponse>()
@@ -317,10 +317,42 @@ describe('real nested apply and editor ownership', () => {
       refresh.resolve(response('A-refresh'))
       await flushPromises()
       expect(wrapper.get('input').element.value).toBe('draft-B-during-refresh')
-      expect(wrapper.emitted('updated')).toBeUndefined()
+      expect(wrapper.emitted('updated')).toEqual([[]])
       expect(wrapper.get('button.btn-primary').attributes('disabled')).toBeUndefined()
       await click(wrapper, 'common.back')
       expect(wrapper.text()).not.toContain('common.loading')
+      expect(wrapper.text()).toContain('A-refresh')
+    })
+  }
+})
+
+describe('committed saves reconcile the current list after Back', () => {
+  for (const action of ['create', 'update'] as const) {
+    it.each(['mutation', 'refresh'] as const)(`reconciles ${action} after Back while ${'%s'} is pending`, async stage => {
+      const mutation = deferred<unknown>()
+      const refresh = deferred<ListResponse>()
+      mocks[action].mockReturnValueOnce(mutation.promise)
+      const wrapper = mountDialog()
+      await flushPromises()
+      await startMutation(wrapper, action)
+      mocks.list.mockReturnValueOnce(refresh.promise)
+      if (stage === 'refresh') {
+        mutation.resolve(response('committed-template').items[0])
+        await flushPromises()
+        expect(mocks.list).toHaveBeenCalledTimes(2)
+      }
+      await click(wrapper, 'common.back')
+      if (stage === 'mutation') {
+        mutation.resolve(response('committed-template').items[0])
+        await flushPromises()
+      }
+      expect(mocks.list).toHaveBeenCalledTimes(2)
+      refresh.resolve(response('committed-template'))
+      await flushPromises()
+      expect(wrapper.text()).toContain('committed-template')
+      expect(wrapper.text()).not.toContain('common.loading')
+      expect(wrapper.emitted('updated')).toEqual([[]])
+      expect(mocks.showSuccess).toHaveBeenCalledTimes(1)
     })
   }
 })
