@@ -45,7 +45,7 @@ func (r *grokRefusalHandlerRepo) UpdateExtra(context.Context, int64, map[string]
 	return nil
 }
 
-func (r *grokRefusalHandlerRepo) ExtendModelRateLimit(context.Context, int64, string, time.Time, ...string) error {
+func (r *grokRefusalHandlerRepo) SetModelRateLimit(context.Context, int64, string, time.Time, ...string) error {
 	r.cooldowns.Add(1)
 	return nil
 }
@@ -145,7 +145,7 @@ func TestGrokRequestRefusalHandlerPoolAndQueuedFraming(t *testing.T) {
 						c.Next()
 					})
 					path := "/v1/chat/completions"
-					body := fmt.Sprintf(`{"model":"grok-4.3","messages":[{"role":"user","content":"hello"}],"stream":%t}`, stream)
+					body := fmt.Sprintf(`{"model":"grok-4.3","messages":[{"role":"user","name":"alice","content":"hello"}],"presence_penalty":0.2,"presencePenalty":0.3,"stream":%t}`, stream)
 					if route == "native" {
 						path = "/v1/responses"
 						body = fmt.Sprintf(`{"model":"grok-4.3","input":"hello","stream":%t}`, stream)

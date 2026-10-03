@@ -183,7 +183,7 @@ func TestGrokRequestRefusalActualForwardPaths(t *testing.T) {
 
 func TestGrokRawChatActualOutboundCompatibility(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	body := []byte(`{"model":"grok-4.3","presence_penalty":0,"presence_penalty":0.4,"presencePenalty":0.2,"presencePenalty":0.5,"large_id":9007199254740993,"custom":{"count":9007199254740993},"messages":[{"role":"user","role":"system","name":"rules","name":"rules2","content":"brief"},{"role":"user","name":"alice","content":"hi"},{"role":"assistant","name":"agent","tool_calls":[{"function":{"name":"lookup","arguments":"{}"}}]}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"name":{"type":"string"}}}}}],"stream":false}`)
+	body := []byte(`{"model":"grok-4.3","presence_penalty":0,"presence_penalty":0.4,"presencePenalty":0.2,"presencePenalty":0.5,"large_id":9007199254740993,"custom":{"count":9007199254740993},"messages":[{"role":"user","role":"system","name":"rules","name":"rules2","content":"brief"},{"role":"user","name":"alice","content":"hi"},{"role":"assistant","name":"agent","tool_calls":[{"function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","name":"lookup","tool_call_id":"call1","content":"result"},{"role":"function","name":"legacylookup","content":"result"},{"role":"system","role":"user","name":"charlie","content":"hi again"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"name":{"type":"string"}}}}}],"functions":[{"name":"legacylookup"}],"stream":false}`)
 	original := bytes.Clone(body)
 	for _, platform := range []string{PlatformGrok, PlatformOpenAI} {
 		t.Run(platform, func(t *testing.T) {
@@ -201,7 +201,11 @@ func TestGrokRawChatActualOutboundCompatibility(t *testing.T) {
 				require.False(t, gjson.GetBytes(upstream.lastBody, "presencePenalty").Exists())
 				require.False(t, gjson.GetBytes(upstream.lastBody, "messages.0.name").Exists())
 				require.False(t, gjson.GetBytes(upstream.lastBody, "messages.2.name").Exists())
+				require.False(t, gjson.GetBytes(upstream.lastBody, "messages.3.name").Exists(), "role tool message.name is unsupported")
+				require.False(t, gjson.GetBytes(upstream.lastBody, "messages.4.name").Exists(), "role function message.name is unsupported")
 				require.Equal(t, "system", gjson.GetBytes(upstream.lastBody, "messages.0.role").String())
+				require.Equal(t, "user", gjson.GetBytes(upstream.lastBody, "messages.5.role").String())
+				require.Equal(t, "charlie", gjson.GetBytes(upstream.lastBody, "messages.5.name").String())
 			} else {
 				require.Equal(t, body, upstream.lastBody)
 			}
@@ -211,6 +215,8 @@ func TestGrokRawChatActualOutboundCompatibility(t *testing.T) {
 			require.Equal(t, "alice", gjson.GetBytes(upstream.lastBody, "messages.1.name").String())
 			require.Equal(t, "lookup", gjson.GetBytes(upstream.lastBody, "messages.2.tool_calls.0.function.name").String())
 			require.Equal(t, "lookup", gjson.GetBytes(upstream.lastBody, "tools.0.function.name").String())
+			require.Equal(t, "legacylookup", gjson.GetBytes(upstream.lastBody, "functions.0.name").String())
+			require.Equal(t, "call1", gjson.GetBytes(upstream.lastBody, "messages.3.tool_call_id").String())
 			require.Equal(t, "string", gjson.GetBytes(upstream.lastBody, "tools.0.function.parameters.properties.name.type").String())
 		})
 	}
