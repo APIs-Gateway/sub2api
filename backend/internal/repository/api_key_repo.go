@@ -29,6 +29,11 @@ type apiKeyRepository struct {
 }
 
 func NewAPIKeyRepository(client *dbent.Client, sqlDB *sql.DB) service.APIKeyRepository {
+	if sqlDB == nil {
+		// 不要把 nil *sql.DB 装进非 nil 的 sqlExecutor 接口：否则 r.sql == nil 的判断永远为假，
+		// 没有 SQL 连接的用法（只用 ent client 的测试）会在原生 SQL 查询处解引用 nil。
+		return newAPIKeyRepositoryWithSQL(client, nil)
+	}
 	return newAPIKeyRepositoryWithSQL(client, sqlDB)
 }
 
