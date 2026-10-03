@@ -117,6 +117,20 @@ func TestForwardAsChatCompletionsForwardsOnlyReceivedStreamUsage(t *testing.T) {
 					svc := &GatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 
 					result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, []byte(body), nil)
+					if terminal == "eof" {
+						require.Error(t, err)
+						require.NotContains(t, rec.Body.String(), "[DONE]")
+						if tc.wantInput+tc.wantOutput+tc.wantCacheRead+tc.wantCacheCreation == 0 {
+							require.Nil(t, result)
+							return
+						}
+						require.NotNil(t, result)
+						require.Equal(t, tc.wantInput, result.Usage.InputTokens)
+						require.Equal(t, tc.wantOutput, result.Usage.OutputTokens)
+						require.Equal(t, tc.wantCacheRead, result.Usage.CacheReadInputTokens)
+						require.Equal(t, tc.wantCacheCreation, result.Usage.CacheCreationInputTokens)
+						return
+					}
 					require.NoError(t, err)
 					require.NotNil(t, result)
 					require.Equal(t, tc.wantInput, result.Usage.InputTokens)

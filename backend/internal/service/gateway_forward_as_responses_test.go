@@ -364,6 +364,9 @@ func TestHandleResponsesBufferedStreamingResponse_PreservesMessageStartCacheUsag
 			`event: message_delta`,
 			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}`,
 			``,
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			``,
 		}, "\n"))),
 	}
 
@@ -398,6 +401,9 @@ func TestHandleResponsesBufferedStreamingResponse_RestoresCustomToolCall(t *test
 			``,
 			`event: message_delta`,
 			`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":3}}`,
+			``,
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
 			``,
 		}, "\n"))),
 	}
@@ -547,6 +553,9 @@ func TestHandleResponsesBufferedStreamingResponse_CompactSSEFormat(t *testing.T)
 			`data:{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}`,
 			``,
 			`event:ping`,
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			``,
 		}, "\n"))),
 	}
 
@@ -582,6 +591,9 @@ func TestHandleResponsesStreamingResponse_CompactSSEFormat(t *testing.T) {
 			`data:{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":6}}`,
 			``,
 			`event:ping`,
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			``,
 		}, "\n"))),
 	}
 

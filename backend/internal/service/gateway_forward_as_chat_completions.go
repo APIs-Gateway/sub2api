@@ -238,8 +238,13 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
+	sawMessageStop := false
+	var streamErr error
+	drain := newAnthropicCompatDrain(s.cfg, resp.Body, c)
+	defer drain.stop()
 
 	for scanner.Scan() {
+		drain.touch()
 		line := scanner.Text()
 		// SSE 规范允许 `event:xxx`（冒号后无空格）：Kimi 等 Anthropic 兼容上游
 		// 返回紧凑格式，严格匹配 "event: " 会丢弃全部事件（#4653 同根因）。
@@ -258,6 +263,15 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		var event apicompat.AnthropicStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
+		}
+
+		if event.Type == "error" {
+			streamErr = &sseStreamErrorEventError{RawData: payload}
+			break
+		}
+		if event.Type == "message_stop" {
+			sawMessageStop = true
+			break
 		}
 
 		// message_start carries the initial response structure and cache usage
@@ -298,18 +312,37 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+	readErr := scanner.Err()
+	if streamErr != nil {
+		readErr = streamErr
+	}
+	if readErr != nil {
+		if !errors.Is(readErr, context.Canceled) && !errors.Is(readErr, context.DeadlineExceeded) {
 			logger.L().Warn("forward_as_cc buffered: read error",
-				zap.Error(err),
+				zap.Error(readErr),
 				zap.String("request_id", requestID),
 			)
 		}
 	}
 
+	resultWithUsage := func() *ForwardResult {
+		return &ForwardResult{
+			RequestID:        requestID,
+			Usage:            usage,
+			Model:            originalModel,
+			UpstreamModel:    mappedModel,
+			ReasoningEffort:  reasoningEffort,
+			Stream:           false,
+			Duration:         time.Since(startTime),
+			ClientDisconnect: anthropicCompatClientGone(c),
+		}
+	}
+	if !sawMessageStop {
+		return anthropicCompatBufferedIncomplete(c, writeGatewayCCError, resultWithUsage(), readErr)
+	}
+
 	if finalResp == nil {
-		writeGatewayCCError(c, http.StatusBadGateway, "server_error", "Upstream stream ended without a response")
-		return nil, fmt.Errorf("upstream stream ended without response")
+		return anthropicCompatBufferedIncomplete(c, writeGatewayCCError, resultWithUsage(), errors.New("upstream stream ended without response"))
 	}
 
 	// Update usage from accumulated delta
@@ -344,15 +377,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		c.JSON(http.StatusOK, ccResp)
 	}
 
-	return &ForwardResult{
-		RequestID:       requestID,
-		Usage:           usage,
-		Model:           originalModel,
-		UpstreamModel:   mappedModel,
-		ReasoningEffort: reasoningEffort,
-		Stream:          false,
-		Duration:        time.Since(startTime),
-	}, nil
+	return resultWithUsage(), nil
 }
 
 // handleCCStreamingFromAnthropic reads Anthropic SSE events, converts each
@@ -385,6 +410,11 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	var usage ClaudeUsage
 	var firstTokenMs *int
 	firstChunk := true
+	clientDisconnected := false
+	sawMessageStop := false
+	var streamErr error
+	drain := newAnthropicCompatDrain(s.cfg, resp.Body, c)
+	defer drain.stop()
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -395,14 +425,15 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
-			RequestID:       requestID,
-			Usage:           usage,
-			Model:           originalModel,
-			UpstreamModel:   mappedModel,
-			ReasoningEffort: reasoningEffort,
-			Stream:          true,
-			Duration:        time.Since(startTime),
-			FirstTokenMs:    firstTokenMs,
+			RequestID:        requestID,
+			Usage:            usage,
+			Model:            originalModel,
+			UpstreamModel:    mappedModel,
+			ReasoningEffort:  reasoningEffort,
+			Stream:           true,
+			Duration:         time.Since(startTime),
+			FirstTokenMs:     firstTokenMs,
+			ClientDisconnect: clientDisconnected || anthropicCompatClientGone(c),
 		}
 	}
 
@@ -447,6 +478,17 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			mergeAnthropicUsage(&usage, event.Message.Usage)
 			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "message.usage"), &usage)
 		}
+		if event.Type == "message_stop" {
+			sawMessageStop = true
+		}
+		if anthropicCompatClientGone(c) {
+			clientDisconnected = true
+			drain.start()
+		}
+		if clientDisconnected {
+			return false
+		}
+
 		// The converter accumulates its own usage. Keep it aligned with the
 		// normalized buckets used for billing before it emits a terminal event.
 		anthState.InputTokens = usage.InputTokens
@@ -473,6 +515,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	}
 
 	for scanner.Scan() {
+		drain.touch()
 		line := scanner.Text()
 		// 与缓冲路径一致：接受 SSE 紧凑格式（冒号后无空格，#4653 同根因）。
 		if _, ok := extractOpenAISSEEventLine(line); !ok {
@@ -491,23 +534,42 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
+		if event.Type == "error" {
+			streamErr = &sseStreamErrorEventError{RawData: payload}
+			break
+		}
 		// The intermediate Responses converter can synthesize zero usage even
 		// when the upstream omitted it. Forward only an actual upstream object,
 		// including an explicitly empty one, regardless of stream_options.
 		ccState.IncludeUsage = ccState.IncludeUsage || anthropicChatStreamHasUsage(&event, payload)
 
 		if processAnthropicEvent(&event, payload) {
-			return resultWithUsage(), nil
+			clientDisconnected = true
+			drain.start()
+		}
+		if sawMessageStop {
+			break
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+	readErr := scanner.Err()
+	if streamErr != nil {
+		readErr = streamErr
+	}
+	if readErr != nil {
+		if !errors.Is(readErr, context.Canceled) && !errors.Is(readErr, context.DeadlineExceeded) {
 			logger.L().Warn("forward_as_cc stream: read error",
-				zap.Error(err),
+				zap.Error(readErr),
 				zap.String("request_id", requestID),
 			)
 		}
+	}
+
+	if !sawMessageStop {
+		return anthropicCompatIncompleteStream(c, resultWithUsage(), readErr)
+	}
+	if clientDisconnected || anthropicCompatClientGone(c) {
+		return resultWithUsage(), nil
 	}
 
 	// Finalize both state machines
