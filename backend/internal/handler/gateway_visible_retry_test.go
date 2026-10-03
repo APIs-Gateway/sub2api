@@ -110,7 +110,7 @@ func (u *visibleRetryUpstream) DoWithTLS(_ *http.Request, _ string, id int64, _ 
 		payload = "event: message_start\ndata: " + `{"type":"message_start","message":{"usage":{"input_tokens":99}}}` + "\n\nevent: message_delta\ndata: " + `{"type":"message_delta","usage":{"output_tokens":88}}` + "\n\n"
 		header = "metered-attempt"
 	}
-	if u.mode == "committed_error" || u.mode == "metered_sse_error" {
+	if u.mode == "committed_error" || strings.HasPrefix(u.mode, "metered_sse_") {
 		payload += "event: error\ndata: " + `{"type":"error","error":{"type":"overloaded_error","message":"fixture"}}` + "\n\n"
 	} else {
 		payload += "event: message_stop\ndata: " + `{"type":"message_stop"}` + "\n\n"
@@ -119,7 +119,7 @@ func (u *visibleRetryUpstream) DoWithTLS(_ *http.Request, _ string, id int64, _ 
 		payload = "event: message_start\ndata: " + `{"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}` + "\n\nevent: message_delta\ndata: " + `{"type":"message_delta","usage":{"output_tokens":15}}` + "\n\n"
 	}
 	var body io.ReadCloser = io.NopCloser(strings.NewReader(payload))
-	if (u.mode == "comment_retry" && u.calls == 1) || u.mode == "metered_empty" || strings.HasPrefix(u.mode, "exhausted_") || strings.HasPrefix(u.mode, "comment_write_failed_") {
+	if (u.mode == "comment_retry" && u.calls == 1) || u.mode == "metered_empty" || u.mode == "metered_sse_after_comment" || strings.HasPrefix(u.mode, "exhausted_") || strings.HasPrefix(u.mode, "comment_write_failed_") {
 		u.delayedBody = &visibleRetryDelayedBody{reader: strings.NewReader(payload), delay: true, closed: make(chan struct{})}
 		if u.mode == "comment_write_failed_read_error" {
 			u.delayedBody.readErr = io.ErrUnexpectedEOF
@@ -130,7 +130,7 @@ func (u *visibleRetryUpstream) DoWithTLS(_ *http.Request, _ string, id int64, _ 
 }
 func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, mode := range []string{"comment_retry", "committed_error", "metered_empty", "metered_sse_error", "comment_write_failed_eof", "comment_write_failed_read_error", "exhausted_two_zero", "exhausted_selection_zero", "exhausted_terminal_write_failed"} {
+	for _, mode := range []string{"comment_retry", "committed_error", "metered_empty", "metered_sse_error", "metered_sse_after_comment", "comment_write_failed_eof", "comment_write_failed_read_error", "exhausted_two_zero", "exhausted_selection_zero", "exhausted_terminal_write_failed"} {
 		t.Run(mode, func(t *testing.T) {
 			gid := int64(9152)
 			group := &service.Group{ID: gid, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive, RateMultiplier: 1}
@@ -183,7 +183,7 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 			h.Messages(c)
 			pool.Stop()
 			require.Empty(t, accountRepo.overloaded, "preserve fork pool-mode policy: provider 529 must not cool down this account")
-			if mode == "metered_sse_error" {
+			if strings.HasPrefix(mode, "metered_sse_") {
 				events, exists := c.Get(service.OpsUpstreamErrorsKey)
 				require.True(t, exists)
 				ops, ok := events.([]*service.OpsUpstreamErrorEvent)
@@ -252,8 +252,8 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 				require.NotContains(t, rec.Body.String(), "partial")
 				require.Contains(t, rec.Body.String(), "error")
 				require.Empty(t, rec.Header().Get("X-Request-Id"))
-				if mode == "metered_sse_error" {
-					require.Contains(t, rec.Body.String(), "error")
+				if mode == "metered_sse_after_comment" {
+					require.Contains(t, rec.Body.String(), ": ping\n\n", "ensure overload follows a committed pre-visible transport comment")
 				}
 			} else {
 				require.Contains(t, rec.Body.String(), "partial")

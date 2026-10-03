@@ -778,8 +778,9 @@ func (e *UpstreamFailoverError) Error() string {
 // Error() 保持原字符串以兼容现有日志/检索；调用方应通过 errors.As
 // 提取 RawData 并构造 UpstreamFailoverError.ResponseBody。
 type sseStreamErrorEventError struct {
-	RawData                  string
-	SafeToFailoverAfterWrite bool // Only transport comments preceded a failed attempt.
+	RawData                   string
+	SafeToFailoverAfterWrite  bool // Only transport comments preceded an unmetered failed attempt.
+	BeforeClientVisibleOutput bool // Provider error attribution; independent of replay and billing eligibility.
 }
 
 func (e *sseStreamErrorEventError) Error() string { return "have error in stream" }
@@ -5889,7 +5890,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				// 上游 HTTP 200 + SSE 流体内出现 event:error 帧。
 				body := []byte(sseErr.RawData)
 				semanticStatus := http.StatusForbidden
-				if (c.Writer.Size() == writerSizeBeforeStream || sseErr.SafeToFailoverAfterWrite) && gjson.GetBytes(body, "error.type").String() == "overloaded_error" {
+				if (c.Writer.Size() == writerSizeBeforeStream || sseErr.BeforeClientVisibleOutput) && gjson.GetBytes(body, "error.type").String() == "overloaded_error" {
 					// 尚未向客户端写出任何字节时的 overloaded_error，视为可失败转移的 529，
 					// 补一次 handleFailoverSideEffects 让限流/冷却规则按真实语义生效。
 					semanticStatus = 529
@@ -9113,6 +9114,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				if err != nil {
 					var streamErr *sseStreamErrorEventError
 					if errors.As(err, &streamErr) {
+						streamErr.BeforeClientVisibleOutput = !visibleOutput.visible
 						streamErr.SafeToFailoverAfterWrite = !visibleOutput.visible && !usage.hasObservedTokens() && !clientDisconnected && !anthropicCompatClientGone(c)
 					}
 					if clientDisconnected || anthropicCompatClientGone(c) {
