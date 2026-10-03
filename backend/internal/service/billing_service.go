@@ -1664,15 +1664,43 @@ func (s *BillingService) CalculateCostWithConfig(model string, tokens UsageToken
 // 拆分为：范围内 (200k, 0) + 范围外 (10k, 10k)
 // 范围内正常计费，范围外 × 2 计费
 func (s *BillingService) CalculateCostWithLongContext(model string, tokens UsageTokens, rateMultiplier float64, threshold int, extraMultiplier float64) (*CostBreakdown, error) {
+	return calculateCostWithLongContextSplit(tokens, rateMultiplier, threshold, extraMultiplier,
+		func(segment UsageTokens, segmentMultiplier float64) (*CostBreakdown, error) {
+			return s.CalculateCost(model, segment, segmentMultiplier)
+		})
+}
+
+// CalculateCostWithLongContextUnified 与 CalculateCostWithLongContext 的拆分规则完全相同，
+// 区别只在每一段的计价入口：这里经 CalculateCostUnified（带 Resolver 与 PricingAt），
+// 使 DeepSeek 默认价卡的峰时倍率与 pro→Flash 切换按计费时点生效。
+// input.Tokens 与 input.RateMultiplier 是整次请求的用量与倍率，拆段后由本函数逐段覆盖。
+func (s *BillingService) CalculateCostWithLongContextUnified(input CostInput, threshold int, extraMultiplier float64) (*CostBreakdown, error) {
+	return calculateCostWithLongContextSplit(input.Tokens, input.RateMultiplier, threshold, extraMultiplier,
+		func(segment UsageTokens, segmentMultiplier float64) (*CostBreakdown, error) {
+			segmentInput := input
+			segmentInput.Tokens = segment
+			segmentInput.RateMultiplier = segmentMultiplier
+			return s.CalculateCostUnified(segmentInput)
+		})
+}
+
+// calculateCostWithLongContextSplit 是长上下文双倍计费的拆分逻辑，由
+// CalculateCostWithLongContext（CalculateCost 逐段计价）与
+// CalculateCostWithLongContextUnified（CalculateCostUnified 逐段计价）共用。
+// calc 对一段用量按给定倍率计价。
+func calculateCostWithLongContextSplit(
+	tokens UsageTokens, rateMultiplier float64, threshold int, extraMultiplier float64,
+	calc func(segment UsageTokens, segmentMultiplier float64) (*CostBreakdown, error),
+) (*CostBreakdown, error) {
 	// 未启用长上下文计费，直接走正常计费
 	if threshold <= 0 || extraMultiplier <= 1 {
-		return s.CalculateCost(model, tokens, rateMultiplier)
+		return calc(tokens, rateMultiplier)
 	}
 
 	// 计算总输入 token（缓存读取 + 新输入）
 	total := tokens.CacheReadTokens + tokens.InputTokens
 	if total <= threshold {
-		return s.CalculateCost(model, tokens, rateMultiplier)
+		return calc(tokens, rateMultiplier)
 	}
 
 	// 拆分成范围内和范围外
@@ -1718,7 +1746,7 @@ func (s *BillingService) CalculateCostWithLongContext(model string, tokens Usage
 		CacheCreation1hTokens: tokens.CacheCreation1hTokens,
 		ImageOutputTokens:     tokens.ImageOutputTokens,
 	}
-	inRangeCost, err := s.CalculateCost(model, inRangeTokens, rateMultiplier)
+	inRangeCost, err := calc(inRangeTokens, rateMultiplier)
 	if err != nil {
 		return nil, err
 	}
@@ -1729,12 +1757,12 @@ func (s *BillingService) CalculateCostWithLongContext(model string, tokens Usage
 		ImageInputTokens: outRangeImageInputTokens,
 		CacheReadTokens:  outRangeCacheTokens,
 	}
-	outRangeCost, err := s.CalculateCost(model, outRangeTokens, rateMultiplier*extraMultiplier)
+	outRangeCost, err := calc(outRangeTokens, rateMultiplier*extraMultiplier)
 	if err != nil {
 		return inRangeCost, fmt.Errorf("out-range cost: %w", err)
 	}
 
-	// 合并成本
+	// 合并成本。计费模式原样沿用范围内一段的值：CalculateCost 不填（保持空串），CalculateCostUnified 填 "token"。
 	return &CostBreakdown{
 		InputCost:         inRangeCost.InputCost + outRangeCost.InputCost,
 		ImageInputCost:    inRangeCost.ImageInputCost + outRangeCost.ImageInputCost,
@@ -1744,6 +1772,7 @@ func (s *BillingService) CalculateCostWithLongContext(model string, tokens Usage
 		CacheReadCost:     inRangeCost.CacheReadCost + outRangeCost.CacheReadCost,
 		TotalCost:         inRangeCost.TotalCost + outRangeCost.TotalCost,
 		ActualCost:        inRangeCost.ActualCost + outRangeCost.ActualCost,
+		BillingMode:       inRangeCost.BillingMode,
 	}, nil
 }
 
