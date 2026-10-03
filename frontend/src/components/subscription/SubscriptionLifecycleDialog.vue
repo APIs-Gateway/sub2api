@@ -72,7 +72,7 @@
           </div>
         </div>
 
-        <!-- 报价 -->
+        <!-- 报价：两种币种模式都只写实付币种的金额，不并列额度价值（两数相除即换算比例）。 -->
         <div class="rounded-md border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-800/40">
           <div v-if="quoting" class="text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</div>
           <div v-else-if="quoteErrorMsg" class="text-sm text-primary-700 dark:text-primary-400">
@@ -83,9 +83,6 @@
               <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.renewPrice') }}</span>
               <NumText tier="secondary" :text="formatPaymentValue(renewQuoteData.price)" />
             </div>
-            <div v-if="!isFiat" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('userSubscriptions.lifecycle.renewValue') }}: {{ formatPlanValue(renewQuoteData.price) }}
-            </div>
           </template>
           <template v-else-if="mode === 'change' && changeQuoteData">
             <div class="flex items-baseline justify-between">
@@ -93,15 +90,8 @@
               <NumText tier="secondary" :text="formatPaymentValue(changeQuoteData.diff)" />
             </div>
             <div class="mt-1 space-y-0.5 text-xs text-gray-500 dark:text-gray-400">
-              <template v-if="isFiat">
-                <div>{{ t('userSubscriptions.lifecycle.newPlanPriceFiat') }}: {{ formatPaymentValue(changeQuoteData.new_plan_price) }}</div>
-                <div>{{ t('userSubscriptions.lifecycle.oldRemainingValueFiat') }}: {{ formatPaymentValue(changeQuoteData.old_remaining_value) }}</div>
-              </template>
-              <template v-else>
-                <div>{{ t('userSubscriptions.lifecycle.changeDiffValue') }}: {{ formatPlanValue(changeQuoteData.diff) }}</div>
-                <div>{{ t('userSubscriptions.lifecycle.newPlanPrice') }}: {{ formatPlanValue(changeQuoteData.new_plan_price) }}</div>
-                <div>{{ t('userSubscriptions.lifecycle.oldRemainingValue') }}: {{ formatPlanValue(changeQuoteData.old_remaining_value) }}</div>
-              </template>
+              <div>{{ t('userSubscriptions.lifecycle.newPlanPriceFiat') }}: {{ formatPaymentValue(changeQuoteData.new_plan_price) }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.oldRemainingValueFiat') }}: {{ formatPaymentValue(changeQuoteData.old_remaining_value) }}</div>
               <div>{{ t('userSubscriptions.lifecycle.caps', { weekly: formatCap(changeQuoteData.weekly_cap_usd), monthly: formatCap(changeQuoteData.monthly_cap_usd) }) }}</div>
             </div>
           </template>
