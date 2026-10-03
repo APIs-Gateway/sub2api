@@ -26,7 +26,8 @@ type View = {
   handleToggleEnabled: (p: ReturnType<typeof plan>, enabled: boolean) => Promise<void>
   startEdit: (p: ReturnType<typeof plan>) => void; confirmDeletePlan: (p: ReturnType<typeof plan>) => void
   newPlan: { model_id: string; cron_expression: string }; plans: ReturnType<typeof plan>[]
-  editingPlanId: number | null; showDeleteConfirm: boolean
+  editingPlanId: number | null; showDeleteConfirm: boolean; showAddForm: boolean
+  editForm: { model_id: string }
 }
 function mountPanel(show = false) {
   return shallowMount(ScheduledTestsPanel, {
@@ -235,5 +236,51 @@ describe('scheduled test mutations keep their account and plan identity', () => 
     expect(view(w).showDeleteConfirm).toBe(true)
     expect(api.delete).toHaveBeenCalledTimes(1)
     expect(api.delete).toHaveBeenCalledWith(1)
+  })
+
+  it('keeps a new create draft and unrelated selected results after cancelling the pending create', async () => {
+    const pending = deferred<ReturnType<typeof plan>>()
+    api.create.mockReturnValueOnce(pending.promise)
+    const w = await openPanel()
+    const click = async (text: string) => { await w.findAll('button').find(b => b.text() === text)!.trigger('click') }
+    await click('admin.scheduledTests.addPlan')
+    view(w).newPlan.model_id = 'submitted-model'
+    view(w).newPlan.cron_expression = '*/30 * * * *'
+    await flushPromises()
+    await click('common.save')
+    expect(api.create).toHaveBeenCalledTimes(1)
+    await click('common.cancel')
+    await click('admin.scheduledTests.addPlan')
+    view(w).newPlan.model_id = 'new-draft-model'
+    view(w).newPlan.cron_expression = '0 * * * *'
+    await expand(w, 1)
+    await flushPromises()
+    expect(w.text()).toContain('22ms')
+    pending.resolve(plan(3))
+    await flushPromises()
+    expect(view(w).showAddForm).toBe(true)
+    expect(view(w).newPlan.model_id).toBe('new-draft-model')
+    expect(view(w).newPlan.cron_expression).toBe('0 * * * *')
+    expect(w.text()).toContain('22ms')
+    expect(showSuccess).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a newly reopened edit of the same plan after an older save finishes', async () => {
+    const pending = deferred<ReturnType<typeof plan>>()
+    api.update.mockReturnValueOnce(pending.promise)
+    const w = await openPanel()
+    const edit = () => w.findAll('button[title="admin.scheduledTests.editPlan"]')[0].trigger('click')
+    await edit()
+    await w.findAll('button').find(b => b.text() === 'common.save')!.trigger('click')
+    expect(api.update).toHaveBeenCalledTimes(1)
+    await w.findAll('button').find(b => b.text() === 'common.cancel')!.trigger('click')
+    await edit()
+    view(w).editForm.model_id = 'new-edit-model'
+    pending.resolve({ ...plan(1), model_id: 'submitted-old-edit' })
+    await flushPromises()
+    expect(view(w).editingPlanId).toBe(1)
+    expect(view(w).editForm.model_id).toBe('new-edit-model')
+    expect(w.findAll('button').some(b => b.text() === 'common.save')).toBe(true)
+    expect(showSuccess).toHaveBeenCalledTimes(1)
   })
 })

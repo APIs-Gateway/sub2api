@@ -515,6 +515,9 @@ onBeforeUnmount(() => {
 })
 const expandedResultIds = reactive(new Set<number>())
 const showAddForm = ref(false)
+let createEditorRevision = 0
+let editEditorRevision = 0
+watch(showAddForm, () => { createEditorRevision++ }, { flush: 'sync' })
 const showDeleteConfirm = ref(false)
 const deletingPlan = ref<ScheduledTestPlan | null>(null)
 const editingPlanId = ref<number | null>(null)
@@ -543,13 +546,15 @@ const resetNewPlan = () => {
   newPlan.auto_recover = false
 }
 
-const loadPlans = async () => {
+const loadPlans = async (invalidateSelection = false) => {
   if (!props.show || !props.accountId) return
   const generation = panelGeneration
   const accountId = props.accountId
   const requestId = ++plansRequestId
-  expandedPlanId.value = null
-  invalidateResults()
+  if (invalidateSelection) {
+    expandedPlanId.value = null
+    invalidateResults()
+  }
   loading.value = true
   try {
     const data = await adminAPI.scheduledTests.listByAccount(accountId)
@@ -584,6 +589,7 @@ watch(() => [props.show, props.accountId] as const, () => {
 const handleCreate = async () => {
   if (!props.show || !props.accountId || creating.value || !newPlan.model_id || !newPlan.cron_expression) return
   const generation = panelGeneration
+  const editorRevision = createEditorRevision
   creating.value = true
   try {
     const maxResults = Number(newPlan.max_results) || 100
@@ -597,9 +603,12 @@ const handleCreate = async () => {
     })
     if (!isCurrentPanel(generation)) return
     appStore.showSuccess(t('admin.scheduledTests.createSuccess'))
-    showAddForm.value = false
-    resetNewPlan()
-    await loadPlans()
+    const sameEditor = editorRevision === createEditorRevision
+    if (sameEditor) {
+      showAddForm.value = false
+      resetNewPlan()
+    }
+    await loadPlans(sameEditor)
   } catch (error: any) {
     if (!isCurrentPanel(generation)) return
     appStore.showError(error?.message || 'Failed to create plan')
@@ -628,6 +637,7 @@ const handleToggleEnabled = async (plan: ScheduledTestPlan, enabled: boolean) =>
 }
 
 const startEdit = (plan: ScheduledTestPlan) => {
+  editEditorRevision++
   editingPlanId.value = plan.id
   editForm.model_id = plan.model_id
   editForm.cron_expression = plan.cron_expression
@@ -637,6 +647,7 @@ const startEdit = (plan: ScheduledTestPlan) => {
 }
 
 const cancelEdit = () => {
+  editEditorRevision++
   editingPlanId.value = null
 }
 
@@ -644,6 +655,7 @@ const handleEdit = async () => {
   if (!props.show || !props.accountId || updating.value || !editingPlanId.value || !editForm.model_id || !editForm.cron_expression) return
   const generation = panelGeneration
   const planId = editingPlanId.value
+  const editorRevision = editEditorRevision
   if (expandedPlanId.value === planId) invalidateResults()
   updating.value = true
   try {
@@ -661,7 +673,7 @@ const handleEdit = async () => {
       plans.value[index] = updated
     }
     appStore.showSuccess(t('admin.scheduledTests.updateSuccess'))
-    if (editingPlanId.value === planId) editingPlanId.value = null
+    if (editingPlanId.value === planId && editorRevision === editEditorRevision) editingPlanId.value = null
   } catch (error: any) {
     if (!isCurrentPanel(generation)) return
     appStore.showError(error?.message || 'Failed to update plan')
