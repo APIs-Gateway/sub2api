@@ -626,7 +626,8 @@ func (s *PaymentService) sendBalanceRechargeSuccessNotification(ctx context.Cont
 
 func (s *PaymentService) sendSubscriptionPurchaseSuccessNotification(ctx context.Context, o *dbent.PaymentOrder) error {
 	variables := map[string]string{
-		"subscription_group": "Subscription",
+		// 空串表示没有分组名（自定义卡、转套餐卡、分组已删除），由通知服务按收件人 locale 回退。
+		"subscription_group": "",
 		"subscription_days":  "",
 		"expiry_time":        "",
 		"order_id":           strconv.FormatInt(o.ID, 10),
