@@ -17,7 +17,9 @@ const FORBIDDEN: Array<{ name: string; pattern: RegExp }> = [
   { name: '1 CNY = x USD 换算', pattern: /1\s*(?:CNY|\{currency\})\s*[=＝]/i },
   { name: '充值倍率 / 当前倍率', pattern: /充值倍率|當前倍率|当前倍率|recharge rate|current rate/i },
   { name: '每刀单价 / 每 N 刀一档', pattern: /每刀|每\s*\d+\s*刀|per dollar|\d+\s*USD steps/i },
-  { name: '额度价值（与实付并列）', pattern: /额度价值|額度價值|quota value/i }
+  { name: '额度价值（与实付并列）', pattern: /额度价值|額度價值|quota value/i },
+  // 「约为官方价的 0.25」「0.25 of official pricing」这类带具体数字的折算示例。
+  { name: '折合官方价的具体比例', pattern: /官方[价價]的\s*\d*\.\d|\d*\.\d+\s*of\s+(?:the\s+)?official\s+pric/i }
 ]
 
 function collectMessages(value: unknown, path: string, out: Array<[string, string]>) {

@@ -1173,7 +1173,7 @@
       title: 'How billing works',
       intro: 'This site bills by usage, deducted from your balance (USD) in real time. A monthly plan gives you a large "official-price quota" for a low price — for example, ¥39 grants $2700 of quota, with models charged at official prices.',
       rate: 'The "Nx rate" on the right of each group is how fast that pool burns your balance relative to official pricing: a higher number means a more stable pool but also more balance consumed for the same usage. It is the billing coefficient, not your final cost.',
-      effective: 'The "0.X rate" in the group description is your effective fraction of official pricing after the plan discount. For example, "full-power pro" is a 6x rate, which works out to about 0.25 of official pricing under a plan.'
+      effective: 'The "0.X rate" in the group description is your effective fraction of official pricing after the plan discount.'
     },
     statusLabel: 'Status',
     selectStatus: 'Select status',
