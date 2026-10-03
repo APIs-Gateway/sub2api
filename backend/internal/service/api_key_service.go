@@ -771,12 +771,14 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		return nil, fmt.Errorf("update api key: %w", err)
 	}
 
-	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 	s.compileAPIKeyIPRules(apiKey)
 
+	// 主分组变更要先联动回退链（可能删掉与新主分组重复的项、换平台清空用户链），再失效鉴权缓存，
+	// 这样重算出来的 HasGroupRoutes 已经反映联动之后的链（审查 BK-A / S-1）。
 	if primaryChangedTo != nil {
 		notifyPrimaryGroupChanged(ctx, s.groupRouteHooks, apiKey, primaryChangedTo)
 	}
+	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 
 	// Invalidate Redis rate limit cache so reset takes effect immediately
 	if resetRateLimit && s.rateLimitCacheInvalid != nil {

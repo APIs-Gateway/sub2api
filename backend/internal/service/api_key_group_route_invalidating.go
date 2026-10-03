@@ -30,6 +30,9 @@ func InvalidateAuthCacheForGroupRoutes(ctx context.Context, invalidator APIKeyAu
 // authCacheInvalidatingGroupRouteService 是 GroupRouteService 写路径上的失效钩子：
 // 在 ReplaceUserChain / ReplaceHiddenChain / OnPrimaryGroupChanged 成功之后失效这把 Key 的鉴权缓存。
 // 读路径与 ResolveEffectiveChain 原样透传。
+//
+// 注意：这里靠嵌入接口透传，GroupRouteService 以后新增的写方法如果不在下面显式覆盖，会被静默透传、
+// 不触发失效（鉴权快照里的 HasGroupRoutes 就会陈旧）。**新增写方法必须在这里覆盖**（审查 S-2）。
 type authCacheInvalidatingGroupRouteService struct {
 	GroupRouteService
 	invalidator APIKeyAuthCacheKeyInvalidator
@@ -37,9 +40,11 @@ type authCacheInvalidatingGroupRouteService struct {
 
 // NewAuthCacheInvalidatingGroupRouteService 用失效钩子包装 GroupRouteService。invalidator 为 nil 时返回 inner 本身。
 //
-// 接线：service/wire.go 的 ProvideGroupRouteService 已经把它作为 GroupRouteService 的提供者，
-// 所以所有通过依赖注入拿到 GroupRouteService 的写入入口（用户端 PUT、管理端隐藏链、主分组变更、PR5 迁移工具）
-// 自动经过它；不要在注入之外直接 NewGroupRouteService 去写链，否则会绕过失效。
+// 接线：由 NewKeyFallbackService 对自己持有的 routes 包装一次（用户端 PUT、管理端隐藏链的写入都经过它）。
+// 不能放在 wire 的 GroupRouteService 提供者里：*APIKeyService 依赖 GroupRouteKeyHooks，后者依赖 GroupRouteService，
+// 提供者再依赖 *APIKeyService 就成环（审查 BK-A）。主分组变更走的是 APIKeyService / AdminService 持有的
+// 未包装实例，那两处自己在 notifyPrimaryGroupChanged 之后失效鉴权缓存。
+// 不要在注入之外直接 NewGroupRouteService 去写链，否则会绕过失效。
 // 调用方传入的 key 必须带 Key 明文（GetByID 加载的完整 Key），否则算不出缓存 key，无法失效。
 func NewAuthCacheInvalidatingGroupRouteService(inner GroupRouteService, invalidator APIKeyAuthCacheKeyInvalidator) GroupRouteService {
 	if inner == nil || invalidator == nil {

@@ -210,6 +210,13 @@ func NewKeyFallbackService(
 	pricer *KeyEditorPriceService,
 	settings *SettingService,
 ) *KeyFallbackService {
+	// 保存 / 清空链之后要失效这把 Key 的鉴权缓存（快照里的 HasGroupRoutes），所以在这里给 routes 套上失效装饰器，
+	// 用户端 PUT 与管理端隐藏链的写入都经过它。装饰器不能放在 wire 的 GroupRouteService 提供者里，会和
+	// APIKeyService → GroupRouteKeyHooks → GroupRouteService 成环（审查 BK-A）。keys 为 nil 时不包装，
+	// 避免把 nil 指针装进非 nil 的接口。
+	if keys != nil {
+		routes = NewAuthCacheInvalidatingGroupRouteService(routes, keys)
+	}
 	s := &KeyFallbackService{
 		keys:   keys,
 		users:  users,
