@@ -126,6 +126,10 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		if stripErr != nil {
 			return nil, fmt.Errorf("sanitize Grok unsupported fields: %w", stripErr)
 		}
+		upstreamBody, stripErr = sanitizeGrokRawChatCompatFields(upstreamBody)
+		if stripErr != nil {
+			return nil, fmt.Errorf("sanitize Grok raw Chat fields: %w", stripErr)
+		}
 	}
 	if clientStream {
 		var usageErr error
@@ -230,6 +234,11 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+		if account.Platform == PlatformGrok && isGrokContentPolicyRejection(resp.StatusCode, respBody) {
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+				UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: upstreamRequestIDFromHeader(resp.Header), Kind: "http_error", Message: upstreamMsg})
+			return nil, s.writeGrokContentPolicyRejection(c, resp.StatusCode, upstreamMsg)
+		}
 		shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody)
 		var tempUnscheduled bool
 		shouldFailover, tempUnscheduled = s.openAIPromoteTempUnscheduleFailover(ctx, c, account, resp.StatusCode, respBody, shouldFailover, upstreamModel)

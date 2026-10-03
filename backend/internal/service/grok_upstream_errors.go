@@ -1,8 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -23,6 +26,9 @@ func isGrokContentPolicyRejection(statusCode int, responseBody []byte) bool {
 
 	var payload any
 	if json.Unmarshal(responseBody, &payload) == nil {
+		if grokExplicitRequestRefusal(responseBody) {
+			return true
+		}
 		if grokStructuredAccountAccessMarker(payload) {
 			return false
 		}
@@ -35,28 +41,125 @@ func isGrokContentPolicyRejection(statusCode int, responseBody []byte) bool {
 }
 
 func grokStructuredAccountAccessMarker(value any) bool {
+	return grokStructuredAccountAccessMarkerWithPermission(value, true)
+}
+
+func grokStructuredAccountAccessMarkerWithPermission(value any, includePermission bool) bool {
 	switch node := value.(type) {
 	case map[string]any:
 		for key, child := range node {
 			normalizedKey := normalizeGrokErrorMarker(key)
 			switch normalizedKey {
 			case "code", "error_code", "type", "category", "reason":
-				if marker, ok := child.(string); ok && isGrokAccountAccessCode(marker) {
+				if marker, ok := child.(string); ok && isGrokAccountAccessCode(marker) &&
+					(includePermission || normalizeGrokErrorMarker(marker) != "permission_denied") {
 					return true
 				}
 			}
-			if grokStructuredAccountAccessMarker(child) {
+			if grokStructuredAccountAccessMarkerWithPermission(child, includePermission) {
 				return true
 			}
 		}
 	case []any:
 		for _, child := range node {
-			if grokStructuredAccountAccessMarker(child) {
+			if grokStructuredAccountAccessMarkerWithPermission(child, includePermission) {
 				return true
 			}
 		}
+	case string:
+		// The refusal exception must inspect decoded text as well: JSON
+		// escapes must not hide a suspension/entitlement phrase from the
+		// existing raw-body account guard.
+		return !includePermission && grokAccountAccessMessage(node)
 	}
 	return false
+}
+
+// Only a structured permission denial with a complete, recognized refusal
+// sentence may bypass account handling. Duplicate keys are ambiguous: reject
+// this exception rather than letting a later value conceal an account fault.
+func grokExplicitRequestRefusal(body []byte) bool {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	payload, err := decodeGrokUniqueJSON(decoder)
+	if err != nil {
+		return false
+	}
+	if _, err = decoder.Token(); err != io.EOF {
+		return false
+	}
+	root, ok := payload.(map[string]any)
+	if !ok || grokStructuredAccountAccessMarkerWithPermission(root, false) {
+		return false
+	}
+	permission := func(node map[string]any) bool {
+		for _, key := range []string{"code", "error_code", "type", "category", "reason"} {
+			if value, ok := node[key].(string); ok && normalizeGrokErrorMarker(value) == "permission_denied" {
+				return true
+			}
+		}
+		return false
+	}
+	nested, _ := root["error"].(map[string]any)
+	if !permission(root) && !permission(nested) {
+		return false
+	}
+	for _, candidate := range []any{root["error"], root["message"], root["detail"], nested["message"], nested["error"]} {
+		value, ok := candidate.(string)
+		if !ok {
+			continue
+		}
+		value = strings.ToLower(strings.TrimSpace(value))
+		value = strings.NewReplacer("’", "'", "‘", "'").Replace(value)
+		if value == "i'm sorry, i can't help with that request." || value == "i'm sorry, i cannot help with that request." {
+			return true
+		}
+	}
+	return false
+}
+
+func decodeGrokUniqueJSON(decoder *json.Decoder) (any, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	switch token {
+	case json.Delim('{'):
+		object := make(map[string]any)
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return nil, err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid object key")
+			}
+			if _, exists := object[key]; exists {
+				return nil, fmt.Errorf("duplicate object key")
+			}
+			value, err := decodeGrokUniqueJSON(decoder)
+			if err != nil {
+				return nil, err
+			}
+			object[key] = value
+		}
+		_, err := decoder.Token()
+		return object, err
+	case json.Delim('['):
+		var array []any
+		for decoder.More() {
+			value, err := decodeGrokUniqueJSON(decoder)
+			if err != nil {
+				return nil, err
+			}
+			array = append(array, value)
+		}
+		_, err := decoder.Token()
+		return array, err
+	default:
+		return token, nil
+	}
 }
 
 func grokStructuredContentPolicyMarker(value any) bool {
