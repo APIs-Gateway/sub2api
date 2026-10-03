@@ -1295,9 +1295,9 @@
     rateLimitColumn: 'Rate Limit',
     rateLimitSection: 'Rate Limit',
     resetUsage: 'Reset',
-    rateLimit5h: '5-Hour Limit (USD)',
-    rateLimit1d: 'Daily Limit (USD)',
-    rateLimit7d: '7-Day Limit (USD)',
+    rateLimit5h: '5-Hour Limit ({currency})',
+    rateLimit1d: 'Daily Limit ({currency})',
+    rateLimit7d: '7-Day Limit ({currency})',
     rateLimitHint: 'Set the maximum spending for this key within each time window. 0 = unlimited.',
     stablePriority: {
       label: 'Enable Stable Priority',

@@ -1299,9 +1299,9 @@
     rateLimitColumn: '速率限制',
     rateLimitSection: '速率限制',
     resetUsage: '重置',
-    rateLimit5h: '5小時限額 (USD)',
-    rateLimit1d: '日限額 (USD)',
-    rateLimit7d: '7天限額 (USD)',
+    rateLimit5h: '5小時限額 ({currency})',
+    rateLimit1d: '日限額 ({currency})',
+    rateLimit7d: '7天限額 ({currency})',
     rateLimitHint: '設定此金鑰在指定時間窗口內的最大消費額。0 = 無限制。',
     stablePriority: {
       label: '啟用穩定優先',
