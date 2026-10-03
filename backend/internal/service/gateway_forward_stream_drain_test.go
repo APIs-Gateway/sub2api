@@ -374,7 +374,8 @@ func TestGatewayForwardStreamDrain_IdleClosesReaderAndPreservesUsage(t *testing.
 			defer body.Close()
 			svc := &GatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{StreamDataIntervalTimeout: 1}}}
 			result, err := runGatewayForwardDrainHandler(t, handle, svc, &http.Response{Body: body}, c)
-			require.ErrorContains(t, err, "stream data interval timeout")
+			require.Error(t, err)
+			require.True(t, errors.Is(err, errGatewayForwardStreamIdle) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, io.EOF), "pump timeout and established detached watchdog can close the reader concurrently: %v", err)
 			require.NotNil(t, result)
 			require.Equal(t, 27, result.Usage.OutputTokens)
 			require.Equal(t, 15, result.Usage.CacheReadInputTokens)

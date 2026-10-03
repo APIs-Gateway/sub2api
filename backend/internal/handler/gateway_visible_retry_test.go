@@ -113,7 +113,13 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 			}
 			select {
 			case log := <-usage.created:
-				require.Equal(t, 10, log.InputTokens)
+				if mode == "comment_retry" {
+					require.Zero(t, log.InputTokens)
+					require.Equal(t, 10, log.CacheReadInputTokens, "preserve fork sticky-failover force-cache billing")
+				} else {
+					require.Equal(t, 10, log.InputTokens)
+					require.Zero(t, log.CacheReadInputTokens)
+				}
 				require.Equal(t, 15, log.OutputTokens)
 				require.Equal(t, upstream.accounts[len(upstream.accounts)-1], log.AccountID)
 			default:

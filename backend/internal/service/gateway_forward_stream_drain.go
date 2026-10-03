@@ -51,10 +51,6 @@ func (d *gatewayForwardStreamDrain) startTerminalTail() {
 	d.tailTimer = time.NewTimer(gatewayForwardStreamTailGrace)
 }
 
-func (d *gatewayForwardStreamDrain) terminalSeen() bool {
-	return d.tailTimer != nil
-}
-
 func (d *gatewayForwardStreamDrain) next() (string, error) {
 	var tailCh, idleCh <-chan time.Time
 	if d.tailTimer != nil {
