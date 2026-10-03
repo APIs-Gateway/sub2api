@@ -42,7 +42,7 @@ func IsBillingInflightNoChargeError(err error) bool {
 // authentication/permission refusals are zero-charge proof. An incomplete body,
 // usage-bearing error, transport failure, or proxy 502 is deliberately unknown.
 func markBillingInflightProviderRefusal(c *gin.Context, status int, body []byte, readErr error) bool {
-	if readErr != nil || (status != http.StatusUnauthorized && status != http.StatusForbidden) {
+	if readErr != nil || (status != http.StatusUnauthorized && status != http.StatusForbidden && status != 529) {
 		return false
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -68,7 +68,15 @@ func markBillingInflightProviderRefusal(c *gin.Context, status int, body []byte,
 			continue
 		}
 		switch strings.ToLower(marker) {
-		case "authentication_error", "invalid_api_key", "invalid_authentication", "permission_error", "permission_denied", "insufficient_permissions":
+		case "unauthenticated", "authentication_error", "invalid_api_key", "invalid_authentication", "permission_error", "permission_denied", "insufficient_permissions":
+			if status == 529 {
+				return false
+			}
+			proof = true
+		case "overloaded_error":
+			if status != 529 {
+				return false
+			}
 			proof = true
 		case "invalid_request_error", "error":
 		default:

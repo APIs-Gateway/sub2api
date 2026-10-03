@@ -2539,6 +2539,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 再记审计行并清标，turn N+1 才能重新打标。
 				upstreamResponseModel := ""
 				if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
+					if mark.Blocked && result == nil {
+						service.MarkBillingInflightAttemptNoCharge(turnCtx)
+					}
 					upstreamResponseModel = mark.ResponseModel
 				}
 				mismatchRequestBody := wsMismatchRequestBody
@@ -3825,6 +3828,11 @@ type upstreamModelMismatchUsageRecorder interface {
 // 避免「未拦截 + 其他错误带部分 result」时审计行与正常行双写。
 // 注意调用顺序：成功路径若需读取 mark.ResponseModel 透传给 RecordUsage，必须在本方法之前读。
 func (h *OpenAIGatewayHandler) recordUpstreamModelMismatchIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, channelFields service.ChannelUsageFields, requestPayloadHash string, requestBody []byte) {
+	if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil && mark.Blocked && c.Request != nil {
+		// The existing mismatch policy writes a zero-cost audit outside the
+		// primary billing task. Release only this attempt's estimate.
+		service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+	}
 	var recorder upstreamModelMismatchUsageRecorder
 	if h.gatewayService != nil {
 		recorder = h.gatewayService

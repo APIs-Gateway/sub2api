@@ -150,7 +150,7 @@ func (s *GatewayService) anthropicCompatProviderError(ctx context.Context, resp 
 		Kind: "stream_error", Message: sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body))), Detail: detail,
 	})
 	if eligible {
-		return nil, &UpstreamFailoverError{StatusCode: status, ResponseBody: body, BillingNoCharge: true}
+		return nil, &UpstreamFailoverError{StatusCode: status, ResponseBody: body, BillingNoCharge: markBillingInflightProviderRefusal(c, status, body, nil)}
 	}
 	return result, err
 }
