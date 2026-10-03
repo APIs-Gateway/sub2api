@@ -49,6 +49,34 @@ func (b *visibleRetryDelayedBody) Read(p []byte) (int, error) {
 }
 func (b *visibleRetryDelayedBody) Close() error { b.once.Do(func() { close(b.closed) }); return nil }
 
+type visibleRetryTerminalFailWriter struct {
+	*httptest.ResponseRecorder
+	failed                              bool
+	comments, afterWrites, afterFlushes int
+}
+
+func (w *visibleRetryTerminalFailWriter) Write(p []byte) (int, error) {
+	if w.failed {
+		w.afterWrites++
+		return 0, io.ErrClosedPipe
+	}
+	if strings.HasPrefix(string(p), "data:") && bytes.Contains(p, []byte(`"type":"error"`)) {
+		w.failed = true
+		return 0, io.ErrClosedPipe
+	}
+	if strings.HasPrefix(string(p), ": ping") {
+		w.comments++
+	}
+	return w.ResponseRecorder.Write(p)
+}
+func (w *visibleRetryTerminalFailWriter) Flush() {
+	if w.failed {
+		w.afterFlushes++
+		return
+	}
+	w.ResponseRecorder.Flush()
+}
+
 type visibleRetryAccountRepo struct {
 	compatPartialAccountRepo
 	overloaded []int64
@@ -74,7 +102,7 @@ func (u *visibleRetryUpstream) DoWithTLS(_ *http.Request, _ string, id int64, _ 
 	u.accounts = append(u.accounts, id)
 	payload := compatPartialMessageStartSSE + "event: message_delta\ndata: " + `{"type":"message_delta","usage":{"output_tokens":15}}` + "\n\n"
 	header := "success-attempt"
-	if u.mode == "comment_retry" && u.calls == 1 {
+	if (u.mode == "comment_retry" && u.calls == 1) || strings.HasPrefix(u.mode, "exhausted_") {
 		payload = "event: message_start\ndata: " + `{"type":"message_start","message":{"usage":{"input_tokens":0,"output_tokens":0}}}` + "\n\nevent: message_stop\ndata: " + `{"type":"message_stop"}` + "\n\n"
 		header = "failed-attempt"
 	}
@@ -91,7 +119,7 @@ func (u *visibleRetryUpstream) DoWithTLS(_ *http.Request, _ string, id int64, _ 
 		payload = "event: message_start\ndata: " + `{"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}` + "\n\nevent: message_delta\ndata: " + `{"type":"message_delta","usage":{"output_tokens":15}}` + "\n\n"
 	}
 	var body io.ReadCloser = io.NopCloser(strings.NewReader(payload))
-	if (u.mode == "comment_retry" && u.calls == 1) || u.mode == "metered_empty" || strings.HasPrefix(u.mode, "comment_write_failed_") {
+	if (u.mode == "comment_retry" && u.calls == 1) || u.mode == "metered_empty" || strings.HasPrefix(u.mode, "exhausted_") || strings.HasPrefix(u.mode, "comment_write_failed_") {
 		u.delayedBody = &visibleRetryDelayedBody{reader: strings.NewReader(payload), delay: true, closed: make(chan struct{})}
 		if u.mode == "comment_write_failed_read_error" {
 			u.delayedBody.readErr = io.ErrUnexpectedEOF
@@ -102,13 +130,16 @@ func (u *visibleRetryUpstream) DoWithTLS(_ *http.Request, _ string, id int64, _ 
 }
 func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, mode := range []string{"comment_retry", "committed_error", "metered_empty", "metered_sse_error", "comment_write_failed_eof", "comment_write_failed_read_error"} {
+	for _, mode := range []string{"comment_retry", "committed_error", "metered_empty", "metered_sse_error", "comment_write_failed_eof", "comment_write_failed_read_error", "exhausted_two_zero", "exhausted_selection_zero", "exhausted_terminal_write_failed"} {
 		t.Run(mode, func(t *testing.T) {
 			gid := int64(9152)
 			group := &service.Group{ID: gid, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive, RateMultiplier: 1}
 			accounts := []*service.Account{}
 			for _, id := range []int64{9252, 9253} {
 				accounts = append(accounts, &service.Account{ID: id, Name: "native-visible", Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey, Credentials: map[string]any{"api_key": "local", "pool_mode": true, "pool_mode_retry_count": 0}, Concurrency: 1, Priority: 1, Status: service.StatusActive, Schedulable: true, AccountGroups: []service.AccountGroup{{AccountID: id, GroupID: gid}}})
+			}
+			if mode == "exhausted_selection_zero" {
+				accounts = accounts[:1]
 			}
 			upstream := &visibleRetryUpstream{mode: mode}
 			usage := &partialUsageBillingUsageLogRepo{created: make(chan *service.UsageLog, 4)}
@@ -133,10 +164,15 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 			h.usageRecordWorkerPool = pool
 			rec := httptest.NewRecorder()
 			var failedWriter *compatLiveFailedWriter
+			var terminalFailWriter *visibleRetryTerminalFailWriter
 			var downstream http.ResponseWriter = rec
 			if strings.HasPrefix(mode, "comment_write_failed_") {
 				failedWriter = &compatLiveFailedWriter{ResponseRecorder: rec}
 				downstream = failedWriter
+			}
+			if mode == "exhausted_terminal_write_failed" {
+				terminalFailWriter = &visibleRetryTerminalFailWriter{ResponseRecorder: rec}
+				downstream = terminalFailWriter
 			}
 			c, _ := gin.CreateTestContext(downstream)
 			c.Request = httptest.NewRequest("POST", "/v1/messages", bytes.NewBufferString(`{"model":"claude-sonnet-4-5","stream":true,"messages":[{"role":"user","content":"hello"}]}`))
@@ -154,6 +190,49 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 				require.True(t, ok)
 				require.Len(t, ops, 1)
 				require.Equal(t, 529, ops[0].UpstreamStatusCode, "retain provider overload attribution even when pool policy skips cooldown")
+			}
+			if strings.HasPrefix(mode, "exhausted_") {
+				expectedCalls := 2
+				if mode == "exhausted_selection_zero" {
+					expectedCalls = 1
+				}
+				require.Equal(t, expectedCalls, upstream.calls)
+				require.Equal(t, http.StatusOK, rec.Code, "transport comment already committed the SSE status")
+				require.Contains(t, rec.Header().Get("Content-Type"), "text/event-stream")
+				require.Contains(t, rec.Body.String(), ": ping\n\n")
+				require.Empty(t, rec.Header().Get("X-Request-Id"))
+				errorFrames := 0
+				for _, line := range strings.Split(rec.Body.String(), "\n") {
+					if line == "" || strings.HasPrefix(line, ":") {
+						continue
+					}
+					require.True(t, strings.HasPrefix(line, "data:"), "after a transport comment, terminal error must be an SSE data frame, not bare JSON: %q", line)
+					var frame struct {
+						Type  string          `json:"type"`
+						Error json.RawMessage `json:"error"`
+					}
+					require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &frame))
+					require.Equal(t, "error", frame.Type)
+					require.NotEmpty(t, frame.Error)
+					errorFrames++
+				}
+				if terminalFailWriter != nil {
+					require.True(t, terminalFailWriter.failed)
+					require.Equal(t, 2, terminalFailWriter.comments)
+					require.NoError(t, c.Request.Context().Err(), "terminal write failure must leave request context live")
+					require.Zero(t, terminalFailWriter.afterWrites)
+					require.Zero(t, terminalFailWriter.afterFlushes)
+					require.Zero(t, errorFrames)
+				} else {
+					require.Equal(t, 1, errorFrames)
+				}
+				select {
+				case log := <-usage.created:
+					t.Fatalf("zero-metered failed attempt must not create usage: %+v", log)
+				default:
+				}
+				require.Empty(t, billingRepo.commands)
+				return
 			}
 			if failedWriter != nil {
 				require.NoError(t, c.Request.Context().Err(), "write failure must not cancel request context to hide generic fallback")
