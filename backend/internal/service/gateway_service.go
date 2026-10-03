@@ -8778,9 +8778,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	// 这样 Anthropic SDK / Claude Code 等客户端能按标准 error 类型解析，UI 能显示具体错误文案，
 	// 服务端 ExtractUpstreamErrorMessage 也能从透传的 body 中提取 message。
 	errorEventSent := false
-	sendErrorEvent := func(reason, message string) {
+	sendErrorEvent := func(reason, message string) bool {
 		if errorEventSent {
-			return
+			return true
 		}
 		errorEventSent = true
 		if message == "" {
@@ -8797,8 +8797,11 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			// json.Marshal 不可能在已知 string-only 输入上失败，保守 fallback
 			body = []byte(fmt.Sprintf(`{"type":"error","error":{"type":%q,"message":%q}}`, reason, message))
 		}
-		_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", body)
+		if _, err := fmt.Fprintf(w, "event: error\ndata: %s\n\n", body); err != nil {
+			return false
+		}
 		flusher.Flush()
+		return true
 	}
 
 	needModelReplace := originalModel != mappedModel
@@ -9103,7 +9106,18 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, err
 					}
 					if visibleOutput.visible {
-						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, err
+						reason := "upstream_stream_error"
+						message := "Upstream stream failed"
+						if streamErr != nil {
+							if t := gjson.Get(streamErr.RawData, "error.type").String(); t != "" {
+								reason = t
+							}
+							if m := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage([]byte(streamErr.RawData)))); m != "" {
+								message = m
+							}
+						}
+						connected := sendErrorEvent(reason, message)
+						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: !connected}, err
 					}
 					return nil, err
 				}
