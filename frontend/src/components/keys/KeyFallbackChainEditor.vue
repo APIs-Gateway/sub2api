@@ -460,15 +460,23 @@ const PriceLine = defineComponent({
       // 选择列表里整行是一个 button，里面只能放短语内容，所以用 span
       const tag = p.bare ? 'span' : 'p'
       const cls = ['text-xs tabular-nums text-gray-500 dark:text-gray-400', p.bare ? 'block' : 'mt-1.5']
-      const hasUsd = typeof price?.input_usd_per_mtok === 'number' && typeof price?.output_usd_per_mtok === 'number'
-      if (!price || !price.priced || !hasUsd) {
-        return h(tag, { class: cls, 'data-test': 'price' }, t('keyFallback.editor.unpriced'))
-      }
       // 人民币用服务端给的余额价口径（cny），不在前端自己乘倍率或汇率；
       // 全站切到美元（含 free 站）或没有 cny 时，显示同一价格的美元口径。
-      const useFiat = isFiat.value && !!price.cny
-      const input = useFiat ? formatFiat(price.cny!.input_per_mtok) : formatUsd(price.input_usd_per_mtok!, 3)
-      const output = useFiat ? formatFiat(price.cny!.output_per_mtok) : formatUsd(price.output_usd_per_mtok!, 3)
+      // 哪条路径要的字段齐全才走哪条：人民币只看 cny，美元只看两个 usd 字段。
+      let input: string | null = null
+      let output: string | null = null
+      if (price?.priced) {
+        if (isFiat.value && price.cny) {
+          input = formatFiat(price.cny.input_per_mtok)
+          output = formatFiat(price.cny.output_per_mtok)
+        } else if (typeof price.input_usd_per_mtok === 'number' && typeof price.output_usd_per_mtok === 'number') {
+          input = formatUsd(price.input_usd_per_mtok, 3)
+          output = formatUsd(price.output_usd_per_mtok, 3)
+        }
+      }
+      if (input === null || output === null) {
+        return h(tag, { class: cls, 'data-test': 'price' }, t('keyFallback.editor.unpriced'))
+      }
       return h(tag, { class: cls, 'data-test': 'price' }, [
         t('keyFallback.editor.input', { price: input }),
         h('span', { class: 'text-gray-300 dark:text-dark-500', 'aria-hidden': 'true' }, ' / '),

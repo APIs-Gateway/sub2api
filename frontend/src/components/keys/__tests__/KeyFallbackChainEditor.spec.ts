@@ -433,6 +433,21 @@ describe('KeyFallbackChainEditor', () => {
     expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('未定价')
   })
 
+  it('人民币口径只看 cny：美元字段缺失也照常显示人民币价', async () => {
+    const chain = makeChain()
+    chain.items[1].reference_price = { priced: true, cny: { input_per_mtok: 0.5, output_per_mtok: 4 } }
+    const w = await mountEditor(chain)
+    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 ¥0.50 / 输出 ¥4.00')
+  })
+
+  it('美元口径只看美元字段：只有 cny 时按「未定价」，不拿人民币数字套 $', async () => {
+    setRecharge(1)
+    const chain = makeChain()
+    chain.items[1].reference_price = { priced: true, cny: { input_per_mtok: 0.5, output_per_mtok: 4 } }
+    const w = await mountEditor(chain)
+    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('未定价')
+  })
+
   it('未知错误统一提示保存失败，不透出后端 message', async () => {
     const w = await mountEditor()
     replaceChain.mockRejectedValue({ status: 500, message: 'pq: deadlock detected' })
