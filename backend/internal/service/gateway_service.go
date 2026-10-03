@@ -9231,6 +9231,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			}
 			applyStreamHeaders(visibleOutput.visible)
 			if _, werr := fmt.Fprint(w, keepaliveBlock); werr != nil {
+				MarkResponseCommitted(c)
 				clientDisconnected = true
 				logger.LegacyPrintf("service.gateway", "Client disconnected during keepalive ping, continuing to drain upstream for billing")
 				continue

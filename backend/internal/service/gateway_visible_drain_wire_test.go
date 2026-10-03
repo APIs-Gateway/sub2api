@@ -206,7 +206,7 @@ func TestGatewayVisibleDrain_CanceledNonErrorEventExit(t *testing.T) {
 				body := &visibleDrainCancelExitBody{payload: strings.NewReader(payload), cancel: cancel, ending: ending, closed: make(chan struct{})}
 				upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: body}}
 				svc := newForwardPartialUsageServiceForTest(upstream)
-				defer body.Close()
+				defer func() { _ = body.Close() }()
 				type outcome struct {
 					result *ForwardResult
 					err    error

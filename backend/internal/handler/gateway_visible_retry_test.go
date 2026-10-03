@@ -23,10 +23,11 @@ import (
 )
 
 type visibleRetryDelayedBody struct {
-	reader *strings.Reader
-	delay  bool
-	closed chan struct{}
-	once   sync.Once
+	reader  *strings.Reader
+	delay   bool
+	closed  chan struct{}
+	once    sync.Once
+	readErr error
 }
 
 func (b *visibleRetryDelayedBody) Read(p []byte) (int, error) {
@@ -40,14 +41,19 @@ func (b *visibleRetryDelayedBody) Read(p []byte) (int, error) {
 			return 0, io.ErrClosedPipe
 		}
 	}
-	return b.reader.Read(p)
+	n, err := b.reader.Read(p)
+	if err == io.EOF && b.readErr != nil {
+		return n, b.readErr
+	}
+	return n, err
 }
 func (b *visibleRetryDelayedBody) Close() error { b.once.Do(func() { close(b.closed) }); return nil }
 
 type visibleRetryUpstream struct {
-	calls    int
-	accounts []int64
-	mode     string
+	calls       int
+	accounts    []int64
+	mode        string
+	delayedBody *visibleRetryDelayedBody
 }
 
 func (u *visibleRetryUpstream) Do(req *http.Request, proxy string, id int64, n int) (*http.Response, error) {
@@ -67,15 +73,22 @@ func (u *visibleRetryUpstream) DoWithTLS(_ *http.Request, _ string, id int64, _ 
 	} else {
 		payload += "event: message_stop\ndata: " + `{"type":"message_stop"}` + "\n\n"
 	}
+	if strings.HasPrefix(u.mode, "comment_write_failed_") {
+		payload = "event: message_start\ndata: " + `{"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}` + "\n\nevent: message_delta\ndata: " + `{"type":"message_delta","usage":{"output_tokens":15}}` + "\n\n"
+	}
 	var body io.ReadCloser = io.NopCloser(strings.NewReader(payload))
-	if u.mode == "comment_retry" && u.calls == 1 {
-		body = &visibleRetryDelayedBody{reader: strings.NewReader(payload), delay: true, closed: make(chan struct{})}
+	if (u.mode == "comment_retry" && u.calls == 1) || strings.HasPrefix(u.mode, "comment_write_failed_") {
+		u.delayedBody = &visibleRetryDelayedBody{reader: strings.NewReader(payload), delay: true, closed: make(chan struct{})}
+		if u.mode == "comment_write_failed_read_error" {
+			u.delayedBody.readErr = io.ErrUnexpectedEOF
+		}
+		body = u.delayedBody
 	}
 	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{header}}, Body: body}, nil
 }
 func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, mode := range []string{"comment_retry", "committed_error"} {
+	for _, mode := range []string{"comment_retry", "committed_error", "comment_write_failed_eof", "comment_write_failed_read_error"} {
 		t.Run(mode, func(t *testing.T) {
 			gid := int64(9152)
 			group := &service.Group{ID: gid, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive, RateMultiplier: 1}
@@ -105,7 +118,13 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 			pool := newUsageRecordTestPool(t)
 			h.usageRecordWorkerPool = pool
 			rec := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(rec)
+			var failedWriter *compatLiveFailedWriter
+			var downstream http.ResponseWriter = rec
+			if strings.HasPrefix(mode, "comment_write_failed_") {
+				failedWriter = &compatLiveFailedWriter{ResponseRecorder: rec}
+				downstream = failedWriter
+			}
+			c, _ := gin.CreateTestContext(downstream)
 			c.Request = httptest.NewRequest("POST", "/v1/messages", bytes.NewBufferString(`{"model":"claude-sonnet-4-5","stream":true,"messages":[{"role":"user","content":"hello"}]}`))
 			c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.Group, group))
 			key := &service.APIKey{ID: 9352, UserID: 9452, GroupID: &gid, Group: group, Status: service.StatusActive, User: &service.User{ID: 9452, Concurrency: 10, Balance: 100}}
@@ -113,15 +132,30 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: key.UserID, Concurrency: 10})
 			h.Messages(c)
 			pool.Stop()
-			require.Contains(t, rec.Body.String(), "partial")
-			require.Equal(t, "success-attempt", rec.Header().Get("X-Request-Id"))
+			if failedWriter != nil {
+				require.NoError(t, c.Request.Context().Err(), "write failure must not cancel request context to hide generic fallback")
+				require.True(t, failedWriter.failed, "delayed upstream must force pre-visible comment write failure")
+				require.Equal(t, 1, upstream.calls, "failed comment must not replay or switch accounts")
+				require.Zero(t, failedWriter.afterWrites)
+				require.Zero(t, failedWriter.afterFlushes)
+				require.Empty(t, rec.Body.String())
+				require.Empty(t, rec.Header().Get("X-Request-Id"))
+				select {
+				case <-upstream.delayedBody.closed:
+				default:
+					t.Fatal("failed-write upstream body not closed")
+				}
+			} else {
+				require.Contains(t, rec.Body.String(), "partial")
+				require.Equal(t, "success-attempt", rec.Header().Get("X-Request-Id"))
+			}
 			if mode == "comment_retry" {
 				require.Equal(t, 2, upstream.calls)
 				require.NotEqual(t, upstream.accounts[0], upstream.accounts[1])
 				require.Contains(t, rec.Body.String(), ": ping\n\n")
 				require.NotContains(t, rec.Body.String(), "failed-attempt")
 				require.NotContains(t, rec.Body.String(), `"input_tokens":99`)
-			} else {
+			} else if mode == "committed_error" {
 				require.Equal(t, 1, upstream.calls)
 				require.Equal(t, 1, strings.Count(rec.Body.String(), "event: error\n"))
 				require.Contains(t, rec.Body.String(), "overloaded_error")
