@@ -78,6 +78,7 @@ func createGroupIfNotExists(ctx context.Context, client *dbent.Client, name, pla
 		SetRateMultiplier(1.0).
 		SetIsExclusive(false).
 		SetAllowImageGeneration(platform == service.PlatformGrok).
+		SetSimpleModeAutoImageEligible(platform == service.PlatformOpenAI).
 		Save(ctx)
 	if err != nil {
 		if dbent.IsConstraintError(err) {

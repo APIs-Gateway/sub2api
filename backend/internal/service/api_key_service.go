@@ -993,3 +993,28 @@ func (s *APIKeyService) UpdateRateLimitUsage(ctx context.Context, apiKeyID int64
 	}
 	return s.apiKeyRepo.IncrementRateLimitUsage(ctx, apiKeyID, cost)
 }
+
+// GetCurrentImagePermissionGroup bypasses both auth caches for long-lived WS
+// image admission. A moved or disabled key must not reuse its handshake group.
+func (s *APIKeyService) GetCurrentImagePermissionGroup(ctx context.Context, initial *APIKey) (*Group, error) {
+	if s == nil || s.apiKeyRepo == nil || initial == nil || initial.Key == "" {
+		return nil, ErrInsufficientPerms
+	}
+	current, err := s.apiKeyRepo.GetByKeyForAuth(ctx, initial.Key)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil || current.ID != initial.ID || current.UserID != initial.UserID || !current.IsActive() || current.IsExpired() || current.User == nil || !current.User.IsActive() || current.User.ID != current.UserID {
+		return nil, ErrInsufficientPerms
+	}
+	if initial.GroupID == nil && initial.Group == nil && current.GroupID == nil && current.Group == nil {
+		return nil, nil
+	}
+	if initial.GroupID == nil || initial.Group == nil || current.GroupID == nil || *current.GroupID != *initial.GroupID || current.Group == nil || current.Group.ID != *current.GroupID || current.Group.Platform != initial.Group.Platform || !current.Group.Hydrated || !current.Group.IsActive() {
+		return nil, ErrInsufficientPerms
+	}
+	if !current.User.CanBindGroup(current.Group.ID, current.Group.IsExclusive) {
+		return nil, ErrInsufficientPerms
+	}
+	return current.Group, nil
+}

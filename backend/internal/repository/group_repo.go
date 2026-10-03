@@ -301,6 +301,12 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetModelsListConfig(groupIn.ModelsListConfig).
 		SetRpmLimit(groupIn.RPMLimit)
 
+	// The seeder alone grants this internal exception. A stale service.Group
+	// from a concurrent update must never restore it after an admin cleared it.
+	if !groupIn.SimpleModeAutoImageEligible {
+		builder = builder.SetSimpleModeAutoImageEligible(false)
+	}
+
 	// 显式处理可空字段：nil 需要 clear，非 nil 需要 set。
 	if groupIn.DailyLimitUSD != nil {
 		builder = builder.SetDailyLimitUsd(*groupIn.DailyLimitUSD)

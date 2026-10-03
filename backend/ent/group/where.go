@@ -135,6 +135,11 @@ func AllowImageGeneration(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldAllowImageGeneration, v))
 }
 
+// SimpleModeAutoImageEligible applies equality check predicate on the "simple_mode_auto_image_eligible" field. It's identical to SimpleModeAutoImageEligibleEQ.
+func SimpleModeAutoImageEligible(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldSimpleModeAutoImageEligible, v))
+}
+
 // ImageRateIndependent applies equality check predicate on the "image_rate_independent" field. It's identical to ImageRateIndependentEQ.
 func ImageRateIndependent(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldImageRateIndependent, v))
@@ -1008,6 +1013,16 @@ func AllowImageGenerationEQ(v bool) predicate.Group {
 // AllowImageGenerationNEQ applies the NEQ predicate on the "allow_image_generation" field.
 func AllowImageGenerationNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldAllowImageGeneration, v))
+}
+
+// SimpleModeAutoImageEligibleEQ applies the EQ predicate on the "simple_mode_auto_image_eligible" field.
+func SimpleModeAutoImageEligibleEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldSimpleModeAutoImageEligible, v))
+}
+
+// SimpleModeAutoImageEligibleNEQ applies the NEQ predicate on the "simple_mode_auto_image_eligible" field.
+func SimpleModeAutoImageEligibleNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldSimpleModeAutoImageEligible, v))
 }
 
 // ImageRateIndependentEQ applies the EQ predicate on the "image_rate_independent" field.

@@ -171,6 +171,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 			})
 		}).
 		WithGroup(func(q *dbent.GroupQuery) {
+			q.Where(group.DeletedAtIsNil())
 			q.Select(
 				group.FieldID,
 				group.FieldName,
@@ -183,6 +184,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				group.FieldWeeklyLimitUsd,
 				group.FieldMonthlyLimitUsd,
 				group.FieldAllowImageGeneration,
+				group.FieldSimpleModeAutoImageEligible,
 				group.FieldImageRateIndependent,
 				group.FieldImageRateMultiplier,
 				group.FieldImagePrice1k,
@@ -924,6 +926,7 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		WeeklyLimitUSD:                  g.WeeklyLimitUsd,
 		MonthlyLimitUSD:                 g.MonthlyLimitUsd,
 		AllowImageGeneration:            g.AllowImageGeneration,
+		SimpleModeAutoImageEligible:     g.SimpleModeAutoImageEligible,
 		ImageRateIndependent:            g.ImageRateIndependent,
 		ImageRateMultiplier:             g.ImageRateMultiplier,
 		ImagePrice1K:                    g.ImagePrice1k,

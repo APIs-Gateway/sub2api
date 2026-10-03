@@ -384,7 +384,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", service.OpenAIResponsesImageGenerationDisabledMessage())
 		return
 	}
-	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
+	if imageIntent && !service.GroupAllowsImageGenerationForMode(apiKey.Group, h.cfg) {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
 		return
 	}
@@ -1985,7 +1985,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, service.OpenAIResponsesImageGenerationDisabledMessage())
 		return
 	}
-	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
+	if imageIntent && !service.GroupAllowsImageGenerationForMode(apiKey.Group, h.cfg) {
 		writeOpenAIWSRejection(ctx, wsConn, http.StatusForbidden, "permission_error", "", service.ImageGenerationPermissionMessage())
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, service.ImageGenerationPermissionMessage())
 		return
@@ -2273,6 +2273,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 		hooks := &service.OpenAIWSIngressHooks{
 			InitialRequestModel: reqModel,
+			BeforeImagePermission: func() (*service.Group, error) {
+				return h.apiKeyService.GetCurrentImagePermissionGroup(ctx, apiKey)
+			},
 			OnIngressModeResolved: func(passthrough bool) {
 				turnPassthrough.Store(passthrough)
 			},

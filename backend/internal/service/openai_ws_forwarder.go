@@ -262,6 +262,8 @@ type OpenAIWSIngressHooks struct {
 	// OnIngressModeResolved runs before any turn hook, after passthrough versus
 	// ctx_pool/HTTP bridge has been selected for this connection.
 	OnIngressModeResolved func(passthrough bool)
+	// BeforeImagePermission reads authoritative permissions before image gates or injection.
+	BeforeImagePermission func() (*Group, error)
 	BeforeTurn            func(turn int) error
 	BeforeRequest         func(turn int, payload []byte, originalModel string) error
 	// AfterLocalPrewarm releases the connection's initial concurrency slots
@@ -3191,11 +3193,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			normalized = next
 		}
 		apiKey := getAPIKeyFromContext(c)
-		imageGenerationAllowed := GroupAllowsImageGeneration(apiKeyGroup(apiKey))
-		codexBridgeEnabled := isCodexCLI &&
-			!isOpenAIResponsesLiteWebSocketPayload(normalized) &&
-			imageGenerationAllowed &&
-			s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
+		upstreamImageModel := normalizeOpenAIModelForUpstream(account, account.GetMappedModel(originalModel))
+		imageCandidate := IsImageGenerationIntent(openAIResponsesEndpoint, upstreamImageModel, normalized) || IsImageGenerationIntent(openAIResponsesEndpoint, originalModel, normalized)
+		bridgeCandidate := isCodexCLI && !isOpenAIResponsesLiteWebSocketPayload(normalized) && s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
+		imageGenerationAllowed := GroupAllowsImageGenerationForMode(apiKeyGroup(apiKey), s.cfg)
+		if imageCandidate || bridgeCandidate {
+			imageGenerationAllowed = s.currentWSImagePermission(hooks, apiKey)
+		}
+		codexBridgeEnabled := bridgeCandidate && imageGenerationAllowed
 		if codexBridgeEnabled {
 			payloadMap := make(map[string]any)
 			if err := json.Unmarshal(normalized, &payloadMap); err != nil {
