@@ -10119,8 +10119,11 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		requestedModel = input.OriginalModel
 	}
 
+	// 请求级计费时点：用户计费与账号统计成本共用，避免跨 DeepSeek 峰谷边界时两者错位（与 OpenAI 网关一致）。
+	pricingAt := deepseekNowFunc()
+
 	// 计算费用
-	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, opts)
+	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, opts, pricingAt)
 
 	// 计费识别（per-day）：是否订阅计费 = 用户有生效订阅卡，**与 group 类型无关**
 	// （取代旧 group.IsSubscriptionType()）。实际钱/额度走 per-day 瀑布，此 flag 仅用于
@@ -10149,7 +10152,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 				CacheReadTokens:     result.Usage.CacheReadInputTokens,
 				ImageOutputTokens:   result.Usage.ImageOutputTokens,
 			},
-			cost.TotalCost, deepseekNowFunc(),
+			cost.TotalCost, pricingAt,
 		)
 	}
 
@@ -10200,17 +10203,18 @@ func (s *GatewayService) calculateRecordUsageCost(
 	multiplier float64,
 	imageMultiplier float64,
 	opts *recordUsageOpts,
+	pricingAt time.Time,
 ) *CostBreakdown {
 	// 图片生成：渠道定价为 token 计费时走 token 路径，否则走图片计费
 	if result.ImageCount > 0 {
 		if resolved := s.resolveChannelPricing(ctx, billingModel, apiKey); resolved != nil && resolved.Mode == BillingModeToken {
-			return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, opts)
+			return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, opts, pricingAt)
 		}
 		return s.calculateImageCost(ctx, result, apiKey, billingModel, imageMultiplier)
 	}
 
 	// Token 计费
-	return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, opts)
+	return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, opts, pricingAt)
 }
 
 // billableModelWithFallback 在选定计费模型（可能是渠道映射/请求来源覆盖出的别名）
@@ -10308,6 +10312,7 @@ func (s *GatewayService) calculateImageCost(
 }
 
 // calculateTokenCost 计算 Token 计费：根据 opts 决定走普通/长上下文/渠道统一计费。
+// pricingAt 是请求级计费时点，只用于 DeepSeek 默认价卡的峰时倍率与 pro→Flash 切换判定。
 func (s *GatewayService) calculateTokenCost(
 	ctx context.Context,
 	result *ForwardResult,
@@ -10315,6 +10320,7 @@ func (s *GatewayService) calculateTokenCost(
 	billingModel string,
 	multiplier float64,
 	opts *recordUsageOpts,
+	pricingAt time.Time,
 ) *CostBreakdown {
 	// billingService 未注入（如轻量部署/测试场景下 GatewayService 未接入完整计费依赖）时，
 	// 与 hasResolvableTokenPricing 的既有 nil 处理保持一致：不计价，避免 nil 解引用 panic。
@@ -10348,6 +10354,27 @@ func (s *GatewayService) calculateTokenCost(
 			Resolver:       s.resolver,
 			Resolved:       resolved,
 		})
+	} else if isDeepSeekModel(billingModel) && s.resolver != nil && apiKey.Group != nil {
+		// 无渠道价的 DeepSeek：与 OpenAI 网关一致走统一计费入口并传入 PricingAt，默认价卡才会按官方口径
+		// 在工作日高峰时段叠加 2× 峰时倍率（CalculateCost 系列不带峰时倍率，会让 DeepSeek 永远按低谷价扣费）。
+		// 只收窄到 DeepSeek 模型：其余模型仍走下面两个原有分支，扣费逐位不变。
+		gid := apiKey.Group.ID
+		input := CostInput{
+			Ctx:            ctx,
+			Model:          billingModel,
+			GroupID:        &gid,
+			Tokens:         tokens,
+			RequestCount:   1,
+			RateMultiplier: multiplier,
+			PricingAt:      pricingAt,
+			Resolver:       s.resolver,
+		}
+		if opts.LongContextThreshold > 0 {
+			// Gemini 原生入口的长上下文加价（阈值与倍率由 handler 写死）在峰时倍率之外照常叠加。
+			cost, err = s.billingService.CalculateCostWithLongContextUnified(input, opts.LongContextThreshold, opts.LongContextMultiplier)
+		} else {
+			cost, err = s.billingService.CalculateCostUnified(input)
+		}
 	} else if opts.LongContextThreshold > 0 {
 		// 长上下文双倍计费（如 Gemini 200K 阈值）
 		cost, err = s.billingService.CalculateCostWithLongContext(

@@ -24,10 +24,11 @@ import (
 //
 // 计费有两条路径，Quoter 按分组平台与是否命中渠道定价选路（QuotePricingPath），分别调用对应网关实际使用的函数：
 //
-//   - unified：OpenAI 网关（openai / grok 分组）的全部 token 请求，以及任何网关命中渠道定价时 → CalculateCostUnified；
-//   - legacy：非 OpenAI 网关（Anthropic / Gemini / Antigravity 等）且没有渠道定价时 →
+//   - unified：OpenAI 网关（openai / grok 分组）的全部 token 请求，任何网关命中渠道定价时，
+//     以及非 OpenAI 网关上无渠道定价的 DeepSeek → CalculateCostUnified
+//     （DeepSeek 带 PricingAt，叠加峰时倍率；Gemini 分组的 DeepSeek 再按原生入口走 CalculateCostWithLongContextUnified）；
+//   - legacy：非 OpenAI 网关（Anthropic / Gemini / Antigravity 等）、没有渠道定价、且不是 DeepSeek 模型时 →
 //     CalculateCost（Gemini 分组再按 Gemini 原生入口的实现走 CalculateCostWithLongContext，200K 阈值、超出部分 2 倍）。
-//     这条路径不叠加 DeepSeek 峰时倍率。
 //
 // service tier 只有 OpenAI 网关会传给计费；非 OpenAI 网关在两条路径上都忽略它。
 //
@@ -96,10 +97,11 @@ const (
 type QuotePricingPath string
 
 const (
-	// QuotePricingPathUnified：CalculateCostUnified。OpenAI 网关的 token 请求，或任何网关命中渠道定价时。
+	// QuotePricingPathUnified：CalculateCostUnified。OpenAI 网关的 token 请求，任何网关命中渠道定价时，
+	// 以及非 OpenAI 网关上无渠道定价的 DeepSeek（叠加 DeepSeek 峰时倍率）。
 	QuotePricingPathUnified QuotePricingPath = "unified"
-	// QuotePricingPathLegacy：CalculateCost / CalculateCostWithLongContext。非 OpenAI 网关且无渠道定价时；
-	// 不叠加 DeepSeek 峰时倍率，忽略 service tier。
+	// QuotePricingPathLegacy：CalculateCost / CalculateCostWithLongContext。非 OpenAI 网关、无渠道定价、
+	// 且不是 DeepSeek 模型时；忽略 service tier。
 	QuotePricingPathLegacy QuotePricingPath = "legacy"
 )
 
@@ -251,7 +253,7 @@ type Quote struct {
 	Intervals   []QuoteTokenInterval `json:"intervals,omitempty"`
 	LongContext *QuoteLongContext    `json:"long_context,omitempty"`
 	ServiceTier *QuoteServiceTier    `json:"service_tier,omitempty"`
-	// PricingPath 是 Cost 复现的网关计费路径；GatewayLongContext 仅 legacy 路径下的 Gemini 分组有值。
+	// PricingPath 是 Cost 复现的网关计费路径；GatewayLongContext 仅「非 OpenAI 网关且无渠道定价」下的 Gemini 分组有值。
 	PricingPath        QuotePricingPath         `json:"pricing_path"`
 	GatewayLongContext *QuoteGatewayLongContext `json:"gateway_long_context,omitempty"`
 
@@ -344,10 +346,12 @@ func (q *PriceQuoter) Quote(ctx context.Context, req QuoteRequest) (*Quote, erro
 	}
 
 	// 选路：与两个网关一致。OpenAI 网关 token 请求一律走 CalculateCostUnified；
-	// 其它平台只有命中渠道定价才走 Unified，否则走 CalculateCost（legacy）。
+	// 其它平台命中渠道定价、或是无渠道定价的 DeepSeek 才走 Unified，其余走 CalculateCost（legacy）。
 	quote.PricingPath = QuotePricingPathUnified
-	if quote.usesLegacyTokenPath() {
-		quote.PricingPath = QuotePricingPathLegacy
+	if quote.usesGatewayNoChannelPricePath() {
+		if quote.usesLegacyTokenPath() {
+			quote.PricingPath = QuotePricingPathLegacy
+		}
 		if pg.Platform == PlatformGemini {
 			quote.GatewayLongContext = &QuoteGatewayLongContext{
 				ThresholdTokens: geminiGatewayLongContextThreshold,
@@ -384,10 +388,16 @@ const (
 	geminiGatewayLongContextMultiplier = 2.0
 )
 
-// usesLegacyTokenPath 判断 token 计费是否走 CalculateCost 路径：
-// 非 OpenAI 网关且没有渠道定价（GatewayService.calculateTokenCost 里 resolveChannelPricing 返回 nil 的情形）。
-func (qt *Quote) usesLegacyTokenPath() bool {
+// usesGatewayNoChannelPricePath 判断 token 计费是否落在 GatewayService.calculateTokenCost 的「无渠道价」分支：
+// 非 OpenAI 网关且没有渠道定价（resolveChannelPricing 返回 nil 的情形）。Gemini 原生入口的长上下文加价只在这个分支生效。
+func (qt *Quote) usesGatewayNoChannelPricePath() bool {
 	return !quotePlatformUsesOpenAIGateway(qt.platform) && qt.resolved.Source != PricingSourceChannel
+}
+
+// usesLegacyTokenPath 判断 token 计费是否走 CalculateCost 路径：无渠道价分支里的非 DeepSeek 模型。
+// 无渠道价的 DeepSeek 在网关里走 CalculateCostUnified（传 PricingAt，叠加峰时倍率），不属于 legacy。
+func (qt *Quote) usesLegacyTokenPath() bool {
+	return qt.usesGatewayNoChannelPricePath() && !isDeepSeekModel(qt.Model)
 }
 
 // quotePlatformUsesOpenAIGateway 判断分组平台的请求是否由 OpenAIGatewayService 计费。
@@ -432,7 +442,7 @@ func (q *PriceQuoter) pricingGroup(ctx context.Context, req QuoteRequest) (*Grou
 func (q *PriceQuoter) fillTokenQuote(quote *Quote) {
 	resolved := quote.resolved
 	legacy := quote.PricingPath == QuotePricingPathLegacy
-	// 非 OpenAI 网关（legacy 与渠道价路径都一样）不按 service tier 计费，展示与计费同样按标准档。
+	// 非 OpenAI 网关（legacy、渠道价、无渠道价的 DeepSeek 三种路径都一样）不按 service tier 计费，展示与计费同样按标准档。
 	tier := quote.serviceTier
 	if quote.ignoresServiceTier() {
 		tier = ""
@@ -601,9 +611,11 @@ func (q *PriceQuoter) fillImageRequestQuote(quote *Quote) {
 //     即下面的 token 路径：EffectiveMultiplier、完整 token、RequestCount=1。
 //
 // token 请求：
-//   - legacy 路径（非 OpenAI 网关且无渠道定价）：CalculateCost；Gemini 分组走 CalculateCostWithLongContext。
-//     不叠加 DeepSeek 峰时倍率，定价时点是调用时刻而不是 Quote.At；
-//   - 其余：CalculateCostUnified。非 OpenAI 网关不传 ServiceTier 与 PricingAt（gateway_service.go calculateTokenCost）。
+//   - legacy 路径（非 OpenAI 网关、无渠道定价、非 DeepSeek 模型）：CalculateCost；Gemini 分组走 CalculateCostWithLongContext。
+//     定价时点是调用时刻而不是 Quote.At；
+//   - 非 OpenAI 网关上无渠道定价的 DeepSeek：CalculateCostUnified 并传 PricingAt = Quote.At（叠加峰时倍率），
+//     Gemini 分组走 CalculateCostWithLongContextUnified（gateway_service.go calculateTokenCost）；
+//   - 其余：CalculateCostUnified。非 OpenAI 网关不传 ServiceTier（渠道价分支连 PricingAt 也不传，但渠道价不受计费时点影响）。
 func (qt *Quote) Cost(ctx context.Context, usage QuoteUsage) (*CostBreakdown, error) {
 	if qt == nil || qt.quoter == nil || qt.resolved == nil {
 		return nil, ErrPriceQuoterUnavailable
@@ -660,9 +672,16 @@ func (qt *Quote) Cost(ctx context.Context, usage QuoteUsage) (*CostBreakdown, er
 		Resolver:       qt.quoter.resolver,
 		Resolved:       qt.resolved,
 	}
-	if openAI {
+	switch {
+	case openAI:
 		input.ServiceTier = qt.serviceTier
 		input.PricingAt = qt.At
+	case qt.usesGatewayNoChannelPricePath():
+		// 到这里的只会是无渠道价的 DeepSeek（非 DeepSeek 已在上面走 legacy）：网关传 PricingAt、不传 ServiceTier。
+		input.PricingAt = qt.At
+		if qt.GatewayLongContext != nil {
+			return billing.CalculateCostWithLongContextUnified(input, qt.GatewayLongContext.ThresholdTokens, qt.GatewayLongContext.ExtraMultiplier)
+		}
 	}
 	return billing.CalculateCostUnified(input)
 }
