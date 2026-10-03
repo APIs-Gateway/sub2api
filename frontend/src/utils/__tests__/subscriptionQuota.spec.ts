@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { getExpirationDateRelation, getRemainingExpiryDuration } from '../subscriptionQuota'
+import {
+  getExpirationDateRelation,
+  getRemainingExpiryDuration,
+  subscriptionDisplayName
+} from '../subscriptionQuota'
 
 describe('subscription expiry timing', () => {
   it('uses local calendar dates for today and tomorrow', () => {
@@ -77,5 +81,44 @@ describe('subscription expiry timing', () => {
       unit: 'days',
       days: 2
     })
+  })
+})
+
+describe('subscriptionDisplayName', () => {
+  const t = (key: string) => key
+
+  it('prefers the group name while the source group still exists', () => {
+    const group = { name: '  Pro  ' } as never
+    expect(subscriptionDisplayName({ group, daily_amount_usd: 30 }, t)).toBe('Pro')
+  })
+
+  it('falls back to the daily amount title when the source group was deleted', () => {
+    // 分组被删后卡保留，但读不到 group 边；不能展示 `Group #id`。
+    expect(subscriptionDisplayName({ group: undefined, daily_amount_usd: 30 }, t)).toBe(
+      'userSubscriptions.daily $30.00'
+    )
+    expect(subscriptionDisplayName({ group: undefined, daily_amount_usd: 12.5 }, t)).toBe(
+      'userSubscriptions.daily $12.50'
+    )
+  })
+
+  it('uses the card daily limit when the daily amount is missing', () => {
+    expect(subscriptionDisplayName({ group: undefined, daily_limit_usd: 8 }, t)).toBe(
+      'userSubscriptions.daily $8.00'
+    )
+  })
+
+  it('treats a blank group name like a missing group', () => {
+    const group = { name: '   ' } as never
+    expect(subscriptionDisplayName({ group, daily_amount_usd: 5 }, t)).toBe(
+      'userSubscriptions.daily $5.00'
+    )
+  })
+
+  it('shows the unlimited label for a card with neither group nor daily amount', () => {
+    expect(subscriptionDisplayName({ group: undefined }, t)).toBe('userSubscriptions.unlimited')
+    expect(subscriptionDisplayName({ group: undefined, daily_amount_usd: 0 }, t)).toBe(
+      'userSubscriptions.unlimited'
+    )
   })
 })

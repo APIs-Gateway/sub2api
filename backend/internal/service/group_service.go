@@ -19,6 +19,8 @@ type GroupRepository interface {
 	GetByIDLite(ctx context.Context, id int64) (*Group, error)
 	Update(ctx context.Context, group *Group) error
 	Delete(ctx context.Context, id int64) error
+	// DeleteCascade 软删分组并清理其账号绑定、用户专属授权等关联。订阅卡不随分组删除，
+	// 因此返回的「需失效订阅缓存的用户」列表目前恒为空（保留返回值以免改动所有实现方）。
 	DeleteCascade(ctx context.Context, id int64) ([]int64, error)
 
 	List(ctx context.Context, params pagination.PaginationParams) ([]Group, *pagination.PaginationResult, error)

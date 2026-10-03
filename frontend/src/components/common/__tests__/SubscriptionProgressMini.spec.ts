@@ -22,3 +22,33 @@ describe('subscription expiry calendar labels', () => {
     expect(w.text()).toContain('subscriptionProgress.' + label)
   })
 })
+
+// 订阅卡不随分组删除：来源分组被删后卡仍在列表里，但读不到分组（group 缺失、group_id 仍指向旧分组）。
+describe('subscription label when the source group no longer exists', () => {
+  async function openTooltip(subscription: Record<string, unknown>) {
+    store.activeSubscriptions = [subscription]
+    const w = mount(SubscriptionProgressMini, { global: { stubs: { Icon: true, RouterLink: true } } })
+    await w.get('button').trigger('click')
+    return w
+  }
+  const expiresAt = new Date(2026, 8, 25, 12).toISOString()
+
+  it('falls back to the daily amount title instead of exposing the group id', async () => {
+    const w = await openTooltip({ id: 1, group_id: 777, daily_amount_usd: 30, expires_at: expiresAt })
+    expect(w.text()).toContain('userSubscriptions.daily $30.00')
+    expect(w.text()).not.toContain('Group #')
+    expect(w.text()).not.toContain('777')
+  })
+
+  it('still shows the group name while the group exists', async () => {
+    const w = await openTooltip({
+      id: 2,
+      group_id: 5,
+      daily_amount_usd: 30,
+      expires_at: expiresAt,
+      group: { name: 'Plan' }
+    })
+    expect(w.text()).toContain('Plan')
+    expect(w.text()).not.toContain('userSubscriptions.daily')
+  })
+})

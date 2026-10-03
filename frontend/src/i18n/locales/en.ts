@@ -2981,9 +2981,7 @@
         grok: 'Grok',
       },
       deleteConfirm:
-        "Are you sure you want to delete '{name}'? All associated API keys will no longer belong to any group.",
-      deleteConfirmSubscription:
-        "Are you sure you want to delete subscription group '{name}'? This will invalidate all API keys bound to this subscription and delete all related subscription records. This action cannot be undone.",
+        "Are you sure you want to delete '{name}'? Its account bindings will be cleared (the accounts themselves are kept), and API keys bound to this group will stop working until their owners switch to another group. Existing subscription cards are not affected. Plans still tied to this group can no longer be purchased, so take them off sale first. This action cannot be undone.",
       subscription: {
         title: 'Subscription Settings',
         type: 'Billing Type',

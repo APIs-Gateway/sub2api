@@ -46,7 +46,7 @@
           >
             <div class="mb-2 flex items-center justify-between">
               <span class="text-sm font-medium text-gray-900 dark:text-white">
-                {{ subscription.group?.name || `Group #${subscription.group_id}` }}
+                {{ subscriptionDisplayName(subscription, t) }}
               </span>
               <span
                 v-if="subscription.expires_at"
@@ -116,7 +116,7 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { useSubscriptionStore } from '@/stores'
 import type { UserSubscription } from '@/types'
-import { getExpirationDateRelation } from '@/utils/subscriptionQuota'
+import { getExpirationDateRelation, subscriptionDisplayName } from '@/utils/subscriptionQuota'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 
 const { t } = useI18n()

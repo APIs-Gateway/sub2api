@@ -3877,15 +3877,10 @@ const editImageFinalPricePreview = computed(() =>
   buildImageFinalPricePreview(editForm),
 );
 
-// 根据分组类型返回不同的删除确认消息
+// 删除确认文案：订阅卡不随分组删除，也不区分分组类型，所有分组共用同一条。
 const deleteConfirmMessage = computed(() => {
   if (!deletingGroup.value) {
     return "";
-  }
-  if (deletingGroup.value.subscription_type === "subscription") {
-    return t("admin.groups.deleteConfirmSubscription", {
-      name: deletingGroup.value.name,
-    });
   }
   return t("admin.groups.deleteConfirm", { name: deletingGroup.value.name });
 });
