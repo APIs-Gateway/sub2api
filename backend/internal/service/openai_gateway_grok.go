@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -227,6 +228,41 @@ func sanitizeGrokUnsupportedFields(body []byte) ([]byte, error) {
 	return marshalOpenAIUpstreamJSON(payload)
 }
 
+// Opt in only at the raw Chat send. UseNumber preserves arbitrary numeric
+// parameters; decoding also applies the existing last-key-wins JSON policy to
+// repeated roles/fields, so no unsupported duplicate can survive the rewrite.
+func sanitizeGrokRawChatCompatFields(body []byte) ([]byte, error) {
+	var payload map[string]any
+	decoder := common.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
+	}
+	changed := false
+	for _, key := range []string{"presence_penalty", "presencePenalty"} {
+		if _, ok := payload[key]; ok {
+			delete(payload, key)
+			changed = true
+		}
+	}
+	if messages, ok := payload["messages"].([]any); ok {
+		for _, item := range messages {
+			message, ok := item.(map[string]any)
+			if !ok || message["role"] == "user" {
+				continue
+			}
+			if _, exists := message["name"]; exists {
+				delete(message, "name")
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return body, nil
+	}
+	return marshalOpenAIUpstreamJSON(payload)
+}
+
 func deleteJSONFields(value any, fields map[string]struct{}) bool {
 	changed := false
 	switch typed := value.(type) {
@@ -432,18 +468,50 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 // with a generic, safe rejection instead of routing through the shared OpenAI
 // error handler. The upstream body/message is intentionally not echoed back:
 // it must not leak account-pool or subscription-to-API implementation details.
-func (s *OpenAIGatewayService) writeGrokContentPolicyRejection(c *gin.Context, statusCode int, upstreamMsg string) error {
-	MarkResponseCommitted(c)
-	c.JSON(statusCode, gin.H{
-		"error": gin.H{
-			"type":    "invalid_request_error",
-			"message": "Your request was rejected by the upstream content safety system. Please modify your input and try again.",
-		},
-	})
-	if upstreamMsg == "" {
-		return fmt.Errorf("grok content policy rejection: %d", statusCode)
+type GrokContentPolicyRejectionError struct{ message string }
+
+func (e *GrokContentPolicyRejectionError) Error() string { return e.message }
+
+// IsGrokContentPolicyRejectionError keeps request refusals out of account
+// health reporting as well as cooldown/failover. They are not account successes.
+func IsGrokContentPolicyRejectionError(err error) bool {
+	var refusal *GrokContentPolicyRejectionError
+	return errors.As(err, &refusal)
+}
+
+// ReportOpenAIAccountScheduleError reports account failures without treating a
+// request-scoped Grok refusal as either a failure or a recovery.
+func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleError(accountID int64, err error) {
+	if !IsGrokContentPolicyRejectionError(err) {
+		s.ReportOpenAIAccountScheduleResult(accountID, false, nil)
 	}
-	return fmt.Errorf("grok content policy rejection: %d message=%s", statusCode, upstreamMsg)
+}
+
+func (s *OpenAIGatewayService) writeGrokContentPolicyRejection(c *gin.Context, statusCode int, upstreamMsg string) error {
+	const message = "Your request was rejected by the upstream content safety system. Please modify your input and try again."
+	StopOpenAICompactSSEKeepaliveCommitted(c)
+	MarkResponseCommitted(c)
+	if c.Writer.Written() {
+		if InboundIsResponses(c) {
+			writeOpenAICompactSSEFailureMessage(c, statusCode, "invalid_request", message)
+		} else {
+			MarkOpsStreamError(c, "invalid_request_error", message, statusCode)
+			payload, _ := json.Marshal(gin.H{"error": gin.H{"type": "invalid_request_error", "message": message}})
+			_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", payload)
+			c.Writer.Flush()
+		}
+	} else {
+		c.JSON(statusCode, gin.H{
+			"error": gin.H{
+				"type":    "invalid_request_error",
+				"message": message,
+			},
+		})
+	}
+	if upstreamMsg == "" {
+		return &GrokContentPolicyRejectionError{message: fmt.Sprintf("grok content policy rejection: %d", statusCode)}
+	}
+	return &GrokContentPolicyRejectionError{message: fmt.Sprintf("grok content policy rejection: %d message=%s", statusCode, upstreamMsg)}
 }
 
 func (s *OpenAIGatewayService) tempUnscheduleGrok(ctx context.Context, account *Account, cooldown time.Duration, reason string) {
