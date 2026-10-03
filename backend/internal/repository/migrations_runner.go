@@ -104,7 +104,7 @@ func migrationAppliesToDatabase(name string, dialect migrationDatabaseDialect) b
 		return dialect == migrationDatabaseMySQL
 	case strings.HasSuffix(name, "_sqlite.sql"):
 		return dialect == migrationDatabaseSQLite
-	case name == authCacheInvalidationOutboxMigration || name == latestAPIKeyIPIndexMigration || name == userEmailDotStrippedIndexMigration || name == opsIngressRejectAggregatesMigration || name == "197_simple_mode_auto_image_eligibility.sql":
+	case name == authCacheInvalidationOutboxMigration || name == latestAPIKeyIPIndexMigration || name == userEmailDotStrippedIndexMigration || name == opsIngressRejectAggregatesMigration || name == "197_simple_mode_auto_image_eligibility.sql" || name == "198_billing_inflight_leases.sql":
 		return dialect == migrationDatabasePostgres
 	default:
 		return true

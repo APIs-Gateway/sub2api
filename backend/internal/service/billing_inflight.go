@@ -1,14 +1,20 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"math"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
@@ -21,6 +27,169 @@ type BillingInflightRepository interface {
 	ReleaseBillingInflight(context.Context, int64, string) error
 	StageBillingInflight(context.Context, int64, string, string, *UsageBillingCommand, time.Duration) (string, error)
 	FinishBillingInflightAttempt(context.Context, int64, string, string) error
+}
+
+// IsBillingInflightNoChargeError requires a provider refusal, not merely a
+// replayable pre-output failure. A header timeout or failed scanner can hide an
+// already executed request and must retain its estimate until the bounded TTL.
+func IsBillingInflightNoChargeError(err error) bool {
+	var failover *UpstreamFailoverError
+	var proof *billingInflightNoChargeError
+	return errors.As(err, &proof) || IsGrokContentPolicyRejectionError(err) || (errors.As(err, &failover) && failover.BillingNoCharge)
+}
+
+// Called where a real provider error response has been read. Only explicit
+// authentication/permission refusals are zero-charge proof. An incomplete body,
+// usage-bearing error, transport failure, or proxy 502 is deliberately unknown.
+func markBillingInflightProviderRefusal(c *gin.Context, status int, body []byte, readErr error) bool {
+	if readErr != nil || (status != http.StatusUnauthorized && status != http.StatusForbidden) {
+		return false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	payload, err := decodeBillingInflightErrorValue(decoder, 0)
+	if err != nil || billingInflightErrorHasUsage(payload) {
+		return false
+	}
+	if _, err = decoder.Token(); err != io.EOF {
+		return false
+	}
+	envelope, ok := payload.(map[string]any)
+	if !ok {
+		return false
+	}
+	providerError, ok := envelope["error"].(map[string]any)
+	if !ok {
+		return false
+	}
+	proof := false
+	for _, field := range []string{"type", "code", "status"} {
+		marker, ok := providerError[field].(string)
+		if !ok || marker == "" {
+			continue
+		}
+		switch strings.ToLower(marker) {
+		case "authentication_error", "invalid_api_key", "invalid_authentication", "permission_error", "permission_denied", "insufficient_permissions":
+			proof = true
+		case "invalid_request_error", "error":
+		default:
+			return false
+		}
+	}
+	if !proof {
+		return false
+	}
+	if c != nil && c.Request != nil {
+		MarkBillingInflightAttemptNoCharge(c.Request.Context())
+	}
+	return true
+}
+
+// Reject duplicate keys so classification cannot disagree with a JSON consumer
+// using last-key-wins semantics. Depth is bounded for hostile error payloads.
+func decodeBillingInflightErrorValue(decoder *json.Decoder, depth int) (any, error) {
+	if depth > 64 {
+		return nil, errors.New("provider error nesting exceeded limit")
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return token, nil
+	}
+	switch delimiter {
+	case '{':
+		value := map[string]any{}
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return nil, err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return nil, errors.New("invalid error key")
+			}
+			if _, exists := value[key]; exists {
+				return nil, errors.New("duplicate provider error key")
+			}
+			child, err := decodeBillingInflightErrorValue(decoder, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			value[key] = child
+		}
+		_, err := decoder.Token()
+		return value, err
+	case '[':
+		value := []any{}
+		for decoder.More() {
+			child, err := decodeBillingInflightErrorValue(decoder, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			value = append(value, child)
+		}
+		_, err := decoder.Token()
+		return value, err
+	default:
+		return nil, errors.New("invalid provider error delimiter")
+	}
+}
+
+type billingInflightNoChargeError struct{ cause error }
+
+func (e *billingInflightNoChargeError) Error() string { return e.cause.Error() }
+func (e *billingInflightNoChargeError) Unwrap() error { return e.cause }
+func wrapBillingInflightNoChargeError(err error, proof bool) error {
+	if err == nil || !proof {
+		return err
+	}
+	return &billingInflightNoChargeError{cause: err}
+}
+
+func billingInflightErrorHasUsage(value any) bool {
+	switch value := value.(type) {
+	case map[string]any:
+		for key, child := range value {
+			if strings.EqualFold(key, "usage") || strings.EqualFold(key, "partial_usage") || strings.HasSuffix(strings.ToLower(key), "_tokens") || strings.EqualFold(key, "partial") || billingInflightErrorHasUsage(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range value {
+			if billingInflightErrorHasUsage(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Keep complete-body proof when existing error handling replays a captured body.
+// Classification still receives the same bounded bytes; incomplete reads never
+// become zero-charge proof merely because a bytes.Reader can reach EOF.
+type billingInflightProviderErrorBody struct {
+	*bytes.Reader
+	readErr error
+}
+
+func (b *billingInflightProviderErrorBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	if err == io.EOF && b.readErr != nil {
+		return n, b.readErr
+	}
+	return n, err
+}
+
+func (b *billingInflightProviderErrorBody) Close() error { return nil }
+
+func readBillingInflightErrorBody(reader io.Reader, limit int64) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(reader, limit))
+	if int64(len(body)) >= limit {
+		return body, errors.New("upstream error body reached read limit without complete-body proof")
+	}
+	return body, err
 }
 
 type billingInflightContextKey struct{}
@@ -73,6 +242,9 @@ func newBillingInflightLease(ctx context.Context, repo UsageBillingRepository, c
 	}
 	backend, ok := repo.(BillingInflightRepository)
 	if !ok || backend == nil {
+		return nil, nil
+	}
+	if capability, ok := backend.(interface{ BillingInflightAvailable() bool }); ok && !capability.BillingInflightAvailable() {
 		return nil, nil
 	}
 	ttl := time.Duration(cfg.Billing.InflightReservation.TTLSeconds) * time.Second

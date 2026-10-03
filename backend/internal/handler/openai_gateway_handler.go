@@ -627,6 +627,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if result == nil && service.IsGrokContentPolicyRejectionError(err) {
+				service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+			}
 			// Client went away: record the observed usage and stop; never report
 			// the cancellation as an upstream failure. (Upstream spells this as two
 			// identical branches; merged here with the same evaluation order.)
@@ -647,7 +650,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
-					if result == nil && service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
+					if result == nil && service.IsBillingInflightNoChargeError(err) && service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
 						service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
 					}
 					if failoverClientGone(c) {
@@ -1175,6 +1178,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if result == nil && service.IsGrokContentPolicyRejectionError(err) {
+				service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+			}
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai_messages.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),
@@ -1184,7 +1190,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
-					if result == nil && service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
+					if result == nil && service.IsBillingInflightNoChargeError(err) && service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
 						service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
 					}
 					if failoverClientGone(c) {
@@ -2222,8 +2228,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	var replayBillingLease *service.BillingInflightLease
 	var wsBillingMu sync.Mutex
 	var wsBillingLeases []*service.BillingInflightLease
+	wsBillingClosed := false
 	defer func() {
 		wsBillingMu.Lock()
+		wsBillingClosed = true
 		leases := append([]*service.BillingInflightLease(nil), wsBillingLeases...)
 		wsBillingMu.Unlock()
 		for _, lease := range leases {
@@ -2362,6 +2370,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			BeforeUpstreamTurn: func(turn int, payload []byte, originalModel string) error {
 				wsBillingMu.Lock()
 				defer wsBillingMu.Unlock()
+				if wsBillingClosed {
+					return context.Canceled
+				}
 				key := turnBillingKeys.forTurn(turn, apiKey)
 				model := strings.TrimSpace(originalModel)
 				if model == "" {
@@ -2371,7 +2382,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if lease := turnBillingLeases[turn]; lease != nil {
 					reserveCtx = service.WithBillingInflightLease(reserveCtx, lease)
 				}
-				lease, err := h.gatewayService.ReserveBillingInflight(reserveCtx, service.BillingInflightRequest{APIKey: key, Account: account, Model: model, Body: payload, ChannelUsageFields: channelMappingWS.ToUsageFields(model, "")})
+				lease, err := h.gatewayService.ReserveBillingInflight(reserveCtx, service.BillingInflightRequest{APIKey: key, Account: account, Model: model, Body: payload, ChannelUsageFields: channelMappingWS.ToUsageFields(reqModel, "")})
 				if err != nil {
 					writeOpenAIWSBillingRejection(ctx, wsConn, err)
 					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, "billing check failed", err)
@@ -2505,8 +2516,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				turnLease := turnBillingLeases[turn]
 				wsBillingMu.Unlock()
 				turnCtx := service.WithBillingInflightLease(ctx, turnLease)
-				var noChargeFailover *service.UpstreamFailoverError
-				if result == nil && errors.As(turnErr, &noChargeFailover) && service.GetOpsCyberPolicy(c) == nil {
+				if result == nil && service.IsBillingInflightNoChargeError(turnErr) && service.GetOpsCyberPolicy(c) == nil {
 					service.MarkBillingInflightAttemptNoCharge(turnCtx)
 				}
 				if turnErr == nil {
@@ -3648,7 +3658,11 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 // stable 为可选的稳定优先调度结果：仅 chat_completions stable 兜底路径传入，
 // 用于让 cyber 计费行按"实际服务档位组"计费（其余调用点不传，零值=按 home 组计费）。
 func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockKey string, channelFields service.ChannelUsageFields, requestPayloadHash string, stable ...service.OpenAIAccountScheduleDecision) {
-	h.recordCyberPolicyIfMarkedWithContext(c.Request.Context(), c, apiKey, account, subscription, model, forwardErrored, cyberBlockKey, channelFields, requestPayloadHash, stable...)
+	parent := context.Background()
+	if c != nil && c.Request != nil {
+		parent = c.Request.Context()
+	}
+	h.recordCyberPolicyIfMarkedWithContext(parent, c, apiKey, account, subscription, model, forwardErrored, cyberBlockKey, channelFields, requestPayloadHash, stable...)
 }
 
 func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithContext(parent context.Context, c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockKey string, channelFields service.ChannelUsageFields, requestPayloadHash string, stable ...service.OpenAIAccountScheduleDecision) {

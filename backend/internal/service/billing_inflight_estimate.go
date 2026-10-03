@@ -179,7 +179,16 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 		result.ImageCount = 1
 		result.ImageSize = imageCfg.SizeTier
 		result.BillingModel = imageCfg.Model
-		models = usageBillingModelCandidates(inflightPreferredModel(request, upstream), imageCfg.Model, upstream, request.ChannelMappedModel, request.OriginalModel, request.Model)
+		// Match RecordUsage: a generated image's billing model takes precedence
+		// over the chat model unless the explicit channel/request policy overrides it.
+		billingModel := imageCfg.Model
+		if request.BillingModelSource == BillingModelSourceChannelMapped && request.ChannelMappedModel != "" && request.ChannelMappedModel != request.OriginalModel {
+			billingModel = request.ChannelMappedModel
+		}
+		if request.BillingModelSource == BillingModelSourceRequested && request.OriginalModel != "" {
+			billingModel = request.OriginalModel
+		}
+		models = usageBillingModelCandidates(billingModel, imageCfg.Model, request.ChannelMappedModel, request.OriginalModel, upstream, request.Model)
 		tokens.ImageOutputTokens = tokens.OutputTokens
 	}
 	tier := gjson.GetBytes(request.Body, "service_tier").String()

@@ -457,7 +457,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			if err != nil {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
-					if result == nil && c.Writer.Size() == writerSizeBeforeForward {
+					if result == nil && service.IsBillingInflightNoChargeError(err) && c.Writer.Size() == writerSizeBeforeForward {
 						service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
 					}
 					// 流式内容已写入客户端，无法撤销，禁止 failover 以防止流拼接腐化
@@ -963,7 +963,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
-					if result == nil && c.Writer.Size() == writerSizeBeforeForward {
+					if result == nil && service.IsBillingInflightNoChargeError(err) && c.Writer.Size() == writerSizeBeforeForward {
 						service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
 					}
 					// 流式内容已写入客户端，无法撤销，禁止 failover 以防止流拼接腐化

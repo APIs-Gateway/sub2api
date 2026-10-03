@@ -328,6 +328,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 
 		if err != nil {
+			if result == nil && service.IsGrokContentPolicyRejectionError(err) {
+				service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+			}
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai_chat_completions.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),
@@ -337,7 +340,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
-					if result == nil && service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
+					if result == nil && service.IsBillingInflightNoChargeError(err) && service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
 						service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
 					}
 					if failoverClientGone(c) {

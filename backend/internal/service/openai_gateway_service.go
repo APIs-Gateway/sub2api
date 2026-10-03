@@ -2853,15 +2853,19 @@ func openAIUpstreamErrorBodyReadLimitForConfig(cfg *config.Config) int64 {
 }
 
 func (s *OpenAIGatewayService) readUpstreamErrorBody(resp *http.Response) []byte {
+	body, _ := s.readUpstreamErrorBodyComplete(resp)
+	return body
+}
+
+func (s *OpenAIGatewayService) readUpstreamErrorBodyComplete(resp *http.Response) ([]byte, error) {
 	if resp == nil || resp.Body == nil {
-		return nil
+		return nil, nil
 	}
 	cfg := (*config.Config)(nil)
 	if s != nil {
 		cfg = s.cfg
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, openAIUpstreamErrorBodyReadLimitForConfig(cfg)))
-	return body
+	return readBillingInflightErrorBody(resp.Body, openAIUpstreamErrorBodyReadLimitForConfig(cfg))
 }
 
 func (s *OpenAIGatewayService) handleFailoverSideEffects(ctx context.Context, resp *http.Response, account *Account, responseBody []byte, requestedModel ...string) bool {
@@ -3837,9 +3841,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// Handle error response
 		if resp.StatusCode >= 400 {
-			respBody := s.readUpstreamErrorBody(resp)
+			respBody, proofReadErr := s.readUpstreamErrorBodyComplete(resp)
 			_ = resp.Body.Close()
-			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			resp.Body = &billingInflightProviderErrorBody{Reader: bytes.NewReader(respBody), readErr: proofReadErr}
 
 			if !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 				agentTaskRecoveryTried = true
@@ -3854,7 +3858,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				continue
 			}
 			respBody = s.redactAgentIdentitySensitiveBody(ctx, account, respBody)
-			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			resp.Body = &billingInflightProviderErrorBody{Reader: bytes.NewReader(respBody), readErr: proofReadErr}
 
 			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 			upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
@@ -3917,6 +3921,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					Detail:             upstreamDetail,
 				})
 
+				markBillingInflightProviderRefusal(c, resp.StatusCode, respBody, proofReadErr)
 				shouldDisable := s.handleFailoverSideEffects(ctx, resp, account, respBody, upstreamModel)
 				return nil, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 					StatusCode:             resp.StatusCode,
@@ -4224,9 +4229,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			break
 		}
 
-		responseBody := s.readUpstreamErrorBody(resp)
+		responseBody, proofReadErr := s.readUpstreamErrorBodyComplete(resp)
 		_ = resp.Body.Close()
-		resp.Body = io.NopCloser(bytes.NewReader(responseBody))
+		resp.Body = &billingInflightProviderErrorBody{Reader: bytes.NewReader(responseBody), readErr: proofReadErr}
 		if !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, responseBody) {
 			agentTaskRecoveryTried = true
 			expectedTaskID := account.GetCredential("task_id")
@@ -4242,11 +4247,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		// 透传模式默认保持原样代理；容量错误以及 API-key 上游的瞬时
 		// 5xx 应先触发多账号 failover，且此时尚未写入下游响应。
 		responseBody = s.redactAgentIdentitySensitiveBody(ctx, account, responseBody)
-		resp.Body = io.NopCloser(bytes.NewReader(responseBody))
+		resp.Body = &billingInflightProviderErrorBody{Reader: bytes.NewReader(responseBody), readErr: proofReadErr}
 		if shouldFailoverOpenAIPassthroughResponse(account, resp.StatusCode, responseBody) {
-			return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body, responseBody)
+			return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body, responseBody, proofReadErr)
 		}
-		return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body, responseBody)
+		return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body, responseBody, proofReadErr)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -4635,7 +4640,12 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 	account *Account,
 	requestBody []byte,
 	responseBody []byte,
-) error {
+	proofErrors ...error,
+) (returnErr error) {
+	if len(proofErrors) > 0 {
+		proof := markBillingInflightProviderRefusal(c, resp.StatusCode, responseBody, proofErrors[0])
+		defer func() { returnErr = wrapBillingInflightNoChargeError(returnErr, proof) }()
+	}
 	body := s.redactAgentIdentitySensitiveBody(ctx, account, responseBody)
 
 	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(body))
@@ -4679,7 +4689,12 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	account *Account,
 	requestBody []byte,
 	responseBody []byte,
-) error {
+	proofErrors ...error,
+) (returnErr error) {
+	if len(proofErrors) > 0 {
+		proof := markBillingInflightProviderRefusal(c, resp.StatusCode, responseBody, proofErrors[0])
+		defer func() { returnErr = wrapBillingInflightNoChargeError(returnErr, proof) }()
+	}
 	MarkResponseCommitted(c)
 	body := s.redactAgentIdentitySensitiveBody(ctx, account, responseBody)
 
@@ -6083,7 +6098,8 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	requestBody []byte,
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
-	body := s.readUpstreamErrorBody(resp)
+	body, proofReadErr := s.readUpstreamErrorBodyComplete(resp)
+	markBillingInflightProviderRefusal(c, resp.StatusCode, body, proofReadErr)
 	body = s.redactAgentIdentitySensitiveBody(ctx, account, body)
 
 	// cyber_policy 硬阻断：透传上游原始错误体给客户端（不重包成通用 502），不冷却账号。
@@ -6264,7 +6280,8 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	writeError compatErrorWriter,
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
-	body := s.readUpstreamErrorBody(resp)
+	body, proofReadErr := s.readUpstreamErrorBodyComplete(resp)
+	markBillingInflightProviderRefusal(c, resp.StatusCode, body, proofReadErr)
 
 	// cyber_policy：兼容路径（Chat Completions / Anthropic）以各自格式回写错误，
 	// 不原样透传 responses 格式的 cyber body（否则对下游格式不合法）。cyber 是上游网络

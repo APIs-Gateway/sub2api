@@ -5,11 +5,13 @@ package service
 import (
 	"context"
 	"errors"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -187,5 +189,89 @@ func TestBillingInflight_UnpricedExclusiveAndNilGroup(t *testing.T) {
 			require.True(t, repo.exclusive, "unknown models cannot bypass admission with a zero estimate")
 		}
 		lease.HandlerDone()
+	}
+}
+
+func TestBillingInflight_ImageModelMatchesCompletionPricingPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, source, mapped, original string
+		paid                           bool
+	}{
+		{"default_image_first", "", "", "gpt-5", true},
+		{"upstream_image_first", BillingModelSourceUpstream, "", "gpt-5", true},
+		{"requested_explicit_free_chat", BillingModelSourceRequested, "", "gpt-5", false},
+		{"channel_explicit_free_chat", BillingModelSourceChannelMapped, "gpt-5", "requested-alias", false},
+		{"unchanged_channel_still_image", BillingModelSourceChannelMapped, "gpt-5", "gpt-5", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := inflightTestConfig()
+			repo := &inflightCaptureRepo{allow: true}
+			zero, paid := 0.0, 0.5
+			cs := newTestChannelServiceWithCache(t, &channelCache{
+				pricingByGroupModel: map[channelModelKey]*ChannelModelPricing{
+					{groupID: 2, model: "gpt-5"}:       {BillingMode: BillingModePerRequest, PerRequestPrice: &zero},
+					{groupID: 2, model: "gpt-image-2"}: {BillingMode: BillingModePerRequest, PerRequestPrice: &paid},
+				}, channelByGroupID: map[int64]*Channel{2: {ID: 1, Status: StatusActive}}, groupPlatform: map[int64]string{2: ""},
+				wildcardByGroupPlatform: map[channelGroupPlatformKey][]*wildcardPricingEntry{}, mappingByGroupModel: map[channelModelKey]string{}, wildcardMappingByGP: map[channelGroupPlatformKey][]*wildcardMappingEntry{}, byID: map[int64]*Channel{},
+			})
+			billing := NewBillingService(cfg, nil)
+			svc := &OpenAIGatewayService{cfg: cfg, usageBillingRepo: repo, billingService: billing, resolver: NewModelPricingResolver(cs, billing)}
+			groupID := int64(2)
+			key := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: &Group{ID: 2, RateMultiplier: 1}}
+			lease, err := svc.ReserveBillingInflight(context.Background(), BillingInflightRequest{APIKey: key, Model: "gpt-5", Body: []byte(`{"model":"gpt-5","input":"draw","tools":[{"type":"image_generation","model":"gpt-image-2"}]}`), ChannelUsageFields: ChannelUsageFields{BillingModelSource: tc.source, ChannelMappedModel: tc.mapped, OriginalModel: tc.original}})
+			require.NoError(t, err)
+			if tc.paid {
+				require.NotNil(t, lease)
+				defer lease.HandlerDone()
+				require.InDelta(t, 0.5, repo.amount, 1e-8)
+			} else {
+				require.Nil(t, lease, "explicit completion billing override is truly free")
+			}
+		})
+	}
+}
+
+func TestBillingInflight_NoChargeProofDoesNotInferTransportCost(t *testing.T) {
+	require.False(t, IsBillingInflightNoChargeError(&UpstreamFailoverError{StatusCode: 502, RetryableOnSameAccount: true}))
+	require.False(t, IsBillingInflightNoChargeError(errors.New("header timeout")))
+	require.True(t, IsBillingInflightNoChargeError(&UpstreamFailoverError{StatusCode: 529, BillingNoCharge: true}))
+	require.True(t, IsBillingInflightNoChargeError(&GrokContentPolicyRejectionError{message: "safe refusal"}))
+}
+
+func TestBillingInflight_ProviderRefusalRequiresCompleteUsageFreeBody(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		status     int
+		readErr    error
+		release    bool
+	}{
+		{"auth", `{"error":{"type":"authentication_error","code":"invalid_api_key"}}`, 401, nil, true},
+		{"permission", `{"error":{"type":"permission_error"}}`, 403, nil, true},
+		{"transport502", `{"error":{"type":"authentication_error"}}`, 502, nil, false},
+		{"partial_body", `{"error":{"type":"authentication_error"}}`, 401, errors.New("read reset"), false},
+		{"invalid_json", `{"error":{"type":"authentication_error"}`, 401, nil, false},
+		{"observed_usage", `{"error":{"type":"authentication_error"},"usage":{"input_tokens":1}}`, 401, nil, false},
+		{"escaped_usage", `{"error":{"type":"authentication_error"},"nested":{"\u0075sage":{"input_tokens":1}}}`, 401, nil, false},
+		{"duplicate_error", `{"error":{"type":"authentication_error"},"error":{"type":"server_error"}}`, 401, nil, false},
+		{"conflicting_top", `{"type":"permission_denied","error":{"type":"server_error"}}`, 403, nil, false},
+		{"conflicting_type_code", `{"error":{"type":"server_error","code":"invalid_api_key"}}`, 401, nil, false},
+		{"unknown403", `{"error":{"type":"unknown"}}`, 403, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &inflightCaptureRepo{allow: true}
+			lease, err := newBillingInflightLease(context.Background(), repo, inflightTestConfig(), 1, 1, false)
+			require.NoError(t, err)
+			lease.MarkDispatched()
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+			c.Request = c.Request.WithContext(WithBillingInflightLease(c.Request.Context(), lease))
+			markBillingInflightProviderRefusal(c, tc.status, []byte(tc.body), tc.readErr)
+			lease.HandlerDone()
+			if tc.release {
+				require.Equal(t, 1, repo.releases)
+			} else {
+				require.Zero(t, repo.releases)
+			}
+		})
 	}
 }

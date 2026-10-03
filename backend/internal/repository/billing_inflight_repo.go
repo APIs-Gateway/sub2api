@@ -14,6 +14,12 @@ import (
 
 var _ service.BillingInflightRepository = (*usageBillingRepository)(nil)
 
+// The new lease ledger is PostgreSQL-only. Other supported drivers retain their
+// existing admission path and must not execute PostgreSQL lease SQL or DDL.
+func (r *usageBillingRepository) BillingInflightAvailable() bool {
+	return r != nil && r.db != nil && isPostgresDriver(r.db)
+}
+
 // Every operation locks user before lease rows. This serializes admission with
 // the existing user -> active card settlement/purchase/renewal lock order.
 func lockBillingInflightUser(ctx context.Context, tx *sql.Tx, userID int64) (float64, error) {
@@ -30,7 +36,7 @@ func (r *usageBillingRepository) inflightTx(ctx context.Context, userID int64, f
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	balance, err := lockBillingInflightUser(ctx, tx, userID)
 	if err != nil {
 		return err

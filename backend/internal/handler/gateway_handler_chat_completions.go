@@ -261,7 +261,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				if result == nil && c.Writer.Size() == writerSizeBeforeForward {
+				if result == nil && service.IsBillingInflightNoChargeError(err) && c.Writer.Size() == writerSizeBeforeForward {
 					service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
 				}
 				if c.Writer.Size() != writerSizeBeforeForward {

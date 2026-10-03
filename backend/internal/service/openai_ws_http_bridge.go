@@ -512,7 +512,8 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, openAIWSHTTPBridgeErrorBodyLimitBytes))
+		respBody, readErr := readBillingInflightErrorBody(resp.Body, openAIWSHTTPBridgeErrorBodyLimitBytes)
+		noChargeProof := markBillingInflightProviderRefusal(c, resp.StatusCode, respBody, readErr)
 		markOpenAICyberPolicyEvent(c, respBody, resp.StatusCode, nil)
 		if resp.StatusCode == http.StatusBadRequest &&
 			extractUpstreamErrorCode(respBody) == openAIWSFallbackReasonInvalidEncryptedContent {
@@ -538,13 +539,13 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 					ResponseHeaders: cloneHeader(resp.Header),
 				}
 			}
-			return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body, respBody)
+			return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body, respBody, readErr)
 		}
 		if !accountErrorHandled && shouldFailover {
 			s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, originalModel)
 		}
 		_ = writeClientMessage(buildOpenAIWSHTTPBridgeErrorEvent(resp.StatusCode, upstreamMsg, sequence.Next()))
-		return nil, fmt.Errorf("upstream http bridge error: status=%d message=%s", resp.StatusCode, upstreamMsg)
+		return nil, wrapBillingInflightNoChargeError(fmt.Errorf("upstream http bridge error: status=%d message=%s", resp.StatusCode, upstreamMsg), noChargeProof)
 	}
 
 	responseID := ""

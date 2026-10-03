@@ -756,6 +756,7 @@ type ForwardResult struct {
 
 // UpstreamFailoverError indicates an upstream error that should trigger account failover.
 type UpstreamFailoverError struct {
+	BillingNoCharge                 bool // An explicit provider refusal proves no charge; transport/replay safety alone does not.
 	StatusCode                      int
 	ResponseBody                    []byte      // 上游响应体，用于错误透传规则匹配
 	ResponseHeaders                 http.Header // 上游响应头，用于透传 cf-ray/cf-mitigated/content-type 等诊断信息
@@ -5782,7 +5783,8 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 	// 处理可切换账号的错误
 	if resp.StatusCode >= 400 && s.shouldFailoverUpstreamError(resp.StatusCode) {
-		respBody, _ := s.readUpstreamErrorBody(resp)
+		respBody, proofReadErr := s.readUpstreamErrorBody(resp)
+		markBillingInflightProviderRefusal(c, resp.StatusCode, respBody, proofReadErr)
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
@@ -6145,7 +6147,8 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	}
 
 	if resp.StatusCode >= 400 && s.shouldFailoverUpstreamError(resp.StatusCode) {
-		respBody, _ := s.readUpstreamErrorBody(resp)
+		respBody, proofReadErr := s.readUpstreamErrorBody(resp)
+		markBillingInflightProviderRefusal(c, resp.StatusCode, respBody, proofReadErr)
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
@@ -8346,11 +8349,12 @@ func (s *GatewayService) readUpstreamErrorBody(resp *http.Response) ([]byte, err
 	if s != nil && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody && s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes > int(limit) {
 		limit = int64(s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, limit))
+	return readBillingInflightErrorBody(resp.Body, limit)
 }
 
 func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, requestedModel ...string) (*ForwardResult, error) {
 	body, readErr := s.readUpstreamErrorBody(resp)
+	markBillingInflightProviderRefusal(c, resp.StatusCode, body, readErr)
 	if readErr != nil {
 		// 读取失败时 body 可能被截断，错误分类会基于不完整数据；记录日志以便排查，
 		// 避免静默吞掉导致误判。
@@ -8525,7 +8529,8 @@ func (s *GatewayService) handleFailoverSideEffects(ctx context.Context, resp *ht
 func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *http.Response, c *gin.Context, account *Account) (*ForwardResult, error) {
 	MarkResponseCommitted(c)
 	// Capture upstream error body before side-effects consume the stream.
-	respBody, _ := s.readUpstreamErrorBody(resp)
+	respBody, readErr := s.readUpstreamErrorBody(resp)
+	markBillingInflightProviderRefusal(c, resp.StatusCode, respBody, readErr)
 	_ = resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
