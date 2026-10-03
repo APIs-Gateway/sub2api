@@ -8,8 +8,6 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > ai 页签 
  <div aria-label="客户端" class="flex flex-wrap gap-2" role="radiogroup">
   <button aria-checked="true" class="onb-chip onb-chip-active" data-test="ai-client-claude" role="radio" type="button">
    "Claude Code"
-  <button aria-checked="false" class="onb-chip" data-test="ai-client-codex" role="radio" type="button">
-   "Codex"
   <button aria-checked="false" class="onb-chip" data-test="ai-client-cursor" role="radio" type="button">
    "Cursor"
   <button aria-checked="false" class="onb-chip" data-test="ai-client-chat" role="radio" type="button">
@@ -36,10 +34,6 @@ ai-client-claude: 简短版 = "请带我把「Claude Code」接入 Hiyo。接入
   复制简短版 = "请带我把「Claude Code」接入 Hiyo。接入地址是 https://codex.hiyo.top，接口格式是 Anthropic。需要设置环境变量 ANTHROPIC_BASE_URL（填接入地址）和 ANTHROPIC_AUTH_TOKEN（填密钥），也可以写进 ~/.claude/settings.json 的 env 里。密钥我会自己填，请不要向我索要。 参考文档：https://docs.example.com"
   复制详细版 = <338 字符 sha1:9b161dfa708d 开头:"请带我一步步把「Claude Code」接入 Hiyo。\\n\\n- 接入地址：https://codex.hiyo.top\\n">
   打开 = ["https://chatgpt.com/?q=<216 字符 sha1:6b95f0e50c42 开头:\\"请带我把「Claude Code」接入 Hiyo。接入地址是 https://codex.hiyo.top，接口格式是 \\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<216 字符 sha1:6b95f0e50c42 开头:\\"请带我把「Claude Code」接入 Hiyo。接入地址是 https://codex.hiyo.top，接口格式是 \\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
-ai-client-codex: 简短版 = "请带我把「Codex」接入 Hiyo。接入地址是 https://codex.hiyo.top，接口格式是 Anthropic。需要在 ~/.codex/config.toml 里添加一个自定义模型提供方：base_url 填接入地址，wire_api 用 \\"responses\\"，并填入密钥。密钥我会自己填，请不要向我索要。 参考文档：https://docs.example.com"
-  复制简短版 = "请带我把「Codex」接入 Hiyo。接入地址是 https://codex.hiyo.top，接口格式是 Anthropic。需要在 ~/.codex/config.toml 里添加一个自定义模型提供方：base_url 填接入地址，wire_api 用 \\"responses\\"，并填入密钥。密钥我会自己填，请不要向我索要。 参考文档：https://docs.example.com"
-  复制详细版 = <315 字符 sha1:712893640c49 开头:"请带我一步步把「Codex」接入 Hiyo。\\n\\n- 接入地址：https://codex.hiyo.top\\n- 接口格式">
-  打开 = ["https://chatgpt.com/?q=<193 字符 sha1:2ca09b7215fc 开头:\\"请带我把「Codex」接入 Hiyo。接入地址是 https://codex.hiyo.top，接口格式是 Anthro\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<193 字符 sha1:2ca09b7215fc 开头:\\"请带我把「Codex」接入 Hiyo。接入地址是 https://codex.hiyo.top，接口格式是 Anthro\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-cursor: 简短版 = "请带我把「Cursor」接入 Hiyo。接入地址是 https://codex.hiyo.top，接口格式是 Anthropic。需要在 Cursor 的模型设置里启用自定义 Anthropic 接口，填写接入地址和密钥，并手动添加要用的模型名。密钥我会自己填，请不要向我索要。 参考文档：https://docs.example.com"
   复制简短版 = "请带我把「Cursor」接入 Hiyo。接入地址是 https://codex.hiyo.top，接口格式是 Anthropic。需要在 Cursor 的模型设置里启用自定义 Anthropic 接口，填写接入地址和密钥，并手动添加要用的模型名。密钥我会自己填，请不要向我索要。 参考文档：https://docs.example.com"
   复制详细版 = <291 字符 sha1:47ed28a2c12b 开头:"请带我一步步把「Cursor」接入 Hiyo。\\n\\n- 接入地址：https://codex.hiyo.top\\n- 接口格">
@@ -311,8 +305,6 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic' > ai 页签 1`] = `
     <div aria-label="Client" class="flex flex-wrap gap-2" role="radiogroup">
      <button aria-checked="true" class="onb-chip onb-chip-active" data-test="ai-client-claude" role="radio" type="button">
       "Claude Code"
-     <button aria-checked="false" class="onb-chip" data-test="ai-client-codex" role="radio" type="button">
-      "Codex"
      <button aria-checked="false" class="onb-chip" data-test="ai-client-cursor" role="radio" type="button">
       "Cursor"
      <button aria-checked="false" class="onb-chip" data-test="ai-client-chat" role="radio" type="button">
@@ -339,10 +331,6 @@ ai-client-claude: 简短版 = "Please help me connect \\"Claude Code\\" to Hiyo.
   复制简短版 = "Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
   复制详细版 = <669 字符 sha1:399bb02095c8 开头:"Please walk me through connecting \\"Claude Code\\" to Hiyo, ste">
   打开 = ["https://chatgpt.com/?q=<389 字符 sha1:77c3c009d241 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to Hiyo. The endpoint i\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<389 字符 sha1:77c3c009d241 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to Hiyo. The endpoint i\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
-ai-client-codex: 简短版 = "Please help me connect \\"Codex\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制简短版 = "Please help me connect \\"Codex\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制详细版 = <639 字符 sha1:2eabde59b8bc 开头:"Please walk me through connecting \\"Codex\\" to Hiyo, step by s">
-  打开 = ["https://chatgpt.com/?q=<359 字符 sha1:078cc702336d 开头:\\"Please help me connect \\\\\\"Codex\\\\\\" to Hiyo. The endpoint is http\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<359 字符 sha1:078cc702336d 开头:\\"Please help me connect \\\\\\"Codex\\\\\\" to Hiyo. The endpoint is http\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-cursor: 简短版 = "Please help me connect \\"Cursor\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs a custom Anthropic endpoint enabled in Cursor's model settings, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
   复制简短版 = "Please help me connect \\"Cursor\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs a custom Anthropic endpoint enabled in Cursor's model settings, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
   复制详细版 = <639 字符 sha1:93e863e63f62 开头:"Please walk me through connecting \\"Cursor\\" to Hiyo, step by ">
@@ -828,10 +816,6 @@ exports[`KeyOnboardingModal 页签快照 > 'antigravity' > ai 页签 1`] = `
  <div aria-label="Client" class="flex flex-wrap gap-2" role="radiogroup">
   <button aria-checked="true" class="onb-chip onb-chip-active" data-test="ai-client-claude" role="radio" type="button">
    "Claude Code"
-  <button aria-checked="false" class="onb-chip" data-test="ai-client-codex" role="radio" type="button">
-   "Codex"
-  <button aria-checked="false" class="onb-chip" data-test="ai-client-cursor" role="radio" type="button">
-   "Cursor"
   <button aria-checked="false" class="onb-chip" data-test="ai-client-chat" role="radio" type="button">
    "Chat app"
   <button aria-checked="false" class="onb-chip" data-test="ai-client-code" role="radio" type="button">
@@ -856,14 +840,6 @@ ai-client-claude: 简短版 = "Please help me connect \\"Claude Code\\" to Hiyo.
   复制简短版 = "Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://codex.hiyo.top/antigravity and the API format is Anthropic. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
   复制详细版 = <678 字符 sha1:cf4aba7d3094 开头:"Please walk me through connecting \\"Claude Code\\" to Hiyo, ste">
   打开 = ["https://chatgpt.com/?q=<401 字符 sha1:cfc6cc4f6d34 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to Hiyo. The endpoint i\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<401 字符 sha1:cfc6cc4f6d34 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to Hiyo. The endpoint i\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
-ai-client-codex: 简短版 = "Please help me connect \\"Codex\\" to Hiyo. The endpoint is https://codex.hiyo.top/antigravity and the API format is Anthropic. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制简短版 = "Please help me connect \\"Codex\\" to Hiyo. The endpoint is https://codex.hiyo.top/antigravity and the API format is Anthropic. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制详细版 = <648 字符 sha1:7af64efb08b3 开头:"Please walk me through connecting \\"Codex\\" to Hiyo, step by s">
-  打开 = ["https://chatgpt.com/?q=<371 字符 sha1:9d0422c13ca8 开头:\\"Please help me connect \\\\\\"Codex\\\\\\" to Hiyo. The endpoint is http\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<371 字符 sha1:9d0422c13ca8 开头:\\"Please help me connect \\\\\\"Codex\\\\\\" to Hiyo. The endpoint is http\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
-ai-client-cursor: 简短版 = "Please help me connect \\"Cursor\\" to Hiyo. The endpoint is https://codex.hiyo.top/antigravity and the API format is Anthropic. It needs a custom Anthropic endpoint enabled in Cursor's model settings, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制简短版 = "Please help me connect \\"Cursor\\" to Hiyo. The endpoint is https://codex.hiyo.top/antigravity and the API format is Anthropic. It needs a custom Anthropic endpoint enabled in Cursor's model settings, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制详细版 = <648 字符 sha1:cf3c4e31d375 开头:"Please walk me through connecting \\"Cursor\\" to Hiyo, step by ">
-  打开 = ["https://chatgpt.com/?q=<371 字符 sha1:19eb22d18434 开头:\\"Please help me connect \\\\\\"Cursor\\\\\\" to Hiyo. The endpoint is htt\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<371 字符 sha1:19eb22d18434 开头:\\"Please help me connect \\\\\\"Cursor\\\\\\" to Hiyo. The endpoint is htt\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-chat: 简短版 = "Please help me connect \\"Chat app\\" to Hiyo. The endpoint is https://codex.hiyo.top/antigravity and the API format is Anthropic. It needs a custom provider added in the app's settings, using the Anthropic-compatible type, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
   复制简短版 = "Please help me connect \\"Chat app\\" to Hiyo. The endpoint is https://codex.hiyo.top/antigravity and the API format is Anthropic. It needs a custom provider added in the app's settings, using the Anthropic-compatible type, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
   复制详细版 = <670 字符 sha1:cd3e71a07084 开头:"Please walk me through connecting \\"Chat app\\" to Hiyo, step b">
@@ -1120,19 +1096,13 @@ exports[`KeyOnboardingModal 页签快照 > 'gemini' > ai 页签 1`] = `
  <p class="text-sm text-gray-600 dark:text-dark-400">
   "Pick the app you want to use and send this message to an AI assistant. It will walk you through the setup."
  <div aria-label="Client" class="flex flex-wrap gap-2" role="radiogroup">
-  <button aria-checked="true" class="onb-chip onb-chip-active" data-test="ai-client-claude" role="radio" type="button">
-   "Claude Code"
-  <button aria-checked="false" class="onb-chip" data-test="ai-client-codex" role="radio" type="button">
-   "Codex"
-  <button aria-checked="false" class="onb-chip" data-test="ai-client-cursor" role="radio" type="button">
-   "Cursor"
-  <button aria-checked="false" class="onb-chip" data-test="ai-client-chat" role="radio" type="button">
+  <button aria-checked="true" class="onb-chip onb-chip-active" data-test="ai-client-chat" role="radio" type="button">
    "Chat app"
   <button aria-checked="false" class="onb-chip" data-test="ai-client-code" role="radio" type="button">
    "Calling from code"
   <button aria-checked="false" class="onb-chip" data-test="ai-client-other" role="radio" type="button">
    "Other"
- <textarea class="input w-full resize-none text-sm leading-relaxed" data-test="ai-prompt" readonly="" rows="5" value="Please help me connect "Claude Code" to sub2api. The endpoint is https://codex.hiyo.top and the API format is Gemini. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com" :value="Please help me connect \\"Claude Code\\" to sub2api. The endpoint is https://codex.hiyo.top and the API format is Gemini. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com">
+ <textarea class="input w-full resize-none text-sm leading-relaxed" data-test="ai-prompt" readonly="" rows="5" value="Please help me connect "Chat app" to sub2api. The endpoint is https://codex.hiyo.top and the API format is Gemini. It needs a custom provider added in the app's settings, using the Gemini-compatible type, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com" :value="Please help me connect \\"Chat app\\" to sub2api. The endpoint is https://codex.hiyo.top and the API format is Gemini. It needs a custom provider added in the app's settings, using the Gemini-compatible type, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com">
  <div class="flex flex-wrap gap-2">
   <button class="btn btn-primary btn-sm" data-test="ai-copy" type="button">
    "Copy"
@@ -1146,18 +1116,6 @@ exports[`KeyOnboardingModal 页签快照 > 'gemini' > ai 页签 1`] = `
   "Your key is not in this message. Enter it yourself when you set things up."
 
 ### 复制与链接
-ai-client-claude: 简短版 = "Please help me connect \\"Claude Code\\" to sub2api. The endpoint is https://codex.hiyo.top and the API format is Gemini. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制简短版 = "Please help me connect \\"Claude Code\\" to sub2api. The endpoint is https://codex.hiyo.top and the API format is Gemini. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制详细版 = <651 字符 sha1:2e55cd871acf 开头:"Please walk me through connecting \\"Claude Code\\" to sub2api, ">
-  打开 = ["https://chatgpt.com/?q=<389 字符 sha1:f877b01621df 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to sub2api. The endpoin\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<389 字符 sha1:f877b01621df 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to sub2api. The endpoin\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
-ai-client-codex: 简短版 = "Please help me connect \\"Codex\\" to sub2api. The endpoint is https://codex.hiyo.top and the API format is Gemini. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制简短版 = "Please help me connect \\"Codex\\" to sub2api. The endpoint is https://codex.hiyo.top and the API format is Gemini. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制详细版 = <621 字符 sha1:561316cbe873 开头:"Please walk me through connecting \\"Codex\\" to sub2api, step b">
-  打开 = ["https://chatgpt.com/?q=<359 字符 sha1:03c030a49095 开头:\\"Please help me connect \\\\\\"Codex\\\\\\" to sub2api. The endpoint is h\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<359 字符 sha1:03c030a49095 开头:\\"Please help me connect \\\\\\"Codex\\\\\\" to sub2api. The endpoint is h\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
-ai-client-cursor: 简短版 = "Please help me connect \\"Cursor\\" to sub2api. The endpoint is https://codex.hiyo.top and the API format is Gemini. It needs a custom Gemini endpoint enabled in Cursor's model settings, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制简短版 = "Please help me connect \\"Cursor\\" to sub2api. The endpoint is https://codex.hiyo.top and the API format is Gemini. It needs a custom Gemini endpoint enabled in Cursor's model settings, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制详细版 = <618 字符 sha1:99caf1dd68b1 开头:"Please walk me through connecting \\"Cursor\\" to sub2api, step ">
-  打开 = ["https://chatgpt.com/?q=<356 字符 sha1:2cc9e2bb7250 开头:\\"Please help me connect \\\\\\"Cursor\\\\\\" to sub2api. The endpoint is \\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<356 字符 sha1:2cc9e2bb7250 开头:\\"Please help me connect \\\\\\"Cursor\\\\\\" to sub2api. The endpoint is \\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-chat: 简短版 = "Please help me connect \\"Chat app\\" to sub2api. The endpoint is https://codex.hiyo.top and the API format is Gemini. It needs a custom provider added in the app's settings, using the Gemini-compatible type, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
   复制简短版 = "Please help me connect \\"Chat app\\" to sub2api. The endpoint is https://codex.hiyo.top and the API format is Gemini. It needs a custom provider added in the app's settings, using the Gemini-compatible type, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
   复制详细版 = <640 字符 sha1:d0d49b7033d6 开头:"Please walk me through connecting \\"Chat app\\" to sub2api, ste">
@@ -1171,14 +1129,14 @@ ai-client-other: 简短版 = "Please help me connect \\"Other\\" to sub2api. The
   复制详细版 = <554 字符 sha1:e9e5ff4d65f9 开头:"Please walk me through connecting \\"Other\\" to sub2api, step b">
   打开 = ["https://chatgpt.com/?q=<292 字符 sha1:dc82f1ccb52e 开头:\\"Please help me connect \\\\\\"Other\\\\\\" to sub2api. The endpoint is h\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<292 字符 sha1:dc82f1ccb52e 开头:\\"Please help me connect \\\\\\"Other\\\\\\" to sub2api. The endpoint is h\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 第一个客户端的详细版全文:
-Please walk me through connecting "Claude Code" to sub2api, step by step.
+Please walk me through connecting "Chat app" to sub2api, step by step.
 
 - Endpoint: https://codex.hiyo.top
 - API format: Gemini
 - Key: I will enter it myself. Do not ask me for it or have me paste it into the chat.
 - Available models: gemini-3-pro
 
-It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json.
+It needs a custom provider added in the app's settings, using the Gemini-compatible type, with the endpoint and key filled in and the model names added by hand.
 
 First ask which operating system I use, then tell me which file to change and how. Remind me to back up the existing config before changing it, and show me one simple command to check that it works.
 Docs: https://docs.example.com"
@@ -1437,7 +1395,7 @@ exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > ai �
       "Calling from code"
      <button aria-checked="false" class="onb-chip" data-test="ai-client-other" role="radio" type="button">
       "Other"
-    <textarea class="input w-full resize-none text-sm leading-relaxed" data-test="ai-prompt" readonly="" rows="5" value="Please help me connect "Claude Code" to Hiyo. The endpoint is https://cdn.example.com/v1 and the API format is OpenAI. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you." :value="Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://cdn.example.com/v1 and the API format is OpenAI. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you.">
+    <textarea class="input w-full resize-none text-sm leading-relaxed" data-test="ai-prompt" readonly="" rows="5" value="Please help me connect "Claude Code" to Hiyo. The endpoint is https://cdn.example.com and the API format is Anthropic. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you." :value="Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://cdn.example.com and the API format is Anthropic. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you.">
     <div class="flex flex-wrap gap-2">
      <button class="btn btn-primary btn-sm" data-test="ai-copy" type="button">
       "Copy"
@@ -1451,10 +1409,10 @@ exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > ai �
      "Your key is not in this message. Enter it yourself when you set things up."
 
 ### 复制与链接
-ai-client-claude: 简短版 = "Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://cdn.example.com/v1 and the API format is OpenAI. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you."
-  复制简短版 = "Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://cdn.example.com/v1 and the API format is OpenAI. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you."
-  复制详细版 = <634 字符 sha1:a7dc405a2488 开头:"Please walk me through connecting \\"Claude Code\\" to Hiyo, ste">
-  打开 = ["https://chatgpt.com/?q=<359 字符 sha1:c476acd53da2 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to Hiyo. The endpoint i\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<359 字符 sha1:c476acd53da2 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to Hiyo. The endpoint i\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
+ai-client-claude: 简短版 = "Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://cdn.example.com and the API format is Anthropic. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you."
+  复制简短版 = "Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://cdn.example.com and the API format is Anthropic. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you."
+  复制详细版 = <634 字符 sha1:35978350ddb9 开头:"Please walk me through connecting \\"Claude Code\\" to Hiyo, ste">
+  打开 = ["https://chatgpt.com/?q=<359 字符 sha1:f7414017db0f 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to Hiyo. The endpoint i\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<359 字符 sha1:f7414017db0f 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to Hiyo. The endpoint i\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-codex: 简短版 = "Please help me connect \\"Codex\\" to Hiyo. The endpoint is https://cdn.example.com/v1 and the API format is OpenAI. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you."
   复制简短版 = "Please help me connect \\"Codex\\" to Hiyo. The endpoint is https://cdn.example.com/v1 and the API format is OpenAI. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you."
   复制详细版 = <604 字符 sha1:bd0bcffcee9e 开头:"Please walk me through connecting \\"Codex\\" to Hiyo, step by s">
@@ -1478,8 +1436,8 @@ ai-client-other: 简短版 = "Please help me connect \\"Other\\" to Hiyo. The en
 第一个客户端的详细版全文:
 Please walk me through connecting "Claude Code" to Hiyo, step by step.
 
-- Endpoint: https://cdn.example.com/v1
-- API format: OpenAI
+- Endpoint: https://cdn.example.com
+- API format: Anthropic
 - Key: I will enter it myself. Do not ask me for it or have me paste it into the chat.
 - Available models: gpt-5.6-sol, gpt-5.6-luna
 
@@ -2166,9 +2124,7 @@ exports[`KeyOnboardingModal 页签快照 > 'openai' > ai 页签 1`] = `
     <p class="text-sm text-gray-600 dark:text-dark-400">
      "Pick the app you want to use and send this message to an AI assistant. It will walk you through the setup."
     <div aria-label="Client" class="flex flex-wrap gap-2" role="radiogroup">
-     <button aria-checked="true" class="onb-chip onb-chip-active" data-test="ai-client-claude" role="radio" type="button">
-      "Claude Code"
-     <button aria-checked="false" class="onb-chip" data-test="ai-client-codex" role="radio" type="button">
+     <button aria-checked="true" class="onb-chip onb-chip-active" data-test="ai-client-codex" role="radio" type="button">
       "Codex"
      <button aria-checked="false" class="onb-chip" data-test="ai-client-cursor" role="radio" type="button">
       "Cursor"
@@ -2178,7 +2134,7 @@ exports[`KeyOnboardingModal 页签快照 > 'openai' > ai 页签 1`] = `
       "Calling from code"
      <button aria-checked="false" class="onb-chip" data-test="ai-client-other" role="radio" type="button">
       "Other"
-    <textarea class="input w-full resize-none text-sm leading-relaxed" data-test="ai-prompt" readonly="" rows="5" value="Please help me connect "Claude Code" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com" :value="Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com">
+    <textarea class="input w-full resize-none text-sm leading-relaxed" data-test="ai-prompt" readonly="" rows="5" value="Please help me connect "Codex" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to "responses", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com" :value="Please help me connect \\"Codex\\" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com">
     <div class="flex flex-wrap gap-2">
      <button class="btn btn-primary btn-sm" data-test="ai-copy" type="button">
       "Copy"
@@ -2192,10 +2148,6 @@ exports[`KeyOnboardingModal 页签快照 > 'openai' > ai 页签 1`] = `
      "Your key is not in this message. Enter it yourself when you set things up."
 
 ### 复制与链接
-ai-client-claude: 简短版 = "Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制简短版 = "Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制详细版 = <664 字符 sha1:2262fdcae1e9 开头:"Please walk me through connecting \\"Claude Code\\" to Hiyo, ste">
-  打开 = ["https://chatgpt.com/?q=<389 字符 sha1:4f87a8cdc08d 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to Hiyo. The endpoint i\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<389 字符 sha1:4f87a8cdc08d 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to Hiyo. The endpoint i\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-codex: 简短版 = "Please help me connect \\"Codex\\" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
   复制简短版 = "Please help me connect \\"Codex\\" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
   复制详细版 = <634 字符 sha1:40c8218ebfdf 开头:"Please walk me through connecting \\"Codex\\" to Hiyo, step by s">
@@ -2217,14 +2169,14 @@ ai-client-other: 简短版 = "Please help me connect \\"Other\\" to Hiyo. The en
   复制详细版 = <567 字符 sha1:d1db92fb847d 开头:"Please walk me through connecting \\"Other\\" to Hiyo, step by s">
   打开 = ["https://chatgpt.com/?q=<292 字符 sha1:69c73666fa63 开头:\\"Please help me connect \\\\\\"Other\\\\\\" to Hiyo. The endpoint is http\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<292 字符 sha1:69c73666fa63 开头:\\"Please help me connect \\\\\\"Other\\\\\\" to Hiyo. The endpoint is http\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 第一个客户端的详细版全文:
-Please walk me through connecting "Claude Code" to Hiyo, step by step.
+Please walk me through connecting "Codex" to Hiyo, step by step.
 
 - Endpoint: https://codex.hiyo.top/v1
 - API format: OpenAI
 - Key: I will enter it myself. Do not ask me for it or have me paste it into the chat.
 - Available models: gpt-5.6-sol, gpt-5.6-luna
 
-It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json.
+It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to "responses", and the key filled in.
 
 First ask which operating system I use, then tell me which file to change and how. Remind me to back up the existing config before changing it, and show me one simple command to check that it works.
 Docs: https://docs.example.com"
@@ -2710,19 +2662,13 @@ exports[`KeyOnboardingModal 页签快照 > '未知平台' > ai 页签 1`] = `
  <p class="text-sm text-gray-600 dark:text-dark-400">
   "Pick the app you want to use and send this message to an AI assistant. It will walk you through the setup."
  <div aria-label="Client" class="flex flex-wrap gap-2" role="radiogroup">
-  <button aria-checked="true" class="onb-chip onb-chip-active" data-test="ai-client-claude" role="radio" type="button">
-   "Claude Code"
-  <button aria-checked="false" class="onb-chip" data-test="ai-client-codex" role="radio" type="button">
-   "Codex"
-  <button aria-checked="false" class="onb-chip" data-test="ai-client-cursor" role="radio" type="button">
-   "Cursor"
-  <button aria-checked="false" class="onb-chip" data-test="ai-client-chat" role="radio" type="button">
+  <button aria-checked="true" class="onb-chip onb-chip-active" data-test="ai-client-chat" role="radio" type="button">
    "Chat app"
   <button aria-checked="false" class="onb-chip" data-test="ai-client-code" role="radio" type="button">
    "Calling from code"
   <button aria-checked="false" class="onb-chip" data-test="ai-client-other" role="radio" type="button">
    "Other"
- <textarea class="input w-full resize-none text-sm leading-relaxed" data-test="ai-prompt" readonly="" rows="5" value="Please help me connect "Claude Code" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com" :value="Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com">
+ <textarea class="input w-full resize-none text-sm leading-relaxed" data-test="ai-prompt" readonly="" rows="5" value="Please help me connect "Chat app" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs a custom provider added in the app's settings, using the Anthropic-compatible type, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com" :value="Please help me connect \\"Chat app\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs a custom provider added in the app's settings, using the Anthropic-compatible type, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com">
  <div class="flex flex-wrap gap-2">
   <button class="btn btn-primary btn-sm" data-test="ai-copy" type="button">
    "Copy"
@@ -2736,18 +2682,6 @@ exports[`KeyOnboardingModal 页签快照 > '未知平台' > ai 页签 1`] = `
   "Your key is not in this message. Enter it yourself when you set things up."
 
 ### 复制与链接
-ai-client-claude: 简短版 = "Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制简短版 = "Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制详细版 = <618 字符 sha1:ca62d3451860 开头:"Please walk me through connecting \\"Claude Code\\" to Hiyo, ste">
-  打开 = ["https://chatgpt.com/?q=<389 字符 sha1:77c3c009d241 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to Hiyo. The endpoint i\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<389 字符 sha1:77c3c009d241 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to Hiyo. The endpoint i\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
-ai-client-codex: 简短版 = "Please help me connect \\"Codex\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制简短版 = "Please help me connect \\"Codex\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制详细版 = <588 字符 sha1:ef5a415f0d58 开头:"Please walk me through connecting \\"Codex\\" to Hiyo, step by s">
-  打开 = ["https://chatgpt.com/?q=<359 字符 sha1:078cc702336d 开头:\\"Please help me connect \\\\\\"Codex\\\\\\" to Hiyo. The endpoint is http\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<359 字符 sha1:078cc702336d 开头:\\"Please help me connect \\\\\\"Codex\\\\\\" to Hiyo. The endpoint is http\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
-ai-client-cursor: 简短版 = "Please help me connect \\"Cursor\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs a custom Anthropic endpoint enabled in Cursor's model settings, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制简短版 = "Please help me connect \\"Cursor\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs a custom Anthropic endpoint enabled in Cursor's model settings, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制详细版 = <588 字符 sha1:2cc865e75c3c 开头:"Please walk me through connecting \\"Cursor\\" to Hiyo, step by ">
-  打开 = ["https://chatgpt.com/?q=<359 字符 sha1:174d91bb9aa3 开头:\\"Please help me connect \\\\\\"Cursor\\\\\\" to Hiyo. The endpoint is htt\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<359 字符 sha1:174d91bb9aa3 开头:\\"Please help me connect \\\\\\"Cursor\\\\\\" to Hiyo. The endpoint is htt\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-chat: 简短版 = "Please help me connect \\"Chat app\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs a custom provider added in the app's settings, using the Anthropic-compatible type, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
   复制简短版 = "Please help me connect \\"Chat app\\" to Hiyo. The endpoint is https://codex.hiyo.top and the API format is Anthropic. It needs a custom provider added in the app's settings, using the Anthropic-compatible type, with the endpoint and key filled in and the model names added by hand. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
   复制详细版 = <610 字符 sha1:c2184bbaddfc 开头:"Please walk me through connecting \\"Chat app\\" to Hiyo, step b">
@@ -2761,13 +2695,13 @@ ai-client-other: 简短版 = "Please help me connect \\"Other\\" to Hiyo. The en
   复制详细版 = <521 字符 sha1:2d634dfc6cff 开头:"Please walk me through connecting \\"Other\\" to Hiyo, step by s">
   打开 = ["https://chatgpt.com/?q=<292 字符 sha1:aa18fc7f73cf 开头:\\"Please help me connect \\\\\\"Other\\\\\\" to Hiyo. The endpoint is http\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<292 字符 sha1:aa18fc7f73cf 开头:\\"Please help me connect \\\\\\"Other\\\\\\" to Hiyo. The endpoint is http\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 第一个客户端的详细版全文:
-Please walk me through connecting "Claude Code" to Hiyo, step by step.
+Please walk me through connecting "Chat app" to Hiyo, step by step.
 
 - Endpoint: https://codex.hiyo.top
 - API format: Anthropic
 - Key: I will enter it myself. Do not ask me for it or have me paste it into the chat.
 
-It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json.
+It needs a custom provider added in the app's settings, using the Anthropic-compatible type, with the endpoint and key filled in and the model names added by hand.
 
 First ask which operating system I use, then tell me which file to change and how. Remind me to back up the existing config before changing it, and show me one simple command to check that it works.
 Docs: https://docs.example.com"
@@ -2982,9 +2916,7 @@ exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 没
  <p class="text-sm text-gray-600 dark:text-dark-400">
   "Pick the app you want to use and send this message to an AI assistant. It will walk you through the setup."
  <div aria-label="Client" class="flex flex-wrap gap-2" role="radiogroup">
-  <button aria-checked="true" class="onb-chip onb-chip-active" data-test="ai-client-claude" role="radio" type="button">
-   "Claude Code"
-  <button aria-checked="false" class="onb-chip" data-test="ai-client-codex" role="radio" type="button">
+  <button aria-checked="true" class="onb-chip onb-chip-active" data-test="ai-client-codex" role="radio" type="button">
    "Codex"
   <button aria-checked="false" class="onb-chip" data-test="ai-client-cursor" role="radio" type="button">
    "Cursor"
@@ -2994,7 +2926,7 @@ exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 没
    "Calling from code"
   <button aria-checked="false" class="onb-chip" data-test="ai-client-other" role="radio" type="button">
    "Other"
- <textarea class="input w-full resize-none text-sm leading-relaxed" data-test="ai-prompt" readonly="" rows="5" value="Please help me connect "Claude Code" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com" :value="Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com">
+ <textarea class="input w-full resize-none text-sm leading-relaxed" data-test="ai-prompt" readonly="" rows="5" value="Please help me connect "Codex" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to "responses", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com" :value="Please help me connect \\"Codex\\" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com">
  <div class="flex flex-wrap gap-2">
   <button class="btn btn-primary btn-sm" data-test="ai-copy" type="button">
    "Copy"
@@ -3008,10 +2940,6 @@ exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 没
   "Your key is not in this message. Enter it yourself when you set things up."
 
 ### 复制与链接
-ai-client-claude: 简短版 = "Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制简短版 = "Please help me connect \\"Claude Code\\" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
-  复制详细版 = <618 字符 sha1:e29ea96f1221 开头:"Please walk me through connecting \\"Claude Code\\" to Hiyo, ste">
-  打开 = ["https://chatgpt.com/?q=<389 字符 sha1:4f87a8cdc08d 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to Hiyo. The endpoint i\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<389 字符 sha1:4f87a8cdc08d 开头:\\"Please help me connect \\\\\\"Claude Code\\\\\\" to Hiyo. The endpoint i\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-codex: 简短版 = "Please help me connect \\"Codex\\" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
   复制简短版 = "Please help me connect \\"Codex\\" to Hiyo. The endpoint is https://codex.hiyo.top/v1 and the API format is OpenAI. It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to \\"responses\\", and the key filled in. I will enter the key myself, so please do not ask me to send it to you. Docs: https://docs.example.com"
   复制详细版 = <588 字符 sha1:4dc52ee6c843 开头:"Please walk me through connecting \\"Codex\\" to Hiyo, step by s">
@@ -3033,13 +2961,13 @@ ai-client-other: 简短版 = "Please help me connect \\"Other\\" to Hiyo. The en
   复制详细版 = <521 字符 sha1:d52f2cc03a6e 开头:"Please walk me through connecting \\"Other\\" to Hiyo, step by s">
   打开 = ["https://chatgpt.com/?q=<292 字符 sha1:69c73666fa63 开头:\\"Please help me connect \\\\\\"Other\\\\\\" to Hiyo. The endpoint is http\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new?q=<292 字符 sha1:69c73666fa63 开头:\\"Please help me connect \\\\\\"Other\\\\\\" to Hiyo. The endpoint is http\\"> [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 第一个客户端的详细版全文:
-Please walk me through connecting "Claude Code" to Hiyo, step by step.
+Please walk me through connecting "Codex" to Hiyo, step by step.
 
 - Endpoint: https://codex.hiyo.top/v1
 - API format: OpenAI
 - Key: I will enter it myself. Do not ask me for it or have me paste it into the chat.
 
-It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json.
+It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to "responses", and the key filled in.
 
 First ask which operating system I use, then tell me which file to change and how. Remind me to back up the existing config before changing it, and show me one simple command to check that it works.
 Docs: https://docs.example.com"

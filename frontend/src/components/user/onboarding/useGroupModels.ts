@@ -6,21 +6,22 @@ import type { UserAvailableChannel } from '@/api/channels'
  * 当前密钥所在分组的可用模型（「交给 AI」的详细版和 CC Switch 的模型下拉用）。
  *
  * - load()：第一次调用时请求一次可用渠道列表，之后不再请求（失败也不重试，模型列表只是锦上添花）；
+ * - loading：请求还在路上时为 true，页签据此显示「加载中」、禁用依赖模型的按钮；
  * - models：该分组下所有渠道里的模型名，去重，保持渠道里的顺序；没有分组或还没加载完时为空数组。
  */
 export function useGroupModels(groupId: () => number | null | undefined) {
   const channels = ref<UserAvailableChannel[] | null>(null)
-  let loading = false
+  const loading = ref(false)
 
   async function load() {
-    if (channels.value || loading) return
-    loading = true
+    if (channels.value || loading.value) return
+    loading.value = true
     try {
       channels.value = await userChannelsAPI.getAvailable()
     } catch {
       channels.value = []
     } finally {
-      loading = false
+      loading.value = false
     }
   }
 
@@ -39,5 +40,5 @@ export function useGroupModels(groupId: () => number | null | undefined) {
     return [...names]
   })
 
-  return { models, load }
+  return { models, loading, load }
 }

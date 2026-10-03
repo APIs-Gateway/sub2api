@@ -551,11 +551,79 @@ describe('KeyOnboardingModal', () => {
     it('切换客户端会改文本', async () => {
       const w = await mountModal({ initialTab: 'ai' })
       const text = () => (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
-      await w.get('[data-test="ai-client-claude"]').trigger('click')
-      const claude = text()
+      const codex = text()
       await w.get('[data-test="ai-client-cursor"]').trigger('click')
-      expect(text()).not.toBe(claude)
+      expect(text()).not.toBe(codex)
       expect(text()).toContain('Cursor')
+    })
+
+    describe('工具按分组过滤，默认选中第一个可用的', () => {
+      const chips = (w: VueWrapper) => w.findAll('[data-test^="ai-client-"]').map((c) => c.attributes('data-test')!.replace('ai-client-', ''))
+      const checked = (w: VueWrapper) =>
+        w.findAll('[data-test^="ai-client-"][aria-checked="true"]').map((c) => c.attributes('data-test')!.replace('ai-client-', ''))
+      const text = (w: VueWrapper) => (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
+      const group = (platform: string, extra: Record<string, unknown> = {}) => ({
+        key: SECRET,
+        name: 'my-key',
+        group_id: 7,
+        group: { id: 7, platform, ...extra }
+      })
+
+      it('openai 分组：没有 Claude Code，默认 Codex，指令里是 /v1 地址和 OpenAI 格式（以前默认 Claude Code，三者互相矛盾）', async () => {
+        const w = await mountModal({ initialTab: 'ai' })
+        expect(chips(w)).toEqual(['codex', 'cursor', 'chat', 'code', 'other'])
+        expect(checked(w)).toEqual(['codex'])
+        expect(text(w)).toContain('"Codex"')
+        expect(text(w)).toContain('https://codex.hiyo.top/v1')
+        expect(text(w)).toContain('OpenAI')
+        expect(text(w)).not.toContain('ANTHROPIC_BASE_URL')
+      })
+
+      it('openai 分组开了调度：有 Claude Code 且排第一，指令是根地址 + Anthropic + ANTHROPIC_BASE_URL', async () => {
+        const w = await mountModal({ initialTab: 'ai', apiKey: group('openai', { allow_messages_dispatch: true }) })
+        expect(chips(w)).toEqual(['claude', 'codex', 'cursor', 'chat', 'code', 'other'])
+        expect(checked(w)).toEqual(['claude'])
+        expect(text(w)).toContain('"Claude Code"')
+        expect(text(w)).toContain('The endpoint is https://codex.hiyo.top and')
+        expect(text(w)).toContain('API format is Anthropic')
+        expect(text(w)).toContain('ANTHROPIC_BASE_URL')
+        // 同一个分组切到 Codex：地址和格式跟着变
+        await w.get('[data-test="ai-client-codex"]').trigger('click')
+        expect(text(w)).toContain('The endpoint is https://codex.hiyo.top/v1 and')
+        expect(text(w)).toContain('API format is OpenAI')
+      })
+
+      it.each([
+        ['anthropic', ['claude', 'cursor', 'chat', 'code', 'other']],
+        ['antigravity', ['claude', 'chat', 'code', 'other']],
+        ['gemini', ['chat', 'code', 'other']]
+      ])('%s 分组：%j，默认选中第一个', async (platform, expected) => {
+        const w = await mountModal({ initialTab: 'ai', apiKey: group(platform) })
+        expect(chips(w)).toEqual(expected)
+        expect(checked(w)).toEqual([expected[0]])
+      })
+
+      it('换到另一个密钥时，选中的工具不在新分组里就回到第一个可用的；仍可用就保留', async () => {
+        const w = await mountModal({ initialTab: 'ai', apiKey: group('anthropic') })
+        await w.get('[data-test="ai-client-cursor"]').trigger('click')
+        await w.setProps({ show: false })
+        await w.setProps({ apiKey: group('gemini'), show: true })
+        await flushPromises()
+        expect(checked(w)).toEqual(['chat'])
+        await w.setProps({ show: false })
+        await w.setProps({ apiKey: group('openai'), show: true })
+        await flushPromises()
+        // chat 在 openai 分组里也能用，保留
+        expect(checked(w)).toEqual(['chat'])
+      })
+
+      it('切到别的页签再回来，修正后的选择还在', async () => {
+        const w = await mountModal({ initialTab: 'ai' })
+        expect(checked(w)).toEqual(['codex'])
+        await w.get('[data-test="tab-manual"]').trigger('click')
+        await w.get('[data-test="tab-ai"]').trigger('click')
+        expect(checked(w)).toEqual(['codex'])
+      })
     })
 
     it('在 ChatGPT / Claude 中打开：链接只带不含密钥的文本', async () => {

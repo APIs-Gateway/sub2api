@@ -13,6 +13,7 @@ import InstallTab from '../InstallTab.vue'
 import { CodeBlock } from '../CodeBlock'
 import ManualTab from '../ManualTab.vue'
 import type { EndpointOption } from '@/utils/apiEndpoints'
+import type { CcSwitchForm } from '../useCcSwitchState'
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
@@ -94,24 +95,84 @@ describe('AiTab', () => {
         models: ['gpt-5.6-sol', 'gpt-5.6-luna'],
         docUrl: 'https://docs.example.com',
         copiedId: '',
-        client: 'claude',
+        client: 'codex',
         ...props
       } as never,
       attrs: panelAttrs
     })
+  const chips = (w: ReturnType<typeof mountTab>) =>
+    w.findAll('[data-test^="ai-client-"]').map((c) => c.attributes('data-test')!.replace('ai-client-', ''))
+  const text = (w: ReturnType<typeof mountTab>) => (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
 
   it('选客户端走 v-model:client；提示词随 client 变化，不含密钥', async () => {
     const w = mountTab()
-    const text = () => (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
-    const claude = text()
-    expect(claude).toContain('https://api.example.com/v1')
+    const codex = text(w)
+    expect(codex).toContain('https://api.example.com/v1')
     await w.get('[data-test="ai-client-cursor"]').trigger('click')
     expect(w.emitted('update:client')![0]).toEqual(['cursor'])
     // 外壳把新值传回来之后，提示词跟着变
     await w.setProps({ client: 'cursor' })
-    expect(text()).toContain('Cursor')
-    expect(text()).not.toBe(claude)
-    expect(text()).not.toContain('sk-')
+    expect(text(w)).toContain('Cursor')
+    expect(text(w)).not.toBe(codex)
+    expect(text(w)).not.toContain('sk-')
+  })
+
+  describe('工具按分组过滤', () => {
+    it.each([
+      ['openai', false, ['codex', 'cursor', 'chat', 'code', 'other']],
+      ['openai', true, ['claude', 'codex', 'cursor', 'chat', 'code', 'other']],
+      ['anthropic', false, ['claude', 'cursor', 'chat', 'code', 'other']],
+      ['gemini', false, ['chat', 'code', 'other']],
+      ['antigravity', false, ['claude', 'chat', 'code', 'other']]
+    ] as [string, boolean, string[]][])('%s 分组（开了调度：%s）只显示 %j', (platform, allowMessagesDispatch, expected) => {
+      const w = mountTab({ platform, allowMessagesDispatch, client: expected[0] })
+      expect(chips(w)).toEqual(expected)
+    })
+
+    it('选中的工具不在可选范围里（旧的默认值 Claude Code）：用第一个可用的，并交回外壳', async () => {
+      const w = mountTab({ client: 'claude' })
+      expect(chips(w)).not.toContain('claude')
+      expect(w.emitted('update:client')![0]).toEqual(['codex'])
+      expect(w.get('[data-test="ai-client-codex"]').attributes('aria-checked')).toBe('true')
+      expect(w.findAll('[role="radio"][aria-checked="true"]')).toHaveLength(1)
+      // 提示词用的是 Codex，不是 Claude Code：地址、接口格式、要设置的内容一致
+      expect(text(w)).toContain('Codex')
+      expect(text(w)).toContain('https://api.example.com/v1')
+      expect(text(w)).toContain('OpenAI')
+      expect(text(w)).not.toContain('ANTHROPIC')
+    })
+
+    it('选中的工具可用时保持不变，不多发更新', () => {
+      const w = mountTab({ client: 'cursor' })
+      expect(w.emitted('update:client')).toBeUndefined()
+      expect(w.get('[data-test="ai-client-cursor"]').attributes('aria-checked')).toBe('true')
+    })
+
+    it('openai 分组开了调度：Claude Code 可选，提示词是根地址 + Anthropic', () => {
+      const w = mountTab({ allowMessagesDispatch: true, client: 'claude' })
+      expect(chips(w)[0]).toBe('claude')
+      expect(w.emitted('update:client')).toBeUndefined()
+      expect(text(w)).toContain('Claude Code')
+      expect(text(w)).toContain('The endpoint is https://api.example.com and')
+      expect(text(w)).toContain('API format is Anthropic')
+      expect(text(w)).toContain('ANTHROPIC_BASE_URL')
+    })
+
+    it('换了分组：选中的工具在新分组里没有，就改成第一个可用的', async () => {
+      const w = mountTab({ platform: 'anthropic', client: 'cursor' })
+      expect(w.emitted('update:client')).toBeUndefined()
+      await w.setProps({ platform: 'gemini' })
+      expect(chips(w)).toEqual(['chat', 'code', 'other'])
+      expect(w.emitted('update:client')!.at(-1)).toEqual(['chat'])
+      expect(w.get('[data-test="ai-client-chat"]').attributes('aria-checked')).toBe('true')
+    })
+
+    it('分组开关调度之后立刻更新可选工具', async () => {
+      const w = mountTab({ allowMessagesDispatch: false })
+      expect(chips(w)).not.toContain('claude')
+      await w.setProps({ allowMessagesDispatch: true })
+      expect(chips(w)[0]).toBe('claude')
+    })
   })
 
   it('复制简短版和详细版通过 copy 交出，按钮 id 固定', async () => {
@@ -125,6 +186,13 @@ describe('AiTab', () => {
     expect(detail.length).toBeGreaterThan(short.length)
   })
 
+  it('clients、modelsLoading 先只是声明，不改变页面，也不会漏到根元素上', () => {
+    const plain = mountTab()
+    const w = mountTab({ clients: ['codex', 'opencode'], modelsLoading: true })
+    for (const attr of ['clients', 'models-loading']) expect(w.attributes(attr)).toBeUndefined()
+    expect(w.html()).toBe(plain.html())
+  })
+
   it('copiedId 对应的按钮显示「已复制」', () => {
     const w = mountTab({ copiedId: 'ai-short' })
     expect(w.get('[data-test="ai-copy"]').text()).toBe('Copied')
@@ -133,7 +201,8 @@ describe('AiTab', () => {
 })
 
 describe('CcSwitchTab', () => {
-  const mountTab = (props: Record<string, unknown> = {}) =>
+  // 表单是一个对象，用一个 v-model:form；props 里写不下的字段用第二个参数覆盖
+  const mountTab = (props: Record<string, unknown> = {}, form: Partial<CcSwitchForm> = {}) =>
     mount(CcSwitchTab, {
       props: {
         endpoint,
@@ -144,9 +213,7 @@ describe('CcSwitchTab', () => {
         clients: ['codex'],
         idPrefix: 'onboarding-9',
         copiedId: '',
-        client: 'codex',
-        name: '',
-        model: '',
+        form: { client: 'codex', name: '', model: '', ...form },
         ...props
       } as never,
       attrs: panelAttrs
@@ -155,19 +222,43 @@ describe('CcSwitchTab', () => {
 
   it('只有一个客户端时不显示客户端选择；有多个时单选组用 idPrefix 关联标签', () => {
     expect(mountTab().find('[role="radiogroup"]').exists()).toBe(false)
-    const w = mountTab({ platform: 'antigravity', clients: ['claude', 'gemini'], client: 'claude' })
+    const w = mountTab({ platform: 'antigravity', clients: ['claude', 'gemini'] }, { client: 'claude' })
     expect(w.get('[role="radiogroup"]').attributes('aria-labelledby')).toBe('onboarding-9-ccs-client')
     expect(w.get('#onboarding-9-ccs-client').text()).toBe('Client')
   })
 
-  it('客户端、名称、模型都走 v-model', async () => {
-    const w = mountTab({ platform: 'antigravity', clients: ['claude', 'gemini'], client: 'claude' })
+  it('客户端、名称、模型合成一个表单对象，走一个 v-model:form；每次都换成新对象，其余字段原样带上', async () => {
+    const form: CcSwitchForm = { client: 'claude', name: 'Old', model: 'gpt-5.6-sol' }
+    const w = mountTab({ platform: 'antigravity', clients: ['claude', 'gemini'] }, form)
     await w.get('[data-test="ccs-client-gemini"]').trigger('click')
-    expect(w.emitted('update:client')![0]).toEqual(['gemini'])
     await w.get('[data-test="ccs-name"]').setValue('Mine')
-    expect(w.emitted('update:name')![0]).toEqual(['Mine'])
     await w.get('[data-test="ccs-model"]').setValue('gpt-5.6-luna')
-    expect(w.emitted('update:model')![0]).toEqual(['gpt-5.6-luna'])
+    // 外壳没有接 update:form 时，页签自己记着最新的值，所以每次都是在上一次的基础上改一个字段
+    expect(w.emitted('update:form')).toEqual([
+      [{ client: 'gemini', name: 'Old', model: 'gpt-5.6-sol' }],
+      [{ client: 'gemini', name: 'Mine', model: 'gpt-5.6-sol' }],
+      [{ client: 'gemini', name: 'Mine', model: 'gpt-5.6-luna' }]
+    ])
+    // 不再有三个独立的 v-model
+    expect(w.emitted('update:client')).toBeUndefined()
+    expect(w.emitted('update:name')).toBeUndefined()
+    expect(w.emitted('update:model')).toBeUndefined()
+    // 传进来的对象没有被改动
+    expect(form).toEqual({ client: 'claude', name: 'Old', model: 'gpt-5.6-sol' })
+  })
+
+  it('外壳把新表单传回来之后，输入框和单选跟着变', async () => {
+    const w = mountTab({ platform: 'antigravity', clients: ['claude', 'gemini'] }, { client: 'claude' })
+    await w.setProps({ form: { client: 'gemini', name: 'Mine', model: 'gpt-5.6-luna' } })
+    expect((w.get('[data-test="ccs-name"]').element as HTMLInputElement).value).toBe('Mine')
+    expect((w.get('[data-test="ccs-model"]').element as HTMLSelectElement).value).toBe('gpt-5.6-luna')
+    expect(w.get('[data-test="ccs-client-gemini"]').attributes('aria-checked')).toBe('true')
+  })
+
+  it('modelsLoading 先只是声明，不改变页面，也不会漏到根元素上', () => {
+    const w = mountTab({ modelsLoading: true })
+    expect(w.attributes('models-loading')).toBeUndefined()
+    expect(w.html()).toBe(mountTab({ modelsLoading: false }).html())
   })
 
   it('没有模型时不显示模型字段；默认名称是「站点名 - 客户端」', () => {
@@ -177,7 +268,7 @@ describe('CcSwitchTab', () => {
   })
 
   it('复制链接通过 copy 交出；Codex 用配置的地址（带 /v1），其他客户端用 API 根地址', async () => {
-    const codex = mountTab({ name: 'Mine', model: 'gpt-5.6-luna' })
+    const codex = mountTab({}, { name: 'Mine', model: 'gpt-5.6-luna' })
     await codex.get('[data-test="ccs-copy-link"]').trigger('click')
     const [text, id] = codex.emitted('copy')![0] as [string, string]
     expect(id).toBe('deeplink')
@@ -188,7 +279,7 @@ describe('CcSwitchTab', () => {
     expect(url.searchParams.get('apiKey')).toBe(KEY)
     expect(url.searchParams.get('endpoint')).toBe('https://api.example.com/v1')
 
-    const claude = mountTab({ platform: 'anthropic', clients: ['claude'], client: 'claude' })
+    const claude = mountTab({ platform: 'anthropic', clients: ['claude'] }, { client: 'claude' })
     await claude.get('[data-test="ccs-copy-link"]').trigger('click')
     expect(linkOf((claude.emitted('copy')![0] as [string])[0]).searchParams.get('endpoint')).toBe('https://api.example.com')
   })

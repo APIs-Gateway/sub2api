@@ -96,7 +96,10 @@
         :endpoint="activeEndpoint"
         :platform="platform"
         :site-name="siteName"
+        :allow-messages-dispatch="allowMessagesDispatch"
+        :clients="clients"
         :models="models"
+        :models-loading="modelsLoading"
         :doc-url="docUrl"
         :copied-id="copiedId"
         @copy="copy"
@@ -106,14 +109,13 @@
       <CcSwitchTab
         v-else-if="active === 'ccswitch'"
         v-bind="panelAttrs"
-        v-model:client="ccsClient"
-        v-model:name="ccsCustomName"
-        v-model:model="ccsModel"
+        v-model:form="ccsForm"
         :endpoint="activeEndpoint"
         :full-key="fullKey"
         :platform="platform"
         :site-name="siteName"
         :models="models"
+        :models-loading="modelsLoading"
         :clients="ccsClients"
         :id-prefix="uid"
         :copied-id="copiedId"
@@ -279,22 +281,23 @@ function onTabKeydown(e: KeyboardEvent) {
 const { copiedId, copy, reset: resetCopied } = useCopyFeedback()
 
 // ===== 分组可用的客户端和模型 =====
+const allowMessagesDispatch = computed(() => props.apiKey?.group?.allow_messages_dispatch)
 const clients = computed<OnboardingClient[]>(() =>
-  clientsForPlatform(platform.value, { allowMessagesDispatch: props.apiKey?.group?.allow_messages_dispatch })
+  clientsForPlatform(platform.value, { allowMessagesDispatch: allowMessagesDispatch.value })
 )
-const { models, load: loadModels } = useGroupModels(() => props.apiKey?.group?.id ?? props.apiKey?.group_id)
+const {
+  models,
+  loading: modelsLoading,
+  load: loadModels
+} = useGroupModels(() => props.apiKey?.group?.id ?? props.apiKey?.group_id)
 
 // ===== 要跨页签保留的页签状态：页签是按需渲染的，状态放在页签组件里切走就丢了 =====
 const aiClient = ref<AiClient>('claude')
-const {
-  clients: ccsClients,
-  client: ccsClient,
-  customName: ccsCustomName,
-  model: ccsModel
-} = useCcSwitchState({
+const { clients: ccsClients, form: ccsForm } = useCcSwitchState({
   platform,
   show: () => props.show,
-  groupId: () => props.apiKey?.group?.id
+  groupId: () => props.apiKey?.group?.id,
+  allowMessagesDispatch: () => allowMessagesDispatch.value
 })
 
 watch(
