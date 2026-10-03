@@ -41,7 +41,7 @@ vi.mock('@/stores', () => ({
 const mountHome = () => mount(HomeView, {
   global: {
     stubs: {
-      RouterLink: { template: '<a><slot /></a>' },
+      RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' },
       LocaleSwitcher: true,
       Icon: true,
       BrandMark: true,
@@ -49,7 +49,7 @@ const mountHome = () => mount(HomeView, {
   },
 })
 
-describe('HomeView documentation link', () => {
+describe('HomeView documentation entries', () => {
   beforeEach(() => {
     checkAuth.mockReset()
     fetchPublicSettings.mockReset()
@@ -63,42 +63,23 @@ describe('HomeView documentation link', () => {
     })
   })
 
-  it('does not render unsafe documentation links', () => {
-    publicDocUrl.value = 'javascript:alert(1)'
-
+  it('links the header icon, the hero link and the footer link to the built-in docs page', () => {
     const wrapper = mountHome()
 
-    expect(wrapper.find('a[href="javascript:alert(1)"]').exists()).toBe(false)
+    expect(wrapper.findAll('a[href="/docs"]')).toHaveLength(3)
 
     wrapper.unmount()
   })
 
-  it('renders sanitized documentation links', () => {
-    publicDocUrl.value = 'https://docs.example.com/guide'
-
-    const wrapper = mountHome()
-
-    expect(wrapper.find('a[href="https://docs.example.com/guide"]').exists()).toBe(true)
-
-    wrapper.unmount()
-  })
-
-  it('prefers sanitized cached documentation links', () => {
+  it('ignores the external documentation URL setting', () => {
     publicDocUrl.value = 'https://docs.example.com/fallback'
     cachedPublicSettings.value = { doc_url: 'https://docs.example.com/cached' }
 
     const wrapper = mountHome()
 
-    expect(wrapper.find('a[href="https://docs.example.com/cached"]').exists()).toBe(true)
-    expect(wrapper.find('a[href="https://docs.example.com/fallback"]').exists()).toBe(false)
-
-    wrapper.unmount()
-  })
-
-  it('hides documentation links when no URL is configured', () => {
-    const wrapper = mountHome()
-
-    expect(wrapper.find('a[href]').exists()).toBe(false)
+    expect(wrapper.findAll('a[href="/docs"]')).toHaveLength(3)
+    expect(wrapper.find('a[href^="https://docs.example.com"]').exists()).toBe(false)
+    expect(wrapper.find('a[target="_blank"]').exists()).toBe(false)
 
     wrapper.unmount()
   })
