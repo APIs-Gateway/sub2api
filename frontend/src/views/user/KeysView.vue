@@ -450,6 +450,16 @@
                 <Icon name="edit" size="sm" />
                 <span class="text-xs">{{ t('common.edit') }}</span>
               </button>
+              <!-- 兜底设置：只有已绑定分组的密钥才有兜底链 -->
+              <button
+                v-if="row.group_id"
+                @click="openFallbackDrawer(row)"
+                class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                data-test="fallback-entry"
+              >
+                <Icon name="arrowsUpDown" size="sm" />
+                <span class="text-xs">{{ t('keyFallback.entry') }}</span>
+              </button>
               <!-- Delete Button -->
               <button
                 @click="confirmDelete(row)"
@@ -1070,6 +1080,12 @@
       @close="closeOnboarding"
     />
 
+    <KeyFallbackChainDrawer
+      :show="showFallbackDrawer"
+      :initial-key-id="fallbackDrawerKeyId"
+      @close="showFallbackDrawer = false"
+    />
+
     <!-- Group Selector Dropdown (Teleported to body to avoid overflow clipping) -->
     <Teleport to="body">
       <div
@@ -1164,6 +1180,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import SearchInput from '@/components/common/SearchInput.vue'
 	import Icon from '@/components/icons/Icon.vue'
 import KeyOnboardingModal from '@/components/user/KeyOnboardingModal.vue'
+import KeyFallbackChainDrawer from '@/components/keys/KeyFallbackChainDrawer.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
@@ -1362,6 +1379,12 @@ const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
 const showColumnDropdown = ref(false)
 const showOnboardingModal = ref(false)
+const showFallbackDrawer = ref(false)
+const fallbackDrawerKeyId = ref<number | null>(null)
+const openFallbackDrawer = (key: ApiKey) => {
+  fallbackDrawerKeyId.value = key.id
+  showFallbackDrawer.value = true
+}
 const onboardingKey = ref<ApiKey | null>(null)
 const onboardingTab = ref<'install' | 'ai' | 'ccswitch' | 'manual'>('install')
 const selectedKey = ref<ApiKey | null>(null)

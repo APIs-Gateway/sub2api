@@ -1349,6 +1349,11 @@ export interface UsageLog {
 
   created_at: string
 
+  // 实际服务本次请求的兜底分组。用户端只在该次请求走的是用户自己配置的兜底链时才返回，
+  // 其余情况一律缺省，按 group 展示。
+  served_group_id?: number | null
+  served_group?: { id: number; name: string } | null
+
   user?: User
   api_key?: ApiKey
   group?: Group
@@ -1361,6 +1366,8 @@ export interface UsageLogAccountSummary {
 }
 
 export interface AdminUsageLog extends UsageLog {
+  // 兜底来源：1 = 用户自己的兜底链，2 = 管理员隐藏链；缺省表示主分组
+  served_route_source?: number | null
   upstream_model?: string | null
   model_mapping_chain?: string | null
   upstream_model_mismatch?: boolean
@@ -2070,3 +2077,121 @@ export type {
   PlatformQuotaWindow,
   PlatformQuotasResponse,
 } from '@/api/admin/users'
+
+
+// ==================== Key 级分组兜底链 ====================
+
+/** 链上一项的状态：active 可用；disabled 分组已停用；unavailable 已删除或用户无权使用 */
+export type KeyFallbackItemStatus = 'active' | 'disabled' | 'unavailable'
+
+export interface KeyFallbackCnyPrice {
+  input_per_mtok: number
+  output_per_mtok: number
+}
+
+/**
+ * 参考模型每百万 Token 的价格。priced=false 时其余字段都不出现。
+ * cny 是余额价口径（和价格页一致，已含分组倍率与用户专属倍率），是用户端人民币展示的唯一来源；
+ * input/output_usd_per_mtok 是同一价格的美元口径，供全站切到美元或 free 站时使用。
+ */
+export interface KeyFallbackReferencePrice {
+  priced: boolean
+  input_usd_per_mtok?: number
+  output_usd_per_mtok?: number
+  official_input_usd_per_mtok?: number
+  official_output_usd_per_mtok?: number
+  cny?: KeyFallbackCnyPrice
+}
+
+export interface KeyFallbackChainItem {
+  group_id: number
+  name: string
+  role: 'primary' | 'fallback'
+  position: number
+  status: KeyFallbackItemStatus
+  usable: boolean
+  rate_multiplier: number
+  user_rate_multiplier: number | null
+  effective_multiplier: number
+  reference_price?: KeyFallbackReferencePrice
+}
+
+export interface KeyFallbackAvailableGroup {
+  group_id: number
+  name: string
+  status: KeyFallbackItemStatus
+  rate_multiplier: number
+  user_rate_multiplier?: number | null
+  effective_multiplier: number
+  reference_price?: KeyFallbackReferencePrice
+}
+
+export interface KeyFallbackChain {
+  key_id: number
+  platform: GroupPlatform
+  reference_model: string
+  max_fallbacks: number
+  /** 总开关。关着时接口照常可保存，界面不做任何区别对待 */
+  enabled?: boolean
+  items: KeyFallbackChainItem[]
+  available: KeyFallbackAvailableGroup[]
+}
+
+export interface KeyFallbackSummaryKey {
+  key_id: number
+  name: string
+  items: Array<Pick<KeyFallbackChainItem, 'group_id' | 'name' | 'role' | 'position' | 'status' | 'usable'>>
+  has_available: boolean
+}
+
+export interface KeyFallbackSummary {
+  enabled?: boolean
+  platforms: Array<{ platform: GroupPlatform; keys: KeyFallbackSummaryKey[] }>
+}
+
+/** 管理端：隐藏链的一项 */
+export interface AdminHiddenChainItem {
+  group_id: number
+  name?: string
+  position: number
+  note?: string
+  created_by?: number
+  updated_at?: string
+}
+
+export interface AdminEffectiveHop {
+  hop: number
+  group_id: number
+  name?: string
+  source: 'admin_head' | 'primary' | 'user' | 'admin_tail'
+  eligible: boolean
+}
+
+/** 被跳过的链项及原因（独立数组，不在 effective 里交错） */
+export interface AdminSkippedHop {
+  group_id: number
+  name?: string
+  source: 'user' | 'admin'
+  skip_reason: string
+}
+
+export interface AdminKeyFallbackChain {
+  key_id: number
+  user_id: number
+  platform: GroupPlatform
+  primary_group: { group_id: number; name: string }
+  enabled?: boolean
+  user_items: Array<{ group_id: number; name?: string; position: number }>
+  hidden_head: AdminHiddenChainItem[]
+  hidden_tail: AdminHiddenChainItem[]
+  effective: AdminEffectiveHop[]
+  skipped?: AdminSkippedHop[]
+  truncated?: boolean
+}
+
+export interface AdminHiddenChainPayload {
+  head?: number[]
+  tail?: number[]
+  /** 有 head 项时必填 */
+  note?: string
+}

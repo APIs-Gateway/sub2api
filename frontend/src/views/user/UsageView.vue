@@ -192,6 +192,25 @@
             }}</span>
           </template>
 
+          <template #cell-group="{ row }">
+            <div class="flex flex-wrap items-center gap-1.5" data-test="usage-group-cell">
+              <template v-if="row.served_group || row.served_group_id">
+                <span class="text-sm text-gray-900 dark:text-white" data-test="served-group">{{
+                  row.served_group?.name || `#${row.served_group_id}`
+                }}</span>
+                <span
+                  class="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+                  :title="t('keyFallback.usage.servedTip')"
+                  data-test="served-tag"
+                  >{{ t('keyFallback.usage.servedTag') }}</span
+                >
+              </template>
+              <span v-else class="text-sm text-gray-900 dark:text-white">{{
+                row.group?.name || '-'
+              }}</span>
+            </div>
+          </template>
+
           <template #cell-model="{ value }">
             <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
           </template>
@@ -780,6 +799,7 @@ const cacheStats = computed(() => {
 
 const columns = computed<Column[]>(() => [
   { key: 'api_key', label: t('usage.apiKeyFilter'), sortable: false },
+  { key: 'group', label: t('keyFallback.usage.groupColumn'), sortable: false },
   { key: 'model', label: t('usage.model'), sortable: true },
   { key: 'reasoning_effort', label: t('usage.reasoningEffort'), sortable: false },
   { key: 'endpoint', label: t('usage.endpoint'), sortable: false },
