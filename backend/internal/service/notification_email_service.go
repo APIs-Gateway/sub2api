@@ -47,6 +47,11 @@ const (
 	notificationEmailMaxSubjectLength         = 200
 	notificationEmailMaxHTMLLength            = 30000
 	notificationEmailUnsubscribeTTL           = 365 * 24 * time.Hour
+	// 邮件已经发出去之后写发送标记的时限：写标记不能因调用方的 ctx 已超时而丢失，但也不能无限等。
+	notificationEmailMarkerWriteTimeout = 5 * time.Second
+	// 旧格式发送标记只有写入时间。ReminderExpiresAt 非零时，写入时间晚于「到期时间往前推这么久」
+	// 的旧标记视为本周期发的：最早一档是到期前 7 天，留 1 天余量。
+	notificationEmailLegacyMarkerCycleWindow = 8 * 24 * time.Hour
 )
 
 var (
@@ -118,16 +123,19 @@ type NotificationEmailPreviewInput struct {
 }
 
 type NotificationEmailSendInput struct {
-	Event            string
-	Locale           string
-	RecipientEmail   string
-	RecipientName    string
-	UserID           int64
-	SourceType       string
-	SourceID         string
-	ReminderKey      string
-	Variables        map[string]string
-	RawHTMLVariables map[string]string
+	Event          string
+	Locale         string
+	RecipientEmail string
+	RecipientName  string
+	UserID         int64
+	SourceType     string
+	SourceID       string
+	ReminderKey    string
+	// ReminderExpiresAt 是提醒所属周期的到期时间（订阅卡当前的 expires_at）。非零时发送标记里记下它：
+	// 同一张卡续费延期后到期时间变了，就算新周期，同一档提醒可以再发一次。为零时保持「标记存在即已发」。
+	ReminderExpiresAt time.Time
+	Variables         map[string]string
+	RawHTMLVariables  map[string]string
 }
 
 type NotificationEmailUnsubscribeResult struct {
@@ -424,7 +432,7 @@ func (s *NotificationEmailService) Send(ctx context.Context, input NotificationE
 
 	deliveryKey := notificationEmailDeliveryKey(normalizedEvent, input.SourceType, input.SourceID, recipient, input.ReminderKey)
 	if deliveryKey != "" {
-		sent, err := s.deliveryExists(ctx, deliveryKey, legacyNotificationEmailDeliveryKey(normalizedEvent, input.SourceType, input.SourceID, recipient, input.ReminderKey))
+		sent, err := s.deliveryExists(ctx, input.ReminderExpiresAt, deliveryKey, legacyNotificationEmailDeliveryKey(normalizedEvent, input.SourceType, input.SourceID, recipient, input.ReminderKey))
 		if err != nil {
 			return err
 		}
@@ -440,7 +448,12 @@ func (s *NotificationEmailService) Send(ctx context.Context, input NotificationE
 		return notificationEmailDeliveryErr(err)
 	}
 	if deliveryKey != "" {
-		if err := s.settingRepo.Set(ctx, deliveryKey, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		// 邮件已经发出去了，标记一定要落库：调用方的 ctx 可能在发信期间超时（提醒扫描共用一个 10 秒 ctx），
+		// 用已过期的 ctx 写标记会失败，下一轮扫描就会把同一封再发一遍。所以脱离取消信号，只限制写入时长。
+		markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), notificationEmailMarkerWriteTimeout)
+		err := s.settingRepo.Set(markCtx, deliveryKey, notificationEmailDeliveryMarkerValue(time.Now(), input.ReminderExpiresAt))
+		cancel()
+		if err != nil {
 			return err
 		}
 	}
@@ -704,20 +717,64 @@ func (s *NotificationEmailService) unsubscribeSecret(ctx context.Context) (strin
 	return secret, nil
 }
 
-func (s *NotificationEmailService) deliveryExists(ctx context.Context, keys ...string) (bool, error) {
+// deliveryExists 判断这一封是否已经发过。cycleEnd 为零时，任一标记存在即已发；
+// 非零时标记必须覆盖 cycleEnd 所在的周期才算已发，其他周期留下的标记不算。
+func (s *NotificationEmailService) deliveryExists(ctx context.Context, cycleEnd time.Time, keys ...string) (bool, error) {
 	for _, key := range keys {
 		if strings.TrimSpace(key) == "" {
 			continue
 		}
-		_, err := s.settingRepo.GetValue(ctx, key)
+		value, err := s.settingRepo.GetValue(ctx, key)
 		if err == nil {
-			return true, nil
+			if cycleEnd.IsZero() || notificationEmailMarkerCoversCycle(value, cycleEnd) {
+				return true, nil
+			}
+			continue
 		}
 		if !errors.Is(err, ErrSettingNotFound) {
 			return false, err
 		}
 	}
 	return false, nil
+}
+
+// notificationEmailDeliveryMarker 是带周期信息的发送标记：写入时间 + 发送时卡的到期时间。
+type notificationEmailDeliveryMarker struct {
+	SentAt    time.Time `json:"sent_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// notificationEmailDeliveryMarkerValue 生成发送标记的值。没有周期信息时保持旧格式（只有写入时间的
+// RFC3339 字符串），其他邮件的标记完全不变。
+func notificationEmailDeliveryMarkerValue(sentAt, cycleEnd time.Time) string {
+	legacy := sentAt.UTC().Format(time.RFC3339Nano)
+	if cycleEnd.IsZero() {
+		return legacy
+	}
+	payload, err := json.Marshal(notificationEmailDeliveryMarker{SentAt: sentAt.UTC(), ExpiresAt: cycleEnd.UTC()})
+	if err != nil {
+		return legacy
+	}
+	return string(payload)
+}
+
+// notificationEmailMarkerCoversCycle 判断一个已存在的发送标记是否覆盖到期时间为 cycleEnd 的这个周期：
+//   - 新格式（带到期时间）：记录的到期时间与 cycleEnd 相同才算（按秒比较），续费延期后到期时间变了，不算；
+//   - 旧格式（只有写入时间）：写入时间晚于 cycleEnd 往前推 8 天，认为是本周期发的；更早的是上个周期的；
+//   - 读不懂的值：按已发处理，宁可少发也不重发。
+func notificationEmailMarkerCoversCycle(value string, cycleEnd time.Time) bool {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "{") {
+		var marker notificationEmailDeliveryMarker
+		if err := json.Unmarshal([]byte(value), &marker); err == nil && !marker.ExpiresAt.IsZero() {
+			return marker.ExpiresAt.Truncate(time.Second).Equal(cycleEnd.Truncate(time.Second))
+		}
+		return true
+	}
+	if sentAt, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return sentAt.After(cycleEnd.Add(-notificationEmailLegacyMarkerCycleWindow))
+	}
+	return true
 }
 
 func validateNotificationEmailTemplate(event, subject, htmlBody string) error {
