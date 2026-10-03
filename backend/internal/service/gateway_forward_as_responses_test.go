@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestAdaptResponsesClientToolsForAnthropic_FlattensNamespace(t *testing.T) {
@@ -329,6 +330,21 @@ func TestHandleResponsesStreamingResponse_RestoresNamespaceTool(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"name":"read_thread"`)
 	require.Contains(t, rec.Body.String(), `"namespace":"codex_app"`)
 	require.NotContains(t, rec.Body.String(), `"name":"codex_app__read_thread"`)
+	completed := 0
+	for _, line := range strings.Split(rec.Body.String(), "\n") {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimPrefix(line, "data: ")
+		if gjson.Get(payload, "type").String() != "response.completed" {
+			continue
+		}
+		completed++
+		require.Equal(t, "read_thread", gjson.Get(payload, "response.output.0.name").String())
+		require.Equal(t, "codex_app", gjson.Get(payload, "response.output.0.namespace").String())
+		require.JSONEq(t, `{"thread_id":"123"}`, gjson.Get(payload, "response.output.0.arguments").String())
+	}
+	require.Equal(t, 1, completed, "terminal snapshot must restore the same client namespace and name exactly once")
 }
 
 func TestExtractResponsesReasoningEffortFromBody(t *testing.T) {

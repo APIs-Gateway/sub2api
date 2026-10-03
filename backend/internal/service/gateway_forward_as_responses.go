@@ -511,8 +511,8 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	clientDisconnected := false
 	sawMessageStop := false
 	var streamErr error
-	drain := newAnthropicCompatDrain(s.cfg, resp.Body, c)
-	defer drain.stop()
+	compatDrain := newAnthropicCompatDrain(s.cfg, resp.Body, c)
+	defer compatDrain.stop()
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -520,6 +520,8 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+	drain := newGatewayForwardStreamDrain(scanner, resp.Body, s.forwardStreamInterval())
+	defer drain.stop()
 
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
@@ -548,7 +550,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		}
 
 		// Extract usage from message_delta
-		if event.Type == "message_delta" && event.Usage != nil {
+		if event.Usage != nil {
 			mergeAnthropicUsage(&usage, *event.Usage)
 			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "usage"), &usage)
 		}
@@ -558,14 +560,17 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "message.usage"), &usage)
 		}
 
+		if event.Type == "message_delta" && event.Delta != nil && event.Delta.StopReason != "" {
+			state.StopReason = event.Delta.StopReason
+		}
 		if event.Type == "message_stop" {
 			sawMessageStop = true
 		}
 		if anthropicCompatClientGone(c) {
 			clientDisconnected = true
-			drain.start()
+			compatDrain.start()
 		}
-		if clientDisconnected {
+		if clientDisconnected || sawMessageStop {
 			return false
 		}
 
@@ -598,6 +603,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			for _, restored := range payloads {
 				eventType := gjson.GetBytes(restored, "type").String()
 				if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, restored); err != nil {
+					MarkResponseCommitted(c)
 					logger.L().Info("forward_as_responses stream: client disconnected",
 						zap.String("request_id", requestID),
 					)
@@ -606,40 +612,70 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			}
 		}
 		if len(events) > 0 {
-			c.Writer.Flush()
+			if !clientDisconnected {
+				c.Writer.Flush()
+			}
 		}
 		return false
 	}
 
 	finalizeStream := func() (*ForwardResult, error) {
+		state.InputTokens = usage.InputTokens
+		state.OutputTokens = usage.OutputTokens
+		state.CacheReadInputTokens = usage.CacheReadInputTokens
+		state.CacheCreationInputTokens = usage.CacheCreationInputTokens
 		if finalEvents := apicompat.FinalizeAnthropicResponsesStream(state); len(finalEvents) > 0 {
 			for _, evt := range finalEvents {
-				sse, err := apicompat.ResponsesEventToSSE(evt)
+				payload, err := json.Marshal(evt)
 				if err != nil {
 					continue
 				}
-				out := string(reverseToolNamesIfPresent(c, []byte(sse)))
-				fmt.Fprint(c.Writer, out) //nolint:errcheck
+				payload = reverseToolNamesIfPresent(c, payload)
+				payloads, _, err := clientToolRestorer.RestoreEvent(payload)
+				if err != nil {
+					logger.L().Warn("forward_as_responses stream: failed to restore final client tools", zap.Error(err), zap.String("request_id", requestID))
+					continue
+				}
+				for _, restored := range payloads {
+					eventType := gjson.GetBytes(restored, "type").String()
+					if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, restored); err != nil {
+						MarkResponseCommitted(c)
+						clientDisconnected = true
+						break
+					}
+				}
+				if clientDisconnected {
+					break
+				}
 			}
-			c.Writer.Flush()
+			if !clientDisconnected {
+				c.Writer.Flush()
+			}
 		}
 		return resultWithUsage(), nil
 	}
 
 	// Read Anthropic SSE events
-	for scanner.Scan() {
-		drain.touch()
-		line := scanner.Text()
+	var readErr error
+	for {
+		line, err := drain.next()
+		if err != nil {
+			readErr = err
+			break
+		}
+		compatDrain.touch()
 		eventType, ok := parseAnthropicSSEField(line, "event")
 		if !ok {
 			continue
 		}
 
 		// Read data line
-		if !scanner.Scan() {
+		dataLine, err := drain.next()
+		if err != nil {
+			readErr = err
 			break
 		}
-		dataLine := scanner.Text()
+		compatDrain.touch()
 		payload, ok := parseAnthropicSSEField(dataLine, "data")
 		if !ok {
 			continue
@@ -661,14 +697,13 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		}
 		if processEvent(&event, payload) {
 			clientDisconnected = true
-			drain.start()
+			compatDrain.start()
 		}
 		if sawMessageStop {
-			break
+			drain.startTerminalTail()
 		}
 	}
 
-	readErr := scanner.Err()
 	if streamErr != nil {
 		readErr = streamErr
 	}
@@ -681,7 +716,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		}
 	}
 
-	if !sawMessageStop {
+	if streamErr != nil || !sawMessageStop {
 		return anthropicCompatIncompleteStream(c, resultWithUsage(), readErr)
 	}
 	if clientDisconnected || anthropicCompatClientGone(c) {

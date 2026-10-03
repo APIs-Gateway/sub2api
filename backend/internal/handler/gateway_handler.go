@@ -967,7 +967,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
 					}
 					// 流式内容已写入客户端，无法撤销，禁止 failover 以防止流拼接腐化
-					if c.Writer.Size() != writerSizeBeforeForward {
+					if c.Writer.Size() != writerSizeBeforeForward && !failoverErr.SafeToFailoverAfterWrite {
 						h.handleFailoverExhausted(c, failoverErr, account.Platform, true)
 						return
 					}
