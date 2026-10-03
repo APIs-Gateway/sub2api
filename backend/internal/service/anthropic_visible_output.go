@@ -58,6 +58,11 @@ func (t *anthropicVisibleOutputTracker) observe(event map[string]any) {
 		name, _ := block["name"].(string)
 		clientTool := kind == "tool_use" && id != "" && name != ""
 		t.blocks[index] = anthropicVisibleOutputBlock{kind: kind, clientTool: clientTool}
+		if kind == "text" {
+			if text, ok := block["text"].(string); ok && text != "" {
+				t.visible = true
+			}
+		}
 		if clientTool {
 			if input, ok := block["input"].(map[string]any); ok && len(input) > 0 {
 				t.visible = true

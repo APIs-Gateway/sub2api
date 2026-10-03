@@ -37,6 +37,8 @@ func TestGatewayVisibleDrain_ActualNativeAttempt(t *testing.T) {
 		{"incomplete_client_tool", start + tool + stop, true, true, 0, ""},
 		{"complete_empty_client_tool", start + tool + toolStop + stop, false, false, 0, "probe"},
 		{"visible_text_and_late_usage", start + text + stop + delta, false, false, 27, "answer"},
+		{"text_in_block_start", start + visibleDrainEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"start answer"}}`) + toolStop + stop, false, false, 0, "start answer"},
+		{"large_line_after_visible", start + text + visibleDrainEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"`+strings.Repeat("z", 9*1024*1024)+`"}}`) + stop, false, false, 0, "answer"},
 		{"explicit_error_after_stop", start + text + delta + stop + providerErr, false, true, 27, "answer"},
 		{"explicit_error_before_visible", start + providerErr, true, true, 0, ""},
 		{"buffer_limit", start + visibleDrainEvent("ping", `{"type":"ping","opaque":"`+strings.Repeat("x", 9*1024*1024)+`"}`), true, true, 0, ""},
