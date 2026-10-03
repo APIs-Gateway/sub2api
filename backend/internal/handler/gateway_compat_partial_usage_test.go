@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
@@ -46,6 +47,14 @@ type compatPartialBillingRepo struct {
 	commands []service.UsageBillingCommand
 }
 
+type compatPartialAccountRepo struct {
+	service.AccountRepository
+}
+
+func (*compatPartialAccountRepo) SetTempUnschedulable(context.Context, int64, time.Time, string) error {
+	return nil
+}
+
 func (r *compatPartialBillingRepo) Apply(ctx context.Context, cmd *service.UsageBillingCommand) (*service.UsageBillingApplyResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -55,21 +64,28 @@ func (r *compatPartialBillingRepo) Apply(ctx context.Context, cmd *service.Usage
 }
 
 type compatPartialUsageUpstream struct {
-	payload string
-	cancel  context.CancelFunc
-	calls   int
+	payload   string
+	cancel    context.CancelFunc
+	calls     int
+	failFirst bool
+	accounts  []int64
 }
 
 func (u *compatPartialUsageUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
 	return u.DoWithTLS(req, proxyURL, accountID, accountConcurrency, nil)
 }
 
-func (u *compatPartialUsageUpstream) DoWithTLS(_ *http.Request, _ string, _ int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+func (u *compatPartialUsageUpstream) DoWithTLS(_ *http.Request, _ string, accountID int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	u.calls++
+	u.accounts = append(u.accounts, accountID)
 	if u.cancel != nil {
 		u.cancel()
 	}
-	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(u.payload))}, nil
+	payload := u.payload
+	if u.failFirst && u.calls == 1 {
+		payload = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Unavailable\"}}\n\n"
+	}
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}, "X-Request-Id": {fmt.Sprintf("compat_usage_%d", u.calls)}}, Body: io.NopCloser(strings.NewReader(payload))}, nil
 }
 
 const compatPartialMessageStartSSE = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_partial\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}\n\n" +
@@ -84,8 +100,8 @@ const compatPartialMessageStartSSE = "event: message_start\ndata: {\"type\":\"me
 func TestGatewayCompatibleHandlersPreservePartialUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, endpoint := range []string{"chat/completions", "responses"} {
-		for _, ending := range []string{"complete", "truncated", "disconnected_truncated", "before_start",
-			"buffered/complete", "buffered/truncated", "buffered/disconnected_truncated", "buffered/before_start"} {
+		for _, ending := range []string{"complete", "truncated", "disconnected_truncated", "before_start", "failover",
+			"buffered/complete", "buffered/truncated", "buffered/disconnected_truncated", "buffered/before_start", "buffered/failover"} {
 			t.Run(endpoint+"/"+ending, func(t *testing.T) {
 				clientStream := !strings.HasPrefix(ending, "buffered/")
 				ending := strings.TrimPrefix(ending, "buffered/")
@@ -94,12 +110,12 @@ func TestGatewayCompatibleHandlersPreservePartialUsage(t *testing.T) {
 				account := &service.Account{
 					ID: 9201, Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey,
 					Status: service.StatusActive, Schedulable: true, Concurrency: 1,
-					Credentials:   map[string]any{"api_key": "local-test"},
+					Credentials:   map[string]any{"api_key": "local-test", "pool_mode": true, "pool_mode_retry_count": 0},
 					AccountGroups: []service.AccountGroup{{AccountID: 9201, GroupID: groupID}},
 				}
 				payload := compatPartialMessageStartSSE + "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":15}}\n\n"
 				switch ending {
-				case "complete":
+				case "complete", "failover":
 					payload += "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 				case "before_start":
 					payload = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Unavailable\"}}\n\n"
@@ -107,6 +123,16 @@ func TestGatewayCompatibleHandlersPreservePartialUsage(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				upstream := &compatPartialUsageUpstream{payload: payload}
+				accounts := []*service.Account{account}
+				if ending == "failover" {
+					upstream.failFirst = true
+					account.Credentials["pool_mode"] = true
+					account.Credentials["pool_mode_retry_count"] = 0
+					second := *account
+					second.ID = 9204
+					second.AccountGroups = []service.AccountGroup{{AccountID: second.ID, GroupID: groupID}}
+					accounts = append(accounts, &second)
+				}
 				if ending == "disconnected_truncated" {
 					upstream.cancel = cancel
 				}
@@ -115,17 +141,18 @@ func TestGatewayCompatibleHandlersPreservePartialUsage(t *testing.T) {
 				cfg.Default.RateMultiplier = 1
 				userRepo := &openAIRecordUsageUserRepoStub795{user: service.User{ID: 9203, Balance: 100, Status: service.StatusActive}}
 				billingRepo := &compatPartialBillingRepo{}
-				snapshot := service.NewSchedulerSnapshotService(&fakeSchedulerCache{accounts: []*service.Account{account}}, nil, nil, nil, nil)
-				gateway := service.NewGatewayService(
-					nil, &fakeGroupRepo{group: group}, usageRepo, billingRepo, userRepo, nil, nil, nil, cfg,
-					snapshot, nil, service.NewBillingService(cfg, nil), nil, nil, nil, upstream,
-					&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-				)
 				billingCache := service.NewBillingCacheService(nil, userRepo, nil, nil, nil, nil, cfg, nil, nil)
 				t.Cleanup(billingCache.Stop)
+				snapshot := service.NewSchedulerSnapshotService(&fakeSchedulerCache{accounts: accounts}, nil, nil, nil, nil)
+				gateway := service.NewGatewayService(
+					&compatPartialAccountRepo{}, &fakeGroupRepo{group: group}, usageRepo, billingRepo, userRepo, nil, nil, nil, cfg,
+					snapshot, nil, service.NewBillingService(cfg, nil), nil, billingCache, nil, upstream,
+					&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+				)
 				pool := newUsageRecordTestPool(t)
 				h := &GatewayHandler{
-					gatewayService: gateway, billingCacheService: billingCache, cfg: cfg,
+					maxAccountSwitches: 2,
+					gatewayService:     gateway, billingCacheService: billingCache, cfg: cfg,
 					concurrencyHelper:     NewConcurrencyHelper(service.NewConcurrencyService(&fakeConcurrencyCache{}), SSEPingFormatClaude, 0),
 					usageRecordWorkerPool: pool,
 				}
@@ -147,9 +174,14 @@ func TestGatewayCompatibleHandlersPreservePartialUsage(t *testing.T) {
 					h.ChatCompletions(c)
 				}
 				pool.Stop()
-				require.Equal(t, 1, upstream.calls, "no replay after a started or cancelled request")
+				if ending == "failover" {
+					require.Equal(t, 2, upstream.calls, "unmetered pre-output failure must switch to a successful account")
+					require.NotEqual(t, upstream.accounts[0], upstream.accounts[1])
+				} else {
+					require.Equal(t, 1, upstream.calls, "no replay after a started or cancelled request")
+				}
 				if !clientStream {
-					if ending == "complete" {
+					if ending == "complete" || ending == "failover" {
 						require.Equal(t, http.StatusOK, recorder.Code)
 						require.Contains(t, recorder.Body.String(), "partial")
 					} else {
@@ -168,10 +200,11 @@ func TestGatewayCompatibleHandlersPreservePartialUsage(t *testing.T) {
 				require.Equal(t, 10, usageRepo.logs[0].InputTokens)
 				require.Equal(t, 15, usageRepo.logs[0].OutputTokens)
 				require.Equal(t, apiKey.ID, usageRepo.logs[0].APIKeyID)
-				require.Equal(t, account.ID, usageRepo.logs[0].AccountID)
+				require.Equal(t, upstream.accounts[len(upstream.accounts)-1], usageRepo.logs[0].AccountID)
 				require.Len(t, billingRepo.commands, 1, "metered usage must reach atomic billing exactly once")
 				require.Equal(t, 10, billingRepo.commands[0].InputTokens)
 				require.Equal(t, 15, billingRepo.commands[0].OutputTokens)
+				require.Equal(t, upstream.accounts[len(upstream.accounts)-1], billingRepo.commands[0].AccountID)
 				require.Positive(t, billingRepo.commands[0].OfficialCost)
 				require.Positive(t, billingRepo.commands[0].BalanceCost)
 			})
