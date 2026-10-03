@@ -320,7 +320,10 @@ func newWSInflightFixture(t *testing.T, mode string, source string, prices map[s
 	t.Cleanup(httpClient.CloseIdleConnections)
 	realBilling := NewUsageBillingRepository(client, inflightTestDB(t))
 	observedBilling := &wsInflightBillingObserver{UsageBillingRepository: realBilling, BillingInflightRepository: realBilling.(service.BillingInflightRepository), commands: make(chan service.UsageBillingCommand, 16)}
-	deferred := service.NewDeferredService(accounts, nil, time.Minute)
+	wheel, err := service.NewTimingWheelService()
+	require.NoError(t, err)
+	t.Cleanup(wheel.Stop)
+	deferred := service.NewDeferredService(accounts, wheel, time.Minute)
 	t.Cleanup(deferred.Stop)
 	gateway := service.NewOpenAIGatewayService(accounts, NewUsageLogRepository(client, inflightTestDB(t)), observedBilling, users, subs, rates, NewGatewayCache(rdb), cfg, snapshots, concurrency, billService, service.NewRateLimitService(accounts, nil, cfg, nil, nil), billing, wsInflightHTTPTransport{client: httpClient}, deferred, nil, nil, service.NewModelPricingResolver(channels, billService), channels, nil, settings, nil, nil, groups)
 	t.Cleanup(gateway.CloseOpenAIWSPool)

@@ -117,7 +117,10 @@ func newInflightHTTPFixture(t *testing.T, platform, response, contentType string
 	usage := NewUsageLogRepository(client, inflightTestDB(t))
 	atomicBilling := NewUsageBillingRepository(client, inflightTestDB(t))
 	upstream := &inflightHTTPUpstream{started: make(chan struct{}), release: make(chan struct{}), response: response, contentType: contentType}
-	deferred := service.NewDeferredService(accounts, nil, time.Minute)
+	wheel, err := service.NewTimingWheelService()
+	require.NoError(t, err)
+	t.Cleanup(wheel.Stop)
+	deferred := service.NewDeferredService(accounts, wheel, time.Minute)
 	t.Cleanup(deferred.Stop)
 	gatewaySvc := service.NewGatewayService(accounts, groups, usage, atomicBilling, users, subs, rates, cache, cfg, snapshot, concurrency, billing, rateLimit, billingCache, nil, upstream, deferred, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	openAISvc := service.NewOpenAIGatewayService(accounts, usage, atomicBilling, users, subs, rates, cache, cfg, snapshot, concurrency, billing, rateLimit, billingCache, upstream, deferred, nil, nil, nil, nil, nil, nil, nil, nil, groups)
