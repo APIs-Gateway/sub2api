@@ -703,6 +703,11 @@ type AccountWaitPlan struct {
 	MaxConcurrency int
 	Timeout        time.Duration
 	MaxWaiting     int
+	// GroupSaturated 为 true 表示选号层已经确认「本分组内所有能接新请求的账号都没有空位」，
+	// 而不只是某一个账号忙。Key 级回退链只在它为 true 时把等待超时视为「分组繁忙」；
+	// 其余（零值）一律按单账号等待处理：先在组内重选一次。
+	// 反向定义：只有能证明整组满的构造点才置 true（设计 3.5），默认 false。
+	GroupSaturated bool
 }
 
 type AccountSelectionResult struct {
@@ -2517,6 +2522,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			MaxConcurrency: acc.Concurrency,
 			Timeout:        cfg.FallbackWaitTimeout,
 			MaxWaiting:     cfg.FallbackMaxWaiting,
+			// Layer 2 已按序尝试过全部能接新会话的候选，走到这里即整组满（设计 3.5 表 #13）。
+			GroupSaturated: true,
 		})
 	}
 	return nil, ErrNoAvailableAccounts

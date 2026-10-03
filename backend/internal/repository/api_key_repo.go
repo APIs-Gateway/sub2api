@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 
@@ -28,6 +29,11 @@ type apiKeyRepository struct {
 }
 
 func NewAPIKeyRepository(client *dbent.Client, sqlDB *sql.DB) service.APIKeyRepository {
+	if sqlDB == nil {
+		// 不要把 nil *sql.DB 装进非 nil 的 sqlExecutor 接口：否则 r.sql == nil 的判断永远为假，
+		// 没有 SQL 连接的用法（只用 ent client 的测试）会在原生 SQL 查询处解引用 nil。
+		return newAPIKeyRepositoryWithSQL(client, nil)
+	}
 	return newAPIKeyRepositoryWithSQL(client, sqlDB)
 }
 
@@ -212,7 +218,33 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	out := apiKeyEntityToService(m)
+	// 没有绑定主分组的 Key 不可能有回退链（保存链要求 Key 已绑定分组），省一次查询。
+	if m.GroupID != nil {
+		out.HasGroupRoutes, out.HasGroupRoutesUnknown = r.keyHasGroupRoutes(ctx, m.ID)
+	}
+	return out, nil
+}
+
+// keyHasGroupRoutes 判断 Key 是否配置了回退链（api_key_group_routes 里有任意一行）。
+//
+// 只在鉴权缓存未命中时执行一次（结果随快照缓存）。走 uq_agr_key_source_group
+// (api_key_id, source, group_id) 的前缀索引做 EXISTS，不会扫表。
+// 查询失败时返回 (false, true)：本次按「没有链」处理（等同于功能关闭时的现状行为）并记日志，
+// 不能因为这个可选特性让鉴权失败；unknown=true 告诉调用方这个 false 不可信，不要写进鉴权缓存
+// （否则一次瞬时错误会让链在整个缓存 TTL 内失效，审查 S4）。
+func (r *apiKeyRepository) keyHasGroupRoutes(ctx context.Context, keyID int64) (has bool, unknown bool) {
+	if r.sql == nil || keyID <= 0 {
+		return false, false
+	}
+	var exists bool
+	if err := scanSingleRow(ctx, r.sql,
+		"SELECT EXISTS (SELECT 1 FROM api_key_group_routes WHERE api_key_id = $1)",
+		[]any{keyID}, &exists); err != nil {
+		logger.LegacyPrintf("repository.api_key", "[GroupRoutes] exists check failed: api_key=%d err=%v", keyID, err)
+		return false, true
+	}
+	return exists, false
 }
 
 func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey) error {

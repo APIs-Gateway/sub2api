@@ -60,6 +60,11 @@ type OpenAIAccountScheduleRequest struct {
 	RequireCompact          bool
 	UseUpstreamTokenCost    bool
 	ExcludedIDs             map[int64]struct{}
+	// ProbeGroupSaturation 只在「Key 有回退链且当前不是最后一跳」时由入口经 context 置位
+	// （WithOpenAIGroupSaturationProbe）。置位后负载选择层在返回 WaitPlan 之前，先把 top-K 之外
+	// 且 fresh load 显示有空位的候选补试一遍，全部失败才把 WaitPlan.GroupSaturated 置 true。
+	// 零值（无链请求、末跳）行为与改动前完全一致。
+	ProbeGroupSaturation bool
 }
 
 type OpenAIAccountScheduleDecision struct {
@@ -309,6 +314,17 @@ func (b *openAISelectionProbeBudget) recordRecheck() bool {
 	}
 	b.rechecks++
 	return true
+}
+
+// exhausted 报告探测预算是否已用尽：开启了上限，且 acquire 或 DB 复核次数已达上限。
+// 用尽意味着选号顺序里排在后面的候选可能一次都没有尝试过，调用方不能据此证明「整组满」。
+// 用 >= 偏保守：恰好用满、且全部试过的情形也按用尽处理，只会少下一次「整组满」的结论，不会多下。
+// 预算有没有上限取决于成本感知（includeOverflowFallback），和有没有链无关；没有开启上限时恒为 false。
+func (b *openAISelectionProbeBudget) exhausted() bool {
+	if b == nil || !b.limited {
+		return false
+	}
+	return b.acquires >= openAIAccountSelectionProbeLimit || b.rechecks >= openAIAccountSelectionProbeLimit
 }
 
 type openAIStickyEscapeConfig struct {
@@ -1268,6 +1284,15 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		return nil, candidateCount, topK, loadSkew, noAvailableOpenAISelectionError(req.RequestedModel, req.RequireCompact && len(plan.allCandidates) > 0, filterStats.summary("selection_order_empty"))
 	}
 
+	// 仅 ProbeGroupSaturation（有链且非末跳）时记录用于补试的计划与已尝试过的顺序；
+	// 无链请求不走这几行。
+	var satPlan openAIAccountLoadPlan
+	var satTried [][]openAIAccountCandidateScore
+	if req.ProbeGroupSaturation {
+		satPlan = plan
+		satTried = append(satTried, selectionOrder)
+	}
+
 	result, compactBlocked, acquireErr := s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, selectionOrder, budget)
 	if acquireErr != nil {
 		return nil, candidateCount, topK, loadSkew, acquireErr
@@ -1276,9 +1301,22 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		return result, candidateCount, topK, loadSkew, nil
 	}
 
+	// 第一轮是否撞到探测预算上限（只有成本感知开启时预算才有上限，默认不开）。撞上限时，selectionOrder
+	// 里排在后面的候选一次都没有尝试过，而 satTried 仍把整份 selectionOrder 算作「已尝试」，
+	// 补试会错误地证明整组满，把还有空号的主分组送去回退（BK-2）。
+	// 只看第一轮：fresh 那一轮是对同一批候选重试，第一轮没撞上限就说明每个候选至少试过一次。
+	// 不变式：第一轮开了上限，就意味着顺序覆盖了全部候选（includeOverflowFallback 为真时 selectionOrder
+	// 是候选全集）。第一轮没开上限、fresh 轮才开的情形见下面 fresh 轮之后的补判（审查 S-1）。
+	mainTruncated := req.ProbeGroupSaturation && budget.exhausted()
+	firstLimited := budget.limited
+
 	if s.service.concurrencyService != nil {
 		if freshLoadMap, loadErr := s.service.concurrencyService.GetAccountsLoadBatchFresh(ctx, loadReq); loadErr == nil {
 			freshPlan := s.buildOpenAIAccountLoadPlan(ctx, req, filtered, freshLoadMap)
+			if req.ProbeGroupSaturation {
+				satPlan = freshPlan
+				satTried = append(satTried, freshPlan.selectionOrder)
+			}
 			if freshPlan.includeOverflowFallback {
 				budget.enableLimit()
 			}
@@ -1297,6 +1335,31 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 				loadSkew = freshPlan.loadSkew
 			}
 		}
+	}
+
+	// 第一轮不限、fresh 轮才开上限（includeOverflowFallback 在两次建计划之间翻转）：fresh 轮若在上限处截断，
+	// satTried 仍收录了它的全部候选，同样不能据此证明整组满（审查 S-1）。
+	if req.ProbeGroupSaturation && !firstLimited && budget.exhausted() {
+		mainTruncated = true
+	}
+
+	groupSaturated := false
+	if req.ProbeGroupSaturation {
+		probed, probeBlocked, saturated, probeErr := s.probeUntriedForGroupSaturation(ctx, req, satPlan, satTried)
+		if probeErr != nil {
+			// 补试是附加动作：无链请求在同样的场景下拿到的是 WaitPlan，不是错误。补试遇到瞬时的 Redis
+			// 错误时不能让有链请求反而失败（Redis 错误属于「不回退」的终止条件，用户会直接收到错误），
+			// 按「没有证明整组满」继续走后面的 WaitPlan 流程。主流程自己的 acquireErr 仍照原样返回。
+			slog.Warn("openai_group_saturation_probe_failed",
+				"group_id", derefGroupID(req.GroupID),
+				"error", probeErr)
+			saturated = false
+		}
+		if probed != nil {
+			return probed, satPlan.candidateCount, satPlan.topK, satPlan.loadSkew, nil
+		}
+		compactBlocked = compactBlocked || probeBlocked
+		groupSaturated = saturated && !mainTruncated
 	}
 
 	cfg := s.service.schedulingConfig()
@@ -1324,11 +1387,72 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 				MaxConcurrency: fresh.Concurrency,
 				Timeout:        cfg.FallbackWaitTimeout,
 				MaxWaiting:     cfg.FallbackMaxWaiting,
+				// 只有补试证明了「所有 LoadRate<100 的候选都拿不到槽」才为 true；
+				// 无链请求不补试，恒为 false（与改动前一致）。
+				GroupSaturated: groupSaturated,
 			},
 		}, candidateCount, topK, loadSkew, nil
 	}
 
 	return nil, candidateCount, topK, loadSkew, noAvailableOpenAISelectionError(req.RequestedModel, compactBlocked, filterStats.summary("selection_order_exhausted"))
+}
+
+// probeUntriedForGroupSaturation 只在 req.ProbeGroupSaturation 为真时调用（有链且非末跳）。
+//
+// selectByLoadBalance 的选号顺序只含 top-K（默认 7）候选，top-K 全满不等于整组满：
+// 优先级低、错误率略高的空闲号可能排在 top-K 之外（设计复核 N1a）。这里对 fresh load 中
+// LoadRate<100 且此前没有尝试过的候选按评分顺序补试一遍：
+//   - 补试成功：返回选中结果（组内有空位，不应跨组回退）；
+//   - 全部失败：saturated=true，调用方把 WaitPlan.GroupSaturated 置 true；
+//   - 补试中途因探测预算用尽被截断：saturated=false（没有证明整组满），按单账号等待处理；
+//   - 补试自己出错：返回 err，由调用方按「没有证明整组满」处理，不让有链请求因此失败（S3）。
+//
+// tried 里的候选一律视为已尝试：调用方必须保证它们真的试过。主流程的探测预算被截断时这一点不成立，
+// 由调用方（selectByLoadBalance 的 mainTruncated）否决 saturated（BK-2）。
+//
+// 补试使用独立的、已开启上限的探测预算（最多 openAIAccountSelectionProbeLimit 次 acquire 和
+// DB 复核），不消耗也不改变主流程的预算，随后 WaitPlan 循环的行为与改动前一致。
+func (s *defaultOpenAIAccountScheduler) probeUntriedForGroupSaturation(
+	ctx context.Context,
+	req OpenAIAccountScheduleRequest,
+	plan openAIAccountLoadPlan,
+	tried [][]openAIAccountCandidateScore,
+) (*AccountSelectionResult, bool, bool, error) {
+	triedIDs := make(map[int64]struct{})
+	for _, order := range tried {
+		for _, candidate := range order {
+			if candidate.account != nil {
+				triedIDs[candidate.account.ID] = struct{}{}
+			}
+		}
+	}
+	rest := make([]openAIAccountCandidateScore, 0, len(plan.candidates))
+	for _, candidate := range plan.candidates {
+		if candidate.account == nil {
+			continue
+		}
+		if _, done := triedIDs[candidate.account.ID]; done {
+			continue
+		}
+		if candidate.loadKnown && candidate.loadInfo != nil && candidate.loadInfo.LoadRate >= 100 {
+			continue
+		}
+		rest = append(rest, candidate)
+	}
+	if len(rest) == 0 {
+		return nil, false, true, nil
+	}
+	sort.SliceStable(rest, func(i, j int) bool {
+		return isOpenAIAccountCandidateBetter(rest[i], rest[j])
+	})
+
+	budget := newOpenAISelectionProbeBudget()
+	budget.enableLimit()
+	result, compactBlocked, err := s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, rest, budget)
+	if err != nil || result != nil {
+		return result, compactBlocked, false, err
+	}
+	return nil, compactBlocked, !budget.exhausted(), nil
 }
 
 func (s *defaultOpenAIAccountScheduler) isAccountTransportCompatible(account *Account, requiredTransport OpenAIUpstreamTransport) bool {
@@ -1814,6 +1938,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		RequireCompact:          requireCompact,
 		UseUpstreamTokenCost:    useUpstreamTokenCost,
 		ExcludedIDs:             excludedIDs,
+		ProbeGroupSaturation:    openAIGroupSaturationProbeEnabled(ctx),
 	})
 }
 

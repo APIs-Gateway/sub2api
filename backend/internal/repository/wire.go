@@ -136,6 +136,7 @@ var ProviderSet = wire.NewSet(
 	NewTLSFingerprintProfileCache,
 	NewChannelCache,
 	NewContentModerationHashCache,
+	NewGroupChainBreaker, // Key 级分组回退链熔断（PR2a 第 1 段：仅注册，尚无注入点）
 
 	// Encryptors
 	NewAESEncryptor,

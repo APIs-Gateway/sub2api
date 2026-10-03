@@ -1750,13 +1750,40 @@ const (
 	accountSlotAcquireFailed accountSlotAcquireStatus = iota
 	accountSlotAcquired
 	accountSlotRetrySelection
+	// accountSlotBusyDeferred 只会在入口传入回退链的 hop 策略（有链且非末跳）时出现：
+	// 本分组繁忙（整组已满，或单账号等待超时后组内重选一次仍然忙），**没有写任何响应**，
+	// 由入口按 FallbackWorthy{busy} 交给 runner 换组。无链请求和末跳永远不会得到它。
+	accountSlotBusyDeferred
 )
 
+// acquireResponsesAccountSlot 是无链请求的原入口，行为与引入回退链之前完全一致。
 func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	c *gin.Context,
 	groupID *int64,
 	sessionHash string,
 	selection *service.AccountSelectionResult,
+	reqStream bool,
+	streamStarted *bool,
+	reqLog *zap.Logger,
+) (func(), accountSlotAcquireStatus) {
+	return h.acquireResponsesAccountSlotForHop(c, groupID, sessionHash, selection, service.OpenAIAccountScheduleDecision{}, nil, reqStream, streamStarted, reqLog)
+}
+
+// acquireResponsesAccountSlotForHop 在 acquireResponsesAccountSlot 之上支持回退链的 hop 策略。
+// hop 为 nil（无链、末跳）时所有分支与原来逐行相同。hop 非 nil（有链且非末跳）时：
+//   - 等待时长按 hop.waitFor 封顶（繁忙 / 粘性短等，且不超过剩余总预算）；
+//   - 排队已满、等待超时两条失败分支不写响应：单账号等待先返回 accountSlotRetrySelection
+//     （调用方照 accountSlotRetrySelection 分支把该号加入排除表后重选，不清 sessionHash，
+//     不占 maxAccountSwitches），已重选过或整组已满则返回 accountSlotBusyDeferred；
+//   - 命中 previous_response_id 层（规则 3）时保持原等待时长和原错误响应；
+//   - 其余失败分支（Redis 错误、recheck 失败等）仍照原样写响应。
+func (h *OpenAIGatewayHandler) acquireResponsesAccountSlotForHop(
+	c *gin.Context,
+	groupID *int64,
+	sessionHash string,
+	selection *service.AccountSelectionResult,
+	decision service.OpenAIAccountScheduleDecision,
+	hop *openAIHopSlotPolicy,
 	reqStream bool,
 	streamStarted *bool,
 	reqLog *zap.Logger,
@@ -1801,6 +1828,17 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 		return wrapReleaseOnDone(ctx, fastReleaseFunc), accountSlotAcquired
 	}
 
+	waitTimeout := selection.WaitPlan.Timeout
+	if hop != nil {
+		waitTimeout = hop.waitFor(selection.WaitPlan, decision)
+		if waitTimeout <= 0 {
+			// 总预算已用完，不再排队等待，直接按等待超时处理。
+			if status, deferred := hop.onCapacityFailure(selection.WaitPlan, decision, service.HopFailureBusyTimeout, &ConcurrencyError{SlotType: "account", IsTimeout: true}); deferred {
+				return nil, status
+			}
+		}
+	}
+
 	canWait, waitErr := h.concurrencyHelper.IncrementAccountWaitCount(ctx, account.ID, selection.WaitPlan.MaxWaiting)
 	if waitErr != nil {
 		reqLog.Warn("openai.account_wait_counter_increment_failed", zap.Int64("account_id", account.ID), zap.Error(waitErr))
@@ -1809,6 +1847,11 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 			zap.Int64("account_id", account.ID),
 			zap.Int("max_waiting", selection.WaitPlan.MaxWaiting),
 		)
+		if hop != nil {
+			if status, deferred := hop.onCapacityFailure(selection.WaitPlan, decision, service.HopFailureQueueFull, nil); deferred {
+				return nil, status
+			}
+		}
 		h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later", *streamStarted)
 		return nil, accountSlotAcquireFailed
 	}
@@ -1826,12 +1869,20 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 		c,
 		account.ID,
 		selection.WaitPlan.MaxConcurrency,
-		selection.WaitPlan.Timeout,
+		waitTimeout,
 		reqStream,
 		streamStarted,
 	)
 	if err != nil {
 		reqLog.Warn("openai.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+		if hop != nil {
+			var concurrencyErr *ConcurrencyError
+			if errors.As(err, &concurrencyErr) && concurrencyErr.IsTimeout {
+				if status, deferred := hop.onCapacityFailure(selection.WaitPlan, decision, service.HopFailureBusyTimeout, err); deferred {
+					return nil, status
+				}
+			}
+		}
 		h.handleConcurrencyError(c, err, "account", *streamStarted)
 		return nil, accountSlotAcquireFailed
 	}

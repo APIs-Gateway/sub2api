@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 16 // v16: simple-mode default image eligibility
+const apiKeyAuthSnapshotVersion = 17 // v17: has_group_routes（回退链标志）；v16: simple-mode default image eligibility；v15: per-key stable_priority_enabled
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -188,6 +188,12 @@ func (s *APIKeyService) loadAuthCacheEntry(ctx context.Context, key, cacheKey st
 		return nil, fmt.Errorf("get api key: %w", ErrAPIKeyNotFound)
 	}
 	entry := &APIKeyAuthCacheEntry{Snapshot: snapshot}
+	if apiKey.HasGroupRoutesUnknown {
+		// 回退链的 EXISTS 查询失败：本次按无链处理，但不缓存，下一次请求回源重查，
+		// 避免一次瞬时错误让有链的 Key 在整个缓存 TTL 内失去回退（审查 S4）。
+		slog.Warn("api_key_auth_cache.skip_write_group_routes_unknown", "api_key_id", apiKey.ID)
+		return entry, nil
+	}
 	s.setAuthCacheEntry(ctx, cacheKey, entry, s.authCfg.l2TTL)
 	return entry, nil
 }
@@ -228,6 +234,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		RateLimit1d:           apiKey.RateLimit1d,
 		RateLimit7d:           apiKey.RateLimit7d,
 		StablePriorityEnabled: apiKey.StablePriorityEnabled,
+		HasGroupRoutes:        apiKey.HasGroupRoutes,
 		User: APIKeyAuthUserSnapshot{
 			ID:                         apiKey.User.ID,
 			Status:                     apiKey.User.Status,
@@ -315,6 +322,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 		RateLimit1d:           snapshot.RateLimit1d,
 		RateLimit7d:           snapshot.RateLimit7d,
 		StablePriorityEnabled: snapshot.StablePriorityEnabled,
+		HasGroupRoutes:        snapshot.HasGroupRoutes,
 		User: &User{
 			ID:                         snapshot.User.ID,
 			Status:                     snapshot.User.Status,

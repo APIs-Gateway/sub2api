@@ -29,6 +29,11 @@ type APIKeyAuthSnapshot struct {
 
 	// StablePriorityEnabled per-key 稳定优先开关；调度时与 User.StablePriorityEnabled 取或生效。
 	StablePriorityEnabled bool `json:"stable_priority_enabled"`
+
+	// HasGroupRoutes 该 Key 在 api_key_group_routes 里是否有任意回退链项（user 或 admin）。
+	// 只是一个标志位，链明细不进快照；由 GetByKeyForAuth 计算，保存链时靠 InvalidateAuthCacheByKey 失效。
+	// v17 新增：旧版本快照没有这个字段，由版本号比对整体丢弃，不会被误读成 false。
+	HasGroupRoutes bool `json:"has_group_routes"`
 }
 
 // APIKeyAuthUserSnapshot 用户快照

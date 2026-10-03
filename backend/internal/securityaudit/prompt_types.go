@@ -79,13 +79,42 @@ type Request struct {
 	Model      string
 	Body       []byte
 	Stage      string
+
+	// ChainGroups 有回退链时，链上所有存活跳的分组（含主分组）。非空时审计范围按并集判定；
+	// GroupID / GroupName 始终保持主分组，触发审计的那一跳另记在 ScopeGroupID / ScopeGroupName
+	// （见 ActiveConfig.ScopeRequest）。无链时为空。
+	ChainGroups []ChainGroup
+
+	// ScopeGroupID / ScopeGroupName 只给管理端：主分组不在审计范围、链上某一跳（可能是管理员隐藏链分组）
+	// 在范围内时，记录触发审计的那一跳。主分组自己在范围内、或无链时为空。
+	ScopeGroupID   *int64
+	ScopeGroupName string
+}
+
+// scopeGroup 返回判定审计范围时使用的分组：并集命中了其它跳就是那一跳，否则是请求分组本身。
+func (r Request) scopeGroup() *int64 {
+	if r.ScopeGroupID != nil {
+		return r.ScopeGroupID
+	}
+	return r.GroupID
+}
+
+// ChainGroup 是回退链上的一跳分组。
+type ChainGroup struct {
+	ID   int64
+	Name string
 }
 
 func (r Request) Clone() Request {
 	r.Body = append([]byte(nil), r.Body...)
+	r.ChainGroups = append([]ChainGroup(nil), r.ChainGroups...)
 	if r.GroupID != nil {
 		id := *r.GroupID
 		r.GroupID = &id
+	}
+	if r.ScopeGroupID != nil {
+		id := *r.ScopeGroupID
+		r.ScopeGroupID = &id
 	}
 	return r
 }
@@ -118,6 +147,10 @@ type PromptSnapshot struct {
 	Stage              string `json:"stage"`
 
 	ScanText string `json:"-"`
+
+	// ScopeGroupID / ScopeGroupName 仅管理端：回退链并集命中的那一跳（可能是隐藏链分组）。未入库。
+	ScopeGroupID   *int64 `json:"scope_group_id,omitempty"`
+	ScopeGroupName string `json:"scope_group_name,omitempty"`
 }
 
 func (s PromptSnapshot) Redacted() PromptSnapshot {

@@ -48,6 +48,7 @@ func ExtractPromptSnapshot(req Request) (PromptSnapshot, error) {
 		RequestID: req.RequestID, UserID: req.UserID, UsernameSnapshot: req.Username,
 		UserEmailSnapshot: req.UserEmail, APIKeyID: req.APIKeyID, APIKeyNameSnapshot: req.APIKeyName,
 		GroupID: cloneInt64Ptr(req.GroupID), GroupName: req.GroupName, Provider: req.Provider,
+		ScopeGroupID: cloneInt64Ptr(req.ScopeGroupID), ScopeGroupName: req.ScopeGroupName,
 		Endpoint: req.Endpoint, Protocol: req.Protocol, Model: req.Model,
 		PromptHash: hex.EncodeToString(digest[:]), RedactedPreview: BuildPromptPreview(metadataText, DefaultPromptPreviewMaxRunes),
 		FullPrompt:   BuildFullPrompt(metadataText, DefaultFullPromptMaxRunes),
