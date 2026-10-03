@@ -46,7 +46,7 @@
           >
             <div class="mb-2 flex items-center justify-between">
               <span class="text-sm font-medium text-gray-900 dark:text-white">
-                {{ subscriptionDisplayName(subscription, t) }}
+                {{ subscriptionTitle(subscription) }}
               </span>
               <span
                 v-if="subscription.expires_at"
@@ -199,6 +199,11 @@ function getProgressWidth(used: number | undefined, limit: number | null | undef
   if (!limit || limit === 0) return '0%'
   const percentage = Math.min(((used || 0) / limit) * 100, 100)
   return `${percentage}%`
+}
+
+// 没有来源分组的卡回退到「每日 X」，金额和下面的用量同一口径（人民币模式下是 ¥）。
+function subscriptionTitle(sub: UserSubscription): string {
+  return subscriptionDisplayName(sub, t, (amount) => formatSubscription(amount, sub.fiat_per_credit))
 }
 
 function formatUsage(

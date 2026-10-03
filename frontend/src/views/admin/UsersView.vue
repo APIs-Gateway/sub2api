@@ -389,7 +389,7 @@
               <GroupBadge
                 v-for="sub in row.subscriptions"
                 :key="sub.id"
-                :name="subscriptionDisplayName(sub, t)"
+                :name="subscriptionDisplayName(sub, t, formatUsdAmount)"
                 :platform="sub.group?.platform"
                 :subscription-type="sub.group?.subscription_type"
                 :rate-multiplier="sub.group?.rate_multiplier"
@@ -754,6 +754,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatDateTime } from '@/utils/format'
+import { formatUsdAmount } from '@/utils/numberFormat'
 import { subscriptionDisplayName } from '@/utils/subscriptionQuota'
 import Icon from '@/components/icons/Icon.vue'
 

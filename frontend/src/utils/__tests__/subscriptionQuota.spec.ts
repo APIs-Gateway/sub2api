@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   getExpirationDateRelation,
   getRemainingExpiryDuration,
   subscriptionDisplayName
 } from '../subscriptionQuota'
+import { formatCnyAmount, formatUsdAmount } from '../numberFormat'
 
 describe('subscription expiry timing', () => {
   it('uses local calendar dates for today and tomorrow', () => {
@@ -89,36 +90,59 @@ describe('subscriptionDisplayName', () => {
 
   it('prefers the group name while the source group still exists', () => {
     const group = { name: '  Pro  ' } as never
-    expect(subscriptionDisplayName({ group, daily_amount_usd: 30 }, t)).toBe('Pro')
+    const format = vi.fn(formatUsdAmount)
+    expect(subscriptionDisplayName({ group, daily_amount_usd: 30 }, t, format)).toBe('Pro')
+    // 有分组名时不需要金额，也就不该去格式化。
+    expect(format).not.toHaveBeenCalled()
   })
 
   it('falls back to the daily amount title when the source group was deleted', () => {
     // 分组被删后卡保留，但读不到 group 边；不能展示 `Group #id`。
-    expect(subscriptionDisplayName({ group: undefined, daily_amount_usd: 30 }, t)).toBe(
+    expect(subscriptionDisplayName({ group: undefined, daily_amount_usd: 30 }, t, formatUsdAmount)).toBe(
       'userSubscriptions.daily $30.00'
     )
-    expect(subscriptionDisplayName({ group: undefined, daily_amount_usd: 12.5 }, t)).toBe(
+    expect(subscriptionDisplayName({ group: undefined, daily_amount_usd: 12.5 }, t, formatUsdAmount)).toBe(
       'userSubscriptions.daily $12.50'
     )
   })
 
   it('uses the card daily limit when the daily amount is missing', () => {
-    expect(subscriptionDisplayName({ group: undefined, daily_limit_usd: 8 }, t)).toBe(
+    expect(subscriptionDisplayName({ group: undefined, daily_limit_usd: 8 }, t, formatUsdAmount)).toBe(
       'userSubscriptions.daily $8.00'
     )
   })
 
   it('treats a blank group name like a missing group', () => {
     const group = { name: '   ' } as never
-    expect(subscriptionDisplayName({ group, daily_amount_usd: 5 }, t)).toBe(
+    expect(subscriptionDisplayName({ group, daily_amount_usd: 5 }, t, formatUsdAmount)).toBe(
       'userSubscriptions.daily $5.00'
     )
   })
 
   it('shows the unlimited label for a card with neither group nor daily amount', () => {
-    expect(subscriptionDisplayName({ group: undefined }, t)).toBe('userSubscriptions.unlimited')
-    expect(subscriptionDisplayName({ group: undefined, daily_amount_usd: 0 }, t)).toBe(
+    const format = vi.fn(formatUsdAmount)
+    expect(subscriptionDisplayName({ group: undefined }, t, format)).toBe('userSubscriptions.unlimited')
+    expect(subscriptionDisplayName({ group: undefined, daily_amount_usd: 0 }, t, format)).toBe(
       'userSubscriptions.unlimited'
     )
+    expect(format).not.toHaveBeenCalled()
+  })
+
+  it('formats the fallback amount with the caller-supplied formatter instead of a fixed currency', () => {
+    // 用户端人民币模式：调用方按卡单价折算成 ¥，标题不能再是 $。
+    const fiatPerCredit = 0.045
+    const toCny = (amount: number) => formatCnyAmount(amount * fiatPerCredit)
+    const name = subscriptionDisplayName({ group: undefined, daily_amount_usd: 60 }, t, toCny)
+    expect(name).toBe('userSubscriptions.daily ¥2.70')
+    expect(name).not.toContain('$')
+  })
+
+  it('passes the daily amount (not the daily limit) to the formatter when both exist', () => {
+    const format = vi.fn((amount: number) => `<${amount}>`)
+    expect(
+      subscriptionDisplayName({ group: undefined, daily_amount_usd: 30, daily_limit_usd: 60 }, t, format)
+    ).toBe('userSubscriptions.daily <30>')
+    expect(format).toHaveBeenCalledTimes(1)
+    expect(format).toHaveBeenCalledWith(30)
   })
 })

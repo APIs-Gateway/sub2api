@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import UserSubscriptionCard from '../UserSubscriptionCard.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
-import { resetFiatDataMissingForTest } from '@/composables/useCurrencyDisplay'
+import { resetFiatDataMissingForTest, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import type { UserSubscription } from '@/types'
 
 // 可变的假设置：改它就能模拟 codex 站（倍率 13）和 free 站（倍率 1）。
@@ -70,6 +70,8 @@ function mountCard(subscription: UserSubscription) {
 beforeEach(() => {
   window.localStorage.clear()
   resetFiatDataMissingForTest()
+  // 展示口径是模块级单例，清 localStorage 不会复位，上一个用例切到美元会带到下一个。
+  useCurrencyDisplay().setMode('fiat')
   publicSettings.value = { balance_recharge_multiplier: 13 }
 })
 
@@ -120,5 +122,60 @@ describe('迷你订阅进度', () => {
     await wrapper.get('button').trigger('click')
 
     expect(plain(wrapper.text())).toContain('$20.00/$60.00')
+  })
+})
+
+// 没有来源分组的卡（自定义卡 / 来源分组被删）在迷你进度里回退到「每日 X」，
+// 这个标题要和同一行下面的用量用同一种货币，不能标题是 $、用量是 ¥。
+describe('迷你订阅进度：没有分组的卡的回退标题', () => {
+  async function openMini(subscription: UserSubscription) {
+    subscriptionStore.activeSubscriptions = [subscription]
+    const wrapper = mount(SubscriptionProgressMini, { global: { stubs: { Icon: true, RouterLink: true } } })
+    await wrapper.get('button').trigger('click')
+    return plain(wrapper.text())
+  }
+
+  it('人民币模式：标题按卡单价折算成 ¥，和用量同一口径', async () => {
+    const text = await openMini(cardFixture({ fiat_per_credit: 0.045 } as Partial<UserSubscription>))
+
+    // 每日额度 60 × 0.045 = 2.70。
+    expect(text).toContain('userSubscriptions.daily¥2.70')
+    expect(text).toContain('¥0.90/¥2.70')
+    expect(text).not.toContain('$')
+  })
+
+  it('美元模式（用户手动切换）：标题保持 $', async () => {
+    useCurrencyDisplay().setMode('usd')
+    const text = await openMini(cardFixture({ fiat_per_credit: 0.045 } as Partial<UserSubscription>))
+
+    expect(text).toContain('userSubscriptions.daily$60.00')
+    expect(text).toContain('$20.00/$60.00')
+    expect(text).not.toContain('¥')
+  })
+
+  it('free 站（倍率 1）：强制美元，即使卡上带了单价', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 1 }
+    const text = await openMini(cardFixture({ fiat_per_credit: 0.045 } as Partial<UserSubscription>))
+
+    expect(text).toContain('userSubscriptions.daily$60.00')
+    expect(text).toContain('$20.00/$60.00')
+    expect(text).not.toContain('¥')
+  })
+
+  it('拿不到这张卡的单价时标题和用量一起回落到美元，不混排', async () => {
+    const text = await openMini(cardFixture())
+
+    expect(text).toContain('userSubscriptions.daily$60.00')
+    expect(text).toContain('$20.00/$60.00')
+    expect(text).not.toContain('¥')
+  })
+
+  it('有来源分组时仍显示分组名', async () => {
+    const text = await openMini(
+      cardFixture({ fiat_per_credit: 0.045, group: { name: 'Plan' } } as unknown as Partial<UserSubscription>)
+    )
+
+    expect(text).toContain('Plan')
+    expect(text).not.toContain('userSubscriptions.daily')
   })
 })
