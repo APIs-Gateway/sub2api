@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -35,8 +36,20 @@ func runAnthropicVisibleOutputStream(t *testing.T, payload string) (*streamingRe
 	return result, recorder, err
 }
 
+func requireAnthropicMeteredInvisibleAttempt(t *testing.T, result *streamingResult, err error, inputTokens, outputTokens int) {
+	t.Helper()
+	require.Error(t, err)
+	var failover *UpstreamFailoverError
+	require.False(t, errors.As(err, &failover), "observed usage must not replay an already metered attempt")
+	require.NotNil(t, result, "retain observed usage for the original attempt's billing")
+	require.Equal(t, inputTokens, result.usage.InputTokens)
+	require.Equal(t, outputTokens, result.usage.OutputTokens)
+	require.Nil(t, result.firstTokenMs, "metadata and server tools are not client-visible output")
+	require.False(t, result.clientDisconnect)
+}
+
 // 服务端搜索不是客户端答案或待执行的工具调用；其 input delta 不能
-// 解除空可见输出保护，阻断账号重试。
+// 解除空可见输出保护。已观察到用量的尝试仍须保留计费且不可重试。
 func TestAnthropicVisibleOutput_ServerToolInputDoesNotCommitAttempt(t *testing.T) {
 	payload := "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":7}}}\n\n" +
 		"data: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_1\",\"name\":\"web_search\",\"input\":{\"query\":\"weather\"}}}\n\n" +
@@ -45,16 +58,30 @@ func TestAnthropicVisibleOutput_ServerToolInputDoesNotCommitAttempt(t *testing.T
 		"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":12}}\n\n" +
 		"data: {\"type\":\"message_stop\"}\n\n"
 
-	result, recorder, err := runAnthropicVisibleOutputStream(t, payload)
-
-	var failover *UpstreamFailoverError
-	require.ErrorAs(t, err, &failover)
-	require.Nil(t, result, "failed attempts must not become a second bill when account failover succeeds")
-	require.Equal(t, http.StatusBadGateway, failover.StatusCode)
-	require.True(t, failover.SafeToFailoverAfterWrite)
-	require.Contains(t, string(failover.ResponseBody), "empty_visible_output")
-	require.Empty(t, recorder.Body.String(), "do not leak staged server-tool or usage events")
-	require.Empty(t, recorder.Header().Values("X-Request-Id"), "failed-attempt headers must remain private")
+	for _, metered := range []bool{true, false} {
+		name, attemptPayload := "metered", payload
+		if !metered {
+			name = "zero usage"
+			attemptPayload = strings.ReplaceAll(strings.ReplaceAll(payload, `"input_tokens":7`, `"input_tokens":0`), `"output_tokens":12`, `"output_tokens":0`)
+		}
+		t.Run(name, func(t *testing.T) {
+			result, recorder, err := runAnthropicVisibleOutputStream(t, attemptPayload)
+			if metered {
+				requireAnthropicMeteredInvisibleAttempt(t, result, err, 7, 12)
+				require.Contains(t, err.Error(), "empty_visible_output")
+			} else {
+				var failover *UpstreamFailoverError
+				require.ErrorAs(t, err, &failover)
+				require.Nil(t, result)
+				require.Equal(t, http.StatusBadGateway, failover.StatusCode)
+				require.True(t, failover.SafeToFailoverAfterWrite)
+				require.True(t, failover.RetryableOnSameAccount)
+				require.Contains(t, string(failover.ResponseBody), "empty_visible_output")
+			}
+			require.Empty(t, recorder.Body.String(), "do not leak staged server-tool or usage events")
+			require.Empty(t, recorder.Header().Values("X-Request-Id"), "failed-attempt headers must remain private")
+		})
+	}
 }
 
 func TestAnthropicVisibleOutput_StagingOverflowReturnsFailoverWithoutPartialOutput(t *testing.T) {
@@ -230,40 +257,49 @@ func TestAnthropicVisibleOutput_TerminalDeadlineEndsContinuousPingStream(t *test
 }
 
 func TestAnthropicVisibleOutput_BeforeVisibleHeartbeatIsOnlyTransportComment(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	c.Request.Header.Set("User-Agent", "claude-cli/2.1.198 (external, cli)")
-	svc := &GatewayService{
-		cfg: &config.Config{Gateway: config.GatewayConfig{
-			MaxLineSize:             defaultMaxLineSize,
-			StreamKeepaliveInterval: 1,
-		}},
-		rateLimitService: &RateLimitService{},
-	}
-	reader, writer := io.Pipe()
-	defer func() { _ = reader.Close() }()
-	defer func() { _ = writer.Close() }()
-	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"X-Request-Id": []string{"attempt-private"}}, Body: reader}
-	const raw = `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`
-	go func() {
-		defer func() { _ = writer.Close() }()
-		_, _ = io.WriteString(writer, "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":7}}}\n\n"+
-			"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\"}}\n\n")
-		time.Sleep(1100 * time.Millisecond)
-		_, _ = io.WriteString(writer, "event: error\ndata: "+raw+"\n\n")
-	}()
+	for _, inputTokens := range []string{"7", "0"} {
+		t.Run("input_tokens="+inputTokens, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			c.Request.Header.Set("User-Agent", "claude-cli/2.1.198 (external, cli)")
+			svc := &GatewayService{
+				cfg: &config.Config{Gateway: config.GatewayConfig{
+					MaxLineSize:             defaultMaxLineSize,
+					StreamKeepaliveInterval: 1,
+				}},
+				rateLimitService: &RateLimitService{},
+			}
+			reader, writer := io.Pipe()
+			defer func() { _ = reader.Close() }()
+			defer func() { _ = writer.Close() }()
+			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"X-Request-Id": []string{"attempt-private"}}, Body: reader}
+			const raw = `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`
+			go func() {
+				defer func() { _ = writer.Close() }()
+				_, _ = io.WriteString(writer, "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":"+inputTokens+"}}}\n\n"+
+					"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\"}}\n\n")
+				time.Sleep(1100 * time.Millisecond)
+				_, _ = io.WriteString(writer, "event: error\ndata: "+raw+"\n\n")
+			}()
 
-	result, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
-	var streamErr *sseStreamErrorEventError
-	require.ErrorAs(t, err, &streamErr)
-	require.Nil(t, result)
-	require.Equal(t, raw, streamErr.RawData)
-	require.True(t, streamErr.SafeToFailoverAfterWrite, "传输注释不能阻断账号重试")
-	require.Equal(t, ": ping\n\n", recorder.Body.String(), "首可见输出前不能发 metadata、event:ping 或 noop delta")
-	require.Empty(t, recorder.Header().Values("X-Request-Id"))
-	require.Empty(t, recorder.Result().Header.Values("X-Request-Id"), "已经提交的头也不能泄露失败账号的 request-id")
+			result, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+			var streamErr *sseStreamErrorEventError
+			require.ErrorAs(t, err, &streamErr)
+			require.Equal(t, raw, streamErr.RawData)
+			if inputTokens == "7" {
+				requireAnthropicMeteredInvisibleAttempt(t, result, err, 7, 0)
+				require.False(t, streamErr.SafeToFailoverAfterWrite, "传输注释不代表免费，已观察到的用量禁止重放")
+			} else {
+				require.Nil(t, result)
+				require.True(t, streamErr.SafeToFailoverAfterWrite, "零用量时传输注释不能阻断账号重试")
+			}
+			require.Equal(t, ": ping\n\n", recorder.Body.String(), "首可见输出前不能发 metadata、event:ping 或 noop delta")
+			require.Empty(t, recorder.Header().Values("X-Request-Id"))
+			require.Empty(t, recorder.Result().Header.Values("X-Request-Id"), "已经提交的头也不能泄露失败账号的 request-id")
+		})
+	}
 }
 
 func TestAnthropicVisibleOutput_InterleavedIndexesDoNotBorrowClientToolType(t *testing.T) {
@@ -309,15 +345,17 @@ func TestAnthropicVisibleOutput_ClientTextAndToolReleaseStagedEvents(t *testing.
 
 func TestAnthropicVisibleOutput_EmptyThinkingAndMetadataDoNotSucceed(t *testing.T) {
 	cases := []struct {
-		name   string
-		events string
+		name        string
+		events      string
+		inputTokens int
 	}{
-		{"empty 200", ""},
-		{"metadata only", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":7}}}\n\n"},
+		{"empty 200", "", 0},
+		{"metadata only", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":7}}}\n\n", 7},
+		{"metadata only zero usage", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0}}}\n\n", 0},
 		{"thinking only", "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\"}}\n\n" +
-			"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"plan\"}}\n\n"},
-		{"empty text", "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"\"}}\n\n"},
-		{"unknown tool index", "data: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n"},
+			"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"plan\"}}\n\n", 0},
+		{"empty text", "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"\"}}\n\n", 0},
+		{"unknown tool index", "data: {\"type\":\"content_block_delta\",\"index\":4,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -326,10 +364,17 @@ func TestAnthropicVisibleOutput_EmptyThinkingAndMetadataDoNotSucceed(t *testing.
 				payload += "data: {\"type\":\"message_stop\"}\n\n"
 			}
 			result, recorder, err := runAnthropicVisibleOutputStream(t, payload)
-			var failover *UpstreamFailoverError
-			require.ErrorAs(t, err, &failover)
-			require.Nil(t, result)
-			require.True(t, failover.SafeToFailoverAfterWrite)
+			if tc.inputTokens > 0 {
+				requireAnthropicMeteredInvisibleAttempt(t, result, err, tc.inputTokens, 0)
+				require.Contains(t, err.Error(), "empty_visible_output")
+			} else {
+				var failover *UpstreamFailoverError
+				require.ErrorAs(t, err, &failover)
+				require.Nil(t, result)
+				require.Equal(t, http.StatusBadGateway, failover.StatusCode)
+				require.True(t, failover.SafeToFailoverAfterWrite)
+				require.True(t, failover.RetryableOnSameAccount)
+			}
 			require.Empty(t, recorder.Body.String())
 			require.Empty(t, recorder.Header().Values("X-Request-Id"))
 		})
@@ -366,14 +411,24 @@ func TestAnthropicVisibleOutput_SSEErrorsKeepTypedUpstreamClassification(t *test
 	const raw = `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`
 	for _, prefix := range []string{"event: error\n", ""} {
 		t.Run(prefix, func(t *testing.T) {
-			payload := "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":7}}}\n\n" + prefix + "data: " + raw + "\n\n"
-			result, recorder, err := runAnthropicVisibleOutputStream(t, payload)
-			var streamErr *sseStreamErrorEventError
-			require.ErrorAs(t, err, &streamErr)
-			require.Equal(t, raw, streamErr.RawData)
-			require.True(t, streamErr.SafeToFailoverAfterWrite)
-			require.Nil(t, result)
-			require.Empty(t, recorder.Body.String())
+			for _, inputTokens := range []string{"7", "0"} {
+				t.Run("input_tokens="+inputTokens, func(t *testing.T) {
+					payload := "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":" + inputTokens + "}}}\n\n" + prefix + "data: " + raw + "\n\n"
+					result, recorder, err := runAnthropicVisibleOutputStream(t, payload)
+					var streamErr *sseStreamErrorEventError
+					require.ErrorAs(t, err, &streamErr)
+					require.Equal(t, raw, streamErr.RawData)
+					if inputTokens == "7" {
+						requireAnthropicMeteredInvisibleAttempt(t, result, err, 7, 0)
+						require.False(t, streamErr.SafeToFailoverAfterWrite)
+					} else {
+						require.True(t, streamErr.SafeToFailoverAfterWrite)
+						require.Nil(t, result)
+					}
+					require.Empty(t, recorder.Body.String())
+					require.Empty(t, recorder.Header().Values("X-Request-Id"))
+				})
+			}
 		})
 	}
 }

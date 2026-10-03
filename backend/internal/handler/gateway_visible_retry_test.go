@@ -79,7 +79,7 @@ func (u *visibleRetryUpstream) DoWithTLS(_ *http.Request, _ string, id int64, _ 
 		header = "failed-attempt"
 	}
 	if strings.HasPrefix(u.mode, "metered_") {
-		payload = "event: message_start\ndata: " + `{"type":"message_start","message":{"usage":{"input_tokens":99,"output_tokens":88}}}` + "\n\n"
+		payload = "event: message_start\ndata: " + `{"type":"message_start","message":{"usage":{"input_tokens":99}}}` + "\n\nevent: message_delta\ndata: " + `{"type":"message_delta","usage":{"output_tokens":88}}` + "\n\n"
 		header = "metered-attempt"
 	}
 	if u.mode == "committed_error" || u.mode == "metered_sse_error" {
@@ -146,10 +146,14 @@ func TestGatewayVisibleRetry_RealMessagesHandler(t *testing.T) {
 			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: key.UserID, Concurrency: 10})
 			h.Messages(c)
 			pool.Stop()
+			require.Empty(t, accountRepo.overloaded, "preserve fork pool-mode policy: provider 529 must not cool down this account")
 			if mode == "metered_sse_error" {
-				require.Equal(t, []int64{upstream.accounts[0]}, accountRepo.overloaded, "preserve pre-visible provider 529 attribution despite forbidding metered replay")
-			} else {
-				require.Empty(t, accountRepo.overloaded)
+				events, exists := c.Get(service.OpsUpstreamErrorsKey)
+				require.True(t, exists)
+				ops, ok := events.([]*service.OpsUpstreamErrorEvent)
+				require.True(t, ok)
+				require.Len(t, ops, 1)
+				require.Equal(t, 529, ops[0].UpstreamStatusCode, "retain provider overload attribution even when pool policy skips cooldown")
 			}
 			if failedWriter != nil {
 				require.NoError(t, c.Request.Context().Err(), "write failure must not cancel request context to hide generic fallback")
