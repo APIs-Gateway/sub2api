@@ -24,7 +24,8 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/user/profile/__tests__/ProfileIdentityBindingsSection.emailDraft.spec.ts \
 	src/views/admin/__tests__/SettingsView.spec.ts \
 	src/views/admin/orders/__tests__/AdminOrdersView.spec.ts \
-	src/views/admin/ops/components/__tests__/OpsSettingsDialog.loading.spec.ts
+	src/views/admin/ops/components/__tests__/OpsSettingsDialog.loading.spec.ts \
+	src/views/admin/ops/components/__tests__/OpsAlertEventsCard.pagination.spec.ts
 
 # 一键编译前后端
 build: build-backend build-frontend
