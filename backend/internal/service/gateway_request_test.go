@@ -111,6 +111,35 @@ func TestParseGatewayRequest_NonAnthropicPreservesClaudeCodeLongContextModelSuff
 	require.Equal(t, "claude-opus-4-8[1m]", gjson.GetBytes(parsed.Body.Bytes(), "model").String())
 }
 
+func TestParseGatewayRequest_TrimsModelWhitespaceForAllProtocols(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol string
+		model    string
+		want     string
+	}{
+		{name: "anthropic leading space", protocol: domain.PlatformAnthropic, model: " claude-opus-4-8", want: "claude-opus-4-8"},
+		{name: "anthropic trailing space", protocol: domain.PlatformAnthropic, model: "claude-opus-4-8 ", want: "claude-opus-4-8"},
+		{name: "anthropic spaces around long context suffix", protocol: domain.PlatformAnthropic, model: " claude-opus-4-8[1m] ", want: "claude-opus-4-8"},
+		{name: "anthropic space before long context suffix", protocol: domain.PlatformAnthropic, model: "claude-opus-4-8 [1m]", want: "claude-opus-4-8"},
+		{name: "responses leading space", protocol: "responses", model: " gpt-5.6-sol", want: "gpt-5.6-sol"},
+		{name: "responses keeps long context suffix", protocol: "responses", model: " claude-opus-4-8[1m] ", want: "claude-opus-4-8[1m]"},
+		{name: "gemini trailing space", protocol: domain.PlatformGemini, model: "gemini-2.5-pro ", want: "gemini-2.5-pro"},
+		{name: "whitespace only becomes empty", protocol: domain.PlatformAnthropic, model: "   ", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(fmt.Sprintf(`{"model":%q,"input":"hi"}`, tt.model))
+			parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), tt.protocol)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, parsed.Model)
+			require.Equal(t, tt.want, gjson.GetBytes(parsed.Body.Bytes(), "model").String(), "转发给上游的请求体也要用同一个名字")
+			require.Equal(t, "hi", gjson.GetBytes(parsed.Body.Bytes(), "input").String())
+		})
+	}
+}
+
 func TestParseGatewayRequest_ResponsesInput(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.1","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}`)
 	parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), "responses")

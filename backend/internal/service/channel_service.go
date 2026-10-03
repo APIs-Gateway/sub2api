@@ -605,7 +605,9 @@ func resolveMapping(lk *channelLookup, groupID int64, model string) ChannelMappi
 		BillingModelSource: lk.channel.BillingModelSource,
 	}
 
-	modelLower := strings.ToLower(model)
+	// 与定价查找（lookupPricingAcrossPlatforms 内的 normalizeChannelPricingModelName）一样先去首尾空白，
+	// 否则带空白的名字会绕过渠道级模型映射，按未映射的名字走后面的计费。
+	modelLower := strings.ToLower(strings.TrimSpace(model))
 	if mapped := lookupMappingAcrossPlatforms(lk.cache, groupID, lk.platform, modelLower); mapped != "" {
 		result.MappedModel = mapped
 		result.Mapped = true
