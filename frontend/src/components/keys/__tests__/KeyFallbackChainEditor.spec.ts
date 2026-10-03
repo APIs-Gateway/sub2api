@@ -182,7 +182,7 @@ describe('KeyFallbackChainEditor', () => {
   it('充值倍率为 1（free 站）时跟着全站口径显示美元', async () => {
     setRecharge(1)
     const w = await mountEditor()
-    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 $1.875 / 输出 $15.000')
+    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 $1.88 / 输出 $15.00')
     expect(w.text()).not.toContain('¥')
   })
 
@@ -197,7 +197,18 @@ describe('KeyFallbackChainEditor', () => {
     const chain = makeChain()
     chain.items[1].reference_price = { priced: true, input_usd_per_mtok: 1.875, output_usd_per_mtok: 15 }
     const w = await mountEditor(chain)
-    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 $1.875 / 输出 $15.000')
+    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 $1.88 / 输出 $15.00')
+  })
+
+  it('美元价沿用全站统一金额规则：≥ 1 两位小数，< 1 取 4 位有效数字，不固定 3 位小数', async () => {
+    setRecharge(1)
+    const chain = makeChain()
+    // 0.0375 固定 3 位会被写成 $0.038；12.3456 固定 3 位会是 $12.346。
+    chain.items[1].reference_price = { priced: true, input_usd_per_mtok: 0.0375, output_usd_per_mtok: 12.3456 }
+    chain.items[2].reference_price = { priced: true, input_usd_per_mtok: 0.5, output_usd_per_mtok: 1234.5 }
+    const w = await mountEditor(chain)
+    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 $0.0375 / 输出 $12.35')
+    expect(w.get('[data-test="fallback-item-22"] [data-test="price"]').text()).toBe('输入 $0.50 / 输出 $1,234.50')
   })
 
   it('总开关关着（enabled=false）时编辑器照常工作，不出现任何开关提示', async () => {
@@ -426,7 +437,7 @@ describe('KeyFallbackChainEditor', () => {
     await flushPromises()
   })
 
-  it('priced=true 但缺美元价时按「未定价」显示，不出现 $0.000', async () => {
+  it('priced=true 但缺美元价时按「未定价」显示，不出现 $0.00', async () => {
     const chain = makeChain()
     chain.items[1].reference_price = { priced: true }
     const w = await mountEditor(chain)

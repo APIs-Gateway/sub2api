@@ -462,6 +462,7 @@ const PriceLine = defineComponent({
       const cls = ['text-xs tabular-nums text-gray-500 dark:text-gray-400', p.bare ? 'block' : 'mt-1.5']
       // 人民币用服务端给的余额价口径（cny），不在前端自己乘倍率或汇率；
       // 全站切到美元（含 free 站）或没有 cny 时，显示同一价格的美元口径。
+      // 两条路径都走全站统一的金额规则（≥ 1 两位小数，< 1 取 4 位有效数字），不自己定小数位。
       // 哪条路径要的字段齐全才走哪条：人民币只看 cny，美元只看两个 usd 字段。
       let input: string | null = null
       let output: string | null = null
@@ -470,8 +471,8 @@ const PriceLine = defineComponent({
           input = formatFiat(price.cny.input_per_mtok)
           output = formatFiat(price.cny.output_per_mtok)
         } else if (typeof price.input_usd_per_mtok === 'number' && typeof price.output_usd_per_mtok === 'number') {
-          input = formatUsd(price.input_usd_per_mtok, 3)
-          output = formatUsd(price.output_usd_per_mtok, 3)
+          input = formatUsd(price.input_usd_per_mtok)
+          output = formatUsd(price.output_usd_per_mtok)
         }
       }
       if (input === null || output === null) {
