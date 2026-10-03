@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -37,12 +38,13 @@ type wsInflightProviderTurn struct {
 	release        chan struct{}
 }
 type wsInflightProvider struct {
-	turns  chan wsInflightProviderTurn
-	stop   chan struct{}
-	calls  atomic.Int64
-	replay atomic.Bool
-	fault  atomic.Value
-	server *httptest.Server
+	turns    chan wsInflightProviderTurn
+	stop     chan struct{}
+	stopOnce sync.Once
+	calls    atomic.Int64
+	replay   atomic.Bool
+	fault    atomic.Value
+	server   *httptest.Server
 }
 
 func (p *wsInflightProvider) faultMode() string {
@@ -162,7 +164,7 @@ func newWSInflightProvider(t *testing.T) *wsInflightProvider {
 		}
 		_, _ = fmt.Fprintf(w, "data: %s\n\n", wsInflightCompleted(responseNumber, body, strings.Contains(string(body), "image_generation") || strings.HasPrefix(responseModel, "gpt-image"), responseModel))
 	}))
-	t.Cleanup(func() { close(p.stop); p.server.Close() })
+	t.Cleanup(func() { p.stopOnce.Do(func() { close(p.stop) }); p.server.Close() })
 	return p
 }
 func wsInflightCompleted(n int64, body []byte, image bool, model string) []byte {
@@ -242,7 +244,7 @@ func newWSInflightFixture(t *testing.T, mode string, source string, prices map[s
 	logger.InitBootstrap()
 	gin.SetMode(gin.TestMode)
 	ctx := context.Background()
-	client := testEntClient(t)
+	client := inflightTestEntClient(t)
 	rdb := testRedis(t)
 	p := newWSInflightProvider(t)
 	cfg := &config.Config{}
@@ -291,18 +293,18 @@ func newWSInflightFixture(t *testing.T, mode string, source string, prices map[s
 		}
 		channel.ModelPricing = append(channel.ModelPricing, pricing)
 	}
-	channelRepo := NewChannelRepository(integrationDB)
+	channelRepo := NewChannelRepository(inflightTestDB(t))
 	require.NoError(t, channelRepo.Create(ctx, channel))
-	groups := NewGroupRepository(client, integrationDB)
+	groups := NewGroupRepository(client, inflightTestDB(t))
 	channels := service.NewChannelService(channelRepo, groups, nil, nil, nil)
 	account := mustCreateAccount(t, client, &service.Account{Name: "ws-funding-" + uuid.NewString(), Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Concurrency: 10, Credentials: map[string]any{"api_key": "sk-provider", "base_url": p.server.URL}, Extra: map[string]any{"openai_apikey_responses_websockets_v2_enabled": true, "openai_apikey_responses_websockets_v2_mode": ingress}})
 	schedulerCache := NewSchedulerCache(rdb)
-	accounts := NewAccountRepository(client, integrationDB, schedulerCache)
+	accounts := NewAccountRepository(client, inflightTestDB(t), schedulerCache)
 	require.NoError(t, accounts.BindGroups(ctx, account.ID, []int64{group.ID}))
-	users := NewUserRepository(client, integrationDB)
+	users := NewUserRepository(client, inflightTestDB(t))
 	subs := NewUserSubscriptionRepository(client)
-	rates := NewUserGroupRateRepository(integrationDB)
-	keys := NewAPIKeyRepository(client, integrationDB)
+	rates := NewUserGroupRateRepository(inflightTestDB(t))
+	keys := NewAPIKeyRepository(client, inflightTestDB(t))
 	saved := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, GroupID: &group.ID, Key: "sk-ws-" + uuid.NewString()})
 	apiKeys := service.NewAPIKeyService(keys, users, groups, subs, rates, NewAPIKeyCache(rdb), cfg)
 	key, err := apiKeys.GetByKey(ctx, saved.Key)
@@ -311,12 +313,16 @@ func newWSInflightFixture(t *testing.T, mode string, source string, prices map[s
 	billing := service.NewBillingCacheService(NewBillingCache(rdb), users, subs, keys, nil, rates, cfg, nil, settings)
 	t.Cleanup(billing.Stop)
 	concurrency := service.NewConcurrencyService(NewConcurrencyCache(rdb, 15, 30))
-	snapshots := service.NewSchedulerSnapshotService(schedulerCache, NewSchedulerOutboxRepository(integrationDB), accounts, groups, cfg)
+	snapshots := service.NewSchedulerSnapshotService(schedulerCache, NewSchedulerOutboxRepository(inflightTestDB(t)), accounts, groups, cfg)
+	t.Cleanup(snapshots.Stop)
 	billService := service.NewBillingService(cfg, nil)
 	httpClient := &http.Client{}
-	realBilling := NewUsageBillingRepository(client, integrationDB)
+	t.Cleanup(httpClient.CloseIdleConnections)
+	realBilling := NewUsageBillingRepository(client, inflightTestDB(t))
 	observedBilling := &wsInflightBillingObserver{UsageBillingRepository: realBilling, BillingInflightRepository: realBilling.(service.BillingInflightRepository), commands: make(chan service.UsageBillingCommand, 16)}
-	gateway := service.NewOpenAIGatewayService(accounts, NewUsageLogRepository(client, integrationDB), observedBilling, users, subs, rates, NewGatewayCache(rdb), cfg, snapshots, concurrency, billService, service.NewRateLimitService(accounts, nil, cfg, nil, nil), billing, wsInflightHTTPTransport{client: httpClient}, service.NewDeferredService(accounts, nil, time.Minute), nil, nil, service.NewModelPricingResolver(channels, billService), channels, nil, settings, nil, nil, groups)
+	deferred := service.NewDeferredService(accounts, nil, time.Minute)
+	t.Cleanup(deferred.Stop)
+	gateway := service.NewOpenAIGatewayService(accounts, NewUsageLogRepository(client, inflightTestDB(t)), observedBilling, users, subs, rates, NewGatewayCache(rdb), cfg, snapshots, concurrency, billService, service.NewRateLimitService(accounts, nil, cfg, nil, nil), billing, wsInflightHTTPTransport{client: httpClient}, deferred, nil, nil, service.NewModelPricingResolver(channels, billService), channels, nil, settings, nil, nil, groups)
 	t.Cleanup(gateway.CloseOpenAIWSPool)
 	pool := service.NewUsageRecordWorkerPoolWithOptions(service.UsageRecordWorkerPoolOptions{WorkerCount: 1, QueueSize: 16, TaskTimeout: 10 * time.Second})
 	t.Cleanup(pool.Stop)
@@ -334,6 +340,7 @@ func newWSInflightFixture(t *testing.T, mode string, source string, prices map[s
 	router.POST("/v1/responses", handler.Responses)
 	server := httptest.NewServer(router)
 	t.Cleanup(func() {
+		p.stopOnce.Do(func() { close(p.stop) })
 		server.Close()
 		if wsStarted.Load() {
 			select {
@@ -376,21 +383,21 @@ func wsInflightReadCompleted(t *testing.T, conn *coderws.Conn) {
 func (f *wsInflightFixture) held(t *testing.T) float64 {
 	t.Helper()
 	var amount float64
-	require.NoError(t, integrationDB.QueryRow(`SELECT COALESCE(SUM(amount),0) FROM billing_inflight_leases WHERE user_id=$1 AND expires_at>clock_timestamp()`, f.userID).Scan(&amount))
+	require.NoError(t, inflightTestDB(t).QueryRow(`SELECT COALESCE(SUM(amount),0) FROM billing_inflight_leases WHERE user_id=$1 AND expires_at>clock_timestamp()`, f.userID).Scan(&amount))
 	return amount
 }
 func (f *wsInflightFixture) waitUsage(t *testing.T, n int) {
 	t.Helper()
 	require.Eventually(t, func() bool {
 		var count int
-		err := integrationDB.QueryRow(`SELECT COUNT(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&count)
+		err := inflightTestDB(t).QueryRow(`SELECT COUNT(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&count)
 		return err == nil && count == n && f.held(t) == 0
 	}, 10*time.Second, 20*time.Millisecond)
 }
 func (f *wsInflightFixture) wallet(t *testing.T) float64 {
 	t.Helper()
 	var amount float64
-	require.NoError(t, integrationDB.QueryRow(`SELECT balance FROM users WHERE id=$1`, f.userID).Scan(&amount))
+	require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.userID).Scan(&amount))
 	return amount
 }
 func (f *wsInflightFixture) denyConcurrentHTTP(t *testing.T, model string) {
@@ -413,7 +420,7 @@ func TestBillingInflightWS_RealTurnReservesBillsOnceAndReleases(t *testing.T) {
 			conn := f.dial(t)
 			for turn := 1; turn <= 2; turn++ {
 				if turn == 2 {
-					_, err := integrationDB.Exec(`UPDATE users SET balance=balance+0.5 WHERE id=$1`, f.userID)
+					_, err := inflightTestDB(t).Exec(`UPDATE users SET balance=balance+0.5 WHERE id=$1`, f.userID)
 					require.NoError(t, err)
 					require.NoError(t, f.billing.InvalidateUserBalance(context.Background(), f.userID))
 				}
@@ -441,7 +448,7 @@ func TestBillingInflightWS_LocalBridgePrewarmDoesNotReserveOrBill(t *testing.T) 
 	require.Zero(t, f.held(t))
 	require.InDelta(t, .75, f.wallet(t), 1e-9)
 	var count int
-	require.NoError(t, integrationDB.QueryRow(`SELECT COUNT(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&count))
+	require.NoError(t, inflightTestDB(t).QueryRow(`SELECT COUNT(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&count))
 	require.Zero(t, count)
 	wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","input":"real turn"}`)
 	pending := f.provider.next(t)
@@ -470,7 +477,7 @@ func TestBillingInflightWS_LaterModelUsesActualBillingSource(t *testing.T) {
 					close(first.release)
 					wsInflightReadCompleted(t, conn)
 					f.waitUsage(t, 1)
-					_, err := integrationDB.Exec(`UPDATE users SET balance=balance+0.5 WHERE id=$1`, f.userID)
+					_, err := inflightTestDB(t).Exec(`UPDATE users SET balance=balance+0.5 WHERE id=$1`, f.userID)
 					require.NoError(t, err)
 					require.NoError(t, f.billing.InvalidateUserBalance(context.Background(), f.userID))
 					secondPayload := `{"type":"response.create","model":"gpt-5.1","input":"later B"}`
@@ -494,7 +501,7 @@ func TestBillingInflightWS_LaterModelUsesActualBillingSource(t *testing.T) {
 					f.waitUsage(t, 2)
 					require.InDelta(t, .75-expected, f.wallet(t), 1e-9)
 					var amount float64
-					require.NoError(t, integrationDB.QueryRow(`SELECT actual_cost FROM usage_logs WHERE user_id=$1 ORDER BY id DESC LIMIT 1`, f.userID).Scan(&amount))
+					require.NoError(t, inflightTestDB(t).QueryRow(`SELECT actual_cost FROM usage_logs WHERE user_id=$1 ORDER BY id DESC LIMIT 1`, f.userID).Scan(&amount))
 					require.InDelta(t, expected, amount, 1e-9)
 				})
 			}
@@ -535,7 +542,7 @@ func TestBillingInflightWS_ImageToolsMatchExistingSettlementWhenTextIsFree(t *te
 			f.waitUsage(t, 2)
 			require.InDelta(t, .75-expectedCost, f.wallet(t), 1e-9, "actual image follows existing settlement")
 			var count int
-			require.NoError(t, integrationDB.QueryRow(`SELECT image_count FROM usage_logs WHERE user_id=$1 ORDER BY id DESC LIMIT 1`, f.userID).Scan(&count))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT image_count FROM usage_logs WHERE user_id=$1 ORDER BY id DESC LIMIT 1`, f.userID).Scan(&count))
 			require.Equal(t, expectedImageCount, count)
 		})
 	}
@@ -571,12 +578,12 @@ func TestBillingInflightWS_UnknownBridgeProcessingRetainsBoundedHold(t *testing.
 			require.InDelta(t, .75, f.wallet(t), 1e-9)
 			f.denyConcurrentHTTP(t, "gpt-5.4")
 			var logs, dedup int
-			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&logs))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&logs))
 			require.Zero(t, logs)
-			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
 			require.Zero(t, dedup)
 			var seconds float64
-			require.NoError(t, integrationDB.QueryRow(`SELECT EXTRACT(EPOCH FROM MAX(expires_at)-clock_timestamp()) FROM billing_inflight_leases WHERE user_id=$1 AND phase='attempt'`, f.userID).Scan(&seconds))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT EXTRACT(EPOCH FROM MAX(expires_at)-clock_timestamp()) FROM billing_inflight_leases WHERE user_id=$1 AND phase='attempt'`, f.userID).Scan(&seconds))
 			require.Greater(t, seconds, 850.0)
 			require.LessOrEqual(t, seconds, 900.0)
 		})
@@ -617,7 +624,7 @@ func TestBillingInflightWS_QueuedTurnsCannotConsumeAnotherAttempt(t *testing.T) 
 			released = true
 			require.Eventually(t, func() bool { return f.wallet(t) == .6875 && f.held(t) == .5 }, 5*time.Second, 20*time.Millisecond, "old queued task must consume only its immutable obligation")
 			var oldPending int
-			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM billing_inflight_leases WHERE id=$1 AND phase='pending'`, firstCommand.InflightObligationID).Scan(&oldPending))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM billing_inflight_leases WHERE id=$1 AND phase='pending'`, firstCommand.InflightObligationID).Scan(&oldPending))
 			require.Zero(t, oldPending)
 			close(second.release)
 			wsInflightReadCompleted(t, conn)
@@ -657,9 +664,9 @@ func TestBillingInflightWS_ProviderReplayDoesNotBillOrRetainAnExtraObligation(t 
 			require.NotEqual(t, firstCommand.InflightObligationID, secondCommand.InflightObligationID)
 			require.InDelta(t, .25, f.wallet(t), 1e-9, "same provider response id and payload must bill once")
 			var logs, dedup int
-			require.NoError(t, integrationDB.QueryRow(`SELECT COUNT(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&logs))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT COUNT(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&logs))
 			require.Equal(t, 1, logs)
-			require.NoError(t, integrationDB.QueryRow(`SELECT COUNT(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT COUNT(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
 			require.Equal(t, 1, dedup)
 		})
 	}
@@ -690,7 +697,7 @@ func TestBillingInflightWS_CanonicalBridgeAuthRefusalReleasesItsTurn(t *testing.
 			wsInflightReadCompleted(t, conn)
 			f.waitUsage(t, 1)
 			require.InDelta(t, .25, f.wallet(t), 1e-9)
-			_, err := integrationDB.Exec(`UPDATE users SET balance=balance+0.5 WHERE id=$1`, f.userID)
+			_, err := inflightTestDB(t).Exec(`UPDATE users SET balance=balance+0.5 WHERE id=$1`, f.userID)
 			require.NoError(t, err)
 			require.NoError(t, f.billing.InvalidateUserBalance(context.Background(), f.userID))
 			f.provider.fault.Store(failure)
@@ -712,7 +719,7 @@ func TestBillingInflightWS_CanonicalBridgeAuthRefusalReleasesItsTurn(t *testing.
 			require.InDelta(t, .75, f.wallet(t), 1e-9)
 			require.EqualValues(t, 1, f.billingRepo.calls.Load(), "rejected turn must not add a billing command")
 			var logs int
-			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&logs))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&logs))
 			require.Equal(t, 1, logs, "only the preceding successful turn has usage")
 			f.provider.fault.Store("")
 			done := make(chan *httptest.ResponseRecorder, 1)
@@ -758,14 +765,14 @@ func TestBillingInflightWS_BlockedModelMismatchAuditDoesNotStrandFunding(t *test
 			require.InDelta(t, .25, f.wallet(t), 1e-9, "only accepted response is billed")
 			var audit, normal, dedup int
 			var auditCost float64
-			require.NoError(t, integrationDB.QueryRow(`SELECT count(*),COALESCE(sum(actual_cost),0) FROM usage_logs WHERE user_id=$1 AND upstream_model_mismatch=true`, f.userID).Scan(&audit, &auditCost))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*),COALESCE(sum(actual_cost),0) FROM usage_logs WHERE user_id=$1 AND upstream_model_mismatch=true`, f.userID).Scan(&audit, &auditCost))
 			require.Equal(t, 1, audit)
 			require.Zero(t, auditCost)
-			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1 AND upstream_model_mismatch=false`, f.userID).Scan(&normal))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1 AND upstream_model_mismatch=false`, f.userID).Scan(&normal))
 			require.Equal(t, 1, normal)
-			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
 			require.Equal(t, 1, dedup, "zero-cost audit must not claim settlement idempotency")
-			_, err := integrationDB.Exec(`UPDATE users SET balance=balance+0.5 WHERE id=$1`, f.userID)
+			_, err := inflightTestDB(t).Exec(`UPDATE users SET balance=balance+0.5 WHERE id=$1`, f.userID)
 			require.NoError(t, err)
 			require.NoError(t, f.billing.InvalidateUserBalance(context.Background(), f.userID))
 			done := make(chan *httptest.ResponseRecorder, 1)
@@ -803,7 +810,7 @@ func TestBillingInflightWS_InitialImageModelInheritanceRemainsPaid(t *testing.T)
 			for turn := 1; turn <= 2; turn++ {
 				payload := `{"type":"response.create","model":"gpt-image-2","input":"draw cat","tools":[{"type":"image_generation","model":"gpt-image-2","size":"1024x1024"}]}`
 				if turn == 2 {
-					_, err := integrationDB.Exec(`UPDATE users SET balance=balance+0.5 WHERE id=$1`, f.userID)
+					_, err := inflightTestDB(t).Exec(`UPDATE users SET balance=balance+0.5 WHERE id=$1`, f.userID)
 					require.NoError(t, err)
 					require.NoError(t, f.billing.InvalidateUserBalance(context.Background(), f.userID))
 					payload = `{"type":"response.create","input":"draw dog"}`
@@ -819,7 +826,7 @@ func TestBillingInflightWS_InitialImageModelInheritanceRemainsPaid(t *testing.T)
 				require.InDelta(t, .25, f.wallet(t), 1e-9)
 			}
 			var images int
-			require.NoError(t, integrationDB.QueryRow(`SELECT sum(image_count) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&images))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT sum(image_count) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&images))
 			require.Equal(t, 2, images)
 			require.EqualValues(t, 2, f.billingRepo.calls.Load())
 		})
@@ -842,8 +849,8 @@ func TestBillingInflightWS_PassthroughBaselineMismatchRemainsNormalSettlement(t 
 	require.InDelta(t, .25, f.wallet(t), 1e-9)
 	require.EqualValues(t, 1, f.provider.calls.Load(), "v2 baseline does not retry model mismatch")
 	var audit, dedup int
-	require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1 AND upstream_model_mismatch=true`, f.userID).Scan(&audit))
+	require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1 AND upstream_model_mismatch=true`, f.userID).Scan(&audit))
 	require.Zero(t, audit)
-	require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+	require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
 	require.Equal(t, 1, dedup)
 }

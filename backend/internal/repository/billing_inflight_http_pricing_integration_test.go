@@ -78,10 +78,10 @@ func TestBillingInflightHTTP_RealBlockedMismatchAuditDoesNotStackFunding(t *test
 	require.EqualValues(t, 1, f.billingRepo.calls.Load())
 	var audit int
 	var cost float64
-	require.NoError(t, integrationDB.QueryRow(`SELECT count(*),COALESCE(sum(actual_cost),0) FROM usage_logs WHERE user_id=$1 AND upstream_model_mismatch=true`, f.userID).Scan(&audit, &cost))
+	require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*),COALESCE(sum(actual_cost),0) FROM usage_logs WHERE user_id=$1 AND upstream_model_mismatch=true`, f.userID).Scan(&audit, &cost))
 	require.Equal(t, 1, audit)
 	require.Zero(t, cost)
-	ok, err := NewUsageBillingRepository(testEntClient(t), integrationDB).(service.BillingInflightRepository).ReserveBillingInflight(context.Background(), f.userID, uuid.NewString(), .25, false, time.Minute)
+	ok, err := NewUsageBillingRepository(inflightTestEntClient(t), inflightTestDB(t)).(service.BillingInflightRepository).ReserveBillingInflight(context.Background(), f.userID, uuid.NewString(), .25, false, time.Minute)
 	require.NoError(t, err)
 	require.True(t, ok, "third owner sees only settled cost, not a stranded mismatch estimate")
 }
@@ -94,7 +94,7 @@ func TestBillingInflightHTTP_RealFreeTextAndPaidImageFunding(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			f := newWSInflightFixture(t, "bridge", service.BillingModelSourceUpstream, map[string]float64{"gpt-5.4": 0, "gpt-image-2": .5})
-			repo := NewUsageBillingRepository(testEntClient(t), integrationDB).(service.BillingInflightRepository)
+			repo := NewUsageBillingRepository(inflightTestEntClient(t), inflightTestDB(t)).(service.BillingInflightRepository)
 			owner := uuid.NewString()
 			amount := .75
 			if exclusive {
@@ -111,7 +111,7 @@ func TestBillingInflightHTTP_RealFreeTextAndPaidImageFunding(t *testing.T) {
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 			require.Eventually(t, func() bool {
 				var count int
-				err := integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&count)
+				err := inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&count)
 				return err == nil && count == 1 && f.held(t) == amount
 			}, 10*time.Second, 20*time.Millisecond, "free completion keeps the separate paid/exclusive owner's hold intact")
 			require.InDelta(t, .75, f.wallet(t), 1e-9)
@@ -136,7 +136,7 @@ func TestBillingInflightHTTP_RealPaidCardSharesAllWindowFunding(t *testing.T) {
 	for _, limitingWindow := range []string{"daily", "weekly", "monthly"} {
 		t.Run(limitingWindow, func(t *testing.T) {
 			f := newWSInflightFixture(t, "bridge", service.BillingModelSourceUpstream, map[string]float64{"gpt-5.4": .5})
-			_, err := integrationDB.Exec(`UPDATE users SET balance=0 WHERE id=$1`, f.userID)
+			_, err := inflightTestDB(t).Exec(`UPDATE users SET balance=0 WHERE id=$1`, f.userID)
 			require.NoError(t, err)
 			d, w, m := 10.0, 100.0, 1000.0
 			switch limitingWindow {
@@ -147,7 +147,7 @@ func TestBillingInflightHTTP_RealPaidCardSharesAllWindowFunding(t *testing.T) {
 			case "monthly":
 				m = .75
 			}
-			admissionCard(t, testEntClient(t), f.userID, 0, d, w, m, 0, 0, 0)
+			admissionCard(t, inflightTestEntClient(t), f.userID, 0, d, w, m, 0, 0, 0)
 			require.NoError(t, f.billing.InvalidateUserBalance(context.Background(), f.userID))
 			done := inflightRealResponsesRequest(f, `{"model":"gpt-5.4","input":"card paid request"}`)
 			turn := f.provider.next(t)
@@ -162,7 +162,7 @@ func TestBillingInflightHTTP_RealPaidCardSharesAllWindowFunding(t *testing.T) {
 			require.Zero(t, f.wallet(t))
 			require.Zero(t, f.held(t))
 			var du, wu, mu float64
-			require.NoError(t, integrationDB.QueryRow(`SELECT daily_usage_usd,weekly_usage_usd,monthly_usage_usd FROM user_subscriptions WHERE user_id=$1 AND status='active'`, f.userID).Scan(&du, &wu, &mu))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT daily_usage_usd,weekly_usage_usd,monthly_usage_usd FROM user_subscriptions WHERE user_id=$1 AND status='active'`, f.userID).Scan(&du, &wu, &mu))
 			require.InDelta(t, .5, du, 1e-9)
 			require.InDelta(t, .5, wu, 1e-9)
 			require.InDelta(t, .5, mu, 1e-9)

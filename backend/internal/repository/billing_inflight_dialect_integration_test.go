@@ -22,12 +22,12 @@ func TestBillingInflightPostgres_MigrationRepeatAndNonPostgresSkip(t *testing.T)
 	require.NoError(t, err)
 	source := fstest.MapFS{name: &fstest.MapFile{Data: data}}
 	t.Run("postgres_existing_schema_repeat", func(t *testing.T) {
-		require.NoError(t, applyMigrationsFS(ctx, integrationDB, source))
-		require.NoError(t, applyMigrationsFS(ctx, integrationDB, source))
+		require.NoError(t, applyMigrationsFS(ctx, inflightTestDB(t), source))
+		require.NoError(t, applyMigrationsFS(ctx, inflightTestDB(t), source))
 		var n int
-		require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM schema_migrations WHERE filename=$1`, name).Scan(&n))
+		require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM schema_migrations WHERE filename=$1`, name).Scan(&n))
 		require.Equal(t, 1, n)
-		require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='billing_inflight_leases'`).Scan(&n))
+		require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='billing_inflight_leases'`).Scan(&n))
 		require.Equal(t, 1, n)
 	})
 	t.Run("sqlite_only_new_migration", func(t *testing.T) {

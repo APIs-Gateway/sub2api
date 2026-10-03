@@ -71,12 +71,13 @@ type inflightHTTPFixture struct {
 	openAIService *service.OpenAIGatewayService
 	pool          *service.UsageRecordWorkerPool
 	upstream      *inflightHTTPUpstream
+	requests      sync.WaitGroup
 }
 
 func newInflightHTTPFixture(t *testing.T, platform, response, contentType string, poolOptions ...service.UsageRecordWorkerPoolOptions) *inflightHTTPFixture {
 	t.Helper()
 	logger.InitBootstrap()
-	client := testEntClient(t)
+	client := inflightTestEntClient(t)
 	rdb := testRedis(t)
 	cfg := &config.Config{}
 	cfg.Default.RateMultiplier = 1
@@ -89,19 +90,19 @@ func newInflightHTTPFixture(t *testing.T, platform, response, contentType string
 	group.Hydrated = true
 	group.AllowImageGeneration = true
 	group.AllowMessagesDispatch = true
-	_, err := integrationDB.Exec(`UPDATE groups SET allow_image_generation=true, allow_messages_dispatch=true WHERE id=$1`, group.ID)
+	_, err := inflightTestDB(t).Exec(`UPDATE groups SET allow_image_generation=true, allow_messages_dispatch=true WHERE id=$1`, group.ID)
 	require.NoError(t, err)
 	key := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, GroupID: &group.ID, Key: "sk-" + uuid.NewString(), Name: "inflight-http"})
 	key.User = user
 	key.Group = group
 	schedulerCache := NewSchedulerCache(rdb)
-	accounts := NewAccountRepository(client, integrationDB, schedulerCache)
+	accounts := NewAccountRepository(client, inflightTestDB(t), schedulerCache)
 	account := mustCreateAccount(t, client, &service.Account{Name: uuid.NewString(), Platform: platform, Type: service.AccountTypeAPIKey, Concurrency: 100, Credentials: map[string]any{"api_key": "local-fixture", "base_url": "https://upstream.test", "pool_mode": true, "pool_mode_retry_count": 0}, Extra: map[string]any{"privacy_mode": service.PrivacyModeTrainingOff, "openai_responses_supported": true}})
 	require.NoError(t, accounts.BindGroups(context.Background(), account.ID, []int64{group.ID}))
-	groups := NewGroupRepository(client, integrationDB)
-	users := NewUserRepository(client, integrationDB)
+	groups := NewGroupRepository(client, inflightTestDB(t))
+	users := NewUserRepository(client, inflightTestDB(t))
 	subs := NewUserSubscriptionRepository(client)
-	rates := NewUserGroupRateRepository(integrationDB)
+	rates := NewUserGroupRateRepository(inflightTestDB(t))
 	cache := NewGatewayCache(rdb)
 	billingCacheRepo := NewBillingCache(rdb)
 	require.NoError(t, billingCacheRepo.SetUserBalance(context.Background(), user.ID, 100))
@@ -110,15 +111,18 @@ func newInflightHTTPFixture(t *testing.T, platform, response, contentType string
 	t.Cleanup(billingCache.Stop)
 	concurrency := service.NewConcurrencyService(NewConcurrencyCache(rdb, 15, 30))
 	snapshot := service.NewSchedulerSnapshotService(schedulerCache, nil, accounts, groups, cfg)
+	t.Cleanup(snapshot.Stop)
 	billing := service.NewBillingService(cfg, nil)
 	rateLimit := service.NewRateLimitService(accounts, nil, cfg, nil, nil)
-	usage := NewUsageLogRepository(client, integrationDB)
-	atomicBilling := NewUsageBillingRepository(client, integrationDB)
+	usage := NewUsageLogRepository(client, inflightTestDB(t))
+	atomicBilling := NewUsageBillingRepository(client, inflightTestDB(t))
 	upstream := &inflightHTTPUpstream{started: make(chan struct{}), release: make(chan struct{}), response: response, contentType: contentType}
 	deferred := service.NewDeferredService(accounts, nil, time.Minute)
+	t.Cleanup(deferred.Stop)
 	gatewaySvc := service.NewGatewayService(accounts, groups, usage, atomicBilling, users, subs, rates, cache, cfg, snapshot, concurrency, billing, rateLimit, billingCache, nil, upstream, deferred, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	openAISvc := service.NewOpenAIGatewayService(accounts, usage, atomicBilling, users, subs, rates, cache, cfg, snapshot, concurrency, billing, rateLimit, billingCache, upstream, deferred, nil, nil, nil, nil, nil, nil, nil, nil, groups)
-	keyService := service.NewAPIKeyService(NewAPIKeyRepository(client, integrationDB), users, groups, subs, rates, nil, cfg)
+	t.Cleanup(openAISvc.CloseOpenAIWSPool)
+	keyService := service.NewAPIKeyService(NewAPIKeyRepository(client, inflightTestDB(t)), users, groups, subs, rates, nil, cfg)
 	gemini := service.NewGeminiMessagesCompatService(accounts, groups, cache, snapshot, nil, rateLimit, upstream, nil, cfg)
 	options := service.UsageRecordWorkerPoolOptions{WorkerCount: 1, QueueSize: 16, TaskTimeout: 5 * time.Second}
 	if len(poolOptions) > 0 {
@@ -126,14 +130,34 @@ func newInflightHTTPFixture(t *testing.T, platform, response, contentType string
 	}
 	pool := service.NewUsageRecordWorkerPoolWithOptions(options)
 	t.Cleanup(pool.Stop)
-	return &inflightHTTPFixture{user: user, key: key, pool: pool, upstream: upstream, openAIService: openAISvc,
+	fixture := &inflightHTTPFixture{user: user, key: key, pool: pool, upstream: upstream, openAIService: openAISvc,
 		gateway: userhandler.NewGatewayHandler(gatewaySvc, gemini, nil, nil, nil, concurrency, billingCache, nil, nil, pool, nil, nil, nil, cfg, nil, openAISvc),
 		openAI:  userhandler.NewOpenAIGatewayHandler(openAISvc, concurrency, billingCache, keyService, pool, nil, nil, nil, cfg)}
+	t.Cleanup(func() {
+		select {
+		case <-upstream.release:
+		default:
+			close(upstream.release)
+		}
+		done := make(chan struct{})
+		go func() { fixture.requests.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			t.Error("HTTP handlers did not stop before isolated database cleanup")
+		}
+	})
+	return fixture
 }
 func (f *inflightHTTPFixture) request(body, path, modelAction string, serve func(*gin.Context)) *httptest.ResponseRecorder {
+	f.requests.Add(1)
+	defer f.requests.Done()
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	c.Request = c.Request.WithContext(ctx)
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.Group, f.key.Group))
 	c.Set(string(middleware.ContextKeyAPIKey), f.key)
@@ -175,7 +199,7 @@ func TestBillingInflightHTTP_ConcurrentAdmissionAndBillOnce(t *testing.T) {
 			if tc.name == "openai_images" {
 				// This fixture returns native Images JSON. Responses-capable accounts
 				// deliberately route image requests through the Responses bridge.
-				_, err := integrationDB.Exec(`UPDATE accounts SET extra = extra || '{"openai_responses_supported":false}'::jsonb WHERE id IN (SELECT account_id FROM account_groups WHERE group_id=$1)`, *f.key.GroupID)
+				_, err := inflightTestDB(t).Exec(`UPDATE accounts SET extra = extra || '{"openai_responses_supported":false}'::jsonb WHERE id IN (SELECT account_id FROM account_groups WHERE group_id=$1)`, *f.key.GroupID)
 				require.NoError(t, err)
 			}
 			firstDone := make(chan *httptest.ResponseRecorder, 1)
@@ -202,8 +226,8 @@ func TestBillingInflightHTTP_ConcurrentAdmissionAndBillOnce(t *testing.T) {
 			f.pool.Stop()
 			t.Logf("worker stats=%+v", f.pool.Stats())
 			var logs, dedup int
-			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs))
-			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
 			require.Equal(t, 1, logs, "one usage record for the dispatched request")
 			require.Equal(t, 1, dedup, "one authoritative settlement for the dispatched request")
 			require.InDelta(t, 0, inflightHeld(t, f.user.ID), 1e-8, "settlement and final handler release consume all holds")
@@ -223,10 +247,10 @@ func TestBillingInflightHTTP_StaleWalletPreservesPreciseCardDenials(t *testing.T
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newInflightHTTPFixture(t, service.PlatformAnthropic, inflightAnthropicJSON, "application/json")
-			_, err := integrationDB.Exec(`UPDATE users SET balance=0 WHERE id=$1`, f.user.ID)
+			_, err := inflightTestDB(t).Exec(`UPDATE users SET balance=0 WHERE id=$1`, f.user.ID)
 			require.NoError(t, err)
 			if tc.name != "wallet" {
-				admissionCard(t, testEntClient(t), f.user.ID, 0, 1, 10, 20, tc.daily, tc.weekly, tc.monthly)
+				admissionCard(t, inflightTestEntClient(t), f.user.ID, 0, 1, 10, 20, tc.daily, tc.weekly, tc.monthly)
 			}
 			rec := f.request(`{"model":"claude-sonnet-4-5","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "/v1/messages", "", f.gateway.Messages)
 			require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
@@ -266,12 +290,12 @@ func TestBillingInflightHTTP_ProviderRefusalAndUnknownReadFunding(t *testing.T) 
 				require.Positive(t, inflightHeld(t, f.user.ID), "unknown execution must retain bounded estimate")
 			}
 			var logs int
-			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs))
 			require.Zero(t, logs)
 			var wallet float64
-			require.NoError(t, integrationDB.QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&wallet))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&wallet))
 			require.InDelta(t, f.user.Balance, wallet, 1e-10)
-			ok, err := NewUsageBillingRepository(testEntClient(t), integrationDB).(service.BillingInflightRepository).ReserveBillingInflight(context.Background(), f.user.ID, uuid.NewString(), 1, false, time.Minute)
+			ok, err := NewUsageBillingRepository(inflightTestEntClient(t), inflightTestDB(t)).(service.BillingInflightRepository).ReserveBillingInflight(context.Background(), f.user.ID, uuid.NewString(), 1, false, time.Minute)
 			require.NoError(t, err)
 			require.Equal(t, tc.noCharge, ok, "a separate paid owner must see authoritative retained funding")
 		})
@@ -306,14 +330,14 @@ func TestBillingInflightHTTP_QueuedAndDroppedUsageRetainFunding(t *testing.T) {
 			releaseWorker()
 			f.pool.Stop()
 			var logs int
-			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs))
 			if drop {
 				require.EqualValues(t, 1, f.pool.Stats().DroppedQueueFull)
 				require.Zero(t, logs)
 				require.Positive(t, inflightHeld(t, f.user.ID), "dropped accounting keeps a bounded, non-durable mitigation hold")
-				_, err := integrationDB.Exec(`UPDATE billing_inflight_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE user_id=$1`, f.user.ID)
+				_, err := inflightTestDB(t).Exec(`UPDATE billing_inflight_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE user_id=$1`, f.user.ID)
 				require.NoError(t, err)
-				ok, err := NewUsageBillingRepository(testEntClient(t), integrationDB).(service.BillingInflightRepository).ReserveBillingInflight(context.Background(), f.user.ID, uuid.NewString(), 1, false, time.Minute)
+				ok, err := NewUsageBillingRepository(inflightTestEntClient(t), inflightTestDB(t)).(service.BillingInflightRepository).ReserveBillingInflight(context.Background(), f.user.ID, uuid.NewString(), 1, false, time.Minute)
 				require.NoError(t, err)
 				require.True(t, ok, "expired dropped work must not become a permanent funds freeze")
 			} else {
@@ -337,7 +361,7 @@ func TestBillingInflightHTTP_ChatErrorReplayPreservesOriginalReadFailure(t *test
 			}
 			t.Run(caseName, func(t *testing.T) {
 				f := newInflightHTTPFixture(t, service.PlatformOpenAI, `{"error":{"type":"authentication_error","code":"invalid_api_key","message":"bad key"}}`, "application/json")
-				_, err := integrationDB.Exec(`UPDATE accounts SET extra=jsonb_set(extra,'{openai_responses_supported}',to_jsonb($2::boolean)) WHERE id IN(SELECT account_id FROM account_groups WHERE group_id=$1)`, *f.key.GroupID, responsesCompat)
+				_, err := inflightTestDB(t).Exec(`UPDATE accounts SET extra=jsonb_set(extra,'{openai_responses_supported}',to_jsonb($2::boolean)) WHERE id IN(SELECT account_id FROM account_groups WHERE group_id=$1)`, *f.key.GroupID, responsesCompat)
 				require.NoError(t, err)
 				f.upstream.status = http.StatusUnauthorized
 				if incomplete {
@@ -354,7 +378,7 @@ func TestBillingInflightHTTP_ChatErrorReplayPreservesOriginalReadFailure(t *test
 					require.Zero(t, inflightHeld(t, f.user.ID))
 				}
 				var n int
-				require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&n))
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&n))
 				require.Zero(t, n)
 			})
 		}
@@ -381,9 +405,9 @@ func TestBillingInflightHTTP_RealWorkerPanicKeepsBoundedPGFunding(t *testing.T) 
 	require.EqualValues(t, 1, f.pool.Stats().CompletedTasks, "existing pool recovers the panic; lease requires explicit cost completion")
 	require.Positive(t, inflightHeld(t, f.user.ID), "panic before completion cannot free the PG attempt")
 	var n int
-	require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&n))
+	require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&n))
 	require.Zero(t, n)
-	ok, err := NewUsageBillingRepository(testEntClient(t), integrationDB).(service.BillingInflightRepository).ReserveBillingInflight(context.Background(), f.user.ID, uuid.NewString(), 1, false, time.Minute)
+	ok, err := NewUsageBillingRepository(inflightTestEntClient(t), inflightTestDB(t)).(service.BillingInflightRepository).ReserveBillingInflight(context.Background(), f.user.ID, uuid.NewString(), 1, false, time.Minute)
 	require.NoError(t, err)
 	require.False(t, ok)
 }
