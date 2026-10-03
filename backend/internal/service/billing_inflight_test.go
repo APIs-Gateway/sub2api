@@ -247,6 +247,10 @@ func TestBillingInflight_ProviderRefusalRequiresCompleteUsageFreeBody(t *testing
 	}{
 		{"auth", `{"error":{"type":"authentication_error","code":"invalid_api_key"}}`, 401, nil, true},
 		{"permission", `{"error":{"type":"permission_error"}}`, 403, nil, true},
+		{"gemini_auth", `{"error":{"code":401,"status":"UNAUTHENTICATED","message":"auth"}}`, 401, nil, true},
+		{"gemini_permission", `{"error":{"code":403,"status":"PERMISSION_DENIED","message":"auth"}}`, 403, nil, true},
+		{"partial_image_output", `{"type":"response.failed","error":{"type":"permission_error"},"output":[{"type":"image_generation_call","result":"partial"}]}`, 403, nil, false},
+		{"nested_image", `{"error":{"type":"permission_error"},"nested":{"image_count":1}}`, 403, nil, false},
 		{"transport502", `{"error":{"type":"authentication_error"}}`, 502, nil, false},
 		{"partial_body", `{"error":{"type":"authentication_error"}}`, 401, errors.New("read reset"), false},
 		{"invalid_json", `{"error":{"type":"authentication_error"}`, 401, nil, false},

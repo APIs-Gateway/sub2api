@@ -23,6 +23,10 @@ type BillingInflightRequest struct {
 	GeminiLongContext bool
 	ChannelUsageFields
 	StableDecision *OpenAIAccountScheduleDecision
+	// V2 passthrough returns the frozen first wire model, no UpstreamModel or
+	// ImageCount. Estimate that existing settlement shape while forwarding each
+	// later frame unchanged.
+	PassthroughBillingModel string
 }
 
 func inflightEstimateTokens(body []byte, defaultOutput int, embeddings bool) UsageTokens {
@@ -165,13 +169,24 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 	}
 	upstream := inflightAttemptModel(request)
 	models := usageBillingModelCandidates(inflightPreferredModel(request, upstream), upstream, request.ChannelMappedModel, request.OriginalModel, request.Model)
+	if request.PassthroughBillingModel != "" {
+		upstream = ""
+		billingModel := request.PassthroughBillingModel
+		if request.BillingModelSource == BillingModelSourceChannelMapped && request.ChannelMappedModel != "" && request.ChannelMappedModel != request.OriginalModel {
+			billingModel = request.ChannelMappedModel
+		}
+		if request.BillingModelSource == BillingModelSourceRequested && request.OriginalModel != "" {
+			billingModel = request.OriginalModel
+		}
+		models = usageBillingModelCandidates(billingModel, request.ChannelMappedModel, request.OriginalModel, request.PassthroughBillingModel)
+	}
 	tokens := inflightEstimateTokens(request.Body, s.cfg.Billing.InflightReservation.DefaultMaxOutputTokens, request.Embeddings)
 	result := &OpenAIForwardResult{Model: request.Model, UpstreamModel: upstream}
 	if request.Images != nil {
 		result.ImageCount = request.Images.N
 		result.ImageSize = request.Images.SizeTier
 	}
-	if request.Images == nil && IsImageGenerationIntent(openAIResponsesEndpoint, upstream, request.Body) {
+	if request.Images == nil && request.PassthroughBillingModel == "" && IsImageGenerationIntent(openAIResponsesEndpoint, upstream, request.Body) {
 		imageCfg, err := resolveOpenAIResponsesImageBillingConfigDetailedFromBody(request.Body, upstream)
 		if err != nil {
 			return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, request, 0, true)

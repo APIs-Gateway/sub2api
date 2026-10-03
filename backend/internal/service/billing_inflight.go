@@ -57,6 +57,9 @@ func markBillingInflightProviderRefusal(c *gin.Context, status int, body []byte,
 	if !ok {
 		return false
 	}
+	if outerType, exists := envelope["type"]; exists && outerType != "error" {
+		return false
+	}
 	providerError, ok := envelope["error"].(map[string]any)
 	if !ok {
 		return false
@@ -160,7 +163,8 @@ func billingInflightErrorHasUsage(value any) bool {
 	switch value := value.(type) {
 	case map[string]any:
 		for key, child := range value {
-			if strings.EqualFold(key, "usage") || strings.EqualFold(key, "partial_usage") || strings.HasSuffix(strings.ToLower(key), "_tokens") || strings.EqualFold(key, "partial") || billingInflightErrorHasUsage(child) {
+			key = strings.ToLower(key)
+			if key == "usage" || key == "partial_usage" || strings.HasSuffix(key, "_tokens") || key == "partial" || key == "response" || key == "output" || key == "image_count" || key == "images" || key == "data" || billingInflightErrorHasUsage(child) {
 				return true
 			}
 		}

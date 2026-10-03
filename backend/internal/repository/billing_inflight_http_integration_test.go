@@ -151,6 +151,12 @@ func TestBillingInflightHTTP_ConcurrentAdmissionAndBillOnce(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newInflightHTTPFixture(t, tc.platform, tc.response, tc.contentType)
+			if tc.name == "openai_images" {
+				// This fixture returns native Images JSON. Responses-capable accounts
+				// deliberately route image requests through the Responses bridge.
+				_, err := integrationDB.Exec(`UPDATE accounts SET extra = extra || '{"openai_responses_supported":false}'::jsonb WHERE id IN (SELECT account_id FROM account_groups WHERE group_id=$1)`, *f.key.GroupID)
+				require.NoError(t, err)
+			}
 			firstDone := make(chan *httptest.ResponseRecorder, 1)
 			go func() { firstDone <- f.request(tc.body, tc.path, tc.modelAction, tc.handler(f)) }()
 			select {

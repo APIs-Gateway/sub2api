@@ -2348,6 +2348,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// rotates models between turns.
 		var turnClientModel atomic.Pointer[string]
 		var turnPassthrough atomic.Bool
+		var passthroughBillingModel string // protected by wsBillingMu
 		var turnBillingKeys openAIWSTurnBillingKeys
 		turnBillingLeases := make(map[int]*service.BillingInflightLease)
 		if replayBillingLease != nil {
@@ -2382,7 +2383,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if lease := turnBillingLeases[turn]; lease != nil {
 					reserveCtx = service.WithBillingInflightLease(reserveCtx, lease)
 				}
-				lease, err := h.gatewayService.ReserveBillingInflight(reserveCtx, service.BillingInflightRequest{APIKey: key, Account: account, Model: model, Body: payload, ChannelUsageFields: channelMappingWS.ToUsageFields(reqModel, "")})
+				if turnPassthrough.Load() && passthroughBillingModel == "" {
+					passthroughBillingModel = strings.TrimSpace(gjson.GetBytes(payload, "model").String())
+					if passthroughBillingModel == "" {
+						passthroughBillingModel = model
+					}
+				}
+				lease, err := h.gatewayService.ReserveBillingInflight(reserveCtx, service.BillingInflightRequest{APIKey: key, Account: account, Model: model, Body: payload, ChannelUsageFields: channelMappingWS.ToUsageFields(reqModel, ""), PassthroughBillingModel: passthroughBillingModel})
 				if err != nil {
 					writeOpenAIWSBillingRejection(ctx, wsConn, err)
 					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, "billing check failed", err)
