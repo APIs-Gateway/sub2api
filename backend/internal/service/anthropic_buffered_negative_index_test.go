@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -55,7 +56,7 @@ func TestAnthropicBufferedAggregators_IgnoreNegativeBlockIndex(t *testing.T) {
 		{
 			name: "gateway responses",
 			run: func(resp *http.Response, c *gin.Context) (*ForwardResult, error) {
-				return (&GatewayService{}).handleResponsesBufferedStreamingResponse(resp, c, "claude-sonnet-4.5", "claude-sonnet-4.5", nil, time.Now())
+				return (&GatewayService{}).handleResponsesBufferedStreamingResponse(resp, c, "claude-sonnet-4.5", "claude-sonnet-4.5", nil, time.Now(), apicompat.ResponsesClientToolMapping{})
 			},
 		},
 	}
@@ -75,8 +76,8 @@ func TestAnthropicBufferedAggregators_IgnoreNegativeBlockIndex(t *testing.T) {
 			require.NotPanics(t, func() { result, err = tt.run(resp, c) })
 			require.NoError(t, err)
 			require.NotNil(t, result)
-			require.Equal(t, 10, result.Usage.InputTokens)
-			require.Equal(t, 5, result.Usage.OutputTokens)
+			require.EqualValues(t, 10, result.Usage.InputTokens)
+			require.EqualValues(t, 5, result.Usage.OutputTokens)
 			require.Contains(t, rec.Body.String(), "Hello")
 			require.NotContains(t, rec.Body.String(), "IGNORED")
 		})
