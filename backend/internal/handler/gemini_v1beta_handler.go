@@ -656,14 +656,15 @@ func parseGeminiModelAction(rest string) (model string, action string, err error
 		return "", "", &pathParseError{"missing path"}
 	}
 
+	// 模型名首尾空白（如 URL 里的 %20）在入口去掉；rest 已 TrimSpace，首字符非空白，模型段去空白后不会为空。
 	// Standard: {model}:{action}
 	if i := strings.Index(rest, ":"); i > 0 && i < len(rest)-1 {
-		return rest[:i], rest[i+1:], nil
+		return strings.TrimSpace(rest[:i]), rest[i+1:], nil
 	}
 
 	// Fallback: {model}/{action}
 	if i := strings.Index(rest, "/"); i > 0 && i < len(rest)-1 {
-		return rest[:i], rest[i+1:], nil
+		return strings.TrimSpace(rest[:i]), rest[i+1:], nil
 	}
 
 	return "", "", &pathParseError{"invalid model action path"}

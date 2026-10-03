@@ -323,6 +323,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 
+	// 入口先去掉 model 首尾空白，之后的映射、调度、转发、计价、日志都用同一个名字。
+	body = service.TrimRequestBodyModel(body)
 	// 使用 gjson 只读提取字段做校验，避免完整 Unmarshal
 	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
@@ -943,6 +945,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 
+	body = service.TrimRequestBodyModel(body)
 	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
@@ -2002,6 +2005,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 
+	// 首条消息的 model 也在入口去掉首尾空白，转发给上游的 payload 与 reqModel 保持一致。
+	firstMessage = service.TrimRequestBodyModel(firstMessage)
 	reqModel := strings.TrimSpace(gjson.GetBytes(firstMessage, "model").String())
 	if reqModel == "" {
 		writeOpenAIWSRejection(ctx, wsConn, http.StatusBadRequest, "invalid_request_error", "", "model is required")
