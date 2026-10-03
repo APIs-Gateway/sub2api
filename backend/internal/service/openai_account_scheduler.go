@@ -319,7 +319,7 @@ func (b *openAISelectionProbeBudget) recordRecheck() bool {
 // exhausted 报告探测预算是否已用尽：开启了上限，且 acquire 或 DB 复核次数已达上限。
 // 用尽意味着选号顺序里排在后面的候选可能一次都没有尝试过，调用方不能据此证明「整组满」。
 // 用 >= 偏保守：恰好用满、且全部试过的情形也按用尽处理，只会少下一次「整组满」的结论，不会多下。
-// 没有开启上限（默认，无链请求）时恒为 false。
+// 预算有没有上限取决于成本感知（includeOverflowFallback），和有没有链无关；没有开启上限时恒为 false。
 func (b *openAISelectionProbeBudget) exhausted() bool {
 	if b == nil || !b.limited {
 		return false
@@ -1305,7 +1305,10 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	// 里排在后面的候选一次都没有尝试过，而 satTried 仍把整份 selectionOrder 算作「已尝试」，
 	// 补试会错误地证明整组满，把还有空号的主分组送去回退（BK-2）。
 	// 只看第一轮：fresh 那一轮是对同一批候选重试，第一轮没撞上限就说明每个候选至少试过一次。
+	// 不变式：第一轮开了上限，就意味着顺序覆盖了全部候选（includeOverflowFallback 为真时 selectionOrder
+	// 是候选全集）。第一轮没开上限、fresh 轮才开的情形见下面 fresh 轮之后的补判（审查 S-1）。
 	mainTruncated := req.ProbeGroupSaturation && budget.exhausted()
+	firstLimited := budget.limited
 
 	if s.service.concurrencyService != nil {
 		if freshLoadMap, loadErr := s.service.concurrencyService.GetAccountsLoadBatchFresh(ctx, loadReq); loadErr == nil {
@@ -1332,6 +1335,12 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 				loadSkew = freshPlan.loadSkew
 			}
 		}
+	}
+
+	// 第一轮不限、fresh 轮才开上限（includeOverflowFallback 在两次建计划之间翻转）：fresh 轮若在上限处截断，
+	// satTried 仍收录了它的全部候选，同样不能据此证明整组满（审查 S-1）。
+	if req.ProbeGroupSaturation && !firstLimited && budget.exhausted() {
+		mainTruncated = true
 	}
 
 	groupSaturated := false
