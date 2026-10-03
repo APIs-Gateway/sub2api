@@ -53,8 +53,13 @@ func TestCacheTTLOrder_ActualCompatibilityWireAndUsage(t *testing.T) {
 				require.Equal(t, "1h", gjson.GetBytes(upstream.lastBody, "tools.0.cache_control.ttl").String())
 				requireAnthropicLongBeforeShort(t, upstream.lastBody)
 				require.Equal(t, 40, result.Usage.CacheCreationInputTokens)
-				require.Equal(t, 10, result.Usage.CacheCreation5mTokens)
-				require.Equal(t, 30, result.Usage.CacheCreation1hTokens)
+				// Baseline cdbc23de0 compatibility adapters retain aggregate usage
+				// but do not expose TTL buckets. Preserve that billing contract.
+				require.Equal(t, 0, result.Usage.CacheCreation5mTokens)
+				require.Equal(t, 0, result.Usage.CacheCreation1hTokens)
+				require.Equal(t, 11, result.Usage.InputTokens)
+				require.Equal(t, 7, result.Usage.CacheReadInputTokens)
+				require.Equal(t, 3, result.Usage.OutputTokens)
 			})
 		}
 	}
