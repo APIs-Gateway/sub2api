@@ -113,7 +113,8 @@ func anthropicCompatBufferedIncomplete(c *gin.Context, writeError func(*gin.Cont
 	result, err := anthropicCompatIncompleteStream(c, result, readErr)
 	var failoverErr *UpstreamFailoverError
 	var streamErr *sseStreamErrorEventError
-	if !errors.As(err, &failoverErr) && !(result == nil && !c.Writer.Written() && !anthropicCompatClientGone(c) && errors.As(err, &streamErr)) {
+	providerWillFailover := result == nil && !c.Writer.Written() && !anthropicCompatClientGone(c) && errors.As(err, &streamErr)
+	if !errors.As(err, &failoverErr) && !providerWillFailover {
 		writeError(c, http.StatusBadGateway, "server_error", "Upstream stream ended before the response completed")
 	}
 	return result, err
