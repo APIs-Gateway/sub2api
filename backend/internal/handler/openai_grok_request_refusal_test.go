@@ -57,8 +57,8 @@ func TestGrokRequestRefusalHandlerPoolAndQueuedFraming(t *testing.T) {
 	t.Cleanup(func() { time.Sleep(5 * time.Second) })
 	for _, route := range []string{"raw", "bridge", "native"} {
 		for _, stream := range []bool{false, true} {
-			for _, queue := range []string{"none", "user", "account", "account_fault"} {
-				if queue != "none" && queue != "account_fault" && !stream {
+			for _, queue := range []string{"none", "user", "account", "account_fault", "account_escaped"} {
+				if queue != "none" && queue != "account_fault" && queue != "account_escaped" && !stream {
 					continue
 				}
 				t.Run(fmt.Sprintf("%s_stream_%t_queue_%s", route, stream, queue), func(t *testing.T) {
@@ -116,7 +116,10 @@ func TestGrokRequestRefusalHandlerPoolAndQueuedFraming(t *testing.T) {
 						}
 						body := `{"code":"permission-denied","error":"I'm sorry, I can't help with that request."}`
 						if queue == "account_fault" {
-							body = `{"code":"permission-denied","error":{"code":"entitlement_required","message":"I'm sorry, I can't help with that request."},"detail":"account\u0020has\u0020been\u0020disabled"}`
+							body = `{"code":"permission-denied","error":{"code":"entitlement_required","message":"I'm sorry, I can't help with that request."}}`
+						}
+						if queue == "account_escaped" {
+							body = `{"code":"permission-denied","error":"I'm sorry, I can't help with that request.","detail":"account\u0020has\u0020been\u0020disabled"}`
 						}
 						return &http.Response{StatusCode: 403, Header: http.Header{"Content-Type": []string{"application/json"}, "X-Request-Id": []string{"grok-refusal-request"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
 					}}
@@ -154,7 +157,7 @@ func TestGrokRequestRefusalHandlerPoolAndQueuedFraming(t *testing.T) {
 					request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 					request.Header.Set("Content-Type", "application/json")
 					router.ServeHTTP(recorder, request)
-					if queue == "account_fault" {
+					if queue == "account_fault" || queue == "account_escaped" {
 						require.Equal(t, int32(2), calls.Load(), "true entitlement failure must still use account failover")
 						require.NotEqual(t, usedAccounts[0], usedAccounts[1])
 						require.Positive(t, repo.cooldowns.Load())
