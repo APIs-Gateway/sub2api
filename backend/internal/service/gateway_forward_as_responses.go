@@ -195,7 +195,7 @@ func (s *GatewayService) ForwardAsResponses(
 		result, handleErr = s.handleResponsesBufferedStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping)
 	}
 
-	return result, handleErr
+	return s.anthropicCompatProviderError(ctx, resp, c, account, mappedModel, result, handleErr)
 }
 
 func adaptResponsesClientToolsForAnthropic(body []byte) ([]byte, apicompat.ResponsesClientToolMapping, error) {

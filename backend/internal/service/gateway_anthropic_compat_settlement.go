@@ -1,17 +1,20 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 // Match the native stream idle timeout while collecting usage after a client
@@ -82,14 +85,14 @@ func anthropicCompatIncompleteStream(c *gin.Context, result *ForwardResult, read
 		c.Writer.Header().Del("Content-Type")
 	}
 	if readErr != nil && !observed && !c.Writer.Written() && !result.ClientDisconnect && !anthropicCompatClientGone(c) {
+		var streamError *sseStreamErrorEventError
+		if errors.As(readErr, &streamError) {
+			return nil, streamError
+		}
 		body, _ := json.Marshal(map[string]any{
 			"type":  "error",
 			"error": map[string]string{"type": "upstream_disconnected", "message": "upstream stream disconnected: " + sanitizeStreamError(readErr)},
 		})
-		var streamError *sseStreamErrorEventError
-		if errors.As(readErr, &streamError) {
-			body = []byte(streamError.RawData)
-		}
 		// Headers are still pending; an exhausted failover must be able to
 		// answer endpoint JSON instead of inheriting the upstream SSE type.
 		c.Writer.Header().Del("Content-Type")
@@ -108,8 +111,42 @@ func anthropicCompatIncompleteStream(c *gin.Context, result *ForwardResult, read
 func anthropicCompatBufferedIncomplete(c *gin.Context, writeError func(*gin.Context, int, string, string), result *ForwardResult, readErr error) (*ForwardResult, error) {
 	result, err := anthropicCompatIncompleteStream(c, result, readErr)
 	var failoverErr *UpstreamFailoverError
-	if !errors.As(err, &failoverErr) {
+	var streamErr *sseStreamErrorEventError
+	if !errors.As(err, &failoverErr) && !(result == nil && !c.Writer.Written() && !anthropicCompatClientGone(c) && errors.As(err, &streamErr)) {
 		writeError(c, http.StatusBadGateway, "server_error", "Upstream stream ended before the response completed")
+	}
+	return result, err
+}
+
+// Provider SSE errors keep native Anthropic semantic status and cooldown
+// policy. Only an unmetered failure before output can enter account failover.
+func (s *GatewayService) anthropicCompatProviderError(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, model string, result *ForwardResult, err error) (*ForwardResult, error) {
+	var streamErr *sseStreamErrorEventError
+	if !errors.As(err, &streamErr) {
+		return result, err
+	}
+	body := []byte(streamErr.RawData)
+	eligible := result == nil && !c.Writer.Written() && !anthropicCompatClientGone(c)
+	status := http.StatusForbidden
+	if eligible && gjson.GetBytes(body, "error.type").String() == "overloaded_error" {
+		status = 529
+		s.handleFailoverSideEffects(ctx, &http.Response{StatusCode: status, Header: resp.Header.Clone(), Body: io.NopCloser(bytes.NewReader(body))}, account, model)
+	}
+	detail := ""
+	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+		limit := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+		if limit <= 0 {
+			limit = 2048
+		}
+		detail = truncateString(streamErr.RawData, limit)
+	}
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+		UpstreamStatusCode: status, UpstreamRequestID: upstreamRequestIDFromHeader(resp.Header),
+		Kind: "stream_error", Message: sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body))), Detail: detail,
+	})
+	if eligible {
+		return nil, &UpstreamFailoverError{StatusCode: status, ResponseBody: body}
 	}
 	return result, err
 }

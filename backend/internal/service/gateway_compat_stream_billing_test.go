@@ -319,3 +319,69 @@ func TestCompatStreamDisabledIdleStillBoundsDisconnectedDrain(t *testing.T) {
 		}
 	}
 }
+
+type compatProviderPolicyRepo struct {
+	AccountRepository
+	overloaded []int64
+}
+
+func (r *compatProviderPolicyRepo) SetOverloaded(_ context.Context, id int64, _ time.Time) error {
+	r.overloaded = append(r.overloaded, id)
+	return nil
+}
+
+func TestCompatProviderSSEErrorPreservesNativeFailoverPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		kind   string
+		status int
+	}{
+		{"overloaded_error", 529},
+		{"authentication_error", http.StatusForbidden},
+		{"invalid_request_error", http.StatusForbidden},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			repo := &compatProviderPolicyRepo{}
+			cfg := &config.Config{}
+			svc := &GatewayService{cfg: cfg, rateLimitService: NewRateLimitService(repo, nil, cfg, nil, nil)}
+			account := &Account{ID: 7901, Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			raw := `{"type":"error","error":{"type":"` + tc.kind + `","message":"upstream denied request"}}`
+			result, err := anthropicCompatIncompleteStream(c, &ForwardResult{}, &sseStreamErrorEventError{RawData: raw})
+			require.Nil(t, result)
+			result, err = svc.anthropicCompatProviderError(context.Background(), &http.Response{Header: http.Header{}}, c, account, "claude-sonnet-4-5", result, err)
+			require.Nil(t, result)
+			var failover *UpstreamFailoverError
+			require.ErrorAs(t, err, &failover)
+			require.Equal(t, tc.status, failover.StatusCode)
+			require.False(t, failover.RetryableOnSameAccount)
+			require.JSONEq(t, raw, string(failover.ResponseBody))
+			require.False(t, c.Writer.Written())
+			if tc.kind == "overloaded_error" {
+				require.Equal(t, []int64{account.ID}, repo.overloaded, "529 must apply configured native cooldown")
+			} else {
+				require.Empty(t, repo.overloaded)
+			}
+		})
+	}
+}
+
+func TestCompatProviderSSEErrorAfterMeteringCannotReplay(t *testing.T) {
+	for name, handle := range compatStreamHandlers() {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			raw := `{"type":"error","error":{"type":"overloaded_error","message":"try later"}}`
+			payload := compatAnthropicStream(false) + "event: error\ndata: " + raw + "\n\n"
+			result, err := handle(&GatewayService{}, &http.Response{Header: http.Header{}, Body: io.NopCloser(strings.NewReader(payload))}, c)
+			require.Error(t, err)
+			require.NotNil(t, result)
+			result, err = (&GatewayService{}).anthropicCompatProviderError(context.Background(), &http.Response{Header: http.Header{}}, c, &Account{ID: 7901, Platform: PlatformAnthropic}, "claude-sonnet-4-5", result, err)
+			require.NotNil(t, result)
+			require.Equal(t, 15, result.Usage.OutputTokens)
+			var failover *UpstreamFailoverError
+			require.False(t, errors.As(err, &failover))
+			require.NotContains(t, rec.Body.String(), "[DONE]")
+			require.NotContains(t, rec.Body.String(), "response.completed")
+		})
+	}
+}

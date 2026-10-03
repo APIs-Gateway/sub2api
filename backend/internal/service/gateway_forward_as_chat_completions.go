@@ -196,7 +196,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 		result, handleErr = s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
 	}
 
-	return result, handleErr
+	return s.anthropicCompatProviderError(ctx, resp, c, account, mappedModel, result, handleErr)
 }
 
 // extractCCReasoningEffortFromBody reads reasoning effort from a Chat Completions

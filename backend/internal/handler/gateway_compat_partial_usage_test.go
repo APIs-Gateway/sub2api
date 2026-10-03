@@ -143,10 +143,11 @@ func TestGatewayCompatibleHandlersPreservePartialUsage(t *testing.T) {
 				billingRepo := &compatPartialBillingRepo{}
 				billingCache := service.NewBillingCacheService(nil, userRepo, nil, nil, nil, nil, cfg, nil, nil)
 				t.Cleanup(billingCache.Stop)
+				accountRepo := &compatPartialAccountRepo{}
 				snapshot := service.NewSchedulerSnapshotService(&fakeSchedulerCache{accounts: accounts}, nil, nil, nil, nil)
 				gateway := service.NewGatewayService(
-					&compatPartialAccountRepo{}, &fakeGroupRepo{group: group}, usageRepo, billingRepo, userRepo, nil, nil, nil, cfg,
-					snapshot, nil, service.NewBillingService(cfg, nil), nil, billingCache, nil, upstream,
+					accountRepo, &fakeGroupRepo{group: group}, usageRepo, billingRepo, userRepo, nil, nil, nil, cfg,
+					snapshot, nil, service.NewBillingService(cfg, nil), service.NewRateLimitService(accountRepo, nil, cfg, nil, nil), billingCache, nil, upstream,
 					&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 				)
 				pool := newUsageRecordTestPool(t)
