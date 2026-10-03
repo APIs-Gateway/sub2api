@@ -100,6 +100,7 @@ func newWSInflightProvider(t *testing.T) *wsInflightProvider {
 				if tools := gjson.GetBytes(body, "tools"); tools.Exists() {
 					image = strings.Contains(tools.Raw, "image_generation")
 				}
+				image = image || strings.HasPrefix(effectiveModel, "gpt-image")
 				responseNumber := n
 				if p.replay.Load() {
 					responseNumber = 1
@@ -159,7 +160,7 @@ func newWSInflightProvider(t *testing.T) *wsInflightProvider {
 		if fault == "mismatch" && n == 1 {
 			responseModel = "gpt-5-mini"
 		}
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", wsInflightCompleted(responseNumber, body, strings.Contains(string(body), "image_generation"), responseModel))
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", wsInflightCompleted(responseNumber, body, strings.Contains(string(body), "image_generation") || strings.HasPrefix(responseModel, "gpt-image"), responseModel))
 	}))
 	t.Cleanup(func() { close(p.stop); p.server.Close() })
 	return p
@@ -454,7 +455,11 @@ func TestBillingInflightWS_LocalBridgePrewarmDoesNotReserveOrBill(t *testing.T) 
 func TestBillingInflightWS_LaterModelUsesActualBillingSource(t *testing.T) {
 	for _, mode := range []string{"native", "passthrough", "bridge"} {
 		for _, source := range []string{service.BillingModelSourceRequested, service.BillingModelSourceUpstream} {
-			for _, inherited := range []bool{false, true} {
+			inheritedModes := []bool{false}
+			if mode == "passthrough" {
+				inheritedModes = append(inheritedModes, true)
+			}
+			for _, inherited := range inheritedModes {
 				name := fmt.Sprintf("%s/%s/session_%t", mode, source, inherited)
 				t.Run(name, func(t *testing.T) {
 					f := newWSInflightFixture(t, mode, source, map[string]float64{"gpt-5.4": .5, "gpt-5.1": 0})
@@ -477,7 +482,7 @@ func TestBillingInflightWS_LaterModelUsesActualBillingSource(t *testing.T) {
 					second := f.provider.next(t)
 					require.Equal(t, "gpt-5.1", second.effectiveModel, "provider uses actual B, including preserved session inheritance")
 					expected := 0.0
-					if source == service.BillingModelSourceRequested {
+					if source == service.BillingModelSourceRequested || mode == "passthrough" {
 						expected = .5
 					}
 					require.InDelta(t, expected, f.held(t), 1e-9, "reservation must follow existing completion billing source, not only latest draft model")
@@ -497,7 +502,7 @@ func TestBillingInflightWS_LaterModelUsesActualBillingSource(t *testing.T) {
 	}
 }
 
-func TestBillingInflightWS_InheritedImageToolsReservePaidImageWhenTextIsFree(t *testing.T) {
+func TestBillingInflightWS_ImageToolsMatchExistingSettlementWhenTextIsFree(t *testing.T) {
 	for _, mode := range []string{"native", "passthrough", "bridge"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newWSInflightFixture(t, mode, service.BillingModelSourceUpstream, map[string]float64{"gpt-5.4": 0, "gpt-image-2": .5})
@@ -509,17 +514,29 @@ func TestBillingInflightWS_InheritedImageToolsReservePaidImageWhenTextIsFree(t *
 			wsInflightReadCompleted(t, conn)
 			f.waitUsage(t, 1)
 			require.InDelta(t, .75, f.wallet(t), 1e-9)
-			wsInflightWrite(t, conn, `{"type":"session.update","session":{"tools":[{"type":"image_generation","model":"gpt-image-2","size":"1024x1024"}]}}`)
-			wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","input":"draw a cat"}`)
+			imagePayload := `{"type":"response.create","model":"gpt-5.4","input":"draw a cat","tools":[{"type":"image_generation","model":"gpt-image-2","size":"1024x1024"}]}`
+			if mode == "passthrough" {
+				wsInflightWrite(t, conn, `{"type":"session.update","session":{"tools":[{"type":"image_generation","model":"gpt-image-2","size":"1024x1024"}]}}`)
+				imagePayload = `{"type":"response.create","model":"gpt-5.4","input":"draw a cat"}`
+			}
+			wsInflightWrite(t, conn, imagePayload)
 			second := f.provider.next(t)
-			require.InDelta(t, .5, f.held(t), 1e-9, "inherited image tools must use paid image model despite free text model")
+			expectedCost := .5
+			expectedImageCount := 1
+			if mode == "passthrough" {
+				// Existing v2 adapter supplies no ImageCount/BillingModel to
+				// settlement. Reservation must match that unchanged zero cost.
+				expectedCost = 0
+				expectedImageCount = 0
+			}
+			require.InDelta(t, expectedCost, f.held(t), 1e-9, "reservation follows each adapter's existing image metadata")
 			close(second.release)
 			wsInflightReadCompleted(t, conn)
 			f.waitUsage(t, 2)
-			require.InDelta(t, .25, f.wallet(t), 1e-9, "actual image settles once")
+			require.InDelta(t, .75-expectedCost, f.wallet(t), 1e-9, "actual image follows existing settlement")
 			var count int
 			require.NoError(t, integrationDB.QueryRow(`SELECT image_count FROM usage_logs WHERE user_id=$1 ORDER BY id DESC LIMIT 1`, f.userID).Scan(&count))
-			require.Equal(t, 1, count)
+			require.Equal(t, expectedImageCount, count)
 		})
 	}
 }
@@ -663,8 +680,12 @@ func TestBillingInflightWS_CanonicalBridgeAuthRefusalReleasesItsTurn(t *testing.
 		t.Run(failure, func(t *testing.T) {
 			f := newWSInflightFixture(t, "bridge", service.BillingModelSourceUpstream, map[string]float64{"gpt-5.4": .5})
 			f.addAccount(t)
-			f.provider.fault.Store(failure)
 			conn := f.dial(t)
+			wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","generate":false,"input":[]}`)
+			wsInflightReadCompleted(t, conn)
+			require.Zero(t, f.held(t))
+			require.EqualValues(t, 0, f.provider.calls.Load())
+			f.provider.fault.Store(failure)
 			wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","input":"rejected authentication"}`)
 			first := f.provider.next(t)
 			require.InDelta(t, .5, f.held(t), 1e-9)
@@ -711,7 +732,7 @@ func TestBillingInflightWS_CanonicalBridgeAuthRefusalReleasesItsTurn(t *testing.
 }
 
 func TestBillingInflightWS_BlockedModelMismatchAuditDoesNotStrandFunding(t *testing.T) {
-	for _, mode := range []string{"native", "passthrough", "bridge"} {
+	for _, mode := range []string{"native", "bridge"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newWSInflightFixture(t, mode, service.BillingModelSourceUpstream, map[string]float64{"gpt-5.4": .5})
 			f.addAccount(t)
@@ -762,4 +783,59 @@ func TestBillingInflightWS_BlockedModelMismatchAuditDoesNotStrandFunding(t *test
 			require.EqualValues(t, 2, f.billingRepo.calls.Load())
 		})
 	}
+}
+
+// Native/bridge already inherit the first model when a later response.create
+// omits it. This does not add session.update support to either adapter.
+func TestBillingInflightWS_InitialImageModelInheritanceRemainsPaid(t *testing.T) {
+	for _, mode := range []string{"native", "bridge"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newWSInflightFixture(t, mode, service.BillingModelSourceUpstream, map[string]float64{"gpt-image-2": .5})
+			conn := f.dial(t)
+			for turn := 1; turn <= 2; turn++ {
+				payload := `{"type":"response.create","model":"gpt-image-2","input":"draw cat","tools":[{"type":"image_generation","model":"gpt-image-2","size":"1024x1024"}]}`
+				if turn == 2 {
+					_, err := integrationDB.Exec(`UPDATE users SET balance=balance+0.5 WHERE id=$1`, f.userID)
+					require.NoError(t, err)
+					require.NoError(t, f.billing.InvalidateUserBalance(context.Background(), f.userID))
+					payload = `{"type":"response.create","input":"draw dog"}`
+				}
+				wsInflightWrite(t, conn, payload)
+				pending := f.provider.next(t)
+				require.Equal(t, "gpt-image-2", pending.effectiveModel)
+				require.InDelta(t, .5, f.held(t), 1e-9)
+				f.denyConcurrentHTTP(t, "gpt-image-2")
+				close(pending.release)
+				wsInflightReadCompleted(t, conn)
+				f.waitUsage(t, turn)
+				require.InDelta(t, .25, f.wallet(t), 1e-9)
+			}
+			var images int
+			require.NoError(t, integrationDB.QueryRow(`SELECT sum(image_count) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&images))
+			require.Equal(t, 2, images)
+			require.EqualValues(t, 2, f.billingRepo.calls.Load())
+		})
+	}
+}
+
+// V2 had no upstream-model mismatch filtering before this PR. Keep its actual
+// normal settlement, rather than introducing a new audit/retry policy here.
+func TestBillingInflightWS_PassthroughBaselineMismatchRemainsNormalSettlement(t *testing.T) {
+	f := newWSInflightFixture(t, "passthrough", service.BillingModelSourceUpstream, map[string]float64{"gpt-5.4": .5})
+	f.addAccount(t)
+	f.provider.fault.Store("mismatch")
+	conn := f.dial(t)
+	wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","input":"existing v2 metadata"}`)
+	pending := f.provider.next(t)
+	require.InDelta(t, .5, f.held(t), 1e-9)
+	close(pending.release)
+	wsInflightReadCompleted(t, conn)
+	f.waitUsage(t, 1)
+	require.InDelta(t, .25, f.wallet(t), 1e-9)
+	require.EqualValues(t, 1, f.provider.calls.Load(), "v2 baseline does not retry model mismatch")
+	var audit, dedup int
+	require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1 AND upstream_model_mismatch=true`, f.userID).Scan(&audit))
+	require.Zero(t, audit)
+	require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+	require.Equal(t, 1, dedup)
 }
