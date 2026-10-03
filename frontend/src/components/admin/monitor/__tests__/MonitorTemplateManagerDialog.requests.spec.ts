@@ -5,6 +5,7 @@ import MonitorTemplateManagerDialog from '../MonitorTemplateManagerDialog.vue'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(), create: vi.fn(), update: vi.fn(), del: vi.fn(),
+  listAssociatedMonitors: vi.fn(), apply: vi.fn(),
   showError: vi.fn(), showSuccess: vi.fn(),
 }))
 vi.mock('@/api/admin', () => ({ adminAPI: { channelMonitorTemplate: mocks } }))
@@ -29,7 +30,7 @@ const response = (name: string): ListResponse => ({
     response_format: 'sse', created_at: '', updated_at: '', associated_monitors: 2,
   }],
 })
-function mountDialog(show = true) {
+function mountDialog(show = true, realPicker = false) {
   return shallowMount(MonitorTemplateManagerDialog, {
     props: { show },
     global: {
@@ -39,7 +40,7 @@ function mountDialog(show = true) {
           props: ['show'], emits: ['confirm', 'cancel'],
           template: '<button v-if="show" data-test="confirm-delete" @click="$emit(\'confirm\')">confirm</button>',
         },
-        MonitorTemplateApplyPickerDialog: {
+        MonitorTemplateApplyPickerDialog: realPicker ? false : {
           props: ['show'], emits: ['applied'],
           template: '<button v-if="show" data-test="applied" @click="$emit(\'applied\', 2)">applied</button>',
         },
@@ -75,6 +76,8 @@ beforeEach(() => {
   mocks.create.mockResolvedValue(response('created').items[0])
   mocks.update.mockResolvedValue(response('updated').items[0])
   mocks.del.mockResolvedValue(undefined)
+  mocks.listAssociatedMonitors.mockResolvedValue({ items: [{ id: 21, name: 'Monitor 21', provider: 'anthropic', api_mode: 'chat_completions', enabled: true }] })
+  mocks.apply.mockResolvedValue({ affected: 1 })
 })
 
 describe('monitor template manager request ownership', () => {
@@ -240,4 +243,84 @@ describe('monitor template manager request ownership', () => {
     expect(mocks.showSuccess).not.toHaveBeenCalled()
     expect(wrapper.emitted('updated')).toBeUndefined()
   })
+})
+
+describe('real nested apply and editor ownership', () => {
+  it.each(['resolve', 'reject'] as const)('ignores a real child apply %s from a previous manager opening', async outcome => {
+    const old = deferred<{ affected: number }>()
+    const current = deferred<{ affected: number }>()
+    mocks.apply.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise)
+    const wrapper = mountDialog(true, true)
+    await flushPromises()
+    await click(wrapper, 'admin.channelMonitor.template.applyButton')
+    await flushPromises()
+    await click(wrapper, 'admin.channelMonitor.template.applyPickerConfirm')
+    expect(mocks.apply).toHaveBeenNthCalledWith(1, 17, [21])
+    await reopen(wrapper)
+    await click(wrapper, 'admin.channelMonitor.template.applyButton')
+    await flushPromises()
+    await click(wrapper, 'admin.channelMonitor.template.applyPickerConfirm')
+    expect(mocks.apply).toHaveBeenNthCalledWith(2, 17, [21])
+    if (outcome === 'resolve') old.resolve({ affected: 2 })
+    else old.reject(new Error('old apply failure'))
+    await flushPromises()
+    expect(mocks.showSuccess).not.toHaveBeenCalled()
+    expect(mocks.showError).not.toHaveBeenCalled()
+    expect(mocks.list).toHaveBeenCalledTimes(2)
+    expect(wrapper.emitted('updated')).toBeUndefined()
+    expect(wrapper.text()).toContain('common.submitting')
+    current.resolve({ affected: 1 })
+    await flushPromises()
+    expect(mocks.showSuccess).toHaveBeenCalledTimes(1)
+    expect(mocks.list).toHaveBeenCalledTimes(3)
+    expect(wrapper.emitted('updated')).toEqual([[]])
+    expect(wrapper.text()).not.toContain('admin.channelMonitor.template.applyPickerConfirm')
+  })
+  for (const action of ['create', 'update'] as const) {
+    it.each(['resolve', 'reject'] as const)(`keeps new draft B and its pending save after ${action} A %s in the same opening`, async outcome => {
+      const old = deferred<unknown>()
+      const current = deferred<unknown>()
+      mocks[action].mockReturnValueOnce(old.promise)
+      const wrapper = mountDialog()
+      await flushPromises()
+      await startMutation(wrapper, action)
+      await click(wrapper, 'common.back')
+      mocks.create.mockReturnValueOnce(current.promise)
+      await click(wrapper, 'admin.channelMonitor.template.createButton')
+      await wrapper.get('input').setValue('new-editor-B')
+      await click(wrapper, 'common.create')
+      expect(mocks.create).toHaveBeenCalledTimes(action === 'create' ? 2 : 1)
+      if (outcome === 'resolve') old.resolve(undefined)
+      else old.reject(new Error('old editor error'))
+      await flushPromises()
+      expect(wrapper.get('input').element.value).toBe('new-editor-B')
+      expect(wrapper.get('button.btn-primary').attributes('disabled')).toBeDefined()
+      expect(mocks.showError).not.toHaveBeenCalled()
+      expect(mocks.showSuccess).not.toHaveBeenCalled()
+      expect(wrapper.emitted('updated')).toBeUndefined()
+      expect(mocks.list).toHaveBeenCalledTimes(1)
+      current.resolve(response('saved-B').items[0])
+      await flushPromises()
+      expect(wrapper.emitted('updated')).toEqual([[]])
+    })
+    it(`keeps draft B when ${action} A's refresh finishes later`, async () => {
+      const refresh = deferred<ListResponse>()
+      const wrapper = mountDialog()
+      await flushPromises()
+      mocks.list.mockReturnValueOnce(refresh.promise)
+      await startMutation(wrapper, action)
+      await flushPromises()
+      expect(mocks.list).toHaveBeenCalledTimes(2)
+      await click(wrapper, 'common.back')
+      await click(wrapper, 'admin.channelMonitor.template.createButton')
+      await wrapper.get('input').setValue('draft-B-during-refresh')
+      refresh.resolve(response('A-refresh'))
+      await flushPromises()
+      expect(wrapper.get('input').element.value).toBe('draft-B-during-refresh')
+      expect(wrapper.emitted('updated')).toBeUndefined()
+      expect(wrapper.get('button.btn-primary').attributes('disabled')).toBeUndefined()
+      await click(wrapper, 'common.back')
+      expect(wrapper.text()).not.toContain('common.loading')
+    })
+  }
 })

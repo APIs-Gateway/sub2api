@@ -2,7 +2,7 @@
   <BaseDialog
     :show="show"
     :title="t('admin.channelMonitor.template.applyPickerTitle', { name: templateName })"
-    @close="$emit('close')"
+    @close="closeDialog"
   >
     <p class="mb-3 text-sm text-gray-600 dark:text-gray-400">
       {{ t('admin.channelMonitor.template.applyPickerHint') }}
@@ -69,7 +69,7 @@
 
     <template #footer>
       <div class="flex justify-end gap-2">
-        <button class="btn btn-secondary" @click="$emit('close')">
+        <button class="btn btn-secondary" @click="closeDialog">
           {{ t('common.cancel') }}
         </button>
         <button
@@ -87,7 +87,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -117,16 +117,31 @@ const selectedIds = ref<number[]>([])
 const selectedSet = computed(() => new Set(selectedIds.value))
 let requestVersion = 0
 
-onUnmounted(() => { requestVersion++ })
+let active = false
+function invalidateRequests() {
+  active = false
+  requestVersion++
+  loading.value = false
+  submitting.value = false
+}
+function isCurrent(version: number, templateId: number): boolean {
+  return active && props.show && props.templateId === templateId && requestVersion === version
+}
+function closeDialog() {
+  invalidateRequests()
+  emit('close')
+}
+onBeforeUnmount(invalidateRequests)
 
 watch(
   () => [props.show, props.templateId] as const,
   ([show, id]) => {
-    const version = ++requestVersion
+    invalidateRequests()
     if (!show || id == null) return
-    void fetchMonitors(id, version)
+    active = true
+    void fetchMonitors(id, requestVersion)
   },
-  { immediate: true },
+  { immediate: true, flush: 'sync' },
 )
 
 async function fetchMonitors(id: number, version: number) {
@@ -135,15 +150,15 @@ async function fetchMonitors(id: number, version: number) {
   selectedIds.value = []
   try {
     const { items } = await adminAPI.channelMonitorTemplate.listAssociatedMonitors(id)
-    if (version !== requestVersion) return
+    if (!isCurrent(version, id)) return
     monitors.value = items
     // 默认全选
     selectedIds.value = items.map((m) => m.id)
   } catch (err: unknown) {
-    if (version !== requestVersion) return
+    if (!isCurrent(version, id)) return
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {
-    if (version === requestVersion) loading.value = false
+    if (isCurrent(version, id)) loading.value = false
   }
 }
 
@@ -162,20 +177,23 @@ function selectNone() {
 }
 
 async function handleApply() {
-  if (props.templateId == null || selectedIds.value.length === 0 || submitting.value) return
+  const templateId = props.templateId
+  const version = requestVersion
+  if (templateId == null || !isCurrent(version, templateId) || selectedIds.value.length === 0 || submitting.value) return
   submitting.value = true
   try {
     const { affected } = await adminAPI.channelMonitorTemplate.apply(
-      props.templateId,
+      templateId,
       [...selectedIds.value],
     )
+    if (!isCurrent(version, templateId)) return
     appStore.showSuccess(t('admin.channelMonitor.template.applySuccess', { n: affected }))
     emit('applied', affected)
-    emit('close')
+    if (isCurrent(version, templateId)) closeDialog()
   } catch (err: unknown) {
-    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    if (isCurrent(version, templateId)) appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {
-    submitting.value = false
+    if (isCurrent(version, templateId)) submitting.value = false
   }
 }
 </script>
