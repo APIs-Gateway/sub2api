@@ -93,9 +93,12 @@ func TestDefaultModelMappingIncludesGrokAliases(t *testing.T) {
 	t.Parallel()
 
 	mapping := DefaultModelMapping()
-	require.Equal(t, "grok-4.3", mapping["grok"])
-	require.Equal(t, "grok-4.3", mapping["grok-latest"])
+	require.Equal(t, "grok-4.5", mapping["grok"])
+	require.Equal(t, "grok-4.5", mapping["grok-latest"])
+	require.Equal(t, "grok-4.5", mapping["grok-4.5"])
+	require.Equal(t, "grok-4.5", mapping["grok-4.5-latest"])
 	require.Equal(t, "grok-build-0.1", mapping["grok-build"])
+	require.Equal(t, "grok-4.5", mapping["grok-build-latest"])
 	require.Equal(t, "grok-4.20-0309-reasoning", mapping["grok-4.20-reasoning"])
 	require.Equal(t, "grok-4.20-0309-non-reasoning", mapping["grok-4.20-non-reasoning"])
 	require.Equal(t, "grok-4.20-multi-agent-0309", mapping["grok-4.20-multi-agent-0309"])
@@ -103,13 +106,13 @@ func TestDefaultModelMappingIncludesGrokAliases(t *testing.T) {
 
 func TestDefaultModelsAndIDsReturnIndependentModelLists(t *testing.T) {
 	models := DefaultModels()
-	require.Len(t, models, 5)
-	require.Equal(t, "grok-4.3", models[0].ID)
-	require.Equal(t, "Grok 4.20 Multi Agent", models[4].DisplayName)
+	require.Len(t, models, 6)
+	require.Equal(t, "grok-4.5", models[0].ID)
+	require.Equal(t, "Grok 4.20 Multi Agent", models[5].DisplayName)
 
 	models[0].ID = "mutated"
 	ids := DefaultModelIDs()
-	require.Equal(t, "grok-4.3", ids[0])
+	require.Equal(t, "grok-4.5", ids[0])
 	require.Len(t, ids, len(DefaultModels()))
 }
 
