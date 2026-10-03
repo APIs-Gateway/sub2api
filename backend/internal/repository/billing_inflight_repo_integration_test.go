@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -416,6 +417,7 @@ func TestBillingInflightPostgres_RedisLossAndConcurrentRecharge(t *testing.T) {
 	require.False(t, ok)
 	users := NewUserRepository(testEntClient(t), integrationDB)
 	start := make(chan struct{})
+	startedAt := time.Now()
 	var wg sync.WaitGroup
 	errs := make(chan error, 21)
 	admissions := make(chan bool, 20)
@@ -449,5 +451,55 @@ func TestBillingInflightPostgres_RedisLossAndConcurrentRecharge(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, 11, u.Balance, 1e-8)
 	require.InDelta(t, float64(n+1), inflightHeld(t, user.ID), 1e-8)
-	t.Logf("20 concurrent admission calls with one recharge: admitted=%d held=%.2f authoritative_wallet=%.2f", n, inflightHeld(t, user.ID), u.Balance)
+	t.Logf("20 concurrent admission calls with one recharge: admitted=%d held=%.2f authoritative_wallet=%.2f elapsed=%s", n, inflightHeld(t, user.ID), u.Balance, time.Since(startedAt))
+}
+
+func TestBillingInflightPostgres_RefundConcurrentAdmissionAndLateActual(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo, user, key := inflightFixture(t, 0)
+	group := mustCreateGroup(t, client, &service.Group{Name: uuid.NewString()})
+	today := service.TodayEastDayNumber()
+	d, w, m := 1.0, 10.0, 20.0
+	card := mustCreateSubscription(t, client, &service.UserSubscription{UserID: user.ID, GroupID: group.ID, DailyAmountUSD: 1, TodayRemaining: 1, TodayDay: today, StartDay: today, ExpireDay: today + 12, ExpiresAt: service.ExpireDayToExpiresAt(today + 12), Status: service.SubscriptionStatusActive, DailyLimitUSD: &d, WeeklyLimitUSD: &w, MonthlyLimitUSD: &m})
+	owner := uuid.NewString()
+	ok, err := repo.ReserveBillingInflight(ctx, user.ID, owner, 1, false, time.Minute)
+	require.NoError(t, err)
+	require.True(t, ok)
+	order := createCompletedSubscriptionRefundOrderForIntegration(t, client, user, group.ID, 300, 30, "")
+	paymentSvc := makePaymentServiceForSubscriptionIntegration(t)
+	start := make(chan struct{})
+	refundDone, reserveDone := make(chan error, 1), make(chan error, 1)
+	go func() {
+		<-start
+		result, err := paymentSvc.ExecuteRefund(ctx, &service.RefundPlan{OrderID: order.ID, Order: order, RefundAmount: 120, GatewayAmount: 120, Reason: "inflight regression", DeductionType: payment.DeductionTypeSubscription, SubscriptionID: card.ID, SubDaysToDeduct: 12, SubDaysToRestore: 13, SubExpireDayToRestore: today + 12, SubTodayRemainingToRestore: 1, SubTodayDayToRestore: today})
+		if err == nil && !result.Success {
+			err = fmt.Errorf("refund failed")
+		}
+		refundDone <- err
+	}()
+	go func() {
+		<-start
+		ok, err := repo.ReserveBillingInflight(ctx, user.ID, uuid.NewString(), 1, false, time.Minute)
+		if err == nil && ok {
+			err = fmt.Errorf("another owner was admitted using held/refunded card funds")
+		}
+		reserveDone <- err
+	}()
+	close(start)
+	require.NoError(t, <-refundDone)
+	require.NoError(t, <-reserveDone)
+	got, err := NewUserSubscriptionRepository(client).GetByID(ctx, card.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.SubscriptionStatusExpired, got.Status)
+	cmd := &service.UsageBillingCommand{UserID: user.ID, APIKeyID: key.ID, RequestID: uuid.NewString(), OfficialCost: 0.5, RateMultiplier: 1}
+	cmd.InflightObligationID, err = repo.StageBillingInflight(ctx, user.ID, owner, owner+":initial", cmd, time.Minute)
+	require.NoError(t, err)
+	require.NoError(t, repo.FinishBillingInflightAttempt(ctx, user.ID, owner, owner+":initial"))
+	result, err := repo.Apply(ctx, cmd)
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.Nil(t, result.SubscriptionID, "refund preserves old actual settlement: expired card cannot cover paid work")
+	require.InDelta(t, -0.5, *result.NewBalance, 1e-8)
+	require.Zero(t, inflightHeld(t, user.ID))
 }

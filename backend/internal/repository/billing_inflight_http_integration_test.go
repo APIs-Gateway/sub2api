@@ -64,12 +64,13 @@ func (u *inflightHTTPUpstream) DoWithTLS(req *http.Request, proxy string, id int
 }
 
 type inflightHTTPFixture struct {
-	user     *service.User
-	key      *service.APIKey
-	gateway  *userhandler.GatewayHandler
-	openAI   *userhandler.OpenAIGatewayHandler
-	pool     *service.UsageRecordWorkerPool
-	upstream *inflightHTTPUpstream
+	user          *service.User
+	key           *service.APIKey
+	gateway       *userhandler.GatewayHandler
+	openAI        *userhandler.OpenAIGatewayHandler
+	openAIService *service.OpenAIGatewayService
+	pool          *service.UsageRecordWorkerPool
+	upstream      *inflightHTTPUpstream
 }
 
 func newInflightHTTPFixture(t *testing.T, platform, response, contentType string, poolOptions ...service.UsageRecordWorkerPoolOptions) *inflightHTTPFixture {
@@ -125,7 +126,7 @@ func newInflightHTTPFixture(t *testing.T, platform, response, contentType string
 	}
 	pool := service.NewUsageRecordWorkerPoolWithOptions(options)
 	t.Cleanup(pool.Stop)
-	return &inflightHTTPFixture{user: user, key: key, pool: pool, upstream: upstream,
+	return &inflightHTTPFixture{user: user, key: key, pool: pool, upstream: upstream, openAIService: openAISvc,
 		gateway: userhandler.NewGatewayHandler(gatewaySvc, gemini, nil, nil, nil, concurrency, billingCache, nil, nil, pool, nil, nil, nil, cfg, nil, openAISvc),
 		openAI:  userhandler.NewOpenAIGatewayHandler(openAISvc, concurrency, billingCache, keyService, pool, nil, nil, nil, cfg)}
 }
@@ -321,4 +322,68 @@ func TestBillingInflightHTTP_QueuedAndDroppedUsageRetainFunding(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBillingInflightHTTP_ChatErrorReplayPreservesOriginalReadFailure(t *testing.T) {
+	for _, responsesCompat := range []bool{false, true} {
+		name := "raw_chat"
+		if responsesCompat {
+			name = "responses_compat_chat"
+		}
+		for _, incomplete := range []bool{false, true} {
+			caseName := name + "/complete"
+			if incomplete {
+				caseName = name + "/reader_reset"
+			}
+			t.Run(caseName, func(t *testing.T) {
+				f := newInflightHTTPFixture(t, service.PlatformOpenAI, `{"error":{"type":"authentication_error","code":"invalid_api_key","message":"bad key"}}`, "application/json")
+				_, err := integrationDB.Exec(`UPDATE accounts SET extra=jsonb_set(extra,'{openai_responses_supported}',to_jsonb($2::boolean)) WHERE id IN(SELECT account_id FROM account_groups WHERE group_id=$1)`, *f.key.GroupID, responsesCompat)
+				require.NoError(t, err)
+				f.upstream.status = http.StatusUnauthorized
+				if incomplete {
+					f.upstream.readErr = errors.New("non-EOF upstream read failure after valid JSON prefix")
+				}
+				close(f.upstream.release)
+				rec := f.request(`{"model":"gpt-5","max_completion_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "/v1/chat/completions", "", f.openAI.ChatCompletions)
+				require.GreaterOrEqual(t, rec.Code, 400, rec.Body.String())
+				require.EqualValues(t, 1, f.upstream.calls.Load())
+				f.pool.Stop()
+				if incomplete {
+					require.Positive(t, inflightHeld(t, f.user.ID), "captured auth prefix replay cannot fabricate complete refusal proof")
+				} else {
+					require.Zero(t, inflightHeld(t, f.user.ID))
+				}
+				var n int
+				require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&n))
+				require.Zero(t, n)
+			})
+		}
+	}
+}
+
+func TestBillingInflightHTTP_RealWorkerPanicKeepsBoundedPGFunding(t *testing.T) {
+	f := newInflightHTTPFixture(t, service.PlatformOpenAI, inflightResponsesJSON, "application/json")
+	lease, err := f.openAIService.ReserveBillingInflight(context.Background(), service.BillingInflightRequest{APIKey: f.key, Model: "gpt-5", Body: []byte(`{"model":"gpt-5","input":"hello"}`)})
+	require.NoError(t, err)
+	require.NotNil(t, lease)
+	lease.MarkDispatched()
+	wrap, finish := service.AcquireBillingInflightTask(service.WithBillingInflightLease(context.Background(), lease))
+	panicReached := make(chan struct{})
+	require.Equal(t, service.UsageRecordSubmitModeEnqueued, f.pool.Submit(func(ctx context.Context) {
+		_ = wrap(ctx)
+		defer finish(true)
+		defer close(panicReached)
+		panic("simulated billing worker failure before actual settlement")
+	}))
+	lease.HandlerDone()
+	f.pool.Stop()
+	<-panicReached
+	require.EqualValues(t, 1, f.pool.Stats().CompletedTasks, "existing pool recovers the panic; lease requires explicit cost completion")
+	require.Positive(t, inflightHeld(t, f.user.ID), "panic before completion cannot free the PG attempt")
+	var n int
+	require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&n))
+	require.Zero(t, n)
+	ok, err := NewUsageBillingRepository(testEntClient(t), integrationDB).(service.BillingInflightRepository).ReserveBillingInflight(context.Background(), f.user.ID, uuid.NewString(), 1, false, time.Minute)
+	require.NoError(t, err)
+	require.False(t, ok)
 }
