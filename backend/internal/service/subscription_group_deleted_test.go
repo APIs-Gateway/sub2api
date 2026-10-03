@@ -101,6 +101,8 @@ func TestSubscriptionWithDeletedGroup_RenewQuoteKeepsCardAndSkipsGroupLookup(t *
 }
 
 func TestSubscriptionGroupDisplayName_DeletedGroup(t *testing.T) {
-	require.Equal(t, "订阅", subscriptionGroupDisplayName(nil))
+	// 读不到分组（无分组卡、来源分组已删）返回空串，由通知服务按收件人 locale 回退，不在这里写死语言。
+	require.Empty(t, subscriptionGroupDisplayName(nil))
+	require.Empty(t, subscriptionGroupDisplayName(&Group{Name: "  "}))
 	require.Equal(t, "Pro", subscriptionGroupDisplayName(&Group{Name: "Pro"}))
 }
