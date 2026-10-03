@@ -104,7 +104,11 @@ func newWSInflightProvider(t *testing.T) *wsInflightProvider {
 				if p.replay.Load() {
 					responseNumber = 1
 				}
-				event := wsInflightCompleted(responseNumber, body, image, effectiveModel)
+				responseModel := effectiveModel
+				if p.faultMode() == "mismatch" && n == 1 {
+					responseModel = "gpt-5-mini"
+				}
+				event := wsInflightCompleted(responseNumber, body, image, responseModel)
 				if err := conn.Write(r.Context(), coderws.MessageText, event); err != nil {
 					return
 				}
@@ -151,7 +155,11 @@ func newWSInflightProvider(t *testing.T) *wsInflightProvider {
 		if p.replay.Load() {
 			responseNumber = 1
 		}
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", wsInflightCompleted(responseNumber, body, strings.Contains(string(body), "image_generation"), turn.effectiveModel))
+		responseModel := turn.effectiveModel
+		if fault == "mismatch" && n == 1 {
+			responseModel = "gpt-5-mini"
+		}
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", wsInflightCompleted(responseNumber, body, strings.Contains(string(body), "image_generation"), responseModel))
 	}))
 	t.Cleanup(func() { close(p.stop); p.server.Close() })
 	return p
@@ -698,6 +706,60 @@ func TestBillingInflightWS_CanonicalBridgeAuthRefusalReleasesItsTurn(t *testing.
 			}
 			f.waitUsage(t, 1)
 			require.InDelta(t, .25, f.wallet(t), 1e-9)
+		})
+	}
+}
+
+func TestBillingInflightWS_BlockedModelMismatchAuditDoesNotStrandFunding(t *testing.T) {
+	for _, mode := range []string{"native", "passthrough", "bridge"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newWSInflightFixture(t, mode, service.BillingModelSourceUpstream, map[string]float64{"gpt-5.4": .5})
+			f.addAccount(t)
+			f.provider.fault.Store("mismatch")
+			conn := f.dial(t)
+			wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","input":"must receive requested model"}`)
+			first := f.provider.next(t)
+			require.InDelta(t, .5, f.held(t), 1e-9)
+			close(first.release)
+			second := f.provider.next(t)
+			require.InDelta(t, .5, f.held(t), 1e-9, "blocked zero-cost attempt must not stack a second estimate on replay")
+			close(second.release)
+			wsInflightReadCompleted(t, conn)
+			f.waitUsage(t, 2)
+			require.InDelta(t, .25, f.wallet(t), 1e-9, "only accepted response is billed")
+			var audit, normal, dedup int
+			var auditCost float64
+			require.NoError(t, integrationDB.QueryRow(`SELECT count(*),COALESCE(sum(actual_cost),0) FROM usage_logs WHERE user_id=$1 AND upstream_model_mismatch=true`, f.userID).Scan(&audit, &auditCost))
+			require.Equal(t, 1, audit)
+			require.Zero(t, auditCost)
+			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1 AND upstream_model_mismatch=false`, f.userID).Scan(&normal))
+			require.Equal(t, 1, normal)
+			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+			require.Equal(t, 1, dedup, "zero-cost audit must not claim settlement idempotency")
+			_, err := integrationDB.Exec(`UPDATE users SET balance=balance+0.5 WHERE id=$1`, f.userID)
+			require.NoError(t, err)
+			require.NoError(t, f.billing.InvalidateUserBalance(context.Background(), f.userID))
+			done := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				rec := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.4","input":"third logical owner after safe replay"}`))
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				f.router.ServeHTTP(rec, req.WithContext(ctx))
+				done <- rec
+			}()
+			third := f.provider.next(t)
+			require.InDelta(t, .5, f.held(t), 1e-9)
+			close(third.release)
+			select {
+			case rec := <-done:
+				require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			case <-time.After(5 * time.Second):
+				t.Fatal("third owner did not finish")
+			}
+			f.waitUsage(t, 3)
+			require.InDelta(t, .25, f.wallet(t), 1e-9)
+			require.EqualValues(t, 2, f.billingRepo.calls.Load())
 		})
 	}
 }
