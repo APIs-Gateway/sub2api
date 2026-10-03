@@ -626,14 +626,25 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		state.CacheCreationInputTokens = usage.CacheCreationInputTokens
 		if finalEvents := apicompat.FinalizeAnthropicResponsesStream(state); len(finalEvents) > 0 {
 			for _, evt := range finalEvents {
-				sse, err := apicompat.ResponsesEventToSSE(evt)
+				payload, err := json.Marshal(evt)
 				if err != nil {
 					continue
 				}
-				out := string(reverseToolNamesIfPresent(c, []byte(sse)))
-				if _, err := fmt.Fprint(c.Writer, out); err != nil {
-					MarkResponseCommitted(c)
-					clientDisconnected = true
+				payload = reverseToolNamesIfPresent(c, payload)
+				payloads, _, err := clientToolRestorer.RestoreEvent(payload)
+				if err != nil {
+					logger.L().Warn("forward_as_responses stream: failed to restore final client tools", zap.Error(err), zap.String("request_id", requestID))
+					continue
+				}
+				for _, restored := range payloads {
+					eventType := gjson.GetBytes(restored, "type").String()
+					if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, restored); err != nil {
+						MarkResponseCommitted(c)
+						clientDisconnected = true
+						break
+					}
+				}
+				if clientDisconnected {
 					break
 				}
 			}
