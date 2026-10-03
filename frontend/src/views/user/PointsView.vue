@@ -89,14 +89,13 @@
           <div v-if="overview.config.redeem_balance_on" class="card p-6 space-y-4">
             <div>
               <h3 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('points.redeemBalance.title') }}</h3>
-              <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">{{ isFiat ? t('points.redeemBalance.descFiat') : t('points.redeemBalance.desc') }}</p>
+              <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">{{ t('points.redeemBalance.descFiat') }}</p>
             </div>
             <div class="space-y-2">
               <label class="input-label">{{ t('points.redeemBalance.points') }}</label>
               <input v-model.number="redeemBalancePoints" type="number" min="1" class="input" />
               <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.estimate', { amount: formatWallet(redeemBalanceEstimate) }) }}</p>
-              <p v-if="isFiat" class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.rateHintFiat', { peg: formatCurrency(peg, 'CNY') }) }}</p>
-              <p v-else class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.rateHint', { peg: formatCurrency(peg, 'CNY'), rate: balanceRedeemRate.toFixed(2) }) }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.rateHintFiat', { peg: formatCurrency(peg, 'CNY') }) }}</p>
             </div>
             <button class="btn btn-primary w-full" :disabled="busy || !redeemBalancePoints" @click="onRedeemBalance">{{ t('points.redeemBalance.submit') }}</button>
           </div>

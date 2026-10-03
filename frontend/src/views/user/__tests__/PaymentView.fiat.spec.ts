@@ -163,14 +163,18 @@ describe('充值页按人民币展示', () => {
     expect(text).toContain('¥10.50')
   })
 
-  it('美元模式下保持原来的美元到账和倍率说明', async () => {
+  it('美元模式只写实付人民币和到账额度，不出现任何倍率说明', async () => {
     publicSettings.value = { balance_recharge_multiplier: 13 }
     useCurrencyDisplay().setMode('usd')
     const wrapper = await mountTopUp(13)
     const text = plain(wrapper.text())
 
+    // 实付 ¥10.00，到账 130 个额度：两个数都在，但没有「1 CNY = x USD」「当前倍率」。
+    expect(text).toContain('¥10.00')
+    expect(text).toContain('payment.creditedBalanceWithCurrency')
     expect(text).toContain('USD130.00')
-    expect(text).toContain('payment.rechargeMultiplier')
+    expect(text).not.toContain('payment.rechargeMultiplier')
+    expect(text).not.toContain('payment.rechargeRatePreview')
   })
 
   it('free 站（倍率 1）保持美元，不显示到账换算行', async () => {
@@ -231,6 +235,19 @@ describe('续费/转套餐结账页按人民币展示', () => {
 
     expect(text).toContain('USD90.00')
     expect(text).not.toContain('¥4.05')
+    expect(text).not.toContain('userSubscriptions.lifecycle.changeDiffValue')
+  })
+
+  it('美元模式只写实付人民币和每日额度，不把额度价值与实付并列', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    useCurrencyDisplay().setMode('usd')
+    const text = await mountCheckout(13)
+
+    expect(text).toContain('¥72.60')
+    expect(text).toContain('USD90.00')
+    expect(text).not.toContain('USD72.60')
+    expect(text).not.toContain('userSubscriptions.lifecycle.changeDiffValue')
+    expect(text).not.toContain('userSubscriptions.lifecycle.renewValue')
   })
 })
 
@@ -391,5 +408,17 @@ describe('固定套餐详情按人民币展示', () => {
     expect(text).toContain('USD70.00')
     expect(text).toContain('payment.planCard.rate')
     expect(text).not.toContain('payment.planCard.equivalentCny')
+    expect(text).not.toContain('payment.subscriptionValueWithCurrency')
+  })
+
+  it('美元模式写实付人民币和美元额度，不再并列写套餐价值', async () => {
+    useCurrencyDisplay().setMode('usd')
+    const text = await mountPlan(13)
+
+    expect(text).toContain('¥90.00')
+    expect(text).toContain('USD10.00')
+    expect(text).toContain('USD70.00')
+    expect(text).not.toContain('payment.subscriptionValueWithCurrency')
+    expect(text).not.toContain('USD90.00')
   })
 })

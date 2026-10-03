@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SubscriptionPurchasePanel from '../SubscriptionPurchasePanel.vue'
 import subscriptionsAPI from '@/api/subscriptions'
-import { resetFiatDataMissingForTest } from '@/composables/useCurrencyDisplay'
+import { resetFiatDataMissingForTest, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 
 // 可变的假设置：改它就能模拟 codex 站（倍率 13）和 free 站（倍率 1）。
 const publicSettings: { value: Record<string, unknown> } = { value: {} }
@@ -34,6 +34,8 @@ function plain(text: string): string {
 beforeEach(() => {
   window.localStorage.clear()
   resetFiatDataMissingForTest()
+  // 展示口径是模块级单例，逐个用例复位。
+  useCurrencyDisplay().setMode('fiat')
   publicSettings.value = { balance_recharge_multiplier: 13 }
 })
 
@@ -84,6 +86,23 @@ describe('购买面板按人民币展示', () => {
 
     expect(text).toContain('USD210.00')
     expect(wrapper.find('[data-testid="subscription-purchase-daily-fiat"]').exists()).toBe(false)
+    expect(wrapper.find('input[type="number"]').exists()).toBe(true)
+    expect(text).not.toContain('subscriptionPurchase.unitPrice')
+    expect(text).not.toContain('×0.0450')
+  })
+
+  it('美元模式写每日额度和封顶，不写每刀单价', async () => {
+    useCurrencyDisplay().setMode('usd')
+    const wrapper = await mountPanel()
+    const text = plain(wrapper.text())
+
+    // 报价区第一格是每日额度（USD 30.00），和周/月封顶（USD 210.00、USD 900.00）同一口径。
+    expect(text).toContain('subscriptionPurchase.dailyAmount')
+    expect(text).toContain('USD30.00')
+    expect(text).toContain('USD210.00')
+    expect(text).toContain('USD900.00')
+    expect(text).not.toContain('subscriptionPurchase.unitPrice')
+    expect(text).not.toContain('×0.0450')
     expect(wrapper.find('input[type="number"]').exists()).toBe(true)
   })
 })
