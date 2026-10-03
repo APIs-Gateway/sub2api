@@ -50,7 +50,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { EndpointOption } from '@/utils/apiEndpoints'
-import { AI_CLIENTS, buildAiPrompt, chatgptUrl, claudeUrl, type AiClient } from '@/utils/keyOnboarding'
+import { AI_CLIENTS, buildAiPrompt, chatgptUrl, claudeUrl, type AiClient, type OnboardingClient } from '@/utils/keyOnboarding'
 
 // 根元素要接住外壳传来的 tabpanel 属性（role / id / aria-labelledby），所以关掉自动继承、手动放在根上
 defineOptions({ inheritAttrs: false })
@@ -60,8 +60,14 @@ const props = defineProps<{
   endpoint: EndpointOption
   platform: string | null
   siteName: string
+  /** 分组是否开了 /v1/messages 调度：openai 分组开了之后，Claude Code 也能接入 */
+  allowMessagesDispatch?: boolean
+  /** 这个分组能用的客户端，和一键安装、手动配置拿到的是同一份 */
+  clients?: OnboardingClient[]
   /** 密钥所在分组的可用模型，详细版里列出 */
   models: string[]
+  /** 模型列表还在加载 */
+  modelsLoading?: boolean
   /** 站点配置的使用文档地址，没有时为空 */
   docUrl?: string
   /** 最近复制成功的按钮 id，对应的按钮显示「已复制」 */
