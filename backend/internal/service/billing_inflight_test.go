@@ -73,6 +73,42 @@ func inflightTestConfig() *config.Config {
 	return cfg
 }
 
+func TestBillingInflight_DeepSeekEstimateMatchesPeakPricing(t *testing.T) {
+	for _, platform := range []string{PlatformAnthropic, PlatformOpenAI} {
+		for _, slot := range gatewayDeepSeekSlots() {
+			t.Run(platform+"/"+slot.name, func(t *testing.T) {
+				withDeepseekNow(t, slot.at)
+				cfg := inflightTestConfig()
+				cfg.Billing.InflightReservation.DefaultMaxOutputTokens = 8
+				repo := &inflightCaptureRepo{allow: true}
+				key := gatewayDeepSeekAPIKey(1701, platform)
+				key.User = &User{ID: 1}
+				key.Group.RateMultiplier = 1.5
+				body := []byte(`{"model":"deepseek-v4-flash","max_tokens":8,"messages":[{"role":"user","content":"hello"}]}`)
+				request := BillingInflightRequest{APIKey: key, Model: "deepseek-v4-flash", Body: body}
+				gateway := newGatewayDeepSeekBillingService(nil, *key.GroupID, platform)
+				gateway.cfg = cfg
+				gateway.usageBillingRepo = repo
+				var lease *BillingInflightLease
+				var err error
+				if platform == PlatformOpenAI {
+					openAI := &OpenAIGatewayService{cfg: cfg, usageBillingRepo: repo, billingService: gateway.billingService, resolver: gateway.resolver, channelService: gateway.channelService}
+					lease, err = openAI.ReserveBillingInflight(context.Background(), request)
+				} else {
+					lease, err = gateway.ReserveBillingInflight(context.Background(), request)
+				}
+				require.NoError(t, err)
+				require.NotNil(t, lease)
+				defer lease.HandlerDone()
+				tokens := inflightEstimateTokens(body, 8, false)
+				want := (float64(tokens.InputTokens)*1.5e-7 + float64(tokens.OutputTokens)*6e-7) * slot.mult * key.Group.RateMultiplier
+				require.InDelta(t, want, repo.amount, 1e-12, "inflight estimate must include actual default DeepSeek peak/group pricing")
+				require.False(t, repo.exclusive, "priced DeepSeek must not become unknown pricing")
+			})
+		}
+	}
+}
+
 func TestBillingInflight_ImmutableAttemptHandoff(t *testing.T) {
 	repo := &inflightCaptureRepo{allow: true}
 	cfg := inflightTestConfig()

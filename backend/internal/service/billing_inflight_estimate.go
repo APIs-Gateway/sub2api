@@ -122,7 +122,8 @@ func (s *GatewayService) ReserveBillingInflight(ctx context.Context, request Bil
 		opts.LongContextMultiplier = 2
 	}
 	known := s.hasResolvableTokenPricing(ctx, model, key)
-	cost := s.calculateRecordUsageCost(ctx, result, key, model, multiplier, resolveImageRateMultiplier(key, multiplier), opts)
+	pricingAt := deepseekNowFunc()
+	cost := s.calculateRecordUsageCost(ctx, result, key, model, multiplier, resolveImageRateMultiplier(key, multiplier), opts, pricingAt)
 	if result.ImageCount > 0 && cost.TotalCost > 0 {
 		known = true
 	}
@@ -133,10 +134,10 @@ func (s *GatewayService) ReserveBillingInflight(ctx context.Context, request Bil
 		result.Usage.InputTokens = 0
 		result.Usage.CacheCreationInputTokens = tokens.InputTokens
 		result.Usage.CacheCreation5mTokens = tokens.InputTokens
-		amount = math.Max(amount, s.calculateRecordUsageCost(ctx, result, key, model, multiplier, resolveImageRateMultiplier(key, multiplier), opts).ActualCost)
+		amount = math.Max(amount, s.calculateRecordUsageCost(ctx, result, key, model, multiplier, resolveImageRateMultiplier(key, multiplier), opts, pricingAt).ActualCost)
 		result.Usage.CacheCreation5mTokens = 0
 		result.Usage.CacheCreation1hTokens = tokens.InputTokens
-		amount = math.Max(amount, s.calculateRecordUsageCost(ctx, result, key, model, multiplier, resolveImageRateMultiplier(key, multiplier), opts).ActualCost)
+		amount = math.Max(amount, s.calculateRecordUsageCost(ctx, result, key, model, multiplier, resolveImageRateMultiplier(key, multiplier), opts, pricingAt).ActualCost)
 	}
 	return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, request, amount, !known)
 }
@@ -207,7 +208,8 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 		tokens.ImageOutputTokens = tokens.OutputTokens
 	}
 	tier := gjson.GetBytes(request.Body, "service_tier").String()
-	cost, err := s.calculateOpenAIRecordUsageCost(ctx, result, key, models, multiplier, resolveImageRateMultiplier(key, multiplier), tokens, tier, deepseekNowFunc())
+	pricingAt := deepseekNowFunc()
+	cost, err := s.calculateOpenAIRecordUsageCost(ctx, result, key, models, multiplier, resolveImageRateMultiplier(key, multiplier), tokens, tier, pricingAt)
 	if err != nil {
 		return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, request, 0, true)
 	}
@@ -215,7 +217,7 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 	if result.ImageCount == 0 {
 		tokens.CacheCreationTokens = tokens.InputTokens
 		tokens.InputTokens = 0
-		if cacheCost, err := s.calculateOpenAIRecordUsageCost(ctx, result, key, models, multiplier, resolveImageRateMultiplier(key, multiplier), tokens, tier, deepseekNowFunc()); err == nil {
+		if cacheCost, err := s.calculateOpenAIRecordUsageCost(ctx, result, key, models, multiplier, resolveImageRateMultiplier(key, multiplier), tokens, tier, pricingAt); err == nil {
 			amount = math.Max(amount, cacheCost.ActualCost)
 		}
 	}
