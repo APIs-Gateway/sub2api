@@ -144,10 +144,10 @@ describe('KeyFallbackChainEditor', () => {
   it('每项显示分组徽标、人民币参考价和状态', async () => {
     const w = await mountEditor()
     expect(w.get('[data-test="reference-model"]').text()).toContain('gpt-5.5')
-    // 1.875 / 7.2 = 0.260，15 / 7.2 = 2.08
+    // 1.875 / 7.2 = 0.2604（小于 1 取 4 位有效数字），15 / 7.2 = 2.08
     const row = w.get('[data-test="fallback-item-21"]')
     expect(row.get('[data-test="badge"]').text()).toContain('Codex 稳定')
-    expect(row.get('[data-test="price"]').text()).toBe('输入 ¥0.260 / 输出 ¥2.08')
+    expect(row.get('[data-test="price"]').text()).toBe('输入 ¥0.2604 / 输出 ¥2.08')
     expect(row.get('[data-test="status"]').text()).toContain('可用')
   })
 
@@ -178,7 +178,7 @@ describe('KeyFallbackChainEditor', () => {
     const chain = makeChain()
     chain.items[1].reference_price = { priced: true, input_usd_per_mtok: 9, output_usd_per_mtok: 9, cny: { input_per_mtok: 0.5, output_per_mtok: 4 } }
     const w = await mountEditor(chain)
-    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 ¥0.500 / 输出 ¥4.00')
+    expect(w.get('[data-test="fallback-item-21"] [data-test="price"]').text()).toBe('输入 ¥0.50 / 输出 ¥4.00')
   })
 
   it('没有 cny 时回落到同一价格的美元口径，不拿美元数字套 ¥', async () => {
@@ -232,8 +232,8 @@ describe('KeyFallbackChainEditor', () => {
     const picker = w.get('[data-test="picker"]')
     expect(picker.text()).toContain('Codex Pro')
     expect(picker.text()).toContain('Codex Max')
-    // 参考价 3.75/7.2 = 0.521
-    expect(picker.get('[data-test="pick-30"]').text()).toContain('输入 ¥0.521')
+    // 参考价 3.75/7.2 = 0.5208
+    expect(picker.get('[data-test="pick-30"]').text()).toContain('输入 ¥0.5208')
     await picker.get('[data-test="pick-30"]').trigger('click')
     await flushPromises()
     expect(replaceChain).toHaveBeenCalledWith(7, [21, 22, 23, 30])
