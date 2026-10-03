@@ -32,15 +32,24 @@ import (
 // Only the provider is controlled: a gate keeps its response pending while a
 // second HTTP request competes for the same user's actual available funds.
 type wsInflightProviderTurn struct {
-	payload []byte
-	release chan struct{}
+	payload        []byte
+	effectiveModel string
+	release        chan struct{}
 }
 type wsInflightProvider struct {
 	turns  chan wsInflightProviderTurn
 	stop   chan struct{}
 	calls  atomic.Int64
-	fault  string
+	replay atomic.Bool
+	fault  atomic.Value
 	server *httptest.Server
+}
+
+func (p *wsInflightProvider) faultMode() string {
+	if v := p.fault.Load(); v != nil {
+		return v.(string)
+	}
+	return ""
 }
 
 func newWSInflightProvider(t *testing.T) *wsInflightProvider {
@@ -54,19 +63,27 @@ func newWSInflightProvider(t *testing.T) *wsInflightProvider {
 			}
 			defer func() { _ = conn.CloseNow() }()
 			sessionImage := false
+			sessionModel := ""
 			for {
 				_, body, err := conn.Read(r.Context())
 				if err != nil {
 					return
 				}
 				if gjson.GetBytes(body, "type").String() == "session.update" {
+					if model := gjson.GetBytes(body, "session.model"); model.Exists() {
+						sessionModel = model.String()
+					}
 					if tools := gjson.GetBytes(body, "session.tools"); tools.Exists() {
 						sessionImage = strings.Contains(tools.Raw, "image_generation")
 					}
 					continue
 				}
 				n := p.calls.Add(1)
-				turn := wsInflightProviderTurn{payload: body, release: make(chan struct{})}
+				effectiveModel := gjson.GetBytes(body, "model").String()
+				if effectiveModel == "" {
+					effectiveModel = sessionModel
+				}
+				turn := wsInflightProviderTurn{payload: body, effectiveModel: effectiveModel, release: make(chan struct{})}
 				select {
 				case p.turns <- turn:
 				case <-r.Context().Done():
@@ -83,7 +100,11 @@ func newWSInflightProvider(t *testing.T) *wsInflightProvider {
 				if tools := gjson.GetBytes(body, "tools"); tools.Exists() {
 					image = strings.Contains(tools.Raw, "image_generation")
 				}
-				event := wsInflightCompleted(n, body, image)
+				responseNumber := n
+				if p.replay.Load() {
+					responseNumber = 1
+				}
+				event := wsInflightCompleted(responseNumber, body, image, effectiveModel)
 				if err := conn.Write(r.Context(), coderws.MessageText, event); err != nil {
 					return
 				}
@@ -94,7 +115,7 @@ func newWSInflightProvider(t *testing.T) *wsInflightProvider {
 			return
 		}
 		n := p.calls.Add(1)
-		turn := wsInflightProviderTurn{payload: body, release: make(chan struct{})}
+		turn := wsInflightProviderTurn{payload: body, effectiveModel: gjson.GetBytes(body, "model").String(), release: make(chan struct{})}
 		select {
 		case p.turns <- turn:
 		case <-r.Context().Done():
@@ -107,18 +128,38 @@ func newWSInflightProvider(t *testing.T) *wsInflightProvider {
 		case <-r.Context().Done():
 			return
 		}
+
+		fault := p.faultMode()
+		if fault == "401" || fault == "403" {
+			status := http.StatusUnauthorized
+			code := "invalid_api_key"
+			if fault == "403" {
+				status = http.StatusForbidden
+				code = "permission_denied"
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = fmt.Fprintf(w, `{"error":{"type":%q,"code":%q,"message":"provider denied authentication"}}`, code, code)
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		if p.fault == "scanner" {
+		if fault == "scanner" {
 			_, _ = io.WriteString(w, "data: "+strings.Repeat("x", 2<<20)+"\n\n")
 			return
 		}
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", wsInflightCompleted(n, body, strings.Contains(string(body), "image_generation")))
+		responseNumber := n
+		if p.replay.Load() {
+			responseNumber = 1
+		}
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", wsInflightCompleted(responseNumber, body, strings.Contains(string(body), "image_generation"), turn.effectiveModel))
 	}))
 	t.Cleanup(func() { close(p.stop); p.server.Close() })
 	return p
 }
-func wsInflightCompleted(n int64, body []byte, image bool) []byte {
-	model := gjson.GetBytes(body, "model").String()
+func wsInflightCompleted(n int64, body []byte, image bool, model string) []byte {
+	if model == "" {
+		model = gjson.GetBytes(body, "model").String()
+	}
 	if model == "" {
 		model = "gpt-5.4"
 	}
@@ -173,6 +214,9 @@ func (b *wsInflightBillingObserver) Apply(ctx context.Context, cmd *service.Usag
 }
 
 type wsInflightFixture struct {
+	accounts    service.AccountRepository
+	accountID   int64
+	groupID     int64
 	userID      int64
 	key         *service.APIKey
 	gateway     *service.OpenAIGatewayService
@@ -275,11 +319,22 @@ func newWSInflightFixture(t *testing.T, mode string, source string, prices map[s
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: user.ID, Concurrency: 10})
 		c.Next()
 	})
-	router.GET("/v1/responses", handler.ResponsesWebSocket)
+	wsDone := make(chan struct{})
+	var wsStarted atomic.Bool
+	router.GET("/v1/responses", func(c *gin.Context) { wsStarted.Store(true); defer close(wsDone); handler.ResponsesWebSocket(c) })
 	router.POST("/v1/responses", handler.Responses)
 	server := httptest.NewServer(router)
-	t.Cleanup(server.Close)
-	return &wsInflightFixture{userID: user.ID, key: key, gateway: gateway, billing: billing, router: router, server: server, provider: p, httpClient: httpClient, billingRepo: observedBilling}
+	t.Cleanup(func() {
+		server.Close()
+		if wsStarted.Load() {
+			select {
+			case <-wsDone:
+			case <-time.After(5 * time.Second):
+				t.Error("real WS handler did not release its resources before fixture cleanup")
+			}
+		}
+	})
+	return &wsInflightFixture{accounts: accounts, accountID: account.ID, groupID: group.ID, userID: user.ID, key: key, gateway: gateway, billing: billing, router: router, server: server, provider: p, httpClient: httpClient, billingRepo: observedBilling}
 }
 func (f *wsInflightFixture) dial(t *testing.T) *coderws.Conn {
 	t.Helper()
@@ -287,7 +342,7 @@ func (f *wsInflightFixture) dial(t *testing.T) *coderws.Conn {
 	defer cancel()
 	conn, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(f.server.URL, "http")+"/v1/responses", nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.CloseNow() })
+	t.Cleanup(func() { _ = conn.Close(coderws.StatusNormalClosure, "test complete"); _ = conn.CloseNow() })
 	return conn
 }
 func wsInflightWrite(t *testing.T, conn *coderws.Conn, payload string) {
@@ -412,7 +467,7 @@ func TestBillingInflightWS_LaterModelUsesActualBillingSource(t *testing.T) {
 					}
 					wsInflightWrite(t, conn, secondPayload)
 					second := f.provider.next(t)
-					require.Equal(t, "gpt-5.1", gjson.GetBytes(second.payload, "model").String(), "actual outgoing body uses B")
+					require.Equal(t, "gpt-5.1", second.effectiveModel, "provider uses actual B, including preserved session inheritance")
 					expected := 0.0
 					if source == service.BillingModelSourceRequested {
 						expected = .5
@@ -468,7 +523,7 @@ func TestBillingInflightWS_UnknownBridgeProcessingRetainsBoundedHold(t *testing.
 			if failure == "header_timeout" {
 				f.httpClient.Timeout = 150 * time.Millisecond
 			} else {
-				f.provider.fault = "scanner"
+				f.provider.fault.Store("scanner")
 			}
 			conn := f.dial(t)
 			wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","input":"processing outcome remains unknown"}`)
@@ -493,7 +548,7 @@ func TestBillingInflightWS_UnknownBridgeProcessingRetainsBoundedHold(t *testing.
 			var logs, dedup int
 			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&logs))
 			require.Zero(t, logs)
-			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE user_id=$1`, f.userID).Scan(&dedup))
+			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
 			require.Zero(t, dedup)
 			var seconds float64
 			require.NoError(t, integrationDB.QueryRow(`SELECT EXTRACT(EPOCH FROM MAX(expires_at)-clock_timestamp()) FROM billing_inflight_leases WHERE user_id=$1 AND phase='attempt'`, f.userID).Scan(&seconds))
@@ -547,6 +602,102 @@ func TestBillingInflightWS_QueuedTurnsCannotConsumeAnotherAttempt(t *testing.T) 
 			require.NotEqual(t, firstCommand.InflightObligationID, secondCommand.InflightObligationID)
 			require.InDelta(t, .625, f.wallet(t), 1e-9)
 			require.EqualValues(t, 2, f.billingRepo.calls.Load())
+		})
+	}
+}
+
+func TestBillingInflightWS_ProviderReplayDoesNotBillOrRetainAnExtraObligation(t *testing.T) {
+	for _, mode := range []string{"native", "passthrough", "bridge"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newWSInflightFixture(t, mode, service.BillingModelSourceUpstream, map[string]float64{"gpt-5.4": .5})
+			f.provider.replay.Store(true)
+			conn := f.dial(t)
+			payload := `{"type":"response.create","model":"gpt-5.4","input":"same logical provider turn","max_output_tokens":8}`
+			wsInflightWrite(t, conn, payload)
+			first := f.provider.next(t)
+			require.InDelta(t, .5, f.held(t), 1e-9)
+			close(first.release)
+			wsInflightReadCompleted(t, conn)
+			f.waitUsage(t, 1)
+			firstCommand := <-f.billingRepo.commands
+			require.NotEmpty(t, firstCommand.InflightObligationID)
+			wsInflightWrite(t, conn, payload)
+			second := f.provider.next(t)
+			require.InDelta(t, .5, f.held(t), 1e-9)
+			f.denyConcurrentHTTP(t, "gpt-5.4")
+			close(second.release)
+			wsInflightReadCompleted(t, conn)
+			require.Eventually(t, func() bool { return f.billingRepo.calls.Load() == 2 && f.held(t) == 0 }, 5*time.Second, 20*time.Millisecond, "idempotent provider replay must release its own newly staged obligation")
+			secondCommand := <-f.billingRepo.commands
+			require.NotEqual(t, firstCommand.InflightObligationID, secondCommand.InflightObligationID)
+			require.InDelta(t, .25, f.wallet(t), 1e-9, "same provider response id and payload must bill once")
+			var logs, dedup int
+			require.NoError(t, integrationDB.QueryRow(`SELECT COUNT(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&logs))
+			require.Equal(t, 1, logs)
+			require.NoError(t, integrationDB.QueryRow(`SELECT COUNT(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+			require.Equal(t, 1, dedup)
+		})
+	}
+}
+
+func (f *wsInflightFixture) addAccount(t *testing.T) {
+	t.Helper()
+	original, err := f.accounts.GetByID(context.Background(), f.accountID)
+	require.NoError(t, err)
+	another := *original
+	another.ID = 0
+	another.Name = "ws-funding-second-" + uuid.NewString()
+	require.NoError(t, f.accounts.Create(context.Background(), &another))
+	require.NoError(t, f.accounts.BindGroups(context.Background(), another.ID, []int64{f.groupID}))
+}
+func TestBillingInflightWS_CanonicalBridgeAuthRefusalReleasesItsTurn(t *testing.T) {
+	for _, failure := range []string{"401", "403"} {
+		t.Run(failure, func(t *testing.T) {
+			f := newWSInflightFixture(t, "bridge", service.BillingModelSourceUpstream, map[string]float64{"gpt-5.4": .5})
+			f.addAccount(t)
+			f.provider.fault.Store(failure)
+			conn := f.dial(t)
+			wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","input":"rejected authentication"}`)
+			first := f.provider.next(t)
+			require.InDelta(t, .5, f.held(t), 1e-9)
+			close(first.release)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			for {
+				_, event, err := conn.Read(ctx)
+				if err != nil {
+					require.NotEqual(t, context.DeadlineExceeded, ctx.Err())
+					break
+				}
+				require.NotEqual(t, "response.completed", gjson.GetBytes(event, "type").String())
+			}
+			require.Eventually(t, func() bool { return f.held(t) == 0 }, 5*time.Second, 20*time.Millisecond, "complete canonical authentication rejection must release this WS turn lease")
+			require.InDelta(t, .75, f.wallet(t), 1e-9)
+			require.Zero(t, f.billingRepo.calls.Load())
+			var logs int
+			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&logs))
+			require.Zero(t, logs)
+			f.provider.fault.Store("")
+			done := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				rec := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.4","input":"another funded request"}`))
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				f.router.ServeHTTP(rec, req.WithContext(ctx))
+				done <- rec
+			}()
+			next := f.provider.next(t)
+			require.InDelta(t, .5, f.held(t), 1e-9)
+			close(next.release)
+			select {
+			case rec := <-done:
+				require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			case <-time.After(5 * time.Second):
+				t.Fatal("independent HTTP request did not finish")
+			}
+			f.waitUsage(t, 1)
+			require.InDelta(t, .25, f.wallet(t), 1e-9)
 		})
 	}
 }
