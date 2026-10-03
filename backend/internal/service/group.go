@@ -32,11 +32,14 @@ type Group struct {
 
 	// 图片生成计费配置（antigravity 和 gemini 平台使用）
 	AllowImageGeneration bool
-	ImageRateIndependent bool
-	ImageRateMultiplier  float64
-	ImagePrice1K         *float64
-	ImagePrice2K         *float64
-	ImagePrice4K         *float64
+	// SimpleModeAutoImageEligible is internal provenance for an untouched
+	// system-created OpenAI default. Admin permission edits clear it forever.
+	SimpleModeAutoImageEligible bool
+	ImageRateIndependent        bool
+	ImageRateMultiplier         float64
+	ImagePrice1K                *float64
+	ImagePrice2K                *float64
+	ImagePrice4K                *float64
 
 	// Claude Code 客户端限制
 	ClaudeCodeOnly  bool

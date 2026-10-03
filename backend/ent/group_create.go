@@ -245,6 +245,20 @@ func (_c *GroupCreate) SetNillableAllowImageGeneration(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetSimpleModeAutoImageEligible sets the "simple_mode_auto_image_eligible" field.
+func (_c *GroupCreate) SetSimpleModeAutoImageEligible(v bool) *GroupCreate {
+	_c.mutation.SetSimpleModeAutoImageEligible(v)
+	return _c
+}
+
+// SetNillableSimpleModeAutoImageEligible sets the "simple_mode_auto_image_eligible" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableSimpleModeAutoImageEligible(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetSimpleModeAutoImageEligible(*v)
+	}
+	return _c
+}
+
 // SetImageRateIndependent sets the "image_rate_independent" field.
 func (_c *GroupCreate) SetImageRateIndependent(v bool) *GroupCreate {
 	_c.mutation.SetImageRateIndependent(v)
@@ -692,6 +706,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultAllowImageGeneration
 		_c.mutation.SetAllowImageGeneration(v)
 	}
+	if _, ok := _c.mutation.SimpleModeAutoImageEligible(); !ok {
+		v := group.DefaultSimpleModeAutoImageEligible
+		_c.mutation.SetSimpleModeAutoImageEligible(v)
+	}
 	if _, ok := _c.mutation.ImageRateIndependent(); !ok {
 		v := group.DefaultImageRateIndependent
 		_c.mutation.SetImageRateIndependent(v)
@@ -807,6 +825,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.AllowImageGeneration(); !ok {
 		return &ValidationError{Name: "allow_image_generation", err: errors.New(`ent: missing required field "Group.allow_image_generation"`)}
+	}
+	if _, ok := _c.mutation.SimpleModeAutoImageEligible(); !ok {
+		return &ValidationError{Name: "simple_mode_auto_image_eligible", err: errors.New(`ent: missing required field "Group.simple_mode_auto_image_eligible"`)}
 	}
 	if _, ok := _c.mutation.ImageRateIndependent(); !ok {
 		return &ValidationError{Name: "image_rate_independent", err: errors.New(`ent: missing required field "Group.image_rate_independent"`)}
@@ -945,6 +966,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.AllowImageGeneration(); ok {
 		_spec.SetField(group.FieldAllowImageGeneration, field.TypeBool, value)
 		_node.AllowImageGeneration = value
+	}
+	if value, ok := _c.mutation.SimpleModeAutoImageEligible(); ok {
+		_spec.SetField(group.FieldSimpleModeAutoImageEligible, field.TypeBool, value)
+		_node.SimpleModeAutoImageEligible = value
 	}
 	if value, ok := _c.mutation.ImageRateIndependent(); ok {
 		_spec.SetField(group.FieldImageRateIndependent, field.TypeBool, value)
@@ -1411,6 +1436,18 @@ func (u *GroupUpsert) SetAllowImageGeneration(v bool) *GroupUpsert {
 // UpdateAllowImageGeneration sets the "allow_image_generation" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateAllowImageGeneration() *GroupUpsert {
 	u.SetExcluded(group.FieldAllowImageGeneration)
+	return u
+}
+
+// SetSimpleModeAutoImageEligible sets the "simple_mode_auto_image_eligible" field.
+func (u *GroupUpsert) SetSimpleModeAutoImageEligible(v bool) *GroupUpsert {
+	u.Set(group.FieldSimpleModeAutoImageEligible, v)
+	return u
+}
+
+// UpdateSimpleModeAutoImageEligible sets the "simple_mode_auto_image_eligible" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateSimpleModeAutoImageEligible() *GroupUpsert {
+	u.SetExcluded(group.FieldSimpleModeAutoImageEligible)
 	return u
 }
 
@@ -2073,6 +2110,20 @@ func (u *GroupUpsertOne) SetAllowImageGeneration(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateAllowImageGeneration() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateAllowImageGeneration()
+	})
+}
+
+// SetSimpleModeAutoImageEligible sets the "simple_mode_auto_image_eligible" field.
+func (u *GroupUpsertOne) SetSimpleModeAutoImageEligible(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSimpleModeAutoImageEligible(v)
+	})
+}
+
+// UpdateSimpleModeAutoImageEligible sets the "simple_mode_auto_image_eligible" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateSimpleModeAutoImageEligible() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSimpleModeAutoImageEligible()
 	})
 }
 
@@ -2959,6 +3010,20 @@ func (u *GroupUpsertBulk) SetAllowImageGeneration(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateAllowImageGeneration() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateAllowImageGeneration()
+	})
+}
+
+// SetSimpleModeAutoImageEligible sets the "simple_mode_auto_image_eligible" field.
+func (u *GroupUpsertBulk) SetSimpleModeAutoImageEligible(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSimpleModeAutoImageEligible(v)
+	})
+}
+
+// UpdateSimpleModeAutoImageEligible sets the "simple_mode_auto_image_eligible" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateSimpleModeAutoImageEligible() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSimpleModeAutoImageEligible()
 	})
 }
 

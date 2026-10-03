@@ -3,6 +3,7 @@ package service
 import (
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/tidwall/gjson"
 )
 
@@ -34,6 +35,17 @@ func ImageGenerationPermissionMessage() string {
 // GroupAllowsImageGeneration preserves ungrouped-key behavior and enforces the flag when a group is present.
 func GroupAllowsImageGeneration(group *Group) bool {
 	return group == nil || group.AllowImageGeneration
+}
+
+// GroupAllowsImageGenerationForMode permits the one provenance-backed simple
+// mode exception. All other groups and standard mode retain the saved flag.
+func GroupAllowsImageGenerationForMode(group *Group, cfg *config.Config) bool {
+	if GroupAllowsImageGeneration(group) {
+		return true
+	}
+	return cfg != nil && cfg.RunMode == config.RunModeSimple &&
+		group.ID > 0 && group.Hydrated && group.Status == StatusActive &&
+		group.Platform == PlatformOpenAI && group.SimpleModeAutoImageEligible
 }
 
 // IsImageGenerationIntent classifies requests that can produce generated images.
@@ -461,4 +473,16 @@ func openAIJSONString(value gjson.Result) string {
 		return ""
 	}
 	return strings.TrimSpace(value.String())
+}
+
+// currentWSImagePermission never falls back to a handshake snapshot after an
+// authoritative lookup fails. Production ingress always installs the hook.
+func (s *OpenAIGatewayService) currentWSImagePermission(hooks *OpenAIWSIngressHooks, initial *APIKey) bool {
+	if hooks != nil && hooks.BeforeImagePermission != nil {
+		group, err := hooks.BeforeImagePermission()
+		if err != nil { return false }
+		if group == nil { return initial != nil && initial.GroupID == nil && initial.Group == nil }
+		return GroupAllowsImageGenerationForMode(group, s.cfg)
+	}
+	return GroupAllowsImageGenerationForMode(apiKeyGroup(initial), s.cfg)
 }

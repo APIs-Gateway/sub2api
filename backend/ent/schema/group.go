@@ -81,6 +81,9 @@ func (Group) Fields() []ent.Field {
 		field.Bool("allow_image_generation").
 			Default(false).
 			Comment("是否允许该分组使用图片生成能力"),
+		field.Bool("simple_mode_auto_image_eligible").
+			Default(false).
+			Comment("仅系统新建且管理员未显式设置图片权限的简易模式 OpenAI 默认组可使用的内部例外"),
 		field.Bool("image_rate_independent").
 			Default(false).
 			Comment("图片生成是否使用独立倍率；false 表示共享分组有效倍率"),

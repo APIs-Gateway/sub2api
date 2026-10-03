@@ -183,6 +183,7 @@ func (s *GroupService) Update(ctx context.Context, id int64, req UpdateGroupRequ
 	}
 	if req.AllowImageGeneration != nil {
 		group.AllowImageGeneration = *req.AllowImageGeneration
+		group.SimpleModeAutoImageEligible = false
 	}
 	if req.ImageRateIndependent != nil {
 		group.ImageRateIndependent = *req.ImageRateIndependent

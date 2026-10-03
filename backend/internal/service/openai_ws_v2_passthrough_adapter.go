@@ -717,6 +717,13 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	// model would miss any admin-configured model whitelist and be silently
 	// passed through, defeating that policy on every frame after the first.
 	capturedSessionModel := openAIWSPassthroughPolicyModelForFrame(account, firstClientMessage)
+	sessionImageIntent := false
+	if (IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(firstClientMessage) || isOpenAIImageGenerationModel(capturedSessionModel)) && !s.currentWSImagePermission(hooks, getAPIKeyFromContext(c)) {
+		message := ImageGenerationPermissionMessage()
+		rejection := newOpenAIWSLocalRejection(http.StatusForbidden, "permission_error", "", message, nil)
+		writeOpenAIWSLocalRejectionEvent(ctx, clientConn, rejection)
+		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, message, rejection)
+	}
 	initialRequestModel := ""
 	if hooks != nil {
 		initialRequestModel = hooks.InitialRequestModel
@@ -972,13 +979,26 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, message, rejection)
 				}
 			}
-			if (isResponseCreate || eventType == "session.update") && IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(payload) {
-				if apiKey := getAPIKeyFromContext(c); apiKey != nil && !GroupAllowsImageGeneration(apiKey.Group) {
+			frameImageIntent := openAIWSFrameRequiresImagePermission(account, payload, capturedSessionModel, sessionImageIntent)
+			if (isResponseCreate || eventType == "session.update") && frameImageIntent {
+				if s.openAIResponsesImageGenerationDisabled() {
+					message := OpenAIResponsesImageGenerationDisabledMessage()
+					rejection := newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", message, nil)
+					writeOpenAIWSLocalRejectionEvent(ctx, clientConn, rejection)
+					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, message, rejection)
+				}
+				if !s.currentWSImagePermission(hooks, getAPIKeyFromContext(c)) {
 					message := ImageGenerationPermissionMessage()
 					rejection := newOpenAIWSLocalRejection(http.StatusForbidden, "permission_error", "", message, nil)
 					writeOpenAIWSLocalRejectionEvent(ctx, clientConn, rejection)
 					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, message, rejection)
 				}
+			}
+			if eventType == "session.update" {
+				if gjson.GetBytes(payload, "session.tools").Exists() || gjson.GetBytes(payload, "tools").Exists() {
+					sessionImageIntent = IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(payload)
+				}
+
 			}
 			if isResponseCreate && isOpenAIResponsesLiteWebSocketPayload(payload) {
 				litePayload, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(payload, account)
@@ -1483,4 +1503,24 @@ func logOpenAIWSV2Passthrough(format string, args ...any) {
 		"[OpenAI WS v2 passthrough] %s "+format,
 		append([]any{openaiWSV2PassthroughModeFields}, args...)...,
 	)
+}
+
+// Session tools remain active when a response.create omits tools. Mapped and
+// inherited image models also require current permissions before upstream IO.
+func openAIWSFrameRequiresImagePermission(account *Account, payload []byte, sessionModel string, sessionImageTools bool) bool {
+	if IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(payload) {
+		return true
+	}
+	switch strings.TrimSpace(gjson.GetBytes(payload, "type").String()) {
+	case "response.create":
+		model := openAIWSPassthroughPolicyModelForFrame(account, payload)
+		if model == "" {
+			model = sessionModel
+		}
+		// An explicit per-response tools list overrides the session tools.
+		return (sessionImageTools && !gjson.GetBytes(payload, "tools").Exists()) || isOpenAIImageGenerationModel(model)
+	case "session.update":
+		return isOpenAIImageGenerationModel(openAIWSPassthroughPolicyModelFromSessionFrame(account, payload))
+	}
+	return false
 }
