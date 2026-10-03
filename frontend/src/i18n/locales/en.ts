@@ -12,100 +12,11 @@
     goToDashboard: 'Go to Dashboard',
     // Hero title & description (Anthropic-minimal style, OpenAI positioning)
     heroTitle: 'Powerful AI, made simple',
-    heroDesc: 'A fast, reliable, pay-as-you-go API for powerful AI models. Sign up, grab a key, and start building.',
-    // Legacy fields kept for compatibility
-    heroSubtitle: 'One key for powerful AI models',
-    heroDescription: 'A fast, reliable, pay-as-you-go API for powerful AI models',
-    tags: {
-      subscriptionToApi: 'Fast & Reliable',
-      stickySession: 'Session Persistence',
-      realtimeBilling: 'Pay As You Go'
-    },
-    // Pain points section
-    painPoints: {
-      title: 'Sound Familiar?',
-      items: {
-        expensive: {
-          title: 'High Subscription Costs',
-          desc: 'Paying for multiple AI subscriptions that add up every month'
-        },
-        complex: {
-          title: 'Account Chaos',
-          desc: 'Managing scattered accounts and API keys across different platforms'
-        },
-        unstable: {
-          title: 'Service Interruptions',
-          desc: 'Single accounts hitting rate limits and disrupting your workflow'
-        },
-        noControl: {
-          title: 'No Usage Control',
-          desc: "Can't track where your money goes or limit team member usage"
-        }
-      }
-    },
-    // Solutions section
-    solutions: {
-      title: 'We Solve These Problems',
-      subtitle: 'Three simple steps to stress-free AI access'
-    },
-    features: {
-      unifiedGateway: 'Fast & Reliable',
-      unifiedGatewayDesc: 'High-availability infrastructure with smart routing — low latency, high success rate.',
-      multiAccount: 'Simple to Integrate',
-      multiAccountDesc: 'Compatible with popular OpenAI SDKs. Grab one key and start calling.',
-      balanceQuota: 'Pay As You Go',
-      balanceQuotaDesc: 'Pay only for what you use, with real-time usage and quota visibility.'
-    },
-    // Comparison section
-    comparison: {
-      title: 'Why Choose Us?',
-      headers: {
-        feature: 'Comparison',
-        official: 'Official Subscriptions',
-        us: 'Our Platform'
-      },
-      items: {
-        pricing: {
-          feature: 'Pricing',
-          official: 'Fixed monthly fee, pay even if unused',
-          us: 'Pay only for what you use'
-        },
-        models: {
-          feature: 'Model Selection',
-          official: 'Single provider only',
-          us: 'Switch between models freely'
-        },
-        management: {
-          feature: 'Account Management',
-          official: 'Manage each service separately',
-          us: 'Unified key, one dashboard'
-        },
-        stability: {
-          feature: 'Stability',
-          official: 'Single account rate limits',
-          us: 'Multi-account pool, auto-failover'
-        },
-        control: {
-          feature: 'Usage Control',
-          official: 'Not available',
-          us: 'Quotas & detailed analytics'
-        }
-      }
-    },
-    providers: {
-      title: 'Supported models',
-      description: 'Powered by OpenAI models',
-      supported: 'Available',
-      soon: 'Soon',
-      claude: 'Claude',
-      gemini: 'Gemini',
-      antigravity: 'Antigravity',
-      more: 'More'
-    },
+    heroDesc: 'A fast, reliable API for powerful AI models. Sign up and create a key to connect.',
     // CTA section
     cta: {
       title: 'Ready to Get Started?',
-      description: 'Sign up now and get free trial credits to experience seamless AI access',
+      description: 'Create a key, then subscribe or top up your balance to start calling.',
       button: 'Sign Up Free'
     },
     footer: {
@@ -113,36 +24,30 @@
     },
     // Landing page marketing copy (previously hardcoded in HomeView.vue)
     marketing: {
-      eyebrow: 'Subscription · Daily-refreshing quota · Overdraft-friendly',
+      eyebrow: 'Two ways to pay: subscription or balance',
       endpointNote: '// OpenAI-compatible · one key',
-      valueTitle: 'Subscribe once, full every day',
-      valueDesc: 'Not a prepaid balance that drains away — a subscription whose quota refreshes daily. About ¥3.6 (≈ $0.5) a day unlocks usage equivalent to $2700 of official spend.',
-      stat1Value: '$90 / day',
-      stat1Label: 'Daily refreshing quota',
-      stat2Value: '¥3.6 / day',
-      stat2Label: 'Avg daily cost ≈ $0.5',
-      stat3Value: '$2700 / mo',
-      stat3Label: 'Equivalent official usage',
+      valueTitle: 'Subscribe once, quota refreshes every day',
+      valueDesc: 'Use a subscription and a balance together, or just one of them.',
       feature1Title: 'Fast & stable',
-      feature1Desc: 'High-availability gateway and smart routing — low latency, high success rate.',
+      feature1Desc: 'Low latency and a high success rate — stable and dependable.',
       feature2Title: 'Simple to connect',
-      feature2Desc: 'Compatible with mainstream OpenAI / Anthropic protocols — one key to start.',
+      feature2Desc: 'Compatible with mainstream OpenAI / Anthropic protocols — one key connects you.',
       feature3Title: 'Transparent metering',
       feature3Desc: 'Every call’s latency, tokens and cost are recorded — usage visible in real time.',
       integrateTitle: 'Connect anywhere',
       integrateDesc: 'Standard-compatible — plug into your IDE or agent in minutes. One key, many clients.',
       clientAnySdk: 'Any OpenAI SDK',
-      compareTitle: 'How it differs from pay-as-you-go',
-      paygTitle: 'Pay-as-you-go',
-      paygPoint1: 'Stops when balance runs out; constant top-ups',
-      paygPoint2: 'Unpredictable bills under heavy use',
-      paygPoint3: 'Price floats with usage, hard to estimate',
-      subTitle: 'This platform (subscription)',
-      subPoint1: 'Quota refreshes daily — usage resets, no balance burn',
-      subPoint2: 'Fixed per-cycle cost, clear and predictable',
-      subPoint3: 'High-availability gateway + smart routing',
-      overdraftTitle: 'Overdraft supported — bursts don’t cut you off',
-      overdraftDesc: 'When the daily quota is exceeded, you keep calling within an overdraft allowance, metered as days drawn forward — so a single heavy session never stalls you mid-task.'
+      compareTitle: 'How subscription and balance differ',
+      subscriptionTitle: 'Subscription',
+      subscriptionPoint1: 'Choose a daily quota and validity when you buy',
+      subscriptionPoint2: 'Quota refreshes daily, with weekly and monthly caps',
+      subscriptionPoint3: 'Fixed per-cycle cost, clear and predictable',
+      balanceTitle: 'Balance',
+      balancePoint1: 'Top up whenever you need to',
+      balancePoint2: 'Billed by actual usage — you pay for what you use',
+      balancePoint3: 'With a subscription, usage continues on your balance once the quota runs out',
+      overdraftTitle: 'Daily quota used up? Refresh it',
+      overdraftDesc: 'Open My Subscriptions and choose “Refresh daily allowance” to restore today’s quota right away and keep going. Up to 5 times per calendar month; weekly and monthly caps still apply.'
     }
   },
 
@@ -7175,7 +7080,7 @@
         contactInfoHint: 'Customer support contact info, displayed on redeem page, profile, etc.',
         docUrl: 'Documentation URL',
         docUrlPlaceholder: 'https://docs.example.com',
-        docUrlHint: 'Link to your documentation site. Leave empty to hide the documentation link.',
+        docUrlHint: 'Link to an external documentation site, shown only in the "Connect a key" dialog. The Docs links on the home page and header always open the built-in docs page. Leave empty to hide it.',
         siteLogo: 'Site Logo',
         uploadImage: 'Upload Image',
         remove: 'Remove',
