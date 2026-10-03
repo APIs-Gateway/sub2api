@@ -375,7 +375,8 @@ func TestGroupSaturation_LegacyPathConstructors(t *testing.T) {
 		return cfg
 	}
 	groupID := int64(1)
-	oneAccount := []Account{{ID: 1, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1}}
+	// 账号必须属于 groupID：load batch 路径的粘性层会校验账号与分组的归属，不属于就清掉粘性绑定。
+	oneAccount := []Account{{ID: 1, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1, GroupIDs: []int64{groupID}}}
 
 	t.Run("#4 Layer 3 负载显示全满：GroupSaturated", func(t *testing.T) {
 		svc := newLegacySvc(legacyCfg(true), oneAccount, &stubGatewayCache{}, stubConcurrencyCache{
