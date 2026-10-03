@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import BulkEditAccountModal from '../BulkEditAccountModal.vue'
 import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
@@ -49,6 +50,7 @@ function mountModal(extraProps: Record<string, unknown> = {}) {
       ...extraProps
     } as any,
     global: {
+      plugins: [createPinia()],
       stubs: {
         BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
         ConfirmDialog: true,
