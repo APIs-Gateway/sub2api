@@ -166,7 +166,11 @@ describe('scheduled test reads belong to the current selection', () => {
 describe('scheduled test mutations keep their account and plan identity', () => {
   const mutate = (w: ReturnType<typeof mountPanel>, operation: string) => {
     const vm = view(w)
-    if (operation === 'create') { vm.newPlan.model_id = 'model-new'; return vm.handleCreate() }
+    if (operation === 'create') {
+      vm.newPlan.model_id = 'model-new'
+      vm.newPlan.cron_expression = '*/30 * * * *'
+      return vm.handleCreate()
+    }
     if (operation === 'edit') { vm.startEdit(plan(1)); return vm.handleEdit() }
     if (operation === 'delete') { vm.confirmDeletePlan(plan(1)); return vm.handleDelete() }
     return vm.handleToggleEnabled(plan(1), false)
