@@ -187,33 +187,50 @@ func (b *visibleDrainCancelExitBody) Read(p []byte) (int, error) {
 }
 func (b *visibleDrainCancelExitBody) Close() error { b.once.Do(func() { close(b.closed) }); return nil }
 func TestGatewayVisibleDrain_CanceledNonErrorEventExit(t *testing.T) {
-	for _, ending := range []string{"eof", "read_error", "terminal_tail"} {
-		t.Run(ending, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			c, rec := newPartialUsageTestContext(t)
-			c.Request = c.Request.WithContext(ctx)
-			payload := visibleDrainEvent("message_start", `{"type":"message_start","message":{"usage":{"input_tokens":11,"cache_read_input_tokens":7}}}`)
-			if ending == "terminal_tail" {
-				payload += visibleDrainEvent("message_stop", `{"type":"message_stop"}`)
-			}
-			body := &visibleDrainCancelExitBody{payload: strings.NewReader(payload), cancel: cancel, ending: ending, closed: make(chan struct{})}
-			upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: body}}
-			svc := newForwardPartialUsageServiceForTest(upstream)
-			result, err := svc.Forward(context.Background(), c, newAnthropicAPIKeyAccountForPartialUsageTest(), &ParsedRequest{Body: NewRequestBodyRef([]byte(`{"model":"claude-sonnet-4-5","stream":true,"messages":[{"role":"user","content":"hi"}]}`)), Model: "claude-sonnet-4-5", Stream: true})
-			require.Error(t, err)
-			require.NotNil(t, result)
-			require.Equal(t, 11, result.Usage.InputTokens)
-			require.Equal(t, 7, result.Usage.CacheReadInputTokens)
-			require.True(t, result.ClientDisconnect)
-			var failover *UpstreamFailoverError
-			require.False(t, errors.As(err, &failover))
-			require.Empty(t, rec.Body.String())
-			select {
-			case <-body.closed:
-			default:
-				t.Fatal("reader was not closed on canceled exit")
-			}
-		})
+	for _, visible := range []bool{false, true} {
+		for _, ending := range []string{"eof", "read_error", "terminal_tail"} {
+			t.Run(fmt.Sprintf("%t/%s", visible, ending), func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				rec := httptest.NewRecorder()
+				writer := &visibleDrainCancelWriter{ResponseRecorder: rec, ctx: ctx, cancel: func() {}}
+				c, _ := gin.CreateTestContext(writer)
+				c.Request = httptest.NewRequest("POST", "/v1/messages", nil).WithContext(ctx)
+				payload := visibleDrainEvent("message_start", `{"type":"message_start","message":{"usage":{"input_tokens":11,"cache_read_input_tokens":7}}}`)
+				if visible {
+					payload += visibleDrainEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"answer"}}`)
+				}
+				if ending == "terminal_tail" {
+					payload += visibleDrainEvent("message_stop", `{"type":"message_stop"}`)
+				}
+				body := &visibleDrainCancelExitBody{payload: strings.NewReader(payload), cancel: cancel, ending: ending, closed: make(chan struct{})}
+				upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: body}}
+				svc := newForwardPartialUsageServiceForTest(upstream)
+				result, err := svc.Forward(context.Background(), c, newAnthropicAPIKeyAccountForPartialUsageTest(), &ParsedRequest{Body: NewRequestBodyRef([]byte(`{"model":"claude-sonnet-4-5","stream":true,"messages":[{"role":"user","content":"hi"}]}`)), Model: "claude-sonnet-4-5", Stream: true})
+				if visible && ending == "terminal_tail" {
+					require.NoError(t, err)
+				} else {
+					require.Error(t, err)
+				}
+				require.NotNil(t, result)
+				require.Equal(t, 11, result.Usage.InputTokens)
+				require.Equal(t, 7, result.Usage.CacheReadInputTokens)
+				require.True(t, result.ClientDisconnect)
+				var failover *UpstreamFailoverError
+				require.False(t, errors.As(err, &failover))
+				if visible {
+					require.Contains(t, rec.Body.String(), "answer")
+				} else {
+					require.Empty(t, rec.Body.String())
+				}
+				require.Zero(t, writer.afterWrites)
+				require.Zero(t, writer.afterFlushes)
+				select {
+				case <-body.closed:
+				default:
+					t.Fatal("reader was not closed on canceled exit")
+				}
+			})
+		}
 	}
 }
