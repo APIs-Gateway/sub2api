@@ -1,24 +1,32 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { defineComponent, reactive } from 'vue'
+import { flushPromises, mount } from '@vue/test-utils'
+import { invalidateAuthSession } from '@/utils/authSessionVersion'
 
-const { updateAccountMock, checkMixedChannelRiskMock, showErrorMock, authState } = vi.hoisted(() => ({
+const { updateAccountMock, checkMixedChannelRiskMock, showErrorMock, authState, syncSavedMock, syncPreviewMock, showSuccessMock, showInfoMock } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
   showErrorMock: vi.fn(),
+  showSuccessMock: vi.fn(),
+  showInfoMock: vi.fn(),
+  syncSavedMock: vi.fn(),
+  syncPreviewMock: vi.fn(),
   authState: { isSimpleMode: true }
 }))
+const loginState = reactive({ authSessionVersion: 0, user: { id: 1 } })
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError: showErrorMock,
-    showSuccess: vi.fn(),
-    showInfo: vi.fn()
+    showSuccess: showSuccessMock,
+    showInfo: showInfoMock
   })
 }))
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
+    get authSessionVersion() { return loginState.authSessionVersion },
+    get user() { return loginState.user },
     get isSimpleMode() {
       return authState.isSimpleMode
     }
@@ -29,6 +37,8 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       update: updateAccountMock,
+      syncUpstreamModels: syncSavedMock,
+      syncUpstreamModelsPreview: syncPreviewMock,
       checkMixedChannelRisk: checkMixedChannelRiskMock
     },
     settings: {
@@ -78,7 +88,10 @@ const ModelWhitelistSelectorStub = defineComponent({
     modelValue: {
       type: Array,
       default: () => []
-    }
+    },
+    syncCredentials: Object,
+    syncContext: Number,
+    active: Boolean
   },
   emits: ['update:modelValue'],
   template: `
@@ -220,6 +233,108 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
     }
   })
 }
+
+describe('EditAccountModal model preview', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    loginState.authSessionVersion = invalidateAuthSession()
+    loginState.user = { id: 1 }
+  })
+  const deferred = () => {
+    let resolve!: (value: { models: string[] }) => void
+    let reject!: (error: Error) => void
+    const promise = new Promise<{ models: string[] }>((yes, no) => { resolve = yes; reject = no })
+    return { promise, resolve, reject }
+  }
+  const button = (wrapper: ReturnType<typeof mountModal>) => wrapper.findAll('button')
+    .find(item => item.text().includes('admin.accounts.syncUpstreamModels'))!
+  const apiKeyAG = () => ({ ...buildAntigravityAccount(), type: 'apikey', credentials: { api_key: 'redacted', base_url: 'https://saved.example/antigravity' } })
+  const values = (wrapper: ReturnType<typeof mountModal>) => wrapper.findAll('input').map(input => (input.element as HTMLInputElement).value)
+
+  it('passes the current URL/key/cleared proxy to the API-key selector without exposing the saved secret', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('input[placeholder="https://api.openai.com"]').setValue(' https://draft.example ')
+    await wrapper.get('input[type="password"]').setValue(' new-key ')
+    expect(wrapper.findComponent(ModelWhitelistSelectorStub).props('syncCredentials')).toEqual({
+      account_id: 1, platform: 'openai', type: 'apikey', base_url: 'https://draft.example', api_key: 'new-key', proxy_id: 0
+    })
+    await wrapper.get('input[type="password"]').setValue('')
+    expect(wrapper.findComponent(ModelWhitelistSelectorStub).props('syncCredentials').api_key).toBe('')
+    await wrapper.setProps({ account: { ...buildAccount(), name: 'background poll' } })
+    expect(wrapper.findComponent(ModelWhitelistSelectorStub).props('syncCredentials').base_url).toBe('https://draft.example')
+    wrapper.unmount()
+  })
+
+  it('uses the separate Antigravity API-key button to preview a draft', async () => {
+    syncPreviewMock.mockResolvedValue({ models: ['ag-draft'] })
+    const wrapper = mountModal(apiKeyAG())
+    await wrapper.get('input[placeholder="https://cloudcode-pa.googleapis.com"]').setValue('https://draft.example/antigravity')
+    await wrapper.get('input[type="password"]').setValue('new-key')
+    await button(wrapper).trigger('click')
+    await flushPromises()
+    expect(syncPreviewMock).toHaveBeenCalledWith({ account_id: 3, platform: 'antigravity', type: 'apikey', base_url: 'https://draft.example/antigravity', api_key: 'new-key', proxy_id: 0 })
+    expect(syncSavedMock).not.toHaveBeenCalled()
+    expect(values(wrapper)).toContain('ag-draft')
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps Antigravity OAuth on the saved account endpoint', async () => {
+    syncSavedMock.mockResolvedValue({ models: ['ag-oauth'] })
+    const wrapper = mountModal(buildAntigravityAccount())
+    await button(wrapper).trigger('click')
+    await flushPromises()
+    expect(syncSavedMock).toHaveBeenCalledWith(3)
+    expect(syncPreviewMock).not.toHaveBeenCalled()
+    expect(values(wrapper)).toContain('ag-oauth')
+    wrapper.unmount()
+  })
+
+  for (const change of ['account', 'close/reopen', 'close event', 'URL', 'key', 'proxy', 'login session', 'unmount'] as const) {
+    for (const result of ['success', 'error'] as const) {
+      it(`ignores Antigravity ${result} after ${change} and protects the next request`, async () => {
+        const old = deferred(), latest = deferred()
+        syncPreviewMock.mockReturnValueOnce(old.promise).mockReturnValueOnce(latest.promise)
+        const wrapper = mountModal(apiKeyAG())
+        await button(wrapper).trigger('click')
+        if (change === 'account') await wrapper.setProps({ account: { ...apiKeyAG(), id: 4 } })
+        if (change === 'close/reopen') { await wrapper.setProps({ show: false }); await wrapper.setProps({ show: true }) }
+        if (change === 'close event') await wrapper.findAll('button').find(item => item.text() === 'common.cancel')!.trigger('click')
+        if (change === 'URL') await wrapper.get('input[placeholder="https://cloudcode-pa.googleapis.com"]').setValue('https://new.example/antigravity')
+        if (change === 'key') await wrapper.get('input[type="password"]').setValue('new-key')
+        if (change === 'proxy') wrapper.findComponent({ name: 'ProxySelector' }).vm.$emit('update:modelValue', 8)
+        if (change === 'login session') loginState.authSessionVersion = invalidateAuthSession()
+        if (change === 'unmount') wrapper.unmount()
+        else await button(wrapper).trigger('click')
+        if (result === 'success') old.resolve({ models: ['stale-ag'] })
+        else old.reject(new Error('stale failure'))
+        await flushPromises()
+        expect(values(wrapper)).not.toContain('stale-ag')
+        expect(showErrorMock).not.toHaveBeenCalled()
+        expect(showSuccessMock).not.toHaveBeenCalled()
+        if (change !== 'unmount') {
+          expect(syncPreviewMock).toHaveBeenCalledTimes(2)
+          expect(button(wrapper).attributes('disabled')).toBeDefined()
+          latest.resolve({ models: ['current-ag'] })
+          await flushPromises()
+          expect(values(wrapper)).toContain('current-ag')
+          wrapper.unmount()
+        }
+      })
+    }
+  }
+
+  it('keeps the Antigravity draft on a current error and allows retry', async () => {
+    syncPreviewMock.mockRejectedValue(new Error('safe preview error'))
+    const wrapper = mountModal(apiKeyAG())
+    await button(wrapper).trigger('click')
+    await flushPromises()
+    expect(showErrorMock).toHaveBeenCalled()
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    expect(button(wrapper).attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+})
 
 describe('EditAccountModal', () => {
   afterEach(() => {

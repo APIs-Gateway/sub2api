@@ -1,6 +1,8 @@
 .PHONY: build build-backend build-frontend dev-db dev-local test test-backend test-frontend test-frontend-critical secret-scan
 
 FRONTEND_CRITICAL_VITEST := \
+	src/components/account/__tests__/ModelWhitelistSelector.spec.ts \
+	src/components/account/__tests__/EditAccountModal.spec.ts \
 	src/i18n/__tests__/localeKeyCompleteness.spec.ts \
 	src/api/__tests__/client.spec.ts \
 	src/api/__tests__/tokenRefresh.spec.ts \

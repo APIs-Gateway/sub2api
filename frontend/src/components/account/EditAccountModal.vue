@@ -139,7 +139,7 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
-              <ModelWhitelistSelector v-model="allowedModels" :model-mappings="modelMappings" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+              <ModelWhitelistSelector v-model="allowedModels" :model-mappings="modelMappings" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :sync-credentials="draftSyncCredentials" :sync-context="modelSyncContext" :active="show" />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -492,7 +492,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :model-mappings="modelMappings" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+            <ModelWhitelistSelector v-model="allowedModels" :model-mappings="modelMappings" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :sync-credentials="draftSyncCredentials" :sync-context="modelSyncContext" :active="show" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -705,7 +705,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :model-mappings="modelMappings" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+            <ModelWhitelistSelector v-model="allowedModels" :model-mappings="modelMappings" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :sync-credentials="draftSyncCredentials" :sync-context="modelSyncContext" :active="show" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -2476,6 +2476,8 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
+import { useModelSyncRequest } from '@/composables/useModelSyncRequest'
+import type { SyncUpstreamPreviewParams } from '@/api/admin/accounts'
 import type {
   Account,
   Proxy,
@@ -2664,7 +2666,7 @@ const antigravityProjectId = ref('')
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const antigravityWhitelistModels = ref<string[]>([])
 const antigravityModelMappings = ref<ModelMapping[]>([])
-const isSyncingAntigravityUpstream = ref(false)
+const modelSyncContext = ref(0)
 const tempUnschedEnabled = ref(false)
 const tempUnschedRules = ref<TempUnschedRuleForm[]>([])
 const getModelMappingKey = createStableObjectKeyResolver<ModelMapping>('edit-model-mapping')
@@ -3003,6 +3005,23 @@ const form = reactive({
   group_ids: [] as number[],
   expires_at: null as number | null
 })
+
+const draftSyncCredentials = computed<SyncUpstreamPreviewParams | undefined>(() => {
+  const account = props.account
+  if (!account || account.type !== 'apikey') return undefined
+  return {
+    account_id: account.id,
+    platform: account.platform,
+    type: account.type,
+    base_url: editBaseUrl.value.trim() || defaultBaseUrl.value,
+    api_key: editApiKey.value.trim(),
+    proxy_id: form.proxy_id ?? 0
+  }
+})
+const { busy: isSyncingAntigravityUpstream, begin: beginAntigravitySync } = useModelSyncRequest(() =>
+  JSON.stringify([props.show, modelSyncContext.value, props.account?.id, props.account?.platform,
+    props.account?.type, draftSyncCredentials.value])
+)
 
 const statusOptions = computed(() => {
   const options = [
@@ -3372,11 +3391,13 @@ watch(
   [() => props.show, () => props.account],
   ([show, newAccount], [wasShow, previousAccount]) => {
     if (!show || !newAccount) {
+      modelSyncContext.value++
       return
     }
     // A list refresh may replace the prop object for the same account while the
     // administrator is editing. Only a new edit session or account ID resets the form.
     if (!wasShow || newAccount.id !== previousAccount?.id) {
+      modelSyncContext.value++
       syncFormFromAccount(newAccount)
       loadTLSProfiles()
     }
@@ -3428,11 +3449,16 @@ const addAntigravityPresetMapping = (from: string, to: string) => {
 }
 
 const syncAntigravityUpstreamModels = async () => {
-  if (!props.account?.id || isSyncingAntigravityUpstream.value) return
-
-  isSyncingAntigravityUpstream.value = true
+  if (!props.show || !props.account?.id) return
+  const request = beginAntigravitySync()
+  if (!request) return
+  const accountId = props.account.id
+  const credentials = draftSyncCredentials.value ? { ...draftSyncCredentials.value } : undefined
   try {
-    const result = await adminAPI.accounts.syncUpstreamModels(props.account.id)
+    const result = credentials
+      ? await adminAPI.accounts.syncUpstreamModelsPreview(credentials)
+      : await adminAPI.accounts.syncUpstreamModels(accountId)
+    if (!request.current()) return
     const upstreamModels = result.models.map((model) => model.trim()).filter(Boolean)
     if (upstreamModels.length === 0) {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsEmpty'))
@@ -3454,10 +3480,11 @@ const syncAntigravityUpstreamModels = async () => {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
     }
   } catch (error) {
+    if (!request.current()) return
     const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
     appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
   } finally {
-    isSyncingAntigravityUpstream.value = false
+    request.finish()
   }
 }
 
@@ -3802,6 +3829,7 @@ const parseDateTimeLocal = parseDateTimeLocalInput
 
 // Methods
 const handleClose = () => {
+  modelSyncContext.value++
   antigravityMixedChannelConfirmed.value = false
   clearMixedChannelDialog()
   emit('close')

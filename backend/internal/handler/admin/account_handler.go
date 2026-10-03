@@ -2348,27 +2348,88 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 	response.Success(c, gin.H{"models": models})
 }
 
-// SyncUpstreamModelsPreview handles syncing live supported models using provided credentials (no account ID needed).
+// SyncUpstreamModelsPreview fetches models from a temporary draft connection without saving it.
 // POST /api/v1/admin/accounts/models/sync-upstream-preview
 func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 	var req struct {
-		Platform string `json:"platform" binding:"required"`
-		Type     string `json:"type" binding:"required"`
-		BaseURL  string `json:"base_url"`
-		APIKey   string `json:"api_key" binding:"required"`
+		AccountID int64           `json:"account_id" binding:"gte=0"`
+		Platform  string          `json:"platform" binding:"required"`
+		Type      string          `json:"type" binding:"required"`
+		BaseURL   *string         `json:"base_url"`
+		APIKey    string          `json:"api_key"`
+		ProxyID   json.RawMessage `json:"proxy_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
 
+	if req.Type != service.AccountTypeAPIKey {
+		response.BadRequest(c, "Draft model preview requires an API key account")
+		return
+	}
+	var draftProxyID int64
+	if len(req.ProxyID) > 0 && (json.Unmarshal(req.ProxyID, &draftProxyID) != nil || draftProxyID < 0) {
+		response.BadRequest(c, "Invalid proxy ID")
+		return
+	}
 	tempAccount := &service.Account{
-		Platform: req.Platform,
-		Type:     req.Type,
-		Credentials: map[string]any{
-			"api_key":  req.APIKey,
-			"base_url": req.BaseURL,
-		},
+		Platform:    req.Platform,
+		Type:        req.Type,
+		Credentials: map[string]any{},
+	}
+	if req.AccountID > 0 {
+		saved, err := h.adminService.GetAccount(c.Request.Context(), req.AccountID)
+		if err != nil || saved == nil {
+			response.NotFound(c, "Account not found")
+			return
+		}
+		if saved.Platform != req.Platform || saved.Type != req.Type {
+			response.BadRequest(c, "Draft connection must match the saved account platform and type")
+			return
+		}
+		// Credential/extra maps can contain nested headers and model mappings. Deep
+		// copy their JSON representation so preview helpers cannot mutate saved state.
+		for source, target := range map[*map[string]any]*map[string]any{
+			&saved.Credentials: &tempAccount.Credentials,
+			&saved.Extra:       &tempAccount.Extra,
+		} {
+			data, err := json.Marshal(*source)
+			if err != nil || json.Unmarshal(data, target) != nil {
+				response.InternalError(c, "Failed to prepare draft connection")
+				return
+			}
+		}
+		if tempAccount.Credentials == nil {
+			tempAccount.Credentials = map[string]any{}
+		}
+		tempAccount.Concurrency = saved.Concurrency
+		if saved.ProxyID != nil {
+			id := *saved.ProxyID
+			tempAccount.ProxyID = &id
+		}
+	}
+	if key := strings.TrimSpace(req.APIKey); key != "" {
+		tempAccount.Credentials["api_key"] = key
+	}
+	if req.BaseURL != nil {
+		tempAccount.Credentials["base_url"] = strings.TrimSpace(*req.BaseURL)
+	}
+	if len(req.ProxyID) > 0 {
+		tempAccount.ProxyID = nil
+		if draftProxyID > 0 {
+			id := draftProxyID
+			tempAccount.ProxyID = &id
+		}
+	}
+	if tempAccount.ProxyID != nil {
+		proxy, err := h.adminService.GetProxy(c.Request.Context(), *tempAccount.ProxyID)
+		if err != nil || proxy == nil {
+			response.BadRequest(c, "Proxy not found")
+			return
+		}
+		copy := *proxy
+		tempAccount.Proxy = &copy
 	}
 
 	if h.accountTestService == nil {
