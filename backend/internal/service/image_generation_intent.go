@@ -480,8 +480,12 @@ func openAIJSONString(value gjson.Result) string {
 func (s *OpenAIGatewayService) currentWSImagePermission(hooks *OpenAIWSIngressHooks, initial *APIKey) bool {
 	if hooks != nil && hooks.BeforeImagePermission != nil {
 		group, err := hooks.BeforeImagePermission()
-		if err != nil { return false }
-		if group == nil { return initial != nil && initial.GroupID == nil && initial.Group == nil }
+		if err != nil {
+			return false
+		}
+		if group == nil {
+			return initial != nil && initial.GroupID == nil && initial.Group == nil
+		}
 		return GroupAllowsImageGenerationForMode(group, s.cfg)
 	}
 	return GroupAllowsImageGenerationForMode(apiKeyGroup(initial), s.cfg)

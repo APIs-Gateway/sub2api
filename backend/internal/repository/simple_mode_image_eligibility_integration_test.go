@@ -4,11 +4,12 @@ package repository
 
 import (
 	"context"
-"time"
-"crypto/sha256"
-"encoding/hex"
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
+	"time"
 
+	entgroup "github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -24,14 +25,10 @@ func TestSimpleModeImageEligibilitySeederPreservesOldAndManualRows(t *testing.T)
 	require.NoError(t, err)
 	require.False(t, old.SimpleModeAutoImageEligible)
 	require.NoError(t, createGroupIfNotExists(ctx, client, "openai-new-system-default", service.PlatformOpenAI))
-	seeded, err := client.Group.Query().Where().All(ctx)
+	seeded, err := client.Group.Query().Where(entgroup.NameEQ("openai-new-system-default")).Only(ctx)
 	require.NoError(t, err)
-	for _, g := range seeded {
-		if g.Name == "openai-new-system-default" {
-			require.True(t, g.SimpleModeAutoImageEligible)
-			require.False(t, g.AllowImageGeneration)
-		}
-	}
+	require.True(t, seeded.SimpleModeAutoImageEligible)
+	require.False(t, seeded.AllowImageGeneration)
 	repo := newGroupRepositoryWithSQL(client, nil)
 	manual := &service.Group{Name: "manual-claimed-eligibility", Platform: service.PlatformOpenAI, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard, RateMultiplier: 1, SimpleModeAutoImageEligible: true}
 	require.NoError(t, repo.Create(ctx, manual))
@@ -72,15 +69,33 @@ func TestGroupRepositoryCannotReviveClearedSimpleModeImageEligibility(t *testing
 }
 
 func TestImagePermissionChangesEnqueueDurableInvalidation(t *testing.T) {
- ctx:=context.Background();client:=integrationEntClient
- group,err:=client.Group.Create().SetName("image-outbox-"+time.Now().Format("150405.000000000")).SetPlatform(service.PlatformOpenAI).SetSimpleModeAutoImageEligible(true).Save(ctx)
- require.NoError(t,err)
- user:=mustCreateUser(t,client,&service.User{})
- key:=mustCreateApiKey(t,client,&service.APIKey{UserID:user.ID,Key:"sk-image-outbox-"+time.Now().Format("150405.000000000"),Name:"image-outbox",GroupID:&group.ID})
- digest:=sha256.Sum256([]byte(key.Key));hashed:=hex.EncodeToString(digest[:])
- for _,update:=range []string{"simple_mode_auto_image_eligible = FALSE","allow_image_generation = TRUE","allow_image_generation = FALSE"} {
-  _,err=integrationDB.ExecContext(ctx,"DELETE FROM auth_cache_invalidation_outbox WHERE cache_key=$1",hashed);require.NoError(t,err)
-  _,err=integrationDB.ExecContext(ctx,"UPDATE groups SET "+update+" WHERE id=$1",group.ID);require.NoError(t,err)
-  var count int;require.NoError(t,integrationDB.QueryRowContext(ctx,"SELECT COUNT(*) FROM auth_cache_invalidation_outbox WHERE cache_key=$1",hashed).Scan(&count));require.Equal(t,1,count,update)
- }
+	ctx := context.Background()
+	client := integrationEntClient
+	group, err := client.Group.Create().SetName("image-outbox-" + time.Now().Format("150405.000000000")).SetPlatform(service.PlatformOpenAI).SetSimpleModeAutoImageEligible(true).Save(ctx)
+	require.NoError(t, err)
+	user := mustCreateUser(t, client, &service.User{})
+	key := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, Key: "sk-image-outbox-" + time.Now().Format("150405.000000000"), Name: "image-outbox", GroupID: &group.ID})
+	digest := sha256.Sum256([]byte(key.Key))
+	hashed := hex.EncodeToString(digest[:])
+	for _, update := range []string{"simple_mode_auto_image_eligible = FALSE", "allow_image_generation = TRUE", "allow_image_generation = FALSE"} {
+		_, err = integrationDB.ExecContext(ctx, "DELETE FROM auth_cache_invalidation_outbox WHERE cache_key=$1", hashed)
+		require.NoError(t, err)
+		_, err = integrationDB.ExecContext(ctx, "UPDATE groups SET "+update+" WHERE id=$1", group.ID)
+		require.NoError(t, err)
+		var count int
+		require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM auth_cache_invalidation_outbox WHERE cache_key=$1", hashed).Scan(&count))
+		require.Equal(t, 1, count, update)
+	}
+	_, err = integrationDB.ExecContext(ctx, "DELETE FROM auth_cache_invalidation_outbox WHERE cache_key=$1", hashed)
+	require.NoError(t, err)
+	_, err = integrationDB.ExecContext(ctx, "UPDATE groups SET name=name || '-renamed' WHERE id=$1", group.ID)
+	require.NoError(t, err)
+	var count int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM auth_cache_invalidation_outbox WHERE cache_key=$1", hashed).Scan(&count))
+	require.Zero(t, count)
+	_, err = integrationDB.ExecContext(ctx, "DELETE FROM groups WHERE id=$1", group.ID)
+	require.NoError(t, err)
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM auth_cache_invalidation_outbox WHERE cache_key=$1", hashed).Scan(&count))
+	require.Positive(t, count)
+
 }

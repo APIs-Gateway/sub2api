@@ -1,7 +1,13 @@
 package service
 
 import (
+	"context"
 	"errors"
+	"github.com/gin-gonic/gin"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -61,6 +67,40 @@ func TestWSImageSessionPermissionCoversInheritedAndMappedModels(t *testing.T) {
 		{`{"type":"session.update","session":{"model":"alias"}}`, "", false, true},
 		{`{"type":"session.update","session":{"tools":[]}}`, "", true, false},
 	} {
-		require.Equal(t, tt.want, openAIWSFrameRequiresImagePermission(account, []byte(tt.body), tt.session, tt.tools), tt.body)
+		require.Equal(t, tt.want, openAIWSFrameRequiresImagePermission(account, []byte(tt.body), tt.session, tt.tools, false), tt.body)
+	}
+}
+
+func TestWSInheritedImageChoiceUsesItsOwnOverrideField(t *testing.T) {
+	account := &Account{Platform: PlatformOpenAI}
+	require.True(t, openAIWSFrameRequiresImagePermission(account, []byte(`{"type":"response.create","model":"gpt-5.1","tools":[{"type":"namespace","name":"image_gen"}]}`), "gpt-5.1", false, true))
+	require.False(t, openAIWSFrameRequiresImagePermission(account, []byte(`{"type":"response.create","model":"gpt-5.1","tool_choice":"none"}`), "gpt-5.1", false, true))
+}
+
+func TestSimpleModeEligibleResponsesReachUpstreamAndKeepStandardPermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, mode := range []string{config.RunModeSimple, config.RunModeStandard} {
+		for _, eligible := range []bool{true, false} {
+			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"output":[{"id":"ig1","type":"image_generation_call","result":"aGVsbG8=","size":"1024x1024"}],"usage":{"input_tokens":1,"output_tokens":1}}`))}}
+			cfg := &config.Config{RunMode: mode}
+			cfg.Security.URLAllowlist.Enabled = false
+			svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
+			account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "test", "base_url": "https://example.test/v1", "model_mapping": map[string]any{"draw-alias": "gpt-image-2"}}, Extra: openAIResponsesSupportedTestExtra()}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			c.Set("api_key", &APIKey{Group: &Group{ID: 1, Hydrated: true, Status: StatusActive, Platform: PlatformOpenAI, SimpleModeAutoImageEligible: eligible}})
+			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+			result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"draw-alias","input":"draw","stream":false}`))
+			if mode == config.RunModeSimple && eligible {
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				require.NotNil(t, upstream.lastReq)
+			} else {
+				require.Error(t, err)
+				require.Nil(t, upstream.lastReq)
+				require.Equal(t, http.StatusForbidden, rec.Code)
+			}
+		}
 	}
 }

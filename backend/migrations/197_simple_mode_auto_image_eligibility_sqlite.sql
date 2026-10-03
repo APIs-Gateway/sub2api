@@ -17,4 +17,3 @@ BEGIN
            OR OLD.allow_image_generation IS NOT NEW.allow_image_generation
            OR OLD.simple_mode_auto_image_eligible IS NOT NEW.simple_mode_auto_image_eligible);
 END;
-

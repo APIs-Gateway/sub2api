@@ -72,30 +72,45 @@ func TestSimpleModeImageEligibilityAuthSnapshotRoundtrip(t *testing.T) {
 }
 
 func TestAdminExplicitImagePermissionClearsEligibilityInBothUpdateEntrypoints(t *testing.T) {
- for _,value:=range []bool{false,true} {
-  for _,admin:=range []bool{false,true} {
-   group:=&Group{ID:1,Name:"image-default",Platform:PlatformOpenAI,Status:StatusActive,Hydrated:true,SimpleModeAutoImageEligible:true,SubscriptionType:SubscriptionTypeStandard}
-   repo:=&groupRepoStubForAdmin{getByID:group}
-   if admin {_,err:=(&adminServiceImpl{groupRepo:repo}).UpdateGroup(context.Background(),1,&UpdateGroupInput{AllowImageGeneration:&value});require.NoError(t,err)} else {_,err:=(&GroupService{groupRepo:repo}).Update(context.Background(),1,UpdateGroupRequest{AllowImageGeneration:&value});require.NoError(t,err)}
-   require.False(t,group.SimpleModeAutoImageEligible)
-   require.Equal(t,value,group.AllowImageGeneration)
-  }
- }
- group:=&Group{ID:1,Name:"image-default",Platform:PlatformOpenAI,Status:StatusActive,Hydrated:true,SimpleModeAutoImageEligible:true,SubscriptionType:SubscriptionTypeStandard}
- repo:=&groupRepoStubForAdmin{getByID:group}
- _,err:=(&adminServiceImpl{groupRepo:repo}).UpdateGroup(context.Background(),1,&UpdateGroupInput{Description:func()*string{s:="ordinary edit";return &s}()});require.NoError(t,err);require.True(t,group.SimpleModeAutoImageEligible)
- duplicateRepo:=&duplicateGroupRepoStub{groupRepoStubForAdmin:repo}
- copy,err:=(&adminServiceImpl{groupRepo:duplicateRepo}).DuplicateGroup(context.Background(),1,"admin:1","image-copy");require.NoError(t,err);require.False(t,copy.SimpleModeAutoImageEligible)
+	for _, value := range []bool{false, true} {
+		for _, admin := range []bool{false, true} {
+			group := &Group{ID: 1, Name: "image-default", Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, SimpleModeAutoImageEligible: true, SubscriptionType: SubscriptionTypeStandard}
+			repo := &groupRepoStubForAdmin{getByID: group}
+			if admin {
+				_, err := (&adminServiceImpl{groupRepo: repo}).UpdateGroup(context.Background(), 1, &UpdateGroupInput{AllowImageGeneration: &value})
+				require.NoError(t, err)
+			} else {
+				_, err := (&GroupService{groupRepo: repo}).Update(context.Background(), 1, UpdateGroupRequest{AllowImageGeneration: &value})
+				require.NoError(t, err)
+			}
+			require.False(t, group.SimpleModeAutoImageEligible)
+			require.Equal(t, value, group.AllowImageGeneration)
+		}
+	}
+	group := &Group{ID: 1, Name: "image-default", Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, SimpleModeAutoImageEligible: true, SubscriptionType: SubscriptionTypeStandard}
+	repo := &groupRepoStubForAdmin{getByID: group}
+	_, err := (&adminServiceImpl{groupRepo: repo}).UpdateGroup(context.Background(), 1, &UpdateGroupInput{Description: func() *string { s := "ordinary edit"; return &s }()})
+	require.NoError(t, err)
+	require.True(t, group.SimpleModeAutoImageEligible)
+	duplicateRepo := &duplicateGroupRepoStub{groupRepoStubForAdmin: repo}
+	copy, err := (&adminServiceImpl{groupRepo: duplicateRepo}).DuplicateGroup(context.Background(), 1, "admin:1", "image-copy")
+	require.NoError(t, err)
+	require.False(t, copy.SimpleModeAutoImageEligible)
 }
 
 func TestCurrentImagePermissionPreservesUnassignedKeysAndRejectsNewAssignment(t *testing.T) {
- initial:=&APIKey{ID:1,UserID:2,Key:"unassigned",Status:StatusActive}
- current:=*initial;current.User=&User{ID:2,Status:StatusActive}
- svc:=&APIKeyService{apiKeyRepo:&authRepoStub{getByKeyForAuth:func(context.Context,string)(*APIKey,error){return &current,nil}}}
- group,err:=svc.GetCurrentImagePermissionGroup(context.Background(),initial);require.NoError(t,err);require.Nil(t,group)
- gateway:=&OpenAIGatewayService{}
- hooks:=&OpenAIWSIngressHooks{BeforeImagePermission:func()(*Group,error){return svc.GetCurrentImagePermissionGroup(context.Background(),initial)}}
- require.True(t,gateway.currentWSImagePermission(hooks,initial))
- gid:=int64(3);current.GroupID=&gid;current.Group=&Group{ID:gid,Platform:PlatformOpenAI,Hydrated:true,Status:StatusActive}
- require.False(t,gateway.currentWSImagePermission(hooks,initial))
+	initial := &APIKey{ID: 1, UserID: 2, Key: "unassigned", Status: StatusActive}
+	current := *initial
+	current.User = &User{ID: 2, Status: StatusActive}
+	svc := &APIKeyService{apiKeyRepo: &authRepoStub{getByKeyForAuth: func(context.Context, string) (*APIKey, error) { return &current, nil }}}
+	group, err := svc.GetCurrentImagePermissionGroup(context.Background(), initial)
+	require.NoError(t, err)
+	require.Nil(t, group)
+	gateway := &OpenAIGatewayService{}
+	hooks := &OpenAIWSIngressHooks{BeforeImagePermission: func() (*Group, error) { return svc.GetCurrentImagePermissionGroup(context.Background(), initial) }}
+	require.True(t, gateway.currentWSImagePermission(hooks, initial))
+	gid := int64(3)
+	current.GroupID = &gid
+	current.Group = &Group{ID: gid, Platform: PlatformOpenAI, Hydrated: true, Status: StatusActive}
+	require.False(t, gateway.currentWSImagePermission(hooks, initial))
 }

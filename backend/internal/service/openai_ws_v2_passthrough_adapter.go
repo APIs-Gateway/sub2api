@@ -717,7 +717,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	// model would miss any admin-configured model whitelist and be silently
 	// passed through, defeating that policy on every frame after the first.
 	capturedSessionModel := openAIWSPassthroughPolicyModelForFrame(account, firstClientMessage)
-	sessionImageIntent := false
+	sessionImageTools := false
+	sessionImageChoice := false
 	if (IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(firstClientMessage) || isOpenAIImageGenerationModel(capturedSessionModel)) && !s.currentWSImagePermission(hooks, getAPIKeyFromContext(c)) {
 		message := ImageGenerationPermissionMessage()
 		rejection := newOpenAIWSLocalRejection(http.StatusForbidden, "permission_error", "", message, nil)
@@ -979,7 +980,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, message, rejection)
 				}
 			}
-			frameImageIntent := openAIWSFrameRequiresImagePermission(account, payload, capturedSessionModel, sessionImageIntent)
+			frameImageIntent := openAIWSFrameRequiresImagePermission(account, payload, capturedSessionModel, sessionImageTools, sessionImageChoice)
 			if (isResponseCreate || eventType == "session.update") && frameImageIntent {
 				if s.openAIResponsesImageGenerationDisabled() {
 					message := OpenAIResponsesImageGenerationDisabledMessage()
@@ -995,10 +996,20 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				}
 			}
 			if eventType == "session.update" {
-				if gjson.GetBytes(payload, "session.tools").Exists() || gjson.GetBytes(payload, "tools").Exists() {
-					sessionImageIntent = IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(payload)
+				tools := gjson.GetBytes(payload, "session.tools")
+				if !tools.Exists() {
+					tools = gjson.GetBytes(payload, "tools")
 				}
-
+				if tools.Exists() {
+					sessionImageTools = openAIJSONToolsContainNativeImageGeneration(tools)
+				}
+				choice := gjson.GetBytes(payload, "session.tool_choice")
+				if !choice.Exists() {
+					choice = gjson.GetBytes(payload, "tool_choice")
+				}
+				if choice.Exists() {
+					sessionImageChoice = openAIJSONToolChoiceSelectsExplicitImageGeneration(choice)
+				}
 			}
 			if isResponseCreate && isOpenAIResponsesLiteWebSocketPayload(payload) {
 				litePayload, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(payload, account)
@@ -1507,7 +1518,7 @@ func logOpenAIWSV2Passthrough(format string, args ...any) {
 
 // Session tools remain active when a response.create omits tools. Mapped and
 // inherited image models also require current permissions before upstream IO.
-func openAIWSFrameRequiresImagePermission(account *Account, payload []byte, sessionModel string, sessionImageTools bool) bool {
+func openAIWSFrameRequiresImagePermission(account *Account, payload []byte, sessionModel string, sessionImageTools bool, sessionImageChoice bool) bool {
 	if IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(payload) {
 		return true
 	}
@@ -1518,7 +1529,7 @@ func openAIWSFrameRequiresImagePermission(account *Account, payload []byte, sess
 			model = sessionModel
 		}
 		// An explicit per-response tools list overrides the session tools.
-		return (sessionImageTools && !gjson.GetBytes(payload, "tools").Exists()) || isOpenAIImageGenerationModel(model)
+		return (sessionImageTools && !gjson.GetBytes(payload, "tools").Exists()) || (sessionImageChoice && !gjson.GetBytes(payload, "tool_choice").Exists()) || isOpenAIImageGenerationModel(model)
 	case "session.update":
 		return isOpenAIImageGenerationModel(openAIWSPassthroughPolicyModelFromSessionFrame(account, payload))
 	}

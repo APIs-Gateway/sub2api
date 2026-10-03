@@ -35,4 +35,3 @@ DROP TRIGGER IF EXISTS trg_groups_auth_cache_invalidation ON groups;
 CREATE TRIGGER trg_groups_auth_cache_invalidation
 AFTER UPDATE OR DELETE ON groups
 FOR EACH ROW EXECUTE FUNCTION enqueue_group_auth_cache_invalidation();
-
