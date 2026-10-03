@@ -272,7 +272,7 @@ func TestAnthropicVisibleOutput_InterleavedIndexesDoNotBorrowClientToolType(t *t
 		"data: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"status\\\"}\"}}\n\n" +
 		"data: {\"type\":\"content_block_stop\",\"index\":2}\n\n" +
 		"data: {\"type\":\"message_stop\"}\n\n"
-	_, err, recorder := runAnthropicVisibleOutputStream(t, payload)
+	_, recorder, err := runAnthropicVisibleOutputStream(t, payload)
 	var failover *UpstreamFailoverError
 	require.ErrorAs(t, err, &failover)
 	require.Empty(t, recorder.Body.String(), "server-tool input must not borrow a different index's client-tool type")

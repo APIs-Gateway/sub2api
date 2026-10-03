@@ -8828,6 +8828,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	visibleOutput := &anthropicVisibleOutputTracker{}
 	var stagedOutput bytes.Buffer
 	failBeforeVisibleOutput := func(reason, message string) (*streamingResult, error) {
+		if clientDisconnected || anthropicCompatClientGone(c) {
+			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after client cancellation: %s", reason)
+		}
 		body, _ := json.Marshal(map[string]any{
 			"type":  "error",
 			"error": map[string]string{"type": reason, "message": message},
@@ -9019,7 +9022,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			if !visibleOutput.visible && !clientDisconnected {
 				return failBeforeVisibleOutput("empty_visible_output", "Upstream stream ended without client-visible output")
 			}
-			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected || anthropicCompatClientGone(c)}, nil
 		}
 		select {
 		case ev, ok := <-events:
@@ -9029,9 +9032,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				}
 				// 上游完成，返回结果
 				if !sawTerminalEvent {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected || anthropicCompatClientGone(c)}, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected || anthropicCompatClientGone(c)}, nil
 			}
 			if ev.err != nil {
 				if !visibleOutput.visible && !clientDisconnected &&
@@ -9043,7 +9046,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					return failBeforeVisibleOutput("upstream_disconnected", "upstream stream disconnected: "+sanitizeStreamError(ev.err))
 				}
 				if sawTerminalEvent {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected || anthropicCompatClientGone(c)}, nil
 				}
 				// 检测 context 取消（客户端断开会导致 context 取消，进而影响上游读取）
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
@@ -9178,7 +9181,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			if !visibleOutput.visible && !clientDisconnected {
 				return failBeforeVisibleOutput("empty_visible_output", "Upstream stream ended without client-visible output")
 			}
-			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected || anthropicCompatClientGone(c)}, nil
 
 		case <-intervalCh:
 			if sawTerminalEvent {
