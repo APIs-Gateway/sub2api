@@ -259,7 +259,10 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				zap.Bool("upstream_error_response_already_written", upstreamErrorAlreadyCommunicated),
 				zap.Error(err),
 			)
-			return
+			// Metered partial usage is settled once; failover always returns nil.
+			if result == nil {
+				return
+			}
 		}
 
 		// 6. Record usage

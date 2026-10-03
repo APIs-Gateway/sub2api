@@ -195,7 +195,7 @@ func (s *GatewayService) ForwardAsResponses(
 		result, handleErr = s.handleResponsesBufferedStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping)
 	}
 
-	return result, handleErr
+	return s.anthropicCompatProviderError(ctx, resp, c, account, mappedModel, result, handleErr)
 }
 
 func adaptResponsesClientToolsForAnthropic(body []byte) ([]byte, apicompat.ResponsesClientToolMapping, error) {
@@ -322,8 +322,13 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	// Accumulate the final Anthropic response from streaming events
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
+	sawMessageStop := false
+	var streamErr error
+	drain := newAnthropicCompatDrain(s.cfg, resp.Body, c)
+	defer drain.stop()
 
 	for scanner.Scan() {
+		drain.touch()
 		line := scanner.Text()
 		eventType, ok := parseAnthropicSSEField(line, "event")
 		if !ok {
@@ -348,6 +353,15 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 				zap.String("event_type", eventType),
 			)
 			continue
+		}
+
+		if event.Type == "error" {
+			streamErr = &sseStreamErrorEventError{RawData: payload}
+			break
+		}
+		if event.Type == "message_stop" {
+			sawMessageStop = true
+			break
 		}
 
 		// message_start carries the initial response structure
@@ -392,18 +406,37 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+	readErr := scanner.Err()
+	if streamErr != nil {
+		readErr = streamErr
+	}
+	if readErr != nil {
+		if !errors.Is(readErr, context.Canceled) && !errors.Is(readErr, context.DeadlineExceeded) {
 			logger.L().Warn("forward_as_responses buffered: read error",
-				zap.Error(err),
+				zap.Error(readErr),
 				zap.String("request_id", requestID),
 			)
 		}
 	}
 
+	resultWithUsage := func() *ForwardResult {
+		return &ForwardResult{
+			RequestID:        requestID,
+			Usage:            usage,
+			Model:            originalModel,
+			UpstreamModel:    mappedModel,
+			ReasoningEffort:  reasoningEffort,
+			Stream:           false,
+			Duration:         time.Since(startTime),
+			ClientDisconnect: anthropicCompatClientGone(c),
+		}
+	}
+	if !sawMessageStop {
+		return anthropicCompatBufferedIncomplete(c, writeResponsesError, resultWithUsage(), readErr)
+	}
+
 	if finalResp == nil {
-		writeResponsesError(c, http.StatusBadGateway, "server_error", "Upstream stream ended without a response")
-		return nil, fmt.Errorf("upstream stream ended without response")
+		return anthropicCompatBufferedIncomplete(c, writeResponsesError, resultWithUsage(), errors.New("upstream stream ended without response"))
 	}
 
 	// Update usage from accumulated delta
@@ -443,15 +476,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		c.JSON(http.StatusOK, responsesResp)
 	}
 
-	return &ForwardResult{
-		RequestID:       requestID,
-		Usage:           usage,
-		Model:           originalModel,
-		UpstreamModel:   mappedModel,
-		ReasoningEffort: reasoningEffort,
-		Stream:          false,
-		Duration:        time.Since(startTime),
-	}, nil
+	return resultWithUsage(), nil
 }
 
 // handleResponsesStreamingResponse reads Anthropic SSE events from upstream,
@@ -483,6 +508,11 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	var usage ClaudeUsage
 	var firstTokenMs *int
 	firstChunk := true
+	clientDisconnected := false
+	sawMessageStop := false
+	var streamErr error
+	drain := newAnthropicCompatDrain(s.cfg, resp.Body, c)
+	defer drain.stop()
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -493,14 +523,15 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
-			RequestID:       requestID,
-			Usage:           usage,
-			Model:           originalModel,
-			UpstreamModel:   mappedModel,
-			ReasoningEffort: reasoningEffort,
-			Stream:          true,
-			Duration:        time.Since(startTime),
-			FirstTokenMs:    firstTokenMs,
+			RequestID:        requestID,
+			Usage:            usage,
+			Model:            originalModel,
+			UpstreamModel:    mappedModel,
+			ReasoningEffort:  reasoningEffort,
+			Stream:           true,
+			Duration:         time.Since(startTime),
+			FirstTokenMs:     firstTokenMs,
+			ClientDisconnect: clientDisconnected || anthropicCompatClientGone(c),
 		}
 	}
 
@@ -526,6 +557,23 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			mergeAnthropicUsage(&usage, event.Message.Usage)
 			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "message.usage"), &usage)
 		}
+
+		if event.Type == "message_stop" {
+			sawMessageStop = true
+		}
+		if anthropicCompatClientGone(c) {
+			clientDisconnected = true
+			drain.start()
+		}
+		if clientDisconnected {
+			return false
+		}
+
+		state.InputTokens = usage.InputTokens
+		state.OutputTokens = usage.OutputTokens
+		state.CacheReadInputTokens = usage.CacheReadInputTokens
+		state.CacheCreationInputTokens = usage.CacheCreationInputTokens
+		normalizeAnthropicChatEventUsage(event, usage)
 
 		// Convert to Responses events
 		events := apicompat.AnthropicEventToResponsesEvents(event, state)
@@ -580,6 +628,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 
 	// Read Anthropic SSE events
 	for scanner.Scan() {
+		drain.touch()
 		line := scanner.Text()
 		eventType, ok := parseAnthropicSSEField(line, "event")
 		if !ok {
@@ -606,18 +655,37 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			continue
 		}
 
+		if event.Type == "error" {
+			streamErr = &sseStreamErrorEventError{RawData: payload}
+			break
+		}
 		if processEvent(&event, payload) {
-			return resultWithUsage(), nil
+			clientDisconnected = true
+			drain.start()
+		}
+		if sawMessageStop {
+			break
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+	readErr := scanner.Err()
+	if streamErr != nil {
+		readErr = streamErr
+	}
+	if readErr != nil {
+		if !errors.Is(readErr, context.Canceled) && !errors.Is(readErr, context.DeadlineExceeded) {
 			logger.L().Warn("forward_as_responses stream: read error",
-				zap.Error(err),
+				zap.Error(readErr),
 				zap.String("request_id", requestID),
 			)
 		}
+	}
+
+	if !sawMessageStop {
+		return anthropicCompatIncompleteStream(c, resultWithUsage(), readErr)
+	}
+	if clientDisconnected || anthropicCompatClientGone(c) {
+		return resultWithUsage(), nil
 	}
 
 	return finalizeStream()

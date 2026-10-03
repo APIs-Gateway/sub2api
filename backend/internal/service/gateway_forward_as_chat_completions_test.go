@@ -40,6 +40,9 @@ func TestHandleCCBufferedFromAnthropic_ToolArgumentsAreValidJSON(t *testing.T) {
 		`event: message_delta`,
 		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`,
 		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
 	}, "\n")))}
 
 	_, err := (&GatewayService{}).handleCCBufferedFromAnthropic(resp, c, "gpt-5", "claude-sonnet-4.5", nil, time.Now())
@@ -109,6 +112,9 @@ func TestHandleCCBufferedFromAnthropic_PreservesMessageStartCacheUsageAndReasoni
 			`event: message_delta`,
 			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}`,
 			``,
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			``,
 		}, "\n"))),
 	}
 
@@ -150,6 +156,11 @@ func TestHandleCCBufferedFromAnthropic_CompactSSEFormat(t *testing.T) {
 			`data:{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}`,
 			``,
 			`event:ping`,
+			`data:{"type":"ping"}`,
+			``,
+			`event:message_stop`,
+			`data: {"type":"message_stop"}`,
+			``,
 		}, "\n"))),
 	}
 
@@ -187,6 +198,11 @@ func TestHandleCCStreamingFromAnthropic_CompactSSEFormat(t *testing.T) {
 			`data:{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}`,
 			``,
 			`event:ping`,
+			`data:{"type":"ping"}`,
+			``,
+			`event:message_stop`,
+			`data: {"type":"message_stop"}`,
+			``,
 		}, "\n"))),
 	}
 
