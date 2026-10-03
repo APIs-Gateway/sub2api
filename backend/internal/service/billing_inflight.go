@@ -64,6 +64,9 @@ func markBillingInflightProviderRefusal(c *gin.Context, status int, body []byte,
 	if !ok {
 		return false
 	}
+	if code, ok := providerError["code"].(float64); ok && code != float64(status) {
+		return false
+	}
 	proof := false
 	for _, field := range []string{"type", "code", "status"} {
 		marker, ok := providerError[field].(string)

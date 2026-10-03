@@ -249,6 +249,7 @@ func TestBillingInflight_ProviderRefusalRequiresCompleteUsageFreeBody(t *testing
 		{"permission", `{"error":{"type":"permission_error"}}`, 403, nil, true},
 		{"gemini_auth", `{"error":{"code":401,"status":"UNAUTHENTICATED","message":"auth"}}`, 401, nil, true},
 		{"gemini_permission", `{"error":{"code":403,"status":"PERMISSION_DENIED","message":"auth"}}`, 403, nil, true},
+		{"gemini_conflicting_code", `{"error":{"code":500,"status":"UNAUTHENTICATED"}}`, 401, nil, false},
 		{"partial_image_output", `{"type":"response.failed","error":{"type":"permission_error"},"output":[{"type":"image_generation_call","result":"partial"}]}`, 403, nil, false},
 		{"nested_image", `{"error":{"type":"permission_error"},"nested":{"image_count":1}}`, 403, nil, false},
 		{"transport502", `{"error":{"type":"authentication_error"}}`, 502, nil, false},

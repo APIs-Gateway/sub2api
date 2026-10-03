@@ -310,3 +310,144 @@ func TestBillingInflightPostgres_ResetExpiryRechargeAndExclusive(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok, "proven no-charge clears the exclusive attempt")
 }
+
+func TestBillingInflightPostgres_DeletedKeyLateSettlementAcrossGroups(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo, user, firstKey := inflightFixture(t, 2)
+	group := mustCreateGroup(t, client, &service.Group{Name: uuid.NewString(), Platform: service.PlatformOpenAI})
+	secondKey := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, GroupID: &group.ID, Key: "sk-" + uuid.NewString(), Name: "other-group"})
+	owner := uuid.NewString()
+	ok, err := repo.ReserveBillingInflight(ctx, user.ID, owner, 1, false, time.Minute)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, NewAPIKeyRepository(client, integrationDB).DeleteWithAudit(ctx, firstKey.ID))
+	cmd := &service.UsageBillingCommand{UserID: user.ID, APIKeyID: firstKey.ID, RequestID: uuid.NewString(), OfficialCost: 1.5, RateMultiplier: 1}
+	child, err := repo.StageBillingInflight(ctx, user.ID, owner, owner+":initial", cmd, time.Minute)
+	require.NoError(t, err)
+	cmd.InflightObligationID = child
+	require.InDelta(t, 1.5, inflightHeld(t, user.ID), 1e-8)
+	ok, err = repo.ReserveBillingInflight(ctx, user.ID, uuid.NewString(), 1, false, time.Minute)
+	require.NoError(t, err)
+	require.False(t, ok, "other group and key share the user's pending obligation")
+	result, err := repo.Apply(ctx, cmd)
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.InDelta(t, 0.5, *result.NewBalance, 1e-8)
+	require.Zero(t, inflightHeld(t, user.ID))
+	result, err = repo.Apply(ctx, cmd)
+	require.NoError(t, err)
+	require.False(t, result.Applied)
+	var n int
+	require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, firstKey.ID).Scan(&n))
+	require.Equal(t, 1, n)
+	newOwner := uuid.NewString()
+	ok, err = repo.ReserveBillingInflight(ctx, user.ID, newOwner, 0.5, false, time.Minute)
+	require.NoError(t, err)
+	require.True(t, ok)
+	secondCmd := &service.UsageBillingCommand{UserID: user.ID, APIKeyID: secondKey.ID, RequestID: uuid.NewString(), OfficialCost: 0.5, RateMultiplier: 1}
+	secondCmd.InflightObligationID, err = repo.StageBillingInflight(ctx, user.ID, newOwner, newOwner+":initial", secondCmd, time.Minute)
+	require.NoError(t, err)
+	result, err = repo.Apply(ctx, secondCmd)
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.Zero(t, *result.NewBalance)
+	require.Zero(t, inflightHeld(t, user.ID))
+}
+
+func TestBillingInflightPostgres_RenewalAndAdmissionLockOrder(t *testing.T) {
+	client := testEntClient(t)
+	repo, user, _ := inflightFixture(t, 10)
+	today := service.TodayEastDayNumber()
+	card := mustCreateSubscription(t, client, &service.UserSubscription{UserID: user.ID, DailyAmountUSD: 1000, TodayRemaining: 1000, TodayDay: today, StartDay: today, ExpireDay: today + 10, ExpiresAt: service.ExpireDayToExpiresAt(today + 10), Status: service.SubscriptionStatusActive})
+	_, err := integrationDB.Exec(`UPDATE users SET concurrency=1 WHERE id=$1`, user.ID)
+	require.NoError(t, err)
+	svc := service.NewSubscriptionService(NewGroupRepository(client, integrationDB), NewUserSubscriptionRepository(client), NewUserRepository(client, integrationDB), nil, nil, client, nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	gate, err := integrationDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = gate.Rollback() }()
+	_, err = gate.ExecContext(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, user.ID)
+	require.NoError(t, err)
+	reserveDone, renewDone := make(chan error, 1), make(chan error, 1)
+	go func() {
+		_, err := repo.ReserveBillingInflight(ctx, user.ID, uuid.NewString(), 1, false, time.Minute)
+		reserveDone <- err
+	}()
+	// Put admission first in the user lock queue. Renewal must obtain that same
+	// user lock before card, not hold card while waiting on the user update.
+	require.Eventually(t, func() bool {
+		var n int
+		err := integrationDB.QueryRow(`SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%SELECT balance FROM users%'`).Scan(&n)
+		return err == nil && n > 0
+	}, 3*time.Second, 10*time.Millisecond)
+	go func() { _, err := svc.ApplyRenewFromOrder(ctx, card.ID, 30); renewDone <- err }()
+	require.Eventually(t, func() bool {
+		var n int
+		err := integrationDB.QueryRow(`SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND (query LIKE '%UPDATE%users%' OR query LIKE '%SELECT%users%')`).Scan(&n)
+		return err == nil && n >= 2
+	}, 3*time.Second, 10*time.Millisecond)
+	require.NoError(t, gate.Commit())
+	require.NoError(t, <-reserveDone, "admission must not deadlock with renewal's concurrency update")
+	require.NoError(t, <-renewDone)
+	got, err := NewUserSubscriptionRepository(client).GetByID(ctx, card.ID)
+	require.NoError(t, err)
+	require.Equal(t, today+40, got.ExpireDay)
+	u, err := NewUserRepository(client, integrationDB).GetByID(ctx, user.ID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, u.Concurrency, 100)
+	require.InDelta(t, 10, u.Balance, 1e-8, "renewal still never charges wallet")
+}
+
+func TestBillingInflightPostgres_RedisLossAndConcurrentRecharge(t *testing.T) {
+	ctx := context.Background()
+	repo, user, _ := inflightFixture(t, 1)
+	cache := NewBillingCache(testRedis(t))
+	require.NoError(t, cache.SetUserBalance(ctx, user.ID, 100))
+	ok, err := repo.ReserveBillingInflight(ctx, user.ID, uuid.NewString(), 1, false, time.Minute)
+	require.NoError(t, err)
+	require.True(t, ok)
+	// The harness owns this isolated Redis container. Flush cannot alter the PG
+	// funding obligation or permit a second owner with the same cached wallet.
+	require.NoError(t, integrationRedis.FlushDB(ctx).Err())
+	ok, err = repo.ReserveBillingInflight(ctx, user.ID, uuid.NewString(), 1, false, time.Minute)
+	require.NoError(t, err)
+	require.False(t, ok)
+	users := NewUserRepository(testEntClient(t), integrationDB)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, 21)
+	admissions := make(chan bool, 20)
+	wg.Add(1)
+	go func() { defer wg.Done(); <-start; errs <- users.UpdateBalance(ctx, user.ID, 10) }()
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			ok, err := repo.ReserveBillingInflight(ctx, user.ID, uuid.NewString(), 1, false, time.Minute)
+			errs <- err
+			admissions <- ok
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	close(admissions)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	n := 0
+	for ok := range admissions {
+		if ok {
+			n++
+		}
+	}
+	require.LessOrEqual(t, n, 10, "concurrent recharge may be visible before/after admission, never counted twice")
+	u, err := users.GetByID(ctx, user.ID)
+	require.NoError(t, err)
+	require.InDelta(t, 11, u.Balance, 1e-8)
+	require.InDelta(t, float64(n+1), inflightHeld(t, user.ID), 1e-8)
+	t.Logf("20 concurrent admission calls with one recharge: admitted=%d held=%.2f authoritative_wallet=%.2f", n, inflightHeld(t, user.ID), u.Balance)
+}

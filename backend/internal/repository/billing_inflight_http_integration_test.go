@@ -4,10 +4,12 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,7 +32,13 @@ type inflightHTTPUpstream struct {
 	release     chan struct{}
 	response    string
 	contentType string
+	status      int
+	readErr     error
 }
+
+type inflightHTTPReadError struct{ err error }
+
+func (r inflightHTTPReadError) Read([]byte) (int, error) { return 0, r.err }
 
 func (u *inflightHTTPUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	if u.calls.Add(1) == 1 {
@@ -41,7 +49,15 @@ func (u *inflightHTTPUpstream) Do(req *http.Request, _ string, _ int64, _ int) (
 			return nil, req.Context().Err()
 		}
 	}
-	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {u.contentType}}, Body: io.NopCloser(strings.NewReader(u.response)), Request: req}, nil
+	status := u.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	var body io.Reader = strings.NewReader(u.response)
+	if u.readErr != nil {
+		body = io.MultiReader(body, inflightHTTPReadError{u.readErr})
+	}
+	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {u.contentType}}, Body: io.NopCloser(body), Request: req}, nil
 }
 func (u *inflightHTTPUpstream) DoWithTLS(req *http.Request, proxy string, id int64, slots int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxy, id, slots)
@@ -56,7 +72,7 @@ type inflightHTTPFixture struct {
 	upstream *inflightHTTPUpstream
 }
 
-func newInflightHTTPFixture(t *testing.T, platform, response, contentType string) *inflightHTTPFixture {
+func newInflightHTTPFixture(t *testing.T, platform, response, contentType string, poolOptions ...service.UsageRecordWorkerPoolOptions) *inflightHTTPFixture {
 	t.Helper()
 	logger.InitBootstrap()
 	client := testEntClient(t)
@@ -103,7 +119,11 @@ func newInflightHTTPFixture(t *testing.T, platform, response, contentType string
 	openAISvc := service.NewOpenAIGatewayService(accounts, usage, atomicBilling, users, subs, rates, cache, cfg, snapshot, concurrency, billing, rateLimit, billingCache, upstream, deferred, nil, nil, nil, nil, nil, nil, nil, nil, groups)
 	keyService := service.NewAPIKeyService(NewAPIKeyRepository(client, integrationDB), users, groups, subs, rates, nil, cfg)
 	gemini := service.NewGeminiMessagesCompatService(accounts, groups, cache, snapshot, nil, rateLimit, upstream, nil, cfg)
-	pool := service.NewUsageRecordWorkerPoolWithOptions(service.UsageRecordWorkerPoolOptions{WorkerCount: 1, QueueSize: 16, TaskTimeout: 5 * time.Second})
+	options := service.UsageRecordWorkerPoolOptions{WorkerCount: 1, QueueSize: 16, TaskTimeout: 5 * time.Second}
+	if len(poolOptions) > 0 {
+		options = poolOptions[0]
+	}
+	pool := service.NewUsageRecordWorkerPoolWithOptions(options)
 	t.Cleanup(pool.Stop)
 	return &inflightHTTPFixture{user: user, key: key, pool: pool, upstream: upstream,
 		gateway: userhandler.NewGatewayHandler(gatewaySvc, gemini, nil, nil, nil, concurrency, billingCache, nil, nil, pool, nil, nil, nil, cfg, nil, openAISvc),
@@ -213,6 +233,92 @@ func TestBillingInflightHTTP_StaleWalletPreservesPreciseCardDenials(t *testing.T
 			require.Contains(t, rec.Body.String(), tc.code)
 			require.Zero(t, f.upstream.calls.Load(), "fresh PG rejection must propagate before sending upstream despite cached wallet 100")
 			require.Zero(t, inflightHeld(t, f.user.ID))
+		})
+	}
+}
+
+func TestBillingInflightHTTP_ProviderRefusalAndUnknownReadFunding(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		status     int
+		readErr    error
+		noCharge   bool
+	}{
+		{"complete_auth", `{"error":{"type":"authentication_error","message":"bad credential"}}`, 401, nil, true},
+		{"incomplete_auth_prefix", `{"error":{"type":"authentication_error","message":"bad credential"}}`, 401, errors.New("upstream reader reset"), false},
+		{"escaped_usage", `{"error":{"type":"authentication_error"},"response":{"us\u0061ge":{"input_tokens":10}}}`, 401, nil, false},
+		{"duplicate_error", `{"error":{"type":"authentication_error"},"error":{"type":"server_error"}}`, 401, nil, false},
+		{"image_partial", `{"type":"response.failed","error":{"type":"permission_error"},"output":[{"type":"image_generation_call","result":"partial"}]}`, 403, nil, false},
+		{"unknown_502", `{"error":{"type":"server_error"}}`, 502, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newInflightHTTPFixture(t, service.PlatformAnthropic, tc.body, "application/json")
+			f.upstream.status, f.upstream.readErr = tc.status, tc.readErr
+			close(f.upstream.release)
+			rec := f.request(`{"model":"claude-sonnet-4-5","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`, "/v1/messages", "", f.gateway.Messages)
+			require.GreaterOrEqual(t, rec.Code, 400, rec.Body.String())
+			require.EqualValues(t, 1, f.upstream.calls.Load())
+			f.pool.Stop()
+			if tc.noCharge {
+				require.Zero(t, inflightHeld(t, f.user.ID), "complete canonical rejection proves no charge")
+			} else {
+				require.Positive(t, inflightHeld(t, f.user.ID), "unknown execution must retain bounded estimate")
+			}
+			var logs int
+			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs))
+			require.Zero(t, logs)
+			var wallet float64
+			require.NoError(t, integrationDB.QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&wallet))
+			require.InDelta(t, f.user.Balance, wallet, 1e-10)
+			ok, err := NewUsageBillingRepository(testEntClient(t), integrationDB).(service.BillingInflightRepository).ReserveBillingInflight(context.Background(), f.user.ID, uuid.NewString(), 1, false, time.Minute)
+			require.NoError(t, err)
+			require.Equal(t, tc.noCharge, ok, "a separate paid owner must see authoritative retained funding")
+		})
+	}
+}
+
+func TestBillingInflightHTTP_QueuedAndDroppedUsageRetainFunding(t *testing.T) {
+	for _, drop := range []bool{false, true} {
+		name := "queue_delay"
+		if drop {
+			name = "queue_drop"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newInflightHTTPFixture(t, service.PlatformAnthropic, inflightAnthropicJSON, "application/json", service.UsageRecordWorkerPoolOptions{WorkerCount: 1, QueueSize: 1, TaskTimeout: time.Minute, OverflowPolicy: config.UsageRecordOverflowPolicyDrop})
+			workerStarted, workerRelease := make(chan struct{}), make(chan struct{})
+			var releaseOnce sync.Once
+			releaseWorker := func() { releaseOnce.Do(func() { close(workerRelease) }) }
+			t.Cleanup(releaseWorker)
+			require.Equal(t, service.UsageRecordSubmitModeEnqueued, f.pool.Submit(func(context.Context) { close(workerStarted); <-workerRelease }))
+			<-workerStarted
+			if drop {
+				require.Equal(t, service.UsageRecordSubmitModeEnqueued, f.pool.Submit(func(context.Context) {}))
+			}
+			close(f.upstream.release)
+			body := `{"model":"claude-sonnet-4-5","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`
+			first := f.request(body, "/v1/messages", "", f.gateway.Messages)
+			require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+			require.Positive(t, inflightHeld(t, f.user.ID), "completion cannot free unexecuted billing task")
+			second := f.request(body, "/v1/messages", "", f.gateway.Messages)
+			require.Equal(t, http.StatusForbidden, second.Code, second.Body.String())
+			require.EqualValues(t, 1, f.upstream.calls.Load())
+			releaseWorker()
+			f.pool.Stop()
+			var logs int
+			require.NoError(t, integrationDB.QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs))
+			if drop {
+				require.EqualValues(t, 1, f.pool.Stats().DroppedQueueFull)
+				require.Zero(t, logs)
+				require.Positive(t, inflightHeld(t, f.user.ID), "dropped accounting keeps a bounded, non-durable mitigation hold")
+				_, err := integrationDB.Exec(`UPDATE billing_inflight_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE user_id=$1`, f.user.ID)
+				require.NoError(t, err)
+				ok, err := NewUsageBillingRepository(testEntClient(t), integrationDB).(service.BillingInflightRepository).ReserveBillingInflight(context.Background(), f.user.ID, uuid.NewString(), 1, false, time.Minute)
+				require.NoError(t, err)
+				require.True(t, ok, "expired dropped work must not become a permanent funds freeze")
+			} else {
+				require.Equal(t, 1, logs)
+				require.Zero(t, inflightHeld(t, f.user.ID))
+			}
 		})
 	}
 }
