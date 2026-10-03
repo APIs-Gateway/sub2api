@@ -50,6 +50,8 @@ func TestGatewayVisibleDrain_ActualNativeAttempt(t *testing.T) {
 		{"complete_empty_client_tool", start + tool + toolStop + stop, false, false, 0, "probe"},
 		{"visible_text_and_late_usage", start + text + stop + delta, false, false, 27, "answer"},
 		{"visible_stop_cached_alias", start + text + stop + visibleDrainEvent("message_stop", `{"type":"message_stop","usage":{"input_tokens":11,"output_tokens":27,"cached_tokens":17,"cache_creation_input_tokens":5,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":3}}}`), false, false, 27, "answer"},
+		{"visible_stop_override_5m", start + text + stop + visibleDrainEvent("message_stop", `{"type":"message_stop","usage":{"input_tokens":11,"output_tokens":27,"cached_tokens":17,"cache_creation_input_tokens":5,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":3}}}`), false, false, 27, "answer"},
+		{"visible_stop_override_1h", start + text + stop + visibleDrainEvent("message_stop", `{"type":"message_stop","usage":{"input_tokens":11,"output_tokens":27,"cached_tokens":17,"cache_creation_input_tokens":5,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":3}}}`), false, false, 27, "answer"},
 		{"text_in_block_start", start + visibleDrainEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"start answer"}}`) + toolStop + stop, false, false, 0, "start answer"},
 		{"large_line_after_visible", start + text + visibleDrainEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"`+strings.Repeat("z", 9*1024*1024)+`"}}`) + stop, false, false, 0, "answer"},
 		{"explicit_error_after_stop", start + text + delta + stop + providerErr, false, true, 27, "answer"},
@@ -65,6 +67,11 @@ func TestGatewayVisibleDrain_ActualNativeAttempt(t *testing.T) {
 			policyRepo := &compatProviderPolicyRepo{}
 			svc.rateLimitService = NewRateLimitService(policyRepo, nil, svc.cfg, nil, nil)
 			account := newAnthropicAPIKeyAccountForPartialUsageTest()
+			if strings.HasPrefix(tc.name, "visible_stop_override_") {
+				account.Type = AccountTypeOAuth
+				account.Credentials["access_token"] = "local-test"
+				account.Extra = map[string]any{"cache_ttl_override_enabled": true, "cache_ttl_override_target": strings.TrimPrefix(tc.name, "visible_stop_override_")}
+			}
 			body := []byte(`{"model":"claude-3-5-sonnet-latest","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
 			result, err := svc.Forward(context.Background(), c, account, &ParsedRequest{Body: NewRequestBodyRef(body), Model: "claude-3-5-sonnet-latest", Stream: true})
 			if tc.failure {
@@ -86,11 +93,24 @@ func TestGatewayVisibleDrain_ActualNativeAttempt(t *testing.T) {
 			} else {
 				require.NotNil(t, result)
 				require.Equal(t, 11, result.Usage.InputTokens)
-				if tc.name == "visible_stop_cached_alias" {
+				if tc.name == "visible_stop_cached_alias" || strings.HasPrefix(tc.name, "visible_stop_override_") {
 					require.Equal(t, 17, result.Usage.CacheReadInputTokens)
 					require.Equal(t, 5, result.Usage.CacheCreationInputTokens)
-					require.Equal(t, 2, result.Usage.CacheCreation5mTokens)
-					require.Equal(t, 3, result.Usage.CacheCreation1hTokens)
+					switch tc.name {
+					case "visible_stop_override_5m":
+						require.Equal(t, 5, result.Usage.CacheCreation5mTokens)
+						require.Zero(t, result.Usage.CacheCreation1hTokens)
+						require.Contains(t, rec.Body.String(), `"ephemeral_5m_input_tokens":5`)
+						require.Contains(t, rec.Body.String(), `"ephemeral_1h_input_tokens":0`)
+					case "visible_stop_override_1h":
+						require.Zero(t, result.Usage.CacheCreation5mTokens)
+						require.Equal(t, 5, result.Usage.CacheCreation1hTokens)
+						require.Contains(t, rec.Body.String(), `"ephemeral_5m_input_tokens":0`)
+						require.Contains(t, rec.Body.String(), `"ephemeral_1h_input_tokens":5`)
+					default:
+						require.Equal(t, 2, result.Usage.CacheCreation5mTokens)
+						require.Equal(t, 3, result.Usage.CacheCreation1hTokens)
+					}
 					require.Contains(t, rec.Body.String(), `"cache_read_input_tokens":17`)
 				} else {
 					require.Equal(t, 7, result.Usage.CacheReadInputTokens)
