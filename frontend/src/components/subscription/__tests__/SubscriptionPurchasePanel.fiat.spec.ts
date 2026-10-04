@@ -79,12 +79,13 @@ describe('购买面板按人民币展示', () => {
     expect(wrapper.find('input[type="number"]').exists()).toBe(false)
   })
 
-  it('free 站保持美元：封顶带 USD，保留额度输入框', async () => {
+  it('free 站保持美元：封顶写 $，保留额度输入框', async () => {
     publicSettings.value = { balance_recharge_multiplier: 1 }
     const wrapper = await mountPanel()
     const text = plain(wrapper.text())
 
-    expect(text).toContain('USD210.00')
+    expect(text).toContain('$210.00')
+    expect(text).not.toMatch(/USD\d/)
     expect(wrapper.find('[data-testid="subscription-purchase-daily-fiat"]').exists()).toBe(false)
     expect(wrapper.find('input[type="number"]').exists()).toBe(true)
     expect(text).not.toContain('subscriptionPurchase.unitPrice')
@@ -96,11 +97,12 @@ describe('购买面板按人民币展示', () => {
     const wrapper = await mountPanel()
     const text = plain(wrapper.text())
 
-    // 报价区第一格是每日额度（USD 30.00），和周/月封顶（USD 210.00、USD 900.00）同一口径。
+    // 报价区第一格是每日额度（$30.00），和周/月封顶（$210.00、$900.00）同一口径。
     expect(text).toContain('subscriptionPurchase.dailyAmount')
-    expect(text).toContain('USD30.00')
-    expect(text).toContain('USD210.00')
-    expect(text).toContain('USD900.00')
+    expect(text).toContain('$30.00')
+    expect(text).toContain('$210.00')
+    expect(text).toContain('$900.00')
+    expect(text).not.toMatch(/USD\d/)
     expect(text).not.toContain('subscriptionPurchase.unitPrice')
     expect(text).not.toContain('×0.0450')
     expect(wrapper.find('input[type="number"]').exists()).toBe(true)

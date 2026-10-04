@@ -1631,10 +1631,10 @@
       title: '兑换套餐',
       desc: '无套餐时开通；已有套餐时自动续费或换套餐。',
       plan: '套餐',
-      planTitle: '每日 USD {d}',
+      planTitle: '每日 {d}',
       planTitleFiat: '每日 {d}',
       dailyAmount: '每日额度',
-      dailyOption: 'USD {d}',
+      dailyOption: '{d}',
       validityDays: '有效期',
       pointsPrice: '积分价',
       actionLabels: {

@@ -79,6 +79,8 @@ describe('useCurrencyDisplay', () => {
     const { formatUsd } = useCurrencyDisplay()
 
     expect(formatUsd(5)).toBe('$5.00')
+    // 千分位照常，符号永远是 $，不会写成 USD1,300.00。
+    expect(formatUsd(1300)).toBe('$1,300.00')
     expect(formatUsd(5, 6)).toBe('$5.000000')
     expect(formatUsd(52.4361, EXACT_DIGITS)).toBe('$52.4361')
     expect(formatUsd(null)).toBe('$0.00')
@@ -148,6 +150,9 @@ describe('useCurrencyDisplay', () => {
     expect(normalize(formatWallet(130))).toContain('10.00')
     setMode('usd')
     expect(formatWallet(130)).toBe('$130.00')
+    // 美元模式的钱包金额（充值到账、余额）都是 $ + 千分位，同一页上只有一种写法。
+    expect(formatWallet(1300)).toBe('$1,300.00')
+    expect(formatWallet(159.61)).toBe('$159.61')
   })
 
   it('订阅金额按卡单价折算；缺单价时回落到美元，绝不按钱包单价猜', () => {
