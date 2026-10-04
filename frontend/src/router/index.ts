@@ -12,6 +12,7 @@ import { getAdminComplianceSessionVersion } from '@/utils/adminComplianceSession
 import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { recoverFromChunkLoadError } from '@/utils/chunkLoadRecovery'
+import { isSafeRedirectPath } from '@/utils/redirect'
 import { getSetupStatus } from '@/api/setup'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveRouteDocumentTitle } from './title'
@@ -819,6 +820,14 @@ router.beforeEach(async (to, _from, next) => {
       // (they are blocked from all protected routes, so redirecting would cause a loop)
       if (appStore.backendModeEnabled && !authStore.isAdmin) {
         next()
+        return
+      }
+      // 带着 redirect 来的（首页注册入口、守卫写入的原路径）直接去那里；
+      // 没带或不是站内路径，仍按角色回各自的首页。
+      // 后端模式下非管理员已在上面放行，不会走到这里，所以不会和"受保护页 -> /login"互相弹。
+      const redirect = to.query?.redirect
+      if (isSafeRedirectPath(redirect)) {
+        next(redirect)
         return
       }
       // Admin users go to admin dashboard, regular users go to user dashboard

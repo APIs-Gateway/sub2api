@@ -168,7 +168,7 @@
       <p class="text-gray-500 dark:text-dark-400">
         {{ t('auth.dontHaveAccount') }}
         <router-link
-          to="/register"
+          :to="{ path: '/register', query: authRedirectQuery }"
           class="font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
         >
           {{ t('auth.signUp') }}
@@ -207,6 +207,7 @@ import { getPublicSettings, isTotp2FARequired, isWeChatWebOAuthEnabled } from '@
 import type { LoginAgreementDocument, TotpLoginResponse } from '@/types'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { clearAllAffiliateReferralCodes } from '@/utils/oauthAffiliate'
+import { redirectQuery, sanitizeRedirectPath } from '@/utils/redirect'
 
 const { t } = useI18n()
 const LOGIN_AGREEMENT_STORAGE_KEY = 'sub2api_login_agreement_consent'
@@ -216,6 +217,13 @@ const LOGIN_AGREEMENT_STORAGE_KEY = 'sub2api_login_agreement_consent'
 const router = useRouter()
 const authStore = useAuthStore()
 const appStore = useAppStore()
+
+// 登录后要回到的页面（守卫写入的原路径，或首页注册入口带来的 /keys）。
+// 只认站内路径，其余一律回 /dashboard；切到注册页时原样带过去。
+const authRedirectQuery = computed(() => redirectQuery(router.currentRoute.value.query.redirect))
+function resolveRedirectTarget(): string {
+  return sanitizeRedirectPath(router.currentRoute.value.query.redirect)
+}
 
 // ==================== State ====================
 
@@ -491,8 +499,7 @@ async function handleLogin(): Promise<void> {
     appStore.showSuccess(t('auth.loginSuccess'))
 
     // Redirect to dashboard or intended route
-    const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
-    await router.push(redirectTo)
+    await router.push(resolveRedirectTarget())
   } catch (error: unknown) {
     // Reset Turnstile on error
     if (turnstileRef.value) {
@@ -525,8 +532,7 @@ async function handle2FAVerify(code: string): Promise<void> {
     appStore.showSuccess(t('auth.loginSuccess'))
 
     // Redirect to dashboard or intended route
-    const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
-    await router.push(redirectTo)
+    await router.push(resolveRedirectTarget())
   } catch (error: unknown) {
     const err = error as { message?: string; response?: { data?: { message?: string } } }
     const message = err.response?.data?.message || err.message || t('profile.totp.loginFailed')

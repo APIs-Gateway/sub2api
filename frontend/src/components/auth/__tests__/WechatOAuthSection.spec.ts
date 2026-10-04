@@ -256,4 +256,29 @@ describe('WechatOAuthSection', () => {
 
     expect(wrapper.text()).toContain('MOCK-NOT-CONFIGURED')
   })
+
+  it.each([
+    ['站内路径原样交给后端', '/keys', '%2Fkeys'],
+    ['协议相对地址回落到 /dashboard', '//evil.com', '%2Fdashboard'],
+    ['反斜杠回落到 /dashboard', '/\\evil.com', '%2Fdashboard'],
+    ['编码的双斜杠回落到 /dashboard', '/%2F%2Fevil.com', '%2Fdashboard'],
+    ['绝对地址回落到 /dashboard', 'https://evil.com', '%2Fdashboard'],
+  ])('start URL 里的 redirect：%s', async (_name, redirect, encoded) => {
+    routeState.query = { redirect }
+    seedPublicSettings({
+      wechat_oauth_open_enabled: true,
+      wechat_oauth_mp_enabled: false,
+    })
+    const wrapper = mount(WechatOAuthSection, {
+      global: {
+        plugins: [pinia],
+      },
+    })
+
+    await wrapper.get('button').trigger('click')
+
+    expect(locationState.current.href).toBe(
+      `/api/v1/auth/oauth/wechat/start?mode=open&redirect=${encoded}`
+    )
+  })
 })

@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ref } from 'vue'
 
 import KeyOnboardingModal from '../KeyOnboardingModal.vue'
+import { buildMachineFiles } from '@/views/docs/docsMachine'
 
 const { getAvailable, showError, i18nState } = vi.hoisted(() => ({
   getAvailable: vi.fn(),
@@ -529,32 +530,37 @@ describe('KeyOnboardingModal', () => {
   })
 
   describe('交给 AI', () => {
-    it('文本里没有密钥，复制简短版/详细版也没有', async () => {
+    // 文档链接的域名是站点自己的来源（页面所在的地址），不是接入地址
+    const ORIGIN = window.location.origin
+
+    it('一句话指向站内的工具文档，文本里没有密钥，复制简短版/详细版也没有', async () => {
       const w = await mountModal({ initialTab: 'ai', docUrl: 'https://docs.example.com' })
       const shown = (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
+      expect(shown).toBe(`Follow this guide to connect Codex to Hiyo: ${ORIGIN}/docs/codex.md`)
       expect(shown).not.toContain(SECRET)
-      expect(shown).toContain('https://codex.hiyo.top')
 
       await w.get('[data-test="ai-copy"]').trigger('click')
       await w.get('[data-test="ai-copy-detail"]').trigger('click')
       await flushPromises()
       const [short, detail] = clipboard.writeText.mock.calls.map((c) => c[0] as string)
+      expect(short).toBe(shown)
       for (const text of [short, detail]) {
         expect(text).not.toContain(SECRET)
         expect(text).not.toContain('sk-')
       }
+      // 管理员配置的外部文档地址不再进一句话，只在详细版里
+      expect(short).not.toContain('https://docs.example.com')
       expect(detail).toContain('gpt-5.6-sol, gpt-5.6-luna')
       expect(detail).not.toContain('not-mine')
       expect(detail).toContain('https://docs.example.com')
     })
 
-    it('切换客户端会改文本', async () => {
+    it('切换客户端会换成对应的文档', async () => {
       const w = await mountModal({ initialTab: 'ai' })
       const text = () => (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
-      const codex = text()
+      expect(text()).toContain('/docs/codex.md')
       await w.get('[data-test="ai-client-cursor"]').trigger('click')
-      expect(text()).not.toBe(codex)
-      expect(text()).toContain('Cursor')
+      expect(text()).toBe(`Follow this guide to connect Cursor to Hiyo: ${ORIGIN}/docs/cursor.md`)
     })
 
     describe('工具按分组过滤，默认选中第一个可用的', () => {
@@ -569,30 +575,23 @@ describe('KeyOnboardingModal', () => {
         group: { id: 7, platform, ...extra }
       })
 
-      it('openai 分组：没有 Claude Code，默认 Codex，指令里是 /v1 地址和 OpenAI 格式（以前默认 Claude Code，三者互相矛盾）', async () => {
+      it('openai 分组：没有 Claude Code，默认 Codex，读的是 Codex 的文档（以前默认 Claude Code，指令里地址、格式、变量三者互相矛盾）', async () => {
         const w = await mountModal({ initialTab: 'ai' })
         expect(chips(w)).toEqual(['codex', 'cursor', 'chat', 'code', 'other'])
         expect(checked(w)).toEqual(['codex'])
-        expect(text(w)).toContain('"Codex"')
-        expect(text(w)).toContain('https://codex.hiyo.top/v1')
-        expect(text(w)).toContain('OpenAI')
+        // 一句话里没有地址和接口格式，只指向 Codex 的文档，不会再出现互相矛盾的说法
+        expect(text(w)).toBe(`Follow this guide to connect Codex to Hiyo: ${ORIGIN}/docs/codex.md`)
         expect(text(w)).not.toContain('ANTHROPIC_BASE_URL')
       })
 
-      it('openai 分组开了调度：Claude Code 可选但排第二，默认仍是 Codex；切到 Claude Code 才是根地址 + Anthropic + ANTHROPIC_BASE_URL', async () => {
+      it('openai 分组开了调度：Claude Code 可选但排第二，默认仍是 Codex；切到 Claude Code 才读 Claude Code 的文档', async () => {
         const w = await mountModal({ initialTab: 'ai', apiKey: group('openai', { allow_messages_dispatch: true }) })
         expect(chips(w)).toEqual(['codex', 'claude', 'cursor', 'chat', 'code', 'other'])
         expect(checked(w)).toEqual(['codex'])
-        expect(text(w)).toContain('"Codex"')
-        expect(text(w)).toContain('The endpoint is https://codex.hiyo.top/v1 and')
-        expect(text(w)).toContain('API format is OpenAI')
-        expect(text(w)).not.toContain('ANTHROPIC_BASE_URL')
-        // 同一个分组切到 Claude Code：地址和格式跟着变
+        expect(text(w)).toBe(`Follow this guide to connect Codex to Hiyo: ${ORIGIN}/docs/codex.md`)
+        // 同一个分组切到 Claude Code：读的文档跟着变
         await w.get('[data-test="ai-client-claude"]').trigger('click')
-        expect(text(w)).toContain('"Claude Code"')
-        expect(text(w)).toContain('The endpoint is https://codex.hiyo.top and')
-        expect(text(w)).toContain('API format is Anthropic')
-        expect(text(w)).toContain('ANTHROPIC_BASE_URL')
+        expect(text(w)).toBe(`Follow this guide to connect Claude Code to Hiyo: ${ORIGIN}/docs/claude-code.md`)
       })
 
       it.each([
@@ -640,8 +639,7 @@ describe('KeyOnboardingModal', () => {
           await flushPromises()
         }
         expect(checked(w)).toEqual(['codex'])
-        expect(text(w)).toContain('"Codex"')
-        expect(text(w)).toContain('https://codex.hiyo.top/v1')
+        expect(text(w)).toBe(`Follow this guide to connect Codex to Hiyo: ${ORIGIN}/docs/codex.md`)
       })
 
       it('切到别的页签再回来，修正后的选择还在', async () => {
@@ -653,13 +651,112 @@ describe('KeyOnboardingModal', () => {
       })
     })
 
+    describe('各分组、各工具的一句话和链接', () => {
+      const group = (platform: string, extra: Record<string, unknown> = {}) => ({
+        key: SECRET,
+        name: 'my-key',
+        group_id: 7,
+        group: { id: 7, platform, ...extra }
+      })
+      // 工具 → [读哪份文档, 一句话（英文界面）]
+      const sentence = (client: string, url: string): string =>
+        ({
+          claude: `Follow this guide to connect Claude Code to Hiyo: ${url}`,
+          codex: `Follow this guide to connect Codex to Hiyo: ${url}`,
+          cursor: `Follow this guide to connect Cursor to Hiyo: ${url}`,
+          chat: `Follow this guide to connect my chat client to Hiyo: ${url}`,
+          code: `Follow this guide to call Hiyo from my code: ${url}`,
+          other: `Follow this guide to connect the tool I use to Hiyo: ${url}`
+        })[client]!
+      const DOC: Record<string, string> = {
+        claude: '/docs/claude-code.md',
+        codex: '/docs/codex.md',
+        cursor: '/docs/cursor.md',
+        chat: '/llms.txt',
+        code: '/docs/openai-sdk.md',
+        other: '/llms.txt'
+      }
+      const CASES: [string, string, Record<string, unknown>, string[]][] = [
+        ['openai', 'openai（没开调度）', {}, ['codex', 'cursor', 'chat', 'code', 'other']],
+        ['openai', 'openai（开了调度）', { allow_messages_dispatch: true }, ['codex', 'claude', 'cursor', 'chat', 'code', 'other']],
+        ['anthropic', 'anthropic', {}, ['claude', 'cursor', 'chat', 'code', 'other']],
+        ['gemini', 'gemini', {}, ['chat', 'code', 'other']],
+        ['antigravity', 'antigravity', {}, ['claude', 'chat', 'code', 'other']]
+      ]
+
+      it.each(CASES)('%s：%s 的每个工具，一句话、复制的内容、两个打开链接是同一句，读的文档真的存在', async (platform, _name, extra, clients) => {
+        const open = vi.spyOn(window, 'open').mockReturnValue(null)
+        const served = Object.keys(buildMachineFiles())
+        const w = await mountModal({ initialTab: 'ai', apiKey: group(platform, extra) })
+        for (const client of clients) {
+          await w.get(`[data-test="ai-client-${client}"]`).trigger('click')
+          const shown = (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
+          const url = `${ORIGIN}${DOC[client]}`
+          expect(shown, `${platform} ${client}`).toBe(sentence(client, url))
+          // 链接指向的文档都在站内的机器文件里（上线后 /docs/<id>.md 和 /llms.txt 能访问），不是死链
+          expect(served, `${platform} ${client}`).toContain(DOC[client].slice(1))
+
+          clipboard.writeText.mockClear()
+          open.mockClear()
+          await w.get('[data-test="ai-copy"]').trigger('click')
+          await w.get('[data-test="ai-open-chatgpt"]').trigger('click')
+          await w.get('[data-test="ai-open-claude"]').trigger('click')
+          await flushPromises()
+          expect(clipboard.writeText.mock.calls[0][0]).toBe(shown)
+          const [gpt, claude] = open.mock.calls.map((c) => new URL(String(c[0])))
+          expect(gpt.searchParams.get('hints')).toBe('search')
+          expect(gpt.searchParams.get('q')).toBe(shown)
+          expect(claude.searchParams.get('q')).toBe(shown)
+          expect(shown).not.toContain(SECRET)
+        }
+        // 文档目录：任何分组、任何工具下都是 /llms.txt，用新窗口打开
+        const catalog = w.get('a[data-test="ai-catalog"]')
+        expect(catalog.attributes('href')).toBe(`${ORIGIN}/llms.txt`)
+        expect(catalog.attributes('target')).toBe('_blank')
+        expect(served).toContain('llms.txt')
+        open.mockRestore()
+      })
+
+      it('中文界面：一句话是「请按这份文档，帮我把 X 接入 站点：链接」，没有分组时不显示这个页签的内容', async () => {
+        i18nState.lang = 'zh-CN'
+        const w = await mountModal({ initialTab: 'ai' })
+        const text = () => (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
+        expect(text()).toBe(`请按这份文档，帮我把 Codex 接入 Hiyo：${ORIGIN}/docs/codex.md`)
+        await w.get('[data-test="ai-client-chat"]').trigger('click')
+        expect(text()).toBe(`请按这份文档，帮我把聊天客户端接入 Hiyo：${ORIGIN}/llms.txt`)
+        await w.get('[data-test="ai-client-code"]').trigger('click')
+        expect(text()).toBe(`请按这份文档，帮我在代码里调用 Hiyo：${ORIGIN}/docs/openai-sdk.md`)
+        expect(w.get('a[data-test="ai-catalog"]').text()).toBe('给 AI 读的文档目录')
+        expect(w.get('[data-test="ai-footnote"]').text()).toContain('「复制详细版」')
+
+        const none = await mountModal({ initialTab: 'ai', apiKey: { key: SECRET, name: 'k', group_id: null, group: null } })
+        expect(none.find('[data-test="panel-ai"]').exists()).toBe(false)
+      })
+
+      // free 站：美元计价、没有支付。界面上只有站点名和站点地址会变，这一页不能出现任何价格、充值、换算的字眼
+      it.each([
+        ['en', 'Hiyo free', 'Follow this guide to connect Codex to Hiyo free: '],
+        ['zh-CN', 'Hiyo 公益站', '请按这份文档，帮我把 Codex 接入 Hiyo 公益站：']
+      ] as const)('free 站（%s）：站点名取自设置，这一页没有价格、充值、倍率一类的字', async (lang, siteName, prefix) => {
+        i18nState.lang = lang
+        const w = await mountModal({ initialTab: 'ai', siteName, baseUrl: 'https://free.example.com/' })
+        const shown = (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
+        expect(shown).toBe(`${prefix}${ORIGIN}/docs/codex.md`)
+        const page = `${w.get('[data-test="panel-ai"]').text()}\n${shown}`
+        expect(page).not.toMatch(/[¥￥$]|USD|CNY|RMB|price|pricing|billing|balance|recharge|payment|top[- ]?up|multiplier|价格|计费|余额|充值|支付|付费|倍率|汇率|换算/i)
+        // 接入地址不进一句话：免费站和付费站走同一份文档
+        expect(shown).not.toContain('free.example.com')
+      })
+    })
+
     it('在 ChatGPT / Claude 中打开：链接只带不含密钥的文本', async () => {
       const open = vi.spyOn(window, 'open').mockReturnValue(null)
       const w = await mountModal({ initialTab: 'ai' })
       await w.get('[data-test="ai-open-chatgpt"]').trigger('click')
       await w.get('[data-test="ai-open-claude"]').trigger('click')
       const [gpt, claude] = open.mock.calls.map((c) => String(c[0]))
-      expect(gpt.startsWith('https://chatgpt.com/?q=')).toBe(true)
+      // ChatGPT 要带联网搜索，才会去读链接；Claude 不需要
+      expect(gpt.startsWith('https://chatgpt.com/?hints=search&q=')).toBe(true)
       expect(claude.startsWith('https://claude.ai/new?q=')).toBe(true)
       expect(decodeURIComponent(gpt)).not.toContain(SECRET)
       expect(decodeURIComponent(claude)).not.toContain(SECRET)

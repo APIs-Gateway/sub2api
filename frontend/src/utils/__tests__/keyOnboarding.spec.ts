@@ -1187,7 +1187,7 @@ describe('交给 AI 的文本', () => {
 
   it('打开链接把文本编码进 q 参数', () => {
     const text = 'a b&c=d?'
-    expect(chatgptUrl(text)).toBe('https://chatgpt.com/?q=a%20b%26c%3Dd%3F')
+    expect(chatgptUrl(text)).toBe('https://chatgpt.com/?hints=search&q=a%20b%26c%3Dd%3F')
     expect(claudeUrl(text)).toBe('https://claude.ai/new?q=a%20b%26c%3Dd%3F')
   })
 })

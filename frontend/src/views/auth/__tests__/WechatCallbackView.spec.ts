@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import WechatCallbackView from '@/views/auth/WechatCallbackView.vue'
+import { isSafeRedirectPath } from '@/utils/redirect'
 
 const {
   exchangePendingOAuthCompletionMock,
@@ -1088,5 +1089,105 @@ describe('WechatCallbackView', () => {
     expect(replaceMock.mock.calls[0]?.[0]).toContain('wechat_bind_existing%3D1')
     expect(replaceMock.mock.calls[0]?.[0]).toContain('mode%3Dmp')
     expect(replaceMock.mock.calls[0]?.[0]).toContain('email=resume%40example.com')
+  })
+})
+
+const REDIRECT_CASES: Array<[string, string, string]> = [
+  ['站内路径原样保留', '/keys', '/keys'],
+  ['带查询串的站内路径', '/usage?model=gpt-5&range=7d', '/usage?model=gpt-5&range=7d'],
+  ['协议相对地址', '//evil.com', '/dashboard'],
+  ['反斜杠', '/\\evil.com', '/dashboard'],
+  ['绝对地址', 'https://evil.com', '/dashboard'],
+  ['脚本协议', 'javascript:alert(1)', '/dashboard'],
+  ['编码的双斜杠', '/%2F%2Fevil.com', '/dashboard'],
+  ['编码的反斜杠', '/%5Cevil.com', '/dashboard'],
+  ['多重编码', '/%252F%252Fevil.com', '/dashboard'],
+  ['Tab 夹在斜杠之间', '/\t/evil.com', '/dashboard'],
+  ['点段', '/.//evil.com', '/dashboard'],
+]
+
+describe('WechatCallbackView 的 redirect 校验', () => {
+  const stubs = {
+    AuthLayout: { template: '<div><slot /></div>' },
+    Icon: true,
+    RouterLink: { template: '<a><slot /></a>' },
+    transition: false,
+  }
+
+  beforeEach(() => {
+    replaceMock.mockReset()
+    setTokenMock.mockReset()
+    exchangePendingOAuthCompletionMock.mockReset()
+    getPublicSettingsMock.mockReset()
+    getAuthTokenMock.mockReset()
+    getPublicSettingsMock.mockResolvedValue({
+      invitation_code_enabled: false,
+      turnstile_enabled: false,
+      turnstile_site_key: '',
+    })
+    setTokenMock.mockResolvedValue({})
+    routeState.query = {}
+    localStorage.clear()
+    sessionStorage.clear()
+    locationState.current = {
+      href: 'http://localhost/auth/wechat/callback',
+      hash: '',
+      search: '',
+      pathname: '/auth/wechat/callback',
+    }
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: locationState.current,
+    })
+  })
+
+  it.each(REDIRECT_CASES)('回调带 token 的 fragment：%s', async (_name, redirect, expected) => {
+    locationState.current.hash = `#access_token=legacy-access-token&redirect=${encodeURIComponent(redirect)}`
+
+    mount(WechatCallbackView, { global: { stubs } })
+    await flushPromises()
+
+    expect(setTokenMock).toHaveBeenCalledWith('legacy-access-token')
+    expect(replaceMock).toHaveBeenCalledTimes(1)
+    expect(replaceMock).toHaveBeenCalledWith(expected)
+  })
+
+  it.each(REDIRECT_CASES)('后端换回登录结果里的 redirect：%s', async (_name, redirect, expected) => {
+    exchangePendingOAuthCompletionMock.mockResolvedValue({
+      access_token: 'access-token',
+      refresh_token: 'refresh-token',
+      expires_in: 3600,
+      redirect,
+    })
+
+    mount(WechatCallbackView, { global: { stubs } })
+    await flushPromises()
+
+    expect(setTokenMock).toHaveBeenCalledWith('access-token')
+    expect(replaceMock).toHaveBeenCalledTimes(1)
+    expect(replaceMock).toHaveBeenCalledWith(expected)
+  })
+
+  it('微信「绑定已有账号」先去登录：交给登录页的 redirect 是回调页自己，校验函数必须放行', async () => {
+    // 这是 redirect 链上唯一一处把「站内回调页 + 它自己的查询串」当作 redirect 的用法，
+    // 登录成功后要回到回调页继续绑定，不能被统一校验误伤。
+    exchangePendingOAuthCompletionMock.mockResolvedValue({
+      error: 'invitation_required',
+      redirect: '/usage',
+    })
+    getAuthTokenMock.mockReturnValue(null)
+
+    const wrapper = mount(WechatCallbackView, { global: { stubs } })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="existing-account-email"]').setValue('user+tag@example.com')
+    await wrapper.get('[data-testid="existing-account-submit"]').trigger('click')
+
+    expect(replaceMock).toHaveBeenCalledTimes(1)
+    const loginUrl = new URL(replaceMock.mock.calls[0]?.[0] as string, 'http://localhost')
+    expect(loginUrl.pathname).toBe('/login')
+    const resumePath = loginUrl.searchParams.get('redirect') as string
+    expect(resumePath.startsWith('/auth/wechat/callback?wechat_bind_existing=1')).toBe(true)
+    expect(isSafeRedirectPath(resumePath)).toBe(true)
   })
 })

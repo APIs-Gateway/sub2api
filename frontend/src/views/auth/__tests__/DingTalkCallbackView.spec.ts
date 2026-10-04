@@ -95,3 +95,63 @@ describe('DingTalkCallbackView', () => {
     expect(replace).toHaveBeenCalledWith('/profile')
   })
 })
+
+const REDIRECT_CASES: Array<[string, string, string]> = [
+  ['站内路径原样保留', '/keys', '/keys'],
+  ['带查询串的站内路径', '/usage?model=gpt-5&range=7d', '/usage?model=gpt-5&range=7d'],
+  ['协议相对地址', '//evil.com', '/dashboard'],
+  ['反斜杠', '/\\evil.com', '/dashboard'],
+  ['绝对地址', 'https://evil.com', '/dashboard'],
+  ['脚本协议', 'javascript:alert(1)', '/dashboard'],
+  ['编码的双斜杠', '/%2F%2Fevil.com', '/dashboard'],
+  ['编码的反斜杠', '/%5Cevil.com', '/dashboard'],
+  ['多重编码', '/%252F%252Fevil.com', '/dashboard'],
+  ['Tab 夹在斜杠之间', '/\t/evil.com', '/dashboard'],
+  ['点段', '/.//evil.com', '/dashboard'],
+]
+
+describe('DingTalkCallbackView 的 redirect 校验', () => {
+  const stubs = {
+    AuthLayout: { template: '<div><slot /></div>' },
+    Icon: true,
+    RouterLink: { template: '<a><slot /></a>' },
+    transition: false
+  }
+
+  beforeEach(() => {
+    replace.mockReset()
+    setToken.mockReset()
+    exchangePendingOAuthCompletion.mockReset()
+    setToken.mockResolvedValue({})
+    window.location.hash = ''
+    localStorage.clear()
+    sessionStorage.clear()
+  })
+
+  it.each(REDIRECT_CASES)('回调带 token 的 fragment：%s', async (_name, redirect, expected) => {
+    window.location.hash = `#access_token=legacy-access-token&redirect=${encodeURIComponent(redirect)}`
+
+    mount(DingTalkCallbackView, { global: { stubs } })
+    await flushPromises()
+
+    expect(setToken).toHaveBeenCalledWith('legacy-access-token')
+    expect(replace).toHaveBeenCalledTimes(1)
+    expect(replace).toHaveBeenCalledWith(expected)
+  })
+
+  it.each(REDIRECT_CASES)('后端换回登录结果里的 redirect：%s', async (_name, redirect, expected) => {
+    exchangePendingOAuthCompletion.mockResolvedValue({
+      access_token: 'access-token',
+      refresh_token: 'refresh-token',
+      expires_in: 3600,
+      redirect
+    })
+
+    mount(DingTalkCallbackView, { global: { stubs } })
+    await flushPromises()
+
+    expect(setToken).toHaveBeenCalledWith('access-token')
+    expect(replace).toHaveBeenCalledTimes(1)
+    expect(replace).toHaveBeenCalledWith(expected)
+  })
+})

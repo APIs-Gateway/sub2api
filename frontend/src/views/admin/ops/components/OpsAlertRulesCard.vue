@@ -47,6 +47,10 @@ const showEditor = ref(false)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
 const draft = ref<AlertRule | null>(null)
+// 校验提示只在用户点过「保存」之后才出现，刚打开弹窗时不提前报错。
+const submitAttempted = ref(false)
+// 用户手动改过阈值之后，选指标就不再自动改写阈值。
+const thresholdTouched = ref(false)
 
 type MetricGroup = 'system' | 'group' | 'account'
 
@@ -292,6 +296,14 @@ const windowOptions = computed(() => {
   return windows.map((m) => ({ value: m, label: `${m}m` }))
 })
 
+const DEFAULT_THRESHOLD = 1
+
+// 新建规则时阈值的默认值。多数指标沿用 1；未定价使用记录数是计数，
+// 比较符默认 ">"，阈值取 0 才能做到「出现 1 条就触发」。
+function defaultThresholdFor(metricType: MetricType): number {
+  return metricType === 'unpriced_billing_rows' ? 0 : DEFAULT_THRESHOLD
+}
+
 function newRuleDraft(): AlertRule {
   return {
     name: '',
@@ -299,7 +311,7 @@ function newRuleDraft(): AlertRule {
     enabled: true,
     metric_type: 'error_rate',
     operator: '>',
-    threshold: 1,
+    threshold: DEFAULT_THRESHOLD,
     window_minutes: 1,
     sustained_minutes: 2,
     severity: 'P1',
@@ -311,14 +323,30 @@ function newRuleDraft(): AlertRule {
 function openCreate() {
   editingId.value = null
   draft.value = newRuleDraft()
+  submitAttempted.value = false
+  thresholdTouched.value = false
   showEditor.value = true
 }
 
 function openEdit(rule: AlertRule) {
   editingId.value = rule.id ?? null
   draft.value = JSON.parse(JSON.stringify(rule))
+  submitAttempted.value = false
+  // 已有规则的阈值是用户设定的，换指标时不改写。
+  thresholdTouched.value = true
   showEditor.value = true
 }
+
+const draftMetricType = computed<MetricType>({
+  get() {
+    return draft.value?.metric_type ?? 'error_rate'
+  },
+  set(value) {
+    if (!draft.value) return
+    draft.value.metric_type = value
+    if (!thresholdTouched.value) draft.value.threshold = defaultThresholdFor(value)
+  }
+})
 
 const editorValidation = computed(() => {
   const errors: string[] = []
@@ -344,8 +372,11 @@ const editorValidation = computed(() => {
   return { valid: errors.length === 0, errors }
 })
 
+const showValidation = computed(() => submitAttempted.value && !editorValidation.value.valid)
+
 async function save() {
   if (!draft.value) return
+  submitAttempted.value = true
   if (!editorValidation.value.valid) {
     appStore.showError(editorValidation.value.errors[0] || t('admin.ops.alertRules.validation.invalid'))
     return
@@ -522,7 +553,7 @@ function cancelDelete() {
       @close="showEditor = false"
     >
       <div class="space-y-4">
-        <div v-if="!editorValidation.valid" class="rounded-xl bg-red-50 p-4 text-xs text-red-700 dark:bg-red-900/30 dark:text-red-300">
+        <div v-if="showValidation" class="rounded-xl bg-red-50 p-4 text-xs text-red-700 dark:bg-red-900/30 dark:text-red-300">
           <div class="font-bold">{{ t('admin.ops.alertRules.validation.title') }}</div>
           <ul class="mt-1 list-disc pl-5">
             <li v-for="e in editorValidation.errors" :key="e">{{ e }}</li>
@@ -542,7 +573,7 @@ function cancelDelete() {
 
           <div>
             <label class="input-label">{{ t('admin.ops.alertRules.form.metric') }}</label>
-            <Select v-model="draft!.metric_type" :options="metricOptions" />
+            <Select v-model="draftMetricType" :options="metricOptions" />
             <div v-if="selectedMetricDefinition" class="mt-1 space-y-0.5 text-xs text-gray-500 dark:text-gray-400">
               <p>{{ selectedMetricDefinition.description }}</p>
               <p>
@@ -581,7 +612,7 @@ function cancelDelete() {
 
           <div>
             <label class="input-label">{{ t('admin.ops.alertRules.form.threshold') }}</label>
-            <input v-model.number="draft!.threshold" class="input" type="number" />
+            <input v-model.number="draft!.threshold" class="input" type="number" @input="thresholdTouched = true" />
           </div>
 
           <div>
