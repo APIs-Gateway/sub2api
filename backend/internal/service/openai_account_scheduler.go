@@ -1354,12 +1354,23 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 				"group_id", derefGroupID(req.GroupID),
 				"error", probeErr)
 			saturated = false
+			RecordGroupFallbackSaturationProbe(GroupSaturationProbeError)
+		} else if probed != nil {
+			RecordGroupFallbackSaturationProbe(GroupSaturationProbeServed)
 		}
 		if probed != nil {
 			return probed, satPlan.candidateCount, satPlan.topK, satPlan.loadSkew, nil
 		}
 		compactBlocked = compactBlocked || probeBlocked
 		groupSaturated = saturated && !mainTruncated
+		if probeErr == nil {
+			if groupSaturated {
+				RecordGroupFallbackSaturationProbe(GroupSaturationProbeSaturated)
+			} else {
+				// 补试预算用尽，或主流程的探测预算被截断：都没有证明整组满。
+				RecordGroupFallbackSaturationProbe(GroupSaturationProbeTruncated)
+			}
+		}
 	}
 
 	cfg := s.service.schedulingConfig()
@@ -1394,6 +1405,12 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		}, candidateCount, topK, loadSkew, nil
 	}
 
+	// 有链且非末跳（ProbeGroupSaturation）时，DB 复核预算用尽也会走到这里：排在后面的候选一次都没有复核过，
+	// 这不是「组内没号」，而是大分组繁忙。返回可识别的哨兵（仍 Unwrap 到 ErrNoAvailableAccounts），
+	// 入口据此按繁忙分类、不计熔断（第 3 段收敛复审 S-3）。无链请求与末跳不走这条分支，错误与改动前一致。
+	if req.ProbeGroupSaturation && !compactBlocked && budget.exhausted() {
+		return nil, candidateCount, topK, loadSkew, noAvailableOpenAISelectionBudgetExhaustedError(req.RequestedModel, filterStats.summary("selection_order_exhausted"))
+	}
 	return nil, candidateCount, topK, loadSkew, noAvailableOpenAISelectionError(req.RequestedModel, compactBlocked, filterStats.summary("selection_order_exhausted"))
 }
 

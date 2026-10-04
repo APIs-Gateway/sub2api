@@ -134,10 +134,18 @@ func ProvideOpenAIGatewayHandler(
 	opsService *service.OpsService,
 	cfg *config.Config,
 	coordinator *securityaudit.Coordinator,
+	groupRouteService service.GroupRouteService,
+	settingService *service.SettingService,
+	groupChainBreaker service.GroupChainBreakerGate,
 ) *OpenAIGatewayHandler {
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
 	h.securityAuditCoordinator = coordinator
+	// Key 级分组回退链运行时：全局开关默认关闭，关闭时（以及 Key 没配链时）所有入口都走原路径。
+	// 显式判空，避免把 nil 指针装进接口造成「非 nil 接口、nil 指针」。
+	if settingService != nil {
+		h.groupFallback = newGroupFallbackRuntime(groupRouteService, settingService, groupChainBreaker)
+	}
 	return h
 }
 

@@ -1480,6 +1480,9 @@ func (s *OpenAIGatewayService) SelectAccountForModelWithExclusions(ctx context.C
 type noAvailableOpenAISelectionFailure struct {
 	requestedModel string
 	details        string
+	// budgetExhausted 为 true 表示不是组内没号，而是选号的探测预算用尽（大分组、成本感知开启时），
+	// 后面的候选一次都没有复核过。回退链入口把它当「繁忙」处理，不计熔断。
+	budgetExhausted bool
 }
 
 func (e noAvailableOpenAISelectionFailure) Error() string {
@@ -1495,6 +1498,25 @@ func (e noAvailableOpenAISelectionFailure) Error() string {
 
 func (noAvailableOpenAISelectionFailure) Unwrap() error {
 	return ErrNoAvailableAccounts
+}
+
+// noAvailableOpenAISelectionBudgetExhaustedError 与 noAvailableOpenAISelectionError 相同（同样 Unwrap 到
+// ErrNoAvailableAccounts），只是带上「探测预算用尽」的标记，见 IsOpenAISelectionBudgetExhausted。
+func noAvailableOpenAISelectionBudgetExhaustedError(requestedModel string, detail string) error {
+	return noAvailableOpenAISelectionFailure{requestedModel: requestedModel, details: strings.TrimSpace(detail), budgetExhausted: true}
+}
+
+// IsOpenAISelectionBudgetExhausted 报告选号错误是否来自探测预算用尽（而不是组内真的没有可用账号）。
+// 只有有链且非末跳的请求才会得到这种错误；它仍满足 errors.Is(err, ErrNoAvailableAccounts)。
+func IsOpenAISelectionBudgetExhausted(err error) bool {
+	var failure noAvailableOpenAISelectionFailure
+	return errors.As(err, &failure) && failure.budgetExhausted
+}
+
+// NewOpenAISelectionBudgetExhaustedErrorForTest 构造带「探测预算用尽」标记的选号错误，供 handler 层测试使用
+// （真实场景只有调度器在大分组、成本感知开启时才会返回它）。
+func NewOpenAISelectionBudgetExhaustedErrorForTest(requestedModel string) error {
+	return noAvailableOpenAISelectionBudgetExhaustedError(requestedModel, "test")
 }
 
 func noAvailableOpenAISelectionError(requestedModel string, compactBlocked bool, details ...string) error {
@@ -9296,6 +9318,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if apiKey.GroupID != nil {
 		usageLog.GroupID = apiKey.GroupID
 	}
+	// Key 级回退链：影子 Key 的 GroupID / Group 是实际服务这次请求的分组（上面的倍率、渠道定价、图片单价
+	// 都已按它计算），而 usage_logs.group_id 始终是主分组（HomeGroupID，设计 5.3），服务分组与来源另写
+	// served_group_id / served_route_source。非影子 Key（HomeGroupID 为空）或服务分组就是主分组时不写 served 列，
+	// 与改动前逐字节一致。
+	applyServedGroupToUsageLog(usageLog, apiKey)
 	if subscription != nil {
 		usageLog.SubscriptionID = &subscription.ID
 	}
@@ -9352,6 +9379,58 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 
 	return nil
+}
+
+// applyServedGroupToUsageLog 把回退链影子 Key 的「主分组 / 服务分组」拆开写进使用记录：
+// group_id = 主分组（HomeGroupID），served_group_id = 实际服务分组，served_route_source = 该跳来源。
+// apiKey 不是影子 Key、或服务分组就是主分组时什么都不改。
+func applyServedGroupToUsageLog(usageLog *UsageLog, apiKey *APIKey) {
+	if usageLog == nil || apiKey == nil || apiKey.HomeGroupID == nil || apiKey.GroupID == nil {
+		return
+	}
+	if *apiKey.HomeGroupID == *apiKey.GroupID {
+		return
+	}
+	home := *apiKey.HomeGroupID
+	served := *apiKey.GroupID
+	usageLog.GroupID = &home
+	usageLog.ServedGroupID = &served
+	usageLog.ServedRouteSource = ChainHop{RouteSource: apiKey.RouteSource}.ServedRouteSourceValue()
+}
+
+// IsModelOpenForGroup 回退链的每跳静态资格之一（设计 3.4 第 4 项）：模型在该分组的渠道定价列表里没有被限制。
+// 这里只覆盖「渠道定价列表限制」；BillingModelSource=upstream 时需要逐账号检查，预检返回「未限制」，
+// 由选号阶段处理（没号 → 换组，不计熔断）。
+func (s *OpenAIGatewayService) IsModelOpenForGroup(ctx context.Context, groupID int64, requestedModel string) bool {
+	if s == nil || groupID <= 0 {
+		return true
+	}
+	gid := groupID
+	return !s.checkChannelPricingRestriction(ctx, &gid, requestedModel)
+}
+
+// IsModelPricedForGroup 回退链的每跳静态资格之一（设计 3.4 第 5 项）：hop 分组有该模型的价格。
+// 未配价格的模型会按零成本计费放行（RecordUsage 的 pricing_missing_record_zero_cost），所以回退跳必须先确认有价，
+// 否则兜底分组会白送。判定与计费走同一条取价链：同一个 calculateOpenAIRecordUsageCost，传入 hop 分组的影子 Key
+// 和渠道映射之后的候选模型名，只有取价层报告「无价格」才算未定价；其它错误（取价层异常等）按已定价放行（fail-open），
+// 与计费侧「定价缺失才零计费、其它错误才失败」的分类一致。
+func (s *OpenAIGatewayService) IsModelPricedForGroup(ctx context.Context, hopKey *APIKey, requestedModel string, mapping ChannelMappingResult) bool {
+	if s == nil || s.billingService == nil || hopKey == nil || hopKey.Group == nil {
+		return true
+	}
+	billingModel := requestedModel
+	if mapping.BillingModelSource == BillingModelSourceChannelMapped && mapping.Mapped && mapping.MappedModel != "" {
+		billingModel = mapping.MappedModel
+	}
+	candidates := usageBillingModelCandidates(billingModel, requestedModel, mapping.MappedModel)
+	if len(candidates) == 0 {
+		return true
+	}
+	_, err := s.calculateOpenAIRecordUsageCost(ctx, nil, hopKey, candidates, 1, 1, UsageTokens{InputTokens: 1}, "", deepseekNowFunc())
+	if err != nil && isUsagePricingUnavailableError(err) {
+		return false
+	}
+	return true
 }
 
 func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(

@@ -410,13 +410,14 @@ func TestChainServedGroupIsWithinAuditedSet(t *testing.T) {
 		res := runner.Run(context.Background(), service.ChainRunInput{Chain: chain, Model: "gpt-test", UserID: 7}, func(_ context.Context, info service.HopInfo) service.HopResult {
 			served = append(served, info.Hop.GroupID)
 			if info.Index == servedIdx {
-				return service.HopResult{Outcome: service.HopOutcomeDone, Attempts: 1}
+				return service.HopResult{Outcome: service.HopOutcomeDone, Attempts: 1, UpstreamAttempted: true}
 			}
 			return service.HopResult{
-				Outcome:         service.HopOutcomeFallbackWorthy,
-				Reason:          service.FallbackReasonNoAccount,
-				Attempts:        1,
-				WriteFinalError: func() {},
+				Outcome:           service.HopOutcomeFallbackWorthy,
+				Reason:            service.FallbackReasonNoAccount,
+				Attempts:          1,
+				UpstreamAttempted: true,
+				WriteFinalError:   func() {},
 			}
 		})
 		require.Equal(t, service.ChainRunServed, res.Status)
@@ -521,7 +522,7 @@ func TestCheckHopGroupRPM_NonFirstHopExceededSkipsAndReleases(t *testing.T) {
 	require.EqualValues(t, 1, atomic.LoadInt32(&cache.decr), "被跳过的这一跳不应占用 RPM 额度")
 }
 
-// BK-2 / S3：退回规则按 (Outcome, IsLast, ErrorWritten, Attempts) 决定。
+// BK-2 / S3：退回规则按 (Outcome, IsLast, ErrorWritten, UpstreamAttempted) 决定。
 func TestReleaseHopGroupRPMIfNotServed_Rules(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
@@ -532,7 +533,8 @@ func TestReleaseHopGroupRPMIfNotServed_Rules(t *testing.T) {
 		{"done", service.HopInfo{}, service.HopResult{Outcome: service.HopOutcomeDone}, 0},
 		{"terminal", service.HopInfo{}, service.HopResult{Outcome: service.HopOutcomeTerminal}, 0},
 		{"non-last fallback never reached upstream", service.HopInfo{}, service.HopResult{Outcome: service.HopOutcomeFallbackWorthy}, 1},
-		{"non-last fallback reached upstream keeps count", service.HopInfo{}, service.HopResult{Outcome: service.HopOutcomeFallbackWorthy, Attempts: 2}, 0},
+		{"non-last fallback reached upstream keeps count", service.HopInfo{}, service.HopResult{Outcome: service.HopOutcomeFallbackWorthy, Attempts: 2, UpstreamAttempted: true}, 0},
+		{"attempts alone do not decide: UpstreamAttempted is the single source", service.HopInfo{}, service.HopResult{Outcome: service.HopOutcomeFallbackWorthy, Attempts: 2}, 1},
 		{"last hop fallback error written keeps count", service.HopInfo{IsLast: true}, service.HopResult{Outcome: service.HopOutcomeFallbackWorthy, ErrorWritten: true}, 0},
 		{"last hop fallback keeps count even without ErrorWritten", service.HopInfo{IsLast: true}, service.HopResult{Outcome: service.HopOutcomeFallbackWorthy}, 0},
 		{"non-last fallback with error written keeps count", service.HopInfo{}, service.HopResult{Outcome: service.HopOutcomeFallbackWorthy, ErrorWritten: true}, 0},

@@ -112,6 +112,9 @@ const (
 	OpsUpstreamErrorMessageKey = "ops_upstream_error_message"
 	OpsUpstreamErrorDetailKey  = "ops_upstream_error_detail"
 	OpsUpstreamErrorsKey       = "ops_upstream_errors"
+	// OpsServedGroupIDKey 记录回退链当前这一跳实际服务的分组 ID（仅 served != 主分组时设置）。
+	// appendOpsUpstreamError 会把它写进每个上游错误事件，让后台排障看得出这次失败发生在哪个分组。
+	OpsServedGroupIDKey = "ops_served_group_id"
 
 	// Optional stage latencies (milliseconds) for troubleshooting and alerting.
 	OpsAuthLatencyMsKey      = "ops_auth_latency_ms"
@@ -351,6 +354,23 @@ type OpsUpstreamErrorEvent struct {
 
 	Message string `json:"message,omitempty"`
 	Detail  string `json:"detail,omitempty"`
+
+	// ServedGroupID 是回退链里这次上游尝试所在的分组（仅当它不是 Key 的主分组时才有值）。
+	// ops_error_logs.group_id 始终是主分组，这里只补充「这次失败发生在哪个兜底分组」，不改表结构。
+	// 只给后台排障看，用户端不返回。
+	ServedGroupID int64 `json:"served_group_id,omitempty"`
+}
+
+// SetOpsServedGroup 标记回退链当前这一跳的服务分组；groupID<=0 清除标记（回到主分组）。
+func SetOpsServedGroup(c *gin.Context, groupID int64) {
+	if c == nil {
+		return
+	}
+	if groupID <= 0 {
+		c.Set(OpsServedGroupIDKey, int64(0))
+		return
+	}
+	c.Set(OpsServedGroupIDKey, groupID)
 }
 
 func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
@@ -373,6 +393,13 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 	}
 	if ev.Message != "" {
 		ev.Message = sanitizeUpstreamErrorMessage(ev.Message)
+	}
+	if ev.ServedGroupID == 0 {
+		if v, ok := c.Get(OpsServedGroupIDKey); ok {
+			if id, _ := v.(int64); id > 0 {
+				ev.ServedGroupID = id
+			}
+		}
 	}
 
 	var existing []*OpsUpstreamErrorEvent
