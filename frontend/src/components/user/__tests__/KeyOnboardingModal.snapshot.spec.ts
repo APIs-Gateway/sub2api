@@ -227,10 +227,12 @@ async function collect(w: VueWrapper, tab: Tab, fullDom = false): Promise<string
       const open = vi.spyOn(window, 'open').mockReturnValue(null)
       await click(w, '[data-test="ai-open-chatgpt"]')
       await click(w, '[data-test="ai-open-claude"]')
-      // 链接里带的是简短版提示词的转义，只记前缀和摘要
+      // 链接里带的是那一句话（q 参数）；除 q 以外的参数（ChatGPT 的 hints=search）和打开方式也记下来
       const links = open.mock.calls.map((c) => {
-        const [prefix, q] = String(c[0]).split('?q=')
-        return `${prefix}?q=${brief(decodeURIComponent(q))} ${JSON.stringify(c.slice(1))}`
+        const u = new URL(String(c[0]))
+        const q = u.searchParams.get('q')
+        u.searchParams.delete('q')
+        return `${u.origin}${u.pathname}${u.search} q=${JSON.stringify(q)} ${JSON.stringify(c.slice(1))}`
       })
       out.push(`  打开 = ${JSON.stringify(links)}`)
       open.mockRestore()

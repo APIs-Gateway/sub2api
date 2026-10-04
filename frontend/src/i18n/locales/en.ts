@@ -997,6 +997,8 @@
       openChatgpt: 'Open in ChatGPT',
       openClaude: 'Open in Claude',
       keyNote: 'Your key is not in this message. Enter it yourself when you set things up.',
+      footnote: 'The AI opens the link and reads the guide itself. If it can’t open web pages, or you want to tell it which models this key can use, choose “Copy detailed version”.',
+      docCatalog: 'Docs index for AI',
       short: 'Please help me connect "{client}" to {site}. The endpoint is {url} and the API format is {protocol}. {hint} I will enter the key myself, so please do not ask me to send it to you.',
       detailIntro: 'Please walk me through connecting "{client}" to {site}, step by step.',
       detailUrl: '- Endpoint: {url}',

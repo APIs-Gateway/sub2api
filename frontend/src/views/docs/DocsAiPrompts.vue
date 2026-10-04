@@ -56,7 +56,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
-import { AI_TOOLS, aiToolUrl, type AiTool } from './aiTools'
+import { AI_TOOLS, aiToolSentence, aiToolUrl, type AiTool } from './aiTools'
 import { copyText, parseAiPrompts, type DocVars } from './docsRender'
 
 const props = defineProps<{
@@ -86,13 +86,7 @@ function toolLabel(tool: AiTool): string {
   return tool.name ?? t(`docs.ai.tools.${tool.id}.label`)
 }
 
-const sentence = computed(() => {
-  const params = { site: props.vars.site, url: docUrl.value }
-  const tool = activeTool.value
-  return tool.name
-    ? t('docs.ai.sentenceNamed', { ...params, tool: tool.name })
-    : t(`docs.ai.tools.${tool.id}.sentence`, params)
-})
+const sentence = computed(() => aiToolSentence(activeTool.value, t, { site: props.vars.site, url: docUrl.value }))
 
 const longPrompt = computed(() => {
   const prompts = parseAiPrompts(props.promptsRaw, { ...props.vars, llms: docUrl.value })

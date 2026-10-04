@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
 import KeyOnboardingModal from '../KeyOnboardingModal.vue'
+import { buildMachineFiles, fillMachineText } from '@/views/docs/docsMachine'
 
 const { getAvailable } = vi.hoisted(() => ({ getAvailable: vi.fn() }))
 vi.mock('@/api/channels', () => ({ userChannelsAPI: { getAvailable } }))
@@ -113,6 +114,55 @@ describe('KeyOnboardingModal 线路选择', () => {
     const w2 = await mountModal({ apiKey: key('anthropic') })
     await w2.get(`[data-test="endpoint-${CDN}"]`).setValue(true)
     expect((await collectAll(w2)).join('\n')).not.toContain('api.example.com')
+  })
+
+  describe('交给 AI：文档链接跟着线路走', () => {
+    const aiText = (w: Awaited<ReturnType<typeof mountModal>>) => (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
+    /** 按站内机器文件的渲染规则（和线上后端一致）渲染这个链接，得到 AI 实际读到的内容 */
+    const render = (href: string, base = DEFAULT_URL) => {
+      const link = new URL(href)
+      const template = buildMachineFiles()[link.pathname.slice(1)]
+      expect(template, link.pathname).toBeTruthy()
+      return fillMachineText(template, {
+        site: 'Hiyo',
+        apiBaseUrl: base,
+        customEndpoints: endpoints,
+        origin: link.origin,
+        requestedEndpoint: link.searchParams.get('endpoint') ?? ''
+      })
+    }
+
+    it('选了备用线路：一句话和文档目录的链接都带 ?endpoint=，AI 读到的文档里是备用线路的地址', async () => {
+      const w = await mountModal()
+      await w.get(`[data-test="endpoint-${CDN}"]`).setValue(true)
+      await w.get('[data-test="tab-ai"]').trigger('click')
+      const sentence = aiText(w)
+      const docHref = sentence.slice(sentence.indexOf('http'))
+      expect(new URL(docHref).pathname).toBe('/docs/codex.md')
+      expect(new URL(docHref).searchParams.get('endpoint')).toBe(CDN)
+      const doc = render(docHref)
+      expect(doc).toContain(`${CDN}/v1`)
+      expect(doc).not.toContain('api.example.com')
+
+      const catalogHref = w.get('[data-test="ai-catalog"]').attributes('href')!
+      expect(new URL(catalogHref).pathname).toBe('/llms.txt')
+      expect(new URL(catalogHref).searchParams.get('endpoint')).toBe(CDN)
+      const catalog = render(catalogHref)
+      expect(catalog).toContain(`/docs/codex.md?endpoint=${CDN}`)
+      expect(catalog).not.toContain('api.example.com')
+    })
+
+    it('选默认线路：链接不带 ?endpoint=，文档里是默认地址', async () => {
+      const w = await mountModal()
+      await w.get('[data-test="tab-ai"]').trigger('click')
+      const sentence = aiText(w)
+      const docHref = sentence.slice(sentence.indexOf('http'))
+      expect(docHref).not.toContain('endpoint=')
+      expect(w.get('[data-test="ai-catalog"]').attributes('href')).not.toContain('endpoint=')
+      const doc = render(docHref)
+      expect(doc).toContain(`${DEFAULT_URL}/v1`)
+      expect(doc).not.toContain(CDN)
+    })
   })
 
   it('选默认线路时内容与没有备用线路时逐字节一致（所有页签）', async () => {

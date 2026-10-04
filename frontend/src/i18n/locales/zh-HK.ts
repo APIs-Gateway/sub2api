@@ -996,6 +996,8 @@
       openChatgpt: '在 ChatGPT 中開啟',
       openClaude: '在 Claude 中開啟',
       keyNote: '這句話裏沒有你的金鑰，設定時請自己填寫。',
+      footnote: 'AI 會自己開啟連結讀文件。如果它打不開網頁，或者你想把這個金鑰能用的模型一起告訴它，請用「複製詳細版」。',
+      docCatalog: '給 AI 讀的文件目錄',
       short: '請帶我把「{client}」接入 {site}。接入地址是 {url}，介面格式是 {protocol}。{hint}金鑰我會自己填，請不要向我索取。',
       detailIntro: '請帶我一步步把「{client}」接入 {site}。',
       detailUrl: '- 接入地址：{url}',

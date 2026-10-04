@@ -97,6 +97,7 @@
         :endpoint="activeEndpoint"
         :platform="platform"
         :site-name="siteName"
+        :origin="origin"
         :allow-messages-dispatch="allowMessagesDispatch"
         :clients="clients"
         :models="models"
@@ -213,7 +214,9 @@ const { t } = useI18n()
 const uid = `onboarding-${++onboardingUid}`
 
 // ===== 线路 =====
-const endpointOptions = computed(() => resolveEndpointOptions(props.baseUrl, props.customEndpoints, window.location.origin))
+// 站点自己的来源：线路没填默认地址时的退路，也是「交给 AI」里文档链接的域名
+const origin = window.location.origin
+const endpointOptions = computed(() => resolveEndpointOptions(props.baseUrl, props.customEndpoints, origin))
 const savedEndpointId = ref(loadSavedEndpointId())
 // 已选线路被站点删掉时 pickEndpoint 回落到默认地址
 const activeEndpoint = computed(() => pickEndpoint(endpointOptions.value, savedEndpointId.value))
