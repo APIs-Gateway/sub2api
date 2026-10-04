@@ -110,10 +110,11 @@ func (f *fakeAttempt) fn() ChainHopAttempt {
 		}
 		if s.done {
 			f.written = append(f.written, fmt.Sprintf("ok:%d", gid))
-			return HopResult{Outcome: HopOutcomeDone, Attempts: s.attempts}
+			return HopResult{Outcome: HopOutcomeDone, Attempts: s.attempts, UpstreamAttempted: s.attempts > 0}
 		}
 		res := ClassifyHopFailure(s.failure)
 		res.Attempts = s.attempts
+		res.UpstreamAttempted = s.attempts > 0
 		switch res.Outcome {
 		case HopOutcomeTerminal:
 			f.written = append(f.written, fmt.Sprintf("terminal:%d", gid))
@@ -670,6 +671,23 @@ func TestRunner_BreakerBypassFailureIsReportedToBreaker(t *testing.T) {
 	require.Equal(t, ChainRunExhausted, res.Status)
 	require.Equal(t, []int64{1}, gate.failedGroups(), "兜底尝试的结果照常上报熔断器")
 	require.Equal(t, []string{"skip-err:2"}, fa.written, "优先写前面跳暂存的错误，且只写一次")
+}
+
+func TestRunner_BreakerBypassJudgesByUpstreamAttemptedNotOutcome(t *testing.T) {
+	// A 熔断被跳过；B 以「繁忙」FallbackWorthy 结束但没有向上游发过请求；C 因资格检查被跳过。
+	// 判据是「没有任何一跳真正向上游发出过请求」（HopResult.UpstreamAttempted），B 的 outcome 不是 Skipped 也不算尝试，
+	// 所以必须兜底重试 A。
+	gate := &fakeBreakerGate{admissions: map[int64]BreakerAdmission{1: {Allowed: false, State: BreakerStateOpen}}}
+	fa := &fakeAttempt{scripts: map[int64]hopScript{
+		1: {done: true, attempts: 1},
+		2: {failure: HopFailure{Kind: HopFailureBusyTimeout}},
+		3: {skip: true},
+	}}
+	res := newTestRunner(gate).Run(context.Background(), runnerInput(1, 2, 3), fa.fn())
+
+	require.Equal(t, ChainRunServed, res.Status)
+	require.True(t, res.BreakerBypassRetried)
+	require.Equal(t, []int64{2, 3, 1}, fa.calledGroups())
 }
 
 func TestRunner_NoBreakerBypassWhenAnotherHopWasAttempted(t *testing.T) {

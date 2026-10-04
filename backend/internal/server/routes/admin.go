@@ -169,13 +169,23 @@ func registerPointsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	}
 }
 
-// registerPricingRoutes 注册价格报价的管理端路由。全部是只读 GET：
-// 返回任意「模型 × 分组（× 用户）」按当前配置计费时的最终价格，与网关计费同源。
+// registerPricingRoutes 注册价格报价与价格矩阵的管理端路由。全部是只读 GET：
+// 报价返回任意「模型 × 分组（× 用户）」按当前配置计费时的最终价格，与网关计费同源；
+// 价格矩阵返回渠道到矩阵的派生结果与模型目录。
 func registerPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	pricing := admin.Group("/pricing")
 	{
 		pricing.GET("/quote", h.Admin.PricingQuote.Quote)
 	}
+
+	// W6 价格矩阵：只读，查看渠道到矩阵的派生结果与模型目录。
+	matrix := admin.Group("/pricing-matrix")
+	{
+		matrix.GET("/groups/:id/derive", h.Admin.PricingMatrix.ViewGroupDerive)
+		matrix.GET("/channels/:id/derive", h.Admin.PricingMatrix.ViewChannelDerive)
+		matrix.GET("/hook-stats", h.Admin.PricingMatrix.HookStats)
+	}
+	admin.GET("/model-catalog", h.Admin.PricingMatrix.ListModelCatalog)
 }
 
 func registerAdminComplianceRoutes(admin *gin.RouterGroup, h *handler.Handlers) {

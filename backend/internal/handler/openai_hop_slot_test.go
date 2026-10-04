@@ -22,10 +22,12 @@ type hopSlotCache struct {
 	*concurrencyCacheMock
 	queueFull    bool
 	waitIncCalls int32
+	lastMaxWait  int32
 }
 
 func (c *hopSlotCache) IncrementAccountWaitCount(ctx context.Context, accountID int64, maxWait int) (bool, error) {
 	atomic.AddInt32(&c.waitIncCalls, 1)
+	atomic.StoreInt32(&c.lastMaxWait, int32(maxWait))
 	return !c.queueFull, nil
 }
 
@@ -512,5 +514,128 @@ func TestWriteDeferredAccountSlotFailure_MatchesLegacyResponse(t *testing.T) {
 		e := newHopSlotEnv(t, false, nil)
 		e.h.writeDeferredAccountSlotFailure(e.c, nil, false)
 		require.Empty(t, e.recorder.Body.String())
+	})
+}
+
+// ---------- 规则 7：兜底身份的排队份额与末跳的等待封顶 ----------
+
+func TestNewOpenAIHopSlotPolicy_FallbackIdentityAndLastHop(t *testing.T) {
+	settings := service.DefaultGroupFallbackSettings()
+	require.Equal(t, 0.3, settings.StickyQueueShare, "默认份额 0.3")
+	now := time.Now()
+
+	first := newOpenAIHopSlotPolicy(service.HopInfo{Index: 0, HasChain: true, TimeRemaining: time.Second}, settings, now)
+	require.NotNil(t, first)
+	require.Zero(t, first.QueueShare, "首跳（主分组或管理员 head）不受份额限制")
+	require.False(t, first.LimitOnly)
+
+	mid := newOpenAIHopSlotPolicy(service.HopInfo{Index: 1, HasChain: true, TimeRemaining: time.Second}, settings, now)
+	require.NotNil(t, mid)
+	require.Equal(t, 0.3, mid.QueueShare, "下标 > 0 即兜底身份")
+	require.False(t, mid.LimitOnly)
+	require.Equal(t, 2*time.Second, mid.BusyWait)
+
+	last := newOpenAIHopSlotPolicy(service.HopInfo{Index: 2, HasChain: true, IsLast: true, TimeRemaining: 5 * time.Second}, settings, now)
+	require.NotNil(t, last, "兜底身份的末跳也要有份额与等待封顶")
+	require.True(t, last.LimitOnly)
+	require.Equal(t, 0.3, last.QueueShare)
+	require.Zero(t, last.BusyWait, "末跳不做繁忙短等")
+	require.Equal(t, now.Add(5*time.Second), last.Deadline)
+
+	require.Nil(t, newOpenAIHopSlotPolicy(service.HopInfo{Index: 0, HasChain: true, IsLast: true}, settings, now), "链长为 1 的末跳就是首跳：保持 nil")
+	require.Nil(t, newOpenAIHopSlotPolicy(service.HopInfo{Index: 1, HasChain: false, IsLast: true}, settings, now), "无链永远是 nil")
+}
+
+func TestOpenAIHopSlotPolicy_QueueLimit(t *testing.T) {
+	var nilPolicy *openAIHopSlotPolicy
+	require.Equal(t, 100, nilPolicy.queueLimit(100), "无链：原样")
+
+	share := &openAIHopSlotPolicy{QueueShare: 0.3}
+	require.Equal(t, 30, share.queueLimit(100))
+	require.Equal(t, 3, share.queueLimit(10))
+	require.Equal(t, 1, share.queueLimit(5), "向下取整")
+	require.Equal(t, 1, share.queueLimit(1), "至少 1，兜底流量不会被完全挡掉")
+	require.Equal(t, 0, share.queueLimit(0), "原值为 0（不允许排队）保持 0")
+
+	require.Equal(t, 100, (&openAIHopSlotPolicy{}).queueLimit(100), "没有份额：不缩减")
+	require.Equal(t, 100, (&openAIHopSlotPolicy{QueueShare: 1}).queueLimit(100), "份额 >= 1：不缩减")
+	require.Equal(t, 100, (&openAIHopSlotPolicy{QueueShare: 1.5}).queueLimit(100))
+}
+
+func TestOpenAIHopSlotPolicy_LimitOnlyKeepsLastHopBehaviourExceptBudgetCap(t *testing.T) {
+	last := &openAIHopSlotPolicy{LimitOnly: true, QueueShare: 0.3, Deadline: time.Now().Add(400 * time.Millisecond)}
+	ctx := context.Background()
+	require.True(t, ctx == last.selectionContext(ctx), "末跳不补试（规则 2）")
+
+	plan := &service.AccountWaitPlan{Timeout: 120 * time.Second, GroupSaturated: true}
+	sticky := service.OpenAIAccountScheduleDecision{StickySessionHit: true}
+	got := last.waitFor(plan, sticky)
+	require.Greater(t, got, time.Duration(0))
+	require.LessOrEqual(t, got, 400*time.Millisecond, "等待被剩余总预算封顶，不会把 120 秒原等待带进 25 秒预算")
+
+	shortPlan := &service.AccountWaitPlan{Timeout: 100 * time.Millisecond}
+	require.Equal(t, 100*time.Millisecond, last.waitFor(shortPlan, sticky), "原等待更短时保持原值")
+	prev := service.OpenAIAccountScheduleDecision{StickyPreviousHit: true}
+	require.Equal(t, 120*time.Second, last.waitFor(plan, prev), "规则 3：previous_response_id 层保持原时长")
+
+	status, deferred := last.onCapacityFailure(plan, service.OpenAIAccountScheduleDecision{}, service.HopFailureBusyTimeout, nil)
+	require.False(t, deferred, "末跳不延迟写错误（规则 4：原错误照常输出）")
+	require.Equal(t, accountSlotAcquireFailed, status)
+	require.False(t, last.ReselectUsed(), "末跳不重选")
+}
+
+func TestAcquireSlotForHop_FallbackQueueUsesShareOfMaxWaiting(t *testing.T) {
+	balance := service.OpenAIAccountScheduleDecision{Layer: "load_balance"}
+
+	t.Run("兜底身份的非末跳：排队上限取份额", func(t *testing.T) {
+		e := newHopSlotEnv(t, false, nil)
+		hop := &openAIHopSlotPolicy{BusyWait: 30 * time.Millisecond, StickyWait: 30 * time.Millisecond, QueueShare: 0.3}
+		selection := hopSlotSelection(7001, time.Second, false)
+		selection.WaitPlan.MaxWaiting = 10
+		_, status := e.acquire(selection, balance, hop)
+		require.Equal(t, accountSlotRetrySelection, status)
+		require.EqualValues(t, 3, atomic.LoadInt32(&e.cache.lastMaxWait))
+	})
+
+	t.Run("首跳：排队上限保持原值", func(t *testing.T) {
+		e := newHopSlotEnv(t, false, nil)
+		hop := &openAIHopSlotPolicy{BusyWait: 30 * time.Millisecond, StickyWait: 30 * time.Millisecond}
+		selection := hopSlotSelection(7001, time.Second, false)
+		selection.WaitPlan.MaxWaiting = 10
+		_, _ = e.acquire(selection, balance, hop)
+		require.EqualValues(t, 10, atomic.LoadInt32(&e.cache.lastMaxWait))
+	})
+
+	t.Run("无链：排队上限保持原值", func(t *testing.T) {
+		e := newHopSlotEnv(t, false, nil)
+		selection := hopSlotSelection(7001, 30*time.Millisecond, false)
+		selection.WaitPlan.MaxWaiting = 10
+		_, _ = e.acquire(selection, balance, nil)
+		require.EqualValues(t, 10, atomic.LoadInt32(&e.cache.lastMaxWait))
+	})
+
+	t.Run("兜底身份的末跳：份额生效，排队已满照原样写 429", func(t *testing.T) {
+		e := newHopSlotEnv(t, true, nil)
+		hop := newOpenAIHopSlotPolicy(service.HopInfo{Index: 1, HasChain: true, IsLast: true, TimeRemaining: time.Second}, service.DefaultGroupFallbackSettings(), time.Now())
+		require.NotNil(t, hop)
+		selection := hopSlotSelection(7001, time.Second, false)
+		selection.WaitPlan.MaxWaiting = 10
+		release, status := e.acquire(selection, balance, hop)
+		require.Nil(t, release)
+		require.Equal(t, accountSlotAcquireFailed, status)
+		require.EqualValues(t, 3, atomic.LoadInt32(&e.cache.lastMaxWait))
+		require.Equal(t, http.StatusTooManyRequests, e.recorder.Code)
+		require.Contains(t, e.recorder.Body.String(), "Too many pending requests", "末跳保持原错误")
+	})
+
+	t.Run("兜底身份的末跳：等待被剩余总预算封顶，不用 WaitPlan 的原时长", func(t *testing.T) {
+		e := newHopSlotEnv(t, false, nil)
+		hop := &openAIHopSlotPolicy{LimitOnly: true, QueueShare: 0.3, Deadline: time.Now().Add(150 * time.Millisecond)}
+		start := time.Now()
+		_, status := e.acquire(hopSlotSelection(7001, 30*time.Second, false), balance, hop)
+		require.Equal(t, accountSlotAcquireFailed, status)
+		require.Less(t, time.Since(start), 5*time.Second)
+		require.Equal(t, http.StatusTooManyRequests, e.recorder.Code, "超时后仍按原样写 429")
+		require.Contains(t, e.recorder.Body.String(), "Concurrency limit exceeded for account")
 	})
 }

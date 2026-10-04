@@ -209,14 +209,14 @@ const scripts = computed<Record<string, string>>(() => {
 .onb-tile[data-copied='true']:hover {
   border-color: theme('colors.primary.300');
 }
-:global(.dark) .onb-tile[data-copied='true'],
-:global(.dark) .onb-tile[data-copied='true']:hover {
+.dark .onb-tile[data-copied='true'],
+.dark .onb-tile[data-copied='true']:hover {
   border-color: theme('colors.primary.600');
 }
 .onb-tile[data-copied='true'] .onb-tile-icon {
   color: theme('colors.primary.600');
 }
-:global(.dark) .onb-tile[data-copied='true'] .onb-tile-icon {
+.dark .onb-tile[data-copied='true'] .onb-tile-icon {
   color: theme('colors.primary.400');
 }
 @media (prefers-reduced-motion: no-preference) {

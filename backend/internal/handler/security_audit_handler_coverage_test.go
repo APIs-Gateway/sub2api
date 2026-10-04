@@ -141,7 +141,7 @@ func TestPromptAuditBlockedGeminiRouteStopsBeforeDispatch(t *testing.T) {
 func TestPromptAuditProviderWrappersInjectCoordinator(t *testing.T) {
 	coordinator := securityaudit.NewCoordinator(nil, nil)
 	gateway := ProvideGatewayHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, &config.Config{}, nil, nil, coordinator)
-	openAI := ProvideOpenAIGatewayHandler(nil, nil, nil, nil, nil, nil, nil, nil, &config.Config{}, coordinator)
+	openAI := ProvideOpenAIGatewayHandler(nil, nil, nil, nil, nil, nil, nil, nil, &config.Config{}, coordinator, nil, nil, nil)
 	require.Same(t, coordinator, gateway.securityAuditCoordinator)
 	require.Same(t, coordinator, openAI.securityAuditCoordinator)
 }

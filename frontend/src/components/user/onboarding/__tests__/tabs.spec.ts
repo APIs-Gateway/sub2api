@@ -201,6 +201,8 @@ describe('AiTab', () => {
 })
 
 describe('CcSwitchTab', () => {
+  const EMPTY = { haikuModel: '', sonnetModel: '', opusModel: '' }
+  const CLAUDE_MODELS = ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5']
   // 表单是一个对象，用一个 v-model:form；props 里写不下的字段用第二个参数覆盖
   const mountTab = (props: Record<string, unknown> = {}, form: Partial<CcSwitchForm> = {}) =>
     mount(CcSwitchTab, {
@@ -213,12 +215,16 @@ describe('CcSwitchTab', () => {
         clients: ['codex'],
         idPrefix: 'onboarding-9',
         copiedId: '',
-        form: { client: 'codex', name: '', model: '', ...form },
+        form: { client: 'codex', name: '', model: '', ...EMPTY, ...form },
         ...props
       } as never,
       attrs: panelAttrs
     })
+  const mountClaude = (props: Record<string, unknown> = {}, form: Partial<CcSwitchForm> = {}) =>
+    mountTab({ platform: 'anthropic', clients: ['claude'], models: CLAUDE_MODELS, ...props }, { client: 'claude', ...form })
   const linkOf = (text: string) => new URL(text.replace(/^ccswitch:\/\//, 'http://'))
+  const valueOf = (w: ReturnType<typeof mountTab>, test: string) => (w.get(`[data-test="${test}"]`).element as HTMLSelectElement).value
+  const optionsOf = (w: ReturnType<typeof mountTab>, test: string) => w.findAll(`[data-test="${test}"] option`).map((o) => o.text())
 
   it('只有一个客户端时不显示客户端选择；有多个时单选组用 idPrefix 关联标签', () => {
     expect(mountTab().find('[role="radiogroup"]').exists()).toBe(false)
@@ -227,71 +233,249 @@ describe('CcSwitchTab', () => {
     expect(w.get('#onboarding-9-ccs-client').text()).toBe('Client')
   })
 
-  it('客户端、名称、模型合成一个表单对象，走一个 v-model:form；每次都换成新对象，其余字段原样带上', async () => {
-    const form: CcSwitchForm = { client: 'claude', name: 'Old', model: 'gpt-5.6-sol' }
-    const w = mountTab({ platform: 'antigravity', clients: ['claude', 'gemini'] }, form)
-    await w.get('[data-test="ccs-client-gemini"]').trigger('click')
+  describe('模型下拉', () => {
+    it('Claude 有四个：主模型、Haiku、Sonnet、Opus，标签和下拉用 idPrefix 关联；选项一样，第一项是留空', () => {
+      const w = mountClaude()
+      expect(w.findAll('[data-test="ccs-models"] label').map((l) => l.text())).toEqual([
+        'Primary model',
+        'Haiku model',
+        'Sonnet model',
+        'Opus model'
+      ])
+      for (const [test, key] of [
+        ['ccs-model', 'model'],
+        ['ccs-model-haiku', 'haikuModel'],
+        ['ccs-model-sonnet', 'sonnetModel'],
+        ['ccs-model-opus', 'opusModel']
+      ]) {
+        const id = w.get(`[data-test="${test}"]`).attributes('id')
+        expect(id).toBe(`onboarding-9-ccs-${key}`)
+        expect(w.get(`label[for="${id}"]`).exists()).toBe(true)
+        expect(optionsOf(w, test)).toEqual(['Optional; leave blank to use the CC Switch default', 'claude-haiku-4-5', 'claude-opus-5', 'claude-sonnet-5'])
+      }
+    })
+
+    it('Codex 和 Gemini 只有主模型；选项按客户端筛选（Codex 只列 gpt-*，Gemini 只列 gemini-*）', () => {
+      const codex = mountTab({ models: ['gpt-image-2', 'gpt-5.6-sol', 'claude-sonnet-5'] })
+      expect(codex.findAll('[data-test="ccs-models"] select')).toHaveLength(1)
+      expect(optionsOf(codex, 'ccs-model').slice(1)).toEqual(['gpt-5.6-sol'])
+      const gemini = mountTab({ platform: 'gemini', clients: ['gemini'], models: ['gemini-3-pro', 'gpt-5.6-sol'] }, { client: 'gemini' })
+      expect(gemini.findAll('[data-test="ccs-models"] select')).toHaveLength(1)
+      expect(optionsOf(gemini, 'ccs-model').slice(1)).toEqual(['gemini-3-pro'])
+    })
+
+    it('下拉显示表单里的值，选了之后换成新对象交给外壳', async () => {
+      const w = mountClaude({}, { model: 'claude-sonnet-5', sonnetModel: 'claude-sonnet-5' })
+      expect(valueOf(w, 'ccs-model')).toBe('claude-sonnet-5')
+      expect(valueOf(w, 'ccs-model-haiku')).toBe('')
+      await w.get('[data-test="ccs-model-haiku"]').setValue('claude-haiku-4-5')
+      expect(w.emitted('update:form')).toEqual([
+        [{ client: 'claude', name: '', model: 'claude-sonnet-5', haikuModel: 'claude-haiku-4-5', sonnetModel: 'claude-sonnet-5', opusModel: '' }]
+      ])
+      // 选「留空」就是清掉这一项
+      await w.get('[data-test="ccs-model-sonnet"]').setValue('')
+      expect((w.emitted('update:form')![1] as [CcSwitchForm])[0].sonnetModel).toBe('')
+    })
+
+    it('表单里的值不在选项里时（外壳还没来得及重新预选）也列出来，下拉不会显示成空白', () => {
+      const w = mountClaude({}, { model: 'claude-sonnet-4' })
+      expect(optionsOf(w, 'ccs-model')).toContain('claude-sonnet-4')
+      expect(valueOf(w, 'ccs-model')).toBe('claude-sonnet-4')
+    })
+  })
+
+  describe('切换客户端', () => {
+    const mountAntigravity = (form: Partial<CcSwitchForm> = {}) =>
+      mountTab(
+        { platform: 'antigravity', clients: ['claude', 'gemini'], models: ['claude-sonnet-5', 'claude-haiku-4-5', 'gemini-3-pro'] },
+        { client: 'claude', ...form }
+      )
+
+    it('一次写入一个完整的新对象：客户端、名称、四个模型一起换，不是一个字段一个字段地写', async () => {
+      const form: CcSwitchForm = {
+        client: 'claude',
+        name: 'Old',
+        model: 'claude-sonnet-5',
+        haikuModel: 'claude-haiku-4-5',
+        sonnetModel: 'claude-sonnet-5',
+        opusModel: ''
+      }
+      const w = mountAntigravity(form)
+      await w.get('[data-test="ccs-client-gemini"]').trigger('click')
+      expect(w.emitted('update:form')).toEqual([
+        [{ client: 'gemini', name: '', model: 'gemini-3-pro', haikuModel: '', sonnetModel: '', opusModel: '' }]
+      ])
+      // 再换回 Claude：重新按 Claude 预选，三档回来
+      await w.get('[data-test="ccs-client-claude"]').trigger('click')
+      expect(w.emitted('update:form')).toHaveLength(2)
+      expect((w.emitted('update:form')![1] as [CcSwitchForm])[0]).toEqual({
+        client: 'claude',
+        name: '',
+        model: 'claude-sonnet-5',
+        haikuModel: 'claude-haiku-4-5',
+        sonnetModel: 'claude-sonnet-5',
+        opusModel: ''
+      })
+      // 传进来的对象没有被改动
+      expect(form.name).toBe('Old')
+      expect(form.client).toBe('claude')
+    })
+
+    it('外壳接着 v-model 时，一次点击之后下拉、名称、单选都已经是新客户端的', async () => {
+      const w = mountAntigravity({ name: 'Old', model: 'claude-sonnet-5', sonnetModel: 'claude-sonnet-5' })
+      await w.get('[data-test="ccs-client-gemini"]').trigger('click')
+      await w.setProps({ form: (w.emitted('update:form')![0] as [CcSwitchForm])[0] })
+      expect(w.findAll('[data-test="ccs-models"] select')).toHaveLength(1)
+      expect(valueOf(w, 'ccs-model')).toBe('gemini-3-pro')
+      expect((w.get('[data-test="ccs-name"]').element as HTMLInputElement).value).toBe('')
+      expect(w.get('[data-test="ccs-name"]').attributes('placeholder')).toBe('Hiyo - Gemini')
+      expect(w.get('[data-test="ccs-client-gemini"]').attributes('aria-checked')).toBe('true')
+    })
+
+    it('再点一下已经选中的客户端：什么都不改', async () => {
+      const w = mountAntigravity({ name: 'Mine' })
+      await w.get('[data-test="ccs-client-claude"]').trigger('click')
+      expect(w.emitted('update:form')).toBeUndefined()
+    })
+  })
+
+  it('名称改一个字段就换一个新对象，其余字段原样带上', async () => {
+    const form: CcSwitchForm = { client: 'claude', name: 'Old', model: 'claude-sonnet-5', haikuModel: '', sonnetModel: '', opusModel: '' }
+    const w = mountClaude({}, form)
     await w.get('[data-test="ccs-name"]').setValue('Mine')
-    await w.get('[data-test="ccs-model"]').setValue('gpt-5.6-luna')
     // 外壳没有接 update:form 时，页签自己记着最新的值，所以每次都是在上一次的基础上改一个字段
+    await w.get('[data-test="ccs-model-opus"]').setValue('claude-opus-5')
     expect(w.emitted('update:form')).toEqual([
-      [{ client: 'gemini', name: 'Old', model: 'gpt-5.6-sol' }],
-      [{ client: 'gemini', name: 'Mine', model: 'gpt-5.6-sol' }],
-      [{ client: 'gemini', name: 'Mine', model: 'gpt-5.6-luna' }]
+      [{ ...form, name: 'Mine' }],
+      [{ ...form, name: 'Mine', opusModel: 'claude-opus-5' }]
     ])
-    // 不再有三个独立的 v-model
+    // 不再有独立的 v-model
     expect(w.emitted('update:client')).toBeUndefined()
     expect(w.emitted('update:name')).toBeUndefined()
     expect(w.emitted('update:model')).toBeUndefined()
-    // 传进来的对象没有被改动
-    expect(form).toEqual({ client: 'claude', name: 'Old', model: 'gpt-5.6-sol' })
+    expect(form.name).toBe('Old')
   })
 
-  it('外壳把新表单传回来之后，输入框和单选跟着变', async () => {
-    const w = mountTab({ platform: 'antigravity', clients: ['claude', 'gemini'] }, { client: 'claude' })
-    await w.setProps({ form: { client: 'gemini', name: 'Mine', model: 'gpt-5.6-luna' } })
+  it('外壳把新表单传回来之后，输入框、下拉和单选跟着变', async () => {
+    const w = mountTab({ platform: 'antigravity', clients: ['claude', 'gemini'], models: ['gemini-3-pro', 'gemini-2.5-flash'] }, { client: 'claude' })
+    await w.setProps({ form: { client: 'gemini', name: 'Mine', model: 'gemini-2.5-flash', ...EMPTY } })
     expect((w.get('[data-test="ccs-name"]').element as HTMLInputElement).value).toBe('Mine')
-    expect((w.get('[data-test="ccs-model"]').element as HTMLSelectElement).value).toBe('gpt-5.6-luna')
+    expect(valueOf(w, 'ccs-model')).toBe('gemini-2.5-flash')
     expect(w.get('[data-test="ccs-client-gemini"]').attributes('aria-checked')).toBe('true')
   })
 
-  it('modelsLoading 先只是声明，不改变页面，也不会漏到根元素上', () => {
-    const w = mountTab({ modelsLoading: true })
-    expect(w.attributes('models-loading')).toBeUndefined()
-    expect(w.html()).toBe(mountTab({ modelsLoading: false }).html())
+  describe('模型加载中和没有模型', () => {
+    const buttons = (w: ReturnType<typeof mountTab>) => ['ccs-open', 'ccs-copy-link'].map((t) => w.get(`[data-test="${t}"]`))
+
+    it('加载中：显示提示，下拉和导入、复制按钮都禁用；提示用 aria-describedby 关联到按钮', () => {
+      const w = mountClaude({ models: [], modelsLoading: true })
+      const hint = w.get('[data-test="ccs-models-hint"]')
+      expect(hint.text()).toBe('Loading available models…')
+      expect(hint.attributes('role')).toBe('status')
+      for (const sel of w.findAll('[data-test="ccs-models"] select')) expect(sel.attributes('disabled')).toBeDefined()
+      for (const b of buttons(w)) {
+        expect(b.attributes('disabled')).toBeDefined()
+        expect(b.attributes('aria-describedby')).toBe(hint.attributes('id'))
+      }
+    })
+
+    it('加载中点导入按钮：不会打开 CC Switch，也不会复制', async () => {
+      const open = vi.spyOn(window, 'open').mockReturnValue(null)
+      const w = mountClaude({ models: [], modelsLoading: true })
+      for (const b of buttons(w)) await b.trigger('click')
+      expect(open).not.toHaveBeenCalled()
+      expect(w.emitted('copy')).toBeUndefined()
+      open.mockRestore()
+    })
+
+    it('加载完、有模型：没有提示，下拉和按钮都可用', () => {
+      const w = mountClaude()
+      expect(w.find('[data-test="ccs-models-hint"]').exists()).toBe(false)
+      for (const sel of w.findAll('[data-test="ccs-models"] select')) expect(sel.attributes('disabled')).toBeUndefined()
+      for (const b of buttons(w)) {
+        expect(b.attributes('disabled')).toBeUndefined()
+        expect(b.attributes('aria-describedby')).toBeUndefined()
+      }
+    })
+
+    it('没有可选的模型：下拉还在，但只有留空一项、不能选；给出提示；导入按钮仍可用', async () => {
+      const open = vi.spyOn(window, 'open').mockReturnValue(null)
+      const w = mountClaude({ models: [] })
+      expect(w.get('[data-test="ccs-models-hint"]').text()).toBe('No models are available for this key. You can still import and leave the model fields blank.')
+      expect(w.findAll('[data-test="ccs-models"] select')).toHaveLength(4)
+      for (const t of ['ccs-model', 'ccs-model-haiku', 'ccs-model-sonnet', 'ccs-model-opus']) {
+        expect(optionsOf(w, t)).toEqual(['Optional; leave blank to use the CC Switch default'])
+        expect(w.get(`[data-test="${t}"]`).attributes('disabled')).toBeDefined()
+      }
+      for (const b of buttons(w)) expect(b.attributes('disabled')).toBeUndefined()
+      await w.get('[data-test="ccs-open"]').trigger('click')
+      const url = linkOf(String(open.mock.calls[0][0]))
+      for (const k of ['model', 'haikuModel', 'sonnetModel', 'opusModel']) expect(url.searchParams.has(k)).toBe(false)
+      open.mockRestore()
+    })
+
+    it('Codex 的分组筛选后没有 gpt 类模型时仍然列出全部，不显示「没有模型」', () => {
+      const w = mountTab({ models: ['gpt-image-2'] })
+      expect(w.find('[data-test="ccs-models-hint"]').exists()).toBe(false)
+      expect(optionsOf(w, 'ccs-model').slice(1)).toEqual(['gpt-image-2'])
+    })
+
+    it('modelsLoading 不会漏到根元素上', () => {
+      expect(mountTab({ modelsLoading: true }).attributes('models-loading')).toBeUndefined()
+    })
   })
 
-  it('没有模型时不显示模型字段；默认名称是「站点名 - 客户端」', () => {
-    const w = mountTab({ models: [] })
-    expect(w.find('[data-test="ccs-model"]').exists()).toBe(false)
-    expect(w.get('[data-test="ccs-name"]').attributes('placeholder')).toBe('Hiyo - Codex')
+  it('默认名称是「站点名 - 客户端」', () => {
+    expect(mountTab({ models: [] }).get('[data-test="ccs-name"]').attributes('placeholder')).toBe('Hiyo - Codex')
   })
 
-  it('复制链接通过 copy 交出；Codex 用配置的地址（带 /v1），其他客户端用 API 根地址', async () => {
-    const codex = mountTab({}, { name: 'Mine', model: 'gpt-5.6-luna' })
-    await codex.get('[data-test="ccs-copy-link"]').trigger('click')
-    const [text, id] = codex.emitted('copy')![0] as [string, string]
-    expect(id).toBe('deeplink')
-    const url = linkOf(text)
-    expect(url.searchParams.get('app')).toBe('codex')
-    expect(url.searchParams.get('name')).toBe('Mine')
-    expect(url.searchParams.get('model')).toBe('gpt-5.6-luna')
-    expect(url.searchParams.get('apiKey')).toBe(KEY)
-    expect(url.searchParams.get('endpoint')).toBe('https://api.example.com/v1')
+  describe('导入链接', () => {
+    it('复制链接通过 copy 交出；Codex 用配置的地址（带 /v1），其他客户端用 API 根地址', async () => {
+      const codex = mountTab({}, { name: 'Mine', model: 'gpt-5.6-luna' })
+      await codex.get('[data-test="ccs-copy-link"]').trigger('click')
+      const [text, id] = codex.emitted('copy')![0] as [string, string]
+      expect(id).toBe('deeplink')
+      const url = linkOf(text)
+      expect(url.searchParams.get('app')).toBe('codex')
+      expect(url.searchParams.get('name')).toBe('Mine')
+      expect(url.searchParams.get('model')).toBe('gpt-5.6-luna')
+      expect(url.searchParams.get('apiKey')).toBe(KEY)
+      expect(url.searchParams.get('endpoint')).toBe('https://api.example.com/v1')
 
-    const claude = mountTab({ platform: 'anthropic', clients: ['claude'] }, { client: 'claude' })
-    await claude.get('[data-test="ccs-copy-link"]').trigger('click')
-    expect(linkOf((claude.emitted('copy')![0] as [string])[0]).searchParams.get('endpoint')).toBe('https://api.example.com')
-  })
+      const claude = mountClaude()
+      await claude.get('[data-test="ccs-copy-link"]').trigger('click')
+      expect(linkOf((claude.emitted('copy')![0] as [string])[0]).searchParams.get('endpoint')).toBe('https://api.example.com')
+    })
 
-  it('打开 CC Switch：用 window.open(链接, _self)', async () => {
-    const open = vi.spyOn(window, 'open').mockReturnValue(null)
-    const w = mountTab()
-    await w.get('[data-test="ccs-open"]').trigger('click')
-    expect(open).toHaveBeenCalledTimes(1)
-    expect(String(open.mock.calls[0][0]).startsWith('ccswitch://')).toBe(true)
-    expect(open.mock.calls[0][1]).toBe('_self')
-    open.mockRestore()
+    it('Claude：四个模型都带进链接（model / haikuModel / sonnetModel / opusModel），留空的不带', async () => {
+      const w = mountClaude(
+        {},
+        { model: 'claude-sonnet-5', haikuModel: 'claude-haiku-4-5', sonnetModel: 'claude-sonnet-5', opusModel: '' }
+      )
+      await w.get('[data-test="ccs-copy-link"]').trigger('click')
+      const url = linkOf((w.emitted('copy')![0] as [string])[0])
+      expect(url.searchParams.get('app')).toBe('claude')
+      expect(url.searchParams.get('model')).toBe('claude-sonnet-5')
+      expect(url.searchParams.get('haikuModel')).toBe('claude-haiku-4-5')
+      expect(url.searchParams.get('sonnetModel')).toBe('claude-sonnet-5')
+      expect(url.searchParams.has('opusModel')).toBe(false)
+    })
+
+    it('Codex 不选模型：链接里没有 model（不再写死 gpt-5.6-sol）', async () => {
+      const w = mountTab()
+      await w.get('[data-test="ccs-copy-link"]').trigger('click')
+      expect(linkOf((w.emitted('copy')![0] as [string])[0]).searchParams.has('model')).toBe(false)
+    })
+
+    it('打开 CC Switch：用 window.open(链接, _self)', async () => {
+      const open = vi.spyOn(window, 'open').mockReturnValue(null)
+      const w = mountTab()
+      await w.get('[data-test="ccs-open"]').trigger('click')
+      expect(open).toHaveBeenCalledTimes(1)
+      expect(String(open.mock.calls[0][0]).startsWith('ccswitch://')).toBe(true)
+      expect(open.mock.calls[0][1]).toBe('_self')
+      open.mockRestore()
+    })
   })
 })
 

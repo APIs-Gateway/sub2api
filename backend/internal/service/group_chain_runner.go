@@ -58,6 +58,12 @@ type HopResult struct {
 	Breaker BreakerSignal
 	// Attempts 本跳实际发往上游的 Forward 次数（等待与组内重选不计），计入每请求总尝试上限。
 	Attempts int
+	// UpstreamAttempted 为 true 表示本跳真的向上游发出过请求（Forward 至少调用过一次）。
+	// 它是「这一跳有没有真正尝试」的唯一判据：兜底重试（整条链没有任何一跳真正发出过上游请求时才触发）
+	// 与分组层 RPM 的退回（ReleaseHopGroupRPMIfNotServed）都读它，不再各自从 Outcome / Attempts 推断。
+	// 没号、繁忙、排队已满、等槽超时这类「没拿到号」的结局都是 false，即使 Outcome 是 FallbackWorthy。
+	// attempt 实现必须如实填写，约定 Attempts > 0 当且仅当 UpstreamAttempted。
+	UpstreamAttempted bool
 	// UpstreamStatus 最后一个上游状态码，仅用于诊断日志。
 	UpstreamStatus int
 	// ErrorWritten 为 true 表示 attempt 已经把（原始）错误写给了客户端，runner 不会再写。
@@ -217,7 +223,7 @@ func (r *GroupChainRunner) Run(ctx context.Context, in ChainRunInput, attempt Ch
 
 	var pending *pendingBreakerFailure
 	var flush func()
-	// 兜底重试：没有任何一跳真正发出过上游请求时，对最后一个被熔断跳过的跳再跑一次。
+	// 兜底重试：没有任何一跳真正发出过上游请求（HopResult.UpstreamAttempted）时，对最后一个被熔断跳过的跳再跑一次。
 	anyAttempted := false
 	lastBreakerSkipped := -1
 
@@ -319,7 +325,7 @@ func (r *GroupChainRunner) Run(ctx context.Context, in ChainRunInput, attempt Ch
 		trace.Outcome = result.Outcome
 		trace.Reason = result.Reason
 		trace.Attempts = result.Attempts
-		if result.Outcome != HopOutcomeSkipped {
+		if result.UpstreamAttempted {
 			anyAttempted = true
 		}
 
@@ -397,7 +403,8 @@ func (r *GroupChainRunner) Run(ctx context.Context, in ChainRunInput, attempt Ch
 
 	// 兜底重试：整条链没有任何一跳真正发出过上游请求，而有跳是因为熔断被跳过的。
 	// 熔断只是尽力而为的优化，不能让用户一次真实尝试都得不到：忽略熔断，对最后一个被熔断跳过的跳补跑一次。
-	// 仍受总时间预算与总尝试次数约束；结果照常上报熔断器（相当于一次额外的探测）。
+	// 仍受总时间预算与总尝试次数约束。兜底分支不影响熔断状态：成功不上报；失败虽然调用 RecordFailure，
+	// 但不带探测令牌，在 open / half-open 态会被熔断器忽略。
 	if !anyAttempted && lastBreakerSkipped >= 0 && ctx.Err() == nil && !in.Output.Committed() &&
 		r.now().Sub(start) < budget && attemptsUsed < maxAttempts {
 		hop := chain[lastBreakerSkipped]

@@ -164,6 +164,7 @@ type ChannelService struct {
 	authCacheInvalidator APIKeyAuthCacheInvalidator
 	pricingService       *PricingService // 用于「可用渠道」展示时回落到全局定价；可为 nil（测试场景）
 	cachePubSub          ChannelCachePubSub
+	saveHook             ChannelSaveHook // 渠道保存后的回调（W6 派生钩子）；可为 nil，必须在开始处理请求之前设置
 
 	cache           atomic.Value // *channelCache
 	cacheGeneration atomic.Uint64
@@ -831,6 +832,7 @@ func (s *ChannelService) Create(ctx context.Context, input *CreateChannelInput) 
 	}
 
 	s.invalidateCache()
+	s.afterChannelSaved(ctx, channel.ID, nil)
 	created, err := s.repo.GetByID(ctx, channel.ID)
 	if err != nil {
 		return nil, err
@@ -871,6 +873,7 @@ func (s *ChannelService) Update(ctx context.Context, id int64, input *UpdateChan
 	}
 
 	oldGroupIDs := s.getOldGroupIDs(ctx, id)
+	hookGroupIDs := s.previousGroupIDsForSaveHook(ctx, id)
 
 	if err := s.repo.Update(ctx, channel); err != nil {
 		return nil, fmt.Errorf("update channel: %w", err)
@@ -878,6 +881,7 @@ func (s *ChannelService) Update(ctx context.Context, id int64, input *UpdateChan
 
 	s.invalidateCache()
 	s.invalidateAuthCacheForGroups(ctx, oldGroupIDs, channel.GroupIDs)
+	s.afterChannelSaved(ctx, id, hookGroupIDs)
 
 	updated, err := s.repo.GetByID(ctx, id)
 	if err != nil {
@@ -996,6 +1000,7 @@ func (s *ChannelService) Delete(ctx context.Context, id int64) error {
 
 	s.invalidateCache()
 	s.invalidateAuthCacheForGroups(ctx, groupIDs)
+	s.afterChannelSaved(ctx, id, groupIDs)
 
 	return nil
 }
