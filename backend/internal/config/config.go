@@ -772,7 +772,8 @@ func normalizeProxyProbeURLs(targets []ProbeURLConfig) ([]ProbeURLConfig, error)
 }
 
 type BillingConfig struct {
-	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
+	InflightReservation BillingInflightReservationConfig `mapstructure:"inflight_reservation"`
+	CircuitBreaker      CircuitBreakerConfig             `mapstructure:"circuit_breaker"`
 	// UserPlatformQuotaCacheTTLSeconds 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口。
 	// 消费点：
 	//   - billing_cache_service.cacheWriteWorker 异步累加
@@ -782,6 +783,13 @@ type BillingConfig struct {
 	// UserPlatformQuotaSentinelTTLSeconds sentinel(无 limit 占位)entry 的 TTL,
 	// 显著短于 quota cache 默认 86400s 以控 Redis 内存;默认 3600=1h。
 	UserPlatformQuotaSentinelTTLSeconds int `mapstructure:"user_platform_quota_sentinel_ttl_seconds"`
+}
+
+// Bounded concurrency admission protection, not a hard per-request spending cap.
+type BillingInflightReservationConfig struct {
+	Enabled                bool `mapstructure:"enabled"`
+	TTLSeconds             int  `mapstructure:"ttl_seconds"`
+	DefaultMaxOutputTokens int  `mapstructure:"default_max_output_tokens"`
 }
 
 type CircuitBreakerConfig struct {
@@ -1899,6 +1907,9 @@ func setDefaults() {
 	viper.SetDefault("security.proxy_fallback.allow_direct_on_error", false)
 
 	// Billing
+	viper.SetDefault("billing.inflight_reservation.enabled", true)
+	viper.SetDefault("billing.inflight_reservation.ttl_seconds", 900)
+	viper.SetDefault("billing.inflight_reservation.default_max_output_tokens", 8192)
 	viper.SetDefault("billing.circuit_breaker.enabled", true)
 	viper.SetDefault("billing.circuit_breaker.failure_threshold", 5)
 	viper.SetDefault("billing.circuit_breaker.reset_timeout_seconds", 30)

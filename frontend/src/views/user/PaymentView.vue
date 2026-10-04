@@ -52,9 +52,6 @@
                 :currency-label="selectedCurrency"
                 :prefix="selectedCurrencySymbol"
               />
-              <p v-if="balanceRechargeMultiplier !== 1 && !isFiat" class="mt-3 text-xs font-medium text-gray-600 dark:text-gray-400">
-                {{ t('payment.rechargeMultiplier', { currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
-              </p>
               <p v-if="amountError" class="mt-2 text-xs text-primary-700 dark:text-primary-400">{{ amountError }}</p>
             </div>
             <div v-if="enabledMethods.length >= 1" class="card p-6">
@@ -79,13 +76,11 @@
                   <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('payment.actualPay') }}</span>
                   <NumText tier="secondary" :text="formatSelectedPaymentAmount(totalAmount)" />
                 </div>
+                <!-- 美元模式也只写实付金额和到账额度，不写「1 CNY = x USD」这类换算比例。 -->
                 <div v-if="balanceRechargeMultiplier !== 1" class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': feeRate <= 0 }">
                   <span class="text-gray-600 dark:text-gray-400">{{ isFiat ? t('payment.creditedBalance') : t('payment.creditedBalanceWithCurrency', { currency: 'USD' }) }}</span>
                   <NumText tier="secondary" class="text-gray-900 dark:text-white" :text="isFiat ? formatWallet(creditedAmount) : formatUSDValue(creditedAmount)" />
                 </div>
-                <p v-if="balanceRechargeMultiplier !== 1 && !isFiat" class="border-t border-gray-200 pt-2 text-xs text-gray-600 dark:border-dark-600 dark:text-gray-400">
-                  {{ t('payment.rechargeRatePreview', { currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
-                </p>
               </div>
             </div>
             <button :class="['btn w-full py-3 text-base font-medium', paymentButtonClass]" :disabled="!canSubmit || submitting" @click="handleSubmitRecharge">
@@ -113,11 +108,8 @@
                     {{ t('payment.paymentAmountWithCurrency', { currency: selectedCurrency }) }}
                   </span>
                 </div>
+                <!-- 只并列实付金额和每日额度，不写额度价值（两数相除即换算比例）。 -->
                 <div class="mt-3 grid grid-cols-2 gap-3">
-                  <div v-if="!isFiat">
-                    <span class="text-xs text-gray-600 dark:text-gray-400">{{ lifecycleOrder.intent === 'renew' ? t('userSubscriptions.lifecycle.renewValue') : t('userSubscriptions.lifecycle.changeDiffValue') }}</span>
-                    <div class="num-secondary text-base text-gray-900 dark:text-white">{{ formatUSDValue(lifecycleOrder.amount) }}</div>
-                  </div>
                   <div v-if="!isFiat || lifecycleFiatPerCredit">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.dailyAmount') }}</span>
                     <div class="num-secondary text-base text-gray-900 dark:text-white">{{ isFiat ? formatSubscription(lifecycleOrder.dailyAmountUsd, lifecycleFiatPerCredit) : formatUSDValue(lifecycleOrder.dailyAmountUsd) }}</div>
@@ -216,10 +208,6 @@
                       <span class="num-secondary text-base text-gray-900 dark:text-white">{{ formatPlanQuota(selectedPlan.monthly_limit_usd) }}</span>
                       <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
                     </div>
-                  </div>
-                  <div v-if="!isFiat">
-                    <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.subscriptionValueWithCurrency', { currency: 'USD' }) }}</span>
-                    <div class="num-secondary text-base text-gray-900 dark:text-white">{{ formatUSDValue(selectedPlan.price) }}</div>
                   </div>
                   <div v-if="selectedPlan.daily_limit_usd == null && selectedPlan.weekly_limit_usd == null && selectedPlan.monthly_limit_usd == null">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('payment.planCard.quota') }}</span>

@@ -940,7 +940,8 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 	account *Account,
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
-	body := s.readUpstreamErrorBody(resp)
+	body, proofReadErr := s.readUpstreamErrorBodyComplete(resp)
+	markBillingInflightProviderRefusal(c, resp.StatusCode, body, proofReadErr)
 
 	upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body)))
 	upstreamDetail := ""
