@@ -26,17 +26,14 @@ import {
   type DocVars,
   type EndpointOption,
 } from './docsRender'
+import { ENDPOINT_QUERY_PARAM, endpointQuery } from './endpointQuery'
 import type { CustomEndpoint } from '@/types'
 
-/** 备用地址在 URL 里的参数名：值是端点的 API 根地址，必须是站点设置里存在的一个。 */
-export const ENDPOINT_QUERY_PARAM = 'endpoint'
+// ?endpoint= 的参数名和拼法在 endpointQuery.ts（接入弹窗也要用，不能为它加载整份文档）；这里再导出，原来的引用不变。
+export { ENDPOINT_QUERY_PARAM, endpointQuery }
 
 export const MACHINE_FILE_LLMS = 'llms.txt'
 export const MACHINE_FILE_FULL = 'llms-full.txt'
-/** ?endpoint=… 查询串。冒号和斜杠不转义，链接读起来像地址；后端的 machineEndpointQuery 同规则。 */
-export function endpointQuery(base: string): string {
-  return `?${ENDPOINT_QUERY_PARAM}=${encodeURIComponent(base).replace(/%3A/gi, ':').replace(/%2F/gi, '/')}`
-}
 
 export const machineSectionPath = (id: string): string => `docs/${id}.md`
 

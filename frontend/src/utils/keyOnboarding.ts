@@ -770,8 +770,9 @@ export function buildAiPrompt(input: AiPromptInput): string {
   return lines.filter((l, i, arr) => l !== '' || (i > 0 && arr[i - 1] !== '')).join('\n').trim()
 }
 
+/** hints=search 让 ChatGPT 打开联网搜索，它才会去读提示里的文档链接。 */
 export function chatgptUrl(prompt: string): string {
-  return `https://chatgpt.com/?q=${encodeURIComponent(prompt)}`
+  return `https://chatgpt.com/?hints=search&q=${encodeURIComponent(prompt)}`
 }
 
 export function claudeUrl(prompt: string): string {

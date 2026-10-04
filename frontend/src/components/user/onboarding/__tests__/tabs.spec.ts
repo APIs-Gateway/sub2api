@@ -86,12 +86,15 @@ describe('InstallTab', () => {
 })
 
 describe('AiTab', () => {
+  // 站点自己的来源：文档链接的域名；接入地址（endpoint）是另一回事，不能混用
+  const ORIGIN = 'https://site.example.com'
   const mountTab = (props: Record<string, unknown> = {}) =>
     mount(AiTab, {
       props: {
         endpoint,
         platform: 'openai',
         siteName: 'Hiyo',
+        origin: ORIGIN,
         models: ['gpt-5.6-sol', 'gpt-5.6-luna'],
         docUrl: 'https://docs.example.com',
         copiedId: '',
@@ -104,17 +107,60 @@ describe('AiTab', () => {
     w.findAll('[data-test^="ai-client-"]').map((c) => c.attributes('data-test')!.replace('ai-client-', ''))
   const text = (w: ReturnType<typeof mountTab>) => (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
 
-  it('选客户端走 v-model:client；提示词随 client 变化，不含密钥', async () => {
+  it('选客户端走 v-model:client；一句话随 client 换成对应的文档，不含密钥', async () => {
     const w = mountTab()
     const codex = text(w)
-    expect(codex).toContain('https://api.example.com/v1')
+    expect(codex).toBe(`Follow this guide to connect Codex to Hiyo: ${ORIGIN}/docs/codex.md`)
     await w.get('[data-test="ai-client-cursor"]').trigger('click')
     expect(w.emitted('update:client')![0]).toEqual(['cursor'])
-    // 外壳把新值传回来之后，提示词跟着变
+    // 外壳把新值传回来之后，一句话跟着变
     await w.setProps({ client: 'cursor' })
-    expect(text(w)).toContain('Cursor')
-    expect(text(w)).not.toBe(codex)
+    expect(text(w)).toBe(`Follow this guide to connect Cursor to Hiyo: ${ORIGIN}/docs/cursor.md`)
     expect(text(w)).not.toContain('sk-')
+  })
+
+  it('一句话用站点来源做域名，不用接入地址；站点名取 siteName，只有空白时退回 sub2api', async () => {
+    const w = mountTab({ siteName: '  My\n  Site ' })
+    expect(text(w)).toBe(`Follow this guide to connect Codex to My Site: ${ORIGIN}/docs/codex.md`)
+    expect(text(w)).not.toContain('api.example.com')
+    await w.setProps({ siteName: '   ' })
+    expect(text(w)).toContain('to sub2api:')
+  })
+
+  it('备用线路：文档链接和文档目录都带 ?endpoint=；默认线路不带', async () => {
+    const cdn: EndpointOption = { ...endpoint, id: 'https://cdn.example.com', base: 'https://cdn.example.com', v1: 'https://cdn.example.com/v1', configured: 'https://cdn.example.com/v1', name: 'CDN', isDefault: false }
+    const w = mountTab({ endpoint: cdn })
+    expect(text(w)).toBe(`Follow this guide to connect Codex to Hiyo: ${ORIGIN}/docs/codex.md?endpoint=https://cdn.example.com`)
+    expect(w.get('[data-test="ai-catalog"]').attributes('href')).toBe(`${ORIGIN}/llms.txt?endpoint=https://cdn.example.com`)
+    await w.setProps({ endpoint })
+    expect(text(w)).not.toContain('endpoint=')
+    expect(w.get('[data-test="ai-catalog"]').attributes('href')).toBe(`${ORIGIN}/llms.txt`)
+  })
+
+  it('文档目录是新窗口打开的 /llms.txt 链接，页尾有两段说明', () => {
+    const w = mountTab()
+    const link = w.get('a[data-test="ai-catalog"]')
+    expect(link.attributes('href')).toBe(`${ORIGIN}/llms.txt`)
+    expect(link.attributes('target')).toBe('_blank')
+    expect(link.attributes('rel')).toBe('noopener noreferrer')
+    expect(link.text()).toBe('Docs index for AI')
+    expect(w.text()).toContain('Your key is not in this message')
+    expect(w.get('[data-test="ai-footnote"]').text()).toContain('Copy detailed version')
+  })
+
+  it('在 ChatGPT 中打开带联网搜索参数，在 Claude 中打开不带；链接里就是框里的那句话', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const w = mountTab()
+    await w.get('[data-test="ai-open-chatgpt"]').trigger('click')
+    await w.get('[data-test="ai-open-claude"]').trigger('click')
+    const [gpt, claude] = open.mock.calls.map((c) => new URL(String(c[0])))
+    expect(`${gpt.origin}${gpt.pathname}`).toBe('https://chatgpt.com/')
+    expect(gpt.searchParams.get('hints')).toBe('search')
+    expect(gpt.searchParams.get('q')).toBe(text(w))
+    expect(`${claude.origin}${claude.pathname}`).toBe('https://claude.ai/new')
+    expect(claude.searchParams.has('hints')).toBe(false)
+    expect(claude.searchParams.get('q')).toBe(text(w))
+    open.mockRestore()
   })
 
   describe('工具按分组过滤', () => {
@@ -135,11 +181,8 @@ describe('AiTab', () => {
       expect(w.emitted('update:client')![0]).toEqual(['codex'])
       expect(w.get('[data-test="ai-client-codex"]').attributes('aria-checked')).toBe('true')
       expect(w.findAll('[role="radio"][aria-checked="true"]')).toHaveLength(1)
-      // 提示词用的是 Codex，不是 Claude Code：地址、接口格式、要设置的内容一致
-      expect(text(w)).toContain('Codex')
-      expect(text(w)).toContain('https://api.example.com/v1')
-      expect(text(w)).toContain('OpenAI')
-      expect(text(w)).not.toContain('ANTHROPIC')
+      // 一句话读的是 Codex 的文档，不是 Claude Code 的
+      expect(text(w)).toBe(`Follow this guide to connect Codex to Hiyo: ${ORIGIN}/docs/codex.md`)
     })
 
     it('选中的工具可用时保持不变，不多发更新', () => {
@@ -148,14 +191,11 @@ describe('AiTab', () => {
       expect(w.get('[data-test="ai-client-cursor"]').attributes('aria-checked')).toBe('true')
     })
 
-    it('openai 分组开了调度：Claude Code 可选（排在 Codex 后面），选中时提示词是根地址 + Anthropic', () => {
+    it('openai 分组开了调度：Claude Code 可选（排在 Codex 后面），选中时读 Claude Code 的文档', () => {
       const w = mountTab({ allowMessagesDispatch: true, client: 'claude' })
       expect(chips(w).slice(0, 2)).toEqual(['codex', 'claude'])
       expect(w.emitted('update:client')).toBeUndefined()
-      expect(text(w)).toContain('Claude Code')
-      expect(text(w)).toContain('The endpoint is https://api.example.com and')
-      expect(text(w)).toContain('API format is Anthropic')
-      expect(text(w)).toContain('ANTHROPIC_BASE_URL')
+      expect(text(w)).toBe(`Follow this guide to connect Claude Code to Hiyo: ${ORIGIN}/docs/claude-code.md`)
     })
 
     it('换了分组：选中的工具在新分组里没有，就改成第一个可用的', async () => {
@@ -181,6 +221,9 @@ describe('AiTab', () => {
     await w.get('[data-test="ai-copy-detail"]').trigger('click')
     const [[short, shortId], [detail, detailId]] = w.emitted('copy') as [string, string][]
     expect([shortId, detailId]).toEqual(['ai-short', 'ai-detail'])
+    // 复制的就是框里的那句话；管理员配置的文档地址只出现在详细版里
+    expect(short).toBe(text(w))
+    expect(short).not.toContain('https://docs.example.com')
     expect(detail).toContain('gpt-5.6-sol, gpt-5.6-luna')
     expect(detail).toContain('https://docs.example.com')
     expect(detail.length).toBeGreaterThan(short.length)
