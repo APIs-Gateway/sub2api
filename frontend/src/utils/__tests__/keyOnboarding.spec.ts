@@ -1014,7 +1014,7 @@ describe('交给 AI 的工具按分组过滤', () => {
 
   it.each([
     ['openai', false, ['codex', 'cursor', ...ALWAYS]],
-    ['openai', true, ['claude', 'codex', 'cursor', ...ALWAYS]],
+    ['openai', true, ['codex', 'claude', 'cursor', ...ALWAYS]],
     ['anthropic', false, ['claude', 'cursor', ...ALWAYS]],
     ['grok', false, ['claude', 'cursor', ...ALWAYS]],
     ['gemini', false, ALWAYS],
@@ -1037,13 +1037,17 @@ describe('交给 AI 的工具按分组过滤', () => {
     expect(aiClientsForPlatform('unknown')).toEqual(ALWAYS)
   })
 
-  it('顺序同 AI_CLIENTS，第一个就是默认选中的；每个分组至少有一个可选', () => {
+  it('第一个就是默认选中的：openai 排 Codex、Claude Code 其次，其他平台顺序同 AI_CLIENTS；每个分组至少有一个可选', () => {
+    const openaiOrder: AiClient[] = ['codex', 'claude', 'cursor', ...ALWAYS]
     for (const p of PLATFORMS) for (const allowMessagesDispatch of [false, true]) {
       const list = aiClientsForPlatform(p, { allowMessagesDispatch })
       expect(list.length).toBeGreaterThan(0)
-      expect(list).toEqual(AI_CLIENTS.filter((c) => list.includes(c)))
+      const order = p === 'openai' ? openaiOrder : AI_CLIENTS
+      expect(list).toEqual(order.filter((c) => list.includes(c)))
     }
+    // openai 分组开不开调度，默认都是 Codex
     expect(aiClientsForPlatform('openai')[0]).toBe('codex')
+    expect(aiClientsForPlatform('openai', { allowMessagesDispatch: true })[0]).toBe('codex')
     expect(aiClientsForPlatform('anthropic')[0]).toBe('claude')
     expect(aiClientsForPlatform('gemini')[0]).toBe('chat')
   })

@@ -579,18 +579,20 @@ describe('KeyOnboardingModal', () => {
         expect(text(w)).not.toContain('ANTHROPIC_BASE_URL')
       })
 
-      it('openai 分组开了调度：有 Claude Code 且排第一，指令是根地址 + Anthropic + ANTHROPIC_BASE_URL', async () => {
+      it('openai 分组开了调度：Claude Code 可选但排第二，默认仍是 Codex；切到 Claude Code 才是根地址 + Anthropic + ANTHROPIC_BASE_URL', async () => {
         const w = await mountModal({ initialTab: 'ai', apiKey: group('openai', { allow_messages_dispatch: true }) })
-        expect(chips(w)).toEqual(['claude', 'codex', 'cursor', 'chat', 'code', 'other'])
-        expect(checked(w)).toEqual(['claude'])
+        expect(chips(w)).toEqual(['codex', 'claude', 'cursor', 'chat', 'code', 'other'])
+        expect(checked(w)).toEqual(['codex'])
+        expect(text(w)).toContain('"Codex"')
+        expect(text(w)).toContain('The endpoint is https://codex.hiyo.top/v1 and')
+        expect(text(w)).toContain('API format is OpenAI')
+        expect(text(w)).not.toContain('ANTHROPIC_BASE_URL')
+        // 同一个分组切到 Claude Code：地址和格式跟着变
+        await w.get('[data-test="ai-client-claude"]').trigger('click')
         expect(text(w)).toContain('"Claude Code"')
         expect(text(w)).toContain('The endpoint is https://codex.hiyo.top and')
         expect(text(w)).toContain('API format is Anthropic')
         expect(text(w)).toContain('ANTHROPIC_BASE_URL')
-        // 同一个分组切到 Codex：地址和格式跟着变
-        await w.get('[data-test="ai-client-codex"]').trigger('click')
-        expect(text(w)).toContain('The endpoint is https://codex.hiyo.top/v1 and')
-        expect(text(w)).toContain('API format is OpenAI')
       })
 
       it.each([
@@ -603,7 +605,7 @@ describe('KeyOnboardingModal', () => {
         expect(checked(w)).toEqual([expected[0]])
       })
 
-      it('换到另一个密钥时，选中的工具不在新分组里就回到第一个可用的；仍可用就保留', async () => {
+      it('换到另一个密钥时，换了分组就回到新分组的默认工具；同一类分组之间换密钥，选的保留', async () => {
         const w = await mountModal({ initialTab: 'ai', apiKey: group('anthropic') })
         await w.get('[data-test="ai-client-cursor"]').trigger('click')
         await w.setProps({ show: false })
@@ -613,8 +615,33 @@ describe('KeyOnboardingModal', () => {
         await w.setProps({ show: false })
         await w.setProps({ apiKey: group('openai'), show: true })
         await flushPromises()
-        // chat 在 openai 分组里也能用，保留
+        // 以前 chat 在 openai 分组里也能用就保留，默认就取决于上一个打开的密钥；现在换了分组就回到 Codex
+        expect(checked(w)).toEqual(['codex'])
+
+        // 同一个分组（或同一类）换密钥：用户选的聊天客户端保留
+        await w.get('[data-test="ai-client-chat"]').trigger('click')
+        await w.setProps({ show: false })
+        await w.setProps({ apiKey: { ...group('openai'), name: 'other-key' }, show: true })
+        await flushPromises()
         expect(checked(w)).toEqual(['chat'])
+      })
+
+      // 默认只取决于当前分组，不取决于上一个打开的密钥
+      it.each([
+        ['anthropic → openai（开了调度）', [group('anthropic'), group('openai', { allow_messages_dispatch: true })]],
+        ['gemini → openai', [group('gemini'), group('openai')]],
+        ['openai → anthropic → openai（开了调度）', [group('openai'), group('anthropic'), group('openai', { allow_messages_dispatch: true })]],
+        ['openai（没开调度）→ openai（开了调度）', [group('openai'), group('openai', { allow_messages_dispatch: true })]]
+      ])('打开顺序 %s：最后一个密钥默认选中 Codex', async (_name, keys) => {
+        const w = await mountModal({ initialTab: 'ai', apiKey: keys[0] })
+        for (const k of keys.slice(1)) {
+          await w.setProps({ show: false })
+          await w.setProps({ apiKey: k, show: true })
+          await flushPromises()
+        }
+        expect(checked(w)).toEqual(['codex'])
+        expect(text(w)).toContain('"Codex"')
+        expect(text(w)).toContain('https://codex.hiyo.top/v1')
       })
 
       it('切到别的页签再回来，修正后的选择还在', async () => {

@@ -120,7 +120,7 @@ describe('AiTab', () => {
   describe('工具按分组过滤', () => {
     it.each([
       ['openai', false, ['codex', 'cursor', 'chat', 'code', 'other']],
-      ['openai', true, ['claude', 'codex', 'cursor', 'chat', 'code', 'other']],
+      ['openai', true, ['codex', 'claude', 'cursor', 'chat', 'code', 'other']],
       ['anthropic', false, ['claude', 'cursor', 'chat', 'code', 'other']],
       ['gemini', false, ['chat', 'code', 'other']],
       ['antigravity', false, ['claude', 'chat', 'code', 'other']]
@@ -148,9 +148,9 @@ describe('AiTab', () => {
       expect(w.get('[data-test="ai-client-cursor"]').attributes('aria-checked')).toBe('true')
     })
 
-    it('openai 分组开了调度：Claude Code 可选，提示词是根地址 + Anthropic', () => {
+    it('openai 分组开了调度：Claude Code 可选（排在 Codex 后面），选中时提示词是根地址 + Anthropic', () => {
       const w = mountTab({ allowMessagesDispatch: true, client: 'claude' })
-      expect(chips(w)[0]).toBe('claude')
+      expect(chips(w).slice(0, 2)).toEqual(['codex', 'claude'])
       expect(w.emitted('update:client')).toBeUndefined()
       expect(text(w)).toContain('Claude Code')
       expect(text(w)).toContain('The endpoint is https://api.example.com and')
@@ -171,7 +171,7 @@ describe('AiTab', () => {
       const w = mountTab({ allowMessagesDispatch: false })
       expect(chips(w)).not.toContain('claude')
       await w.setProps({ allowMessagesDispatch: true })
-      expect(chips(w)[0]).toBe('claude')
+      expect(chips(w)).toEqual(['codex', 'claude', 'cursor', 'chat', 'code', 'other'])
     })
   })
 

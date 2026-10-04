@@ -667,7 +667,8 @@ export type AiClient = 'claude' | 'codex' | 'cursor' | 'chat' | 'code' | 'other'
 export const AI_CLIENTS: AiClient[] = ['claude', 'codex', 'cursor', 'chat', 'code', 'other']
 
 /**
- * 各平台的分组在「交给 AI」里能选哪些工具，顺序同 AI_CLIENTS，第一个就是默认选中的。
+ * 各平台的分组在「交给 AI」里能选哪些工具，第一个就是这个分组默认选中的。
+ * 顺序同 AI_CLIENTS；openai 分组把 Codex 排在 Claude Code 前面（分组开了调度时两个都有，主力工具是 Codex）。
  *
  * - Claude Code：anthropic、grok、antigravity；openai 分组开了 /v1/messages 调度之后也行
  *   （和一键安装的 clientsForPlatform 一致）
@@ -692,7 +693,8 @@ export function aiClientsForPlatform(
     code: true,
     other: true
   }
-  return AI_CLIENTS.filter((c) => usable[c])
+  const order: AiClient[] = isOpenai ? ['codex', 'claude', 'cursor', 'chat', 'code', 'other'] : AI_CLIENTS
+  return order.filter((c) => usable[c])
 }
 
 export type TranslateFn = (key: string, params?: Record<string, unknown>) => string

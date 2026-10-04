@@ -169,7 +169,7 @@ import {
   resolveEndpointOptions,
   saveEndpointId
 } from '@/utils/apiEndpoints'
-import { clientsForPlatform, type AiClient, type OnboardingClient } from '@/utils/keyOnboarding'
+import { aiClientsForPlatform, clientsForPlatform, type AiClient, type OnboardingClient } from '@/utils/keyOnboarding'
 import AiTab from './onboarding/AiTab.vue'
 import CcSwitchTab from './onboarding/CcSwitchTab.vue'
 import InstallTab from './onboarding/InstallTab.vue'
@@ -293,6 +293,16 @@ const {
 
 // ===== 要跨页签保留的页签状态：页签是按需渲染的，状态放在页签组件里切走就丢了 =====
 const aiClient = ref<AiClient>('claude')
+// 换了分组（平台或调度开关变了）就回到这个分组的默认工具；同类分组之间换密钥，用户选的保留。
+// 不靠初始值：否则默认取决于上一个打开的密钥，而不是当前分组。页签里的回退只是兜底。
+watch(
+  // 没有这个字段和 false 是一回事，不算换了分组
+  [platform, () => !!allowMessagesDispatch.value],
+  ([p, dispatch]) => {
+    aiClient.value = aiClientsForPlatform(p, { allowMessagesDispatch: dispatch })[0] ?? 'claude'
+  },
+  { immediate: true }
+)
 const { clients: ccsClients, form: ccsForm } = useCcSwitchState({
   platform,
   show: () => props.show,
