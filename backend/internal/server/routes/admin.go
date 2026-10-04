@@ -231,6 +231,9 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		ops.GET("/account-availability", h.Admin.Ops.GetAccountAvailability)
 		ops.GET("/realtime-traffic", h.Admin.Ops.GetRealtimeTrafficSummary)
 
+		// Unpriced usage (read-only): usage rows with tokens but zero cost, by group x model
+		ops.GET("/unpriced-usage", h.Admin.Ops.GetUnpricedUsage)
+
 		// Alerts (rules + events)
 		ops.GET("/alert-rules", h.Admin.Ops.ListAlertRules)
 		ops.POST("/alert-rules", h.Admin.Ops.CreateAlertRule)
