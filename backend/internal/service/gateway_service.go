@@ -10487,6 +10487,8 @@ func (s *GatewayService) calculateImageCost(
 		})
 		if err != nil {
 			logger.LegacyPrintf("service.gateway", "Calculate image token cost failed: %v", err)
+			noteUnpricedBilling(ctx, apiKey, result.Model, UnpricedBillingReasonImageCalcError, err,
+				"zero_cost", billingModel)
 			return &CostBreakdown{ActualCost: 0}
 		}
 		return cost
@@ -10517,6 +10519,8 @@ func (s *GatewayService) calculateTokenCost(
 	// billingService 未注入（如轻量部署/测试场景下 GatewayService 未接入完整计费依赖）时，
 	// 与 hasResolvableTokenPricing 的既有 nil 处理保持一致：不计价，避免 nil 解引用 panic。
 	if s.billingService == nil {
+		noteUnpricedBilling(ctx, apiKey, result.Model, UnpricedBillingReasonNoBillingService, nil,
+			"zero_cost", billingModel)
 		return &CostBreakdown{ActualCost: 0}
 	}
 
@@ -10578,6 +10582,11 @@ func (s *GatewayService) calculateTokenCost(
 	}
 	if err != nil {
 		logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
+		reason := UnpricedBillingReasonCalcError
+		if isUsagePricingUnavailableError(err) {
+			reason = UnpricedBillingReasonMissingPrice
+		}
+		noteUnpricedBilling(ctx, apiKey, result.Model, reason, err, "zero_cost", billingModel)
 		return &CostBreakdown{ActualCost: 0}
 	}
 	return cost

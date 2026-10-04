@@ -271,12 +271,17 @@ func (s *OpsAlertEvaluatorService) evaluateOnce(interval time.Duration) {
 				}
 			}
 
+			description := buildOpsAlertDescription(rule, metricValue, windowMinutes, scopePlatform, scopeGroupID)
+			if strings.TrimSpace(rule.MetricType) == OpsAlertMetricUnpricedBillingRows {
+				description += s.describeUnpricedBillingAlert(ctx, windowStart, windowEnd, scopePlatform, scopeGroupID)
+			}
+
 			firedEvent := &OpsAlertEvent{
 				RuleID:         rule.ID,
 				Severity:       strings.TrimSpace(rule.Severity),
 				Status:         OpsAlertStatusFiring,
 				Title:          fmt.Sprintf("%s: %s", strings.TrimSpace(rule.Severity), strings.TrimSpace(rule.Name)),
-				Description:    buildOpsAlertDescription(rule, metricValue, windowMinutes, scopePlatform, scopeGroupID),
+				Description:    description,
 				MetricValue:    float64Ptr(metricValue),
 				ThresholdValue: float64Ptr(rule.Threshold),
 				Dimensions:     buildOpsAlertDimensions(scopePlatform, scopeGroupID),
@@ -581,6 +586,8 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 			return 0, false
 		}
 		return float64(n), true
+	case OpsAlertMetricUnpricedBillingRows:
+		return s.computeUnpricedBillingRows(ctx, start, end, platform, groupID)
 	}
 
 	overview, err := s.opsRepo.GetDashboardOverview(ctx, &OpsDashboardFilter{

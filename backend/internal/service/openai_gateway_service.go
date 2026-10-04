@@ -9146,6 +9146,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	cost, err = s.calculateOpenAIRecordUsageCost(ctx, result, billingAPIKey, billingModels, multiplier, imageMultiplier, tokens, serviceTier, pricingAt)
 	if err != nil {
 		if !isUsagePricingUnavailableError(err) {
+			noteUnpricedBilling(ctx, billingAPIKey, result.Model, UnpricedBillingReasonCalcError, err,
+				"error_returned", billingModels...)
 			return err
 		}
 		logger.L().With(
@@ -9157,6 +9159,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			zap.Int64("api_key_id", apiKey.ID),
 			zap.Int64("account_id", account.ID),
 		).Warn("openai_usage.pricing_missing_record_zero_cost", zap.Error(err))
+		noteUnpricedBilling(ctx, billingAPIKey, result.Model, UnpricedBillingReasonMissingPrice, err,
+			"zero_cost", billingModels...)
 		cost = &CostBreakdown{BillingMode: string(BillingModeToken)}
 	}
 	if input.UpstreamModelMismatchBlocked || s.upstreamModelMismatchZeroCost(input) {
@@ -9476,6 +9480,8 @@ func (s *OpenAIGatewayService) calculateOpenAIImageCost(
 			return cost
 		}
 		logger.LegacyPrintf("service.openai_gateway", "Calculate image channel cost failed: %v", err)
+		noteUnpricedBilling(ctx, apiKey, result.Model, UnpricedBillingReasonImageCalcError, err,
+			"group_image_price_fallback", billingModel)
 	}
 
 	var groupConfig *ImagePriceConfig

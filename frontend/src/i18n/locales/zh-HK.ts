@@ -6372,7 +6372,8 @@
           accountErrorCount: '錯誤帳號數（不含臨時不可調度）',
           accountErrorRatio: '錯誤帳號比例 (%)',
           accountTempUnscheduledCount: '臨時不可調度帳號數',
-          overloadAccountCount: '過載帳號數'
+          overloadAccountCount: '過載帳號數',
+          unpricedBillingRows: '未定價用量記錄數'
         },
         metricDescriptions: {
           successRate: '統計窗口內成功請求占比（0~100）。',
@@ -6390,7 +6391,8 @@
           accountErrorCount: '統計窗口內產生錯誤的帳號數量（不含臨時不可調度）。',
           accountErrorRatio: '統計窗口內錯誤帳號占比（0~100）。',
           accountTempUnscheduledCount: '當前處於臨時不可調度狀態的帳號數量（如代理/憑據故障被自動摘除）。',
-          overloadAccountCount: '統計窗口內過載帳號數量。'
+          overloadAccountCount: '統計窗口內過載帳號數量。',
+          unpricedBillingRows: '統計窗口內有 token 或圖片用量、但計費金額為 0 的用量記錄數（倍率為 0 的分組、已知免費名單內的條目、被攔截的審計記錄不計入）。'
         },
         hints: {
           recommended: '推薦：運算符 {operator}，閾值 {threshold}{unit}',

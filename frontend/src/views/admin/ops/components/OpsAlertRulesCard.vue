@@ -170,6 +170,14 @@ const metricDefinitions = computed(() => {
       recommendedOperator: '>',
       recommendedThreshold: 10
     },
+    {
+      type: 'unpriced_billing_rows',
+      group: 'system',
+      label: t('admin.ops.alertRules.metrics.unpricedBillingRows'),
+      description: t('admin.ops.alertRules.metricDescriptions.unpricedBillingRows'),
+      recommendedOperator: '>',
+      recommendedThreshold: 0
+    },
 
     // Group-level metrics (requires group_id filter)
     {

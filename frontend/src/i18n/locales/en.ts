@@ -6369,7 +6369,8 @@
           accountErrorCount: 'Error Accounts (excluding temporarily unschedulable)',
           accountErrorRatio: 'Error Account Ratio (%)',
           accountTempUnscheduledCount: 'Temporarily Unschedulable Accounts',
-          overloadAccountCount: 'Overloaded Accounts'
+          overloadAccountCount: 'Overloaded Accounts',
+          unpricedBillingRows: 'Unpriced Usage Rows'
         },
         metricDescriptions: {
           successRate: 'Percentage of successful requests in the window (0-100).',
@@ -6387,7 +6388,8 @@
           accountErrorCount: 'Number of error accounts within the window (excluding temporarily unschedulable).',
           accountErrorRatio: 'Error account ratio within the window (0-100).',
           accountTempUnscheduledCount: 'Number of accounts currently temporarily unschedulable (e.g. proxy/credential failure auto-eviction).',
-          overloadAccountCount: 'Number of overloaded accounts within the window.'
+          overloadAccountCount: 'Number of overloaded accounts within the window.',
+          unpricedBillingRows: 'Number of usage rows within the window that have token or image usage but a billed cost of 0 (groups with a 0 rate multiplier, entries on the known-free list and intercepted audit rows are excluded).'
         },
         hints: {
           recommended: 'Recommended: operator {operator}, threshold {threshold}{unit}',
