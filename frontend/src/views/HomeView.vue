@@ -93,7 +93,7 @@
 
           <div class="reveal mt-9 flex flex-wrap items-center gap-x-7 gap-y-3" style="--d: 210ms">
             <router-link
-              :to="isAuthenticated ? dashboardPath : '/login'"
+              :to="getStartedPath"
               class="inline-flex items-center gap-2 rounded-md bg-ink px-6 py-3 text-[15px] font-medium text-paper transition-opacity hover:opacity-90"
             >
               {{ isAuthenticated ? t('home.goToDashboard') : t('home.getStarted') }}
@@ -185,7 +185,7 @@
         </h2>
         <p class="mt-3 max-w-md text-base text-muted">{{ t('home.cta.description') }}</p>
         <router-link
-          :to="isAuthenticated ? dashboardPath : '/register'"
+          :to="isAuthenticated ? KEYS_PATH : `/register?redirect=${KEYS_PATH}`"
           class="mt-6 inline-flex items-center gap-2 rounded-md bg-ink px-6 py-3 text-[15px] font-medium text-paper transition-opacity hover:opacity-90"
         >
           {{ isAuthenticated ? t('home.goToDashboard') : t('home.cta.button') }}
@@ -284,6 +284,15 @@ const isDark = ref(document.documentElement.classList.contains('dark'))
 const isAuthenticated = computed(() => authStore.isAuthenticated)
 const isAdmin = computed(() => authStore.isAdmin)
 const dashboardPath = computed(() => (isAdmin.value ? '/admin/dashboard' : '/dashboard'))
+
+// 主按钮的去向：已登录直接进密钥页；未登录先注册，注册完（含邮箱验证）回到密钥页。
+// 站点关闭注册时改去登录页，登录后同样回到密钥页。
+const KEYS_PATH = '/keys'
+const registrationOpen = computed(() => appStore.cachedPublicSettings?.registration_enabled !== false)
+const getStartedPath = computed(() => {
+  if (isAuthenticated.value) return KEYS_PATH
+  return `${registrationOpen.value ? '/register' : '/login'}?redirect=${KEYS_PATH}`
+})
 // Current year for footer
 const currentYear = computed(() => new Date().getFullYear())
 
