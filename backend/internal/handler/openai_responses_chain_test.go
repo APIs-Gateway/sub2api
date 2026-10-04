@@ -202,6 +202,10 @@ type chainRespOptions struct {
 	forced    []config.OpenAIForcedAccountRoute
 	// audit 非 nil 时启用提示词审计，值是审计范围里的分组 ID（命中则拦截）。
 	audit []int64
+	// stableStore / stableKey 用于旧「稳定优先」与回退链的共存测试（只覆盖 chat/completions）：
+	// stableKey 为 true 时 Key 开着稳定优先，stableStore 是（会记录调用的）稳定优先状态存储。
+	stableStore service.StablePriorityStateStore
+	stableKey   bool
 }
 
 // chainRespBase 是默认场景：主分组 1（倍率 1）有账号 11，兜底分组 2（倍率 2）有账号 21，链为 [1, 2]，开关打开。
@@ -297,7 +301,7 @@ func newChainRespHarness(t *testing.T, o chainRespOptions) *chainRespHarness {
 		billingCache,
 		hs.upstream,
 		&service.DeferredService{},
-		nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, o.stableStore, nil,
 	)
 
 	h := NewOpenAIGatewayHandler(gateway, concurrency, billingCache, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)
@@ -337,6 +341,8 @@ func newChainRespHarness(t *testing.T, o chainRespOptions) *chainRespHarness {
 		Group:          o.primary,
 		HasGroupRoutes: o.hasRoutes,
 		User:           &service.User{ID: chainRespUserID, Status: service.StatusActive, Balance: 100},
+
+		StablePriorityEnabled: o.stableKey,
 	}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -350,6 +356,7 @@ func newChainRespHarness(t *testing.T, o chainRespOptions) *chainRespHarness {
 		}
 	})
 	router.POST("/openai/v1/responses", h.Responses)
+	router.POST("/openai/v1/chat/completions", h.ChatCompletions)
 	hs.router = router
 	return hs
 }
