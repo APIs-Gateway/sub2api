@@ -447,6 +447,9 @@
     channelStatus: '渠道状态',
     riskControl: '风控中心',
     promptAudit: '提示词审计',
+    topUp: '充值',
+    userId: '用户 ID',
+    userIdCopied: '已复制用户 ID',
   },
 
   // Auth

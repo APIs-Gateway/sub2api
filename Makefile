@@ -29,7 +29,11 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/admin/__tests__/SettingsView.spec.ts \
 	src/views/admin/orders/__tests__/AdminOrdersView.spec.ts \
 	src/views/admin/ops/components/__tests__/OpsSettingsDialog.loading.spec.ts \
-	src/views/admin/ops/components/__tests__/OpsAlertEventsCard.pagination.spec.ts
+	src/views/admin/ops/components/__tests__/OpsAlertEventsCard.pagination.spec.ts \
+	src/components/layout/__tests__/AppSidebar.userNav.spec.ts \
+	src/components/layout/__tests__/AppHeader.userMenu.spec.ts \
+	src/components/layout/__tests__/AppHeader.docsLink.spec.ts \
+	src/components/layout/__tests__/userNav.spec.ts
 
 # 一键编译前后端
 build: build-backend build-frontend

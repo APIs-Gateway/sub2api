@@ -12,6 +12,8 @@
       <!-- Header -->
       <AppHeader />
 
+      <!-- Site-wide notice strips (e.g. low balance) mount here: under the header, above the page -->
+
       <!-- Main Content -->
       <main class="p-4 md:p-6 lg:p-8">
         <slot />
