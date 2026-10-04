@@ -65,6 +65,9 @@ type PricingDerivationService struct {
 	facts    OfficialPriceFactSource
 	timeout  time.Duration
 
+	// invalidator 在派生结果落库之后失效分组快照缓存（见 SetSnapshotInvalidator）；nil 表示没有读取方。
+	invalidator MatrixSnapshotInvalidator
+
 	// mu 串行化同一进程里的刷新，避免两次渠道保存的派生结果以相反的顺序落库。
 	mu     sync.Mutex
 	runs   atomic.Int64
@@ -83,6 +86,13 @@ func NewPricingDerivationService(repo PricingMatrixRepository, channels ChannelR
 		facts:    facts,
 		timeout:  DefaultPricingDeriveTimeout,
 	}
+}
+
+// SetSnapshotInvalidator 设置派生写入落库之后要失效的分组快照缓存（matrixPolicy，由后续 PR 接线）。
+// 渠道保存时 ChannelService 发出的缓存通知早于这次派生写入，单靠它会让快照缓存住「写入前」的数据，
+// 所以写入之后要由这里再失效一次。必须在开始处理请求之前设置；默认没有，什么也不做。
+func (s *PricingDerivationService) SetSnapshotInvalidator(inv MatrixSnapshotInvalidator) {
+	s.invalidator = inv
 }
 
 // Stats 返回钩子的进程内计数。
@@ -160,6 +170,17 @@ func (s *PricingDerivationService) RefreshChannel(ctx context.Context, channelID
 	})
 	if err != nil {
 		return nil, fmt.Errorf("apply derive plans: %w", err)
+	}
+	if s.invalidator != nil {
+		var changed []int64
+		for _, p := range plans {
+			if !p.Skipped && !p.Empty() {
+				changed = append(changed, p.GroupID)
+			}
+		}
+		if len(changed) > 0 {
+			s.invalidator.InvalidateGroups(changed...)
+		}
 	}
 
 	for i, p := range plans {

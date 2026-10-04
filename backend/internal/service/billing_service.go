@@ -231,6 +231,10 @@ type CostBreakdown struct {
 	TotalCost         float64
 	ActualCost        float64 // 应用倍率后的实际费用
 	BillingMode       string  // 计费模式（"token"/"per_request"/"image"），由 CalculateCostUnified 填充
+
+	// extraMultiplier 是成本函数里已经乘进 ActualCost 的分组额外倍率（W6 PR4-1，见 group_policy_extra.go）。
+	// 只在额外倍率不为 1 时设置；RecordUsage 用它把 usage_logs.rate_multiplier 记成「原倍率 x 额外倍率」。
+	extraMultiplier float64
 }
 
 // ErrModelPricingUnavailable indicates that none of the configured pricing

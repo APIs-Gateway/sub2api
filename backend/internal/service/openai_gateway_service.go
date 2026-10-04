@@ -9270,10 +9270,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.TotalCost = cost.TotalCost
 		usageLog.ActualCost = cost.ActualCost
 	}
+	// 额外倍率已乘进 cost.ActualCost；用量行的倍率同步记成乘过之后的值（extra 为 1 时原样）。
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
-		usageLog.RateMultiplier = imageMultiplier
+		usageLog.RateMultiplier = rateWithExtra(imageMultiplier, cost)
 	} else {
-		usageLog.RateMultiplier = multiplier
+		usageLog.RateMultiplier = rateWithExtra(multiplier, cost)
 	}
 	usageLog.AccountRateMultiplier = &accountRateMultiplier
 	usageLog.BillingType = billingType
@@ -9466,9 +9467,12 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 		if candidate == "" {
 			continue
 		}
-		cost, err := s.calculateOpenAIRecordUsageTokenCost(ctx, apiKey, candidate, multiplier, tokens, serviceTier, pricingAt)
+		// 额外倍率按「实际出价的候选」取：候选回退时不能拿 A 模型的倍率去乘 B 模型的价（W6 R2-BK-2）。
+		// extra 为 1 时 multiplier*extra 与 multiplier 逐位相同。
+		extra := groupExtraMultiplier(ctx, s.groupPolicy(), apiKey, candidate, pricingAt)
+		cost, err := s.calculateOpenAIRecordUsageTokenCost(ctx, apiKey, candidate, multiplier*extra, tokens, serviceTier, pricingAt)
 		if err == nil {
-			return cost, nil
+			return withExtraMultiplier(cost, extra), nil
 		}
 		lastErr = err
 	}
@@ -9545,6 +9549,9 @@ func (s *OpenAIGatewayService) calculateOpenAIImageCost(
 	result *OpenAIForwardResult,
 	multiplier float64,
 ) *CostBreakdown {
+	// 额外倍率按这里收到的模型取（BK-2 余项）：带额外倍率的图片请求走的是首个候选，不是图片价选出的模型。
+	extra := groupExtraMultiplier(ctx, s.groupPolicy(), apiKey, billingModel, deepseekNowFunc())
+	multiplier *= extra
 	sizeTier := NormalizeImageBillingTierOrDefault(result.ImageSize)
 	if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved != nil &&
 		(resolved.Mode == BillingModePerRequest || resolved.Mode == BillingModeImage) {
@@ -9560,7 +9567,7 @@ func (s *OpenAIGatewayService) calculateOpenAIImageCost(
 			Resolved:       resolved,
 		})
 		if err == nil {
-			return cost
+			return withExtraMultiplier(cost, extra)
 		}
 		logger.LegacyPrintf("service.openai_gateway", "Calculate image channel cost failed: %v", err)
 		noteUnpricedBilling(ctx, apiKey, result.Model, UnpricedBillingReasonImageCalcError, err,
@@ -9575,7 +9582,7 @@ func (s *OpenAIGatewayService) calculateOpenAIImageCost(
 			Price4K: apiKey.Group.ImagePrice4K,
 		}
 	}
-	return s.billingService.CalculateImageCost(billingModel, sizeTier, result.ImageCount, groupConfig, multiplier)
+	return withExtraMultiplier(s.billingService.CalculateImageCost(billingModel, sizeTier, result.ImageCount, groupConfig, multiplier), extra)
 }
 
 func (s *OpenAIGatewayService) resolveOpenAIChannelPricing(ctx context.Context, billingModel string, apiKey *APIKey) *ResolvedPricing {
