@@ -278,29 +278,144 @@ func TestOpenAICost_ImageCostUsesTheExtraOfThePricedImageModelNotTheFirstCandida
 // legacy 不受影响
 // ---------------------------------------------------------------------------
 
-func TestCost_LegacyPolicyLeavesCostsUnchanged(t *testing.T) {
+// 证明「legacy 分组计费逐字段不变」：同一份渠道配置（夹具里 gpGroupMain、gpGroupAnthropic 的渠道对下面这些模型
+// 有自己的价，比较的是渠道价，不是官方价），两条取策略的路径对照：
+//   - 生产默认路径：服务有 channelService、不注入 override，groupPolicy() 现取 legacyPolicy；
+//   - 对照路径：同一个 channelService，显式注入 legacyPolicy。
+// 三条成本入口（OpenAI 文本、OpenAI 图片、Anthropic）各覆盖一次；每条既比成本函数的整个返回值，
+// 也比 RecordUsage 写出的用量行。
+
+func mcLegacyOpenAISvc(cs *ChannelService, explicit bool, logStub *openAIRecordUsageLogRepoStub) *OpenAIGatewayService {
+	svc := newOpenAIRecordUsageServiceForTest(logStub, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, &openAIUserGroupRateRepoStub{})
+	svc.channelService = cs
+	svc.policyOverride = nil
+	svc.resolver = &ModelPricingResolver{channelService: cs, billingService: svc.billingService}
+	if explicit {
+		legacy := newLegacyGroupPolicy(cs)
+		svc.policyOverride = legacy
+		svc.resolver.policyOverride = legacy
+	}
+	return svc
+}
+
+func mcLegacyGatewaySvc(cs *ChannelService, explicit bool, logStub *openAIRecordUsageLogRepoStub) *GatewayService {
+	svc := newGatewayRecordUsageServiceForTest(logStub, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.channelService = cs
+	svc.policyOverride = nil
+	svc.resolver = &ModelPricingResolver{channelService: cs, billingService: svc.billingService}
+	if explicit {
+		legacy := newLegacyGroupPolicy(cs)
+		svc.policyOverride = legacy
+		svc.resolver.policyOverride = legacy
+	}
+	return svc
+}
+
+type mcLegacyCase struct {
+	name string
+	// wantRate 是 main 上写进 usage_logs.rate_multiplier 的值：main 的写法是
+	// usageLog.RateMultiplier = multiplier（文本）/ imageMultiplier（图片），即分组倍率本身，没有任何乘法。
+	// 这里把输入的倍率写死，额外倍率为 1 时写回的值必须与它逐位相同（用 1.3、2.7 这类不能精确表示的小数，
+	// 任何多余的乘除都会让末位漂移）。
+	wantRate float64
+	run      func(t *testing.T, cs *ChannelService, explicit bool) (*UsageLog, *CostBreakdown)
+}
+
+func mcLegacyCases() []mcLegacyCase {
 	ctx := context.Background()
-	cs := newGroupPolicyFixture()
-	legacy := newLegacyGroupPolicy(cs)
+	return []mcLegacyCase{
+		{
+			name:     "openai token",
+			wantRate: 1.3,
+			run: func(t *testing.T, cs *ChannelService, explicit bool) (*UsageLog, *CostBreakdown) {
+				key := mcKey(Group{ID: gpGroupMain, Platform: PlatformOpenAI, RateMultiplier: 1.3})
+				newResult := func() *OpenAIForwardResult {
+					return &OpenAIForwardResult{Model: "gpt-5.6-luna", Duration: time.Second, Usage: OpenAIUsage{InputTokens: 1000, OutputTokens: 100}}
+				}
+				logStub := &openAIRecordUsageLogRepoStub{inserted: true}
+				svc := mcLegacyOpenAISvc(cs, explicit, logStub)
+				cost, err := svc.calculateOpenAIRecordUsageCost(ctx, newResult(), key, []string{"gpt-5.6-luna"}, 1.3, 1.3,
+					UsageTokens{InputTokens: 1000, OutputTokens: 100}, "", time.Time{})
+				require.NoError(t, err)
+				require.NoError(t, svc.RecordUsage(ctx, &OpenAIRecordUsageInput{Result: newResult(), APIKey: key, User: &User{ID: 1}, Account: &Account{ID: 3}}))
+				require.NotNil(t, logStub.lastLog)
+				return logStub.lastLog, cost
+			},
+		},
+		{
+			name:     "openai image",
+			wantRate: 2.7,
+			run: func(t *testing.T, cs *ChannelService, explicit bool) (*UsageLog, *CostBreakdown) {
+				key := mcKey(Group{ID: gpGroupMain, Platform: PlatformOpenAI, RateMultiplier: 1.3, ImageRateIndependent: true, ImageRateMultiplier: 2.7})
+				newResult := func() *OpenAIForwardResult {
+					return &OpenAIForwardResult{Model: "gpt-image-2", Duration: time.Second, ImageCount: 2, ImageSize: "1K"}
+				}
+				logStub := &openAIRecordUsageLogRepoStub{inserted: true}
+				svc := mcLegacyOpenAISvc(cs, explicit, logStub)
+				cost, err := svc.calculateOpenAIRecordUsageCost(ctx, newResult(), key, []string{"gpt-image-2"}, 1.3, 2.7, UsageTokens{}, "", time.Time{})
+				require.NoError(t, err)
+				require.NoError(t, svc.RecordUsage(ctx, &OpenAIRecordUsageInput{Result: newResult(), APIKey: key, User: &User{ID: 1}, Account: &Account{ID: 3}}))
+				require.NotNil(t, logStub.lastLog)
+				return logStub.lastLog, cost
+			},
+		},
+		{
+			name:     "anthropic token",
+			wantRate: 1.3,
+			run: func(t *testing.T, cs *ChannelService, explicit bool) (*UsageLog, *CostBreakdown) {
+				key := mcKey(Group{ID: gpGroupAnthropic, Platform: PlatformAnthropic, RateMultiplier: 1.3})
+				newResult := func() *ForwardResult {
+					return &ForwardResult{RequestID: "legacy_ab", Model: "claude-sonnet-4-5", Duration: time.Second, Usage: ClaudeUsage{InputTokens: 1000, OutputTokens: 100}}
+				}
+				logStub := &openAIRecordUsageLogRepoStub{inserted: true}
+				svc := mcLegacyGatewaySvc(cs, explicit, logStub)
+				cost := svc.calculateRecordUsageCost(ctx, newResult(), key, "claude-sonnet-4-5", 1.3, 1.3, &recordUsageOpts{}, time.Time{})
+				require.NoError(t, svc.RecordUsage(ctx, &RecordUsageInput{Result: newResult(), APIKey: key, User: &User{ID: 601}, Account: &Account{ID: 701}}))
+				require.NotNil(t, logStub.lastLog)
+				return logStub.lastLog, cost
+			},
+		},
+	}
+}
+
+func TestCost_LegacyDefaultPathAndExplicitLegacyPolicyAreFieldForFieldIdentical(t *testing.T) {
+	for _, tc := range mcLegacyCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := newGroupPolicyFixture() // 两条路径共用同一个渠道服务
+			defLog, defCost := tc.run(t, cs, false)
+			expLog, expCost := tc.run(t, cs, true)
+
+			// 比的是真实的渠道价，不是两个零。
+			require.Greater(t, defCost.TotalCost, 0.0)
+			require.Greater(t, defLog.TotalCost, 0.0)
+
+			// 成本函数：整个返回值逐字段相同，包括未导出的额外倍率标记；legacy 没有额外倍率，标记恒为零。
+			require.Equal(t, defCost, expCost)
+			require.Zero(t, defCost.extraMultiplier)
+			require.Zero(t, expCost.extraMultiplier)
+
+			// 用量行：总价、实付、rate_multiplier 逐位相同。
+			require.Equal(t, defLog.TotalCost, expLog.TotalCost)
+			require.Equal(t, defLog.ActualCost, expLog.ActualCost)
+			require.Equal(t, defLog.RateMultiplier, expLog.RateMultiplier)
+
+			// extra = 1 时写回的 rate_multiplier 与 main 上的写法逐位相同（期望值写死，见 mcLegacyCase.wantRate）。
+			require.Equal(t, tc.wantRate, defLog.RateMultiplier)
+			require.Equal(t, tc.wantRate, expLog.RateMultiplier)
+			require.InDelta(t, defLog.TotalCost*defLog.RateMultiplier, defLog.ActualCost, 1e-12)
+		})
+	}
+}
+
+// 没有 extra 单元格的 v2 分组同样不乘：成本与没有任何策略的服务逐字段相同。
+func TestCost_V2GroupWithoutExtraCellsMatchesNoPolicy(t *testing.T) {
 	key := mcKey(Group{ID: gpGroupMain, Platform: PlatformOpenAI})
 	result := &OpenAIForwardResult{}
-
-	require.Equal(t, 1.0, groupExtraMultiplier(ctx, legacy, key, "gpt-5.6-luna", time.Time{}))
-
-	// 没有任何策略的服务：倍率只有原来的 1.5，没有额外倍率的标记。
 	withoutPolicy := mcOpenAICost(t, nil, key, []string{"gpt-5.6-luna"}, result, 1.5, 1.5)
 	require.Greater(t, withoutPolicy.TotalCost, 0.0)
 	require.Zero(t, withoutPolicy.extraMultiplier)
 	require.InDelta(t, withoutPolicy.TotalCost*1.5, withoutPolicy.ActualCost, 1e-12)
 
-	// 注入 legacyPolicy：夹具里这个分组的渠道对该模型有自己的价，所以总价不同于上面的官方价，不拿来相比；
-	// 但倍率同样只有原来的 1.5，也没有额外倍率的标记。
-	withLegacy := mcOpenAICost(t, legacy, key, []string{"gpt-5.6-luna"}, result, 1.5, 1.5)
-	require.Greater(t, withLegacy.TotalCost, 0.0)
-	require.Zero(t, withLegacy.extraMultiplier)
-	require.InDelta(t, withLegacy.TotalCost*1.5, withLegacy.ActualCost, 1e-12)
-
-	// 没有 extra 单元格的 v2 分组同样不乘。
 	empty := mcOpenAICost(t, newMPPolicyFor(GroupStateSnapshot{}), key, []string{"gpt-5.6-luna"}, result, 1.5, 1.5)
 	require.Equal(t, withoutPolicy, empty)
 }
@@ -372,13 +487,6 @@ func TestOpenAIRecordUsage_RateMultiplierIncludesExtra(t *testing.T) {
 	require.InDelta(t, base.ActualCost*2, got.ActualCost, 1e-12)
 	require.InDelta(t, base.RateMultiplier*2, got.RateMultiplier, 1e-12)
 	require.InDelta(t, got.TotalCost*got.RateMultiplier, got.ActualCost, 1e-12, "actual_cost = total_cost x rate_multiplier still holds")
-
-	// legacy 策略：用量行与没有策略时完全一致。
-	legacy := mcRunOpenAIRecordUsage(t, newLegacyGroupPolicy(newGroupPolicyFixture()))
-	none := mcRunOpenAIRecordUsage(t, nil)
-	require.Equal(t, none.TotalCost, legacy.TotalCost)
-	require.Equal(t, none.ActualCost, legacy.ActualCost)
-	require.Equal(t, none.RateMultiplier, legacy.RateMultiplier)
 }
 
 func mcRunGatewayRecordUsage(t *testing.T, policy GroupPolicy) *UsageLog {
@@ -411,9 +519,4 @@ func TestGatewayRecordUsage_RateMultiplierIncludesExtra(t *testing.T) {
 	require.InDelta(t, base.ActualCost*2, got.ActualCost, 1e-12)
 	require.InDelta(t, base.RateMultiplier*2, got.RateMultiplier, 1e-12)
 	require.InDelta(t, got.TotalCost*got.RateMultiplier, got.ActualCost, 1e-12)
-
-	legacy := mcRunGatewayRecordUsage(t, newLegacyGroupPolicy(newGroupPolicyFixture()))
-	none := mcRunGatewayRecordUsage(t, nil)
-	require.Equal(t, none.ActualCost, legacy.ActualCost)
-	require.Equal(t, none.RateMultiplier, legacy.RateMultiplier)
 }
