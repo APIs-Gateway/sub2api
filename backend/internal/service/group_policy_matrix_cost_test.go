@@ -287,12 +287,18 @@ func TestCost_LegacyPolicyLeavesCostsUnchanged(t *testing.T) {
 
 	require.Equal(t, 1.0, groupExtraMultiplier(ctx, legacy, key, "gpt-5.6-luna", time.Time{}))
 
-	// 没有任何策略的服务与注入 legacyPolicy 的服务，成本逐字段相同（包括没有额外倍率的标记）。
+	// 没有任何策略的服务：倍率只有原来的 1.5，没有额外倍率的标记。
 	withoutPolicy := mcOpenAICost(t, nil, key, []string{"gpt-5.6-luna"}, result, 1.5, 1.5)
+	require.Greater(t, withoutPolicy.TotalCost, 0.0)
+	require.Zero(t, withoutPolicy.extraMultiplier)
+	require.InDelta(t, withoutPolicy.TotalCost*1.5, withoutPolicy.ActualCost, 1e-12)
+
+	// 注入 legacyPolicy：夹具里这个分组的渠道对该模型有自己的价，所以总价不同于上面的官方价，不拿来相比；
+	// 但倍率同样只有原来的 1.5，也没有额外倍率的标记。
 	withLegacy := mcOpenAICost(t, legacy, key, []string{"gpt-5.6-luna"}, result, 1.5, 1.5)
-	require.Equal(t, withoutPolicy.TotalCost > 0, true)
-	require.Equal(t, withoutPolicy.TotalCost, withLegacy.TotalCost)
+	require.Greater(t, withLegacy.TotalCost, 0.0)
 	require.Zero(t, withLegacy.extraMultiplier)
+	require.InDelta(t, withLegacy.TotalCost*1.5, withLegacy.ActualCost, 1e-12)
 
 	// 没有 extra 单元格的 v2 分组同样不乘。
 	empty := mcOpenAICost(t, newMPPolicyFor(GroupStateSnapshot{}), key, []string{"gpt-5.6-luna"}, result, 1.5, 1.5)

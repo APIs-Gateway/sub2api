@@ -455,7 +455,9 @@ func (p *matrixPolicy) snapshot(ctx context.Context, groupID int64) *matrixSnaps
 	v, _, _ := p.sf.Do(fmt.Sprintf("%d:%d", groupID, gen), func() (any, error) {
 		return p.load(ctx, groupID, gen), nil
 	})
-	return v.(*matrixSnapshot)
+	// load 永远返回非 nil 的 *matrixSnapshot，所以这里的断言不会失败。
+	snap, _ := v.(*matrixSnapshot)
+	return snap
 }
 
 // SnapshotDegraded 报告分组当前用的是不是加载失败时的默认状态兜底（语义第 2 条）。
