@@ -66,6 +66,14 @@ func main() {
 		return
 	}
 
+	// 一次性运维命令：model-catalog seed（部署后手动执行，不启动服务）
+	if args := flag.Args(); len(args) > 0 && args[0] == "model-catalog" {
+		if err := runModelCatalogCommand(args[1:], os.Stdout); err != nil {
+			log.Fatalf("model-catalog: %v", err)
+		}
+		return
+	}
+
 	// CLI setup mode
 	if *setupMode {
 		if err := setup.RunCLI(); err != nil {

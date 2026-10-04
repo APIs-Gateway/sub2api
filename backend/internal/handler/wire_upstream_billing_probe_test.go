@@ -18,6 +18,7 @@ func TestProvideAdminHandlersAttachesUpstreamBillingProbe(t *testing.T) {
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, probe,
 		nil, // pricingQuoteHandler
+		nil, // pricingMatrixHandler
 		nil, // adminTokenHandler
 		nil, // auditLogHandler
 		nil, // apiKeyFallbackHandler
