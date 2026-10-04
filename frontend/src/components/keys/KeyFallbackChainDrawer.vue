@@ -19,14 +19,14 @@
               <h2 :id="titleId" class="text-base font-semibold text-gray-900 dark:text-white">
                 {{ t('keyFallback.drawer.title') }}
               </h2>
-              <p class="mt-1 text-sm leading-relaxed text-gray-500 dark:text-gray-400" data-test="intro">
+              <p class="mt-1 text-sm leading-relaxed text-gray-600 dark:text-gray-400" data-test="intro">
                 {{ t('keyFallback.drawer.intro') }}
               </p>
             </div>
             <button
               ref="closeBtn"
               type="button"
-              class="-mr-2 rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 dark:hover:bg-dark-700 dark:hover:text-dark-300"
+              class="-mr-2 rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-gray-100"
               :aria-label="t('keyFallback.drawer.close')"
               data-test="drawer-close"
               @click="emit('close')"
@@ -57,7 +57,7 @@
               <p class="text-sm font-medium text-gray-900 dark:text-white">
                 {{ t('keyFallback.drawer.emptyTitle') }}
               </p>
-              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">
                 {{ t('keyFallback.drawer.emptyHint') }}
               </p>
             </div>
@@ -84,14 +84,14 @@
                     >
                       <span class="min-w-0">
                         <span class="block truncate text-sm font-medium text-gray-900 dark:text-white">{{ k.name }}</span>
-                        <span class="mt-0.5 block truncate text-xs text-gray-500 dark:text-gray-400" data-test="key-summary">
+                        <span class="mt-0.5 block truncate text-xs text-gray-600 dark:text-gray-400" data-test="key-summary">
                           {{ summary(k) }}
                         </span>
                       </span>
                       <Icon
                         :name="expandedKeyId === k.key_id ? 'chevronUp' : 'chevronDown'"
                         size="sm"
-                        class="shrink-0 text-gray-400"
+                        class="shrink-0 text-gray-500 dark:text-gray-400"
                       />
                     </button>
                     <div v-if="expandedKeyId === k.key_id" class="border-t border-gray-100 bg-gray-50/60 px-3 py-4 dark:border-dark-700 dark:bg-dark-900/40">

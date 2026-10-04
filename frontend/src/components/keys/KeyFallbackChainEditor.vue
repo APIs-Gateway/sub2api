@@ -21,11 +21,11 @@
 
     <template v-else>
       <div class="mb-3 flex items-start justify-between gap-3">
-        <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400" data-test="reference-model">
+        <p class="text-xs leading-relaxed text-gray-600 dark:text-gray-400" data-test="reference-model">
           {{ t('keyFallback.editor.referenceModel', { model: chain.reference_model }) }}
         </p>
         <span
-          class="shrink-0 text-xs text-gray-400 dark:text-gray-500"
+          class="shrink-0 text-xs text-gray-600 dark:text-gray-400"
           role="status"
           data-test="save-status"
         >
@@ -58,7 +58,7 @@
                   :user-rate-multiplier="primary.user_rate_multiplier"
                 />
                 <span
-                  class="inline-flex items-center gap-1 rounded bg-gray-900 px-1.5 py-0.5 text-[11px] font-medium text-white dark:bg-gray-100 dark:text-gray-900"
+                  class="inline-flex items-center gap-1 rounded bg-gray-900 px-1.5 py-0.5 text-[11px] font-medium text-white dark:bg-dark-600 dark:text-gray-100"
                   :title="t('keyFallback.editor.primaryHint')"
                 >
                   <Icon name="lock" size="xs" />
@@ -121,7 +121,7 @@
                   </button>
                   <button
                     type="button"
-                    class="chain-icon-btn hover:!text-red-600"
+                    class="chain-icon-btn hover:!text-red-600 dark:hover:!text-red-400"
                     :disabled="saving"
                     :aria-label="t('keyFallback.editor.remove', { name: item.name })"
                     data-test="remove"
@@ -139,7 +139,7 @@
               >
                 <button
                   type="button"
-                  class="text-xs font-medium text-amber-800 underline underline-offset-2 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 dark:text-amber-300"
+                  class="text-xs font-medium text-amber-800 underline underline-offset-2 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 dark:text-amber-300 dark:hover:text-red-400"
                   :disabled="saving"
                   :aria-label="t('keyFallback.editor.remove', { name: item.name })"
                   data-test="remove-unusable"
@@ -178,7 +178,7 @@
             <p
               v-if="addDisabledReason"
               :id="addHintId"
-              class="mt-1.5 text-xs text-gray-500 dark:text-gray-400"
+              class="mt-1.5 text-xs text-gray-600 dark:text-gray-400"
               data-test="add-hint"
             >
               {{ addDisabledReason }}
@@ -192,7 +192,7 @@
               :aria-label="t('keyFallback.editor.pickTitle')"
               data-test="picker"
             >
-              <p class="border-b border-gray-100 px-3 py-2 text-xs text-gray-500 dark:border-dark-700 dark:text-gray-400">
+              <p class="border-b border-gray-100 px-3 py-2 text-xs text-gray-600 dark:border-dark-700 dark:text-gray-400">
                 {{ t('keyFallback.editor.pickTitle') }}
               </p>
               <ul class="max-h-64 divide-y divide-gray-100 overflow-y-auto dark:divide-dark-700">
@@ -221,7 +221,7 @@
         </div>
       </div>
 
-      <p v-if="localFallbacks.length > 1" class="mt-3 text-xs text-gray-400 dark:text-gray-500">
+      <p v-if="localFallbacks.length > 1" class="mt-3 text-xs text-gray-600 dark:text-gray-400">
         {{ t('keyFallback.editor.orderHint') }}
       </p>
     </template>
@@ -439,7 +439,7 @@ const StatusMark = defineComponent({
         },
         [
           h('span', {
-            class: ['h-1.5 w-1.5 rounded-full', ok ? 'bg-emerald-500' : 'bg-amber-500'],
+            class: ['h-1.5 w-1.5 rounded-full', ok ? 'bg-emerald-600 dark:bg-emerald-400' : 'bg-amber-600 dark:bg-amber-400'],
             'aria-hidden': 'true'
           }),
           t(`keyFallback.editor.status.${p.item.status}`)
@@ -462,7 +462,7 @@ const PriceLine = defineComponent({
       const price = p.item.reference_price
       // 选择列表里整行是一个 button，里面只能放短语内容，所以用 span
       const tag = p.bare ? 'span' : 'p'
-      const cls = ['text-xs tabular-nums text-gray-500 dark:text-gray-400', p.bare ? 'block' : 'mt-1.5']
+      const cls = ['text-xs tabular-nums text-gray-600 dark:text-gray-400', p.bare ? 'block' : 'mt-1.5']
       // 人民币用服务端给的余额价口径（cny），不在前端自己乘倍率或汇率；
       // 全站切到美元（含 free 站）或没有 cny 时，显示同一价格的美元口径。
       // 每百万 Token 价格是报价，两条路径都按单价规则显示（不被四舍五入吞掉第三、四位小数），
@@ -518,6 +518,11 @@ const ReasonLine = defineComponent({
 </script>
 
 <style scoped>
+/*
+ * 深色规则一律写成 `.dark .x`。不要写 `:global(.dark) .x`：Vue 3 会把它编译成孤零零一条 `.dark`，
+ * 规则落到 <html> 上，既改不了卡片和节点，还会把整页的底色和文字色一起改掉。
+ */
+
 /* 竖线贯穿整条链；节点画在竖线上，节点样式表达这一跳是什么 */
 .chain-rail::before {
   content: '';
@@ -528,8 +533,8 @@ const ReasonLine = defineComponent({
   width: 1px;
   background: theme('colors.gray.300');
 }
-:global(.dark) .chain-rail::before {
-  background: theme('colors.dark.600');
+.dark .chain-rail::before {
+  background: theme('colors.dark.500');
 }
 .chain-row {
   position: relative;
@@ -540,6 +545,11 @@ const ReasonLine = defineComponent({
 .chain-list > .chain-row:last-child {
   padding-bottom: 0.625rem;
 }
+
+/*
+ * 节点：同样大小、同样粗细的圆环，填充色与卡片一致，只用颜色和填充区分状态。
+ *   主分组 = 实心；可用的兜底 = 绿环；不可用的兜底 = 琥珀环；待添加 = 灰环
+ */
 .chain-node {
   position: relative;
   z-index: 1;
@@ -549,31 +559,36 @@ const ReasonLine = defineComponent({
   width: 15px;
   border-radius: 9999px;
   background: theme('colors.white');
-  border: 1.5px solid theme('colors.gray.400');
+  border: 2px solid theme('colors.gray.500');
 }
-:global(.dark) .chain-node {
-  background: theme('colors.dark.900');
+.dark .chain-node {
+  background: theme('colors.dark.800');
   border-color: theme('colors.dark.400');
 }
 .chain-node--primary {
   background: theme('colors.gray.900');
   border-color: theme('colors.gray.900');
 }
-:global(.dark) .chain-node--primary {
+.dark .chain-node--primary {
   background: theme('colors.gray.100');
   border-color: theme('colors.gray.100');
 }
 .chain-node--ok {
-  border-color: theme('colors.emerald.500');
+  border-color: theme('colors.emerald.600');
+}
+.dark .chain-node--ok {
+  border-color: theme('colors.emerald.400');
 }
 .chain-node--off {
-  border-style: dashed;
-  border-color: theme('colors.amber.500');
+  border-color: theme('colors.amber.600');
+}
+.dark .chain-node--off {
+  border-color: theme('colors.amber.400');
 }
 .chain-node--add {
-  border-style: dashed;
   margin-top: 0.625rem;
 }
+
 .chain-card {
   min-width: 0;
   flex: 1;
@@ -582,7 +597,7 @@ const ReasonLine = defineComponent({
   background: theme('colors.white');
   padding: 0.625rem 0.75rem;
 }
-:global(.dark) .chain-card {
+.dark .chain-card {
   border-color: theme('colors.dark.600');
   background: theme('colors.dark.800');
 }
@@ -590,7 +605,8 @@ const ReasonLine = defineComponent({
   border-style: dashed;
   background: theme('colors.gray.50');
 }
-:global(.dark) .chain-card--off {
+.dark .chain-card--off {
+  border-color: theme('colors.dark.500');
   background: theme('colors.dark.900');
 }
 .chain-icon-btn {
@@ -600,16 +616,19 @@ const ReasonLine = defineComponent({
   align-items: center;
   justify-content: center;
   border-radius: 0.375rem;
-  color: theme('colors.gray.400');
+  color: theme('colors.gray.500');
   transition: color 150ms, background-color 150ms;
+}
+.dark .chain-icon-btn {
+  color: theme('colors.dark.300');
 }
 .chain-icon-btn:hover:not(:disabled) {
   background: theme('colors.gray.100');
   color: theme('colors.gray.700');
 }
-:global(.dark) .chain-icon-btn:hover:not(:disabled) {
+.dark .chain-icon-btn:hover:not(:disabled) {
   background: theme('colors.dark.700');
-  color: theme('colors.dark.200');
+  color: theme('colors.dark.100');
 }
 .chain-icon-btn:focus-visible,
 .add-btn:focus-visible {
@@ -640,16 +659,17 @@ const ReasonLine = defineComponent({
   color: theme('colors.gray.400');
   background: transparent;
 }
-:global(.dark) .add-btn {
+.dark .add-btn {
   border-color: theme('colors.dark.500');
   color: theme('colors.dark.200');
 }
-:global(.dark) .add-btn:hover:not(:disabled) {
+.dark .add-btn:hover:not(:disabled) {
   border-color: theme('colors.dark.300');
   background: theme('colors.dark.800');
 }
-:global(.dark) .add-btn:disabled {
+.dark .add-btn:disabled {
   color: theme('colors.dark.500');
+  background: transparent;
 }
 @media (prefers-reduced-motion: reduce) {
   .chain-icon-btn,
