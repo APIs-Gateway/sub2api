@@ -616,7 +616,7 @@ const ReasonLine = defineComponent({
   align-items: center;
   justify-content: center;
   border-radius: 0.375rem;
-  color: theme('colors.gray.500');
+  color: theme('textColor.gray.500');
   transition: color 150ms, background-color 150ms;
 }
 .dark .chain-icon-btn {
