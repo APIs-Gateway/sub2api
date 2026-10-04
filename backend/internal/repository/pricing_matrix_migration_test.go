@@ -16,17 +16,16 @@ var w6Migrations = []string{
 	"202_w6_cost_accounting_rules.sql",
 }
 
-// sqlStatements 去掉注释行后的语句文本。
+// sqlWithoutComments 去掉注释行后的语句文本。
 func sqlWithoutComments(sqlText string) string {
-	var b strings.Builder
+	var kept []string
 	for _, line := range strings.Split(sqlText, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "--") {
 			continue
 		}
-		b.WriteString(line)
-		b.WriteString("\n")
+		kept = append(kept, line)
 	}
-	return b.String()
+	return strings.Join(kept, "\n")
 }
 
 // W6-M1..M3 只建新表：不改、不删任何现有对象，不写数据，每个文件都带 lock_timeout，
