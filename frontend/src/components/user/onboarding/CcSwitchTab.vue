@@ -59,14 +59,14 @@
 <script setup lang="ts">
 /**
  * 「CC Switch」页签：生成 ccswitch:// 导入链接，可以直接打开或复制。
- * 选中的客户端、自定义名称、选的模型用 v-model 放在外壳里（见 useCcSwitchState），
+ * 选中的客户端、自定义名称、选的模型合成一个表单对象，用 v-model:form 放在外壳里（见 useCcSwitchState），
  * 这样切到别的页签再回来时还在；链接本身由这里按当前状态生成。
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { EndpointOption } from '@/utils/apiEndpoints'
 import { CC_SWITCH_USAGE_SCRIPT, buildCcSwitchImportDeeplink } from '@/utils/ccswitchImport'
-import type { CcsClient } from './useCcSwitchState'
+import type { CcSwitchForm, CcsClient } from './useCcSwitchState'
 
 // 根元素要接住外壳传来的 tabpanel 属性（role / id / aria-labelledby），所以关掉自动继承、手动放在根上
 defineOptions({ inheritAttrs: false })
@@ -80,6 +80,8 @@ const props = defineProps<{
   siteName: string
   /** 密钥所在分组的可用模型；为空时不显示模型字段 */
   models: string[]
+  /** 模型列表还在加载 */
+  modelsLoading?: boolean
   /** 这个平台能导入成哪些客户端；多于一个时显示客户端选择 */
   clients: CcsClient[]
   /** 同一页上多个弹窗实例时，页签内 id 的前缀，避免 id 重复 */
@@ -93,12 +95,28 @@ const emit = defineEmits<{
   copy: [text: string, id: string]
 }>()
 
-/** 选中的客户端 */
-const client = defineModel<CcsClient>('client', { required: true })
+/** 表单：选中的客户端、自定义名称、选的模型。更新时换成新对象，交给外壳 */
+const form = defineModel<CcSwitchForm>('form', { required: true })
+const client = computed({
+  get: () => form.value.client,
+  set: (v: CcsClient) => {
+    form.value = { ...form.value, client: v }
+  }
+})
 /** 自定义名称，留空时用默认名称 */
-const customName = defineModel<string>('name', { required: true })
+const customName = computed({
+  get: () => form.value.name,
+  set: (v: string) => {
+    form.value = { ...form.value, name: v }
+  }
+})
 /** 选的模型，留空表示用默认 */
-const selectedModel = defineModel<string>('model', { required: true })
+const selectedModel = computed({
+  get: () => form.value.model,
+  set: (v: string) => {
+    form.value = { ...form.value, model: v }
+  }
+})
 
 const { t } = useI18n()
 

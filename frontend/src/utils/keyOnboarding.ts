@@ -663,7 +663,39 @@ export function buildInstallScript(client: OnboardingClient, os: ScriptOs, input
 // ---------------------------------------------------------------- 交给 AI
 
 export type AiClient = 'claude' | 'codex' | 'cursor' | 'chat' | 'code' | 'other'
+/** 「交给 AI」里的全部工具，顺序就是界面上的顺序；某个分组实际能选哪些见 aiClientsForPlatform。 */
 export const AI_CLIENTS: AiClient[] = ['claude', 'codex', 'cursor', 'chat', 'code', 'other']
+
+/**
+ * 各平台的分组在「交给 AI」里能选哪些工具，第一个就是这个分组默认选中的。
+ * 顺序同 AI_CLIENTS；openai 分组把 Codex 排在 Claude Code 前面（分组开了调度时两个都有，主力工具是 Codex）。
+ *
+ * - Claude Code：anthropic、grok、antigravity；openai 分组开了 /v1/messages 调度之后也行
+ *   （和一键安装的 clientsForPlatform 一致）
+ * - Codex：只有 openai
+ * - Cursor：openai、anthropic、grok；gemini 和 antigravity 分组不提供
+ * - 聊天客户端、写代码调用、其他：任何有分组的密钥都能用
+ *
+ * 没有分组（platform 为空）时一个都没有。
+ */
+export function aiClientsForPlatform(
+  platform: GroupPlatform | string | null | undefined,
+  opts: { allowMessagesDispatch?: boolean } = {}
+): AiClient[] {
+  if (!platform) return []
+  const isOpenai = platform === 'openai'
+  const isAnthropicLike = platform === 'anthropic' || platform === 'grok'
+  const usable: Record<AiClient, boolean> = {
+    claude: isAnthropicLike || platform === 'antigravity' || (isOpenai && !!opts.allowMessagesDispatch),
+    codex: isOpenai,
+    cursor: isOpenai || isAnthropicLike,
+    chat: true,
+    code: true,
+    other: true
+  }
+  const order: AiClient[] = isOpenai ? ['codex', 'claude', 'cursor', 'chat', 'code', 'other'] : AI_CLIENTS
+  return order.filter((c) => usable[c])
+}
 
 export type TranslateFn = (key: string, params?: Record<string, unknown>) => string
 
@@ -685,8 +717,11 @@ export interface AiPromptInput {
 export function buildAiPrompt(input: AiPromptInput): string {
   const { t, client } = input
   const platform = input.platform || 'anthropic'
-  const url = nativeEndpoint(platform, input.baseUrl)
-  const protocol = protocolFor(platform)
+  // Claude Code 只说 Anthropic 接口：地址是 API 根地址（antigravity 带 /antigravity），格式是 Anthropic，
+  // 和提示里要设置的 ANTHROPIC_BASE_URL 对得上。其他工具按分组平台的原生接口。
+  // 否则 openai 分组开了调度、选 Claude Code 时，会得到「地址 /v1、格式 OpenAI」却要设置 ANTHROPIC_BASE_URL 的矛盾说法。
+  const url = client === 'claude' ? endpointFor('claude', platform, input.baseUrl) : nativeEndpoint(platform, input.baseUrl)
+  const protocol = client === 'claude' ? 'Anthropic' : protocolFor(platform)
   const site = oneLine(input.siteName || '') || 'sub2api'
   const params = { client: input.clientLabel, site, url, protocol }
   const hint = t(`keyOnboarding.ai.hint.${client}`, params)
