@@ -58,10 +58,12 @@ func CheckHopGroupRPM(ctx context.Context, billing *service.BillingCacheService,
 
 // ReleaseHopGroupRPMIfNotServed 在一跳结束后调用，决定是否把这一跳的分组层计数退回一次：
 //   - Skipped（该跳没有执行）：退回；
-//   - FallbackWorthy 且不是最后一跳、没有把错误写给客户端、并且本跳没有真正打到上游（Attempts == 0，
+//   - FallbackWorthy 且不是最后一跳、没有把错误写给客户端、并且本跳没有真正打到上游（!UpstreamAttempted，
 //     即没号 / 繁忙 / 等待超时）：退回，避免繁忙的主分组被从未服务的尝试耗掉额度；
 //   - 其余一律保持计数，与无链时一致：成功（Done）、不可回退（Terminal）、最后一跳（它以写出最终错误结束，
-//     不是「回退」）、已经打过上游的失败（Attempts > 0，上游失败风暴仍受分组 RPM 约束）。
+//     不是「回退」）、已经打过上游的失败（UpstreamAttempted，上游失败风暴仍受分组 RPM 约束）。
+//
+// 「有没有真正打到上游」只读 HopResult.UpstreamAttempted，与 runner 的兜底重试判据同一个来源，不再从 Attempts 推断。
 //
 // 边界：非末跳回退后，runner 因预算用尽而把这一跳的错误作为最终错误写出，入口在调用本函数时无法知道，
 // 这种情况下计数已经退回，属于可接受的偏差。
@@ -70,7 +72,7 @@ func ReleaseHopGroupRPMIfNotServed(ctx context.Context, ticket *service.GroupRPM
 	case service.HopOutcomeSkipped:
 		ticket.Release(ctx)
 	case service.HopOutcomeFallbackWorthy:
-		if !info.IsLast && !result.ErrorWritten && result.Attempts == 0 {
+		if !info.IsLast && !result.ErrorWritten && !result.UpstreamAttempted {
 			ticket.Release(ctx)
 		}
 	}
