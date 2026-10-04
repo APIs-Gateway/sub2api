@@ -1633,10 +1633,10 @@
       title: 'Exchange for a plan',
       desc: 'Activate a plan, or renew/change your current plan when one is active.',
       plan: 'Plan',
-      planTitle: 'Daily USD {d}',
+      planTitle: 'Daily {d}',
       planTitleFiat: 'Daily {d}',
       dailyAmount: 'Daily amount',
-      dailyOption: 'USD {d}',
+      dailyOption: '{d}',
       validityDays: 'Validity',
       pointsPrice: 'Points price',
       actionLabels: {

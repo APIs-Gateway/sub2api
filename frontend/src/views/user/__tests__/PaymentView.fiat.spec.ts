@@ -79,17 +79,17 @@ function checkoutInfo(multiplier: number, feeRate = 0, plans: unknown[] = []) {
   }
 }
 
-async function mountTopUp(multiplier: number, feeRate = 0) {
+async function mountTopUp(multiplier: number, feeRate = 0, amount = 10) {
   getCheckoutInfo.mockResolvedValue(checkoutInfo(multiplier, feeRate))
   const wrapper = mount(PaymentView, {
     global: {
       stubs: {
         AppLayout: { template: '<div><slot /></div>' },
-        // 金额输入：点按钮等价于用户输入 10（人民币，和下单金额同一单位）。
+        // 金额输入：点按钮等价于用户输入 amount（人民币，和下单金额同一单位，默认 10）。
         AmountInput: {
           props: ['modelValue', 'amounts', 'min', 'max', 'currencyLabel', 'prefix'],
           emits: ['update:modelValue'],
-          template: '<button data-test="amount-10" @click="$emit(\'update:modelValue\', 10)" />',
+          template: `<button data-test="amount-pick" @click="$emit('update:modelValue', ${amount})" />`,
         },
         PaymentMethodSelector: true,
         CryptoNetworkSelector: true,
@@ -105,7 +105,7 @@ async function mountTopUp(multiplier: number, feeRate = 0) {
   await flushPromises()
   const topUpTab = wrapper.findAll('button').find((button) => button.text() === 'payment.tabTopUp')
   await topUpTab!.trigger('click')
-  await wrapper.get('[data-test="amount-10"]').trigger('click')
+  await wrapper.get('[data-test="amount-pick"]').trigger('click')
   await flushPromises()
   return wrapper
 }
@@ -172,9 +172,23 @@ describe('充值页按人民币展示', () => {
     // 实付 ¥10.00，到账 130 个额度：两个数都在，但没有「1 CNY = x USD」「当前倍率」。
     expect(text).toContain('¥10.00')
     expect(text).toContain('payment.creditedBalanceWithCurrency')
-    expect(text).toContain('USD130.00')
+    expect(text).toContain('$130.00')
+    expect(text).not.toMatch(/USD\d/)
     expect(text).not.toContain('payment.rechargeMultiplier')
     expect(text).not.toContain('payment.rechargeRatePreview')
+  })
+
+  it('美元模式到账额度和余额同一写法：$1,300.00 与 $650.00，不带 USD 前缀', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    useCurrencyDisplay().setMode('usd')
+    const wrapper = await mountTopUp(13, 0, 100)
+    const text = plain(wrapper.text())
+
+    // 实付 ¥100 × 13 = 到账 1300 个额度，带千分位；当前余额 650 个额度。
+    expect(text).toContain('¥100.00')
+    expect(text).toContain('$1,300.00')
+    expect(text).toContain('$650.00')
+    expect(text).not.toMatch(/USD\d/)
   })
 
   it('free 站（倍率 1）保持美元，不显示到账换算行', async () => {
@@ -233,7 +247,7 @@ describe('续费/转套餐结账页按人民币展示', () => {
     publicSettings.value = { balance_recharge_multiplier: 1 }
     const text = await mountCheckout(1)
 
-    expect(text).toContain('USD90.00')
+    expect(text).toContain('$90.00')
     expect(text).not.toContain('¥4.05')
     expect(text).not.toContain('userSubscriptions.lifecycle.changeDiffValue')
   })
@@ -244,8 +258,9 @@ describe('续费/转套餐结账页按人民币展示', () => {
     const text = await mountCheckout(13)
 
     expect(text).toContain('¥72.60')
-    expect(text).toContain('USD90.00')
-    expect(text).not.toContain('USD72.60')
+    expect(text).toContain('$90.00')
+    expect(text).not.toContain('$72.60')
+    expect(text).not.toMatch(/USD\d/)
     expect(text).not.toContain('userSubscriptions.lifecycle.changeDiffValue')
     expect(text).not.toContain('userSubscriptions.lifecycle.renewValue')
   })
@@ -404,8 +419,9 @@ describe('固定套餐详情按人民币展示', () => {
     useCurrencyDisplay().setMode('usd')
     const text = await mountPlan(1)
 
-    expect(text).toContain('USD10.00')
-    expect(text).toContain('USD70.00')
+    expect(text).toContain('$10.00')
+    expect(text).toContain('$70.00')
+    expect(text).not.toMatch(/USD\d/)
     expect(text).toContain('payment.planCard.rate')
     expect(text).not.toContain('payment.planCard.equivalentCny')
     expect(text).not.toContain('payment.subscriptionValueWithCurrency')
@@ -416,9 +432,10 @@ describe('固定套餐详情按人民币展示', () => {
     const text = await mountPlan(13)
 
     expect(text).toContain('¥90.00')
-    expect(text).toContain('USD10.00')
-    expect(text).toContain('USD70.00')
+    expect(text).toContain('$10.00')
+    expect(text).toContain('$70.00')
+    expect(text).not.toMatch(/USD\d/)
     expect(text).not.toContain('payment.subscriptionValueWithCurrency')
-    expect(text).not.toContain('USD90.00')
+    expect(text).not.toContain('$90.00')
   })
 })

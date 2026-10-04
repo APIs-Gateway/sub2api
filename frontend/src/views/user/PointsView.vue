@@ -175,7 +175,7 @@
                     :aria-pressed="selectedPlanDaily === amount"
                     @click="selectedPlanDaily = amount"
                   >
-                    {{ isFiat ? formatPlanQuota(amount, dailyUnitPrice(amount)) : t('points.redeemPlan.dailyOption', { d: amount }) }}
+                    {{ isFiat ? formatPlanQuota(amount, dailyUnitPrice(amount)) : t('points.redeemPlan.dailyOption', { d: formatUsd(amount) }) }}
                   </button>
                 </div>
               </div>
@@ -494,7 +494,7 @@ async function onRedeemPlan(plan: PointsPlanOption): Promise<void> {
   }
   const planName = isFiat.value
     ? t('points.redeemPlan.planTitleFiat', { d: formatPlanQuota(plan.daily_amount_usd, plan.unit_price) })
-    : t('points.redeemPlan.planTitle', { d: plan.daily_amount_usd })
+    : t('points.redeemPlan.planTitle', { d: formatUsd(plan.daily_amount_usd) })
   if (!window.confirm(t('points.redeemPlan.confirm', {
     action: selectedPlanSubmitLabel.value,
     points: formatCount(selectedPlanPointsPrice.value),

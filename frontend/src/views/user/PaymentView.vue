@@ -79,7 +79,7 @@
                 <!-- 美元模式也只写实付金额和到账额度，不写「1 CNY = x USD」这类换算比例。 -->
                 <div v-if="balanceRechargeMultiplier !== 1" class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': feeRate <= 0 }">
                   <span class="text-gray-600 dark:text-gray-400">{{ isFiat ? t('payment.creditedBalance') : t('payment.creditedBalanceWithCurrency', { currency: 'USD' }) }}</span>
-                  <NumText tier="secondary" class="text-gray-900 dark:text-white" :text="isFiat ? formatWallet(creditedAmount) : formatUSDValue(creditedAmount)" />
+                  <NumText tier="secondary" class="text-gray-900 dark:text-white" :text="isFiat ? formatWallet(creditedAmount) : formatUsd(creditedAmount)" />
                 </div>
               </div>
             </div>
@@ -112,7 +112,7 @@
                 <div class="mt-3 grid grid-cols-2 gap-3">
                   <div v-if="!isFiat || lifecycleFiatPerCredit">
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.dailyAmount') }}</span>
-                    <div class="num-secondary text-base text-gray-900 dark:text-white">{{ isFiat ? formatSubscription(lifecycleOrder.dailyAmountUsd, lifecycleFiatPerCredit) : formatUSDValue(lifecycleOrder.dailyAmountUsd) }}</div>
+                    <div class="num-secondary text-base text-gray-900 dark:text-white">{{ isFiat ? formatSubscription(lifecycleOrder.dailyAmountUsd, lifecycleFiatPerCredit) : formatUsd(lifecycleOrder.dailyAmountUsd) }}</div>
                   </div>
                   <div>
                     <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.validity') }}</span>
@@ -358,7 +358,6 @@ import {
 import { platformBadgeClass, platformLabel } from '@/utils/platformColors'
 import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
 import NumText from '@/components/common/NumText.vue'
-import { formatMoneyNumber } from '@/utils/numberFormat'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import { planFiatPerCredit } from '@/utils/subscriptionFiat'
 import BillingRulesCard from '@/components/common/BillingRulesCard.vue'
@@ -377,7 +376,7 @@ const authStore = useAuthStore()
 const paymentStore = usePaymentStore()
 const subscriptionStore = useSubscriptionStore()
 const appStore = useAppStore()
-const { isFiat, formatWallet, formatSubscription } = useCurrencyDisplay()
+const { isFiat, formatWallet, formatSubscription, formatUsd } = useCurrencyDisplay()
 
 const user = computed(() => authStore.user)
 const activeSubscriptions = computed(() => subscriptionStore.activeSubscriptions)
@@ -666,13 +665,9 @@ function formatSelectedPaymentAmount(value: number): string {
   return formatPaymentAmount(value, selectedCurrency.value, localeCode.value)
 }
 
-function formatUSDValue(value: number): string {
-  return `USD ${formatMoneyNumber(value)}`
-}
-
 /** 固定套餐的额度（日/周/月限额）：人民币模式按这个套餐的实付价折算。 */
 function formatPlanQuota(credits: number): string {
-  if (!isFiat.value) return formatUSDValue(credits)
+  if (!isFiat.value) return formatUsd(credits)
   return formatSubscription(credits, selectedPlanFiatPerCredit.value)
 }
 

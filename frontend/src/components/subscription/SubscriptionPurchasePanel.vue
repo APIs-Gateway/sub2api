@@ -150,7 +150,6 @@ import subscriptionsAPI, {
 import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
 import NumText from '@/components/common/NumText.vue'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
-import { formatMoneyNumber } from '@/utils/numberFormat'
 
 const emit = defineEmits<{
   // 购买意向：把校验过的 D/T 与当前报价交给父组件去走下单流程（订单创建/支付）。
@@ -168,7 +167,7 @@ const props = withDefaults(defineProps<{
 })
 
 const { t } = useI18n()
-const { isFiat, formatFiat, formatSubscription } = useCurrencyDisplay()
+const { isFiat, formatFiat, formatSubscription, formatUsd } = useCurrencyDisplay()
 
 const pricing = ref<SubscriptionPricingBounds | null>(null)
 const loadError = ref(false)
@@ -200,10 +199,6 @@ const formattedPayableAmount = computed(() =>
   formatPaymentAmount(payableAmount.value, paymentCurrency.value, props.locale)
 )
 
-function formatUSDValue(value: number): string {
-  return `USD ${formatMoneyNumber(value)}`
-}
-
 // 这张卡 1 个额度值多少人民币：报价的 u(D) 按订阅付款倍率折成实付币种。报价回来之前为 null。
 const fiatPerCredit = computed(() => {
   const unit = quote.value?.unit_price
@@ -212,7 +207,7 @@ const fiatPerCredit = computed(() => {
 
 /** 周/月封顶：人民币模式按报价单价折算；报价未出来时显示 0，不回落到美元。 */
 function formatCap(credits: number): string {
-  if (!isFiat.value) return formatUSDValue(credits)
+  if (!isFiat.value) return formatUsd(credits)
   return fiatPerCredit.value ? formatSubscription(credits, fiatPerCredit.value) : formatFiat(0)
 }
 

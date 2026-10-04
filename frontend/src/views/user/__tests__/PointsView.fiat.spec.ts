@@ -150,8 +150,10 @@ describe('积分页按人民币展示', () => {
     const wrapper = await mountPoints()
     const text = wrapper.text().replace(/\s+/g, '')
 
-    expect(text).toContain('points.redeemPlan.dailyOption')
+    // 档位按钮和封顶都用 $ 写法，不再有「USD 30」这种前缀写法。
+    expect(text).toContain('points.redeemPlan.dailyOption{"d":"$30.00"}')
     expect(text).toContain('$210.00/$900.00')
+    expect(text).not.toMatch(/USD\d/)
     expect(text).not.toContain('¥9.45')
   })
 })

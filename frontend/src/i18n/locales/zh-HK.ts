@@ -1637,10 +1637,10 @@
       title: '兌換套餐',
       desc: '無套餐時開通；已有套餐時自動續費或換套餐。',
       plan: '套餐',
-      planTitle: '每日 USD {d}',
+      planTitle: '每日 {d}',
       planTitleFiat: '每日 {d}',
       dailyAmount: '每日額度',
-      dailyOption: 'USD {d}',
+      dailyOption: '{d}',
       validityDays: '有效期',
       pointsPrice: '積分價',
       actionLabels: {
