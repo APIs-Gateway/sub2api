@@ -10318,6 +10318,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 
 	// 计算费用
 	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, opts, pricingAt)
+	// 额外倍率已乘进 cost.ActualCost；用量行的倍率同步记成乘过之后的值（extra 为 1 时原样）。
+	multiplier = rateWithExtra(multiplier, cost)
+	imageMultiplier = rateWithExtra(imageMultiplier, cost)
 
 	// 计费识别（per-day）：是否订阅计费 = 用户有生效订阅卡，**与 group 类型无关**
 	// （取代旧 group.IsSubscriptionType()）。实际钱/额度走 per-day 瀑布，此 flag 仅用于
@@ -10399,16 +10402,21 @@ func (s *GatewayService) calculateRecordUsageCost(
 	opts *recordUsageOpts,
 	pricingAt time.Time,
 ) *CostBreakdown {
+	// 额外倍率按选定的计费模型取一次，乘进两个倍率（W6 R2-BK-2）。extra 为 1 时两个倍率都不变。
+	extra := groupExtraMultiplier(ctx, s.groupPolicy(), apiKey, billingModel, pricingAt)
+	multiplier *= extra
+	imageMultiplier *= extra
+
 	// 图片生成：渠道定价为 token 计费时走 token 路径，否则走图片计费
 	if result.ImageCount > 0 {
 		if resolved := s.resolveChannelPricing(ctx, billingModel, apiKey); resolved != nil && resolved.Mode == BillingModeToken {
-			return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, opts, pricingAt)
+			return withExtraMultiplier(s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, opts, pricingAt), extra)
 		}
-		return s.calculateImageCost(ctx, result, apiKey, billingModel, imageMultiplier)
+		return withExtraMultiplier(s.calculateImageCost(ctx, result, apiKey, billingModel, imageMultiplier), extra)
 	}
 
 	// Token 计费
-	return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, opts, pricingAt)
+	return withExtraMultiplier(s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, opts, pricingAt), extra)
 }
 
 // billableModelWithFallback 在选定计费模型（可能是渠道映射/请求来源覆盖出的别名）

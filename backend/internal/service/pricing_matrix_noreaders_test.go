@@ -32,6 +32,7 @@ var matrixOwnFiles = map[string]struct{}{
 	"internal/service/pricing_matrix_facts.go":   {},
 	"internal/service/model_catalog_service.go":  {},
 	"internal/service/channel_save_hook.go":      {},
+	"internal/service/group_policy_matrix.go":    {}, // W6 PR4-1：matrixPolicy，目前只被测试驱动，没有生产路径构造它
 
 	"internal/repository/pricing_matrix_repo.go": {},
 	"internal/repository/model_catalog_repo.go":  {},
@@ -56,6 +57,7 @@ var matrixEntryPoints = regexp.MustCompile(`\b(` + strings.Join([]string{
 	"PricingMatrixRepository", "NewPricingMatrixRepository",
 	"ModelCatalogService", "NewModelCatalogService", "ModelCatalogRepository", "NewModelCatalogRepository",
 	"ResolveCatalogEntry", "OfficialPriceFactSource", "LookupOfficialPriceFact",
+	"matrixPolicy", "NewMatrixGroupPolicy", "MatrixSnapshotSource", "MatrixSnapshotInvalidator",
 }, "|") + `)\b`)
 
 func TestMatrixTablesAndDerivationHaveNoReaders(t *testing.T) {
