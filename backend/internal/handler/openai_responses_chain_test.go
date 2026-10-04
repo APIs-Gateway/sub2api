@@ -277,13 +277,21 @@ func newChainRespHarness(t *testing.T, o chainRespOptions) *chainRespHarness {
 
 	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: hs.usageLogs}
 	billingRepo := &openAIWSPrewarmUsageBillingRepoStub{commands: make(chan *service.UsageBillingCommand, 16)}
+	// 调度器与入口共用同一个并发服务：busy 账号拿不到槽，调度器才会返回等槽计划，进入 hop 的短等 / 重选逻辑。
+	cache := &concurrencyCacheMock{
+		acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireAccountSlotFn: func(_ context.Context, accountID int64, _ int, _ string) (bool, error) {
+			return !o.busy[accountID], nil
+		},
+	}
+	concurrency := service.NewConcurrencyService(cache)
 	gateway := service.NewOpenAIGatewayService(
 		&chainRespAccountRepo{schedulable: o.schedulable, configured: o.configured},
 		usageRepo,
 		billingRepo,
 		nil, nil, nil, nil,
 		cfg,
-		nil, nil,
+		nil, concurrency,
 		service.NewBillingService(cfg, nil),
 		nil,
 		billingCache,
@@ -292,13 +300,6 @@ func newChainRespHarness(t *testing.T, o chainRespOptions) *chainRespHarness {
 		nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 
-	cache := &concurrencyCacheMock{
-		acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
-		acquireAccountSlotFn: func(_ context.Context, accountID int64, _ int, _ string) (bool, error) {
-			return !o.busy[accountID], nil
-		},
-	}
-	concurrency := service.NewConcurrencyService(cache)
 	h := NewOpenAIGatewayHandler(gateway, concurrency, billingCache, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)
 	h.concurrencyHelper = NewConcurrencyHelper(concurrency, SSEPingFormatNone, time.Second)
 	h.maxAccountSwitches = 3

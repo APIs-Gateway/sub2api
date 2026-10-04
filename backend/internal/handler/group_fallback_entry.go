@@ -269,21 +269,19 @@ func (e *groupChainEntry) logRun(res service.ChainRunResult) {
 }
 
 func formatChainTrace(trace []service.HopTrace) string {
-	var b strings.Builder
-	for i, t := range trace {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		fmt.Fprintf(&b, "%d@%d:%d", t.Index, t.GroupID, int(t.Outcome))
+	parts := make([]string, 0, len(trace))
+	for _, t := range trace {
+		part := fmt.Sprintf("%d@%d:%d", t.Index, t.GroupID, int(t.Outcome))
 		if t.Reason != "" {
-			b.WriteString("/" + string(t.Reason))
+			part += "/" + string(t.Reason)
 		}
 		if t.SkippedBy != "" {
-			b.WriteString("/skip=" + t.SkippedBy)
+			part += "/skip=" + t.SkippedBy
 		}
 		if t.BreakerBypassed {
-			b.WriteString("/bypass")
+			part += "/bypass"
 		}
+		parts = append(parts, part)
 	}
-	return b.String()
+	return strings.Join(parts, ",")
 }
