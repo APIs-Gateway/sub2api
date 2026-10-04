@@ -52,6 +52,9 @@ const messages: Record<string, string> = {
   'keys.lastUsedAt': 'Last Used',
   'keys.lastUsedIP': 'Last Used IP',
   'keys.rateLimitColumn': 'Rate Limit',
+  'keys.rateLimit5h': '5-Hour Limit ({currency})',
+  'keys.rateLimit1d': 'Daily Limit ({currency})',
+  'keys.rateLimit7d': '7-Day Limit ({currency})',
   'keys.searchPlaceholder': 'Search name or key...',
   'keys.status.active': 'Active',
   'keys.status.expired': 'Expired',
@@ -116,7 +119,11 @@ vi.mock('vue-i18n', async () => {
     ...actual,
     useI18n: () => ({
       locale: ref('en'),
-      t: (key: string) => messages[key] ?? key,
+      // 只对带 {name} 占位符的文案做替换，其余文案原样返回。
+      t: (key: string, params?: Record<string, unknown>) => {
+        const message = messages[key] ?? key
+        return params ? message.replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? '')) : message
+      },
     }),
   }
 })
@@ -481,6 +488,59 @@ describe('user KeysView fiat limit input', () => {
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
     expect(updateKey).toHaveBeenLastCalledWith(b.id, expect.objectContaining({ quota: 300 }))
+    wrapper.unmount()
+  })
+})
+
+// 限额标签的币种要和输入框前面的符号一致：人民币模式写 CNY，美元模式和 free 站写 USD。
+describe('user KeysView limit labels follow the currency', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    updateKey.mockReset()
+    publicSettings.value = { balance_recharge_multiplier: 10 }
+    activeSubscriptions.value = []
+    useCurrencyDisplay().setMode('fiat')
+    getPublicSettings.mockResolvedValue({})
+    getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
+    getAvailableGroups.mockResolvedValue([])
+    getUserGroupRates.mockResolvedValue({})
+    isCurrentStep.mockReturnValue(false)
+  })
+
+  async function openLimitForm() {
+    const key: ApiKey = { ...createApiKey(), group_id: 1, rate_limit_5h: 5, rate_limit_1d: 10, rate_limit_7d: 20 }
+    listKeys.mockResolvedValue({ items: [key], total: 1, page: 1, page_size: 20, pages: 1 })
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    await nextTick()
+    const labels = wrapper
+      .findAll('label.input-label')
+      .map((label) => label.text())
+      .filter((text) => /Limit \(/.test(text))
+    return { wrapper, labels }
+  }
+
+  it('人民币模式：三个限额标签写 CNY，不再写 USD', async () => {
+    const { wrapper, labels } = await openLimitForm()
+
+    expect(labels).toEqual(['5-Hour Limit (CNY)', 'Daily Limit (CNY)', '7-Day Limit (CNY)'])
+    expect(wrapper.find('input[placeholder="keys.quotaAmountPlaceholderFiat"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('美元模式：三个限额标签写 USD', async () => {
+    useCurrencyDisplay().setMode('usd')
+    const { wrapper, labels } = await openLimitForm()
+
+    expect(labels).toEqual(['5-Hour Limit (USD)', 'Daily Limit (USD)', '7-Day Limit (USD)'])
+    wrapper.unmount()
+  })
+
+  it('free 站（倍率 1）按美元：标签写 USD', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 1 }
+    const { wrapper, labels } = await openLimitForm()
+
+    expect(labels).toEqual(['5-Hour Limit (USD)', 'Daily Limit (USD)', '7-Day Limit (USD)'])
     wrapper.unmount()
   })
 })

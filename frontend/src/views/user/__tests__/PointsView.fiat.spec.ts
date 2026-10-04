@@ -107,6 +107,21 @@ describe('积分页按人民币展示', () => {
     expect(redeemPointsToBalance).toHaveBeenCalledWith(100)
   })
 
+  it('美元模式兑换余额只写将获得的余额和积分面值，不出现折算倍率', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    useCurrencyDisplay().setMode('usd')
+    const wrapper = await mountPoints()
+    await wrapper.findAll('input[type="number"]')[0].setValue('100')
+    const text = wrapper.text()
+
+    // 100 积分 × ¥0.01 × 13 = $13.00；文案只剩积分面值，没有「1 CNY = x USD」。
+    expect(text).toContain('"amount":"$13.00"')
+    // 提示里只带积分面值一个参数，没有折算倍率。
+    expect(text).toContain('points.redeemBalance.rateHintFiat{"peg":"¥0.01"}')
+    expect(text).toContain('points.redeemBalance.descFiat')
+    expect(text).not.toContain('points.redeemBalance.rateHint{')
+  })
+
   it('套餐档位和封顶写成人民币，不出现 USD 和 $', async () => {
     publicSettings.value = { balance_recharge_multiplier: 13 }
     const wrapper = await mountPoints()

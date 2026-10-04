@@ -740,7 +740,7 @@
             <p v-if="limitInputFiat" class="input-hint -mt-2">{{ limitFiatHint }}</p>
             <!-- 5-Hour Limit -->
             <div>
-              <label class="input-label">{{ t('keys.rateLimit5h') }}</label>
+              <label class="input-label">{{ t('keys.rateLimit5h', { currency: limitInputCurrency }) }}</label>
               <div class="relative">
                 <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
                 <input
@@ -784,7 +784,7 @@
 
             <!-- Daily Limit -->
             <div>
-              <label class="input-label">{{ t('keys.rateLimit1d') }}</label>
+              <label class="input-label">{{ t('keys.rateLimit1d', { currency: limitInputCurrency }) }}</label>
               <div class="relative">
                 <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
                 <input
@@ -828,7 +828,7 @@
 
             <!-- 7-Day Limit -->
             <div>
-              <label class="input-label">{{ t('keys.rateLimit7d') }}</label>
+              <label class="input-label">{{ t('keys.rateLimit7d', { currency: limitInputCurrency }) }}</label>
               <div class="relative">
                 <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
                 <input
@@ -1447,6 +1447,8 @@ const limitInputFiat = ref(false)
 // 回显和提交用同一个单价：弹窗打开后订阅卡数据才加载回来时，也不会前后口径不一致
 const limitInputRate = ref(0)
 const limitInputSymbol = computed(() => (limitInputFiat.value ? '¥' : '$'))
+// 限额标签上的币种代码，和输入框前面的符号同一口径（弹窗打开时定格）。
+const limitInputCurrency = computed(() => (limitInputFiat.value ? 'CNY' : 'USD'))
 // 编辑时记下每个字段回显的人民币值和原始额度：用户没改的字段原样提交额度，
 // 避免「额度 → 人民币（四舍五入）→ 额度」往返一次就把上限改掉几分。
 const limitOriginals = new Map<LimitField, { input: number; credits: number }>()
