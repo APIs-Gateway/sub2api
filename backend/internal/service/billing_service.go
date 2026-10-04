@@ -1093,8 +1093,9 @@ func (s *BillingService) GetModelPricing(model string) (*ModelPricing, error) {
 // 驱动 DeepSeek pro→Flash 切换判定（切换点前 Pro 价、之后 Flash 价），零值
 // 回退当前时刻；测试也能用固定时点钉住断言。
 func (s *BillingService) getModelPricingAt(model string, pricingAt time.Time) (*ModelPricing, error) {
-	// 标准化模型名称（转小写）
-	model = strings.ToLower(model)
+	// 标准化模型名称（去首尾空白、转小写）。兜底价里有 modelLower == "kimi-k3" 这类精确匹配，
+	// 名字带空白会让它们全部落空而按「无价」零计费。
+	model = strings.ToLower(strings.TrimSpace(model))
 
 	// 1. 优先从动态价格服务获取
 	if s.pricingService != nil {

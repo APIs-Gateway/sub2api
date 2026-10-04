@@ -124,6 +124,38 @@ func TestGetModelPricing_CaseInsensitive(t *testing.T) {
 	require.Equal(t, p1.InputPricePerToken, p2.InputPricePerToken)
 }
 
+// 无渠道分组的报价走 GetModelPricing：名字带首尾空白时不能查不到价（兜底价里有 == "kimi-k3"
+// 这类精确匹配），否则会被当成「无价」零计费。
+func TestGetModelPricing_TrimsSurroundingWhitespace(t *testing.T) {
+	svc := newTestBillingService()
+
+	for _, model := range []string{"kimi-k3", "grok-4.3", "qwen3-embedding-8b", "claude-sonnet-4", "gpt-5.6-sol"} {
+		want, err := svc.GetModelPricing(model)
+		require.NoError(t, err, "模型 %s", model)
+
+		for _, dirty := range []string{" " + model, model + " ", "\t" + model + "\n", "\u00a0" + model + "\u3000"} {
+			got, err := svc.GetModelPricing(dirty)
+			require.NoError(t, err, "带空白的名字 %q 必须能查到价", dirty)
+			require.Equal(t, want.InputPricePerToken, got.InputPricePerToken, "%q 输入价", dirty)
+			require.Equal(t, want.OutputPricePerToken, got.OutputPricePerToken, "%q 输出价", dirty)
+		}
+	}
+}
+
+func TestCalculateCost_TrimsSurroundingWhitespaceInModel(t *testing.T) {
+	svc := newTestBillingService()
+	tokens := UsageTokens{InputTokens: 1000, OutputTokens: 500}
+
+	want, err := svc.CalculateCost("kimi-k3", tokens, 1.0)
+	require.NoError(t, err)
+	require.Greater(t, want.TotalCost, 0.0)
+
+	got, err := svc.CalculateCost(" kimi-k3 ", tokens, 1.0)
+	require.NoError(t, err)
+	require.Equal(t, want.TotalCost, got.TotalCost)
+	require.Equal(t, want.ActualCost, got.ActualCost)
+}
+
 func TestGetModelPricing_FallbackWarningIsDeduplicatedPerNormalizedModel(t *testing.T) {
 	svc := newTestBillingService()
 	logs := captureBillingLog(t)

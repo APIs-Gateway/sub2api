@@ -932,6 +932,29 @@ func TestResolveChannelMapping_ExactMapping(t *testing.T) {
 	require.Equal(t, int64(1), result.ChannelID)
 }
 
+// 渠道定价查找会去掉名字首尾空白，渠道级模型映射也必须一样，否则加个空格就能绕过映射。
+func TestResolveChannelMapping_TrimsSurroundingWhitespace(t *testing.T) {
+	ch := Channel{
+		ID:       1,
+		Status:   StatusActive,
+		GroupIDs: []int64{10},
+		ModelMapping: map[string]map[string]string{
+			"anthropic": {
+				"claude-sonnet-4": "claude-sonnet-4-20250514",
+			},
+		},
+	}
+	repo := makeStandardRepo(ch, map[int64]string{10: "anthropic"})
+	svc := newTestChannelService(repo)
+
+	for _, model := range []string{" claude-sonnet-4", "claude-sonnet-4 ", "\tClaude-Sonnet-4\n"} {
+		result := svc.ResolveChannelMapping(context.Background(), 10, model)
+		require.True(t, result.Mapped, "%q", model)
+		require.Equal(t, "claude-sonnet-4-20250514", result.MappedModel, "%q", model)
+		require.Equal(t, int64(1), result.ChannelID)
+	}
+}
+
 func TestResolveChannelMapping_WildcardMapping(t *testing.T) {
 	ch := Channel{
 		ID:       1,

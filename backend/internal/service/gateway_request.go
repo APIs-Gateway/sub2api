@@ -197,18 +197,21 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 			return fmt.Errorf("invalid model field type")
 		}
 		parsed.Model = modelResult.String()
+		// 首尾空白在入口去掉一次（所有协议），Anthropic 另外去掉 Claude Code 泄漏的 [1m] 后缀；
+		// 改写后的名字同步写回 body，调度、转发、计价、日志用的是同一个名字。
+		normalizedModel := strings.TrimSpace(parsed.Model)
 		if protocol == domain.PlatformAnthropic {
-			normalizedModel := normalizeClaudeCodeLongContextModel(parsed.Model)
-			if normalizedModel != parsed.Model {
-				normalizedBody, err := sjson.SetBytes(bodyBytes, "model", normalizedModel)
-				if err != nil {
-					return fmt.Errorf("normalize model field: %w", err)
-				}
-				parsed.Body.Replace(normalizedBody)
-				bodyBytes = normalizedBody
-				jsonStr = *(*string)(unsafe.Pointer(&bodyBytes))
-				parsed.Model = normalizedModel
+			normalizedModel = strings.TrimSpace(normalizeClaudeCodeLongContextModel(normalizedModel))
+		}
+		if normalizedModel != parsed.Model {
+			normalizedBody, err := sjson.SetBytes(bodyBytes, "model", normalizedModel)
+			if err != nil {
+				return fmt.Errorf("normalize model field: %w", err)
 			}
+			parsed.Body.Replace(normalizedBody)
+			bodyBytes = normalizedBody
+			jsonStr = *(*string)(unsafe.Pointer(&bodyBytes))
+			parsed.Model = normalizedModel
 		}
 	}
 
