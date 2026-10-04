@@ -17,22 +17,25 @@ export interface UserMonitorExtraModel {
 export interface MonitorTimelinePoint {
   status: MonitorStatus
   latency_ms: number | null
-  ping_latency_ms: number | null
+  /** 仅管理员的响应里有；普通用户的响应不含该字段。 */
+  ping_latency_ms?: number | null
   checked_at: string
 }
 
 export interface UserMonitorView {
   id: number
   name: string
-  provider: Provider
   group_name: string
-  primary_model: string
   primary_status: MonitorStatus
   primary_latency_ms: number | null
-  primary_ping_latency_ms: number | null
   availability_7d: number
-  extra_models: UserMonitorExtraModel[]
   timeline: MonitorTimelinePoint[]
+  // 以下字段只在管理员的响应里出现。普通用户的响应由后端裁掉，
+  // 页面必须按「有就显示、没有就不显示」来渲染，不能假定它们存在。
+  provider?: Provider
+  primary_model?: string
+  primary_ping_latency_ms?: number | null
+  extra_models?: UserMonitorExtraModel[]
 }
 
 export interface UserMonitorListResponse {
@@ -40,7 +43,8 @@ export interface UserMonitorListResponse {
 }
 
 export interface UserMonitorModelDetail {
-  model: string
+  /** 仅管理员的响应里有模型名；普通用户拿到的 models 只有主模型一项，且没有这个字段。 */
+  model?: string
   latest_status: MonitorStatus
   latest_latency_ms: number | null
   availability_7d: number
@@ -52,7 +56,8 @@ export interface UserMonitorModelDetail {
 export interface UserMonitorDetail {
   id: number
   name: string
-  provider: Provider
+  /** 仅管理员的响应里有。 */
+  provider?: Provider
   group_name: string
   models: UserMonitorModelDetail[]
 }

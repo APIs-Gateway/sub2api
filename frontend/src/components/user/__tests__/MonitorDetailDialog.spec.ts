@@ -41,3 +41,45 @@ describe('monitor detail request ownership', () => {
     expect(w.text()).toContain('channelStatus.detailLoadError')
   })
 })
+
+describe('monitor detail without model names (normal users)', () => {
+  const userDetail = {
+    models: [{
+      latest_status: 'operational', latest_latency_ms: 820,
+      availability_7d: 99.5, availability_15d: 98.1, availability_30d: 97.7, avg_latency_7d_ms: 900,
+    }],
+  }
+
+  it('shows the primary stats as a grid instead of a one-row table', async () => {
+    mocks.status.mockResolvedValueOnce(userDetail)
+    const w = open(); await flushPromises()
+    expect(w.find('table').exists()).toBe(false)
+    expect(w.findAll('dl > div')).toHaveLength(6)
+    expect(w.text()).toContain('monitorCommon.status.operational')
+    expect(w.text()).toContain('820')
+    expect(w.text()).toContain('99.50%')
+    expect(w.text()).toContain('98.10%')
+    expect(w.text()).toContain('97.70%')
+    expect(w.text()).toContain('900')
+    expect(w.text()).not.toContain('channelStatus.detailColumns.model')
+  })
+
+  it('keeps the per-model table for admins', async () => {
+    mocks.status.mockResolvedValueOnce({ models: [
+      { model: 'primary-model', latest_status: 'operational' },
+      { model: 'extra-model', latest_status: 'degraded' },
+    ] })
+    const w = open(); await flushPromises()
+    expect(w.find('table').exists()).toBe(true)
+    expect(w.find('dl').exists()).toBe(false)
+    expect(w.text()).toContain('primary-model')
+    expect(w.text()).toContain('extra-model')
+  })
+
+  it('renders nothing but the shell when the response has no models', async () => {
+    mocks.status.mockResolvedValueOnce({ models: [] })
+    const w = open(); await flushPromises()
+    expect(w.findAll('dl > div')).toHaveLength(0)
+    expect(w.find('table').exists()).toBe(false)
+  })
+})
