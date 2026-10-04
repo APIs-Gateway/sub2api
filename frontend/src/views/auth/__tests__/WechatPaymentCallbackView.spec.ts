@@ -114,3 +114,44 @@ describe('WechatPaymentCallbackView', () => {
     expect(wrapper.find('.bg-red-50').exists()).toBe(false)
   })
 })
+
+describe('WechatPaymentCallbackView 的 redirect 校验', () => {
+  beforeEach(() => {
+    replaceMock.mockReset()
+    routeState.query = {}
+    locationState.current = {
+      href: 'http://localhost/auth/wechat/payment/callback',
+      hash: '',
+      search: '',
+      pathname: '/auth/wechat/payment/callback',
+      origin: 'http://localhost',
+    } as Location & { origin: string }
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: locationState.current,
+    })
+  })
+
+  it.each([
+    ['协议相对地址', '//evil.com'],
+    ['反斜杠', '/\\evil.com'],
+    ['绝对地址', 'https://evil.com'],
+    ['编码的双斜杠', '/%2F%2Fevil.com'],
+    ['编码的反斜杠', '/%5Cevil.com'],
+    ['点段', '/.//evil.com'],
+  ])('不合法的 redirect（%s）回落到 /purchase', async (_name, redirect) => {
+    locationState.current.hash = `#wechat_resume_token=resume-token-123&redirect=${encodeURIComponent(redirect)}`
+
+    mount(WechatPaymentCallbackView)
+    await flushPromises()
+
+    expect(replaceMock).toHaveBeenCalledTimes(1)
+    expect(replaceMock).toHaveBeenCalledWith({
+      path: '/purchase',
+      query: {
+        wechat_resume: '1',
+        wechat_resume_token: 'resume-token-123',
+      },
+    })
+  })
+})

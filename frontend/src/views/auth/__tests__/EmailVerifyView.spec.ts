@@ -454,3 +454,122 @@ describe('EmailVerifyView', () => {
     expect(pushMock).toHaveBeenCalledWith('/dashboard')
   })
 })
+
+describe('EmailVerifyView 的 redirect（普通邮箱注册）', () => {
+  const stubs = {
+    AuthLayout: { template: '<div><slot /><slot name="footer" /></div>' },
+    Icon: true,
+    TurnstileWidget: true,
+    transition: false,
+  }
+
+  beforeEach(() => {
+    pushMock.mockReset()
+    registerMock.mockReset()
+    getPublicSettingsMock.mockReset()
+    sendVerifyCodeMock.mockReset()
+    apiClientPostMock.mockReset()
+    authStoreState.pendingAuthSession = null
+    sessionStorage.clear()
+    localStorage.clear()
+
+    getPublicSettingsMock.mockResolvedValue({
+      turnstile_enabled: false,
+      turnstile_site_key: '',
+      site_name: 'Sub2API',
+      registration_email_suffix_whitelist: [],
+    })
+    sendVerifyCodeMock.mockResolvedValue({ countdown: 60 })
+    registerMock.mockResolvedValue({})
+  })
+
+  async function verifyWith(registerData: Record<string, unknown>) {
+    sessionStorage.setItem(
+      'register_data',
+      JSON.stringify({ email: 'normal@example.com', password: 'secret-456', ...registerData })
+    )
+    const wrapper = mount(EmailVerifyView, { global: { stubs } })
+    await flushPromises()
+    await wrapper.get('#code').setValue('654321')
+    await wrapper.get('form').trigger('submit.prevent')
+    await flushPromises()
+    return wrapper
+  }
+
+  function expectPushedOnly(target: unknown) {
+    expect(pushMock).toHaveBeenCalledTimes(1)
+    expect(pushMock).toHaveBeenCalledWith(target)
+  }
+
+  it('验证成功后回到注册页带来的 redirect', async () => {
+    await verifyWith({ redirect: '/keys' })
+
+    expect(registerMock).toHaveBeenCalledTimes(1)
+    expectPushedOnly('/keys')
+  })
+
+  it('redirect 带查询串时原样保留', async () => {
+    await verifyWith({ redirect: '/keys?new=1' })
+
+    expectPushedOnly('/keys?new=1')
+  })
+
+  it('没有 redirect 时回 /dashboard', async () => {
+    await verifyWith({})
+
+    expectPushedOnly('/dashboard')
+  })
+
+  it.each([
+    '//evil.com',
+    '/\\evil.com',
+    'https://evil.com',
+    'javascript:alert(1)',
+    '/%2F%2Fevil.com',
+    '/%5Cevil.com',
+    '/%252F%252Fevil.com',
+    '/\n/evil.com',
+    '/login',
+  ])('register_data 里被篡改成 %j 时回落到 /dashboard', async (redirect) => {
+    await verifyWith({ redirect })
+
+    expect(registerMock).toHaveBeenCalledTimes(1)
+    expectPushedOnly('/dashboard')
+  })
+
+  it('第三方登录补邮箱流程的 pending_redirect 同样要过校验', async () => {
+    await verifyWith({ pending_redirect: '//evil.com' })
+
+    expectPushedOnly('/dashboard')
+  })
+
+  it('「返回注册」把 redirect 带回注册页，用户重填后不丢去向', async () => {
+    sessionStorage.setItem(
+      'register_data',
+      JSON.stringify({ email: 'normal@example.com', password: 'secret-456', redirect: '/keys' })
+    )
+    const wrapper = mount(EmailVerifyView, { global: { stubs } })
+    await flushPromises()
+
+    const back = wrapper.findAll('button').find((button) => button.text().includes('auth.backToRegistration'))
+    expect(back).toBeDefined()
+    await back!.trigger('click')
+
+    expect(sessionStorage.getItem('register_data')).toBeNull()
+    expectPushedOnly({ path: '/register', query: { redirect: '/keys' } })
+  })
+
+  it('「返回注册」在没有 redirect 或不合法时不带', async () => {
+    sessionStorage.setItem(
+      'register_data',
+      JSON.stringify({ email: 'normal@example.com', password: 'secret-456', redirect: '//evil.com' })
+    )
+    const wrapper = mount(EmailVerifyView, { global: { stubs } })
+    await flushPromises()
+
+    const back = wrapper.findAll('button').find((button) => button.text().includes('auth.backToRegistration'))
+    await back!.trigger('click')
+
+    expectPushedOnly({ path: '/register', query: {} })
+  })
+})
