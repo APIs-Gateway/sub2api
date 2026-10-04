@@ -28,6 +28,7 @@ import (
 import (
 	_ "embed"
 	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
+	_ "github.com/lib/pq"
 )
 
 // Injectors from wire.go:
@@ -115,10 +116,10 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	tempUnschedCache := repository.NewTempUnschedCache(redisClient)
 	timeoutCounterCache := repository.NewTimeoutCounterCache(redisClient)
 	openAI403CounterCache := repository.NewOpenAI403CounterCache(redisClient)
-	modelDowngradeCounter := repository.NewModelDowngradeCounterCache(redisClient)
+	modelDowngradeCounterCache := repository.NewModelDowngradeCounterCache(redisClient)
 	geminiTokenCache := repository.NewGeminiTokenCache(redisClient)
 	compositeTokenCacheInvalidator := service.NewCompositeTokenCacheInvalidator(geminiTokenCache)
-	rateLimitService := service.ProvideRateLimitService(accountRepository, usageLogRepository, configConfig, geminiQuotaService, tempUnschedCache, timeoutCounterCache, openAI403CounterCache, modelDowngradeCounter, settingService, compositeTokenCacheInvalidator)
+	rateLimitService := service.ProvideRateLimitService(accountRepository, usageLogRepository, configConfig, geminiQuotaService, tempUnschedCache, timeoutCounterCache, openAI403CounterCache, modelDowngradeCounterCache, settingService, compositeTokenCacheInvalidator)
 	identityCache := repository.NewIdentityCache(redisClient)
 	identityService := service.NewIdentityService(identityCache)
 	httpUpstream := repository.NewHTTPUpstream(configConfig)
@@ -594,7 +595,7 @@ func provideCleanup(
 				return nil
 			}},
 			{"AdminAuditWriter", func() error {
-				// 先于数据库连接关闭：把队列里剩余的审计日志写完。
+
 				if adminAuditWriter != nil {
 					adminAuditWriter.Stop(ctx)
 				}
