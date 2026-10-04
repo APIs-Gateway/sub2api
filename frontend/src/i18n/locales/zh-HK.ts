@@ -12,100 +12,11 @@
     goToDashboard: '進入控制台',
     // Hero 主標題與描述（Anthropic 極簡風，OpenAI 定位）
     heroTitle: '強大的 AI 能力，觸手可及',
-    heroDesc: '穩定、快速、按量計費的大模型 API 服務。註冊即可獲取金鑰，立即開始調用。',
-    // 舊字段保留兼容
-    heroSubtitle: '一個金鑰，暢用強大的 AI 模型',
-    heroDescription: '穩定、快速、按量計費的大模型 API 服務',
-    tags: {
-      subscriptionToApi: '極速穩定',
-      stickySession: '會話保持',
-      realtimeBilling: '按量計費'
-    },
-    // 用戶痛點區塊
-    painPoints: {
-      title: '你是否也遇到這些問題？',
-      items: {
-        expensive: {
-          title: '訂閱費用高',
-          desc: '每個 AI 服務都要單獨訂閱，每月支出越來越多'
-        },
-        complex: {
-          title: '多帳號難管理',
-          desc: '不同平台的帳號、金鑰分散各處，管理起來很麻煩'
-        },
-        unstable: {
-          title: '服務不穩定',
-          desc: '單一帳號容易觸發限制，影響正常使用'
-        },
-        noControl: {
-          title: '用量無法控制',
-          desc: '不知道錢花在哪了，也無法限制團隊成員的使用'
-        }
-      }
-    },
-    // 解決方案區塊
-    solutions: {
-      title: '我們幫你解決',
-      subtitle: '簡單三步，開始省心使用 AI'
-    },
-    features: {
-      unifiedGateway: '極速穩定',
-      unifiedGatewayDesc: '高可用架構與智能調度，低延遲、高成功率，穩定可靠。',
-      multiAccount: '簡單接入',
-      multiAccountDesc: '兼容主流 OpenAI SDK，獲取一個金鑰即可開始調用。',
-      balanceQuota: '按量計費',
-      balanceQuotaDesc: '用多少付多少，實時查看用量與額度，清晰可控。'
-    },
-    // 優勢對比
-    comparison: {
-      title: '為什么選擇我們？',
-      headers: {
-        feature: '對比項',
-        official: '官方訂閱',
-        us: '本平台'
-      },
-      items: {
-        pricing: {
-          feature: '付費方式',
-          official: '固定月費，用不完也付',
-          us: '按量付費，用多少付多少'
-        },
-        models: {
-          feature: '模型選擇',
-          official: '單一服務商',
-          us: '多模型隨意切換'
-        },
-        management: {
-          feature: '帳號管理',
-          official: '每個服務單獨管理',
-          us: '統一金鑰，一站管理'
-        },
-        stability: {
-          feature: '服務穩定性',
-          official: '單帳號易觸發限制',
-          us: '多帳號池，自動切換'
-        },
-        control: {
-          feature: '用量控制',
-          official: '無法限制',
-          us: '可設配額、查明細'
-        }
-      }
-    },
-    providers: {
-      title: '支持的模型',
-      description: '基於 OpenAI 模型構建',
-      supported: '可用',
-      soon: '即將推出',
-      claude: 'Claude',
-      gemini: 'Gemini',
-      antigravity: 'Antigravity',
-      more: '更多'
-    },
+    heroDesc: '穩定、快速的大模型 API 服務。註冊後創建金鑰即可接入。',
     // CTA 區塊
     cta: {
       title: '準備好開始了嗎？',
-      description: '註冊即可獲得免費試用額度，體驗一站式 AI 服務',
+      description: '創建金鑰後，訂閱或充值餘額即可開始調用。',
       button: '免費註冊'
     },
     footer: {
@@ -113,36 +24,30 @@
     },
     // 落地頁營銷文案（原先寫死在 HomeView.vue 內，已收歸 i18n）
     marketing: {
-      eyebrow: '訂閱制 · 每日刷新額度 · 可透支',
+      eyebrow: '訂閱與餘額，兩種用法',
       endpointNote: '// OpenAI 兼容 · 一個金鑰即用',
-      valueTitle: '訂閱一次，每天都滿',
-      valueDesc: '不是預存餘額慢慢扣，而是訂閱制：額度每日自動刷新。平均每天約 ¥3.6（≈ $0.5），即可調用相當於官方 $2700 的用量。',
-      stat1Value: '$90 / 日',
-      stat1Label: '每日刷新額度',
-      stat2Value: '¥3.6 / 日',
-      stat2Label: '平均每日成本 ≈ $0.5',
-      stat3Value: '$2700 / 月',
-      stat3Label: '相當於官方用量',
+      valueTitle: '訂閱一次，額度每天刷新',
+      valueDesc: '訂閱和餘額可以搭配使用，也可以只用其中一種。',
       feature1Title: '極速穩定',
-      feature1Desc: '高可用網關與智能調度，低延遲、高成功率，穩定可靠。',
+      feature1Desc: '低延遲、高成功率，穩定可靠。',
       feature2Title: '簡單接入',
-      feature2Desc: '兼容主流 OpenAI / Anthropic 協議，獲取一個金鑰即可開始。',
+      feature2Desc: '兼容主流 OpenAI / Anthropic 協議，一個金鑰即可接入。',
       feature3Title: '透明可計量',
       feature3Desc: '每一次調用的耗時、Token 與費用都精確記錄，用量實時可視。',
       integrateTitle: '隨處接入',
       integrateDesc: '兼容主流協議，幾分鐘內接入你的 IDE 或 Agent；一個金鑰，多端通用。',
       clientAnySdk: '任意 OpenAI SDK',
-      compareTitle: '和傳統按量付費有甚麼不同',
-      paygTitle: '傳統按量付費',
-      paygPoint1: '餘額扣完即停，需要不斷充值',
-      paygPoint2: '高強度使用時賬單不可預期',
-      paygPoint3: '價格隨用量浮動，難以估算',
-      subTitle: '本平台（訂閱制）',
-      subPoint1: '額度每日刷新，用量重置不燒餘額',
-      subPoint2: '固定週期費用，成本清晰可預期',
-      subPoint3: '高可用網關 + 智能調度，穩定可靠',
-      overdraftTitle: '支持透支，臨時超額也不斷流',
-      overdraftDesc: '當日額度用超時可在透支額度內繼續調用，按「往後預支天數」計量，不會因為一次高強度使用就瞬間停擺——趕進度時尤其省心。'
+      compareTitle: '訂閱和餘額有甚麼不同',
+      subscriptionTitle: '訂閱',
+      subscriptionPoint1: '購買時選好每日額度和有效期',
+      subscriptionPoint2: '每日額度每天刷新，另有周封頂和月封頂',
+      subscriptionPoint3: '固定週期費用，成本清晰可預期',
+      balanceTitle: '餘額',
+      balancePoint1: '先充值，隨時可以再充值',
+      balancePoint2: '按實際用量扣費，用多少扣多少',
+      balancePoint3: '搭配訂閱時，訂閱額度用完後繼續扣餘額',
+      overdraftTitle: '當日額度用完，可以透支刷新',
+      overdraftDesc: '在「我的訂閱」點「透支刷新當日額度」，當日額度立即恢復，繼續使用。每個自然月最多 5 次，周封頂和月封頂仍然生效。'
     }
   },
 
@@ -7167,7 +7072,7 @@
         contactInfoPlaceholder: '例如：QQ: 123456789',
         contactInfoHint: '填寫客服聯系方式，將展示在兌換頁面、個人資料等位置',
         docUrl: '文件連結',
-        docUrlHint: '文件網站的連結。留空則隱藏文件連結。',
+        docUrlHint: '外部文件網站的連結，只在「接入金鑰」彈窗裡作為文件入口。首頁和頂欄的「文件」固定打開站內文件頁。留空則不顯示。',
         docUrlPlaceholder: 'https://docs.example.com',
         siteLogo: '站點Logo',
         uploadImage: '上傳圖片',

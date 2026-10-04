@@ -27,16 +27,13 @@
         <AnnouncementBell v-if="user" />
 
         <!-- Docs Link -->
-        <a
-          v-if="docUrl"
-          :href="docUrl"
-          target="_blank"
-          rel="noopener noreferrer"
+        <router-link
+          to="/docs"
           class="hidden items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white sm:flex"
         >
           <Icon name="book" size="sm" />
           <span class="hidden sm:inline">{{ t('nav.docs') }}</span>
-        </a>
+        </router-link>
 
         <!-- Language Switcher -->
         <LocaleSwitcher />
@@ -179,7 +176,6 @@ import CurrencyModeSwitch from '@/components/common/CurrencyModeSwitch.vue'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { sanitizeUrl } from '@/utils/url'
 
 const router = useRouter()
 const route = useRoute()
@@ -194,7 +190,6 @@ const { canSwitch: currencyCanSwitch } = useCurrencyDisplay()
 const dropdownOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
 const contactInfo = computed(() => appStore.contactInfo)
-const docUrl = computed(() => sanitizeUrl(appStore.docUrl))
 const avatarUrl = computed(() => user.value?.avatar_url?.trim() || '')
 
 // 计价单位只影响用户侧页面；后台页面一律按额度展示，不放切换器免得误以为能切。

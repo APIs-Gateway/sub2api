@@ -30,16 +30,9 @@
         <div class="flex items-center gap-1.5">
           <LocaleSwitcher />
 
-          <a
-            v-if="docUrl"
-            :href="docUrl"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="icon-btn"
-            :title="t('home.viewDocs')"
-          >
+          <router-link to="/docs" class="icon-btn" :title="t('home.viewDocs')" :aria-label="t('home.viewDocs')">
             <Icon name="book" size="md" />
-          </a>
+          </router-link>
 
           <button
             @click="toggleTheme"
@@ -106,15 +99,9 @@
               {{ isAuthenticated ? t('home.goToDashboard') : t('home.getStarted') }}
               <Icon name="arrowRight" size="md" :stroke-width="2" />
             </router-link>
-            <a
-              v-if="docUrl"
-              :href="docUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="link-clay text-[15px] font-medium"
-            >
+            <router-link to="/docs" class="link-clay text-[15px] font-medium">
               {{ t('home.docs') }} →
-            </a>
+            </router-link>
           </div>
 
           <!-- Signature: mono 端点（OpenAI 兼容） -->
@@ -137,17 +124,11 @@
         </div>
       </section>
 
-      <!-- 订阅价值：深墨色对比带 + 大号 Fraunces 黏土数字（重要信息上移） -->
+      <!-- 订阅与余额的总述：深墨色对比带（只放文字，不放没有依据的数字） -->
       <section class="reveal mx-auto mt-12 max-w-5xl md:mt-16">
-        <div class="value-band rounded-xl px-7 py-11 md:px-12 md:py-14">
+        <div class="value-band rounded-xl px-7 py-10 md:px-12 md:py-12">
           <h2 class="font-display text-2xl font-semibold tracking-tight band-ink md:text-3xl">{{ mk.valueTitle }}</h2>
-          <p class="mt-2.5 max-w-xl text-[15px] leading-relaxed band-muted">{{ mk.valueDesc }}</p>
-          <div class="mt-10 grid grid-cols-1 gap-8 sm:grid-cols-3">
-            <div v-for="(s, i) in mk.stats" :key="i">
-              <div class="font-display text-4xl font-semibold tabular-nums band-clay md:text-5xl">{{ s.value }}</div>
-              <div class="mt-2 text-sm band-muted">{{ s.label }}</div>
-            </div>
-          </div>
+          <p class="mt-2.5 max-w-xl text-balance text-[15px] leading-relaxed band-muted">{{ mk.valueDesc }}</p>
         </div>
       </section>
 
@@ -164,27 +145,21 @@
         </div>
       </section>
 
-      <!-- 订阅制 vs 传统按量付费 -->
+      <!-- 订阅 vs 余额：两张并列的说明卡 -->
       <section class="mx-auto max-w-5xl border-t border-line py-14 md:py-16">
         <h2 class="font-display text-2xl font-semibold tracking-tight text-ink md:text-3xl">{{ mk.compareTitle }}</h2>
         <div class="mt-8 grid gap-px overflow-hidden rounded-md border border-line bg-[var(--line)] md:grid-cols-2">
-          <div class="bg-[var(--card)] px-6 py-6">
-            <p class="text-xs font-medium uppercase tracking-wide text-faint">{{ mk.paygTitle }}</p>
-            <ul class="mt-3 space-y-2 text-[15px] leading-relaxed text-muted">
-              <li v-for="(t, i) in mk.paygPoints" :key="i" class="flex gap-2"><span class="text-faint">—</span>{{ t }}</li>
-            </ul>
-          </div>
-          <div class="bg-[var(--card)] px-6 py-6">
-            <p class="text-xs font-medium uppercase tracking-wide text-clay">{{ mk.subTitle }}</p>
+          <div v-for="card in mk.cards" :key="card.title" class="bg-[var(--card)] px-6 py-6">
+            <h3 class="font-display text-lg font-semibold text-ink">{{ card.title }}</h3>
             <ul class="mt-3 space-y-2 text-[15px] leading-relaxed text-ink/85">
-              <li v-for="(t, i) in mk.subPoints" :key="i" class="flex gap-2"><span class="text-clay">+</span>{{ t }}</li>
+              <li v-for="(point, i) in card.points" :key="i" class="flex gap-2"><span class="text-clay">+</span>{{ point }}</li>
             </ul>
           </div>
         </div>
-        <!-- 可透支 callout -->
+        <!-- 透支刷新 callout -->
         <div class="mt-6 rounded-md border border-line px-6 py-5">
           <h3 class="font-display text-lg font-semibold text-ink">{{ mk.overdraftTitle }}</h3>
-          <p class="mt-1.5 max-w-2xl text-[15px] leading-relaxed text-muted">{{ mk.overdraftDesc }}</p>
+          <p class="mt-1.5 max-w-2xl text-balance text-[15px] leading-relaxed text-muted">{{ mk.overdraftDesc }}</p>
         </div>
       </section>
 
@@ -225,15 +200,9 @@
         class="mx-auto flex max-w-5xl flex-col items-center justify-between gap-3 text-center sm:flex-row sm:text-left"
       >
         <p class="text-sm text-faint">&copy; {{ currentYear }} {{ siteName }}. {{ t('home.footer.allRightsReserved') }}</p>
-        <a
-          v-if="docUrl"
-          :href="docUrl"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="text-sm text-faint transition-colors hover:text-ink"
-        >
+        <router-link to="/docs" class="text-sm text-faint transition-colors hover:text-ink">
           {{ t('home.docs') }}
-        </a>
+        </router-link>
       </div>
     </footer>
   </div>
@@ -250,17 +219,12 @@ import { sanitizeUrl } from '@/utils/url'
 
 const { t } = useI18n()
 
-// 落地页营销文案（i18n: home.marketing.*；数字为占位示例，待确认后替换）
+// 落地页营销文案（i18n: home.marketing.*）。只讲订阅和余额；没有确切依据的数字不写。
 const mk = computed(() => ({
   eyebrow: t('home.marketing.eyebrow'),
   endpointNote: t('home.marketing.endpointNote'),
   valueTitle: t('home.marketing.valueTitle'),
   valueDesc: t('home.marketing.valueDesc'),
-  stats: [
-    { value: t('home.marketing.stat1Value'), label: t('home.marketing.stat1Label') },
-    { value: t('home.marketing.stat2Value'), label: t('home.marketing.stat2Label') },
-    { value: t('home.marketing.stat3Value'), label: t('home.marketing.stat3Label') },
-  ],
   features: [
     { title: t('home.marketing.feature1Title'), desc: t('home.marketing.feature1Desc') },
     { title: t('home.marketing.feature2Title'), desc: t('home.marketing.feature2Desc') },
@@ -270,17 +234,23 @@ const mk = computed(() => ({
   integrateDesc: t('home.marketing.integrateDesc'),
   clients: ['Claude Code', 'Codex', 'OpenClaw', 'Hermes', 'Cherry Studio', t('home.marketing.clientAnySdk')],
   compareTitle: t('home.marketing.compareTitle'),
-  paygTitle: t('home.marketing.paygTitle'),
-  paygPoints: [
-    t('home.marketing.paygPoint1'),
-    t('home.marketing.paygPoint2'),
-    t('home.marketing.paygPoint3'),
-  ],
-  subTitle: t('home.marketing.subTitle'),
-  subPoints: [
-    t('home.marketing.subPoint1'),
-    t('home.marketing.subPoint2'),
-    t('home.marketing.subPoint3'),
+  cards: [
+    {
+      title: t('home.marketing.subscriptionTitle'),
+      points: [
+        t('home.marketing.subscriptionPoint1'),
+        t('home.marketing.subscriptionPoint2'),
+        t('home.marketing.subscriptionPoint3'),
+      ],
+    },
+    {
+      title: t('home.marketing.balanceTitle'),
+      points: [
+        t('home.marketing.balancePoint1'),
+        t('home.marketing.balancePoint2'),
+        t('home.marketing.balancePoint3'),
+      ],
+    },
   ],
   overdraftTitle: t('home.marketing.overdraftTitle'),
   overdraftDesc: t('home.marketing.overdraftDesc'),
@@ -292,7 +262,6 @@ const appStore = useAppStore()
 // Site settings - directly from appStore (already initialized from injected config)
 const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
-const docUrl = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ''))
 const homeContent = computed(() => appStore.cachedPublicSettings?.home_content || '')
 
 // Hero copy: prefer admin-configured subtitle, else i18n default
@@ -501,8 +470,5 @@ onMounted(() => {
 }
 .band-muted {
   color: rgba(245, 242, 234, 0.62);
-}
-.band-clay {
-  color: #e09372;
 }
 </style>

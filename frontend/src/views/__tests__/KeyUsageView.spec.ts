@@ -241,58 +241,34 @@ describe('KeyUsageView daily detail', () => {
     wrapper.unmount()
   })
 
-  it('does not render unsafe documentation links', () => {
-    publicDocUrl.value = 'javascript:alert(1)'
-
-    const wrapper = mount(KeyUsageView, {
+  const mountKeyUsage = () =>
+    mount(KeyUsageView, {
       global: {
         stubs: {
-          RouterLink: { template: '<a><slot /></a>' },
+          RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' },
           LocaleSwitcher: true,
           Icon: true,
         },
       },
     })
 
-    expect(wrapper.find('a[href="javascript:alert(1)"]').exists()).toBe(false)
+  it('always links the documentation entries to the built-in docs page', () => {
+    const wrapper = mountKeyUsage()
+
+    // 顶栏图标和页脚各一个
+    expect(wrapper.findAll('a[href="/docs"]')).toHaveLength(2)
 
     wrapper.unmount()
   })
 
-  it('renders sanitized documentation links', () => {
-    publicDocUrl.value = 'https://docs.example.com/help'
-
-    const wrapper = mount(KeyUsageView, {
-      global: {
-        stubs: {
-          RouterLink: { template: '<a><slot /></a>' },
-          LocaleSwitcher: true,
-          Icon: true,
-        },
-      },
-    })
-
-    expect(wrapper.find('a[href="https://docs.example.com/help"]').exists()).toBe(true)
-
-    wrapper.unmount()
-  })
-
-  it('prefers sanitized cached documentation links', () => {
+  it('ignores the external documentation URL setting', () => {
     publicDocUrl.value = 'https://docs.example.com/fallback'
     cachedPublicSettings.value = { doc_url: 'https://docs.example.com/cached' }
 
-    const wrapper = mount(KeyUsageView, {
-      global: {
-        stubs: {
-          RouterLink: { template: '<a><slot /></a>' },
-          LocaleSwitcher: true,
-          Icon: true,
-        },
-      },
-    })
+    const wrapper = mountKeyUsage()
 
-    expect(wrapper.find('a[href="https://docs.example.com/cached"]').exists()).toBe(true)
-    expect(wrapper.find('a[href="https://docs.example.com/fallback"]').exists()).toBe(false)
+    expect(wrapper.findAll('a[href="/docs"]')).toHaveLength(2)
+    expect(wrapper.find('a[href^="https://docs.example.com"]').exists()).toBe(false)
 
     wrapper.unmount()
   })
