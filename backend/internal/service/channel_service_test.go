@@ -991,10 +991,9 @@ func TestResolveChannelMapping_WildcardFirstMatch(t *testing.T) {
 
 	result := svc.ResolveChannelMapping(context.Background(), 10, "claude-sonnet-4")
 	require.True(t, result.Mapped)
-	// map iteration order is non-deterministic, so the first-match depends on
-	// insertion order which Go maps don't guarantee; verify that one of the
-	// wildcard targets matched
-	require.Contains(t, []string{"target1", "target2"}, result.MappedModel)
+	// 通配符按前缀长度排序，前缀更长的 claude-sonnet-* 固定先命中
+	// （配置里的 map 没有顺序，展开缓存时由 expandMappingToCache 排序）
+	require.Equal(t, "target1", result.MappedModel)
 }
 
 func TestResolveChannelMapping_NoMapping(t *testing.T) {

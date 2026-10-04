@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -94,7 +95,7 @@ type channelCache struct {
 	pricingByGroupModel     map[channelModelKey]*ChannelModelPricing            // (groupID, platform, model) → 定价
 	wildcardByGroupPlatform map[channelGroupPlatformKey][]*wildcardPricingEntry // (groupID, platform) → 通配符定价（按配置顺序，先匹配先使用）
 	mappingByGroupModel     map[channelModelKey]string                          // (groupID, platform, model) → 映射目标
-	wildcardMappingByGP     map[channelGroupPlatformKey][]*wildcardMappingEntry // (groupID, platform) → 通配符映射（按配置顺序，先匹配先使用）
+	wildcardMappingByGP     map[channelGroupPlatformKey][]*wildcardMappingEntry // (groupID, platform) → 通配符映射（前缀长者在前、同长按字典序，先匹配先使用）
 	channelByGroupID        map[int64]*Channel                                  // groupID → 渠道
 	groupPlatform           map[int64]string                                    // groupID → platform
 
@@ -254,6 +255,12 @@ func expandPricingToCache(cache *channelCache, ch *Channel, gid int64, platform 
 
 // expandMappingToCache 将渠道的模型映射展开到缓存（按分组+平台维度）。
 // 各平台严格独立：antigravity 分组只匹配 antigravity 映射。
+//
+// ModelMapping 是 map（数据库里是 JSONB，不保留键序），遍历顺序每次都不同，
+// 所以展开结果必须与遍历顺序无关，规则固定为：
+//  1. 精确名优先于通配符：精确名存在 mappingByGroupModel，lookupMappingAcrossPlatforms 先查它；
+//  2. 通配符按前缀长度降序，长度相同按前缀字典序，因此多个互为前缀的通配符并存时命中前缀最长的；
+//  3. 小写后同键（只差大小写）的 src，按原始 src 的字节序依次处理，后处理的覆盖先处理的。
 func expandMappingToCache(cache *channelCache, ch *Channel, gid int64, platform string) {
 	for _, mappingPlatform := range matchingPlatforms(platform) {
 		platformMapping, ok := ch.ModelMapping[mappingPlatform]
@@ -262,19 +269,46 @@ func expandMappingToCache(cache *channelCache, ch *Channel, gid int64, platform 
 		}
 		// 使用映射条目的原始平台作为缓存 key，防止跨平台同名映射冲突
 		gpKey := channelGroupPlatformKey{groupID: gid, platform: mappingPlatform}
-		for src, dst := range platformMapping {
-			if strings.HasSuffix(src, "*") {
-				prefix := strings.ToLower(strings.TrimSuffix(src, "*"))
-				cache.wildcardMappingByGP[gpKey] = append(cache.wildcardMappingByGP[gpKey], &wildcardMappingEntry{
-					prefix: prefix,
-					target: dst,
-				})
-			} else {
+
+		// 先把 src 按字节序排好再处理，大小写撞键时谁覆盖谁才是确定的
+		srcs := make([]string, 0, len(platformMapping))
+		for src := range platformMapping {
+			srcs = append(srcs, src)
+		}
+		sort.Strings(srcs)
+
+		wildcardByPrefix := make(map[string]*wildcardMappingEntry)
+		for _, src := range srcs {
+			dst := platformMapping[src]
+			if !strings.HasSuffix(src, "*") {
 				key := channelModelKey{groupID: gid, platform: mappingPlatform, model: strings.ToLower(src)}
 				cache.mappingByGroupModel[key] = dst
+				continue
 			}
+			prefix := strings.ToLower(strings.TrimSuffix(src, "*"))
+			if existing, dup := wildcardByPrefix[prefix]; dup {
+				// 通配符也可能只差大小写：与精确名相同，后处理的覆盖先处理的
+				existing.target = dst
+				continue
+			}
+			entry := &wildcardMappingEntry{prefix: prefix, target: dst}
+			wildcardByPrefix[prefix] = entry
+			cache.wildcardMappingByGP[gpKey] = append(cache.wildcardMappingByGP[gpKey], entry)
 		}
+		sortWildcardMappings(cache.wildcardMappingByGP[gpKey])
 	}
+}
+
+// sortWildcardMappings 固定通配符映射的匹配顺序：前缀长者在前，长度相同按前缀字典序。
+// matchWildcardMapping 取第一个命中的条目，所以命中的总是前缀最长的那个；
+// 互不为前缀的通配符不会同时命中同一个模型名，它们之间的顺序不影响查找结果。
+func sortWildcardMappings(entries []*wildcardMappingEntry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		if len(entries[i].prefix) != len(entries[j].prefix) {
+			return len(entries[i].prefix) > len(entries[j].prefix)
+		}
+		return entries[i].prefix < entries[j].prefix
+	})
 }
 
 // storeErrorCache 存入短 TTL 空缓存，防止 DB 错误后紧密重试。
