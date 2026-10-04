@@ -8809,7 +8809,7 @@ const form = reactive<SettingsForm>({
   default_user_rpm_limit: 0,
   site_name: "Sub2API",
   site_logo: "",
-  site_subtitle: "Subscription to API Conversion Platform",
+  site_subtitle: "",
   default_locale: "zh-HK",
   api_base_url: "",
   contact_info: "",

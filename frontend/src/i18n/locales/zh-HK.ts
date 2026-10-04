@@ -7043,7 +7043,7 @@
         siteNamePlaceholder: 'Sub2API',
         siteSubtitle: '站點副標題',
         siteSubtitleHint: '顯示在登入和註冊頁面',
-        siteSubtitlePlaceholder: '訂閱轉 API 轉換平台',
+        siteSubtitlePlaceholder: '快速穩定的大模型 API 服務',
         defaultLocale: '預設語言',
         defaultLocaleHint: '訪客未在本裝置手動選擇語言時使用',
         apiBaseUrl: 'API 端點地址',
