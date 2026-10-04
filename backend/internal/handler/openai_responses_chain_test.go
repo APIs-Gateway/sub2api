@@ -44,6 +44,8 @@ type chainRespReply struct {
 	contentType string
 	// gated 为 true 时 body 要等到网关第一次 Flush（心跳真正写出）之后才放出。
 	gated bool
+	// onDo 非 nil 时在上游收到请求（返回响应之前）调用，用来模拟「上游处理期间客户端断开」之类的事件。
+	onDo func()
 }
 
 // chainRespUpstreamError 是上游容量类失败（5xx，触发 failover）。
@@ -63,6 +65,9 @@ func (u *chainRespUpstream) Do(_ *http.Request, _ string, accountID int64, _ int
 	u.calls = append(u.calls, accountID)
 	reply, ok := u.replies[accountID]
 	u.mu.Unlock()
+	if ok && reply.onDo != nil {
+		reply.onDo()
+	}
 	if !ok {
 		reply = chainRespReply{body: keepaliveMismatchResponsesSSE(chainRespModel, fmt.Sprintf("served-by-%d", accountID))}
 	}
@@ -202,6 +207,13 @@ type chainRespOptions struct {
 	forced    []config.OpenAIForcedAccountRoute
 	// audit 非 nil 时启用提示词审计，值是审计范围里的分组 ID（命中则拦截）。
 	audit []int64
+	// stableStore / stableKey 用于旧「稳定优先」与回退链的共存测试（只覆盖 chat/completions）：
+	// stableKey 为 true 时 Key 开着稳定优先，stableStore 是（会记录调用的）稳定优先状态存储。
+	stableStore service.StablePriorityStateStore
+	stableKey   bool
+	// groupRepo 是网关服务用的分组仓储（旧稳定优先沿分组指针解析兜底档位时用）；maxSwitches > 0 时覆盖入口的单跳换号上限（默认 3）。
+	groupRepo   service.GroupRepository
+	maxSwitches int
 }
 
 // chainRespBase 是默认场景：主分组 1（倍率 1）有账号 11，兜底分组 2（倍率 2）有账号 21，链为 [1, 2]，开关打开。
@@ -297,12 +309,15 @@ func newChainRespHarness(t *testing.T, o chainRespOptions) *chainRespHarness {
 		billingCache,
 		hs.upstream,
 		&service.DeferredService{},
-		nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, o.stableStore, o.groupRepo,
 	)
 
 	h := NewOpenAIGatewayHandler(gateway, concurrency, billingCache, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)
 	h.concurrencyHelper = NewConcurrencyHelper(concurrency, SSEPingFormatNone, time.Second)
 	h.maxAccountSwitches = 3
+	if o.maxSwitches > 0 {
+		h.maxAccountSwitches = o.maxSwitches
+	}
 
 	settings := service.DefaultGroupFallbackSettings()
 	settings.Enabled = o.switchOn
@@ -337,6 +352,8 @@ func newChainRespHarness(t *testing.T, o chainRespOptions) *chainRespHarness {
 		Group:          o.primary,
 		HasGroupRoutes: o.hasRoutes,
 		User:           &service.User{ID: chainRespUserID, Status: service.StatusActive, Balance: 100},
+
+		StablePriorityEnabled: o.stableKey,
 	}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -350,6 +367,7 @@ func newChainRespHarness(t *testing.T, o chainRespOptions) *chainRespHarness {
 		}
 	})
 	router.POST("/openai/v1/responses", h.Responses)
+	router.POST("/openai/v1/chat/completions", h.ChatCompletions)
 	hs.router = router
 	return hs
 }

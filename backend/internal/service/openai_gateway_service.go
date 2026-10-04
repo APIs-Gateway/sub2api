@@ -9418,10 +9418,15 @@ func (s *OpenAIGatewayService) IsModelOpenForGroup(ctx context.Context, groupID 
 // 否则兜底分组会白送。判定与计费走同一条取价链：同一个 calculateOpenAIRecordUsageCost，传入 hop 分组的影子 Key
 // 和渠道映射之后的候选模型名，只有取价层报告「无价格」才算未定价；其它错误（取价层异常等）按已定价放行（fail-open），
 // 与计费侧「定价缺失才零计费、其它错误才失败」的分类一致。
+//
+// 这是不对应任何用量行的取价计算：调用前给 ctx 打「非结算调用」标记（WithBillingNonSettlement），
+// 无价观测（noteUnpricedBilling）看到标记就跳过。否则一个无价模型的链请求，每次资格检查都会让无价计数加一，
+// 计数就和 usage_logs 对不上了（计数只属于真正写用量行的结算，一个请求只结算一次）。
 func (s *OpenAIGatewayService) IsModelPricedForGroup(ctx context.Context, hopKey *APIKey, requestedModel string, mapping ChannelMappingResult) bool {
 	if s == nil || s.billingService == nil || hopKey == nil || hopKey.Group == nil {
 		return true
 	}
+	ctx = WithBillingNonSettlement(ctx)
 	billingModel := requestedModel
 	if mapping.BillingModelSource == BillingModelSourceChannelMapped && mapping.Mapped && mapping.MappedModel != "" {
 		billingModel = mapping.MappedModel
