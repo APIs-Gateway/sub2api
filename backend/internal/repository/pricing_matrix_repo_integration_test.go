@@ -463,7 +463,7 @@ func TestPricingDerivationHook_EndToEndWithChannelService(t *testing.T) {
 	}
 	ch, err := svc.Create(ctx, &service.CreateChannelInput{
 		Name: "mx-hook-" + uuid.NewString(), GroupIDs: []int64{gid}, ModelPricing: priced(1e-6),
-		AccountStatsPricingRules: []service.AccountStatsPricingRule{{Name: "r", SortOrder: 1}},
+		AccountStatsPricingRules: []service.AccountStatsPricingRule{{Name: "r", SortOrder: 1, GroupIDs: []int64{gid}, AccountIDs: []int64{}}},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = integrationDB.ExecContext(ctx, `DELETE FROM channels WHERE id = $1`, ch.ID) })
