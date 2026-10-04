@@ -113,7 +113,7 @@ func mxCellLiteralLookup(cells []MatrixCell, name string) *MatrixCell {
 	return best
 }
 
-// mxCellTwoStepLookup 与 lookupChannelPricingNormalized 一致的两步查找。
+// mxCellTwoStepLookup 与 legacyPolicy.PriceOverride 一致的两步查找。
 func mxCellTwoStepLookup(cells []MatrixCell, name string) *MatrixCell {
 	if c := mxCellLiteralLookup(cells, name); c != nil {
 		return c

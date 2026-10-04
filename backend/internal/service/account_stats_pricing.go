@@ -21,7 +21,7 @@ import (
 // pricingAt 与本次客户计费使用同一时刻，避免跨峰谷请求的成本与售价错位。
 func resolveAccountStatsCost(
 	ctx context.Context,
-	channelService *ChannelService,
+	policy GroupPolicy,
 	billingService *BillingService,
 	accountID int64,
 	groupID int64,
@@ -32,23 +32,23 @@ func resolveAccountStatsCost(
 	serviceTier string,
 	pricingAt time.Time,
 ) *float64 {
-	if channelService == nil || upstreamModel == "" {
+	if policy == nil || upstreamModel == "" {
 		return nil
 	}
-	channel, err := channelService.GetChannelForGroup(ctx, groupID)
-	if err != nil || channel == nil {
+	// 没有（启用的）渠道的分组一律走默认公式，不看自定义规则（见 GroupPolicy.CostMode）。
+	mode := policy.CostMode(ctx, groupID)
+	if mode == MatrixCostAccountRate {
 		return nil
 	}
-
-	platform := channelService.GetGroupPlatform(ctx, groupID)
+	rules, platform := policy.CostRules(ctx, groupID)
 
 	// 优先级 1：自定义规则（始终尝试）
-	if cost := tryCustomRules(channel, accountID, groupID, platform, upstreamModel, tokens, requestCount); cost != nil {
+	if cost := tryCustomRules(rules, accountID, groupID, platform, upstreamModel, tokens, requestCount); cost != nil {
 		return cost
 	}
 
 	// 优先级 2：渠道开启"应用模型定价到账号统计"时，直接使用客户计费（倍率前）
-	if channel.ApplyPricingToAccountStats {
+	if mode == MatrixCostFollowBilling {
 		cost := totalCost
 		if cost <= 0 {
 			return nil
@@ -87,11 +87,11 @@ func tryModelFilePricing(billingService *BillingService, model string, tokens Us
 
 // tryCustomRules 遍历自定义规则，按数组顺序先命中为准。
 func tryCustomRules(
-	channel *Channel, accountID, groupID int64,
+	rules []AccountStatsPricingRule, accountID, groupID int64,
 	platform, model string, tokens UsageTokens, requestCount int,
 ) *float64 {
 	modelLower := strings.ToLower(model)
-	for _, rule := range channel.AccountStatsPricingRules {
+	for _, rule := range rules {
 		if !matchAccountStatsRule(&rule, accountID, groupID) {
 			continue
 		}
@@ -229,7 +229,7 @@ func calculateTokenStatsCost(pricing *ChannelModelPricing, tokens UsageTokens) *
 func applyAccountStatsCost(
 	ctx context.Context,
 	usageLog *UsageLog,
-	cs *ChannelService, bs *BillingService,
+	policy GroupPolicy, bs *BillingService,
 	accountID int64, groupID int64,
 	upstreamModel, requestedModel string,
 	tokens UsageTokens,
@@ -249,6 +249,6 @@ func applyAccountStatsCost(
 		serviceTier = *usageLog.ServiceTier
 	}
 	usageLog.AccountStatsCost = resolveAccountStatsCost(
-		ctx, cs, bs, accountID, groupID, model, tokens, requestCount, totalCost, serviceTier, pricingAt,
+		ctx, policy, bs, accountID, groupID, model, tokens, requestCount, totalCost, serviceTier, pricingAt,
 	)
 }
