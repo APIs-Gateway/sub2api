@@ -101,6 +101,32 @@ func TestLoadBillingKnownFreeList_BadConfigFallsBackToEmpty(t *testing.T) {
 	}}), "写坏的名单按空处理，宁可多告警")
 }
 
+func TestLoadBillingKnownFreeList_UnknownFieldDropsWholeList(t *testing.T) {
+	settings := &unpricedSettingRepoStub{values: map[string]string{
+		SettingKeyBillingKnownFreeList: `[{"group_id":16,"model":"ok-model"},{"groupId":16,"model":"typo-model"}]`,
+	}}
+	require.Empty(t, loadBillingKnownFreeList(context.Background(), settings), "字段名写错时整份名单作废，包括写对的那一项")
+}
+
+func TestComputeRuleMetric_MisspelledKnownFreeListDoesNotMaskRows(t *testing.T) {
+	repo := &unpricedOpsRepoStub{rows: []*OpsUnpricedBillingRow{
+		unpricedRow(16, "free-model", 4),
+		unpricedRow(18, "free-model", 6),
+	}}
+	svc := &OpsAlertEvaluatorService{
+		opsRepo: repo,
+		opsService: &OpsService{settingRepo: &unpricedSettingRepoStub{values: map[string]string{
+			// group_id 写成了 groupId：旧实现会把它当成「任意分组」，把两个分组的同名模型都盖住。
+			SettingKeyBillingKnownFreeList: `[{"groupId":16,"model":"free-model"}]`,
+		}}},
+	}
+
+	value, ok := svc.computeRuleMetric(context.Background(), &OpsAlertRule{MetricType: OpsAlertMetricUnpricedBillingRows},
+		nil, time.Now().Add(-5*time.Minute), time.Now(), "", nil)
+	require.True(t, ok)
+	require.InDelta(t, 10.0, value, 1e-9, "名单写坏时按空名单处理，只会多告警")
+}
+
 func TestLoadBillingKnownFreeList_ReadErrorFallsBackToEmpty(t *testing.T) {
 	require.Empty(t, loadBillingKnownFreeList(context.Background(), &unpricedFailingSettingRepo{}))
 }

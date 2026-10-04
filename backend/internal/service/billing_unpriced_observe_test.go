@@ -153,6 +153,27 @@ func TestParseBillingKnownFreeList(t *testing.T) {
 	}, list, "model 为空或 group_id 为负的项被丢弃")
 }
 
+func TestParseBillingKnownFreeList_StrictRejectsWholeList(t *testing.T) {
+	for name, raw := range map[string]string{
+		"misspelled group_id":                 `[{"groupId": 16, "model": "free-a"}]`,
+		"unknown field next to valid entries": `[{"group_id": 16, "model": "free-a"}, {"group": 5, "model": "free-b"}]`,
+		"wrong field type":                    `[{"group_id": "16", "model": "free-a"}]`,
+		"second array after the list":         `[{"model": "free-a"}] []`,
+		"garbage after the list":              `[{"model": "free-a"}] x`,
+		"stray closing bracket":               `[{"model": "free-a"}] ]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			list, err := parseBillingKnownFreeList(raw)
+			require.Error(t, err)
+			require.Empty(t, list, "解析失败整份作废，不返回部分结果")
+		})
+	}
+
+	list, err := parseBillingKnownFreeList("  [] \n")
+	require.NoError(t, err)
+	require.Empty(t, list)
+}
+
 func TestBillingKnownFreeMatches(t *testing.T) {
 	list := []BillingKnownFreeEntry{
 		{GroupID: 16, Model: "Free-A"},
