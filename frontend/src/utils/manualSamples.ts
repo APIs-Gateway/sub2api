@@ -1,5 +1,13 @@
 import { normalizeApiBase } from '@/utils/apiEndpoints'
-import { codexProviderId, endpointFor, opencodeProviderFor, psQuote, shQuote, type OnboardingClient } from '@/utils/keyOnboarding'
+import {
+  codexProviderId,
+  endpointFor,
+  looksLikeNonStringToml,
+  opencodeProviderFor,
+  psQuote,
+  shQuote,
+  type OnboardingClient
+} from '@/utils/keyOnboarding'
 
 /**
  * 「手动配置」页签里的代码示例和配置片段的纯函数生成器。
@@ -33,7 +41,9 @@ export const MANUAL_TAB_LABELS: Record<ManualCodeTab, string> = {
  * 代码页签对当前分组是否可用。**「可用与否」只在这里判断。**
  *
  * 和一键安装用同一份依据：clientsForPlatform 给出的客户端清单（openai 分组只有开了 Messages 调度才有 claude）。
- * - OpenAI SDK 和 curl 走 OpenAI 兼容接口：清单里有 Codex 或 OpenCode（这两个都读 /v1）就能用；
+ * - OpenAI SDK 和 curl 请求的是 /v1/chat/completions：清单里有 Codex 或 OpenCode 的分组（openai、anthropic、grok、gemini）
+ *   都有这个接口，antigravity 没有。这里看清单只是借它判断分组有没有 OpenAI 兼容接口，不代表 OpenCode 读的就是这个地址：
+ *   OpenCode 在 gemini 分组读的是 /v1beta（见 buildConfigSnippets），其余读 /v1；
  * - 其余页签一一对应同名客户端。
  *
  * 产品上还没定不可用的页签是「隐藏」还是「置灰并提示换分组」。现在是隐藏（见 availableManualCodeTabs）；
@@ -56,6 +66,18 @@ export function isManualCodeTabAvailable(tab: ManualCodeTab, clients: readonly O
 /** 当前分组下要显示的代码页签（按固定顺序）。 */
 export function availableManualCodeTabs(clients: readonly OnboardingClient[]): ManualCodeTab[] {
   return MANUAL_CODE_TABS.filter((tab) => isManualCodeTabAvailable(tab, clients))
+}
+
+/**
+ * 打开手动配置时默认选中的页签：
+ * - openai 分组（清单里有 Codex）是 OpenAI SDK，也就是显示出来的第一个；
+ * - anthropic、grok、gemini、antigravity 分组是该分组的原生客户端页签（Claude Code 或 Gemini），不是 OpenAI SDK。
+ * 没有分组、什么都不可用时返回 openai（页签区不显示，值不会被用到）。
+ */
+export function defaultManualCodeTab(clients: readonly OnboardingClient[]): ManualCodeTab {
+  const tabs = availableManualCodeTabs(clients)
+  if (clients.includes('codex')) return tabs[0] ?? 'openai'
+  return tabs.find((tab) => tab === 'claude' || tab === 'gemini') ?? tabs[0] ?? 'openai'
 }
 
 // ---------------------------------------------------------------- 示例模型
@@ -206,7 +228,7 @@ export function buildManualCode(tab: ManualCodeTab, input: ManualCodeInput): Man
       const id = codexProviderId(input.siteName)
       const overrides = [
         ['model_provider', id],
-        [`model_providers.${id}.name`, input.siteName || 'sub2api'],
+        [`model_providers.${id}.name`, codexDisplayName(input.siteName, id)],
         [`model_providers.${id}.base_url`, endpointFor('codex', input.platform, input.base)],
         [`model_providers.${id}.env_key`, 'OPENAI_API_KEY'],
         [`model_providers.${id}.wire_api`, 'responses']
@@ -310,6 +332,16 @@ function tomlQuote(v: string): string {
     .replace(/"/g, '\\"')
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001f\u007f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)}"`
+}
+
+/**
+ * -c 里的 provider 显示名：站点名（没有就 sub2api）。
+ * 站点名叫 2024、true 这类会被 TOML 读成数字、布尔值的名字时改用 provider id（已经避开了这些写法），
+ * 否则 Windows PowerShell 5.1 吃掉引号后 Codex 收到的类型就错了。config.toml 片段里名字是带引号的字符串，不受影响。
+ */
+function codexDisplayName(siteName: string, id: string): string {
+  const name = siteName || 'sub2api'
+  return looksLikeNonStringToml(name) ? id : name
 }
 
 /**

@@ -742,4 +742,71 @@ describe('KeyOnboardingModal', () => {
       expect(manualTabs(await mountModal({ initialTab: 'manual', apiKey: dispatch }))).toEqual(['openai', 'curl', 'codex', 'claude'])
     })
   })
+
+  describe('手动配置：默认选中的代码页签', () => {
+    const checked = (w: VueWrapper) =>
+      w.findAll('[data-test^="manual-tab-"][aria-checked="true"]').map((b) => b.attributes('data-test')!.replace('manual-tab-', ''))
+    const group = (platform: string, extra: Record<string, unknown> = {}) => ({ ...apiKey(platform), group: { ...apiKey(platform).group, ...extra } })
+    const reopen = async (w: VueWrapper, key: Record<string, unknown>) => {
+      await w.setProps({ show: false })
+      await w.setProps({ apiKey: key, show: true })
+      await flushPromises()
+    }
+
+    it.each([
+      ['openai', {}, 'openai'],
+      ['openai', { allow_messages_dispatch: true }, 'openai'],
+      ['anthropic', {}, 'claude'],
+      ['grok', {}, 'claude'],
+      ['gemini', {}, 'gemini'],
+      ['antigravity', {}, 'claude']
+    ] as const)('%s %j：默认选中 %s（openai 分组是 OpenAI SDK，其余是该分组的原生客户端）', async (platform, extra, expected) => {
+      const w = await mountModal({ initialTab: 'manual', apiKey: group(platform, extra) })
+      expect(checked(w)).toEqual([expected])
+    })
+
+    it('换了分组就回到新分组的默认页签；同一类分组之间换密钥，用户选的保留', async () => {
+      const w = await mountModal({ initialTab: 'manual', apiKey: group('anthropic') })
+      expect(checked(w)).toEqual(['claude'])
+      await w.get('[data-test="manual-tab-curl"]').trigger('click')
+      expect(checked(w)).toEqual(['curl'])
+
+      // 同一类分组换密钥：保留
+      await reopen(w, { ...group('anthropic'), name: 'other-key' })
+      expect(checked(w)).toEqual(['curl'])
+
+      // 换了分组：回到新分组的默认，不管上一个密钥选了什么
+      await reopen(w, group('gemini'))
+      expect(checked(w)).toEqual(['gemini'])
+      await reopen(w, group('openai'))
+      expect(checked(w)).toEqual(['openai'])
+
+      await w.get('[data-test="manual-tab-curl"]').trigger('click')
+      await reopen(w, { ...group('openai'), name: 'other-key' })
+      expect(checked(w)).toEqual(['curl'])
+    })
+
+    it('openai 分组的 Messages 调度开关变了也算换了分组：选中的页签回到默认', async () => {
+      const w = await mountModal({ initialTab: 'manual', apiKey: group('openai', { allow_messages_dispatch: true }) })
+      await w.get('[data-test="manual-tab-claude"]').trigger('click')
+      expect(checked(w)).toEqual(['claude'])
+      await reopen(w, group('openai'))
+      expect(checked(w)).toEqual(['openai'])
+    })
+
+    it('先打开没有分组的密钥、再换成有分组的：默认取决于当前分组', async () => {
+      const w = await mountModal({ initialTab: 'manual', apiKey: { key: SECRET, name: 'k', group_id: null, group: null } })
+      expect(checked(w)).toEqual([])
+      await reopen(w, group('anthropic'))
+      expect(checked(w)).toEqual(['claude'])
+    })
+
+    it('切到别的页签再回到手动配置：选的代码页签还在', async () => {
+      const w = await mountModal({ initialTab: 'manual', apiKey: group('gemini') })
+      await w.get('[data-test="manual-tab-curl"]').trigger('click')
+      await w.get('[data-test="tab-ai"]').trigger('click')
+      await w.get('[data-test="tab-manual"]').trigger('click')
+      expect(checked(w)).toEqual(['curl'])
+    })
+  })
 })

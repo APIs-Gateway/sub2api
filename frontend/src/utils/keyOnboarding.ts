@@ -149,11 +149,28 @@ function oneLine(value: string): string {
   return (value || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim()
 }
 
-/** Codex 的 provider id：只含小写字母、数字、下划线，且不与内置 provider 重名。 */
+// 数字（2024、1_000、-5、3.14、1e5、0x1f）、true/false、inf/nan、日期时间（1979-05-27、07:32:00）、以 [ 或 { 开头的数组和表
+const NON_STRING_TOML =
+  /^(?:[+-]?(?:[0-9][0-9_]*(?:\.[0-9][0-9_]*)?(?:e[+-]?[0-9_]+)?|0[xob][0-9a-f_]+|inf|nan)|true|false|\d{4}-\d{2}-\d{2}.*|\d{2}:\d{2}:\d{2}.*|[[{].*)$/
+
+/**
+ * 这个文字被 TOML 当成值解析时是不是字符串以外的类型。
+ * Codex 的 -c key=value 先把 value 当 TOML 解析；站点名派生出来的 provider id 和显示名撞上这些写法时，
+ * 在 Windows PowerShell 5.1 里（往外部程序传参会吃掉值里的双引号）就读成了数字、布尔值、日期，类型不对。
+ */
+export function looksLikeNonStringToml(value: string): boolean {
+  return NON_STRING_TOML.test(value.trim().toLowerCase())
+}
+
+/**
+ * Codex 的 provider id：只含小写字母、数字、下划线，且不与内置 provider 重名；
+ * 也不能写出来像数字、true/false 这类 TOML 值（站点名叫 2024、true 时加 site_ 前缀），这样命令行里不用加引号。
+ */
 export function codexProviderId(siteName?: string): string {
   const raw = (siteName || '').toLowerCase().replace(/[^a-z0-9_]/g, '')
   const id = raw || 'sub2api'
-  return ['openai', 'ollama', 'lmstudio'].includes(id) ? `${id}_site` : id
+  if (['openai', 'ollama', 'lmstudio'].includes(id)) return `${id}_site`
+  return looksLikeNonStringToml(id) ? `site_${id}` : id
 }
 
 // ---------------------------------------------------------------- 脚本

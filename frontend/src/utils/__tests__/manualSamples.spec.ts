@@ -4,13 +4,14 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { clientsForPlatform, type OnboardingClient } from '../keyOnboarding'
+import { clientsForPlatform, codexProviderId, type OnboardingClient } from '../keyOnboarding'
 import {
   KEY_PLACEHOLDER,
   MANUAL_CODE_TABS,
   availableManualCodeTabs,
   buildConfigSnippets,
   buildManualCode,
+  defaultManualCodeTab,
   isManualCodeTabAvailable,
   pickExampleModel,
   type ManualCodeInput,
@@ -61,6 +62,38 @@ describe('哪些代码页签可用：跟随 clientsForPlatform', () => {
     expect(only('claude')).toEqual(['claude'])
     expect(only('gemini')).toEqual(['gemini'])
     expect(only()).toEqual([])
+  })
+})
+
+describe('defaultManualCodeTab：打开时默认选中的页签', () => {
+  it.each([
+    ['openai', false, 'openai'],
+    ['openai', true, 'openai'],
+    ['anthropic', false, 'claude'],
+    ['grok', false, 'claude'],
+    ['gemini', false, 'gemini'],
+    ['antigravity', false, 'claude'],
+    [null, false, 'openai'],
+    ['unknown', false, 'openai']
+  ] as const)('%s（调度 %s）：%s', (platform, dispatch, expected) => {
+    expect(defaultManualCodeTab(clientsForPlatform(platform, { allowMessagesDispatch: dispatch }))).toBe(expected)
+  })
+
+  it('openai 分组是 OpenAI SDK，其余分组是原生客户端页签；有页签可用时默认一定是可用的那个', () => {
+    for (const platform of ['openai', 'anthropic', 'grok', 'gemini', 'antigravity']) {
+      for (const dispatch of [false, true]) {
+        const clients = clientsForPlatform(platform, { allowMessagesDispatch: dispatch })
+        expect(isManualCodeTabAvailable(defaultManualCodeTab(clients), clients), `${platform} ${dispatch}`).toBe(true)
+      }
+    }
+  })
+
+  it('只看客户端清单：有 Codex 就是 OpenAI SDK，否则是第一个原生客户端（Claude Code 在 Gemini 前），都没有时是第一个可用页签', () => {
+    expect(defaultManualCodeTab(['codex', 'claude'])).toBe('openai')
+    expect(defaultManualCodeTab(['claude', 'gemini'])).toBe('claude')
+    expect(defaultManualCodeTab(['gemini', 'claude'])).toBe('claude')
+    expect(defaultManualCodeTab(['opencode'])).toBe('openai')
+    expect(defaultManualCodeTab([])).toBe('openai')
   })
 })
 
@@ -270,6 +303,14 @@ describe.skipIf(!hasBash)('buildManualCode：bash 示例原样运行，取值带
     expect(r.parts.slice(6, -1)).toEqual(codexArgs(NASTY_BASE, 'My "Site"', 'mysite'))
   })
 
+  it('Codex：站点名是纯数字或 true 时，provider id 加了 site_ 前缀，显示名用 id，命令行里没有引号', () => {
+    for (const siteName of ['2024', 'true']) {
+      const r = run(codeOf('codex', 'bash', { base: NASTY_BASE, apiKey: NASTY_KEY, siteName }))
+      expect(r.status, r.stderr).toBe(0)
+      expect(r.parts.slice(6, -1)).toEqual(codexArgs(NASTY_BASE, `site_${siteName}`, `site_${siteName}`))
+    }
+  })
+
   it('Claude Code', () => {
     const r = run(codeOf('claude', 'bash', { platform: 'anthropic', base: NASTY_BASE, apiKey: NASTY_KEY }))
     expect(r.status, r.stderr).toBe(0)
@@ -302,16 +343,42 @@ describe.skipIf(!hasTomllib)('buildManualCode：Codex 的 -c 值按 Codex 的规
     return JSON.parse(spawnSync('python3', ['-c', script], { input: value, encoding: 'utf-8' }).stdout)
   }
 
-  it.each(['Hiyo', 'My Site', '土星 AI', '2024', 'true', 'inf', '-5', '[x]', '"quoted"', "it's", '1979-05-27'])('站点名 %j', (siteName) => {
+  /** 取出每个 -c 的 key=value（值里没有空格的直接取，有空格的在 PowerShell 里被单引号包着） */
+  const overridesOf = (siteName: string) => {
     const code = codeOf('codex', 'windows', { siteName })
-    // 取出每个 -c 的 key=value（值里没有空格的直接取，有空格的在 PowerShell 里被单引号包着）
     const overrides = [...code.matchAll(/-c (?:'([^']*(?:''[^']*)*)'|(\S+))/g)].map((m) => (m[1] ?? m[2]).replace(/''/g, "'"))
     const byKey = Object.fromEntries(overrides.map((o) => [o.slice(0, o.indexOf('=')), o.slice(o.indexOf('=') + 1)]))
     const id = Object.keys(byKey).find((k) => k.endsWith('.name'))!.split('.')[1]
+    return { byKey, id }
+  }
+
+  // 这些站点名按 TOML 会被读成数字、布尔值、日期，或者写得像数组、表（[x] 本身不是合法数组，但一并回避）：provider id 加 site_ 前缀，显示名改用 id
+  const NON_STRING_NAMES = ['2024', 'true', 'false', 'inf', 'nan', '-5', '+5', '3.14', '1e5', '0x1f', '1_000', '[1]', '[x]', '{a=1}', '1979-05-27', '07:32:00']
+  const expectedName = (siteName: string, id: string) => (NON_STRING_NAMES.includes(siteName) ? id : siteName)
+
+  it.each(['Hiyo', 'My Site', '土星 AI', '7eleven', '"quoted"', "it's", ...NON_STRING_NAMES])('站点名 %j', (siteName) => {
+    const { byKey, id } = overridesOf(siteName)
     expect(parseLikeCodex(byKey['model_provider'])).toBe(id)
-    expect(parseLikeCodex(byKey[`model_providers.${id}.name`])).toBe(siteName)
+    expect(parseLikeCodex(byKey[`model_providers.${id}.name`])).toBe(expectedName(siteName, id))
     expect(parseLikeCodex(byKey[`model_providers.${id}.base_url`])).toBe('https://api.example.com/v1')
     expect(parseLikeCodex(byKey[`model_providers.${id}.env_key`])).toBe('OPENAI_API_KEY')
+  })
+
+  // Windows PowerShell 5.1 往外部程序传参数时会吃掉值里的双引号：这里模拟吃掉之后 Codex 收到的值，类型不能变
+  it.each(['Hiyo', 'My Site', '7eleven', ...NON_STRING_NAMES])('PowerShell 5.1 吃掉双引号以后，站点名 %j 的 id 和显示名仍是字符串', (siteName) => {
+    const { byKey, id } = overridesOf(siteName)
+    const eaten = (v: string) => v.replace(/"/g, '')
+    expect(parseLikeCodex(eaten(byKey['model_provider']))).toBe(id)
+    expect(parseLikeCodex(eaten(byKey[`model_providers.${id}.name`]))).toBe(expectedName(siteName, id))
+  })
+
+  it('provider id 不需要引号：命令行里 model_provider 和 model_providers.<id> 都是裸值', () => {
+    for (const siteName of ['2024', 'true', '1e5', '0x1f']) {
+      const { byKey, id } = overridesOf(siteName)
+      expect(id).toBe(codexProviderId(siteName))
+      expect(byKey['model_provider']).toBe(id)
+      expect(id).toMatch(/^site_/)
+    }
   })
 })
 

@@ -128,6 +128,7 @@
         v-else-if="active === 'manual'"
         v-bind="panelAttrs"
         v-model:endpoint-id="endpointChoice"
+        v-model:code-tab="manualCodeTab"
         :endpoint="activeEndpoint"
         :endpoint-options="endpointOptions"
         :full-key="fullKey"
@@ -181,6 +182,7 @@ import ManualTab from './onboarding/ManualTab.vue'
 import { useCcSwitchState } from './onboarding/useCcSwitchState'
 import { useCopyFeedback } from './onboarding/useCopyFeedback'
 import { useGroupModels } from './onboarding/useGroupModels'
+import { useManualCodeTab } from './onboarding/useManualCodeTab'
 
 export type OnboardingTab = 'install' | 'ai' | 'ccswitch' | 'manual'
 
@@ -289,6 +291,8 @@ const allowMessagesDispatch = computed(() => props.apiKey?.group?.allow_messages
 const clients = computed<OnboardingClient[]>(() =>
   clientsForPlatform(platform.value, { allowMessagesDispatch: allowMessagesDispatch.value })
 )
+// 手动配置页签里选中的代码页签：跨页签保留，换了分组回到默认（原生客户端；openai 分组是 OpenAI SDK）
+const manualCodeTab = useManualCodeTab({ platform, allowMessagesDispatch: () => allowMessagesDispatch.value, clients })
 const {
   models,
   loading: modelsLoading,

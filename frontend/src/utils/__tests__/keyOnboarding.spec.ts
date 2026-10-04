@@ -15,6 +15,7 @@ import {
   claudeUrl,
   clientsForPlatform,
   codexProviderId,
+  looksLikeNonStringToml,
   docsSectionFor,
   endpointFor,
   psQuote,
@@ -61,6 +62,37 @@ describe('quoting', () => {
     expect(codexProviderId('My Site!')).toBe('mysite')
     expect(codexProviderId('')).toBe('sub2api')
     expect(codexProviderId('OpenAI')).toBe('openai_site')
+  })
+
+  it('provider id 不能写出来像数字、true/false 这类 TOML 值：加 site_ 前缀，命令行里就不用加引号', () => {
+    for (const [name, id] of [
+      ['2024', 'site_2024'],
+      ['1_000', 'site_1_000'],
+      ['1e5', 'site_1e5'],
+      ['0x1f', 'site_0x1f'],
+      ['true', 'site_true'],
+      ['False', 'site_false'],
+      ['inf', 'site_inf'],
+      ['NaN', 'site_nan'],
+      ['2024-05', 'site_202405']
+    ]) {
+      expect(codexProviderId(name), name).toBe(id)
+    }
+    // 只是数字开头、或名字里带数字的不受影响
+    expect(codexProviderId('7eleven')).toBe('7eleven')
+    expect(codexProviderId('Hiyo 2')).toBe('hiyo2')
+    expect(codexProviderId('site_2024')).toBe('site_2024')
+    expect(codexProviderId('truelove')).toBe('truelove')
+    expect(codexProviderId('sub2api')).toBe('sub2api')
+  })
+
+  it('looksLikeNonStringToml：被 TOML 读成字符串以外类型的文字', () => {
+    for (const v of ['2024', '-5', '+5', '3.14', '1_000', '1e5', '1E-5', '0x1f', '0o7', '0b101', 'true', 'false', 'inf', '-inf', 'nan', '1979-05-27', '07:32:00', '[1]', '{a=1}', ' 2024 ']) {
+      expect(looksLikeNonStringToml(v), v).toBe(true)
+    }
+    for (const v of ['Hiyo', '7eleven', 'My Site', 'truelove', 'site_2024', '', 'sub2api', '1.2.3', 'v2024']) {
+      expect(looksLikeNonStringToml(v), v).toBe(false)
+    }
   })
 })
 
