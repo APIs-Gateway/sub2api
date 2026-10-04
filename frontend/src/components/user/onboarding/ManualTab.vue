@@ -160,7 +160,7 @@ let manualUid = 0
  * - 按客户端的配置文件片段、排障提示、文档链接、页脚提醒。
  * 复制只是把内容通过 copy 事件交给外壳。
  */
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { EndpointOption } from '@/utils/apiEndpoints'
 import { CLIENT_LABELS, endpointFor, type OnboardingClient } from '@/utils/keyOnboarding'
@@ -168,6 +168,7 @@ import {
   availableManualCodeTabs,
   buildConfigSnippets,
   buildManualCode,
+  defaultManualCodeTab,
   KEY_PLACEHOLDER,
   MANUAL_TAB_LABELS,
   type ManualCodeTab
@@ -240,9 +241,12 @@ function rowsFor(opt: EndpointOption): { id: string; label: string; value: strin
 
 // ===== 代码示例 =====
 const visibleTabs = computed(() => availableManualCodeTabs(props.clients))
-const codeTab = ref<ManualCodeTab>('openai')
-// 选中的页签对新分组不可用时回到第一个可用的
-const activeTab = computed<ManualCodeTab>(() => (visibleTabs.value.includes(codeTab.value) ? codeTab.value : visibleTabs.value[0]))
+// 选中的页签：外壳用 v-model:code-tab 记着（切走再回来、关闭再打开还在，换分组时由外壳改回默认）
+const codeTab = defineModel<ManualCodeTab>('codeTab')
+// 没选过、或选中的页签对当前分组不可用时，用这个分组的默认页签（原生客户端；openai 分组是 OpenAI SDK）
+const activeTab = computed<ManualCodeTab>(() =>
+  codeTab.value && visibleTabs.value.includes(codeTab.value) ? codeTab.value : defaultManualCodeTab(props.clients)
+)
 
 const sampleInput = computed(() => ({
   base: props.endpoint.base,

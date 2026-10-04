@@ -807,6 +807,12 @@ describe('Codex provider placeholders', () => {
     }
   })
 
+  it('prefixes ids that would read as a TOML number or boolean, same rule as the onboarding dialog', () => {
+    expect(codexProviderId('2024')).toBe('site_2024')
+    expect(codexProviderId('True')).toBe('site_true')
+    expect(codexProviderId('7eleven')).toBe('7eleven')
+  })
+
   it('escapes the display name for a TOML string and flattens line breaks', () => {
     expect(codexProviderName('A "B" \\ C\nD')).toBe('A \\"B\\" \\\\ C D')
     expect(codexProviderName(' \n ')).toBe('sub2api')

@@ -168,25 +168,25 @@ func TestChannelPricing_UnrelatedChannelModelNotMatched(t *testing.T) {
 		"normalized lookup must not match an unrelated channel pricing entry")
 }
 
-// lookupChannelPricingNormalized 的分支：无渠道服务、非 OpenAI 模型（归一结果为空）、
+// priceOverride 的分支：无渠道服务、非 OpenAI 模型（归一结果为空）、
 // 归一后与字面名相同（不重复查询）时都返回 nil；带后缀名回落到基名渠道价。
 func TestLookupChannelPricingNormalized_Branches(t *testing.T) {
 	const groupID = int64(778)
 	ctx := context.Background()
 
-	require.Nil(t, (&ModelPricingResolver{}).lookupChannelPricingNormalized(ctx, groupID, "gpt-5.6-luna-high"))
+	require.Nil(t, (&ModelPricingResolver{}).priceOverride(ctx, groupID, "gpt-5.6-luna-high"))
 
 	cs := newChannelServiceWithPricings(groupID, []ChannelModelPricing{
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, channelPricingExpectedChannelCost),
 	})
 	r := &ModelPricingResolver{channelService: cs}
 
-	require.Nil(t, r.lookupChannelPricingNormalized(ctx, groupID, "claude-sonnet-4-5"), "non-OpenAI model has no normalized name")
-	require.Nil(t, r.lookupChannelPricingNormalized(ctx, groupID, "gpt-5.4"), "base name without channel pricing must not match")
+	require.Nil(t, r.priceOverride(ctx, groupID, "claude-sonnet-4-5"), "non-OpenAI model has no normalized name")
+	require.Nil(t, r.priceOverride(ctx, groupID, "gpt-5.4"), "base name without channel pricing must not match")
 
-	exact := r.lookupChannelPricingNormalized(ctx, groupID, "gpt-5.6-luna")
+	exact := r.priceOverride(ctx, groupID, "gpt-5.6-luna")
 	require.NotNil(t, exact)
-	suffixed := r.lookupChannelPricingNormalized(ctx, groupID, "gpt-5.6-luna-high")
+	suffixed := r.priceOverride(ctx, groupID, "gpt-5.6-luna-high")
 	require.NotNil(t, suffixed)
 	require.InDelta(t, channelPricingExpectedChannelCost/1e6, *suffixed.InputPrice, 1e-15)
 }

@@ -6,6 +6,7 @@ import { Marked, Renderer } from 'marked'
 import DOMPurify from 'dompurify'
 import type { CustomEndpoint } from '@/types'
 import { OPENAI_CC_SWITCH_CODEX_MODEL } from '@/utils/ccswitchImport'
+import { codexProviderId } from '@/utils/keyOnboarding'
 import { sanitizeUrl } from '@/utils/url'
 
 /**
@@ -153,15 +154,8 @@ export function saveEndpointId(id: string): void {
   }
 }
 
-/**
- * Codex 的 provider id：由站点名派生，只含小写字母、数字、下划线，且不与内置 provider 重名。
- * 规则与「接入密钥」弹窗的一键安装一致。
- */
-export function codexProviderId(siteName?: string): string {
-  const raw = (siteName || '').toLowerCase().replace(/[^a-z0-9_]/g, '')
-  const id = raw || 'sub2api'
-  return ['openai', 'ollama', 'lmstudio'].includes(id) ? `${id}_site` : id
-}
+// Codex 的 provider id 由站点名派生，规则与「接入密钥」弹窗的一键安装、手动配置是同一份（utils/keyOnboarding.ts），文档页直接用它
+export { codexProviderId }
 
 /** 写进 TOML 双引号字符串的站点名：换行和控制字符换成空格，反斜杠和双引号转义。 */
 export function codexProviderName(siteName?: string): string {

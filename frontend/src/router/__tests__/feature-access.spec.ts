@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createRouter } from 'vue-router'
 import { invalidateAdminComplianceSession } from '@/utils/adminComplianceSession'
 
 type NavigationGuard = (
@@ -80,6 +81,15 @@ vi.mock('@/composables/useRoutePrefetch', () => ({
   }),
 }))
 
+type RouteRecord = {
+  path: string
+  redirect?: unknown
+  meta?: Record<string, unknown>
+}
+
+// 读出真实路由表：createRouter 在本文件里被 mock，但它收到的 routes 就是 router/index.ts 里写的那份。
+let routeTable: RouteRecord[] = []
+
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
   const promise = new Promise<T>((resolvePromise) => {
@@ -111,6 +121,8 @@ function runGuard(meta: Record<string, unknown>, path: string) {
 describe('feature route guard', () => {
   beforeAll(async () => {
     await import('@/router')
+    const options = vi.mocked(createRouter).mock.calls[0]?.[0] as unknown as { routes: RouteRecord[] }
+    routeTable = options.routes
   })
 
   beforeEach(() => {
@@ -277,5 +289,62 @@ describe('feature route guard', () => {
 
     expect(next).toHaveBeenCalledOnce()
     expect(next).toHaveBeenCalledWith(false)
+  })
+})
+
+describe('payment gating of the route table', () => {
+  const route = (path: string) => routeTable.find((r) => r.path === path)
+
+  beforeEach(() => {
+    authStore.isAuthenticated = true
+    authStore.isAdmin = false
+    authStore.isSimpleMode = false
+    appStore.publicSettingsLoaded = false
+    appStore.cachedPublicSettings = null
+    appStore.fetchPublicSettings.mockReset()
+    complianceStore.initialized = true
+  })
+
+  it('only gates user routes that cannot work without payment', () => {
+    const gated = routeTable
+      .filter((r) => r.meta?.requiresPayment === true && !r.path.startsWith('/admin'))
+      .map((r) => r.path)
+    expect(gated.sort()).toEqual(['/orders', '/purchase'])
+  })
+
+  it('keeps the payment return pages reachable when payment is switched off', () => {
+    for (const path of ['/payment/result', '/payment/stripe', '/payment/airwallex', '/payment/stripe-popup']) {
+      expect(route(path), path).toBeDefined()
+      expect(route(path)?.meta?.requiresPayment, path).toBe(false)
+    }
+  })
+
+  it('has no orphan /payment/qrcode route', () => {
+    expect(route('/payment/qrcode')).toBeUndefined()
+  })
+
+  it.each(['/subscriptions', '/redeem', '/points'])('lets users into %s even when payment is disabled', async (path) => {
+    const record = route(path)
+    expect(record, path).toBeDefined()
+    expect(record?.meta?.requiresPayment).toBeUndefined()
+
+    appStore.cachedPublicSettings = { payment_enabled: false }
+    appStore.publicSettingsLoaded = true
+    const { navigation, next } = runGuard(record?.meta ?? {}, path)
+    await navigation
+
+    expect(next).toHaveBeenCalledOnce()
+    expect(next).toHaveBeenCalledWith()
+  })
+
+  it.each(['/purchase', '/orders'])('still redirects %s to the dashboard when payment is disabled', async (path) => {
+    const record = route(path)
+    appStore.cachedPublicSettings = { payment_enabled: false }
+    appStore.publicSettingsLoaded = true
+    const { navigation, next } = runGuard(record?.meta ?? {}, path)
+    await navigation
+
+    expect(next).toHaveBeenCalledOnce()
+    expect(next).toHaveBeenCalledWith('/dashboard')
   })
 })

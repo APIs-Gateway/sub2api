@@ -363,7 +363,7 @@ func TestTryCustomRules_FirstMatchWins(t *testing.T) {
 		},
 	}
 	tokens := UsageTokens{InputTokens: 100, OutputTokens: 50}
-	result := tryCustomRules(channel, 999, 1, "", "claude-opus-4", tokens, 1)
+	result := tryCustomRules(channel.AccountStatsPricingRules, 999, 1, "", "claude-opus-4", tokens, 1)
 	require.NotNil(t, result)
 	// 应使用第一条规则的价格：100*0.01 + 50*0.02 = 2.0
 	require.InDelta(t, 2.0, *result, 1e-12)
@@ -388,7 +388,7 @@ func TestTryCustomRules_GPT56UsesConfiguredHighTierAfter272K(t *testing.T) {
 		}},
 	}
 
-	result := tryCustomRules(channel, 999, 1, "", "gpt-5.6-terra", UsageTokens{
+	result := tryCustomRules(channel.AccountStatsPricingRules, 999, 1, "", "gpt-5.6-terra", UsageTokens{
 		InputTokens:     1000,
 		CacheReadTokens: 300000,
 	}, 1)
@@ -414,7 +414,7 @@ func TestTryCustomRules_SkipsNonMatchingRules(t *testing.T) {
 		},
 	}
 	tokens := UsageTokens{InputTokens: 100}
-	result := tryCustomRules(channel, 999, 1, "", "claude-opus-4", tokens, 1)
+	result := tryCustomRules(channel.AccountStatsPricingRules, 999, 1, "", "claude-opus-4", tokens, 1)
 	require.NotNil(t, result)
 	// 跳过规则1（账号不匹配），使用规则2：100*0.05 = 5.0
 	require.InDelta(t, 5.0, *result, 1e-12)
@@ -432,7 +432,7 @@ func TestTryCustomRules_NoMatch_ReturnsNil(t *testing.T) {
 		},
 	}
 	tokens := UsageTokens{InputTokens: 100}
-	result := tryCustomRules(channel, 999, 2, "", "claude-opus-4", tokens, 1)
+	result := tryCustomRules(channel.AccountStatsPricingRules, 999, 2, "", "claude-opus-4", tokens, 1)
 	require.Nil(t, result) // 账号和分组都不匹配
 }
 
@@ -454,7 +454,7 @@ func TestTryCustomRules_RuleMatchesButModelNot_ContinuesToNext(t *testing.T) {
 		},
 	}
 	tokens := UsageTokens{InputTokens: 100}
-	result := tryCustomRules(channel, 999, 1, "", "claude-opus-4", tokens, 1)
+	result := tryCustomRules(channel.AccountStatsPricingRules, 999, 1, "", "claude-opus-4", tokens, 1)
 	require.NotNil(t, result)
 	require.InDelta(t, 5.0, *result, 1e-12) // 使用规则2
 }
@@ -762,7 +762,7 @@ func TestResolveAccountStatsCost_DeepSeekPricingPriority(t *testing.T) {
 			if tt.noChannel {
 				groupID = 99
 			}
-			cost := resolveAccountStatsCost(context.Background(), cs, newTestBillingService(),
+			cost := resolveAccountStatsCost(context.Background(), newLegacyGroupPolicy(cs), newTestBillingService(),
 				1, groupID, "deepseek-v4-flash", UsageTokens{InputTokens: 1000}, 1, 0.75, "", peak)
 			if tt.noChannel {
 				require.Nil(t, cost)
@@ -781,7 +781,7 @@ func TestResolveAccountStatsCost_DeepSeekPricingPriority(t *testing.T) {
 func TestResolveAccountStatsCost_NilChannelService(t *testing.T) {
 	result := resolveAccountStatsCost(
 		context.Background(),
-		nil, // channelService is nil
+		nil, // policy is nil
 		newTestBillingServiceWithPrices(map[string]*ModelPricing{}),
 		1, 1, "claude-sonnet-4",
 		UsageTokens{InputTokens: 100}, 1, 0.5, "",
@@ -798,7 +798,7 @@ func TestResolveAccountStatsCost_EmptyUpstreamModel(t *testing.T) {
 
 	result := resolveAccountStatsCost(
 		context.Background(),
-		cs,
+		newLegacyGroupPolicy(cs),
 		newTestBillingServiceWithPrices(map[string]*ModelPricing{}),
 		1, 1, "", // empty upstream model
 		UsageTokens{InputTokens: 100}, 1, 0.5, "",
@@ -816,7 +816,7 @@ func TestResolveAccountStatsCost_GetChannelForGroupReturnsNil(t *testing.T) {
 
 	result := resolveAccountStatsCost(
 		context.Background(),
-		cs,
+		newLegacyGroupPolicy(cs),
 		newTestBillingServiceWithPrices(map[string]*ModelPricing{}),
 		1, 99, "claude-sonnet-4", // groupID 99 has no channel
 		UsageTokens{InputTokens: 100}, 1, 0.5, "",
@@ -849,7 +849,7 @@ func TestResolveAccountStatsCost_HitsCustomRule(t *testing.T) {
 
 	result := resolveAccountStatsCost(
 		context.Background(),
-		cs, nil, // billingService not needed when custom rule hits
+		newLegacyGroupPolicy(cs), nil, // billingService not needed when custom rule hits
 		1, 10, "claude-sonnet-4",
 		tokens, 1, 999.0, "priority", // 自定义账号价格不叠加服务层级倍率
 		time.Time{},
@@ -872,7 +872,7 @@ func TestResolveAccountStatsCost_ApplyPricingToAccountStats_UsesTotalCost(t *tes
 
 	result := resolveAccountStatsCost(
 		context.Background(),
-		cs, nil,
+		newLegacyGroupPolicy(cs), nil,
 		1, 10, "claude-sonnet-4",
 		tokens, 1, 0.75, "priority", // 已完成用户计费，不再重复应用服务层级倍率
 		time.Time{},
@@ -891,7 +891,7 @@ func TestResolveAccountStatsCost_ApplyPricingToAccountStats_ZeroTotalCost_Return
 
 	result := resolveAccountStatsCost(
 		context.Background(),
-		cs, nil,
+		newLegacyGroupPolicy(cs), nil,
 		1, 10, "claude-sonnet-4",
 		UsageTokens{}, 1, 0.0, "", // totalCost = 0
 		time.Time{},
@@ -919,7 +919,7 @@ func TestResolveAccountStatsCost_FallsBackToLiteLLM(t *testing.T) {
 
 	result := resolveAccountStatsCost(
 		context.Background(),
-		cs, bs,
+		newLegacyGroupPolicy(cs), bs,
 		1, 10, "claude-sonnet-4",
 		tokens, 1, 999.0, "", // totalCost ignored
 		time.Time{},
@@ -952,7 +952,7 @@ func TestResolveAccountStatsCost_Gemini31ProUsesFallbackPricing(t *testing.T) {
 
 	result := resolveAccountStatsCost(
 		context.Background(),
-		cs, bs,
+		newLegacyGroupPolicy(cs), bs,
 		1, 10, "gemini-3.1-pro",
 		UsageTokens{InputTokens: 1_000_000, OutputTokens: 1_000_000, CacheReadTokens: 1_000_000}, 1, 0, "",
 		time.Time{},
@@ -972,7 +972,7 @@ func TestResolveAccountStatsCost_Gemini36FlashTierUsesFallbackPricing(t *testing
 
 	result := resolveAccountStatsCost(
 		context.Background(),
-		cs, bs,
+		newLegacyGroupPolicy(cs), bs,
 		1, 10, "gemini-3.6-flash-low",
 		UsageTokens{InputTokens: 1_000_000, OutputTokens: 1_000_000, CacheReadTokens: 1_000_000}, 1, 0, "",
 		time.Time{},
@@ -997,7 +997,7 @@ func TestResolveAccountStatsCost_AllMiss_ReturnsNil(t *testing.T) {
 
 	result := resolveAccountStatsCost(
 		context.Background(),
-		cs, bs,
+		newLegacyGroupPolicy(cs), bs,
 		1, 10, "totally-unknown-model",
 		tokens, 1, 0.0, "",
 		time.Time{},
@@ -1015,7 +1015,7 @@ func TestResolveAccountStatsCost_NilBillingService_SkipsLiteLLM(t *testing.T) {
 
 	result := resolveAccountStatsCost(
 		context.Background(),
-		cs, nil, // billingService is nil
+		newLegacyGroupPolicy(cs), nil, // billingService is nil
 		1, 10, "claude-sonnet-4",
 		UsageTokens{InputTokens: 100}, 1, 0.0, "",
 		time.Time{},
@@ -1049,7 +1049,7 @@ func TestResolveAccountStatsCost_CustomRulePriorityOverApplyPricing(t *testing.T
 
 	result := resolveAccountStatsCost(
 		context.Background(),
-		cs, nil,
+		newLegacyGroupPolicy(cs), nil,
 		1, 10, "claude-sonnet-4",
 		tokens, 1, 99.0, "", // totalCost = 99.0 (would be used if ApplyPricing wins)
 		time.Time{},
@@ -1078,7 +1078,7 @@ func TestApplyAccountStatsCost_UsesUsageLogServiceTier(t *testing.T) {
 	usageLog := &UsageLog{ServiceTier: &serviceTier}
 
 	applyAccountStatsCost(
-		context.Background(), usageLog, cs, bs,
+		context.Background(), usageLog, newLegacyGroupPolicy(cs), bs,
 		1, 10, "gpt-5.6-sol", "gpt-5.6-sol",
 		UsageTokens{InputTokens: 100, OutputTokens: 50}, 999, time.Time{},
 	)
