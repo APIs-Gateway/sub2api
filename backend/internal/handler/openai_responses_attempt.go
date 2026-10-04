@@ -462,30 +462,10 @@ func (r *openAIResponsesRun) attempt(args responsesHopArgs) service.HopResult {
 }
 
 // noAccountFacts 把一次「没有拿到号」的选号失败描述成 ClassifyHopFailure 的输入（仅有链时调用）。
-//   - 本跳已经组内重选过一次（policy.ReselectUsed）：忙号被排除后剩下的是「没号」，本质是繁忙，按繁忙分类、不计熔断（规则 1）；
-//   - 选号探测预算用尽（IsOpenAISelectionBudgetExhausted，大分组 DB 复核预算耗尽）：同样是繁忙，不计熔断（S-3）；
-//   - 不是「没有可用账号」类的错误（仓储 / 快照故障等）：不可回退，按原逻辑写 503；
-//   - 其余：用与 resolveNoAccountError 同源的诊断给出「组内有账号 / 支持该模型」，并把图片意图、压缩请求这类
-//     能力受限的请求标成 CapabilityBlocked，避免把「没有账号具备这项能力」记成分组故障。
+// 分类规则与 chat/completions 共用，见 openAINoAccountFacts；这里只提供 Responses 自己的能力受限判据：
+// 图片意图、压缩请求（legacy compact / 原生 v2）没有账号具备这项能力，不是分组容量问题，不计熔断。
 func (r *openAIResponsesRun) noAccountFacts(key *service.APIKey, policy *openAIHopSlotPolicy, selectionErr error) service.HopFailure {
-	if policy.ReselectUsed() || service.IsOpenAISelectionBudgetExhausted(selectionErr) {
-		return service.HopFailure{Kind: service.HopFailureBusyTimeout}
-	}
-	if selectionErr != nil && !errors.Is(selectionErr, service.ErrNoAvailableAccounts) && !errors.Is(selectionErr, service.ErrNoAvailableCompactAccounts) {
-		return service.HopFailure{Kind: service.HopFailureOther}
-	}
-	f := service.HopFailure{
-		Kind:              service.HopFailureNoAccount,
-		PoolHasAccounts:   true,
-		ModelSupported:    true,
-		CapabilityBlocked: r.imageIntent || r.legacyCompact || r.nativeV2 || errors.Is(selectionErr, service.ErrNoAvailableCompactAccounts),
-	}
-	if r.h != nil && r.h.gatewayService != nil && key != nil {
-		diag := r.h.gatewayService.DiagnoseModelAvailabilityForPlatform(r.c.Request.Context(), key.GroupID, r.reqModel, service.PlatformFromAPIKey(key))
-		f.PoolHasAccounts = diag.HasAccountsInPool
-		f.ModelSupported = diag.HasModelSupport
-	}
-	return f
+	return r.h.openAINoAccountFacts(r.c, key, r.reqModel, policy, selectionErr, r.imageIntent || r.legacyCompact || r.nativeV2)
 }
 
 // writeBillingError 按 billingErrorDetails 写出计费 / RPM 类错误（含 Retry-After），streamStarted 决定用流式还是 JSON 格式。

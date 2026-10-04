@@ -1,15 +1,12 @@
 package handler
 
 import (
-	"context"
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -92,18 +89,49 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
-	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, body); decision != nil && !decision.AllowNextStage {
-		h.openAISecurityAuditError(c, decision)
+	// Key 级回退链：先解析一次有效链，审核 / 审计按链上全部分组的并集审一次（审核拦截即终止，不会去试下一跳），
+	// 之后逐跳迭代的就是这一份链。plan 为 nil 表示无链：审核与之后的所有步骤都走原路径。
+	plan := h.resolveOpenAIChainPlan(c, reqLog, apiKey)
+	var auditDecision *securityaudit.Decision
+	if plan != nil {
+		auditDecision = h.checkSecurityAuditForChain(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, body, plan.Hops())
+	} else {
+		auditDecision = h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, body)
+	}
+	if auditDecision != nil && !auditDecision.AllowNextStage {
+		h.openAISecurityAuditError(c, auditDecision)
 		return
 	}
 	if h.rejectIfCyberSessionBlocked(c, apiKey, body, reqModel, cyberBlockFormatChat) {
 		return
 	}
 
-	// 解析渠道级模型映射
-	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-	forwardModel := openAIChannelForwardModel(channelMapping, reqModel)
-	c.Request = c.Request.WithContext(service.WithModelDowngradeSelectionModel(c.Request.Context(), forwardModel))
+	// 解析渠道级模型映射。渠道配置按分组生效，所以有链时每一跳各解析一次（见 channelPlanFor），
+	// 无链仍在这里解析一次，与原来一致。
+	channelCache := make(map[int64]chatChannelPlan, 2)
+	channelPlanFor := func(groupID *int64) chatChannelPlan {
+		cacheKey := int64(0)
+		if groupID != nil {
+			cacheKey = *groupID
+		}
+		if cached, ok := channelCache[cacheKey]; ok {
+			return cached
+		}
+		mapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), groupID, reqModel)
+		resolved := chatChannelPlan{mapping: mapping, forwardModel: openAIChannelForwardModel(mapping, reqModel)}
+		channelCache[cacheKey] = resolved
+		return resolved
+	}
+	// applyForwardModel 把这一跳选号用的模型写进 ctx（每跳重算，设计 3.4 第 7 项）；
+	// 模型降级判定读取的就是这个值，后写的值遮住先写的，不会把上一跳的映射带到下一跳。
+	applyForwardModel := func(channel chatChannelPlan) {
+		c.Request = c.Request.WithContext(service.WithModelDowngradeSelectionModel(c.Request.Context(), channel.forwardModel))
+	}
+	var legacyChannel chatChannelPlan
+	if plan == nil {
+		legacyChannel = channelPlanFor(apiKey.GroupID)
+		applyForwardModel(legacyChannel)
+	}
 
 	if h.errorPassthroughService != nil {
 		service.BindErrorPassthroughService(c, h.errorPassthroughService)
@@ -123,7 +151,16 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		defer userReleaseFunc()
 	}
 
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	// 有链：RPM 的顺序与无链一致（先首跳分组层、后用户层，用户层只计一次），首跳分组层的计数凭据交给逐跳循环；
+	// 首跳（或用户层）超限直接 429，不回退、不退回计数。
+	var billingErr error
+	var firstHopTicket *service.GroupRPMTicket
+	if plan != nil {
+		firstHopTicket, billingErr = h.billingCacheService.CheckBillingEligibilityForChain(c.Request.Context(), apiKey.User, apiKey, plan.FirstHop().Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey))
+	} else {
+		billingErr = h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey))
+	}
+	if err := billingErr; err != nil {
 		reqLog.Info("openai_chat_completions.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -136,306 +173,28 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
 
-	maxAccountSwitches := h.maxAccountSwitches
-	switchCount := 0
-	failedAccountIDs := make(map[int64]struct{})
-	sameAccountRetryCount := make(map[int64]int)
-	var lastFailoverErr *service.UpstreamFailoverError
-
-	for {
-		if failoverClientGone(c) {
-			return
-		}
-		reqLog.Debug("openai_chat_completions.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		stableIntent := service.StablePriorityIntent{Enabled: apiKey.StablePriorityEnabled || (apiKey.User != nil && apiKey.User.StablePriorityEnabled)}
-		modelAvailabilityDiagnoser := service.ModelAvailabilityDiagnoser(h.gatewayService)
-		if openAIStablePriorityCanFallback(apiKey, stableIntent) {
-			// A no-account result may have traversed fallback groups. Diagnosing
-			// only the home group could turn a temporarily unavailable fallback
-			// model into a false 404, so keep the established 503 response.
-			modelAvailabilityDiagnoser = nil
-		}
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerStable(
-			c.Request.Context(),
-			apiKey.Group,
-			apiKey.GroupID,
-			"",
-			sessionHash,
-			forwardModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportAny,
-			service.OpenAIEndpointCapabilityChatCompletions,
-			false,
-			true,
-			stableIntent,
-			requestPlatform,
-		)
-		if err != nil {
-			if failoverClientGone(c) {
-				reqLog.Info("openai_chat_completions.account_select_aborted_client_disconnected", zap.Error(err))
-				return
-			}
-			reqLog.Warn("openai_chat_completions.account_select_failed",
-				zap.Error(err),
-				zap.Int("excluded_account_count", len(failedAccountIDs)),
-			)
-			if lastFailoverErr == nil {
-				h.respondNoAccountError(c, modelAvailabilityDiagnoser, apiKey, reqModel, reqModel, service.PlatformOpenAI, "Service temporarily unavailable", err, noAccountCapacityMarkIfNoAvailable, openAINoAccountResponseStreaming, streamStarted)
-				return
-			} else {
-				if lastFailoverErr != nil {
-					h.handleFailoverExhausted(c, lastFailoverErr, streamStarted)
-				} else {
-					h.handleStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
-				}
-				return
-			}
-		}
-		if selection == nil || selection.Account == nil {
-			h.respondNoAccountError(c, modelAvailabilityDiagnoser, apiKey, reqModel, reqModel, service.PlatformOpenAI, "No available accounts", nil, noAccountCapacityMarkAlways, openAINoAccountResponseStreaming, streamStarted)
-			return
-		}
-		account := selection.Account
-		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
-		reqLog.Debug("openai_chat_completions.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
-		if scheduleDecision.StablePriorityFallback || scheduleDecision.StablePriorityReverted {
-			reqLog.Info("openai_chat_completions.stable_priority",
-				zap.Bool("fallback", scheduleDecision.StablePriorityFallback),
-				zap.Bool("reverted", scheduleDecision.StablePriorityReverted),
-				zap.String("state", scheduleDecision.StablePriorityState),
-				zap.Int64p("home_group", apiKey.GroupID),
-				zap.Int64("served_group", scheduleDecision.StableServedGroupID),
-				zap.Int64("account_id", account.ID),
-			)
-		}
-		setOpsSelectedAccount(c, account.ID, account.Platform)
-
-		// 稳定优先兜底到 served 组时，须统一按"实际服务组"处理：
-		//  1) 粘性会话绑定的 groupID 须与调度器读取侧一致，否则后续请求换命名空间、粘性失效、在兜底账号间抖动；
-		//  2) 渠道映射须按 served 组重算，否则转发体与计费模型字段会沿用 home 组映射而出错。
-		stickyGroupID := apiKey.GroupID
-		effectiveMapping := channelMapping
-		homeGroupID := int64(0)
-		if apiKey.GroupID != nil {
-			homeGroupID = *apiKey.GroupID
-		}
-		if served := scheduleDecision.StableServedGroupID; served > 0 && served != homeGroupID {
-			servedGroupID := served
-			stickyGroupID = &servedGroupID
-			effectiveMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), &servedGroupID, reqModel)
-		}
-		accountReleaseFunc, slotStatus := h.acquireResponsesAccountSlot(c, stickyGroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
-		if slotStatus == accountSlotRetrySelection {
-			failedAccountIDs[account.ID] = struct{}{}
-			continue
-		}
-		if slotStatus != accountSlotAcquired {
-			return
-		}
-
-		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
-		forwardStart := time.Now()
-
-		forwardBody := body
-		if effectiveMapping.Mapped {
-			forwardBody = h.gatewayService.ReplaceModelInBody(body, effectiveMapping.MappedModel)
-		}
-		// 心跳字节（SSE 注释行）不算内容交付：与 Responses 入口同口径取扣除心跳后的 Size。
-		if !reserveBillingInflightHTTP(c, h.gatewayService, service.BillingInflightRequest{APIKey: apiKey, Account: account, Model: reqModel, Body: forwardBody, ChannelUsageFields: effectiveMapping.ToUsageFields(reqModel, ""), StableDecision: &scheduleDecision}, accountReleaseFunc, func(status int, code, message string) {
-			h.handleStreamingAwareError(c, status, code, message, streamStarted)
-		}) {
-			return
-		}
-		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
-		result, err := func() (*service.OpenAIForwardResult, error) {
-			defer func() {
-				if accountReleaseFunc != nil {
-					accountReleaseFunc()
-				}
-			}()
-			return h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, promptCacheKey, "")
-		}()
-		cyberBlockKeyChat := ""
-		if service.GetOpsCyberPolicy(c) != nil {
-			cyberBlockKeyChat = service.CyberSessionBlockKey(apiKey.ID, c, body)
-		}
-		requestPayloadHash := service.HashUsageRequestPayload(body)
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockKeyChat, effectiveMapping.ToUsageFields(reqModel, ""), requestPayloadHash, scheduleDecision)
-		// 上游模型不一致：先读 B（成功路径 RecordUsage 透传），再记审计行并清标（下一次尝试可重新打标）。
-		upstreamResponseModel := ""
-		if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
-			upstreamResponseModel = mark.ResponseModel
-		}
-		h.recordUpstreamModelMismatchIfMarked(c, apiKey, account, subscription, reqModel, effectiveMapping.ToUsageFields(reqModel, ""), requestPayloadHash, body)
-
-		forwardDurationMs := time.Since(forwardStart).Milliseconds()
-		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
-		responseLatencyMs := forwardDurationMs
-		if upstreamLatencyMs > 0 && forwardDurationMs > upstreamLatencyMs {
-			responseLatencyMs = forwardDurationMs - upstreamLatencyMs
-		}
-		service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, responseLatencyMs)
-		if err == nil && result != nil && result.FirstTokenMs != nil {
-			service.SetOpsLatencyMs(c, service.OpsTimeToFirstTokenMsKey, int64(*result.FirstTokenMs))
-		}
-		userAgent := c.GetHeader("User-Agent")
-		clientIP := ip.GetClientIP(c)
-		inboundEndpoint := GetInboundEndpoint(c)
-		upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account)
-		// 稳定优先方案 Y：兜底时按实际服务档位组倍率计费（normal 态为 0，不影响正常计费）。
-		stableServedGroupID := scheduleDecision.StableServedGroupID
-		stableServedRate := scheduleDecision.StableServedRateMultiplier
-		stableServedImageIndependent := scheduleDecision.StableServedImageRateIndependent
-		stableServedImageRate := scheduleDecision.StableServedImageRateMultiplier
-		stableServedImagePrice1K := scheduleDecision.StableServedImagePrice1K
-		stableServedImagePrice2K := scheduleDecision.StableServedImagePrice2K
-		stableServedImagePrice4K := scheduleDecision.StableServedImagePrice4K
-
-		cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-		submitChatUsage := func(result *service.OpenAIForwardResult) {
-			h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
-				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-					Result:                           result,
-					APIKey:                           apiKey,
-					User:                             apiKey.User,
-					Account:                          account,
-					Subscription:                     subscription,
-					InboundEndpoint:                  inboundEndpoint,
-					UpstreamEndpoint:                 upstreamEndpoint,
-					UserAgent:                        userAgent,
-					IPAddress:                        clientIP,
-					APIKeyService:                    h.apiKeyService,
-					ChannelUsageFields:               effectiveMapping.ToUsageFields(reqModel, result.UpstreamModel),
-					CyberBlocked:                     cyberBlocked,
-					UpstreamResponseModel:            upstreamResponseModel,
-					StableServedGroupID:              stableServedGroupID,
-					StableServedRateMultiplier:       stableServedRate,
-					StableServedImageRateIndependent: stableServedImageIndependent,
-					StableServedImageRateMultiplier:  stableServedImageRate,
-					StableServedImagePrice1K:         stableServedImagePrice1K,
-					StableServedImagePrice2K:         stableServedImagePrice2K,
-					StableServedImagePrice4K:         stableServedImagePrice4K,
-				}); err != nil {
-					logger.L().With(
-						zap.String("component", "handler.openai_gateway.chat_completions"),
-						zap.Int64("user_id", subject.UserID),
-						zap.Int64("api_key_id", apiKey.ID),
-						zap.Any("group_id", apiKey.GroupID),
-						zap.String("model", reqModel),
-						zap.Int64("account_id", account.ID),
-					).Error("openai_chat_completions.record_usage_failed", zap.Error(err))
-				}
-			})
-		}
-
-		if err != nil {
-			if result == nil && service.IsGrokContentPolicyRejectionError(err) {
-				service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
-			}
-			if result != nil && result.ImageCount > 0 {
-				reqLog.Warn("openai_chat_completions.forward_partial_error_with_image_result",
-					zap.Int64("account_id", account.ID),
-					zap.Int("image_count", result.ImageCount),
-					zap.Error(err),
-				)
-			} else {
-				var failoverErr *service.UpstreamFailoverError
-				if errors.As(err, &failoverErr) {
-					if result == nil && service.IsBillingInflightNoChargeError(err) && service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
-						service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
-					}
-					if failoverClientGone(c) {
-						reqLog.Info("openai_chat_completions.failover_aborted_client_disconnected",
-							zap.Int64("account_id", account.ID),
-							zap.Int("upstream_status", failoverErr.StatusCode),
-						)
-						return
-					}
-					if !openAIForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
-						h.handleFailoverExhausted(c, failoverErr, true)
-						return
-					}
-					// 与 Responses 入口一致：只写过心跳或 SafeToFailoverAfterWrite 的 failover 已提交
-					// 200 SSE，耗尽时走流内 error 事件。
-					if failoverErr.SafeToFailoverAfterWrite && c.Writer.Written() {
-						streamStarted = true
-					}
-					if openAIForwardWroteKeepaliveOnly(c, writerSizeBeforeForward) {
-						streamStarted = true
-					}
-					// Pool mode: retry on the same account
-					if retry, canceled := waitPoolModeSameAccountRetry(c, reqLog, "openai_chat_completions.pool_mode_same_account_retry", account, failoverErr, sameAccountRetryCount); canceled {
-						return
-					} else if retry {
-						continue
-					}
-					if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(account.ID) {
-						h.handleFailoverExhausted(c, failoverErr, streamStarted)
-						return
-					}
-					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
-					h.gatewayService.RecordOpenAIAccountSwitch()
-					failedAccountIDs[account.ID] = struct{}{}
-					lastFailoverErr = failoverErr
-					if switchCount >= maxAccountSwitches {
-						h.handleFailoverExhausted(c, failoverErr, streamStarted)
-						return
-					}
-					switchCount++
-					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount) {
-						h.handleFailoverExhausted(c, failoverErr, streamStarted)
-						return
-					}
-					reqLog.Warn("openai_chat_completions.upstream_failover_switching",
-						zap.Int64("account_id", account.ID),
-						zap.Int("upstream_status", failoverErr.StatusCode),
-						zap.Int("switch_count", switchCount),
-						zap.Int("max_switches", maxAccountSwitches),
-					)
-					continue
-				}
-				// A partial stream may carry metered usage even when the terminal
-				// event or upstream read fails. Cyber policy already records its
-				// own usage above; a failover never reaches this branch.
-				if result != nil && service.GetOpsCyberPolicy(c) == nil &&
-					(result.PartialOutputDelivered || result.Usage != (service.OpenAIUsage{})) {
-					submitChatUsage(result)
-				}
-				clientGone := (result != nil && result.ClientDisconnect) || failoverClientGone(c)
-				if clientGone {
-					return
-				}
-				h.gatewayService.ReportOpenAIAccountScheduleError(account.ID, err)
-				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
-				wroteFallback := false
-				if !upstreamErrorAlreadyCommunicated {
-					wroteFallback = h.ensureOpenAIStreamReadErrorResponse(c, err, streamStarted)
-					if !wroteFallback {
-						wroteFallback = h.ensureForwardErrorResponse(c, streamStarted)
-					}
-				}
-				reqLog.Warn("openai_chat_completions.forward_failed",
-					zap.Int64("account_id", account.ID),
-					zap.Bool("fallback_error_response_written", wroteFallback),
-					zap.Bool("upstream_error_response_already_written", upstreamErrorAlreadyCommunicated),
-					zap.Error(err),
-				)
-				return
-			}
-		}
-		if result != nil {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, result.FirstTokenMs, account.GetMappedModel(reqModel))
-		} else {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil, account.GetMappedModel(reqModel))
-		}
-
-		submitChatUsage(result)
-		reqLog.Debug("openai_chat_completions.request_completed",
-			zap.Int64("account_id", account.ID),
-			zap.Int("switch_count", switchCount),
-		)
+	run := &openAIChatRun{
+		h:                  h,
+		c:                  c,
+		reqLog:             reqLog,
+		subject:            subject,
+		subscription:       subscription,
+		body:               body,
+		reqModel:           reqModel,
+		reqStream:          reqStream,
+		requestPlatform:    requestPlatform,
+		sessionHash:        sessionHash,
+		promptCacheKey:     promptCacheKey,
+		routingStart:       routingStart,
+		streamStarted:      &streamStarted,
+		maxAccountSwitches: h.maxAccountSwitches,
+	}
+	if plan == nil {
+		// 无链：单次调用，所有出口都在 attempt 内部直接写响应，与引入回退链之前一致。
+		run.attempt(chatHopArgs{key: apiKey, channel: legacyChannel})
 		return
 	}
+	h.runChatChain(c, plan, run, apiKey, firstHopTicket, channelPlanFor, applyForwardModel, reqModel, reqStream, reqLog, &streamStarted)
 }
 
 func openAIStablePriorityCanFallback(apiKey *service.APIKey, intent service.StablePriorityIntent) bool {

@@ -599,14 +599,10 @@ func (h *OpenAIGatewayHandler) runResponsesChain(
 	res := entry.run(c, chainHopFuncs{
 		Eligible: func(hopKey *service.APIKey, info service.HopInfo) bool {
 			// 静态资格（设计 3.4）：主分组那一跳与原来一致不额外检查；其余各跳（含管理员 head）模型必须在该分组开放、
-			// 且有价格（未配价格的模型会按零成本放行，兜底分组不能白送）。
-			if info.Hop.RouteSource != service.RouteSourcePrimary {
-				if !h.gatewayService.IsModelOpenForGroup(c.Request.Context(), info.Hop.GroupID, reqModel) {
-					return false
-				}
-				if !imageIntent && !h.gatewayService.IsModelPricedForGroup(c.Request.Context(), hopKey, reqModel, channelPlanFor(hopKey.GroupID).mapping) {
-					return false
-				}
+			// 且有价格（未配价格的模型会按零成本放行，兜底分组不能白送）。生图请求按图片价计费，不查这条取价链。
+			if info.Hop.RouteSource != service.RouteSourcePrimary &&
+				!h.openAIHopStaticEligible(c.Request.Context(), hopKey, info, reqModel, channelPlanFor(hopKey.GroupID).mapping, !imageIntent) {
+				return false
 			}
 			// 生图权限：首跳是主分组时已在入口按原样 403；其余各跳没有权限就跳过。
 			if imageIntent && (info.Index > 0 || info.Hop.RouteSource != service.RouteSourcePrimary) &&

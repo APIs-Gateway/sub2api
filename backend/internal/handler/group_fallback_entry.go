@@ -13,7 +13,7 @@ import (
 // Key 级分组回退链的入口接线（PR2a 第 4 段）。
 //
 // 本文件是各入口共用的骨架：「解析一次链 → 审核用并集 → 逐跳进入 attempt → 收尾」。
-// 入口（Responses、以后的 chat/completions）只需要提供自己的单跳逻辑 chainHopFuncs.Attempt，
+// 入口（目前是 /v1/responses 与 /v1/chat/completions）只需要提供自己的单跳逻辑 chainHopFuncs.Attempt，
 // 以及（可选的）静态资格检查与错误写出函数；影子 Key、分组层 RPM、RPM 退回、输出状态、指标与日志都在这里。
 //
 // 无链请求（开关关闭、Key 没配链、链长 < 2、解析出错）一律不经过本文件：入口拿到的 plan 为 nil，
