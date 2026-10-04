@@ -1827,6 +1827,7 @@ func TestGatewayService_Forward_PostOutputSSEOverloadedErrorKeepsExistingStatus(
 
 	const errorJSON = `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`
 	fixture := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"answer\"}}\n\n" +
 		"event: error\ndata: " + errorJSON + "\n\n"
 	upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -1845,12 +1846,21 @@ func TestGatewayService_Forward_PostOutputSSEOverloadedErrorKeepsExistingStatus(
 
 	result, err := svc.Forward(context.Background(), c, newAnthropicOAuthAccountForSSEOverloadTest(), parsed)
 	require.Error(t, err)
-	require.Nil(t, result)
-
+	require.NotNil(t, result)
+	require.Equal(t, 1, result.Usage.InputTokens)
 	var failoverErr *UpstreamFailoverError
-	require.ErrorAs(t, err, &failoverErr)
-	require.Equal(t, http.StatusForbidden, failoverErr.StatusCode)
-	require.JSONEq(t, errorJSON, string(failoverErr.ResponseBody))
+	require.False(t, errors.As(err, &failoverErr), "visible output must not be replayed")
+	var streamErr *sseStreamErrorEventError
+	require.ErrorAs(t, err, &streamErr)
+	require.JSONEq(t, errorJSON, streamErr.RawData)
+	events, exists := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, exists)
+	opsEvents, ok := events.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, opsEvents, 1)
+	require.Equal(t, http.StatusForbidden, opsEvents[0].UpstreamStatusCode)
+	require.Contains(t, rec.Body.String(), "answer")
+	require.Equal(t, 1, strings.Count(rec.Body.String(), "event: error\n"))
 	require.Zero(t, repo.tempCalls)
 	require.Contains(t, rec.Body.String(), "message_start")
 }

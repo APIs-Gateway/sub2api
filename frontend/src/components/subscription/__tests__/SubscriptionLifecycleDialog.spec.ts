@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import SubscriptionLifecycleDialog from '../SubscriptionLifecycleDialog.vue'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import type { UserSubscription } from '@/types'
 
 const getSubscriptionPricing = vi.hoisted(() => vi.fn())
@@ -59,6 +60,8 @@ describe('SubscriptionLifecycleDialog', () => {
   beforeEach(() => {
     publicSettings.value = {}
     window.localStorage.clear()
+    // 展示口径是模块级单例，逐个用例复位。
+    useCurrencyDisplay().setMode('fiat')
     getSubscriptionPricing.mockReset().mockResolvedValue({
       d_min: 30,
       d_max: 300,
@@ -103,8 +106,10 @@ describe('SubscriptionLifecycleDialog', () => {
     expect(changePlanQuote).toHaveBeenCalledWith(90, 30)
     expect(wrapper.text()).toContain('userSubscriptions.lifecycle.dailyAmount')
     expect(wrapper.text()).toContain('¥7.26')
-    expect(wrapper.text()).toContain('$72.60')
+    // 补差只写实付人民币，不再并列写美元的额度价值。
+    expect(wrapper.text()).not.toContain('$72.60')
     expect(wrapper.text()).not.toContain('USD 72.60')
+    expect(wrapper.text()).not.toContain('userSubscriptions.lifecycle.changeDiffValue')
   })
   function mountDialog(mode: 'renew' | 'change') {
     return mount(SubscriptionLifecycleDialog, {
@@ -186,6 +191,49 @@ describe('SubscriptionLifecycleDialog', () => {
     expect(text).toContain('caps$630.00$2,700.00')
     expect(text).not.toContain('¥4.05')
     expect(wrapper.find('input[type="number"]').exists()).toBe(true)
+  })
+
+  it('美元模式下转套餐只写实付人民币，额度与封顶保持美元，不并列额度价值', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    useCurrencyDisplay().setMode('usd')
+    changePlanQuote.mockResolvedValue(changeQuote)
+    const wrapper = mountDialog('change')
+    await flushPromises()
+    await flushPromises()
+    const text = wrapper.text().replace(/\s+/g, '')
+
+    // 补差 ¥72.60、新套餐 ¥2,700.00、旧套餐剩余 ¥2,627.40 都是实付币种；封顶和每日额度仍是美元。
+    expect(text).toContain('¥72.60')
+    expect(text).toContain('¥2,700.00')
+    expect(text).toContain('¥2,627.40')
+    expect(text).toContain('caps$630.00$2,700.00')
+    expect(text).not.toContain('$72.60')
+    expect(text).not.toContain('$2,627.40')
+    expect(text).not.toContain('userSubscriptions.lifecycle.changeDiffValue')
+    expect(text).not.toContain('userSubscriptions.lifecycle.renewValue')
+    expect(wrapper.find('input[type="number"]').exists()).toBe(true)
+  })
+
+  it('美元模式下续费只写实付人民币，不并列额度价值', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    useCurrencyDisplay().setMode('usd')
+    renewQuote.mockResolvedValue({
+      subscription_id: 376,
+      daily_amount_usd: 90,
+      added_days: 30,
+      price: 121.5,
+      unit_price: 0.045,
+      group_id: 1,
+    })
+    const wrapper = mountDialog('renew')
+    await flushPromises()
+    await flushPromises()
+    const text = wrapper.text().replace(/\s+/g, '')
+
+    expect(text).toContain('¥121.50')
+    expect(text).toContain('$90.00')
+    expect(text).not.toContain('$121.50')
+    expect(text).not.toContain('userSubscriptions.lifecycle.renewValue')
   })
 
   async function confirmAndGetPayload(wrapper: ReturnType<typeof mountDialog>) {

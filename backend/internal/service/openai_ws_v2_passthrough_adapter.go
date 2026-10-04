@@ -17,6 +17,7 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 type openAIWSClientFrameConn struct {
@@ -719,6 +720,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	capturedSessionModel := openAIWSPassthroughPolicyModelForFrame(account, firstClientMessage)
 	sessionImageTools := false
 	sessionImageChoice := false
+	sessionBillingTools := ""
+	sessionBillingChoice := ""
 	if (IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(firstClientMessage) || isOpenAIImageGenerationModel(capturedSessionModel)) && !s.currentWSImagePermission(hooks, getAPIKeyFromContext(c)) {
 		message := ImageGenerationPermissionMessage()
 		rejection := newOpenAIWSLocalRejection(http.StatusForbidden, "permission_error", "", message, nil)
@@ -1002,12 +1005,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				}
 				if tools.Exists() {
 					sessionImageTools = openAIJSONToolsContainNativeImageGeneration(tools)
+					sessionBillingTools = tools.Raw
 				}
 				choice := gjson.GetBytes(payload, "session.tool_choice")
 				if !choice.Exists() {
 					choice = gjson.GetBytes(payload, "tool_choice")
 				}
 				if choice.Exists() {
+					sessionBillingChoice = choice.Raw
 					sessionImageChoice = openAIJSONToolChoiceSelectsExplicitImageGeneration(choice)
 				}
 			}
@@ -1096,6 +1101,26 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			//     覆盖（Store(nil)），因为 OpenAI 上游对该帧实际不传
 			//     service_tier 时按 default 处理，billing 应如实反映。
 			if policyErr == nil && blocked == nil && isResponseCreate {
+				if hooks != nil && hooks.BeforeUpstreamTurn != nil {
+					turnNo := int(completedTurns.Load()) + 1
+					if turnNo < 2 {
+						turnNo = 2
+					}
+					estimateBody := out
+					if sessionImageTools && !gjson.GetBytes(out, "tools").Exists() && sessionBillingTools != "" {
+						if body, err := sjson.SetRawBytes(estimateBody, "tools", []byte(sessionBillingTools)); err == nil {
+							estimateBody = body
+						}
+					}
+					if sessionImageChoice && !gjson.GetBytes(out, "tool_choice").Exists() && sessionBillingChoice != "" {
+						if body, err := sjson.SetRawBytes(estimateBody, "tool_choice", []byte(sessionBillingChoice)); err == nil {
+							estimateBody = body
+						}
+					}
+					if err := hooks.BeforeUpstreamTurn(turnNo, estimateBody, requestModelForThisFrame); err != nil {
+						return out, nil, err
+					}
+				}
 				usageMeta.updateFromResponseCreate(out, model, requestModelForThisFrame)
 				acceptedTurn = true
 			}
@@ -1116,6 +1141,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		},
 	}
 	upstreamFirstMessageSent := false
+	if hooks != nil && hooks.BeforeUpstreamTurn != nil {
+		if err := hooks.BeforeUpstreamTurn(1, firstClientMessage, requestModel); err != nil {
+			return err
+		}
+	}
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
 	firstWriteErr := relayUpstreamFrameConn.WriteFrame(firstWriteCtx, coderws.MessageText, firstClientMessage)
 	cancelFirstWrite()

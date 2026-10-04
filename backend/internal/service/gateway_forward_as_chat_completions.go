@@ -413,8 +413,8 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	clientDisconnected := false
 	sawMessageStop := false
 	var streamErr error
-	drain := newAnthropicCompatDrain(s.cfg, resp.Body, c)
-	defer drain.stop()
+	compatDrain := newAnthropicCompatDrain(s.cfg, resp.Body, c)
+	defer compatDrain.stop()
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -422,6 +422,8 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+	drain := newGatewayForwardStreamDrain(scanner, resp.Body, s.forwardStreamInterval())
+	defer drain.stop()
 
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
@@ -438,6 +440,11 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	}
 
 	writeChunk := func(chunk apicompat.ChatCompletionsChunk) bool {
+		if clientDisconnected || anthropicCompatClientGone(c) {
+			clientDisconnected = true
+			compatDrain.start()
+			return true
+		}
 		sse, err := apicompat.ChatChunkToSSE(chunk)
 		if err != nil {
 			return false
@@ -446,6 +453,9 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		// c 可能持有请求侧注入的 ToolNameRewrite；无则仅做静态前缀还原。
 		out := string(reverseToolNamesIfPresent(c, []byte(sse)))
 		if _, err := fmt.Fprint(c.Writer, out); err != nil {
+			MarkResponseCommitted(c)
+			clientDisconnected = true
+			compatDrain.start()
 			return true // client disconnected
 		}
 		return false
@@ -469,7 +479,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		}
 
 		// Extract usage from message_delta
-		if event.Type == "message_delta" && event.Usage != nil {
+		if event.Usage != nil {
 			mergeAnthropicUsage(&usage, *event.Usage)
 			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "usage"), &usage)
 		}
@@ -478,14 +488,17 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			mergeAnthropicUsage(&usage, event.Message.Usage)
 			normalizeAnthropicCompatiblePromptUsage(gjson.Get(rawEvent, "message.usage"), &usage)
 		}
+		if event.Type == "message_delta" && event.Delta != nil && event.Delta.StopReason != "" {
+			anthState.StopReason = event.Delta.StopReason
+		}
 		if event.Type == "message_stop" {
 			sawMessageStop = true
 		}
 		if anthropicCompatClientGone(c) {
 			clientDisconnected = true
-			drain.start()
+			compatDrain.start()
 		}
-		if clientDisconnected {
+		if clientDisconnected || sawMessageStop {
 			return false
 		}
 
@@ -510,22 +523,32 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 				}
 			}
 		}
-		c.Writer.Flush()
+		if !clientDisconnected {
+			c.Writer.Flush()
+		}
 		return false
 	}
 
-	for scanner.Scan() {
-		drain.touch()
-		line := scanner.Text()
+	var readErr error
+	for {
+		line, err := drain.next()
+		if err != nil {
+			readErr = err
+			break
+		}
+		compatDrain.touch()
 		// 与缓冲路径一致：接受 SSE 紧凑格式（冒号后无空格，#4653 同根因）。
 		if _, ok := extractOpenAISSEEventLine(line); !ok {
 			continue
 		}
 
-		if !scanner.Scan() {
+		dataLine, err := drain.next()
+		if err != nil {
+			readErr = err
 			break
 		}
-		payload, ok := extractOpenAISSEDataLine(scanner.Text())
+		compatDrain.touch()
+		payload, ok := extractOpenAISSEDataLine(dataLine)
 		if !ok {
 			continue
 		}
@@ -545,14 +568,13 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 
 		if processAnthropicEvent(&event, payload) {
 			clientDisconnected = true
-			drain.start()
+			compatDrain.start()
 		}
 		if sawMessageStop {
-			break
+			drain.startTerminalTail()
 		}
 	}
 
-	readErr := scanner.Err()
 	if streamErr != nil {
 		readErr = streamErr
 	}
@@ -565,7 +587,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		}
 	}
 
-	if !sawMessageStop {
+	if streamErr != nil || !sawMessageStop {
 		return anthropicCompatIncompleteStream(c, resultWithUsage(), readErr)
 	}
 	if clientDisconnected || anthropicCompatClientGone(c) {
@@ -590,8 +612,15 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	}
 
 	// Write [DONE] marker
-	fmt.Fprint(c.Writer, "data: [DONE]\n\n") //nolint:errcheck
-	c.Writer.Flush()
+	if !clientDisconnected {
+		if _, err := fmt.Fprint(c.Writer, "data: [DONE]\n\n"); err != nil {
+			MarkResponseCommitted(c)
+			clientDisconnected = true
+		}
+		if !clientDisconnected {
+			c.Writer.Flush()
+		}
+	}
 
 	return resultWithUsage(), nil
 }

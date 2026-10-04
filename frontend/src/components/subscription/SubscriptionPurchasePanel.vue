@@ -31,7 +31,7 @@
           />
           <!-- 人民币模式下每日额度直接写成每天可用的金额，滑块只负责档位。 -->
           <div v-if="isFiat" data-testid="subscription-purchase-daily-fiat" class="w-28 text-right">
-            <NumText tier="secondary" :text="dailyFiatText" />
+            <NumText tier="secondary" :text="dailyAmountText" />
             <span class="ml-1 text-xs text-gray-500 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.perDay') }}</span>
           </div>
           <input
@@ -106,14 +106,11 @@
               <NumText v-else tier="primary" :text="formattedPayableAmount" />
             </span>
           </div>
+          <!-- 两种币种模式都只写每日额度和封顶，不写每刀单价（会暴露定价曲线）。 -->
           <dl class="mt-3 grid grid-cols-2 gap-2 border-t border-gray-200 pt-3 text-center dark:border-dark-700 sm:grid-cols-4">
-            <div v-if="isFiat">
+            <div>
               <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.dailyAmount') }}</dt>
-              <dd class="text-sm text-gray-900 dark:text-white"><NumText tier="secondary" :text="dailyFiatText" /></dd>
-            </div>
-            <div v-else>
-              <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.unitPrice') }}</dt>
-              <dd class="num-secondary text-sm text-gray-900 dark:text-white">×{{ (quote?.unit_price ?? 0).toFixed(4) }}</dd>
+              <dd class="text-sm text-gray-900 dark:text-white"><NumText tier="secondary" :text="dailyAmountText" /></dd>
             </div>
             <div>
               <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('subscriptionPurchase.concurrency') }}</dt>
@@ -219,7 +216,7 @@ function formatCap(credits: number): string {
   return fiatPerCredit.value ? formatSubscription(credits, fiatPerCredit.value) : formatFiat(0)
 }
 
-const dailyFiatText = computed(() => formatCap(dailyAmount.value))
+const dailyAmountText = computed(() => formatCap(dailyAmount.value))
 
 const validityOptions = computed(() => {
   const options = [

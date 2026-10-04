@@ -256,6 +256,18 @@ func (s *SubscriptionService) withSubscriptionUpdateTx(ctx context.Context, fn f
 	return nil
 }
 
+// Renewal can update user concurrency after changing the card. Acquire the user
+// first, like settlement and inflight admission, so that update cannot create
+// a card -> user cycle. Other dialects retain their existing transaction path.
+func (s *SubscriptionService) lockSubscriptionOwnerForUpdate(ctx context.Context, userID int64) error {
+	tx := dbent.TxFromContext(ctx)
+	if tx == nil || tx.Client().Driver() == nil || tx.Client().Driver().Dialect() != dialect.Postgres {
+		return nil
+	}
+	_, err := tx.User.Query().Where(user.IDEQ(userID)).ForUpdate().OnlyID(ctx)
+	return err
+}
+
 // createSubscription 创建新订阅（内部方法）
 // resolveAssignDailyAmount 决定新卡的每日额度 D：input.DailyAmountUSD>0 优先（来自订单冻结快照/plan）；
 // 否则回退所挂 group 的 daily_limit_usd（须 > 0）——存量/管理端按 group 直接分配的兼容路径。

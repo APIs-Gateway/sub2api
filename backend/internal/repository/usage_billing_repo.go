@@ -43,16 +43,39 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 		}
 	}()
 
+	if cmd.InflightObligationID != "" {
+		if _, err := tx.ExecContext(ctx, "SAVEPOINT billing_inflight_claim"); err != nil {
+			return nil, err
+		}
+	}
 	applied, err := r.claimUsageBillingKey(ctx, tx, cmd)
 	if err != nil {
 		return nil, err
 	}
 	if !applied {
+		if cmd.InflightObligationID == "" {
+			return &service.UsageBillingApplyResult{Applied: false}, nil
+		}
+		// Keep the old claim rollback semantics, including archive hits that
+		// inserted a transient active key. Only reservation bookkeeping commits.
+		if _, err := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT billing_inflight_claim"); err != nil {
+			return nil, err
+		}
+		if err := consumeBillingInflight(ctx, tx, cmd); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		tx = nil
 		return &service.UsageBillingApplyResult{Applied: false}, nil
 	}
 
 	result := &service.UsageBillingApplyResult{Applied: true}
 	if err := r.applyUsageBillingEffects(ctx, tx, cmd, result); err != nil {
+		return nil, err
+	}
+	if err := consumeBillingInflight(ctx, tx, cmd); err != nil {
 		return nil, err
 	}
 

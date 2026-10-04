@@ -165,13 +165,15 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	return base
 }
 
-func wrapUsageRecordTaskContext(parent context.Context, task service.UsageRecordTask) service.UsageRecordTask {
+func wrapUsageRecordTaskContext(parent context.Context, task service.UsageRecordTask) (service.UsageRecordTask, func()) {
 	if task == nil {
-		return nil
+		return nil, func() {}
 	}
+	attach, finish := service.AcquireBillingInflightTask(parent)
 	return func(ctx context.Context) {
-		task(usageRecordContext(parent, ctx))
-	}
+		defer finish(true)
+		task(attach(usageRecordContext(parent, ctx)))
+	}, func() { finish(false) }
 }
 
 // openAIChannelForwardModel returns the model used for upstream capability
@@ -253,6 +255,7 @@ func (h *OpenAIGatewayHandler) applyOpenAIForcedAccountRouting(c *gin.Context, a
 // Responses handles OpenAI Responses API endpoint
 // POST /openai/v1/responses
 func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
+	defer finishBillingInflightHTTP(c)
 	// 局部兜底：确保该 handler 内部任何 panic 都不会击穿到进程级。
 	streamStarted := false
 	defer h.recoverResponsesPanic(c, &streamStarted)
@@ -550,6 +553,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		// 从不可变的 canonical forwardBody 派生本次尝试 body 并整块剔除上游私有的加密
 		// reasoning item（含耦合的 id/summary），避免非透传上游 400 拒绝 Kiro reasoning 形态。
 		attemptBody := h.deriveOpenAIForwardAttemptBody(reqLog, forwardBody, account, &passthroughFailoverState)
+		if !reserveBillingInflightHTTP(c, h.gatewayService, service.BillingInflightRequest{APIKey: apiKey, Account: account, Model: reqModel, Body: attemptBody, ChannelUsageFields: channelMapping.ToUsageFields(reqModel, "")}, accountReleaseFunc, func(status int, code, message string) {
+			h.handleStreamingAwareError(c, status, code, message, streamStarted)
+		}) {
+			return
+		}
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
@@ -621,6 +629,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if result == nil && service.IsGrokContentPolicyRejectionError(err) {
+				service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+			}
 			// Client went away: record the observed usage and stop; never report
 			// the cancellation as an upstream failure. (Upstream spells this as two
 			// identical branches; merged here with the same evaluation order.)
@@ -641,6 +652,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
+					if result == nil && service.IsBillingInflightNoChargeError(err) && service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
+						service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+					}
 					if failoverClientGone(c) {
 						reqLog.Info("openai.failover_aborted_client_disconnected",
 							zap.Int64("account_id", account.ID),
@@ -889,6 +903,7 @@ func (h *OpenAIGatewayHandler) logOpenAIRemoteCompactOutcome(c *gin.Context, sta
 // Messages handles Anthropic Messages API requests routed to OpenAI platform.
 // POST /v1/messages (when group platform is OpenAI)
 func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
+	defer finishBillingInflightHTTP(c)
 	streamStarted := false
 	defer h.recoverAnthropicMessagesPanic(c, &streamStarted)
 
@@ -1084,6 +1099,11 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		defaultMappedModel := strings.TrimSpace(effectiveMappedModel)
 		// 应用渠道模型映射到请求体
 		forwardBody := mappedBodyForMessages(channelMappingMsg.Mapped, channelMappingMsg.MappedModel)
+		if !reserveBillingInflightHTTP(c, h.gatewayService, service.BillingInflightRequest{APIKey: apiKey, Account: account, Model: reqModel, Body: forwardBody, ChannelUsageFields: channelMappingMsg.ToUsageFields(reqModel, "")}, accountReleaseFunc, func(status int, code, message string) {
+			h.anthropicStreamingAwareError(c, status, code, message, streamStarted)
+		}) {
+			return
+		}
 		// 心跳字节（Anthropic ping）不算内容交付：与 Responses 入口同口径取扣除心跳后的 Size。
 		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
 		result, err := func() (*service.OpenAIForwardResult, error) {
@@ -1161,6 +1181,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if result == nil && service.IsGrokContentPolicyRejectionError(err) {
+				service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+			}
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai_messages.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),
@@ -1170,6 +1193,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
+					if result == nil && service.IsBillingInflightNoChargeError(err) && service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
+						service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+					}
 					if failoverClientGone(c) {
 						reqLog.Info("openai_messages.failover_aborted_client_disconnected",
 							zap.Int64("account_id", account.ID),
@@ -2204,6 +2230,19 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// A later turn can be replayed as turn 1 when a different account is selected.
 	// Keep its already chosen group price across those account attempts.
 	var replayBillingKey *service.APIKey
+	var replayBillingLease *service.BillingInflightLease
+	var wsBillingMu sync.Mutex
+	var wsBillingLeases []*service.BillingInflightLease
+	wsBillingClosed := false
+	defer func() {
+		wsBillingMu.Lock()
+		wsBillingClosed = true
+		leases := append([]*service.BillingInflightLease(nil), wsBillingLeases...)
+		wsBillingMu.Unlock()
+		for _, lease := range leases {
+			lease.HandlerDone()
+		}
+	}()
 
 	for {
 		reqLog.Debug("openai.websocket_account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
@@ -2314,7 +2353,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// rotates models between turns.
 		var turnClientModel atomic.Pointer[string]
 		var turnPassthrough atomic.Bool
+		var passthroughBillingModel string // protected by wsBillingMu
 		var turnBillingKeys openAIWSTurnBillingKeys
+		turnBillingLeases := make(map[int]*service.BillingInflightLease)
+		if replayBillingLease != nil {
+			turnBillingLeases[1] = replayBillingLease
+		}
 		var attemptLastTurn atomic.Int64
 		noteAttemptTurn := func(turn int) {
 			for {
@@ -2329,6 +2373,41 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 		hooks := &service.OpenAIWSIngressHooks{
 			InitialRequestModel: reqModel,
+			BeforeUpstreamTurn: func(turn int, payload []byte, originalModel string) error {
+				wsBillingMu.Lock()
+				defer wsBillingMu.Unlock()
+				if wsBillingClosed {
+					return context.Canceled
+				}
+				key := turnBillingKeys.forTurn(turn, apiKey)
+				model := strings.TrimSpace(originalModel)
+				if model == "" {
+					model = reqModel
+				}
+				reserveCtx := ctx
+				if lease := turnBillingLeases[turn]; lease != nil {
+					reserveCtx = service.WithBillingInflightLease(reserveCtx, lease)
+				}
+				if turnPassthrough.Load() && passthroughBillingModel == "" {
+					passthroughBillingModel = strings.TrimSpace(gjson.GetBytes(payload, "model").String())
+					if passthroughBillingModel == "" {
+						passthroughBillingModel = model
+					}
+				}
+				lease, err := h.gatewayService.ReserveBillingInflight(reserveCtx, service.BillingInflightRequest{APIKey: key, Account: account, Model: model, Body: payload, ChannelUsageFields: channelMappingWS.ToUsageFields(reqModel, ""), PassthroughBillingModel: passthroughBillingModel})
+				if err != nil {
+					writeOpenAIWSBillingRejection(ctx, wsConn, err)
+					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, "billing check failed", err)
+				}
+				if lease != nil {
+					if turnBillingLeases[turn] == nil {
+						wsBillingLeases = append(wsBillingLeases, lease)
+					}
+					turnBillingLeases[turn] = lease
+					lease.MarkDispatched()
+				}
+				return nil
+			},
 			BeforeImagePermission: func() (*service.Group, error) {
 				return h.apiKeyService.GetCurrentImagePermissionGroup(ctx, apiKey)
 			},
@@ -2445,6 +2524,16 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
 				noteAttemptTurn(turn)
+				wsBillingMu.Lock()
+				turnLease := turnBillingLeases[turn]
+				wsBillingMu.Unlock()
+				turnCtx := service.WithBillingInflightLease(ctx, turnLease)
+				if result == nil && service.IsBillingInflightNoChargeError(turnErr) && service.GetOpsCyberPolicy(c) == nil {
+					service.MarkBillingInflightAttemptNoCharge(turnCtx)
+				}
+				if turnErr == nil {
+					defer turnLease.HandlerDone()
+				}
 				// 每次 attempt 都清 cyber mark；failover 链结束前保留 recorded guard，
 				// 避免同一逻辑 turn 换号后重复落风控。CyberBlocked 必须在 submit 前
 				// 同步预捕获（task 闭包由 worker 池异步执行，届时 mark 已清除）。
@@ -2457,11 +2546,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				releaseTurnSlots()
 				turnBillingKey := turnBillingKeys.forTurn(turn, apiKey)
 				cyberMarked := service.GetOpsCyberPolicy(c) != nil
-				h.recordCyberPolicyIfMarked(c, turnBillingKey, account, subscription, reqModel, turnErr != nil, cyberBlockKey, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash)
+				h.recordCyberPolicyIfMarkedWithContext(turnCtx, c, turnBillingKey, account, subscription, reqModel, turnErr != nil, cyberBlockKey, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash)
 				// 上游模型不一致标记按 turn 生命周期：先读 B 供本 turn 的 RecordUsage 透传，
 				// 再记审计行并清标，turn N+1 才能重新打标。
 				upstreamResponseModel := ""
 				if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil {
+					if mark.Blocked && result == nil {
+						service.MarkBillingInflightAttemptNoCharge(turnCtx)
+					}
 					upstreamResponseModel = mark.ResponseModel
 				}
 				mismatchRequestBody := wsMismatchRequestBody
@@ -2501,7 +2593,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account)
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 				usageRequestPayloadHash := requestPayloadHash
-				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
+				h.submitOpenAIUsageRecordTask(turnCtx, result, func(taskCtx context.Context) {
 					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
 						Result:                result,
 						APIKey:                turnBillingKey,
@@ -2564,6 +2656,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					return
 				}
 				wsAttemptMessage = nextAttemptMessage
+				wsBillingMu.Lock()
+				replayBillingLease = turnBillingLeases[int(attemptLastTurn.Load())]
+				wsBillingMu.Unlock()
 				if retryCurrentTurn {
 					if turn := int(attemptLastTurn.Load()); turn > 1 {
 						replayBillingKey = turnBillingKeys.forTurn(turn, apiKey)
@@ -2799,9 +2894,12 @@ func (h *OpenAIGatewayHandler) submitUsageRecordTask(parent context.Context, tas
 	if task == nil {
 		return
 	}
-	task = wrapUsageRecordTaskContext(parent, task)
+	task, abandon := wrapUsageRecordTaskContext(parent, task)
 	if h.usageRecordWorkerPool != nil {
 		if mode := h.usageRecordWorkerPool.Submit(task); mode != service.UsageRecordSubmitModeDroppedStopped {
+			if mode.Dropped() {
+				abandon()
+			}
 			return
 		}
 		// 池已停止（进程关停窗口）：计费任务不能静默丢失，降级为内联同步执行。
@@ -2836,7 +2934,7 @@ func (h *OpenAIGatewayHandler) submitMandatoryUsageRecordTask(parent context.Con
 	if task == nil {
 		return
 	}
-	task = wrapUsageRecordTaskContext(parent, task)
+	task, _ = wrapUsageRecordTaskContext(parent, task)
 	if h.usageRecordWorkerPool != nil {
 		if mode := h.usageRecordWorkerPool.Submit(task); !mode.Dropped() {
 			return
@@ -3575,6 +3673,14 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 // stable 为可选的稳定优先调度结果：仅 chat_completions stable 兜底路径传入，
 // 用于让 cyber 计费行按"实际服务档位组"计费（其余调用点不传，零值=按 home 组计费）。
 func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockKey string, channelFields service.ChannelUsageFields, requestPayloadHash string, stable ...service.OpenAIAccountScheduleDecision) {
+	parent := context.Background()
+	if c != nil && c.Request != nil {
+		parent = c.Request.Context()
+	}
+	h.recordCyberPolicyIfMarkedWithContext(parent, c, apiKey, account, subscription, model, forwardErrored, cyberBlockKey, channelFields, requestPayloadHash, stable...)
+}
+
+func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithContext(parent context.Context, c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockKey string, channelFields service.ChannelUsageFields, requestPayloadHash string, stable ...service.OpenAIAccountScheduleDecision) {
 	mark := service.GetOpsCyberPolicy(c)
 	if mark == nil {
 		return
@@ -3653,9 +3759,16 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		ClientIP:        clientIPStr,
 		CreatedAt:       time.Now(),
 	}
+	attach := func(ctx context.Context) context.Context { return ctx }
+	finish := func(bool) {}
+	if forwardErrored && gwSvc != nil {
+		attach, finish = service.AcquireBillingInflightTask(parent)
+	}
 	go func() {
+		defer finish(true)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+		ctx = attach(usageRecordContext(parent, ctx))
 		if cmSvc != nil {
 			cmSvc.RecordCyberPolicyEvent(ctx, service.CyberPolicyRecordInput{
 				RequestID:       requestID,
@@ -3727,6 +3840,11 @@ type upstreamModelMismatchUsageRecorder interface {
 // 避免「未拦截 + 其他错误带部分 result」时审计行与正常行双写。
 // 注意调用顺序：成功路径若需读取 mark.ResponseModel 透传给 RecordUsage，必须在本方法之前读。
 func (h *OpenAIGatewayHandler) recordUpstreamModelMismatchIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, channelFields service.ChannelUsageFields, requestPayloadHash string, requestBody []byte) {
+	if mark := service.GetOpsUpstreamModelMismatch(c); mark != nil && mark.Blocked && c.Request != nil {
+		// The existing mismatch policy writes a zero-cost audit outside the
+		// primary billing task. Release only this attempt's estimate.
+		service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+	}
 	var recorder upstreamModelMismatchUsageRecorder
 	if h.gatewayService != nil {
 		recorder = h.gatewayService
