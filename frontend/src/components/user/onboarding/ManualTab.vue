@@ -302,7 +302,7 @@ const snippets = computed(() =>
   @apply border-primary-500 bg-primary-500;
   box-shadow: inset 0 0 0 2.5px theme('colors.white');
 }
-:global(.dark) .line-card-active .line-dot {
+.dark .line-card-active .line-dot {
   box-shadow: inset 0 0 0 2.5px theme('colors.dark.800');
 }
 
