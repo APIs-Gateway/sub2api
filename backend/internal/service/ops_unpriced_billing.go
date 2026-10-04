@@ -107,7 +107,8 @@ type OpsUnpricedBillingReport struct {
 	ProcessCounters []UnpricedBillingCounter `json:"process_counters"`
 }
 
-// loadBillingKnownFreeList 读取已知免费名单。读取失败或内容写坏时返回空名单并记一条警告：
+// loadBillingKnownFreeList 读取已知免费名单。读取失败或内容写坏（JSON 不合法、字段名写错等，
+// 解析规则见 parseBillingKnownFreeList）时整份作废，返回空名单并记一条警告：
 // 名单只会让告警变少，空名单是安全的一侧。
 func loadBillingKnownFreeList(ctx context.Context, settingRepo SettingRepository) []BillingKnownFreeEntry {
 	if settingRepo == nil {

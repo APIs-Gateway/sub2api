@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +19,10 @@ import (
 // 背景：两个网关在「算不出价格」的分支上都是静默的。OpenAI 网关把成本置零并只打一条警告，
 // Anthropic 网关（含 Gemini、Antigravity 共用的 recordUsageCore）算价出错时只打日志并返回
 // ActualCost: 0。这里给这些分支补一行带 reason 的结构化日志和进程内计数器，让它们能被看见。
+//
+// 只有「结算」调用才计数、打日志，也就是会对应一行 usage_logs 的那次计费计算。转发前的余额预占估算等
+// 不产生用量行的调用，要先用 WithBillingNonSettlement 给 ctx 打标记（见 billing_non_settlement.go），
+// 否则同一个无价请求会按尝试次数被重复计数，计数就和用量表对不上了。
 
 const (
 	// OpsAlertMetricUnpricedBillingRows 是告警规则的指标类型：窗口内「有用量、倍率大于 0，
@@ -42,8 +48,8 @@ const (
 )
 
 const (
-	// 计数器维度的基数上限。模型名来自请求，虽然走到这里的请求都已被上游接受，仍要防止异常名字撑爆内存；
-	// 超出后新的维度并入 unpricedBillingOverflowModel。
+	// 计数器维度的基数上限。模型名来自客户端请求，仍要防止异常名字撑爆内存（不产生用量行的非结算调用
+	// 已被跳过，但结算调用里的模型名同样来自客户端）；超出后新的维度并入 unpricedBillingOverflowModel。
 	unpricedBillingCounterMaxKeys = 2048
 	unpricedBillingOverflowModel  = "_other"
 	// 写入计数器的模型名最长字节数；日志字段不截断。
@@ -74,12 +80,16 @@ type UnpricedBillingCounter struct {
 // noteUnpricedBilling 记录一次无价/算价出错：打一行结构化警告，并给（平台、分组、模型、原因）计数加一。
 //
 //   - 只观测，不返回任何东西，调用点的计费行为保持不变。
+//   - ctx 带「非结算调用」标记（IsBillingNonSettlement）时直接返回，不计数也不打日志。
 //   - model 取用量行的 Model（与 usage_logs.model 对得上），原样记录，不 trim、不改大小写，
 //     这样带前导空格之类的脏名字能在维度里直接看见；实际参与算价的候选模型放在 billingModels，只进日志。
 //   - err 可为 nil（例如 no_billing_service 没有错误对象）。
 //   - outcome 说明这次调用点之后发生了什么：zero_cost（成本置零继续记账）、error_returned（把错误返回给调用方）、
 //     group_image_price_fallback（改用分组图片价兜底）。
 func noteUnpricedBilling(ctx context.Context, apiKey *APIKey, model, reason string, err error, outcome string, billingModels ...string) {
+	if IsBillingNonSettlement(ctx) {
+		return
+	}
 	platform, groupID := unpricedBillingDims(apiKey)
 	incrementUnpricedBillingCounter(platform, groupID, model, reason)
 
@@ -205,16 +215,23 @@ type BillingKnownFreeEntry struct {
 	Note    string `json:"note,omitempty"`
 }
 
-// parseBillingKnownFreeList 解析 settings 里的名单。空串是空名单；JSON 无法解析时返回错误，
-// 调用方应按空名单处理（宁可多告警，也不要因为配置写坏而漏掉）。无效项（model 为空、group_id 为负）会被丢弃。
+// parseBillingKnownFreeList 解析 settings 里的名单。空串是空名单。解析是严格的：JSON 无法解析、
+// 出现未知字段（例如把 group_id 写成 groupId，否则该项会悄悄变成「任意分组」）、数组之后还有多余内容，
+// 都返回错误，整份名单作废。调用方应按空名单处理（宁可多告警，也不要因为配置写坏而漏掉）。
+// 通过解析后，无效项（model 为空、group_id 为负）会被丢弃。
 func parseBillingKnownFreeList(raw string) ([]BillingKnownFreeEntry, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
 	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
 	var entries []BillingKnownFreeEntry
-	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+	if err := decoder.Decode(&entries); err != nil {
 		return nil, err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("unexpected data after the known-free list")
 	}
 	valid := entries[:0]
 	for _, entry := range entries {
