@@ -652,7 +652,7 @@ describe('ManualTab', () => {
       expect(w.find('[data-test="manual-key"]').exists()).toBe(true)
     })
 
-    it('默认选第一个页签；点页签换代码；选中的页签对新分组不可用时回到第一个可用的', async () => {
+    it('点页签换代码；选中的页签对新分组不可用时回到默认页签', async () => {
       const w = mountTab({ platform: 'openai', clients: ['codex', 'claude', 'opencode'] })
       expect(w.get('[data-test="manual-tab-openai"]').attributes('aria-checked')).toBe('true')
       await w.get('[data-test="manual-tab-claude"]').trigger('click')
@@ -661,6 +661,40 @@ describe('ManualTab', () => {
       await w.setProps({ platform: 'openai', clients: ['codex', 'opencode'] })
       expect(w.get('[data-test="manual-tab-openai"]').attributes('aria-checked')).toBe('true')
       expect(shownCode(w)[0]).toContain('from openai import OpenAI')
+    })
+
+    describe('默认选中的页签', () => {
+      const checked = (w: ReturnType<typeof mountTab>) =>
+        w.findAll('[data-test^="manual-tab-"][aria-checked="true"]').map((b) => b.attributes('data-test')!.replace('manual-tab-', ''))
+
+      it.each([
+        ['openai', ['codex', 'opencode'], 'openai'],
+        ['openai 开了 Messages 调度', ['codex', 'claude', 'opencode'], 'openai'],
+        ['anthropic / grok', ['claude', 'opencode'], 'claude'],
+        ['gemini', ['gemini', 'opencode'], 'gemini'],
+        ['antigravity', ['claude', 'gemini'], 'claude']
+      ] as const)('%s：默认 %s 页签，不是 OpenAI SDK（openai 分组除外）', (_name, clients, expected) => {
+        const w = mountTab({ platform: 'x', clients: [...clients] })
+        expect(checked(w)).toEqual([expected])
+        expect(shownCode(w).length).toBeGreaterThan(0)
+      })
+
+      it('原生客户端的默认页签显示的是那个客户端的命令', () => {
+        expect(shownCode(mountTab({ platform: 'anthropic', clients: ['claude', 'opencode'] }))[0]).toContain('ANTHROPIC_BASE_URL')
+        expect(shownCode(mountTab({ platform: 'gemini', clients: ['gemini', 'opencode'] }))[0]).toContain('GOOGLE_GEMINI_BASE_URL')
+        expect(shownCode(mountTab({ platform: 'openai', clients: ['codex', 'opencode'] }))[0]).toContain('from openai import OpenAI')
+      })
+
+      it('外壳通过 v-model:codeTab 记着选择：点页签发出 update:codeTab，传进来的值被采用', async () => {
+        const w = mountTab({ platform: 'anthropic', clients: ['claude', 'opencode'], codeTab: 'curl' })
+        expect(checked(w)).toEqual(['curl'])
+        await w.get('[data-test="manual-tab-openai"]').trigger('click')
+        expect(w.emitted('update:codeTab')).toEqual([['openai']])
+      })
+
+      it('传进来的页签对当前分组不可用时用默认页签', () => {
+        expect(checked(mountTab({ platform: 'anthropic', clients: ['claude', 'opencode'], codeTab: 'gemini' }))).toEqual(['claude'])
+      })
     })
 
     it('代码块的复制按钮走 copy，id 带页签名', async () => {
@@ -677,6 +711,7 @@ describe('ManualTab', () => {
 
     it('示例模型取自分组：anthropic 取 sonnet 档，openai 没有默认模型时取第一个 gpt-*', async () => {
       const claude = mountTab({ platform: 'anthropic', models: ['claude-opus-5', 'claude-sonnet-4-5', 'claude-haiku-5'] })
+      await claude.get('[data-test="manual-tab-openai"]').trigger('click')
       expect(shownCode(claude)[0]).toContain('"claude-sonnet-4-5"')
       const gpt = mountTab({ platform: 'openai', clients: ['codex', 'opencode'], models: ['gpt-image-2', 'gpt-5.5', 'gpt-5.6-luna'] })
       expect(shownCode(gpt)[0]).toContain('"gpt-5.5"')

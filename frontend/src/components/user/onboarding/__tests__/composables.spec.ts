@@ -1,12 +1,14 @@
 /**
- * 外壳用的两个 composable：模型加载状态（useGroupModels）和 CC Switch 的表单状态（useCcSwitchState）。
+ * 外壳用的几个 composable：模型加载状态（useGroupModels）、CC Switch 的表单状态（useCcSwitchState）、手动配置选中的代码页签（useManualCodeTab）。
  * 弹窗整体的行为由 ../../__tests__/KeyOnboardingModal*.spec.ts 覆盖；这里只验证它们对页签暴露的接口。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { effectScope, nextTick, ref } from 'vue'
+import { computed, effectScope, nextTick, ref } from 'vue'
 
+import { clientsForPlatform } from '@/utils/keyOnboarding'
 import { useCcSwitchState } from '../useCcSwitchState'
 import { useGroupModels } from '../useGroupModels'
+import { useManualCodeTab } from '../useManualCodeTab'
 
 const { getAvailable } = vi.hoisted(() => ({ getAvailable: vi.fn() }))
 vi.mock('@/api/channels', () => ({ userChannelsAPI: { getAvailable } }))
@@ -193,5 +195,56 @@ describe('useCcSwitchState', () => {
     s.form.value = { ...before, name: 'Mine' }
     expect(s.form.value).not.toBe(before)
     expect(before.name).toBe('')
+  })
+})
+
+describe('useManualCodeTab', () => {
+  const setup = (platform: string | null, dispatch: boolean | undefined = undefined) => {
+    const state = { platform: ref(platform), dispatch: ref<boolean | undefined>(dispatch) }
+    const clients = computed(() => clientsForPlatform(state.platform.value, { allowMessagesDispatch: state.dispatch.value }))
+    const scope = effectScope()
+    const tab = scope.run(() => useManualCodeTab({ platform: state.platform, allowMessagesDispatch: () => state.dispatch.value, clients }))!
+    return { ...state, tab, stop: () => scope.stop() }
+  }
+
+  it('初始值是这个分组的默认页签：openai 是 OpenAI SDK，其余是原生客户端', () => {
+    expect(setup('openai').tab.value).toBe('openai')
+    expect(setup('anthropic').tab.value).toBe('claude')
+    expect(setup('grok').tab.value).toBe('claude')
+    expect(setup('gemini').tab.value).toBe('gemini')
+    expect(setup('antigravity').tab.value).toBe('claude')
+    expect(setup(null).tab.value).toBe('openai')
+  })
+
+  it('换了分组（平台变了）回到新分组的默认页签', async () => {
+    const s = setup('anthropic')
+    s.tab.value = 'curl'
+    s.platform.value = 'gemini'
+    await nextTick()
+    expect(s.tab.value).toBe('gemini')
+    s.platform.value = 'openai'
+    await nextTick()
+    expect(s.tab.value).toBe('openai')
+  })
+
+  it('Messages 调度开关变了也算换了分组；没有这个字段和 false 是一回事，不算', async () => {
+    const s = setup('openai', true)
+    s.tab.value = 'claude'
+    s.dispatch.value = false
+    await nextTick()
+    expect(s.tab.value).toBe('openai')
+
+    s.tab.value = 'curl'
+    s.dispatch.value = undefined
+    await nextTick()
+    expect(s.tab.value).toBe('curl')
+  })
+
+  it('平台没变（同类分组之间换密钥）时，用户选的保留', async () => {
+    const s = setup('anthropic')
+    s.tab.value = 'curl'
+    s.platform.value = 'anthropic'
+    await nextTick()
+    expect(s.tab.value).toBe('curl')
   })
 })
