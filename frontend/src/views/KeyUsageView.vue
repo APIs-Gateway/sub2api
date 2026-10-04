@@ -956,7 +956,7 @@ onUnmounted(() => {
   animation: shimmer-kv 1.8s ease-in-out infinite;
   border-radius: 8px;
 }
-:global(.dark) .skeleton {
+.dark .skeleton {
   background: linear-gradient(90deg, #334155 25%, #1e293b 50%, #334155 75%);
   background-size: 200% 100%;
 }

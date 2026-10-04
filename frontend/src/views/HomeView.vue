@@ -461,7 +461,7 @@ onMounted(() => {
 .value-band {
   background-color: #262420;
 }
-:global(.dark) .value-band {
+.dark .value-band {
   background-color: #2a2723;
   border: 1px solid var(--line);
 }
