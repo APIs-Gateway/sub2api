@@ -83,10 +83,11 @@ func NewModelCatalogService(repo ModelCatalogRepository) *ModelCatalogService {
 	return &ModelCatalogService{repo: repo}
 }
 
-// NormalizeCatalogModelKey 目录里 model_key 的规范写法：与 normalizeChannelPricingModelName 同一条规则
-// （去空白、小写，claude-* 的点号统一成连字符）。
+// NormalizeCatalogModelKey 目录里 model_key 的规范写法：先 TrimSpace，再套 normalizeChannelPricingModelName
+// （小写，claude-* 的点号统一成连字符）。与 PriceQuoter 入口共用 normalizePricingEntryModel（设计 3.2、R2-D），
+// 所以目录的每个入口（Resolve、Create、种子）都不依赖调用方已经归一过。
 func NormalizeCatalogModelKey(model string) string {
-	return normalizeChannelPricingModelName(model)
+	return normalizePricingEntryModel(model)
 }
 
 // List 列出目录条目（按平台、model_key 排序）。
@@ -105,8 +106,9 @@ func (s *ModelCatalogService) List(ctx context.Context, filter ModelCatalogFilte
 }
 
 // Resolve 按 model_key 或别名查找同平台的目录条目；未登记返回 nil。
+// 平台与模型名都先去首尾空白（库里的平台名建条目时就是去过空白的）；模型名再按目录键的规则归一。
 func (s *ModelCatalogService) Resolve(ctx context.Context, platform, model string) (*ModelCatalogEntry, error) {
-	entries, err := s.repo.List(ctx, ModelCatalogFilter{Platform: platform})
+	entries, err := s.repo.List(ctx, ModelCatalogFilter{Platform: strings.TrimSpace(platform)})
 	if err != nil {
 		return nil, fmt.Errorf("list model catalog: %w", err)
 	}
@@ -132,6 +134,22 @@ func ResolveCatalogEntry(entries []ModelCatalogEntry, model string) *ModelCatalo
 		}
 	}
 	return nil
+}
+
+// catalogEntryAccess 把目录条目的状态转成准入结果（设计 3.2「准入」）：显式为 draft、retired 才不放行，
+// active 与未登记（entry 为 nil）都放行。纯函数，PriceQuoter 的 Quote.Access 在分组准入之后叠加它。
+func catalogEntryAccess(entry *ModelCatalogEntry) QuoteAccess {
+	if entry == nil {
+		return QuoteAccess{OK: true}
+	}
+	switch entry.Status {
+	case ModelCatalogDraft:
+		return QuoteAccess{OK: false, Reason: QuoteAccessReasonCatalogDraft}
+	case ModelCatalogRetired:
+		return QuoteAccess{OK: false, Reason: QuoteAccessReasonCatalogRetired}
+	default:
+		return QuoteAccess{OK: true}
+	}
 }
 
 func (s ModelCatalogStatus) valid() bool {

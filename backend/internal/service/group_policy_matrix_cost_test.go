@@ -36,6 +36,18 @@ func (p *mcExtraPolicy) ExtraMultiplier(_ context.Context, groupID int64, model 
 	return p.value
 }
 
+// mcFixedExtra 在真实策略上只把额外倍率换成固定值，价格覆盖、准入、阶段都用内嵌策略的。
+// 一个单元格只有一种价格模式，真实快照编译不出「custom 价 + 额外倍率」的组合；
+// 需要这个组合（token 模式渠道价上叠加额外倍率）的用例用它造出来。
+type mcFixedExtra struct {
+	GroupPolicy
+	extra float64
+}
+
+func (p mcFixedExtra) ExtraMultiplier(context.Context, int64, string, time.Time) float64 {
+	return p.extra
+}
+
 func mcKey(g Group) *APIKey {
 	gid := g.ID
 	return &APIKey{ID: 9, GroupID: &gid, Group: &g}
@@ -519,4 +531,126 @@ func TestGatewayRecordUsage_RateMultiplierIncludesExtra(t *testing.T) {
 	require.InDelta(t, base.ActualCost*2, got.ActualCost, 1e-12)
 	require.InDelta(t, base.RateMultiplier*2, got.RateMultiplier, 1e-12)
 	require.InDelta(t, got.TotalCost*got.RateMultiplier, got.ActualCost, 1e-12)
+}
+
+// ---------------------------------------------------------------------------
+// PR4-2：图片请求的时点、token 路径、用量行
+// ---------------------------------------------------------------------------
+
+// 图片请求的额外倍率生效时点用请求级 pricingAt（与文本候选循环、Anthropic 网关同一个时点），不是策略自己的「现在」。
+// 窗口在策略时钟（mpT0）的一天之后：时点取零值时窗口还没开始；传入窗口内的 pricingAt 才乘，窗口末端是开区间。
+func TestOpenAICost_ImageRequestExtraWindowFollowsTheRequestLevelPricingAt(t *testing.T) {
+	ctx := context.Background()
+	price := 0.04
+	key := mcKey(Group{ID: 1, Platform: PlatformOpenAI, ImagePrice1K: &price})
+	result := &OpenAIForwardResult{Model: "gpt-image-2", ImageCount: 2, ImageSize: "1K"}
+	from := mpT0.Add(24 * time.Hour)
+	to := from.Add(time.Hour)
+	policy := newMPPolicyFor(GroupStateSnapshot{Cells: []StoredMatrixCell{mpWindow(mpExtra("gpt-image-2", 3), &from, &to)}})
+
+	costAt := func(at time.Time) *CostBreakdown {
+		got, err := mcOpenAISvc(policy).calculateOpenAIRecordUsageCost(ctx, result, key, []string{"gpt-image-2"}, 1.0, 1.5, UsageTokens{}, "", at)
+		require.NoError(t, err)
+		require.Equal(t, string(BillingModeImage), got.BillingMode)
+		return got
+	}
+	base := costAt(time.Time{})
+	require.Zero(t, base.extraMultiplier, "a zero pricingAt falls back to the policy clock, which is before the window")
+
+	mcRequireScaled(t, base, costAt(from), 3)
+	mcRequireScaled(t, base, costAt(from.Add(30*time.Minute)), 3)
+	require.Equal(t, base, costAt(from.Add(-time.Minute)))
+	require.Equal(t, base, costAt(to), "the end of the window is exclusive")
+}
+
+// legacy 的图片路径对 pricingAt 不敏感：额外倍率恒为 1，零值、过去、未来的时点得到逐字段相同的成本。
+func TestCost_LegacyImagePathIgnoresPricingAt(t *testing.T) {
+	ctx := context.Background()
+	cs := newGroupPolicyFixture()
+	key := mcKey(Group{ID: gpGroupMain, Platform: PlatformOpenAI, RateMultiplier: 1.3, ImageRateIndependent: true, ImageRateMultiplier: 2.7})
+	result := &OpenAIForwardResult{Model: "gpt-image-2", ImageCount: 2, ImageSize: "1K"}
+	svc := mcLegacyOpenAISvc(cs, false, &openAIRecordUsageLogRepoStub{inserted: true})
+
+	costAt := func(at time.Time) *CostBreakdown {
+		got, err := svc.calculateOpenAIRecordUsageCost(ctx, result, key, []string{"gpt-image-2"}, 1.3, 2.7, UsageTokens{}, "", at)
+		require.NoError(t, err)
+		return got
+	}
+	zero := costAt(time.Time{})
+	require.Greater(t, zero.TotalCost, 0.0, "a real channel price, not two zeros")
+	require.Zero(t, zero.extraMultiplier)
+	for _, at := range []time.Time{mpT0.Add(-720 * time.Hour), mpT0, mpT0.Add(720 * time.Hour)} {
+		require.Equal(t, zero, costAt(at), "pricingAt %v", at)
+	}
+}
+
+// 图片请求遇到 token 模式的渠道价：两个网关都把它当普通 token 请求，倍率是 token 倍率（不是独立的图片倍率），
+// 额外倍率乘在 token 倍率上。custom 单元格的价格是 token 模式，额外倍率用 mcFixedExtra 叠上去。
+func TestOpenAICost_ImageRequestOnTokenPathMultipliesTheTokenMultiplier(t *testing.T) {
+	key := mcKey(Group{ID: 1, Platform: PlatformOpenAI, RateMultiplier: 1.3, ImageRateIndependent: true, ImageRateMultiplier: 2.7})
+	result := &OpenAIForwardResult{Model: "gpt-image-2", ImageCount: 2, ImageSize: "1K"}
+	custom := newMPPolicyFor(GroupStateSnapshot{Cells: []StoredMatrixCell{mpCustom("gpt-image-2", 1e-6)}})
+
+	// 输入 1000 token x 1e-6 + 输出 100 token x 4e-6 = 0.0014。
+	base := mcOpenAICost(t, custom, key, []string{"gpt-image-2"}, result, 1.3, 2.7)
+	require.Equal(t, string(BillingModeToken), base.BillingMode)
+	require.Zero(t, base.extraMultiplier)
+	require.InDelta(t, 0.0014, base.TotalCost, 1e-12)
+	require.InDelta(t, 0.0014*1.3, base.ActualCost, 1e-12, "the token multiplier 1.3, not the independent image multiplier 2.7")
+
+	got := mcOpenAICost(t, mcFixedExtra{GroupPolicy: custom, extra: 2}, key, []string{"gpt-image-2"}, result, 1.3, 2.7)
+	require.Equal(t, string(BillingModeToken), got.BillingMode)
+	mcRequireScaled(t, base, got, 2)
+	require.InDelta(t, 0.0014*1.3*2, got.ActualCost, 1e-12)
+}
+
+func TestGatewayCost_ImageRequestOnTokenPathMultipliesTheTokenMultiplier(t *testing.T) {
+	ctx := context.Background()
+	key := mcKey(Group{ID: 1, Platform: PlatformAnthropic, RateMultiplier: 1.3, ImageRateIndependent: true, ImageRateMultiplier: 2.7})
+	result := &ForwardResult{Model: "claude-sonnet-4", ImageCount: 2, ImageSize: "1K", Usage: ClaudeUsage{InputTokens: 1000, OutputTokens: 100}}
+	custom := newMPPolicyFor(GroupStateSnapshot{Cells: []StoredMatrixCell{mpCustom("claude-sonnet-4", 3e-6)}})
+
+	// 输入 1000 token x 3e-6 + 输出 100 token x 12e-6 = 0.0042。
+	base := mcGatewaySvc(custom).calculateRecordUsageCost(ctx, result, key, "claude-sonnet-4", 1.3, 2.7, &recordUsageOpts{}, time.Time{})
+	require.Equal(t, string(BillingModeToken), base.BillingMode)
+	require.Zero(t, base.extraMultiplier)
+	require.InDelta(t, 0.0042, base.TotalCost, 1e-12)
+	require.InDelta(t, 0.0042*1.3, base.ActualCost, 1e-12)
+
+	got := mcGatewaySvc(mcFixedExtra{GroupPolicy: custom, extra: 2}).calculateRecordUsageCost(ctx, result, key, "claude-sonnet-4", 1.3, 2.7, &recordUsageOpts{}, time.Time{})
+	require.Equal(t, string(BillingModeToken), got.BillingMode)
+	mcRequireScaled(t, base, got, 2)
+	require.InDelta(t, 0.0042*1.3*2, got.ActualCost, 1e-12)
+}
+
+// 图片行的用量记录：rate_multiplier 记成「图片倍率 x 额外倍率」，actual_cost = total_cost x rate_multiplier。
+func mcRunOpenAIImageRecordUsage(t *testing.T, policy GroupPolicy) *UsageLog {
+	t.Helper()
+	price := 0.04
+	logStub := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(logStub, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, &openAIUserGroupRateRepoStub{})
+	svc.policyOverride = policy
+	svc.resolver = &ModelPricingResolver{policyOverride: policy, billingService: svc.billingService}
+	key := mcKey(Group{ID: 1, Platform: PlatformOpenAI, RateMultiplier: 1.3, ImageRateIndependent: true, ImageRateMultiplier: 2.7, ImagePrice1K: &price})
+	require.NoError(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result:  &OpenAIForwardResult{Model: "gpt-image-2", Duration: time.Second, ImageCount: 2, ImageSize: "1K"},
+		APIKey:  key,
+		User:    &User{ID: 1},
+		Account: &Account{ID: 3},
+	}))
+	require.NotNil(t, logStub.lastLog)
+	return logStub.lastLog
+}
+
+func TestOpenAIRecordUsage_ImageRowRateMultiplierIncludesExtra(t *testing.T) {
+	base := mcRunOpenAIImageRecordUsage(t, newMPPolicyFor(GroupStateSnapshot{}))
+	require.InDelta(t, 0.08, base.TotalCost, 1e-12)
+	require.InDelta(t, 2.7, base.RateMultiplier, 1e-12, "the image row records the image multiplier, not the token multiplier")
+	require.InDelta(t, 0.08*2.7, base.ActualCost, 1e-12)
+
+	got := mcRunOpenAIImageRecordUsage(t, newMPPolicyFor(GroupStateSnapshot{Cells: []StoredMatrixCell{mpExtra("gpt-image-2", 3)}}))
+	require.InDelta(t, base.TotalCost, got.TotalCost, 1e-15)
+	require.InDelta(t, 2.7*3, got.RateMultiplier, 1e-12, "rate_multiplier = imageMultiplier x extra")
+	require.InDelta(t, got.TotalCost*got.RateMultiplier, got.ActualCost, 1e-12, "actual_cost = total_cost x rate_multiplier still holds")
+	require.InDelta(t, base.ActualCost*3, got.ActualCost, 1e-12)
 }

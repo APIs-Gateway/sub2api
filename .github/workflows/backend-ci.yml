@@ -29,6 +29,13 @@ jobs:
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover
+      # 分组策略矩阵实现带快照缓存、singleflight 与失效通知，并发路径靠 -race 守住。
+      # 只跑 TestMatrixPolicy_*：-race 编译与运行都慢，整个 service 包不值得为此翻倍。
+      - name: Unit tests (race, matrix policy)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -run '^TestMatrixPolicy_' ./internal/service/
       - name: Integration tests (coverage)
         working-directory: backend
         run: make test-integration-cover

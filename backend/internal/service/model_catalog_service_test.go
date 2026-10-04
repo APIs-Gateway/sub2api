@@ -62,6 +62,51 @@ func TestNormalizeCatalogModelKey(t *testing.T) {
 	require.Empty(t, NormalizeCatalogModelKey("   "))
 }
 
+// 入口名字规范化（设计 3.2、R2-D）：平台与模型名都先 TrimSpace，再按目录键的规则归一，调用方不必先去空白或转小写。
+func TestModelCatalogService_ResolveToleratesPaddedAndMixedCaseNames(t *testing.T) {
+	ctx := context.Background()
+	svc := NewModelCatalogService(&mxCatalogRepo{entries: []ModelCatalogEntry{
+		mxCatalogEntry("openai", "gpt-5.6-luna", "luna-b"),
+		mxCatalogEntry("anthropic", "claude-opus-4-5"),
+	}})
+
+	for _, platform := range []string{"openai", " openai ", "\topenai\n"} {
+		for _, model := range []string{"gpt-5.6-luna", " GPT-5.6-Luna ", "\tgpt-5.6-LUNA\n", "luna-b", " Luna-B "} {
+			got, err := svc.Resolve(ctx, platform, model)
+			require.NoError(t, err)
+			require.NotNil(t, got, "%q %q", platform, model)
+			require.Equal(t, "gpt-5.6-luna", got.ModelKey, "%q %q", platform, model)
+		}
+	}
+	for _, model := range []string{"claude-opus-4-5", "Claude-Opus-4.5", " claude-opus-4.5 "} {
+		got, err := svc.Resolve(ctx, "anthropic", model)
+		require.NoError(t, err)
+		require.NotNil(t, got, "%q", model)
+		require.Equal(t, "claude-opus-4-5", got.ModelKey, "%q", model)
+	}
+
+	// 平台之间不串；空名与纯空白名未登记，不是错误。
+	got, err := svc.Resolve(ctx, "anthropic", "gpt-5.6-luna")
+	require.NoError(t, err)
+	require.Nil(t, got)
+	got, err = svc.Resolve(ctx, "openai", "   ")
+	require.NoError(t, err)
+	require.Nil(t, got)
+}
+
+// 目录状态到准入结果的转换：只有显式的 draft、retired 不放行；active、未登记、未知状态值都放行。
+func TestCatalogEntryAccess(t *testing.T) {
+	require.Equal(t, QuoteAccess{OK: true}, catalogEntryAccess(nil), "unregistered counts as active")
+	for status, want := range map[ModelCatalogStatus]QuoteAccess{
+		ModelCatalogActive:          {OK: true},
+		ModelCatalogDraft:           {OK: false, Reason: QuoteAccessReasonCatalogDraft},
+		ModelCatalogRetired:         {OK: false, Reason: QuoteAccessReasonCatalogRetired},
+		ModelCatalogStatus("weird"): {OK: true},
+	} {
+		require.Equal(t, want, catalogEntryAccess(&ModelCatalogEntry{Status: status}), "%q", status)
+	}
+}
+
 func TestModelCatalogService_CreateNormalizesAndStores(t *testing.T) {
 	repo := &mxCatalogRepo{}
 	svc := NewModelCatalogService(repo)
