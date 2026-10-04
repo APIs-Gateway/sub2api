@@ -528,6 +528,30 @@ func TestResponsesChain_FailoverExhaustedFallsBackAndConfirmsBreakerFailure(t *t
 	require.Equal(t, []int64{1}, o.breaker.failedGroups(), "5xx 暂记，下一跳成功后才计入主分组的熔断")
 }
 
+// 弱 429：账号近 30 秒的 429 占比不够，429 闸门故意不换号，组内其它账号一个都没试过。
+// 这不是整组耗尽的证据：请求照常回退到下一个分组，但熔断器不能有任何记录（BK-1）。
+func TestResponsesChain_Weak429OnFirstHopFallsBackWithoutBreakerCount(t *testing.T) {
+	o := chainRespBase()
+	// 429 闸门是进程级状态，账号号段与其它用例错开，避免互相影响。
+	o.schedulable = map[int64][]service.Account{
+		1: {chainRespAccount(1101)},
+		2: {chainRespAccount(2101)},
+	}
+	o.replies = map[int64]chainRespReply{
+		1101: {status: http.StatusTooManyRequests, body: `{"error":{"type":"rate_limit_error","message":"slow down"}}`, contentType: "application/json"},
+	}
+	require.False(t, service.ShouldSwitchAccountOn429(1101), "前提：这个账号没有任何放行换号的 429 判定")
+	got, _ := runChainRespCase(t, o, chainRespBodyJSON)
+
+	require.Equal(t, http.StatusOK, got.status)
+	require.Equal(t, []int64{1101, 2101}, got.calls, "主分组只试了一个号就被 429 闸门停下，回退到下一个分组")
+	require.Contains(t, got.body, "served-by-2101")
+	require.NotContains(t, got.body, "slow down", "主分组的上游错误不能泄漏给兜底成功的请求")
+	require.EqualValues(t, 2, *got.usage.ServedGroupID, "计费 served 列是下一跳")
+	require.EqualValues(t, 1, *got.usage.GroupID, "group_id 仍是主分组")
+	require.Empty(t, o.breaker.failedGroups(), "弱 429 不是整组耗尽的证据：不计熔断")
+}
+
 func TestResponsesChain_AllHopsFailEndsWithLastHopOriginalError(t *testing.T) {
 	o := chainRespBase()
 	o.replies = map[int64]chainRespReply{11: chainRespUpstreamError(), 21: chainRespUpstreamError()}

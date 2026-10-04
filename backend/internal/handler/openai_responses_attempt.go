@@ -138,16 +138,21 @@ func (r *openAIResponsesRun) attempt(args responsesHopArgs) service.HopResult {
 			return r.noAccountFacts(key, policy, selectionErr)
 		}
 	}
-	failoverExhausted := func(failoverErr *service.UpstreamFailoverError) service.HopResult {
+	// failoverExhaustedBy 在 failover 失败后收尾。noGroupEvidence 为 true 表示这次停下并不能说明整组有问题
+	// （例如只试了一个号就按 429 闸门停下）：照常可以回退，但不产生熔断信号。
+	failoverExhaustedBy := func(failoverErr *service.UpstreamFailoverError, noGroupEvidence bool) service.HopResult {
 		return fail(func() service.HopFailure {
 			return service.HopFailure{
 				Kind:                   service.HopFailureFailoverExhausted,
 				LastStatus:             failoverErr.StatusCode,
-				RequestScopedTransient: failoverErr.RequestScopedTransient,
+				RequestScopedTransient: failoverErr.RequestScopedTransient || noGroupEvidence,
 			}
 		}, func() {
 			h.handleFailoverExhausted(c, failoverErr, stream())
 		})
+	}
+	failoverExhausted := func(failoverErr *service.UpstreamFailoverError) service.HopResult {
+		return failoverExhaustedBy(failoverErr, false)
 	}
 	// attemptsExhausted：有链时受每请求总尝试次数约束（AttemptsRemaining 为 0 视为未设置）。
 	attemptsExhausted := func() bool {
@@ -251,7 +256,8 @@ func (r *openAIResponsesRun) attempt(args responsesHopArgs) service.HopResult {
 		// reasoning item（含耦合的 id/summary），避免非透传上游 400 拒绝 Kiro reasoning 形态。
 		attemptBody := h.deriveOpenAIForwardAttemptBody(reqLog, forwardBody, account, &passthroughFailoverState)
 		// 在途计费预占按这一跳的有效 Key（有链时是影子 Key）估价：同一个请求的多次尝试 / 多跳复用并重设同一张预占单。
-		// 预占被拒时本跳没有真正调用上游（attempts 不增加），分组层 RPM 凭据由 ReleaseHopGroupRPMIfNotServed 退回。
+		// 预占被拒时本跳没有真正调用上游（attempts 不增加），直接按终止收尾：与无链一致，不退回分组层 RPM 计数
+		// （ReleaseHopGroupRPMIfNotServed 只对跳过和「未写错误的可回退失败」退回）。
 		if !reserveBillingInflightHTTP(c, h.gatewayService, service.BillingInflightRequest{APIKey: key, Account: account, Model: r.reqModel, Body: attemptBody, ChannelUsageFields: channelMapping.ToUsageFields(r.reqModel, "")}, accountReleaseFunc, func(status int, code, message string) {
 			h.handleStreamingAwareError(c, status, code, message, stream())
 		}) {
@@ -386,7 +392,9 @@ func (r *openAIResponsesRun) attempt(args responsesHopArgs) service.HopResult {
 						continue
 					}
 					if failoverErr.StatusCode == http.StatusTooManyRequests && !service.ShouldSwitchAccountOn429(account.ID) {
-						return failoverExhausted(failoverErr)
+						// 弱 429：该账号近 30 秒的 429 占比不够，系统故意不换号，组内其它账号一个都没试过。
+						// 这不是「整组耗尽」的证据：有链时照常回退到下一跳，但不计入熔断，免得繁忙分组被零星 429 误开。
+						return failoverExhaustedBy(failoverErr, true)
 					}
 					if openAIFirstOutputFailoverExhausted(failoverErr, &firstOutputTimeoutSwitchCount) {
 						return failoverExhausted(failoverErr)
