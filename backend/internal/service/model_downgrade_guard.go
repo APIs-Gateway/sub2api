@@ -167,13 +167,12 @@ func (s *OpenAIGatewayService) modelDowngradeCandidateFilter(ctx context.Context
 				return false
 			}
 		}
-		if groupID != nil && s.channelService != nil {
-			channel, err := s.channelService.GetChannelForGroup(ctx, *groupID)
+		if gp := s.groupPolicy(); groupID != nil && gp != nil {
+			upstreamCheck, err := gp.UpstreamCheck(ctx, *groupID)
 			if err != nil {
 				return false
 			}
-			if channel != nil && channel.RestrictModels && channel.BillingModelSource == BillingModelSourceUpstream &&
-				s.isUpstreamModelRestrictedByChannel(ctx, *groupID, candidate, selectionModel, requireCompact) {
+			if upstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, candidate, selectionModel, requireCompact) {
 				return false
 			}
 		}

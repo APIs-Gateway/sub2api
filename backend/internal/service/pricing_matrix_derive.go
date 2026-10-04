@@ -614,7 +614,7 @@ func (x matrixCustomIndex) hit(name string) bool {
 	return false
 }
 
-// twoStepHit 复刻 lookupChannelPricingNormalized 的两步：先字面名，未命中再用
+// twoStepHit 复刻 legacyPolicy.PriceOverride（原 lookupChannelPricingNormalized）的两步：先字面名，未命中再用
 // normalizeKnownOpenAICodexModel 归一化后的名字查一次。
 func (x matrixCustomIndex) twoStepHit(name string) bool {
 	if x.hit(name) {

@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
-	"strings"
+	"time"
 )
 
 // PricingSource 定价来源标识
@@ -44,6 +44,8 @@ type ResolvedPricing struct {
 // 解析链：Channel → LiteLLM → Fallback。
 type ModelPricingResolver struct {
 	channelService *ChannelService
+	// 显式注入的分组策略；nil 时由 channelService 构造 legacyPolicy（见 group_policy.go）。
+	policyOverride GroupPolicy
 	billingService *BillingService
 }
 
@@ -66,8 +68,8 @@ type PricingInput struct {
 // 2. 如果指定了 GroupID，查找渠道定价并覆盖
 func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) *ResolvedPricing {
 	var chPricing *ChannelModelPricing
-	if input.GroupID != nil && r.channelService != nil {
-		chPricing = r.lookupChannelPricingNormalized(ctx, *input.GroupID, input.Model)
+	if input.GroupID != nil {
+		chPricing = r.priceOverride(ctx, *input.GroupID, input.Model)
 		if chPricing != nil {
 			mode := chPricing.BillingMode
 			if mode == "" {
@@ -118,33 +120,19 @@ func (r *ModelPricingResolver) resolveBasePricing(model string) (*ModelPricing, 
 	return pricing, PricingSourceLiteLLM
 }
 
-// lookupChannelPricingNormalized 查找渠道定价：先用字面模型名做精确/通配匹配，
-// 未命中时用与官方兜底价一致的归一化模型名再查一次。
-//
-// 官方兜底价对 OpenAI/Codex 族会把 gpt-5.6-luna-high 这类变体名归一化到基名
-// （billing_service.go 的 normalizeKnownOpenAICodexModel 分支），而渠道定价此前
-// 只认字面名。两者不对称导致：管理员只配基名、请求模型带 effort 后缀时，渠道定价
-// 未命中而官方兜底命中，计费候选循环首个成功即返回，渠道定价永远轮不到（issue #5256）。
-//
-// 字面名优先，保证管理员对具体变体的显式配价不被基名覆盖；非 OpenAI 模型
-// normalizeKnownOpenAICodexModel 返回空串，此处天然 no-op。
-func (r *ModelPricingResolver) lookupChannelPricingNormalized(ctx context.Context, groupID int64, model string) *ChannelModelPricing {
-	if r.channelService == nil {
+// priceOverride 经 GroupPolicy 取分组对该模型的价格覆盖（字面名、codex 归一化名两步查找在策略内部，
+// 见 legacyPolicy.PriceOverride）；没有策略（未配置渠道服务）时返回 nil。
+func (r *ModelPricingResolver) priceOverride(ctx context.Context, groupID int64, model string) *ChannelModelPricing {
+	gp := r.groupPolicy()
+	if gp == nil {
 		return nil
 	}
-	if pricing := r.channelService.GetChannelModelPricing(ctx, groupID, model); pricing != nil {
-		return pricing
-	}
-	normalized := normalizeKnownOpenAICodexModel(model)
-	if normalized == "" || strings.EqualFold(normalized, strings.TrimSpace(model)) {
-		return nil
-	}
-	return r.channelService.GetChannelModelPricing(ctx, groupID, normalized)
+	return gp.PriceOverride(ctx, groupID, model, time.Time{})
 }
 
 // applyChannelOverrides 应用渠道定价覆盖
 func (r *ModelPricingResolver) applyChannelOverrides(ctx context.Context, groupID int64, model string, resolved *ResolvedPricing) {
-	chPricing := r.lookupChannelPricingNormalized(ctx, groupID, model)
+	chPricing := r.priceOverride(ctx, groupID, model)
 	if chPricing == nil {
 		return
 	}

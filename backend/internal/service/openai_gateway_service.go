@@ -370,6 +370,7 @@ type OpenAIGatewayService struct {
 	openaiWSResolver      OpenAIWSProtocolResolver
 	resolver              *ModelPricingResolver
 	channelService        *ChannelService
+	policyOverride        GroupPolicy // 显式注入的分组策略；nil 时由 channelService 构造 legacyPolicy（见 group_policy.go）
 	balanceNotifyService  *BalanceNotifyService
 	settingService        *SettingService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
@@ -487,27 +488,30 @@ func NewOpenAIGatewayService(
 
 // ResolveChannelMapping 解析渠道级模型映射（代理到 ChannelService）
 func (s *OpenAIGatewayService) ResolveChannelMapping(ctx context.Context, groupID int64, model string) ChannelMappingResult {
-	if s.channelService == nil {
+	gp := s.groupPolicy()
+	if gp == nil {
 		return ChannelMappingResult{MappedModel: model}
 	}
-	return s.channelService.ResolveChannelMapping(ctx, groupID, model)
+	return gp.Mapping(ctx, groupID, model)
 }
 
 // IsModelRestricted 检查模型是否被渠道限制（代理到 ChannelService）
 func (s *OpenAIGatewayService) IsModelRestricted(ctx context.Context, groupID int64, model string) bool {
-	if s.channelService == nil {
+	gp := s.groupPolicy()
+	if gp == nil {
 		return false
 	}
-	return s.channelService.IsModelRestricted(ctx, groupID, model)
+	return !gp.ModelAccess(ctx, groupID, model).OK
 }
 
 // ResolveChannelMappingAndRestrict 解析渠道映射。
 // 模型限制检查已移至调度阶段，restricted 始终返回 false。
 func (s *OpenAIGatewayService) ResolveChannelMappingAndRestrict(ctx context.Context, groupID *int64, model string) (ChannelMappingResult, bool) {
-	if s.channelService == nil {
+	gp := s.groupPolicy()
+	if gp == nil || groupID == nil {
 		return ChannelMappingResult{MappedModel: model}, false
 	}
-	return s.channelService.ResolveChannelMappingAndRestrict(ctx, groupID, model)
+	return gp.Mapping(ctx, *groupID, model), false
 }
 
 func (s *OpenAIGatewayService) isCodexImageGenerationBridgeEnabled(ctx context.Context, account *Account, apiKey *APIKey) bool {
@@ -527,11 +531,11 @@ func (s *OpenAIGatewayService) isCodexImageGenerationBridgeEnabled(ctx context.C
 		(account.IsOpenAIApiKey() && !isOfficialOpenAIResponsesBridgeURL(account.GetOpenAIBaseURL())) {
 		return false
 	}
-	if s != nil && s.channelService != nil && apiKey != nil && apiKey.GroupID != nil {
-		ch, err := s.channelService.GetChannelForGroup(ctx, *apiKey.GroupID)
+	if gp := s.groupPolicy(); gp != nil && apiKey != nil && apiKey.GroupID != nil {
+		override, err := gp.Feature(ctx, *apiKey.GroupID, PlatformOpenAI, GroupFeatureCodexImageGenerationBridge)
 		if err != nil {
 			slog.Warn("failed to resolve codex image generation bridge channel override", "group_id", *apiKey.GroupID, "error", err)
-		} else if override := ch.CodexImageGenerationBridgeOverride(PlatformOpenAI); override != nil {
+		} else if override != nil {
 			return *override
 		}
 	}
@@ -539,15 +543,16 @@ func (s *OpenAIGatewayService) isCodexImageGenerationBridgeEnabled(ctx context.C
 }
 
 func (s *OpenAIGatewayService) checkChannelPricingRestriction(ctx context.Context, groupID *int64, requestedModel string) bool {
-	if groupID == nil || s.channelService == nil || requestedModel == "" {
+	gp := s.groupPolicy()
+	if groupID == nil || gp == nil || requestedModel == "" {
 		return false
 	}
-	mapping := s.channelService.ResolveChannelMapping(ctx, *groupID, requestedModel)
+	mapping := gp.Mapping(ctx, *groupID, requestedModel)
 	billingModel := billingModelForRestriction(mapping.BillingModelSource, requestedModel, mapping.MappedModel)
 	if billingModel == "" {
 		return false
 	}
-	return s.channelService.IsModelRestricted(ctx, *groupID, billingModel)
+	return !gp.ModelAccess(ctx, *groupID, billingModel).OK
 }
 
 func shouldForwardOpenAIResponsesViaRawChatCompletions(account *Account) bool {
@@ -586,7 +591,8 @@ func openAIForwardModelFromContext(ctx context.Context) (openAIForwardModel, boo
 }
 
 func (s *OpenAIGatewayService) isUpstreamModelRestrictedByChannel(ctx context.Context, groupID int64, account *Account, requestedModel string, requireCompact bool) bool {
-	if s.channelService == nil {
+	gp := s.groupPolicy()
+	if gp == nil {
 		return false
 	}
 	if compactForwardModel, ok := openAIForwardModelFromContext(ctx); ok {
@@ -597,22 +603,20 @@ func (s *OpenAIGatewayService) isUpstreamModelRestrictedByChannel(ctx context.Co
 	if upstreamModel == "" {
 		return false
 	}
-	return s.channelService.IsModelRestricted(ctx, groupID, upstreamModel)
+	return !gp.UpstreamAccess(ctx, groupID, upstreamModel).OK
 }
 
 func (s *OpenAIGatewayService) needsUpstreamChannelRestrictionCheck(ctx context.Context, groupID *int64) bool {
-	if groupID == nil || s.channelService == nil {
+	gp := s.groupPolicy()
+	if groupID == nil || gp == nil {
 		return false
 	}
-	ch, err := s.channelService.GetChannelForGroup(ctx, *groupID)
+	required, err := gp.UpstreamCheck(ctx, *groupID)
 	if err != nil {
 		slog.Warn("failed to check openai channel upstream restriction", "group_id", *groupID, "error", err)
 		return false
 	}
-	if ch == nil || !ch.RestrictModels {
-		return false
-	}
-	return ch.BillingModelSource == BillingModelSourceUpstream
+	return required
 }
 
 // ReplaceModelInBody 替换请求体中的 JSON model 字段（通用 gjson/sjson 实现）。
@@ -9332,7 +9336,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	// 上游模型不一致审计行：这里仍按真实 token 计算账号侧统计成本（反映该账号实际消耗的上游用量），
 	// 这是账号维度的统计口径而非向用户计费，不构成计费泄漏；用户侧 total_cost/actual_cost 已为 0 且不扣费。
 	if billingAPIKey.GroupID != nil {
-		applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
+		applyAccountStatsCost(ctx, usageLog, s.groupPolicy(), s.billingService,
 			account.ID, *billingAPIKey.GroupID, result.UpstreamModel, result.Model,
 			tokens, cost.TotalCost, pricingAt,
 		)
