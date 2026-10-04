@@ -7046,7 +7046,7 @@
         siteNamePlaceholder: 'Sub2API',
         siteNameHint: 'Displayed in emails and page titles',
         siteSubtitle: 'Site Subtitle',
-        siteSubtitlePlaceholder: 'Subscription to API Conversion Platform',
+        siteSubtitlePlaceholder: 'Fast, reliable LLM API service',
         siteSubtitleHint: 'Displayed on login and register pages',
         defaultLocale: 'Default Language',
         defaultLocaleHint: 'Used when visitors have not selected a language on this device',

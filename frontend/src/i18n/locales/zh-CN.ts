@@ -7046,7 +7046,7 @@
         siteNamePlaceholder: 'Sub2API',
         siteSubtitle: '站点副标题',
         siteSubtitleHint: '显示在登录和注册页面',
-        siteSubtitlePlaceholder: '订阅转 API 转换平台',
+        siteSubtitlePlaceholder: '快速稳定的大模型 API 服务',
         defaultLocale: '默认语言',
         defaultLocaleHint: '访客未在本设备手动选择语言时使用',
         apiBaseUrl: 'API 端点地址',
