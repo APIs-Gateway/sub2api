@@ -38,6 +38,10 @@ vi.mock('@/stores/adminSettings', () => ({
   useAdminSettingsStore: () => stores.adminSettings,
 }))
 
+vi.mock('@/composables/useClipboard', () => ({
+  useClipboard: () => ({ copied: { value: false }, copyToClipboard: vi.fn() }),
+}))
+
 vi.mock('@/composables/useCurrencyDisplay', () => ({
   useCurrencyDisplay: () => ({ canSwitch: { value: false } }),
 }))

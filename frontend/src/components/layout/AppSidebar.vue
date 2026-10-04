@@ -146,6 +146,9 @@
       </template>
     </nav>
 
+    <!-- Balance card mount point (user view only): renders nothing unless a card is slotted in -->
+    <slot v-if="!isAdmin && !appStore.backendModeEnabled" name="balance-card" :collapsed="sidebarCollapsed" />
+
     <!-- Bottom Section -->
     <div class="mt-auto border-t border-gray-100 p-3 dark:border-dark-800">
       <!-- Theme Toggle -->
@@ -206,6 +209,7 @@ import { sanitizeSvg } from '@/utils/sanitize'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import BrandMark from '@/components/common/BrandMark.vue'
+import { USER_NAV_ENTRIES } from './userNav'
 
 interface NavItem {
   path: string
@@ -694,35 +698,44 @@ const ChevronDownIcon = {
 // Public-settings flags go through the registry in utils/featureFlags.ts,
 // which handles the opt-in vs opt-out fallback when settings haven't loaded
 // yet. Admin-only flags (not in public settings) stay inline below.
+// The user-menu flags (payment, available channels, channel monitor) are declared
+// next to their entries in ./userNav.ts.
 const flagChannelMonitor = makeSidebarFlag(FeatureFlags.channelMonitor)
-const flagPayment = makeSidebarFlag(FeatureFlags.payment)
-const flagAvailableChannels = makeSidebarFlag(FeatureFlags.availableChannels)
 const flagRiskControl = makeSidebarFlag(FeatureFlags.riskControl)
 const flagOpsMonitoring = () => adminSettingsStore.opsMonitoringEnabled
 const flagAdminPayment = () => adminSettingsStore.paymentEnabled
 
-// buildSelfNavItems 构造用户自己的导航项（用户端主菜单和管理员的"我的账户"子菜单共享这组声明）。
-// withDashboard=true 时包含仪表盘（用户端），false 时不含（管理员的个人区已经有独立仪表盘入口）。
-//
-// 条目顺序：密钥 → 用量 → 可用渠道 → 渠道状态 → 订阅/支付 → 兑换/资料。
-// 可用渠道紧挨渠道状态之上，让用户"先看自己能用什么、再看对应状态"。
+// Icons of the user-menu entries, keyed by path (labels and gates live in ./userNav.ts).
+const SELF_NAV_ICONS: Record<string, unknown> = {
+  '/dashboard': DashboardIcon,
+  '/keys': KeyIcon,
+  '/usage': ChartIcon,
+  '/available-channels': ChannelIcon,
+  '/monitor': SignalIcon,
+  '/subscriptions': CreditCardIcon,
+  '/purchase': RechargeSubscriptionIcon,
+  '/orders': OrderListIcon,
+  '/redeem': GiftIcon,
+  '/points': UsersIcon,
+  '/docs': BookIcon,
+  '/profile': UserIcon,
+}
+
+// The user's own menu, shared by the user sidebar and the admin "My account"
+// section. It is the list from ./userNav.ts in its declared order, followed by the
+// site's custom menu items. withDashboard=false drops the dashboard entry
+// (the admin menu has its own dashboard link).
 function buildSelfNavItems(withDashboard: boolean): NavItem[] {
-  const items: NavItem[] = []
-  if (withDashboard) {
-    items.push({ path: '/dashboard', label: t('nav.dashboard'), icon: DashboardIcon })
-  }
+  const items: NavItem[] = USER_NAV_ENTRIES.filter((entry) => withDashboard || !entry.userOnly).map(
+    (entry): NavItem => ({
+      path: entry.path,
+      label: t(entry.labelKey),
+      icon: SELF_NAV_ICONS[entry.path],
+      hideInSimpleMode: entry.hideInSimpleMode,
+      featureFlag: entry.flag ? makeSidebarFlag(entry.flag) : undefined,
+    }),
+  )
   items.push(
-    { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
-    { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
-    { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
-    { path: '/monitor', label: t('nav.channelStatus'), icon: SignalIcon, featureFlag: flagChannelMonitor },
-    { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
-    { path: '/purchase', label: t('nav.buySubscription'), icon: RechargeSubscriptionIcon, hideInSimpleMode: true, featureFlag: flagPayment },
-    { path: '/orders', label: t('nav.myOrders'), icon: OrderListIcon, hideInSimpleMode: true, featureFlag: flagPayment },
-    { path: '/redeem', label: t('nav.redeem'), icon: GiftIcon, hideInSimpleMode: true },
-    { path: '/points', label: t('nav.points'), icon: UsersIcon, hideInSimpleMode: true },
-    { path: '/docs', label: t('nav.usageDocs'), icon: BookIcon },
-    { path: '/profile', label: t('nav.profile'), icon: UserIcon },
     ...customMenuItemsForUser.value.map((item): NavItem => ({
       path: `/custom/${item.id}`,
       label: item.label,

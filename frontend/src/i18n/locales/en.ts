@@ -447,6 +447,9 @@
     channelStatus: 'Channel Status',
     riskControl: 'Risk Control',
     promptAudit: 'Prompt Audit',
+    topUp: 'Top Up',
+    userId: 'User ID',
+    userIdCopied: 'User ID copied',
   },
 
   // Auth
