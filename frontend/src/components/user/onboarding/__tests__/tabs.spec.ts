@@ -296,51 +296,247 @@ describe('CcSwitchTab', () => {
 })
 
 describe('ManualTab', () => {
+  const cdn: EndpointOption = {
+    id: 'https://cdn.example.com',
+    base: 'https://cdn.example.com',
+    v1: 'https://cdn.example.com/v1',
+    configured: 'https://cdn.example.com',
+    name: 'Fast line',
+    description: '',
+    isDefault: false
+  }
   const mountTab = (props: Record<string, unknown> = {}) =>
     mount(ManualTab, {
       props: {
         endpoint,
+        endpointOptions: [endpoint],
+        endpointId: 'default',
         fullKey: KEY,
         maskedKey: 'sk-SEC…cdef',
         platform: 'anthropic',
         siteName: 'Hiyo',
         clients: ['claude', 'opencode'],
+        models: [],
         docUrl: '',
         copiedId: '',
         ...props
       } as never,
       attrs: panelAttrs
     })
+  const codeTabs = (w: ReturnType<typeof mountTab>) => w.findAll('[data-test^="manual-tab-"]').map((b) => b.attributes('data-test')!.replace('manual-tab-', ''))
+  const shownCode = (w: ReturnType<typeof mountTab>) => w.findAll('[data-test="manual-code"] pre').map((p) => p.text())
 
-  it('表格显示掩码，复制的是完整密钥；地址行复制 API 根地址和 /v1 地址', async () => {
+  it('面板属性落在根元素上', () => {
     const w = mountTab()
-    const table = w.get('table')
-    expect(table.text()).toContain('sk-SEC…cdef')
-    expect(table.text()).not.toContain(KEY)
-    const buttons = table.findAll('button')
-    for (const b of buttons) await b.trigger('click')
-    expect(w.emitted('copy')).toEqual([
-      ['https://api.example.com', 'm-base'],
-      ['https://api.example.com/v1', 'm-v1'],
-      [KEY, 'm-key']
-    ])
+    expect(w.attributes('role')).toBe('tabpanel')
+    expect(w.attributes('id')).toBe('panel-x')
+    expect(w.attributes('aria-labelledby')).toBe('tab-x')
+    expect(w.attributes('data-test')).toBe('panel-manual')
   })
 
-  it('每个客户端一段配置片段；代码块的复制按钮也走 copy', async () => {
-    const w = mountTab()
-    const titles = w.findAll('details > summary').map((s) => s.text())
-    // OpenCode 没有手动配置片段，只有 Claude Code 一段
-    expect(titles).toEqual(['Claude Code'])
-    await w.findAllComponents(CodeBlock)[0].get('button').trigger('click')
-    const [text, id] = w.emitted('copy')![0] as [string, string]
-    expect(id.startsWith('claude-')).toBe(true)
-    expect(text).toContain("export ANTHROPIC_BASE_URL='https://api.example.com'")
-    expect(text).toContain(KEY)
+  describe('地址卡片', () => {
+    it('只有默认线路：一张卡片，没有单选；每个地址一个复制按钮，说明是通用的一句', async () => {
+      const w = mountTab()
+      expect(w.findAll('[data-test^="manual-line-"]:not([data-test^="manual-line-radio"]):not([data-test="manual-line-note"])').length).toBe(1)
+      expect(w.find('input[type="radio"]').exists()).toBe(false)
+      expect(w.find('[role="radiogroup"][data-test="manual-lines"]').exists()).toBe(false)
+      expect(w.get('[data-test="manual-line-0"]').text()).toContain('Default')
+      expect(w.get('[data-test="manual-line-note"]').text()).toBe('Enter this address in your client.')
+      await w.get('[data-test="copy-line-0-v1"]').trigger('click')
+      await w.get('[data-test="copy-line-0-base"]').trigger('click')
+      expect(w.emitted('copy')).toEqual([
+        ['https://api.example.com/v1', 'm-0-v1'],
+        ['https://api.example.com', 'm-0-base']
+      ])
+    })
+
+    it('卡片上只列代码里用得到的地址：/v1 给 OpenAI 兼容的客户端，接入地址给 Claude Code / Gemini CLI；没有分组时两个都给', () => {
+      const rows = (props: Record<string, unknown>) => {
+        const w = mountTab(props)
+        return [w.find('[data-test="copy-line-0-v1"]').exists(), w.find('[data-test="copy-line-0-base"]').exists()]
+      }
+      expect(rows({ platform: 'openai', clients: ['codex', 'opencode'] })).toEqual([true, false])
+      expect(rows({ platform: 'openai', clients: ['codex', 'claude', 'opencode'] })).toEqual([true, true])
+      expect(rows({ platform: 'gemini', clients: ['gemini', 'opencode'] })).toEqual([true, true])
+      expect(rows({ platform: 'antigravity', clients: ['claude', 'gemini'] })).toEqual([false, true])
+      expect(rows({ platform: null, clients: [] })).toEqual([true, true])
+    })
+
+    it('antigravity：卡片上的接入地址带 /antigravity，和代码里用的一致，也是复制出去的那个', async () => {
+      const w = mountTab({ platform: 'antigravity', clients: ['claude', 'gemini'] })
+      expect(w.get('[data-test="manual-line-0"]').text()).toContain('https://api.example.com/antigravity')
+      expect(w.get('[data-test="manual-line-0"]').text()).not.toContain('https://api.example.com/v1')
+      expect(shownCode(w).join('\n')).toContain('https://api.example.com/antigravity')
+      await w.get('[data-test="copy-line-0-base"]').trigger('click')
+      expect(w.emitted('copy')).toEqual([['https://api.example.com/antigravity', 'm-0-base']])
+    })
+
+    it('多条线路：每条一张卡片，是单选组；选中的写明「下方代码使用此地址」，备用线路用管理员的名称，没有说明时给通用的一句', () => {
+      const w = mountTab({ endpointOptions: [endpoint, cdn] })
+      expect(w.get('[data-test="manual-lines"]').attributes('role')).toBe('radiogroup')
+      expect(w.get('[data-test="manual-lines"]').attributes('aria-label')).toBe('API Endpoints')
+      const radios = w.findAll('input[type="radio"]')
+      expect(radios.map((r) => (r.element as HTMLInputElement).checked)).toEqual([true, false])
+      const cards = [w.get('[data-test="manual-line-0"]'), w.get('[data-test="manual-line-1"]')]
+      expect(cards[0].text()).toContain('Default')
+      expect(cards[0].text()).toContain('Used in the code below')
+      expect(cards[1].text()).toContain('Fast line')
+      expect(cards[1].text()).toContain('https://cdn.example.com/v1')
+      expect(cards[1].text()).not.toContain('Used in the code below')
+      expect(cards[1].get('[data-test="manual-line-note"]').text()).toBe('If the default address is slow, use this one instead.')
+    })
+
+    it('管理员给备用线路写了说明就原样显示', () => {
+      const w = mountTab({ endpointOptions: [endpoint, { ...cdn, description: '国内访问更快' }] })
+      expect(w.get('[data-test="manual-line-1"] [data-test="manual-line-note"]').text()).toBe('国内访问更快')
+    })
+
+    it('点卡片或选单选就换线路（v-model:endpointId）；点复制按钮只复制，不换线路', async () => {
+      const w = mountTab({ endpointOptions: [endpoint, cdn] })
+      await w.get('[data-test="copy-line-1-v1"]').trigger('click')
+      expect(w.emitted('update:endpointId')).toBeUndefined()
+      expect(w.emitted('copy')![0]).toEqual(['https://cdn.example.com/v1', 'm-1-v1'])
+      await w.get('[data-test="manual-line-1"]').trigger('click')
+      expect(w.emitted('update:endpointId')![0]).toEqual(['https://cdn.example.com'])
+      await w.get('[data-test="manual-line-radio-0"]').setValue(true)
+      expect(w.emitted('update:endpointId')!.at(-1)).toEqual(['default'])
+    })
+
+    it('选中哪条线路，代码就用哪条的地址；卡片仍列出全部线路', async () => {
+      const w = mountTab({ platform: 'openai', clients: ['codex', 'opencode'], endpointOptions: [endpoint, cdn] })
+      expect(shownCode(w)[0]).toContain('https://api.example.com/v1')
+      await w.setProps({ endpoint: cdn, endpointId: cdn.id })
+      expect(shownCode(w)[0]).toContain('https://cdn.example.com/v1')
+      expect(shownCode(w)[0]).not.toContain('api.example.com')
+      expect(w.get('[data-test="manual-line-0"]').text()).toContain('https://api.example.com/v1')
+    })
+
+    it('复制过的按钮显示「已复制」', () => {
+      const w = mountTab({ copiedId: 'm-0-v1' })
+      expect(w.get('[data-test="copy-line-0-v1"]').text()).toBe('Copied')
+      expect(w.get('[data-test="copy-line-0-base"]').text()).toBe('Copy')
+    })
+  })
+
+  describe('密钥', () => {
+    it('密钥行显示掩码，复制的是完整密钥', async () => {
+      const w = mountTab()
+      const row = w.get('[data-test="manual-key"]')
+      expect(row.text()).toContain('sk-SEC…cdef')
+      expect(row.text()).not.toContain(KEY)
+      await row.get('button').trigger('click')
+      expect(w.emitted('copy')).toEqual([[KEY, 'm-key']])
+    })
+
+    it('拿到完整密钥：标题写「密钥已填入下方」，代码里是真密钥', () => {
+      const w = mountTab()
+      expect(w.get('[data-test="manual-key-state"]').text()).toBe('Your key is filled in below')
+      expect(shownCode(w).join('\n')).toContain(KEY)
+      expect(shownCode(w).join('\n')).not.toContain('YOUR_API_KEY')
+    })
+
+    it('拿不到完整密钥：给提示，代码里用占位符，没有密钥行', () => {
+      const w = mountTab({ fullKey: '', maskedKey: '' })
+      expect(w.find('[data-test="manual-key"]').exists()).toBe(false)
+      expect(w.get('[data-test="manual-key-state"]').text()).toContain('YOUR_API_KEY')
+      expect(shownCode(w).join('\n')).toContain('YOUR_API_KEY')
+    })
+
+    it('只有打码的密钥时，提示里带上它', () => {
+      const w = mountTab({ fullKey: '', maskedKey: 'sk-SEC…cdef' })
+      expect(w.get('[data-test="manual-key-state"]').text()).toContain('sk-SEC…cdef')
+    })
+  })
+
+  describe('代码页签：随分组能力显示', () => {
+    it.each([
+      ['openai', ['codex', 'opencode'], ['openai', 'curl', 'codex']],
+      ['openai 开了 Messages 调度', ['codex', 'claude', 'opencode'], ['openai', 'curl', 'codex', 'claude']],
+      ['anthropic', ['claude', 'opencode'], ['openai', 'curl', 'claude']],
+      ['gemini', ['gemini', 'opencode'], ['openai', 'curl', 'gemini']],
+      ['antigravity', ['claude', 'gemini'], ['claude', 'gemini']],
+      ['没有分组', [], []]
+    ])('%s', (_name, clients, expected) => {
+      const w = mountTab({ clients, platform: clients.length ? 'x' : null })
+      expect(codeTabs(w)).toEqual(expected)
+    })
+
+    it('没有分组：不显示代码，提示先选分组；地址和密钥照常显示', () => {
+      const w = mountTab({ platform: null, clients: [] })
+      expect(w.find('[data-test="manual-code"]').exists()).toBe(false)
+      expect(w.get('[data-test="manual-no-group"]').text()).toBe('Choose a group for this key before connecting it.')
+      expect(w.find('[data-test="manual-key"]').exists()).toBe(true)
+    })
+
+    it('默认选第一个页签；点页签换代码；选中的页签对新分组不可用时回到第一个可用的', async () => {
+      const w = mountTab({ platform: 'openai', clients: ['codex', 'claude', 'opencode'] })
+      expect(w.get('[data-test="manual-tab-openai"]').attributes('aria-checked')).toBe('true')
+      await w.get('[data-test="manual-tab-claude"]').trigger('click')
+      expect(w.get('[data-test="manual-tab-claude"]').attributes('aria-checked')).toBe('true')
+      expect(shownCode(w)[0]).toContain('ANTHROPIC_BASE_URL')
+      await w.setProps({ platform: 'openai', clients: ['codex', 'opencode'] })
+      expect(w.get('[data-test="manual-tab-openai"]').attributes('aria-checked')).toBe('true')
+      expect(shownCode(w)[0]).toContain('from openai import OpenAI')
+    })
+
+    it('代码块的复制按钮走 copy，id 带页签名', async () => {
+      const w = mountTab({ platform: 'openai', clients: ['codex', 'opencode'] })
+      await w.get('[data-test="manual-tab-curl"]').trigger('click')
+      const blocks = w.findAllComponents(CodeBlock).filter((b) => b.element.closest('[data-test="manual-code"]'))
+      expect(blocks.map((b) => b.props('label'))).toEqual(['macOS / Linux', 'Windows PowerShell (curl.exe)'])
+      await blocks[1].get('button').trigger('click')
+      const [text, id] = w.emitted('copy')![0] as [string, string]
+      expect(id).toBe('code-curl-windows')
+      expect(text).toContain('curl.exe')
+      expect(text).toContain(KEY)
+    })
+
+    it('示例模型取自分组：anthropic 取 sonnet 档，openai 没有默认模型时取第一个 gpt-*', async () => {
+      const claude = mountTab({ platform: 'anthropic', models: ['claude-opus-5', 'claude-sonnet-4-5', 'claude-haiku-5'] })
+      expect(shownCode(claude)[0]).toContain('"claude-sonnet-4-5"')
+      const gpt = mountTab({ platform: 'openai', clients: ['codex', 'opencode'], models: ['gpt-image-2', 'gpt-5.5', 'gpt-5.6-luna'] })
+      expect(shownCode(gpt)[0]).toContain('"gpt-5.5"')
+    })
+  })
+
+  describe('配置文件片段', () => {
+    const titles = (w: ReturnType<typeof mountTab>) => w.findAll('details > summary').map((s) => s.text())
+
+    it('每个可用客户端一段，包括 OpenCode', () => {
+      expect(titles(mountTab())).toEqual(['Claude Code', 'OpenCode'])
+      expect(titles(mountTab({ platform: 'openai', clients: ['codex', 'opencode'] }))).toEqual(['Codex CLI', 'OpenCode'])
+      expect(titles(mountTab({ platform: 'gemini', clients: ['gemini', 'opencode'] }))).toEqual(['Gemini CLI', 'OpenCode'])
+    })
+
+    it('代码块的复制按钮也走 copy', async () => {
+      const w = mountTab()
+      const block = w.findAllComponents(CodeBlock).find((b) => b.element.closest('details'))!
+      await block.get('button').trigger('click')
+      const [text, id] = w.emitted('copy')![0] as [string, string]
+      expect(id.startsWith('claude-')).toBe(true)
+      expect(text).toContain("export ANTHROPIC_BASE_URL='https://api.example.com'")
+      expect(text).toContain(KEY)
+    })
+
+    it('OpenCode 片段按平台选 provider，写当前线路的地址', () => {
+      const w = mountTab({ endpointOptions: [endpoint, cdn], endpoint: cdn, endpointId: cdn.id })
+      const text = w.findAll('details pre').map((p) => p.text()).find((t) => t.includes('opencode.ai/config.json'))!
+      expect(JSON.parse(text)).toEqual({
+        $schema: 'https://opencode.ai/config.json',
+        provider: { anthropic: { options: { baseURL: 'https://cdn.example.com/v1', apiKey: KEY } } }
+      })
+    })
   })
 
   it('有文档地址才显示「查看文档」链接', () => {
     expect(mountTab().find('a[target="_blank"]').exists()).toBe(false)
     const w = mountTab({ docUrl: 'https://docs.example.com' })
     expect(w.get('a[target="_blank"]').attributes('href')).toBe('https://docs.example.com')
+  })
+
+  it('保留「连不上时检查」四条，页脚提醒妥善保管密钥', () => {
+    const w = mountTab()
+    expect(w.findAll('ul li').length).toBe(4)
+    expect(w.get('[data-test="manual-footer"]').text()).toBe('Keep your key safe. Anyone who has it can spend your balance or plan.')
   })
 })

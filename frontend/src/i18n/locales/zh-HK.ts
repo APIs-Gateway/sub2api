@@ -1127,7 +1127,16 @@
       troubleshoot2: '金鑰要完整複製，前後不能有空格或換行。',
       troubleshoot3: '改完設定後重新啟動客戶端。',
       troubleshoot4: '確認網絡或代理可以連到接入地址；客戶端版本太舊時先升級。',
-      viewDocs: '查看文件'
+      viewDocs: '查看文件',
+      lineUsed: '下方程式碼使用此地址',
+      lineDefaultNote: '在客戶端裡填寫這個地址。',
+      lineAltNote: '預設地址訪問慢時，可以改用這個地址。',
+      codeLabel: '程式碼示例',
+      keyFilled: '金鑰已填入下方',
+      keyMissing: '沒有讀到完整金鑰，請把程式碼裡的 {placeholder} 換成你的金鑰。',
+      keyMasked: '沒有讀到完整金鑰，請把程式碼裡的 {placeholder} 換成你的金鑰（{masked}）。',
+      snippetsTitle: '寫進設定檔',
+      keepSafe: '請妥善保管金鑰，任何拿到它的人都能消耗你的餘額或套餐。'
     }
   },
 

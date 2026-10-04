@@ -115,6 +115,11 @@ export function nativeEndpoint(platform: GroupPlatform | string | null | undefin
   }
 }
 
+/** OpenCode 里这个平台对应的内置 provider 名；一键安装脚本和手动配置片段都按它写 provider.<名字>.options。 */
+export function opencodeProviderFor(platform: GroupPlatform | string | null | undefined): string {
+  return platform === 'gemini' ? 'google' : platform === 'openai' ? 'openai' : 'anthropic'
+}
+
 export function protocolFor(platform: GroupPlatform | string | null | undefined): string {
   switch (platform) {
     case 'openai':
@@ -284,7 +289,7 @@ function scriptParams(client: OnboardingClient, input: InstallScriptInput): Scri
     providerId: codexProviderId(input.siteName),
     providerName: oneLine(input.siteName || '') || 'sub2api',
     model: OPENAI_CC_SWITCH_CODEX_MODEL,
-    opencodeProvider: platform === 'gemini' ? 'google' : platform === 'openai' ? 'openai' : 'anthropic',
+    opencodeProvider: opencodeProviderFor(platform),
     installCli: client === 'codex' && input.mode === 'full',
     done: oneLine(input.doneMessage || '') || 'Done. Restart the client to apply.',
     msg: resolveMessages(input.messages)

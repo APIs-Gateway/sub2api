@@ -1128,7 +1128,16 @@
       troubleshoot2: 'Copy the whole key, with no spaces or line breaks around it.',
       troubleshoot3: 'Restart the client after changing its config.',
       troubleshoot4: 'Check that your network or proxy can reach the endpoint, and update the client if it is old.',
-      viewDocs: 'View docs'
+      viewDocs: 'View docs',
+      lineUsed: 'Used in the code below',
+      lineDefaultNote: 'Enter this address in your client.',
+      lineAltNote: 'If the default address is slow, use this one instead.',
+      codeLabel: 'Code examples',
+      keyFilled: 'Your key is filled in below',
+      keyMissing: 'The full key could not be read. Replace {placeholder} in the code with your key.',
+      keyMasked: 'The full key could not be read. Replace {placeholder} in the code with your key ({masked}).',
+      snippetsTitle: 'Save it in a config file',
+      keepSafe: 'Keep your key safe. Anyone who has it can spend your balance or plan.'
     }
   },
 
