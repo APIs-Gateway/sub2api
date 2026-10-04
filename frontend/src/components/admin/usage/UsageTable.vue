@@ -93,7 +93,7 @@
             <span v-if="row.group" class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
               {{ row.group.name }}
             </span>
-            <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+            <span v-else class="text-sm text-gray-500 dark:text-gray-400">-</span>
             <!-- 实际服务本次请求的兜底分组及来源（统计口径仍按上面的主分组） -->
             <span
               v-if="row.served_group || row.served_group_id"

@@ -23,19 +23,19 @@
     </div>
 
     <div v-else class="space-y-5">
-      <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('keyFallback.admin.intro') }}</p>
+      <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('keyFallback.admin.intro') }}</p>
 
       <!-- 主分组与用户自己的兜底：只读 -->
       <div class="grid gap-3 sm:grid-cols-2">
         <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-          <p class="mb-1.5 text-xs text-gray-500 dark:text-gray-400">{{ t('keyFallback.admin.primary') }}</p>
+          <p class="mb-1.5 text-xs text-gray-600 dark:text-gray-400">{{ t('keyFallback.admin.primary') }}</p>
           <p class="text-sm font-medium text-gray-900 dark:text-white" data-test="primary-name">
             {{ chain.primary_group.name }}
-            <span class="ml-1 text-xs tabular-nums text-gray-500">{{ rateText(primaryRate) }}</span>
+            <span class="ml-1 text-xs tabular-nums text-gray-600 dark:text-gray-400">{{ rateText(primaryRate) }}</span>
           </p>
         </div>
         <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-          <p class="mb-1.5 text-xs text-gray-500 dark:text-gray-400">{{ t('keyFallback.admin.userItems') }}</p>
+          <p class="mb-1.5 text-xs text-gray-600 dark:text-gray-400">{{ t('keyFallback.admin.userItems') }}</p>
           <p class="text-sm text-gray-900 dark:text-white">
             <template v-if="chain.user_items.length">
               {{ chain.user_items.map((i) => groupName(i.group_id)).join('、') }}
@@ -59,7 +59,7 @@
           >
             <span class="min-w-0 truncate text-sm text-gray-900 dark:text-white">
               {{ groupName(gid) }}
-              <span class="ml-1 text-xs tabular-nums text-gray-500">{{ rateText(groupRate(gid)) }}</span>
+              <span class="ml-1 text-xs tabular-nums text-gray-600 dark:text-gray-400">{{ rateText(groupRate(gid)) }}</span>
             </span>
             <span class="flex shrink-0 items-center gap-0.5">
               <button
@@ -84,7 +84,7 @@
               </button>
               <button
                 type="button"
-                class="hidden-icon-btn hover:!text-red-600"
+                class="hidden-icon-btn hover:!text-red-600 dark:hover:!text-red-400"
                 :disabled="saving"
                 :aria-label="t('keyFallback.admin.remove', { name: groupName(gid) })"
                 data-test="remove"
@@ -95,7 +95,7 @@
             </span>
           </li>
         </ul>
-        <p v-else class="mb-2 text-xs text-gray-400">{{ t(`keyFallback.admin.${part.name}Empty`) }}</p>
+        <p v-else class="mb-2 text-xs text-gray-600 dark:text-gray-400">{{ t(`keyFallback.admin.${part.name}Empty`) }}</p>
 
         <select
           class="input"
@@ -148,7 +148,7 @@
           data-test="note"
         />
         <p
-          :class="['mt-1 text-xs', noteInvalid ? 'text-red-600 dark:text-red-400' : 'text-gray-500']"
+          :class="['mt-1 text-xs', noteInvalid ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-400']"
           data-test="note-hint"
         >
           {{ noteInvalid ? t('keyFallback.admin.noteRequired') : t('keyFallback.admin.noteHint') }}
@@ -166,7 +166,7 @@
             :key="hop.hop"
             class="flex flex-wrap items-center gap-x-2 text-xs text-gray-700 dark:text-gray-300"
           >
-            <span class="text-gray-500">{{ t(`keyFallback.admin.hopSource.${hop.source}`) }}</span>
+            <span class="text-gray-600 dark:text-gray-400">{{ t(`keyFallback.admin.hopSource.${hop.source}`) }}</span>
             <span>{{ groupName(hop.group_id) }}</span>
           </li>
         </ol>
@@ -387,6 +387,7 @@ async function clearChain() {
 </script>
 
 <style scoped>
+/* 深色规则写成 `.dark .x`，不要用 `:global(.dark) .x`（Vue 3 会把它编译成单独一条 `.dark`，规则落到 <html> 上） */
 .hidden-icon-btn {
   display: inline-flex;
   height: 1.75rem;
@@ -394,11 +395,18 @@ async function clearChain() {
   align-items: center;
   justify-content: center;
   border-radius: 0.375rem;
-  color: theme('colors.gray.400');
+  color: theme('colors.gray.500');
+}
+.dark .hidden-icon-btn {
+  color: theme('colors.dark.300');
 }
 .hidden-icon-btn:hover:not(:disabled) {
   background: theme('colors.gray.100');
   color: theme('colors.gray.700');
+}
+.dark .hidden-icon-btn:hover:not(:disabled) {
+  background: theme('colors.dark.700');
+  color: theme('colors.dark.100');
 }
 .hidden-icon-btn:focus-visible {
   outline: 2px solid theme('colors.primary.500');
