@@ -73,16 +73,49 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > ccswitch �
    <label class="input-label" for="ccs-name">
     "配置名称"
    <input class="input" data-test="ccs-name" id="ccs-name" placeholder="Hiyo - Claude" type="text" :value="">
-  <div class="sm:col-span-2">
-   <label class="input-label" for="ccs-model">
-    "模型"
-   <select class="input" data-test="ccs-model" id="ccs-model" :value="">
-    <option value="">
-     "默认"
-    <option value="claude-opus-5">
-     "claude-opus-5"
-    <option value="claude-sonnet-5">
-     "claude-sonnet-5"
+ <div>
+  <div class="grid gap-4 sm:grid-cols-2" data-test="ccs-models">
+   <div class="">
+    <label class="input-label" for="onboarding-N-ccs-model">
+     "主模型"
+    <select class="input" data-test="ccs-model" id="onboarding-N-ccs-model" value="claude-sonnet-5" :value="claude-sonnet-5">
+     <option value="">
+      "可选；留空时使用 CC Switch 默认模型"
+     <option value="claude-opus-5">
+      "claude-opus-5"
+     <option value="claude-sonnet-5">
+      "claude-sonnet-5"
+   <div class="">
+    <label class="input-label" for="onboarding-N-ccs-haikuModel">
+     "Haiku 模型"
+    <select class="input" data-test="ccs-model-haiku" id="onboarding-N-ccs-haikuModel" value="" :value="">
+     <option value="">
+      "可选；留空时使用 CC Switch 默认模型"
+     <option value="claude-opus-5">
+      "claude-opus-5"
+     <option value="claude-sonnet-5">
+      "claude-sonnet-5"
+   <div class="">
+    <label class="input-label" for="onboarding-N-ccs-sonnetModel">
+     "Sonnet 模型"
+    <select class="input" data-test="ccs-model-sonnet" id="onboarding-N-ccs-sonnetModel" value="claude-sonnet-5" :value="claude-sonnet-5">
+     <option value="">
+      "可选；留空时使用 CC Switch 默认模型"
+     <option value="claude-opus-5">
+      "claude-opus-5"
+     <option value="claude-sonnet-5">
+      "claude-sonnet-5"
+   <div class="">
+    <label class="input-label" for="onboarding-N-ccs-opusModel">
+     "Opus 模型"
+    <select class="input" data-test="ccs-model-opus" id="onboarding-N-ccs-opusModel" value="claude-opus-5" :value="claude-opus-5">
+     <option value="">
+      "可选；留空时使用 CC Switch 默认模型"
+     <option value="claude-opus-5">
+      "claude-opus-5"
+     <option value="claude-sonnet-5">
+      "claude-sonnet-5"
+  <!--v-if-->
  <div class="flex flex-wrap items-center gap-2">
   <button class="btn btn-primary" data-test="ccs-open" type="button">
    "打开 CC Switch"
@@ -94,11 +127,16 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > ccswitch �
    "下载 CC Switch"
 
 ### 复制与链接
-模型选项 = ["默认","claude-opus-5","claude-sonnet-5"]
 (单一客户端): placeholder = Hiyo - Claude
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并选模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  ccs-model = "claude-sonnet-5" 选项 = ["可选；留空时使用 CC Switch 默认模型","claude-opus-5","claude-sonnet-5"]
+  ccs-model-haiku = "" 选项 = ["可选；留空时使用 CC Switch 默认模型","claude-opus-5","claude-sonnet-5"]
+  ccs-model-sonnet = "claude-sonnet-5" 选项 = ["可选；留空时使用 CC Switch 默认模型","claude-opus-5","claude-sonnet-5"]
+  ccs-model-opus = "claude-opus-5" 选项 = ["可选；留空时使用 CC Switch 默认模型","claude-opus-5","claude-sonnet-5"]
+  模型提示 = null
+  按钮禁用 = [false,false]
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-sonnet-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-sonnet-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > install 页签 1`] = `
@@ -401,16 +439,49 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic' > ccswitch 页签 1`] = `
       <label class="input-label" for="ccs-name">
        "Profile name"
       <input class="input" data-test="ccs-name" id="ccs-name" placeholder="Hiyo - Claude" type="text" :value="">
-     <div class="sm:col-span-2">
-      <label class="input-label" for="ccs-model">
-       "Model"
-      <select class="input" data-test="ccs-model" id="ccs-model" :value="">
-       <option value="">
-        "Default"
-       <option value="claude-opus-5">
-        "claude-opus-5"
-       <option value="claude-sonnet-5">
-        "claude-sonnet-5"
+    <div>
+     <div class="grid gap-4 sm:grid-cols-2" data-test="ccs-models">
+      <div class="">
+       <label class="input-label" for="onboarding-N-ccs-model">
+        "Primary model"
+       <select class="input" data-test="ccs-model" id="onboarding-N-ccs-model" value="claude-sonnet-5" :value="claude-sonnet-5">
+        <option value="">
+         "Optional; leave blank to use the CC Switch default"
+        <option value="claude-opus-5">
+         "claude-opus-5"
+        <option value="claude-sonnet-5">
+         "claude-sonnet-5"
+      <div class="">
+       <label class="input-label" for="onboarding-N-ccs-haikuModel">
+        "Haiku model"
+       <select class="input" data-test="ccs-model-haiku" id="onboarding-N-ccs-haikuModel" value="" :value="">
+        <option value="">
+         "Optional; leave blank to use the CC Switch default"
+        <option value="claude-opus-5">
+         "claude-opus-5"
+        <option value="claude-sonnet-5">
+         "claude-sonnet-5"
+      <div class="">
+       <label class="input-label" for="onboarding-N-ccs-sonnetModel">
+        "Sonnet model"
+       <select class="input" data-test="ccs-model-sonnet" id="onboarding-N-ccs-sonnetModel" value="claude-sonnet-5" :value="claude-sonnet-5">
+        <option value="">
+         "Optional; leave blank to use the CC Switch default"
+        <option value="claude-opus-5">
+         "claude-opus-5"
+        <option value="claude-sonnet-5">
+         "claude-sonnet-5"
+      <div class="">
+       <label class="input-label" for="onboarding-N-ccs-opusModel">
+        "Opus model"
+       <select class="input" data-test="ccs-model-opus" id="onboarding-N-ccs-opusModel" value="claude-opus-5" :value="claude-opus-5">
+        <option value="">
+         "Optional; leave blank to use the CC Switch default"
+        <option value="claude-opus-5">
+         "claude-opus-5"
+        <option value="claude-sonnet-5">
+         "claude-sonnet-5"
+     <!--v-if-->
     <div class="flex flex-wrap items-center gap-2">
      <button class="btn btn-primary" data-test="ccs-open" type="button">
       "Open CC Switch"
@@ -422,11 +493,16 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic' > ccswitch 页签 1`] = `
       "Download CC Switch"
 
 ### 复制与链接
-模型选项 = ["Default","claude-opus-5","claude-sonnet-5"]
 (单一客户端): placeholder = Hiyo - Claude
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并选模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  ccs-model = "claude-sonnet-5" 选项 = ["Optional; leave blank to use the CC Switch default","claude-opus-5","claude-sonnet-5"]
+  ccs-model-haiku = "" 选项 = ["Optional; leave blank to use the CC Switch default","claude-opus-5","claude-sonnet-5"]
+  ccs-model-sonnet = "claude-sonnet-5" 选项 = ["Optional; leave blank to use the CC Switch default","claude-opus-5","claude-sonnet-5"]
+  ccs-model-opus = "claude-opus-5" 选项 = ["Optional; leave blank to use the CC Switch default","claude-opus-5","claude-sonnet-5"]
+  模型提示 = null
+  按钮禁用 = [false,false]
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-sonnet-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-sonnet-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'anthropic' > install 页签 1`] = `
@@ -882,16 +958,49 @@ exports[`KeyOnboardingModal 页签快照 > 'antigravity' > ccswitch 页签 1`] =
    <label class="input-label" for="ccs-name">
     "Profile name"
    <input class="input" data-test="ccs-name" id="ccs-name" placeholder="Hiyo - Claude" type="text" :value="">
-  <div class="sm:col-span-2">
-   <label class="input-label" for="ccs-model">
-    "Model"
-   <select class="input" data-test="ccs-model" id="ccs-model" :value="">
-    <option value="">
-     "Default"
-    <option value="claude-opus-5">
-     "claude-opus-5"
-    <option value="gemini-3-pro">
-     "gemini-3-pro"
+ <div>
+  <div class="grid gap-4 sm:grid-cols-2" data-test="ccs-models">
+   <div class="">
+    <label class="input-label" for="onboarding-N-ccs-model">
+     "Primary model"
+    <select class="input" data-test="ccs-model" id="onboarding-N-ccs-model" value="claude-opus-5" :value="claude-opus-5">
+     <option value="">
+      "Optional; leave blank to use the CC Switch default"
+     <option value="claude-opus-5">
+      "claude-opus-5"
+     <option value="gemini-3-pro">
+      "gemini-3-pro"
+   <div class="">
+    <label class="input-label" for="onboarding-N-ccs-haikuModel">
+     "Haiku model"
+    <select class="input" data-test="ccs-model-haiku" id="onboarding-N-ccs-haikuModel" value="" :value="">
+     <option value="">
+      "Optional; leave blank to use the CC Switch default"
+     <option value="claude-opus-5">
+      "claude-opus-5"
+     <option value="gemini-3-pro">
+      "gemini-3-pro"
+   <div class="">
+    <label class="input-label" for="onboarding-N-ccs-sonnetModel">
+     "Sonnet model"
+    <select class="input" data-test="ccs-model-sonnet" id="onboarding-N-ccs-sonnetModel" value="" :value="">
+     <option value="">
+      "Optional; leave blank to use the CC Switch default"
+     <option value="claude-opus-5">
+      "claude-opus-5"
+     <option value="gemini-3-pro">
+      "gemini-3-pro"
+   <div class="">
+    <label class="input-label" for="onboarding-N-ccs-opusModel">
+     "Opus model"
+    <select class="input" data-test="ccs-model-opus" id="onboarding-N-ccs-opusModel" value="claude-opus-5" :value="claude-opus-5">
+     <option value="">
+      "Optional; leave blank to use the CC Switch default"
+     <option value="claude-opus-5">
+      "claude-opus-5"
+     <option value="gemini-3-pro">
+      "gemini-3-pro"
+  <!--v-if-->
  <div class="flex flex-wrap items-center gap-2">
   <button class="btn btn-primary" data-test="ccs-open" type="button">
    "Open CC Switch"
@@ -903,15 +1012,23 @@ exports[`KeyOnboardingModal 页签快照 > 'antigravity' > ccswitch 页签 1`] =
    "Download CC Switch"
 
 ### 复制与链接
-模型选项 = ["Default","claude-opus-5","gemini-3-pro"]
 ccs-client-claude: placeholder = Hiyo - Claude
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并选模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
+  ccs-model = "claude-opus-5" 选项 = ["Optional; leave blank to use the CC Switch default","claude-opus-5","gemini-3-pro"]
+  ccs-model-haiku = "" 选项 = ["Optional; leave blank to use the CC Switch default","claude-opus-5","gemini-3-pro"]
+  ccs-model-sonnet = "" 选项 = ["Optional; leave blank to use the CC Switch default","claude-opus-5","gemini-3-pro"]
+  ccs-model-opus = "claude-opus-5" 选项 = ["Optional; leave blank to use the CC Switch default","claude-opus-5","gemini-3-pro"]
+  模型提示 = null
+  按钮禁用 = [false,false]
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","opusModel":"claude-opus-5","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
 ccs-client-gemini: placeholder = Hiyo - Gemini
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","name":"Hiyo - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","name":"Hiyo - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并选模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"claude-opus-5","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  ccs-model = "gemini-3-pro" 选项 = ["Optional; leave blank to use the CC Switch default","gemini-3-pro"]
+  模型提示 = null
+  按钮禁用 = [false,false]
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"Hiyo - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"Hiyo - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'antigravity' > install 页签 1`] = `
@@ -1151,14 +1268,17 @@ exports[`KeyOnboardingModal 页签快照 > 'gemini' > ccswitch 页签 1`] = `
    <label class="input-label" for="ccs-name">
     "Profile name"
    <input class="input" data-test="ccs-name" id="ccs-name" placeholder="sub2api - Gemini" type="text" :value="">
-  <div class="sm:col-span-2">
-   <label class="input-label" for="ccs-model">
-    "Model"
-   <select class="input" data-test="ccs-model" id="ccs-model" :value="">
-    <option value="">
-     "Default"
-    <option value="gemini-3-pro">
-     "gemini-3-pro"
+ <div>
+  <div class="grid gap-4 sm:grid-cols-2" data-test="ccs-models">
+   <div class="sm:col-span-2">
+    <label class="input-label" for="onboarding-N-ccs-model">
+     "Primary model"
+    <select class="input" data-test="ccs-model" id="onboarding-N-ccs-model" value="gemini-3-pro" :value="gemini-3-pro">
+     <option value="">
+      "Optional; leave blank to use the CC Switch default"
+     <option value="gemini-3-pro">
+      "gemini-3-pro"
+  <!--v-if-->
  <div class="flex flex-wrap items-center gap-2">
   <button class="btn btn-primary" data-test="ccs-open" type="button">
    "Open CC Switch"
@@ -1170,11 +1290,13 @@ exports[`KeyOnboardingModal 页签快照 > 'gemini' > ccswitch 页签 1`] = `
    "Download CC Switch"
 
 ### 复制与链接
-模型选项 = ["Default","gemini-3-pro"]
 (单一客户端): placeholder = sub2api - Gemini
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","name":"sub2api - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","name":"sub2api - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并选模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  ccs-model = "gemini-3-pro" 选项 = ["Optional; leave blank to use the CC Switch default","gemini-3-pro"]
+  模型提示 = null
+  按钮禁用 = [false,false]
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"sub2api - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"sub2api - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'gemini' > install 页签 1`] = `
@@ -1503,16 +1625,19 @@ exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > ccsw
       <label class="input-label" for="ccs-name">
        "Profile name"
       <input class="input" data-test="ccs-name" id="ccs-name" placeholder="Hiyo - Codex" type="text" :value="">
-     <div class="sm:col-span-2">
-      <label class="input-label" for="ccs-model">
-       "Model"
-      <select class="input" data-test="ccs-model" id="ccs-model" :value="">
-       <option value="">
-        "Default"
-       <option value="gpt-5.6-sol">
-        "gpt-5.6-sol"
-       <option value="gpt-5.6-luna">
-        "gpt-5.6-luna"
+    <div>
+     <div class="grid gap-4 sm:grid-cols-2" data-test="ccs-models">
+      <div class="sm:col-span-2">
+       <label class="input-label" for="onboarding-N-ccs-model">
+        "Primary model"
+       <select class="input" data-test="ccs-model" id="onboarding-N-ccs-model" value="gpt-5.6-sol" :value="gpt-5.6-sol">
+        <option value="">
+         "Optional; leave blank to use the CC Switch default"
+        <option value="gpt-5.6-luna">
+         "gpt-5.6-luna"
+        <option value="gpt-5.6-sol">
+         "gpt-5.6-sol"
+     <!--v-if-->
     <div class="flex flex-wrap items-center gap-2">
      <button class="btn btn-primary" data-test="ccs-open" type="button">
       "Open CC Switch"
@@ -1524,11 +1649,13 @@ exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > ccsw
       "Download CC Switch"
 
 ### 复制与链接
-模型选项 = ["Default","gpt-5.6-sol","gpt-5.6-luna"]
 (单一客户端): placeholder = Hiyo - Codex
+  ccs-model = "gpt-5.6-sol" 选项 = ["Optional; leave blank to use the CC Switch default","gpt-5.6-luna","gpt-5.6-sol"]
+  模型提示 = null
+  按钮禁用 = [false,false]
   复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Hiyo - Codex","homepage":"https://cdn.example.com/v1","endpoint":"https://cdn.example.com/v1","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
   打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Hiyo - Codex","homepage":"https://cdn.example.com/v1","endpoint":"https://cdn.example.com/v1","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并选模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Mine","homepage":"https://cdn.example.com/v1","endpoint":"https://cdn.example.com/v1","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-luna","name":"Mine","homepage":"https://cdn.example.com/v1","endpoint":"https://cdn.example.com/v1","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > install 页签 1`] = `
@@ -2222,16 +2349,19 @@ exports[`KeyOnboardingModal 页签快照 > 'openai' > ccswitch 页签 1`] = `
       <label class="input-label" for="ccs-name">
        "Profile name"
       <input class="input" data-test="ccs-name" id="ccs-name" placeholder="Hiyo - Codex" type="text" :value="">
-     <div class="sm:col-span-2">
-      <label class="input-label" for="ccs-model">
-       "Model"
-      <select class="input" data-test="ccs-model" id="ccs-model" :value="">
-       <option value="">
-        "Default"
-       <option value="gpt-5.6-sol">
-        "gpt-5.6-sol"
-       <option value="gpt-5.6-luna">
-        "gpt-5.6-luna"
+    <div>
+     <div class="grid gap-4 sm:grid-cols-2" data-test="ccs-models">
+      <div class="sm:col-span-2">
+       <label class="input-label" for="onboarding-N-ccs-model">
+        "Primary model"
+       <select class="input" data-test="ccs-model" id="onboarding-N-ccs-model" value="gpt-5.6-sol" :value="gpt-5.6-sol">
+        <option value="">
+         "Optional; leave blank to use the CC Switch default"
+        <option value="gpt-5.6-luna">
+         "gpt-5.6-luna"
+        <option value="gpt-5.6-sol">
+         "gpt-5.6-sol"
+     <!--v-if-->
     <div class="flex flex-wrap items-center gap-2">
      <button class="btn btn-primary" data-test="ccs-open" type="button">
       "Open CC Switch"
@@ -2243,11 +2373,13 @@ exports[`KeyOnboardingModal 页签快照 > 'openai' > ccswitch 页签 1`] = `
       "Download CC Switch"
 
 ### 复制与链接
-模型选项 = ["Default","gpt-5.6-sol","gpt-5.6-luna"]
 (单一客户端): placeholder = Hiyo - Codex
+  ccs-model = "gpt-5.6-sol" 选项 = ["Optional; leave blank to use the CC Switch default","gpt-5.6-luna","gpt-5.6-sol"]
+  模型提示 = null
+  按钮禁用 = [false,false]
   复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
   打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并选模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-luna","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'openai' > install 页签 1`] = `
@@ -2716,7 +2848,35 @@ exports[`KeyOnboardingModal 页签快照 > '未知平台' > ccswitch 页签 1`] 
    <label class="input-label" for="ccs-name">
     "Profile name"
    <input class="input" data-test="ccs-name" id="ccs-name" placeholder="Hiyo - Claude" type="text" :value="">
-  <!--v-if-->
+ <div>
+  <div class="grid gap-4 sm:grid-cols-2" data-test="ccs-models">
+   <div class="">
+    <label class="input-label" for="onboarding-N-ccs-model">
+     "Primary model"
+    <select aria-describedby="onboarding-N-ccs-models-hint" class="input" data-test="ccs-model" disabled="" id="onboarding-N-ccs-model" value="" :value="">
+     <option value="">
+      "Optional; leave blank to use the CC Switch default"
+   <div class="">
+    <label class="input-label" for="onboarding-N-ccs-haikuModel">
+     "Haiku model"
+    <select aria-describedby="onboarding-N-ccs-models-hint" class="input" data-test="ccs-model-haiku" disabled="" id="onboarding-N-ccs-haikuModel" value="" :value="">
+     <option value="">
+      "Optional; leave blank to use the CC Switch default"
+   <div class="">
+    <label class="input-label" for="onboarding-N-ccs-sonnetModel">
+     "Sonnet model"
+    <select aria-describedby="onboarding-N-ccs-models-hint" class="input" data-test="ccs-model-sonnet" disabled="" id="onboarding-N-ccs-sonnetModel" value="" :value="">
+     <option value="">
+      "Optional; leave blank to use the CC Switch default"
+   <div class="">
+    <label class="input-label" for="onboarding-N-ccs-opusModel">
+     "Opus model"
+    <select aria-describedby="onboarding-N-ccs-models-hint" class="input" data-test="ccs-model-opus" disabled="" id="onboarding-N-ccs-opusModel" value="" :value="">
+     <option value="">
+      "Optional; leave blank to use the CC Switch default"
+  <p class="input-hint mt-2 flex items-center gap-2" data-test="ccs-models-hint" id="onboarding-N-ccs-models-hint" role="status">
+   <!--v-if-->
+   "No models are available for this key. You can still import and leave the model fields blank."
  <div class="flex flex-wrap items-center gap-2">
   <button class="btn btn-primary" data-test="ccs-open" type="button">
    "Open CC Switch"
@@ -2728,11 +2888,16 @@ exports[`KeyOnboardingModal 页签快照 > '未知平台' > ccswitch 页签 1`] 
    "Download CC Switch"
 
 ### 复制与链接
-模型选项 = []
 (单一客户端): placeholder = Hiyo - Claude
+  ccs-model = ""（禁用） 选项 = ["Optional; leave blank to use the CC Switch default"]
+  ccs-model-haiku = ""（禁用） 选项 = ["Optional; leave blank to use the CC Switch default"]
+  ccs-model-sonnet = ""（禁用） 选项 = ["Optional; leave blank to use the CC Switch default"]
+  ccs-model-opus = ""（禁用） 选项 = ["Optional; leave blank to use the CC Switch default"]
+  模型提示 = "No models are available for this key. You can still import and leave the model fields blank."
+  按钮禁用 = [false,false]
   复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
   打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并选模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > '未知平台' > install 页签 1`] = `
@@ -2882,7 +3047,7 @@ exports[`KeyOnboardingModal 页签快照 > '没有分组' > manual 页签 1`] = 
 按钮 2 (API Key) -> "sk-SECRET-1234567890abcdef""
 `;
 
-exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 没有模型字段，交给 AI 的详细版没有模型 1`] = `
+exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 的模型下拉只剩留空一项并给出提示，交给 AI 的详细版没有模型 1`] = `
 "### DOM
 <div aria-labelledby="onboarding-N-tab-ccswitch" class="onb-card space-y-4" data-test="panel-ccswitch" id="onboarding-N-panel-ccswitch" role="tabpanel">
  <div class="grid gap-4 sm:grid-cols-2">
@@ -2891,7 +3056,17 @@ exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 没
    <label class="input-label" for="ccs-name">
     "Profile name"
    <input class="input" data-test="ccs-name" id="ccs-name" placeholder="Hiyo - Codex" type="text" :value="">
-  <!--v-if-->
+ <div>
+  <div class="grid gap-4 sm:grid-cols-2" data-test="ccs-models">
+   <div class="sm:col-span-2">
+    <label class="input-label" for="onboarding-N-ccs-model">
+     "Primary model"
+    <select aria-describedby="onboarding-N-ccs-models-hint" class="input" data-test="ccs-model" disabled="" id="onboarding-N-ccs-model" value="" :value="">
+     <option value="">
+      "Optional; leave blank to use the CC Switch default"
+  <p class="input-hint mt-2 flex items-center gap-2" data-test="ccs-models-hint" id="onboarding-N-ccs-models-hint" role="status">
+   <!--v-if-->
+   "No models are available for this key. You can still import and leave the model fields blank."
  <div class="flex flex-wrap items-center gap-2">
   <button class="btn btn-primary" data-test="ccs-open" type="button">
    "Open CC Switch"
@@ -2903,14 +3078,16 @@ exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 没
    "Download CC Switch"
 
 ### 复制与链接
-模型选项 = []
 (单一客户端): placeholder = Hiyo - Codex
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并选模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  ccs-model = ""（禁用） 选项 = ["Optional; leave blank to use the CC Switch default"]
+  模型提示 = "No models are available for this key. You can still import and leave the model fields blank."
+  按钮禁用 = [false,false]
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
 `;
 
-exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 没有模型字段，交给 AI 的详细版没有模型 2`] = `
+exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 的模型下拉只剩留空一项并给出提示，交给 AI 的详细版没有模型 2`] = `
 "### DOM
 <div aria-labelledby="onboarding-N-tab-ai" class="onb-card space-y-4" data-test="panel-ai" id="onboarding-N-panel-ai" role="tabpanel">
  <p class="text-sm text-gray-600 dark:text-dark-400">

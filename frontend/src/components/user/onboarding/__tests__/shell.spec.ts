@@ -89,25 +89,96 @@ describe('外壳交给页签的接口', () => {
     expect(ai.props('clients')).toEqual(['codex', 'opencode'])
   })
 
-  it('CC Switch：拿到模型是否在加载，表单是一个对象', async () => {
+  it('CC Switch：拿到模型是否在加载，表单是一个对象；模型加载完按规则预选', async () => {
     let resolve!: (v: unknown) => void
     getAvailable.mockReturnValue(new Promise((r) => (resolve = r)))
     const w = mountModal({ initialTab: 'ccswitch' })
     await flushPromises()
 
     const ccs = w.getComponent(CcSwitchTab)
+    const empty = { haikuModel: '', sonnetModel: '', opusModel: '' }
     expect(ccs.props('modelsLoading')).toBe(true)
-    expect(ccs.props('form')).toEqual({ client: 'codex', name: '', model: '' })
+    expect(ccs.props('form')).toEqual({ client: 'codex', name: '', model: '', ...empty })
 
     resolve(channels)
     await flushPromises()
     expect(ccs.props('modelsLoading')).toBe(false)
+    // 分组里有 gpt-5.6-sol：Codex 预选它
+    expect(ccs.props('form')).toEqual({ client: 'codex', name: '', model: 'gpt-5.6-sol', ...empty })
 
     // 页签里改名字，外壳存下来的是新对象；切走再回来还在
     await w.get('[data-test="ccs-name"]').setValue('Mine')
-    expect(w.getComponent(CcSwitchTab).props('form')).toEqual({ client: 'codex', name: 'Mine', model: '' })
+    expect(w.getComponent(CcSwitchTab).props('form')).toEqual({ client: 'codex', name: 'Mine', model: 'gpt-5.6-sol', ...empty })
     await w.get('[data-test="tab-manual"]').trigger('click')
     await w.get('[data-test="tab-ccswitch"]').trigger('click')
     expect((w.get('[data-test="ccs-name"]').element as HTMLInputElement).value).toBe('Mine')
+  })
+
+  it('CC Switch：Claude 分组的四个下拉预选好；切换客户端一次换完整个表单', async () => {
+    getAvailable.mockResolvedValue([
+      {
+        name: 'ch',
+        description: '',
+        platforms: [
+          {
+            platform: 'antigravity',
+            groups: [{ id: 7, name: 'g7' }],
+            supported_models: [{ name: 'claude-opus-5' }, { name: 'claude-sonnet-5' }, { name: 'claude-haiku-4-5' }, { name: 'gemini-3-pro' }]
+          }
+        ]
+      }
+    ])
+    const w = mountModal({ initialTab: 'ccswitch', apiKey: keyOf('antigravity') })
+    await flushPromises()
+    const value = (test: string) => (w.get(`[data-test="${test}"]`).element as HTMLSelectElement).value
+    expect(['ccs-model', 'ccs-model-haiku', 'ccs-model-sonnet', 'ccs-model-opus'].map(value)).toEqual([
+      'claude-sonnet-5',
+      'claude-haiku-4-5',
+      'claude-sonnet-5',
+      'claude-opus-5'
+    ])
+
+    // 把名称和 Opus 改掉，切到 Gemini：名称回到默认、只剩一个主模型，已经预选好
+    await w.get('[data-test="ccs-name"]').setValue('Mine')
+    await w.get('[data-test="ccs-model-opus"]').setValue('claude-sonnet-5')
+    await w.get('[data-test="ccs-client-gemini"]').trigger('click')
+    expect(w.getComponent(CcSwitchTab).props('form')).toEqual({
+      client: 'gemini',
+      name: '',
+      model: 'gemini-3-pro',
+      haikuModel: '',
+      sonnetModel: '',
+      opusModel: ''
+    })
+    expect(w.findAll('[data-test="ccs-models"] select')).toHaveLength(1)
+
+    // 再切回 Claude：三档重新预选，上次手改的 Opus 不再保留
+    await w.get('[data-test="ccs-client-claude"]').trigger('click')
+    expect(['ccs-model', 'ccs-model-haiku', 'ccs-model-sonnet', 'ccs-model-opus'].map(value)).toEqual([
+      'claude-sonnet-5',
+      'claude-haiku-4-5',
+      'claude-sonnet-5',
+      'claude-opus-5'
+    ])
+  })
+
+  it('CC Switch：模型加载中导入和复制都禁用，加载完恢复；加载失败时给出「没有可选的模型」，仍可导入', async () => {
+    let resolve!: (v: unknown) => void
+    getAvailable.mockReturnValue(new Promise((r) => (resolve = r)))
+    const w = mountModal({ initialTab: 'ccswitch' })
+    await flushPromises()
+    expect(w.get('[data-test="ccs-open"]').attributes('disabled')).toBeDefined()
+    expect(w.get('[data-test="ccs-models-hint"]').text()).toBe('Loading available models…')
+    resolve(channels)
+    await flushPromises()
+    expect(w.get('[data-test="ccs-open"]').attributes('disabled')).toBeUndefined()
+    expect(w.find('[data-test="ccs-models-hint"]').exists()).toBe(false)
+
+    getAvailable.mockReset()
+    getAvailable.mockRejectedValue(new Error('x'))
+    const failed = mountModal({ initialTab: 'ccswitch' })
+    await flushPromises()
+    expect(failed.get('[data-test="ccs-models-hint"]').text()).toContain('No models are available')
+    expect(failed.get('[data-test="ccs-open"]').attributes('disabled')).toBeUndefined()
   })
 })

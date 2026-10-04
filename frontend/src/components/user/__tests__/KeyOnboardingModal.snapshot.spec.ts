@@ -248,29 +248,36 @@ async function collect(w: VueWrapper, tab: Tab, fullDom = false): Promise<string
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     const chips = w.findAll('[data-test^="ccs-client-"]')
     const targets = chips.length > 0 ? chips.map((c) => c.attributes('data-test')!) : [null]
-    const modelOptions = w.findAll('[data-test="ccs-model"] option').map((o) => o.text())
-    out.push(`模型选项 = ${JSON.stringify(modelOptions)}`)
     const readLink = (url: string) => {
       const u = new URL(url.replace(/^ccswitch:\/\//, 'http://'))
       const params: Record<string, string> = {}
       u.searchParams.forEach((v, k) => (params[k] = v.length > 400 ? brief(v) : v))
       return JSON.stringify({ host: u.host, path: u.pathname, params })
     }
+    // 每个模型下拉：当前值、选项、是否禁用；以及模型下面的提示、两个导入按钮是否禁用
+    const readModels = () => [
+      ...w.findAll('select[data-test^="ccs-model"]').map((sel) => {
+        const disabled = sel.attributes('disabled') !== undefined ? '（禁用）' : ''
+        return `  ${sel.attributes('data-test')} = ${JSON.stringify((sel.element as HTMLSelectElement).value)}${disabled} 选项 = ${JSON.stringify(sel.findAll('option').map((o) => o.text()))}`
+      }),
+      `  模型提示 = ${JSON.stringify(w.find('[data-test="ccs-models-hint"]').exists() ? w.get('[data-test="ccs-models-hint"]').text() : null)}`,
+      `  按钮禁用 = ${JSON.stringify(['ccs-open', 'ccs-copy-link'].map((t) => w.get(`[data-test="${t}"]`).attributes('disabled') !== undefined))}`
+    ]
     for (const target of targets) {
       if (target) await click(w, `[data-test="${target}"]`)
       out.push(`${target ?? '(单一客户端)'}: placeholder = ${w.get('[data-test="ccs-name"]').attributes('placeholder')}`)
+      out.push(...readModels())
       await click(w, '[data-test="ccs-copy-link"]')
       out.push(`  复制链接 = ${readLink(lastCopied())}`)
       open.mockClear()
       await click(w, '[data-test="ccs-open"]')
       out.push(`  打开 = ${JSON.stringify(open.mock.calls.map((c) => c[1]))} ${readLink(String(open.mock.calls[0]?.[0]))}`)
-      // 改名并选模型
+      // 改名，并把主模型换成下拉里的第一个具体模型
       await w.get('[data-test="ccs-name"]').setValue('Mine')
-      if (modelOptions.length > 1) await w.get('[data-test="ccs-model"]').setValue(modelOptions[1])
+      const mainOptions = w.get('[data-test="ccs-model"]').findAll('option').map((o) => o.text())
+      if (mainOptions.length > 1) await w.get('[data-test="ccs-model"]').setValue(mainOptions[1])
       await click(w, '[data-test="ccs-copy-link"]')
-      out.push(`  改名并选模型后 = ${readLink(lastCopied())}`)
-      await w.get('[data-test="ccs-name"]').setValue('')
-      if (modelOptions.length > 1) await w.get('[data-test="ccs-model"]').setValue('')
+      out.push(`  改名并换主模型后 = ${readLink(lastCopied())}`)
     }
     open.mockRestore()
   }
@@ -320,7 +327,7 @@ describe('KeyOnboardingModal 页签快照', () => {
     expect(dom(w)).toMatchSnapshot()
   })
 
-  it('取不到模型列表：CC Switch 没有模型字段，交给 AI 的详细版没有模型', async () => {
+  it('取不到模型列表：CC Switch 的模型下拉只剩留空一项并给出提示，交给 AI 的详细版没有模型', async () => {
     getAvailable.mockRejectedValue(new Error('x'))
     const w = await mountModal({ ...BASE, apiKey: keyOf(7, 'openai') })
     expect(await collect(w, 'ccswitch')).toMatchSnapshot()
@@ -428,24 +435,25 @@ describe('状态在页签之间的保留（拆分页签时最容易丢）', () =
     w.unmount()
   })
 
-  it('CC Switch 的名称和模型：切页签保留；关闭再打开清空；客户端选择保留', async () => {
+  it('CC Switch 的名称和模型：切页签保留；关闭再打开名称清空、模型重新预选；客户端选择保留', async () => {
     const w = await mountModal({ ...BASE, apiKey: keyOf(10, 'antigravity'), initialTab: 'ccswitch' })
     await click(w, '[data-test="ccs-client-gemini"]')
     await w.get('[data-test="ccs-name"]').setValue('Mine')
-    await w.get('[data-test="ccs-model"]').setValue('gemini-3-pro')
+    await w.get('[data-test="ccs-model"]').setValue('')
     const value = (sel: string) => (w.get(sel).element as HTMLInputElement).value
 
     await gotoTab(w, 'manual')
     await gotoTab(w, 'ccswitch')
     expect(value('[data-test="ccs-name"]')).toBe('Mine')
-    expect(value('[data-test="ccs-model"]')).toBe('gemini-3-pro')
+    // 切页签不会重新预选：手动清掉的主模型还是空的
+    expect(value('[data-test="ccs-model"]')).toBe('')
     expect(isChecked(w, '[data-test="ccs-client-gemini"]')).toBe('true')
 
     await w.setProps({ show: false })
     await w.setProps({ show: true })
     expect(w.find('[data-test="panel-ccswitch"]').exists()).toBe(true)
     expect(value('[data-test="ccs-name"]')).toBe('')
-    expect(value('[data-test="ccs-model"]')).toBe('')
+    expect(value('[data-test="ccs-model"]')).toBe('gemini-3-pro')
     expect(isChecked(w, '[data-test="ccs-client-gemini"]')).toBe('true')
     w.unmount()
   })

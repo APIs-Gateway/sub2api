@@ -307,6 +307,7 @@ const { clients: ccsClients, form: ccsForm } = useCcSwitchState({
   platform,
   show: () => props.show,
   groupId: () => props.apiKey?.group?.id,
+  models: () => models.value,
   allowMessagesDispatch: () => allowMessagesDispatch.value
 })
 

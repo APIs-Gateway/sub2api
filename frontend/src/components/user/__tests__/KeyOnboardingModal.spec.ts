@@ -685,16 +685,33 @@ describe('KeyOnboardingModal', () => {
       open.mockRestore()
     })
 
-    it('模型选项只来自该密钥的分组', async () => {
+    it('模型选项只来自该密钥的分组，按字母排序；分组里有 gpt-5.6-sol 就预选它', async () => {
       const w = await mountModal({ initialTab: 'ccswitch' })
       const options = w.findAll('[data-test="ccs-model"] option').map((o) => o.text())
-      expect(options).toEqual(['Default', 'gpt-5.6-sol', 'gpt-5.6-luna'])
+      expect(options).toEqual(['Optional; leave blank to use the CC Switch default', 'gpt-5.6-luna', 'gpt-5.6-sol'])
+      expect((w.get('[data-test="ccs-model"]').element as HTMLSelectElement).value).toBe('gpt-5.6-sol')
     })
 
-    it('取不到模型列表时不显示模型字段', async () => {
+    it('分组里没有 gpt-5.6-sol：不硬塞它，预选分组里合适的；一个合适的都没有就留空，链接里不带 model', async () => {
+      const open = vi.spyOn(window, 'open').mockReturnValue(null)
+      getAvailable.mockResolvedValue([
+        { name: 'ch', description: '', platforms: [{ platform: 'openai', groups: [{ id: 7, name: 'g' }], supported_models: [{ name: 'gpt-5.5' }, { name: 'gpt-5.6-luna' }] }] }
+      ])
+      const w = await mountModal({ initialTab: 'ccswitch' })
+      expect((w.get('[data-test="ccs-model"]').element as HTMLSelectElement).value).toBe('gpt-5.5')
+      await w.get('[data-test="ccs-model"]').setValue('')
+      await w.get('[data-test="ccs-open"]').trigger('click')
+      expect(new URL(String(open.mock.calls[0][0]).replace('ccswitch://', 'http://')).searchParams.has('model')).toBe(false)
+      open.mockRestore()
+    })
+
+    it('取不到模型列表时：下拉只有留空一项，给出提示，仍然可以导入', async () => {
       getAvailable.mockRejectedValue(new Error('x'))
       const w = await mountModal({ initialTab: 'ccswitch' })
-      expect(w.find('[data-test="ccs-model"]').exists()).toBe(false)
+      expect(w.findAll('[data-test="ccs-model"] option')).toHaveLength(1)
+      expect(w.get('[data-test="ccs-model"]').attributes('disabled')).toBeDefined()
+      expect(w.get('[data-test="ccs-models-hint"]').text()).toContain('No models are available for this key')
+      expect(w.get('[data-test="ccs-open"]').attributes('disabled')).toBeUndefined()
     })
 
     it('antigravity 分组可以选 Claude 或 Gemini', async () => {
