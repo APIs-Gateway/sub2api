@@ -2688,12 +2688,13 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 			result.GrantedGroupID = &gid
 			result.GrantedGroupName = group.Name
 
-			// 失效认证缓存（在事务提交后执行）
-			if s.authCacheInvalidator != nil {
-				s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
-			}
+			// 先联动回退链，再失效认证缓存（在事务提交后执行）：重算出来的 HasGroupRoutes 才反映联动之后的链，
+			// 与 APIKeyService.Update 的顺序一致（组装审查 S-2）。
 			if previousGroupID == nil || *previousGroupID != gid {
 				notifyPrimaryGroupChanged(ctx, s.groupRouteHooks, apiKey, group)
+			}
+			if s.authCacheInvalidator != nil {
+				s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 			}
 
 			result.APIKey = apiKey
@@ -2706,14 +2707,14 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		return nil, fmt.Errorf("update api key: %w", err)
 	}
 
-	// 失效认证缓存
-	if s.authCacheInvalidator != nil {
-		s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
-	}
 	// 绑定到新的主分组（不含解绑）：联动回退链。解绑时链项原样保留（运行时对未绑分组的 Key 不启用链，
 	// 重新绑定时再由这里按新主分组清理重复项 / 换平台清空用户链）。
 	if apiKey.Group != nil && (previousGroupID == nil || *previousGroupID != apiKey.Group.ID) {
 		notifyPrimaryGroupChanged(ctx, s.groupRouteHooks, apiKey, apiKey.Group)
+	}
+	// 联动之后再失效认证缓存，让快照里的 HasGroupRoutes 反映联动后的链（组装审查 S-2）。
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 	}
 
 	result.APIKey = apiKey
