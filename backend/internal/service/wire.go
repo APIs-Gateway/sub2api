@@ -707,6 +707,8 @@ var ProviderSet = wire.NewSet(
 	NewChannelService,
 	NewModelPricingResolver,
 	NewPriceQuoter,
+	ProvidePricingDerivationService,
+	NewModelCatalogService,
 	NewContentModerationService,
 	NewAffiliateService,
 	ProvidePointsService,
@@ -721,6 +723,14 @@ var ProviderSet = wire.NewSet(
 	ProvideAdminTokenService,
 	ProvideAdminAuditWriter,
 )
+
+// ProvidePricingDerivationService 创建 W6 派生服务，并把它挂到 ChannelService 的保存钩子上。
+// 钩子是 best-effort：失败只记日志、计数，不影响渠道保存。
+func ProvidePricingDerivationService(repo PricingMatrixRepository, channels ChannelRepository, billing *BillingService, channelService *ChannelService) *PricingDerivationService {
+	svc := NewPricingDerivationService(repo, channels, billing)
+	channelService.SetSaveHook(svc)
+	return svc
+}
 
 // ProvideUserPlatformQuotaUsageFlusher 创建并启动 UserPlatformQuotaUsageFlusher。
 func ProvideUserPlatformQuotaUsageFlusher(cfg *config.Config, cache BillingCache, quotaRepo UserPlatformQuotaRepository, tw *TimingWheelService) *UserPlatformQuotaUsageFlusher {
