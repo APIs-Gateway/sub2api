@@ -956,8 +956,14 @@ onUnmounted(() => {
   animation: shimmer-kv 1.8s ease-in-out infinite;
   border-radius: 8px;
 }
+/* 深色占位块取暖炭灰 token（与其他页面的 dark-700 占位同源），不再用蓝灰 slate */
 .dark .skeleton {
-  background: linear-gradient(90deg, #334155 25%, #1e293b 50%, #334155 75%);
+  background: linear-gradient(
+    90deg,
+    theme('colors.dark.700') 25%,
+    theme('colors.dark.800') 50%,
+    theme('colors.dark.700') 75%
+  );
   background-size: 200% 100%;
 }
 
