@@ -1032,7 +1032,16 @@
       troubleshoot2: '密钥要完整复制，前后不能有空格或换行。',
       troubleshoot3: '改完配置后重启客户端。',
       troubleshoot4: '确认网络或代理可以访问接入地址；客户端版本太旧时先升级。',
-      viewDocs: '查看文档'
+      viewDocs: '查看文档',
+      lineUsed: '下方代码使用此地址',
+      lineDefaultNote: '在客户端里填写这个地址。',
+      lineAltNote: '默认地址访问慢时，可以改用这个地址。',
+      codeLabel: '代码示例',
+      keyFilled: '密钥已填入下方',
+      keyMissing: '没有读到完整密钥，请把代码里的 {placeholder} 换成你的密钥。',
+      keyMasked: '没有读到完整密钥，请把代码里的 {placeholder} 换成你的密钥（{masked}）。',
+      snippetsTitle: '写进配置文件',
+      keepSafe: '请妥善保管密钥，任何拿到它的人都能消耗你的余额或套餐。'
     }
   },
 

@@ -49,7 +49,10 @@ async function collectAll(w: Awaited<ReturnType<typeof mountModal>>): Promise<st
   for (const tab of ['install', 'ai', 'ccswitch', 'manual']) {
     await w.get(`[data-test="tab-${tab}"]`).trigger('click')
     await flushPromises()
-    out.push(w.html().replace(/id="onboarding-\d+-[a-z-]+"/g, '').replace(/(aria-controls|aria-labelledby|aria-describedby|for|name)="onboarding-\d+[^"]*"/g, ''))
+    // 手动配置页的地址卡片会列出全部线路（卡片本身就是线路选择），这一块不算「内容」；其余部分仍必须只含所选线路
+    const root = w.element.cloneNode(true) as HTMLElement
+    root.querySelectorAll('[data-test="manual-lines"]').forEach((n) => n.remove())
+    out.push(root.outerHTML.replace(/id="onboarding-\d+-[a-z-]+"/g, '').replace(/(aria-controls|aria-labelledby|aria-describedby|for|name)="onboarding-\d+[^"]*"/g, ''))
     if (tab === 'install') {
       for (const b of w.findAll('button.onb-tile')) {
         clipboard.writeText.mockClear()
@@ -147,6 +150,60 @@ describe('KeyOnboardingModal 线路选择', () => {
     localStorage.setItem('docs_api_endpoint', CDN)
     await w.setProps({ show: true })
     expect((w.get(`[data-test="endpoint-${CDN}"]`).element as HTMLInputElement).checked).toBe(true)
+  })
+
+  describe('手动配置页：地址卡片就是线路选择', () => {
+    const lineCards = (w: Awaited<ReturnType<typeof mountModal>>) => w.findAll('[data-test="manual-lines"] > [data-test^="manual-line-"]')
+
+    it('外壳顶部的线路单选在手动配置页隐藏，切到别的页签又回来', async () => {
+      const w = await mountModal()
+      expect(w.find('[data-test="endpoints"]').exists()).toBe(true)
+      await w.get('[data-test="tab-manual"]').trigger('click')
+      expect(w.find('[data-test="endpoints"]').exists()).toBe(false)
+      await w.get('[data-test="tab-ai"]').trigger('click')
+      expect(w.find('[data-test="endpoints"]').exists()).toBe(true)
+    })
+
+    it('每条线路一张卡片，各显示自己的地址；选中的与外壳的选择一致，备用线路的名称和说明原样', async () => {
+      const w = await mountModal({ initialTab: 'manual' })
+      const cards = lineCards(w)
+      expect(cards.length).toBe(2)
+      expect(cards[0].text()).toContain('Default')
+      expect(cards[0].text()).toContain(`${DEFAULT_URL}/v1`)
+      expect(cards[1].text()).toContain('CDN 加速')
+      expect(cards[1].text()).toContain(`${CDN}/v1`)
+      expect(cards[1].text()).toContain('国内访问更快')
+      expect((cards[0].get('input').element as HTMLInputElement).checked).toBe(true)
+    })
+
+    it('点备用线路的卡片：写入 docs_api_endpoint，下面的代码换成备用地址，复制的也是备用地址；再切回别的页签，顶部单选也是它', async () => {
+      const w = await mountModal({ initialTab: 'manual' })
+      await lineCards(w)[1].trigger('click')
+      expect(localStorage.getItem('docs_api_endpoint')).toBe(CDN)
+      const code = w.get('[data-test="manual-code"]').text()
+      expect(code).toContain(`${CDN}/v1`)
+      expect(code).not.toContain(DEFAULT_URL)
+      await w.get('[data-test="manual-code-openai-python"] button').trigger('click')
+      await flushPromises()
+      expect(String(clipboard.writeText.mock.calls.at(-1)?.[0])).toContain(`${CDN}/v1`)
+      await w.get('[data-test="tab-ai"]').trigger('click')
+      expect((w.get(`[data-test="endpoint-${CDN}"]`).element as HTMLInputElement).checked).toBe(true)
+    })
+
+    it('在别的页签选好备用线路，手动配置页的卡片也选中它', async () => {
+      const w = await mountModal()
+      await w.get(`[data-test="endpoint-${CDN}"]`).setValue(true)
+      await w.get('[data-test="tab-manual"]').trigger('click')
+      const cards = lineCards(w)
+      expect((cards[1].get('input').element as HTMLInputElement).checked).toBe(true)
+      expect(cards[1].text()).toContain('Used in the code below')
+    })
+
+    it('只有默认线路时是一张卡片，没有单选', async () => {
+      const w = await mountModal({ initialTab: 'manual', customEndpoints: [] })
+      expect(lineCards(w).length).toBe(1)
+      expect(w.find('[data-test="manual-lines"] input[type="radio"]').exists()).toBe(false)
+    })
   })
 
   describe('手动配置页的命令不能被地址里的特殊字符利用', () => {
