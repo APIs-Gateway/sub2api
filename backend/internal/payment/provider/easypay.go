@@ -221,7 +221,7 @@ func (e *EasyPay) createAPIPayment(ctx context.Context, req payment.CreatePaymen
 // came back verbatim, and nothing downstream repairs it —
 // sanitizeCreatePaymentResponseDetails only strips NUL bytes before the value is
 // persisted to pay_url/qr_code. The frontend then feeds qr_code straight into
-// QRCode.toCanvas (PaymentQRCodeView.renderQR), so a relative path becomes a QR
+// QRCode.toCanvas (PaymentStatusPanel / PaymentQRDialog), so a relative path becomes a QR
 // whose payload is a bare path: WeChat renders it as text, and pay_url resolves
 // against the gateway's own domain and 404s.
 //

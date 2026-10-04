@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { shallowMount } from '@vue/test-utils'
 import UserSubscriptionCard from '../UserSubscriptionCard.vue'
-import type { UserSubscription } from '@/types'
+import { useAppStore as useRealAppStore } from '@/stores/app'
+import type { PublicSettings, UserSubscription } from '@/types'
 
 const routerPush = vi.hoisted(() => vi.fn())
 
@@ -208,6 +209,44 @@ describe('UserSubscriptionCard expiry labels', () => {
     expect(text).not.toContain('userSubscriptions.status.expired')
     expect(text).not.toContain('common.today')
     expect(text).not.toContain('common.tomorrow')
+  })
+})
+
+describe('UserSubscriptionCard payment gating', () => {
+  function mountActive() {
+    return shallowMount(UserSubscriptionCard, {
+      props: { subscription: activeSubscriptionFixture() },
+      global: { stubs: { ConfirmDialog: true } },
+    })
+  }
+
+  function buttonLabels(wrapper: ReturnType<typeof mountActive>) {
+    return wrapper.findAll('button').map(button => button.text())
+  }
+
+  it('shows renew and change-plan while public settings are unknown', () => {
+    const labels = buttonLabels(mountActive())
+
+    expect(labels).toContain('payment.renewNow')
+    expect(labels).toContain('userSubscriptions.lifecycle.changeTitle')
+  })
+
+  it('shows renew and change-plan when payment is enabled', () => {
+    useRealAppStore().cachedPublicSettings = { payment_enabled: true } as PublicSettings
+    const labels = buttonLabels(mountActive())
+
+    expect(labels).toContain('payment.renewNow')
+    expect(labels).toContain('userSubscriptions.lifecycle.changeTitle')
+  })
+
+  it('hides renew and change-plan when payment is disabled, keeping the card usable', () => {
+    useRealAppStore().cachedPublicSettings = { payment_enabled: false } as PublicSettings
+    const wrapper = mountActive()
+    const labels = buttonLabels(wrapper)
+
+    expect(labels).not.toContain('payment.renewNow')
+    expect(labels).not.toContain('userSubscriptions.lifecycle.changeTitle')
+    expect(wrapper.text()).toContain('userSubscriptions.status.active')
   })
 })
 

@@ -58,12 +58,15 @@
           >
             {{ t('userSubscriptions.overdraftBtn.label') }}
           </button>
-          <button type="button" class="btn btn-primary btn-sm" @click="openLifecycle('renew')">
-            {{ t('payment.renewNow') }}
-          </button>
-          <button type="button" class="btn btn-secondary btn-sm" @click="openLifecycle('change')">
-            {{ t('userSubscriptions.lifecycle.changeTitle') }}
-          </button>
+          <!-- 续费 / 转套餐都要走支付；支付关闭时不显示，避免点进去被送回仪表盘。 -->
+          <template v-if="paymentEnabled">
+            <button type="button" class="btn btn-primary btn-sm" @click="openLifecycle('renew')">
+              {{ t('payment.renewNow') }}
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" @click="openLifecycle('change')">
+              {{ t('userSubscriptions.lifecycle.changeTitle') }}
+            </button>
+          </template>
         </div>
       </div>
     </div>
@@ -170,6 +173,7 @@ import { EXACT_DIGITS, useCurrencyDisplay, type MoneyDigits } from '@/composable
 import subscriptionsAPI from '@/api/subscriptions'
 import { useAppStore } from '@/stores'
 import type { UserSubscription } from '@/types'
+import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { formatDateTimeToMinute } from '@/utils/format'
 import {
   getExpirationDateRelation,
@@ -196,6 +200,9 @@ const { t } = useI18n()
 const { formatSubscription } = useCurrencyDisplay()
 const appStore = useAppStore()
 const router = useRouter()
+
+// 支付关闭时（公共设置明确为 false）隐藏续费/转套餐；设置未加载时按开启处理，与侧栏一致。
+const paymentEnabled = computed(() => isFeatureFlagEnabled(FeatureFlags.payment))
 
 // 东八区常量：窗口/有效期边界一律按东八区自然日算（东八区无 DST，固定 +08:00）。
 const SH_TZ = 'Asia/Shanghai'

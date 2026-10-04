@@ -335,18 +335,6 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/payment/qrcode',
-    name: 'PaymentQRCode',
-    component: () => import('@/views/user/PaymentQRCodeView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: false,
-      title: 'Payment',
-      titleKey: 'payment.qr.scanToPay',
-      requiresPayment: true
-    }
-  },
-  {
     path: '/payment/result',
     name: 'PaymentResult',
     component: () => import('@/views/user/PaymentResultView.vue'),
