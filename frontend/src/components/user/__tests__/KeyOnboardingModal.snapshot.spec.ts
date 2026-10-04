@@ -283,13 +283,34 @@ async function collect(w: VueWrapper, tab: Tab, fullDom = false): Promise<string
   }
 
   if (tab === 'manual') {
-    const buttons = panel().findAll('button')
-    for (const [i, b] of buttons.entries()) {
-      clipboard.writeText.mockClear()
-      await b.trigger('click')
-      await flushPromises()
-      out.push(`按钮 ${i} (${b.element.closest('tr')?.querySelector('td')?.textContent?.trim() ?? b.element.closest('details')?.querySelector('summary')?.textContent?.trim() ?? '?'}) -> ${payload(lastCopied())}`)
-      if (i === 0 && fullDom) sections.push(`### 复制第一个按钮后的播报区与内容区\n${domAfterCopy(w, tab)}`)
+    // 先点一遍地址卡片、密钥行、配置片段里的复制按钮，再把每个代码页签依次点一遍、复制其中的代码块
+    const copyButtons = (inCode: boolean) =>
+      panel()
+        .findAll('button:not([role="radio"])')
+        .filter((b) => !!b.element.closest('[data-test="manual-code"]') === inCode)
+    const labelOf = (b: ReturnType<typeof copyButtons>[number]) =>
+      b.attributes('data-test') ??
+      b.element.closest('details')?.querySelector('summary')?.textContent?.trim() ??
+      b.element.closest('[data-test^="manual-code-"]')?.getAttribute('data-test') ??
+      '?'
+    let first = true
+    const press = async (buttons: ReturnType<typeof copyButtons>) => {
+      for (const b of buttons) {
+        clipboard.writeText.mockClear()
+        await b.trigger('click')
+        await flushPromises()
+        out.push(`按钮 ${labelOf(b)} -> ${payload(lastCopied())}`)
+        if (first && fullDom) sections.push(`### 复制第一个按钮后的播报区与内容区\n${domAfterCopy(w, tab)}`)
+        first = false
+      }
+    }
+    await press(copyButtons(false))
+    const tabs = w.findAll('[data-test^="manual-tab-"]').map((c) => c.attributes('data-test')!)
+    out.push(`代码页签 = ${JSON.stringify(tabs.map((t) => t.replace('manual-tab-', '')))}`)
+    for (const target of tabs) {
+      await click(w, `[data-test="${target}"]`)
+      out.push(`## ${target}`)
+      await press(copyButtons(true))
     }
   }
 

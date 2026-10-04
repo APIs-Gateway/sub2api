@@ -9,8 +9,9 @@
         <code class="font-mono text-xs tabular-nums text-gray-500 dark:text-dark-400">{{ maskedKey }}</code>
       </p>
 
-      <!-- 线路：站点配了备用地址才出现。选哪个，下面所有页签生成的内容就用哪个；和使用文档页共用同一个选择 -->
-      <div v-if="endpointOptions.length > 1" class="onb-lines" data-test="endpoints">
+      <!-- 线路：站点配了备用地址才出现。选哪个，下面所有页签生成的内容就用哪个；和使用文档页共用同一个选择。
+           手动配置页签自己用地址卡片选线路，这里不重复显示 -->
+      <div v-if="endpointOptions.length > 1 && active !== 'manual'" class="onb-lines" data-test="endpoints">
         <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
           <span :id="`${uid}-endpoints-label`" class="onb-lines-label">{{ t('keys.endpoints.title') }}</span>
           <div
@@ -126,12 +127,15 @@
       <ManualTab
         v-else-if="active === 'manual'"
         v-bind="panelAttrs"
+        v-model:endpoint-id="endpointChoice"
         :endpoint="activeEndpoint"
+        :endpoint-options="endpointOptions"
         :full-key="fullKey"
         :masked-key="maskedKey"
         :platform="platform"
         :site-name="siteName"
         :clients="clients"
+        :models="models"
         :doc-url="docUrl"
         :copied-id="copiedId"
         @copy="copy"
@@ -154,7 +158,7 @@ let onboardingUid = 0
  *   InstallTab   一键安装   瓦片 / 脚本预览
  *   AiTab        交给 AI    提示词 / ChatGPT、Claude 链接
  *   CcSwitchTab  CC Switch  导入链接
- *   ManualTab    手动配置   地址、密钥、配置片段
+ *   ManualTab    手动配置   地址卡片（同时是线路选择）、代码示例、配置片段
  *
  * 页签面板的 role / id / aria-labelledby 由外壳通过 v-bind="panelAttrs" 传给页签，页签放在自己的根元素上。
  */

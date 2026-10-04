@@ -225,62 +225,96 @@ copy-opencode-windows -> <2130 字符 sha1:e9e5b15c672a 开头:"& {\\n$ErrorActi
 exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > manual 页签 1`] = `
 "### DOM
 <div aria-labelledby="onboarding-N-tab-manual" class="onb-card space-y-5" data-test="panel-manual" id="onboarding-N-panel-manual" role="tabpanel">
- <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
-  <table class="w-full text-sm">
-   <tbody>
-    <tr class="">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "接入地址"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://codex.hiyo.top"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "复制"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "OpenAI 兼容地址"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://codex.hiyo.top/v1"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "复制"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "API 密钥"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "sk-SEC…cdef"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "复制"
- <div class="space-y-2">
-  <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
-   <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+ <div class="grid gap-3" data-test="manual-lines">
+  <div class="line-card" data-test="manual-line-0">
+   <div class="flex items-center gap-2">
+    <span class="line-name">
+     "默认"
+    <!--v-if-->
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "OpenAI 兼容地址"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://codex.hiyo.top/v1"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-v1" type="button">
+      "复制"
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "接入地址"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://codex.hiyo.top"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-base" type="button">
+      "复制"
+   <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-line-note" id="manual-4-line-note-0">
+    "在客户端里填写这个地址。"
+ <div class="line-row" data-test="manual-key">
+  <span class="shrink-0 text-sm text-gray-600 dark:text-dark-400">
+   "API 密钥"
+  <code class="min-w-0 flex-1 truncate font-mono text-sm tabular-nums text-gray-900 dark:text-gray-100">
+   "sk-SEC…cdef"
+  <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-key" type="button">
+   "复制"
+ <section class="space-y-3" data-test="manual-code">
+  <div aria-label="代码示例" class="flex flex-wrap gap-2" role="radiogroup">
+   <button aria-checked="true" class="onb-chip onb-chip-active" data-test="manual-tab-openai" role="radio" type="button">
+    "OpenAI SDK"
+   <button aria-checked="false" class="onb-chip" data-test="manual-tab-curl" role="radio" type="button">
+    "curl"
+   <button aria-checked="false" class="onb-chip" data-test="manual-tab-claude" role="radio" type="button">
     "Claude Code"
-   <div class="mt-3 space-y-2">
-    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-     <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-      <span class="text-xs text-gray-500 dark:text-dark-400">
-       "环境变量"
-      <button class="copy-btn" type="button">
-       <span class="text-xs">
-        "复制"
-     <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-      "export ANTHROPIC_BASE_URL='https://codex.hiyo.top'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
-    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-     <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-      <span class="font-mono text-xs text-gray-500 dark:text-dark-400">
-       "~/.claude/settings.json"
-      <button class="copy-btn" type="button">
-       <span class="text-xs">
-        "复制"
-     <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-      "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://codex.hiyo.top\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+  <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-key-state">
+   "密钥已填入下方"
+  <div class="space-y-2">
+   <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800" data-test="manual-code-openai-python">
+    <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+     <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+      "Python"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+      <span class="text-xs">
+       "复制"
+    <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+     "# pip install openai\\nfrom openai import OpenAI\\n\\nclient = OpenAI(\\n    base_url=\\"https://codex.hiyo.top/v1\\",\\n    api_key=\\"sk-SECRET-1234567890abcdef\\",\\n)\\n\\nresp = client.chat.completions.create(\\n    model=\\"claude-sonnet-5\\",\\n    messages=[{\\"role\\": \\"user\\", \\"content\\": \\"Hello\\"}],\\n)\\nprint(resp.choices[0].message.content)"
+ <div>
+  <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
+   "写进配置文件"
+  <div class="space-y-2">
+   <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+    <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+     "Claude Code"
+    <div class="mt-3 space-y-2">
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "环境变量"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+        <span class="text-xs">
+         "复制"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "export ANTHROPIC_BASE_URL='https://codex.hiyo.top'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "~/.claude/settings.json"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+        <span class="text-xs">
+         "复制"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://codex.hiyo.top\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+   <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+    <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+     "OpenCode"
+    <div class="mt-3 space-y-2">
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "~/.config/opencode/opencode.json"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+        <span class="text-xs">
+         "复制"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "{\\n  \\"$schema\\": \\"https://opencode.ai/config.json\\",\\n  \\"provider\\": {\\n    \\"anthropic\\": {\\n      \\"options\\": {\\n        \\"baseURL\\": \\"https://codex.hiyo.top/v1\\",\\n        \\"apiKey\\": \\"sk-SECRET-1234567890abcdef\\"\\n      }\\n    }\\n  }\\n}"
  <div>
   <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
    "连不上时检查"
@@ -295,13 +329,25 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > manual 页
     "确认网络或代理可以访问接入地址；客户端版本太旧时先升级。"
  <a class="inline-flex text-sm font-medium text-primary-700 hover:underline dark:text-primary-400" href="https://docs.example.com" rel="noopener noreferrer" target="_blank">
   "查看文档"
+ <p class="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-dark-700 dark:text-dark-400" data-test="manual-footer">
+  "请妥善保管密钥，任何拿到它的人都能消耗你的余额或套餐。"
 
 ### 复制与链接
-按钮 0 (接入地址) -> "https://codex.hiyo.top"
-按钮 1 (OpenAI 兼容地址) -> "https://codex.hiyo.top/v1"
-按钮 2 (API 密钥) -> "sk-SECRET-1234567890abcdef"
-按钮 3 (Claude Code) -> "export ANTHROPIC_BASE_URL='https://codex.hiyo.top'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
-按钮 4 (Claude Code) -> "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://codex.hiyo.top\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}""
+按钮 copy-line-0-v1 -> "https://codex.hiyo.top/v1"
+按钮 copy-line-0-base -> "https://codex.hiyo.top"
+按钮 copy-key -> "sk-SECRET-1234567890abcdef"
+按钮 Claude Code -> "export ANTHROPIC_BASE_URL='https://codex.hiyo.top'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
+按钮 Claude Code -> "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://codex.hiyo.top\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+按钮 OpenCode -> "{\\n  \\"$schema\\": \\"https://opencode.ai/config.json\\",\\n  \\"provider\\": {\\n    \\"anthropic\\": {\\n      \\"options\\": {\\n        \\"baseURL\\": \\"https://codex.hiyo.top/v1\\",\\n        \\"apiKey\\": \\"sk-SECRET-1234567890abcdef\\"\\n      }\\n    }\\n  }\\n}"
+代码页签 = ["openai","curl","claude"]
+## manual-tab-openai
+按钮 manual-code-openai-python -> "# pip install openai\\nfrom openai import OpenAI\\n\\nclient = OpenAI(\\n    base_url=\\"https://codex.hiyo.top/v1\\",\\n    api_key=\\"sk-SECRET-1234567890abcdef\\",\\n)\\n\\nresp = client.chat.completions.create(\\n    model=\\"claude-sonnet-5\\",\\n    messages=[{\\"role\\": \\"user\\", \\"content\\": \\"Hello\\"}],\\n)\\nprint(resp.choices[0].message.content)"
+## manual-tab-curl
+按钮 manual-code-curl-bash -> "curl https://codex.hiyo.top/v1/chat/completions \\\\\\n  -H 'Authorization: Bearer sk-SECRET-1234567890abcdef' \\\\\\n  -H 'Content-Type: application/json' \\\\\\n  -d '{\\"model\\":\\"claude-sonnet-5\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hello\\"}]}'"
+按钮 manual-code-curl-windows -> "@'\\n{\\"model\\":\\"claude-sonnet-5\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hello\\"}]}\\n'@ | curl.exe https://codex.hiyo.top/v1/chat/completions -H 'Authorization: Bearer sk-SECRET-1234567890abcdef' -H 'Content-Type: application/json' -d '@-'"
+## manual-tab-claude
+按钮 manual-code-claude-bash -> "export ANTHROPIC_BASE_URL='https://codex.hiyo.top'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'\\nclaude -p 'Hello'"
+按钮 manual-code-claude-windows -> "$env:ANTHROPIC_BASE_URL = 'https://codex.hiyo.top'\\n$env:ANTHROPIC_AUTH_TOKEN = 'sk-SECRET-1234567890abcdef'\\nclaude -p 'Hello'""
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'anthropic' > ai 页签 1`] = `
@@ -730,62 +776,96 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic' > manual 页签 1`] = `
      <span>
       "Manual"
    <div aria-labelledby="onboarding-N-tab-manual" class="onb-card space-y-5" data-test="panel-manual" id="onboarding-N-panel-manual" role="tabpanel">
-    <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
-     <table class="w-full text-sm">
-      <tbody>
-       <tr class="">
-        <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-         "Endpoint"
-        <td class="px-4 py-2.5">
-         <div class="flex items-center gap-2">
-          <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-           "https://codex.hiyo.top"
-          <button class="copy-btn shrink-0" type="button">
-           <span class="text-xs">
-            "Copy"
-       <tr class="border-t border-gray-100 dark:border-dark-800">
-        <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-         "OpenAI-compatible endpoint"
-        <td class="px-4 py-2.5">
-         <div class="flex items-center gap-2">
-          <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-           "https://codex.hiyo.top/v1"
-          <button class="copy-btn shrink-0" type="button">
-           <span class="text-xs">
-            "Copy"
-       <tr class="border-t border-gray-100 dark:border-dark-800">
-        <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-         "API Key"
-        <td class="px-4 py-2.5">
-         <div class="flex items-center gap-2">
-          <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-           "sk-SEC…cdef"
-          <button class="copy-btn shrink-0" type="button">
-           <span class="text-xs">
-            "Copy"
-    <div class="space-y-2">
-     <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
-      <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+    <div class="grid gap-3" data-test="manual-lines">
+     <div class="line-card" data-test="manual-line-0">
+      <div class="flex items-center gap-2">
+       <span class="line-name">
+        "Default"
+       <!--v-if-->
+      <div class="space-y-1">
+       <p class="text-xs text-gray-500 dark:text-dark-400">
+        "OpenAI-compatible endpoint"
+       <div class="flex items-center gap-2">
+        <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+         "https://codex.hiyo.top/v1"
+        <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-v1" type="button">
+         "Copy"
+      <div class="space-y-1">
+       <p class="text-xs text-gray-500 dark:text-dark-400">
+        "Endpoint"
+       <div class="flex items-center gap-2">
+        <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+         "https://codex.hiyo.top"
+        <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-base" type="button">
+         "Copy"
+      <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-line-note" id="manual-3-line-note-0">
+       "Enter this address in your client."
+    <div class="line-row" data-test="manual-key">
+     <span class="shrink-0 text-sm text-gray-600 dark:text-dark-400">
+      "API Key"
+     <code class="min-w-0 flex-1 truncate font-mono text-sm tabular-nums text-gray-900 dark:text-gray-100">
+      "sk-SEC…cdef"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-key" type="button">
+      "Copy"
+    <section class="space-y-3" data-test="manual-code">
+     <div aria-label="Code examples" class="flex flex-wrap gap-2" role="radiogroup">
+      <button aria-checked="true" class="onb-chip onb-chip-active" data-test="manual-tab-openai" role="radio" type="button">
+       "OpenAI SDK"
+      <button aria-checked="false" class="onb-chip" data-test="manual-tab-curl" role="radio" type="button">
+       "curl"
+      <button aria-checked="false" class="onb-chip" data-test="manual-tab-claude" role="radio" type="button">
        "Claude Code"
-      <div class="mt-3 space-y-2">
-       <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-        <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-         <span class="text-xs text-gray-500 dark:text-dark-400">
-          "Environment variables"
-         <button class="copy-btn" type="button">
-          <span class="text-xs">
-           "Copy"
-        <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-         "export ANTHROPIC_BASE_URL='https://codex.hiyo.top'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
-       <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-        <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-         <span class="font-mono text-xs text-gray-500 dark:text-dark-400">
-          "~/.claude/settings.json"
-         <button class="copy-btn" type="button">
-          <span class="text-xs">
-           "Copy"
-        <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-         "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://codex.hiyo.top\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+     <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-key-state">
+      "Your key is filled in below"
+     <div class="space-y-2">
+      <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800" data-test="manual-code-openai-python">
+       <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+        <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+         "Python"
+        <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+         <span class="text-xs">
+          "Copy"
+       <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+        "# pip install openai\\nfrom openai import OpenAI\\n\\nclient = OpenAI(\\n    base_url=\\"https://codex.hiyo.top/v1\\",\\n    api_key=\\"sk-SECRET-1234567890abcdef\\",\\n)\\n\\nresp = client.chat.completions.create(\\n    model=\\"claude-sonnet-5\\",\\n    messages=[{\\"role\\": \\"user\\", \\"content\\": \\"Hello\\"}],\\n)\\nprint(resp.choices[0].message.content)"
+    <div>
+     <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
+      "Save it in a config file"
+     <div class="space-y-2">
+      <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+       <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+        "Claude Code"
+       <div class="mt-3 space-y-2">
+        <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+         <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+          <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+           "Environment variables"
+          <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+           <span class="text-xs">
+            "Copy"
+         <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+          "export ANTHROPIC_BASE_URL='https://codex.hiyo.top'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
+        <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+         <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+          <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+           "~/.claude/settings.json"
+          <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+           <span class="text-xs">
+            "Copy"
+         <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+          "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://codex.hiyo.top\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+      <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+       <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+        "OpenCode"
+       <div class="mt-3 space-y-2">
+        <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+         <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+          <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+           "~/.config/opencode/opencode.json"
+          <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+           <span class="text-xs">
+            "Copy"
+         <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+          "{\\n  \\"$schema\\": \\"https://opencode.ai/config.json\\",\\n  \\"provider\\": {\\n    \\"anthropic\\": {\\n      \\"options\\": {\\n        \\"baseURL\\": \\"https://codex.hiyo.top/v1\\",\\n        \\"apiKey\\": \\"sk-SECRET-1234567890abcdef\\"\\n      }\\n    }\\n  }\\n}"
     <div>
      <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
       "If it will not connect"
@@ -800,67 +880,103 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic' > manual 页签 1`] = `
        "Check that your network or proxy can reach the endpoint, and update the client if it is old."
     <a class="inline-flex text-sm font-medium text-primary-700 hover:underline dark:text-primary-400" href="https://docs.example.com" rel="noopener noreferrer" target="_blank">
      "View docs"
+    <p class="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-dark-700 dark:text-dark-400" data-test="manual-footer">
+     "Keep your key safe. Anyone who has it can spend your balance or plan."
 
 ### 复制第一个按钮后的播报区与内容区
 <p aria-live="polite" class="sr-only" data-test="copy-status" role="status">
  "Copied"
 <div aria-labelledby="onboarding-N-tab-manual" class="onb-card space-y-5" data-test="panel-manual" id="onboarding-N-panel-manual" role="tabpanel">
- <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
-  <table class="w-full text-sm">
-   <tbody>
-    <tr class="">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "Endpoint"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://codex.hiyo.top"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copied"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "OpenAI-compatible endpoint"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://codex.hiyo.top/v1"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copy"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "API Key"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "sk-SEC…cdef"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copy"
- <div class="space-y-2">
-  <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
-   <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+ <div class="grid gap-3" data-test="manual-lines">
+  <div class="line-card" data-test="manual-line-0">
+   <div class="flex items-center gap-2">
+    <span class="line-name">
+     "Default"
+    <!--v-if-->
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "OpenAI-compatible endpoint"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://codex.hiyo.top/v1"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white !text-primary-700 dark:!text-primary-400" data-test="copy-line-0-v1" type="button">
+      "Copied"
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "Endpoint"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://codex.hiyo.top"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-base" type="button">
+      "Copy"
+   <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-line-note" id="manual-3-line-note-0">
+    "Enter this address in your client."
+ <div class="line-row" data-test="manual-key">
+  <span class="shrink-0 text-sm text-gray-600 dark:text-dark-400">
+   "API Key"
+  <code class="min-w-0 flex-1 truncate font-mono text-sm tabular-nums text-gray-900 dark:text-gray-100">
+   "sk-SEC…cdef"
+  <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-key" type="button">
+   "Copy"
+ <section class="space-y-3" data-test="manual-code">
+  <div aria-label="Code examples" class="flex flex-wrap gap-2" role="radiogroup">
+   <button aria-checked="true" class="onb-chip onb-chip-active" data-test="manual-tab-openai" role="radio" type="button">
+    "OpenAI SDK"
+   <button aria-checked="false" class="onb-chip" data-test="manual-tab-curl" role="radio" type="button">
+    "curl"
+   <button aria-checked="false" class="onb-chip" data-test="manual-tab-claude" role="radio" type="button">
     "Claude Code"
-   <div class="mt-3 space-y-2">
-    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-     <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-      <span class="text-xs text-gray-500 dark:text-dark-400">
-       "Environment variables"
-      <button class="copy-btn" type="button">
-       <span class="text-xs">
-        "Copy"
-     <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-      "export ANTHROPIC_BASE_URL='https://codex.hiyo.top'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
-    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-     <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-      <span class="font-mono text-xs text-gray-500 dark:text-dark-400">
-       "~/.claude/settings.json"
-      <button class="copy-btn" type="button">
-       <span class="text-xs">
-        "Copy"
-     <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-      "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://codex.hiyo.top\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+  <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-key-state">
+   "Your key is filled in below"
+  <div class="space-y-2">
+   <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800" data-test="manual-code-openai-python">
+    <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+     <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+      "Python"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+      <span class="text-xs">
+       "Copy"
+    <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+     "# pip install openai\\nfrom openai import OpenAI\\n\\nclient = OpenAI(\\n    base_url=\\"https://codex.hiyo.top/v1\\",\\n    api_key=\\"sk-SECRET-1234567890abcdef\\",\\n)\\n\\nresp = client.chat.completions.create(\\n    model=\\"claude-sonnet-5\\",\\n    messages=[{\\"role\\": \\"user\\", \\"content\\": \\"Hello\\"}],\\n)\\nprint(resp.choices[0].message.content)"
+ <div>
+  <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
+   "Save it in a config file"
+  <div class="space-y-2">
+   <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+    <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+     "Claude Code"
+    <div class="mt-3 space-y-2">
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "Environment variables"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+        <span class="text-xs">
+         "Copy"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "export ANTHROPIC_BASE_URL='https://codex.hiyo.top'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "~/.claude/settings.json"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+        <span class="text-xs">
+         "Copy"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://codex.hiyo.top\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+   <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+    <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+     "OpenCode"
+    <div class="mt-3 space-y-2">
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "~/.config/opencode/opencode.json"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+        <span class="text-xs">
+         "Copy"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "{\\n  \\"$schema\\": \\"https://opencode.ai/config.json\\",\\n  \\"provider\\": {\\n    \\"anthropic\\": {\\n      \\"options\\": {\\n        \\"baseURL\\": \\"https://codex.hiyo.top/v1\\",\\n        \\"apiKey\\": \\"sk-SECRET-1234567890abcdef\\"\\n      }\\n    }\\n  }\\n}"
  <div>
   <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
    "If it will not connect"
@@ -875,13 +991,25 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic' > manual 页签 1`] = `
     "Check that your network or proxy can reach the endpoint, and update the client if it is old."
  <a class="inline-flex text-sm font-medium text-primary-700 hover:underline dark:text-primary-400" href="https://docs.example.com" rel="noopener noreferrer" target="_blank">
   "View docs"
+ <p class="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-dark-700 dark:text-dark-400" data-test="manual-footer">
+  "Keep your key safe. Anyone who has it can spend your balance or plan."
 
 ### 复制与链接
-按钮 0 (Endpoint) -> "https://codex.hiyo.top"
-按钮 1 (OpenAI-compatible endpoint) -> "https://codex.hiyo.top/v1"
-按钮 2 (API Key) -> "sk-SECRET-1234567890abcdef"
-按钮 3 (Claude Code) -> "export ANTHROPIC_BASE_URL='https://codex.hiyo.top'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
-按钮 4 (Claude Code) -> "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://codex.hiyo.top\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}""
+按钮 copy-line-0-v1 -> "https://codex.hiyo.top/v1"
+按钮 copy-line-0-base -> "https://codex.hiyo.top"
+按钮 copy-key -> "sk-SECRET-1234567890abcdef"
+按钮 Claude Code -> "export ANTHROPIC_BASE_URL='https://codex.hiyo.top'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
+按钮 Claude Code -> "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://codex.hiyo.top\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+按钮 OpenCode -> "{\\n  \\"$schema\\": \\"https://opencode.ai/config.json\\",\\n  \\"provider\\": {\\n    \\"anthropic\\": {\\n      \\"options\\": {\\n        \\"baseURL\\": \\"https://codex.hiyo.top/v1\\",\\n        \\"apiKey\\": \\"sk-SECRET-1234567890abcdef\\"\\n      }\\n    }\\n  }\\n}"
+代码页签 = ["openai","curl","claude"]
+## manual-tab-openai
+按钮 manual-code-openai-python -> "# pip install openai\\nfrom openai import OpenAI\\n\\nclient = OpenAI(\\n    base_url=\\"https://codex.hiyo.top/v1\\",\\n    api_key=\\"sk-SECRET-1234567890abcdef\\",\\n)\\n\\nresp = client.chat.completions.create(\\n    model=\\"claude-sonnet-5\\",\\n    messages=[{\\"role\\": \\"user\\", \\"content\\": \\"Hello\\"}],\\n)\\nprint(resp.choices[0].message.content)"
+## manual-tab-curl
+按钮 manual-code-curl-bash -> "curl https://codex.hiyo.top/v1/chat/completions \\\\\\n  -H 'Authorization: Bearer sk-SECRET-1234567890abcdef' \\\\\\n  -H 'Content-Type: application/json' \\\\\\n  -d '{\\"model\\":\\"claude-sonnet-5\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hello\\"}]}'"
+按钮 manual-code-curl-windows -> "@'\\n{\\"model\\":\\"claude-sonnet-5\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hello\\"}]}\\n'@ | curl.exe https://codex.hiyo.top/v1/chat/completions -H 'Authorization: Bearer sk-SECRET-1234567890abcdef' -H 'Content-Type: application/json' -d '@-'"
+## manual-tab-claude
+按钮 manual-code-claude-bash -> "export ANTHROPIC_BASE_URL='https://codex.hiyo.top'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'\\nclaude -p 'Hello'"
+按钮 manual-code-claude-windows -> "$env:ANTHROPIC_BASE_URL = 'https://codex.hiyo.top'\\n$env:ANTHROPIC_AUTH_TOKEN = 'sk-SECRET-1234567890abcdef'\\nclaude -p 'Hello'""
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'antigravity' > ai 页签 1`] = `
@@ -1114,75 +1242,104 @@ copy-gemini-windows -> <2396 字符 sha1:ac6f9c22f971 开头:"& {\\n$ErrorAction
 exports[`KeyOnboardingModal 页签快照 > 'antigravity' > manual 页签 1`] = `
 "### DOM
 <div aria-labelledby="onboarding-N-tab-manual" class="onb-card space-y-5" data-test="panel-manual" id="onboarding-N-panel-manual" role="tabpanel">
- <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
-  <table class="w-full text-sm">
-   <tbody>
-    <tr class="">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "Endpoint"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://codex.hiyo.top"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copy"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "OpenAI-compatible endpoint"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://codex.hiyo.top/v1"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copy"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "API Key"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "sk-SEC…cdef"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copy"
- <div class="space-y-2">
-  <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
-   <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+ <div class="grid gap-3" data-test="manual-lines">
+  <div class="line-card" data-test="manual-line-0">
+   <div class="flex items-center gap-2">
+    <span class="line-name">
+     "Default"
+    <!--v-if-->
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "Endpoint"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://codex.hiyo.top/antigravity"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-base" type="button">
+      "Copy"
+   <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-line-note" id="manual-6-line-note-0">
+    "Enter this address in your client."
+ <div class="line-row" data-test="manual-key">
+  <span class="shrink-0 text-sm text-gray-600 dark:text-dark-400">
+   "API Key"
+  <code class="min-w-0 flex-1 truncate font-mono text-sm tabular-nums text-gray-900 dark:text-gray-100">
+   "sk-SEC…cdef"
+  <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-key" type="button">
+   "Copy"
+ <section class="space-y-3" data-test="manual-code">
+  <div aria-label="Code examples" class="flex flex-wrap gap-2" role="radiogroup">
+   <button aria-checked="true" class="onb-chip onb-chip-active" data-test="manual-tab-claude" role="radio" type="button">
     "Claude Code"
-   <div class="mt-3 space-y-2">
-    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-     <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-      <span class="text-xs text-gray-500 dark:text-dark-400">
-       "Environment variables"
-      <button class="copy-btn" type="button">
-       <span class="text-xs">
-        "Copy"
-     <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-      "export ANTHROPIC_BASE_URL='https://codex.hiyo.top/antigravity'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
-    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-     <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-      <span class="font-mono text-xs text-gray-500 dark:text-dark-400">
-       "~/.claude/settings.json"
-      <button class="copy-btn" type="button">
-       <span class="text-xs">
-        "Copy"
-     <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-      "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://codex.hiyo.top/antigravity\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
-  <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
-   <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
-    "Gemini CLI"
-   <div class="mt-3 space-y-2">
-    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-     <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-      <span class="text-xs text-gray-500 dark:text-dark-400">
-       "Environment variables"
-      <button class="copy-btn" type="button">
-       <span class="text-xs">
-        "Copy"
-     <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-      "export GOOGLE_GEMINI_BASE_URL='https://codex.hiyo.top/antigravity'\\nexport GEMINI_API_KEY='sk-SECRET-1234567890abcdef'"
+   <button aria-checked="false" class="onb-chip" data-test="manual-tab-gemini" role="radio" type="button">
+    "Gemini"
+  <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-key-state">
+   "Your key is filled in below"
+  <div class="space-y-2">
+   <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800" data-test="manual-code-claude-bash">
+    <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+     <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+      "macOS / Linux"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+      <span class="text-xs">
+       "Copy"
+    <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+     "export ANTHROPIC_BASE_URL='https://codex.hiyo.top/antigravity'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'\\nclaude -p 'Hello'"
+   <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800" data-test="manual-code-claude-windows">
+    <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+     <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+      "Windows PowerShell"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+      <span class="text-xs">
+       "Copy"
+    <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+     "$env:ANTHROPIC_BASE_URL = 'https://codex.hiyo.top/antigravity'\\n$env:ANTHROPIC_AUTH_TOKEN = 'sk-SECRET-1234567890abcdef'\\nclaude -p 'Hello'"
+ <div>
+  <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
+   "Save it in a config file"
+  <div class="space-y-2">
+   <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+    <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+     "Claude Code"
+    <div class="mt-3 space-y-2">
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "Environment variables"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+        <span class="text-xs">
+         "Copy"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "export ANTHROPIC_BASE_URL='https://codex.hiyo.top/antigravity'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "~/.claude/settings.json"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+        <span class="text-xs">
+         "Copy"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://codex.hiyo.top/antigravity\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+   <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+    <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+     "Gemini CLI"
+    <div class="mt-3 space-y-2">
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "Environment variables"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+        <span class="text-xs">
+         "Copy"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "export GOOGLE_GEMINI_BASE_URL='https://codex.hiyo.top/antigravity'\\nexport GEMINI_API_KEY='sk-SECRET-1234567890abcdef'"
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "~/.gemini/.env"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+        <span class="text-xs">
+         "Copy"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "GOOGLE_GEMINI_BASE_URL='https://codex.hiyo.top/antigravity'\\nGEMINI_API_KEY='sk-SECRET-1234567890abcdef'"
  <div>
   <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
    "If it will not connect"
@@ -1197,14 +1354,23 @@ exports[`KeyOnboardingModal 页签快照 > 'antigravity' > manual 页签 1`] = `
     "Check that your network or proxy can reach the endpoint, and update the client if it is old."
  <a class="inline-flex text-sm font-medium text-primary-700 hover:underline dark:text-primary-400" href="https://docs.example.com" rel="noopener noreferrer" target="_blank">
   "View docs"
+ <p class="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-dark-700 dark:text-dark-400" data-test="manual-footer">
+  "Keep your key safe. Anyone who has it can spend your balance or plan."
 
 ### 复制与链接
-按钮 0 (Endpoint) -> "https://codex.hiyo.top"
-按钮 1 (OpenAI-compatible endpoint) -> "https://codex.hiyo.top/v1"
-按钮 2 (API Key) -> "sk-SECRET-1234567890abcdef"
-按钮 3 (Claude Code) -> "export ANTHROPIC_BASE_URL='https://codex.hiyo.top/antigravity'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
-按钮 4 (Claude Code) -> "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://codex.hiyo.top/antigravity\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
-按钮 5 (Gemini CLI) -> "export GOOGLE_GEMINI_BASE_URL='https://codex.hiyo.top/antigravity'\\nexport GEMINI_API_KEY='sk-SECRET-1234567890abcdef'""
+按钮 copy-line-0-base -> "https://codex.hiyo.top/antigravity"
+按钮 copy-key -> "sk-SECRET-1234567890abcdef"
+按钮 Claude Code -> "export ANTHROPIC_BASE_URL='https://codex.hiyo.top/antigravity'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
+按钮 Claude Code -> "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://codex.hiyo.top/antigravity\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+按钮 Gemini CLI -> "export GOOGLE_GEMINI_BASE_URL='https://codex.hiyo.top/antigravity'\\nexport GEMINI_API_KEY='sk-SECRET-1234567890abcdef'"
+按钮 Gemini CLI -> "GOOGLE_GEMINI_BASE_URL='https://codex.hiyo.top/antigravity'\\nGEMINI_API_KEY='sk-SECRET-1234567890abcdef'"
+代码页签 = ["claude","gemini"]
+## manual-tab-claude
+按钮 manual-code-claude-bash -> "export ANTHROPIC_BASE_URL='https://codex.hiyo.top/antigravity'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'\\nclaude -p 'Hello'"
+按钮 manual-code-claude-windows -> "$env:ANTHROPIC_BASE_URL = 'https://codex.hiyo.top/antigravity'\\n$env:ANTHROPIC_AUTH_TOKEN = 'sk-SECRET-1234567890abcdef'\\nclaude -p 'Hello'"
+## manual-tab-gemini
+按钮 manual-code-gemini-bash -> "export GOOGLE_GEMINI_BASE_URL='https://codex.hiyo.top/antigravity'\\nexport GEMINI_API_KEY='sk-SECRET-1234567890abcdef'\\ngemini -m gemini-3-pro -p 'Hello'"
+按钮 manual-code-gemini-windows -> "$env:GOOGLE_GEMINI_BASE_URL = 'https://codex.hiyo.top/antigravity'\\n$env:GEMINI_API_KEY = 'sk-SECRET-1234567890abcdef'\\ngemini -m gemini-3-pro -p 'Hello'""
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'gemini' > ai 页签 1`] = `
@@ -1382,53 +1548,96 @@ copy-opencode-windows -> <2171 字符 sha1:b3081f9bcd06 开头:"& {\\n$ErrorActi
 exports[`KeyOnboardingModal 页签快照 > 'gemini' > manual 页签 1`] = `
 "### DOM
 <div aria-labelledby="onboarding-N-tab-manual" class="onb-card space-y-5" data-test="panel-manual" id="onboarding-N-panel-manual" role="tabpanel">
- <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
-  <table class="w-full text-sm">
-   <tbody>
-    <tr class="">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "Endpoint"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://codex.hiyo.top"
-       <button class="copy-btn shrink-0" type="button">
+ <div class="grid gap-3" data-test="manual-lines">
+  <div class="line-card" data-test="manual-line-0">
+   <div class="flex items-center gap-2">
+    <span class="line-name">
+     "Default"
+    <!--v-if-->
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "OpenAI-compatible endpoint"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://codex.hiyo.top/v1"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-v1" type="button">
+      "Copy"
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "Endpoint"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://codex.hiyo.top"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-base" type="button">
+      "Copy"
+   <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-line-note" id="manual-5-line-note-0">
+    "Enter this address in your client."
+ <div class="line-row" data-test="manual-key">
+  <span class="shrink-0 text-sm text-gray-600 dark:text-dark-400">
+   "API Key"
+  <code class="min-w-0 flex-1 truncate font-mono text-sm tabular-nums text-gray-900 dark:text-gray-100">
+   "sk-SEC…cdef"
+  <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-key" type="button">
+   "Copy"
+ <section class="space-y-3" data-test="manual-code">
+  <div aria-label="Code examples" class="flex flex-wrap gap-2" role="radiogroup">
+   <button aria-checked="true" class="onb-chip onb-chip-active" data-test="manual-tab-openai" role="radio" type="button">
+    "OpenAI SDK"
+   <button aria-checked="false" class="onb-chip" data-test="manual-tab-curl" role="radio" type="button">
+    "curl"
+   <button aria-checked="false" class="onb-chip" data-test="manual-tab-gemini" role="radio" type="button">
+    "Gemini"
+  <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-key-state">
+   "Your key is filled in below"
+  <div class="space-y-2">
+   <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800" data-test="manual-code-openai-python">
+    <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+     <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+      "Python"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+      <span class="text-xs">
+       "Copy"
+    <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+     "# pip install openai\\nfrom openai import OpenAI\\n\\nclient = OpenAI(\\n    base_url=\\"https://codex.hiyo.top/v1\\",\\n    api_key=\\"sk-SECRET-1234567890abcdef\\",\\n)\\n\\nresp = client.chat.completions.create(\\n    model=\\"gemini-3-pro\\",\\n    messages=[{\\"role\\": \\"user\\", \\"content\\": \\"Hello\\"}],\\n)\\nprint(resp.choices[0].message.content)"
+ <div>
+  <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
+   "Save it in a config file"
+  <div class="space-y-2">
+   <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+    <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+     "Gemini CLI"
+    <div class="mt-3 space-y-2">
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "Environment variables"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
         <span class="text-xs">
          "Copy"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "OpenAI-compatible endpoint"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://codex.hiyo.top/v1"
-       <button class="copy-btn shrink-0" type="button">
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "export GOOGLE_GEMINI_BASE_URL='https://codex.hiyo.top'\\nexport GEMINI_API_KEY='sk-SECRET-1234567890abcdef'"
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "~/.gemini/.env"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
         <span class="text-xs">
          "Copy"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "API Key"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "sk-SEC…cdef"
-       <button class="copy-btn shrink-0" type="button">
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "GOOGLE_GEMINI_BASE_URL='https://codex.hiyo.top'\\nGEMINI_API_KEY='sk-SECRET-1234567890abcdef'"
+   <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+    <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+     "OpenCode"
+    <div class="mt-3 space-y-2">
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "~/.config/opencode/opencode.json"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
         <span class="text-xs">
          "Copy"
- <div class="space-y-2">
-  <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
-   <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
-    "Gemini CLI"
-   <div class="mt-3 space-y-2">
-    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-     <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-      <span class="text-xs text-gray-500 dark:text-dark-400">
-       "Environment variables"
-      <button class="copy-btn" type="button">
-       <span class="text-xs">
-        "Copy"
-     <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-      "export GOOGLE_GEMINI_BASE_URL='https://codex.hiyo.top'\\nexport GEMINI_API_KEY='sk-SECRET-1234567890abcdef'"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "{\\n  \\"$schema\\": \\"https://opencode.ai/config.json\\",\\n  \\"provider\\": {\\n    \\"google\\": {\\n      \\"options\\": {\\n        \\"baseURL\\": \\"https://codex.hiyo.top/v1beta\\",\\n        \\"apiKey\\": \\"sk-SECRET-1234567890abcdef\\"\\n      }\\n    }\\n  }\\n}"
  <div>
   <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
    "If it will not connect"
@@ -1443,12 +1652,25 @@ exports[`KeyOnboardingModal 页签快照 > 'gemini' > manual 页签 1`] = `
     "Check that your network or proxy can reach the endpoint, and update the client if it is old."
  <a class="inline-flex text-sm font-medium text-primary-700 hover:underline dark:text-primary-400" href="https://docs.example.com" rel="noopener noreferrer" target="_blank">
   "View docs"
+ <p class="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-dark-700 dark:text-dark-400" data-test="manual-footer">
+  "Keep your key safe. Anyone who has it can spend your balance or plan."
 
 ### 复制与链接
-按钮 0 (Endpoint) -> "https://codex.hiyo.top"
-按钮 1 (OpenAI-compatible endpoint) -> "https://codex.hiyo.top/v1"
-按钮 2 (API Key) -> "sk-SECRET-1234567890abcdef"
-按钮 3 (Gemini CLI) -> "export GOOGLE_GEMINI_BASE_URL='https://codex.hiyo.top'\\nexport GEMINI_API_KEY='sk-SECRET-1234567890abcdef'""
+按钮 copy-line-0-v1 -> "https://codex.hiyo.top/v1"
+按钮 copy-line-0-base -> "https://codex.hiyo.top"
+按钮 copy-key -> "sk-SECRET-1234567890abcdef"
+按钮 Gemini CLI -> "export GOOGLE_GEMINI_BASE_URL='https://codex.hiyo.top'\\nexport GEMINI_API_KEY='sk-SECRET-1234567890abcdef'"
+按钮 Gemini CLI -> "GOOGLE_GEMINI_BASE_URL='https://codex.hiyo.top'\\nGEMINI_API_KEY='sk-SECRET-1234567890abcdef'"
+按钮 OpenCode -> "{\\n  \\"$schema\\": \\"https://opencode.ai/config.json\\",\\n  \\"provider\\": {\\n    \\"google\\": {\\n      \\"options\\": {\\n        \\"baseURL\\": \\"https://codex.hiyo.top/v1beta\\",\\n        \\"apiKey\\": \\"sk-SECRET-1234567890abcdef\\"\\n      }\\n    }\\n  }\\n}"
+代码页签 = ["openai","curl","gemini"]
+## manual-tab-openai
+按钮 manual-code-openai-python -> "# pip install openai\\nfrom openai import OpenAI\\n\\nclient = OpenAI(\\n    base_url=\\"https://codex.hiyo.top/v1\\",\\n    api_key=\\"sk-SECRET-1234567890abcdef\\",\\n)\\n\\nresp = client.chat.completions.create(\\n    model=\\"gemini-3-pro\\",\\n    messages=[{\\"role\\": \\"user\\", \\"content\\": \\"Hello\\"}],\\n)\\nprint(resp.choices[0].message.content)"
+## manual-tab-curl
+按钮 manual-code-curl-bash -> "curl https://codex.hiyo.top/v1/chat/completions \\\\\\n  -H 'Authorization: Bearer sk-SECRET-1234567890abcdef' \\\\\\n  -H 'Content-Type: application/json' \\\\\\n  -d '{\\"model\\":\\"gemini-3-pro\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hello\\"}]}'"
+按钮 manual-code-curl-windows -> "@'\\n{\\"model\\":\\"gemini-3-pro\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hello\\"}]}\\n'@ | curl.exe https://codex.hiyo.top/v1/chat/completions -H 'Authorization: Bearer sk-SECRET-1234567890abcdef' -H 'Content-Type: application/json' -d '@-'"
+## manual-tab-gemini
+按钮 manual-code-gemini-bash -> "export GOOGLE_GEMINI_BASE_URL='https://codex.hiyo.top'\\nexport GEMINI_API_KEY='sk-SECRET-1234567890abcdef'\\ngemini -m gemini-3-pro -p 'Hello'"
+按钮 manual-code-gemini-windows -> "$env:GOOGLE_GEMINI_BASE_URL = 'https://codex.hiyo.top'\\n$env:GEMINI_API_KEY = 'sk-SECRET-1234567890abcdef'\\ngemini -m gemini-3-pro -p 'Hello'""
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > ai 页签 1`] = `
@@ -1995,24 +2217,7 @@ exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > manu
      "Connect "my-key" to your client"
     <code class="font-mono text-xs tabular-nums text-gray-500 dark:text-dark-400">
      "sk-SEC…cdef"
-   <div class="onb-lines" data-test="endpoints">
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-     <span class="onb-lines-label" id="onboarding-N-endpoints-label">
-      "API Endpoints"
-     <div aria-describedby="onboarding-N-endpoints-hint" aria-labelledby="onboarding-N-endpoints-label" class="flex flex-wrap gap-2" role="radiogroup">
-      <label class="onb-chip onb-line">
-       <input class="sr-only" data-test="endpoint-default" name="onboarding-N-endpoint" type="radio" value="default" :checked=false>
-       "Default"
-      <label class="onb-chip onb-line onb-chip-active">
-       <input class="sr-only" data-test="endpoint-https://cdn.example.com" name="onboarding-N-endpoint" type="radio" value="https://cdn.example.com" :checked=true>
-       "CDN 加速"
-    <p class="onb-lines-detail" data-test="endpoint-detail">
-     <span class="text-gray-600 dark:text-dark-300">
-      "国内访问更快"
-     <code class="font-mono tabular-nums">
-      "https://cdn.example.com"
-    <p class="onb-lines-hint" id="onboarding-N-endpoints-hint">
-     "If access is slow, switch to another API endpoint. Your API key works with all of them."
+   <!--v-if-->
    <div class="flex flex-wrap gap-1 border-b border-gray-200 pb-3 dark:border-dark-700" role="tablist">
     <button aria-controls="onboarding-N-panel-install" aria-selected="false" class="onb-tab" data-test="tab-install" id="onboarding-N-tab-install" role="tab" tabindex="-1" type="button">
      <svg aria-hidden="true" class="h-4 w-4" fill="none" stroke-width="1.5" stroke="currentColor" viewBox="0 0 24 24">
@@ -2035,75 +2240,141 @@ exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > manu
      <span>
       "Manual"
    <div aria-labelledby="onboarding-N-tab-manual" class="onb-card space-y-5" data-test="panel-manual" id="onboarding-N-panel-manual" role="tabpanel">
-    <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
-     <table class="w-full text-sm">
-      <tbody>
-       <tr class="">
-        <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-         "Endpoint"
-        <td class="px-4 py-2.5">
-         <div class="flex items-center gap-2">
-          <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-           "https://cdn.example.com"
-          <button class="copy-btn shrink-0" type="button">
-           <span class="text-xs">
-            "Copy"
-       <tr class="border-t border-gray-100 dark:border-dark-800">
-        <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-         "OpenAI-compatible endpoint"
-        <td class="px-4 py-2.5">
-         <div class="flex items-center gap-2">
-          <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-           "https://cdn.example.com/v1"
-          <button class="copy-btn shrink-0" type="button">
-           <span class="text-xs">
-            "Copy"
-       <tr class="border-t border-gray-100 dark:border-dark-800">
-        <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-         "API Key"
-        <td class="px-4 py-2.5">
-         <div class="flex items-center gap-2">
-          <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-           "sk-SEC…cdef"
-          <button class="copy-btn shrink-0" type="button">
-           <span class="text-xs">
-            "Copy"
-    <div class="space-y-2">
-     <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
-      <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
-       "Codex CLI"
-      <div class="mt-3 space-y-2">
-       <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-        <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-         <span class="font-mono text-xs text-gray-500 dark:text-dark-400">
-          "~/.codex/config.toml"
-         <button class="copy-btn" type="button">
-          <span class="text-xs">
-           "Copy"
-        <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-         "model_provider = \\"hiyo\\"\\nmodel = \\"gpt-5.6-sol\\"\\n\\n[model_providers.hiyo]\\nname = \\"Hiyo\\"\\nbase_url = \\"https://cdn.example.com/v1\\"\\nwire_api = \\"responses\\"\\nrequires_openai_auth = false\\nexperimental_bearer_token = \\"sk-SECRET-1234567890abcdef\\""
-     <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
-      <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+    <div aria-label="API Endpoints" class="grid gap-3 sm:grid-cols-2" data-test="manual-lines" role="radiogroup">
+     <div class="line-card line-card-pick" data-test="manual-line-0">
+      <div class="flex items-center gap-2">
+       <label class="line-pick">
+        <input aria-describedby="manual-2-line-note-0" class="sr-only" data-test="manual-line-radio-0" name="manual-2-line" type="radio" value="default" :checked=false>
+        <span aria-hidden="true" class="line-dot">
+        <span class="line-name">
+         "Default"
+       <!--v-if-->
+      <div class="space-y-1">
+       <p class="text-xs text-gray-500 dark:text-dark-400">
+        "OpenAI-compatible endpoint"
+       <div class="flex items-center gap-2">
+        <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+         "https://api.example.com/v1"
+        <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-v1" type="button">
+         "Copy"
+      <div class="space-y-1">
+       <p class="text-xs text-gray-500 dark:text-dark-400">
+        "Endpoint"
+       <div class="flex items-center gap-2">
+        <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+         "https://api.example.com"
+        <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-base" type="button">
+         "Copy"
+      <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-line-note" id="manual-2-line-note-0">
+       "Enter this address in your client."
+     <div class="line-card line-card-pick line-card-active" data-test="manual-line-1">
+      <div class="flex items-center gap-2">
+       <label class="line-pick">
+        <input aria-describedby="manual-2-line-note-1" checked="" class="sr-only" data-test="manual-line-radio-1" name="manual-2-line" type="radio" value="https://cdn.example.com" :checked=true>
+        <span aria-hidden="true" class="line-dot">
+        <span class="line-name">
+         "CDN 加速"
+       <span class="ml-auto text-xs text-gray-500 dark:text-dark-400">
+        "Used in the code below"
+      <div class="space-y-1">
+       <p class="text-xs text-gray-500 dark:text-dark-400">
+        "OpenAI-compatible endpoint"
+       <div class="flex items-center gap-2">
+        <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+         "https://cdn.example.com/v1"
+        <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-1-v1" type="button">
+         "Copy"
+      <div class="space-y-1">
+       <p class="text-xs text-gray-500 dark:text-dark-400">
+        "Endpoint"
+       <div class="flex items-center gap-2">
+        <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+         "https://cdn.example.com"
+        <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-1-base" type="button">
+         "Copy"
+      <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-line-note" id="manual-2-line-note-1">
+       "国内访问更快"
+    <div class="line-row" data-test="manual-key">
+     <span class="shrink-0 text-sm text-gray-600 dark:text-dark-400">
+      "API Key"
+     <code class="min-w-0 flex-1 truncate font-mono text-sm tabular-nums text-gray-900 dark:text-gray-100">
+      "sk-SEC…cdef"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-key" type="button">
+      "Copy"
+    <section class="space-y-3" data-test="manual-code">
+     <div aria-label="Code examples" class="flex flex-wrap gap-2" role="radiogroup">
+      <button aria-checked="true" class="onb-chip onb-chip-active" data-test="manual-tab-openai" role="radio" type="button">
+       "OpenAI SDK"
+      <button aria-checked="false" class="onb-chip" data-test="manual-tab-curl" role="radio" type="button">
+       "curl"
+      <button aria-checked="false" class="onb-chip" data-test="manual-tab-codex" role="radio" type="button">
+       "Codex"
+      <button aria-checked="false" class="onb-chip" data-test="manual-tab-claude" role="radio" type="button">
        "Claude Code"
-      <div class="mt-3 space-y-2">
-       <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-        <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-         <span class="text-xs text-gray-500 dark:text-dark-400">
-          "Environment variables"
-         <button class="copy-btn" type="button">
-          <span class="text-xs">
-           "Copy"
-        <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-         "export ANTHROPIC_BASE_URL='https://cdn.example.com'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
-       <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-        <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-         <span class="font-mono text-xs text-gray-500 dark:text-dark-400">
-          "~/.claude/settings.json"
-         <button class="copy-btn" type="button">
-          <span class="text-xs">
-           "Copy"
-        <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-         "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://cdn.example.com\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+     <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-key-state">
+      "Your key is filled in below"
+     <div class="space-y-2">
+      <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800" data-test="manual-code-openai-python">
+       <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+        <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+         "Python"
+        <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+         <span class="text-xs">
+          "Copy"
+       <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+        "# pip install openai\\nfrom openai import OpenAI\\n\\nclient = OpenAI(\\n    base_url=\\"https://cdn.example.com/v1\\",\\n    api_key=\\"sk-SECRET-1234567890abcdef\\",\\n)\\n\\nresp = client.chat.completions.create(\\n    model=\\"gpt-5.6-sol\\",\\n    messages=[{\\"role\\": \\"user\\", \\"content\\": \\"Hello\\"}],\\n)\\nprint(resp.choices[0].message.content)"
+    <div>
+     <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
+      "Save it in a config file"
+     <div class="space-y-2">
+      <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+       <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+        "Codex CLI"
+       <div class="mt-3 space-y-2">
+        <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+         <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+          <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+           "~/.codex/config.toml"
+          <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+           <span class="text-xs">
+            "Copy"
+         <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+          "model_provider = \\"hiyo\\"\\nmodel = \\"gpt-5.6-sol\\"\\n\\n[model_providers.hiyo]\\nname = \\"Hiyo\\"\\nbase_url = \\"https://cdn.example.com/v1\\"\\nwire_api = \\"responses\\"\\nrequires_openai_auth = false\\nexperimental_bearer_token = \\"sk-SECRET-1234567890abcdef\\""
+      <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+       <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+        "Claude Code"
+       <div class="mt-3 space-y-2">
+        <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+         <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+          <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+           "Environment variables"
+          <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+           <span class="text-xs">
+            "Copy"
+         <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+          "export ANTHROPIC_BASE_URL='https://cdn.example.com'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
+        <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+         <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+          <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+           "~/.claude/settings.json"
+          <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+           <span class="text-xs">
+            "Copy"
+         <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+          "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://cdn.example.com\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+      <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+       <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+        "OpenCode"
+       <div class="mt-3 space-y-2">
+        <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+         <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+          <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+           "~/.config/opencode/opencode.json"
+          <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+           <span class="text-xs">
+            "Copy"
+         <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+          "{\\n  \\"$schema\\": \\"https://opencode.ai/config.json\\",\\n  \\"provider\\": {\\n    \\"openai\\": {\\n      \\"options\\": {\\n        \\"baseURL\\": \\"https://cdn.example.com/v1\\",\\n        \\"apiKey\\": \\"sk-SECRET-1234567890abcdef\\"\\n      }\\n    }\\n  }\\n}"
     <div>
      <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
       "If it will not connect"
@@ -2117,80 +2388,148 @@ exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > manu
       <li>
        "Check that your network or proxy can reach the endpoint, and update the client if it is old."
     <!--v-if-->
+    <p class="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-dark-700 dark:text-dark-400" data-test="manual-footer">
+     "Keep your key safe. Anyone who has it can spend your balance or plan."
 
 ### 复制第一个按钮后的播报区与内容区
 <p aria-live="polite" class="sr-only" data-test="copy-status" role="status">
  "Copied"
 <div aria-labelledby="onboarding-N-tab-manual" class="onb-card space-y-5" data-test="panel-manual" id="onboarding-N-panel-manual" role="tabpanel">
- <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
-  <table class="w-full text-sm">
-   <tbody>
-    <tr class="">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "Endpoint"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://cdn.example.com"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copied"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "OpenAI-compatible endpoint"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://cdn.example.com/v1"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copy"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "API Key"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "sk-SEC…cdef"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copy"
- <div class="space-y-2">
-  <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
-   <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
-    "Codex CLI"
-   <div class="mt-3 space-y-2">
-    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-     <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-      <span class="font-mono text-xs text-gray-500 dark:text-dark-400">
-       "~/.codex/config.toml"
-      <button class="copy-btn" type="button">
-       <span class="text-xs">
-        "Copy"
-     <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-      "model_provider = \\"hiyo\\"\\nmodel = \\"gpt-5.6-sol\\"\\n\\n[model_providers.hiyo]\\nname = \\"Hiyo\\"\\nbase_url = \\"https://cdn.example.com/v1\\"\\nwire_api = \\"responses\\"\\nrequires_openai_auth = false\\nexperimental_bearer_token = \\"sk-SECRET-1234567890abcdef\\""
-  <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
-   <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+ <div aria-label="API Endpoints" class="grid gap-3 sm:grid-cols-2" data-test="manual-lines" role="radiogroup">
+  <div class="line-card line-card-pick" data-test="manual-line-0">
+   <div class="flex items-center gap-2">
+    <label class="line-pick">
+     <input aria-describedby="manual-2-line-note-0" class="sr-only" data-test="manual-line-radio-0" name="manual-2-line" type="radio" value="default" :checked=false>
+     <span aria-hidden="true" class="line-dot">
+     <span class="line-name">
+      "Default"
+    <!--v-if-->
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "OpenAI-compatible endpoint"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://api.example.com/v1"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white !text-primary-700 dark:!text-primary-400" data-test="copy-line-0-v1" type="button">
+      "Copied"
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "Endpoint"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://api.example.com"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-base" type="button">
+      "Copy"
+   <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-line-note" id="manual-2-line-note-0">
+    "Enter this address in your client."
+  <div class="line-card line-card-pick line-card-active" data-test="manual-line-1">
+   <div class="flex items-center gap-2">
+    <label class="line-pick">
+     <input aria-describedby="manual-2-line-note-1" checked="" class="sr-only" data-test="manual-line-radio-1" name="manual-2-line" type="radio" value="https://cdn.example.com" :checked=true>
+     <span aria-hidden="true" class="line-dot">
+     <span class="line-name">
+      "CDN 加速"
+    <span class="ml-auto text-xs text-gray-500 dark:text-dark-400">
+     "Used in the code below"
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "OpenAI-compatible endpoint"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://cdn.example.com/v1"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-1-v1" type="button">
+      "Copy"
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "Endpoint"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://cdn.example.com"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-1-base" type="button">
+      "Copy"
+   <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-line-note" id="manual-2-line-note-1">
+    "国内访问更快"
+ <div class="line-row" data-test="manual-key">
+  <span class="shrink-0 text-sm text-gray-600 dark:text-dark-400">
+   "API Key"
+  <code class="min-w-0 flex-1 truncate font-mono text-sm tabular-nums text-gray-900 dark:text-gray-100">
+   "sk-SEC…cdef"
+  <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-key" type="button">
+   "Copy"
+ <section class="space-y-3" data-test="manual-code">
+  <div aria-label="Code examples" class="flex flex-wrap gap-2" role="radiogroup">
+   <button aria-checked="true" class="onb-chip onb-chip-active" data-test="manual-tab-openai" role="radio" type="button">
+    "OpenAI SDK"
+   <button aria-checked="false" class="onb-chip" data-test="manual-tab-curl" role="radio" type="button">
+    "curl"
+   <button aria-checked="false" class="onb-chip" data-test="manual-tab-codex" role="radio" type="button">
+    "Codex"
+   <button aria-checked="false" class="onb-chip" data-test="manual-tab-claude" role="radio" type="button">
     "Claude Code"
-   <div class="mt-3 space-y-2">
-    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-     <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-      <span class="text-xs text-gray-500 dark:text-dark-400">
-       "Environment variables"
-      <button class="copy-btn" type="button">
-       <span class="text-xs">
-        "Copy"
-     <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-      "export ANTHROPIC_BASE_URL='https://cdn.example.com'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
-    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-     <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-      <span class="font-mono text-xs text-gray-500 dark:text-dark-400">
-       "~/.claude/settings.json"
-      <button class="copy-btn" type="button">
-       <span class="text-xs">
-        "Copy"
-     <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-      "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://cdn.example.com\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+  <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-key-state">
+   "Your key is filled in below"
+  <div class="space-y-2">
+   <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800" data-test="manual-code-openai-python">
+    <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+     <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+      "Python"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+      <span class="text-xs">
+       "Copy"
+    <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+     "# pip install openai\\nfrom openai import OpenAI\\n\\nclient = OpenAI(\\n    base_url=\\"https://cdn.example.com/v1\\",\\n    api_key=\\"sk-SECRET-1234567890abcdef\\",\\n)\\n\\nresp = client.chat.completions.create(\\n    model=\\"gpt-5.6-sol\\",\\n    messages=[{\\"role\\": \\"user\\", \\"content\\": \\"Hello\\"}],\\n)\\nprint(resp.choices[0].message.content)"
+ <div>
+  <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
+   "Save it in a config file"
+  <div class="space-y-2">
+   <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+    <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+     "Codex CLI"
+    <div class="mt-3 space-y-2">
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "~/.codex/config.toml"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+        <span class="text-xs">
+         "Copy"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "model_provider = \\"hiyo\\"\\nmodel = \\"gpt-5.6-sol\\"\\n\\n[model_providers.hiyo]\\nname = \\"Hiyo\\"\\nbase_url = \\"https://cdn.example.com/v1\\"\\nwire_api = \\"responses\\"\\nrequires_openai_auth = false\\nexperimental_bearer_token = \\"sk-SECRET-1234567890abcdef\\""
+   <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+    <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+     "Claude Code"
+    <div class="mt-3 space-y-2">
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "Environment variables"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+        <span class="text-xs">
+         "Copy"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "export ANTHROPIC_BASE_URL='https://cdn.example.com'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "~/.claude/settings.json"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+        <span class="text-xs">
+         "Copy"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://cdn.example.com\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+   <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+    <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+     "OpenCode"
+    <div class="mt-3 space-y-2">
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "~/.config/opencode/opencode.json"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+        <span class="text-xs">
+         "Copy"
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "{\\n  \\"$schema\\": \\"https://opencode.ai/config.json\\",\\n  \\"provider\\": {\\n    \\"openai\\": {\\n      \\"options\\": {\\n        \\"baseURL\\": \\"https://cdn.example.com/v1\\",\\n        \\"apiKey\\": \\"sk-SECRET-1234567890abcdef\\"\\n      }\\n    }\\n  }\\n}"
  <div>
   <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
    "If it will not connect"
@@ -2204,14 +2543,31 @@ exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > manu
    <li>
     "Check that your network or proxy can reach the endpoint, and update the client if it is old."
  <!--v-if-->
+ <p class="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-dark-700 dark:text-dark-400" data-test="manual-footer">
+  "Keep your key safe. Anyone who has it can spend your balance or plan."
 
 ### 复制与链接
-按钮 0 (Endpoint) -> "https://cdn.example.com"
-按钮 1 (OpenAI-compatible endpoint) -> "https://cdn.example.com/v1"
-按钮 2 (API Key) -> "sk-SECRET-1234567890abcdef"
-按钮 3 (Codex CLI) -> "model_provider = \\"hiyo\\"\\nmodel = \\"gpt-5.6-sol\\"\\n\\n[model_providers.hiyo]\\nname = \\"Hiyo\\"\\nbase_url = \\"https://cdn.example.com/v1\\"\\nwire_api = \\"responses\\"\\nrequires_openai_auth = false\\nexperimental_bearer_token = \\"sk-SECRET-1234567890abcdef\\""
-按钮 4 (Claude Code) -> "export ANTHROPIC_BASE_URL='https://cdn.example.com'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
-按钮 5 (Claude Code) -> "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://cdn.example.com\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}""
+按钮 copy-line-0-v1 -> "https://api.example.com/v1"
+按钮 copy-line-0-base -> "https://api.example.com"
+按钮 copy-line-1-v1 -> "https://cdn.example.com/v1"
+按钮 copy-line-1-base -> "https://cdn.example.com"
+按钮 copy-key -> "sk-SECRET-1234567890abcdef"
+按钮 Codex CLI -> "model_provider = \\"hiyo\\"\\nmodel = \\"gpt-5.6-sol\\"\\n\\n[model_providers.hiyo]\\nname = \\"Hiyo\\"\\nbase_url = \\"https://cdn.example.com/v1\\"\\nwire_api = \\"responses\\"\\nrequires_openai_auth = false\\nexperimental_bearer_token = \\"sk-SECRET-1234567890abcdef\\""
+按钮 Claude Code -> "export ANTHROPIC_BASE_URL='https://cdn.example.com'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'"
+按钮 Claude Code -> "{\\n  \\"env\\": {\\n    \\"ANTHROPIC_BASE_URL\\": \\"https://cdn.example.com\\",\\n    \\"ANTHROPIC_AUTH_TOKEN\\": \\"sk-SECRET-1234567890abcdef\\"\\n  }\\n}"
+按钮 OpenCode -> "{\\n  \\"$schema\\": \\"https://opencode.ai/config.json\\",\\n  \\"provider\\": {\\n    \\"openai\\": {\\n      \\"options\\": {\\n        \\"baseURL\\": \\"https://cdn.example.com/v1\\",\\n        \\"apiKey\\": \\"sk-SECRET-1234567890abcdef\\"\\n      }\\n    }\\n  }\\n}"
+代码页签 = ["openai","curl","codex","claude"]
+## manual-tab-openai
+按钮 manual-code-openai-python -> "# pip install openai\\nfrom openai import OpenAI\\n\\nclient = OpenAI(\\n    base_url=\\"https://cdn.example.com/v1\\",\\n    api_key=\\"sk-SECRET-1234567890abcdef\\",\\n)\\n\\nresp = client.chat.completions.create(\\n    model=\\"gpt-5.6-sol\\",\\n    messages=[{\\"role\\": \\"user\\", \\"content\\": \\"Hello\\"}],\\n)\\nprint(resp.choices[0].message.content)"
+## manual-tab-curl
+按钮 manual-code-curl-bash -> "curl https://cdn.example.com/v1/chat/completions \\\\\\n  -H 'Authorization: Bearer sk-SECRET-1234567890abcdef' \\\\\\n  -H 'Content-Type: application/json' \\\\\\n  -d '{\\"model\\":\\"gpt-5.6-sol\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hello\\"}]}'"
+按钮 manual-code-curl-windows -> "@'\\n{\\"model\\":\\"gpt-5.6-sol\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hello\\"}]}\\n'@ | curl.exe https://cdn.example.com/v1/chat/completions -H 'Authorization: Bearer sk-SECRET-1234567890abcdef' -H 'Content-Type: application/json' -d '@-'"
+## manual-tab-codex
+按钮 manual-code-codex-bash -> "export OPENAI_API_KEY='sk-SECRET-1234567890abcdef'\\ncodex exec --skip-git-repo-check -m gpt-5.6-sol \\\\\\n  -c model_provider=hiyo \\\\\\n  -c model_providers.hiyo.name=Hiyo \\\\\\n  -c model_providers.hiyo.base_url=https://cdn.example.com/v1 \\\\\\n  -c model_providers.hiyo.env_key=OPENAI_API_KEY \\\\\\n  -c model_providers.hiyo.wire_api=responses \\\\\\n  'Hello'"
+按钮 manual-code-codex-windows -> "$env:OPENAI_API_KEY = 'sk-SECRET-1234567890abcdef'\\ncodex exec --skip-git-repo-check -m gpt-5.6-sol -c model_provider=hiyo -c model_providers.hiyo.name=Hiyo -c model_providers.hiyo.base_url=https://cdn.example.com/v1 -c model_providers.hiyo.env_key=OPENAI_API_KEY -c model_providers.hiyo.wire_api=responses 'Hello'"
+## manual-tab-claude
+按钮 manual-code-claude-bash -> "export ANTHROPIC_BASE_URL='https://cdn.example.com'\\nexport ANTHROPIC_AUTH_TOKEN='sk-SECRET-1234567890abcdef'\\nclaude -p 'Hello'"
+按钮 manual-code-claude-windows -> "$env:ANTHROPIC_BASE_URL = 'https://cdn.example.com'\\n$env:ANTHROPIC_AUTH_TOKEN = 'sk-SECRET-1234567890abcdef'\\nclaude -p 'Hello'""
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'openai' > ai 页签 1`] = `
@@ -2653,53 +3009,79 @@ exports[`KeyOnboardingModal 页签快照 > 'openai' > manual 页签 1`] = `
      <span>
       "Manual"
    <div aria-labelledby="onboarding-N-tab-manual" class="onb-card space-y-5" data-test="panel-manual" id="onboarding-N-panel-manual" role="tabpanel">
-    <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
-     <table class="w-full text-sm">
-      <tbody>
-       <tr class="">
-        <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-         "Endpoint"
-        <td class="px-4 py-2.5">
-         <div class="flex items-center gap-2">
-          <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-           "https://codex.hiyo.top"
-          <button class="copy-btn shrink-0" type="button">
+    <div class="grid gap-3" data-test="manual-lines">
+     <div class="line-card" data-test="manual-line-0">
+      <div class="flex items-center gap-2">
+       <span class="line-name">
+        "Default"
+       <!--v-if-->
+      <div class="space-y-1">
+       <p class="text-xs text-gray-500 dark:text-dark-400">
+        "OpenAI-compatible endpoint"
+       <div class="flex items-center gap-2">
+        <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+         "https://codex.hiyo.top/v1"
+        <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-v1" type="button">
+         "Copy"
+      <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-line-note" id="manual-1-line-note-0">
+       "Enter this address in your client."
+    <div class="line-row" data-test="manual-key">
+     <span class="shrink-0 text-sm text-gray-600 dark:text-dark-400">
+      "API Key"
+     <code class="min-w-0 flex-1 truncate font-mono text-sm tabular-nums text-gray-900 dark:text-gray-100">
+      "sk-SEC…cdef"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-key" type="button">
+      "Copy"
+    <section class="space-y-3" data-test="manual-code">
+     <div aria-label="Code examples" class="flex flex-wrap gap-2" role="radiogroup">
+      <button aria-checked="true" class="onb-chip onb-chip-active" data-test="manual-tab-openai" role="radio" type="button">
+       "OpenAI SDK"
+      <button aria-checked="false" class="onb-chip" data-test="manual-tab-curl" role="radio" type="button">
+       "curl"
+      <button aria-checked="false" class="onb-chip" data-test="manual-tab-codex" role="radio" type="button">
+       "Codex"
+     <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-key-state">
+      "Your key is filled in below"
+     <div class="space-y-2">
+      <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800" data-test="manual-code-openai-python">
+       <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+        <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+         "Python"
+        <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+         <span class="text-xs">
+          "Copy"
+       <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+        "# pip install openai\\nfrom openai import OpenAI\\n\\nclient = OpenAI(\\n    base_url=\\"https://codex.hiyo.top/v1\\",\\n    api_key=\\"sk-SECRET-1234567890abcdef\\",\\n)\\n\\nresp = client.chat.completions.create(\\n    model=\\"gpt-5.6-sol\\",\\n    messages=[{\\"role\\": \\"user\\", \\"content\\": \\"Hello\\"}],\\n)\\nprint(resp.choices[0].message.content)"
+    <div>
+     <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
+      "Save it in a config file"
+     <div class="space-y-2">
+      <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+       <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+        "Codex CLI"
+       <div class="mt-3 space-y-2">
+        <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+         <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+          <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+           "~/.codex/config.toml"
+          <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
            <span class="text-xs">
             "Copy"
-       <tr class="border-t border-gray-100 dark:border-dark-800">
-        <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-         "OpenAI-compatible endpoint"
-        <td class="px-4 py-2.5">
-         <div class="flex items-center gap-2">
-          <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-           "https://codex.hiyo.top/v1"
-          <button class="copy-btn shrink-0" type="button">
+         <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+          "model_provider = \\"hiyo\\"\\nmodel = \\"gpt-5.6-sol\\"\\n\\n[model_providers.hiyo]\\nname = \\"Hiyo\\"\\nbase_url = \\"https://codex.hiyo.top/v1\\"\\nwire_api = \\"responses\\"\\nrequires_openai_auth = false\\nexperimental_bearer_token = \\"sk-SECRET-1234567890abcdef\\""
+      <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+       <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+        "OpenCode"
+       <div class="mt-3 space-y-2">
+        <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+         <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+          <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+           "~/.config/opencode/opencode.json"
+          <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
            <span class="text-xs">
             "Copy"
-       <tr class="border-t border-gray-100 dark:border-dark-800">
-        <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-         "API Key"
-        <td class="px-4 py-2.5">
-         <div class="flex items-center gap-2">
-          <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-           "sk-SEC…cdef"
-          <button class="copy-btn shrink-0" type="button">
-           <span class="text-xs">
-            "Copy"
-    <div class="space-y-2">
-     <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
-      <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
-       "Codex CLI"
-      <div class="mt-3 space-y-2">
-       <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-        <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-         <span class="font-mono text-xs text-gray-500 dark:text-dark-400">
-          "~/.codex/config.toml"
-         <button class="copy-btn" type="button">
-          <span class="text-xs">
-           "Copy"
-        <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-         "model_provider = \\"hiyo\\"\\nmodel = \\"gpt-5.6-sol\\"\\n\\n[model_providers.hiyo]\\nname = \\"Hiyo\\"\\nbase_url = \\"https://codex.hiyo.top/v1\\"\\nwire_api = \\"responses\\"\\nrequires_openai_auth = false\\nexperimental_bearer_token = \\"sk-SECRET-1234567890abcdef\\""
+         <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+          "{\\n  \\"$schema\\": \\"https://opencode.ai/config.json\\",\\n  \\"provider\\": {\\n    \\"openai\\": {\\n      \\"options\\": {\\n        \\"baseURL\\": \\"https://codex.hiyo.top/v1\\",\\n        \\"apiKey\\": \\"sk-SECRET-1234567890abcdef\\"\\n      }\\n    }\\n  }\\n}"
     <div>
      <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
       "If it will not connect"
@@ -2714,58 +3096,86 @@ exports[`KeyOnboardingModal 页签快照 > 'openai' > manual 页签 1`] = `
        "Check that your network or proxy can reach the endpoint, and update the client if it is old."
     <a class="inline-flex text-sm font-medium text-primary-700 hover:underline dark:text-primary-400" href="https://docs.example.com" rel="noopener noreferrer" target="_blank">
      "View docs"
+    <p class="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-dark-700 dark:text-dark-400" data-test="manual-footer">
+     "Keep your key safe. Anyone who has it can spend your balance or plan."
 
 ### 复制第一个按钮后的播报区与内容区
 <p aria-live="polite" class="sr-only" data-test="copy-status" role="status">
  "Copied"
 <div aria-labelledby="onboarding-N-tab-manual" class="onb-card space-y-5" data-test="panel-manual" id="onboarding-N-panel-manual" role="tabpanel">
- <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
-  <table class="w-full text-sm">
-   <tbody>
-    <tr class="">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "Endpoint"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://codex.hiyo.top"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copied"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "OpenAI-compatible endpoint"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://codex.hiyo.top/v1"
-       <button class="copy-btn shrink-0" type="button">
+ <div class="grid gap-3" data-test="manual-lines">
+  <div class="line-card" data-test="manual-line-0">
+   <div class="flex items-center gap-2">
+    <span class="line-name">
+     "Default"
+    <!--v-if-->
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "OpenAI-compatible endpoint"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://codex.hiyo.top/v1"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white !text-primary-700 dark:!text-primary-400" data-test="copy-line-0-v1" type="button">
+      "Copied"
+   <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-line-note" id="manual-1-line-note-0">
+    "Enter this address in your client."
+ <div class="line-row" data-test="manual-key">
+  <span class="shrink-0 text-sm text-gray-600 dark:text-dark-400">
+   "API Key"
+  <code class="min-w-0 flex-1 truncate font-mono text-sm tabular-nums text-gray-900 dark:text-gray-100">
+   "sk-SEC…cdef"
+  <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-key" type="button">
+   "Copy"
+ <section class="space-y-3" data-test="manual-code">
+  <div aria-label="Code examples" class="flex flex-wrap gap-2" role="radiogroup">
+   <button aria-checked="true" class="onb-chip onb-chip-active" data-test="manual-tab-openai" role="radio" type="button">
+    "OpenAI SDK"
+   <button aria-checked="false" class="onb-chip" data-test="manual-tab-curl" role="radio" type="button">
+    "curl"
+   <button aria-checked="false" class="onb-chip" data-test="manual-tab-codex" role="radio" type="button">
+    "Codex"
+  <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-key-state">
+   "Your key is filled in below"
+  <div class="space-y-2">
+   <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800" data-test="manual-code-openai-python">
+    <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+     <span class="min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+      "Python"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
+      <span class="text-xs">
+       "Copy"
+    <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+     "# pip install openai\\nfrom openai import OpenAI\\n\\nclient = OpenAI(\\n    base_url=\\"https://codex.hiyo.top/v1\\",\\n    api_key=\\"sk-SECRET-1234567890abcdef\\",\\n)\\n\\nresp = client.chat.completions.create(\\n    model=\\"gpt-5.6-sol\\",\\n    messages=[{\\"role\\": \\"user\\", \\"content\\": \\"Hello\\"}],\\n)\\nprint(resp.choices[0].message.content)"
+ <div>
+  <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
+   "Save it in a config file"
+  <div class="space-y-2">
+   <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+    <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+     "Codex CLI"
+    <div class="mt-3 space-y-2">
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "~/.codex/config.toml"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
         <span class="text-xs">
          "Copy"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "API Key"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "sk-SEC…cdef"
-       <button class="copy-btn shrink-0" type="button">
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "model_provider = \\"hiyo\\"\\nmodel = \\"gpt-5.6-sol\\"\\n\\n[model_providers.hiyo]\\nname = \\"Hiyo\\"\\nbase_url = \\"https://codex.hiyo.top/v1\\"\\nwire_api = \\"responses\\"\\nrequires_openai_auth = false\\nexperimental_bearer_token = \\"sk-SECRET-1234567890abcdef\\""
+   <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
+    <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
+     "OpenCode"
+    <div class="mt-3 space-y-2">
+     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-1.5 dark:border-dark-700">
+       <span class="font-mono min-w-0 truncate text-xs text-gray-500 dark:text-dark-400">
+        "~/.config/opencode/opencode.json"
+       <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" type="button">
         <span class="text-xs">
          "Copy"
- <div class="space-y-2">
-  <details class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-dark-700 dark:bg-dark-800">
-   <summary class="cursor-pointer select-none text-sm font-medium text-gray-900 dark:text-white">
-    "Codex CLI"
-   <div class="mt-3 space-y-2">
-    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
-     <div class="flex items-center justify-between border-b border-gray-100 px-3 py-1.5 dark:border-dark-800">
-      <span class="font-mono text-xs text-gray-500 dark:text-dark-400">
-       "~/.codex/config.toml"
-      <button class="copy-btn" type="button">
-       <span class="text-xs">
-        "Copy"
-     <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
-      "model_provider = \\"hiyo\\"\\nmodel = \\"gpt-5.6-sol\\"\\n\\n[model_providers.hiyo]\\nname = \\"Hiyo\\"\\nbase_url = \\"https://codex.hiyo.top/v1\\"\\nwire_api = \\"responses\\"\\nrequires_openai_auth = false\\nexperimental_bearer_token = \\"sk-SECRET-1234567890abcdef\\""
+      <pre class="overflow-x-auto bg-gray-900 px-4 py-3 text-[13px] leading-relaxed text-gray-100 dark:bg-dark-950">
+       "{\\n  \\"$schema\\": \\"https://opencode.ai/config.json\\",\\n  \\"provider\\": {\\n    \\"openai\\": {\\n      \\"options\\": {\\n        \\"baseURL\\": \\"https://codex.hiyo.top/v1\\",\\n        \\"apiKey\\": \\"sk-SECRET-1234567890abcdef\\"\\n      }\\n    }\\n  }\\n}"
  <div>
   <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
    "If it will not connect"
@@ -2780,12 +3190,23 @@ exports[`KeyOnboardingModal 页签快照 > 'openai' > manual 页签 1`] = `
     "Check that your network or proxy can reach the endpoint, and update the client if it is old."
  <a class="inline-flex text-sm font-medium text-primary-700 hover:underline dark:text-primary-400" href="https://docs.example.com" rel="noopener noreferrer" target="_blank">
   "View docs"
+ <p class="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-dark-700 dark:text-dark-400" data-test="manual-footer">
+  "Keep your key safe. Anyone who has it can spend your balance or plan."
 
 ### 复制与链接
-按钮 0 (Endpoint) -> "https://codex.hiyo.top"
-按钮 1 (OpenAI-compatible endpoint) -> "https://codex.hiyo.top/v1"
-按钮 2 (API Key) -> "sk-SECRET-1234567890abcdef"
-按钮 3 (Codex CLI) -> "model_provider = \\"hiyo\\"\\nmodel = \\"gpt-5.6-sol\\"\\n\\n[model_providers.hiyo]\\nname = \\"Hiyo\\"\\nbase_url = \\"https://codex.hiyo.top/v1\\"\\nwire_api = \\"responses\\"\\nrequires_openai_auth = false\\nexperimental_bearer_token = \\"sk-SECRET-1234567890abcdef\\"""
+按钮 copy-line-0-v1 -> "https://codex.hiyo.top/v1"
+按钮 copy-key -> "sk-SECRET-1234567890abcdef"
+按钮 Codex CLI -> "model_provider = \\"hiyo\\"\\nmodel = \\"gpt-5.6-sol\\"\\n\\n[model_providers.hiyo]\\nname = \\"Hiyo\\"\\nbase_url = \\"https://codex.hiyo.top/v1\\"\\nwire_api = \\"responses\\"\\nrequires_openai_auth = false\\nexperimental_bearer_token = \\"sk-SECRET-1234567890abcdef\\""
+按钮 OpenCode -> "{\\n  \\"$schema\\": \\"https://opencode.ai/config.json\\",\\n  \\"provider\\": {\\n    \\"openai\\": {\\n      \\"options\\": {\\n        \\"baseURL\\": \\"https://codex.hiyo.top/v1\\",\\n        \\"apiKey\\": \\"sk-SECRET-1234567890abcdef\\"\\n      }\\n    }\\n  }\\n}"
+代码页签 = ["openai","curl","codex"]
+## manual-tab-openai
+按钮 manual-code-openai-python -> "# pip install openai\\nfrom openai import OpenAI\\n\\nclient = OpenAI(\\n    base_url=\\"https://codex.hiyo.top/v1\\",\\n    api_key=\\"sk-SECRET-1234567890abcdef\\",\\n)\\n\\nresp = client.chat.completions.create(\\n    model=\\"gpt-5.6-sol\\",\\n    messages=[{\\"role\\": \\"user\\", \\"content\\": \\"Hello\\"}],\\n)\\nprint(resp.choices[0].message.content)"
+## manual-tab-curl
+按钮 manual-code-curl-bash -> "curl https://codex.hiyo.top/v1/chat/completions \\\\\\n  -H 'Authorization: Bearer sk-SECRET-1234567890abcdef' \\\\\\n  -H 'Content-Type: application/json' \\\\\\n  -d '{\\"model\\":\\"gpt-5.6-sol\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hello\\"}]}'"
+按钮 manual-code-curl-windows -> "@'\\n{\\"model\\":\\"gpt-5.6-sol\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hello\\"}]}\\n'@ | curl.exe https://codex.hiyo.top/v1/chat/completions -H 'Authorization: Bearer sk-SECRET-1234567890abcdef' -H 'Content-Type: application/json' -d '@-'"
+## manual-tab-codex
+按钮 manual-code-codex-bash -> "export OPENAI_API_KEY='sk-SECRET-1234567890abcdef'\\ncodex exec --skip-git-repo-check -m gpt-5.6-sol \\\\\\n  -c model_provider=hiyo \\\\\\n  -c model_providers.hiyo.name=Hiyo \\\\\\n  -c model_providers.hiyo.base_url=https://codex.hiyo.top/v1 \\\\\\n  -c model_providers.hiyo.env_key=OPENAI_API_KEY \\\\\\n  -c model_providers.hiyo.wire_api=responses \\\\\\n  'Hello'"
+按钮 manual-code-codex-windows -> "$env:OPENAI_API_KEY = 'sk-SECRET-1234567890abcdef'\\ncodex exec --skip-git-repo-check -m gpt-5.6-sol -c model_provider=hiyo -c model_providers.hiyo.name=Hiyo -c model_providers.hiyo.base_url=https://codex.hiyo.top/v1 -c model_providers.hiyo.env_key=OPENAI_API_KEY -c model_providers.hiyo.wire_api=responses 'Hello'""
 `;
 
 exports[`KeyOnboardingModal 页签快照 > '未知平台' > ai 页签 1`] = `
@@ -2913,39 +3334,38 @@ exports[`KeyOnboardingModal 页签快照 > '未知平台' > install 页签 1`] =
 exports[`KeyOnboardingModal 页签快照 > '未知平台' > manual 页签 1`] = `
 "### DOM
 <div aria-labelledby="onboarding-N-tab-manual" class="onb-card space-y-5" data-test="panel-manual" id="onboarding-N-panel-manual" role="tabpanel">
- <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
-  <table class="w-full text-sm">
-   <tbody>
-    <tr class="">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "Endpoint"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://codex.hiyo.top"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copy"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "OpenAI-compatible endpoint"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://codex.hiyo.top/v1"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copy"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "API Key"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "sk-SEC…cdef"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copy"
+ <div class="grid gap-3" data-test="manual-lines">
+  <div class="line-card" data-test="manual-line-0">
+   <div class="flex items-center gap-2">
+    <span class="line-name">
+     "Default"
+    <!--v-if-->
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "OpenAI-compatible endpoint"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://codex.hiyo.top/v1"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-v1" type="button">
+      "Copy"
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "Endpoint"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://codex.hiyo.top"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-base" type="button">
+      "Copy"
+   <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-line-note" id="manual-8-line-note-0">
+    "Enter this address in your client."
+ <div class="line-row" data-test="manual-key">
+  <span class="shrink-0 text-sm text-gray-600 dark:text-dark-400">
+   "API Key"
+  <code class="min-w-0 flex-1 truncate font-mono text-sm tabular-nums text-gray-900 dark:text-gray-100">
+   "sk-SEC…cdef"
+  <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-key" type="button">
+   "Copy"
+ <!--v-if-->
  <!--v-if-->
  <div>
   <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
@@ -2961,11 +3381,14 @@ exports[`KeyOnboardingModal 页签快照 > '未知平台' > manual 页签 1`] = 
     "Check that your network or proxy can reach the endpoint, and update the client if it is old."
  <a class="inline-flex text-sm font-medium text-primary-700 hover:underline dark:text-primary-400" href="https://docs.example.com" rel="noopener noreferrer" target="_blank">
   "View docs"
+ <p class="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-dark-700 dark:text-dark-400" data-test="manual-footer">
+  "Keep your key safe. Anyone who has it can spend your balance or plan."
 
 ### 复制与链接
-按钮 0 (Endpoint) -> "https://codex.hiyo.top"
-按钮 1 (OpenAI-compatible endpoint) -> "https://codex.hiyo.top/v1"
-按钮 2 (API Key) -> "sk-SECRET-1234567890abcdef""
+按钮 copy-line-0-v1 -> "https://codex.hiyo.top/v1"
+按钮 copy-line-0-base -> "https://codex.hiyo.top"
+按钮 copy-key -> "sk-SECRET-1234567890abcdef"
+代码页签 = []"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > '没有分组' > ai 页签 1`] = `
@@ -2992,39 +3415,39 @@ exports[`KeyOnboardingModal 页签快照 > '没有分组' > install 页签 1`] =
 exports[`KeyOnboardingModal 页签快照 > '没有分组' > manual 页签 1`] = `
 "### DOM
 <div aria-labelledby="onboarding-N-tab-manual" class="onb-card space-y-5" data-test="panel-manual" id="onboarding-N-panel-manual" role="tabpanel">
- <div class="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
-  <table class="w-full text-sm">
-   <tbody>
-    <tr class="">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "Endpoint"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://codex.hiyo.top"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copy"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "OpenAI-compatible endpoint"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "https://codex.hiyo.top/v1"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copy"
-    <tr class="border-t border-gray-100 dark:border-dark-800">
-     <td class="w-28 px-4 py-2.5 text-gray-600 dark:text-dark-400 sm:w-40">
-      "API Key"
-     <td class="px-4 py-2.5">
-      <div class="flex items-center gap-2">
-       <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-gray-100">
-        "sk-SEC…cdef"
-       <button class="copy-btn shrink-0" type="button">
-        <span class="text-xs">
-         "Copy"
+ <div class="grid gap-3" data-test="manual-lines">
+  <div class="line-card" data-test="manual-line-0">
+   <div class="flex items-center gap-2">
+    <span class="line-name">
+     "Default"
+    <!--v-if-->
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "OpenAI-compatible endpoint"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://codex.hiyo.top/v1"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-v1" type="button">
+      "Copy"
+   <div class="space-y-1">
+    <p class="text-xs text-gray-500 dark:text-dark-400">
+     "Endpoint"
+    <div class="flex items-center gap-2">
+     <code class="min-w-0 flex-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+      "https://codex.hiyo.top"
+     <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-line-0-base" type="button">
+      "Copy"
+   <p class="text-xs text-gray-500 dark:text-dark-400" data-test="manual-line-note" id="manual-7-line-note-0">
+    "Enter this address in your client."
+ <div class="line-row" data-test="manual-key">
+  <span class="shrink-0 text-sm text-gray-600 dark:text-dark-400">
+   "API Key"
+  <code class="min-w-0 flex-1 truncate font-mono text-sm tabular-nums text-gray-900 dark:text-gray-100">
+   "sk-SEC…cdef"
+  <button class="inline-flex shrink-0 items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white" data-test="copy-key" type="button">
+   "Copy"
+ <p class="text-sm text-gray-600 dark:text-dark-400" data-test="manual-no-group">
+  "Choose a group for this key before connecting it."
  <!--v-if-->
  <div>
   <p class="mb-2 font-serif text-sm text-gray-900 dark:text-white">
@@ -3040,11 +3463,14 @@ exports[`KeyOnboardingModal 页签快照 > '没有分组' > manual 页签 1`] = 
     "Check that your network or proxy can reach the endpoint, and update the client if it is old."
  <a class="inline-flex text-sm font-medium text-primary-700 hover:underline dark:text-primary-400" href="https://docs.example.com" rel="noopener noreferrer" target="_blank">
   "View docs"
+ <p class="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-dark-700 dark:text-dark-400" data-test="manual-footer">
+  "Keep your key safe. Anyone who has it can spend your balance or plan."
 
 ### 复制与链接
-按钮 0 (Endpoint) -> "https://codex.hiyo.top"
-按钮 1 (OpenAI-compatible endpoint) -> "https://codex.hiyo.top/v1"
-按钮 2 (API Key) -> "sk-SECRET-1234567890abcdef""
+按钮 copy-line-0-v1 -> "https://codex.hiyo.top/v1"
+按钮 copy-line-0-base -> "https://codex.hiyo.top"
+按钮 copy-key -> "sk-SECRET-1234567890abcdef"
+代码页签 = []"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 的模型下拉只剩留空一项并给出提示，交给 AI 的详细版没有模型 1`] = `

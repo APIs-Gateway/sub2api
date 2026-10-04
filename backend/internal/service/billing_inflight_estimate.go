@@ -102,6 +102,8 @@ func (s *GatewayService) ReserveBillingInflight(ctx context.Context, request Bil
 	if request.APIKey == nil || request.APIKey.User == nil {
 		return nil, nil
 	}
+	// 预占估算不产生用量行：算价时遇到无价模型不计入「无价计费」观测（见 billing_non_settlement.go）。
+	ctx = WithBillingNonSettlement(ctx)
 	key := request.APIKey
 	multiplier := s.cfg.Default.RateMultiplier
 	if key.GroupID != nil && key.Group != nil {
@@ -149,6 +151,8 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 	if request.APIKey == nil || request.APIKey.User == nil {
 		return nil, nil
 	}
+	// 预占估算不产生用量行：算价时遇到无价模型不计入「无价计费」观测（见 billing_non_settlement.go）。
+	ctx = WithBillingNonSettlement(ctx)
 	key := request.APIKey
 	if d := request.StableDecision; d != nil && key.GroupID != nil && key.Group != nil && d.StableServedGroupID > 0 && d.StableServedGroupID != *key.GroupID && d.StableServedRateMultiplier > 0 {
 		group := *key.Group

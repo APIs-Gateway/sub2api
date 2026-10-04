@@ -1037,7 +1037,16 @@
       troubleshoot2: '密钥要完整复制，前后不能有空格或换行。',
       troubleshoot3: '改完配置后重启客户端。',
       troubleshoot4: '确认网络或代理可以访问接入地址；客户端版本太旧时先升级。',
-      viewDocs: '查看文档'
+      viewDocs: '查看文档',
+      lineUsed: '下方代码使用此地址',
+      lineDefaultNote: '在客户端里填写这个地址。',
+      lineAltNote: '默认地址访问慢时，可以改用这个地址。',
+      codeLabel: '代码示例',
+      keyFilled: '密钥已填入下方',
+      keyMissing: '没有读到完整密钥，请把代码里的 {placeholder} 换成你的密钥。',
+      keyMasked: '没有读到完整密钥，请把代码里的 {placeholder} 换成你的密钥（{masked}）。',
+      snippetsTitle: '写进配置文件',
+      keepSafe: '请妥善保管密钥，任何拿到它的人都能消耗你的余额或套餐。'
     }
   },
 
@@ -6286,7 +6295,7 @@
           accountErrorRatio: '错误账号比例 (%)',
           accountTempUnscheduledCount: '临时不可调度账号数',
           overloadAccountCount: '过载账号数',
-          unpricedBillingRows: '未定价用量记录数'
+          unpricedBillingRows: '未定价使用记录数'
         },
         metricDescriptions: {
           successRate: '统计窗口内成功请求占比（0~100）。',
@@ -6305,7 +6314,7 @@
           accountErrorRatio: '统计窗口内错误账号占比（0~100）。',
           accountTempUnscheduledCount: '当前处于临时不可调度状态的账号数量（如代理/凭据故障被自动摘除）。',
           overloadAccountCount: '统计窗口内过载账号数量。',
-          unpricedBillingRows: '统计窗口内有 token 或图片用量、但计费金额为 0 的用量记录数（倍率为 0 的分组、已知免费名单内的条目、被拦截的审计记录不计入）。'
+          unpricedBillingRows: '统计窗口内有 token 或图片用量、但计费金额为 0 的使用记录数（倍率为 0 的分组、已知免费名单内的条目、模型不一致的记录不计入）。'
         },
         hints: {
           recommended: '推荐：运算符 {operator}，阈值 {threshold}{unit}',
@@ -7051,7 +7060,7 @@
         siteNamePlaceholder: 'Sub2API',
         siteSubtitle: '站点副标题',
         siteSubtitleHint: '显示在登录和注册页面',
-        siteSubtitlePlaceholder: '订阅转 API 转换平台',
+        siteSubtitlePlaceholder: '快速稳定的大模型 API 服务',
         defaultLocale: '默认语言',
         defaultLocaleHint: '访客未在本设备手动选择语言时使用',
         apiBaseUrl: 'API 端点地址',

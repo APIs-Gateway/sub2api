@@ -1038,7 +1038,16 @@
       troubleshoot2: 'Copy the whole key, with no spaces or line breaks around it.',
       troubleshoot3: 'Restart the client after changing its config.',
       troubleshoot4: 'Check that your network or proxy can reach the endpoint, and update the client if it is old.',
-      viewDocs: 'View docs'
+      viewDocs: 'View docs',
+      lineUsed: 'Used in the code below',
+      lineDefaultNote: 'Enter this address in your client.',
+      lineAltNote: 'If the default address is slow, use this one instead.',
+      codeLabel: 'Code examples',
+      keyFilled: 'Your key is filled in below',
+      keyMissing: 'The full key could not be read. Replace {placeholder} in the code with your key.',
+      keyMasked: 'The full key could not be read. Replace {placeholder} in the code with your key ({masked}).',
+      snippetsTitle: 'Save it in a config file',
+      keepSafe: 'Keep your key safe. Anyone who has it can spend your balance or plan.'
     }
   },
 
@@ -6280,7 +6289,7 @@
           accountErrorRatio: 'Error Account Ratio (%)',
           accountTempUnscheduledCount: 'Temporarily Unschedulable Accounts',
           overloadAccountCount: 'Overloaded Accounts',
-          unpricedBillingRows: 'Unpriced Usage Rows'
+          unpricedBillingRows: 'Unpriced Usage Records'
         },
         metricDescriptions: {
           successRate: 'Percentage of successful requests in the window (0-100).',
@@ -6299,7 +6308,7 @@
           accountErrorRatio: 'Error account ratio within the window (0-100).',
           accountTempUnscheduledCount: 'Number of accounts currently temporarily unschedulable (e.g. proxy/credential failure auto-eviction).',
           overloadAccountCount: 'Number of overloaded accounts within the window.',
-          unpricedBillingRows: 'Number of usage rows within the window that have token or image usage but a billed cost of 0 (groups with a 0 rate multiplier, entries on the known-free list and intercepted audit rows are excluded).'
+          unpricedBillingRows: 'Number of usage records within the window that have token or image usage but a billed cost of 0 (groups with a 0 rate multiplier, entries on the known-free list and model-mismatch records are excluded).'
         },
         hints: {
           recommended: 'Recommended: operator {operator}, threshold {threshold}{unit}',
@@ -7051,7 +7060,7 @@
         siteNamePlaceholder: 'Sub2API',
         siteNameHint: 'Displayed in emails and page titles',
         siteSubtitle: 'Site Subtitle',
-        siteSubtitlePlaceholder: 'Subscription to API Conversion Platform',
+        siteSubtitlePlaceholder: 'Fast, reliable LLM API service',
         siteSubtitleHint: 'Displayed on login and register pages',
         defaultLocale: 'Default Language',
         defaultLocaleHint: 'Used when visitors have not selected a language on this device',

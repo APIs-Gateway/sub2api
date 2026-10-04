@@ -1037,7 +1037,16 @@
       troubleshoot2: '金鑰要完整複製，前後不能有空格或換行。',
       troubleshoot3: '改完設定後重新啟動客戶端。',
       troubleshoot4: '確認網絡或代理可以連到接入地址；客戶端版本太舊時先升級。',
-      viewDocs: '查看文件'
+      viewDocs: '查看文件',
+      lineUsed: '下方程式碼使用此地址',
+      lineDefaultNote: '在客戶端裡填寫這個地址。',
+      lineAltNote: '預設地址訪問慢時，可以改用這個地址。',
+      codeLabel: '程式碼示例',
+      keyFilled: '金鑰已填入下方',
+      keyMissing: '沒有讀到完整金鑰，請把程式碼裡的 {placeholder} 換成你的金鑰。',
+      keyMasked: '沒有讀到完整金鑰，請把程式碼裡的 {placeholder} 換成你的金鑰（{masked}）。',
+      snippetsTitle: '寫進設定檔',
+      keepSafe: '請妥善保管金鑰，任何拿到它的人都能消耗你的餘額或套餐。'
     }
   },
 
@@ -6283,7 +6292,7 @@
           accountErrorRatio: '錯誤帳號比例 (%)',
           accountTempUnscheduledCount: '臨時不可調度帳號數',
           overloadAccountCount: '過載帳號數',
-          unpricedBillingRows: '未定價用量記錄數'
+          unpricedBillingRows: '未定價使用記錄數'
         },
         metricDescriptions: {
           successRate: '統計窗口內成功請求占比（0~100）。',
@@ -6302,7 +6311,7 @@
           accountErrorRatio: '統計窗口內錯誤帳號占比（0~100）。',
           accountTempUnscheduledCount: '當前處於臨時不可調度狀態的帳號數量（如代理/憑據故障被自動摘除）。',
           overloadAccountCount: '統計窗口內過載帳號數量。',
-          unpricedBillingRows: '統計窗口內有 token 或圖片用量、但計費金額為 0 的用量記錄數（倍率為 0 的分組、已知免費名單內的條目、被攔截的審計記錄不計入）。'
+          unpricedBillingRows: '統計窗口內有 token 或圖片用量、但計費金額為 0 的使用記錄數（倍率為 0 的分組、已知免費名單內的條目、模型不一致的記錄不計入）。'
         },
         hints: {
           recommended: '推薦：運算符 {operator}，閾值 {threshold}{unit}',
@@ -7048,7 +7057,7 @@
         siteNamePlaceholder: 'Sub2API',
         siteSubtitle: '站點副標題',
         siteSubtitleHint: '顯示在登入和註冊頁面',
-        siteSubtitlePlaceholder: '訂閱轉 API 轉換平台',
+        siteSubtitlePlaceholder: '快速穩定的大模型 API 服務',
         defaultLocale: '預設語言',
         defaultLocaleHint: '訪客未在本裝置手動選擇語言時使用',
         apiBaseUrl: 'API 端點地址',

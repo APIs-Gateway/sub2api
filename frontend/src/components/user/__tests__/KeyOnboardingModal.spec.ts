@@ -722,13 +722,41 @@ describe('KeyOnboardingModal', () => {
     })
   })
 
-  it('手动配置：密钥只显示掩码，复制的是完整密钥', async () => {
+  it('手动配置：密钥行只显示掩码，复制的是完整密钥；代码里直接填好密钥', async () => {
     const w = await mountModal({ initialTab: 'manual' })
     const panel = w.get('[data-test="panel-manual"]')
     expect(panel.text()).toContain('https://codex.hiyo.top')
-    expect(panel.find('table').text()).not.toContain(SECRET)
-    await panel.findAll('button').find((b) => b.text() === 'Copy' && b.element.closest('tr')?.textContent?.includes('API'))!.trigger('click')
+    expect(panel.get('[data-test="manual-key"]').text()).not.toContain(SECRET)
+    await panel.get('[data-test="copy-key"]').trigger('click')
     await flushPromises()
     expect(clipboard.writeText).toHaveBeenCalledWith(SECRET)
+    expect(panel.get('[data-test="manual-code"]').text()).toContain(SECRET)
+    expect(panel.get('[data-test="manual-key-state"]').text()).toBe('Your key is filled in below')
+  })
+
+  describe('手动配置：代码页签随分组能力，和一键安装用同一份判断', () => {
+    const manualTabs = (w: VueWrapper) => w.findAll('[data-test^="manual-tab-"]').map((b) => b.attributes('data-test')!.replace('manual-tab-', ''))
+    const installClients = (w: VueWrapper) => w.findAll('section.onb-card').map((s) => s.attributes('data-test')!.replace('client-', ''))
+
+    it.each([
+      ['openai', {}],
+      ['openai', { allow_messages_dispatch: true }],
+      ['anthropic', {}],
+      ['gemini', {}],
+      ['antigravity', {}]
+    ] as const)('%s %j：Codex / Claude Code / Gemini 页签出现与否，和一键安装里有没有对应客户端一致', async (platform, extra) => {
+      const key = { ...apiKey(platform), group: { ...apiKey(platform).group, ...extra } }
+      const install = installClients(await mountModal({ initialTab: 'install', apiKey: key }))
+      const tabs = manualTabs(await mountModal({ initialTab: 'manual', apiKey: key }))
+      expect(tabs.includes('codex')).toBe(install.includes('codex'))
+      expect(tabs.includes('claude')).toBe(install.includes('claude'))
+      expect(tabs.includes('gemini')).toBe(install.includes('gemini'))
+    })
+
+    it('openai 分组：开了 Messages 调度才有 Claude Code 页签', async () => {
+      expect(manualTabs(await mountModal({ initialTab: 'manual' }))).toEqual(['openai', 'curl', 'codex'])
+      const dispatch = { ...apiKey('openai'), group: { ...apiKey('openai').group, allow_messages_dispatch: true } }
+      expect(manualTabs(await mountModal({ initialTab: 'manual', apiKey: dispatch }))).toEqual(['openai', 'curl', 'codex', 'claude'])
+    })
   })
 })
