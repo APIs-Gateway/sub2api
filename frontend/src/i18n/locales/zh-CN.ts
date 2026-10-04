@@ -8053,7 +8053,8 @@
     title: '我的订阅',
     description: '查看您的订阅计划和用量',
     noActiveSubscriptions: '暂无有效订阅',
-    noActiveSubscriptionsDesc: '您没有任何有效订阅。请联系管理员获取订阅。',
+    noActiveSubscriptionsDesc: '购买订阅后，每日额度和用量会显示在这里。',
+    noActiveSubscriptionsNoPaymentDesc: '订阅生效后，每日额度和用量会显示在这里。',
     failedToLoad: '加载订阅失败',
     overdraftBtn: {
       label: '透支刷新当日额度',

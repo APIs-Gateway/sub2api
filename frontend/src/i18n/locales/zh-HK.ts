@@ -8050,7 +8050,8 @@
     title: '我的訂閱',
     description: '查看您的訂閱計劃和用量',
     noActiveSubscriptions: '暫無有效訂閱',
-    noActiveSubscriptionsDesc: '您沒有任何有效訂閱。請聯系管理員獲取訂閱。',
+    noActiveSubscriptionsDesc: '購買訂閱後，每日額度和用量會顯示在這裏。',
+    noActiveSubscriptionsNoPaymentDesc: '訂閱生效後，每日額度和用量會顯示在這裏。',
     failedToLoad: '加載訂閱失敗',
     overdraftBtn: {
       label: '透支刷新當日額度',

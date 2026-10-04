@@ -8055,7 +8055,9 @@
     description: 'View your subscription plans and usage',
     noActiveSubscriptions: 'No Active Subscriptions',
     noActiveSubscriptionsDesc:
-      "You don't have any active subscriptions. Contact administrator to get one.",
+      'Once you have a subscription, your daily allowance and usage will appear here.',
+    noActiveSubscriptionsNoPaymentDesc:
+      'Once a subscription is active, your daily allowance and usage will appear here.',
     failedToLoad: 'Failed to load subscriptions',
     overdraftBtn: {
       label: 'Refresh daily allowance',
