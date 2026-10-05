@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -122,7 +121,7 @@ func wsImageInputConfigure(t *testing.T, f *wsInflightFixture, mapped bool) {
 	require.Len(t, channels, 1)
 	channel := channels[0]
 	if mapped {
-		channel.ModelMapping = map[string]string{"gpt-5.4": "gpt-5.4-mini"}
+		channel.ModelMapping = map[string]map[string]string{service.PlatformOpenAI: {"gpt-5.4": "gpt-5.4-mini"}}
 	}
 	require.NoError(t, repo.Update(context.Background(), &channel))
 }
