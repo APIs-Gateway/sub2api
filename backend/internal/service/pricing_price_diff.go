@@ -21,11 +21,11 @@ const priceDiffRelTol = 1e-9
 
 // PriceDiff 比较改动前后的报价（调用方对每一档 service tier、DeepSeek 的峰时与非峰时各报一次、各比一次）。规则：
 //   - 任一份为 nil：unknown；
-//   - 「形状」不同：unknown。形状是决定价格怎么算的那些因素：是否有价、计费模式、计费路径（unified 或 legacy）、
+//   - 「形状」不同：unknown。形状是决定价格怎么算的那些因素：是否有价、价格是否来自渠道价（单元格的 custom）、
+//     计费模式、计费路径（unified 或 legacy）、
 //     Gemini 原生入口的长上下文加价、service tier 的计价方式、价卡自带的长上下文规则、价卡策略标记
 //     （DeepSeek 官方价卡与峰时、GPT-5.x 的长上下文策略）。inherit 改成数值相同的 custom 会让其中几项变化，
 //     不能因为单价碰巧相等就说价格没变；
-//   - 形状相同且都没有价：none；
 //   - 价格点集合不同（区间或按次档位的边界、标签变了）：unknown；
 //   - 所有价格点都相等：none；有涨无跌：up；有跌无涨：down；有涨有跌：unknown（最严，管理员必须交互式确认）。
 //
@@ -39,9 +39,8 @@ func PriceDiff(before, after *Quote) PriceDelta {
 	if quoteShape(before) != quoteShape(after) {
 		return PriceDeltaUnknown
 	}
-	if !before.Priced {
-		return PriceDeltaNone
-	}
+	// 没有价的报价也要比较价格点：没有渠道价时图片请求按张计费（CalculateImageCost，乘 ImageMultiplier），
+	// 这条路径不要求模型有 token 价，所以「两边都没有价」不等于「价格没变」。
 	a, b := quotePricePoints(before), quotePricePoints(after)
 	if len(a) != len(b) {
 		return PriceDeltaUnknown
@@ -107,7 +106,7 @@ func priceDiffEqual(a, b float64) bool {
 // quoteShape 把决定价格怎么算的因素摊成一个串：两份报价的形状不同，就不比较单价。
 func quoteShape(q *Quote) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "priced=%t;mode=%s;path=%s;", q.Priced, q.BillingMode, q.PricingPath)
+	fmt.Fprintf(&b, "priced=%t;channel=%t;mode=%s;path=%s;", q.Priced, q.Source == QuoteSourceChannel, q.BillingMode, q.PricingPath)
 	if g := q.GatewayLongContext; g != nil {
 		fmt.Fprintf(&b, "glc=%d/%g;", g.ThresholdTokens, g.ExtraMultiplier)
 	} else {
@@ -153,6 +152,9 @@ func quotePricePoints(q *Quote) map[string]float64 {
 	if img <= 0 {
 		img = 1
 	}
+	// 没有渠道价时的图片请求按张计费，单价乘 ImageMultiplier（含额外倍率）；Quote 只在目录把模型标成图片模型时才有
+	// ImageRequest，其余模型这条路径不进任何别的价格点，所以倍率本身单独作为一个点。
+	put("img.mult", img)
 	addUnit := func(prefix string, u QuoteUnitPrices, mult float64) {
 		put(prefix+"input", u.Input*mult)
 		put(prefix+"output", u.Output*mult)

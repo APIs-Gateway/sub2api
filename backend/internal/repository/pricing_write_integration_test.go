@@ -201,7 +201,7 @@ func TestPricingCellWriter_Integration_CreateUpdateDeleteWithHistory(t *testing.
 	require.Equal(t, int64(5), pwiConfigRevision(t, gid))
 	require.Len(t, pwiHistory(t, gid), 5)
 
-	// 删除两个 inherit 单元格：不涉价，历史只有前态。
+	// 删除两个 inherit 单元格：删除一律算涉价（可能放开被字面名遮住的基名价），历史只有前态。
 	res, err = pwiApply(store, service.CellWriteRequest{
 		Ops: []service.CellOp{
 			{GroupID: gid, ModelKey: "pw-inherit", Kind: service.CellOpDelete, BaselineRevision: 1},
@@ -210,7 +210,7 @@ func TestPricingCellWriter_Integration_CreateUpdateDeleteWithHistory(t *testing.
 		GroupRevisions: map[int64]int64{gid: 5}, OperatorID: 11,
 	})
 	require.NoError(t, err)
-	require.False(t, res.TouchesPrice)
+	require.True(t, res.TouchesPrice)
 	require.Equal(t, int64(6), pwiConfigRevision(t, gid))
 	require.Len(t, pwiCells(t, gid), 2)
 	hist = pwiHistory(t, gid)
@@ -497,9 +497,11 @@ func TestInterimPriceWriteGate_Integration_PreviewConfirmCommit(t *testing.T) {
 	require.Equal(t, service.ReasonApprovalExpired, pwiReason(t, commit(expiring.ApprovalID, priceReq("pw-gate-2", 1.2, 4, 0), true, true)))
 	require.NotContains(t, pwiCells(t, gid), "pw-gate-2")
 
-	// 不涉价的写入（关闭一个新单元格）可以不带预览，但仍要二次确认并留历史。
+	// 不涉价的写入（只关闭已有的单元格、价格不变）可以不带预览，但仍要二次确认并留历史。
+	closeOp := pwiExtra(gid, "pw-gate", 1.5, 1)
+	closeOp.Open = false
 	closed := service.CellWriteRequest{
-		Ops:            []service.CellOp{pwiUpsert(gid, "pw-closed", false, service.MatrixPriceInherit, 0)},
+		Ops:            []service.CellOp{closeOp},
 		GroupRevisions: map[int64]int64{gid: 4},
 	}
 	require.Equal(t, service.ReasonPriceWriteConfirm, pwiReason(t, commit(0, closed, false, false)))

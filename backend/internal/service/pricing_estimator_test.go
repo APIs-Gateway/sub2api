@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -38,14 +39,18 @@ func peSnapshot(cells ...StoredMatrixCell) GroupStateSnapshot {
 
 // peEstimator 拼出一个接了矩阵数据源的报价器与估算器：分组 777 是 v2 开放分组，里面有 gpt-5.5 与 gpt-5.4 两个自定义价格的单元格。
 func peEstimator() (*PriceEstimator, *PriceQuoter) {
+	est, quoter, _ := peEstimatorWith(peSnapshot(peCell(peModelA, 2e-6, 4e-6), peCell(peModelB, 1e-6, 2e-6)))
+	return est, quoter
+}
+
+// peEstimatorWith 同 peEstimator，但分组 777 的现状由调用方给定，并返回数据源（测试里可以让它出错）。
+func peEstimatorWith(snap GroupStateSnapshot) (*PriceEstimator, *PriceQuoter, *mpFakeSource) {
 	f := newQuoteTestFixture(nil, nil, []*Group{quoteTestGroup(1)}, nil)
-	src := newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{
-		peGroupID: peSnapshot(peCell(peModelA, 2e-6, 4e-6), peCell(peModelB, 1e-6, 2e-6)),
-	})
+	src := newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{peGroupID: snap})
 	f.quoter.SetMatrixSource(src)
 	est := NewPriceEstimator(f.quoter)
 	est.now = func() time.Time { return quoteTestAtLow }
-	return est, f.quoter
+	return est, f.quoter, src
 }
 
 func peWrite(model string, action CellWriteAction, touches bool, after *MatrixCell) PlannedCellWrite {
@@ -122,7 +127,11 @@ func TestPriceEstimator_EstimateGroupConfig(t *testing.T) {
 		{"wildcard mapping", cfg(nil), cfg(nil, MatrixMappingEntry{Src: "gpt-*", Dst: peModelB}), PriceDeltaUnknown},
 		{"mapping to a cheaper model", cfg(nil), cfg(nil, toB), PriceDeltaDown},
 		{"mapping removed", cfg(nil, toB), cfg(nil), PriceDeltaUp},
-		{"mapping source requested ignores the mapping", cfg(str(BillingModelSourceRequested)), cfg(str(BillingModelSourceRequested), toB), PriceDeltaNone},
+		{"requested with a changed mapping target is unprovable", cfg(str(BillingModelSourceRequested)), cfg(str(BillingModelSourceRequested), toB), PriceDeltaUnknown},
+		{"requested, alias target moves", cfg(str(BillingModelSourceRequested), MatrixMappingEntry{Src: "alias-x", Dst: peModelA}),
+			cfg(str(BillingModelSourceRequested), MatrixMappingEntry{Src: "alias-x", Dst: peModelB}), PriceDeltaUnknown},
+		{"wildcard mapping unchanged, billing source switched", cfg(nil, MatrixMappingEntry{Src: "gpt-*", Dst: peModelB}),
+			cfg(str(BillingModelSourceRequested), MatrixMappingEntry{Src: "gpt-*", Dst: peModelB}), PriceDeltaUnknown},
 		{"source change with no mapping", cfg(nil), cfg(str(BillingModelSourceRequested)), PriceDeltaNone},
 		{"switching to requested with a mapping bills the requested model", cfg(nil, toB), cfg(str(BillingModelSourceRequested), toB), PriceDeltaUp},
 	}
@@ -134,9 +143,25 @@ func TestPriceEstimator_EstimateGroupConfig(t *testing.T) {
 		})
 	}
 
+	// 映射来源是别名（不是单元格）：切换计费来源也会换计费模型，不能是 none。
+	alias := MatrixMappingEntry{Src: "alias-x", Dst: peModelB}
+	got, err := est.EstimateGroupConfig(ctx, peGroupID, cfg(nil, alias), cfg(str(BillingModelSourceRequested), alias))
+	require.NoError(t, err)
+	require.NotEqual(t, PriceDeltaNone, got)
+	got, err = est.EstimateGroupConfig(ctx, peGroupID, cfg(str(BillingModelSourceRequested), alias), cfg(nil, alias))
+	require.NoError(t, err)
+	require.NotEqual(t, PriceDeltaNone, got)
+
+	// 读分组现状失败：unknown 加错误，不能退回「没有单元格」。
+	failing, _, failSrc := peEstimatorWith(peSnapshot(peCell(peModelA, 2e-6, 4e-6), peCell(peModelB, 1e-6, 2e-6)))
+	failSrc.setErrors(nil, errors.New("snapshot down"))
+	got, err = failing.EstimateGroupConfig(ctx, peGroupID, cfg(nil), cfg(nil, toB))
+	require.Error(t, err)
+	require.Equal(t, PriceDeltaUnknown, got)
+
 	// 报价器没有接数据源。
 	f := newQuoteTestFixture(nil, nil, []*Group{quoteTestGroup(1)}, nil)
-	got, err := NewPriceEstimator(f.quoter).EstimateGroupConfig(ctx, peGroupID, cfg(nil), cfg(nil, toB))
+	got, err = NewPriceEstimator(f.quoter).EstimateGroupConfig(ctx, peGroupID, cfg(nil), cfg(nil, toB))
 	require.ErrorIs(t, err, ErrPriceQuoterUnavailable)
 	require.Equal(t, PriceDeltaUnknown, got)
 }
@@ -242,4 +267,54 @@ func TestEstimatorHelpers(t *testing.T) {
 	require.ErrorIs(t, validPriceDelta("sideways"), errPriceEstimateInvalid)
 	require.Equal(t, PriceDeltaUnknown, diffQuotes([]*Quote{nil}, nil))
 	require.Equal(t, PriceDeltaUnknown, diffQuotes([]*Quote{nil}, []*Quote{nil}))
+}
+
+func TestPriceEstimator_SnapshotFailureIsUnknownNotNone(t *testing.T) {
+	ctx := context.Background()
+	c := peMatrixCell(peModelA, 5e-6, 4e-6)
+	planned := []PlannedCellWrite{peWrite(peModelA, CellWriteUpdate, true, &c)}
+	req := QuoteRequest{Model: peModelA, GroupID: peGroupID, At: quoteTestAtLow}
+
+	for name, setErr := range map[string]func(src *mpFakeSource){
+		"snapshots": func(src *mpFakeSource) { src.setErrors(nil, errors.New("snapshot down")) },
+		"metadata":  func(src *mpFakeSource) { src.setErrors(errors.New("meta down"), nil) },
+	} {
+		est, quoter, src := peEstimatorWith(peSnapshot(peCell(peModelA, 2e-6, 4e-6)))
+		setErr(src)
+		got, err := est.EstimateCellWrites(ctx, planned)
+		require.Error(t, err, name)
+		require.Equal(t, PriceDeltaUnknown, got, name)
+		_, err = quoter.QuoteWith(ctx, req, CellOverlay{})
+		require.Error(t, err, name)
+		_, err = quoter.BatchQuoteWith(ctx, []QuoteRequest{req}, CellOverlay{})
+		require.Error(t, err, name)
+	}
+}
+
+func TestPriceEstimator_LiteralNameCellsShadowTheBaseName(t *testing.T) {
+	ctx := context.Background()
+	const base, variant = "gpt-5.6-sol", "gpt-5.6-sol-high"
+	extra := 1.5
+	baseCell := StoredMatrixCell{GroupID: peGroupID, MatrixCell: MatrixCell{
+		ModelKey: base, Open: true, PriceMode: MatrixPriceExtra, ExtraMultiplier: &extra, Source: MatrixSourceManual}}
+	inherit := MatrixCell{ModelKey: variant, Open: true, PriceMode: MatrixPriceInherit, Source: MatrixSourceManual}
+
+	// 变体名上新建一个 inherit 单元格：字面名优先，把基名的 1.5 倍挡掉，变体名的价降了。
+	est, _, _ := peEstimatorWith(peSnapshot(baseCell))
+	got, err := est.EstimateCellWrites(ctx, []PlannedCellWrite{peWrite(variant, CellWriteCreate, true, &inherit)})
+	require.NoError(t, err)
+	require.Equal(t, PriceDeltaDown, got)
+
+	// 反过来，删掉这个单元格，变体名回到基名的价。
+	shadow := StoredMatrixCell{GroupID: peGroupID, MatrixCell: inherit}
+	est, _, _ = peEstimatorWith(peSnapshot(baseCell, shadow))
+	got, err = est.EstimateCellWrites(ctx, []PlannedCellWrite{peWrite(variant, CellWriteDelete, true, nil)})
+	require.NoError(t, err)
+	require.Equal(t, PriceDeltaUp, got)
+
+	// 没有基名单元格：新建 inherit 单元格不改价。
+	est, _, _ = peEstimatorWith(peSnapshot())
+	got, err = est.EstimateCellWrites(ctx, []PlannedCellWrite{peWrite(variant, CellWriteCreate, true, &inherit)})
+	require.NoError(t, err)
+	require.Equal(t, PriceDeltaNone, got)
 }

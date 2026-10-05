@@ -18,16 +18,27 @@ import (
 // CellWriter.ApplyTx 与 GroupConfigWriter.ApplyTx 只负责写；「写完以后保存时校验必须通过」由
 // MatrixTxWriter.ApplyCellWritesTx、ApplyGroupConfigTx 把写入与校验做成一体。直接调用写入器的 ApplyTx 就绕过了校验
 // （白名单分组里会出现无价或 0 元的开放单元格），所以这个守卫扫描 backend 下全部非测试 Go 源码：
-// 凡是能接触到写入器类型的文件，除了 pricing_write_tx.go，都不能出现 `.ApplyTx(` 调用。
-// W5 的 change-set 动作拿着 *ent.Tx 写价格时，同样只能调 MatrixTxWriter 的两个入口。
-
-// writerAwareTypes 提到写入器类型或构造函数的文件才会被检查：别的包里同名的 ApplyTx（例如 W5 的 Action 接口）不受影响。
-var writerAwareTypes = regexp.MustCompile(`\b(CellWriter|GroupConfigWriter|NewPricingCellWriter|NewPricingGroupConfigWriter)\b`)
+// 只要出现 `.ApplyTx(` 调用，文件就必须在白名单里（今天只有 pricing_write_tx.go）。
+// 不按「文件里有没有提到写入器类型」来猜：同一个包里经未导出字段（g.tx.cells.ApplyTx）调用，文件里不会出现类型名。
+// W5 的 change-set 动作拿着 *ent.Tx 写价格时，同样只能调 MatrixTxWriter 的两个入口；
+// 那个动作文件要登记进 applyTxAllowedFiles 才能出现 ApplyTx 调用。
+//
+// 第二条守卫：Interactive 能放行涉价写入，只能由鉴权方式得出。非测试代码里，除 pricing_write_tx.go
+// （PriceWriteActorFromAuthMethod）以外，不能构造 PriceWriteActor 字面量，也不能给 Interactive 字段赋值。
 
 var applyTxCall = regexp.MustCompile(`\.ApplyTx\(`)
 
 // matrixTxEntryFile 唯一允许调用写入器 ApplyTx 的文件。
 const matrixTxEntryFile = "internal/service/pricing_write_tx.go"
+
+// applyTxAllowedFiles 允许出现 `.ApplyTx(` 的文件（相对 backend）。
+var applyTxAllowedFiles = map[string]bool{matrixTxEntryFile: true}
+
+// interactiveSetters 构造 PriceWriteActor 或写 Interactive 字段的写法。
+var interactiveSetters = regexp.MustCompile(`PriceWriteActor\{|\bInteractive\s*:|\.Interactive\s*=[^=]`)
+
+// interactiveAllowedFiles 允许这样写的文件（相对 backend）。
+var interactiveAllowedFiles = map[string]bool{matrixTxEntryFile: true}
 
 func TestWriterApplyTxIsOnlyCalledFromTheTxEntryPoint(t *testing.T) {
 	backendRoot, err := filepath.Abs("../..")
@@ -64,10 +75,11 @@ func TestWriterApplyTxIsOnlyCalledFromTheTxEntryPoint(t *testing.T) {
 		calls := len(applyTxCall.FindAllString(text, -1))
 		if rel == matrixTxEntryFile {
 			entryCalls = calls
-			return nil
+		} else if calls > 0 && !applyTxAllowedFiles[rel] {
+			violations = append(violations, rel+" 直接调用了 ApplyTx，应改调 MatrixTxWriter.ApplyCellWritesTx / ApplyGroupConfigTx")
 		}
-		if calls > 0 && writerAwareTypes.MatchString(text) {
-			violations = append(violations, rel+" 直接调用了写入器的 ApplyTx，应改调 MatrixTxWriter.ApplyCellWritesTx / ApplyGroupConfigTx")
+		if interactiveSetters.MatchString(text) && !interactiveAllowedFiles[rel] {
+			violations = append(violations, rel+" 自己构造了 PriceWriteActor 或给 Interactive 赋值，应改用 PriceWriteActorFromAuthMethod")
 		}
 		return nil
 	})
@@ -77,4 +89,17 @@ func TestWriterApplyTxIsOnlyCalledFromTheTxEntryPoint(t *testing.T) {
 
 	sort.Strings(violations)
 	require.Empty(t, violations)
+}
+
+// 守卫的正则本身要能抓到各种写法（包括同包里经未导出字段的调用）。
+func TestWriteTxGuardPatterns(t *testing.T) {
+	for _, line := range []string{"res, err := w.cells.ApplyTx(ctx, tx, req)", "g.tx.cells.ApplyTx(ctx, tx, req)", "x.ApplyTx(a)"} {
+		require.True(t, applyTxCall.MatchString(line), line)
+	}
+	require.False(t, applyTxCall.MatchString("ApplyTx(ctx context.Context, tx MatrixTx, req CellWriteRequest)"), "接口方法的声明不算调用")
+	for _, line := range []string{"PriceWriteActor{ID: 1}", "x := PriceWriteActor{ID: 1, Interactive: true}", "a.Interactive = true", "Interactive:true"} {
+		require.True(t, interactiveSetters.MatchString(line), line)
+	}
+	require.False(t, interactiveSetters.MatchString("if !actor.Interactive {"), "读取不算")
+	require.False(t, interactiveSetters.MatchString("actor.Interactive == true"), "比较不算")
 }

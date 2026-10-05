@@ -92,8 +92,9 @@ type PlannedCellWrite struct {
 	Action CellWriteAction   `json:"action"`
 	Before *StoredMatrixCell `json:"before,omitempty"`
 	After  *MatrixCell       `json:"after,omitempty"`
-	// TouchesPrice 前后的价格字段（price_mode、extra_multiplier、custom_price）不同。
-	// 只改 open 不算涉价；删除一个 inherit 单元格同样不算。
+	// TouchesPrice 价格可能变了：更新时前后的价格字段（price_mode、extra_multiplier、custom_price）不同；
+	// 新建与删除一律算（字面名单元格会遮住基名与通配符单元格，增删它就改变了变体名实际生效的价）。
+	// 只改 open 的更新不算。
 	TouchesPrice bool `json:"touches_price"`
 }
 

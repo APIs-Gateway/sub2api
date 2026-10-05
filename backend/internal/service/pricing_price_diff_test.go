@@ -158,3 +158,20 @@ func TestCombinePriceDeltas(t *testing.T) {
 	require.Equal(t, PriceDeltaUnknown, CombinePriceDeltas(PriceDeltaNone, PriceDeltaUnknown))
 	require.Equal(t, PriceDeltaUnknown, CombinePriceDeltas(PriceDeltaUp, "sideways"))
 }
+
+func TestPriceDiff_ImageMultiplierAndChannelSource(t *testing.T) {
+	// 没有渠道价时图片请求按张计费，单价乘 ImageMultiplier（含额外倍率）：两边都没有 token 价也要比较。
+	unpriced := func(img float64) *Quote { return &Quote{Priced: false, ImageMultiplier: img} }
+	require.Equal(t, PriceDeltaNone, PriceDiff(unpriced(1), unpriced(1)))
+	require.Equal(t, PriceDeltaUp, PriceDiff(unpriced(1), unpriced(3)))
+	require.Equal(t, PriceDeltaDown, PriceDiff(unpriced(3), unpriced(1)))
+
+	// inherit 改成数值相同的 custom：价格来源从目录变成渠道价，图片请求从按张计费变成按 token 计费，不能报 none。
+	catalog := pdQuote(1e-6, 2e-6)
+	catalog.Source = QuoteSourceLiteLLM
+	channel := pdQuote(1e-6, 2e-6)
+	channel.Source = QuoteSourceChannel
+	require.Equal(t, PriceDeltaUnknown, PriceDiff(catalog, channel))
+	require.Equal(t, PriceDeltaUnknown, PriceDiff(channel, catalog))
+	require.Equal(t, PriceDeltaNone, PriceDiff(channel, func() *Quote { c := pdQuote(1e-6, 2e-6); c.Source = QuoteSourceChannel; return c }()))
+}

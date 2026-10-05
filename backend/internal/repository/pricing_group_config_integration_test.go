@@ -202,8 +202,15 @@ func TestInterimPriceWriteGate_Integration_AllowlistGroupRejectsUnpricedOpenCell
 	req := func(op service.CellOp) service.CellWriteRequest {
 		return service.CellWriteRequest{Ops: []service.CellOp{op}, GroupRevisions: map[int64]int64{gid: 3}, OperatorID: 21}
 	}
+	// 新建单元格一律算涉价：先预览，再用交互式会话带着凭证提交。
 	commit := func(r service.CellWriteRequest) error {
-		_, err := gate.Commit(ctx, service.PriceWriteCommit{Request: r, Confirm: true, Actor: service.PriceWriteActor{ID: 22}})
+		ticket, err := gate.Propose(ctx, service.PriceWriteProposal{Request: r})
+		if err != nil {
+			return err
+		}
+		_, err = gate.Commit(ctx, service.PriceWriteCommit{
+			ApprovalID: ticket.ApprovalID, Request: r, Confirm: true, Actor: service.PriceWriteActor{ID: 22, Interactive: true},
+		})
 		return err
 	}
 

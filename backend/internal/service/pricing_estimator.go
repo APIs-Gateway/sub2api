@@ -134,11 +134,19 @@ func diffQuotes(before, after []*Quote) PriceDelta {
 
 // EstimateGroupConfig 实现 PriceDeltaEstimator。
 //
-// 改计费来源或模型映射，改变的是「一个请求模型按哪个模型计费」。所以对分组里每个 open 的精确单元格、
-// 以及映射里被改动的精确来源名，分别算出改前、改后的计费模型，两者不同就各自报价（单元格不变，叠加层为空），再比较。规则：
+// 改计费来源或模型映射，改变的是「一个请求模型按哪个模型计费」。原则：证明不了「没变」就给 unknown。
+// 对要比较的每个请求模型，算出改前、改后的计费模型，两者不同就各自报价（单元格不变，叠加层为空），再比较。规则：
 //   - 计费来源是 upstream（改前或改后）：计费模型取决于账号的上游模型，这里算不出来，unknown；
 //   - 被改动的映射里有通配符来源：受影响的请求模型数不封顶，unknown；
+//   - 计费来源在 requested 与非 requested 之间切换：全部映射来源（改前、改后两份映射里的精确来源）都要比较，
+//     不只是 open 的单元格（开放分组里的映射来源通常是别名、不是单元格，照样可以被请求）；
+//     任何一份映射里有通配符来源也是 unknown，因为它命中的请求模型数不封顶；
+//   - 计费来源是 requested、映射目标变了：计费模型不变，但映射目标仍在运行时的候选链里
+//     （源模型没有价时回落到映射后的模型，OpenAI 的图片请求还会在候选里挑按次或图片模式的模型），
+//     算不出来，unknown；
 //   - 其余按上面的办法逐个比较；没有任何模型的计费模型变了，就是 none。
+//
+// 要比较的模型是：分组里 open 的精确单元格，加上被改动的映射来源（以及计费来源切换时的全部映射来源）。
 func (e *PriceEstimator) EstimateGroupConfig(ctx context.Context, groupID int64, before, after MatrixGroupConfig) (PriceDelta, error) {
 	if !GroupConfigTouchesPrice(before, after) {
 		return PriceDeltaNone, nil
@@ -153,8 +161,22 @@ func (e *PriceEstimator) EstimateGroupConfig(ctx context.Context, groupID int64,
 	if wildcard {
 		return PriceDeltaUnknown, nil
 	}
+	reqBefore, reqAfter := isRequestedBillingSource(before), isRequestedBillingSource(after)
+	if reqBefore && reqAfter && len(changed) > 0 {
+		return PriceDeltaUnknown, nil
+	}
+	sources := changed
+	if reqBefore != reqAfter {
+		for _, m := range [][]MatrixMappingEntry{before.ModelMapping, after.ModelMapping} {
+			exact, wc := mappingSourceNames(m)
+			if wc {
+				return PriceDeltaUnknown, nil
+			}
+			sources = append(sources, exact...)
+		}
+	}
 
-	models, err := e.groupConfigModels(ctx, groupID, changed)
+	models, err := e.groupConfigModels(ctx, groupID, sources)
 	if err != nil {
 		return PriceDeltaUnknown, err
 	}
@@ -162,9 +184,10 @@ func (e *PriceEstimator) EstimateGroupConfig(ctx context.Context, groupID int64,
 }
 
 // compareBillingModels 对每个计费模型发生变化的请求模型，在同一组「service tier x 时刻」上报改前、改后的计费模型的价并比较。
+// 所有模型的请求收齐以后，改前、改后各做一次批量报价（每次只读一次分组快照）。
 // 时刻取并集：只要任一侧是 DeepSeek，两侧都按峰时与非峰时各报一次，保证两侧的组合一一对应。
 func (e *PriceEstimator) compareBillingModels(ctx context.Context, groupID int64, models []string, before, after MatrixGroupConfig, now time.Time) (PriceDelta, error) {
-	var deltas []PriceDelta
+	var reqsB, reqsA []QuoteRequest
 	for _, m := range models {
 		bb, ba := estimatorBillingModel(groupID, before, m), estimatorBillingModel(groupID, after, m)
 		if strings.EqualFold(strings.TrimSpace(bb), strings.TrimSpace(ba)) {
@@ -175,24 +198,25 @@ func (e *PriceEstimator) compareBillingModels(ctx context.Context, groupID int64
 			peak, off := deepseekReferenceTimes(now)
 			times = []time.Time{peak, off}
 		}
-		var reqsB, reqsA []QuoteRequest
 		for _, tier := range estimatorServiceTiers {
 			for _, at := range times {
 				reqsB = append(reqsB, QuoteRequest{Model: bb, GroupID: groupID, ServiceTier: tier, At: at})
 				reqsA = append(reqsA, QuoteRequest{Model: ba, GroupID: groupID, ServiceTier: tier, At: at})
 			}
 		}
-		qb, err := e.quoter.BatchQuoteWith(ctx, reqsB, CellOverlay{})
-		if err != nil {
-			return PriceDeltaUnknown, err
-		}
-		qa, err := e.quoter.BatchQuoteWith(ctx, reqsA, CellOverlay{})
-		if err != nil {
-			return PriceDeltaUnknown, err
-		}
-		deltas = append(deltas, diffQuotes(qb, qa))
 	}
-	return CombinePriceDeltas(deltas...), nil
+	if len(reqsB) == 0 {
+		return PriceDeltaNone, nil
+	}
+	qb, err := e.quoter.BatchQuoteWith(ctx, reqsB, CellOverlay{})
+	if err != nil {
+		return PriceDeltaUnknown, err
+	}
+	qa, err := e.quoter.BatchQuoteWith(ctx, reqsA, CellOverlay{})
+	if err != nil {
+		return PriceDeltaUnknown, err
+	}
+	return diffQuotes(qb, qa), nil
 }
 
 // groupConfigModels 要比较的请求模型：分组里 open 的精确单元格，加上映射里被改动的精确来源名。去重、排序。
@@ -225,6 +249,23 @@ func (e *PriceEstimator) groupConfigModels(ctx context.Context, groupID int64, c
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+func isRequestedBillingSource(cfg MatrixGroupConfig) bool {
+	return cfg.BillingModelSource != nil && *cfg.BillingModelSource == BillingModelSourceRequested
+}
+
+// mappingSourceNames 映射里的精确来源名（小写）；有通配符来源时 wildcard 为 true。
+func mappingSourceNames(entries []MatrixMappingEntry) (exact []string, wildcard bool) {
+	for _, e := range entries {
+		src := strings.ToLower(strings.TrimSpace(e.Src))
+		if strings.HasSuffix(src, "*") {
+			wildcard = true
+			continue
+		}
+		exact = append(exact, src)
+	}
+	return exact, wildcard
 }
 
 func isUpstreamBillingSource(cfg MatrixGroupConfig) bool {
@@ -266,7 +307,7 @@ func changedMappingSources(before, after []MatrixMappingEntry) (exact []string, 
 // estimatorBillingModel 请求模型 model 在配置 cfg 下按哪个模型计费（计费来源不是 upstream）：
 // requested 就是请求模型；channel_mapped 与没有渠道（空）都是分组映射之后的模型，没有映射则还是请求模型。
 func estimatorBillingModel(groupID int64, cfg MatrixGroupConfig, model string) string {
-	if cfg.BillingModelSource != nil && *cfg.BillingModelSource == BillingModelSourceRequested {
+	if isRequestedBillingSource(cfg) {
 		return model
 	}
 	snap := buildMatrixSnapshot(groupID, "", GroupStateSnapshot{

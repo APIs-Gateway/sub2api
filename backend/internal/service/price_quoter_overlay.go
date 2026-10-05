@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"sort"
+	"sync"
 )
 
 // W6 PR4b-2b-1：QuoteWith / BatchQuoteWith（设计 3.3）——在分组现状之上叠一层「假想的」单元格或分组配置再报价，
@@ -62,21 +63,46 @@ func (q *PriceQuoter) SetMatrixSource(src quoteOverlaySource) {
 	q.matrixSource = src
 }
 
-// overlaySnapshotSource 在真实数据源读到的快照上套叠加层。
+// overlaySnapshotSource 在真实数据源读到的快照上套叠加层，并记下数据源返回的第一个错误。
+// matrixPolicy 读快照失败时从不报错，而是退回「开放、没有单元格、没有额外倍率」的默认状态；
+// 估算器要是照这个状态报价，写入前后两份报价会相同，结果就成了 none。所以报价之后必须检查这里记下的错误（见 failure）。
 type overlaySnapshotSource struct {
 	inner   quoteOverlaySource
 	overlay CellOverlay
+
+	mu  sync.Mutex
+	err error
+}
+
+func (s *overlaySnapshotSource) record(err error) {
+	s.mu.Lock()
+	if s.err == nil {
+		s.err = err
+	}
+	s.mu.Unlock()
+}
+
+// failure 返回读快照时遇到的第一个错误；没有出错返回 nil。
+func (s *overlaySnapshotSource) failure() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
 }
 
 var _ MatrixSnapshotSource = (*overlaySnapshotSource)(nil)
 
 func (s *overlaySnapshotSource) GetGroupMeta(ctx context.Context, groupIDs []int64) (map[int64]DeriveGroup, error) {
-	return s.inner.GetGroupMeta(ctx, groupIDs)
+	metas, err := s.inner.GetGroupMeta(ctx, groupIDs)
+	if err != nil {
+		s.record(err)
+	}
+	return metas, err
 }
 
 func (s *overlaySnapshotSource) LoadGroupSnapshots(ctx context.Context, groupIDs []int64) (map[int64]GroupStateSnapshot, error) {
 	snaps, err := s.inner.LoadGroupSnapshots(ctx, groupIDs)
 	if err != nil {
+		s.record(err)
 		return nil, err
 	}
 	out := make(map[int64]GroupStateSnapshot, len(snaps))
@@ -138,33 +164,43 @@ func overlayCells(groupID int64, existing []StoredMatrixCell, overlay map[string
 
 // withOverlay 返回一个报价器副本：价格解析器的分组策略换成「真实数据源加叠加层」的 matrixPolicy。
 // 副本与原报价器共用计费服务、分组读取、倍率与目录，所以报价逻辑完全相同。
-func (q *PriceQuoter) withOverlay(overlay CellOverlay) (*PriceQuoter, error) {
+// 返回的数据源要在报价之后调用 failure：读快照出过错，这次报价就不可信。
+func (q *PriceQuoter) withOverlay(overlay CellOverlay) (*PriceQuoter, *overlaySnapshotSource, error) {
 	if q == nil || q.resolver == nil || q.billing == nil || q.groups == nil || q.matrixSource == nil {
-		return nil, ErrPriceQuoterUnavailable
+		return nil, nil, ErrPriceQuoterUnavailable
 	}
-	policy := NewMatrixGroupPolicy(&overlaySnapshotSource{inner: q.matrixSource, overlay: overlay}, nil)
+	src := &overlaySnapshotSource{inner: q.matrixSource, overlay: overlay}
 	resolver := *q.resolver
-	resolver.policyOverride = policy
+	resolver.policyOverride = NewMatrixGroupPolicy(src, nil)
 	scoped := *q
 	scoped.resolver = &resolver
-	return &scoped, nil
+	return &scoped, src, nil
 }
 
 // QuoteWith 在分组现状之上叠加 overlay 再报价。overlay 为零值时报的就是分组按矩阵语义的现状。
+// 读分组现状失败时返回错误（不会退回「没有单元格」的默认状态报价）。
 func (q *PriceQuoter) QuoteWith(ctx context.Context, req QuoteRequest, overlay CellOverlay) (*Quote, error) {
-	scoped, err := q.withOverlay(overlay)
+	scoped, src, err := q.withOverlay(overlay)
 	if err != nil {
 		return nil, err
 	}
-	return scoped.Quote(ctx, req)
+	quote, err := scoped.Quote(ctx, req)
+	if ferr := src.failure(); ferr != nil {
+		return nil, ferr
+	}
+	return quote, err
 }
 
 // BatchQuoteWith 是 BatchQuote 的叠加版：同一批请求共用一份叠加层，分组与快照各只读一次。
-// 结果与 reqs 一一对应，单个请求失败时该位置为 nil；报价器不可用时整体返回错误。
+// 结果与 reqs 一一对应，单个请求失败时该位置为 nil；报价器不可用或读分组现状失败时整体返回错误。
 func (q *PriceQuoter) BatchQuoteWith(ctx context.Context, reqs []QuoteRequest, overlay CellOverlay) ([]*Quote, error) {
-	scoped, err := q.withOverlay(overlay)
+	scoped, src, err := q.withOverlay(overlay)
 	if err != nil {
 		return nil, err
 	}
-	return scoped.batchQuote(ctx, reqs), nil
+	quotes := scoped.batchQuote(ctx, reqs)
+	if ferr := src.failure(); ferr != nil {
+		return nil, ferr
+	}
+	return quotes, nil
 }
