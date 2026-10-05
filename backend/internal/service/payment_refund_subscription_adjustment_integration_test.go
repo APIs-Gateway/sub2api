@@ -211,6 +211,40 @@ func TestRefundSubscriptionAdjustmentPG_PrepareSnapshotDoesNotOverwriteRenewal(t
 	assertRefundAdjustmentCard(t, c, p, 70)
 }
 
+func TestRefundSubscriptionAdjustmentPG_NoInterleaveRestoresCard(t *testing.T) {
+	c, s, p, _ := refundAdjustmentFixture(t, 40)
+	result, err := s.ExecuteRefund(context.Background(), p)
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	assertRefundAdjustmentCard(t, c, p, 40)
+}
+
+func TestRefundSubscriptionAdjustmentPG_MaxExpiryAndAlreadyExpired(t *testing.T) {
+	t.Run("maximum", func(t *testing.T) {
+		maxDay := ClampExpireDay(int(^uint(0) >> 1))
+		c, s, p, provider := refundAdjustmentFixture(t, maxDay-TodayEastDayNumber()-10)
+		provider.onRefund = func() { refundAdjustmentPaidRenewal(t, c, s, p, 30) }
+		result, err := s.ExecuteRefund(context.Background(), p)
+		require.NoError(t, err)
+		require.False(t, result.Success)
+		assertRefundAdjustmentCard(t, c, p, maxDay-TodayEastDayNumber())
+	})
+	t.Run("already expired", func(t *testing.T) {
+		ctx := context.Background()
+		c, s, p, _ := refundAdjustmentFixture(t, 5)
+		_, err := c.UserSubscription.UpdateOneID(p.SubscriptionID).SetStatus(SubscriptionStatusExpired).SetExpireDay(TodayEastDayNumber() - 5).SetExpiresAt(ExpireDayToExpiresAt(TodayEastDayNumber() - 5)).SetTodayRemaining(0).Save(ctx)
+		require.NoError(t, err)
+		result, err := s.ExecuteRefund(ctx, p)
+		require.NoError(t, err)
+		require.False(t, result.Success)
+		m, err := c.UserSubscription.Get(ctx, p.SubscriptionID)
+		require.NoError(t, err)
+		require.Equal(t, SubscriptionStatusExpired, m.Status)
+		require.Equal(t, TodayEastDayNumber()-1, m.ExpireDay)
+		require.Zero(t, m.TodayRemaining)
+	})
+}
+
 func TestRefundSubscriptionAdjustmentPG_ActualClampAndCurrentValue(t *testing.T) {
 	for _, rollover := range []bool{false, true} {
 		t.Run(fmt.Sprintf("rollover=%v", rollover), func(t *testing.T) {
