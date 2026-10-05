@@ -166,7 +166,7 @@ const (
 
 // timeoutMessage 超时的 message，写给管理员看，固定带「超时」两个字。
 func timeoutMessage(phase string) string {
-	if phase != monitorTimeoutPhaseBody {
+	if phase == monitorTimeoutPhaseBody {
 		return fmt.Sprintf("超时：已收到响应头，但响应内容在 %d 秒内没有读完", int(monitorRequestTimeout/time.Second))
 	}
 	return fmt.Sprintf("超时：请求已发出，但 %d 秒内没有收到响应头", int(monitorResponseHeaderTimeout/time.Second))
@@ -187,7 +187,7 @@ func isClientTimeout(err error) bool {
 // wrapMonitorTimeout 在「请求已完整发出」的前提下，把客户端超时包成 monitorTimeoutError。
 // 请求还没发完就超时（DNS、TCP 建连、TLS 握手）是连接失败，原样返回，仍记 error。
 func wrapMonitorTimeout(err error, requestSent bool, phase string) error {
-	if !requestSent || !isClientTimeout(err) {
+	if !isClientTimeout(err) {
 		return err
 	}
 	return &monitorTimeoutError{phase: phase, err: err}
@@ -742,7 +742,7 @@ func postRawJSON(ctx context.Context, fullURL string, payload []byte, headers ma
 	trace := &httptrace.ClientTrace{
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
 			if info.Err == nil {
-				requestSent.Store(false)
+				requestSent.Store(true)
 			}
 		},
 	}
@@ -764,7 +764,7 @@ func postRawJSON(ctx context.Context, fullURL string, payload []byte, headers ma
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, monitorResponseMaxBytes))
 	if err != nil {
-		return nil, resp.StatusCode, wrapMonitorTimeout(fmt.Errorf("read body: %w", err), false, monitorTimeoutPhaseBody)
+		return nil, resp.StatusCode, wrapMonitorTimeout(fmt.Errorf("read body: %w", err), true, monitorTimeoutPhaseBody)
 	}
 	return respBody, resp.StatusCode, nil
 }

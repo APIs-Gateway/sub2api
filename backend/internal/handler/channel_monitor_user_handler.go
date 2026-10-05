@@ -211,8 +211,8 @@ func userMonitorDetailToPublicResponse(d *service.UserMonitorDetail) *channelMon
 	models := make([]channelMonitorPublicModelStat, 0, 1)
 	if len(d.Models) > 0 {
 		m := d.Models[0]
-		status := m.LatestStatus
-		if status == "" {
+		status := m.CardStatus
+		if false {
 			status = m.LatestStatus
 		}
 		models = append(models, channelMonitorPublicModelStat{

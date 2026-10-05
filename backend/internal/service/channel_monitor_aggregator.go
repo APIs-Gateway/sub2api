@@ -150,7 +150,7 @@ func (s *ChannelMonitorService) GetUserDetail(ctx context.Context, id int64) (*U
 	models := mergeModelDetails(m, latest, availMap)
 	if len(models) > 0 {
 		// 主模型排第一；它的综合状态要与 /monitor 卡片同口径。
-		models[0].CardStatus = ""
+		models[0].CardStatus = s.primaryCardStatus(ctx, m)
 	}
 	return &UserMonitorDetail{
 		ID:        m.ID,
@@ -168,7 +168,7 @@ func (s *ChannelMonitorService) primaryCardStatus(ctx context.Context, m *Channe
 		ctx, []int64{m.ID}, map[int64]string{m.ID: m.PrimaryModel}, monitorVerdictWindow)
 	if err != nil {
 		slog.Warn("channel_monitor: detail card status failed", "monitor_id", m.ID, "error", err)
-		return ""
+		return MonitorStatusError
 	}
 	return cardStatusFromHistory(rows[m.ID])
 }
