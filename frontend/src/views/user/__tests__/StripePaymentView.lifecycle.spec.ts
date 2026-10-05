@@ -452,4 +452,22 @@ describe('Stripe page owns asynchronous callbacks only while mounted', () => {
     expect(routerPush).not.toHaveBeenCalled()
   })
 
+  it('preserves the mounted popup completion delay and closes it once', async () => {
+    vi.useFakeTimers()
+    const close = vi.spyOn(window, 'close').mockImplementation(() => {})
+    vi.stubGlobal('opener', {})
+    routeState.query.method = 'wechat_pay'
+    stripeInstance.confirmWechatPayPayment.mockResolvedValueOnce({ paymentIntent: { status: 'succeeded' } })
+    const wrapper = mountView()
+    await settle()
+    expect(state(wrapper).stripeSuccess).toBe(true)
+    expect(close).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1999)
+    expect(close).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(routerPush).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
 })
