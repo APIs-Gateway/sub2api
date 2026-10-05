@@ -117,6 +117,22 @@ func TestAntigravityInterruptedUsage_MeteredEmptyDoesNotReplay(t *testing.T) {
 	}
 }
 
+func TestAntigravityInterruptedUsage_UsageOnlyDoesNotReplay(t *testing.T) {
+	for _, mode := range []string{"claude_stream", "claude_buffered"} {
+		t.Run(mode, func(t *testing.T) {
+			result, err, rec := agMeteredReader(t, mode, io.NopCloser(strings.NewReader(agMeteredFrame(`{"response":{"usageMetadata":{"promptTokenCount":10}}}`))), &config.Config{}, false)
+			require.Error(t, err)
+			var failover *UpstreamFailoverError
+			require.False(t, errors.As(err, &failover))
+			require.NotNil(t, result)
+			require.Equal(t, 10, result.usage.InputTokens)
+			require.Zero(t, result.usage.OutputTokens)
+			require.NotContains(t, rec.Body.String(), "message_stop")
+			require.Contains(t, rec.Body.String(), "error")
+		})
+	}
+}
+
 func TestAntigravityInterruptedUsage_ZeroMeterEmptyRetainsRetry(t *testing.T) {
 	for _, mode := range []string{"claude_stream", "claude_buffered"} {
 		t.Run(mode, func(t *testing.T) {
@@ -212,19 +228,64 @@ func TestAntigravityInterruptedUsage_CanceledStallIsBounded(t *testing.T) {
 
 func TestAntigravityInterruptedUsage_ImageOnlyPartialIsBillable(t *testing.T) {
 	for _, stream := range []bool{false, true} {
+		for _, failureKind := range []string{"read_error", "cancel", "cancel_no_image"} {
+			t.Run(map[bool]string{false: "buffered", true: "stream"}[stream]+"/"+failureKind, func(t *testing.T) {
+				image := `{"response":{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"aGVsbG8="}}]}}]}}`
+				if failureKind == "cancel_no_image" {
+					image = agMeteredSnapshot
+				}
+				svc, account, c, _ := antigravityClientErrorFixture(t, 200, "")
+				account.Credentials["model_mapping"] = map[string]any{"gemini-3.1-flash-image": "gemini-3.1-flash-image"}
+				failure := errors.New("read failed after generated image")
+				if failureKind != "read_error" {
+					failure = context.Canceled
+				}
+				svc.httpUpstream = &httpUpstreamStub{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(io.MultiReader(strings.NewReader(agMeteredFrame(image)), agMeteredReadFailure{failure}))}}
+				result, err := svc.ForwardGemini(context.Background(), c, account, "gemini-3.1-flash-image", "streamGenerateContent", stream, []byte(`{"contents":[{"role":"user","parts":[{"text":"draw"}]}]}`), false)
+				if failureKind == "read_error" || !stream {
+					require.ErrorIs(t, err, failure)
+				} else {
+					require.NoError(t, err)
+				}
+				var failover *UpstreamFailoverError
+				require.False(t, errors.As(err, &failover))
+				require.NotNil(t, result)
+				if failureKind == "cancel_no_image" {
+					require.Zero(t, result.ImageCount)
+					assertAGMeteredSnapshot(t, &result.Usage)
+				} else {
+					require.Equal(t, 1, result.ImageCount)
+					require.False(t, result.Usage.hasObservedTokens())
+				}
+				if failureKind != "read_error" && stream {
+					require.True(t, result.ClientDisconnect)
+				}
+			})
+		}
+	}
+}
+
+func TestAntigravityInterruptedUsage_ConvertedProviderFailureKeepsRawOps(t *testing.T) {
+	for _, stream := range []bool{false, true} {
 		t.Run(map[bool]string{false: "buffered", true: "stream"}[stream], func(t *testing.T) {
-			image := `{"response":{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"aGVsbG8="}}]}}]}}`
-			svc, account, c, _ := antigravityClientErrorFixture(t, 200, "")
-			account.Credentials["model_mapping"] = map[string]any{"gemini-3.1-flash-image": "gemini-3.1-flash-image"}
-			failure := errors.New("read failed after generated image")
-			svc.httpUpstream = &httpUpstreamStub{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(io.MultiReader(strings.NewReader(agMeteredFrame(image)), agMeteredReadFailure{failure}))}}
-			result, err := svc.ForwardGemini(context.Background(), c, account, "gemini-3.1-flash-image", "streamGenerateContent", stream, []byte(`{"contents":[{"role":"user","parts":[{"text":"draw"}]}]}`), false)
-			require.ErrorIs(t, err, failure)
-			var failover *UpstreamFailoverError
-			require.False(t, errors.As(err, &failover))
+			body := agMeteredFrame(agMeteredSnapshot) + agMeteredFrame(antigravityPrivateError)
+			svc, account, c, rec := antigravityClientErrorFixture(t, 200, body)
+			account.Credentials["model_mapping"] = map[string]any{"claude-sonnet-4-5": "claude-sonnet-4-5"}
+			req := `{"model":"claude-sonnet-4-5","max_tokens":8,"messages":[{"role":"user","content":"hi"}],"stream":` + map[bool]string{false: "false", true: "true"}[stream] + `}`
+			result, err := svc.Forward(context.Background(), c, account, []byte(req), false)
+			require.Error(t, err)
 			require.NotNil(t, result)
-			require.Equal(t, 1, result.ImageCount)
-			require.False(t, result.Usage.hasObservedTokens())
+			assertAGMeteredSnapshot(t, &result.Usage)
+			marker, ok := GetOpsStreamError(c)
+			require.True(t, ok)
+			require.True(t, marker.UpstreamAttributed)
+			require.True(t, marker.CountTowardsSLA)
+			require.Equal(t, !stream, marker.NonStream)
+			require.Equal(t, 403, marker.IntendedStatus)
+			raw, ok := c.Get(OpsUpstreamErrorMessageKey)
+			require.True(t, ok)
+			require.Contains(t, raw, "private-project-123")
+			assertAntigravityClientSafe(t, rec.Body.String())
 		})
 	}
 }

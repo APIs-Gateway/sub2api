@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Gemini sends cumulative snapshots. Keep the latest metered snapshot rather
@@ -48,7 +50,7 @@ func antigravityInterruptedImageUsage(usage *ClaudeUsage, imageCount int, firstT
 	return &antigravityStreamResult{usage: usage, imageCount: imageCount, firstTokenMs: firstTokenMs, clientDisconnect: disconnected}, err
 }
 
-func (s *AntigravityGatewayService) antigravityLineHasProviderError(line string) bool {
+func (s *AntigravityGatewayService) antigravityLineHasProviderError(c *gin.Context, line string, stream bool) bool {
 	line = strings.TrimSpace(line)
 	if !strings.HasPrefix(line, "data:") {
 		return false
@@ -57,7 +59,10 @@ func (s *AntigravityGatewayService) antigravityLineHasProviderError(line string)
 	if err != nil {
 		return false
 	}
-	_, _, ok := antigravitySafeGeminiError(inner)
+	_, status, ok := antigravitySafeGeminiError(inner)
+	if ok {
+		s.recordAntigravityGeminiClientError(c, status, inner, stream)
+	}
 	return ok
 }
 
