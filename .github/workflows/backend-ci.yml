@@ -26,6 +26,16 @@ jobs:
           /bin/sh deploy/tests/docker-compose-security-test.sh
           /bin/sh deploy/test-caddyfile-cache.sh
           python3 deploy/tests/docker-compose-redis-command-test.py
+      - name: Anthropic start output metering and interrupted native attempts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestAnthropicStartOutput_' ./internal/service/
+      - name: Anthropic start output actual wallet and card settlement (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestAnthropicStartOutputHTTP_' ./internal/repository/
       - name: Integration tests (chat ping actual account failover and billing)
         working-directory: backend
         run: go test -tags=integration -count=1 -v -run '^TestChatPingHTTP_' ./internal/repository/
