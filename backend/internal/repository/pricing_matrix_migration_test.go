@@ -121,3 +121,35 @@ func TestW6CostAccountingRulesMigrationShape(t *testing.T) {
 	require.Contains(t, code, "platform  VARCHAR(50) NOT NULL DEFAULT ''")
 	require.Equal(t, 1, strings.Count(code, "REFERENCES"), "只有价格行引用规则行")
 }
+
+// W6-M6（迁移 208，PR4b-1）：过渡审批记录表，外加给历史表补一个可空列。
+// 与 200 至 202 不同，它含一条 ALTER TABLE，所以单独校验：只能是「加一个可空列」。
+func TestW6PricingWriteApprovalsMigrationShape(t *testing.T) {
+	const name = "208_w6_pricing_write_approvals.sql"
+	code := sqlWithoutComments(readMigrationForTest(t, name))
+
+	require.Contains(t, code, "SET LOCAL lock_timeout")
+	require.Contains(t, code, "SET LOCAL statement_timeout")
+	require.Contains(t, code, "CREATE TABLE IF NOT EXISTS pricing_write_approvals")
+	require.Contains(t, code, "CHECK (status IN ('previewed', 'consumed'))")
+	require.Contains(t, code, "CHECK (price_delta IN ('up', 'down', 'none', 'unknown'))")
+	require.Contains(t, code, "CREATE INDEX IF NOT EXISTS idx_pwa_status_created")
+	require.NotContains(t, code, "REFERENCES", "不建外键")
+
+	forbidden := regexp.MustCompile(`(?i)\b(DROP\s|TRUNCATE|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|CONCURRENTLY)\b`)
+	require.Empty(t, forbidden.FindString(code), "迁移只能新增对象，不改数据")
+
+	alters := regexp.MustCompile(`(?i)ALTER\s+TABLE[^;]*;`).FindAllString(code, -1)
+	require.Equal(t, []string{"ALTER TABLE model_group_price_history ADD COLUMN IF NOT EXISTS approval_id BIGINT;"}, alters,
+		"唯一的 ALTER：给历史表加一个可空、无默认值的列")
+
+	entries, err := os.ReadDir(filepath.Join("..", "..", "migrations"))
+	require.NoError(t, err)
+	var sameNumber []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "208_") {
+			sameNumber = append(sameNumber, e.Name())
+		}
+	}
+	require.Equal(t, []string{name}, sameNumber, "迁移号 208 只能有一个文件")
+}
