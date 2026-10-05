@@ -41,10 +41,12 @@
   overflow: hidden !important;
 }
 
+/* 深色模式用站点的暖炭灰（tailwind.config.js 的 dark / gray 色板），不再是 slate 蓝灰：
+   弹层 dark-800 #262420、描边 dark-700 #34302a、底栏 dark-900 #1c1b18、正文 gray-300 #d9d3c6、次要字 gray-400 #b8b1a1 */
 .dark .driver-popover.theme-tour-popover {
-  background-color: #1e293b !important;
-  border-color: #334155 !important;
-  color: #f3f4f6 !important;
+  background-color: #262420 !important;
+  border-color: #34302a !important;
+  color: #f3f1ea !important;
 }
 
 /* 3. Header Area */
@@ -84,7 +86,7 @@
   justify-content: center !important;
 }
 .theme-tour-popover .driver-popover-close-btn:hover { background-color: #f3f4f6 !important; color: #4b5563 !important; }
-.dark .theme-tour-popover .driver-popover-close-btn:hover { background-color: #334155 !important; }
+.dark .theme-tour-popover .driver-popover-close-btn:hover { background-color: #34302a !important; }
 
 /* 4. Body Content */
 .theme-tour-popover .driver-popover-description {
@@ -97,7 +99,7 @@
   line-height: 1.6 !important;
   background-color: transparent !important;
 }
-.dark .theme-tour-popover .driver-popover-description { color: #cbd5e1 !important; }
+.dark .theme-tour-popover .driver-popover-description { color: #d9d3c6 !important; }
 
 /* 5. Footer Area - Flex Row with Left/Right Containers */
 .theme-tour-popover .driver-popover-footer {
@@ -110,8 +112,8 @@
   margin: 0 !important;
 }
 .dark .theme-tour-popover .driver-popover-footer {
-  background-color: #0f172a !important;
-  border-top-color: #1e293b !important;
+  background-color: #1c1b18 !important;
+  border-top-color: #262420 !important;
 }
 
 /* Left Container: Progress + Shortcuts */
@@ -136,7 +138,7 @@
   font-weight: 500 !important;
   white-space: nowrap !important;
 }
-.dark .theme-tour-popover .driver-popover-progress-text { color: #9ca3af !important; }
+.dark .theme-tour-popover .driver-popover-progress-text { color: #b8b1a1 !important; }
 
 /* Shortcuts (Divider + Keys) */
 .footer-shortcuts {
@@ -147,7 +149,7 @@
   border-left: 1px solid #e5e7eb !important;
   height: 20px !important;
 }
-.dark .footer-shortcuts { border-left-color: #334155 !important; }
+.dark .footer-shortcuts { border-left-color: #34302a !important; }
 
 .shortcut-item {
   display: flex !important;
@@ -157,7 +159,7 @@
   color: #6b7280 !important;
   white-space: nowrap !important;
 }
-.dark .shortcut-item { color: #94a3b8 !important; }
+.dark .shortcut-item { color: #b8b1a1 !important; }
 
 .shortcut-item kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace !important;
@@ -174,9 +176,9 @@
   display: inline-block !important;
 }
 .dark .shortcut-item kbd {
-  background-color: #1e293b !important;
-  border-color: #475569 !important;
-  color: #cbd5e1 !important;
+  background-color: #262420 !important;
+  border-color: #4f4940 !important;
+  color: #d9d3c6 !important;
 }
 
 /* Nav Buttons */
@@ -211,9 +213,9 @@
 }
 .theme-tour-popover .driver-popover-prev-btn:hover { background-color: #f9fafb !important; color: #374151 !important; }
 .dark .theme-tour-popover .driver-popover-prev-btn { 
-  background-color: #1e293b !important; 
-  border-color: #475569 !important; 
-  color: #9ca3af !important; 
+  background-color: #262420 !important; 
+  border-color: #4f4940 !important; 
+  color: #b8b1a1 !important; 
 }
 
 /* Arrows */
@@ -223,7 +225,7 @@
 .driver-popover-arrow-side-top.driver-popover-arrow { border-top-color: #ffffff !important; }
 .driver-popover-arrow-side-bottom.driver-popover-arrow { border-bottom-color: #ffffff !important; }
 
-.dark .driver-popover-arrow-side-left.driver-popover-arrow { border-left-color: #1e293b !important; }
-.dark .driver-popover-arrow-side-right.driver-popover-arrow { border-right-color: #1e293b !important; }
-.dark .driver-popover-arrow-side-top.driver-popover-arrow { border-top-color: #1e293b !important; }
-.dark .driver-popover-arrow-side-bottom.driver-popover-arrow { border-bottom-color: #1e293b !important; }
+.dark .driver-popover-arrow-side-left.driver-popover-arrow { border-left-color: #262420 !important; }
+.dark .driver-popover-arrow-side-right.driver-popover-arrow { border-right-color: #262420 !important; }
+.dark .driver-popover-arrow-side-top.driver-popover-arrow { border-top-color: #262420 !important; }
+.dark .driver-popover-arrow-side-bottom.driver-popover-arrow { border-bottom-color: #262420 !important; }

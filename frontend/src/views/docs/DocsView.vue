@@ -427,7 +427,10 @@ onBeforeUnmount(() => {
   --d-ink: #1a1814;
   --d-text: #3a352e;
   --d-muted: #6d6659;
+  /* faint 只给不带字的细线、单选框描边（3:1 即可）；落在字上的用 faint-text，
+     在 #faf9f5 上 4.93:1、#f3f1ea 上 4.60:1 */
   --d-faint: #918a7c;
+  --d-faint-text: #736c5f;
   --d-rule: #d9d3c6;
   --d-hair: #e9e5db;
   --d-wash: #f3f1ea;
@@ -457,6 +460,7 @@ onBeforeUnmount(() => {
   --d-text: #d3ccbe;
   --d-muted: #a39b8b;
   --d-faint: #8c8475;
+  --d-faint-text: #8c8475;
   --d-rule: #3f3a33;
   --d-hair: #2f2c27;
   --d-wash: #232220;
@@ -995,7 +999,7 @@ onBeforeUnmount(() => {
 }
 .docs-line-desc {
   font-size: 0.8125rem;
-  color: var(--d-faint);
+  color: var(--d-faint-text);
 }
 .docs-line-url {
   grid-column: 2;
@@ -1049,7 +1053,7 @@ onBeforeUnmount(() => {
 }
 .docs-part-num {
   font-variant-numeric: tabular-nums;
-  color: var(--d-faint);
+  color: var(--d-faint-text);
 }
 .docs-part-rule {
   height: 1px;
@@ -1128,7 +1132,7 @@ onBeforeUnmount(() => {
   padding-left: 0.25em;
 }
 .docs-prose :deep(li::marker) {
-  color: var(--d-faint);
+  color: var(--d-faint-text);
 }
 .docs-prose :deep(li > p) {
   margin-bottom: 0;

@@ -56,6 +56,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
+import { chatgptUrl as buildChatgptUrl, claudeUrl as buildClaudeUrl } from '@/utils/keyOnboarding'
 import { AI_TOOLS, aiToolSentence, aiToolUrl, type AiTool } from './aiTools'
 import { copyText, parseAiPrompts, type DocVars } from './docsRender'
 
@@ -92,8 +93,9 @@ const longPrompt = computed(() => {
   const prompts = parseAiPrompts(props.promptsRaw, { ...props.vars, llms: docUrl.value })
   return prompts[activeTool.value.id] ?? prompts[AI_TOOLS[0].id] ?? ''
 })
-const chatgptUrl = computed(() => `https://chatgpt.com/?q=${encodeURIComponent(longPrompt.value)}`)
-const claudeUrl = computed(() => `https://claude.ai/new?q=${encodeURIComponent(longPrompt.value)}`)
+// 和接入弹窗共用同一组链接写法（ChatGPT 带 hints=search，才会联网读文档链接）
+const chatgptUrl = computed(() => buildChatgptUrl(longPrompt.value))
+const claudeUrl = computed(() => buildClaudeUrl(longPrompt.value))
 
 async function copyAs(kind: 'sentence' | 'full' | 'prompt', text: string) {
   if (!(await copyText(text))) return

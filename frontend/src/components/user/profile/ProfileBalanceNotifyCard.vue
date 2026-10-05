@@ -79,7 +79,7 @@
                     <button v-else @click="sendCodeForSaved(entry.email)" :disabled="sendingSavedCode" class="text-xs text-gray-500 hover:text-gray-700">
                       {{ t('profile.balanceNotify.resend') }}
                     </button>
-                    <button @click="cancelSavedVerification" class="text-xs text-gray-400 hover:text-gray-600">
+                    <button @click="cancelSavedVerification" class="text-xs text-gray-400 hover:text-gray-700 dark:hover:text-gray-600">
                       {{ t('common.cancel') }}
                     </button>
                   </template>

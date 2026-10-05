@@ -687,9 +687,9 @@ describe('AI prompts', () => {
 
       const chatgpt = wrapper.get('[data-testid="docs-ai-chatgpt"]').attributes('href')!
       const claude = wrapper.get('[data-testid="docs-ai-claude"]').attributes('href')!
-      expect(chatgpt.startsWith('https://chatgpt.com/?q=')).toBe(true)
+      expect(chatgpt.startsWith('https://chatgpt.com/?hints=search&q=')).toBe(true)
       expect(claude.startsWith('https://claude.ai/new?q=')).toBe(true)
-      expect(decodeURIComponent(chatgpt.split('?q=')[1]).replace(/\s+/g, ' ')).toBe(prompt.replace(/\s+/g, ' '))
+      expect(decodeURIComponent(chatgpt.split('&q=')[1]).replace(/\s+/g, ' ')).toBe(prompt.replace(/\s+/g, ' '))
       expect(decodeURIComponent(claude.split('?q=')[1]).replace(/\s+/g, ' ')).toBe(prompt.replace(/\s+/g, ' '))
     })
 

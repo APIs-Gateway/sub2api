@@ -516,7 +516,7 @@ onUnmounted(() => {
 .select-clear {
   @apply flex flex-shrink-0 cursor-pointer items-center justify-center;
   @apply rounded text-gray-400 transition-colors;
-  @apply hover:text-gray-600 dark:hover:text-gray-200;
+  @apply hover:text-gray-700 dark:hover:text-gray-200;
 }
 </style>
 
