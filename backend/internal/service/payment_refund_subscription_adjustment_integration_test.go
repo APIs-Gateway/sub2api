@@ -14,6 +14,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
+	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/google/uuid"
@@ -336,11 +337,15 @@ func TestRefundSubscriptionAdjustmentPG_IndependentRevocationIsNotRevived(t *tes
 			}
 			_, err := s.ExecuteRefund(ctx, p)
 			require.Error(t, err)
-			m, err := c.UserSubscription.Get(ctx, p.SubscriptionID)
+			// Inspect the persisted card without the normal soft-delete filter.
+			// Refund compensation must leave a separately deleted card hidden.
+			m, err := c.UserSubscription.Get(mixins.SkipSoftDelete(ctx), p.SubscriptionID)
 			require.NoError(t, err)
 			require.Equal(t, TodayEastDayNumber()+10, m.ExpireDay)
 			if deleted {
 				require.NotNil(t, m.DeletedAt)
+				_, hiddenErr := c.UserSubscription.Get(ctx, p.SubscriptionID)
+				require.True(t, dbent.IsNotFound(hiddenErr))
 			} else {
 				require.Equal(t, SubscriptionStatusExpired, m.Status)
 			}
