@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises } from '@vue/test-utils'
 
@@ -11,9 +11,15 @@ vi.mock('@/api/subscriptions', () => ({
 }))
 
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import { useSubscriptionStore } from '@/stores/subscriptions'
 import { resetFiatDataMissingForTest, useCurrencyDisplay } from '../useCurrencyDisplay'
-import { loadPlanPricing, resetPlanPricingForTest, useRateDisplay } from '../useRateDisplay'
+import {
+  PLAN_PRICING_RETRY_COOLDOWN_MS,
+  loadPlanPricing,
+  resetPlanPricingForTest,
+  useRateDisplay
+} from '../useRateDisplay'
 
 /** 生产 codex 站的 /subscriptions/pricing：u_min = 0.04（D ≥ 210），u_max = 0.05（D = 30）。 */
 const PROD_PRICING = {
@@ -29,6 +35,13 @@ const PROD_PRICING = {
 
 function setSettings(settings: Record<string, unknown> | null) {
   useAppStore().cachedPublicSettings = settings as PublicSettings | null
+}
+
+/** 登录 / 退出：isAuthenticated 要 token 和 user 都在。 */
+function setLoggedIn(loggedIn: boolean) {
+  const auth = useAuthStore()
+  auth.token = loggedIn ? 'test-token' : null
+  auth.user = loggedIn ? ({ id: 1, role: 'user' } as never) : null
 }
 
 function setCards(cards: Array<Record<string, unknown>>) {
@@ -47,6 +60,12 @@ describe('useRateDisplay', () => {
     useCurrencyDisplay().setMode('fiat')
     getSubscriptionPricing.mockReset().mockResolvedValue(PROD_PRICING)
     setSettings({ balance_recharge_multiplier: 13, payment_enabled: true })
+    // 接口需要登录，默认按已登录用户测；未登录的用例单独覆盖。
+    setLoggedIn(true)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   describe('m = 1（free 站）', () => {
@@ -252,8 +271,169 @@ describe('useRateDisplay', () => {
     })
   })
 
+  describe('失败后的冷却', () => {
+    const COOLDOWN = PLAN_PRICING_RETRY_COOLDOWN_MS
+
+    /** 只假冒 Date，不动 setTimeout / 微任务，flushPromises 照常能用。 */
+    function freezeClock(startMs = 1_000_000) {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(startMs)
+    }
+
+    it('冷却时长是 60 秒', () => {
+      expect(COOLDOWN).toBe(60_000)
+    })
+
+    it('冷却期内的每一次挂载都不重发，哪怕只差 1 毫秒到点', async () => {
+      freezeClock()
+      getSubscriptionPricing.mockRejectedValue(new Error('boom'))
+      useRateDisplay()
+      await flushPromises()
+      expect(getSubscriptionPricing).toHaveBeenCalledTimes(1)
+
+      for (const elapsed of [1, 1_000, 30_000, COOLDOWN - 1]) {
+        vi.setSystemTime(1_000_000 + elapsed)
+        useRateDisplay()
+        await loadPlanPricing()
+      }
+      expect(getSubscriptionPricing).toHaveBeenCalledTimes(1)
+    })
+
+    it('满 60 秒后的下一次挂载重试；重试成功后套餐低至出现，之后不再请求', async () => {
+      freezeClock()
+      getSubscriptionPricing.mockRejectedValueOnce(new Error('boom')).mockResolvedValue(PROD_PRICING)
+      const first = useRateDisplay()
+      await flushPromises()
+      expect(first.rateView(1.4).plan).toBeUndefined()
+
+      vi.setSystemTime(1_000_000 + COOLDOWN)
+      const second = useRateDisplay()
+      await flushPromises()
+
+      expect(getSubscriptionPricing).toHaveBeenCalledTimes(2)
+      // 已经挂着的组件也是同一份缓存，会随之补上。
+      expect(first.rateView(1.4).plan).toBe('0.056')
+      expect(second.rateView(1.4).plan).toBe('0.056')
+
+      vi.setSystemTime(1_000_000 + COOLDOWN * 10)
+      useRateDisplay()
+      await flushPromises()
+      expect(getSubscriptionPricing).toHaveBeenCalledTimes(2)
+    })
+
+    it('重试又失败：重新计时，再过 60 秒才有下一次', async () => {
+      freezeClock()
+      getSubscriptionPricing.mockRejectedValue(new Error('boom'))
+      useRateDisplay()
+      await flushPromises()
+
+      vi.setSystemTime(1_000_000 + COOLDOWN)
+      useRateDisplay()
+      await flushPromises()
+      expect(getSubscriptionPricing).toHaveBeenCalledTimes(2)
+
+      vi.setSystemTime(1_000_000 + COOLDOWN + COOLDOWN - 1)
+      useRateDisplay()
+      await flushPromises()
+      expect(getSubscriptionPricing).toHaveBeenCalledTimes(2)
+
+      vi.setSystemTime(1_000_000 + COOLDOWN * 2)
+      useRateDisplay()
+      await flushPromises()
+      expect(getSubscriptionPricing).toHaveBeenCalledTimes(3)
+    })
+
+    it('重试还在路上时，再有组件挂载只共用这一次请求', async () => {
+      freezeClock()
+      getSubscriptionPricing.mockRejectedValueOnce(new Error('boom'))
+      useRateDisplay()
+      await flushPromises()
+
+      let resolve: (value: unknown) => void = () => {}
+      getSubscriptionPricing.mockReturnValue(new Promise((r) => (resolve = r)))
+      vi.setSystemTime(1_000_000 + COOLDOWN)
+      const a = loadPlanPricing()
+      const b = loadPlanPricing()
+      expect(b).toBe(a)
+      // 请求还没回来时即使再过很久，也不会叠一个新请求。
+      vi.setSystemTime(1_000_000 + COOLDOWN * 5)
+      expect(loadPlanPricing()).toBe(a)
+      expect(getSubscriptionPricing).toHaveBeenCalledTimes(2)
+
+      resolve(PROD_PRICING)
+      await a
+      expect(useRateDisplay().rateView(1.4).plan).toBe('0.056')
+    })
+
+    it('成功过的不会因为时间久了重新请求', async () => {
+      freezeClock()
+      useRateDisplay()
+      await flushPromises()
+
+      vi.setSystemTime(1_000_000 + COOLDOWN * 100)
+      useRateDisplay()
+      await flushPromises()
+      expect(getSubscriptionPricing).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('登录态', () => {
+    it('未登录：不请求，只有主倍率', async () => {
+      setLoggedIn(false)
+      const rate = useRateDisplay()
+      await flushPromises()
+
+      expect(getSubscriptionPricing).not.toHaveBeenCalled()
+      expect(rate.rateView(1.4).main).toBe('0.108')
+      expect(rate.rateView(1.4).plan).toBeUndefined()
+      expect(rate.planAvailable.value).toBe(false)
+    })
+
+    it('只有 token 或只有用户信息都不算登录', async () => {
+      const auth = useAuthStore()
+      auth.token = 'test-token'
+      auth.user = null
+      useRateDisplay()
+      await flushPromises()
+      expect(getSubscriptionPricing).not.toHaveBeenCalled()
+
+      auth.token = null
+      auth.user = { id: 1, role: 'user' } as never
+      useRateDisplay()
+      await flushPromises()
+      expect(getSubscriptionPricing).not.toHaveBeenCalled()
+    })
+
+    it('先挂载后登录：登录那一刻补发一次请求，之后不重复', async () => {
+      setLoggedIn(false)
+      const rate = useRateDisplay()
+      await flushPromises()
+      expect(getSubscriptionPricing).not.toHaveBeenCalled()
+
+      setLoggedIn(true)
+      await flushPromises()
+      expect(getSubscriptionPricing).toHaveBeenCalledTimes(1)
+      expect(rate.rateView(1.4).plan).toBe('0.056')
+
+      setLoggedIn(false)
+      setLoggedIn(true)
+      await flushPromises()
+      expect(getSubscriptionPricing).toHaveBeenCalledTimes(1)
+    })
+
+    it('已登录但 m = 1 或支付关闭：照旧不请求（与原条件取与）', async () => {
+      setSettings({ balance_recharge_multiplier: 1, payment_enabled: true })
+      useRateDisplay()
+      setSettings({ balance_recharge_multiplier: 13, payment_enabled: false })
+      useRateDisplay()
+      await flushPromises()
+
+      expect(getSubscriptionPricing).not.toHaveBeenCalled()
+    })
+  })
+
   describe('R2 抑制条件', () => {
-    it('/subscriptions/pricing 失败：静默，只有主倍率，也不再重试', async () => {
+    it('/subscriptions/pricing 失败：静默，只有主倍率；冷却期内别的组件再用也不重发', async () => {
       getSubscriptionPricing.mockRejectedValue(new Error('boom'))
       const rate = useRateDisplay()
       await flushPromises()
@@ -262,7 +442,6 @@ describe('useRateDisplay', () => {
       expect(rate.rateView(1.4).plan).toBeUndefined()
       expect(rate.planAvailable.value).toBe(false)
 
-      // 另一个组件再用，不会再发请求。
       useRateDisplay()
       await flushPromises()
       expect(getSubscriptionPricing).toHaveBeenCalledTimes(1)
