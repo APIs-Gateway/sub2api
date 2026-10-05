@@ -147,6 +147,37 @@ func TestResponsesInputTokensChainExhaustionNeverGenerates(t *testing.T) {
 	require.Equal(t, int32(1), hs.routes.calls.Load())
 }
 
+func TestResponsesInputTokensBusyChainFallsBackWithoutBillingOrBreakerFailure(t *testing.T) {
+	for _, allBusy := range []bool{false, true} {
+		o := chainRespBase()
+		o.busy = map[int64]bool{11: true}
+		if allBusy {
+			o.busy[21] = true
+		}
+		for group, accounts := range o.schedulable {
+			for i := range accounts {
+				accounts[i].Credentials = map[string]any{"api_key": "key"}
+			}
+			o.schedulable[group] = accounts
+		}
+		o.replies = map[int64]chainRespReply{21: {body: `{"object":"response.input_tokens","input_tokens":42}`, contentType: "application/json"}}
+		hs := newChainRespHarness(t, o)
+		hs.router.POST("/v1/responses/input_tokens", hs.handler.ResponsesInputTokens)
+		rec := httptest.NewRecorder()
+		hs.router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/responses/input_tokens", strings.NewReader(`{"model":"gpt-5.4","input":"hello"}`)))
+		if allBusy {
+			require.Equal(t, 429, rec.Code, rec.Body.String())
+			require.Empty(t, hs.upstream.accountCalls())
+		} else {
+			require.Equal(t, 200, rec.Code, rec.Body.String())
+			require.Equal(t, []int64{21}, hs.upstream.accountCalls())
+		}
+		require.Empty(t, hs.usageLogs)
+		require.Empty(t, o.breaker.failedGroups(), "capacity waits cannot penalize group health")
+		require.Equal(t, int32(1), hs.routes.calls.Load())
+	}
+}
+
 func TestResponsesInputTokensOpsClassificationAndFilter(t *testing.T) {
 	for _, tc := range []struct {
 		path           string

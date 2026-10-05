@@ -138,7 +138,7 @@ func TestResponsesInputTokensFallbackAndErrors(t *testing.T) {
 }
 
 func TestResponsesInputTokensRejectsInvalidSuccess(t *testing.T) {
-	for _, body := range []string{`{}`, `null`, `[]`, `{"object":"response.input_tokens","input_tokens":null}`, `{"object":"response.input_tokens","input_tokens":"3"}`, `{"object":"response.input_tokens","input_tokens":3.5}`, `{"object":"response.input_tokens","input_tokens":-1}`, `{"object":"response","input_tokens":3}`, `{"object":"response.input_tokens","input_tokens":3}garbage`} {
+	for _, body := range []string{`{}`, `null`, `[]`, `{"Object":"response.input_tokens","input_tokens":3}`, `{"object":"response.input_tokens","Input_Tokens":3}`, `{"object":"response.input_tokens","input_tokens":2,"input_tokens":3}`, `{"object":"response.input_tokens","input_tokens":null}`, `{"object":"response.input_tokens","input_tokens":"3"}`, `{"object":"response.input_tokens","input_tokens":3.5}`, `{"object":"response.input_tokens","input_tokens":-1}`, `{"object":"response","input_tokens":3}`, `{"object":"response.input_tokens","input_tokens":3}garbage`} {
 		t.Run(body, func(t *testing.T) {
 			upstream := &inputTokensUpstream{status: 200, body: body}
 			account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "key"}}
@@ -217,7 +217,7 @@ func TestResponsesInputTokensSelfContainedFormats(t *testing.T) {
 }
 
 func TestResponsesInputTokensInvalidRequestsNeverReachUpstream(t *testing.T) {
-	for _, body := range []string{`[]`, `null`, `{}`, `{"model":3}`, `{"model":" "}`, `{"model":"gpt-4o","model":"different"}`, `{"model":"gpt-4o","input":"a","input":"b"}`, `{"model":"gpt-4o"} trailing`, `{"model":"gpt-4o","instructions":5}`} {
+	for _, body := range []string{`[]`, `null`, `{}`, `{"model":3}`, `{"model":" "}`, `{"model":"gpt-4o","model":"different"}`, `{"model":"gpt-4o","Model":"restricted-model"}`, `{"model":"gpt-4o","MODEL":"restricted-model"}`, `{"model":"gpt-4o","Input":"unaudited input"}`, `{"model":"gpt-4o","input":"a","input":"b"}`, `{"model":"gpt-4o"} trailing`, `{"model":"gpt-4o","instructions":5}`} {
 		t.Run(body, func(t *testing.T) {
 			upstream := &inputTokensUpstream{}
 			rec, err := inputTokensFixture(t, &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "key"}}, upstream, body, &config.Config{})
@@ -227,7 +227,7 @@ func TestResponsesInputTokensInvalidRequestsNeverReachUpstream(t *testing.T) {
 		})
 	}
 	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://relay.invalid"}}
-	for _, input := range []string{`[null]`, `[{"type":"message","role":3}]`, `[{"role":"user","content":5}]`, `[{"role":"user","content":[{"type":"input_file","file_data":"data:application/pdf;base64,AAAA"}]}]`, `[{"type":"reasoning","encrypted_content":"opaque"}]`} {
+	for _, input := range []string{`[null]`, `[{}]`, `[{"type":"message","role":3}]`, `[{"role":"tool","content":"bad role"}]`, `[{"role":"user","content":null}]`, `[{"type":"function_call","call_id":"call_1","arguments":"{}"}]`, `[{"type":"function_call_output","call_id":"call_1","output":null}]`, `[{"role":"user","content":[{"type":"input_text"}]}]`, `[{"role":"user","content":5}]`, `[{"role":"user","content":[{"type":"input_file","file_data":"data:application/pdf;base64,AAAA"}]}]`, `[{"type":"reasoning","encrypted_content":"opaque"}]`} {
 		upstream := &inputTokensUpstream{}
 		rec, err := inputTokensFixture(t, account, upstream, `{"model":"gpt-4o","input":`+input+`}`, &config.Config{})
 		require.Error(t, err)

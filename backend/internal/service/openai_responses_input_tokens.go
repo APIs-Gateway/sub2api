@@ -46,45 +46,60 @@ type openAIInputTokensRequest struct {
 // model audited/selected with gjson cannot differ from the model parsed by an
 // upstream JSON decoder. Unknown single fields remain intact on the wire.
 func ResponsesInputTokensModel(body []byte) (string, error) {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	token, err := decoder.Token()
-	if err != nil || token != json.Delim('{') {
-		return "", errors.New("input_tokens: expected object")
-	}
-	seen := make(map[string]bool)
-	model := ""
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return "", err
-		}
-		name, ok := token.(string)
-		if !ok || seen[name] {
-			return "", errors.New("input_tokens: duplicate field")
-		}
-		seen[name] = true
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
-			return "", err
-		}
-		if name == "model" {
-			if err := json.Unmarshal(raw, &model); err != nil {
-				return "", err
-			}
-		}
-	}
-	if _, err := decoder.Token(); err != nil {
+	fields, err := decodeResponsesInputTokensObject(body)
+	if err != nil {
 		return "", err
 	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return "", errors.New("input_tokens: trailing input")
+	var model string
+	if err := json.Unmarshal(fields["model"], &model); err != nil {
+		return "", err
 	}
 	model = strings.TrimSpace(model)
 	if model == "" {
 		return "", errors.New("input_tokens: model is required")
 	}
 	return model, nil
+}
+
+func decodeResponsesInputTokensObject(body []byte) (map[string]json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil, errors.New("input_tokens: expected object")
+	}
+	fields := make(map[string]json.RawMessage)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		name, ok := token.(string)
+		if _, exists := fields[name]; !ok || exists {
+			return nil, errors.New("input_tokens: duplicate field")
+		}
+		// encoding/json accepts case-insensitive struct field names, while
+		// policy inspection and the upstream API use the canonical JSON keys.
+		// Reject aliases that could change a value after it was audited.
+		switch strings.ToLower(name) {
+		case "model", "instructions", "input", "tools", "tool_choice", "text", "conversation", "previous_response_id", "object", "input_tokens":
+			if name != strings.ToLower(name) {
+				return nil, errors.New("input_tokens: noncanonical field name")
+			}
+		}
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return nil, err
+		}
+		fields[name] = raw
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, err
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, errors.New("input_tokens: trailing input")
+	}
+	return fields, nil
 }
 
 // ForwardResponsesInputTokens is a preflight operation. It never constructs a
@@ -200,11 +215,11 @@ func (s *OpenAIGatewayService) ForwardResponsesInputTokens(ctx context.Context, 
 		}
 		return writeError(status, "upstream_error", "Upstream request failed", fmt.Errorf("input_tokens: upstream status %d", resp.StatusCode))
 	}
-	var result struct {
-		Object      string `json:"object"`
-		InputTokens *int64 `json:"input_tokens"`
-	}
-	if err := json.Unmarshal(responseBody, &result); err != nil || result.Object != "response.input_tokens" || result.InputTokens == nil || *result.InputTokens < 0 {
+	fields, parseErr := decodeResponsesInputTokensObject(responseBody)
+	var object string
+	var inputTokens *int64
+	if parseErr != nil || json.Unmarshal(fields["object"], &object) != nil || object != "response.input_tokens" ||
+		json.Unmarshal(fields["input_tokens"], &inputTokens) != nil || inputTokens == nil || *inputTokens < 0 {
 		return writeError(http.StatusBadGateway, "upstream_error", "Invalid upstream token count response", errors.New("input_tokens: invalid count response"))
 	}
 	if requestID := resp.Header.Get("X-Request-Id"); requestID != "" {
@@ -317,6 +332,24 @@ func estimateResponsesInputTokens(req openAIInputTokensRequest) (int, error) {
 			if item == nil {
 				return 0, errors.New("input_tokens: null input item")
 			}
+			hasNonNullField := func(name string) bool {
+				return len(item[name]) > 0 && !bytes.Equal(bytes.TrimSpace(item[name]), []byte("null"))
+			}
+			switch kind {
+			case "", "message":
+				role := readString("role")
+				if (role != "user" && role != "assistant" && role != "system" && role != "developer") || !hasNonNullField("content") {
+					return 0, errors.New("input_tokens: invalid text message")
+				}
+			case "function_call":
+				if strings.TrimSpace(readString("name")) == "" || strings.TrimSpace(readString("call_id")) == "" || !hasNonNullField("arguments") {
+					return 0, errors.New("input_tokens: invalid function call")
+				}
+			case "function_call_output":
+				if strings.TrimSpace(readString("call_id")) == "" || !hasNonNullField("output") {
+					return 0, errors.New("input_tokens: invalid function output")
+				}
+			}
 			total += 3
 			for _, name := range []string{"role", "type", "name", "arguments", "output", "call_id", "id"} {
 				if raw := item[name]; len(raw) > 0 {
@@ -341,18 +374,18 @@ func estimateResponsesInputTokens(req openAIInputTokensRequest) (int, error) {
 				continue
 			}
 			var parts []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
+				Type string  `json:"type"`
+				Text *string `json:"text"`
 			}
 			if err := json.Unmarshal(content, &parts); err != nil {
 				return 0, err
 			}
 			for _, part := range parts {
-				if part.Type != "input_text" && part.Type != "output_text" && part.Type != "text" {
+				if part.Text == nil || (part.Type != "input_text" && part.Type != "output_text" && part.Type != "text") {
 					return 0, errors.New("input_tokens: media requires native counting")
 				}
 				total++
-				if err := add(part.Text); err != nil {
+				if err := add(*part.Text); err != nil {
 					return 0, err
 				}
 			}
