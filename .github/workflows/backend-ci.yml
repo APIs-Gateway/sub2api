@@ -129,6 +129,9 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
+      - name: Stripe page disposal actual mocked payment regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/StripePaymentView.lifecycle.spec.ts src/views/user/__tests__/StripePaymentView.spec.ts
       - name: Rewrite deletion actual component and admission regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/composables/__tests__/useModelWhitelist.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts src/components/account/__tests__/BulkEditAccountModal.spec.ts src/components/account/__tests__/CreateAccountModal.modelPreview.spec.ts
