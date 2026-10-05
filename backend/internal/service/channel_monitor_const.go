@@ -12,7 +12,7 @@ const (
 	// monitorRequestTimeout 单次模型请求总超时（含 Body 读取）。
 	// 取 90 秒：线上被判超时的探测请求，88% 在服务端随后成功完成，耗时 p90 约 87–93 秒；
 	// 再长就会撞上 Cloudflare 的空闲上限（约 100–120 秒），没有观测意义。
-	monitorRequestTimeout = 45 * time.Second
+	monitorRequestTimeout = 90 * time.Second
 	// monitorPingTimeout HEAD 请求 endpoint origin 的超时。
 	monitorPingTimeout = 8 * time.Second
 	// monitorDegradedThreshold 主请求成功但耗时超过该阈值视为 degraded。
@@ -91,7 +91,7 @@ const (
 	// 低于该次数但至少有 1 次硬失败时卡片显示 degraded。一次探测只是从上游号池里抽了一个节点，
 	// 单次结果不足以说明整条渠道不可用。
 	monitorVerdictWindow       = 3
-	monitorVerdictHardFailures = 2
+	monitorVerdictHardFailures = 1
 
 	// monitorEndpointResolveTimeout validateEndpoint 解析 hostname 的最长耗时。
 	monitorEndpointResolveTimeout = 5 * time.Second
@@ -112,7 +112,7 @@ const (
 	monitorTLSHandshakeTimeout = 10 * time.Second
 	// monitorResponseHeaderTimeout HTTP transport 等待响应头超时，与总超时一致：
 	// 上游号池偶尔 40–90 秒才吐出第一个字节，这类请求最终多数成功，只能算慢，不算坏。
-	monitorResponseHeaderTimeout = 30 * time.Second
+	monitorResponseHeaderTimeout = 90 * time.Second
 	// monitorPingDiscardMaxBytes ping 时丢弃响应体的最大字节数。
 	monitorPingDiscardMaxBytes = 1024
 

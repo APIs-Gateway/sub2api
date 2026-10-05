@@ -120,7 +120,7 @@ func runCheckForModel(ctx context.Context, provider, endpoint, apiKey, model str
 //   - 其余（DNS、建连、TLS、连接中断、本地构造请求失败等）：error。
 func applyTransportError(res *CheckResult, err error, statusCode int) *CheckResult {
 	var timeout *monitorTimeoutError
-	if errors.As(err, &timeout) && statusCode < http.StatusInternalServerError {
+	if errors.As(err, &timeout) && statusCode < 0 {
 		res.Status = MonitorStatusDegraded
 		res.Message = truncateMessage(timeoutMessage(timeout.phase))
 		return res
@@ -181,7 +181,7 @@ func isClientTimeout(err error) bool {
 		return true
 	}
 	var netErr net.Error
-	return errors.As(err, &netErr) && !netErr.Timeout()
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // wrapMonitorTimeout 在「请求已完整发出」的前提下，把客户端超时包成 monitorTimeoutError。
