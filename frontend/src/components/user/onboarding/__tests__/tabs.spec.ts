@@ -472,6 +472,85 @@ describe('CcSwitchTab', () => {
     expect(mountTab({ models: [] }).get('[data-test="ccs-name"]').attributes('placeholder')).toBe('Hiyo - Codex')
   })
 
+  describe('标题、导入后的提示、余额文案', () => {
+    const copiedLink = async (w: ReturnType<typeof mountTab>) => {
+      await w.get('[data-test="ccs-copy-link"]').trigger('click')
+      return linkOf((w.emitted('copy')![0] as [string])[0])
+    }
+
+    it('最上面有标题和一句说明', () => {
+      const w = mountTab()
+      expect(w.get('[data-test="ccs-title"]').text()).toBe('Import to CC Switch')
+      expect(w.get('[data-test="ccs-intro"]').text()).toBe('Pick a client and models, then click "Open CC Switch" to import.')
+    })
+
+    it('Codex：先不启用，显示黄色提醒；没有「立即切换」的说明；链接 enabled=false', async () => {
+      const w = mountTab()
+      const warning = w.get('[data-test="ccs-codex-warning"]')
+      expect(warning.text()).toBe(
+        'The Codex profile is imported but not enabled. Enable it in CC Switch yourself, then restart Codex as prompted, so old and new settings are not mixed.'
+      )
+      expect(warning.attributes('role')).toBe('note')
+      expect(warning.classes()).toEqual(expect.arrayContaining(['border-amber-200', 'bg-amber-50']))
+      expect(w.find('[data-test="ccs-switch-note"]').exists()).toBe(false)
+      expect((await copiedLink(w)).searchParams.get('enabled')).toBe('false')
+    })
+
+    it.each([
+      ['claude', 'anthropic', ['claude']],
+      ['gemini', 'gemini', ['gemini']]
+    ] as const)('%s：确认导入后立即切换，没有黄色提醒；链接 enabled=true', async (client, platform, clients) => {
+      const w = mountTab({ platform, clients: [...clients], models: [] }, { client })
+      expect(w.find('[data-test="ccs-codex-warning"]').exists()).toBe(false)
+      expect(w.get('[data-test="ccs-switch-note"]').text()).toBe(
+        'Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time.'
+      )
+      expect((await copiedLink(w)).searchParams.get('enabled')).toBe('true')
+    })
+
+    it('在 antigravity 分组里切换客户端，提示跟着换（Claude / Gemini 都是立即切换）', async () => {
+      const w = mountTab({ platform: 'antigravity', clients: ['claude', 'gemini'], models: [] }, { client: 'claude' })
+      expect(w.find('[data-test="ccs-switch-note"]').exists()).toBe(true)
+      expect(w.find('[data-test="ccs-codex-warning"]').exists()).toBe(false)
+    })
+
+    it('余额文案：每 5 分钟自动刷新，不写币种和符号；链接里 usageAutoInterval=5、usageEnabled=true', async () => {
+      for (const w of [mountTab(), mountClaude()]) {
+        const note = w.get('[data-test="ccs-balance-note"]').text()
+        expect(note).toBe('Balance lookup is imported with the profile and refreshes every 5 minutes.')
+        expect(note).not.toMatch(/[$¥￥]|USD|CNY|RMB|13/)
+        const url = await copiedLink(w)
+        expect(url.searchParams.get('usageAutoInterval')).toBe('5')
+        expect(url.searchParams.get('usageEnabled')).toBe('true')
+      }
+    })
+
+    it('openai 分组开了调度，选 Claude：导入成 Claude，用 API 根地址（不是带 /v1 的 Codex 地址），立即切换；选回 Codex 恢复黄色提醒', async () => {
+      const w = mountTab({ clients: ['codex', 'claude'] }, { client: 'claude' })
+      expect(w.findAll('[data-test^="ccs-client-"]').map((b) => b.attributes('data-test'))).toEqual(['ccs-client-codex', 'ccs-client-claude'])
+      expect(w.findAll('[data-test="ccs-models"] select')).toHaveLength(4)
+      expect(w.find('[data-test="ccs-codex-warning"]').exists()).toBe(false)
+      const claude = await copiedLink(w)
+      expect(claude.searchParams.get('app')).toBe('claude')
+      expect(claude.searchParams.get('endpoint')).toBe('https://api.example.com')
+      expect(claude.searchParams.get('enabled')).toBe('true')
+
+      await w.setProps({ form: { client: 'codex', name: '', model: '', ...EMPTY } })
+      expect(w.find('[data-test="ccs-codex-warning"]').exists()).toBe(true)
+      await w.get('[data-test="ccs-copy-link"]').trigger('click')
+      const codex = linkOf((w.emitted('copy')![1] as [string])[0])
+      expect(codex.searchParams.get('app')).toBe('codex')
+      expect(codex.searchParams.get('endpoint')).toBe('https://api.example.com/v1')
+      expect(codex.searchParams.get('enabled')).toBe('false')
+    })
+
+    it('点 Claude 的单选：名称回到默认，模型按 Claude 预选（分组里没有 claude-* 就留空）', async () => {
+      const w = mountTab({ clients: ['codex', 'claude'], models: ['gpt-5.6-sol'] }, { client: 'codex', name: 'Old', model: 'gpt-5.6-sol' })
+      await w.get('[data-test="ccs-client-claude"]').trigger('click')
+      expect((w.emitted('update:form')![0] as [CcSwitchForm])[0]).toEqual({ client: 'claude', name: '', model: '', ...EMPTY })
+    })
+  })
+
   describe('导入链接', () => {
     it('复制链接通过 copy 交出；Codex 用配置的地址（带 /v1），其他客户端用 API 根地址', async () => {
       const codex = mountTab({}, { name: 'Mine', model: 'gpt-5.6-luna' })

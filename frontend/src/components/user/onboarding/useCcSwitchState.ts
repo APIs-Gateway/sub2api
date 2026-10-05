@@ -1,7 +1,7 @@
 import { computed, ref, watch, type Ref } from 'vue'
-import { NO_CC_SWITCH_MODELS, pickCcSwitchModels, type CcSwitchClientType } from '@/utils/ccswitchImport'
+import { ccSwitchClientsForPlatform, pickCcSwitchModels, type CcSwitchApp } from '@/utils/ccswitchImport'
 
-export type CcsClient = CcSwitchClientType | 'codex'
+export type CcsClient = CcSwitchApp
 
 /**
  * CC Switch 页签里用户填的内容，合成一个对象，外壳用一个 v-model:form 交给页签。
@@ -40,34 +40,26 @@ export function useCcSwitchState(opts: {
   groupId: () => number | undefined
   /** 这把密钥所在分组的可用模型（还没加载完时是空数组） */
   models?: () => string[]
-  /** 分组是否开了 /v1/messages 调度。openai 分组开了之后也能导入成 Claude；现在还没有用到，留给后面的改动。 */
+  /** 分组是否开了 /v1/messages 调度。openai 分组开了之后，除 Codex 外也能导入成 Claude。 */
   allowMessagesDispatch?: () => boolean | undefined
 }) {
   const models = () => opts.models?.() ?? []
 
-  // 该平台的分组在 CC Switch 里能导入成哪些客户端
-  const clients = computed<CcsClient[]>(() => {
-    switch (opts.platform.value) {
-      case 'openai':
-        return ['codex']
-      case 'gemini':
-        return ['gemini']
-      case 'antigravity':
-        return ['claude', 'gemini']
-      default:
-        return ['claude']
-    }
-  })
+  // 该分组在 CC Switch 里能导入成哪些客户端，第一个是默认选中的（分组的主力客户端）
+  const clients = computed<CcsClient[]>(() =>
+    ccSwitchClientsForPlatform(opts.platform.value, { allowMessagesDispatch: !!opts.allowMessagesDispatch?.() })
+  )
 
-  const form = ref<CcSwitchForm>({ client: 'claude', name: '', ...NO_CC_SWITCH_MODELS })
+  const form = ref<CcSwitchForm>({ client: clients.value[0], name: '', ...pickCcSwitchModels(clients.value[0], models()) })
+  // 换了平台、或 openai 分组的调度开关变了：能选的客户端变了，回到新分组的默认客户端（和「交给 AI」页签一致）。
+  // 只看这两个条件，不看 clients 数组本身：同一个分组下重新取到的数据不该改掉用户选的客户端。
   watch(
-    clients,
-    (list) => {
-      if (list.includes(form.value.client)) return
-      const client = list[0]
+    [opts.platform, () => !!opts.allowMessagesDispatch?.()],
+    () => {
+      const client = clients.value[0]
+      if (client === form.value.client) return
       form.value = { ...form.value, client, ...pickCcSwitchModels(client, models()) }
-    },
-    { immediate: true }
+    }
   )
 
   // 关闭再打开、换分组：名称清空，模型重新预选，客户端保留

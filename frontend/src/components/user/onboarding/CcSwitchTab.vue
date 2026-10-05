@@ -1,5 +1,9 @@
 <template>
   <div v-bind="$attrs" class="onb-card space-y-4" data-test="panel-ccswitch">
+    <header class="space-y-1">
+      <h4 class="font-serif text-lg text-gray-900 dark:text-white" data-test="ccs-title">{{ t('keyOnboarding.ccs.title') }}</h4>
+      <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-intro">{{ t('keyOnboarding.ccs.intro') }}</p>
+    </header>
     <div class="grid gap-4 sm:grid-cols-2">
       <div v-if="clients.length > 1">
         <span :id="clientLabelId" class="input-label">{{ t('keyOnboarding.ccs.client') }}</span>
@@ -57,6 +61,17 @@
         {{ modelsHint }}
       </p>
     </div>
+    <!-- 导入之后会怎样：Codex 先不启用，要用户自己启用并重启（黄色提醒）；Claude / Gemini 确认后立即切换 -->
+    <div
+      v-if="!enableOnImport"
+      role="note"
+      class="flex gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+      data-test="ccs-codex-warning"
+    >
+      <Icon name="exclamationTriangle" size="md" class="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+      <p>{{ t('keyOnboarding.ccs.codexWarning') }}</p>
+    </div>
+    <p v-else class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-switch-note">{{ t('keyOnboarding.ccs.switchNote') }}</p>
     <div class="flex flex-wrap items-center gap-2">
       <button
         type="button"
@@ -79,21 +94,29 @@
         {{ copiedId === 'deeplink' ? t('keyOnboarding.copied') : t('keyOnboarding.ccs.copyLink') }}
       </button>
     </div>
-    <p class="text-sm text-gray-600 dark:text-dark-400">
-      {{ t('keyOnboarding.ccs.notInstalled') }}
-      <a
-        :href="CC_SWITCH_RELEASES"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400"
-      >{{ t('keyOnboarding.ccs.download') }}</a>
-    </p>
+    <div class="space-y-1.5">
+      <p class="text-sm text-gray-600 dark:text-dark-400">
+        {{ t('keyOnboarding.ccs.notInstalled') }}
+        <a
+          :href="CC_SWITCH_RELEASES"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400"
+        >{{ t('keyOnboarding.ccs.download') }}</a>
+      </p>
+      <p class="text-xs text-gray-500 dark:text-dark-400" data-test="ccs-balance-note">
+        {{ t('keyOnboarding.ccs.balanceNote', { minutes: CC_SWITCH_USAGE_INTERVAL_MINUTES }) }}
+      </p>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 /**
  * 「CC Switch」页签：生成 ccswitch:// 导入链接，可以直接打开或复制。
+ * 标题和一句说明在最上面；导入之后会怎样，在按钮上方说明：Codex 先不启用（黄色提醒，要在 CC Switch 里手动启用并重启 Codex），
+ * Claude / Gemini 确认导入后立即切换；按钮下方说明余额查询随配置导入、每 N 分钟自动刷新（N 和链接里的 usageAutoInterval 同源，
+ * 文案里不写单位：余额的单位由接口返回，见 CC_SWITCH_USAGE_SCRIPT）。
  * 选中的客户端、自定义名称、各个模型合成一个表单对象，用 v-model:form 放在外壳里（见 useCcSwitchState），
  * 这样切到别的页签再回来时还在；链接本身由这里按当前状态生成。
  *
@@ -103,8 +126,11 @@
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Icon from '@/components/icons/Icon.vue'
 import type { EndpointOption } from '@/utils/apiEndpoints'
 import {
+  CC_SWITCH_ENABLE_ON_IMPORT,
+  CC_SWITCH_USAGE_INTERVAL_MINUTES,
   CC_SWITCH_USAGE_SCRIPT,
   buildCcSwitchImportDeeplink,
   ccSwitchModelOptions,
@@ -198,16 +224,20 @@ const modelsHint = computed(() => {
 const clientLabelId = computed(() => `${props.idPrefix}-ccs-client`)
 const defaultName = computed(() => `${props.siteName} - ${CCS_LABELS[client.value]}`)
 
+/** 这个客户端导入后是否立即切换：Codex 不切换（显示黄色提醒），Claude / Gemini 切换；和导入链接里的 enabled 同一张表 */
+const enableOnImport = computed(() => CC_SWITCH_ENABLE_ON_IMPORT[client.value])
+
 // 导入链接要的地址：每个客户端各取它自己需要的那种，和改动前（1a4a797f6）一致。
-// - Codex（openai 平台）：沿用管理员配置的地址（root 就是 root，带 /v1 就带 /v1），ccswitchImport.ts 的约定；
-// - Claude / Gemini / antigravity：API 根地址。客户端自己会拼 /v1/messages，所以不能带结尾的 /v1。
-const importBaseUrl = computed(() => (props.platform === 'openai' ? props.endpoint.configured : props.endpoint.base))
+// - Codex：沿用管理员配置的地址（root 就是 root，带 /v1 就带 /v1），ccswitchImport.ts 的约定；
+// - Claude / Gemini / antigravity：API 根地址。客户端自己会拼 /v1/messages，所以不能带结尾的 /v1
+//   （openai 分组开了调度后导入成 Claude，也用根地址）。
+const importBaseUrl = computed(() => (client.value === 'codex' ? props.endpoint.configured : props.endpoint.base))
 
 const deeplink = computed(() =>
   buildCcSwitchImportDeeplink({
     baseUrl: importBaseUrl.value,
     platform: props.platform as never,
-    clientType: client.value === 'gemini' ? 'gemini' : 'claude',
+    clientType: client.value,
     providerName: customName.value.trim() || defaultName.value,
     apiKey: props.fullKey,
     usageScript: CC_SWITCH_USAGE_SCRIPT,

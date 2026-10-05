@@ -75,6 +75,11 @@ ai-client-other: 简短版 = "请按这份文档，帮我把正在用的工具�
 exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > ccswitch 页签 1`] = `
 "### DOM
 <div aria-labelledby="onboarding-N-tab-ccswitch" class="onb-card space-y-4" data-test="panel-ccswitch" id="onboarding-N-panel-ccswitch" role="tabpanel">
+ <header class="space-y-1">
+  <h4 class="font-serif text-lg text-gray-900 dark:text-white" data-test="ccs-title">
+   "一键导入 CC Switch"
+  <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-intro">
+   "选好客户端和模型后，点「打开 CC Switch」即可导入。"
  <div class="grid gap-4 sm:grid-cols-2">
   <!--v-if-->
   <div class="sm:col-span-2">
@@ -124,15 +129,20 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > ccswitch �
      <option value="claude-sonnet-5">
       "claude-sonnet-5"
   <!--v-if-->
+ <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-switch-note">
+  "确认导入后会立即切换到这个配置，之后可以在 CC Switch 里随时切换。"
  <div class="flex flex-wrap items-center gap-2">
   <button class="btn btn-primary" data-test="ccs-open" type="button">
    "打开 CC Switch"
   <button class="btn btn-secondary" data-test="ccs-copy-link" type="button">
    "复制导入链接"
- <p class="text-sm text-gray-600 dark:text-dark-400">
-  "点了没反应？请先安装 CC Switch，再点一次。"
-  <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
-   "下载 CC Switch"
+ <div class="space-y-1.5">
+  <p class="text-sm text-gray-600 dark:text-dark-400">
+   "点了没反应？请先安装 CC Switch，再点一次。"
+   <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
+    "下载 CC Switch"
+  <p class="text-xs text-gray-500 dark:text-dark-400" data-test="ccs-balance-note">
+   "余额查询已随配置导入，并每 5 分钟自动刷新。"
 
 ### 复制与链接
 (单一客户端): placeholder = Hiyo - Claude
@@ -142,9 +152,9 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > ccswitch �
   ccs-model-opus = "claude-opus-5" 选项 = ["可选；留空时使用 CC Switch 默认模型","claude-opus-5","claude-sonnet-5"]
   模型提示 = null
   按钮禁用 = [false,false]
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-sonnet-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-sonnet-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-sonnet-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-sonnet-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > install 页签 1`] = `
@@ -504,6 +514,11 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic' > ccswitch 页签 1`] = `
      <span>
       "Manual"
    <div aria-labelledby="onboarding-N-tab-ccswitch" class="onb-card space-y-4" data-test="panel-ccswitch" id="onboarding-N-panel-ccswitch" role="tabpanel">
+    <header class="space-y-1">
+     <h4 class="font-serif text-lg text-gray-900 dark:text-white" data-test="ccs-title">
+      "Import to CC Switch"
+     <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-intro">
+      "Pick a client and models, then click "Open CC Switch" to import."
     <div class="grid gap-4 sm:grid-cols-2">
      <!--v-if-->
      <div class="sm:col-span-2">
@@ -553,15 +568,20 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic' > ccswitch 页签 1`] = `
         <option value="claude-sonnet-5">
          "claude-sonnet-5"
      <!--v-if-->
+    <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-switch-note">
+     "Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time."
     <div class="flex flex-wrap items-center gap-2">
      <button class="btn btn-primary" data-test="ccs-open" type="button">
       "Open CC Switch"
      <button class="btn btn-secondary" data-test="ccs-copy-link" type="button">
       "Copy import link"
-    <p class="text-sm text-gray-600 dark:text-dark-400">
-     "Nothing happened? Install CC Switch first, then click again."
-     <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
-      "Download CC Switch"
+    <div class="space-y-1.5">
+     <p class="text-sm text-gray-600 dark:text-dark-400">
+      "Nothing happened? Install CC Switch first, then click again."
+      <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
+       "Download CC Switch"
+     <p class="text-xs text-gray-500 dark:text-dark-400" data-test="ccs-balance-note">
+      "Balance lookup is imported with the profile and refreshes every 5 minutes."
 
 ### 复制与链接
 (单一客户端): placeholder = Hiyo - Claude
@@ -571,9 +591,9 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic' > ccswitch 页签 1`] = `
   ccs-model-opus = "claude-opus-5" 选项 = ["Optional; leave blank to use the CC Switch default","claude-opus-5","claude-sonnet-5"]
   模型提示 = null
   按钮禁用 = [false,false]
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-sonnet-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-sonnet-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-sonnet-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-sonnet-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","sonnetModel":"claude-sonnet-5","opusModel":"claude-opus-5","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'anthropic' > install 页签 1`] = `
@@ -1124,6 +1144,11 @@ Docs: https://docs.example.com"
 exports[`KeyOnboardingModal 页签快照 > 'antigravity' > ccswitch 页签 1`] = `
 "### DOM
 <div aria-labelledby="onboarding-N-tab-ccswitch" class="onb-card space-y-4" data-test="panel-ccswitch" id="onboarding-N-panel-ccswitch" role="tabpanel">
+ <header class="space-y-1">
+  <h4 class="font-serif text-lg text-gray-900 dark:text-white" data-test="ccs-title">
+   "Import to CC Switch"
+  <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-intro">
+   "Pick a client and models, then click "Open CC Switch" to import."
  <div class="grid gap-4 sm:grid-cols-2">
   <div>
    <span class="input-label" id="onboarding-N-ccs-client">
@@ -1180,15 +1205,20 @@ exports[`KeyOnboardingModal 页签快照 > 'antigravity' > ccswitch 页签 1`] =
      <option value="gemini-3-pro">
       "gemini-3-pro"
   <!--v-if-->
+ <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-switch-note">
+  "Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time."
  <div class="flex flex-wrap items-center gap-2">
   <button class="btn btn-primary" data-test="ccs-open" type="button">
    "Open CC Switch"
   <button class="btn btn-secondary" data-test="ccs-copy-link" type="button">
    "Copy import link"
- <p class="text-sm text-gray-600 dark:text-dark-400">
-  "Nothing happened? Install CC Switch first, then click again."
-  <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
-   "Download CC Switch"
+ <div class="space-y-1.5">
+  <p class="text-sm text-gray-600 dark:text-dark-400">
+   "Nothing happened? Install CC Switch first, then click again."
+   <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
+    "Download CC Switch"
+  <p class="text-xs text-gray-500 dark:text-dark-400" data-test="ccs-balance-note">
+   "Balance lookup is imported with the profile and refreshes every 5 minutes."
 
 ### 复制与链接
 ccs-client-claude: placeholder = Hiyo - Claude
@@ -1198,16 +1228,16 @@ ccs-client-claude: placeholder = Hiyo - Claude
   ccs-model-opus = "claude-opus-5" 选项 = ["Optional; leave blank to use the CC Switch default","claude-opus-5","gemini-3-pro"]
   模型提示 = null
   按钮禁用 = [false,false]
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","opusModel":"claude-opus-5","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","opusModel":"claude-opus-5","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"claude-opus-5","opusModel":"claude-opus-5","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
 ccs-client-gemini: placeholder = Hiyo - Gemini
   ccs-model = "gemini-3-pro" 选项 = ["Optional; leave blank to use the CC Switch default","gemini-3-pro"]
   模型提示 = null
   按钮禁用 = [false,false]
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"Hiyo - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"Hiyo - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"Hiyo - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"Hiyo - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top/antigravity","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'antigravity' > install 页签 1`] = `
@@ -1487,6 +1517,11 @@ Docs: https://docs.example.com"
 exports[`KeyOnboardingModal 页签快照 > 'gemini' > ccswitch 页签 1`] = `
 "### DOM
 <div aria-labelledby="onboarding-N-tab-ccswitch" class="onb-card space-y-4" data-test="panel-ccswitch" id="onboarding-N-panel-ccswitch" role="tabpanel">
+ <header class="space-y-1">
+  <h4 class="font-serif text-lg text-gray-900 dark:text-white" data-test="ccs-title">
+   "Import to CC Switch"
+  <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-intro">
+   "Pick a client and models, then click "Open CC Switch" to import."
  <div class="grid gap-4 sm:grid-cols-2">
   <!--v-if-->
   <div class="sm:col-span-2">
@@ -1504,24 +1539,29 @@ exports[`KeyOnboardingModal 页签快照 > 'gemini' > ccswitch 页签 1`] = `
      <option value="gemini-3-pro">
       "gemini-3-pro"
   <!--v-if-->
+ <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-switch-note">
+  "Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time."
  <div class="flex flex-wrap items-center gap-2">
   <button class="btn btn-primary" data-test="ccs-open" type="button">
    "Open CC Switch"
   <button class="btn btn-secondary" data-test="ccs-copy-link" type="button">
    "Copy import link"
- <p class="text-sm text-gray-600 dark:text-dark-400">
-  "Nothing happened? Install CC Switch first, then click again."
-  <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
-   "Download CC Switch"
+ <div class="space-y-1.5">
+  <p class="text-sm text-gray-600 dark:text-dark-400">
+   "Nothing happened? Install CC Switch first, then click again."
+   <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
+    "Download CC Switch"
+  <p class="text-xs text-gray-500 dark:text-dark-400" data-test="ccs-balance-note">
+   "Balance lookup is imported with the profile and refreshes every 5 minutes."
 
 ### 复制与链接
 (单一客户端): placeholder = sub2api - Gemini
   ccs-model = "gemini-3-pro" 选项 = ["Optional; leave blank to use the CC Switch default","gemini-3-pro"]
   模型提示 = null
   按钮禁用 = [false,false]
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"sub2api - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"sub2api - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"sub2api - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"sub2api - Gemini","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"gemini","model":"gemini-3-pro","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'gemini' > install 页签 1`] = `
@@ -1917,9 +1957,21 @@ exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > ccsw
      <span>
       "Manual"
    <div aria-labelledby="onboarding-N-tab-ccswitch" class="onb-card space-y-4" data-test="panel-ccswitch" id="onboarding-N-panel-ccswitch" role="tabpanel">
+    <header class="space-y-1">
+     <h4 class="font-serif text-lg text-gray-900 dark:text-white" data-test="ccs-title">
+      "Import to CC Switch"
+     <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-intro">
+      "Pick a client and models, then click "Open CC Switch" to import."
     <div class="grid gap-4 sm:grid-cols-2">
-     <!--v-if-->
-     <div class="sm:col-span-2">
+     <div>
+      <span class="input-label" id="onboarding-N-ccs-client">
+       "Client"
+      <div aria-label="Client" aria-labelledby="onboarding-N-ccs-client" class="flex flex-wrap gap-2" role="radiogroup">
+       <button aria-checked="true" class="onb-chip onb-chip-active" data-test="ccs-client-codex" role="radio" type="button">
+        "Codex"
+       <button aria-checked="false" class="onb-chip" data-test="ccs-client-claude" role="radio" type="button">
+        "Claude"
+     <div class="">
       <label class="input-label" for="ccs-name">
        "Profile name"
       <input class="input" data-test="ccs-name" id="ccs-name" placeholder="Hiyo - Codex" type="text" :value="">
@@ -1936,24 +1988,42 @@ exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > ccsw
         <option value="gpt-5.6-sol">
          "gpt-5.6-sol"
      <!--v-if-->
+    <div class="flex gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100" data-test="ccs-codex-warning" role="note">
+     <svg aria-hidden="true" class="h-5 w-5 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" fill="none" stroke-width="1.5" stroke="currentColor" viewBox="0 0 24 24">
+      <图标 sha1:942e02c32e1f>
+     <p>
+      "The Codex profile is imported but not enabled. Enable it in CC Switch yourself, then restart Codex as prompted, so old and new settings are not mixed."
     <div class="flex flex-wrap items-center gap-2">
      <button class="btn btn-primary" data-test="ccs-open" type="button">
       "Open CC Switch"
      <button class="btn btn-secondary" data-test="ccs-copy-link" type="button">
       "Copy import link"
-    <p class="text-sm text-gray-600 dark:text-dark-400">
-     "Nothing happened? Install CC Switch first, then click again."
-     <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
-      "Download CC Switch"
+    <div class="space-y-1.5">
+     <p class="text-sm text-gray-600 dark:text-dark-400">
+      "Nothing happened? Install CC Switch first, then click again."
+      <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
+       "Download CC Switch"
+     <p class="text-xs text-gray-500 dark:text-dark-400" data-test="ccs-balance-note">
+      "Balance lookup is imported with the profile and refreshes every 5 minutes."
 
 ### 复制与链接
-(单一客户端): placeholder = Hiyo - Codex
+ccs-client-codex: placeholder = Hiyo - Codex
   ccs-model = "gpt-5.6-sol" 选项 = ["Optional; leave blank to use the CC Switch default","gpt-5.6-luna","gpt-5.6-sol"]
   模型提示 = null
   按钮禁用 = [false,false]
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Hiyo - Codex","homepage":"https://cdn.example.com/v1","endpoint":"https://cdn.example.com/v1","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Hiyo - Codex","homepage":"https://cdn.example.com/v1","endpoint":"https://cdn.example.com/v1","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-luna","name":"Mine","homepage":"https://cdn.example.com/v1","endpoint":"https://cdn.example.com/v1","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Hiyo - Codex","homepage":"https://cdn.example.com/v1","endpoint":"https://cdn.example.com/v1","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"false","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Hiyo - Codex","homepage":"https://cdn.example.com/v1","endpoint":"https://cdn.example.com/v1","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"false","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-luna","name":"Mine","homepage":"https://cdn.example.com/v1","endpoint":"https://cdn.example.com/v1","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"false","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+ccs-client-claude: placeholder = Hiyo - Claude
+  ccs-model = "" 选项 = ["Optional; leave blank to use the CC Switch default","gpt-5.6-luna","gpt-5.6-sol"]
+  ccs-model-haiku = "" 选项 = ["Optional; leave blank to use the CC Switch default","gpt-5.6-luna","gpt-5.6-sol"]
+  ccs-model-sonnet = "" 选项 = ["Optional; leave blank to use the CC Switch default","gpt-5.6-luna","gpt-5.6-sol"]
+  ccs-model-opus = "" 选项 = ["Optional; leave blank to use the CC Switch default","gpt-5.6-luna","gpt-5.6-sol"]
+  模型提示 = null
+  按钮禁用 = [false,false]
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Hiyo - Claude","homepage":"https://cdn.example.com","endpoint":"https://cdn.example.com","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Hiyo - Claude","homepage":"https://cdn.example.com","endpoint":"https://cdn.example.com","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","model":"gpt-5.6-luna","name":"Mine","homepage":"https://cdn.example.com","endpoint":"https://cdn.example.com","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > install 页签 1`] = `
@@ -2783,6 +2853,11 @@ exports[`KeyOnboardingModal 页签快照 > 'openai' > ccswitch 页签 1`] = `
      <span>
       "Manual"
    <div aria-labelledby="onboarding-N-tab-ccswitch" class="onb-card space-y-4" data-test="panel-ccswitch" id="onboarding-N-panel-ccswitch" role="tabpanel">
+    <header class="space-y-1">
+     <h4 class="font-serif text-lg text-gray-900 dark:text-white" data-test="ccs-title">
+      "Import to CC Switch"
+     <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-intro">
+      "Pick a client and models, then click "Open CC Switch" to import."
     <div class="grid gap-4 sm:grid-cols-2">
      <!--v-if-->
      <div class="sm:col-span-2">
@@ -2802,24 +2877,32 @@ exports[`KeyOnboardingModal 页签快照 > 'openai' > ccswitch 页签 1`] = `
         <option value="gpt-5.6-sol">
          "gpt-5.6-sol"
      <!--v-if-->
+    <div class="flex gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100" data-test="ccs-codex-warning" role="note">
+     <svg aria-hidden="true" class="h-5 w-5 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" fill="none" stroke-width="1.5" stroke="currentColor" viewBox="0 0 24 24">
+      <图标 sha1:942e02c32e1f>
+     <p>
+      "The Codex profile is imported but not enabled. Enable it in CC Switch yourself, then restart Codex as prompted, so old and new settings are not mixed."
     <div class="flex flex-wrap items-center gap-2">
      <button class="btn btn-primary" data-test="ccs-open" type="button">
       "Open CC Switch"
      <button class="btn btn-secondary" data-test="ccs-copy-link" type="button">
       "Copy import link"
-    <p class="text-sm text-gray-600 dark:text-dark-400">
-     "Nothing happened? Install CC Switch first, then click again."
-     <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
-      "Download CC Switch"
+    <div class="space-y-1.5">
+     <p class="text-sm text-gray-600 dark:text-dark-400">
+      "Nothing happened? Install CC Switch first, then click again."
+      <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
+       "Download CC Switch"
+     <p class="text-xs text-gray-500 dark:text-dark-400" data-test="ccs-balance-note">
+      "Balance lookup is imported with the profile and refreshes every 5 minutes."
 
 ### 复制与链接
 (单一客户端): placeholder = Hiyo - Codex
   ccs-model = "gpt-5.6-sol" 选项 = ["Optional; leave blank to use the CC Switch default","gpt-5.6-luna","gpt-5.6-sol"]
   模型提示 = null
   按钮禁用 = [false,false]
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-luna","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"false","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-sol","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"false","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","model":"gpt-5.6-luna","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"false","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'openai' > install 页签 1`] = `
@@ -3355,6 +3438,11 @@ Docs: https://docs.example.com"
 exports[`KeyOnboardingModal 页签快照 > '未知平台' > ccswitch 页签 1`] = `
 "### DOM
 <div aria-labelledby="onboarding-N-tab-ccswitch" class="onb-card space-y-4" data-test="panel-ccswitch" id="onboarding-N-panel-ccswitch" role="tabpanel">
+ <header class="space-y-1">
+  <h4 class="font-serif text-lg text-gray-900 dark:text-white" data-test="ccs-title">
+   "Import to CC Switch"
+  <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-intro">
+   "Pick a client and models, then click "Open CC Switch" to import."
  <div class="grid gap-4 sm:grid-cols-2">
   <!--v-if-->
   <div class="sm:col-span-2">
@@ -3390,15 +3478,20 @@ exports[`KeyOnboardingModal 页签快照 > '未知平台' > ccswitch 页签 1`] 
   <p class="input-hint mt-2 flex items-center gap-2" data-test="ccs-models-hint" id="onboarding-N-ccs-models-hint" role="status">
    <!--v-if-->
    "No models are available for this key. You can still import and leave the model fields blank."
+ <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-switch-note">
+  "Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time."
  <div class="flex flex-wrap items-center gap-2">
   <button class="btn btn-primary" data-test="ccs-open" type="button">
    "Open CC Switch"
   <button class="btn btn-secondary" data-test="ccs-copy-link" type="button">
    "Copy import link"
- <p class="text-sm text-gray-600 dark:text-dark-400">
-  "Nothing happened? Install CC Switch first, then click again."
-  <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
-   "Download CC Switch"
+ <div class="space-y-1.5">
+  <p class="text-sm text-gray-600 dark:text-dark-400">
+   "Nothing happened? Install CC Switch first, then click again."
+   <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
+    "Download CC Switch"
+  <p class="text-xs text-gray-500 dark:text-dark-400" data-test="ccs-balance-note">
+   "Balance lookup is imported with the profile and refreshes every 5 minutes."
 
 ### 复制与链接
 (单一客户端): placeholder = Hiyo - Claude
@@ -3408,9 +3501,9 @@ exports[`KeyOnboardingModal 页签快照 > '未知平台' > ccswitch 页签 1`] 
   ccs-model-opus = ""（禁用） 选项 = ["Optional; leave blank to use the CC Switch default"]
   模型提示 = "No models are available for this key. You can still import and leave the model fields blank."
   按钮禁用 = [false,false]
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Hiyo - Claude","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"claude","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"true","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > '未知平台' > install 页签 1`] = `
@@ -3568,6 +3661,11 @@ exports[`KeyOnboardingModal 页签快照 > '没有分组' > manual 页签 1`] = 
 exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 的模型下拉只剩留空一项并给出提示，交给 AI 的详细版没有模型 1`] = `
 "### DOM
 <div aria-labelledby="onboarding-N-tab-ccswitch" class="onb-card space-y-4" data-test="panel-ccswitch" id="onboarding-N-panel-ccswitch" role="tabpanel">
+ <header class="space-y-1">
+  <h4 class="font-serif text-lg text-gray-900 dark:text-white" data-test="ccs-title">
+   "Import to CC Switch"
+  <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-intro">
+   "Pick a client and models, then click "Open CC Switch" to import."
  <div class="grid gap-4 sm:grid-cols-2">
   <!--v-if-->
   <div class="sm:col-span-2">
@@ -3585,24 +3683,32 @@ exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 的
   <p class="input-hint mt-2 flex items-center gap-2" data-test="ccs-models-hint" id="onboarding-N-ccs-models-hint" role="status">
    <!--v-if-->
    "No models are available for this key. You can still import and leave the model fields blank."
+ <div class="flex gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100" data-test="ccs-codex-warning" role="note">
+  <svg aria-hidden="true" class="h-5 w-5 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" fill="none" stroke-width="1.5" stroke="currentColor" viewBox="0 0 24 24">
+   <图标 sha1:942e02c32e1f>
+  <p>
+   "The Codex profile is imported but not enabled. Enable it in CC Switch yourself, then restart Codex as prompted, so old and new settings are not mixed."
  <div class="flex flex-wrap items-center gap-2">
   <button class="btn btn-primary" data-test="ccs-open" type="button">
    "Open CC Switch"
   <button class="btn btn-secondary" data-test="ccs-copy-link" type="button">
    "Copy import link"
- <p class="text-sm text-gray-600 dark:text-dark-400">
-  "Nothing happened? Install CC Switch first, then click again."
-  <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
-   "Download CC Switch"
+ <div class="space-y-1.5">
+  <p class="text-sm text-gray-600 dark:text-dark-400">
+   "Nothing happened? Install CC Switch first, then click again."
+   <a class="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-400" href="https://github.com/farion1231/cc-switch/releases" rel="noopener noreferrer" target="_blank">
+    "Download CC Switch"
+  <p class="text-xs text-gray-500 dark:text-dark-400" data-test="ccs-balance-note">
+   "Balance lookup is imported with the profile and refreshes every 5 minutes."
 
 ### 复制与链接
 (单一客户端): placeholder = Hiyo - Codex
   ccs-model = ""（禁用） 选项 = ["Optional; leave blank to use the CC Switch default"]
   模型提示 = "No models are available for this key. You can still import and leave the model fields blank."
   按钮禁用 = [false,false]
-  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}
-  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","usageEnabled":"true","usageScript":"<692 字符 sha1:650401abcd2d 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"30"}}"
+  复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"false","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"false","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
+  改名并换主模型后 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","name":"Mine","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"false","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 的模型下拉只剩留空一项并给出提示，交给 AI 的详细版没有模型 2`] = `
