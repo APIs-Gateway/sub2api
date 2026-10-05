@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, shallowMount } from '@vue/test-utils'
+import { watch } from 'vue'
 
 const routeState = vi.hoisted(() => ({
   query: {} as Record<string, unknown>,
@@ -468,6 +469,64 @@ describe('Stripe page owns asynchronous callbacks only while mounted', () => {
     expect(close).toHaveBeenCalledTimes(1)
     expect(routerPush).not.toHaveBeenCalled()
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  // Controlled Vue observer reentry is a defensive boundary, not an existing page watcher.
+  it.each(['alipay', 'wechat_pay'])('suppresses %s dispatch after controlled synchronous loading observer disposal', async method => {
+    const pending = deferred<typeof stripeInstance>()
+    loadStripe.mockReturnValueOnce(pending.promise)
+    routeState.query.method = method
+    const wrapper = mountView()
+    await settle()
+    expect(loadStripe).toHaveBeenCalledTimes(1)
+    expect(state(wrapper).loading).toBe(true)
+    const stop = watch(() => state(wrapper).loading, loading => {
+      if (loading === false) wrapper.unmount()
+    }, { flush: 'sync' })
+    pending.resolve(stripeInstance)
+    await settle()
+    stop()
+    expect(stripeInstance.confirmAlipayPayment).not.toHaveBeenCalled()
+    expect(stripeInstance.confirmWechatPayPayment).not.toHaveBeenCalled()
+    expect(state(wrapper).redirecting).toBe(false)
+  })
+
+  it('does not create a poll after controlled synchronous QR observer disposal', async () => {
+    vi.useFakeTimers()
+    const pending = deferred<unknown>()
+    routeState.query.method = 'wechat_pay'
+    stripeInstance.confirmWechatPayPayment.mockReturnValueOnce(pending.promise)
+    const wrapper = mountView()
+    await settle()
+    expect(stripeInstance.confirmWechatPayPayment).toHaveBeenCalledTimes(1)
+    const stop = watch(() => state(wrapper).wechatQrUrl, value => {
+      if (value) wrapper.unmount()
+    }, { flush: 'sync' })
+    pending.resolve(qr)
+    await settle()
+    stop()
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(paymentStore.pollOrderStatus).not.toHaveBeenCalled()
+  })
+
+  it('does not schedule navigation after controlled synchronous success observer disposal', async () => {
+    vi.useFakeTimers()
+    const pending = deferred<unknown>()
+    routeState.query.method = 'wechat_pay'
+    stripeInstance.confirmWechatPayPayment.mockReturnValueOnce(pending.promise)
+    const wrapper = mountView()
+    await settle()
+    expect(stripeInstance.confirmWechatPayPayment).toHaveBeenCalledTimes(1)
+    const stop = watch(() => state(wrapper).stripeSuccess, success => {
+      if (success) wrapper.unmount()
+    }, { flush: 'sync' })
+    pending.resolve({ paymentIntent: { status: 'succeeded' } })
+    await settle()
+    stop()
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(routerPush).not.toHaveBeenCalled()
   })
 
 })
