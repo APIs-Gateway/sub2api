@@ -59,6 +59,9 @@ jobs:
       - name: Unit tests (converted Responses input recovery)
         working-directory: backend
         run: go test -tags=unit -count=1 -run '^TestStructuredInputRecovery_|^TestConvertedResponsesInputStringRejection|^TestForwardAsChatCompletions_(ResponsesSupportedFallsBack|StructuredInput)' -v ./internal/service/
+      - name: Unit tests (cache write wire and accounting agreement)
+        working-directory: backend
+        run: go test -tags=unit -count=1 -run '^TestCacheWriteUsage_' -v ./internal/pkg/apicompat/ ./internal/service/
       - name: Unit tests (Chat input audio boundaries)
         working-directory: backend
         run: go test -tags=unit -count=1 -run '^TestChatInputAudio_' -v ./internal/pkg/apicompat/ ./internal/service/
@@ -93,6 +96,9 @@ jobs:
       - name: Integration tests (converted Responses fallback actual billing)
         working-directory: backend
         run: go test -tags=integration -count=1 -run '^TestStructuredInputFallbackHTTP_' -v ./internal/repository/
+      - name: Integration tests (cache write wire and wallet card agreement)
+        working-directory: backend
+        run: go test -tags=integration -count=1 -run '^TestCacheWriteUsageHTTP_' -v ./internal/repository/
       - name: Integration tests (Gemini Chat audio and local funding release)
         working-directory: backend
         run: go test -tags=integration -count=1 -run '^TestChatInputAudioHTTP_' -v ./internal/repository/
