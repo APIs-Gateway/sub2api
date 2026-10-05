@@ -237,7 +237,7 @@ func TestRefundPendingAtomicPostgres_HistoryFailureCannotClaimOrSettle(t *testin
 	assertPendingPostgresState(t, c, p, OrderStatusRefundPending, 23)
 	_, err = c.ExecContext(ctx, `ALTER TABLE unavailable_refund_history RENAME TO payment_audit_logs`)
 	require.NoError(t, err)
-	for i, body := range []string{`{broken`, `null`, `[]`, `{"deductionType":"surprise"}`, `{"balanceToDeduct":"bad"}`, `{"deductionType":"none","deductionType":"balance"}`, `{"deductionRollbackOK":null}`, `{"deductionType":"balance","balanceToDeduct":-10}`, `{"deductionRollbackOK":true,"DeductionRollbackOK":false}`, `{"DeductionRollbackOK":null}`, `{"deductionType":"balance","balanceToDeduct":10,"BalanceToDeduct":20}`, `{"BalanceToDeduct":null}`, `{"DeductionType":"none"}`} {
+	for i, body := range []string{`{broken`, `null`, `[]`, `{"deductionType":"surprise"}`, `{"balanceToDeduct":"bad"}`, `{"deductionType":"none","deductionType":"balance"}`, `{"deductionRollbackOK":null}`, `{"deductionType":"balance","balanceToDeduct":-10}`, `{"deductionRollbackOK":true,"DeductionRollbackOK":false}`, `{"DeductionRollbackOK":null}`, `{"deductionType":"balance","balanceToDeduct":10,"BalanceToDeduct":20}`, `{"BalanceToDeduct":null}`, `{"DeductionType":"none"}`, `{"deductionType":"balance","balanceToDeduct":10,"subExpireDayToRestore":null}`, `{"deductionType":"balance","balanceToDeduct":10,"subTodayRemainingToRestore":null}`} {
 		t.Run(fmt.Sprintf("malformed_%d", i), func(t *testing.T) {
 			_, err := c.PaymentAuditLog.Create().SetOrderID(strconv.FormatInt(p.OrderID, 10)).SetAction(fmt.Sprintf("REFUND_PENDING_%d", i)).SetOperator("admin").SetDetail(body).Save(ctx)
 			require.NoError(t, err)
