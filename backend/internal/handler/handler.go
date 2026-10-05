@@ -46,6 +46,7 @@ type AdminHandlers struct {
 	AdminToken             *admin.AdminTokenHandler
 	AuditLog               *admin.AuditLogHandler
 	APIKeyFallback         *admin.APIKeyFallbackHandler
+	PricingSnapshot        *admin.PricingSnapshotHandler
 }
 
 // Handlers contains all HTTP handlers

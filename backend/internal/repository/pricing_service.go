@@ -71,7 +71,14 @@ func (c *pricingRemoteClient) FetchPricingJSON(ctx context.Context, url string) 
 		return nil, &service.PricingRemoteHTTPStatusError{StatusCode: resp.StatusCode}
 	}
 
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, service.PricingMaxDownloadBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > service.PricingMaxDownloadBytes {
+		return nil, service.ErrPricingDownloadTooLarge
+	}
+	return body, nil
 }
 
 func (c *pricingRemoteClient) FetchHashText(ctx context.Context, url string) (string, error) {

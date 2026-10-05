@@ -26,21 +26,24 @@ import (
 
 // matrixOwnFiles 本 PR 新增的非测试文件（相对 backend 的路径）。
 var matrixOwnFiles = map[string]struct{}{
-	"internal/service/pricing_matrix_types.go":       {},
-	"internal/service/pricing_matrix_derive.go":      {},
-	"internal/service/pricing_matrix_plan.go":        {},
-	"internal/service/pricing_matrix_service.go":     {},
-	"internal/service/pricing_matrix_facts.go":       {},
-	"internal/service/model_catalog_service.go":      {},
-	"internal/service/channel_save_hook.go":          {},
-	"internal/service/group_policy_matrix.go":        {}, // W6 PR4-1：matrixPolicy，目前只被测试驱动，没有生产路径构造它
-	"internal/service/pricing_write_types.go":        {}, // W6 PR4b-1：价格写入路径（CellWriter、PriceWriteGate），没有生产路径构造它
-	"internal/service/pricing_write_plan.go":         {},
-	"internal/service/pricing_write_gate.go":         {},
-	"internal/service/pricing_exposure.go":           {}, // W6 PR4b-2a：保存时校验（ExposureValidator / ExposureGuard），没有生产路径构造它
-	"internal/service/pricing_group_config_write.go": {}, // W6 PR4b-2a：分组配置写路径，没有生产路径构造它
-	"internal/service/pricing_price_diff.go":         {}, // W6 PR4b-2a：PriceDiff，纯函数
-	"internal/service/user_price_catalog.go":         {}, // W6 PR8a：用户价格页，v2 分组的模型清单读模型目录（第一个读取方）
+	"internal/service/pricing_matrix_types.go":           {},
+	"internal/service/pricing_matrix_derive.go":          {},
+	"internal/service/pricing_matrix_plan.go":            {},
+	"internal/service/pricing_matrix_service.go":         {},
+	"internal/service/pricing_matrix_facts.go":           {},
+	"internal/service/model_catalog_service.go":          {},
+	"internal/service/channel_save_hook.go":              {},
+	"internal/service/group_policy_matrix.go":            {}, // W6 PR4-1：matrixPolicy，目前只被测试驱动，没有生产路径构造它
+	"internal/service/pricing_write_types.go":            {}, // W6 PR4b-1：价格写入路径（CellWriter、PriceWriteGate），没有生产路径构造它
+	"internal/service/pricing_write_plan.go":             {},
+	"internal/service/pricing_write_gate.go":             {},
+	"internal/service/pricing_exposure.go":               {}, // W6 PR4b-2a：保存时校验（ExposureValidator / ExposureGuard），没有生产路径构造它
+	"internal/service/pricing_group_config_write.go":     {}, // W6 PR4b-2a：分组配置写路径，没有生产路径构造它
+	"internal/service/pricing_price_diff.go":             {}, // W6 PR4b-2a：PriceDiff，纯函数
+	"internal/service/user_price_catalog.go":             {}, // W6 PR8a：用户价格页，v2 分组的模型清单读模型目录（第一个读取方）
+	"internal/service/pricing_snapshot_types.go":         {}, // W6 PR9b：快照批准事务里的校验回调类型（MatrixExecutor），只在管理员批准时执行
+	"internal/service/pricing_snapshot_admin_service.go": {}, // W6 PR9b：快照批准，auto 模式下不会被调用
+	"internal/service/pricing_snapshot_exposure.go":      {}, // W6 PR9b：批准时对白名单分组跑 CheckGroups
 
 	// W6 PR5：stagedPolicy 与影子比对。它们读矩阵快照，但只用来比对：阶段为 shadow 的分组才会比对，
 	// 真实请求不会被路由到矩阵（见下面的 TestStagedPolicyNeverRoutesToV2InProduction）。
@@ -50,13 +53,14 @@ var matrixOwnFiles = map[string]struct{}{
 	"internal/service/pricing_shadow_session.go": {},
 	"internal/service/pricing_stage_service.go":  {},
 
-	"internal/repository/pricing_matrix_repo.go":         {},
-	"internal/repository/model_catalog_repo.go":          {},
-	"internal/repository/model_catalog_seed.go":          {},
-	"internal/repository/pricing_cell_writer.go":         {},
-	"internal/repository/pricing_write_store.go":         {},
-	"internal/repository/pricing_group_config_writer.go": {},
-	"internal/repository/pricing_stage_repo.go":          {}, // W6 PR5：阶段切换与影子样本的存储
+	"internal/repository/pricing_matrix_repo.go":              {},
+	"internal/repository/model_catalog_repo.go":               {},
+	"internal/repository/model_catalog_seed.go":               {},
+	"internal/repository/pricing_cell_writer.go":              {},
+	"internal/repository/pricing_write_store.go":              {},
+	"internal/repository/pricing_group_config_writer.go":      {},
+	"internal/repository/pricing_snapshot_exposure_source.go": {}, // W6 PR9b：批准时列出白名单分组
+	"internal/repository/pricing_stage_repo.go":               {}, // W6 PR5：阶段切换与影子样本的存储
 
 	"internal/handler/admin/pricing_matrix_handler.go": {},
 	"cmd/server/model_catalog_cmd.go":                  {},

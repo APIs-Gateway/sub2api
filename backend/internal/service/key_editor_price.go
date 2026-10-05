@@ -217,6 +217,14 @@ func (s *KeyEditorPriceService) loadRechargeMult(ctx context.Context) float64 {
 	return rechargeMult
 }
 
+// pricingSnapshotID 返回报价所用的生效价格快照 id；报价器不提供时为 0。
+func (s *KeyEditorPriceService) pricingSnapshotID() int64 {
+	if v, ok := s.quoter.(interface{ PricingSnapshotID() int64 }); ok {
+		return v.PricingSnapshotID()
+	}
+	return 0
+}
+
 // ReferencePrice 返回「主分组 primaryGroupID 的 Key 经 groupID 服务」时参考模型的参考价。
 // 任何失败（没有模型、分组不存在、未定价、按次计费没有 token 单价）都降级为 priced=false。
 func (s *KeyEditorPriceService) ReferencePrice(ctx context.Context, model string, primaryGroupID, groupID, userID int64) KeyEditorReferencePrice {
@@ -224,7 +232,8 @@ func (s *KeyEditorPriceService) ReferencePrice(ctx context.Context, model string
 	if s == nil || s.quoter == nil || model == "" || primaryGroupID <= 0 || groupID <= 0 {
 		return KeyEditorReferencePrice{}
 	}
-	cacheKey := fmt.Sprintf("%s|%d|%d|%d", model, primaryGroupID, groupID, userID)
+	// 缓存键带上生效的价格快照 id：批准之后旧快照的缓存不会再被命中（auto 模式下恒为 0）。
+	cacheKey := fmt.Sprintf("%s|%d|%d|%d|%d", model, primaryGroupID, groupID, userID, s.pricingSnapshotID())
 	now := s.now()
 	s.mu.Lock()
 	if e, ok := s.cache[cacheKey]; ok && now.Before(e.expires) {

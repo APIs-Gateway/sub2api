@@ -83,6 +83,11 @@ description: 把 sub2api 新版本发布到生产环境的标准流程：构建�
 2. 对照线上 `<deploy_dir>` 下的配置文件和 compose，决定哪些要改。
 3. 只有配置文件 / 环境变量来源的开关，改完必须重启才生效。
 4. 改之前备份原文件；密钥不要贴进聊天、日志或 PR。
+5. **价格兜底是否改动**：`git diff <old_commit>..<new_commit> -- backend/internal/service/billing_service.go backend/internal/service/pricing_service.go backend/internal/service/gpt56_pricing_policy.go`，
+   回答「本次发布改没改 `fallbackPrices`（`BillingService.initFallbackPricing`）与 PricingService 里的代码兜底价
+   （`matchOpenAIModel` 返回的 `openAIGPT6SolFallbackPricing` 等硬编码价），以及卡策略（DeepSeek 官方卡、GPT-5.4/5.5/5.6 的长上下文、缓存写入与促销价）」。
+   价格固定快照（`pricing_snapshot_mode = pinned`）的批准流程只管 LiteLLM JSON 这一层，管不到这几处，它们随二进制变化：
+   改了就在部署说明里单列出涨跌的模型，让人确认后再继续；没改也要写明「未改动」。
 
 ## 5. 保留旧前端 assets
 

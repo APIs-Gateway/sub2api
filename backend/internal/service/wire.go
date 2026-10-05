@@ -37,6 +37,12 @@ func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient,
 	return svc, nil
 }
 
+// ProvidePricingSnapshotAdminService 创建价格快照页的管理服务。
+// 批准事务里对所有白名单分组做保存时校验（ExposureGuard.CheckGroups）；读取器缺失时批准失败关闭。
+func ProvidePricingSnapshotAdminService(cfg *config.Config, pricing *PricingService, store PricingSnapshotRepository, reader SnapshotExposureReader, settings SettingRepository, db *sql.DB) *PricingSnapshotAdminService {
+	return NewPricingSnapshotAdminService(pricing, store, NewSnapshotExposureChecker(cfg, reader, settings), db)
+}
+
 // ProvideUpdateService creates UpdateService with BuildInfo
 func ProvideUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, buildInfo BuildInfo) *UpdateService {
 	return NewUpdateService(cache, githubClient, buildInfo.Version, buildInfo.BuildType)
@@ -635,6 +641,7 @@ var ProviderSet = wire.NewSet(
 	NewUsageService,
 	NewDashboardService,
 	ProvidePricingService,
+	ProvidePricingSnapshotAdminService,
 	NewBillingService,
 	ProvideBillingCacheService,
 	NewAnnouncementService,

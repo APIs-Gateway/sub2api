@@ -22,6 +22,7 @@ func TestProvideAdminHandlersAttachesUpstreamBillingProbe(t *testing.T) {
 		nil, // adminTokenHandler
 		nil, // auditLogHandler
 		nil, // apiKeyFallbackHandler
+		nil, // pricingSnapshotHandler
 	)
 
 	require.Same(t, accountHandler, adminHandlers.Account)
