@@ -822,10 +822,6 @@ func (s *PaymentService) refundFinalizePlan(ctx context.Context, o *dbent.Paymen
 // (never pushed negative), matching prepDeduct's force semantics; the shortfall
 // is audited. Subscription cards are closed (purchase) or have the renewed
 // days revoked (renew); a card that no longer exists is tolerated.
-func (s *PaymentService) applyRefundFinalDeduction(ctx context.Context, p *RefundPlan) error {
-	return s.applyRefundFinalDeductionWithSubscription(ctx, p, s.subscriptionSvc)
-}
-
 func (s *PaymentService) applyRefundFinalDeductionWithSubscription(ctx context.Context, p *RefundPlan, subscriptionSvc *SubscriptionService) error {
 	switch p.DeductionType {
 	case payment.DeductionTypeBalance:
