@@ -187,14 +187,14 @@ func TestRunCheckForModel_VerdictTable(t *testing.T) {
 			timeout:     verdictShortTimeout,
 			handler:     func(_ http.ResponseWriter, release <-chan struct{}) { <-release },
 			wantStatus:  MonitorStatusDegraded,
-			wantMessage: []string{"超时", "响应头"},
+			wantMessage: []string{"超时", "没有收到响应头"},
 		},
 		{
 			name:        "2xx 已发响应头、读 body 超时 → degraded，message 注明超时",
 			timeout:     verdictShortTimeout,
 			handler:     stallAfterHeaders(http.StatusOK),
 			wantStatus:  MonitorStatusDegraded,
-			wantMessage: []string{"超时", "响应内容"},
+			wantMessage: []string{"超时", "没有读完"},
 		},
 		{
 			name:        "5xx 响应头之后读 body 超时 → 仍按 5xx 记 error",
@@ -453,5 +453,11 @@ func TestTimeoutMessage_NamesThePhaseAndTheLimit(t *testing.T) {
 	}
 	if headers == body {
 		t.Errorf("header-phase and body-phase messages should differ")
+	}
+	if !strings.Contains(headers, "没有收到响应头") {
+		t.Errorf("header-phase message should say no response header arrived, got %q", headers)
+	}
+	if !strings.Contains(body, "没有读完") {
+		t.Errorf("body-phase message should say the body was not fully read, got %q", body)
 	}
 }
