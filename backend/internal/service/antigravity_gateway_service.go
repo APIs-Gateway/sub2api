@@ -1887,7 +1887,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 						Message:            upstreamMsg,
 						Detail:             upstreamDetail,
 					})
-					return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RetryableOnSameAccount: true}
+					return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RetryableOnSameAccount: true, RedactClientMessage: true}
 				}
 			}
 
@@ -1905,7 +1905,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					Message:            upstreamMsg,
 					Detail:             upstreamDetail,
 				})
-				return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody}
+				return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RedactClientMessage: true}
 			}
 
 			return nil, s.writeMappedClaudeError(c, account, resp.StatusCode, upstreamRequestIDFromHeader(resp.Header), respBody)
@@ -1998,10 +1998,11 @@ func isPassthroughErrorMessage(msg string) bool {
 	return false
 }
 
-// getPassthroughOrDefault 若消息在白名单内则返回原始消息，否则返回默认消息
+// Keep the recognized request error useful without echoing provider identity
+// that may appear alongside the whitelisted phrase.
 func getPassthroughOrDefault(upstreamMsg, defaultMsg string) string {
 	if isPassthroughErrorMessage(upstreamMsg) {
-		return upstreamMsg
+		return "Prompt is too long"
 	}
 	return defaultMsg
 }
@@ -3464,6 +3465,10 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 					firstTokenMs = &ms
 				}
 
+				if safe, status, ok := antigravitySafeGeminiError(inner); ok {
+					setOpsUpstreamError(c, status, extractAntigravityErrorMessage(inner), s.getUpstreamErrorDetail(inner))
+					payload = string(safe)
+				}
 				cw.Fprintf("data: %s\n\n", payload)
 				continue
 			}
@@ -3608,6 +3613,14 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 			var parsed map[string]any
 			if err := json.Unmarshal(inner, &parsed); err != nil {
 				continue
+			}
+			if safe, status, ok := antigravitySafeGeminiError(inner); ok {
+				setOpsUpstreamError(c, status, extractAntigravityErrorMessage(inner), s.getUpstreamErrorDetail(inner))
+				// Store only the safe error envelope. Successful parts and usage are
+				// retained by the helper; the raw body remains in internal Ops.
+				if err := json.Unmarshal(safe, &parsed); err != nil {
+					return nil, err
+				}
 			}
 
 			// 记录首 token 时间
@@ -3894,9 +3907,9 @@ func (s *AntigravityGatewayService) writeMappedClaudeError(c *gin.Context, accou
 	}
 
 	// 检查错误透传规则
-	if ptStatus, ptErrType, ptErrMsg, matched := applyErrorPassthroughRule(
+	if ptStatus, ptErrType, ptErrMsg, matched := applyErrorPassthroughRuleWithRedaction(
 		c, account.Platform, upstreamStatus, body,
-		0, "", "",
+		0, "", "", true,
 	); matched {
 		c.JSON(ptStatus, gin.H{
 			"type":  "error",
