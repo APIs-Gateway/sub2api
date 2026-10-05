@@ -424,7 +424,7 @@ func TestInterimPriceWriteGate_ExposureValidation(t *testing.T) {
 	// 模型有官方价：通过。
 	f = pwNewGate()
 	f.reader.modes = allowlist
-	f.prices["nothing"] = OfficialPriceState{Known: true, NonZero: true}
+	f.prices["nothing"] = OfficialPriceState{Known: true, TokenNonZero: true}
 	f.writer.applyRes = &CellWriteResult{Planned: unpriced(), ChangedGroupIDs: []int64{1}}
 	_, err = f.gate.Commit(ctx, PriceWriteCommit{Request: req, Confirm: true, Actor: PriceWriteActor{ID: 9}})
 	require.NoError(t, err)

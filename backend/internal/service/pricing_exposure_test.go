@@ -61,8 +61,10 @@ func exCustom(group int64, key string, price MatrixCustomPrice) ExposureCell {
 }
 
 var exOfficial = exFakePrices{
-	"priced": {Known: true, NonZero: true},
+	"priced": {Known: true, TokenNonZero: true},
 	"zero":   {Known: true},
+	// 官方只有按张价、token 价全 0 的图片模型。
+	"img-only": {Known: true, ImageCapable: true},
 }
 
 func TestExposureValidator_Check(t *testing.T) {
@@ -93,6 +95,18 @@ func TestExposureValidator_Check(t *testing.T) {
 		{"explicit zero custom is not covered by the official price", exCustom(1, "priced", MatrixCustomPrice{BillingMode: BillingModeToken, InputPrice: pwF(0)}), ExposureZeroPrice},
 		{"explicit zero interval price", exCustom(1, "priced", MatrixCustomPrice{BillingMode: BillingModeToken,
 			Intervals: []MatrixPriceInterval{{MinTokens: 0, InputPrice: pwF(0)}}}), ExposureZeroPrice},
+		// B1：按计费模式分别判定。
+		{"per_request with a zero price and a token price is free", exCustom(1, "nothing", MatrixCustomPrice{BillingMode: BillingModePerRequest,
+			PerRequestPrice: pwF(0), InputPrice: pwF(1e-6)}), ExposureZeroPrice},
+		{"image mode with only token-style interval prices is free", exCustom(1, "nothing", MatrixCustomPrice{BillingMode: BillingModeImage,
+			Intervals: []MatrixPriceInterval{{TierLabel: "1K", OutputPrice: pwF(1e-5)}}}), ExposureZeroPrice},
+		{"empty per_request does not fall back to the official price", exCustom(1, "priced", MatrixCustomPrice{BillingMode: BillingModePerRequest}), ExposureZeroPrice},
+		{"token mode with only a per-request price and no official price", exCustom(1, "nothing", MatrixCustomPrice{BillingMode: BillingModeToken,
+			PerRequestPrice: pwF(0.04)}), ExposureUnpriced},
+		{"empty token custom on an image-only model is free", exCustom(1, "img-only", MatrixCustomPrice{BillingMode: BillingModeToken}), ExposureZeroPrice},
+		{"per_request with a zero price but a positive interval price", exCustom(1, "nothing", MatrixCustomPrice{BillingMode: BillingModePerRequest,
+			PerRequestPrice: pwF(0), Intervals: []MatrixPriceInterval{{TierLabel: "1K", PerRequestPrice: pwF(0.04)}}}), ""},
+		{"inherit on an image-only model has a price", exCell(1, "img-only", MatrixPriceInherit), ""},
 		{"closed cells are not checked", closed, ""},
 		{"wildcard cells are not checked", pattern, ""},
 	}

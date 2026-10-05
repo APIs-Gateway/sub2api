@@ -49,12 +49,15 @@ type ExposureViolation struct {
 	Reason   ExposureViolationReason `json:"reason"`
 }
 
-// OfficialPriceState 官方价里关于某个模型的事实：有没有价、价是不是全 0。
+// OfficialPriceState 官方价里关于某个模型的事实：有没有价、token 价是不是全 0、是不是图片模型。
 type OfficialPriceState struct {
 	// Known 动态目录或内置兜底里有这个模型的价格。
 	Known bool
-	// NonZero 至少有一个非零的 token 单价，或者是带按张价的图片模型。
-	NonZero bool
+	// TokenNonZero 至少有一个正的 token 单价（含图片 token 价）。token 模式的 custom 单元格留空的字段回落到它。
+	TokenNonZero bool
+	// ImageCapable 图片模型（有按张价或图片 token 价）。只对 inherit、extra 单元格算有价：
+	// 无渠道价时图片请求走 CalculateImageCost（有兜底价）；custom 单元格一旦有渠道价，图片请求不再按张计费。
+	ImageCapable bool
 }
 
 // OfficialPriceStateSource 查询官方价事实，由 BillingService 实现。
@@ -113,25 +116,48 @@ func (v *ExposureValidator) Check(ctx context.Context, cells []ExposureCell) []E
 	return out
 }
 
+// evaluate 按计费模式分别判定（与运行时一致，B1）：
+//   - 已知免费名单最先放行；
+//   - custom 的 per_request / image 模式：只看按次价（顶层与区间），不回落官方价，也不看 token 字段；
+//   - custom 的 token 模式：只看 token 字段；有显式值但全是 0 判 zero_price；全部留空才回落官方的 token 价；
+//   - inherit、extra：官方有价，且 token 价非零或是图片模型。
 func (v *ExposureValidator) evaluate(groupID int64, c MatrixCell, free []BillingKnownFreeEntry) (ExposureViolationReason, bool) {
-	if c.PriceMode == MatrixPriceCustom && c.CustomPrice != nil && customPriceHasNonZero(c.CustomPrice) {
-		return "", false
-	}
 	if billingKnownFreeMatches(free, groupID, c.ModelKey) {
 		return "", false
-	}
-	// 自定义价里写了显式的 0（而不是留空回落官方价）：官方价不会盖住它，只有已知免费名单能放行。
-	if c.PriceMode == MatrixPriceCustom && c.CustomPrice != nil && customPriceHasExplicitValue(c.CustomPrice) {
-		return ExposureZeroPrice, true
 	}
 	var st OfficialPriceState
 	if v.prices != nil {
 		st = v.prices.LookupOfficialPriceState(c.ModelKey)
 	}
+	if c.PriceMode == MatrixPriceCustom && c.CustomPrice != nil {
+		cp := c.CustomPrice
+		switch cp.BillingMode {
+		case BillingModePerRequest, BillingModeImage:
+			if customPerRequestHasPositive(cp) {
+				return "", false
+			}
+			return ExposureZeroPrice, true
+		default:
+			if customTokenHasPositive(cp) {
+				return "", false
+			}
+			if customTokenHasExplicitValue(cp) {
+				return ExposureZeroPrice, true
+			}
+			// 全部留空：回落官方的 token 价，图片能力不算。
+			switch {
+			case !st.Known:
+				return ExposureUnpriced, true
+			case !st.TokenNonZero:
+				return ExposureZeroPrice, true
+			}
+			return "", false
+		}
+	}
 	switch {
 	case !st.Known:
 		return ExposureUnpriced, true
-	case !st.NonZero:
+	case !st.TokenNonZero && !st.ImageCapable:
 		return ExposureZeroPrice, true
 	}
 	return "", false
@@ -139,30 +165,42 @@ func (v *ExposureValidator) evaluate(groupID int64, c MatrixCell, free []Billing
 
 func exposurePositive(p *float64) bool { return p != nil && *p > 0 }
 
-// customPriceHasNonZero 自定义价里至少有一个字段是正数。
-func customPriceHasNonZero(cp *MatrixCustomPrice) bool {
-	if exposurePositive(cp.InputPrice) || exposurePositive(cp.OutputPrice) || exposurePositive(cp.CacheWritePrice) ||
-		exposurePositive(cp.CacheReadPrice) || exposurePositive(cp.ImageOutputPrice) || exposurePositive(cp.PerRequestPrice) {
+// customPerRequestHasPositive 按次价（顶层或区间）至少有一个是正数。
+func customPerRequestHasPositive(cp *MatrixCustomPrice) bool {
+	if exposurePositive(cp.PerRequestPrice) {
 		return true
 	}
 	for _, iv := range cp.Intervals {
-		if exposurePositive(iv.InputPrice) || exposurePositive(iv.OutputPrice) || exposurePositive(iv.CacheWritePrice) ||
-			exposurePositive(iv.CacheReadPrice) || exposurePositive(iv.PerRequestPrice) {
+		if exposurePositive(iv.PerRequestPrice) {
 			return true
 		}
 	}
 	return false
 }
 
-// customPriceHasExplicitValue 自定义价里至少有一个字段不是留空（含显式的 0）。
-func customPriceHasExplicitValue(cp *MatrixCustomPrice) bool {
-	if cp.InputPrice != nil || cp.OutputPrice != nil || cp.CacheWritePrice != nil ||
-		cp.CacheReadPrice != nil || cp.ImageOutputPrice != nil || cp.PerRequestPrice != nil {
+// customTokenHasPositive token 字段（顶层与区间）至少有一个是正数。
+func customTokenHasPositive(cp *MatrixCustomPrice) bool {
+	if exposurePositive(cp.InputPrice) || exposurePositive(cp.OutputPrice) || exposurePositive(cp.CacheWritePrice) ||
+		exposurePositive(cp.CacheReadPrice) || exposurePositive(cp.ImageOutputPrice) {
 		return true
 	}
 	for _, iv := range cp.Intervals {
-		if iv.InputPrice != nil || iv.OutputPrice != nil || iv.CacheWritePrice != nil ||
-			iv.CacheReadPrice != nil || iv.PerRequestPrice != nil {
+		if exposurePositive(iv.InputPrice) || exposurePositive(iv.OutputPrice) ||
+			exposurePositive(iv.CacheWritePrice) || exposurePositive(iv.CacheReadPrice) {
+			return true
+		}
+	}
+	return false
+}
+
+// customTokenHasExplicitValue token 字段（顶层与区间）至少有一个不是留空（含显式的 0）。
+func customTokenHasExplicitValue(cp *MatrixCustomPrice) bool {
+	if cp.InputPrice != nil || cp.OutputPrice != nil || cp.CacheWritePrice != nil ||
+		cp.CacheReadPrice != nil || cp.ImageOutputPrice != nil {
+		return true
+	}
+	for _, iv := range cp.Intervals {
+		if iv.InputPrice != nil || iv.OutputPrice != nil || iv.CacheWritePrice != nil || iv.CacheReadPrice != nil {
 			return true
 		}
 	}

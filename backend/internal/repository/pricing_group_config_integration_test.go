@@ -112,7 +112,7 @@ func TestPricingGroupConfigWriter_Integration_AllowlistSwitchIsBlockedByUnpriced
 	ctx := context.Background()
 	gid := pwiV2Group(t)
 	store := NewPricingWriteStore(integrationDB)
-	prices := pwiPrices{"pw-official": {Known: true, NonZero: true}, "pw-zero": {Known: true}}
+	prices := pwiPrices{"pw-official": {Known: true, TokenNonZero: true}, "pw-zero": {Known: true}}
 
 	// 开放分组里可以先放无价的 open 单元格（只对白名单分组阻止）。
 	custom := pwiUpsert(gid, "pw-custom", true, service.MatrixPriceCustom, 0)
@@ -153,7 +153,7 @@ func TestInterimPriceWriteGate_Integration_AllowlistGroupRejectsUnpricedOpenCell
 	gid := pwiV2Group(t)
 	pwiSetAccess(t, gid, "allowlist")
 	store := NewPricingWriteStore(integrationDB)
-	gate := service.NewInterimPriceWriteGate(store, NewPricingCellWriter(), pwiGuard(pwiPrices{"pw-official": {Known: true, NonZero: true}}), nil)
+	gate := service.NewInterimPriceWriteGate(store, NewPricingCellWriter(), pwiGuard(pwiPrices{"pw-official": {Known: true, TokenNonZero: true}}), nil)
 	req := func(op service.CellOp) service.CellWriteRequest {
 		return service.CellWriteRequest{Ops: []service.CellOp{op}, GroupRevisions: map[int64]int64{gid: 3}, OperatorID: 21}
 	}
