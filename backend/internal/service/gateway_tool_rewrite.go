@@ -525,6 +525,9 @@ func restoreToolNamesInJSON(body []byte, rw *ToolNameRewrite) []byte {
 		restoreArray("content", true)
 	case "content_block_start":
 		restoreBlock("content_block", true)
+	case "response.function_call_arguments.delta", "response.function_call_arguments.done",
+		"response.custom_tool_call_input.delta", "response.custom_tool_call_input.done":
+		restore("name")
 	case "response.output_item.added", "response.output_item.done":
 		restoreBlock("item", false)
 	case "response.created", "response.in_progress", "response.completed", "response.done", "response.failed", "response.incomplete":

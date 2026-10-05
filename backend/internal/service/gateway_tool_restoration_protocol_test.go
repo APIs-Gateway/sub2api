@@ -33,6 +33,10 @@ func TestToolNameRestoreProtocol_FieldsAndOpaqueBytes(t *testing.T) {
 		{"responses function", `{"type":"function_call","name":"cc_ses_get","arguments":"cc_ses_get","call_id":"cc_ses_get"}`},
 		{"responses custom", `{"type":"custom_tool_call","name":"cc_ses_get","input":"cc_ses_get"}`},
 		{"responses item frame", `data: {"type":"response.output_item.done","item":{"type":"function_call","name":"cc_ses_get","arguments":"cc_ses_get"}}`},
+		{"responses arguments delta", `{"type":"response.function_call_arguments.delta","name":"cc_ses_get","call_id":"cc_ses_get","delta":"cc_ses_get"}`},
+		{"responses arguments done", `{"type":"response.function_call_arguments.done","name":"cc_ses_get","call_id":"cc_ses_get","arguments":"cc_ses_get"}`},
+		{"responses custom delta", `{"type":"response.custom_tool_call_input.delta","name":"cc_ses_get","namespace":"cc_ses_get","delta":"cc_ses_get"}`},
+		{"responses custom done", `{"type":"response.custom_tool_call_input.done","name":"cc_ses_get","namespace":"cc_ses_get","input":"cc_ses_get"}`},
 		{"responses completed", `{"type":"response.completed","response":{"output":[{"type":"function_call","name":"cc_ses_get","arguments":"cc_ses_get"},{"type":"reasoning","encrypted_content":"cc_ses_get"}]}}`},
 		{"responses buffered", `{"object":"response","output":[{"type":"function_call","name":"cc_ses_get","arguments":"cc_ses_get"}]}`},
 		{"chat buffered", `{"object":"chat.completion","choices":[{"message":{"tool_calls":[{"type":"function","id":"cc_ses_get","function":{"name":"cc_ses_get","arguments":"cc_ses_get"}}],"content":"cc_ses_get"}}]}`},
@@ -58,6 +62,8 @@ func TestToolNameRestoreProtocol_NoSpeculativeRestoration(t *testing.T) {
 		`{"type":"tool_use","name":123,"input":"cc_ses_get"}`,
 		`{"type":"message","content":[],"item":{"type":"function_call","name":"cc_ses_get"},"output":[{"type":"function_call","name":"cc_ses_get"}]}`,
 		`{"type":"message","content":[{"type":"function_call","name":"cc_ses_get"}],"choices":[{"message":{"function_call":{"name":"cc_ses_get"}}}]}`,
+		`{"type":"response.function_call_arguments.extension","name":"cc_ses_get","arguments":"cc_ses_get"}`,
+		`{"type":"response.custom_tool_call_input.extension","name":"cc_ses_get","input":"cc_ses_get"}`,
 		`{"type":"response.custom_extension","item":{"type":"function_call","name":"cc_ses_get"},"response":{"output":[{"type":"function_call","name":"cc_ses_get"}]}}`,
 		`{"object":"response","output":[{"type":"tool_use","name":"cc_ses_get"}],"content_block":{"type":"tool_use","name":"cc_ses_get"}}`,
 		`{"object":"chat.completion","choices":[{"message":{"tool_calls":[{"type":"extension","function":{"name":"cc_ses_get"}}]}}]}`,
@@ -257,6 +263,50 @@ func TestToolNameRestoreProtocol_ActualResponsesReaders(t *testing.T) {
 			require.Contains(t, body, `"text":"cc_ses_get"`)
 			if streaming {
 				require.Equal(t, 1, strings.Count(body, "event: response.completed\n"))
+				seen := map[string]int{}
+				var arguments string
+				for _, frame := range strings.Split(body, "\n\n") {
+					for _, line := range strings.Split(frame, "\n") {
+						if !strings.HasPrefix(line, "data: ") {
+							continue
+						}
+						payload := strings.TrimPrefix(line, "data: ")
+						require.True(t, gjson.Valid(payload))
+						kind := gjson.Get(payload, "type").String()
+						switch kind {
+						case "response.output_item.added", "response.output_item.done":
+							if gjson.Get(payload, "item.type").String() == "function_call" {
+								seen[kind]++
+								require.Equal(t, "session_get", gjson.Get(payload, "item.name").String())
+								require.Equal(t, "cc_ses_get", gjson.Get(payload, "item.call_id").String())
+							}
+						case "response.function_call_arguments.delta", "response.function_call_arguments.done":
+							seen[kind]++
+							require.Equal(t, "session_get", gjson.Get(payload, "name").String())
+							require.Equal(t, "cc_ses_get", gjson.Get(payload, "call_id").String())
+							if kind == "response.function_call_arguments.delta" {
+								arguments += gjson.Get(payload, "delta").String()
+							} else {
+								require.JSONEq(t, `{"literal":"cc_ses_get"}`, gjson.Get(payload, "arguments").String())
+							}
+						case "response.completed":
+							seen[kind]++
+							for _, item := range gjson.Get(payload, "response.output").Array() {
+								if item.Get("type").String() == "function_call" {
+									require.Equal(t, "session_get", item.Get("name").String())
+									require.Equal(t, "cc_ses_get", item.Get("call_id").String())
+									require.JSONEq(t, `{"literal":"cc_ses_get"}`, item.Get("arguments").String())
+								}
+							}
+						}
+					}
+				}
+				require.Equal(t, map[string]int{
+					"response.output_item.added": 1, "response.output_item.done": 1,
+					"response.function_call_arguments.delta": 1, "response.function_call_arguments.done": 1,
+					"response.completed": 1,
+				}, seen)
+				require.JSONEq(t, `{"literal":"cc_ses_get"}`, arguments)
 			}
 		})
 	}
