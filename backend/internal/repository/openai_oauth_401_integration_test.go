@@ -380,10 +380,14 @@ func TestOpenAI401HTTP_ConcurrentCredentialWriterWins(t *testing.T) {
 
 func TestOpenAI401HTTP_TerminalRecoveryControls(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
-		for _, name := range []string{"retry_rejected", "model_not_found", "cloudflare_html", "incomplete_auth_body"} {
+		for _, name := range []string{"retry_rejected", "model_not_found", "cloudflare_html", "incomplete_auth_body", "outer_conflicting_code", "outer_conflicting_status"} {
 			t.Run(fmt.Sprintf("passthrough_%t/%s", passthrough, name), func(t *testing.T) {
 				f, executor, upstream := newOAuth401HTTPFixture(t, passthrough)
 				switch name {
+				case "outer_conflicting_code":
+					upstream.rejection = `{"type":"error","code":"server_error","status":500,"error":{"type":"authentication_error"}}`
+				case "outer_conflicting_status":
+					upstream.rejection = `{"status":500,"error":{"type":"authentication_error"}}`
 				case "retry_rejected":
 					upstream.rejectRetry = true
 				case "model_not_found":
@@ -413,7 +417,9 @@ func TestOpenAI401HTTP_TerminalRecoveryControls(t *testing.T) {
 				require.Zero(t, logs)
 				require.Zero(t, dedup)
 				require.InDelta(t, 10, balance, 1e-10)
-				if name == "retry_rejected" {
+				if name == "retry_rejected" || strings.HasPrefix(name, "outer_conflicting") {
+					// Existing final-refusal billing classification is unchanged;
+					// only recovery eligibility becomes stricter.
 					require.Zero(t, inflightHeld(t, f.user.ID))
 				} else {
 					require.Positive(t, inflightHeld(t, f.user.ID), "unknown/provider-specific refusal retains its bounded attempt hold")

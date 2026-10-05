@@ -89,6 +89,29 @@ func isRecoverableOpenAIHTTP401(status int, body []byte, readErr error) bool {
 	if openAI401PermanentOrRequestError(payload) {
 		return false
 	}
+
+	// Envelope metadata cannot contradict the HTTP status or its nested auth
+	// refusal. An unknown/object-valued marker is not a credential proof.
+	for _, field := range []string{"code", "status"} {
+		value, exists := envelope[field]
+		if !exists || value == nil || value == "" {
+			continue
+		}
+		switch value := value.(type) {
+		case float64:
+			if value != float64(status) {
+				return false
+			}
+		case string:
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "authentication_error", "invalid_api_key", "invalid_authentication", "unauthenticated", "access_token_expired", "token_expired", "error", "invalid_request_error":
+			default:
+				return false
+			}
+		default:
+			return false
+		}
+	}
 	providerError, ok := envelope["error"].(map[string]any)
 	if !ok {
 		return false
