@@ -1123,7 +1123,7 @@
     lastUsedIP: '最近使用 IP',
     useKey: '使用金鑰',
     connect: '接入',
-    usedLabel: '已用',
+    usedLabel: '累計已用',
     unlimited: '不限額',
     overview: {
       address: '接入地址',

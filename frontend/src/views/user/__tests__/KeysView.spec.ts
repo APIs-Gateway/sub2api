@@ -693,7 +693,8 @@ describe('user KeysView overview and connect actions', () => {
     expect(rowA.get('[data-test="row-used"]').text()).toBe('≈¥4.00')
     expect(rowA.get('[data-test="row-limit"]').text()).toBe('≈¥10.00')
     expect(rowA.get('[data-test="row-recent"]').text()).toBe('¥2.00')
-    // 「近 30 天」「今日」标签直接写在行里，不靠悬停提示
+    // 「累计已用」「近 30 天」「今日」标签直接写在行里，不靠悬停提示
+    expect(rowA.text()).toContain('keys.usedLabel')
     expect(rowA.text()).toContain('keys.total')
     expect(rowA.text()).toContain('keys.today')
     expect(rowA.findAll('[title]').map((el) => el.attributes('title'))).not.toContain('keys.total')

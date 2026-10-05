@@ -1124,7 +1124,7 @@
     lastUsedIP: 'Last Used IP',
     useKey: 'Use Key',
     connect: 'Connect',
-    usedLabel: 'Used',
+    usedLabel: 'Total used',
     unlimited: 'No limit',
     overview: {
       address: 'Endpoint',
