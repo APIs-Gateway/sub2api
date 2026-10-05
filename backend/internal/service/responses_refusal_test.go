@@ -121,3 +121,36 @@ func TestResponsesRefusal_SharedResponsesReconstruction(t *testing.T) {
 		})
 	}
 }
+
+func TestResponsesRefusal_DeliveredRefusalStopsReplayAfterFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, terminal := range []string{"eof", "provider_failed"} {
+		t.Run(terminal, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			body := `data: {"type":"response.created","response":{"id":"resp_r","model":"gpt-5.5"}}` + "\n\n" + `data: {"type":"response.refusal.delta","delta":"cannot help"}` + "\n\n"
+			if terminal == "provider_failed" {
+				body += `data: {"type":"response.failed","response":{"id":"resp_r","status":"failed","usage":{"input_tokens":10,"output_tokens":2},"error":{"code":"server_error","message":"provider failed"}}}` + "\n\n"
+			}
+			resp := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+			result, err := (&OpenAIGatewayService{cfg: &config.Config{}}).handleChatStreamingResponse(resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, "gpt-5.5", "gpt-5.5", "gpt-5.5", time.Now(), openAISilentRefusalMinRequestBodyBytes)
+			require.Error(t, err)
+			require.NotNil(t, result)
+			var replay *UpstreamFailoverError
+			require.NotErrorAs(t, err, &replay)
+			require.True(t, result.PartialOutputDelivered, "refusal is semantic content already delivered")
+			require.Contains(t, rec.Body.String(), `"refusal":"cannot help"`)
+			require.NotContains(t, rec.Body.String(), "data: [DONE]")
+			require.NotContains(t, rec.Body.String(), "openai_silent_refusal")
+			if terminal == "provider_failed" {
+				require.Equal(t, 10, result.Usage.InputTokens)
+				require.Equal(t, 2, result.Usage.OutputTokens)
+				require.Equal(t, 1, strings.Count(rec.Body.String(), `"error"`))
+			} else {
+				require.Zero(t, result.Usage.InputTokens)
+				require.Zero(t, result.Usage.OutputTokens)
+			}
+		})
+	}
+}
