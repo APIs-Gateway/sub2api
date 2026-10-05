@@ -41,7 +41,7 @@ func openAIWSInputMayContainImageAtDepth(input gjson.Result, depth int) bool {
 		return false
 	}
 	switch input.Get("type").String() {
-	case "input_image", "image_url", "image", "input_file", "item_reference", "compaction":
+	case "input_image", "image_url", "image", "input_file", "item_reference", "compaction", "image_generation_call":
 		// Stored files/items and compacted opaque state can contain images.
 		return true
 	}
@@ -90,7 +90,7 @@ func (s *openAIWSImageInputEstimates) prepare(turn int, body []byte) int {
 	return estimate
 }
 
-func (s *openAIWSImageInputEstimates) complete(turn int, responseID string, actualImageInput int) {
+func (s *openAIWSImageInputEstimates) complete(turn int, responseID string, actualImageInput, actualImageOutput int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	estimate, known := s.pending[turn]
@@ -110,6 +110,11 @@ func (s *openAIWSImageInputEstimates) complete(turn int, responseID string, actu
 	}
 	if actualImageInput > estimate {
 		estimate = actualImageInput
+	}
+	// Generated images can be edited by previous_response_id on a later turn.
+	// This is potential input metadata, not a rewrite of actual input usage.
+	if actualImageOutput > 0 && estimate == 0 {
+		estimate = 1
 	}
 	if s.byResponse[responseID] > estimate {
 		estimate = s.byResponse[responseID]

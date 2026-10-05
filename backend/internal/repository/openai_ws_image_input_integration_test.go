@@ -502,3 +502,43 @@ func TestWSImageInputHTTP_CurrentGenerationIntentIsSeparateFromFrozenPrice(t *te
 		})
 	}
 }
+
+func TestWSImageInputHTTP_GeneratedOutputCanBeReusedAsImageInput(t *testing.T) {
+	for _, parent := range []string{"previous_response_id", "opaque_output_item"} {
+		t.Run(parent, func(t *testing.T) {
+			f := newWSInflightFixture(t, "passthrough", service.BillingModelSourceUpstream, map[string]float64{"token:gpt-5.4": 0, "competitor": .5}, wsImageInputPricing(t, false))
+			p := newWSImageInputProvider(t, f)
+			conn := f.dial(t)
+			wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","input":"generate an image","tools":[{"type":"image_generation"}],"max_output_tokens":8}`)
+			first := p.next(t)
+			require.Positive(t, f.held(t))
+			first.reply <- wsImageInputEvent(1, "response.completed", `{"input_tokens":2,"output_tokens":1}`, `,"tool_usage":{"image_gen":{"output_tokens_details":{"image_tokens":1}}}`)
+			wsInflightReadCompleted(t, conn)
+			f.waitUsage(t, 1)
+			wsImageInputLog(t, f, 1, 0, 1, .1)
+			require.InDelta(t, .65, f.wallet(t), 1e-9)
+			next := `{"type":"response.create","model":"gpt-5.4","previous_response_id":"resp_image_1","input":"describe the stored image","tools":[],"max_output_tokens":8}`
+			if parent == "opaque_output_item" {
+				next = `{"type":"response.create","model":"gpt-5.4","previous_response_id":null,"input":[{"type":"image_generation_call","id":"ig_prior","result":"opaque-image"}],"tools":[],"max_output_tokens":8}`
+			}
+			wsInflightWrite(t, conn, next)
+			second := p.next(t)
+			require.Positive(t, f.held(t), "stored generated output is not known-free input")
+			require.Equal(t, next, string(second.payload), "estimate metadata never rewrites the provider request")
+			f.denyConcurrentHTTP(t, "competitor")
+			require.EqualValues(t, 2, p.calls.Load())
+			second.reply <- wsImageInputEvent(2, "response.completed", `{"input_tokens":2,"output_tokens":1,"input_tokens_details":{"image_tokens":2}}`, "")
+			wsInflightReadCompleted(t, conn)
+			f.waitUsage(t, 2)
+			wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","previous_response_id":null,"input":"new plain text chain","tools":[],"max_output_tokens":8}`)
+			third := p.next(t)
+			require.Zero(t, f.held(t), "a new plain text chain discards image context")
+			third.reply <- wsImageInputEvent(3, "response.completed", `{"input_tokens":2,"output_tokens":1}`, "")
+			wsInflightReadCompleted(t, conn)
+			f.waitUsage(t, 3)
+			wsImageInputLog(t, f, 3, 2, 1, .2)
+			require.InDelta(t, .55, f.wallet(t), 1e-9)
+			require.EqualValues(t, 3, p.calls.Load())
+		})
+	}
+}
