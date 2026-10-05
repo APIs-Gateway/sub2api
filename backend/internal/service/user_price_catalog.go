@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -187,17 +186,15 @@ func visiblePriceGroups(q UserPriceCatalogQuery) []Group {
 }
 
 func userPriceCatalogCacheKey(userID int64, groups []Group, models map[string]struct{}) string {
-	var sb strings.Builder
-	sb.WriteString(strconv.FormatInt(userID, 10))
-	sb.WriteString("|")
+	buf := strconv.AppendInt(nil, userID, 10)
+	buf = append(buf, '|')
 	for _, g := range groups {
-		sb.WriteString(strconv.FormatInt(g.ID, 10))
-		sb.WriteString(",")
+		buf = strconv.AppendInt(buf, g.ID, 10)
+		buf = append(buf, ',')
 	}
-	sb.WriteString("|")
+	buf = append(buf, '|')
 	if models == nil {
-		sb.WriteString("*")
-		return sb.String()
+		return string(append(buf, '*'))
 	}
 	names := make([]string, 0, len(models))
 	for name := range models {
@@ -205,10 +202,10 @@ func userPriceCatalogCacheKey(userID int64, groups []Group, models map[string]st
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		sb.WriteString(strconv.Quote(name))
-		sb.WriteString(",")
+		buf = strconv.AppendQuote(buf, name)
+		buf = append(buf, ',')
 	}
-	return sb.String()
+	return string(buf)
 }
 
 func (s *UserPriceCatalogService) cacheGet(key string) *UserPriceCatalog {
