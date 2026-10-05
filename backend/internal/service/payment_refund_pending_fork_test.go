@@ -407,6 +407,7 @@ func TestExecuteRefundGatewayPendingFlows(t *testing.T) {
 				entClient:    client,
 				loadBalancer: &captureLoadBalancer{},
 				userRepo: &mockUserRepo{
+					getByIDUser:     &User{Balance: 500},
 					deductBalanceFn: func(_ context.Context, _ int64, amount float64) error { deducted += amount; return nil },
 					updateBalanceFn: func(_ context.Context, _ int64, amount float64) error { restored += amount; return nil },
 				},
