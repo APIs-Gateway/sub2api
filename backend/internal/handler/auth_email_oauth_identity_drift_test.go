@@ -107,8 +107,14 @@ func TestEmailOAuthBoundIdentityAfterAuthenticatedPendingBind(t *testing.T) {
 			c.Request.AddCookie(encodedCookie(oauthPendingBrowserCookieName, session.BrowserSessionKey))
 			h.BindPendingOAuthLogin(c)
 			require.Equal(t, http.StatusOK, recorder.Code)
-			payload := decodeJSONResponseData(t, recorder)
-			claims, err := h.authService.ValidateToken(payload["access_token"].(string))
+			// Pending bind returns the OAuth token pair directly, without the
+			// generic API response data envelope.
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+			accessToken, ok := payload["access_token"].(string)
+			require.True(t, ok)
+			require.NotEmpty(t, accessToken)
+			claims, err := h.authService.ValidateToken(accessToken)
 			require.NoError(t, err)
 			require.Equal(t, owner.ID, claims.UserID)
 			bound := emailDriftIdentity(t, client, provider, "12345")
