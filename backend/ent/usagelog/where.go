@@ -110,6 +110,11 @@ func ServedRouteSource(v int16) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldServedRouteSource, v))
 }
 
+// CostUnit applies equality check predicate on the "cost_unit" field. It's identical to CostUnitEQ.
+func CostUnit(v int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldCostUnit, v))
+}
+
 // ChannelID applies equality check predicate on the "channel_id" field. It's identical to ChannelIDEQ.
 func ChannelID(v int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldChannelID, v))
@@ -798,6 +803,56 @@ func ServedRouteSourceIsNil() predicate.UsageLog {
 // ServedRouteSourceNotNil applies the NotNil predicate on the "served_route_source" field.
 func ServedRouteSourceNotNil() predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldNotNull(FieldServedRouteSource))
+}
+
+// CostUnitEQ applies the EQ predicate on the "cost_unit" field.
+func CostUnitEQ(v int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldCostUnit, v))
+}
+
+// CostUnitNEQ applies the NEQ predicate on the "cost_unit" field.
+func CostUnitNEQ(v int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldCostUnit, v))
+}
+
+// CostUnitIn applies the In predicate on the "cost_unit" field.
+func CostUnitIn(vs ...int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldCostUnit, vs...))
+}
+
+// CostUnitNotIn applies the NotIn predicate on the "cost_unit" field.
+func CostUnitNotIn(vs ...int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldCostUnit, vs...))
+}
+
+// CostUnitGT applies the GT predicate on the "cost_unit" field.
+func CostUnitGT(v int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldCostUnit, v))
+}
+
+// CostUnitGTE applies the GTE predicate on the "cost_unit" field.
+func CostUnitGTE(v int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldCostUnit, v))
+}
+
+// CostUnitLT applies the LT predicate on the "cost_unit" field.
+func CostUnitLT(v int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldCostUnit, v))
+}
+
+// CostUnitLTE applies the LTE predicate on the "cost_unit" field.
+func CostUnitLTE(v int16) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldCostUnit, v))
+}
+
+// CostUnitIsNil applies the IsNil predicate on the "cost_unit" field.
+func CostUnitIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldCostUnit))
+}
+
+// CostUnitNotNil applies the NotNil predicate on the "cost_unit" field.
+func CostUnitNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldCostUnit))
 }
 
 // ChannelIDEQ applies the EQ predicate on the "channel_id" field.

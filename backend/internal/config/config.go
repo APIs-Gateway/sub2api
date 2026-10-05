@@ -1364,21 +1364,57 @@ func (d *DatabaseConfig) DSN() string {
 	)
 }
 
+// 连接 PostgreSQL 时设置的 application_name，让运维能在 pg_stat_activity 里认出是哪类连接
+// （例如停服窗口里确认「已经没有应用连接」才动手迁移数据）。
+// 只用固定的服务名：不带主机名、版本号或任何密钥，因为 application_name 对所有能查
+// pg_stat_activity 的角色可见，还会出现在数据库日志里。
+const (
+	// DBApplicationName 是主服务（含 jwtgen 这类走 repository.InitEnt 的进程）的主库连接。
+	DBApplicationName = "sub2api-app"
+	// DBApplicationNameCLI 是一次性运维子命令（如 model-catalog seed）开的主库连接。
+	DBApplicationNameCLI = "sub2api-cli"
+	// DBApplicationNameLegacyInvite 是「旧站付费用户领码」功能连到旧站库的只读连接。
+	DBApplicationNameLegacyInvite = "sub2api-legacy-invite"
+)
+
+// sanitizeDBApplicationName 保证 application_name 能安全拼进 key=value 形式的 DSN：
+// 只留字母数字和 . _ -，其它字符换成 _；空串回落到 DBApplicationName。PostgreSQL 会把超过 63 字节的截断。
+func sanitizeDBApplicationName(name string) string {
+	if name == "" {
+		return DBApplicationName
+	}
+	b := []byte(name)
+	for i, c := range b {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '_', c == '-':
+		default:
+			b[i] = '_'
+		}
+	}
+	return string(b)
+}
+
 // DSNWithTimezone returns DSN with timezone setting
 func (d *DatabaseConfig) DSNWithTimezone(tz string) string {
+	return d.DSNWithTimezoneAndApplicationName(tz, DBApplicationName)
+}
+
+// DSNWithTimezoneAndApplicationName 同 DSNWithTimezone，并把连接的 application_name 设为 appName。
+func (d *DatabaseConfig) DSNWithTimezoneAndApplicationName(tz, appName string) string {
 	if tz == "" {
 		tz = "Asia/Shanghai"
 	}
+	appName = sanitizeDBApplicationName(appName)
 	// 当密码为空时不包含 password 参数，避免 libpq 解析错误
 	if d.Password == "" {
 		return fmt.Sprintf(
-			"host=%s port=%d user=%s dbname=%s sslmode=%s TimeZone=%s",
-			d.Host, d.Port, d.User, d.DBName, d.SSLMode, tz,
+			"host=%s port=%d user=%s dbname=%s sslmode=%s TimeZone=%s application_name=%s",
+			d.Host, d.Port, d.User, d.DBName, d.SSLMode, tz, appName,
 		)
 	}
 	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s TimeZone=%s",
-		d.Host, d.Port, d.User, d.Password, d.DBName, d.SSLMode, tz,
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s TimeZone=%s application_name=%s",
+		d.Host, d.Port, d.User, d.Password, d.DBName, d.SSLMode, tz, appName,
 	)
 }
 
@@ -1423,16 +1459,18 @@ type LegacyInviteConfig struct {
 
 // DSN 返回旧站库的连接串。与主库不同，这里不追加 TimeZone：
 // 判定只做金额求和，不依赖时区，少一个可能配错的参数。
+// 连接带固定的 application_name（DBApplicationNameLegacyInvite），旧站运维停服迁移时能在
+// pg_stat_activity 里把这条只读连接和真正的应用连接区分开。
 func (c *LegacyInviteConfig) DSN() string {
 	if c.Password == "" {
 		return fmt.Sprintf(
-			"host=%s port=%d user=%s dbname=%s sslmode=%s",
-			c.Host, c.Port, c.User, c.DBName, c.SSLMode,
+			"host=%s port=%d user=%s dbname=%s sslmode=%s application_name=%s",
+			c.Host, c.Port, c.User, c.DBName, c.SSLMode, DBApplicationNameLegacyInvite,
 		)
 	}
 	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		c.Host, c.Port, c.User, c.Password, c.DBName, c.SSLMode,
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s application_name=%s",
+		c.Host, c.Port, c.User, c.Password, c.DBName, c.SSLMode, DBApplicationNameLegacyInvite,
 	)
 }
 

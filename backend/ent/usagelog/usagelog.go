@@ -36,6 +36,8 @@ const (
 	FieldServedGroupID = "served_group_id"
 	// FieldServedRouteSource holds the string denoting the served_route_source field in the database.
 	FieldServedRouteSource = "served_route_source"
+	// FieldCostUnit holds the string denoting the cost_unit field in the database.
+	FieldCostUnit = "cost_unit"
 	// FieldChannelID holds the string denoting the channel_id field in the database.
 	FieldChannelID = "channel_id"
 	// FieldModelMappingChain holds the string denoting the model_mapping_chain field in the database.
@@ -167,6 +169,7 @@ var Columns = []string{
 	FieldUpstreamResponseModel,
 	FieldServedGroupID,
 	FieldServedRouteSource,
+	FieldCostUnit,
 	FieldChannelID,
 	FieldModelMappingChain,
 	FieldBillingTier,
@@ -343,6 +346,11 @@ func ByServedGroupID(opts ...sql.OrderTermOption) OrderOption {
 // ByServedRouteSource orders the results by the served_route_source field.
 func ByServedRouteSource(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldServedRouteSource, opts...).ToFunc()
+}
+
+// ByCostUnit orders the results by the cost_unit field.
+func ByCostUnit(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCostUnit, opts...).ToFunc()
 }
 
 // ByChannelID orders the results by the channel_id field.

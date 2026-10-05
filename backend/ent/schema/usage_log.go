@@ -59,6 +59,9 @@ func (UsageLog) Fields() []ent.Field {
 		// 两列仅在 served != 主分组时写入；NULL = 主分组/未回退。group_id 仍是主分组。
 		field.Int64("served_group_id").Optional().Nillable().Comment("实际服务分组 ID（仅回退时写入）"),
 		field.Int16("served_route_source").Optional().Nillable().Comment("回退来源：1=用户链 2=管理员链，NULL=主分组"),
+		// cost_unit：这行 actual_cost 等金额的记账单位。NULL = 历史额度（切换前写入的行和 USD 模式写入的行），
+		// 1 = 人民币。可空、无默认值：加列只改元数据，不重写 9GB 的大表。写入见 service.CreditUnit.CostUnit。
+		field.Int16("cost_unit").Optional().Nillable().Comment("金额记账单位：NULL=历史额度，1=人民币"),
 		field.Int64("channel_id").Optional().Nillable().Comment("渠道 ID"),
 		field.String("model_mapping_chain").MaxLen(500).Optional().Nillable().Comment("模型映射链"),
 		field.String("billing_tier").MaxLen(50).Optional().Nillable().Comment("计费层级标签"),

@@ -35954,6 +35954,8 @@ type UsageLogMutation struct {
 	addserved_group_id          *int64
 	served_route_source         *int16
 	addserved_route_source      *int16
+	cost_unit                   *int16
+	addcost_unit                *int16
 	channel_id                  *int64
 	addchannel_id               *int64
 	model_mapping_chain         *string
@@ -36620,6 +36622,76 @@ func (m *UsageLogMutation) ResetServedRouteSource() {
 	m.served_route_source = nil
 	m.addserved_route_source = nil
 	delete(m.clearedFields, usagelog.FieldServedRouteSource)
+}
+
+// SetCostUnit sets the "cost_unit" field.
+func (m *UsageLogMutation) SetCostUnit(i int16) {
+	m.cost_unit = &i
+	m.addcost_unit = nil
+}
+
+// CostUnit returns the value of the "cost_unit" field in the mutation.
+func (m *UsageLogMutation) CostUnit() (r int16, exists bool) {
+	v := m.cost_unit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCostUnit returns the old "cost_unit" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldCostUnit(ctx context.Context) (v *int16, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCostUnit is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCostUnit requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCostUnit: %w", err)
+	}
+	return oldValue.CostUnit, nil
+}
+
+// AddCostUnit adds i to the "cost_unit" field.
+func (m *UsageLogMutation) AddCostUnit(i int16) {
+	if m.addcost_unit != nil {
+		*m.addcost_unit += i
+	} else {
+		m.addcost_unit = &i
+	}
+}
+
+// AddedCostUnit returns the value that was added to the "cost_unit" field in this mutation.
+func (m *UsageLogMutation) AddedCostUnit() (r int16, exists bool) {
+	v := m.addcost_unit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearCostUnit clears the value of the "cost_unit" field.
+func (m *UsageLogMutation) ClearCostUnit() {
+	m.cost_unit = nil
+	m.addcost_unit = nil
+	m.clearedFields[usagelog.FieldCostUnit] = struct{}{}
+}
+
+// CostUnitCleared returns if the "cost_unit" field was cleared in this mutation.
+func (m *UsageLogMutation) CostUnitCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldCostUnit]
+	return ok
+}
+
+// ResetCostUnit resets all changes to the "cost_unit" field.
+func (m *UsageLogMutation) ResetCostUnit() {
+	m.cost_unit = nil
+	m.addcost_unit = nil
+	delete(m.clearedFields, usagelog.FieldCostUnit)
 }
 
 // SetChannelID sets the "channel_id" field.
@@ -38607,7 +38679,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 45)
+	fields := make([]string, 0, 46)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -38640,6 +38712,9 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.served_route_source != nil {
 		fields = append(fields, usagelog.FieldServedRouteSource)
+	}
+	if m.cost_unit != nil {
+		fields = append(fields, usagelog.FieldCostUnit)
 	}
 	if m.channel_id != nil {
 		fields = append(fields, usagelog.FieldChannelID)
@@ -38773,6 +38848,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.ServedGroupID()
 	case usagelog.FieldServedRouteSource:
 		return m.ServedRouteSource()
+	case usagelog.FieldCostUnit:
+		return m.CostUnit()
 	case usagelog.FieldChannelID:
 		return m.ChannelID()
 	case usagelog.FieldModelMappingChain:
@@ -38872,6 +38949,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldServedGroupID(ctx)
 	case usagelog.FieldServedRouteSource:
 		return m.OldServedRouteSource(ctx)
+	case usagelog.FieldCostUnit:
+		return m.OldCostUnit(ctx)
 	case usagelog.FieldChannelID:
 		return m.OldChannelID(ctx)
 	case usagelog.FieldModelMappingChain:
@@ -39025,6 +39104,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetServedRouteSource(v)
+		return nil
+	case usagelog.FieldCostUnit:
+		v, ok := value.(int16)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCostUnit(v)
 		return nil
 	case usagelog.FieldChannelID:
 		v, ok := value.(int64)
@@ -39278,6 +39364,9 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addserved_route_source != nil {
 		fields = append(fields, usagelog.FieldServedRouteSource)
 	}
+	if m.addcost_unit != nil {
+		fields = append(fields, usagelog.FieldCostUnit)
+	}
 	if m.addchannel_id != nil {
 		fields = append(fields, usagelog.FieldChannelID)
 	}
@@ -39347,6 +39436,8 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedServedGroupID()
 	case usagelog.FieldServedRouteSource:
 		return m.AddedServedRouteSource()
+	case usagelog.FieldCostUnit:
+		return m.AddedCostUnit()
 	case usagelog.FieldChannelID:
 		return m.AddedChannelID()
 	case usagelog.FieldInputTokens:
@@ -39407,6 +39498,13 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddServedRouteSource(v)
+		return nil
+	case usagelog.FieldCostUnit:
+		v, ok := value.(int16)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddCostUnit(v)
 		return nil
 	case usagelog.FieldChannelID:
 		v, ok := value.(int64)
@@ -39564,6 +39662,9 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldServedRouteSource) {
 		fields = append(fields, usagelog.FieldServedRouteSource)
 	}
+	if m.FieldCleared(usagelog.FieldCostUnit) {
+		fields = append(fields, usagelog.FieldCostUnit)
+	}
 	if m.FieldCleared(usagelog.FieldChannelID) {
 		fields = append(fields, usagelog.FieldChannelID)
 	}
@@ -39640,6 +39741,9 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldServedRouteSource:
 		m.ClearServedRouteSource()
+		return nil
+	case usagelog.FieldCostUnit:
+		m.ClearCostUnit()
 		return nil
 	case usagelog.FieldChannelID:
 		m.ClearChannelID()
@@ -39729,6 +39833,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldServedRouteSource:
 		m.ResetServedRouteSource()
+		return nil
+	case usagelog.FieldCostUnit:
+		m.ResetCostUnit()
 		return nil
 	case usagelog.FieldChannelID:
 		m.ResetChannelID()

@@ -70,7 +70,7 @@ func runModelCatalogCommand(args []string, out io.Writer) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	// 只开一个普通的数据库连接：不走 repository.InitEnt，因为它会执行迁移与密钥初始化。
-	db, err := sql.Open("postgres", cfg.Database.DSNWithTimezone(cfg.Timezone))
+	db, err := sql.Open("postgres", cfg.Database.DSNWithTimezoneAndApplicationName(cfg.Timezone, config.DBApplicationNameCLI))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}

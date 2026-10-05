@@ -120,6 +120,9 @@ type UsageLog struct {
 	// ServedRouteSource 回退来源：1=用户链 2=管理员链；nil = 主分组。
 	// 用户端 DTO 只在来源为 1 时透出 ServedGroupID，来源为 2（隐藏链）一律按主分组展示。
 	ServedRouteSource *int16
+	// CostUnit 这行 actual_cost 等金额的记账单位：nil（写 NULL）= 历史额度，1 = 人民币（UsageLogCostUnitCNY）。
+	// 由 usage_logs 的写入层按进程的 CREDIT_CURRENCY 统一盖章（见 CreditUnit.CostUnit），业务代码不要自己赋值。
+	CostUnit *int16
 	// ChannelID 渠道 ID
 	ChannelID *int64
 	// ModelMappingChain 模型映射链，如 "a→b→c"

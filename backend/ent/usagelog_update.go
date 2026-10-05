@@ -230,6 +230,33 @@ func (_u *UsageLogUpdate) ClearServedRouteSource() *UsageLogUpdate {
 	return _u
 }
 
+// SetCostUnit sets the "cost_unit" field.
+func (_u *UsageLogUpdate) SetCostUnit(v int16) *UsageLogUpdate {
+	_u.mutation.ResetCostUnit()
+	_u.mutation.SetCostUnit(v)
+	return _u
+}
+
+// SetNillableCostUnit sets the "cost_unit" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableCostUnit(v *int16) *UsageLogUpdate {
+	if v != nil {
+		_u.SetCostUnit(*v)
+	}
+	return _u
+}
+
+// AddCostUnit adds value to the "cost_unit" field.
+func (_u *UsageLogUpdate) AddCostUnit(v int16) *UsageLogUpdate {
+	_u.mutation.AddCostUnit(v)
+	return _u
+}
+
+// ClearCostUnit clears the value of the "cost_unit" field.
+func (_u *UsageLogUpdate) ClearCostUnit() *UsageLogUpdate {
+	_u.mutation.ClearCostUnit()
+	return _u
+}
+
 // SetChannelID sets the "channel_id" field.
 func (_u *UsageLogUpdate) SetChannelID(v int64) *UsageLogUpdate {
 	_u.mutation.ResetChannelID()
@@ -1141,6 +1168,15 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.ServedRouteSourceCleared() {
 		_spec.ClearField(usagelog.FieldServedRouteSource, field.TypeInt16)
 	}
+	if value, ok := _u.mutation.CostUnit(); ok {
+		_spec.SetField(usagelog.FieldCostUnit, field.TypeInt16, value)
+	}
+	if value, ok := _u.mutation.AddedCostUnit(); ok {
+		_spec.AddField(usagelog.FieldCostUnit, field.TypeInt16, value)
+	}
+	if _u.mutation.CostUnitCleared() {
+		_spec.ClearField(usagelog.FieldCostUnit, field.TypeInt16)
+	}
 	if value, ok := _u.mutation.ChannelID(); ok {
 		_spec.SetField(usagelog.FieldChannelID, field.TypeInt64, value)
 	}
@@ -1693,6 +1729,33 @@ func (_u *UsageLogUpdateOne) AddServedRouteSource(v int16) *UsageLogUpdateOne {
 // ClearServedRouteSource clears the value of the "served_route_source" field.
 func (_u *UsageLogUpdateOne) ClearServedRouteSource() *UsageLogUpdateOne {
 	_u.mutation.ClearServedRouteSource()
+	return _u
+}
+
+// SetCostUnit sets the "cost_unit" field.
+func (_u *UsageLogUpdateOne) SetCostUnit(v int16) *UsageLogUpdateOne {
+	_u.mutation.ResetCostUnit()
+	_u.mutation.SetCostUnit(v)
+	return _u
+}
+
+// SetNillableCostUnit sets the "cost_unit" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableCostUnit(v *int16) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetCostUnit(*v)
+	}
+	return _u
+}
+
+// AddCostUnit adds value to the "cost_unit" field.
+func (_u *UsageLogUpdateOne) AddCostUnit(v int16) *UsageLogUpdateOne {
+	_u.mutation.AddCostUnit(v)
+	return _u
+}
+
+// ClearCostUnit clears the value of the "cost_unit" field.
+func (_u *UsageLogUpdateOne) ClearCostUnit() *UsageLogUpdateOne {
+	_u.mutation.ClearCostUnit()
 	return _u
 }
 
@@ -2636,6 +2699,15 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if _u.mutation.ServedRouteSourceCleared() {
 		_spec.ClearField(usagelog.FieldServedRouteSource, field.TypeInt16)
+	}
+	if value, ok := _u.mutation.CostUnit(); ok {
+		_spec.SetField(usagelog.FieldCostUnit, field.TypeInt16, value)
+	}
+	if value, ok := _u.mutation.AddedCostUnit(); ok {
+		_spec.AddField(usagelog.FieldCostUnit, field.TypeInt16, value)
+	}
+	if _u.mutation.CostUnitCleared() {
+		_spec.ClearField(usagelog.FieldCostUnit, field.TypeInt16)
 	}
 	if value, ok := _u.mutation.ChannelID(); ok {
 		_spec.SetField(usagelog.FieldChannelID, field.TypeInt64, value)
