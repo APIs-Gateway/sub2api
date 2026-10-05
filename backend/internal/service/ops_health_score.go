@@ -12,11 +12,7 @@ import (
 // - Layered scoring: Business Health (70%) + Infrastructure Health (30%)
 // - Avoids double-counting (e.g., DB failure affects both infra and business metrics)
 // - Conservative + stable: penalize clear degradations; avoid overreacting to missing/idle data.
-func computeDashboardHealthScore(now time.Time, overview *OpsDashboardOverview) int {
-	return computeDashboardHealthScoreWithThresholds(now, overview, defaultOpsMetricThresholds())
-}
-
-func computeDashboardHealthScoreWithThresholds(now time.Time, overview *OpsDashboardOverview, thresholds *OpsMetricThresholds) int {
+func computeDashboardHealthScore(now time.Time, overview *OpsDashboardOverview, thresholdConfig ...*OpsMetricThresholds) int {
 	if overview == nil {
 		return 0
 	}
@@ -27,7 +23,7 @@ func computeDashboardHealthScoreWithThresholds(now time.Time, overview *OpsDashb
 		return 100
 	}
 
-	businessHealth := computeBusinessHealthWithThresholds(overview, thresholds)
+	businessHealth := computeBusinessHealth(overview, thresholdConfig...)
 	infraHealth := computeInfraHealth(now, overview)
 
 	// Weighted combination: 70% business + 30% infrastructure
@@ -37,13 +33,10 @@ func computeDashboardHealthScoreWithThresholds(now time.Time, overview *OpsDashb
 
 // computeBusinessHealth calculates business health score (0-100)
 // Components: Error Rate (50%) + TTFT (50%)
-func computeBusinessHealth(overview *OpsDashboardOverview) float64 {
-	return computeBusinessHealthWithThresholds(overview, defaultOpsMetricThresholds())
-}
-
-func computeBusinessHealthWithThresholds(overview *OpsDashboardOverview, thresholds *OpsMetricThresholds) float64 {
-	if thresholds == nil {
-		thresholds = defaultOpsMetricThresholds()
+func computeBusinessHealth(overview *OpsDashboardOverview, thresholdConfig ...*OpsMetricThresholds) float64 {
+	thresholds := defaultOpsMetricThresholds()
+	if len(thresholdConfig) > 0 && thresholdConfig[0] != nil {
+		thresholds = thresholdConfig[0]
 	}
 	// Preserve the default 1%..10% curve and worst-case error combination.
 	// A successfully loaded nil field disables that metric; it is not a default.
