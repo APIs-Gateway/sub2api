@@ -528,6 +528,13 @@ describe('KeyFallbackChainEditor 分组倍率', () => {
     expect(primary.get('[data-test="price"]').text()).toMatch(/^输入 ¥/)
   })
 
+  it('徽标变长换行时，状态和拖动、删除按钮留在右侧', async () => {
+    const w = await mountReal()
+
+    expect(w.get('[data-test="primary-item"] [data-test="status"]').classes()).toContain('ml-auto')
+    expect(w.get('[data-test="fallback-item-21"] [data-test="status"]').element.parentElement?.classList.contains('ml-auto')).toBe(true)
+  })
+
   it('兜底项带专属倍率：默认值划线，专属值高亮，套餐低至也一样', async () => {
     const w = await mountReal()
     const row = w.get('[data-test="fallback-item-21"]')

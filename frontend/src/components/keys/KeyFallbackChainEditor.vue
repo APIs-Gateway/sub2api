@@ -66,7 +66,7 @@
                   {{ t('keyFallback.editor.primary') }}
                 </span>
               </div>
-              <StatusMark :item="primary" />
+              <StatusMark :item="primary" class="ml-auto" />
             </div>
             <PriceLine :item="primary" />
             <ReasonLine :item="primary" is-primary />
@@ -104,7 +104,7 @@
                     :rate-view="groupRateView(item.rate_multiplier, item.user_rate_multiplier)"
                   />
                 </div>
-                <div class="flex items-center gap-1">
+                <div class="ml-auto flex items-center gap-1">
                   <StatusMark :item="item" />
                   <button
                     type="button"
