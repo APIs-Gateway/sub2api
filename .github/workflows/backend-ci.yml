@@ -125,6 +125,9 @@ jobs:
       - name: Configured ops thresholds actual header regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/views/admin/ops/components/__tests__/OpsDashboardHeader.thresholds.spec.ts src/views/admin/ops/utils/__tests__/metricThresholds.spec.ts src/views/admin/ops/__tests__/OpsDashboard.spec.ts
+      - name: Channel default prices actual edit and stale-request regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/components/admin/channel/__tests__/PricingEntryCard.modelDefaultPrice.spec.ts
       - name: Frontend typecheck and critical vitest
         run: make test-frontend
       - name: Frontend production build
