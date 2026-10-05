@@ -462,8 +462,8 @@
               </button>
               <!-- 兜底设置：只有已绑定分组的密钥才有兜底链 -->
               <button
-                v-if="row.group_id"
-                @click="openFallbackDrawer(row)"
+                v-if="row.group_id && fallbackEntryVisible(row)"
+                @click="openFallbackDrawer(row, $event)"
                 class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
                 data-test="fallback-entry"
               >
@@ -1094,7 +1094,8 @@
     <KeyFallbackChainDrawer
       :show="showFallbackDrawer"
       :initial-key-id="fallbackDrawerKeyId"
-      @close="showFallbackDrawer = false"
+      :return-focus="fallbackTrigger"
+      @close="closeFallbackDrawer"
     />
 
     <!-- Group Selector Dropdown (Teleported to body to avoid overflow clipping) -->
@@ -1196,6 +1197,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import Icon from '@/components/icons/Icon.vue'
 import KeyOnboardingModal from '@/components/user/KeyOnboardingModal.vue'
 import KeyFallbackChainDrawer from '@/components/keys/KeyFallbackChainDrawer.vue'
+import { keyFallbackAPI } from '@/api/keyFallback'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import PlanRateText from '@/components/common/PlanRateText.vue'
@@ -1407,9 +1409,47 @@ const showColumnDropdown = ref(false)
 const showOnboardingModal = ref(false)
 const showFallbackDrawer = ref(false)
 const fallbackDrawerKeyId = ref<number | null>(null)
-const openFallbackDrawer = (key: ApiKey) => {
+const fallbackTrigger = ref<HTMLElement | null>(null)
+const openFallbackDrawer = (key: ApiKey, event?: Event) => {
   fallbackDrawerKeyId.value = key.id
+  fallbackTrigger.value = (event?.currentTarget as HTMLElement | null) ?? null
   showFallbackDrawer.value = true
+}
+const closeFallbackDrawer = () => {
+  showFallbackDrawer.value = false
+  // 抽屉里可能增删了兜底项，入口是否显示要跟着刷新
+  loadFallbackSummary()
+}
+
+// 入口显隐：沿用抽屉的批量摘要（has_available = 这把 Key 还有没加入链的同平台可用分组）。
+// 没有可添加的分组、链里也没有项，入口就不显示；链里已有项时照常显示，用户才能看到并删掉。
+// 摘要还没回来时先不显示，避免入口闪一下；读取失败就显示，不因此把入口藏起来。
+type FallbackEntryInfo = { hasAvailable: boolean; hasFallback: boolean }
+const fallbackEntryInfo = ref<Map<number, FallbackEntryInfo> | null>(null)
+const fallbackSummaryState = ref<'loading' | 'ok' | 'error'>('loading')
+const loadFallbackSummary = async () => {
+  try {
+    const res = await keyFallbackAPI.listChains()
+    const map = new Map<number, FallbackEntryInfo>()
+    for (const p of res?.platforms ?? []) {
+      for (const k of p.keys) {
+        map.set(k.key_id, {
+          hasAvailable: k.has_available,
+          hasFallback: k.items.some((i) => i.role === 'fallback')
+        })
+      }
+    }
+    fallbackEntryInfo.value = map
+    fallbackSummaryState.value = 'ok'
+  } catch {
+    fallbackSummaryState.value = 'error'
+  }
+}
+const fallbackEntryVisible = (key: ApiKey): boolean => {
+  if (fallbackSummaryState.value === 'error') return true
+  if (fallbackSummaryState.value === 'loading') return false
+  const info = fallbackEntryInfo.value?.get(key.id)
+  return !info || info.hasAvailable || info.hasFallback
 }
 const onboardingKey = ref<ApiKey | null>(null)
 const onboardingTab = ref<'install' | 'ai' | 'ccswitch' | 'manual'>('install')
@@ -2026,6 +2066,7 @@ function formatResetTime(resetAt: string | null): string {
 onMounted(() => {
   loadSavedColumns()
   loadApiKeys()
+  loadFallbackSummary()
   loadGroups()
   loadUserGroupRates()
   loadPublicSettings()

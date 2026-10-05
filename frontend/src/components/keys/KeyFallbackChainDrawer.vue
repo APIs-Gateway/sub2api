@@ -8,11 +8,14 @@
         @click.self="emit('close')"
       >
         <aside
+          ref="panel"
           class="drawer-panel flex h-full w-full flex-col bg-white shadow-overlay dark:bg-dark-800 sm:max-w-[30rem] sm:border-l sm:border-gray-200 sm:dark:border-dark-700"
           role="dialog"
           aria-modal="true"
           :aria-labelledby="titleId"
+          tabindex="-1"
           data-test="drawer"
+          @keydown.tab="onTab"
         >
           <header class="flex items-start justify-between gap-3 border-b border-gray-200 px-4 py-4 dark:border-dark-700 sm:px-6">
             <div class="min-w-0">
@@ -122,6 +125,8 @@ const props = defineProps<{
   show: boolean
   /** 从哪把 Key 的行内入口打开；打开后直接展开它 */
   initialKeyId?: number | null
+  /** 关闭后把焦点还给谁；不传就还给打开时拿着焦点的元素 */
+  returnFocus?: HTMLElement | null
 }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
@@ -133,6 +138,7 @@ const loading = ref(false)
 const loadError = ref('')
 const expandedKeyId = ref<number | null>(null)
 const closeBtn = ref<HTMLButtonElement | null>(null)
+const panel = ref<HTMLElement | null>(null)
 let loadVersion = 0
 let previousFocus: HTMLElement | null = null
 
@@ -174,8 +180,51 @@ function onChanged(keyId: number, chain: KeyFallbackChain) {
   }
 }
 
+/** 抽屉里当前能用 Tab 走到的元素（排除禁用的和被样式隐藏的，比如窄屏下的拖动手柄） */
+function focusableElements(): HTMLElement[] {
+  const root = panel.value
+  if (!root) return []
+  return Array.from(
+    root.querySelectorAll<HTMLElement>(
+      'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    )
+  ).filter(
+    (el) =>
+      !(el as HTMLButtonElement).disabled &&
+      el.getAttribute('aria-hidden') !== 'true' &&
+      getComputedStyle(el).display !== 'none'
+  )
+}
+
+/** 焦点陷阱：Tab / Shift+Tab 只在抽屉里循环 */
+function onTab(e: KeyboardEvent) {
+  const items = focusableElements()
+  if (items.length === 0) {
+    e.preventDefault()
+    panel.value?.focus()
+    return
+  }
+  const first = items[0]
+  const last = items[items.length - 1]
+  const active = document.activeElement as HTMLElement | null
+  if (!active || !panel.value?.contains(active)) {
+    e.preventDefault()
+    ;(e.shiftKey ? last : first).focus()
+  } else if (e.shiftKey && (active === first || active === panel.value)) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
+// 焦点跑到抽屉外面时（比如点了遮罩后再按 Tab），把它拉回来
 function onKeydown(e: KeyboardEvent) {
-  if (props.show && e.key === 'Escape') emit('close')
+  if (!props.show) return
+  // 编辑器里的选择列表展开时，Esc 由它先处理（只收起列表）
+  if (e.key === 'Escape' && !e.defaultPrevented) emit('close')
+  else if (e.key === 'Tab' && panel.value && !panel.value.contains(e.target as Node)) onTab(e)
 }
 
 watch(
@@ -189,7 +238,8 @@ watch(
       closeBtn.value?.focus()
     } else {
       loadVersion++
-      previousFocus?.focus?.()
+      const target = props.returnFocus && props.returnFocus.isConnected ? props.returnFocus : previousFocus
+      target?.focus?.()
       previousFocus = null
     }
   },

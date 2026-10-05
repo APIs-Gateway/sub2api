@@ -1,5 +1,5 @@
 <template>
-  <div class="fallback-editor" :aria-busy="loading || saving">
+  <div ref="root" class="fallback-editor" :aria-busy="loading || saving">
     <!-- 加载中 -->
     <div v-if="loading && !chain" class="space-y-3 py-2" data-test="editor-loading">
       <div class="h-14 animate-pulse rounded-lg bg-gray-100 dark:bg-dark-700" />
@@ -106,6 +106,31 @@
                 </div>
                 <div class="ml-auto flex items-center gap-1">
                   <StatusMark :item="item" />
+                  <!-- 窄屏不能拖：用上移 / 下移按钮调整顺序 -->
+                  <button
+                    type="button"
+                    class="move-btn chain-icon-btn"
+                    :disabled="saving || index === 0"
+                    :aria-label="t('keyFallback.editor.moveUp', { name: item.name })"
+                    :title="t('keyFallback.editor.moveUp', { name: item.name })"
+                    :data-move="`${item.group_id}-up`"
+                    data-test="move-up"
+                    @click="moveBy(index, -1)"
+                  >
+                    <Icon name="chevronUp" size="sm" />
+                  </button>
+                  <button
+                    type="button"
+                    class="move-btn chain-icon-btn"
+                    :disabled="saving || index === localFallbacks.length - 1"
+                    :aria-label="t('keyFallback.editor.moveDown', { name: item.name })"
+                    :title="t('keyFallback.editor.moveDown', { name: item.name })"
+                    :data-move="`${item.group_id}-down`"
+                    data-test="move-down"
+                    @click="moveBy(index, 1)"
+                  >
+                    <Icon name="chevronDown" size="sm" />
+                  </button>
                   <button
                     type="button"
                     class="drag-handle chain-icon-btn cursor-grab active:cursor-grabbing"
@@ -167,6 +192,7 @@
           <span class="chain-node chain-node--add" aria-hidden="true" />
           <div class="min-w-0 flex-1">
             <button
+              ref="addBtn"
               type="button"
               :disabled="addDisabled"
               :aria-expanded="pickerOpen"
@@ -232,7 +258,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
+import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
 import GroupBadge from '@/components/common/GroupBadge.vue'
@@ -268,6 +294,8 @@ const actionError = ref('')
 /** 后端指明了出错分组时，错误标在对应那一项上（key 为 group_id） */
 const itemErrors = ref<Record<number, string>>({})
 const pickerOpen = ref(false)
+const root = ref<HTMLElement | null>(null)
+const addBtn = ref<HTMLButtonElement | null>(null)
 const localFallbacks = ref<KeyFallbackChainItem[]>([])
 const addHintId = `fallback-add-hint-${props.keyId}`
 
@@ -304,6 +332,22 @@ watch(addDisabled, (v) => {
   if (v) pickerOpen.value = false
 })
 
+/**
+ * 选择列表展开时，Esc 只收起列表，不再往上传给抽屉。
+ * 挂在 window 的捕获阶段：焦点在列表里还是在别处都能先接到，也先于抽屉自己的 Esc 处理。
+ */
+function onPickerEscape(e: KeyboardEvent) {
+  if (e.key !== 'Escape' || !pickerOpen.value) return
+  e.preventDefault()
+  e.stopPropagation()
+  pickerOpen.value = false
+  nextTick(() => addBtn.value?.focus())
+}
+watch(pickerOpen, (open) => {
+  if (open) window.addEventListener('keydown', onPickerEscape, true)
+  else window.removeEventListener('keydown', onPickerEscape, true)
+})
+
 async function load() {
   const version = ++loadVersion
   loading.value = true
@@ -323,7 +367,10 @@ async function load() {
 }
 
 onMounted(load)
-onBeforeUnmount(() => clearTimeout(savedTimer))
+onBeforeUnmount(() => {
+  clearTimeout(savedTimer)
+  window.removeEventListener('keydown', onPickerEscape, true)
+})
 watch(
   () => props.keyId,
   () => {
@@ -405,14 +452,25 @@ function onDragEnd() {
   persist(next)
 }
 
-/** 键盘排序：在拖动手柄上按上下方向键 */
-function moveBy(index: number, delta: -1 | 1) {
+/** 调整顺序：拖动手柄上按上下方向键，或窄屏的上移 / 下移按钮 */
+async function moveBy(index: number, delta: -1 | 1) {
   const target = index + delta
   if (saving.value || target < 0 || target >= localFallbacks.value.length) return
+  const groupId = localFallbacks.value[index].group_id
   const next = [...localFallbacks.value]
   ;[next[index], next[target]] = [next[target], next[index]]
   localFallbacks.value = next
-  persist(next.map((i) => i.group_id))
+  await persist(next.map((i) => i.group_id))
+  // 保存期间按钮是禁用的，焦点会丢；保存完把焦点放回这一项（到顶或到底了就换另一个方向）
+  await nextTick()
+  const dir = delta === -1 ? ['up', 'down'] : ['down', 'up']
+  for (const d of dir) {
+    const el = root.value?.querySelector<HTMLButtonElement>(`[data-move="${groupId}-${d}"]`)
+    if (el && !el.disabled) {
+      el.focus()
+      break
+    }
+  }
 }
 
 function removeItem(groupId: number) {
@@ -676,6 +734,17 @@ const ReasonLine = defineComponent({
 .dark .add-btn:disabled {
   color: theme('colors.dark.500');
   background: transparent;
+}
+/* 窄屏不能拖：藏起拖动手柄，改用上移 / 下移；宽屏反过来 */
+@media (max-width: 639.98px) {
+  .drag-handle {
+    display: none;
+  }
+}
+@media (min-width: 640px) {
+  .move-btn {
+    display: none;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .chain-icon-btn,

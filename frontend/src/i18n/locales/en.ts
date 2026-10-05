@@ -858,7 +858,7 @@
     },
     editor: {
       referenceModel: "Reference model {model}, price per million tokens",
-      orderHint: "Drag to reorder. Groups higher up are used first.",
+      orderHint: "Groups higher up are used first.",
       primary: "Main",
       primaryHint: "Main group. Change it when you edit the key.",
       input: "Input {price}",
@@ -882,6 +882,8 @@
       remove: "Remove {name}",
       removeUnusable: "Remove",
       dragHandle: "Drag to reorder {name}, or use the up and down arrow keys",
+      moveUp: "Move {name} up",
+      moveDown: "Move {name} down",
       saving: "Saving…",
       saved: "Saved",
       loadFailed: "Failed to load. Please try again.",

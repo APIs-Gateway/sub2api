@@ -34,6 +34,11 @@ const {
   nextStep: vi.fn(),
 }))
 
+const { listChains } = vi.hoisted(() => ({ listChains: vi.fn() }))
+vi.mock('@/api/keyFallback', () => ({
+  keyFallbackAPI: { listChains, getChain: vi.fn(), replaceChain: vi.fn() },
+}))
+
 const messages: Record<string, string> = {
   'common.actions': 'Actions',
   'common.name': 'Name',
@@ -239,6 +244,8 @@ describe('user KeysView column settings', () => {
     getAvailableGroups.mockResolvedValue([])
     getUserGroupRates.mockResolvedValue({})
     isCurrentStep.mockReturnValue(false)
+    listChains.mockReset()
+    listChains.mockResolvedValue({ platforms: [] })
   })
 
   it.each([
@@ -769,6 +776,101 @@ describe('user KeysView overview and connect actions', () => {
     await wrapper.get('[data-row="2"] [data-test="action-connect"]').trigger('click')
     expect(modal().props('initialTab')).toBe('install')
     expect(modal().props('apiKey')).toMatchObject({ id: 2 })
+    wrapper.unmount()
+  })
+})
+
+// 没有可加入链的分组（同平台、已授权、启用中、不是主分组）时，行内的「兜底」入口不显示；
+// 链里已有项时照常显示，用户才能看到并删掉。
+describe('user KeysView fallback entry visibility', () => {
+  const summaryOf = (keys: Array<{ key_id: number; has_available: boolean; fallback: boolean }>) => ({
+    platforms: [
+      {
+        platform: 'openai',
+        keys: keys.map((k) => ({
+          key_id: k.key_id,
+          name: `k${k.key_id}`,
+          has_available: k.has_available,
+          items: [
+            { group_id: 1, name: 'main', role: 'primary', position: 0, status: 'active', usable: true },
+            ...(k.fallback
+              ? [{ group_id: 2, name: 'fb', role: 'fallback', position: 1, status: 'active', usable: true }]
+              : []),
+          ],
+        })),
+      },
+    ],
+  })
+
+  beforeEach(() => {
+    localStorage.clear()
+    publicSettings.value = null
+    activeSubscriptions.value = []
+    listKeys.mockResolvedValue({
+      items: [{ ...createApiKey(), id: 1, group_id: 1 }, { ...createApiKey(), id: 2, group_id: 1 }],
+      total: 2, page: 1, page_size: 20, pages: 1,
+    })
+    getPublicSettings.mockResolvedValue({})
+    getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
+    getAvailableGroups.mockResolvedValue([])
+    getUserGroupRates.mockResolvedValue({})
+    isCurrentStep.mockReturnValue(false)
+    listChains.mockReset()
+  })
+
+  it('有可添加分组的 Key 显示入口，没有的不显示', async () => {
+    listChains.mockResolvedValue(summaryOf([
+      { key_id: 1, has_available: true, fallback: false },
+      { key_id: 2, has_available: false, fallback: false },
+    ]))
+    const wrapper = await mountView()
+    expect(wrapper.findAll('[data-test="fallback-entry"]')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('所有 Key 都没有可添加的分组（如 free 站只有一个分组）：入口整体不显示', async () => {
+    listChains.mockResolvedValue(summaryOf([
+      { key_id: 1, has_available: false, fallback: false },
+      { key_id: 2, has_available: false, fallback: false },
+    ]))
+    const wrapper = await mountView()
+    expect(wrapper.find('[data-test="fallback-entry"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('已有兜底项时，即使没有可添加的分组入口也照常显示', async () => {
+    listChains.mockResolvedValue(summaryOf([
+      { key_id: 1, has_available: false, fallback: true },
+      { key_id: 2, has_available: false, fallback: false },
+    ]))
+    const wrapper = await mountView()
+    expect(wrapper.findAll('[data-test="fallback-entry"]')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('摘要读取失败时不把入口藏起来', async () => {
+    listChains.mockRejectedValue(new Error('boom'))
+    const wrapper = await mountView()
+    expect(wrapper.findAll('[data-test="fallback-entry"]')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('摘要还没回来时先不显示，回来后再显示', async () => {
+    let resolve!: (v: unknown) => void
+    listChains.mockReturnValue(new Promise((r) => { resolve = r }))
+    const wrapper = await mountView()
+    expect(wrapper.find('[data-test="fallback-entry"]').exists()).toBe(false)
+    resolve(summaryOf([{ key_id: 1, has_available: true, fallback: false }, { key_id: 2, has_available: true, fallback: false }]))
+    await flushPromises()
+    expect(wrapper.findAll('[data-test="fallback-entry"]')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('没有绑定分组的 Key 仍然没有入口', async () => {
+    listKeys.mockResolvedValue({ items: [createApiKey()], total: 1, page: 1, page_size: 20, pages: 1 })
+    listChains.mockResolvedValue({ platforms: [] })
+    const wrapper = await mountView()
+    expect(wrapper.find('[data-test="fallback-entry"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })

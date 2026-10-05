@@ -47,6 +47,7 @@ vi.mock('vue-draggable-plus', () => ({
 }))
 
 import KeyFallbackChainEditor from '../KeyFallbackChainEditor.vue'
+import KeyFallbackChainDrawer from '../KeyFallbackChainDrawer.vue'
 
 // cny 是服务端按余额价口径给的人民币价（这里取美元价 / 7.2），前端不再自己换算
 const price = (input: number, output: number) => ({
@@ -253,6 +254,51 @@ describe('KeyFallbackChainEditor', () => {
     await w.get('[data-test="fallback-item-21"] [data-test="drag-handle"]').trigger('keydown', { key: 'ArrowDown' })
     await flushPromises()
     expect(replaceChain).toHaveBeenCalledWith(7, [22, 21, 23])
+  })
+
+  it('窄屏上移 / 下移按钮：第一项不能上移，最后一项不能下移，都有 aria-label', async () => {
+    const w = await mountEditor()
+    const up = (id: number) => w.get(`[data-test="fallback-item-${id}"] [data-test="move-up"]`)
+    const down = (id: number) => w.get(`[data-test="fallback-item-${id}"] [data-test="move-down"]`)
+    expect(up(21).attributes('disabled')).toBeDefined()
+    expect(down(21).attributes('disabled')).toBeUndefined()
+    expect(up(22).attributes('disabled')).toBeUndefined()
+    expect(down(22).attributes('disabled')).toBeUndefined()
+    expect(up(23).attributes('disabled')).toBeUndefined()
+    expect(down(23).attributes('disabled')).toBeDefined()
+    expect(up(22).attributes('aria-label')).toBe('上移 Codex 备用')
+    expect(down(22).attributes('aria-label')).toBe('下移 Codex 备用')
+  })
+
+  it('点上移 / 下移按整条替换，焦点留在这一项的按钮上', async () => {
+    const w = await mountEditor()
+    replaceChain.mockImplementation((_id: number, g: number[]) => Promise.resolve(replyFor(makeChain(), g)))
+    await w.get('[data-test="fallback-item-22"] [data-test="move-up"]').trigger('click')
+    await flushPromises()
+    expect(replaceChain).toHaveBeenLastCalledWith(7, [22, 21, 23])
+    expect(ids(w)).toEqual([22, 21, 23])
+    await w.get('[data-test="fallback-item-21"] [data-test="move-down"]').trigger('click')
+    await flushPromises()
+    expect(replaceChain).toHaveBeenLastCalledWith(7, [22, 23, 21])
+  })
+
+  it('移到顶 / 底后焦点换到另一个方向的按钮，不丢到页面开头', async () => {
+    const w = mount(KeyFallbackChainEditor, {
+      attachTo: document.body,
+      props: { keyId: 7 },
+      global: { stubs: { GroupBadge: true } }
+    })
+    getChain.mockResolvedValue(makeChain())
+    await w.setProps({ keyId: 8 })
+    await flushPromises()
+    replaceChain.mockImplementation((_id: number, g: number[]) => Promise.resolve(replyFor(makeChain(), g)))
+    const btn = w.get('[data-test="fallback-item-22"] [data-test="move-up"]')
+    ;(btn.element as HTMLElement).focus()
+    await btn.trigger('click')
+    await flushPromises()
+    // 22 现在在最前面，上移已禁用，焦点落在它的下移按钮上
+    expect(document.activeElement).toBe(w.get('[data-test="fallback-item-22"] [data-test="move-down"]').element)
+    w.unmount()
   })
 
   it('添加：从选择列表挑一个分组，追加到链末尾', async () => {
@@ -610,5 +656,71 @@ describe('KeyFallbackChainEditor 分组倍率', () => {
     expect(getSubscriptionPricing).not.toHaveBeenCalled()
     expect(rateOf(w.get('[data-test="primary-item"]'))).toBe('0.0769x')
     expect(w.findAll('[data-test="plan-rate"]')).toHaveLength(0)
+  })
+})
+
+describe('KeyFallbackChainEditor 的 Esc 分层（在抽屉里）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    getChain.mockReset()
+    replaceChain.mockReset()
+    setRecharge(7.2)
+  })
+
+  async function mountInDrawer() {
+    const summaryItems = [
+      { group_id: 16, name: 'Codex Plus', role: 'primary', position: 0, status: 'active', usable: true }
+    ]
+    const { keyFallbackAPI } = await import('@/api/keyFallback')
+    ;(keyFallbackAPI.listChains as ReturnType<typeof vi.fn>).mockResolvedValue({
+      platforms: [{ platform: 'openai', keys: [{ key_id: 7, name: 'k', has_available: true, items: summaryItems }] }]
+    })
+    getChain.mockResolvedValue(makeChain())
+    const w = mount(KeyFallbackChainDrawer, {
+      attachTo: document.body,
+      props: { show: true, initialKeyId: 7 },
+      global: {
+        stubs: {
+          Teleport: true,
+          Transition: false,
+          GroupBadge: { template: '<span />' },
+          PlatformIcon: true
+        }
+      }
+    })
+    await flushPromises()
+    return w
+  }
+  const esc = () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+
+  it('选择列表展开时按 Esc 只收起列表，抽屉不关；再按一次才关', async () => {
+    const w = await mountInDrawer()
+    await w.get('[data-test="add-button"]').trigger('click')
+    expect(w.find('[data-test="picker"]').exists()).toBe(true)
+    esc()
+    await flushPromises()
+    expect(w.find('[data-test="picker"]').exists()).toBe(false)
+    expect(w.emitted('close')).toBeUndefined()
+    // 焦点回到「添加兜底分组」按钮
+    expect(document.activeElement).toBe(w.get('[data-test="add-button"]').element)
+    esc()
+    expect(w.emitted('close')).toHaveLength(1)
+    w.unmount()
+  })
+
+  it('列表没展开时按 Esc 直接关闭抽屉', async () => {
+    const w = await mountInDrawer()
+    esc()
+    expect(w.emitted('close')).toHaveLength(1)
+    w.unmount()
+  })
+
+  it('列表被再点一次收起后，Esc 恢复为关闭抽屉', async () => {
+    const w = await mountInDrawer()
+    await w.get('[data-test="add-button"]').trigger('click')
+    await w.get('[data-test="add-button"]').trigger('click')
+    esc()
+    expect(w.emitted('close')).toHaveLength(1)
+    w.unmount()
   })
 })

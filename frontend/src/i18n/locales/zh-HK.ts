@@ -857,7 +857,7 @@
     },
     editor: {
       referenceModel: "參考模型 {model}，每百萬 Token 的價格",
-      orderHint: "拖拽調整順序，靠前的先被使用",
+      orderHint: "靠前的先被使用",
       primary: "主要",
       primaryHint: "主分組，更換請在編輯金鑰時修改",
       input: "輸入 {price}",
@@ -881,6 +881,8 @@
       remove: "移除 {name}",
       removeUnusable: "移除",
       dragHandle: "拖拽調整 {name} 的順序，也可以按上下方向鍵",
+      moveUp: "上移 {name}",
+      moveDown: "下移 {name}",
       saving: "正在儲存…",
       saved: "已儲存",
       loadFailed: "加載失敗，請重試",
