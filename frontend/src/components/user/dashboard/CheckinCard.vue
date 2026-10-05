@@ -30,10 +30,10 @@
         <div v-else-if="status.spend_per_extra > 0" class="hidden text-right sm:block">
           <p class="num-aux">
             {{ t('checkin.todaySpend') }}
-            <span class="num-secondary text-gray-700 dark:text-gray-300">{{ formatLimit(status.today_spend) }}</span>
+            <span class="num-secondary text-gray-700 dark:text-gray-300">{{ formatSourceAmount(status.today_spend) }}</span>
           </p>
           <p class="num-aux text-[11px] text-gray-400 dark:text-gray-500">
-            {{ t('checkin.nextBonusHint', { amount: formatLimit(status.spend_to_next_bonus) }) }}
+            {{ t('checkin.nextBonusHint', { amount: formatSourceAmount(status.spend_to_next_bonus) }) }}
           </p>
         </div>
         <button
@@ -95,9 +95,9 @@ const claimDisabled = computed(
 )
 
 // 签到奖励直接进钱包，按钱包单价精确折算；「今日消费」和解锁门槛统计的是
-// 钱包与订阅卡混扣的额度，只能按当前扣费来源近似折算（带 ≈）。
+// 钱包与订阅卡混扣的额度，只能按当前扣费来源折算（人民币站 ¥、free 站 $，每处只出一个金额）。
 const { formatWallet } = useCurrencyDisplay()
-const { formatLimit } = useSourceFiatRate()
+const { formatSourceAmount } = useSourceFiatRate()
 
 // notActive：基础签到被"当日活跃度门槛"拦住（未领、当日 Token 未达标、且无其他可领项）。
 const notActive = computed(() => {

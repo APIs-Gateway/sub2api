@@ -32,14 +32,6 @@
           :text="formatMixed(stats?.today_actual_cost || 0, stats?.today_actual_cost_fiat)"
           :title="`${t('dashboard.actual')}: ${formatMixed(stats?.today_actual_cost || 0, stats?.today_actual_cost_fiat, EXACT_DIGITS)}`"
         />
-        <!-- 官方价是美元口径的对照值，人民币模式下与实付并列只会让人误读，只在美元模式展示 -->
-        <NumText
-          v-if="!isFiat"
-          tier="secondary"
-          class="font-normal text-gray-400 dark:text-gray-500"
-          :text="`/ ${formatUsd(stats?.today_cost || 0)}`"
-          :title="`${t('dashboard.standard')}: ${formatUsd(stats?.today_cost || 0, EXACT_DIGITS)}`"
-        />
       </span>
       <span class="num-aux" :title="formatMixed(stats?.total_actual_cost || 0, stats?.total_actual_cost_fiat, EXACT_DIGITS)">
         {{ t('common.total') }}: {{ formatMixed(stats?.total_actual_cost || 0, stats?.total_actual_cost_fiat) }}
@@ -53,14 +45,12 @@
     <div class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.todayTokens') }}</span>
       <NumText tier="primary" :text="formatTokens(stats?.today_tokens || 0)" :title="formatNumber(stats?.today_tokens || 0)" />
-      <span class="num-aux">{{ t('dashboard.input') }} {{ formatTokens(stats?.today_input_tokens || 0) }} · {{ t('dashboard.output') }} {{ formatTokens(stats?.today_output_tokens || 0) }} · {{ t('dashboard.cache') }} {{ formatTokens((stats?.today_cache_creation_tokens || 0) + (stats?.today_cache_read_tokens || 0)) }}</span>
     </div>
 
     <!-- Total Tokens -->
     <div class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.totalTokens') }}</span>
       <NumText tier="primary" :text="formatTokens(stats?.total_tokens || 0)" :title="formatNumber(stats?.total_tokens || 0)" />
-      <span class="num-aux">{{ t('dashboard.input') }} {{ formatTokens(stats?.total_input_tokens || 0) }} · {{ t('dashboard.output') }} {{ formatTokens(stats?.total_output_tokens || 0) }} · {{ t('dashboard.cache') }} {{ formatTokens((stats?.total_cache_creation_tokens || 0) + (stats?.total_cache_read_tokens || 0)) }}</span>
     </div>
 
     <!-- Performance (RPM/TPM) -->
@@ -215,7 +205,7 @@ const props = defineProps<{
   platformQuotas?: PlatformQuotaItem[] | null
 }>()
 const { t } = useI18n()
-const { isFiat, formatUsd, formatWallet, formatMixed } = useCurrencyDisplay()
+const { formatWallet, formatMixed } = useCurrencyDisplay()
 // 平台限额统计的是额度（钱包和订阅卡混扣），只能按当前扣费来源近似折算
 const { formatLimit } = useSourceFiatRate()
 

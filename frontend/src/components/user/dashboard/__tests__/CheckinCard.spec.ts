@@ -33,8 +33,14 @@ vi.mock('@/stores/app', () => ({
   })
 }))
 
+const activeSubscriptions: { value: Array<Record<string, unknown>> } = { value: [] }
+
 vi.mock('@/stores/subscriptions', () => ({
-  useSubscriptionStore: () => ({ activeSubscriptions: [] })
+  useSubscriptionStore: () => ({
+    get activeSubscriptions() {
+      return activeSubscriptions.value
+    }
+  })
 }))
 
 vi.mock('@/i18n', () => ({
@@ -94,6 +100,7 @@ describe('CheckinCard', () => {
     claimCheckin.mockResolvedValue({ type: 'daily', amount: 0.25, status: claimedStatus })
     refreshUser.mockResolvedValue(undefined)
     publicSettings.value = { turnstile_enabled: false }
+    activeSubscriptions.value = []
   })
 
   it('keeps a committed checkin successful when the follow-up user refresh fails', async () => {
@@ -191,5 +198,51 @@ describe('CheckinCard', () => {
     expect(toast).toContain('checkin.claimedToast:')
     expect(toast).toContain('¥')
     expect(toast).toContain('0.25')
+  })
+
+  describe('今日消费只显示一个金额', () => {
+    const spendStatus: CheckinStatus = {
+      ...claimedStatus,
+      spend_per_extra: 5,
+      today_spend: 20,
+      spend_to_next_bonus: 10
+    }
+    const norm = (s: string) => s.replace(/[\u00a0\u202f]/g, ' ')
+
+    async function mountSpend() {
+      getCheckinStatus.mockResolvedValue(spendStatus)
+      const wrapper = mount(CheckinCard, { global: { stubs: { TurnstileWidget: true } } })
+      await flushPromises()
+      return norm(wrapper.text())
+    }
+
+    it('人民币站：今日消费与下次解锁各一个 ¥ 金额，没有 $ 和 ≈', async () => {
+      publicSettings.value = { turnstile_enabled: false, balance_recharge_multiplier: 10 }
+      const text = await mountSpend()
+      expect(text).toContain('checkin.todaySpend ¥2.00')
+      expect(text).toContain('checkin.nextBonusHint:¥1.00')
+      expect(text).not.toContain('$')
+      expect(text).not.toContain('≈')
+      expect(text).not.toContain('/')
+    })
+
+    it('有生效订阅卡：按卡单价折算，不按钱包单价（不高估）', async () => {
+      publicSettings.value = { turnstile_enabled: false, balance_recharge_multiplier: 10 }
+      activeSubscriptions.value = [{ status: 'active', fiat_per_credit: 0.05 }]
+      const text = await mountSpend()
+      // 20 × 0.05 = ¥1.00、10 × 0.05 = ¥0.50（钱包单价 0.1 会得到 ¥2.00 / ¥1.00）
+      expect(text).toContain('checkin.todaySpend ¥1.00')
+      expect(text).toContain('checkin.nextBonusHint:¥0.50')
+      expect(text).not.toContain('≈')
+    })
+
+    it('free 站（倍率 1）：只显示 $ 金额，没有 ¥ 和 ≈', async () => {
+      publicSettings.value = { turnstile_enabled: false }
+      const text = await mountSpend()
+      expect(text).toContain('checkin.todaySpend $20.00')
+      expect(text).toContain('checkin.nextBonusHint:$10.00')
+      expect(text).not.toContain('¥')
+      expect(text).not.toContain('≈')
+    })
   })
 })

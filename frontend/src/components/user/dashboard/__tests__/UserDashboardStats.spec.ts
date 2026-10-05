@@ -163,8 +163,8 @@ describe('UserDashboardStats 按平台拆分', () => {
   })
 })
 
-describe('UserDashboardStats token 明细', () => {
-  it('includes cache creation and read tokens in the token card breakdown', () => {
+describe('UserDashboardStats token 卡片', () => {
+  it('只显示今日与累计总数，不再显示输入/输出/缓存明细', () => {
     const w = mountStats(
       makeStats({
         today_tokens: 370,
@@ -181,24 +181,23 @@ describe('UserDashboardStats token 明细', () => {
     )
 
     const text = w.text()
-    expect(text).toContain('dashboard.input 100 · dashboard.output 200 · dashboard.cache 70')
-    expect(text).toContain('dashboard.input 400 · dashboard.output 500 · dashboard.cache 11')
+    expect(text).toContain('370')
+    expect(text).toContain('911')
+    expect(text).not.toContain('dashboard.input')
+    expect(text).not.toContain('dashboard.output')
+    expect(text).not.toContain('dashboard.cache')
   })
+})
 
-  it('treats missing cache token fields as zero', () => {
-    const stats: Partial<UserStatsType> = makeStats({
-      today_input_tokens: 1,
-      today_output_tokens: 2,
-      total_input_tokens: 3,
-      total_output_tokens: 4,
-    })
-    delete stats.today_cache_creation_tokens
-    delete stats.today_cache_read_tokens
-    delete stats.total_cache_creation_tokens
-    delete stats.total_cache_read_tokens
-
-    const text = mountStats(stats as UserStatsType).text()
-    expect(text).toContain('dashboard.output 2 · dashboard.cache 0')
-    expect(text).toContain('dashboard.output 4 · dashboard.cache 0')
+describe('UserDashboardStats 今日消费', () => {
+  it('只显示实际消费，不再并列「/ 标准」金额', () => {
+    const w = mountStats(
+      makeStats({ today_actual_cost: 4.2, today_cost: 6.1, total_actual_cost: 84.2, total_cost: 120 })
+    )
+    const text = w.text().replace(/[\u00a0\u202f]/g, ' ')
+    expect(text).toContain('$4.20')
+    expect(text).toContain('$84.20')
+    expect(text).not.toContain('$6.10')
+    expect(text).not.toContain('/ $')
   })
 })
