@@ -212,3 +212,34 @@ func TestResponsesInputTokensOpsClassificationAndFilter(t *testing.T) {
 	require.Equal(t, EndpointResponsesInputTokens, DeriveUpstreamEndpoint(EndpointResponsesInputTokens, "/responses/input_tokens", service.PlatformOpenAI))
 	require.Equal(t, EndpointResponsesInputTokens, DeriveUpstreamEndpoint(EndpointResponsesInputTokens, "/responses/input_tokens", service.PlatformGrok))
 }
+
+func TestResponsesInputTokensNativeFailureIsTerminalWithoutBillingOrReplay(t *testing.T) {
+	for _, tc := range []struct {
+		name, body   string
+		status, want int
+	}{
+		{"quota", `{"error":{"message":"private quota detail"}}`, 429, 429},
+		{"provider error", `{"error":{"message":"private provider detail"}}`, 503, 503},
+		{"invalid count", `{"object":"response.input_tokens","input_tokens":-1}`, 200, 502},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := chainRespBase()
+			for group, accounts := range o.schedulable {
+				for i := range accounts {
+					accounts[i].Credentials = map[string]any{"api_key": "key"}
+				}
+				o.schedulable[group] = accounts
+			}
+			o.replies = map[int64]chainRespReply{11: {status: tc.status, body: tc.body, contentType: "application/json"}}
+			hs := newChainRespHarness(t, o)
+			hs.router.POST("/v1/responses/input_tokens", hs.handler.ResponsesInputTokens)
+			rec := httptest.NewRecorder()
+			hs.router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/responses/input_tokens", strings.NewReader(`{"model":"gpt-5.4","input":"hello"}`)))
+			require.Equal(t, tc.want, rec.Code, rec.Body.String())
+			require.Equal(t, []int64{11}, hs.upstream.accountCalls(), "counting failure must not invoke generation or replay on the next group")
+			require.Empty(t, hs.usageLogs)
+			require.NotContains(t, rec.Body.String(), "private")
+			require.Empty(t, rec.Header().Get("X-Sub2api-Token-Count"))
+		})
+	}
+}

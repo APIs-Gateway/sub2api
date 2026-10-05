@@ -28,6 +28,9 @@ type inputTokensUpstream struct {
 	missingBody bool
 	readErr     bool
 	afterCall   func()
+	proxyURL    string
+	accountID   int64
+	concurrency int
 }
 
 type inputTokensBrokenReader struct{}
@@ -42,8 +45,9 @@ type inputTokensResponseBody struct {
 }
 
 func (b inputTokensResponseBody) Close() error { *b.closed = true; return nil }
-func (u *inputTokensUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+func (u *inputTokensUpstream) Do(req *http.Request, proxyURL string, accountID int64, concurrency int) (*http.Response, error) {
 	u.calls++
+	u.proxyURL, u.accountID, u.concurrency = proxyURL, accountID, concurrency
 	u.req = req
 	u.wire, _ = io.ReadAll(req.Body)
 	if u.afterCall != nil {
@@ -339,4 +343,76 @@ func TestResponsesInputTokensIncompleteTransportResponse(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.True(t, upstream.closed)
 	require.Empty(t, rec.Body.String())
+}
+
+func TestResponsesInputTokensOfficialBasesRetainAccountTransport(t *testing.T) {
+	for _, base := range []string{"https://api.openai.com", "https://api.openai.com/v1/", "https://api.openai.com/v1/responses"} {
+		t.Run(base, func(t *testing.T) {
+			account := &Account{ID: 91, Concurrency: 7, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"api_key": "account-secret", "base_url": base},
+				Proxy:       &Proxy{Protocol: "http", Host: "127.0.0.1", Port: 8181, Username: "proxy-user", Password: "proxy-pass"}}
+			upstream := &inputTokensUpstream{status: 200, body: `{"object":"response.input_tokens","input_tokens":4,"future":true}`}
+			rec, err := inputTokensFixture(t, account, upstream, `{"model":"gpt-4o","input":"hello"}`, &config.Config{})
+			require.NoError(t, err)
+			require.Equal(t, 200, rec.Code)
+			require.Equal(t, 1, upstream.calls)
+			require.Equal(t, account.Proxy.URL(), upstream.proxyURL)
+			require.Equal(t, account.ID, upstream.accountID)
+			require.Equal(t, account.Concurrency, upstream.concurrency)
+			require.Equal(t, "https://api.openai.com/v1/responses/input_tokens", upstream.req.URL.String())
+			require.JSONEq(t, upstream.body, rec.Body.String())
+			require.True(t, upstream.closed)
+		})
+	}
+}
+
+func TestResponsesInputTokensMalformedWireAndTypedLocalItemsFailClosed(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"gpt-4o",`, `{"model":`, `{"model":"gpt-4o"`,
+		`{"model":"gpt-4o","input":[{"type":"function_call","name":"f","call_id":"c","arguments":{}}]}`,
+		`{"model":"gpt-4o","input":[{"type":"function_call_output","call_id":"c","output":3}]}`,
+		`{"model":"gpt-4o","input":[{"role":"user","content":"hello","id":3}]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://relay.invalid"}}
+			upstream := &inputTokensUpstream{}
+			rec, err := inputTokensFixture(t, account, upstream, body, &config.Config{})
+			require.Error(t, err)
+			require.Equal(t, 400, rec.Code)
+			require.Zero(t, upstream.calls)
+			require.Empty(t, rec.Header().Get("X-Sub2api-Token-Count"))
+			require.False(t, gjson.GetBytes(rec.Body.Bytes(), "input_tokens").Exists())
+		})
+	}
+}
+
+func TestResponsesInputTokensRedirectAndCanceledTransportNeverCount(t *testing.T) {
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "key"}}
+	upstream := &inputTokensUpstream{status: 302, body: "private redirect details"}
+	rec, err := inputTokensFixture(t, account, upstream, `{"model":"gpt-4o","input":"hello"}`, &config.Config{})
+	require.Error(t, err)
+	require.Equal(t, 502, rec.Code)
+	require.True(t, upstream.closed)
+	require.Equal(t, 1, upstream.calls)
+	require.NotContains(t, rec.Body.String(), "private redirect")
+	require.Empty(t, rec.Header().Get("X-Sub2api-Token-Count"))
+	for _, readError := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(context.Background())
+		upstream = &inputTokensUpstream{status: 200, afterCall: cancel, readErr: readError}
+		if !readError {
+			upstream.err = errors.New("private canceled transport")
+		}
+		rec = httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/input_tokens", nil).WithContext(ctx)
+		s := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+		err = s.ForwardResponsesInputTokens(ctx, c, account, []byte(`{"model":"gpt-4o","input":"hello"}`))
+		require.ErrorIs(t, err, context.Canceled)
+		require.Empty(t, rec.Body.String())
+		require.Equal(t, 1, upstream.calls)
+		if readError {
+			require.True(t, upstream.closed)
+		}
+		cancel()
+	}
 }
