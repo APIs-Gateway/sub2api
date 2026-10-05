@@ -141,7 +141,7 @@ func decodeRefundPendingSnapshot(body string, detail *refundPendingAuditDetail) 
 		// encoding/json accepts case-insensitive aliases for struct fields.
 		// Reject those aliases before decoding so they cannot overwrite a
 		// canonical financial value or bypass the null check below.
-		for _, canonical := range []string{"refundID", "deductionRollbackOK", "deductionType", "balanceToDeduct", "subDaysToDeduct", "subscriptionID", "gatewayBaseAmount", "gatewayAmount", "refundFeeRate", "refundFeeAmount", "refundAmount", "subDaysToRestore", "subExpireDayToRestore", "subTodayRemainingToRestore", "subTodayDayToRestore"} {
+		for _, canonical := range []string{"refundID", "deductionRollbackOK", "deductionType", "balanceToDeduct", "subDaysToDeduct", "subscriptionID", "gatewayBaseAmount", "gatewayAmount", "refundFeeRate", "refundFeeAmount", "refundAmount", "subDaysToRestore", "subExpireDayToRestore", "subTodayRemainingToRestore", "subTodayDayToRestore", "subscriptionAdjustmentID"} {
 			if strings.EqualFold(key, canonical) && key != canonical {
 				return fmt.Errorf("non-canonical financial snapshot field %s", key)
 			}

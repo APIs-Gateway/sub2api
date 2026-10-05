@@ -939,11 +939,15 @@ func (s *PaymentService) finalizeRefundFailed(ctx context.Context, o *dbent.Paym
 			return nil, infraerrors.InternalServer("REFUND_ROLLBACK_FAILED",
 				"the refund failed but restoring the refund pre-deduction failed; the order stays REFUND_PENDING, retry later")
 		}
-		if err := s.writeRefundAuditStrict(txCtx, o.ID, refundAttemptAuditAction("REFUND_ROLLBACK_RECOVERED"), map[string]any{
-			"deductionType": rb.DeductionType, "balanceRestored": rb.BalanceToDeduct,
-			"subscriptionID": rb.SubscriptionID, "subDaysRestored": rb.SubDaysToRestore,
-		}); err != nil {
-			return nil, err
+		// New adjustment compensation owns its strict recovered audit; legacy
+		// wallet/card compensation keeps the original caller-owned audit.
+		if rb.subscriptionAdjustmentID == 0 {
+			if err := s.writeRefundAuditStrict(txCtx, o.ID, refundAttemptAuditAction("REFUND_ROLLBACK_RECOVERED"), map[string]any{
+				"deductionType": rb.DeductionType, "balanceRestored": rb.BalanceToDeduct,
+				"subscriptionID": rb.SubscriptionID, "subDaysRestored": rb.SubDaysToRestore,
+			}); err != nil {
+				return nil, err
+			}
 		}
 	}
 	now := time.Now()

@@ -210,3 +210,114 @@ func TestRefundSubscriptionAdjustmentPG_PrepareSnapshotDoesNotOverwriteRenewal(t
 	require.False(t, result.Success)
 	assertRefundAdjustmentCard(t, c, p, 70)
 }
+
+func TestRefundSubscriptionAdjustmentPG_ActualClampAndCurrentValue(t *testing.T) {
+	for _, rollover := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rollover=%v", rollover), func(t *testing.T) {
+			ctx := context.Background()
+			c, s, p, provider := refundAdjustmentFixture(t, 5)
+			provider.onRefund = func() {
+				refundAdjustmentPaidRenewal(t, c, s, p, 10)
+				if rollover {
+					_, err := c.UserSubscription.UpdateOneID(p.SubscriptionID).SetTodayDay(TodayEastDayNumber() + 1).SetTodayRemaining(2).Save(ctx)
+					require.NoError(t, err)
+				}
+			}
+			result, err := s.ExecuteRefund(ctx, p)
+			require.NoError(t, err)
+			require.False(t, result.Success)
+			m, err := c.UserSubscription.Get(ctx, p.SubscriptionID)
+			require.NoError(t, err)
+			require.Equal(t, TodayEastDayNumber()+15, m.ExpireDay, "only the six actually removed days are restored, not thirty requested days")
+			require.Equal(t, SubscriptionStatusActive, m.Status)
+			if rollover {
+				require.Equal(t, TodayEastDayNumber()+1, m.TodayDay)
+				require.Equal(t, 2.0, m.TodayRemaining)
+			} else {
+				require.Equal(t, 4.5, m.TodayRemaining)
+			}
+			require.Equal(t, 2.0, m.DailyUsageUsd)
+			require.Equal(t, 3.0, m.WeeklyUsageUsd)
+			require.Equal(t, 4.0, m.MonthlyUsageUsd)
+		})
+	}
+}
+
+func TestRefundSubscriptionAdjustmentPG_IndependentRevocationIsNotRevived(t *testing.T) {
+	for _, deleted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("deleted=%v", deleted), func(t *testing.T) {
+			ctx := context.Background()
+			c, s, p, provider := refundAdjustmentFixture(t, 40)
+			provider.onRefund = func() {
+				q := c.UserSubscription.UpdateOneID(p.SubscriptionID)
+				if deleted {
+					q.SetDeletedAt(time.Now())
+				} else {
+					q.SetStatus(SubscriptionStatusExpired)
+				}
+				_, err := q.Save(ctx)
+				require.NoError(t, err)
+			}
+			_, err := s.ExecuteRefund(ctx, p)
+			require.Error(t, err)
+			m, err := c.UserSubscription.Get(ctx, p.SubscriptionID)
+			require.NoError(t, err)
+			require.Equal(t, TodayEastDayNumber()+10, m.ExpireDay)
+			if deleted {
+				require.NotNil(t, m.DeletedAt)
+			} else {
+				require.Equal(t, SubscriptionStatusExpired, m.Status)
+			}
+			count, err := c.PaymentAuditLog.Query().Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(p.OrderID, 10)), paymentauditlog.ActionHasPrefix("REFUND_SUB_RESTORED_")).Count(ctx)
+			require.NoError(t, err)
+			require.Zero(t, count)
+		})
+	}
+}
+
+func TestRefundSubscriptionAdjustmentPG_DeductionAuditFailureIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	c, s, p, provider := refundAdjustmentFixture(t, 40)
+	_, err := c.ExecContext(ctx, `CREATE FUNCTION reject_sub_deduct() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action LIKE 'REFUND_SUB_DEDUCT_%' THEN RAISE EXCEPTION 'deduction audit failed'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_sub_deduct BEFORE INSERT ON payment_audit_logs FOR EACH ROW EXECUTE FUNCTION reject_sub_deduct()`)
+	require.NoError(t, err)
+	_, err = s.ExecuteRefund(ctx, p)
+	require.ErrorContains(t, err, "deduction audit failed")
+	require.Zero(t, provider.calls)
+	assertRefundAdjustmentCard(t, c, p, 40)
+	o, err := c.PaymentOrder.Get(ctx, p.OrderID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusCompleted, o.Status)
+}
+
+func TestRefundSubscriptionAdjustmentPG_FinalRecoveryAuditFailureKeepsPending(t *testing.T) {
+	ctx := context.Background()
+	c, s, p, provider := refundAdjustmentFixture(t, 40)
+	provider.pending = true
+	_, err := c.ExecContext(ctx, `CREATE FUNCTION reject_sub_restore() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.expire_day > OLD.expire_day THEN RAISE EXCEPTION 'hold compensation'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_sub_restore BEFORE UPDATE ON user_subscriptions FOR EACH ROW EXECUTE FUNCTION reject_sub_restore()`)
+	require.NoError(t, err)
+	result, err := s.ExecuteRefund(ctx, p)
+	require.NoError(t, err)
+	require.True(t, result.RefundPending)
+	_, err = c.ExecContext(ctx, `DROP TRIGGER reject_sub_restore ON user_subscriptions; DROP FUNCTION reject_sub_restore()`)
+	require.NoError(t, err)
+	refundAdjustmentPaidRenewal(t, c, s, p, 30)
+	_, err = c.ExecContext(ctx, `CREATE FUNCTION reject_recovered() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action LIKE 'REFUND_ROLLBACK_RECOVERED_%' THEN RAISE EXCEPTION 'final recovery audit failed'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_recovered BEFORE INSERT ON payment_audit_logs FOR EACH ROW EXECUTE FUNCTION reject_recovered()`)
+	require.NoError(t, err)
+	_, err = s.QueryAndFinalizeRefund(ctx, p.OrderID)
+	require.Error(t, err)
+	m, err := c.UserSubscription.Get(ctx, p.SubscriptionID)
+	require.NoError(t, err)
+	require.Equal(t, TodayEastDayNumber()+40, m.ExpireDay)
+	o, err := c.PaymentOrder.Get(ctx, p.OrderID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusRefundPending, o.Status)
+	count, err := c.PaymentAuditLog.Query().Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(p.OrderID, 10)), paymentauditlog.ActionHasPrefix("REFUND_SUB_RESTORED_")).Count(ctx)
+	require.NoError(t, err)
+	require.Zero(t, count)
+	_, err = c.ExecContext(ctx, `DROP TRIGGER reject_recovered ON payment_audit_logs; DROP FUNCTION reject_recovered()`)
+	require.NoError(t, err)
+	result, err = s.QueryAndFinalizeRefund(ctx, p.OrderID)
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	assertRefundAdjustmentCard(t, c, p, 70)
+}

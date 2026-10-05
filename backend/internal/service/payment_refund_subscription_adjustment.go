@@ -238,7 +238,7 @@ func (s *PaymentService) restoreRefundSubscriptionAdjustment(ctx context.Context
 		if err := s.writeRefundAuditStrict(txCtx, p.OrderID, "REFUND_SUB_RESTORED_"+a.Owner, map[string]any{"adjustmentID": p.subscriptionAdjustmentID, "daysRestored": newExpireDay - current.ExpireDay, "todayRestored": valueRestored}); err != nil {
 			return err
 		}
-		return s.writeRefundAuditStrict(txCtx, p.OrderID, refundAttemptAuditAction("REFUND_ROLLBACK_RECOVERED"), map[string]any{"subscriptionAdjustmentID": p.subscriptionAdjustmentID})
+		return s.writeRefundAuditStrict(txCtx, p.OrderID, "REFUND_ROLLBACK_RECOVERED_"+a.Owner, map[string]any{"subscriptionAdjustmentID": p.subscriptionAdjustmentID})
 	})
 }
 
