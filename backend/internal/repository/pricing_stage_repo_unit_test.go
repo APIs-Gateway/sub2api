@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"testing"
 	"time"
@@ -150,15 +151,13 @@ func shadowSample() service.PricingShadowSample {
 	}
 }
 
-func anyArgs(n int) []driverArg {
-	out := make([]driverArg, n)
+func anyArgs(n int) []driver.Value {
+	out := make([]driver.Value, n)
 	for i := range out {
 		out[i] = sqlmock.AnyArg()
 	}
 	return out
 }
-
-type driverArg = interface{}
 
 func TestPricingShadowStore_InsertDiffs(t *testing.T) {
 	ctx := context.Background()
