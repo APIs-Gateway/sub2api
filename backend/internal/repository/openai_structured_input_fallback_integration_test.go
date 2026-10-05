@@ -3,10 +3,17 @@
 package repository
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	userhandler "github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	middleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,7 +25,7 @@ import (
 )
 
 const structuredHTTPRejection = `{"error":{"type":"invalid_request_error","code":"invalid_type","param":"input","message":"Invalid type for 'input': expected a string, but got an array instead."}}`
-const structuredHTTPVLLMRejection = `{"error":{"message":"2 validation errors: [{'type':'string_type','loc':('body','input','str'),'msg':'Input should be a valid string','input':[{'role':'assistant','content':'private history'}]}, {'type':'list_type','loc':('body','input','list'),'msg':'invalid list'}]"}}`
+const structuredHTTPVLLMRejection = `{"error":{"type":"Bad Request","param":null,"code":400,"message":"2 validation errors: [{'type':'string_type','loc':('body','input','str'),'msg':'Input should be a valid string','input':[{'role':'assistant','content':'private history'}]}, {'type':'list_type','loc':('body','input','list'),'msg':'invalid list'}]"}}`
 const structuredHTTPChatStream = "data: {\"id\":\"structured_chat\",\"model\":\"gpt-5\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"structured_chat\",\"model\":\"gpt-5\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\ndata: [DONE]\n\n"
 
 func structuredHTTPBody(stream bool) string {
@@ -74,6 +81,9 @@ func assertStructuredHTTPSettlement(t *testing.T, f *inflightHTTPFixture, card b
 	require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&balance))
 	require.Equal(t, 1, logs)
 	require.Equal(t, 1, dedup)
+	var endpoint string
+	require.NoError(t, inflightTestDB(t).QueryRow(`SELECT upstream_endpoint FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&endpoint))
+	require.Equal(t, "/v1/chat/completions", endpoint)
 	require.Equal(t, 10, input)
 	require.Equal(t, 5, output)
 	require.Positive(t, cost)
@@ -191,6 +201,218 @@ func TestStructuredInputFallbackHTTP_UnmeteredProofNegative(t *testing.T) {
 			require.Zero(t, logs)
 			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
 			require.Zero(t, dedup)
+		})
+	}
+}
+
+func TestStructuredInputFallbackHTTP_SecondMeteredPartialBillsOnce(t *testing.T) {
+	for name, rejection := range map[string]string{"canonical": structuredHTTPRejection, "vllm": structuredHTTPVLLMRejection} {
+		for _, card := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/card_%t", name, card), func(t *testing.T) {
+				f := newInflightHTTPFixture(t, service.PlatformOpenAI, inflightChatJSON, "application/json")
+				chatAudioWallet(t, f)
+				if card {
+					admissionCard(t, inflightTestEntClient(t), f.user.ID, 0, 1, 10, 20, 0, 0, 0)
+				}
+				structuredHTTPSequence(t, f, rejection, true, nil, nil)
+				observe := f.upstream.observe
+				f.upstream.observe = func(req *http.Request) {
+					observe(req)
+					if f.upstream.calls.Load() == 1 {
+						f.upstream.response = `data: {"id":"partial_structured","model":"gpt-5","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}` + "\n\n"
+						f.upstream.readErr = errors.New("provider interrupted after metered content")
+					}
+				}
+				rec := f.request(structuredHTTPBody(true), "/v1/chat/completions", "", f.openAI.ChatCompletions)
+				require.Equal(t, 200, rec.Code, rec.Body.String())
+				require.Contains(t, rec.Body.String(), "ok")
+				require.Contains(t, rec.Body.String(), "error")
+				require.NotContains(t, rec.Body.String(), "data: [DONE]")
+				assertStructuredHTTPSettlement(t, f, card, 10)
+			})
+		}
+	}
+}
+
+func TestStructuredInputFallbackHTTP_SecondRefusalAndUnknownHold(t *testing.T) {
+	for _, kind := range []string{"authentication", "permission", "raw_400", "raw_429", "raw_500", "raw_stream_read_failure"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newInflightHTTPFixture(t, service.PlatformOpenAI, inflightChatJSON, "application/json")
+			stream := kind == "raw_stream_read_failure"
+			structuredHTTPSequence(t, f, structuredHTTPRejection, stream, nil, nil)
+			observe := f.upstream.observe
+			f.upstream.observe = func(req *http.Request) {
+				observe(req)
+				if f.upstream.calls.Load() != 1 {
+					return
+				}
+				f.upstream.status = 400
+				f.upstream.response = `{"error":{"type":"invalid_request_error","message":"other raw rejection"}}`
+				f.upstream.contentType = "application/json"
+				switch kind {
+				case "authentication":
+					f.upstream.status = 401
+					f.upstream.response = `{"error":{"type":"authentication_error","code":"invalid_api_key","message":"denied"}}`
+				case "permission":
+					f.upstream.status = 403
+					f.upstream.response = `{"error":{"type":"permission_error","message":"denied"}}`
+				case "raw_429":
+					f.upstream.status = 429
+				case "raw_500":
+					f.upstream.status = 500
+				case "raw_stream_read_failure":
+					f.upstream.status = 200
+					f.upstream.response = ""
+					f.upstream.contentType = "text/event-stream"
+					f.upstream.readErr = errors.New("unknown provider execution before content")
+				}
+			}
+			rec := f.request(structuredHTTPBody(stream), "/v1/chat/completions", "", f.openAI.ChatCompletions)
+			require.NotEqual(t, 200, rec.Code, rec.Body.String())
+			require.EqualValues(t, 2, f.upstream.calls.Load(), "raw second refusal must not trigger an internal third send")
+			f.pool.Stop()
+			var logs, dedup int
+			var balance float64
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs))
+			require.Zero(t, logs)
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+			require.Zero(t, dedup)
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&balance))
+			require.InDelta(t, f.user.Balance, balance, 1e-12)
+			if kind == "authentication" || kind == "permission" {
+				require.InDelta(t, 0, inflightHeld(t, f.user.ID), 1e-12)
+			} else {
+				require.Positive(t, inflightHeld(t, f.user.ID), "first validation cannot grant no-charge proof to a later unknown execution")
+			}
+		})
+	}
+}
+
+func TestStructuredInputFallbackHTTP_CompleteBodyAndReprNegative(t *testing.T) {
+	for _, kind := range []string{"reader_failure", "limit_tail_usage", "limit_tail_second_json", "truncated_repr", "duplicate_repr_loc"} {
+		t.Run(kind, func(t *testing.T) {
+			rejection := structuredHTTPRejection
+			switch kind {
+			case "limit_tail_usage":
+				rejection += strings.Repeat(" ", 512<<10) + `{"usage":{"input_tokens":10}}`
+			case "limit_tail_second_json":
+				rejection += strings.Repeat(" ", 512<<10) + structuredHTTPRejection
+			case "truncated_repr":
+				rejection = `{"error":{"message":"1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':"}}`
+			case "duplicate_repr_loc":
+				rejection = `{"error":{"message":"1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':[],'loc':('body','model','str')}]"}}`
+			}
+			f := newInflightHTTPFixture(t, service.PlatformOpenAI, rejection, "application/json")
+			f.upstream.status = 400
+			if kind == "reader_failure" {
+				f.upstream.readErr = errors.New("complete JSON prefix followed by non-EOF error")
+			}
+			close(f.upstream.release)
+			rec := f.request(structuredHTTPBody(false), "/v1/chat/completions", "", f.openAI.ChatCompletions)
+			require.Equal(t, 400, rec.Code, rec.Body.String())
+			require.EqualValues(t, 1, f.upstream.calls.Load())
+			require.Positive(t, inflightHeld(t, f.user.ID))
+			f.pool.Stop()
+			var logs, dedup int
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs))
+			require.Zero(t, logs)
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+			require.Zero(t, dedup)
+		})
+	}
+}
+
+func structuredHTTPWithOps(t *testing.T, f *inflightHTTPFixture, serve func(*gin.Context)) *httptest.ResponseRecorder {
+	t.Helper()
+	cfg := &config.Config{}
+	cfg.Ops.Enabled = true
+	ops := service.NewOpsService(NewOpsRepository(inflightTestDB(t)), NewSettingRepository(inflightTestEntClient(t)), cfg, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(userhandler.InboundEndpointMiddleware(), func(c *gin.Context) {
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.Group, f.key.Group))
+		c.Set(string(middleware.ContextKeyAPIKey), f.key)
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: f.user.ID, Concurrency: 100})
+		c.Next()
+	}, userhandler.OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1/chat/completions", serve)
+	rec := httptest.NewRecorder()
+	request := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(structuredHTTPBody(false)))
+	request.Header.Set("Content-Type", "application/json")
+	ctx, cancel := context.WithTimeout(request.Context(), 15*time.Second)
+	defer cancel()
+	router.ServeHTTP(rec, request.WithContext(ctx))
+	return rec
+}
+
+func TestStructuredInputFallbackHTTP_TransportOpsAndOuterAttemptReset(t *testing.T) {
+	for _, recover := range []bool{false, true} {
+		t.Run(fmt.Sprintf("outer_recovery_%t", recover), func(t *testing.T) {
+			f := newInflightHTTPFixture(t, service.PlatformOpenAI, inflightChatJSON, "application/json")
+			chatAudioWallet(t, f)
+			close(f.upstream.release)
+			var other *service.Account
+			if recover {
+				other = mustCreateAccount(t, inflightTestEntClient(t), &service.Account{Name: "structured-second", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Concurrency: 100, Priority: 10, Credentials: map[string]any{"api_key": "other-key", "base_url": "https://second.test", "pool_mode": true, "pool_mode_retry_count": 0}, Extra: map[string]any{"privacy_mode": service.PrivacyModeTrainingOff, "openai_responses_supported": true}})
+				require.NoError(t, f.accounts.BindGroups(context.Background(), other.ID, []int64{*f.key.GroupID}))
+			}
+			var current *gin.Context
+			rawEndpoint := ""
+			finalEndpoint := ""
+			f.upstream.script = func(req *http.Request, id int64) (*http.Response, error) {
+				response := func(status int, payload, contentType string) *http.Response {
+					return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {contentType}}, Body: io.NopCloser(strings.NewReader(payload)), Request: req}
+				}
+				if id == f.account.ID {
+					if f.upstream.calls.Load() == 1 {
+						require.Equal(t, "/v1/responses", req.URL.Path)
+						return response(400, structuredHTTPRejection, "application/json"), nil
+					}
+					require.Equal(t, "/v1/chat/completions", req.URL.Path)
+					rawEndpoint = userhandler.GetUpstreamEndpoint(current, service.PlatformOpenAI)
+					return nil, errors.New("header timeout before response")
+				}
+				require.True(t, recover)
+				require.Equal(t, other.ID, id)
+				require.Equal(t, "/v1/responses", req.URL.Path)
+				require.Equal(t, "/v1/responses", userhandler.GetUpstreamEndpoint(current, service.PlatformOpenAI))
+				return response(200, inflightResponsesSSE, "text/event-stream"), nil
+			}
+			rec := structuredHTTPWithOps(t, f, func(c *gin.Context) {
+				current = c
+				f.openAI.ChatCompletions(c)
+				finalEndpoint = userhandler.GetUpstreamEndpoint(c, service.PlatformOpenAI)
+			})
+			require.Equal(t, "/v1/chat/completions", rawEndpoint)
+			var opsEndpoint string
+			require.Eventually(t, func() bool {
+				return inflightTestDB(t).QueryRow(`SELECT upstream_endpoint FROM ops_error_logs ORDER BY id DESC LIMIT 1`).Scan(&opsEndpoint) == nil
+			}, 10*time.Second, 20*time.Millisecond, "real Ops middleware must persist endpoint")
+			if recover {
+				require.Equal(t, 200, rec.Code, rec.Body.String())
+				require.EqualValues(t, 3, f.upstream.calls.Load())
+				require.Equal(t, "/v1/responses", finalEndpoint)
+				require.Equal(t, "/v1/responses", opsEndpoint)
+				f.pool.Stop()
+				var logs, dedup int
+				var accountID int64
+				var endpoint string
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*),max(account_id),max(upstream_endpoint) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs, &accountID, &endpoint))
+				require.Equal(t, 1, logs)
+				require.Equal(t, other.ID, accountID)
+				require.Equal(t, "/v1/responses", endpoint)
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+				require.Equal(t, 1, dedup)
+			} else {
+				require.NotEqual(t, 200, rec.Code, rec.Body.String())
+				require.EqualValues(t, 2, f.upstream.calls.Load())
+				require.Equal(t, "/v1/chat/completions", finalEndpoint)
+				require.Equal(t, "/v1/chat/completions", opsEndpoint)
+				f.pool.Stop()
+				var logs int
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs))
+				require.Zero(t, logs)
+			}
+			require.Positive(t, inflightHeld(t, f.user.ID), "unproved transport attempt keeps TTL even when a later account succeeds")
 		})
 	}
 }

@@ -15,6 +15,19 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+const openAIStructuredInputRawFallbackKey = "openai_structured_input_raw_fallback"
+
+// OpenAIStructuredInputRecoveredViaRawChat records the actual transport for this
+// attempt. It never changes the account's persisted capability or billing model.
+func OpenAIStructuredInputRecoveredViaRawChat(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	value, exists := c.Get(openAIStructuredInputRawFallbackKey)
+	recovered, ok := value.(bool)
+	return exists && ok && recovered
+}
+
 // This is an internal protocol retry, not a new billing attempt or a claim that
 // any transport failure is free. Both calls retain the caller's immutable lease.
 func canRecoverConvertedResponsesInput(ctx context.Context, c *gin.Context, account *Account, responsesShape bool, outbound []byte) bool {
@@ -71,7 +84,7 @@ func isConvertedResponsesInputStringRejection(status int, body []byte, readErr e
 		switch value {
 		case "invalid_type":
 			invalidType = true
-		case "invalid_request_error", "BadRequestError":
+		case "invalid_request_error", "BadRequestError", "Bad Request":
 		case float64(http.StatusBadRequest):
 			if key != "code" {
 				return false
@@ -81,10 +94,10 @@ func isConvertedResponsesInputStringRejection(status int, body []byte, readErr e
 		}
 	}
 	param, hasParam := provider["param"]
-	if hasParam && param != "input" {
+	if hasParam && param != nil && param != "input" {
 		return false
 	}
-	if invalidType && hasParam && structuredInputTypeMessage.MatchString(message) {
+	if invalidType && param == "input" && provider["type"] != "Bad Request" && structuredInputTypeMessage.MatchString(message) {
 		return true
 	}
 	return firstVLLMInputStringDiagnostic(message)
@@ -127,34 +140,30 @@ func firstVLLMInputStringDiagnostic(message string) bool {
 	if !p.take("validation errors:") && !p.take("validation error:") {
 		return false
 	}
-	// Full Python list/dict representation; elided diagnostics are ambiguous.
-	if !p.take("[") || !p.take("{") {
+	// Parse a complete bounded repr without evaluating Python or searching echoes.
+	value, ok := p.value(0)
+	diagnostics, list := value.([]any)
+	if !ok || !list || len(diagnostics) != count || strings.TrimSpace(p.rest) != "" {
 		return false
 	}
-	key, ok := p.quoted()
-	if !ok {
-		return false
-	}
-	if key == "type" {
-		if !p.take(":") || !p.stringValue("string_type") || !p.take(",") {
+	for _, value := range diagnostics {
+		diagnostic, ok := value.(map[string]any)
+		if !ok || !structuredErrorKeys(diagnostic, "type", "loc", "msg", "input", "input_value", "ctx", "url") {
 			return false
 		}
-		key, ok = p.quoted()
 	}
-	if !ok || key != "loc" || !p.take(":") || !p.take("(") || !p.stringValue("body") || !p.take(",") || !p.stringValue("input") || !p.take(",") || !p.stringValue("str") || !p.take(")") || !p.take(",") || !p.stringValue("msg") || !p.take(":") || !p.stringValue("Input should be a valid string") {
+	first := diagnostics[0].(map[string]any)
+	if typ, exists := first["type"]; exists && typ != "string_type" {
 		return false
 	}
-	if p.take("}") {
-		return p.take("]") && strings.TrimSpace(p.rest) == "" && count == 1
-	}
-	if !p.take(",") {
-		return false
-	}
-	key, ok = p.quoted()
-	return ok && (key == "input" || key == "input_value") && p.take(":")
+	loc, ok := first["loc"].(structuredDiagnosticTuple)
+	return ok && len(loc) == 3 && loc[0] == "body" && loc[1] == "input" && loc[2] == "str" && first["msg"] == "Input should be a valid string"
 }
 
-type structuredDiagnosticParser struct{ rest string }
+type structuredDiagnosticParser struct {
+	rest  string
+	nodes int
+}
 
 func (p *structuredDiagnosticParser) take(token string) bool {
 	p.rest = strings.TrimLeft(p.rest, " \t\r\n")
@@ -165,26 +174,182 @@ func (p *structuredDiagnosticParser) take(token string) bool {
 	return true
 }
 
-func (p *structuredDiagnosticParser) stringValue(want string) bool {
-	value, ok := p.quoted()
-	return ok && value == want
-}
-
 func (p *structuredDiagnosticParser) quoted() (string, bool) {
 	p.rest = strings.TrimLeft(p.rest, " \t\r\n")
 	if len(p.rest) < 2 || (p.rest[0] != '\'' && p.rest[0] != '"') {
 		return "", false
 	}
 	quote := p.rest[0]
-	for i := 1; i < len(p.rest); i++ {
-		if p.rest[i] == '\\' || p.rest[i] < ' ' {
+	rest := p.rest[1:]
+	var decoded strings.Builder
+	for len(rest) > 0 {
+		if rest[0] == quote {
+			p.rest = rest[1:]
+			return decoded.String(), true
+		}
+		if rest[0] < ' ' {
 			return "", false
 		}
-		if p.rest[i] == quote {
-			value := p.rest[1:i]
-			p.rest = p.rest[i+1:]
-			return value, true
+		character, _, tail, err := strconv.UnquoteChar(rest, quote)
+		if err != nil {
+			return "", false
 		}
+		decoded.WriteRune(character)
+		rest = tail
 	}
 	return "", false
+}
+
+// An opaque marker distinguishes a validated dataclass repr from strings/lists.
+// Only syntax is consumed; no names, constructors or arguments are executed.
+type structuredDiagnosticCall struct{}
+type structuredDiagnosticTuple []any
+
+func (p *structuredDiagnosticParser) value(depth int) (any, bool) {
+	p.nodes++
+	if depth > 32 || p.nodes > 4096 {
+		return nil, false
+	}
+	p.rest = strings.TrimLeft(p.rest, " \t\r\n")
+	if len(p.rest) == 0 {
+		return nil, false
+	}
+	switch p.rest[0] {
+	case '\'', '"':
+		return p.quoted()
+	case '{':
+		p.rest = p.rest[1:]
+		result := map[string]any{}
+		if p.take("}") {
+			return result, true
+		}
+		for {
+			key, ok := p.quoted()
+			if !ok || !p.take(":") {
+				return nil, false
+			}
+			if _, duplicate := result[key]; duplicate {
+				return nil, false
+			}
+			value, ok := p.value(depth + 1)
+			if !ok {
+				return nil, false
+			}
+			result[key] = value
+			if p.take("}") {
+				return result, true
+			}
+			if !p.take(",") {
+				return nil, false
+			}
+			if p.take("}") {
+				return result, true
+			}
+		}
+	case '[', '(':
+		close := "]"
+		tuple := p.rest[0] == '('
+		if tuple {
+			close = ")"
+		}
+		p.rest = p.rest[1:]
+		result := []any{}
+		sequence := func() (any, bool) {
+			if tuple {
+				return structuredDiagnosticTuple(result), true
+			}
+			return result, true
+		}
+		if p.take(close) {
+			return sequence()
+		}
+		for {
+			value, ok := p.value(depth + 1)
+			if !ok {
+				return nil, false
+			}
+			result = append(result, value)
+			if p.take(close) {
+				return sequence()
+			}
+			if !p.take(",") {
+				return nil, false
+			}
+			if p.take(close) {
+				return sequence()
+			}
+		}
+	default:
+		if name := p.identifier(); name != "" {
+			switch name {
+			case "None":
+				return nil, true
+			case "True":
+				return true, true
+			case "False":
+				return false, true
+			}
+			if !p.take("(") {
+				return nil, false
+			}
+			if p.take(")") {
+				return structuredDiagnosticCall{}, true
+			}
+			keywords := map[string]bool{}
+			for {
+				before := p.rest
+				keyword := p.identifier()
+				if keyword != "" && p.take("=") {
+					if keywords[keyword] {
+						return nil, false
+					}
+					keywords[keyword] = true
+				} else {
+					p.rest = before
+				}
+				if _, ok := p.value(depth + 1); !ok {
+					return nil, false
+				}
+				if p.take(")") {
+					return structuredDiagnosticCall{}, true
+				}
+				if !p.take(",") {
+					return nil, false
+				}
+				if p.take(")") {
+					return structuredDiagnosticCall{}, true
+				}
+			}
+		}
+		end := strings.IndexAny(p.rest, ",):]} \t\r\n")
+		if end < 0 {
+			end = len(p.rest)
+		}
+		if end == 0 {
+			return nil, false
+		}
+		number, err := strconv.ParseFloat(p.rest[:end], 64)
+		if err != nil {
+			return nil, false
+		}
+		p.rest = p.rest[end:]
+		return number, true
+	}
+}
+
+func (p *structuredDiagnosticParser) identifier() string {
+	p.rest = strings.TrimLeft(p.rest, " \t\r\n")
+	if len(p.rest) == 0 || !structuredIdentifierStart(p.rest[0]) {
+		return ""
+	}
+	end := 1
+	for end < len(p.rest) && (structuredIdentifierStart(p.rest[end]) || p.rest[end] >= '0' && p.rest[end] <= '9') {
+		end++
+	}
+	value := p.rest[:end]
+	p.rest = p.rest[end:]
+	return value
+}
+func structuredIdentifierStart(character byte) bool {
+	return character == '_' || character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
 }

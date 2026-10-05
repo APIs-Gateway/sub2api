@@ -214,6 +214,9 @@ func GetInboundEndpoint(c *gin.Context) string {
 // and the account platform. Handlers call this after scheduling an
 // account, passing account.Platform.
 func GetUpstreamEndpoint(c *gin.Context, platform string) string {
+	if platform == service.PlatformOpenAI && service.OpenAIStructuredInputRecoveredViaRawChat(c) {
+		return EndpointChatCompletions
+	}
 	inbound := GetInboundEndpoint(c)
 	rawPath := ""
 	if c != nil && c.Request != nil && c.Request.URL != nil {

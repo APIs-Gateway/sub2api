@@ -219,6 +219,15 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	if account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	if recovery, _ := c.Get(openAIStructuredInputRawFallbackKey); recovery == "pending" {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := c.Request.Context().Err(); err != nil {
+			return nil, err
+		}
+		c.Set(openAIStructuredInputRawFallbackKey, true)
+	}
 	recordUpstream429Attempt(account.ID)
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	if err != nil {

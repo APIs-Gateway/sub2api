@@ -13,7 +13,9 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -22,7 +24,7 @@ import (
 func TestForwardAsChatCompletions_ResponsesSupportedFallsBackWhenStructuredInputRequiresString(t *testing.T) {
 	for name, rejection := range map[string]string{
 		"OpenAI invalid type": `{"error":{"type":"invalid_request_error","code":"invalid_type","param":"input","message":"Invalid type for 'input': expected a string, but got an array instead."}}`,
-		"vLLM validation":     `{"error":{"message":"240 validation errors: [{'type':'string_type', 'loc':('body','input','str'), 'msg':'Input should be a valid string', 'input':[{'role':'user','content':'hi'}, {'role':'assistant','content':[{'type':'output_text'}]}, ResponseFunctionToolCall(type='function_call'), {'type':'function_call_output'}]"}}`,
+		"vLLM validation":     structuredVLLMRejection,
 	} {
 		t.Run(name, func(t *testing.T) {
 			gin.SetMode(gin.TestMode)
@@ -67,9 +69,8 @@ func TestForwardAsChatCompletions_ResponsesSupportedFallsBackWhenStructuredInput
 			require.Equal(t, "/v1/chat/completions", upstream.requests[1].URL.Path)
 			require.JSONEq(t, string(body), string(upstream.bodies[1]))
 			require.Equal(t, originalBody, body)
-			require.Equal(t, "/v1/chat/completions", result.UpstreamEndpoint)
-			require.Equal(t, "/v1/chat/completions", GetActualOpenAIUpstreamEndpoint(c))
 			require.Equal(t, "ok", gjson.Get(rec.Body.String(), "choices.0.message.content").String())
+			require.True(t, OpenAIStructuredInputRecoveredViaRawChat(c))
 			require.True(t, logs.ContainsMessage("structured Responses input rejected"))
 			logs.mu.Lock()
 			defer logs.mu.Unlock()
@@ -127,7 +128,6 @@ func TestForwardAsChatCompletions_StructuredInputRejectionDoesNotRetryIneligible
 		{name: "unknown support", unknown: true},
 		{name: "Responses shaped Chat ingress", responsesBody: true},
 		{name: "native Responses ingress", responsesBody: true, nativeIngress: true},
-		{name: "native CN Responses protocol", platform: PlatformDeepseek},
 		{name: "OAuth", accountType: AccountTypeOAuth},
 		{name: "authentication", status: http.StatusUnauthorized},
 		{name: "authorization", status: http.StatusForbidden},
@@ -238,7 +238,6 @@ func TestForwardAsChatCompletions_StructuredInputRetryPreservesStreamingAndMappi
 			require.Equal(t, mappedModel, result.UpstreamModel)
 			require.Equal(t, 9, result.Usage.InputTokens)
 			require.Equal(t, 4, result.Usage.OutputTokens)
-			require.Equal(t, "/v1/chat/completions", result.UpstreamEndpoint)
 			require.Contains(t, rec.Header().Get("Content-Type"), "text/event-stream")
 			require.Contains(t, rec.Body.String(), "data: [DONE]")
 		})
@@ -308,7 +307,7 @@ func structuredInputRetryTestAccount() *Account {
 }
 
 const structuredInputRejection = `{"error":{"type":"invalid_request_error","code":"invalid_type","param":"input","message":"Invalid type for 'input': expected a string, but got an array instead."}}`
-const structuredVLLMRejection = `{"error":{"message":"2 validation errors: [{'type':'string_type', 'loc':('body','input','str'), 'msg':'Input should be a valid string', 'input':[{'role':'assistant','content':'private user history'}]}, {'type':'list_type','loc':('body','input','list'),'msg':'other diagnostic'}]"}}`
+const structuredVLLMRejection = `{"error":{"type":"Bad Request","param":null,"code":400,"message":"2 validation errors: [{'type':'string_type', 'loc':('body','input','str'), 'msg':'Input should be a valid string', 'input':[{'role':'assistant','content':'private user history'}]}, {'type':'list_type','loc':('body','input','list'),'msg':'other diagnostic'}]"}}`
 
 func TestStructuredInputRecovery_StrictCompleteProof(t *testing.T) {
 	vllm := func(message string) string {
@@ -339,6 +338,11 @@ func TestStructuredInputRecovery_StrictCompleteProof(t *testing.T) {
 		{"numeric_type", `{"error":{"type":400,"code":"invalid_type","param":"input","message":"Expected a string, but got an array instead."}}`, false},
 		{"numeric_code", `{"error":{"code":400,"type":"BadRequestError","message":"1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string'}]"}}`, true},
 		{"message_null", `{"error":{"message":null}}`, false}, {"null_param", `{"error":{"param":null}}`, false},
+		{"vllm_wrong_param", strings.Replace(structuredVLLMRejection, `"param":null`, `"param":"tools"`, 1), false},
+		{"vllm_wrong_type", strings.Replace(structuredVLLMRejection, `"type":"Bad Request"`, `"type":"server_error"`, 1), false},
+		{"vllm_wrong_code", strings.Replace(structuredVLLMRejection, `"code":400`, `"code":500`, 1), false},
+		{"vllm_alias_param", strings.Replace(structuredVLLMRejection, `"param":null`, `"Param":null`, 1), false},
+
 		{"unknown_field", `{"error":{"unexpected":{},"message":"Expected a string, but got an array instead."}}`, false},
 		{"no_header", vllm(`'loc':('body','input','str'),'msg':'Input should be a valid string'`), false},
 		{"elided_diagnostics", vllm(`240 validation errors: ... 'loc':('body','input','str'),'msg':'Input should be a valid string'`), false},
@@ -361,6 +365,26 @@ func TestStructuredInputRecovery_StrictCompleteProof(t *testing.T) {
 		{"long_message", vllm(strings.Repeat("x", 32*1024+1)), false},
 		{"deep_json", `{"error":{"message":"x","extra":` + strings.Repeat("[", 66) + `0` + strings.Repeat("]", 66) + `}}`, false},
 		{"oversize", structuredInputRejection + strings.Repeat(" ", 64*1024), false},
+		{"truncated_repr", vllm(`1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':`), false},
+		{"duplicate_repr_loc", vllm(`1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':[],'loc':('body','model','str')}]`), false},
+		{"escaped_repr_duplicate", vllm(`1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':[],'lo\x63':('body','model','str')}]`), false},
+		{"unclosed_echo_quote", vllm(`1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':'unterminated}]`), false},
+		{"count_mismatch", vllm(`2 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':[]}]`), false},
+		{"complete_dataclass", vllm(`1 validation errors: [{'type':'string_type','loc':('body','input','str'),'msg':'Input should be a valid string','input':[ResponseFunctionToolCall(id='call_1',type='function_call',arguments='{}'),{'role':'assistant','content':'it\'s fine','optional':None,'boolean':True,'n':2}]}]`), true},
+		{"missing_value", vllm(`1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':}]`), false},
+		{"trailing_repr", vllm(`1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':[]}] []`), false},
+		{"echo_literal_types", vllm(`1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':[{},[],(),False,True,None,-2.5,ResponseFunctionToolCall(),ResponseFunctionToolCall('positional',index=0,),],}]`), true},
+		{"deep_echo", vllm(`1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':` + strings.Repeat("[", 34) + `0` + strings.Repeat("]", 34) + `}]`), false},
+		{"many_echo_nodes", vllm(`1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':[` + strings.Repeat("0,", 4100) + `0]}]`), false},
+		{"repr_duplicate_keyword", vllm(`1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':[ResponseFunctionToolCall(id='a',id='b')]}]`), false},
+		{"repr_invalid_number", vllm(`1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':.x}]`), false},
+		{"repr_bare_identifier", vllm(`1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':unrecognized}]`), false},
+		{"repr_invalid_function", vllm(`1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':Fn(id='x'`), false},
+		{"repr_missing_comma", vllm(`1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string' 'input':[]}]`), false},
+		{"repr_quote_control", vllm("1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':'bad\nquote'}]"), false},
+		{"repr_non_map_diagnostic", vllm(`1 validation errors: [None]`), false},
+		{"repr_diagnostic_alias", vllm(`1 validation errors: [{'Loc':('body','input','str'),'msg':'Input should be a valid string'}]`), false},
+		{"repr_wrong_loc_container", vllm(`1 validation errors: [{'loc':['body','input','str'],'msg':'Input should be a valid string'}]`), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, isConvertedResponsesInputStringRejection(400, []byte(tc.body), nil))
@@ -385,7 +409,7 @@ func (r *structuredInputCancelReader) Read(p []byte) (int, error) {
 }
 
 func TestStructuredInputRecovery_ForwardRejectsUnsafeProof(t *testing.T) {
-	for _, kind := range []string{"limit_tail_usage", "limit_tail_second", "read_failure", "canceled_forward", "canceled_request", "committed_ping", "committed_json", "websocket_probe_missing", "websocket_probe_invalid", "websocketv2_probe_missing", "websocketv2_probe_invalid", "apikeywebsocket_probe_missing", "apikeywebsocket_probe_invalid"} {
+	for _, kind := range []string{"limit_tail_usage", "limit_tail_second", "read_failure", "canceled_forward", "canceled_request", "committed_ping", "committed_json", "truncated_repr", "duplicate_repr", "websocket_probe_missing", "websocket_probe_invalid", "websocketv2_probe_missing", "websocketv2_probe_invalid", "apikeywebsocket_probe_missing", "apikeywebsocket_probe_invalid"} {
 		t.Run(kind, func(t *testing.T) {
 			body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":[{"type":"text","text":"prior"}]}],"stream":false}`)
 			rec := httptest.NewRecorder()
@@ -396,8 +420,21 @@ func TestStructuredInputRecovery_ForwardRejectsUnsafeProof(t *testing.T) {
 			account := structuredInputRetryTestAccount()
 			var reader io.Reader = strings.NewReader(structuredInputRejection)
 			switch kind {
+			case "truncated_repr", "duplicate_repr":
+				message := `1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':`
+				if kind == "duplicate_repr" {
+					message = `1 validation errors: [{'loc':('body','input','str'),'msg':'Input should be a valid string','input':[],'loc':('body','model','str')}]`
+				}
+				payload, err := json.Marshal(map[string]any{"error": map[string]any{"message": message}})
+				require.NoError(t, err)
+				reader = bytes.NewReader(payload)
+
 			case "limit_tail_usage", "limit_tail_second":
-				reader = strings.NewReader(structuredInputRejection + strings.Repeat(" ", int(openAIUpstreamErrorBodyReadLimit)) + `{"usage":{"input_tokens":10}}`)
+				suffix := `{"usage":{"input_tokens":10}}`
+				if kind == "limit_tail_second" {
+					suffix = structuredInputRejection
+				}
+				reader = strings.NewReader(structuredInputRejection + strings.Repeat(" ", int(openAIUpstreamErrorBodyReadLimit)) + suffix)
 			case "read_failure":
 				reader = io.MultiReader(reader, structuredInputFailReader{errors.New("read did not reach EOF")})
 			case "canceled_forward":
@@ -436,7 +473,165 @@ func TestStructuredInputRecovery_ForwardRejectsUnsafeProof(t *testing.T) {
 			require.Nil(t, result)
 			require.Len(t, u.requests, 1)
 			require.True(t, tracked.closed)
+			require.False(t, OpenAIStructuredInputRecoveredViaRawChat(c))
 			require.Equal(t, "/v1/responses", u.requests[0].URL.Path)
 		})
 	}
+}
+
+type structuredInputRoutingRecorder struct {
+	*httpUpstreamRecorder
+	firstBody          *passthroughCloseTrackingReadCloser
+	proxies            []string
+	accounts           []int64
+	slots              []int
+	firstClosedAtRetry bool
+}
+
+func (u *structuredInputRoutingRecorder) Do(req *http.Request, proxy string, id int64, slots int) (*http.Response, error) {
+	if len(u.requests) == 1 {
+		u.firstClosedAtRetry = u.firstBody.closed
+	}
+	u.proxies = append(u.proxies, proxy)
+	u.accounts = append(u.accounts, id)
+	u.slots = append(u.slots, slots)
+	return u.httpUpstreamRecorder.Do(req, proxy, id, slots)
+}
+func (u *structuredInputRoutingRecorder) DoWithTLS(req *http.Request, proxy string, id int64, slots int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxy, id, slots)
+}
+
+func TestStructuredInputRecovery_RoutingAndSecondPartial(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprintf("partial_%t", partial), func(t *testing.T) {
+			body := []byte(`{"model":"client-model","stream":true,"service_tier":"flex","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":[{"type":"text","text":"prior"}]}],"vendor_field":"keep"}`)
+			original := append([]byte(nil), body...)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewReader(body))
+			first := &passthroughCloseTrackingReadCloser{Reader: strings.NewReader(structuredInputRejection)}
+			stream := `data: {"id":"partial_raw","model":"gpt-5.4","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":15,"total_tokens":25}}` + "\n\n"
+			var second io.Reader = strings.NewReader(stream + "data: [DONE]\n\n")
+			if partial {
+				second = io.MultiReader(strings.NewReader(stream), structuredInputFailReader{errors.New("provider read failure")})
+			}
+			u := &structuredInputRoutingRecorder{httpUpstreamRecorder: &httpUpstreamRecorder{responses: []*http.Response{{StatusCode: 400, Header: http.Header{"Content-Type": {"application/json"}}, Body: first}, {StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(second)}}}, firstBody: first}
+			svc := &OpenAIGatewayService{cfg: structuredInputRetryTestConfig(), httpUpstream: u}
+			account := structuredInputRetryTestAccount()
+			account.Credentials["base_url"] = "http://upstream.example/v9"
+			account.Proxy = &Proxy{Protocol: "http", Host: "proxy.test", Port: 8080}
+			account.Concurrency = 3
+			before, err := json.Marshal(account.Extra)
+			require.NoError(t, err)
+			result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.4")
+			if partial {
+				require.Error(t, err)
+				var failover *UpstreamFailoverError
+				require.False(t, errors.As(err, &failover), "metered second partial cannot replay")
+			} else {
+				require.NoError(t, err)
+			}
+			require.NotNil(t, result)
+			require.Equal(t, 10, result.Usage.InputTokens)
+			require.Equal(t, 15, result.Usage.OutputTokens)
+			require.Len(t, u.requests, 2)
+			require.True(t, u.firstClosedAtRetry)
+			require.Equal(t, []string{"http://proxy.test:8080", "http://proxy.test:8080"}, u.proxies)
+			require.Equal(t, []int64{account.ID, account.ID}, u.accounts)
+			require.Equal(t, []int{3, 3}, u.slots)
+			require.Equal(t, "/v9/responses", u.requests[0].URL.Path)
+			require.Equal(t, "/v9/chat/completions", u.requests[1].URL.Path)
+			require.Equal(t, "flex", gjson.GetBytes(u.bodies[1], "service_tier").String())
+			require.Equal(t, "keep", gjson.GetBytes(u.bodies[1], "vendor_field").String())
+			require.Equal(t, "gpt-5.4", result.BillingModel)
+			require.NotNil(t, result.ServiceTier)
+			require.Equal(t, "flex", *result.ServiceTier)
+			require.Equal(t, original, body)
+			after, marshalErr := json.Marshal(account.Extra)
+			require.NoError(t, marshalErr)
+			require.Equal(t, before, after)
+		})
+	}
+}
+
+func TestStructuredInputRecovery_AudioLocalRefusalDoesNotDispatch(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"}}]}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewReader(body))
+	u := &httpUpstreamRecorder{}
+	svc := &OpenAIGatewayService{cfg: structuredInputRetryTestConfig(), httpUpstream: u}
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, structuredInputRetryTestAccount(), body, "", "")
+	require.ErrorIs(t, err, apicompat.ErrUnsupportedInputAudio)
+	require.Nil(t, result)
+	require.Empty(t, u.requests)
+	require.Equal(t, 400, rec.Code)
+}
+
+func TestStructuredInputRecovery_EligibilityBoundaries(t *testing.T) {
+	for _, kind := range []string{"allowed", "nil_context", "nil_gin", "nil_request", "nil_writer", "nil_account", "oauth", "other_platform", "native_shape", "string_input", "object_input", "probe_false", "probe_missing", "probe_invalid", "force_responses", "force_chat"} {
+		t.Run(kind, func(t *testing.T) {
+			var ctx context.Context = context.Background()
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+			account := structuredInputRetryTestAccount()
+			shape := false
+			outbound := []byte(`{"input":[{"role":"user","content":"hi"}]}`)
+			want := false
+			switch kind {
+			case "allowed":
+				want = true
+			case "nil_context":
+				ctx = nil
+			case "nil_gin":
+				c = nil
+			case "nil_request":
+				c.Request = nil
+			case "nil_writer":
+				c.Writer = nil
+			case "nil_account":
+				account = nil
+			case "oauth":
+				account.Type = AccountTypeOAuth
+			case "other_platform":
+				account.Platform = PlatformGrok
+			case "native_shape":
+				shape = true
+			case "string_input":
+				outbound = []byte(`{"input":"hi"}`)
+			case "object_input":
+				outbound = []byte(`{"input":{"role":"user","content":"hi"}}`)
+				want = true
+			case "probe_false":
+				account.Extra[openai_compat.ExtraKeyResponsesSupported] = false
+			case "probe_missing":
+				delete(account.Extra, openai_compat.ExtraKeyResponsesSupported)
+			case "probe_invalid":
+				account.Extra[openai_compat.ExtraKeyResponsesSupported] = 1
+			case "force_responses":
+				account.Extra[openai_compat.ExtraKeyResponsesMode] = "force_responses"
+			case "force_chat":
+				account.Extra[openai_compat.ExtraKeyResponsesMode] = "force_chat_completions"
+			}
+			require.Equal(t, want, canRecoverConvertedResponsesInput(ctx, c, account, shape, outbound))
+		})
+	}
+}
+
+func TestStructuredInputRecovery_TransportMarkerResetsPerAttempt(t *testing.T) {
+	require.False(t, OpenAIStructuredInputRecoveredViaRawChat(nil))
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	c.Set(openAIStructuredInputRawFallbackKey, "invalid")
+	require.False(t, OpenAIStructuredInputRecoveredViaRawChat(c))
+	c.Set(openAIStructuredInputRawFallbackKey, true)
+	require.True(t, OpenAIStructuredInputRecoveredViaRawChat(c))
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hi"}]}`)
+	u := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 400, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"other refusal"}}`))}}
+	svc := &OpenAIGatewayService{cfg: structuredInputRetryTestConfig(), httpUpstream: u}
+	_, err := svc.ForwardAsChatCompletions(context.Background(), c, structuredInputRetryTestAccount(), body, "", "")
+	require.Error(t, err)
+	require.False(t, OpenAIStructuredInputRecoveredViaRawChat(c))
+	require.Len(t, u.requests, 1)
 }
