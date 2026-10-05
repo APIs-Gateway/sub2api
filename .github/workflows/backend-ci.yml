@@ -50,6 +50,11 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=integration -race -count=1 -run '^TestOpenAI401HTTP_' -v ./internal/repository/
+      - name: Responses refusal conversion and actual Chat output (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestResponsesRefusal_|^TestResponsesToChatCompletions_RefusalPreserved|^TestResponsesEventToChatChunks_RefusalDelta|^TestBufferedResponseAccumulator_RefusalRebuiltFromDeltas' ./internal/pkg/apicompat/ ./internal/service/
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover
