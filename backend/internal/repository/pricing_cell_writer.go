@@ -23,7 +23,7 @@ func (pricingCellWriter) PlanTx(ctx context.Context, exec service.MatrixExecutor
 	return planned, err
 }
 
-func (pricingCellWriter) ApplyTx(ctx context.Context, tx service.MatrixExecutor, req service.CellWriteRequest) (*service.CellWriteResult, error) {
+func (pricingCellWriter) ApplyTx(ctx context.Context, tx service.MatrixTx, req service.CellWriteRequest) (*service.CellWriteResult, error) {
 	norm, planned, err := prepareCellWrite(ctx, tx, req, true)
 	if err != nil {
 		return nil, err

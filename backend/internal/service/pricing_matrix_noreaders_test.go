@@ -25,24 +25,28 @@ import (
 
 // matrixOwnFiles 本 PR 新增的非测试文件（相对 backend 的路径）。
 var matrixOwnFiles = map[string]struct{}{
-	"internal/service/pricing_matrix_types.go":   {},
-	"internal/service/pricing_matrix_derive.go":  {},
-	"internal/service/pricing_matrix_plan.go":    {},
-	"internal/service/pricing_matrix_service.go": {},
-	"internal/service/pricing_matrix_facts.go":   {},
-	"internal/service/model_catalog_service.go":  {},
-	"internal/service/channel_save_hook.go":      {},
-	"internal/service/group_policy_matrix.go":    {}, // W6 PR4-1：matrixPolicy，目前只被测试驱动，没有生产路径构造它
-	"internal/service/pricing_write_types.go":    {}, // W6 PR4b-1：价格写入路径（CellWriter、PriceWriteGate），没有生产路径构造它
-	"internal/service/pricing_write_plan.go":     {},
-	"internal/service/pricing_write_gate.go":     {},
-	"internal/service/user_price_catalog.go":     {}, // W6 PR8a：用户价格页，v2 分组的模型清单读模型目录（第一个读取方）
+	"internal/service/pricing_matrix_types.go":       {},
+	"internal/service/pricing_matrix_derive.go":      {},
+	"internal/service/pricing_matrix_plan.go":        {},
+	"internal/service/pricing_matrix_service.go":     {},
+	"internal/service/pricing_matrix_facts.go":       {},
+	"internal/service/model_catalog_service.go":      {},
+	"internal/service/channel_save_hook.go":          {},
+	"internal/service/group_policy_matrix.go":        {}, // W6 PR4-1：matrixPolicy，目前只被测试驱动，没有生产路径构造它
+	"internal/service/pricing_write_types.go":        {}, // W6 PR4b-1：价格写入路径（CellWriter、PriceWriteGate），没有生产路径构造它
+	"internal/service/pricing_write_plan.go":         {},
+	"internal/service/pricing_write_gate.go":         {},
+	"internal/service/pricing_exposure.go":           {}, // W6 PR4b-2a：保存时校验（ExposureValidator / ExposureGuard），没有生产路径构造它
+	"internal/service/pricing_group_config_write.go": {}, // W6 PR4b-2a：分组配置写路径，没有生产路径构造它
+	"internal/service/pricing_price_diff.go":         {}, // W6 PR4b-2a：PriceDiff，纯函数
+	"internal/service/user_price_catalog.go":         {}, // W6 PR8a：用户价格页，v2 分组的模型清单读模型目录（第一个读取方）
 
-	"internal/repository/pricing_matrix_repo.go": {},
-	"internal/repository/model_catalog_repo.go":  {},
-	"internal/repository/model_catalog_seed.go":  {},
-	"internal/repository/pricing_cell_writer.go": {},
-	"internal/repository/pricing_write_store.go": {},
+	"internal/repository/pricing_matrix_repo.go":         {},
+	"internal/repository/model_catalog_repo.go":          {},
+	"internal/repository/model_catalog_seed.go":          {},
+	"internal/repository/pricing_cell_writer.go":         {},
+	"internal/repository/pricing_write_store.go":         {},
+	"internal/repository/pricing_group_config_writer.go": {},
 
 	"internal/handler/admin/pricing_matrix_handler.go": {},
 	"cmd/server/model_catalog_cmd.go":                  {},
@@ -66,6 +70,9 @@ var matrixEntryPoints = regexp.MustCompile(`\b(` + strings.Join([]string{
 	"matrixPolicy", "NewMatrixGroupPolicy", "MatrixSnapshotSource", "MatrixSnapshotInvalidator",
 	"CellWriter", "NewPricingCellWriter", "PriceWriteGate", "InterimPriceWriteGate", "NewInterimPriceWriteGate",
 	"PriceWriteStore", "NewPricingWriteStore", "MatrixExecutor", "NormalizeCellWriteRequest", "PlanCellWrites",
+	"MatrixTx", "ExposureValidator", "NewExposureValidator", "ExposureGuard", "NewExposureGuard", "ExposureReader",
+	"GroupConfigWriter", "GroupConfigService", "NewGroupConfigService", "NewPricingGroupConfigWriter", "NewPricingExposureReader",
+	"OfficialPriceStateSource", "LookupOfficialPriceState",
 }, "|") + `)\b`)
 
 func TestMatrixTablesAndDerivationHaveNoReaders(t *testing.T) {

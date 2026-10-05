@@ -26,6 +26,9 @@ var (
 	_ service.MatrixExecutor = (*sql.DB)(nil)
 	_ service.MatrixExecutor = (*sql.Tx)(nil)
 	_ service.MatrixExecutor = (*dbent.Tx)(nil)
+	// 写入器只收事务：*sql.DB 不满足 MatrixTx，传进来会在编译期报错。
+	_ service.MatrixTx = (*sql.Tx)(nil)
+	_ service.MatrixTx = (*dbent.Tx)(nil)
 )
 
 var pwxStateCols = []string{"group_id", "pricing_stage", "revision"}

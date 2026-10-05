@@ -29,7 +29,7 @@ func (w *pwFakeWriter) PlanTx(_ context.Context, _ MatrixExecutor, req CellWrite
 	return w.planned, w.planErr
 }
 
-func (w *pwFakeWriter) ApplyTx(_ context.Context, _ MatrixExecutor, req CellWriteRequest) (*CellWriteResult, error) {
+func (w *pwFakeWriter) ApplyTx(_ context.Context, _ MatrixTx, req CellWriteRequest) (*CellWriteResult, error) {
 	w.applyReqs = append(w.applyReqs, req)
 	return w.applyRes, w.applyErr
 }
@@ -57,7 +57,7 @@ type pwFakeStore struct {
 
 func (s *pwFakeStore) Reader() MatrixExecutor { return nil }
 
-func (s *pwFakeStore) WithTx(ctx context.Context, fn func(ctx context.Context, tx MatrixExecutor) error) error {
+func (s *pwFakeStore) WithTx(ctx context.Context, fn func(ctx context.Context, tx MatrixTx) error) error {
 	if s.txErr != nil {
 		return s.txErr
 	}
@@ -98,11 +98,14 @@ type pwGateFixture struct {
 	store  *pwFakeStore
 	writer *pwFakeWriter
 	inv    *pwFakeInvalidator
+	reader *exFakeReader
+	prices exFakePrices
 }
 
 func pwNewGate() pwGateFixture {
-	f := pwGateFixture{store: &pwFakeStore{}, writer: &pwFakeWriter{}, inv: &pwFakeInvalidator{}}
-	f.gate = NewInterimPriceWriteGate(f.store, f.writer, f.inv)
+	f := pwGateFixture{store: &pwFakeStore{}, writer: &pwFakeWriter{}, inv: &pwFakeInvalidator{},
+		reader: &exFakeReader{}, prices: exFakePrices{}}
+	f.gate = NewInterimPriceWriteGate(f.store, f.writer, NewExposureGuard(f.reader, NewExposureValidator(f.prices, nil)), f.inv)
 	f.gate.now = func() time.Time { return pwNow }
 	return f
 }
@@ -295,7 +298,7 @@ func TestInterimPriceWriteGate_CommitWithoutApproval(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, f.inv.calls)
 
-	gate := NewInterimPriceWriteGate(f.store, f.writer, nil)
+	gate := NewInterimPriceWriteGate(f.store, f.writer, NewExposureGuard(f.reader, NewExposureValidator(f.prices, nil)), nil)
 	f.writer.applyRes = &CellWriteResult{ChangedGroupIDs: []int64{1}}
 	_, err = gate.Commit(ctx, pwCommit(0, false))
 	require.NoError(t, err)
@@ -386,4 +389,54 @@ func TestInterimPriceWriteGate_CommitFailures(t *testing.T) {
 	_, err = f.gate.Commit(ctx, pwCommit(7, true))
 	require.EqualError(t, err, "begin failed")
 	require.Empty(t, f.writer.applyReqs)
+}
+
+func TestInterimPriceWriteGate_ExposureValidation(t *testing.T) {
+	ctx := context.Background()
+	// 白名单分组里开放一个没有官方价的模型（只改 open、不涉价）。
+	unpriced := func() []PlannedCellWrite {
+		return []PlannedCellWrite{{
+			Op: CellOp{GroupID: 1, ModelKey: "nothing", Kind: CellOpUpsert}, Action: CellWriteCreate,
+			After: &MatrixCell{ModelKey: "nothing", Open: true, PriceMode: MatrixPriceInherit},
+		}}
+	}
+	allowlist := map[int64]MatrixAccessMode{1: MatrixAccessAllowlist}
+	req := CellWriteRequest{Ops: []CellOp{pwUpsert(1, "nothing", true, MatrixPriceInherit)}, GroupRevisions: map[int64]int64{1: 3}, OperatorID: 7}
+
+	// 预览就阻止，不登记审批行。
+	f := pwNewGate()
+	f.reader.modes = allowlist
+	f.writer.planned = unpriced()
+	_, err := f.gate.Propose(ctx, PriceWriteProposal{Request: req})
+	require.Equal(t, ReasonExposureUnpriced, pwReason(t, err))
+	require.Empty(t, f.store.inserted)
+
+	// 提交：写入之后、消耗审批之前校验，违规整个事务回滚、不消耗凭证、不失效缓存。
+	f = pwNewGate()
+	f.reader.modes = allowlist
+	f.writer.applyRes = &CellWriteResult{Planned: unpriced(), ChangedGroupIDs: []int64{1}}
+	_, err = f.gate.Commit(ctx, PriceWriteCommit{ApprovalID: 5, Request: req, Confirm: true, Actor: PriceWriteActor{ID: 9, Interactive: true}})
+	require.Equal(t, ReasonExposureUnpriced, pwReason(t, err))
+	require.Equal(t, 1, f.store.txRollbacks)
+	require.Empty(t, f.store.consumeCalls)
+	require.Empty(t, f.inv.calls)
+
+	// 模型有官方价：通过。
+	f = pwNewGate()
+	f.reader.modes = allowlist
+	f.prices["nothing"] = OfficialPriceState{Known: true, TokenNonZero: true}
+	f.writer.applyRes = &CellWriteResult{Planned: unpriced(), ChangedGroupIDs: []int64{1}}
+	_, err = f.gate.Commit(ctx, PriceWriteCommit{Request: req, Confirm: true, Actor: PriceWriteActor{ID: 9}})
+	require.NoError(t, err)
+
+	// 没有配置保存时校验：预览与提交都失败关闭。
+	f = pwNewGate()
+	gate := NewInterimPriceWriteGate(f.store, f.writer, nil, nil)
+	f.writer.planned = unpriced()
+	_, err = gate.Propose(ctx, PriceWriteProposal{Request: req})
+	require.Equal(t, ReasonExposureGuardMissing, pwReason(t, err))
+	f.writer.applyRes = &CellWriteResult{Planned: unpriced()}
+	_, err = gate.Commit(ctx, PriceWriteCommit{Request: req, Confirm: true, Actor: PriceWriteActor{ID: 9}})
+	require.Equal(t, ReasonExposureGuardMissing, pwReason(t, err))
+	require.Equal(t, 1, f.store.txRollbacks)
 }
