@@ -27,6 +27,9 @@ type BillingInflightRequest struct {
 	// ImageCount. Estimate that existing settlement shape while forwarding each
 	// later frame unchanged.
 	PassthroughBillingModel string
+	// Approximate image input inherited through a v2 previous_response_id. This
+	// is internal admission metadata, never a provider request or actual usage.
+	PassthroughImageInputTokens int
 }
 
 func inflightEstimateTokens(body []byte, defaultOutput int, embeddings bool) UsageTokens {
@@ -153,6 +156,7 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 	}
 	// 预占估算不产生用量行：算价时遇到无价模型不计入「无价计费」观测（见 billing_non_settlement.go）。
 	ctx = WithBillingNonSettlement(ctx)
+	ctx = pinGroupPolicySnapshots(ctx, s.groupPolicy())
 	key := request.APIKey
 	if d := request.StableDecision; d != nil && key.GroupID != nil && key.Group != nil && d.StableServedGroupID > 0 && d.StableServedGroupID != *key.GroupID && d.StableServedRateMultiplier > 0 {
 		group := *key.Group
@@ -218,6 +222,25 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 		return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, request, 0, true)
 	}
 	amount := cost.ActualCost
+	if request.PassthroughBillingModel != "" {
+		// V2 settlement remains token based with its frozen first model. A
+		// zero ordinary token price does not imply free image token buckets.
+		imageTokens := tokens
+		imageTokens.ImageInputTokens = request.PassthroughImageInputTokens
+		if imageTokens.ImageInputTokens > imageTokens.InputTokens {
+			imageTokens.InputTokens = imageTokens.ImageInputTokens
+		}
+		if IsImageGenerationIntent(openAIResponsesEndpoint, request.PassthroughBillingModel, request.Body) {
+			imageTokens.ImageOutputTokens = imageTokens.OutputTokens
+		}
+		if imageTokens.ImageInputTokens > 0 || imageTokens.ImageOutputTokens > 0 {
+			if imageCost, err := s.calculateOpenAIRecordUsageCost(ctx, result, key, models, multiplier, resolveImageRateMultiplier(key, multiplier), imageTokens, tier, pricingAt); err == nil {
+				amount = math.Max(amount, imageCost.ActualCost)
+			} else {
+				return applyInflightEstimate(ctx, s.usageBillingRepo, s.cfg, request, 0, true)
+			}
+		}
+	}
 	if result.ImageCount == 0 {
 		tokens.CacheCreationTokens = tokens.InputTokens
 		tokens.InputTokens = 0

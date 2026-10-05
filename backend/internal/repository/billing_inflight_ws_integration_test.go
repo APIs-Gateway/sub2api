@@ -240,7 +240,7 @@ type wsInflightFixture struct {
 	billingRepo *wsInflightBillingObserver
 }
 
-func newWSInflightFixture(t *testing.T, mode string, source string, prices map[string]float64) *wsInflightFixture {
+func newWSInflightFixture(t *testing.T, mode string, source string, prices map[string]float64, billingOverride ...*service.BillingService) *wsInflightFixture {
 	t.Helper()
 	logger.InitBootstrap()
 	gin.SetMode(gin.TestMode)
@@ -317,6 +317,9 @@ func newWSInflightFixture(t *testing.T, mode string, source string, prices map[s
 	snapshots := service.NewSchedulerSnapshotService(schedulerCache, NewSchedulerOutboxRepository(inflightTestDB(t)), accounts, groups, cfg)
 	t.Cleanup(snapshots.Stop)
 	billService := service.NewBillingService(cfg, nil)
+	if len(billingOverride) > 0 {
+		billService = billingOverride[0]
+	}
 	httpClient := &http.Client{}
 	t.Cleanup(httpClient.CloseIdleConnections)
 	realBilling := NewUsageBillingRepository(client, inflightTestDB(t))

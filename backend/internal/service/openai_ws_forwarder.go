@@ -268,7 +268,10 @@ type OpenAIWSIngressHooks struct {
 	// BeforeUpstreamTurn runs after request rewriting, for every actual provider
 	// turn (including the first turn and retries, excluding local prewarms).
 	BeforeUpstreamTurn func(turn int, payload []byte, originalModel string) error
-	BeforeRequest      func(turn int, payload []byte, originalModel string) error
+	// BeforePassthroughUpstreamTurn additionally receives estimate-only image
+	// context. It replaces BeforeUpstreamTurn for v2; provider frames stay intact.
+	BeforePassthroughUpstreamTurn func(turn int, payload []byte, originalModel string, imageInputTokens int) error
+	BeforeRequest                 func(turn int, payload []byte, originalModel string) error
 	// AfterLocalPrewarm releases the connection's initial concurrency slots
 	// after a synthetic HTTP bridge response, without recording usage.
 	AfterLocalPrewarm func(turn int)

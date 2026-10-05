@@ -2259,43 +2259,47 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		if replayBillingKey != nil {
 			turnBillingKeys.set(1, replayBillingKey)
 		}
+		reserveWSTurn := func(turn int, payload []byte, originalModel string, imageInputTokens int) error {
+			wsBillingMu.Lock()
+			defer wsBillingMu.Unlock()
+			if wsBillingClosed {
+				return context.Canceled
+			}
+			key := turnBillingKeys.forTurn(turn, apiKey)
+			model := strings.TrimSpace(originalModel)
+			if model == "" {
+				model = reqModel
+			}
+			reserveCtx := ctx
+			if lease := turnBillingLeases[turn]; lease != nil {
+				reserveCtx = service.WithBillingInflightLease(reserveCtx, lease)
+			}
+			if turnPassthrough.Load() && passthroughBillingModel == "" {
+				passthroughBillingModel = strings.TrimSpace(gjson.GetBytes(payload, "model").String())
+				if passthroughBillingModel == "" {
+					passthroughBillingModel = model
+				}
+			}
+			lease, err := h.gatewayService.ReserveBillingInflight(reserveCtx, service.BillingInflightRequest{APIKey: key, Account: account, Model: model, Body: payload, ChannelUsageFields: channelMappingWS.ToUsageFields(reqModel, ""), PassthroughBillingModel: passthroughBillingModel, PassthroughImageInputTokens: imageInputTokens})
+			if err != nil {
+				writeOpenAIWSBillingRejection(ctx, wsConn, err)
+				return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, "billing check failed", err)
+			}
+			if lease != nil {
+				if turnBillingLeases[turn] == nil {
+					wsBillingLeases = append(wsBillingLeases, lease)
+				}
+				turnBillingLeases[turn] = lease
+				lease.MarkDispatched()
+			}
+			return nil
+		}
 		hooks := &service.OpenAIWSIngressHooks{
 			InitialRequestModel: reqModel,
 			BeforeUpstreamTurn: func(turn int, payload []byte, originalModel string) error {
-				wsBillingMu.Lock()
-				defer wsBillingMu.Unlock()
-				if wsBillingClosed {
-					return context.Canceled
-				}
-				key := turnBillingKeys.forTurn(turn, apiKey)
-				model := strings.TrimSpace(originalModel)
-				if model == "" {
-					model = reqModel
-				}
-				reserveCtx := ctx
-				if lease := turnBillingLeases[turn]; lease != nil {
-					reserveCtx = service.WithBillingInflightLease(reserveCtx, lease)
-				}
-				if turnPassthrough.Load() && passthroughBillingModel == "" {
-					passthroughBillingModel = strings.TrimSpace(gjson.GetBytes(payload, "model").String())
-					if passthroughBillingModel == "" {
-						passthroughBillingModel = model
-					}
-				}
-				lease, err := h.gatewayService.ReserveBillingInflight(reserveCtx, service.BillingInflightRequest{APIKey: key, Account: account, Model: model, Body: payload, ChannelUsageFields: channelMappingWS.ToUsageFields(reqModel, ""), PassthroughBillingModel: passthroughBillingModel})
-				if err != nil {
-					writeOpenAIWSBillingRejection(ctx, wsConn, err)
-					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, "billing check failed", err)
-				}
-				if lease != nil {
-					if turnBillingLeases[turn] == nil {
-						wsBillingLeases = append(wsBillingLeases, lease)
-					}
-					turnBillingLeases[turn] = lease
-					lease.MarkDispatched()
-				}
-				return nil
+				return reserveWSTurn(turn, payload, originalModel, 0)
 			},
+			BeforePassthroughUpstreamTurn: reserveWSTurn,
 			BeforeImagePermission: func() (*service.Group, error) {
 				return h.apiKeyService.GetCurrentImagePermissionGroup(ctx, apiKey)
 			},

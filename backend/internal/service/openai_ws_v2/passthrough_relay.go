@@ -28,6 +28,7 @@ type Usage struct {
 	CacheCreationInputTokens int
 	CacheReadInputTokens     int
 	ImageOutputTokens        int
+	ImageInputTokens         int
 }
 
 type RelayResult struct {
@@ -926,6 +927,22 @@ func parseUsageAndAccumulate(
 	if imageTokens == 0 {
 		imageTokens = usageResult.Get("completion_tokens_details.image_tokens").Int()
 	}
+	imageInputTokens := usageResult.Get("input_tokens_details.image_tokens").Int()
+	if imageInputTokens == 0 {
+		imageInputTokens = usageResult.Get("prompt_tokens_details.image_tokens").Int()
+	}
+	// Match HTTP usage extraction: only the tool usage beside this response's
+	// usage can backfill a zero image bucket. Positive usage wins; negative
+	// usage retains the existing HTTP semantics rather than being overwritten.
+	imageGen := gjson.GetBytes(message, "response.tool_usage.image_gen")
+	if imageGen.IsObject() {
+		if imageInputTokens == 0 && imageGen.Get("input_tokens_details.image_tokens").Int() > 0 {
+			imageInputTokens = imageGen.Get("input_tokens_details.image_tokens").Int()
+		}
+		if imageTokens == 0 && imageGen.Get("output_tokens_details.image_tokens").Int() > 0 {
+			imageTokens = imageGen.Get("output_tokens_details.image_tokens").Int()
+		}
+	}
 
 	inputTokens, inputOK := parseUsageIntField(inputResult, true)
 	outputTokens, outputOK := parseUsageIntField(outputResult, true)
@@ -954,6 +971,7 @@ func parseUsageAndAccumulate(
 		CacheCreationInputTokens: cacheCreationTokens,
 		CacheReadInputTokens:     cachedTokens,
 		ImageOutputTokens:        int(imageTokens),
+		ImageInputTokens:         int(imageInputTokens),
 	}
 
 	state.usage.InputTokens += parsedUsage.InputTokens
@@ -961,6 +979,7 @@ func parseUsageAndAccumulate(
 	state.usage.CacheCreationInputTokens += parsedUsage.CacheCreationInputTokens
 	state.usage.CacheReadInputTokens += parsedUsage.CacheReadInputTokens
 	state.usage.ImageOutputTokens += parsedUsage.ImageOutputTokens
+	state.usage.ImageInputTokens += parsedUsage.ImageInputTokens
 	return parsedUsage
 }
 
