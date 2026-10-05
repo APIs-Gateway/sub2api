@@ -368,11 +368,14 @@ describe('EditAccountModal', () => {
       updateAccountMock.mockResolvedValue(account)
       const wrapper = mountModal(account)
       await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelMapping')!.trigger('click')
-      const row = wrapper.get('input[placeholder="admin.accounts.requestModel"]').element.parentElement!
+      const sourceSelector = scenario.label === 'Bedrock strict admission'
+        ? 'input[placeholder="admin.accounts.fromModel"]'
+        : 'input[placeholder="admin.accounts.requestModel"]'
+      const row = wrapper.get(sourceSelector).element.parentElement!
       expect(row.querySelector<HTMLInputElement>('input')?.value).toBe('alias')
       await wrapper.findAll('button').find(button => button.element.parentElement === row)!.trigger('click')
       await flushPromises()
-      expect(wrapper.find('input[placeholder="admin.accounts.requestModel"]').exists()).toBe(false)
+      expect(wrapper.find(sourceSelector).exists()).toBe(false)
       await wrapper.get('form#edit-account-form').trigger('submit.prevent')
       await flushPromises()
       expect(updateAccountMock).toHaveBeenCalledTimes(1)
