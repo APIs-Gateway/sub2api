@@ -140,7 +140,9 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const adminSettingsStore = useAdminSettingsStore()
 
-const loading = ref(false)
+const settingsLoading = ref(false)
+const markdownLoading = ref(false)
+const loading = computed(() => settingsLoading.value || markdownLoading.value)
 const pageTheme = ref<'light' | 'dark'>('light')
 const renderedHtml = ref('')
 const markdownContainer = ref<HTMLElement | null>(null)
@@ -148,6 +150,8 @@ const tocItems = ref<TocItem[]>([])
 const tocVisible = ref(typeof window !== 'undefined' ? window.innerWidth > 768 : true)
 const activeHeadingId = ref('')
 let themeObserver: MutationObserver | null = null
+let markdownRequestVersion = 0
+let unmounted = false
 
 const menuItemId = computed(() => route.params.id as string)
 
@@ -221,18 +225,23 @@ function buildPageImageUrl(slug: string, src: string): string {
 }
 
 async function fetchAndRenderMarkdown(slug: string) {
-  loading.value = true
+  const version = ++markdownRequestVersion
+  const isCurrentRequest = () => !unmounted && version === markdownRequestVersion && markdownSlug.value === slug
+  markdownLoading.value = true
+  renderedHtml.value = ''
   tocItems.value = []
   activeHeadingId.value = ''
   try {
     const resp = await fetch(`/api/v1/pages/${encodeURIComponent(slug)}`, {
       headers: authStore.token ? { Authorization: `Bearer ${authStore.token}` } : {},
     })
+    if (!isCurrentRequest()) return
     if (!resp.ok) {
       renderedHtml.value = `<p class="text-red-500">${t('errors.pageNotFound')}</p>`
       return
     }
     let raw = await resp.text()
+    if (!isCurrentRequest()) return
 
     raw = raw.replace(
       /!\[([^\]]*)\]\(([^)]+)\)/g,
@@ -262,12 +271,13 @@ async function fetchAndRenderMarkdown(slug: string) {
     renderedHtml.value = withIds
     tocItems.value = toc
   } catch {
-    renderedHtml.value = '<p class="text-red-500">Failed to load page</p>'
+    if (isCurrentRequest()) {
+      renderedHtml.value = '<p class="text-red-500">Failed to load page</p>'
+    }
   } finally {
-    loading.value = false
-    await nextTick()
-    await nextTick()
-    injectCopyButtons()
+    if (isCurrentRequest()) {
+      markdownLoading.value = false
+    }
   }
 }
 
@@ -333,12 +343,23 @@ function injectCopyButtons() {
   })
 }
 
+watch(loading, async (isLoading) => {
+  if (isLoading) return
+  const version = markdownRequestVersion
+  await nextTick()
+  await nextTick()
+  if (!unmounted && version === markdownRequestVersion && markdownSlug.value) injectCopyButtons()
+})
+
 watch(markdownSlug, (slug) => {
   if (slug) {
     fetchAndRenderMarkdown(slug)
   } else {
+    markdownRequestVersion++
+    markdownLoading.value = false
     renderedHtml.value = ''
     tocItems.value = []
+    activeHeadingId.value = ''
   }
 }, { immediate: true })
 
@@ -356,15 +377,17 @@ onMounted(async () => {
   }
 
   if (appStore.publicSettingsLoaded) return
-  loading.value = true
+  settingsLoading.value = true
   try {
     await appStore.fetchPublicSettings()
   } finally {
-    loading.value = false
+    if (!unmounted) settingsLoading.value = false
   }
 })
 
 onUnmounted(() => {
+  unmounted = true
+  markdownRequestVersion++
   if (themeObserver) {
     themeObserver.disconnect()
     themeObserver = null
