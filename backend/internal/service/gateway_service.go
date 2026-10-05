@@ -10255,6 +10255,8 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	account := input.Account
 	subscription := input.Subscription
 	ApplyForwardImageBillingResolution(result)
+	// 一次结算固定读同一份分组快照（W6 PR5）：legacy 策略下是空操作，不分配。
+	ctx = pinGroupPolicySnapshots(ctx, s.groupPolicy())
 
 	// 强制缓存计费：将 input_tokens 转为 cache_read_input_tokens
 	// 用于粘性会话切换时的特殊计费处理
@@ -10298,14 +10300,15 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if input.BillingModelSource == BillingModelSourceRequested && input.OriginalModel != "" {
 		billingModel = input.OriginalModel
 	}
-	// 无价时保留既有请求模型兜底；upstream 模式额外尝试渠道映射模型，
-	// 最后尝试实际出站模型，避免未定价的请求别名被静默按 $0 计费。
-	// 已定价的计费源优先级不受影响。
-	if input.BillingModelSource == BillingModelSourceUpstream {
-		billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteBillingModel, input.ChannelMappedModel, result.UpstreamModel)
-	} else {
-		billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteBillingModel, result.UpstreamModel)
-	}
+	selectedBillingModel := billingModel
+
+	// 请求级计费时点：用户计费与账号统计成本共用，避免跨 DeepSeek 峰谷边界时两者错位（与 OpenAI 网关一致）。
+	pricingAt := deepseekNowFunc()
+
+	// 无价回退加计算费用。影子比对用同一个函数重算（shadowCompareBilling），所以这一段单独成函数。
+	// 倍率在这里按值传入，下面 rateWithExtra 改写的是本函数里的变量，影子重算拿到的仍是原值。
+	baseMultiplier, baseImageMultiplier := multiplier, imageMultiplier
+	billingModel, cost := s.resolveBillingModelAndCost(ctx, input, result, apiKey, selectedBillingModel, concreteBillingModel, multiplier, imageMultiplier, opts, pricingAt)
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
 	requestedModel := result.Model
@@ -10313,11 +10316,6 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		requestedModel = input.OriginalModel
 	}
 
-	// 请求级计费时点：用户计费与账号统计成本共用，避免跨 DeepSeek 峰谷边界时两者错位（与 OpenAI 网关一致）。
-	pricingAt := deepseekNowFunc()
-
-	// 计算费用
-	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, opts, pricingAt)
 	// 额外倍率已乘进 cost.ActualCost；用量行的倍率同步记成乘过之后的值（extra 为 1 时原样）。
 	multiplier = rateWithExtra(multiplier, cost)
 	imageMultiplier = rateWithExtra(imageMultiplier, cost)
@@ -10352,6 +10350,14 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 			cost.TotalCost, pricingAt,
 		)
 	}
+
+	// 影子比对（W6 PR5）：只在分组处于 shadow 阶段时才有动作，不改变上面算出的任何结果。
+	s.shadowCompareBilling(ctx, &gatewayShadowBilling{
+		input: input, result: result, apiKey: apiKey, account: account, usageLog: usageLog,
+		selectedModel: selectedBillingModel, concreteModel: concreteBillingModel, billingModel: billingModel,
+		multiplier: baseMultiplier, imageMultiplier: baseImageMultiplier,
+		opts: opts, pricingAt: pricingAt, cost: cost,
+	})
 
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
@@ -10391,6 +10397,35 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	return nil
 }
 
+// resolveBillingModelAndCost 是「选定计费模型之后的无价回退，加上成本计算」这一段。
+// 结算与影子重算调用同一个函数（W6 PR5、REVIEW_OPUS_2 S-1）：比对点从 billableModelWithFallback 开始、
+// 到 calculateRecordUsageCost 结束，与 OpenAI 侧同粒度，网关分派（图片选路、候选回退）两边完全相同。
+// selectedModel 是回退之前选定的计费模型。
+func (s *GatewayService) resolveBillingModelAndCost(
+	ctx context.Context,
+	input *recordUsageCoreInput,
+	result *ForwardResult,
+	apiKey *APIKey,
+	selectedModel string,
+	concreteModel string,
+	multiplier float64,
+	imageMultiplier float64,
+	opts *recordUsageOpts,
+	pricingAt time.Time,
+) (string, *CostBreakdown) {
+	// 无价时保留既有请求模型兜底；upstream 模式额外尝试渠道映射模型，
+	// 最后尝试实际出站模型，避免未定价的请求别名被静默按 $0 计费。
+	// 已定价的计费源优先级不受影响。
+	billingModel := selectedModel
+	if input.BillingModelSource == BillingModelSourceUpstream {
+		billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteModel, input.ChannelMappedModel, result.UpstreamModel)
+	} else {
+		billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, concreteModel, result.UpstreamModel)
+	}
+	// 计算费用
+	return billingModel, s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, opts, pricingAt)
+}
+
 // calculateRecordUsageCost 根据请求类型和选项计算费用。
 func (s *GatewayService) calculateRecordUsageCost(
 	ctx context.Context,
@@ -10403,6 +10438,8 @@ func (s *GatewayService) calculateRecordUsageCost(
 	pricingAt time.Time,
 ) *CostBreakdown {
 	// 额外倍率按选定的计费模型取一次，乘进两个倍率（W6 R2-BK-2）。extra 为 1 时两个倍率都不变。
+	// 额外倍率与后面的价格覆盖读同一份分组快照（W6 PR5）。
+	ctx = pinGroupPolicySnapshots(ctx, s.groupPolicy())
 	extra := groupExtraMultiplier(ctx, s.groupPolicy(), apiKey, billingModel, pricingAt)
 	multiplier *= extra
 	imageMultiplier *= extra
@@ -10447,7 +10484,10 @@ func (s *GatewayService) billableModelWithFallback(ctx context.Context, apiKey *
 	}
 	for _, fallback := range candidates[1:] {
 		if s.hasResolvableTokenPricing(ctx, fallback, apiKey) {
-			logger.LegacyPrintf("service.gateway", "[Billing] billing model %q has no pricing, falling back to concrete model %q", billingModel, fallback)
+			// 影子重算里不打这条日志：结算那一次已经打过，重复打会让日志与用量行对不上（W6 PR5、S-1）。
+			if !isShadowRecompute(ctx) {
+				logger.LegacyPrintf("service.gateway", "[Billing] billing model %q has no pricing, falling back to concrete model %q", billingModel, fallback)
+			}
 			return fallback
 		}
 	}

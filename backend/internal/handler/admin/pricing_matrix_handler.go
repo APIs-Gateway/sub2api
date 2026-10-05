@@ -7,6 +7,7 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -24,16 +25,102 @@ type modelCatalogLister interface {
 	List(ctx context.Context, filter service.ModelCatalogFilter) ([]service.ModelCatalogEntry, error)
 }
 
-// PricingMatrixHandler 价格矩阵（W6）的只读管理接口：查看渠道到矩阵的派生结果与模型目录。
-// 全部是 GET，不写任何东西；本 PR 里没有任何计费、调度、准入路径读取这些数据。
+// pricingStageOperator 是 PricingMatrixHandler 对 service.PricingStageService 的最小依赖（W6 PR5）。
+type pricingStageOperator interface {
+	Switch(ctx context.Context, req service.PricingStageSwitchRequest) (*service.PricingStageSwitchResult, error)
+	ShadowStats() service.PricingShadowStats
+	MatrixSnapshotStats() service.MatrixSnapshotStats
+	ShadowSamples(ctx context.Context, groupID int64, limit int) ([]service.PricingShadowSample, error)
+}
+
+// PricingMatrixHandler 价格矩阵（W6）的管理接口：查看渠道到矩阵的派生结果与模型目录（只读），
+// 以及（PR5）阶段切换与影子比对结果。阶段切换是唯一的写入口，PR7 之前只允许 legacy 与 shadow。
 type PricingMatrixHandler struct {
 	derive  pricingDeriveViewer
 	catalog modelCatalogLister
+	stage   pricingStageOperator
 }
 
-// NewPricingMatrixHandler 创建价格矩阵只读 handler。
-func NewPricingMatrixHandler(derive *service.PricingDerivationService, catalog *service.ModelCatalogService) *PricingMatrixHandler {
-	return &PricingMatrixHandler{derive: derive, catalog: catalog}
+// NewPricingMatrixHandler 创建价格矩阵 handler。
+func NewPricingMatrixHandler(derive *service.PricingDerivationService, catalog *service.ModelCatalogService, stage *service.PricingStageService) *PricingMatrixHandler {
+	return &PricingMatrixHandler{derive: derive, catalog: catalog, stage: stage}
+}
+
+// switchPricingStageRequest 阶段切换请求体。
+type switchPricingStageRequest struct {
+	Stage   string `json:"stage" binding:"required"`
+	Confirm bool   `json:"confirm"`
+}
+
+// SwitchStage 切换分组的价格体系阶段（登记为 pricing.stage_switch）。PR7 合并之前只允许 legacy 与 shadow。
+// PUT /api/v1/admin/pricing-matrix/groups/:id/stage  {"stage": "shadow", "confirm": true}
+func (h *PricingMatrixHandler) SwitchStage(c *gin.Context) {
+	id, ok := parsePricingMatrixID(c)
+	if !ok {
+		return
+	}
+	var req switchPricingStageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.ErrorFrom(c, infraerrors.BadRequest("VALIDATION_ERROR", err.Error()))
+		return
+	}
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	result, err := h.stage.Switch(c.Request.Context(), service.PricingStageSwitchRequest{
+		GroupID:    id,
+		To:         service.PricingStage(strings.TrimSpace(req.Stage)),
+		OperatorID: subject.UserID,
+		Confirm:    req.Confirm,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// ShadowStats 返回影子比对的进程内计数（指标 pricing_shadow_compared_total、pricing_shadow_diff_total 等）
+// 与矩阵快照缓存的计数。多实例各算各的，进程重启后清零。
+// GET /api/v1/admin/pricing-matrix/shadow/stats
+func (h *PricingMatrixHandler) ShadowStats(c *gin.Context) {
+	response.Success(c, gin.H{
+		"metrics":  h.stage.ShadowStats(),
+		"snapshot": h.stage.MatrixSnapshotStats(),
+	})
+}
+
+// ShadowDiffs 返回最近的差异样本（pricing_shadow_diffs，保留 14 天的采样）。
+// GET /api/v1/admin/pricing-matrix/shadow/diffs?group_id=16&limit=50
+func (h *PricingMatrixHandler) ShadowDiffs(c *gin.Context) {
+	var groupID int64
+	if raw := strings.TrimSpace(c.Query("group_id")); raw != "" {
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || v <= 0 {
+			response.ErrorFrom(c, infraerrors.BadRequest("INVALID_PARAMETER", "group_id must be a positive integer").
+				WithMetadata(map[string]string{"param": "group_id"}))
+			return
+		}
+		groupID = v
+	}
+	limit := 50
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v <= 0 {
+			response.ErrorFrom(c, infraerrors.BadRequest("INVALID_PARAMETER", "limit must be a positive integer").
+				WithMetadata(map[string]string{"param": "limit"}))
+			return
+		}
+		limit = v
+	}
+	items, err := h.stage.ShadowSamples(c.Request.Context(), groupID, limit)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"items": items})
 }
 
 // ViewGroupDerive 返回分组按渠道当前配置实时派生的结果，并与库里现状对照。

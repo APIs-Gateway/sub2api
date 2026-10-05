@@ -622,10 +622,11 @@ func TestQuoteAccess_CatalogStatusIsLayeredOnTopOfGroupAccess(t *testing.T) {
 		require.Equal(t, QuoteAccess{OK: false, Reason: QuoteAccessReasonCatalogDraft}, qxQuote(t, f, " LUNA-Draft ").Access)
 	})
 
-	t.Run("shadow stage also applies the catalog", func(t *testing.T) {
+	t.Run("shadow stage reports the runtime result: the catalog is not layered on", func(t *testing.T) {
 		shadow := qxMatrix(PlatformOpenAI, GroupStateSnapshot{Config: mpStoredConfig(PricingStageShadow, nil)})
-		f, _ := build(shadow)
-		require.Equal(t, QuoteAccess{OK: false, Reason: QuoteAccessReasonCatalogDraft}, qxQuote(t, f, "gpt-5.4").Access)
+		f, spy := build(shadow)
+		require.Equal(t, QuoteAccess{OK: true}, qxQuote(t, f, "gpt-5.4").Access)
+		require.Zero(t, spy.calls)
 	})
 
 	t.Run("group access comes first: a closed cell is reported as closed, the catalog is not asked", func(t *testing.T) {
