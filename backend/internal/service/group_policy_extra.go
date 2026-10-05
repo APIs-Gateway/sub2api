@@ -20,10 +20,19 @@ import (
 // groupExtraMultiplier 取分组对 model 的额外倍率。没有策略、没有分组，或者取到的值不是有限的正数时返回 1。
 // 分组取 apiKey.Group.ID：稳定优先兜底时影子 key 的分组就是实际服务的分组，价格与倍率都按它算。
 func groupExtraMultiplier(ctx context.Context, policy GroupPolicy, apiKey *APIKey, model string, at time.Time) float64 {
-	if policy == nil || apiKey == nil || apiKey.Group == nil {
+	if apiKey == nil || apiKey.Group == nil {
 		return 1
 	}
-	extra := policy.ExtraMultiplier(ctx, apiKey.Group.ID, model, at)
+	return extraMultiplierFor(ctx, policy, apiKey.Group.ID, model, at)
+}
+
+// extraMultiplierFor 是 groupExtraMultiplier 去掉 API Key 的形态：PriceQuoter 手上只有计价分组，没有 key。
+// 校验规则与网关侧完全相同（同一个函数），所以报价与计费对「坏值按 1」的处理不会出现分歧。
+func extraMultiplierFor(ctx context.Context, policy GroupPolicy, groupID int64, model string, at time.Time) float64 {
+	if policy == nil {
+		return 1
+	}
+	extra := policy.ExtraMultiplier(ctx, groupID, model, at)
 	if math.IsNaN(extra) || extra <= 0 || math.IsInf(extra, 0) {
 		return 1
 	}

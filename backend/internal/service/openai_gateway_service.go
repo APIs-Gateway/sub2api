@@ -9457,10 +9457,10 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	billingModel := firstUsageBillingModel(billingModels)
 	if result != nil && result.ImageCount > 0 {
 		if imageBillingModel := s.firstOpenAIImageBillingModel(ctx, billingModels, apiKey); imageBillingModel != "" {
-			return s.calculateOpenAIImageCost(ctx, imageBillingModel, apiKey, result, imageMultiplier), nil
+			return s.calculateOpenAIImageCost(ctx, imageBillingModel, apiKey, result, imageMultiplier, pricingAt), nil
 		}
 		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved == nil {
-			return s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier), nil
+			return s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier, pricingAt), nil
 		}
 	}
 	if len(billingModels) == 0 || billingModel == "" {
@@ -9553,9 +9553,11 @@ func (s *OpenAIGatewayService) calculateOpenAIImageCost(
 	apiKey *APIKey,
 	result *OpenAIForwardResult,
 	multiplier float64,
+	pricingAt time.Time,
 ) *CostBreakdown {
 	// 额外倍率按这里收到的模型取（BK-2 余项）：带额外倍率的图片请求走的是首个候选，不是图片价选出的模型。
-	extra := groupExtraMultiplier(ctx, s.groupPolicy(), apiKey, billingModel, deepseekNowFunc())
+	// 生效时点用请求级 pricingAt，与文本候选循环、Anthropic 网关同一个时点；legacy 的 ExtraMultiplier 恒为 1，不看时点。
+	extra := groupExtraMultiplier(ctx, s.groupPolicy(), apiKey, billingModel, pricingAt)
 	multiplier *= extra
 	sizeTier := NormalizeImageBillingTierOrDefault(result.ImageSize)
 	if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved != nil &&

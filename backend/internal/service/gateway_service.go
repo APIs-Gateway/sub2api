@@ -10419,18 +10419,33 @@ func (s *GatewayService) calculateRecordUsageCost(
 	return withExtraMultiplier(s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, opts, pricingAt), extra)
 }
 
-// billableModelWithFallback 在选定计费模型（可能是渠道映射/请求来源覆盖出的别名）
-// 查不到任何价格（渠道价与全局价均无）时，按序回退到候选模型，避免静默 $0 计费。
-// 所有候选都无价时保持原值，走既有的 warn + 零成本路径。
-func (s *GatewayService) billableModelWithFallback(ctx context.Context, apiKey *APIKey, billingModel string, fallbacks ...string) string {
-	if s.hasResolvableTokenPricing(ctx, billingModel, apiKey) {
-		return billingModel
-	}
+// billableModelCandidates 给出 billableModelWithFallback 检查价格的先后顺序：选定的计费模型原样排第一
+// （不去空白、不去重），后面是各个兜底候选，兜底候选先去首尾空白，再跳过空串与等于计费模型的。
+// 纯函数：不读渠道、不读价格、不写日志，供网关之外需要同一条候选链的调用方（W6 的 QuoteRequested）直接使用，
+// 免得另写一份顺序规则。返回值至少有一项（计费模型本身）。
+func billableModelCandidates(billingModel string, fallbacks ...string) []string {
+	candidates := make([]string, 0, 1+len(fallbacks))
+	candidates = append(candidates, billingModel)
 	for _, fallback := range fallbacks {
 		fallback = strings.TrimSpace(fallback)
 		if fallback == "" || fallback == billingModel {
 			continue
 		}
+		candidates = append(candidates, fallback)
+	}
+	return candidates
+}
+
+// billableModelWithFallback 在选定计费模型（可能是渠道映射/请求来源覆盖出的别名）
+// 查不到任何价格（渠道价与全局价均无）时，按序回退到候选模型，避免静默 $0 计费。
+// 所有候选都无价时保持原值，走既有的 warn + 零成本路径。
+// 候选的先后顺序见 billableModelCandidates。
+func (s *GatewayService) billableModelWithFallback(ctx context.Context, apiKey *APIKey, billingModel string, fallbacks ...string) string {
+	candidates := billableModelCandidates(billingModel, fallbacks...)
+	if s.hasResolvableTokenPricing(ctx, candidates[0], apiKey) {
+		return billingModel
+	}
+	for _, fallback := range candidates[1:] {
 		if s.hasResolvableTokenPricing(ctx, fallback, apiKey) {
 			logger.LegacyPrintf("service.gateway", "[Billing] billing model %q has no pricing, falling back to concrete model %q", billingModel, fallback)
 			return fallback

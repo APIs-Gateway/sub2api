@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
@@ -34,6 +35,14 @@ import (
 //
 // 因此 Quote.Cost 给出的费用与对应网关用同样入参调用计费函数得到的费用逐位相同。
 //
+// 额外倍率（W6，设计 3.2）：网关在成本函数里按「实际出价的那个模型」取分组的额外倍率并乘进倍率。
+// Quote 只有一个模型（调用方给的计费模型），所以只取一次，位置与网关一致：OpenAI 文本是候选循环里出价的那个候选，
+// OpenAI 图片是 calculateOpenAIImageCost 收到的模型，Anthropic 是 billableModelWithFallback 选定之后的模型。
+// 取到的额外倍率乘进 EffectiveMultiplier 与 ImageMultiplier（顺序与网关相同：先按图片倍率策略算好，再乘额外倍率），
+// 所以 FinalPrices 与 Cost 都含它。legacy 分组与没有单元格的 v2 分组恒为 1，结果与改动前逐位相同。
+//
+// Quote.Access（W6，设计 3.2「准入」）：分组准入 + 目录状态，见 quoteAccess。
+//
 // 注意：QuoteSourceFallback 的含义是「用了 BillingService.fallbackPrices 里的兜底价」，
 // 与 ModelPricingResolver 的 PricingSourceFallback（同为字符串 "fallback"，表示「没有任何价格」）意思相反，别混用。
 type PriceQuoter struct {
@@ -41,11 +50,34 @@ type PriceQuoter struct {
 	billing  *BillingService
 	groups   priceQuoteGroupReader
 	rates    *userGroupRateResolver
+	// catalog 是可选的模型目录读取方，由 SetModelCatalog 在装配阶段接上。为 nil 时 Quote.Access 只反映分组准入。
+	catalog quoteCatalogReader
 }
 
 // priceQuoteGroupReader 是 PriceQuoter 对分组仓储的最小依赖。
 type priceQuoteGroupReader interface {
 	GetByIDLite(ctx context.Context, id int64) (*Group, error)
+}
+
+// quoteCatalogReader 是 PriceQuoter 对模型目录的最小依赖：按平台与模型名（或别名）查目录条目，未登记返回 nil。
+// 名字的规范化（先去首尾空白，再套 normalizeChannelPricingModelName）由目录一侧负责，调用方不必先归一。
+type quoteCatalogReader interface {
+	Resolve(ctx context.Context, platform, model string) (*ModelCatalogEntry, error)
+}
+
+// SetModelCatalog 给报价器接上模型目录，之后 Quote.Access 会叠加目录状态（draft、retired 不放行）。
+// 只在装配阶段调用，不加锁；不调用或传 nil 时，Quote.Access 只反映分组准入。
+// 目录状态只对 shadow、v2 阶段的分组生效：legacy 分组的运行时准入不读目录，报价不能比网关多拦一道。
+func (q *PriceQuoter) SetModelCatalog(catalog quoteCatalogReader) {
+	q.catalog = catalog
+}
+
+// normalizePricingEntryModel 是 PriceQuoter 与模型目录入口共用的名字规范化（设计 3.2、R2-D）：
+// 先 strings.TrimSpace，再套既有的 normalizeChannelPricingModelName（小写，claude- 名的点号写成连字符）。
+// 调用方不必先去空白或归一。注意它只用于「查键」（目录、准入）；送进价格链的名字（Quote.Model）只去首尾空白、
+// 不改大小写与点号，价格链里各个取价函数各自有规范化，报价喂给它们的名字必须与网关喂给它们的一致。
+func normalizePricingEntryModel(model string) string {
+	return normalizeChannelPricingModelName(strings.TrimSpace(model))
 }
 
 var (
@@ -120,11 +152,19 @@ type QuoteRequest struct {
 	At time.Time
 }
 
-// QuoteAccess 预留给「该分组是否能用这个模型」的判定，PR1 只填 OK=true。
+// QuoteAccess 是「该分组是否能用这个模型」的判定。Reason 取值：
+// closed_in_group（单元格显式关闭）、not_in_allowlist（白名单分组里没有它）、
+// catalog_draft、catalog_retired（模型目录里显式为草稿或已下线）。
 type QuoteAccess struct {
 	OK     bool   `json:"ok"`
 	Reason string `json:"reason,omitempty"`
 }
+
+// 模型目录状态造成的拒绝原因。未登记的模型视同 active，不产生拒绝原因（设计 S-3、Q2）。
+const (
+	QuoteAccessReasonCatalogDraft   = "catalog_draft"
+	QuoteAccessReasonCatalogRetired = "catalog_retired"
+)
 
 // QuoteUnitPrices 是一组单价，单位 USD/token（QuotePriceSet.PerMTok 里是 USD/1M token）。
 type QuoteUnitPrices struct {
@@ -262,15 +302,20 @@ type Quote struct {
 
 	// GroupMultiplier 是计价分组的默认倍率；UserMultiplier 仅在用户专属倍率与分组倍率不同时给出；
 	// EffectiveMultiplier 是 token / 按次计费实际使用的倍率；ImageMultiplier 是图片请求使用的倍率。
+	// 两者都已乘上 ExtraMultiplier（即 usage_logs.rate_multiplier 里记的值）。
 	GroupMultiplier     float64  `json:"group_multiplier"`
 	UserMultiplier      *float64 `json:"user_multiplier,omitempty"`
 	EffectiveMultiplier float64  `json:"effective_multiplier"`
 	ImageMultiplier     float64  `json:"image_multiplier"`
+	// ExtraMultiplier 是分组对这个模型设的额外倍率（设计 3.2），仅在不等于 1 时给出。
+	ExtraMultiplier *float64 `json:"extra_multiplier,omitempty"`
 
 	Policy QuotePolicyFlags `json:"policy"`
 
 	// 以下是 Cost 用的内部状态，不进 JSON。
-	quoter         *PriceQuoter
+	quoter *PriceQuoter
+	// extra 是已经乘进两个倍率的额外倍率，1 表示没有（手工构造的 Quote 里零值同样按 1）。
+	extra          float64
 	resolved       *ResolvedPricing
 	serviceTier    string
 	pricingGroupID int64
@@ -316,6 +361,14 @@ func (q *PriceQuoter) Quote(ctx context.Context, req QuoteRequest) (*Quote, erro
 
 	at := deepseekPricingAt(req.At)
 	gid := pg.ID
+
+	// 额外倍率：与网关一致，按实际出价的模型（这里就是 model）、计价分组、计费时点取，乘进两个倍率。
+	// 乘法的位置与网关相同（先按图片倍率策略算好 imageMultiplier，再各自乘 extra），extra 为 1 时 x*1 与 x 逐位相同。
+	policy := q.resolver.groupPolicy()
+	extra := extraMultiplierFor(ctx, policy, pg.ID, model, at)
+	effectiveMultiplier := rateMultiplier * extra
+	imageMultiplier *= extra
+
 	resolved := q.resolver.Resolve(ctx, PricingInput{Model: model, GroupID: &gid})
 
 	quote := &Quote{
@@ -324,12 +377,13 @@ func (q *PriceQuoter) Quote(ctx context.Context, req QuoteRequest) (*Quote, erro
 		ServedGroupID:       pg.ID,
 		UserID:              req.UserID,
 		At:                  at,
-		Access:              QuoteAccess{OK: true},
+		Access:              q.quoteAccess(ctx, policy, pg, model),
 		BillingMode:         string(resolved.Mode),
 		GroupMultiplier:     pg.RateMultiplier,
-		EffectiveMultiplier: rateMultiplier,
+		EffectiveMultiplier: effectiveMultiplier,
 		ImageMultiplier:     imageMultiplier,
 		quoter:              q,
+		extra:               extra,
 		resolved:            resolved,
 		serviceTier:         tier,
 		pricingGroupID:      pg.ID,
@@ -343,6 +397,10 @@ func (q *PriceQuoter) Quote(ctx context.Context, req QuoteRequest) (*Quote, erro
 	if req.UserID > 0 && rateMultiplier != pg.RateMultiplier {
 		userMultiplier := rateMultiplier
 		quote.UserMultiplier = &userMultiplier
+	}
+	if extra != 1 {
+		extraMultiplier := extra
+		quote.ExtraMultiplier = &extraMultiplier
 	}
 
 	// 选路：与两个网关一致。OpenAI 网关 token 请求一律走 CalculateCostUnified；
@@ -436,6 +494,46 @@ func (q *PriceQuoter) pricingGroup(ctx context.Context, req QuoteRequest) (*Grou
 		return served, nil
 	}
 	return home, nil
+}
+
+// quoteAccess 给出 Quote.Access：分组准入，再叠加目录状态（设计 3.2「准入」）。
+//
+// 分组准入镜像网关的两个检查点：
+//   - 计费来源是 upstream 的限制型分组（policy.UpstreamCheck 为真）：Quote 的输入是计费模型，这时它就是账号映射之后的
+//     上游模型，网关对它做的是 UpstreamAccess（调度循环里逐账号），不是请求模型的 ModelAccess。目录状态不拦上游模型：
+//     上游模型名不对用户开放，新模型上线前账号可以先映射过去。
+//   - 其余分组：网关调度前对计费模型做 ModelAccess（checkChannelPricingRestriction），这里同样。
+//
+// UpstreamCheck 返回错误（缓存加载失败）时按「不需要检查」处理，与网关的 needsUpstreamChannelRestrictionCheck 一致。
+// 没有策略（没有渠道服务）时放行。ModelAccess 与 UpstreamAccess 的查找规则（含对空白与大小写的处理）由策略负责，
+// 与 checkRestricted 一致，这里不另加一层。
+func (q *PriceQuoter) quoteAccess(ctx context.Context, policy GroupPolicy, pg *Group, model string) QuoteAccess {
+	if policy == nil {
+		return QuoteAccess{OK: true}
+	}
+	if required, err := policy.UpstreamCheck(ctx, pg.ID); err == nil && required {
+		return policy.UpstreamAccess(ctx, pg.ID, model)
+	}
+	if access := policy.ModelAccess(ctx, pg.ID, model); !access.OK {
+		return access
+	}
+	return q.catalogAccess(ctx, policy, pg, model)
+}
+
+// catalogAccess 叠加模型目录状态：目录里显式为 draft 或 retired 才拦，未登记视同 active（Q2）。
+// 只对 shadow、v2 阶段的分组生效，因为 legacy 分组的运行时准入不读目录；没有接目录（SetModelCatalog）时放行。
+// 目录读取失败时放行并记 Warn：Access 是展示与校验用的，读不到目录不能把一个可用的模型报成不可用。
+func (q *PriceQuoter) catalogAccess(ctx context.Context, policy GroupPolicy, pg *Group, model string) QuoteAccess {
+	if q.catalog == nil || policy.Stage(ctx, pg.ID) == PricingStageLegacy {
+		return QuoteAccess{OK: true}
+	}
+	entry, err := q.catalog.Resolve(ctx, pg.Platform, normalizePricingEntryModel(model))
+	if err != nil {
+		slog.Warn("price quote: catalog lookup failed, treating the model as active",
+			"group_id", pg.ID, "platform", pg.Platform, "model", model, "error", err)
+		return QuoteAccess{OK: true}
+	}
+	return catalogEntryAccess(entry)
 }
 
 // fillTokenQuote 填 token 计费模式的报价。
@@ -616,10 +714,23 @@ func (q *PriceQuoter) fillImageRequestQuote(quote *Quote) {
 //   - 非 OpenAI 网关上无渠道定价的 DeepSeek：CalculateCostUnified 并传 PricingAt = Quote.At（叠加峰时倍率），
 //     Gemini 分组走 CalculateCostWithLongContextUnified（gateway_service.go calculateTokenCost）；
 //   - 其余：CalculateCostUnified。非 OpenAI 网关不传 ServiceTier（渠道价分支连 PricingAt 也不传，但渠道价不受计费时点影响）。
+//
+// 额外倍率已经乘进 EffectiveMultiplier 与 ImageMultiplier；返回的费用明细与网关一样带上这个标记
+// （withExtraMultiplier，extra 为 1 时原样返回），所以 Cost 与网关成本函数的返回值可以逐字段比较。
 func (qt *Quote) Cost(ctx context.Context, usage QuoteUsage) (*CostBreakdown, error) {
 	if qt == nil || qt.quoter == nil || qt.resolved == nil {
 		return nil, ErrPriceQuoterUnavailable
 	}
+	extra := qt.extra
+	if extra <= 0 {
+		extra = 1
+	}
+	cost, err := qt.cost(ctx, usage)
+	return withExtraMultiplier(cost, extra), err
+}
+
+// cost 是 Cost 去掉额外倍率标记的部分：按网关的分支选计费函数。
+func (qt *Quote) cost(ctx context.Context, usage QuoteUsage) (*CostBreakdown, error) {
 	billing := qt.quoter.billing
 	channelPriced := qt.resolved.Source == PricingSourceChannel
 	gid := qt.pricingGroupID
