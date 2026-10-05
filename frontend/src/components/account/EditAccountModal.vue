@@ -3413,7 +3413,8 @@ const addModelMapping = () => {
 
 const removeModelMapping = (index: number) => {
   // An identity would disable the fork's permissive rename-only policy.
-  const preserveSourceAdmission = !modelMappingAllowUnlisted.value || allowedModels.value.length > 0
+  const hasExplicitWhitelist = buildModelMappingObject('whitelist', allowedModels.value, []) !== null
+  const preserveSourceAdmission = !modelMappingAllowUnlisted.value || hasExplicitWhitelist
   removeModelMappingEntry(modelMappings.value, index, allowedModels.value, preserveSourceAdmission)
 }
 

@@ -66,6 +66,7 @@ vi.mock('vue-i18n', async () => {
 })
 
 import EditAccountModal from '../EditAccountModal.vue'
+import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
 
 const BaseDialogStub = defineComponent({
   name: 'BaseDialog',
@@ -213,7 +214,7 @@ function buildAntigravityAccount(projectId = 'configured-project') {
   } as any
 }
 
-function mountModal(account = buildAccount(), renderGroupSelector = false) {
+function mountModal(account = buildAccount(), renderGroupSelector = false, renderModelWhitelist = false) {
   return mount(EditAccountModal, {
     props: {
       show: true,
@@ -228,7 +229,7 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
         Icon: true,
         ProxySelector: true,
         GroupSelector: !renderGroupSelector,
-        ModelWhitelistSelector: ModelWhitelistSelectorStub
+        ModelWhitelistSelector: renderModelWhitelist ? false : ModelWhitelistSelectorStub
       }
     }
   })
@@ -344,6 +345,35 @@ describe('EditAccountModal', () => {
   afterEach(() => {
     authState.isSimpleMode = true
   })
+
+  for (const custom of ['claude-*', 'valid-custom']) {
+    it(`uses actual saved whitelist validity for a permissive account with ${custom} draft`, async () => {
+      const account = buildAccount()
+      account.credentials = { api_key: 'sk-test', model_mapping: { alias: 'gpt-6' }, model_mapping_allow_unlisted: true }
+      updateAccountMock.mockReset()
+      showErrorMock.mockReset()
+      checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+      updateAccountMock.mockResolvedValue(account)
+      const wrapper = mountModal(account, false, true)
+      await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelWhitelist')!.trigger('click')
+      const selector = wrapper.getComponent(ModelWhitelistSelector)
+      await selector.get('input[placeholder="admin.accounts.enterCustomModelName"]').setValue(custom)
+      await selector.findAll('button').find(button => button.text() === 'admin.accounts.addModel')!.trigger('click')
+      expect(selector.props('modelValue')).toEqual([custom])
+      await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelMapping')!.trigger('click')
+      const row = wrapper.get('input[placeholder="admin.accounts.requestModel"]').element.parentElement!
+      await wrapper.findAll('button').find(button => button.element.parentElement === row)!.trigger('click')
+      await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+      expect(updateAccountMock).toHaveBeenCalledTimes(1)
+      const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+      expect(credentials.model_mapping).toEqual(custom === 'claude-*' ? undefined : { 'valid-custom': 'valid-custom', alias: 'alias' })
+      expect(credentials.model_mapping_allow_unlisted).toBe(true)
+      expect(showErrorMock).not.toHaveBeenCalled()
+      expect(account.credentials.model_mapping).toEqual({ alias: 'gpt-6' })
+      wrapper.unmount()
+    })
+  }
 
   for (const scenario of [
     { label: 'mixed whitelist and rewrites', mapping: { alias: 'gpt-6', stable: 'stable' }, permissive: false, expected: { alias: 'alias', stable: 'stable' } },
