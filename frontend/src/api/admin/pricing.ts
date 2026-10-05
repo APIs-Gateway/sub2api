@@ -59,6 +59,9 @@ export interface QuoteBatchCell {
   final_per_mtok?: QuoteUnitPrices
   /** 按次计费的用户实付单价（美元 / 次，已乘倍率） */
   per_request_price?: number
+  /** 按次计费没有主价、只有区间价时，区间价（已乘倍率）的最小 / 最大值；此时没有 per_request_price */
+  per_request_min?: number
+  per_request_max?: number
 }
 
 export interface QuoteBatchResult {

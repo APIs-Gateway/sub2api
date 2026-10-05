@@ -72,6 +72,7 @@
         <span class="flex items-center gap-1.5"><CellFace :view="legend.unpriced" variant="chip" />{{ t('admin.pricingConfig.matrix.legendUnpriced') }}</span>
         <span class="flex items-center gap-1.5"><CellFace :view="legend.closed" variant="chip" />{{ t('admin.pricingConfig.matrix.legendClosed') }}</span>
         <span class="flex items-center gap-1.5"><Icon name="lock" size="xs" />{{ t('admin.pricingConfig.matrix.legendUnswitched') }}</span>
+        <span class="flex items-center gap-1.5" data-test="legend-paid">{{ t('admin.pricingConfig.matrix.legendPaid') }}</span>
       </div>
 
       <div v-if="state.error && !state.loaded" class="card py-16 text-center" data-test="load-error">
@@ -239,7 +240,7 @@ function trimNum(n: number): string {
 }
 
 // 图例用的示例格子
-const sample = { unswitched: false, usd: null, perRequestUsd: null, extra: null, reason: null }
+const sample = { unswitched: false, usd: null, perRequestUsd: null, perRequestRange: null, extra: null, reason: null }
 const legend: Record<'open' | 'extra' | 'custom' | 'unpriced' | 'closed', CellView> = {
   open: { ...sample, kind: 'open' },
   extra: { ...sample, kind: 'extra', extra: 1.2 },

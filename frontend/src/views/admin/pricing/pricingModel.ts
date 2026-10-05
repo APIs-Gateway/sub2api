@@ -146,6 +146,8 @@ export interface CellView {
   usd: { input: number; output: number } | null
   /** 按次计费的用户实付单价（美元 / 次） */
   perRequestUsd: number | null
+  /** 按次计费只有区间价时的价格范围（美元 / 次） */
+  perRequestRange: { min: number; max: number } | null
   extra: number | null
   /** 关闭原因：closed_in_group / not_in_allowlist / catalog_draft / catalog_retired */
   reason: string | null
@@ -157,17 +159,21 @@ export interface CellView {
  */
 export function cellView(quote: QuoteBatchCell | undefined, group: PricingGroup): CellView | null {
   if (!quote) return null
-  const base = { unswitched: isGroupUnswitched(group), usd: null, perRequestUsd: null, extra: null, reason: null }
+  const base = { unswitched: isGroupUnswitched(group), usd: null, perRequestUsd: null, perRequestRange: null, extra: null, reason: null }
   if (quote.error) return { ...base, kind: 'error' }
   if (!quote.access?.ok) return { ...base, kind: 'closed', reason: quote.access?.reason ?? null }
 
   const usd = quote.final_per_mtok ? { input: quote.final_per_mtok.input, output: quote.final_per_mtok.output } : null
   const perRequestUsd = typeof quote.per_request_price === 'number' ? quote.per_request_price : null
+  const perRequestRange =
+    typeof quote.per_request_min === 'number' && typeof quote.per_request_max === 'number'
+      ? { min: quote.per_request_min, max: quote.per_request_max }
+      : null
   const extra = typeof quote.extra_multiplier === 'number' && quote.extra_multiplier !== 1 ? quote.extra_multiplier : null
-  const priced = quote.priced && (usd !== null || perRequestUsd !== null)
-  const shown = { ...base, usd, perRequestUsd, extra }
+  const priced = quote.priced && (usd !== null || perRequestUsd !== null || perRequestRange !== null)
+  const shown = { ...base, usd, perRequestUsd, perRequestRange, extra }
 
-  if (!priced) return { ...shown, kind: 'unpriced', usd: null, perRequestUsd: null }
+  if (!priced) return { ...shown, kind: 'unpriced', usd: null, perRequestUsd: null, perRequestRange: null }
   if (quote.source === 'channel') return { ...shown, kind: 'custom' }
   if (extra !== null) return { ...shown, kind: 'extra' }
   return { ...shown, kind: 'open' }

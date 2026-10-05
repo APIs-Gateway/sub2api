@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"strings"
 
@@ -37,6 +38,10 @@ type quoteBatchCell struct {
 	FinalPerMTok *service.QuoteUnitPrices `json:"final_per_mtok,omitempty"`
 	// PerRequestPrice 是按次计费的用户实付单价（USD / 次，已乘倍率）。
 	PerRequestPrice *float64 `json:"per_request_price,omitempty"`
+	// PerRequestMin / PerRequestMax：按次计费没有主价、只有区间价时，给出区间价（已乘倍率）的最小与最大值，
+	// 此时不返回 PerRequestPrice（否则会被当成 0 元）。
+	PerRequestMin *float64 `json:"per_request_min,omitempty"`
+	PerRequestMax *float64 `json:"per_request_max,omitempty"`
 }
 
 // QuoteBatch 一次返回多个「模型 × 分组」的精简报价，外加每个模型的官方参考价。
@@ -96,8 +101,20 @@ func (h *PricingQuoteHandler) quoteBatchCell(ctx context.Context, groupID int64,
 		cell.FinalPerMTok = &perMTok
 	}
 	if quote.PerRequest != nil && quote.Priced {
-		price := quote.PerRequest.DefaultPrice * quote.EffectiveMultiplier
-		cell.PerRequestPrice = &price
+		if quote.PerRequest.DefaultPrice == 0 && len(quote.PerRequest.Tiers) > 0 {
+			lo, hi := quote.PerRequest.Tiers[0].Price, quote.PerRequest.Tiers[0].Price
+			for _, tier := range quote.PerRequest.Tiers[1:] {
+				lo = math.Min(lo, tier.Price)
+				hi = math.Max(hi, tier.Price)
+			}
+			lo *= quote.EffectiveMultiplier
+			hi *= quote.EffectiveMultiplier
+			cell.PerRequestMin = &lo
+			cell.PerRequestMax = &hi
+		} else {
+			price := quote.PerRequest.DefaultPrice * quote.EffectiveMultiplier
+			cell.PerRequestPrice = &price
+		}
 	}
 	return cell
 }

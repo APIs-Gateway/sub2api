@@ -68,6 +68,27 @@ function priceText(v: CellView): { line: string; exact: string } | null {
       exact: t('admin.pricingConfig.cell.tipPerRequest', { price: exact.sub ?? exact.main })
     }
   }
+  if (v.perRequestRange !== null) {
+    const { min, max } = v.perRequestRange
+    // 区间只有一个价时按单价显示
+    if (min === max) {
+      return {
+        line: t('admin.pricingConfig.cell.perRequest', { price: paid(min).main }),
+        exact: t('admin.pricingConfig.cell.tipPerRequest', { price: paid(min, true).sub ?? paid(min, true).main })
+      }
+    }
+    const lo = paid(min)
+    const hi = paid(max)
+    const exactLo = paid(min, true)
+    const exactHi = paid(max, true)
+    return {
+      line: t('admin.pricingConfig.cell.perRequestRange', { min: lo.main, max: hi.main }),
+      exact: t('admin.pricingConfig.cell.tipPerRequestRange', {
+        min: exactLo.sub ?? exactLo.main,
+        max: exactHi.sub ?? exactHi.main
+      })
+    }
+  }
   return null
 }
 

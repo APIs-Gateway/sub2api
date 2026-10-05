@@ -136,6 +136,39 @@ func TestPricingQuoteBatch_PerRequestAndErrors(t *testing.T) {
 		require.NotContains(t, cell, "final_per_mtok")
 	})
 
+	t.Run("tiers only: no main price gives a min-max range instead of zero", func(t *testing.T) {
+		stub := &stubPriceQuoter{quote: &service.Quote{
+			Priced:              true,
+			EffectiveMultiplier: 2,
+			PerRequest: &service.QuotePerRequest{Tiers: []service.QuoteRequestTier{
+				{TierLabel: "1K", Price: 1.8},
+				{TierLabel: "2K", Price: 2.5},
+				{TierLabel: "4K", Price: 1.0},
+			}},
+		}}
+		rec, envelope := doPricingQuoteBatchRequest(t, stub, "group_ids=3&models=img")
+		require.Equal(t, http.StatusOK, rec.Code)
+		cell := envelope.Data["cells"].([]any)[0].(map[string]any)
+		require.NotContains(t, cell, "per_request_price")
+		require.Equal(t, 2.0, cell["per_request_min"])
+		require.Equal(t, 5.0, cell["per_request_max"])
+	})
+
+	t.Run("main price wins over tiers", func(t *testing.T) {
+		stub := &stubPriceQuoter{quote: &service.Quote{
+			Priced:              true,
+			EffectiveMultiplier: 1,
+			PerRequest: &service.QuotePerRequest{
+				DefaultPrice: 0.05,
+				Tiers:        []service.QuoteRequestTier{{TierLabel: "1K", Price: 1.8}},
+			},
+		}}
+		_, envelope := doPricingQuoteBatchRequest(t, stub, "group_ids=3&models=img")
+		cell := envelope.Data["cells"].([]any)[0].(map[string]any)
+		require.Equal(t, 0.05, cell["per_request_price"])
+		require.NotContains(t, cell, "per_request_min")
+	})
+
 	t.Run("quote error becomes a cell error", func(t *testing.T) {
 		stub := &stubPriceQuoter{err: service.ErrGroupNotFound}
 		rec, envelope := doPricingQuoteBatchRequest(t, stub, "group_ids=3&models=a")

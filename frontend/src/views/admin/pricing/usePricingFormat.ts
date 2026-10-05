@@ -31,7 +31,8 @@ export function usePricingFormat() {
     const dollars = formatUsd(usd, UNIT)
     if (!isFiat.value) return { main: dollars, sub: null }
     const fiat = formatOfficial(usd, UNIT)
-    return fiat === null ? { main: dollars, sub: null } : { main: fiat, sub: dollars }
+    // 退回美元时带 US 前缀，免得和同页格子里的 ¥ 看成同一种单位
+    return fiat === null ? { main: `US${dollars}`, sub: null } : { main: fiat, sub: dollars }
   }
 
   return { isFiat, paid, official }

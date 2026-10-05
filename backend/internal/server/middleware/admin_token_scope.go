@@ -253,6 +253,8 @@ var adminReviewedReadRules = []AdminRouteRule{
 	{http.MethodGet, "/usage/search-api-keys", "id and name only; never the key"},
 	{http.MethodGet, "/redeem-codes/stats", "counters only"},
 	{http.MethodGet, "/api-keys/:id/fallback-chain", "group ids, notes and dry-run only; never the key"},
+	{http.MethodGet, "/pricing/quote", "read-only price quote; no secrets"},
+	{http.MethodGet, "/pricing/quote-batch", "read-only batch price quotes and official reference prices; no secrets"},
 }
 
 // adminDangerRouteSet is the lookup form of adminDangerRules. The reviewed

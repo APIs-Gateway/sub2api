@@ -67,6 +67,11 @@ describe('cellView', () => {
     expect(view).toMatchObject({ kind: 'open', usd: null, perRequestUsd: 0.5 })
   })
 
+  it('按次计费只有区间价：取范围，不当成 0 元', () => {
+    const view = cellView(quote({ final_per_mtok: undefined, per_request_min: 3.6, per_request_max: 5 }), legacyGroup)
+    expect(view).toMatchObject({ kind: 'open', perRequestUsd: null, perRequestRange: { min: 3.6, max: 5 } })
+  })
+
   it('关闭：保留原因，不算开放', () => {
     const view = cellView(quote({ access: { ok: false, reason: 'not_in_allowlist' } }), legacyGroup)
     expect(view).toMatchObject({ kind: 'closed', reason: 'not_in_allowlist', usd: null })
