@@ -2463,6 +2463,7 @@ type oauthPendingFlowTestHandlerOptions struct {
 	affiliateService   *service.AffiliateService
 	affiliateFactory   func(*dbent.Client, *service.SettingService) *service.AffiliateService
 	totpCache          service.TotpCache
+	refreshTokenCache  service.RefreshTokenCache
 	totpEncryptor      service.SecretEncryptor
 	userRepoOptions    oauthPendingFlowUserRepoOptions
 }
@@ -2563,11 +2564,15 @@ CREATE TABLE IF NOT EXISTS user_affiliates (
 			},
 		}, options.emailCache)
 	}
+	refreshTokenCache := options.refreshTokenCache
+	if refreshTokenCache == nil {
+		refreshTokenCache = &oauthPendingFlowRefreshTokenCacheStub{}
+	}
 	authSvc := service.NewAuthService(
 		client,
 		userRepo,
 		redeemRepo,
-		&oauthPendingFlowRefreshTokenCacheStub{},
+		refreshTokenCache,
 		cfg,
 		settingSvc,
 		emailService,
@@ -3485,6 +3490,15 @@ func (s *oauthPendingFlowTotpCacheStub) SetLoginSession(_ context.Context, tempT
 func (s *oauthPendingFlowTotpCacheStub) DeleteLoginSession(_ context.Context, tempToken string) error {
 	delete(s.loginSessions, tempToken)
 	return nil
+}
+
+func (s *oauthPendingFlowTotpCacheStub) ConsumeLoginSession(ctx context.Context, tempToken string) (*service.TotpLoginSession, error) {
+	session, err := s.GetLoginSession(ctx, tempToken)
+	if err != nil {
+		return nil, err
+	}
+	delete(s.loginSessions, tempToken)
+	return session, nil
 }
 
 func (s *oauthPendingFlowTotpCacheStub) IncrementVerifyAttempts(_ context.Context, userID int64) (int, error) {

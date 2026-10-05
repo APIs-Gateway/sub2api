@@ -19,6 +19,14 @@ const (
 	totpAttemptsTTL       = 15 * time.Minute
 )
 
+var consumeTotpLoginSessionScript = redis.NewScript(`
+local value = redis.call("GET", KEYS[1])
+if value then
+  redis.call("DEL", KEYS[1])
+end
+return value
+`)
+
 // TotpCache implements service.TotpCache using Redis
 type TotpCache struct {
 	rdb *redis.Client
@@ -101,6 +109,26 @@ func (c *TotpCache) SetLoginSession(ctx context.Context, tempToken string, sessi
 	}
 
 	return nil
+}
+
+// ConsumeLoginSession returns and deletes a session as one Redis operation.
+func (c *TotpCache) ConsumeLoginSession(ctx context.Context, tempToken string) (*service.TotpLoginSession, error) {
+	result, err := consumeTotpLoginSessionScript.Run(ctx, c.rdb, []string{totpLoginKeyPrefix + tempToken}).Result()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("consume login session: %w", err)
+	}
+	data, ok := result.(string)
+	if !ok {
+		return nil, fmt.Errorf("consume login session: unexpected redis result type %T", result)
+	}
+	var session service.TotpLoginSession
+	if err := json.Unmarshal([]byte(data), &session); err != nil {
+		return nil, fmt.Errorf("unmarshal consumed login session: %w", err)
+	}
+	return &session, nil
 }
 
 // DeleteLoginSession deletes a TOTP login session

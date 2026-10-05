@@ -34,6 +34,7 @@ type TotpCache interface {
 
 	// Login session methods (for 2FA login flow)
 	GetLoginSession(ctx context.Context, tempToken string) (*TotpLoginSession, error)
+	ConsumeLoginSession(ctx context.Context, tempToken string) (*TotpLoginSession, error)
 	SetLoginSession(ctx context.Context, tempToken string, session *TotpLoginSession, ttl time.Duration) error
 	DeleteLoginSession(ctx context.Context, tempToken string) error
 
@@ -465,6 +466,11 @@ func (s *TotpService) createLoginSession(
 // GetLoginSession retrieves a login session
 func (s *TotpService) GetLoginSession(ctx context.Context, tempToken string) (*TotpLoginSession, error) {
 	return s.cache.GetLoginSession(ctx, tempToken)
+}
+
+// ConsumeLoginSession atomically claims a verified login session before side effects.
+func (s *TotpService) ConsumeLoginSession(ctx context.Context, tempToken string) (*TotpLoginSession, error) {
+	return s.cache.ConsumeLoginSession(ctx, tempToken)
 }
 
 // DeleteLoginSession deletes a login session
