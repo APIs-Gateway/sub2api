@@ -275,3 +275,15 @@ func TestWSImageInputEstimate_CurrentWireModelDeterminesGeneration(t *testing.T)
 		})
 	}
 }
+
+func TestWSImageInputLineageProviderCounterCannotOverflowToFree(t *testing.T) {
+	state := &openAIWSImageInputEstimates{}
+	maxInt := int(^uint(0) >> 1)
+	state.prepare(1, []byte(`{"input":"text"}`))
+	state.complete(1, "large_counter", maxInt)
+	body := []byte(`{"previous_response_id":"large_counter","input":"text"}`)
+	require.Equal(t, maxInt, state.prepare(2, body))
+	state.complete(2, "next_large_counter", 0)
+	require.Equal(t, maxInt, state.prepare(3, []byte(`{"previous_response_id":"next_large_counter","input":"text"}`)))
+	require.Zero(t, state.prepare(4, []byte(`{"previous_response_id":null,"input":"new text chain"}`)))
+}

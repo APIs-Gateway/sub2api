@@ -71,7 +71,14 @@ func (s *openAIWSImageInputEstimates) prepare(turn int, body []byte) int {
 	}
 	estimate := 0
 	if potential {
-		estimate = inherited + budget
+		// Provider counters may reach the integer limit. Overflow must not
+		// turn a known paid image lineage into a negative/free estimate.
+		maxInt := int(^uint(0) >> 1)
+		if inherited > maxInt-budget {
+			estimate = maxInt
+		} else {
+			estimate = inherited + budget
+		}
 	}
 	if s.pending == nil {
 		s.pending = make(map[int]int)
