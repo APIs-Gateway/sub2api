@@ -3,6 +3,7 @@
 package service
 
 import (
+	"context"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -51,4 +52,10 @@ func TestRefundSubscriptionAdjustmentSnapshotAuditActionsFitSchema(t *testing.T)
 		require.NotEqual(t, action, refundSubscriptionAuditAction(prefix, uuid.NewString()))
 	}
 	require.Empty(t, refundSubscriptionAuditAction("REFUND_SUB_DEDUCT_", "invalid"))
+}
+
+func TestRefundSubscriptionAdjustmentSnapshotUnavailableService(t *testing.T) {
+	s := &PaymentService{}
+	require.ErrorContains(t, s.deductRefundSubscription(context.Background(), &RefundPlan{}, nil), "subscription service unavailable")
+	require.ErrorContains(t, s.validateRefundSubscriptionAdjustment(context.Background(), 1, refundPendingAuditDetail{SubscriptionAdjustmentID: -1}), "invalid refund subscription adjustment reference")
 }

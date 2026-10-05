@@ -404,7 +404,7 @@ func TestRefundSubscriptionAdjustmentPG_FinalRecoveryAuditFailureKeepsPending(t 
 }
 
 func TestRefundSubscriptionAdjustmentPG_InvalidReferenceStopsBeforeProvider(t *testing.T) {
-	for _, invalid := range []string{"zero", "negative", "missing", "other order", "other card"} {
+	for _, invalid := range []string{"zero", "negative", "missing", "other order", "other card", "malformed audit", "noncanonical audit", "invalid interval", "wrong deduction type"} {
 		t.Run(invalid, func(t *testing.T) {
 			ctx := context.Background()
 			c, s, p, provider := refundAdjustmentFixture(t, 40)
@@ -428,7 +428,7 @@ func TestRefundSubscriptionAdjustmentPG_InvalidReferenceStopsBeforeProvider(t *t
 				id = 0
 			case "negative":
 				id = -1
-			case "other order", "other card":
+			case "other order", "other card", "malformed audit", "noncanonical audit", "invalid interval", "wrong deduction type":
 				original, err := c.PaymentAuditLog.Query().Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(p.OrderID, 10)), paymentauditlog.ActionHasPrefix("REFUND_SUB_DEDUCT_")).Only(ctx)
 				require.NoError(t, err)
 				var adjustment map[string]json.RawMessage
@@ -441,8 +441,18 @@ func TestRefundSubscriptionAdjustmentPG_InvalidReferenceStopsBeforeProvider(t *t
 				orderID := strconv.FormatInt(p.OrderID, 10)
 				if invalid == "other order" {
 					orderID = strconv.FormatInt(p.OrderID+1, 10)
-				} else {
+				} else if invalid == "other card" {
 					detail = strings.Replace(detail, `"subscriptionID":`+strconv.FormatInt(p.SubscriptionID, 10), `"subscriptionID":`+strconv.FormatInt(p.SubscriptionID+1, 10), 1)
+				}
+				switch invalid {
+				case "malformed audit":
+					detail = "{invalid"
+				case "noncanonical audit":
+					detail = strings.TrimSuffix(detail, "}") + `,"unknown":true}`
+				case "invalid interval":
+					detail = strings.Replace(detail, `"removedDays":30`, `"removedDays":31`, 1)
+				case "wrong deduction type":
+					snapshot["deductionType"] = json.RawMessage(`"balance"`)
 				}
 				bad, err := c.PaymentAuditLog.Create().SetOrderID(orderID).SetAction("REFUND_SUB_DEDUCT_" + base64.RawURLEncoding.EncodeToString(ownerID[:])).SetOperator("admin").SetDetail(detail).Save(ctx)
 				require.NoError(t, err)
