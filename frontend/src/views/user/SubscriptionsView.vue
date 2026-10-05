@@ -69,12 +69,23 @@
               @saved="loadSubscriptions"
             />
           </div>
-          <p
+          <!-- 只剩已过期 / 已撤销的订阅时到不了上面的空态，购买入口就放在这里（同样只在支付开启时出现）。 -->
+          <div
             v-else
-            class="rounded-md border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400"
+            class="rounded-md border border-dashed border-gray-200 px-4 py-6 text-center dark:border-dark-700"
           >
-            {{ t('userSubscriptions.noActiveNow') }}
-          </p>
+            <p class="text-sm text-gray-500 dark:text-gray-400">
+              {{ t('userSubscriptions.noActiveNow') }}
+            </p>
+            <RouterLink
+              v-if="paymentEnabled"
+              to="/purchase?tab=subscription"
+              class="btn btn-primary btn-sm mt-3"
+              data-testid="subscriptions-ended-purchase"
+            >
+              {{ t('subscriptionPurchase.title') }}
+            </RouterLink>
+          </div>
         </section>
 
         <!-- 已结束（已过期 / 已撤销）：默认折叠 -->

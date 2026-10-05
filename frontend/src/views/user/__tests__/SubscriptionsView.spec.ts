@@ -108,3 +108,64 @@ describe('SubscriptionsView empty state', () => {
     expect(wrapper.text()).not.toContain('userSubscriptions.noActiveSubscriptions')
   })
 })
+
+// 只剩已过期 / 已撤销订阅的用户到不了上面的空态（subscriptions.length 不为 0），
+// 「生效中」下面那条虚线提示就是他们看到的全部，购买入口要放在这里。
+describe('SubscriptionsView 只剩已结束订阅时的购买入口', () => {
+  const endedOnly = [
+    { id: 3, status: 'expired', expires_at: '2026-09-01T00:00:00Z', group: null },
+    { id: 4, status: 'revoked', expires_at: '2026-08-01T00:00:00Z', group: null },
+  ]
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    getMySubscriptions.mockReset().mockResolvedValue(endedOnly)
+    getCheckoutInfo.mockReset().mockResolvedValue({ data: { methods: {}, subscription_payment_multiplier: 1 } })
+  })
+
+  it('支付开启时，在「当前没有生效中的订阅」下给出购买订阅入口', async () => {
+    setPublicSettings({ payment_enabled: true })
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('userSubscriptions.noActiveNow')
+    const purchase = wrapper.get('[data-testid="subscriptions-ended-purchase"]')
+    expect(purchase.attributes('href')).toBe('/purchase?tab=subscription')
+    expect(purchase.text()).toBe('subscriptionPurchase.title')
+    expect(purchase.classes()).toContain('btn-primary')
+    // 从没有订阅的那套空态不出现，已结束的历史仍然照常展示。
+    expect(wrapper.find('[data-testid="subscriptions-empty-purchase"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('userSubscriptions.sectionEnded')
+  })
+
+  it('设置还没加载时也给入口（与侧栏同一口径）', async () => {
+    setPublicSettings(null)
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="subscriptions-ended-purchase"]').exists()).toBe(true)
+  })
+
+  it('支付关闭时不出现购买入口', async () => {
+    setPublicSettings({ payment_enabled: false })
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('userSubscriptions.noActiveNow')
+    expect(wrapper.find('[data-testid="subscriptions-ended-purchase"]').exists()).toBe(false)
+    expect(wrapper.find('a[href^="/purchase"]').exists()).toBe(false)
+  })
+
+  it('有生效中的订阅时不显示这条提示，也就没有这个入口', async () => {
+    setPublicSettings({ payment_enabled: true })
+    getMySubscriptions.mockResolvedValue([
+      { id: 1, status: 'active', expires_at: null, group: null },
+      ...endedOnly,
+    ])
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('userSubscriptions.noActiveNow')
+    expect(wrapper.find('[data-testid="subscriptions-ended-purchase"]').exists()).toBe(false)
+  })
+})

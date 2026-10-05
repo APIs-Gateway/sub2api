@@ -36,11 +36,12 @@
       />
 
       <!-- 有生效订阅：订阅还剩多少。余额为 0 对订阅用户是常态，所以这里不做任何告警样式。
-           屏幕高度不到 700px 时收起这一行，把空间还给导航（顶栏的订阅进度仍在） -->
+           窗口高度不到 960px 时收起这一行，把空间还给导航：实测带这一行时窗口要约 954px 高才放得下
+           全部菜单项，再矮最后一项（个人资料）会被卡片挤出可视区（顶栏的订阅进度仍在） -->
       <router-link
         v-if="user && hasSubscription"
         to="/subscriptions"
-        class="group mt-3 block rounded-sm border-t [@media(max-height:700px)]:hidden border-gray-200 pt-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900/15 dark:border-dark-700 dark:focus-visible:ring-white/20"
+        class="group mt-3 block rounded-sm border-t [@media(max-height:960px)]:hidden border-gray-200 pt-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900/15 dark:border-dark-700 dark:focus-visible:ring-white/20"
         data-testid="balance-card-subscription"
         @click="onNavigate"
       >

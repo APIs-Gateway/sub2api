@@ -433,7 +433,7 @@
     github: 'GitHub',
     mySubscriptions: 'My Subscriptions',
     supportQqGroup: 'Support QQ Group',
-    buySubscription: 'Recharge / Subscription',
+    buySubscription: 'Top Up / Subscription',
     docs: 'Docs',
     myOrders: 'My Orders',
     orderManagement: 'Orders',
@@ -8053,16 +8053,16 @@
     retry: 'Retry'
   },
 
-  // Recharge / Subscription Page
+  // Top Up / Subscription Page
   purchase: {
-    title: 'Recharge / Subscription',
+    title: 'Top Up / Subscription',
     description: '',
     openInNewTab: 'Open in new tab',
     notEnabledTitle: 'Feature not enabled',
-    notEnabledDesc: 'The administrator has not enabled the recharge/subscription entry. Please contact admin.',
-    notConfiguredTitle: 'Recharge / Subscription URL not configured',
+    notEnabledDesc: 'The administrator has not enabled the top-up/subscription entry. Please contact admin.',
+    notConfiguredTitle: 'Top Up / Subscription URL not configured',
     notConfiguredDesc:
-      'The administrator enabled the entry but has not configured a recharge/subscription URL. Please contact admin.'
+      'The administrator enabled the entry but has not configured a top-up/subscription URL. Please contact admin.'
   },
 
   // Custom Page (iframe embed)
@@ -8359,7 +8359,7 @@
 
   // Payment System
   payment: {
-    title: 'Recharge / Subscription',
+    title: 'Top Up / Subscription',
     amountLabel: 'Amount',
     paymentAmount: 'Payment Amount',
     paymentAmountWithCurrency: 'Payment Amount ({currency})',
@@ -8452,12 +8452,12 @@
       processing: 'Payment Processing',
       processingHint: 'Payment confirmation is still pending. This page will refresh automatically.',
       failed: 'Payment Failed',
-      backToRecharge: 'Back to Recharge',
+      backToRecharge: 'Back to Top Up',
       viewOrders: 'View Orders',
     },
     currentBalance: 'Current Balance',
     groupFallback: 'Group #{id}',
-    rechargeAccount: 'Recharge Account',
+    rechargeAccount: 'Top-up Account',
     activeSubscription: 'Active Subscription',
     noActiveSubscription: 'No active subscription',
     tabTopUp: 'Top Up',

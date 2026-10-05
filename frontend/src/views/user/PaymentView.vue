@@ -10,7 +10,7 @@
           <button v-for="tab in tabs" :key="tab.key"
             class="flex-1 rounded-md px-4 py-2.5 text-sm font-medium transition-colors"
             :class="activeTab === tab.key ? 'bg-white text-gray-900 dark:bg-dark-700 dark:text-white' : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'"
-            @click="activeTab = tab.key">{{ tab.label }}</button>
+            @click="selectTab(tab.key)">{{ tab.label }}</button>
         </div>
         <!-- Payment in progress (shared by recharge and subscription) -->
         <template v-if="paymentPhase === 'paying'">
@@ -598,6 +598,27 @@ const tabs = computed(() => {
   result.push({ key: 'subscription', label: t('payment.tabSubscribe') })
   if (!checkout.value.balance_disabled) result.push({ key: 'recharge', label: t('payment.tabTopUp') })
   return result
+})
+
+// 标签和地址栏的 ?tab= 保持同步。
+// - 人已经在购买页时，侧栏余额卡、低余额横幅的「充值」只是把 query 换成 tab=recharge：路由没变、
+//   组件不会重建，onMounted 不会再跑，所以要在这里跟着 query 切标签。
+// - 手动点标签条时把 tab 写回地址栏；否则地址栏停在旧值，再点「充值」就是同一个地址，什么都不会发生。
+function selectTab(key: 'recharge' | 'subscription') {
+  activeTab.value = key
+  if (route.query.tab !== key) {
+    void router.replace({ path: route.path, query: { tab: key } })
+  }
+}
+
+watch(() => route.query.tab, (tab) => {
+  if (tab === 'recharge' && !checkout.value.balance_disabled) {
+    // 订阅确认页挂着时标签条是隐藏的，不清掉会停在一个没有标签条的充值页。
+    selectedPlan.value = null
+    activeTab.value = 'recharge'
+  } else if (tab === 'subscription') {
+    activeTab.value = 'subscription'
+  }
 })
 
 const visibleMethods = computed(() => getVisibleMethods(checkout.value.methods))
