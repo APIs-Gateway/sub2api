@@ -61,7 +61,10 @@ func ResponsesInputTokensModel(body []byte) (string, error) {
 	return model, nil
 }
 
-func decodeResponsesInputTokensObject(body []byte) (map[string]json.RawMessage, error) {
+func decodeResponsesInputTokensObject(body []byte, canonicalFields ...string) (map[string]json.RawMessage, error) {
+	if len(canonicalFields) == 0 {
+		canonicalFields = []string{"model", "instructions", "input", "tools", "tool_choice", "text", "conversation", "previous_response_id", "object", "input_tokens"}
+	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	token, err := decoder.Token()
 	if err != nil || token != json.Delim('{') {
@@ -80,9 +83,8 @@ func decodeResponsesInputTokensObject(body []byte) (map[string]json.RawMessage, 
 		// encoding/json accepts case-insensitive struct field names, while
 		// policy inspection and the upstream API use the canonical JSON keys.
 		// Reject aliases that could change a value after it was audited.
-		switch strings.ToLower(name) {
-		case "model", "instructions", "input", "tools", "tool_choice", "text", "conversation", "previous_response_id", "object", "input_tokens":
-			if name != strings.ToLower(name) {
+		for _, canonical := range canonicalFields {
+			if strings.EqualFold(name, canonical) && name != canonical {
 				return nil, errors.New("input_tokens: noncanonical field name")
 			}
 		}
@@ -317,20 +319,21 @@ func estimateResponsesInputTokens(req openAIInputTokensRequest) (int, error) {
 			return 0, err
 		}
 	} else {
-		var items []map[string]json.RawMessage
+		var items []json.RawMessage
 		if err := json.Unmarshal(req.Input, &items); err != nil {
 			return 0, fmt.Errorf("input_tokens: invalid input: %w", err)
 		}
-		for _, item := range items {
+		for _, rawItem := range items {
+			item, err := decodeResponsesInputTokensObject(rawItem, "type", "role", "content", "name", "arguments", "output", "call_id", "id")
+			if err != nil {
+				return 0, err
+			}
 			readString := func(name string) string { var v string; _ = json.Unmarshal(item[name], &v); return v }
 			kind := readString("type")
 			switch kind {
 			case "", "message", "function_call", "function_call_output":
 			default:
 				return 0, fmt.Errorf("input_tokens: cannot estimate input type %q", kind)
-			}
-			if item == nil {
-				return 0, errors.New("input_tokens: null input item")
 			}
 			hasNonNullField := func(name string) bool {
 				return len(item[name]) > 0 && !bytes.Equal(bytes.TrimSpace(item[name]), []byte("null"))
@@ -373,30 +376,34 @@ func estimateResponsesInputTokens(req openAIInputTokensRequest) (int, error) {
 				}
 				continue
 			}
-			var parts []struct {
-				Type string  `json:"type"`
-				Text *string `json:"text"`
-			}
+			var parts []json.RawMessage
 			if err := json.Unmarshal(content, &parts); err != nil {
 				return 0, err
 			}
-			for _, part := range parts {
-				if part.Text == nil || (part.Type != "input_text" && part.Type != "output_text" && part.Type != "text") {
+			for _, rawPart := range parts {
+				part, err := decodeResponsesInputTokensObject(rawPart, "type", "text")
+				if err != nil {
+					return 0, err
+				}
+				var kind string
+				var text *string
+				if json.Unmarshal(part["type"], &kind) != nil || json.Unmarshal(part["text"], &text) != nil || text == nil || (kind != "input_text" && kind != "output_text" && kind != "text") {
 					return 0, errors.New("input_tokens: media requires native counting")
 				}
 				total++
-				if err := add(*part.Text); err != nil {
+				if err := add(*text); err != nil {
 					return 0, err
 				}
 			}
 		}
 	}
 	for _, tool := range req.Tools {
-		var descriptor struct {
-			Type string `json:"type"`
-			Name string `json:"name"`
+		descriptor, err := decodeResponsesInputTokensObject(tool, "type", "name")
+		if err != nil {
+			return 0, err
 		}
-		if err := json.Unmarshal(tool, &descriptor); err != nil || descriptor.Type != "function" || strings.TrimSpace(descriptor.Name) == "" {
+		var kind, name string
+		if json.Unmarshal(descriptor["type"], &kind) != nil || json.Unmarshal(descriptor["name"], &name) != nil || kind != "function" || strings.TrimSpace(name) == "" {
 			return 0, errors.New("input_tokens: hosted/custom tools require native counting")
 		}
 		if err := addJSON(tool); err != nil {
