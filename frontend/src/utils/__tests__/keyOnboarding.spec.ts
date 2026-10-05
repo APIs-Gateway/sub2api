@@ -4,12 +4,10 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import en from '@/i18n/locales/en'
 import {
   AI_CLIENTS,
   CODEX_MIN_NODE_MAJOR,
   aiClientsForPlatform,
-  buildAiPrompt,
   buildInstallScript,
   chatgptUrl,
   claudeUrl,
@@ -34,17 +32,6 @@ const hasPwsh = spawnSync('pwsh', ['-NoProfile', '-Command', '1']).status === 0
 // 带特殊字符的地址和密钥：引号、空格、$、反引号、反斜杠
 const NASTY_KEY = `sk-a'b"c $HOME \`x\` \\ d`
 const NASTY_BASE = `https://example.com/it's`
-
-function lookup(obj: unknown, path: string): string | undefined {
-  let cur = obj as Record<string, unknown> | string | undefined
-  for (const seg of path.split('.')) {
-    if (typeof cur !== 'object' || cur === null) return undefined
-    cur = cur[seg] as Record<string, unknown> | string | undefined
-  }
-  return typeof cur === 'string' ? cur : undefined
-}
-const enT = (key: string, params: Record<string, unknown> = {}) =>
-  (lookup(en, key) ?? key).replace(/\{(\w+)\}/g, (_, k) => String(params[k] ?? ''))
 
 describe('quoting', () => {
   it('shQuote 处理单引号', () => {
@@ -1094,97 +1081,7 @@ describe('交给 AI 的工具按分组过滤', () => {
   })
 })
 
-describe('交给 AI 的文本', () => {
-  const SECRET = 'sk-SECRET-1234567890abcdef'
-  const base = {
-    t: enT,
-    baseUrl: 'https://codex.hiyo.top/',
-    platform: 'openai',
-    siteName: 'Hiyo',
-    models: ['gpt-5.6-sol', 'gpt-5.6-luna'],
-    docUrl: 'https://docs.example.com'
-  }
-
-  it.each(AI_CLIENTS)('%s：简短版和详细版都不含密钥，且带地址', (client) => {
-    for (const detailed of [false, true]) {
-      const text = buildAiPrompt({ ...base, client, clientLabel: client, detailed })
-      expect(text).not.toContain(SECRET)
-      expect(text).not.toContain('sk-')
-      // Claude Code 用 API 根地址，其他工具在 openai 分组下用 /v1 地址
-      expect(text).toContain(client === 'claude' ? 'https://codex.hiyo.top' : 'https://codex.hiyo.top/v1')
-      expect(text).toContain('Hiyo')
-      expect(text).not.toMatch(/\{\w+\}/)
-    }
-  })
-
-  describe('地址、接口格式和要设置的变量互相对得上', () => {
-    const urlLine = (text: string) => /endpoint is (\S+) and/.exec(text)?.[1]
-    const formatOf = (text: string) => /API format is (\w+)\./.exec(text)?.[1]
-
-    it('openai 分组选 Claude Code（分组开了调度）：根地址 + Anthropic，不能是 /v1 + OpenAI', () => {
-      const short = buildAiPrompt({ ...base, client: 'claude', clientLabel: 'Claude Code' })
-      expect(urlLine(short)).toBe('https://codex.hiyo.top')
-      expect(formatOf(short)).toBe('Anthropic')
-      expect(short).toContain('ANTHROPIC_BASE_URL')
-      expect(short).not.toContain('/v1')
-      expect(short).not.toContain('OpenAI')
-
-      const detailed = buildAiPrompt({ ...base, client: 'claude', clientLabel: 'Claude Code', detailed: true })
-      expect(detailed).toContain('- Endpoint: https://codex.hiyo.top\n')
-      expect(detailed).toContain('- API format: Anthropic')
-      expect(detailed).not.toContain('/v1')
-    })
-
-    it('openai 分组选 Codex：/v1 地址 + OpenAI', () => {
-      const short = buildAiPrompt({ ...base, client: 'codex', clientLabel: 'Codex' })
-      expect(urlLine(short)).toBe('https://codex.hiyo.top/v1')
-      expect(formatOf(short)).toBe('OpenAI')
-      expect(short).toContain('wire_api')
-    })
-
-    it.each([
-      ['anthropic', 'https://codex.hiyo.top'],
-      ['grok', 'https://codex.hiyo.top'],
-      ['antigravity', 'https://codex.hiyo.top/antigravity']
-    ])('%s 分组选 Claude Code：%s + Anthropic', (platform, url) => {
-      const short = buildAiPrompt({ ...base, platform, client: 'claude', clientLabel: 'Claude Code' })
-      expect(urlLine(short)).toBe(url)
-      expect(formatOf(short)).toBe('Anthropic')
-    })
-
-    it('Claude Code 的地址跟着选中的线路走：根地址不带结尾的 / 和 /v1', () => {
-      for (const baseUrl of ['https://cdn.example.com/', 'https://cdn.example.com/v1', ' https://cdn.example.com// ']) {
-        const short = buildAiPrompt({ ...base, baseUrl, client: 'claude', clientLabel: 'Claude Code' })
-        expect(urlLine(short)).toBe('https://cdn.example.com')
-      }
-    })
-
-    it('其他工具不受影响：按分组平台的原生接口', () => {
-      for (const client of ['cursor', 'chat', 'code', 'other'] as const) {
-        const openai = buildAiPrompt({ ...base, client, clientLabel: client })
-        expect(urlLine(openai)).toBe('https://codex.hiyo.top/v1')
-        expect(formatOf(openai)).toBe('OpenAI')
-        const gemini = buildAiPrompt({ ...base, platform: 'gemini', client, clientLabel: client })
-        expect(urlLine(gemini)).toBe('https://codex.hiyo.top')
-        expect(formatOf(gemini)).toBe('Gemini')
-      }
-    })
-  })
-
-  it('详细版带模型列表、文档地址和配置要点', () => {
-    const text = buildAiPrompt({ ...base, client: 'codex', clientLabel: 'Codex', detailed: true })
-    expect(text).toContain('gpt-5.6-sol, gpt-5.6-luna')
-    expect(text).toContain('https://docs.example.com')
-    expect(text).toContain('config.toml')
-    expect(text.split('\n').length).toBeGreaterThan(4)
-  })
-
-  it('简短版是一段话；没有文档地址时不带文档行', () => {
-    const text = buildAiPrompt({ ...base, docUrl: '', client: 'claude', clientLabel: 'Claude Code' })
-    expect(text).not.toContain('\n')
-    expect(text).not.toContain('Docs:')
-  })
-
+describe('交给 AI 的打开链接', () => {
   it('打开链接把文本编码进 q 参数', () => {
     const text = 'a b&c=d?'
     expect(chatgptUrl(text)).toBe('https://chatgpt.com/?hints=search&q=a%20b%26c%3Dd%3F')

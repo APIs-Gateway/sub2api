@@ -1389,6 +1389,9 @@ onMounted(async () => {
           showRenewalModal.value = true
         }
       }
+    } else if (route.query.tab === 'recharge' && !checkout.value.balance_disabled) {
+      // 侧栏余额卡、低余额横幅的「充值」：直接落在充值标签（余额充值被后台关闭时留在订阅标签）。
+      activeTab.value = 'recharge'
     }
   } catch (err: unknown) { appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error'))) }
   finally { loading.value = false }

@@ -96,7 +96,6 @@ describe('AiTab', () => {
         siteName: 'Hiyo',
         origin: ORIGIN,
         models: ['gpt-5.6-sol', 'gpt-5.6-luna'],
-        docUrl: 'https://docs.example.com',
         copiedId: '',
         client: 'codex',
         ...props
@@ -221,18 +220,82 @@ describe('AiTab', () => {
     await w.get('[data-test="ai-copy-detail"]').trigger('click')
     const [[short, shortId], [detail, detailId]] = w.emitted('copy') as [string, string][]
     expect([shortId, detailId]).toEqual(['ai-short', 'ai-detail'])
-    // 复制的就是框里的那句话；管理员配置的文档地址只出现在详细版里
+    // 复制的就是框里的那句话
     expect(short).toBe(text(w))
-    expect(short).not.toContain('https://docs.example.com')
-    expect(detail).toContain('gpt-5.6-sol, gpt-5.6-luna')
-    expect(detail).toContain('https://docs.example.com')
+    // 详细版：开头、先读的文档、接入地址、模型、要求，文档链接的域名是站点自己的来源，接入地址取选中线路
+    expect(detail).toContain('Please help me connect Codex to Hiyo')
+    expect(detail).toContain(`Read this first: ${ORIGIN}/docs/codex.md\n`)
+    expect(detail).toContain('- OpenAI-compatible Base URL: https://api.example.com/v1\n')
+    expect(detail).toContain('- Models this key can call: gpt-5.6-sol, gpt-5.6-luna\n')
+    expect(detail).toContain(`use ${ORIGIN}/docs/errors.md to troubleshoot`)
+    expect(detail).not.toContain('sk-SECRET')
     expect(detail.length).toBeGreaterThan(short.length)
   })
 
-  it('clients、modelsLoading 先只是声明，不改变页面，也不会漏到根元素上', () => {
+  it('详细版跟着当前工具、分组和线路变：换工具读对应的文档，备用线路的链接带 ?endpoint=，地址换成备用线路', async () => {
+    const cdn: EndpointOption = { ...endpoint, id: 'https://cdn.example.com', base: 'https://cdn.example.com', v1: 'https://cdn.example.com/v1', configured: 'https://cdn.example.com/v1', name: 'CDN', isDefault: false }
+    const w = mountTab({ endpoint: cdn, platform: 'anthropic', client: 'claude', models: ['claude-opus-5', 'claude-sonnet-5'] })
+    await w.get('[data-test="ai-copy-detail"]').trigger('click')
+    const [detail] = w.emitted('copy')![0] as [string]
+    expect(detail).toContain(`Read this first: ${ORIGIN}/docs/claude-code.md?endpoint=https://cdn.example.com\n`)
+    expect(detail).toContain('- Anthropic-compatible Base URL (no /v1): https://cdn.example.com\n')
+    expect(detail).toContain('Models this key can call: claude-sonnet-5, claude-opus-5\n')
+    expect(detail).not.toContain('api.example.com')
+    // 开了调度的 openai 分组：多一个 Anthropic 兼容地址
+    await w.setProps({ platform: 'openai', allowMessagesDispatch: true, endpoint })
+    await w.get('[data-test="ai-copy-detail"]').trigger('click')
+    const [openaiDetail] = w.emitted('copy')![1] as [string]
+    expect(openaiDetail).toContain('- Anthropic-compatible Base URL (no /v1; for Claude Code): https://api.example.com\n')
+    expect(openaiDetail).toContain('- OpenAI-compatible Base URL: https://api.example.com/v1\n')
+  })
+
+  describe('模型还在加载：「复制详细版」先禁用', () => {
+    const detailButton = (w: ReturnType<typeof mountTab>) => w.get('[data-test="ai-copy-detail"]')
+
+    it('加载中：按钮禁用、标为忙碌、有转圈和说明；点击不交出任何内容；其他按钮不受影响', async () => {
+      const w = mountTab({ modelsLoading: true })
+      const btn = detailButton(w)
+      expect(btn.attributes('disabled')).toBeDefined()
+      expect(btn.attributes('aria-busy')).toBe('true')
+      expect(btn.attributes('title')).toBe('Loading the models this key can use…')
+      expect(btn.find('[data-test="ai-detail-spinner"]').attributes('aria-hidden')).toBe('true')
+      await btn.trigger('click')
+      expect(w.emitted('copy')).toBeUndefined()
+      for (const id of ['ai-copy', 'ai-open-chatgpt', 'ai-open-claude']) expect(w.get(`[data-test="${id}"]`).attributes('disabled')).toBeUndefined()
+    })
+
+    it('加载完（不管成功还是失败）按钮立刻可用，没有转圈；复制出来的带上这时拿到的模型', async () => {
+      const w = mountTab({ modelsLoading: true, models: [] })
+      await w.setProps({ modelsLoading: false, models: ['gpt-5.6-sol'] })
+      const btn = detailButton(w)
+      expect(btn.attributes('disabled')).toBeUndefined()
+      expect(btn.attributes('aria-busy')).toBeUndefined()
+      expect(btn.find('[data-test="ai-detail-spinner"]').exists()).toBe(false)
+      expect(btn.attributes('title')).toBe('The detailed version includes the connection details, the requirements and the models this key can use.')
+      await btn.trigger('click')
+      expect((w.emitted('copy')![0] as [string])[0]).toContain('Models this key can call: gpt-5.6-sol\n')
+    })
+
+    it('没取到模型（加载失败，列表为空）：按钮可用，详细版里没有模型这一行', async () => {
+      const w = mountTab({ modelsLoading: false, models: [] })
+      await detailButton(w).trigger('click')
+      const detail = (w.emitted('copy')![0] as [string])[0]
+      expect(detail).not.toContain('Models this key can call')
+      expect(detail).toContain('Full, up-to-date model list')
+    })
+
+    it('按钮上的文字照旧是「复制详细版」，复制后变成「已复制」', async () => {
+      const w = mountTab({ modelsLoading: true })
+      expect(detailButton(w).text()).toBe('Copy detailed version')
+      await w.setProps({ modelsLoading: false, copiedId: 'ai-detail' })
+      expect(detailButton(w).text()).toBe('Copied')
+    })
+  })
+
+  it('clients 先只是声明，不改变页面，也不会漏到根元素上', () => {
     const plain = mountTab()
-    const w = mountTab({ clients: ['codex', 'opencode'], modelsLoading: true })
-    for (const attr of ['clients', 'models-loading']) expect(w.attributes(attr)).toBeUndefined()
+    const w = mountTab({ clients: ['codex', 'opencode'] })
+    expect(w.attributes('clients')).toBeUndefined()
     expect(w.html()).toBe(plain.html())
   })
 

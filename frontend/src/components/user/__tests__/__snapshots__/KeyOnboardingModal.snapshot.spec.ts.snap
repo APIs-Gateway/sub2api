@@ -20,7 +20,8 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > ai 页签 
  <div class="flex flex-wrap gap-2">
   <button class="btn btn-primary btn-sm" data-test="ai-copy" type="button">
    "复制"
-  <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" type="button">
+  <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="详细版写好了接入地址、要求和这个密钥可用的模型。" type="button">
+   <!--v-if-->
    "复制详细版"
   <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
    "在 ChatGPT 中打开"
@@ -40,36 +41,43 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > ai 页签 
 ### 复制与链接
 ai-client-claude: 简短版 = "请按这份文档，帮我把 Claude Code 接入 Hiyo：http://localhost:3000/docs/claude-code.md"
   复制简短版 = "请按这份文档，帮我把 Claude Code 接入 Hiyo：http://localhost:3000/docs/claude-code.md"
-  复制详细版 = <338 字符 sha1:9b161dfa708d 开头:"请带我一步步把「Claude Code」接入 Hiyo。\\n\\n- 接入地址：https://codex.hiyo.top\\n">
+  复制详细版 = <721 字符 sha1:e8a18828b6e1 开头:"请帮我把 Claude Code 接入 Hiyo（兼容 OpenAI 和 Anthropic 格式的 API 服务）。\\n">
   打开 = ["https://chatgpt.com/?hints=search q=\\"请按这份文档，帮我把 Claude Code 接入 Hiyo：http://localhost:3000/docs/claude-code.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"请按这份文档，帮我把 Claude Code 接入 Hiyo：http://localhost:3000/docs/claude-code.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-cursor: 简短版 = "请按这份文档，帮我把 Cursor 接入 Hiyo：http://localhost:3000/docs/cursor.md"
   复制简短版 = "请按这份文档，帮我把 Cursor 接入 Hiyo：http://localhost:3000/docs/cursor.md"
-  复制详细版 = <291 字符 sha1:47ed28a2c12b 开头:"请带我一步步把「Cursor」接入 Hiyo。\\n\\n- 接入地址：https://codex.hiyo.top\\n- 接口格">
+  复制详细版 = <669 字符 sha1:0e78d122c564 开头:"请帮我把 Cursor 接入 Hiyo（兼容 OpenAI 和 Anthropic 格式的 API 服务）。\\n请先阅读：">
   打开 = ["https://chatgpt.com/?hints=search q=\\"请按这份文档，帮我把 Cursor 接入 Hiyo：http://localhost:3000/docs/cursor.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"请按这份文档，帮我把 Cursor 接入 Hiyo：http://localhost:3000/docs/cursor.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-chat: 简短版 = "请按这份文档，帮我把聊天客户端接入 Hiyo：http://localhost:3000/llms.txt"
   复制简短版 = "请按这份文档，帮我把聊天客户端接入 Hiyo：http://localhost:3000/llms.txt"
-  复制详细版 = <288 字符 sha1:ac3abdd6f22e 开头:"请带我一步步把「聊天客户端」接入 Hiyo。\\n\\n- 接入地址：https://codex.hiyo.top\\n- 接口格式">
+  复制详细版 = <565 字符 sha1:fe89dba7fbe2 开头:"请帮我把聊天客户端接入 Hiyo（兼容 OpenAI 和 Anthropic 格式的 API 服务）。\\n请先阅读：htt">
   打开 = ["https://chatgpt.com/?hints=search q=\\"请按这份文档，帮我把聊天客户端接入 Hiyo：http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"请按这份文档，帮我把聊天客户端接入 Hiyo：http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-code: 简短版 = "请按这份文档，帮我在代码里调用 Hiyo：http://localhost:3000/docs/openai-sdk.md"
   复制简短版 = "请按这份文档，帮我在代码里调用 Hiyo：http://localhost:3000/docs/openai-sdk.md"
-  复制详细版 = <294 字符 sha1:6c4010055db9 开头:"请带我一步步把「写代码调用」接入 Hiyo。\\n\\n- 接入地址：https://codex.hiyo.top\\n- 接口格式">
+  复制详细版 = <713 字符 sha1:4a515d5c6da9 开头:"请帮我在代码里调用 Hiyo（兼容 OpenAI 和 Anthropic 格式的 API 服务）。\\n请先阅读：http:">
   打开 = ["https://chatgpt.com/?hints=search q=\\"请按这份文档，帮我在代码里调用 Hiyo：http://localhost:3000/docs/openai-sdk.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"请按这份文档，帮我在代码里调用 Hiyo：http://localhost:3000/docs/openai-sdk.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-other: 简短版 = "请按这份文档，帮我把正在用的工具接入 Hiyo：http://localhost:3000/llms.txt"
   复制简短版 = "请按这份文档，帮我把正在用的工具接入 Hiyo：http://localhost:3000/llms.txt"
-  复制详细版 = <255 字符 sha1:dc079be37beb 开头:"请带我一步步把「其他」接入 Hiyo。\\n\\n- 接入地址：https://codex.hiyo.top\\n- 接口格式：An">
+  复制详细版 = <562 字符 sha1:6e71236cf261 开头:"请帮我把正在用的工具接入 Hiyo（兼容 OpenAI 和 Anthropic 格式的 API 服务）。\\n请先阅读：ht">
   打开 = ["https://chatgpt.com/?hints=search q=\\"请按这份文档，帮我把正在用的工具接入 Hiyo：http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"请按这份文档，帮我把正在用的工具接入 Hiyo：http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 第一个客户端的详细版全文:
-请带我一步步把「Claude Code」接入 Hiyo。
+请帮我把 Claude Code 接入 Hiyo（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：http://localhost:3000/docs/claude-code.md
+按文档里的步骤一步步带我配置。
 
-- 接入地址：https://codex.hiyo.top
-- 接口格式：Anthropic
-- 密钥：我会自己填写，请不要向我索要，也不要让我把密钥发在聊天里。
-- 可用模型：claude-opus-5, claude-sonnet-5
+接入信息：
+- Anthropic 兼容 Base URL（不带 /v1）：https://codex.hiyo.top
+- OpenAI 兼容 Base URL（Cursor、聊天客户端等用）：https://codex.hiyo.top/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-sonnet-5、claude-opus-5
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- 密钥变量用 ANTHROPIC_AUTH_TOKEN，不是 ANTHROPIC_API_KEY；电脑上残留的 ANTHROPIC_API_KEY 要删掉。
+- 如果返回 400，提示字段不被接受，在 env 里加 CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1，重启后再试。
 
-需要设置环境变量 ANTHROPIC_BASE_URL（填接入地址）和 ANTHROPIC_AUTH_TOKEN（填密钥），也可以写进 ~/.claude/settings.json 的 env 里。
-
-请先问我用的是什么系统，再告诉我要改哪个文件、怎么改。改之前提醒我备份原配置，配好后教我用一条简单的命令验证。
-参考文档：https://docs.example.com"
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 http://localhost:3000/docs/errors.md 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > ccswitch 页签 1`] = `
@@ -428,7 +436,8 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic' > ai 页签 1`] = `
     <div class="flex flex-wrap gap-2">
      <button class="btn btn-primary btn-sm" data-test="ai-copy" type="button">
       "Copy"
-     <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" type="button">
+     <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="The detailed version includes the connection details, the requirements and the models this key can use." type="button">
+      <!--v-if-->
       "Copy detailed version"
      <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
       "Open in ChatGPT"
@@ -448,36 +457,43 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic' > ai 页签 1`] = `
 ### 复制与链接
 ai-client-claude: 简短版 = "Follow this guide to connect Claude Code to Hiyo: http://localhost:3000/docs/claude-code.md"
   复制简短版 = "Follow this guide to connect Claude Code to Hiyo: http://localhost:3000/docs/claude-code.md"
-  复制详细版 = <669 字符 sha1:399bb02095c8 开头:"Please walk me through connecting \\"Claude Code\\" to Hiyo, ste">
+  复制详细版 = <1410 字符 sha1:6c55efb67220 开头:"Please help me connect Claude Code to Hiyo (an API service c">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect Claude Code to Hiyo: http://localhost:3000/docs/claude-code.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect Claude Code to Hiyo: http://localhost:3000/docs/claude-code.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-cursor: 简短版 = "Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md"
   复制简短版 = "Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md"
-  复制详细版 = <639 字符 sha1:93e863e63f62 开头:"Please walk me through connecting \\"Cursor\\" to Hiyo, step by ">
+  复制详细版 = <1431 字符 sha1:8c35b93e2477 开头:"Please help me connect Cursor to Hiyo (an API service compat">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-chat: 简短版 = "Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt"
   复制简短版 = "Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt"
-  复制详细版 = <661 字符 sha1:37f1134a0aa2 开头:"Please walk me through connecting \\"Chat app\\" to Hiyo, step b">
+  复制详细版 = <1171 字符 sha1:5ee2ad2aac9d 开头:"Please help me connect my chat app to Hiyo (an API service c">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-code: 简短版 = "Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md"
   复制简短版 = "Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md"
-  复制详细版 = <644 字符 sha1:432c3e6335a1 开头:"Please walk me through connecting \\"Calling from code\\" to Hiy">
+  复制详细版 = <1408 字符 sha1:38b81cfebad4 开头:"Please help me call Hiyo from my code (an API service compat">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-other: 简短版 = "Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt"
   复制简短版 = "Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt"
-  复制详细版 = <572 字符 sha1:fb306c4c3f4e 开头:"Please walk me through connecting \\"Other\\" to Hiyo, step by s">
+  复制详细版 = <1169 字符 sha1:3316e5f36ea8 开头:"Please help me connect the tool I use to Hiyo (an API servic">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 第一个客户端的详细版全文:
-Please walk me through connecting "Claude Code" to Hiyo, step by step.
+Please help me connect Claude Code to Hiyo (an API service compatible with the OpenAI and Anthropic formats).
+Read this first: http://localhost:3000/docs/claude-code.md
+Follow the steps in the guide and walk me through the setup one step at a time.
 
-- Endpoint: https://codex.hiyo.top
-- API format: Anthropic
-- Key: I will enter it myself. Do not ask me for it or have me paste it into the chat.
-- Available models: claude-opus-5, claude-sonnet-5
+Connection details:
+- Anthropic-compatible Base URL (no /v1): https://codex.hiyo.top
+- OpenAI-compatible Base URL (for Cursor, chat apps and similar): https://codex.hiyo.top/v1
+- Key: use sk-YOUR_API_KEY as a placeholder. I will fill in the real key myself, so do not ask me to send it to you.
+- Models this key can call: claude-sonnet-5, claude-opus-5
+- Full, up-to-date model list: request GET https://codex.hiyo.top/v1/models with this key. Do not fill in model names from memory.
+- The key variable is ANTHROPIC_AUTH_TOKEN, not ANTHROPIC_API_KEY. Remove any leftover ANTHROPIC_API_KEY on my computer.
+- If a request returns 400 saying a field is not accepted, add CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 to env and restart.
 
-It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json.
-
-First ask which operating system I use, then tell me which file to change and how. Remind me to back up the existing config before changing it, and show me one simple command to check that it works.
-Docs: https://docs.example.com"
+Requirements:
+1. Say exactly which file path or setting needs to change.
+2. Ask me directly whenever you need to know about my system, tools or anything else.
+3. At the end, tell me how to check that it works. If something fails, use http://localhost:3000/docs/errors.md to troubleshoot.
+4. If you are a coding assistant running on my computer, you may edit the config files for me, but tell me what you are going to change first."
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'anthropic' > ccswitch 页签 1`] = `
@@ -1093,7 +1109,8 @@ exports[`KeyOnboardingModal 页签快照 > 'antigravity' > ai 页签 1`] = `
  <div class="flex flex-wrap gap-2">
   <button class="btn btn-primary btn-sm" data-test="ai-copy" type="button">
    "Copy"
-  <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" type="button">
+  <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="The detailed version includes the connection details, the requirements and the models this key can use." type="button">
+   <!--v-if-->
    "Copy detailed version"
   <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
    "Open in ChatGPT"
@@ -1113,32 +1130,39 @@ exports[`KeyOnboardingModal 页签快照 > 'antigravity' > ai 页签 1`] = `
 ### 复制与链接
 ai-client-claude: 简短版 = "Follow this guide to connect Claude Code to Hiyo: http://localhost:3000/docs/claude-code.md"
   复制简短版 = "Follow this guide to connect Claude Code to Hiyo: http://localhost:3000/docs/claude-code.md"
-  复制详细版 = <678 字符 sha1:cf4aba7d3094 开头:"Please walk me through connecting \\"Claude Code\\" to Hiyo, ste">
+  复制详细版 = <1474 字符 sha1:2c919928d15c 开头:"Please help me connect Claude Code to Hiyo (an API service c">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect Claude Code to Hiyo: http://localhost:3000/docs/claude-code.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect Claude Code to Hiyo: http://localhost:3000/docs/claude-code.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-chat: 简短版 = "Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt"
   复制简短版 = "Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt"
-  复制详细版 = <670 字符 sha1:cd3e71a07084 开头:"Please walk me through connecting \\"Chat app\\" to Hiyo, step b">
+  复制详细版 = <1364 字符 sha1:9e839d124c78 开头:"Please help me connect my chat app to Hiyo (an API service c">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-code: 简短版 = "Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md"
   复制简短版 = "Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md"
-  复制详细版 = <653 字符 sha1:e2d0921a43cb 开头:"Please walk me through connecting \\"Calling from code\\" to Hiy">
+  复制详细版 = <1439 字符 sha1:172870ddef46 开头:"Please help me call Hiyo from my code (an API service compat">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-other: 简短版 = "Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt"
   复制简短版 = "Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt"
-  复制详细版 = <581 字符 sha1:b3f9dfe1bd4a 开头:"Please walk me through connecting \\"Other\\" to Hiyo, step by s">
+  复制详细版 = <1362 字符 sha1:2366525e53af 开头:"Please help me connect the tool I use to Hiyo (an API servic">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 第一个客户端的详细版全文:
-Please walk me through connecting "Claude Code" to Hiyo, step by step.
+Please help me connect Claude Code to Hiyo (an API service compatible with the OpenAI and Anthropic formats).
+Read this first: http://localhost:3000/docs/claude-code.md
+Follow the steps in the guide and walk me through the setup one step at a time.
 
-- Endpoint: https://codex.hiyo.top/antigravity
-- API format: Anthropic
-- Key: I will enter it myself. Do not ask me for it or have me paste it into the chat.
-- Available models: claude-opus-5, gemini-3-pro
+Connection details:
+- Address (no /v1; use it for both Claude Code and Gemini CLI): https://codex.hiyo.top/antigravity
+- Key: use sk-YOUR_API_KEY as a placeholder. I will fill in the real key myself, so do not ask me to send it to you.
+- Models this key can call: claude-opus-5, gemini-3-pro
+- Full, up-to-date model list: request GET https://codex.hiyo.top/v1/models with this key. Do not fill in model names from memory.
+- In the guide, replace every address https://codex.hiyo.top with https://codex.hiyo.top/antigravity when you set things up.
+- The key variable is ANTHROPIC_AUTH_TOKEN, not ANTHROPIC_API_KEY. Remove any leftover ANTHROPIC_API_KEY on my computer.
+- If a request returns 400 saying a field is not accepted, add CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 to env and restart.
 
-It needs the environment variables ANTHROPIC_BASE_URL (the endpoint) and ANTHROPIC_AUTH_TOKEN (the key). They can also go in the env section of ~/.claude/settings.json.
-
-First ask which operating system I use, then tell me which file to change and how. Remind me to back up the existing config before changing it, and show me one simple command to check that it works.
-Docs: https://docs.example.com"
+Requirements:
+1. Say exactly which file path or setting needs to change.
+2. Ask me directly whenever you need to know about my system, tools or anything else.
+3. At the end, tell me how to check that it works. If something fails, use http://localhost:3000/docs/errors.md to troubleshoot.
+4. If you are a coding assistant running on my computer, you may edit the config files for me, but tell me what you are going to change first."
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'antigravity' > ccswitch 页签 1`] = `
@@ -1470,7 +1494,8 @@ exports[`KeyOnboardingModal 页签快照 > 'gemini' > ai 页签 1`] = `
  <div class="flex flex-wrap gap-2">
   <button class="btn btn-primary btn-sm" data-test="ai-copy" type="button">
    "Copy"
-  <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" type="button">
+  <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="The detailed version includes the connection details, the requirements and the models this key can use." type="button">
+   <!--v-if-->
    "Copy detailed version"
   <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
    "Open in ChatGPT"
@@ -1490,28 +1515,33 @@ exports[`KeyOnboardingModal 页签快照 > 'gemini' > ai 页签 1`] = `
 ### 复制与链接
 ai-client-chat: 简短版 = "Follow this guide to connect my chat client to sub2api: http://localhost:3000/llms.txt"
   复制简短版 = "Follow this guide to connect my chat client to sub2api: http://localhost:3000/llms.txt"
-  复制详细版 = <640 字符 sha1:d0d49b7033d6 开头:"Please walk me through connecting \\"Chat app\\" to sub2api, ste">
+  复制详细版 = <1128 字符 sha1:ecb31425e0ff 开头:"Please help me connect my chat app to sub2api (an API servic">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect my chat client to sub2api: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect my chat client to sub2api: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-code: 简短版 = "Follow this guide to call sub2api from my code: http://localhost:3000/docs/openai-sdk.md"
   复制简短版 = "Follow this guide to call sub2api from my code: http://localhost:3000/docs/openai-sdk.md"
-  复制详细版 = <623 字符 sha1:6f4a538d08b2 开头:"Please walk me through connecting \\"Calling from code\\" to sub">
+  复制详细版 = <1364 字符 sha1:8b472c37414b 开头:"Please help me call sub2api from my code (an API service com">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to call sub2api from my code: http://localhost:3000/docs/openai-sdk.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to call sub2api from my code: http://localhost:3000/docs/openai-sdk.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-other: 简短版 = "Follow this guide to connect the tool I use to sub2api: http://localhost:3000/llms.txt"
   复制简短版 = "Follow this guide to connect the tool I use to sub2api: http://localhost:3000/llms.txt"
-  复制详细版 = <554 字符 sha1:e9e5ff4d65f9 开头:"Please walk me through connecting \\"Other\\" to sub2api, step b">
+  复制详细版 = <1126 字符 sha1:36e30a5d841f 开头:"Please help me connect the tool I use to sub2api (an API ser">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect the tool I use to sub2api: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect the tool I use to sub2api: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 第一个客户端的详细版全文:
-Please walk me through connecting "Chat app" to sub2api, step by step.
+Please help me connect my chat app to sub2api (an API service compatible with the OpenAI and Anthropic formats).
+Read this first: http://localhost:3000/llms.txt
+Ask me which chat app I use, find its section in the docs index, then walk me through the setup step by step.
 
-- Endpoint: https://codex.hiyo.top
-- API format: Gemini
-- Key: I will enter it myself. Do not ask me for it or have me paste it into the chat.
-- Available models: gemini-3-pro
+Connection details:
+- OpenAI-compatible Base URL: https://codex.hiyo.top/v1
+- Gemini native address (for Gemini CLI; no /v1): https://codex.hiyo.top
+- Key: use sk-YOUR_API_KEY as a placeholder. I will fill in the real key myself, so do not ask me to send it to you.
+- Models this key can call: gemini-3-pro
+- Full, up-to-date model list: request GET https://codex.hiyo.top/v1/models with this key. Do not fill in model names from memory.
+- Model names in the guide’s examples (such as gpt-5.6-sol) are only examples. Use a model that is available to this key’s group.
 
-It needs a custom provider added in the app's settings, using the Gemini-compatible type, with the endpoint and key filled in and the model names added by hand.
-
-First ask which operating system I use, then tell me which file to change and how. Remind me to back up the existing config before changing it, and show me one simple command to check that it works.
-Docs: https://docs.example.com"
+Requirements:
+1. Say exactly which file path or setting needs to change.
+2. Ask me directly whenever you need to know about my system, tools or anything else.
+3. At the end, tell me how to check that it works. If something fails, use http://localhost:3000/docs/errors.md to troubleshoot."
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'gemini' > ccswitch 页签 1`] = `
@@ -1851,7 +1881,8 @@ exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > ai �
     <div class="flex flex-wrap gap-2">
      <button class="btn btn-primary btn-sm" data-test="ai-copy" type="button">
       "Copy"
-     <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" type="button">
+     <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="The detailed version includes the connection details, the requirements and the models this key can use." type="button">
+      <!--v-if-->
       "Copy detailed version"
      <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
       "Open in ChatGPT"
@@ -1871,39 +1902,46 @@ exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > ai �
 ### 复制与链接
 ai-client-codex: 简短版 = "Follow this guide to connect Codex to Hiyo: http://localhost:3000/docs/codex.md?endpoint=https://cdn.example.com"
   复制简短版 = "Follow this guide to connect Codex to Hiyo: http://localhost:3000/docs/codex.md?endpoint=https://cdn.example.com"
-  复制详细版 = <604 字符 sha1:bd0bcffcee9e 开头:"Please walk me through connecting \\"Codex\\" to Hiyo, step by s">
+  复制详细版 = <1373 字符 sha1:f44e00cc0d52 开头:"Please help me connect Codex to Hiyo (an API service compati">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect Codex to Hiyo: http://localhost:3000/docs/codex.md?endpoint=https://cdn.example.com\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect Codex to Hiyo: http://localhost:3000/docs/codex.md?endpoint=https://cdn.example.com\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-claude: 简短版 = "Follow this guide to connect Claude Code to Hiyo: http://localhost:3000/docs/claude-code.md?endpoint=https://cdn.example.com"
   复制简短版 = "Follow this guide to connect Claude Code to Hiyo: http://localhost:3000/docs/claude-code.md?endpoint=https://cdn.example.com"
-  复制详细版 = <634 字符 sha1:35978350ddb9 开头:"Please walk me through connecting \\"Claude Code\\" to Hiyo, ste">
+  复制详细版 = <1455 字符 sha1:973fc63ef03c 开头:"Please help me connect Claude Code to Hiyo (an API service c">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect Claude Code to Hiyo: http://localhost:3000/docs/claude-code.md?endpoint=https://cdn.example.com\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect Claude Code to Hiyo: http://localhost:3000/docs/claude-code.md?endpoint=https://cdn.example.com\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-cursor: 简短版 = "Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md?endpoint=https://cdn.example.com"
   复制简短版 = "Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md?endpoint=https://cdn.example.com"
-  复制详细版 = <601 字符 sha1:04510a8b0097 开头:"Please walk me through connecting \\"Cursor\\" to Hiyo, step by ">
+  复制详细版 = <1346 字符 sha1:011ee74b0728 开头:"Please help me connect Cursor to Hiyo (an API service compat">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md?endpoint=https://cdn.example.com\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md?endpoint=https://cdn.example.com\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-chat: 简短版 = "Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt?endpoint=https://cdn.example.com"
   复制简短版 = "Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt?endpoint=https://cdn.example.com"
-  复制详细版 = <623 字符 sha1:6e89f2d3280e 开头:"Please walk me through connecting \\"Chat app\\" to Hiyo, step b">
+  复制详细版 = <1086 字符 sha1:323879ff7a84 开头:"Please help me connect my chat app to Hiyo (an API service c">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt?endpoint=https://cdn.example.com\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt?endpoint=https://cdn.example.com\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-code: 简短版 = "Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md?endpoint=https://cdn.example.com"
   复制简短版 = "Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md?endpoint=https://cdn.example.com"
-  复制详细版 = <606 字符 sha1:42932f2d1351 开头:"Please walk me through connecting \\"Calling from code\\" to Hiy">
+  复制详细版 = <1235 字符 sha1:2afa22023790 开头:"Please help me call Hiyo from my code (an API service compat">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md?endpoint=https://cdn.example.com\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md?endpoint=https://cdn.example.com\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-other: 简短版 = "Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt?endpoint=https://cdn.example.com"
   复制简短版 = "Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt?endpoint=https://cdn.example.com"
-  复制详细版 = <537 字符 sha1:991d535b9083 开头:"Please walk me through connecting \\"Other\\" to Hiyo, step by s">
+  复制详细版 = <1084 字符 sha1:bb38d9ffbbfc 开头:"Please help me connect the tool I use to Hiyo (an API servic">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt?endpoint=https://cdn.example.com\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt?endpoint=https://cdn.example.com\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 第一个客户端的详细版全文:
-Please walk me through connecting "Codex" to Hiyo, step by step.
+Please help me connect Codex to Hiyo (an API service compatible with the OpenAI and Anthropic formats).
+Read this first: http://localhost:3000/docs/codex.md?endpoint=https://cdn.example.com
+Follow the steps in the guide and walk me through the setup one step at a time.
 
-- Endpoint: https://cdn.example.com/v1
-- API format: OpenAI
-- Key: I will enter it myself. Do not ask me for it or have me paste it into the chat.
-- Available models: gpt-5.6-sol, gpt-5.6-luna
+Connection details:
+- OpenAI-compatible Base URL: https://cdn.example.com/v1
+- Anthropic-compatible Base URL (no /v1; for Claude Code): https://cdn.example.com
+- Key: use sk-YOUR_API_KEY as a placeholder. I will fill in the real key myself, so do not ask me to send it to you.
+- Models this key can call: gpt-5.6-sol, gpt-5.6-luna
+- Full, up-to-date model list: request GET https://cdn.example.com/v1/models with this key. Do not fill in model names from memory.
+- In config.toml, set wire_api to responses and keep model_provider and model at the very top of the file. After editing, fully quit Codex, reopen it and start a new session.
 
-It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to "responses", and the key filled in.
-
-First ask which operating system I use, then tell me which file to change and how. Remind me to back up the existing config before changing it, and show me one simple command to check that it works."
+Requirements:
+1. Say exactly which file path or setting needs to change.
+2. Ask me directly whenever you need to know about my system, tools or anything else.
+3. At the end, tell me how to check that it works. If something fails, use http://localhost:3000/docs/errors.md?endpoint=https://cdn.example.com to troubleshoot.
+4. If you are a coding assistant running on my computer, you may edit the config files for me, but tell me what you are going to change first."
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > ccswitch 页签 1`] = `
@@ -2767,7 +2805,8 @@ exports[`KeyOnboardingModal 页签快照 > 'openai' > ai 页签 1`] = `
     <div class="flex flex-wrap gap-2">
      <button class="btn btn-primary btn-sm" data-test="ai-copy" type="button">
       "Copy"
-     <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" type="button">
+     <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="The detailed version includes the connection details, the requirements and the models this key can use." type="button">
+      <!--v-if-->
       "Copy detailed version"
      <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
       "Open in ChatGPT"
@@ -2787,36 +2826,41 @@ exports[`KeyOnboardingModal 页签快照 > 'openai' > ai 页签 1`] = `
 ### 复制与链接
 ai-client-codex: 简短版 = "Follow this guide to connect Codex to Hiyo: http://localhost:3000/docs/codex.md"
   复制简短版 = "Follow this guide to connect Codex to Hiyo: http://localhost:3000/docs/codex.md"
-  复制详细版 = <634 字符 sha1:40c8218ebfdf 开头:"Please walk me through connecting \\"Codex\\" to Hiyo, step by s">
+  复制详细版 = <1222 字符 sha1:d0d0ab985289 开头:"Please help me connect Codex to Hiyo (an API service compati">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect Codex to Hiyo: http://localhost:3000/docs/codex.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect Codex to Hiyo: http://localhost:3000/docs/codex.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-cursor: 简短版 = "Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md"
   复制简短版 = "Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md"
-  复制详细版 = <631 字符 sha1:95e55033e266 开头:"Please walk me through connecting \\"Cursor\\" to Hiyo, step by ">
+  复制详细版 = <1195 字符 sha1:996b94c382eb 开头:"Please help me connect Cursor to Hiyo (an API service compat">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-chat: 简短版 = "Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt"
   复制简短版 = "Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt"
-  复制详细版 = <653 字符 sha1:e619b63db18c 开头:"Please walk me through connecting \\"Chat app\\" to Hiyo, step b">
+  复制详细版 = <935 字符 sha1:ed9fd6bc22a3 开头:"Please help me connect my chat app to Hiyo (an API service c">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-code: 简短版 = "Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md"
   复制简短版 = "Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md"
-  复制详细版 = <636 字符 sha1:2f920d4f8fe5 开头:"Please walk me through connecting \\"Calling from code\\" to Hiy">
+  复制详细版 = <1051 字符 sha1:9449e4f83c95 开头:"Please help me call Hiyo from my code (an API service compat">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-other: 简短版 = "Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt"
   复制简短版 = "Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt"
-  复制详细版 = <567 字符 sha1:d1db92fb847d 开头:"Please walk me through connecting \\"Other\\" to Hiyo, step by s">
+  复制详细版 = <933 字符 sha1:159887fc394b 开头:"Please help me connect the tool I use to Hiyo (an API servic">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 第一个客户端的详细版全文:
-Please walk me through connecting "Codex" to Hiyo, step by step.
+Please help me connect Codex to Hiyo (an API service compatible with the OpenAI and Anthropic formats).
+Read this first: http://localhost:3000/docs/codex.md
+Follow the steps in the guide and walk me through the setup one step at a time.
 
-- Endpoint: https://codex.hiyo.top/v1
-- API format: OpenAI
-- Key: I will enter it myself. Do not ask me for it or have me paste it into the chat.
-- Available models: gpt-5.6-sol, gpt-5.6-luna
+Connection details:
+- OpenAI-compatible Base URL: https://codex.hiyo.top/v1
+- Key: use sk-YOUR_API_KEY as a placeholder. I will fill in the real key myself, so do not ask me to send it to you.
+- Models this key can call: gpt-5.6-sol, gpt-5.6-luna
+- Full, up-to-date model list: request GET https://codex.hiyo.top/v1/models with this key. Do not fill in model names from memory.
+- In config.toml, set wire_api to responses and keep model_provider and model at the very top of the file. After editing, fully quit Codex, reopen it and start a new session.
 
-It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to "responses", and the key filled in.
-
-First ask which operating system I use, then tell me which file to change and how. Remind me to back up the existing config before changing it, and show me one simple command to check that it works.
-Docs: https://docs.example.com"
+Requirements:
+1. Say exactly which file path or setting needs to change.
+2. Ask me directly whenever you need to know about my system, tools or anything else.
+3. At the end, tell me how to check that it works. If something fails, use http://localhost:3000/docs/errors.md to troubleshoot.
+4. If you are a coding assistant running on my computer, you may edit the config files for me, but tell me what you are going to change first."
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 'openai' > ccswitch 页签 1`] = `
@@ -3392,7 +3436,8 @@ exports[`KeyOnboardingModal 页签快照 > '未知平台' > ai 页签 1`] = `
  <div class="flex flex-wrap gap-2">
   <button class="btn btn-primary btn-sm" data-test="ai-copy" type="button">
    "Copy"
-  <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" type="button">
+  <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="The detailed version includes the connection details, the requirements and the models this key can use." type="button">
+   <!--v-if-->
    "Copy detailed version"
   <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
    "Open in ChatGPT"
@@ -3412,27 +3457,32 @@ exports[`KeyOnboardingModal 页签快照 > '未知平台' > ai 页签 1`] = `
 ### 复制与链接
 ai-client-chat: 简短版 = "Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt"
   复制简短版 = "Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt"
-  复制详细版 = <610 字符 sha1:c2184bbaddfc 开头:"Please walk me through connecting \\"Chat app\\" to Hiyo, step b">
+  复制详细版 = <1112 字符 sha1:603a6bf74b6c 开头:"Please help me connect my chat app to Hiyo (an API service c">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-code: 简短版 = "Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md"
   复制简短版 = "Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md"
-  复制详细版 = <593 字符 sha1:553490fe7bd3 开头:"Please walk me through connecting \\"Calling from code\\" to Hiy">
+  复制详细版 = <1349 字符 sha1:39404d827532 开头:"Please help me call Hiyo from my code (an API service compat">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-other: 简短版 = "Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt"
   复制简短版 = "Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt"
-  复制详细版 = <521 字符 sha1:2d634dfc6cff 开头:"Please walk me through connecting \\"Other\\" to Hiyo, step by s">
+  复制详细版 = <1110 字符 sha1:d2cfeab85747 开头:"Please help me connect the tool I use to Hiyo (an API servic">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 第一个客户端的详细版全文:
-Please walk me through connecting "Chat app" to Hiyo, step by step.
+Please help me connect my chat app to Hiyo (an API service compatible with the OpenAI and Anthropic formats).
+Read this first: http://localhost:3000/llms.txt
+Ask me which chat app I use, find its section in the docs index, then walk me through the setup step by step.
 
-- Endpoint: https://codex.hiyo.top
-- API format: Anthropic
-- Key: I will enter it myself. Do not ask me for it or have me paste it into the chat.
+Connection details:
+- OpenAI-compatible Base URL (for Cursor, chat apps and similar): https://codex.hiyo.top/v1
+- Anthropic-compatible Base URL (no /v1): https://codex.hiyo.top
+- Key: use sk-YOUR_API_KEY as a placeholder. I will fill in the real key myself, so do not ask me to send it to you.
+- Full, up-to-date model list: request GET https://codex.hiyo.top/v1/models with this key. Do not fill in model names from memory.
+- Model names in the guide’s examples (such as gpt-5.6-sol) are only examples. Use a model that is available to this key’s group.
 
-It needs a custom provider added in the app's settings, using the Anthropic-compatible type, with the endpoint and key filled in and the model names added by hand.
-
-First ask which operating system I use, then tell me which file to change and how. Remind me to back up the existing config before changing it, and show me one simple command to check that it works.
-Docs: https://docs.example.com"
+Requirements:
+1. Say exactly which file path or setting needs to change.
+2. Ask me directly whenever you need to know about my system, tools or anything else.
+3. At the end, tell me how to check that it works. If something fails, use http://localhost:3000/docs/errors.md to troubleshoot."
 `;
 
 exports[`KeyOnboardingModal 页签快照 > '未知平台' > ccswitch 页签 1`] = `
@@ -3731,7 +3781,8 @@ exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 的
  <div class="flex flex-wrap gap-2">
   <button class="btn btn-primary btn-sm" data-test="ai-copy" type="button">
    "Copy"
-  <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" type="button">
+  <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="The detailed version includes the connection details, the requirements and the models this key can use." type="button">
+   <!--v-if-->
    "Copy detailed version"
   <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
    "Open in ChatGPT"
@@ -3751,35 +3802,40 @@ exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 的
 ### 复制与链接
 ai-client-codex: 简短版 = "Follow this guide to connect Codex to Hiyo: http://localhost:3000/docs/codex.md"
   复制简短版 = "Follow this guide to connect Codex to Hiyo: http://localhost:3000/docs/codex.md"
-  复制详细版 = <588 字符 sha1:4dc52ee6c843 开头:"Please walk me through connecting \\"Codex\\" to Hiyo, step by s">
+  复制详细版 = <1168 字符 sha1:e1403be8dfd6 开头:"Please help me connect Codex to Hiyo (an API service compati">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect Codex to Hiyo: http://localhost:3000/docs/codex.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect Codex to Hiyo: http://localhost:3000/docs/codex.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-cursor: 简短版 = "Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md"
   复制简短版 = "Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md"
-  复制详细版 = <585 字符 sha1:dd2792e11dec 开头:"Please walk me through connecting \\"Cursor\\" to Hiyo, step by ">
+  复制详细版 = <1141 字符 sha1:aca1dcf30c7f 开头:"Please help me connect Cursor to Hiyo (an API service compat">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect Cursor to Hiyo: http://localhost:3000/docs/cursor.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-chat: 简短版 = "Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt"
   复制简短版 = "Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt"
-  复制详细版 = <607 字符 sha1:4a839508bcee 开头:"Please walk me through connecting \\"Chat app\\" to Hiyo, step b">
+  复制详细版 = <881 字符 sha1:53ebe4c72035 开头:"Please help me connect my chat app to Hiyo (an API service c">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect my chat client to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-code: 简短版 = "Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md"
   复制简短版 = "Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md"
-  复制详细版 = <590 字符 sha1:9fc9bd6ea48c 开头:"Please walk me through connecting \\"Calling from code\\" to Hiy">
+  复制详细版 = <997 字符 sha1:ed14442ac998 开头:"Please help me call Hiyo from my code (an API service compat">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to call Hiyo from my code: http://localhost:3000/docs/openai-sdk.md\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 ai-client-other: 简短版 = "Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt"
   复制简短版 = "Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt"
-  复制详细版 = <521 字符 sha1:d52f2cc03a6e 开头:"Please walk me through connecting \\"Other\\" to Hiyo, step by s">
+  复制详细版 = <879 字符 sha1:39ed82c9a403 开头:"Please help me connect the tool I use to Hiyo (an API servic">
   打开 = ["https://chatgpt.com/?hints=search q=\\"Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]","https://claude.ai/new q=\\"Follow this guide to connect the tool I use to Hiyo: http://localhost:3000/llms.txt\\" [\\"_blank\\",\\"noopener,noreferrer\\"]"]
 第一个客户端的详细版全文:
-Please walk me through connecting "Codex" to Hiyo, step by step.
+Please help me connect Codex to Hiyo (an API service compatible with the OpenAI and Anthropic formats).
+Read this first: http://localhost:3000/docs/codex.md
+Follow the steps in the guide and walk me through the setup one step at a time.
 
-- Endpoint: https://codex.hiyo.top/v1
-- API format: OpenAI
-- Key: I will enter it myself. Do not ask me for it or have me paste it into the chat.
+Connection details:
+- OpenAI-compatible Base URL: https://codex.hiyo.top/v1
+- Key: use sk-YOUR_API_KEY as a placeholder. I will fill in the real key myself, so do not ask me to send it to you.
+- Full, up-to-date model list: request GET https://codex.hiyo.top/v1/models with this key. Do not fill in model names from memory.
+- In config.toml, set wire_api to responses and keep model_provider and model at the very top of the file. After editing, fully quit Codex, reopen it and start a new session.
 
-It needs a custom model provider in ~/.codex/config.toml, with base_url set to the endpoint, wire_api set to "responses", and the key filled in.
-
-First ask which operating system I use, then tell me which file to change and how. Remind me to back up the existing config before changing it, and show me one simple command to check that it works.
-Docs: https://docs.example.com"
+Requirements:
+1. Say exactly which file path or setting needs to change.
+2. Ask me directly whenever you need to know about my system, tools or anything else.
+3. At the end, tell me how to check that it works. If something fails, use http://localhost:3000/docs/errors.md to troubleshoot.
+4. If you are a coding assistant running on my computer, you may edit the config files for me, but tell me what you are going to change first."
 `;
 
 exports[`KeyOnboardingModal 页签快照 > 没有密钥时弹窗内容为空 1`] = `

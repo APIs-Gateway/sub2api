@@ -567,6 +567,70 @@ describe('PaymentView subscription lifecycle checkout', () => {
   })
 })
 
+describe('PaymentView 充值标签入口（侧栏余额卡 / 低余额横幅）', () => {
+  beforeEach(() => {
+    routeState.path = '/purchase'
+    routeState.query = {}
+    routerReplace.mockReset().mockResolvedValue(undefined)
+    routerPush.mockReset().mockResolvedValue(undefined)
+    fetchActiveSubscriptions.mockReset().mockResolvedValue(undefined)
+    showError.mockReset()
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture())
+    window.localStorage.clear()
+  })
+
+  async function mountView() {
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    await flushPromises()
+    return wrapper
+  }
+
+  function activeTabLabel(wrapper: Awaited<ReturnType<typeof mountView>>) {
+    return wrapper
+      .findAll('button')
+      .filter(button => ['payment.tabSubscribe', 'payment.tabTopUp'].includes(button.text()))
+      .find(button => button.classes().includes('bg-white'))
+      ?.text()
+  }
+
+  it('?tab=recharge 直接落在充值标签', async () => {
+    routeState.query = { tab: 'recharge' }
+
+    expect(activeTabLabel(await mountView())).toBe('payment.tabTopUp')
+  })
+
+  it('不带 tab 时仍然默认订阅标签', async () => {
+    expect(activeTabLabel(await mountView())).toBe('payment.tabSubscribe')
+  })
+
+  it('?tab=subscription 不受影响', async () => {
+    routeState.query = { tab: 'subscription' }
+
+    expect(activeTabLabel(await mountView())).toBe('payment.tabSubscribe')
+  })
+
+  it('后台关掉余额充值时没有充值标签，?tab=recharge 不会把页面带到一个不存在的标签', async () => {
+    routeState.query = { tab: 'recharge' }
+    getCheckoutInfo.mockResolvedValue({
+      data: { ...checkoutInfoFixture().data, balance_disabled: true },
+    })
+
+    const wrapper = await mountView()
+
+    expect(wrapper.findAll('button').some(button => button.text() === 'payment.tabTopUp')).toBe(false)
+    expect(showError).not.toHaveBeenCalled()
+  })
+})
+
 // 组件里用到的金额口径依赖 app store；未配置充值倍率时按美元展示（旧行为）。
 beforeEach(() => {
   setActivePinia(createPinia())
