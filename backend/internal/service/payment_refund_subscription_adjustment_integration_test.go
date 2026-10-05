@@ -225,6 +225,41 @@ func TestRefundSubscriptionAdjustmentPG_NoInterleaveRestoresCard(t *testing.T) {
 	assertRefundAdjustmentCard(t, c, p, 40)
 }
 
+func TestRefundSubscriptionAdjustmentPG_HeldRetryKeepsOriginalAdjustment(t *testing.T) {
+	ctx := context.Background()
+	c, s, p, provider := refundAdjustmentFixture(t, 40)
+	_, err := c.ExecContext(ctx, `CREATE FUNCTION reject_sub_restore() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.expire_day > OLD.expire_day THEN RAISE EXCEPTION 'hold compensation'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_sub_restore BEFORE UPDATE ON user_subscriptions FOR EACH ROW EXECUTE FUNCTION reject_sub_restore()`)
+	require.NoError(t, err)
+	_, err = s.ExecuteRefund(ctx, p)
+	require.Error(t, err)
+	require.Equal(t, 1, provider.calls)
+	card, err := c.UserSubscription.Get(ctx, p.SubscriptionID)
+	require.NoError(t, err)
+	require.Equal(t, TodayEastDayNumber()+10, card.ExpireDay)
+	order, err := c.PaymentOrder.Get(ctx, p.OrderID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusRefundFailed, order.Status)
+	_, err = c.ExecContext(ctx, `DROP TRIGGER reject_sub_restore ON user_subscriptions; DROP FUNCTION reject_sub_restore()`)
+	require.NoError(t, err)
+	retry, early, err := s.PrepareRefund(ctx, p.OrderID, 10, "retry original refund", false, false)
+	require.NoError(t, err)
+	require.Nil(t, early)
+	provider.onRefund = func() {
+		card, err := c.UserSubscription.Get(ctx, p.SubscriptionID)
+		require.NoError(t, err)
+		require.Equal(t, TodayEastDayNumber()+10, card.ExpireDay, "retry must not debit held days twice")
+		refundAdjustmentPaidRenewal(t, c, s, retry, 30)
+	}
+	result, err := s.ExecuteRefund(ctx, retry)
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	require.Equal(t, 2, provider.calls)
+	assertRefundAdjustmentCard(t, c, retry, 70)
+	count, err := c.PaymentAuditLog.Query().Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(p.OrderID, 10)), paymentauditlog.ActionHasPrefix("REFUND_SUB_DEDUCT_")).Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, count, "held retry must bind the original durable adjustment")
+}
+
 func TestRefundSubscriptionAdjustmentPG_MaxExpiryAndAlreadyExpired(t *testing.T) {
 	t.Run("maximum", func(t *testing.T) {
 		maxDay := ClampExpireDay(int(^uint(0) >> 1))
