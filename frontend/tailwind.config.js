@@ -1,3 +1,23 @@
+import plugin from 'tailwindcss/plugin'
+
+/**
+ * 浅色模式下 text-gray-400 / text-gray-500 的文字色。
+ *
+ * 色板里的 gray-400 (#b8b1a1) 在白底只有 2.13:1、gray-500 (#918a7c) 约 3.4:1，达不到
+ * WCAG AA 的 4.5:1。这两档在全站被大量用作次要文字（模板里约 2200 处 + 深色模式的
+ * dark:text-gray-400 约 1500 处），所以不改色板，也不逐处替换，而是只覆盖「文字色」这一个
+ * 出口（见 theme.extend.textColor）：浅色取下面的值，深色仍取色板原值。
+ *
+ * 对比度（白 / gray-50 / gray-100 底）：
+ *   400 -> #736c5f  5.20 / 4.93 / 4.60
+ *   500 -> #6f685b  5.52 / 5.24 / 4.88
+ * 修改这两个值时请同步更新 src/__tests__/lightGrayTextContrast.spec.ts 的校验。
+ */
+export const lightGrayText = { 400: '#736c5f', 500: '#6f685b' }
+
+const channels = (hex) =>
+  [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(' ')
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{vue,js,ts,jsx,tsx}'],
@@ -60,6 +80,14 @@ export default {
           800: '#262420',
           900: '#1c1b18',
           950: '#141310'
+        }
+      },
+      // 只覆盖文字色（text-gray-400/500，含 placeholder:/hover: 等变体和 @apply），
+      // bg-/border-/ring-/fill- 等仍用上面的 gray 色板。值走 CSS 变量，见底部 plugin。
+      textColor: {
+        gray: {
+          400: 'rgb(var(--text-gray-400) / <alpha-value>)',
+          500: 'rgb(var(--text-gray-500) / <alpha-value>)'
         }
       },
       fontFamily: {
@@ -137,5 +165,36 @@ export default {
       }
     }
   },
-  plugins: []
+  plugins: [
+    plugin(({ addBase, theme }) => {
+      // 默认（浅色）取加深后的值；以下场景沿用色板原值，保持「本来就该弱」的层级：
+      //  - .dark：深色模式不动；
+      //  - input/textarea/select：占位符（placeholder:text-gray-400 继承自输入框）；
+      //  - 禁用控件：按钮/输入框等 :disabled 与 aria-disabled；
+      //  - 浅色模式下固定深底的 tooltip / 终端块（bg-gray-800/900/950，以及终端上的半透明复制按钮
+      //    bg-gray-800/80），原值在深底上对比度更高。
+      //    注意：bg-black/50、bg-gray-950/60 这类半透明遮罩下面是浅色卡片，不能放进这个列表。
+      addBase({
+        ':root:not(.dark)': {
+          '--text-gray-400': channels(lightGrayText[400]),
+          '--text-gray-500': channels(lightGrayText[500])
+        },
+        [[
+          '.dark',
+          'input',
+          'textarea',
+          'select',
+          ':disabled',
+          "[aria-disabled='true']",
+          '.bg-gray-800',
+          '.bg-gray-900',
+          '.bg-gray-950',
+          "[class~='bg-gray-800/80']"
+        ].join(', ')]: {
+          '--text-gray-400': channels(theme('colors.gray.400')),
+          '--text-gray-500': channels(theme('colors.gray.500'))
+        }
+      })
+    })
+  ]
 }
