@@ -35,7 +35,7 @@
             <button
               type="button"
               :disabled="index === 0"
-              class="rounded p-1 text-gray-400 transition-colors hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-gray-200"
+              class="rounded p-1 text-gray-400 transition-colors hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-gray-200"
               @click="moveRule(index, -1)"
             >
               <Icon name="chevronUp" size="sm" :stroke-width="2" />
@@ -43,7 +43,7 @@
             <button
               type="button"
               :disabled="index === rules.length - 1"
-              class="rounded p-1 text-gray-400 transition-colors hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-gray-200"
+              class="rounded p-1 text-gray-400 transition-colors hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-gray-200"
               @click="moveRule(index, 1)"
             >
               <Icon name="chevronDown" size="sm" :stroke-width="2" />

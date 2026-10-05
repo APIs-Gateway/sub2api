@@ -1050,7 +1050,7 @@
         req1Code: '1. 金鑰從環境變數裏讀取，不要寫死在程式碼裏；給我可以直接執行的最小示例；回覆較長時開啟串流輸出（stream）。',
         req2: '2. 需要我的系統、工具等資料時直接問我。',
         req3: '3. 最後告訴我怎麼驗證是否成功；出錯時對照 {url} 排查。',
-        req4: '4. 如果你本身就是運行在我電腦上的編程助手，可以直接幫我修改設定檔，但動手前先告訴我要改哪些內容。'
+        req4: '4. 如果你本身就是運行在我電腦上的程式設計助手，可以直接幫我修改設定檔，但動手前先告訴我要改哪些內容。'
       }
     },
     ccs: {
@@ -8101,8 +8101,8 @@
     title: '我的訂閱',
     description: '查看您的訂閱計劃和用量',
     noActiveSubscriptions: '暫無有效訂閱',
-    noActiveSubscriptionsDesc: '購買訂閱後，每日額度和用量會顯示在這裏。',
-    noActiveSubscriptionsNoPaymentDesc: '訂閱生效後，每日額度和用量會顯示在這裏。',
+    noActiveSubscriptionsDesc: '購買訂閱後，每日額度和用量會顯示在這裡。',
+    noActiveSubscriptionsNoPaymentDesc: '訂閱生效後，每日額度和用量會顯示在這裡。',
     failedToLoad: '加載訂閱失敗',
     overdraftBtn: {
       label: '透支刷新當日額度',
