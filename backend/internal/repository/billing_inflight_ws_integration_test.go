@@ -225,6 +225,7 @@ func (b *wsInflightBillingObserver) Apply(ctx context.Context, cmd *service.Usag
 }
 
 type wsInflightFixture struct {
+	pool        *service.UsageRecordWorkerPool
 	accounts    service.AccountRepository
 	accountID   int64
 	groupID     int64
@@ -341,6 +342,7 @@ func newWSInflightFixture(t *testing.T, mode string, source string, prices map[s
 	var wsStarted atomic.Bool
 	router.GET("/v1/responses", func(c *gin.Context) { wsStarted.Store(true); defer close(wsDone); handler.ResponsesWebSocket(c) })
 	router.POST("/v1/responses", handler.Responses)
+	router.POST("/v1/chat/completions", handler.ChatCompletions)
 	server := httptest.NewServer(router)
 	t.Cleanup(func() {
 		p.stopOnce.Do(func() { close(p.stop) })
@@ -353,7 +355,7 @@ func newWSInflightFixture(t *testing.T, mode string, source string, prices map[s
 			}
 		}
 	})
-	return &wsInflightFixture{accounts: accounts, accountID: account.ID, groupID: group.ID, userID: user.ID, key: key, gateway: gateway, billing: billing, router: router, server: server, provider: p, httpClient: httpClient, billingRepo: observedBilling}
+	return &wsInflightFixture{pool: pool, accounts: accounts, accountID: account.ID, groupID: group.ID, userID: user.ID, key: key, gateway: gateway, billing: billing, router: router, server: server, provider: p, httpClient: httpClient, billingRepo: observedBilling}
 }
 func (f *wsInflightFixture) dial(t *testing.T) *coderws.Conn {
 	t.Helper()

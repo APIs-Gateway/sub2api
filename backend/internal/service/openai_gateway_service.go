@@ -8215,6 +8215,7 @@ func normalizeResponsesStreamingTerminalOutput(data []byte, acc *apicompat.Buffe
 func responsesStreamEventMayContributeToOutput(eventType string) bool {
 	switch eventType {
 	case "response.output_text.delta",
+		"response.refusal.delta",
 		"response.output_item.added",
 		"response.function_call_arguments.delta",
 		"response.reasoning_summary_text.delta":
