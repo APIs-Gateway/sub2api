@@ -571,7 +571,7 @@ func TestStructuredInputRecovery_AudioLocalRefusalDoesNotDispatch(t *testing.T) 
 func TestStructuredInputRecovery_EligibilityBoundaries(t *testing.T) {
 	for _, kind := range []string{"allowed", "nil_context", "nil_gin", "nil_request", "nil_writer", "nil_account", "oauth", "other_platform", "native_shape", "string_input", "object_input", "probe_false", "probe_missing", "probe_invalid", "force_responses", "force_chat"} {
 		t.Run(kind, func(t *testing.T) {
-			var ctx context.Context = context.Background()
+			ctx := context.Background()
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
 			account := structuredInputRetryTestAccount()

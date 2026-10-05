@@ -416,3 +416,61 @@ func TestStructuredInputFallbackHTTP_TransportOpsAndOuterAttemptReset(t *testing
 		})
 	}
 }
+
+// Keep this fixture on existing public APIs so the identical test also runs on
+// the pre-fix production commit as valid RED evidence.
+type structuredHTTPDelayedReader struct {
+	io.Reader
+	delayed bool
+}
+
+func (r *structuredHTTPDelayedReader) Read(p []byte) (int, error) {
+	if !r.delayed {
+		r.delayed = true
+		time.Sleep(120 * time.Millisecond)
+	}
+	return r.Reader.Read(p)
+}
+func TestStructuredInputFallbackHTTP_FirstLegLatency(t *testing.T) {
+	for _, kind := range []string{"buffered", "stream", "partial"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newInflightHTTPFixture(t, service.PlatformOpenAI, inflightChatJSON, "application/json")
+			chatAudioWallet(t, f)
+			stream := kind != "buffered"
+			f.upstream.script = func(req *http.Request, _ int64) (*http.Response, error) {
+				if f.upstream.calls.Load() == 1 {
+					require.Equal(t, "/v1/responses", req.URL.Path)
+					return &http.Response{StatusCode: 400, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(&structuredHTTPDelayedReader{Reader: strings.NewReader(structuredHTTPRejection)})}, nil
+				}
+				require.EqualValues(t, 2, f.upstream.calls.Load())
+				require.Equal(t, "/v1/chat/completions", req.URL.Path)
+				contentType := "application/json"
+				var reader io.Reader = strings.NewReader(inflightChatJSON)
+				if stream {
+					contentType = "text/event-stream"
+					reader = strings.NewReader(structuredHTTPChatStream)
+				}
+				if kind == "partial" {
+					reader = io.MultiReader(strings.NewReader(`data: {"id":"latency_partial","model":"gpt-5","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`+"\n\n"), inflightHTTPReadError{errors.New("metered read failure")})
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {contentType}}, Body: io.NopCloser(reader)}, nil
+			}
+			close(f.upstream.release)
+			rec := f.request(structuredHTTPBody(stream), "/v1/chat/completions", "", f.openAI.ChatCompletions)
+			require.Equal(t, 200, rec.Code, rec.Body.String())
+			assertStructuredHTTPSettlement(t, f, false, 10)
+			var duration int
+			var ttft *int
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT duration_ms,first_token_ms FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&duration, &ttft))
+			require.GreaterOrEqual(t, duration, 120, "persisted duration must include Responses rejection read")
+			if stream {
+				require.NotNil(t, ttft)
+				require.GreaterOrEqual(t, *ttft, 120, "persisted TTFT must include first leg")
+			}
+			if kind == "partial" {
+				require.Contains(t, rec.Body.String(), "error")
+				require.NotContains(t, rec.Body.String(), "data: [DONE]")
+			}
+		})
+	}
+}

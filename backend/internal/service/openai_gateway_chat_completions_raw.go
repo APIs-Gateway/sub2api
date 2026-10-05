@@ -68,8 +68,19 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	body []byte,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
-	startTime := time.Now()
+	return s.forwardAsRawChatCompletionsFromStart(ctx, c, account, body, defaultMappedModel, time.Now())
+}
 
+// A proven conversion rejection and its raw recovery share one attempt clock.
+// Direct raw requests retain their existing start time at this entry point.
+func (s *OpenAIGatewayService) forwardAsRawChatCompletionsFromStart(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	defaultMappedModel string,
+	startTime time.Time,
+) (*OpenAIForwardResult, error) {
 	// 1. Parse minimal fields needed for routing/billing
 	originalModel := gjson.GetBytes(body, "model").String()
 	if originalModel == "" {

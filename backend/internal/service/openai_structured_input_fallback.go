@@ -152,7 +152,7 @@ func firstVLLMInputStringDiagnostic(message string) bool {
 			return false
 		}
 	}
-	first := diagnostics[0].(map[string]any)
+	first, _ := diagnostics[0].(map[string]any)
 	if typ, exists := first["type"]; exists && typ != "string_type" {
 		return false
 	}
@@ -194,7 +194,7 @@ func (p *structuredDiagnosticParser) quoted() (string, bool) {
 		if err != nil {
 			return "", false
 		}
-		decoded.WriteRune(character)
+		_, _ = decoded.WriteRune(character)
 		rest = tail
 	}
 	return "", false

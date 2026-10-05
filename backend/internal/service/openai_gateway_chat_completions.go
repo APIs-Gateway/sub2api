@@ -325,7 +325,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 				zap.Int64("account_id", account.ID), zap.Int("upstream_status", resp.StatusCode))
 			cancelUpstream()
 			c.Set(openAIStructuredInputRawFallbackKey, "pending")
-			return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
+			return s.forwardAsRawChatCompletionsFromStart(ctx, c, account, body, defaultMappedModel, startTime)
 		}
 
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
