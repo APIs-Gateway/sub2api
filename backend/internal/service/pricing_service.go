@@ -306,6 +306,9 @@ type PricingService struct {
 	lastUpdated  time.Time
 	localHash    string
 
+	// snap 是固定快照（W6 PR9）的状态；nil 表示没有接快照存储，行为与固定快照上线前完全一致。
+	snap *pricingSnapshotState
+
 	// 停止信号
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -329,6 +332,21 @@ func (s *PricingService) Initialize() error {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to create data directory: %v", err)
 	}
 
+	// 固定快照：auto 模式下只确认模式；pinned 模式下加载生效快照，失败即 fail-closed（不退回远端数据或内置文件）。
+	if s.snap != nil {
+		if err := s.startSnapshots(); err != nil {
+			return err
+		}
+		if s.isPinned() {
+			s.startUpdateScheduler()
+			s.mu.RLock()
+			modelCount := len(s.pricingData)
+			s.mu.RUnlock()
+			logger.LegacyPrintf("service.pricing", "[Pricing] Service initialized with %d models (pinned snapshot)", modelCount)
+			return nil
+		}
+	}
+
 	// 首次加载价格数据
 	if err := s.checkAndUpdatePricing(); err != nil {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Initial load failed, using fallback: %v", err)
@@ -347,6 +365,7 @@ func (s *PricingService) Initialize() error {
 // Stop 停止价格服务
 func (s *PricingService) Stop() {
 	close(s.stopCh)
+	s.stopSnapshots()
 	s.wg.Wait()
 	logger.LegacyPrintf("service.pricing", "%s", "[Pricing] Service stopped")
 }
@@ -444,6 +463,10 @@ func (s *PricingService) checkAndUpdatePricing() error {
 
 // syncWithRemote 与远程同步（基于哈希校验）
 func (s *PricingService) syncWithRemote() error {
+	// pinned 模式下计费只读生效快照，定时同步不得下载进生效数据（候选拉取走快照流程）。
+	if s.isPinned() {
+		return nil
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
@@ -542,6 +565,11 @@ func (s *PricingService) downloadPricingDataWithContext(ctx context.Context, wai
 		return fmt.Errorf("parse pricing data: %w", err)
 	}
 
+	// pinned 模式下不改写价格文件与生效数据；这里只拦在进入前，换入内存处还有一次持锁复核。
+	if s.isPinned() {
+		return ErrPricingPinned
+	}
+
 	// 保存到本地文件
 	pricingFile := s.getPricingFilePath()
 	if err := os.WriteFile(pricingFile, body, 0644); err != nil {
@@ -561,6 +589,10 @@ func (s *PricingService) downloadPricingDataWithContext(ctx context.Context, wai
 
 	// 更新内存数据
 	s.mu.Lock()
+	if s.pinnedLocked() {
+		s.mu.Unlock()
+		return ErrPricingPinned
+	}
 	s.setPricingDataLocked(data)
 	s.lastUpdated = time.Now()
 	s.localHash = syncHash
@@ -1477,6 +1509,9 @@ func (s *PricingService) GetStatus() map[string]any {
 
 // ForceUpdate 强制更新
 func (s *PricingService) ForceUpdate() error {
+	if s.isPinned() {
+		return ErrPricingPinned
+	}
 	return s.downloadPricingData()
 }
 

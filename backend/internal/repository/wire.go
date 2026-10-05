@@ -101,6 +101,7 @@ var ProviderSet = wire.NewSet(
 	NewPricingStageStore,
 	NewPricingShadowStore,
 	NewModelCatalogRepository,
+	NewPricingSnapshotRepository,
 	NewChannelMonitorRepository,
 	NewChannelMonitorRequestTemplateRepository,
 	NewContentModerationRepository,
