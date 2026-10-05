@@ -176,10 +176,11 @@ func TestCodexAccountMapping_IdentityAccountSwitchSharedProviderValidator(t *tes
 			bodyA := `{ "models": [ { "slug": "gpt-5.4", "limit": 100 } ], "opaque":900719925474099312345 }`
 			bodyB := bodyA
 			modelB := "gpt-5.4"
-			if variant == "different_models" {
+			switch variant {
+			case "different_models":
 				modelB = "gpt-5.5"
 				bodyB = `{ "models": [ { "slug": "gpt-5.5", "limit": 100 } ], "opaque":900719925474099312345 }`
-			} else if variant == "different_metadata" {
+			case "different_metadata":
 				bodyB = `{ "models": [ { "slug": "gpt-5.4", "limit": 200 } ], "opaque":900719925474099312345 }`
 			}
 			var mu sync.Mutex
