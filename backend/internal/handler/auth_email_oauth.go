@@ -240,9 +240,8 @@ func (h *AuthHandler) emailOAuthShouldCreatePendingRegistration(ctx context.Cont
 	}
 	email := strings.TrimSpace(strings.ToLower(input.Email))
 	if identityUser != nil {
-		if !strings.EqualFold(strings.TrimSpace(identityUser.Email), email) {
-			return false, infraerrors.Conflict("AUTH_IDENTITY_EMAIL_MISMATCH", "oauth identity belongs to a different email")
-		}
+		// The verified provider subject owns the login; a changed provider email
+		// neither creates a new account nor selects an account with that email.
 		return false, nil
 	}
 	if _, err := findUserByNormalizedEmail(ctx, client, email); err != nil {
