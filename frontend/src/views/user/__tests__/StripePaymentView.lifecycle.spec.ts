@@ -341,4 +341,94 @@ describe('Stripe page owns asynchronous callbacks only while mounted', () => {
     expect(state(current).stripeError).toBe('')
     expect(vi.getTimerCount()).toBe(0)
   })
+
+  it.each(['order', 'config', 'sdk'])('preserves mounted %s errors and ends initial loading', async stage => {
+    const failure = new Error('mounted fixture failure')
+    if (stage === 'order') getOrder.mockRejectedValueOnce(failure)
+    else if (stage === 'config') paymentStore.fetchConfig.mockRejectedValueOnce(failure)
+    else loadStripe.mockRejectedValueOnce(failure)
+    const wrapper = mountView()
+    await settle()
+    expect(state(wrapper).initError).toBe('mounted fixture failure')
+    expect(state(wrapper).loading).toBe(false)
+    expect(wrapper.text()).toContain('mounted fixture failure')
+    expect(stripeInstance.confirmPayment).not.toHaveBeenCalled()
+  })
+
+  it.each(['success', 'error', 'rejection'])('preserves mounted Alipay %s behavior', async outcome => {
+    routeState.query.method = 'alipay'
+    if (outcome === 'rejection') stripeInstance.confirmAlipayPayment.mockRejectedValueOnce(new Error('mounted Alipay failure'))
+    else stripeInstance.confirmAlipayPayment.mockResolvedValueOnce(outcome === 'success' ? {} : { error: { message: 'mounted decline' } })
+    const wrapper = mountView()
+    await settle()
+    expect(stripeInstance.confirmAlipayPayment).toHaveBeenCalledWith('pi_secret_42', { return_url: window.location.origin + '/payment/result?order_id=42&status=success' })
+    expect(state(wrapper).loading).toBe(false)
+    expect(state(wrapper).redirecting).toBe(outcome !== 'error')
+    expect(state(wrapper).stripeError).toBe(outcome === 'error' ? 'mounted decline' : '')
+    expect(state(wrapper).initError).toBe(outcome === 'rejection' ? 'mounted Alipay failure' : '')
+  })
+
+  it.each(['succeeded', 'error', 'unknown'])('preserves mounted WeChat %s behavior and exact request options', async outcome => {
+    vi.useFakeTimers()
+    routeState.query.method = 'wechat_pay'
+    stripeInstance.confirmWechatPayPayment.mockResolvedValueOnce(outcome === 'error' ? { error: { message: 'mounted WeChat decline' } } : { paymentIntent: { status: outcome } })
+    const wrapper = mountView()
+    await settle()
+    expect(stripeInstance.confirmWechatPayPayment).toHaveBeenCalledWith('pi_secret_42', { payment_method_options: { wechat_pay: { client: 'web' } } })
+    expect(state(wrapper).stripeSuccess).toBe(outcome === 'succeeded')
+    expect(state(wrapper).stripeError).toBe(outcome === 'error' ? 'mounted WeChat decline' : outcome === 'unknown' ? 'payment.result.failed' : '')
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(routerPush).toHaveBeenCalledTimes(outcome === 'succeeded' ? 1 : 0)
+  })
+
+  it.each(['error', 'rejection'])('preserves mounted generic %s and releases submitting state', async outcome => {
+    if (outcome === 'rejection') stripeInstance.confirmPayment.mockRejectedValueOnce(new Error('mounted generic failure'))
+    else stripeInstance.confirmPayment.mockResolvedValueOnce({ error: { message: 'mounted generic decline' } })
+    const wrapper = mountView()
+    await settle()
+    await wrapper.findAll('button').find(button => button.text() === 'payment.stripePay')!.trigger('click')
+    await settle()
+    expect(stripeInstance.confirmPayment).toHaveBeenCalledTimes(1)
+    expect(state(wrapper).stripeError).toBe(outcome === 'error' ? 'mounted generic decline' : 'mounted generic failure')
+    expect(state(wrapper).stripeSubmitting).toBe(false)
+    expect(state(wrapper).stripeSuccess).toBe(false)
+  })
+
+  it('does not mount an Element when unmounted during the real DOM nextTick', async () => {
+    const pending = deferred<typeof stripeInstance>()
+    loadStripe.mockReturnValueOnce(pending.promise)
+    const wrapper = mountView()
+    await settle()
+    expect(loadStripe).toHaveBeenCalledTimes(1)
+    pending.resolve(stripeInstance)
+    queueMicrotask(() => wrapper.unmount())
+    await settle()
+    expect(stripeInstance.elements).not.toHaveBeenCalled()
+    expect(stripePaymentElement.mount).not.toHaveBeenCalled()
+  })
+
+  it('does not load SDK when disposed during the actual dynamic-import await', async () => {
+    const pending = deferred<void>()
+    paymentStore.fetchConfig.mockReturnValueOnce(pending.promise)
+    const wrapper = mountView()
+    await settle()
+    expect(paymentStore.fetchConfig).toHaveBeenCalledTimes(1)
+    pending.resolve()
+    queueMicrotask(() => wrapper.unmount())
+    await settle()
+    expect(loadStripe).not.toHaveBeenCalled()
+  })
+
+  it('a retained real payment button cannot submit after page disposal', async () => {
+    stripeInstance.confirmPayment.mockResolvedValueOnce({})
+    const wrapper = mountView()
+    await settle()
+    const button = wrapper.findAll('button').find(element => element.text() === 'payment.stripePay')!.element as HTMLButtonElement
+    expect(button.disabled).toBe(false)
+    wrapper.unmount()
+    button.click()
+    await settle()
+    expect(stripeInstance.confirmPayment).not.toHaveBeenCalled()
+  })
+
 })
