@@ -341,6 +341,7 @@ func newWSInflightFixture(t *testing.T, mode string, source string, prices map[s
 	var wsStarted atomic.Bool
 	router.GET("/v1/responses", func(c *gin.Context) { wsStarted.Store(true); defer close(wsDone); handler.ResponsesWebSocket(c) })
 	router.POST("/v1/responses", handler.Responses)
+	router.POST("/v1/chat/completions", handler.ChatCompletions)
 	server := httptest.NewServer(router)
 	t.Cleanup(func() {
 		p.stopOnce.Do(func() { close(p.stop) })
