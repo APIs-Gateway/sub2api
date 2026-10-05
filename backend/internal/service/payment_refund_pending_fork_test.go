@@ -342,7 +342,7 @@ func TestMarkRefundPendingSnapshotsPlannedDeduction(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.RefundPending)
 
-	detail := svc.latestRefundPendingDetail(ctx, order.ID)
+	detail := refundPendingDetailForTest(t, svc, ctx, order.ID)
 	require.True(t, detail.hasSnapshot)
 	require.Equal(t, "rf_snap", detail.RefundID)
 	require.Equal(t, payment.DeductionTypeBalance, detail.DeductionType)
@@ -407,6 +407,7 @@ func TestExecuteRefundGatewayPendingFlows(t *testing.T) {
 				entClient:    client,
 				loadBalancer: &captureLoadBalancer{},
 				userRepo: &mockUserRepo{
+					getByIDUser:     &User{Balance: 500},
 					deductBalanceFn: func(_ context.Context, _ int64, amount float64) error { deducted += amount; return nil },
 					updateBalanceFn: func(_ context.Context, _ int64, amount float64) error { restored += amount; return nil },
 				},
@@ -433,7 +434,7 @@ func TestExecuteRefundGatewayPendingFlows(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.wantStatus, reloaded.Status)
 			if tc.wantStatus == OrderStatusRefundPending {
-				detail := svc.latestRefundPendingDetail(ctx, order.ID)
+				detail := refundPendingDetailForTest(t, svc, ctx, order.ID)
 				require.Equal(t, "rf_p", detail.RefundID)
 				require.Equal(t, 25.0, detail.BalanceToDeduct)
 				require.Equal(t, payment.DeductionTypeBalance, detail.DeductionType)
@@ -487,11 +488,11 @@ func TestApplyRefundFinalDeductionEdgeCases(t *testing.T) {
 	svc := &PaymentService{entClient: client}
 
 	p := &RefundPlan{OrderID: order.ID, Order: order, DeductionType: payment.DeductionTypeBalance}
-	require.NoError(t, svc.applyRefundFinalDeduction(ctx, p))
+	require.NoError(t, svc.applyRefundFinalDeductionWithSubscription(ctx, p, svc.subscriptionSvc))
 	require.Zero(t, p.BalanceToDeduct)
 
 	p = &RefundPlan{OrderID: order.ID, Order: order, DeductionType: payment.DeductionTypeSubscription, SubscriptionID: 5, SubDaysToDeduct: 3}
-	require.NoError(t, svc.applyRefundFinalDeduction(ctx, p), "no subscription service configured")
+	require.NoError(t, svc.applyRefundFinalDeductionWithSubscription(ctx, p, svc.subscriptionSvc), "no subscription service configured")
 	require.Zero(t, p.SubDaysToDeduct)
 
 	renewOrder := *order
@@ -501,7 +502,7 @@ func TestApplyRefundFinalDeductionEdgeCases(t *testing.T) {
 	}
 	svc.subscriptionSvc = NewSubscriptionService(groupRepoNoop{}, newRefundUserSubRepoStub(nil), nil, nil, nil, nil, nil, nil)
 	p = &RefundPlan{OrderID: order.ID, Order: &renewOrder, DeductionType: payment.DeductionTypeSubscription, SubscriptionID: 5, SubDaysToDeduct: -1}
-	require.NoError(t, svc.applyRefundFinalDeduction(ctx, p), "zero/negative renew days means nothing to deduct")
+	require.NoError(t, svc.applyRefundFinalDeductionWithSubscription(ctx, p, svc.subscriptionSvc), "zero/negative renew days means nothing to deduct")
 	require.Zero(t, p.SubDaysToDeduct)
 	require.Equal(t, 1, countRefundAuditForTest(t, ctx, client, order.ID, "REFUND_FINALIZE_NO_RENEW_DAYS"))
 }

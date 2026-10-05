@@ -134,7 +134,7 @@ func TestRefundSettlementUsesLatestAttemptSnapshot(t *testing.T) {
 
 			require.True(t, runRefundAttemptForTest(t, ctx, svc, order.ID, tc.second, balance(tc.second)).RefundPending)
 			require.Equal(t, 2, countRefundAuditForTest(t, ctx, client, order.ID, "REFUND_PENDING"), "each attempt keeps its own snapshot")
-			require.Equal(t, tc.wantLatestDeduct, svc.latestRefundPendingDetail(ctx, order.ID).DeductionType)
+			require.Equal(t, tc.wantLatestDeduct, refundPendingDetailForTest(t, svc, ctx, order.ID).DeductionType)
 			require.Equal(t, 1, countRefundAuditForTest(t, ctx, client, order.ID, "REFUND_FAILED"), "first attempt failure is audited")
 
 			prov.queryResp = &payment.RefundResponse{Status: payment.ProviderStatusSuccess}
@@ -169,7 +169,7 @@ func TestRefundSettlementNoDoubleDeductionWhenLatestRollbackFailed(t *testing.T)
 	require.True(t, result.RefundPending)
 	require.Contains(t, result.Warning, "rollback failed")
 	require.Equal(t, -30.0, ledger.net(), "attempt 2 deduction is still in place")
-	require.False(t, svc.latestRefundPendingDetail(ctx, order.ID).DeductionRollbackOK)
+	require.False(t, refundPendingDetailForTest(t, svc, ctx, order.ID).DeductionRollbackOK)
 
 	prov.queryResp = &payment.RefundResponse{Status: payment.ProviderStatusSuccess}
 	settled, err := svc.QueryAndFinalizeRefund(ctx, order.ID)
@@ -196,7 +196,7 @@ func TestRefundFailedRestoresOutstandingDeductionAndRetryDeductsOnce(t *testing.
 
 	require.True(t, runRefundAttemptForTest(t, ctx, svc, order.ID, payment.DeductionTypeBalance, 30).RefundPending)
 	require.Equal(t, -30.0, ledger.net())
-	require.True(t, svc.hasOutstandingRefundRollbackFailure(ctx, order.ID))
+	require.True(t, refundRollbackOutstandingForTest(t, svc, ctx, order.ID))
 
 	// Restore still failing: neither the query nor a manual "failed" may mark
 	// the order failed while the user is still debited.
@@ -219,7 +219,7 @@ func TestRefundFailedRestoresOutstandingDeductionAndRetryDeductsOnce(t *testing.
 	requireOrderStatusForTest(t, ctx, client, order.ID, OrderStatusRefundFailed)
 	require.Equal(t, 0.0, ledger.net())
 	require.Equal(t, 1, countRefundAuditForTest(t, ctx, client, order.ID, "REFUND_ROLLBACK_RECOVERED"))
-	require.False(t, svc.hasOutstandingRefundRollbackFailure(ctx, order.ID))
+	require.False(t, refundRollbackOutstandingForTest(t, svc, ctx, order.ID))
 
 	// Retry succeeds at the gateway: exactly one deduction in total.
 	prov.refundResp = &payment.RefundResponse{RefundID: "rf2", Status: payment.ProviderStatusSuccess}
@@ -253,7 +253,7 @@ func TestRefundFailedSubscriptionRestoreWithoutServiceKeepsPending(t *testing.T)
 	restore := replacePaymentProviderFactoryForTest(t, &refundQueryProviderTestDouble{refundResponse: &payment.RefundResponse{Status: payment.ProviderStatusFailed}})
 	defer restore()
 
-	detail := svc.latestRefundPendingDetail(ctx, order.ID)
+	detail := refundPendingDetailForTest(t, svc, ctx, order.ID)
 	rb := refundRollbackPlanFromSnapshot(order, detail)
 	require.Equal(t, 6, rb.SubDaysToRestore)
 	require.Equal(t, 123, rb.SubExpireDayToRestore)
@@ -262,13 +262,15 @@ func TestRefundFailedSubscriptionRestoreWithoutServiceKeepsPending(t *testing.T)
 	_, err := svc.QueryAndFinalizeRefund(ctx, order.ID)
 	require.Equal(t, "REFUND_ROLLBACK_FAILED", infraerrors.Reason(err))
 	requireOrderStatusForTest(t, ctx, client, order.ID, OrderStatusRefundPending)
-	require.True(t, svc.hasOutstandingRefundRollbackFailure(ctx, order.ID))
+	require.True(t, refundRollbackOutstandingForTest(t, svc, ctx, order.ID))
 }
 
 func TestMarkRefundPendingSnapshotsRestoreTargets(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)
 	order := newRefundAttemptOrderForTest(t, ctx, client, "snapshot-restore")
+	_, claimErr := client.PaymentOrder.UpdateOneID(order.ID).SetStatus(OrderStatusRefunding).Save(ctx)
+	require.NoError(t, claimErr)
 	svc := &PaymentService{entClient: client, userRepo: &mockUserRepo{}}
 	_, err := svc.markRefundPending(ctx, &RefundPlan{
 		OrderID:                    order.ID,
@@ -282,7 +284,7 @@ func TestMarkRefundPendingSnapshotsRestoreTargets(t *testing.T) {
 		SubTodayDayToRestore:       455,
 	}, &payment.RefundResponse{Status: payment.ProviderStatusPending})
 	require.NoError(t, err)
-	d := svc.latestRefundPendingDetail(ctx, order.ID)
+	d := refundPendingDetailForTest(t, svc, ctx, order.ID)
 	require.Equal(t, 8, d.SubDaysToRestore)
 	require.Equal(t, 456, d.SubExpireDayToRestore)
 	require.Equal(t, 1.5, d.SubTodayRemainingToRestore)
