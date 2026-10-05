@@ -59,6 +59,11 @@ jobs:
       - name: Unit tests (converted Responses input recovery)
         working-directory: backend
         run: go test -tags=unit -count=1 -run '^TestStructuredInputRecovery_|^TestConvertedResponsesInputStringRejection|^TestForwardAsChatCompletions_(ResponsesSupportedFallsBack|StructuredInput)' -v ./internal/service/
+      - name: Chat-to-Responses legacy calls, developer and named choice contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestChatResponsesContracts_|^TestChatCompletionsToResponses_(ToolChoiceShape|DeveloperRolePreserved|LegacyFunction)' ./internal/pkg/apicompat/ ./internal/service/
       - name: Unit tests (cache write wire and accounting agreement)
         working-directory: backend
         run: go test -tags=unit -count=1 -run '^TestCacheWriteUsage_' -v ./internal/pkg/apicompat/ ./internal/service/
