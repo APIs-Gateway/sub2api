@@ -497,20 +497,31 @@ func TestInterimPriceWriteGate_Integration_PreviewConfirmCommit(t *testing.T) {
 	require.Equal(t, service.ReasonApprovalExpired, pwiReason(t, commit(expiring.ApprovalID, priceReq("pw-gate-2", 1.2, 4, 0), true, true)))
 	require.NotContains(t, pwiCells(t, gid), "pw-gate-2")
 
-	// 不涉价的写入（只关闭已有的单元格、价格不变）可以不带预览，但仍要二次确认并留历史。
-	closeOp := pwiExtra(gid, "pw-gate", 1.5, 1)
-	closeOp.Open = false
-	closed := service.CellWriteRequest{
-		Ops:            []service.CellOp{closeOp},
+	// 新建单元格一律算涉价，要先预览：这里新建一个关闭的 inherit 单元格。
+	create := service.CellWriteRequest{
+		Ops:            []service.CellOp{pwiUpsert(gid, "pw-closed", false, service.MatrixPriceInherit, 0)},
 		GroupRevisions: map[int64]int64{gid: 4},
 	}
-	require.Equal(t, service.ReasonPriceWriteConfirm, pwiReason(t, commit(0, closed, false, false)))
-	require.NoError(t, commit(0, closed, true, false))
+	require.Equal(t, service.ReasonPriceWriteApproval, pwiReason(t, commit(0, create, true, true)), "新建没有预览不行")
+	created, err := gate.Propose(ctx, service.PriceWriteProposal{Request: create})
+	require.NoError(t, err)
+	require.True(t, created.TouchesPrice)
+	require.NoError(t, commit(created.ApprovalID, create, true, true))
 	require.Equal(t, int64(5), pwiConfigRevision(t, gid))
+
+	// 不涉价的写入（只开关已有的单元格、价格不变）可以不带预览，但仍要二次确认并留历史。
+	flip := service.CellWriteRequest{
+		Ops:            []service.CellOp{pwiUpsert(gid, "pw-closed", true, service.MatrixPriceInherit, 1)},
+		GroupRevisions: map[int64]int64{gid: 5},
+	}
+	require.Equal(t, service.ReasonPriceWriteConfirm, pwiReason(t, commit(0, flip, false, false)))
+	require.NoError(t, commit(0, flip, true, false))
+	require.Equal(t, int64(6), pwiConfigRevision(t, gid))
 	hist = pwiHistory(t, gid)
-	require.Len(t, hist, 2)
-	require.False(t, hist[1].Appr.Valid)
-	require.Equal(t, []int64{gid, gid}, inv.groups)
+	require.Len(t, hist, 3)
+	require.True(t, hist[1].Appr.Valid)
+	require.False(t, hist[2].Appr.Valid)
+	require.Equal(t, []int64{gid, gid, gid}, inv.groups)
 }
 
 func TestInterimPriceWriteGate_Integration_ProposeRefusesLegacyGroups(t *testing.T) {
