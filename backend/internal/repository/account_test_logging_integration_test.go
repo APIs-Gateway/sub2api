@@ -48,7 +48,7 @@ func TestAccountTestLogging_ActualLoggerOpsPostgres(t *testing.T) {
 				sink.Start()
 				t.Cleanup(sink.Stop)
 				var calls atomic.Int32
-				provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					calls.Add(1)
 					require.Equal(t, "/v1/responses", r.URL.Path)
 					var payload map[string]any
@@ -182,7 +182,7 @@ func TestAccountTestLogging_ActualLoggerOpsPostgres(t *testing.T) {
 		t.Cleanup(func() { logger.SetSink(nil) })
 		sink.Start()
 		t.Cleanup(sink.Stop)
-		provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(403)
 			_, _ = io.WriteString(w, accountTestPrivateBody)
 		}))
