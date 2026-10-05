@@ -1535,7 +1535,8 @@ import TempUnschedRulesEditor from '@/components/account/TempUnschedRulesEditor.
 import Icon from '@/components/icons/Icon.vue'
 import {
   buildModelMappingObject as buildModelMappingPayload,
-  getPresetMappingsByPlatform
+  getPresetMappingsByPlatform,
+  removeModelMappingEntry
 } from '@/composables/useModelWhitelist'
 import {
   DEFAULT_POOL_MODE_RETRY_COUNT,
@@ -1813,7 +1814,7 @@ const addModelMapping = () => {
 }
 
 const removeModelMapping = (index: number) => {
-  modelMappings.value.splice(index, 1)
+  removeModelMappingEntry(modelMappings.value, index, allowedModels.value)
 }
 
 const addOpenAICompactModelMapping = () => {

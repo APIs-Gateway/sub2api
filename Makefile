@@ -1,6 +1,7 @@
 .PHONY: build build-backend build-frontend dev-db dev-local test test-backend test-frontend test-frontend-critical secret-scan
 
 FRONTEND_CRITICAL_VITEST := \
+	src/composables/__tests__/useModelWhitelist.spec.ts \
 	src/components/admin/monitor/__tests__/MonitorTemplateApplyPickerDialog.spec.ts \
 	src/components/admin/monitor/__tests__/MonitorTemplateApplyPickerDialog.apply.spec.ts \
 	src/components/admin/monitor/__tests__/MonitorTemplateManagerDialog.requests.spec.ts \
