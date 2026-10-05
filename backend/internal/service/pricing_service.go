@@ -734,6 +734,12 @@ func (s *PricingService) loadPricingData(filePath string) error {
 	hashStr := hex.EncodeToString(hash[:])
 
 	s.mu.Lock()
+	// 启动期间模式可能被切成 pinned（轮询已经装入了快照）：此时不能再用文件里的数据覆盖它。
+	if s.pinnedLocked() {
+		s.mu.Unlock()
+		logger.LegacyPrintf("service.pricing", "[Pricing] Skipped loading %s: pricing became pinned while loading", filePath)
+		return nil
+	}
 	s.setPricingDataLocked(pricingData)
 	s.localHash = hashStr
 

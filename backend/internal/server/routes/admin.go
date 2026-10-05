@@ -182,10 +182,11 @@ func registerPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		snapshots := pricing.Group("/snapshots")
 		{
 			snapshots.GET("", h.Admin.PricingSnapshot.Overview)
-			snapshots.POST("/pin", h.Admin.PricingSnapshot.Pin)
+			// 固定与批准是 C 档动作：必须是登录管理员的 JWT 会话，机器令牌与旧的全局 admin API key 一律 403。
+			snapshots.POST("/pin", middleware.RequireAdminJWT(), h.Admin.PricingSnapshot.Pin)
 			snapshots.POST("/fetch", h.Admin.PricingSnapshot.Fetch)
 			snapshots.POST("/:id/preview", h.Admin.PricingSnapshot.Preview)
-			snapshots.POST("/:id/approve", h.Admin.PricingSnapshot.Approve)
+			snapshots.POST("/:id/approve", middleware.RequireAdminJWT(), h.Admin.PricingSnapshot.Approve)
 			snapshots.POST("/:id/reject", h.Admin.PricingSnapshot.Reject)
 		}
 	}

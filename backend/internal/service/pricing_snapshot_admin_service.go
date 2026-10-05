@@ -146,10 +146,28 @@ func (a *PricingSnapshotAdminService) Overview(ctx context.Context) (*SnapshotOv
 	if err != nil {
 		return nil, err
 	}
+	var activeData map[string]*LiteLLMModelPricing
+	activeLoaded := false
 	for _, c := range candidates {
-		if active == nil || !strings.EqualFold(c.ContentSHA256, active.ContentSHA256) {
-			out.PendingCandidates = append(out.PendingCandidates, c)
+		if active != nil && strings.EqualFold(c.ContentSHA256, active.ContentSHA256) {
+			continue
 		}
+		// 与生效快照没有任何差异的候选（批准之后合成快照的字节哈希对不上远程原文）不算待批准。
+		// 读取或解析失败时保守地留在列表里。
+		if active != nil {
+			if !activeLoaded {
+				activeLoaded = true
+				activeData, _ = a.baseData(ctx, active)
+			}
+			if activeData != nil {
+				if _, candData, lerr := a.loadSnapshot(ctx, &c); lerr == nil {
+					if entries, _ := computePricingDiff(activeData, candData); len(entries) == 0 {
+						continue
+					}
+				}
+			}
+		}
+		out.PendingCandidates = append(out.PendingCandidates, c)
 	}
 	out.History, err = a.store.List(ctx, nil, pricingSnapshotHistoryLimit)
 	if err != nil {

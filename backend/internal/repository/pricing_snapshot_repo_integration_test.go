@@ -192,7 +192,7 @@ func TestPricingSnapshotRepo_CandidatesApprovalAndCleanup(t *testing.T) {
 	require.ErrorIs(t, err, service.ErrPricingSnapshotNotFound)
 }
 
-func TestPricingSnapshotRepo_RecentBillingModels(t *testing.T) {
+func TestPricingSnapshotRepo_RecentBillingModels_Integration(t *testing.T) {
 	ctx := context.Background()
 	repo := NewPricingSnapshotRepository(integrationDB)
 	models, err := repo.RecentBillingModels(ctx, 7)

@@ -25,6 +25,20 @@ const (
 	pricingSnapshotNotifyTimeout = 3 * time.Second
 )
 
+// 启动时对齐状态遇到瞬时错误（数据库抖动）先重试几次，再 fail-closed；永久性错误（模式值损坏、没有生效快照、
+// 内容与哈希对不上、内容无法解析）不重试。它们是变量，只为让单元测试把等待缩短。
+var (
+	pricingSnapshotStartAttempts   = 3
+	pricingSnapshotStartRetryDelay = time.Second
+)
+
+// errPricingSnapshotPermanent 标记重试也不会变好的错误。
+var errPricingSnapshotPermanent = errors.New("permanent snapshot state error")
+
+func isPermanentSnapshotError(err error) bool {
+	return errors.Is(err, errPricingSnapshotPermanent) || errors.Is(err, ErrPricingSnapshotNotFound)
+}
+
 // pricingSnapshotState 是 PricingService 上与固定快照有关的全部状态，集中在一个结构里，
 // 使 pricing_service.go 只需加一个字段。nil 表示没有接快照存储，行为与改动前完全一致。
 type pricingSnapshotState struct {
@@ -95,7 +109,7 @@ func (s *PricingService) readSnapshotMode(ctx context.Context) (string, error) {
 	case PricingSnapshotModePinned:
 		return PricingSnapshotModePinned, nil
 	default:
-		return "", fmt.Errorf("%s has unsupported value %q", SettingKeyPricingSnapshotMode, value)
+		return "", fmt.Errorf("%w: %s has unsupported value %q", errPricingSnapshotPermanent, SettingKeyPricingSnapshotMode, value)
 	}
 }
 
@@ -146,11 +160,11 @@ func (s *PricingService) refreshSnapshotState(ctx context.Context) error {
 	}
 	sum := sha256.Sum256(payload)
 	if !strings.EqualFold(hex.EncodeToString(sum[:]), meta.ContentSHA256) {
-		return fmt.Errorf("snapshot %d payload does not match its content_sha256", meta.ID)
+		return fmt.Errorf("%w: snapshot %d payload does not match its content_sha256", errPricingSnapshotPermanent, meta.ID)
 	}
 	data, err := s.parsePricingData(payload)
 	if err != nil {
-		return fmt.Errorf("parse snapshot %d: %w", meta.ID, err)
+		return fmt.Errorf("%w: parse snapshot %d: %v", errPricingSnapshotPermanent, meta.ID, err)
 	}
 
 	loadedAt := meta.FetchedAt
@@ -174,9 +188,17 @@ func (s *PricingService) refreshSnapshotState(ctx context.Context) error {
 // 成功后再起订阅与轮询。
 func (s *PricingService) startSnapshots() error {
 	st := s.snap
-	ctx, cancel := context.WithTimeout(context.Background(), pricingSnapshotOpTimeout)
-	err := s.refreshSnapshotState(ctx)
-	cancel()
+	var err error
+	for attempt := 1; attempt <= pricingSnapshotStartAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), pricingSnapshotOpTimeout)
+		err = s.refreshSnapshotState(ctx)
+		cancel()
+		if err == nil || isPermanentSnapshotError(err) || attempt == pricingSnapshotStartAttempts {
+			break
+		}
+		logger.LegacyPrintf("service.pricing", "[Pricing] WARN: snapshot state load failed (attempt %d/%d), retrying: %v", attempt, pricingSnapshotStartAttempts, err)
+		time.Sleep(pricingSnapshotStartRetryDelay)
+	}
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrPricingSnapshotStartup, err)
 	}

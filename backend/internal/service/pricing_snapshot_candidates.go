@@ -20,6 +20,12 @@ const (
 	pricingSnapshotCandidateRetention = 30 * 24 * time.Hour
 )
 
+// PricingMaxDownloadBytes 是价格 JSON 下载的大小上限；超过就拒绝（LiteLLM 的文件约 1 MB）。
+const PricingMaxDownloadBytes = 50 << 20
+
+// ErrPricingDownloadTooLarge 表示下载的价格数据超过 PricingMaxDownloadBytes。
+var ErrPricingDownloadTooLarge = errors.New("pricing download exceeds the size limit")
+
 // PricingSnapshotFetchResult 是拉取候选的结果。
 type PricingSnapshotFetchResult struct {
 	// Unchanged 为真表示远程内容与生效快照完全相同，没有保存任何东西。
@@ -46,6 +52,9 @@ func (s *PricingService) fetchRemotePricing(parent context.Context) ([]byte, map
 	body, err := s.fetchPricingJSONWithContext(ctx, remoteURL, nil)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("download failed: %w", err)
+	}
+	if len(body) > PricingMaxDownloadBytes {
+		return nil, nil, "", fmt.Errorf("download failed: %w", ErrPricingDownloadTooLarge)
 	}
 	data, err := s.parsePricingData(body)
 	if err != nil {
@@ -80,6 +89,13 @@ func (s *PricingService) FetchCandidateSnapshot(ctx context.Context, fetchedBy *
 	if strings.EqualFold(active.ContentSHA256, sha) {
 		return &PricingSnapshotFetchResult{Unchanged: true, Active: active}, nil
 	}
+	// 批准之后生效快照是合成出来的（键有序、紧凑），字节哈希永远与远程原文对不上，
+	// 所以再按解析后的数据比较：没有任何差异就算没变，不再存零差异的候选。
+	if same, err := s.sameAsSnapshot(ctx, active, data); err != nil {
+		logger.LegacyPrintf("service.pricing", "[Pricing] WARN: compare remote data with the active snapshot failed, saving as candidate: %v", err)
+	} else if same {
+		return &PricingSnapshotFetchResult{Unchanged: true, Active: active}, nil
+	}
 	candidate, created, err := s.snap.store.InsertCandidate(ctx, NewPricingSnapshot{
 		Label:            "remote-" + time.Now().UTC().Format("2006-01-02") + "-" + sha[:8],
 		Source:           PricingSnapshotSourceRemote,
@@ -94,6 +110,20 @@ func (s *PricingService) FetchCandidateSnapshot(ctx context.Context, fetchedBy *
 		return nil, fmt.Errorf("save candidate snapshot: %w", err)
 	}
 	return &PricingSnapshotFetchResult{Candidate: candidate, Created: created, Active: active}, nil
+}
+
+// sameAsSnapshot 报告 data 与快照里的价格数据是否没有任何差异（新增、移除、变化都没有）。
+func (s *PricingService) sameAsSnapshot(ctx context.Context, meta *PricingSnapshotMeta, data map[string]*LiteLLMModelPricing) (bool, error) {
+	payload, err := s.snap.store.GetPayload(ctx, meta.ID)
+	if err != nil {
+		return false, fmt.Errorf("load snapshot %d payload: %w", meta.ID, err)
+	}
+	base, err := s.parsePricingData(payload)
+	if err != nil {
+		return false, fmt.Errorf("parse snapshot %d: %w", meta.ID, err)
+	}
+	entries, _ := computePricingDiff(base, data)
+	return len(entries) == 0, nil
 }
 
 // autoFetchSnapshotCandidate 由 pinned 模式下的定时同步调用：每天最多拉取一次候选（不改生效数据），
