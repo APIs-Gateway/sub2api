@@ -34,12 +34,44 @@ export interface AvailabilityRow {
   availability_7d: number | null | undefined
 }
 
+/** 硬失败（卡片上的「红」）：failed / error。降级（慢、超时、4xx）不算。 */
+export function isHardFailureStatus(s: MonitorStatus | '' | undefined | null): boolean {
+  return s === STATUS_FAILED || s === STATUS_ERROR
+}
+
+/**
+ * 页面总状态只看红卡：没有红卡 → operational；有红卡 → degraded；每张卡都是红的 → unavailable。
+ * 降级（黄）的卡只在卡片本身显示，不拉低总状态；还没有历史的卡（空状态）既不算红也不算绿。
+ */
+export function deriveOverallStatus(
+  statuses: ReadonlyArray<MonitorStatus | '' | undefined | null>,
+): 'operational' | 'degraded' | 'unavailable' {
+  const red = statuses.filter(isHardFailureStatus).length
+  if (red === 0) return 'operational'
+  return red === statuses.length ? 'unavailable' : 'degraded'
+}
+
 export function useChannelMonitorFormat() {
   const { t } = useI18n()
 
   function statusLabel(s: MonitorStatus | ''): string {
     if (!s) return t('monitorCommon.status.unknown')
     return t(`monitorCommon.status.${s}`)
+  }
+
+  /**
+   * 用户端（/monitor）看到的状态文案。管理员保留 失败 / 错误 的细分；
+   * 普通用户看不到细分，硬失败统一叫「不可用」，与页面顶部总状态用的是同一个词。
+   */
+  function viewStatusLabel(s: MonitorStatus | '', adminView: boolean): string {
+    if (!adminView && isHardFailureStatus(s)) return t('monitorCommon.status.unavailable')
+    return statusLabel(s)
+  }
+
+  /** 与 viewStatusLabel 配套：普通用户的 error 和 failed 一样是红色，不落到灰色的「未知」样式。 */
+  function viewStatusBadgeClass(s: MonitorStatus | '', adminView: boolean): string {
+    if (!adminView && s === STATUS_ERROR) return statusBadgeClass(STATUS_FAILED)
+    return statusBadgeClass(s)
   }
 
   function statusBadgeClass(s: MonitorStatus | ''): string {
@@ -133,7 +165,9 @@ export function useChannelMonitorFormat() {
 
   return {
     statusLabel,
+    viewStatusLabel,
     statusBadgeClass,
+    viewStatusBadgeClass,
     providerLabel,
     providerBadgeClass,
     providerPickerClass,

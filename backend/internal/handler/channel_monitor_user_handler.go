@@ -206,12 +206,17 @@ func userMonitorViewToPublicItem(v *service.UserMonitorView) channelMonitorPubli
 
 // userMonitorDetailToPublicResponse 只保留主模型（Models[0]，聚合层保证主模型排第一）的统计，
 // 并丢掉模型名；附加模型整条不返回。
+// 状态用主模型最近几次探测的综合状态（CardStatus），与 /monitor 卡片保持一致；没有时回落到最近一次状态。
 func userMonitorDetailToPublicResponse(d *service.UserMonitorDetail) *channelMonitorPublicDetailResponse {
 	models := make([]channelMonitorPublicModelStat, 0, 1)
 	if len(d.Models) > 0 {
 		m := d.Models[0]
+		status := m.CardStatus
+		if status == "" {
+			status = m.LatestStatus
+		}
 		models = append(models, channelMonitorPublicModelStat{
-			LatestStatus:    m.LatestStatus,
+			LatestStatus:    status,
 			LatestLatencyMs: m.LatestLatencyMs,
 			Availability7d:  m.Availability7d,
 			Availability15d: m.Availability15d,

@@ -64,6 +64,22 @@ describe('monitor detail without model names (normal users)', () => {
     expect(w.text()).not.toContain('channelStatus.detailColumns.model')
   })
 
+  it.each(['failed', 'error'])('shows %s as unavailable, in red, to normal users', async (latest) => {
+    mocks.status.mockResolvedValueOnce({ models: [{ ...userDetail.models[0], latest_status: latest }] })
+    const w = open(); await flushPromises()
+    expect(w.text()).toContain('monitorCommon.status.unavailable')
+    expect(w.text()).not.toContain(`monitorCommon.status.${latest}`)
+    const badge = w.findAll('dd span').find(s => s.text() === 'monitorCommon.status.unavailable')!
+    expect(badge.classes().join(' ')).toMatch(/red/)
+  })
+
+  it('keeps degraded as degraded for normal users', async () => {
+    mocks.status.mockResolvedValueOnce({ models: [{ ...userDetail.models[0], latest_status: 'degraded' }] })
+    const w = open(); await flushPromises()
+    expect(w.text()).toContain('monitorCommon.status.degraded')
+    expect(w.text()).not.toContain('monitorCommon.status.unavailable')
+  })
+
   it('keeps the per-model table for admins', async () => {
     mocks.status.mockResolvedValueOnce({ models: [
       { model: 'primary-model', latest_status: 'operational' },
@@ -74,6 +90,17 @@ describe('monitor detail without model names (normal users)', () => {
     expect(w.find('dl').exists()).toBe(false)
     expect(w.text()).toContain('primary-model')
     expect(w.text()).toContain('extra-model')
+  })
+
+  it('keeps the failed / error distinction in the admin table', async () => {
+    mocks.status.mockResolvedValueOnce({ models: [
+      { model: 'primary-model', latest_status: 'failed' },
+      { model: 'extra-model', latest_status: 'error' },
+    ] })
+    const w = open(); await flushPromises()
+    expect(w.text()).toContain('monitorCommon.status.failed')
+    expect(w.text()).toContain('monitorCommon.status.error')
+    expect(w.text()).not.toContain('monitorCommon.status.unavailable')
   })
 
   it('renders nothing but the shell when the response has no models', async () => {

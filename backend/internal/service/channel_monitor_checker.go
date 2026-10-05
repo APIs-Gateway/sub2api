@@ -8,10 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/tidwall/gjson"
@@ -57,7 +60,10 @@ type CheckOptions struct {
 }
 
 // runCheckForModel 对单个 (provider, model) 做一次完整检测。
-// 不返回 error：所有失败都包装进 CheckResult.Status=error/failed。
+// 不返回 error：所有失败都包装进 CheckResult.Status。
+//
+// 判定口径：硬失败（error / failed）只留给「连不上、HTTP 5xx、2xx 但文本为空」；
+// 请求已发出却等不到响应头 / 读不完响应体（客户端超时）和 4xx（含 429）都只算 degraded。
 //
 // opts 承载模板 / 监控快照带来的自定义配置。nil 等同于 "off + 无 extra headers"。
 func runCheckForModel(ctx context.Context, provider, endpoint, apiKey, model string, opts *CheckOptions) *CheckResult {
@@ -77,17 +83,10 @@ func runCheckForModel(ctx context.Context, provider, endpoint, apiKey, model str
 	res.LatencyMs = &latencyMs
 
 	if err != nil {
-		res.Status = MonitorStatusError
-		res.Message = truncateMessage(sanitizeErrorMessage(err.Error()))
-		return res
+		return applyTransportError(res, err, statusCode)
 	}
 	if statusCode < 200 || statusCode >= 300 {
-		// 错误路径：用 rawBody 而非 respText（gjson textPath 抽取在错误响应里通常为空，
-		// 会丢掉真正的上游错误信息，例如 `{"error":{"message":"No available accounts ..."}}`）。
-		res.Status = MonitorStatusError
-		bodySnippet := truncateForErrorBody(rawBody)
-		res.Message = truncateMessage(sanitizeErrorMessage(fmt.Sprintf("upstream HTTP %d: %s", statusCode, bodySnippet)))
-		return res
+		return applyHTTPStatusFailure(res, statusCode, rawBody)
 	}
 
 	// Replace 模式：跳过 challenge 校验（用户 body 是静态的，challenge 没法嵌入）。
@@ -103,12 +102,95 @@ func runCheckForModel(ctx context.Context, provider, endpoint, apiKey, model str
 	}
 
 	if !validateChallenge(respText, challenge.Expected) {
-		res.Status = MonitorStatusFailed
+		// 文本为空等同于「2xx 但没有内容」，算 failed；有内容但答案不对说明渠道在应答，只算 degraded。
+		res.Status = MonitorStatusDegraded
+		if strings.TrimSpace(respText) == "" {
+			res.Status = MonitorStatusFailed
+		}
 		res.Message = truncateMessage(sanitizeErrorMessage(fmt.Sprintf("challenge mismatch (expected %s, got %q)", challenge.Expected, respText)))
 		return res
 	}
 
 	return finalizeOperationalOrDegraded(res, latency, latencyMs)
+}
+
+// applyTransportError 把传输层错误翻译成状态：
+//   - 请求已完整发出、但等不到响应头 / 读不完响应体（客户端超时）：degraded，message 注明「超时」；
+//     响应头已经是 5xx 时仍按 5xx 记 error。
+//   - 其余（DNS、建连、TLS、连接中断、本地构造请求失败等）：error。
+func applyTransportError(res *CheckResult, err error, statusCode int) *CheckResult {
+	var timeout *monitorTimeoutError
+	if errors.As(err, &timeout) && statusCode < http.StatusInternalServerError {
+		res.Status = MonitorStatusDegraded
+		res.Message = truncateMessage(timeoutMessage(timeout.phase))
+		return res
+	}
+	res.Status = MonitorStatusError
+	msg := err.Error()
+	if statusCode >= http.StatusInternalServerError {
+		msg = fmt.Sprintf("upstream HTTP %d: %s", statusCode, msg)
+	}
+	res.Message = truncateMessage(sanitizeErrorMessage(msg))
+	return res
+}
+
+// applyHTTPStatusFailure 处理非 2xx 响应：只有 5xx 算硬失败（error）。
+// 4xx（含 429 限流、401/403 凭据问题、400/404 请求问题）说明网关还在应答，不能据此说渠道不可用，记 degraded；
+// 状态码和上游 body 片段写进 message，管理员能看到具体原因。
+func applyHTTPStatusFailure(res *CheckResult, statusCode int, rawBody string) *CheckResult {
+	res.Status = MonitorStatusDegraded
+	if statusCode >= http.StatusInternalServerError {
+		res.Status = MonitorStatusError
+	}
+	// 错误路径：用 rawBody 而非 respText（gjson textPath 抽取在错误响应里通常为空，
+	// 会丢掉真正的上游错误信息，例如 `{"error":{"message":"No available accounts ..."}}`）。
+	bodySnippet := truncateForErrorBody(rawBody)
+	res.Message = truncateMessage(sanitizeErrorMessage(fmt.Sprintf("upstream HTTP %d: %s", statusCode, bodySnippet)))
+	return res
+}
+
+// monitorTimeoutError 表示请求已完整发出，但在期限内没等到响应头或没读完响应体。
+// 这是「慢」而不是「连不上」，runCheckForModel 把它记为 degraded。
+type monitorTimeoutError struct {
+	phase string // monitorTimeoutPhaseHeaders / monitorTimeoutPhaseBody
+	err   error
+}
+
+func (e *monitorTimeoutError) Error() string { return e.err.Error() }
+func (e *monitorTimeoutError) Unwrap() error { return e.err }
+
+const (
+	monitorTimeoutPhaseHeaders = "headers"
+	monitorTimeoutPhaseBody    = "body"
+)
+
+// timeoutMessage 超时的 message，写给管理员看，固定带「超时」两个字。
+func timeoutMessage(phase string) string {
+	if phase == monitorTimeoutPhaseBody {
+		return fmt.Sprintf("超时：已收到响应头，但响应内容在 %d 秒内没有读完", int(monitorRequestTimeout/time.Second))
+	}
+	return fmt.Sprintf("超时：请求已发出，但 %d 秒内没有收到响应头", int(monitorResponseHeaderTimeout/time.Second))
+}
+
+// isClientTimeout 判断 err 是否客户端侧的超时（总超时、等响应头超时、读 body 超时、ctx 截止）。
+func isClientTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+// wrapMonitorTimeout 在「请求已完整发出」的前提下，把客户端超时包成 monitorTimeoutError。
+// 请求还没发完就超时（DNS、TCP 建连、TLS 握手）是连接失败，原样返回，仍记 error。
+func wrapMonitorTimeout(err error, requestSent bool, phase string) error {
+	if !requestSent || !isClientTimeout(err) {
+		return err
+	}
+	return &monitorTimeoutError{phase: phase, err: err}
 }
 
 // finalizeOperationalOrDegraded 负责走到最后一步的 operational/degraded 判定。
@@ -652,8 +734,19 @@ func hasNonEmptyBodyValue(v any) bool {
 
 // postRawJSON 发送 POST + 已序列化好的 JSON 字节，限制响应体大小，返回响应字节、HTTP status、错误。
 // adapter 自行 marshal 是为了精确控制字段顺序与类型，所以这里直接收 []byte 而不是 any。
+//
+// 另外记录请求是否已经完整写出：写出之后再超时是「等响应太慢」（monitorTimeoutError），
+// 写出之前超时（DNS / 建连 / TLS）是连接失败。
 func postRawJSON(ctx context.Context, fullURL string, payload []byte, headers map[string]string) ([]byte, int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(payload))
+	var requestSent atomic.Bool
+	trace := &httptrace.ClientTrace{
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				requestSent.Store(true)
+			}
+		},
+	}
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodPost, fullURL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, 0, fmt.Errorf("build request: %w", err)
 	}
@@ -665,13 +758,13 @@ func postRawJSON(ctx context.Context, fullURL string, payload []byte, headers ma
 
 	resp, err := monitorHTTPClient.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("do request: %w", err)
+		return nil, 0, wrapMonitorTimeout(fmt.Errorf("do request: %w", err), requestSent.Load(), monitorTimeoutPhaseHeaders)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, monitorResponseMaxBytes))
 	if err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("read body: %w", err)
+		return nil, resp.StatusCode, wrapMonitorTimeout(fmt.Errorf("read body: %w", err), true, monitorTimeoutPhaseBody)
 	}
 	return respBody, resp.StatusCode, nil
 }

@@ -44,7 +44,11 @@ FRONTEND_CRITICAL_VITEST := \
 	src/utils/__tests__/lowBalance.spec.ts \
 	src/components/user/__tests__/MonitorDetailDialog.spec.ts \
 	src/components/user/monitor/__tests__/MonitorCard.visibility.spec.ts \
-	src/views/user/__tests__/ChannelStatusView.visibility.spec.ts
+	src/views/user/__tests__/ChannelStatusView.visibility.spec.ts \
+	src/views/user/__tests__/ChannelStatusView.overall.spec.ts \
+	src/composables/__tests__/useChannelMonitorFormat.status.spec.ts \
+	src/api/__tests__/admin.channelMonitor.runNow.spec.ts \
+	src/components/admin/monitor/__tests__/MonitorFormDialog.userVisibleHint.spec.ts
 
 # 一键编译前后端
 build: build-backend build-frontend

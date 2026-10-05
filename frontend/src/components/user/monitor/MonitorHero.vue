@@ -61,7 +61,7 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import AutoRefreshButton from '@/components/common/AutoRefreshButton.vue'
 export type MonitorWindow = '7d' | '15d' | '30d'
-export type OverallStatus = 'operational' | 'degraded'
+export type OverallStatus = 'operational' | 'degraded' | 'unavailable'
 
 const props = defineProps<{
   overallStatus: OverallStatus
@@ -97,6 +97,8 @@ const overallChipClass = computed(() => {
   switch (props.overallStatus) {
     case 'operational':
       return 'text-gray-700 dark:text-gray-300'
+    case 'unavailable':
+      return 'text-red-700 dark:text-red-300'
     case 'degraded':
     default:
       return 'text-primary-700 dark:text-primary-300'
@@ -107,6 +109,8 @@ const overallDotClass = computed(() => {
   switch (props.overallStatus) {
     case 'operational':
       return 'bg-gray-400 dark:bg-gray-500'
+    case 'unavailable':
+      return 'bg-red-500'
     case 'degraded':
     default:
       return 'bg-primary-600'

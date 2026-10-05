@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import type { UserMonitorView } from '@/api/channelMonitor'
 import MonitorCard from '../MonitorCard.vue'
 import ProviderIcon from '../ProviderIcon.vue'
 
@@ -37,7 +38,7 @@ const adminItem = {
   timeline: [{ ...nonAdminItem.timeline[0], ping_latency_ms: 37 }],
 }
 
-const mountCard = (item: typeof nonAdminItem | typeof adminItem) =>
+const mountCard = (item: UserMonitorView) =>
   mount(MonitorCard, { props: { item, window: '7d', availabilityValue: 99.5, countdownSeconds: 60 } })
 
 describe('MonitorCard：普通用户的卡片', () => {
@@ -63,6 +64,21 @@ describe('MonitorCard：普通用户的卡片', () => {
     expect(text).toContain('99.50')
     expect(text).toContain('过去')
     expect(text).toContain('现在')
+  })
+
+  it.each(['failed', 'error'] as const)('硬失败（%s）统一显示「不可用」，红卡用强调色', (status) => {
+    const w = mountCard({ ...nonAdminItem, primary_status: status, timeline: [{ ...nonAdminItem.timeline[0], status }] })
+    expect(w.text()).toContain('不可用')
+    expect(w.text()).not.toMatch(/失败|错误/)
+    expect(w.html()).toMatch(/title="[^"]*· 不可用 ·[^"]*"/) // 时间线格子的悬浮提示
+    expect(w.html()).toContain('bg-primary-600')
+  })
+
+  it('降级的卡只在卡片本身显示降级，不用红卡的强调色', () => {
+    const w = mountCard({ ...nonAdminItem, primary_status: 'degraded', timeline: [{ ...nonAdminItem.timeline[0], status: 'degraded' }] })
+    expect(w.text()).toContain('降级')
+    expect(w.text()).not.toContain('不可用')
+    expect(w.html()).not.toContain('bg-primary-600')
   })
 
   it('没有写死的英文状态词', () => {
@@ -95,6 +111,15 @@ describe('MonitorCard：管理员的卡片保持不变', () => {
     expect(text).toContain('37')
     expect(text).toContain('+ 1 模型')
     expect(wrapper.findComponent(ProviderIcon).exists()).toBe(true)
+  })
+
+  it('管理员仍然看到失败 / 错误的细分', () => {
+    const failed = mountCard({ ...adminItem, primary_status: 'failed', timeline: [{ ...adminItem.timeline[0], status: 'failed' }] })
+    expect(failed.text()).toContain('失败')
+    expect(failed.text()).not.toContain('不可用')
+    const error = mountCard({ ...adminItem, primary_status: 'error', timeline: [{ ...adminItem.timeline[0], status: 'error' }] })
+    expect(error.text()).toContain('错误')
+    expect(error.html()).toMatch(/title="[^"]*· 错误 ·[^"]*"/)
   })
 
   it('两个指标并排', () => {

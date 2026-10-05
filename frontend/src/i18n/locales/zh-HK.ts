@@ -1447,6 +1447,7 @@
       degraded: '降級',
       failed: '失敗',
       error: '錯誤',
+      unavailable: '不可用',
       unknown: '-'
     },
     providers: {
@@ -3765,6 +3766,7 @@
       form: {
         name: '名稱',
         namePlaceholder: '輸入監控名稱',
+        userVisibleHint: '會顯示給所有用戶，不要寫上游廠商、上游模型或內部帳號名。',
         provider: '平台',
         apiMode: 'OpenAI 協議',
         apiModeChatCompletions: 'OpenAI Compatible',

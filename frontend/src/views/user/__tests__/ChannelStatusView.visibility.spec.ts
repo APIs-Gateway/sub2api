@@ -86,7 +86,8 @@ describe('渠道状态页：普通用户', () => {
     for (const re of LEAKS) expect(listHtml).not.toMatch(re)
     expect(wrapper.text()).toContain('GPT 通道')
     expect(wrapper.text()).toContain('Claude 通道')
-    expect(wrapper.text()).toContain('失败')
+    expect(wrapper.text()).toContain('不可用') // 普通用户看到的硬失败统一叫「不可用」
+    expect(wrapper.text()).not.toContain('失败')
 
     await wrapper.findAll('button').find(b => b.text().includes('GPT 通道'))!.trigger('click')
     await flushPromises()
@@ -101,7 +102,7 @@ describe('渠道状态页：普通用户', () => {
   it('顶部总状态是中文，不是写死的英文', async () => {
     list.mockResolvedValue(nonAdminList)
     wrapper = mountView(); await flushPromises()
-    expect(wrapper.text()).toContain('降级') // 其中一个渠道失败 → 总状态降级
+    expect(wrapper.text()).toContain('降级') // 其中一个渠道是红卡 → 总状态降级
     expect(wrapper.text()).not.toMatch(/\b(OPERATIONAL|DEGRADED|UNAVAILABLE|PAST|NOW)\b/)
   })
 
