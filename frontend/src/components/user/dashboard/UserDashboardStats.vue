@@ -53,14 +53,12 @@
     <div class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.todayTokens') }}</span>
       <NumText tier="primary" :text="formatTokens(stats?.today_tokens || 0)" :title="formatNumber(stats?.today_tokens || 0)" />
-      <span class="num-aux">{{ t('dashboard.input') }} {{ formatTokens(stats?.today_input_tokens || 0) }} · {{ t('dashboard.output') }} {{ formatTokens(stats?.today_output_tokens || 0) }} · {{ t('dashboard.cache') }} {{ formatTokens((stats?.today_cache_creation_tokens || 0) + (stats?.today_cache_read_tokens || 0)) }}</span>
     </div>
 
     <!-- Total Tokens -->
     <div class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.totalTokens') }}</span>
       <NumText tier="primary" :text="formatTokens(stats?.total_tokens || 0)" :title="formatNumber(stats?.total_tokens || 0)" />
-      <span class="num-aux">{{ t('dashboard.input') }} {{ formatTokens(stats?.total_input_tokens || 0) }} · {{ t('dashboard.output') }} {{ formatTokens(stats?.total_output_tokens || 0) }} · {{ t('dashboard.cache') }} {{ formatTokens((stats?.total_cache_creation_tokens || 0) + (stats?.total_cache_read_tokens || 0)) }}</span>
     </div>
 
     <!-- Performance (RPM/TPM) -->
