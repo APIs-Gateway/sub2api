@@ -2259,7 +2259,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		if replayBillingKey != nil {
 			turnBillingKeys.set(1, replayBillingKey)
 		}
-		reserveWSTurn := func(turn int, payload []byte, originalModel string, imageInputTokens int) error {
+		reserveWSTurn := func(turn int, payload []byte, originalModel string, imageInputTokens int, imageGenerationIntent bool) error {
 			wsBillingMu.Lock()
 			defer wsBillingMu.Unlock()
 			if wsBillingClosed {
@@ -2280,7 +2280,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					passthroughBillingModel = model
 				}
 			}
-			lease, err := h.gatewayService.ReserveBillingInflight(reserveCtx, service.BillingInflightRequest{APIKey: key, Account: account, Model: model, Body: payload, ChannelUsageFields: channelMappingWS.ToUsageFields(reqModel, ""), PassthroughBillingModel: passthroughBillingModel, PassthroughImageInputTokens: imageInputTokens})
+			lease, err := h.gatewayService.ReserveBillingInflight(reserveCtx, service.BillingInflightRequest{APIKey: key, Account: account, Model: model, Body: payload, ChannelUsageFields: channelMappingWS.ToUsageFields(reqModel, ""), PassthroughBillingModel: passthroughBillingModel, PassthroughImageInputTokens: imageInputTokens, PassthroughImageGenerationIntent: imageGenerationIntent})
 			if err != nil {
 				writeOpenAIWSBillingRejection(ctx, wsConn, err)
 				return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, "billing check failed", err)
@@ -2297,7 +2297,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		hooks := &service.OpenAIWSIngressHooks{
 			InitialRequestModel: reqModel,
 			BeforeUpstreamTurn: func(turn int, payload []byte, originalModel string) error {
-				return reserveWSTurn(turn, payload, originalModel, 0)
+				return reserveWSTurn(turn, payload, originalModel, 0, false)
 			},
 			BeforePassthroughUpstreamTurn: reserveWSTurn,
 			BeforeImagePermission: func() (*service.Group, error) {

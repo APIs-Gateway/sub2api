@@ -107,7 +107,7 @@ func wsImageInputPricing(t *testing.T, free bool) *service.BillingService {
 	if free {
 		in, out = 0, 0
 	}
-	catalog := fmt.Sprintf(`{"gpt-5.4":{"input_cost_per_token":0,"output_cost_per_token":0,"input_cost_per_image_token":%g,"output_cost_per_image_token":%g,"mode":"chat","litellm_provider":"openai"},"gpt-5.4-mini":{"input_cost_per_token":0,"output_cost_per_token":0,"input_cost_per_image_token":%g,"output_cost_per_image_token":%g,"mode":"chat","litellm_provider":"openai"},"gpt-5.5":{"input_cost_per_token":0,"output_cost_per_token":0,"input_cost_per_image_token":1,"output_cost_per_image_token":2,"mode":"chat","litellm_provider":"openai"}}`, in/2, out/2, in, out)
+	catalog := fmt.Sprintf(`{"gpt-image-1":{"input_cost_per_token":0,"output_cost_per_token":0,"input_cost_per_image_token":%g,"output_cost_per_image_token":%g,"mode":"image_generation","litellm_provider":"openai"},"gpt-5.4":{"input_cost_per_token":0,"output_cost_per_token":0,"input_cost_per_image_token":%g,"output_cost_per_image_token":%g,"mode":"chat","litellm_provider":"openai"},"gpt-5.4-mini":{"input_cost_per_token":0,"output_cost_per_token":0,"input_cost_per_image_token":%g,"output_cost_per_image_token":%g,"mode":"chat","litellm_provider":"openai"},"gpt-5.5":{"input_cost_per_token":0,"output_cost_per_token":0,"input_cost_per_image_token":1,"output_cost_per_image_token":2,"mode":"chat","litellm_provider":"openai"}}`, in, out, in/2, out/2, in, out)
 	require.NoError(t, os.WriteFile(filepath.Join(cfg.Pricing.DataDir, "model_pricing.json"), []byte(catalog), 0600))
 	pricing := service.NewPricingService(cfg, nil)
 	require.NoError(t, pricing.Initialize())
@@ -445,6 +445,61 @@ func TestWSImageInputHTTP_ExistingNonImageModesKeepTheirTariff(t *testing.T) {
 			wsImageInputLog(t, f, 1, 0, 0, .5)
 			require.InDelta(t, .25, f.wallet(t), 1e-9)
 			require.EqualValues(t, 1, f.provider.calls.Load())
+		})
+	}
+}
+
+func TestWSImageInputHTTP_CurrentGenerationIntentIsSeparateFromFrozenPrice(t *testing.T) {
+	for _, mode := range []string{"initial_image_then_text", "session_image_without_model"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newWSInflightFixture(t, "passthrough", service.BillingModelSourceUpstream, map[string]float64{"token:gpt-image-1": 0, "token:gpt-5.4": 0, "competitor": .5}, wsImageInputPricing(t, false))
+			p := newWSImageInputProvider(t, f)
+			conn := f.dial(t)
+			model := "gpt-image-1"
+			if mode == "session_image_without_model" {
+				model = "gpt-5.4"
+			}
+			wsInflightWrite(t, conn, fmt.Sprintf(`{"type":"response.create","model":%q,"input":"first turn","max_output_tokens":8}`, model))
+			first := p.next(t)
+			hosted := ""
+			cost := .2
+			if mode == "initial_image_then_text" {
+				require.Positive(t, f.held(t))
+				hosted = `,"tool_usage":{"image_gen":{"output_tokens_details":{"image_tokens":1}}}`
+			} else {
+				require.Zero(t, f.held(t))
+				cost = 0
+			}
+			first.reply <- wsImageInputEvent(1, "response.completed", `{"input_tokens":2,"output_tokens":1}`, hosted)
+			wsInflightReadCompleted(t, conn)
+			f.waitUsage(t, 1)
+			wire := `{"type":"response.create","model":"gpt-5.4","input":"independent text","previous_response_id":null,"max_output_tokens":8}`
+			if mode == "session_image_without_model" {
+				wsInflightWrite(t, conn, `{"type":"session.update","session":{"model":"gpt-image-1"}}`)
+				wire = `{"type":"response.create","input":"generate","max_output_tokens":8}`
+			}
+			wsInflightWrite(t, conn, wire)
+			second := p.next(t)
+			if mode == "initial_image_then_text" {
+				require.Zero(t, f.held(t), "frozen image billing model must not turn a new text request into generation")
+				require.Equal(t, "gpt-5.4", gjson.GetBytes(second.payload, "model").String())
+				hosted = ""
+			} else {
+				require.Positive(t, f.held(t), "omitted wire model inherits session generation while price remains first text model")
+				require.False(t, gjson.GetBytes(second.payload, "model").Exists())
+				f.denyConcurrentHTTP(t, "competitor")
+				require.EqualValues(t, 2, p.calls.Load())
+				hosted = `,"tool_usage":{"image_gen":{"output_tokens_details":{"image_tokens":1}}}`
+				cost = .1
+			}
+			second.reply <- wsImageInputEvent(2, "response.completed", `{"input_tokens":2,"output_tokens":1}`, hosted)
+			wsInflightReadCompleted(t, conn)
+			f.waitUsage(t, 2)
+			wsImageInputLog(t, f, 2, 0, 1, cost)
+			require.InDelta(t, .75-cost, f.wallet(t), 1e-9)
+			var wrong int
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1 AND (model<>$2 OR image_count<>0 OR billing_mode<>'token')`, f.userID, model).Scan(&wrong))
+			require.Zero(t, wrong, "actual frozen token-only billing contract is unchanged")
 		})
 	}
 }

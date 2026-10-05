@@ -64,7 +64,7 @@ func TestWSImageInputEstimate_OnlyOneAdmissionHook(t *testing.T) {
 				return nil
 			}}
 			if modern {
-				hooks.BeforePassthroughUpstreamTurn = func(turn int, wire []byte, model string, imageInput int) error {
+				hooks.BeforePassthroughUpstreamTurn = func(turn int, wire []byte, model string, imageInput int, _ bool) error {
 					metadataCalls++
 					require.Equal(t, 3, turn)
 					require.Equal(t, body, wire)
@@ -73,12 +73,12 @@ func TestWSImageInputEstimate_OnlyOneAdmissionHook(t *testing.T) {
 					return nil
 				}
 			}
-			require.NoError(t, beforeOpenAIPassthroughUpstreamTurn(hooks, &openAIWSImageInputEstimates{}, 3, body, "frozen"))
+			require.NoError(t, beforeOpenAIPassthroughUpstreamTurn(hooks, &openAIWSImageInputEstimates{}, 3, body, "frozen", "frozen"))
 			require.Equal(t, 1, legacyCalls+metadataCalls)
 			require.Equal(t, modern, metadataCalls == 1)
 		})
 	}
-	require.NoError(t, beforeOpenAIPassthroughUpstreamTurn(nil, &openAIWSImageInputEstimates{}, 1, nil, ""))
+	require.NoError(t, beforeOpenAIPassthroughUpstreamTurn(nil, &openAIWSImageInputEstimates{}, 1, nil, "", ""))
 }
 
 func TestWSImageInputEstimate_QueuedCompletionKeepsItsOwnContext(t *testing.T) {
@@ -130,7 +130,7 @@ func TestWSImageInputEstimate_ActualAdapterQueuedFramesUseDistinctTurns(t *testi
 	server, serverErr := startPassthroughLifecycleServerWithHooks(t, ctx, newPassthroughLifecycleService(cfg, upstream), passthroughLifecycleAccount(), func(*gin.Context) *OpenAIWSIngressHooks {
 		return &OpenAIWSIngressHooks{
 			BeforeUpstreamTurn: func(int, []byte, string) error { legacy.Add(1); return nil },
-			BeforePassthroughUpstreamTurn: func(turn int, body []byte, _ string, image int) error {
+			BeforePassthroughUpstreamTurn: func(turn int, body []byte, _ string, image int, _ bool) error {
 				admissions <- admission{turn, image, append([]byte(nil), body...)}
 				return nil
 			},
@@ -249,4 +249,29 @@ func TestWSImageInputEstimate_OversizedIdentityIsNotRetainedOrFree(t *testing.T)
 	require.Greater(t, s.prepare(4, []byte(`{"previous_response_id":"resp_observed","input":"continue"}`)), 100, "positive observed image usage preserves hidden image context")
 	s.complete(4, "resp_observed", 0)
 	require.Positive(t, s.byResponse["resp_observed"])
+}
+
+func TestWSImageInputEstimate_CurrentWireModelDeterminesGeneration(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, session string
+		want                bool
+	}{
+		{"new_text", `{"model":"gpt-5.4","input":"text"}`, "gpt-image-1", false},
+		{"inherited_image_model", `{"input":"generate"}`, "gpt-image-1", true},
+		{"explicit_image_model", `{"model":"gpt-image-1","input":"generate"}`, "gpt-5.4", true},
+		{"current_tool", `{"model":"gpt-5.4","tools":[{"type":"image_generation"}]}`, "gpt-5.4", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			hook := &OpenAIWSIngressHooks{BeforePassthroughUpstreamTurn: func(_ int, body []byte, original string, _ int, potential bool) error {
+				called = true
+				require.Equal(t, "frozen-price-model", original)
+				require.Equal(t, tc.want, potential)
+				require.Equal(t, tc.body, string(body))
+				return nil
+			}}
+			require.NoError(t, beforeOpenAIPassthroughUpstreamTurn(hook, &openAIWSImageInputEstimates{}, 1, []byte(tc.body), "frozen-price-model", tc.session))
+			require.True(t, called)
+		})
+	}
 }

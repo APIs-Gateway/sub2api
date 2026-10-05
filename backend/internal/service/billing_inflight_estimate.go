@@ -29,7 +29,8 @@ type BillingInflightRequest struct {
 	PassthroughBillingModel string
 	// Approximate image input inherited through a v2 previous_response_id. This
 	// is internal admission metadata, never a provider request or actual usage.
-	PassthroughImageInputTokens int
+	PassthroughImageInputTokens      int
+	PassthroughImageGenerationIntent bool
 }
 
 func inflightEstimateTokens(body []byte, defaultOutput int, embeddings bool) UsageTokens {
@@ -230,7 +231,11 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 		if imageTokens.ImageInputTokens > imageTokens.InputTokens {
 			imageTokens.InputTokens = imageTokens.ImageInputTokens
 		}
-		if IsImageGenerationIntent(openAIResponsesEndpoint, request.PassthroughBillingModel, request.Body) {
+		currentModel := strings.TrimSpace(gjson.GetBytes(request.Body, "model").String())
+		if currentModel == "" {
+			currentModel = request.Model
+		}
+		if request.PassthroughImageGenerationIntent || IsImageGenerationIntent(openAIResponsesEndpoint, currentModel, request.Body) {
 			imageTokens.ImageOutputTokens = imageTokens.OutputTokens
 		}
 		if imageTokens.ImageInputTokens > 0 || imageTokens.ImageOutputTokens > 0 {

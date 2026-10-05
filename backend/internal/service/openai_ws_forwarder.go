@@ -270,7 +270,7 @@ type OpenAIWSIngressHooks struct {
 	BeforeUpstreamTurn func(turn int, payload []byte, originalModel string) error
 	// BeforePassthroughUpstreamTurn additionally receives estimate-only image
 	// context. It replaces BeforeUpstreamTurn for v2; provider frames stay intact.
-	BeforePassthroughUpstreamTurn func(turn int, payload []byte, originalModel string, imageInputTokens int) error
+	BeforePassthroughUpstreamTurn func(turn int, payload []byte, originalModel string, imageInputTokens int, imageGenerationIntent bool) error
 	BeforeRequest                 func(turn int, payload []byte, originalModel string) error
 	// AfterLocalPrewarm releases the connection's initial concurrency slots
 	// after a synthetic HTTP bridge response, without recording usage.

@@ -1118,7 +1118,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 							estimateBody = body
 						}
 					}
-					if err := beforeOpenAIPassthroughUpstreamTurn(hooks, imageInputEstimates, turnNo, estimateBody, requestModelForThisFrame); err != nil {
+					if err := beforeOpenAIPassthroughUpstreamTurn(hooks, imageInputEstimates, turnNo, estimateBody, requestModelForThisFrame, model); err != nil {
 						return out, nil, err
 					}
 				}
@@ -1142,7 +1142,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		},
 	}
 	upstreamFirstMessageSent := false
-	if err := beforeOpenAIPassthroughUpstreamTurn(hooks, imageInputEstimates, 1, firstClientMessage, requestModel); err != nil {
+	if err := beforeOpenAIPassthroughUpstreamTurn(hooks, imageInputEstimates, 1, firstClientMessage, requestModel, capturedSessionModel); err != nil {
 		return err
 	}
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())

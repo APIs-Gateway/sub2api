@@ -117,13 +117,17 @@ func (s *openAIWSImageInputEstimates) complete(turn int, responseID string, actu
 	s.byResponse[responseID] = estimate
 }
 
-func beforeOpenAIPassthroughUpstreamTurn(hooks *OpenAIWSIngressHooks, estimates *openAIWSImageInputEstimates, turn int, body []byte, model string) error {
+func beforeOpenAIPassthroughUpstreamTurn(hooks *OpenAIWSIngressHooks, estimates *openAIWSImageInputEstimates, turn int, body []byte, model, upstreamModel string) error {
 	imageInput := estimates.prepare(turn, body)
 	if hooks == nil {
 		return nil
 	}
 	if hooks.BeforePassthroughUpstreamTurn != nil {
-		return hooks.BeforePassthroughUpstreamTurn(turn, body, model, imageInput)
+		if wireModel := gjson.GetBytes(body, "model").String(); wireModel != "" {
+			upstreamModel = wireModel
+		}
+		imageGeneration := IsImageGenerationIntent(openAIResponsesEndpoint, upstreamModel, body)
+		return hooks.BeforePassthroughUpstreamTurn(turn, body, model, imageInput, imageGeneration)
 	}
 	if hooks.BeforeUpstreamTurn != nil {
 		return hooks.BeforeUpstreamTurn(turn, body, model)
