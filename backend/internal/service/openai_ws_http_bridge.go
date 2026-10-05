@@ -2,6 +2,7 @@ package service
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -187,8 +188,13 @@ func skipOpenAIWSJSONValue(payload []byte, i int) int {
 
 func prepareOpenAIWSHTTPBridgeBody(payload []byte) ([]byte, error) {
 	var body map[string]any
-	if err := json.Unmarshal(payload, &body); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	if err := decoder.Decode(&body); err != nil {
 		return nil, err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, errors.New("response.create payload must contain one JSON object")
 	}
 	if body == nil {
 		return nil, errors.New("response.create payload must be a JSON object")
@@ -294,6 +300,22 @@ func (c *openAIWSToolCallReplayCollector) Items() []json.RawMessage {
 
 func (c *openAIWSToolCallReplayCollector) AllItems() []json.RawMessage {
 	return slices.Clone(c.allItems)
+}
+
+// A store=false reasoning id cannot restore context without its encrypted body.
+// Preserve all other output items and the opaque encrypted string unchanged.
+func openAIWSHTTPBridgeReplayOutputItems(items []json.RawMessage) []json.RawMessage {
+	replayable := make([]json.RawMessage, 0, len(items))
+	for _, item := range items {
+		if gjson.GetBytes(item, "type").String() == "reasoning" {
+			encrypted := gjson.GetBytes(item, "encrypted_content")
+			if encrypted.Type != gjson.String || strings.TrimSpace(encrypted.String()) == "" {
+				continue
+			}
+		}
+		replayable = append(replayable, item)
+	}
+	return replayable
 }
 
 func (c *openAIWSToolCallReplayCollector) addAllItem(item gjson.Result) {
@@ -597,7 +619,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			Duration:        time.Since(turnStart),
 			FirstTokenMs:    firstTokenMs,
 		}
-		if replayInput := replayCollector.Items(); len(replayInput) > 0 {
+		if replayInput := openAIWSHTTPBridgeReplayOutputItems(replayCollector.AllItems()); len(replayInput) > 0 {
 			result.wsReplayInput = replayInput
 			result.wsReplayInputExists = true
 		}

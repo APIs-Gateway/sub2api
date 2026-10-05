@@ -54,6 +54,11 @@ jobs:
       - name: Unit tests (Chat input audio boundaries)
         working-directory: backend
         run: go test -tags=unit -count=1 -run '^TestChatInputAudio_' -v ./internal/pkg/apicompat/ ./internal/service/
+      - name: HTTP bridge continuation history actual wire (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestOpenAIWSHTTPBridgeHistory_|^TestOpenAIWSHTTPBridgeKeepsContinuation|^TestOpenAIWSHTTPBridgeFullCustomToolHistory|^TestOpenAIWSHTTPBridgeObjectToolOutput' ./internal/service/
       # 分组策略矩阵实现带快照缓存、singleflight 与失效通知，并发路径靠 -race 守住。
       # 只跑矩阵、阶段与影子比对相关测试；流式 ping 保留独立命名门槛。
       - name: Chat ping and disconnect regression tests (actual results)
@@ -80,6 +85,11 @@ jobs:
       - name: Integration tests (Gemini Chat audio and local funding release)
         working-directory: backend
         run: go test -tags=integration -count=1 -run '^TestChatInputAudioHTTP_' -v ./internal/repository/
+      - name: HTTP bridge continuation history actual funded turns (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestOpenAIWSBridgeHistoryHTTP_|^TestBillingInflightWS_RealTurnReservesBillsOnceAndReleases|^TestBillingInflightWS_LaterModelUsesActualBillingSource' ./internal/repository/
       - name: Integration tests (race, TOTP login claims)
         working-directory: backend
         env:
