@@ -345,6 +345,39 @@ describe('EditAccountModal', () => {
     authState.isSimpleMode = true
   })
 
+  for (const scenario of [
+    { label: 'mixed whitelist and rewrites', mapping: { alias: 'gpt-6', stable: 'stable' }, permissive: false, expected: { alias: 'alias', stable: 'stable' } },
+    { label: 'the final strict rewrite', mapping: { alias: 'gpt-6' }, permissive: false, expected: { alias: 'alias' } },
+    { label: 'permissive rename-only admission', mapping: { alias: 'gpt-6' }, permissive: true, expected: undefined },
+    { label: 'an explicit whitelist with the permissive flag', mapping: { alias: 'gpt-6', stable: 'stable' }, permissive: true, expected: { alias: 'alias', stable: 'stable' } }
+  ]) {
+    it(`preserves ${scenario.label} when deleting a rewrite through the real editor`, async () => {
+      const account = buildAccount()
+      account.credentials = { api_key: 'sk-test', model_mapping: scenario.mapping, model_mapping_allow_unlisted: scenario.permissive }
+      const original = structuredClone(account.credentials)
+      updateAccountMock.mockReset()
+      showErrorMock.mockReset()
+      checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+      updateAccountMock.mockResolvedValue(account)
+      const wrapper = mountModal(account)
+      await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelMapping')!.trigger('click')
+      const row = wrapper.get('input[placeholder="admin.accounts.requestModel"]').element.parentElement!
+      expect(row.querySelector<HTMLInputElement>('input')?.value).toBe('alias')
+      await wrapper.findAll('button').find(button => button.element.parentElement === row)!.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('input[placeholder="admin.accounts.requestModel"]').exists()).toBe(false)
+      await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+      expect(updateAccountMock).toHaveBeenCalledTimes(1)
+      const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+      expect(credentials?.model_mapping).toEqual(scenario.expected)
+      expect(credentials?.model_mapping_allow_unlisted).toBe(scenario.permissive)
+      expect(showErrorMock).not.toHaveBeenCalledWith('admin.accounts.modelMappingConflict')
+      expect(account.credentials).toEqual(original)
+      wrapper.unmount()
+    })
+  }
+
   it('allows removing assigned inactive groups and undoing the selection before saving', async () => {
     authState.isSimpleMode = false
     const account = buildAccount()

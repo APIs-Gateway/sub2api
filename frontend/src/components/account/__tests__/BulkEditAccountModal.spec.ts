@@ -92,6 +92,32 @@ describe('BulkEditAccountModal', () => {
     } as any)
   })
 
+  for (const mode of ['whitelist', 'mapping'] as const) {
+    it(`retains the deleted rewrite source only in the selected ${mode} save mode`, async () => {
+      const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['apikey'] })
+      await wrapper.get('#bulk-edit-model-restriction-enabled').setValue(true)
+      await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelMapping')!.trigger('click')
+      await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.addMapping')!.trigger('click')
+      await wrapper.get('input[placeholder="admin.accounts.requestModel"]').setValue('retained-alias')
+      await wrapper.get('input[placeholder="admin.accounts.actualModel"]').setValue('gpt-6')
+      const row = wrapper.get('input[placeholder="admin.accounts.requestModel"]').element.parentElement!
+      await wrapper.findAll('button').find(button => button.element.parentElement === row)!.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('input[placeholder="admin.accounts.requestModel"]').exists()).toBe(false)
+      if (mode === 'whitelist') {
+        await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelWhitelist')!.trigger('click')
+        expect(wrapper.getComponent(ModelWhitelistSelector).props('modelValue')).toEqual(['retained-alias'])
+      }
+      await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        credentials: { model_mapping: mode === 'whitelist' ? { 'retained-alias': 'retained-alias' } : {} }
+      })
+      wrapper.unmount()
+    })
+  }
+
   it('antigravity 白名单包含 Gemini 图片模型且过滤掉普通 GPT 模型', async () => {
     const wrapper = mountModal()
     const selector = wrapper.findComponent(ModelWhitelistSelector)
