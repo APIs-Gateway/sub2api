@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 )
@@ -123,6 +124,11 @@ func TestPricingShadow_ViewsAreTruncatedAndFieldsBounded(t *testing.T) {
 	require.JSONEq(t, `{"truncated":true}`, string(raw))
 	require.Equal(t, "ab", truncateShadowString("abcdef", 2))
 	require.Equal(t, "abc", truncateShadowString("abc", 10))
+	// 多字节：不切半个字符；非法 UTF-8 被剔除。
+	require.Equal(t, "你", truncateShadowString("你好", 4))
+	require.Equal(t, "", truncateShadowString("你好", 2))
+	require.Equal(t, "ab", truncateShadowString("a\xffb", 10))
+	require.True(t, utf8.ValidString(truncateShadowString("模型模型模型", 7)))
 
 	sink := &spSink{}
 	h := newPricingShadowHub(sink)

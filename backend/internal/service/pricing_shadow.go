@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 )
 
 // W6 PR5：影子比对的计数、采样与限流（设计 4.4、2.7）。
@@ -286,19 +288,25 @@ func marshalShadowView(v any) (json.RawMessage, error) {
 }
 
 func truncateShadowString(s string, max int) string {
+	s = strings.ToValidUTF8(s, "")
 	if len(s) <= max {
 		return s
 	}
-	return s[:max]
+	// 按 rune 边界截断，不把多字节字符切成半个。
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 // Stats 返回当前进程的计数快照，排序固定。
 func (h *pricingShadowHub) Stats() PricingShadowStats {
 	out := PricingShadowStats{
-		ComparedTotal:  []PricingShadowComparedCount{},
-		DiffTotal:      []PricingShadowDiffCount{},
-		SkippedTotal:   map[string]int64{},
-		PanicsTotal:    h.panics.Load(),
+		ComparedTotal: []PricingShadowComparedCount{},
+		DiffTotal:     []PricingShadowDiffCount{},
+		SkippedTotal:  map[string]int64{},
+		PanicsTotal:   h.panics.Load(),
 		SamplesDropped: h.dropped.Load(),
 	}
 	h.compared.Range(func(k, v any) bool {
