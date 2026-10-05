@@ -88,17 +88,28 @@ func (s *pssSettings) Delete(context.Context, string) error { return errors.New(
 type pssStore struct {
 	mu            sync.Mutex
 	active        *PricingSnapshotMeta
+	metas         map[int64]*PricingSnapshotMeta
 	payloads      map[int64][]byte
 	getActiveErr  error
 	getPayloadErr error
 	activateErr   error
+	insertErr     error
+	applyErr      error
+	recent        []string
+	recentErr     error
+	deleteErr     error
+	deleted       []time.Time
 	activated     []NewPricingSnapshot
+	inserted      []NewPricingSnapshot
+	applied       []ApplyMergedSnapshot
 	metaCalls     int
 	nextID        int64
+	// checkHook 在 ApplyMerged 成功提交前一刻运行（模拟提交之后才出现的故障）。
+	checkHook func()
 }
 
 func newPSSStore() *pssStore {
-	return &pssStore{payloads: map[int64][]byte{}, nextID: 100}
+	return &pssStore{payloads: map[int64][]byte{}, metas: map[int64]*PricingSnapshotMeta{}, nextID: 100}
 }
 
 func pssSHA(payload []byte) string {
@@ -109,8 +120,26 @@ func pssSHA(payload []byte) string {
 func (f *pssStore) setActive(id int64, payload []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.active = &PricingSnapshotMeta{ID: id, Label: fmt.Sprintf("snap-%d", id), Source: PricingSnapshotSourceBootstrap,
-		ContentSHA256: pssSHA(payload), Status: PricingSnapshotStatusActive, FetchedAt: time.Unix(1700000000, 0)}
+	f.setActiveLocked(&PricingSnapshotMeta{ID: id, Label: fmt.Sprintf("snap-%d", id), Source: PricingSnapshotSourceBootstrap,
+		ContentSHA256: pssSHA(payload), Status: PricingSnapshotStatusActive, FetchedAt: time.Unix(1700000000, 0)}, payload)
+}
+
+func (f *pssStore) setActiveLocked(meta *PricingSnapshotMeta, payload []byte) {
+	if f.active != nil {
+		f.active.Status = PricingSnapshotStatusSuperseded
+	}
+	meta.Status = PricingSnapshotStatusActive
+	f.active = meta
+	f.metas[meta.ID] = meta
+	f.payloads[meta.ID] = payload
+}
+
+// addCandidate 直接放一份候选（不经过 InsertCandidate）。
+func (f *pssStore) addCandidate(id int64, payload []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.metas[id] = &PricingSnapshotMeta{ID: id, Label: fmt.Sprintf("cand-%d", id), Source: PricingSnapshotSourceRemote,
+		ContentSHA256: pssSHA(payload), Status: PricingSnapshotStatusCandidate, FetchedAt: time.Unix(1700000100, 0)}
 	f.payloads[id] = payload
 }
 
@@ -141,6 +170,40 @@ func (f *pssStore) GetPayload(_ context.Context, id int64) ([]byte, error) {
 	return p, nil
 }
 
+func (f *pssStore) GetMeta(_ context.Context, id int64) (*PricingSnapshotMeta, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, ok := f.metas[id]
+	if !ok {
+		return nil, ErrPricingSnapshotNotFound
+	}
+	c := *m
+	return &c, nil
+}
+
+func (f *pssStore) List(_ context.Context, statuses []string, limit int) ([]PricingSnapshotMeta, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []PricingSnapshotMeta
+	for id := f.nextID + 1000; id > 0; id-- {
+		m, ok := f.metas[id]
+		if !ok {
+			continue
+		}
+		if len(statuses) > 0 {
+			match := false
+			for _, st := range statuses {
+				match = match || st == m.Status
+			}
+			if !match {
+				continue
+			}
+		}
+		out = append(out, *m)
+	}
+	return out, nil
+}
+
 func (f *pssStore) ActivateNew(_ context.Context, in NewPricingSnapshot) (*PricingSnapshotMeta, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -149,9 +212,90 @@ func (f *pssStore) ActivateNew(_ context.Context, in NewPricingSnapshot) (*Prici
 	}
 	f.nextID++
 	f.activated = append(f.activated, in)
-	f.payloads[f.nextID] = in.Payload
-	f.active = &PricingSnapshotMeta{ID: f.nextID, Label: in.Label, Source: in.Source, ContentSHA256: in.ContentSHA256,
-		ModelCount: in.ModelCount, Status: PricingSnapshotStatusActive, FetchedAt: time.Unix(1700000000, 0)}
+	f.setActiveLocked(&PricingSnapshotMeta{ID: f.nextID, Label: in.Label, Source: in.Source, ContentSHA256: in.ContentSHA256,
+		ModelCount: in.ModelCount, FetchedAt: time.Unix(1700000000, 0)}, in.Payload)
+	m := *f.active
+	return &m, nil
+}
+
+func (f *pssStore) InsertCandidate(_ context.Context, in NewPricingSnapshot) (*PricingSnapshotMeta, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.insertErr != nil {
+		return nil, false, f.insertErr
+	}
+	for _, m := range f.metas {
+		if m.Status == PricingSnapshotStatusCandidate && m.ContentSHA256 == in.ContentSHA256 {
+			c := *m
+			return &c, false, nil
+		}
+	}
+	f.nextID++
+	f.inserted = append(f.inserted, in)
+	m := &PricingSnapshotMeta{ID: f.nextID, Label: in.Label, Source: in.Source, SourceURL: in.SourceURL, ContentSHA256: in.ContentSHA256,
+		ModelCount: in.ModelCount, Status: PricingSnapshotStatusCandidate, FetchedBy: in.FetchedBy, FetchedAt: time.Unix(1700000100, 0)}
+	f.metas[m.ID] = m
+	f.payloads[m.ID] = in.Payload
+	c := *m
+	return &c, true, nil
+}
+
+func (f *pssStore) RejectCandidate(_ context.Context, id int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, ok := f.metas[id]
+	if !ok || m.Status != PricingSnapshotStatusCandidate {
+		return ErrPricingSnapshotNotCandidate
+	}
+	m.Status = PricingSnapshotStatusRejected
+	return nil
+}
+
+func (f *pssStore) DeleteExpiredCandidates(_ context.Context, before time.Time) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = append(f.deleted, before)
+	if f.deleteErr != nil {
+		return 0, f.deleteErr
+	}
+	return 2, nil
+}
+
+func (f *pssStore) RecentBillingModels(context.Context, int) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.recent, f.recentErr
+}
+
+// ApplyMerged 模拟事务语义：先核对基线、再运行 Check，任何一步失败都不改动状态。
+func (f *pssStore) ApplyMerged(ctx context.Context, req ApplyMergedSnapshot) (*PricingSnapshotMeta, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.applied = append(f.applied, req)
+	if f.applyErr != nil {
+		return nil, f.applyErr
+	}
+	if f.active == nil || f.active.ID != req.ExpectedActiveID || f.active.ContentSHA256 != req.ExpectedActiveSHA {
+		return nil, ErrPricingSnapshotBaselineChanged
+	}
+	if req.Check != nil {
+		if err := req.Check(ctx, nil); err != nil {
+			return nil, err
+		}
+	}
+	if f.checkHook != nil {
+		f.checkHook()
+	}
+	f.nextID++
+	in := req.New
+	f.setActiveLocked(&PricingSnapshotMeta{ID: f.nextID, Label: in.Label, Source: in.Source, ContentSHA256: in.ContentSHA256,
+		ModelCount: in.ModelCount, ParentSnapshotID: in.ParentSnapshotID, CandidateSnapshotID: in.CandidateSnapshotID,
+		ApprovedBy: in.ApprovedBy, FetchedAt: time.Unix(1700000200, 0)}, in.Payload)
+	if req.ConsumeCandidate && in.CandidateSnapshotID != nil {
+		if c, ok := f.metas[*in.CandidateSnapshotID]; ok {
+			c.Status = PricingSnapshotStatusSuperseded
+		}
+	}
 	m := *f.active
 	return &m, nil
 }
@@ -502,8 +646,11 @@ func TestPricingSnapshot_PinnedBlocksRemoteDownloadIntoLiveData(t *testing.T) {
 	defer svc.Stop()
 
 	require.ErrorIs(t, svc.ForceUpdate(), ErrPricingPinned)
-	require.NoError(t, svc.syncWithRemote(), "pinned 时定时同步是空操作")
-	require.Zero(t, calls, "pinned 时不访问远程")
+	require.Zero(t, calls, "ForceUpdate 在 pinned 时不访问远程")
+	require.NoError(t, svc.syncWithRemote(), "pinned 时定时同步只把远程内容拉成候选")
+	require.Equal(t, 1, calls)
+	require.Len(t, store.inserted, 1)
+	require.InDelta(t, 0.000001, pssInputCost(t, svc), 1e-12, "生效数据不变")
 
 	// 下载进行到一半才变成 pinned：解析之后、写文件之前被拦下。
 	svc.mu.Lock()

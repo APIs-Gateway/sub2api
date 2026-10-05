@@ -121,6 +121,8 @@ var adminDangerRules = []AdminRouteRule{
 	{http.MethodPut, "/payment/plans/:id", "subscription plan pricing"},
 	{http.MethodDelete, "/payment/plans/:id", "subscription plan pricing (delete)"},
 	{http.MethodPut, "/payment/config", "payment configuration"},
+	{http.MethodPost, "/pricing/snapshots/pin", "freezes official prices on a snapshot (switches the pricing source for every group)"},
+	{http.MethodPost, "/pricing/snapshots/:id/approve", "makes a merged price snapshot the effective official price table"},
 	{http.MethodPost, "/payment/providers", "payment provider credentials / routing"},
 	{http.MethodPut, "/payment/providers/:id", "payment provider credentials / routing"},
 	{http.MethodDelete, "/payment/providers/:id", "payment provider (delete)"},
@@ -244,6 +246,11 @@ var adminReviewedWriteRules = []AdminRouteRule{
 	{http.MethodPost, "/settings/send-test-email", "sends one test email; persists nothing"},
 	{http.MethodPost, "/settings/email-template-preview", "renders a preview; persists nothing"},
 	{http.MethodPost, "/settings/web-search-emulation/test", "connection test; persists nothing"},
+
+	// pricing snapshots: candidates never change effective prices until approved.
+	{http.MethodPost, "/pricing/snapshots/fetch", "downloads a candidate snapshot; the effective prices do not change"},
+	{http.MethodPost, "/pricing/snapshots/:id/preview", "dry-run of an approval; persists nothing"},
+	{http.MethodPost, "/pricing/snapshots/:id/reject", "discards an unapproved candidate; the effective prices do not change"},
 }
 
 // adminReviewedReadRules lists GET routes that look like they could expose a

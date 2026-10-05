@@ -463,10 +463,6 @@ func (s *PricingService) checkAndUpdatePricing() error {
 
 // syncWithRemote 与远程同步（基于哈希校验）
 func (s *PricingService) syncWithRemote() error {
-	// pinned 模式下计费只读生效快照，定时同步不得下载进生效数据（候选拉取走快照流程）。
-	if s.isPinned() {
-		return nil
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
@@ -476,6 +472,12 @@ func (s *PricingService) syncWithRemote() error {
 		case <-ctx.Done():
 		}
 	}()
+
+	// pinned 模式下计费只读生效快照，定时同步不得下载进生效数据：只把远程内容拉成候选快照（每天一次）。
+	if s.isPinned() {
+		s.autoFetchSnapshotCandidate(ctx)
+		return nil
+	}
 
 	// 如果配置了哈希URL，从远程获取哈希进行比对
 	if s.cfg.Pricing.HashURL != "" {
@@ -732,6 +734,12 @@ func (s *PricingService) loadPricingData(filePath string) error {
 	hashStr := hex.EncodeToString(hash[:])
 
 	s.mu.Lock()
+	// 启动期间模式可能被切成 pinned（轮询已经装入了快照）：此时不能再用文件里的数据覆盖它。
+	if s.pinnedLocked() {
+		s.mu.Unlock()
+		logger.LegacyPrintf("service.pricing", "[Pricing] Skipped loading %s: pricing became pinned while loading", filePath)
+		return nil
+	}
 	s.setPricingDataLocked(pricingData)
 	s.localHash = hashStr
 
