@@ -161,6 +161,20 @@ func TestWSImageInputHTTP_FrozenModelFundingAndTextReset(t *testing.T) {
 				if source == service.BillingModelSourceRequested {
 					rate = .05
 				}
+				// Stage creates a financial UUID distinct from the immutable attempt.
+				// Observe the committed pending row before Apply can settle/release it.
+				type stagedObligation struct {
+					attempt, owner, id, rowOwner, phase, requestID, fingerprint string
+					userID, keyID                                               int64
+					amount, knownCharge                                         float64
+					err                                                         error
+				}
+				staged := make(chan stagedObligation, 2)
+				f.billingRepo.afterStage = func(ctx context.Context, userID int64, owner, attempt, id string) {
+					v := stagedObligation{attempt: attempt, owner: owner, id: id}
+					v.err = inflightTestDB(t).QueryRowContext(ctx, `SELECT p.user_id,p.owner_id,p.phase,p.amount,p.request_id,p.api_key_id,p.request_fingerprint,a.known_charge FROM billing_inflight_leases p JOIN billing_inflight_leases a ON a.id=$2 AND a.owner_id=p.owner_id AND a.phase='attempt' WHERE p.id=$1`, id, attempt).Scan(&v.userID, &v.rowOwner, &v.phase, &v.amount, &v.requestID, &v.keyID, &v.fingerprint, &v.knownCharge)
+					staged <- v
+				}
 				previousAttempt := ""
 				for n := 1; n <= 3; n++ {
 					input, extra, model := wsImageInputPayload, "", "gpt-5.4"
@@ -189,10 +203,9 @@ func TestWSImageInputHTTP_FrozenModelFundingAndTextReset(t *testing.T) {
 					} else {
 						require.Zero(t, f.held(t), "new text chain must remain known-free")
 					}
-					attemptID := ""
+					attemptID, ownerID := "", ""
 					if n < 3 {
-						var ownerID string
-						require.NoError(t, inflightTestDB(t).QueryRow(`SELECT a.id,o.id FROM billing_inflight_leases a JOIN billing_inflight_leases o ON a.owner_id=o.id WHERE a.user_id=$1 AND a.phase='attempt' AND o.phase='owner'`, f.userID).Scan(&attemptID, &ownerID))
+						require.NoError(t, inflightTestDB(t).QueryRow(`SELECT a.id,o.id FROM billing_inflight_leases a JOIN billing_inflight_leases o ON a.owner_id=o.id WHERE a.user_id=$1 AND a.phase='attempt' AND a.amount>0 AND o.phase='owner'`, f.userID).Scan(&attemptID, &ownerID))
 						require.NotEmpty(t, ownerID)
 						require.NotEqual(t, previousAttempt, attemptID)
 						previousAttempt = attemptID
@@ -210,7 +223,28 @@ func TestWSImageInputHTTP_FrozenModelFundingAndTextReset(t *testing.T) {
 					f.waitUsage(t, n)
 					select {
 					case command := <-f.billingRepo.commands:
-						require.Equal(t, attemptID, command.InflightObligationID, "settlement consumes this exact per-turn obligation")
+						if n < 3 {
+							select {
+							case obligation := <-staged:
+								require.NoError(t, obligation.err)
+								require.Equal(t, attemptID, obligation.attempt)
+								require.Equal(t, ownerID, obligation.owner)
+								require.Equal(t, ownerID, obligation.rowOwner)
+								require.Equal(t, "pending", obligation.phase)
+								require.Equal(t, f.userID, obligation.userID)
+								require.Equal(t, command.APIKeyID, obligation.keyID)
+								require.Equal(t, command.RequestID, obligation.requestID)
+								require.Equal(t, command.RequestFingerprint, obligation.fingerprint)
+								require.InDelta(t, 2*rate, obligation.amount, 1e-9)
+								require.InDelta(t, 2*rate, obligation.knownCharge, 1e-9, "only this frozen attempt records the actual charge")
+								require.NotEqual(t, attemptID, obligation.id)
+								require.Equal(t, obligation.id, command.InflightObligationID, "Apply consumes the exact financial obligation staged for this attempt")
+							case <-time.After(5 * time.Second):
+								t.Fatal("actual pending obligation observation missing")
+							}
+						} else {
+							require.Empty(t, command.InflightObligationID, "known-free text creates no financial obligation")
+						}
 					case <-time.After(5 * time.Second):
 						t.Fatal("actual billing Apply missing")
 					}
@@ -370,6 +404,25 @@ func TestWSImageInputHTTP_QueuedWorkerOwnsOnlyItsObligation(t *testing.T) {
 	require.NoError(t, f.billing.InvalidateUserBalance(context.Background(), f.userID))
 	gate := make(chan struct{})
 	f.billingRepo.firstApplyGate = gate
+	type settledObligation struct {
+		phase, owner, currentAttempt string
+		amount, currentAmount        float64
+		err                          error
+	}
+	settled := make(chan settledObligation, 1)
+	var observed atomic.Bool
+	f.billingRepo.afterApply = func(ctx context.Context, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult, applyErr error) {
+		if !observed.CompareAndSwap(false, true) {
+			return
+		}
+		v := settledObligation{err: applyErr}
+		if applyErr == nil && result != nil && result.Applied {
+			// Apply committed, but its worker still holds the task reference: the
+			// settled history row is available before normal owner cleanup.
+			v.err = inflightTestDB(t).QueryRowContext(ctx, `SELECT p.phase,p.owner_id,p.amount,a.id,a.amount FROM billing_inflight_leases p JOIN billing_inflight_leases a ON a.user_id=p.user_id AND a.phase='attempt' AND a.amount>0 WHERE p.id=$1`, cmd.InflightObligationID).Scan(&v.phase, &v.owner, &v.amount, &v.currentAttempt, &v.currentAmount)
+		}
+		settled <- v
+	}
 	var release sync.Once
 	t.Cleanup(func() { release.Do(func() { close(gate) }) })
 	conn := f.dial(t)
@@ -391,13 +444,23 @@ func TestWSImageInputHTTP_QueuedWorkerOwnsOnlyItsObligation(t *testing.T) {
 	second := p.next(t)
 	secondHold := f.held(t) - .2
 	require.Positive(t, secondHold)
+	var secondAttempt, secondOwner string
+	require.NoError(t, inflightTestDB(t).QueryRow(`SELECT id,owner_id FROM billing_inflight_leases WHERE user_id=$1 AND phase='attempt' AND amount>0`, f.userID).Scan(&secondAttempt, &secondOwner))
 	f.denyConcurrentHTTP(t, "competitor")
 	require.EqualValues(t, 2, p.calls.Load())
 	release.Do(func() { close(gate) })
 	require.Eventually(t, func() bool { return f.wallet(t) == 99.8 && f.held(t) == secondHold }, 5*time.Second, 20*time.Millisecond, "old financial task cannot consume new attempt estimate")
-	var oldPending int
-	require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM billing_inflight_leases WHERE id=$1`, old.InflightObligationID).Scan(&oldPending))
-	require.Zero(t, oldPending)
+	select {
+	case v := <-settled:
+		require.NoError(t, v.err)
+		require.Equal(t, "settled", v.phase, "atomic Apply retains history without a live pending hold")
+		require.Zero(t, v.amount)
+		require.NotEqual(t, secondOwner, v.owner)
+		require.Equal(t, secondAttempt, v.currentAttempt)
+		require.InDelta(t, secondHold, v.currentAmount, 1e-9, "settling the old obligation leaves the new immutable attempt unchanged")
+	case <-time.After(5 * time.Second):
+		t.Fatal("committed old obligation observation missing")
+	}
 	second.reply <- wsImageInputEvent(2, "response.completed", `{"input_tokens":2,"output_tokens":1,"input_tokens_details":{"image_tokens":2}}`, "")
 	wsInflightReadCompleted(t, conn)
 	f.waitUsage(t, 2)
@@ -419,6 +482,9 @@ func TestWSImageInputHTTP_ProviderReplayBillsOnce(t *testing.T) {
 		pending.reply <- wsImageInputEvent(1, "response.completed", `{"input_tokens":2,"output_tokens":1,"input_tokens_details":{"image_tokens":2}}`, "")
 		wsInflightReadCompleted(t, conn)
 		require.Eventually(t, func() bool { return f.billingRepo.calls.Load() == int64(n) && f.held(t) == 0 }, 5*time.Second, 20*time.Millisecond)
+		// Apply is observed before RecordUsage persists its log. Wait for the
+		// actual log as well; keep the exact one-log/one-dedup assertions below.
+		f.waitUsage(t, 1)
 		cmd := <-f.billingRepo.commands
 		require.NotEmpty(t, cmd.InflightObligationID)
 		require.NotEqual(t, previous, cmd.InflightObligationID)
