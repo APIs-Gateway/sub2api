@@ -62,6 +62,9 @@ jobs:
             backend/coverage-integration.out
           if-no-files-found: ignore
           retention-days: 14
+      - name: Responses input token regression tests (actual results)
+        working-directory: backend
+        run: go test -tags=unit -count=1 -v -run '^TestResponsesInputTokens|^TestGatewayResponsesInputTokens' ./internal/service/ ./internal/handler/ ./internal/server/routes/
       - name: Upload backend coverage to Codecov
         uses: codecov/codecov-action@v5
         with:

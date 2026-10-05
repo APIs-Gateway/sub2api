@@ -15,15 +15,16 @@ import (
 // ──────────────────────────────────────────────────────────
 
 const (
-	EndpointMessages          = "/v1/messages"
-	EndpointChatCompletions   = "/v1/chat/completions"
-	EndpointEmbeddings        = "/v1/embeddings"
-	EndpointAlphaSearch       = "/v1/alpha/search"
-	EndpointResponses         = "/v1/responses"
-	EndpointResponsesCompact  = "/v1/responses/compact"
-	EndpointImagesGenerations = "/v1/images/generations"
-	EndpointImagesEdits       = "/v1/images/edits"
-	EndpointGeminiModels      = "/v1beta/models"
+	EndpointMessages             = "/v1/messages"
+	EndpointChatCompletions      = "/v1/chat/completions"
+	EndpointEmbeddings           = "/v1/embeddings"
+	EndpointAlphaSearch          = "/v1/alpha/search"
+	EndpointResponses            = "/v1/responses"
+	EndpointResponsesInputTokens = "/v1/responses/input_tokens"
+	EndpointResponsesCompact     = "/v1/responses/compact"
+	EndpointImagesGenerations    = "/v1/images/generations"
+	EndpointImagesEdits          = "/v1/images/edits"
+	EndpointGeminiModels         = "/v1beta/models"
 )
 
 // gin.Context keys used by the middleware and helpers below.
@@ -45,6 +46,8 @@ const (
 func NormalizeInboundEndpoint(path string) string {
 	path = strings.TrimSpace(path)
 	switch {
+	case service.IsOpenAIResponsesInputTokensPath(path):
+		return EndpointResponsesInputTokens
 	case strings.Contains(path, EndpointEmbeddings):
 		return EndpointEmbeddings
 	case strings.Contains(path, EndpointAlphaSearch) ||
@@ -106,7 +109,7 @@ func DeriveUpstreamEndpoint(inbound, rawRequestPath, platform string) string {
 
 	switch platform {
 	case service.PlatformOpenAI, service.PlatformGrok:
-		if inbound == EndpointEmbeddings || inbound == EndpointImagesGenerations || inbound == EndpointImagesEdits ||
+		if inbound == EndpointResponsesInputTokens || inbound == EndpointEmbeddings || inbound == EndpointImagesGenerations || inbound == EndpointImagesEdits ||
 			(platform == service.PlatformOpenAI && inbound == EndpointAlphaSearch) {
 			return inbound
 		}
