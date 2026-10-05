@@ -35,6 +35,16 @@ func TestUsageLogRepo_CostUnitAllWritePaths(t *testing.T) {
 	apiKey := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, Key: "sk-cost-unit-" + uuid.NewString(), Name: "k"})
 	account := mustCreateAccount(t, client, &service.Account{Name: "acc-cost-unit-" + uuid.NewString()})
 
+	// 批量路径用的是独立连接，写入会真正提交，不能靠事务回滚清理；
+	// 不清掉的话，同一个库里依赖「库里只有自己造的数据」的其他 usage_logs 套件会被污染。
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = integrationDB.ExecContext(bg, `DELETE FROM usage_logs WHERE user_id = $1`, user.ID)
+		_, _ = integrationDB.ExecContext(bg, `DELETE FROM api_keys WHERE id = $1`, apiKey.ID)
+		_, _ = integrationDB.ExecContext(bg, `DELETE FROM accounts WHERE id = $1`, account.ID)
+		_, _ = integrationDB.ExecContext(bg, `DELETE FROM users WHERE id = $1`, user.ID)
+	})
+
 	newLog := func(requestID string) *service.UsageLog {
 		return &service.UsageLog{
 			UserID: user.ID, APIKeyID: apiKey.ID, AccountID: account.ID, RequestID: requestID,
