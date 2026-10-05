@@ -349,11 +349,18 @@ describe('EditAccountModal', () => {
     { label: 'mixed whitelist and rewrites', mapping: { alias: 'gpt-6', stable: 'stable' }, permissive: false, expected: { alias: 'alias', stable: 'stable' } },
     { label: 'the final strict rewrite', mapping: { alias: 'gpt-6' }, permissive: false, expected: { alias: 'alias' } },
     { label: 'permissive rename-only admission', mapping: { alias: 'gpt-6' }, permissive: true, expected: undefined },
-    { label: 'an explicit whitelist with the permissive flag', mapping: { alias: 'gpt-6', stable: 'stable' }, permissive: true, expected: { alias: 'alias', stable: 'stable' } }
+    { label: 'an explicit whitelist with the permissive flag', mapping: { alias: 'gpt-6', stable: 'stable' }, permissive: true, expected: { alias: 'alias', stable: 'stable' } },
+    { label: 'Bedrock strict admission', mapping: { alias: 'us.anthropic.claude-sonnet-5-v1' }, permissive: false, expected: { alias: 'alias' } }
   ]) {
     it(`preserves ${scenario.label} when deleting a rewrite through the real editor`, async () => {
       const account = buildAccount()
       account.credentials = { api_key: 'sk-test', model_mapping: scenario.mapping, model_mapping_allow_unlisted: scenario.permissive }
+      if (scenario.label === 'Bedrock strict admission') {
+        account.platform = 'anthropic'
+        account.type = 'bedrock'
+        account.credentials.auth_mode = 'apikey'
+        account.credentials.aws_region = 'us-east-1'
+      }
       const original = structuredClone(account.credentials)
       updateAccountMock.mockReset()
       showErrorMock.mockReset()
