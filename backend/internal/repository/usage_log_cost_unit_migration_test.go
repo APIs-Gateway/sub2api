@@ -9,7 +9,7 @@ import (
 
 // 203：usage_logs.cost_unit 可空、无默认值、无约束（否则 PG 会重写 9GB 的表），幂等，带 lock_timeout。
 func TestUsageLogCostUnitMigrationShape(t *testing.T) {
-	sqlText := readMigrationForTest(t, "203_usage_log_cost_unit.sql")
+	sqlText := readMigrationForTest(t, "209_usage_log_cost_unit.sql")
 
 	require.Contains(t, sqlText, "SET LOCAL lock_timeout")
 	require.Contains(t, sqlText, "SET LOCAL statement_timeout")

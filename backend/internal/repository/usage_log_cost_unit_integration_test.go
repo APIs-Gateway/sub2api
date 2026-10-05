@@ -94,11 +94,11 @@ func TestUsageLogRepo_CostUnitAllWritePaths(t *testing.T) {
 	}
 }
 
-// 迁移 203 在 PostgreSQL 上可重复执行：测试库启动时已经应用过一次，这里在事务里再跑两遍，
+// 迁移 209 在 PostgreSQL 上可重复执行：测试库启动时已经应用过一次，这里在事务里再跑两遍，
 // 都不能报错，最终列是可空、无默认值的 smallint（有默认值会让 PG 重写整张大表）。
 func TestUsageLogCostUnitMigration_IdempotentOnPostgres(t *testing.T) {
 	ctx := context.Background()
-	sqlText := readMigrationForTest(t, "203_usage_log_cost_unit.sql")
+	sqlText := readMigrationForTest(t, "209_usage_log_cost_unit.sql")
 
 	tx := testTx(t)
 	for i := 0; i < 2; i++ {

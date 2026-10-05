@@ -1,4 +1,4 @@
--- 203_usage_log_cost_unit.sql
+-- 209_usage_log_cost_unit.sql
 -- 站内额度改以人民币记账（见 service.CreditUnit）：usage_logs 新增 cost_unit，
 -- 标记这一行 actual_cost 等金额的记账单位。
 --   NULL = 历史额度（切换前写入的行；CREDIT_CURRENCY=USD 时写入的所有行）
