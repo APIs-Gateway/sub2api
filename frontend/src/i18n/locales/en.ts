@@ -450,6 +450,12 @@
     topUp: 'Top Up',
     userId: 'User ID',
     userIdCopied: 'User ID copied',
+    balanceCard: {
+      subscription: 'Subscription',
+      leftDaily: 'Left today',
+      leftWeekly: 'Left this week',
+      leftMonthly: 'Left this month',
+    },
   },
 
   // Auth

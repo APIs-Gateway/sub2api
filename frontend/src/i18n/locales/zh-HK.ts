@@ -450,6 +450,12 @@
     topUp: '充值',
     userId: '用戶 ID',
     userIdCopied: '已複製用戶 ID',
+    balanceCard: {
+      subscription: '訂閱',
+      leftDaily: '今日剩餘',
+      leftWeekly: '本周剩餘',
+      leftMonthly: '本月剩餘',
+    },
   },
 
   // Auth
