@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const antigravityZeroMalformedFunctionCall = `{"response":{"candidates":[{"content":{"parts":[{"thoughtSignature":"sig"}]},"finishReason":"MALFORMED_FUNCTION_CALL"}],"usageMetadata":{"promptTokenCount":0,"candidatesTokenCount":0}}}`
+
 func antigravityEmptyStreamTestResponse(payloads ...string) *http.Response {
 	var body strings.Builder
 	for _, payload := range payloads {
@@ -31,7 +33,7 @@ func TestHandleClaudeStreamingResponse_MalformedSignatureSwitchesAccount(t *test
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	resp := antigravityEmptyStreamTestResponse(`{"response":{"candidates":[{"content":{"role":"model","parts":[{"thoughtSignature":"sig"}]},"finishReason":"MALFORMED_FUNCTION_CALL"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2}}}`)
+	resp := antigravityEmptyStreamTestResponse(`{"response":{"candidates":[{"content":{"role":"model","parts":[{"thoughtSignature":"sig"}]},"finishReason":"MALFORMED_FUNCTION_CALL"}],"usageMetadata":{"promptTokenCount":0,"candidatesTokenCount":0}}}`)
 
 	result, err := svc.handleClaudeStreamingResponse(c, resp, time.Now(), "gemini-3.8-flash")
 	require.Nil(t, result)
@@ -49,7 +51,7 @@ func TestHandleClaudeStreamingResponse_OtherEmptyStreamsRetrySameAccount(t *test
 		name    string
 		payload string
 	}{
-		{"usage-only", `{"response":{"usageMetadata":{"promptTokenCount":10}}}`},
+		{"zero-usage-only", `{"response":{"usageMetadata":{"promptTokenCount":0}}}`},
 		{"unparseable", "not json"},
 		{"signature-only stop", `{"response":{"candidates":[{"content":{"parts":[{"thoughtSignature":"sig"}]},"finishReason":"STOP"}]}}`},
 	} {
@@ -79,7 +81,7 @@ func TestHandleClaudeStreamingResponse_MalformedThenEmptyStopRetriesSameAccount(
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	resp := antigravityEmptyStreamTestResponse(
-		geminiMalformedFunctionCall,
+		antigravityZeroMalformedFunctionCall,
 		`{"response":{"candidates":[{"finishReason":"STOP"}]}}`,
 	)
 
@@ -175,7 +177,7 @@ func TestHandleClaudeStreamingResponse_GroundingAtEOFReleasesPrelude(t *testing.
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	resp := antigravityEmptyStreamTestResponse(
 		`{"response":{"candidates":[{"content":{"parts":[{"text":"","thought":true,"thoughtSignature":"sig"}]}}]}}`,
-		`{"response":{"candidates":[{"groundingMetadata":{"webSearchQueries":["lookup"]}}]}}`,
+		`{"response":{"candidates":[{"groundingMetadata":{"webSearchQueries":["lookup"]},"finishReason":"STOP"}]}}`,
 	)
 
 	result, err := svc.handleClaudeStreamingResponse(c, resp, time.Now(), "gemini-3.8-flash")
@@ -198,7 +200,7 @@ func TestHandleClaudeStreamingResponse_KeepaliveDoesNotCommitEmptyStream(t *test
 	reader, writer := io.Pipe()
 	writeErr := make(chan error, 1)
 	go func() {
-		_, err := io.WriteString(writer, "data: "+geminiMalformedFunctionCall+"\n\n")
+		_, err := io.WriteString(writer, "data: "+antigravityZeroMalformedFunctionCall+"\n\n")
 		if err == nil {
 			time.Sleep(2200 * time.Millisecond) // Wait past two keepalive ticks before upstream EOF.
 		}
@@ -273,7 +275,7 @@ func TestHandleClaudeStreamToNonStreaming_MalformedThenEmptyStopRetriesSameAccou
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	resp := antigravityEmptyStreamTestResponse(
-		geminiMalformedFunctionCall,
+		antigravityZeroMalformedFunctionCall,
 		`{"response":{"candidates":[{"finishReason":"STOP"}]}}`,
 	)
 
