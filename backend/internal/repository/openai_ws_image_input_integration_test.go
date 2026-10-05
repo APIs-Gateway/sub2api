@@ -542,3 +542,33 @@ func TestWSImageInputHTTP_GeneratedOutputCanBeReusedAsImageInput(t *testing.T) {
 		})
 	}
 }
+
+func TestWSImageInputHTTP_ChannelAliasCannotOverrideActualWireIntent(t *testing.T) {
+	f := newWSInflightFixture(t, "passthrough", service.BillingModelSourceUpstream, map[string]float64{"token:gpt-5.4": 0, "token:gpt-image-1": 0, "competitor": .5}, wsImageInputPricing(t, false))
+	channels := NewChannelRepository(inflightTestDB(t))
+	entries, err := channels.ListAll(context.Background())
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	channel := entries[0]
+	channel.ModelMapping = map[string]map[string]string{service.PlatformOpenAI: {"gpt-image-1": "gpt-5.4"}}
+	require.NoError(t, channels.Update(context.Background(), &channel))
+	p := newWSImageInputProvider(t, f)
+	conn := f.dial(t)
+	wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-image-1","input":"ordinary text","max_output_tokens":8}`)
+	first := p.next(t)
+	require.Equal(t, "gpt-5.4", gjson.GetBytes(first.payload, "model").String(), "real channel mapping determines the provider's first model")
+	require.Zero(t, f.held(t))
+	first.reply <- wsImageInputEvent(1, "response.completed", `{"input_tokens":2,"output_tokens":1}`, "")
+	wsInflightReadCompleted(t, conn)
+	f.waitUsage(t, 1)
+	wsInflightWrite(t, conn, `{"type":"response.create","input":"new plain text","previous_response_id":null,"max_output_tokens":8}`)
+	second := p.next(t)
+	require.False(t, gjson.GetBytes(second.payload, "model").Exists(), "no wire model injection")
+	require.Zero(t, f.held(t), "original image alias must not override the actual text session intent")
+	second.reply <- wsImageInputEvent(2, "response.completed", `{"input_tokens":2,"output_tokens":1}`, "")
+	wsInflightReadCompleted(t, conn)
+	f.waitUsage(t, 2)
+	wsImageInputLog(t, f, 2, 0, 0, 0)
+	require.InDelta(t, .75, f.wallet(t), 1e-9)
+	require.EqualValues(t, 2, p.calls.Load())
+}

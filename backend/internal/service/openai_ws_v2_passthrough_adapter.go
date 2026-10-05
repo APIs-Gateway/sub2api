@@ -718,6 +718,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	// model would miss any admin-configured model whitelist and be silently
 	// passed through, defeating that policy on every frame after the first.
 	capturedSessionModel := openAIWSPassthroughPolicyModelForFrame(account, firstClientMessage)
+	// Admission image intent follows the actual provider session model, not
+	// the mapped policy model or original client alias retained for billing.
+	capturedWireModel := requestModel
 	sessionImageTools := false
 	sessionImageChoice := false
 	sessionBillingTools := ""
@@ -763,6 +766,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	if accountScoped {
 		firstClientMessage = accountScopedFirst
 	}
+	capturedWireModel = strings.TrimSpace(gjson.GetBytes(firstClientMessage, "model").String())
 
 	// 在 policy filter 之后再提取 service_tier / reasoning_effort 用于
 	// usage 上报：filter
@@ -1087,6 +1091,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				model = capturedSessionModel
 			}
 			out, blocked, policyErr := s.applyOpenAIFastPolicyToWSResponseCreate(ctx, account, model, payload)
+			if policyErr == nil && blocked == nil {
+				if wireModel := openAIWSPassthroughRequestModelFromSessionFrame(out); wireModel != "" {
+					capturedWireModel = wireModel
+				}
+			}
 			// 多轮 passthrough usage：仅在成功（non-block / non-err）
 			// 的 response.create 帧上更新 usageMeta，使用
 			// filter 处理后的 payload，与首帧 policy-after-extract 语义
@@ -1118,7 +1127,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 							estimateBody = body
 						}
 					}
-					if err := beforeOpenAIPassthroughUpstreamTurn(hooks, imageInputEstimates, turnNo, estimateBody, requestModelForThisFrame, model); err != nil {
+					if err := beforeOpenAIPassthroughUpstreamTurn(hooks, imageInputEstimates, turnNo, estimateBody, requestModelForThisFrame, capturedWireModel); err != nil {
 						return out, nil, err
 					}
 				}
@@ -1142,7 +1151,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		},
 	}
 	upstreamFirstMessageSent := false
-	if err := beforeOpenAIPassthroughUpstreamTurn(hooks, imageInputEstimates, 1, firstClientMessage, requestModel, capturedSessionModel); err != nil {
+	if err := beforeOpenAIPassthroughUpstreamTurn(hooks, imageInputEstimates, 1, firstClientMessage, requestModel, capturedWireModel); err != nil {
 		return err
 	}
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())

@@ -231,11 +231,7 @@ func (s *OpenAIGatewayService) ReserveBillingInflight(ctx context.Context, reque
 		if imageTokens.ImageInputTokens > imageTokens.InputTokens {
 			imageTokens.InputTokens = imageTokens.ImageInputTokens
 		}
-		currentModel := strings.TrimSpace(gjson.GetBytes(request.Body, "model").String())
-		if currentModel == "" {
-			currentModel = request.Model
-		}
-		if request.PassthroughImageGenerationIntent || IsImageGenerationIntent(openAIResponsesEndpoint, currentModel, request.Body) {
+		if request.PassthroughImageGenerationIntent {
 			imageTokens.ImageOutputTokens = imageTokens.OutputTokens
 		}
 		if imageTokens.ImageInputTokens > 0 || imageTokens.ImageOutputTokens > 0 {
