@@ -687,6 +687,9 @@ func (s *PaymentService) finalizeRefundSucceeded(ctx context.Context, o *dbent.P
 	if c == 0 {
 		return nil, infraerrors.Conflict("CONFLICT", "order status changed")
 	}
+	if err := s.checkRefundPendingAttempt(txCtx, o.ID, detail); err != nil {
+		return nil, err
+	}
 	if !detail.DeductionRollbackOK {
 		// The deduction taken before the gateway call was never rolled
 		// back, so it is still in place: do not deduct twice.
@@ -893,41 +896,83 @@ func (s *PaymentService) applyRefundFinalDeductionWithSubscription(ctx context.C
 // kept REFUND_PENDING, because a failed refund must never leave the user
 // debited (and a later retry would deduct again).
 func (s *PaymentService) finalizeRefundFailed(ctx context.Context, o *dbent.PaymentOrder, detail refundPendingAuditDetail, gErr error) (*RefundResult, error) {
-	c, err := s.entClient.PaymentOrder.Update().
+	tx, err := s.entClientForCtx(ctx).Tx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin failed refund settlement: %w", err)
+	}
+	rb := refundRollbackPlanFromSnapshot(o, detail)
+	blockedRollback := false
+	defer func() {
+		_ = tx.Rollback()
+		s.invalidateRefundSettlementCaches(rb)
+		if blockedRollback {
+			s.writeAuditLog(ctx, o.ID, refundAttemptAuditAction("REFUND_FAIL_BLOCKED_ROLLBACK_FAILED"), "admin", map[string]any{"detail": psErrMsg(gErr)})
+		}
+	}()
+	txCtx := dbent.NewTxContext(ctx, tx)
+	if err := lockRefundUser(txCtx, o.UserID); err != nil {
+		return nil, fmt.Errorf("lock refund user: %w", err)
+	}
+	c, err := tx.PaymentOrder.Update().
 		Where(paymentorder.IDEQ(o.ID), paymentorder.StatusEQ(OrderStatusRefundPending)).
 		SetStatus(OrderStatusRefunding).
-		Save(ctx)
+		Save(txCtx)
 	if err != nil {
 		return nil, fmt.Errorf("lock: %w", err)
 	}
-	if c == 0 {
+	if c != 1 {
 		return nil, infraerrors.Conflict("CONFLICT", "order status changed")
 	}
+	if err := s.checkRefundPendingAttempt(txCtx, o.ID, detail); err != nil {
+		return nil, err
+	}
 	if !detail.DeductionRollbackOK {
-		rb := refundRollbackPlanFromSnapshot(o, detail)
-		if !s.rollbackRefundFromSnapshot(ctx, rb, gErr) {
-			_, _ = s.entClient.PaymentOrder.UpdateOneID(o.ID).SetStatus(OrderStatusRefundPending).Save(ctx)
-			s.writeAuditLog(ctx, o.ID, refundAttemptAuditAction("REFUND_FAIL_BLOCKED_ROLLBACK_FAILED"), "admin", map[string]any{"detail": psErrMsg(gErr)})
+		if rb.DeductionType == payment.DeductionTypeSubscription && rb.SubscriptionID > 0 && s.subscriptionSvc == nil {
+			blockedRollback = true
+			return nil, infraerrors.InternalServer("REFUND_ROLLBACK_FAILED", "subscription service unavailable; order stays REFUND_PENDING")
+		}
+		if !s.rollbackRefundWithSubscription(txCtx, rb, gErr, s.refundSettlementSubscriptionService()) {
+			// All compensation and the temporary claim roll back together.
+			blockedRollback = true
 			return nil, infraerrors.InternalServer("REFUND_ROLLBACK_FAILED",
 				"the refund failed but restoring the refund pre-deduction failed; the order stays REFUND_PENDING, retry later")
 		}
-		s.writeAuditLog(ctx, o.ID, refundAttemptAuditAction("REFUND_ROLLBACK_RECOVERED"), "admin", map[string]any{
-			"deductionType":   rb.DeductionType,
-			"balanceRestored": rb.BalanceToDeduct,
-			"subscriptionID":  rb.SubscriptionID,
-			"subDaysRestored": rb.SubDaysToRestore,
-		})
+		if err := s.writeRefundAuditStrict(txCtx, o.ID, refundAttemptAuditAction("REFUND_ROLLBACK_RECOVERED"), map[string]any{
+			"deductionType": rb.DeductionType, "balanceRestored": rb.BalanceToDeduct,
+			"subscriptionID": rb.SubscriptionID, "subDaysRestored": rb.SubDaysToRestore,
+		}); err != nil {
+			return nil, err
+		}
 	}
 	now := time.Now()
-	if _, err := s.entClient.PaymentOrder.UpdateOneID(o.ID).
+	if _, err := tx.PaymentOrder.UpdateOneID(o.ID).
 		SetStatus(OrderStatusRefundFailed).
 		SetFailedAt(now).
 		SetFailedReason(psErrMsg(gErr)).
-		Save(ctx); err != nil {
+		Save(txCtx); err != nil {
 		return nil, fmt.Errorf("mark refund failed: %w", err)
 	}
-	s.writeAuditLog(ctx, o.ID, refundAttemptAuditAction("REFUND_FAILED"), "admin", map[string]any{"detail": psErrMsg(gErr)})
+	if err := s.writeRefundAuditStrict(txCtx, o.ID, refundAttemptAuditAction("REFUND_FAILED"), map[string]any{"detail": psErrMsg(gErr)}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit failed refund settlement: %w", err)
+	}
 	return &RefundResult{Success: false, Warning: "gateway refund failed: " + psErrMsg(gErr)}, nil
+}
+
+// A provider query or manual resolution may outlive failed -> retry -> pending.
+// Checking inside the claim transaction binds the outcome to its pre-read audit
+// row, including genuine legacy absence, rather than an ABA-prone status alone.
+func (s *PaymentService) checkRefundPendingAttempt(ctx context.Context, orderID int64, expected refundPendingAuditDetail) error {
+	current, err := s.latestRefundPendingDetail(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if current.snapshotID != expected.snapshotID || current.found != expected.found {
+		return infraerrors.Conflict("CONFLICT", "pending refund attempt changed; query or verify the current attempt again")
+	}
+	return nil
 }
 
 // refundRollbackPlanFromSnapshot rebuilds the pre-deduction of a pending
@@ -1001,6 +1046,7 @@ type refundPendingAuditDetail struct {
 	// refund of this order was accepted by the gateway at least once.
 	found       bool
 	hasSnapshot bool
+	snapshotID  int64 // Internal audit identity; never decoded from snapshot JSON.
 }
 
 // lockedRefundAmount returns the refund amount a retry of this order must
@@ -1033,6 +1079,7 @@ func (s *PaymentService) latestRefundPendingDetail(ctx context.Context, oid int6
 		return detail, fmt.Errorf("read pending refund snapshot: %w", err)
 	}
 	detail.found = true
+	detail.snapshotID = logEntry.ID
 	if !strings.HasPrefix(strings.TrimSpace(logEntry.Detail), "{") {
 		return detail, fmt.Errorf("invalid pending refund snapshot: expected object")
 	}

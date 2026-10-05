@@ -12,6 +12,7 @@ import (
 
 	"entgo.io/ent/dialect"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +43,7 @@ type refundStorageFaultTx struct {
 }
 
 func (t *refundStorageFaultTx) fail(query string) error {
-	q := strings.ToUpper(query)
+	q := strings.ReplaceAll(strings.ToUpper(query), "`", `"`)
 	phase := t.fault.phase
 	match := (phase == "user update" && strings.HasPrefix(q, "UPDATE") && strings.Contains(q, `"USERS"`)) ||
 		(phase == "user query" && strings.HasPrefix(q, "SELECT") && strings.Contains(q, `"USERS"`)) ||
@@ -194,7 +195,7 @@ func TestRefundSettlementDeletedUserCannotBeClaimed(t *testing.T) {
 	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
 	require.NoError(t, err)
 	require.Equal(t, OrderStatusRefundPending, reloaded.Status)
-	user, err := client.User.Get(ctx, order.UserID)
+	user, err := client.User.Get(mixins.SkipSoftDelete(ctx), order.UserID)
 	require.NoError(t, err)
 	require.Equal(t, 23.0, user.Balance)
 	require.Zero(t, countRefundAuditForTest(t, ctx, client, order.ID, "REFUND_SUCCESS"))
