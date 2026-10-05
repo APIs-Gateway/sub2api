@@ -46,6 +46,8 @@ func (s *GeminiMessagesCompatService) ForwardAsChatCompletions(
 	if err != nil {
 		if errors.Is(err, apicompat.ErrUnsupportedInputAudio) || errors.Is(err, apicompat.ErrInvalidInputAudio) {
 			MarkBillingInflightAttemptNoCharge(ctx)
+			writeChatInputAudioError(c, err.Error())
+			return nil, err
 		}
 		return nil, s.writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 	}

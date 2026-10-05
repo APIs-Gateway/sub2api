@@ -246,3 +246,90 @@ func TestChatInputAudioHTTP_MixedToolTurnPreserved(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assertAudioSettlement(t, f, false)
 }
+
+// A real handler sees the exact writer state established by a wait-loop ping.
+// Do not cancel its context: the failed frame itself must stop further Flush.
+type chatAudioFrameWriter struct {
+	gin.ResponseWriter
+	fail              bool
+	failed            bool
+	errorFrames       int
+	flushAfterFailure int
+}
+
+func (w *chatAudioFrameWriter) Write(data []byte) (int, error) {
+	if strings.HasPrefix(string(data), "data: ") {
+		w.errorFrames++
+		if w.fail {
+			w.failed = true
+			return 0, errors.New("client stopped accepting error frame")
+		}
+	}
+	return w.ResponseWriter.Write(data)
+}
+func (w *chatAudioFrameWriter) Flush() {
+	if w.failed {
+		w.flushAfterFailure++
+	}
+	w.ResponseWriter.Flush()
+}
+
+func TestChatInputAudioHTTP_RejectAfterWaitPingKeepsSSEAndFunding(t *testing.T) {
+	for _, platform := range []string{service.PlatformGemini, service.PlatformAnthropic, service.PlatformOpenAI} {
+		for _, fail := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/write_failure_%t", platform, fail), func(t *testing.T) {
+				model, response, contentType := "claude-sonnet-4-5", inflightAnthropicSSE, "text/event-stream"
+				if platform == service.PlatformGemini {
+					model, response, contentType = "gemini-3.6-flash", inflightGeminiJSON, "application/json"
+				}
+				if platform == service.PlatformOpenAI {
+					model, response = "gpt-5", inflightResponsesSSE
+				}
+				f := newInflightHTTPFixture(t, platform, response, contentType)
+				chatAudioWallet(t, f)
+				close(f.upstream.release)
+				content := `[{"type":"input_audio","input_audio":{"data":"%%%","format":"wav"}}]`
+				var writer *chatAudioFrameWriter
+				rec := f.request(chatAudioBody(model, "user", content, true), "/v1/chat/completions", "", func(c *gin.Context) {
+					c.Header("Content-Type", "text/event-stream")
+					_, err := c.Writer.WriteString(": ping\n\n")
+					require.NoError(t, err)
+					c.Writer.Flush()
+					writer = &chatAudioFrameWriter{ResponseWriter: c.Writer, fail: fail}
+					c.Writer = writer
+					if platform == service.PlatformOpenAI {
+						f.openAI.ChatCompletions(c)
+					} else {
+						f.gateway.ChatCompletions(c)
+					}
+				})
+				require.Equal(t, http.StatusOK, rec.Code, "the already committed wait transport status cannot change")
+				require.Contains(t, rec.Header().Get("Content-Type"), "text/event-stream")
+				require.Equal(t, 1, writer.errorFrames)
+				require.Zero(t, writer.flushAfterFailure)
+				if fail {
+					require.Equal(t, ": ping\n\n", rec.Body.String())
+				} else {
+					require.True(t, strings.HasPrefix(rec.Body.String(), ": ping\n\ndata: "), rec.Body.String())
+					frame := strings.TrimSpace(strings.TrimPrefix(rec.Body.String(), ": ping\n\ndata: "))
+					require.True(t, gjson.Valid(frame), "one valid JSON error SSE frame")
+					require.Equal(t, "invalid_request_error", gjson.Get(frame, "error.type").String())
+					require.Equal(t, "invalid_request_error", gjson.Get(frame, "error.code").String())
+				}
+				f.pool.Stop()
+				require.Zero(t, f.upstream.calls.Load(), "local refusal cannot call the provider")
+				require.Zero(t, inflightHeld(t, f.user.ID))
+				var logs, dedup, activeLeases int
+				var balance float64
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs))
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM billing_inflight_leases WHERE user_id=$1 AND expires_at>clock_timestamp()`, f.user.ID).Scan(&activeLeases))
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&balance))
+				require.Zero(t, logs)
+				require.Zero(t, dedup)
+				require.Zero(t, activeLeases)
+				require.InDelta(t, 10, balance, 1e-10)
+			})
+		}
+	}
+}
