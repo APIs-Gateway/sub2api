@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -73,6 +74,22 @@ func fmtRefusalCase(stream, usage bool) string {
 }
 
 func TestResponsesRefusal_DetectorBoundaries(t *testing.T) {
+	for _, refusal := range []string{"false", "true", "0", "1", "{}", "[]"} {
+		for _, shape := range []struct{ name, format string }{
+			{"chat", `{"choices":[{"delta":{"refusal":%s}}]}`},
+			{"response_delta", `{"type":"response.refusal.delta","delta":%s}`},
+			{"response_terminal", `{"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"refusal","refusal":%s}]}]}}`},
+		} {
+			t.Run(shape.name+"/non_string/"+refusal, func(t *testing.T) {
+				d := newOpenAIChatSilentRefusalDetector(openAISilentRefusalMinRequestBodyBytes)
+				d.ObservePayload([]byte(fmt.Sprintf(shape.format, refusal)))
+				require.False(t, d.HasSemanticOutput())
+				require.False(t, d.ShouldReleaseClientOutput())
+				d.ObservePayload([]byte(`{"choices":[{"delta":{},"finish_reason":"stop"}]}`))
+				require.True(t, d.IsSilentRefusal())
+			})
+		}
+	}
 	for _, tc := range []struct {
 		name, payload string
 		want          bool
@@ -104,6 +121,29 @@ func TestResponsesRefusal_DetectorBoundaries(t *testing.T) {
 			d.ObserveChatChunk(chunk)
 			require.Equal(t, refusal != "", d.HasSemanticOutput())
 			require.Equal(t, refusal != "", d.ShouldReleaseClientOutput())
+		})
+	}
+}
+
+func TestResponsesRefusal_ActualRawChatEOFRequiresString(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, refusal := range []string{"false", "true", "0", "1", "{}", "[]", "null", `""`, `"cannot help"`} {
+		t.Run(refusal, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			body := fmt.Sprintf("data: {\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"refusal\":%s},\"finish_reason\":null}]}\n\n", refusal)
+			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+			result, err := (&OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}).streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "gpt-5.4", "gpt-5.4", "gpt-5.4", nil, nil, time.Now(), 0)
+			require.Error(t, err, "EOF without a terminal is still a truncated upstream")
+			if refusal == `"cannot help"` {
+				require.NotNil(t, result)
+				require.True(t, result.PartialOutputDelivered)
+				require.Contains(t, rec.Body.String(), body, "valid raw refusal remains unchanged on the wire")
+			} else if result != nil {
+				require.False(t, result.PartialOutputDelivered, "malformed/empty refusal cannot authorize zero-token partial settlement")
+			}
+			require.NotContains(t, rec.Body.String(), "data: [DONE]")
 		})
 	}
 }

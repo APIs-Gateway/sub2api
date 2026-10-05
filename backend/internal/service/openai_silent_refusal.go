@@ -206,7 +206,7 @@ func (d *openAIChatSilentRefusalDetector) observeChatChoicesPayload(payload []by
 			d.sawContent = true
 			d.semanticOutput = true
 		}
-		if refusal := delta.Get("refusal"); refusal.String() != "" {
+		if refusal := delta.Get("refusal"); refusal.Type == gjson.String && refusal.Str != "" {
 			d.sawContent = true
 			d.semanticOutput = true
 		}
@@ -237,8 +237,13 @@ func (d *openAIChatSilentRefusalDetector) observeChatChoicesPayload(payload []by
 
 func (d *openAIChatSilentRefusalDetector) observeResponsesPayload(payload []byte, eventType string) {
 	switch eventType {
-	case "response.output_text.delta", "response.refusal.delta":
+	case "response.output_text.delta":
 		if gjson.GetBytes(payload, "delta").String() != "" {
+			d.sawContent = true
+			d.semanticOutput = true
+		}
+	case "response.refusal.delta":
+		if refusal := gjson.GetBytes(payload, "delta"); refusal.Type == gjson.String && refusal.Str != "" {
 			d.sawContent = true
 			d.semanticOutput = true
 		}
@@ -290,7 +295,7 @@ func (d *openAIChatSilentRefusalDetector) observeResponseMessageItem(item gjson.
 		return
 	}
 	for _, part := range content.Array() {
-		if part.Get("type").String() == "refusal" && part.Get("refusal").String() != "" {
+		if refusal := part.Get("refusal"); part.Get("type").String() == "refusal" && refusal.Type == gjson.String && refusal.Str != "" {
 			d.sawContent = true
 			d.semanticOutput = true
 			return

@@ -25,13 +25,23 @@ func TestResponsesRefusalHTTP_ActualFundedDelivery(t *testing.T) {
 		for _, tc := range []struct {
 			name                      string
 			stream, usage, empty, eof bool
+			rawRefusal                string
 		}{
-			{"buffered_usage", false, true, false, false},
-			{"buffered_no_usage", false, false, false, false},
-			{"stream_usage", true, true, false, false},
-			{"stream_no_usage", true, false, false, false},
-			{"delivered_then_eof", true, false, false, true},
-			{"empty_then_eof", true, false, true, true},
+			{"buffered_usage", false, true, false, false, ""},
+			{"buffered_no_usage", false, false, false, false, ""},
+			{"stream_usage", true, true, false, false, ""},
+			{"stream_no_usage", true, false, false, false, ""},
+			{"delivered_then_eof", true, false, false, true, ""},
+			{"empty_then_eof", true, false, true, true, ""},
+			{"raw_false_eof", true, false, true, true, "false"},
+			{"raw_true_eof", true, false, true, true, "true"},
+			{"raw_zero_eof", true, false, true, true, "0"},
+			{"raw_number_eof", true, false, true, true, "1"},
+			{"raw_object_eof", true, false, true, true, "{}"},
+			{"raw_array_eof", true, false, true, true, "[]"},
+			{"raw_null_eof", true, false, true, true, "null"},
+			{"raw_empty_eof", true, false, true, true, `""`},
+			{"raw_string_eof", true, false, false, true, `"cannot help"`},
 		} {
 			t.Run(fmt.Sprintf("%s/card=%t", tc.name, card), func(t *testing.T) {
 				ctx := context.Background()
@@ -53,10 +63,18 @@ func TestResponsesRefusalHTTP_ActualFundedDelivery(t *testing.T) {
 						return
 					}
 					payloads <- payload
-					if r.URL.Path != "/v1/responses" {
-						t.Errorf("expected real converted Responses route, got %s", r.URL.Path)
+					expectedPath := "/v1/responses"
+					if tc.rawRefusal != "" {
+						expectedPath = "/v1/chat/completions"
+					}
+					if r.URL.Path != expectedPath {
+						t.Errorf("expected real provider route %s, got %s", expectedPath, r.URL.Path)
 					}
 					w.Header().Set("Content-Type", "text/event-stream")
+					if tc.rawRefusal != "" {
+						_, _ = fmt.Fprintf(w, "data: {\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"refusal\":%s},\"finish_reason\":null}]}\n\n", tc.rawRefusal)
+						return
+					}
 					_, _ = io.WriteString(w, `data: {"type":"response.created","response":{"id":"refusal_funded","model":"gpt-5.4"}}`+"\n\n")
 					delta := "cannot help"
 					if tc.empty {
@@ -76,7 +94,7 @@ func TestResponsesRefusalHTTP_ActualFundedDelivery(t *testing.T) {
 				account, err := f.accounts.GetByID(ctx, f.accountID)
 				require.NoError(t, err)
 				account.Credentials["base_url"] = provider.URL
-				account.Extra["openai_responses_supported"] = true
+				account.Extra["openai_responses_supported"] = tc.rawRefusal == ""
 				require.NoError(t, f.accounts.Update(ctx, account))
 				body := fmt.Sprintf(`{"model":"gpt-5.4","stream":%t,"max_completion_tokens":8,"messages":[{"role":"user","content":"hello"}]}`, tc.stream)
 				rec := httptest.NewRecorder()
@@ -86,7 +104,11 @@ func TestResponsesRefusalHTTP_ActualFundedDelivery(t *testing.T) {
 				require.EqualValues(t, 1, calls.Load(), rec.Body.String())
 				select {
 				case payload := <-payloads:
-					require.True(t, gjson.GetBytes(payload, "input").IsArray())
+					inputPath := "input"
+					if tc.rawRefusal != "" {
+						inputPath = "messages"
+					}
+					require.True(t, gjson.GetBytes(payload, inputPath).IsArray())
 					require.Equal(t, "gpt-5.4", gjson.GetBytes(payload, "model").String())
 				case <-time.After(time.Second):
 					t.Fatal("missing actual provider request")
@@ -98,6 +120,7 @@ func TestResponsesRefusalHTTP_ActualFundedDelivery(t *testing.T) {
 				if !tc.empty {
 					f.waitUsage(t, 1)
 				}
+				f.pool.Stop() // Drain actual asynchronous billing before asserting absence.
 				var logs, dedup, input, output int
 				var fee float64
 				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*),COALESCE(sum(input_tokens),0),COALESCE(sum(output_tokens),0),COALESCE(sum(actual_cost),0) FROM usage_logs WHERE user_id=$1`, f.userID).Scan(&logs, &input, &output, &fee))
