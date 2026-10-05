@@ -77,6 +77,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # 充值倍率只能在白名单文件里读取（额度 → 人民币记账重构的换算闸门），见 tools/check_credit_multiplier.py。
+      # 放在 lint job 里随它一起跑，不单独成为 required check。
+      - name: Credit multiplier gate
+        run: |
+          python3 tools/test_check_credit_multiplier.py
+          python3 tools/check_credit_multiplier.py
       - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod

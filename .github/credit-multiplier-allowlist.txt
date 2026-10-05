@@ -1,0 +1,31 @@
+# 充值倍率（BALANCE_RECHARGE_MULTIPLIER / BalanceRechargeMultiplier）读取点白名单。
+# 由 tools/check_credit_multiplier.py 在 CI 里检查：backend/ 下的非测试 Go 文件，只有这里登记过的才能出现它。
+#
+# 这是 2026-10-05 main（0770cf1b3）上的现状，加上 R1 新增的 credit_unit.go（启动检查要读它）。
+# 方向是只减不增：R2–R6 把各处读取改成走 credit_unit.go 后，把对应文件从这里删掉。
+# 需要新增读取点时在这里登记，并在 PR 里说明为什么不能走 credit_unit.go。
+
+# 唯一的换算入口（R1 新增）
+backend/internal/service/credit_unit.go
+
+# 设置读写与公开接口
+backend/internal/handler/admin/setting_handler.go
+backend/internal/handler/dto/settings.go
+backend/internal/handler/payment_handler.go
+backend/internal/handler/setting_handler.go
+backend/internal/service/payment_config_service.go
+backend/internal/service/setting_service.go
+backend/internal/service/settings_view.go
+
+# 充值、积分、订阅定价
+backend/internal/service/payment_amounts.go
+backend/internal/service/payment_order.go
+backend/internal/service/points_service.go
+backend/internal/service/subscription_pricing.go
+
+# 折算与展示价
+backend/internal/handler/provider_pricing_handler.go
+backend/internal/service/credit_fiat_rate.go
+backend/internal/service/key_editor_price.go
+backend/internal/service/provider_pricing.go
+backend/internal/service/usage_credit_fiat_totals.go

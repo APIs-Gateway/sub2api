@@ -141,6 +141,20 @@ func (_c *UsageLogCreate) SetNillableServedRouteSource(v *int16) *UsageLogCreate
 	return _c
 }
 
+// SetCostUnit sets the "cost_unit" field.
+func (_c *UsageLogCreate) SetCostUnit(v int16) *UsageLogCreate {
+	_c.mutation.SetCostUnit(v)
+	return _c
+}
+
+// SetNillableCostUnit sets the "cost_unit" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableCostUnit(v *int16) *UsageLogCreate {
+	if v != nil {
+		_c.SetCostUnit(*v)
+	}
+	return _c
+}
+
 // SetChannelID sets the "channel_id" field.
 func (_c *UsageLogCreate) SetChannelID(v int64) *UsageLogCreate {
 	_c.mutation.SetChannelID(v)
@@ -959,6 +973,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 		_spec.SetField(usagelog.FieldServedRouteSource, field.TypeInt16, value)
 		_node.ServedRouteSource = &value
 	}
+	if value, ok := _c.mutation.CostUnit(); ok {
+		_spec.SetField(usagelog.FieldCostUnit, field.TypeInt16, value)
+		_node.CostUnit = &value
+	}
 	if value, ok := _c.mutation.ChannelID(); ok {
 		_spec.SetField(usagelog.FieldChannelID, field.TypeInt64, value)
 		_node.ChannelID = &value
@@ -1395,6 +1413,30 @@ func (u *UsageLogUpsert) AddServedRouteSource(v int16) *UsageLogUpsert {
 // ClearServedRouteSource clears the value of the "served_route_source" field.
 func (u *UsageLogUpsert) ClearServedRouteSource() *UsageLogUpsert {
 	u.SetNull(usagelog.FieldServedRouteSource)
+	return u
+}
+
+// SetCostUnit sets the "cost_unit" field.
+func (u *UsageLogUpsert) SetCostUnit(v int16) *UsageLogUpsert {
+	u.Set(usagelog.FieldCostUnit, v)
+	return u
+}
+
+// UpdateCostUnit sets the "cost_unit" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateCostUnit() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldCostUnit)
+	return u
+}
+
+// AddCostUnit adds v to the "cost_unit" field.
+func (u *UsageLogUpsert) AddCostUnit(v int16) *UsageLogUpsert {
+	u.Add(usagelog.FieldCostUnit, v)
+	return u
+}
+
+// ClearCostUnit clears the value of the "cost_unit" field.
+func (u *UsageLogUpsert) ClearCostUnit() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldCostUnit)
 	return u
 }
 
@@ -2249,6 +2291,34 @@ func (u *UsageLogUpsertOne) UpdateServedRouteSource() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearServedRouteSource() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearServedRouteSource()
+	})
+}
+
+// SetCostUnit sets the "cost_unit" field.
+func (u *UsageLogUpsertOne) SetCostUnit(v int16) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetCostUnit(v)
+	})
+}
+
+// AddCostUnit adds v to the "cost_unit" field.
+func (u *UsageLogUpsertOne) AddCostUnit(v int16) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddCostUnit(v)
+	})
+}
+
+// UpdateCostUnit sets the "cost_unit" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateCostUnit() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateCostUnit()
+	})
+}
+
+// ClearCostUnit clears the value of the "cost_unit" field.
+func (u *UsageLogUpsertOne) ClearCostUnit() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearCostUnit()
 	})
 }
 
@@ -3370,6 +3440,34 @@ func (u *UsageLogUpsertBulk) UpdateServedRouteSource() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearServedRouteSource() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearServedRouteSource()
+	})
+}
+
+// SetCostUnit sets the "cost_unit" field.
+func (u *UsageLogUpsertBulk) SetCostUnit(v int16) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetCostUnit(v)
+	})
+}
+
+// AddCostUnit adds v to the "cost_unit" field.
+func (u *UsageLogUpsertBulk) AddCostUnit(v int16) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddCostUnit(v)
+	})
+}
+
+// UpdateCostUnit sets the "cost_unit" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateCostUnit() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateCostUnit()
+	})
+}
+
+// ClearCostUnit clears the value of the "cost_unit" field.
+func (u *UsageLogUpsertBulk) ClearCostUnit() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearCostUnit()
 	})
 }
 

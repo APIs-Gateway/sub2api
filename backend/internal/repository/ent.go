@@ -163,5 +163,12 @@ func InitEnt(cfg *config.Config) (*ent.Client, *sql.DB, error) {
 		}
 	}
 
+	// 固定本进程的记账单位（CREDIT_CURRENCY 等，启动时读一次）并做启动检查。
+	// 放在迁移之后：settings 表已就绪；放在最后：任何失败都拒绝启动，不会带着错的单位对外服务。
+	if err := initCreditUnitAtStartup(migrationCtx, client, cfg); err != nil {
+		_ = client.Close()
+		return nil, nil, fmt.Errorf("credit unit startup check: %w", err)
+	}
+
 	return client, drv.DB(), nil
 }

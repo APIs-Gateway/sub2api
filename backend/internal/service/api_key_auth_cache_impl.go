@@ -16,6 +16,14 @@ import (
 
 const apiKeyAuthSnapshotVersion = 17 // v17: has_group_routes（回退链标志）；v16: simple-mode default image eligibility；v15: per-key stable_priority_enabled
 
+// currentAPIKeyAuthSnapshotVersion 是本进程写入、也只接受的快照版本：基础版本再叠加币种模式
+// （CreditUnit.AuthSnapshotVersion）。快照里缓存了余额、Key 额度与限额、分组倍率等「额度类」数值，
+// 单位随 CREDIT_CURRENCY 变；叠加后 USD 与 CNY 的版本号互不相等，切换（或回滚）后旧快照自然失效，
+// 不会把旧单位的数读成新单位。USD 模式下等于 apiKeyAuthSnapshotVersion，行为与引入前一致。
+func currentAPIKeyAuthSnapshotVersion() int {
+	return CurrentCreditUnit().AuthSnapshotVersion(apiKeyAuthSnapshotVersion)
+}
+
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
 	l1TTL         time.Duration
@@ -208,7 +216,7 @@ func (s *APIKeyService) applyAuthCacheEntry(key string, entry *APIKeyAuthCacheEn
 	if entry.Snapshot == nil {
 		return nil, false, nil
 	}
-	if entry.Snapshot.Version != apiKeyAuthSnapshotVersion {
+	if entry.Snapshot.Version != currentAPIKeyAuthSnapshotVersion() {
 		return nil, false, nil
 	}
 	return s.snapshotToAPIKey(key, entry.Snapshot), true, nil
@@ -219,7 +227,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		return nil
 	}
 	snapshot := &APIKeyAuthSnapshot{
-		Version:               apiKeyAuthSnapshotVersion,
+		Version:               currentAPIKeyAuthSnapshotVersion(),
 		APIKeyID:              apiKey.ID,
 		UserID:                apiKey.UserID,
 		GroupID:               apiKey.GroupID,
