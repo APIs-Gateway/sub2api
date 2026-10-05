@@ -79,15 +79,14 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import BillingRulesCard from '@/components/common/BillingRulesCard.vue'
 import ModelCatalogRow from '@/components/channels/ModelCatalogRow.vue'
-import userChannelsAPI, { type UserAvailableChannel } from '@/api/channels'
-import userGroupsAPI from '@/api/groups'
+import userChannelsAPI, { type UserPriceCatalog } from '@/api/channels'
 import subscriptionsAPI, { type SubscriptionPricingBounds } from '@/api/subscriptions'
 import { useAppStore } from '@/stores/app'
 import { useSubscriptionStore } from '@/stores/subscriptions'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { platformLabel } from '@/utils/platformColors'
-import { buildCatalog, resolveSubscriptionUnit, type SubscriptionUnitRange } from '@/utils/modelCatalog'
+import { buildPriceCatalog, resolveSubscriptionUnit, type SubscriptionUnitRange } from '@/utils/modelCatalog'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -100,14 +99,13 @@ const subscriptionUnit = computed<SubscriptionUnitRange | null>(() =>
   resolveSubscriptionUnit(subscriptionStore.activeSubscriptions, pricingBounds.value),
 )
 
-const channels = ref<UserAvailableChannel[]>([])
-const userGroupRates = ref<Record<number, number>>({})
+const prices = ref<UserPriceCatalog | null>(null)
 const loading = ref(false)
 const searchQuery = ref('')
 const platformFilter = ref('all')
 const expandedKeys = ref<Set<string>>(new Set())
 
-const catalog = computed(() => buildCatalog(channels.value, userGroupRates.value))
+const catalog = computed(() => buildPriceCatalog(prices.value))
 
 const searchedModels = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
@@ -139,15 +137,8 @@ function toggleModel(key: string) {
 async function loadChannels() {
   loading.value = true
   try {
-    const [list, rates] = await Promise.all([
-      userChannelsAPI.getAvailable(),
-      userGroupsAPI.getUserGroupRates().catch((err: unknown) => {
-        console.error('Failed to load user group rates:', err)
-        return {} as Record<number, number>
-      }),
-    ])
-    channels.value = list
-    userGroupRates.value = rates
+    // 价格与倍率都由后端按各分组的价格阶段取好、乘好（含用户专属倍率），前端不再自己乘。
+    prices.value = await userChannelsAPI.getPrices()
     // 套餐单价区间只是展示增强，取不到时不显示套餐价
     if (rechargeMultiplier.value !== 1 && !pricingBounds.value) {
       subscriptionsAPI

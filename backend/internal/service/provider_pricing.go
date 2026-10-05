@@ -112,29 +112,7 @@ func (s *PricingService) BuildHvoyProviderPricing(paymentMultiplier float64, gro
 
 	models := make([]HvoyProviderPricingModel, 0, len(hvoyProviderPricingModels))
 	for _, model := range hvoyProviderPricingModels {
-		pricing := s.GetModelPricing(model.modelName)
-		if pricing == nil {
-			models = append(models, HvoyProviderPricingModel{
-				ModelName: model.modelName,
-				GroupName: model.groupName,
-				Enabled:   false,
-				Note:      "pricing unavailable",
-			})
-			continue
-		}
-
-		rateMultiplier, note := hvoyGroupRateMultiplier(groupMultipliers, model.groupName)
-		models = append(models, HvoyProviderPricingModel{
-			ModelName:          model.modelName,
-			GroupName:          model.groupName,
-			InputPrice:         usdPerTokenToCNYPerMTok(pricing.InputCostPerToken*rateMultiplier, multiplier),
-			OutputPrice:        optionalUSDPerTokenToCNYPerMTok(pricing.OutputCostPerToken*rateMultiplier, multiplier),
-			CacheInputPrice:    optionalUSDPerTokenToCNYPerMTok(pricing.CacheReadInputTokenCost*rateMultiplier, multiplier),
-			CacheCreatePrice:   optionalUSDPerTokenToCNYPerMTok(pricing.CacheCreationInputTokenCost*rateMultiplier, multiplier),
-			CacheCreatePrice1H: optionalUSDPerTokenToCNYPerMTok(pricing.CacheCreationInputTokenCostAbove1hr*rateMultiplier, multiplier),
-			Enabled:            true,
-			Note:               note,
-		})
+		models = append(models, s.buildHvoyModelFromCatalog(model, multiplier, groupMultipliers))
 	}
 
 	return HvoyProviderPricingResponse{
@@ -149,6 +127,34 @@ func (s *PricingService) BuildHvoyProviderPricing(paymentMultiplier float64, gro
 			UpdatedAt:  updatedAt.UTC().Format(time.RFC3339),
 			Models:     models,
 		},
+	}
+}
+
+// buildHvoyModelFromCatalog 按「LiteLLM 原价 × 分组倍率 ÷ 支付倍率」给一个模型出价（旧口径）。
+// BuildHvoyProviderPricing 逐个模型调用它；报价器接管之后，找不到 codex plus 分组或分组倍率无效时仍走这里，
+// 保持与接管前逐位相同的输出。multiplier 是已经归一化的支付倍率。
+func (s *PricingService) buildHvoyModelFromCatalog(model hvoyProviderPricingModelRef, multiplier float64, groupMultipliers map[string]float64) HvoyProviderPricingModel {
+	pricing := s.GetModelPricing(model.modelName)
+	if pricing == nil {
+		return HvoyProviderPricingModel{
+			ModelName: model.modelName,
+			GroupName: model.groupName,
+			Enabled:   false,
+			Note:      "pricing unavailable",
+		}
+	}
+
+	rateMultiplier, note := hvoyGroupRateMultiplier(groupMultipliers, model.groupName)
+	return HvoyProviderPricingModel{
+		ModelName:          model.modelName,
+		GroupName:          model.groupName,
+		InputPrice:         usdPerTokenToCNYPerMTok(pricing.InputCostPerToken*rateMultiplier, multiplier),
+		OutputPrice:        optionalUSDPerTokenToCNYPerMTok(pricing.OutputCostPerToken*rateMultiplier, multiplier),
+		CacheInputPrice:    optionalUSDPerTokenToCNYPerMTok(pricing.CacheReadInputTokenCost*rateMultiplier, multiplier),
+		CacheCreatePrice:   optionalUSDPerTokenToCNYPerMTok(pricing.CacheCreationInputTokenCost*rateMultiplier, multiplier),
+		CacheCreatePrice1H: optionalUSDPerTokenToCNYPerMTok(pricing.CacheCreationInputTokenCostAbove1hr*rateMultiplier, multiplier),
+		Enabled:            true,
+		Note:               note,
 	}
 }
 

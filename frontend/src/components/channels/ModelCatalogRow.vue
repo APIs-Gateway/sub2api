@@ -216,8 +216,8 @@ function visibleColumns(sets: PriceSet[]): ColumnKey[] {
 
 type Cells = Record<ColumnKey | 'unit', string>
 
-function cellsOf(set: PriceSet, rate: number): Cells {
-  const f = (v: number | null) => (v == null ? '-' : money(balancePrice(v, rate, kind.value, ctx.value)))
+function cellsOf(set: PriceSet): Cells {
+  const f = (v: number | null) => (v == null ? '-' : money(balancePrice(v, kind.value, ctx.value)))
   return {
     input: f(set.input),
     cacheRead: f(set.cacheRead),
@@ -228,8 +228,8 @@ function cellsOf(set: PriceSet, rate: number): Cells {
   }
 }
 
-function planOf(set: PriceSet, rate: number): string {
-  const p = (v: number | null) => (v == null ? null : planPrice(v, rate, kind.value, ctx.value))
+function planOf(set: PriceSet): string {
+  const p = (v: number | null) => (v == null ? null : planPrice(v, kind.value, ctx.value))
   if (!isToken.value) return formatPlan(p(set.unit))
   if (set.input == null && set.output == null) return formatPlan(p(set.imageOutput))
   return `${formatPlan(p(set.input))} / ${formatPlan(p(set.output))}`
@@ -247,23 +247,23 @@ interface PriceLine {
 
 function linesOf(entry: GroupPrice | null): PriceLine[] {
   if (!entry) return []
-  const { first } = entry.pricing
-  const rate = entry.group.rate
-  const defs: Array<{ key: string; label: string; v: number | null }> = isToken.value
+  const { first, official: officialSet } = entry.pricing
+  const defs: Array<{ key: string; label: string; v: number | null; o: number | null }> = isToken.value
     ? [
-        { key: 'input', label: t('availableChannels.pricing.inputPrice'), v: first.input },
-        { key: 'output', label: t('availableChannels.pricing.outputPrice'), v: first.output },
-        { key: 'cacheRead', label: t('availableChannels.pricing.cacheReadPrice'), v: first.cacheRead },
-        { key: 'cacheWrite', label: t('availableChannels.pricing.cacheWritePrice'), v: first.cacheWrite },
-        { key: 'imageOutput', label: t('availableChannels.pricing.imageOutputPrice'), v: first.imageOutput },
+        { key: 'input', label: t('availableChannels.pricing.inputPrice'), v: first.input, o: officialSet.input },
+        { key: 'output', label: t('availableChannels.pricing.outputPrice'), v: first.output, o: officialSet.output },
+        { key: 'cacheRead', label: t('availableChannels.pricing.cacheReadPrice'), v: first.cacheRead, o: officialSet.cacheRead },
+        { key: 'cacheWrite', label: t('availableChannels.pricing.cacheWritePrice'), v: first.cacheWrite, o: officialSet.cacheWrite },
+        { key: 'imageOutput', label: t('availableChannels.pricing.imageOutputPrice'), v: first.imageOutput, o: officialSet.imageOutput },
       ]
-    : [{ key: 'unit', label: t('availableChannels.pricing.perRequestPrice'), v: first.unit }]
+    : [{ key: 'unit', label: t('availableChannels.pricing.perRequestPrice'), v: first.unit, o: officialSet.unit }]
   return defs
-    .filter((d): d is { key: string; label: string; v: number } => d.v != null)
+    .filter((d): d is { key: string; label: string; v: number; o: number | null } => d.v != null)
     .map((d) => {
-      const balance = balancePrice(d.v, rate, kind.value, ctx.value)
+      const balance = balancePrice(d.v, kind.value, ctx.value)
       const price = money(balance)
-      const official = officialPrice(d.v, kind.value)
+      // 官方价是乘倍率之前的单价；后端没给时退回额度价，不会比展示价更高。
+      const official = officialPrice(d.o ?? d.v, kind.value)
       const officialText = formatOfficial(official, UNIT_PRICE)
       // 与展示价同一币种下比较；展示出来的数字相同时不算「更高」。
       const officialAmount = isFiat.value ? official * officialCnyRate.value : official
@@ -288,7 +288,7 @@ const showInOut = computed(() => groupColumns.value.includes('input'))
 const showPlan = computed(() =>
   props.model.entries.some((e) =>
     [e.pricing.first.input, e.pricing.first.output, e.pricing.first.imageOutput, e.pricing.first.unit].some(
-      (v) => v != null && planPrice(v, e.group.rate, kind.value, ctx.value) != null,
+      (v) => v != null && planPrice(v, kind.value, ctx.value) != null,
     ),
   ),
 )
@@ -306,8 +306,8 @@ const groupRows = computed(() =>
       rateText: formatRate(g.rate),
       customRateNote: g.hasCustomRate ? t('availableChannels.rateCustom', { base: formatRate(g.baseRate) }) : '',
       lowest: props.model.entries.length > 1 && idx === 0,
-      cells: cellsOf(e.pricing.first, g.rate),
-      plan: planOf(e.pricing.first, g.rate),
+      cells: cellsOf(e.pricing.first),
+      plan: planOf(e.pricing.first),
     }
   }),
 )
@@ -325,7 +325,7 @@ const tierRows = computed(() => {
   if (!best) return []
   return best.pricing.tiers.map((tier) => ({
     label: tierLabel(tier),
-    cells: cellsOf(tier.prices, best.group.rate),
+    cells: cellsOf(tier.prices),
   }))
 })
 const tierColumns = computed(() =>

@@ -65,7 +65,8 @@ func TestCommonRoutesRegistersProviderPricing(t *testing.T) {
 			service.NewPaymentConfigService(nil, repo, nil),
 			service.NewPricingService(nil, nil),
 			settingSvc,
-			nil, // 无分组仓库：报价按倍率 1 输出（LoadHvoyProviderGroupMultipliers 对 nil 安全）
+			nil, // 无分组仓库：报价按倍率 1 输出（BuildHvoyProviderPricingQuoted 对 nil 分组仓库安全）
+			nil, // 无报价器：沿用旧口径
 		),
 	})
 

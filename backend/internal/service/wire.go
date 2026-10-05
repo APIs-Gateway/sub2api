@@ -709,6 +709,7 @@ var ProviderSet = wire.NewSet(
 	NewPriceQuoter,
 	ProvidePricingDerivationService,
 	NewModelCatalogService,
+	NewUserPriceCatalogService,
 	NewContentModerationService,
 	NewAffiliateService,
 	ProvidePointsService,

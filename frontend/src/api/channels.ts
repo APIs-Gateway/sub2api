@@ -73,6 +73,80 @@ export async function getAvailable(options?: { signal?: AbortSignal }): Promise<
   return data
 }
 
-export const userChannelsAPI = { getAvailable }
+/** 价格页上一个分组的展示信息。 */
+export interface UserPriceGroup {
+  id: number
+  name: string
+  platform: string
+  /** 'standard' | 'subscription' */
+  subscription_type: string
+  is_exclusive: boolean
+  description?: string
+}
+
+/** 一组单价（USD）：token 计费是每 token，按次 / 按图是每次；null 表示这一项没有价格。 */
+export interface UserPriceSet {
+  input: number | null
+  output: number | null
+  cache_read: number | null
+  cache_write: number | null
+  image_output: number | null
+  unit: number | null
+}
+
+/** 一档价格：token 计费按上下文长度分档，按次 / 按图按档位或分辨率分档。 */
+export interface UserPriceTier {
+  min_tokens: number
+  max_tokens: number | null
+  label?: string
+  /** 乘倍率之前的单价。 */
+  official: UserPriceSet
+  /** 乘完倍率后的单价。 */
+  prices: UserPriceSet
+}
+
+/** 一个模型在一个分组里的价格，倍率已在后端乘好。 */
+export interface UserPriceEntry {
+  group_id: number
+  /** 实际乘上的倍率：用户专属倍率优先于分组倍率，v2 分组再含额外倍率。 */
+  rate: number
+  /** 分组默认倍率。 */
+  base_rate: number
+  /** rate 是否来自用户专属倍率。 */
+  has_custom_rate: boolean
+  billing_mode: BillingMode
+  /** token：每百万 token 展示；request：每次展示。 */
+  kind: 'token' | 'request'
+  /** 乘倍率之前的单价（官方价对照）。 */
+  official: UserPriceSet
+  /** 乘完倍率后的单价。 */
+  prices: UserPriceSet
+  tiers: UserPriceTier[]
+}
+
+export interface UserPriceModel {
+  name: string
+  platform: string
+  /** 只含有价格的分组；为空表示这个模型暂无价格。 */
+  entries: UserPriceEntry[]
+}
+
+export interface UserPriceCatalog {
+  groups: UserPriceGroup[]
+  models: UserPriceModel[]
+}
+
+/**
+ * 用户价格页的数据：模型 → 分组 → 价格。价格由后端按各分组的价格阶段取好、乘好倍率，
+ * 不含渠道名，前端只做币种换算与排版。
+ */
+export async function getPrices(options?: { signal?: AbortSignal }): Promise<UserPriceCatalog> {
+  const { data } = await apiClient.get<UserPriceCatalog>('/channels/prices', {
+    signal: options?.signal
+  })
+  return data
+}
+
+export const userChannelsAPI = { getAvailable, getPrices }
 
 export default userChannelsAPI

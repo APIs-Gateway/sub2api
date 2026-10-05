@@ -24,6 +24,7 @@ type AvailableChannelHandler struct {
 	channelService *service.ChannelService
 	apiKeyService  *service.APIKeyService
 	settingService *service.SettingService
+	priceCatalog   *service.UserPriceCatalogService
 }
 
 // NewAvailableChannelHandler 创建用户侧可用渠道 handler。
@@ -31,11 +32,13 @@ func NewAvailableChannelHandler(
 	channelService *service.ChannelService,
 	apiKeyService *service.APIKeyService,
 	settingService *service.SettingService,
+	priceCatalog *service.UserPriceCatalogService,
 ) *AvailableChannelHandler {
 	return &AvailableChannelHandler{
 		channelService: channelService,
 		apiKeyService:  apiKeyService,
 		settingService: settingService,
+		priceCatalog:   priceCatalog,
 	}
 }
 
@@ -140,20 +143,7 @@ func (h *AvailableChannelHandler) List(c *gin.Context) {
 
 	// 管理员在「价格配置 > 对外展示设置」勾选的展示分组 / 模型;为空表示全部展示。
 	display := h.settingService.GetPricingDisplaySettings(c.Request.Context())
-	var visibleGroupIDs map[int64]struct{}
-	if len(display.GroupIDs) > 0 {
-		visibleGroupIDs = make(map[int64]struct{}, len(display.GroupIDs))
-		for _, id := range display.GroupIDs {
-			visibleGroupIDs[id] = struct{}{}
-		}
-	}
-	var visibleModels map[string]struct{}
-	if len(display.Models) > 0 {
-		visibleModels = make(map[string]struct{}, len(display.Models))
-		for _, m := range display.Models {
-			visibleModels[m] = struct{}{}
-		}
-	}
+	visibleGroupIDs, visibleModels := displayFilterSets(display)
 
 	channels, err := h.channelService.ListAvailable(c.Request.Context())
 	if err != nil {
@@ -188,6 +178,61 @@ func (h *AvailableChannelHandler) List(c *gin.Context) {
 	}
 
 	response.Success(c, out)
+}
+
+// displayFilterSets 把展示设置转成查找表；空列表返回 nil，表示不限制。
+func displayFilterSets(display service.PricingDisplaySettings) (map[int64]struct{}, map[string]struct{}) {
+	var groupIDs map[int64]struct{}
+	if len(display.GroupIDs) > 0 {
+		groupIDs = make(map[int64]struct{}, len(display.GroupIDs))
+		for _, id := range display.GroupIDs {
+			groupIDs[id] = struct{}{}
+		}
+	}
+	var models map[string]struct{}
+	if len(display.Models) > 0 {
+		models = make(map[string]struct{}, len(display.Models))
+		for _, m := range display.Models {
+			models[m] = struct{}{}
+		}
+	}
+	return groupIDs, models
+}
+
+// ListPrices 返回用户价格页的数据：模型 → 分组 → 价格。
+// GET /api/v1/channels/prices
+//
+// 价格由 PriceQuoter 给出，随各分组的价格阶段取价，倍率（分组倍率或用户专属倍率）在后端乘好；
+// 响应里没有渠道名，也没有上游信息。开关、分组可见性与展示设置的口径与 List 相同。
+func (h *AvailableChannelHandler) ListPrices(c *gin.Context) {
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if !h.featureEnabled(c) {
+		response.Success(c, &service.UserPriceCatalog{Groups: []service.UserPriceGroup{}, Models: []service.UserPriceModel{}})
+		return
+	}
+
+	userGroups, err := h.apiKeyService.GetAvailableGroups(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	groupIDs, models := displayFilterSets(h.settingService.GetPricingDisplaySettings(c.Request.Context()))
+
+	catalog, err := h.priceCatalog.Build(c.Request.Context(), service.UserPriceCatalogQuery{
+		UserID:          subject.UserID,
+		Groups:          userGroups,
+		DisplayGroupIDs: groupIDs,
+		DisplayModels:   models,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, catalog)
 }
 
 // buildPlatformSections 把一个渠道按 visibleGroups 的平台集合拆成有序的 section 列表：
