@@ -48,7 +48,7 @@ func TestStructuredInputRecovery_FirstLegLatency(t *testing.T) {
 				payload = `data: {"id":"latency_raw","model":"gpt-5.4","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":15,"total_tokens":25}}` + "\n\n"
 				reader = strings.NewReader(payload + "data: [DONE]\n\n")
 				if kind == "partial" {
-					reader = io.MultiReader(strings.NewReader(payload), structuredInputFailReader{errors.New("metered read failed")})
+					reader = io.MultiReader(strings.NewReader(payload+structuredInputProviderErrorFrame), structuredInputFailReader{errors.New("metered read failed")})
 				}
 			}
 			upstream := &httpUpstreamRecorder{responses: []*http.Response{
@@ -61,6 +61,8 @@ func TestStructuredInputRecovery_FirstLegLatency(t *testing.T) {
 				require.Error(t, err)
 				var failover *UpstreamFailoverError
 				require.False(t, errors.As(err, &failover))
+				require.Equal(t, 1, strings.Count(rec.Body.String(), `"error":`))
+				require.NotContains(t, rec.Body.String(), "data: [DONE]")
 			} else {
 				require.NoError(t, err)
 			}

@@ -513,7 +513,7 @@ func TestStructuredInputRecovery_RoutingAndSecondPartial(t *testing.T) {
 			stream := `data: {"id":"partial_raw","model":"gpt-5.4","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":15,"total_tokens":25}}` + "\n\n"
 			var second io.Reader = strings.NewReader(stream + "data: [DONE]\n\n")
 			if partial {
-				second = io.MultiReader(strings.NewReader(stream), structuredInputFailReader{errors.New("provider read failure")})
+				second = io.MultiReader(strings.NewReader(stream+structuredInputProviderErrorFrame), structuredInputFailReader{errors.New("provider read failure")})
 			}
 			u := &structuredInputRoutingRecorder{httpUpstreamRecorder: &httpUpstreamRecorder{responses: []*http.Response{{StatusCode: 400, Header: http.Header{"Content-Type": {"application/json"}}, Body: first}, {StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(second)}}}, firstBody: first}
 			svc := &OpenAIGatewayService{cfg: structuredInputRetryTestConfig(), httpUpstream: u}
@@ -528,6 +528,8 @@ func TestStructuredInputRecovery_RoutingAndSecondPartial(t *testing.T) {
 				require.Error(t, err)
 				var failover *UpstreamFailoverError
 				require.False(t, errors.As(err, &failover), "metered second partial cannot replay")
+				require.Equal(t, 1, strings.Count(rec.Body.String(), `"error":`))
+				require.NotContains(t, rec.Body.String(), "data: [DONE]")
 			} else {
 				require.NoError(t, err)
 			}
@@ -634,4 +636,28 @@ func TestStructuredInputRecovery_TransportMarkerResetsPerAttempt(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, OpenAIStructuredInputRecoveredViaRawChat(c))
 	require.Len(t, u.requests, 1)
+}
+
+const structuredInputProviderErrorFrame = "data: {\"error\":{\"type\":\"server_error\",\"message\":\"provider failed after metering\"}}\n\n"
+
+func TestStructuredInputRecovery_UsageCompleteTailReadErrorKeepsRawContract(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewReader(body))
+	payload := `data: {"id":"complete_usage","model":"gpt-5.4","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":15,"total_tokens":25}}` + "\n\n"
+	u := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: 400, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(structuredInputRejection))},
+		{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(io.MultiReader(strings.NewReader(payload), structuredInputFailReader{errors.New("tail read failed")}))},
+	}}
+	svc := &OpenAIGatewayService{cfg: structuredInputRetryTestConfig(), httpUpstream: u}
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, structuredInputRetryTestAccount(), body, "", "")
+	require.NoError(t, err, "existing raw usage-complete terminal contract")
+	require.NotNil(t, result)
+	require.Len(t, u.requests, 2)
+	require.Equal(t, 10, result.Usage.InputTokens)
+	require.Equal(t, 15, result.Usage.OutputTokens)
+	require.Contains(t, rec.Body.String(), `"content":"ok"`)
+	require.NotContains(t, rec.Body.String(), `"error":`)
+	require.NotContains(t, rec.Body.String(), "data: [DONE]")
 }

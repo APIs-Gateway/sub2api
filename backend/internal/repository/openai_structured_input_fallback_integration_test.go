@@ -26,6 +26,7 @@ import (
 
 const structuredHTTPRejection = `{"error":{"type":"invalid_request_error","code":"invalid_type","param":"input","message":"Invalid type for 'input': expected a string, but got an array instead."}}`
 const structuredHTTPVLLMRejection = `{"error":{"type":"Bad Request","param":null,"code":400,"message":"2 validation errors: [{'type':'string_type','loc':('body','input','str'),'msg':'Input should be a valid string','input':[{'role':'assistant','content':'private history'}]}, {'type':'list_type','loc':('body','input','list'),'msg':'invalid list'}]"}}`
+const structuredHTTPProviderErrorFrame = "data: {\"error\":{\"type\":\"server_error\",\"message\":\"provider failed after metering\"}}\n\n"
 const structuredHTTPChatStream = "data: {\"id\":\"structured_chat\",\"model\":\"gpt-5\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"structured_chat\",\"model\":\"gpt-5\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\ndata: [DONE]\n\n"
 
 func structuredHTTPBody(stream bool) string {
@@ -219,14 +220,14 @@ func TestStructuredInputFallbackHTTP_SecondMeteredPartialBillsOnce(t *testing.T)
 				f.upstream.observe = func(req *http.Request) {
 					observe(req)
 					if f.upstream.calls.Load() == 1 {
-						f.upstream.response = `data: {"id":"partial_structured","model":"gpt-5","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}` + "\n\n"
+						f.upstream.response = `data: {"id":"partial_structured","model":"gpt-5","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}` + "\n\n" + structuredHTTPProviderErrorFrame
 						f.upstream.readErr = errors.New("provider interrupted after metered content")
 					}
 				}
 				rec := f.request(structuredHTTPBody(true), "/v1/chat/completions", "", f.openAI.ChatCompletions)
 				require.Equal(t, 200, rec.Code, rec.Body.String())
 				require.Contains(t, rec.Body.String(), "ok")
-				require.Contains(t, rec.Body.String(), "error")
+				require.Equal(t, 1, strings.Count(rec.Body.String(), `"error":`))
 				require.NotContains(t, rec.Body.String(), "data: [DONE]")
 				assertStructuredHTTPSettlement(t, f, card, 10)
 			})
@@ -451,7 +452,7 @@ func TestStructuredInputFallbackHTTP_FirstLegLatency(t *testing.T) {
 					reader = strings.NewReader(structuredHTTPChatStream)
 				}
 				if kind == "partial" {
-					reader = io.MultiReader(strings.NewReader(`data: {"id":"latency_partial","model":"gpt-5","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`+"\n\n"), inflightHTTPReadError{errors.New("metered read failure")})
+					reader = io.MultiReader(strings.NewReader(`data: {"id":"latency_partial","model":"gpt-5","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`+"\n\n"+structuredHTTPProviderErrorFrame), inflightHTTPReadError{errors.New("metered read failure")})
 				}
 				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {contentType}}, Body: io.NopCloser(reader)}, nil
 			}
@@ -468,9 +469,36 @@ func TestStructuredInputFallbackHTTP_FirstLegLatency(t *testing.T) {
 				require.GreaterOrEqual(t, *ttft, 120, "persisted TTFT must include first leg")
 			}
 			if kind == "partial" {
-				require.Contains(t, rec.Body.String(), "error")
+				require.Equal(t, 1, strings.Count(rec.Body.String(), `"error":`))
 				require.NotContains(t, rec.Body.String(), "data: [DONE]")
 			}
+		})
+	}
+}
+
+func TestStructuredInputFallbackHTTP_UsageCompleteTailReadErrorKeepsRawContract(t *testing.T) {
+	for _, card := range []bool{false, true} {
+		t.Run(fmt.Sprintf("card_%t", card), func(t *testing.T) {
+			f := newInflightHTTPFixture(t, service.PlatformOpenAI, inflightChatJSON, "application/json")
+			chatAudioWallet(t, f)
+			if card {
+				admissionCard(t, inflightTestEntClient(t), f.user.ID, 0, 1, 10, 20, 0, 0, 0)
+			}
+			structuredHTTPSequence(t, f, structuredHTTPRejection, true, nil, nil)
+			observe := f.upstream.observe
+			f.upstream.observe = func(req *http.Request) {
+				observe(req)
+				if f.upstream.calls.Load() == 1 {
+					f.upstream.response = strings.Split(structuredHTTPChatStream, "data: [DONE]")[0]
+					f.upstream.readErr = errors.New("tail read failed after complete usage")
+				}
+			}
+			rec := f.request(structuredHTTPBody(true), "/v1/chat/completions", "", f.openAI.ChatCompletions)
+			require.Equal(t, 200, rec.Code, rec.Body.String())
+			require.Contains(t, rec.Body.String(), "ok")
+			require.NotContains(t, rec.Body.String(), `"error":`)
+			require.NotContains(t, rec.Body.String(), "data: [DONE]")
+			assertStructuredHTTPSettlement(t, f, card, 10)
 		})
 	}
 }
