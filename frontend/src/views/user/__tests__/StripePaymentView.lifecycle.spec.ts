@@ -431,7 +431,7 @@ describe('Stripe page owns asynchronous callbacks only while mounted', () => {
     expect(stripeInstance.confirmPayment).not.toHaveBeenCalled()
   })
 
-  it.each([false, true])('ignores an already queued completion timer after unmount (popup=%s)', async popup => {
+  it.each([false, true])('suppresses controlled late completion callback delivery after unmount (popup=%s)', async popup => {
     vi.useFakeTimers()
     const scheduled = vi.spyOn(globalThis, 'setTimeout')
     const close = vi.spyOn(window, 'close').mockImplementation(() => {})
@@ -446,7 +446,7 @@ describe('Stripe page owns asynchronous callbacks only while mounted', () => {
     expect(vi.getTimerCount()).toBe(1)
     wrapper.unmount()
     expect(vi.getTimerCount()).toBe(0)
-    // Model a callback that was already queued before clearTimeout ran.
+    // Deliberately deliver the captured callback; do not infer browser clearTimeout behavior.
     ;(completion as () => void)()
     expect(close).not.toHaveBeenCalled()
     expect(routerPush).not.toHaveBeenCalled()
