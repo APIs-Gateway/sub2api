@@ -231,7 +231,8 @@
           </template>
 
           <template #cell-usage="{ row }">
-            <div class="text-sm">
+            <!-- 给个宽度下限，列再窄也不会把「近30天 / 今日」折成竖排 -->
+            <div class="min-w-[9.5rem] text-sm">
               <!-- 有上限：已用与上限同一口径（都是额度折算），与进度条、超额变色一致 -->
               <template v-if="row.quota > 0">
                 <div class="flex flex-wrap items-baseline gap-x-1.5">
@@ -507,11 +508,39 @@
     <!-- Create/Edit Modal -->
     <BaseDialog
       :show="showCreateModal || showEditModal"
-      :title="showEditModal ? t('keys.editKey') : t('keys.createKey')"
+      :title="createdKey ? t('keys.createdTitle') : showEditModal ? t('keys.editKey') : t('keys.createKey')"
       width="normal"
       @close="closeModals"
     >
-      <form id="key-form" @submit.prevent="handleSubmit" class="space-y-5">
+      <!-- 创建成功：弹窗原地变成确认态，完整密钥只在这里一次性给出 -->
+      <div v-if="createdKey" class="space-y-4" data-test="key-created">
+        <div class="flex items-center gap-3">
+          <span class="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400">
+            <Icon name="check" size="md" />
+          </span>
+          <div class="min-w-0">
+            <div class="truncate text-sm font-medium text-gray-900 dark:text-white">{{ createdKey.name }}</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('keys.createdHint') }}</div>
+          </div>
+        </div>
+        <div class="flex items-stretch gap-2">
+          <code
+            data-test="key-created-value"
+            class="min-w-0 flex-1 select-all break-all rounded-md border border-gray-200 bg-gray-50 px-3 py-2.5 font-mono text-sm text-gray-900 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-100"
+          >{{ createdKey.key }}</code>
+          <button
+            type="button"
+            class="btn btn-secondary flex-none"
+            data-test="key-created-copy"
+            @click="copyToClipboard(createdKey.key, createdKey.id)"
+          >
+            <Icon :name="copiedKeyId === createdKey.id ? 'check' : 'copy'" size="sm" class="mr-1.5" />
+            {{ copiedKeyId === createdKey.id ? t('keys.copied') : t('common.copy') }}
+          </button>
+        </div>
+      </div>
+
+      <form v-else id="key-form" @submit.prevent="handleSubmit" class="space-y-5">
         <div>
           <label class="input-label">{{ t('keys.nameLabel') }}</label>
           <input
@@ -1000,7 +1029,15 @@
         </div>
       </form>
       <template #footer>
-        <div class="flex justify-end gap-3">
+        <div v-if="createdKey" class="flex justify-end gap-3">
+          <button @click="closeModals" type="button" class="btn btn-secondary" data-test="key-created-close">
+            {{ t('common.close') }}
+          </button>
+          <button @click="connectCreatedKey" type="button" class="btn btn-primary" data-test="key-created-connect">
+            {{ t('keys.goConnect') }}
+          </button>
+        </div>
+        <div v-else class="flex justify-end gap-3">
           <button @click="closeModals" type="button" class="btn btn-secondary">
             {{ t('common.cancel') }}
           </button>
@@ -1169,6 +1206,7 @@
 <script setup lang="ts">
 	import { ref, reactive, computed, watch, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 	import { useI18n } from 'vue-i18n'
+	import { useRoute, useRouter } from 'vue-router'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
 	import { useClipboard } from '@/composables/useClipboard'
@@ -1235,9 +1273,11 @@ const allColumns = computed<Column[]>(() => [
   { key: 'name', label: t('common.name'), sortable: true },
   { key: 'id', label: t('keys.id'), sortable: true },
   { key: 'key', label: t('keys.apiKey'), sortable: false },
+  // 用量排在分组之前：表格宽度超出时右侧操作列是吸附的，靠后的列默认被它盖住，
+  // 用量放太靠后就只剩列首的「近 / 今」两个字露在外面
+  { key: 'usage', label: t('keys.usage'), sortable: false },
   { key: 'group', label: t('keys.group'), sortable: false },
   { key: 'current_concurrency', label: t('keys.currentConcurrency'), sortable: true },
-  { key: 'usage', label: t('keys.usage'), sortable: false },
   { key: 'rate_limit', label: t('keys.rateLimitColumn'), sortable: false },
   { key: 'expires_at', label: t('keys.expiresAt'), sortable: true },
   { key: 'status', label: t('common.status'), sortable: true },
@@ -1407,6 +1447,8 @@ const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
 const showColumnDropdown = ref(false)
 const showOnboardingModal = ref(false)
+// 刚创建成功的密钥：非空时创建弹窗显示「密钥已创建」确认态
+const createdKey = ref<ApiKey | null>(null)
 const showFallbackDrawer = ref(false)
 const fallbackDrawerKeyId = ref<number | null>(null)
 const fallbackTrigger = ref<HTMLElement | null>(null)
@@ -1550,6 +1592,25 @@ function limitFromInput(field: LimitField, input: number | null): number {
 watch(showCreateModal, (open) => {
   if (open) beginLimitInput()
 })
+
+// /keys?new=1 直接打开创建弹窗；打开后立刻把参数从地址栏清掉，刷新或返回不会再弹
+const route = useRoute()
+const router = useRouter()
+watch(
+  () => route.query.new,
+  (flag) => {
+    if (flag === undefined) return
+    if (flag === '1') {
+      showEditModal.value = false
+      createdKey.value = null
+      showCreateModal.value = true
+    }
+    const rest = { ...route.query }
+    delete rest.new
+    void router.replace({ query: rest })
+  },
+  { immediate: true }
+)
 
 // 自定义Key验证
 const customKeyError = computed(() => {
@@ -1911,7 +1972,7 @@ const handleSubmit = async () => {
       appStore.showSuccess(t('keys.keyUpdatedSuccess'))
     } else {
       const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
-      await keysAPI.create(
+      const created = await keysAPI.create(
         formData.value.name,
         formData.value.group_id,
         customKey,
@@ -1926,6 +1987,12 @@ const handleSubmit = async () => {
       // Only advance tour if active, on submit step, and creation succeeded
       if (onboardingStore.isCurrentStep('[data-tour="key-form-submit"]')) {
         onboardingStore.nextStep(500)
+      }
+      // 创建弹窗原地变成确认态，由用户关闭或去接入；列表在后台刷新
+      if (created?.key) {
+        createdKey.value = created
+        loadApiKeys()
+        return
       }
     }
     closeModals()
@@ -1959,8 +2026,15 @@ const handleDelete = async () => {
   }
 }
 
+const connectCreatedKey = () => {
+  const key = createdKey.value
+  closeModals()
+  if (key) openOnboarding(key, 'install')
+}
+
 const closeModals = () => {
   showCreateModal.value = false
+  createdKey.value = null
   showEditModal.value = false
   selectedKey.value = null
   formData.value = {

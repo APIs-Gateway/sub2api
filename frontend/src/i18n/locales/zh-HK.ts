@@ -1164,6 +1164,9 @@
     lastUsedIP: '最近使用 IP',
     useKey: '使用金鑰',
     connect: '接入',
+    createdTitle: '金鑰已創建',
+    createdHint: '之後仍可在列表中查看。',
+    goConnect: '去接入',
     usedLabel: '累計已用',
     unlimited: '不限額',
     overview: {

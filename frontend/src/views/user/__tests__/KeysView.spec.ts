@@ -88,6 +88,16 @@ vi.mock('@/api', () => ({
 const publicSettings: { value: Record<string, unknown> | null } = { value: null }
 const activeSubscriptions: { value: Array<Record<string, unknown>> } = { value: [] }
 
+// 路由：只需要 query 与 replace；测试里直接改 routeState.query 模拟带参数打开
+const routeState = vi.hoisted(() => ({
+  query: {} as Record<string, unknown>,
+  replace: vi.fn(),
+}))
+vi.mock('vue-router', () => ({
+  useRoute: () => routeState,
+  useRouter: () => ({ replace: routeState.replace }),
+}))
+
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError,
@@ -871,6 +881,131 @@ describe('user KeysView fallback entry visibility', () => {
     listChains.mockResolvedValue({ platforms: [] })
     const wrapper = await mountView()
     expect(wrapper.find('[data-test="fallback-entry"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+describe('user KeysView ?new=1 与创建成功确认态', () => {
+  const created: ApiKey = { ...createApiKey(), id: 9, name: 'fresh', key: 'sk-fresh-full-key', group_id: 5 }
+
+  beforeEach(() => {
+    localStorage.clear()
+    publicSettings.value = null
+    activeSubscriptions.value = []
+    routeState.query = {}
+    routeState.replace.mockReset()
+    createKey.mockReset()
+    copyToClipboard.mockReset()
+    copyToClipboard.mockResolvedValue(true)
+    listKeys.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 1 })
+    getPublicSettings.mockResolvedValue({})
+    getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
+    getAvailableGroups.mockResolvedValue([])
+    getUserGroupRates.mockResolvedValue({})
+    isCurrentStep.mockReturnValue(false)
+    nextStep.mockReset()
+  })
+
+  const submitCreate = async (wrapper: VueWrapper) => {
+    await wrapper.get('[data-tour="key-form-name"]').setValue('fresh')
+    const groupSelect = wrapper.findAllComponents({ name: 'Select' })
+      .find((select) => select.attributes('data-tour') === 'key-form-group')!
+    groupSelect.vm.$emit('update:modelValue', 5)
+    await nextTick()
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+  }
+
+  it('打开 /keys?new=1 直接弹出创建弹窗，并把参数清掉', async () => {
+    routeState.query = { new: '1', foo: 'bar' }
+    const wrapper = await mountView()
+    expect(wrapper.find('#key-form').exists()).toBe(true)
+    expect(routeState.replace).toHaveBeenCalledTimes(1)
+    expect(routeState.replace).toHaveBeenCalledWith({ query: { foo: 'bar' } })
+    wrapper.unmount()
+  })
+
+  it('没有 new 参数时不弹窗，也不改地址', async () => {
+    const wrapper = await mountView()
+    expect(wrapper.find('#key-form').exists()).toBe(false)
+    expect(routeState.replace).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('new 不是 1 时只清参数，不弹窗', async () => {
+    routeState.query = { new: '0' }
+    const wrapper = await mountView()
+    expect(wrapper.find('#key-form').exists()).toBe(false)
+    expect(routeState.replace).toHaveBeenCalledWith({ query: {} })
+    wrapper.unmount()
+  })
+
+  it('创建成功后弹窗原地变成确认态：完整密钥、复制、提示、去接入', async () => {
+    routeState.query = { new: '1' }
+    createKey.mockResolvedValue(created)
+    const wrapper = await mountView()
+    const listCallsBefore = listKeys.mock.calls.length
+    await submitCreate(wrapper)
+
+    expect(createKey).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('#key-form').exists()).toBe(false)
+    expect(wrapper.get('[data-test="key-created-value"]').text()).toBe('sk-fresh-full-key')
+    expect(wrapper.text()).toContain('keys.createdHint')
+    expect(wrapper.find('[data-test="key-created-connect"]').exists()).toBe(true)
+    // 列表在后台刷新
+    expect(listKeys.mock.calls.length).toBe(listCallsBefore + 1)
+
+    await wrapper.get('[data-test="key-created-copy"]').trigger('click')
+    expect(copyToClipboard).toHaveBeenCalledWith('sk-fresh-full-key', 'keys.copied')
+    wrapper.unmount()
+  })
+
+  it('创建成功时导览仍在最后一步推进', async () => {
+    isCurrentStep.mockReturnValue(true)
+    createKey.mockResolvedValue(created)
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'Create API Key').trigger('click')
+    await submitCreate(wrapper)
+    expect(isCurrentStep).toHaveBeenCalledWith('[data-tour="key-form-submit"]')
+    expect(nextStep).toHaveBeenCalledWith(500)
+    wrapper.unmount()
+  })
+
+  it('创建失败时留在表单，不进确认态', async () => {
+    createKey.mockRejectedValue({ response: { data: { detail: 'boom' } } })
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'Create API Key').trigger('click')
+    await submitCreate(wrapper)
+    expect(wrapper.find('#key-form').exists()).toBe(true)
+    expect(wrapper.find('[data-test="key-created"]').exists()).toBe(false)
+    expect(showError).toHaveBeenCalledWith('boom')
+    wrapper.unmount()
+  })
+
+  it('点「去接入」关掉确认态，并用新密钥打开接入弹窗', async () => {
+    createKey.mockResolvedValue(created)
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'Create API Key').trigger('click')
+    await submitCreate(wrapper)
+    await wrapper.get('[data-test="key-created-connect"]').trigger('click')
+
+    const modal = wrapper.findComponent({ name: 'KeyOnboardingModal' })
+    expect(wrapper.find('[data-test="key-created"]').exists()).toBe(false)
+    expect(modal.props('show')).toBe(true)
+    expect(modal.props('initialTab')).toBe('install')
+    expect(modal.props('apiKey')).toMatchObject({ id: 9, key: 'sk-fresh-full-key' })
+    wrapper.unmount()
+  })
+
+  it('关闭确认态后再打开创建弹窗，回到空白表单', async () => {
+    createKey.mockResolvedValue(created)
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'Create API Key').trigger('click')
+    await submitCreate(wrapper)
+    await wrapper.get('[data-test="key-created-close"]').trigger('click')
+    expect(wrapper.find('[data-test="key-created"]').exists()).toBe(false)
+    await getButtonByText(wrapper, 'Create API Key').trigger('click')
+    expect((wrapper.get('[data-tour="key-form-name"]').element as HTMLInputElement).value).toBe('')
     wrapper.unmount()
   })
 })
