@@ -11,3 +11,19 @@ func (s *BillingService) LookupOfficialPriceFact(model string) OfficialPriceFact
 		ImageCapable: s.quoteModelImageCapable(model),
 	}
 }
+
+// LookupOfficialPriceState 实现 OfficialPriceStateSource（W6 PR4b-2a，保存时校验用，设计 5.2 的 S-5）：
+//   - Known：GetModelPricing 不报「无价」；
+//   - NonZero：有任一正的 token 单价，或是图片模型（按张价或图片 token 价，与 LookupOfficialPriceFact 同一个判定）。
+//     图片模型的按张价不在 ModelPricing 里，所以按图片模型算有价，宁可少拦。
+func (s *BillingService) LookupOfficialPriceState(model string) OfficialPriceState {
+	pricing, err := s.GetModelPricing(model)
+	if err != nil || pricing == nil {
+		return OfficialPriceState{}
+	}
+	nonZero := pricing.InputPricePerToken > 0 || pricing.OutputPricePerToken > 0 ||
+		pricing.CacheCreationPricePerToken > 0 || pricing.CacheReadPricePerToken > 0 ||
+		pricing.ImageInputPricePerToken > 0 || pricing.ImageOutputPricePerToken > 0 ||
+		s.quoteModelImageCapable(model)
+	return OfficialPriceState{Known: true, NonZero: nonZero}
+}

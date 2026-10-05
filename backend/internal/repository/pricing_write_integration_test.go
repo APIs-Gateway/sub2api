@@ -54,7 +54,7 @@ func pwiExtra(gid int64, key string, extra float64, baseline int64) service.Cell
 
 func pwiApply(store service.PriceWriteStore, req service.CellWriteRequest) (*service.CellWriteResult, error) {
 	var res *service.CellWriteResult
-	err := store.WithTx(context.Background(), func(ctx context.Context, tx service.MatrixExecutor) error {
+	err := store.WithTx(context.Background(), func(ctx context.Context, tx service.MatrixTx) error {
 		var err error
 		res, err = NewPricingCellWriter().ApplyTx(ctx, tx, req)
 		return err
@@ -313,7 +313,7 @@ func TestPricingCellWriter_Integration_RollbackLeavesNoTrace(t *testing.T) {
 	store := NewPricingWriteStore(integrationDB)
 	abort := errors.New("abort")
 
-	err := store.WithTx(context.Background(), func(ctx context.Context, tx service.MatrixExecutor) error {
+	err := store.WithTx(context.Background(), func(ctx context.Context, tx service.MatrixTx) error {
 		_, err := NewPricingCellWriter().ApplyTx(ctx, tx, service.CellWriteRequest{
 			Ops: []service.CellOp{pwiExtra(gid, "pw-m", 1.5, 0)}, GroupRevisions: map[int64]int64{gid: 3}, OperatorID: 1,
 		})
@@ -340,7 +340,7 @@ func TestPricingCellWriter_Integration_SharesTheConfigRowLock(t *testing.T) {
 	_, err = holder.ExecContext(ctx, `SELECT group_id FROM group_model_config WHERE group_id = $1 FOR UPDATE`, gid)
 	require.NoError(t, err)
 
-	err = store.WithTx(ctx, func(ctx context.Context, tx service.MatrixExecutor) error {
+	err = store.WithTx(ctx, func(ctx context.Context, tx service.MatrixTx) error {
 		if _, err := tx.ExecContext(ctx, `SET LOCAL lock_timeout = '300ms'`); err != nil {
 			return err
 		}
@@ -422,7 +422,7 @@ func TestInterimPriceWriteGate_Integration_PreviewConfirmCommit(t *testing.T) {
 	gid := pwiV2Group(t) // revision 3
 	store := NewPricingWriteStore(integrationDB)
 	inv := &pwiInvalidator{}
-	gate := service.NewInterimPriceWriteGate(store, NewPricingCellWriter(), inv)
+	gate := service.NewInterimPriceWriteGate(store, NewPricingCellWriter(), pwiGuard(nil), inv)
 	priceReq := func(key string, extra float64, groupRev, baseline int64) service.CellWriteRequest {
 		return service.CellWriteRequest{
 			Ops: []service.CellOp{pwiExtra(gid, key, extra, baseline)}, GroupRevisions: map[int64]int64{gid: groupRev}, OperatorID: 21,
@@ -513,7 +513,7 @@ func TestInterimPriceWriteGate_Integration_PreviewConfirmCommit(t *testing.T) {
 
 func TestInterimPriceWriteGate_Integration_ProposeRefusesLegacyGroups(t *testing.T) {
 	gid := pwiGroup(t, "legacy", 1)
-	gate := service.NewInterimPriceWriteGate(NewPricingWriteStore(integrationDB), NewPricingCellWriter(), nil)
+	gate := service.NewInterimPriceWriteGate(NewPricingWriteStore(integrationDB), NewPricingCellWriter(), pwiGuard(nil), nil)
 	_, err := gate.Propose(context.Background(), service.PriceWriteProposal{Request: service.CellWriteRequest{
 		Ops: []service.CellOp{pwiExtra(gid, "pw-m", 1.5, 0)}, GroupRevisions: map[int64]int64{gid: 1}, OperatorID: 21,
 	}})
@@ -538,7 +538,7 @@ func TestPricingWriteStore_Integration_ApprovalIsConsumedExactlyOnce(t *testing.
 	}
 	consume := func(id int64, hash, kind string) (*service.PriceWriteApproval, error) {
 		var a *service.PriceWriteApproval
-		err := store.WithTx(ctx, func(ctx context.Context, tx service.MatrixExecutor) error {
+		err := store.WithTx(ctx, func(ctx context.Context, tx service.MatrixTx) error {
 			var err error
 			a, err = store.ConsumeApproval(ctx, tx, id, hash, kind, 6, time.Now())
 			return err

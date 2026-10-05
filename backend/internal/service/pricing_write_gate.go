@@ -18,16 +18,22 @@ import (
 //   - 预览之后库里有人动过同一批单元格，基线对不上，写入被拒绝，必须重新预览。
 //
 // 不涉价的写入（只改 open、删除 inherit 单元格）可以不带凭证，但仍要二次确认并留历史。
+//
+// 保存时校验（设计 5.2）：所有写入（包括不涉价、只改 open 的）在写事务里、消耗审批之前过 ExposureGuard，
+// 白名单分组里不能出现无价或 0 元的 open 单元格；预览（Propose）也过同一道校验，让管理员提前看到阻止原因。
+// 没有配置 ExposureGuard 时写入与预览一律失败关闭。
 type InterimPriceWriteGate struct {
 	store       PriceWriteStore
 	writer      CellWriter
+	exposure    *ExposureGuard
 	invalidator MatrixSnapshotInvalidator
 	now         func() time.Time
 }
 
-// NewInterimPriceWriteGate 创建过渡审批关口。invalidator 可为 nil（没有读取方）。
-func NewInterimPriceWriteGate(store PriceWriteStore, writer CellWriter, invalidator MatrixSnapshotInvalidator) *InterimPriceWriteGate {
-	return &InterimPriceWriteGate{store: store, writer: writer, invalidator: invalidator, now: time.Now}
+// NewInterimPriceWriteGate 创建过渡审批关口。exposure 为保存时校验（nil 则失败关闭）；
+// invalidator 可为 nil（没有读取方）。
+func NewInterimPriceWriteGate(store PriceWriteStore, writer CellWriter, exposure *ExposureGuard, invalidator MatrixSnapshotInvalidator) *InterimPriceWriteGate {
+	return &InterimPriceWriteGate{store: store, writer: writer, exposure: exposure, invalidator: invalidator, now: time.Now}
 }
 
 // priceWriteStaleAfter 从未被消耗的预览记录保留多久再清理。
@@ -53,6 +59,9 @@ func (g *InterimPriceWriteGate) Propose(ctx context.Context, in PriceWritePropos
 	}
 	planned, err := g.writer.PlanTx(ctx, g.store.Reader(), req)
 	if err != nil {
+		return nil, err
+	}
+	if err := g.exposure.CheckCellWrites(ctx, g.store.Reader(), planned); err != nil {
 		return nil, err
 	}
 	touches := PlannedTouchesPrice(planned)
@@ -137,9 +146,14 @@ func (g *InterimPriceWriteGate) Commit(ctx context.Context, in PriceWriteCommit)
 	hash := PriceWritePlanHash(req)
 
 	var result *CellWriteResult
-	err = g.store.WithTx(ctx, func(ctx context.Context, tx MatrixExecutor) error {
+	err = g.store.WithTx(ctx, func(ctx context.Context, tx MatrixTx) error {
 		res, err := g.writer.ApplyTx(ctx, tx, req)
 		if err != nil {
+			return err
+		}
+		// 保存时校验在写入之后、消耗审批之前：违规就整个事务回滚，审批也不会被消耗。
+		// 配置行已被 ApplyTx 锁住，这里读到的准入模式不会在校验与提交之间变化。
+		if err := g.exposure.CheckCellWrites(ctx, tx, res.Planned); err != nil {
 			return err
 		}
 		if err := g.authorize(ctx, tx, in, hash, res); err != nil {

@@ -31,7 +31,7 @@ func TestPricingWriteStore_WithTx(t *testing.T) {
 		mock.ExpectExec(`SET LOCAL lock_timeout = '5s'`).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(`UPDATE t`).WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
-		err := NewPricingWriteStore(db).WithTx(ctx, func(ctx context.Context, tx service.MatrixExecutor) error {
+		err := NewPricingWriteStore(db).WithTx(ctx, func(ctx context.Context, tx service.MatrixTx) error {
 			_, err := tx.ExecContext(ctx, `UPDATE t SET x = 1`)
 			return err
 		})
@@ -41,7 +41,7 @@ func TestPricingWriteStore_WithTx(t *testing.T) {
 	t.Run("begin fails", func(t *testing.T) {
 		db, mock := newSQLMock(t)
 		mock.ExpectBegin().WillReturnError(boom)
-		err := NewPricingWriteStore(db).WithTx(ctx, func(context.Context, service.MatrixExecutor) error {
+		err := NewPricingWriteStore(db).WithTx(ctx, func(context.Context, service.MatrixTx) error {
 			t.Fatal("事务没开起来，不应运行回调")
 			return nil
 		})
@@ -53,7 +53,7 @@ func TestPricingWriteStore_WithTx(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectExec(`SET LOCAL lock_timeout`).WillReturnError(boom)
 		mock.ExpectRollback()
-		err := NewPricingWriteStore(db).WithTx(ctx, func(context.Context, service.MatrixExecutor) error {
+		err := NewPricingWriteStore(db).WithTx(ctx, func(context.Context, service.MatrixTx) error {
 			t.Fatal("设置锁超时失败后不应运行回调")
 			return nil
 		})
@@ -65,7 +65,7 @@ func TestPricingWriteStore_WithTx(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectExec(`SET LOCAL lock_timeout`).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectRollback()
-		err := NewPricingWriteStore(db).WithTx(ctx, func(context.Context, service.MatrixExecutor) error { return boom })
+		err := NewPricingWriteStore(db).WithTx(ctx, func(context.Context, service.MatrixTx) error { return boom })
 		require.Same(t, boom, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -74,7 +74,7 @@ func TestPricingWriteStore_WithTx(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectExec(`SET LOCAL lock_timeout`).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectCommit().WillReturnError(boom)
-		err := NewPricingWriteStore(db).WithTx(ctx, func(context.Context, service.MatrixExecutor) error { return nil })
+		err := NewPricingWriteStore(db).WithTx(ctx, func(context.Context, service.MatrixTx) error { return nil })
 		require.ErrorIs(t, err, boom)
 		require.ErrorContains(t, err, "commit")
 	})
@@ -84,7 +84,7 @@ func TestPricingWriteStore_WithTx(t *testing.T) {
 		mock.ExpectExec(`SET LOCAL lock_timeout`).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectRollback()
 		require.PanicsWithValue(t, "kaboom", func() {
-			_ = NewPricingWriteStore(db).WithTx(ctx, func(context.Context, service.MatrixExecutor) error { panic("kaboom") })
+			_ = NewPricingWriteStore(db).WithTx(ctx, func(context.Context, service.MatrixTx) error { panic("kaboom") })
 		})
 		require.NoError(t, mock.ExpectationsWereMet())
 	})

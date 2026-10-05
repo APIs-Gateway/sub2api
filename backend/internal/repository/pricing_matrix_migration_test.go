@@ -122,7 +122,7 @@ func TestW6CostAccountingRulesMigrationShape(t *testing.T) {
 	require.Equal(t, 1, strings.Count(code, "REFERENCES"), "只有价格行引用规则行")
 }
 
-// W6-M6（迁移 208，PR4b-1）：过渡审批记录表，外加给历史表补一个可空列。
+// W6-M7（迁移 208，PR4b-1；设计 2.8 的 W6-M6 是 PR11 的渠道表归档，编号不同）：过渡审批记录表，外加给历史表补一个可空列。
 // 与 200 至 202 不同，它含一条 ALTER TABLE，所以单独校验：只能是「加一个可空列」。
 func TestW6PricingWriteApprovalsMigrationShape(t *testing.T) {
 	const name = "208_w6_pricing_write_approvals.sql"

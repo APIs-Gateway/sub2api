@@ -24,7 +24,7 @@ func NewPricingWriteStore(db *sql.DB) service.PriceWriteStore {
 
 func (s *pricingWriteStore) Reader() service.MatrixExecutor { return s.db }
 
-func (s *pricingWriteStore) WithTx(ctx context.Context, fn func(ctx context.Context, tx service.MatrixExecutor) error) (err error) {
+func (s *pricingWriteStore) WithTx(ctx context.Context, fn func(ctx context.Context, tx service.MatrixTx) error) (err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)

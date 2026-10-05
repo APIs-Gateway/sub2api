@@ -24,6 +24,16 @@ type MatrixExecutor interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
+// MatrixTx 写入用的事务句柄：在 MatrixExecutor 之上要求 Commit / Rollback，*sql.Tx 与 *ent.Tx 都满足，
+// *sql.DB 不满足。写入器的 ApplyTx 收它而不是 MatrixExecutor，是为了让「传了不在事务里的连接」在编译期就报错：
+// 在自动提交的连接上，FOR UPDATE 的行锁会在语句结束时立刻放掉，写入不再是原子的，也和钩子、阶段切换互斥不了。
+// 调用方负责提交与回滚，写入器不会调用 Commit / Rollback。
+type MatrixTx interface {
+	MatrixExecutor
+	Commit() error
+	Rollback() error
+}
+
 // CellOpKind 单元格操作的种类。
 type CellOpKind string
 
@@ -104,11 +114,12 @@ type CellGroupState struct {
 type CellWriter interface {
 	// PlanTx 读取现状并规划，不写入、不加锁（预览用）；校验与 ApplyTx 完全一致。
 	PlanTx(ctx context.Context, exec MatrixExecutor, req CellWriteRequest) ([]PlannedCellWrite, error)
-	// ApplyTx 在调用方的事务里写入：先按 group_id 升序对 group_model_config 行 SELECT ... FOR UPDATE
+	// ApplyTx 只能在事务里调用（参数类型 MatrixTx 保证这一点；服务层只经 PriceWriteStore.WithTx 调用）。
+	// 它在调用方的事务里写入：先按 group_id 升序对 group_model_config 行 SELECT ... FOR UPDATE
 	// （与派生钩子、阶段切换互斥），确认分组都是 v2 且基线未变，再逐个单元格写入，
 	// 同一事务里追加 model_group_price_history，并把涉及分组的配置 revision 加一。
 	// 提交之后调用方必须对 ChangedGroupIDs 调用 MatrixSnapshotInvalidator.InvalidateGroups。
-	ApplyTx(ctx context.Context, tx MatrixExecutor, req CellWriteRequest) (*CellWriteResult, error)
+	ApplyTx(ctx context.Context, tx MatrixTx, req CellWriteRequest) (*CellWriteResult, error)
 }
 
 // PriceDelta 一次写入对用户实付价格的方向；PR4 的 PriceDiff 给出同样四个值。
@@ -148,7 +159,7 @@ type PriceWriteStore interface {
 	// Reader 返回预览规划用的执行器（不开事务）。
 	Reader() MatrixExecutor
 	// WithTx 在一个事务里运行 fn（设置 lock_timeout）；fn 返回错误就回滚。
-	WithTx(ctx context.Context, fn func(ctx context.Context, tx MatrixExecutor) error) error
+	WithTx(ctx context.Context, fn func(ctx context.Context, tx MatrixTx) error) error
 	InsertApproval(ctx context.Context, a PriceWriteApproval) (int64, error)
 	// ConsumeApproval 在 tx 里原子地把 previewed 且未过期、指纹与种类都匹配的记录置为 consumed，并返回它；
 	// 其他情况返回 ClassifyApprovalRejection 给出的错误。
