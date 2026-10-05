@@ -31,7 +31,7 @@ func TestHandleClaudeStreamingResponse_MalformedSignatureSwitchesAccount(t *test
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	resp := antigravityEmptyStreamTestResponse(`{"response":{"candidates":[{"content":{"role":"model","parts":[{"thoughtSignature":"sig"}]},"finishReason":"MALFORMED_FUNCTION_CALL"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2}}}`)
+	resp := antigravityEmptyStreamTestResponse(`{"response":{"candidates":[{"content":{"role":"model","parts":[{"thoughtSignature":"sig"}]},"finishReason":"MALFORMED_FUNCTION_CALL"}],"usageMetadata":{"promptTokenCount":0,"candidatesTokenCount":0}}}`)
 
 	result, err := svc.handleClaudeStreamingResponse(c, resp, time.Now(), "gemini-3.8-flash")
 	require.Nil(t, result)

@@ -175,7 +175,7 @@ func TestAntigravityGeminiClientErrorStreamAndBuffered(t *testing.T) {
 }
 
 func TestAntigravityGeminiClientErrorDoesNotScrubSuccessfulPartsOrUsage(t *testing.T) {
-	payload := `{"candidates":[{"content":{"parts":[{"text":"projects/private-project-123 pool-sa@internal.example.com"},{"functionCall":{"name":"lookup","args":{"error":{"message":"details do-not-echo"}}}}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2}}`
+	payload := `{"candidates":[{"content":{"parts":[{"text":"projects/private-project-123 pool-sa@internal.example.com"},{"functionCall":{"name":"lookup","args":{"error":{"message":"details do-not-echo"}}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2}}`
 	for _, stream := range []bool{true, false} {
 		t.Run(map[bool]string{true: "stream", false: "buffered"}[stream], func(t *testing.T) {
 			svc, _, c, rec := antigravityClientErrorFixture(t, 200, "")
