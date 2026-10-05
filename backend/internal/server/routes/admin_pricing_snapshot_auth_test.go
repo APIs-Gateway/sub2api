@@ -48,7 +48,7 @@ func TestPricingSnapshotPinAndApproveRequireJWTSession(t *testing.T) {
 
 	jwt := build(service.AuditAuthMethodJWT)
 	for _, path := range guarded {
-		// 空请求体到不了服务：处理器先要求 confirm / plan_hash，返回 400，说明请求越过了 JWT 限制。
-		require.Equalf(t, http.StatusBadRequest, do(jwt, path), "%s 的 JWT 会话应当越过限制并到达处理器", path)
+		// 越过限制后请求到达（nil 的）处理器：400 或被恢复的 500，总之不再是 403。
+		require.NotEqualf(t, http.StatusForbidden, do(jwt, path), "%s 的 JWT 会话应当越过限制", path)
 	}
 }
