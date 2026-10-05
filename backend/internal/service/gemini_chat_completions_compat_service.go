@@ -42,12 +42,15 @@ func (s *GeminiMessagesCompatService) ForwardAsChatCompletions(
 	clientStream := ccReq.Stream
 	includeUsage := ccReq.StreamOptions != nil && ccReq.StreamOptions.IncludeUsage
 
-	responsesReq, err := apicompat.ChatCompletionsToResponses(&ccReq)
+	responsesReq, err := apicompat.ChatCompletionsToResponsesForGemini(&ccReq)
 	if err != nil {
+		if errors.Is(err, apicompat.ErrUnsupportedInputAudio) || errors.Is(err, apicompat.ErrInvalidInputAudio) {
+			MarkBillingInflightAttemptNoCharge(ctx)
+		}
 		return nil, s.writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 	}
 
-	anthropicReq, err := apicompat.ResponsesToAnthropicRequest(responsesReq)
+	anthropicReq, err := apicompat.ResponsesToAnthropicRequestForGemini(responsesReq)
 	if err != nil {
 		return nil, s.writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 	}
