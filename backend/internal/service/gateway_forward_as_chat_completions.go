@@ -466,10 +466,24 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	// apicompat.AnthropicUsage) can still be normalized into the
 	// mutually-exclusive usage buckets billing expects.
 	processAnthropicEvent := func(event *apicompat.AnthropicStreamEvent, rawEvent string) bool {
-		// Drop Anthropic keepalive pings before OpenAI conversion:
-		// leaking `event: ping` frames crashes OpenAI-stream clients.
-		// Error events must still forward — they carry upstream failures.
+		// Keep transport heartbeats out of chat JSON and first-token timing.
+		// Failed writes follow the same usage drain as failed content writes.
 		if event.Type == "ping" {
+			if clientDisconnected || anthropicCompatClientGone(c) {
+				clientDisconnected = true
+				compatDrain.start()
+				return false
+			}
+			if sawMessageStop {
+				return false
+			}
+			if _, err := fmt.Fprint(c.Writer, ": ping\n\n"); err != nil {
+				MarkResponseCommitted(c)
+				clientDisconnected = true
+				compatDrain.start()
+				return false
+			}
+			c.Writer.Flush()
 			return false
 		}
 		if firstChunk {
