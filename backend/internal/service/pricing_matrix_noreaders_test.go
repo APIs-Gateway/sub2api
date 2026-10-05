@@ -13,7 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 零行为变化的静态证据：W6 PR2、PR4b-1 新增的表与代码没有任何读取方。
+// 零行为变化的静态证据：W6 PR2、PR4b-1 新增的表与代码没有任何读取方；PR5 之后唯一的读取方是 stagedPolicy
+// 与它的比对代码（上面 matrixOwnFiles 里标注的文件），而且它只比对、不路由。
 //
 // 这个测试扫描 backend 下全部非测试 Go 源码：
 //  1. 矩阵表与模型目录表的名字只能出现在本 PR 自己的文件里（也就是说，计费、调度、准入、
@@ -41,12 +42,21 @@ var matrixOwnFiles = map[string]struct{}{
 	"internal/service/pricing_price_diff.go":         {}, // W6 PR4b-2a：PriceDiff，纯函数
 	"internal/service/user_price_catalog.go":         {}, // W6 PR8a：用户价格页，v2 分组的模型清单读模型目录（第一个读取方）
 
+	// W6 PR5：stagedPolicy 与影子比对。它们读矩阵快照，但只用来比对：阶段为 shadow 的分组才会比对，
+	// 真实请求不会被路由到矩阵（见下面的 TestStagedPolicyNeverRoutesToV2InProduction）。
+	"internal/service/group_policy_staged.go":    {},
+	"internal/service/pricing_shadow.go":         {},
+	"internal/service/pricing_shadow_ctx.go":     {},
+	"internal/service/pricing_shadow_session.go": {},
+	"internal/service/pricing_stage_service.go":  {},
+
 	"internal/repository/pricing_matrix_repo.go":         {},
 	"internal/repository/model_catalog_repo.go":          {},
 	"internal/repository/model_catalog_seed.go":          {},
 	"internal/repository/pricing_cell_writer.go":         {},
 	"internal/repository/pricing_write_store.go":         {},
 	"internal/repository/pricing_group_config_writer.go": {},
+	"internal/repository/pricing_stage_repo.go":          {}, // W6 PR5：阶段切换与影子样本的存储
 
 	"internal/handler/admin/pricing_matrix_handler.go": {},
 	"cmd/server/model_catalog_cmd.go":                  {},
@@ -125,4 +135,44 @@ func TestMatrixTablesAndDerivationHaveNoReaders(t *testing.T) {
 
 	sort.Strings(violations)
 	require.Empty(t, violations, "现有路径不得读取 W6 的新表或派生入口（本 PR 零行为变化）")
+}
+
+// W6 PR5 的零行为变化证据：stagedPolicy 只有一个把真实请求路由到矩阵的开关 v2Live，
+// 生产代码里没有任何地方把它设成 true（PR7 才会）。所以现在任何分组的计费、准入、映射都走 legacy，
+// shadow 阶段只是旁路比对。测试文件可以设置它，用来验证 PR7 之后的路由。
+func TestStagedPolicyNeverRoutesToV2InProduction(t *testing.T) {
+	backendRoot, err := filepath.Abs("../..")
+	require.NoError(t, err)
+	assign := regexp.MustCompile(`v2Live\s*(:|=)\s*true`)
+
+	var violations []string
+	scanned := 0
+	err = filepath.Walk(backendRoot, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() {
+			switch info.Name() {
+			case "node_modules", ".git", "vendor", "testdata":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		scanned++
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if assign.Match(raw) {
+			rel, _ := filepath.Rel(backendRoot, path)
+			violations = append(violations, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Greater(t, scanned, 500)
+	require.Empty(t, violations, "PR7 之前，生产代码不得放开 stagedPolicy 的 v2 路由")
 }

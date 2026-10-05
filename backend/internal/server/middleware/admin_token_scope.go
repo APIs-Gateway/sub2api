@@ -115,6 +115,7 @@ var adminDangerRules = []AdminRouteRule{
 	// --- Pricing, rebates, payment configuration -------------------------
 	{http.MethodPost, "/channels", "channel pricing / routing"},
 	{http.MethodPut, "/channels/:id", "channel pricing / routing"},
+	{http.MethodPut, "/pricing-matrix/groups/:id/stage", "pricing stage switch (pricing.stage_switch, touches price)"},
 	{http.MethodDelete, "/channels/:id", "channel pricing / routing (delete)"},
 	{http.MethodPost, "/payment/plans", "subscription plan pricing"},
 	{http.MethodPut, "/payment/plans/:id", "subscription plan pricing"},
