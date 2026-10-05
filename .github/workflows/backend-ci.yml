@@ -29,6 +29,11 @@ jobs:
       - name: Integration tests (chat ping actual account failover and billing)
         working-directory: backend
         run: go test -tags=integration -count=1 -v -run '^TestChatPingHTTP_' ./internal/repository/
+      - name: Tool-name restoration protocol fields and opaque content (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestToolNameRestoreProtocol_|^TestRestoreToolNamesInBytes|^TestApplyToolNameRewriteToBody' ./internal/service/
       - name: Google/GitHub bound identity email drift and authentication controls
         working-directory: backend
         run: go test -tags=unit -count=1 -run '^TestEmailOAuthBoundIdentity|^TestEmailOAuthCallbackDoesNotAutoLinkLocalAccount|^TestLogin2FACompletesPendingOAuthBindAndConsumesSession' -v ./internal/handler/
