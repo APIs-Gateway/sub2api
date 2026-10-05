@@ -56,6 +56,7 @@
                   :platform="chain.platform"
                   :rate-multiplier="primary.rate_multiplier"
                   :user-rate-multiplier="primary.user_rate_multiplier"
+                  :rate-view="groupRateView(primary.rate_multiplier, primary.user_rate_multiplier)"
                 />
                 <span
                   class="inline-flex items-center gap-1 rounded bg-gray-900 px-1.5 py-0.5 text-[11px] font-medium text-white dark:bg-dark-600 dark:text-gray-100"
@@ -100,6 +101,7 @@
                     :platform="chain.platform"
                     :rate-multiplier="item.rate_multiplier"
                     :user-rate-multiplier="item.user_rate_multiplier"
+                    :rate-view="groupRateView(item.rate_multiplier, item.user_rate_multiplier)"
                   />
                 </div>
                 <div class="flex items-center gap-1">
@@ -210,6 +212,7 @@
                         :platform="chain.platform"
                         :rate-multiplier="g.rate_multiplier"
                         :user-rate-multiplier="g.user_rate_multiplier ?? null"
+                        :rate-view="groupRateView(g.rate_multiplier, g.user_rate_multiplier ?? null)"
                       />
                     </span>
                     <PriceLine :item="g" bare />
@@ -236,6 +239,7 @@ import GroupBadge from '@/components/common/GroupBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { keyFallbackAPI } from '@/api/keyFallback'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { useGroupRateView } from '@/composables/useGroupRateView'
 import { extractApiErrorCode, extractApiErrorMetadata } from '@/utils/apiError'
 import { fallbackErrorMessage, REFRESH_ON_ERROR } from '@/utils/keyFallbackError'
 import type {
@@ -252,6 +256,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const { isFiat, formatFiat, formatUsd } = useCurrencyDisplay()
+// 分组徽标的倍率与下面的参考价同一口径：人民币模式显示等效倍率并补「套餐低至」，美元模式和 free 站原样
+const { groupRateView } = useGroupRateView()
 
 const chain = ref<KeyFallbackChain | null>(null)
 const loading = ref(false)
