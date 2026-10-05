@@ -2,7 +2,9 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -260,12 +262,16 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 
 		if err != nil {
+			heartbeatOnly := service.AnthropicChatHeartbeatOnly(c)
+			if heartbeatOnly {
+				streamStarted = true
+			}
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				if result == nil && service.IsBillingInflightNoChargeError(err) && c.Writer.Size() == writerSizeBeforeForward {
+				if result == nil && service.IsBillingInflightNoChargeError(err) && (c.Writer.Size() == writerSizeBeforeForward || heartbeatOnly) {
 					service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
 				}
-				if c.Writer.Size() != writerSizeBeforeForward {
+				if c.Writer.Size() != writerSizeBeforeForward && !heartbeatOnly {
 					h.handleCCFailoverExhausted(c, failoverErr, true)
 					return
 				}
@@ -334,6 +340,17 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 
 // chatCompletionsErrorResponse writes an error in OpenAI Chat Completions format.
 func (h *GatewayHandler) chatCompletionsErrorResponse(c *gin.Context, status int, errType, message string) {
+	if service.AnthropicChatHeartbeatOnly(c) {
+		service.MarkOpsStreamError(c, errType, message, status)
+		service.MarkResponseCommitted(c)
+		payload, err := json.Marshal(gin.H{"error": gin.H{"type": errType, "message": message}})
+		if err == nil {
+			if _, writeErr := fmt.Fprintf(c.Writer, "data: %s\n\ndata: [DONE]\n\n", payload); writeErr == nil {
+				c.Writer.Flush()
+			}
+		}
+		return
+	}
 	c.JSON(status, gin.H{
 		"error": gin.H{
 			"type":    errType,
@@ -345,6 +362,13 @@ func (h *GatewayHandler) chatCompletionsErrorResponse(c *gin.Context, status int
 // handleCCFailoverExhausted writes a failover-exhausted error in CC format.
 func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, streamStarted bool) {
 	if streamStarted {
+		if service.AnthropicChatHeartbeatOnly(c) {
+			status, errType, message := http.StatusBadGateway, "server_error", "All available accounts exhausted"
+			if lastErr != nil && lastErr.StatusCode > 0 {
+				status, errType, message = service.ResolveUpstreamErrorResponse(c, service.PlatformAnthropic, lastErr.StatusCode, lastErr.ResponseBody)
+			}
+			h.chatCompletionsErrorResponse(c, status, errType, message)
+		}
 		return
 	}
 	// 无具体上游错误(连失败状态码都没有)时,保留通用「账号穷尽」语义。

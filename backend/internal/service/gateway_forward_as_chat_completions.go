@@ -69,14 +69,14 @@ func (s *GatewayService) ForwardAsChatCompletions(
 		}
 	}
 	if err := validateClaudeOpus55Request(body, mappedModel); err != nil {
-		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		writeGatewayCCError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, err
 	}
 	responsesReq.Model = mappedModel
 	anthropicReq, err := apicompat.ResponsesToAnthropicRequest(responsesReq)
 	if err != nil {
 		if claude.IsOpus55(mappedModel) {
-			writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+			writeGatewayCCError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		}
 		return nil, fmt.Errorf("convert responses to anthropic: %w", err)
 	}
@@ -470,10 +470,28 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	// apicompat.AnthropicUsage) can still be normalized into the
 	// mutually-exclusive usage buckets billing expects.
 	processAnthropicEvent := func(event *apicompat.AnthropicStreamEvent, rawEvent string) bool {
-		// Drop Anthropic keepalive pings before OpenAI conversion:
-		// leaking `event: ping` frames crashes OpenAI-stream clients.
-		// Error events must still forward — they carry upstream failures.
+		// Keep transport heartbeats out of chat JSON and first-token timing.
+		// Failed writes follow the same usage drain as failed content writes.
 		if event.Type == "ping" {
+			if clientDisconnected || anthropicCompatClientGone(c) {
+				clientDisconnected = true
+				compatDrain.start()
+				return false
+			}
+			if sawMessageStop {
+				return false
+			}
+			wasHeartbeatOnly := anthropicCompatReplayBeforeContent(c)
+			if _, err := fmt.Fprint(c.Writer, ": ping\n\n"); err != nil {
+				MarkResponseCommitted(c)
+				clientDisconnected = true
+				compatDrain.start()
+				return false
+			}
+			if wasHeartbeatOnly {
+				c.Set(anthropicChatHeartbeatSizeKey, c.Writer.Size())
+			}
+			c.Writer.Flush()
 			return false
 		}
 		if firstChunk {
@@ -662,7 +680,18 @@ func normalizeAnthropicChatEventUsage(event *apicompat.AnthropicStreamEvent, usa
 // writeGatewayCCError writes an error in OpenAI Chat Completions format for
 // the Anthropic-upstream CC forwarding path.
 func writeGatewayCCError(c *gin.Context, statusCode int, errType, message string) {
+	heartbeatOnly := AnthropicChatHeartbeatOnly(c)
 	MarkResponseCommitted(c)
+	if heartbeatOnly {
+		MarkOpsStreamError(c, errType, message, statusCode)
+		payload, err := json.Marshal(gin.H{"error": gin.H{"type": errType, "message": message}})
+		if err == nil {
+			if _, writeErr := fmt.Fprintf(c.Writer, "data: %s\n\ndata: [DONE]\n\n", payload); writeErr == nil {
+				c.Writer.Flush()
+			}
+		}
+		return
+	}
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
 			"type":    errType,
