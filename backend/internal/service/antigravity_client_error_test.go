@@ -208,3 +208,27 @@ func TestAntigravitySafeGeminiErrorEnvelopeVariants(t *testing.T) {
 	require.Contains(t, string(safe), `"promptTokenCount":10`)
 	require.NotContains(t, string(safe), "do-not-echo")
 }
+
+// Claude conversion never relays native Google error envelopes. Preserve its
+// existing empty-stream error policy; metered-empty accounting is tracked in #1585.
+func TestAntigravityClaudeClientErrorConvertedStreamDoesNotEchoGoogleError(t *testing.T) {
+	for _, stream := range []bool{true, false} {
+		t.Run(map[bool]string{true: "stream", false: "buffered"}[stream], func(t *testing.T) {
+			svc, _, c, rec := antigravityClientErrorFixture(t, 200, "")
+			resp := antigravityEmptyStreamTestResponse(`{"response":` + antigravityPrivateError + `}`)
+			var result *antigravityStreamResult
+			var err error
+			if stream {
+				result, err = svc.handleClaudeStreamingResponse(c, resp, time.Now(), "claude-opus-4-6")
+			} else {
+				result, err = svc.handleClaudeStreamToNonStreaming(c, resp, time.Now(), "claude-opus-4-6")
+			}
+			require.Nil(t, result)
+			var failover *UpstreamFailoverError
+			require.ErrorAs(t, err, &failover)
+			require.Empty(t, rec.Body.String())
+			assertAntigravityClientSafe(t, string(failover.ResponseBody))
+			require.False(t, failover.BillingNoCharge)
+		})
+	}
+}
