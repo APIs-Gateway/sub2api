@@ -1,6 +1,7 @@
 import type { GroupPlatform } from '@/types'
 import { normalizeApiBase } from '@/utils/apiEndpoints'
-import { OPENAI_CC_SWITCH_CODEX_MODEL } from '@/utils/ccswitchImport'
+import { NON_CHAT_MODEL, OPENAI_CC_SWITCH_CODEX_MODEL } from '@/utils/ccswitchImport'
+import { aiCatalogUrl, aiToolUrl } from '@/views/docs/aiTools'
 
 /**
  * 「一键安装」脚本与「交给 AI」文本的纯函数生成器。
@@ -102,33 +103,9 @@ export function endpointFor(
   }
 }
 
-/** 平台原生接口的地址：交给 AI 的文本里使用。 */
-export function nativeEndpoint(platform: GroupPlatform | string | null | undefined, baseUrl: string): string {
-  const root = rootUrl(baseUrl)
-  switch (platform) {
-    case 'openai':
-      return withV1(root)
-    case 'antigravity':
-      return `${root}/antigravity`
-    default:
-      return root
-  }
-}
-
 /** OpenCode 里这个平台对应的内置 provider 名；一键安装脚本和手动配置片段都按它写 provider.<名字>.options。 */
 export function opencodeProviderFor(platform: GroupPlatform | string | null | undefined): string {
   return platform === 'gemini' ? 'google' : platform === 'openai' ? 'openai' : 'anthropic'
-}
-
-export function protocolFor(platform: GroupPlatform | string | null | undefined): string {
-  switch (platform) {
-    case 'openai':
-      return 'OpenAI'
-    case 'gemini':
-      return 'Gemini'
-    default:
-      return 'Anthropic'
-  }
 }
 
 // ---------------------------------------------------------------- 引号
@@ -721,53 +698,220 @@ export function aiClientsForPlatform(
 
 export type TranslateFn = (key: string, params?: Record<string, unknown>) => string
 
-export interface AiPromptInput {
-  t: TranslateFn
-  client: AiClient
-  clientLabel: string
-  baseUrl: string
-  platform?: GroupPlatform | string | null
-  siteName?: string
-  models?: string[]
-  docUrl?: string
-  detailed?: boolean
+// ---------------------------------------------------------------- 交给 AI：复制详细版
+
+/** 详细版里最多列出的模型个数。 */
+export const AI_PROMPT_MODEL_LIMIT = 20
+
+/** 详细版末尾「出错时对照」的文档章节。 */
+export const AI_PROMPT_ERRORS_SECTION = 'errors'
+
+/** 品牌名不翻译；聊天客户端、写代码调用、其他在文案里有各自的开头句。 */
+const AI_TOOL_BRANDS: Partial<Record<AiClient, string>> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' }
+
+const byModelName = (a: string, b: string) => a.localeCompare(b, 'en', { numeric: true })
+
+/** 候选里名字符合 re 的、名字最短的一个（通常是不带日期后缀的那个）；没有就是空串。 */
+function shortestModel(list: string[], re: RegExp): string {
+  return list.filter((m) => re.test(m)).sort((a, b) => a.length - b.length)[0] ?? ''
+}
+
+export interface AiPromptModels {
+  /** 要写进提示词的模型，已按工具筛选、排序，最多 AI_PROMPT_MODEL_LIMIT 个 */
+  list: string[]
+  /** 列出来的不是这个分组的全部模型（被筛掉了一部分，或超出了个数上限） */
+  partial: boolean
 }
 
 /**
- * 生成可以发给 AI 助手的话。刻意不接收密钥：调用方没有任何办法把密钥带进来。
+ * 详细版里列哪些模型：
+ * - 去重、按名字排序；
+ * - Claude Code：claude-* 排前面，其中名字最短的 sonnet 放第一个；
+ * - Codex：只列 gpt-* 和名字里带 codex 的对话模型，gpt-5.6-sol 放第一个；
+ * - Cursor、聊天客户端、其他：只列对话模型（排除图片、向量、语音这类）；
+ * - 写代码调用：全部模型；
+ * - 筛完一个都不剩时退回全部模型，不让这一行空着。
+ */
+export function pickAiPromptModels(client: AiClient, models: readonly string[]): AiPromptModels {
+  const all = [...new Set(models.map((m) => m.trim()).filter(Boolean))].sort(byModelName)
+  const chat = all.filter((m) => !NON_CHAT_MODEL.test(m))
+  let list: string[]
+  switch (client) {
+    case 'claude': {
+      const claude = chat.filter((m) => /claude/i.test(m))
+      const lead = shortestModel(claude, /sonnet/i)
+      list = [...(lead ? [lead] : []), ...claude.filter((m) => m !== lead), ...chat.filter((m) => !/claude/i.test(m))]
+      break
+    }
+    case 'codex': {
+      const gpt = chat.filter((m) => /^gpt-|codex/i.test(m))
+      const lead = gpt.find((m) => m.toLowerCase() === OPENAI_CC_SWITCH_CODEX_MODEL)
+      list = lead ? [lead, ...gpt.filter((m) => m !== lead)] : gpt
+      break
+    }
+    case 'code':
+      list = all
+      break
+    default:
+      list = chat
+  }
+  if (list.length === 0) list = all
+  const shown = list.slice(0, AI_PROMPT_MODEL_LIMIT)
+  return { list: shown, partial: shown.length < all.length }
+}
+
+/**
+ * 详细版里先读的文档（章节 id，对应 /docs/<id>.md）。空数组表示读文档目录（/llms.txt），由 AI 自己挑章节。
+ * 写代码调用按分组平台换：文档里 OpenAI SDK 的示例对 Gemini 分组要配合接口列表里的 Gemini 原生格式，
+ * 对 Antigravity 分组只有 Anthropic 格式的示例可参考。
+ */
+export function aiPromptDocSections(client: AiClient, platform: GroupPlatform | string | null | undefined): string[] {
+  switch (client) {
+    case 'claude':
+      return ['claude-code']
+    case 'codex':
+      return ['codex']
+    case 'cursor':
+      return ['cursor']
+    case 'code':
+      if (platform === 'gemini') return ['openai-sdk', 'endpoints']
+      if (platform === 'antigravity') return ['examples']
+      return ['openai-sdk', 'examples']
+    default:
+      return []
+  }
+}
+
+export interface AiPromptInput {
+  t: TranslateFn
+  client: AiClient
+  /** 选中线路的 API 根地址 */
+  baseUrl: string
+  platform?: GroupPlatform | string | null
+  /** 分组是否开了 /v1/messages 调度：openai 分组开了之后多一个 Anthropic 兼容地址（Claude Code 用） */
+  allowMessagesDispatch?: boolean
+  siteName?: string
+  /** 站点自己的来源（页面所在地址）：文档链接的域名 */
+  origin: string
+  /** 选了备用线路时，它的 API 根地址：文档链接带 ?endpoint=，AI 读到的文档里就是这条线路。默认线路不传 */
+  docEndpoint?: string
+  /** 这把密钥所在分组的可用模型；还没取到时为空，详细版里就没有模型这一行 */
+  models?: string[]
+}
+
+type AddressKind = 'openai' | 'anthropic' | 'gemini' | 'antigravity'
+
+/** 接入信息里的地址行：按分组平台给，不把这个分组用不了的地址写进去。这个工具要用的那一行排最前。 */
+function aiAddressLines(
+  client: AiClient,
+  platform: string,
+  allowMessagesDispatch: boolean,
+  root: string
+): { key: string; kind: AddressKind; url: string }[] {
+  const v1 = withV1(root)
+  let lines: { key: string; kind: AddressKind; url: string }[]
+  switch (platform) {
+    case 'openai':
+      lines = [{ key: 'addrOpenai', kind: 'openai', url: v1 }]
+      if (allowMessagesDispatch) lines.push({ key: 'addrAnthropicClaude', kind: 'anthropic', url: root })
+      break
+    case 'gemini':
+      lines = [
+        { key: 'addrGemini', kind: 'gemini', url: root },
+        { key: 'addrOpenai', kind: 'openai', url: v1 }
+      ]
+      break
+    case 'antigravity':
+      lines = [{ key: 'addrAntigravity', kind: 'antigravity', url: `${root}/antigravity` }]
+      break
+    default:
+      lines = [
+        { key: 'addrAnthropic', kind: 'anthropic', url: root },
+        { key: 'addrOpenaiAlt', kind: 'openai', url: v1 }
+      ]
+  }
+  const own: AddressKind = client === 'claude' ? 'anthropic' : 'openai'
+  return [...lines.filter((l) => l.kind === own), ...lines.filter((l) => l.kind !== own)]
+}
+
+/**
+ * 生成「复制详细版」：一份可以直接粘贴给 AI 助手的完整提示词。
+ * 刻意不接收密钥：调用方没有任何办法把密钥带进来，里面只有 sk-你的密钥 这样的占位。
+ *
+ * 骨架固定：先读的文档、接入信息（地址、密钥占位、可用模型、模型列表去哪查、这个工具和分组要注意的几条）、四条要求。
+ * 随工具变的部分：先读哪份文档、读法、工具约束、要求 1 和要求 4；随分组平台变的部分：地址行、写代码时的 SDK 说明。
+ * 提示词里不出现价格、充值、倍率这类字眼：弹窗不知道站点有没有开支付。
  */
 export function buildAiPrompt(input: AiPromptInput): string {
   const { t, client } = input
   const platform = input.platform || 'anthropic'
-  // Claude Code 只说 Anthropic 接口：地址是 API 根地址（antigravity 带 /antigravity），格式是 Anthropic，
-  // 和提示里要设置的 ANTHROPIC_BASE_URL 对得上。其他工具按分组平台的原生接口。
-  // 否则 openai 分组开了调度、选 Claude Code 时，会得到「地址 /v1、格式 OpenAI」却要设置 ANTHROPIC_BASE_URL 的矛盾说法。
-  const url = client === 'claude' ? endpointFor('claude', platform, input.baseUrl) : nativeEndpoint(platform, input.baseUrl)
-  const protocol = client === 'claude' ? 'Anthropic' : protocolFor(platform)
+  const root = rootUrl(input.baseUrl)
+  const v1 = withV1(root)
   const site = oneLine(input.siteName || '') || 'sub2api'
-  const params = { client: input.clientLabel, site, url, protocol }
-  const hint = t(`keyOnboarding.ai.hint.${client}`, params)
-  const docLine = input.docUrl ? t('keyOnboarding.ai.docLine', { url: input.docUrl }) : ''
+  const k = (key: string, params?: Record<string, unknown>) => t(`keyOnboarding.ai.detail.${key}`, params)
 
-  if (!input.detailed) {
-    return [t('keyOnboarding.ai.short', { ...params, hint }), docLine].filter(Boolean).join(' ')
+  // 开头：做什么
+  const intro =
+    client === 'chat' ? k('introChat', { site }) : client === 'code' ? k('introCode', { site }) : client === 'other' ? k('introOther', { site }) : k('intro', { site, tool: AI_TOOL_BRANDS[client] })
+
+  // 先读的文档：工具自己的章节；没有对应章节的读文档目录。链接带上选中的线路，AI 读到的文档里就是同一个地址。
+  const sections = aiPromptDocSections(client, platform)
+  const docLinks = sections.length
+    ? sections.map((id) => aiToolUrl({ id, section: id }, input.origin, input.docEndpoint))
+    : [aiCatalogUrl(input.origin, input.docEndpoint)]
+  const follow = client === 'chat' ? k('followChat') : client === 'code' ? k('followCode') : client === 'other' ? k('followOther') : k('followDoc')
+
+  // 可用模型
+  const picked = pickAiPromptModels(client, input.models ?? [])
+  const modelsLine = picked.list.length ? k(picked.partial ? 'modelsPartial' : 'models', { models: picked.list.join(k('listSep')) }) : ''
+
+  // 这个分组和这个工具要注意的几条：分组的地址、工具自己的写法、文档示例里的模型名
+  const notes: string[] = []
+  if (platform === 'antigravity') notes.push(k('noteAntigravityBase', { base: root, url: `${root}/antigravity` }))
+  switch (client) {
+    case 'claude':
+      notes.push(k('claudeKey'), k('claudeBetas'))
+      break
+    case 'codex':
+      notes.push(k('codexConfig'))
+      break
+    case 'cursor':
+      notes.push(k('cursorSettings'))
+      break
+    case 'code':
+      if (platform === 'antigravity') notes.push(k('noteAntigravityFormat'))
+      else if (platform === 'gemini') notes.push(k('codeGemini'))
+      else if (platform !== 'openai') notes.push(k('codeAnthropic'))
+      break
+    case 'chat':
+    case 'other':
+      if (platform === 'antigravity') notes.push(k('noteAntigravityFormat'))
+      break
   }
+  // 文档里的示例模型名是 OpenAI 分组的，别的分组直接照抄会找不到模型
+  if (platform !== 'openai' && client !== 'claude') notes.push(k('noteExampleModel', { example: OPENAI_CC_SWITCH_CODEX_MODEL }))
 
-  const models = (input.models || []).filter(Boolean)
-  const lines = [
-    t('keyOnboarding.ai.detailIntro', params),
-    '',
-    t('keyOnboarding.ai.detailUrl', params),
-    t('keyOnboarding.ai.detailProtocol', params),
-    t('keyOnboarding.ai.detailKey'),
-    models.length ? t('keyOnboarding.ai.detailModels', { models: models.join(', ') }) : '',
-    '',
-    hint,
-    '',
-    t('keyOnboarding.ai.detailSteps'),
-    docLine
+  const needsAssistantNote = client === 'claude' || client === 'codex' || client === 'cursor'
+  const blocks = [
+    [intro, k('read', { docs: docLinks.join(' ') }), follow],
+    [
+      k('infoTitle'),
+      ...aiAddressLines(client, platform, !!input.allowMessagesDispatch, root).map((l) => k(l.key, { url: l.url })),
+      k('key'),
+      modelsLine,
+      k('modelsFull', { url: `${v1}/models` }),
+      ...notes
+    ],
+    [
+      k('requirements'),
+      client === 'code' ? k('req1Code') : k('req1File'),
+      k('req2'),
+      k('req3', { url: aiToolUrl({ id: AI_PROMPT_ERRORS_SECTION, section: AI_PROMPT_ERRORS_SECTION }, input.origin, input.docEndpoint) }),
+      needsAssistantNote ? k('req4') : ''
+    ]
   ]
-  return lines.filter((l, i, arr) => l !== '' || (i > 0 && arr[i - 1] !== '')).join('\n').trim()
+  // 没有内容的行（没取到模型、没有第 4 条）直接去掉
+  return blocks.map((b) => b.filter(Boolean).join('\n')).join('\n\n')
 }
 
 /** hints=search 让 ChatGPT 打开联网搜索，它才会去读提示里的文档链接。 */

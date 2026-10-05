@@ -28,7 +28,22 @@
       <button type="button" class="btn btn-primary btn-sm" data-test="ai-copy" @click="emit('copy', aiShort, 'ai-short')">
         {{ copiedId === 'ai-short' ? t('keyOnboarding.copied') : t('keyOnboarding.copy') }}
       </button>
-      <button type="button" class="btn btn-secondary btn-sm" data-test="ai-copy-detail" @click="emit('copy', aiDetailed, 'ai-detail')">
+      <!-- 详细版里要写这把密钥能用的模型：模型还在加载时先禁用，免得复制出一份没有模型的 -->
+      <button
+        type="button"
+        class="btn btn-secondary btn-sm"
+        :disabled="modelsLoading"
+        :aria-busy="modelsLoading ? 'true' : undefined"
+        :title="modelsLoading ? t('keyOnboarding.ai.detailLoading') : t('keyOnboarding.ai.detailHint')"
+        data-test="ai-copy-detail"
+        @click="emit('copy', aiDetailed, 'ai-detail')"
+      >
+        <span
+          v-if="modelsLoading"
+          class="mr-2 h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600 motion-reduce:animate-none dark:border-dark-600 dark:border-t-gray-300"
+          aria-hidden="true"
+          data-test="ai-detail-spinner"
+        ></span>
         {{ copiedId === 'ai-detail' ? t('keyOnboarding.copied') : t('keyOnboarding.ai.copyDetail') }}
       </button>
       <button type="button" class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" @click="openExternal(chatgptUrl(aiShort))">
@@ -88,10 +103,8 @@ const props = defineProps<{
   clients?: OnboardingClient[]
   /** 密钥所在分组的可用模型，详细版里列出 */
   models: string[]
-  /** 模型列表还在加载 */
+  /** 模型列表还在加载：「复制详细版」先禁用，加载完（成功或失败）再可用 */
   modelsLoading?: boolean
-  /** 站点配置的使用文档地址，没有时为空 */
-  docUrl?: string
   /** 最近复制成功的按钮 id，对应的按钮显示「已复制」 */
   copiedId: string
 }>()
@@ -119,25 +132,26 @@ watch(
   { immediate: true }
 )
 
-// 注意：这里刻意不传密钥
-function aiPrompt(detailed: boolean): string {
-  return buildAiPrompt({
-    t: (key, params) => t(key, params ?? {}),
-    client: current.value,
-    clientLabel: t(`keyOnboarding.ai.clients.${current.value}`),
-    baseUrl: props.endpoint.base,
-    platform: props.platform,
-    siteName: props.siteName,
-    models: props.models,
-    docUrl: props.docUrl,
-    detailed
-  })
-}
-const aiDetailed = computed(() => aiPrompt(true))
-
-// 一句话：只指向文档，接入地址、接口格式、要改的文件都在文档里。选了备用线路时链接带 ?endpoint=，AI 读到的文档里就是那个地址
+// 选了备用线路时，文档链接带 ?endpoint=，AI 读到的文档里就是那个地址；默认线路不带
 const docEndpoint = computed(() => (props.endpoint.isDefault ? undefined : props.endpoint.base))
 const site = computed(() => props.siteName.replace(/\s+/g, ' ').trim() || 'sub2api')
+
+// 详细版：骨架、地址、模型、要求都写好。注意：这里刻意不传密钥
+const aiDetailed = computed(() =>
+  buildAiPrompt({
+    t: (key, params) => t(key, params ?? {}),
+    client: current.value,
+    baseUrl: props.endpoint.base,
+    platform: props.platform,
+    allowMessagesDispatch: props.allowMessagesDispatch,
+    siteName: site.value,
+    origin: props.origin,
+    docEndpoint: docEndpoint.value,
+    models: props.models
+  })
+)
+
+// 一句话：只指向文档，接入地址、接口格式、要改的文件都在文档里
 const aiShort = computed(() => {
   const tool = aiToolForClient(current.value)
   return aiToolSentence(tool, (key, params) => t(key, params ?? {}), {

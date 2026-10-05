@@ -102,7 +102,6 @@
         :clients="clients"
         :models="models"
         :models-loading="modelsLoading"
-        :doc-url="docUrl"
         :copied-id="copiedId"
         @copy="copy"
       />
