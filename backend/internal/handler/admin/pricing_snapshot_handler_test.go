@@ -167,7 +167,7 @@ func TestPricingSnapshotHandler_PreviewAndApprove(t *testing.T) {
 
 	rec, env = doSnapshotRequest(t, stub, true, http.MethodPost, "/snapshots/7/approve", `{"plan_hash": "abc", "confirm": true, "hold_models": ["a"]}`)
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, string(env.Data), `"id":11`)
+	require.Contains(t, string(env.Data), `"ID":11`)
 	require.Equal(t, "abc", stub.lastHash)
 	require.Equal(t, []string{"a"}, stub.lastHolds)
 	require.Equal(t, int64(42), stub.lastAdmin)
