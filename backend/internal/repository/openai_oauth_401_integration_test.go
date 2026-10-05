@@ -475,12 +475,24 @@ func TestOpenAI401HTTP_ConcurrentRejectedRequestsShareRefresh(t *testing.T) {
 }
 
 func TestOpenAI401HTTP_CanceledCallerKeepsSuccessfulRotation(t *testing.T) {
-	for _, passthrough := range []bool{false, true} {
-		t.Run(fmt.Sprintf("passthrough_%t", passthrough), func(t *testing.T) {
-			f, executor, upstream := newOAuth401HTTPFixture(t, passthrough)
-			ctx, cancel := context.WithCancel(context.Background())
+	for _, tc := range []struct{ passthrough, deadline bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		t.Run(fmt.Sprintf("passthrough_%t/deadline_%t", tc.passthrough, tc.deadline), func(t *testing.T) {
+			f, executor, upstream := newOAuth401HTTPFixture(t, tc.passthrough)
+			var ctx context.Context
+			var cancel context.CancelFunc
+			if tc.deadline {
+				ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+			} else {
+				ctx, cancel = context.WithCancel(context.Background())
+			}
 			defer cancel()
-			executor.after = cancel // issuer has consumed old RT and returned new grant
+			executor.after = func() {
+				if tc.deadline {
+					<-ctx.Done()
+				} else {
+					cancel()
+				}
+			} // issuer has consumed old RT and returned new grant
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(oauth401Request)).WithContext(context.WithValue(ctx, ctxkey.Group, f.key.Group))
@@ -489,7 +501,11 @@ func TestOpenAI401HTTP_CanceledCallerKeepsSuccessfulRotation(t *testing.T) {
 			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: f.user.ID, Concurrency: 100})
 			f.openAI.Responses(c)
 			f.pool.Stop()
-			require.ErrorIs(t, ctx.Err(), context.Canceled)
+			expectedCancellation := context.Canceled
+			if tc.deadline {
+				expectedCancellation = context.DeadlineExceeded
+			}
+			require.ErrorIs(t, ctx.Err(), expectedCancellation)
 			require.EqualValues(t, 1, executor.calls.Load())
 			upstream.mu.Lock()
 			auths := append([]string(nil), upstream.auths...)
