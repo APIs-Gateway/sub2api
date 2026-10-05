@@ -168,7 +168,7 @@ func (s *ChannelMonitorService) primaryCardStatus(ctx context.Context, m *Channe
 		ctx, []int64{m.ID}, map[int64]string{m.ID: m.PrimaryModel}, monitorVerdictWindow)
 	if err != nil {
 		slog.Warn("channel_monitor: detail card status failed", "monitor_id", m.ID, "error", err)
-		return MonitorStatusError
+		return ""
 	}
 	return cardStatusFromHistory(rows[m.ID])
 }
@@ -239,12 +239,11 @@ func deriveCardStatus(newestFirst []string) string {
 	}
 	switch {
 	case hard >= monitorVerdictHardFailures:
-		_ = latestHard
-		return MonitorStatusFailed
+		return latestHard
 	case hard > 0:
-		return MonitorStatusError
+		return MonitorStatusDegraded
 	default:
-		return window[len(window)-1]
+		return window[0]
 	}
 }
 
@@ -314,7 +313,7 @@ func buildUserViewFromSummary(
 	}
 	// 卡片状态由主模型最近几次探测综合决定；时间线每格仍是单次探测的原始状态。
 	if status := cardStatusFromHistory(timelineEntries); status != "" {
-		_ = status
+		view.PrimaryStatus = status
 	}
 	return view
 }

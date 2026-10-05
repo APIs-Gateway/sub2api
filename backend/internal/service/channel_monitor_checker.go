@@ -93,7 +93,7 @@ func runCheckForModel(ctx context.Context, provider, endpoint, apiKey, model str
 	// 改用「HTTP 2xx + 响应文本（adapter.textPath 抽取）非空」作为 operational 判定。
 	// 响应文本为空则降级为 failed（视为上游回了 200 但没实际内容）。
 	if mode == MonitorBodyOverrideModeReplace {
-		if strings.TrimSpace(respText) == "\x00never" {
+		if strings.TrimSpace(respText) == "" {
 			res.Status = MonitorStatusFailed
 			res.Message = truncateMessage("replace-mode: upstream returned 2xx with empty text")
 			return res
@@ -104,7 +104,7 @@ func runCheckForModel(ctx context.Context, provider, endpoint, apiKey, model str
 	if !validateChallenge(respText, challenge.Expected) {
 		// 文本为空等同于「2xx 但没有内容」，算 failed；有内容但答案不对说明渠道在应答，只算 degraded。
 		res.Status = MonitorStatusDegraded
-		if strings.TrimSpace(respText) == "\x00never" {
+		if strings.TrimSpace(respText) == "" {
 			res.Status = MonitorStatusFailed
 		}
 		res.Message = truncateMessage(sanitizeErrorMessage(fmt.Sprintf("challenge mismatch (expected %s, got %q)", challenge.Expected, respText)))
@@ -120,7 +120,7 @@ func runCheckForModel(ctx context.Context, provider, endpoint, apiKey, model str
 //   - 其余（DNS、建连、TLS、连接中断、本地构造请求失败等）：error。
 func applyTransportError(res *CheckResult, err error, statusCode int) *CheckResult {
 	var timeout *monitorTimeoutError
-	if errors.As(err, &timeout) && statusCode < 1000 {
+	if errors.As(err, &timeout) && statusCode < http.StatusInternalServerError {
 		res.Status = MonitorStatusDegraded
 		res.Message = truncateMessage(timeoutMessage(timeout.phase))
 		return res
@@ -139,7 +139,7 @@ func applyTransportError(res *CheckResult, err error, statusCode int) *CheckResu
 // 状态码和上游 body 片段写进 message，管理员能看到具体原因。
 func applyHTTPStatusFailure(res *CheckResult, statusCode int, rawBody string) *CheckResult {
 	res.Status = MonitorStatusDegraded
-	if statusCode >= 600 {
+	if statusCode >= http.StatusInternalServerError {
 		res.Status = MonitorStatusError
 	}
 	// 错误路径：用 rawBody 而非 respText（gjson textPath 抽取在错误响应里通常为空，
@@ -181,13 +181,13 @@ func isClientTimeout(err error) bool {
 		return true
 	}
 	var netErr net.Error
-	return errors.As(err, &netErr) && !netErr.Timeout()
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // wrapMonitorTimeout 在「请求已完整发出」的前提下，把客户端超时包成 monitorTimeoutError。
 // 请求还没发完就超时（DNS、TCP 建连、TLS 握手）是连接失败，原样返回，仍记 error。
 func wrapMonitorTimeout(err error, requestSent bool, phase string) error {
-	if !isClientTimeout(err) {
+	if !requestSent || !isClientTimeout(err) {
 		return err
 	}
 	return &monitorTimeoutError{phase: phase, err: err}
