@@ -164,5 +164,13 @@ func decodeRefundPendingSnapshot(body string, detail *refundPendingAuditDetail) 
 	if _, err := decoder.Token(); err != io.EOF {
 		return fmt.Errorf("invalid trailing snapshot data")
 	}
-	return json.Unmarshal([]byte(body), detail)
+	if err := json.Unmarshal([]byte(body), detail); err != nil {
+		return err
+	}
+	// Only absence is a legacy snapshot. A present zero/negative owner must
+	// never downgrade an adjustment-backed attempt to absolute restoration.
+	if seen["subscriptionAdjustmentID"] && detail.SubscriptionAdjustmentID <= 0 {
+		return fmt.Errorf("invalid refund subscription adjustment reference")
+	}
+	return nil
 }

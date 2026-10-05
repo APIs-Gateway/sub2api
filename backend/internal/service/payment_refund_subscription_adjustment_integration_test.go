@@ -4,8 +4,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,6 +86,7 @@ type refundAdjustmentProvider struct {
 	onRefund func()
 	pending  bool
 	calls    int
+	queries  int
 }
 
 func (p *refundAdjustmentProvider) Refund(context.Context, payment.RefundRequest) (*payment.RefundResponse, error) {
@@ -97,6 +100,7 @@ func (p *refundAdjustmentProvider) Refund(context.Context, payment.RefundRequest
 	return nil, fmt.Errorf("mock provider final failure")
 }
 func (p *refundAdjustmentProvider) QueryRefund(context.Context, payment.RefundQueryRequest) (*payment.RefundResponse, error) {
+	p.queries++
 	return &payment.RefundResponse{Status: payment.ProviderStatusFailed}, nil
 }
 
@@ -354,4 +358,70 @@ func TestRefundSubscriptionAdjustmentPG_FinalRecoveryAuditFailureKeepsPending(t 
 	require.NoError(t, err)
 	require.False(t, result.Success)
 	assertRefundAdjustmentCard(t, c, p, 70)
+}
+
+func TestRefundSubscriptionAdjustmentPG_InvalidReferenceStopsBeforeProvider(t *testing.T) {
+	for _, invalid := range []string{"zero", "negative", "missing", "other order", "other card"} {
+		t.Run(invalid, func(t *testing.T) {
+			ctx := context.Background()
+			c, s, p, provider := refundAdjustmentFixture(t, 40)
+			provider.pending = true
+			_, err := c.ExecContext(ctx, `CREATE FUNCTION reject_sub_restore() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.expire_day > OLD.expire_day THEN RAISE EXCEPTION 'hold compensation'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_sub_restore BEFORE UPDATE ON user_subscriptions FOR EACH ROW EXECUTE FUNCTION reject_sub_restore()`)
+			require.NoError(t, err)
+			result, err := s.ExecuteRefund(ctx, p)
+			require.NoError(t, err)
+			require.True(t, result.RefundPending)
+			_, err = c.ExecContext(ctx, `DROP TRIGGER reject_sub_restore ON user_subscriptions; DROP FUNCTION reject_sub_restore()`)
+			require.NoError(t, err)
+			pending, err := c.PaymentAuditLog.Query().Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(p.OrderID, 10)), paymentauditlog.ActionHasPrefix("REFUND_PENDING")).Order(paymentauditlog.ByID()).All(ctx)
+			require.NoError(t, err)
+			require.NotEmpty(t, pending)
+			entry := pending[len(pending)-1]
+			var snapshot map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal([]byte(entry.Detail), &snapshot))
+			id := int64(9223372036854775807)
+			switch invalid {
+			case "zero":
+				id = 0
+			case "negative":
+				id = -1
+			case "other order", "other card":
+				original, err := c.PaymentAuditLog.Query().Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(p.OrderID, 10)), paymentauditlog.ActionHasPrefix("REFUND_SUB_DEDUCT_")).Only(ctx)
+				require.NoError(t, err)
+				var adjustment map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal([]byte(original.Detail), &adjustment))
+				owner := uuid.NewString()
+				// Keep the existing canonical audit field order. The loader must
+				// reject ownership before this reference reaches any mutation.
+				detail := strings.Replace(original.Detail, string(adjustment["owner"]), strconv.Quote(owner), 1)
+				orderID := strconv.FormatInt(p.OrderID, 10)
+				if invalid == "other order" {
+					orderID = strconv.FormatInt(p.OrderID+1, 10)
+				} else {
+					detail = strings.Replace(detail, `"subscriptionID":`+strconv.FormatInt(p.SubscriptionID, 10), `"subscriptionID":`+strconv.FormatInt(p.SubscriptionID+1, 10), 1)
+				}
+				bad, err := c.PaymentAuditLog.Create().SetOrderID(orderID).SetAction("REFUND_SUB_DEDUCT_" + owner).SetOperator("admin").SetDetail(detail).Save(ctx)
+				require.NoError(t, err)
+				id = bad.ID
+			}
+			snapshot["subscriptionAdjustmentID"] = json.RawMessage(strconv.FormatInt(id, 10))
+			body, err := json.Marshal(snapshot)
+			require.NoError(t, err)
+			_, err = c.PaymentAuditLog.UpdateOneID(entry.ID).SetDetail(string(body)).Save(ctx)
+			require.NoError(t, err)
+			_, err = s.QueryAndFinalizeRefund(ctx, p.OrderID)
+			require.Error(t, err)
+			require.Zero(t, provider.queries, "invalid ownership must be rejected before provider query")
+			require.Equal(t, 1, provider.calls)
+			card, err := c.UserSubscription.Get(ctx, p.SubscriptionID)
+			require.NoError(t, err)
+			require.Equal(t, TodayEastDayNumber()+10, card.ExpireDay)
+			order, err := c.PaymentOrder.Get(ctx, p.OrderID)
+			require.NoError(t, err)
+			require.Equal(t, OrderStatusRefundPending, order.Status)
+			count, err := c.PaymentAuditLog.Query().Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(p.OrderID, 10)), paymentauditlog.ActionHasPrefix("REFUND_SUB_RESTORED_")).Count(ctx)
+			require.NoError(t, err)
+			require.Zero(t, count)
+		})
+	}
 }

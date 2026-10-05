@@ -15,6 +15,8 @@ func TestRefundSubscriptionAdjustmentSnapshotReference(t *testing.T) {
 		`{"SubscriptionAdjustmentID":1}`,
 		`{"subscriptionAdjustmentID":1,"subscriptionAdjustmentID":0}`,
 		`{"subscriptionAdjustmentID":null}`,
+		`{"subscriptionAdjustmentID":0}`,
+		`{"subscriptionAdjustmentID":-1}`,
 		`{"subscriptionAdjustmentID":"1"}`,
 		`{"subscriptionAdjustmentID":1.5}`,
 		`{"subscriptionAdjustmentID":9223372036854775808}`,
