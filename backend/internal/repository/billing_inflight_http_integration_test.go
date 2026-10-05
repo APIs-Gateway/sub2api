@@ -68,14 +68,19 @@ func (u *inflightHTTPUpstream) DoWithTLS(req *http.Request, proxy string, id int
 }
 
 type inflightHTTPFixture struct {
-	user          *service.User
-	key           *service.APIKey
-	gateway       *userhandler.GatewayHandler
-	openAI        *userhandler.OpenAIGatewayHandler
-	openAIService *service.OpenAIGatewayService
-	pool          *service.UsageRecordWorkerPool
-	upstream      *inflightHTTPUpstream
-	requests      sync.WaitGroup
+	account        *service.Account
+	gatewayService *service.GatewayService
+	geminiService  *service.GeminiMessagesCompatService
+	rateLimit      *service.RateLimitService
+	settings       *service.SettingService
+	user           *service.User
+	key            *service.APIKey
+	gateway        *userhandler.GatewayHandler
+	openAI         *userhandler.OpenAIGatewayHandler
+	openAIService  *service.OpenAIGatewayService
+	pool           *service.UsageRecordWorkerPool
+	upstream       *inflightHTTPUpstream
+	requests       sync.WaitGroup
 }
 
 func newInflightHTTPFixture(t *testing.T, platform, response, contentType string, poolOptions ...service.UsageRecordWorkerPoolOptions) *inflightHTTPFixture {
@@ -137,7 +142,7 @@ func newInflightHTTPFixture(t *testing.T, platform, response, contentType string
 	}
 	pool := service.NewUsageRecordWorkerPoolWithOptions(options)
 	t.Cleanup(pool.Stop)
-	fixture := &inflightHTTPFixture{user: user, key: key, pool: pool, upstream: upstream, openAIService: openAISvc,
+	fixture := &inflightHTTPFixture{account: account, gatewayService: gatewaySvc, geminiService: gemini, rateLimit: rateLimit, settings: settings, user: user, key: key, pool: pool, upstream: upstream, openAIService: openAISvc,
 		gateway: userhandler.NewGatewayHandler(gatewaySvc, gemini, nil, nil, nil, concurrency, billingCache, nil, nil, pool, nil, nil, nil, cfg, nil, openAISvc),
 		openAI:  userhandler.NewOpenAIGatewayHandler(openAISvc, concurrency, billingCache, keyService, pool, nil, nil, nil, cfg)}
 	t.Cleanup(func() {

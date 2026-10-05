@@ -52,6 +52,38 @@ func normalizeChatInputAudio(req *ChatCompletionsRequest, allowAudio bool) (*Cha
 		if !allowAudio || message.Role != "user" {
 			return nil, ErrUnsupportedInputAudio
 		}
+		for _, rawPart := range rawParts {
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(rawPart, &fields) != nil || fields == nil {
+				return nil, fmt.Errorf("%w: content parts must be objects", ErrInvalidInputAudio)
+			}
+			var contentType string
+			if json.Unmarshal(fields["type"], &contentType) != nil || contentType == "" {
+				return nil, fmt.Errorf("%w: content part type must be a non-empty string", ErrInvalidInputAudio)
+			}
+			for _, name := range []string{"image_url", "file", "input_audio"} {
+				if raw, exists := fields[name]; exists {
+					var descriptor map[string]json.RawMessage
+					if json.Unmarshal(raw, &descriptor) != nil || descriptor == nil {
+						return nil, fmt.Errorf("%w: %s must be an object", ErrInvalidInputAudio, name)
+					}
+					for _, key := range []string{"url", "file_id", "file_data", "filename"} {
+						if field, exists := descriptor[key]; exists {
+							var value *string
+							if json.Unmarshal(field, &value) != nil || value == nil {
+								return nil, fmt.Errorf("%w: %s.%s must be a string", ErrInvalidInputAudio, name, key)
+							}
+						}
+					}
+				}
+			}
+			if text, exists := fields["text"]; exists {
+				var value *string
+				if json.Unmarshal(text, &value) != nil || value == nil {
+					return nil, fmt.Errorf("%w: content part text must be a string", ErrInvalidInputAudio)
+				}
+			}
+		}
 		// A malformed sibling must not make the existing typed-content decoder
 		// fall back to text and silently discard an otherwise valid audio part.
 		var parts []ChatContentPart

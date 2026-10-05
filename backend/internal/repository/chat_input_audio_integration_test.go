@@ -3,11 +3,13 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -109,6 +111,15 @@ func TestChatInputAudioHTTP_LocalRejectReleasesFunding(t *testing.T) {
 		{"format_type", "user", `[{"type":"input_audio","input_audio":{"data":"aA==","format":123}}]`},
 		{"bad_sibling_before", "user", `[{"type":"text","text":123},` + valid + `]`},
 		{"bad_sibling_after", "user", `[` + valid + `,{"type":"text","text":123}]`},
+		{"null_sibling", "user", `[null,` + valid + `]`},
+		{"null_text_sibling", "user", `[{"type":"text","text":null},` + valid + `]`},
+		{"null_type_sibling", "user", `[{"type":null},` + valid + `]`},
+		{"missing_type_sibling", "user", `[{},` + valid + `]`},
+		{"array_sibling", "user", `[[],` + valid + `]`},
+		{"null_image_sibling", "user", `[{"type":"image_url","image_url":null},` + valid + `]`},
+		{"null_file_sibling", "user", `[{"type":"file","file":null},` + valid + `]`},
+		{"null_image_url_sibling", "user", `[{"type":"image_url","image_url":{"url":null}},` + valid + `]`},
+		{"null_file_data_sibling", "user", `[{"type":"file","file":{"file_data":null}},` + valid + `]`},
 	}
 	for _, platform := range []string{service.PlatformGemini, service.PlatformAnthropic, service.PlatformOpenAI} {
 		for _, tc := range cases {
@@ -290,6 +301,7 @@ func TestChatInputAudioHTTP_RejectAfterWaitPingKeepsSSEAndFunding(t *testing.T) 
 				close(f.upstream.release)
 				content := `[{"type":"input_audio","input_audio":{"data":"%%%","format":"wav"}}]`
 				var writer *chatAudioFrameWriter
+				var opsValue any
 				rec := f.request(chatAudioBody(model, "user", content, true), "/v1/chat/completions", "", func(c *gin.Context) {
 					c.Header("Content-Type", "text/event-stream")
 					_, err := c.Writer.WriteString(": ping\n\n")
@@ -302,9 +314,17 @@ func TestChatInputAudioHTTP_RejectAfterWaitPingKeepsSSEAndFunding(t *testing.T) 
 					} else {
 						f.gateway.ChatCompletions(c)
 					}
+					opsValue, _ = c.Get(service.OpsStreamErrorKey)
 				})
 				require.Equal(t, http.StatusOK, rec.Code, "the already committed wait transport status cannot change")
 				require.Contains(t, rec.Header().Get("Content-Type"), "text/event-stream")
+				ops, ok := opsValue.(service.OpsStreamError)
+				require.True(t, ok)
+				require.True(t, ops.RequestScoped)
+				require.False(t, ops.CountTowardsSLA)
+				require.False(t, ops.UpstreamAttributed)
+				require.Equal(t, http.StatusBadRequest, ops.IntendedStatus)
+				require.Equal(t, "invalid_request_error", ops.Code)
 				require.Equal(t, 1, writer.errorFrames)
 				require.Zero(t, writer.flushAfterFailure)
 				if fail {
@@ -328,6 +348,122 @@ func TestChatInputAudioHTTP_RejectAfterWaitPingKeepsSSEAndFunding(t *testing.T) 
 				require.Zero(t, logs)
 				require.Zero(t, dedup)
 				require.Zero(t, activeLeases)
+				require.InDelta(t, 10, balance, 1e-10)
+			})
+		}
+	}
+}
+
+func TestChatInputAudioHTTP_LocalRejectDoesNotReportAccountHealth(t *testing.T) {
+	f := newInflightHTTPFixture(t, service.PlatformOpenAI, inflightResponsesSSE, "text/event-stream")
+	chatAudioWallet(t, f)
+	close(f.upstream.release)
+	f.rateLimit.SetSettingService(f.settings)
+	original, err := f.settings.GetAllSettings(context.Background())
+	require.NoError(t, err)
+	enabled := *original
+	enabled.OpenAIAdvancedSchedulerEnabled = true
+	require.NoError(t, f.settings.UpdateSettings(context.Background(), &enabled))
+	t.Cleanup(func() { require.NoError(t, f.settings.UpdateSettings(context.Background(), original)) })
+	// The other account's seeded runtime observation must remain; the actual
+	// locally rejected account must acquire neither a failure nor a success row.
+	f.openAIService.ReportOpenAIAccountScheduleResult(9991598, false, nil)
+	require.Equal(t, 1, f.openAIService.SnapshotOpenAIAccountSchedulerMetrics().RuntimeStatsAccountCount)
+	body := chatAudioBody("gpt-5", "user", `[{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"}}]`, false)
+	response := f.request(body, "/v1/chat/completions", "", f.openAI.ChatCompletions)
+	require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	require.Equal(t, "invalid_request_error", gjson.Get(response.Body.String(), "error.type").String())
+	require.Equal(t, 1, f.openAIService.SnapshotOpenAIAccountSchedulerMetrics().RuntimeStatsAccountCount)
+	require.Zero(t, f.upstream.calls.Load())
+	require.Zero(t, inflightHeld(t, f.user.ID))
+}
+
+type chatAudioNoIOWriter struct {
+	gin.ResponseWriter
+	writes, flushes int
+}
+
+func (w *chatAudioNoIOWriter) Write(p []byte) (int, error) {
+	w.writes++
+	return w.ResponseWriter.Write(p)
+}
+func (w *chatAudioNoIOWriter) WriteString(p string) (int, error) {
+	w.writes++
+	return w.ResponseWriter.WriteString(p)
+}
+func (w *chatAudioNoIOWriter) Flush() { w.flushes++; w.ResponseWriter.Flush() }
+
+// Cancel after the real PG admission, then invoke each actual converter.
+// A public handler canceled earlier would stop in concurrency acquisition and
+// would not prove this local-validation/no-charge writer boundary.
+func TestChatInputAudioHTTP_CanceledLocalServiceReleasesFundingWithoutIO(t *testing.T) {
+	for _, platform := range []string{service.PlatformGemini, service.PlatformAnthropic, service.PlatformOpenAI} {
+		for _, committed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/committed_%t", platform, committed), func(t *testing.T) {
+				model := "claude-sonnet-4-5"
+				if platform == service.PlatformGemini {
+					model = "gemini-3.6-flash"
+				}
+				if platform == service.PlatformOpenAI {
+					model = "gpt-5"
+				}
+				f := newInflightHTTPFixture(t, platform, inflightResponsesSSE, "text/event-stream")
+				chatAudioWallet(t, f)
+				close(f.upstream.release)
+				body := []byte(chatAudioBody(model, "user", `[{"type":"input_audio","input_audio":{"data":"%%%","format":"wav"}}]`, true))
+				lease, err := f.openAIService.ReserveBillingInflight(context.Background(), service.BillingInflightRequest{APIKey: f.key, Account: f.account, Model: model, Body: body})
+				require.NoError(t, err)
+				require.NotNil(t, lease)
+				t.Cleanup(lease.HandlerDone)
+				lease.MarkDispatched() // Same pre-Forward phase used by the HTTP wrapper.
+				var activeBefore int
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM billing_inflight_leases WHERE user_id=$1 AND expires_at>clock_timestamp()`, f.user.ID).Scan(&activeBefore))
+				require.Positive(t, activeBefore)
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
+				if committed {
+					c.Header("Content-Type", "text/event-stream")
+					_, err := c.Writer.WriteString(": ping\n\n")
+					require.NoError(t, err)
+					c.Writer.Flush()
+				}
+				initial := recorder.Body.String()
+				writer := &chatAudioNoIOWriter{ResponseWriter: c.Writer}
+				c.Writer = writer
+				ctx, cancel := context.WithCancel(service.WithBillingInflightLease(c.Request.Context(), lease))
+				c.Request = c.Request.WithContext(ctx)
+				cancel()
+				if platform == service.PlatformOpenAI {
+					result, forwardErr := f.openAIService.ForwardAsChatCompletions(ctx, c, f.account, body, "", "")
+					require.Nil(t, result)
+					require.ErrorContains(t, forwardErr, "input_audio")
+				} else if platform == service.PlatformGemini {
+					result, forwardErr := f.geminiService.ForwardAsChatCompletions(ctx, c, f.account, body)
+					require.Nil(t, result)
+					require.ErrorContains(t, forwardErr, "input_audio")
+				} else {
+					result, forwardErr := f.gatewayService.ForwardAsChatCompletions(ctx, c, f.account, body, nil)
+					require.Nil(t, result)
+					require.ErrorContains(t, forwardErr, "input_audio")
+				}
+				lease.HandlerDone()
+				require.Zero(t, writer.writes)
+				require.Zero(t, writer.flushes)
+				require.Equal(t, initial, recorder.Body.String())
+				_, marked := c.Get(service.OpsStreamErrorKey)
+				require.False(t, marked)
+				require.Zero(t, f.upstream.calls.Load())
+				require.Zero(t, inflightHeld(t, f.user.ID))
+				var active, usage, dedup int
+				var balance float64
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM billing_inflight_leases WHERE user_id=$1 AND expires_at>clock_timestamp()`, f.user.ID).Scan(&active))
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&usage))
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&balance))
+				require.Zero(t, active)
+				require.Zero(t, usage)
+				require.Zero(t, dedup)
 				require.InDelta(t, 10, balance, 1e-10)
 			})
 		}
