@@ -342,7 +342,7 @@ func TestMarkRefundPendingSnapshotsPlannedDeduction(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.RefundPending)
 
-	detail := svc.latestRefundPendingDetail(ctx, order.ID)
+	detail := refundPendingDetailForTest(t, svc, ctx, order.ID)
 	require.True(t, detail.hasSnapshot)
 	require.Equal(t, "rf_snap", detail.RefundID)
 	require.Equal(t, payment.DeductionTypeBalance, detail.DeductionType)
@@ -434,7 +434,7 @@ func TestExecuteRefundGatewayPendingFlows(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.wantStatus, reloaded.Status)
 			if tc.wantStatus == OrderStatusRefundPending {
-				detail := svc.latestRefundPendingDetail(ctx, order.ID)
+				detail := refundPendingDetailForTest(t, svc, ctx, order.ID)
 				require.Equal(t, "rf_p", detail.RefundID)
 				require.Equal(t, 25.0, detail.BalanceToDeduct)
 				require.Equal(t, payment.DeductionTypeBalance, detail.DeductionType)

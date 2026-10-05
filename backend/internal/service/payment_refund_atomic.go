@@ -1,10 +1,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"time"
 
@@ -112,4 +114,46 @@ func (s *PaymentService) writeRefundAuditStrict(ctx context.Context, orderID int
 		return fmt.Errorf("write refund audit: %w", err)
 	}
 	return nil
+}
+
+// Historical snapshots may omit fields, but present financial fields must not
+// silently change meaning through duplicate keys or JSON null coercion.
+func decodeRefundPendingSnapshot(body string, detail *refundPendingAuditDetail) error {
+	decoder := json.NewDecoder(bytes.NewBufferString(body))
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if token != json.Delim('{') {
+		return fmt.Errorf("expected object")
+	}
+	seen := make(map[string]bool)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := token.(string)
+		if !ok || seen[key] {
+			return fmt.Errorf("duplicate or invalid snapshot field %v", token)
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+		switch key {
+		case "deductionType", "deductionRollbackOK", "balanceToDeduct", "subDaysToDeduct", "subscriptionID", "refundAmount", "gatewayBaseAmount", "gatewayAmount", "refundFeeRate", "refundFeeAmount":
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return fmt.Errorf("null financial snapshot field %s", key)
+			}
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return fmt.Errorf("invalid trailing snapshot data")
+	}
+	return json.Unmarshal([]byte(body), detail)
 }

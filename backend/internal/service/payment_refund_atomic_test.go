@@ -12,6 +12,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func refundPendingDetailForTest(t *testing.T, svc *PaymentService, ctx context.Context, orderID int64) refundPendingAuditDetail {
+	t.Helper()
+	detail, err := svc.latestRefundPendingDetail(ctx, orderID)
+	require.NoError(t, err)
+	return detail
+}
+
+func refundRollbackOutstandingForTest(t *testing.T, svc *PaymentService, ctx context.Context, orderID int64) bool {
+	t.Helper()
+	outstanding, err := svc.hasOutstandingRefundRollbackFailure(ctx, orderID)
+	require.NoError(t, err)
+	return outstanding
+}
+
 // Existing service fixtures supply wallet values and record debit callbacks.
 // Model the new atomic repository contract; actual DB races/rollback are
 // verified with the real repository in integration tests.

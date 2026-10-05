@@ -274,7 +274,7 @@ func TestResolvePendingRefundConcurrentChangeConflicts(t *testing.T) {
 	require.NoError(t, err)
 	_, err = client.PaymentOrder.UpdateOneID(order.ID).SetStatus(OrderStatusRefunded).Save(ctx)
 	require.NoError(t, err)
-	detail := svc.latestRefundPendingDetail(ctx, order.ID)
+	detail := refundPendingDetailForTest(t, svc, ctx, order.ID)
 	_, err = svc.finalizeRefundSucceeded(ctx, o, detail, svc.refundFinalizePlan(ctx, o, detail))
 	require.Equal(t, "CONFLICT", infraerrors.Reason(err))
 	_, err = svc.finalizeRefundFailed(ctx, o, detail, errors.New("manual"))
