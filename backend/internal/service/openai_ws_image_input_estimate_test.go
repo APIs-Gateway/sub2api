@@ -119,6 +119,11 @@ func TestWSImageInputEstimate_ActualAdapterQueuedFramesUseDistinctTurns(t *testi
 	admissions := make(chan admission, 4)
 	type completion struct{ turn, image int }
 	completed := make(chan completion, 4)
+	type closure struct {
+		turn int
+		err  error
+	}
+	closedTurns := make(chan closure, 2)
 	gates := []chan struct{}{make(chan struct{}), make(chan struct{})}
 	var releases [2]sync.Once
 	defer func() {
@@ -134,7 +139,11 @@ func TestWSImageInputEstimate_ActualAdapterQueuedFramesUseDistinctTurns(t *testi
 				admissions <- admission{turn, image, append([]byte(nil), body...)}
 				return nil
 			},
-			AfterTurn: func(turn int, result *OpenAIForwardResult, _ error) {
+			AfterTurn: func(turn int, result *OpenAIForwardResult, turnErr error) {
+				if result == nil {
+					closedTurns <- closure{turn, turnErr}
+					return
+				}
 				completed <- completion{turn, result.Usage.ImageInputTokens}
 				if turn <= 2 {
 					select {
@@ -231,6 +240,15 @@ func TestWSImageInputEstimate_ActualAdapterQueuedFramesUseDistinctTurns(t *testi
 	case <-time.After(3 * time.Second):
 		t.Fatal("adapter did not terminate")
 	}
+	select {
+	case closed := <-closedTurns:
+		require.Equal(t, 4, closed.turn, "terminal transport failure is not another completed response")
+		require.Error(t, closed.err)
+	default:
+		// A graceful client close can finish the relay without an error callback.
+	}
+	require.Empty(t, closedTurns, "at most one terminal error callback")
+	require.Empty(t, completed, "close must not invent a fourth metered completion")
 }
 
 func TestWSImageInputEstimate_OversizedIdentityIsNotRetainedOrFree(t *testing.T) {
