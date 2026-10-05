@@ -64,6 +64,17 @@ func TestChatInputAudio_RolesAndMalformedSiblings(t *testing.T) {
 			`[{"type":"file","file":null},{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"}}]`,
 			`[{"type":"image_url","image_url":{"url":null}},{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"}}]`,
 			`[{"type":"file","file":{"file_data":null}},{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"}}]`,
+			`[{"type":"text","Text":null},{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"}}]`,
+			`[{"type":"image_url","Image_URL":null},{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"}}]`,
+			`[{"type":"image_url","image_url":{"url":"data:image/png;base64,aA=="},"Image_URL":null},{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"}}]`,
+			`[{"type":"text","text":"hello","text":null},{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"}}]`,
+			`[{"type":"text","text":"hello","te\u0078t":null},{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"}}]`,
+			`[{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"},"type":"text","text":"hidden audio"}]`,
+			`[{"Type":"input_audio","input_audio":{"data":"aA==","format":"wav"}}]`,
+			`[{"type":"image_url","image_url":{"URL":null}},{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"}}]`,
+			`[{"type":"input_audio","input_audio":{"Data":"aA==","format":"wav"}}]`,
+			`[{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"},"ty\u0070e":"text","text":"hidden audio"}]`,
+			`[{"type":"input_audio","input_audio":{"data":"aA==","d\u0061ta":"%%%","format":"wav"}}]`,
 		} {
 			t.Run(role+"/"+content, func(t *testing.T) {
 				req := &ChatCompletionsRequest{Model: "gemini-2.5-flash", Messages: []ChatMessage{{Role: role, Content: json.RawMessage(content)}}}
@@ -90,7 +101,7 @@ func TestChatInputAudio_InvalidPayloadsAndOrdinaryControls(t *testing.T) {
 			require.ErrorIs(t, err, ErrInvalidInputAudio)
 		})
 	}
-	for _, content := range []string{`"ordinary text"`, `[{"type":"text","text":"hello"}]`, `[{"type":"file","file":{"file_data":"data:application/pdf;base64,aA=="}}]`, `[null]`, `[{"type":"text","text":null}]`, `[{"type":"image_url","image_url":null}]`, `[{"type":"file","file":null}]`} {
+	for _, content := range []string{`"ordinary text"`, `[{"type":"text","text":"hello"}]`, `[{"type":"file","file":{"file_data":"data:application/pdf;base64,aA=="}}]`, `[null]`, `[{"type":"text","text":null}]`, `[{"type":"image_url","image_url":null}]`, `[{"type":"file","file":null}]`, `[{"type":"text","Text":null}]`, `[{"type":"text","text":"hello","te\u0078t":null}]`} {
 		t.Run(content, func(t *testing.T) {
 			req := &ChatCompletionsRequest{Model: "gemini-2.5-flash", Messages: []ChatMessage{{Role: "user", Content: json.RawMessage(content)}}}
 			ordinary, err := ChatCompletionsToResponses(req)

@@ -1,10 +1,12 @@
 package apicompat
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // A private intermediate type distinguishes validated Chat audio from ordinary
@@ -34,17 +36,11 @@ func normalizeChatInputAudio(req *ChatCompletionsRequest, allowAudio bool) (*Cha
 		}
 		hasAudio := false
 		for _, rawPart := range rawParts {
-			var probe struct {
-				Type string `json:"type"`
+			audio, reserved := chatAudioPartTypes(rawPart)
+			if reserved {
+				return nil, fmt.Errorf("%w: reserved intermediate content type", ErrInvalidInputAudio)
 			}
-			if json.Unmarshal(rawPart, &probe) == nil {
-				if probe.Type == geminiChatAudioFileType {
-					return nil, fmt.Errorf("%w: reserved intermediate content type", ErrInvalidInputAudio)
-				}
-				if probe.Type == "input_audio" {
-					hasAudio = true
-				}
-			}
+			hasAudio = hasAudio || audio
 		}
 		if !hasAudio {
 			continue
@@ -53,9 +49,15 @@ func normalizeChatInputAudio(req *ChatCompletionsRequest, allowAudio bool) (*Cha
 			return nil, ErrUnsupportedInputAudio
 		}
 		for _, rawPart := range rawParts {
+			if err := chatAudioUniqueJSONKeys(json.NewDecoder(bytes.NewReader(rawPart))); err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrInvalidInputAudio, err)
+			}
 			var fields map[string]json.RawMessage
 			if json.Unmarshal(rawPart, &fields) != nil || fields == nil {
 				return nil, fmt.Errorf("%w: content parts must be objects", ErrInvalidInputAudio)
+			}
+			if !chatAudioCanonicalFields(fields, "type", "text", "image_url", "file", "input_audio", "prompt_cache_breakpoint") {
+				return nil, fmt.Errorf("%w: noncanonical content field", ErrInvalidInputAudio)
 			}
 			var contentType string
 			if json.Unmarshal(fields["type"], &contentType) != nil || contentType == "" {
@@ -66,6 +68,9 @@ func normalizeChatInputAudio(req *ChatCompletionsRequest, allowAudio bool) (*Cha
 					var descriptor map[string]json.RawMessage
 					if json.Unmarshal(raw, &descriptor) != nil || descriptor == nil {
 						return nil, fmt.Errorf("%w: %s must be an object", ErrInvalidInputAudio, name)
+					}
+					if !chatAudioCanonicalFields(descriptor, "url", "detail", "file_id", "file_data", "filename", "data", "format") {
+						return nil, fmt.Errorf("%w: noncanonical descriptor field", ErrInvalidInputAudio)
 					}
 					for _, key := range []string{"url", "file_id", "file_data", "filename"} {
 						if field, exists := descriptor[key]; exists {
@@ -128,4 +133,86 @@ func normalizeChatInputAudio(req *ChatCompletionsRequest, allowAudio bool) (*Cha
 		converted.Messages[messageIndex].Content = content
 	}
 	return &converted, nil
+}
+
+// Inspect every root type member before typed decoding can hide one behind a
+// duplicate or case-insensitive alias. Ordinary no-audio parts retain their
+// original decoding behavior.
+func chatAudioPartTypes(raw json.RawMessage) (audio, reserved bool) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return false, false
+	}
+	for decoder.More() {
+		token, err = decoder.Token()
+		if err != nil {
+			return audio, reserved
+		}
+		name, ok := token.(string)
+		if !ok {
+			return audio, reserved
+		}
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil {
+			return audio, reserved
+		}
+		if strings.EqualFold(name, "type") {
+			var kind string
+			if json.Unmarshal(value, &kind) == nil {
+				audio = audio || kind == "input_audio"
+				reserved = reserved || kind == geminiChatAudioFileType
+			}
+		}
+	}
+	return audio, reserved
+}
+
+func chatAudioCanonicalFields(fields map[string]json.RawMessage, canonical ...string) bool {
+	for name := range fields {
+		for _, expected := range canonical {
+			if name != expected && strings.EqualFold(name, expected) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Decoder tokens expose decoded keys, including escaped duplicates, before a
+// map or struct can choose one conflicting value.
+func chatAudioUniqueJSONKeys(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	switch token {
+	case json.Delim('{'):
+		seen := make(map[string]bool)
+		for decoder.More() {
+			key, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			name, ok := key.(string)
+			if !ok || seen[name] {
+				return errors.New("duplicate or invalid content key")
+			}
+			seen[name] = true
+			if err := chatAudioUniqueJSONKeys(decoder); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token()
+		return err
+	case json.Delim('['):
+		for decoder.More() {
+			if err := chatAudioUniqueJSONKeys(decoder); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token()
+		return err
+	}
+	return nil
 }

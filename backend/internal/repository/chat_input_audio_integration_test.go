@@ -120,6 +120,17 @@ func TestChatInputAudioHTTP_LocalRejectReleasesFunding(t *testing.T) {
 		{"null_file_sibling", "user", `[{"type":"file","file":null},` + valid + `]`},
 		{"null_image_url_sibling", "user", `[{"type":"image_url","image_url":{"url":null}},` + valid + `]`},
 		{"null_file_data_sibling", "user", `[{"type":"file","file":{"file_data":null}},` + valid + `]`},
+		{"text_case_alias_null", "user", `[{"type":"text","Text":null},` + valid + `]`},
+		{"image_case_alias_null", "user", `[{"type":"image_url","Image_URL":null},` + valid + `]`},
+		{"image_case_alias_overwrite", "user", `[{"type":"image_url","image_url":{"url":"data:image/png;base64,aA=="},"Image_URL":null},` + valid + `]`},
+		{"duplicate_text_key", "user", `[{"type":"text","text":"hello","text":null},` + valid + `]`},
+		{"escaped_duplicate_text_key", "user", `[{"type":"text","text":"hello","te\u0078t":null},` + valid + `]`},
+		{"duplicate_type_hides_audio", "user", `[{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"},"type":"text","text":"hidden audio"}]`},
+		{"type_case_alias", "user", `[{"Type":"input_audio","input_audio":{"data":"aA==","format":"wav"}}]`},
+		{"descriptor_case_alias", "user", `[{"type":"image_url","image_url":{"URL":null}},` + valid + `]`},
+		{"audio_descriptor_case_alias", "user", `[{"type":"input_audio","input_audio":{"Data":"aA==","format":"wav"}}]`},
+		{"escaped_duplicate_type_hides_audio", "user", `[{"type":"input_audio","input_audio":{"data":"aA==","format":"wav"},"ty\u0070e":"text","text":"hidden audio"}]`},
+		{"escaped_duplicate_audio_descriptor", "user", `[{"type":"input_audio","input_audio":{"data":"aA==","d\u0061ta":"%%%","format":"wav"}}]`},
 	}
 	for _, platform := range []string{service.PlatformGemini, service.PlatformAnthropic, service.PlatformOpenAI} {
 		for _, tc := range cases {
