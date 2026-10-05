@@ -48,6 +48,7 @@ func TestPricingSnapshotPinAndApproveRequireJWTSession(t *testing.T) {
 
 	jwt := build(service.AuditAuthMethodJWT)
 	for _, path := range guarded {
-		require.Equalf(t, http.StatusInternalServerError, do(jwt, path), "%s 的 JWT 会话应当越过限制并到达处理器", path)
+		// 空请求体到不了服务：处理器先要求 confirm / plan_hash，返回 400，说明请求越过了 JWT 限制。
+		require.Equalf(t, http.StatusBadRequest, do(jwt, path), "%s 的 JWT 会话应当越过限制并到达处理器", path)
 	}
 }
