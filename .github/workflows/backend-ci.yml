@@ -31,7 +31,7 @@ jobs:
         run: go test -tags=unit -count=1 -run '^TestEmailOAuthBoundIdentity|^TestEmailOAuthCallbackDoesNotAutoLinkLocalAccount|^TestLogin2FACompletesPendingOAuthBindAndConsumesSession' -v ./internal/handler/
       - name: Configured ops thresholds actual dashboard regressions
         working-directory: backend
-        run: go test -tags=unit -count=1 -v -run '^TestOpsConfiguredThresholdsActualDashboard|^TestComputeDashboardHealthScore|^TestComputeBusinessHealth|^TestComputeInfraHealth' ./internal/service/
+        run: go test -tags=unit -race -count=1 -v -run '^TestOpsConfiguredThresholds|^TestComputeDashboardHealthScore|^TestComputeBusinessHealth|^TestComputeInfraHealth' ./internal/service/
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover

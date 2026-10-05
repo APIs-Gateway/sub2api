@@ -66,7 +66,7 @@ func (s *OpsService) GetDashboardOverview(ctx context.Context, filter *OpsDashbo
 	}
 
 	thresholds := defaultOpsMetricThresholds()
-	if loaded, err := s.GetMetricThresholds(ctx); err == nil && loaded != nil {
+	if loaded, err := s.getMetricThresholds(ctx, false); err == nil && loaded != nil {
 		thresholds = loaded
 	} else if err != nil {
 		log.Printf("[Ops] GetMetricThresholds failed: %v", err)

@@ -94,9 +94,64 @@ func TestOpsConfiguredThresholdsActualDashboard(t *testing.T) {
 			require.Equal(t, tc.upstream, got.UpstreamErrorRate)
 			require.Equal(t, tc.ttft, got.TTFT.P99)
 			require.Zero(t, ov.HealthScore, "do not mutate repository snapshot")
-			if !tc.noRepo && !tc.missing && !tc.readError {
-				require.Zero(t, settings.setCalls, "threshold reads must not rewrite successfully loaded settings")
-			}
+			require.Zero(t, settings.setCalls, "dashboard threshold reads never initialize or rewrite settings")
 		})
 	}
+}
+
+func TestOpsConfiguredThresholdsDashboardReadCannotOverwriteConcurrentSave(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	settings := newRuntimeSettingRepoStub()
+	readStarted, releaseRead := make(chan struct{}), make(chan struct{})
+	settings.getValueFn = func(key string) (string, error) {
+		if key != SettingKeyOpsMetricThresholds {
+			return "", ErrSettingNotFound
+		}
+		// Capture the missing-row result, then let an administrator save before
+		// the dashboard observes that result. Defaults must stay in memory.
+		close(readStarted)
+		select {
+		case <-releaseRead:
+			return "", ErrSettingNotFound
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	svc := &OpsService{settingRepo: settings, opsRepo: &configuredThresholdOpsRepo{
+		opsRepoMock: &opsRepoMock{}, overview: &OpsDashboardOverview{RequestCountTotal: 100, ErrorRate: .02},
+	}}
+	type result struct {
+		overview *OpsDashboardOverview
+		err      error
+	}
+	completed := make(chan result, 1)
+	go func() {
+		now := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+		ov, err := svc.GetDashboardOverview(ctx, &OpsDashboardFilter{StartTime: now.Add(-time.Hour), EndTime: now, QueryMode: OpsQueryModeRaw})
+		completed <- result{overview: ov, err: err}
+	}()
+	select {
+	case <-readStarted:
+	case <-ctx.Done():
+		t.Fatal("dashboard did not reach captured missing threshold read")
+	}
+	custom := &OpsMetricThresholds{SLAPercentMin: float64Ptr(90), TTFTp99MsMax: float64Ptr(2000),
+		RequestErrorRatePercentMax: float64Ptr(10), UpstreamErrorRatePercentMax: float64Ptr(20)}
+	updated, err := svc.UpdateMetricThresholds(ctx, custom)
+	close(releaseRead)
+	require.NoError(t, err)
+	require.Equal(t, custom, updated)
+	select {
+	case got := <-completed:
+		require.NoError(t, got.err)
+		require.Equal(t, 96, got.overview.HealthScore, "captured missing-row read uses default score")
+	case <-ctx.Done():
+		t.Fatal("dashboard did not complete after threshold read release")
+	}
+	settings.getValueFn = nil
+	stored, err := svc.GetMetricThresholds(ctx)
+	require.NoError(t, err)
+	require.Equal(t, custom, stored)
+	require.Equal(t, 1, settings.setCalls, "only the administrator's save writes settings")
 }
