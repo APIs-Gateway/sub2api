@@ -14,6 +14,8 @@ func TestWSImageInputOutput_ActualCompletedProductWithoutUsage(t *testing.T) {
 		generated                   bool
 	}{
 		{"actual_image", "response.completed", "completed", `[{"type":"image_generation_call","status":"completed","result":"opaque-base64"}]`, true},
+		{"done_alias", "response.done", "completed", `[{"type":"image_generation_call","status":"completed","result":"opaque-base64"}]`, true},
+		{"done_alias_unfinished", "response.done", "in_progress", `[{"type":"image_generation_call","status":"completed","result":"opaque-base64"}]`, false},
 		{"missing_outer_status", "response.completed", "", `[{"type":"image_generation_call","status":"completed","result":"opaque-base64"}]`, true},
 		{"missing_item_status", "response.completed", "completed", `[{"type":"image_generation_call","result":"opaque-base64"}]`, true},
 		{"cancelled_item", "response.completed", "completed", `[{"type":"image_generation_call","status":"cancelled","result":"opaque-base64"}]`, false},

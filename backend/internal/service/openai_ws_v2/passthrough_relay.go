@@ -768,7 +768,7 @@ func observeUpstreamMessage(
 // Observe actual completed output, not the request's generation intent. Keep no
 // image result, URL or encrypted payload in connection lineage metadata.
 func terminalHasGeneratedImage(message []byte, eventType string) bool {
-	if eventType != "response.completed" || imageOutputStatusIsUnfinished(gjson.GetBytes(message, "response.status")) {
+	if (eventType != "response.completed" && eventType != "response.done") || imageOutputStatusIsUnfinished(gjson.GetBytes(message, "response.status")) {
 		return false
 	}
 	output := gjson.GetBytes(message, "response.output")

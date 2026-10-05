@@ -645,6 +645,8 @@ func TestWSImageInputHTTP_GeneratedProductWithoutImageUsageIsNotKnownFree(t *tes
 		generated                   bool
 	}{
 		{"completed_product", "response.completed", "completed", `[{"type":"image_generation_call","status":"completed","result":"opaque-image"}]`, true},
+		{"done_product_wallet", "response.done", "completed", `[{"type":"image_generation_call","status":"completed","result":"opaque-image"}]`, true},
+		{"done_product_card", "response.done", "completed", `[{"type":"image_generation_call","status":"completed","result":"opaque-image"}]`, true},
 		{"missing_outer_status", "response.completed", "", `[{"type":"image_generation_call","status":"completed","result":"opaque-image"}]`, true},
 		{"missing_item_status", "response.completed", "completed", `[{"type":"image_generation_call","result":"opaque-image"}]`, true},
 		{"failed_terminal", "response.failed", "failed", `[{"type":"image_generation_call","status":"completed","result":"opaque-image"}]`, false},
@@ -655,6 +657,25 @@ func TestWSImageInputHTTP_GeneratedProductWithoutImageUsageIsNotKnownFree(t *tes
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newWSInflightFixture(t, "passthrough", service.BillingModelSourceUpstream, map[string]float64{"token:gpt-5.4": 0, "competitor": .5}, wsImageInputPricing(t, false))
+			card := tc.name == "done_product_card"
+			if card {
+				admissionCard(t, inflightTestEntClient(t), f.userID, 0, .75, .9, 1.2, 0, 0, 0)
+				_, err := inflightTestDB(t).Exec(`UPDATE users SET balance=0 WHERE id=$1`, f.userID)
+				require.NoError(t, err)
+				require.NoError(t, f.billing.InvalidateUserBalance(context.Background(), f.userID))
+			}
+			assertSpent := func(spent float64) {
+				if !card {
+					require.InDelta(t, .75-spent, f.wallet(t), 1e-9)
+					return
+				}
+				var daily, weekly, monthly float64
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT daily_usage_usd,weekly_usage_usd,monthly_usage_usd FROM user_subscriptions WHERE user_id=$1 AND status='active'`, f.userID).Scan(&daily, &weekly, &monthly))
+				for _, amount := range []float64{daily, weekly, monthly} {
+					require.InDelta(t, spent, amount, 1e-9)
+				}
+				require.Zero(t, f.wallet(t))
+			}
 			p := newWSImageInputProvider(t, f)
 			conn := f.dial(t)
 			wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","input":"generate","tools":[{"type":"image_generation"}],"max_output_tokens":8}`)
@@ -673,7 +694,7 @@ func TestWSImageInputHTTP_GeneratedProductWithoutImageUsageIsNotKnownFree(t *tes
 			f.waitUsage(t, 1)
 			wsImageInputLog(t, f, 1, 0, 0, 0)
 			require.Zero(t, f.held(t), "no image usage is fabricated from the produced output")
-			require.InDelta(t, .75, f.wallet(t), 1e-9)
+			assertSpent(0)
 			next := `{"type":"response.create","model":"gpt-5.4","previous_response_id":"resp_image_1","input":"continue parent","tools":[],"max_output_tokens":8}`
 			wsInflightWrite(t, conn, next)
 			second := p.next(t)
@@ -692,7 +713,7 @@ func TestWSImageInputHTTP_GeneratedProductWithoutImageUsageIsNotKnownFree(t *tes
 			f.waitUsage(t, 2)
 			wsImageInputLog(t, f, 2, imageTokens, 0, cost)
 			require.Zero(t, f.held(t))
-			require.InDelta(t, .75-cost, f.wallet(t), 1e-9)
+			assertSpent(cost)
 			wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","previous_response_id":null,"input":"new text","tools":[],"max_output_tokens":8}`)
 			third := p.next(t)
 			require.Zero(t, f.held(t), "a null parent starts a genuinely free text chain")
@@ -700,7 +721,7 @@ func TestWSImageInputHTTP_GeneratedProductWithoutImageUsageIsNotKnownFree(t *tes
 			wsInflightReadCompleted(t, conn)
 			f.waitUsage(t, 3)
 			wsImageInputLog(t, f, 3, imageTokens, 0, cost)
-			require.InDelta(t, .75-cost, f.wallet(t), 1e-9)
+			assertSpent(cost)
 			require.EqualValues(t, 3, p.calls.Load())
 		})
 	}
