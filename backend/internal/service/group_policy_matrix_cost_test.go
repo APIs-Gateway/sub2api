@@ -230,8 +230,9 @@ func TestOpenAICost_ExtraMultiplierRespectsEffectiveWindow(t *testing.T) {
 	result := &OpenAIForwardResult{}
 	none := newMPPolicyFor(GroupStateSnapshot{})
 
-	future := time.Now().Add(24 * time.Hour)
-	past := time.Now().Add(-24 * time.Hour)
+	// 测试策略用固定时钟 mpT0，窗口必须相对它取，不能用真实时间（否则真实时间越过 mpT0 后用例失效）。
+	future := mpT0.Add(24 * time.Hour)
+	past := mpT0.Add(-24 * time.Hour)
 	notYet := mpWindow(mpExtra("gpt-5.4", 2), &future, nil)
 	expired := mpWindow(mpExtra("gpt-5.4", 2), nil, &past)
 	active := mpWindow(mpExtra("gpt-5.4", 2), &past, &future)
