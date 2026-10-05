@@ -29,6 +29,9 @@ jobs:
       - name: Integration tests (chat ping actual account failover and billing)
         working-directory: backend
         run: go test -tags=integration -count=1 -v -run '^TestChatPingHTTP_' ./internal/repository/
+      - name: Google/GitHub bound identity email drift and authentication controls
+        working-directory: backend
+        run: go test -tags=unit -count=1 -run '^TestEmailOAuthBoundIdentity|^TestEmailOAuthCallbackDoesNotAutoLinkLocalAccount|^TestLogin2FACompletesPendingOAuthBindAndConsumesSession' -v ./internal/handler/
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover
