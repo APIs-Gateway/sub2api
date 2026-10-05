@@ -28,4 +28,5 @@ backend/internal/handler/provider_pricing_handler.go
 backend/internal/service/credit_fiat_rate.go
 backend/internal/service/key_editor_price.go
 backend/internal/service/provider_pricing.go
+backend/internal/service/provider_pricing_quoted.go
 backend/internal/service/usage_credit_fiat_totals.go
