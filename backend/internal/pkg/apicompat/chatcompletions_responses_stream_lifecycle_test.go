@@ -53,7 +53,7 @@ func TestStream_ReasoningOnlySynthesizesVisibleText(t *testing.T) {
 	})
 
 	open := map[int]string{}
-	var sawTextDelta, sawTextDone, sawMessageDone bool
+	var sawTextDelta, sawTextDone, sawMessageDone, sawIncomplete bool
 	for _, e := range events {
 		switch e.Type {
 		case "response.output_item.added":
@@ -71,7 +71,8 @@ func TestStream_ReasoningOnlySynthesizesVisibleText(t *testing.T) {
 				sawMessageDone = true
 				require.Equal(t, "thinking before final", e.Item.Content[0].Text)
 			}
-		case "response.completed":
+		case "response.incomplete":
+			sawIncomplete = true
 			require.NotNil(t, e.Response)
 			require.Equal(t, "incomplete", e.Response.Status)
 			require.NotNil(t, e.Response.IncompleteDetails)
@@ -82,6 +83,7 @@ func TestStream_ReasoningOnlySynthesizesVisibleText(t *testing.T) {
 			require.Equal(t, "thinking before final", e.Response.Output[1].Content[0].Text)
 		}
 	}
+	require.True(t, sawIncomplete, "reasoning-only length must emit incomplete")
 	require.True(t, sawTextDelta, "reasoning-only stream must produce visible text delta")
 	require.True(t, sawTextDone, "reasoning-only stream must close visible text part")
 	require.True(t, sawMessageDone, "reasoning-only stream must close synthesized message item")

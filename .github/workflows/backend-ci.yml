@@ -58,7 +58,7 @@ jobs:
         run: go test -tags=unit -count=1 -v -run '^TestRefundPendingStorageFailures|^TestRefundConfirmedSettlementStorageFailure|^TestRefundSettlementDeletedUser|^TestRefundMalformedSnapshot|^TestRefundBlockedDiagnostics' ./internal/service/
       - name: CC length terminal event and real readers
         working-directory: backend
-        run: go test -tags=unit -count=1 -v -run '^TestChatLengthTerminal_|^TestStream_ValidToolCallAtOutputLimitKeepsIncompleteResponse$' ./internal/pkg/apicompat/ ./internal/service/
+        run: go test -tags=unit -count=1 -v -run '^TestChatLengthTerminal_|^TestStream_ValidToolCallAtOutputLimitKeepsIncompleteResponse$|^TestStream_ReasoningOnlySynthesizesVisibleText$' ./internal/pkg/apicompat/ ./internal/service/
       - name: Unit tests (converted Responses input recovery)
         working-directory: backend
         run: go test -tags=unit -count=1 -run '^TestStructuredInputRecovery_|^TestConvertedResponsesInputStringRejection|^TestForwardAsChatCompletions_(ResponsesSupportedFallsBack|StructuredInput)' -v ./internal/service/
