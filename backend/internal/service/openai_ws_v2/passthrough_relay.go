@@ -768,15 +768,10 @@ func observeUpstreamMessage(
 // Observe actual completed output, not the request's generation intent. Keep no
 // image result, URL or encrypted payload in connection lineage metadata.
 func terminalHasGeneratedImage(message []byte, eventType string) bool {
-	if eventType != "response.completed" && eventType != "response.done" && eventType != "response.incomplete" {
-		return false
-	}
-	status := gjson.GetBytes(message, "response.status")
-	// A response can exhaust its output budget after an image tool already
-	// completed. Observe that product without treating an unfinished tool or
-	// a failed/cancelled response as a completed image.
-	incompleteProduct := eventType == "response.incomplete" && status.String() == "incomplete"
-	if imageOutputStatusIsUnfinished(status) && !incompleteProduct {
+	// The outer response can fail or stop after an image tool completed.
+	// Potential image input follows the actual product, independently of the
+	// response status, without changing its outcome or charged counters.
+	if !isTerminalEvent(eventType) {
 		return false
 	}
 	output := gjson.GetBytes(message, "response.output")
@@ -793,12 +788,11 @@ func terminalHasGeneratedImage(message []byte, eventType string) bool {
 	return found
 }
 
-// Providers can omit status on completed events and output items. An actual
-// nonempty image result is still potential input; only explicit unfinished or
-// failed states disprove the completed-product observation.
+// Providers can omit status on output items. A nonempty image result is still
+// potential input; explicit unfinished or failed item states exclude it.
 func imageOutputStatusIsUnfinished(status gjson.Result) bool {
 	switch status.String() {
-	case "failed", "cancelled", "canceled", "in_progress", "queued", "incomplete":
+	case "failed", "cancelled", "canceled", "in_progress", "generating", "queued", "incomplete":
 		return true
 	default:
 		return false
