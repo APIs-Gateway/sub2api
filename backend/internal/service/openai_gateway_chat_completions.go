@@ -59,6 +59,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	c.Set(openAIStructuredInputRawFallbackKey, false)
 	s.prepareCodexAccountIdentitySource(c, account)
 	restrictionResult := s.detectCodexClientRestriction(c, account)
 	apiKeyID := getAPIKeyIDFromContext(c)
@@ -317,6 +318,15 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		respBody, proofReadErr := s.readUpstreamErrorBodyComplete(resp)
 		_ = resp.Body.Close()
 		resp.Body = &billingInflightProviderErrorBody{Reader: bytes.NewReader(respBody), readErr: proofReadErr}
+
+		if canRecoverConvertedResponsesInput(ctx, c, account, isResponsesShape, responsesBody) &&
+			isConvertedResponsesInputStringRejection(resp.StatusCode, respBody, proofReadErr) {
+			logger.L().Info("openai chat_completions: structured Responses input rejected, falling back to raw chat completions",
+				zap.Int64("account_id", account.ID), zap.Int("upstream_status", resp.StatusCode))
+			cancelUpstream()
+			c.Set(openAIStructuredInputRawFallbackKey, "pending")
+			return s.forwardAsRawChatCompletionsFromStart(ctx, c, account, body, defaultMappedModel, startTime)
+		}
 
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
