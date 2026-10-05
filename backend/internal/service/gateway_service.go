@@ -10559,8 +10559,8 @@ func (s *GatewayService) calculateImageCost(
 		})
 		if err != nil {
 			if !isShadowRecompute(ctx) {
-			logger.LegacyPrintf("service.gateway", "Calculate image token cost failed: %v", err)
-		}
+				logger.LegacyPrintf("service.gateway", "Calculate image token cost failed: %v", err)
+			}
 			noteUnpricedBilling(ctx, apiKey, result.Model, UnpricedBillingReasonImageCalcError, err,
 				"zero_cost", billingModel)
 			return &CostBreakdown{ActualCost: 0}

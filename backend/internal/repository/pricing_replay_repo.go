@@ -254,10 +254,7 @@ func (r *pricingReplayRepository) Fingerprint(ctx context.Context, groupIDs []in
 			if err := tx.QueryRowContext(ctx, q).Scan(&h); err != nil {
 				return fmt.Errorf("hash %s: %w", table, err)
 			}
-			b.WriteString(table)
-			b.WriteByte('=')
-			b.WriteString(h)
-			b.WriteByte('\n')
+			fmt.Fprintf(&b, "%s=%s\n", table, h)
 		}
 		sum := sha256.Sum256([]byte(b.String()))
 		fp.ChannelConfigHash = hex.EncodeToString(sum[:])
