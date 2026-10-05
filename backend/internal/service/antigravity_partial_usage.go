@@ -7,30 +7,53 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
-// Gemini sends cumulative snapshots. Keep the latest metered snapshot rather
-// than summing it or allowing an empty terminal/error frame to erase it.
-func antigravityRetainMeteredUsage(previous, next *ClaudeUsage) *ClaudeUsage {
-	if next.hasObservedTokens() {
-		return next
-	}
-	if previous != nil {
-		return previous
-	}
-	return &ClaudeUsage{}
+// Keep native cumulative counters separately: prompt includes cache reads,
+// while candidate and thought output counters have independent presence. A
+// sparse/zero later frame cannot erase provider usage already observed. A newer
+// positive counter replaces its prior value; snapshots are never summed/maxed.
+type antigravityUsageCollector struct {
+	prompt, candidates, cached, thoughts, image int
+	usage                                       ClaudeUsage
 }
 
-func (s *AntigravityGatewayService) antigravityObserveUsage(previous *ClaudeUsage, line string) *ClaudeUsage {
+func (u *antigravityUsageCollector) observe(data []byte) *ClaudeUsage {
+	metadata := gjson.GetBytes(data, "usageMetadata")
+	update := func(name string, target *int) {
+		if field := metadata.Get(name); field.Exists() && field.Int() > 0 {
+			*target = int(field.Int())
+		}
+	}
+	update("promptTokenCount", &u.prompt)
+	update("candidatesTokenCount", &u.candidates)
+	update("cachedContentTokenCount", &u.cached)
+	update("thoughtsTokenCount", &u.thoughts)
+	metadata.Get("candidatesTokensDetails").ForEach(func(_, detail gjson.Result) bool {
+		if detail.Get("modality").String() == "IMAGE" && detail.Get("tokenCount").Int() > 0 {
+			u.image = int(detail.Get("tokenCount").Int())
+			return false
+		}
+		return true
+	})
+	u.usage.InputTokens = u.prompt - u.cached
+	u.usage.OutputTokens = u.candidates + u.thoughts
+	u.usage.CacheReadInputTokens = u.cached
+	u.usage.ImageOutputTokens = u.image
+	return &u.usage
+}
+
+func (s *AntigravityGatewayService) antigravityObserveUsage(collector *antigravityUsageCollector, line string) *ClaudeUsage {
 	line = strings.TrimSpace(line)
 	if !strings.HasPrefix(line, "data:") {
-		return previous
+		return &collector.usage
 	}
 	inner, err := s.unwrapV1InternalResponse([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))))
 	if err != nil {
-		return previous
+		return &collector.usage
 	}
-	return antigravityRetainMeteredUsage(previous, extractGeminiUsage(inner))
+	return collector.observe(inner)
 }
 
 // A metered failed attempt must be settled once instead of entering replay.

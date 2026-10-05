@@ -289,3 +289,118 @@ func TestAntigravityInterruptedUsage_ConvertedProviderFailureKeepsRawOps(t *test
 		})
 	}
 }
+
+// Record actual writes/flushes after request cancellation, including keepalives
+// while a silent upstream has not provided another scan event.
+type agMeteredCancelWriter struct {
+	*httptest.ResponseRecorder
+	ctx           context.Context
+	firstFlush    chan struct{}
+	firstSent     bool
+	ioAfterCancel int
+}
+
+func (w *agMeteredCancelWriter) Write(body []byte) (int, error) {
+	if w.ctx.Err() != nil {
+		w.ioAfterCancel++
+	}
+	return w.ResponseRecorder.Write(body)
+}
+
+func (w *agMeteredCancelWriter) Flush() {
+	if w.ctx.Err() != nil {
+		w.ioAfterCancel++
+	}
+	w.ResponseRecorder.Flush()
+	if !w.firstSent {
+		w.firstSent = true
+		close(w.firstFlush)
+	}
+}
+
+func TestAntigravityInterruptedUsage_CanceledSilentStreamSkipsKeepaliveAndKeepsLateUsage(t *testing.T) {
+	for _, mode := range []string{"claude_stream", "gemini_stream"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			writer := &agMeteredCancelWriter{ResponseRecorder: httptest.NewRecorder(), ctx: ctx, firstFlush: make(chan struct{})}
+			c, _ := gin.CreateTestContext(writer)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil).WithContext(ctx)
+			svc := newAntigravityTestService(&config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize, StreamKeepaliveInterval: 1}})
+			reader, upstream := io.Pipe()
+			defer reader.Close()
+			defer upstream.Close()
+			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: reader}
+			type completion struct {
+				result *antigravityStreamResult
+				err    error
+			}
+			done := make(chan completion, 1)
+			go func() {
+				var result *antigravityStreamResult
+				var err error
+				if mode == "claude_stream" {
+					result, err = svc.handleClaudeStreamingResponse(c, resp, time.Now(), "claude-sonnet-4-5")
+				} else {
+					result, err = svc.handleGeminiStreamingResponse(c, resp, time.Now())
+				}
+				done <- completion{result, err}
+			}()
+			_, err := io.WriteString(upstream, agMeteredFrame(`{"response":{"candidates":[{"content":{"parts":[{"text":"first"}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2}}}`))
+			require.NoError(t, err)
+			select {
+			case <-writer.firstFlush:
+			case <-time.After(5 * time.Second):
+				t.Fatal("first provider content was not written")
+			}
+			cancel()
+			time.Sleep(1200 * time.Millisecond) // A keepalive tick happens while the next provider read remains parked.
+			_, err = io.WriteString(upstream, agMeteredFrame(`{"response":{"candidates":[{"content":{"parts":[{"text":"late"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":8}}}`))
+			require.NoError(t, err)
+			require.NoError(t, upstream.Close())
+			var final completion
+			select {
+			case final = <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("stream did not finish after the provider terminal")
+			}
+			require.NoError(t, final.err)
+			require.NotNil(t, final.result)
+			require.True(t, final.result.clientDisconnect)
+			require.Equal(t, 20, final.result.usage.InputTokens)
+			require.Equal(t, 8, final.result.usage.OutputTokens)
+			require.Zero(t, writer.ioAfterCancel, "a canceled client must receive neither keepalive writes nor flushes")
+			require.NotContains(t, writer.Body.String(), "message_stop")
+		})
+	}
+}
+
+func TestAntigravityInterruptedUsage_SparseCumulativeCountersRetainMetering(t *testing.T) {
+	for _, mode := range []string{"claude_stream", "claude_buffered", "gemini_stream", "gemini_buffered"} {
+		for _, tc := range []struct {
+			name, metadata              string
+			input, output, cache, image int
+		}{
+			{"prompt_only", `{"promptTokenCount":10}`, 7, 6, 3, 5},
+			{"candidate_only", `{"candidatesTokenCount":7}`, 7, 11, 3, 5},
+			{"cache_only", `{"cachedContentTokenCount":4}`, 6, 6, 4, 5},
+			{"partial_zeros", `{"promptTokenCount":10,"cachedContentTokenCount":0,"candidatesTokenCount":0,"thoughtsTokenCount":0,"candidatesTokensDetails":[{"modality":"IMAGE","tokenCount":0}]}`, 7, 6, 3, 5},
+			{"positive_correction_not_max", `{"promptTokenCount":8,"cachedContentTokenCount":2,"candidatesTokenCount":1,"thoughtsTokenCount":1,"candidatesTokensDetails":[{"modality":"IMAGE","tokenCount":2}]}`, 6, 2, 2, 2},
+		} {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				sentinel := errors.New("read failed after sparse metering")
+				prefix := agMeteredFrame(agMeteredSnapshot) + agMeteredFrame(`{"response":{"usageMetadata":`+tc.metadata+`}}`)
+				result, err, rec := agMeteredReader(t, mode, io.NopCloser(io.MultiReader(strings.NewReader(prefix), agMeteredReadFailure{sentinel})), &config.Config{}, false)
+				require.ErrorIs(t, err, sentinel)
+				var failover *UpstreamFailoverError
+				require.False(t, errors.As(err, &failover))
+				require.NotNil(t, result)
+				require.Equal(t, tc.input, result.usage.InputTokens)
+				require.Equal(t, tc.output, result.usage.OutputTokens)
+				require.Equal(t, tc.cache, result.usage.CacheReadInputTokens)
+				require.Equal(t, tc.image, result.usage.ImageOutputTokens)
+				require.NotContains(t, rec.Body.String(), "message_stop")
+			})
+		}
+	}
+}

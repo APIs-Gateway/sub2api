@@ -156,19 +156,25 @@ func TestAntigravityPartialBilling_RealHandlerSettlesOnce(t *testing.T) {
 	for _, native := range []bool{false, true} {
 		for _, stream := range []bool{false, true} {
 			for _, card := range []bool{false, true} {
-				for _, failure := range []string{"empty", "read_error", "provider_error"} {
+				for _, failure := range []string{"empty", "read_error", "provider_error", "sparse_usage", "partial_zeros"} {
 					name := map[bool]string{false: "claude", true: "gemini"}[native] + map[bool]string{false: "_buffered", true: "_stream"}[stream] + map[bool]string{false: "_wallet", true: "_card"}[card] + "/" + failure
 					t.Run(name, func(t *testing.T) {
 						payload := `{"response":{"candidates":[{"content":{"parts":[{"thoughtSignature":"sig"}]},"finishReason":"MALFORMED_FUNCTION_CALL"}],"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":4}}}`
-						if failure == "read_error" {
+						if failure == "read_error" || failure == "sparse_usage" || failure == "partial_zeros" {
 							payload = `{"response":{"candidates":[{"content":{"parts":[{"text":"partial"}]}}],"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":4}}}`
 						}
 						response := "data: " + payload + "\n\n"
 						if failure == "provider_error" {
 							response += "data: " + `{"response":{"error":{"code":403,"status":"PERMISSION_DENIED","message":"projects/private account@pool"}}}` + "\n\n"
 						}
+						if failure == "sparse_usage" {
+							response += "data: " + `{"response":{"usageMetadata":{"promptTokenCount":10}}}` + "\n\n"
+						}
+						if failure == "partial_zeros" {
+							response += "data: " + `{"response":{"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":0,"candidatesTokenCount":0,"thoughtsTokenCount":0}}}` + "\n\n"
+						}
 						f := newAGMeteredBillingFixture(t, response)
-						if failure == "read_error" {
+						if failure == "read_error" || failure == "sparse_usage" || failure == "partial_zeros" {
 							f.upstream.readErr = errors.New("provider interrupted after metering")
 						}
 						if card {
