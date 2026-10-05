@@ -365,6 +365,8 @@ func (q *PriceQuoter) Quote(ctx context.Context, req QuoteRequest) (*Quote, erro
 	// 额外倍率：与网关一致，按实际出价的模型（这里就是 model）、计价分组、计费时点取，乘进两个倍率。
 	// 乘法的位置与网关相同（先按图片倍率策略算好 imageMultiplier，再各自乘 extra），extra 为 1 时 x*1 与 x 逐位相同。
 	policy := q.resolver.groupPolicy()
+	// 一次报价固定读同一份分组快照：额外倍率、价格覆盖、准入、阶段都来自它（W6 PR5，PR4-2 审查「给后续」）。
+	ctx = pinGroupPolicySnapshots(ctx, policy)
 	extra := extraMultiplierFor(ctx, policy, pg.ID, model, at)
 	effectiveMultiplier := rateMultiplier * extra
 	imageMultiplier *= extra
@@ -521,10 +523,12 @@ func (q *PriceQuoter) quoteAccess(ctx context.Context, policy GroupPolicy, pg *G
 }
 
 // catalogAccess 叠加模型目录状态：目录里显式为 draft 或 retired 才拦，未登记视同 active（Q2）。
-// 只对 shadow、v2 阶段的分组生效，因为 legacy 分组的运行时准入不读目录；没有接目录（SetModelCatalog）时放行。
+// 只对 v2 阶段的分组生效：legacy 与 shadow 分组的运行时准入都不读目录，Access 要如实显示运行时实际生效的结果，
+// 不能把「v2 的预览」和「legacy 的现状」混在一起（PR4-2 审查「给后续」PR5 第 3 条）。
+// shadow 阶段目录状态带来的差异由影子比对另行统计。没有接目录（SetModelCatalog）时放行。
 // 目录读取失败时放行并记 Warn：Access 是展示与校验用的，读不到目录不能把一个可用的模型报成不可用。
 func (q *PriceQuoter) catalogAccess(ctx context.Context, policy GroupPolicy, pg *Group, model string) QuoteAccess {
-	if q.catalog == nil || policy.Stage(ctx, pg.ID) == PricingStageLegacy {
+	if q.catalog == nil || policy.Stage(ctx, pg.ID) != PricingStageV2 {
 		return QuoteAccess{OK: true}
 	}
 	entry, err := q.catalog.Resolve(ctx, pg.Platform, normalizePricingEntryModel(model))

@@ -109,6 +109,9 @@ type matrixSnapshot struct {
 
 	// loadErr 非空表示这是加载失败时的兜底快照（没有可用的旧快照时退回默认状态）。
 	loadErr error
+	// stale 为 true 表示这是加载失败后继续使用的旧快照（数据只是旧，不是缺）。旧快照的浅拷贝，其余字段与原快照共享且只读。
+	// 影子比对遇到它要跳过：这时 legacy 一侧可能已经读到了新的渠道数据（PR4-1 审查给 PR5 第 3 条）。
+	stale bool
 }
 
 // buildMatrixSnapshot 把库里的分组现状编译成快照。纯函数，不做 I/O。
@@ -349,6 +352,11 @@ type matrixPolicy struct {
 	generation uint64
 	sf         singleflight.Group
 
+	// refreshing 记录正在后台刷新的分组，同一个分组同一时间只有一个后台加载（cachedSnapshot 用）。
+	refreshing sync.Map
+	// lastInvalidatedNs 最近一次失效的时刻（本地失效或收到其他实例的通知），影子比对用它避开「渠道刚保存、派生还没落库」的窗口。
+	lastInvalidatedNs atomic.Int64
+
 	loads         atomic.Int64
 	loadFailures  atomic.Int64
 	staleServed   atomic.Int64
@@ -414,6 +422,7 @@ func (p *matrixPolicy) invalidate(groupIDs []int64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.generation++
+	p.lastInvalidatedNs.Store(p.now().UnixNano())
 	mark := func(id int64) {
 		if e, ok := p.entries[id]; ok && !e.invalidated {
 			p.entries[id] = &matrixSnapshotEntry{snap: e.snap, expiresAt: e.expiresAt, invalidated: true}
@@ -441,8 +450,23 @@ func (p *matrixPolicy) notify() {
 	}
 }
 
-// snapshot 返回分组的快照，永不为 nil。
+// snapshot 返回分组的快照，永不为 nil。ctx 里有固定器（pinGroupPolicySnapshots）时，同一次计算里
+// 对同一个分组的所有读取都得到同一份快照，哪怕缓存在中途被替换。
 func (p *matrixPolicy) snapshot(ctx context.Context, groupID int64) *matrixSnapshot {
+	pin := pinFromContext(ctx)
+	if pin == nil {
+		return p.loadSnapshot(ctx, groupID)
+	}
+	if e, ok := pin.get(p, groupID); ok && e.snap != nil {
+		return e.snap
+	}
+	// 固定器里是冷启动的空位（cachedSnapshot 记的）也要换成真快照：阻塞读取方本来就等得起，
+	// 并且之后的读取与它保持一致。
+	return pin.putSnapshot(p, groupID, p.loadSnapshot(ctx, groupID))
+}
+
+// loadSnapshot 从缓存取快照，缓存没有或已过期就加载（阻塞）。
+func (p *matrixPolicy) loadSnapshot(ctx context.Context, groupID int64) *matrixSnapshot {
 	now := p.now()
 	p.mu.RLock()
 	e := p.entries[groupID]
@@ -462,8 +486,66 @@ func (p *matrixPolicy) snapshot(ctx context.Context, groupID int64) *matrixSnaps
 
 // SnapshotDegraded 报告分组当前用的是不是加载失败时的默认状态兜底（语义第 2 条）。
 // 使用旧快照（语义第 1 条）不算兜底：数据只是旧，不是缺。
+// 判断取自 snapshot 返回的那一份快照，所以在固定器下与参与计算的快照是同一份。
 func (p *matrixPolicy) SnapshotDegraded(ctx context.Context, groupID int64) bool {
 	return p.snapshot(ctx, groupID).loadErr != nil
+}
+
+// cachedSnapshot 是不阻塞的取法，给热路径上「只想知道阶段」的调用方（stagedPolicy）用：
+//   - 缓存里有快照就直接用，即使已过期或已被失效，同时在后台刷新（不等）；
+//   - 缓存里没有（进程刚启动、这个分组第一次出现）返回 nil，并在后台开始加载。
+//
+// 这样请求路径不会因为矩阵表的数据库读取而被拖慢或卡住：加载完成之前，调用方按 legacy 处理，
+// 与没有矩阵策略时的行为完全相同。固定器存在时，结果（包括 nil）固定下来，同一次计算内不会前后不一。
+func (p *matrixPolicy) cachedSnapshot(ctx context.Context, groupID int64) *matrixSnapshot {
+	pin := pinFromContext(ctx)
+	if pin != nil {
+		if e, ok := pin.get(p, groupID); ok {
+			return e.snap
+		}
+	}
+	now := p.now()
+	p.mu.RLock()
+	e := p.entries[groupID]
+	p.mu.RUnlock()
+
+	var snap *matrixSnapshot
+	if e != nil {
+		snap = e.snap
+	}
+	if e == nil || e.invalidated || !now.Before(e.expiresAt) {
+		p.refreshAsync(groupID)
+	}
+	if pin != nil {
+		return pin.put(p, groupID, pinnedEntry{snap: snap}).snap
+	}
+	return snap
+}
+
+// refreshAsync 在后台加载一个分组的快照，同一个分组同一时间只有一个。加载失败按 load 的既有语义兜底并计数，
+// 失败后 5 秒内缓存项有效，所以不会在数据库故障期间反复重试。后台加载不继承任何请求的 ctx。
+func (p *matrixPolicy) refreshAsync(groupID int64) {
+	if _, running := p.refreshing.LoadOrStore(groupID, struct{}{}); running {
+		return
+	}
+	go func() {
+		defer p.refreshing.Delete(groupID)
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("group matrix snapshot refresh panicked", "group_id", groupID, "panic", r)
+			}
+		}()
+		p.loadSnapshot(context.Background(), groupID)
+	}()
+}
+
+// lastInvalidation 返回最近一次失效的时刻；从未失效返回零值。
+func (p *matrixPolicy) lastInvalidation() time.Time {
+	ns := p.lastInvalidatedNs.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
 }
 
 // load 从数据库加载一份快照并存进缓存；失败时按上面的语义兜底。gen 是调用方读到的缓存代数。
@@ -487,8 +569,11 @@ func (p *matrixPolicy) load(ctx context.Context, groupID int64, gen uint64) *mat
 	p.mu.RUnlock()
 	if prev != nil && prev.snap.loadErr == nil {
 		p.staleServed.Add(1)
-		p.store(gen, groupID, &matrixSnapshotEntry{snap: prev.snap, expiresAt: now.Add(p.errTTL)})
-		return prev.snap
+		// 浅拷贝一份并打上 stale 标记：数据与旧快照完全相同，只是让影子比对认得出「这是沿用的旧数据」。
+		stale := *prev.snap
+		stale.stale = true
+		p.store(gen, groupID, &matrixSnapshotEntry{snap: &stale, expiresAt: now.Add(p.errTTL)})
+		return &stale
 	}
 
 	p.coldFallbacks.Add(1)

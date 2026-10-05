@@ -9082,6 +9082,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	account := input.Account
 	subscription := input.Subscription
 	ApplyOpenAIImageBillingResolution(result)
+	// 一次结算固定读同一份分组快照（W6 PR5）：legacy 策略下是空操作，不分配。
+	ctx = pinGroupPolicySnapshots(ctx, s.groupPolicy())
 
 	// OpenAI input_tokens 聚合普通输入、缓存读取和显式缓存写入。
 	// 后两类会分别按 cache-read/cache-write 单价计费，必须先从普通输入中扣除。
@@ -9170,6 +9172,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	// 请求级计费时点：用户计费与账号统计成本共用，避免跨 DeepSeek 峰谷边界时两者错位。
 	pricingAt := deepseekNowFunc()
 	cost, err = s.calculateOpenAIRecordUsageCost(ctx, result, billingAPIKey, billingModels, multiplier, imageMultiplier, tokens, serviceTier, pricingAt)
+	// 影子比对要的是成本函数的原始返回（下面会按无价、审计行等情况改写 cost）。
+	shadowLegacyCost, shadowLegacyErr := cost, err
 	if err != nil {
 		if !isUsagePricingUnavailableError(err) {
 			noteUnpricedBilling(ctx, billingAPIKey, result.Model, UnpricedBillingReasonCalcError, err,
@@ -9343,6 +9347,14 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		)
 	}
 
+	// 影子比对（W6 PR5）：只在分组处于 shadow 阶段时才有动作，不改变上面算出的任何结果。
+	s.shadowCompareBilling(ctx, &openAIShadowBilling{
+		result: result, apiKey: billingAPIKey, account: account, usageLog: usageLog,
+		billingModels: billingModels, multiplier: multiplier, imageMultiplier: imageMultiplier,
+		tokens: tokens, serviceTier: serviceTier, pricingAt: pricingAt, cost: cost,
+		legacyCost: shadowLegacyCost, legacyErr: shadowLegacyErr,
+	})
+
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 		CompleteBillingInflightTask(ctx)
@@ -9454,6 +9466,8 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	serviceTier string,
 	pricingAt time.Time,
 ) (*CostBreakdown, error) {
+	// 额外倍率、价格覆盖读同一份分组快照（W6 PR5）；ctx 里已有固定器时原样返回。
+	ctx = pinGroupPolicySnapshots(ctx, s.groupPolicy())
 	billingModel := firstUsageBillingModel(billingModels)
 	if result != nil && result.ImageCount > 0 {
 		if imageBillingModel := s.firstOpenAIImageBillingModel(ctx, billingModels, apiKey); imageBillingModel != "" {

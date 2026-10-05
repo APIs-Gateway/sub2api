@@ -708,6 +708,9 @@ var ProviderSet = wire.NewSet(
 	NewModelPricingResolver,
 	NewPriceQuoter,
 	ProvidePricingDerivationService,
+	NewPricingShadowRecorder,
+	ProvideStagedGroupPolicy,
+	NewPricingStageService,
 	NewModelCatalogService,
 	NewUserPriceCatalogService,
 	NewContentModerationService,
@@ -731,6 +734,33 @@ func ProvidePricingDerivationService(repo PricingMatrixRepository, channels Chan
 	svc := NewPricingDerivationService(repo, channels, billing)
 	channelService.SetSaveHook(svc)
 	return svc
+}
+
+// ProvideStagedGroupPolicy 创建 W6 的 stagedPolicy，并一次性注入三个读取方：两个网关与价格解析器。
+// 三处必须是同一个实例（报价器的策略取自 resolver，所以也是它）；派生钩子的快照失效器设成同一个 matrixPolicy。
+// 必须在开始处理请求之前完成，所以放在依赖注入里、不走运行时开关。
+// 所有分组默认是 legacy：stagedPolicy 把请求原样转发给 legacyPolicy，行为与注入之前逐位相同。
+func ProvideStagedGroupPolicy(
+	channelService *ChannelService,
+	repo PricingMatrixRepository,
+	pubsub ChannelCachePubSub,
+	recorder *PricingShadowRecorder,
+	gateway *GatewayService,
+	openAIGateway *OpenAIGatewayService,
+	resolver *ModelPricingResolver,
+	derive *PricingDerivationService,
+) *StagedGroupPolicy {
+	matrix := NewMatrixGroupPolicy(repo, pubsub)
+	var sink PricingShadowSink // 不能直接传 nil 的 *PricingShadowRecorder：那会得到一个非 nil 的接口值
+	if recorder != nil {
+		sink = recorder
+	}
+	policy := newStagedGroupPolicy(newLegacyGroupPolicy(channelService), matrix, sink)
+	gateway.policyOverride = policy
+	openAIGateway.policyOverride = policy
+	resolver.policyOverride = policy
+	derive.SetSnapshotInvalidator(matrix)
+	return policy
 }
 
 // ProvideUserPlatformQuotaUsageFlusher 创建并启动 UserPlatformQuotaUsageFlusher。

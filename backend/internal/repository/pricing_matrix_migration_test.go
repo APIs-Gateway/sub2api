@@ -153,3 +153,30 @@ func TestW6PricingWriteApprovalsMigrationShape(t *testing.T) {
 	}
 	require.Equal(t, []string{name}, sameNumber, "迁移号 208 只能有一个文件")
 }
+
+// W6-M4（迁移 215，PR5）：影子比对差异样本表。只建新表和新索引，没有任何现有读取方。
+func TestW6PricingShadowDiffsMigrationShape(t *testing.T) {
+	const name = "215_w6_pricing_shadow_diffs.sql"
+	code := sqlWithoutComments(readMigrationForTest(t, name))
+
+	require.Contains(t, code, "SET LOCAL lock_timeout")
+	require.Contains(t, code, "SET LOCAL statement_timeout")
+	require.Contains(t, code, "CREATE TABLE IF NOT EXISTS pricing_shadow_diffs")
+	require.Contains(t, code, "CHECK (kind IN ('access', 'mapping', 'feature', 'cost', 'account_cost'))")
+	require.Contains(t, code, "CHECK (class IN ('translation', 'expected'))")
+	require.Contains(t, code, "CREATE INDEX IF NOT EXISTS idx_pricing_shadow_diffs_created")
+	require.NotContains(t, code, "REFERENCES", "不建外键")
+
+	forbidden := regexp.MustCompile(`(?i)\b(ALTER\s+TABLE|DROP\s|TRUNCATE|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|CONCURRENTLY)\b`)
+	require.Empty(t, forbidden.FindString(code), "迁移只能建新表和新索引")
+
+	entries, err := os.ReadDir(filepath.Join("..", "..", "migrations"))
+	require.NoError(t, err)
+	var sameNumber []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "215_") {
+			sameNumber = append(sameNumber, e.Name())
+		}
+	}
+	require.Equal(t, []string{name}, sameNumber, "迁移号 215 只能有一个文件")
+}
