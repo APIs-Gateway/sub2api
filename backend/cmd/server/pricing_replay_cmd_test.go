@@ -56,22 +56,22 @@ func TestParsePricingReplayArgs_AllFlags(t *testing.T) {
 
 func TestParsePricingReplayArgs_Invalid(t *testing.T) {
 	for name, args := range map[string][]string{
-		"unknown flag":     {"--nope"},
-		"positional":       {"extra"},
-		"days zero":        {"--days", "0"},
-		"days too big":     {"--days", "366"},
-		"bad source":       {"--matrix-source", "x"},
-		"workers zero":     {"--workers", "0"},
-		"workers too many": {"--workers", "65"},
-		"batch zero":       {"--batch-size", "0"},
-		"batch too big":    {"--batch-size", "50001"},
-		"stmt zero":        {"--statement-timeout", "0s"},
-		"stmt too long":    {"--statement-timeout", "31m"},
-		"lock zero":        {"--lock-timeout", "0s"},
-		"lock too long":    {"--lock-timeout", "2m"},
-		"bad group":        {"--groups", "1,x"},
-		"negative group":   {"--groups", "-1"},
-		"bad until":        {"--until", "yesterday"},
+		"unknown flag":      {"--nope"},
+		"positional":        {"extra"},
+		"days zero":         {"--days", "0"},
+		"days too big":      {"--days", "366"},
+		"bad source":        {"--matrix-source", "x"},
+		"workers zero":      {"--workers", "0"},
+		"workers too many":  {"--workers", "65"},
+		"batch zero":        {"--batch-size", "0"},
+		"batch too big":     {"--batch-size", "50001"},
+		"stmt zero":         {"--statement-timeout", "0s"},
+		"stmt too long":     {"--statement-timeout", "31m"},
+		"lock zero":         {"--lock-timeout", "0s"},
+		"lock too long":     {"--lock-timeout", "2m"},
+		"bad group":         {"--groups", "1,x"},
+		"negative group":    {"--groups", "-1"},
+		"bad until":         {"--until", "yesterday"},
 	} {
 		var errOut bytes.Buffer
 		_, err := parsePricingReplayArgs(args, &errOut, replayCmdNow)
@@ -139,4 +139,21 @@ func TestPrintPricingReplayResult(t *testing.T) {
 	for _, want := range []string{"in_window=10", "kind=cost class=translation", "pass=false", "not passed: translation diffs", "dir/base-summary.json", "dir/base-diffs.csv (2 rows)"} {
 		require.True(t, strings.Contains(text, want), want)
 	}
+}
+
+// 数据库连不上时命令在核对只读会话那一步就退出：配置、时区、日志降级与 DSN 拼装都走过，且没有任何文件产出。
+func TestRunPricingReplayCommand_DatabaseUnreachable(t *testing.T) {
+	t.Setenv("DATABASE_HOST", "127.0.0.1")
+	t.Setenv("DATABASE_PORT", "1")
+	t.Setenv("DATABASE_USER", "replay")
+	t.Setenv("DATABASE_PASSWORD", "x")
+	t.Setenv("DATABASE_DBNAME", "replay_test")
+	t.Setenv("DATABASE_SSLMODE", "disable")
+	dir := t.TempDir()
+	var out bytes.Buffer
+	err := runPricingReplayCommand([]string{"--out-dir", dir, "--statement-timeout", "5s"}, &out)
+	require.Error(t, err)
+	entries, readErr := os.ReadDir(dir)
+	require.NoError(t, readErr)
+	require.Empty(t, entries)
 }
