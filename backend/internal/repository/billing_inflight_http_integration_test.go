@@ -72,6 +72,7 @@ func (u *inflightHTTPUpstream) DoWithTLS(req *http.Request, proxy string, id int
 }
 
 type inflightHTTPFixture struct {
+	cfg            *config.Config
 	account        *service.Account
 	gatewayService *service.GatewayService
 	geminiService  *service.GeminiMessagesCompatService
@@ -148,7 +149,7 @@ func newInflightHTTPFixture(t *testing.T, platform, response, contentType string
 	}
 	pool := service.NewUsageRecordWorkerPoolWithOptions(options)
 	t.Cleanup(pool.Stop)
-	fixture := &inflightHTTPFixture{account: account, accounts: accounts, accountID: account.ID, gatewayService: gatewaySvc, geminiService: gemini, rateLimit: rateLimit, settings: settings, user: user, key: key, pool: pool, upstream: upstream, openAIService: openAISvc,
+	fixture := &inflightHTTPFixture{cfg: cfg, account: account, accounts: accounts, accountID: account.ID, gatewayService: gatewaySvc, geminiService: gemini, rateLimit: rateLimit, settings: settings, user: user, key: key, pool: pool, upstream: upstream, openAIService: openAISvc,
 		gateway: userhandler.NewGatewayHandler(gatewaySvc, gemini, nil, nil, nil, concurrency, billingCache, nil, nil, pool, nil, nil, nil, cfg, nil, openAISvc),
 		openAI:  userhandler.NewOpenAIGatewayHandler(openAISvc, concurrency, billingCache, keyService, pool, nil, nil, nil, cfg)}
 	t.Cleanup(func() {
