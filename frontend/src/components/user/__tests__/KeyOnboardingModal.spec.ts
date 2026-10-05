@@ -533,7 +533,7 @@ describe('KeyOnboardingModal', () => {
     // 文档链接的域名是站点自己的来源（页面所在的地址），不是接入地址
     const ORIGIN = window.location.origin
 
-    it('一句话指向站内的工具文档，文本里没有密钥，复制简短版/详细版也没有', async () => {
+    it('一句话指向站内的工具文档，文本里没有密钥，复制简短版/详细版也没有（详细版里只有占位）', async () => {
       const w = await mountModal({ initialTab: 'ai', docUrl: 'https://docs.example.com' })
       const shown = (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
       expect(shown).toBe(`Follow this guide to connect Codex to Hiyo: ${ORIGIN}/docs/codex.md`)
@@ -544,15 +544,69 @@ describe('KeyOnboardingModal', () => {
       await flushPromises()
       const [short, detail] = clipboard.writeText.mock.calls.map((c) => c[0] as string)
       expect(short).toBe(shown)
-      for (const text of [short, detail]) {
-        expect(text).not.toContain(SECRET)
-        expect(text).not.toContain('sk-')
-      }
-      // 管理员配置的外部文档地址不再进一句话，只在详细版里
+      for (const text of [short, detail]) expect(text).not.toContain(SECRET)
+      expect(short).not.toContain('sk-')
+      expect(detail.match(/sk-\S*/g)).toEqual(['sk-YOUR_API_KEY'])
+      // 管理员配置的外部文档地址（线上是一份 AI 读不了的在线文档）不再进一句话，也不进详细版：详细版读的是站内的文档
       expect(short).not.toContain('https://docs.example.com')
-      expect(detail).toContain('gpt-5.6-sol, gpt-5.6-luna')
+      expect(detail).not.toContain('https://docs.example.com')
+      // 详细版：先读站内的 Codex 文档，地址、这个分组的模型（别的分组的不出现）、错误排查都在
+      expect(detail).toContain(`Read this first: ${ORIGIN}/docs/codex.md\n`)
+      expect(detail).toContain('- OpenAI-compatible Base URL: https://codex.hiyo.top/v1\n')
+      expect(detail).toContain('Models this key can call: gpt-5.6-sol, gpt-5.6-luna\n')
       expect(detail).not.toContain('not-mine')
-      expect(detail).toContain('https://docs.example.com')
+      expect(detail).toContain(`${ORIGIN}/docs/errors.md`)
+    })
+
+    describe('复制详细版：等模型加载完', () => {
+      const copyDetail = async (w: VueWrapper) => {
+        clipboard.writeText.mockClear()
+        await w.get('[data-test="ai-copy-detail"]').trigger('click')
+        await flushPromises()
+        return String(clipboard.writeText.mock.calls[0]?.[0])
+      }
+
+      it('模型还在加载：按钮禁用，点了也不复制；加载完立刻可用，复制出来的带这个分组的模型', async () => {
+        let resolve!: (v: unknown) => void
+        getAvailable.mockReturnValue(new Promise((r) => (resolve = r)))
+        const w = await mountModal({ initialTab: 'ai' })
+        const btn = () => w.get('[data-test="ai-copy-detail"]')
+        expect(btn().attributes('disabled')).toBeDefined()
+        expect(btn().find('[data-test="ai-detail-spinner"]').exists()).toBe(true)
+        clipboard.writeText.mockClear()
+        await btn().trigger('click')
+        expect(clipboard.writeText).not.toHaveBeenCalled()
+
+        resolve(channels)
+        await flushPromises()
+        expect(btn().attributes('disabled')).toBeUndefined()
+        expect(btn().find('[data-test="ai-detail-spinner"]').exists()).toBe(false)
+        expect(await copyDetail(w)).toContain('Models this key can call: gpt-5.6-sol, gpt-5.6-luna\n')
+      })
+
+      it('取不到模型：加载结束后按钮可用，详细版里没有模型这一行，其余照常', async () => {
+        getAvailable.mockRejectedValue(new Error('x'))
+        const w = await mountModal({ initialTab: 'ai' })
+        expect(w.get('[data-test="ai-copy-detail"]').attributes('disabled')).toBeUndefined()
+        const detail = await copyDetail(w)
+        expect(detail).not.toContain('Models this key can call')
+        expect(detail).toContain('Read this first:')
+        expect(detail).toContain('Full, up-to-date model list')
+      })
+
+      it('换到备用线路：详细版里的地址是备用线路，文档链接带 ?endpoint=', async () => {
+        localStorage.setItem('docs_api_endpoint', 'https://cdn.example.com')
+        const w = await mountModal({
+          initialTab: 'ai',
+          customEndpoints: [{ name: 'CDN', endpoint: 'https://cdn.example.com/v1/', description: '' }]
+        })
+        const detail = await copyDetail(w)
+        expect(detail).toContain(`Read this first: ${ORIGIN}/docs/codex.md?endpoint=https://cdn.example.com\n`)
+        expect(detail).toContain('- OpenAI-compatible Base URL: https://cdn.example.com/v1\n')
+        expect(detail).toContain(`${ORIGIN}/docs/errors.md?endpoint=https://cdn.example.com to troubleshoot`)
+        expect(detail).not.toContain('codex.hiyo.top/v1')
+        localStorage.clear()
+      })
     })
 
     it('切换客户端会换成对应的文档', async () => {
@@ -708,6 +762,16 @@ describe('KeyOnboardingModal', () => {
           expect(gpt.searchParams.get('q')).toBe(shown)
           expect(claude.searchParams.get('q')).toBe(shown)
           expect(shown).not.toContain(SECRET)
+
+          // 详细版：先读的文档、错误排查都是站内的、真的存在，没有密钥
+          clipboard.writeText.mockClear()
+          await w.get('[data-test="ai-copy-detail"]').trigger('click')
+          await flushPromises()
+          const detail = String(clipboard.writeText.mock.calls[0][0])
+          const docs = (detail.match(/https?:\/\/\S+/g) ?? []).filter((u) => u.startsWith(`${ORIGIN}/docs/`) || u.startsWith(`${ORIGIN}/llms.txt`))
+          expect(docs.length, `${platform} ${client}`).toBeGreaterThanOrEqual(2)
+          for (const u of docs) expect(served, `${platform} ${client} ${u}`).toContain(new URL(u).pathname.slice(1))
+          expect(detail).not.toContain(SECRET)
         }
         // 文档目录：任何分组、任何工具下都是 /llms.txt，用新窗口打开
         const catalog = w.get('a[data-test="ai-catalog"]')
@@ -742,7 +806,13 @@ describe('KeyOnboardingModal', () => {
         const w = await mountModal({ initialTab: 'ai', siteName, baseUrl: 'https://free.example.com/' })
         const shown = (w.get('[data-test="ai-prompt"]').element as HTMLTextAreaElement).value
         expect(shown).toBe(`${prefix}${ORIGIN}/docs/codex.md`)
-        const page = `${w.get('[data-test="panel-ai"]').text()}\n${shown}`
+        // 详细版也一样：这是同一个弹窗，不知道站点有没有开支付
+        clipboard.writeText.mockClear()
+        await w.get('[data-test="ai-copy-detail"]').trigger('click')
+        await flushPromises()
+        const detail = String(clipboard.writeText.mock.calls[0][0])
+        expect(detail).toContain(siteName)
+        const page = `${w.get('[data-test="panel-ai"]').text()}\n${shown}\n${detail}`
         expect(page).not.toMatch(/[¥￥$]|USD|CNY|RMB|price|pricing|billing|balance|recharge|payment|top[- ]?up|multiplier|价格|计费|余额|充值|支付|付费|倍率|汇率|换算/i)
         // 接入地址不进一句话：免费站和付费站走同一份文档
         expect(shown).not.toContain('free.example.com')

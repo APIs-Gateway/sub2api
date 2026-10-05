@@ -1,0 +1,1089 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`复制详细版：en 和 zh-HK 的代表性快照 > en：anthropic / cursor 1`] = `
+"Please help me connect Cursor to Hiyo codex (an API service compatible with the OpenAI and Anthropic formats).
+Read this first: https://codex.hiyo.top/docs/cursor.md
+Follow the steps in the guide and walk me through the setup one step at a time.
+
+Connection details:
+- OpenAI-compatible Base URL (for Cursor, chat apps and similar): https://codex.hiyo.top/v1
+- Anthropic-compatible Base URL (no /v1): https://codex.hiyo.top
+- Key: use sk-YOUR_API_KEY as a placeholder. I will fill in the real key myself, so do not ask me to send it to you.
+- Models this key can call: claude-haiku-5, claude-opus-4-1, claude-opus-5, claude-sonnet-5, claude-sonnet-5-20261001
+- Full, up-to-date model list: request GET https://codex.hiyo.top/v1/models with this key. Do not fill in model names from memory.
+- Override OpenAI Base URL must include /v1. Custom model names must match the model list exactly, and Auto must be turned off in the chat panel.
+- Model names in the guide’s examples (such as gpt-5.6-sol) are only examples. Use a model that is available to this key’s group.
+
+Requirements:
+1. Say exactly which file path or setting needs to change.
+2. Ask me directly whenever you need to know about my system, tools or anything else.
+3. At the end, tell me how to check that it works. If something fails, use https://codex.hiyo.top/docs/errors.md to troubleshoot.
+4. If you are a coding assistant running on my computer, you may edit the config files for me, but tell me what you are going to change first."
+`;
+
+exports[`复制详细版：en 和 zh-HK 的代表性快照 > en：antigravity / chat 1`] = `
+"Please help me connect my chat app to Hiyo codex (an API service compatible with the OpenAI and Anthropic formats).
+Read this first: https://codex.hiyo.top/llms.txt
+Ask me which chat app I use, find its section in the docs index, then walk me through the setup step by step.
+
+Connection details:
+- Address (no /v1; use it for both Claude Code and Gemini CLI): https://codex.hiyo.top/antigravity
+- Key: use sk-YOUR_API_KEY as a placeholder. I will fill in the real key myself, so do not ask me to send it to you.
+- Models this key can call: claude-opus-5, claude-sonnet-5, gemini-3.1-pro-high
+- Full, up-to-date model list: request GET https://codex.hiyo.top/v1/models with this key. Do not fill in model names from memory.
+- In the guide, replace every address https://codex.hiyo.top with https://codex.hiyo.top/antigravity when you set things up.
+- This address only accepts Anthropic and Gemini format requests. Pick one of those two as the provider type or SDK, not OpenAI.
+- Model names in the guide’s examples (such as gpt-5.6-sol) are only examples. Use a model that is available to this key’s group.
+
+Requirements:
+1. Say exactly which file path or setting needs to change.
+2. Ask me directly whenever you need to know about my system, tools or anything else.
+3. At the end, tell me how to check that it works. If something fails, use https://codex.hiyo.top/docs/errors.md to troubleshoot."
+`;
+
+exports[`复制详细版：en 和 zh-HK 的代表性快照 > en：gemini / code 1`] = `
+"Please help me call Hiyo codex from my code (an API service compatible with the OpenAI and Anthropic formats).
+Read this first: https://codex.hiyo.top/docs/openai-sdk.md https://codex.hiyo.top/docs/endpoints.md
+Use the examples in the guide to walk me through writing the call, step by step.
+
+Connection details:
+- OpenAI-compatible Base URL: https://codex.hiyo.top/v1
+- Gemini native address (for Gemini CLI; no /v1): https://codex.hiyo.top
+- Key: use sk-YOUR_API_KEY as a placeholder. I will fill in the real key myself, so do not ask me to send it to you.
+- Models this key can call: gemini-3-flash, gemini-3-pro-image, gemini-3.1-pro-preview
+- Full, up-to-date model list: request GET https://codex.hiyo.top/v1/models with this key. Do not fill in model names from memory.
+- The OpenAI SDK uses the OpenAI-compatible Base URL; the official Gemini SDK uses the Gemini native address (no /v1).
+- Model names in the guide’s examples (such as gpt-5.6-sol) are only examples. Use a model that is available to this key’s group.
+
+Requirements:
+1. Read the key from an environment variable instead of hard-coding it; give me a minimal example I can run as is; turn on streaming (stream) for long replies.
+2. Ask me directly whenever you need to know about my system, tools or anything else.
+3. At the end, tell me how to check that it works. If something fails, use https://codex.hiyo.top/docs/errors.md to troubleshoot."
+`;
+
+exports[`复制详细版：en 和 zh-HK 的代表性快照 > en：openai（开了调度） / claude 1`] = `
+"Please help me connect Claude Code to Hiyo codex (an API service compatible with the OpenAI and Anthropic formats).
+Read this first: https://codex.hiyo.top/docs/claude-code.md
+Follow the steps in the guide and walk me through the setup one step at a time.
+
+Connection details:
+- Anthropic-compatible Base URL (no /v1; for Claude Code): https://codex.hiyo.top
+- OpenAI-compatible Base URL: https://codex.hiyo.top/v1
+- Key: use sk-YOUR_API_KEY as a placeholder. I will fill in the real key myself, so do not ask me to send it to you.
+- Models this key can call (partial list): gpt-5.3-codex, gpt-5.5, gpt-5.6-luna, gpt-5.6-sol, gpt-5.6-terra
+- Full, up-to-date model list: request GET https://codex.hiyo.top/v1/models with this key. Do not fill in model names from memory.
+- The key variable is ANTHROPIC_AUTH_TOKEN, not ANTHROPIC_API_KEY. Remove any leftover ANTHROPIC_API_KEY on my computer.
+- If a request returns 400 saying a field is not accepted, add CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 to env and restart.
+
+Requirements:
+1. Say exactly which file path or setting needs to change.
+2. Ask me directly whenever you need to know about my system, tools or anything else.
+3. At the end, tell me how to check that it works. If something fails, use https://codex.hiyo.top/docs/errors.md to troubleshoot.
+4. If you are a coding assistant running on my computer, you may edit the config files for me, but tell me what you are going to change first."
+`;
+
+exports[`复制详细版：en 和 zh-HK 的代表性快照 > en：openai（没开调度） / codex 1`] = `
+"Please help me connect Codex to Hiyo codex (an API service compatible with the OpenAI and Anthropic formats).
+Read this first: https://codex.hiyo.top/docs/codex.md
+Follow the steps in the guide and walk me through the setup one step at a time.
+
+Connection details:
+- OpenAI-compatible Base URL: https://codex.hiyo.top/v1
+- Key: use sk-YOUR_API_KEY as a placeholder. I will fill in the real key myself, so do not ask me to send it to you.
+- Models this key can call (partial list): gpt-5.6-sol, gpt-5.3-codex, gpt-5.5, gpt-5.6-luna, gpt-5.6-terra
+- Full, up-to-date model list: request GET https://codex.hiyo.top/v1/models with this key. Do not fill in model names from memory.
+- In config.toml, set wire_api to responses and keep model_provider and model at the very top of the file. After editing, fully quit Codex, reopen it and start a new session.
+
+Requirements:
+1. Say exactly which file path or setting needs to change.
+2. Ask me directly whenever you need to know about my system, tools or anything else.
+3. At the end, tell me how to check that it works. If something fails, use https://codex.hiyo.top/docs/errors.md to troubleshoot.
+4. If you are a coding assistant running on my computer, you may edit the config files for me, but tell me what you are going to change first."
+`;
+
+exports[`复制详细版：en 和 zh-HK 的代表性快照 > zh-HK：anthropic / cursor 1`] = `
+"請幫我把 Cursor 接入 Hiyo codex（相容 OpenAI 和 Anthropic 格式的 API 服務）。
+請先閱讀：https://codex.hiyo.top/docs/cursor.md
+按文件裏的步驟一步步帶我設定。
+
+接入資料：
+- OpenAI 相容 Base URL（Cursor、聊天客戶端等用）：https://codex.hiyo.top/v1
+- Anthropic 相容 Base URL（不帶 /v1）：https://codex.hiyo.top
+- 金鑰：用 sk-你的金鑰 佔位，我會自己填，不要讓我把真實金鑰發給你。
+- 這個金鑰可以呼叫的模型：claude-haiku-5、claude-opus-4-1、claude-opus-5、claude-sonnet-5、claude-sonnet-5-20261001
+- 完整、最新的模型列表：用這個金鑰請求 GET https://codex.hiyo.top/v1/models 查看，不要憑記憶填寫模型名稱。
+- Override OpenAI Base URL 必須帶 /v1；自訂模型名稱要和模型列表一字不差，聊天面板裏要關掉 Auto。
+- 文件示例裏的模型名稱（如 gpt-5.6-sol）只是示例，請換成這個金鑰的分組裏有的模型。
+
+要求：
+1. 要改的檔案路徑或設定項寫清楚。
+2. 需要我的系統、工具等資料時直接問我。
+3. 最後告訴我怎麼驗證是否成功；出錯時對照 https://codex.hiyo.top/docs/errors.md 排查。
+4. 如果你本身就是運行在我電腦上的編程助手，可以直接幫我修改設定檔，但動手前先告訴我要改哪些內容。"
+`;
+
+exports[`复制详细版：en 和 zh-HK 的代表性快照 > zh-HK：antigravity / chat 1`] = `
+"請幫我把聊天客戶端接入 Hiyo codex（相容 OpenAI 和 Anthropic 格式的 API 服務）。
+請先閱讀：https://codex.hiyo.top/llms.txt
+先問我用的是哪一個聊天客戶端，再從文件目錄裏找到對應的那一節，按步驟帶我設定。
+
+接入資料：
+- 地址（不帶 /v1；Claude Code 和 Gemini CLI 都填這個）：https://codex.hiyo.top/antigravity
+- 金鑰：用 sk-你的金鑰 佔位，我會自己填，不要讓我把真實金鑰發給你。
+- 這個金鑰可以呼叫的模型：claude-opus-5、claude-sonnet-5、gemini-3.1-pro-high
+- 完整、最新的模型列表：用這個金鑰請求 GET https://codex.hiyo.top/v1/models 查看，不要憑記憶填寫模型名稱。
+- 文件裏所有寫着 https://codex.hiyo.top 的接入地址，設定時都換成 https://codex.hiyo.top/antigravity 使用。
+- 這個地址只接受 Anthropic 和 Gemini 格式的請求，服務商類型或 SDK 請選這兩種，不要選 OpenAI。
+- 文件示例裏的模型名稱（如 gpt-5.6-sol）只是示例，請換成這個金鑰的分組裏有的模型。
+
+要求：
+1. 要改的檔案路徑或設定項寫清楚。
+2. 需要我的系統、工具等資料時直接問我。
+3. 最後告訴我怎麼驗證是否成功；出錯時對照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：en 和 zh-HK 的代表性快照 > zh-HK：gemini / code 1`] = `
+"請幫我在程式碼裏呼叫 Hiyo codex（相容 OpenAI 和 Anthropic 格式的 API 服務）。
+請先閱讀：https://codex.hiyo.top/docs/openai-sdk.md https://codex.hiyo.top/docs/endpoints.md
+按文件裏的示例，一步步帶我把呼叫寫出來。
+
+接入資料：
+- OpenAI 相容 Base URL：https://codex.hiyo.top/v1
+- Gemini 原生地址（Gemini CLI 用，不帶 /v1）：https://codex.hiyo.top
+- 金鑰：用 sk-你的金鑰 佔位，我會自己填，不要讓我把真實金鑰發給你。
+- 這個金鑰可以呼叫的模型：gemini-3-flash、gemini-3-pro-image、gemini-3.1-pro-preview
+- 完整、最新的模型列表：用這個金鑰請求 GET https://codex.hiyo.top/v1/models 查看，不要憑記憶填寫模型名稱。
+- OpenAI SDK 用 OpenAI 相容 Base URL，Gemini 官方 SDK 用 Gemini 原生地址（不帶 /v1）。
+- 文件示例裏的模型名稱（如 gpt-5.6-sol）只是示例，請換成這個金鑰的分組裏有的模型。
+
+要求：
+1. 金鑰從環境變數裏讀取，不要寫死在程式碼裏；給我可以直接執行的最小示例；回覆較長時開啟串流輸出（stream）。
+2. 需要我的系統、工具等資料時直接問我。
+3. 最後告訴我怎麼驗證是否成功；出錯時對照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：en 和 zh-HK 的代表性快照 > zh-HK：openai（开了调度） / claude 1`] = `
+"請幫我把 Claude Code 接入 Hiyo codex（相容 OpenAI 和 Anthropic 格式的 API 服務）。
+請先閱讀：https://codex.hiyo.top/docs/claude-code.md
+按文件裏的步驟一步步帶我設定。
+
+接入資料：
+- Anthropic 相容 Base URL（不帶 /v1，Claude Code 用）：https://codex.hiyo.top
+- OpenAI 相容 Base URL：https://codex.hiyo.top/v1
+- 金鑰：用 sk-你的金鑰 佔位，我會自己填，不要讓我把真實金鑰發給你。
+- 這個金鑰可以呼叫的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用這個金鑰請求 GET https://codex.hiyo.top/v1/models 查看，不要憑記憶填寫模型名稱。
+- 金鑰變數用 ANTHROPIC_AUTH_TOKEN，不是 ANTHROPIC_API_KEY；電腦上殘留的 ANTHROPIC_API_KEY 要刪掉。
+- 如果返回 400，提示欄位不被接受，在 env 裏加 CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1，重新啟動後再試。
+
+要求：
+1. 要改的檔案路徑或設定項寫清楚。
+2. 需要我的系統、工具等資料時直接問我。
+3. 最後告訴我怎麼驗證是否成功；出錯時對照 https://codex.hiyo.top/docs/errors.md 排查。
+4. 如果你本身就是運行在我電腦上的編程助手，可以直接幫我修改設定檔，但動手前先告訴我要改哪些內容。"
+`;
+
+exports[`复制详细版：en 和 zh-HK 的代表性快照 > zh-HK：openai（没开调度） / codex 1`] = `
+"請幫我把 Codex 接入 Hiyo codex（相容 OpenAI 和 Anthropic 格式的 API 服務）。
+請先閱讀：https://codex.hiyo.top/docs/codex.md
+按文件裏的步驟一步步帶我設定。
+
+接入資料：
+- OpenAI 相容 Base URL：https://codex.hiyo.top/v1
+- 金鑰：用 sk-你的金鑰 佔位，我會自己填，不要讓我把真實金鑰發給你。
+- 這個金鑰可以呼叫的模型（部分）：gpt-5.6-sol、gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-terra
+- 完整、最新的模型列表：用這個金鑰請求 GET https://codex.hiyo.top/v1/models 查看，不要憑記憶填寫模型名稱。
+- config.toml 的 wire_api 用 responses，model_provider 和 model 要放在檔案最前面；改完要完全退出 Codex 再開啟，新建會話。
+
+要求：
+1. 要改的檔案路徑或設定項寫清楚。
+2. 需要我的系統、工具等資料時直接問我。
+3. 最後告訴我怎麼驗證是否成功；出錯時對照 https://codex.hiyo.top/docs/errors.md 排查。
+4. 如果你本身就是運行在我電腦上的編程助手，可以直接幫我修改設定檔，但動手前先告訴我要改哪些內容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'anthropic / chat / cdn' 1`] = `
+"请帮我把聊天客户端接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt?endpoint=https://cdn.example.com
+先问我用的是哪一个聊天客户端，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL（Cursor、聊天客户端等用）：https://cdn.example.com/v1
+- Anthropic 兼容 Base URL（不带 /v1）：https://cdn.example.com
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-haiku-5、claude-opus-4-1、claude-opus-5、claude-sonnet-5、claude-sonnet-5-20261001
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'anthropic / chat / default' 1`] = `
+"请帮我把聊天客户端接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt
+先问我用的是哪一个聊天客户端，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL（Cursor、聊天客户端等用）：https://codex.hiyo.top/v1
+- Anthropic 兼容 Base URL（不带 /v1）：https://codex.hiyo.top
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-haiku-5、claude-opus-4-1、claude-opus-5、claude-sonnet-5、claude-sonnet-5-20261001
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'anthropic / claude / cdn' 1`] = `
+"请帮我把 Claude Code 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/claude-code.md?endpoint=https://cdn.example.com
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- Anthropic 兼容 Base URL（不带 /v1）：https://cdn.example.com
+- OpenAI 兼容 Base URL（Cursor、聊天客户端等用）：https://cdn.example.com/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-sonnet-5、claude-haiku-5、claude-opus-4-1、claude-opus-5、claude-sonnet-5-20261001
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- 密钥变量用 ANTHROPIC_AUTH_TOKEN，不是 ANTHROPIC_API_KEY；电脑上残留的 ANTHROPIC_API_KEY 要删掉。
+- 如果返回 400，提示字段不被接受，在 env 里加 CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1，重启后再试。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'anthropic / claude / default' 1`] = `
+"请帮我把 Claude Code 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/claude-code.md
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- Anthropic 兼容 Base URL（不带 /v1）：https://codex.hiyo.top
+- OpenAI 兼容 Base URL（Cursor、聊天客户端等用）：https://codex.hiyo.top/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-sonnet-5、claude-haiku-5、claude-opus-4-1、claude-opus-5、claude-sonnet-5-20261001
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- 密钥变量用 ANTHROPIC_AUTH_TOKEN，不是 ANTHROPIC_API_KEY；电脑上残留的 ANTHROPIC_API_KEY 要删掉。
+- 如果返回 400，提示字段不被接受，在 env 里加 CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1，重启后再试。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'anthropic / code / cdn' 1`] = `
+"请帮我在代码里调用 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/openai-sdk.md?endpoint=https://cdn.example.com https://codex.hiyo.top/docs/examples.md?endpoint=https://cdn.example.com
+按文档里的示例，一步步带我把调用写出来。
+
+接入信息：
+- OpenAI 兼容 Base URL（Cursor、聊天客户端等用）：https://cdn.example.com/v1
+- Anthropic 兼容 Base URL（不带 /v1）：https://cdn.example.com
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-haiku-5、claude-opus-4-1、claude-opus-5、claude-sonnet-5、claude-sonnet-5-20261001
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- OpenAI SDK 用 OpenAI 兼容 Base URL，Anthropic SDK 用 Anthropic 兼容 Base URL（不带 /v1）。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 密钥从环境变量里读取，不要写死在代码里；给我可以直接运行的最小示例；回复较长时开启流式输出（stream）。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'anthropic / code / default' 1`] = `
+"请帮我在代码里调用 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/openai-sdk.md https://codex.hiyo.top/docs/examples.md
+按文档里的示例，一步步带我把调用写出来。
+
+接入信息：
+- OpenAI 兼容 Base URL（Cursor、聊天客户端等用）：https://codex.hiyo.top/v1
+- Anthropic 兼容 Base URL（不带 /v1）：https://codex.hiyo.top
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-haiku-5、claude-opus-4-1、claude-opus-5、claude-sonnet-5、claude-sonnet-5-20261001
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- OpenAI SDK 用 OpenAI 兼容 Base URL，Anthropic SDK 用 Anthropic 兼容 Base URL（不带 /v1）。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 密钥从环境变量里读取，不要写死在代码里；给我可以直接运行的最小示例；回复较长时开启流式输出（stream）。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'anthropic / cursor / cdn' 1`] = `
+"请帮我把 Cursor 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/cursor.md?endpoint=https://cdn.example.com
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL（Cursor、聊天客户端等用）：https://cdn.example.com/v1
+- Anthropic 兼容 Base URL（不带 /v1）：https://cdn.example.com
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-haiku-5、claude-opus-4-1、claude-opus-5、claude-sonnet-5、claude-sonnet-5-20261001
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- Override OpenAI Base URL 必须带 /v1；自定义模型名要和模型列表一字不差，聊天面板里要关掉 Auto。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'anthropic / cursor / default' 1`] = `
+"请帮我把 Cursor 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/cursor.md
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL（Cursor、聊天客户端等用）：https://codex.hiyo.top/v1
+- Anthropic 兼容 Base URL（不带 /v1）：https://codex.hiyo.top
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-haiku-5、claude-opus-4-1、claude-opus-5、claude-sonnet-5、claude-sonnet-5-20261001
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- Override OpenAI Base URL 必须带 /v1；自定义模型名要和模型列表一字不差，聊天面板里要关掉 Auto。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'anthropic / other / cdn' 1`] = `
+"请帮我把正在用的工具接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt?endpoint=https://cdn.example.com
+先问我用的是什么软件，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL（Cursor、聊天客户端等用）：https://cdn.example.com/v1
+- Anthropic 兼容 Base URL（不带 /v1）：https://cdn.example.com
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-haiku-5、claude-opus-4-1、claude-opus-5、claude-sonnet-5、claude-sonnet-5-20261001
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'anthropic / other / default' 1`] = `
+"请帮我把正在用的工具接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt
+先问我用的是什么软件，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL（Cursor、聊天客户端等用）：https://codex.hiyo.top/v1
+- Anthropic 兼容 Base URL（不带 /v1）：https://codex.hiyo.top
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-haiku-5、claude-opus-4-1、claude-opus-5、claude-sonnet-5、claude-sonnet-5-20261001
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'antigravity / chat / cdn' 1`] = `
+"请帮我把聊天客户端接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt?endpoint=https://cdn.example.com
+先问我用的是哪一个聊天客户端，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- 地址（不带 /v1；Claude Code 和 Gemini CLI 都填这个）：https://cdn.example.com/antigravity
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-opus-5、claude-sonnet-5、gemini-3.1-pro-high
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- 文档里所有写着 https://cdn.example.com 的接入地址，配置时都换成 https://cdn.example.com/antigravity 使用。
+- 这个地址只接受 Anthropic 和 Gemini 格式的请求，服务商类型或 SDK 请选这两种，不要选 OpenAI。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'antigravity / chat / default' 1`] = `
+"请帮我把聊天客户端接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt
+先问我用的是哪一个聊天客户端，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- 地址（不带 /v1；Claude Code 和 Gemini CLI 都填这个）：https://codex.hiyo.top/antigravity
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-opus-5、claude-sonnet-5、gemini-3.1-pro-high
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- 文档里所有写着 https://codex.hiyo.top 的接入地址，配置时都换成 https://codex.hiyo.top/antigravity 使用。
+- 这个地址只接受 Anthropic 和 Gemini 格式的请求，服务商类型或 SDK 请选这两种，不要选 OpenAI。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'antigravity / claude / cdn' 1`] = `
+"请帮我把 Claude Code 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/claude-code.md?endpoint=https://cdn.example.com
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- 地址（不带 /v1；Claude Code 和 Gemini CLI 都填这个）：https://cdn.example.com/antigravity
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-sonnet-5、claude-opus-5、gemini-3.1-pro-high
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- 文档里所有写着 https://cdn.example.com 的接入地址，配置时都换成 https://cdn.example.com/antigravity 使用。
+- 密钥变量用 ANTHROPIC_AUTH_TOKEN，不是 ANTHROPIC_API_KEY；电脑上残留的 ANTHROPIC_API_KEY 要删掉。
+- 如果返回 400，提示字段不被接受，在 env 里加 CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1，重启后再试。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'antigravity / claude / default' 1`] = `
+"请帮我把 Claude Code 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/claude-code.md
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- 地址（不带 /v1；Claude Code 和 Gemini CLI 都填这个）：https://codex.hiyo.top/antigravity
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-sonnet-5、claude-opus-5、gemini-3.1-pro-high
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- 文档里所有写着 https://codex.hiyo.top 的接入地址，配置时都换成 https://codex.hiyo.top/antigravity 使用。
+- 密钥变量用 ANTHROPIC_AUTH_TOKEN，不是 ANTHROPIC_API_KEY；电脑上残留的 ANTHROPIC_API_KEY 要删掉。
+- 如果返回 400，提示字段不被接受，在 env 里加 CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1，重启后再试。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'antigravity / code / cdn' 1`] = `
+"请帮我在代码里调用 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/examples.md?endpoint=https://cdn.example.com
+按文档里的示例，一步步带我把调用写出来。
+
+接入信息：
+- 地址（不带 /v1；Claude Code 和 Gemini CLI 都填这个）：https://cdn.example.com/antigravity
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-opus-5、claude-sonnet-5、gemini-3.1-pro-high
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- 文档里所有写着 https://cdn.example.com 的接入地址，配置时都换成 https://cdn.example.com/antigravity 使用。
+- 这个地址只接受 Anthropic 和 Gemini 格式的请求，服务商类型或 SDK 请选这两种，不要选 OpenAI。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 密钥从环境变量里读取，不要写死在代码里；给我可以直接运行的最小示例；回复较长时开启流式输出（stream）。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'antigravity / code / default' 1`] = `
+"请帮我在代码里调用 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/examples.md
+按文档里的示例，一步步带我把调用写出来。
+
+接入信息：
+- 地址（不带 /v1；Claude Code 和 Gemini CLI 都填这个）：https://codex.hiyo.top/antigravity
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-opus-5、claude-sonnet-5、gemini-3.1-pro-high
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- 文档里所有写着 https://codex.hiyo.top 的接入地址，配置时都换成 https://codex.hiyo.top/antigravity 使用。
+- 这个地址只接受 Anthropic 和 Gemini 格式的请求，服务商类型或 SDK 请选这两种，不要选 OpenAI。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 密钥从环境变量里读取，不要写死在代码里；给我可以直接运行的最小示例；回复较长时开启流式输出（stream）。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'antigravity / other / cdn' 1`] = `
+"请帮我把正在用的工具接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt?endpoint=https://cdn.example.com
+先问我用的是什么软件，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- 地址（不带 /v1；Claude Code 和 Gemini CLI 都填这个）：https://cdn.example.com/antigravity
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-opus-5、claude-sonnet-5、gemini-3.1-pro-high
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- 文档里所有写着 https://cdn.example.com 的接入地址，配置时都换成 https://cdn.example.com/antigravity 使用。
+- 这个地址只接受 Anthropic 和 Gemini 格式的请求，服务商类型或 SDK 请选这两种，不要选 OpenAI。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'antigravity / other / default' 1`] = `
+"请帮我把正在用的工具接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt
+先问我用的是什么软件，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- 地址（不带 /v1；Claude Code 和 Gemini CLI 都填这个）：https://codex.hiyo.top/antigravity
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：claude-opus-5、claude-sonnet-5、gemini-3.1-pro-high
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- 文档里所有写着 https://codex.hiyo.top 的接入地址，配置时都换成 https://codex.hiyo.top/antigravity 使用。
+- 这个地址只接受 Anthropic 和 Gemini 格式的请求，服务商类型或 SDK 请选这两种，不要选 OpenAI。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'gemini / chat / cdn' 1`] = `
+"请帮我把聊天客户端接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt?endpoint=https://cdn.example.com
+先问我用的是哪一个聊天客户端，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://cdn.example.com/v1
+- Gemini 原生地址（Gemini CLI 用，不带 /v1）：https://cdn.example.com
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gemini-3-flash、gemini-3.1-pro-preview
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'gemini / chat / default' 1`] = `
+"请帮我把聊天客户端接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt
+先问我用的是哪一个聊天客户端，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://codex.hiyo.top/v1
+- Gemini 原生地址（Gemini CLI 用，不带 /v1）：https://codex.hiyo.top
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gemini-3-flash、gemini-3.1-pro-preview
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'gemini / code / cdn' 1`] = `
+"请帮我在代码里调用 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/openai-sdk.md?endpoint=https://cdn.example.com https://codex.hiyo.top/docs/endpoints.md?endpoint=https://cdn.example.com
+按文档里的示例，一步步带我把调用写出来。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://cdn.example.com/v1
+- Gemini 原生地址（Gemini CLI 用，不带 /v1）：https://cdn.example.com
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：gemini-3-flash、gemini-3-pro-image、gemini-3.1-pro-preview
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- OpenAI SDK 用 OpenAI 兼容 Base URL，Gemini 官方 SDK 用 Gemini 原生地址（不带 /v1）。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 密钥从环境变量里读取，不要写死在代码里；给我可以直接运行的最小示例；回复较长时开启流式输出（stream）。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'gemini / code / default' 1`] = `
+"请帮我在代码里调用 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/openai-sdk.md https://codex.hiyo.top/docs/endpoints.md
+按文档里的示例，一步步带我把调用写出来。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://codex.hiyo.top/v1
+- Gemini 原生地址（Gemini CLI 用，不带 /v1）：https://codex.hiyo.top
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：gemini-3-flash、gemini-3-pro-image、gemini-3.1-pro-preview
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- OpenAI SDK 用 OpenAI 兼容 Base URL，Gemini 官方 SDK 用 Gemini 原生地址（不带 /v1）。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 密钥从环境变量里读取，不要写死在代码里；给我可以直接运行的最小示例；回复较长时开启流式输出（stream）。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'gemini / other / cdn' 1`] = `
+"请帮我把正在用的工具接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt?endpoint=https://cdn.example.com
+先问我用的是什么软件，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://cdn.example.com/v1
+- Gemini 原生地址（Gemini CLI 用，不带 /v1）：https://cdn.example.com
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gemini-3-flash、gemini-3.1-pro-preview
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'gemini / other / default' 1`] = `
+"请帮我把正在用的工具接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt
+先问我用的是什么软件，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://codex.hiyo.top/v1
+- Gemini 原生地址（Gemini CLI 用，不带 /v1）：https://codex.hiyo.top
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gemini-3-flash、gemini-3.1-pro-preview
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- 文档示例里的模型名（如 gpt-5.6-sol）只是示例，请换成这个密钥的分组里有的模型。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（开了调度） / chat / cdn' 1`] = `
+"请帮我把聊天客户端接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt?endpoint=https://cdn.example.com
+先问我用的是哪一个聊天客户端，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://cdn.example.com/v1
+- Anthropic 兼容 Base URL（不带 /v1，Claude Code 用）：https://cdn.example.com
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（开了调度） / chat / default' 1`] = `
+"请帮我把聊天客户端接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt
+先问我用的是哪一个聊天客户端，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://codex.hiyo.top/v1
+- Anthropic 兼容 Base URL（不带 /v1，Claude Code 用）：https://codex.hiyo.top
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（开了调度） / claude / cdn' 1`] = `
+"请帮我把 Claude Code 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/claude-code.md?endpoint=https://cdn.example.com
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- Anthropic 兼容 Base URL（不带 /v1，Claude Code 用）：https://cdn.example.com
+- OpenAI 兼容 Base URL：https://cdn.example.com/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- 密钥变量用 ANTHROPIC_AUTH_TOKEN，不是 ANTHROPIC_API_KEY；电脑上残留的 ANTHROPIC_API_KEY 要删掉。
+- 如果返回 400，提示字段不被接受，在 env 里加 CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1，重启后再试。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（开了调度） / claude / default' 1`] = `
+"请帮我把 Claude Code 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/claude-code.md
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- Anthropic 兼容 Base URL（不带 /v1，Claude Code 用）：https://codex.hiyo.top
+- OpenAI 兼容 Base URL：https://codex.hiyo.top/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- 密钥变量用 ANTHROPIC_AUTH_TOKEN，不是 ANTHROPIC_API_KEY；电脑上残留的 ANTHROPIC_API_KEY 要删掉。
+- 如果返回 400，提示字段不被接受，在 env 里加 CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1，重启后再试。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（开了调度） / code / cdn' 1`] = `
+"请帮我在代码里调用 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/openai-sdk.md?endpoint=https://cdn.example.com https://codex.hiyo.top/docs/examples.md?endpoint=https://cdn.example.com
+按文档里的示例，一步步带我把调用写出来。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://cdn.example.com/v1
+- Anthropic 兼容 Base URL（不带 /v1，Claude Code 用）：https://cdn.example.com
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra、gpt-image-2、text-embedding-3-large
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+
+要求：
+1. 密钥从环境变量里读取，不要写死在代码里；给我可以直接运行的最小示例；回复较长时开启流式输出（stream）。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（开了调度） / code / default' 1`] = `
+"请帮我在代码里调用 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/openai-sdk.md https://codex.hiyo.top/docs/examples.md
+按文档里的示例，一步步带我把调用写出来。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://codex.hiyo.top/v1
+- Anthropic 兼容 Base URL（不带 /v1，Claude Code 用）：https://codex.hiyo.top
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra、gpt-image-2、text-embedding-3-large
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+
+要求：
+1. 密钥从环境变量里读取，不要写死在代码里；给我可以直接运行的最小示例；回复较长时开启流式输出（stream）。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（开了调度） / codex / cdn' 1`] = `
+"请帮我把 Codex 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/codex.md?endpoint=https://cdn.example.com
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://cdn.example.com/v1
+- Anthropic 兼容 Base URL（不带 /v1，Claude Code 用）：https://cdn.example.com
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.6-sol、gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- config.toml 的 wire_api 用 responses，model_provider 和 model 要放在文件最前面；改完要完全退出 Codex 再打开，新建会话。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（开了调度） / codex / default' 1`] = `
+"请帮我把 Codex 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/codex.md
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://codex.hiyo.top/v1
+- Anthropic 兼容 Base URL（不带 /v1，Claude Code 用）：https://codex.hiyo.top
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.6-sol、gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- config.toml 的 wire_api 用 responses，model_provider 和 model 要放在文件最前面；改完要完全退出 Codex 再打开，新建会话。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（开了调度） / cursor / cdn' 1`] = `
+"请帮我把 Cursor 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/cursor.md?endpoint=https://cdn.example.com
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://cdn.example.com/v1
+- Anthropic 兼容 Base URL（不带 /v1，Claude Code 用）：https://cdn.example.com
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- Override OpenAI Base URL 必须带 /v1；自定义模型名要和模型列表一字不差，聊天面板里要关掉 Auto。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（开了调度） / cursor / default' 1`] = `
+"请帮我把 Cursor 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/cursor.md
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://codex.hiyo.top/v1
+- Anthropic 兼容 Base URL（不带 /v1，Claude Code 用）：https://codex.hiyo.top
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- Override OpenAI Base URL 必须带 /v1；自定义模型名要和模型列表一字不差，聊天面板里要关掉 Auto。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（开了调度） / other / cdn' 1`] = `
+"请帮我把正在用的工具接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt?endpoint=https://cdn.example.com
+先问我用的是什么软件，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://cdn.example.com/v1
+- Anthropic 兼容 Base URL（不带 /v1，Claude Code 用）：https://cdn.example.com
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（开了调度） / other / default' 1`] = `
+"请帮我把正在用的工具接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt
+先问我用的是什么软件，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://codex.hiyo.top/v1
+- Anthropic 兼容 Base URL（不带 /v1，Claude Code 用）：https://codex.hiyo.top
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（没开调度） / chat / cdn' 1`] = `
+"请帮我把聊天客户端接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt?endpoint=https://cdn.example.com
+先问我用的是哪一个聊天客户端，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://cdn.example.com/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（没开调度） / chat / default' 1`] = `
+"请帮我把聊天客户端接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt
+先问我用的是哪一个聊天客户端，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://codex.hiyo.top/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（没开调度） / code / cdn' 1`] = `
+"请帮我在代码里调用 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/openai-sdk.md?endpoint=https://cdn.example.com https://codex.hiyo.top/docs/examples.md?endpoint=https://cdn.example.com
+按文档里的示例，一步步带我把调用写出来。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://cdn.example.com/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra、gpt-image-2、text-embedding-3-large
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+
+要求：
+1. 密钥从环境变量里读取，不要写死在代码里；给我可以直接运行的最小示例；回复较长时开启流式输出（stream）。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（没开调度） / code / default' 1`] = `
+"请帮我在代码里调用 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/openai-sdk.md https://codex.hiyo.top/docs/examples.md
+按文档里的示例，一步步带我把调用写出来。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://codex.hiyo.top/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra、gpt-image-2、text-embedding-3-large
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+
+要求：
+1. 密钥从环境变量里读取，不要写死在代码里；给我可以直接运行的最小示例；回复较长时开启流式输出（stream）。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（没开调度） / codex / cdn' 1`] = `
+"请帮我把 Codex 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/codex.md?endpoint=https://cdn.example.com
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://cdn.example.com/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.6-sol、gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- config.toml 的 wire_api 用 responses，model_provider 和 model 要放在文件最前面；改完要完全退出 Codex 再打开，新建会话。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（没开调度） / codex / default' 1`] = `
+"请帮我把 Codex 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/codex.md
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://codex.hiyo.top/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.6-sol、gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- config.toml 的 wire_api 用 responses，model_provider 和 model 要放在文件最前面；改完要完全退出 Codex 再打开，新建会话。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（没开调度） / cursor / cdn' 1`] = `
+"请帮我把 Cursor 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/cursor.md?endpoint=https://cdn.example.com
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://cdn.example.com/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+- Override OpenAI Base URL 必须带 /v1；自定义模型名要和模型列表一字不差，聊天面板里要关掉 Auto。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（没开调度） / cursor / default' 1`] = `
+"请帮我把 Cursor 接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/docs/cursor.md
+按文档里的步骤一步步带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://codex.hiyo.top/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+- Override OpenAI Base URL 必须带 /v1；自定义模型名要和模型列表一字不差，聊天面板里要关掉 Auto。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。
+4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（没开调度） / other / cdn' 1`] = `
+"请帮我把正在用的工具接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt?endpoint=https://cdn.example.com
+先问我用的是什么软件，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://cdn.example.com/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://cdn.example.com/v1/models 查看，不要凭记忆填写模型名。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md?endpoint=https://cdn.example.com 排查。"
+`;
+
+exports[`复制详细版：快照（zh-CN 完整矩阵） > 'openai（没开调度） / other / default' 1`] = `
+"请帮我把正在用的工具接入 Hiyo codex（兼容 OpenAI 和 Anthropic 格式的 API 服务）。
+请先阅读：https://codex.hiyo.top/llms.txt
+先问我用的是什么软件，再从文档目录里找到对应的那一节，按步骤带我配置。
+
+接入信息：
+- OpenAI 兼容 Base URL：https://codex.hiyo.top/v1
+- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。
+- 这个密钥可以调用的模型（部分）：gpt-5.3-codex、gpt-5.5、gpt-5.6-luna、gpt-5.6-sol、gpt-5.6-terra
+- 完整、最新的模型列表：用这个密钥请求 GET https://codex.hiyo.top/v1/models 查看，不要凭记忆填写模型名。
+
+要求：
+1. 要改的文件路径或设置项写清楚。
+2. 需要我的系统、工具等信息时直接问我。
+3. 最后告诉我怎么验证是否成功；出错时对照 https://codex.hiyo.top/docs/errors.md 排查。"
+`;

@@ -15,13 +15,11 @@ const BASES = [
 ]
 const PLATFORMS = ['anthropic', 'openai', 'gemini', 'antigravity', null]
 const CLIENTS = ['claude', 'codex', 'gemini', 'opencode'] as const
-const t = (key: string, params: Record<string, unknown> = {}) => `${key}${JSON.stringify(params)}`
 
 describe('keyOnboarding 默认线路回归', () => {
-  it('endpointFor / nativeEndpoint 不变', () => {
+  it('endpointFor 不变', () => {
     for (const b of BASES) for (const p of PLATFORMS) {
       for (const c of CLIENTS) expect(newGen.endpointFor(c, p, b)).toBe(oldGen.endpointFor(c, p, b))
-      expect(newGen.nativeEndpoint(p, b)).toBe(oldGen.nativeEndpoint(p, b))
     }
   })
 
@@ -35,39 +33,6 @@ describe('keyOnboarding 默认线路回归', () => {
       }
     }
     expect(n).toBeGreaterThan(100)
-  })
-
-  // 有意改变：Claude Code 只说 Anthropic 接口（根地址 + Anthropic）。旧值按分组平台写，openai 分组下是 /v1 + OpenAI，
-  // 和提示里要设置的 ANTHROPIC_BASE_URL 互相矛盾；gemini 分组下格式写成 Gemini。其余工具和平台不变。
-  const claudeChanged = (client: string, p: string | null) => client === 'claude' && (p === 'openai' || p === 'gemini')
-
-  it('交给 AI 的提示词（简短与详细）逐字节一致，Claude Code 在 openai / gemini 分组下除外', () => {
-    for (const b of BASES) for (const p of PLATFORMS) for (const client of newGen.AI_CLIENTS) for (const detailed of [false, true]) {
-      if (claudeChanged(client, p)) continue
-      const input = { t, client, clientLabel: client, baseUrl: b, platform: p, siteName: 'Hiyo', models: ['m1', 'm2'], docUrl: 'https://doc.example', detailed }
-      expect(newGen.buildAiPrompt(input)).toBe(oldGen.buildAiPrompt(input))
-    }
-  })
-
-  it('交给 AI 的提示词：Claude Code 在 openai / gemini 分组下，只有地址和接口格式变成 API 根地址和 Anthropic', () => {
-    for (const b of BASES) for (const p of ['openai', 'gemini']) for (const detailed of [false, true]) {
-      const input = { t, client: 'claude' as const, clientLabel: 'Claude Code', baseUrl: b, platform: p, siteName: 'Hiyo', models: ['m1', 'm2'], docUrl: 'https://doc.example', detailed }
-      // t 的替身把参数原样打印出来，url 和 protocol 是相邻的两项；提示里嵌套的那份（hint）多转义了一层引号
-      const pairs = (url: string, protocol: string) => {
-        const plain = `"url":"${url}","protocol":"${protocol}"`
-        return [plain, plain.replace(/"/g, '\\"')]
-      }
-      const oldPairs = pairs(oldGen.nativeEndpoint(p, b), p === 'openai' ? 'OpenAI' : 'Gemini')
-      const newPairs = pairs(newGen.endpointFor('claude', p, b), 'Anthropic')
-      const oldOut = oldGen.buildAiPrompt(input)
-      let expected = oldOut
-      for (const [i, oldPair] of oldPairs.entries()) {
-        // 简短版里 hint 嵌在整句里，两种写法都有；详细版里 hint 是单独一行，只有原样的写法
-        expect(oldOut.includes(oldPair)).toBe(i === 0 || !detailed)
-        expected = expected.split(oldPair).join(newPairs[i])
-      }
-      expect(newGen.buildAiPrompt(input)).toBe(expected)
-    }
   })
 
   // 弹窗（改动前 1a4a797f6）里的 base 只去结尾的 /；CC Switch 导入链接直接用它。

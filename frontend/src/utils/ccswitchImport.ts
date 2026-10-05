@@ -141,7 +141,7 @@ export const NO_CC_SWITCH_MODELS: Readonly<CcSwitchModelPick> = Object.freeze({
 })
 
 /** 图片、向量、语音这类不是对话用的模型，不进 Codex 的选项 */
-const NON_CHAT_MODEL = /image|embed|tts|whisper|audio|moderation|dall-?e|realtime|transcribe|speech|rerank/i
+export const NON_CHAT_MODEL = /image|embed|tts|whisper|audio|moderation|dall-?e|realtime|transcribe|speech|rerank/i
 
 const byName = (a: string, b: string) => a.localeCompare(b, 'en', { numeric: true })
 

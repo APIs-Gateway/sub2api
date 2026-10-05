@@ -133,11 +133,12 @@ describe('一句话（三种语言）', () => {
 })
 
 describe('「交给 AI」页尾的新文案（三种语言）', () => {
-  const KEYS = ['keyOnboarding.ai.footnote', 'keyOnboarding.ai.docCatalog'] as const
+  // 页尾两条，加上「复制详细版」按钮的说明（正常时、模型加载中）
+  const KEYS = ['keyOnboarding.ai.footnote', 'keyOnboarding.ai.docCatalog', 'keyOnboarding.ai.detailHint', 'keyOnboarding.ai.detailLoading'] as const
   // 页面只写用户要知道的话：不提价格、充值、换算（free 站没有这些），也不提上游、账号池、内部路由
   const FORBIDDEN = /[¥￥$]|USD|CNY|RMB|price|pricing|billing|balance|recharge|payment|top[- ]?up|multiplier|upstream|account pool|价格|计费|余额|充值|支付|付费|倍率|汇率|换算|上游|账号池|帳號池|路由/i
 
-  it.each(Object.keys(LOCALES) as Lang[])('%s：两条文案都有，没有价格、充值、上游一类的词', (lang) => {
+  it.each(Object.keys(LOCALES) as Lang[])('%s：这几条文案都有，没有价格、充值、上游一类的词', (lang) => {
     const t = translator(lang)
     for (const key of KEYS) {
       const text = t(key)
