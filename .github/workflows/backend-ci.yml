@@ -35,6 +35,11 @@ jobs:
       - name: Configured ops thresholds actual dashboard regressions
         working-directory: backend
         run: go test -tags=unit -race -count=1 -v -run '^TestOpsConfiguredThresholds|^TestComputeDashboardHealthScore|^TestComputeBusinessHealth|^TestComputeInfraHealth' ./internal/service/
+      - name: Cold snapshot stage barrier (100 race iterations)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=100 -timeout=2m -v -run '^TestStagedPolicy_ColdSnapshotFallsBackToLegacy$' ./internal/service/
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover
