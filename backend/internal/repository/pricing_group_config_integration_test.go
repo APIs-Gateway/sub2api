@@ -37,7 +37,11 @@ func pwiAccessMode(t *testing.T, gid int64) string {
 }
 
 func pwiGroupConfigService(prices pwiPrices, inv *pwiInvalidator) *service.GroupConfigService {
-	return service.NewGroupConfigService(NewPricingWriteStore(integrationDB), NewPricingGroupConfigWriter(), pwiGuard(prices), inv)
+	var invalidator service.MatrixSnapshotInvalidator // 不能直接传 nil 的 *pwiInvalidator：那会是非 nil 的接口值
+	if inv != nil {
+		invalidator = inv
+	}
+	return service.NewGroupConfigService(NewPricingWriteStore(integrationDB), NewPricingGroupConfigWriter(), pwiGuard(prices), invalidator)
 }
 
 func TestPricingGroupConfigWriter_Integration_WritesAndBumpsRevision(t *testing.T) {
