@@ -35,6 +35,7 @@ vi.mock('@/api', () => ({
   usageAPI: { getDashboardApiKeysUsage },
   userGroupsAPI: { getAvailable: getAvailableGroups, getUserGroupRates }
 }))
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }), useRouter: () => ({ replace: vi.fn() }) }))
 vi.mock('@/api/subscriptions', () => ({ default: { getSubscriptionPricing } }))
 vi.mock('@/i18n', () => ({ getLocale: () => 'zh-CN' }))
 vi.mock('@/stores/onboarding', () => ({ useOnboardingStore: () => ({ isCurrentStep: () => false, nextStep: vi.fn() }) }))

@@ -1162,6 +1162,9 @@
     lastUsedIP: 'Last Used IP',
     useKey: 'Use Key',
     connect: 'Connect',
+    createdTitle: 'Key created',
+    createdHint: 'You can still find it in the list later.',
+    goConnect: 'Connect now',
     usedLabel: 'Total used',
     unlimited: 'No limit',
     overview: {
