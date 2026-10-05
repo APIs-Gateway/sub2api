@@ -95,7 +95,9 @@ func (s *AuthService) loginOrRegisterVerifiedEmailOAuth(
 	if err != nil {
 		return nil, nil, err
 	}
-	if identityUser != nil && !strings.EqualFold(strings.TrimSpace(identityUser.Email), email) {
+	// Google/GitHub subjects remain stable when their verified email changes.
+	// Keep the fork's separate OIDC pending/login fast-path policy unchanged.
+	if providerType == "oidc" && identityUser != nil && !strings.EqualFold(strings.TrimSpace(identityUser.Email), email) {
 		return nil, nil, infraerrors.Conflict("AUTH_IDENTITY_EMAIL_MISMATCH", "oauth identity belongs to a different email")
 	}
 
