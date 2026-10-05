@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CC_SWITCH_ENABLE_ON_IMPORT,
+  CC_SWITCH_USAGE_INTERVAL_MINUTES,
   CC_SWITCH_USAGE_SCRIPT,
   OPENAI_CC_SWITCH_CODEX_MODEL,
   buildCcSwitchImportDeeplink,
+  ccSwitchClientsForPlatform,
   ccSwitchModelOptions,
-  pickCcSwitchModels
+  pickCcSwitchModels,
+  type CcSwitchApp
 } from '@/utils/ccswitchImport'
 import type { GroupPlatform } from '@/types'
+import en from '@/i18n/locales/en'
+import zhCN from '@/i18n/locales/zh-CN'
+import zhHK from '@/i18n/locales/zh-HK'
 
 function paramsFromDeeplink(deeplink: string): URLSearchParams {
   const query = deeplink.split('?')[1] || ''
@@ -36,7 +43,7 @@ describe('ccswitchImport utils', () => {
         ...baseInput,
         baseUrl,
         platform: 'openai',
-        clientType: 'claude'
+        clientType: 'codex'
       })
     )
 
@@ -52,7 +59,7 @@ describe('ccswitchImport utils', () => {
 
   it('passes the chosen Codex model through', () => {
     const params = paramsFromDeeplink(
-      buildCcSwitchImportDeeplink({ ...baseInput, platform: 'openai', clientType: 'claude', model: ' gpt-5.5 ' })
+      buildCcSwitchImportDeeplink({ ...baseInput, platform: 'openai', clientType: 'codex', model: ' gpt-5.5 ' })
     )
     expect(params.get('app')).toBe('codex')
     expect(params.get('model')).toBe('gpt-5.5')
@@ -140,7 +147,7 @@ describe('CC Switch 导入链接里的模型参数', () => {
       ).keys()
     ]
     expect(keys.slice(0, 7)).toEqual(['resource', 'app', 'model', 'haikuModel', 'sonnetModel', 'opusModel', 'name'])
-    expect(keys.slice(7)).toEqual(['homepage', 'endpoint', 'apiKey', 'configFormat', 'usageEnabled', 'usageScript', 'usageAutoInterval'])
+    expect(keys.slice(7)).toEqual(['homepage', 'endpoint', 'apiKey', 'configFormat', 'enabled', 'usageEnabled', 'usageScript', 'usageAutoInterval'])
   })
 
   it('antigravity 选 Claude 时也带三档；选 Gemini 或 Codex 时三档不带，即使传了也忽略', () => {
@@ -151,7 +158,7 @@ describe('CC Switch 导入链接里的模型参数', () => {
     expect(gemini.get('app')).toBe('gemini')
     expect(gemini.get('model')).toBe('gemini-3-pro')
     for (const k of ['haikuModel', 'sonnetModel', 'opusModel']) expect(gemini.has(k)).toBe(false)
-    const codex = params({ platform: 'openai', haikuModel: 'h', sonnetModel: 's', opusModel: 'o' })
+    const codex = params({ platform: 'openai', clientType: 'codex', haikuModel: 'h', sonnetModel: 's', opusModel: 'o' })
     for (const k of ['haikuModel', 'sonnetModel', 'opusModel']) expect(codex.has(k)).toBe(false)
   })
 })
@@ -294,7 +301,7 @@ describe('CC Switch usage script', () => {
       buildCcSwitchImportDeeplink({
         baseUrl,
         platform: 'openai',
-        clientType: 'claude',
+        clientType: 'codex',
         providerName: 'Sub2API',
         apiKey: 'sk-test',
         usageScript: CC_SWITCH_USAGE_SCRIPT
@@ -335,5 +342,250 @@ describe('CC Switch usage script', () => {
       quota: { remaining: 12, unit: 'USD' },
       is_active: false
     })).toEqual({ isValid: false, remaining: 12, unit: 'USD' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 导入语义（enabled / 余额刷新间隔 / openai 分组开了调度时的 Claude）
+// ---------------------------------------------------------------------------
+
+describe('CC Switch 导入后是否立即切换（enabled）', () => {
+  it('Claude、Gemini 立即切换，Codex 先不切换；表里就这三项', () => {
+    expect(CC_SWITCH_ENABLE_ON_IMPORT).toEqual({ claude: true, codex: false, gemini: true })
+  })
+
+  it('余额自动刷新间隔是 5 分钟', () => {
+    expect(CC_SWITCH_USAGE_INTERVAL_MINUTES).toBe(5)
+  })
+})
+
+describe('CC Switch 各分组可导入的客户端', () => {
+  it.each<[string | null, boolean | undefined, CcSwitchApp[]]>([
+    // openai：没开调度（包括字段缺失）只有 Codex；开了调度再补上 Claude，Codex 仍排第一（默认选中）
+    ['openai', undefined, ['codex']],
+    ['openai', false, ['codex']],
+    ['openai', true, ['codex', 'claude']],
+    // 调度开关只对 openai 分组有意义，其他平台不受它影响
+    ['anthropic', undefined, ['claude']],
+    ['anthropic', true, ['claude']],
+    ['grok', true, ['claude']],
+    ['gemini', undefined, ['gemini']],
+    ['gemini', true, ['gemini']],
+    ['antigravity', undefined, ['claude', 'gemini']],
+    ['antigravity', true, ['claude', 'gemini']],
+    [null, undefined, ['claude']],
+    ['unknown', undefined, ['claude']]
+  ])('%s，开了调度=%s -> %j', (platform, dispatch, expected) => {
+    expect(ccSwitchClientsForPlatform(platform, { allowMessagesDispatch: dispatch })).toEqual(expected)
+    // 不传选项等于没开调度
+    if (!dispatch) expect(ccSwitchClientsForPlatform(platform)).toEqual(expected)
+  })
+
+  // 生产里分组 30（codex pro+plus）、27（稳定 luna 专用）是 openai 分组、没开 Messages 调度：
+  // cxw 2026-10-04 决定它们的 Claude Code 保持隐藏。这里按它们的真实形状钉住：不管字段是 false、缺失还是 null，都只有 Codex。
+  it.each([
+    ['分组 30，调度 false', { id: 30, platform: 'openai', allow_messages_dispatch: false }],
+    ['分组 27，调度字段缺失', { id: 27, platform: 'openai' }],
+    ['分组 27，调度 null', { id: 27, platform: 'openai', allow_messages_dispatch: null }]
+  ])('%s：只有 Codex，没有 Claude', (_label, group) => {
+    const clients = ccSwitchClientsForPlatform(group.platform, { allowMessagesDispatch: group.allow_messages_dispatch as boolean | undefined })
+    expect(clients).toEqual(['codex'])
+    expect(clients).not.toContain('claude')
+  })
+})
+
+describe('CC Switch 导入链接：分组平台 × 调度开关 × 客户端，逐项断言', () => {
+  const ROOT = 'https://api.example.com'
+  // 管理员把地址配成带 /v1 的：Codex 沿用它，其他客户端用 API 根地址（页签就是这样选 baseUrl 的）
+  const CONFIGURED = 'https://api.example.com/v1'
+  const KEY = 'sk-test-KEY'
+  const NAME = 'Hiyo - X'
+  const SCRIPT = CC_SWITCH_USAGE_SCRIPT
+
+  // 页签预选后的模型，用来确认「哪个客户端带哪些模型参数」
+  const PICKED = { model: 'm-main', haikuModel: 'm-haiku', sonnetModel: 'm-sonnet', opusModel: 'm-opus' }
+
+  const rows: [string | null, boolean | undefined, CcSwitchApp][] = []
+  for (const [platform, dispatch] of [
+    ['openai', undefined],
+    ['openai', false],
+    ['openai', true],
+    ['anthropic', undefined],
+    ['anthropic', true],
+    ['grok', undefined],
+    ['gemini', undefined],
+    ['antigravity', undefined],
+    [null, undefined]
+  ] as const) {
+    for (const client of ccSwitchClientsForPlatform(platform, { allowMessagesDispatch: dispatch })) rows.push([platform, dispatch, client])
+  }
+
+  it('矩阵覆盖了每个平台的每个客户端，包括 openai 开了调度时的 Claude', () => {
+    expect(rows.map(([p, d, c]) => `${p}/${d ?? '-'}/${c}`)).toEqual([
+      'openai/-/codex',
+      'openai/false/codex',
+      'openai/true/codex',
+      'openai/true/claude',
+      'anthropic/-/claude',
+      'anthropic/true/claude',
+      'grok/-/claude',
+      'gemini/-/gemini',
+      'antigravity/-/claude',
+      'antigravity/-/gemini',
+      'null/-/claude'
+    ])
+  })
+
+  it.each(rows)('%s，开了调度=%s，导入成 %s：所有参数', (platform, _dispatch, client) => {
+    const baseUrl = client === 'codex' ? CONFIGURED : ROOT
+    const link = buildCcSwitchImportDeeplink({
+      baseUrl,
+      platform: platform as GroupPlatform | null,
+      clientType: client,
+      providerName: NAME,
+      apiKey: KEY,
+      usageScript: SCRIPT,
+      ...PICKED
+    })
+    expect(link.startsWith('ccswitch://v1/import?')).toBe(true)
+    const p = paramsFromDeeplink(link)
+
+    const endpoint = platform === 'antigravity' ? `${ROOT}/antigravity` : baseUrl
+    const expected: Record<string, string> = {
+      resource: 'provider',
+      app: client,
+      name: NAME,
+      homepage: baseUrl,
+      endpoint,
+      apiKey: KEY,
+      configFormat: 'json',
+      // Claude / Gemini 立即切换，Codex 不切换
+      enabled: client === 'codex' ? 'false' : 'true',
+      usageEnabled: 'true',
+      usageAutoInterval: '5',
+      model: PICKED.model
+    }
+    // 三档模型只有导入成 Claude 才带
+    if (client === 'claude') Object.assign(expected, { haikuModel: PICKED.haikuModel, sonnetModel: PICKED.sonnetModel, opusModel: PICKED.opusModel })
+
+    for (const [k, v] of Object.entries(expected)) expect(p.get(k), `${k}`).toBe(v)
+    // 没有多带别的参数
+    expect([...p.keys()].sort()).toEqual([...Object.keys(expected), 'usageScript'].sort())
+    // 用量脚本原样随链接带上，请求的是 /v1/usage
+    expect(atob(p.get('usageScript') || '')).toBe(SCRIPT)
+  })
+
+  it('openai 分组导入成 Claude：用 API 根地址，不用带 /v1 的 Codex 地址', () => {
+    const p = paramsFromDeeplink(
+      buildCcSwitchImportDeeplink({ baseUrl: ROOT, platform: 'openai', clientType: 'claude', providerName: NAME, apiKey: KEY, usageScript: SCRIPT })
+    )
+    expect(p.get('app')).toBe('claude')
+    expect(p.get('endpoint')).toBe(ROOT)
+    expect(p.get('enabled')).toBe('true')
+    // 没选模型就一个都不带：Claude Code 用它自己的模型名，调度那边按分组配置换成实际模型
+    for (const k of ['model', 'haikuModel', 'sonnetModel', 'opusModel']) expect(p.has(k)).toBe(false)
+  })
+
+  it('同一个 openai 分组：Codex 和 Claude 两条链接只在 app / endpoint / enabled（和三档模型）上不同', () => {
+    const codex = paramsFromDeeplink(
+      buildCcSwitchImportDeeplink({ baseUrl: CONFIGURED, platform: 'openai', clientType: 'codex', providerName: NAME, apiKey: KEY, usageScript: SCRIPT })
+    )
+    const claude = paramsFromDeeplink(
+      buildCcSwitchImportDeeplink({ baseUrl: ROOT, platform: 'openai', clientType: 'claude', providerName: NAME, apiKey: KEY, usageScript: SCRIPT })
+    )
+    const differing = [...codex.keys()].filter((k) => codex.get(k) !== claude.get(k)).sort()
+    expect(differing).toEqual(['app', 'enabled', 'endpoint', 'homepage'])
+    expect(codex.get('enabled')).toBe('false')
+    expect(claude.get('enabled')).toBe('true')
+  })
+})
+
+describe('CC Switch 余额查询（随链接导入的用量脚本）', () => {
+  type UsageConfig = {
+    request: { url: string; method: string; headers: { Authorization: string } }
+    extractor: (response: Record<string, unknown>) => Record<string, unknown>
+  }
+  const load = (endpoint = 'https://api.example.com'): UsageConfig =>
+    // eslint-disable-next-line no-new-func
+    new Function('return ' + CC_SWITCH_USAGE_SCRIPT.replaceAll('{{baseUrl}}', endpoint).replaceAll('{{apiKey}}', 'sk-test'))() as UsageConfig
+
+  it('链接里是 usageEnabled=true、每 5 分钟刷新，脚本请求 /v1/usage', () => {
+    const p = paramsFromDeeplink(
+      buildCcSwitchImportDeeplink({ baseUrl: 'https://api.example.com', platform: 'anthropic', clientType: 'claude', providerName: 'n', apiKey: 'k', usageScript: CC_SWITCH_USAGE_SCRIPT })
+    )
+    expect(p.get('usageEnabled')).toBe('true')
+    expect(p.get('usageAutoInterval')).toBe('5')
+    expect(p.has('usageBaseUrl')).toBe(false)
+    const config = load()
+    expect(config.request.url).toBe('https://api.example.com/v1/usage')
+  })
+
+  it('单位跟着接口返回的 unit 走，脚本里不写死币种', () => {
+    expect(CC_SWITCH_USAGE_SCRIPT).not.toMatch(/USD|CNY|RMB|¥|美元|人民币/)
+    const { extractor } = load()
+    // 接口说是什么单位就是什么单位：今天是 USD，记账单位换成人民币后脚本不用改
+    expect(extractor({ remaining: 12.5, unit: 'USD' })).toEqual({ isValid: true, remaining: 12.5, unit: 'USD' })
+    expect(extractor({ remaining: 12.5, unit: 'CNY' })).toEqual({ isValid: true, remaining: 12.5, unit: 'CNY' })
+    expect(extractor({ quota: { remaining: 7, unit: 'CNY' } })).toEqual({ isValid: true, remaining: 7, unit: 'CNY' })
+    // 接口没给单位：不编一个，交给 CC Switch 只显示数字
+    expect(extractor({ remaining: 3 })).toEqual({ isValid: true, remaining: 3, unit: null })
+  })
+
+  it('余额读 remaining，其次 quota.remaining、balance；is_active / isValid 决定是否有效', () => {
+    const { extractor } = load()
+    expect(extractor({ remaining: 1, balance: 9, quota: { remaining: 5 } }).remaining).toBe(1)
+    expect(extractor({ balance: 9, quota: { remaining: 5 } }).remaining).toBe(5)
+    expect(extractor({ balance: 9 }).remaining).toBe(9)
+    expect(extractor({ remaining: 1, is_active: false }).isValid).toBe(false)
+    expect(extractor({ remaining: 1, isValid: false }).isValid).toBe(false)
+  })
+})
+
+describe('CC Switch 页签文案（三种语言）', () => {
+  const locales = { 'zh-CN': zhCN, 'zh-HK': zhHK, en } as const
+  const NEW_KEYS = ['title', 'intro', 'codexWarning', 'switchNote', 'balanceNote'] as const
+
+  it.each(Object.entries(locales))('%s：新增的几句都有', (_name, locale) => {
+    const ccs = locale.keyOnboarding.ccs as Record<string, string>
+    for (const k of NEW_KEYS) expect(typeof ccs[k] === 'string' && ccs[k].length > 0, k).toBe(true)
+  })
+
+  it.each(Object.entries(locales))('%s：不写死币种、符号、换算倍数，不提上游和内部机制', (_name, locale) => {
+    const ccs = locale.keyOnboarding.ccs as Record<string, string>
+    for (const k of NEW_KEYS) {
+      expect(ccs[k], k).not.toMatch(/[$¥￥]|USD|CNY|RMB|\b13\b|倍率|匯率|汇率|換算|换算|multiplier|exchange rate/i)
+      expect(ccs[k], k).not.toMatch(/上游|账号池|帳號池|号池|upstream|pool|channel|渠道/i)
+    }
+  })
+
+  it.each(Object.entries(locales))('%s：刷新间隔用 {minutes} 占位，和导入链接里的数字同源', (_name, locale) => {
+    const text = (locale.keyOnboarding.ccs as Record<string, string>).balanceNote
+    expect(text).toContain('{minutes}')
+    expect(text.replace('{minutes}', String(CC_SWITCH_USAGE_INTERVAL_MINUTES))).toMatch(/5/)
+    expect(text).not.toMatch(/\b(5|30)\b/)
+  })
+
+  it('zh-HK 用「金鑰」「設定」「匯入」，不夹简体；zh-CN 不夹繁体', () => {
+    const hk = zhHK.keyOnboarding.ccs as Record<string, string>
+    const cn = zhCN.keyOnboarding.ccs as Record<string, string>
+    for (const k of NEW_KEYS) {
+      expect(hk[k], k).not.toMatch(/密钥|配置|导入|设置|启用|刷新页面/)
+      expect(cn[k], k).not.toMatch(/金鑰|設定|匯入|啟用/)
+    }
+    expect(hk.codexWarning).toContain('啟用')
+    expect(hk.switchNote).toContain('匯入')
+  })
+
+  // 上面的词表只拦得住几个词；整句里夹了别的简体字（如「余额」「设定」）要靠字表拦
+  const SIMPLIFIED_ONLY = /[余额随设汇导钥给选项码装认换时问击载开关这个启复链点续]/
+  const TRADITIONAL_ONLY = /[餘額隨設匯導鑰給選項碼裝認換時問擊載開關這個啟復連點續]/
+
+  it('zh-HK 新增文案里没有简体字；zh-CN 新增文案里没有繁体字', () => {
+    const hk = zhHK.keyOnboarding.ccs as Record<string, string>
+    const cn = zhCN.keyOnboarding.ccs as Record<string, string>
+    for (const k of NEW_KEYS) {
+      expect(hk[k], `zh-HK ${k}`).not.toMatch(SIMPLIFIED_ONLY)
+      expect(cn[k], `zh-CN ${k}`).not.toMatch(TRADITIONAL_ONLY)
+    }
   })
 })

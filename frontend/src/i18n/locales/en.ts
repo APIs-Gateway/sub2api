@@ -1055,6 +1055,8 @@
       }
     },
     ccs: {
+      title: 'Import to CC Switch',
+      intro: 'Pick a client and models, then click "Open CC Switch" to import.',
       client: 'Client',
       name: 'Profile name',
       modelMain: 'Primary model',
@@ -1064,6 +1066,9 @@
       modelDefault: 'Optional; leave blank to use the CC Switch default',
       modelsLoading: 'Loading available models…',
       noModels: 'No models are available for this key. You can still import and leave the model fields blank.',
+      codexWarning: 'The Codex profile is imported but not enabled. Enable it in CC Switch yourself, then restart Codex as prompted, so old and new settings are not mixed.',
+      switchNote: 'Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time.',
+      balanceNote: 'Balance lookup is imported with the profile and refreshes every {minutes} minutes.',
       open: 'Open CC Switch',
       copyLink: 'Copy import link',
       notInstalled: 'Nothing happened? Install CC Switch first, then click again.',

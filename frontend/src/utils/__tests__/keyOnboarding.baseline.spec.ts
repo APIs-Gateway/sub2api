@@ -38,8 +38,17 @@ describe('keyOnboarding 默认线路回归', () => {
   // 弹窗（改动前 1a4a797f6）里的 base 只去结尾的 /；CC Switch 导入链接直接用它。
   const oldModalBase = (raw: string) => raw.trim().replace(/\/+$/, '')
   const KEY = 'sk-test-123'
+  // 改动前 openai 分组只会导入成 Codex，clientType 只分 claude / gemini；现在页签传的是真实客户端（openai 分组开了调度时 Claude 也能选），
+  // 所以这里把 openai 的 claude 换成 codex，保持「openai 分组 = Codex」这条基线
   const link = (baseUrl: string, platform: string | null, clientType: 'claude' | 'gemini') =>
-    buildCcSwitchImportDeeplink({ baseUrl, platform: platform as never, clientType, providerName: 'Hiyo - X', apiKey: KEY, usageScript: CC_SWITCH_USAGE_SCRIPT })
+    buildCcSwitchImportDeeplink({
+      baseUrl,
+      platform: platform as never,
+      clientType: platform === 'openai' && clientType === 'claude' ? 'codex' : clientType,
+      providerName: 'Hiyo - X',
+      apiKey: KEY,
+      usageScript: CC_SWITCH_USAGE_SCRIPT
+    })
   /** 现在弹窗实际传给 buildCcSwitchImportDeeplink 的地址：通过真实的 resolveEndpointOptions 取得 */
   const newLink = (raw: string, platform: string | null, clientType: 'claude' | 'gemini') => {
     const opt = resolveEndpointOptions(raw, [], 'https://fallback.example')[0]

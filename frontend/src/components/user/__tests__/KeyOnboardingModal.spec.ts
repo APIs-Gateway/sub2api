@@ -887,6 +887,147 @@ describe('KeyOnboardingModal', () => {
       await w.get('[data-test="ccs-client-gemini"]').trigger('click')
       expect(w.get('[data-test="ccs-name"]').attributes('placeholder')).toBe('Hiyo - Gemini')
     })
+
+    describe('导入语义：是否立即切换、余额刷新、openai 分组开了调度时的 Claude', () => {
+      // 生产里的分组形状：16「codex特惠分组」开了 Messages 调度；30「codex pro+plus」、27「稳定 luna 专用」没开
+      const prodKey = (id: number, extra: Record<string, unknown> = {}) => ({
+        key: SECRET,
+        name: 'my-key',
+        group_id: id,
+        group: { id, platform: 'openai', ...extra }
+      })
+      const GROUP_16 = prodKey(16, { allow_messages_dispatch: true })
+      const GROUP_30 = prodKey(30, { allow_messages_dispatch: false })
+      const GROUP_27 = prodKey(27) // 字段缺失
+      const GPT = [{ name: 'gpt-5.6-sol' }, { name: 'gpt-5.5' }]
+      beforeEach(() => {
+        getAvailable.mockResolvedValue([
+          {
+            name: 'ch',
+            description: '',
+            platforms: [
+              { platform: 'openai', groups: [{ id: 16, name: 'g16' }, { id: 30, name: 'g30' }, { id: 27, name: 'g27' }], supported_models: GPT },
+              { platform: 'anthropic', groups: [{ id: 8, name: 'g8' }], supported_models: [{ name: 'claude-sonnet-5' }] }
+            ]
+          }
+        ])
+      })
+
+      const linkParams = async (w: VueWrapper, open: ReturnType<typeof vi.spyOn>) => {
+        open.mockClear()
+        await w.get('[data-test="ccs-open"]').trigger('click')
+        return new URL(String(open.mock.calls[0][0]).replace('ccswitch://', 'http://')).searchParams
+      }
+      const chips = (w: VueWrapper) => w.findAll('[data-test^="ccs-client-"]').map((b) => b.attributes('data-test')!.replace('ccs-client-', ''))
+      const installCards = (w: VueWrapper) => w.findAll('section.onb-card').map((c) => c.attributes('data-test')!.replace('client-', ''))
+
+      it.each([
+        ['分组 30（调度 false）', GROUP_30],
+        ['分组 27（调度字段缺失）', GROUP_27]
+      ])('%s：CC Switch 里没有 Claude，一键安装里也没有 Claude Code，只导入 Codex', async (_label, key) => {
+        const open = vi.spyOn(window, 'open').mockReturnValue(null)
+        const w = await mountModal({ initialTab: 'ccswitch', apiKey: key })
+        // 只有一个客户端：不出现客户端单选，更没有 Claude
+        expect(chips(w)).toEqual([])
+        expect(w.find('[data-test="ccs-client-claude"]').exists()).toBe(false)
+        expect(w.findAll('[data-test="ccs-models"] select')).toHaveLength(1)
+        expect(w.get('[data-test="ccs-name"]').attributes('placeholder')).toBe('Hiyo - Codex')
+        const p = await linkParams(w, open)
+        expect(p.get('app')).toBe('codex')
+        expect(p.get('enabled')).toBe('false')
+        expect(p.get('usageAutoInterval')).toBe('5')
+        for (const k of ['haikuModel', 'sonnetModel', 'opusModel']) expect(p.has(k)).toBe(false)
+        expect(w.find('[data-test="ccs-codex-warning"]').exists()).toBe(true)
+
+        await w.get('[data-test="tab-install"]').trigger('click')
+        expect(installCards(w)).toEqual(['codex', 'opencode'])
+        open.mockRestore()
+      })
+
+      it('分组 16（开了调度）：客户端有 Codex 和 Claude，默认 Codex；一键安装里 Claude Code 也在', async () => {
+        const w = await mountModal({ initialTab: 'ccswitch', apiKey: GROUP_16 })
+        expect(chips(w)).toEqual(['codex', 'claude'])
+        expect(w.get('[data-test="ccs-client-codex"]').attributes('aria-checked')).toBe('true')
+        expect(w.get('[data-test="ccs-name"]').attributes('placeholder')).toBe('Hiyo - Codex')
+        await w.get('[data-test="tab-install"]').trigger('click')
+        expect(installCards(w)).toEqual(['codex', 'claude', 'opencode'])
+      })
+
+      it('分组 16 选 Claude：app=claude、API 根地址、立即切换；没有黄色提醒；三档模型留空就不带；换回 Codex 恢复提醒', async () => {
+        const open = vi.spyOn(window, 'open').mockReturnValue(null)
+        const w = await mountModal({ initialTab: 'ccswitch', apiKey: GROUP_16 })
+        await w.get('[data-test="ccs-client-claude"]').trigger('click')
+        expect(w.get('[data-test="ccs-name"]').attributes('placeholder')).toBe('Hiyo - Claude')
+        expect(w.findAll('[data-test="ccs-models"] select')).toHaveLength(4)
+        expect(w.find('[data-test="ccs-codex-warning"]').exists()).toBe(false)
+        expect(w.find('[data-test="ccs-switch-note"]').exists()).toBe(true)
+        const claude = await linkParams(w, open)
+        expect(Object.fromEntries(claude)).toMatchObject({
+          resource: 'provider',
+          app: 'claude',
+          name: 'Hiyo - Claude',
+          endpoint: 'https://codex.hiyo.top',
+          homepage: 'https://codex.hiyo.top',
+          apiKey: SECRET,
+          enabled: 'true',
+          usageEnabled: 'true',
+          usageAutoInterval: '5'
+        })
+        // 分组里都是 gpt-*：没有可预选的 Claude 模型，一个都不带
+        for (const k of ['model', 'haikuModel', 'sonnetModel', 'opusModel']) expect(claude.has(k)).toBe(false)
+
+        await w.get('[data-test="ccs-client-codex"]').trigger('click')
+        expect(w.find('[data-test="ccs-codex-warning"]').exists()).toBe(true)
+        const codex = await linkParams(w, open)
+        expect(codex.get('app')).toBe('codex')
+        expect(codex.get('enabled')).toBe('false')
+        open.mockRestore()
+      })
+
+      it('选着 Claude 换到没开调度的分组 30：回到 Codex，不会继续导入成 Claude', async () => {
+        const open = vi.spyOn(window, 'open').mockReturnValue(null)
+        const w = await mountModal({ initialTab: 'ccswitch', apiKey: GROUP_16 })
+        await w.get('[data-test="ccs-client-claude"]').trigger('click')
+        await w.setProps({ show: false })
+        await w.setProps({ apiKey: GROUP_30, show: true })
+        await flushPromises()
+        expect(chips(w)).toEqual([])
+        const p = await linkParams(w, open)
+        expect(p.get('app')).toBe('codex')
+        expect(p.get('enabled')).toBe('false')
+        open.mockRestore()
+      })
+
+      it.each([
+        ['anthropic', 'claude'],
+        ['gemini', 'gemini'],
+        ['antigravity', 'claude']
+      ] as const)('%s 分组：导入成 %s，立即切换，余额每 5 分钟刷新', async (platform, app) => {
+        const open = vi.spyOn(window, 'open').mockReturnValue(null)
+        const w = await mountModal({ initialTab: 'ccswitch', apiKey: apiKey(platform) })
+        const p = await linkParams(w, open)
+        expect(p.get('app')).toBe(app)
+        expect(p.get('enabled')).toBe('true')
+        expect(p.get('usageEnabled')).toBe('true')
+        expect(p.get('usageAutoInterval')).toBe('5')
+        expect(w.find('[data-test="ccs-codex-warning"]').exists()).toBe(false)
+        open.mockRestore()
+      })
+
+      it.each([
+        ['en', 'Balance lookup is imported with the profile and refreshes every 5 minutes.'],
+        ['zh-CN', '余额查询已随配置导入，并每 5 分钟自动刷新。']
+      ] as const)('%s：页面上有余额文案，整页不出现币种、美元符号或 13 这个倍数', async (lang, balance) => {
+        i18nState.lang = lang
+        for (const key of [GROUP_30, GROUP_16, apiKey('anthropic')]) {
+          const w = await mountModal({ initialTab: 'ccswitch', apiKey: key })
+          const text = w.get('[data-test="panel-ccswitch"]').text()
+          expect(w.get('[data-test="ccs-balance-note"]').text()).toBe(balance)
+          expect(text).not.toMatch(/[$¥￥]|USD|CNY|RMB|\b13\b|倍率|multiplier/i)
+          w.unmount()
+        }
+      })
+    })
   })
 
   it('手动配置：密钥行只显示掩码，复制的是完整密钥；代码里直接填好密钥', async () => {

@@ -3,13 +3,47 @@ import type { GroupPlatform } from '@/types'
 /** Codex 的首选模型：分组里有它就预选它；文档、手动配置的示例也用它。不会再写死进导入链接。 */
 export const OPENAI_CC_SWITCH_CODEX_MODEL = 'gpt-5.6-sol'
 
-export type CcSwitchClientType = 'claude' | 'gemini'
-
-/** CC Switch 里能导入成哪几种客户端（导入链接的 app 参数） */
+/** CC Switch 里能导入成哪几种客户端（导入链接的 app 参数）；页签里选中的客户端也是这三种之一 */
 export type CcSwitchApp = 'claude' | 'codex' | 'gemini'
+export type CcSwitchClientType = CcSwitchApp
+
+/**
+ * 各客户端导入后是否立即切换（导入链接的 enabled 参数）。
+ * Claude / Gemini 确认导入后立刻切到这个配置；Codex 先只导入、不切换，要用户在 CC Switch 里手动启用并重启 Codex。
+ * 页签里的提示（Codex 的黄色提醒、Claude / Gemini 的「会立即切换」）也读这张表，和链接保持一致。
+ */
+export const CC_SWITCH_ENABLE_ON_IMPORT: Readonly<Record<CcSwitchApp, boolean>> = Object.freeze({
+  claude: true,
+  codex: false,
+  gemini: true
+})
+
+/** 余额查询的自动刷新间隔，单位分钟（导入链接的 usageAutoInterval）；页签里「每 N 分钟自动刷新」的文案也用它 */
+export const CC_SWITCH_USAGE_INTERVAL_MINUTES = 5
+
+/**
+ * 各平台的分组在 CC Switch 里能导入成哪些客户端，第一个是默认选中的。
+ * openai 分组默认只有 Codex；分组开了 /v1/messages 调度之后 Claude Code 的请求也进得来，再补上 Claude
+ * （和一键安装的 clientsForPlatform 一致，没开调度的分组不提供 Claude）。
+ */
+export function ccSwitchClientsForPlatform(
+  platform: GroupPlatform | string | null | undefined,
+  opts: { allowMessagesDispatch?: boolean } = {}
+): CcSwitchApp[] {
+  switch (platform) {
+    case 'openai':
+      return opts.allowMessagesDispatch ? ['codex', 'claude'] : ['codex']
+    case 'gemini':
+      return ['gemini']
+    case 'antigravity':
+      return ['claude', 'gemini']
+    default:
+      return ['claude']
+  }
+}
 
 export interface CcSwitchImportConfig {
-  app: string
+  app: CcSwitchApp
   endpoint: string
 }
 
@@ -34,6 +68,9 @@ export interface CcSwitchImportDeeplinkInput {
 // CC Switch substitutes its stored provider endpoint for {{baseUrl}} before
 // evaluating this script. A configured /v1 prefix must not become /v1/v1/usage.
 // Keep other path prefixes (including /antigravity) for their matching usage route.
+//
+// 余额读的是 GET /v1/usage 响应里的 remaining（没有就取 quota.remaining、balance），单位读响应里的 unit
+// （没有就取 quota.unit）。这里不替站点写死单位：接口返回什么就显示什么，记账单位以后换了不用改这段脚本。
 export const CC_SWITCH_USAGE_SCRIPT = `({
     request: {
       url: "{{baseUrl}}".replace(/\\/+$/, "").replace(/\\/v1$/, "") + "/v1/usage",
@@ -42,7 +79,7 @@ export const CC_SWITCH_USAGE_SCRIPT = `({
     },
     extractor: function(response) {
       const remaining = response?.remaining ?? response?.quota?.remaining ?? response?.balance;
-      const unit = response?.unit ?? response?.quota?.unit ?? "USD";
+      const unit = response?.unit ?? response?.quota?.unit ?? null;
       return {
         isValid: response?.is_active ?? response?.isValid ?? true,
         remaining,
@@ -67,6 +104,9 @@ export function resolveCcSwitchImportConfig(
         endpoint: `${baseUrl.replace(/\/+$/, '')}/antigravity`
       }
     case 'openai':
+      // 开了 /v1/messages 调度的 openai 分组也能导入成 Claude：Claude Code 自己会拼 /v1/messages，
+      // 用调用方传来的 API 根地址，和 anthropic 分组一样
+      if (clientType === 'claude') return { app: 'claude', endpoint: baseUrl }
       return {
         app: 'codex',
         // CC Switch handles Codex request paths; preserve the provider's chosen prefix.
@@ -96,9 +136,11 @@ export function buildCcSwitchImportDeeplink(input: CcSwitchImportDeeplinkInput):
     ['endpoint', config.endpoint],
     ['apiKey', input.apiKey],
     ['configFormat', 'json'],
+    // 一直显式带上 true / false：不传的话 CC Switch 默认只导入、不切换
+    ['enabled', String(CC_SWITCH_ENABLE_ON_IMPORT[config.app])],
     ['usageEnabled', 'true'],
     ['usageScript', btoa(input.usageScript)],
-    ['usageAutoInterval', '30']
+    ['usageAutoInterval', String(CC_SWITCH_USAGE_INTERVAL_MINUTES)]
   ]
 
   // 模型参数紧跟在 app 后面，只带非空的；三档模型只有 Claude 有

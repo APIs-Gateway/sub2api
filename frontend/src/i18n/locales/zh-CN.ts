@@ -1054,6 +1054,8 @@
       }
     },
     ccs: {
+      title: '一键导入 CC Switch',
+      intro: '选好客户端和模型后，点「打开 CC Switch」即可导入。',
       client: '客户端',
       name: '配置名称',
       modelMain: '主模型',
@@ -1063,6 +1065,9 @@
       modelDefault: '可选；留空时使用 CC Switch 默认模型',
       modelsLoading: '加载可用模型中…',
       noModels: '当前密钥没有可选的模型，也可以留空继续导入。',
+      codexWarning: 'Codex 配置会先以未启用状态导入。请在 CC Switch 中手动启用，并按提示重启 Codex，避免新旧配置混用。',
+      switchNote: '确认导入后会立即切换到这个配置，之后可以在 CC Switch 里随时切换。',
+      balanceNote: '余额查询已随配置导入，并每 {minutes} 分钟自动刷新。',
       open: '打开 CC Switch',
       copyLink: '复制导入链接',
       notInstalled: '点了没反应？请先安装 CC Switch，再点一次。',

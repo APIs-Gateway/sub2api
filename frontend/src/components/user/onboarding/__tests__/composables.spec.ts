@@ -72,15 +72,28 @@ describe('useGroupModels', () => {
 
 describe('useCcSwitchState', () => {
   const NO = { haikuModel: '', sonnetModel: '', opusModel: '' }
-  const setup = (platform: string | null, show = true, groupId: number | undefined = 7, models: string[] = []) => {
-    const state = { platform: ref(platform), show: ref(show), groupId: ref<number | undefined>(groupId), models: ref(models) }
+  const setup = (
+    platform: string | null,
+    show = true,
+    groupId: number | undefined = 7,
+    models: string[] = [],
+    dispatch: boolean | undefined = undefined
+  ) => {
+    const state = {
+      platform: ref(platform),
+      show: ref(show),
+      groupId: ref<number | undefined>(groupId),
+      models: ref(models),
+      dispatch: ref<boolean | undefined>(dispatch)
+    }
     const scope = effectScope()
     const result = scope.run(() =>
       useCcSwitchState({
         platform: state.platform,
         show: () => state.show.value,
         groupId: () => state.groupId.value,
-        models: () => state.models.value
+        models: () => state.models.value,
+        allowMessagesDispatch: () => state.dispatch.value
       })
     )!
     return { ...state, ...result, stop: () => scope.stop() }
@@ -93,7 +106,7 @@ describe('useCcSwitchState', () => {
     expect(setup('antigravity').form.value).toEqual({ client: 'claude', name: '', model: '', ...NO })
   })
 
-  it('选中的客户端不在新平台的可选范围内时，改成第一个；在范围内就保留', async () => {
+  it('选中的客户端不在新平台的可选范围内时，改成第一个；新平台的第一个就是它时不动', async () => {
     const s = setup('antigravity')
     s.form.value = { ...s.form.value, client: 'gemini' }
     s.platform.value = 'gemini'
@@ -102,6 +115,53 @@ describe('useCcSwitchState', () => {
     s.platform.value = 'openai'
     await nextTick()
     expect(s.form.value.client).toBe('codex')
+  })
+
+  describe('openai 分组开了调度：除 Codex 外也能导入成 Claude', () => {
+    it('没开调度（或字段缺失）只有 Codex；开了调度是 Codex 和 Claude，默认选中 Codex', () => {
+      expect(setup('openai').clients.value).toEqual(['codex'])
+      expect(setup('openai', true, 30, [], false).clients.value).toEqual(['codex'])
+      const on = setup('openai', true, 16, [], true)
+      expect(on.clients.value).toEqual(['codex', 'claude'])
+      expect(on.form.value.client).toBe('codex')
+    })
+
+    it('调度开关变了：能选的客户端跟着变；选着 Claude 时关掉调度，回到 Codex 并按 Codex 预选', async () => {
+      const s = setup('openai', true, 16, ['gpt-5.6-sol', 'gpt-5.5'], true)
+      s.form.value = { ...s.form.value, client: 'claude' }
+      s.dispatch.value = false
+      await nextTick()
+      expect(s.clients.value).toEqual(['codex'])
+      expect(s.form.value).toEqual({ client: 'codex', name: '', model: 'gpt-5.6-sol', ...NO })
+    })
+
+    it('开了调度的 openai 分组选 Claude 时：模型按 Claude 的规则预选，分组里都是 gpt-* 就一个都不预选', async () => {
+      const s = setup('openai', true, 16, ['gpt-5.6-sol', 'gpt-5.5'], true)
+      s.form.value = { ...s.form.value, client: 'claude' }
+      s.models.value = ['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4']
+      await nextTick()
+      expect(s.form.value).toEqual({ client: 'claude', name: '', model: '', ...NO })
+    })
+
+    it('从 anthropic 分组（选着 Claude）换到开了调度的 openai 分组：回到 Codex，不把 Claude 带过去', async () => {
+      const s = setup('anthropic')
+      expect(s.form.value.client).toBe('claude')
+      s.platform.value = 'openai'
+      s.dispatch.value = true
+      await nextTick()
+      expect(s.form.value.client).toBe('codex')
+    })
+
+    it('同一个分组下选的 Claude 保留（重新打开、重新加载模型都不会换回 Codex）', async () => {
+      const s = setup('openai', true, 16, ['gpt-5.5'], true)
+      s.form.value = { ...s.form.value, client: 'claude' }
+      s.show.value = false
+      await nextTick()
+      s.show.value = true
+      s.models.value = ['gpt-5.5', 'gpt-5.4']
+      await nextTick()
+      expect(s.form.value.client).toBe('claude')
+    })
   })
 
   it('换平台导致客户端回退时，模型按新客户端预选，一次写完', async () => {

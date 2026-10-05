@@ -1054,6 +1054,8 @@
       }
     },
     ccs: {
+      title: '一鍵匯入 CC Switch',
+      intro: '選好客戶端和模型後，點「開啟 CC Switch」即可匯入。',
       client: '客戶端',
       name: '設定名稱',
       modelMain: '主模型',
@@ -1063,6 +1065,9 @@
       modelDefault: '可選；留空時使用 CC Switch 預設模型',
       modelsLoading: '載入可用模型中…',
       noModels: '目前金鑰沒有可選的模型，也可以留空繼續匯入。',
+      codexWarning: 'Codex 設定會先以未啟用狀態匯入。請在 CC Switch 中手動啟用，並依提示重新啟動 Codex，避免新舊設定混用。',
+      switchNote: '確認匯入後會立即切換到這個設定，之後可以在 CC Switch 裡隨時切換。',
+      balanceNote: '餘額查詢已隨設定匯入，並每 {minutes} 分鐘自動刷新。',
       open: '開啟 CC Switch',
       copyLink: '複製匯入連結',
       notInstalled: '點了沒反應？請先安裝 CC Switch，再點一次。',
