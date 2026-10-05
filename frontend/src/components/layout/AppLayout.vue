@@ -1,8 +1,12 @@
 <template>
   <div class="min-h-screen bg-gray-50 dark:bg-dark-950">
 
-    <!-- Sidebar -->
-    <AppSidebar />
+    <!-- Sidebar（余额卡挂在它的插槽里，只在普通用户侧栏渲染） -->
+    <AppSidebar>
+      <template #balance-card="{ collapsed }">
+        <SidebarBalanceCard :collapsed="collapsed" />
+      </template>
+    </AppSidebar>
 
     <!-- Main Content Area -->
     <div
@@ -30,6 +34,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useOnboardingTour } from '@/composables/useOnboardingTour'
 import { useOnboardingStore } from '@/stores/onboarding'
 import AppSidebar from './AppSidebar.vue'
+import SidebarBalanceCard from './SidebarBalanceCard.vue'
 import AppHeader from './AppHeader.vue'
 
 const appStore = useAppStore()

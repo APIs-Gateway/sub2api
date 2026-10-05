@@ -34,6 +34,10 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/layout/__tests__/AppHeader.userMenu.spec.ts \
 	src/components/layout/__tests__/AppHeader.docsLink.spec.ts \
 	src/components/layout/__tests__/userNav.spec.ts \
+	src/components/layout/__tests__/SidebarBalanceCard.spec.ts \
+	src/components/layout/__tests__/AppLayout.balanceCard.spec.ts \
+	src/composables/__tests__/useTopUpEntry.spec.ts \
+	src/utils/__tests__/subscriptionSummary.spec.ts \
 	src/components/user/__tests__/MonitorDetailDialog.spec.ts \
 	src/components/user/monitor/__tests__/MonitorCard.visibility.spec.ts \
 	src/views/user/__tests__/ChannelStatusView.visibility.spec.ts
