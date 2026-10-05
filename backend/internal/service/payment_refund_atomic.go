@@ -152,7 +152,7 @@ func decodeRefundPendingSnapshot(body string, detail *refundPendingAuditDetail) 
 			return err
 		}
 		switch key {
-		case "deductionType", "deductionRollbackOK", "balanceToDeduct", "subDaysToDeduct", "subscriptionID", "refundAmount", "gatewayBaseAmount", "gatewayAmount", "refundFeeRate", "refundFeeAmount", "subDaysToRestore", "subExpireDayToRestore", "subTodayRemainingToRestore", "subTodayDayToRestore":
+		case "deductionType", "deductionRollbackOK", "balanceToDeduct", "subDaysToDeduct", "subscriptionID", "refundAmount", "gatewayBaseAmount", "gatewayAmount", "refundFeeRate", "refundFeeAmount", "subDaysToRestore", "subExpireDayToRestore", "subTodayRemainingToRestore", "subTodayDayToRestore", "subscriptionAdjustmentID":
 			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 				return fmt.Errorf("null financial snapshot field %s", key)
 			}
