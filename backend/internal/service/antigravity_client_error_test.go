@@ -162,6 +162,13 @@ func TestAntigravityGeminiClientErrorStreamAndBuffered(t *testing.T) {
 				require.Contains(t, raw, "private-project-123")
 				detail, _ := c.Get(OpsUpstreamErrorDetailKey)
 				require.Contains(t, detail, "do-not-echo")
+				ops, exists := GetOpsStreamError(c)
+				require.True(t, exists)
+				require.True(t, ops.UpstreamAttributed, "HTTP-200 error must not be reported as a recovered failover")
+				require.True(t, ops.CountTowardsSLA)
+				require.Equal(t, !stream, ops.NonStream)
+				require.Equal(t, http.StatusForbidden, ops.IntendedStatus)
+				assertAntigravityClientSafe(t, ops.Message)
 			})
 		}
 	}
@@ -186,6 +193,8 @@ func TestAntigravityGeminiClientErrorDoesNotScrubSuccessfulPartsOrUsage(t *testi
 			require.Contains(t, rec.Body.String(), "private-project-123")
 			require.Contains(t, rec.Body.String(), "pool-sa@")
 			require.Contains(t, rec.Body.String(), "details do-not-echo")
+			_, marked := GetOpsStreamError(c)
+			require.False(t, marked, "successful model content is not a provider error")
 		})
 	}
 }

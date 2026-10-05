@@ -3466,7 +3466,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 				}
 
 				if safe, status, ok := antigravitySafeGeminiError(inner); ok {
-					setOpsUpstreamError(c, status, extractAntigravityErrorMessage(inner), s.getUpstreamErrorDetail(inner))
+					s.recordAntigravityGeminiClientError(c, status, inner, true)
 					payload = string(safe)
 				}
 				cw.Fprintf("data: %s\n\n", payload)
@@ -3615,7 +3615,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 				continue
 			}
 			if safe, status, ok := antigravitySafeGeminiError(inner); ok {
-				setOpsUpstreamError(c, status, extractAntigravityErrorMessage(inner), s.getUpstreamErrorDetail(inner))
+				s.recordAntigravityGeminiClientError(c, status, inner, false)
 				// Store only the safe error envelope. Successful parts and usage are
 				// retained by the helper; the raw body remains in internal Ops.
 				if err := json.Unmarshal(safe, &parsed); err != nil {

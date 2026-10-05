@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/googleapi"
+	"github.com/gin-gonic/gin"
 )
 
 // antigravitySafeGeminiError recognizes an unwrapped provider error envelope.
@@ -42,4 +43,15 @@ func antigravitySafeGeminiError(body []byte) ([]byte, int, bool) {
 		return nil, 0, false
 	}
 	return encoded, status, true
+}
+
+func (s *AntigravityGatewayService) recordAntigravityGeminiClientError(c *gin.Context, status int, body []byte, stream bool) {
+	setOpsUpstreamError(c, status, sanitizeUpstreamErrorMessage(extractAntigravityErrorMessage(body)), s.getUpstreamErrorDetail(body))
+	_, errType, message, _ := MapUpstreamErrorDefault(status)
+	// These errors retain HTTP 200 on the wire. Without upstream attribution,
+	// Ops would treat the raw error context as a recovered failover attempt.
+	MarkOpsStreamErrorValue(c, OpsStreamError{
+		ErrType: errType, Code: "upstream_error_envelope", Message: message,
+		IntendedStatus: status, CountTowardsSLA: true, NonStream: !stream, UpstreamAttributed: true,
+	})
 }
