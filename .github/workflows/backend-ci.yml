@@ -59,9 +59,17 @@ jobs:
       - name: Account test structured failure metadata (named)
         working-directory: backend
         run: go test -tags=unit -count=1 -run '^TestAccountTestLogging_' -v ./internal/service/
+      - name: CC length terminal event and real readers
+        working-directory: backend
+        run: go test -tags=unit -count=1 -v -run '^TestChatLengthTerminal_|^TestStream_ValidToolCallAtOutputLimitKeepsIncompleteResponse$|^TestStream_ReasoningOnlySynthesizesVisibleText$' ./internal/pkg/apicompat/ ./internal/service/
       - name: Unit tests (converted Responses input recovery)
         working-directory: backend
         run: go test -tags=unit -count=1 -run '^TestStructuredInputRecovery_|^TestConvertedResponsesInputStringRejection|^TestForwardAsChatCompletions_(ResponsesSupportedFallsBack|StructuredInput)' -v ./internal/service/
+      - name: Chat-to-Responses legacy calls, developer and named choice contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestChatResponsesContracts_|^TestChatCompletionsToResponses_(ToolChoiceShape|DeveloperRolePreserved|LegacyFunction)' ./internal/pkg/apicompat/ ./internal/service/
       - name: Unit tests (cache write wire and accounting agreement)
         working-directory: backend
         run: go test -tags=unit -count=1 -run '^TestCacheWriteUsage_' -v ./internal/pkg/apicompat/ ./internal/service/
@@ -101,6 +109,9 @@ jobs:
       - name: Integration tests (Antigravity actual partial billing)
         working-directory: backend
         run: go test -tags=integration -count=1 -run '^TestAntigravityPartialBilling_' -v ./internal/repository/
+      - name: CC length actual Responses and Messages wallet/card billing
+        working-directory: backend
+        run: go test -tags=integration -count=1 -v -run '^TestChatLengthTerminalHTTP_' ./internal/repository/
       - name: Integration tests (converted Responses fallback actual billing)
         working-directory: backend
         run: go test -tags=integration -count=1 -run '^TestStructuredInputFallbackHTTP_' -v ./internal/repository/
