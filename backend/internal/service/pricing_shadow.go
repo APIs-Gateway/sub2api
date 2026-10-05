@@ -303,10 +303,10 @@ func truncateShadowString(s string, max int) string {
 // Stats 返回当前进程的计数快照，排序固定。
 func (h *pricingShadowHub) Stats() PricingShadowStats {
 	out := PricingShadowStats{
-		ComparedTotal: []PricingShadowComparedCount{},
-		DiffTotal:     []PricingShadowDiffCount{},
-		SkippedTotal:  map[string]int64{},
-		PanicsTotal:   h.panics.Load(),
+		ComparedTotal:  []PricingShadowComparedCount{},
+		DiffTotal:      []PricingShadowDiffCount{},
+		SkippedTotal:   map[string]int64{},
+		PanicsTotal:    h.panics.Load(),
 		SamplesDropped: h.dropped.Load(),
 	}
 	h.compared.Range(func(k, v any) bool {
