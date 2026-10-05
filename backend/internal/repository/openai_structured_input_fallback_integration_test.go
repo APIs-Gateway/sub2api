@@ -353,7 +353,7 @@ func TestStructuredInputFallbackHTTP_TransportOpsAndOuterAttemptReset(t *testing
 			close(f.upstream.release)
 			var other *service.Account
 			if recover {
-				other = mustCreateAccount(t, inflightTestEntClient(t), &service.Account{Name: "structured-second", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Concurrency: 100, Priority: 10, Credentials: map[string]any{"api_key": "other-key", "base_url": "https://second.test", "pool_mode": true, "pool_mode_retry_count": 0}, Extra: map[string]any{"privacy_mode": service.PrivacyModeTrainingOff, "openai_responses_supported": true}})
+				other = mustCreateAccount(t, inflightTestEntClient(t), &service.Account{Name: "structured-second", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Concurrency: 100, Priority: f.account.Priority + 10, Credentials: map[string]any{"api_key": "other-key", "base_url": "https://second.test", "pool_mode": true, "pool_mode_retry_count": 0}, Extra: map[string]any{"privacy_mode": service.PrivacyModeTrainingOff, "openai_responses_supported": true}})
 				require.NoError(t, f.accounts.BindGroups(context.Background(), other.ID, []int64{*f.key.GroupID}))
 			}
 			var current *gin.Context
@@ -374,6 +374,7 @@ func TestStructuredInputFallbackHTTP_TransportOpsAndOuterAttemptReset(t *testing
 				}
 				require.True(t, recover)
 				require.Equal(t, other.ID, id)
+				require.EqualValues(t, 3, f.upstream.calls.Load(), "second account must follow first Responses rejection and raw transport failure")
 				require.Equal(t, "/v1/responses", req.URL.Path)
 				require.Equal(t, "/v1/responses", userhandler.GetUpstreamEndpoint(current, service.PlatformOpenAI))
 				return response(200, inflightResponsesSSE, "text/event-stream"), nil
@@ -403,6 +404,11 @@ func TestStructuredInputFallbackHTTP_TransportOpsAndOuterAttemptReset(t *testing
 				require.Equal(t, "/v1/responses", endpoint)
 				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
 				require.Equal(t, 1, dedup)
+				var cost, balance float64
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT actual_cost FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&cost))
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&balance))
+				require.Positive(t, cost)
+				require.InDelta(t, 10-cost, balance, 1e-10)
 			} else {
 				require.NotEqual(t, 200, rec.Code, rec.Body.String())
 				require.EqualValues(t, 2, f.upstream.calls.Load())
