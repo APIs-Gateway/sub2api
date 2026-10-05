@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -143,6 +144,7 @@ func TestPrintPricingReplayResult(t *testing.T) {
 
 // 数据库连不上时命令在核对只读会话那一步就退出：配置、时区、日志降级与 DSN 拼装都走过，且没有任何文件产出。
 func TestRunPricingReplayCommand_DatabaseUnreachable(t *testing.T) {
+	logger.InitBootstrap() // main() 在分派子命令之前已经做过这一步
 	t.Setenv("DATABASE_HOST", "127.0.0.1")
 	t.Setenv("DATABASE_PORT", "1")
 	t.Setenv("DATABASE_USER", "replay")
