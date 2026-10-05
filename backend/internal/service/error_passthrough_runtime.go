@@ -220,6 +220,22 @@ func applyErrorPassthroughRule(
 	defaultErrType string,
 	defaultErrMsg string,
 ) (status int, errType string, errMsg string, matched bool) {
+	return applyErrorPassthroughRuleWithRedaction(c, platform, upstreamStatus, responseBody,
+		defaultStatus, defaultErrType, defaultErrMsg, false)
+}
+
+// Redaction affects derived client messages only. Matching still uses the raw
+// provider body, and explicit administrator messages retain their precedence.
+func applyErrorPassthroughRuleWithRedaction(
+	c *gin.Context,
+	platform string,
+	upstreamStatus int,
+	responseBody []byte,
+	defaultStatus int,
+	defaultErrType string,
+	defaultErrMsg string,
+	redactClientMessage bool,
+) (status int, errType string, errMsg string, matched bool) {
 	status = defaultStatus
 	errType = defaultErrType
 	errMsg = defaultErrMsg
@@ -240,6 +256,9 @@ func applyErrorPassthroughRule(
 	}
 
 	errMsg = sanitizeClientVisibleUpstreamMessage(ExtractUpstreamErrorMessage(responseBody))
+	if redactClientMessage {
+		_, _, errMsg, _ = MapUpstreamErrorDefault(upstreamStatus)
+	}
 	if !rule.PassthroughBody && rule.CustomMessage != nil {
 		errMsg = *rule.CustomMessage
 	}
