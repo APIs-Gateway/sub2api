@@ -52,6 +52,9 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=integration -race -count=1 -run '^TestLoginTotpAtomic' -v ./internal/handler/
+      - name: Refund transaction regressions (named)
+        working-directory: backend
+        run: go test -tags=integration -count=1 -v -run '^TestRefundPendingAtomicPostgres_|^TestRefundAtomicPostgres_' ./internal/service/ ./internal/repository/
       - name: Preserve actual Go coverage profiles
         if: always()
         uses: actions/upload-artifact@v7
