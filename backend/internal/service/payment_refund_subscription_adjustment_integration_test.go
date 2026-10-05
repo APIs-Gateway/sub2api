@@ -89,6 +89,8 @@ type refundAdjustmentProvider struct {
 	queries  int
 }
 
+func (p *refundAdjustmentProvider) ProviderKey() string { return payment.TypeStripe }
+
 func (p *refundAdjustmentProvider) Refund(context.Context, payment.RefundRequest) (*payment.RefundResponse, error) {
 	p.calls++
 	if p.onRefund != nil {
@@ -113,7 +115,7 @@ func refundAdjustmentFixture(t *testing.T, expireDays int) (*dbent.Client, *Paym
 	require.NoError(t, err)
 	s.subscriptionSvc = NewSubscriptionService(nil, &refundAdjustmentPGCards{client: c}, nil, nil, nil, c, nil, nil)
 	s.configService = NewPaymentConfigService(c, nil, nil)
-	o, err := c.PaymentOrder.UpdateOneID(old.OrderID).SetOrderType(payment.OrderTypeSubscription).SetStatus(OrderStatusCompleted).SetSubscriptionDays(30).SetProviderSnapshot(map[string]any{"subscription": map[string]any{"daily_amount_usd": 10.0, "validity_days": 30.0, "intent": SubscriptionIntentRenew, "target_subscription_id": card.ID}}).Save(ctx)
+	o, err := c.PaymentOrder.UpdateOneID(old.OrderID).SetOrderType(payment.OrderTypeSubscription).SetStatus(OrderStatusCompleted).SetPaymentTradeNo("paid-old-renewal").SetSubscriptionDays(30).SetProviderSnapshot(map[string]any{"subscription": map[string]any{"daily_amount_usd": 10.0, "validity_days": 30.0, "intent": SubscriptionIntentRenew, "target_subscription_id": card.ID}}).Save(ctx)
 	require.NoError(t, err)
 	p, early, err := s.PrepareRefund(ctx, o.ID, 10, "refund old renewal", false, false)
 	require.NoError(t, err)
