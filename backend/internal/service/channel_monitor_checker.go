@@ -120,7 +120,7 @@ func runCheckForModel(ctx context.Context, provider, endpoint, apiKey, model str
 //   - 其余（DNS、建连、TLS、连接中断、本地构造请求失败等）：error。
 func applyTransportError(res *CheckResult, err error, statusCode int) *CheckResult {
 	var timeout *monitorTimeoutError
-	if errors.As(err, &timeout) && statusCode < 0 {
+	if errors.As(err, &timeout) && statusCode < http.StatusInternalServerError {
 		res.Status = MonitorStatusDegraded
 		res.Message = truncateMessage(timeoutMessage(timeout.phase))
 		return res

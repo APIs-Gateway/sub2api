@@ -90,8 +90,8 @@ const (
 	// monitorVerdictHardFailures 窗口内至少多少次硬失败（error / failed）才把卡片判为失败；
 	// 低于该次数但至少有 1 次硬失败时卡片显示 degraded。一次探测只是从上游号池里抽了一个节点，
 	// 单次结果不足以说明整条渠道不可用。
-	monitorVerdictWindow       = 3
-	monitorVerdictHardFailures = 1
+	monitorVerdictWindow       = 2
+	monitorVerdictHardFailures = 2
 
 	// monitorEndpointResolveTimeout validateEndpoint 解析 hostname 的最长耗时。
 	monitorEndpointResolveTimeout = 5 * time.Second

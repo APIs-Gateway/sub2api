@@ -240,7 +240,7 @@ func deriveCardStatus(newestFirst []string) string {
 	switch {
 	case hard >= monitorVerdictHardFailures:
 		return latestHard
-	case hard > 0:
+	case hard > 1:
 		return MonitorStatusDegraded
 	default:
 		return window[0]
