@@ -4,6 +4,7 @@
       'inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium transition-colors',
       badgeClass
     ]"
+    :title="planRateView ? planRateView.tip : undefined"
   >
     <!-- Platform logo -->
     <PlatformIcon v-if="platform" :platform="platform" size="sm" />
@@ -13,13 +14,19 @@
     <span v-if="showLabel" :class="labelClass">
       <template v-if="hasCustomRate">
         <!-- 原倍率删除线 + 专属倍率高亮 -->
-        <span class="line-through opacity-50 mr-0.5">{{ rateMultiplier }}x</span>
-        <span class="font-bold">{{ userRateMultiplier }}x</span>
+        <span class="line-through opacity-50 mr-0.5">{{ defaultRateText }}x</span>
+        <span class="font-bold">{{ customRateText }}x</span>
       </template>
       <template v-else>
         {{ labelText }}
       </template>
     </span>
+    <!-- 套餐低至：窄屏收起，信息在悬停提示里 -->
+    <PlanRateText
+      v-if="planRateView && inlinePlan"
+      :rate-view="planRateView"
+      class="hidden text-[10px] font-medium sm:inline"
+    />
   </span>
 </template>
 
@@ -28,6 +35,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { SubscriptionType, GroupPlatform } from '@/types'
 import PlatformIcon from './PlatformIcon.vue'
+import PlanRateText from './PlanRateText.vue'
+import type { GroupRateView } from '@/composables/useGroupRateView'
 
 interface Props {
   name: string
@@ -43,6 +52,16 @@ interface Props {
    * 只关心费率、不关心有效期的场景）。
    */
   alwaysShowRate?: boolean
+  /**
+   * 用户端的展示倍率（useGroupRateView().groupRateView 生成）：人民币模式显示等效倍率，
+   * 并在右侧补「套餐低至」。不传就按 rateMultiplier / userRateMultiplier 原样显示（后台用）。
+   */
+  rateView?: GroupRateView
+  /**
+   * 「套餐低至」是否放在徽标里面（默认是）。表格行里横向放不下（密钥列表在 1440 宽下已经要
+   * 横向滚动），传 false 由使用处把它放在徽标下一行；悬停提示不受影响。
+   */
+  inlinePlan?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -50,7 +69,8 @@ const props = withDefaults(defineProps<Props>(), {
   showRate: true,
   daysRemaining: null,
   userRateMultiplier: null,
-  alwaysShowRate: false
+  alwaysShowRate: false,
+  inlinePlan: true
 })
 
 const { t } = useI18n()
@@ -67,6 +87,23 @@ const hasCustomRate = computed(() => {
   )
 })
 
+// 标签里显示的是倍率（而不是订阅天数）：专属倍率、标准分组，或订阅分组开了 alwaysShowRate
+const labelShowsRate = computed(
+  () => hasCustomRate.value || !isSubscription.value || props.alwaysShowRate
+)
+
+// 标签显示倍率时才用 rateView；订阅分组显示「订阅」/ 剩余天数，不受影响
+const shownRateView = computed(() => (labelShowsRate.value ? props.rateView : undefined))
+
+// 专属倍率：划掉的默认倍率和高亮的专属倍率。有 rateView 用它换算好的，否则用原始值
+const hasCustomView = computed(() => shownRateView.value?.mainStruck !== undefined)
+const defaultRateText = computed(() =>
+  hasCustomView.value ? shownRateView.value!.mainStruck : String(props.rateMultiplier)
+)
+const customRateText = computed(() =>
+  hasCustomView.value ? shownRateView.value!.main : String(props.userRateMultiplier)
+)
+
 // 是否显示右侧标签
 const showLabel = computed(() => {
   if (!props.showRate) return false
@@ -76,9 +113,18 @@ const showLabel = computed(() => {
   return props.rateMultiplier !== undefined || hasCustomRate.value
 })
 
+// 有「套餐低至」才显示第二段，悬停提示也只在这时加（其余情况徽标与原来逐字相同）
+const planRateView = computed(() =>
+  showLabel.value && shownRateView.value?.plan !== undefined ? shownRateView.value : undefined
+)
+
 // Label text
 const labelText = computed(() => {
-  const rateLabel = props.rateMultiplier !== undefined ? `${props.rateMultiplier}x` : ''
+  const rateLabel = shownRateView.value
+    ? `${shownRateView.value.main}x`
+    : props.rateMultiplier !== undefined
+      ? `${props.rateMultiplier}x`
+      : ''
   if (isSubscription.value && !props.alwaysShowRate) {
     // 如果有剩余天数，显示天数
     if (props.daysRemaining !== null && props.daysRemaining !== undefined) {

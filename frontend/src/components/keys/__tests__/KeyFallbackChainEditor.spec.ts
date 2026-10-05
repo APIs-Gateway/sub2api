@@ -3,10 +3,18 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, h } from 'vue'
 
+import { resetFiatDataMissingForTest, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { resetPlanPricingForTest } from '@/composables/useRateDisplay'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import type { KeyFallbackChain, KeyFallbackChainItem } from '@/types'
 
-const { getChain, replaceChain } = vi.hoisted(() => ({ getChain: vi.fn(), replaceChain: vi.fn() }))
+const { getChain, replaceChain, getSubscriptionPricing } = vi.hoisted(() => ({
+  getChain: vi.fn(),
+  replaceChain: vi.fn(),
+  getSubscriptionPricing: vi.fn()
+}))
+vi.mock('@/api/subscriptions', () => ({ default: { getSubscriptionPricing } }))
 
 // 测试环境用的是 vue-i18n 的 runtime 构建，不能现场编译消息；
 // 这里直接按 zh-CN 语言包的点路径取文案并替换 {占位符}，断言的是用户真正看到的字。
@@ -477,5 +485,130 @@ describe('KeyFallbackChainEditor', () => {
     await w.get('[data-test="editor-load-error"] button').trigger('click')
     await flushPromises()
     expect(w.find('[data-test="primary-item"]').exists()).toBe(true)
+  })
+})
+
+// 徽标上的倍率与下面的参考价同一口径：人民币模式显示等效倍率（r 除以充值倍率）并补「套餐低至」，
+// 美元模式和 free 站（充值倍率 1）原样。这里用真实的 GroupBadge 渲染，断言用户看到的字。
+describe('KeyFallbackChainEditor 分组倍率', () => {
+  const PROD_PRICING = { d_min: 30, d_max: 510, u_min: 0.04, u_max: 0.05, t_min: 30, t_max: 360, t_step: 30, d_floor: 210 }
+
+  async function mountReal(chain = makeChain()) {
+    getChain.mockResolvedValue(chain)
+    const wrapper = mount(KeyFallbackChainEditor, { props: { keyId: 7 } })
+    await flushPromises()
+    return wrapper
+  }
+
+  /** 卡片里的倍率药丸（徽标右侧那一小块）和「套餐低至」。 */
+  const rateOf = (root: { find: (s: string) => { exists(): boolean; text(): string } }) => root.find('span.rounded.text-\\[10px\\]').text()
+  const planOf = (root: { findAll: (s: string) => Array<{ text(): string }> }) => root.findAll('[data-test="plan-rate"]').map((n) => n.text())
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    window.localStorage.clear()
+    resetFiatDataMissingForTest()
+    resetPlanPricingForTest()
+    useCurrencyDisplay().setMode('fiat')
+    getChain.mockReset()
+    replaceChain.mockReset()
+    getSubscriptionPricing.mockReset().mockResolvedValue(PROD_PRICING)
+    const auth = useAuthStore()
+    auth.token = 'test-token'
+    auth.user = { id: 1, role: 'user' } as never
+    setRecharge(13)
+  })
+
+  it('人民币模式：主分组 0.0769x + 套餐低至 0.04x，价格行仍是 ¥ 参考价', async () => {
+    const w = await mountReal()
+    const primary = w.get('[data-test="primary-item"]')
+
+    expect(rateOf(primary)).toBe('0.0769x')
+    expect(planOf(primary)).toEqual(['套餐低至 0.04x'])
+    expect(primary.get('[data-test="price"]').text()).toMatch(/^输入 ¥/)
+  })
+
+  it('徽标变长换行时，状态和拖动、删除按钮留在右侧', async () => {
+    const w = await mountReal()
+
+    expect(w.get('[data-test="primary-item"] [data-test="status"]').classes()).toContain('ml-auto')
+    expect(w.get('[data-test="fallback-item-21"] [data-test="status"]').element.parentElement?.classList.contains('ml-auto')).toBe(true)
+  })
+
+  it('主要项徽标变长时，「主要」标签不被挤成竖排，而是换到下一行', async () => {
+    const w = await mountReal()
+    const primary = w.get('[data-test="primary-item"]')
+    const label = primary.findAll('span[title]').find((n) => n.text() === '主要')!
+
+    expect(label).toBeDefined()
+    expect(label.classes()).toEqual(expect.arrayContaining(['shrink-0', 'whitespace-nowrap']))
+    expect(label.element.parentElement?.classList.contains('flex-wrap')).toBe(true)
+  })
+
+  it('兜底项带专属倍率：默认值划线，专属值高亮，套餐低至也一样', async () => {
+    const w = await mountReal()
+    const row = w.get('[data-test="fallback-item-21"]')
+
+    // 默认 1.8 → 0.138，专属 1.5 → 0.115；套餐低至 0.072 / 0.06
+    expect(row.findAll('.line-through').map((n) => n.text())).toEqual(['0.138x', '0.072x'])
+    expect(row.findAll('.font-bold').map((n) => n.text())).toEqual(['0.115x', '0.06x'])
+  })
+
+  it('添加分组的选择列表：每个候选也用等效倍率', async () => {
+    const w = await mountReal()
+    await w.get('[data-test="add-button"]').trigger('click')
+    const picker = w.get('[data-test="picker"]')
+
+    expect(rateOf(picker.get('[data-test="pick-30"]'))).toBe('0.231x')
+    expect(planOf(picker.get('[data-test="pick-30"]'))).toEqual(['套餐低至 0.12x'])
+    expect(rateOf(picker.get('[data-test="pick-31"]'))).toBe('0.385x')
+    expect(planOf(picker.get('[data-test="pick-31"]'))).toEqual(['套餐低至 0.2x'])
+    expect(picker.get('[data-test="pick-30"] [data-test="price"]').text()).toContain('输入 ¥0.5208')
+  })
+
+  it('套餐定价取不到：只剩主倍率', async () => {
+    getSubscriptionPricing.mockRejectedValue(new Error('boom'))
+    const w = await mountReal()
+
+    expect(rateOf(w.get('[data-test="primary-item"]'))).toBe('0.0769x')
+    expect(w.findAll('[data-test="plan-rate"]')).toHaveLength(0)
+  })
+
+  it('美元模式（充值倍率 13，选了 $）：原始倍率，没有套餐低至', async () => {
+    useCurrencyDisplay().setMode('usd')
+    const w = await mountReal()
+
+    expect(rateOf(w.get('[data-test="primary-item"]'))).toBe('1x')
+    const row = w.get('[data-test="fallback-item-21"]')
+    expect(row.findAll('.line-through').map((n) => n.text())).toEqual(['1.8x'])
+    expect(row.findAll('.font-bold').map((n) => n.text())).toEqual(['1.5x'])
+    expect(w.findAll('[data-test="plan-rate"]')).toHaveLength(0)
+    expect(w.get('[data-test="primary-item"] [data-test="price"]').text()).toMatch(/^输入 \$/)
+  })
+
+  it('free 站（充值倍率 1）：与改动前逐字相同，不请求套餐定价', async () => {
+    setRecharge(1)
+    window.localStorage.setItem('currency-display-mode', 'fiat')
+    const w = await mountReal()
+
+    expect(rateOf(w.get('[data-test="primary-item"]'))).toBe('1x')
+    const row = w.get('[data-test="fallback-item-21"]')
+    expect(row.findAll('.line-through').map((n) => n.text())).toEqual(['1.8x'])
+    expect(row.findAll('.font-bold').map((n) => n.text())).toEqual(['1.5x'])
+    expect(w.findAll('[data-test="plan-rate"]')).toHaveLength(0)
+    // 徽标本身没有悬停提示（只有带套餐低至的人民币模式才有）
+    expect(w.findAll('span.rounded-md.px-2').filter((n) => n.attributes('title') !== undefined)).toHaveLength(0)
+    expect(getSubscriptionPricing).not.toHaveBeenCalled()
+  })
+
+  it('未登录：不请求套餐定价，只有主倍率', async () => {
+    const auth = useAuthStore()
+    auth.token = null
+    auth.user = null
+    const w = await mountReal()
+
+    expect(getSubscriptionPricing).not.toHaveBeenCalled()
+    expect(rateOf(w.get('[data-test="primary-item"]'))).toBe('0.0769x')
+    expect(w.findAll('[data-test="plan-rate"]')).toHaveLength(0)
   })
 })

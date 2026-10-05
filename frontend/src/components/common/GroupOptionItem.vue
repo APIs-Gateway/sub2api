@@ -22,22 +22,30 @@
       </span>
     </div>
 
-    <!-- Right: rate pill + checkmark (vertically centered to first row) -->
-    <div class="flex shrink-0 items-center gap-2 pt-0.5">
-      <!-- Rate pill (platform color) -->
-      <span v-if="rateMultiplier !== undefined" :title="t('groups.rateMultiplierTip')" :class="['inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold', ratePillClass]">
-        <template v-if="hasCustomRate">
-          <span class="mr-1 line-through opacity-50">{{ rateMultiplier }}x</span>
-          <span class="font-bold">{{ userRateMultiplier }}x</span>
-        </template>
-        <template v-else>
-          {{ t('groups.rateMultiplierLabel', { rate: rateMultiplier }) }}
-        </template>
-      </span>
+    <!-- Right: rate pill (+ plan rate below it) + checkmark (aligned to the pill) -->
+    <div class="flex shrink-0 items-start gap-2 pt-0.5">
+      <div class="flex flex-col items-end gap-1">
+        <!-- Rate pill (platform color) -->
+        <span v-if="rateMultiplier !== undefined" :title="rateTip" :class="['inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold', ratePillClass]">
+          <template v-if="hasCustomRate">
+            <span class="mr-1 line-through opacity-50">{{ defaultRateText }}x</span>
+            <span class="font-bold">{{ customRateText }}x</span>
+          </template>
+          <template v-else>
+            {{ t('groups.rateMultiplierLabel', { rate: pillRateText }) }}
+          </template>
+        </span>
+        <!-- 套餐低至（人民币模式，套餐可买时） -->
+        <PlanRateText
+          v-if="rateMultiplier !== undefined && rateView && rateView.plan !== undefined"
+          :rate-view="rateView"
+          class="text-xs"
+        />
+      </div>
       <!-- Checkmark -->
       <svg
         v-if="showCheckmark && selected"
-        class="h-4 w-4 shrink-0 text-primary-600 dark:text-primary-400"
+        class="mt-1 h-4 w-4 shrink-0 text-primary-600 dark:text-primary-400"
         fill="none"
         stroke="currentColor"
         viewBox="0 0 24 24"
@@ -53,6 +61,8 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GroupBadge from './GroupBadge.vue'
+import PlanRateText from './PlanRateText.vue'
+import type { GroupRateView } from '@/composables/useGroupRateView'
 import type { SubscriptionType, GroupPlatform } from '@/types'
 
 interface Props {
@@ -64,6 +74,12 @@ interface Props {
   description?: string | null
   selected?: boolean
   showCheckmark?: boolean
+  /**
+   * 用户端的展示倍率（useGroupRateView().groupRateView 生成）：人民币模式显示等效倍率，
+   * 药丸下面补「套餐低至」，悬停提示用新口径。不传就按 rateMultiplier / userRateMultiplier
+   * 原样显示、悬停用 groups.rateMultiplierTip。
+   */
+  rateView?: GroupRateView
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -84,6 +100,17 @@ const hasCustomRate = computed(() => {
     props.userRateMultiplier !== props.rateMultiplier
   )
 })
+
+// 药丸文字：有 rateView 用换算好的；专属倍率时 mainStruck 是划掉的默认倍率
+const hasCustomView = computed(() => props.rateView?.mainStruck !== undefined)
+const defaultRateText = computed(() =>
+  hasCustomView.value ? props.rateView!.mainStruck : String(props.rateMultiplier)
+)
+const customRateText = computed(() =>
+  hasCustomView.value ? props.rateView!.main : String(props.userRateMultiplier)
+)
+const pillRateText = computed(() => (props.rateView ? props.rateView.main : props.rateMultiplier))
+const rateTip = computed(() => (props.rateView ? props.rateView.tip : t('groups.rateMultiplierTip')))
 
 // Rate pill color matches platform badge color
 const ratePillClass = computed(() => {

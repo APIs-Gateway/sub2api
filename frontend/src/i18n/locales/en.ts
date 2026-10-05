@@ -826,7 +826,12 @@
     subscription: 'Sub',
     rateMultiplierTip: 'The "Nx rate" is how fast this group burns your balance relative to official pricing: a higher number means a more stable pool but also more balance consumed for the same usage. It is the billing coefficient, not the final price. See the group description for your effective fraction of official pricing after the plan discount.'
     ,
-    rateMultiplierLabel: '{rate}x rate'
+    rateMultiplierLabel: '{rate}x rate',
+    rateTipFiat: 'Rate {rate}x: you pay ¥{rate} for every $1 of usage at official pricing. A lower rate costs less.',
+    rateTipUsd: 'Rate {rate}x: every $1 of usage at official pricing deducts ${rate} of quota. A lower rate costs less.',
+    planRatePrefix: 'Plan as low as',
+    planRateTip: 'With a plan, the same usage is charged at {rate}x or lower.',
+    yourPlanRateTip: 'Your plan currently charges {rate}x.'
   },
 
   keyFallback: {
@@ -1125,9 +1130,8 @@
     selectGroup: 'Select a group',
     billing: {
       title: 'How billing works',
-      intro: 'This site bills by usage, deducted from your balance (USD) in real time. A monthly plan gives you a large "official-price quota" for a low price — for example, ¥39 grants $2700 of quota, with models charged at official prices.',
-      rate: 'The "Nx rate" on the right of each group is how fast that pool burns your balance relative to official pricing: a higher number means a more stable pool but also more balance consumed for the same usage. It is the billing coefficient, not your final cost.',
-      effective: 'The "0.X rate" in the group description is your effective fraction of official pricing after the plan discount.'
+      intro: 'This site bills by usage from your balance. With a plan, usage is charged to the plan first, which costs less for the same usage.',
+      rate: 'A lower rate on the right of a group costs less: the same usage is charged less in a lower-rate group.'
     },
     statusLabel: 'Status',
     selectStatus: 'Select status',
@@ -1154,7 +1158,7 @@
     lastUsedIP: 'Last Used IP',
     useKey: 'Use Key',
     connect: 'Connect',
-    usedLabel: 'Used',
+    usedLabel: 'Total used',
     unlimited: 'No limit',
     overview: {
       address: 'Endpoint',

@@ -50,22 +50,23 @@
           <span class="chain-node chain-node--primary" aria-hidden="true" />
           <div class="chain-card">
             <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-              <div class="flex min-w-0 items-center gap-2">
+              <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                 <GroupBadge
                   :name="primary.name"
                   :platform="chain.platform"
                   :rate-multiplier="primary.rate_multiplier"
                   :user-rate-multiplier="primary.user_rate_multiplier"
+                  :rate-view="groupRateView(primary.rate_multiplier, primary.user_rate_multiplier)"
                 />
                 <span
-                  class="inline-flex items-center gap-1 rounded bg-gray-900 px-1.5 py-0.5 text-[11px] font-medium text-white dark:bg-dark-600 dark:text-gray-100"
+                  class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded bg-gray-900 px-1.5 py-0.5 text-[11px] font-medium text-white dark:bg-dark-600 dark:text-gray-100"
                   :title="t('keyFallback.editor.primaryHint')"
                 >
                   <Icon name="lock" size="xs" />
                   {{ t('keyFallback.editor.primary') }}
                 </span>
               </div>
-              <StatusMark :item="primary" />
+              <StatusMark :item="primary" class="ml-auto" />
             </div>
             <PriceLine :item="primary" />
             <ReasonLine :item="primary" is-primary />
@@ -100,9 +101,10 @@
                     :platform="chain.platform"
                     :rate-multiplier="item.rate_multiplier"
                     :user-rate-multiplier="item.user_rate_multiplier"
+                    :rate-view="groupRateView(item.rate_multiplier, item.user_rate_multiplier)"
                   />
                 </div>
-                <div class="flex items-center gap-1">
+                <div class="ml-auto flex items-center gap-1">
                   <StatusMark :item="item" />
                   <button
                     type="button"
@@ -210,6 +212,7 @@
                         :platform="chain.platform"
                         :rate-multiplier="g.rate_multiplier"
                         :user-rate-multiplier="g.user_rate_multiplier ?? null"
+                        :rate-view="groupRateView(g.rate_multiplier, g.user_rate_multiplier ?? null)"
                       />
                     </span>
                     <PriceLine :item="g" bare />
@@ -236,6 +239,7 @@ import GroupBadge from '@/components/common/GroupBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { keyFallbackAPI } from '@/api/keyFallback'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { useGroupRateView } from '@/composables/useGroupRateView'
 import { extractApiErrorCode, extractApiErrorMetadata } from '@/utils/apiError'
 import { fallbackErrorMessage, REFRESH_ON_ERROR } from '@/utils/keyFallbackError'
 import type {
@@ -252,6 +256,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const { isFiat, formatFiat, formatUsd } = useCurrencyDisplay()
+// 分组徽标的倍率与下面的参考价同一口径：人民币模式显示等效倍率并补「套餐低至」，美元模式和 free 站原样
+const { groupRateView } = useGroupRateView()
 
 const chain = ref<KeyFallbackChain | null>(null)
 const loading = ref(false)
