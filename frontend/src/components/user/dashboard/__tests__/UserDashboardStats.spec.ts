@@ -188,3 +188,16 @@ describe('UserDashboardStats token 卡片', () => {
     expect(text).not.toContain('dashboard.cache')
   })
 })
+
+describe('UserDashboardStats 今日消费', () => {
+  it('只显示实际消费，不再并列「/ 标准」金额', () => {
+    const w = mountStats(
+      makeStats({ today_actual_cost: 4.2, today_cost: 6.1, total_actual_cost: 84.2, total_cost: 120 })
+    )
+    const text = w.text().replace(/[\u00a0\u202f]/g, ' ')
+    expect(text).toContain('$4.20')
+    expect(text).toContain('$84.20')
+    expect(text).not.toContain('$6.10')
+    expect(text).not.toContain('/ $')
+  })
+})
