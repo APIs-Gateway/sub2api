@@ -170,7 +170,7 @@ func (s *OpenAIGatewayService) ForwardResponsesInputTokens(ctx context.Context, 
 	if resp == nil || resp.Body == nil {
 		return writeError(http.StatusBadGateway, "upstream_error", "Invalid upstream response", errors.New("input_tokens: missing response body"))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	responseBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
 		if errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
