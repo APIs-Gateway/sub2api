@@ -205,7 +205,9 @@ func newPricingShadowHub(sink PricingShadowSink) *pricingShadowHub {
 
 func addCounter(m *sync.Map, key any, keys *atomic.Int64, overflow any) {
 	if existing, ok := m.Load(key); ok {
-		existing.(*atomic.Int64).Add(1)
+		if c, ok := existing.(*atomic.Int64); ok {
+			c.Add(1)
+		}
 		return
 	}
 	if keys.Load() >= shadowCounterMaxKeys {
@@ -215,7 +217,9 @@ func addCounter(m *sync.Map, key any, keys *atomic.Int64, overflow any) {
 	if !loaded {
 		keys.Add(1)
 	}
-	actual.(*atomic.Int64).Add(1)
+	if c, ok := actual.(*atomic.Int64); ok {
+		c.Add(1)
+	}
 }
 
 func (h *pricingShadowHub) noteCompared(groupID int64) {
@@ -298,16 +302,27 @@ func (h *pricingShadowHub) Stats() PricingShadowStats {
 		SamplesDropped: h.dropped.Load(),
 	}
 	h.compared.Range(func(k, v any) bool {
-		out.ComparedTotal = append(out.ComparedTotal, PricingShadowComparedCount{GroupID: k.(int64), Count: v.(*atomic.Int64).Load()})
+		gid, ok1 := k.(int64)
+		c, ok2 := v.(*atomic.Int64)
+		if ok1 && ok2 {
+			out.ComparedTotal = append(out.ComparedTotal, PricingShadowComparedCount{GroupID: gid, Count: c.Load()})
+		}
 		return true
 	})
 	h.diffs.Range(func(k, v any) bool {
-		key := k.(shadowDiffKey)
-		out.DiffTotal = append(out.DiffTotal, PricingShadowDiffCount{GroupID: key.GroupID, Kind: key.Kind, Class: key.Class, Count: v.(*atomic.Int64).Load()})
+		key, ok1 := k.(shadowDiffKey)
+		c, ok2 := v.(*atomic.Int64)
+		if ok1 && ok2 {
+			out.DiffTotal = append(out.DiffTotal, PricingShadowDiffCount{GroupID: key.GroupID, Kind: key.Kind, Class: key.Class, Count: c.Load()})
+		}
 		return true
 	})
 	h.skipped.Range(func(k, v any) bool {
-		out.SkippedTotal[k.(string)] = v.(*atomic.Int64).Load()
+		name, ok1 := k.(string)
+		c, ok2 := v.(*atomic.Int64)
+		if ok1 && ok2 {
+			out.SkippedTotal[name] = c.Load()
+		}
 		return true
 	})
 	sort.Slice(out.ComparedTotal, func(i, j int) bool { return out.ComparedTotal[i].GroupID < out.ComparedTotal[j].GroupID })
