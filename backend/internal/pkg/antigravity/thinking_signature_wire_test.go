@@ -34,7 +34,7 @@ func TestThinkingSignatureWireGeminiBufferedAndStreamed(t *testing.T) {
 	for _, parts := range []string{
 		`[{"text":"plan","thought":true}]`,
 		`[{"text":"plan","thought":true,"thoughtSignature":"signed"}]`,
-		`[{"thoughtSignature":"signed"}]`,
+		`[{"thought":true,"thoughtSignature":"signed"}]`,
 		`[{"text":"answer","thoughtSignature":"signed"}]`,
 	} {
 		t.Run(parts, func(t *testing.T) {
