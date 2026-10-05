@@ -57,15 +57,15 @@ func TestRestoreToolNamesInBytes_LongestFirst(t *testing.T) {
 		{"abc_12_ext", "bar"},
 		{"abc_12", "foo"},
 	}
-	data := []byte(`{"tool":"abc_12_ext","other":"abc_12"}`)
+	data := []byte(`{"content":[{"type":"tool_use","name":"abc_12_ext"},{"type":"tool_use","name":"abc_12"}],"other":"abc_12"}`)
 	restored := string(restoreToolNamesInBytes(data, rw))
-	require.Equal(t, `{"tool":"bar","other":"foo"}`, restored)
+	require.Equal(t, `{"content":[{"type":"tool_use","name":"bar"},{"type":"tool_use","name":"foo"}],"other":"abc_12"}`, restored)
 }
 
 func TestRestoreToolNamesInBytes_StaticPrefixRollback(t *testing.T) {
 	data := []byte(`{"name":"sessions_list","id":"cc_ses_xyz"}`)
 	got := string(restoreToolNamesInBytes(data, nil))
-	require.Equal(t, `{"name":"sessions_list","id":"session_xyz"}`, got)
+	require.Equal(t, string(data), got, "without a request mapping, opaque output remains unchanged")
 }
 
 func TestApplyToolNameRewriteToBody_RenamesToolsAndToolChoice(t *testing.T) {
@@ -152,7 +152,7 @@ func TestApplyToolNameRewriteToBody_EscapedRepeatedNamesAndCacheControl(t *testi
 	require.Equal(t, "1h", gjson.GetBytes(out, "tools.0.cache_control.ttl").String())
 	require.Contains(t, string(out), `"literal":"sessions_\u4f60 <keep>"`)
 	require.Equal(t, "sessions_你", gjson.GetBytes(out, "messages.0.content.0.input.literal").String())
-	response, err := json.Marshal(map[string]string{"name": fake})
+	response, err := json.Marshal(map[string]string{"type": "tool_use", "name": fake})
 	require.NoError(t, err)
 	require.Equal(t, "sessions_你", gjson.GetBytes(restoreToolNamesInBytes(response, rw), "name").String())
 }
