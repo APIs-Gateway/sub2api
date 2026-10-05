@@ -56,22 +56,22 @@ func TestParsePricingReplayArgs_AllFlags(t *testing.T) {
 
 func TestParsePricingReplayArgs_Invalid(t *testing.T) {
 	for name, args := range map[string][]string{
-		"unknown flag":      {"--nope"},
-		"positional":        {"extra"},
-		"days zero":         {"--days", "0"},
-		"days too big":      {"--days", "366"},
-		"bad source":        {"--matrix-source", "x"},
-		"workers zero":      {"--workers", "0"},
-		"workers too many":  {"--workers", "65"},
-		"batch zero":        {"--batch-size", "0"},
-		"batch too big":     {"--batch-size", "50001"},
-		"stmt zero":         {"--statement-timeout", "0s"},
-		"stmt too long":     {"--statement-timeout", "31m"},
-		"lock zero":         {"--lock-timeout", "0s"},
-		"lock too long":     {"--lock-timeout", "2m"},
-		"bad group":         {"--groups", "1,x"},
-		"negative group":    {"--groups", "-1"},
-		"bad until":         {"--until", "yesterday"},
+		"unknown flag":     {"--nope"},
+		"positional":       {"extra"},
+		"days zero":        {"--days", "0"},
+		"days too big":     {"--days", "366"},
+		"bad source":       {"--matrix-source", "x"},
+		"workers zero":     {"--workers", "0"},
+		"workers too many": {"--workers", "65"},
+		"batch zero":       {"--batch-size", "0"},
+		"batch too big":    {"--batch-size", "50001"},
+		"stmt zero":        {"--statement-timeout", "0s"},
+		"stmt too long":    {"--statement-timeout", "31m"},
+		"lock zero":        {"--lock-timeout", "0s"},
+		"lock too long":    {"--lock-timeout", "2m"},
+		"bad group":        {"--groups", "1,x"},
+		"negative group":   {"--groups", "-1"},
+		"bad until":        {"--until", "yesterday"},
 	} {
 		var errOut bytes.Buffer
 		_, err := parsePricingReplayArgs(args, &errOut, replayCmdNow)
