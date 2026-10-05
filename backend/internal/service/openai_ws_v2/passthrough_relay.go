@@ -775,7 +775,8 @@ func terminalHasGeneratedImage(message []byte, eventType string) bool {
 	// A response can exhaust its output budget after an image tool already
 	// completed. Observe that product without treating an unfinished tool or
 	// a failed/cancelled response as a completed image.
-	if imageOutputStatusIsUnfinished(status) && !(eventType == "response.incomplete" && status.String() == "incomplete") {
+	incompleteProduct := eventType == "response.incomplete" && status.String() == "incomplete"
+	if imageOutputStatusIsUnfinished(status) && !incompleteProduct {
 		return false
 	}
 	output := gjson.GetBytes(message, "response.output")
