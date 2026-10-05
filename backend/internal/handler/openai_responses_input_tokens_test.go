@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -101,4 +102,82 @@ func TestResponsesInputTokensChainAndAudit(t *testing.T) {
 			require.Empty(t, hs.usageLogs)
 		})
 	}
+}
+
+func TestResponsesInputTokensAdmissionFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		key        *service.APIKey
+		subject    *middleware2.AuthSubject
+		limit      int64
+		want       int
+	}{
+		{"missing key", `{}`, nil, &middleware2.AuthSubject{UserID: 100}, 1024, 401},
+		{"missing group", `{}`, &service.APIKey{}, &middleware2.AuthSubject{UserID: 100}, 1024, 401},
+		{"unsupported platform", `{}`, alphaSearchAPIKey(service.PlatformAnthropic, 1), &middleware2.AuthSubject{UserID: 100}, 1024, 404},
+		{"missing subject", `{}`, alphaSearchAPIKey(service.PlatformOpenAI, 1), nil, 1024, 500},
+		{"body exceeds limit", `{"model":"gpt-4o","input":"long body"}`, alphaSearchAPIKey(service.PlatformOpenAI, 1), &middleware2.AuthSubject{UserID: 100}, 8, 413},
+		{"invalid JSON", `{`, alphaSearchAPIKey(service.PlatformOpenAI, 1), &middleware2.AuthSubject{UserID: 100}, 1024, 400},
+		{"invalid model", `{"model":3}`, alphaSearchAPIKey(service.PlatformOpenAI, 1), &middleware2.AuthSubject{UserID: 100}, 1024, 400},
+		{"missing dependencies", `{"model":"gpt-4o"}`, alphaSearchAPIKey(service.PlatformOpenAI, 1), &middleware2.AuthSubject{UserID: 100}, 1024, 503},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Gateway.MaxBodySize = tc.limit
+			h := NewOpenAIGatewayHandler(nil, nil, nil, nil, nil, nil, nil, nil, cfg)
+			c, rec := newAlphaSearchContext(tc.body, tc.key, tc.subject)
+			c.Request.URL.Path = "/v1/responses/input_tokens"
+			h.ResponsesInputTokens(c)
+			require.Equal(t, tc.want, rec.Code, rec.Body.String())
+			require.False(t, service.ResponsesInputTokensAttemptedUpstream(c))
+		})
+	}
+}
+
+func TestResponsesInputTokensChainExhaustionNeverGenerates(t *testing.T) {
+	o := chainRespBase()
+	o.schedulable = nil
+	hs := newChainRespHarness(t, o)
+	hs.router.POST("/v1/responses/input_tokens", hs.handler.ResponsesInputTokens)
+	rec := httptest.NewRecorder()
+	hs.router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/responses/input_tokens", strings.NewReader(`{"model":"gpt-5.4","input":"hello"}`)))
+	require.Equal(t, 503, rec.Code, rec.Body.String())
+	require.Empty(t, hs.upstream.accountCalls())
+	require.Empty(t, hs.usageLogs)
+	require.Equal(t, int32(1), hs.routes.calls.Load())
+}
+
+func TestResponsesInputTokensOpsClassificationAndFilter(t *testing.T) {
+	for _, tc := range []struct {
+		path           string
+		ignored, count bool
+	}{
+		{"/v1/responses/input_tokens", true, true},
+		{"/responses/input_tokens", true, true},
+		{"/backend-api/codex/responses/input_tokens", true, true},
+		{"/v1/responses/input_tokens/foo", false, false},
+		{"/responses/input_tokensx", false, false},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			setupOpsErrorLogTestQueue(t, 2)
+			settings := &opsAdvancedSettingsRepoStub{advanced: `{"ignore_count_tokens_errors":true}`}
+			ops := service.NewOpsService(nil, settings, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			r := gin.New()
+			r.Use(OpsErrorLoggerMiddleware(ops))
+			r.POST(tc.path, func(c *gin.Context) {
+				require.Equal(t, tc.count, isCountTokensRequest(c))
+				c.JSON(502, gin.H{"error": gin.H{"message": "Upstream request failed", "type": "upstream_error"}})
+			})
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, tc.path, nil))
+			require.Equal(t, 502, rec.Code)
+			if tc.ignored {
+				require.Zero(t, OpsErrorLogQueueLength())
+			} else {
+				require.Equal(t, int64(1), OpsErrorLogQueueLength())
+			}
+		})
+	}
+	require.Equal(t, EndpointResponsesInputTokens, DeriveUpstreamEndpoint(EndpointResponsesInputTokens, "/responses/input_tokens", service.PlatformOpenAI))
+	require.Equal(t, EndpointResponsesInputTokens, DeriveUpstreamEndpoint(EndpointResponsesInputTokens, "/responses/input_tokens", service.PlatformGrok))
 }

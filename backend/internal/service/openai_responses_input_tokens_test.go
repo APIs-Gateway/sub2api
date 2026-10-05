@@ -18,13 +18,22 @@ import (
 
 type inputTokensUpstream struct {
 	HTTPUpstream
-	status int
-	body   string
-	err    error
-	calls  int
-	req    *http.Request
-	wire   []byte
-	closed bool
+	status      int
+	body        string
+	err         error
+	calls       int
+	req         *http.Request
+	wire        []byte
+	closed      bool
+	missingBody bool
+	readErr     bool
+	afterCall   func()
+}
+
+type inputTokensBrokenReader struct{}
+
+func (inputTokensBrokenReader) Read([]byte) (int, error) {
+	return 0, errors.New("private read failure")
 }
 
 type inputTokensResponseBody struct {
@@ -37,8 +46,17 @@ func (u *inputTokensUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*
 	u.calls++
 	u.req = req
 	u.wire, _ = io.ReadAll(req.Body)
+	if u.afterCall != nil {
+		u.afterCall()
+	}
 	if u.err != nil {
 		return nil, u.err
+	}
+	if u.missingBody {
+		return &http.Response{StatusCode: u.status}, nil
+	}
+	if u.readErr {
+		return &http.Response{StatusCode: u.status, Body: inputTokensResponseBody{Reader: inputTokensBrokenReader{}, closed: &u.closed}}, nil
 	}
 	return &http.Response{StatusCode: u.status, Header: http.Header{"X-Request-Id": {"count-1"}}, Body: inputTokensResponseBody{Reader: strings.NewReader(u.body), closed: &u.closed}}, nil
 }
@@ -293,4 +311,32 @@ func TestResponsesInputTokensInvalidLocalToolDescriptors(t *testing.T) {
 			require.Empty(t, rec.Header().Get("X-Sub2api-Token-Count"))
 		})
 	}
+}
+
+func TestResponsesInputTokensIncompleteTransportResponse(t *testing.T) {
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "key"}}
+	for _, upstream := range []*inputTokensUpstream{{status: 200, missingBody: true}, {status: 200, readErr: true}} {
+		rec, err := inputTokensFixture(t, account, upstream, `{"model":"gpt-4o"}`, &config.Config{})
+		require.Error(t, err)
+		require.Equal(t, 502, rec.Code)
+		require.NotContains(t, rec.Body.String(), "private read failure")
+		if upstream.readErr {
+			require.True(t, upstream.closed)
+		}
+	}
+	rec, err := inputTokensFixture(t, nil, &inputTokensUpstream{}, `{"model":"gpt-4o"}`, &config.Config{})
+	require.Error(t, err)
+	require.Equal(t, 503, rec.Code)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	upstream := &inputTokensUpstream{status: 200, body: `{"object":"response.input_tokens","input_tokens":42}`, afterCall: cancel}
+	rec = httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/input_tokens", nil).WithContext(ctx)
+	s := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	err = s.ForwardResponsesInputTokens(ctx, c, account, []byte(`{"model":"gpt-4o"}`))
+	require.ErrorIs(t, err, context.Canceled)
+	require.True(t, upstream.closed)
+	require.Empty(t, rec.Body.String())
 }
