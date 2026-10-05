@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	stdsql "database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -69,6 +70,21 @@ func (t *refundStorageFaultTx) Query(ctx context.Context, query string, args, va
 		return err
 	}
 	return t.Tx.Query(ctx, query, args, value)
+}
+
+// Ent forwards raw savepoint statements through the optional ExecContext
+// extension. Preserve it as well as dialect.Tx so the intended fault executes.
+func (t *refundStorageFaultTx) ExecContext(ctx context.Context, query string, args ...any) (stdsql.Result, error) {
+	if err := t.fail(query); err != nil {
+		return nil, err
+	}
+	executor, ok := t.Tx.(interface {
+		ExecContext(context.Context, string, ...any) (stdsql.Result, error)
+	})
+	if !ok {
+		return nil, errors.New("fixture transaction does not support ExecContext")
+	}
+	return executor.ExecContext(ctx, query, args...)
 }
 
 func (t *refundStorageFaultTx) Commit() error {
