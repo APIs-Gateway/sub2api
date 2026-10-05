@@ -1419,8 +1419,8 @@
     endpointPing: 'Endpoint PING',
     history60pts: 'HISTORY ({n} PTS)',
     nextUpdateIn: 'NEXT UPDATE IN {n}s',
-    past: 'PAST',
-    now: 'NOW',
+    past: 'Past',
+    now: 'Now',
     maintenancePaused: 'Maintenance · timeline paused',
     extraModelsCount: '+ {n} models',
     pollEvery: '{n}s polling',
@@ -1447,9 +1447,9 @@
       '30d': '30 days'
     },
     overall: {
-      operational: 'OPERATIONAL',
-      degraded: 'DEGRADED',
-      unavailable: 'UNAVAILABLE'
+      operational: 'Operational',
+      degraded: 'Degraded',
+      unavailable: 'Unavailable'
     },
     columns: {
       name: 'Name',

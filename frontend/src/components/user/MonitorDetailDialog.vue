@@ -11,6 +11,26 @@
     <div v-else-if="!detail" class="py-8 text-center text-sm text-gray-500">
       {{ t('channelStatus.detailLoadError') }}
     </div>
+    <!-- 普通用户的详情不带模型名，只有主模型一项：用统计格展示，不画单行表格 -->
+    <dl v-else-if="!hasModelNames" class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div
+        v-for="cell in summaryCells"
+        :key="cell.key"
+        class="rounded-xl p-3 bg-gray-50/80 dark:bg-dark-900/40 border border-gray-100 dark:border-dark-700/50"
+      >
+        <dt class="text-xs text-gray-500 dark:text-gray-400">{{ cell.label }}</dt>
+        <dd class="mt-1.5 text-lg leading-7 font-semibold tabular-nums text-gray-900 dark:text-gray-100">
+          <span
+            v-if="cell.badgeClass"
+            class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-5 font-medium"
+            :class="cell.badgeClass"
+          >
+            {{ cell.value }}
+          </span>
+          <template v-else>{{ cell.value }}</template>
+        </dd>
+      </div>
+    </dl>
     <div v-else class="overflow-x-auto">
       <table class="w-full text-left text-sm">
         <thead class="border-b border-gray-200 dark:border-dark-700">
@@ -60,7 +80,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -87,6 +107,23 @@ const { statusLabel, statusBadgeClass, formatLatency, formatPercent } = useChann
 
 const detail = ref<UserMonitorDetail | null>(null)
 const loading = ref(false)
+
+// 模型名只对管理员返回；没有模型名时只展示主模型（models[0]）的汇总。
+const hasModelNames = computed(() => !!detail.value?.models.some(m => !!m.model))
+
+const summaryCells = computed(() => {
+  const m = detail.value?.models[0]
+  if (!m) return []
+  const col = (k: string) => t(`channelStatus.detailColumns.${k}`)
+  return [
+    { key: 'status', label: col('latestStatus'), value: statusLabel(m.latest_status), badgeClass: statusBadgeClass(m.latest_status) },
+    { key: 'latency', label: col('latestLatency'), value: formatLatency(m.latest_latency_ms) },
+    { key: 'avg', label: col('avgLatency7d'), value: formatLatency(m.avg_latency_7d_ms) },
+    { key: 'a7', label: col('availability7d'), value: formatPercent(m.availability_7d) },
+    { key: 'a15', label: col('availability15d'), value: formatPercent(m.availability_15d) },
+    { key: 'a30', label: col('availability30d'), value: formatPercent(m.availability_30d) },
+  ]
+})
 let requestVersion = 0
 
 async function load(id: number) {

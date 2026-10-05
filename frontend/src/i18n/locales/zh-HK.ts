@@ -1422,9 +1422,9 @@
     dialogLatency: '對話延遲',
     endpointPing: '端點 PING',
     history60pts: '近 {n} 次記錄',
-    nextUpdateIn: '{n}s 後刷新',
-    past: 'PAST',
-    now: 'NOW',
+    nextUpdateIn: '{n} 秒後刷新',
+    past: '過去',
+    now: '現在',
     maintenancePaused: '維護中 · 已暫停時間線采集',
     extraModelsCount: '+ {n} 模型',
     pollEvery: '{n}s 輪詢',
@@ -1451,9 +1451,9 @@
       '30d': '30 天'
     },
     overall: {
-      operational: 'OPERATIONAL',
-      degraded: 'DEGRADED',
-      unavailable: 'UNAVAILABLE'
+      operational: '正常',
+      degraded: '降級',
+      unavailable: '不可用'
     },
     columns: {
       name: '名稱',

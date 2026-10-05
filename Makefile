@@ -33,7 +33,10 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/layout/__tests__/AppSidebar.userNav.spec.ts \
 	src/components/layout/__tests__/AppHeader.userMenu.spec.ts \
 	src/components/layout/__tests__/AppHeader.docsLink.spec.ts \
-	src/components/layout/__tests__/userNav.spec.ts
+	src/components/layout/__tests__/userNav.spec.ts \
+	src/components/user/__tests__/MonitorDetailDialog.spec.ts \
+	src/components/user/monitor/__tests__/MonitorCard.visibility.spec.ts \
+	src/views/user/__tests__/ChannelStatusView.visibility.spec.ts
 
 # 一键编译前后端
 build: build-backend build-frontend
