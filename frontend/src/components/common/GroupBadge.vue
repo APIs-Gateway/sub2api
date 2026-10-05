@@ -23,7 +23,7 @@
     </span>
     <!-- 套餐低至：窄屏收起，信息在悬停提示里 -->
     <PlanRateText
-      v-if="planRateView"
+      v-if="planRateView && inlinePlan"
       :rate-view="planRateView"
       class="hidden text-[10px] font-medium sm:inline"
     />
@@ -57,6 +57,11 @@ interface Props {
    * 并在右侧补「套餐低至」。不传就按 rateMultiplier / userRateMultiplier 原样显示（后台用）。
    */
   rateView?: GroupRateView
+  /**
+   * 「套餐低至」是否放在徽标里面（默认是）。表格行里横向放不下（密钥列表在 1440 宽下已经要
+   * 横向滚动），传 false 由使用处把它放在徽标下一行；悬停提示不受影响。
+   */
+  inlinePlan?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -64,7 +69,8 @@ const props = withDefaults(defineProps<Props>(), {
   showRate: true,
   daysRemaining: null,
   userRateMultiplier: null,
-  alwaysShowRate: false
+  alwaysShowRate: false,
+  inlinePlan: true
 })
 
 const { t } = useI18n()

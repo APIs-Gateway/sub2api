@@ -191,15 +191,24 @@
                 class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 transition-colors duration-200 hover:bg-gray-100 dark:hover:bg-dark-800"
                 :title="t('keys.clickToChangeGroup')"
               >
-                <GroupBadge
-                  v-if="row.group"
-                  :name="row.group.name"
-                  :platform="row.group.platform"
-                  :subscription-type="row.group.subscription_type"
-                  :rate-multiplier="row.group.rate_multiplier"
-                  :user-rate-multiplier="userGroupRates[row.group.id]"
-                  :rate-view="groupRateView(row.group, userGroupRates[row.group.id])"
-                />
+                <!-- 套餐低至放在徽标下一行：这一列横向放不下，窄屏只留悬停 -->
+                <div v-if="row.group" class="flex flex-col items-start gap-0.5">
+                  <GroupBadge
+                    :name="row.group.name"
+                    :platform="row.group.platform"
+                    :subscription-type="row.group.subscription_type"
+                    :rate-multiplier="row.group.rate_multiplier"
+                    :user-rate-multiplier="userGroupRates[row.group.id]"
+                    :rate-view="groupRateView(row.group, userGroupRates[row.group.id])"
+                    :inline-plan="false"
+                  />
+                  <PlanRateText
+                    v-if="listPlanView(row)"
+                    :rate-view="listPlanView(row)!"
+                    :title="listPlanView(row)!.tip"
+                    class="hidden pl-1 text-[10px] font-medium sm:block"
+                  />
+                </div>
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
                   t('keys.noGroup')
                 }}</span>
@@ -1189,6 +1198,7 @@ import KeyOnboardingModal from '@/components/user/KeyOnboardingModal.vue'
 import KeyFallbackChainDrawer from '@/components/keys/KeyFallbackChainDrawer.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
+	import PlanRateText from '@/components/common/PlanRateText.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 	import HelpTooltip from '@/components/common/HelpTooltip.vue'
 	import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform } from '@/types'
@@ -1322,6 +1332,16 @@ const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
 const userGroupRates = ref<Record<number, number>>({})
+
+// 列表行里「套餐低至」放在徽标下一行。订阅分组的徽标显示「订阅」/剩余天数而不是倍率，
+// 不带套餐低至（和 GroupBadge 的规则一致）；没有套餐低至（美元、free、定价没取到）就是 undefined。
+const listPlanView = (row: ApiKey) => {
+  const group = row.group
+  if (!group) return undefined
+  const view = groupRateView(group, userGroupRates.value[group.id])
+  const labelShowsRate = group.subscription_type !== 'subscription' || view.mainStruck !== undefined
+  return labelShowsRate && view.plan !== undefined ? view : undefined
+}
 
 // 站点接入地址：公开设置里没配时退回当前站点
 const apiBaseUrl = computed(() => (publicSettings.value?.api_base_url || '').trim() || window.location.origin)

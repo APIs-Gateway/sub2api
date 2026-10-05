@@ -210,6 +210,31 @@ describe('密钥页的分组倍率', () => {
       expect(cell.get('span.inline-flex').attributes('title')).toContain('官方价每 $1 的用量，实付 ¥0.108')
     })
 
+    it('列表里「套餐低至」在徽标下一行，不占徽标的宽度；窄屏只留悬停', async () => {
+      const wrapper = await mountView()
+      const cell = wrapper.get('[data-test="cell-group"]')
+      const badge = cell.get('span.inline-flex')
+
+      expect(badge.find('[data-test="plan-rate"]').exists()).toBe(false)
+      const plan = cell.get('[data-test="plan-rate"]')
+      expect(plan.text()).toBe('套餐低至 0.056x')
+      expect(plan.classes()).toEqual(expect.arrayContaining(['hidden', 'sm:block']))
+      // 悬停提示：徽标和下一行是同一段
+      expect(plan.attributes('title')).toBe(badge.attributes('title'))
+
+      // 创建弹窗里的已选槽宽度够，套餐低至仍在徽标里面
+      const select = await openCreateModal(wrapper)
+      expect(select.get('[data-test="selected"] span.inline-flex').find('[data-test="plan-rate"]').exists()).toBe(true)
+    })
+
+    it('列表里的订阅分组：徽标显示「订阅」，下面没有套餐低至', async () => {
+      const wrapper = await mountView({ keys: [keyRow({ group: { ...G16, subscription_type: 'subscription' } as never })] })
+      const cell = wrapper.get('[data-test="cell-group"]')
+
+      expect(cell.get('span.inline-flex').text()).toContain('订阅')
+      expect(cell.findAll('[data-test="plan-rate"]')).toHaveLength(0)
+    })
+
     it('列表里的徽标：有专属倍率时两对都划线', async () => {
       const wrapper = await mountView({ userRates: { 16: 0.585 } })
       const cell = wrapper.get('[data-test="cell-group"]')

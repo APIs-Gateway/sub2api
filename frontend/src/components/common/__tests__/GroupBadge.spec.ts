@@ -187,6 +187,15 @@ describe('GroupBadge', () => {
       )
     })
 
+    it('inlinePlan=false（表格行把套餐低至放在徽标下一行）：徽标里没有，悬停提示照旧', async () => {
+      const wrapper = mountWithRateView({ ...LEGACY.standard.props, inlinePlan: false })
+      await flushPromises()
+
+      expect(wrapper.find('[data-test="plan-rate"]').exists()).toBe(false)
+      expect(wrapper.get(`span[class="${PILL}"]`).text()).toBe('0.108x')
+      expect(wrapper.attributes('title')).toContain('开通套餐后，同样的用量最低按 0.056x 扣费。')
+    })
+
     it('专属倍率：默认值划掉，专属值高亮，套餐低至也一样', async () => {
       const wrapper = mountWithRateView({ ...LEGACY.standard.props, userRateMultiplier: 0.585 })
       await flushPromises()
