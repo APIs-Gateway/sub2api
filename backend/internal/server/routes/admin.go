@@ -169,9 +169,9 @@ func registerPointsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	}
 }
 
-// registerPricingRoutes 注册价格报价与价格矩阵的管理端路由。全部是只读 GET：
+// registerPricingRoutes 注册价格报价与价格矩阵的管理端路由。除阶段切换（PUT，W6 PR5）外都是只读 GET：
 // 报价返回任意「模型 × 分组（× 用户）」按当前配置计费时的最终价格，与网关计费同源；
-// 价格矩阵返回渠道到矩阵的派生结果与模型目录。
+// 价格矩阵返回渠道到矩阵的派生结果与模型目录，以及影子比对的计数与差异样本。
 func registerPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	pricing := admin.Group("/pricing")
 	{
@@ -185,6 +185,10 @@ func registerPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		matrix.GET("/groups/:id/derive", h.Admin.PricingMatrix.ViewGroupDerive)
 		matrix.GET("/channels/:id/derive", h.Admin.PricingMatrix.ViewChannelDerive)
 		matrix.GET("/hook-stats", h.Admin.PricingMatrix.HookStats)
+		// W6 PR5：阶段切换（PR7 合并之前只允许 legacy 与 shadow）与影子比对结果。
+		matrix.PUT("/groups/:id/stage", h.Admin.PricingMatrix.SwitchStage)
+		matrix.GET("/shadow/stats", h.Admin.PricingMatrix.ShadowStats)
+		matrix.GET("/shadow/diffs", h.Admin.PricingMatrix.ShadowDiffs)
 	}
 	admin.GET("/model-catalog", h.Admin.PricingMatrix.ListModelCatalog)
 }

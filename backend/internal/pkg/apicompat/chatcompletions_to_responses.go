@@ -18,6 +18,14 @@ type chatMessageContent struct {
 // true. store is always false and reasoning.encrypted_content is always
 // included so that the response translator has full context.
 func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest, error) {
+	converted, err := normalizeChatInputAudio(req, false)
+	if err != nil {
+		return nil, err
+	}
+	return chatCompletionsToResponses(converted)
+}
+
+func chatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest, error) {
 	if err := openai.ValidateGPT61SolReasoningEffort(req.Model, req.ReasoningEffort); err != nil {
 		return nil, err
 	}
@@ -387,11 +395,15 @@ func convertChatContentPartsToResponses(parts []ChatContentPart) []ResponsesCont
 					ImageURL:              p.ImageURL.URL,
 				})
 			}
-		case "file":
+		case "file", geminiChatAudioFileType:
 			if p.File != nil && (p.File.FileData != "" || p.File.FileID != "") {
+				partType := "input_file"
+				if p.Type == geminiChatAudioFileType {
+					partType = geminiChatAudioFileType
+				}
 				responseParts = append(responseParts, ResponsesContentPart{
 					PromptCacheBreakpoint: p.PromptCacheBreakpoint,
-					Type:                  "input_file",
+					Type:                  partType,
 					Filename:              p.File.Filename,
 					FileData:              p.File.FileData,
 					FileID:                p.File.FileID,

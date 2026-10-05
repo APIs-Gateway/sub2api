@@ -1,0 +1,258 @@
+package service
+
+import (
+	"context"
+	"time"
+)
+
+// W6 PR5：stagedPolicy，按分组的价格体系阶段选择 GroupPolicy 的实现（设计 3.3、4.3、4.4）。
+//
+//   - legacy：转发给 legacyPolicy，与没有 stagedPolicy 时逐位相同；
+//   - shadow：legacyPolicy 的结果照常返回给调用方；同一个调用上 v2（matrixPolicy）同步算一遍并比较，
+//     只在不一致时写指标与采样。比对永不影响请求：v2 一侧的 panic 被吞掉并计数；
+//   - v2：PR7 才放开。本 PR 里 stagedPolicy 不会把真实请求路由到 matrixPolicy（v2Live 为 false），
+//     即使库里有行写着 v2，也按 legacy 处理。
+//
+// 阶段读取不阻塞：用 matrixPolicy.cachedSnapshot，缓存里没有（进程刚启动、分组第一次出现）就按 legacy 处理，
+// 后台加载。所以请求路径上不会多出任何数据库读取与等待，快照加载完成之前的行为与改动前相同。
+//
+// 一次计算固定同一份快照：阶段判断、v2 一侧的全部读取都从 ctx 里的固定器（pinGroupPolicySnapshots）取。
+//
+// 成本比对不在这里：成本由网关在一处调用点用 ctx 带 forceStage 把同一个成本函数再算一遍
+// （pricing_shadow_session.go、gateway_pricing_shadow.go、openai_pricing_shadow.go）。
+type stagedPolicy struct {
+	legacy GroupPolicy
+	matrix *matrixPolicy
+	hub    *pricingShadowHub
+	// v2Live 为 true 时阶段为 v2 的分组才真正读矩阵。PR7 之前恒为 false。
+	v2Live bool
+}
+
+var _ GroupPolicy = (*stagedPolicy)(nil)
+
+// StagedGroupPolicy 是 stagedPolicy 的导出别名，供依赖注入与管理接口引用。
+type StagedGroupPolicy = stagedPolicy
+
+// newStagedGroupPolicy 创建 stagedPolicy。matrix 为 nil 时永远走 legacy。sink 可为 nil（只计数、不写样本）。
+func newStagedGroupPolicy(legacy GroupPolicy, matrix *matrixPolicy, sink PricingShadowSink) *stagedPolicy {
+	return &stagedPolicy{legacy: legacy, matrix: matrix, hub: newPricingShadowHub(sink)}
+}
+
+// Stats 返回影子比对的进程内计数。
+func (s *stagedPolicy) Stats() PricingShadowStats { return s.hub.Stats() }
+
+// InvalidateGroups 让矩阵快照失效，供阶段切换在写库之后调用。
+func (s *stagedPolicy) InvalidateGroups(groupIDs ...int64) {
+	if s.matrix != nil {
+		s.matrix.InvalidateGroups(groupIDs...)
+	}
+}
+
+// MatrixSnapshotStats 返回矩阵快照缓存的进程内计数；没有矩阵策略时返回零值。
+func (s *stagedPolicy) MatrixSnapshotStats() MatrixSnapshotStats {
+	if s.matrix == nil {
+		return MatrixSnapshotStats{}
+	}
+	return s.matrix.Stats()
+}
+
+// route 决定这次调用用哪个实现。返回的 shadow 非空表示要做影子比对，并带着「判断时看到的那份快照」。
+func (s *stagedPolicy) route(ctx context.Context, groupID int64) (active GroupPolicy, shadow *matrixSnapshot) {
+	if s.matrix == nil {
+		return s.legacy, nil
+	}
+	if forced, ok := forcedStageFromCtx(ctx); ok {
+		if forced == PricingStageV2 {
+			return s.matrix, nil
+		}
+		return s.legacy, nil
+	}
+	snap := s.matrix.cachedSnapshot(ctx, groupID)
+	if snap == nil {
+		return s.legacy, nil
+	}
+	switch snap.stage {
+	case PricingStageV2:
+		if s.v2Live && snap.loadErr == nil {
+			return s.matrix, nil
+		}
+	case PricingStageShadow:
+		return s.legacy, snap
+	}
+	return s.legacy, nil
+}
+
+// shadowReady 判断这次调用能不能比对：快照不能是兜底或沿用的旧数据，渠道与矩阵快照最近没有失效过，
+// 并且没有超过限速。不能比对时记录原因。
+func (s *stagedPolicy) shadowReady(snap *matrixSnapshot, gate *shadowRateGate) bool {
+	switch {
+	case snap.loadErr != nil:
+		s.hub.noteSkipped(ShadowSkipDegraded)
+		return false
+	case snap.stale:
+		s.hub.noteSkipped(ShadowSkipStale)
+		return false
+	}
+	now := s.hub.now()
+	if last := s.matrix.lastInvalidation(); !last.IsZero() && now.Sub(last) < shadowRecentChangeGrace {
+		s.hub.noteSkipped(ShadowSkipRecentChange)
+		return false
+	}
+	if !gate.allow(now) {
+		s.hub.noteSkipped(ShadowSkipRateLimited)
+		return false
+	}
+	return true
+}
+
+// compareCall 在 shadow 阶段对一次逐次调用做比对：run 在固定了快照的 ctx 上调用 v2 一侧并把差异登记下来。
+// 整个过程吞掉 panic，永不影响调用方。
+func (s *stagedPolicy) compareCall(ctx context.Context, groupID int64, snap *matrixSnapshot, run func(v2ctx context.Context)) {
+	if !s.shadowReady(snap, &s.hub.callGate) {
+		return
+	}
+	s.hub.guard("call", func() {
+		run(withPinnedSnapshot(ctx, s.matrix, groupID, snap))
+		s.hub.noteCompared(groupID)
+	})
+}
+
+func (s *stagedPolicy) Mapping(ctx context.Context, groupID int64, model string) ChannelMappingResult {
+	active, shadow := s.route(ctx, groupID)
+	got := active.Mapping(ctx, groupID, model)
+	if shadow != nil {
+		s.compareCall(ctx, groupID, shadow, func(v2ctx context.Context) {
+			// ChannelID 不比：v2 分组不再写 channel_id（设计 2.3、附录 A 第 11 条）。
+			v2 := s.matrix.Mapping(v2ctx, groupID, model)
+			if got.MappedModel != v2.MappedModel || got.Mapped != v2.Mapped || got.BillingModelSource != v2.BillingModelSource {
+				s.hub.noteDiff(groupID, ShadowKindMapping, ShadowClassTranslation, model, "",
+					shadowMappingView(got), shadowMappingView(v2))
+			}
+		})
+	}
+	return got
+}
+
+func (s *stagedPolicy) ModelAccess(ctx context.Context, groupID int64, model string) QuoteAccess {
+	active, shadow := s.route(ctx, groupID)
+	got := active.ModelAccess(ctx, groupID, model)
+	if shadow != nil {
+		s.compareAccess(ctx, groupID, shadow, model, got, func(v2ctx context.Context) QuoteAccess {
+			return s.matrix.ModelAccess(v2ctx, groupID, model)
+		})
+	}
+	return got
+}
+
+func (s *stagedPolicy) UpstreamAccess(ctx context.Context, groupID int64, upstreamModel string) QuoteAccess {
+	active, shadow := s.route(ctx, groupID)
+	got := active.UpstreamAccess(ctx, groupID, upstreamModel)
+	if shadow != nil {
+		s.compareAccess(ctx, groupID, shadow, upstreamModel, got, func(v2ctx context.Context) QuoteAccess {
+			return s.matrix.UpstreamAccess(v2ctx, groupID, upstreamModel)
+		})
+	}
+	return got
+}
+
+// compareAccess 比较准入结果，只比 OK，不比原因（原因只用于展示）。
+// legacy 放行而 v2 因单元格 open=false 关闭，是 v2 新增的例外语义，记为预期差异；其余都是翻译差异。
+func (s *stagedPolicy) compareAccess(ctx context.Context, groupID int64, snap *matrixSnapshot, model string, got QuoteAccess, v2Access func(context.Context) QuoteAccess) {
+	s.compareCall(ctx, groupID, snap, func(v2ctx context.Context) {
+		v2 := v2Access(v2ctx)
+		if got.OK == v2.OK {
+			return
+		}
+		class := ShadowClassTranslation
+		if got.OK && !v2.OK && v2.Reason == QuoteAccessReasonClosedInGroup {
+			class = ShadowClassExpected
+		}
+		s.hub.noteDiff(groupID, ShadowKindAccess, class, model, "", got, v2)
+	})
+}
+
+func (s *stagedPolicy) UpstreamCheck(ctx context.Context, groupID int64) (bool, error) {
+	active, shadow := s.route(ctx, groupID)
+	got, err := active.UpstreamCheck(ctx, groupID)
+	if shadow != nil {
+		s.compareCall(ctx, groupID, shadow, func(v2ctx context.Context) {
+			v2, v2err := s.matrix.UpstreamCheck(v2ctx, groupID)
+			if (err == nil) != (v2err == nil) || got != v2 {
+				s.hub.noteDiff(groupID, ShadowKindFeature, ShadowClassTranslation, "upstream_check", "",
+					map[string]any{"required": got, "failed": err != nil}, map[string]any{"required": v2, "failed": v2err != nil})
+			}
+		})
+	}
+	return got, err
+}
+
+func (s *stagedPolicy) Feature(ctx context.Context, groupID int64, platform string, f GroupFeature) (*bool, error) {
+	active, shadow := s.route(ctx, groupID)
+	got, err := active.Feature(ctx, groupID, platform, f)
+	if shadow != nil {
+		s.compareCall(ctx, groupID, shadow, func(v2ctx context.Context) {
+			v2, v2err := s.matrix.Feature(v2ctx, groupID, platform, f)
+			if (err == nil) != (v2err == nil) || !shadowBoolPtrEqual(got, v2) {
+				s.hub.noteDiff(groupID, ShadowKindFeature, ShadowClassTranslation, string(f), "",
+					shadowBoolPtrView(got), shadowBoolPtrView(v2))
+			}
+		})
+	}
+	return got, err
+}
+
+// PriceOverride、ExtraMultiplier、CostMode、CostRules 不在这里逐次比对：它们的结果只有放进成本计算才有意义，
+// 由网关的成本比对点用同一个成本函数重算，一次覆盖（设计 4.4）。shadow 阶段它们走 legacy。
+
+func (s *stagedPolicy) PriceOverride(ctx context.Context, groupID int64, model string, at time.Time) *ChannelModelPricing {
+	active, _ := s.route(ctx, groupID)
+	return active.PriceOverride(ctx, groupID, model, at)
+}
+
+func (s *stagedPolicy) ExtraMultiplier(ctx context.Context, groupID int64, model string, at time.Time) float64 {
+	active, _ := s.route(ctx, groupID)
+	return active.ExtraMultiplier(ctx, groupID, model, at)
+}
+
+func (s *stagedPolicy) CostMode(ctx context.Context, groupID int64) MatrixCostMode {
+	active, _ := s.route(ctx, groupID)
+	return active.CostMode(ctx, groupID)
+}
+
+func (s *stagedPolicy) CostRules(ctx context.Context, groupID int64) ([]AccountStatsPricingRule, string) {
+	active, _ := s.route(ctx, groupID)
+	return active.CostRules(ctx, groupID)
+}
+
+// Stage 返回分组配置的阶段（不是路由结果）：报价器据此决定要不要叠加目录状态。
+// 影子重算里按强制的阶段返回。缓存里还没有这个分组时是 legacy。
+func (s *stagedPolicy) Stage(ctx context.Context, groupID int64) PricingStage {
+	if forced, ok := forcedStageFromCtx(ctx); ok {
+		return forced
+	}
+	if s.matrix == nil {
+		return s.legacy.Stage(ctx, groupID)
+	}
+	if snap := s.matrix.cachedSnapshot(ctx, groupID); snap != nil && snap.loadErr == nil {
+		return snap.stage
+	}
+	return PricingStageLegacy
+}
+
+func shadowMappingView(r ChannelMappingResult) map[string]any {
+	return map[string]any{"mapped_model": r.MappedModel, "mapped": r.Mapped, "billing_model_source": r.BillingModelSource}
+}
+
+func shadowBoolPtrEqual(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func shadowBoolPtrView(v *bool) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
