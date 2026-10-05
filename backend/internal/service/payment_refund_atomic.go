@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -136,6 +137,14 @@ func decodeRefundPendingSnapshot(body string, detail *refundPendingAuditDetail) 
 		key, ok := token.(string)
 		if !ok || seen[key] {
 			return fmt.Errorf("duplicate or invalid snapshot field %v", token)
+		}
+		// encoding/json accepts case-insensitive aliases for struct fields.
+		// Reject those aliases before decoding so they cannot overwrite a
+		// canonical financial value or bypass the null check below.
+		for _, canonical := range []string{"refundID", "deductionRollbackOK", "deductionType", "balanceToDeduct", "subDaysToDeduct", "subscriptionID", "gatewayBaseAmount", "gatewayAmount", "refundFeeRate", "refundFeeAmount", "refundAmount", "subDaysToRestore", "subExpireDayToRestore", "subTodayRemainingToRestore", "subTodayDayToRestore"} {
+			if strings.EqualFold(key, canonical) && key != canonical {
+				return fmt.Errorf("non-canonical financial snapshot field %s", key)
+			}
 		}
 		seen[key] = true
 		var value json.RawMessage
