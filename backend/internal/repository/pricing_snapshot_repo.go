@@ -154,7 +154,7 @@ func gunzipPricingPayload(gz []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = zr.Close() }()
-	out, err := io.ReadAll(io.LimitReader(zr, pricingSnapshotMaxPayloadBytes+1))
+	out, err := io.ReadAll(io.LimitReader(zr, int64(pricingSnapshotMaxPayloadBytes)+1))
 	if err != nil {
 		return nil, err
 	}
