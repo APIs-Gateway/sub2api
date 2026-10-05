@@ -6,6 +6,7 @@ import (
 	"context"
 	stdsql "database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -214,6 +216,46 @@ func TestRefundMalformedSnapshotCannotSettlePositiveWallet(t *testing.T) {
 			result, err := svc.ResolvePendingRefund(ctx, order.ID, "succeeded", "verified", "admin")
 			require.Error(t, err)
 			require.Nil(t, result)
+			reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+			require.NoError(t, err)
+			require.Equal(t, OrderStatusRefundPending, reloaded.Status)
+			user, err := client.User.Get(ctx, order.UserID)
+			require.NoError(t, err)
+			require.Equal(t, 23.0, user.Balance)
+		})
+	}
+}
+
+func TestRefundBlockedDiagnosticsCannotMarkNewAttempt(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		name := "current attempt"
+		if changed {
+			name = "stale attempt"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			client := newPaymentConfigServiceTestClient(t)
+			order := createPendingRefundOrderForTest(t, ctx, client, "diagnostic")
+			_, err := client.User.UpdateOneID(order.UserID).SetBalance(23).Save(ctx)
+			require.NoError(t, err)
+			setPendingRefundSnapshotForTest(t, ctx, client, order.ID, `{"deductionType":"balance","balanceToDeduct":3,"deductionRollbackOK":false,"snapshotID":0}`)
+			svc := &PaymentService{entClient: client}
+			old := refundPendingDetailForTest(t, svc, ctx, order.ID)
+			require.Positive(t, old.snapshotID, "snapshot JSON cannot set the internal audit identity")
+			if changed {
+				_, err := client.PaymentAuditLog.Create().SetOrderID(strconv.FormatInt(order.ID, 10)).SetAction("REFUND_PENDING_next").SetOperator("admin").SetDetail(`{"deductionType":"balance","balanceToDeduct":10,"deductionRollbackOK":true,"snapshotID":0}`).Save(ctx)
+				require.NoError(t, err)
+			}
+			err = svc.writeRefundBlockedRollbackDiagnostics(ctx, order, old, refundRollbackPlanFromSnapshot(order, old), errors.New("restore unavailable"))
+			if changed {
+				require.Equal(t, "CONFLICT", infraerrors.Reason(err))
+				require.Zero(t, countRefundAuditForTest(t, ctx, client, order.ID, "REFUND_ROLLBACK_FAILED"))
+				require.Zero(t, countRefundAuditForTest(t, ctx, client, order.ID, "REFUND_FAIL_BLOCKED_ROLLBACK_FAILED"))
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, 1, countRefundAuditForTest(t, ctx, client, order.ID, "REFUND_ROLLBACK_FAILED"))
+				require.Equal(t, 1, countRefundAuditForTest(t, ctx, client, order.ID, "REFUND_FAIL_BLOCKED_ROLLBACK_FAILED"))
+			}
 			reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
 			require.NoError(t, err)
 			require.Equal(t, OrderStatusRefundPending, reloaded.Status)

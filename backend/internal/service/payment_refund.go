@@ -906,13 +906,7 @@ func (s *PaymentService) finalizeRefundFailed(ctx context.Context, o *dbent.Paym
 		_ = tx.Rollback()
 		s.invalidateRefundSettlementCaches(rb)
 		if blockedRollback {
-			// Diagnostics are written only after financial rollback. The pending
-			// snapshot remains authoritative even if a diagnostic write fails.
-			s.writeAuditLog(ctx, o.ID, refundAttemptAuditAction("REFUND_ROLLBACK_FAILED"), "admin", map[string]any{
-				"rollbackError": "failed pending refund compensation", "balanceDeducted": rb.BalanceToDeduct,
-				"subscriptionID": rb.SubscriptionID, "subDaysDeducted": rb.SubDaysToDeduct,
-			})
-			s.writeAuditLog(ctx, o.ID, refundAttemptAuditAction("REFUND_FAIL_BLOCKED_ROLLBACK_FAILED"), "admin", map[string]any{"detail": psErrMsg(gErr)})
+			_ = s.writeRefundBlockedRollbackDiagnostics(ctx, o, detail, rb, gErr)
 		}
 	}()
 	txCtx := dbent.NewTxContext(ctx, tx)
@@ -979,6 +973,41 @@ func (s *PaymentService) checkRefundPendingAttempt(ctx context.Context, orderID 
 		return infraerrors.Conflict("CONFLICT", "pending refund attempt changed; query or verify the current attempt again")
 	}
 	return nil
+}
+
+// Diagnostics are best effort after financial rollback, but still bind to
+// the same pending attempt: a late failure marker must not suppress a newer
+// retry's debit. This separate transaction changes only audit rows.
+func (s *PaymentService) writeRefundBlockedRollbackDiagnostics(ctx context.Context, o *dbent.PaymentOrder, detail refundPendingAuditDetail, rb *RefundPlan, gErr error) error {
+	tx, err := s.entClientForCtx(ctx).Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	txCtx := dbent.NewTxContext(ctx, tx)
+	if err := lockRefundUser(txCtx, o.UserID); err != nil {
+		return err
+	}
+	orderQuery := tx.PaymentOrder.Query().Where(paymentorder.IDEQ(o.ID), paymentorder.StatusEQ(OrderStatusRefundPending))
+	if tx.Client().Driver().Dialect() != dialect.SQLite {
+		orderQuery = orderQuery.ForUpdate()
+	}
+	if _, err := orderQuery.Only(txCtx); err != nil {
+		return err
+	}
+	if err := s.checkRefundPendingAttempt(txCtx, o.ID, detail); err != nil {
+		return err
+	}
+	if err := s.writeRefundAuditStrict(txCtx, o.ID, refundAttemptAuditAction("REFUND_ROLLBACK_FAILED"), map[string]any{
+		"rollbackError": "failed pending refund compensation", "balanceDeducted": rb.BalanceToDeduct,
+		"subscriptionID": rb.SubscriptionID, "subDaysDeducted": rb.SubDaysToDeduct,
+	}); err != nil {
+		return err
+	}
+	if err := s.writeRefundAuditStrict(txCtx, o.ID, refundAttemptAuditAction("REFUND_FAIL_BLOCKED_ROLLBACK_FAILED"), map[string]any{"detail": psErrMsg(gErr)}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // refundRollbackPlanFromSnapshot rebuilds the pre-deduction of a pending
