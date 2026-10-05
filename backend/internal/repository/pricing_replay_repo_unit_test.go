@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"testing"
 	"time"
@@ -31,13 +32,13 @@ func TestPricingReplayReadOnlyDSN(t *testing.T) {
 func TestVerifyPricingReplaySession(t *testing.T) {
 	q := "SELECT current_setting"
 	for name, tc := range map[string]struct {
-		row     []any
+		row     []driver.Value
 		err     error
 		wantErr string
 	}{
-		"ok":         {row: []any{"on", "120s", "2s"}},
-		"writable":   {row: []any{"off", "120s", "2s"}, wantErr: "default_transaction_read_only"},
-		"no timeout": {row: []any{"on", "0", "2s"}, wantErr: "statement_timeout"},
+		"ok":         {row: []driver.Value{"on", "120s", "2s"}},
+		"writable":   {row: []driver.Value{"off", "120s", "2s"}, wantErr: "default_transaction_read_only"},
+		"no timeout": {row: []driver.Value{"on", "0", "2s"}, wantErr: "statement_timeout"},
 		"query":      {err: errors.New("boom"), wantErr: "read session settings"},
 	} {
 		db, mock, err := sqlmock.New()

@@ -288,8 +288,9 @@ func TestPricingReplayRun_PassesWhenConfigurationsMatch(t *testing.T) {
 	require.True(t, sum.Verdict.Pass, "%v", sum.Verdict.Reasons)
 	require.Empty(t, sum.Diffs)
 	require.Equal(t, int64(6), sum.Calibration.Rows)
-	require.Equal(t, int64(5), sum.Calibration.Matched)
-	require.InDelta(t, 5.0/6.0, sum.Calibration.MatchRate, 1e-12)
+	// 分组 2 的倍率是 2，探针按分组 1 算出的历史成本对它不吻合；分组 1 里被改动的那行也不吻合。
+	require.Equal(t, int64(3), sum.Calibration.Matched)
+	require.InDelta(t, 0.5, sum.Calibration.MatchRate, 1e-12)
 	require.Equal(t, 24.0, sum.Calibration.WindowHours)
 	require.NotNil(t, sum.FirstTranslationDiffs, "serializes as [] rather than null")
 }

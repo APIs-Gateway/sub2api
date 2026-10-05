@@ -459,7 +459,7 @@ func replayUnpricedZeroEquivalent(legacy, v2 *replaySide) bool {
 
 // CheckGroup 做每个分组只需要做一次的功能类比较：调度循环的上游准入检查与三个功能开关。
 // 这些不随请求变化，逐行比没有意义；差异按分组计一次（kind=feature，行号为 0）。
-func (r *PricingReplayer) CheckGroup(parent context.Context, group *Group) []PricingReplayDiff {
+func (r *PricingReplayer) CheckGroup(parent context.Context, group *Group) (diffs []PricingReplayDiff) {
 	if group == nil {
 		return nil
 	}
@@ -468,7 +468,15 @@ func (r *PricingReplayer) CheckGroup(parent context.Context, group *Group) []Pri
 	ctx := withReplayRecompute(parent)
 	vctx := pinGroupPolicySnapshots(ctx, vp)
 
-	var diffs []PricingReplayDiff
+	// 策略实现出 panic 不能带倒整个回放：记成一条翻译差异，让判定不通过。
+	defer func() {
+		if rec := recover(); rec != nil {
+			diffs = append(diffs, PricingReplayDiff{
+				Kind: ShadowKindFeature, Class: ShadowClassTranslation, Model: "panic",
+				Legacy: nil, V2: map[string]any{"panic": fmt.Sprint(rec)},
+			})
+		}
+	}()
 	lc, lerr := lp.UpstreamCheck(ctx, gid)
 	vc, verr := vp.UpstreamCheck(vctx, gid)
 	if (lerr == nil) != (verr == nil) || lc != vc {
