@@ -442,7 +442,10 @@
     paymentConfig: '支付配置',
     paymentPlans: '订阅套餐',
     channelManagement: '渠道管理',
-    channelPricing: '价格配置',
+    channelPricing: '渠道定价',
+    pricingConfig: '价格配置',
+    pricingModels: '模型',
+    pricingMatrix: '开放与价格',
     channelMonitor: '渠道监控',
     channelStatus: '渠道状态',
     riskControl: '风控中心',
@@ -3226,11 +3229,125 @@
       }
     },
 
+    // Pricing config (read-only): models and availability matrix
+    pricingConfig: {
+      comingSoon: '即将开放',
+      loadError: '价格数据没有加载出来',
+      retry: '重试',
+      deriveFailed: '有 {n} 个分组的开放方式没有读到，先按渠道配置显示。',
+      perMillionTokens: '每百万 Token',
+      models: {
+        title: '模型',
+        description: '有哪些模型、官方价是多少、开放给了几个分组',
+        searchPlaceholder: '搜索模型',
+        allPlatforms: '全部平台',
+        allStatuses: '全部状态',
+        filterUnpriced: '无价',
+        filterUnregistered: '未登记',
+        create: '新建模型',
+        readonlyNote: '目前只能查看。新建模型、上线、调价等操作即将开放。',
+        columns: {
+          model: '模型',
+          platform: '平台',
+          status: '状态',
+          officialPrice: '官方参考价',
+          source: '价格来源',
+          openGroups: '已开放分组'
+        },
+        officialPriceHint: '输入 / 输出，每百万 Token',
+        emptyTitle: '没有符合条件的模型',
+        emptyHint: '换个筛选条件试试。'
+      },
+      status: {
+        draft: '草稿',
+        active: '上线',
+        retired: '下线',
+        unregistered: '未登记'
+      },
+      source: {
+        litellm: '价目表',
+        fallback: '内置价',
+        cardPolicy: '官方定价',
+        channel: '渠道价',
+        none: '无价'
+      },
+      group: {
+        rate: '倍率 ×{rate}',
+        unswitched: '尚未切换',
+        access: {
+          open: '开放',
+          allowlist: '白名单'
+        }
+      },
+      cell: {
+        open: '开放',
+        custom: '自定义价',
+        unpriced: '未定价',
+        closed: '关闭',
+        error: '无法取价',
+        unpricedHint: '调用不扣费',
+        perRequest: '{price} / 次',
+        tipPrice: '输入 {input} / 输出 {output}（每百万 Token，用户实付）',
+        tipPerRequest: '{price} / 次（用户实付）',
+        unpricedTip: '官方价和自定义价都没有，用户调用这个模型不会产生费用',
+        customTip: '这个分组给该模型设了专门的价格，不是官方价 × 倍率',
+        errorTip: '这个格子的价格没有取到，稍后刷新重试',
+        unswitchedTip: '分组还没切换，这是按渠道配置推出的结果'
+      },
+      closedReason: {
+        closed_in_group: '这个分组没有开放该模型',
+        not_in_allowlist: '这个分组是白名单，没有加入该模型',
+        catalog_draft: '模型还是草稿，所有分组都不开放',
+        catalog_retired: '模型已下线，所有分组都不开放'
+      },
+      drawer: {
+        basic: '基本信息',
+        inOut: '输入 {input} / 输出 {output}',
+        noOfficialPrice: '没有官方价',
+        aliases: '别名',
+        referenceModel: '参考模型',
+        groups: '各分组开放情况',
+        unregisteredHint: '还没加入模型目录，目前只在分组配置里出现过。',
+        noGroups: '这个平台还没有分组。',
+        derivedNote: '尚未切换的分组，开放范围和价格是按渠道配置推出的结果。',
+        toMatrix: '去「开放与价格」看全部模型',
+        actionRegister: '加入目录并上线…',
+        action: {
+          draft: '上线…',
+          active: '下线…',
+          retired: '重新上线'
+        }
+      },
+      matrix: {
+        title: '开放与价格',
+        description: '每个模型在哪些分组里可用，以及用户实付多少',
+        noticeTitle: '现在展示的是由渠道配置推出的结果',
+        noticeAll: '所有分组还没有切换到新的价格配置，开放范围和价格仍在「渠道管理」里设置，这里按它们推算，只能查看。',
+        noticeSome: '还有 {n} / {total} 个分组没有切换，它们的开放范围和价格仍在「渠道管理」里设置，这里按它们推算，只能查看。',
+        noticeLink: '前往渠道管理',
+        groupCount: '{n} 个分组',
+        hideClosed: '隐藏全部关闭的模型',
+        edit: '批量调整',
+        legend: '图例',
+        legendOpen: '按官方价开放',
+        legendExtra: '额外倍率',
+        legendCustom: '自定义价',
+        legendUnpriced: '没有任何价格',
+        legendClosed: '不开放',
+        legendUnswitched: '分组还没切换，按渠道配置推出',
+        cornerHint: '官方价：输入 / 输出，每百万 Token',
+        openDetail: '查看模型详情',
+        noGroupsTitle: '{platform} 还没有分组',
+        noGroupsHint: '先在「分组管理」里新建分组，再回来看开放与价格。',
+        empty: '没有匹配的模型'
+      }
+    },
+
     // Channel Management
     channels: {
       noGroupsSelected: '请为 {platform} 至少选择一个分组',
       emptyModelsInPricing: '请为 {platform} 定价规则至少添加一个模型',
-      title: '价格配置',
+      title: '渠道定价',
       description: '管理渠道与模型定价，并配置用户价格页展示哪些分组 / 模型',
       searchChannels: '搜索渠道...',
       display: {

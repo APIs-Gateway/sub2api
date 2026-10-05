@@ -448,6 +448,34 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/pricing',
+    redirect: '/admin/pricing/models'
+  },
+  {
+    path: '/admin/pricing/models',
+    name: 'AdminPricingModels',
+    component: () => import('@/views/admin/pricing/ModelsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Models',
+      titleKey: 'admin.pricingConfig.models.title',
+      descriptionKey: 'admin.pricingConfig.models.description'
+    }
+  },
+  {
+    path: '/admin/pricing/matrix',
+    name: 'AdminPricingMatrix',
+    component: () => import('@/views/admin/pricing/MatrixView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Availability and pricing',
+      titleKey: 'admin.pricingConfig.matrix.title',
+      descriptionKey: 'admin.pricingConfig.matrix.description'
+    }
+  },
+  {
     path: '/admin/channels',
     redirect: '/admin/channels/pricing'
   },

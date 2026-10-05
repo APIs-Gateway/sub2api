@@ -782,6 +782,17 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/users', label: t('nav.users'), icon: UsersIcon, hideInSimpleMode: true },
     { path: '/admin/groups', label: t('nav.groups'), icon: FolderIcon, hideInSimpleMode: true },
     {
+      path: '/admin/pricing',
+      label: t('nav.pricingConfig'),
+      icon: PriceTagIcon,
+      hideInSimpleMode: true,
+      expandOnly: true,
+      children: [
+        { path: '/admin/pricing/models', label: t('nav.pricingModels'), icon: CogIcon },
+        { path: '/admin/pricing/matrix', label: t('nav.pricingMatrix'), icon: FolderIcon },
+      ],
+    },
+    {
       path: '/admin/channels',
       label: t('nav.channelManagement'),
       icon: ChannelIcon,

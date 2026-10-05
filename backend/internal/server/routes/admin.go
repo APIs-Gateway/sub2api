@@ -176,6 +176,7 @@ func registerPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	pricing := admin.Group("/pricing")
 	{
 		pricing.GET("/quote", h.Admin.PricingQuote.Quote)
+		pricing.GET("/quote-batch", h.Admin.PricingQuote.QuoteBatch)
 	}
 
 	// W6 价格矩阵：只读，查看渠道到矩阵的派生结果与模型目录。
