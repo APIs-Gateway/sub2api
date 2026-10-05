@@ -145,6 +145,9 @@ jobs:
         run: pnpm exec vitest run --reporter=verbose src/components/admin/channel/__tests__/PricingEntryCard.modelDefaultPrice.spec.ts
       - name: Frontend typecheck and critical vitest
         run: make test-frontend
+      - name: Custom Markdown actual page ordering and loading regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/CustomPageView.race.spec.ts
       - name: Frontend production build
         working-directory: frontend
         run: pnpm run build
