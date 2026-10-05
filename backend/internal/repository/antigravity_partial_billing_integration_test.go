@@ -156,15 +156,18 @@ func TestAntigravityPartialBilling_RealHandlerSettlesOnce(t *testing.T) {
 	for _, native := range []bool{false, true} {
 		for _, stream := range []bool{false, true} {
 			for _, card := range []bool{false, true} {
-				for _, failure := range []string{"empty", "read_error", "provider_error", "sparse_usage", "partial_zeros"} {
+				for _, failure := range []string{"empty", "read_error", "provider_error", "sparse_usage", "partial_zeros", "cache_only_read", "cache_only_provider"} {
 					name := map[bool]string{false: "claude", true: "gemini"}[native] + map[bool]string{false: "_buffered", true: "_stream"}[stream] + map[bool]string{false: "_wallet", true: "_card"}[card] + "/" + failure
 					t.Run(name, func(t *testing.T) {
 						payload := `{"response":{"candidates":[{"content":{"parts":[{"thoughtSignature":"sig"}]},"finishReason":"MALFORMED_FUNCTION_CALL"}],"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":4}}}`
 						if failure == "read_error" || failure == "sparse_usage" || failure == "partial_zeros" {
 							payload = `{"response":{"candidates":[{"content":{"parts":[{"text":"partial"}]}}],"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":4}}}`
 						}
+						if strings.HasPrefix(failure, "cache_only_") {
+							payload = `{"response":{"usageMetadata":{"cachedContentTokenCount":3}}}`
+						}
 						response := "data: " + payload + "\n\n"
-						if failure == "provider_error" {
+						if failure == "provider_error" || failure == "cache_only_provider" {
 							response += "data: " + `{"response":{"error":{"code":403,"status":"PERMISSION_DENIED","message":"projects/private account@pool"}}}` + "\n\n"
 						}
 						if failure == "sparse_usage" {
@@ -174,7 +177,7 @@ func TestAntigravityPartialBilling_RealHandlerSettlesOnce(t *testing.T) {
 							response += "data: " + `{"response":{"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":0,"candidatesTokenCount":0,"thoughtsTokenCount":0}}}` + "\n\n"
 						}
 						f := newAGMeteredBillingFixture(t, response)
-						if failure == "read_error" || failure == "sparse_usage" || failure == "partial_zeros" {
+						if failure == "read_error" || failure == "sparse_usage" || failure == "partial_zeros" || failure == "cache_only_read" {
 							f.upstream.readErr = errors.New("provider interrupted after metering")
 						}
 						if card {
@@ -206,10 +209,16 @@ func TestAntigravityPartialBilling_RealHandlerSettlesOnce(t *testing.T) {
 						require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&balance))
 						require.Equal(t, 1, logs)
 						require.Equal(t, 1, dedup)
-						require.Equal(t, 7, input)
-						require.Equal(t, 6, output)
+						if strings.HasPrefix(failure, "cache_only_") {
+							require.Zero(t, input, "sparse cache metering must never create negative normal input")
+							require.Zero(t, output)
+							require.InDelta(t, .03, cost, 1e-8)
+						} else {
+							require.Equal(t, 7, input)
+							require.Equal(t, 6, output)
+							require.InDelta(t, .16, cost, 1e-8)
+						}
 						require.Equal(t, 3, cache)
-						require.InDelta(t, .16, cost, 1e-8)
 						if card {
 							var daily, weekly, monthly float64
 							require.NoError(t, inflightTestDB(t).QueryRow(`SELECT daily_usage_usd,weekly_usage_usd,monthly_usage_usd FROM user_subscriptions WHERE user_id=$1 AND status='active'`, f.user.ID).Scan(&daily, &weekly, &monthly))

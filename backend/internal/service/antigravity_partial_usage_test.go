@@ -294,15 +294,19 @@ func TestAntigravityInterruptedUsage_ConvertedProviderFailureKeepsRawOps(t *test
 // while a silent upstream has not provided another scan event.
 type agMeteredCancelWriter struct {
 	*httptest.ResponseRecorder
-	ctx           context.Context
-	firstFlush    chan struct{}
-	firstSent     bool
-	ioAfterCancel int
+	ctx            context.Context
+	firstFlush     chan struct{}
+	firstSent      bool
+	contentWritten bool
+	ioAfterCancel  int
 }
 
 func (w *agMeteredCancelWriter) Write(body []byte) (int, error) {
 	if w.ctx.Err() != nil {
 		w.ioAfterCancel++
+	}
+	if strings.Contains(string(body), `"text":"first"`) {
+		w.contentWritten = true
 	}
 	return w.ResponseRecorder.Write(body)
 }
@@ -312,7 +316,7 @@ func (w *agMeteredCancelWriter) Flush() {
 		w.ioAfterCancel++
 	}
 	w.ResponseRecorder.Flush()
-	if !w.firstSent {
+	if w.contentWritten && !w.firstSent {
 		w.firstSent = true
 		close(w.firstFlush)
 	}
@@ -400,6 +404,31 @@ func TestAntigravityInterruptedUsage_SparseCumulativeCountersRetainMetering(t *t
 				require.Equal(t, tc.cache, result.usage.CacheReadInputTokens)
 				require.Equal(t, tc.image, result.usage.ImageOutputTokens)
 				require.NotContains(t, rec.Body.String(), "message_stop")
+			})
+		}
+	}
+}
+
+func TestAntigravityInterruptedUsage_CacheOnlyDoesNotCreateNegativeInput(t *testing.T) {
+	for _, mode := range []string{"claude_stream", "claude_buffered", "gemini_stream", "gemini_buffered"} {
+		for _, providerError := range []bool{false, true} {
+			t.Run(mode+map[bool]string{false: "/read_error", true: "/provider_error"}[providerError], func(t *testing.T) {
+				prefix := agMeteredFrame(`{"response":{"usageMetadata":{"cachedContentTokenCount":3}}}`)
+				var body io.ReadCloser
+				if providerError {
+					body = io.NopCloser(strings.NewReader(prefix + agMeteredFrame(antigravityPrivateError)))
+				} else {
+					body = io.NopCloser(io.MultiReader(strings.NewReader(prefix), agMeteredReadFailure{errors.New("read failed after cache-only metering")}))
+				}
+				result, err, _ := agMeteredReader(t, mode, body, &config.Config{}, false)
+				require.Error(t, err)
+				var failover *UpstreamFailoverError
+				require.False(t, errors.As(err, &failover))
+				require.NotNil(t, result)
+				require.Zero(t, result.usage.InputTokens)
+				require.Zero(t, result.usage.OutputTokens)
+				require.Equal(t, 3, result.usage.CacheReadInputTokens)
+				require.Zero(t, result.usage.ImageOutputTokens)
 			})
 		}
 	}

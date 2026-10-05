@@ -37,7 +37,7 @@ func (u *antigravityUsageCollector) observe(data []byte) *ClaudeUsage {
 		}
 		return true
 	})
-	u.usage.InputTokens = u.prompt - u.cached
+	u.usage.InputTokens = max(0, u.prompt-u.cached)
 	u.usage.OutputTokens = u.candidates + u.thoughts
 	u.usage.CacheReadInputTokens = u.cached
 	u.usage.ImageOutputTokens = u.image
