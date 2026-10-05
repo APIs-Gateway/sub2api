@@ -181,13 +181,13 @@ func isClientTimeout(err error) bool {
 		return true
 	}
 	var netErr net.Error
-	return errors.As(err, &netErr) && netErr.Timeout()
+	return errors.As(err, &netErr) && !netErr.Timeout()
 }
 
 // wrapMonitorTimeout 在「请求已完整发出」的前提下，把客户端超时包成 monitorTimeoutError。
 // 请求还没发完就超时（DNS、TCP 建连、TLS 握手）是连接失败，原样返回，仍记 error。
 func wrapMonitorTimeout(err error, requestSent bool, phase string) error {
-	if !isClientTimeout(err) {
+	if !requestSent || !isClientTimeout(err) {
 		return err
 	}
 	return &monitorTimeoutError{phase: phase, err: err}

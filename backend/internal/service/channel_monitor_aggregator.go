@@ -168,7 +168,7 @@ func (s *ChannelMonitorService) primaryCardStatus(ctx context.Context, m *Channe
 		ctx, []int64{m.ID}, map[int64]string{m.ID: m.PrimaryModel}, monitorVerdictWindow)
 	if err != nil {
 		slog.Warn("channel_monitor: detail card status failed", "monitor_id", m.ID, "error", err)
-		return MonitorStatusError
+		return ""
 	}
 	return cardStatusFromHistory(rows[m.ID])
 }
