@@ -40,9 +40,11 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=unit -race -count=1 -run '^TestOpenAI401Recovery' -v ./internal/service/
-      - name: OpenAI OAuth HTTP recovery and funded billing (actual PG Redis)
+      - name: OpenAI OAuth HTTP recovery and funded billing (actual PG Redis race)
         working-directory: backend
-        run: go test -tags=integration -count=1 -run '^TestOpenAI401HTTP_' -v ./internal/repository/
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -run '^TestOpenAI401HTTP_' -v ./internal/repository/
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover
