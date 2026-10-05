@@ -174,6 +174,7 @@ func TestOpenAI401RecoveryStrictLifecycle(t *testing.T) {
 					credentials["access_token"] = "fixture-new"
 					switch name {
 					case "cancel_during_refresh":
+						credentials["refresh_token"] = "fixture-next"
 						cancel()
 					case "disable_during_refresh":
 						account.Status = "disabled"
@@ -200,7 +201,13 @@ func TestOpenAI401RecoveryStrictLifecycle(t *testing.T) {
 			} else {
 				require.Error(t, err)
 				require.Empty(t, token)
-				require.Zero(t, repo.updates)
+				if name == "cancel_during_refresh" {
+					require.Equal(t, 1, repo.updates)
+					require.Equal(t, "fixture-new", repo.account.GetOpenAIAccessToken())
+					require.Equal(t, "fixture-next", repo.account.GetOpenAIRefreshToken())
+				} else {
+					require.Zero(t, repo.updates)
+				}
 				if name == "refresh_token_changed_before_lock" {
 					require.Zero(t, executor.calls.Load())
 				}

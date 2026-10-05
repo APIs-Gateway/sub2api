@@ -177,8 +177,10 @@ func (api *OAuthRefreshAPI) refreshRejectedOpenAIToken(ctx context.Context, snap
 	if api.lockTTL/2 < budget {
 		budget = api.lockTTL / 2
 	}
+	recoveryDeadline := time.Now().Add(budget)
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
+	callerCtx := ctx
 	key := executor.CacheKey(&Account{ID: snapshot.id, Platform: PlatformOpenAI, Type: AccountTypeOAuth})
 	local := api.getLocalLock(key)
 	for !local.TryLock() {
@@ -233,6 +235,12 @@ func (api *OAuthRefreshAPI) refreshRejectedOpenAIToken(ctx context.Context, snap
 		if refreshErr != nil {
 			return "", refreshErr
 		}
+		// The issuer may already have invalidated the old refresh token. Once
+		// a grant succeeds, persist its rotation even if its caller cancels;
+		// the original lock budget still bounds every durable operation.
+		persistCtx, persistCancel := context.WithDeadline(context.WithoutCancel(callerCtx), recoveryDeadline)
+		defer persistCancel()
+		ctx = persistCtx
 		current, readErr := read()
 		if readErr != nil {
 			return "", readErr
@@ -270,7 +278,7 @@ func (api *OAuthRefreshAPI) refreshRejectedOpenAIToken(ctx context.Context, snap
 	if err := api.tokenCache.DeleteAccessToken(ctx, key); err != nil {
 		return "", err
 	}
-	if err := ctx.Err(); err != nil {
+	if err := callerCtx.Err(); err != nil {
 		return "", err
 	}
 	return token, nil

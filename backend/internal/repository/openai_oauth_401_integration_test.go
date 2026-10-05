@@ -17,8 +17,11 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	userhandler "github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,6 +29,7 @@ type oauth401RefreshExecutor struct {
 	url       string
 	calls     atomic.Int32
 	before    func()
+	after     func()
 	repo      *oauth401AccountRepository
 	accountID int64
 }
@@ -59,6 +63,9 @@ func (e *oauth401RefreshExecutor) Refresh(ctx context.Context, a *service.Accoun
 	}
 	for key, value := range rotation {
 		credentials[key] = value
+	}
+	if e.after != nil {
+		e.after()
 	}
 	return credentials, nil
 }
@@ -140,12 +147,27 @@ func newOAuth401HTTPFixture(t *testing.T, passthrough bool) (*inflightHTTPFixtur
 	account.Credentials = map[string]any{"access_token": "fixture-old", "refresh_token": "fixture-rt", "expires_at": time.Now().Add(2 * time.Hour).Format(time.RFC3339)}
 	account.Extra = map[string]any{"privacy_mode": service.PrivacyModeTrainingOff, "openai_passthrough": passthrough, "openai_oauth_responses_websockets_v2_mode": "off"}
 	require.NoError(t, accounts.Update(context.Background(), account))
+	var issuerMu sync.Mutex
+	issuerRefreshToken := "fixture-rt"
+	issuerCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		body, err := io.ReadAll(request.Body)
 		require.NoError(t, err)
-		require.Equal(t, "fixture-rt", string(body))
+		issuerMu.Lock()
+		defer issuerMu.Unlock()
+		if string(body) != issuerRefreshToken {
+			writer.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		issuerCalls++
+		token := "fixture-new"
+		issuerRefreshToken = "fixture-next"
+		if issuerCalls > 1 {
+			token = "fixture-later"
+			issuerRefreshToken = "fixture-last"
+		}
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(writer, `{"access_token":"fixture-new","refresh_token":"fixture-next"}`)
+		require.NoError(t, json.NewEncoder(writer).Encode(map[string]any{"access_token": token, "refresh_token": issuerRefreshToken}))
 	}))
 	t.Cleanup(server.Close)
 	guardedAccounts := &oauth401AccountRepository{AccountRepository: accounts}
@@ -447,6 +469,49 @@ func TestOpenAI401HTTP_ConcurrentRejectedRequestsShareRefresh(t *testing.T) {
 			require.Equal(t, 2, dedup)
 			require.Positive(t, cost)
 			require.InDelta(t, 10-cost, balance, 1e-10)
+			require.Zero(t, inflightHeld(t, f.user.ID))
+		})
+	}
+}
+
+func TestOpenAI401HTTP_CanceledCallerKeepsSuccessfulRotation(t *testing.T) {
+	for _, passthrough := range []bool{false, true} {
+		t.Run(fmt.Sprintf("passthrough_%t", passthrough), func(t *testing.T) {
+			f, executor, upstream := newOAuth401HTTPFixture(t, passthrough)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			executor.after = cancel // issuer has consumed old RT and returned new grant
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(oauth401Request)).WithContext(context.WithValue(ctx, ctxkey.Group, f.key.Group))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Set(string(middleware.ContextKeyAPIKey), f.key)
+			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: f.user.ID, Concurrency: 100})
+			f.openAI.Responses(c)
+			f.pool.Stop()
+			require.ErrorIs(t, ctx.Err(), context.Canceled)
+			require.EqualValues(t, 1, executor.calls.Load())
+			upstream.mu.Lock()
+			auths := append([]string(nil), upstream.auths...)
+			upstream.mu.Unlock()
+			require.Equal(t, []string{"Bearer fixture-old"}, auths, "canceled caller must not dispatch its new token")
+			fresh, err := executor.repo.GetByID(context.Background(), executor.accountID)
+			require.NoError(t, err)
+			require.Equal(t, "fixture-new", fresh.GetOpenAIAccessToken())
+			require.Equal(t, "fixture-next", fresh.GetOpenAIRefreshToken(), "successful issuer rotation must survive cancellation")
+			executor.after = nil
+			next, err := executor.Refresh(context.Background(), fresh)
+			require.NoError(t, err, "the issuer must accept the preserved rotated refresh token")
+			require.Equal(t, "fixture-later", next["access_token"])
+			require.Equal(t, "fixture-last", next["refresh_token"])
+			var logs, dedup int
+			var balance float64
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&balance))
+			require.Zero(t, logs)
+			require.Zero(t, dedup)
+			require.InDelta(t, 10, balance, 1e-10)
 			require.Zero(t, inflightHeld(t, f.user.ID))
 		})
 	}
