@@ -14,7 +14,18 @@ import (
 // enables Anthropic platform groups to accept OpenAI Responses API requests
 // by converting them to the native /v1/messages format before forwarding upstream.
 func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, error) {
-	system, messages, err := convertResponsesInputToAnthropic(req.Instructions, req.Input, claude.IsOpus55(req.Model))
+	return responsesToAnthropicRequest(req, false)
+}
+
+// ResponsesToAnthropicRequestForGemini carries validated Chat audio files
+// through the existing Gemini bridge. The default Anthropic route keeps its
+// existing content whitelist; this does not enable general file support.
+func ResponsesToAnthropicRequestForGemini(req *ResponsesRequest) (*AnthropicRequest, error) {
+	return responsesToAnthropicRequest(req, true)
+}
+
+func responsesToAnthropicRequest(req *ResponsesRequest, allowAudio bool) (*AnthropicRequest, error) {
+	system, messages, err := convertResponsesInputToAnthropicForRoute(req.Instructions, req.Input, claude.IsOpus55(req.Model), allowAudio)
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +144,10 @@ func mapResponsesEffortToAnthropic(effort string) string {
 // a Responses API instructions + input array. Returns the system as raw JSON
 // (for Anthropic's polymorphic system field) and a list of Anthropic messages.
 func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMessage, preserveThinking bool) (json.RawMessage, []AnthropicMessage, error) {
+	return convertResponsesInputToAnthropicForRoute(instructions, inputRaw, preserveThinking, false)
+}
+
+func convertResponsesInputToAnthropicForRoute(instructions string, inputRaw json.RawMessage, preserveThinking, allowAudio bool) (json.RawMessage, []AnthropicMessage, error) {
 	var systemParts []string
 	if strings.TrimSpace(instructions) != "" {
 		systemParts = append(systemParts, strings.TrimSpace(instructions))
@@ -224,7 +239,7 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 			}
 
 		case item.Role == "user":
-			content, err := convertResponsesUserToAnthropicContent(item.Content)
+			content, err := convertResponsesUserToAnthropicContent(item.Content, allowAudio)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -262,7 +277,7 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 			if item.Content == nil {
 				continue
 			}
-			content, err := convertResponsesUserToAnthropicContent(item.Content)
+			content, err := convertResponsesUserToAnthropicContent(item.Content, false)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -500,7 +515,7 @@ func anthropicContentIsOnlyBlankText(content json.RawMessage) bool {
 	return true
 }
 
-func convertResponsesUserToAnthropicContent(raw json.RawMessage) (json.RawMessage, error) {
+func convertResponsesUserToAnthropicContent(raw json.RawMessage, allowAudio bool) (json.RawMessage, error) {
 	if len(raw) == 0 {
 		return json.Marshal("") // empty string content
 	}
@@ -527,6 +542,13 @@ func convertResponsesUserToAnthropicContent(raw json.RawMessage) (json.RawMessag
 					Type: "text",
 					Text: p.Text,
 				})
+			}
+		case geminiChatAudioFileType:
+			if allowAudio {
+				src := dataURIToAnthropicImageSource(p.FileData)
+				if src != nil && strings.HasPrefix(src.MediaType, "audio/") && src.Data != "" {
+					blocks = append(blocks, AnthropicContentBlock{Type: "document", Source: src})
+				}
 			}
 		case "input_image":
 			src := dataURIToAnthropicImageSource(p.ImageURL)

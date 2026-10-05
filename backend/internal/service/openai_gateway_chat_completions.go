@@ -169,6 +169,10 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		chatReq.Model = upstreamModel
 		responsesReq, err = apicompat.ChatCompletionsToResponses(&chatReq)
 		if err != nil {
+			if errors.Is(err, apicompat.ErrUnsupportedInputAudio) || errors.Is(err, apicompat.ErrInvalidInputAudio) {
+				MarkBillingInflightAttemptNoCharge(ctx)
+				writeChatInputAudioError(c, err.Error())
+			}
 			return nil, fmt.Errorf("convert chat completions to responses: %w", err)
 		}
 		responsesReq.Model = upstreamModel
