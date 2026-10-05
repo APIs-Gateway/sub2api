@@ -7,12 +7,20 @@ import type { UserSubscription } from '@/types'
  * 摘要回答用户最关心的一件事：「订阅现在还能用多少」，所以取已配置的最窄窗口
  * （日 < 周 < 月）剩余多少，多张卡相加。
  *
- * 金额口径：钱包和订阅卡的额度单价不同，折算成人民币必须用每张卡自己的单价
- * （fiat_per_credit）。只要有一张卡拿不到单价，就不给人民币值（remainingFiat 为 null），
- * 由调用方回落到美元展示，与 formatSubscription 的「宁可展示美元也不猜单价」一致。
+ * 金额口径：这里只汇总额度，不做任何货币换算。钱包和订阅卡的额度单价不同，所以把
+ * 每张卡参与合计的额度连同它自己的单价（fiat_per_credit，缺失或无效为 null）原样交给调用方，
+ * 由调用方走 useCurrencyDisplay 的共享函数（fiatFromCredits / formatFiat / formatSubscription）
+ * 折算和格式化；有卡拿不到单价时调用方按「宁可展示美元也不猜单价」回落。
  */
 
 export type SubscriptionWindow = 'daily' | 'weekly' | 'monthly'
+
+/** 一张参与合计的订阅卡：该窗口内剩余多少额度，以及这张卡自己的人民币单价。 */
+export interface SubscriptionRemainingPart {
+  credits: number
+  /** 1 个额度值多少人民币（后端 fiat_per_credit）；缺失或无效为 null。 */
+  fiatPerCredit: number | null
+}
 
 export interface ActiveSubscriptionSummary {
   /** 生效中的订阅张数。 */
@@ -23,8 +31,8 @@ export interface ActiveSubscriptionSummary {
   window: SubscriptionWindow | null
   /** 该窗口内剩余额度（美元口径的额度值，已用超的卡按 0 计）。 */
   remainingCredits: number
-  /** 同一笔剩余额度折成人民币；有卡拿不到单价时为 null。 */
-  remainingFiat: number | null
+  /** 参与合计的每张卡（没配这个窗口的卡不在其中）；没有卡或全部不限时为空。 */
+  parts: SubscriptionRemainingPart[]
   /** 最早到期的那张卡的到期时间；都不到期时为 null。 */
   nextExpiresAt: string | null
 }
@@ -49,7 +57,7 @@ export function summarizeActiveSubscriptions(subs: readonly UserSubscription[]):
     unlimited: false,
     window: null,
     remainingCredits: 0,
-    remainingFiat: 0,
+    parts: [],
     nextExpiresAt: null
   }
   if (subs.length === 0) return summary
@@ -66,18 +74,13 @@ export function summarizeActiveSubscriptions(subs: readonly UserSubscription[]):
 
   if (subs.some((sub) => WINDOW_ORDER.every((w) => limitOf(sub, w) === null))) {
     summary.unlimited = true
-    summary.remainingFiat = null
     return summary
   }
 
   const window = WINDOW_ORDER.find((w) => subs.some((sub) => limitOf(sub, w) !== null)) ?? null
   summary.window = window
-  if (!window) {
-    summary.remainingFiat = null
-    return summary
-  }
+  if (!window) return summary
 
-  let fiat: number | null = 0
   for (const sub of subs) {
     const limit = limitOf(sub, window)
     // 这张卡没有配这个窗口：它在更宽的窗口里限额，不并入「最窄窗口」的合计。
@@ -85,12 +88,10 @@ export function summarizeActiveSubscriptions(subs: readonly UserSubscription[]):
     const remaining = Math.max(0, limit - usageOf(sub, window))
     summary.remainingCredits += remaining
     const unit = sub.fiat_per_credit
-    if (fiat !== null && typeof unit === 'number' && Number.isFinite(unit) && unit > 0) {
-      fiat += remaining * unit
-    } else {
-      fiat = null
-    }
+    summary.parts.push({
+      credits: remaining,
+      fiatPerCredit: typeof unit === 'number' && Number.isFinite(unit) && unit > 0 ? unit : null
+    })
   }
-  summary.remainingFiat = fiat
   return summary
 }

@@ -34,17 +34,17 @@ describe('summarizeActiveSubscriptions', () => {
       unlimited: false,
       window: null,
       remainingCredits: 0,
-      remainingFiat: 0,
+      parts: [],
       nextExpiresAt: null
     })
   })
 
-  it('取最窄的已配置窗口（日）剩余多少，并按这张卡自己的单价折成人民币', () => {
+  it('取最窄的已配置窗口（日）剩余多少，并带上这张卡自己的单价（不做换算）', () => {
     const s = summarizeActiveSubscriptions([card({ daily_usage_usd: 4 })])
 
     expect(s.window).toBe('daily')
     expect(s.remainingCredits).toBe(6)
-    expect(s.remainingFiat).toBeCloseTo(0.6, 10)
+    expect(s.parts).toEqual([{ credits: 6, fiatPerCredit: 0.1 }])
     expect(s.unlimited).toBe(false)
   })
 
@@ -52,7 +52,7 @@ describe('summarizeActiveSubscriptions', () => {
     const s = summarizeActiveSubscriptions([card({ daily_usage_usd: 25 })])
 
     expect(s.remainingCredits).toBe(0)
-    expect(s.remainingFiat).toBe(0)
+    expect(s.parts).toEqual([{ credits: 0, fiatPerCredit: 0.1 }])
   })
 
   it('没有日限额时退到周，再退到月', () => {
@@ -69,7 +69,7 @@ describe('summarizeActiveSubscriptions', () => {
     expect(monthly.remainingCredits).toBe(200)
   })
 
-  it('多张卡相加，每张卡各用各的单价', () => {
+  it('多张卡相加，每张卡各带各的单价', () => {
     const s = summarizeActiveSubscriptions([
       card({ id: 1, daily_usage_usd: 0, fiat_per_credit: 0.1 }),
       card({ id: 2, daily_limit_usd: 20, daily_usage_usd: 5, fiat_per_credit: 0.05 })
@@ -77,18 +77,21 @@ describe('summarizeActiveSubscriptions', () => {
 
     expect(s.count).toBe(2)
     expect(s.remainingCredits).toBe(25)
-    // 10 × 0.1 + 15 × 0.05
-    expect(s.remainingFiat).toBeCloseTo(1.75, 10)
+    // 每张卡的额度和单价原样给出，由调用方走共享函数折算
+    expect(s.parts).toEqual([
+      { credits: 10, fiatPerCredit: 0.1 },
+      { credits: 15, fiatPerCredit: 0.05 }
+    ])
   })
 
-  it('有一张卡拿不到单价时不给人民币值，交给调用方回落到美元', () => {
+  it('有一张卡拿不到单价时，那张卡的单价为 null，交给调用方回落', () => {
     const s = summarizeActiveSubscriptions([
       card({ id: 1 }),
       card({ id: 2, fiat_per_credit: undefined })
     ])
 
     expect(s.remainingCredits).toBe(20)
-    expect(s.remainingFiat).toBeNull()
+    expect(s.parts.map((p) => p.fiatPerCredit)).toEqual([0.1, null])
   })
 
   it('三个窗口都没配限额的卡视为不限额', () => {
@@ -98,7 +101,7 @@ describe('summarizeActiveSubscriptions', () => {
 
     expect(s.unlimited).toBe(true)
     expect(s.window).toBeNull()
-    expect(s.remainingFiat).toBeNull()
+    expect(s.parts).toEqual([])
   })
 
   it('只要有一张不限额的卡，整体就是不限额', () => {

@@ -111,7 +111,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const subscriptionStore = useSubscriptionStore()
-const { isFiat, formatWallet, formatFiat, formatUsd } = useCurrencyDisplay()
+const { isFiat, formatWallet, formatFiat, formatSubscription, fiatFromCredits } = useCurrencyDisplay()
 const { canTopUp, topUpLocation } = useTopUpEntry()
 
 const user = computed(() => authStore.user)
@@ -141,11 +141,15 @@ const windowLeftLabel = computed(() => {
   }
 })
 
-// 人民币模式下按每张卡自己的单价折算；有卡拿不到单价时整体回落到美元，不混排。
+// 订阅额度的单价每张卡各不相同：折算和格式化都走 useCurrencyDisplay 的共享函数，这里不做换算。
+// 人民币模式下每张卡都有单价才合计成人民币；有卡拿不到单价时整体回落（formatSubscription 不猜单价），不混排。
 const subscriptionAmountText = computed(() => {
-  const s = summary.value
-  if (isFiat.value && s.remainingFiat !== null) return formatFiat(s.remainingFiat)
-  return formatUsd(s.remainingCredits)
+  const { parts, remainingCredits } = summary.value
+  const priced = parts.length > 0 && parts.every((p) => p.fiatPerCredit !== null)
+  if (isFiat.value && priced) {
+    return formatFiat(parts.reduce((sum, p) => sum + fiatFromCredits(p.credits, p.fiatPerCredit), 0))
+  }
+  return formatSubscription(remainingCredits, null)
 })
 
 const daysToExpiry = computed(() => {
