@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -33,6 +34,16 @@ type refundSubscriptionAdjustment struct {
 	TodayDay        int       `json:"todayDay"`
 	DailyAmount     float64   `json:"dailyAmount"`
 	AfterUpdatedAt  time.Time `json:"afterUpdatedAt"`
+}
+
+// Audit actions fit the existing 50-byte column without truncating ownership.
+// The detail retains the full UUID; its action suffix encodes all 128 bits.
+func refundSubscriptionAuditAction(prefix, owner string) string {
+	id, err := uuid.Parse(owner)
+	if err != nil {
+		return ""
+	}
+	return prefix + base64.RawURLEncoding.EncodeToString(id[:])
 }
 
 func (s *PaymentService) withRefundSubscriptionTx(ctx context.Context, p *RefundPlan, fn func(context.Context) error) error {
@@ -119,7 +130,7 @@ func (s *PaymentService) deductRefundSubscription(ctx context.Context, p *Refund
 		if err != nil {
 			return err
 		}
-		entry, err := client.PaymentAuditLog.Create().SetOrderID(strconv.FormatInt(p.OrderID, 10)).SetAction("REFUND_SUB_DEDUCT_" + a.Owner).SetOperator("admin").SetDetail(string(body)).Save(txCtx)
+		entry, err := client.PaymentAuditLog.Create().SetOrderID(strconv.FormatInt(p.OrderID, 10)).SetAction(refundSubscriptionAuditAction("REFUND_SUB_DEDUCT_", a.Owner)).SetOperator("admin").SetDetail(string(body)).Save(txCtx)
 		if err != nil {
 			return err
 		}
@@ -145,7 +156,7 @@ func (s *PaymentService) loadRefundSubscriptionAdjustment(ctx context.Context, o
 	if err != nil || !bytes.Equal(canonical, bytes.TrimSpace([]byte(entry.Detail))) {
 		return nil, fmt.Errorf("invalid noncanonical refund subscription adjustment")
 	}
-	if _, err := uuid.Parse(a.Owner); err != nil || entry.Action != "REFUND_SUB_DEDUCT_"+a.Owner || a.SubscriptionID != subscriptionID || a.RemovedDays != max(0, a.BeforeExpireDay-a.AfterExpireDay) || a.AfterExpireDay <= 0 || a.RemovedToday < 0 || math.IsNaN(a.RemovedToday) || math.IsInf(a.RemovedToday, 0) || a.DailyAmount < 0 || math.IsNaN(a.DailyAmount) || math.IsInf(a.DailyAmount, 0) || a.AfterUpdatedAt.IsZero() {
+	if _, err := uuid.Parse(a.Owner); err != nil || entry.Action != refundSubscriptionAuditAction("REFUND_SUB_DEDUCT_", a.Owner) || a.SubscriptionID != subscriptionID || a.RemovedDays != max(0, a.BeforeExpireDay-a.AfterExpireDay) || a.AfterExpireDay <= 0 || a.RemovedToday < 0 || math.IsNaN(a.RemovedToday) || math.IsInf(a.RemovedToday, 0) || a.DailyAmount < 0 || math.IsNaN(a.DailyAmount) || math.IsInf(a.DailyAmount, 0) || a.AfterUpdatedAt.IsZero() {
 		return nil, fmt.Errorf("invalid refund subscription adjustment")
 	}
 	return &a, nil
@@ -163,7 +174,7 @@ func (s *PaymentService) bindHeldRefundSubscriptionAdjustment(ctx context.Contex
 	if err != nil {
 		return err
 	}
-	restored, err := s.entClientForCtx(ctx).PaymentAuditLog.Query().Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(p.OrderID, 10)), paymentauditlog.ActionEQ("REFUND_SUB_RESTORED_"+a.Owner)).Exist(ctx)
+	restored, err := s.entClientForCtx(ctx).PaymentAuditLog.Query().Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(p.OrderID, 10)), paymentauditlog.ActionEQ(refundSubscriptionAuditAction("REFUND_SUB_RESTORED_", a.Owner))).Exist(ctx)
 	if err != nil {
 		return err
 	}
@@ -186,7 +197,7 @@ func (s *PaymentService) restoreRefundSubscriptionAdjustment(ctx context.Context
 			return err
 		}
 		client := s.entClientForCtx(txCtx)
-		restored, err := client.PaymentAuditLog.Query().Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(p.OrderID, 10)), paymentauditlog.ActionEQ("REFUND_SUB_RESTORED_"+a.Owner)).Exist(txCtx)
+		restored, err := client.PaymentAuditLog.Query().Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(p.OrderID, 10)), paymentauditlog.ActionEQ(refundSubscriptionAuditAction("REFUND_SUB_RESTORED_", a.Owner))).Exist(txCtx)
 		if err != nil || restored {
 			return err
 		}
@@ -235,10 +246,10 @@ func (s *PaymentService) restoreRefundSubscriptionAdjustment(ctx context.Context
 		if _, err := update.Save(txCtx); err != nil {
 			return err
 		}
-		if err := s.writeRefundAuditStrict(txCtx, p.OrderID, "REFUND_SUB_RESTORED_"+a.Owner, map[string]any{"adjustmentID": p.subscriptionAdjustmentID, "daysRestored": newExpireDay - current.ExpireDay, "todayRestored": valueRestored}); err != nil {
+		if err := s.writeRefundAuditStrict(txCtx, p.OrderID, refundSubscriptionAuditAction("REFUND_SUB_RESTORED_", a.Owner), map[string]any{"adjustmentID": p.subscriptionAdjustmentID, "daysRestored": newExpireDay - current.ExpireDay, "todayRestored": valueRestored}); err != nil {
 			return err
 		}
-		return s.writeRefundAuditStrict(txCtx, p.OrderID, "REFUND_ROLLBACK_RECOVERED_"+a.Owner, map[string]any{"subscriptionAdjustmentID": p.subscriptionAdjustmentID})
+		return s.writeRefundAuditStrict(txCtx, p.OrderID, refundSubscriptionAuditAction("REFUND_ROLLBACK_RECOVERED_", a.Owner), map[string]any{"subscriptionAdjustmentID": p.subscriptionAdjustmentID})
 	})
 }
 

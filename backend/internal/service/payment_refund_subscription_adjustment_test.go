@@ -3,8 +3,11 @@
 package service
 
 import (
+	"encoding/base64"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,4 +37,18 @@ func TestRefundSubscriptionAdjustmentSnapshotReference(t *testing.T) {
 	detail = refundPendingAuditDetail{}
 	require.NoError(t, decodeRefundPendingSnapshot(`{"deductionType":"subscription","subscriptionID":3}`, &detail))
 	require.Zero(t, detail.SubscriptionAdjustmentID, "legacy absence remains legacy")
+}
+
+func TestRefundSubscriptionAdjustmentSnapshotAuditActionsFitSchema(t *testing.T) {
+	owner := uuid.NewString()
+	id := uuid.MustParse(owner)
+	for _, prefix := range []string{"REFUND_SUB_DEDUCT_", "REFUND_SUB_RESTORED_", "REFUND_ROLLBACK_RECOVERED_"} {
+		action := refundSubscriptionAuditAction(prefix, owner)
+		require.LessOrEqual(t, len(action), 50)
+		raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(action, prefix))
+		require.NoError(t, err)
+		require.Equal(t, id[:], raw, "all owner bits must be retained")
+		require.NotEqual(t, action, refundSubscriptionAuditAction(prefix, uuid.NewString()))
+	}
+	require.Empty(t, refundSubscriptionAuditAction("REFUND_SUB_DEDUCT_", "invalid"))
 }

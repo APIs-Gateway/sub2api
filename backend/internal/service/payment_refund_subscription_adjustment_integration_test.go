@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -427,7 +428,8 @@ func TestRefundSubscriptionAdjustmentPG_InvalidReferenceStopsBeforeProvider(t *t
 				require.NoError(t, err)
 				var adjustment map[string]json.RawMessage
 				require.NoError(t, json.Unmarshal([]byte(original.Detail), &adjustment))
-				owner := uuid.NewString()
+				ownerID := uuid.New()
+				owner := ownerID.String()
 				// Keep the existing canonical audit field order. The loader must
 				// reject ownership before this reference reaches any mutation.
 				detail := strings.Replace(original.Detail, string(adjustment["owner"]), strconv.Quote(owner), 1)
@@ -437,7 +439,7 @@ func TestRefundSubscriptionAdjustmentPG_InvalidReferenceStopsBeforeProvider(t *t
 				} else {
 					detail = strings.Replace(detail, `"subscriptionID":`+strconv.FormatInt(p.SubscriptionID, 10), `"subscriptionID":`+strconv.FormatInt(p.SubscriptionID+1, 10), 1)
 				}
-				bad, err := c.PaymentAuditLog.Create().SetOrderID(orderID).SetAction("REFUND_SUB_DEDUCT_" + owner).SetOperator("admin").SetDetail(detail).Save(ctx)
+				bad, err := c.PaymentAuditLog.Create().SetOrderID(orderID).SetAction("REFUND_SUB_DEDUCT_" + base64.RawURLEncoding.EncodeToString(ownerID[:])).SetOperator("admin").SetDetail(detail).Save(ctx)
 				require.NoError(t, err)
 				id = bad.ID
 			}
