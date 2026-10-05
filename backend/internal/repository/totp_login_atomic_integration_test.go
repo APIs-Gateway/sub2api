@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,5 +58,13 @@ func TestTotpLoginAtomicRedisClaim(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, session)
 		require.Zero(t, rdb.Exists(ctx, totpLoginKeyPrefix+token).Val())
+	})
+	t.Run("redis_failure", func(t *testing.T) {
+		options := *rdb.Options()
+		closed := redis.NewClient(&options)
+		require.NoError(t, closed.Close())
+		session, err := (&TotpCache{rdb: closed}).ConsumeLoginSession(ctx, token)
+		require.Error(t, err)
+		require.Nil(t, session)
 	})
 }

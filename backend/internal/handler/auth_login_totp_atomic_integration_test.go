@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	entsql "entgo.io/ent/dialect/sql"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
@@ -85,7 +86,12 @@ func atomicTotpHandler(t *testing.T, cache service.TotpCache, settings map[strin
 	t.Helper()
 	spy := &atomicTotpRefreshSpy{}
 	h, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{totpCache: cache, totpEncryptor: oauthPendingFlowTotpEncryptorStub{}, refreshTokenCache: spy, settingValues: settings})
+	// SQLite has one writer. Serialize DB operations while keeping the Redis
+	// session reads/claims concurrent, avoiding unrelated identity-backfill locks.
+	client.Driver().(*entsql.Driver).DB().SetMaxOpenConns(1)
 	user, err := client.User.Create().SetEmail("atomic-totp@example.com").SetPasswordHash("fixture-hash").SetRole(service.RoleUser).SetStatus(service.StatusActive).SetBalance(3.25).SetConcurrency(4).SetTotpEnabled(true).SetTotpSecretEncrypted(atomicTotpSecret).Save(context.Background())
+	require.NoError(t, err)
+	_, err = client.AuthIdentity.Create().SetUserID(user.ID).SetProviderType("email").SetProviderKey("email").SetProviderSubject(user.Email).SetVerifiedAt(time.Now()).SetMetadata(map[string]any{"source": "preexisting"}).Save(context.Background())
 	require.NoError(t, err)
 	return h, client, user, spy
 }
@@ -133,7 +139,7 @@ func TestLoginTotpAtomicActualConcurrent(t *testing.T) {
 			require.Contains(t, rec.Body.String(), "Invalid or expired 2FA session")
 		}
 	}
-	require.Equal(t, 1, winners)
+	require.Equal(t, 1, winners, "actual refresh token stores=%d", spy.stored.Load())
 	require.Equal(t, int32(1), spy.stored.Load(), "only the claimed session may mint a refresh token")
 	stored, err := client.User.Get(context.Background(), user.ID)
 	require.NoError(t, err)
