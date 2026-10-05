@@ -454,6 +454,24 @@ export interface ModelMappingEntry {
   to: string
 }
 
+// Removing a valid rewrite preserves its admitted source, unless the caller
+// uses a permissive rename-only policy or another effective rewrite remains.
+export function removeModelMappingEntry(
+  modelMappings: ModelMappingEntry[],
+  index: number,
+  allowedModels: string[],
+  preserveSourceAdmission = true
+): void {
+  if (!Number.isInteger(index) || index < 0 || index >= modelMappings.length) return
+  const removed = modelMappings[index]
+  modelMappings.splice(index, 1)
+  const from = removed.from.trim()
+  const to = removed.to.trim()
+  if (!preserveSourceAdmission || !from || !to || from.includes('*') || to.includes('*')) return
+  if (findModelMappingConflict(from, modelMappings)) return
+  if (!allowedModels.some(model => model.trim() === from)) allowedModels.push(from)
+}
+
 export function findModelMappingConflict(
   model: string,
   mappings: ReadonlyArray<ModelMappingEntry>

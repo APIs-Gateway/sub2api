@@ -17,7 +17,7 @@ vi.mock('@/api/admin/accounts', () => ({
   getAntigravityDefaultModelMapping: vi.fn().mockResolvedValue({})
 }))
 vi.mock('@/api/admin', () => ({ adminAPI: {
-  accounts: { create: mocks.create },
+  accounts: { create: mocks.create, probeUpstreamBilling: vi.fn().mockResolvedValue({}) },
   settings: { getWebSearchEmulationConfig: vi.fn().mockResolvedValue({}), getSettings: vi.fn().mockResolvedValue({}) },
   tlsFingerprintProfiles: { list: vi.fn().mockResolvedValue([]) }
 } }))
@@ -53,6 +53,31 @@ const deferred = () => {
 
 describe('CreateAccountModal real model preview', () => {
   beforeEach(() => { vi.clearAllMocks(); mocks.preview.mockReset(); auth.authSessionVersion = invalidateAuthSession() })
+
+  it('keeps Create mapping saves independent and retains its existing default whitelist reset after deletion', async () => {
+    mocks.create.mockResolvedValue({ id: 99 })
+    const wrapper = await openCreate('openai')
+    await wrapper.get('input[data-tour="account-form-name"]').setValue('mapping account')
+    await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelMapping')!.trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.addMapping')!.trigger('click')
+    await wrapper.get('input[placeholder="admin.accounts.requestModel"]').setValue('gpt-6')
+    await wrapper.get('input[placeholder="admin.accounts.actualModel"]').setValue('different-target')
+    const row = wrapper.get('input[placeholder="admin.accounts.requestModel"]').element.parentElement!
+    await wrapper.findAll('button').find(button => button.element.parentElement === row)!.trigger('click')
+    await flushPromises()
+    await wrapper.get('#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledTimes(1)
+    expect(mocks.create.mock.calls[0]?.[0]?.credentials).not.toHaveProperty('model_mapping')
+    await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelWhitelist')!.trigger('click')
+    await wrapper.get('#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledTimes(2)
+    expect(mocks.create.mock.calls[1]?.[0]?.credentials?.model_mapping).toMatchObject({ 'gpt-6': 'gpt-6' })
+    expect(wrapper.emitted('created')).toHaveLength(2)
+    expect(mocks.showError).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
 
   for (const platform of ['anthropic', 'openai', 'gemini']) {
     it(`sends the selected and cleared draft proxy for ${platform} without saving`, async () => {

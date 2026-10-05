@@ -942,7 +942,7 @@
               <input v-model="mapping.from" type="text" class="input flex-1" :placeholder="t('admin.accounts.fromModel')" />
               <span class="text-gray-400">→</span>
               <input v-model="mapping.to" type="text" class="input flex-1" :placeholder="t('admin.accounts.toModel')" />
-              <button type="button" @click="modelMappings.splice(index, 1)" class="text-red-500 hover:text-red-700">
+              <button type="button" @click="removeModelMapping(index)" class="text-red-500 hover:text-red-700">
                 <Icon name="trash" size="sm" />
               </button>
             </div>
@@ -2530,6 +2530,7 @@ import {
   buildModelMappingObject,
   findModelMappingConflict,
   splitModelMappingObject,
+  removeModelMappingEntry,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
 
@@ -3411,7 +3412,10 @@ const addModelMapping = () => {
 }
 
 const removeModelMapping = (index: number) => {
-  modelMappings.value.splice(index, 1)
+  // An identity would disable the fork's permissive rename-only policy.
+  const hasExplicitWhitelist = buildModelMappingObject('whitelist', allowedModels.value, []) !== null
+  const preserveSourceAdmission = !modelMappingAllowUnlisted.value || hasExplicitWhitelist
+  removeModelMappingEntry(modelMappings.value, index, allowedModels.value, preserveSourceAdmission)
 }
 
 const addPresetMapping = (from: string, to: string) => {
