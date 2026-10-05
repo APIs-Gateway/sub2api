@@ -11,6 +11,7 @@ import type { OpsRequestDetailsPreset } from './OpsRequestDetailsModal.vue'
 import { useAdminSettingsStore } from '@/stores'
 import { formatNumber } from '@/utils/format'
 import { formatMemorySizeMB } from '../utils/opsFormatters'
+import { getHighMetricThresholdLevel, getSLAProgressPercent, getSLAThresholdLevel as classifySLA, type ThresholdLevel } from '../utils/metricThresholds'
 
 type RealtimeWindow = '1min' | '5min' | '30min' | '1h'
 
@@ -219,48 +220,20 @@ function openErrorDetails(kind: 'request' | 'upstream') {
 }
 
 // --- Threshold checking helpers ---
-type ThresholdLevel = 'normal' | 'warning' | 'critical'
-
 function getSLAThresholdLevel(slaPercent: number | null): ThresholdLevel {
-  if (slaPercent == null) return 'normal'
-  const threshold = props.thresholds?.sla_percent_min
-  if (threshold == null) return 'normal'
-
-  // SLA is "higher is better":
-  // - below threshold => critical
-  // - within +0.1% buffer => warning
-  const warningBuffer = 0.1
-
-  if (slaPercent < threshold) return 'critical'
-  if (slaPercent < threshold + warningBuffer) return 'warning'
-  return 'normal'
+  return classifySLA(slaPercent, props.thresholds?.sla_percent_min)
 }
 
 function getTTFTThresholdLevel(ttftMs: number | null): ThresholdLevel {
-  if (ttftMs == null) return 'normal'
-  const threshold = props.thresholds?.ttft_p99_ms_max
-  if (threshold == null) return 'normal'
-  if (ttftMs >= threshold) return 'critical'
-  if (ttftMs >= threshold * 0.8) return 'warning'
-  return 'normal'
+  return getHighMetricThresholdLevel(ttftMs, props.thresholds?.ttft_p99_ms_max)
 }
 
 function getRequestErrorRateThresholdLevel(errorRatePercent: number | null): ThresholdLevel {
-  if (errorRatePercent == null) return 'normal'
-  const threshold = props.thresholds?.request_error_rate_percent_max
-  if (threshold == null) return 'normal'
-  if (errorRatePercent >= threshold) return 'critical'
-  if (errorRatePercent >= threshold * 0.8) return 'warning'
-  return 'normal'
+  return getHighMetricThresholdLevel(errorRatePercent, props.thresholds?.request_error_rate_percent_max)
 }
 
 function getUpstreamErrorRateThresholdLevel(upstreamErrorRatePercent: number | null): ThresholdLevel {
-  if (upstreamErrorRatePercent == null) return 'normal'
-  const threshold = props.thresholds?.upstream_error_rate_percent_max
-  if (threshold == null) return 'normal'
-  if (upstreamErrorRatePercent >= threshold) return 'critical'
-  if (upstreamErrorRatePercent >= threshold * 0.8) return 'warning'
-  return 'normal'
+  return getHighMetricThresholdLevel(upstreamErrorRatePercent, props.thresholds?.upstream_error_rate_percent_max)
 }
 
 function getThresholdColorClass(level: ThresholdLevel): string {
@@ -545,26 +518,28 @@ const diagnosisReport = computed<DiagnosisItem[]>(() => {
     }
   }
 
-  const ttftP99 = ov.ttft?.p99_ms ?? 0
-  if (ttftP99 > 500) {
+  const ttftP99 = ttftP99Ms.value
+  const ttftLevel = getTTFTThresholdLevel(ttftP99)
+  if (ttftP99 != null && ttftLevel !== 'normal') {
     report.push({
-      type: 'warning',
+      type: ttftLevel,
       message: t('admin.ops.diagnosis.ttftHigh', { ttft: ttftP99.toFixed(0) }),
       impact: t('admin.ops.diagnosis.ttftHighImpact'),
       action: t('admin.ops.diagnosis.ttftHighAction')
     })
   }
 
-  // Error rate diagnostics (adjusted thresholds)
-  const upstreamRatePct = (ov.upstream_error_rate ?? 0) * 100
-  if (upstreamRatePct > 5) {
+  // Diagnostics and metric cards use the same configured comparisons.
+  const upstreamRatePct = upstreamErrorRatePercent.value
+  const upstreamLevel = getUpstreamErrorRateThresholdLevel(upstreamRatePct)
+  if (upstreamRatePct != null && upstreamLevel === 'critical') {
     report.push({
       type: 'critical',
       message: t('admin.ops.diagnosis.upstreamCritical', { rate: upstreamRatePct.toFixed(2) }),
       impact: t('admin.ops.diagnosis.upstreamCriticalImpact'),
       action: t('admin.ops.diagnosis.upstreamCriticalAction')
     })
-  } else if (upstreamRatePct > 2) {
+  } else if (upstreamRatePct != null && upstreamLevel === 'warning') {
     report.push({
       type: 'warning',
       message: t('admin.ops.diagnosis.upstreamHigh', { rate: upstreamRatePct.toFixed(2) }),
@@ -573,15 +548,16 @@ const diagnosisReport = computed<DiagnosisItem[]>(() => {
     })
   }
 
-  const errorPct = (ov.error_rate ?? 0) * 100
-  if (errorPct > 3) {
+  const errorPct = errorRatePercent.value
+  const errorLevel = getRequestErrorRateThresholdLevel(errorPct)
+  if (errorPct != null && errorLevel === 'critical') {
     report.push({
       type: 'critical',
       message: t('admin.ops.diagnosis.errorHigh', { rate: errorPct.toFixed(2) }),
       impact: t('admin.ops.diagnosis.errorHighImpact'),
       action: t('admin.ops.diagnosis.errorHighAction')
     })
-  } else if (errorPct > 0.5) {
+  } else if (errorPct != null && errorLevel === 'warning') {
     report.push({
       type: 'warning',
       message: t('admin.ops.diagnosis.errorElevated', { rate: errorPct.toFixed(2) }),
@@ -591,15 +567,16 @@ const diagnosisReport = computed<DiagnosisItem[]>(() => {
   }
 
   // SLA diagnostics
-  const slaPct = (ov.sla ?? 0) * 100
-  if (slaPct < 90) {
+  const slaPct = slaPercent.value
+  const slaLevel = getSLAThresholdLevel(slaPct)
+  if (slaPct != null && slaLevel === 'critical') {
     report.push({
       type: 'critical',
       message: t('admin.ops.diagnosis.slaCritical', { sla: slaPct.toFixed(2) }),
       impact: t('admin.ops.diagnosis.slaCriticalImpact'),
       action: t('admin.ops.diagnosis.slaCriticalAction')
     })
-  } else if (slaPct < 98) {
+  } else if (slaPct != null && slaLevel === 'warning') {
     report.push({
       type: 'warning',
       message: t('admin.ops.diagnosis.slaLow', { sla: slaPct.toFixed(2) }),
@@ -1268,7 +1245,7 @@ function handleToolbarRefresh() {
             {{ slaPercent == null ? '-' : `${slaPercent.toFixed(3)}%` }}
           </div>
           <div class="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700">
-            <div class="h-full transition-all" :class="getSLAThresholdLevel(slaPercent) === 'critical' ? 'bg-red-500' : getSLAThresholdLevel(slaPercent) === 'warning' ? 'bg-yellow-500' : 'bg-green-500'" :style="{ width: `${Math.max((slaPercent ?? 0) - 90, 0) * 10}%` }"></div>
+            <div class="h-full transition-all" :class="getSLAThresholdLevel(slaPercent) === 'critical' ? 'bg-red-500' : getSLAThresholdLevel(slaPercent) === 'warning' ? 'bg-yellow-500' : 'bg-green-500'" :style="{ width: `${getSLAProgressPercent(slaPercent, props.thresholds?.sla_percent_min)}%` }"></div>
           </div>
           <div class="mt-3 text-xs">
             <div class="flex justify-between">

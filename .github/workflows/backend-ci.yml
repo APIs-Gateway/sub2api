@@ -29,6 +29,9 @@ jobs:
       - name: Google/GitHub bound identity email drift and authentication controls
         working-directory: backend
         run: go test -tags=unit -count=1 -run '^TestEmailOAuthBoundIdentity|^TestEmailOAuthCallbackDoesNotAutoLinkLocalAccount|^TestLogin2FACompletesPendingOAuthBindAndConsumesSession' -v ./internal/handler/
+      - name: Configured ops thresholds actual dashboard regressions
+        working-directory: backend
+        run: go test -tags=unit -count=1 -v -run '^TestOpsConfiguredThresholdsActualDashboard|^TestComputeDashboardHealthScore|^TestComputeBusinessHealth|^TestComputeInfraHealth' ./internal/service/
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover
@@ -105,6 +108,9 @@ jobs:
       - name: Rewrite deletion actual component and admission regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/composables/__tests__/useModelWhitelist.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts src/components/account/__tests__/BulkEditAccountModal.spec.ts src/components/account/__tests__/CreateAccountModal.modelPreview.spec.ts
+      - name: Configured ops thresholds actual header regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/views/admin/ops/components/__tests__/OpsDashboardHeader.thresholds.spec.ts src/views/admin/ops/utils/__tests__/metricThresholds.spec.ts src/views/admin/ops/__tests__/OpsDashboard.spec.ts
       - name: Frontend typecheck and critical vitest
         run: make test-frontend
       - name: Frontend production build
