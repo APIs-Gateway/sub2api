@@ -96,7 +96,7 @@ function mountView() {
 
 
 enableAutoUnmount(afterEach)
-afterEach(() => { vi.clearAllTimers(); vi.useRealTimers() })
+afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -114,6 +114,7 @@ const qr = { paymentIntent: { status: 'requires_action', next_action: {
 
 describe('Stripe page owns asynchronous callbacks only while mounted', () => {
   beforeEach(() => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false })))
     routeState.query = {
       order_id: '42',
       client_secret: 'pi_secret_42',
