@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 零行为变化的静态证据：W6 PR2 新增的表与代码没有任何读取方。
+// 零行为变化的静态证据：W6 PR2、PR4b-1 新增的表与代码没有任何读取方。
 //
 // 这个测试扫描 backend 下全部非测试 Go 源码：
 //  1. 矩阵表与模型目录表的名字只能出现在本 PR 自己的文件里（也就是说，计费、调度、准入、
@@ -33,10 +33,15 @@ var matrixOwnFiles = map[string]struct{}{
 	"internal/service/model_catalog_service.go":  {},
 	"internal/service/channel_save_hook.go":      {},
 	"internal/service/group_policy_matrix.go":    {}, // W6 PR4-1：matrixPolicy，目前只被测试驱动，没有生产路径构造它
+	"internal/service/pricing_write_types.go":    {}, // W6 PR4b-1：价格写入路径（CellWriter、PriceWriteGate），没有生产路径构造它
+	"internal/service/pricing_write_plan.go":     {},
+	"internal/service/pricing_write_gate.go":     {},
 
 	"internal/repository/pricing_matrix_repo.go": {},
 	"internal/repository/model_catalog_repo.go":  {},
 	"internal/repository/model_catalog_seed.go":  {},
+	"internal/repository/pricing_cell_writer.go": {},
+	"internal/repository/pricing_write_store.go": {},
 
 	"internal/handler/admin/pricing_matrix_handler.go": {},
 	"cmd/server/model_catalog_cmd.go":                  {},
@@ -49,7 +54,7 @@ var matrixWiringFiles = map[string]struct{}{
 	"cmd/server/wire_gen.go":      {},
 }
 
-var matrixTableNames = regexp.MustCompile(`model_group_prices|model_group_price_history|group_model_config|cost_accounting_rule|model_catalog`)
+var matrixTableNames = regexp.MustCompile(`model_group_prices|model_group_price_history|group_model_config|cost_accounting_rule|model_catalog|pricing_write_approvals`)
 
 var matrixEntryPoints = regexp.MustCompile(`\b(` + strings.Join([]string{
 	"DeriveGroupState", "PlanGroupApply", "DerivedGroupState", "GroupStateSnapshot", "GroupApplyPlan",
@@ -58,6 +63,8 @@ var matrixEntryPoints = regexp.MustCompile(`\b(` + strings.Join([]string{
 	"ModelCatalogService", "NewModelCatalogService", "ModelCatalogRepository", "NewModelCatalogRepository",
 	"ResolveCatalogEntry", "OfficialPriceFactSource", "LookupOfficialPriceFact",
 	"matrixPolicy", "NewMatrixGroupPolicy", "MatrixSnapshotSource", "MatrixSnapshotInvalidator",
+	"CellWriter", "NewPricingCellWriter", "PriceWriteGate", "InterimPriceWriteGate", "NewInterimPriceWriteGate",
+	"PriceWriteStore", "NewPricingWriteStore", "MatrixExecutor", "NormalizeCellWriteRequest", "PlanCellWrites",
 }, "|") + `)\b`)
 
 func TestMatrixTablesAndDerivationHaveNoReaders(t *testing.T) {

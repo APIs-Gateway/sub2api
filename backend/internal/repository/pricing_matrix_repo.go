@@ -222,10 +222,13 @@ func loadMatrixConfigs(ctx context.Context, exec dbExec, groupIDs []int64) (map[
 	return out, nil
 }
 
+// matrixCellColumns model_group_prices 的读取列，顺序与 scanMatrixCell 一致。
+const matrixCellColumns = `id, group_id, model_key, is_pattern, pattern_order, open, price_mode, extra_multiplier,
+	        custom_price, effective_from, effective_to, source, revision, updated_at`
+
 func loadMatrixCells(ctx context.Context, exec dbExec, groupIDs []int64) (map[int64][]service.StoredMatrixCell, error) {
 	rows, err := exec.QueryContext(ctx,
-		`SELECT id, group_id, model_key, is_pattern, pattern_order, open, price_mode, extra_multiplier,
-		        custom_price, effective_from, effective_to, source, revision, updated_at
+		`SELECT `+matrixCellColumns+`
 		 FROM model_group_prices WHERE group_id = ANY($1)
 		 ORDER BY group_id, is_pattern, pattern_order, model_key`, pq.Array(groupIDs))
 	if err != nil {
@@ -235,37 +238,9 @@ func loadMatrixCells(ctx context.Context, exec dbExec, groupIDs []int64) (map[in
 
 	out := make(map[int64][]service.StoredMatrixCell)
 	for rows.Next() {
-		var (
-			c            service.StoredMatrixCell
-			mode, source string
-			extra        sql.NullFloat64
-			custom       []byte
-			from, to     sql.NullTime
-		)
-		if err := rows.Scan(&c.ID, &c.GroupID, &c.ModelKey, &c.IsPattern, &c.PatternOrder, &c.Open, &mode, &extra,
-			&custom, &from, &to, &source, &c.Revision, &c.UpdatedAt); err != nil {
+		c, err := scanMatrixCell(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan model_group_prices: %w", err)
-		}
-		c.PriceMode = service.MatrixPriceMode(mode)
-		c.Source = service.MatrixSource(source)
-		if extra.Valid {
-			v := extra.Float64
-			c.ExtraMultiplier = &v
-		}
-		if custom != nil {
-			var price service.MatrixCustomPrice
-			if err := json.Unmarshal(custom, &price); err != nil {
-				return nil, fmt.Errorf("decode custom_price of cell %d: %w", c.ID, err)
-			}
-			c.CustomPrice = &price
-		}
-		if from.Valid {
-			t := from.Time
-			c.EffectiveFrom = &t
-		}
-		if to.Valid {
-			t := to.Time
-			c.EffectiveTo = &t
 		}
 		out[c.GroupID] = append(out[c.GroupID], c)
 	}
@@ -273,6 +248,43 @@ func loadMatrixCells(ctx context.Context, exec dbExec, groupIDs []int64) (map[in
 		return nil, fmt.Errorf("iterate model_group_prices: %w", err)
 	}
 	return out, nil
+}
+
+// scanMatrixCell 按 matrixCellColumns 的顺序读一行单元格。
+func scanMatrixCell(rows *sql.Rows) (service.StoredMatrixCell, error) {
+	var (
+		c            service.StoredMatrixCell
+		mode, source string
+		extra        sql.NullFloat64
+		custom       []byte
+		from, to     sql.NullTime
+	)
+	if err := rows.Scan(&c.ID, &c.GroupID, &c.ModelKey, &c.IsPattern, &c.PatternOrder, &c.Open, &mode, &extra,
+		&custom, &from, &to, &source, &c.Revision, &c.UpdatedAt); err != nil {
+		return c, err
+	}
+	c.PriceMode = service.MatrixPriceMode(mode)
+	c.Source = service.MatrixSource(source)
+	if extra.Valid {
+		v := extra.Float64
+		c.ExtraMultiplier = &v
+	}
+	if custom != nil {
+		var price service.MatrixCustomPrice
+		if err := json.Unmarshal(custom, &price); err != nil {
+			return c, fmt.Errorf("decode custom_price of cell %d: %w", c.ID, err)
+		}
+		c.CustomPrice = &price
+	}
+	if from.Valid {
+		t := from.Time
+		c.EffectiveFrom = &t
+	}
+	if to.Valid {
+		t := to.Time
+		c.EffectiveTo = &t
+	}
+	return c, nil
 }
 
 func loadMatrixCostRules(ctx context.Context, exec dbExec, groupIDs []int64) (map[int64][]service.StoredMatrixCostRule, error) {
