@@ -15,6 +15,9 @@ func TestWSImageInputOutput_ActualCompletedProductWithoutUsage(t *testing.T) {
 	}{
 		{"actual_image", "response.completed", "completed", `[{"type":"image_generation_call","status":"completed","result":"opaque-base64"}]`, true},
 		{"done_alias", "response.done", "completed", `[{"type":"image_generation_call","status":"completed","result":"opaque-base64"}]`, true},
+		{"incomplete_completed_product", "response.incomplete", "incomplete", `[{"type":"image_generation_call","status":"completed","result":"opaque-base64"}]`, true},
+		{"incomplete_unfinished_item", "response.incomplete", "incomplete", `[{"type":"image_generation_call","status":"in_progress","result":"opaque-base64"}]`, false},
+		{"incomplete_empty_output", "response.incomplete", "incomplete", `[]`, false},
 		{"done_alias_unfinished", "response.done", "in_progress", `[{"type":"image_generation_call","status":"completed","result":"opaque-base64"}]`, false},
 		{"missing_outer_status", "response.completed", "", `[{"type":"image_generation_call","status":"completed","result":"opaque-base64"}]`, true},
 		{"missing_item_status", "response.completed", "completed", `[{"type":"image_generation_call","result":"opaque-base64"}]`, true},

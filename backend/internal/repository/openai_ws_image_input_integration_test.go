@@ -647,6 +647,8 @@ func TestWSImageInputHTTP_GeneratedProductWithoutImageUsageIsNotKnownFree(t *tes
 		{"completed_product", "response.completed", "completed", `[{"type":"image_generation_call","status":"completed","result":"opaque-image"}]`, true},
 		{"done_product_wallet", "response.done", "completed", `[{"type":"image_generation_call","status":"completed","result":"opaque-image"}]`, true},
 		{"done_product_card", "response.done", "completed", `[{"type":"image_generation_call","status":"completed","result":"opaque-image"}]`, true},
+		{"incomplete_product_wallet", "response.incomplete", "incomplete", `[{"type":"image_generation_call","status":"completed","result":"opaque-image"}]`, true},
+		{"incomplete_product_card", "response.incomplete", "incomplete", `[{"type":"image_generation_call","status":"completed","result":"opaque-image"}]`, true},
 		{"missing_outer_status", "response.completed", "", `[{"type":"image_generation_call","status":"completed","result":"opaque-image"}]`, true},
 		{"missing_item_status", "response.completed", "completed", `[{"type":"image_generation_call","result":"opaque-image"}]`, true},
 		{"failed_terminal", "response.failed", "failed", `[{"type":"image_generation_call","status":"completed","result":"opaque-image"}]`, false},
@@ -657,7 +659,7 @@ func TestWSImageInputHTTP_GeneratedProductWithoutImageUsageIsNotKnownFree(t *tes
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newWSInflightFixture(t, "passthrough", service.BillingModelSourceUpstream, map[string]float64{"token:gpt-5.4": 0, "competitor": .5}, wsImageInputPricing(t, false))
-			card := tc.name == "done_product_card"
+			card := tc.name == "done_product_card" || tc.name == "incomplete_product_card"
 			if card {
 				admissionCard(t, inflightTestEntClient(t), f.userID, 0, .75, .9, 1.2, 0, 0, 0)
 				_, err := inflightTestDB(t).Exec(`UPDATE users SET balance=0 WHERE id=$1`, f.userID)
