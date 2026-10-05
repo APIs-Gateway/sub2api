@@ -21,6 +21,14 @@ type stubPriceQuoter struct {
 	lastReq service.QuoteRequest
 	quote   *service.Quote
 	err     error
+	// reference 是 OfficialReference 的固定返回值（批量报价测试用）。
+	reference service.QuoteOfficialReference
+}
+
+func (s *stubPriceQuoter) OfficialReference(model string) service.QuoteOfficialReference {
+	ref := s.reference
+	ref.Model = model
+	return ref
 }
 
 func (s *stubPriceQuoter) Quote(_ context.Context, req service.QuoteRequest) (*service.Quote, error) {

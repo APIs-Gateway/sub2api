@@ -442,7 +442,10 @@
     paymentConfig: 'Payment Config',
     paymentPlans: 'Plans',
     channelManagement: 'Channels',
-    channelPricing: 'Pricing Config',
+    channelPricing: 'Channel Pricing',
+    pricingConfig: 'Pricing',
+    pricingModels: 'Models',
+    pricingMatrix: 'Availability & Pricing',
     channelMonitor: 'Channel Monitor',
     channelStatus: 'Channel Status',
     riskControl: 'Risk Control',
@@ -3235,11 +3238,128 @@
       }
     },
 
+    // Pricing config (read-only): models and availability matrix
+    pricingConfig: {
+      comingSoon: 'Coming soon',
+      loadError: 'Could not load pricing data',
+      retry: 'Retry',
+      deriveFailed: "Couldn't read how {n} group(s) open models; showing them as channel settings for now.",
+      perMillionTokens: 'per 1M tokens',
+      models: {
+        title: 'Models',
+        description: 'Which models exist, their official prices, and how many groups they are open to',
+        searchPlaceholder: 'Search models',
+        allPlatforms: 'All platforms',
+        allStatuses: 'All statuses',
+        filterUnpriced: 'No price',
+        filterUnregistered: 'Unregistered',
+        create: 'New model',
+        readonlyNote: 'View only for now. Creating models, publishing and changing prices are coming soon.',
+        columns: {
+          model: 'Model',
+          platform: 'Platform',
+          status: 'Status',
+          officialPrice: 'Official price',
+          source: 'Price source',
+          openGroups: 'Open groups'
+        },
+        officialPriceHint: 'input / output, per 1M tokens',
+        emptyTitle: 'No models match',
+        emptyHint: 'Try a different filter.'
+      },
+      status: {
+        draft: 'Draft',
+        active: 'Live',
+        retired: 'Retired',
+        unregistered: 'Unregistered'
+      },
+      source: {
+        litellm: 'Price list',
+        fallback: 'Built-in price',
+        cardPolicy: 'Official rate card',
+        channel: 'Channel price',
+        none: 'No price'
+      },
+      group: {
+        rate: 'Rate ×{rate}',
+        unswitched: 'Not switched yet',
+        access: {
+          open: 'Open',
+          allowlist: 'Allowlist'
+        }
+      },
+      cell: {
+        open: 'Open',
+        custom: 'Custom price',
+        unpriced: 'No price',
+        closed: 'Closed',
+        error: 'Unavailable',
+        unpricedHint: 'Calls are free',
+        perRequest: '{price} / request',
+        perRequestRange: '{min}–{max} / request',
+        tipPrice: 'Input {input} / output {output} (per 1M tokens, what the user pays)',
+        tipPerRequest: '{price} / request (what the user pays)',
+        tipPerRequestRange: '{min}–{max} / request (what the user pays, by tier)',
+        unpricedTip: 'No official price and no custom price, so calls to this model are not charged',
+        customTip: 'This group has its own price for this model instead of official price × rate',
+        errorTip: 'The price for this cell could not be loaded. Refresh to retry.',
+        unswitchedTip: 'This group has not been switched yet; this is the result worked out from its channel settings'
+      },
+      closedReason: {
+        closed_in_group: 'This group does not offer this model',
+        not_in_allowlist: 'This group is an allowlist and does not include this model',
+        catalog_draft: 'The model is still a draft and is closed in every group',
+        catalog_retired: 'The model is retired and is closed in every group'
+      },
+      drawer: {
+        basic: 'Details',
+        inOut: 'Input {input} / output {output}',
+        noOfficialPrice: 'No official price',
+        aliases: 'Aliases',
+        referenceModel: 'Reference model',
+        groups: 'Availability by group',
+        unregisteredHint: 'Not in the model catalog yet; it has only shown up in group settings.',
+        noGroups: 'This platform has no groups yet.',
+        derivedNote: 'For groups not switched yet, availability and prices are worked out from their channel settings.',
+        toMatrix: 'See all models in Availability and pricing',
+        actionRegister: 'Add to catalog and publish…',
+        action: {
+          draft: 'Publish…',
+          active: 'Retire…',
+          retired: 'Publish again'
+        }
+      },
+      matrix: {
+        title: 'Availability and pricing',
+        description: 'Which groups can use each model, and what users pay',
+        noticeTitle: 'This is the result worked out from channel settings',
+        noticeAll: 'No group has been switched to the new pricing setup yet. Availability and prices are still set under Channels; this page works them out and is view only.',
+        noticeSome: '{n} of {total} groups have not been switched yet. Their availability and prices are still set under Channels; this page works them out and is view only.',
+        noticeLink: 'Go to Channels',
+        groupCount: '{n} groups',
+        hideClosed: 'Hide models closed everywhere',
+        edit: 'Bulk edit',
+        legend: 'Legend',
+        legendOpen: 'Open at the official price',
+        legendExtra: 'Extra rate',
+        legendCustom: 'Custom price',
+        legendUnpriced: 'No price at all',
+        legendClosed: 'Not offered',
+        legendUnswitched: 'Group not switched; worked out from channel settings',
+        legendPaid: 'Cell prices are what a balance user actually pays',
+        cornerHint: 'Official price: input / output, per 1M tokens',
+        openDetail: 'View model details',
+        noGroupsTitle: 'No {platform} groups yet',
+        noGroupsHint: 'Create a group under Groups first, then come back to see availability and prices.',
+        empty: 'No models match'
+      }
+    },
+
     // Channel Management
     channels: {
       noGroupsSelected: 'Select at least one group for {platform}',
       emptyModelsInPricing: 'Add at least one model to the {platform} pricing rule',
-      title: 'Pricing Config',
+      title: 'Channel Pricing',
       description: 'Manage channels and model pricing, and configure which groups / models appear on the user pricing page',
       searchChannels: 'Search channels...',
       display: {

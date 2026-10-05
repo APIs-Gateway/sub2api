@@ -16,6 +16,7 @@ import (
 // priceQuoter 是 PricingQuoteHandler 对 service.PriceQuoter 的最小依赖，便于测试时替换。
 type priceQuoter interface {
 	Quote(ctx context.Context, req service.QuoteRequest) (*service.Quote, error)
+	OfficialReference(model string) service.QuoteOfficialReference
 }
 
 // PricingQuoteHandler 提供只读的价格报价接口：返回任意「模型 × 分组（× 用户）」

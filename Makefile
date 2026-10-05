@@ -32,6 +32,11 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/admin/ops/components/__tests__/OpsSettingsDialog.loading.spec.ts \
 	src/views/admin/ops/components/__tests__/OpsAlertEventsCard.pagination.spec.ts \
 	src/components/layout/__tests__/AppSidebar.userNav.spec.ts \
+	src/views/admin/pricing/__tests__/pricingModel.spec.ts \
+	src/views/admin/pricing/__tests__/usePricingData.spec.ts \
+	src/views/admin/pricing/__tests__/ModelsView.spec.ts \
+	src/views/admin/pricing/__tests__/MatrixView.spec.ts \
+	src/api/__tests__/admin.pricing.spec.ts \
 	src/components/layout/__tests__/AppHeader.userMenu.spec.ts \
 	src/components/layout/__tests__/AppHeader.docsLink.spec.ts \
 	src/components/layout/__tests__/userNav.spec.ts \

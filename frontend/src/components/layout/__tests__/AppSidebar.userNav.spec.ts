@@ -314,6 +314,7 @@ describe('admin sidebar is unchanged', () => {
     'link /admin/ops',
     'link /admin/users',
     'link /admin/groups',
+    'group-button nav.pricingConfig',
     'group-button nav.channelManagement',
     'link /admin/subscriptions',
     'link /admin/accounts',
