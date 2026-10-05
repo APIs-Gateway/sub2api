@@ -129,6 +129,8 @@ export const useSubscriptionStore = defineStore('subscriptions', () => {
     // State
     activeSubscriptions,
     loading,
+    /** 至少成功加载过一次（区分「还没加载」和「确实没有订阅」）。 */
+    loaded,
     hasActiveSubscriptions,
 
     // Actions

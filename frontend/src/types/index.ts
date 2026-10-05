@@ -92,6 +92,10 @@ export interface User {
   allowed_groups: number[] | null // Allowed group IDs (null = all non-exclusive groups)
   balance_notify_enabled: boolean
   balance_notify_threshold: number | null
+  /** 阈值类型：fixed 为额度，percentage 为累计充值额的百分比（用户设置页只能设 fixed）。 */
+  balance_notify_threshold_type?: 'fixed' | 'percentage'
+  /** 累计充值额（额度口径），百分比阈值用它折算。 */
+  total_recharged?: number
   balance_notify_extra_emails: NotifyEmailEntry[]
   stable_priority_enabled?: boolean // 稳定优先：所在组渠道全挂时跨分组逐档兜底
   subscriptions?: UserSubscription[] // User's active subscriptions

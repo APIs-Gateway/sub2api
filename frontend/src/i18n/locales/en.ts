@@ -8022,6 +8022,11 @@
     unlimited: 'Unlimited'
   },
 
+  lowBalance: {
+    low: 'Only {amount} left in your balance. Please top up soon.',
+    depleted: 'Your balance has run out. Please top up.'
+  },
+
   // Version Badge
   version: {
     currentVersion: 'Current Version',
