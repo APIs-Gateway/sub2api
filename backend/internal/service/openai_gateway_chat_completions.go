@@ -318,6 +318,14 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		_ = resp.Body.Close()
 		resp.Body = &billingInflightProviderErrorBody{Reader: bytes.NewReader(respBody), readErr: proofReadErr}
 
+		if canRecoverConvertedResponsesInput(ctx, c, account, isResponsesShape, responsesBody) &&
+			isConvertedResponsesInputStringRejection(resp.StatusCode, respBody, proofReadErr) {
+			logger.L().Info("openai chat_completions: structured Responses input rejected, falling back to raw chat completions",
+				zap.Int64("account_id", account.ID), zap.Int("upstream_status", resp.StatusCode))
+			cancelUpstream()
+			return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
+		}
+
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 		if account.Platform == PlatformGrok && isGrokContentPolicyRejection(resp.StatusCode, respBody) {
