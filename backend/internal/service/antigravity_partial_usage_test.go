@@ -16,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 const agMeteredSnapshot = `{"response":{"candidates":[{"content":{"parts":[{"thoughtSignature":"sig"}]}}],"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":4,"candidatesTokensDetails":[{"modality":"IMAGE","tokenCount":5}]}}}`
@@ -429,6 +430,46 @@ func TestAntigravityInterruptedUsage_CacheOnlyDoesNotCreateNegativeInput(t *test
 				require.Zero(t, result.usage.OutputTokens)
 				require.Equal(t, 3, result.usage.CacheReadInputTokens)
 				require.Zero(t, result.usage.ImageOutputTokens)
+			})
+		}
+	}
+}
+
+func TestAntigravityInterruptedUsage_SuccessfulClaudeWireMatchesRetainedUsage(t *testing.T) {
+	for _, mode := range []string{"claude_stream", "claude_buffered"} {
+		for _, sparse := range []bool{false, true} {
+			t.Run(mode+map[bool]string{false: "/full", true: "/sparse"}[sparse], func(t *testing.T) {
+				metadata := `{"promptTokenCount":10,"cachedContentTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":4,"candidatesTokensDetails":[{"modality":"IMAGE","tokenCount":5}]}`
+				if sparse {
+					metadata = `{"promptTokenCount":10}`
+				}
+				terminal := `{"response":{"candidates":[{"content":{"parts":[{"text":"answer"},{"functionCall":{"name":"lookup","args":{}}}]},"finishReason":"STOP"}],"usageMetadata":` + metadata + `}}`
+				result, err, rec := agMeteredReader(t, mode, io.NopCloser(strings.NewReader(agMeteredFrame(agMeteredSnapshot)+agMeteredFrame(terminal))), &config.Config{}, false)
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				assertAGMeteredSnapshot(t, result.usage)
+				require.Contains(t, rec.Body.String(), "answer")
+				require.Contains(t, rec.Body.String(), "lookup")
+				require.Contains(t, rec.Body.String(), "tool_use")
+				var wire gjson.Result
+				if mode == "claude_buffered" {
+					wire = gjson.Get(rec.Body.String(), "usage")
+				} else {
+					for _, line := range strings.Split(rec.Body.String(), "\n") {
+						if strings.HasPrefix(line, "data:") {
+							frame := gjson.Parse(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+							if frame.Get("type").String() == "message_delta" {
+								wire = frame.Get("usage")
+							}
+						}
+					}
+					require.Equal(t, 1, strings.Count(rec.Body.String(), "event: message_stop"))
+				}
+				require.True(t, wire.Exists())
+				require.EqualValues(t, 7, wire.Get("input_tokens").Int())
+				require.EqualValues(t, 6, wire.Get("output_tokens").Int())
+				require.EqualValues(t, 3, wire.Get("cache_read_input_tokens").Int())
+				require.EqualValues(t, 5, wire.Get("image_output_tokens").Int())
 			})
 		}
 	}

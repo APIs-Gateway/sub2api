@@ -4280,6 +4280,15 @@ returnResponse:
 		return antigravityInterruptedUsage(usage, firstTokenMs, false, errors.New("upstream response ended without a terminal event"))
 	}
 
+	transformed.Usage = antigravity.ClaudeUsage{
+		InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     usage.CacheReadInputTokens, ImageOutputTokens: usage.ImageOutputTokens,
+	}
+	claudeResp, err = json.Marshal(transformed)
+	if err != nil {
+		return antigravityInterruptedUsage(usage, firstTokenMs, false, fmt.Errorf("marshal retained Claude usage: %w", err))
+	}
 	c.Data(http.StatusOK, "application/json", claudeResp)
 
 	return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, nil
@@ -4315,6 +4324,21 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 	processor := antigravity.NewStreamingProcessor(originalModel)
 	collector := &antigravityUsageCollector{}
 	usage := &collector.usage
+	processor.SetUsageMapHook(func(wire map[string]any) {
+		wire["input_tokens"] = usage.InputTokens
+		wire["output_tokens"] = usage.OutputTokens
+		for key, count := range map[string]int{
+			"cache_creation_input_tokens": usage.CacheCreationInputTokens,
+			"cache_read_input_tokens":     usage.CacheReadInputTokens,
+			"image_output_tokens":         usage.ImageOutputTokens,
+		} {
+			if count > 0 {
+				wire[key] = count
+			} else {
+				delete(wire, key)
+			}
+		}
+	})
 	terminal := false
 	var firstTokenMs *int
 	// 使用 Scanner 并限制单行大小，避免 ReadString 无上限导致 OOM

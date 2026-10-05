@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 type agMeteredBillingFixture struct {
@@ -156,12 +157,15 @@ func TestAntigravityPartialBilling_RealHandlerSettlesOnce(t *testing.T) {
 	for _, native := range []bool{false, true} {
 		for _, stream := range []bool{false, true} {
 			for _, card := range []bool{false, true} {
-				for _, failure := range []string{"empty", "read_error", "provider_error", "sparse_usage", "partial_zeros", "cache_only_read", "cache_only_provider"} {
+				for _, failure := range []string{"empty", "read_error", "provider_error", "sparse_usage", "partial_zeros", "cache_only_read", "cache_only_provider", "success_full", "success_sparse"} {
 					name := map[bool]string{false: "claude", true: "gemini"}[native] + map[bool]string{false: "_buffered", true: "_stream"}[stream] + map[bool]string{false: "_wallet", true: "_card"}[card] + "/" + failure
 					t.Run(name, func(t *testing.T) {
 						payload := `{"response":{"candidates":[{"content":{"parts":[{"thoughtSignature":"sig"}]},"finishReason":"MALFORMED_FUNCTION_CALL"}],"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":4}}}`
 						if failure == "read_error" || failure == "sparse_usage" || failure == "partial_zeros" {
 							payload = `{"response":{"candidates":[{"content":{"parts":[{"text":"partial"}]}}],"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":4}}}`
+						}
+						if strings.HasPrefix(failure, "success_") {
+							payload = `{"response":{"candidates":[{"content":{"parts":[{"text":"answer"}]}}],"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":4}}}`
 						}
 						if strings.HasPrefix(failure, "cache_only_") {
 							payload = `{"response":{"usageMetadata":{"cachedContentTokenCount":3}}}`
@@ -175,6 +179,13 @@ func TestAntigravityPartialBilling_RealHandlerSettlesOnce(t *testing.T) {
 						}
 						if failure == "partial_zeros" {
 							response += "data: " + `{"response":{"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":0,"candidatesTokenCount":0,"thoughtsTokenCount":0}}}` + "\n\n"
+						}
+						if strings.HasPrefix(failure, "success_") {
+							metadata := `{"promptTokenCount":10,"cachedContentTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":4}`
+							if failure == "success_sparse" {
+								metadata = `{"promptTokenCount":10}`
+							}
+							response += "data: " + `{"response":{"candidates":[{"content":{"parts":[{"text":"done"}]},"finishReason":"STOP"}],"usageMetadata":` + metadata + `}}` + "\n\n"
 						}
 						f := newAGMeteredBillingFixture(t, response)
 						if failure == "read_error" || failure == "sparse_usage" || failure == "partial_zeros" || failure == "cache_only_read" {
@@ -198,7 +209,32 @@ func TestAntigravityPartialBilling_RealHandlerSettlesOnce(t *testing.T) {
 							}
 						}
 						rec := f.request(body, path, action, serve)
-						require.NotContains(t, rec.Body.String(), "message_stop")
+						if strings.HasPrefix(failure, "success_") {
+							require.Equal(t, http.StatusOK, rec.Code)
+							require.Contains(t, rec.Body.String(), "answer")
+							if !native {
+								var wire gjson.Result
+								if !stream {
+									wire = gjson.Get(rec.Body.String(), "usage")
+								} else {
+									for _, line := range strings.Split(rec.Body.String(), "\n") {
+										if strings.HasPrefix(line, "data:") {
+											frame := gjson.Parse(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+											if frame.Get("type").String() == "message_delta" {
+												wire = frame.Get("usage")
+											}
+										}
+									}
+									require.Equal(t, 1, strings.Count(rec.Body.String(), "event: message_stop"))
+								}
+								require.True(t, wire.Exists())
+								require.EqualValues(t, 7, wire.Get("input_tokens").Int())
+								require.EqualValues(t, 6, wire.Get("output_tokens").Int())
+								require.EqualValues(t, 3, wire.Get("cache_read_input_tokens").Int())
+							}
+						} else {
+							require.NotContains(t, rec.Body.String(), "message_stop")
+						}
 						require.NotContains(t, rec.Body.String(), "private")
 						f.pool.Stop()
 						require.EqualValues(t, 1, f.upstream.calls.Load(), "metered work must not replay")
