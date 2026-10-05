@@ -260,11 +260,21 @@ export async function del(id: number): Promise<void> {
 }
 
 /**
+ * 手动检测是同步请求：后端单次检测最长约 90 秒（外加 ping），
+ * 必须比默认的 30 秒请求超时更长，否则慢渠道会在浏览器侧先超时。
+ */
+const RUN_NOW_TIMEOUT_MS = 120_000
+
+/**
  * Trigger an immediate manual check for a channel monitor.
  * Returns the latest check results for primary + extra models.
  */
 export async function runNow(id: number): Promise<RunNowResponse> {
-  const { data } = await apiClient.post<RunNowResponse>(`/admin/channel-monitors/${id}/run`)
+  const { data } = await apiClient.post<RunNowResponse>(
+    `/admin/channel-monitors/${id}/run`,
+    undefined,
+    { timeout: RUN_NOW_TIMEOUT_MS },
+  )
   return data
 }
 

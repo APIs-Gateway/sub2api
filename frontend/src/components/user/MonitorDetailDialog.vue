@@ -103,7 +103,7 @@ defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const { statusLabel, statusBadgeClass, formatLatency, formatPercent } = useChannelMonitorFormat()
+const { statusLabel, statusBadgeClass, viewStatusLabel, viewStatusBadgeClass, formatLatency, formatPercent } = useChannelMonitorFormat()
 
 const detail = ref<UserMonitorDetail | null>(null)
 const loading = ref(false)
@@ -116,7 +116,8 @@ const summaryCells = computed(() => {
   if (!m) return []
   const col = (k: string) => t(`channelStatus.detailColumns.${k}`)
   return [
-    { key: 'status', label: col('latestStatus'), value: statusLabel(m.latest_status), badgeClass: statusBadgeClass(m.latest_status) },
+    // 这一组统计格只给普通用户用（没有模型名）：硬失败统一显示「不可用」。
+    { key: 'status', label: col('latestStatus'), value: viewStatusLabel(m.latest_status, false), badgeClass: viewStatusBadgeClass(m.latest_status, false) },
     { key: 'latency', label: col('latestLatency'), value: formatLatency(m.latest_latency_ms) },
     { key: 'avg', label: col('avgLatency7d'), value: formatLatency(m.avg_latency_7d_ms) },
     { key: 'a7', label: col('availability7d'), value: formatPercent(m.availability_7d) },

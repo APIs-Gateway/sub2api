@@ -1411,6 +1411,7 @@
       degraded: '降级',
       failed: '失败',
       error: '错误',
+      unavailable: '不可用',
       unknown: '-'
     },
     providers: {
@@ -3729,6 +3730,7 @@
       form: {
         name: '名称',
         namePlaceholder: '输入监控名称',
+        userVisibleHint: '会显示给所有用户，不要写上游厂商、上游模型或内部账号名。',
         provider: '平台',
         apiMode: 'OpenAI 协议',
         apiModeChatCompletions: 'OpenAI Compatible',

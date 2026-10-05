@@ -44,14 +44,17 @@ const props = withDefaults(defineProps<{
   countdownSeconds: number
   length?: number
   maintenance?: boolean
+  /** 管理员保留 失败 / 错误 的细分文案；普通用户的悬浮提示里硬失败统一是「不可用」。 */
+  adminView?: boolean
 }>(), {
   buckets: () => [],
   length: 60,
   maintenance: false,
+  adminView: false,
 })
 
 const { t } = useI18n()
-const { statusLabel, formatLatency, formatRelativeTime } = useChannelMonitorFormat()
+const { viewStatusLabel, formatLatency, formatRelativeTime } = useChannelMonitorFormat()
 
 interface Bar {
   colorClass: string
@@ -102,7 +105,7 @@ const displayBars = computed<Bar[]>(() => {
     const heightPct = STATUS_HEIGHT[status] ?? STATUS_HEIGHT.empty
     const latency = formatLatency(point.latency_ms)
     const relative = formatRelativeTime(point.checked_at)
-    const label = statusLabel(point.status)
+    const label = viewStatusLabel(point.status, props.adminView)
     bars.push({
       colorClass,
       heightPct,

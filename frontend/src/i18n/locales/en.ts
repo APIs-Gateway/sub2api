@@ -1404,6 +1404,7 @@
       degraded: 'Degraded',
       failed: 'Failed',
       error: 'Error',
+      unavailable: 'Unavailable',
       unknown: '-'
     },
     providers: {
@@ -3736,6 +3737,7 @@
       form: {
         name: 'Name',
         namePlaceholder: 'Enter monitor name',
+        userVisibleHint: 'Shown to all users. Do not include the upstream vendor, upstream model, or internal account names.',
         provider: 'Platform',
         apiMode: 'OpenAI protocol',
         apiModeChatCompletions: 'OpenAI Compatible',

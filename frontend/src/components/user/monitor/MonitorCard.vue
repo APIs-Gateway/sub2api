@@ -51,7 +51,7 @@
           class="w-1.5 h-1.5 rounded-full"
           :class="statusIsSignal ? 'bg-primary-600' : 'bg-gray-400 dark:bg-gray-500'"
         ></span>
-        {{ statusLabel(item.primary_status) }}
+        {{ viewStatusLabel(item.primary_status, adminView) }}
       </span>
     </div>
 
@@ -81,6 +81,7 @@
     <MonitorTimeline
       :buckets="item.timeline"
       :countdown-seconds="countdownSeconds"
+      :admin-view="adminView"
     />
   </button>
 </template>
@@ -89,8 +90,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { UserMonitorView } from '@/api/channelMonitor'
-import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
-import { STATUS_FAILED, STATUS_ERROR } from '@/constants/channelMonitor'
+import { isHardFailureStatus, useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import ProviderIcon from './ProviderIcon.vue'
 import MonitorMetricPair from './MonitorMetricPair.vue'
 import MonitorAvailabilityRow from './MonitorAvailabilityRow.vue'
@@ -109,15 +109,17 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const {
-  statusLabel,
+  viewStatusLabel,
   providerLabel,
   formatLatency,
 } = useChannelMonitorFormat()
 
-const statusIsSignal = computed(() =>
-  props.item.primary_status === STATUS_FAILED ||
-  props.item.primary_status === STATUS_ERROR
-)
+// 红卡（failed / error）用强调色；降级和正常用中性色。
+const statusIsSignal = computed(() => isHardFailureStatus(props.item.primary_status))
+
+// 管理员的响应带供应商等上游字段，普通用户的响应没有（见 api/channelMonitor.ts）。
+// 管理员保留 失败 / 错误 的细分文案；普通用户统一显示「不可用」。
+const adminView = computed(() => props.item.provider !== undefined)
 
 // 接口没返回 PING 字段（普通用户）时不渲染 PING 卡片；返回 null（管理员、暂无数据）仍显示 “-”。
 const hasPing = computed(() => props.item.primary_ping_latency_ms !== undefined)
