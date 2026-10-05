@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -37,6 +38,9 @@ type pricingSnapshotState struct {
 
 	// reloadMu 串行化「重载」与「固定」，两者都会读写下面的字段并访问数据库。
 	reloadMu sync.Mutex
+
+	// lastAutoFetch 是上次成功自动拉取候选的 unix 秒（0 表示还没有）。
+	lastAutoFetch atomic.Int64
 
 	// 以下字段受 PricingService.mu 保护：pinned 为真时，下载逻辑不得改写生效数据。
 	pinned    bool

@@ -177,6 +177,17 @@ func registerPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		pricing.GET("/quote", h.Admin.PricingQuote.Quote)
 		pricing.GET("/quote-batch", h.Admin.PricingQuote.QuoteBatch)
+
+		// W6 价格快照：固定当前价格（启动引导）、拉取候选、预览差异、批准、拒绝。
+		snapshots := pricing.Group("/snapshots")
+		{
+			snapshots.GET("", h.Admin.PricingSnapshot.Overview)
+			snapshots.POST("/pin", h.Admin.PricingSnapshot.Pin)
+			snapshots.POST("/fetch", h.Admin.PricingSnapshot.Fetch)
+			snapshots.POST("/:id/preview", h.Admin.PricingSnapshot.Preview)
+			snapshots.POST("/:id/approve", h.Admin.PricingSnapshot.Approve)
+			snapshots.POST("/:id/reject", h.Admin.PricingSnapshot.Reject)
+		}
 	}
 
 	// W6 价格矩阵：只读，查看渠道到矩阵的派生结果与模型目录。

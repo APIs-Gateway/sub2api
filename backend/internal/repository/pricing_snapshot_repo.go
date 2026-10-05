@@ -112,6 +112,21 @@ func (r *pricingSnapshotRepository) ActivateNew(ctx context.Context, in service.
 	if _, err := tx.ExecContext(ctx, `UPDATE pricing_snapshots SET status = 'superseded' WHERE status = 'active'`); err != nil {
 		return nil, fmt.Errorf("supersede active pricing snapshot: %w", err)
 	}
+	meta, err := insertActivePricingSnapshot(ctx, tx, in, gz)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		if isUniqueViolation(err) {
+			return nil, service.ErrPricingSnapshotConflict
+		}
+		return nil, fmt.Errorf("commit pricing snapshot activation: %w", err)
+	}
+	return meta, nil
+}
+
+// insertActivePricingSnapshot 插入一行并直接置 active（调用方已在同一事务里把旧的生效行置 superseded）。
+func insertActivePricingSnapshot(ctx context.Context, tx *sql.Tx, in service.NewPricingSnapshot, gz []byte) (*service.PricingSnapshotMeta, error) {
 	row := tx.QueryRowContext(ctx,
 		`INSERT INTO pricing_snapshots
 		   (label, source, source_url, content_sha256, model_count, payload_gz,
@@ -126,12 +141,6 @@ func (r *pricingSnapshotRepository) ActivateNew(ctx context.Context, in service.
 			return nil, service.ErrPricingSnapshotConflict
 		}
 		return nil, fmt.Errorf("insert active pricing snapshot: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		if isUniqueViolation(err) {
-			return nil, service.ErrPricingSnapshotConflict
-		}
-		return nil, fmt.Errorf("commit pricing snapshot activation: %w", err)
 	}
 	return meta, nil
 }

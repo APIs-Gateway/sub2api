@@ -54,6 +54,15 @@ type PriceQuoter struct {
 	catalog quoteCatalogReader
 }
 
+// PricingSnapshotID 返回报价所用的生效价格快照 id（auto 模式为 0）。价格页与回退链的缓存键用它，
+// 批准新快照之后旧缓存随之失效。
+func (q *PriceQuoter) PricingSnapshotID() int64 {
+	if q == nil || q.billing == nil {
+		return 0
+	}
+	return q.billing.pricingService.ActiveSnapshotID()
+}
+
 // priceQuoteGroupReader 是 PriceQuoter 对分组仓储的最小依赖。
 type priceQuoteGroupReader interface {
 	GetByIDLite(ctx context.Context, id int64) (*Group, error)
