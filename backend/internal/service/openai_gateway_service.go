@@ -9609,7 +9609,9 @@ func (s *OpenAIGatewayService) calculateOpenAIImageCost(
 		if err == nil {
 			return withExtraMultiplier(cost, extra)
 		}
-		logger.LegacyPrintf("service.openai_gateway", "Calculate image channel cost failed: %v", err)
+		if !isShadowRecompute(ctx) {
+			logger.LegacyPrintf("service.openai_gateway", "Calculate image channel cost failed: %v", err)
+		}
 		noteUnpricedBilling(ctx, apiKey, result.Model, UnpricedBillingReasonImageCalcError, err,
 			"group_image_price_fallback", billingModel)
 	}
