@@ -162,6 +162,7 @@ func TestWSImageInputHTTP_FrozenModelFundingAndTextReset(t *testing.T) {
 				if source == service.BillingModelSourceRequested {
 					rate = .05
 				}
+				previousAttempt := ""
 				for n := 1; n <= 3; n++ {
 					input, extra, model := wsImageInputPayload, "", "gpt-5.4"
 					if n == 2 {
@@ -184,12 +185,18 @@ func TestWSImageInputHTTP_FrozenModelFundingAndTextReset(t *testing.T) {
 					require.Equal(t, expectedWireModel, gjson.GetBytes(pending.payload, "model").String(), "later model remains on provider wire")
 					if n < 3 {
 						require.Positive(t, f.held(t), "ordinary zero-price tokens still reserve paid image input")
-						if !card {
-							f.denyConcurrentHTTP(t, "competitor")
-							require.EqualValues(t, n, p.calls.Load())
-						}
+						f.denyConcurrentHTTP(t, "competitor")
+						require.EqualValues(t, n, p.calls.Load(), "wallet and all three card windows reject competing provider dispatch")
 					} else {
 						require.Zero(t, f.held(t), "new text chain must remain known-free")
+					}
+					attemptID := ""
+					if n < 3 {
+						var ownerID string
+						require.NoError(t, inflightTestDB(t).QueryRow(`SELECT a.id,o.id FROM billing_inflight_leases a JOIN billing_inflight_leases o ON a.owner_id=o.id WHERE a.user_id=$1 AND a.phase='attempt' AND o.phase='owner'`, f.userID).Scan(&attemptID, &ownerID))
+						require.NotEmpty(t, ownerID)
+						require.NotEqual(t, previousAttempt, attemptID)
+						previousAttempt = attemptID
 					}
 					usage := `{"input_tokens":2,"output_tokens":1}`
 					hosted := ""
@@ -202,6 +209,12 @@ func TestWSImageInputHTTP_FrozenModelFundingAndTextReset(t *testing.T) {
 					pending.reply <- wsImageInputEvent(n, "response.completed", usage, hosted)
 					wsInflightReadCompleted(t, conn)
 					f.waitUsage(t, n)
+					select {
+					case command := <-f.billingRepo.commands:
+						require.Equal(t, attemptID, command.InflightObligationID, "settlement consumes this exact per-turn obligation")
+					case <-time.After(5 * time.Second):
+						t.Fatal("actual billing Apply missing")
+					}
 					billed := n
 					if billed > 2 {
 						billed = 2
@@ -415,4 +428,23 @@ func TestWSImageInputHTTP_ProviderReplayBillsOnce(t *testing.T) {
 		require.InDelta(t, .55, f.wallet(t), 1e-9)
 	}
 	require.EqualValues(t, 2, p.calls.Load())
+}
+
+func TestWSImageInputHTTP_ExistingNonImageModesKeepTheirTariff(t *testing.T) {
+	for _, mode := range []string{"native", "passthrough", "bridge"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newWSInflightFixture(t, mode, service.BillingModelSourceUpstream, map[string]float64{"gpt-5.4": .5})
+			conn := f.dial(t)
+			wsInflightWrite(t, conn, `{"type":"response.create","model":"gpt-5.4","input":"ordinary paid text"}`)
+			pending := f.provider.next(t)
+			require.InDelta(t, .5, f.held(t), 1e-9)
+			f.denyConcurrentHTTP(t, "gpt-5.4")
+			close(pending.release)
+			wsInflightReadCompleted(t, conn)
+			f.waitUsage(t, 1)
+			wsImageInputLog(t, f, 1, 0, 0, .5)
+			require.InDelta(t, .25, f.wallet(t), 1e-9)
+			require.EqualValues(t, 1, f.provider.calls.Load())
+		})
+	}
 }

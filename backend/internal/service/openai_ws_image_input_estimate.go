@@ -16,7 +16,10 @@ type openAIWSImageInputEstimates struct {
 	pending    map[int]int
 }
 
-const openAIWSImageInputEstimateLimit = 128
+const (
+	openAIWSImageInputEstimateLimit   = 128
+	openAIWSImageInputEstimateIDBytes = 256
+)
 
 func openAIWSInputMayContainImage(input gjson.Result) bool {
 	return openAIWSInputMayContainImageAtDepth(input, 0)
@@ -81,16 +84,19 @@ func (s *openAIWSImageInputEstimates) prepare(turn int, body []byte) int {
 }
 
 func (s *openAIWSImageInputEstimates) complete(turn int, responseID string, actualImageInput int) {
-	if responseID == "" {
-		return
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	estimate, known := s.pending[turn]
+	delete(s.pending, turn)
+	// Bound retained bytes as well as entries. Oversized provider IDs remain
+	// intact on the wire and in settlement; only admission lineage is uncached.
+	if responseID == "" || len(responseID) > openAIWSImageInputEstimateIDBytes {
+		return
+	}
 	if s.byResponse == nil {
 		s.byResponse = make(map[string]int)
 	}
-	estimate, known := s.pending[turn]
-	delete(s.pending, turn)
+
 	if !known {
 		// Missing turn metadata cannot prove a stored response has no image.
 		estimate = 1
