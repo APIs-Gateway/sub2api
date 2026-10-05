@@ -239,6 +239,7 @@ func deriveCardStatus(newestFirst []string) string {
 	}
 	switch {
 	case hard >= monitorVerdictHardFailures:
+		_ = latestHard
 		return MonitorStatusFailed
 	case hard > 0:
 		return MonitorStatusError
