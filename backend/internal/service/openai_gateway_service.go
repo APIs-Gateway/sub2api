@@ -3808,6 +3808,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	httpInvalidEncryptedContentRetryTried := false
 	rejectedFieldRetryState := newOpenAIResponsesRejectedFieldRetryState(body)
 	agentTaskRecoveryTried := false
+	httpOAuth401RecoveryTried := false
+	oauth401Snapshot, oauth401Eligible := snapshotOpenAI401Account(account)
 	for {
 		// Build upstream request
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
@@ -3870,6 +3872,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			respBody, proofReadErr := s.readUpstreamErrorBodyComplete(resp)
 			_ = resp.Body.Close()
 			resp.Body = &billingInflightProviderErrorBody{Reader: bytes.NewReader(respBody), readErr: proofReadErr}
+			if !httpOAuth401RecoveryTried && oauth401Eligible && resp.StatusCode == http.StatusUnauthorized {
+				httpOAuth401RecoveryTried = true
+				if nextToken, recovered := s.tryRefreshOpenAIHTTP401(ctx, c, account, oauth401Snapshot, resp.StatusCode, respBody, proofReadErr, token); recovered {
+					token = nextToken
+					continue
+				}
+			}
 
 			if !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 				agentTaskRecoveryTried = true
@@ -4232,6 +4241,8 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	agentTaskRecoveryTried := false
+	httpOAuth401RecoveryTried := false
+	oauth401Snapshot, oauth401Eligible := snapshotOpenAI401Account(account)
 	var resp *http.Response
 	for {
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
@@ -4258,6 +4269,13 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		responseBody, proofReadErr := s.readUpstreamErrorBodyComplete(resp)
 		_ = resp.Body.Close()
 		resp.Body = &billingInflightProviderErrorBody{Reader: bytes.NewReader(responseBody), readErr: proofReadErr}
+		if !httpOAuth401RecoveryTried && oauth401Eligible && resp.StatusCode == http.StatusUnauthorized {
+			httpOAuth401RecoveryTried = true
+			if nextToken, recovered := s.tryRefreshOpenAIHTTP401(ctx, c, account, oauth401Snapshot, resp.StatusCode, responseBody, proofReadErr, token); recovered {
+				token = nextToken
+				continue
+			}
+		}
 		if !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, responseBody) {
 			agentTaskRecoveryTried = true
 			expectedTaskID := account.GetCredential("task_id")
