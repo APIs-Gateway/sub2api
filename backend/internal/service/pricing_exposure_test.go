@@ -107,6 +107,14 @@ func TestExposureValidator_Check(t *testing.T) {
 		{"per_request with a zero price but a positive interval price", exCustom(1, "nothing", MatrixCustomPrice{BillingMode: BillingModePerRequest,
 			PerRequestPrice: pwF(0), Intervals: []MatrixPriceInterval{{TierLabel: "1K", PerRequestPrice: pwF(0.04)}}}), ""},
 		{"inherit on an image-only model has a price", exCell(1, "img-only", MatrixPriceInherit), ""},
+		// B1′：token 模式带区间时顶层价不生效。
+		{"token top-level price is ignored when all interval prices are zero", exCustom(1, "priced", MatrixCustomPrice{BillingMode: BillingModeToken,
+			InputPrice: pwF(3e-6), OutputPrice: pwF(15e-6),
+			Intervals: []MatrixPriceInterval{{MinTokens: 0, InputPrice: pwF(0), OutputPrice: pwF(0)}}}), ExposureZeroPrice},
+		{"token interval with only a per-request price is free", exCustom(1, "priced", MatrixCustomPrice{BillingMode: BillingModeToken,
+			Intervals: []MatrixPriceInterval{{MinTokens: 0, PerRequestPrice: pwF(0.04)}}}), ExposureZeroPrice},
+		{"token zero top-level price with a positive interval price", exCustom(1, "nothing", MatrixCustomPrice{BillingMode: BillingModeToken,
+			InputPrice: pwF(0), Intervals: []MatrixPriceInterval{{MinTokens: 0, InputPrice: pwF(3e-6)}}}), ""},
 		{"closed cells are not checked", closed, ""},
 		{"wildcard cells are not checked", pattern, ""},
 	}

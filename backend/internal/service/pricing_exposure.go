@@ -138,6 +138,14 @@ func (v *ExposureValidator) evaluate(groupID int64, c MatrixCell, free []Billing
 			}
 			return ExposureZeroPrice, true
 		default:
+			// 有有效区间时，运行时不看顶层的 input/output/cache 价，命中区间后区间里留空的字段按 0 计，
+			// 也不回落官方价；顶层只有 image_output_price 仍然生效（B1′）。
+			if customHasEffectiveInterval(cp) {
+				if customIntervalTokenHasPositive(cp) || exposurePositive(cp.ImageOutputPrice) {
+					return "", false
+				}
+				return ExposureZeroPrice, true
+			}
 			if customTokenHasPositive(cp) {
 				return "", false
 			}
@@ -172,6 +180,29 @@ func customPerRequestHasPositive(cp *MatrixCustomPrice) bool {
 	}
 	for _, iv := range cp.Intervals {
 		if exposurePositive(iv.PerRequestPrice) {
+			return true
+		}
+	}
+	return false
+}
+
+// customHasEffectiveInterval 有「有效区间」：与运行时 filterValidIntervals 同口径，
+// 五个价格字段（含 per_request_price）任意一个非 nil 就算。
+func customHasEffectiveInterval(cp *MatrixCustomPrice) bool {
+	for _, iv := range cp.Intervals {
+		if iv.InputPrice != nil || iv.OutputPrice != nil || iv.CacheWritePrice != nil ||
+			iv.CacheReadPrice != nil || iv.PerRequestPrice != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// customIntervalTokenHasPositive 区间里的 input、output、cache_write、cache_read 至少有一个是正数。
+func customIntervalTokenHasPositive(cp *MatrixCustomPrice) bool {
+	for _, iv := range cp.Intervals {
+		if exposurePositive(iv.InputPrice) || exposurePositive(iv.OutputPrice) ||
+			exposurePositive(iv.CacheWritePrice) || exposurePositive(iv.CacheReadPrice) {
 			return true
 		}
 	}
