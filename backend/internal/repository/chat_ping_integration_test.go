@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	middleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -52,6 +53,13 @@ func chatPingResponse(req *http.Request, body string, readErr error, status int)
 		reader = io.MultiReader(reader, inflightHTTPReadError{readErr})
 	}
 	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(reader), Request: req}
+}
+
+func chatPingTextStream() string {
+	// An actual delta reaches the client before finalization; the shared
+	// billing fixture's block-start seed alone does not stream visible text.
+	body := strings.Replace(inflightAnthropicSSE, `"text":"ok"`, `"text":""`, 1)
+	return strings.Replace(body, "event: content_block_stop", "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\nevent: content_block_stop", 1)
 }
 
 func chatPingBillOnce(t *testing.T, f *inflightHTTPFixture, card bool) {
@@ -98,7 +106,7 @@ func TestChatPingHTTP_UnmeteredFailureUsesSecondAccount(t *testing.T) {
 						}
 						return chatPingResponse(req, chatPingFrame+chatPingOverload, nil, http.StatusOK), nil
 					}
-					return chatPingResponse(req, inflightAnthropicSSE, nil, http.StatusOK), nil
+					return chatPingResponse(req, chatPingTextStream(), nil, http.StatusOK), nil
 				}
 				close(f.upstream.release)
 				rec := f.request(chatPingRequest, "/v1/chat/completions", "", f.gateway.ChatCompletions)
@@ -154,10 +162,7 @@ func TestChatPingHTTP_ExhaustionAndLaterHTTPErrorStaySSE(t *testing.T) {
 }
 
 func TestChatPingHTTP_MeteredPartialCannotReplay(t *testing.T) {
-	// Send an actual text delta before the failure. The shared fixture seeds
-	// text at block start, which the converter flushes only at finalization.
-	partialBody := strings.Replace(inflightAnthropicSSE, `"text":"ok"`, `"text":""`, 1)
-	partialBody = strings.Replace(partialBody, "event: content_block_stop", "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\nevent: content_block_stop", 1)
+	partialBody := chatPingTextStream()
 	f := newInflightHTTPFixture(t, service.PlatformAnthropic, chatPingFrame+strings.Replace(partialBody, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n", chatPingOverload, 1), "text/event-stream")
 	chatPingFunding(t, f, false)
 	chatPingAccountB(t, f)
@@ -241,14 +246,21 @@ func TestChatPingHTTP_UnknownHoldBlocksNextDispatchWithSSEError(t *testing.T) {
 	f := newInflightHTTPFixture(t, service.PlatformAnthropic, "", "text/event-stream")
 	chatPingFunding(t, f, false)
 	chatPingAccountB(t, f)
-	var held, newBalance float64
+	var held, unknownHeld, newBalance float64
+	otherOwner := uuid.NewString()
 	f.upstream.script = func(req *http.Request, _ int64) (*http.Response, error) {
+		unknownHeld = inflightHeld(t, f.user.ID)
+		require.Positive(t, unknownHeld)
+		// A real second owner remains in flight while another request spends
+		// the wallet. Preserve the fork's first-owner overdraft policy; the
+		// retry must obey its existing concurrent-owner funding threshold.
+		allowed, err := NewUsageBillingRepository(inflightTestEntClient(t), inflightTestDB(t)).(service.BillingInflightRepository).ReserveBillingInflight(context.Background(), f.user.ID, otherOwner, unknownHeld, false, time.Minute)
+		require.NoError(t, err)
+		require.True(t, allowed)
 		held = inflightHeld(t, f.user.ID)
-		require.Positive(t, held)
-		// Simulate another request spending most of the wallet after this
-		// attempt was dispatched. Its unknown reservation must stay in place.
+		require.InDelta(t, 2*unknownHeld, held, 1e-10)
 		newBalance = held * 1.1
-		_, err := inflightTestDB(t).Exec(`UPDATE users SET balance=$1 WHERE id=$2`, newBalance, f.user.ID)
+		_, err = inflightTestDB(t).Exec(`UPDATE users SET balance=$1 WHERE id=$2`, newBalance, f.user.ID)
 		require.NoError(t, err)
 		return chatPingResponse(req, chatPingFrame, errors.New("upstream reader reset"), http.StatusOK), nil
 	}
@@ -261,6 +273,9 @@ func TestChatPingHTTP_UnknownHoldBlocksNextDispatchWithSSEError(t *testing.T) {
 	require.EqualValues(t, 1, f.upstream.calls.Load(), "the second account cannot dispatch without funding")
 	f.pool.Stop()
 	require.InDelta(t, held, inflightHeld(t, f.user.ID), 1e-10, "unknown first attempt cannot be released as free")
+	var unknownRemaining float64
+	require.NoError(t, inflightTestDB(t).QueryRow(`SELECT COALESCE(sum(amount),0) FROM billing_inflight_leases WHERE user_id=$1 AND owner_id<>$2 AND phase IN ('attempt','pending') AND expires_at>clock_timestamp()`, f.user.ID, otherOwner).Scan(&unknownRemaining))
+	require.InDelta(t, unknownHeld, unknownRemaining, 1e-10, "the first provider's unknown reservation must remain funded")
 	var balance float64
 	var logs int
 	require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&balance))
