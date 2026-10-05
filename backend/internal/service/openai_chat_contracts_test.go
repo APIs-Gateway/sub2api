@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -101,7 +102,13 @@ func TestChatResponsesContracts_RawChatUnchanged(t *testing.T) {
 			require.Nil(t, result)
 			require.Len(t, upstream.requests, 1)
 			require.Equal(t, "https://api.openai.com/v1/chat/completions", upstream.lastReq.URL.String())
-			require.JSONEq(t, string(body), string(upstream.lastBody), "native raw Chat policy must be unchanged")
+			expectedBody := body
+			if stream {
+				// The existing raw path forces usage on for complete billing.
+				expectedBody, err = sjson.SetBytes(body, "stream_options.include_usage", true)
+				require.NoError(t, err)
+			}
+			require.JSONEq(t, string(expectedBody), string(upstream.lastBody), "all raw fields must retain the existing policy")
 		})
 	}
 }
