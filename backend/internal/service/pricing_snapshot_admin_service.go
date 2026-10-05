@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
@@ -343,9 +344,17 @@ func (a *PricingSnapshotAdminService) annotatePlan(ctx context.Context, plan *Sn
 	}
 	if a.checker != nil && a.readExec != nil {
 		if err := a.checker.CheckSnapshotApproval(ctx, a.readExec, plan.mergedData); err != nil {
-			plan.ExposureError = err.Error()
+			plan.ExposureError = exposureErrorText(err)
 		}
 	}
+}
+
+// exposureErrorText 把保存时校验的违规项（metadata.violations）带进预览文本，否则管理员只看到一句笼统的话。
+func exposureErrorText(err error) string {
+	if ae := infraerrors.FromError(err); ae != nil && ae.Metadata["violations"] != "" {
+		return fmt.Sprintf("%s (%s of them: %s)", ae.Message, ae.Metadata["count"], ae.Metadata["violations"])
+	}
+	return err.Error()
 }
 
 func (a *PricingSnapshotAdminService) baseData(ctx context.Context, meta *PricingSnapshotMeta) (map[string]*LiteLLMModelPricing, error) {

@@ -38,9 +38,9 @@ func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient,
 }
 
 // ProvidePricingSnapshotAdminService 创建价格快照页的管理服务。
-// 保存时校验（SnapshotExposureChecker）尚未接线：在它接上之前，批准一律失败关闭，预览、拉取与固定不受影响。
-func ProvidePricingSnapshotAdminService(pricing *PricingService, store PricingSnapshotRepository, db *sql.DB) *PricingSnapshotAdminService {
-	return NewPricingSnapshotAdminService(pricing, store, nil, db)
+// 批准事务里对所有白名单分组做保存时校验（ExposureGuard.CheckGroups）；读取器缺失时批准失败关闭。
+func ProvidePricingSnapshotAdminService(cfg *config.Config, pricing *PricingService, store PricingSnapshotRepository, reader SnapshotExposureReader, settings SettingRepository, db *sql.DB) *PricingSnapshotAdminService {
+	return NewPricingSnapshotAdminService(pricing, store, NewSnapshotExposureChecker(cfg, reader, settings), db)
 }
 
 // ProvideUpdateService creates UpdateService with BuildInfo
