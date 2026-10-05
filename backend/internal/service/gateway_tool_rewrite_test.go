@@ -57,9 +57,9 @@ func TestRestoreToolNamesInBytes_LongestFirst(t *testing.T) {
 		{"abc_12_ext", "bar"},
 		{"abc_12", "foo"},
 	}
-	data := []byte(`{"content":[{"type":"tool_use","name":"abc_12_ext"},{"type":"tool_use","name":"abc_12"}],"other":"abc_12"}`)
+	data := []byte(`{"type":"message","content":[{"type":"tool_use","name":"abc_12_ext"},{"type":"tool_use","name":"abc_12"}],"other":"abc_12"}`)
 	restored := string(restoreToolNamesInBytes(data, rw))
-	require.Equal(t, `{"content":[{"type":"tool_use","name":"bar"},{"type":"tool_use","name":"foo"}],"other":"abc_12"}`, restored)
+	require.Equal(t, `{"type":"message","content":[{"type":"tool_use","name":"bar"},{"type":"tool_use","name":"foo"}],"other":"abc_12"}`, restored)
 }
 
 func TestRestoreToolNamesInBytes_StaticPrefixRollback(t *testing.T) {

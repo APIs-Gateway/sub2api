@@ -435,18 +435,53 @@ func restoreToolNamesInBytes(data []byte, rw *ToolNameRewrite) []byte {
 	if rw == nil {
 		return data
 	}
-	prefix := 0
-	if strings.HasPrefix(string(data), "data:") {
-		prefix = len("data:")
-		for prefix < len(data) && (data[prefix] == ' ' || data[prefix] == '\t') {
-			prefix++
-		}
+	if gjson.ValidBytes(data) {
+		return restoreToolNamesInJSON(data, rw)
 	}
-	body := data[prefix:]
-	if !gjson.ValidBytes(body) {
+	// Native streaming emits complete event/data blocks, and the first write
+	// can include several staged blocks. Inspect only data payload lines and
+	// copy all event names, comments, whitespace and line endings unchanged.
+	var output []byte
+	copied := 0
+	for start := 0; start < len(data); {
+		end := len(data)
+		if newline := bytes.IndexByte(data[start:], '\n'); newline >= 0 {
+			end = start + newline + 1
+		}
+		payloadEnd := end
+		if payloadEnd > start && data[payloadEnd-1] == '\n' {
+			payloadEnd--
+		}
+		if payloadEnd > start && data[payloadEnd-1] == '\r' {
+			payloadEnd--
+		}
+		if bytes.HasPrefix(data[start:payloadEnd], []byte("data:")) {
+			payloadStart := start + len("data:")
+			for payloadStart < payloadEnd && (data[payloadStart] == ' ' || data[payloadStart] == '\t') {
+				payloadStart++
+			}
+			payload := data[payloadStart:payloadEnd]
+			if gjson.ValidBytes(payload) {
+				restored := restoreToolNamesInJSON(payload, rw)
+				if !bytes.Equal(restored, payload) {
+					if output == nil {
+						output = make([]byte, 0, len(data))
+					}
+					output = append(output, data[copied:payloadStart]...)
+					output = append(output, restored...)
+					copied = payloadEnd
+				}
+			}
+		}
+		start = end
+	}
+	if output == nil {
 		return data
 	}
-	changed := false
+	return append(output, data[copied:]...)
+}
+
+func restoreToolNamesInJSON(body []byte, rw *ToolNameRewrite) []byte {
 	restore := func(path string) {
 		value := gjson.GetBytes(body, path)
 		if value.Type != gjson.String {
@@ -463,44 +498,58 @@ func restoreToolNamesInBytes(data []byte, rw *ToolNameRewrite) []byte {
 		}
 		if ok && real != value.String() {
 			if next, err := sjson.SetBytes(body, path, real); err == nil {
-				body, changed = next, true
+				body = next
 			}
 		}
 	}
-	restoreBlock := func(path string) {
+	restoreBlock := func(path string, native bool) {
 		base := path
 		if base != "" {
 			base += "."
 		}
-		switch gjson.GetBytes(body, base+"type").String() {
-		case "tool_use", "server_tool_use", "function_call", "custom_tool_call":
+		kind := gjson.GetBytes(body, base+"type").String()
+		if (native && (kind == "tool_use" || kind == "server_tool_use")) ||
+			(!native && (kind == "function_call" || kind == "custom_tool_call")) {
 			restore(base + "name")
 		}
 	}
-	restoreBlock("")
-	restoreBlock("content_block")
-	restoreBlock("item")
-	for _, path := range []string{"content", "output", "response.output"} {
+	restoreArray := func(path string, native bool) {
 		for i := range gjson.GetBytes(body, path).Array() {
-			restoreBlock(fmt.Sprintf("%s.%d", path, i))
+			restoreBlock(fmt.Sprintf("%s.%d", path, i), native)
 		}
 	}
-	restoreCalls := func(path string) {
-		for i := range gjson.GetBytes(body, path+".tool_calls").Array() {
-			restore(fmt.Sprintf("%s.tool_calls.%d.function.name", path, i))
+	switch gjson.GetBytes(body, "type").String() {
+	case "tool_use", "server_tool_use", "function_call", "custom_tool_call":
+		restore("name")
+	case "message":
+		restoreArray("content", true)
+	case "content_block_start":
+		restoreBlock("content_block", true)
+	case "response.output_item.added", "response.output_item.done":
+		restoreBlock("item", false)
+	case "response.created", "response.in_progress", "response.completed", "response.done", "response.failed", "response.incomplete":
+		restoreArray("response.output", false)
+	case "":
+		switch gjson.GetBytes(body, "object").String() {
+		case "response":
+			restoreArray("output", false)
+		case "chat.completion", "chat.completion.chunk":
+			restoreCalls := func(path string) {
+				for i, call := range gjson.GetBytes(body, path+".tool_calls").Array() {
+					kind := call.Get("type").String()
+					if kind == "" || kind == "function" {
+						restore(fmt.Sprintf("%s.tool_calls.%d.function.name", path, i))
+					}
+				}
+				restore(path + ".function_call.name")
+			}
+			for i := range gjson.GetBytes(body, "choices").Array() {
+				restoreCalls(fmt.Sprintf("choices.%d.delta", i))
+				restoreCalls(fmt.Sprintf("choices.%d.message", i))
+			}
 		}
-		restore(path + ".function_call.name")
 	}
-	for i := range gjson.GetBytes(body, "choices").Array() {
-		restoreCalls(fmt.Sprintf("choices.%d.delta", i))
-		restoreCalls(fmt.Sprintf("choices.%d.message", i))
-	}
-	if !changed {
-		return data
-	}
-	result := make([]byte, 0, prefix+len(body))
-	result = append(result, data[:prefix]...)
-	return append(result, body...)
+	return body
 }
 
 // toolNameRewriteFromContext 从 gin.Context 取出请求阶段保存的工具名映射。
