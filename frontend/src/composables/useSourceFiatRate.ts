@@ -36,10 +36,19 @@ export function useSourceFiatRate() {
   /** 当前按订阅卡单价折算（文案提示用）。 */
   const usesSubscriptionRate = computed(() => activeCardRate.value !== null)
 
+  /**
+   * 按当前扣费来源单价展示一笔金额：人民币模式下是「¥x」，美元模式下是原始额度。
+   * 不带「≈」，给签到「今日消费」这类单个金额的展示用；它们同样是钱包与订阅卡混扣的额度。
+   */
+  function formatSourceAmount(credits: number | null | undefined, digits?: MoneyDigits): string {
+    if (!isFiat.value) return formatUsd(credits, digits)
+    return formatFiat(fiatFromCredits(credits, sourceFiatPerCredit.value), digits)
+  }
+
   /** 额度上限的展示：人民币模式下是「≈¥x」，美元模式下是原始额度。 */
   function formatLimit(credits: number | null | undefined, digits?: MoneyDigits): string {
     if (!isFiat.value) return formatUsd(credits, digits)
-    return `≈${formatFiat(fiatFromCredits(credits, sourceFiatPerCredit.value), digits)}`
+    return `≈${formatSourceAmount(credits, digits)}`
   }
 
   /** 输入框：用户填的人民币按当前来源单价换算回额度。 */
@@ -56,6 +65,7 @@ export function useSourceFiatRate() {
     sourceFiatPerCredit,
     usesSubscriptionRate,
     formatLimit,
+    formatSourceAmount,
     limitCreditsFromFiat,
     limitFiatFromCredits
   }
