@@ -134,7 +134,8 @@ func TestResponsesRefusal_ActualRawChatEOFRequiresString(t *testing.T) {
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 			body := fmt.Sprintf("data: {\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"refusal\":%s},\"finish_reason\":null}]}\n\n", refusal)
 			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
-			result, err := (&OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}).streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "gpt-5.4", "gpt-5.4", "gpt-5.4", nil, nil, time.Now(), 0)
+			account := &Account{ID: 101, Name: "raw-refusal", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1}
+			result, err := (&OpenAIGatewayService{cfg: &config.Config{}}).streamRawChatCompletions(c, resp, account, "gpt-5.4", "gpt-5.4", "gpt-5.4", nil, nil, time.Now(), 0)
 			require.Error(t, err, "EOF without a terminal is still a truncated upstream")
 			if refusal == `"cannot help"` {
 				require.NotNil(t, result)
