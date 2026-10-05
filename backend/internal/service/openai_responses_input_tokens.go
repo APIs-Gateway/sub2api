@@ -330,6 +330,9 @@ func estimateResponsesInputTokens(req openAIInputTokensRequest) (int, error) {
 			}
 			readString := func(name string) string { var v string; _ = json.Unmarshal(item[name], &v); return v }
 			kind := readString("type")
+			if raw := item["type"]; len(raw) > 0 && (json.Unmarshal(raw, &kind) != nil || kind == "") {
+				return 0, errors.New("input_tokens: invalid input item type")
+			}
 			switch kind {
 			case "", "message", "function_call", "function_call_output":
 			default:
