@@ -50,7 +50,7 @@
           <span class="chain-node chain-node--primary" aria-hidden="true" />
           <div class="chain-card">
             <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-              <div class="flex min-w-0 items-center gap-2">
+              <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                 <GroupBadge
                   :name="primary.name"
                   :platform="chain.platform"
@@ -59,7 +59,7 @@
                   :rate-view="groupRateView(primary.rate_multiplier, primary.user_rate_multiplier)"
                 />
                 <span
-                  class="inline-flex items-center gap-1 rounded bg-gray-900 px-1.5 py-0.5 text-[11px] font-medium text-white dark:bg-dark-600 dark:text-gray-100"
+                  class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded bg-gray-900 px-1.5 py-0.5 text-[11px] font-medium text-white dark:bg-dark-600 dark:text-gray-100"
                   :title="t('keyFallback.editor.primaryHint')"
                 >
                   <Icon name="lock" size="xs" />

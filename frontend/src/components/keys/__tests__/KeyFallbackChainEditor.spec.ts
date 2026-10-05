@@ -535,6 +535,16 @@ describe('KeyFallbackChainEditor 分组倍率', () => {
     expect(w.get('[data-test="fallback-item-21"] [data-test="status"]').element.parentElement?.classList.contains('ml-auto')).toBe(true)
   })
 
+  it('主要项徽标变长时，「主要」标签不被挤成竖排，而是换到下一行', async () => {
+    const w = await mountReal()
+    const primary = w.get('[data-test="primary-item"]')
+    const label = primary.findAll('span[title]').find((n) => n.text() === '主要')!
+
+    expect(label).toBeDefined()
+    expect(label.classes()).toEqual(expect.arrayContaining(['shrink-0', 'whitespace-nowrap']))
+    expect(label.element.parentElement?.classList.contains('flex-wrap')).toBe(true)
+  })
+
   it('兜底项带专属倍率：默认值划线，专属值高亮，套餐低至也一样', async () => {
     const w = await mountReal()
     const row = w.get('[data-test="fallback-item-21"]')
