@@ -17,10 +17,11 @@ import (
 // The snapshot covers authentication and transport settings, but excludes the
 // token fields that the refresh executor is allowed to rotate. It is never logged.
 type openAI401Snapshot struct {
-	id       int64
-	proxyID  int64
-	proxyURL string
-	settings [32]byte
+	id           int64
+	proxyID      int64
+	proxyURL     string
+	settings     [32]byte
+	refreshToken [32]byte
 }
 
 func snapshotOpenAI401Account(account *Account) (openAI401Snapshot, bool) {
@@ -37,7 +38,7 @@ func snapshotOpenAI401Account(account *Account) (openAI401Snapshot, bool) {
 	if err != nil {
 		return openAI401Snapshot{}, false
 	}
-	snapshot := openAI401Snapshot{id: account.ID, settings: sha256.Sum256(encoded)}
+	snapshot := openAI401Snapshot{id: account.ID, settings: sha256.Sum256(encoded), refreshToken: sha256.Sum256([]byte(account.GetOpenAIRefreshToken()))}
 	if account.ProxyID != nil {
 		if account.Proxy == nil || account.Proxy.ID != *account.ProxyID || !account.Proxy.IsActive() {
 			return openAI401Snapshot{}, false
@@ -50,7 +51,14 @@ func snapshotOpenAI401Account(account *Account) (openAI401Snapshot, bool) {
 
 func (snapshot openAI401Snapshot) matches(account *Account) bool {
 	current, ok := snapshotOpenAI401Account(account)
+	// A durable access-token winner may have rotated its refresh token too.
+	// The selected refresh token is separately enforced before a new grant.
+	current.refreshToken = snapshot.refreshToken
 	return ok && current == snapshot
+}
+
+type openAI401CredentialsCAS interface {
+	CompareAndSwapCredentials(context.Context, *Account, map[string]any) (bool, error)
 }
 
 // A complete, structured authentication refusal is required. This classifier
@@ -161,7 +169,7 @@ func (api *OAuthRefreshAPI) refreshRejectedOpenAIToken(ctx context.Context, snap
 	if api == nil || api.accountRepo == nil || api.tokenCache == nil || executor == nil {
 		return "", errors.New("OAuth rejection recovery unavailable")
 	}
-	updater, ok := api.accountRepo.(accountCredentialsUpdater)
+	updater, ok := api.accountRepo.(openAI401CredentialsCAS)
 	if !ok {
 		return "", errors.New("OAuth credential updater unavailable")
 	}
@@ -218,6 +226,9 @@ func (api *OAuthRefreshAPI) refreshRejectedOpenAIToken(ctx context.Context, snap
 	}
 	if strings.TrimSpace(fresh.GetOpenAIAccessToken()) == strings.TrimSpace(rejectedToken) {
 		usedRefreshToken := fresh.GetOpenAIRefreshToken()
+		if sha256.Sum256([]byte(usedRefreshToken)) != snapshot.refreshToken {
+			return "", errors.New("selected OAuth refresh credentials changed before recovery")
+		}
 		credentials, refreshErr := executor.Refresh(ctx, fresh)
 		if refreshErr != nil {
 			return "", refreshErr
@@ -239,8 +250,12 @@ func (api *OAuthRefreshAPI) refreshRejectedOpenAIToken(ctx context.Context, snap
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
-			if err := updater.UpdateCredentials(ctx, snapshot.id, candidate.Credentials); err != nil {
+			swapped, err := updater.CompareAndSwapCredentials(ctx, current, candidate.Credentials)
+			if err != nil {
 				return "", err
+			}
+			if !swapped {
+				return "", errors.New("OAuth credentials changed before conditional persistence")
 			}
 		}
 		fresh, err = read()

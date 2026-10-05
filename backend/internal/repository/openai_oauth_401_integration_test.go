@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -22,9 +23,11 @@ import (
 )
 
 type oauth401RefreshExecutor struct {
-	url    string
-	calls  atomic.Int32
-	before func()
+	url       string
+	calls     atomic.Int32
+	before    func()
+	repo      *oauth401AccountRepository
+	accountID int64
 }
 
 func (e *oauth401RefreshExecutor) CacheKey(a *service.Account) string {
@@ -60,10 +63,31 @@ func (e *oauth401RefreshExecutor) Refresh(ctx context.Context, a *service.Accoun
 	return credentials, nil
 }
 
+// The hook runs after the recovery's last database read, immediately before
+// the real repository obtains its row lock. It models a writer outside OAuth locks.
+type oauth401AccountRepository struct {
+	service.AccountRepository
+	beforeCAS func(*service.Account)
+}
+
+func (r *oauth401AccountRepository) CompareAndSwapCredentials(ctx context.Context, expected *service.Account, credentials map[string]any) (bool, error) {
+	if r.beforeCAS != nil {
+		r.beforeCAS(expected)
+	}
+	updater := r.AccountRepository.(interface {
+		CompareAndSwapCredentials(context.Context, *service.Account, map[string]any) (bool, error)
+	})
+	return updater.CompareAndSwapCredentials(ctx, expected, credentials)
+}
+
 type oauth401Upstream struct {
 	mu                           sync.Mutex
 	auths, bodies, urls, proxies []string
 	onRetry                      func()
+	onRejected                   func()
+	rejectRetry                  bool
+	rejection                    string
+	readErr                      error
 }
 
 func (u *oauth401Upstream) Do(request *http.Request, proxy string, _ int64, _ int) (*http.Response, error) {
@@ -78,14 +102,26 @@ func (u *oauth401Upstream) Do(request *http.Request, proxy string, _ int64, _ in
 	u.proxies = append(u.proxies, proxy)
 	call := len(u.auths)
 	u.mu.Unlock()
-	status, response := http.StatusUnauthorized, `{"error":{"type":"authentication_error","code":"token_expired","message":"access token expired"}}`
-	if call > 1 {
+	status, response := http.StatusUnauthorized, `{"error":{"type":"authentication_error","code":"invalid_api_key","message":"access token expired"}}`
+	if request.Header.Get("Authorization") == "Bearer fixture-old" {
+		if u.onRejected != nil {
+			u.onRejected()
+		}
+	} else if call > 1 && !u.rejectRetry {
 		if u.onRetry != nil {
 			u.onRetry()
 		}
 		status, response = http.StatusOK, strings.ReplaceAll(inflightResponsesJSON, `"gpt-5"`, `"gpt-5.4"`)
+ response = strings.ReplaceAll(response, "resp_inflight", fmt.Sprintf("resp_oauth401_%d",call))
 	}
-	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(response)), Request: request}, nil
+	if status == http.StatusUnauthorized && u.rejection != "" {
+		response = u.rejection
+	}
+	var reader io.Reader = strings.NewReader(response)
+	if u.readErr != nil && status == http.StatusUnauthorized {
+		reader = io.MultiReader(reader, inflightHTTPReadError{u.readErr})
+	}
+	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(reader), Request: request}, nil
 }
 func (u *oauth401Upstream) DoWithTLS(request *http.Request, proxy string, id int64, slots int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(request, proxy, id, slots)
@@ -112,10 +148,11 @@ func newOAuth401HTTPFixture(t *testing.T, passthrough bool) (*inflightHTTPFixtur
 		_, _ = io.WriteString(writer, `{"access_token":"fixture-new","refresh_token":"fixture-next"}`)
 	}))
 	t.Cleanup(server.Close)
-	executor := &oauth401RefreshExecutor{url: server.URL}
+	guardedAccounts := &oauth401AccountRepository{AccountRepository: accounts}
+	executor := &oauth401RefreshExecutor{url: server.URL, repo: guardedAccounts, accountID: id}
 	tokenCache := NewGeminiTokenCache(rdb)
-	provider := service.NewOpenAITokenProvider(accounts, tokenCache, nil)
-	provider.SetRefreshAPI(service.NewOAuthRefreshAPI(accounts, tokenCache), executor)
+	provider := service.NewOpenAITokenProvider(guardedAccounts, tokenCache, nil)
+	provider.SetRefreshAPI(service.NewOAuthRefreshAPI(guardedAccounts, tokenCache), executor)
 	cfg := &config.Config{}
 	cfg.Default.RateMultiplier = 1
 	cfg.Billing.InflightReservation.Enabled = true
@@ -130,7 +167,12 @@ func newOAuth401HTTPFixture(t *testing.T, passthrough bool) (*inflightHTTPFixtur
 	snapshot := service.NewSchedulerSnapshotService(NewSchedulerCache(rdb), nil, accounts, groups, cfg)
 	t.Cleanup(snapshot.Stop)
 	upstream := &oauth401Upstream{}
-	svc := service.NewOpenAIGatewayService(accounts, NewUsageLogRepository(client, db), NewUsageBillingRepository(client, db), users, subs, rates, NewGatewayCache(rdb), cfg, snapshot, concurrency, service.NewBillingService(cfg, nil), service.NewRateLimitService(accounts, nil, cfg, nil, nil), billingCache, upstream, nil, provider, nil, nil, nil, nil, settings, nil, nil, groups)
+	wheel, err := service.NewTimingWheelService()
+	require.NoError(t, err)
+	t.Cleanup(wheel.Stop)
+	deferred := service.NewDeferredService(accounts, wheel, time.Minute)
+	t.Cleanup(deferred.Stop)
+	svc := service.NewOpenAIGatewayService(accounts, NewUsageLogRepository(client, db), NewUsageBillingRepository(client, db), users, subs, rates, NewGatewayCache(rdb), cfg, snapshot, concurrency, service.NewBillingService(cfg, nil), service.NewRateLimitService(accounts, nil, cfg, nil, nil), billingCache, upstream, deferred, provider, nil, nil, nil, nil, settings, nil, nil, groups)
 	t.Cleanup(svc.CloseOpenAIWSPool)
 	keys := service.NewAPIKeyService(NewAPIKeyRepository(client, db), users, groups, subs, rates, nil, cfg)
 	f.openAIService = svc
@@ -192,7 +234,12 @@ func TestOpenAI401HTTP_RealRecoveryBillsOnce(t *testing.T) {
 }
 
 func TestOpenAI401HTTP_RetryKeepsFundedAttempt(t *testing.T) {
-	f, executor, upstream := newOAuth401HTTPFixture(t, false)
+ for _, passthrough := range []bool{false,true} {
+  t.Run(fmt.Sprintf("passthrough_%t",passthrough),func(t *testing.T){testOAuth401FundedAttempt(t,passthrough)})
+ }
+}
+func testOAuth401FundedAttempt(t *testing.T, passthrough bool) {
+ f, executor, upstream := newOAuth401HTTPFixture(t, passthrough)
 	refreshStarted, release := make(chan struct{}), make(chan struct{})
 	t.Cleanup(func() {
 		select {
@@ -235,4 +282,150 @@ func TestOpenAI401HTTP_RetryKeepsFundedAttempt(t *testing.T) {
 	}
 	f.pool.Stop()
 	require.Zero(t, inflightHeld(t, f.user.ID))
+}
+
+func TestOpenAI401HTTP_ConcurrentCredentialWriterWins(t *testing.T) {
+	for _, passthrough := range []bool{false, true} {
+		for _, stage := range []string{"before_recovery_refresh_token", "before_persist_access_refresh", "before_persist_auth_headers", "durable_rotated_winner"} {
+			t.Run(fmt.Sprintf("passthrough_%t/%s", passthrough, stage), func(t *testing.T) {
+				f, executor, upstream := newOAuth401HTTPFixture(t, passthrough)
+				repository := executor.repo.AccountRepository
+				expected, err := repository.GetByID(context.Background(), executor.accountID)
+				require.NoError(t, err)
+				winner := make(map[string]any, len(expected.Credentials))
+				for k, v := range expected.Credentials {
+					winner[k] = v
+				}
+				switch stage {
+				case "before_recovery_refresh_token":
+					winner["refresh_token"] = "fixture-admin-rt"
+				case "before_persist_access_refresh", "durable_rotated_winner":
+					winner["access_token"] = "fixture-admin-at"
+					winner["refresh_token"] = "fixture-admin-rt"
+				case "before_persist_auth_headers":
+					winner["header_overrides"] = map[string]any{"X-Fixture-Owner": "admin"}
+				}
+				writeWinner := func() {
+					require.NoError(t, repository.(interface {
+						UpdateCredentials(context.Context, int64, map[string]any) error
+					}).UpdateCredentials(context.Background(), executor.accountID, winner))
+				}
+				if strings.HasPrefix(stage, "before_persist") {
+					executor.repo.beforeCAS = func(*service.Account) { writeWinner() }
+				} else {
+					upstream.onRejected = writeWinner
+				}
+				rec := f.request(oauth401Request, "/v1/responses", "", f.openAI.Responses)
+				f.pool.Stop()
+				current, err := repository.GetByID(context.Background(), executor.accountID)
+				require.NoError(t, err)
+				require.Equal(t, winner, current.Credentials, "the concurrent writer must not be overwritten")
+				upstream.mu.Lock()
+				auths := append([]string(nil), upstream.auths...)
+				upstream.mu.Unlock()
+				var logs, dedup int
+				var cost, balance float64
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*),COALESCE(sum(actual_cost),0) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs, &cost))
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&balance))
+				if stage == "durable_rotated_winner" {
+					require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+					require.Equal(t, []string{"Bearer fixture-old", "Bearer fixture-admin-at"}, auths)
+					require.Zero(t, executor.calls.Load(), "reuse an existing access-token winner without another grant")
+					require.Equal(t, 1, logs)
+					require.Equal(t, 1, dedup)
+					require.Positive(t, cost)
+					require.InDelta(t, 10-cost, balance, 1e-10)
+				} else {
+					require.NotEqual(t, http.StatusOK, rec.Code, rec.Body.String())
+					require.Equal(t, []string{"Bearer fixture-old"}, auths, "stale recovery must not dispatch again")
+					expectedGrants := int32(1)
+					if stage == "before_recovery_refresh_token" {
+						expectedGrants = 0
+					}
+					require.Equal(t, expectedGrants, executor.calls.Load())
+					require.Zero(t, logs)
+					require.Zero(t, dedup)
+					require.Zero(t, cost)
+					require.InDelta(t, 10, balance, 1e-10)
+				}
+				require.Zero(t, inflightHeld(t, f.user.ID), "terminal complete auth refusal releases its own attempt")
+			})
+		}
+	}
+}
+
+func TestOpenAI401HTTP_TerminalRecoveryControls(t *testing.T) {
+	for _, passthrough := range []bool{false, true} {
+		for _, name := range []string{"retry_rejected", "model_not_found", "cloudflare_html", "incomplete_auth_body"} {
+			t.Run(fmt.Sprintf("passthrough_%t/%s", passthrough, name), func(t *testing.T) {
+				f, executor, upstream := newOAuth401HTTPFixture(t, passthrough)
+				switch name {
+				case "retry_rejected":
+					upstream.rejectRetry = true
+				case "model_not_found":
+					upstream.rejection = `{"error":{"code":"model_not_found","message":"model unavailable"}}`
+				case "cloudflare_html":
+					upstream.rejection = "<html>Cloudflare Unauthorized</html>"
+				case "incomplete_auth_body":
+					upstream.readErr = io.ErrUnexpectedEOF
+				}
+				rec := f.request(oauth401Request, "/v1/responses", "", f.openAI.Responses)
+				require.NotEqual(t, http.StatusOK, rec.Code, rec.Body.String())
+				f.pool.Stop()
+				expectedGrants, expectedDispatch := int32(0), 1
+				if name == "retry_rejected" {
+					expectedGrants, expectedDispatch = 1, 2
+				}
+				require.Equal(t, expectedGrants, executor.calls.Load())
+				upstream.mu.Lock()
+				calls := len(upstream.auths)
+				upstream.mu.Unlock()
+				require.Equal(t, expectedDispatch, calls)
+				var logs, dedup int
+				var balance float64
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs))
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&balance))
+				require.Zero(t, logs)
+				require.Zero(t, dedup)
+				require.InDelta(t, 10, balance, 1e-10)
+				if name == "retry_rejected" {
+					require.Zero(t, inflightHeld(t, f.user.ID))
+				} else {
+					require.Positive(t, inflightHeld(t, f.user.ID), "unknown/provider-specific refusal retains its bounded attempt hold")
+				}
+			})
+		}
+	}
+}
+
+func TestOpenAI401HTTP_ConcurrentRejectedRequestsShareRefresh(t *testing.T) {
+ for _, passthrough := range []bool{false,true} {
+  t.Run(fmt.Sprintf("passthrough_%t",passthrough),func(t *testing.T) {
+   f, executor, upstream := newOAuth401HTTPFixture(t,passthrough)
+   var rejected atomic.Int32
+   bothRejected := make(chan struct{})
+   upstream.onRejected = func(){if rejected.Add(1) == 2 {close(bothRejected)}}
+   executor.before = func(){select{case <-bothRejected: case <-time.After(5*time.Second): t.Error("second request did not dispatch original rejected token")}}
+   done := make(chan *httptest.ResponseRecorder,2)
+   for range 2 {go func(){done <- f.request(oauth401Request,"/v1/responses","",f.openAI.Responses)}()}
+   for range 2 {select{case rec:=<-done: require.Equal(t,http.StatusOK,rec.Code,rec.Body.String()); case <-time.After(10*time.Second):t.Fatal("concurrent recovery did not finish")}}
+   f.pool.Stop()
+   require.EqualValues(t,1,executor.calls.Load(),"shared existing local/Redis refresh locks allow only one grant")
+   upstream.mu.Lock(); auths:=append([]string(nil),upstream.auths...); upstream.mu.Unlock()
+   require.Len(t,auths,4)
+   require.Equal(t,2,strings.Count(strings.Join(auths,"
+"),"Bearer fixture-old"))
+   require.Equal(t,2,strings.Count(strings.Join(auths,"
+"),"Bearer fixture-new"))
+   var logs,dedup int
+   var cost,balance float64
+   require.NoError(t,inflightTestDB(t).QueryRow(`SELECT count(*),COALESCE(sum(actual_cost),0) FROM usage_logs WHERE user_id=$1`,f.user.ID).Scan(&logs,&cost))
+   require.NoError(t,inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`,f.key.ID).Scan(&dedup))
+   require.NoError(t,inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`,f.user.ID).Scan(&balance))
+   require.Equal(t,2,logs); require.Equal(t,2,dedup); require.Positive(t,cost); require.InDelta(t,10-cost,balance,1e-10)
+   require.Zero(t,inflightHeld(t,f.user.ID))
+  })
+ }
 }

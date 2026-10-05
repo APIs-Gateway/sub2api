@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -90,6 +91,20 @@ func (r *openAI401Repo) UpdateCredentials(_ context.Context, id int64, credentia
 	return nil
 }
 
+func (r *openAI401Repo) CompareAndSwapCredentials(_ context.Context, expected *Account, credentials map[string]any) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.saveErr != nil {
+		return false, r.saveErr
+	}
+	if r.account == nil || r.account.ID != expected.ID || !reflect.DeepEqual(r.account.Credentials, expected.Credentials) {
+		return false, nil
+	}
+	r.updates++
+	r.account.Credentials = cloneCredentials(credentials)
+	return true, nil
+}
+
 func (r *openAI401Repo) Update(context.Context, *Account) error {
 	panic("full account update forbidden")
 }
@@ -114,7 +129,7 @@ func (e *openAI401Executor) Refresh(ctx context.Context, a *Account) (map[string
 }
 
 func TestOpenAI401RecoveryStrictLifecycle(t *testing.T) {
-	for _, name := range []string{"refresh_future_expiry", "durable_winner", "unchanged_token", "read_failure", "nil_account", "save_failure", "lock_failure", "disabled", "platform_changed", "proxy_changed", "header_changed", "cancel_during_refresh", "disable_during_refresh", "winner_during_refresh", "refresh_token_changed", "refresh_failure"} {
+	for _, name := range []string{"refresh_future_expiry", "durable_winner", "unchanged_token", "read_failure", "nil_account", "save_failure", "lock_failure", "disabled", "platform_changed", "proxy_changed", "header_changed", "cancel_during_refresh", "disable_during_refresh", "winner_during_refresh", "refresh_token_changed", "refresh_token_changed_before_lock", "refresh_failure"} {
 		t.Run(name, func(t *testing.T) {
 			account := openAI401Account()
 			snapshot, ok := snapshotOpenAI401Account(account)
@@ -127,6 +142,9 @@ func TestOpenAI401RecoveryStrictLifecycle(t *testing.T) {
 			switch name {
 			case "durable_winner":
 				account.Credentials["access_token"] = "fixture-winner"
+				account.Credentials["refresh_token"] = "fixture-winner-rt"
+			case "refresh_token_changed_before_lock":
+				account.Credentials["refresh_token"] = "admin-new"
 			case "unchanged_token":
 				executor.refresh = func(_ context.Context, a *Account) (map[string]any, error) {
 					return cloneCredentials(a.Credentials), nil
@@ -183,6 +201,9 @@ func TestOpenAI401RecoveryStrictLifecycle(t *testing.T) {
 				require.Error(t, err)
 				require.Empty(t, token)
 				require.Zero(t, repo.updates)
+				if name == "refresh_token_changed_before_lock" {
+					require.Zero(t, executor.calls.Load())
+				}
 			}
 		})
 	}
