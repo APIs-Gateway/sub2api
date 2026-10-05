@@ -17,7 +17,7 @@ vi.mock('@/api/admin/accounts', () => ({
   getAntigravityDefaultModelMapping: vi.fn().mockResolvedValue({})
 }))
 vi.mock('@/api/admin', () => ({ adminAPI: {
-  accounts: { create: mocks.create },
+  accounts: { create: mocks.create, probeUpstreamBilling: vi.fn().mockResolvedValue({}) },
   settings: { getWebSearchEmulationConfig: vi.fn().mockResolvedValue({}), getSettings: vi.fn().mockResolvedValue({}) },
   tlsFingerprintProfiles: { list: vi.fn().mockResolvedValue([]) }
 } }))
@@ -74,6 +74,7 @@ describe('CreateAccountModal real model preview', () => {
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledTimes(2)
     expect(mocks.create.mock.calls[1]?.[0]?.credentials?.model_mapping).toMatchObject({ 'gpt-6': 'gpt-6' })
+    expect(wrapper.emitted('created')).toHaveLength(2)
     expect(mocks.showError).not.toHaveBeenCalled()
     wrapper.unmount()
   })
