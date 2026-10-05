@@ -16,7 +16,8 @@
       <!-- Header -->
       <AppHeader />
 
-      <!-- Site-wide notice strips (e.g. low balance) mount here: under the header, above the page -->
+      <!-- Site-wide notice strips mount here: under the header, above the page -->
+      <LowBalanceBanner />
 
       <!-- Main Content -->
       <main class="p-4 md:p-6 lg:p-8">
@@ -35,6 +36,7 @@ import { useOnboardingTour } from '@/composables/useOnboardingTour'
 import { useOnboardingStore } from '@/stores/onboarding'
 import AppSidebar from './AppSidebar.vue'
 import SidebarBalanceCard from './SidebarBalanceCard.vue'
+import LowBalanceBanner from './LowBalanceBanner.vue'
 import AppHeader from './AppHeader.vue'
 
 const appStore = useAppStore()

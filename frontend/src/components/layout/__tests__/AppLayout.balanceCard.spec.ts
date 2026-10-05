@@ -33,7 +33,7 @@ describe('AppLayout 余额卡挂载', () => {
     const wrapper = mount(AppLayout, {
       slots: { default: '<p>page</p>' },
       global: {
-        stubs: { AppSidebar: SidebarStub, AppHeader: true, SidebarBalanceCard: CardStub },
+        stubs: { AppSidebar: SidebarStub, AppHeader: true, SidebarBalanceCard: CardStub, LowBalanceBanner: true },
       },
     })
 

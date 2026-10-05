@@ -7986,6 +7986,11 @@
     unlimited: '無限制'
   },
 
+  lowBalance: {
+    low: '餘額僅剩 {amount}，請及時充值。',
+    depleted: '餘額已用完，請及時充值。'
+  },
+
   // Version Badge
   version: {
     currentVersion: '當前版本',
