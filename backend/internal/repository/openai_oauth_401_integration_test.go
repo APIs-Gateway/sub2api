@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	userhandler "github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
@@ -531,4 +532,52 @@ func TestOpenAI401HTTP_CanceledCallerKeepsSuccessfulRotation(t *testing.T) {
 			require.Zero(t, inflightHeld(t, f.user.ID))
 		})
 	}
+}
+
+func TestOpenAI401HTTP_CredentialsCASFailureIsAtomic(t *testing.T) {
+	f, executor, _ := newOAuth401HTTPFixture(t, false)
+	_ = f
+	repository := executor.repo.AccountRepository
+	updater := repository.(interface {
+		CompareAndSwapCredentials(context.Context, *service.Account, map[string]any) (bool, error)
+	})
+	expected, err := repository.GetByID(context.Background(), executor.accountID)
+	require.NoError(t, err)
+	candidate := map[string]any{"access_token": "fixture-new", "refresh_token": "fixture-next"}
+	t.Run("nil_expected", func(t *testing.T) {
+		swapped, err := updater.CompareAndSwapCredentials(context.Background(), nil, candidate)
+		require.ErrorIs(t, err, service.ErrAccountNilInput)
+		require.False(t, swapped)
+	})
+	t.Run("missing_account", func(t *testing.T) {
+		missing := *expected
+		missing.ID = -1
+		swapped, err := updater.CompareAndSwapCredentials(context.Background(), &missing, candidate)
+		require.NoError(t, err)
+		require.False(t, swapped)
+	})
+	t.Run("canceled_before_transaction", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		swapped, err := updater.CompareAndSwapCredentials(ctx, expected, candidate)
+		require.ErrorIs(t, err, context.Canceled)
+		require.False(t, swapped)
+	})
+	t.Run("outer_transaction_not_durable", func(t *testing.T) {
+		tx, err := inflightTestEntClient(t).Tx(context.Background())
+		require.NoError(t, err)
+		defer func() { _ = tx.Rollback() }()
+		swapped, err := updater.CompareAndSwapCredentials(dbent.NewTxContext(context.Background(), tx), expected, candidate)
+		require.Error(t, err)
+		require.False(t, swapped)
+	})
+	t.Run("invalid_credentials_roll_back", func(t *testing.T) {
+		swapped, err := updater.CompareAndSwapCredentials(context.Background(), expected, map[string]any{"access_token": "fixture-new", "invalid": func() {}})
+		require.Error(t, err)
+		require.False(t, swapped)
+	})
+	after, err := repository.GetByID(context.Background(), executor.accountID)
+	require.NoError(t, err)
+	require.Equal(t, expected.Credentials, after.Credentials, "failed conditional writes must not damage the durable grant")
+	require.Equal(t, expected.Extra, after.Extra)
 }

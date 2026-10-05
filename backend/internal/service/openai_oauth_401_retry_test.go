@@ -26,6 +26,10 @@ func TestOpenAI401RecoveryClassifier(t *testing.T) {
 		readErr    error
 		want       bool
 	}{
+		{"root_array", `[{"error":{"type":"authentication_error"}}]`, 401, nil, false},
+		{"error_string", `{"error":"Unauthorized"}`, 401, nil, false},
+		{"nested_array_fault", `{"error":{"type":"authentication_error"},"metadata":["account disabled"]}`, 401, nil, false},
+		{"nested_array_safe", `{"error":{"type":"authentication_error"},"metadata":["fixture"]}`, 401, nil, true},
 		{"authentication", `{"error":{"type":"authentication_error","message":"token expired"}}`, 401, nil, true},
 		{"expired", `{"error":{"type":"invalid_request_error","code":"token_expired"}}`, 401, nil, true},
 		{"numeric_code", `{"error":{"type":"authentication_error","code":401}}`, 401, nil, true},
@@ -61,11 +65,18 @@ type openAI401Repo struct {
 	account          *Account
 	readErr, saveErr error
 	updates          int
+	reads            int
+	getErrOn         int
+	afterGet         func()
 }
 
 func (r *openAI401Repo) GetByID(context.Context, int64) (*Account, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.reads++
+	if r.getErrOn == r.reads {
+		return nil, errors.New("read unavailable")
+	}
 	if r.readErr != nil {
 		return nil, r.readErr
 	}
@@ -74,6 +85,9 @@ func (r *openAI401Repo) GetByID(context.Context, int64) (*Account, error) {
 	}
 	a := *r.account
 	a.Credentials = cloneCredentials(a.Credentials)
+	if r.afterGet != nil {
+		r.afterGet()
+	}
 	return &a, nil
 }
 
@@ -109,6 +123,13 @@ func (r *openAI401Repo) Update(context.Context, *Account) error {
 	panic("full account update forbidden")
 }
 
+type openAI401FailureCache struct {
+	refreshAPICacheStub
+	deleteErr error
+}
+
+func (c *openAI401FailureCache) DeleteAccessToken(context.Context, string) error { return c.deleteErr }
+
 type openAI401Executor struct {
 	calls   atomic.Int32
 	refresh func(context.Context, *Account) (map[string]any, error)
@@ -129,17 +150,25 @@ func (e *openAI401Executor) Refresh(ctx context.Context, a *Account) (map[string
 }
 
 func TestOpenAI401RecoveryStrictLifecycle(t *testing.T) {
-	for _, name := range []string{"refresh_future_expiry", "durable_winner", "unchanged_token", "read_failure", "nil_account", "save_failure", "lock_failure", "disabled", "platform_changed", "proxy_changed", "header_changed", "cancel_during_refresh", "disable_during_refresh", "winner_during_refresh", "refresh_token_changed", "refresh_token_changed_before_lock", "refresh_failure"} {
+	for _, name := range []string{"refresh_future_expiry", "durable_winner", "unchanged_token", "read_failure", "nil_account", "save_failure", "lock_failure", "disabled", "platform_changed", "proxy_changed", "header_changed", "cancel_during_refresh", "disable_during_refresh", "winner_during_refresh", "refresh_token_changed", "refresh_token_changed_before_lock", "refresh_failure", "cancel_on_read", "reread_failure_after_save", "cache_failure_after_save", "durable_empty_token"} {
 		t.Run(name, func(t *testing.T) {
 			account := openAI401Account()
 			snapshot, ok := snapshotOpenAI401Account(account)
 			require.True(t, ok)
 			repo := &openAI401Repo{account: account}
-			cache := &refreshAPICacheStub{lockResult: true}
+			cache := &openAI401FailureCache{refreshAPICacheStub: refreshAPICacheStub{lockResult: true}}
 			executor := &openAI401Executor{}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			switch name {
+			case "cancel_on_read":
+				repo.afterGet = cancel
+			case "reread_failure_after_save":
+				repo.getErrOn = 3
+			case "cache_failure_after_save":
+				cache.deleteErr = errors.New("cache invalidation unavailable")
+			case "durable_empty_token":
+				account.Credentials["access_token"] = ""
 			case "durable_winner":
 				account.Credentials["access_token"] = "fixture-winner"
 				account.Credentials["refresh_token"] = "fixture-winner-rt"
@@ -201,10 +230,14 @@ func TestOpenAI401RecoveryStrictLifecycle(t *testing.T) {
 			} else {
 				require.Error(t, err)
 				require.Empty(t, token)
-				if name == "cancel_during_refresh" {
+				if name == "cancel_during_refresh" || name == "reread_failure_after_save" || name == "cache_failure_after_save" {
 					require.Equal(t, 1, repo.updates)
 					require.Equal(t, "fixture-new", repo.account.GetOpenAIAccessToken())
-					require.Equal(t, "fixture-next", repo.account.GetOpenAIRefreshToken())
+					expectedRT := "fixture-rotated"
+					if name == "cancel_during_refresh" {
+						expectedRT = "fixture-next"
+					}
+					require.Equal(t, expectedRT, repo.account.GetOpenAIRefreshToken())
 				} else {
 					require.Zero(t, repo.updates)
 				}
@@ -236,7 +269,7 @@ func TestOpenAI401RecoveryCancellationWhileWaitingSameLocalLock(t *testing.T) {
 }
 
 func TestOpenAI401RecoverySnapshotTransportAndCredentialExclusions(t *testing.T) {
-	for _, name := range []string{"nil", "apikey", "setup", "PAT", "agent", "missing_rt", "disabled", "same_proxy_id_new_endpoint", "same_proxy_id_new_auth", "extra_changed"} {
+	for _, name := range []string{"nil", "apikey", "setup", "PAT", "agent", "missing_rt", "disabled", "same_proxy_id_new_endpoint", "same_proxy_id_new_auth", "extra_changed", "unserializable_auth"} {
 		t.Run(name, func(t *testing.T) {
 			a := openAI401Account()
 			id := int64(7)
@@ -263,10 +296,53 @@ func TestOpenAI401RecoverySnapshotTransportAndCredentialExclusions(t *testing.T)
 				a.Proxy.Host = "new.test"
 			case "same_proxy_id_new_auth":
 				a.Proxy.Password = "changed"
+			case "unserializable_auth":
+				a.Credentials["custom"] = func() {}
 			case "extra_changed":
 				a.Extra = map[string]any{"openai_passthrough": true}
 			}
 			require.False(t, snapshot.matches(a))
+		})
+	}
+}
+
+func TestOpenAI401RecoveryDependenciesAndDistributedWaitFailClosed(t *testing.T) {
+	for _, name := range []string{"nil_api", "nil_repository", "nil_cache", "nil_executor", "missing_conditional_updater", "already_canceled", "distributed_lock_deadline"} {
+		t.Run(name, func(t *testing.T) {
+			account := openAI401Account()
+			snapshot, ok := snapshotOpenAI401Account(account)
+			require.True(t, ok)
+			repo := &openAI401Repo{account: account}
+			cache := &refreshAPICacheStub{lockResult: true}
+			executor := &openAI401Executor{}
+			var refreshExecutor OAuthRefreshExecutor = executor
+			api := NewOAuthRefreshAPI(repo, cache)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			switch name {
+			case "nil_api":
+				api = nil
+			case "nil_repository":
+				api.accountRepo = nil
+			case "nil_cache":
+				api.tokenCache = nil
+			case "nil_executor":
+				refreshExecutor = nil
+			case "missing_conditional_updater":
+				api.accountRepo = &mockAccountRepoForGemini{}
+			case "already_canceled":
+				cancel()
+			case "distributed_lock_deadline":
+				cache.lockResult = false
+				api.lockTTL = 40 * time.Millisecond
+			}
+			started := time.Now()
+			token, err := api.refreshRejectedOpenAIToken(ctx, snapshot, refreshExecutor, "fixture-old")
+			require.Error(t, err)
+			require.Empty(t, token)
+			require.Zero(t, executor.calls.Load())
+			require.Zero(t, repo.updates)
+			require.Less(t, time.Since(started), time.Second, "failed locking must be bounded and must not bypass the shared namespace")
 		})
 	}
 }
