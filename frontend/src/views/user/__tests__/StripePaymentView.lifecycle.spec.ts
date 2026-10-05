@@ -431,4 +431,25 @@ describe('Stripe page owns asynchronous callbacks only while mounted', () => {
     expect(stripeInstance.confirmPayment).not.toHaveBeenCalled()
   })
 
+  it.each([false, true])('ignores an already queued completion timer after unmount (popup=%s)', async popup => {
+    vi.useFakeTimers()
+    const scheduled = vi.spyOn(globalThis, 'setTimeout')
+    const close = vi.spyOn(window, 'close').mockImplementation(() => {})
+    if (popup) vi.stubGlobal('opener', {})
+    routeState.query.method = 'wechat_pay'
+    stripeInstance.confirmWechatPayPayment.mockResolvedValueOnce({ paymentIntent: { status: 'succeeded' } })
+    const wrapper = mountView()
+    await settle()
+    const completion = scheduled.mock.calls.find(([, delay]) => delay === 2000)?.[0]
+    expect(completion).toBeTypeOf('function')
+    expect(state(wrapper).stripeSuccess).toBe(true)
+    expect(vi.getTimerCount()).toBe(1)
+    wrapper.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+    // Model a callback that was already queued before clearTimeout ran.
+    ;(completion as () => void)()
+    expect(close).not.toHaveBeenCalled()
+    expect(routerPush).not.toHaveBeenCalled()
+  })
+
 })
