@@ -154,7 +154,11 @@ func TestChatPingHTTP_ExhaustionAndLaterHTTPErrorStaySSE(t *testing.T) {
 }
 
 func TestChatPingHTTP_MeteredPartialCannotReplay(t *testing.T) {
-	f := newInflightHTTPFixture(t, service.PlatformAnthropic, chatPingFrame+strings.Replace(inflightAnthropicSSE, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n", chatPingOverload, 1), "text/event-stream")
+	// Send an actual text delta before the failure. The shared fixture seeds
+	// text at block start, which the converter flushes only at finalization.
+	partialBody := strings.Replace(inflightAnthropicSSE, `"text":"ok"`, `"text":""`, 1)
+	partialBody = strings.Replace(partialBody, "event: content_block_stop", "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\nevent: content_block_stop", 1)
+	f := newInflightHTTPFixture(t, service.PlatformAnthropic, chatPingFrame+strings.Replace(partialBody, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n", chatPingOverload, 1), "text/event-stream")
 	chatPingFunding(t, f, false)
 	chatPingAccountB(t, f)
 	close(f.upstream.release)
