@@ -906,6 +906,12 @@ func (s *PaymentService) finalizeRefundFailed(ctx context.Context, o *dbent.Paym
 		_ = tx.Rollback()
 		s.invalidateRefundSettlementCaches(rb)
 		if blockedRollback {
+			// Diagnostics are written only after financial rollback. The pending
+			// snapshot remains authoritative even if a diagnostic write fails.
+			s.writeAuditLog(ctx, o.ID, refundAttemptAuditAction("REFUND_ROLLBACK_FAILED"), "admin", map[string]any{
+				"rollbackError": "failed pending refund compensation", "balanceDeducted": rb.BalanceToDeduct,
+				"subscriptionID": rb.SubscriptionID, "subDaysDeducted": rb.SubDaysToDeduct,
+			})
 			s.writeAuditLog(ctx, o.ID, refundAttemptAuditAction("REFUND_FAIL_BLOCKED_ROLLBACK_FAILED"), "admin", map[string]any{"detail": psErrMsg(gErr)})
 		}
 	}()
@@ -992,17 +998,6 @@ func refundRollbackPlanFromSnapshot(o *dbent.PaymentOrder, d refundPendingAuditD
 	}
 }
 
-func (s *PaymentService) rollbackRefundFromSnapshot(ctx context.Context, p *RefundPlan, gErr error) bool {
-	if p.DeductionType == payment.DeductionTypeSubscription && p.SubscriptionID > 0 && s.subscriptionSvc == nil {
-		s.writeAuditLog(ctx, p.OrderID, refundAttemptAuditAction("REFUND_ROLLBACK_FAILED"), "admin", map[string]any{"gatewayError": psErrMsg(gErr), "rollbackError": "subscription service not configured"})
-		return false
-	}
-	return s.RollbackRefund(ctx, p, gErr)
-}
-
-// hasOutstandingRefundRollbackFailure reports whether the newest rollback
-// outcome recorded for the order is a failure, i.e. an earlier attempt's
-// pre-deduction is still in place and must not be taken again.
 func (s *PaymentService) hasOutstandingRefundRollbackFailure(ctx context.Context, oid int64) (bool, error) {
 	e, err := s.entClientForCtx(ctx).PaymentAuditLog.Query().
 		Where(
