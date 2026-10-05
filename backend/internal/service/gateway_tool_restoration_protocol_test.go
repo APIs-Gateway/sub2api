@@ -97,7 +97,7 @@ func TestToolNameRestoreProtocol_ActualChatReaders(t *testing.T) {
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 			c.Set(toolNameRewriteKey, &ToolNameRewrite{Reverse: map[string]string{"cc_ses_get": "session_get"}, ReverseOrdered: [][2]string{{"cc_ses_get", "session_get"}}})
-			resp := &http.Response{Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			resp := &http.Response{Body: io.NopCloser(strings.NewReader(toolNameRestorationEventStream(strings.Join([]string{
 				`data: {"type":"message_start","message":{"id":"msg_opaque","role":"assistant","content":[],"model":"claude-sonnet-4.5","usage":{"input_tokens":10}}}`,
 				`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
 				`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"cc_ses_get"}}`,
@@ -108,7 +108,7 @@ func TestToolNameRestoreProtocol_ActualChatReaders(t *testing.T) {
 				`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`,
 				`data: {"type":"message_stop"}`,
 				"",
-			}, "\n\n")))}
+			}, "\n\n"))))}
 			var result *ForwardResult
 			var err error
 			if streaming {
@@ -150,8 +150,21 @@ func TestToolNameRestoreProtocol_ActualChatReaders(t *testing.T) {
 	}
 }
 
+// The actual compat readers route by SSE event fields, not JSON type alone.
+func toolNameRestorationEventStream(payload string) string {
+	var stream strings.Builder
+	for _, block := range strings.Split(payload, "\n\n") {
+		if block == "" {
+			continue
+		}
+		kind := gjson.Get(strings.TrimPrefix(block, "data: "), "type").String()
+		stream.WriteString("event: " + kind + "\n" + block + "\n\n")
+	}
+	return stream.String()
+}
+
 func toolNameRestorationNativeFixture() string {
-	return strings.Join([]string{
+	return toolNameRestorationEventStream(strings.Join([]string{
 		`data: {"type":"message_start","message":{"id":"msg_opaque","type":"message","role":"assistant","model":"model","content":[],"usage":{"input_tokens":10}}}`,
 		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":"cc_ses_get"}}`,
 		`data: {"type":"content_block_stop","index":0}`,
@@ -164,7 +177,7 @@ func toolNameRestorationNativeFixture() string {
 		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`,
 		`data: {"type":"message_stop"}`,
 		"",
-	}, "\n\n")
+	}, "\n\n"))
 }
 
 func TestToolNameRestoreProtocol_ActualNativeStagedStream(t *testing.T) {
