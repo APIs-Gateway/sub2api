@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/common"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -480,9 +481,9 @@ func IsGrokContentPolicyRejectionError(err error) bool {
 }
 
 // ReportOpenAIAccountScheduleError reports account failures without treating a
-// request-scoped Grok refusal as either a failure or a recovery.
+// request-scoped Grok refusal or local audio validation as failure or recovery.
 func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleError(accountID int64, err error) {
-	if !IsGrokContentPolicyRejectionError(err) {
+	if !IsGrokContentPolicyRejectionError(err) && !errors.Is(err, apicompat.ErrUnsupportedInputAudio) && !errors.Is(err, apicompat.ErrInvalidInputAudio) {
 		s.ReportOpenAIAccountScheduleResult(accountID, false, nil)
 	}
 }
