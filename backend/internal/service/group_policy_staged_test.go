@@ -188,6 +188,13 @@ func TestStagedPolicy_LegacyStageForwardsToLegacyWithoutComparing(t *testing.T) 
 // 分组还没有快照（进程刚启动）：按 legacy 处理，不阻塞，不比对。
 func TestStagedPolicy_ColdSnapshotFallsBackToLegacy(t *testing.T) {
 	src := newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{1: shadowSnap(nil)})
+	// Keep the asynchronous warm-up cold until both cold-state assertions finish.
+	// Scheduler speed must not decide whether the second read sees shadow.
+	releaseLoad := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseLoad) }) }
+	src.afterLoad = func() { <-releaseLoad }
+	t.Cleanup(release)
 	matrix, _ := newMPForTest(src, nil)
 	legacy := &spLegacy{mapping: ChannelMappingResult{MappedModel: "a"}, access: QuoteAccess{OK: true}}
 	staged := newStagedGroupPolicy(legacy, matrix, nil)
@@ -195,6 +202,10 @@ func TestStagedPolicy_ColdSnapshotFallsBackToLegacy(t *testing.T) {
 	require.Equal(t, legacy.mapping, staged.Mapping(context.Background(), 1, "a"))
 	require.Equal(t, PricingStageLegacy, staged.Stage(context.Background(), 1), "unknown stage is legacy")
 	require.Empty(t, staged.Stats().ComparedTotal)
+
+	release()
+	require.Equal(t, PricingStageShadow, matrix.Stage(context.Background(), 1), "released load reaches the real warm state")
+	require.Equal(t, PricingStageShadow, staged.Stage(context.Background(), 1), "a warm stage must not stay legacy")
 
 	// 没有矩阵策略：永远 legacy。
 	bare := newStagedGroupPolicy(legacy, nil, nil)
