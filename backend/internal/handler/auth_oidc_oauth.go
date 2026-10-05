@@ -795,13 +795,17 @@ func oidcParseTokenResponse(body string) (*oidcTokenResponse, bool) {
 		return nil, false
 	}
 
-	accessToken := strings.TrimSpace(getGJSON(body, "access_token"))
+	accessToken := firstNonEmpty(getGJSON(body, "access_token"), getGJSON(body, "accessToken"))
 	idToken := strings.TrimSpace(getGJSON(body, "id_token"))
 	if accessToken != "" || idToken != "" {
-		tokenType := strings.TrimSpace(getGJSON(body, "token_type"))
-		refreshToken := strings.TrimSpace(getGJSON(body, "refresh_token"))
+		tokenType := firstNonEmpty(getGJSON(body, "token_type"), getGJSON(body, "tokenType"))
+		refreshToken := firstNonEmpty(getGJSON(body, "refresh_token"), getGJSON(body, "refreshToken"))
 		scope := strings.TrimSpace(getGJSON(body, "scope"))
-		expiresIn := gjson.Get(body, "expires_in").Int()
+		expires := gjson.Get(body, "expires_in")
+		if !expires.Exists() {
+			expires = gjson.Get(body, "expiresIn")
+		}
+		expiresIn := expires.Int()
 		return &oidcTokenResponse{
 			AccessToken:  accessToken,
 			TokenType:    tokenType,
