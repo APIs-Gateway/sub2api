@@ -111,17 +111,17 @@ func quoteShape(q *Quote) string {
 	if g := q.GatewayLongContext; g != nil {
 		fmt.Fprintf(&b, "glc=%d/%g;", g.ThresholdTokens, g.ExtraMultiplier)
 	} else {
-		b.WriteString("glc=-;")
+		_, _ = b.WriteString("glc=-;")
 	}
 	if st := q.ServiceTier; st != nil {
 		fmt.Fprintf(&b, "tier=%s;", st.Mode)
 	} else {
-		b.WriteString("tier=-;")
+		_, _ = b.WriteString("tier=-;")
 	}
 	if lc := q.LongContext; lc != nil {
 		fmt.Fprintf(&b, "lc=%d/%t/%t;", lc.ThresholdTokens, lc.PriorityExcludesLongContext, lc.ExplicitPrices != nil)
 	} else {
-		b.WriteString("lc=-;")
+		_, _ = b.WriteString("lc=-;")
 	}
 	p := q.Policy
 	fmt.Fprintf(&b, "policy=%t/%t/%t/%g/%s", p.DeepSeekOfficialCard, p.DeepSeekProBilledAsFlash, p.DeepSeekPeak,
