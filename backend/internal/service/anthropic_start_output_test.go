@@ -49,7 +49,11 @@ func TestAnthropicStartOutput_ParserCumulativeAndControls(t *testing.T) {
 			}
 			usage := &ClaudeUsage{}
 			parse(`{"type":"message_start","message":{"usage":{"output_tokens":8,"cached_tokens":9}}}`, usage)
-			require.Equal(t, 9, usage.CacheReadInputTokens, "existing alias survives start output addition")
+			expectedAlias := 0
+			if name == "passthrough" {
+				expectedAlias = 9
+			}
+			require.Equal(t, expectedAlias, usage.CacheReadInputTokens, "preserve each parser's existing alias support")
 		})
 	}
 }
