@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -22,9 +23,14 @@ type BuildInfo struct {
 }
 
 // ProvidePricingService creates and initializes PricingService
-func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient) (*PricingService, error) {
+func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient, settingRepo SettingRepository, snapshotRepo PricingSnapshotRepository, snapshotPubSub ChannelCachePubSub) (*PricingService, error) {
 	svc := NewPricingService(cfg, remoteClient)
+	svc.ConfigureSnapshots(settingRepo, snapshotRepo, snapshotPubSub)
 	if err := svc.Initialize(); err != nil {
+		// pinned 模式下加载生效快照失败必须 fail-closed：不能静默退回远端数据或内置文件，直接让启动失败。
+		if errors.Is(err, ErrPricingSnapshotStartup) {
+			return nil, err
+		}
 		// Pricing service initialization failure should not block startup, use fallback prices
 		println("[Service] Warning: Pricing service initialization failed:", err.Error())
 	}
