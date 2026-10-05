@@ -500,7 +500,7 @@ func TestInterimPriceWriteGate_Integration_PreviewConfirmCommit(t *testing.T) {
 	// 新建单元格一律算涉价，要先预览：这里新建一个关闭的 inherit 单元格。
 	create := service.CellWriteRequest{
 		Ops:            []service.CellOp{pwiUpsert(gid, "pw-closed", false, service.MatrixPriceInherit, 0)},
-		GroupRevisions: map[int64]int64{gid: 4},
+		GroupRevisions: map[int64]int64{gid: 4}, OperatorID: 21,
 	}
 	require.Equal(t, service.ReasonPriceWriteApproval, pwiReason(t, commit(0, create, true, true)), "新建没有预览不行")
 	created, err := gate.Propose(ctx, service.PriceWriteProposal{Request: create})
