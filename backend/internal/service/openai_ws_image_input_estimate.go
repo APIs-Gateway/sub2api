@@ -90,7 +90,7 @@ func (s *openAIWSImageInputEstimates) prepare(turn int, body []byte) int {
 	return estimate
 }
 
-func (s *openAIWSImageInputEstimates) complete(turn int, responseID string, actualImageInput, actualImageOutput int) {
+func (s *openAIWSImageInputEstimates) complete(turn int, responseID string, actualImageInput, actualImageOutput int, hasGeneratedImage bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	estimate, known := s.pending[turn]
@@ -113,7 +113,7 @@ func (s *openAIWSImageInputEstimates) complete(turn int, responseID string, actu
 	}
 	// Generated images can be edited by previous_response_id on a later turn.
 	// This is potential input metadata, not a rewrite of actual input usage.
-	if actualImageOutput > 0 && estimate == 0 {
+	if (actualImageOutput > 0 || hasGeneratedImage) && estimate == 0 {
 		estimate = 1
 	}
 	if s.byResponse[responseID] > estimate {

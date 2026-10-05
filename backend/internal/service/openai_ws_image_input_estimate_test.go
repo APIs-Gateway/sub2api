@@ -22,15 +22,15 @@ func TestWSImageInputEstimate_LineageAndReset(t *testing.T) {
 	image := []byte(`{"type":"response.create","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/image"}]}]}`)
 	first := s.prepare(1, image)
 	require.Positive(t, first)
-	s.complete(1, "resp_image", 2, 0)
+	s.complete(1, "resp_image", 2, 0, false)
 	inherited := s.prepare(1, []byte(`{"previous_response_id":"resp_image","input":"describe it"}`))
 	require.Greater(t, inherited, first)
-	s.complete(1, "resp_followup", 0, 0)
+	s.complete(1, "resp_followup", 0, 0, false)
 	require.Positive(t, s.prepare(1, []byte(`{"previous_response_id":"resp_followup","input":"another question"}`)))
 	for _, body := range []string{`{"input":"new chain"}`, `{"previous_response_id":null,"input":"new chain"}`, `{"input":[{"type":"message","content":[{"type":"input_text","text":"input_image is a word"}]}],"tools":[{"type":"function","name":"image","parameters":{"type":"input_image"}}]}`} {
 		require.Zero(t, s.prepare(1, []byte(body)), body)
 	}
-	s.complete(1, "resp_text", 0, 0)
+	s.complete(1, "resp_text", 0, 0, false)
 	require.Zero(t, s.prepare(1, []byte(`{"previous_response_id":"resp_text","input":"plain continuation"}`)))
 	require.Positive(t, s.prepare(1, []byte(`{"previous_response_id":"resp_unknown","input":"unresolved persisted state"}`)))
 	require.Positive(t, s.prepare(1, []byte(`{"conversation":"conv_stored","input":"persisted state"}`)))
@@ -43,7 +43,7 @@ func TestWSImageInputEstimate_BoundedEvictionCannotBecomeFree(t *testing.T) {
 	s := &openAIWSImageInputEstimates{}
 	for n := 0; n < openAIWSImageInputEstimateLimit+1; n++ {
 		s.prepare(1, []byte(`{"input":"text"}`))
-		s.complete(1, fmt.Sprintf("resp_%d", n), 0, 0)
+		s.complete(1, fmt.Sprintf("resp_%d", n), 0, 0, false)
 	}
 	require.Len(t, s.byResponse, openAIWSImageInputEstimateLimit)
 	require.Len(t, s.order, openAIWSImageInputEstimateLimit)
@@ -86,17 +86,17 @@ func TestWSImageInputEstimate_QueuedCompletionKeepsItsOwnContext(t *testing.T) {
 	image := s.prepare(1, []byte(`{"input":[{"type":"input_image","image_url":"opaque"}]}`))
 	require.Positive(t, image)
 	require.Zero(t, s.prepare(2, []byte(`{"input":"independent text"}`)))
-	s.complete(1, "resp_image", 0, 0)
-	s.complete(2, "resp_text", 0, 0)
+	s.complete(1, "resp_image", 0, 0, false)
+	s.complete(2, "resp_text", 0, 0, false)
 	require.Greater(t, s.prepare(3, []byte(`{"previous_response_id":"resp_image","input":"continue image"}`)), image)
 	require.Zero(t, s.prepare(4, []byte(`{"previous_response_id":"resp_text","input":"continue text"}`)))
-	s.complete(999, "resp_missing", 0, 0)
+	s.complete(999, "resp_missing", 0, 0, false)
 	require.Positive(t, s.prepare(5, []byte(`{"previous_response_id":"resp_missing","input":"unknown"}`)))
 	for n := 0; n < openAIWSImageInputEstimateLimit+1; n++ {
 		s.prepare(100+n, []byte(`{"input":"plain"}`))
 	}
 	require.Len(t, s.pending, openAIWSImageInputEstimateLimit)
-	s.complete(100+openAIWSImageInputEstimateLimit, "resp_overflow", 0, 0)
+	s.complete(100+openAIWSImageInputEstimateLimit, "resp_overflow", 0, 0, false)
 	require.Positive(t, s.prepare(500, []byte(`{"previous_response_id":"resp_overflow","input":"unknown"}`)))
 }
 
@@ -237,17 +237,17 @@ func TestWSImageInputEstimate_OversizedIdentityIsNotRetainedOrFree(t *testing.T)
 	s := &openAIWSImageInputEstimates{}
 	huge := "resp_" + strings.Repeat("x", openAIWSImageInputEstimateIDBytes)
 	s.prepare(1, []byte(`{"input":[{"type":"input_image","image_url":"opaque"}]}`))
-	s.complete(1, huge, 4, 0)
+	s.complete(1, huge, 4, 0, false)
 	require.Empty(t, s.byResponse)
 	require.Empty(t, s.order)
 	require.Empty(t, s.pending)
 	require.Positive(t, s.prepare(2, []byte(fmt.Sprintf(`{"previous_response_id":%q,"input":"continue"}`, huge))))
-	s.complete(2, "", 0, 0)
+	s.complete(2, "", 0, 0, false)
 	require.Empty(t, s.pending)
 	require.Zero(t, s.prepare(3, []byte(`{"input":"text"}`)))
-	s.complete(3, "resp_observed", 100, 0)
+	s.complete(3, "resp_observed", 100, 0, false)
 	require.Greater(t, s.prepare(4, []byte(`{"previous_response_id":"resp_observed","input":"continue"}`)), 100, "positive observed image usage preserves hidden image context")
-	s.complete(4, "resp_observed", 0, 0)
+	s.complete(4, "resp_observed", 0, 0, false)
 	require.Positive(t, s.byResponse["resp_observed"])
 }
 
@@ -280,10 +280,10 @@ func TestWSImageInputLineageProviderCounterCannotOverflowToFree(t *testing.T) {
 	state := &openAIWSImageInputEstimates{}
 	maxInt := int(^uint(0) >> 1)
 	state.prepare(1, []byte(`{"input":"text"}`))
-	state.complete(1, "large_counter", maxInt, 0)
+	state.complete(1, "large_counter", maxInt, 0, false)
 	body := []byte(`{"previous_response_id":"large_counter","input":"text"}`)
 	require.Equal(t, maxInt, state.prepare(2, body))
-	state.complete(2, "next_large_counter", 0, 0)
+	state.complete(2, "next_large_counter", 0, 0, false)
 	require.Equal(t, maxInt, state.prepare(3, []byte(`{"previous_response_id":"next_large_counter","input":"text"}`)))
 	require.Zero(t, state.prepare(4, []byte(`{"previous_response_id":null,"input":"new text chain"}`)))
 }
@@ -291,11 +291,22 @@ func TestWSImageInputLineageProviderCounterCannotOverflowToFree(t *testing.T) {
 func TestWSImageInputEstimate_GeneratedOutputRetainsOnlyPotential(t *testing.T) {
 	state := &openAIWSImageInputEstimates{}
 	require.Zero(t, state.prepare(1, []byte(`{"input":"generate from text"}`)))
-	state.complete(1, "generated_image", 0, 5)
+	state.complete(1, "generated_image", 0, 5, false)
 	require.Equal(t, 1, state.byResponse["generated_image"])
 	require.Positive(t, state.prepare(2, []byte(`{"previous_response_id":"generated_image","input":"edit it"}`)))
-	state.complete(2, "edited_image", 0, 0)
+	state.complete(2, "edited_image", 0, 0, false)
 	require.Positive(t, state.prepare(3, []byte(`{"previous_response_id":"edited_image","input":"continue"}`)))
 	require.Zero(t, state.prepare(4, []byte(`{"previous_response_id":null,"input":"new text"}`)))
 	require.Positive(t, state.prepare(5, []byte(`{"input":[{"type":"image_generation_call","id":"opaque","result":"uninspected"}]}`)))
+}
+
+func TestWSImageInputEstimate_ObservedGeneratedOutputWithoutUsage(t *testing.T) {
+	state := &openAIWSImageInputEstimates{}
+	require.Zero(t, state.prepare(1, []byte(`{"input":"generate from text"}`)))
+	state.complete(1, "actual_generated", 0, 0, true)
+	require.Equal(t, 1, state.byResponse["actual_generated"])
+	require.Positive(t, state.prepare(2, []byte(`{"previous_response_id":"actual_generated","input":"edit it"}`)))
+	require.Zero(t, state.prepare(3, []byte(`{"previous_response_id":null,"input":"new text"}`)))
+	state.complete(3, "no_product", 0, 0, false)
+	require.Zero(t, state.prepare(4, []byte(`{"previous_response_id":"no_product","input":"continue text"}`)))
 }

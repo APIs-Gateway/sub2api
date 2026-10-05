@@ -1206,7 +1206,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			},
 			OnTurnComplete: func(turn openaiwsv2.RelayTurnResult) {
 				turnNo := int(completedTurns.Add(1))
-				imageInputEstimates.complete(turnNo, turn.RequestID, turn.Usage.ImageInputTokens, turn.Usage.ImageOutputTokens)
+				imageInputEstimates.complete(turnNo, turn.RequestID, turn.Usage.ImageInputTokens, turn.Usage.ImageOutputTokens, turn.HasGeneratedImage)
 				turnResult := &OpenAIForwardResult{
 					RequestID: turn.RequestID,
 					Usage: OpenAIUsage{

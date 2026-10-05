@@ -44,6 +44,9 @@ type RelayResult struct {
 }
 
 type RelayTurnResult struct {
+	// HasGeneratedImage retains terminal output presence, never image contents.
+	// It does not infer or alter provider usage counters.
+	HasGeneratedImage bool
 	RequestModel      string
 	Usage             Usage
 	RequestID         string
@@ -114,12 +117,13 @@ type relayExitSignal struct {
 }
 
 type observedUpstreamEvent struct {
-	terminal   bool
-	eventType  string
-	responseID string
-	usage      Usage
-	duration   time.Duration
-	firstToken *int
+	hasGeneratedImage bool
+	terminal          bool
+	eventType         string
+	responseID        string
+	usage             Usage
+	duration          time.Duration
+	firstToken        *int
 }
 
 type relayTurnTiming struct {
@@ -739,6 +743,7 @@ func observeUpstreamMessage(
 		return observed
 	}
 	observed.terminal = true
+	observed.hasGeneratedImage = terminalHasGeneratedImage(message, eventType)
 	state.pendingTurn.Store(false)
 	if responseID == "" {
 		// A terminal without a response id cannot be matched to a turn timing;
@@ -760,6 +765,38 @@ func observeUpstreamMessage(
 	return observed
 }
 
+// Observe actual completed output, not the request's generation intent. Keep no
+// image result, URL or encrypted payload in connection lineage metadata.
+func terminalHasGeneratedImage(message []byte, eventType string) bool {
+	if eventType != "response.completed" || imageOutputStatusIsUnfinished(gjson.GetBytes(message, "response.status")) {
+		return false
+	}
+	output := gjson.GetBytes(message, "response.output")
+	if !output.IsArray() {
+		return false
+	}
+	found := false
+	output.ForEach(func(_, item gjson.Result) bool {
+		result := item.Get("result")
+		found = item.Get("type").String() == "image_generation_call" &&
+			!imageOutputStatusIsUnfinished(item.Get("status")) && result.Type == gjson.String && strings.TrimSpace(result.Str) != ""
+		return !found
+	})
+	return found
+}
+
+// Providers can omit status on completed events and output items. An actual
+// nonempty image result is still potential input; only explicit unfinished or
+// failed states disprove the completed-product observation.
+func imageOutputStatusIsUnfinished(status gjson.Result) bool {
+	switch status.String() {
+	case "failed", "cancelled", "canceled", "in_progress", "queued", "incomplete":
+		return true
+	default:
+		return false
+	}
+}
+
 func emitTurnComplete(
 	onTurnComplete func(turn RelayTurnResult),
 	state *relayState,
@@ -777,6 +814,7 @@ func emitTurnComplete(
 		requestModel = state.requestModel
 	}
 	onTurnComplete(RelayTurnResult{
+		HasGeneratedImage: observed.hasGeneratedImage,
 		RequestModel:      requestModel,
 		Usage:             observed.usage,
 		RequestID:         responseID,
