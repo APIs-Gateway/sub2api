@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ModelCatalogRow from '../ModelCatalogRow.vue'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
-import { buildCatalog } from '@/utils/modelCatalog'
-import type { UserAvailableChannel } from '@/api/channels'
+import { buildPriceCatalog } from '@/utils/modelCatalog'
+import type { UserPriceCatalog, UserPriceSet } from '@/api/channels'
 
 const publicSettings: { value: Record<string, unknown> | null } = { value: null }
 
@@ -46,36 +46,63 @@ vi.mock('vue-i18n', () => ({
   }),
 }))
 
-const g = (id: number, name: string, rate: number) => ({
-  id, name, platform: 'openai', subscription_type: 'standard', rate_multiplier: rate, is_exclusive: false,
+const g = (id: number, name: string) => ({
+  id, name, platform: 'openai', subscription_type: 'standard', is_exclusive: false,
 })
 
-const tokenPricing = {
-  billing_mode: 'token' as const,
-  input_price: 1e-6,
-  output_price: 4e-6,
-  cache_read_price: 1e-7,
-  cache_write_price: null,
-  image_output_price: null,
-  per_request_price: null,
-  intervals: [],
+const set = (over: Partial<UserPriceSet> = {}): UserPriceSet => ({
+  input: null, output: null, cache_read: null, cache_write: null, image_output: null, unit: null, ...over,
+})
+
+/** 按后端的口径放大：prices = official × 倍率。 */
+function scaled(s: UserPriceSet, rate: number): UserPriceSet {
+  return Object.fromEntries(Object.entries(s).map(([k, v]) => [k, v == null ? null : v * rate])) as unknown as UserPriceSet
 }
 
-function model(over: Record<string, unknown> = {}, rates: Record<number, number> = {}) {
-  const channels: UserAvailableChannel[] = [
-    {
-      name: 'c',
-      description: '',
-      platforms: [
-        {
-          platform: 'openai',
-          groups: [g(1, 'Stable', 1.3), g(2, 'Budget', 0.65)],
-          supported_models: [{ name: 'gpt-x', platform: 'openai', pricing: { ...tokenPricing, ...over } as never }],
-        },
-      ],
-    },
-  ]
-  return buildCatalog(channels, rates)[0]
+interface TierSpec {
+  min: number
+  max: number | null
+  label?: string
+  official: Partial<UserPriceSet>
+}
+
+interface Over {
+  billing_mode?: 'token' | 'per_request' | 'image'
+  kind?: 'token' | 'request'
+  official?: Partial<UserPriceSet>
+  tiers?: TierSpec[]
+}
+
+const baseRates: Record<number, number> = { 1: 1.3, 2: 0.65 }
+
+/** 与后端 /channels/prices 的结构一致：两个分组（Stable 1.3x、Budget 0.65x），价格已乘倍率。 */
+function model(over: Over = {}, rates: Record<number, number> = {}) {
+  const official = set(over.official ?? { input: 1e-6, output: 4e-6, cache_read: 1e-7 })
+  const entries = [1, 2].map((id) => {
+    const rate = rates[id] ?? baseRates[id]
+    return {
+      group_id: id,
+      rate,
+      base_rate: baseRates[id],
+      has_custom_rate: rate !== baseRates[id],
+      billing_mode: over.billing_mode ?? 'token',
+      kind: over.kind ?? 'token',
+      official,
+      prices: scaled(official, rate),
+      tiers: (over.tiers ?? []).map((t) => ({
+        min_tokens: t.min,
+        max_tokens: t.max,
+        label: t.label,
+        official: set(t.official),
+        prices: scaled(set(t.official), rate),
+      })),
+    }
+  })
+  const data: UserPriceCatalog = {
+    groups: [g(1, 'Stable'), g(2, 'Budget')],
+    models: [{ name: 'gpt-x', platform: 'openai', entries: entries as never }],
+  }
+  return buildPriceCatalog(data)[0]
 }
 
 const unit = { min: 0.05, max: 0.1, exact: false }
@@ -142,9 +169,9 @@ describe('ModelCatalogRow', () => {
     const w = mount(ModelCatalogRow, {
       props: {
         model: model({
-          intervals: [
-            { min_tokens: 0, max_tokens: 200000, input_price: 1e-6, output_price: 4e-6, cache_read_price: null, cache_write_price: null, per_request_price: null },
-            { min_tokens: 200000, max_tokens: null, input_price: 2e-6, output_price: 8e-6, cache_read_price: null, cache_write_price: null, per_request_price: null },
+          tiers: [
+            { min: 0, max: 200000, official: { input: 1e-6, output: 4e-6 } },
+            { min: 200000, max: null, official: { input: 2e-6, output: 8e-6 } },
           ],
         }),
         expanded: true,
@@ -160,13 +187,7 @@ describe('ModelCatalogRow', () => {
   it('shows a per-request model that only has interval pricing', () => {
     const w = mount(ModelCatalogRow, {
       props: {
-        model: model({
-          billing_mode: 'per_request' as never,
-          input_price: null,
-          output_price: null,
-          cache_read_price: null,
-          intervals: [{ min_tokens: 0, max_tokens: null, input_price: null, output_price: null, cache_read_price: null, cache_write_price: null, per_request_price: 0.13 }],
-        }),
+        model: model({ billing_mode: 'per_request', kind: 'request', official: { unit: 0.13 } }),
       },
     })
     // 0.13 * 0.65 / 13 = 0.0065
@@ -202,24 +223,20 @@ describe('ModelCatalogRow', () => {
   })
 
   it('shows the cache write price in the hero, group table and tier table only when configured', () => {
-    const iv = (min: number, max: number | null, input: number, cacheWrite: number | null) => ({
-      min_tokens: min,
-      max_tokens: max,
-      input_price: input,
-      output_price: input * 4,
-      cache_read_price: null,
-      cache_write_price: cacheWrite,
-      per_request_price: null,
+    const collapsed = mount(ModelCatalogRow, {
+      props: { model: model({ official: { input: 1e-6, output: 4e-6, cache_write: 2.6e-6 } }) },
     })
-    const collapsed = mount(ModelCatalogRow, { props: { model: model({ cache_write_price: 2.6e-6 }) } })
     // 列表行只放核心价格
     expect(collapsed.get('[data-test="start-prices"]').text()).not.toContain('Cache write')
 
     const w = mount(ModelCatalogRow, {
       props: {
         model: model({
-          cache_write_price: 2.6e-6,
-          intervals: [iv(0, 200000, 1e-6, 2.6e-6), iv(200000, null, 2e-6, 5.2e-6)],
+          official: { input: 1e-6, output: 4e-6, cache_write: 2.6e-6 },
+          tiers: [
+            { min: 0, max: 200000, official: { input: 1e-6, output: 4e-6, cache_write: 2.6e-6 } },
+            { min: 200000, max: null, official: { input: 2e-6, output: 8e-6, cache_write: 5.2e-6 } },
+          ],
         }),
         expanded: true,
       },
@@ -248,16 +265,13 @@ describe('ModelCatalogRow', () => {
   })
 
   it('names the tier column by billing mode', () => {
-    const tiers = [
-      { min_tokens: 0, max_tokens: 1000, tier_label: 'A', input_price: null, output_price: null, cache_read_price: null, cache_write_price: null, per_request_price: 0.13 },
-      { min_tokens: 1000, max_tokens: null, tier_label: 'B', input_price: null, output_price: null, cache_read_price: null, cache_write_price: null, per_request_price: 0.26 },
+    const tiers: TierSpec[] = [
+      { min: 0, max: 1000, label: 'A', official: { unit: 0.13 } },
+      { min: 1000, max: null, label: 'B', official: { unit: 0.26 } },
     ]
-    const header = (mode: string) => {
+    const header = (mode: 'per_request' | 'image') => {
       const w = mount(ModelCatalogRow, {
-        props: {
-          model: model({ billing_mode: mode, input_price: null, output_price: null, cache_read_price: null, intervals: tiers }),
-          expanded: true,
-        },
+        props: { model: model({ billing_mode: mode, kind: 'request', official: { unit: 0.13 }, tiers }), expanded: true },
       })
       return w.get('[data-test="tier-table"] thead th').text()
     }
@@ -267,9 +281,9 @@ describe('ModelCatalogRow', () => {
     const token = mount(ModelCatalogRow, {
       props: {
         model: model({
-          intervals: [
-            { min_tokens: 0, max_tokens: 200000, input_price: 1e-6, output_price: 4e-6, cache_read_price: null, cache_write_price: null, per_request_price: null },
-            { min_tokens: 200000, max_tokens: null, input_price: 2e-6, output_price: 8e-6, cache_read_price: null, cache_write_price: null, per_request_price: null },
+          tiers: [
+            { min: 0, max: 200000, official: { input: 1e-6, output: 4e-6 } },
+            { min: 200000, max: null, official: { input: 2e-6, output: 8e-6 } },
           ],
         }),
         expanded: true,
@@ -283,19 +297,17 @@ describe('ModelCatalogRow', () => {
       props: {
         model: model({
           billing_mode: 'per_request',
-          input_price: null,
-          output_price: null,
-          cache_read_price: null,
-          per_request_price: 6.5,
-          intervals: [
-            { min_tokens: 0, max_tokens: 1000, tier_label: 'A', input_price: null, output_price: null, cache_read_price: null, cache_write_price: null, per_request_price: 0.13 },
-            { min_tokens: 1000, max_tokens: null, tier_label: 'B', input_price: null, output_price: null, cache_read_price: null, cache_write_price: null, per_request_price: 0.26 },
+          kind: 'request',
+          official: { unit: 0.13 },
+          tiers: [
+            { min: 0, max: 1000, label: 'A', official: { unit: 0.13 } },
+            { min: 1000, max: null, label: 'B', official: { unit: 0.26 } },
           ],
         }),
         expanded: true,
       },
     })
-    // 0.13 * 0.65 / 13 = 0.0065；不是基础价 6.5 * 0.65 / 13 = 0.325
+    // 0.13 * 0.65 / 13 = 0.0065
     expect(w.get('[data-test="start-prices"]').text()).toContain('¥0.0065')
     expect(w.get('[data-test="hero-prices"]').text()).toContain('¥0.0065')
     expect(w.get('[data-test="group-table"] tbody tr').text()).toContain('¥0.0065')
@@ -307,10 +319,7 @@ describe('ModelCatalogRow', () => {
       props: {
         model: model({
           billing_mode: 'image',
-          input_price: null,
-          output_price: null,
-          cache_read_price: null,
-          image_output_price: 40e-6,
+          official: { image_output: 40e-6 },
         }),
         expanded: true,
         subscriptionUnit: unit,
@@ -332,7 +341,7 @@ describe('ModelCatalogRow', () => {
 
   it('shows 0 as free instead of treating it as not configured', () => {
     const free = mount(ModelCatalogRow, {
-      props: { model: model({ input_price: 0, output_price: 0, cache_read_price: null }), expanded: true },
+      props: { model: model({ official: { input: 0, output: 0 } }), expanded: true },
     })
     expect(free.find('[data-test="start-prices"]').exists()).toBe(true)
     expect(free.get('[data-test="start-prices"]').text()).toContain('¥0.00')
@@ -341,7 +350,7 @@ describe('ModelCatalogRow', () => {
 
     publicSettings.value = null
     const freeUsd = mount(ModelCatalogRow, {
-      props: { model: model({ billing_mode: 'per_request', input_price: null, output_price: null, cache_read_price: null, per_request_price: 0 }) },
+      props: { model: model({ billing_mode: 'per_request', kind: 'request', official: { unit: 0 } }) },
     })
     expect(freeUsd.get('[data-test="start-prices"]').text()).toContain('$0.00')
     expect(freeUsd.text()).not.toContain('No pricing')

@@ -36,6 +36,7 @@ var matrixOwnFiles = map[string]struct{}{
 	"internal/service/pricing_write_types.go":    {}, // W6 PR4b-1：价格写入路径（CellWriter、PriceWriteGate），没有生产路径构造它
 	"internal/service/pricing_write_plan.go":     {},
 	"internal/service/pricing_write_gate.go":     {},
+	"internal/service/user_price_catalog.go":     {}, // W6 PR8a：用户价格页，v2 分组的模型清单读模型目录（第一个读取方）
 
 	"internal/repository/pricing_matrix_repo.go": {},
 	"internal/repository/model_catalog_repo.go":  {},

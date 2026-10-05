@@ -9,14 +9,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 价格页契约测试（PR1 只记录，不切换）。
+// 价格页契约测试。
 //
-// 用户价格页（/api/v1/channels/available）的取价是 ChannelService.fillGlobalPricingFallback：
-// 渠道没填价时用 PricingService（LiteLLM）合成展示价，不查 BillingService.fallbackPrices，
-// 也不走 DeepSeek 官方价卡/峰谷、不看 service tier 与用户专属倍率。
-// PriceQuoter 与计费同源。两者的现有偏差在这里逐条列成「已知偏差」：
-// 断言的是「偏差目前确实存在」，后续 PR 把价格页切到 PriceQuoter 时，
-// 这些用例会失败，届时按失败点逐条改成「一致」断言并删掉对应偏差说明。
+// 用户价格页现在读 /api/v1/channels/prices（UserPriceCatalogService，价格由 PriceQuoter.BatchQuote 给出），
+// 与计费同源；已知偏差的处理结果见 user_price_catalog_test.go：
+//   - 偏差 1（只有兜底价的模型显示无价）：已消除（TestUserPriceCatalog_FallbackOnlyModelNowPriced）；
+//   - 偏差 2（DeepSeek 官方价卡与 JSON 不一致）：已消除（TestUserPriceCatalog_DeepSeekShowsOfficialCardOffPeak）；
+//   - 偏差 3（页面看不到峰价）：保留。页面展示标准（低谷）价，高峰时段的 2 倍只在计费上体现，
+//     原因是页面价不应随一天里的时段跳动，高峰倍率也没有对用户的现成文案；
+//   - 偏差 4（service tier）：保留。价格页只展示标准档，priority、flex 是请求级参数；
+//   - 偏差 5（图片尺寸分档）：已消除（TestUserPriceCatalog_ImageGenerationModelShowsSizeTiers）；
+//   - 偏差 6（用户专属倍率）：已消除，倍率在后端乘好（TestUserPriceCatalog_UserRateAppliedInBackend）。
+//
+// 下面的用例继续记录旧端点 /api/v1/channels/available（ChannelService.fillGlobalPricingFallback，
+// 新手引导的模型清单还在读它）的取价口径：渠道没填价时用 PricingService（LiteLLM）合成展示价，
+// 不查 BillingService.fallbackPrices，也不走 DeepSeek 官方价卡与峰谷、不看 service tier 与用户专属倍率。
+// 它与 PriceQuoter 的现有偏差在这里逐条列成「已知偏差」：断言的是「偏差目前确实存在」。
 
 // pricePageModel 返回价格页对某个模型最终展示的定价（nil 表示页面显示「无价格」）。
 func pricePageModel(catalog map[string]*LiteLLMModelPricing, model string) *ChannelModelPricing {

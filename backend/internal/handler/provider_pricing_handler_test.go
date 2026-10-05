@@ -78,7 +78,7 @@ func TestProviderPricingHandlerGetPricing(t *testing.T) {
 
 	settingSvc := service.NewSettingService(repo, &config.Config{})
 	groupRepo := &providerPricingGroupRepoStub{groups: []service.Group{{Name: "codex  plus", RateMultiplier: 1.4}}}
-	h := NewProviderPricingHandler(service.NewPaymentConfigService(nil, repo, nil), pricingSvc, settingSvc, groupRepo)
+	h := NewProviderPricingHandler(service.NewPaymentConfigService(nil, repo, nil), pricingSvc, settingSvc, groupRepo, nil)
 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -131,6 +131,7 @@ func TestProviderPricingHandlerGetPricingGroupError(t *testing.T) {
 		service.NewPricingService(nil, nil),
 		service.NewSettingService(repo, &config.Config{}),
 		&providerPricingGroupRepoStub{err: errors.New("db down")},
+		nil,
 	)
 
 	recorder := httptest.NewRecorder()
@@ -154,6 +155,7 @@ func TestProviderPricingHandlerGetPricingConfigError(t *testing.T) {
 		service.NewPricingService(nil, nil),
 		service.NewSettingService(repo, &config.Config{}),
 		&providerPricingGroupRepoStub{},
+		nil,
 	)
 
 	recorder := httptest.NewRecorder()
