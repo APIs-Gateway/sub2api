@@ -112,7 +112,7 @@ func (u *oauth401Upstream) Do(request *http.Request, proxy string, _ int64, _ in
 			u.onRetry()
 		}
 		status, response = http.StatusOK, strings.ReplaceAll(inflightResponsesJSON, `"gpt-5"`, `"gpt-5.4"`)
- response = strings.ReplaceAll(response, "resp_inflight", fmt.Sprintf("resp_oauth401_%d",call))
+		response = strings.ReplaceAll(response, "resp_inflight", fmt.Sprintf("resp_oauth401_%d", call))
 	}
 	if status == http.StatusUnauthorized && u.rejection != "" {
 		response = u.rejection
@@ -234,12 +234,12 @@ func TestOpenAI401HTTP_RealRecoveryBillsOnce(t *testing.T) {
 }
 
 func TestOpenAI401HTTP_RetryKeepsFundedAttempt(t *testing.T) {
- for _, passthrough := range []bool{false,true} {
-  t.Run(fmt.Sprintf("passthrough_%t",passthrough),func(t *testing.T){testOAuth401FundedAttempt(t,passthrough)})
- }
+	for _, passthrough := range []bool{false, true} {
+		t.Run(fmt.Sprintf("passthrough_%t", passthrough), func(t *testing.T) { testOAuth401FundedAttempt(t, passthrough) })
+	}
 }
 func testOAuth401FundedAttempt(t *testing.T, passthrough bool) {
- f, executor, upstream := newOAuth401HTTPFixture(t, passthrough)
+	f, executor, upstream := newOAuth401HTTPFixture(t, passthrough)
 	refreshStarted, release := make(chan struct{}), make(chan struct{})
 	t.Cleanup(func() {
 		select {
@@ -401,31 +401,53 @@ func TestOpenAI401HTTP_TerminalRecoveryControls(t *testing.T) {
 }
 
 func TestOpenAI401HTTP_ConcurrentRejectedRequestsShareRefresh(t *testing.T) {
- for _, passthrough := range []bool{false,true} {
-  t.Run(fmt.Sprintf("passthrough_%t",passthrough),func(t *testing.T) {
-   f, executor, upstream := newOAuth401HTTPFixture(t,passthrough)
-   var rejected atomic.Int32
-   bothRejected := make(chan struct{})
-   upstream.onRejected = func(){if rejected.Add(1) == 2 {close(bothRejected)}}
-   executor.before = func(){select{case <-bothRejected: case <-time.After(5*time.Second): t.Error("second request did not dispatch original rejected token")}}
-   done := make(chan *httptest.ResponseRecorder,2)
-   for range 2 {go func(){done <- f.request(oauth401Request,"/v1/responses","",f.openAI.Responses)}()}
-   for range 2 {select{case rec:=<-done: require.Equal(t,http.StatusOK,rec.Code,rec.Body.String()); case <-time.After(10*time.Second):t.Fatal("concurrent recovery did not finish")}}
-   f.pool.Stop()
-   require.EqualValues(t,1,executor.calls.Load(),"shared existing local/Redis refresh locks allow only one grant")
-   upstream.mu.Lock(); auths:=append([]string(nil),upstream.auths...); upstream.mu.Unlock()
-   require.Len(t,auths,4)
-   require.Equal(t,2,strings.Count(strings.Join(auths,"
-"),"Bearer fixture-old"))
-   require.Equal(t,2,strings.Count(strings.Join(auths,"
-"),"Bearer fixture-new"))
-   var logs,dedup int
-   var cost,balance float64
-   require.NoError(t,inflightTestDB(t).QueryRow(`SELECT count(*),COALESCE(sum(actual_cost),0) FROM usage_logs WHERE user_id=$1`,f.user.ID).Scan(&logs,&cost))
-   require.NoError(t,inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`,f.key.ID).Scan(&dedup))
-   require.NoError(t,inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`,f.user.ID).Scan(&balance))
-   require.Equal(t,2,logs); require.Equal(t,2,dedup); require.Positive(t,cost); require.InDelta(t,10-cost,balance,1e-10)
-   require.Zero(t,inflightHeld(t,f.user.ID))
-  })
- }
+	for _, passthrough := range []bool{false, true} {
+		t.Run(fmt.Sprintf("passthrough_%t", passthrough), func(t *testing.T) {
+			f, executor, upstream := newOAuth401HTTPFixture(t, passthrough)
+			var rejected atomic.Int32
+			bothRejected := make(chan struct{})
+			upstream.onRejected = func() {
+				if rejected.Add(1) == 2 {
+					close(bothRejected)
+				}
+			}
+			executor.before = func() {
+				select {
+				case <-bothRejected:
+				case <-time.After(5 * time.Second):
+					t.Error("second request did not dispatch original rejected token")
+				}
+			}
+			done := make(chan *httptest.ResponseRecorder, 2)
+			for range 2 {
+				go func() { done <- f.request(oauth401Request, "/v1/responses", "", f.openAI.Responses) }()
+			}
+			for range 2 {
+				select {
+				case rec := <-done:
+					require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+				case <-time.After(10 * time.Second):
+					t.Fatal("concurrent recovery did not finish")
+				}
+			}
+			f.pool.Stop()
+			require.EqualValues(t, 1, executor.calls.Load(), "shared existing local/Redis refresh locks allow only one grant")
+			upstream.mu.Lock()
+			auths := append([]string(nil), upstream.auths...)
+			upstream.mu.Unlock()
+			require.Len(t, auths, 4)
+			require.Equal(t, 2, strings.Count(strings.Join(auths, "|"), "Bearer fixture-old"))
+			require.Equal(t, 2, strings.Count(strings.Join(auths, "|"), "Bearer fixture-new"))
+			var logs, dedup int
+			var cost, balance float64
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*),COALESCE(sum(actual_cost),0) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs, &cost))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
+			require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&balance))
+			require.Equal(t, 2, logs)
+			require.Equal(t, 2, dedup)
+			require.Positive(t, cost)
+			require.InDelta(t, 10-cost, balance, 1e-10)
+			require.Zero(t, inflightHeld(t, f.user.ID))
+		})
+	}
 }
