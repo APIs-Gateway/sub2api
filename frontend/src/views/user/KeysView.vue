@@ -198,6 +198,7 @@
                   :subscription-type="row.group.subscription_type"
                   :rate-multiplier="row.group.rate_multiplier"
                   :user-rate-multiplier="userGroupRates[row.group.id]"
+                  :rate-view="groupRateView(row.group, userGroupRates[row.group.id])"
                 />
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
                   t('keys.noGroup')
@@ -522,7 +523,6 @@
                 <p class="font-semibold text-white">{{ t('keys.billing.title') }}</p>
                 <p>{{ t('keys.billing.intro') }}</p>
                 <p>{{ t('keys.billing.rate') }}</p>
-                <p>{{ t('keys.billing.effective') }}</p>
               </div>
             </HelpTooltip>
           </label>
@@ -542,6 +542,7 @@
                 :subscription-type="(option as unknown as GroupOption).subscriptionType"
                 :rate-multiplier="(option as unknown as GroupOption).rate"
                 :user-rate-multiplier="(option as unknown as GroupOption).userRate"
+                :rate-view="groupRateView((option as unknown as GroupOption).rate, (option as unknown as GroupOption).userRate)"
               />
               <span v-else class="text-gray-400">{{ t('keys.selectGroup') }}</span>
             </template>
@@ -552,6 +553,7 @@
                 :subscription-type="(option as unknown as GroupOption).subscriptionType"
                 :rate-multiplier="(option as unknown as GroupOption).rate"
                 :user-rate-multiplier="(option as unknown as GroupOption).userRate"
+                :rate-view="groupRateView((option as unknown as GroupOption).rate, (option as unknown as GroupOption).userRate)"
                 :description="(option as unknown as GroupOption).description"
                 :selected="selected"
               />
@@ -1136,6 +1138,7 @@
               :subscription-type="option.subscriptionType"
               :rate-multiplier="option.rate"
               :user-rate-multiplier="option.userRate"
+              :rate-view="groupRateView(option.rate, option.userRate)"
               :description="option.description"
               :selected="
                 selectedKeyForGroup?.group_id === option.value ||
@@ -1163,11 +1166,14 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { EXACT_DIGITS, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import NumText from '@/components/common/NumText.vue'
 import { useSourceFiatRate } from '@/composables/useSourceFiatRate'
+import { useGroupRateView } from '@/composables/useGroupRateView'
 
 const { t } = useI18n()
 // 今日/累计花费用服务端分桶折算的人民币；额度上限与限额按当前扣费来源近似折算
 const { isFiat: currencyIsFiat, formatMixed } = useCurrencyDisplay()
 const { sourceFiatPerCredit, formatLimit } = useSourceFiatRate()
+// 分组徽标 / 下拉药丸的倍率：人民币模式显示等效倍率并补「套餐低至」，美元模式和 free 站原样
+const { groupRateView } = useGroupRateView()
 import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'

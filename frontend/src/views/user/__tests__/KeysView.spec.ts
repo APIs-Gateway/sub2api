@@ -93,6 +93,11 @@ vi.mock('@/stores/app', () => ({
   }),
 }))
 
+// 分组倍率（useRateDisplay）会读登录状态：这里按未登录，不去请求套餐定价。
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ isAuthenticated: false }),
+}))
+
 vi.mock('@/stores/subscriptions', () => ({
   useSubscriptionStore: () => ({
     get activeSubscriptions() {

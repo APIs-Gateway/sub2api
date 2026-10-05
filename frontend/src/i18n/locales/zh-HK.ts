@@ -819,7 +819,12 @@
     subscription: '訂閱',
     rateMultiplierTip: '「Nx 倍率」是該分組相對官方價的扣額度速度：數字越大、池子越穩定，同樣的用量扣得也越多；它是系統扣費的系數，不是最終價格。疊加套餐折扣後你實際相當於官方價幾折，見分組描述。'
     ,
-    rateMultiplierLabel: '{rate}x 倍率'
+    rateMultiplierLabel: '{rate}x 倍率',
+    rateTipFiat: '倍率 {rate}x：官方價每 $1 的用量，實付 ¥{rate}。倍率越低越省。',
+    rateTipUsd: '倍率 {rate}x：官方價每 $1 的用量，扣 ${rate} 額度。倍率越低越省。',
+    planRatePrefix: '套餐低至',
+    planRateTip: '開通套餐後，同樣的用量最低按 {rate}x 扣費。',
+    yourPlanRateTip: '你的套餐當前按 {rate}x 扣費。'
   },
 
   keyFallback: {
@@ -1094,9 +1099,8 @@
     selectGroup: '選擇分組',
     billing: {
       title: '計費怎么算？',
-      intro: '本站按量從餘額（USD）實時扣費。開通月套餐後，你會用很低的價格拿到一大筆「官方價額度」——例如 ¥39 得到 $2700 額度，模型按官方價計費。',
-      rate: '分組右側的「Nx 倍率」是這個池子相對官方價的扣額度速度：數字越大、池子越穩定，同樣的用量扣得也越多。它是系統扣費用的系數，不是你最終掏的錢。',
-      effective: '分組描述裡的「0.X 倍率」才是疊加套餐折扣後、你實際相當於官方價的幾折。'
+      intro: '本站按量從餘額扣費。開通套餐後，用量會優先從套餐扣，同樣的用量更划算。',
+      rate: '分組右側的倍率越低越省：同樣的用量，倍率低的分組扣得更少。'
     },
     statusLabel: '狀態',
     selectStatus: '選擇狀態',
