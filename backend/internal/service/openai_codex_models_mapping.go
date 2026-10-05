@@ -18,6 +18,64 @@ func codexModelsNeedAccountProjection(account *Account) bool {
 	return !account.IsOpenAIPassthroughEnabled() && len(account.GetModelMapping()) > 0
 }
 
+// Decoded known keys must be unique before JSON map parsing or sjson splicing:
+// those libraries choose different occurrences. Opaque metadata remains raw.
+func validateCodexProjectionKnownKeys(body []byte) error {
+	if err := rejectCodexProjectionDuplicateKeys(body, "models"); err != nil {
+		return err
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return err
+	}
+	var entries []json.RawMessage
+	if json.Unmarshal(envelope["models"], &entries) != nil {
+		return nil // The existing manifest validator owns envelope shape errors.
+	}
+	for _, raw := range entries {
+		if err := rejectCodexProjectionDuplicateKeys(raw, "slug", "display_name"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rejectCodexProjectionDuplicateKeys(raw []byte, known ...string) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] != '{' {
+		return nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if _, err := decoder.Token(); err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(known))
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		name, ok := token.(string)
+		if !ok {
+			return fmt.Errorf("invalid Codex model property")
+		}
+		for _, field := range known {
+			if name == field {
+				if seen[field] {
+					return fmt.Errorf("ambiguous duplicate Codex property %q", field)
+				}
+				seen[field] = true
+			}
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+	}
+	_, err := decoder.Token()
+	return err
+}
+
 func projectCodexModelsForAccount(body []byte, account *Account) ([]byte, error) {
 	if !codexModelsNeedAccountProjection(account) {
 		return body, nil
@@ -96,16 +154,15 @@ func projectCodexModelsForAccount(body []byte, account *Account) ([]byte, error)
 	}
 	// Splice only the known model names/array. Opaque client metadata stays
 	// byte-for-byte intact, including large numbers and unknown string escapes.
-	var encoded bytes.Buffer
-	encoded.WriteByte('[')
+	encoded := []byte{'['}
 	for i, raw := range projected {
 		if i > 0 {
-			encoded.WriteByte(',')
+			encoded = append(encoded, ',')
 		}
-		encoded.Write(raw)
+		encoded = append(encoded, raw...)
 	}
-	encoded.WriteByte(']')
-	return sjson.SetRawBytes(body, "models", encoded.Bytes())
+	encoded = append(encoded, ']')
+	return sjson.SetRawBytes(body, "models", encoded)
 }
 
 func codexModelsRepresentationETag(body []byte) string {

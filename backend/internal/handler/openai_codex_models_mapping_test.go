@@ -52,6 +52,8 @@ func requestCodexMappingHandler(t *testing.T, h *OpenAIGatewayHandler, path, val
 	groupID := int64(42)
 	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{GroupID: &groupID, Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI}})
 	h.CodexModels(c)
+	// Gin's engine commits deferred status headers after a handler returns.
+	c.Writer.WriteHeaderNow()
 	return recorder
 }
 
@@ -166,4 +168,103 @@ func TestCodexAccountMapping_ActualHandlerCanceledDoesNotDispatch(t *testing.T) 
 	mu.Lock()
 	require.Zero(t, calls)
 	mu.Unlock()
+}
+
+func TestCodexAccountMapping_IdentityAccountSwitchSharedProviderValidator(t *testing.T) {
+	for _, variant := range []string{"different_models", "different_metadata", "same_bytes"} {
+		t.Run(variant, func(t *testing.T) {
+			bodyA := `{ "models": [ { "slug": "gpt-5.4", "limit": 100 } ], "opaque":900719925474099312345 }`
+			bodyB := bodyA
+			modelB := "gpt-5.4"
+			if variant == "different_models" {
+				modelB = "gpt-5.5"
+				bodyB = `{ "models": [ { "slug": "gpt-5.5", "limit": 100 } ], "opaque":900719925474099312345 }`
+			} else if variant == "different_metadata" {
+				bodyB = `{ "models": [ { "slug": "gpt-5.4", "limit": 200 } ], "opaque":900719925474099312345 }`
+			}
+			var mu sync.Mutex
+			var auths, conditionals []string
+			failFirst := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				auth := r.Header.Get("Authorization")
+				mu.Lock()
+				auths = append(auths, auth)
+				conditionals = append(conditionals, r.Header.Get("If-None-Match"))
+				fail := failFirst && auth == "Bearer first-key"
+				mu.Unlock()
+				if fail {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = w.Write([]byte(`{"error":{"message":"temporary"}}`))
+					return
+				}
+				w.Header().Set("ETag", `W/"v1"`)
+				if r.Header.Get("If-None-Match") != "" {
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+				body := bodyA
+				if auth == "Bearer second-key" {
+					body = bodyB
+				}
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			h, repo := newCodexMappingHandler(t, server, map[string]any{"gpt-5.4": "gpt-5.4"})
+			first := requestCodexMappingHandler(t, h, "/v1/models?client_version=0.137.0", "", context.Background())
+			require.Equal(t, http.StatusOK, first.Code)
+			require.Equal(t, bodyA, first.Body.String())
+			secondAccount := repo.accounts[0]
+			secondAccount.ID = 2
+			secondAccount.Priority = 10
+			secondAccount.Credentials = map[string]any{"api_key": "second-key", "base_url": server.URL, "model_mapping": map[string]any{modelB: modelB}}
+			repo.accounts = append(repo.accounts, secondAccount)
+			mu.Lock()
+			failFirst = true
+			mu.Unlock()
+			second := requestCodexMappingHandler(t, h, "/v1/models?client_version=0.137.0", first.Header().Get("ETag"), context.Background())
+			if variant == "same_bytes" {
+				require.Equal(t, http.StatusNotModified, second.Code)
+				require.Empty(t, second.Body.String())
+				require.Equal(t, first.Header().Get("ETag"), second.Header().Get("ETag"))
+			} else {
+				require.Equal(t, http.StatusOK, second.Code, second.Body.String())
+				require.Equal(t, bodyB, second.Body.String())
+				require.NotEqual(t, first.Header().Get("ETag"), second.Header().Get("ETag"))
+			}
+			mu.Lock()
+			require.Equal(t, []string{"Bearer first-key", "Bearer first-key", "Bearer second-key"}, auths)
+			require.Equal(t, []string{"", "", ""}, conditionals)
+			mu.Unlock()
+		})
+	}
+}
+
+func TestCodexAccountMapping_ActualHandlerDuplicateStructuralKeysRejected(t *testing.T) {
+	for _, body := range []string{
+		`{"models":[{"slug":"gpt-5.4"}],"models":[{"slug":"blocked"}]}`,
+		`{"models":[{"slug":"gpt-5.4"}],"mo\u0064els":[{"slug":"blocked"}]}`,
+		`{"models":[{"slug":"blocked","slug":"gpt-5.4"}]}`,
+		`{"models":[{"slug":"blocked","sl\u0075g":"gpt-5.4"}]}`,
+		`{"models":[{"slug":"gpt-5.4","display_name":"old","display_\u006eame":"actual"}]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			var mu sync.Mutex
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
+				calls++
+				mu.Unlock()
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			h, _ := newCodexMappingHandler(t, server, map[string]any{"alias": "gpt-5.4"})
+			response := requestCodexMappingHandler(t, h, "/v1/models?client_version=0.137.0", "", context.Background())
+			require.Equal(t, http.StatusBadGateway, response.Code, response.Body.String())
+			require.Contains(t, response.Body.String(), "upstream_error")
+			require.NotContains(t, response.Body.String(), `"models"`)
+			mu.Lock()
+			require.Equal(t, 1, calls)
+			mu.Unlock()
+		})
+	}
 }

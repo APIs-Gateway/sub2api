@@ -280,8 +280,13 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 	}
 	account.ApplyHeaderOverrides(req.Header)
 	if projectAccount {
-		req.Header.Del("If-None-Match")
-		req.Header.Del("If-Modified-Since")
+		// Overrides can store noncanonical header keys directly. Delete every
+		// spelling so an account override cannot turn this into a partial fetch.
+		for name := range req.Header {
+			if strings.EqualFold(name, "If-None-Match") || strings.EqualFold(name, "If-Modified-Since") {
+				delete(req.Header, name)
+			}
+		}
 	}
 
 	proxyURL := ""
@@ -348,6 +353,14 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 			retryable: isRetryableCodexModelsManifestTransportError(err),
 		}
 	}
+	if projectAccount {
+		if err := validateCodexProjectionKnownKeys(body); err != nil {
+			return nil, &codexModelsManifestUpstreamError{
+				err:       infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST", "ambiguous mapped Codex manifest: %v", err),
+				retryable: true,
+			}
+		}
+	}
 	if apiKeyUpstream {
 		body = convertOpenAIModelListToCodexManifest(body)
 		adjusted, adjustErr := adjustAPIKeyCodexModelsManifestFunc(body)
@@ -384,9 +397,9 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 				retryable: true,
 			}
 		}
-		if !bytes.Equal(body, projected) {
-			etag = codexModelsRepresentationETag(projected)
-		}
+		// Even identity mappings need a representation validator: separate
+		// accounts/providers can reuse the same upstream ETag for different bytes.
+		etag = codexModelsRepresentationETag(projected)
 		body = projected
 		if codexModelsETagMatches(ifNoneMatch, etag) {
 			return &CodexModelsManifest{ETag: etag, NotModified: true}, nil

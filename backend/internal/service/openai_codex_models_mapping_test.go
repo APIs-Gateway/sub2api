@@ -89,7 +89,7 @@ func TestCodexAccountMapping_RealServiceProjection(t *testing.T) {
 				unlisted bool
 				want     []string
 			}{
-				{"strict_wildcard", map[string]any{"gpt-*": "gpt-5.4"}, false, []string{"gpt-5.4"}},
+				{"strict_wildcard", map[string]any{"gpt-*": "gpt-5.4"}, false, []string{"gpt-5.4", "gpt-6.1-sol"}},
 				{"exact_alias", map[string]any{"company-fast": "gpt-5.4"}, false, []string{"company-fast"}},
 				{"unlisted_rename", map[string]any{"company-fast": "gpt-5.4"}, true, []string{"gpt-5.4", "blocked", "gpt-6.1-sol", "company-fast"}},
 				{"identity_keeps_whitelist", map[string]any{"gpt-5.4": "gpt-5.4", "company-fast": "gpt-5.4"}, true, []string{"gpt-5.4", "company-fast"}},
@@ -130,14 +130,16 @@ func TestCodexAccountMapping_RepresentationAndConditional(t *testing.T) {
 			}
 			manifest := f.fetch(t, "")
 			require.Equal(t, body, string(manifest.Body))
-			require.Equal(t, `W/"upstream"`, manifest.ETag)
 			if mode == "identity" || mode == "empty" {
-				cached := f.fetch(t, `"other", "upstream"`)
+				require.NotEqual(t, `W/"upstream"`, manifest.ETag)
+				cached := f.fetch(t, `"other", `+strings.TrimPrefix(manifest.ETag, "W/"))
 				require.True(t, cached.NotModified)
 				require.Empty(t, cached.Body)
 				f.mu.Lock()
 				require.Empty(t, f.headers[1].Get("If-None-Match"))
 				f.mu.Unlock()
+			} else {
+				require.Equal(t, `W/"upstream"`, manifest.ETag)
 			}
 		})
 	}
@@ -219,7 +221,7 @@ func TestCodexAccountMapping_StarWithoutUpstreamValidator(t *testing.T) {
 	manifest := f.fetch(t, "*")
 	require.True(t, manifest.NotModified)
 	require.Empty(t, manifest.Body)
-	require.Empty(t, manifest.ETag)
+	require.NotEmpty(t, manifest.ETag)
 }
 
 func TestCodexAccountMapping_AccountOverridesCannotMakeFetchConditional(t *testing.T) {
@@ -235,4 +237,36 @@ func TestCodexAccountMapping_AccountOverridesCannotMakeFetchConditional(t *testi
 	require.Empty(t, f.headers[0].Get("If-None-Match"))
 	require.Empty(t, f.headers[0].Get("If-Modified-Since"))
 	require.Equal(t, "preserved", f.headers[0].Get("X-Catalog-Test"))
+}
+
+func TestCodexAccountMapping_DuplicateStructuralKeysFailClosed(t *testing.T) {
+	for _, oauth := range []bool{false, true} {
+		for _, body := range []string{
+			`{"models":[{"slug":"gpt-5.4"}],"models":[{"slug":"blocked"}]}`,
+			`{"models":[{"slug":"gpt-5.4"}],"mo\u0064els":[{"slug":"blocked"}]}`,
+			`{"models":[{"slug":"blocked","slug":"gpt-5.4"}]}`,
+			`{"models":[{"slug":"blocked","sl\u0075g":"gpt-5.4"}]}`,
+			`{"models":[{"slug":"gpt-5.4","display_name":"old","display_name":"actual"}]}`,
+			`{"models":[{"slug":"gpt-5.4","display_name":"old","display_\u006eame":"actual"}]}`,
+		} {
+			t.Run(body+"/"+map[bool]string{false: "apikey", true: "oauth"}[oauth], func(t *testing.T) {
+				f := newCodexMappingFixture(t, body, oauth)
+				f.account.Credentials["model_mapping"] = map[string]any{"alias": "gpt-5.4"}
+				manifest, err := f.service.FetchCodexModelsManifest(context.Background(), f.account, "0.137.0", "")
+				require.Error(t, err)
+				require.True(t, IsRetryableCodexModelsManifestError(err))
+				require.Nil(t, manifest)
+				// This guard belongs only to mapped projection; old passthrough
+				// and unmapped representations remain byte-for-byte opaque.
+				delete(f.account.Credentials, "model_mapping")
+				require.Equal(t, body, string(f.fetch(t, "").Body))
+			})
+		}
+	}
+	f := newCodexMappingFixture(t, `{"opaque":1,"opaque":2,"models":[{"slug":"gpt-5.4","future":1,"future":2,"big":900719925474099312345}]}`, false)
+	f.account.Credentials["model_mapping"] = map[string]any{"alias": "gpt-5.4"}
+	body := string(f.fetch(t, "").Body)
+	require.Contains(t, body, `"opaque":1,"opaque":2`)
+	require.Contains(t, body, `"future":1,"future":2,"big":900719925474099312345`)
+	require.Contains(t, body, `"slug":"alias"`)
 }
