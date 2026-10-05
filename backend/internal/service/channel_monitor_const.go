@@ -12,14 +12,14 @@ const (
 	// monitorRequestTimeout 单次模型请求总超时（含 Body 读取）。
 	// 取 90 秒：线上被判超时的探测请求，88% 在服务端随后成功完成，耗时 p90 约 87–93 秒；
 	// 再长就会撞上 Cloudflare 的空闲上限（约 100–120 秒），没有观测意义。
-	monitorRequestTimeout = 90 * time.Second
+	monitorRequestTimeout = 45 * time.Second
 	// monitorPingTimeout HEAD 请求 endpoint origin 的超时。
 	monitorPingTimeout = 8 * time.Second
 	// monitorDegradedThreshold 主请求成功但耗时超过该阈值视为 degraded。
 	// 取值依据实测分布：LLM 首字延迟本身波动很大。早期 24h 样本 p50≈2.9s、p90≈15.1s，
 	// 15s 恰好落在正常分布中间（真实小请求里 24%–50% 超过 15s），导致页面长期处于降级。
 	// 近 8 天真实小请求首字 >30s 占 10%–27%，取 30s 让「降级」只留给明显偏慢的一档。
-	monitorDegradedThreshold = 30 * time.Second
+	monitorDegradedThreshold = 15 * time.Second
 	// monitorHistoryRetentionDays 明细历史保留天数。
 	// 60s 默认间隔 * 30 天 ≈ 43200 行/monitor/model，一般部署总量 <= 2M 行，
 	// PG 无压力；所以直接保留完整明细一个月，可用率查询可以全走原始行不依赖聚合。
@@ -112,7 +112,7 @@ const (
 	monitorTLSHandshakeTimeout = 10 * time.Second
 	// monitorResponseHeaderTimeout HTTP transport 等待响应头超时，与总超时一致：
 	// 上游号池偶尔 40–90 秒才吐出第一个字节，这类请求最终多数成功，只能算慢，不算坏。
-	monitorResponseHeaderTimeout = 90 * time.Second
+	monitorResponseHeaderTimeout = 30 * time.Second
 	// monitorPingDiscardMaxBytes ping 时丢弃响应体的最大字节数。
 	monitorPingDiscardMaxBytes = 1024
 

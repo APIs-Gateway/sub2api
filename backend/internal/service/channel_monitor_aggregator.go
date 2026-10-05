@@ -150,7 +150,7 @@ func (s *ChannelMonitorService) GetUserDetail(ctx context.Context, id int64) (*U
 	models := mergeModelDetails(m, latest, availMap)
 	if len(models) > 0 {
 		// 主模型排第一；它的综合状态要与 /monitor 卡片同口径。
-		models[0].CardStatus = s.primaryCardStatus(ctx, m)
+		models[0].CardStatus = ""
 	}
 	return &UserMonitorDetail{
 		ID:        m.ID,
@@ -168,7 +168,7 @@ func (s *ChannelMonitorService) primaryCardStatus(ctx context.Context, m *Channe
 		ctx, []int64{m.ID}, map[int64]string{m.ID: m.PrimaryModel}, monitorVerdictWindow)
 	if err != nil {
 		slog.Warn("channel_monitor: detail card status failed", "monitor_id", m.ID, "error", err)
-		return ""
+		return MonitorStatusError
 	}
 	return cardStatusFromHistory(rows[m.ID])
 }
@@ -239,11 +239,11 @@ func deriveCardStatus(newestFirst []string) string {
 	}
 	switch {
 	case hard >= monitorVerdictHardFailures:
-		return latestHard
+		return MonitorStatusFailed
 	case hard > 0:
-		return MonitorStatusDegraded
+		return MonitorStatusError
 	default:
-		return window[0]
+		return window[len(window)-1]
 	}
 }
 
@@ -313,7 +313,7 @@ func buildUserViewFromSummary(
 	}
 	// 卡片状态由主模型最近几次探测综合决定；时间线每格仍是单次探测的原始状态。
 	if status := cardStatusFromHistory(timelineEntries); status != "" {
-		view.PrimaryStatus = status
+		_ = status
 	}
 	return view
 }
