@@ -346,13 +346,13 @@ func TestResponsesInputTokensIncompleteTransportResponse(t *testing.T) {
 }
 
 func TestResponsesInputTokensOfficialBasesRetainAccountTransport(t *testing.T) {
-	for _, base := range []string{"https://api.openai.com", "https://api.openai.com/v1/", "https://api.openai.com/v1/responses"} {
+	for _, base := range []string{"https://api.openai.com", "https://api.openai.com/v1/", "https://api.openai.com/v1/responses", "https://api.openai.com:443/v1"} {
 		t.Run(base, func(t *testing.T) {
 			account := &Account{ID: 91, Concurrency: 7, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 				Credentials: map[string]any{"api_key": "account-secret", "base_url": base},
 				Proxy:       &Proxy{Protocol: "http", Host: "127.0.0.1", Port: 8181, Username: "proxy-user", Password: "proxy-pass"}}
 			upstream := &inputTokensUpstream{status: 200, body: `{"object":"response.input_tokens","input_tokens":4,"future":true}`}
-			rec, err := inputTokensFixture(t, account, upstream, `{"model":"gpt-4o","input":"hello"}`, &config.Config{})
+			rec, err := inputTokensFixture(t, account, upstream, `{"model":"gpt-4o","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.invalid/image"}]}]}`, &config.Config{})
 			require.NoError(t, err)
 			require.Equal(t, 200, rec.Code)
 			require.Equal(t, 1, upstream.calls)
@@ -414,5 +414,19 @@ func TestResponsesInputTokensRedirectAndCanceledTransportNeverCount(t *testing.T
 			require.True(t, upstream.closed)
 		}
 		cancel()
+	}
+}
+
+func TestResponsesInputTokensNonofficialAuthoritiesNeverReceiveMediaCount(t *testing.T) {
+	for _, base := range []string{"https://api.openai.com:8443/v1", "https://api.openai.com.evil.invalid/v1", "https://api.openai.com@evil.invalid/v1", "https://account-user@api.openai.com/v1"} {
+		t.Run(base, func(t *testing.T) {
+			account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "key", "base_url": base}}
+			upstream := &inputTokensUpstream{status: 200, body: `{"object":"response.input_tokens","input_tokens":42}`}
+			rec, err := inputTokensFixture(t, account, upstream, `{"model":"gpt-4o","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.invalid/image"}]}]}`, &config.Config{})
+			require.Error(t, err)
+			require.Equal(t, 400, rec.Code)
+			require.Zero(t, upstream.calls)
+			require.Empty(t, rec.Header().Get("X-Sub2api-Token-Count"))
+		})
 	}
 }

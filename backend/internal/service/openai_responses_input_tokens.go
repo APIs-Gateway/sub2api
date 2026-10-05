@@ -246,7 +246,7 @@ func usesOfficialInputTokensEndpoint(account *Account) bool {
 		return true
 	}
 	u, err := url.Parse(base)
-	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Host, "api.openai.com") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Hostname(), "api.openai.com") || (u.Port() != "" && u.Port() != "443") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return false
 	}
 	switch strings.TrimRight(u.Path, "/") {
