@@ -87,6 +87,29 @@ func (s *pwFakeStore) PurgeStale(_ context.Context, before time.Time) (int64, er
 	return 0, s.purgeErr
 }
 
+// pwFakeEstimator 价格方向估算器：返回预设的方向，并记下被调用的参数。
+type pwFakeEstimator struct {
+	delta      PriceDelta
+	err        error
+	cellCalls  [][]PlannedCellWrite
+	groupCalls []pwGroupEstimate
+}
+
+type pwGroupEstimate struct {
+	groupID       int64
+	before, after MatrixGroupConfig
+}
+
+func (e *pwFakeEstimator) EstimateCellWrites(_ context.Context, planned []PlannedCellWrite) (PriceDelta, error) {
+	e.cellCalls = append(e.cellCalls, planned)
+	return e.delta, e.err
+}
+
+func (e *pwFakeEstimator) EstimateGroupConfig(_ context.Context, groupID int64, before, after MatrixGroupConfig) (PriceDelta, error) {
+	e.groupCalls = append(e.groupCalls, pwGroupEstimate{groupID, before, after})
+	return e.delta, e.err
+}
+
 type pwFakeInvalidator struct{ calls [][]int64 }
 
 func (i *pwFakeInvalidator) InvalidateGroups(ids ...int64) { i.calls = append(i.calls, ids) }
@@ -100,12 +123,18 @@ type pwGateFixture struct {
 	inv    *pwFakeInvalidator
 	reader *exFakeReader
 	prices exFakePrices
+	est    *pwFakeEstimator
+}
+
+// pwGuard 保存时校验关口：用夹具里的读取器与官方价。
+func (f pwGateFixture) guard() *ExposureGuard {
+	return NewExposureGuard(f.reader, NewExposureValidator(f.prices, nil))
 }
 
 func pwNewGate() pwGateFixture {
 	f := pwGateFixture{store: &pwFakeStore{}, writer: &pwFakeWriter{}, inv: &pwFakeInvalidator{},
-		reader: &exFakeReader{}, prices: exFakePrices{}}
-	f.gate = NewInterimPriceWriteGate(f.store, f.writer, NewExposureGuard(f.reader, NewExposureValidator(f.prices, nil)), f.inv)
+		reader: &exFakeReader{}, prices: exFakePrices{}, est: &pwFakeEstimator{}}
+	f.gate = NewInterimPriceWriteGate(f.store, NewMatrixTxWriter(f.writer, nil, f.guard()), f.est, f.inv)
 	f.gate.now = func() time.Time { return pwNow }
 	return f
 }
@@ -128,9 +157,11 @@ func pwPricePlan(touches bool) []PlannedCellWrite {
 func TestInterimPriceWriteGate_Propose(t *testing.T) {
 	f := pwNewGate()
 	f.writer.planned = pwPricePlan(true)
+	f.est.delta = PriceDeltaUp
 
-	ticket, err := f.gate.Propose(context.Background(), PriceWriteProposal{Request: pwPriceRequest(), Delta: PriceDeltaUp})
+	ticket, err := f.gate.Propose(context.Background(), PriceWriteProposal{Request: pwPriceRequest()})
 	require.NoError(t, err)
+	require.Equal(t, [][]PlannedCellWrite{f.writer.planned}, f.est.cellCalls, "价格方向只取自估算器，估算器收到的是规划结果")
 
 	norm, err := NormalizeCellWriteRequest(pwPriceRequest())
 	require.NoError(t, err)
@@ -186,12 +217,6 @@ func TestInterimPriceWriteGate_ProposeFailures(t *testing.T) {
 
 	f = pwNewGate()
 	f.writer.planned = pwPricePlan(true)
-	_, err = f.gate.Propose(ctx, PriceWriteProposal{Request: pwPriceRequest(), Delta: "sideways"})
-	require.Equal(t, ReasonPriceDeltaInvalid, pwReason(t, err))
-	require.Empty(t, f.store.inserted)
-
-	f = pwNewGate()
-	f.writer.planned = pwPricePlan(true)
 	f.store.insertErr = errors.New("db down")
 	_, err = f.gate.Propose(ctx, PriceWriteProposal{Request: pwPriceRequest()})
 	require.EqualError(t, err, "db down")
@@ -206,35 +231,67 @@ func TestInterimPriceWriteGate_ProposeFailures(t *testing.T) {
 	require.Equal(t, PriceDeltaUnknown, ticket.Delta)
 }
 
-func TestResolveProposalDelta(t *testing.T) {
-	cases := []struct {
-		delta   PriceDelta
-		touches bool
-		want    PriceDelta
-		wantErr bool
-	}{
-		{"", false, PriceDeltaNone, false},
-		{PriceDeltaNone, false, PriceDeltaNone, false},
-		{PriceDeltaUp, false, "", true},
-		{PriceDeltaDown, false, "", true},
-		{PriceDeltaUnknown, false, "", true},
-		{"", true, PriceDeltaUnknown, false},
-		{PriceDeltaUp, true, PriceDeltaUp, false},
-		{PriceDeltaDown, true, PriceDeltaDown, false},
-		{PriceDeltaUnknown, true, PriceDeltaUnknown, false},
-		{PriceDeltaNone, true, PriceDeltaNone, false},
-		{"sideways", true, "", true},
-		{"sideways", false, "", true},
-	}
-	for _, tc := range cases {
-		got, err := resolveProposalDelta(tc.delta, tc.touches)
-		if tc.wantErr {
-			require.Equal(t, ReasonPriceDeltaInvalid, pwReason(t, err), "%q touches=%v", tc.delta, tc.touches)
-			continue
-		}
+func TestInterimPriceWriteGate_DeltaComesOnlyFromTheEstimator(t *testing.T) {
+	ctx := context.Background()
+	propose := func(f pwGateFixture, touches bool) *PriceWriteTicket {
+		f.writer.planned = pwPricePlan(touches)
+		ticket, err := f.gate.Propose(ctx, PriceWriteProposal{Request: pwPriceRequest()})
 		require.NoError(t, err)
-		require.Equal(t, tc.want, got, "%q touches=%v", tc.delta, tc.touches)
+		return ticket
 	}
+
+	// 不涉价：none，不用估算器。
+	f := pwNewGate()
+	f.est.delta = PriceDeltaUp
+	require.Equal(t, PriceDeltaNone, propose(f, false).Delta)
+	require.Empty(t, f.est.cellCalls)
+
+	// 涉价：估算器的四个取值原样采用。
+	for _, d := range []PriceDelta{PriceDeltaUp, PriceDeltaDown, PriceDeltaNone, PriceDeltaUnknown} {
+		f = pwNewGate()
+		f.est.delta = d
+		require.Equal(t, d, propose(f, true).Delta)
+	}
+
+	// 估算器出错、返回不认识的值、没有配置估算器：都是 unknown（最严，必须交互式会话）。
+	f = pwNewGate()
+	f.est.err = errors.New("quote failed")
+	f.est.delta = PriceDeltaNone
+	require.Equal(t, PriceDeltaUnknown, propose(f, true).Delta)
+
+	f = pwNewGate()
+	f.est.delta = "sideways"
+	require.Equal(t, PriceDeltaUnknown, propose(f, true).Delta)
+
+	f = pwNewGate()
+	f.gate = NewInterimPriceWriteGate(f.store, NewMatrixTxWriter(f.writer, nil, f.guard()), nil, nil)
+	f.gate.now = func() time.Time { return pwNow }
+	require.Equal(t, PriceDeltaUnknown, propose(f, true).Delta)
+	require.Equal(t, PriceDeltaUnknown, f.store.inserted[0].Delta)
+}
+
+func TestPriceWriteActorFromAuthMethod(t *testing.T) {
+	require.Equal(t, PriceWriteActor{ID: 5, Interactive: true}, PriceWriteActorFromAuthMethod(5, AuditAuthMethodJWT))
+	for _, m := range []string{AuditAuthMethodAdminAPIKey, AuditAuthMethodAdminToken, "", "JWT", "interactive"} {
+		require.Equal(t, PriceWriteActor{ID: 5}, PriceWriteActorFromAuthMethod(5, m), "%q 不是交互式会话", m)
+	}
+}
+
+func TestMatrixTxWriter_MissingWriters(t *testing.T) {
+	ctx := context.Background()
+	w := NewMatrixTxWriter(nil, nil, nil)
+	_, err := w.ApplyCellWritesTx(ctx, nil, CellWriteRequest{})
+	require.Equal(t, ReasonPriceWriterMissing, pwReason(t, err))
+	_, err = w.ApplyGroupConfigTx(ctx, nil, GroupConfigWriteRequest{})
+	require.Equal(t, ReasonPriceWriterMissing, pwReason(t, err))
+	_, err = w.PreviewCellWrites(ctx, nil, CellWriteRequest{})
+	require.Equal(t, ReasonPriceWriterMissing, pwReason(t, err))
+	_, err = w.PreviewGroupConfig(ctx, nil, GroupConfigWriteRequest{})
+	require.Equal(t, ReasonPriceWriterMissing, pwReason(t, err))
+
+	var nilWriter *MatrixTxWriter
+	_, err = nilWriter.ApplyCellWritesTx(ctx, nil, CellWriteRequest{})
+	require.Equal(t, ReasonPriceWriterMissing, pwReason(t, err))
 }
 
 func pwCommit(approval int64, interactive bool) PriceWriteCommit {
@@ -298,7 +355,7 @@ func TestInterimPriceWriteGate_CommitWithoutApproval(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, f.inv.calls)
 
-	gate := NewInterimPriceWriteGate(f.store, f.writer, NewExposureGuard(f.reader, NewExposureValidator(f.prices, nil)), nil)
+	gate := NewInterimPriceWriteGate(f.store, NewMatrixTxWriter(f.writer, nil, f.guard()), f.est, nil)
 	f.writer.applyRes = &CellWriteResult{ChangedGroupIDs: []int64{1}}
 	_, err = gate.Commit(ctx, pwCommit(0, false))
 	require.NoError(t, err)
@@ -310,7 +367,8 @@ func TestInterimPriceWriteGate_CommitConsumesApprovalInTheWriteTx(t *testing.T) 
 	// 预览与提交的指纹一致：同一份请求得到同一个计划指纹。
 	proposer := pwNewGate()
 	proposer.writer.planned = pwPricePlan(true)
-	ticket, err := proposer.gate.Propose(ctx, PriceWriteProposal{Request: pwPriceRequest(), Delta: PriceDeltaUp})
+	proposer.est.delta = PriceDeltaUp
+	ticket, err := proposer.gate.Propose(ctx, PriceWriteProposal{Request: pwPriceRequest()})
 	require.NoError(t, err)
 
 	f := pwNewGate()
@@ -431,7 +489,7 @@ func TestInterimPriceWriteGate_ExposureValidation(t *testing.T) {
 
 	// 没有配置保存时校验：预览与提交都失败关闭。
 	f = pwNewGate()
-	gate := NewInterimPriceWriteGate(f.store, f.writer, nil, nil)
+	gate := NewInterimPriceWriteGate(f.store, NewMatrixTxWriter(f.writer, nil, nil), f.est, nil)
 	f.writer.planned = unpriced()
 	_, err = gate.Propose(ctx, PriceWriteProposal{Request: req})
 	require.Equal(t, ReasonExposureGuardMissing, pwReason(t, err))

@@ -114,7 +114,8 @@ type CellGroupState struct {
 type CellWriter interface {
 	// PlanTx 读取现状并规划，不写入、不加锁（预览用）；校验与 ApplyTx 完全一致。
 	PlanTx(ctx context.Context, exec MatrixExecutor, req CellWriteRequest) ([]PlannedCellWrite, error)
-	// ApplyTx 只能在事务里调用（参数类型 MatrixTx 保证这一点；服务层只经 PriceWriteStore.WithTx 调用）。
+	// ApplyTx 只能在事务里调用（参数类型 MatrixTx 保证这一点），而且只能经 MatrixTxWriter.ApplyCellWritesTx 调用：
+	// 保存时校验在那里和写入做成一体，直接调用 ApplyTx 就绕过了它（pricing_write_tx_guard_test.go 守着）。
 	// 它在调用方的事务里写入：先按 group_id 升序对 group_model_config 行 SELECT ... FOR UPDATE
 	// （与派生钩子、阶段切换互斥），确认分组都是 v2 且基线未变，再逐个单元格写入，
 	// 同一事务里追加 model_group_price_history，并把涉及分组的配置 revision 加一。
@@ -132,8 +133,13 @@ const (
 	PriceDeltaUnknown PriceDelta = "unknown"
 )
 
-// PriceWriteKindCells 审批记录的种类：单元格写入。
-const PriceWriteKindCells = "cell_write"
+// 审批记录的种类（pricing_write_approvals.kind，VARCHAR(24)，库里没有枚举约束）。
+const (
+	// PriceWriteKindCells 单元格写入。
+	PriceWriteKindCells = "cell_write"
+	// PriceWriteKindGroupConfig 分组配置写入：改计费来源、改模型映射会改变请求按哪个模型计费，按涉价处理。
+	PriceWriteKindGroupConfig = "group_config"
+)
 
 // PriceWriteApprovalTTL 预览记录的有效期，过期必须重新预览。
 const PriceWriteApprovalTTL = 30 * time.Minute
@@ -177,12 +183,10 @@ type PriceWriteGate interface {
 	Commit(ctx context.Context, in PriceWriteCommit) (*CellWriteResult, error)
 }
 
-// PriceWriteProposal 预览请求。
+// PriceWriteProposal 预览请求。价格方向不在这里：它只能由服务端估算器（PriceDeltaEstimator）给出，
+// 请求里没有这个字段，所以调用方（包括 HTTP 层）没有办法自己声明一个 none。
 type PriceWriteProposal struct {
 	Request CellWriteRequest
-	// Delta 由调用方的估算器（PR4b-2 的 QuoteWith + PriceDiff）给出，不来自终端用户输入。
-	// 空串：涉价时按 unknown、不涉价时按 none。不涉价的写入只能是 none。
-	Delta PriceDelta
 }
 
 // PriceWriteTicket 预览凭证。
@@ -198,7 +202,8 @@ type PriceWriteTicket struct {
 // PriceWriteActor 提交写入的操作人。
 type PriceWriteActor struct {
 	ID int64
-	// Interactive 是交互式管理员会话（JWT）；机器令牌（admin token）不是。
+	// Interactive 是交互式管理员会话（JWT）；机器令牌（admin token）与全局管理员密钥不是。
+	// 只能由 PriceWriteActorFromAuthMethod 按鉴权中间件记下的 auth_method 构造，不取自请求体。
 	Interactive bool
 }
 
@@ -227,7 +232,6 @@ const (
 	ReasonPriceWriteApproval       = "PRICE_WRITE_APPROVAL_REQUIRED"
 	ReasonPriceWriteInteractive    = "PRICE_WRITE_INTERACTIVE_REQUIRED"
 	ReasonPriceWritePlanChanged    = "PRICE_WRITE_PLAN_CHANGED"
-	ReasonPriceDeltaInvalid        = "PRICE_DELTA_INVALID"
 	ReasonApprovalNotFound         = "PRICE_WRITE_APPROVAL_NOT_FOUND"
 	ReasonApprovalExpired          = "PRICE_WRITE_APPROVAL_EXPIRED"
 	ReasonApprovalConsumed         = "PRICE_WRITE_APPROVAL_CONSUMED"

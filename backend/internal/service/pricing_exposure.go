@@ -320,6 +320,19 @@ func (g *ExposureGuard) CheckGroups(ctx context.Context, exec MatrixExecutor, gr
 	return exposureError(g.validator.Check(ctx, cells))
 }
 
+// CheckGroupAsAllowlist 预览用：分组还不是白名单时，按「假如它已经是白名单」校验它现有的 open 精确单元格。
+// 保存时校验（CheckGroups）读的是库里的准入模式，改成白名单的写入要先预览、后提交，预览时库里还是旧模式。
+func (g *ExposureGuard) CheckGroupAsAllowlist(ctx context.Context, exec MatrixExecutor, groupID int64) error {
+	if err := g.ready(); err != nil {
+		return err
+	}
+	cells, err := g.reader.OpenCellsTx(ctx, exec, []int64{groupID})
+	if err != nil {
+		return err
+	}
+	return exposureError(g.validator.Check(ctx, cells))
+}
+
 func exposureError(violations []ExposureViolation) error {
 	if len(violations) == 0 {
 		return nil

@@ -422,7 +422,7 @@ func TestInterimPriceWriteGate_Integration_PreviewConfirmCommit(t *testing.T) {
 	gid := pwiV2Group(t) // revision 3
 	store := NewPricingWriteStore(integrationDB)
 	inv := &pwiInvalidator{}
-	gate := service.NewInterimPriceWriteGate(store, NewPricingCellWriter(), pwiGuard(nil), inv)
+	gate := service.NewInterimPriceWriteGate(store, service.NewMatrixTxWriter(NewPricingCellWriter(), nil, pwiGuard(nil)), nil, inv)
 	priceReq := func(key string, extra float64, groupRev, baseline int64) service.CellWriteRequest {
 		return service.CellWriteRequest{
 			Ops: []service.CellOp{pwiExtra(gid, key, extra, baseline)}, GroupRevisions: map[int64]int64{gid: groupRev}, OperatorID: 21,
@@ -513,7 +513,7 @@ func TestInterimPriceWriteGate_Integration_PreviewConfirmCommit(t *testing.T) {
 
 func TestInterimPriceWriteGate_Integration_ProposeRefusesLegacyGroups(t *testing.T) {
 	gid := pwiGroup(t, "legacy", 1)
-	gate := service.NewInterimPriceWriteGate(NewPricingWriteStore(integrationDB), NewPricingCellWriter(), pwiGuard(nil), nil)
+	gate := service.NewInterimPriceWriteGate(NewPricingWriteStore(integrationDB), service.NewMatrixTxWriter(NewPricingCellWriter(), nil, pwiGuard(nil)), nil, nil)
 	_, err := gate.Propose(context.Background(), service.PriceWriteProposal{Request: service.CellWriteRequest{
 		Ops: []service.CellOp{pwiExtra(gid, "pw-m", 1.5, 0)}, GroupRevisions: map[int64]int64{gid: 1}, OperatorID: 21,
 	}})

@@ -41,7 +41,51 @@ func pwiGroupConfigService(prices pwiPrices, inv *pwiInvalidator) *service.Group
 	if inv != nil {
 		invalidator = inv
 	}
-	return service.NewGroupConfigService(NewPricingWriteStore(integrationDB), NewPricingGroupConfigWriter(), pwiGuard(prices), invalidator)
+	return service.NewGroupConfigService(NewPricingWriteStore(integrationDB),
+		service.NewMatrixTxWriter(nil, NewPricingGroupConfigWriter(), pwiGuard(prices)), nil, invalidator)
+}
+
+// pwiGcApply 走完整的预览加提交：涉价的改动带着预览凭证，用交互式管理员会话提交。
+func pwiGcApply(ctx context.Context, svc *service.GroupConfigService, req service.GroupConfigWriteRequest) (*service.GroupConfigWriteResult, error) {
+	ticket, err := svc.Propose(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return svc.Commit(ctx, service.GroupConfigCommit{
+		ApprovalID: ticket.ApprovalID, Request: req, Confirm: true,
+		Actor: service.PriceWriteActor{ID: req.OperatorID, Interactive: true},
+	})
+}
+
+func TestGroupConfigService_Integration_PriceTouchingNeedsApproval(t *testing.T) {
+	ctx := context.Background()
+	gid := pwiV2Group(t) // revision 3
+	svc := pwiGroupConfigService(nil, nil)
+	bms := service.BillingModelSourceRequested
+	req := service.GroupConfigWriteRequest{GroupID: gid, BaselineRevision: 3, OperatorID: 5, BillingModelSource: &bms}
+
+	// 没有凭证：拒绝，库里不变。
+	_, err := svc.Commit(ctx, service.GroupConfigCommit{Request: req, Confirm: true, Actor: service.PriceWriteActor{ID: 5, Interactive: true}})
+	require.Equal(t, service.ReasonPriceWriteApproval, pwiReason(t, err))
+	require.Equal(t, int64(3), pwiConfigRevision(t, gid))
+
+	// 没有估算器时方向是 unknown：机器令牌（非交互式）拒绝，凭证被事务回滚而保持可用。
+	ticket, err := svc.Propose(ctx, req)
+	require.NoError(t, err)
+	require.NotZero(t, ticket.ApprovalID)
+	require.True(t, ticket.TouchesPrice)
+	require.Equal(t, service.PriceDeltaUnknown, ticket.Delta)
+	_, err = svc.Commit(ctx, service.GroupConfigCommit{ApprovalID: ticket.ApprovalID, Request: req, Confirm: true, Actor: service.PriceWriteActor{ID: 5}})
+	require.Equal(t, service.ReasonPriceWriteInteractive, pwiReason(t, err))
+	require.Equal(t, int64(3), pwiConfigRevision(t, gid))
+
+	// 交互式会话：成功，凭证用掉，不能重放。
+	commit := service.GroupConfigCommit{ApprovalID: ticket.ApprovalID, Request: req, Confirm: true, Actor: service.PriceWriteActor{ID: 5, Interactive: true}}
+	_, err = svc.Commit(ctx, commit)
+	require.NoError(t, err)
+	require.Equal(t, int64(4), pwiConfigRevision(t, gid))
+	_, err = svc.Commit(ctx, commit)
+	require.Error(t, err)
 }
 
 func TestPricingGroupConfigWriter_Integration_WritesAndBumpsRevision(t *testing.T) {
@@ -53,7 +97,7 @@ func TestPricingGroupConfigWriter_Integration_WritesAndBumpsRevision(t *testing.
 	mapping := []service.MatrixMappingEntry{{Src: "b-*", Dst: "x"}, {Src: "B-long", Dst: "y"}, {Src: "a", Dst: ""}}
 	features := map[string]any{"bedrock_cc_compat": true, "web_search_emulation": map[string]any{"anthropic": true}}
 
-	res, err := svc.Apply(ctx, service.GroupConfigWriteRequest{
+	res, err := pwiGcApply(ctx, svc, service.GroupConfigWriteRequest{
 		GroupID: gid, BaselineRevision: 3, OperatorID: 5,
 		AccessMode: &allow, CostMode: &costMode, BillingModelSource: &bms, ModelMapping: &mapping, Features: &features,
 	})
@@ -73,7 +117,7 @@ func TestPricingGroupConfigWriter_Integration_WritesAndBumpsRevision(t *testing.
 	require.Equal(t, true, got.Features["bedrock_cc_compat"])
 
 	// 同样的内容再写一次：不加 revision，不失效缓存。
-	res, err = svc.Apply(ctx, service.GroupConfigWriteRequest{GroupID: gid, BaselineRevision: 4, OperatorID: 5, AccessMode: &allow})
+	res, err = pwiGcApply(ctx, svc, service.GroupConfigWriteRequest{GroupID: gid, BaselineRevision: 4, OperatorID: 5, AccessMode: &allow})
 	require.NoError(t, err)
 	require.False(t, res.Changed)
 	require.Equal(t, int64(4), pwiConfigRevision(t, gid))
@@ -81,12 +125,12 @@ func TestPricingGroupConfigWriter_Integration_WritesAndBumpsRevision(t *testing.
 
 	// 基线过期。
 	open := service.MatrixAccessOpen
-	_, err = svc.Apply(ctx, service.GroupConfigWriteRequest{GroupID: gid, BaselineRevision: 3, OperatorID: 5, AccessMode: &open})
+	_, err = pwiGcApply(ctx, svc, service.GroupConfigWriteRequest{GroupID: gid, BaselineRevision: 3, OperatorID: 5, AccessMode: &open})
 	require.Equal(t, service.ReasonPriceBaselineChanged, pwiReason(t, err))
 	require.Equal(t, "allowlist", pwiAccessMode(t, gid))
 
 	// 清空计费来源；只改成本模式不算涉价，也不过保存时校验。
-	res, err = svc.Apply(ctx, service.GroupConfigWriteRequest{GroupID: gid, BaselineRevision: 4, OperatorID: 5, ClearBillingModelSource: true})
+	res, err = pwiGcApply(ctx, svc, service.GroupConfigWriteRequest{GroupID: gid, BaselineRevision: 4, OperatorID: 5, ClearBillingModelSource: true})
 	require.NoError(t, err)
 	require.True(t, res.ExposureRelevant)
 	require.Nil(t, mxLoad(t, NewPricingMatrixRepository(integrationDB), gid).Config.BillingModelSource)
@@ -96,14 +140,14 @@ func TestPricingGroupConfigWriter_Integration_OnlyV2Groups(t *testing.T) {
 	for _, stage := range []string{"legacy", "shadow"} {
 		gid := pwiGroup(t, stage, 1)
 		open := service.MatrixAccessOpen
-		_, err := pwiGroupConfigService(nil, nil).Apply(context.Background(),
+		_, err := pwiGcApply(context.Background(), pwiGroupConfigService(nil, nil),
 			service.GroupConfigWriteRequest{GroupID: gid, BaselineRevision: 1, OperatorID: 5, AccessMode: &open})
 		require.Equal(t, service.ReasonGroupConfigNotV2, pwiReason(t, err), stage)
 		require.Equal(t, int64(1), pwiConfigRevision(t, gid))
 	}
 	// 没有配置行的分组同样拒绝。
 	open := service.MatrixAccessOpen
-	_, err := pwiGroupConfigService(nil, nil).Apply(context.Background(),
+	_, err := pwiGcApply(context.Background(), pwiGroupConfigService(nil, nil),
 		service.GroupConfigWriteRequest{GroupID: mxIntGroup(t), BaselineRevision: 1, OperatorID: 5, AccessMode: &open})
 	require.Equal(t, service.ReasonGroupConfigNotV2, pwiReason(t, err))
 }
@@ -132,7 +176,7 @@ func TestPricingGroupConfigWriter_Integration_AllowlistSwitchIsBlockedByUnpriced
 
 	allow := service.MatrixAccessAllowlist
 	svc := pwiGroupConfigService(prices, nil)
-	_, err = svc.Apply(ctx, service.GroupConfigWriteRequest{GroupID: gid, BaselineRevision: 4, OperatorID: 5, AccessMode: &allow})
+	_, err = pwiGcApply(ctx, svc, service.GroupConfigWriteRequest{GroupID: gid, BaselineRevision: 4, OperatorID: 5, AccessMode: &allow})
 	require.Equal(t, service.ReasonExposureUnpriced, pwiReason(t, err))
 	require.Equal(t, "open", pwiAccessMode(t, gid), "违规时整个事务回滚")
 	require.Equal(t, int64(4), pwiConfigRevision(t, gid))
@@ -143,7 +187,7 @@ func TestPricingGroupConfigWriter_Integration_AllowlistSwitchIsBlockedByUnpriced
 	fixZero.CustomPrice = &service.MatrixCustomPrice{BillingMode: service.BillingModeToken, OutputPrice: mxF(2e-6)}
 	_, err = pwiApply(store, service.CellWriteRequest{Ops: []service.CellOp{fix, fixZero}, GroupRevisions: map[int64]int64{gid: 4}, OperatorID: 1})
 	require.NoError(t, err)
-	_, err = svc.Apply(ctx, service.GroupConfigWriteRequest{GroupID: gid, BaselineRevision: 5, OperatorID: 5, AccessMode: &allow})
+	_, err = pwiGcApply(ctx, svc, service.GroupConfigWriteRequest{GroupID: gid, BaselineRevision: 5, OperatorID: 5, AccessMode: &allow})
 	require.NoError(t, err)
 	require.Equal(t, "allowlist", pwiAccessMode(t, gid))
 }
@@ -153,7 +197,8 @@ func TestInterimPriceWriteGate_Integration_AllowlistGroupRejectsUnpricedOpenCell
 	gid := pwiV2Group(t)
 	pwiSetAccess(t, gid, "allowlist")
 	store := NewPricingWriteStore(integrationDB)
-	gate := service.NewInterimPriceWriteGate(store, NewPricingCellWriter(), pwiGuard(pwiPrices{"pw-official": {Known: true, TokenNonZero: true}}), nil)
+	gate := service.NewInterimPriceWriteGate(store,
+		service.NewMatrixTxWriter(NewPricingCellWriter(), nil, pwiGuard(pwiPrices{"pw-official": {Known: true, TokenNonZero: true}})), nil, nil)
 	req := func(op service.CellOp) service.CellWriteRequest {
 		return service.CellWriteRequest{Ops: []service.CellOp{op}, GroupRevisions: map[int64]int64{gid: 3}, OperatorID: 21}
 	}

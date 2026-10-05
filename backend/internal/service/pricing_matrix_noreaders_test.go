@@ -44,6 +44,9 @@ var matrixOwnFiles = map[string]struct{}{
 	"internal/service/pricing_snapshot_types.go":         {}, // W6 PR9b：快照批准事务里的校验回调类型（MatrixExecutor），只在管理员批准时执行
 	"internal/service/pricing_snapshot_admin_service.go": {}, // W6 PR9b：快照批准，auto 模式下不会被调用
 	"internal/service/pricing_snapshot_exposure.go":      {}, // W6 PR9b：批准时对白名单分组跑 CheckGroups
+	"internal/service/pricing_write_tx.go":               {}, // W6 PR4b-2b-1：写入与保存时校验的唯一事务入口（MatrixTxWriter），没有生产路径构造它
+	"internal/service/pricing_estimator.go":              {}, // W6 PR4b-2b-1：价格方向估算器，没有生产路径构造它
+	"internal/service/price_quoter_overlay.go":           {}, // W6 PR4b-2b-1：QuoteWith / BatchQuoteWith，没有生产路径调用
 
 	// W6 PR5：stagedPolicy 与影子比对。它们读矩阵快照，但只用来比对：阶段为 shadow 的分组才会比对，
 	// 真实请求不会被路由到矩阵（见下面的 TestStagedPolicyNeverRoutesToV2InProduction）。
@@ -87,6 +90,8 @@ var matrixEntryPoints = regexp.MustCompile(`\b(` + strings.Join([]string{
 	"MatrixTx", "ExposureValidator", "NewExposureValidator", "ExposureGuard", "NewExposureGuard", "ExposureReader",
 	"GroupConfigWriter", "GroupConfigService", "NewGroupConfigService", "NewPricingGroupConfigWriter", "NewPricingExposureReader",
 	"OfficialPriceStateSource", "LookupOfficialPriceState",
+	"MatrixTxWriter", "NewMatrixTxWriter", "PriceDeltaEstimator", "PriceEstimator", "NewPriceEstimator",
+	"CellOverlay", "OverlayFromPlanned",
 }, "|") + `)\b`)
 
 func TestMatrixTablesAndDerivationHaveNoReaders(t *testing.T) {
