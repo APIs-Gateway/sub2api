@@ -34,13 +34,14 @@ type inflightHTTPUpstream struct {
 	contentType string
 	status      int
 	readErr     error
+	script      func(*http.Request, int64) (*http.Response, error)
 }
 
 type inflightHTTPReadError struct{ err error }
 
 func (r inflightHTTPReadError) Read([]byte) (int, error) { return 0, r.err }
 
-func (u *inflightHTTPUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+func (u *inflightHTTPUpstream) Do(req *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
 	if u.calls.Add(1) == 1 {
 		close(u.started)
 		select {
@@ -48,6 +49,9 @@ func (u *inflightHTTPUpstream) Do(req *http.Request, _ string, _ int64, _ int) (
 		case <-req.Context().Done():
 			return nil, req.Context().Err()
 		}
+	}
+	if u.script != nil {
+		return u.script(req, accountID)
 	}
 	status := u.status
 	if status == 0 {
@@ -65,6 +69,8 @@ func (u *inflightHTTPUpstream) DoWithTLS(req *http.Request, proxy string, id int
 
 type inflightHTTPFixture struct {
 	user          *service.User
+	accounts      service.AccountRepository
+	accountID     int64
 	key           *service.APIKey
 	gateway       *userhandler.GatewayHandler
 	openAI        *userhandler.OpenAIGatewayHandler
@@ -133,7 +139,7 @@ func newInflightHTTPFixture(t *testing.T, platform, response, contentType string
 	}
 	pool := service.NewUsageRecordWorkerPoolWithOptions(options)
 	t.Cleanup(pool.Stop)
-	fixture := &inflightHTTPFixture{user: user, key: key, pool: pool, upstream: upstream, openAIService: openAISvc,
+	fixture := &inflightHTTPFixture{user: user, accounts: accounts, accountID: account.ID, key: key, pool: pool, upstream: upstream, openAIService: openAISvc,
 		gateway: userhandler.NewGatewayHandler(gatewaySvc, gemini, nil, nil, nil, concurrency, billingCache, nil, nil, pool, nil, nil, nil, cfg, nil, openAISvc),
 		openAI:  userhandler.NewOpenAIGatewayHandler(openAISvc, concurrency, billingCache, keyService, pool, nil, nil, nil, cfg)}
 	t.Cleanup(func() {

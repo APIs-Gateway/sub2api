@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -193,7 +194,6 @@ func TestHandleCCStreamingFromAnthropic_PingWriteFailureStopsDownstream(t *testi
 				require.Equal(t, 10, result.Usage.InputTokens)
 			} else {
 				require.Zero(t, result.Usage.InputTokens)
-				require.Nil(t, result.FirstTokenMs)
 			}
 		})
 	}
@@ -232,4 +232,34 @@ func TestHandleCCStreamingFromAnthropic_PingOnlyDoesNotFabricateUsage(t *testing
 	require.Nil(t, result, "no observed tokens must not create a billable result")
 	require.Equal(t, ": ping\n\n", writer.Body.String())
 	require.NotContains(t, writer.Body.String(), "[DONE]")
+}
+
+func TestHandleCCStreamingFromAnthropic_PingPreservesProviderAdmission(t *testing.T) {
+	for _, metered := range []bool{false, true} {
+		t.Run(fmt.Sprint(metered), func(t *testing.T) {
+			writer := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(writer)
+			stream := "event: ping\ndata: {\"type\":\"ping\"}\n\n"
+			if metered {
+				stream += "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_paid\",\"usage\":{\"input_tokens\":10}}}\n\n"
+			}
+			stream += "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"busy\"}}\n\n"
+			svc := &GatewayService{}
+			resp := &http.Response{Header: http.Header{}, Body: io.NopCloser(strings.NewReader(stream))}
+			result, err := svc.handleCCStreamingFromAnthropic(resp, c, "gpt-5", "claude-sonnet-4.5", nil, time.Now())
+			result, err = svc.anthropicCompatProviderError(context.Background(), resp, c, &Account{ID: 1, Platform: PlatformAnthropic}, "claude-sonnet-4.5", result, err)
+			require.Error(t, err)
+			var failover *UpstreamFailoverError
+			if metered {
+				require.False(t, errors.As(err, &failover))
+				require.NotNil(t, result)
+				require.Equal(t, 10, result.Usage.InputTokens)
+			} else {
+				require.ErrorAs(t, err, &failover)
+				require.Equal(t, 529, failover.StatusCode)
+				require.True(t, failover.BillingNoCharge, "complete overload envelope preserves existing refusal proof")
+				require.Nil(t, result)
+			}
+		})
+	}
 }

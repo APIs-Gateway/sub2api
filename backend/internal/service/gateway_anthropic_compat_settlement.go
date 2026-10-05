@@ -78,6 +78,23 @@ func anthropicCompatClientGone(c *gin.Context) bool {
 	return c != nil && c.Request != nil && c.Request.Context().Err() != nil
 }
 
+// This marker is internal and records an exact writer size, so any later
+// JSON/content/error write invalidates heartbeat-only replay automatically.
+const anthropicChatHeartbeatSizeKey = "sub2api.anthropic_chat_heartbeat_size"
+
+func AnthropicChatHeartbeatOnly(c *gin.Context) bool {
+	if c == nil || c.Writer == nil || IsResponseCommitted(c) || anthropicCompatClientGone(c) {
+		return false
+	}
+	value, found := c.Get(anthropicChatHeartbeatSizeKey)
+	size, ok := value.(int)
+	return found && ok && size > 0 && c.Writer.Size() == size
+}
+
+func anthropicCompatReplayBeforeContent(c *gin.Context) bool {
+	return !c.Writer.Written() || AnthropicChatHeartbeatOnly(c)
+}
+
 // Failover must return no billable result. Once usage was metered it is settled
 // by the handler instead of replaying, even when no response bytes were sent.
 func anthropicCompatIncompleteStream(c *gin.Context, result *ForwardResult, readErr error) (*ForwardResult, error) {
@@ -85,7 +102,7 @@ func anthropicCompatIncompleteStream(c *gin.Context, result *ForwardResult, read
 	if !c.Writer.Written() {
 		c.Writer.Header().Del("Content-Type")
 	}
-	if readErr != nil && !errors.Is(readErr, bufio.ErrTooLong) && !errors.Is(readErr, context.Canceled) && !errors.Is(readErr, context.DeadlineExceeded) && !observed && !c.Writer.Written() && !result.ClientDisconnect && !anthropicCompatClientGone(c) {
+	if readErr != nil && !errors.Is(readErr, bufio.ErrTooLong) && !errors.Is(readErr, context.Canceled) && !errors.Is(readErr, context.DeadlineExceeded) && !observed && anthropicCompatReplayBeforeContent(c) && !result.ClientDisconnect && !anthropicCompatClientGone(c) {
 		var streamError *sseStreamErrorEventError
 		if errors.As(readErr, &streamError) {
 			return nil, streamError
@@ -96,7 +113,9 @@ func anthropicCompatIncompleteStream(c *gin.Context, result *ForwardResult, read
 		})
 		// Headers are still pending; an exhausted failover must be able to
 		// answer endpoint JSON instead of inheriting the upstream SSE type.
-		c.Writer.Header().Del("Content-Type")
+		if !c.Writer.Written() {
+			c.Writer.Header().Del("Content-Type")
+		}
 		return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, ResponseBody: body, RetryableOnSameAccount: true}
 	}
 	err := errors.New("stream usage incomplete: missing terminal event")
@@ -128,7 +147,7 @@ func (s *GatewayService) anthropicCompatProviderError(ctx context.Context, resp 
 		return result, err
 	}
 	body := []byte(streamErr.RawData)
-	eligible := result == nil && !c.Writer.Written() && !anthropicCompatClientGone(c)
+	eligible := result == nil && anthropicCompatReplayBeforeContent(c) && !anthropicCompatClientGone(c)
 	status := http.StatusForbidden
 	if eligible && gjson.GetBytes(body, "error.type").String() == "overloaded_error" {
 		status = 529

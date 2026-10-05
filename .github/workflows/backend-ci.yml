@@ -55,6 +55,9 @@ jobs:
       - name: Integration tests (Antigravity actual partial billing)
         working-directory: backend
         run: go test -tags=integration -count=1 -run '^TestAntigravityPartialBilling_' -v ./internal/repository/
+      - name: Integration tests (chat ping actual account failover and billing)
+        working-directory: backend
+        run: go test -tags=integration -count=1 -v -run '^TestChatPingHTTP_' ./internal/repository/
       - name: Integration tests (race, TOTP login claims)
         working-directory: backend
         env:
