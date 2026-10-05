@@ -3226,6 +3226,12 @@ func mapGeminiFinishReasonToClaudeStopReason(finishReason string) string {
 }
 
 func convertClaudeMessagesToGeminiGenerateContent(body []byte) ([]byte, error) {
+	return convertClaudeMessagesToGeminiGenerateContentForRoute(body, false)
+}
+
+// Only the Chat route whose input_audio has already been validated opts in.
+// Client body fields never control this internal route selection.
+func convertClaudeMessagesToGeminiGenerateContentForRoute(body []byte, allowValidatedChatAudio bool) ([]byte, error) {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, err
@@ -3234,7 +3240,7 @@ func convertClaudeMessagesToGeminiGenerateContent(body []byte) ([]byte, error) {
 	toolUseIDToName := make(map[string]string)
 
 	systemText := extractClaudeSystemText(req["system"])
-	contents, err := convertClaudeMessagesToGeminiContents(req["messages"], toolUseIDToName)
+	contents, err := convertClaudeMessagesToGeminiContentsForRoute(req["messages"], toolUseIDToName, allowValidatedChatAudio)
 	if err != nil {
 		return nil, err
 	}
@@ -3315,6 +3321,10 @@ func extractClaudeSystemText(system any) string {
 }
 
 func convertClaudeMessagesToGeminiContents(messages any, toolUseIDToName map[string]string) ([]any, error) {
+	return convertClaudeMessagesToGeminiContentsForRoute(messages, toolUseIDToName, false)
+}
+
+func convertClaudeMessagesToGeminiContentsForRoute(messages any, toolUseIDToName map[string]string, allowValidatedChatAudio bool) ([]any, error) {
 	arr, ok := messages.([]any)
 	if !ok {
 		return nil, errors.New("messages must be an array")
@@ -3393,7 +3403,7 @@ func convertClaudeMessagesToGeminiContents(messages any, toolUseIDToName map[str
 					if src, ok := bm["source"].(map[string]any); ok {
 						mediaType, _ := src["media_type"].(string)
 						data, _ := src["data"].(string)
-						if src["type"] == "base64" && strings.HasPrefix(mediaType, "audio/") && data != "" {
+						if allowValidatedChatAudio && src["type"] == "base64" && strings.HasPrefix(mediaType, "audio/") && data != "" {
 							parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": mediaType, "data": data}})
 							continue
 						}

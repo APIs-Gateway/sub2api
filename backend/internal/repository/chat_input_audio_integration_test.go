@@ -73,7 +73,7 @@ func TestChatInputAudioHTTP_GeminiPayloadAndBillOnce(t *testing.T) {
 					f.upstream.observe = func(req *http.Request) {
 						payload, err := io.ReadAll(req.Body)
 						require.NoError(t, err)
-						require.Contains(t, req.URL.Path, "gemini-2.5-flash")
+						require.Contains(t, req.URL.Path, "gemini-3.6-flash")
 						parts := gjson.GetBytes(payload, "contents.0.parts").Array()
 						require.Len(t, parts, 4, "actual upstream must receive each mixed content part: %s", payload)
 						require.Equal(t, "before", parts[0].Get("text").String())
@@ -85,7 +85,7 @@ func TestChatInputAudioHTTP_GeminiPayloadAndBillOnce(t *testing.T) {
 					}
 					close(f.upstream.release)
 					content := fmt.Sprintf(`[{"type":"text","text":"before"},{"type":"input_audio","input_audio":{"data":"aGVsbG8=","format":%q}},{"type":"image_url","image_url":{"url":"data:image/png;base64,aW1hZ2U="}},{"type":"text","text":"after"}]`, format)
-					rec := f.request(chatAudioBody("gemini-2.5-flash", "user", content, stream), "/v1/chat/completions", "", f.gateway.ChatCompletions)
+					rec := f.request(chatAudioBody("gemini-3.6-flash", "user", content, stream), "/v1/chat/completions", "", f.gateway.ChatCompletions)
 					require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 					require.Contains(t, rec.Body.String(), "ok")
 					assertAudioSettlement(t, f, card)
@@ -116,7 +116,7 @@ func TestChatInputAudioHTTP_LocalRejectReleasesFunding(t *testing.T) {
 				response, contentType := inflightAnthropicSSE, "text/event-stream"
 				model := "claude-sonnet-4-5"
 				if platform == service.PlatformGemini {
-					model, response, contentType = "gemini-2.5-flash", inflightGeminiJSON, "application/json"
+					model, response, contentType = "gemini-3.6-flash", inflightGeminiJSON, "application/json"
 				}
 				if platform == service.PlatformOpenAI {
 					model, response = "gpt-5", inflightResponsesSSE
@@ -142,6 +142,9 @@ func TestChatInputAudioHTTP_LocalRejectReleasesFunding(t *testing.T) {
 				require.Zero(t, dedup)
 				require.InDelta(t, 10, balance, 1e-10)
 				require.Zero(t, inflightHeld(t, f.user.ID), "no-dispatch validation must release the current immutable attempt")
+				var activeLeases int
+				require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM billing_inflight_leases WHERE user_id=$1 AND expires_at>clock_timestamp()`, f.user.ID).Scan(&activeLeases))
+				require.Zero(t, activeLeases, "local rejection must not leave an exclusive zero-valued owner either")
 			})
 		}
 	}
@@ -174,7 +177,7 @@ func TestChatInputAudioHTTP_UnknownReadErrorRetainsFunding(t *testing.T) {
 	f.upstream.readErr = errors.New("unknown provider execution after audio dispatch")
 	close(f.upstream.release)
 	content := `[{"type":"input_audio","input_audio":{"data":"aGVsbG8=","format":"wav"}}]`
-	rec := f.request(chatAudioBody("gemini-2.5-flash", "user", content, false), "/v1/chat/completions", "", f.gateway.ChatCompletions)
+	rec := f.request(chatAudioBody("gemini-3.6-flash", "user", content, false), "/v1/chat/completions", "", f.gateway.ChatCompletions)
 	require.Equal(t, http.StatusBadGateway, rec.Code, rec.Body.String())
 	require.EqualValues(t, 1, f.upstream.calls.Load())
 	f.pool.Stop()
@@ -185,4 +188,61 @@ func TestChatInputAudioHTTP_UnknownReadErrorRetainsFunding(t *testing.T) {
 	require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&balance))
 	require.Zero(t, logs)
 	require.InDelta(t, 10, balance, 1e-10)
+}
+
+func TestChatInputAudioHTTP_DefaultMessagesKeepOriginalDocumentFallback(t *testing.T) {
+	for _, role := range []string{"user", "assistant"} {
+		for _, mime := range []string{"audio/wav", "audio/unknown"} {
+			for _, data := range []string{"aA==", "%%%"} {
+				t.Run(role+"/"+mime+"/"+data, func(t *testing.T) {
+					f := newInflightHTTPFixture(t, service.PlatformGemini, inflightGeminiJSON, "application/json")
+					chatAudioWallet(t, f)
+					block := map[string]any{"type": "document", "source": map[string]any{"type": "base64", "media_type": mime, "data": data}}
+					body, err := json.Marshal(map[string]any{"allowValidatedChatAudio": true, "allow_audio": true, "model": "gemini-3.6-flash", "max_tokens": 8, "messages": []any{map[string]any{"role": role, "content": []any{block}}}})
+					require.NoError(t, err)
+					f.upstream.observe = func(req *http.Request) {
+						payload, err := io.ReadAll(req.Body)
+						require.NoError(t, err)
+						parts := gjson.GetBytes(payload, "contents.0.parts").Array()
+						require.Len(t, parts, 1)
+						require.False(t, parts[0].Get("inlineData").Exists(), "new Chat audio option must not change native Messages document behavior")
+						encoded, err := json.Marshal(block)
+						require.NoError(t, err)
+						require.JSONEq(t, string(encoded), parts[0].Get("text").String())
+					}
+					close(f.upstream.release)
+					rec := f.request(string(body), "/v1/messages", "", f.gateway.Messages)
+					require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+					assertAudioSettlement(t, f, false)
+				})
+			}
+		}
+	}
+}
+
+func TestChatInputAudioHTTP_MixedToolTurnPreserved(t *testing.T) {
+	f := newInflightHTTPFixture(t, service.PlatformGemini, inflightGeminiJSON, "application/json")
+	chatAudioWallet(t, f)
+	f.upstream.observe = func(req *http.Request) {
+		payload, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		contents := gjson.GetBytes(payload, "contents").Array()
+		require.Len(t, contents, 2, "tool pairing must remain intact: %s", payload)
+		require.Equal(t, "model", contents[0].Get("role").String())
+		require.Equal(t, "echo", contents[0].Get("parts.0.functionCall.name").String())
+		require.Equal(t, "hello", contents[0].Get("parts.0.functionCall.args.text").String())
+		require.Equal(t, "user", contents[1].Get("role").String())
+		parts := contents[1].Get("parts").Array()
+		require.Len(t, parts, 4)
+		require.Equal(t, "echo", parts[0].Get("functionResponse.name").String())
+		require.Equal(t, "before", parts[1].Get("text").String())
+		require.Equal(t, "audio/wav", parts[2].Get("inlineData.mimeType").String())
+		require.Equal(t, "aGVsbG8=", parts[2].Get("inlineData.data").String())
+		require.Equal(t, "after", parts[3].Get("text").String())
+	}
+	close(f.upstream.release)
+	body := `{"model":"gemini-3.6-flash","max_tokens":8,"messages":[{"role":"assistant","content":"","tool_calls":[{"id":"call_audio","type":"function","function":{"name":"echo","arguments":"{\"text\":\"hello\"}"}}]},{"role":"tool","tool_call_id":"call_audio","content":"done"},{"role":"user","content":[{"type":"text","text":"before"},{"type":"input_audio","input_audio":{"data":"aGVsbG8=","format":"wav"}},{"type":"text","text":"after"}]}]}`
+	rec := f.request(body, "/v1/chat/completions", "", f.gateway.ChatCompletions)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assertAudioSettlement(t, f, false)
 }
