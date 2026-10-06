@@ -20,29 +20,33 @@ type pricingGroupConfigWriter struct{}
 // NewPricingGroupConfigWriter 创建分组配置写入器。
 func NewPricingGroupConfigWriter() service.GroupConfigWriter { return pricingGroupConfigWriter{} }
 
+func (pricingGroupConfigWriter) PlanTx(ctx context.Context, exec service.MatrixExecutor, req service.GroupConfigWriteRequest) (*service.GroupConfigWriteResult, error) {
+	norm, err := service.NormalizeGroupConfigWrite(req)
+	if err != nil {
+		return nil, err
+	}
+	cur, found, err := loadGroupConfig(ctx, exec, norm.GroupID, false)
+	if err != nil {
+		return nil, err
+	}
+	_, res, err := planGroupConfigWrite(cur, found, norm)
+	return res, err
+}
+
 func (pricingGroupConfigWriter) ApplyTx(ctx context.Context, tx service.MatrixTx, req service.GroupConfigWriteRequest) (*service.GroupConfigWriteResult, error) {
 	norm, err := service.NormalizeGroupConfigWrite(req)
 	if err != nil {
 		return nil, err
 	}
-	md := map[string]string{"group_id": strconv.FormatInt(norm.GroupID, 10)}
-	cur, found, err := loadLockedGroupConfig(ctx, tx, norm.GroupID)
+	cur, found, err := loadGroupConfig(ctx, tx, norm.GroupID, true)
 	if err != nil {
 		return nil, err
 	}
-	if !found || cur.PricingStage != service.PricingStageV2 {
-		return nil, infraerrors.Conflict(service.ReasonGroupConfigNotV2,
-			"group configuration is only editable for groups on the v2 pricing stage").WithMetadata(md)
+	target, res, err := planGroupConfigWrite(cur, found, norm)
+	if err != nil {
+		return nil, err
 	}
-	if cur.Revision != norm.BaselineRevision {
-		return nil, infraerrors.Conflict(service.ReasonPriceBaselineChanged,
-			"the group configuration changed since it was read").WithMetadata(md)
-	}
-
-	target := service.ApplyGroupConfigPatch(cur.MatrixGroupConfig, norm)
-	changed, exposure := service.GroupConfigChange(cur.MatrixGroupConfig, target)
-	res := &service.GroupConfigWriteResult{Before: cur, After: cur, Changed: changed, ExposureRelevant: exposure}
-	if !changed {
+	if !res.Changed {
 		return res, nil
 	}
 
@@ -84,19 +88,44 @@ func (pricingGroupConfigWriter) ApplyTx(ctx context.Context, tx service.MatrixTx
 	return res, nil
 }
 
-// loadLockedGroupConfig 读取并锁住分组的配置行（FOR UPDATE OF c，只锁配置行，与单元格写入器、派生钩子、
+// planGroupConfigWrite 核对分组是 v2、基线未变，套用补丁得到目标配置与结果（还没写入）。
+// PlanTx 与 ApplyTx 共用它，所以预览与提交的校验完全一致。
+func planGroupConfigWrite(cur service.StoredGroupConfig, found bool, norm service.GroupConfigWriteRequest) (service.MatrixGroupConfig, *service.GroupConfigWriteResult, error) {
+	md := map[string]string{"group_id": strconv.FormatInt(norm.GroupID, 10)}
+	if !found || cur.PricingStage != service.PricingStageV2 {
+		return service.MatrixGroupConfig{}, nil, infraerrors.Conflict(service.ReasonGroupConfigNotV2,
+			"group configuration is only editable for groups on the v2 pricing stage").WithMetadata(md)
+	}
+	if cur.Revision != norm.BaselineRevision {
+		return service.MatrixGroupConfig{}, nil, infraerrors.Conflict(service.ReasonPriceBaselineChanged,
+			"the group configuration changed since it was read").WithMetadata(md)
+	}
+	target := service.ApplyGroupConfigPatch(cur.MatrixGroupConfig, norm)
+	changed, exposure := service.GroupConfigChange(cur.MatrixGroupConfig, target)
+	res := &service.GroupConfigWriteResult{Before: cur, After: cur, Changed: changed, ExposureRelevant: exposure}
+	if changed {
+		// 预览看到的是改后的内容（revision 与 updated_at 要写入之后才有）。
+		res.After.MatrixGroupConfig = target
+	}
+	return target, res, nil
+}
+
+// loadGroupConfig 读取分组的配置行；lock 为真时 FOR UPDATE OF c（只锁配置行，与单元格写入器、派生钩子、
 // 阶段切换取同一把锁）。分组已软删除或没有配置行时 found 为 false。
-func loadLockedGroupConfig(ctx context.Context, exec service.MatrixExecutor, groupID int64) (service.StoredGroupConfig, bool, error) {
+func loadGroupConfig(ctx context.Context, exec service.MatrixExecutor, groupID int64, lock bool) (service.StoredGroupConfig, bool, error) {
 	var c service.StoredGroupConfig
+	lockClause := ""
+	if lock {
+		lockClause = "\n\t\t FOR UPDATE OF c"
+	}
 	rows, err := exec.QueryContext(ctx,
 		`SELECT c.group_id, c.access_mode, c.billing_model_source, c.model_mapping, c.features, c.cost_mode,
 		        c.pricing_stage, c.stage_changed_at, c.stage_changed_by, c.revision, c.updated_at
 		 FROM group_model_config c
 		 JOIN groups g ON g.id = c.group_id AND g.deleted_at IS NULL
-		 WHERE c.group_id = $1
-		 FOR UPDATE OF c`, groupID)
+		 WHERE c.group_id = $1`+lockClause, groupID)
 	if err != nil {
-		return c, false, fmt.Errorf("lock group_model_config: %w", err)
+		return c, false, fmt.Errorf("load group_model_config: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	if !rows.Next() {

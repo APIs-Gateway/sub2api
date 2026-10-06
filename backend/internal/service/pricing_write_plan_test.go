@@ -284,9 +284,9 @@ func TestPlanCellWrites_ActionsAndPriceTouch(t *testing.T) {
 		"same":          {CellWriteNoop, false},
 		"open-flip":     {CellWriteUpdate, false},
 		"had-custom":    {CellWriteUpdate, true},
-		"gpt-new":       {CellWriteCreate, false},
+		"gpt-new":       {CellWriteCreate, true},
 		"gpt-custom":    {CellWriteCreate, true},
-		"del-inherit":   {CellWriteDelete, false},
+		"del-inherit":   {CellWriteDelete, true},
 		"del-extra":     {CellWriteDelete, true},
 		"never-existed": {CellWriteNoop, false},
 	} {
@@ -300,7 +300,7 @@ func TestPlanCellWrites_ActionsAndPriceTouch(t *testing.T) {
 	require.Equal(t, 1.5, *got["to-extra"].After.ExtraMultiplier)
 	require.Nil(t, got["del-extra"].After)
 
-	noTouch := []PlannedCellWrite{got["same"], got["open-flip"], got["gpt-new"]}
+	noTouch := []PlannedCellWrite{got["same"], got["open-flip"], got["never-existed"]}
 	require.False(t, PlannedTouchesPrice(noTouch))
 	require.False(t, PlannedTouchesPrice(nil))
 }

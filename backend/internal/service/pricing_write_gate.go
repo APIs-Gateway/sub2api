@@ -21,19 +21,22 @@ import (
 //
 // 保存时校验（设计 5.2）：所有写入（包括不涉价、只改 open 的）在写事务里、消耗审批之前过 ExposureGuard，
 // 白名单分组里不能出现无价或 0 元的 open 单元格；预览（Propose）也过同一道校验，让管理员提前看到阻止原因。
-// 没有配置 ExposureGuard 时写入与预览一律失败关闭。
+// 写入与校验做成一体，由 MatrixTxWriter.ApplyCellWritesTx 提供；没有配置 ExposureGuard 时写入与预览一律失败关闭。
+//
+// 价格方向只由估算器给出（estimateCellDelta）：请求里没有这个字段，估算器缺失、出错或返回不认识的值都按 unknown。
 type InterimPriceWriteGate struct {
 	store       PriceWriteStore
-	writer      CellWriter
-	exposure    *ExposureGuard
+	tx          *MatrixTxWriter
+	estimator   PriceDeltaEstimator
 	invalidator MatrixSnapshotInvalidator
 	now         func() time.Time
 }
 
-// NewInterimPriceWriteGate 创建过渡审批关口。exposure 为保存时校验（nil 则失败关闭）；
+// NewInterimPriceWriteGate 创建过渡审批关口。tx 是写入与保存时校验的唯一入口（nil 则失败关闭）；
+// estimator 是价格方向的唯一来源（nil 时涉价写入一律按 unknown，即必须交互式会话）；
 // invalidator 可为 nil（没有读取方）。
-func NewInterimPriceWriteGate(store PriceWriteStore, writer CellWriter, exposure *ExposureGuard, invalidator MatrixSnapshotInvalidator) *InterimPriceWriteGate {
-	return &InterimPriceWriteGate{store: store, writer: writer, exposure: exposure, invalidator: invalidator, now: time.Now}
+func NewInterimPriceWriteGate(store PriceWriteStore, tx *MatrixTxWriter, estimator PriceDeltaEstimator, invalidator MatrixSnapshotInvalidator) *InterimPriceWriteGate {
+	return &InterimPriceWriteGate{store: store, tx: tx, estimator: estimator, invalidator: invalidator, now: time.Now}
 }
 
 // priceWriteStaleAfter 从未被消耗的预览记录保留多久再清理。
@@ -57,18 +60,12 @@ func (g *InterimPriceWriteGate) Propose(ctx context.Context, in PriceWritePropos
 	if err != nil {
 		return nil, err
 	}
-	planned, err := g.writer.PlanTx(ctx, g.store.Reader(), req)
+	planned, err := g.tx.PreviewCellWrites(ctx, g.store.Reader(), req)
 	if err != nil {
-		return nil, err
-	}
-	if err := g.exposure.CheckCellWrites(ctx, g.store.Reader(), planned); err != nil {
 		return nil, err
 	}
 	touches := PlannedTouchesPrice(planned)
-	delta, err := resolveProposalDelta(in.Delta, touches)
-	if err != nil {
-		return nil, err
-	}
+	delta := g.estimateCellDelta(ctx, planned, touches)
 
 	now := g.now()
 	approval := PriceWriteApproval{
@@ -95,23 +92,27 @@ func (g *InterimPriceWriteGate) Propose(ctx context.Context, in PriceWritePropos
 	}, nil
 }
 
-func resolveProposalDelta(delta PriceDelta, touches bool) (PriceDelta, error) {
-	switch delta {
-	case "":
-		if touches {
-			return PriceDeltaUnknown, nil
-		}
-		return PriceDeltaNone, nil
-	case PriceDeltaUp, PriceDeltaDown, PriceDeltaUnknown:
-		if !touches {
-			return "", infraerrors.BadRequest(ReasonPriceDeltaInvalid, "a write that does not touch prices has no price direction")
-		}
-		return delta, nil
-	case PriceDeltaNone:
-		return delta, nil
-	default:
-		return "", infraerrors.BadRequest(ReasonPriceDeltaInvalid, "unknown price direction")
+// estimateCellDelta 价格方向：不涉价是 none；涉价时只取估算器的结果，估算器缺失、出错或返回不认识的值都是 unknown。
+func (g *InterimPriceWriteGate) estimateCellDelta(ctx context.Context, planned []PlannedCellWrite, touches bool) PriceDelta {
+	if !touches {
+		return PriceDeltaNone
 	}
+	if g.estimator == nil {
+		return PriceDeltaUnknown
+	}
+	return safePriceDelta(g.estimator.EstimateCellWrites(ctx, planned))
+}
+
+// safePriceDelta 把估算器的返回值收成一个可信的方向：出错或不认识的值都是 unknown（最严，必须交互式会话）。
+func safePriceDelta(delta PriceDelta, err error) PriceDelta {
+	if err != nil {
+		slog.Warn("price delta estimation failed, treating the direction as unknown", "error", err)
+		return PriceDeltaUnknown
+	}
+	if validPriceDelta(delta) != nil {
+		return PriceDeltaUnknown
+	}
+	return delta
 }
 
 func priceWriteSummary(planned []PlannedCellWrite) []priceWriteSummaryItem {
@@ -147,13 +148,10 @@ func (g *InterimPriceWriteGate) Commit(ctx context.Context, in PriceWriteCommit)
 
 	var result *CellWriteResult
 	err = g.store.WithTx(ctx, func(ctx context.Context, tx MatrixTx) error {
-		res, err := g.writer.ApplyTx(ctx, tx, req)
+		// 写入与保存时校验在 ApplyCellWritesTx 里是一体的：写入之后、消耗审批之前校验，
+		// 违规就整个事务回滚，审批也不会被消耗。
+		res, err := g.tx.ApplyCellWritesTx(ctx, tx, req)
 		if err != nil {
-			return err
-		}
-		// 保存时校验在写入之后、消耗审批之前：违规就整个事务回滚，审批也不会被消耗。
-		// 配置行已被 ApplyTx 锁住，这里读到的准入模式不会在校验与提交之间变化。
-		if err := g.exposure.CheckCellWrites(ctx, tx, res.Planned); err != nil {
 			return err
 		}
 		if err := g.authorize(ctx, tx, in, hash, res); err != nil {
@@ -183,10 +181,16 @@ func (g *InterimPriceWriteGate) authorize(ctx context.Context, tx MatrixExecutor
 	if err != nil {
 		return err
 	}
-	if res.TouchesPrice && !a.TouchesPrice {
+	return checkApprovalForWrite(a, res.TouchesPrice, in.Actor)
+}
+
+// checkApprovalForWrite 核对被消耗的审批与这次写入：预览时没涉价、实际写入涉价，要重新预览；
+// 涉价且方向不是 none 的写入必须是交互式管理员会话，机器令牌不行。单元格与分组配置的写入共用。
+func checkApprovalForWrite(a *PriceWriteApproval, writeTouchesPrice bool, actor PriceWriteActor) error {
+	if writeTouchesPrice && !a.TouchesPrice {
 		return infraerrors.Conflict(ReasonPriceWritePlanChanged, "the write now touches prices but the preview did not, preview again")
 	}
-	if a.TouchesPrice && a.Delta != PriceDeltaNone && !in.Actor.Interactive {
+	if a.TouchesPrice && a.Delta != PriceDeltaNone && !actor.Interactive {
 		return infraerrors.Forbidden(ReasonPriceWriteInteractive, "price changes must be confirmed in an interactive administrator session")
 	}
 	return nil

@@ -272,8 +272,9 @@ func planCellDelete(p *PlannedCellWrite) {
 		return
 	}
 	p.Action = CellWriteDelete
-	p.TouchesPrice = cellPriceFingerprint(p.Before.PriceMode, p.Before.ExtraMultiplier, p.Before.CustomPrice) !=
-		cellPriceFingerprint(MatrixPriceInherit, nil, nil)
+	// 删除一律算涉价：单元格按字面名查找，字面名上的单元格（哪怕是 inherit）会遮住基名与通配符单元格的价，
+	// 删掉它就把被遮住的价放开了（价格方向交给估算器，纯开放类的删除估出来是 none）。
+	p.TouchesPrice = true
 }
 
 func planCellUpsert(p *PlannedCellWrite) {
@@ -285,7 +286,8 @@ func planCellUpsert(p *PlannedCellWrite) {
 	p.After = &target
 	if p.Before == nil {
 		p.Action = CellWriteCreate
-		p.TouchesPrice = op.PriceMode != MatrixPriceInherit
+		// 新建一律算涉价：在变体名上新建 inherit 单元格会遮住基名单元格的额外倍率（lookupCell 字面名优先）。
+		p.TouchesPrice = true
 		return
 	}
 	if matrixCellContent(p.Before.MatrixCell) == matrixCellContent(target) {

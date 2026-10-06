@@ -52,6 +52,8 @@ type PriceQuoter struct {
 	rates    *userGroupRateResolver
 	// catalog 是可选的模型目录读取方，由 SetModelCatalog 在装配阶段接上。为 nil 时 Quote.Access 只反映分组准入。
 	catalog quoteCatalogReader
+	// matrixSource 是 QuoteWith 读取分组现状的来源（只读），由 SetMatrixSource 在装配阶段接上。为 nil 时 QuoteWith 不可用。
+	matrixSource quoteOverlaySource
 }
 
 // PricingSnapshotID 返回报价所用的生效价格快照 id（auto 模式为 0）。价格页与回退链的缓存键用它，

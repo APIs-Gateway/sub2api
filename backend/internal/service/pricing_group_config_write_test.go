@@ -4,10 +4,13 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -159,14 +162,22 @@ func TestApplyGroupConfigPatchAndChange(t *testing.T) {
 }
 
 type gcFakeWriter struct {
-	res  *GroupConfigWriteResult
-	err  error
-	reqs []GroupConfigWriteRequest
+	res      *GroupConfigWriteResult
+	err      error
+	reqs     []GroupConfigWriteRequest
+	planRes  *GroupConfigWriteResult
+	planErr  error
+	planReqs []GroupConfigWriteRequest
 }
 
 func (w *gcFakeWriter) ApplyTx(_ context.Context, _ MatrixTx, req GroupConfigWriteRequest) (*GroupConfigWriteResult, error) {
 	w.reqs = append(w.reqs, req)
 	return w.res, w.err
+}
+
+func (w *gcFakeWriter) PlanTx(_ context.Context, _ MatrixExecutor, req GroupConfigWriteRequest) (*GroupConfigWriteResult, error) {
+	w.planReqs = append(w.planReqs, req)
+	return w.planRes, w.planErr
 }
 
 func gcResult(changed, exposure bool, mode MatrixAccessMode) *GroupConfigWriteResult {
@@ -176,34 +187,62 @@ func gcResult(changed, exposure bool, mode MatrixAccessMode) *GroupConfigWriteRe
 	}
 }
 
-func TestGroupConfigService_Apply(t *testing.T) {
-	ctx := context.Background()
-	newSvc := func(w *gcFakeWriter, r *exFakeReader) (*GroupConfigService, *pwFakeStore, *pwFakeInvalidator) {
-		store, inv := &pwFakeStore{}, &pwFakeInvalidator{}
-		return NewGroupConfigService(store, w, NewExposureGuard(r, NewExposureValidator(exOfficial, nil)), inv), store, inv
+// gcPriceResult 一次涉价的改动：计费来源从空（无渠道）改成 requested。
+func gcPriceResult() *GroupConfigWriteResult {
+	return &GroupConfigWriteResult{
+		Changed: true, ExposureRelevant: true,
+		Before: StoredGroupConfig{GroupID: 1, MatrixGroupConfig: MatrixGroupConfig{AccessMode: MatrixAccessOpen}},
+		After: StoredGroupConfig{GroupID: 1, MatrixGroupConfig: MatrixGroupConfig{
+			AccessMode: MatrixAccessOpen, BillingModelSource: gcStr(BillingModelSourceRequested)}},
 	}
+}
+
+type gcFixture struct {
+	svc    *GroupConfigService
+	writer *gcFakeWriter
+	reader *exFakeReader
+	store  *pwFakeStore
+	inv    *pwFakeInvalidator
+	est    *pwFakeEstimator
+}
+
+func gcNewService(w *gcFakeWriter, r *exFakeReader) gcFixture {
+	f := gcFixture{writer: w, reader: r, store: &pwFakeStore{}, inv: &pwFakeInvalidator{}, est: &pwFakeEstimator{}}
+	guard := NewExposureGuard(r, NewExposureValidator(exOfficial, nil))
+	f.svc = NewGroupConfigService(f.store, NewMatrixTxWriter(nil, w, guard), f.est, f.inv)
+	f.svc.now = func() time.Time { return pwNow }
+	return f
+}
+
+func gcCommit(req GroupConfigWriteRequest, approval int64, interactive bool) GroupConfigCommit {
+	return GroupConfigCommit{ApprovalID: approval, Request: req, Confirm: true, Actor: PriceWriteActor{ID: 7, Interactive: interactive}}
+}
+
+func TestGroupConfigService_Commit(t *testing.T) {
+	ctx := context.Background()
 	req := gcBase()
+	req.OperatorID = 5
 	req.AccessMode = gcAccess(MatrixAccessAllowlist)
 
 	// 白名单且涉准入：写入之后校验；通过就提交并失效缓存。
-	w := &gcFakeWriter{res: gcResult(true, true, MatrixAccessAllowlist)}
 	r := &exFakeReader{modes: map[int64]MatrixAccessMode{1: MatrixAccessAllowlist}, cells: []ExposureCell{exCell(1, "priced", MatrixPriceInherit)}}
-	svc, store, inv := newSvc(w, r)
-	res, err := svc.Apply(ctx, req)
+	f := gcNewService(&gcFakeWriter{res: gcResult(true, true, MatrixAccessAllowlist)}, r)
+	res, err := f.svc.Commit(ctx, gcCommit(req, 0, false))
 	require.NoError(t, err)
 	require.True(t, res.Changed)
 	require.Equal(t, [][]int64{{1}}, r.cellCalls)
-	require.Equal(t, [][]int64{{1}}, inv.calls)
-	require.Zero(t, store.txRollbacks)
-	require.Len(t, w.reqs, 1)
+	require.Equal(t, [][]int64{{1}}, f.inv.calls)
+	require.Zero(t, f.store.txRollbacks)
+	require.Len(t, f.writer.reqs, 1)
+	require.Equal(t, int64(7), f.writer.reqs[0].OperatorID, "操作人取自提交者，不取自请求体")
 
 	// 违规：整个事务回滚，不失效缓存。
 	r = &exFakeReader{modes: map[int64]MatrixAccessMode{1: MatrixAccessAllowlist}, cells: []ExposureCell{exCell(1, "nothing", MatrixPriceInherit)}}
-	svc, store, inv = newSvc(&gcFakeWriter{res: gcResult(true, true, MatrixAccessAllowlist)}, r)
-	_, err = svc.Apply(ctx, req)
+	f = gcNewService(&gcFakeWriter{res: gcResult(true, true, MatrixAccessAllowlist)}, r)
+	_, err = f.svc.Commit(ctx, gcCommit(req, 0, false))
 	require.Equal(t, ReasonExposureUnpriced, pwReason(t, err))
-	require.Equal(t, 1, store.txRollbacks)
-	require.Empty(t, inv.calls)
+	require.Equal(t, 1, f.store.txRollbacks)
+	require.Empty(t, f.inv.calls)
 
 	// 不需要校验的情形：没有变化、不涉准入、改成开放分组。
 	for _, res := range []*GroupConfigWriteResult{
@@ -212,33 +251,253 @@ func TestGroupConfigService_Apply(t *testing.T) {
 		gcResult(true, true, MatrixAccessOpen),
 	} {
 		r = &exFakeReader{modes: map[int64]MatrixAccessMode{1: MatrixAccessAllowlist}, cells: []ExposureCell{exCell(1, "nothing", MatrixPriceInherit)}}
-		svc, _, inv = newSvc(&gcFakeWriter{res: res}, r)
-		_, err = svc.Apply(ctx, req)
+		f = gcNewService(&gcFakeWriter{res: res}, r)
+		_, err = f.svc.Commit(ctx, gcCommit(req, 0, false))
 		require.NoError(t, err)
 		require.Empty(t, r.modeCalls)
-		require.Equal(t, res.Changed, len(inv.calls) == 1, "没有变化就不失效缓存")
+		require.Equal(t, res.Changed, len(f.inv.calls) == 1, "没有变化就不失效缓存")
 	}
 
 	// 前置条件与写入器错误。
-	svc, store, _ = newSvc(&gcFakeWriter{}, &exFakeReader{})
-	noOperator := req
-	noOperator.OperatorID = 0
-	_, err = svc.Apply(ctx, noOperator)
+	f = gcNewService(&gcFakeWriter{}, &exFakeReader{})
+	in := gcCommit(req, 0, false)
+	in.Actor.ID = 0
+	_, err = f.svc.Commit(ctx, in)
 	require.Equal(t, ReasonPriceWriteActorRequired, pwReason(t, err))
-	_, err = svc.Apply(ctx, gcBase())
+	in = gcCommit(req, 0, false)
+	in.Confirm = false
+	_, err = f.svc.Commit(ctx, in)
+	require.Equal(t, ReasonPriceWriteConfirm, pwReason(t, err))
+	_, err = f.svc.Commit(ctx, gcCommit(gcBase(), 0, false))
 	require.Equal(t, ReasonGroupConfigEmpty, pwReason(t, err))
-	require.Zero(t, store.txRuns, "请求不合法时不开事务")
+	require.Zero(t, f.store.txRuns, "请求不合法时不开事务")
 
-	svc, store, inv = newSvc(&gcFakeWriter{err: errors.New("db down")}, &exFakeReader{})
-	_, err = svc.Apply(ctx, req)
+	f = gcNewService(&gcFakeWriter{err: errors.New("db down")}, &exFakeReader{})
+	_, err = f.svc.Commit(ctx, gcCommit(req, 0, false))
 	require.EqualError(t, err, "db down")
-	require.Equal(t, 1, store.txRollbacks)
-	require.Empty(t, inv.calls)
+	require.Equal(t, 1, f.store.txRollbacks)
+	require.Empty(t, f.inv.calls)
 
 	// 没有配置保存时校验：涉准入的白名单写入失败关闭。
-	store, inv = &pwFakeStore{}, &pwFakeInvalidator{}
-	svc = NewGroupConfigService(store, &gcFakeWriter{res: gcResult(true, true, MatrixAccessAllowlist)}, nil, inv)
-	_, err = svc.Apply(ctx, req)
+	store, inv := &pwFakeStore{}, &pwFakeInvalidator{}
+	svc := NewGroupConfigService(store, NewMatrixTxWriter(nil, &gcFakeWriter{res: gcResult(true, true, MatrixAccessAllowlist)}, nil), nil, inv)
+	_, err = svc.Commit(ctx, gcCommit(req, 0, false))
 	require.Equal(t, ReasonExposureGuardMissing, pwReason(t, err))
 	require.Equal(t, 1, store.txRollbacks)
+}
+
+func TestGroupConfigService_CommitPriceTouchingNeedsApproval(t *testing.T) {
+	ctx := context.Background()
+	req := gcBase()
+	req.BillingModelSource = gcStr(BillingModelSourceRequested)
+	norm, err := NormalizeGroupConfigWrite(req)
+	require.NoError(t, err)
+	hash := GroupConfigPlanHash(norm)
+
+	// 涉价但没有凭证：拒绝，事务回滚，缓存不失效。
+	f := gcNewService(&gcFakeWriter{res: gcPriceResult()}, &exFakeReader{})
+	_, err = f.svc.Commit(ctx, gcCommit(req, 0, true))
+	require.Equal(t, ReasonPriceWriteApproval, pwReason(t, err))
+	require.Equal(t, 1, f.store.txRollbacks)
+	require.Empty(t, f.store.consumeCalls)
+	require.Empty(t, f.inv.calls)
+
+	// 带凭证：在写入的同一个事务里消耗，种类是 group_config，指纹与预览一致。
+	f = gcNewService(&gcFakeWriter{res: gcPriceResult()}, &exFakeReader{})
+	f.store.consumeRes = &PriceWriteApproval{ID: 7, TouchesPrice: true, Delta: PriceDeltaUp}
+	_, err = f.svc.Commit(ctx, gcCommit(req, 7, true))
+	require.NoError(t, err)
+	require.Equal(t, []pwConsumeCall{{id: 7, hash: hash, kind: PriceWriteKindGroupConfig, approver: 7, now: pwNow}}, f.store.consumeCalls)
+	require.Equal(t, [][]int64{{1}}, f.inv.calls)
+
+	// 方向不是 none：机器令牌不行；方向是 none：可以。
+	for _, tc := range []struct {
+		delta       PriceDelta
+		interactive bool
+		reason      string
+	}{
+		{PriceDeltaUp, false, ReasonPriceWriteInteractive},
+		{PriceDeltaDown, false, ReasonPriceWriteInteractive},
+		{PriceDeltaUnknown, false, ReasonPriceWriteInteractive},
+		{PriceDeltaUp, true, ""},
+		{PriceDeltaNone, false, ""},
+	} {
+		f = gcNewService(&gcFakeWriter{res: gcPriceResult()}, &exFakeReader{})
+		f.store.consumeRes = &PriceWriteApproval{TouchesPrice: true, Delta: tc.delta}
+		_, err = f.svc.Commit(ctx, gcCommit(req, 7, tc.interactive))
+		if tc.reason == "" {
+			require.NoError(t, err, "%s", tc.delta)
+			continue
+		}
+		require.Equal(t, tc.reason, pwReason(t, err), "%s", tc.delta)
+		require.Equal(t, 1, f.store.txRollbacks)
+		require.Empty(t, f.inv.calls)
+	}
+
+	// 预览时不涉价、提交时涉价：要重新预览。
+	f = gcNewService(&gcFakeWriter{res: gcPriceResult()}, &exFakeReader{})
+	f.store.consumeRes = &PriceWriteApproval{TouchesPrice: false, Delta: PriceDeltaNone}
+	_, err = f.svc.Commit(ctx, gcCommit(req, 7, true))
+	require.Equal(t, ReasonPriceWritePlanChanged, pwReason(t, err))
+
+	// 凭证无效（过期、已用、种类或指纹不符）：整个事务回滚。
+	f = gcNewService(&gcFakeWriter{res: gcPriceResult()}, &exFakeReader{})
+	f.store.consumeErr = infraerrors.Conflict(ReasonApprovalMismatch, "mismatch")
+	_, err = f.svc.Commit(ctx, gcCommit(req, 7, true))
+	require.Equal(t, ReasonApprovalMismatch, pwReason(t, err))
+	require.Equal(t, 1, f.store.txRollbacks)
+
+	// 不涉价的写入带着凭证也能提交（凭证照常被消耗）。
+	f = gcNewService(&gcFakeWriter{res: gcResult(true, true, MatrixAccessOpen)}, &exFakeReader{})
+	f.store.consumeRes = &PriceWriteApproval{TouchesPrice: false, Delta: PriceDeltaNone}
+	_, err = f.svc.Commit(ctx, gcCommit(req, 7, false))
+	require.NoError(t, err)
+	require.Len(t, f.store.consumeCalls, 1)
+}
+
+func TestGroupConfigService_Propose(t *testing.T) {
+	ctx := context.Background()
+	req := gcBase()
+	req.BillingModelSource = gcStr(BillingModelSourceRequested)
+
+	// 涉价：估算器给方向，登记审批行，summary 存前后对比与操作人。
+	f := gcNewService(&gcFakeWriter{planRes: gcPriceResult()}, &exFakeReader{})
+	f.est.delta = PriceDeltaUp
+	ticket, err := f.svc.Propose(ctx, req)
+	require.NoError(t, err)
+	norm, err := NormalizeGroupConfigWrite(req)
+	require.NoError(t, err)
+	require.Len(t, f.store.inserted, 1)
+	a := f.store.inserted[0]
+	require.Equal(t, PriceWriteKindGroupConfig, a.Kind)
+	require.Equal(t, GroupConfigPlanHash(norm), a.PlanHash)
+	require.True(t, a.TouchesPrice)
+	require.Equal(t, PriceDeltaUp, a.Delta)
+	require.Equal(t, []int64{1}, a.GroupIDs)
+	require.Equal(t, int64(7), a.PreviewedBy)
+	require.Equal(t, pwNow.Add(PriceWriteApprovalTTL), a.ExpiresAt)
+	var summary map[string]any
+	require.NoError(t, json.Unmarshal(a.Summary, &summary))
+	require.EqualValues(t, 7, summary["operator_id"])
+	require.EqualValues(t, 1, summary["group_id"])
+	require.Equal(t, "up", summary["price_delta"])
+	before, after := summary["before"].(map[string]any), summary["after"].(map[string]any)
+	require.Nil(t, before["billing_model_source"])
+	require.Equal(t, BillingModelSourceRequested, after["billing_model_source"])
+	require.Equal(t, int64(101), ticket.ApprovalID)
+	require.True(t, ticket.TouchesPrice)
+	require.Equal(t, PriceDeltaUp, ticket.Delta)
+	require.Equal(t, a.ExpiresAt, ticket.ExpiresAt)
+	require.Len(t, f.est.groupCalls, 1)
+	require.Equal(t, int64(1), f.est.groupCalls[0].groupID)
+	require.Nil(t, f.est.groupCalls[0].before.BillingModelSource)
+	require.Equal(t, BillingModelSourceRequested, *f.est.groupCalls[0].after.BillingModelSource)
+	require.Equal(t, []time.Time{pwNow.Add(-priceWriteStaleAfter)}, f.store.purgedBefore)
+
+	// 估算器出错或返回不认识的值：unknown。
+	f = gcNewService(&gcFakeWriter{planRes: gcPriceResult()}, &exFakeReader{})
+	f.est.err = errors.New("quote failed")
+	ticket, err = f.svc.Propose(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, PriceDeltaUnknown, ticket.Delta)
+	f = gcNewService(&gcFakeWriter{planRes: gcPriceResult()}, &exFakeReader{})
+	f.est.delta = "sideways"
+	ticket, err = f.svc.Propose(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, PriceDeltaUnknown, ticket.Delta)
+
+	// 没有估算器：unknown。
+	f = gcNewService(&gcFakeWriter{planRes: gcPriceResult()}, &exFakeReader{})
+	f.svc.estimator = nil
+	ticket, err = f.svc.Propose(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, PriceDeltaUnknown, ticket.Delta)
+
+	// 不涉价（只改准入）、没有变化：不登记审批行，也不用估算器。
+	for _, res := range []*GroupConfigWriteResult{gcResult(true, true, MatrixAccessOpen), gcResult(false, false, MatrixAccessOpen)} {
+		f = gcNewService(&gcFakeWriter{planRes: res}, &exFakeReader{})
+		ticket, err = f.svc.Propose(ctx, req)
+		require.NoError(t, err)
+		require.Zero(t, ticket.ApprovalID)
+		require.False(t, ticket.TouchesPrice)
+		require.Equal(t, PriceDeltaNone, ticket.Delta)
+		require.Equal(t, res.Changed, ticket.Changed)
+		require.Empty(t, f.store.inserted)
+		require.Empty(t, f.est.groupCalls)
+	}
+
+	// 改成白名单：预览就按「假如已经是白名单」校验现有的 open 单元格。
+	r := &exFakeReader{cells: []ExposureCell{exCell(1, "nothing", MatrixPriceInherit)}}
+	f = gcNewService(&gcFakeWriter{planRes: gcResult(true, true, MatrixAccessAllowlist)}, r)
+	_, err = f.svc.Propose(ctx, req)
+	require.Equal(t, ReasonExposureUnpriced, pwReason(t, err))
+	require.Equal(t, [][]int64{{1}}, r.cellCalls)
+	require.Empty(t, f.store.inserted)
+
+	// 前置条件与错误。
+	f = gcNewService(&gcFakeWriter{planRes: gcPriceResult()}, &exFakeReader{})
+	noOperator := req
+	noOperator.OperatorID = 0
+	_, err = f.svc.Propose(ctx, noOperator)
+	require.Equal(t, ReasonPriceWriteActorRequired, pwReason(t, err))
+	_, err = f.svc.Propose(ctx, gcBase())
+	require.Equal(t, ReasonGroupConfigEmpty, pwReason(t, err))
+	require.Empty(t, f.writer.planReqs, "请求不合法时不读库")
+
+	f = gcNewService(&gcFakeWriter{planErr: infraerrors.Conflict(ReasonPriceBaselineChanged, "stale")}, &exFakeReader{})
+	_, err = f.svc.Propose(ctx, req)
+	require.Equal(t, ReasonPriceBaselineChanged, pwReason(t, err))
+
+	f = gcNewService(&gcFakeWriter{planRes: gcPriceResult()}, &exFakeReader{})
+	f.store.insertErr = errors.New("db down")
+	_, err = f.svc.Propose(ctx, req)
+	require.EqualError(t, err, "db down")
+
+	f = gcNewService(&gcFakeWriter{planRes: gcPriceResult()}, &exFakeReader{})
+	f.store.purgeErr = errors.New("purge failed")
+	_, err = f.svc.Propose(ctx, req)
+	require.NoError(t, err, "清理过期预览失败不影响预览本身")
+}
+
+func TestGroupConfigTouchesPriceAndPlanHash(t *testing.T) {
+	bms := func(v string) *string { return &v }
+	base := MatrixGroupConfig{AccessMode: MatrixAccessOpen, ModelMapping: []MatrixMappingEntry{{Src: "a", Dst: "b"}}}
+
+	same := base
+	require.False(t, GroupConfigTouchesPrice(base, same))
+	access := base
+	access.AccessMode = MatrixAccessAllowlist
+	require.False(t, GroupConfigTouchesPrice(base, access), "改准入不涉价")
+	cost := base
+	cost.CostMode = MatrixCostFollowBilling
+	cost.Features = map[string]any{"bedrock_cc_compat": true}
+	require.False(t, GroupConfigTouchesPrice(base, cost), "改成本模式与功能开关不涉价")
+	source := base
+	source.BillingModelSource = bms("upstream")
+	require.True(t, GroupConfigTouchesPrice(base, source))
+	require.True(t, GroupConfigTouchesPrice(source, base))
+	mapping := base
+	mapping.ModelMapping = []MatrixMappingEntry{{Src: "a", Dst: "c"}}
+	require.True(t, GroupConfigTouchesPrice(base, mapping))
+
+	// 指纹绑定基线与目标态，不含操作人。
+	req := gcBase()
+	req.AccessMode = gcAccess(MatrixAccessAllowlist)
+	n1, err := NormalizeGroupConfigWrite(req)
+	require.NoError(t, err)
+	other := req
+	other.OperatorID = 99
+	n2, err := NormalizeGroupConfigWrite(other)
+	require.NoError(t, err)
+	require.Equal(t, GroupConfigPlanHash(n1), GroupConfigPlanHash(n2))
+	moved := req
+	moved.BaselineRevision = 4
+	n3, err := NormalizeGroupConfigWrite(moved)
+	require.NoError(t, err)
+	require.NotEqual(t, GroupConfigPlanHash(n1), GroupConfigPlanHash(n3))
+	changed := req
+	changed.AccessMode = gcAccess(MatrixAccessOpen)
+	n4, err := NormalizeGroupConfigWrite(changed)
+	require.NoError(t, err)
+	require.NotEqual(t, GroupConfigPlanHash(n1), GroupConfigPlanHash(n4))
 }
