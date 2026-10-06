@@ -176,15 +176,15 @@ type runtimePricedEntry struct {
 
 // runtimePricingState 是无价检查的进程内状态：HasPrice 缓存、开关值缓存、日志限速与计数。
 type runtimePricingState struct {
-	mu       sync.Mutex
-	priced   map[runtimePricedKey]runtimePricedEntry
-	policy   string
-	policyAt time.Time
-	policyOK bool
-	free     []BillingKnownFreeEntry
+	mu        sync.Mutex
+	priced    map[runtimePricedKey]runtimePricedEntry
+	policy    string
+	policyAt  time.Time
+	policyOK  bool
+	free      []BillingKnownFreeEntry
 	freeUntil time.Time
-	freeOK   bool
-	logged   map[string]time.Time
+	freeOK    bool
+	logged    map[string]time.Time
 
 	observed atomic.Int64
 	blocked  atomic.Int64
