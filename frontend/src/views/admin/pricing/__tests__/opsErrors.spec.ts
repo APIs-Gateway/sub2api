@@ -45,6 +45,25 @@ describe('opsErrorText', () => {
     expect(opsErrorText({ status: 409, reason: 'PRICING_GATE_NOT_IN_SHADOW' }, t, te)).toContain('先切到对照运行')
   })
 
+  it('开放检查 409：列出前 3 项模型与原因，并说明共多少项', () => {
+    const text = opsErrorText({
+      status: 409, reason: 'PRICING_GATE_EXPOSURE_BLOCKED', message: 'x',
+      metadata: { group_id: '2', failures: 'PRICING_GATE_EXPOSURE_BLOCKED', count: '5', issues: '2:gpt-5.5:unpriced;2:m-1:zero_price;2:vendor/m:2:wildcard_unverifiable->x;2:d:unpriced;2:e:unpriced' }
+    }, t, te)
+    expect(text).toContain('没有可用价格')
+    expect(text).toContain('gpt-5.5（没有价格）')
+    expect(text).toContain('m-1（价格为 0）')
+    expect(text).toContain('vendor/m:2（通配符开放，无法逐个核对价格）')
+    expect(text).not.toContain('d（')
+    expect(text).toContain('共 5 项')
+  })
+
+  it('开放检查 409 没有 issues 时只给原因说明', () => {
+    const text = opsErrorText({ status: 409, reason: 'PRICING_GATE_EXPOSURE_BLOCKED', metadata: { failures: 'PRICING_GATE_EXPOSURE_BLOCKED' } }, t, te)
+    expect(text).toContain('已知免费名单')
+    expect(text).not.toContain('涉及')
+  })
+
   it('凭证问题（404/409）和预览后配置变化都算过期错误', () => {
     for (const reason of ['PRICE_WRITE_APPROVAL_NOT_FOUND', 'PRICE_WRITE_APPROVAL_CONSUMED', 'PRICE_WRITE_APPROVAL_MISMATCH', 'PRICING_STAGE_CHANGED']) {
       expect(isStaleError({ reason }), reason).toBe(true)
@@ -63,7 +82,7 @@ describe('opsErrorText', () => {
       'PRICING_STAGE_CHANGED', 'PRICING_STAGE_APPROVAL_REQUIRED', 'PRICING_GATE_NOT_IN_SHADOW', 'PRICING_GATE_OBSERVATION_SHORT',
       'PRICING_GATE_SHADOW_DIFFS', 'PRICING_GATE_SHADOW_DIFFS_IN_PROCESS', 'PRICING_GATE_REPLAY_EMPTY', 'PRICING_GATE_REPLAY_MISSING',
       'PRICING_GATE_REPLAY_FAILED', 'PRICING_GATE_REPLAY_WINDOW_SHORT', 'PRICING_GATE_REPLAY_TOO_OLD', 'PRICING_GATE_REPLAY_STALE',
-      'PRICING_GATE_DERIVE_FAILED'
+      'PRICING_GATE_DERIVE_FAILED', 'PRICING_GATE_EXPOSURE_BLOCKED'
     ]
     for (const r of reasons) expect(te(`admin.pricingOps.errors.${r}`), r).toBe(true)
   })

@@ -36,6 +36,26 @@ export function isSessionOnlyError(err: unknown): boolean {
   return asOpsError(err).reason === 'ADMIN_TOKEN_MANAGEMENT_JWT_ONLY'
 }
 
+const ISSUES_SHOWN = 3
+
+/** 把 metadata.issues（「分组:模型:原因[->目标]」，分号分隔）整理成「涉及：模型（原因）…」，只列前几项。 */
+function listExposureIssues(raw: string, count: string | undefined, t: Translate, te: HasKey): string {
+  const issues = raw.split(';').map((x) => x.trim()).filter(Boolean)
+  if (issues.length === 0) return ''
+  const items = issues.slice(0, ISSUES_SHOWN).map((item) => {
+    const parts = item.split('->')[0].split(':')
+    // 第一段是分组，最后一段是原因，中间都算模型（模型名可能带冒号）
+    if (parts.length < 3) return item
+    const model = parts.slice(1, -1).join(':')
+    const key = `admin.pricingOps.snapshots.exposureReason.${parts[parts.length - 1]}`
+    const why = te(key) ? t(key) : parts[parts.length - 1]
+    return `${model}（${why}）`
+  })
+  const total = Number(count)
+  const more = Number.isFinite(total) && total > items.length ? t(`${NS}.exposureMore`, { count: total }) : ''
+  return ' ' + t(`${NS}.exposureIssues`, { items: items.join('、') }) + more
+}
+
 export function opsErrorText(err: unknown, t: Translate, te: HasKey): string {
   const e = asOpsError(err)
   if (e.status === 0) return t(`${NS}.network`)
@@ -43,9 +63,13 @@ export function opsErrorText(err: unknown, t: Translate, te: HasKey): string {
   const reason = e.reason
   // 阶段切换闸门：409，metadata.failures 带全部不满足的原因，逐条翻译
   if (reason?.startsWith('PRICING_GATE_')) {
-    return gateFailureCodes(reason, e.metadata)
-      .map((code) => (te(`${NS}.${code}`) ? t(`${NS}.${code}`) : code))
-      .join('；')
+    const codes = gateFailureCodes(reason, e.metadata)
+    let text = codes.map((code) => (te(`${NS}.${code}`) ? t(`${NS}.${code}`) : code)).join('；')
+    // 开放检查未通过：metadata.issues 是「分组:模型:原因」，列出前几项
+    if (codes.includes('PRICING_GATE_EXPOSURE_BLOCKED') && e.metadata?.issues) {
+      text += listExposureIssues(e.metadata.issues, e.metadata.count, t, te)
+    }
+    return text
   }
   if (reason && te(`${NS}.${reason}`)) {
     const meta = e.metadata ?? {}

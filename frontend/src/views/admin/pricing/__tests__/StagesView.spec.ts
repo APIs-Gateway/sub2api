@@ -293,6 +293,31 @@ describe('StagesView', () => {
     expect(text).not.toContain('72')
   })
 
+  it('预览里开放检查未通过：作为失败项展示并禁用确认；提交 409 时列出涉及的模型', async () => {
+    api.previewGroupStage.mockResolvedValue(v2Ready({
+      executable: false, approval_id: 0, plan_hash: '', expires_at: undefined,
+      gate: gate({ passed: false, failures: [{ code: 'PRICING_GATE_EXPOSURE_BLOCKED', message: 'x' }] })
+    }))
+    let wrapper = await mountPricingView(StagesView)
+    await open(wrapper, 2, 'v2')
+    expect(wrapper.find('[data-test="failure-PRICING_GATE_EXPOSURE_BLOCKED"]').text()).toContain('已知免费名单')
+    expect(confirmBtn(wrapper).attributes('disabled')).toBeDefined()
+
+    api.previewGroupStage.mockResolvedValue(v2Ready())
+    api.switchGroupStage.mockRejectedValue({
+      status: 409, reason: 'PRICING_GATE_EXPOSURE_BLOCKED', message: 'x',
+      metadata: { group_id: '2', failures: 'PRICING_GATE_EXPOSURE_BLOCKED', count: '2', issues: '2:gpt-5.5:unpriced;2:m-1:zero_price' }
+    })
+    wrapper = await mountPricingView(StagesView)
+    await open(wrapper, 2, 'v2')
+    await confirmBtn(wrapper).trigger('click')
+    await flushPromises()
+    const text = wrapper.find('[data-test="stage-error"]').text()
+    expect(text).toContain('gpt-5.5（没有价格）')
+    expect(text).toContain('m-1（价格为 0）')
+    expect(wrapper.find('[data-test="stage-repreview"]').exists()).toBe(true)
+  })
+
   it('已提交但本实例没能加载快照：提示部分实例稍后生效', async () => {
     api.switchGroupStage.mockResolvedValue({ kind: 'advance', group_id: 1, from: 'legacy', to: 'shadow', changed: true, revision: 4, changed_at: '', snapshot_ready: false })
     const wrapper = await mountPricingView(StagesView)
