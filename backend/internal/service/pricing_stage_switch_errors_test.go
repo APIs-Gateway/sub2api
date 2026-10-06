@@ -177,7 +177,7 @@ func TestStageSwitchCommit_RollbackStorageErrorsRollBackAndSurface(t *testing.T)
 			{ID: 2, GroupID: 7, MatrixCell: MatrixCell{ModelKey: "edited", Open: true, PriceMode: MatrixPriceInherit, Source: MatrixSourceManual}},
 		}
 		w.failAt[c.op] = c.n
-		name := fmt.Sprintf("%s#%d", c.op, c.n)
+		name := fmt.Sprintf("%s #%d", c.op, c.n)
 		_, err := f.sw.Commit(context.Background(), jwtReq(PricingStageShadow, 0))
 		require.ErrorContains(t, err, "injected failure in "+name, name)
 		require.Equal(t, PricingStageV2, f.store.cfg.PricingStage, name)
