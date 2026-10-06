@@ -329,11 +329,12 @@ func (s *ssSync) EnsureGroupsLoaded(_ context.Context, ids ...int64) error {
 }
 
 type ssFixture struct {
-	store  *ssStore
-	derive *ssDeriver
-	fp     *ssFingerprint
-	sync   *ssSync
-	sw     *PricingStageSwitcher
+	store    *ssStore
+	derive   *ssDeriver
+	fp       *ssFingerprint
+	sync     *ssSync
+	settings *ssSettings // 已知免费名单
+	sw       *PricingStageSwitcher
 }
 
 func newSSFixture(stage PricingStage) *ssFixture {
@@ -347,6 +348,8 @@ func newSSFixture(stage PricingStage) *ssFixture {
 	}
 	f.sw = NewPricingStageSwitcher(store, f.derive, f.fp, nil, f.sync, nil)
 	f.sw.now = func() time.Time { return sgNow }
+	f.settings = &ssSettings{value: `[]`}
+	f.sw.SetExposureChecker(ssExposureChecker(store, f.settings))
 	// 分组现有的派生行与派生结果一致。
 	store.cells = []StoredMatrixCell{{ID: 1, GroupID: 7, Revision: 1,
 		MatrixCell: MatrixCell{ModelKey: "gpt-5.4", Open: true, PriceMode: MatrixPriceInherit, Source: MatrixSourceLegacyDerived}}}

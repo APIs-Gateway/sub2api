@@ -136,6 +136,7 @@ func newFailingFixture(stage PricingStage) (*ssFixture, *ssFailing) {
 	w := &ssFailing{ssStore: f.store, failAt: map[string]int{}}
 	f.sw = NewPricingStageSwitcher(w, f.derive, f.fp, nil, f.sync, nil)
 	f.sw.now = func() time.Time { return sgNow }
+	f.sw.SetExposureChecker(ssExposureChecker(f.store, f.settings))
 	return f, w
 }
 

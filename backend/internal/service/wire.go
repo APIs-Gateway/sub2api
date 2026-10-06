@@ -794,7 +794,8 @@ func ProvideModelCatalogService(repo ModelCatalogRepository, policy *StagedGroup
 }
 
 // ProvidePricingStageSwitcher 创建阶段切换器（W6 PR7b）。
-// 提交之后失效并同步加载本实例的分组快照靠 stagedPolicy；影子样本数取自同一个 stagedPolicy 的进程内计数。
+// 提交之后失效并同步加载本实例的分组快照靠 stagedPolicy；影子样本数取自同一个 stagedPolicy 的进程内计数；
+// 切到 v2 时的无价与开放范围检查用 exposureReader、billing（官方价）与 settings（已知免费名单）。
 func ProvidePricingStageSwitcher(
 	store PricingStageSwitchStore,
 	derive *PricingDerivationService,
@@ -802,6 +803,9 @@ func ProvidePricingStageSwitcher(
 	catalog *ModelCatalogService,
 	policy *StagedGroupPolicy,
 	cfg *config.Config,
+	exposureReader ExposureReader,
+	billing *BillingService,
+	settings SettingRepository,
 ) *PricingStageSwitcher {
 	compared := func(groupID int64) int64 {
 		for _, c := range policy.Stats().ComparedTotal {
@@ -812,6 +816,12 @@ func ProvidePricingStageSwitcher(
 		return 0
 	}
 	sw := NewPricingStageSwitcher(store, derive, fingerprint, catalog, policy, compared)
+	var prices OfficialPriceStateSource // 不能直接传 nil 的 *BillingService：那会得到一个非 nil 的接口值
+	if billing != nil {
+		prices = billing
+	}
+	// 切到 v2 的暴露检查与价格写入路径共用同一口径：官方价、已知免费名单、保存时校验的读取器。
+	sw.SetExposureChecker(NewStageExposureChecker(exposureReader, NewExposureValidator(prices, settings), prices))
 	if cfg != nil {
 		sw.SetObservationHours(cfg.Pricing.GateObservationHours)
 	}

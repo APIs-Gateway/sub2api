@@ -66,6 +66,7 @@ var matrixOwnFiles = map[string]struct{}{
 	"internal/service/pricing_stage_service.go":       {},
 	"internal/service/pricing_stage_gate.go":          {}, // W6 PR7b：shadow 到 v2 的闸门（纯函数）
 	"internal/service/pricing_stage_switch.go":        {}, // W6 PR7b：阶段切换的预览与事务
+	"internal/service/pricing_stage_exposure.go":      {}, // W6：切 v2 时的无价与开放范围检查（B1）
 	"internal/service/pricing_replay_evidence.go":     {}, // W6 PR7b：回放结果落库
 
 	"internal/repository/pricing_matrix_repo.go":              {},

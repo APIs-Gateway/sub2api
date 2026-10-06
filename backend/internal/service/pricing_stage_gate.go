@@ -60,6 +60,10 @@ const (
 	ReasonPricingStageNeedsApproval = "PRICING_STAGE_APPROVAL_REQUIRED"
 )
 
+// ReasonPricingGateExposureBlocked 切到 v2 之后白名单分组里会出现无价、0 元或通配符放行的模型（B1）。
+// 同样是 409：预览里作为闸门失败项（gate.failures），提交时作为错误原因；metadata.issues 列出「分组:模型:原因」。
+const ReasonPricingGateExposureBlocked = "PRICING_GATE_EXPOSURE_BLOCKED"
+
 // PriceWriteKindStageSwitch 审批记录的种类：阶段切换（shadow 到 v2）。
 const PriceWriteKindStageSwitch = "stage_switch"
 
