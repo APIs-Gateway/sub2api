@@ -126,6 +126,25 @@ func TestModelCatalogTransition_PreviewAndTransition(t *testing.T) {
 		require.Empty(t, store.usageReqs)
 	})
 
+	t.Run("preview of the current status still reports usage", func(t *testing.T) {
+		store := &w2CatalogStore{entry: entry, usage: CatalogUsage{Requests: 5}}
+		svc, _ := w2NewTransition(store)
+		p, err := svc.Preview(ctx, 4, ModelCatalogActive)
+		require.NoError(t, err)
+		require.Equal(t, int64(5), p.Usage.Requests, "目标等于当前状态时也带近 7 天用量")
+		require.Equal(t, 7, p.Usage.WindowDays)
+		require.False(t, p.ConfirmRequired, "空操作不需要确认")
+		require.Len(t, store.usageReqs, 1)
+
+		retired := &ModelCatalogEntry{ID: 4, ModelKey: "gpt-x", Status: ModelCatalogRetired}
+		store = &w2CatalogStore{entry: retired, usage: CatalogUsage{Requests: 5}}
+		svc, _ = w2NewTransition(store)
+		p, err = svc.Preview(ctx, 4, ModelCatalogRetired)
+		require.NoError(t, err)
+		require.Equal(t, int64(5), p.Usage.Requests)
+		require.False(t, p.ConfirmRequired, "已是 retired：再转 retired 不会新挡流量，不要求确认")
+	})
+
 	t.Run("concurrent change is reported", func(t *testing.T) {
 		store := &w2CatalogStore{entry: entry, updateOK: false}
 		svc, _ := w2NewTransition(store)
