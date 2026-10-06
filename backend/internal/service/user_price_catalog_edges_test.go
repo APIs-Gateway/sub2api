@@ -107,3 +107,34 @@ func TestUserPriceCatalog_DeepSeekPeakMultiplierMarked(t *testing.T) {
 	require.NotNil(t, pro)
 	require.Equal(t, 0.0, pro.PeakMultiplier, "渠道自定义价不叠加峰时倍率")
 }
+
+// 同一个 DeepSeek 模型跨分组：默认价卡分组带峰时倍率，渠道自定义价分组不带（计费也不对渠道价叠加）。
+func TestUserPriceCatalog_DeepSeekPeakMultiplierIsPerGroup(t *testing.T) {
+	catalog := map[string]*LiteLLMModelPricing{
+		"deepseek-v4-flash": {Mode: "chat", InputCostPerToken: 1e-6, OutputCostPerToken: 2e-6},
+	}
+	channels := []Channel{
+		{
+			ID: 1, Name: "default-card", Status: StatusActive, GroupIDs: []int64{1},
+			ModelMapping: map[string]map[string]string{PlatformOpenAI: {"deepseek-v4-flash": "deepseek-v4-flash"}},
+		},
+		{
+			ID: 2, Name: "custom-price", Status: StatusActive, GroupIDs: []int64{2},
+			ModelPricing: []ChannelModelPricing{{
+				Platform: PlatformOpenAI, Models: []string{"deepseek-v4-flash"},
+				BillingMode: BillingModeToken, InputPrice: testPtrFloat64(3e-6), OutputPrice: testPtrFloat64(6e-6),
+			}},
+		},
+	}
+	groups := []Group{
+		{ID: 1, Name: "g1", Platform: PlatformOpenAI, RateMultiplier: 1},
+		{ID: 2, Name: "g2", Platform: PlatformOpenAI, RateMultiplier: 1},
+	}
+	fx := newPriceCatalogFixture(&PricingService{pricingData: catalog}, channels, groups, nil, nil)
+	m := fx.build(t, 9).model(PlatformOpenAI, "deepseek-v4-flash")
+	require.NotNil(t, m)
+	require.NotNil(t, m.entry(1))
+	require.NotNil(t, m.entry(2))
+	require.Equal(t, 2.0, m.entry(1).PeakMultiplier)
+	require.Equal(t, 0.0, m.entry(2).PeakMultiplier)
+}

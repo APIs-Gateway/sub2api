@@ -21,7 +21,7 @@
             <NumText tier="secondary" class="ml-1 text-gray-900 dark:text-white" :text="row.price" />
           </span>
           <span class="text-xs text-gray-500 dark:text-gray-400">{{ unitLabel }}</span>
-          <span v-if="peakNote" class="text-xs text-gray-500 dark:text-gray-400" data-test="peak-note-row">{{ peakShort }}</span>
+          <span v-if="peakShort" class="text-xs text-gray-500 dark:text-gray-400" data-test="peak-note-row">{{ peakShort }}</span>
         </span>
         <span v-else class="mt-1 block text-xs text-gray-400 dark:text-gray-500 sm:mt-0">{{ t('availableChannels.noPricing') }}</span>
       </span>
@@ -84,6 +84,7 @@
                 <th scope="row" class="px-3 py-2 text-left font-normal">
                   <span class="font-medium text-gray-900 dark:text-white">{{ row.name }}</span>
                   <span class="ml-1.5 text-xs text-gray-500 dark:text-gray-400" data-test="rate-tag">{{ row.rateText }}x</span>
+                  <span v-if="row.peakText" class="ml-1 text-xs text-gray-500 dark:text-gray-400" data-test="peak-tag">{{ row.peakText }}</span>
                   <span v-if="row.customRateNote" class="ml-1 text-xs text-gray-500 dark:text-gray-400" data-test="rate-custom">{{ row.customRateNote }}</span>
                   <span
                     v-if="row.lowest && idx === 0"
@@ -317,6 +318,7 @@ const sections = computed(() =>
           name: g.name,
           rateText: formatRate(g.rate),
           customRateNote: g.hasCustomRate ? t('availableChannels.rateCustom', { base: formatRate(g.baseRate) }) : '',
+          peakText: e.pricing.peakMultiplier ? peakShortOf(e.pricing.peakMultiplier) : '',
           lowest: entries.length > 1 && idx === 0,
           cells: cellsOf(e.pricing.first, k),
           plan: planOf(e.pricing.first, k),
@@ -326,13 +328,14 @@ const sections = computed(() =>
   }),
 )
 
-/** DeepSeek 等带峰时倍率的模型：价格是标准价，高峰时段按倍数计费。 */
-const peakNote = computed(() =>
-  props.model.peakMultiplier ? t('availableChannels.peakNote', { n: formatRate(props.model.peakMultiplier) }) : '',
-)
-const peakShort = computed(() =>
-  props.model.peakMultiplier ? t('availableChannels.peakShort', { n: formatRate(props.model.peakMultiplier) }) : '',
-)
+/** 峰时倍率按分组标注：只有走默认价卡的分组带倍数，渠道自定义价的分组不带。 */
+function peakShortOf(n: number): string {
+  return t('availableChannels.peakShort', { n: formatRate(n) })
+}
+/** 列表行只标起价所在的那个分组；该分组没有峰时倍率就不标。 */
+const peakShort = computed(() => (props.model.peakMultiplier ? peakShortOf(props.model.peakMultiplier) : ''))
+/** 展开面板的说明：有任一分组带峰时倍率才出现，具体分组看分组表里的标注。 */
+const peakNote = computed(() => (props.model.hasPeakGroup ? t('availableChannels.peakNote') : ''))
 
 function tierLabel(tier: ModelTier): string {
   const { label, min, max } = tier.range

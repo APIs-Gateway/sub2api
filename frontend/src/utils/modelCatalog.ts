@@ -81,8 +81,10 @@ export interface CatalogModel {
   entries: GroupPrice[]
   /** 主要计费方式里起价最低的分组；没有任何定价时为 null。 */
   cheapest: GroupPrice | null
-  /** 任一分组带峰时倍率时的倍数，否则 null。 */
+  /** 起价所在分组的峰时倍数（列表行标注用），该分组没有峰时倍率时为 null。 */
   peakMultiplier: number | null
+  /** 是否有任一分组带峰时倍率（展开面板的说明用）；具体哪个分组看各分组的 pricing.peakMultiplier。 */
+  hasPeakGroup: boolean
 }
 
 export interface SubscriptionUnitRange {
@@ -191,7 +193,6 @@ export function buildPriceCatalog(data: UserPriceCatalog | null | undefined): Ca
           a.group.name.localeCompare(b.group.name),
       )
       const kinds = [...new Set(entries.map((e) => e.pricing.kind))]
-      const peaks = entries.map((e) => e.pricing.peakMultiplier ?? 0)
       return {
         key: `${m.platform}::${m.name}`,
         name: m.name,
@@ -200,7 +201,8 @@ export function buildPriceCatalog(data: UserPriceCatalog | null | undefined): Ca
         kinds,
         entries,
         cheapest: entries[0] ?? null,
-        peakMultiplier: Math.max(0, ...peaks) > 1 ? Math.max(...peaks) : null,
+        peakMultiplier: entries[0]?.pricing.peakMultiplier ?? null,
+        hasPeakGroup: entries.some((e) => e.pricing.peakMultiplier != null),
       }
     })
     .sort((a, b) => a.name.localeCompare(b.name))

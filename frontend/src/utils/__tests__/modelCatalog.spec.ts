@@ -232,7 +232,27 @@ describe('buildPriceCatalog', () => {
     }
     const byName = Object.fromEntries(buildPriceCatalog(data).map((m) => [m.name, m]))
     expect(byName.ds.peakMultiplier).toBe(2)
+    expect(byName.ds.hasPeakGroup).toBe(true)
     expect(byName.plain.peakMultiplier).toBeNull()
+    expect(byName.plain.hasPeakGroup).toBe(false)
+  })
+
+  it('takes the row peak multiplier from the cheapest group only', () => {
+    const data: UserPriceCatalog = {
+      groups: [group(1, 'Default card'), group(2, 'Custom price')],
+      models: [
+        {
+          name: 'ds',
+          platform: 'openai',
+          entries: [entry(1, 1.3, { input: 1e-6 }, { peak_multiplier: 2 }), entry(2, 0.5, { input: 1e-6 })],
+        },
+      ],
+    }
+    const [m] = buildPriceCatalog(data)
+    expect(m.cheapest?.group.name).toBe('Custom price')
+    expect(m.peakMultiplier).toBeNull()
+    expect(m.hasPeakGroup).toBe(true)
+    expect(m.entries.map((e) => e.pricing.peakMultiplier)).toEqual([null, 2])
   })
 
   it('returns an empty catalog for no data', () => {

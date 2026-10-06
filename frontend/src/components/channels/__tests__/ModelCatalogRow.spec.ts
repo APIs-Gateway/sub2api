@@ -42,7 +42,7 @@ vi.mock('vue-i18n', () => ({
         'availableChannels.tierName': 'Tier',
         'availableChannels.resolution': 'Resolution',
         'availableChannels.noPricing': 'No pricing',
-        'availableChannels.peakNote': `peak note ${params?.n}`,
+        'availableChannels.peakNote': 'peak note',
         'availableChannels.peakShort': `peak ${params?.n}x`,
       })[key] ?? key,
   }),
@@ -411,12 +411,29 @@ describe('ModelCatalogRow', () => {
     expect(sections[0].findAll('td').some((td) => td.text() === '-')).toBe(false)
   })
 
-  it('marks the weekday peak multiplier in the row and the panel, and nothing for ordinary models', () => {
-    const peak = model()
-    peak.peakMultiplier = 2
-    const w = mount(ModelCatalogRow, { props: { model: peak, expanded: true } })
-    expect(w.get('[data-test="peak-note-row"]').text()).toBe('peak 2x')
-    expect(w.get('[data-test="peak-note"]').text()).toBe('peak note 2')
+  it('marks the peak multiplier per group: only default-card groups are tagged', () => {
+    const off = set({ input: 1e-6, output: 4e-6 })
+    const mk = (id: number, rate: number, peak?: number) => ({
+      group_id: id, rate, base_rate: rate, has_custom_rate: false, billing_mode: 'token', kind: 'token',
+      official: off, prices: scaled(off, rate), tiers: [], peak_multiplier: peak,
+    })
+    const build = (cheapPeak: boolean) =>
+      buildPriceCatalog({
+        groups: [g(1, 'Stable'), g(2, 'Budget')],
+        // Budget 更便宜（起价所在分组）；Stable 走默认价卡带峰时倍率。
+        models: [{ name: 'ds', platform: 'openai', entries: [mk(1, 1.3, 2), mk(2, 0.65, cheapPeak ? 2 : undefined)] }],
+      } as unknown as UserPriceCatalog)[0]
+
+    const mixed = mount(ModelCatalogRow, { props: { model: build(false), expanded: true } })
+    const tags = mixed.findAll('[data-test="group-table"] tbody tr').map((r) => r.find('[data-test="peak-tag"]').exists())
+    expect(tags).toEqual([false, true]) // Budget（无）、Stable（有）
+    expect(mixed.get('[data-test="peak-note"]').text()).toBe('peak note')
+    // 起价所在分组没有峰时倍率：列表行不标
+    expect(mixed.find('[data-test="peak-note-row"]').exists()).toBe(false)
+
+    const cheapPeak = mount(ModelCatalogRow, { props: { model: build(true), expanded: true } })
+    expect(cheapPeak.get('[data-test="peak-note-row"]').text()).toBe('peak 2x')
+    expect(cheapPeak.findAll('[data-test="peak-tag"]')).toHaveLength(2)
     const plain = mount(ModelCatalogRow, { props: { model: model(), expanded: true } })
     expect(plain.find('[data-test="peak-note-row"]').exists()).toBe(false)
     expect(plain.find('[data-test="peak-note"]').exists()).toBe(false)
