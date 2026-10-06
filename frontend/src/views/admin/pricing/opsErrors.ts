@@ -3,6 +3,7 @@
  * 文案在 admin.pricingOps.errors.<REASON> 下；没有登记的 reason 走通用提示，并把错误代码带出来方便反馈。
  */
 import { asOpsError } from '@/api/admin/pricingOps'
+import { gateFailureCodes } from './stageSwitchModel'
 
 type Translate = (key: string, params?: Record<string, unknown>) => string
 type HasKey = (key: string) => boolean
@@ -16,9 +17,12 @@ const STALE_REASONS = new Set([
   'PRICING_SNAPSHOT_NOT_CANDIDATE',
   'PRICING_SNAPSHOT_NOT_FOUND',
   'PRICE_BASELINE_CHANGED',
+  'PRICE_WRITE_APPROVAL_NOT_FOUND',
+  'PRICE_WRITE_APPROVAL_CONSUMED',
   'PRICE_WRITE_APPROVAL_EXPIRED',
   'PRICE_WRITE_APPROVAL_MISMATCH',
-  'PRICE_WRITE_PLAN_CHANGED'
+  'PRICE_WRITE_PLAN_CHANGED',
+  'PRICING_STAGE_CHANGED'
 ])
 
 /** 这类错误说明界面上的数据已经过时，调用方应当刷新后让管理员重新确认。 */
@@ -37,6 +41,12 @@ export function opsErrorText(err: unknown, t: Translate, te: HasKey): string {
   if (e.status === 0) return t(`${NS}.network`)
   if (e.status === 401) return t(`${NS}.sessionExpired`)
   const reason = e.reason
+  // 阶段切换闸门：409，metadata.failures 带全部不满足的原因，逐条翻译
+  if (reason?.startsWith('PRICING_GATE_')) {
+    return gateFailureCodes(reason, e.metadata)
+      .map((code) => (te(`${NS}.${code}`) ? t(`${NS}.${code}`) : code))
+      .join('；')
+  }
   if (reason && te(`${NS}.${reason}`)) {
     const meta = e.metadata ?? {}
     return t(`${NS}.${reason}`, { count: meta.count ?? '', group: meta.group_id ?? '' })
