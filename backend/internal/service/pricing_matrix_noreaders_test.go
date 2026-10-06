@@ -64,6 +64,9 @@ var matrixOwnFiles = map[string]struct{}{
 	"internal/service/pricing_shadow_ctx.go":          {},
 	"internal/service/pricing_shadow_session.go":      {},
 	"internal/service/pricing_stage_service.go":       {},
+	"internal/service/pricing_stage_gate.go":          {}, // W6 PR7b：shadow 到 v2 的闸门（纯函数）
+	"internal/service/pricing_stage_switch.go":        {}, // W6 PR7b：阶段切换的预览与事务
+	"internal/service/pricing_replay_evidence.go":     {}, // W6 PR7b：回放结果落库
 
 	"internal/repository/pricing_matrix_repo.go":              {},
 	"internal/repository/model_catalog_repo.go":               {},
@@ -76,6 +79,7 @@ var matrixOwnFiles = map[string]struct{}{
 	"internal/repository/pricing_matrix_configured_groups.go": {}, // W6 PR7a：启动预加载列出有配置行的分组
 	"internal/repository/pricing_known_free_store.go":         {}, // W6 PR4b-2b-2：已知免费名单与目录状态、用量统计的存储
 	"internal/repository/pricing_cost_rule_writer.go":         {}, // W6 PR4b-2b-2：成本核算规则写入器
+	"internal/repository/pricing_stage_switch_repo.go":        {}, // W6 PR7b：阶段切换的存储原语与回放证据
 
 	"internal/handler/admin/pricing_matrix_handler.go": {},
 	"internal/handler/admin/pricing_write_handler.go":  {}, // W6 PR4b-2b-2：价格写入的管理接口（提交类接口要 JWT 会话）
@@ -100,7 +104,7 @@ var matrixWiringFiles = map[string]struct{}{
 	"cmd/server/wire_gen.go":      {},
 }
 
-var matrixTableNames = regexp.MustCompile(`model_group_prices|model_group_price_history|group_model_config|cost_accounting_rule|model_catalog|pricing_write_approvals`)
+var matrixTableNames = regexp.MustCompile(`model_group_prices|model_group_price_history|group_model_config|cost_accounting_rule|model_catalog|pricing_write_approvals|pricing_replay_evidence|pricing_stage_audit`)
 
 var matrixEntryPoints = regexp.MustCompile(`\b(` + strings.Join([]string{
 	"DeriveGroupState", "PlanGroupApply", "DerivedGroupState", "GroupStateSnapshot", "GroupApplyPlan",
@@ -120,6 +124,8 @@ var matrixEntryPoints = regexp.MustCompile(`\b(` + strings.Join([]string{
 	"NewPricingKnownFreeStore", "ModelCatalogTransitionService", "NewModelCatalogTransitionService",
 	"ModelCatalogStatusStore", "NewModelCatalogStatusStore", "CostRuleService", "NewCostRuleService", "CostRuleWriter",
 	"NewPricingCostRuleWriter", "PricingWriteServices", "ProvidePricingWriteServices",
+	"PricingStageSwitcher", "NewPricingStageSwitcher", "PricingStageSwitchStore", "NewPricingStageSwitchStore",
+	"PricingStageOps", "EvaluateStageGate", "PricingReplayEvidenceStore", "NewPricingReplayEvidenceStore",
 }, "|") + `)\b`)
 
 func TestMatrixTablesAndDerivationHaveNoReaders(t *testing.T) {
@@ -174,18 +180,24 @@ func TestMatrixTablesAndDerivationHaveNoReaders(t *testing.T) {
 	require.Empty(t, violations, "现有路径不得读取 W6 的新表或派生入口（本 PR 零行为变化）")
 }
 
-// W6 PR7a 的零行为变化证据：阶段 API 仍不开放 v2，所以任何分组都不可能被写成 v2，
-// 生产环境所有分组的计费、准入、映射继续走 legacy（shadow 只旁路比对）。
-// PR7b 开放 v2 时，要把这条守卫改成对切换闸门的检查。
-func TestStagedPolicyV2StageStillClosedInProduction(t *testing.T) {
-	require.False(t, pricingStageAllowed(PricingStageV2), "PR7a 不开放 v2 阶段")
-	require.True(t, pricingStageAllowed(PricingStageLegacy))
-	require.True(t, pricingStageAllowed(PricingStageShadow))
+// W6 PR7b 开放 v2 之后的守卫：
+//  1. 阶段 API 只有接上切换器才允许 v2；
+//  2. 写 pricing_stage 的 SQL 只能出现在阶段仓储 pricing_stage_repo.go 里（切换存储经它的 setGroupStage 写），
+//     包括 UPDATE ... SET pricing_stage = 和 INSERT INTO group_model_config (... pricing_stage ...)（Q12 复制分组会用到）；
+//  3. 切换器的 v2 路径必须评估闸门并消耗预览凭证，两处调用都在 pricing_stage_switch.go 里，被删掉会失败。
+func TestStagedPolicyV2StageOnlyOpenThroughTheGate(t *testing.T) {
+	require.False(t, pricingStageAllowed(PricingStageV2, false), "没有切换器时不开放 v2 阶段")
+	require.True(t, pricingStageAllowed(PricingStageV2, true))
+	for _, open := range []bool{false, true} {
+		require.True(t, pricingStageAllowed(PricingStageLegacy, open))
+		require.True(t, pricingStageAllowed(PricingStageShadow, open))
+	}
 
 	backendRoot, err := filepath.Abs("../..")
 	require.NoError(t, err)
-	writer := regexp.MustCompile(`SET\s+pricing_stage\s*=`)
+	writer := regexp.MustCompile(`(?is)SET\s+pricing_stage\s*=|INSERT\s+INTO\s+group_model_config\s*\([^)]*pricing_stage`)
 	var violations []string
+	scanned := 0
 	err = filepath.Walk(backendRoot, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -200,6 +212,7 @@ func TestStagedPolicyV2StageStillClosedInProduction(t *testing.T) {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
+		scanned++
 		raw, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
@@ -212,5 +225,26 @@ func TestStagedPolicyV2StageStillClosedInProduction(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+	require.Greater(t, scanned, 500, "扫描范围不对：应当覆盖 backend 下的全部 Go 源码")
 	require.Empty(t, violations, "只有阶段仓储可以写 pricing_stage")
+
+	// 守卫的正则本身要能抓到各种写法。
+	for _, sql := range []string{
+		"UPDATE group_model_config SET pricing_stage = $2",
+		"UPDATE group_model_config\n SET   pricing_stage=$2",
+		"INSERT INTO group_model_config (group_id, pricing_stage) VALUES ($1, 'v2')",
+		"INSERT INTO group_model_config\n(group_id, access_mode,\n pricing_stage)",
+	} {
+		require.True(t, writer.MatchString(sql), sql)
+	}
+	require.False(t, writer.MatchString("INSERT INTO group_model_config (group_id, access_mode) VALUES ($1, $2)"))
+
+	// 切换器的 v2 路径：闸门与凭证都不能被绕过。
+	raw, err := os.ReadFile(filepath.Join(backendRoot, "internal/service/pricing_stage_switch.go"))
+	require.NoError(t, err)
+	text := string(raw)
+	require.Contains(t, text, "EvaluateStageGate(")
+	require.Contains(t, text, "ConsumeApproval(")
+	require.Contains(t, text, "checkApprovalForWrite(")
+	require.Less(t, strings.Index(text, "EvaluateStageGate("), strings.Index(text, "ConsumeApproval("), "先评估闸门，再消耗凭证")
 }

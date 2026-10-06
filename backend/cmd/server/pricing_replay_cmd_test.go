@@ -29,6 +29,7 @@ func TestParsePricingReplayArgs_Defaults(t *testing.T) {
 	require.Equal(t, repository.DefaultPricingReplayStatementTimeout, a.statementTimeout)
 	require.Equal(t, repository.DefaultPricingReplayLockTimeout, a.lockTimeout)
 	require.False(t, a.strict)
+	require.False(t, a.record)
 	require.GreaterOrEqual(t, a.workers, 1)
 }
 
@@ -37,7 +38,7 @@ func TestParsePricingReplayArgs_AllFlags(t *testing.T) {
 	a, err := parsePricingReplayArgs([]string{
 		"--days", "7", "--until", "2026-10-01T00:00:00Z", "--groups", "3, 1,2", "--out-dir", "/tmp/x",
 		"--matrix-source", "stored", "--pricing-file", "p.json", "--workers", "2", "--batch-size", "100",
-		"--statement-timeout", "30s", "--lock-timeout", "1s", "--max-diff-rows", "5", "--sample", "3", "--strict",
+		"--statement-timeout", "30s", "--lock-timeout", "1s", "--max-diff-rows", "5", "--sample", "3", "--strict", "--record",
 	}, &errOut, replayCmdNow)
 	require.NoError(t, err)
 	require.Equal(t, 7, a.days)
@@ -53,6 +54,7 @@ func TestParsePricingReplayArgs_AllFlags(t *testing.T) {
 	require.Equal(t, 5, a.maxDiffRows)
 	require.Equal(t, 3, a.sample)
 	require.True(t, a.strict)
+	require.True(t, a.record)
 }
 
 func TestParsePricingReplayArgs_Invalid(t *testing.T) {

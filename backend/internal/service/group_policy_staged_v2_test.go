@@ -8,6 +8,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -101,17 +102,26 @@ func TestStagedPolicy_V2RoutingIsLiveByDefault(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type spLister struct {
-	ids   []int64
-	errs  []error // 前几次调用依次返回这些错误
-	calls atomic.Int32
+	ids    []int64
+	stages map[int64]PricingStage // 没写的分组按 v2 算
+	errs   []error                // 前几次调用依次返回这些错误
+	calls  atomic.Int32
 }
 
-func (l *spLister) ListConfiguredGroupIDs(context.Context) ([]int64, error) {
+func (l *spLister) ListConfiguredGroups(context.Context) ([]ConfiguredGroup, error) {
 	n := int(l.calls.Add(1))
 	if n <= len(l.errs) && l.errs[n-1] != nil {
 		return nil, l.errs[n-1]
 	}
-	return l.ids, nil
+	out := make([]ConfiguredGroup, 0, len(l.ids))
+	for _, id := range l.ids {
+		stage, ok := l.stages[id]
+		if !ok {
+			stage = PricingStageV2
+		}
+		out = append(out, ConfiguredGroup{ID: id, Stage: stage})
+	}
+	return out, nil
 }
 
 // flakyMatrixSource 前 failLoads 次读取分组快照失败，之后恢复。
@@ -176,16 +186,163 @@ func TestStagedPolicy_PreloadGivesUpAndCountsTheGroupsThatNeverLoaded(t *testing
 	staged.Preload(ctx, &spLister{ids: []int64{1}})
 	require.EqualValues(t, 1, staged.MatrixSnapshotStats().PreloadFailures)
 
-	// 列表一直失败：没有分组可计数，也不 panic。
+	// 列表一直失败：没有分组可计数，单独记一次失败（不知道哪些分组是 v2），也不 panic。
 	staged2, _ := newColdStaged(newMPSource(PlatformOpenAI, nil))
 	staged2.Preload(ctx, &spLister{errs: []error{errors.New("a"), errors.New("b"), errors.New("c")}})
-	require.Zero(t, staged2.MatrixSnapshotStats().PreloadFailures)
+	require.EqualValues(t, 1, staged2.MatrixSnapshotStats().PreloadFailures)
 
 	// 没有 lister 或没有矩阵：什么也不做。
 	staged2.Preload(ctx, nil)
 	newStagedGroupPolicy(&spLegacy{}, nil, nil).Preload(ctx, &spLister{})
 	var nilStaged *stagedPolicy
 	nilStaged.Preload(ctx, &spLister{})
+}
+
+// W6 PR7b-1 审查 B1：快照加载失败时的拒绝范围只含启动时处于 shadow、v2 的分组。
+// legacy 分组（有配置行也一样）照旧按 legacy 放行；shadow 分组按「可能已经推进到 v2」处理，和 v2 一样被拒绝。
+func TestStagedPolicy_UnavailableSnapshotOnlyRejectsShadowAndV2Groups(t *testing.T) {
+	ctx := context.Background()
+	src := &flakyMatrixSource{
+		// 分组 1、2、3 在库里存在（有元信息）：读快照才会真的失败；不存在的分组（99）按默认状态，读不到也不算失败。
+		mpFakeSource: newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{
+			1: {Config: mpStoredConfig(PricingStageLegacy, nil)}, 2: shadowSnap(nil), 3: v2Snap(nil, 1)}),
+		failLoads: 1 << 20, // 数据库一直不可用：预加载和请求时的加载都失败
+	}
+	staged, legacy := newColdStaged(src)
+	staged.Preload(ctx, &spLister{
+		ids:    []int64{1, 2, 3},
+		stages: map[int64]PricingStage{1: PricingStageLegacy, 2: PricingStageShadow, 3: PricingStageV2},
+	})
+	denied := QuoteAccess{OK: false, Reason: QuoteAccessReasonSnapshotUnavailable}
+
+	require.True(t, staged.ModelAccess(ctx, 1, "gpt-5.4").OK, "legacy group with a config row: legacy answers")
+	require.Positive(t, legacy.calls.Load())
+	require.Zero(t, staged.MatrixSnapshotStats().SnapshotUnavailable, "legacy requests were not rejected")
+	require.True(t, staged.ModelAccess(ctx, 99, "gpt-5.4").OK, "no config row: legacy")
+
+	require.Equal(t, denied, staged.ModelAccess(ctx, 2, "gpt-5.4"), "shadow may have advanced to v2: rejected like v2")
+	require.Equal(t, denied, staged.ModelAccess(ctx, 3, "gpt-5.4"))
+	require.GreaterOrEqual(t, staged.MatrixSnapshotStats().SnapshotUnavailable, int64(2))
+}
+
+// 运行中从 legacy 切到 shadow/v2 的分组（启动时没有配置行或是 legacy）会进入「可能是 v2」集合：
+// 阶段切换提交后失效快照的路径记下它，之后它的快照加载失败就被拒绝，而不是按 legacy 放行。
+func TestStagedPolicy_GroupSwitchedAfterStartupBecomesRejectableOnLoadFailure(t *testing.T) {
+	ctx := context.Background()
+	src := &flakyMatrixSource{
+		// 分组 1、7、8 在库里存在：读快照才会真的失败（元信息不存在的分组读快照不会走到失败的那一步）。
+		mpFakeSource: newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{1: {}, 7: {}, 8: {}}),
+		failLoads:    1 << 20,
+	}
+	staged, _ := newColdStaged(src)
+	staged.Preload(ctx, &spLister{ids: []int64{1}, stages: map[int64]PricingStage{1: PricingStageLegacy}})
+	denied := QuoteAccess{OK: false, Reason: QuoteAccessReasonSnapshotUnavailable}
+
+	require.True(t, staged.ModelAccess(ctx, 7, "gpt-5.4").OK, "group 7 had no config row at startup: legacy")
+	require.True(t, staged.ModelAccess(ctx, 1, "gpt-5.4").OK, "group 1 was legacy at startup: legacy")
+
+	// 阶段切换提交之后的失效通知：两个分组都进了集合。
+	staged.InvalidateGroups(7)
+	staged.InvalidateGroups(1)
+	require.Equal(t, denied, staged.ModelAccess(ctx, 7, "gpt-5.4"))
+	require.Equal(t, denied, staged.ModelAccess(ctx, 1, "gpt-5.4"))
+	require.True(t, staged.ModelAccess(ctx, 8, "gpt-5.4").OK, "an untouched group stays legacy")
+}
+
+// spDynLister 可以在运行中改变返回内容的 lister。
+type spDynLister struct {
+	mu     sync.Mutex
+	groups []ConfiguredGroup
+	errs   int // 前几次调用返回错误
+	calls  atomic.Int32
+}
+
+func (l *spDynLister) set(groups ...ConfiguredGroup) {
+	l.mu.Lock()
+	l.groups = groups
+	l.mu.Unlock()
+}
+
+func (l *spDynLister) ListConfiguredGroups(context.Context) ([]ConfiguredGroup, error) {
+	n := int(l.calls.Add(1))
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if n <= l.errs {
+		return nil, errors.New("list failed")
+	}
+	return append([]ConfiguredGroup{}, l.groups...), nil
+}
+
+// 别的实例切换阶段：本实例只收到不带分组的失效通知。通知之后（去抖）重新列一次，shadow、v2 的分组进入集合，
+// legacy 分组不进，已经在集合里的分组不会被移除。
+func TestStagedPolicy_PeerInvalidationRelistsConfiguredGroups(t *testing.T) {
+	ctx := context.Background()
+	staged, _ := newColdStaged(newMPSource(PlatformOpenAI, nil))
+	staged.matrix.relistDebounce = 5 * time.Millisecond
+	lister := &spDynLister{}
+	lister.set(ConfiguredGroup{ID: 1, Stage: PricingStageLegacy})
+	staged.Preload(ctx, lister)
+	require.False(t, staged.matrix.mayBeConfigured(7), "listed at startup: group 7 has no config row")
+
+	lister.set(ConfiguredGroup{ID: 1, Stage: PricingStageLegacy}, ConfiguredGroup{ID: 7, Stage: PricingStageShadow},
+		ConfiguredGroup{ID: 8, Stage: PricingStageV2})
+	staged.matrix.onPeerInvalidate()
+	require.Eventually(t, func() bool { return staged.matrix.mayBeConfigured(7) }, 5*time.Second, 5*time.Millisecond)
+	require.True(t, staged.matrix.mayBeConfigured(8))
+	require.False(t, staged.matrix.mayBeConfigured(1), "legacy groups stay out of the set")
+
+	// 只加不减：之后的列表里没有分组 7 了，它仍在集合里。
+	lister.set(ConfiguredGroup{ID: 1, Stage: PricingStageLegacy})
+	before := lister.calls.Load()
+	staged.matrix.onPeerInvalidate()
+	require.Eventually(t, func() bool { return lister.calls.Load() > before }, 5*time.Second, 5*time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
+	require.True(t, staged.matrix.mayBeConfigured(7))
+}
+
+// 启动时三次都没列出分组的实例，之后由周期任务补上：集合变成「只有 shadow、v2」，legacy 分组不再被拒绝。
+func TestStagedPolicy_PeriodicRelistRecoversFromAFailedStartupList(t *testing.T) {
+	ctx := context.Background()
+	src := &flakyMatrixSource{
+		mpFakeSource: newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{1: {}, 2: v2Snap(nil, 1)}),
+		failLoads:    1 << 20,
+	}
+	staged, _ := newColdStaged(src)
+	staged.matrix.relistInterval = 10 * time.Millisecond
+	lister := &spDynLister{errs: matrixPreloadAttempts}
+	lister.set(ConfiguredGroup{ID: 1, Stage: PricingStageLegacy}, ConfiguredGroup{ID: 2, Stage: PricingStageV2})
+	staged.Preload(ctx, lister)
+
+	denied := QuoteAccess{OK: false, Reason: QuoteAccessReasonSnapshotUnavailable}
+	require.Eventually(t, func() bool { return staged.ModelAccess(ctx, 1, "gpt-5.4").OK }, 5*time.Second, 5*time.Millisecond,
+		"after the relist succeeds the legacy group is served as legacy")
+	require.Equal(t, denied, staged.ModelAccess(ctx, 2, "gpt-5.4"))
+}
+
+// 切换提交之后本实例自己发出的失效通知会回到自己的订阅上，加载到一半代数变了：补加载一次，不报失败。
+type spEchoSource struct {
+	*mpFakeSource
+	matrix *matrixPolicy
+	calls  atomic.Int32
+}
+
+func (s *spEchoSource) LoadGroupSnapshots(ctx context.Context, ids []int64) (map[int64]GroupStateSnapshot, error) {
+	if s.calls.Add(1) == 1 {
+		s.matrix.invalidateAll() // 模拟自己的通知回声落在加载过程中
+	}
+	return s.mpFakeSource.LoadGroupSnapshots(ctx, ids)
+}
+
+func TestStagedPolicy_EnsureGroupsLoadedRetriesAfterAnEchoedInvalidation(t *testing.T) {
+	ctx := context.Background()
+	src := &spEchoSource{mpFakeSource: newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{1: shadowSnap(nil)})}
+	matrix, _ := newMPForTest(src, nil)
+	src.matrix = matrix
+	staged := newStagedGroupPolicy(&spLegacy{}, matrix, nil)
+
+	require.NoError(t, staged.EnsureGroupsLoaded(ctx, 1))
+	require.EqualValues(t, 2, src.calls.Load(), "one echoed load, one retry")
+	require.True(t, matrix.cachedReady(1))
 }
 
 // ---------------------------------------------------------------------------

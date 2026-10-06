@@ -724,7 +724,8 @@ var ProviderSet = wire.NewSet(
 	NewPricingShadowRecorder,
 	ProvideStagedGroupPolicy,
 	ProvidePricingWriteServices,
-	NewPricingStageService,
+	ProvidePricingStageService,
+	ProvidePricingStageSwitcher,
 	ProvideModelCatalogService,
 	NewUserPriceCatalogService,
 	NewContentModerationService,
@@ -789,6 +790,44 @@ func ProvideModelCatalogService(repo ModelCatalogRepository, policy *StagedGroup
 	if cached := policy.SetModelCatalog(svc); cached != nil && quoter != nil {
 		quoter.SetModelCatalog(cached)
 	}
+	return svc
+}
+
+// ProvidePricingStageSwitcher 创建阶段切换器（W6 PR7b）。
+// 提交之后失效并同步加载本实例的分组快照靠 stagedPolicy；影子样本数取自同一个 stagedPolicy 的进程内计数。
+func ProvidePricingStageSwitcher(
+	store PricingStageSwitchStore,
+	derive *PricingDerivationService,
+	fingerprint PricingStageFingerprinter,
+	catalog *ModelCatalogService,
+	policy *StagedGroupPolicy,
+) *PricingStageSwitcher {
+	compared := func(groupID int64) int64 {
+		for _, c := range policy.Stats().ComparedTotal {
+			if c.GroupID == groupID {
+				return c.Count
+			}
+		}
+		return 0
+	}
+	sw := NewPricingStageSwitcher(store, derive, fingerprint, catalog, policy, compared)
+	sw.SetInProcessTranslationDiffs(func(groupID int64) (int64, time.Time) {
+		var n int64
+		for _, c := range policy.Stats().DiffTotal {
+			if c.GroupID == groupID && c.Class == ShadowClassTranslation {
+				n += c.Count
+			}
+		}
+		return n, policy.hub.lastTranslationDiffAt(groupID)
+	})
+	return sw
+}
+
+// ProvidePricingStageService 创建阶段服务并接上阶段切换器：之后 v2 才是允许的目标阶段。
+// 阶段服务依赖切换器，管理接口只依赖阶段服务，所以切换器一定会被装配进来。
+func ProvidePricingStageService(store PricingStageStore, policy *StagedGroupPolicy, recorder *PricingShadowRecorder, switcher *PricingStageSwitcher) *PricingStageService {
+	svc := NewPricingStageService(store, policy, recorder)
+	svc.SetSwitcher(switcher)
 	return svc
 }
 
