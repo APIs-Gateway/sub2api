@@ -151,8 +151,11 @@ const (
 type RuntimePriceInputs struct {
 	// OfficialState 查官方价（动态目录或内置兜底）里关于这个模型的事实（有没有价、token 价是否非零、是否图片模型），
 	// 与保存时校验用同一份 OfficialPriceState；为 nil 按「官方没有价」。
+	OfficialState func(model string) OfficialPriceState
 	// PricingSnapshotID 是当前生效的价格快照 id（auto 模式为 0），HasPrice 缓存键的一部分。
 	PricingSnapshotID int64
+	// ReadKnownFree 读取已知免费名单（billing_unpriced 观测用的同一份）；为 nil 按空名单。只在候选链无价时才会读，进程内缓存 15 秒。
+	ReadKnownFree func(ctx context.Context) []BillingKnownFreeEntry
 	// ReadPolicy 读取 billing_unpriced_policy 的当前值；为 nil 按 observe。
 	ReadPolicy func(ctx context.Context) string
 }
@@ -176,6 +179,9 @@ type runtimePricingState struct {
 	policy   string
 	policyAt time.Time
 	policyOK bool
+	free     []BillingKnownFreeEntry
+	freeAt   time.Time
+	freeOK   bool
 	logged   map[string]time.Time
 
 	observed atomic.Int64
@@ -241,6 +247,25 @@ func (r *runtimePricingState) policyValue(ctx context.Context, now time.Time, re
 	return value
 }
 
+// knownFreeList 返回已知免费名单（缓存 15 秒，读取方为 nil 按空名单）。名单读失败时读取方返回空，空名单是安全的一侧（只会多观测）。
+func (r *runtimePricingState) knownFreeList(ctx context.Context, now time.Time, read func(context.Context) []BillingKnownFreeEntry) []BillingKnownFreeEntry {
+	if read == nil {
+		return nil
+	}
+	r.mu.Lock()
+	if r.freeOK && now.Sub(r.freeAt) < runtimePolicyTTL {
+		v := r.free
+		r.mu.Unlock()
+		return v
+	}
+	r.mu.Unlock()
+	list := read(ctx)
+	r.mu.Lock()
+	r.free, r.freeAt, r.freeOK = list, now, true
+	r.mu.Unlock()
+	return list
+}
+
 // RuntimeAccess 是调度阶段对白名单 v2 分组的无价检查（设计 5.2「运行时」）。candidates 是调度前能拿到的计费候选链
 // （请求模型、映射后的模型、按计费来源构造的候选），任一有价就算有价（R2-S-5），偏向少拦。
 //
@@ -270,6 +295,15 @@ func (s *stagedPolicy) RuntimeAccess(ctx context.Context, groupID int64, candida
 	if priced {
 		yes := true
 		return QuoteAccess{OK: true, Priced: &yes}
+	}
+
+	// 已知免费名单里的（分组、模型）是有意免费：不算无价，不记观测，也不拦（与保存时校验、unpriced_billing_rows 同一份名单）。
+	if free := s.runtime.knownFreeList(ctx, now, in.ReadKnownFree); len(free) > 0 {
+		for _, candidate := range candidates {
+			if billingKnownFreeMatches(free, groupID, candidate) {
+				return QuoteAccess{OK: true}
+			}
+		}
 	}
 
 	block := s.runtime.policyValue(ctx, now, in.ReadPolicy) == BillingUnpricedPolicyBlockAllowlist

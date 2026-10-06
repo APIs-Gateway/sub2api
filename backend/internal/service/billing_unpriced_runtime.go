@@ -43,6 +43,14 @@ func (s *SettingService) BillingUnpricedPolicy(ctx context.Context) string {
 	return BillingUnpricedPolicyObserve
 }
 
+// BillingKnownFreeList 读取已知免费名单；读取失败或写坏按空名单。调用方自己缓存（stagedPolicy 缓存 15 秒）。
+func (s *SettingService) BillingKnownFreeList(ctx context.Context) []BillingKnownFreeEntry {
+	if s == nil {
+		return nil
+	}
+	return loadBillingKnownFreeList(ctx, s.settingRepo)
+}
+
 // NormalizeBillingUnpricedPolicy 校验并规范化 billing_unpriced_policy 的写入值（去首尾空白）；只认两个取值，其余（含空串）不合法。
 func NormalizeBillingUnpricedPolicy(value string) (string, bool) {
 	switch v := strings.TrimSpace(value); v {
@@ -82,16 +90,9 @@ func runtimeUnpricedBlocked(ctx context.Context, policy GroupPolicy, billing *Bi
 	if len(candidates) == 0 {
 		return false
 	}
-	in := RuntimePriceInputs{ReadPolicy: settings.BillingUnpricedPolicy}
+	in := RuntimePriceInputs{ReadPolicy: settings.BillingUnpricedPolicy, ReadKnownFree: settings.BillingKnownFreeList}
 	if billing != nil {
-		in.OfficialState = func(model string) OfficialPriceState {
-			st := billing.LookupOfficialPriceState(model)
-			if !st.Known && billing.quoteModelImageCapable(model) {
-				// 图片请求无渠道价时走 CalculateImageCost（分组图片价、目录价、兜底价），总是有价；调度时看不到请求类型。
-				st = OfficialPriceState{Known: true, ImageCapable: true}
-			}
-			return st
-		}
+		in.OfficialState = billing.LookupOfficialPriceState
 		in.PricingSnapshotID = billing.pricingService.ActiveSnapshotID()
 	}
 	access := rp.RuntimeAccess(ctx, groupID, candidates, in)

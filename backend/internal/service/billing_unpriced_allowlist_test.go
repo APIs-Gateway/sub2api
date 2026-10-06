@@ -147,3 +147,92 @@ func TestUnpricedAllowlist_SetBillingUnpricedPolicy(t *testing.T) {
 	}
 	require.Error(t, NewSettingService(nil, nil).SetBillingUnpricedPolicy(ctx, "observe"))
 }
+
+// 候选链与计费的取价回退一致：上游模型无价但请求模型（或渠道映射模型）有价时，block_allowlist 不拦。
+func TestUnpricedAllowlist_UpstreamSourceFallsBackToRequestedModel(t *testing.T) {
+	ctx := context.Background()
+	creds := map[string]any{"model_mapping": map[string]any{"req-priced-xyz": "up-unpriced-xyz"}}
+	oaAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: creds}
+	gwAccount := &Account{Platform: PlatformAnthropic, Type: AccountTypeAPIKey, Credentials: creds}
+	oaUp := resolveOpenAIAccountUpstreamModelForRequest(oaAccount, "req-priced-xyz", false)
+	gwUp := resolveAccountUpstreamModel(gwAccount, "req-priced-xyz")
+	require.NotEqual(t, "req-priced-xyz", oaUp, "the account really maps the request to a different upstream model")
+	require.NotEqual(t, "req-priced-xyz", gwUp)
+
+	f := newSPFixture(t, v2Snap(func(c *MatrixGroupConfig) {
+		c.AccessMode = MatrixAccessAllowlist
+		c.BillingModelSource = mpS(BillingModelSourceUpstream)
+	}, 1, mpInherit(oaUp), mpInherit(gwUp), mpCustom("req-priced-xyz", 1e-6)))
+	settings := NewSettingService(&brSettingRepo{value: BillingUnpricedPolicyBlockAllowlist}, nil)
+	bs := newTestBillingService()
+	openai := &OpenAIGatewayService{billingService: bs, policyOverride: f.staged, settingService: settings}
+	gw := &GatewayService{billingService: bs, policyOverride: f.staged, settingService: settings}
+
+	require.False(t, openai.isUpstreamModelRestrictedByChannel(ctx, 1, oaAccount, "req-priced-xyz", false), "the requested model has a price")
+	require.False(t, gw.isUpstreamModelRestrictedByChannel(ctx, 1, gwAccount, "req-priced-xyz"), "the requested model has a price")
+
+	// 对照：请求模型也无价时照拦。
+	creds2 := map[string]any{"model_mapping": map[string]any{"req-unpriced-xyz": "up-unpriced-xyz"}}
+	gwAccount2 := &Account{Platform: PlatformAnthropic, Type: AccountTypeAPIKey, Credentials: creds2}
+	f2 := newSPFixture(t, v2Snap(func(c *MatrixGroupConfig) {
+		c.AccessMode = MatrixAccessAllowlist
+		c.BillingModelSource = mpS(BillingModelSourceUpstream)
+	}, 1, mpInherit(resolveAccountUpstreamModel(gwAccount2, "req-unpriced-xyz"))))
+	gw2 := &GatewayService{billingService: bs, policyOverride: f2.staged, settingService: settings}
+	require.True(t, gw2.isUpstreamModelRestrictedByChannel(ctx, 1, gwAccount2, "req-unpriced-xyz"))
+}
+
+// 已知免费名单：运行时无价检查也认（按分组、不区分大小写），名单里的模型不算无价、不记观测、不拦；名单只读一次（缓存 15 秒）。
+func TestStagedPolicy_RuntimeAccessHonorsKnownFreeList(t *testing.T) {
+	ctx := context.Background()
+	f := newSPFixture(t, v2Snap(allowlistConfig, 1, mpInherit("free-model"), mpInherit("other-group-free"), mpInherit("not-free")))
+	reads := 0
+	in := RuntimePriceInputs{
+		ReadPolicy: func(context.Context) string { return BillingUnpricedPolicyBlockAllowlist },
+		ReadKnownFree: func(context.Context) []BillingKnownFreeEntry {
+			reads++
+			return []BillingKnownFreeEntry{{Model: "Free-Model"}, {GroupID: 2, Model: "other-group-free"}}
+		},
+	}
+	require.Equal(t, QuoteAccess{OK: true}, f.staged.RuntimeAccess(ctx, 1, []string{"free-model"}, in))
+	require.False(t, f.staged.RuntimeAccess(ctx, 1, []string{"other-group-free"}, in).OK, "the entry is for another group")
+	require.False(t, f.staged.RuntimeAccess(ctx, 1, []string{"not-free"}, in).OK)
+	// 链里任一在名单里就放行。
+	require.True(t, f.staged.RuntimeAccess(ctx, 1, []string{"not-free", "free-model"}, in).OK)
+	require.Equal(t, 1, reads, "cached: the list is not read per request")
+	observed, _ := f.staged.UnpricedAdmissionStats()
+	require.EqualValues(t, 2, observed, "known-free models are not counted as unpriced")
+
+	f.clock.Advance(runtimePolicyTTL + time.Second)
+	f.staged.RuntimeAccess(ctx, 1, []string{"not-free"}, in)
+	require.Equal(t, 2, reads, "re-read after the TTL")
+}
+
+// 网关入口：名单来自 settings 的 billing_known_free_list。
+type unpricedMapRepo struct {
+	SettingRepository
+	values map[string]string
+}
+
+func (r *unpricedMapRepo) GetValue(_ context.Context, key string) (string, error) {
+	if v, ok := r.values[key]; ok {
+		return v, nil
+	}
+	return "", ErrSettingNotFound
+}
+
+func TestUnpricedAllowlist_KnownFreeModelIsNotBlockedAtTheGateway(t *testing.T) {
+	ctx := context.Background()
+	gid := int64(1)
+	f := newSPFixture(t, v2Snap(allowlistConfig, 1, mpInherit("no-such-free-xyz"), mpInherit("no-such-model-xyz")))
+	settings := NewSettingService(&unpricedMapRepo{values: map[string]string{
+		SettingKeyBillingUnpricedPolicy: BillingUnpricedPolicyBlockAllowlist,
+		SettingKeyBillingKnownFreeList:  `[{"group_id":1,"model":"no-such-free-xyz"}]`,
+	}}, nil)
+	bs := newTestBillingService()
+	openai := &OpenAIGatewayService{billingService: bs, policyOverride: f.staged, settingService: settings}
+	gw := &GatewayService{billingService: bs, policyOverride: f.staged, settingService: settings}
+	require.False(t, openai.checkChannelPricingRestriction(ctx, &gid, "no-such-free-xyz"))
+	require.False(t, gw.checkChannelPricingRestriction(ctx, &gid, "no-such-free-xyz"))
+	require.True(t, openai.checkChannelPricingRestriction(ctx, &gid, "no-such-model-xyz"), "control: not on the list")
+}
