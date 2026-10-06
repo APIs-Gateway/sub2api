@@ -137,13 +137,13 @@ type PricingStageSwitcher struct {
 	sync        stageSnapshotSync
 	// compared 返回本实例进程内某个分组的影子比对次数（仅供参考）；可为 nil。
 	compared func(groupID int64) int64
-	// translationInProcess 返回本实例进程内某个分组 translation 类差异的累计数；可为 nil（不检查）。
-	translationInProcess func(groupID int64) int64
+	// translationInProcess 返回本实例进程内某个分组 translation 类差异的累计数与最近一次的时间（没有为零值）；可为 nil（不检查）。
+	translationInProcess func(groupID int64) (int64, time.Time)
 	now                  func() time.Time
 }
 
 // SetInProcessTranslationDiffs 接上进程内翻译差异计数：大于 0 时闸门不放行（W6 PR7b-1 审查偏差 1）。
-func (sw *PricingStageSwitcher) SetInProcessTranslationDiffs(fn func(groupID int64) int64) {
+func (sw *PricingStageSwitcher) SetInProcessTranslationDiffs(fn func(groupID int64) (int64, time.Time)) {
 	sw.translationInProcess = fn
 }
 
@@ -153,7 +153,11 @@ func (sw *PricingStageSwitcher) loadInProcessShadow(facts *StageGateFacts, group
 		facts.Shadow.ComparedInProcess = sw.compared(groupID)
 	}
 	if sw.translationInProcess != nil {
-		facts.Shadow.TranslationDiffsInProcess = sw.translationInProcess(groupID)
+		count, last := sw.translationInProcess(groupID)
+		facts.Shadow.TranslationDiffsInProcess = count
+		if !last.IsZero() {
+			facts.Shadow.LastTranslationDiffAt = &last
+		}
 	}
 }
 
@@ -492,7 +496,7 @@ func (sw *PricingStageSwitcher) afterCommit(ctx context.Context, groupID int64, 
 	defer cancel()
 	if err := sw.sync.EnsureGroupsLoaded(warmCtx, groupID); err != nil {
 		result.SnapshotReady = false
-		slog.Error("pricing stage switch committed but the group snapshot could not be loaded on this instance",
+		slog.Warn("pricing stage switch committed but the group snapshot could not be loaded on this instance",
 			"group_id", groupID, "to", string(result.To), "error", err)
 	}
 }

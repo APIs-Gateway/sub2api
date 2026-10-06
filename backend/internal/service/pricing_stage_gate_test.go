@@ -77,8 +77,14 @@ func TestEvaluateStageGate_Branches(t *testing.T) {
 			in.Facts.Config.UpdatedAt = sgNow.Add(-time.Minute)
 		}, []string{ReasonPricingGateObservation}},
 		{"shadow translation differences", func(in *StageGateInput) { in.Facts.Shadow.TranslationDiffs = 1 }, []string{ReasonPricingGateShadowDiffs}},
-		{"in-process translation differences (lossy shadow table)", func(in *StageGateInput) { in.Facts.Shadow.TranslationDiffsInProcess = 2 },
-			[]string{ReasonPricingGateShadowDiffsInProcess}},
+		{"in-process translation difference after the observation started (lossy shadow table)", func(in *StageGateInput) {
+			last := sgNow.Add(-time.Hour)
+			in.Facts.Shadow.TranslationDiffsInProcess, in.Facts.Shadow.LastTranslationDiffAt = 2, &last
+		}, []string{ReasonPricingGateShadowDiffsInProcess}},
+		{"in-process translation difference before the observation started is ignored", func(in *StageGateInput) {
+			last := sgNow.Add(-101 * time.Hour) // 观察期起点是 100 小时前
+			in.Facts.Shadow.TranslationDiffsInProcess, in.Facts.Shadow.LastTranslationDiffAt = 2, &last
+		}, nil},
 		{"replay has no rows and the window has no traffic: exempt", func(in *StageGateInput) {
 			in.Facts.Replay.RowsReplayed, in.Facts.Replay.RowsInWindow = 0, 0
 		}, nil},
@@ -173,10 +179,6 @@ func TestStageSwitchAccepted_PriceDirection(t *testing.T) {
 
 	// 回放 0 行（含没有流量的分组）：什么也没比较，证明不了价格不变，unknown。
 	delta, _ = StageSwitchAccepted(&ReplayEvidence{ID: 1}, ShadowEvidence{}, nil)
-	require.Equal(t, PriceDeltaUnknown, delta)
-
-	// 本实例进程内的翻译差异计数大于 0：unknown。
-	delta, _ = StageSwitchAccepted(good, ShadowEvidence{TranslationDiffsInProcess: 1}, nil)
 	require.Equal(t, PriceDeltaUnknown, delta)
 
 	// 翻译差异不为 0：unknown。
@@ -288,4 +290,22 @@ func TestReplayEvidenceFromSummary(t *testing.T) {
 	require.False(t, ReplayEvidenceFromSummary(sum, sgNow)[0].Passed, "channel configuration changed during the replay")
 	sum.Meta["matrix_source"] = "stored"
 	require.Equal(t, "stored", ReplayEvidenceFromSummary(sum, sgNow)[0].MatrixSource)
+}
+
+// 影子 hub 按分组记下最近一次 translation 差异的时间；expected 类差异不记。
+func TestPricingShadowHub_LastTranslationDiffAt(t *testing.T) {
+	h := newPricingShadowHub(nil)
+	now := sgNow
+	h.now = func() time.Time { return now }
+	require.True(t, h.lastTranslationDiffAt(7).IsZero())
+
+	h.noteDiff(7, ShadowKindCost, ShadowClassExpected, "m", "", nil, nil)
+	require.True(t, h.lastTranslationDiffAt(7).IsZero())
+
+	h.noteDiff(7, ShadowKindCost, ShadowClassTranslation, "m", "", nil, nil)
+	require.True(t, now.Equal(h.lastTranslationDiffAt(7)))
+	now = now.Add(time.Hour)
+	h.noteDiff(7, ShadowKindCost, ShadowClassTranslation, "m", "", nil, nil)
+	require.True(t, now.Equal(h.lastTranslationDiffAt(7)))
+	require.True(t, h.lastTranslationDiffAt(8).IsZero(), "per group")
 }

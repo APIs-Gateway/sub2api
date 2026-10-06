@@ -440,9 +440,10 @@ func TestStageSwitch_InProcessTranslationDiffsBlockTheGate(t *testing.T) {
 	p := f.preview(t)
 	require.True(t, p.Executable)
 
-	f.sw.SetInProcessTranslationDiffs(func(groupID int64) int64 {
+	last := sgNow.Add(-time.Hour) // 观察期起点是 100 小时前
+	f.sw.SetInProcessTranslationDiffs(func(groupID int64) (int64, time.Time) {
 		require.EqualValues(t, 7, groupID)
-		return 2
+		return 2, last
 	})
 	blocked := f.preview(t)
 	require.False(t, blocked.Executable)
@@ -455,6 +456,10 @@ func TestStageSwitch_InProcessTranslationDiffsBlockTheGate(t *testing.T) {
 	require.Equal(t, ReasonPricingGateShadowDiffsInProcess, infraerrors.Reason(err))
 	require.Equal(t, PricingStageShadow, f.store.cfg.PricingStage)
 	require.Empty(t, f.store.audit)
+
+	// 差异发生在观察期起点之前（渠道修好、重新观察之后）：不再挡闸门，不需要重启。
+	last = sgNow.Add(-101 * time.Hour)
+	require.True(t, f.preview(t).Executable)
 }
 
 // 回放窗口内有流量却一行都没回放上：闸门不放行；窗口内确实没有请求时豁免，但价格方向是 unknown。

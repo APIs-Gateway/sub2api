@@ -8,6 +8,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -243,6 +244,99 @@ func TestStagedPolicy_GroupSwitchedAfterStartupBecomesRejectableOnLoadFailure(t 
 	require.Equal(t, denied, staged.ModelAccess(ctx, 7, "gpt-5.4"))
 	require.Equal(t, denied, staged.ModelAccess(ctx, 1, "gpt-5.4"))
 	require.True(t, staged.ModelAccess(ctx, 8, "gpt-5.4").OK, "an untouched group stays legacy")
+}
+
+// spDynLister 可以在运行中改变返回内容的 lister。
+type spDynLister struct {
+	mu     sync.Mutex
+	groups []ConfiguredGroup
+	errs   int // 前几次调用返回错误
+	calls  atomic.Int32
+}
+
+func (l *spDynLister) set(groups ...ConfiguredGroup) {
+	l.mu.Lock()
+	l.groups = groups
+	l.mu.Unlock()
+}
+
+func (l *spDynLister) ListConfiguredGroups(context.Context) ([]ConfiguredGroup, error) {
+	n := int(l.calls.Add(1))
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if n <= l.errs {
+		return nil, errors.New("list failed")
+	}
+	return append([]ConfiguredGroup{}, l.groups...), nil
+}
+
+// 别的实例切换阶段：本实例只收到不带分组的失效通知。通知之后（去抖）重新列一次，shadow、v2 的分组进入集合，
+// legacy 分组不进，已经在集合里的分组不会被移除。
+func TestStagedPolicy_PeerInvalidationRelistsConfiguredGroups(t *testing.T) {
+	ctx := context.Background()
+	staged, _ := newColdStaged(newMPSource(PlatformOpenAI, nil))
+	staged.matrix.relistDebounce = 5 * time.Millisecond
+	lister := &spDynLister{}
+	lister.set(ConfiguredGroup{ID: 1, Stage: PricingStageLegacy})
+	staged.Preload(ctx, lister)
+	require.False(t, staged.matrix.mayBeConfigured(7), "listed at startup: group 7 has no config row")
+
+	lister.set(ConfiguredGroup{ID: 1, Stage: PricingStageLegacy}, ConfiguredGroup{ID: 7, Stage: PricingStageShadow},
+		ConfiguredGroup{ID: 8, Stage: PricingStageV2})
+	staged.matrix.onPeerInvalidate()
+	require.Eventually(t, func() bool { return staged.matrix.mayBeConfigured(7) }, 5*time.Second, 5*time.Millisecond)
+	require.True(t, staged.matrix.mayBeConfigured(8))
+	require.False(t, staged.matrix.mayBeConfigured(1), "legacy groups stay out of the set")
+
+	// 只加不减：之后的列表里没有分组 7 了，它仍在集合里。
+	lister.set(ConfiguredGroup{ID: 1, Stage: PricingStageLegacy})
+	before := lister.calls.Load()
+	staged.matrix.onPeerInvalidate()
+	require.Eventually(t, func() bool { return lister.calls.Load() > before }, 5*time.Second, 5*time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
+	require.True(t, staged.matrix.mayBeConfigured(7))
+}
+
+// 启动时三次都没列出分组的实例，之后由周期任务补上：集合变成「只有 shadow、v2」，legacy 分组不再被拒绝。
+func TestStagedPolicy_PeriodicRelistRecoversFromAFailedStartupList(t *testing.T) {
+	ctx := context.Background()
+	src := &flakyMatrixSource{mpFakeSource: newMPSource(PlatformOpenAI, nil), failLoads: 1 << 20}
+	staged, _ := newColdStaged(src)
+	staged.matrix.relistInterval = 10 * time.Millisecond
+	lister := &spDynLister{errs: matrixPreloadAttempts}
+	lister.set(ConfiguredGroup{ID: 1, Stage: PricingStageLegacy}, ConfiguredGroup{ID: 2, Stage: PricingStageV2})
+	staged.Preload(ctx, lister)
+
+	denied := QuoteAccess{OK: false, Reason: QuoteAccessReasonSnapshotUnavailable}
+	require.Eventually(t, func() bool { return staged.ModelAccess(ctx, 1, "gpt-5.4").OK }, 5*time.Second, 5*time.Millisecond,
+		"after the relist succeeds the legacy group is served as legacy")
+	require.Equal(t, denied, staged.ModelAccess(ctx, 2, "gpt-5.4"))
+}
+
+// 切换提交之后本实例自己发出的失效通知会回到自己的订阅上，加载到一半代数变了：补加载一次，不报失败。
+type spEchoSource struct {
+	*mpFakeSource
+	matrix *matrixPolicy
+	calls  atomic.Int32
+}
+
+func (s *spEchoSource) LoadGroupSnapshots(ctx context.Context, ids []int64) (map[int64]GroupStateSnapshot, error) {
+	if s.calls.Add(1) == 1 {
+		s.matrix.invalidateAll() // 模拟自己的通知回声落在加载过程中
+	}
+	return s.mpFakeSource.LoadGroupSnapshots(ctx, ids)
+}
+
+func TestStagedPolicy_EnsureGroupsLoadedRetriesAfterAnEchoedInvalidation(t *testing.T) {
+	ctx := context.Background()
+	src := &spEchoSource{mpFakeSource: newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{1: shadowSnap(nil)})}
+	matrix, _ := newMPForTest(src, nil)
+	src.matrix = matrix
+	staged := newStagedGroupPolicy(&spLegacy{}, matrix, nil)
+
+	require.NoError(t, staged.EnsureGroupsLoaded(ctx, 1))
+	require.EqualValues(t, 2, src.calls.Load(), "one echoed load, one retry")
+	require.True(t, matrix.cachedReady(1))
 }
 
 // ---------------------------------------------------------------------------

@@ -381,6 +381,15 @@ type matrixPolicy struct {
 	configuredMu    sync.RWMutex
 	configured      map[int64]struct{}
 	configuredKnown bool
+
+	// 重新列出配置分组（W6 PR7b-1 复审 1）：别的实例切换阶段时，本实例只收到不带分组的失效通知，所以收到通知（去抖）
+	// 和每 60 秒各重新列一次，只往 configured 里加 shadow/v2 的分组。lister 由 Preload 设置。
+	relistMu       sync.Mutex
+	lister         ConfiguredGroupLister
+	relistOnce     sync.Once
+	relistPending  atomic.Bool
+	relistInterval time.Duration // 零值用默认值；测试里调小
+	relistDebounce time.Duration
 }
 
 var _ GroupPolicy = (*matrixPolicy)(nil)
@@ -399,7 +408,7 @@ func NewMatrixGroupPolicy(src MatrixSnapshotSource, pubsub ChannelCachePubSub) *
 	}
 	if pubsub != nil {
 		// 收到其他实例（或本实例）的通知只清本地，不再转发，避免通知回环（与 ChannelService.clearCache 同理）。
-		pubsub.SubscribeUpdates(context.Background(), p.invalidateAll)
+		pubsub.SubscribeUpdates(context.Background(), p.onPeerInvalidate)
 	}
 	return p
 }
@@ -475,6 +484,12 @@ func (p *matrixPolicy) InvalidateGroups(groupIDs ...int64) {
 func (p *matrixPolicy) InvalidateAll() {
 	p.invalidate(nil)
 	p.notify()
+}
+
+// onPeerInvalidate 订阅回调：丢弃全部快照，并（去抖）重新列一次配置分组，让别的实例切到 shadow/v2 的分组进入集合。
+func (p *matrixPolicy) onPeerInvalidate() {
+	p.invalidateAll()
+	p.kickRelist()
 }
 
 // invalidateAll 丢弃本进程里全部分组的快照，不发通知。订阅回调用它。

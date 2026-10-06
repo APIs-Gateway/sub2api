@@ -110,6 +110,9 @@ type ShadowEvidence struct {
 	// TranslationDiffsInProcess 本实例进程内累计的 translation 类差异数（重启清零，多实例各算各的）。
 	// 影子差异表是有损采样（限速、去重、队列满丢弃），表里为 0 只是下界，所以进程内计数大于 0 时闸门也不放行。
 	TranslationDiffsInProcess int64 `json:"translation_diffs_in_process"`
+	// LastTranslationDiffAt 本实例进程内最近一次 translation 差异的时间；没有为 nil。闸门只在它晚于观察期起点时不放行
+	// （渠道修好、观察期重新计时之后，起点之前的旧差异不再挡闸门，不需要重启）。
+	LastTranslationDiffAt *time.Time `json:"last_translation_diff_at,omitempty"`
 	// ComparedInProcess 本实例进程内的比对次数，仅供参考（多实例各算各的，重启清零）。
 	ComparedInProcess int64 `json:"compared_in_process"`
 }
@@ -228,9 +231,9 @@ func EvaluateStageGate(in StageGateInput) StageGateReport {
 		fail(ReasonPricingGateShadowDiffs, fmt.Sprintf("%d translation differences in the shadow comparison", facts.Shadow.TranslationDiffs))
 	}
 
-	if facts.Shadow.TranslationDiffsInProcess > 0 {
-		fail(ReasonPricingGateShadowDiffsInProcess, fmt.Sprintf("%d translation differences were counted in this instance's process (the shadow table is a lossy sample)",
-			facts.Shadow.TranslationDiffsInProcess))
+	if last := facts.Shadow.LastTranslationDiffAt; last != nil && last.After(since) {
+		fail(ReasonPricingGateShadowDiffsInProcess, fmt.Sprintf("a translation difference was counted in this instance's process at %s, after the observation started at %s (the shadow table is a lossy sample)",
+			last.UTC().Format(time.RFC3339), since.UTC().Format(time.RFC3339)))
 	}
 
 	report.Replay = evaluateStageReplay(facts.Replay, in, fail)
@@ -332,12 +335,12 @@ func replayReasonDelta(reason string) PriceDelta {
 
 // StageSwitchAccepted 汇总切到 v2 时被接受的差异，并给出价格方向（price_delta）。
 // 方向为 none 必须有证据：回放存在、翻译差异为 0、影子翻译差异为 0、没有任何被接受的差异（或它们都被证明不改价）。
-// 没有回放、回放 0 行、或翻译差异不为 0（含本实例进程内计数），方向是 unknown。catalog 是目录里 draft、retired 且近 7 天有流量的模型，由调用方查出。
+// 没有回放、回放 0 行、或翻译差异不为 0，方向是 unknown。catalog 是目录里 draft、retired 且近 7 天有流量的模型，由调用方查出。
 func StageSwitchAccepted(replay *ReplayEvidence, shadow ShadowEvidence, catalog []AcceptedDifference) (PriceDelta, []AcceptedDifference) {
 	accepted := []AcceptedDifference{}
 	deltas := []PriceDelta{}
 	// 回放 0 行时什么也没比较，证明不了价格不变：unknown（没有流量的分组也一样，估算器的口径是证明不了就是 unknown）。
-	if replay == nil || replay.RowsReplayed == 0 || replay.TranslationDiffs > 0 || shadow.TranslationDiffs > 0 || shadow.TranslationDiffsInProcess > 0 {
+	if replay == nil || replay.RowsReplayed == 0 || replay.TranslationDiffs > 0 || shadow.TranslationDiffs > 0 {
 		deltas = append(deltas, PriceDeltaUnknown)
 	}
 	if replay != nil {

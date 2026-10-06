@@ -115,6 +115,12 @@ func (s *stagedPolicy) snapshotUnavailable(groupID int64, err error) GroupPolicy
 	return snapshotUnavailablePolicy{err: err}
 }
 
+const (
+	// ensureReloadAttempts 与 ensureReloadDelay：EnsureGroupsLoaded 发现快照没有存进缓存时的补加载次数与间隔。
+	ensureReloadAttempts = 2
+	ensureReloadDelay    = 20 * time.Millisecond
+)
+
 // EnsureGroupsLoaded 同步把这些分组的快照重新加载进本实例的缓存。加载失败，或只拿到沿用的旧数据，都返回错误。
 // 阶段切换提交之后调用，确认本实例已经读到新阶段。
 func (s *stagedPolicy) EnsureGroupsLoaded(ctx context.Context, groupIDs ...int64) error {
@@ -129,8 +135,19 @@ func (s *stagedPolicy) EnsureGroupsLoaded(ctx context.Context, groupIDs ...int64
 		if snap.stale {
 			return fmt.Errorf("group %d: only a stale snapshot is available", id)
 		}
+		// 加载期间收到失效通知（代数变了）时快照没有存进缓存，却也没有 loadErr（与预加载的检查一致）。
+		// 本实例自己发出的通知会回到自己的订阅上，这种回声是常态，所以再同步加载一到两次，每次都重新读代数。
+		for i := 0; i < ensureReloadAttempts && !s.matrix.cachedReady(id); i++ {
+			select {
+			case <-ctx.Done():
+			case <-time.After(ensureReloadDelay):
+			}
+			snap = s.matrix.loadSnapshot(ctx, id)
+			if snap.loadErr != nil {
+				return snap.loadErr
+			}
+		}
 		if !s.matrix.cachedReady(id) {
-			// 加载期间收到失效通知（代数变了）时快照没有存进缓存，却也没有 loadErr（与预加载的检查一致）。
 			return fmt.Errorf("group %d: the loaded snapshot was not cached", id)
 		}
 	}

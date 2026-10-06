@@ -811,14 +811,14 @@ func ProvidePricingStageSwitcher(
 		return 0
 	}
 	sw := NewPricingStageSwitcher(store, derive, fingerprint, catalog, policy, compared)
-	sw.SetInProcessTranslationDiffs(func(groupID int64) int64 {
+	sw.SetInProcessTranslationDiffs(func(groupID int64) (int64, time.Time) {
 		var n int64
 		for _, c := range policy.Stats().DiffTotal {
 			if c.GroupID == groupID && c.Class == ShadowClassTranslation {
 				n += c.Count
 			}
 		}
-		return n
+		return n, policy.hub.lastTranslationDiffAt(groupID)
 	})
 	return sw
 }
