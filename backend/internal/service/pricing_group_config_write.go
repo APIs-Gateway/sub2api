@@ -432,6 +432,11 @@ func (s *GroupConfigService) Commit(ctx context.Context, in GroupConfigCommit) (
 }
 
 // precheckCommit 提交时的开放时预检；回滚由调用方（事务回调返回错误）负责。
+//
+// 注意：预检必须读已提交状态（OpenPrechecker 的数据源走连接池，不走本事务），不能改成在 tx 里读。
+// 前态（写入前的分组现状）靠它读到的已提交状态得到，后态是前态叠加本次写入；本事务已对分组配置行加了 FOR UPDATE，
+// 别的写入者提交不了同一分组的改动，所以已提交状态正好是本事务的基线。要是改成在 tx 里读，前态就会包含本次写入，
+// 前后差集恒为空，提交时预检会悄悄失效（没有任何报错）。
 func (s *GroupConfigService) precheckCommit(ctx context.Context, groupID int64, res *GroupConfigWriteResult) error {
 	if s.precheck == nil || !res.Changed || !res.ExposureRelevant {
 		return nil

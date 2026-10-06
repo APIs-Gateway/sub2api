@@ -194,6 +194,11 @@ func (g *InterimPriceWriteGate) Commit(ctx context.Context, in PriceWriteCommit)
 }
 
 // precheckCommit 提交时的开放时预检：白名单分组里这次写入新增了阻止项就返回错误，调用方回滚整个事务（审批不会被消耗）。
+//
+// 注意：预检必须读已提交状态（OpenPrechecker 的数据源走连接池，不走本事务），不能改成在 tx 里读。
+// 前态（写入前的分组现状）靠它读到的已提交状态得到，后态是前态叠加本次写入；本事务已对分组配置行加了 FOR UPDATE，
+// 别的写入者提交不了同一分组的改动，所以已提交状态正好是本事务的基线。要是改成在 tx 里读，前态就会包含本次写入，
+// 前后差集恒为空，提交时预检会悄悄失效（没有任何报错）。
 func (g *InterimPriceWriteGate) precheckCommit(ctx context.Context, res *CellWriteResult) error {
 	if g.precheck == nil {
 		return nil

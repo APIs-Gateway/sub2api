@@ -977,6 +977,13 @@ func TestGroupConfig_PrecheckOnlyForExposureRelevantAndRunsOnCommit(t *testing.T
 	require.NoError(t, err)
 	require.Empty(t, src.calls)
 
+	// 读分组现状失败：失败关闭，事务回滚。
+	f = gcNewService(&gcFakeWriter{res: gcResult(true, true, MatrixAccessAllowlist)}, &exFakeReader{})
+	f.svc.WithOpenPrecheck(w2Prechecker(&w2Source{err: errors.New("boom")}, nil))
+	_, err = f.svc.Commit(ctx, gcCommit(areq, 0, false))
+	require.Error(t, err)
+	require.Equal(t, 1, f.store.txRollbacks)
+
 	// 目标态里没有新增的问题：放行（分组已经是白名单，本来就有的问题不算）。
 	src = &w2Source{snaps: map[int64]GroupStateSnapshot{1: w2Snap(MatrixAccessAllowlist, PricingStageV2, nil, w2Open("nothing"))}}
 	f = gcNewService(&gcFakeWriter{res: gcResult(true, true, MatrixAccessAllowlist)}, &exFakeReader{})
