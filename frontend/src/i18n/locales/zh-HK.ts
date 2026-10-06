@@ -1548,6 +1548,8 @@
     allPlatforms: '全部',
     platform: '平台',
     startingFrom: '起價',
+    peakNote: '標準價如上；工作日 9–12、14–18 點（北京時間）高峰，輸入、輸出、緩存讀取 {n} 倍',
+    peakShort: '工作日高峰 {n} 倍',
     expand: '展開',
     collapse: '收起',
     group: '分組',

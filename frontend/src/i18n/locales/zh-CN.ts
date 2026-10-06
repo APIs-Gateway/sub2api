@@ -1551,6 +1551,8 @@
     allPlatforms: '全部',
     platform: '平台',
     startingFrom: '起价',
+    peakNote: '标准价如上；工作日 9–12、14–18 点（北京时间）高峰，输入、输出、缓存读取 {n} 倍',
+    peakShort: '工作日高峰 {n} 倍',
     expand: '展开',
     collapse: '收起',
     group: '分组',

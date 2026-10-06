@@ -71,6 +71,8 @@ type UserPriceEntry struct {
 	Official UserPriceSet    `json:"official"`
 	Prices   UserPriceSet    `json:"prices"`
 	Tiers    []UserPriceTier `json:"tiers"`
+	// PeakMultiplier > 1 表示表内是标准（低谷）价，工作日高峰时段输入、输出、缓存读取按这个倍数计费（目前只有 DeepSeek 默认价卡）。
+	PeakMultiplier float64 `json:"peak_multiplier,omitempty"`
 }
 
 // UserPriceModel 是价格页上的一个模型。Entries 只含有价格的分组；没有任何分组有价格时为空，页面显示「暂无价格」。
@@ -415,17 +417,36 @@ func userPriceEntryFromQuote(qt *Quote) *UserPriceEntry {
 		if filled := fillImageGenerationPriceEntry(qt, entry); filled != nil {
 			return filled
 		}
-		return fillTokenPriceEntry(qt, entry)
+		filled := fillTokenPriceEntry(qt, entry)
+		if filled != nil {
+			filled.PeakMultiplier = userPricePeakMultiplier(qt)
+		}
+		return filled
 	}
 }
 
-// fillRequestPriceEntry 渠道按次、按图条目：首档价加分档价，倍率与计费一致（图片模式用图片倍率）。
+// userPricePeakMultiplier 返回计费在高峰时段对这个报价叠加的倍数，没有峰时倍率返回 0。
+// 与 effectiveTokenPricing 同一个条件：DeepSeek 模型且价格来自默认价卡（分组、渠道自定义价不叠加）。
+// 倍数取自 deepseekPeakMultiplierAt 在一个确定的高峰时刻（2026-01-05 周一北京时间 10:00）的值，不另写常量。
+func userPricePeakMultiplier(qt *Quote) float64 {
+	if qt == nil || qt.resolved == nil || !isDeepSeekModel(qt.Model) || qt.resolved.Source != PricingSourceLiteLLM {
+		return 0
+	}
+	if mult := deepseekPeakMultiplierAt(time.Date(2026, 1, 5, 2, 0, 0, 0, time.UTC)); mult > 1 {
+		return mult
+	}
+	return 0
+}
+
+// fillRequestPriceEntry 渠道按次、按图条目：首档价加分档价，倍率与计费一致。
+// 图片请求命中渠道按次/图片模式时计费用 ImageMultiplier（Quote.Cost 的 perRequestMode 分支），
+// 所以图片模式的条目、以及能生成图片的模型的按次条目都用图片倍率；其它按次条目用 EffectiveMultiplier。
 func fillRequestPriceEntry(qt *Quote, entry *UserPriceEntry) *UserPriceEntry {
 	if qt.PerRequest == nil {
 		return nil
 	}
 	mult := qt.EffectiveMultiplier
-	if qt.resolved.Mode == BillingModeImage {
+	if qt.resolved.Mode == BillingModeImage || (qt.quoter != nil && qt.quoter.billing != nil && qt.quoter.billing.quoteModelImageCapable(qt.Model)) {
 		mult = qt.ImageMultiplier
 	}
 	entry.Rate = mult
@@ -451,7 +472,8 @@ func fillRequestPriceEntry(qt *Quote, entry *UserPriceEntry) *UserPriceEntry {
 }
 
 // fillImageGenerationPriceEntry 目录里的图片生成模型（没有渠道价）：按张计价，分 1K、2K、4K 三档，
-// 倍率用图片倍率，与 CalculateImageCost 的口径一致。不是图片生成模型，或按张价只是代码里的兜底值时返回 nil。
+// 倍率用图片倍率，与 CalculateImageCost 的口径一致。按张价来自哪一层都照实展示（含代码里的 $0.134 兜底价，
+// 计费就是按它收），所以页面与计费同源。不是目录里的图片生成模型时返回 nil。
 func fillImageGenerationPriceEntry(qt *Quote, entry *UserPriceEntry) *UserPriceEntry {
 	if qt.ImageRequest == nil || len(qt.ImageRequest.Tiers) == 0 || qt.quoter == nil || qt.quoter.billing == nil ||
 		qt.quoter.billing.pricingService == nil {
@@ -462,7 +484,7 @@ func fillImageGenerationPriceEntry(qt *Quote, entry *UserPriceEntry) *UserPriceE
 		return nil
 	}
 	first := qt.ImageRequest.Tiers[0]
-	if first.Source == "default" || first.Price <= 0 {
+	if first.Price <= 0 {
 		return nil
 	}
 	mult := qt.ImageMultiplier

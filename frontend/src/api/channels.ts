@@ -122,6 +122,8 @@ export interface UserPriceEntry {
   /** 乘完倍率后的单价。 */
   prices: UserPriceSet
   tiers: UserPriceTier[]
+  /** > 1：表内是标准价，工作日高峰时段按这个倍数计费（DeepSeek 默认价卡）；缺省或 0 表示没有峰时倍率。 */
+  peak_multiplier?: number
 }
 
 export interface UserPriceModel {

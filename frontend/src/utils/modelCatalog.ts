@@ -48,6 +48,8 @@ export interface ModelPricing {
   official: PriceSet
   /** 完整阶梯（已乘倍率）；只有一档或没有阶梯时为空数组。 */
   tiers: ModelTier[]
+  /** > 1：展示的是标准价，工作日高峰时段按这个倍数计费；null 表示没有峰时倍率。 */
+  peakMultiplier: number | null
 }
 
 export interface CatalogGroup {
@@ -71,11 +73,16 @@ export interface CatalogModel {
   key: string
   name: string
   platform: string
+  /** 主要计费方式：有按 token 计费的分组就是 token，否则是 request；没有任何定价时为 null。 */
   kind: PriceKind | null
-  /** 按起价从低到高排序，只含有定价的分组。 */
+  /** 这个模型出现过的计费方式，主要的在前。同一模型在不同分组计费方式可以不同。 */
+  kinds: PriceKind[]
+  /** 先按计费方式（主要的在前）、再按起价从低到高排序，只含有定价的分组。 */
   entries: GroupPrice[]
-  /** 起价所在分组；没有任何定价时为 null。 */
+  /** 主要计费方式里起价最低的分组；没有任何定价时为 null。 */
   cheapest: GroupPrice | null
+  /** 任一分组带峰时倍率时的倍数，否则 null。 */
+  peakMultiplier: number | null
 }
 
 export interface SubscriptionUnitRange {
@@ -131,6 +138,7 @@ function toPricing(e: UserPriceEntry): ModelPricing {
     first: toPriceSet(e.prices),
     official: toPriceSet(e.official),
     tiers: (e.tiers ?? []).map(toTier),
+    peakMultiplier: typeof e.peak_multiplier === 'number' && e.peak_multiplier > 1 ? e.peak_multiplier : null,
   }
 }
 
@@ -139,7 +147,12 @@ function rankBase(set: PriceSet): number {
   return set.input ?? set.unit ?? set.output ?? set.imageOutput ?? Number.POSITIVE_INFINITY
 }
 
-/** 额度价（已含倍率），用来给分组排序。 */
+/** token 价与每次价不能直接比较：token 计费的排前面。 */
+function kindRank(kind: PriceKind): number {
+  return kind === 'token' ? 0 : 1
+}
+
+/** 额度价（已含倍率），用来给分组排序。只在同一种计费方式内有可比性。 */
 export function creditPriceOf(entry: GroupPrice): number {
   return rankBase(entry.pricing.first)
 }
@@ -170,14 +183,24 @@ export function buildPriceCatalog(data: UserPriceCatalog | null | undefined): Ca
           pricing: toPricing(e),
         })
       }
-      entries.sort((a, b) => creditPriceOf(a) - creditPriceOf(b) || a.group.name.localeCompare(b.group.name))
+      // 每个分组按自己的计费方式展示；每 token 价和每次价不直接比较，不同类的分开排，价格只在同类里比。
+      entries.sort(
+        (a, b) =>
+          kindRank(a.pricing.kind) - kindRank(b.pricing.kind) ||
+          creditPriceOf(a) - creditPriceOf(b) ||
+          a.group.name.localeCompare(b.group.name),
+      )
+      const kinds = [...new Set(entries.map((e) => e.pricing.kind))]
+      const peaks = entries.map((e) => e.pricing.peakMultiplier ?? 0)
       return {
         key: `${m.platform}::${m.name}`,
         name: m.name,
         platform: m.platform,
-        kind: entries[0]?.pricing.kind ?? null,
+        kind: kinds[0] ?? null,
+        kinds,
         entries,
         cheapest: entries[0] ?? null,
+        peakMultiplier: Math.max(0, ...peaks) > 1 ? Math.max(...peaks) : null,
       }
     })
     .sort((a, b) => a.name.localeCompare(b.name))

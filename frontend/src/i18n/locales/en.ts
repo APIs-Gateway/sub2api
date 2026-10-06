@@ -1544,6 +1544,8 @@
     allPlatforms: 'All',
     platform: 'Platform',
     startingFrom: 'From',
+    peakNote: 'Standard prices shown; on weekdays 9:00–12:00 and 14:00–18:00 (Beijing time) input, output and cache read cost {n}x',
+    peakShort: 'Weekday peak {n}x',
     expand: 'Show prices',
     collapse: 'Hide',
     group: 'Group',

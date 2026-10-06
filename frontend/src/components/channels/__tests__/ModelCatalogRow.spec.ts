@@ -42,6 +42,8 @@ vi.mock('vue-i18n', () => ({
         'availableChannels.tierName': 'Tier',
         'availableChannels.resolution': 'Resolution',
         'availableChannels.noPricing': 'No pricing',
+        'availableChannels.peakNote': `peak note ${params?.n}`,
+        'availableChannels.peakShort': `peak ${params?.n}x`,
       })[key] ?? key,
   }),
 }))
@@ -373,5 +375,50 @@ describe('ModelCatalogRow', () => {
     expect(w.get('button').attributes('aria-expanded')).toBe('false')
     const empty = mount(ModelCatalogRow, { props: { model: { key: 'k', name: 'n', platform: 'openai', kind: null, entries: [], cheapest: null } } })
     expect(empty.get('button').attributes('disabled')).toBeDefined()
+  })
+  it('shows each group by its own billing mode when one model mixes token and per-request groups', () => {
+    const off = set({ input: 1e-6, output: 4e-6 })
+    const req = set({ unit: 0.5 })
+    const mk = (id: number, rate: number, over: Record<string, unknown>, official: UserPriceSet) => ({
+      group_id: id, rate, base_rate: rate, has_custom_rate: false, official, prices: scaled(official, rate), tiers: [], ...over,
+    })
+    const data = {
+      groups: [g(1, 'TokenG'), g(2, 'ReqG'), g(3, 'ReqCheap')],
+      models: [{
+        name: 'mixed', platform: 'openai',
+        entries: [
+          mk(1, 1, { billing_mode: 'token', kind: 'token' }, off),
+          // 每次价低于每 token 价换算后的数字，但不应因此排到前面
+          mk(2, 1, { billing_mode: 'per_request', kind: 'request' }, req),
+          mk(3, 0.4, { billing_mode: 'per_request', kind: 'request' }, req),
+        ],
+      }],
+    } as unknown as UserPriceCatalog
+    const m = buildPriceCatalog(data)[0]
+    expect(m.kinds).toEqual(['token', 'request'])
+    expect(m.entries.map((e) => e.group.name)).toEqual(['TokenG', 'ReqCheap', 'ReqG'])
+    const w = mount(ModelCatalogRow, { props: { model: m, expanded: true } })
+    const sections = w.findAll('[data-test="group-section"]')
+    expect(sections).toHaveLength(2)
+    expect(sections[0].text()).toContain('TokenG')
+    expect(sections[0].text()).not.toContain('Req')
+    expect(sections[0].text()).toContain('per 1M')
+    expect(sections[1].text()).toContain('ReqCheap')
+    expect(sections[1].text()).toContain('ReqG')
+    expect(sections[1].text()).toContain('per request')
+    expect(sections[1].findAll('[data-lowest="true"]')).toHaveLength(1)
+    expect(sections[1].findAll('td').some((td) => td.text() === '-')).toBe(false)
+    expect(sections[0].findAll('td').some((td) => td.text() === '-')).toBe(false)
+  })
+
+  it('marks the weekday peak multiplier in the row and the panel, and nothing for ordinary models', () => {
+    const peak = model()
+    peak.peakMultiplier = 2
+    const w = mount(ModelCatalogRow, { props: { model: peak, expanded: true } })
+    expect(w.get('[data-test="peak-note-row"]').text()).toBe('peak 2x')
+    expect(w.get('[data-test="peak-note"]').text()).toBe('peak note 2')
+    const plain = mount(ModelCatalogRow, { props: { model: model(), expanded: true } })
+    expect(plain.find('[data-test="peak-note-row"]').exists()).toBe(false)
+    expect(plain.find('[data-test="peak-note"]').exists()).toBe(false)
   })
 })
