@@ -54,12 +54,10 @@
                       :class="{ 'is-on': g.view.stage === s }"
                       :aria-pressed="g.view.stage === s"
                       :disabled="!canPick(g, s)"
-                      :title="s === 'v2' ? t('admin.pricingOps.stages.v2Unavailable') : undefined"
                       :data-test="`stage-${g.id}-${s}`"
                       @click="ask(g, s)"
                     >
                       {{ t(`admin.pricingOps.stages.stage.${s}`) }}
-                      <span v-if="s === 'v2' && g.view.stage !== 'v2'" class="ml-1 text-[10px] font-normal opacity-80">{{ t('admin.pricingOps.stages.unavailable') }}</span>
                     </button>
                   </div>
                   <span v-else-if="g.view" class="text-sm text-gray-500 dark:text-dark-300" :data-test="`no-config-${g.id}`">{{ t('admin.pricingOps.stages.noConfig') }}</span>
@@ -76,7 +74,10 @@
                   </template>
                   <span v-else class="text-gray-400 dark:text-dark-400">{{ stats ? t('admin.pricingOps.stages.noShadowData') : '—' }}</span>
                 </td>
-                <td class="text-right">
+                <td class="space-x-2 text-right">
+                  <button v-if="g.view?.stage" type="button" class="btn btn-secondary btn-sm" :data-test="`audit-${g.id}`" @click="openAudit(g)">
+                    {{ t('admin.pricingOps.stages.audit.button') }}
+                  </button>
                   <button v-if="g.view?.stage === 'shadow' || (summaryOf(g.id)?.abnormal ?? 0) + (summaryOf(g.id)?.expected ?? 0) > 0" type="button" class="btn btn-secondary btn-sm" :data-test="`samples-${g.id}`" @click="openSamples(g)">
                     {{ t('admin.pricingOps.stages.samples') }}
                   </button>
@@ -92,26 +93,59 @@
       </template>
     </TablePageLayout>
 
-    <!-- 切换确认 -->
-    <BaseDialog :show="!!pending" :title="t('admin.pricingOps.stages.confirmTitle')" width="normal" @close="closePending">
+    <!-- 切换确认：先预览，再提交 -->
+    <BaseDialog :show="!!pending" :title="t('admin.pricingOps.stages.confirmTitle')" width="wide" @close="closePending">
       <div v-if="pending" class="space-y-3 text-sm text-gray-700 dark:text-gray-300" data-test="stage-dialog">
-        <p>{{ t('admin.pricingOps.stages.confirmLine', { group: pending.group.name, from: stageName(pending.group.view?.stage), to: stageName(pending.to) }) }}</p>
-        <p>{{ t(`admin.pricingOps.stages.confirmNote.${pending.to}`) }}</p>
-        <div v-if="summaryOf(pending.group.id)" class="note" data-test="stage-dialog-summary">
-          <p class="font-medium">{{ t('admin.pricingOps.stages.summaryTitle') }}</p>
-          <p class="num mt-1">
-            {{ t('admin.pricingOps.stages.compared', { n: summaryOf(pending.group.id)!.compared }) }}，{{ t('admin.pricingOps.stages.abnormal', { n: summaryOf(pending.group.id)!.abnormal }) }}，{{ t('admin.pricingOps.stages.expected', { n: summaryOf(pending.group.id)!.expected }) }}
-          </p>
+        <div v-if="previewing" class="flex items-center gap-2 py-6" data-test="stage-previewing">
+          <LoadingSpinner />
+          <span>{{ t('admin.pricingOps.stages.previewing') }}</span>
         </div>
+        <template v-else-if="preview">
+          <StagePreviewBody :preview="preview" :group-name="pending.group.name" />
+          <div v-if="to !== 'v2' && summaryOf(pending.group.id)" class="note" data-test="stage-dialog-summary">
+            <p class="font-medium">{{ t('admin.pricingOps.stages.summaryTitle') }}</p>
+            <p class="num mt-1">
+              {{ t('admin.pricingOps.stages.compared', { n: summaryOf(pending.group.id)!.compared }) }}，{{ t('admin.pricingOps.stages.abnormal', { n: summaryOf(pending.group.id)!.abnormal }) }}，{{ t('admin.pricingOps.stages.expected', { n: summaryOf(pending.group.id)!.expected }) }}
+            </p>
+          </div>
+          <p v-if="blocked" class="note note-signal" data-test="stage-blocked">{{ t(`admin.pricingOps.stages.blocked.${blocked}`) }}</p>
+        </template>
         <p v-if="pendingError" class="note note-signal" role="alert" data-test="stage-error">{{ pendingError }}</p>
       </div>
       <template #footer>
         <button type="button" class="btn btn-secondary" :disabled="switching" @click="closePending">{{ t('common.cancel') }}</button>
-        <button type="button" class="btn btn-primary" :disabled="switching" data-test="stage-confirm" @click="confirm">
+        <button v-if="pendingError || (!previewing && !preview)" type="button" class="btn btn-secondary" :disabled="previewing || switching" data-test="stage-repreview" @click="runPreview">
+          {{ t('admin.pricingOps.stages.repreview') }}
+        </button>
+        <button type="button" class="btn btn-primary" :disabled="!confirmable || switching || previewing || !!pendingError" data-test="stage-confirm" @click="confirm">
           {{ switching ? t('admin.pricingOps.stages.switching') : t('admin.pricingOps.stages.confirmButton') }}
         </button>
       </template>
     </BaseDialog>
+
+    <!-- 切换记录 -->
+    <SideDrawer :show="!!auditGroup" :title="t('admin.pricingOps.stages.audit.title', { group: auditGroup?.name ?? '' })" :subtitle="t('admin.pricingOps.stages.audit.subtitle')" width="wide" @close="auditGroup = null">
+      <div v-if="auditLoading" class="state-block !min-h-[8rem]"><LoadingSpinner /></div>
+      <p v-else-if="auditError" class="note note-signal" role="alert" data-test="audit-error">{{ auditError }}</p>
+      <p v-else-if="audit.length === 0" class="text-sm text-gray-500 dark:text-dark-300" data-test="audit-empty">{{ t('admin.pricingOps.stages.audit.empty') }}</p>
+      <ul v-else class="divide-y divide-gray-100 dark:divide-dark-800" data-test="audit-list">
+        <li v-for="e in audit" :key="e.id" class="py-3 text-sm" :data-test="`audit-item-${e.id}`">
+          <p class="flex flex-wrap items-baseline gap-x-3">
+            <span class="font-medium text-gray-900 dark:text-white">{{ t(`admin.pricingOps.stages.switchKind.${e.kind}`) }}</span>
+            <span>{{ t('admin.pricingOps.stages.audit.line', { from: stageName(e.from), to: stageName(e.to) }) }}</span>
+            <span v-if="e.price_delta !== 'none'" :class="e.price_delta === 'unknown' || e.price_delta === 'up' ? 'font-medium text-primary-700 dark:text-primary-300' : 'text-gray-500 dark:text-dark-300'" data-test="audit-delta">
+              {{ e.price_delta ? t(`admin.pricingOps.stages.priceDelta.${e.price_delta}`) : '—' }}
+            </span>
+            <span class="num ml-auto text-xs text-gray-500 dark:text-dark-300">{{ formatDateTime(e.created_at) }}</span>
+          </p>
+          <p class="num mt-0.5 text-xs text-gray-500 dark:text-dark-300">
+            {{ t('admin.pricingOps.stages.audit.operator', { id: e.operator_id }) }}
+            <template v-if="!e.interactive">，{{ t('admin.pricingOps.stages.audit.noSession') }}</template>
+            <template v-if="e.approval_id">，{{ t('admin.pricingOps.stages.audit.approval', { id: e.approval_id }) }}</template>，{{ t('admin.pricingOps.stages.audit.revision', { before: e.config_revision_before, after: e.config_revision_after }) }}
+          </p>
+        </li>
+      </ul>
+    </SideDrawer>
 
     <!-- 差异样本 -->
     <SideDrawer :show="!!samplesGroup" :title="t('admin.pricingOps.stages.samplesTitle', { group: samplesGroup?.name ?? '' })" :subtitle="t('admin.pricingOps.stages.samplesSubtitle')" width="wide" @close="samplesGroup = null">
@@ -146,7 +180,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -157,15 +191,22 @@ import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import { formatDateTime } from '@/utils/format'
 import {
+  asOpsError,
   getShadowSamples,
   getShadowStats,
+  getStageAudit,
+  previewGroupStage,
   switchGroupStage,
   type OpsStage,
   type ShadowSample,
-  type ShadowStats
+  type ShadowStats,
+  type StageAuditEntry,
+  type StagePreview
 } from '@/api/admin/pricingOps'
 import SideDrawer from './components/SideDrawer.vue'
+import StagePreviewBody from './components/StagePreviewBody.vue'
 import { opsErrorText } from './opsErrors'
+import { blockReason, canConfirm, needsRepreview } from './stageSwitchModel'
 import { asGroupPlatform, platformLabel } from './pricingModel'
 import { useGroupOps, type OpsGroup } from './useGroupOps'
 
@@ -176,9 +217,22 @@ const app = useAppStore()
 const { state, load, reloadGroup } = useGroupOps()
 
 const stats = ref<ShadowStats | null>(null)
-const pending = ref<{ group: OpsGroup; to: 'legacy' | 'shadow' } | null>(null)
+const pending = ref<{ group: OpsGroup; to: OpsStage } | null>(null)
+const preview = ref<StagePreview | null>(null)
+const previewing = ref(false)
 const pendingError = ref('')
 const switching = ref(false)
+const auditGroup = ref<OpsGroup | null>(null)
+const audit = ref<StageAuditEntry[]>([])
+const auditLoading = ref(false)
+const auditError = ref('')
+// 预览的凭证 30 分钟有效；用一个会走的时钟让「已过期」能自己禁掉确认
+const now = ref(Date.now())
+let clock: ReturnType<typeof setInterval> | null = null
+
+const to = computed(() => pending.value?.to)
+const blocked = computed(() => blockReason(preview.value, now.value))
+const confirmable = computed(() => canConfirm(preview.value, now.value))
 const samplesGroup = ref<OpsGroup | null>(null)
 const samples = ref<ShadowSample[]>([])
 const samplesLoading = ref(false)
@@ -205,11 +259,10 @@ function summaryOf(groupId: number) {
   return summaries.value.get(groupId) ?? null
 }
 
-/** v2 现在后端不开放，永远置灰；已经在 v2 的分组不能从这里改回；当前阶段不能再点。 */
+/** 当前阶段不能再点；其余阶段都能点（含 v2 回拨），能不能切由预览告诉管理员。 */
 function canPick(g: OpsGroup, s: OpsStage): boolean {
-  if (s === 'v2') return false
   const cur = g.view?.stage
-  return !!cur && cur !== 'v2' && cur !== s
+  return !!cur && cur !== s
 }
 
 function stageName(s: OpsStage | null | undefined) {
@@ -235,30 +288,83 @@ function pretty(v: unknown): string {
   }
 }
 
-function ask(g: OpsGroup, s: OpsStage) {
-  if (!canPick(g, s) || s === 'v2') return
+let previewSeq = 0
+
+async function runPreview() {
+  const p = pending.value
+  if (!p) return
+  const seq = ++previewSeq
+  previewing.value = true
   pendingError.value = ''
+  preview.value = null
+  try {
+    const r = await previewGroupStage(p.group.id, p.to)
+    if (pending.value === p) preview.value = r
+  } catch (err) {
+    if (pending.value === p) pendingError.value = opsErrorText(err, t, te)
+  } finally {
+    // 只有最新的一次预览能结束加载态，旧请求晚到不能关掉新分组的加载
+    if (seq === previewSeq) previewing.value = false
+  }
+}
+
+async function ask(g: OpsGroup, s: OpsStage) {
+  if (!canPick(g, s)) return
   pending.value = { group: g, to: s }
+  now.value = Date.now()
+  await runPreview()
 }
 
 function closePending() {
-  if (!switching.value) pending.value = null
+  if (switching.value) return
+  pending.value = null
+  preview.value = null
+  pendingError.value = ''
 }
 
 async function confirm() {
   const p = pending.value
-  if (!p) return
+  const pv = preview.value
+  if (switching.value || !p || !pv || !canConfirm(pv, Date.now())) return
   switching.value = true
   pendingError.value = ''
   try {
-    const r = await switchGroupStage(p.group.id, p.to)
-    app.showSuccess(t('admin.pricingOps.stages.switched', { group: p.group.name, to: stageName(r.to) }))
+    const r = await switchGroupStage(p.group.id, p.to, pv.approval_id || undefined)
+    if (r.changed === false) {
+      // 别人先一步改了阶段，这次提交没有改任何东西：不报成功，也不提示实例延迟
+      app.showInfo(t('admin.pricingOps.stages.alreadyThere', { group: p.group.name, to: stageName(r.to) }))
+    } else {
+      // 只有从 v2 回拨（归档了非派生行）才说「已回拨」
+      const key = r.archived ? 'rolledBack' : 'switched'
+      app.showSuccess(t(`admin.pricingOps.stages.${key}`, { group: p.group.name, to: stageName(r.to) }))
+      if (r.snapshot_ready === false) app.showWarning(t('admin.pricingOps.stages.snapshotLater'))
+    }
     pending.value = null
+    preview.value = null
     await reloadGroup(p.group.id)
   } catch (err) {
     pendingError.value = opsErrorText(err, t, te)
+    // 凭证失效、预览后配置变了、闸门不满足：预览作废，按服务端最新状态刷新分组，让管理员重新预览
+    if (needsRepreview(asOpsError(err).reason)) {
+      preview.value = null
+      await reloadGroup(p.group.id)
+    }
   } finally {
     switching.value = false
+  }
+}
+
+async function openAudit(g: OpsGroup) {
+  auditGroup.value = g
+  audit.value = []
+  auditError.value = ''
+  auditLoading.value = true
+  try {
+    audit.value = await getStageAudit(g.id)
+  } catch (err) {
+    auditError.value = opsErrorText(err, t, te)
+  } finally {
+    auditLoading.value = false
   }
 }
 
@@ -289,7 +395,13 @@ async function refresh() {
   await Promise.all([load(), loadStats()])
 }
 
-onMounted(refresh)
+onMounted(() => {
+  clock = setInterval(() => (now.value = Date.now()), 30_000)
+  void refresh()
+})
+onBeforeUnmount(() => {
+  if (clock) clearInterval(clock)
+})
 </script>
 
 <style scoped>

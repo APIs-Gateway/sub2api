@@ -188,7 +188,119 @@ export async function rejectSnapshot(id: number): Promise<void> {
 
 export type OpsStage = 'legacy' | 'shadow' | 'v2'
 
+export type StageKind = 'advance' | 'rollback' | 'noop'
+/** 价格方向：none 不变、up 涨、down 降、unknown 证明不了。 */
+export type PriceDelta = 'none' | 'up' | 'down' | 'unknown'
+
+export interface StageGateFailure {
+  code: string
+  /** 后端的英文说明；界面按 code 翻译，不直接展示。 */
+  message: string
+}
+
+export interface StageGateObservation {
+  since: string
+  observed_hours: number
+  required_hours: number
+  eligible_at: string
+  satisfied: boolean
+}
+
+export interface StageGateShadow {
+  window_from: string
+  translation_diffs: number
+  expected_diffs: number
+  expected_models: string[]
+  translation_diffs_in_process?: number
+  last_translation_diff_at?: string
+  compared_in_process: number
+}
+
+export interface StageGateReplay {
+  present: boolean
+  id?: number
+  recorded_at?: string
+  window_from?: string
+  window_to?: string
+  rows_in_window?: number
+  rows_replayed: number
+  translation_diffs: number
+  expected_diffs: number
+  rows_errored: number
+  passed: boolean
+  binding_current: boolean
+  derive_revision?: string
+  current_derive_revision?: string
+  channel_config_hash_match: boolean
+}
+
+export interface StageGateReport {
+  required: boolean
+  passed: boolean
+  failures: StageGateFailure[]
+  observation: StageGateObservation
+  shadow: StageGateShadow
+  replay: StageGateReplay
+}
+
+export interface AcceptedDifference {
+  source: 'replay' | 'shadow' | 'catalog'
+  kind?: string
+  reason: string
+  model?: string
+  count: number
+  price_delta: PriceDelta
+}
+
+export interface StageDrift {
+  changed: boolean
+  config_changed: boolean
+  cells_inserted: number
+  cells_updated: number
+  cells_deleted: number
+  rules_replaced: number
+}
+
+export interface StageRollbackPreview {
+  archived_cells: number
+  archived_rules: number
+  drift: StageDrift
+}
+
+/** POST .../stage/preview 的响应。切到 v2 且闸门不通过时 executable 为 false、approval_id 为 0。 */
+export interface StagePreview {
+  action: string
+  category: string
+  touches_price: boolean
+  group_id: number
+  from: OpsStage
+  to: OpsStage
+  kind: StageKind
+  price_delta: PriceDelta
+  approval_id: number
+  plan_hash?: string
+  expires_at?: string
+  executable: boolean
+  /** 目标不是 v2 且当前不是 v2 时没有。 */
+  gate?: StageGateReport
+  accepted_differences: AcceptedDifference[]
+  /** 只在当前是 v2（回拨）时有。 */
+  rollback?: StageRollbackPreview | null
+}
+
+/** PUT .../stage 的响应。 */
 export interface StageSwitchResult {
+  action?: string
+  category?: string
+  touches_price?: boolean
+  price_delta?: PriceDelta
+  kind: StageKind
+  approval_id?: number
+  audit_id?: number
+  /** false：已提交，但本实例没能同步加载快照，其他实例稍后生效。 */
+  snapshot_ready?: boolean
+  gate?: StageGateReport
+  archived?: { cells: number; rules: number }
   group_id: number
   from: OpsStage
   to: OpsStage
@@ -197,13 +309,46 @@ export interface StageSwitchResult {
   changed_at: string
 }
 
-/** 目前只允许 legacy 与 shadow；v2 等后端放开后再接，界面不会发 v2 请求。 */
-export async function switchGroupStage(groupId: number, stage: 'legacy' | 'shadow'): Promise<StageSwitchResult> {
-  const { data } = await apiClient.put<StageSwitchResult>(`/admin/pricing-matrix/groups/${groupId}/stage`, {
-    stage,
-    confirm: true
-  })
+export interface StageAuditEntry {
+  id: number
+  created_at: string
+  group_id: number
+  from: OpsStage
+  to: OpsStage
+  kind: StageKind
+  operator_id: number
+  interactive: boolean
+  approval_id?: number
+  price_delta: PriceDelta
+  config_revision_before: number
+  config_revision_after: number
+  evidence?: unknown
+}
+
+/** 阶段切换预览：不改数据；切到 v2 且闸门通过时会登记 30 分钟有效的凭证。 */
+export async function previewGroupStage(groupId: number, stage: OpsStage): Promise<StagePreview> {
+  const { data } = await apiClient.post<StagePreview>(`/admin/pricing-matrix/groups/${groupId}/stage/preview`, { stage })
+  return {
+    ...data,
+    accepted_differences: data.accepted_differences ?? [],
+    gate: data.gate ? { ...data.gate, failures: data.gate.failures ?? [] } : undefined
+  }
+}
+
+/** 提交阶段切换：必须带 confirm；切到 v2 还要带预览拿到的 approval_id，回拨与 legacy、shadow 之间不需要。需要登录会话。 */
+export async function switchGroupStage(groupId: number, stage: OpsStage, approvalId?: number): Promise<StageSwitchResult> {
+  const body: { stage: OpsStage; confirm: true; approval_id?: number } = { stage, confirm: true }
+  if (stage === 'v2' && approvalId) body.approval_id = approvalId
+  const { data } = await apiClient.put<StageSwitchResult>(`/admin/pricing-matrix/groups/${groupId}/stage`, body)
   return data
+}
+
+/** 分组的阶段切换审计，新的在前。 */
+export async function getStageAudit(groupId: number, limit = 50): Promise<StageAuditEntry[]> {
+  const { data } = await apiClient.get<{ items: StageAuditEntry[] | null }>(`/admin/pricing-matrix/groups/${groupId}/stage/audit`, {
+    params: { limit }
+  })
+  return data.items ?? []
 }
 
 export interface ShadowDiffCount {
@@ -276,7 +421,9 @@ export const pricingOpsAPI = {
   previewSnapshot,
   approveSnapshot,
   rejectSnapshot,
+  previewGroupStage,
   switchGroupStage,
+  getStageAudit,
   getShadowStats,
   getShadowSamples,
   getGroupOpsView
