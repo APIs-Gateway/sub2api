@@ -15,9 +15,9 @@ import (
 //   - 动作：pricing.stage_switch，Category 不是 price，touches_price 为真，档位由 price_delta 经 W5 的 TierEngine 得出，
 //     W6 不硬编码档位。
 
-// W6 新增的设置键（存储键）。
+// W6 新增的设置键（存储键）。SettingKeyPricingSnapshotMode 在 pricing_snapshot_types.go，
+// SettingKeyBillingKnownFreeList 在 billing_unpriced_observe.go。
 const (
-	SettingKeyPricingSnapshotMode   = "pricing_snapshot_mode"
 	SettingKeyBillingUnpricedPolicy = "billing_unpriced_policy"
 	SettingKeyPricingDefaultStage   = "pricing_default_stage"
 )
