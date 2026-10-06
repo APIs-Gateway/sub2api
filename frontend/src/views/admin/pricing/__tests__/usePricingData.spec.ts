@@ -105,10 +105,10 @@ describe('usePricingData', () => {
     await load()
     const refCalls = api.pricing.quoteBatch.mock.calls.filter(([groupIds]: [number[]]) => groupIds.length === 0)
     const sizes = refCalls.map(([, models]: [number[], string[]]) => models.length)
-    // 65 个目录模型，加上分组配置里出现过但目录没有的 3 个名字（gpt-5.5、qwen3-max、gpt5.5）
+    // 65 个目录模型，加上分组配置里出现过但目录没有的 4 个名字（gpt-5.5、qwen3-max、gpt5.5、claude-opus-5-5）
     expect(sizes[0]).toBe(QUOTE_BATCH_MAX_MODELS)
-    expect(sizes.reduce((a: number, b: number) => a + b, 0)).toBe(68)
-    expect(Object.keys(state.refs)).toHaveLength(68)
+    expect(sizes.reduce((a: number, b: number) => a + b, 0)).toBe(69)
+    expect(Object.keys(state.refs)).toHaveLength(69)
   })
 
   it('没有分组的平台只取官方参考价', async () => {

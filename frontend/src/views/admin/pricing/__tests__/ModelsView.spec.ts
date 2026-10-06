@@ -38,13 +38,10 @@ describe('ModelsView', () => {
     installApiMocks(api)
   })
 
-  it('渲染目录里的模型，未登记的排在最后，并说明目前只能查看', async () => {
+  it('渲染目录里的模型，未登记的排在最后，新建按钮可用', async () => {
     const wrapper = await mountPricingView(ModelsView)
     expect(rowKeys(wrapper)).toEqual(['gpt-5.4', 'gpt-5.5', 'gpt-6.2-sol', 'minimax-m3', 'qwen3-max', 'claude-opus-5-5'])
-    expect(wrapper.find('[data-test="readonly-note"]').text()).toContain('即将开放')
-    // 写操作不接：新建按钮置灰
-    expect(wrapper.find('[data-test="create-model"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('[data-test="create-model"]').attributes('title')).toBe('即将开放')
+    expect(wrapper.find('[data-test="create-model"]').attributes('disabled')).toBeUndefined()
     // 表头四个必要列
     const head = wrapper.find('thead').text()
     for (const col of ['模型', '平台', '状态', '官方参考价', '价格来源', '已开放分组']) expect(head).toContain(col)
@@ -130,16 +127,15 @@ describe('ModelsView', () => {
     expect(mini.find('[data-test="mini-row-1"]').text()).toContain('尚未切换')
     expect(mini.find('[data-test="mini-row-2"]').text()).toContain('白名单')
     expect(mini.find('[data-test="mini-row-2"]').text()).toContain('×1.2')
-    // 写操作不接：只有置灰的「下线…」
     const action = wrapper.find('[data-test="drawer-action"]')
     expect(action.text()).toBe('下线…')
-    expect(action.attributes('disabled')).toBeDefined()
+    expect(action.attributes('disabled')).toBeUndefined()
 
     await wrapper.find('button[aria-label="关闭"]').trigger('click')
     expect(wrapper.find('[data-test="model-drawer"]').exists()).toBe(false)
   })
 
-  it('抽屉按模型状态给出对应的置灰操作，并解释关闭的原因', async () => {
+  it('抽屉按模型状态给出对应的操作，并解释关闭的原因', async () => {
     const wrapper = await mountPricingView(ModelsView)
 
     await wrapper.find('[data-test="model-row-gpt-6.2-sol"]').trigger('click')
