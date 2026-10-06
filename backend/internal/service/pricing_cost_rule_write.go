@@ -54,11 +54,12 @@ type CostRuleWriteResult struct {
 }
 
 // CostRuleWriter 成本核算规则的 tx-aware 写入器。三个方法都必须在事务里调用：先锁分组配置行，确认分组是 v2 且
-// 基线 revision 一致，再写规则，最后把分组配置 revision 加一。
+// 基线 revision 一致，再写规则，把分组配置 revision 加一，并在同一个事务里追加一行 cost_accounting_rule_history
+// （操作人、动作、改前改后的完整内容）。operatorID 是管理员用户 id，必须为正。
 type CostRuleWriter interface {
-	CreateTx(ctx context.Context, tx MatrixTx, groupID, baseline int64, spec CostRuleSpec) (*CostRuleWriteResult, error)
-	UpdateTx(ctx context.Context, tx MatrixTx, groupID, baseline, ruleID int64, spec CostRuleSpec) (*CostRuleWriteResult, error)
-	DeleteTx(ctx context.Context, tx MatrixTx, groupID, baseline, ruleID int64) (*CostRuleWriteResult, error)
+	CreateTx(ctx context.Context, tx MatrixTx, operatorID, groupID, baseline int64, spec CostRuleSpec) (*CostRuleWriteResult, error)
+	UpdateTx(ctx context.Context, tx MatrixTx, operatorID, groupID, baseline, ruleID int64, spec CostRuleSpec) (*CostRuleWriteResult, error)
+	DeleteTx(ctx context.Context, tx MatrixTx, operatorID, groupID, baseline, ruleID int64) (*CostRuleWriteResult, error)
 }
 
 // CostRuleService 成本核算规则写入的服务层。
@@ -201,7 +202,7 @@ func (s *CostRuleService) Create(ctx context.Context, actor, groupID, baseline i
 		return nil, err
 	}
 	return s.run(ctx, func(ctx context.Context, tx MatrixTx) (*CostRuleWriteResult, error) {
-		return s.writer.CreateTx(ctx, tx, groupID, baseline, norm)
+		return s.writer.CreateTx(ctx, tx, actor, groupID, baseline, norm)
 	})
 }
 
@@ -218,7 +219,7 @@ func (s *CostRuleService) Update(ctx context.Context, actor, groupID, baseline, 
 		return nil, err
 	}
 	return s.run(ctx, func(ctx context.Context, tx MatrixTx) (*CostRuleWriteResult, error) {
-		return s.writer.UpdateTx(ctx, tx, groupID, baseline, ruleID, norm)
+		return s.writer.UpdateTx(ctx, tx, actor, groupID, baseline, ruleID, norm)
 	})
 }
 
@@ -231,6 +232,6 @@ func (s *CostRuleService) Delete(ctx context.Context, actor, groupID, baseline, 
 		return nil, costRuleInvalid("rule_id must be positive")
 	}
 	return s.run(ctx, func(ctx context.Context, tx MatrixTx) (*CostRuleWriteResult, error) {
-		return s.writer.DeleteTx(ctx, tx, groupID, baseline, ruleID)
+		return s.writer.DeleteTx(ctx, tx, actor, groupID, baseline, ruleID)
 	})
 }

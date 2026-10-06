@@ -34,7 +34,9 @@ type InterimPriceWriteGate struct {
 }
 
 // WithOpenPrecheck 接上开放时预检（W6 PR4b-2b-2）：预览时对写入之后的目标态跑一遍，白名单分组的阻止项直接拒绝，
-// 开放分组的问题随凭证返回给管理员确认。没接时预览不做这一项（保存时校验仍在写事务里兜底）。
+// 开放分组的问题随凭证返回给管理员确认；提交时在写事务里再跑一遍（含不带凭证的写入）。
+// 两处都只看这次写入新增的问题，分组里本来就有的问题不挡无关的写入。
+// 没接时预览与提交都不做这一项（保存时校验仍在写事务里兜底）。
 func (g *InterimPriceWriteGate) WithOpenPrecheck(p *OpenPrechecker) *InterimPriceWriteGate {
 	g.precheck = p
 	return g
@@ -171,6 +173,11 @@ func (g *InterimPriceWriteGate) Commit(ctx context.Context, in PriceWriteCommit)
 		if err != nil {
 			return err
 		}
+		// 开放时预检在提交时也要过（只看这次写入新增的问题）：只开关已有单元格这类不涉价的写入可以不带凭证，
+		// 不能因此绕过预览时的预检。分组配置行已被上面的写入锁住，读到的分组现状不会在预检与提交之间变化。
+		if err := g.precheckCommit(ctx, res); err != nil {
+			return err
+		}
 		if err := g.authorize(ctx, tx, in, hash, res); err != nil {
 			return err
 		}
@@ -184,6 +191,23 @@ func (g *InterimPriceWriteGate) Commit(ctx context.Context, in PriceWriteCommit)
 		g.invalidator.InvalidateGroups(result.ChangedGroupIDs...)
 	}
 	return result, nil
+}
+
+// precheckCommit 提交时的开放时预检：白名单分组里这次写入新增了阻止项就返回错误，调用方回滚整个事务（审批不会被消耗）。
+//
+// 注意：预检必须读已提交状态（OpenPrechecker 的数据源走连接池，不走本事务），不能改成在 tx 里读。
+// 前态（写入前的分组现状）靠它读到的已提交状态得到，后态是前态叠加本次写入；本事务已对分组配置行加了 FOR UPDATE，
+// 别的写入者提交不了同一分组的改动，所以已提交状态正好是本事务的基线。要是改成在 tx 里读，前态就会包含本次写入，
+// 前后差集恒为空，提交时预检会悄悄失效（没有任何报错）。
+func (g *InterimPriceWriteGate) precheckCommit(ctx context.Context, res *CellWriteResult) error {
+	if g.precheck == nil {
+		return nil
+	}
+	reports, err := g.precheck.PrecheckPlanned(ctx, res.Planned)
+	if err != nil {
+		return err
+	}
+	return BlockingError(reports)
 }
 
 // authorize 在写入事务里核对并消耗审批；返回错误会让整个事务回滚（写入与历史一并撤销）。

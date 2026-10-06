@@ -306,7 +306,7 @@ type GroupConfigTicket struct {
 	ExpiresAt        time.Time         `json:"expires_at"`
 	Before           MatrixGroupConfig `json:"before"`
 	After            MatrixGroupConfig `json:"after"`
-	// Precheck 开放时预检的报告；没接预检器或分组不适用时为 nil。
+	// Precheck 开放时预检的报告（只含这次改动新增的问题）；没接预检器、分组不适用或改动不影响开放范围时为 nil。
 	Precheck *OpenPrecheckReport `json:"precheck,omitempty"`
 }
 
@@ -335,7 +335,9 @@ func (s *GroupConfigService) Propose(ctx context.Context, req GroupConfigWriteRe
 		return nil, err
 	}
 	var precheck *OpenPrecheckReport
-	if s.precheck != nil && res.Changed {
+	// 只有影响开放范围的改动（准入模式、计费来源、模型映射）才预检；只改成本模式或功能开关不会改变预检结果，
+	// 分组里已有的问题也就不该挡住它。
+	if s.precheck != nil && res.Changed && res.ExposureRelevant {
 		if precheck, err = s.precheck.PrecheckGroupConfig(ctx, norm.GroupID, res.After.MatrixGroupConfig); err != nil {
 			return nil, err
 		}
@@ -410,6 +412,10 @@ func (s *GroupConfigService) Commit(ctx context.Context, in GroupConfigCommit) (
 		if err != nil {
 			return err
 		}
+		// 提交时再预检一次（只看这次改动新增的问题）：只改准入模式这类不涉价的改动可以不带凭证，不能绕过预检。
+		if err := s.precheckCommit(ctx, norm.GroupID, res); err != nil {
+			return err
+		}
 		if err := s.authorize(ctx, tx, in, hash, res); err != nil {
 			return err
 		}
@@ -423,6 +429,23 @@ func (s *GroupConfigService) Commit(ctx context.Context, in GroupConfigCommit) (
 		s.invalidator.InvalidateGroups(norm.GroupID)
 	}
 	return result, nil
+}
+
+// precheckCommit 提交时的开放时预检；回滚由调用方（事务回调返回错误）负责。
+//
+// 注意：预检必须读已提交状态（OpenPrechecker 的数据源走连接池，不走本事务），不能改成在 tx 里读。
+// 前态（写入前的分组现状）靠它读到的已提交状态得到，后态是前态叠加本次写入；本事务已对分组配置行加了 FOR UPDATE，
+// 别的写入者提交不了同一分组的改动，所以已提交状态正好是本事务的基线。要是改成在 tx 里读，前态就会包含本次写入，
+// 前后差集恒为空，提交时预检会悄悄失效（没有任何报错）。
+func (s *GroupConfigService) precheckCommit(ctx context.Context, groupID int64, res *GroupConfigWriteResult) error {
+	if s.precheck == nil || !res.Changed || !res.ExposureRelevant {
+		return nil
+	}
+	rep, err := s.precheck.PrecheckGroupConfig(ctx, groupID, res.After.MatrixGroupConfig)
+	if err != nil {
+		return err
+	}
+	return BlockingError([]OpenPrecheckReport{*rep})
 }
 
 // authorize 在写入事务里核对并消耗审批；返回错误会让整个事务回滚。

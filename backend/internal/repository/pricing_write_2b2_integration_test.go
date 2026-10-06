@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +94,31 @@ func TestPricingKnownFreeStore_Integration(t *testing.T) {
 			return nil
 		}))
 	}
+}
+
+// 快照批准读的白名单分组只含 v2：legacy、shadow 分组的矩阵不生效，与已知免费名单写入的范围一致。
+func TestPricingSnapshotExposureSource_V2AllowlistOnly_Integration(t *testing.T) {
+	v2Allow := pwiV2Group(t)
+	pwiSetAccess(t, v2Allow, "allowlist")
+	v2Open := pwiV2Group(t)
+	legacyAllow := pwiGroup(t, "legacy", 3)
+	pwiSetAccess(t, legacyAllow, "allowlist")
+	shadowAllow := pwiGroup(t, "shadow", 3)
+	pwiSetAccess(t, shadowAllow, "allowlist")
+
+	require.NoError(t, pw2Tx(t, func(ctx context.Context, tx service.MatrixTx) error {
+		ids, err := NewPricingSnapshotExposureSource().AllowlistGroupIDsTx(ctx, tx)
+		require.NoError(t, err)
+		got := map[int64]bool{}
+		for _, id := range ids {
+			got[id] = true
+		}
+		require.True(t, got[v2Allow])
+		require.False(t, got[v2Open])
+		require.False(t, got[legacyAllow])
+		require.False(t, got[shadowAllow])
+		return nil
+	}))
 }
 
 func TestSettingRepository_RejectsProtectedKeys_Integration(t *testing.T) {
@@ -217,6 +243,9 @@ func TestCostRuleWriter_Integration(t *testing.T) {
 	inv := &pwiInvalidator{}
 	svc := service.NewCostRuleService(NewPricingWriteStore(integrationDB), NewPricingCostRuleWriter(), inv)
 	gid := pwiV2Group(t) // revision 3
+	t.Cleanup(func() {
+		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM cost_accounting_rule_history WHERE scope_group_id = $1`, gid)
+	})
 
 	// 创建：写规则与价格行，revision 加一，提交后失效缓存。
 	created, err := svc.Create(ctx, 7, gid, 3, pw2Spec("first"))
@@ -234,17 +263,27 @@ func TestCostRuleWriter_Integration(t *testing.T) {
 	require.Equal(t, []string{"pw2-model"}, snap.Rules[0].Prices[0].Models)
 	require.Equal(t, service.BillingModeToken, snap.Rules[0].Prices[0].Price.BillingMode)
 
-	// 基线过期：拒绝，什么都不写。
+	hist := pw2History(t, gid)
+	require.Len(t, hist, 1)
+	require.Equal(t, pw2HistoryRow{Action: "create", Operator: 7, Revision: 4, Rule: created.RuleID}, hist[0].withoutStates())
+	require.Nil(t, hist[0].Before)
+	require.NotNil(t, hist[0].After)
+	for _, frag := range []string{`"name": "first"`, `"source": "manual"`, `"sort_order": 3`, `"pw2-model"`} {
+		require.Contains(t, *hist[0].After, frag)
+	}
+
+	// 基线过期：拒绝，什么都不写（历史也不追加）。
 	_, err = svc.Create(ctx, 7, gid, 3, pw2Spec("stale"))
 	require.Equal(t, service.ReasonPriceBaselineChanged, pwiReason(t, err))
 	rules, _ := pw2RuleCount(t, gid)
 	require.Equal(t, 1, rules)
+	require.Len(t, pw2History(t, gid), 1)
 
 	// 更新：整个替换（价格行也换掉）。
 	spec := pw2Spec("renamed")
 	spec.Enabled = false
 	spec.Prices = append(spec.Prices, service.MatrixCostRulePrice{Models: []string{"pw2-other"}, Price: service.MatrixCustomPrice{BillingMode: service.BillingModePerRequest, PerRequestPrice: pwF2(0.5)}})
-	updated, err := svc.Update(ctx, 7, gid, 4, created.RuleID, spec)
+	updated, err := svc.Update(ctx, 8, gid, 4, created.RuleID, spec)
 	require.NoError(t, err)
 	require.Equal(t, int64(5), updated.Revision)
 	rules, prices := pw2RuleCount(t, gid)
@@ -253,6 +292,12 @@ func TestCostRuleWriter_Integration(t *testing.T) {
 	snap = mxLoad(t, NewPricingMatrixRepository(integrationDB), gid)
 	require.Equal(t, "renamed", snap.Rules[0].Name)
 	require.False(t, snap.Rules[0].Enabled)
+	hist = pw2History(t, gid)
+	require.Len(t, hist, 2)
+	require.Equal(t, pw2HistoryRow{Action: "update", Operator: 8, Revision: 5, Rule: created.RuleID}, hist[1].withoutStates())
+	require.Contains(t, *hist[1].Before, `"name": "first"`)
+	require.Contains(t, *hist[1].After, `"name": "renamed"`)
+	require.Contains(t, *hist[1].After, `"pw2-other"`)
 
 	// 渠道派生的规则只读；别的分组的规则找不到。
 	var derived int64
@@ -267,6 +312,7 @@ func TestCostRuleWriter_Integration(t *testing.T) {
 	_, err = svc.Delete(ctx, 7, other, 3, created.RuleID)
 	require.Equal(t, service.ReasonCostRuleNotFound, pwiReason(t, err))
 	require.Equal(t, int64(5), pwiConfigRevision(t, gid), "被拒绝的写入不动 revision")
+	require.Len(t, pw2History(t, gid), 2, "被拒绝的写入不留历史")
 
 	// 删除。
 	deleted, err := svc.Delete(ctx, 7, gid, 5, created.RuleID)
@@ -275,6 +321,11 @@ func TestCostRuleWriter_Integration(t *testing.T) {
 	rules, prices = pw2RuleCount(t, gid)
 	require.Equal(t, 1, rules, "只剩派生行")
 	require.Zero(t, prices)
+	hist = pw2History(t, gid)
+	require.Len(t, hist, 3)
+	require.Equal(t, pw2HistoryRow{Action: "delete", Operator: 7, Revision: 6, Rule: created.RuleID}, hist[2].withoutStates())
+	require.Contains(t, *hist[2].Before, `"name": "renamed"`)
+	require.Nil(t, hist[2].After, "删除没有改后内容，历史里仍留着改前内容")
 
 	// legacy 分组与没有配置行的分组：拒绝。
 	legacy := pwiGroup(t, "legacy", 3)
@@ -282,6 +333,47 @@ func TestCostRuleWriter_Integration(t *testing.T) {
 	require.Equal(t, service.ReasonGroupConfigNotV2, pwiReason(t, err))
 	_, err = svc.Create(ctx, 7, mxIntGroup(t), 1, pw2Spec("x"))
 	require.Equal(t, service.ReasonCostRuleNotFound, pwiReason(t, err))
+}
+
+type pw2HistoryRow struct {
+	Action   string
+	Operator int64
+	Revision int64
+	Rule     int64
+	Before   *string
+	After    *string
+}
+
+func (r pw2HistoryRow) withoutStates() pw2HistoryRow {
+	r.Before, r.After = nil, nil
+	return r
+}
+
+// pw2History 读一个分组的成本规则历史（按写入顺序）。
+func pw2History(t *testing.T, gid int64) []pw2HistoryRow {
+	t.Helper()
+	rows, err := integrationDB.QueryContext(context.Background(),
+		`SELECT action, operator_id, group_revision, rule_id, before_state::text, after_state::text
+		 FROM cost_accounting_rule_history WHERE scope_group_id = $1 ORDER BY id`, gid)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var out []pw2HistoryRow
+	for rows.Next() {
+		var (
+			r             pw2HistoryRow
+			before, after sql.NullString
+		)
+		require.NoError(t, rows.Scan(&r.Action, &r.Operator, &r.Revision, &r.Rule, &before, &after))
+		if before.Valid {
+			r.Before = &before.String
+		}
+		if after.Valid {
+			r.After = &after.String
+		}
+		out = append(out, r)
+	}
+	require.NoError(t, rows.Err())
+	return out
 }
 
 func pwF2(v float64) *float64 { return &v }
