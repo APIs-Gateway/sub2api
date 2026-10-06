@@ -150,7 +150,8 @@ func TestOpenAIWSPassthroughTerminalDisarmsActiveReadTimeout(t *testing.T) {
 
 func TestOpenAIWSPassthroughSemanticAndTerminalEventClassification(t *testing.T) {
 	require.False(t, openAIWSPassthroughStartsSemanticOutput([]byte(`{"type":"response.created"}`)))
-	require.True(t, openAIWSPassthroughStartsSemanticOutput([]byte(`{"type":"response.output_text.delta"}`)))
+	require.False(t, openAIWSPassthroughStartsSemanticOutput([]byte(`{"type":"response.output_text.delta"}`)))
+	require.True(t, openAIWSPassthroughStartsSemanticOutput([]byte(`{"type":"response.output_text.delta","delta":" "}`)))
 	require.True(t, openAIWSPassthroughStartsSemanticOutput([]byte(`{"type":"response.done"}`)))
 	require.False(t, openAIWSPassthroughIsTerminalOutput([]byte(`{"type":"response.output_text.delta"}`)))
 	require.True(t, openAIWSPassthroughIsTerminalOutput([]byte(`{"type":"response.cancelled"}`)))

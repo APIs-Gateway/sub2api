@@ -13,6 +13,7 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/tidwall/gjson"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
 
@@ -705,16 +706,11 @@ func observeUpstreamMessage(
 	}
 	now := nowFn()
 
-	if state.firstTokenMs == nil && isTokenEvent(eventType) {
+	startsTTFT := isTokenEvent(eventType, message)
+	if state.firstTokenMs == nil && startsTTFT {
 		ms := int(now.Sub(startAt).Milliseconds())
 		if ms >= 0 {
 			state.firstTokenMs = &ms
-		}
-		if state.activeTurn != nil && state.activeTurn.firstTokenMs == nil {
-			tms := int(now.Sub(state.activeTurn.startAt).Milliseconds())
-			if tms >= 0 {
-				state.activeTurn.firstTokenMs = &tms
-			}
 		}
 	}
 	parsedUsage := parseUsageAndAccumulate(state, message, eventType, onUsageParseFailure)
@@ -723,13 +719,18 @@ func observeUpstreamMessage(
 		responseID: responseID,
 		usage:      parsedUsage,
 	}
+	var turnTiming *relayTurnTiming
 	if responseID != "" {
-		turnTiming := openAIWSRelayGetOrInitTurnTiming(state, responseID, now)
-		if turnTiming != nil && turnTiming.firstTokenMs == nil && isTokenEvent(eventType) {
-			ms := int(now.Sub(turnTiming.startAt).Milliseconds())
-			if ms >= 0 {
-				turnTiming.firstTokenMs = &ms
-			}
+		turnTiming = openAIWSRelayGetOrInitTurnTiming(state, responseID, now)
+	} else {
+		turnTiming = state.activeTurn
+	}
+	// An explicit old response belongs to its own turn. ID-less content belongs
+	// to the current turn, independently of the connection's first-token value.
+	if turnTiming != nil && turnTiming.firstTokenMs == nil && startsTTFT {
+		ms := int(now.Sub(turnTiming.startAt).Milliseconds())
+		if ms >= 0 {
+			turnTiming.firstTokenMs = &ms
 		}
 	}
 	if eventType == "error" {
@@ -1098,11 +1099,9 @@ func shouldParseUsage(eventType string) bool {
 	}
 }
 
-func isTokenEvent(eventType string) bool {
-	eventType = strings.TrimSpace(eventType)
-	return strings.HasSuffix(eventType, ".delta") ||
-		eventType == "response.output_text.done" ||
-		eventType == "response.function_call_arguments.done"
+// Terminal usage/output snapshots do not establish WS first-token timing.
+func isTokenEvent(eventType string, payload []byte) bool {
+	return !isTerminalEvent(eventType) && openai.ResponsesStreamHasOutput(string(payload), eventType, true)
 }
 
 func minDuration(a, b time.Duration) time.Duration {

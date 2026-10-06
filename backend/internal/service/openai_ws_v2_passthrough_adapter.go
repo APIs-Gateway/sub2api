@@ -542,6 +542,15 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) notifyDeadlineChanged() {
 
 func openAIWSPassthroughStartsSemanticOutput(payload []byte) bool {
 	eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
+	// Keep heartbeat deltas on the wire without replacing first-output waiting
+	// with active-read waiting. Other structural/error boundaries are unchanged.
+	if strings.HasSuffix(eventType, ".delta") {
+		if !gjson.ValidBytes(payload) {
+			return false
+		}
+		delta := gjson.GetBytes(payload, "delta")
+		return delta.Type == gjson.String && delta.Str != ""
+	}
 	switch eventType {
 	case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
 		return true

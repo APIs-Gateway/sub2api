@@ -2426,6 +2426,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	wroteDownstream := false
 	upstreamModelChecked := false
 	bufferedStreamEvents := make([][]byte, 0, 4)
+	streamOutputStarted := false
 	eventCount := 0
 	tokenEventCount := 0
 	terminalEventCount := 0
@@ -2687,7 +2688,7 @@ readLoop:
 			}
 		}
 
-		isTokenEvent := isOpenAIWSTokenEvent(eventType)
+		isTokenEvent := isOpenAIWSTokenEvent(eventType, message)
 		if isTokenEvent {
 			tokenEventCount++
 		}
@@ -2814,7 +2815,13 @@ readLoop:
 		if reqStream {
 			// 在首个 token 前先缓冲事件（如 response.created），
 			// 以便上游早期断连时仍可安全回退到 HTTP，不给下游发送半截流。
-			shouldBuffer := firstTokenMs == nil && !isTokenEvent && !isTerminalEvent
+			// Preserve the old type-based stream commitment independently of
+			// payload-aware TTFT. In particular an empty delta is still sent,
+			// and later metadata cannot re-enter pre-output buffering.
+			if openAIWSStreamEventStartsOutput(eventType) || isTerminalEvent {
+				streamOutputStarted = true
+			}
+			shouldBuffer := !streamOutputStarted
 			if shouldBuffer {
 				buffered := make([]byte, len(message))
 				copy(buffered, message)
@@ -4090,7 +4097,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					}
 				}
 			}
-			isTokenEvent := isOpenAIWSTokenEvent(eventType)
+			isTokenEvent := isOpenAIWSTokenEvent(eventType, upstreamMessage)
 			if isTokenEvent {
 				tokenEventCount++
 			}
@@ -5080,7 +5087,8 @@ func isOpenAIWSTerminalEvent(eventType string) bool {
 	}
 }
 
-func isOpenAIWSTokenEvent(eventType string) bool {
+// This is the existing HTTP-via-WS stream commitment boundary, not TTFT.
+func openAIWSStreamEventStartsOutput(eventType string) bool {
 	eventType = strings.TrimSpace(eventType)
 	if eventType == "" {
 		return false
@@ -5089,19 +5097,15 @@ func isOpenAIWSTokenEvent(eventType string) bool {
 	case "response.created", "response.in_progress", "response.output_item.added", "response.output_item.done":
 		return false
 	}
-	if strings.Contains(eventType, ".delta") {
-		return true
-	}
-	if strings.HasPrefix(eventType, "response.output_text") {
-		return true
-	}
-	if strings.HasPrefix(eventType, "response.output") {
-		return true
-	}
-	// 终止事件（response.completed/done/failed/...）由 isOpenAIWSTerminalEvent 单独处理。
-	// 不能把它们当作 token event，否则当上游没有可识别的 delta 时，
-	// firstTokenMs 会被填到终止时刻，等于把"总耗时"误报为"首 token 延迟"。
-	return false
+	return strings.Contains(eventType, ".delta") ||
+		strings.HasPrefix(eventType, "response.output_text") ||
+		strings.HasPrefix(eventType, "response.output")
+}
+
+// WS TTFT measures model content and never terminal-only usage. The HTTP
+// visible/semantic setting and stream-commit classifiers remain independent.
+func isOpenAIWSTokenEvent(eventType string, payload []byte) bool {
+	return !isOpenAIWSTerminalEvent(eventType) && openai.ResponsesStreamHasOutput(string(payload), eventType, true)
 }
 
 func populateOpenAIUsageFromResponseJSON(body []byte, usage *OpenAIUsage) {
