@@ -3401,6 +3401,8 @@
           up: '漲價',
           down: '降價',
           adjust: '調整',
+          mixed: '有漲有跌',
+          server: '以伺服器結果為準',
           same: '無變化'
         },
         issue: {

@@ -3404,6 +3404,8 @@
           up: '涨价',
           down: '降价',
           adjust: '调整',
+          mixed: '有涨有跌',
+          server: '以服务端为准',
           same: '无变化'
         },
         issue: {

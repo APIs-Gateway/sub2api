@@ -3411,6 +3411,8 @@
           up: 'Price up',
           down: 'Price down',
           adjust: 'Adjust',
+          mixed: 'Some up, some down',
+          server: 'See server result',
           same: 'No change'
         },
         issue: {

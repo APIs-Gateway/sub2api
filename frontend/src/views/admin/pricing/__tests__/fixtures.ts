@@ -38,7 +38,15 @@ export const catalog: ModelCatalogEntry[] = [
   entry(5, 'claude-opus-5-5', 'anthropic', 'active')
 ]
 
-function derive(groupId: number, platform: string, stage: 'legacy' | 'v2' | null, access: 'open' | 'allowlist', models: string[]): GroupDeriveView {
+export function derive(
+  groupId: number,
+  platform: string,
+  stage: 'legacy' | 'v2' | null,
+  access: 'open' | 'allowlist',
+  models: string[],
+  /** v2 分组库里实际生效的准入模式；默认与派生值一致 */
+  storedAccess: 'open' | 'allowlist' = access
+): GroupDeriveView {
   return {
     group_id: groupId,
     platform,
@@ -52,7 +60,7 @@ function derive(groupId: number, platform: string, stage: 'legacy' | 'v2' | null
         { model_key: 'gpt-*', is_pattern: true, open: true, price_mode: 'inherit' as const }
       ]
     },
-    stored_config: stage ? { pricing_stage: stage, ...(stage === 'v2' ? { revision: 7 } : {}) } : null,
+    stored_config: stage ? { pricing_stage: stage, ...(stage === 'v2' ? { revision: 7, access_mode: storedAccess } : {}) } : null,
     stored_cells: stage === 'v2' ? models.map((m) => ({ group_id: groupId, model_key: m, is_pattern: false, open: true, price_mode: 'inherit' as const, revision: 4 })) : []
   }
 }

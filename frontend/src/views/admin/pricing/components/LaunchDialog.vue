@@ -226,7 +226,7 @@ function buildOps(): CellOp[] {
 }
 
 const unpickedNote = computed(() => {
-  const names = groups.value.filter((g) => !checked.has(g.id)).map((g) => g.name)
+  const names = groups.value.filter((g) => writable(g) && !checked.has(g.id)).map((g) => g.name)
   return names.length
     ? t('admin.pricingConfig.write.launch.unpicked', { n: names.length, names: names.join('、') })
     : ''
@@ -323,7 +323,10 @@ async function onAction(action: ErrorAction) {
 }
 
 function close() {
-  if (!busy.value) emit('close')
+  if (busy.value) return
+  // 分组的单元格已经写入、只是状态没改成功时，关闭前刷新一次，免得下次操作先撞上基线过期
+  if (cellsDone.value) void refresh()
+  emit('close')
 }
 
 function trimNum(n: number): string {

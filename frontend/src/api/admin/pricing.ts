@@ -121,7 +121,8 @@ export interface GroupDeriveView {
     }
     cells: DerivedCell[]
   }
-  stored_config: { pricing_stage: PricingStage; revision?: number } | null
+  /** v2 分组生效的是这里的 access_mode；derived 只是按渠道实时推出的结果，两者可能不一致 */
+  stored_config: { pricing_stage: PricingStage; revision?: number; access_mode?: 'open' | 'allowlist' } | null
 }
 
 /** 一次批量报价最多带的分组数与模型数，与后端上限一致。 */

@@ -48,10 +48,10 @@
             </td>
             <td class="px-4 py-3 align-top"><CellFace v-if="r.before" :view="r.before" variant="chip" /><span v-else class="text-gray-400">—</span></td>
             <td class="px-4 py-3 align-top"><CellFace :view="r.after" variant="chip" /></td>
-            <td class="px-4 py-3 align-top"><PriceChange :before="r.before?.usd?.input ?? null" :after="r.after.usd?.input ?? null" /></td>
-            <td class="px-4 py-3 align-top"><PriceChange :before="r.before?.usd?.output ?? null" :after="r.after.usd?.output ?? null" /></td>
+            <td class="px-4 py-3 align-top"><CellPriceChange :before="r.before?.usd?.input ?? null" :after="r.after.usd?.input ?? null" /></td>
+            <td class="px-4 py-3 align-top"><CellPriceChange :before="r.before?.usd?.output ?? null" :after="r.after.usd?.output ?? null" /></td>
             <td class="px-4 py-3 align-top">
-              <span class="badge" :class="r.change === 'up' ? 'badge-primary' : ''">{{ t(`admin.pricingConfig.write.change.${r.change}`) }}</span>
+              <span class="badge" :class="['up', 'mixed', 'server'].includes(r.change) ? 'badge-primary' : ''">{{ t(`admin.pricingConfig.write.change.${r.change}`) }}</span>
             </td>
           </tr>
           <tr v-if="!rows.length">
@@ -79,10 +79,10 @@ import { useI18n } from 'vue-i18n'
 import type { CellsTicket } from '@/api/admin/pricing'
 import CurrencyModeSwitch from '@/components/common/CurrencyModeSwitch.vue'
 import CellFace from './CellFace.vue'
-import PriceChange from './PriceChange.vue'
+import CellPriceChange from './CellPriceChange.vue'
 import { usePricingData } from '../usePricingData'
 import { cellKey, cellView, type CellView, type PricingGroup } from '../pricingModel'
-import { describeChange, planWarnings, specToView, type ChangeKind } from '../pricingWrite'
+import { describeChange, planWarnings, reconcileWithServer, specToView, type ChangeKind } from '../pricingWrite'
 
 const props = defineProps<{ ticket: CellsTicket; acked: boolean }>()
 const emit = defineEmits<{ (e: 'update:acked', value: boolean): void }>()
@@ -111,7 +111,8 @@ const rows = computed<Row[]>(() => {
     const after = specToView(p.after ?? null, group, state.refs[model])
     out.push({ key: `${group.id}|${model}`, model, group, before, after, change: p.action === 'noop' ? 'same' : describeChange(before, after) })
   }
-  return out
+  const changes = reconcileWithServer(out.map((r) => r.change), props.ticket.price_delta)
+  return out.map((r, i) => ({ ...r, change: changes[i] }))
 })
 
 const summary = computed(() => {

@@ -12,9 +12,11 @@ import {
   opOpen,
   parseExtra,
   parsePrice,
+  reconcileWithServer,
   specToView
 } from '../pricingWrite'
-import { derives } from './fixtures'
+import type { CellView } from '../pricingModel'
+import { derive, derives } from './fixtures'
 
 const openGroup = buildGroup({ id: 3, name: 'kiro cc', platform: 'anthropic', rate_multiplier: 2 }, derives[3])
 const listGroup = { ...openGroup, id: 9, accessMode: 'allowlist' as const }
@@ -113,6 +115,88 @@ describe('预览里的格子', () => {
     expect(describeChange(open, closed)).toBe('close')
     expect(describeChange(closed, open)).toBe('open')
     expect(describeChange(open, open)).toBe('same')
+  })
+})
+
+describe('准入模式以库里为准（派生值不一致）', () => {
+  const g = { id: 3, name: 'kiro cc', platform: 'anthropic', rate_multiplier: 2 }
+  // 派生按渠道推出「开放」，库里实际是白名单；反过来同理
+  const listInDb = buildGroup(g, derive(3, 'anthropic', 'v2', 'open', ['m'], 'allowlist'))
+  const openInDb = buildGroup(g, derive(3, 'anthropic', 'v2', 'allowlist', ['m'], 'open'))
+
+  it('库里是白名单：清除覆盖保留开放、价格设回继承，不会变成删除（删除就是关闭）；没有单元格的格子是关闭', () => {
+    expect(listInDb.accessMode).toBe('allowlist')
+    const op = opClear(listInDb, 'm', stored({ price_mode: 'extra', extra_multiplier: 2 }))
+    expect(op).toMatchObject({ kind: 'upsert', open: true, price_mode: 'inherit' })
+    expect(specToView(null, listInDb, undefined).kind).toBe('closed')
+    // 没有单元格时点额外倍率：格子本来是关闭的，不能被开放
+    expect(opExtra(listInDb, 'm', null, 1.5)).toBeNull()
+    // 白名单关闭 = 删除单元格
+    expect(opClose(listInDb, 'm', stored())).toMatchObject({ kind: 'delete' })
+  })
+
+  it('库里是开放：关闭写显式 open=false；清除覆盖是删除单元格', () => {
+    expect(openInDb.accessMode).toBe('open')
+    expect(opClose(openInDb, 'm', stored())).toMatchObject({ kind: 'upsert', open: false, price_mode: 'inherit' })
+    expect(opClose(openInDb, 'm', null)).toMatchObject({ kind: 'upsert', open: false })
+    expect(opClear(openInDb, 'm', stored({ price_mode: 'extra', extra_multiplier: 2 }))).toMatchObject({ kind: 'delete' })
+    expect(specToView(null, openInDb, { model: 'm', priced: true, source: 'litellm', per_mtok: { input: 1, output: 2 } }).kind).toBe('open')
+  })
+})
+
+describe('预览里的涨跌标记', () => {
+  const view = (over: Partial<CellView> = {}): CellView => ({
+    kind: 'open',
+    unswitched: false,
+    usd: null,
+    perRequestUsd: null,
+    perRequestRange: null,
+    extra: null,
+    reason: null,
+    ...over
+  })
+  const tok = (input: number, output: number, cache?: { cache_write?: number; cache_read?: number }, over: Partial<CellView> = {}) =>
+    view({ usd: { input, output, ...cache }, ...over })
+
+  it('输入涨、输出跌：有涨有跌，不会因为两项之和变小就标降价', () => {
+    // 官方 $1.25 / $10 → 自定义 $5 / $5：和从 11.25 降到 10，但输入涨到 4 倍
+    expect(describeChange(tok(1.25, 10), tok(5, 5, undefined, { kind: 'custom' }))).toBe('mixed')
+  })
+
+  it('全涨标涨价、全跌标降价、都没变是无变化；价格没变只是口径变了是调整', () => {
+    expect(describeChange(tok(1, 2), tok(2, 4))).toBe('up')
+    expect(describeChange(tok(1, 2), tok(1, 3))).toBe('up')
+    expect(describeChange(tok(2, 4), tok(1, 2))).toBe('down')
+    expect(describeChange(tok(1, 2), tok(1, 2))).toBe('same')
+    expect(describeChange(tok(1, 2), tok(1, 2, undefined, { kind: 'extra', extra: 1.5 }))).toBe('adjust')
+  })
+
+  it('缓存读写参与比较：输入输出不变、缓存读涨了也是涨价；缓存一边有一边没有无法比较', () => {
+    expect(describeChange(tok(1, 2, { cache_read: 0.1 }), tok(1, 2, { cache_read: 0.2 }))).toBe('up')
+    expect(describeChange(tok(1, 2, { cache_read: 0.1, cache_write: 1 }), tok(0.5, 1, { cache_read: 0.2, cache_write: 0.5 }))).toBe('mixed')
+    expect(describeChange(tok(1, 2, { cache_read: 0.1 }), tok(1, 2))).toBe('server')
+  })
+
+  it('按次价逐项比较；Token 与按次之间切换、区间价与单价之间切换以服务端为准', () => {
+    expect(describeChange(view({ perRequestUsd: 1.8 }), view({ perRequestUsd: 3 }))).toBe('up')
+    expect(describeChange(view({ perRequestUsd: 1.8 }), view({ perRequestUsd: 1 }))).toBe('down')
+    expect(describeChange(view({ perRequestRange: { min: 1, max: 3 } }), view({ perRequestRange: { min: 2, max: 2 } }))).toBe('mixed')
+    expect(describeChange(view({ perRequestUsd: 1.8, kind: 'custom' }), tok(5, 30))).toBe('server')
+    expect(describeChange(view({ perRequestUsd: 1 }), view({ perRequestRange: { min: 1, max: 2 } }))).toBe('server')
+    // 改前没有可比的价格
+    expect(describeChange(view({ kind: 'unpriced' }), tok(5, 30))).toBe('server')
+    expect(describeChange(null, tok(5, 30))).toBe('open')
+  })
+
+  it('服务端说涨价或无法确认时，行级的降价不能作为唯一提示', () => {
+    expect(reconcileWithServer(['down', 'same'], 'up')).toEqual(['server', 'same'])
+    expect(reconcileWithServer(['down'], 'unknown')).toEqual(['server'])
+    // 已经有行标了涨价、有涨有跌或以服务端为准，其余行不动
+    expect(reconcileWithServer(['down', 'up'], 'up')).toEqual(['down', 'up'])
+    expect(reconcileWithServer(['down', 'mixed'], 'unknown')).toEqual(['down', 'mixed'])
+    // 服务端说降价或没变化：不改行级结果
+    expect(reconcileWithServer(['down'], 'down')).toEqual(['down'])
+    expect(reconcileWithServer(['down'], 'none')).toEqual(['down'])
   })
 })
 

@@ -9,12 +9,13 @@ import type {
   GroupDeriveView,
   OfficialReference,
   PlannedCellState,
+  PriceDelta,
   PrecheckIssue,
   PriceMode,
   StoredCell
 } from '@/api/admin/pricing'
 import { mTokToPerToken, perTokenToMTok } from '@/components/admin/channel/types'
-import { isGroupUnswitched, type CellView, type ModelRow, type PricingGroup } from './pricingModel'
+import { isGroupUnswitched, type CellUsd, type CellView, type ModelRow, type PricingGroup } from './pricingModel'
 
 /** 一个格子的目标态（界面侧）。 */
 export interface CellSpec {
@@ -189,7 +190,9 @@ export function specToView(
     const input = perTokenToMTok(c.input_price) ?? per?.input
     const output = perTokenToMTok(c.output_price) ?? per?.output
     if (typeof input !== 'number' || typeof output !== 'number') return { ...empty, kind: 'unpriced' }
-    return { ...empty, kind: 'custom', usd: { input: input * group.rate, output: output * group.rate } }
+    const cacheWrite = perTokenToMTok(c.cache_write_price) ?? per?.cache_write
+    const cacheRead = perTokenToMTok(c.cache_read_price) ?? per?.cache_read
+    return { ...empty, kind: 'custom', usd: scaleUsd({ input, output, cache_write: cacheWrite, cache_read: cacheRead }, group.rate) }
   }
   if (!per) return { ...empty, kind: 'unpriced' }
   const extra = spec.mode === 'extra' && typeof spec.extra === 'number' && spec.extra !== 1 ? spec.extra : null
@@ -198,7 +201,17 @@ export function specToView(
     ...empty,
     kind: extra !== null ? 'extra' : 'open',
     extra,
-    usd: { input: per.input * factor, output: per.output * factor }
+    usd: scaleUsd(per, factor)
+  }
+}
+
+/** 各项价格乘同一个系数；没有的缓存价不带。 */
+function scaleUsd(p: { input: number; output: number; cache_write?: number | null; cache_read?: number | null }, factor: number): CellUsd {
+  return {
+    input: p.input * factor,
+    output: p.output * factor,
+    ...(typeof p.cache_write === 'number' ? { cache_write: p.cache_write * factor } : {}),
+    ...(typeof p.cache_read === 'number' ? { cache_read: p.cache_read * factor } : {})
   }
 }
 
@@ -219,23 +232,74 @@ export function usdChanged(before: CellView | null, after: CellView): boolean {
   return a.input !== b.input || a.output !== b.output
 }
 
-export type ChangeKind = 'open' | 'close' | 'up' | 'down' | 'adjust' | 'same'
+export type ChangeKind = 'open' | 'close' | 'up' | 'down' | 'mixed' | 'adjust' | 'server' | 'same'
 
-/** 一行改动的性质：开放、关闭、涨价、降价、调整（价格口径变了、实付没变）、无变化。 */
+type Dir = 'up' | 'down' | 'same'
+
+function dirOf(b: number, a: number): Dir {
+  if (Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b))) return 'same'
+  return a > b ? 'up' : 'down'
+}
+
+/** 计费方式：按 Token、按次（单价）、按次（区间价）、没价格。 */
+function billingOf(v: CellView): 'token' | 'request' | 'range' | 'none' {
+  if (v.usd) return 'token'
+  if (v.perRequestUsd !== null) return 'request'
+  if (v.perRequestRange) return 'range'
+  return 'none'
+}
+
+/**
+ * 逐项比较改前改后的价格：输入、输出、缓存读写（两边都有才比）、按次价。
+ * 返回各项方向；计费方式变了、一边有价一边没有、或某项只有一边有，都算「无法逐项比较」（null）。
+ */
+function compareItems(before: CellView, after: CellView): Dir[] | null {
+  const kind = billingOf(before)
+  if (kind !== billingOf(after)) return null
+  if (kind === 'none') return []
+  if (kind === 'request') return [dirOf(before.perRequestUsd!, after.perRequestUsd!)]
+  if (kind === 'range') return [dirOf(before.perRequestRange!.min, after.perRequestRange!.min), dirOf(before.perRequestRange!.max, after.perRequestRange!.max)]
+  const a = before.usd!
+  const b = after.usd!
+  const dirs: Dir[] = [dirOf(a.input, b.input), dirOf(a.output, b.output)]
+  for (const k of ['cache_write', 'cache_read'] as const) {
+    const x = a[k]
+    const y = b[k]
+    if (typeof x === 'number' && typeof y === 'number') dirs.push(dirOf(x, y))
+    else if (typeof x === 'number' || typeof y === 'number') return null
+  }
+  return dirs
+}
+
+/**
+ * 一行改动的性质：开放、关闭；价格逐项比较后是涨价、降价、有涨有跌；
+ * 价格没变但口径变了是「调整」；计费方式变了或无法逐项比较是「以服务端为准」；没变化。
+ */
 export function describeChange(before: CellView | null, after: CellView): ChangeKind {
   const wasOpen = !!before && before.kind !== 'closed' && before.kind !== 'error'
   const isOpen = after.kind !== 'closed'
   if (!wasOpen && isOpen) return 'open'
   if (wasOpen && !isOpen) return 'close'
   if (!isOpen) return 'same'
-  const a = before?.usd
-  const b = after.usd
-  if (a && b) {
-    const sum = (x: { input: number; output: number }) => x.input + x.output
-    if (Math.abs(sum(b) - sum(a)) > 1e-9) return sum(b) > sum(a) ? 'up' : 'down'
-  }
-  if (before && (before.kind !== after.kind || before.extra !== after.extra)) return 'adjust'
-  return 'same'
+  if (!before) return 'server'
+  const dirs = compareItems(before, after)
+  if (dirs === null) return 'server'
+  const up = dirs.includes('up')
+  const down = dirs.includes('down')
+  if (up && down) return 'mixed'
+  if (up) return 'up'
+  if (down) return 'down'
+  return before.kind !== after.kind || before.extra !== after.extra ? 'adjust' : 'same'
+}
+
+/**
+ * 整体涨跌以服务端 price_delta 为准：服务端说涨价或无法确认时，
+ * 如果没有任何一行标了涨价、有涨有跌或以服务端为准，行级的「降价」不能当成唯一提示，改成「以服务端为准」。
+ */
+export function reconcileWithServer(changes: ChangeKind[], delta: PriceDelta): ChangeKind[] {
+  if (delta !== 'up' && delta !== 'unknown') return changes
+  if (changes.some((c) => c === 'up' || c === 'mixed' || c === 'server')) return changes
+  return changes.map((c) => (c === 'down' ? 'server' : c))
 }
 
 /** 预检里开放分组的问题（白名单分组的问题会让预览直接失败，到不了这里）。 */
