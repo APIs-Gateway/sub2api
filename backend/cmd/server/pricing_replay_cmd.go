@@ -35,7 +35,7 @@ import (
 //
 //	sub2api pricing-replay [--days 30] [--groups 16,18,27,30,33,26] [--out-dir DIR] [--strict] ...
 //
-// 离线、只读：连接在会话级是只读的，不写库、不写 usage log、不扣费，价格数据只读本地文件。
+// 离线、只读：连接在会话级是只读的，不写库、不写 usage log、不扣费，价格数据按服务同样的规则取（pinned 用生效快照，否则读本地文件）。
 // 输出两个文件：JSON 汇总（含配置绑定信息，供 PR7 切换时核对）与差异 CSV。
 
 const pricingReplayUsage = "usage: pricing-replay [--days 30] [--until RFC3339] [--groups 16,18,...] [--out-dir DIR] " +
@@ -95,7 +95,7 @@ func parsePricingReplayArgs(args []string, errOut io.Writer, now time.Time) (pri
 	groups := fs.String("groups", "", "comma separated group ids (default: every live group with usage in the window)")
 	outDir := fs.String("out-dir", ".", "directory for the JSON summary and the diff CSV")
 	source := fs.String("matrix-source", replayMatrixDerived, "v2 side: 'derived' (derive from the channel config now, what a switch would freeze) or 'stored' (read the stored matrix rows)")
-	pricingFile := fs.String("pricing-file", "", "local LiteLLM price file (default: <pricing.data_dir>/model_pricing.json, then the fallback file)")
+	pricingFile := fs.String("pricing-file", "", "local LiteLLM price file override (default: the service's source: the active snapshot when pricing is pinned, else <pricing.data_dir>/model_pricing.json, then the fallback file)")
 	workers := fs.Int("workers", min(runtime.NumCPU(), 8), "parallel workers")
 	batch := fs.Int("batch-size", service.DefaultPricingReplayBatchSize, "rows per keyset page")
 	stmt := fs.Duration("statement-timeout", repository.DefaultPricingReplayStatementTimeout, "session statement_timeout")
@@ -195,14 +195,10 @@ func runPricingReplayCommand(args []string, out io.Writer) error {
 		return err
 	}
 
-	pricingFile, err := resolvePricingReplayFile(a.pricingFile, cfg)
+	// 与服务进程同一套取价规则（pinned 时用生效快照）；取价失败拒绝运行。
+	pricingSvc, pricingInfo, err := loadServicePricing(ctx, db, cfg, a.pricingFile, true)
 	if err != nil {
 		return err
-	}
-	pricingSvc := service.NewPricingService(cfg, nil)
-	pricingInfo, err := pricingSvc.LoadOfflinePricing(pricingFile)
-	if err != nil {
-		return fmt.Errorf("load price file: %w", err)
 	}
 	billing := service.NewBillingService(cfg, pricingSvc)
 
@@ -250,6 +246,8 @@ func runPricingReplayCommand(args []string, out io.Writer) error {
 		"database":                  cfg.Database.DBName,
 		"version":                   Version,
 		"matrix_source":             a.matrixSource,
+		"pricing_source":            pricingInfo.Source,
+		"pricing_snapshot_id":       strconv.FormatInt(pricingInfo.SnapshotID, 10),
 		"pricing_file":              filepath.Base(pricingInfo.Path),
 		"pricing_data_sha256":       pricingInfo.SHA256,
 		"pricing_data_models":       strconv.Itoa(pricingInfo.Models),
