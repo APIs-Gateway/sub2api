@@ -74,6 +74,10 @@ var matrixOwnFiles = map[string]struct{}{
 	"internal/service/pricing_replay_run.go":     {},
 	"internal/service/pricing_replay_source.go":  {},
 	"internal/repository/pricing_replay_repo.go": {},
+
+	// W6 派生 CLI（#1653）：运维命令里手动触发的批量派生（默认 dry-run），只在命令行构造，不被任何请求路径引用。
+	"cmd/server/pricing_matrix_cmd.go":         {},
+	"internal/service/pricing_matrix_batch.go": {},
 }
 
 // matrixWiringFiles 只做依赖注入接线的文件。
