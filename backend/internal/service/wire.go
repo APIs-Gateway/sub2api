@@ -724,7 +724,7 @@ var ProviderSet = wire.NewSet(
 	NewPricingShadowRecorder,
 	ProvideStagedGroupPolicy,
 	NewPricingStageService,
-	NewModelCatalogService,
+	ProvideModelCatalogService,
 	NewUserPriceCatalogService,
 	NewContentModerationService,
 	NewAffiliateService,
@@ -773,7 +773,22 @@ func ProvideStagedGroupPolicy(
 	openAIGateway.policyOverride = policy
 	resolver.policyOverride = policy
 	derive.SetSnapshotInvalidator(matrix)
+	// 启动预加载（W6 PR7a）：有配置行的分组的快照在开始处理请求之前同步加载，v2 分组不会在冷启动的窗口里退回 legacy。
+	// 没有分组配置行（全部是 legacy）时只多一次轻量查询；失败只记日志，见 Preload。
+	if lister, ok := repo.(ConfiguredGroupLister); ok {
+		policy.Preload(context.Background(), lister)
+	}
 	return policy
+}
+
+// ProvideModelCatalogService 创建模型目录服务，并把带缓存的目录读取方接到 v2 运行时准入（stagedPolicy）与价格报价器上。
+// 两处共用同一个读取方，Quote.Access 与网关的运行时准入口径一致。目录状态只对 v2 阶段的分组生效，其余分组不受影响。
+func ProvideModelCatalogService(repo ModelCatalogRepository, policy *StagedGroupPolicy, quoter *PriceQuoter) *ModelCatalogService {
+	svc := NewModelCatalogService(repo)
+	if cached := policy.SetModelCatalog(svc); cached != nil && quoter != nil {
+		quoter.SetModelCatalog(cached)
+	}
+	return svc
 }
 
 // ProvideUserPlatformQuotaUsageFlusher 创建并启动 UserPlatformQuotaUsageFlusher。

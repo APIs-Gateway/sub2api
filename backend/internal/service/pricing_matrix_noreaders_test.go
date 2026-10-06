@@ -50,11 +50,14 @@ var matrixOwnFiles = map[string]struct{}{
 
 	// W6 PR5：stagedPolicy 与影子比对。它们读矩阵快照，但只用来比对：阶段为 shadow 的分组才会比对，
 	// 真实请求不会被路由到矩阵（见下面的 TestStagedPolicyNeverRoutesToV2InProduction）。
-	"internal/service/group_policy_staged.go":    {},
-	"internal/service/pricing_shadow.go":         {},
-	"internal/service/pricing_shadow_ctx.go":     {},
-	"internal/service/pricing_shadow_session.go": {},
-	"internal/service/pricing_stage_service.go":  {},
+	"internal/service/group_policy_staged.go":         {},
+	"internal/service/group_policy_staged_runtime.go": {}, // W6 PR7a：v2 运行时目录与未定价检查
+	"internal/service/group_policy_matrix_preload.go": {}, // W6 PR7a：启动预加载
+	"internal/service/billing_unpriced_runtime.go":    {}, // W6 PR7a：billing_unpriced_policy
+	"internal/service/pricing_shadow.go":              {},
+	"internal/service/pricing_shadow_ctx.go":          {},
+	"internal/service/pricing_shadow_session.go":      {},
+	"internal/service/pricing_stage_service.go":       {},
 
 	"internal/repository/pricing_matrix_repo.go":              {},
 	"internal/repository/model_catalog_repo.go":               {},
@@ -64,6 +67,7 @@ var matrixOwnFiles = map[string]struct{}{
 	"internal/repository/pricing_group_config_writer.go":      {},
 	"internal/repository/pricing_snapshot_exposure_source.go": {}, // W6 PR9b：批准时列出白名单分组
 	"internal/repository/pricing_stage_repo.go":               {}, // W6 PR5：阶段切换与影子样本的存储
+	"internal/repository/pricing_matrix_configured_groups.go": {}, // W6 PR7a：启动预加载列出有配置行的分组
 
 	"internal/handler/admin/pricing_matrix_handler.go": {},
 	"cmd/server/model_catalog_cmd.go":                  {},
@@ -153,16 +157,18 @@ func TestMatrixTablesAndDerivationHaveNoReaders(t *testing.T) {
 	require.Empty(t, violations, "现有路径不得读取 W6 的新表或派生入口（本 PR 零行为变化）")
 }
 
-// W6 PR5 的零行为变化证据：stagedPolicy 只有一个把真实请求路由到矩阵的开关 v2Live，
-// 生产代码里没有任何地方把它设成 true（PR7 才会）。所以现在任何分组的计费、准入、映射都走 legacy，
-// shadow 阶段只是旁路比对。测试文件可以设置它，用来验证 PR7 之后的路由。
-func TestStagedPolicyNeverRoutesToV2InProduction(t *testing.T) {
+// W6 PR7a 的零行为变化证据：阶段 API 仍不开放 v2，所以任何分组都不可能被写成 v2，
+// 生产环境所有分组的计费、准入、映射继续走 legacy（shadow 只旁路比对）。
+// PR7b 开放 v2 时，要把这条守卫改成对切换闸门的检查。
+func TestStagedPolicyV2StageStillClosedInProduction(t *testing.T) {
+	require.False(t, pricingStageAllowed(PricingStageV2), "PR7a 不开放 v2 阶段")
+	require.True(t, pricingStageAllowed(PricingStageLegacy))
+	require.True(t, pricingStageAllowed(PricingStageShadow))
+
 	backendRoot, err := filepath.Abs("../..")
 	require.NoError(t, err)
-	assign := regexp.MustCompile(`v2Live\s*(:|=)\s*true`)
-
+	writer := regexp.MustCompile(`SET\s+pricing_stage\s*=`)
 	var violations []string
-	scanned := 0
 	err = filepath.Walk(backendRoot, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -177,18 +183,17 @@ func TestStagedPolicyNeverRoutesToV2InProduction(t *testing.T) {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		scanned++
 		raw, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
 		}
-		if assign.Match(raw) {
-			rel, _ := filepath.Rel(backendRoot, path)
-			violations = append(violations, filepath.ToSlash(rel))
+		rel, _ := filepath.Rel(backendRoot, path)
+		rel = filepath.ToSlash(rel)
+		if writer.Match(raw) && rel != "internal/repository/pricing_stage_repo.go" {
+			violations = append(violations, rel)
 		}
 		return nil
 	})
 	require.NoError(t, err)
-	require.Greater(t, scanned, 500)
-	require.Empty(t, violations, "PR7 之前，生产代码不得放开 stagedPolicy 的 v2 路由")
+	require.Empty(t, violations, "只有阶段仓储可以写 pricing_stage")
 }

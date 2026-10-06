@@ -10811,7 +10811,12 @@ func (s *GatewayService) checkChannelPricingRestriction(ctx context.Context, gro
 	if billingModel == "" {
 		return false
 	}
-	return !gp.ModelAccess(ctx, *groupID, billingModel).OK
+	if !gp.ModelAccess(ctx, *groupID, billingModel).OK {
+		return true
+	}
+	// 白名单 v2 分组的运行时无价检查（W6 PR7a）：只有 billing_unpriced_policy = block_allowlist 才会拦，其余时候只观测。
+	// legacy、shadow、开放分组与非 stagedPolicy 的策略在这里直接放行。
+	return runtimeUnpricedBlocked(ctx, gp, s.billingService, s.settingService, *groupID, requestedModel, billingModel, mapping.MappedModel)
 }
 
 // billingModelForRestriction 根据计费基准确定限制检查使用的模型。

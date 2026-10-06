@@ -332,13 +332,14 @@ func TestStagedPolicy_ShadowFeatureNilEqualsFalseExceptCodexBridge(t *testing.T)
 	require.EqualValues(t, 1, f.diffCount(ShadowKindFeature, ShadowClassTranslation))
 }
 
-// v2Live 为 false（本 PR 恒为 false）时，库里写着 v2 的分组也走 legacy，并且不比对。
+// v2Live 为 false 时，库里写着 v2 的分组也走 legacy，并且不比对（PR7a 起生产构造默认放开 v2Live，这里手动关掉验证 legacy 路径）。
 func TestStagedPolicy_V2StageDoesNotRouteToMatrixUntilLive(t *testing.T) {
 	ctx := context.Background()
 	f := newSPFixture(t, GroupStateSnapshot{
 		Config: mpStoredConfig(PricingStageV2, nil),
 		Cells:  []StoredMatrixCell{mpClosed(mpInherit("gpt-5.4"))},
 	})
+	f.staged.v2Live = false
 	require.Equal(t, QuoteAccess{OK: true}, f.staged.ModelAccess(ctx, 1, "gpt-5.4"), "legacy answer, the closed cell is not read")
 	require.Empty(t, f.staged.Stats().ComparedTotal)
 	require.Equal(t, PricingStageV2, f.staged.Stage(ctx, 1), "the configured stage is still reported")
