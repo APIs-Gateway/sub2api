@@ -109,7 +109,19 @@
                 <div class="mx-corner-hint">{{ t('admin.pricingConfig.matrix.cornerHint') }}</div>
               </th>
               <th v-for="g in cols" :key="g.id" class="mx-col-head" :data-test="`col-${g.id}`">
-                <span class="col-name">{{ g.name }}</span>
+                <span class="flex items-start justify-between gap-1">
+                  <span class="col-name">{{ g.name }}</span>
+                  <button
+                    type="button"
+                    class="col-gear"
+                    :title="t('admin.pricingConfig.write.group.open')"
+                    :aria-label="t('admin.pricingConfig.write.group.openAria', { name: g.name })"
+                    :data-test="`gear-${g.id}`"
+                    @click="groupDrawerId = g.id"
+                  >
+                    <Icon name="cog" size="sm" />
+                  </button>
+                </span>
                 <span class="col-meta">
                   <span class="num">{{ t('admin.pricingConfig.group.rate', { rate: trimNum(g.rate) }) }}</span>
                   <span v-if="g.accessMode">{{ t(`admin.pricingConfig.group.access.${g.accessMode}`) }}</span>
@@ -210,6 +222,7 @@
     <CustomPriceDialog :show="customOpen" :count="openSelectedCount" @close="customOpen = false" @confirm="onCustom" />
     <CellPlanDialog :ops="planOps" :title="planTitle" @close="planOps = null" @done="onPlanDone" />
 
+    <GroupConfigDrawer :group-id="groupDrawerId" @close="groupDrawerId = null" />
     <ModelDrawer :model="drawerModel" @close="drawerId = null" @action="onModelAction" />
     <ModelActionHost :action="modelAction" @close="modelAction = null" />
   </AppLayout>
@@ -229,6 +242,7 @@ import ModelActionHost from './components/ModelActionHost.vue'
 import ExtraRateDialog from './components/ExtraRateDialog.vue'
 import CustomPriceDialog from './components/CustomPriceDialog.vue'
 import CellPlanDialog from './components/CellPlanDialog.vue'
+import GroupConfigDrawer from './components/GroupConfigDrawer.vue'
 import { usePricingData } from './usePricingData'
 import { usePricingFormat } from './usePricingFormat'
 import { useAppStore } from '@/stores/app'
@@ -266,6 +280,7 @@ const platform = ref('')
 const search = ref('')
 const hideClosed = ref(false)
 const drawerId = ref<string | null>(null)
+const groupDrawerId = ref<number | null>(null)
 
 const groupsOf = (p: string) => state.groups.filter((g) => g.platform === p)
 const cols = computed(() => groupsOf(platform.value))
@@ -484,6 +499,11 @@ onMounted(() => {
 
 .col-meta {
   @apply mt-0.5 flex flex-wrap gap-x-2 text-[11px] font-normal text-gray-500 dark:text-dark-300;
+}
+
+.col-gear {
+  @apply -mr-1 -mt-0.5 flex-shrink-0 rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700;
+  @apply focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-dark-400 dark:hover:bg-dark-700 dark:hover:text-dark-200;
 }
 
 .col-stage {

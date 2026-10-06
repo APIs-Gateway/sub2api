@@ -3416,6 +3416,10 @@
           mapping_target_zero_price: '映射到的模型 {target} 价格是 0'
         },
         error: {
+          GROUP_CONFIG_EMPTY: '没有要改的设置。',
+          GROUP_CONFIG_INVALID: '设置的内容不合法，请检查后再试。',
+          GROUP_CONFIG_NOT_V2: '这个分组还没有切换到新的价格配置，不能在这里改。请刷新数据。',
+          GROUP_PUBLISH_BLOCKED: '白名单分组里有 {count} 项不能发布：',
           ADMIN_TOKEN_MANAGEMENT_JWT_ONLY: '这个操作要用管理员账号登录后台来做，管理员令牌不能提交。',
           PRICE_WRITE_ACTOR_REQUIRED: '没有识别到管理员身份，请重新登录后再试。',
           PRICE_WRITE_APPROVAL_REQUIRED: '这次改动涉及价格，需要先预览再提交。',
@@ -3518,6 +3522,54 @@
           usageAck: '我知道这个名字近期已有请求，新建为草稿后这些请求会被拒绝',
           submit: '新建',
           done: '已新建 {model}（草稿）'
+        },
+        group: {
+          open: '分组设置',
+          openAria: '{name} 的分组设置',
+          title: '{name} 的设置',
+          readonly: '这个分组还没有切换到新的价格配置，设置仍在「渠道管理」里修改，这里只能查看。',
+          accessTitle: '哪些模型可用',
+          accessHint: {
+            open: '没有明确关闭的模型都可用',
+            allowlist: '只有明确开放的模型可用'
+          },
+          billingTitle: '计费',
+          billingSource: '按哪个模型计费',
+          costMode: '成本核算',
+          billing: {
+            none: '无渠道（不指定）',
+            requested: '以请求模型计费',
+            upstream: '以最终模型计费',
+            channel_mapped: '以渠道映射后的模型计费'
+          },
+          cost: {
+            account_rate: '按账号倍率',
+            catalog_upstream: '按模型的官方价',
+            follow_billing: '跟随用户计费价'
+          },
+          mappingTitle: '模型映射',
+          addMapping: '添加映射',
+          noMapping: '这个分组没有设置映射。',
+          mappingInvalid: '映射的两列都要填，或者删掉这一行',
+          featuresTitle: '功能开关',
+          perPlatform: '按平台设置，在渠道管理里修改',
+          publishTitle: '发布预检',
+          publishHint: '检查这个分组里开放的模型是否都有价格，映射到的模型是否有价格。',
+          check: '检查',
+          checking: '检查中…',
+          checkNotApplicable: '这个分组还没有切换到新配置，不需要检查。',
+          checkOk: '没有发现问题。',
+          checkBlocking: '有 {n} 项问题，白名单分组里不能发布：',
+          checkWarnings: '有 {n} 项开放后的问题：',
+          reset: '还原',
+          save: '保存设置',
+          saved: '设置已保存',
+          planTitle: '确认 {name} 的设置改动',
+          planIntro: '下面是这次要改的设置。点「提交」后才会生效。',
+          planNoChange: '这次没有实际变化。',
+          touchesPrice: '这次改动会影响用户按哪个模型计费，价格可能变化。',
+          field: '设置项',
+          none: '无'
         }
       }
     },

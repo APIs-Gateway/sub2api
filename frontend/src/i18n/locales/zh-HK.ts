@@ -3413,6 +3413,10 @@
           mapping_target_zero_price: '映射到的模型 {target} 價格是 0'
         },
         error: {
+          GROUP_CONFIG_EMPTY: '沒有要改的設定。',
+          GROUP_CONFIG_INVALID: '設定的內容不合法，請檢查後再試。',
+          GROUP_CONFIG_NOT_V2: '這個分組還沒有切換到新的價格配置，不能在這裏改。請重新整理資料。',
+          GROUP_PUBLISH_BLOCKED: '白名單分組裏有 {count} 項不能發布：',
           ADMIN_TOKEN_MANAGEMENT_JWT_ONLY: '這個操作要用管理員帳號登入後台來做，管理員令牌不能提交。',
           PRICE_WRITE_ACTOR_REQUIRED: '沒有識別到管理員身份，請重新登入後再試。',
           PRICE_WRITE_APPROVAL_REQUIRED: '這次改動涉及價格，需要先預覽再提交。',
@@ -3515,6 +3519,54 @@
           usageAck: '我知道這個名字近期已有請求，新增為草稿後這些請求會被拒絕',
           submit: '新增',
           done: '已新增 {model}（草稿）'
+        },
+        group: {
+          open: '分組設定',
+          openAria: '{name} 的分組設定',
+          title: '{name} 的設定',
+          readonly: '這個分組還沒有切換到新的價格配置，設定仍在「渠道管理」裏修改，這裏只能查看。',
+          accessTitle: '哪些模型可用',
+          accessHint: {
+            open: '沒有明確關閉的模型都可用',
+            allowlist: '只有明確開放的模型可用'
+          },
+          billingTitle: '計費',
+          billingSource: '按哪個模型計費',
+          costMode: '成本核算',
+          billing: {
+            none: '無渠道（不指定）',
+            requested: '以請求模型計費',
+            upstream: '以最終模型計費',
+            channel_mapped: '以渠道映射後的模型計費'
+          },
+          cost: {
+            account_rate: '按帳號倍率',
+            catalog_upstream: '按模型的官方價',
+            follow_billing: '跟隨用戶計費價'
+          },
+          mappingTitle: '模型映射',
+          addMapping: '添加映射',
+          noMapping: '這個分組沒有設定映射。',
+          mappingInvalid: '映射的兩列都要填，或者刪掉這一行',
+          featuresTitle: '功能開關',
+          perPlatform: '按平台設定，在渠道管理裏修改',
+          publishTitle: '發布預檢',
+          publishHint: '檢查這個分組裏開放的模型是否都有價格，映射到的模型是否有價格。',
+          check: '檢查',
+          checking: '檢查中…',
+          checkNotApplicable: '這個分組還沒有切換到新配置，不需要檢查。',
+          checkOk: '沒有發現問題。',
+          checkBlocking: '有 {n} 項問題，白名單分組裏不能發布：',
+          checkWarnings: '有 {n} 項開放後的問題：',
+          reset: '還原',
+          save: '儲存設定',
+          saved: '設定已儲存',
+          planTitle: '確認 {name} 的設定改動',
+          planIntro: '下面是這次要改的設定。點「提交」後才會生效。',
+          planNoChange: '這次沒有實際變化。',
+          touchesPrice: '這次改動會影響用戶按哪個模型計費，價格可能變化。',
+          field: '設定項',
+          none: '無'
         }
       }
     },

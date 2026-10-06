@@ -121,8 +121,8 @@ export interface GroupDeriveView {
     }
     cells: DerivedCell[]
   }
-  /** v2 分组生效的是这里的 access_mode；derived 只是按渠道实时推出的结果，两者可能不一致 */
-  stored_config: { pricing_stage: PricingStage; revision?: number; access_mode?: 'open' | 'allowlist' } | null
+  /** v2 分组生效的是这里的配置（含 access_mode）；derived 只是按渠道实时推出的结果，两者可能不一致 */
+  stored_config: (Partial<GroupConfigState> & { pricing_stage: PricingStage; revision?: number }) | null
 }
 
 /** 一次批量报价最多带的分组数与模型数，与后端上限一致。 */
@@ -281,7 +281,86 @@ export async function createCatalogEntry(input: CreateCatalogInput): Promise<Mod
   return data
 }
 
+// ---------------------------------------------------------------------------
+// 分组配置（契约第 2 节）
+
+export type AccessMode = 'open' | 'allowlist'
+export type BillingModelSource = 'requested' | 'upstream' | 'channel_mapped'
+export type CostMode = 'account_rate' | 'catalog_upstream' | 'follow_billing'
+
+export interface MappingEntry {
+  src: string
+  dst: string
+}
+
+export interface GroupConfigState {
+  access_mode: AccessMode
+  /** null 表示分组没有渠道 */
+  billing_model_source: BillingModelSource | null
+  model_mapping: MappingEntry[]
+  /** 值是布尔，或「按平台」的布尔表 */
+  features: Record<string, unknown>
+  cost_mode: CostMode
+}
+
+export interface GroupConfigRequest {
+  baseline_revision: number
+  access_mode?: AccessMode
+  billing_model_source?: BillingModelSource
+  clear_billing_model_source?: boolean
+  model_mapping?: MappingEntry[]
+  features?: Record<string, unknown>
+  cost_mode?: CostMode
+}
+
+export interface GroupConfigTicket {
+  approval_id: number
+  plan_hash: string
+  changed: boolean
+  exposure_relevant: boolean
+  touches_price: boolean
+  price_delta: PriceDelta
+  expires_at: string
+  before: GroupConfigState
+  after: GroupConfigState
+  precheck?: PrecheckReport
+}
+
+export interface GroupConfigCommitResult {
+  changed: boolean
+  exposure_relevant: boolean
+  before?: unknown
+  after?: unknown
+}
+
+export async function previewGroupConfig(groupId: number, request: GroupConfigRequest): Promise<GroupConfigTicket> {
+  const { data } = await apiClient.post<GroupConfigTicket>(`/admin/pricing-matrix/groups/${groupId}/config/preview`, request)
+  return data
+}
+
+/** approval_id 传预览返回的值（没有变化或不涉价时是 0）；request 与预览逐字段一致。 */
+export async function commitGroupConfig(
+  groupId: number,
+  approvalId: number,
+  request: GroupConfigRequest
+): Promise<GroupConfigCommitResult> {
+  const { data } = await apiClient.put<GroupConfigCommitResult>(`/admin/pricing-matrix/groups/${groupId}/config`, {
+    approval_id: approvalId,
+    confirm: true,
+    request
+  })
+  return data
+}
+
+export async function getPublishCheck(groupId: number): Promise<PrecheckReport> {
+  const { data } = await apiClient.get<PrecheckReport>(`/admin/pricing-matrix/groups/${groupId}/publish-check`)
+  return { ...data, blocking: data.blocking ?? [], warnings: data.warnings ?? [] }
+}
+
 export const pricingAPI = {
+  previewGroupConfig,
+  commitGroupConfig,
+  getPublishCheck,
   listModelCatalog,
   getGroupDerive,
   quoteBatch,

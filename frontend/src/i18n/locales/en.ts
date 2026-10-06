@@ -3423,6 +3423,10 @@
           mapping_target_zero_price: 'The mapped model {target} has a price of 0'
         },
         error: {
+          GROUP_CONFIG_EMPTY: 'There is nothing to change.',
+          GROUP_CONFIG_INVALID: 'Some settings are not valid. Check them and try again.',
+          GROUP_CONFIG_NOT_V2: 'This group has not been switched to the new pricing setup, so it cannot be edited here. Refresh the data.',
+          GROUP_PUBLISH_BLOCKED: '{count} items in this allowlist group cannot be published:',
           ADMIN_TOKEN_MANAGEMENT_JWT_ONLY: 'Sign in to the admin console with an admin account to do this. Admin tokens cannot submit it.',
           PRICE_WRITE_ACTOR_REQUIRED: 'Your admin identity could not be verified. Sign in again and retry.',
           PRICE_WRITE_APPROVAL_REQUIRED: 'This change affects prices, so it has to be previewed before it is submitted.',
@@ -3525,6 +3529,54 @@
           usageAck: 'I understand this name already gets requests and they will be rejected while it is a draft',
           submit: 'Create',
           done: 'Created {model} as a draft'
+        },
+        group: {
+          open: 'Group settings',
+          openAria: 'Settings of {name}',
+          title: 'Settings of {name}',
+          readonly: 'This group has not been switched to the new pricing setup. Its settings are still changed under Channels; here they are view only.',
+          accessTitle: 'Which models are available',
+          accessHint: {
+            open: 'Every model not explicitly closed is available',
+            allowlist: 'Only models explicitly opened are available'
+          },
+          billingTitle: 'Billing',
+          billingSource: 'Bill by which model',
+          costMode: 'Cost accounting',
+          billing: {
+            none: 'No channel (not set)',
+            requested: 'Bill by the requested model',
+            upstream: 'Bill by the final model',
+            channel_mapped: 'Bill by the model after channel mapping'
+          },
+          cost: {
+            account_rate: 'By account rate',
+            catalog_upstream: "By the model's official price",
+            follow_billing: 'Follow the user billing price'
+          },
+          mappingTitle: 'Model mapping',
+          addMapping: 'Add mapping',
+          noMapping: 'This group has no mapping.',
+          mappingInvalid: 'Fill in both columns of each mapping, or remove the row',
+          featuresTitle: 'Features',
+          perPlatform: 'Set per platform; change it under Channels',
+          publishTitle: 'Publish check',
+          publishHint: 'Checks that every open model in this group has a price, and so do the models it maps to.',
+          check: 'Check',
+          checking: 'Checking…',
+          checkNotApplicable: 'This group has not been switched yet, so there is nothing to check.',
+          checkOk: 'No problems found.',
+          checkBlocking: '{n} problems; an allowlist group cannot be published with them:',
+          checkWarnings: '{n} problems with open models:',
+          reset: 'Reset',
+          save: 'Save settings',
+          saved: 'Settings saved',
+          planTitle: 'Confirm settings changes for {name}',
+          planIntro: 'These are the settings that will change. Nothing changes until you submit.',
+          planNoChange: 'Nothing actually changes.',
+          touchesPrice: 'This change affects which model users are billed by, so prices may change.',
+          field: 'Setting',
+          none: 'None'
         }
       }
     },
