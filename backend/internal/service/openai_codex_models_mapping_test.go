@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -269,4 +270,93 @@ func TestCodexAccountMapping_DuplicateStructuralKeysFailClosed(t *testing.T) {
 	require.Contains(t, body, `"opaque":1,"opaque":2`)
 	require.Contains(t, body, `"future":1,"future":2,"big":900719925474099312345`)
 	require.Contains(t, body, `"slug":"alias"`)
+}
+
+func TestCodexAccountMapping_ExpandedMetadataBudget(t *testing.T) {
+	for _, aliases := range []int{6, 8} {
+		name := "within_budget"
+		if aliases == 8 {
+			name = "expanded_over_budget"
+		}
+		t.Run(name, func(t *testing.T) {
+			metadata := strings.Repeat("m", 1<<20)
+			body := `{"outer":"` + metadata + `","models":[{"slug":"target","metadata":"` + metadata + `","future":900719925474099312345}]}`
+			require.Less(t, len(body), 8<<20)
+			f := newCodexMappingFixture(t, body, false)
+			mapping := make(map[string]any)
+			for _, alias := range []string{"a", "b", "c", "d", "e", "f", "g", "h"}[:aliases] {
+				mapping[alias] = "target"
+			}
+			f.account.Credentials["model_mapping"] = mapping
+			manifest, err := f.service.FetchCodexModelsManifest(context.Background(), f.account, "0.137.0", "")
+			if aliases == 8 {
+				require.Error(t, err)
+				require.True(t, IsRetryableCodexModelsManifestError(err))
+				require.Nil(t, manifest)
+				return
+			}
+			require.NoError(t, err)
+			require.LessOrEqual(t, len(manifest.Body), 8<<20)
+			require.Len(t, codexMappingSlugs(t, manifest.Body), aliases)
+			require.Contains(t, string(manifest.Body), `"outer":"`+metadata+`"`)
+			require.Equal(t, aliases, bytes.Count(manifest.Body, []byte(`"metadata":"`+metadata+`"`)))
+			require.Equal(t, aliases, bytes.Count(manifest.Body, []byte(`900719925474099312345`)))
+			require.True(t, f.fetch(t, manifest.ETag).NotModified)
+		})
+	}
+}
+
+func TestCodexAccountMapping_ExactEncodedBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name, alias, encoded string
+	}{
+		{"ascii_html", "<&>", `"<&>"`},
+		{"unicode", "界", `"界"`},
+		{"quote_backslash", "a\"\\b", `"a\"\\b"`},
+		{"mixed_unicode_html_separator", "<界>\u2028&", `"\u003c界\u003e\u2028\u0026"`},
+	} {
+		for _, overflow := range []bool{false, true} {
+			name := tc.name + "/at_limit"
+			if overflow {
+				name = tc.name + "/one_byte_over"
+			}
+			t.Run(name, func(t *testing.T) {
+				entry := `{ "sl\u0075g": "t", "display_\u006eame":"d", "future":900719925474099312345 }`
+				expectedEntry := strings.Replace(entry, `"t"`, tc.encoded, 1)
+				expectedEntry = strings.Replace(expectedEntry, `"d"`, tc.encoded, 1)
+				prefix, suffix := `{ "opaque":"`, `", "mo\u0064els": `
+				expectedWithoutPadding := prefix + suffix + "[" + expectedEntry + "] }"
+				expectedSize := 8 << 20
+				if overflow {
+					expectedSize++
+				}
+				padding := strings.Repeat("p", expectedSize-len(expectedWithoutPadding))
+				body := prefix + padding + suffix + "[ " + entry + " ] }"
+				require.Less(t, len(body), 8<<20, "the provider input must be below its existing limit")
+				f := newCodexMappingFixture(t, body, false)
+				f.account.Credentials["model_mapping"] = map[string]any{tc.alias: "t"}
+				manifest, err := f.service.FetchCodexModelsManifest(context.Background(), f.account, "0.137.0", "")
+				if overflow {
+					require.Error(t, err)
+					require.True(t, IsRetryableCodexModelsManifestError(err))
+					require.Nil(t, manifest)
+					return
+				}
+				require.NoError(t, err)
+				expected := prefix + padding + suffix + "[" + expectedEntry + "] }"
+				require.Len(t, manifest.Body, expectedSize)
+				require.True(t, bytes.Equal([]byte(expected), manifest.Body), "preserve opaque bytes, escaped keys and exact alias encoding")
+				require.True(t, f.fetch(t, manifest.ETag).NotModified)
+			})
+		}
+	}
+}
+
+func TestCodexAccountMapping_OversizedAliasRejected(t *testing.T) {
+	f := newCodexMappingFixture(t, `{"models":[{"slug":"t"}]}`, false)
+	f.account.Credentials["model_mapping"] = map[string]any{strings.Repeat("a", (8<<20)+1): "t"}
+	manifest, err := f.service.FetchCodexModelsManifest(context.Background(), f.account, "0.137.0", "")
+	require.Error(t, err)
+	require.True(t, IsRetryableCodexModelsManifestError(err))
+	require.Nil(t, manifest)
 }

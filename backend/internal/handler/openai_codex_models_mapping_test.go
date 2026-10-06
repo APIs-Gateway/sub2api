@@ -269,3 +269,30 @@ func TestCodexAccountMapping_ActualHandlerDuplicateStructuralKeysRejected(t *tes
 		})
 	}
 }
+
+func TestCodexAccountMapping_ActualHandlerExpandedCatalogRejected(t *testing.T) {
+	metadata := strings.Repeat("m", 1<<20)
+	body := `{"outer":"` + metadata + `","models":[{"slug":"target","metadata":"` + metadata + `"}]}`
+	require.Less(t, len(body), 8<<20)
+	var mu sync.Mutex
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+	mapping := make(map[string]any)
+	for _, alias := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
+		mapping[alias] = "target"
+	}
+	h, _ := newCodexMappingHandler(t, server, mapping)
+	response := requestCodexMappingHandler(t, h, "/v1/models?client_version=0.137.0", "", context.Background())
+	require.Equal(t, http.StatusBadGateway, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), "upstream_error")
+	require.NotContains(t, response.Body.String(), `"models":`)
+	mu.Lock()
+	require.Equal(t, 1, calls)
+	mu.Unlock()
+}

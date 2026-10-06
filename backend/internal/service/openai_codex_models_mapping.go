@@ -88,7 +88,13 @@ func projectCodexModelsForAccount(body []byte, account *Account) ([]byte, error)
 	if err := json.Unmarshal(envelope["models"], &entries); err != nil {
 		return nil, err
 	}
-	bySlug := make(map[string]json.RawMessage, len(entries))
+	type sourceModel struct {
+		raw          json.RawMessage
+		slugBytes    int
+		displayBytes int
+		hasDisplay   bool
+	}
+	bySlug := make(map[string]sourceModel, len(entries))
 	candidates := make([]string, 0, len(entries))
 	for _, raw := range entries {
 		var entry map[string]json.RawMessage
@@ -101,7 +107,8 @@ func projectCodexModelsForAccount(body []byte, account *Account) ([]byte, error)
 			continue
 		}
 		if _, exists := bySlug[slug]; !exists {
-			bySlug[slug] = raw
+			display, hasDisplay := entry["display_name"]
+			bySlug[slug] = sourceModel{raw: raw, slugBytes: len(entry["slug"]), displayBytes: len(display), hasDisplay: hasDisplay}
 			candidates = append(candidates, slug)
 		}
 	}
@@ -111,8 +118,12 @@ func projectCodexModelsForAccount(body []byte, account *Account) ([]byte, error)
 	}
 	sort.Strings(aliases)
 	candidates = append(candidates, aliases...)
-	projected := make([]json.RawMessage, 0, len(candidates))
-	seen := make(map[string]struct{}, len(candidates))
+	projected := make([]json.RawMessage, 0, len(entries))
+	seen := make(map[string]struct{})
+	// Include the retained envelope, array brackets and each separator, before
+	// allocating a metadata clone. An alias cannot amplify a bounded input into
+	// an unbounded response. RawMessage includes the exact models value bytes.
+	projectedBytes := len(body) - len(envelope["models"]) + 2
 	for _, candidate := range candidates {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "" || strings.Contains(candidate, "*") || !account.IsModelSupported(candidate) {
@@ -123,22 +134,49 @@ func projectCodexModelsForAccount(body []byte, account *Account) ([]byte, error)
 		}
 		target, _ := account.ResolveMappedModel(candidate)
 		target = strings.TrimSpace(target)
-		raw, available := bySlug[target]
+		source, available := bySlug[target]
 		if target == "" || strings.Contains(target, "*") || !available {
 			continue
 		}
+		entryBytes := len(source.raw)
+		var encodedName []byte
+		if candidate != target {
+			if len(candidate) > int(codexModelsManifestBodyLimit) {
+				return nil, fmt.Errorf("mapped Codex manifest exceeds %d bytes", codexModelsManifestBodyLimit)
+			}
+			// Use the same encoder as the real splice. json.Marshal alone would
+			// overcount ASCII HTML characters that sjson does not escape.
+			nameObject, err := sjson.SetBytes([]byte(`{"v":""}`), "v", candidate)
+			if err != nil {
+				return nil, err
+			}
+			encodedName = nameObject[len(`{"v":`) : len(nameObject)-1]
+			entryBytes += len(encodedName) - source.slugBytes
+			if source.hasDisplay {
+				entryBytes += len(encodedName) - source.displayBytes
+			} else {
+				entryBytes += len(`,"display_name":`) + len(encodedName)
+			}
+		}
+		if len(projected) > 0 {
+			entryBytes++
+		}
+		if int64(projectedBytes)+int64(entryBytes) > codexModelsManifestBodyLimit {
+			return nil, fmt.Errorf("mapped Codex manifest exceeds %d bytes", codexModelsManifestBodyLimit)
+		}
+		projectedBytes += entryBytes
 		seen[candidate] = struct{}{}
-		if candidate == target {
-			projected = append(projected, raw)
-			continue
-		}
-		encoded, err := sjson.SetBytes(raw, "slug", candidate)
-		if err != nil {
-			return nil, err
-		}
-		encoded, err = sjson.SetBytes(encoded, "display_name", candidate)
-		if err != nil {
-			return nil, err
+		encoded := source.raw
+		if candidate != target {
+			var err error
+			encoded, err = sjson.SetRawBytes(encoded, "slug", encodedName)
+			if err != nil {
+				return nil, err
+			}
+			encoded, err = sjson.SetRawBytes(encoded, "display_name", encodedName)
+			if err != nil {
+				return nil, err
+			}
 		}
 		projected = append(projected, encoded)
 	}
@@ -150,6 +188,9 @@ func projectCodexModelsForAccount(body []byte, account *Account) ([]byte, error)
 		}
 	}
 	if unchanged {
+		if int64(len(body)) > codexModelsManifestBodyLimit {
+			return nil, fmt.Errorf("mapped Codex manifest exceeds %d bytes", codexModelsManifestBodyLimit)
+		}
 		return body, nil
 	}
 	// Splice only the known model names/array. Opaque client metadata stays
@@ -162,7 +203,14 @@ func projectCodexModelsForAccount(body []byte, account *Account) ([]byte, error)
 		encoded = append(encoded, raw...)
 	}
 	encoded = append(encoded, ']')
-	return sjson.SetRawBytes(body, "models", encoded)
+	result, err := sjson.SetRawBytes(body, "models", encoded)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(result)) > codexModelsManifestBodyLimit {
+		return nil, fmt.Errorf("mapped Codex manifest exceeds %d bytes", codexModelsManifestBodyLimit)
+	}
+	return result, nil
 }
 
 func codexModelsRepresentationETag(body []byte) string {
