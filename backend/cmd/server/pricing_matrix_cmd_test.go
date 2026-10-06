@@ -25,17 +25,31 @@ func TestParsePricingMatrixDeriveArgs_DefaultsToDryRun(t *testing.T) {
 
 func TestParsePricingMatrixDeriveArgs_AllFlags(t *testing.T) {
 	var errOut bytes.Buffer
-	a, err := parsePricingMatrixDeriveArgs([]string{"--apply", "--channel", "7", "--pricing-file", "p.json",
+	a, err := parsePricingMatrixDeriveArgs([]string{"--apply", "--channel", "7",
 		"--channel-timeout", "30s", "--statement-timeout", "5s", "--lock-timeout", "1s"}, &errOut)
 	require.NoError(t, err)
 	require.True(t, a.apply)
 	require.Equal(t, int64(7), a.channelID)
-	require.Equal(t, "p.json", a.pricingFile)
 	require.Equal(t, 30*time.Second, a.channelTimeout)
+	require.Equal(t, 5*time.Second, a.statementTimeout)
+	require.Equal(t, time.Second, a.lockTimeout)
+
+	// --pricing-file 只能用于 dry-run，不能与 --apply 同用。
+	p, err := parsePricingMatrixDeriveArgs([]string{"--pricing-file", "p.json"}, &errOut)
+	require.NoError(t, err)
+	require.False(t, p.apply)
+	require.Equal(t, "p.json", p.pricingFile)
 
 	g, err := parsePricingMatrixDeriveArgs([]string{"--group", "9"}, &errOut)
 	require.NoError(t, err)
 	require.Equal(t, int64(9), g.groupID)
+}
+
+func TestParsePricingMatrixDeriveArgs_PricingFileWithApplyRejected(t *testing.T) {
+	var errOut bytes.Buffer
+	_, err := parsePricingMatrixDeriveArgs([]string{"--pricing-file", "p.json", "--apply"}, &errOut)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--pricing-file cannot be combined with --apply")
 }
 
 func TestParsePricingMatrixDeriveArgs_Invalid(t *testing.T) {
