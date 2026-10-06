@@ -31,9 +31,9 @@ describe('blockReason / canConfirm', () => {
 })
 
 describe('observationRemainingHours', () => {
-  const obs = (observed: number, satisfied = false) => ({ since: '', observed_hours: observed, required_hours: 72, eligible_at: '', satisfied })
+  const obs = (observed: number, satisfied = false) => ({ since: '', observed_hours: observed, required_hours: 1, eligible_at: '', satisfied })
   it('还差几小时，已满为 0', () => {
-    expect(observationRemainingHours(obs(59.5))).toBe(12.5)
+    expect(observationRemainingHours(obs(0.4))).toBe(0.6)
     expect(observationRemainingHours(obs(100, true))).toBe(0)
   })
 })

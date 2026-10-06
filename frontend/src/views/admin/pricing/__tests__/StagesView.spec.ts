@@ -45,7 +45,7 @@ const preview = (over: Record<string, unknown> = {}) => ({
 
 const gate = (over: Record<string, unknown> = {}) => ({
   required: true, passed: true, failures: [],
-  observation: { since: '2026-10-01T00:00:00Z', observed_hours: 100, required_hours: 72, eligible_at: '2026-10-04T00:00:00Z', satisfied: true },
+  observation: { since: '2026-10-01T00:00:00Z', observed_hours: 100, required_hours: 1, eligible_at: '2026-10-04T00:00:00Z', satisfied: true },
   shadow: { window_from: '2026-10-01T00:00:00Z', translation_diffs: 0, expected_diffs: 2, expected_models: ['gpt-5.4'], compared_in_process: 3400 },
   replay: { present: true, id: 11, rows_replayed: 800, translation_diffs: 0, expected_diffs: 0, rows_errored: 0, passed: true, binding_current: true, channel_config_hash_match: true },
   ...over
@@ -161,7 +161,7 @@ describe('StagesView', () => {
     expect(wrapper.find('[data-test="preview-line"]').text()).toContain('把「shadowed」从「对照运行」切换到「新配置」')
     expect(wrapper.find('[data-test="delta-unknown"]').text()).toContain('价格可能变化')
     expect(wrapper.find('[data-test="gate-passed"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="gate-observation"]').text()).toContain('已满 100 小时')
+    expect(wrapper.find('[data-test="gate-observation"]').text()).toContain('已满 100 小时（需要 1 小时）')
     expect(wrapper.find('[data-test="gate-replay"]').text()).toContain('30 天回放已通过')
     expect(wrapper.find('[data-test="gate-binding"]').text()).toContain('最新的渠道配置')
     expect(wrapper.find('[data-test="accepted-0"]').text()).toContain('没有价格的模型，费用和现在一致')
@@ -182,16 +182,17 @@ describe('StagesView', () => {
           { code: 'PRICING_GATE_OBSERVATION_SHORT', message: 'x' },
           { code: 'PRICING_GATE_REPLAY_STALE', message: 'y' }
         ],
-        observation: { since: '', observed_hours: 59.5, required_hours: 72, eligible_at: '2026-10-07T00:00:00Z', satisfied: false },
+        observation: { since: '', observed_hours: 0.4, required_hours: 1, eligible_at: '2026-10-07T00:00:00Z', satisfied: false },
         replay: { present: true, rows_replayed: 10, translation_diffs: 0, expected_diffs: 0, rows_errored: 0, passed: true, binding_current: false, channel_config_hash_match: false }
       })
     }))
     const wrapper = await mountPricingView(StagesView)
     await open(wrapper, 2, 'v2')
     expect(wrapper.find('[data-test="gate-failed"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="gate-observation"]').text()).toContain('还差 12.5 小时')
+    expect(wrapper.find('[data-test="gate-observation"]').text()).toContain('还差 0.6 小时')
     expect(wrapper.find('[data-test="gate-binding"]').text()).toContain('需要重新回放')
-    expect(wrapper.find('[data-test="failure-PRICING_GATE_OBSERVATION_SHORT"]').text()).toContain('不够 72 小时')
+    expect(wrapper.find('[data-test="failure-PRICING_GATE_OBSERVATION_SHORT"]').text()).toContain('不够 1 小时')
+    expect(wrapper.find('[data-test="failure-PRICING_GATE_OBSERVATION_SHORT"]').text()).not.toContain('72')
     expect(wrapper.find('[data-test="failure-PRICING_GATE_REPLAY_STALE"]').text()).toContain('需重新执行回放')
     expect(wrapper.find('[data-test="failure-PRICING_GATE_REPLAY_STALE"]').text()).not.toContain('运行回放')
     expect(wrapper.find('[data-test="stage-blocked"]').text()).toContain('切换条件没有满足')
@@ -288,7 +289,8 @@ describe('StagesView', () => {
     await flushPromises()
     const text = wrapper.find('[data-test="stage-error"]').text()
     expect(text).toContain('30 天回放缺失')
-    expect(text).toContain('不够 72 小时')
+    expect(text).toContain('观察期未满')
+    expect(text).not.toContain('72')
   })
 
   it('已提交但本实例没能加载快照：提示部分实例稍后生效', async () => {

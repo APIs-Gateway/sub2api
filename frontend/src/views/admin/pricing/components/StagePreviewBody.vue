@@ -116,6 +116,10 @@ const replayText = computed(() => {
 })
 
 function failureText(code: string) {
+  // 观察期的小时数以后端返回为准（可配置），不写死
+  if (code === 'PRICING_GATE_OBSERVATION_SHORT' && gate.value) {
+    return t('admin.pricingOps.stages.gate.observationFailure', { required: roundHours(gate.value.observation.required_hours) })
+  }
   const key = `admin.pricingOps.errors.${code}`
   return te(key) ? t(key) : code
 }
