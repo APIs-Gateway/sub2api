@@ -36,6 +36,16 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=integration -race -count=1 -v -run '^TestAnthropicStartOutputHTTP_' ./internal/repository/
+      - name: WS image input usage and bounded lineage (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestWSImageInput' ./internal/service/ ./internal/service/openai_ws_v2/
+      - name: WS image input actual funding and settlement (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestWSImageInputHTTP_' ./internal/repository/
       - name: Integration tests (chat ping actual account failover and billing)
         working-directory: backend
         run: go test -tags=integration -count=1 -v -run '^TestChatPingHTTP_' ./internal/repository/

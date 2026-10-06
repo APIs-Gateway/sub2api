@@ -718,10 +718,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	// model would miss any admin-configured model whitelist and be silently
 	// passed through, defeating that policy on every frame after the first.
 	capturedSessionModel := openAIWSPassthroughPolicyModelForFrame(account, firstClientMessage)
+	// Admission image intent follows the actual provider session model, not
+	// the mapped policy model or original client alias retained for billing.
+	capturedWireModel := requestModel
 	sessionImageTools := false
 	sessionImageChoice := false
 	sessionBillingTools := ""
 	sessionBillingChoice := ""
+	imageInputEstimates := &openAIWSImageInputEstimates{}
 	if (IsExplicitOpenAIResponsesWebSocketImageGenerationIntent(firstClientMessage) || isOpenAIImageGenerationModel(capturedSessionModel)) && !s.currentWSImagePermission(hooks, getAPIKeyFromContext(c)) {
 		message := ImageGenerationPermissionMessage()
 		rejection := newOpenAIWSLocalRejection(http.StatusForbidden, "permission_error", "", message, nil)
@@ -762,6 +766,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	if accountScoped {
 		firstClientMessage = accountScopedFirst
 	}
+	capturedWireModel = strings.TrimSpace(gjson.GetBytes(firstClientMessage, "model").String())
 
 	// 在 policy filter 之后再提取 service_tier / reasoning_effort 用于
 	// usage 上报：filter
@@ -1086,6 +1091,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				model = capturedSessionModel
 			}
 			out, blocked, policyErr := s.applyOpenAIFastPolicyToWSResponseCreate(ctx, account, model, payload)
+			if policyErr == nil && blocked == nil {
+				if wireModel := openAIWSPassthroughRequestModelFromSessionFrame(out); wireModel != "" {
+					capturedWireModel = wireModel
+				}
+			}
 			// 多轮 passthrough usage：仅在成功（non-block / non-err）
 			// 的 response.create 帧上更新 usageMeta，使用
 			// filter 处理后的 payload，与首帧 policy-after-extract 语义
@@ -1101,7 +1111,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			//     覆盖（Store(nil)），因为 OpenAI 上游对该帧实际不传
 			//     service_tier 时按 default 处理，billing 应如实反映。
 			if policyErr == nil && blocked == nil && isResponseCreate {
-				if hooks != nil && hooks.BeforeUpstreamTurn != nil {
+				if hooks != nil {
 					turnNo := int(completedTurns.Load()) + 1
 					if turnNo < 2 {
 						turnNo = 2
@@ -1117,7 +1127,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 							estimateBody = body
 						}
 					}
-					if err := hooks.BeforeUpstreamTurn(turnNo, estimateBody, requestModelForThisFrame); err != nil {
+					if err := beforeOpenAIPassthroughUpstreamTurn(hooks, imageInputEstimates, turnNo, estimateBody, requestModelForThisFrame, capturedWireModel); err != nil {
 						return out, nil, err
 					}
 				}
@@ -1141,10 +1151,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		},
 	}
 	upstreamFirstMessageSent := false
-	if hooks != nil && hooks.BeforeUpstreamTurn != nil {
-		if err := hooks.BeforeUpstreamTurn(1, firstClientMessage, requestModel); err != nil {
-			return err
-		}
+	if err := beforeOpenAIPassthroughUpstreamTurn(hooks, imageInputEstimates, 1, firstClientMessage, requestModel, capturedWireModel); err != nil {
+		return err
 	}
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
 	firstWriteErr := relayUpstreamFrameConn.WriteFrame(firstWriteCtx, coderws.MessageText, firstClientMessage)
@@ -1198,6 +1206,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			},
 			OnTurnComplete: func(turn openaiwsv2.RelayTurnResult) {
 				turnNo := int(completedTurns.Add(1))
+				imageInputEstimates.complete(turnNo, turn.RequestID, turn.Usage.ImageInputTokens, turn.Usage.ImageOutputTokens, turn.HasGeneratedImage)
 				turnResult := &OpenAIForwardResult{
 					RequestID: turn.RequestID,
 					Usage: OpenAIUsage{
@@ -1206,6 +1215,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 						CacheCreationInputTokens: turn.Usage.CacheCreationInputTokens,
 						CacheReadInputTokens:     turn.Usage.CacheReadInputTokens,
 						ImageOutputTokens:        turn.Usage.ImageOutputTokens,
+						ImageInputTokens:         turn.Usage.ImageInputTokens,
 					},
 					Model:           turn.RequestModel,
 					ServiceTier:     usageMeta.serviceTier.Load(),
@@ -1325,6 +1335,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			CacheCreationInputTokens: relayResult.Usage.CacheCreationInputTokens,
 			CacheReadInputTokens:     relayResult.Usage.CacheReadInputTokens,
 			ImageOutputTokens:        relayResult.Usage.ImageOutputTokens,
+			ImageInputTokens:         relayResult.Usage.ImageInputTokens,
 		},
 		Model:           relayResult.RequestModel,
 		ServiceTier:     usageMeta.serviceTier.Load(),
