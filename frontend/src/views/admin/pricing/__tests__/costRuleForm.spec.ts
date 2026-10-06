@@ -36,7 +36,7 @@ describe('costRuleForm', () => {
       sort_order: 0,
       enabled: true,
       prices: [
-        { platform: '', models: ['gpt-5.5', 'gpt-5.5-mini'], price: { billing_mode: 'token', input_price: 1.25e-6, output_price: 1e-5, cache_write_price: null, cache_read_price: null } }
+        { platform: '', models: ['gpt-5.5', 'gpt-5.5-mini'], price: { billing_mode: 'token', input_price: 1.25e-6, output_price: 1e-5, cache_write_price: null, cache_read_price: null, image_output_price: null } }
       ]
     })
   })
@@ -54,15 +54,48 @@ describe('costRuleForm', () => {
     expect(r.ok && r.body.prices[0].price).toMatchObject({ input_price: 1.25e-6, output_price: 5e-8, cache_read_price: 1.25e-7 })
   })
 
-  it('按次价格不换算；图片输出价按每百万 Token 换算', () => {
+  it('按次价格不换算；按图片计费不新带图片输出价', () => {
     const f = emptyForm(7)
     f.name = 'img'
     f.rows[0].modelsText = 'img-1'
     f.rows[0].mode = 'image'
     f.rows[0].perRequest = '0.04'
+    const r = buildRuleBody(f)
+    expect(r.ok && r.body.prices[0].price).toEqual({ billing_mode: 'image', per_request_price: 0.04 })
+  })
+
+  it('按 Token 计费：图片输出价按每百万 Token 换算后提交', () => {
+    const f = emptyForm(7)
+    f.name = 'tok'
+    f.rows[0].modelsText = 'gpt-image-2'
+    f.rows[0].input = '5'
     f.rows[0].imageOutput = '40'
     const r = buildRuleBody(f)
-    expect(r.ok && r.body.prices[0].price).toEqual({ billing_mode: 'image', per_request_price: 0.04, image_output_price: 4e-5 })
+    expect(r.ok && r.body.prices[0].price).toMatchObject({ billing_mode: 'token', input_price: 5e-6, image_output_price: 4e-5 })
+  })
+
+  it('编辑按 Token 规则：读回再保存，图片输出价保持原值', () => {
+    const rule: StoredCostRule = {
+      id: 1, scope_group_id: 7, source: 'legacy_frozen', name: 'gpt-image', group_ids: [], account_ids: [], sort_order: 0, enabled: true,
+      prices: [{ platform: 'openai', models: ['gpt-image-2'], price: { billing_mode: 'token', input_price: 5e-6, output_price: 4e-5, image_output_price: 3e-5 } }]
+    }
+    const form = fromRule(rule)
+    expect(form.rows[0].imageOutput).toBe('30')
+    const r = buildRuleBody(form)
+    expect(r.ok && r.body.prices[0].price.image_output_price).toBeCloseTo(3e-5, 12)
+  })
+
+  it('已存了图片输出价的按图片规则：编辑后原样带回，不悄悄删掉；隐藏字段不参与校验', () => {
+    const rule: StoredCostRule = {
+      id: 2, scope_group_id: 7, source: 'manual', name: 'old-image', group_ids: [], account_ids: [], sort_order: 0, enabled: true,
+      prices: [{ platform: '', models: ['img'], price: { billing_mode: 'image', per_request_price: 0.04, image_output_price: 4e-5 } }]
+    }
+    const form = fromRule(rule)
+    const r = buildRuleBody(form)
+    expect(r.ok && r.body.prices[0].price.image_output_price).toBeCloseTo(4e-5, 12)
+    // 按图片计费时，隐藏的 token 价填了非法值也不报错
+    form.rows[0].input = '-1'
+    expect(buildRuleBody(form).ok).toBe(true)
   })
 
   it('校验：名称、模型、负价格、按次价格', () => {

@@ -3533,7 +3533,6 @@
         },
         unitToken: 'US dollars per 1M tokens',
         unitRequest: 'Price per request: US dollars per request',
-        unitImageToken: 'Image output price: US dollars per 1M tokens',
         intervalsKept: 'Tiered prices are not edited here and stay as they are when you save ({n} tier(s)).',
         error: {
           name: 'Enter a rule name, up to {max} characters.',

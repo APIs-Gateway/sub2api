@@ -3526,7 +3526,6 @@
         },
         unitToken: '美元，每百万 Token',
         unitRequest: '每次价格：美元，每次',
-        unitImageToken: '图片输出价：美元，每百万 Token',
         intervalsKept: '区间价格不在这里编辑，保存时保持原样（{n} 个区间）。',
         error: {
           name: '规则名称不能为空，最多 {max} 个字符。',

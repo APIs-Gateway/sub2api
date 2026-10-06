@@ -85,7 +85,7 @@ describe('CostRulesView', () => {
       account_ids: [],
       sort_order: 0,
       enabled: true,
-      prices: [{ platform: '', models: ['gpt-5.5'], price: { billing_mode: 'token', input_price: 1.25e-6, output_price: 1e-5, cache_write_price: null, cache_read_price: null } }]
+      prices: [{ platform: '', models: ['gpt-5.5'], price: { billing_mode: 'token', input_price: 1.25e-6, output_price: 1e-5, cache_write_price: null, cache_read_price: null, image_output_price: null } }]
     })
     expect(showSuccess).toHaveBeenCalled()
   })
@@ -111,6 +111,30 @@ describe('CostRulesView', () => {
     expect([gid, rid, rev]).toEqual([7, 41, 12])
     expect(body.prices[0].price.output_price).toBeCloseTo(1.2e-5, 12)
     expect(body.account_ids).toEqual([21, 22])
+  })
+
+  it('编辑按 Token 计费的规则：抽屉显示图片输出价，保存后保持原值', async () => {
+    api.getGroupOpsView.mockResolvedValue(view('v2', [rule({
+      prices: [{ platform: 'openai', models: ['gpt-image-2'], price: { billing_mode: 'token', input_price: 5e-6, output_price: 4e-5, image_output_price: 3e-5 } }]
+    })]))
+    const { wrapper } = await mountView()
+    await wrapper.find('[data-test="edit-41"]').trigger('click')
+    expect((wrapper.find('[data-test="cr-imageOutput-0"]').element as HTMLInputElement).value).toBe('30')
+    await wrapper.find('[data-test="cr-name"]').setValue('改个名字')
+    await wrapper.find('[data-test="cr-save"]').trigger('click')
+    await flushPromises()
+    const body = api.updateCostRule.mock.calls[0][3]
+    expect(body.prices[0].price.image_output_price).toBeCloseTo(3e-5, 12)
+  })
+
+  it('按次/按图片计费不显示图片输出价', async () => {
+    const { wrapper } = await mountView()
+    await wrapper.find('[data-test="create-rule"]').trigger('click')
+    expect(wrapper.find('[data-test="cr-imageOutput-0"]').exists()).toBe(true)
+    await wrapper.find('[data-test="cr-mode-0"]').setValue('image')
+    expect(wrapper.find('[data-test="cr-imageOutput-0"]').exists()).toBe(false)
+    await wrapper.find('[data-test="cr-mode-0"]').setValue('per_request')
+    expect(wrapper.find('[data-test="cr-imageOutput-0"]').exists()).toBe(false)
   })
 
   it('基线过期：提示并重读这个分组，抽屉保留', async () => {

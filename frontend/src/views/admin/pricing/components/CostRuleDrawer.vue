@@ -74,10 +74,6 @@
               <label class="input-label" :for="`cr-perRequest-${i}`">{{ t('admin.pricingOps.costRules.field.perRequest') }}</label>
               <input :id="`cr-perRequest-${i}`" v-model="r.perRequest" type="number" min="0" step="any" class="input num" :data-test="`cr-perRequest-${i}`" />
             </div>
-            <div v-if="r.mode === 'image'">
-              <label class="input-label" :for="`cr-imageOutput-${i}`">{{ t('admin.pricingOps.costRules.field.imageOutput') }}</label>
-              <input :id="`cr-imageOutput-${i}`" v-model="r.imageOutput" type="number" min="0" step="any" class="input num" />
-            </div>
           </div>
           <p class="text-xs text-gray-500 dark:text-dark-300">
             {{ unitText(r.mode) }}
@@ -132,7 +128,8 @@ const TOKEN_FIELDS = [
   { key: 'input' },
   { key: 'output' },
   { key: 'cacheWrite' },
-  { key: 'cacheRead' }
+  { key: 'cacheRead' },
+  { key: 'imageOutput' }
 ] as const
 
 const form = reactive<RuleForm>(emptyForm(props.groupId))
@@ -153,7 +150,6 @@ watch(
 
 function unitText(mode: CostBillingMode): string {
   if (mode === 'token') return t('admin.pricingOps.costRules.unitToken')
-  if (mode === 'image') return `${t('admin.pricingOps.costRules.unitRequest')}；${t('admin.pricingOps.costRules.unitImageToken')}`
   return t('admin.pricingOps.costRules.unitRequest')
 }
 

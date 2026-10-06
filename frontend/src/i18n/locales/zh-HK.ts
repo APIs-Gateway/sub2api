@@ -3523,7 +3523,6 @@
         },
         unitToken: '美元，每百萬 Token',
         unitRequest: '每次價格：美元，每次',
-        unitImageToken: '圖片輸出價：美元，每百萬 Token',
         intervalsKept: '區間價格不在這裡編輯，儲存時保持原樣（{n} 個區間）。',
         error: {
           name: '規則名稱不能為空，最多 {max} 個字元。',

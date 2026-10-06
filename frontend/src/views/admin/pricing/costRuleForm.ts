@@ -139,12 +139,15 @@ export function buildRuleBody(form: RuleForm): BuildResult {
       imageOutput: parsePrice(r.imageOutput),
       perRequest: parsePrice(r.perRequest)
     }
-    if (Object.values(fields).some((f) => f.bad)) return { ok: false, error: { key: 'price', params: { n } } }
+    // 只校验当前计费方式下看得见的字段：成本只在按 Token 计费时用 token 价（含图片输出价），按次/按图片只看每次价格
+    const isToken = r.mode === 'token'
     const tokenPrices = [fields.input, fields.output, fields.cacheWrite, fields.cacheRead, fields.imageOutput]
-    if (tokenPrices.some((f) => (f.value ?? 0) > TOKEN_PRICE_MAX_PER_MTOK)) {
+    const visible = isToken ? tokenPrices : [fields.perRequest]
+    if (visible.some((f) => f.bad)) return { ok: false, error: { key: 'price', params: { n } } }
+    if (isToken && tokenPrices.some((f) => (f.value ?? 0) > TOKEN_PRICE_MAX_PER_MTOK)) {
       return { ok: false, error: { key: 'priceTooHigh', params: { n, max: TOKEN_PRICE_MAX_PER_MTOK } } }
     }
-    if ((fields.perRequest.value ?? 0) > REQUEST_PRICE_MAX) {
+    if (!isToken && (fields.perRequest.value ?? 0) > REQUEST_PRICE_MAX) {
       return { ok: false, error: { key: 'perRequestTooHigh', params: { n, max: REQUEST_PRICE_MAX } } }
     }
     if (r.mode !== 'token' && fields.perRequest.value === null && r.intervals.length === 0) {
@@ -157,9 +160,11 @@ export function buildRuleBody(form: RuleForm): BuildResult {
       price.output_price = mTokToPerToken(fields.output.value)
       price.cache_write_price = mTokToPerToken(fields.cacheWrite.value)
       price.cache_read_price = mTokToPerToken(fields.cacheRead.value)
+      price.image_output_price = mTokToPerToken(fields.imageOutput.value)
     } else {
       price.per_request_price = fields.perRequest.value
-      if (r.mode === 'image') price.image_output_price = mTokToPerToken(fields.imageOutput.value)
+      // 按次/按图片不显示图片输出价；规则里已存的值原样带回，不悄悄删掉（后端成本计算不用它）
+      if (!fields.imageOutput.bad && fields.imageOutput.value !== null) price.image_output_price = mTokToPerToken(fields.imageOutput.value)
     }
     if (r.intervals.length > 0) price.intervals = r.intervals
     prices.push({ platform: r.platform, models, price })
