@@ -423,11 +423,11 @@
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-1.5">
+            <div class="flex items-center gap-1">
               <!-- 接入入口：窄屏在名称列里，这里只在宽屏显示 -->
               <button
                 type="button"
-                class="hidden items-center gap-1.5 rounded-md bg-gray-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-gray-800 lg:inline-flex dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+                class="hidden items-center gap-1.5 rounded-md bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-gray-800 lg:inline-flex dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
                 data-test="action-connect"
                 @click="openOnboarding(row, 'install')"
               >
@@ -436,7 +436,7 @@
               </button>
               <button
                 type="button"
-                class="hidden items-center rounded-md border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 lg:inline-flex dark:border-dark-600 dark:text-gray-200 dark:hover:bg-dark-800"
+                class="hidden items-center rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 lg:inline-flex dark:border-dark-600 dark:text-gray-200 dark:hover:bg-dark-800"
                 data-test="action-ccswitch"
                 @click="openOnboarding(row, 'ccswitch')"
               >
@@ -445,39 +445,43 @@
               <!-- Toggle Status Button -->
               <button
                 @click="toggleKeyStatus(row)"
+                :title="row.status === 'active' ? t('keys.disable') : t('keys.enable')"
                 :class="[
-                  'flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white'
+                  'inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white'
                 ]"
               >
                 <Icon v-if="row.status === 'active'" name="ban" size="sm" />
                 <Icon v-else name="checkCircle" size="sm" />
-                <span class="text-xs">{{ row.status === 'active' ? t('keys.disable') : t('keys.enable') }}</span>
+                <span class="sr-only">{{ row.status === 'active' ? t('keys.disable') : t('keys.enable') }}</span>
               </button>
               <!-- Edit Button -->
               <button
                 @click="editKey(row)"
-                class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                :title="t('common.edit')"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
               >
                 <Icon name="edit" size="sm" />
-                <span class="text-xs">{{ t('common.edit') }}</span>
+                <span class="sr-only">{{ t('common.edit') }}</span>
               </button>
               <!-- 兜底设置：只有已绑定分组的密钥才有兜底链 -->
               <button
                 v-if="row.group_id && fallbackEntryVisible(row)"
                 @click="openFallbackDrawer(row, $event)"
-                class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                :title="t('keyFallback.entry')"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
                 data-test="fallback-entry"
               >
                 <Icon name="arrowsUpDown" size="sm" />
-                <span class="text-xs">{{ t('keyFallback.entry') }}</span>
+                <span class="sr-only">{{ t('keyFallback.entry') }}</span>
               </button>
               <!-- Delete Button -->
               <button
                 @click="confirmDelete(row)"
-                class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-700 dark:text-gray-400 dark:hover:bg-primary-900/20 dark:hover:text-primary-400"
+                :title="t('common.delete')"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-700 dark:text-gray-400 dark:hover:bg-primary-900/20 dark:hover:text-primary-400"
               >
                 <Icon name="trash" size="sm" />
-                <span class="text-xs">{{ t('common.delete') }}</span>
+                <span class="sr-only">{{ t('common.delete') }}</span>
               </button>
             </div>
           </template>
