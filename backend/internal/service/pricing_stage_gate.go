@@ -20,6 +20,7 @@ import (
 //     （渠道改过，观察期重新计时）；这段时间里 translation 类差异为 0；
 //  3. 该分组最近一次回放（pricing-replay --record 写入）：通过（翻译差异为 0、没有回放错误、绑定稳定）、
 //     窗口不短于 30 天、结束时间不早于 30 天前、用的是实时派生的矩阵；
+//     回放 0 行只在窗口内该分组确实没有请求时成立（无流量豁免）；窗口内有流量却一行都没回放上，判为不通过；
 //  4. 回放绑定的「渠道配置摘要」与「派生 revision」等于现在的值。渠道配置在回放之后改过，结果作废，要求重跑。
 //
 // 影子的样本数不是硬门槛：计数器在各实例的进程内、重启清零，加不起来；设计里「样本太少的分组以回放覆盖为准」，
@@ -40,9 +41,13 @@ const (
 
 // 闸门不满足时的错误原因（HTTP 409，metadata.failures 带全部不满足的原因，用分号连接）。
 const (
-	ReasonPricingGateNotInShadow    = "PRICING_GATE_NOT_IN_SHADOW"
-	ReasonPricingGateObservation    = "PRICING_GATE_OBSERVATION_SHORT"
-	ReasonPricingGateShadowDiffs    = "PRICING_GATE_SHADOW_DIFFS"
+	ReasonPricingGateNotInShadow = "PRICING_GATE_NOT_IN_SHADOW"
+	ReasonPricingGateObservation = "PRICING_GATE_OBSERVATION_SHORT"
+	ReasonPricingGateShadowDiffs = "PRICING_GATE_SHADOW_DIFFS"
+	// ReasonPricingGateShadowDiffsInProcess 影子差异表是有损采样，本实例进程内的翻译差异计数大于 0 时也不放行。
+	ReasonPricingGateShadowDiffsInProcess = "PRICING_GATE_SHADOW_DIFFS_IN_PROCESS"
+	// ReasonPricingGateReplayEmpty 回放窗口内该分组有流量，但没有一行被回放上（全部 uncovered）。
+	ReasonPricingGateReplayEmpty    = "PRICING_GATE_REPLAY_EMPTY"
 	ReasonPricingGateReplayMissing  = "PRICING_GATE_REPLAY_MISSING"
 	ReasonPricingGateReplayFailed   = "PRICING_GATE_REPLAY_FAILED"
 	ReasonPricingGateReplayShort    = "PRICING_GATE_REPLAY_WINDOW_SHORT"
@@ -102,6 +107,9 @@ type ShadowEvidence struct {
 	ExpectedDiffs    int64     `json:"expected_diffs"`
 	// ExpectedModels 近 7 天出现过预期差异样本的模型（它们是真实请求触发的，所以有流量）。
 	ExpectedModels []string `json:"expected_models"`
+	// TranslationDiffsInProcess 本实例进程内累计的 translation 类差异数（重启清零，多实例各算各的）。
+	// 影子差异表是有损采样（限速、去重、队列满丢弃），表里为 0 只是下界，所以进程内计数大于 0 时闸门也不放行。
+	TranslationDiffsInProcess int64 `json:"translation_diffs_in_process"`
 	// ComparedInProcess 本实例进程内的比对次数，仅供参考（多实例各算各的，重启清零）。
 	ComparedInProcess int64 `json:"compared_in_process"`
 }
@@ -156,6 +164,7 @@ type StageGateReplay struct {
 	RecordedAt       *time.Time `json:"recorded_at,omitempty"`
 	WindowFrom       *time.Time `json:"window_from,omitempty"`
 	WindowTo         *time.Time `json:"window_to,omitempty"`
+	RowsInWindow     int64      `json:"rows_in_window"`
 	RowsReplayed     int64      `json:"rows_replayed"`
 	TranslationDiffs int64      `json:"translation_diffs"`
 	ExpectedDiffs    int64      `json:"expected_diffs"`
@@ -219,6 +228,11 @@ func EvaluateStageGate(in StageGateInput) StageGateReport {
 		fail(ReasonPricingGateShadowDiffs, fmt.Sprintf("%d translation differences in the shadow comparison", facts.Shadow.TranslationDiffs))
 	}
 
+	if facts.Shadow.TranslationDiffsInProcess > 0 {
+		fail(ReasonPricingGateShadowDiffsInProcess, fmt.Sprintf("%d translation differences were counted in this instance's process (the shadow table is a lossy sample)",
+			facts.Shadow.TranslationDiffsInProcess))
+	}
+
 	report.Replay = evaluateStageReplay(facts.Replay, in, fail)
 	report.Passed = len(report.Failures) == 0
 	return report
@@ -237,6 +251,7 @@ func evaluateStageReplay(ev *ReplayEvidence, in StageGateInput, fail func(code, 
 	out.Present = true
 	out.ID = ev.ID
 	out.RecordedAt, out.WindowFrom, out.WindowTo = &recorded, &from, &to
+	out.RowsInWindow = ev.RowsInWindow
 	out.RowsReplayed, out.TranslationDiffs, out.ExpectedDiffs, out.RowsErrored = ev.RowsReplayed, ev.TranslationDiffs, ev.ExpectedDiffs, ev.RowsErrored
 	out.Passed = ev.Passed
 	out.DeriveRevision = ev.DeriveRevision
@@ -246,6 +261,10 @@ func evaluateStageReplay(ev *ReplayEvidence, in StageGateInput, fail func(code, 
 	if !ev.Passed || !ev.BindingStable || ev.TranslationDiffs > 0 || ev.RowsErrored > 0 {
 		fail(ReasonPricingGateReplayFailed, fmt.Sprintf("the latest replay did not pass (translation differences %d, errors %d, binding stable %t)",
 			ev.TranslationDiffs, ev.RowsErrored, ev.BindingStable))
+	}
+	if ev.RowsReplayed == 0 && ev.RowsInWindow > 0 {
+		// 无流量豁免只在窗口内确实没有请求时成立：有请求却一行都没回放上，什么也没验证。
+		fail(ReasonPricingGateReplayEmpty, fmt.Sprintf("the replay window has %d requests for this group but none was replayed", ev.RowsInWindow))
 	}
 	if ev.MatrixSource != "derived" {
 		fail(ReasonPricingGateReplayFailed, "the replay must run against the derived matrix (matrix source derived)")
@@ -313,11 +332,12 @@ func replayReasonDelta(reason string) PriceDelta {
 
 // StageSwitchAccepted 汇总切到 v2 时被接受的差异，并给出价格方向（price_delta）。
 // 方向为 none 必须有证据：回放存在、翻译差异为 0、影子翻译差异为 0、没有任何被接受的差异（或它们都被证明不改价）。
-// 没有回放、或翻译差异不为 0，方向是 unknown。catalog 是目录里 draft、retired 且近 7 天有流量的模型，由调用方查出。
+// 没有回放、回放 0 行、或翻译差异不为 0（含本实例进程内计数），方向是 unknown。catalog 是目录里 draft、retired 且近 7 天有流量的模型，由调用方查出。
 func StageSwitchAccepted(replay *ReplayEvidence, shadow ShadowEvidence, catalog []AcceptedDifference) (PriceDelta, []AcceptedDifference) {
 	accepted := []AcceptedDifference{}
 	deltas := []PriceDelta{}
-	if replay == nil || replay.TranslationDiffs > 0 || shadow.TranslationDiffs > 0 {
+	// 回放 0 行时什么也没比较，证明不了价格不变：unknown（没有流量的分组也一样，估算器的口径是证明不了就是 unknown）。
+	if replay == nil || replay.RowsReplayed == 0 || replay.TranslationDiffs > 0 || shadow.TranslationDiffs > 0 || shadow.TranslationDiffsInProcess > 0 {
 		deltas = append(deltas, PriceDeltaUnknown)
 	}
 	if replay != nil {

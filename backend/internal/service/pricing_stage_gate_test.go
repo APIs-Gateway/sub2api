@@ -77,6 +77,17 @@ func TestEvaluateStageGate_Branches(t *testing.T) {
 			in.Facts.Config.UpdatedAt = sgNow.Add(-time.Minute)
 		}, []string{ReasonPricingGateObservation}},
 		{"shadow translation differences", func(in *StageGateInput) { in.Facts.Shadow.TranslationDiffs = 1 }, []string{ReasonPricingGateShadowDiffs}},
+		{"in-process translation differences (lossy shadow table)", func(in *StageGateInput) { in.Facts.Shadow.TranslationDiffsInProcess = 2 },
+			[]string{ReasonPricingGateShadowDiffsInProcess}},
+		{"replay has no rows and the window has no traffic: exempt", func(in *StageGateInput) {
+			in.Facts.Replay.RowsReplayed, in.Facts.Replay.RowsInWindow = 0, 0
+		}, nil},
+		{"replay has no rows but the window has traffic", func(in *StageGateInput) {
+			in.Facts.Replay.RowsReplayed, in.Facts.Replay.RowsInWindow = 0, 12
+		}, []string{ReasonPricingGateReplayEmpty}},
+		{"replay covered part of the traffic", func(in *StageGateInput) {
+			in.Facts.Replay.RowsReplayed, in.Facts.Replay.RowsInWindow = 3, 12
+		}, nil},
 		{"shadow expected differences are fine", func(in *StageGateInput) { in.Facts.Shadow.ExpectedDiffs = 50 }, nil},
 		{"no replay", func(in *StageGateInput) { in.Facts.Replay = nil }, []string{ReasonPricingGateReplayMissing}},
 		{"replay not passed", func(in *StageGateInput) { in.Facts.Replay.Passed = false }, []string{ReasonPricingGateReplayFailed}},
@@ -150,7 +161,7 @@ func TestStageGateError_ReasonAndMetadata(t *testing.T) {
 }
 
 func TestStageSwitchAccepted_PriceDirection(t *testing.T) {
-	good := &ReplayEvidence{ID: 1}
+	good := &ReplayEvidence{ID: 1, RowsInWindow: 10, RowsReplayed: 10}
 	// 没有任何差异、证据齐全：none。
 	delta, accepted := StageSwitchAccepted(good, ShadowEvidence{}, nil)
 	require.Equal(t, PriceDeltaNone, delta)
@@ -160,14 +171,22 @@ func TestStageSwitchAccepted_PriceDirection(t *testing.T) {
 	delta, _ = StageSwitchAccepted(nil, ShadowEvidence{}, nil)
 	require.Equal(t, PriceDeltaUnknown, delta)
 
+	// 回放 0 行（含没有流量的分组）：什么也没比较，证明不了价格不变，unknown。
+	delta, _ = StageSwitchAccepted(&ReplayEvidence{ID: 1}, ShadowEvidence{}, nil)
+	require.Equal(t, PriceDeltaUnknown, delta)
+
+	// 本实例进程内的翻译差异计数大于 0：unknown。
+	delta, _ = StageSwitchAccepted(good, ShadowEvidence{TranslationDiffsInProcess: 1}, nil)
+	require.Equal(t, PriceDeltaUnknown, delta)
+
 	// 翻译差异不为 0：unknown。
-	delta, _ = StageSwitchAccepted(&ReplayEvidence{TranslationDiffs: 1}, ShadowEvidence{}, nil)
+	delta, _ = StageSwitchAccepted(&ReplayEvidence{RowsReplayed: 10, TranslationDiffs: 1}, ShadowEvidence{}, nil)
 	require.Equal(t, PriceDeltaUnknown, delta)
 	delta, _ = StageSwitchAccepted(good, ShadowEvidence{TranslationDiffs: 1}, nil)
 	require.Equal(t, PriceDeltaUnknown, delta)
 
 	// 附录 A 第 23 项：legacy 空 custom 记 0 元，v2 inherit 无价也记 0 元，最终 ActualCost 逐位相同，单独列出、方向 none。
-	withZero := &ReplayEvidence{Diffs: []PricingReplayDiffCount{
+	withZero := &ReplayEvidence{RowsReplayed: 10, Diffs: []PricingReplayDiffCount{
 		{Kind: ShadowKindCost, Class: ShadowClassExpected, Reason: PricingReplayReasonUnpricedZero, Count: 40},
 		{Kind: ShadowKindAccess, Class: ShadowClassTranslation, Count: 0},
 	}}
@@ -176,12 +195,12 @@ func TestStageSwitchAccepted_PriceDirection(t *testing.T) {
 	require.Equal(t, []AcceptedDifference{{Source: "replay", Kind: ShadowKindCost, Reason: PricingReplayReasonUnpricedZero, Count: 40, PriceDelta: PriceDeltaNone}}, accepted)
 
 	// 名字带空白：v2 按价收费，只会变多。
-	up := &ReplayEvidence{Diffs: []PricingReplayDiffCount{{Kind: ShadowKindCost, Class: ShadowClassExpected, Reason: PricingReplayReasonUntrimmedModel, Count: 1}}}
+	up := &ReplayEvidence{RowsReplayed: 10, Diffs: []PricingReplayDiffCount{{Kind: ShadowKindCost, Class: ShadowClassExpected, Reason: PricingReplayReasonUntrimmedModel, Count: 1}}}
 	delta, _ = StageSwitchAccepted(up, ShadowEvidence{}, nil)
 	require.Equal(t, PriceDeltaUp, delta)
 
 	// 关闭例外：请求会被挡，unknown。
-	closed := &ReplayEvidence{Diffs: []PricingReplayDiffCount{{Kind: ShadowKindAccess, Class: ShadowClassExpected, Reason: "closed_in_group", Count: 5}}}
+	closed := &ReplayEvidence{RowsReplayed: 10, Diffs: []PricingReplayDiffCount{{Kind: ShadowKindAccess, Class: ShadowClassExpected, Reason: "closed_in_group", Count: 5}}}
 	delta, _ = StageSwitchAccepted(closed, ShadowEvidence{}, nil)
 	require.Equal(t, PriceDeltaUnknown, delta)
 

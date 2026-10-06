@@ -54,8 +54,13 @@ func newStagedGroupPolicy(legacy GroupPolicy, matrix *matrixPolicy, sink Pricing
 func (s *stagedPolicy) Stats() PricingShadowStats { return s.hub.Stats() }
 
 // InvalidateGroups 让矩阵快照失效，供阶段切换在写库之后调用。
+// 调用方只有阶段切换：被切换的分组此后有（或刚被改过）配置行，记进「可能是 v2」集合。启动时是 legacy、没有配置行的分组
+// 切到 shadow/v2 之后，本实例即使第一次加载就失败，也会被拒绝而不是按 legacy 放行（W6 PR7b-1 审查 B1）。
 func (s *stagedPolicy) InvalidateGroups(groupIDs ...int64) {
 	if s.matrix != nil {
+		for _, id := range groupIDs {
+			s.matrix.noteConfigured(id)
+		}
 		s.matrix.InvalidateGroups(groupIDs...)
 	}
 }
@@ -123,6 +128,10 @@ func (s *stagedPolicy) EnsureGroupsLoaded(ctx context.Context, groupIDs ...int64
 		}
 		if snap.stale {
 			return fmt.Errorf("group %d: only a stale snapshot is available", id)
+		}
+		if !s.matrix.cachedReady(id) {
+			// 加载期间收到失效通知（代数变了）时快照没有存进缓存，却也没有 loadErr（与预加载的检查一致）。
+			return fmt.Errorf("group %d: the loaded snapshot was not cached", id)
 		}
 	}
 	return nil

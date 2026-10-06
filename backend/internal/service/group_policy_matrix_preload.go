@@ -20,9 +20,15 @@ const (
 	matrixPreloadTimeout    = 30 * time.Second
 )
 
-// ConfiguredGroupLister 列出有 group_model_config 行的（未软删除的）分组。由矩阵仓库实现，是可选的读侧能力。
+// ConfiguredGroup 是一个有 group_model_config 行的分组及其阶段。
+type ConfiguredGroup struct {
+	ID    int64
+	Stage PricingStage
+}
+
+// ConfiguredGroupLister 列出有 group_model_config 行的（未软删除的）分组及其阶段。由矩阵仓库实现，是可选的读侧能力。
 type ConfiguredGroupLister interface {
-	ListConfiguredGroupIDs(ctx context.Context) ([]int64, error)
+	ListConfiguredGroups(ctx context.Context) ([]ConfiguredGroup, error)
 }
 
 // preload 同步加载这些分组的快照，返回加载失败（落入兜底状态）的分组。失败的分组会被标记失效，下一轮重试。
@@ -61,14 +67,25 @@ func (s *stagedPolicy) Preload(ctx context.Context, lister ConfiguredGroupLister
 	for attempt := 1; attempt <= matrixPreloadAttempts; attempt++ {
 		var err error
 		if !listed {
-			ids, err = lister.ListConfiguredGroupIDs(ctx)
+			var groups []ConfiguredGroup
+			groups, err = lister.ListConfiguredGroups(ctx)
+			if err == nil {
+				ids = make([]int64, 0, len(groups))
+				mayBeV2 := make([]int64, 0, len(groups))
+				for _, g := range groups {
+					ids = append(ids, g.ID)
+					if g.Stage != PricingStageLegacy {
+						mayBeV2 = append(mayBeV2, g.ID)
+					}
+				}
+				listed = true
+				// 记下启动时处于 shadow、v2 的分组：之后快照加载不出来时，只有它们（可能是 v2）会被拒绝。
+				// legacy 分组（有配置行也一样）的计费不读矩阵，加载失败照旧按 legacy 放行，与 7a、main 一致。
+				// 预加载仍然覆盖全部有配置行的分组（ids）。
+				s.matrix.setConfiguredList(mayBeV2)
+			}
 		}
 		if err == nil {
-			if !listed {
-				listed = true
-				// 记下启动时有配置行的分组：之后快照加载不出来时，只有它们（可能是 v2）会被拒绝，其余按 legacy 处理。
-				s.matrix.setConfiguredList(ids)
-			}
 			if ids == nil {
 				ids = []int64{}
 			}

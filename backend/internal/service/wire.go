@@ -810,7 +810,17 @@ func ProvidePricingStageSwitcher(
 		}
 		return 0
 	}
-	return NewPricingStageSwitcher(store, derive, fingerprint, catalog, policy, compared)
+	sw := NewPricingStageSwitcher(store, derive, fingerprint, catalog, policy, compared)
+	sw.SetInProcessTranslationDiffs(func(groupID int64) int64 {
+		var n int64
+		for _, c := range policy.Stats().DiffTotal {
+			if c.GroupID == groupID && c.Class == ShadowClassTranslation {
+				n += c.Count
+			}
+		}
+		return n
+	})
+	return sw
 }
 
 // ProvidePricingStageService 创建阶段服务并接上阶段切换器：之后 v2 才是允许的目标阶段。

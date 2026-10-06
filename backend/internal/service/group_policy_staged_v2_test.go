@@ -101,17 +101,26 @@ func TestStagedPolicy_V2RoutingIsLiveByDefault(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type spLister struct {
-	ids   []int64
-	errs  []error // 前几次调用依次返回这些错误
-	calls atomic.Int32
+	ids    []int64
+	stages map[int64]PricingStage // 没写的分组按 v2 算
+	errs   []error                // 前几次调用依次返回这些错误
+	calls  atomic.Int32
 }
 
-func (l *spLister) ListConfiguredGroupIDs(context.Context) ([]int64, error) {
+func (l *spLister) ListConfiguredGroups(context.Context) ([]ConfiguredGroup, error) {
 	n := int(l.calls.Add(1))
 	if n <= len(l.errs) && l.errs[n-1] != nil {
 		return nil, l.errs[n-1]
 	}
-	return l.ids, nil
+	out := make([]ConfiguredGroup, 0, len(l.ids))
+	for _, id := range l.ids {
+		stage, ok := l.stages[id]
+		if !ok {
+			stage = PricingStageV2
+		}
+		out = append(out, ConfiguredGroup{ID: id, Stage: stage})
+	}
+	return out, nil
 }
 
 // flakyMatrixSource 前 failLoads 次读取分组快照失败，之后恢复。
@@ -186,6 +195,54 @@ func TestStagedPolicy_PreloadGivesUpAndCountsTheGroupsThatNeverLoaded(t *testing
 	newStagedGroupPolicy(&spLegacy{}, nil, nil).Preload(ctx, &spLister{})
 	var nilStaged *stagedPolicy
 	nilStaged.Preload(ctx, &spLister{})
+}
+
+// W6 PR7b-1 审查 B1：快照加载失败时的拒绝范围只含启动时处于 shadow、v2 的分组。
+// legacy 分组（有配置行也一样）照旧按 legacy 放行；shadow 分组按「可能已经推进到 v2」处理，和 v2 一样被拒绝。
+func TestStagedPolicy_UnavailableSnapshotOnlyRejectsShadowAndV2Groups(t *testing.T) {
+	ctx := context.Background()
+	src := &flakyMatrixSource{
+		mpFakeSource: newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{}),
+		failLoads:    1 << 20, // 数据库一直不可用：预加载和请求时的加载都失败
+	}
+	staged, legacy := newColdStaged(src)
+	staged.Preload(ctx, &spLister{
+		ids:    []int64{1, 2, 3},
+		stages: map[int64]PricingStage{1: PricingStageLegacy, 2: PricingStageShadow, 3: PricingStageV2},
+	})
+	denied := QuoteAccess{OK: false, Reason: QuoteAccessReasonSnapshotUnavailable}
+
+	require.True(t, staged.ModelAccess(ctx, 1, "gpt-5.4").OK, "legacy group with a config row: legacy answers")
+	require.Positive(t, legacy.calls.Load())
+	require.Zero(t, staged.MatrixSnapshotStats().SnapshotUnavailable, "legacy requests were not rejected")
+	require.True(t, staged.ModelAccess(ctx, 99, "gpt-5.4").OK, "no config row: legacy")
+
+	require.Equal(t, denied, staged.ModelAccess(ctx, 2, "gpt-5.4"), "shadow may have advanced to v2: rejected like v2")
+	require.Equal(t, denied, staged.ModelAccess(ctx, 3, "gpt-5.4"))
+	require.GreaterOrEqual(t, staged.MatrixSnapshotStats().SnapshotUnavailable, int64(2))
+}
+
+// 运行中从 legacy 切到 shadow/v2 的分组（启动时没有配置行或是 legacy）会进入「可能是 v2」集合：
+// 阶段切换提交后失效快照的路径记下它，之后它的快照加载失败就被拒绝，而不是按 legacy 放行。
+func TestStagedPolicy_GroupSwitchedAfterStartupBecomesRejectableOnLoadFailure(t *testing.T) {
+	ctx := context.Background()
+	src := &flakyMatrixSource{
+		mpFakeSource: newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{}),
+		failLoads:    1 << 20,
+	}
+	staged, _ := newColdStaged(src)
+	staged.Preload(ctx, &spLister{ids: []int64{1}, stages: map[int64]PricingStage{1: PricingStageLegacy}})
+	denied := QuoteAccess{OK: false, Reason: QuoteAccessReasonSnapshotUnavailable}
+
+	require.True(t, staged.ModelAccess(ctx, 7, "gpt-5.4").OK, "group 7 had no config row at startup: legacy")
+	require.True(t, staged.ModelAccess(ctx, 1, "gpt-5.4").OK, "group 1 was legacy at startup: legacy")
+
+	// 阶段切换提交之后的失效通知：两个分组都进了集合。
+	staged.InvalidateGroups(7)
+	staged.InvalidateGroups(1)
+	require.Equal(t, denied, staged.ModelAccess(ctx, 7, "gpt-5.4"))
+	require.Equal(t, denied, staged.ModelAccess(ctx, 1, "gpt-5.4"))
+	require.True(t, staged.ModelAccess(ctx, 8, "gpt-5.4").OK, "an untouched group stays legacy")
 }
 
 // ---------------------------------------------------------------------------

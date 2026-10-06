@@ -137,7 +137,24 @@ type PricingStageSwitcher struct {
 	sync        stageSnapshotSync
 	// compared 返回本实例进程内某个分组的影子比对次数（仅供参考）；可为 nil。
 	compared func(groupID int64) int64
-	now      func() time.Time
+	// translationInProcess 返回本实例进程内某个分组 translation 类差异的累计数；可为 nil（不检查）。
+	translationInProcess func(groupID int64) int64
+	now                  func() time.Time
+}
+
+// SetInProcessTranslationDiffs 接上进程内翻译差异计数：大于 0 时闸门不放行（W6 PR7b-1 审查偏差 1）。
+func (sw *PricingStageSwitcher) SetInProcessTranslationDiffs(fn func(groupID int64) int64) {
+	sw.translationInProcess = fn
+}
+
+// loadInProcessShadow 把本实例进程内的比对次数与翻译差异计数补进影子证据。
+func (sw *PricingStageSwitcher) loadInProcessShadow(facts *StageGateFacts, groupID int64) {
+	if sw.compared != nil {
+		facts.Shadow.ComparedInProcess = sw.compared(groupID)
+	}
+	if sw.translationInProcess != nil {
+		facts.Shadow.TranslationDiffsInProcess = sw.translationInProcess(groupID)
+	}
 }
 
 // NewPricingStageSwitcher 创建阶段切换器。catalog、sync、compared 可以为 nil（目录检查按「查不到」处理、不处理快照、不报样本数）。
@@ -340,9 +357,7 @@ func (sw *PricingStageSwitcher) previewV2(ctx context.Context, exec MatrixExecut
 	if evErr != nil {
 		slog.Warn("pricing stage gate: current evidence unavailable", "group_id", out.GroupID, "error", evErr)
 	}
-	if sw.compared != nil {
-		facts.Shadow.ComparedInProcess = sw.compared(out.GroupID)
-	}
+	sw.loadInProcessShadow(facts, out.GroupID)
 	report := EvaluateStageGate(StageGateInput{
 		Facts: facts, Now: now, CurrentDeriveRevision: derived.Revision, CurrentChannelConfigHash: channelHash, EvidenceErr: evErr,
 	})
@@ -529,9 +544,7 @@ func (sw *PricingStageSwitcher) commitV2(ctx context.Context, tx MatrixTx, req P
 	if err != nil {
 		return nil, err
 	}
-	if sw.compared != nil {
-		facts.Shadow.ComparedInProcess = sw.compared(req.GroupID)
-	}
+	sw.loadInProcessShadow(facts, req.GroupID)
 	report := EvaluateStageGate(StageGateInput{
 		Facts: facts, Now: now, CurrentDeriveRevision: derived.Revision, CurrentChannelConfigHash: channelHash, EvidenceErr: evErr,
 	})
@@ -633,6 +646,8 @@ func (sw *PricingStageSwitcher) commitRollback(ctx context.Context, tx MatrixTx,
 	evidence := map[string]any{
 		"archived_cells": archive.Cells, "archived_rules": archive.Rules, "archived_rules_detail": archivedRules,
 		"drift_before_rollback": drift, "rederived": stageDriftOf(apply),
+		// v2 期间对分组配置行的修改会在重新派生时被覆盖，回拨前的配置整份留在证据里以便恢复。
+		"config_before_rollback": before.Config,
 	}
 	auditID, err := sw.ops.InsertAudit(ctx, tx, StageAuditRecord{
 		GroupID: req.GroupID, From: cfg.PricingStage, To: req.To, Kind: StageKindRollback, Actor: stageActor(req), PriceDelta: delta, RevisionBefore: cfg.Revision, RevisionAfter: rev,

@@ -434,6 +434,45 @@ func TestStageSwitchPreview_DirectionIsNoneOnlyWithEvidence(t *testing.T) {
 	require.Equal(t, PriceDeltaUnknown, f3.preview(t).PriceDelta)
 }
 
+// 影子差异表是有损采样：本实例进程内的翻译差异计数大于 0 时，预览与提交都不放行。
+func TestStageSwitch_InProcessTranslationDiffsBlockTheGate(t *testing.T) {
+	f := newSSFixture(PricingStageShadow)
+	p := f.preview(t)
+	require.True(t, p.Executable)
+
+	f.sw.SetInProcessTranslationDiffs(func(groupID int64) int64 {
+		require.EqualValues(t, 7, groupID)
+		return 2
+	})
+	blocked := f.preview(t)
+	require.False(t, blocked.Executable)
+	require.Zero(t, blocked.ApprovalID)
+	require.Equal(t, []string{ReasonPricingGateShadowDiffsInProcess}, sgCodes(*blocked.Gate))
+	require.EqualValues(t, 2, blocked.Gate.Shadow.TranslationDiffsInProcess)
+
+	// 提交时重新评估：之前登记的凭证也不能用。
+	_, err := f.sw.Commit(context.Background(), f.commitReq(p.ApprovalID, AuditAuthMethodJWT))
+	require.Equal(t, ReasonPricingGateShadowDiffsInProcess, infraerrors.Reason(err))
+	require.Equal(t, PricingStageShadow, f.store.cfg.PricingStage)
+	require.Empty(t, f.store.audit)
+}
+
+// 回放窗口内有流量却一行都没回放上：闸门不放行；窗口内确实没有请求时豁免，但价格方向是 unknown。
+func TestStageSwitchPreview_EmptyReplayOnlyPassesWithoutTraffic(t *testing.T) {
+	f := newSSFixture(PricingStageShadow)
+	f.store.replay.RowsReplayed, f.store.replay.RowsInWindow = 0, 9
+	p := f.preview(t)
+	require.False(t, p.Executable)
+	require.Equal(t, []string{ReasonPricingGateReplayEmpty}, sgCodes(*p.Gate))
+
+	f2 := newSSFixture(PricingStageShadow)
+	f2.sw.catalog = &spCatalogSource{}
+	f2.store.replay.RowsReplayed, f2.store.replay.RowsInWindow = 0, 0
+	p2 := f2.preview(t)
+	require.True(t, p2.Executable, "no requests in the window: nothing to compare")
+	require.Equal(t, PriceDeltaUnknown, p2.PriceDelta, "nothing was replayed, so no price evidence")
+}
+
 func TestStageSwitchPreview_FailedGateRegistersNothing(t *testing.T) {
 	f := newSSFixture(PricingStageShadow)
 	f.store.replay = nil
@@ -705,25 +744,34 @@ func TestStageSwitchCommit_ConcurrentSwitchesSerialize(t *testing.T) {
 	const n = 8
 	var wg sync.WaitGroup
 	results := make([]error, n)
+	changes := make([]*PricingStageSwitchResult, n)
 	start := make(chan struct{})
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			_, results[i] = f.sw.Commit(context.Background(), f.commitReq(p.ApprovalID, AuditAuthMethodJWT))
+			changes[i], results[i] = f.sw.Commit(context.Background(), f.commitReq(p.ApprovalID, AuditAuthMethodJWT))
 		}(i)
 	}
 	close(start)
 	wg.Wait()
 
-	ok := 0
-	for _, err := range results {
-		if err == nil {
-			ok++
+	// 第一次提交成功之后，其余的在锁内看到阶段已经是 v2：走 noop 成功返回（不写库、不审计），或者以冲突失败。
+	advanced := 0
+	for i, err := range results {
+		if err != nil {
+			continue
+		}
+		require.NotNil(t, changes[i])
+		if changes[i].Changed {
+			advanced++
+			require.Equal(t, StageKindAdvance, changes[i].Kind)
+		} else {
+			require.Equal(t, stageKindNoop, changes[i].Kind)
 		}
 	}
-	require.Equal(t, 1, ok, "the approval can be used by exactly one switch")
+	require.Equal(t, 1, advanced, "exactly one switch actually changed the stage")
 	require.Equal(t, PricingStageV2, f.store.cfg.PricingStage)
 	require.EqualValues(t, 4, f.store.cfg.Revision, "the stage changed exactly once")
 	require.Len(t, f.store.audit, 1)

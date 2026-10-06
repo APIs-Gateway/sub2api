@@ -8,6 +8,8 @@ import (
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 func newConfiguredGroupsRepo(t *testing.T) (*pricingMatrixRepository, sqlmock.Sqlmock) {
@@ -18,31 +20,31 @@ func newConfiguredGroupsRepo(t *testing.T) (*pricingMatrixRepository, sqlmock.Sq
 	return &pricingMatrixRepository{db: db}, mock
 }
 
-func TestListConfiguredGroupIDs(t *testing.T) {
+func TestListConfiguredGroups(t *testing.T) {
 	repo, mock := newConfiguredGroupsRepo(t)
 	mock.ExpectQuery("FROM group_model_config").
-		WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(int64(2)).AddRow(int64(7)))
-	ids, err := repo.ListConfiguredGroupIDs(context.Background())
+		WillReturnRows(sqlmock.NewRows([]string{"group_id", "pricing_stage"}).AddRow(int64(2), "legacy").AddRow(int64(7), "v2"))
+	groups, err := repo.ListConfiguredGroups(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, []int64{2, 7}, ids)
+	require.Equal(t, []service.ConfiguredGroup{{ID: 2, Stage: service.PricingStageLegacy}, {ID: 7, Stage: service.PricingStageV2}}, groups)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestListConfiguredGroupIDs_Errors(t *testing.T) {
+func TestListConfiguredGroups_Errors(t *testing.T) {
 	repo, mock := newConfiguredGroupsRepo(t)
 	mock.ExpectQuery("FROM group_model_config").WillReturnError(stageBoom)
-	_, err := repo.ListConfiguredGroupIDs(context.Background())
+	_, err := repo.ListConfiguredGroups(context.Background())
 	require.ErrorIs(t, err, stageBoom)
 
 	repo, mock = newConfiguredGroupsRepo(t)
 	mock.ExpectQuery("FROM group_model_config").
-		WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow("not-a-number"))
-	_, err = repo.ListConfiguredGroupIDs(context.Background())
+		WillReturnRows(sqlmock.NewRows([]string{"group_id", "pricing_stage"}).AddRow("not-a-number", "v2"))
+	_, err = repo.ListConfiguredGroups(context.Background())
 	require.Error(t, err)
 
 	repo, mock = newConfiguredGroupsRepo(t)
 	mock.ExpectQuery("FROM group_model_config").
-		WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(int64(1)).RowError(0, stageBoom))
-	_, err = repo.ListConfiguredGroupIDs(context.Background())
+		WillReturnRows(sqlmock.NewRows([]string{"group_id", "pricing_stage"}).AddRow(int64(1), "v2").RowError(0, stageBoom))
+	_, err = repo.ListConfiguredGroups(context.Background())
 	require.Error(t, err)
 }
