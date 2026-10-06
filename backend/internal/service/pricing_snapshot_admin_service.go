@@ -419,7 +419,7 @@ func exposureViolationsFromError(err error) ([]PricingPreviewViolation, int) {
 	}
 	code, msg := UnknownExposureCheckCode, err.Error()
 	if ae != nil && ae.Reason != "" {
-		code = ae.Reason
+		code, msg = ae.Reason, ae.Message // 应用错误只取它自己的文案，不带 error: code=... 前缀
 	}
 	return []PricingPreviewViolation{{Code: code, Message: msg}}, 1
 }

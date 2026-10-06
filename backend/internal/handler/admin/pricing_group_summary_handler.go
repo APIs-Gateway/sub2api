@@ -12,7 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// pricingGroupSummaryReader 是 PricingMatrixHandler 对 service.PricingDerivationService.GroupSummaries 的最小依赖。
+// pricingGroupSummaryReader 是 PricingMatrixHandler 读取分组批量摘要的最小依赖（由矩阵派生服务实现，便于测试时替换）。
 type pricingGroupSummaryReader interface {
 	GroupSummaries(ctx context.Context, ids []int64) (*service.GroupPricingSummaryResult, error)
 }

@@ -101,6 +101,7 @@ func TestModelCatalogTransition_PreviewAndTransition(t *testing.T) {
 	})
 
 	t.Run("no recent usage and non blocking targets skip confirmation", func(t *testing.T) {
+		draft := &ModelCatalogEntry{ID: 4, ModelKey: "gpt-x", Aliases: []string{"gpt-x-latest"}, Status: ModelCatalogDraft}
 		store := &w2CatalogStore{entry: entry, updateOK: true}
 		svc, _ := w2NewTransition(store)
 		p, err := svc.Preview(ctx, 4, ModelCatalogDraft)
@@ -109,11 +110,13 @@ func TestModelCatalogTransition_PreviewAndTransition(t *testing.T) {
 		_, err = svc.Transition(ctx, 4, ModelCatalogDraft, false)
 		require.NoError(t, err)
 
-		store.usageReqs = nil
+		// draft -> active 是真转换且不挡流量：不查用量。
+		store = &w2CatalogStore{entry: draft, updateOK: true}
+		svc, _ = w2NewTransition(store)
 		p, err = svc.Preview(ctx, 4, ModelCatalogActive)
 		require.NoError(t, err)
 		require.False(t, p.ConfirmRequired)
-		require.Empty(t, store.usageReqs, "转成 active 不查用量")
+		require.Empty(t, store.usageReqs, "draft 转成 active 不查用量")
 	})
 
 	t.Run("same status is a no-op", func(t *testing.T) {
