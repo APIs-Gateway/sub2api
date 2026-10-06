@@ -788,6 +788,21 @@ describe('user KeysView overview and connect actions', () => {
     expect(modal().props('apiKey')).toMatchObject({ id: 2 })
     wrapper.unmount()
   })
+
+  it('操作列的停用/启用、编辑、删除按钮带可见文字，不是纯图标', async () => {
+    const wrapper = await mountView(RowsTableStub)
+    const labelsOf = (id: number) =>
+      wrapper.findAll(`[data-row="${id}"] button`).map((b) => b.text())
+    // 行 1 启用中显示「停用」，行 2 已停用显示「启用」
+    expect(labelsOf(1)).toEqual(expect.arrayContaining(['keys.disable', 'common.edit', 'common.delete']))
+    expect(labelsOf(2)).toEqual(expect.arrayContaining(['keys.enable', 'common.edit', 'common.delete']))
+    for (const sel of ['action-toggle', 'action-edit', 'action-delete']) {
+      const btn = wrapper.get(`[data-row="1"] [data-test="${sel}"]`)
+      expect(btn.text()).not.toBe('')
+      expect(btn.find('.sr-only').exists()).toBe(false)
+    }
+    wrapper.unmount()
+  })
 })
 
 // 没有可加入链的分组（同平台、已授权、启用中、不是主分组）时，行内的「兜底」入口不显示；
@@ -835,6 +850,7 @@ describe('user KeysView fallback entry visibility', () => {
     ]))
     const wrapper = await mountView()
     expect(wrapper.findAll('[data-test="fallback-entry"]')).toHaveLength(1)
+    expect(wrapper.get('[data-test="fallback-entry"]').text()).toBe('keyFallback.entry')
     wrapper.unmount()
   })
 
