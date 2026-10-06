@@ -147,6 +147,8 @@ func TestModelCatalogStatusStore_Integration(t *testing.T) {
 	user := mustCreateUser(t, client, &service.User{Email: "pw2-" + uuid.NewString() + "@example.com"})
 	account := mustCreateAccount(t, client, &service.Account{Name: "pw2-" + uuid.NewString(), Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey})
 	apiKey := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, Key: "sk-pw2-" + uuid.NewString(), Name: "pw2"})
+	// 用量日志是共享表：测试结束就删，不能留下「今天」的行去影响仪表盘统计类测试。
+	t.Cleanup(func() { _, _ = integrationDB.ExecContext(ctx, `DELETE FROM usage_logs WHERE user_id = $1`, user.ID) })
 	now := time.Now().UTC().Truncate(time.Second)
 	add := func(model, requested string, at time.Time) {
 		b := client.UsageLog.Create().SetUserID(user.ID).SetAPIKeyID(apiKey.ID).SetAccountID(account.ID).
