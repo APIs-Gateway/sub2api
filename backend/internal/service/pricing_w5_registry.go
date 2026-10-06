@@ -16,10 +16,10 @@ import (
 //     W6 不硬编码档位。
 
 // W6 新增的设置键（存储键）。SettingKeyPricingSnapshotMode 在 pricing_snapshot_types.go，
-// SettingKeyBillingKnownFreeList 在 billing_unpriced_observe.go。
+// SettingKeyBillingKnownFreeList 在 billing_unpriced_observe.go，
+// SettingKeyBillingUnpricedPolicy 在 billing_unpriced_runtime.go。
 const (
-	SettingKeyBillingUnpricedPolicy = "billing_unpriced_policy"
-	SettingKeyPricingDefaultStage   = "pricing_default_stage"
+	SettingKeyPricingDefaultStage = "pricing_default_stage"
 )
 
 // W5Tier W5 注册表里的档位。
