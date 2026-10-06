@@ -1,5 +1,5 @@
 <template>
-  <span class="num font-medium" :class="dir === 'up' ? 'text-primary-700 dark:text-primary-300' : 'text-gray-700 dark:text-gray-300'">
+  <span class="num font-medium" :class="dir === 'up' || dir === 'mixed' ? 'text-primary-700 dark:text-primary-300' : 'text-gray-700 dark:text-gray-300'">
     <template v-if="missing">{{ t('admin.pricingOps.snapshots.trend.missing') }}</template>
     <template v-else-if="dir === 'flat'">{{ t('admin.pricingOps.snapshots.trend.flat') }}</template>
     <template v-else>

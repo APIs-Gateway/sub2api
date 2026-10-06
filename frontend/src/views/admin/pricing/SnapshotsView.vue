@@ -142,9 +142,9 @@
                   <tbody>
                     <tr v-for="c in plan.effectiveChanges" :key="c.model" class="border-b border-gray-100 last:border-b-0 dark:border-dark-800" :data-test="`effective-${c.model}`">
                       <td class="px-4 py-2.5 font-medium text-gray-900 dark:text-white">{{ c.model }}</td>
-                      <td class="num whitespace-nowrap px-4 py-2.5"><PriceChange :before="c.old_missing ? null : c.old_input_per_mtok" :after="c.new_missing ? null : c.new_input_per_mtok" /></td>
-                      <td class="num whitespace-nowrap px-4 py-2.5"><PriceChange :before="c.old_missing ? null : c.old_output_per_mtok" :after="c.new_missing ? null : c.new_output_per_mtok" /></td>
-                      <td class="whitespace-nowrap px-4 py-2.5"><TrendText :dir="effectiveDirection(c)" :missing="c.new_missing" /></td>
+                      <td class="num whitespace-nowrap px-4 py-2.5"><SnapshotPriceChange :before="c.old_missing ? null : c.old_input_per_mtok" :after="c.new_missing ? null : c.new_input_per_mtok" /></td>
+                      <td class="num whitespace-nowrap px-4 py-2.5"><SnapshotPriceChange :before="c.old_missing ? null : c.old_output_per_mtok" :after="c.new_missing ? null : c.new_output_per_mtok" /></td>
+                      <td class="whitespace-nowrap px-4 py-2.5"><TrendText :dir="effectiveDirection(c, plan.entries)" :missing="c.new_missing" /></td>
                     </tr>
                   </tbody>
                 </table>
@@ -183,8 +183,8 @@
                         </p>
                       </td>
                       <td class="px-4 py-3"><span class="badge badge-gray">{{ t(`admin.pricingOps.snapshots.type.${e.change_type}`) }}</span></td>
-                      <td class="num whitespace-nowrap px-4 py-3"><PriceChange :before="pricesOf(e).oldIn" :after="pricesOf(e).newIn" /></td>
-                      <td class="num whitespace-nowrap px-4 py-3"><PriceChange :before="pricesOf(e).oldOut" :after="pricesOf(e).newOut" /></td>
+                      <td class="num whitespace-nowrap px-4 py-3"><SnapshotPriceChange :before="pricesOf(e).oldIn" :after="pricesOf(e).newIn" /></td>
+                      <td class="num whitespace-nowrap px-4 py-3"><SnapshotPriceChange :before="pricesOf(e).oldOut" :after="pricesOf(e).newOut" /></td>
                       <td class="whitespace-nowrap px-4 py-3">
                         <template v-if="entryDirection(e)">
                           <TrendText :dir="entryDirection(e)!" :percent="entryPercent(e)" />
@@ -218,7 +218,7 @@
             <div class="action-bar" data-test="action-bar">
               <p class="text-sm text-gray-900 dark:text-white">
                 {{ t('admin.pricingOps.snapshots.summary', { approve: approveCount, hold: holds.size }) }}
-                <span v-if="planPending" class="ml-2 text-xs text-gray-500 dark:text-dark-300">{{ t('admin.pricingOps.snapshots.recalculating') }}</span>
+                <span v-if="recalculating" class="ml-2 text-xs text-gray-500 dark:text-dark-300">{{ t('admin.pricingOps.snapshots.recalculating') }}</span>
               </p>
               <div class="flex items-center gap-2">
                 <button type="button" class="btn btn-secondary btn-sm" data-test="approve-all" @click="approveAll">{{ t('admin.pricingOps.snapshots.approveAll') }}</button>
@@ -287,7 +287,7 @@
 
     <ConfirmDialog
       :show="rejectOpen"
-      :title="t('admin.pricingOps.snapshots.rejectTitle')"
+      :title="t('admin.pricingOps.snapshots.rejectTitle') + (candidate ? `：${candidate.label}` : '')"
       :message="t('admin.pricingOps.snapshots.rejectMessage')"
       :confirm-text="t('admin.pricingOps.snapshots.reject')"
       danger
@@ -328,7 +328,7 @@ import {
   type SnapshotOverview,
   type SnapshotPlan
 } from '@/api/admin/pricingOps'
-import PriceChange from './components/PriceChange.vue'
+import SnapshotPriceChange from './components/SnapshotPriceChange.vue'
 import TrendText from './components/TrendText.vue'
 import { isStaleError, opsErrorText, parseExposureViolations } from './opsErrors'
 import {
@@ -337,6 +337,7 @@ import {
   entryPercent,
   entryPrices,
   filterEntries,
+  isUpward,
   otherChangedFieldCount,
   type DiffFilter
 } from './snapshotModel'
@@ -355,6 +356,8 @@ const selectedId = ref<number | null>(null)
 const plan = ref<SnapshotPlan | null>(null)
 const planError = ref('')
 const planPending = ref(false)
+// 最后一次成功预览所基于的搁置名单（排序后拼成串）；和本地 holds 对不上就说明预览已经过时
+const planBasis = ref<string | null>(null)
 const holds = ref<Set<string>>(new Set())
 const filter = ref<DiffFilter>('all')
 const search = ref('')
@@ -374,15 +377,22 @@ const candidate = computed<SnapshotMeta | null>(() => overview.value?.pending.fi
 const matched = computed(() => (plan.value ? filterEntries(plan.value.entries, filter.value, search.value) : []))
 const shown = computed(() => matched.value.slice(0, limit.value))
 const approveCount = computed(() => (plan.value ? plan.value.entries.length - holds.value.size : 0))
-const upCount = computed(() => plan.value?.entries.filter((e) => entryDirection(e) === 'up' && !holds.value.has(e.model_key)).length ?? 0)
-const effectiveUp = computed(() => plan.value?.effectiveChanges.filter((c) => effectiveDirection(c) === 'up').length ?? 0)
+const upCount = computed(() => plan.value?.entries.filter((e) => isUpward(entryDirection(e)) && !holds.value.has(e.model_key)).length ?? 0)
+const effectiveUp = computed(() => plan.value?.effectiveChanges.filter((c) => isUpward(effectiveDirection(c, plan.value?.entries))).length ?? 0)
 const violations = computed(() => (plan.value ? parseExposureViolations(plan.value.exposureError) : []))
+const holdsInSync = computed(() => planBasis.value !== null && planBasis.value === holdKey(holds.value))
+// 请求在途、定时器已排上、或本地搁置名单和预览所基于的名单不一致：都算重新计算中
+const recalculating = computed(() => planPending.value || (!!plan.value && !holdsInSync.value))
 const canSubmit = computed(
-  () => !!plan.value && !planPending.value && !planError.value && approveCount.value > 0 && !plan.value.exposureError && !!plan.value.planHash
+  () => !!plan.value && !recalculating.value && !planError.value && approveCount.value > 0 && !plan.value.exposureError && !!plan.value.planHash
 )
 
 const pricesOf = entryPrices
 const otherChanged = otherChangedFieldCount
+
+function holdKey(names: Iterable<string>): string {
+  return [...names].sort().join('\n')
+}
 
 function shortHash(h: string) {
   return h ? h.slice(0, 8) : '—'
@@ -429,11 +439,13 @@ async function loadPlan() {
   planPending.value = true
   planError.value = ''
   try {
-    const result = await previewSnapshot(id, [...holds.value])
+    const sent = [...holds.value]
+    const result = await previewSnapshot(id, sent)
+    // 只接受最新一次请求的响应：旧响应（含期间又点了搁置、已排上重算的）直接丢弃
     if (seq !== planSeq) return
     plan.value = result
-    // 后端会拒绝候选差异里没有的名字：以服务端回传的搁置名单为准
-    holds.value = new Set(result.heldModels)
+    planBasis.value = holdKey(sent)
+    // 搁置名单以本地为准，响应只更新计划和 plan_hash，不覆盖用户在请求期间的点击
   } catch (err) {
     if (seq !== planSeq) return
     planError.value = fail(err)
@@ -444,6 +456,8 @@ async function loadPlan() {
 }
 
 function scheduleRecalc() {
+  // 作废在途请求：它基于的名单已经过时
+  planSeq++
   planPending.value = true
   if (recalcTimer) clearTimeout(recalcTimer)
   recalcTimer = setTimeout(loadPlan, RECALC_DELAY_MS)
@@ -556,19 +570,22 @@ async function approve() {
 
 /** 预览过期或基线变了：重新取总览与预览，让管理员重新看差异再确认。 */
 async function refreshAfterStale() {
+  const seq = ++planSeq
   try {
     await loadOverview()
     if (selectedId.value !== null) {
-      const seq = ++planSeq
-      const result = await previewSnapshot(selectedId.value, [...holds.value])
+      const sent = [...holds.value]
+      const result = await previewSnapshot(selectedId.value, sent)
       if (seq === planSeq) {
         plan.value = result
-        holds.value = new Set(result.heldModels)
+        planBasis.value = holdKey(sent)
         planError.value = ''
       }
     }
   } catch (err) {
-    planError.value = fail(err)
+    if (seq === planSeq) planError.value = fail(err)
+  } finally {
+    if (seq === planSeq) planPending.value = false
   }
 }
 

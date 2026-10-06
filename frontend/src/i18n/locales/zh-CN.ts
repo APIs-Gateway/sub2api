@@ -3350,6 +3350,7 @@
           up: '涨价',
           down: '降价',
           flat: '没变',
+          mixed: '有涨有跌',
           missing: '没有价格',
         },
         noPrice: '无价',

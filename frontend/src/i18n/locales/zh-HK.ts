@@ -3347,6 +3347,7 @@
           up: '漲價',
           down: '降價',
           flat: '沒變',
+          mixed: '有漲有跌',
           missing: '沒有價格',
         },
         noPrice: '無價',

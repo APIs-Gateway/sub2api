@@ -3357,6 +3357,7 @@
           up: 'Up',
           down: 'Down',
           flat: 'No change',
+          mixed: 'Mixed',
           missing: 'No price',
         },
         noPrice: 'No price',

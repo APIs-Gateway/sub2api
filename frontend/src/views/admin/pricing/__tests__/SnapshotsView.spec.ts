@@ -109,6 +109,84 @@ describe('SnapshotsView', () => {
     expect(wrapper.find('[data-test="submit-approval"]').attributes('disabled')).toBeUndefined()
   })
 
+  it('预览在途时又点了搁置：旧响应不覆盖本地搁置名单，且在新预览回来前禁止提交', async () => {
+    const { wrapper } = await mountView()
+    vi.useFakeTimers()
+    try {
+      let releaseFirst: (p: unknown) => void = () => {}
+      api.previewSnapshot.mockImplementationOnce(() => new Promise((resolve) => { releaseFirst = resolve }))
+      await wrapper.find('[data-test="hold-gpt-up"]').trigger('click')
+      await vi.advanceTimersByTimeAsync(400)
+      expect(api.previewSnapshot).toHaveBeenLastCalledWith(5, ['gpt-up'])
+      // 第一个预览还没回来，再搁置第二个
+      await wrapper.find('[data-test="hold-new-model"]').trigger('click')
+      // 第一个预览带着只含 gpt-up 的名单回来
+      releaseFirst(plan({ heldModels: ['gpt-up'], planHash: 'hash-old' }))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(wrapper.find('[data-test="hold-new-model"]').attributes('aria-pressed')).toBe('true')
+      expect(wrapper.find('[data-test="submit-approval"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('[data-test="action-bar"]').text()).toContain('重新计算')
+      api.previewSnapshot.mockResolvedValueOnce(plan({ heldModels: ['gpt-up', 'new-model'], planHash: 'hash-new' }))
+      await vi.advanceTimersByTimeAsync(400)
+    } finally {
+      vi.useRealTimers()
+    }
+    await flushPromises()
+    expect(api.previewSnapshot).toHaveBeenLastCalledWith(5, ['gpt-up', 'new-model'])
+    expect(wrapper.find('[data-test="hold-new-model"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('[data-test="submit-approval"]').attributes('disabled')).toBeUndefined()
+    await wrapper.find('[data-test="submit-approval"]').trigger('click')
+    await wrapper.find('[data-test="approval-confirm"]').trigger('click')
+    await flushPromises()
+    expect(api.approveSnapshot).toHaveBeenCalledWith(5, ['gpt-up', 'new-model'], 'hash-new')
+  })
+
+  it('乱序响应：先发的预览后回来时被丢弃，只采用最新一次的 plan_hash', async () => {
+    const { wrapper } = await mountView()
+    vi.useFakeTimers()
+    try {
+      const resolvers: ((p: unknown) => void)[] = []
+      api.previewSnapshot.mockImplementation(() => new Promise((resolve) => resolvers.push(resolve)))
+      await wrapper.find('[data-test="hold-gpt-up"]').trigger('click')
+      await vi.advanceTimersByTimeAsync(400)
+      await wrapper.find('[data-test="hold-new-model"]').trigger('click')
+      await vi.advanceTimersByTimeAsync(400)
+      expect(resolvers).toHaveLength(2)
+      // 后发的先回来，先发的后回来
+      resolvers[1](plan({ planHash: 'hash-latest' }))
+      await vi.advanceTimersByTimeAsync(0)
+      resolvers[0](plan({ planHash: 'hash-stale' }))
+      await vi.advanceTimersByTimeAsync(0)
+    } finally {
+      vi.useRealTimers()
+    }
+    await flushPromises()
+    expect(wrapper.find('[data-test="submit-approval"]').attributes('disabled')).toBeUndefined()
+    await wrapper.find('[data-test="submit-approval"]').trigger('click')
+    await wrapper.find('[data-test="approval-confirm"]').trigger('click')
+    await flushPromises()
+    expect(api.approveSnapshot).toHaveBeenCalledWith(5, ['gpt-up', 'new-model'], 'hash-latest')
+  })
+
+  it('只涨了缓存价的模型显示涨价，参与「只看涨价」和「搁置所有涨价项」', async () => {
+    const cacheUp = { model_key: 'cache-up', change_type: 'changed', changed_fields: ['cache_read_input_token_cost'], old: { input_cost_per_token: 1e-6, output_cost_per_token: 4e-6, cache_read_input_token_cost: 1e-7 }, new: { input_cost_per_token: 1e-6, output_cost_per_token: 4e-6, cache_read_input_token_cost: 2e-7 }, decision: 'approve' }
+    const p = plan()
+    p.entries.push(cacheUp as never)
+    api.previewSnapshot.mockResolvedValue(p)
+    const { wrapper } = await mountView()
+    expect(wrapper.find('[data-test="snap-row-cache-up"]').text()).toContain('涨价')
+    await wrapper.find('[data-test="filter-up"]').trigger('click')
+    expect(wrapper.findAll('[data-test^="snap-row-"]').map((r) => r.attributes('data-test'))).toEqual(['snap-row-gpt-up', 'snap-row-cache-up'])
+    expect(wrapper.find('[data-test="hold-up"]').text()).toContain('2')
+    vi.useFakeTimers()
+    try {
+      await wrapper.find('[data-test="hold-up"]').trigger('click')
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(wrapper.find('[data-test="hold-cache-up"]').attributes('aria-pressed')).toBe('true')
+  })
+
   it('先看确认框里的摘要，确认后带着 plan_hash 批准', async () => {
     const { wrapper, showSuccess } = await mountView()
     await wrapper.find('[data-test="submit-approval"]').trigger('click')
