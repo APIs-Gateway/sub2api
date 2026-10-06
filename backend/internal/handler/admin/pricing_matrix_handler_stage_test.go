@@ -213,3 +213,27 @@ func TestPricingMatrixHandler_SwitchStageIsJWTOnly(t *testing.T) {
 	require.Equal(t, 1, op.switchCalls)
 	require.True(t, service.PriceWriteActorFromAuthMethod(1, op.switchReq.AuthMethod).Interactive)
 }
+
+func TestPricingMatrixHandler_PreviewAndAuditRejectionsAndErrorMapping(t *testing.T) {
+	op := &stubStageOperator{}
+	for _, c := range []struct{ method, path, body string }{
+		{http.MethodPost, "/pricing-matrix/groups/abc/stage/preview", `{"stage":"v2"}`},
+		{http.MethodGet, "/pricing-matrix/groups/abc/stage/audit", ""},
+		{http.MethodGet, "/pricing-matrix/groups/7/stage/audit?limit=abc", ""},
+	} {
+		rec, env := doStageRequest(t, op, true, c.method, c.path, c.body)
+		require.Equal(t, http.StatusBadRequest, rec.Code, c.path)
+		require.Equal(t, "INVALID_PARAMETER", env.Reason, c.path)
+	}
+	require.Zero(t, op.gotGroup, "no request reached the service")
+
+	op.previewErr = infraerrors.Conflict("PRICING_GATE_FAILED", "gate")
+	rec, env := doStageRequest(t, op, true, http.MethodPost, "/pricing-matrix/groups/7/stage/preview", `{"stage":"v2"}`)
+	require.Equal(t, http.StatusConflict, rec.Code)
+	require.Equal(t, "PRICING_GATE_FAILED", env.Reason)
+
+	op.auditErr = infraerrors.NotFound("GROUP_NOT_FOUND", "no such group")
+	rec, env = doStageRequest(t, op, true, http.MethodGet, "/pricing-matrix/groups/7/stage/audit", "")
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Equal(t, "GROUP_NOT_FOUND", env.Reason)
+}
