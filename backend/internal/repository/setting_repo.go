@@ -101,6 +101,20 @@ func (r *settingRepository) Set(ctx context.Context, key, value string) error {
 		Exec(ctx)
 }
 
+// SetBillingUnpricedPolicy 是 billing_unpriced_policy 的专用写入（W6 PR7b-2a）：与 Set 同一条 upsert，但不经
+// W6GenericWriteGuard（那里把这个键登记为受保护键，通用写入一律 403）。值的合法性与交互式管理员会话由
+// service.SettingService.SetBillingUnpricedPolicy 和 handler 负责，这里只写一个已经校验过的值。
+func (r *settingRepository) SetBillingUnpricedPolicy(ctx context.Context, value string) error {
+	return r.client.Setting.
+		Create().
+		SetKey(service.SettingKeyBillingUnpricedPolicy).
+		SetValue(value).
+		SetUpdatedAt(time.Now()).
+		OnConflictColumns(setting.FieldKey).
+		UpdateNewValues().
+		Exec(ctx)
+}
+
 func (r *settingRepository) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
 	if len(keys) == 0 {
 		return map[string]string{}, nil

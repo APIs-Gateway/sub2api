@@ -240,7 +240,10 @@ func (r *runtimePricingState) policyValue(ctx context.Context, now time.Time, re
 	}
 	r.mu.Unlock()
 	value := BillingUnpricedPolicyObserve
-	if read != nil && read(ctx) == BillingUnpricedPolicyBlockAllowlist {
+	// 用独立的带超时 ctx 读：请求被客户端取消时不会把 observe 缓存给所有请求。
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), runtimeFreeReadTimeout)
+	defer cancel()
+	if read != nil && read(readCtx) == BillingUnpricedPolicyBlockAllowlist {
 		value = BillingUnpricedPolicyBlockAllowlist
 	}
 	r.mu.Lock()

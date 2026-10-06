@@ -126,11 +126,24 @@ type unpricedWriteRepo struct {
 	set map[string]string
 }
 
+// Set 模拟生产仓储：受保护键走通用写入一律拒绝。
 func (r *unpricedWriteRepo) Set(_ context.Context, key, value string) error {
+	if err := W6GenericWriteGuard(key); err != nil {
+		return err
+	}
 	if r.set == nil {
 		r.set = map[string]string{}
 	}
 	r.set[key] = value
+	return nil
+}
+
+// SetBillingUnpricedPolicy 是仓储的专用写入口。
+func (r *unpricedWriteRepo) SetBillingUnpricedPolicy(_ context.Context, value string) error {
+	if r.set == nil {
+		r.set = map[string]string{}
+	}
+	r.set[SettingKeyBillingUnpricedPolicy] = value
 	return nil
 }
 
@@ -148,6 +161,10 @@ func TestUnpricedAllowlist_SetBillingUnpricedPolicy(t *testing.T) {
 		require.Empty(t, repo.set, "an invalid value must not be stored: %q", bad)
 	}
 	require.Error(t, NewSettingService(nil, nil).SetBillingUnpricedPolicy(ctx, "observe"))
+	// 仓储没有专用写入时失败关闭，不退回会被守卫拒绝的通用 Set。
+	require.Error(t, NewSettingService(&brSettingRepo{}, nil).SetBillingUnpricedPolicy(ctx, "observe"))
+	// 通用 Set 仍然拦这个键。
+	require.Error(t, (&unpricedWriteRepo{}).Set(ctx, SettingKeyBillingUnpricedPolicy, "observe"))
 }
 
 // 候选链与计费的取价回退一致：上游模型无价但请求模型（或渠道映射模型）有价时，block_allowlist 不拦。

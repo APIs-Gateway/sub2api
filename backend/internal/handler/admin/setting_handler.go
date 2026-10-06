@@ -2121,6 +2121,14 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		},
 		ForceEmailOnThirdPartySignup: boolValueOrDefault(req.ForceEmailOnThirdPartySignup, previousAuthSourceDefaults.ForceEmailOnThirdPartySignup),
 	}
+	// 白名单分组无价拦截开关（受保护键，走仓储的专用写入）。放在主更新之前、所有校验之后：写入失败时其它设置一个都没落库，
+	// 不会出现「其它设置已保存、接口却报错」；合法值与权限已在 resolveBillingUnpricedPolicyWrite 校验。
+	if billingUnpricedPolicy != "" {
+		if err := h.settingService.SetBillingUnpricedPolicy(c.Request.Context(), billingUnpricedPolicy); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
 	if err := h.settingService.UpdateSettingsWithAuthSourceDefaultsOmitting(c.Request.Context(), settings, authSourceDefaults, omittedSettingKeys); err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -2130,14 +2138,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	if req.OpenAIFastPolicySettings != nil {
 		if err := h.settingService.SetOpenAIFastPolicySettings(c.Request.Context(), openaiFastPolicySettingsFromDTO(req.OpenAIFastPolicySettings)); err != nil {
 			response.BadRequest(c, err.Error())
-			return
-		}
-	}
-
-	// 白名单分组无价拦截开关（独立 key，只在提供时写；合法值与权限已在上面校验）。
-	if billingUnpricedPolicy != "" {
-		if err := h.settingService.SetBillingUnpricedPolicy(c.Request.Context(), billingUnpricedPolicy); err != nil {
-			response.ErrorFrom(c, err)
 			return
 		}
 	}

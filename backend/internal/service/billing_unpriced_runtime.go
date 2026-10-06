@@ -78,7 +78,17 @@ func (s *SettingService) SetBillingUnpricedPolicy(ctx context.Context, value str
 	if s == nil || s.settingRepo == nil {
 		return infraerrors.InternalServer("SETTING_REPO_UNAVAILABLE", "setting repository is not configured")
 	}
-	return s.settingRepo.Set(ctx, SettingKeyBillingUnpricedPolicy, v)
+	// 这个键是受保护键，通用的 settingRepo.Set 会 403（W6GenericWriteGuard）；只走仓储的专用写入。没有专用写入就失败关闭。
+	writer, ok := s.settingRepo.(billingUnpricedPolicyWriter)
+	if !ok {
+		return infraerrors.InternalServer("SETTING_REPO_UNAVAILABLE", "setting repository has no billing_unpriced_policy writer")
+	}
+	return writer.SetBillingUnpricedPolicy(ctx, v)
+}
+
+// billingUnpricedPolicyWriter 是仓储的专用写入口，绕过通用写入守卫，只写 billing_unpriced_policy。
+type billingUnpricedPolicyWriter interface {
+	SetBillingUnpricedPolicy(ctx context.Context, value string) error
 }
 
 // runtimeAccessPolicy 是会做运行时无价检查的策略（stagedPolicy）。legacyPolicy 与测试替身没有它，调用方直接放行。
