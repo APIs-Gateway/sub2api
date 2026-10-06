@@ -48,6 +48,7 @@ func TestPricingWriteCommitRoutesRequireJWTSession(t *testing.T) {
 		{http.MethodPost, "/pricing-matrix/cells/preview"},
 		{http.MethodPost, "/pricing-matrix/groups/3/config/preview"},
 		{http.MethodGet, "/pricing-matrix/groups/3/publish-check"},
+		{http.MethodGet, "/pricing-matrix/groups/summary"},
 		{http.MethodGet, "/pricing-matrix/known-free-list"},
 		{http.MethodPost, "/pricing-matrix/known-free-list/preview"},
 		{http.MethodGet, "/model-catalog/3/transition-preview"},

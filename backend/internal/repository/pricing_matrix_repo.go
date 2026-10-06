@@ -104,6 +104,68 @@ func (r *pricingMatrixRepository) LoadGroupSnapshots(ctx context.Context, groupI
 	return loadMatrixSnapshots(ctx, r.db, groupIDs)
 }
 
+// LoadGroupSummaries 一条 SQL 读出分组、配置行与成本核算规则聚合：配置行不存在的分组按默认值（legacy、open、account_rate）返回。
+func (r *pricingMatrixRepository) LoadGroupSummaries(ctx context.Context, groupIDs []int64, limit int) ([]service.GroupPricingSummary, error) {
+	var ids any // 没有 ids 时传 NULL，表示全部未删除分组
+	if len(groupIDs) > 0 {
+		ids = pq.Array(groupIDs)
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT g.id, g.name, g.platform, c.group_id IS NOT NULL,
+		        COALESCE(c.pricing_stage, 'legacy'), COALESCE(c.revision, 0),
+		        COALESCE(c.access_mode, 'open'), COALESCE(c.cost_mode, 'account_rate'),
+		        c.stage_changed_at, c.updated_at,
+		        COALESCE(r.total, 0), COALESCE(r.enabled_count, 0),
+		        COALESCE(r.derived_count, 0), COALESCE(r.frozen_count, 0), COALESCE(r.manual_count, 0)
+		 FROM groups g
+		 LEFT JOIN group_model_config c ON c.group_id = g.id
+		 LEFT JOIN (
+		     SELECT scope_group_id,
+		            COUNT(*) AS total,
+		            COUNT(*) FILTER (WHERE enabled) AS enabled_count,
+		            COUNT(*) FILTER (WHERE source = 'legacy_derived') AS derived_count,
+		            COUNT(*) FILTER (WHERE source = 'legacy_frozen') AS frozen_count,
+		            COUNT(*) FILTER (WHERE source = 'manual') AS manual_count
+		     FROM cost_accounting_rules GROUP BY scope_group_id
+		 ) r ON r.scope_group_id = g.id
+		 WHERE g.deleted_at IS NULL AND ($1::bigint[] IS NULL OR g.id = ANY($1))
+		 ORDER BY g.id LIMIT $2`, ids, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query group pricing summaries: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := []service.GroupPricingSummary{}
+	for rows.Next() {
+		var (
+			g                   service.GroupPricingSummary
+			stage, access, cost string
+			changedAt, updated  sql.NullTime
+		)
+		if err := rows.Scan(&g.GroupID, &g.Name, &g.Platform, &g.HasConfig, &stage, &g.Revision, &access, &cost,
+			&changedAt, &updated, &g.CostRules.Total, &g.CostRules.Enabled,
+			&g.CostRules.LegacyDerived, &g.CostRules.LegacyFrozen, &g.CostRules.Manual); err != nil {
+			return nil, fmt.Errorf("scan group pricing summary: %w", err)
+		}
+		g.Stage = service.PricingStage(stage)
+		g.Access = service.MatrixAccessMode(access)
+		g.CostMode = service.MatrixCostMode(cost)
+		if changedAt.Valid {
+			t := changedAt.Time
+			g.StageChangedAt = &t
+		}
+		if updated.Valid {
+			t := updated.Time
+			g.ConfigUpdatedAt = &t
+		}
+		out = append(out, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate group pricing summaries: %w", err)
+	}
+	return out, nil
+}
+
 func (r *pricingMatrixRepository) ApplyPlans(
 	ctx context.Context,
 	groupIDs []int64,

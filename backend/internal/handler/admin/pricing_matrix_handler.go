@@ -36,14 +36,15 @@ type pricingStageOperator interface {
 // PricingMatrixHandler 价格矩阵（W6）的管理接口：查看渠道到矩阵的派生结果与模型目录（只读），
 // 以及（PR5）阶段切换与影子比对结果。阶段切换是唯一的写入口，PR7 之前只允许 legacy 与 shadow。
 type PricingMatrixHandler struct {
-	derive  pricingDeriveViewer
-	catalog modelCatalogLister
-	stage   pricingStageOperator
+	derive    pricingDeriveViewer
+	catalog   modelCatalogLister
+	stage     pricingStageOperator
+	summaries pricingGroupSummaryReader
 }
 
 // NewPricingMatrixHandler 创建价格矩阵 handler。
 func NewPricingMatrixHandler(derive *service.PricingDerivationService, catalog *service.ModelCatalogService, stage *service.PricingStageService) *PricingMatrixHandler {
-	return &PricingMatrixHandler{derive: derive, catalog: catalog, stage: stage}
+	return &PricingMatrixHandler{derive: derive, catalog: catalog, stage: stage, summaries: derive}
 }
 
 // switchPricingStageRequest 阶段切换请求体。
