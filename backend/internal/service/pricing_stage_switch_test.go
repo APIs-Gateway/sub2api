@@ -674,10 +674,15 @@ func TestStageSwitchCommit_PlanChangedSincePreviewIsRejected(t *testing.T) {
 	// 凭证只能用一次。
 	f2 := newSSFixture(PricingStageShadow)
 	p2 := f2.preview(t)
+	before := f2.store.cfg
 	_, err = f2.sw.Commit(context.Background(), f2.commitReq(p2.ApprovalID, AuditAuthMethodJWT))
 	require.NoError(t, err)
+	// 已经在 v2 的分组再提交是幂等的空操作（成功返回，不碰凭证），所以要验证「只能用一次」，
+	// 得把分组配置还原成预览时的样子（同一个阶段与版本，计划指纹不变），让提交真的走到消费凭证这一步。
+	f2.store.cfg = before
 	_, err = f2.sw.Commit(context.Background(), f2.commitReq(p2.ApprovalID, AuditAuthMethodJWT))
 	require.Error(t, err)
+	require.Equal(t, ReasonPriceWriteApproval, infraerrors.Reason(err))
 }
 
 func TestStageSwitchCommit_ExpiredApprovalIsRejected(t *testing.T) {

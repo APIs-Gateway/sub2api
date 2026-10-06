@@ -203,8 +203,10 @@ func TestStagedPolicy_PreloadGivesUpAndCountsTheGroupsThatNeverLoaded(t *testing
 func TestStagedPolicy_UnavailableSnapshotOnlyRejectsShadowAndV2Groups(t *testing.T) {
 	ctx := context.Background()
 	src := &flakyMatrixSource{
-		mpFakeSource: newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{}),
-		failLoads:    1 << 20, // 数据库一直不可用：预加载和请求时的加载都失败
+		// 分组 1、2、3 在库里存在（有元信息）：读快照才会真的失败；不存在的分组（99）按默认状态，读不到也不算失败。
+		mpFakeSource: newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{
+			1: {Config: mpStoredConfig(PricingStageLegacy, nil)}, 2: shadowSnap(nil), 3: v2Snap(nil, 1)}),
+		failLoads: 1 << 20, // 数据库一直不可用：预加载和请求时的加载都失败
 	}
 	staged, legacy := newColdStaged(src)
 	staged.Preload(ctx, &spLister{
@@ -228,7 +230,8 @@ func TestStagedPolicy_UnavailableSnapshotOnlyRejectsShadowAndV2Groups(t *testing
 func TestStagedPolicy_GroupSwitchedAfterStartupBecomesRejectableOnLoadFailure(t *testing.T) {
 	ctx := context.Background()
 	src := &flakyMatrixSource{
-		mpFakeSource: newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{}),
+		// 分组 1、7、8 在库里存在：读快照才会真的失败（元信息不存在的分组读快照不会走到失败的那一步）。
+		mpFakeSource: newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{1: {}, 7: {}, 8: {}}),
 		failLoads:    1 << 20,
 	}
 	staged, _ := newColdStaged(src)
@@ -300,7 +303,10 @@ func TestStagedPolicy_PeerInvalidationRelistsConfiguredGroups(t *testing.T) {
 // 启动时三次都没列出分组的实例，之后由周期任务补上：集合变成「只有 shadow、v2」，legacy 分组不再被拒绝。
 func TestStagedPolicy_PeriodicRelistRecoversFromAFailedStartupList(t *testing.T) {
 	ctx := context.Background()
-	src := &flakyMatrixSource{mpFakeSource: newMPSource(PlatformOpenAI, nil), failLoads: 1 << 20}
+	src := &flakyMatrixSource{
+		mpFakeSource: newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{1: {}, 2: v2Snap(nil, 1)}),
+		failLoads:    1 << 20,
+	}
 	staged, _ := newColdStaged(src)
 	staged.matrix.relistInterval = 10 * time.Millisecond
 	lister := &spDynLister{errs: matrixPreloadAttempts}
