@@ -87,6 +87,9 @@ func (r *settingRepository) GetValue(ctx context.Context, key string) (string, e
 }
 
 func (r *settingRepository) Set(ctx context.Context, key, value string) error {
+	if err := service.W6GenericWriteGuard(key); err != nil {
+		return err
+	}
 	now := time.Now()
 	return r.client.Setting.
 		Create().
@@ -118,6 +121,11 @@ func (r *settingRepository) SetMultiple(ctx context.Context, settings map[string
 	if len(settings) == 0 {
 		return nil
 	}
+	for key := range settings {
+		if err := service.W6GenericWriteGuard(key); err != nil {
+			return err
+		}
+	}
 
 	now := time.Now()
 	builders := make([]*ent.SettingCreate, 0, len(settings))
@@ -145,6 +153,9 @@ func (r *settingRepository) GetAll(ctx context.Context) (map[string]string, erro
 }
 
 func (r *settingRepository) Delete(ctx context.Context, key string) error {
+	if err := service.W6GenericWriteGuard(key); err != nil {
+		return err
+	}
 	_, err := r.client.Setting.Delete().Where(setting.KeyEQ(key)).Exec(ctx)
 	return err
 }

@@ -29,7 +29,15 @@ type InterimPriceWriteGate struct {
 	tx          *MatrixTxWriter
 	estimator   PriceDeltaEstimator
 	invalidator MatrixSnapshotInvalidator
+	precheck    *OpenPrechecker
 	now         func() time.Time
+}
+
+// WithOpenPrecheck 接上开放时预检（W6 PR4b-2b-2）：预览时对写入之后的目标态跑一遍，白名单分组的阻止项直接拒绝，
+// 开放分组的问题随凭证返回给管理员确认。没接时预览不做这一项（保存时校验仍在写事务里兜底）。
+func (g *InterimPriceWriteGate) WithOpenPrecheck(p *OpenPrechecker) *InterimPriceWriteGate {
+	g.precheck = p
+	return g
 }
 
 // NewInterimPriceWriteGate 创建过渡审批关口。tx 是写入与保存时校验的唯一入口（nil 则失败关闭）；
@@ -64,6 +72,15 @@ func (g *InterimPriceWriteGate) Propose(ctx context.Context, in PriceWritePropos
 	if err != nil {
 		return nil, err
 	}
+	var precheck []OpenPrecheckReport
+	if g.precheck != nil {
+		if precheck, err = g.precheck.PrecheckPlanned(ctx, planned); err != nil {
+			return nil, err
+		}
+		if err := BlockingError(precheck); err != nil {
+			return nil, err
+		}
+	}
 	touches := PlannedTouchesPrice(planned)
 	delta := g.estimateCellDelta(ctx, planned, touches)
 
@@ -88,7 +105,7 @@ func (g *InterimPriceWriteGate) Propose(ctx context.Context, in PriceWritePropos
 	}
 	return &PriceWriteTicket{
 		ApprovalID: id, PlanHash: approval.PlanHash, TouchesPrice: touches, Delta: delta,
-		ExpiresAt: approval.ExpiresAt, Planned: planned,
+		ExpiresAt: approval.ExpiresAt, Planned: planned, Precheck: precheck,
 	}, nil
 }
 

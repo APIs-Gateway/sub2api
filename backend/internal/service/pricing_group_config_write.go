@@ -277,7 +277,15 @@ type GroupConfigService struct {
 	tx          *MatrixTxWriter
 	estimator   PriceDeltaEstimator
 	invalidator MatrixSnapshotInvalidator
+	precheck    *OpenPrechecker
 	now         func() time.Time
+}
+
+// WithOpenPrecheck 接上开放时预检（W6 PR4b-2b-2）：预览时按分组配置的目标态检查，白名单分组的阻止项直接拒绝
+// （包括映射目标没有可用价格），开放分组的问题随凭证返回。
+func (s *GroupConfigService) WithOpenPrecheck(p *OpenPrechecker) *GroupConfigService {
+	s.precheck = p
+	return s
 }
 
 // NewGroupConfigService 创建服务。tx 是写入与保存时校验的唯一入口（nil 则失败关闭）；
@@ -298,6 +306,8 @@ type GroupConfigTicket struct {
 	ExpiresAt        time.Time         `json:"expires_at"`
 	Before           MatrixGroupConfig `json:"before"`
 	After            MatrixGroupConfig `json:"after"`
+	// Precheck 开放时预检的报告；没接预检器或分组不适用时为 nil。
+	Precheck *OpenPrecheckReport `json:"precheck,omitempty"`
 }
 
 // GroupConfigCommit 提交请求。
@@ -324,8 +334,17 @@ func (s *GroupConfigService) Propose(ctx context.Context, req GroupConfigWriteRe
 	if err != nil {
 		return nil, err
 	}
+	var precheck *OpenPrecheckReport
+	if s.precheck != nil && res.Changed {
+		if precheck, err = s.precheck.PrecheckGroupConfig(ctx, norm.GroupID, res.After.MatrixGroupConfig); err != nil {
+			return nil, err
+		}
+		if err := BlockingError([]OpenPrecheckReport{*precheck}); err != nil {
+			return nil, err
+		}
+	}
 	touches := res.Changed && GroupConfigTouchesPrice(res.Before.MatrixGroupConfig, res.After.MatrixGroupConfig)
-	ticket := &GroupConfigTicket{
+	ticket := &GroupConfigTicket{Precheck: precheck,
 		PlanHash: GroupConfigPlanHash(norm), Changed: res.Changed, ExposureRelevant: res.ExposureRelevant,
 		TouchesPrice: touches, Delta: PriceDeltaNone, Before: res.Before.MatrixGroupConfig, After: res.After.MatrixGroupConfig,
 	}

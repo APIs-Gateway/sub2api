@@ -198,6 +198,8 @@ type PriceWriteTicket struct {
 	Delta        PriceDelta         `json:"price_delta"`
 	ExpiresAt    time.Time          `json:"expires_at"`
 	Planned      []PlannedCellWrite `json:"planned"`
+	// Precheck 开放时预检的报告（只含有问题的分组里的 warnings；白名单分组的阻止项已经在预览时拒绝）。
+	Precheck []OpenPrecheckReport `json:"precheck,omitempty"`
 }
 
 // PriceWriteActor 提交写入的操作人。

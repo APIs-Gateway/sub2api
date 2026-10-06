@@ -17,7 +17,8 @@ import (
 // 官方价由调用方注入（OfficialPriceStateSource），已知免费名单读 billing_known_free_list（PR1 的同一份）。
 //
 // 范围与已知缺口（都写进 PR 说明）：
-//   - 通配符单元格不检查：它只由渠道派生产生、写入器不能创建，且不对应单一模型；
+//   - 通配符单元格：open 的通配符单元格放行的是整个前缀，没有办法逐个模型验证价格，所以在白名单分组里按违规处理
+//     （原因 wildcard_unverifiable，失败关闭）；它只由渠道派生产生、写入器不能创建；
 //   - 带生效时间窗的单元格不检查：写入器现在拒绝写它们，窗口边界时刻的可报价要等 PR7 统一计价时刻之后；
 //   - 开放分组（open）不阻止，只有白名单分组阻止；警告与预览在 PR4b-2b 的开放时预检里给。
 
@@ -38,6 +39,8 @@ type ExposureViolationReason string
 const (
 	// ExposureUnpriced 没有任何可用价格：官方价里没有这个模型，单元格也没有非零的自定义价。
 	ExposureUnpriced ExposureViolationReason = "unpriced"
+	// ExposureWildcardUnverifiable open 的通配符单元格：放行整个前缀，没有办法验证前缀下每个模型都有价，失败关闭。
+	ExposureWildcardUnverifiable ExposureViolationReason = "wildcard_unverifiable"
 	// ExposureZeroPrice 有价格来源，但所有价格都是 0，且不在已知免费名单里（S-5）。
 	ExposureZeroPrice ExposureViolationReason = "zero_price"
 )
@@ -75,7 +78,7 @@ type ExposureCell struct {
 type ExposureReader interface {
 	// AccessModesTx 返回分组的准入模式；没有配置行的分组不在结果里。
 	AccessModesTx(ctx context.Context, exec MatrixExecutor, groupIDs []int64) (map[int64]MatrixAccessMode, error)
-	// OpenCellsTx 返回分组里 open 的精确模型名单元格（不含通配符，不含带生效时间窗的）。
+	// OpenCellsTx 返回分组里 open 的单元格，精确名与通配符都包含（不含带生效时间窗的）。
 	OpenCellsTx(ctx context.Context, exec MatrixExecutor, groupIDs []int64) ([]ExposureCell, error)
 }
 
@@ -91,6 +94,11 @@ func NewExposureValidator(prices OfficialPriceStateSource, settings SettingRepos
 	return &ExposureValidator{prices: prices, settings: settings}
 }
 
+// knownFree 读取已知免费名单（读失败或写坏时是空名单）。
+func (v *ExposureValidator) knownFree(ctx context.Context) []BillingKnownFreeEntry {
+	return loadBillingKnownFreeList(ctx, v.settings)
+}
+
 // Check 判定一批单元格（调用方只传白名单分组的单元格）。返回按（分组、模型）排序的违规项。
 func (v *ExposureValidator) Check(ctx context.Context, cells []ExposureCell) []ExposureViolation {
 	if len(cells) == 0 {
@@ -100,7 +108,11 @@ func (v *ExposureValidator) Check(ctx context.Context, cells []ExposureCell) []E
 	var out []ExposureViolation
 	for _, ec := range cells {
 		c := ec.Cell
-		if !c.Open || c.IsPattern {
+		if !c.Open {
+			continue
+		}
+		if c.IsPattern {
+			out = append(out, ExposureViolation{GroupID: ec.GroupID, ModelKey: c.ModelKey, Reason: ExposureWildcardUnverifiable})
 			continue
 		}
 		if reason, bad := v.evaluate(ec.GroupID, c, free); bad {

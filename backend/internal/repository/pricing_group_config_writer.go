@@ -206,7 +206,7 @@ func (pricingExposureReader) OpenCellsTx(ctx context.Context, exec service.Matri
 	rows, err := exec.QueryContext(ctx,
 		`SELECT `+matrixCellColumns+`
 		 FROM model_group_prices
-		 WHERE group_id = ANY($1) AND open = TRUE AND is_pattern = FALSE
+		 WHERE group_id = ANY($1) AND open = TRUE
 		   AND effective_from IS NULL AND effective_to IS NULL
 		 ORDER BY group_id, model_key`, pq.Array(groupIDs))
 	if err != nil {
