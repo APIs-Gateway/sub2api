@@ -82,6 +82,14 @@ func main() {
 		return
 	}
 
+	// 一次性运维命令：pricing-matrix derive（批量派生矩阵表，默认 dry-run，--apply 才写；不启动服务）
+	if args := flag.Args(); len(args) > 0 && args[0] == "pricing-matrix" {
+		if err := runPricingMatrixCommand(args[1:], os.Stdout); err != nil {
+			log.Fatalf("pricing-matrix: %v", err)
+		}
+		return
+	}
+
 	// CLI setup mode
 	if *setupMode {
 		if err := setup.RunCLI(); err != nil {

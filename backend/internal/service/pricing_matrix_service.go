@@ -150,6 +150,32 @@ func (s *PricingDerivationService) RefreshChannel(ctx context.Context, channelID
 		current = channel.GroupIDs
 	}
 	ids := uniqueSortedIDs(current, previousGroupIDs, ruleGroups)
+	return s.refreshLocked(ctx, channelID, channel, ids)
+}
+
+// RefreshGroups 只重新派生并落库指定的分组（批量派生命令的 --group）。
+// 每个分组按它当前所属的渠道派生，规则与 RefreshChannel 完全一致（同一个 refreshLocked）。
+// 任一分组记录不存在返回 ErrGroupNotFound（钩子对已删除分组按「无渠道」处理，这里是显式点名，所以要报错）。
+func (s *PricingDerivationService) RefreshGroups(ctx context.Context, groupIDs []int64) (*PricingRefreshReport, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ids := uniqueSortedIDs(groupIDs)
+	meta, err := s.repo.GetGroupMeta(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("get group meta: %w", err)
+	}
+	for _, id := range ids {
+		if _, ok := meta[id]; !ok {
+			return nil, ErrGroupNotFound
+		}
+	}
+	return s.refreshLocked(ctx, 0, nil, ids)
+}
+
+// refreshLocked 派生 ids 里的分组并在一个事务里落库。调用方必须持有 s.mu。
+// saved 是刚保存的渠道（可能为 nil，此时每个分组按它当前所属的渠道派生）。
+func (s *PricingDerivationService) refreshLocked(ctx context.Context, channelID int64, channel *Channel, ids []int64) (*PricingRefreshReport, error) {
 	report := &PricingRefreshReport{ChannelID: channelID, Groups: []PricingRefreshGroupResult{}}
 	if len(ids) == 0 {
 		return report, nil
@@ -369,12 +395,18 @@ func (s *PricingDerivationService) ViewChannel(ctx context.Context, channelID in
 }
 
 func (s *PricingDerivationService) buildView(ctx context.Context, group DeriveGroup, owner *Channel) (*GroupDeriveView, error) {
+	view, _, err := s.buildViewPlan(ctx, group, owner)
+	return view, err
+}
+
+// buildViewPlan 同 buildView，同时返回完整的落库计划（批量派生命令要统计单元格、规则的明细）。
+func (s *PricingDerivationService) buildViewPlan(ctx context.Context, group DeriveGroup, owner *Channel) (*GroupDeriveView, GroupApplyPlan, error) {
 	facts := s.collectFacts([]DeriveGroup{group}, map[int64]*Channel{group.ID: owner})
 	derived := DeriveGroupState(owner, group, facts)
 
 	snaps, err := s.repo.LoadGroupSnapshots(ctx, []int64{group.ID})
 	if err != nil {
-		return nil, fmt.Errorf("load group snapshot: %w", err)
+		return nil, GroupApplyPlan{}, fmt.Errorf("load group snapshot: %w", err)
 	}
 	snap := snaps[group.ID]
 	plan := PlanGroupApply(derived, snap)
@@ -396,7 +428,7 @@ func (s *PricingDerivationService) buildView(ctx context.Context, group DeriveGr
 			CellsDelete:   len(plan.CellDeletes),
 			RulesReplaced: len(plan.RuleDeletes) + len(plan.RuleInserts),
 		},
-	}, nil
+	}, plan, nil
 }
 
 func nonNilCells(c []StoredMatrixCell) []StoredMatrixCell {
