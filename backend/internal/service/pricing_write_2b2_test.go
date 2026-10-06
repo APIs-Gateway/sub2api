@@ -304,7 +304,19 @@ func TestKnownFreeListService_CurrentAndPreview(t *testing.T) {
 	change, err = svc.Preview(ctx, []BillingKnownFreeEntry{{Model: "m"}})
 	require.NoError(t, err)
 	require.True(t, change.Changed)
+	require.True(t, change.PreviousInvalid)
 	require.Empty(t, change.Before)
+	// 提交空名单也算变更：这是清掉坏值的唯一办法。
+	change, err = svc.Preview(ctx, nil)
+	require.NoError(t, err)
+	require.True(t, change.Changed)
+	require.True(t, change.PreviousInvalid)
+	// 好名单不带这个标记。
+	svc, _ = w2FreeService(&w2FreeStore{raw: `[]`})
+	change, err = svc.Preview(ctx, nil)
+	require.NoError(t, err)
+	require.False(t, change.Changed)
+	require.False(t, change.PreviousInvalid)
 
 	// 各种错误。
 	boom := errors.New("boom")
@@ -369,6 +381,15 @@ func TestKnownFreeListService_Update(t *testing.T) {
 	require.Empty(t, store.sets)
 	require.Equal(t, 1, ps.txRollbacks)
 
+	// 现有名单写坏了：提交空名单会用 [] 覆盖坏值（以前被判成没有变化，坏值清不掉）。
+	store = &w2FreeStore{raw: `not json`}
+	svc, _ = w2FreeService(store)
+	change, err = svc.Update(ctx, admin, nil, true)
+	require.NoError(t, err)
+	require.True(t, change.Changed)
+	require.True(t, change.PreviousInvalid)
+	require.Equal(t, []string{`[]`}, store.sets)
+
 	// 存储错误与非法输入。
 	boom := errors.New("boom")
 	for _, st := range []*w2FreeStore{{getErr: boom}, {cellsErr: boom}, {setErr: boom}} {
@@ -389,6 +410,7 @@ type w2CostWriter struct {
 	groups []int64
 	base   []int64
 	specs  []CostRuleSpec
+	ops    []int64 // 每次调用收到的操作人
 }
 
 func (w *w2CostWriter) res(groupID, ruleID int64) (*CostRuleWriteResult, error) {
@@ -398,17 +420,20 @@ func (w *w2CostWriter) res(groupID, ruleID int64) (*CostRuleWriteResult, error) 
 	return &CostRuleWriteResult{GroupID: groupID, RuleID: ruleID, Revision: 9}, nil
 }
 
-func (w *w2CostWriter) CreateTx(_ context.Context, _ MatrixTx, groupID, baseline int64, spec CostRuleSpec) (*CostRuleWriteResult, error) {
+func (w *w2CostWriter) CreateTx(_ context.Context, _ MatrixTx, operatorID, groupID, baseline int64, spec CostRuleSpec) (*CostRuleWriteResult, error) {
+	w.ops = append(w.ops, operatorID)
 	w.calls, w.groups, w.base, w.specs = append(w.calls, "create"), append(w.groups, groupID), append(w.base, baseline), append(w.specs, spec)
 	return w.res(groupID, 11)
 }
 
-func (w *w2CostWriter) UpdateTx(_ context.Context, _ MatrixTx, groupID, baseline, ruleID int64, spec CostRuleSpec) (*CostRuleWriteResult, error) {
+func (w *w2CostWriter) UpdateTx(_ context.Context, _ MatrixTx, operatorID, groupID, baseline, ruleID int64, spec CostRuleSpec) (*CostRuleWriteResult, error) {
+	w.ops = append(w.ops, operatorID)
 	w.calls, w.groups, w.base, w.specs = append(w.calls, "update"), append(w.groups, groupID), append(w.base, baseline), append(w.specs, spec)
 	return w.res(groupID, ruleID)
 }
 
-func (w *w2CostWriter) DeleteTx(_ context.Context, _ MatrixTx, groupID, baseline, ruleID int64) (*CostRuleWriteResult, error) {
+func (w *w2CostWriter) DeleteTx(_ context.Context, _ MatrixTx, operatorID, groupID, baseline, ruleID int64) (*CostRuleWriteResult, error) {
+	w.ops = append(w.ops, operatorID)
 	w.calls, w.groups, w.base = append(w.calls, "delete"), append(w.groups, groupID), append(w.base, baseline)
 	return w.res(groupID, ruleID)
 }
@@ -509,6 +534,7 @@ func TestCostRuleService(t *testing.T) {
 	_, err = svc.Delete(ctx, 7, 5, 3, 11)
 	require.NoError(t, err)
 	require.Equal(t, []string{"create", "update", "delete"}, w.calls)
+	require.Equal(t, []int64{7, 7, 7}, w.ops, "写入器收到操作人，历史行才记得住是谁改的")
 	require.Equal(t, [][]int64{{5}, {5}, {5}}, inv.calls)
 
 	// 没有缓存失效器也能写。
@@ -658,6 +684,34 @@ func TestOpenPrechecker_Evaluate(t *testing.T) {
 		require.Equal(t, "zero", reps[0].Blocking[0].Target)
 	})
 
+	t.Run("mapping target price only matters when billing by the target", func(t *testing.T) {
+		mapping := []MatrixMappingEntry{{Src: "priced", Dst: "nothing"}, {Src: "priced2", Dst: "img-only"}, {Src: "priced3", Dst: "zero"}}
+		snap := w2Snap(MatrixAccessAllowlist, PricingStageV2, mapping, w2Open("priced"), w2Open("priced2"), w2Open("priced3"))
+		got := func(source *string) map[string]string {
+			s := snap
+			cfg := *s.Config
+			cfg.BillingModelSource = source
+			s.Config = &cfg
+			reps, err := w2Prechecker(&w2Source{snaps: map[int64]GroupStateSnapshot{1: s}}, nil).PrecheckGroups(ctx, []int64{1}, CellOverlay{})
+			require.NoError(t, err)
+			out := map[string]string{}
+			for _, is := range reps[0].Blocking {
+				if is.Target != "" {
+					out[is.ModelKey+"->"+is.Target] = is.Reason
+				}
+			}
+			return out
+		}
+		str := func(v string) *string { return &v }
+		// 按映射目标计费：图片模型（token 价为 0 但按张计费）不算 0 元；无价与 0 元的目标仍然拦。
+		want := map[string]string{"priced->nothing": OpenIssueMappingTargetUnpriced, "priced3->zero": OpenIssueMappingTargetZeroPrice}
+		require.Equal(t, want, got(str(BillingModelSourceChannelMapped)))
+		require.Equal(t, want, got(str(BillingModelSourceUpstream)))
+		require.Equal(t, want, got(nil))
+		// 按请求模型计费：源模型的价由单元格自己的校验管，目标有没有价与计费无关。
+		require.Empty(t, got(str(BillingModelSourceRequested)))
+	})
+
 	t.Run("overlay replaces config and cells", func(t *testing.T) {
 		src := &w2Source{snaps: map[int64]GroupStateSnapshot{1: w2Snap(MatrixAccessOpen, PricingStageV2, nil, w2Open("nothing"))}}
 		p := w2Prechecker(src, nil)
@@ -673,7 +727,8 @@ func TestOpenPrechecker_Evaluate(t *testing.T) {
 		reps, err := p.PrecheckPlanned(ctx, planned)
 		require.NoError(t, err)
 		require.Len(t, reps, 1)
-		require.Len(t, reps[0].Warnings, 2, "nothing 与 extra 都是开放分组里的无价项")
+		require.Len(t, reps[0].Warnings, 1, "只报这次写入新增的 extra；nothing 是分组里本来就有的")
+		require.Equal(t, "extra", reps[0].Warnings[0].ModelKey)
 
 		reps, err = p.PrecheckPlanned(ctx, planned[1:])
 		require.NoError(t, err)
@@ -783,12 +838,151 @@ func TestGateAndGroupConfig_OpenPrecheckOnPropose(t *testing.T) {
 		}
 		require.NoError(t, err)
 		require.NotNil(t, ticket.Precheck)
-		require.Len(t, ticket.Precheck.Warnings, 1)
+		require.Empty(t, ticket.Precheck.Warnings, "分组里本来就有的无价单元格不是这次改动新增的")
 
 		src.err = errors.New("boom")
 		_, err = f.svc.Propose(ctx, req)
 		require.Error(t, err)
 	}
+}
+
+// ---- 开放时预检只看新增的问题；提交时也要预检 ----
+
+func TestOpenPrechecker_OnlyNewIssuesBlockWrites(t *testing.T) {
+	ctx := context.Background()
+	wild := MatrixCell{ModelKey: "gpt-*", IsPattern: true, Open: true, PriceMode: MatrixPriceInherit}
+	// 白名单分组里本来就有两个问题：派生出来的通配符单元格，和一个无价的开放单元格。
+	snap := w2Snap(MatrixAccessAllowlist, PricingStageV2, nil, w2Open("priced"), w2Open("nothing"), wild)
+	src := &w2Source{snaps: map[int64]GroupStateSnapshot{1: snap}}
+	p := w2Prechecker(src, nil)
+	create := func(key string) PlannedCellWrite {
+		return PlannedCellWrite{Op: CellOp{GroupID: 1, ModelKey: key}, Action: CellWriteCreate,
+			After: &MatrixCell{ModelKey: key, Open: true, PriceMode: MatrixPriceInherit}}
+	}
+
+	// 完整现状报告仍然列出全部问题。
+	full, err := p.PrecheckGroupConfigState(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, full.Blocking, 2)
+
+	// 开一个有价的单元格：本来就有的问题不挡它。
+	reps, err := p.PrecheckPlanned(ctx, []PlannedCellWrite{create("img-only")})
+	require.NoError(t, err)
+	require.Empty(t, reps[0].Blocking)
+	require.NoError(t, BlockingError(reps))
+
+	// 开一个 0 元的单元格：只报这一个新增的问题。
+	reps, err = p.PrecheckPlanned(ctx, []PlannedCellWrite{create("zero")})
+	require.NoError(t, err)
+	require.Len(t, reps[0].Blocking, 1)
+	require.Equal(t, "zero", reps[0].Blocking[0].ModelKey)
+	require.Equal(t, ReasonOpenPrecheckBlocked, w2Reason(t, BlockingError(reps)))
+
+	// 分组配置：已经是白名单、只改映射，本来就有的问题不挡；新增的映射目标问题照常拦。
+	cfg := func(m ...MatrixMappingEntry) MatrixGroupConfig {
+		return MatrixGroupConfig{AccessMode: MatrixAccessAllowlist, ModelMapping: m}
+	}
+	rep, err := p.PrecheckGroupConfig(ctx, 1, cfg(MatrixMappingEntry{Src: "priced", Dst: "priced"}))
+	require.NoError(t, err)
+	require.Empty(t, rep.Blocking)
+	rep, err = p.PrecheckGroupConfig(ctx, 1, cfg(MatrixMappingEntry{Src: "priced", Dst: "zero"}))
+	require.NoError(t, err)
+	require.Len(t, rep.Blocking, 1)
+	require.Equal(t, OpenIssueMappingTargetZeroPrice, rep.Blocking[0].Reason)
+
+	// 开放分组改成白名单：此前只是警告的问题变成阻止项，算新增（通配符在开放分组里本来不报，现在也要报）。
+	open := w2Snap(MatrixAccessOpen, PricingStageV2, nil, w2Open("nothing"), wild)
+	rep, err = w2Prechecker(&w2Source{snaps: map[int64]GroupStateSnapshot{1: open}}, nil).
+		PrecheckGroupConfig(ctx, 1, MatrixGroupConfig{AccessMode: MatrixAccessAllowlist})
+	require.NoError(t, err)
+	require.Len(t, rep.Blocking, 2)
+}
+
+func TestGate_CommitRunsOpenPrecheck(t *testing.T) {
+	ctx := context.Background()
+	open := func(key string) *CellWriteResult {
+		return &CellWriteResult{ChangedGroupIDs: []int64{1}, Planned: []PlannedCellWrite{{
+			Op: CellOp{GroupID: 1, ModelKey: key, Kind: CellOpUpsert}, Action: CellWriteUpdate,
+			After: &MatrixCell{ModelKey: key, Open: true, PriceMode: MatrixPriceInherit},
+		}}}
+	}
+	// 分组里本来就有一个无价的开放单元格。
+	src := &w2Source{snaps: map[int64]GroupStateSnapshot{1: w2Snap(MatrixAccessAllowlist, PricingStageV2, nil, w2Open("nothing"))}}
+
+	// 不涉价、不带凭证、会让白名单分组多出 0 元单元格：预览时的预检在提交时也要过，整个事务回滚，缓存不失效。
+	f := pwNewGate()
+	f.gate.WithOpenPrecheck(w2Prechecker(src, nil))
+	f.writer.applyRes = open("zero")
+	_, err := f.gate.Commit(ctx, pwCommit(0, false))
+	require.Equal(t, ReasonOpenPrecheckBlocked, w2Reason(t, err))
+	require.Equal(t, 1, f.store.txRollbacks)
+	require.Empty(t, f.store.consumeCalls, "被预检拦下时审批不会被消耗")
+	require.Empty(t, f.inv.calls)
+
+	// 只有本来就有的问题：不挡，照常写入。
+	f = pwNewGate()
+	f.gate.WithOpenPrecheck(w2Prechecker(src, nil))
+	f.writer.applyRes = open("priced")
+	_, err = f.gate.Commit(ctx, pwCommit(0, false))
+	require.NoError(t, err)
+	require.Equal(t, [][]int64{{1}}, f.inv.calls)
+
+	// 读分组现状失败：失败关闭。
+	f = pwNewGate()
+	f.gate.WithOpenPrecheck(w2Prechecker(&w2Source{err: errors.New("boom")}, nil))
+	f.writer.applyRes = open("priced")
+	_, err = f.gate.Commit(ctx, pwCommit(0, false))
+	require.Error(t, err)
+	require.Equal(t, 1, f.store.txRollbacks)
+
+	// 没接预检器：和以前一样。
+	f = pwNewGate()
+	f.writer.applyRes = open("zero")
+	_, err = f.gate.Commit(ctx, pwCommit(0, false))
+	require.NoError(t, err)
+}
+
+func TestGroupConfig_PrecheckOnlyForExposureRelevantAndRunsOnCommit(t *testing.T) {
+	ctx := context.Background()
+	bad := w2Snap(MatrixAccessOpen, PricingStageV2, nil, w2Open("nothing"))
+
+	// 只改成本模式或功能开关：不预检，分组里已有的问题也就不挡它。
+	src := &w2Source{snaps: map[int64]GroupStateSnapshot{1: w2Snap(MatrixAccessAllowlist, PricingStageV2, nil, w2Open("nothing"))}}
+	w := &gcFakeWriter{planRes: &GroupConfigWriteResult{Changed: true, After: StoredGroupConfig{GroupID: 1, MatrixGroupConfig: MatrixGroupConfig{AccessMode: MatrixAccessAllowlist}}}}
+	f := gcNewService(w, &exFakeReader{})
+	f.svc.WithOpenPrecheck(w2Prechecker(src, nil))
+	req := gcBase()
+	req.CostMode = gcCost(MatrixCostCatalogUpstream)
+	ticket, err := f.svc.Propose(ctx, req)
+	require.NoError(t, err)
+	require.Nil(t, ticket.Precheck)
+	require.Empty(t, src.calls)
+
+	// 提交：不涉价的准入模式改动（不带凭证）改成白名单会暴露无价单元格，提交时也被拦，事务回滚。
+	src = &w2Source{snaps: map[int64]GroupStateSnapshot{1: bad}}
+	f = gcNewService(&gcFakeWriter{res: gcResult(true, true, MatrixAccessAllowlist)}, &exFakeReader{})
+	f.svc.WithOpenPrecheck(w2Prechecker(src, nil))
+	areq := gcBase()
+	areq.AccessMode = gcAccess(MatrixAccessAllowlist)
+	_, err = f.svc.Commit(ctx, gcCommit(areq, 0, false))
+	require.Equal(t, ReasonOpenPrecheckBlocked, w2Reason(t, err))
+	require.Equal(t, 1, f.store.txRollbacks)
+	require.Empty(t, f.inv.calls)
+
+	// 不影响开放范围的提交不预检。
+	src = &w2Source{snaps: map[int64]GroupStateSnapshot{1: bad}}
+	f = gcNewService(&gcFakeWriter{res: gcResult(true, false, MatrixAccessOpen)}, &exFakeReader{})
+	f.svc.WithOpenPrecheck(w2Prechecker(src, nil))
+	_, err = f.svc.Commit(ctx, gcCommit(req, 0, false))
+	require.NoError(t, err)
+	require.Empty(t, src.calls)
+
+	// 目标态里没有新增的问题：放行（分组已经是白名单，本来就有的问题不算）。
+	src = &w2Source{snaps: map[int64]GroupStateSnapshot{1: w2Snap(MatrixAccessAllowlist, PricingStageV2, nil, w2Open("nothing"))}}
+	f = gcNewService(&gcFakeWriter{res: gcResult(true, true, MatrixAccessAllowlist)}, &exFakeReader{})
+	f.svc.WithOpenPrecheck(w2Prechecker(src, nil))
+	_, err = f.svc.Commit(ctx, gcCommit(areq, 0, false))
+	require.NoError(t, err)
 }
 
 // ---- W5 登记项与装配 ----

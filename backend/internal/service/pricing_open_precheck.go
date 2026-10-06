@@ -88,24 +88,70 @@ func (p *OpenPrechecker) ready() error {
 }
 
 // PrecheckGroups 对这些分组做预检；overlay 是假想的目标态（零值就是现状）。结果按分组 id 排序。
+// 返回分组里的全部问题（含本来就有的），给公开预检与现状报告用；写入路径用 precheckNew，只看新增的问题。
 func (p *OpenPrechecker) PrecheckGroups(ctx context.Context, groupIDs []int64, overlay CellOverlay) ([]OpenPrecheckReport, error) {
-	if err := p.ready(); err != nil {
+	ids, snaps, free, err := p.load(ctx, groupIDs)
+	if err != nil || len(ids) == 0 {
 		return nil, err
 	}
-	ids := dedupeSortedIDs(groupIDs)
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	snaps, err := p.source.LoadGroupSnapshots(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	free := p.validator.knownFree(ctx)
 	out := make([]OpenPrecheckReport, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, p.evaluate(ctx, id, overlay.applyTo(id, snaps[id]), free))
 	}
 	return out, nil
+}
+
+// precheckNew 只返回这次写入新增的问题：同一分组在叠加 overlay 前后各评估一次，目标态里本来就有的问题
+// （同一个分组、模型、原因、映射目标，且在同一类里）不算。分组里已有的问题（例如派生出来的通配符单元格，或快照变价后
+// 变成无价的单元格）不该挡住与它无关的写入；写入新造出来的问题、以及把开放分组改成白名单后变成阻止项的问题照常拦。
+func (p *OpenPrechecker) precheckNew(ctx context.Context, groupIDs []int64, overlay CellOverlay) ([]OpenPrecheckReport, error) {
+	ids, snaps, free, err := p.load(ctx, groupIDs)
+	if err != nil || len(ids) == 0 {
+		return nil, err
+	}
+	out := make([]OpenPrecheckReport, 0, len(ids))
+	for _, id := range ids {
+		after := p.evaluate(ctx, id, overlay.applyTo(id, snaps[id]), free)
+		before := p.evaluate(ctx, id, snaps[id], free)
+		after.Blocking = subtractIssues(after.Blocking, before.Blocking)
+		after.Warnings = subtractIssues(after.Warnings, before.Warnings)
+		out = append(out, after)
+	}
+	return out, nil
+}
+
+func (p *OpenPrechecker) load(ctx context.Context, groupIDs []int64) ([]int64, map[int64]GroupStateSnapshot, []BillingKnownFreeEntry, error) {
+	if err := p.ready(); err != nil {
+		return nil, nil, nil, err
+	}
+	ids := dedupeSortedIDs(groupIDs)
+	if len(ids) == 0 {
+		return nil, nil, nil, nil
+	}
+	snaps, err := p.source.LoadGroupSnapshots(ctx, ids)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return ids, snaps, p.validator.knownFree(ctx), nil
+}
+
+func openIssueKey(is OpenPrecheckIssue) string {
+	return strconv.FormatInt(is.GroupID, 10) + "|" + is.ModelKey + "|" + is.Reason + "|" + is.Target
+}
+
+// subtractIssues 返回 issues 里不在 existing 中的项（结果永远是非 nil 切片）。
+func subtractIssues(issues, existing []OpenPrecheckIssue) []OpenPrecheckIssue {
+	have := make(map[string]struct{}, len(existing))
+	for _, is := range existing {
+		have[openIssueKey(is)] = struct{}{}
+	}
+	out := []OpenPrecheckIssue{}
+	for _, is := range issues {
+		if _, ok := have[openIssueKey(is)]; !ok {
+			out = append(out, is)
+		}
+	}
+	return out
 }
 
 func dedupeSortedIDs(in []int64) []int64 {
@@ -154,7 +200,7 @@ func (p *OpenPrechecker) evaluate(ctx context.Context, groupID int64, snap Group
 		}
 		issues = append(issues, OpenPrecheckIssue{GroupID: v.GroupID, ModelKey: v.ModelKey, Reason: string(v.Reason)})
 	}
-	issues = append(issues, p.mappingTargetIssues(groupID, snap.Config.ModelMapping, openExact, free)...)
+	issues = append(issues, p.mappingTargetIssues(groupID, snap.Config.ModelMapping, snap.Config.BillingModelSource, openExact, free)...)
 
 	sort.Slice(issues, func(i, j int) bool {
 		if issues[i].ModelKey != issues[j].ModelKey {
@@ -172,7 +218,13 @@ func (p *OpenPrechecker) evaluate(ctx context.Context, groupID int64, snap Group
 
 // mappingTargetIssues 精确映射命中 open 单元格时，映射目标必须官方有价且 token 价非零（已知免费名单里的放行）。
 // 通配符来源的映射不检查（它命中的请求模型数不封顶，且通配符单元格在白名单分组里本来就是违规）。
-func (p *OpenPrechecker) mappingTargetIssues(groupID int64, mapping []MatrixMappingEntry, openExact map[string]struct{}, free []BillingKnownFreeEntry) []OpenPrecheckIssue {
+//
+// 只有按映射目标计费时才看目标的价：计费来源是 requested 时按请求模型（映射的来源名）计费，来源名的价由单元格自己的
+// 校验管，目标有没有价与计费无关，不检查。目标是图片模型时 token 价为 0 但按张计费，也不算 0 元。
+func (p *OpenPrechecker) mappingTargetIssues(groupID int64, mapping []MatrixMappingEntry, billingSource *string, openExact map[string]struct{}, free []BillingKnownFreeEntry) []OpenPrecheckIssue {
+	if billingSource != nil && *billingSource == BillingModelSourceRequested {
+		return nil
+	}
 	var out []OpenPrecheckIssue
 	for _, m := range mapping {
 		src, dst := strings.TrimSpace(m.Src), strings.TrimSpace(m.Dst)
@@ -192,14 +244,14 @@ func (p *OpenPrechecker) mappingTargetIssues(groupID int64, mapping []MatrixMapp
 		switch {
 		case !st.Known:
 			out = append(out, OpenPrecheckIssue{GroupID: groupID, ModelKey: src, Reason: OpenIssueMappingTargetUnpriced, Target: dst})
-		case !st.TokenNonZero:
+		case !st.TokenNonZero && !st.ImageCapable:
 			out = append(out, OpenPrecheckIssue{GroupID: groupID, ModelKey: src, Reason: OpenIssueMappingTargetZeroPrice, Target: dst})
 		}
 	}
 	return out
 }
 
-// PrecheckPlanned 对规划好的单元格写入做预检：涉及 open 写入的分组，按写入之后的目标态检查。
+// PrecheckPlanned 对规划好的单元格写入做预检：涉及 open 写入的分组，按写入之后的目标态检查，只报这次写入新增的问题。
 func (p *OpenPrechecker) PrecheckPlanned(ctx context.Context, planned []PlannedCellWrite) ([]OpenPrecheckReport, error) {
 	var ids []int64
 	for _, w := range planned {
@@ -210,12 +262,12 @@ func (p *OpenPrechecker) PrecheckPlanned(ctx context.Context, planned []PlannedC
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	return p.PrecheckGroups(ctx, ids, OverlayFromPlanned(planned))
+	return p.precheckNew(ctx, ids, OverlayFromPlanned(planned))
 }
 
-// PrecheckGroupConfig 对分组配置的目标态做预检（改成白名单、改映射都会改变预检结果）。
+// PrecheckGroupConfig 对分组配置的目标态做预检（改成白名单、改映射、改计费来源都会改变预检结果），只报这次改动新增的问题。
 func (p *OpenPrechecker) PrecheckGroupConfig(ctx context.Context, groupID int64, target MatrixGroupConfig) (*OpenPrecheckReport, error) {
-	reports, err := p.PrecheckGroups(ctx, []int64{groupID}, CellOverlay{Configs: map[int64]MatrixGroupConfig{groupID: target}})
+	reports, err := p.precheckNew(ctx, []int64{groupID}, CellOverlay{Configs: map[int64]MatrixGroupConfig{groupID: target}})
 	if err != nil {
 		return nil, err
 	}

@@ -59,6 +59,9 @@ type KnownFreeListChange struct {
 	// NewViolations 改后会新增的违规（白名单分组里因此无价或 0 元的 open 单元格）；非空时写入被阻止。
 	NewViolations []ExposureViolation `json:"new_violations"`
 	Changed       bool                `json:"changed"`
+	// PreviousInvalid 现有名单的原文写坏了（不是合法 JSON）：保存时校验把它当空名单。此时任何提交（包括空名单）都算变更，
+	// 会用规范化的内容覆盖坏值，管理员才有办法清掉它。
+	PreviousInvalid bool `json:"previous_invalid"`
 }
 
 // staticKnownFreeSettings 只回答已知免费名单这一个键，值是调用方给定的原文。
@@ -148,8 +151,9 @@ func (s *KnownFreeListService) Preview(ctx context.Context, entries []BillingKno
 // diff 计算变更：当前名单（原文）与目标名单之间，哪些条目被删、哪些单元格会新增违规。
 func (s *KnownFreeListService) diff(ctx context.Context, exec MatrixExecutor, currentRaw string, target []BillingKnownFreeEntry, lock bool) (*KnownFreeListChange, error) {
 	current, err := parseBillingKnownFreeList(currentRaw)
-	if err != nil {
-		// 现有名单写坏了：保存时校验把它当空名单；这里也一样，但变更时要让管理员知道。
+	invalid := err != nil
+	if invalid {
+		// 现有名单写坏了：保存时校验把它当空名单；这里也一样，但要标出来，并且提交任何内容都算变更（见 PreviousInvalid）。
 		current = nil
 	}
 	targetRaw, err := marshalKnownFreeList(target)
@@ -174,7 +178,7 @@ func (s *KnownFreeListService) diff(ctx context.Context, exec MatrixExecutor, cu
 	}
 	return &KnownFreeListChange{
 		Before: nonNilEntries(current), After: nonNilEntries(target), Removed: removedKnownFree(current, target),
-		NewViolations: newViolations, Changed: marshalOrEmpty(current) != targetRaw,
+		NewViolations: newViolations, Changed: invalid || marshalOrEmpty(current) != targetRaw, PreviousInvalid: invalid,
 	}, nil
 }
 
