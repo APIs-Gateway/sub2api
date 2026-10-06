@@ -16,6 +16,7 @@ const STALE_REASONS = new Set([
   'PRICING_SNAPSHOT_NOT_CANDIDATE',
   'PRICING_SNAPSHOT_NOT_FOUND',
   'PRICE_BASELINE_CHANGED',
+  'COST_RULE_NOT_FOUND',
   'PRICE_WRITE_APPROVAL_EXPIRED',
   'PRICE_WRITE_APPROVAL_MISMATCH',
   'PRICE_WRITE_PLAN_CHANGED'
@@ -36,7 +37,9 @@ export function opsErrorText(err: unknown, t: Translate, te: HasKey): string {
   const e = asOpsError(err)
   if (e.status === 0) return t(`${NS}.network`)
   if (e.status === 401) return t(`${NS}.sessionExpired`)
-  const reason = e.reason
+  let reason = e.reason
+  // 成本核算规则的价格超限：reason 是 COST_RULE_INVALID，具体原因在 metadata.reason
+  if (reason === 'COST_RULE_INVALID' && e.metadata?.reason === 'PRICE_TOO_HIGH') reason = 'COST_RULE_PRICE_TOO_HIGH'
   if (reason && te(`${NS}.${reason}`)) {
     const meta = e.metadata ?? {}
     return t(`${NS}.${reason}`, { count: meta.count ?? '', group: meta.group_id ?? '' })
