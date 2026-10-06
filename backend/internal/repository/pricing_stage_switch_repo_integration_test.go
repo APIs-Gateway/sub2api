@@ -4,9 +4,11 @@ package repository
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -18,6 +20,35 @@ type stageIntDeriver struct{ state service.DerivedGroupState }
 
 func (d stageIntDeriver) DeriveGroupCurrent(context.Context, int64) (service.DerivedGroupState, string, error) {
 	return d.state, service.PlatformOpenAI, nil
+}
+
+// stageIntPrices 官方价：只有 w6-priced 有价，其余模型都没有。
+type stageIntPrices struct{}
+
+func (stageIntPrices) LookupOfficialPriceState(model string) service.OfficialPriceState {
+	if model == "w6-priced" {
+		return service.OfficialPriceState{Known: true, TokenNonZero: true}
+	}
+	return service.OfficialPriceState{}
+}
+
+// stageIntSettings 只实现 GetValue（已知免费名单），其余方法留给内嵌的 nil 接口。
+type stageIntSettings struct {
+	service.SettingRepository
+	value string
+}
+
+func (s *stageIntSettings) GetValue(_ context.Context, key string) (string, error) {
+	if key != service.SettingKeyBillingKnownFreeList {
+		panic("unexpected setting key " + key)
+	}
+	return s.value, nil
+}
+
+// stageIntExposure 用真实的 ExposureReader（读库）、假的官方价与已知免费名单。settings 为 nil 表示没有名单。
+func stageIntExposure(settings service.SettingRepository) *service.StageExposureChecker {
+	prices := stageIntPrices{}
+	return service.NewStageExposureChecker(NewPricingExposureReader(), service.NewExposureValidator(prices, settings), prices)
 }
 
 func stageIntGroup(t *testing.T) int64 {
@@ -64,6 +95,7 @@ func TestPricingStageSwitch_EndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	derived.Config = cfgs[gid].MatrixGroupConfig
 	sw := service.NewPricingStageSwitcher(store, stageIntDeriver{derived}, fp, nil, nil, nil)
+	sw.SetExposureChecker(stageIntExposure(nil))
 
 	// 闸门不满足：没有回放记录。
 	p, err := sw.Preview(ctx, service.PricingStagePreviewRequest{GroupID: gid, To: service.PricingStageV2, OperatorID: 1})
@@ -166,4 +198,79 @@ func TestPricingStageSwitch_GateFactsFromTheDatabase(t *testing.T) {
 	require.Equal(t, []string{"gpt-5.4"}, facts.Shadow.ExpectedModels)
 	require.Nil(t, facts.Replay)
 	require.Nil(t, facts.OwnerChannelUpdatedAt)
+}
+
+// B1：白名单分组带着无价的 open 单元格从 shadow 切 v2。预览不放行；提交被 409 拒绝，阶段、单元格、凭证、审计都没有变化；
+// 把精确模型加进已知免费名单之后预览与提交放行。真实 PostgreSQL：检查读的是事务里刚冻结、刚改成 v2 的状态。
+func TestPricingStageSwitch_V2ExposureCheckAgainstTheDatabase(t *testing.T) {
+	ctx := context.Background()
+	gid := stageIntGroup(t)
+	long := time.Now().Add(-100 * time.Hour)
+	_, err := integrationDB.ExecContext(ctx,
+		`INSERT INTO group_model_config (group_id, access_mode, pricing_stage, stage_changed_at, updated_at) VALUES ($1, 'allowlist', 'shadow', $2, $2)`, gid, long)
+	require.NoError(t, err)
+	for _, key := range []string{"w6-priced", "w6-ghost"} {
+		_, err = integrationDB.ExecContext(ctx,
+			`INSERT INTO model_group_prices (group_id, model_key, source) VALUES ($1, $2, 'legacy_derived')`, gid, key)
+		require.NoError(t, err)
+	}
+
+	store := NewPricingStageSwitchStore(integrationDB)
+	fp := NewPricingStageFingerprinter(integrationDB)
+	derived := service.DerivedGroupState{GroupID: gid, ChannelID: 1, Revision: "rev-int",
+		Cells: []service.MatrixCell{
+			{ModelKey: "w6-priced", Open: true, PriceMode: service.MatrixPriceInherit, Source: service.MatrixSourceLegacyDerived},
+			{ModelKey: "w6-ghost", Open: true, PriceMode: service.MatrixPriceInherit, Source: service.MatrixSourceLegacyDerived},
+		}}
+	cfgs, err := loadMatrixConfigs(ctx, integrationDB, []int64{gid})
+	require.NoError(t, err)
+	derived.Config = cfgs[gid].MatrixGroupConfig
+	require.Equal(t, service.MatrixAccessAllowlist, derived.Config.AccessMode)
+
+	chain, err := fp.Fingerprint(ctx, []int64{gid})
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	evidence := service.ReplayEvidence{GroupID: gid, RecordedAt: now, WindowFrom: now.Add(-31 * 24 * time.Hour), WindowTo: now.Add(-time.Hour),
+		MatrixSource: "derived", Passed: true, BindingStable: true, RowsInWindow: 5, RowsReplayed: 5,
+		ChannelConfigHash: chain.ChannelConfigHash, DeriveRevision: "rev-int"}
+	require.NoError(t, NewPricingReplayEvidenceStore(integrationDB).RecordReplayEvidence(ctx, []service.ReplayEvidence{evidence}))
+
+	settings := &stageIntSettings{value: `[]`}
+	sw := service.NewPricingStageSwitcher(store, stageIntDeriver{derived}, fp, nil, nil, nil)
+	sw.SetExposureChecker(stageIntExposure(settings))
+	req := service.PricingStagePreviewRequest{GroupID: gid, To: service.PricingStageV2, OperatorID: 1}
+	commit := func(approval int64) error {
+		_, err := sw.Commit(ctx, service.PricingStageSwitchRequest{GroupID: gid, To: service.PricingStageV2, OperatorID: 1, Confirm: true, ApprovalID: approval, AuthMethod: service.AuditAuthMethodJWT})
+		return err
+	}
+
+	// 预览：闸门里多一项暴露检查失败，不登记凭证。
+	p, err := sw.Preview(ctx, req)
+	require.NoError(t, err)
+	require.False(t, p.Executable)
+	require.Zero(t, p.ApprovalID)
+	require.Len(t, p.Gate.Failures, 1)
+	require.Equal(t, service.ReasonPricingGateExposureBlocked, p.Gate.Failures[0].Code)
+	require.Contains(t, p.Gate.Failures[0].Message, "w6-ghost")
+	require.NotContains(t, p.Gate.Failures[0].Message, "w6-priced")
+
+	// 提交：闸门其余条件都满足，走到事务里改完阶段之后的检查被拒绝，整体回滚。
+	err = commit(1)
+	require.Error(t, err)
+	require.Equal(t, service.ReasonPricingGateExposureBlocked, infraerrors.Reason(err))
+	require.Equal(t, 409, infraerrors.Code(err))
+	require.Equal(t, "shadow", stageIntScalar[string](t, `SELECT pricing_stage FROM group_model_config WHERE group_id = $1`, gid))
+	require.Equal(t, 2, stageIntScalar[int](t, `SELECT COUNT(*) FROM model_group_prices WHERE group_id = $1 AND source = 'legacy_derived'`, gid), "nothing stayed frozen")
+	require.Zero(t, stageIntScalar[int](t, `SELECT COUNT(*) FROM pricing_stage_audit WHERE group_id = $1`, gid))
+
+	// 把精确模型加进已知免费名单：预览放行并登记凭证，提交成功。
+	settings.value = `[{"group_id":` + strconv.FormatInt(gid, 10) + `,"model":"w6-ghost"}]`
+	p, err = sw.Preview(ctx, req)
+	require.NoError(t, err)
+	require.True(t, p.Executable, "%+v", p.Gate)
+	require.NotZero(t, p.ApprovalID)
+	require.NoError(t, commit(p.ApprovalID))
+	require.Equal(t, "v2", stageIntScalar[string](t, `SELECT pricing_stage FROM group_model_config WHERE group_id = $1`, gid))
+	require.Equal(t, "consumed", stageIntScalar[string](t, `SELECT status FROM pricing_write_approvals WHERE id = $1`, p.ApprovalID))
+	require.Equal(t, 1, stageIntScalar[int](t, `SELECT COUNT(*) FROM pricing_stage_audit WHERE group_id = $1 AND to_stage = 'v2'`, gid))
 }

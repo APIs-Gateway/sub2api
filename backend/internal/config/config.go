@@ -548,6 +548,9 @@ type PricingConfig struct {
 	UpdateIntervalHours int `mapstructure:"update_interval_hours"`
 	// 哈希校验间隔（分钟）
 	HashCheckIntervalMinutes int `mapstructure:"hash_check_interval_minutes"`
+	// W6 价格阶段切换闸门里 shadow 观察期的最短时长（小时，整数，0-720，默认 72；0 表示不要求观察时长）。
+	// 环境变量 PRICING_GATE_OBSERVATION_HOURS。30 天回放零差异的硬检查不受它影响。
+	GateObservationHours int `mapstructure:"gate_observation_hours"`
 }
 
 type ServerConfig struct {
@@ -2124,6 +2127,7 @@ func setDefaults() {
 	viper.SetDefault("pricing.fallback_file", "./resources/model-pricing/model_prices_and_context_window.json")
 	viper.SetDefault("pricing.update_interval_hours", 24)
 	viper.SetDefault("pricing.hash_check_interval_minutes", 10)
+	viper.SetDefault("pricing.gate_observation_hours", 72)
 
 	// Timezone (default to Asia/Shanghai for Chinese users)
 	viper.SetDefault("timezone", "Asia/Shanghai")
@@ -2437,6 +2441,14 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("dingtalk_connect.sync_corp_email_attr_name", "")
 }
 
+// validatePricingGateObservationHours 校验价格阶段闸门的观察期小时数：0-720，越界启动报错（与其它配置项的校验一致，不静默钳制）。
+func validatePricingGateObservationHours(hours int) error {
+	if hours < 0 || hours > 720 {
+		return fmt.Errorf("pricing.gate_observation_hours must be between 0 and 720, got %d", hours)
+	}
+	return nil
+}
+
 func (c *Config) Validate() error {
 	forwardedClientIPHeaders, err := NormalizeForwardedClientIPHeaders(c.Security.ForwardedClientIPHeaders)
 	if err != nil {
@@ -2462,6 +2474,9 @@ func (c *Config) Validate() error {
 		if c.APIKeyAuth.InvalidAbuse.Capacity < 256 || c.APIKeyAuth.InvalidAbuse.Capacity > 1_000_000 {
 			return fmt.Errorf("api_key_auth_cache.invalid_abuse.capacity must be between 256 and 1000000")
 		}
+	}
+	if err := validatePricingGateObservationHours(c.Pricing.GateObservationHours); err != nil {
+		return err
 	}
 	jwtSecret := strings.TrimSpace(c.JWT.Secret)
 	if jwtSecret == "" {

@@ -172,12 +172,29 @@ func dedupeSortedIDs(in []int64) []int64 {
 }
 
 func (p *OpenPrechecker) evaluate(ctx context.Context, groupID int64, snap GroupStateSnapshot, free []BillingKnownFreeEntry) OpenPrecheckReport {
-	rep := OpenPrecheckReport{GroupID: groupID, Blocking: []OpenPrecheckIssue{}, Warnings: []OpenPrecheckIssue{}}
 	if snap.Config == nil || snap.Config.PricingStage != PricingStageV2 {
+		return OpenPrecheckReport{GroupID: groupID, Blocking: []OpenPrecheckIssue{}, Warnings: []OpenPrecheckIssue{}}
+	}
+	return p.evaluateAsV2(ctx, groupID, snap, free)
+}
+
+// EvaluateAsV2 按「分组已经是 v2」评估这份快照，忽略快照里的阶段（阶段切换用：目标态的快照里分组还是 shadow，
+// 或者在事务里刚冻结、读到的是切换后的状态）。只读，不碰数据库；已知免费名单由调用方的 settings 读取。
+func (p *OpenPrechecker) EvaluateAsV2(ctx context.Context, groupID int64, snap GroupStateSnapshot) (OpenPrecheckReport, error) {
+	if p == nil || p.validator == nil {
+		return OpenPrecheckReport{}, infraerrors.InternalServer(ReasonExposureGuardMissing, "open-time precheck is not configured")
+	}
+	return p.evaluateAsV2(ctx, groupID, snap, p.validator.knownFree(ctx)), nil
+}
+
+// evaluateAsV2 是 evaluate 去掉阶段判断之后的部分：配置行为空（没有准入模式可言）仍然是「不适用」。
+func (p *OpenPrechecker) evaluateAsV2(ctx context.Context, groupID int64, snap GroupStateSnapshot, free []BillingKnownFreeEntry) OpenPrecheckReport {
+	rep := OpenPrecheckReport{GroupID: groupID, Blocking: []OpenPrecheckIssue{}, Warnings: []OpenPrecheckIssue{}}
+	if snap.Config == nil {
 		return rep
 	}
 	rep.Applicable = true
-	rep.Stage = snap.Config.PricingStage
+	rep.Stage = PricingStageV2
 	rep.AccessMode = snap.Config.AccessMode
 	allow := snap.Config.AccessMode == MatrixAccessAllowlist
 
@@ -314,7 +331,8 @@ func BlockingError(reports []OpenPrecheckReport) error {
 	return precheckError(ReasonOpenPrecheckBlocked, "an allowlist group would expose models without a usable price", issues)
 }
 
-func precheckError(reason, message string, issues []OpenPrecheckIssue) error {
+// openIssueList 把问题列成「分组:模型:原因[->映射目标]」，用分号连接，最多 maxOpenPrecheckIssuesListed 项。
+func openIssueList(issues []OpenPrecheckIssue) string {
 	parts := make([]string, 0, len(issues))
 	for i, is := range issues {
 		if i == maxOpenPrecheckIssuesListed {
@@ -326,8 +344,12 @@ func precheckError(reason, message string, issues []OpenPrecheckIssue) error {
 		}
 		parts = append(parts, item)
 	}
+	return strings.Join(parts, ";")
+}
+
+func precheckError(reason, message string, issues []OpenPrecheckIssue) error {
 	return infraerrors.BadRequest(reason, message).WithMetadata(map[string]string{
 		"count":  strconv.Itoa(len(issues)),
-		"issues": strings.Join(parts, ";"),
+		"issues": openIssueList(issues),
 	})
 }

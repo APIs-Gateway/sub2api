@@ -139,7 +139,27 @@ type PricingStageSwitcher struct {
 	compared func(groupID int64) int64
 	// translationInProcess 返回本实例进程内某个分组 translation 类差异的累计数与最近一次的时间（没有为零值）；可为 nil（不检查）。
 	translationInProcess func(groupID int64) (int64, time.Time)
-	now                  func() time.Time
+	// observation 影子观察的最短时长（部署配置 pricing.gate_observation_hours）；构造时默认 72 小时。
+	observation time.Duration
+	// exposure 切到 v2 时的无价与开放范围检查（预览与提交共用）；没接上时 v2 的预览与提交都失败关闭。
+	exposure *StageExposureChecker
+	now      func() time.Time
+}
+
+// SetExposureChecker 接上切到 v2 时的暴露检查。
+func (sw *PricingStageSwitcher) SetExposureChecker(c *StageExposureChecker) {
+	sw.exposure = c
+}
+
+// SetObservationHours 设置影子观察的最短时长（小时）。0 表示不要求观察时长；越界值钳制到 [0, 720]（配置校验已在启动时拦住越界值，这里是兜底）。
+func (sw *PricingStageSwitcher) SetObservationHours(hours int) {
+	if hours < 0 {
+		hours = 0
+	}
+	if hours > PricingGateObservationMaxHours {
+		hours = PricingGateObservationMaxHours
+	}
+	sw.observation = time.Duration(hours) * time.Hour
 }
 
 // SetInProcessTranslationDiffs 接上进程内翻译差异计数：大于 0 时闸门不放行（W6 PR7b-1 审查偏差 1）。
@@ -167,6 +187,7 @@ func NewPricingStageSwitcher(store PricingStageSwitchStore, derive stageDeriver,
 	return &PricingStageSwitcher{
 		store: store, ops: store, derive: derive, fingerprint: fp, catalog: catalog, sync: sync,
 		compared: compared, now: time.Now,
+		observation: PricingGateObservationDefaultHours * time.Hour,
 	}
 }
 
@@ -363,8 +384,18 @@ func (sw *PricingStageSwitcher) previewV2(ctx context.Context, exec MatrixExecut
 	}
 	sw.loadInProcessShadow(facts, out.GroupID)
 	report := EvaluateStageGate(StageGateInput{
-		Facts: facts, Now: now, CurrentDeriveRevision: derived.Revision, CurrentChannelConfigHash: channelHash, EvidenceErr: evErr,
+		Facts: facts, Now: now, ObservationRequired: sw.observation, CurrentDeriveRevision: derived.Revision, CurrentChannelConfigHash: channelHash, EvidenceErr: evErr,
 	})
+	if evErr == nil { // 派生取不到时闸门已经以 derive_failed 拒绝，目标态无从算起
+		failure, err := sw.previewExposure(ctx, exec, out.GroupID, derived)
+		if err != nil {
+			return nil, err
+		}
+		if failure != nil {
+			report.Failures = append(report.Failures, *failure)
+			report.Passed = false
+		}
+	}
 	delta, accepted := StageSwitchAccepted(facts.Replay, facts.Shadow, sw.catalogAccepted(ctx, exec, out.GroupID, platform, now))
 	out.Gate, out.Accepted, out.PriceDelta = &report, accepted, delta
 	if !report.Passed {
@@ -401,6 +432,27 @@ func (sw *PricingStageSwitcher) previewV2(ctx context.Context, exec MatrixExecut
 	out.ExpiresAt = &expires
 	out.Executable = true
 	return out, nil
+}
+
+// previewExposure 对「按渠道当前配置派生并追平之后」的目标态跑暴露检查（只读，不写库）。有问题返回一条闸门失败项。
+func (sw *PricingStageSwitcher) previewExposure(ctx context.Context, exec MatrixExecutor, groupID int64, derived DerivedGroupState) (*StageGateFailure, error) {
+	if sw.exposure == nil {
+		return nil, infraerrors.InternalServer(ReasonExposureGuardMissing, "exposure validation is not configured")
+	}
+	snap, err := sw.ops.LoadSnapshot(ctx, exec, groupID)
+	if err != nil {
+		return nil, err
+	}
+	target := applyPlanToSnapshot(snap, PlanGroupApply(derived, snap))
+	issues, err := sw.exposure.CheckTarget(ctx, groupID, target)
+	if err != nil {
+		return nil, err
+	}
+	if len(issues) == 0 {
+		return nil, nil
+	}
+	f := stageExposureFailure(issues)
+	return &f, nil
 }
 
 // catalogAccepted 目录里 draft、retired 且近 7 天有流量的模型：切到 v2 的那一刻起这些请求会被挡（设计 4.3，S-11）。
@@ -550,7 +602,7 @@ func (sw *PricingStageSwitcher) commitV2(ctx context.Context, tx MatrixTx, req P
 	}
 	sw.loadInProcessShadow(facts, req.GroupID)
 	report := EvaluateStageGate(StageGateInput{
-		Facts: facts, Now: now, CurrentDeriveRevision: derived.Revision, CurrentChannelConfigHash: channelHash, EvidenceErr: evErr,
+		Facts: facts, Now: now, ObservationRequired: sw.observation, CurrentDeriveRevision: derived.Revision, CurrentChannelConfigHash: channelHash, EvidenceErr: evErr,
 	})
 	if !report.Passed {
 		return nil, StageGateError(req.GroupID, report)
@@ -560,15 +612,8 @@ func (sw *PricingStageSwitcher) commitV2(ctx context.Context, tx MatrixTx, req P
 		GroupID: req.GroupID, From: cfg.PricingStage, To: PricingStageV2, ConfigRevision: cfg.Revision,
 		DeriveRevision: derived.Revision, ChannelConfigHash: channelHash, ReplayID: facts.Replay.ID,
 	}
-	approval, err := sw.store.ConsumeApproval(ctx, tx, req.ApprovalID, StageSwitchPlanHash(plan), PriceWriteKindStageSwitch, req.OperatorID, now)
-	if err != nil {
-		return nil, err
-	}
-	if err := checkApprovalForWrite(approval, true, stageActor(req)); err != nil {
-		return nil, err
-	}
 
-	// 把库里的派生行追平到刚刚验证过的那份派生结果，再整体冻结。
+	// 把库里的派生行追平到刚刚验证过的那份派生结果，再整体冻结，然后改阶段。
 	snap, err := sw.ops.LoadSnapshot(ctx, tx, req.GroupID)
 	if err != nil {
 		return nil, err
@@ -585,6 +630,31 @@ func (sw *PricingStageSwitcher) commitV2(ctx context.Context, tx MatrixTx, req P
 	}
 	rev, err := sw.ops.SetStage(ctx, tx, req.GroupID, PricingStageV2, req.OperatorID, now)
 	if err != nil {
+		return nil, err
+	}
+
+	// 无价、0 元与开放范围检查（B1）：必须在同一个事务里、改完阶段之后读事务自己的状态，
+	// 不能用连接池读（那里分组仍是 shadow，什么也查不出）；有问题整体回滚，下面的凭证还没有消耗。
+	if sw.exposure == nil {
+		return nil, infraerrors.InternalServer(ReasonExposureGuardMissing, "exposure validation is not configured")
+	}
+	frozen, err := sw.ops.LoadSnapshot(ctx, tx, req.GroupID)
+	if err != nil {
+		return nil, err
+	}
+	issues, err := sw.exposure.CheckInTx(ctx, tx, req.GroupID, frozen)
+	if err != nil {
+		return nil, err
+	}
+	if len(issues) > 0 {
+		return nil, StageExposureError(req.GroupID, issues)
+	}
+
+	approval, err := sw.store.ConsumeApproval(ctx, tx, req.ApprovalID, StageSwitchPlanHash(plan), PriceWriteKindStageSwitch, req.OperatorID, now)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkApprovalForWrite(approval, true, stageActor(req)); err != nil {
 		return nil, err
 	}
 

@@ -136,6 +136,7 @@ func newFailingFixture(stage PricingStage) (*ssFixture, *ssFailing) {
 	w := &ssFailing{ssStore: f.store, failAt: map[string]int{}}
 	f.sw = NewPricingStageSwitcher(w, f.derive, f.fp, nil, f.sync, nil)
 	f.sw.now = func() time.Time { return sgNow }
+	f.sw.SetExposureChecker(ssExposureChecker(f.store, f.settings))
 	return f, w
 }
 
@@ -360,7 +361,7 @@ func TestEvaluateStageGate_ObservationNeverGoesNegative(t *testing.T) {
 	future := sgNow.Add(2 * time.Hour)
 	report := EvaluateStageGate(StageGateInput{
 		Facts: &StageGateFacts{Config: StageGateConfig{GroupID: 7, Stage: PricingStageShadow, StageChangedAt: &future, UpdatedAt: future}},
-		Now:   sgNow,
+		Now:   sgNow, ObservationRequired: PricingGateObservationDefaultHours * time.Hour,
 	})
 	require.Zero(t, report.Observation.ObservedHours)
 	require.False(t, report.Observation.Satisfied)

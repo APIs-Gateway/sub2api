@@ -18,7 +18,8 @@ var sgNow = time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
 func sgPassing() StageGateInput {
 	changed := sgNow.Add(-100 * time.Hour)
 	return StageGateInput{
-		Now: sgNow,
+		Now:                 sgNow,
+		ObservationRequired: PricingGateObservationDefaultHours * time.Hour,
 		Facts: &StageGateFacts{
 			Config: StageGateConfig{GroupID: 7, Stage: PricingStageShadow, Revision: 3, StageChangedAt: &changed, UpdatedAt: changed},
 			Replay: &ReplayEvidence{
@@ -51,6 +52,59 @@ func TestEvaluateStageGate_PassesWhenEverythingHolds(t *testing.T) {
 	require.True(t, r.Replay.Present)
 	require.True(t, r.Replay.BindingCurrent)
 	require.True(t, r.Replay.ChannelConfigHashMatch)
+}
+
+func TestPricingGateObservationDefault(t *testing.T) {
+	require.Equal(t, 72, PricingGateObservationDefaultHours)
+	require.EqualValues(t, 72, EvaluateStageGate(sgPassing()).Observation.RequiredHours)
+}
+
+// 观察期配置成 1 小时：1 小时前开始的观察满足，59 分钟前的不满足；required_hours 与 eligible_at 跟随配置。
+func TestEvaluateStageGate_ConfiguredOneHour(t *testing.T) {
+	at := func(d time.Duration) StageGateInput {
+		in := sgPassing()
+		in.ObservationRequired = time.Hour
+		t0 := sgNow.Add(-d)
+		in.Facts.Config.StageChangedAt, in.Facts.Config.UpdatedAt = &t0, t0
+		return in
+	}
+	r := EvaluateStageGate(at(time.Hour))
+	require.True(t, r.Passed)
+	require.EqualValues(t, 1, r.Observation.RequiredHours)
+	require.Equal(t, sgNow, r.Observation.EligibleAt)
+
+	r = EvaluateStageGate(at(59 * time.Minute))
+	require.Equal(t, []string{ReasonPricingGateObservation}, sgCodes(r))
+	require.EqualValues(t, 1, r.Observation.RequiredHours)
+	require.Equal(t, sgNow.Add(time.Minute), r.Observation.EligibleAt)
+	require.Contains(t, r.Failures[0].Message, "1 required")
+}
+
+// 观察期配置成 0：时长条件视为满足，进程内翻译差异与回放条件照常检查。
+func TestEvaluateStageGate_ZeroObservationStillChecksInProcessAndReplay(t *testing.T) {
+	zero := func() StageGateInput {
+		in := sgPassing()
+		in.ObservationRequired = 0
+		t0 := sgNow.Add(-time.Minute)
+		in.Facts.Config.StageChangedAt, in.Facts.Config.UpdatedAt = &t0, t0
+		return in
+	}
+	r := EvaluateStageGate(zero())
+	require.True(t, r.Passed)
+	require.True(t, r.Observation.Satisfied)
+	require.EqualValues(t, 0, r.Observation.RequiredHours)
+
+	in := zero()
+	last := sgNow.Add(-30 * time.Second) // 晚于观察起点（1 分钟前）
+	in.Facts.Shadow.TranslationDiffsInProcess, in.Facts.Shadow.LastTranslationDiffAt = 1, &last
+	require.Equal(t, []string{ReasonPricingGateShadowDiffsInProcess}, sgCodes(EvaluateStageGate(in)))
+
+	in = zero()
+	in.Facts.Replay = nil
+	require.Equal(t, []string{ReasonPricingGateReplayMissing}, sgCodes(EvaluateStageGate(in)))
+	in = zero()
+	in.Facts.Replay.Passed = false
+	require.Equal(t, []string{ReasonPricingGateReplayFailed}, sgCodes(EvaluateStageGate(in)))
 }
 
 func TestEvaluateStageGate_Branches(t *testing.T) {

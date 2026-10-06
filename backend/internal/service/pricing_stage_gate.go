@@ -16,7 +16,7 @@ import (
 //
 // 闸门要同时满足（缺一不可）：
 //  1. 分组现在是 shadow；
-//  2. 影子观察不少于 72 小时，起点是「进入 shadow、分组配置最近一次变化、所属渠道最近一次保存」三者里最晚的那个
+//  2. 影子观察不少于配置的时长（pricing.gate_observation_hours，默认 72 小时，0 表示不要求观察时长），起点是「进入 shadow、分组配置最近一次变化、所属渠道最近一次保存」三者里最晚的那个
 //     （渠道改过，观察期重新计时）；这段时间里 translation 类差异为 0；
 //  3. 该分组最近一次回放（pricing-replay --record 写入）：通过（翻译差异为 0、没有回放错误、绑定稳定）、
 //     窗口不短于 30 天、结束时间不早于 30 天前、用的是实时派生的矩阵；
@@ -27,8 +27,10 @@ import (
 // 所以样本数只作为信息给出，回放才是硬条件。
 
 const (
-	// PricingGateObservation 影子观察的最短时长。
-	PricingGateObservation = 72 * time.Hour
+	// PricingGateObservationDefaultHours 影子观察最短时长的默认值（小时）；部署配置 pricing.gate_observation_hours 可改。
+	PricingGateObservationDefaultHours = 72
+	// PricingGateObservationMaxHours 影子观察最短时长的上限（小时）。
+	PricingGateObservationMaxHours = 720
 	// PricingGateReplayWindow 回放窗口的最短长度。
 	PricingGateReplayWindow = 30 * 24 * time.Hour
 	// PricingGateReplayMaxAge 回放窗口结束时间距现在的上限：太旧的回放不代表现在的流量形态。
@@ -57,6 +59,10 @@ const (
 	ReasonPricingStageChanged       = "PRICING_STAGE_CHANGED"
 	ReasonPricingStageNeedsApproval = "PRICING_STAGE_APPROVAL_REQUIRED"
 )
+
+// ReasonPricingGateExposureBlocked 切到 v2 之后白名单分组里会出现无价、0 元或通配符放行的模型（B1）。
+// 同样是 409：预览里作为闸门失败项（gate.failures），提交时作为错误原因；metadata.issues 列出「分组:模型:原因」。
+const ReasonPricingGateExposureBlocked = "PRICING_GATE_EXPOSURE_BLOCKED"
 
 // PriceWriteKindStageSwitch 审批记录的种类：阶段切换（shadow 到 v2）。
 const PriceWriteKindStageSwitch = "stage_switch"
@@ -143,6 +149,9 @@ func StageObservedSince(cfg StageGateConfig, ownerChannelUpdatedAt *time.Time) t
 type StageGateInput struct {
 	Facts *StageGateFacts
 	Now   time.Time
+	// ObservationRequired 影子观察的最短时长（来自部署配置）。0 表示不要求观察时长：
+	// 这一条视为满足，但「最近一次进程内翻译差异早于观察起点」照常检查。
+	ObservationRequired time.Duration
 	// CurrentDeriveRevision 与 CurrentChannelConfigHash 是「现在」按渠道当前配置派生的 revision 与渠道配置摘要。
 	CurrentDeriveRevision    string
 	CurrentChannelConfigHash string
@@ -215,9 +224,9 @@ func EvaluateStageGate(in StageGateInput) StageGateReport {
 	report.Observation = StageGateObservation{
 		Since:         since,
 		ObservedHours: observed.Hours(),
-		RequiredHours: PricingGateObservation.Hours(),
-		EligibleAt:    since.Add(PricingGateObservation),
-		Satisfied:     observed >= PricingGateObservation,
+		RequiredHours: in.ObservationRequired.Hours(),
+		EligibleAt:    since.Add(in.ObservationRequired),
+		Satisfied:     observed >= in.ObservationRequired,
 	}
 
 	if facts.Config.Stage != PricingStageShadow {
