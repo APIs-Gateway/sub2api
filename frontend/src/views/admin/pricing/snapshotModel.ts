@@ -32,6 +32,8 @@ export function isUpward(d: Direction | null): boolean {
 }
 
 /** 快照条目里会影响计费的数值字段：后端 LiteLLM 价格记录里键名带 cost 的都是（输入、输出、缓存读写、长上下文、priority、图片 token 价、按次价等）。 */
+const THRESHOLD_FIELD = 'long_context_input_token_threshold'
+
 function isPriceField(key: string): boolean {
   return key.includes('cost')
 }
@@ -54,6 +56,14 @@ export function entryDirection(e: SnapshotDiffEntry): Direction | null {
     const after = priceValue(e.new, k)
     if (after > before) up = true
     else if (after < before) down = true
+  }
+  // 长上下文门槛不带 cost 但影响计费：调低（更多请求按长上下文价计）= 涨价，调高 = 降价；
+  // 从无到有、从有到无都从严按涨价处理
+  const t0 = priceValue(e.old, THRESHOLD_FIELD)
+  const t1 = priceValue(e.new, THRESHOLD_FIELD)
+  if (t0 !== t1) {
+    if (t0 === 0 || t1 === 0 || t1 < t0) up = true
+    else down = true
   }
   return combine(up, down)
 }
@@ -95,9 +105,13 @@ export function otherChangedFieldCount(e: SnapshotDiffEntry): number {
  */
 export function effectiveDirection(c: EffectiveChange, entries: SnapshotDiffEntry[] = []): Direction {
   const d = pairDirection({ oldIn: c.old_input_per_mtok, oldOut: c.old_output_per_mtok, newIn: c.new_input_per_mtok, newOut: c.new_output_per_mtok })
-  if (d !== 'flat') return d
   const entry = entries.find((e) => e.model_key === c.model)
-  return (entry && entryDirection(entry)) || 'flat'
+  const ed = entry ? entryDirection(entry) : null
+  if (!ed || ed === 'flat') return d
+  // 输入输出和其它价格字段合起来看：输入降、缓存涨 = 有涨有跌
+  const up = isUpward(d) || isUpward(ed)
+  const down = d === 'down' || d === 'mixed' || ed === 'down' || ed === 'mixed'
+  return combine(up, down)
 }
 
 export type DiffFilter = 'all' | DiffTypeFilter

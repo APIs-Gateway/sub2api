@@ -67,6 +67,27 @@ describe('snapshotModel', () => {
     expect(effectiveDirection(c, [])).toBe('flat')
   })
 
+  it('长上下文门槛：调低、从无到有、从有到无都算涨价，调高算降价；会进「只看涨价」', () => {
+    const th = (o: number | undefined, n: number | undefined) =>
+      entry({ changed_fields: ['long_context_input_token_threshold'], old: { long_context_input_token_threshold: o } as never, new: { long_context_input_token_threshold: n } as never })
+    expect(entryDirection(th(272000, 128000))).toBe('up')
+    expect(entryDirection(th(undefined, 272000))).toBe('up')
+    expect(entryDirection(th(272000, undefined))).toBe('up')
+    expect(entryDirection(th(272000, 400000))).toBe('down')
+    expect(filterEntries([th(272000, 128000)], 'up', '')).toHaveLength(1)
+    expect(filterEntries([th(272000, 400000)], 'up', '')).toHaveLength(0)
+    // 门槛调低同时降价：有涨有跌，按涨价处理
+    const both = entry({ changed_fields: ['input_cost_per_token', 'long_context_input_token_threshold'], old: { input_cost_per_token: 2e-6, long_context_input_token_threshold: 272000 } as never, new: { input_cost_per_token: 1e-6, long_context_input_token_threshold: 128000 } as never })
+    expect(entryDirection(both)).toBe('mixed')
+  })
+
+  it('实际变价表：输入降、缓存涨显示有涨有跌，不是降价', () => {
+    const c = { model: 'm', old_missing: false, new_missing: false, old_input_per_mtok: 2, new_input_per_mtok: 1, old_output_per_mtok: 4, new_output_per_mtok: 4 }
+    const e = entry({ model_key: 'm', changed_fields: ['input_cost_per_token', 'cache_read_input_token_cost'], old: { input_cost_per_token: 2e-6, output_cost_per_token: 4e-6, cache_read_input_token_cost: 1e-7 }, new: { input_cost_per_token: 1e-6, output_cost_per_token: 4e-6, cache_read_input_token_cost: 2e-7 } })
+    expect(effectiveDirection(c, [e])).toBe('mixed')
+    expect(effectiveDirection(c, [])).toBe('down')
+  })
+
   it('涨跌幅看输入价，输入价为 0 时看输出价', () => {
     expect(entryPercent(entry({ old: { input_cost_per_token: 1e-6 }, new: { input_cost_per_token: 1.5e-6 } }))).toBeCloseTo(50)
     expect(entryPercent(entry({ old: { input_cost_per_token: 0, output_cost_per_token: 2e-6 }, new: { input_cost_per_token: 0, output_cost_per_token: 1e-6 } }))).toBeCloseTo(-50)

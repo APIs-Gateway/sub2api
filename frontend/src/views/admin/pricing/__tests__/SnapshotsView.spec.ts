@@ -187,6 +187,24 @@ describe('SnapshotsView', () => {
     expect(wrapper.find('[data-test="hold-cache-up"]').attributes('aria-pressed')).toBe('true')
   })
 
+  it('「搁置所有涨价项」把有涨有跌的项也搁置，按钮计数归零', async () => {
+    const mix = { model_key: 'mix-model', change_type: 'changed', changed_fields: ['input_cost_per_token', 'output_cost_per_token'], old: { input_cost_per_token: 2e-6, output_cost_per_token: 1e-6 }, new: { input_cost_per_token: 1e-6, output_cost_per_token: 2e-6 }, decision: 'approve' }
+    const p = plan()
+    p.entries.push(mix as never)
+    api.previewSnapshot.mockResolvedValue(p)
+    const { wrapper } = await mountView()
+    expect(wrapper.find('[data-test="hold-up"]').text()).toContain('2')
+    vi.useFakeTimers()
+    try {
+      await wrapper.find('[data-test="hold-up"]').trigger('click')
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(wrapper.find('[data-test="hold-mix-model"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('[data-test="hold-gpt-up"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('[data-test="hold-up"]').text()).toContain('0')
+  })
+
   it('先看确认框里的摘要，确认后带着 plan_hash 批准', async () => {
     const { wrapper, showSuccess } = await mountView()
     await wrapper.find('[data-test="submit-approval"]').trigger('click')

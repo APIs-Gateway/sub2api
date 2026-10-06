@@ -489,7 +489,7 @@ function approveAll() {
 function holdAllUp() {
   if (!plan.value) return
   const next = new Set(holds.value)
-  for (const e of plan.value.entries) if (entryDirection(e) === 'up') next.add(e.model_key)
+  for (const e of plan.value.entries) if (isUpward(entryDirection(e))) next.add(e.model_key)
   holds.value = next
   scheduleRecalc()
 }
