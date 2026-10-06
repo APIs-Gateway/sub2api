@@ -143,6 +143,8 @@ const (
 	runtimePricedTTL        = 30 * time.Second
 	runtimePricedMaxEntries = 4096
 	runtimePolicyTTL        = 15 * time.Second
+	runtimeFreeErrorTTL     = 2 * time.Second
+	runtimeFreeReadTimeout  = 3 * time.Second
 	runtimeLogInterval      = time.Minute
 	runtimeLogMaxKeys       = 1024
 )
@@ -154,8 +156,8 @@ type RuntimePriceInputs struct {
 	OfficialState func(model string) OfficialPriceState
 	// PricingSnapshotID 是当前生效的价格快照 id（auto 模式为 0），HasPrice 缓存键的一部分。
 	PricingSnapshotID int64
-	// ReadKnownFree 读取已知免费名单（billing_unpriced 观测用的同一份）；为 nil 按空名单。只在候选链无价时才会读，进程内缓存 15 秒。
-	ReadKnownFree func(ctx context.Context) []BillingKnownFreeEntry
+	// ReadKnownFree 读取已知免费名单（billing_unpriced 观测用的同一份）；为 nil 按空名单；出错时沿用上一次读到的名单。只在候选链无价时才会读，进程内缓存 15 秒。
+	ReadKnownFree func(ctx context.Context) ([]BillingKnownFreeEntry, error)
 	// ReadPolicy 读取 billing_unpriced_policy 的当前值；为 nil 按 observe。
 	ReadPolicy func(ctx context.Context) string
 }
@@ -180,7 +182,7 @@ type runtimePricingState struct {
 	policyAt time.Time
 	policyOK bool
 	free     []BillingKnownFreeEntry
-	freeAt   time.Time
+	freeUntil time.Time
 	freeOK   bool
 	logged   map[string]time.Time
 
@@ -247,22 +249,31 @@ func (r *runtimePricingState) policyValue(ctx context.Context, now time.Time, re
 	return value
 }
 
-// knownFreeList 返回已知免费名单（缓存 15 秒，读取方为 nil 按空名单）。名单读失败时读取方返回空，空名单是安全的一侧（只会多观测）。
-func (r *runtimePricingState) knownFreeList(ctx context.Context, now time.Time, read func(context.Context) []BillingKnownFreeEntry) []BillingKnownFreeEntry {
+// knownFreeList 返回已知免费名单（成功读到后缓存 15 秒，读取方为 nil 按空名单）。
+//   - 读取用独立的带超时 ctx，不用请求自己的 ctx：客户端在读名单时断开，不会让空名单被缓存给所有请求；
+//   - 读取出错（数据库抖动、名单 JSON 写坏）时保留上一次成功读到的名单，只缓存 runtimeFreeErrorTTL 后重试；冷启动就出错则是空名单。
+//     注意：空名单对 block 模式是多拦（名单里的免费模型会被当成无价），对 observe 模式才是多观测，所以不能把一次抖动缓存 15 秒。
+func (r *runtimePricingState) knownFreeList(now time.Time, read func(context.Context) ([]BillingKnownFreeEntry, error)) []BillingKnownFreeEntry {
 	if read == nil {
 		return nil
 	}
 	r.mu.Lock()
-	if r.freeOK && now.Sub(r.freeAt) < runtimePolicyTTL {
+	if r.freeOK && now.Before(r.freeUntil) {
 		v := r.free
 		r.mu.Unlock()
 		return v
 	}
 	r.mu.Unlock()
-	list := read(ctx)
+	ctx, cancel := context.WithTimeout(context.Background(), runtimeFreeReadTimeout)
+	list, err := read(ctx)
+	cancel()
 	r.mu.Lock()
-	r.free, r.freeAt, r.freeOK = list, now, true
-	r.mu.Unlock()
+	defer r.mu.Unlock()
+	if err != nil {
+		r.freeOK, r.freeUntil = true, now.Add(runtimeFreeErrorTTL)
+		return r.free // 沿用上一次的名单；冷启动时为空
+	}
+	r.free, r.freeOK, r.freeUntil = list, true, now.Add(runtimePolicyTTL)
 	return list
 }
 
@@ -298,7 +309,7 @@ func (s *stagedPolicy) RuntimeAccess(ctx context.Context, groupID int64, candida
 	}
 
 	// 已知免费名单里的（分组、模型）是有意免费：不算无价，不记观测，也不拦（与保存时校验、unpriced_billing_rows 同一份名单）。
-	if free := s.runtime.knownFreeList(ctx, now, in.ReadKnownFree); len(free) > 0 {
+	if free := s.runtime.knownFreeList(now, in.ReadKnownFree); len(free) > 0 {
 		for _, candidate := range candidates {
 			if billingKnownFreeMatches(free, groupID, candidate) {
 				return QuoteAccess{OK: true}

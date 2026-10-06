@@ -43,12 +43,20 @@ func (s *SettingService) BillingUnpricedPolicy(ctx context.Context) string {
 	return BillingUnpricedPolicyObserve
 }
 
-// BillingKnownFreeList 读取已知免费名单；读取失败或写坏按空名单。调用方自己缓存（stagedPolicy 缓存 15 秒）。
-func (s *SettingService) BillingKnownFreeList(ctx context.Context) []BillingKnownFreeEntry {
-	if s == nil {
-		return nil
+// BillingKnownFreeList 读取已知免费名单。与 loadBillingKnownFreeList 的区别：读取失败或内容写坏时返回错误，
+// 由调用方（stagedPolicy 的进程内缓存）决定保留上一次的名单。键不存在是空名单，不是错误。
+func (s *SettingService) BillingKnownFreeList(ctx context.Context) ([]BillingKnownFreeEntry, error) {
+	if s == nil || s.settingRepo == nil {
+		return nil, nil
 	}
-	return loadBillingKnownFreeList(ctx, s.settingRepo)
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyBillingKnownFreeList)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return parseBillingKnownFreeList(raw)
 }
 
 // NormalizeBillingUnpricedPolicy 校验并规范化 billing_unpriced_policy 的写入值（去首尾空白）；只认两个取值，其余（含空串）不合法。

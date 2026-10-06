@@ -7,7 +7,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -189,9 +191,9 @@ func TestStagedPolicy_RuntimeAccessHonorsKnownFreeList(t *testing.T) {
 	reads := 0
 	in := RuntimePriceInputs{
 		ReadPolicy: func(context.Context) string { return BillingUnpricedPolicyBlockAllowlist },
-		ReadKnownFree: func(context.Context) []BillingKnownFreeEntry {
+		ReadKnownFree: func(context.Context) ([]BillingKnownFreeEntry, error) {
 			reads++
-			return []BillingKnownFreeEntry{{Model: "Free-Model"}, {GroupID: 2, Model: "other-group-free"}}
+			return []BillingKnownFreeEntry{{Model: "Free-Model"}, {GroupID: 2, Model: "other-group-free"}}, nil
 		},
 	}
 	require.Equal(t, QuoteAccess{OK: true}, f.staged.RuntimeAccess(ctx, 1, []string{"free-model"}, in))
@@ -235,4 +237,77 @@ func TestUnpricedAllowlist_KnownFreeModelIsNotBlockedAtTheGateway(t *testing.T) 
 	require.False(t, openai.checkChannelPricingRestriction(ctx, &gid, "no-such-free-xyz"))
 	require.False(t, gw.checkChannelPricingRestriction(ctx, &gid, "no-such-free-xyz"))
 	require.True(t, openai.checkChannelPricingRestriction(ctx, &gid, "no-such-model-xyz"), "control: not on the list")
+}
+
+// 名单读取：出错保留上一次的名单，只缓存很短；不用请求自己的 ctx；冷启动出错只缓存很短。
+func TestStagedPolicy_RuntimeKnownFreeListReadErrors(t *testing.T) {
+	ctx := context.Background()
+	f := newSPFixture(t, v2Snap(allowlistConfig, 1, mpInherit("free-model")))
+	reads, fail := 0, false
+	var sawCanceledCtx bool
+	in := RuntimePriceInputs{
+		ReadPolicy: func(context.Context) string { return BillingUnpricedPolicyBlockAllowlist },
+		ReadKnownFree: func(c context.Context) ([]BillingKnownFreeEntry, error) {
+			reads++
+			if c.Err() != nil {
+				sawCanceledCtx = true
+			}
+			if fail {
+				return nil, errors.New("db down")
+			}
+			return []BillingKnownFreeEntry{{Model: "free-model"}}, nil
+		},
+	}
+	// 冷启动读失败：空名单，只缓存 runtimeFreeErrorTTL，之后重试成功。
+	fail = true
+	require.False(t, f.staged.RuntimeAccess(ctx, 1, []string{"free-model"}, in).OK)
+	require.Equal(t, 1, reads)
+	f.clock.Advance(time.Second)
+	require.False(t, f.staged.RuntimeAccess(ctx, 1, []string{"free-model"}, in).OK)
+	require.Equal(t, 1, reads, "negative cache holds for a moment")
+	fail = false
+	f.clock.Advance(runtimeFreeErrorTTL)
+	require.True(t, f.staged.RuntimeAccess(ctx, 1, []string{"free-model"}, in).OK)
+	require.Equal(t, 2, reads)
+
+	// 已有名单后再读失败：保留上一次的名单。
+	fail = true
+	f.clock.Advance(runtimePolicyTTL + time.Second)
+	require.True(t, f.staged.RuntimeAccess(ctx, 1, []string{"free-model"}, in).OK, "keeps the last good list")
+	require.Equal(t, 3, reads)
+	f.clock.Advance(time.Second)
+	require.True(t, f.staged.RuntimeAccess(ctx, 1, []string{"free-model"}, in).OK)
+	require.Equal(t, 3, reads, "error result is cached only briefly, not re-read per request")
+
+	// 请求自己的 ctx 已取消，也不影响读名单。
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	fail = false
+	f.clock.Advance(runtimePolicyTTL + time.Second)
+	require.True(t, f.staged.RuntimeAccess(canceled, 1, []string{"free-model"}, in).OK)
+	require.False(t, sawCanceledCtx, "the list is read with its own context")
+}
+
+// 原始请求模型 A 经分组映射成 B：OpenAI 侧计费链含 A，所以 B 和上游模型无价、A 有价时不拦；
+// Anthropic 侧计费链是映射后的 B 与上游模型，A 不算。
+func TestUnpricedAllowlist_UpstreamSourceWithGroupMapping(t *testing.T) {
+	ctx := context.Background()
+	oaAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	gwAccount := &Account{Platform: PlatformAnthropic, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"model_mapping": map[string]any{"model-a-xyz": "model-b-xyz"}}}
+	f := newSPFixture(t, v2Snap(func(c *MatrixGroupConfig) {
+		c.AccessMode = MatrixAccessAllowlist
+		c.BillingModelSource = mpS(BillingModelSourceUpstream)
+		c.ModelMapping = []MatrixMappingEntry{{Src: "model-a-xyz", Dst: "model-b-xyz"}}
+	}, 1, mpCustom("model-a-xyz", 1e-6), mpInherit("model-b-xyz")))
+	settings := NewSettingService(&brSettingRepo{value: BillingUnpricedPolicyBlockAllowlist}, nil)
+	bs := newTestBillingService()
+	openai := &OpenAIGatewayService{billingService: bs, policyOverride: f.staged, settingService: settings}
+	gw := &GatewayService{billingService: bs, policyOverride: f.staged, settingService: settings}
+
+	// OpenAI：调度收到 A，forward model 覆盖成 B；A 有价。
+	fwd := context.WithValue(ctx, openAIForwardModelContextKey{}, openAIForwardModel{model: "model-b-xyz"})
+	require.False(t, openai.isUpstreamModelRestrictedByChannel(fwd, 1, oaAccount, "model-a-xyz", false), "A is in the billing chain and priced")
+	// Anthropic：计费用 B，A 的价格不会被用到，所以按 B 拦。
+	require.True(t, gw.isUpstreamModelRestrictedByChannel(ctx, 1, gwAccount, "model-a-xyz"), "A is never billed on this path")
 }
