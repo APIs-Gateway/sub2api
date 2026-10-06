@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,11 +36,13 @@ import (
 // 默认 dry-run：会话级只读（default_transaction_read_only=on），实时派生并与库里现状对比，按分组打印摘要。
 // --apply 复用渠道保存钩子的同一套派生与落库（PricingDerivationService.RefreshChannel / RefreshGroups），
 // 每个渠道一个事务；不改任何分组的 pricing_stage，不碰 channel_model_pricing 与 groups。
-// 官方价事实读本地价格文件（与 pricing-replay 同一套解析），服务里的内存价格数据以后若有差异，
-// 下一次渠道保存会按那时的事实重新派生。
+// 官方价按服务进程同样的规则取（loadServicePricing，与 pricing-replay 共用）：pricing_snapshot_mode 为 pinned 时
+// 读生效的价格快照，否则读 <data_dir>/model_pricing.json；取价失败拒绝运行，不静默退回文件。
+// 并发：落库事务开头取咨询锁，与渠道保存钩子互斥；每个渠道落库后再实时重新派生核对，不一致重跑一次，
+// 仍不一致记为失败（非零退出）。全部落库后发一次与服务相同的 channel_cache_updated 通知，让各实例刷新分组快照缓存。
 
 const pricingMatrixUsage = "usage: pricing-matrix derive [--apply] [--channel ID | --group ID] " +
-	"[--pricing-file PATH] [--channel-timeout 2m] [--statement-timeout 60s] [--lock-timeout 10s]"
+	"[--pricing-file PATH (dry-run only)] [--channel-timeout 2m] [--statement-timeout 60s] [--lock-timeout 10s]"
 
 // pricingMatrixDeriveArgs `pricing-matrix derive` 的参数。
 type pricingMatrixDeriveArgs struct {
@@ -59,7 +62,7 @@ func parsePricingMatrixDeriveArgs(args []string, errOut io.Writer) (pricingMatri
 	apply := fs.Bool("apply", false, "write the derived rows (default is a read-only dry-run)")
 	channel := fs.Int64("channel", 0, "only this channel id (default: every enabled channel)")
 	group := fs.Int64("group", 0, "only this group id")
-	pricingFile := fs.String("pricing-file", "", "local LiteLLM price file (default: <pricing.data_dir>/model_pricing.json, then the fallback file)")
+	pricingFile := fs.String("pricing-file", "", "local LiteLLM price file, dry-run only (default: the service's source: the active snapshot when pricing is pinned, else <pricing.data_dir>/model_pricing.json)")
 	channelTimeout := fs.Duration("channel-timeout", 2*time.Minute, "timeout of one channel (one transaction)")
 	stmt := fs.Duration("statement-timeout", 60*time.Second, "session statement_timeout")
 	lock := fs.Duration("lock-timeout", 10*time.Second, "session lock_timeout")
@@ -83,6 +86,9 @@ func parsePricingMatrixDeriveArgs(args []string, errOut io.Writer) (pricingMatri
 	}
 	if *lock <= 0 || *lock > time.Minute {
 		return a, errors.New("--lock-timeout must be positive and at most 1m")
+	}
+	if *apply && strings.TrimSpace(*pricingFile) != "" {
+		return a, errors.New("--pricing-file cannot be combined with --apply: apply must use the same price source as the service")
 	}
 	a.apply, a.channelID, a.groupID, a.pricingFile = *apply, *channel, *group, *pricingFile
 	a.channelTimeout, a.statementTimeout, a.lockTimeout = *channelTimeout, *stmt, *lock
@@ -130,13 +136,10 @@ func runPricingMatrixCommand(args []string, out io.Writer) error {
 	defer func() { _ = db.Close() }()
 	db.SetMaxOpenConns(2)
 
-	pricingFile, err := resolvePricingReplayFile(a.pricingFile, cfg)
+	// 与服务进程同一套取价规则；apply 不允许退到内置回退文件。
+	pricingSvc, pricingInfo, err := loadServicePricing(ctx, db, cfg, a.pricingFile, !a.apply)
 	if err != nil {
 		return err
-	}
-	pricingSvc := service.NewPricingService(cfg, nil)
-	if _, err := pricingSvc.LoadOfflinePricing(pricingFile); err != nil {
-		return fmt.Errorf("load price file: %w", err)
 	}
 	billing := service.NewBillingService(cfg, pricingSvc)
 
@@ -147,19 +150,25 @@ func runPricingMatrixCommand(args []string, out io.Writer) error {
 	if a.apply {
 		mode = service.PricingDeriveModeApply
 	}
-	_, _ = fmt.Fprintf(out, "pricing-matrix derive db=%s mode=%s channel=%d group=%d pricing_file=%s\n",
-		cfg.Database.DBName, mode, a.channelID, a.groupID, pricingFile)
+	_, _ = fmt.Fprintf(out, "pricing-matrix derive db=%s mode=%s channel=%d group=%d %s\n",
+		cfg.Database.DBName, mode, a.channelID, a.groupID, describePricingSource(pricingInfo))
 
 	report, err := deriver.DeriveBatch(ctx, service.PricingDeriveBatchOptions{
 		ChannelID: a.channelID, GroupID: a.groupID, Apply: a.apply, ChannelTimeout: a.channelTimeout,
 	})
 	if err != nil {
 		if report != nil {
-			printPricingDeriveReport(out, report, cfg.Database.DBName)
+			printPricingDeriveReport(out, report, cfg.Database.DBName, pricingInfo)
+			if shouldNotifyChannelCache(report) {
+				notifyChannelCacheUpdated(context.WithoutCancel(ctx), out, newChannelCacheNotifier(cfg))
+			}
 		}
 		return err
 	}
-	printPricingDeriveReport(out, report, cfg.Database.DBName)
+	if shouldNotifyChannelCache(report) {
+		notifyChannelCacheUpdated(ctx, out, newChannelCacheNotifier(cfg))
+	}
+	printPricingDeriveReport(out, report, cfg.Database.DBName, pricingInfo)
 	if len(report.Failures) > 0 {
 		return fmt.Errorf("%d channel(s) failed; the others were processed", len(report.Failures))
 	}
@@ -168,15 +177,58 @@ func runPricingMatrixCommand(args []string, out io.Writer) error {
 
 // pricingDeriveMachineLine 输出的最后一行（一行 JSON）。
 type pricingDeriveMachineLine struct {
-	Command  string                         `json:"command"`
-	Database string                         `json:"database"`
-	Mode     string                         `json:"mode"`
-	Totals   service.PricingDeriveTotals    `json:"totals"`
-	Failures []service.PricingDeriveFailure `json:"failures"`
+	Command  string `json:"command"`
+	Database string `json:"database"`
+	Mode     string `json:"mode"`
+	// PricingSource 是 snapshot 或 file；SnapshotID 只在快照来源时有值。
+	PricingSource string                            `json:"pricing_source"`
+	SnapshotID    int64                             `json:"pricing_snapshot_id,omitempty"`
+	PricingSHA256 string                            `json:"pricing_data_sha256"`
+	Totals        service.PricingDeriveTotals       `json:"totals"`
+	Failures      []service.PricingDeriveFailure    `json:"failures"`
+	Stale         []service.PricingDeriveStaleGroup `json:"stale_groups"`
+}
+
+// shouldNotifyChannelCache apply 写过东西（或有渠道失败、写入状态不确定）时才需要让各实例刷新缓存。
+func shouldNotifyChannelCache(r *service.PricingDeriveBatchReport) bool {
+	if r == nil || r.Mode != service.PricingDeriveModeApply {
+		return false
+	}
+	if len(r.Failures) > 0 {
+		return true
+	}
+	for _, g := range r.Groups {
+		if g.Applied && g.Status == service.PricingDeriveStatusChanged {
+			return true
+		}
+	}
+	return false
+}
+
+// newChannelCacheNotifier 与服务同一个发布函数（Redis channel_cache_updated）；Redis 没配置时返回 nil。
+func newChannelCacheNotifier(cfg *config.Config) service.ChannelCachePubSub {
+	return repository.NewChannelCache(repository.InitRedis(cfg))
+}
+
+// notifyChannelCacheUpdated 整次运行发一次通知，各实例据此清掉本进程的渠道缓存与分组快照缓存。
+// 失败只打警告，不影响退出码：服务端靠快照 TTL（约 60 秒）也会收敛。
+func notifyChannelCacheUpdated(ctx context.Context, out io.Writer, notifier service.ChannelCachePubSub) {
+	const warning = "warning: could not publish channel_cache_updated (%v); instances converge within about 60s via the snapshot TTL, check shadow stats after a minute\n"
+	if notifier == nil {
+		_, _ = fmt.Fprintf(out, warning, "redis is not configured")
+		return
+	}
+	nctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := notifier.NotifyUpdate(nctx); err != nil {
+		_, _ = fmt.Fprintf(out, warning, err)
+		return
+	}
+	_, _ = fmt.Fprintln(out, "published channel_cache_updated: instances refresh their group snapshot caches")
 }
 
 // printPricingDeriveReport 按分组打印摘要，最后一行是机器可读的 JSON 汇总。
-func printPricingDeriveReport(out io.Writer, r *service.PricingDeriveBatchReport, database string) {
+func printPricingDeriveReport(out io.Writer, r *service.PricingDeriveBatchReport, database string, pricing service.PricingDataInfo) {
 	for _, g := range r.Groups {
 		orphan := ""
 		if g.Orphan {
@@ -201,13 +253,20 @@ func printPricingDeriveReport(out io.Writer, r *service.PricingDeriveBatchReport
 	for _, f := range r.Failures {
 		_, _ = fmt.Fprintf(out, "FAILED channel=%d group=%d: %s\n", f.ChannelID, f.GroupID, f.Error)
 	}
+	for _, st := range r.Stale {
+		_, _ = fmt.Fprintf(out, "stale: channel=%d group=%d reason=%s (derived rows are left as they are; not cleaned)\n", st.ChannelID, st.GroupID, st.Reason)
+	}
 	t := r.Totals
-	_, _ = fmt.Fprintf(out, "totals: channels=%d (inactive skipped %d) groups=%d changed=%d unchanged=%d skipped_v2=%d failures=%d\n",
-		t.Channels, t.ChannelsInactive, t.Groups, t.GroupsChanged, t.GroupsUnchanged, t.GroupsSkipped, t.Failures)
+	_, _ = fmt.Fprintf(out, "totals: channels=%d (inactive skipped %d) groups=%d changed=%d unchanged=%d skipped_v2=%d stale_channel_groups=%d failures=%d\n",
+		t.Channels, t.ChannelsInactive, t.Groups, t.GroupsChanged, t.GroupsUnchanged, t.GroupsSkipped, t.GroupsStaleChannel, t.Failures)
 	if r.Mode == service.PricingDeriveModeDryRun {
 		_, _ = fmt.Fprintln(out, "dry-run: nothing was written; add --apply to write")
 	}
-	line := pricingDeriveMachineLine{Command: "pricing-matrix derive", Database: database, Mode: r.Mode, Totals: r.Totals, Failures: r.Failures}
+	line := pricingDeriveMachineLine{
+		Command: "pricing-matrix derive", Database: database, Mode: r.Mode,
+		PricingSource: pricing.Source, SnapshotID: pricing.SnapshotID, PricingSHA256: pricing.SHA256,
+		Totals: r.Totals, Failures: r.Failures, Stale: r.Stale,
+	}
 	raw, err := json.Marshal(line)
 	if err != nil {
 		raw = []byte(fmt.Sprintf(`{"command":"pricing-matrix derive","error":%q}`, err.Error()))

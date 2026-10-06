@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -81,22 +83,30 @@ func TestPrintPricingDeriveReport_LastLineIsJSON(t *testing.T) {
 			Notes: []service.DerivationNote{{Level: service.DerivationNoteWarn, Code: "x", Model: "m", Message: "msg"}},
 		}},
 		Failures: []service.PricingDeriveFailure{},
-		Totals:   service.PricingDeriveTotals{Channels: 1, Groups: 1, GroupsChanged: 1, CellsNew: 2},
+		Stale:    []service.PricingDeriveStaleGroup{{ChannelID: 2, GroupID: 20, Reason: service.PricingDeriveStaleDisabled}},
+		Totals:   service.PricingDeriveTotals{Channels: 1, Groups: 1, GroupsChanged: 1, CellsNew: 2, GroupsStaleChannel: 1},
 	}
 	var out bytes.Buffer
-	printPricingDeriveReport(&out, r, "db1")
+	printPricingDeriveReport(&out, r, "db1", service.PricingDataInfo{Source: service.PricingSourceSnapshot, SnapshotID: 7, SHA256: "abc"})
 	text := out.String()
 	require.Contains(t, text, "group=10")
 	require.Contains(t, text, "warn: x")
+	require.Contains(t, text, "stale: channel=2 group=20 reason=channel_disabled")
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	var parsed struct {
 		Command  string `json:"command"`
 		Database string `json:"database"`
 		Mode     string `json:"mode"`
 		Totals   struct {
-			Groups   int `json:"groups"`
-			CellsNew int `json:"cells_new"`
+			Groups     int `json:"groups"`
+			CellsNew   int `json:"cells_new"`
+			StaleCount int `json:"groups_stale_channel"`
 		} `json:"totals"`
+		PricingSource string `json:"pricing_source"`
+		SnapshotID    int64  `json:"pricing_snapshot_id"`
+		Stale         []struct {
+			GroupID int64 `json:"group_id"`
+		} `json:"stale_groups"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &parsed))
 	require.Equal(t, "pricing-matrix derive", parsed.Command)
@@ -104,4 +114,57 @@ func TestPrintPricingDeriveReport_LastLineIsJSON(t *testing.T) {
 	require.Equal(t, "dry-run", parsed.Mode)
 	require.Equal(t, 1, parsed.Totals.Groups)
 	require.Equal(t, 2, parsed.Totals.CellsNew)
+	require.Equal(t, 1, parsed.Totals.StaleCount)
+	require.Equal(t, "snapshot", parsed.PricingSource)
+	require.Equal(t, int64(7), parsed.SnapshotID)
+	require.Len(t, parsed.Stale, 1)
+}
+
+func TestParsePricingMatrixDeriveArgs_ApplyRejectsPricingFile(t *testing.T) {
+	var errOut bytes.Buffer
+	_, err := parsePricingMatrixDeriveArgs([]string{"--apply", "--pricing-file", "p.json"}, &errOut)
+	require.ErrorContains(t, err, "--apply")
+	_, err = parsePricingMatrixDeriveArgs([]string{"--pricing-file", "p.json"}, &errOut)
+	require.NoError(t, err, "dry-run 可以用文件覆盖")
+}
+
+type fakeCacheNotifier struct {
+	err   error
+	calls int
+}
+
+func (f *fakeCacheNotifier) NotifyUpdate(context.Context) error       { f.calls++; return f.err }
+func (f *fakeCacheNotifier) SubscribeUpdates(context.Context, func()) {}
+
+func TestNotifyChannelCacheUpdated(t *testing.T) {
+	var out bytes.Buffer
+	ok := &fakeCacheNotifier{}
+	notifyChannelCacheUpdated(context.Background(), &out, ok)
+	require.Equal(t, 1, ok.calls)
+	require.Contains(t, out.String(), "published channel_cache_updated")
+	require.NotContains(t, out.String(), "warning")
+
+	out.Reset()
+	notifyChannelCacheUpdated(context.Background(), &out, &fakeCacheNotifier{err: errors.New("redis down")})
+	require.Contains(t, out.String(), "warning")
+	require.Contains(t, out.String(), "redis down")
+
+	out.Reset()
+	notifyChannelCacheUpdated(context.Background(), &out, nil)
+	require.Contains(t, out.String(), "warning")
+}
+
+func TestShouldNotifyChannelCache(t *testing.T) {
+	applied := func(status string, applied bool) service.PricingDeriveGroupSummary {
+		return service.PricingDeriveGroupSummary{Status: status, Applied: applied}
+	}
+	require.False(t, shouldNotifyChannelCache(nil))
+	require.False(t, shouldNotifyChannelCache(&service.PricingDeriveBatchReport{
+		Mode: service.PricingDeriveModeDryRun, Groups: []service.PricingDeriveGroupSummary{applied(service.PricingDeriveStatusChanged, false)}}), "dry-run 不通知")
+	require.False(t, shouldNotifyChannelCache(&service.PricingDeriveBatchReport{
+		Mode: service.PricingDeriveModeApply, Groups: []service.PricingDeriveGroupSummary{applied(service.PricingDeriveStatusUnchanged, true)}}), "没写任何东西不通知")
+	require.True(t, shouldNotifyChannelCache(&service.PricingDeriveBatchReport{
+		Mode: service.PricingDeriveModeApply, Groups: []service.PricingDeriveGroupSummary{applied(service.PricingDeriveStatusChanged, true)}}))
+	require.True(t, shouldNotifyChannelCache(&service.PricingDeriveBatchReport{
+		Mode: service.PricingDeriveModeApply, Failures: []service.PricingDeriveFailure{{ChannelID: 1, Error: "x"}}}), "有失败时写入状态不确定，也通知")
 }

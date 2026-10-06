@@ -247,3 +247,114 @@ func TestPricingDeriveBatch_FailureIsReportedAndOthersContinue(t *testing.T) {
 	require.Empty(t, r.Groups)
 	require.Empty(t, e.matrix.state)
 }
+
+// ---- 落库后核对（B1）----
+
+func TestPricingDeriveBatch_ApplyVerifiesAndRetriesWhenChannelChangedMidway(t *testing.T) {
+	e := mxBatchEnv(mxOpenAIGroups(10)...)
+	e.setChannel(mxChannelWithRule(1, 1e-6, 10))
+	// 第一次落库前渠道被别处改成 v2：事务外派生的是 v1，落进库的是旧派生。
+	calls := 0
+	e.matrix.beforeRead = func() {
+		calls++
+		if calls == 1 {
+			e.setChannel(mxChannelWithRule(1, 2e-6, 10))
+		}
+	}
+
+	r, err := e.svc.DeriveBatch(context.Background(), PricingDeriveBatchOptions{Apply: true})
+	require.NoError(t, err)
+	require.Empty(t, r.Failures)
+	require.Equal(t, [][]int64{{10}, {10}}, e.matrix.applyCalls, "核对不一致后重跑一次")
+	g := mxBatchGroup(t, r, 10)
+	require.True(t, g.Applied)
+	var retryNote bool
+	for _, n := range g.Notes {
+		retryNote = retryNote || n.Code == "verify_retry"
+	}
+	require.True(t, retryNote, "重跑过要留备注")
+
+	// 库里最终与实时派生一致。
+	again, err := e.svc.DeriveBatch(context.Background(), PricingDeriveBatchOptions{})
+	require.NoError(t, err)
+	require.Zero(t, again.Totals.GroupsChanged)
+}
+
+func TestPricingDeriveBatch_ApplyFailsWhenVerificationNeverConverges(t *testing.T) {
+	e := mxBatchEnv(mxOpenAIGroups(10, 20)...)
+	e.setChannel(mxChannelWithRule(1, 1e-6, 10))
+	e.setChannel(mxChannelWithRule(2, 2e-6, 20))
+	// 渠道 1 每次落库前都被改动，永远追不上；渠道 2 不受影响。
+	price := 3e-6
+	e.matrix.beforeRead = func() {
+		price += 1e-6
+		if len(e.matrix.applyCalls) <= 2 {
+			e.setChannel(mxChannelWithRule(1, price, 10))
+		}
+	}
+
+	r, err := e.svc.DeriveBatch(context.Background(), PricingDeriveBatchOptions{Apply: true})
+	require.NoError(t, err)
+	require.Len(t, r.Failures, 1)
+	require.Equal(t, int64(1), r.Failures[0].ChannelID)
+	require.Contains(t, r.Failures[0].Error, "still differ")
+	require.Equal(t, 1, r.Totals.Failures)
+	require.Equal(t, 2, len(e.matrix.applyCalls)-1, "渠道 1 共尝试两次，之后继续处理渠道 2")
+	require.NotNil(t, e.matrix.state[20].Config, "其余渠道照常处理")
+}
+
+func TestPricingDeriveBatch_DryRunDoesNotVerifyOrRetry(t *testing.T) {
+	e := mxBatchEnv(mxOpenAIGroups(10)...)
+	e.setChannel(mxChannelWithRule(1, 1e-6, 10))
+	r, err := e.svc.DeriveBatch(context.Background(), PricingDeriveBatchOptions{})
+	require.NoError(t, err)
+	require.Empty(t, r.Failures)
+	require.Empty(t, e.matrix.applyCalls)
+}
+
+// ---- 停用 / 已删除渠道的残留分组 ----
+
+func TestPricingDeriveBatch_ListsGroupsWithDerivedRowsOfInactiveOrMissingChannels(t *testing.T) {
+	e := mxBatchEnv(mxOpenAIGroups(10, 20, 30)...)
+	e.setChannel(mxChannelWithRule(1, 1e-6, 10))
+	e.setChannel(mxChannelWithRule(2, 2e-6, 20))
+	e.setChannel(mxChannelWithRule(3, 3e-6, 30))
+	_, err := e.svc.DeriveBatch(context.Background(), PricingDeriveBatchOptions{Apply: true})
+	require.NoError(t, err)
+
+	// 渠道 2 停用；渠道 3 被删除；两处的钩子都没跑（残留）。
+	off := mxChannelWithRule(2, 2e-6, 20)
+	off.Status = StatusDisabled
+	e.channels[2] = off.Clone()
+	delete(e.channels, 3)
+	before := map[int64]GroupStateSnapshot{}
+	for id, st := range e.matrix.state {
+		before[id] = st
+	}
+
+	r, err := e.svc.DeriveBatch(context.Background(), PricingDeriveBatchOptions{Apply: true})
+	require.NoError(t, err)
+	require.Equal(t, []PricingDeriveStaleGroup{
+		{ChannelID: 2, GroupID: 20, Reason: PricingDeriveStaleDisabled},
+		{ChannelID: 3, GroupID: 30, Reason: PricingDeriveStaleMissing},
+	}, r.Stale)
+	require.Equal(t, 2, r.Totals.GroupsStaleChannel)
+	require.Equal(t, before[20], e.matrix.state[20], "只列不清")
+	require.Equal(t, before[30], e.matrix.state[30], "只列不清")
+}
+
+func TestPricingDeriveBatch_StaleListOnlyInFullMode(t *testing.T) {
+	e := mxBatchEnv(mxOpenAIGroups(10, 20)...)
+	e.setChannel(mxChannelWithRule(1, 1e-6, 10))
+	e.setChannel(mxChannelWithRule(2, 2e-6, 20))
+	_, err := e.svc.DeriveBatch(context.Background(), PricingDeriveBatchOptions{Apply: true})
+	require.NoError(t, err)
+	delete(e.channels, 2)
+
+	r, err := e.svc.DeriveBatch(context.Background(), PricingDeriveBatchOptions{ChannelID: 1})
+	require.NoError(t, err)
+	require.Empty(t, r.Stale)
+	r, err = e.svc.DeriveBatch(context.Background(), PricingDeriveBatchOptions{})
+	require.NoError(t, err)
+	require.Len(t, r.Stale, 1)
+}

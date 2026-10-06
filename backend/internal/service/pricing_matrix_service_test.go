@@ -71,6 +71,29 @@ func (r *mxFakeMatrixRepo) ListDerivedRuleGroupIDs(_ context.Context, channelID 
 	return out, nil
 }
 
+func (r *mxFakeMatrixRepo) ListDerivedRuleChannels(context.Context) (map[int64][]int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ruleErr != nil {
+		return nil, r.ruleErr
+	}
+	seen := map[[2]int64]bool{}
+	out := map[int64][]int64{}
+	for gid, snap := range r.state {
+		for _, rule := range snap.Rules {
+			k := [2]int64{rule.SourceChannelID, gid}
+			if rule.Source == MatrixSourceLegacyDerived && !seen[k] {
+				seen[k] = true
+				out[rule.SourceChannelID] = append(out[rule.SourceChannelID], gid)
+			}
+		}
+	}
+	for _, ids := range out {
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	}
+	return out, nil
+}
+
 func (r *mxFakeMatrixRepo) LoadGroupSnapshots(_ context.Context, ids []int64) (map[int64]GroupStateSnapshot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

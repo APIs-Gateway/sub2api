@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -17,6 +18,10 @@ import (
 //     （v2 整体跳过；其余阶段保留 pricing_stage，只动 legacy_derived 来源的行）。
 //
 // 它不改任何分组的 pricing_stage，不碰 channel_model_pricing 与 groups。
+//
+// 并发：apply 与渠道保存钩子是两个进程里的两个写入方。ApplyPlans 开头的咨询锁把落库串行化；
+// 但派生发生在事务之外（读的是当时的渠道），所以每个渠道落库后再做一次只读核对：实时重新派生，
+// 与库里的结果比较，还有差异就重跑一次，仍然不一致记为该渠道失败（进程非零退出）。
 
 // 批量派生的模式。
 const (
@@ -40,6 +45,15 @@ const (
 )
 
 const noteCellBlockedByNonDerived = "cell_blocked_by_non_derived"
+
+// pricingDeriveVerifyAttempts 每个渠道 apply 的最多次数（含第一次）：核对不一致时重跑一次。
+const pricingDeriveVerifyAttempts = 2
+
+// 渠道不再参与派生的原因（PricingDeriveStaleGroup.Reason）。
+const (
+	PricingDeriveStaleDisabled = "channel_disabled"
+	PricingDeriveStaleMissing  = "channel_missing"
+)
 
 // PricingDeriveBatchOptions 批量派生的参数。ChannelID 与 GroupID 都为 0 表示全部启用的渠道。
 type PricingDeriveBatchOptions struct {
@@ -99,6 +113,14 @@ type PricingDeriveFailure struct {
 	Error     string `json:"error"`
 }
 
+// PricingDeriveStaleGroup 库里还留着 legacy_derived 成本核算行、但来源渠道已停用或不存在的分组。
+// 只在全量模式列出，批量派生不清理它们（渠道保存钩子在停用、删除时会清；残留来自钩子失败）。
+type PricingDeriveStaleGroup struct {
+	ChannelID int64  `json:"channel_id"`
+	GroupID   int64  `json:"group_id"`
+	Reason    string `json:"reason"`
+}
+
 // PricingDeriveTotals 汇总。
 type PricingDeriveTotals struct {
 	Channels         int `json:"channels"`
@@ -107,6 +129,8 @@ type PricingDeriveTotals struct {
 	GroupsChanged    int `json:"groups_changed"`
 	GroupsUnchanged  int `json:"groups_unchanged"`
 	GroupsSkipped    int `json:"groups_skipped_v2"`
+	// GroupsStaleChannel 有派生行但来源渠道已停用或不存在的分组数（只统计、不清理）。
+	GroupsStaleChannel int `json:"groups_stale_channel"`
 
 	ConfigNew       int `json:"config_new"`
 	ConfigUpdated   int `json:"config_updated"`
@@ -136,6 +160,7 @@ type PricingDeriveBatchReport struct {
 	Mode     string                      `json:"mode"`
 	Groups   []PricingDeriveGroupSummary `json:"groups"`
 	Failures []PricingDeriveFailure      `json:"failures"`
+	Stale    []PricingDeriveStaleGroup   `json:"stale_groups"`
 	Totals   PricingDeriveTotals         `json:"totals"`
 }
 
@@ -157,16 +182,18 @@ func (s *PricingDerivationService) DeriveBatch(ctx context.Context, opts Pricing
 		Mode:     PricingDeriveModeDryRun,
 		Groups:   []PricingDeriveGroupSummary{},
 		Failures: []PricingDeriveFailure{},
+		Stale:    []PricingDeriveStaleGroup{},
 	}
 	if opts.Apply {
 		report.Mode = PricingDeriveModeApply
 	}
 
-	units, inactive, err := s.batchUnits(ctx, opts)
+	units, inactive, stale, err := s.batchUnits(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
 	report.Totals.ChannelsInactive = inactive
+	report.Stale = append(report.Stale, stale...)
 
 	for _, u := range units {
 		if err := ctx.Err(); err != nil {
@@ -198,50 +225,89 @@ func firstOrZero(channelID int64, ids []int64) int64 {
 	return 0
 }
 
-// batchUnits 决定要处理哪些渠道/分组。inactive 是被跳过的停用渠道数（只在没有点名时统计）。
-func (s *PricingDerivationService) batchUnits(ctx context.Context, opts PricingDeriveBatchOptions) ([]batchUnit, int, error) {
+// batchUnits 决定要处理哪些渠道/分组。inactive 是被跳过的停用渠道数，stale 是有派生行但渠道已停用或不存在的分组
+// （两者都只在没有点名时统计）。
+func (s *PricingDerivationService) batchUnits(ctx context.Context, opts PricingDeriveBatchOptions) ([]batchUnit, int, []PricingDeriveStaleGroup, error) {
 	switch {
 	case opts.GroupID != 0:
 		meta, err := s.repo.GetGroupMeta(ctx, []int64{opts.GroupID})
 		if err != nil {
-			return nil, 0, fmt.Errorf("get group meta: %w", err)
+			return nil, 0, nil, fmt.Errorf("get group meta: %w", err)
 		}
 		if _, ok := meta[opts.GroupID]; !ok {
-			return nil, 0, ErrGroupNotFound
+			return nil, 0, nil, ErrGroupNotFound
 		}
-		return []batchUnit{{groupIDs: []int64{opts.GroupID}, current: map[int64]bool{opts.GroupID: true}}}, 0, nil
+		return []batchUnit{{groupIDs: []int64{opts.GroupID}, current: map[int64]bool{opts.GroupID: true}}}, 0, nil, nil
 	case opts.ChannelID != 0:
 		u, err := s.channelUnit(ctx, opts.ChannelID)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		if u == nil {
-			return nil, 0, ErrChannelNotFound
+			return nil, 0, nil, ErrChannelNotFound
 		}
-		return []batchUnit{*u}, 0, nil
+		return []batchUnit{*u}, 0, nil, nil
 	}
 
 	all, err := s.channels.ListAll(ctx)
 	if err != nil {
-		return nil, 0, fmt.Errorf("list channels: %w", err)
+		return nil, 0, nil, fmt.Errorf("list channels: %w", err)
 	}
 	var units []batchUnit
 	inactive := 0
+	active := make(map[int64]bool, len(all))
+	known := make(map[int64]bool, len(all))
 	for i := range all {
+		known[all[i].ID] = true
 		if !all[i].IsActive() {
 			inactive++
 			continue
 		}
+		active[all[i].ID] = true
 		u, err := s.channelUnit(ctx, all[i].ID)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		if u == nil || len(u.groupIDs) == 0 {
 			continue
 		}
 		units = append(units, *u)
 	}
-	return units, inactive, nil
+
+	stale, err := s.staleDerivedGroups(ctx, active, known)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	return units, inactive, stale, nil
+}
+
+// staleDerivedGroups 列出库里有 legacy_derived 成本核算行、但来源渠道不在启用清单里的分组：
+// 渠道已停用（known 但不 active）或已不存在。只列不清。
+func (s *PricingDerivationService) staleDerivedGroups(ctx context.Context, active, known map[int64]bool) ([]PricingDeriveStaleGroup, error) {
+	byChannel, err := s.repo.ListDerivedRuleChannels(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list derived rule channels: %w", err)
+	}
+	channelIDs := make([]int64, 0, len(byChannel))
+	for id := range byChannel {
+		if !active[id] {
+			channelIDs = append(channelIDs, id)
+		}
+	}
+	sort.Slice(channelIDs, func(i, j int) bool { return channelIDs[i] < channelIDs[j] })
+	var out []PricingDeriveStaleGroup
+	for _, id := range channelIDs {
+		reason := PricingDeriveStaleMissing
+		if known[id] {
+			reason = PricingDeriveStaleDisabled
+		}
+		groups := append([]int64(nil), byChannel[id]...)
+		sort.Slice(groups, func(i, j int) bool { return groups[i] < groups[j] })
+		for _, gid := range groups {
+			out = append(out, PricingDeriveStaleGroup{ChannelID: id, GroupID: gid, Reason: reason})
+		}
+	}
+	return out, nil
 }
 
 // channelUnit 与 RefreshChannel 选分组的方式一致：渠道当前关联的分组，加上仍带有该渠道派生成本核算行的分组。
@@ -275,14 +341,31 @@ func (s *PricingDerivationService) deriveUnit(ctx context.Context, u batchUnit, 
 		return summaries, nil
 	}
 
+	// 落库后核对：实时重新派生并与库里比较。派生发生在事务之外，期间渠道被别处保存时，
+	// 落进库的可能是旧派生；还有差异就重跑一次，仍不一致记为失败。
 	var refreshed *PricingRefreshReport
-	if u.channelID != 0 {
-		refreshed, err = s.RefreshChannel(ctx, u.channelID, nil)
-	} else {
-		refreshed, err = s.RefreshGroups(ctx, u.groupIDs)
-	}
-	if err != nil {
-		return nil, err
+	retried := false
+	for attempt := 1; ; attempt++ {
+		if u.channelID != 0 {
+			refreshed, err = s.RefreshChannel(ctx, u.channelID, nil)
+		} else {
+			refreshed, err = s.RefreshGroups(ctx, u.groupIDs)
+		}
+		if err != nil {
+			return nil, err
+		}
+		verify, verr := s.summarizeUnit(ctx, u)
+		if verr != nil {
+			return nil, fmt.Errorf("verify after apply: %w", verr)
+		}
+		pending := unconvergedGroups(verify)
+		if len(pending) == 0 {
+			break
+		}
+		if attempt >= pricingDeriveVerifyAttempts {
+			return nil, fmt.Errorf("verify after apply: groups %v still differ from the live derivation after %d attempts (the channel is probably being edited); run again", pending, attempt)
+		}
+		retried = true
 	}
 	written := make(map[int64]PricingRefreshGroupResult, len(refreshed.Groups))
 	for _, g := range refreshed.Groups {
@@ -291,6 +374,13 @@ func (s *PricingDerivationService) deriveUnit(ctx context.Context, u batchUnit, 
 	for i := range summaries {
 		sm := &summaries[i]
 		sm.Applied = true
+		if retried {
+			sm.Warnings++
+			sm.Notes = append(sm.Notes, DerivationNote{
+				Level: DerivationNoteWarn, Code: "verify_retry",
+				Message: "落库后核对发现与实时派生不一致（渠道在派生与落库之间被改动），已重跑一次并核对一致",
+			})
+		}
 		// 预览与落库之间如果有别的写入（渠道刚被保存），两边的写入量会对不上：留一条备注，不影响结果。
 		if g, ok := written[sm.GroupID]; ok && pricingDeriveDrifted(*sm, g) {
 			sm.Warnings++
@@ -301,6 +391,17 @@ func (s *PricingDerivationService) deriveUnit(ctx context.Context, u batchUnit, 
 		}
 	}
 	return summaries, nil
+}
+
+// unconvergedGroups 落库后的核对结果里仍有待写入内容的分组（v2 跳过的不算）。
+func unconvergedGroups(verify []PricingDeriveGroupSummary) []int64 {
+	var out []int64
+	for _, g := range verify {
+		if g.Status == PricingDeriveStatusChanged {
+			out = append(out, g.GroupID)
+		}
+	}
+	return out
 }
 
 func pricingDeriveDrifted(sm PricingDeriveGroupSummary, g PricingRefreshGroupResult) bool {
@@ -428,6 +529,7 @@ func summarizePricingDerive(view *GroupDeriveView, plan GroupApplyPlan) PricingD
 func tallyPricingDerive(r *PricingDeriveBatchReport) {
 	t := &r.Totals
 	t.Failures = len(r.Failures)
+	t.GroupsStaleChannel = len(r.Stale)
 	for _, g := range r.Groups {
 		t.Groups++
 		switch g.Status {

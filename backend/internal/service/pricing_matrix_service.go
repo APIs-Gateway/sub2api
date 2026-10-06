@@ -22,9 +22,12 @@ type PricingMatrixRepository interface {
 	GetGroupMeta(ctx context.Context, groupIDs []int64) (map[int64]DeriveGroup, error)
 	// ListDerivedRuleGroupIDs 返回来源渠道为 channelID 的 legacy_derived 成本核算行所属的分组。
 	ListDerivedRuleGroupIDs(ctx context.Context, channelID int64) ([]int64, error)
+	// ListDerivedRuleChannels 返回库里所有 legacy_derived 成本核算行的来源渠道 id，及各自所属的分组
+	// （批量派生命令用它找出「有派生行、但渠道已停用或不存在」的分组）。
+	ListDerivedRuleChannels(ctx context.Context) (map[int64][]int64, error)
 	// LoadGroupSnapshots 读取各分组在库里的现状（不加锁，供只读查看用）。
 	LoadGroupSnapshots(ctx context.Context, groupIDs []int64) (map[int64]GroupStateSnapshot, error)
-	// ApplyPlans 在一个事务里依次完成：按 group_id 升序对 group_model_config 行 SELECT ... FOR UPDATE
+	// ApplyPlans 在一个事务里依次完成：先取派生落库的事务级咨询锁（跨进程串行化钩子与批量派生命令），再按 group_id 升序对 group_model_config 行 SELECT ... FOR UPDATE
 	// （与阶段切换互斥，4.2 混合阶段规则第 3 条）、读取各分组现状、调用 plan 生成计划、执行计划。
 	// plan 里不能做 I/O。
 	ApplyPlans(ctx context.Context, groupIDs []int64, plan func(snaps map[int64]GroupStateSnapshot) ([]GroupApplyPlan, error)) error
