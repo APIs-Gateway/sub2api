@@ -801,6 +801,7 @@ func ProvidePricingStageSwitcher(
 	fingerprint PricingStageFingerprinter,
 	catalog *ModelCatalogService,
 	policy *StagedGroupPolicy,
+	cfg *config.Config,
 ) *PricingStageSwitcher {
 	compared := func(groupID int64) int64 {
 		for _, c := range policy.Stats().ComparedTotal {
@@ -811,6 +812,9 @@ func ProvidePricingStageSwitcher(
 		return 0
 	}
 	sw := NewPricingStageSwitcher(store, derive, fingerprint, catalog, policy, compared)
+	if cfg != nil {
+		sw.SetObservationHours(cfg.Pricing.GateObservationHours)
+	}
 	sw.SetInProcessTranslationDiffs(func(groupID int64) (int64, time.Time) {
 		var n int64
 		for _, c := range policy.Stats().DiffTotal {

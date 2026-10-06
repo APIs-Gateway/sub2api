@@ -139,7 +139,20 @@ type PricingStageSwitcher struct {
 	compared func(groupID int64) int64
 	// translationInProcess 返回本实例进程内某个分组 translation 类差异的累计数与最近一次的时间（没有为零值）；可为 nil（不检查）。
 	translationInProcess func(groupID int64) (int64, time.Time)
-	now                  func() time.Time
+	// observation 影子观察的最短时长（部署配置 pricing.gate_observation_hours）；构造时默认 72 小时。
+	observation time.Duration
+	now         func() time.Time
+}
+
+// SetObservationHours 设置影子观察的最短时长（小时）。0 表示不要求观察时长；越界值钳制到 [0, 720]（配置校验已在启动时拦住越界值，这里是兜底）。
+func (sw *PricingStageSwitcher) SetObservationHours(hours int) {
+	if hours < 0 {
+		hours = 0
+	}
+	if hours > PricingGateObservationMaxHours {
+		hours = PricingGateObservationMaxHours
+	}
+	sw.observation = time.Duration(hours) * time.Hour
 }
 
 // SetInProcessTranslationDiffs 接上进程内翻译差异计数：大于 0 时闸门不放行（W6 PR7b-1 审查偏差 1）。
@@ -167,6 +180,7 @@ func NewPricingStageSwitcher(store PricingStageSwitchStore, derive stageDeriver,
 	return &PricingStageSwitcher{
 		store: store, ops: store, derive: derive, fingerprint: fp, catalog: catalog, sync: sync,
 		compared: compared, now: time.Now,
+		observation: PricingGateObservationDefaultHours * time.Hour,
 	}
 }
 
@@ -363,7 +377,7 @@ func (sw *PricingStageSwitcher) previewV2(ctx context.Context, exec MatrixExecut
 	}
 	sw.loadInProcessShadow(facts, out.GroupID)
 	report := EvaluateStageGate(StageGateInput{
-		Facts: facts, Now: now, CurrentDeriveRevision: derived.Revision, CurrentChannelConfigHash: channelHash, EvidenceErr: evErr,
+		Facts: facts, Now: now, ObservationRequired: sw.observation, CurrentDeriveRevision: derived.Revision, CurrentChannelConfigHash: channelHash, EvidenceErr: evErr,
 	})
 	delta, accepted := StageSwitchAccepted(facts.Replay, facts.Shadow, sw.catalogAccepted(ctx, exec, out.GroupID, platform, now))
 	out.Gate, out.Accepted, out.PriceDelta = &report, accepted, delta
@@ -550,7 +564,7 @@ func (sw *PricingStageSwitcher) commitV2(ctx context.Context, tx MatrixTx, req P
 	}
 	sw.loadInProcessShadow(facts, req.GroupID)
 	report := EvaluateStageGate(StageGateInput{
-		Facts: facts, Now: now, CurrentDeriveRevision: derived.Revision, CurrentChannelConfigHash: channelHash, EvidenceErr: evErr,
+		Facts: facts, Now: now, ObservationRequired: sw.observation, CurrentDeriveRevision: derived.Revision, CurrentChannelConfigHash: channelHash, EvidenceErr: evErr,
 	})
 	if !report.Passed {
 		return nil, StageGateError(req.GroupID, report)
