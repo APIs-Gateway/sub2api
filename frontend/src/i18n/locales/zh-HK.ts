@@ -3442,7 +3442,8 @@
           NETWORK: '網絡不通，請檢查連線後重試。',
           UNAUTHORIZED: '登入已失效，請重新登入。',
           FORBIDDEN: '沒有權限做這個操作。',
-          UNKNOWN: '提交沒有成功（{status}），請稍後重試。'
+          UNKNOWN: '提交沒有成功（{status}），請稍後重試。',
+          INVALID: '提交的內容不合法，請檢查填寫的價格和設定。'
         },
         extra: {
           title: '設定額外倍率',

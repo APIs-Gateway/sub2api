@@ -3452,7 +3452,8 @@
           NETWORK: 'Network error. Check your connection and retry.',
           UNAUTHORIZED: 'Your session expired. Sign in again.',
           FORBIDDEN: 'You do not have permission to do this.',
-          UNKNOWN: 'The request failed ({status}). Try again later.'
+          UNKNOWN: 'The request failed ({status}). Try again later.',
+          INVALID: 'What you submitted is not valid. Check the prices and settings you entered.'
         },
         extra: {
           title: 'Set extra rate',

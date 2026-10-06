@@ -13,6 +13,7 @@ import type {
   PriceMode,
   StoredCell
 } from '@/api/admin/pricing'
+import { mTokToPerToken, perTokenToMTok } from '@/components/admin/channel/types'
 import { isGroupUnswitched, type CellView, type ModelRow, type PricingGroup } from './pricingModel'
 
 /** 一个格子的目标态（界面侧）。 */
@@ -89,10 +90,25 @@ export function opExtra(group: PricingGroup, model: string, stored: StoredCell |
   return upsert(group, model, stored, spec)
 }
 
-/** 自定义价：只改开放的格子。 */
+/**
+ * 自定义价界面上按「美元 / 每百万 Token」填写；接口按「美元 / 每 Token」存（与渠道定价同一个单位），
+ * 所以这里换算之后再写。按次价格本来就是「美元 / 次」，不换算。
+ */
+export function customToApi(price: CustomPrice): CustomPrice {
+  return {
+    ...price,
+    input_price: mTokToPerToken(price.input_price),
+    output_price: mTokToPerToken(price.output_price),
+    cache_write_price: mTokToPerToken(price.cache_write_price),
+    cache_read_price: mTokToPerToken(price.cache_read_price),
+    image_output_price: mTokToPerToken(price.image_output_price)
+  }
+}
+
+/** 自定义价：只改开放的格子。price 的价格按每百万 Token。 */
 export function opCustom(group: PricingGroup, model: string, stored: StoredCell | null, price: CustomPrice): CellOp | null {
   if (!currentSpec(group, stored).open) return null
-  return upsert(group, model, stored, { open: true, mode: 'custom', custom: price })
+  return upsert(group, model, stored, { open: true, mode: 'custom', custom: customToApi(price) })
 }
 
 /** 清除覆盖：回到按官方价 × 分组倍率。开放分组删掉单元格，白名单分组保留开放、价格设回继承。 */
@@ -148,6 +164,7 @@ export function buildRequest(ops: CellOp[], derives: GroupDeriveView[]): CellsRe
 /**
  * 目标态翻成格子状态和用户实付价（美元 / 百万 Token）。
  * 价格 = 官方价 × 分组倍率 × 额外倍率；自定义价同样乘分组倍率，没填的项用官方价。
+ * 单元格里的自定义价是每 Token，这里换成每百万 Token 显示。
  * 官方价和自定义价都没有时是「未定价」。state 为 null 表示单元格不存在。
  */
 export function specToView(
@@ -168,8 +185,9 @@ export function specToView(
         ? { ...empty, kind: 'custom', perRequestUsd: c.per_request_price * group.rate }
         : { ...empty, kind: 'custom' }
     }
-    const input = c.input_price ?? per?.input
-    const output = c.output_price ?? per?.output
+    // 接口里的自定义价是每 Token，换成每百万 Token 再和官方价一起算
+    const input = perTokenToMTok(c.input_price) ?? per?.input
+    const output = perTokenToMTok(c.output_price) ?? per?.output
     if (typeof input !== 'number' || typeof output !== 'number') return { ...empty, kind: 'unpriced' }
     return { ...empty, kind: 'custom', usd: { input: input * group.rate, output: output * group.rate } }
   }

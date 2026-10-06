@@ -62,6 +62,7 @@ export function errorInfo(err: WriteError): ErrorInfo {
   const params: Record<string, string | number> = { ...metadata, status }
   if (reason in KNOWN) return { key: reason, params, action: KNOWN[reason] }
   if (status === 0) return { key: 'NETWORK', params, action: 'none' }
+  if (status === 400) return { key: 'INVALID', params, action: 'none' }
   if (status === 401) return { key: 'UNAUTHORIZED', params, action: 'none' }
   if (status === 403) return { key: 'FORBIDDEN', params, action: 'none' }
   return { key: 'UNKNOWN', params, action: 'none' }

@@ -3445,7 +3445,8 @@
           NETWORK: '网络不通，请检查连接后重试。',
           UNAUTHORIZED: '登录已失效，请重新登录。',
           FORBIDDEN: '没有权限做这个操作。',
-          UNKNOWN: '提交没有成功（{status}），请稍后重试。'
+          UNKNOWN: '提交没有成功（{status}），请稍后重试。',
+          INVALID: '提交的内容不合法，请检查填写的价格和设置。'
         },
         extra: {
           title: '设置额外倍率',

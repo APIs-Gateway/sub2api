@@ -59,7 +59,12 @@ describe('单元格操作', () => {
 
   it('自定义价与清除覆盖', () => {
     const price = { billing_mode: 'token' as const, input_price: 1, output_price: null }
-    expect(opCustom(openGroup, 'm', stored(), price)).toMatchObject({ price_mode: 'custom', custom_price: price })
+    // 界面按每百万 Token 填，接口按每 Token 存
+    expect(opCustom(openGroup, 'm', stored(), { ...price, input_price: 1.25, output_price: 10 })).toMatchObject({
+      price_mode: 'custom',
+      custom_price: { billing_mode: 'token', input_price: 0.00000125, output_price: 0.00001, cache_write_price: null }
+    })
+    expect(opCustom(openGroup, 'm', stored(), price)).toMatchObject({ custom_price: { input_price: 0.000001, output_price: null } })
     expect(opClear(openGroup, 'm', null)).toBeNull()
     expect(opClear(openGroup, 'm', stored({ price_mode: 'extra', extra_multiplier: 2 }))).toMatchObject({ kind: 'delete' })
     expect(opClear(listGroup, 'm', stored({ price_mode: 'extra', extra_multiplier: 2 }))).toMatchObject({ kind: 'upsert', open: true, price_mode: 'inherit' })
@@ -91,7 +96,7 @@ describe('预览里的格子', () => {
     expect(specToView({ ...base, open: false, price_mode: 'inherit' }, openGroup, official)).toMatchObject({ kind: 'closed', usd: null })
     expect(specToView({ ...base, open: true, price_mode: 'inherit' }, openGroup, undefined).kind).toBe('unpriced')
     // 自定义价没填的项回落官方价，仍然乘分组倍率
-    const custom = specToView({ ...base, open: true, price_mode: 'custom', custom_price: { billing_mode: 'token', input_price: 1 } }, openGroup, official)
+    const custom = specToView({ ...base, open: true, price_mode: 'custom', custom_price: { billing_mode: 'token', input_price: 0.000001 } }, openGroup, official)
     expect(custom).toMatchObject({ kind: 'custom', usd: { input: 2, output: 60 } })
     // 单元格不存在：开放分组是开放，白名单分组是关闭
     expect(specToView(null, openGroup, official).kind).toBe('open')
@@ -119,6 +124,8 @@ describe('错误码', () => {
     expect(errorInfo(toWriteError({ status: 403, reason: 'ADMIN_TOKEN_MANAGEMENT_JWT_ONLY' })).key).toBe('ADMIN_TOKEN_MANAGEMENT_JWT_ONLY')
     expect(errorInfo(toWriteError({ status: 409, reason: 'PRICE_WRITE_APPROVAL_EXPIRED' })).action).toBe('repreview')
     expect(errorInfo(toWriteError({ status: 500, reason: 'SOMETHING_NEW' })).key).toBe('UNKNOWN')
+    // 非法自定义价返回的是渠道定价的 reason 码，兜底成通用的「内容不合法」
+    expect(errorInfo(toWriteError({ status: 400, reason: 'CHANNEL_PRICING_INVALID' })).key).toBe('INVALID')
     expect(errorInfo(toWriteError({ status: 0, message: 'Network error' })).key).toBe('NETWORK')
   })
 
