@@ -792,6 +792,7 @@ const adminNavItems = computed((): NavItem[] => {
         { path: '/admin/pricing/matrix', label: t('nav.pricingMatrix'), icon: FolderIcon },
         { path: '/admin/pricing/snapshots', label: t('nav.pricingSnapshots'), icon: BookIcon },
         { path: '/admin/pricing/stages', label: t('nav.pricingStages'), icon: ShieldIcon },
+        { path: '/admin/pricing/cost-rules', label: t('nav.pricingCostRules'), icon: ChartIcon },
       ],
     },
     {
