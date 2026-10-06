@@ -91,6 +91,23 @@ func TestNormalizeCellWriteRequest_RejectsInvalidOps(t *testing.T) {
 				},
 			})
 		}, "INVALID_PRICING_INTERVALS"},
+		{"custom token price over cap", func(op *CellOp) {
+			op.PriceMode, op.CustomPrice = MatrixPriceCustom, custom(MatrixCustomPrice{InputPrice: pwF(1.25)})
+		}, ReasonCellOpInvalid},
+		{"custom cache price over cap", func(op *CellOp) {
+			op.PriceMode, op.CustomPrice = MatrixPriceCustom, custom(MatrixCustomPrice{InputPrice: pwF(1e-6), CacheReadPrice: pwF(0.02)})
+		}, ReasonCellOpInvalid},
+		{"custom per request over cap", func(op *CellOp) {
+			op.PriceMode, op.CustomPrice = MatrixPriceCustom, custom(MatrixCustomPrice{BillingMode: BillingModePerRequest, PerRequestPrice: pwF(1000.5)})
+		}, ReasonCellOpInvalid},
+		{"custom interval price over cap", func(op *CellOp) {
+			op.PriceMode, op.CustomPrice = MatrixPriceCustom, custom(MatrixCustomPrice{
+				Intervals: []MatrixPriceInterval{{MinTokens: 0, OutputPrice: pwF(5)}},
+			})
+		}, ReasonCellOpInvalid},
+		{"custom price infinite", func(op *CellOp) {
+			op.PriceMode, op.CustomPrice = MatrixPriceCustom, custom(MatrixCustomPrice{InputPrice: pwF(math.Inf(1))})
+		}, ReasonCellOpInvalid},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -99,6 +116,41 @@ func TestNormalizeCellWriteRequest_RejectsInvalidOps(t *testing.T) {
 			_, err := NormalizeCellWriteRequest(CellWriteRequest{Ops: []CellOp{op}, GroupRevisions: map[int64]int64{1: 1}})
 			require.Equal(t, tc.reason, pwReason(t, err))
 		})
+	}
+}
+
+func TestNormalizeCellWriteRequest_CustomPriceCap(t *testing.T) {
+	thousand := 1000
+	norm := func(cp MatrixCustomPrice) error {
+		op := pwUpsert(1, "gpt-5.5", true, MatrixPriceCustom)
+		op.CustomPrice = &cp
+		_, err := NormalizeCellWriteRequest(CellWriteRequest{Ops: []CellOp{op}, GroupRevisions: map[int64]int64{1: 1}})
+		return err
+	}
+	// 恰好等于上限放行。
+	require.NoError(t, norm(MatrixCustomPrice{InputPrice: pwF(MaxCustomTokenPrice), OutputPrice: pwF(MaxCustomTokenPrice)}))
+	require.NoError(t, norm(MatrixCustomPrice{BillingMode: BillingModePerRequest, PerRequestPrice: pwF(MaxCustomPerRequestPrice)}))
+	require.NoError(t, norm(MatrixCustomPrice{BillingMode: BillingModeImage, PerRequestPrice: pwF(0.04)}))
+
+	// 超限：reason 是 CELL_OP_INVALID，metadata 带 field 与 reason。
+	for name, tc := range map[string]struct {
+		cp    MatrixCustomPrice
+		field string
+	}{
+		"input":     {MatrixCustomPrice{InputPrice: pwF(0.011)}, "input_price"},
+		"output":    {MatrixCustomPrice{OutputPrice: pwF(1)}, "output_price"},
+		"cache w":   {MatrixCustomPrice{CacheWritePrice: pwF(1)}, "cache_write_price"},
+		"image out": {MatrixCustomPrice{BillingMode: BillingModeImage, PerRequestPrice: pwF(0.04), ImageOutputPrice: pwF(5)}, "image_output_price"},
+		"per req":   {MatrixCustomPrice{BillingMode: BillingModePerRequest, PerRequestPrice: pwF(1001)}, "per_request_price"},
+		"interval":  {MatrixCustomPrice{Intervals: []MatrixPriceInterval{{MinTokens: 0, MaxTokens: &thousand, InputPrice: pwF(1e-6)}, {MinTokens: 1000, InputPrice: pwF(3)}}}, "intervals[1].input_price"},
+	} {
+		err := norm(tc.cp)
+		require.Equal(t, ReasonCellOpInvalid, pwReason(t, err), name)
+		md := infraerrors.FromError(err).Metadata
+		require.Equal(t, tc.field, md["field"], name)
+		require.Equal(t, ReasonPriceTooHigh, md["reason"], name)
+		require.Equal(t, "1", md["group_id"], name)
+		require.Equal(t, "gpt-5.5", md["model_key"], name)
 	}
 }
 

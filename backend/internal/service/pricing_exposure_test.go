@@ -73,6 +73,9 @@ func TestExposureValidator_Check(t *testing.T) {
 	extra.Cell.ExtraMultiplier = pwF(1.5)
 	closed := exCell(1, "unknown-closed", MatrixPriceInherit)
 	closed.Cell.Open = false
+	closedPattern := exCell(1, "gpt-*", MatrixPriceInherit)
+	closedPattern.Cell.Open = false
+	closedPattern.Cell.IsPattern = true
 	pattern := exCell(1, "claude-*", MatrixPriceInherit)
 	pattern.Cell.IsPattern = true
 
@@ -116,7 +119,8 @@ func TestExposureValidator_Check(t *testing.T) {
 		{"token zero top-level price with a positive interval price", exCustom(1, "nothing", MatrixCustomPrice{BillingMode: BillingModeToken,
 			InputPrice: pwF(0), Intervals: []MatrixPriceInterval{{MinTokens: 0, InputPrice: pwF(3e-6)}}}), ""},
 		{"closed cells are not checked", closed, ""},
-		{"wildcard cells are not checked", pattern, ""},
+		{"an open wildcard cell cannot be verified", pattern, ExposureWildcardUnverifiable},
+		{"a closed wildcard cell is fine", closedPattern, ""},
 	}
 	v := NewExposureValidator(exOfficial, nil)
 	for _, tc := range cases {

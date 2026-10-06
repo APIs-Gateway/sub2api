@@ -201,8 +201,27 @@ func registerPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		matrix.PUT("/groups/:id/stage", h.Admin.PricingMatrix.SwitchStage)
 		matrix.GET("/shadow/stats", h.Admin.PricingMatrix.ShadowStats)
 		matrix.GET("/shadow/diffs", h.Admin.PricingMatrix.ShadowDiffs)
+
+		// W6 PR4b-2b-2：价格写入。预览只登记一条预览记录，不改价格；提交、成本核算规则与已知免费名单的写入
+		// 一律要登录管理员的 JWT 会话（RequireAdminJWT），机器令牌与旧的全局管理员密钥 403，不能改价。
+		matrix.POST("/cells/preview", h.Admin.PricingWrite.PreviewCells)
+		matrix.POST("/cells/commit", middleware.RequireAdminJWT(), h.Admin.PricingWrite.CommitCells)
+		matrix.POST("/groups/:id/config/preview", h.Admin.PricingWrite.PreviewGroupConfig)
+		matrix.PUT("/groups/:id/config", middleware.RequireAdminJWT(), h.Admin.PricingWrite.CommitGroupConfig)
+		matrix.GET("/groups/:id/publish-check", h.Admin.PricingWrite.PublishCheck)
+		matrix.POST("/groups/:id/cost-rules", middleware.RequireAdminJWT(), h.Admin.PricingWrite.CreateCostRule)
+		matrix.PUT("/groups/:id/cost-rules/:rule_id", middleware.RequireAdminJWT(), h.Admin.PricingWrite.UpdateCostRule)
+		matrix.DELETE("/groups/:id/cost-rules/:rule_id", middleware.RequireAdminJWT(), h.Admin.PricingWrite.DeleteCostRule)
+		// 已知免费名单是 C 档动作：写入只允许交互式管理员会话。
+		matrix.GET("/known-free-list", h.Admin.PricingWrite.GetKnownFreeList)
+		matrix.POST("/known-free-list/preview", h.Admin.PricingWrite.PreviewKnownFreeList)
+		matrix.PUT("/known-free-list", middleware.RequireAdminJWT(), h.Admin.PricingWrite.UpdateKnownFreeList)
 	}
 	admin.GET("/model-catalog", h.Admin.PricingMatrix.ListModelCatalog)
+	// 目录状态转换：近 7 天有流量的模型转 draft 或 retired 要二次确认；写入同样只允许交互式管理员会话。
+	admin.GET("/model-catalog/:id/transition-preview", h.Admin.PricingWrite.PreviewCatalogTransition)
+	admin.PUT("/model-catalog/:id/status", middleware.RequireAdminJWT(), h.Admin.PricingWrite.TransitionCatalog)
+	admin.POST("/model-catalog", middleware.RequireAdminJWT(), h.Admin.PricingWrite.CreateCatalogEntry)
 }
 
 func registerAdminComplianceRoutes(admin *gin.RouterGroup, h *handler.Handlers) {

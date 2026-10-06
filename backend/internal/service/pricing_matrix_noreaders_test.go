@@ -47,6 +47,12 @@ var matrixOwnFiles = map[string]struct{}{
 	"internal/service/pricing_write_tx.go":               {}, // W6 PR4b-2b-1：写入与保存时校验的唯一事务入口（MatrixTxWriter），没有生产路径构造它
 	"internal/service/pricing_estimator.go":              {}, // W6 PR4b-2b-1：价格方向估算器，没有生产路径构造它
 	"internal/service/price_quoter_overlay.go":           {}, // W6 PR4b-2b-1：QuoteWith / BatchQuoteWith，没有生产路径调用
+	"internal/service/pricing_w5_registry.go":            {}, // W6 PR4b-2b-2：W5 注册表里 W6 的设置键与动作登记，受保护键的通用写入拒绝
+	"internal/service/pricing_open_precheck.go":          {}, // W6 PR4b-2b-2：开放时预检（含映射目标校验、发布预检）
+	"internal/service/pricing_known_free_list.go":        {}, // W6 PR4b-2b-2：已知免费名单的写入口（C 档）
+	"internal/service/model_catalog_transition.go":       {}, // W6 PR4b-2b-2：目录状态转换与 7 天用量检查
+	"internal/service/pricing_cost_rule_write.go":        {}, // W6 PR4b-2b-2：成本核算规则写服务
+	"internal/service/pricing_write_services.go":         {}, // W6 PR4b-2b-2：价格写入路径的装配（所有分组默认 legacy，写入器只写 v2）
 
 	// W6 PR5：stagedPolicy 与影子比对。它们读矩阵快照，但只用来比对：阶段为 shadow 的分组才会比对，
 	// 真实请求不会被路由到矩阵（见下面的 TestStagedPolicyNeverRoutesToV2InProduction）。
@@ -68,8 +74,11 @@ var matrixOwnFiles = map[string]struct{}{
 	"internal/repository/pricing_snapshot_exposure_source.go": {}, // W6 PR9b：批准时列出白名单分组
 	"internal/repository/pricing_stage_repo.go":               {}, // W6 PR5：阶段切换与影子样本的存储
 	"internal/repository/pricing_matrix_configured_groups.go": {}, // W6 PR7a：启动预加载列出有配置行的分组
+	"internal/repository/pricing_known_free_store.go":         {}, // W6 PR4b-2b-2：已知免费名单与目录状态、用量统计的存储
+	"internal/repository/pricing_cost_rule_writer.go":         {}, // W6 PR4b-2b-2：成本核算规则写入器
 
 	"internal/handler/admin/pricing_matrix_handler.go": {},
+	"internal/handler/admin/pricing_write_handler.go":  {}, // W6 PR4b-2b-2：价格写入的管理接口（提交类接口要 JWT 会话）
 	"cmd/server/model_catalog_cmd.go":                  {},
 
 	// W6 PR6：离线只读的价格回放命令与引擎。只在运维命令里被构造，不被任何请求路径引用。
@@ -103,6 +112,10 @@ var matrixEntryPoints = regexp.MustCompile(`\b(` + strings.Join([]string{
 	"OfficialPriceStateSource", "LookupOfficialPriceState",
 	"MatrixTxWriter", "NewMatrixTxWriter", "PriceDeltaEstimator", "PriceEstimator", "NewPriceEstimator",
 	"CellOverlay", "OverlayFromPlanned",
+	"OpenPrechecker", "NewOpenPrechecker", "KnownFreeListService", "NewKnownFreeListService", "KnownFreeListStore",
+	"NewPricingKnownFreeStore", "ModelCatalogTransitionService", "NewModelCatalogTransitionService",
+	"ModelCatalogStatusStore", "NewModelCatalogStatusStore", "CostRuleService", "NewCostRuleService", "CostRuleWriter",
+	"NewPricingCostRuleWriter", "PricingWriteServices", "ProvidePricingWriteServices",
 }, "|") + `)\b`)
 
 func TestMatrixTablesAndDerivationHaveNoReaders(t *testing.T) {
