@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -181,4 +182,43 @@ func TestShouldNotifyChannelCache(t *testing.T) {
 		Mode: service.PricingDeriveModeApply, Groups: []service.PricingDeriveGroupSummary{applied(service.PricingDeriveStatusChanged, true)}}))
 	require.True(t, shouldNotifyChannelCache(&service.PricingDeriveBatchReport{
 		Mode: service.PricingDeriveModeApply, Failures: []service.PricingDeriveFailure{{ChannelID: 1, Error: "x"}}}), "有失败时写入状态不确定，也通知")
+}
+
+func TestRunPricingMatrixCommand_BadDeriveArgsShowUsage(t *testing.T) {
+	var out bytes.Buffer
+	err := runPricingMatrixCommand([]string{"derive", "--channel", "1", "--group", "2"}, &out)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "pricing-matrix", "参数错误时附带用法")
+}
+
+// 报告里的孤儿、跳过原因、提示级备注、失败各有各的输出；apply 模式不打印 dry-run 提示。
+func TestPrintPricingDeriveReport_AllLineKinds(t *testing.T) {
+	r := &service.PricingDeriveBatchReport{
+		Mode: service.PricingDeriveModeApply,
+		Groups: []service.PricingDeriveGroupSummary{{
+			GroupID: 11, ChannelID: 1, Platform: "openai", Stage: "v2",
+			Status: service.PricingDeriveStatusSkipped, Config: service.PricingDeriveConfigSkipped,
+			SkipReason: "stage_v2", Orphan: true,
+			Notes: []service.DerivationNote{
+				{Level: service.DerivationNoteInfo, Code: "only_info", Model: "m", Message: "quiet"},
+				{Level: service.DerivationNoteWarn, Code: "loud", Model: "m", Message: "careful"},
+			},
+		}},
+		Failures: []service.PricingDeriveFailure{{ChannelID: 5, GroupID: 0, Error: "boom"}},
+		Totals:   service.PricingDeriveTotals{Groups: 1, GroupsSkipped: 1, Failures: 1},
+	}
+	var out bytes.Buffer
+	printPricingDeriveReport(&out, r, "db1", service.PricingDataInfo{Source: service.PricingSourceFile, SHA256: "abc"})
+	text := out.String()
+	require.Contains(t, text, "orphan=true")
+	require.Contains(t, text, "skipped: stage_v2")
+	require.Contains(t, text, "warn: loud")
+	require.NotContains(t, text, "only_info", "提示级备注不打印")
+	require.Contains(t, text, "FAILED channel=5 group=0: boom")
+	require.NotContains(t, text, "dry-run: nothing was written")
+}
+
+func TestLoadServicePricing_MissingPriceFileFails(t *testing.T) {
+	_, _, err := loadServicePricing(context.Background(), nil, &config.Config{}, "/nonexistent/prices.json", true)
+	require.ErrorContains(t, err, "load price file")
 }
