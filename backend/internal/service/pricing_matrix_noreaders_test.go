@@ -67,6 +67,13 @@ var matrixOwnFiles = map[string]struct{}{
 
 	"internal/handler/admin/pricing_matrix_handler.go": {},
 	"cmd/server/model_catalog_cmd.go":                  {},
+
+	// W6 PR6：离线只读的价格回放命令与引擎。只在运维命令里被构造，不被任何请求路径引用。
+	"cmd/server/pricing_replay_cmd.go":           {},
+	"internal/service/pricing_replay.go":         {},
+	"internal/service/pricing_replay_run.go":     {},
+	"internal/service/pricing_replay_source.go":  {},
+	"internal/repository/pricing_replay_repo.go": {},
 }
 
 // matrixWiringFiles 只做依赖注入接线的文件。

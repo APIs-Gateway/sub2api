@@ -213,6 +213,36 @@ func TestPricingShadow_RecomputeDoesNotDoubleCountUnpricedBilling(t *testing.T) 
 	require.Empty(t, st.policy.Stats().DiffTotal, "both sides are unpriced: identical error class, no diff")
 }
 
+// Anthropic 网关同样：无价模型结算计一次，影子重算（非结算标记）不重复计数。
+func TestPricingShadow_GatewayRecomputeDoesNotDoubleCountUnpricedBilling(t *testing.T) {
+	run := func(policy GroupPolicy) *UsageLog {
+		logStub := &openAIRecordUsageLogRepoStub{inserted: true}
+		svc := newGatewayRecordUsageServiceForTest(logStub, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+		svc.policyOverride = policy
+		svc.resolver = &ModelPricingResolver{policyOverride: policy, billingService: svc.billingService}
+		gid := int64(1)
+		require.NoError(t, svc.RecordUsage(context.Background(), &RecordUsageInput{
+			Result:  &ForwardResult{RequestID: "req-gateway-unpriced", Usage: ClaudeUsage{InputTokens: 10, OutputTokens: 5}, Model: unpricedTestModel, Duration: time.Second},
+			APIKey:  &APIKey{ID: 502, GroupID: &gid, Group: &Group{ID: 1, Platform: PlatformAnthropic, RateMultiplier: 1}},
+			User:    &User{ID: 601},
+			Account: &Account{ID: 701},
+		}))
+		return logStub.lastLog
+	}
+
+	resetUnpricedBillingCountersForTest()
+	base := run(newMPPolicyFor(GroupStateSnapshot{}))
+	want := UnpricedBillingCounterSnapshot()
+	require.NotEmpty(t, want, "the settlement notes the unpriced request once")
+
+	resetUnpricedBillingCountersForTest()
+	st := sgNewStaged(PlatformAnthropic, sgLegacySnap(nil), sgShadowSnap(nil))
+	got := run(st.policy)
+	require.Equal(t, want, UnpricedBillingCounterSnapshot(), "the shadow recomputation is not counted again")
+	requireSameBilling(t, base, got)
+	require.EqualValues(t, 1, sgCompared(st.policy))
+}
+
 func TestPricingShadow_GatewayRecordUsageIsUnchangedAndDifferenceIsReported(t *testing.T) {
 	base := sgRunGateway(t, newMPPolicyFor(GroupStateSnapshot{}), false)
 	require.Greater(t, base.ActualCost, 0.0)

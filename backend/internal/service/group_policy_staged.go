@@ -192,7 +192,7 @@ func (s *stagedPolicy) Feature(ctx context.Context, groupID int64, platform stri
 	if shadow != nil {
 		s.compareCall(ctx, groupID, shadow, func(v2ctx context.Context) {
 			v2, v2err := s.matrix.Feature(v2ctx, groupID, platform, f)
-			if (err == nil) != (v2err == nil) || !shadowBoolPtrEqual(got, v2) {
+			if (err == nil) != (v2err == nil) || !groupFeatureEquivalent(f, got, v2) {
 				s.hub.noteDiff(groupID, ShadowKindFeature, ShadowClassTranslation, string(f), "",
 					shadowBoolPtrView(got), shadowBoolPtrView(v2))
 			}
@@ -241,6 +241,19 @@ func (s *stagedPolicy) Stage(ctx context.Context, groupID int64) PricingStage {
 
 func shadowMappingView(r ChannelMappingResult) map[string]any {
 	return map[string]any{"mapped_model": r.MappedModel, "mapped": r.Mapped, "billing_model_source": r.BillingModelSource}
+}
+
+// groupFeatureEquivalent 按运行时读取方的语义比较开关值（与 PR4 等价测试的 mqEffective 一致）：
+// web_search_emulation、bedrock_cc_compat 的读取方把 nil 当 false（gateway_websearch_emulation.go、gateway_service.go 的
+// isBedrockCCCompatEnabled），而派生按设计 2.3 在开关不存在时不写键，所以「未配置」与 false 等价；
+// codex_image_generation_bridge 的 nil 表示跟随全局开关（openai_gateway_service.go），与 false 效果不同，严格比较。
+func groupFeatureEquivalent(f GroupFeature, a, b *bool) bool {
+	switch f {
+	case GroupFeatureWebSearchEmulation, GroupFeatureBedrockCCCompat:
+		return (a != nil && *a) == (b != nil && *b)
+	default:
+		return shadowBoolPtrEqual(a, b)
+	}
 }
 
 func shadowBoolPtrEqual(a, b *bool) bool {
