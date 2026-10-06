@@ -149,8 +149,8 @@ const (
 
 // RuntimePriceInputs 是网关交给 RuntimeAccess 的、策略自己没有的价格事实。
 type RuntimePriceInputs struct {
-	// OfficialPriced 判断官方价（动态目录或内置兜底）里有没有这个模型的价格。
-	OfficialPriced func(model string) bool
+	// OfficialState 查官方价（动态目录或内置兜底）里关于这个模型的事实（有没有价、token 价是否非零、是否图片模型），
+	// 与保存时校验用同一份 OfficialPriceState；为 nil 按「官方没有价」。
 	// PricingSnapshotID 是当前生效的价格快照 id（auto 模式为 0），HasPrice 缓存键的一部分。
 	PricingSnapshotID int64
 	// ReadPolicy 读取 billing_unpriced_policy 的当前值；为 nil 按 observe。
@@ -261,7 +261,7 @@ func (s *stagedPolicy) RuntimeAccess(ctx context.Context, groupID int64, candida
 	key := runtimePricedKey{snapshotID: in.PricingSnapshotID, groupID: groupID, revision: snap.revision, chain: strings.Join(candidates, "\x00")}
 	priced := s.runtime.pricedCached(now, key, func() bool {
 		for _, candidate := range candidates {
-			if snap.hasPrice(candidate, now, in.OfficialPriced) {
+			if snap.hasPrice(candidate, now, in.OfficialState) {
 				return true
 			}
 		}
@@ -285,26 +285,21 @@ func (s *stagedPolicy) RuntimeAccess(ctx context.Context, groupID int64, candida
 	return QuoteAccess{OK: !block, Reason: QuoteAccessReasonUnpriced, Priced: &no}
 }
 
-// hasPrice 判断分组快照里某个模型有没有价格：单元格是 custom 且带显式价格字段（含区间）就有价；
-// 其余情况（inherit、extra、没有单元格、custom 但字段全空）回落官方价。生效窗口外的 custom 按 inherit 处理。
-func (s *matrixSnapshot) hasPrice(model string, at time.Time, officialPriced func(string) bool) bool {
-	if cell := s.lookupCell(model); cell != nil && cell.mode == MatrixPriceCustom && cell.pricing != nil &&
-		cell.activeAt(at) && channelPricingHasExplicitPrice(cell.pricing) {
-		return true
+// hasPrice 判断分组快照里某个模型有没有价格，按计费模式区分（B1）：判定本身是保存时校验用的 exposurePriceVerdict，
+// 这里不再另写一份。生效窗口外的 custom 按 inherit 处理。只有「没有任何价格来源」才算无价：
+// 0 元（zero_price）不算，它由保存时校验与已知免费名单管，运行时不因此拦截。
+// 按次、图片模式的 custom 看按次价；inherit、extra 的图片模型（无 token 价）算有价。
+func (s *matrixSnapshot) hasPrice(model string, at time.Time, officialState func(string) OfficialPriceState) bool {
+	var cp *MatrixCustomPrice
+	if cell := s.lookupCell(model); cell != nil && cell.mode == MatrixPriceCustom && cell.pricing != nil && cell.activeAt(at) {
+		c := MatrixCustomPriceFromPricing(*cell.pricing)
+		cp = &c
 	}
-	return officialPriced != nil && officialPriced(model)
-}
-
-// channelPricingHasExplicitPrice 单元格的自定义价是否带任何显式价格字段（顶层或区间，不论是否为 0）。
-func channelPricingHasExplicitPrice(p *ChannelModelPricing) bool {
-	if p.InputPrice != nil || p.OutputPrice != nil || p.CacheWritePrice != nil || p.CacheReadPrice != nil ||
-		p.ImageOutputPrice != nil || p.PerRequestPrice != nil {
-		return true
-	}
-	for _, iv := range p.Intervals {
-		if iv.InputPrice != nil || iv.OutputPrice != nil || iv.CacheWritePrice != nil || iv.CacheReadPrice != nil || iv.PerRequestPrice != nil {
-			return true
+	reason, bad := exposurePriceVerdict(cp, func() OfficialPriceState {
+		if officialState == nil {
+			return OfficialPriceState{}
 		}
-	}
-	return false
+		return officialState(model)
+	})
+	return !bad || reason != ExposureUnpriced
 }

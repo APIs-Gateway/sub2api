@@ -10845,7 +10845,12 @@ func (s *GatewayService) isUpstreamModelRestrictedByChannel(ctx context.Context,
 	if upstreamModel == "" {
 		return false
 	}
-	return !gp.UpstreamAccess(ctx, groupID, upstreamModel).OK
+	if !gp.UpstreamAccess(ctx, groupID, upstreamModel).OK {
+		return true
+	}
+	// 计费来源为 upstream 的白名单 v2 分组：按账号映射后的上游模型做运行时无价检查（W6 PR7b-2a）。
+	// 只有 billing_unpriced_policy = block_allowlist 才会拦；legacy、shadow、开放分组直接放行。
+	return runtimeUnpricedBlocked(ctx, gp, s.billingService, s.settingService, groupID, upstreamModel, "", "")
 }
 
 // resolveAccountUpstreamModel 确定账号将请求模型映射为什么上游模型。

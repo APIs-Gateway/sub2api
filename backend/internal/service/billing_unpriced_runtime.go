@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 // W6 PR7a：billing_unpriced_policy 开关与网关调度阶段的无价检查入口（设计 5.2「运行时」、Q3）。
@@ -13,8 +15,9 @@ import (
 //   - block_allowlist：白名单 v2 分组里无价的请求在调度阶段被拦，与受限模型走同一条路径（同一个通用错误文案，
 //     不含上游厂商、上游模型名或内部路由，原因只写管理员侧日志）。开放分组、legacy、shadow 分组始终不拦。
 //
-// Q3：PR7 上线后观测满 2 周、白名单分组排除已知免费名单后 unpriced_billing_rows 为 0，才把它设成 block_allowlist；
-// 通用 PUT /settings 之外没有专门的写入口，W5 落地后登记为 C 档、AI 不可写。
+// Q3：PR7 上线后观测满 2 周、白名单分组排除已知免费名单后 unpriced_billing_rows 为 0，才把它设成 block_allowlist。
+// 写入口是管理端 PUT /admin/settings 的 billing_unpriced_policy 字段（只认这两个值，非法值 400；
+// 要求交互式管理员会话，admin API key 不能写，因为它会改变用户请求是否被拒）。
 
 const (
 	// SettingKeyBillingUnpricedPolicy 是运行时无价拦截开关的存储键。
@@ -40,6 +43,28 @@ func (s *SettingService) BillingUnpricedPolicy(ctx context.Context) string {
 	return BillingUnpricedPolicyObserve
 }
 
+// NormalizeBillingUnpricedPolicy 校验并规范化 billing_unpriced_policy 的写入值（去首尾空白）；只认两个取值，其余（含空串）不合法。
+func NormalizeBillingUnpricedPolicy(value string) (string, bool) {
+	switch v := strings.TrimSpace(value); v {
+	case BillingUnpricedPolicyObserve, BillingUnpricedPolicyBlockAllowlist:
+		return v, true
+	}
+	return "", false
+}
+
+// SetBillingUnpricedPolicy 写入 billing_unpriced_policy。非法值返回 400。权限（交互式管理员会话）由调用方的 handler 负责。
+// 各实例的进程内缓存最多 15 秒后生效。
+func (s *SettingService) SetBillingUnpricedPolicy(ctx context.Context, value string) error {
+	v, ok := NormalizeBillingUnpricedPolicy(value)
+	if !ok {
+		return infraerrors.BadRequest("INVALID_BILLING_UNPRICED_POLICY", "billing_unpriced_policy must be observe or block_allowlist")
+	}
+	if s == nil || s.settingRepo == nil {
+		return infraerrors.InternalServer("SETTING_REPO_UNAVAILABLE", "setting repository is not configured")
+	}
+	return s.settingRepo.Set(ctx, SettingKeyBillingUnpricedPolicy, v)
+}
+
 // runtimeAccessPolicy 是会做运行时无价检查的策略（stagedPolicy）。legacyPolicy 与测试替身没有它，调用方直接放行。
 type runtimeAccessPolicy interface {
 	RuntimeAccess(ctx context.Context, groupID int64, candidates []string, in RuntimePriceInputs) QuoteAccess
@@ -59,9 +84,13 @@ func runtimeUnpricedBlocked(ctx context.Context, policy GroupPolicy, billing *Bi
 	}
 	in := RuntimePriceInputs{ReadPolicy: settings.BillingUnpricedPolicy}
 	if billing != nil {
-		in.OfficialPriced = func(model string) bool {
-			_, err := billing.GetModelPricing(model)
-			return err == nil
+		in.OfficialState = func(model string) OfficialPriceState {
+			st := billing.LookupOfficialPriceState(model)
+			if !st.Known && billing.quoteModelImageCapable(model) {
+				// 图片请求无渠道价时走 CalculateImageCost（分组图片价、目录价、兜底价），总是有价；调度时看不到请求类型。
+				st = OfficialPriceState{Known: true, ImageCapable: true}
+			}
+			return st
 		}
 		in.PricingSnapshotID = billing.pricingService.ActiveSnapshotID()
 	}
