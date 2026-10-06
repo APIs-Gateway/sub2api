@@ -21,6 +21,7 @@
             <NumText tier="secondary" class="ml-1 text-gray-900 dark:text-white" :text="row.price" />
           </span>
           <span class="text-xs text-gray-500 dark:text-gray-400">{{ unitLabel }}</span>
+          <span v-if="peakShort" class="text-xs text-gray-500 dark:text-gray-400" data-test="peak-note-row">{{ peakShort }}</span>
         </span>
         <span v-else class="mt-1 block text-xs text-gray-400 dark:text-gray-500 sm:mt-0">{{ t('availableChannels.noPricing') }}</span>
       </span>
@@ -47,29 +48,32 @@
         </div>
         <div class="self-end pb-0.5 text-xs text-gray-500 dark:text-gray-400">{{ unitLabel }}</div>
       </div>
+      <p v-if="peakNote" class="mt-2 text-xs text-gray-600 dark:text-gray-300" data-test="peak-note">{{ peakNote }}</p>
 
       <!-- 按分组 -->
       <div class="mt-5">
         <h3 class="mb-1 text-sm font-semibold text-gray-900 dark:text-white">{{ t('availableChannels.byGroup') }}</h3>
         <p class="mb-2 text-xs text-gray-500 dark:text-gray-400" data-test="rate-note">{{ t('availableChannels.rateNote') }}</p>
-        <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-dark-700">
+        <div v-for="sec in sections" :key="sec.kind" :class="sec.first ? '' : 'mt-3'" data-test="group-section">
+          <h4 v-if="sections.length > 1" class="mb-1 text-xs text-gray-500 dark:text-gray-400" data-test="section-unit">{{ sec.unitLabel }}</h4>
+          <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-dark-700">
           <table class="w-full min-w-[34rem] border-collapse text-sm" data-test="group-table">
             <thead>
               <tr class="border-b border-gray-200 bg-gray-50 text-xs font-medium text-gray-600 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300">
                 <th scope="col" class="px-3 py-2 text-left font-medium">{{ t('availableChannels.group') }}</th>
-                <template v-if="isToken">
-                  <th v-for="col in groupColumns" :key="col" scope="col" class="px-3 py-2 text-right font-medium">{{ columnLabels[col] }}</th>
+                <template v-if="sec.kind === 'token'">
+                  <th v-for="col in sec.columns" :key="col" scope="col" class="px-3 py-2 text-right font-medium">{{ columnLabels[col] }}</th>
                 </template>
                 <th v-else scope="col" class="px-3 py-2 text-right font-medium">{{ t('availableChannels.price') }}</th>
-                <th v-if="showPlan" scope="col" class="px-3 py-2 text-right font-medium">
+                <th v-if="sec.showPlan" scope="col" class="px-3 py-2 text-right font-medium">
                   {{ unit?.exact ? t('availableChannels.yourPlanPrice') : t('availableChannels.planPrice') }}
-                  <span v-if="showInOut" class="block text-[11px] font-normal text-gray-500 dark:text-gray-400">{{ t('availableChannels.inOut') }}</span>
+                  <span v-if="sec.showInOut" class="block text-[11px] font-normal text-gray-500 dark:text-gray-400">{{ t('availableChannels.inOut') }}</span>
                 </th>
               </tr>
             </thead>
             <tbody>
               <tr
-                v-for="(row, idx) in groupRows"
+                v-for="(row, idx) in sec.rows"
                 :key="row.id"
                 :class="[
                   'border-b border-gray-100 last:border-b-0 dark:border-dark-700/60',
@@ -80,20 +84,22 @@
                 <th scope="row" class="px-3 py-2 text-left font-normal">
                   <span class="font-medium text-gray-900 dark:text-white">{{ row.name }}</span>
                   <span class="ml-1.5 text-xs text-gray-500 dark:text-gray-400" data-test="rate-tag">{{ row.rateText }}x</span>
+                  <span v-if="row.peakText" class="ml-1 text-xs text-gray-500 dark:text-gray-400" data-test="peak-tag">{{ row.peakText }}</span>
                   <span v-if="row.customRateNote" class="ml-1 text-xs text-gray-500 dark:text-gray-400" data-test="rate-custom">{{ row.customRateNote }}</span>
                   <span
                     v-if="row.lowest && idx === 0"
                     class="ml-1.5 rounded bg-primary-100 px-1.5 py-0.5 text-[11px] font-medium text-primary-800 dark:bg-primary-900/40 dark:text-primary-300"
                   >{{ t('availableChannels.lowest') }}</span>
                 </th>
-                <template v-if="isToken">
-                  <td v-for="col in groupColumns" :key="col" class="px-3 py-2 text-right"><NumText tier="secondary" :text="row.cells[col]" /></td>
+                <template v-if="sec.kind === 'token'">
+                  <td v-for="col in sec.columns" :key="col" class="px-3 py-2 text-right"><NumText tier="secondary" :text="row.cells[col]" /></td>
                 </template>
                 <td v-else class="px-3 py-2 text-right"><NumText tier="secondary" :text="row.cells.unit" /></td>
-                <td v-if="showPlan" class="px-3 py-2 text-right text-gray-700 dark:text-gray-300" data-test="plan-cell"><NumText tier="secondary" :text="row.plan" /></td>
+                <td v-if="sec.showPlan" class="px-3 py-2 text-right text-gray-700 dark:text-gray-300" data-test="plan-cell"><NumText tier="secondary" :text="row.plan" /></td>
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
       </div>
 
@@ -147,6 +153,7 @@ import {
   type GroupPrice,
   type ModelTier,
   type PlanPrice,
+  type PriceKind,
   type PriceSet,
   type PricingContext,
   type SubscriptionUnitRange,
@@ -216,8 +223,8 @@ function visibleColumns(sets: PriceSet[]): ColumnKey[] {
 
 type Cells = Record<ColumnKey | 'unit', string>
 
-function cellsOf(set: PriceSet): Cells {
-  const f = (v: number | null) => (v == null ? '-' : money(balancePrice(v, kind.value, ctx.value)))
+function cellsOf(set: PriceSet, k: PriceKind = kind.value): Cells {
+  const f = (v: number | null) => (v == null ? '-' : money(balancePrice(v, k, ctx.value)))
   return {
     input: f(set.input),
     cacheRead: f(set.cacheRead),
@@ -228,9 +235,9 @@ function cellsOf(set: PriceSet): Cells {
   }
 }
 
-function planOf(set: PriceSet): string {
-  const p = (v: number | null) => (v == null ? null : planPrice(v, kind.value, ctx.value))
-  if (!isToken.value) return formatPlan(p(set.unit))
+function planOf(set: PriceSet, k: PriceKind = kind.value): string {
+  const p = (v: number | null) => (v == null ? null : planPrice(v, k, ctx.value))
+  if (k !== 'token') return formatPlan(p(set.unit))
   if (set.input == null && set.output == null) return formatPlan(p(set.imageOutput))
   return `${formatPlan(p(set.input))} / ${formatPlan(p(set.output))}`
 }
@@ -281,36 +288,54 @@ const heroRows = computed(() => linesOf(props.model.cheapest))
 /** 列表行只放最核心的价格；缓存价格留给展开后的明细。 */
 const startRows = computed(() => heroRows.value.filter((r) => r.key !== 'cacheRead' && r.key !== 'cacheWrite'))
 
-const groupColumns = computed(() =>
-  isToken.value ? visibleColumns(props.model.entries.map((e) => e.pricing.first)) : [],
-)
-const showInOut = computed(() => groupColumns.value.includes('input'))
-const showPlan = computed(() =>
-  props.model.entries.some((e) =>
-    [e.pricing.first.input, e.pricing.first.output, e.pricing.first.imageOutput, e.pricing.first.unit].some(
-      (v) => v != null && planPrice(v, kind.value, ctx.value) != null,
-    ),
-  ),
-)
-
 function formatRate(r: number): string {
   return Number(r.toPrecision(10)).toString()
 }
 
-const groupRows = computed(() =>
-  props.model.entries.map((e, idx) => {
-    const g = e.group
+/**
+ * 同一个模型在不同分组计费方式可以不同：每个分组按自己的方式展示，同一方式的分组放在一张表里，
+ * 价格只在同一张表内比较（最低标记也只在表内）。只有一种方式时就是一张表。
+ */
+const sections = computed(() =>
+  props.model.kinds.map((k, i) => {
+    const entries = props.model.entries.filter((e) => e.pricing.kind === k)
+    const sets = entries.map((e) => e.pricing.first)
     return {
-      id: g.id,
-      name: g.name,
-      rateText: formatRate(g.rate),
-      customRateNote: g.hasCustomRate ? t('availableChannels.rateCustom', { base: formatRate(g.baseRate) }) : '',
-      lowest: props.model.entries.length > 1 && idx === 0,
-      cells: cellsOf(e.pricing.first),
-      plan: planOf(e.pricing.first),
+      kind: k,
+      first: i === 0,
+      unitLabel: k === 'token' ? t('availableChannels.pricing.perMillion') : t('availableChannels.pricing.perRequest'),
+      columns: k === 'token' ? visibleColumns(sets) : [],
+      showInOut: k === 'token' && visibleColumns(sets).includes('input'),
+      showPlan: entries.some((e) =>
+        [e.pricing.first.input, e.pricing.first.output, e.pricing.first.imageOutput, e.pricing.first.unit].some(
+          (v) => v != null && planPrice(v, k, ctx.value) != null,
+        ),
+      ),
+      rows: entries.map((e, idx) => {
+        const g = e.group
+        return {
+          id: g.id,
+          name: g.name,
+          rateText: formatRate(g.rate),
+          customRateNote: g.hasCustomRate ? t('availableChannels.rateCustom', { base: formatRate(g.baseRate) }) : '',
+          peakText: e.pricing.peakMultiplier ? peakShortOf(e.pricing.peakMultiplier) : '',
+          lowest: entries.length > 1 && idx === 0,
+          cells: cellsOf(e.pricing.first, k),
+          plan: planOf(e.pricing.first, k),
+        }
+      }),
     }
   }),
 )
+
+/** 峰时倍率按分组标注：只有走默认价卡的分组带倍数，渠道自定义价的分组不带。 */
+function peakShortOf(n: number): string {
+  return t('availableChannels.peakShort', { n: formatRate(n) })
+}
+/** 列表行只标起价所在的那个分组；该分组没有峰时倍率就不标。 */
+const peakShort = computed(() => (props.model.peakMultiplier ? peakShortOf(props.model.peakMultiplier) : ''))
+/** 展开面板的说明：有任一分组带峰时倍率才出现，具体分组看分组表里的标注。 */
+const peakNote = computed(() => (props.model.hasPeakGroup ? t('availableChannels.peakNote') : ''))
 
 function tierLabel(tier: ModelTier): string {
   const { label, min, max } = tier.range

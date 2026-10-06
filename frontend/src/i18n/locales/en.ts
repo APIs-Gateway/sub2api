@@ -1544,6 +1544,8 @@
     allPlatforms: 'All',
     platform: 'Platform',
     startingFrom: 'From',
+    peakNote: 'Prices shown are standard; for groups marked with a peak multiplier, input, output and cache read are billed at that multiple on weekdays 9:00–12:00 and 14:00–18:00 (Beijing time)',
+    peakShort: 'Weekday peak {n}x',
     expand: 'Show prices',
     collapse: 'Hide',
     group: 'Group',
