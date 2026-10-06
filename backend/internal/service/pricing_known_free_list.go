@@ -27,7 +27,9 @@ const MaxKnownFreeListEntries = 2000
 
 // KnownFreeListStore 名单的存取与白名单分组的 open 单元格读取，都在调用方的事务里。
 type KnownFreeListStore interface {
-	// GetKnownFreeListTx 读名单原文；没有这一行返回空串。
+	// GetKnownFreeList 读名单原文，不加锁，给只读路径（读接口与预览）用；没有这一行返回空串。
+	GetKnownFreeList(ctx context.Context, exec MatrixExecutor) (string, error)
+	// GetKnownFreeListTx 读名单原文并锁住这一行，给写入事务用；没有这一行返回空串。
 	GetKnownFreeListTx(ctx context.Context, exec MatrixExecutor) (string, error)
 	// SetKnownFreeListTx 写名单原文（upsert）。必须在事务里调用。
 	SetKnownFreeListTx(ctx context.Context, tx MatrixTx, raw string) error
@@ -117,11 +119,16 @@ func marshalKnownFreeList(entries []BillingKnownFreeEntry) (string, error) {
 
 // Current 读当前名单（读失败或内容写坏时返回错误，而不是悄悄当成空名单：管理员要看到真实的原文）。
 func (s *KnownFreeListService) Current(ctx context.Context) ([]BillingKnownFreeEntry, error) {
-	raw, err := s.list.GetKnownFreeListTx(ctx, s.store.Reader())
+	raw, err := s.list.GetKnownFreeList(ctx, s.store.Reader())
 	if err != nil {
 		return nil, err
 	}
-	return parseBillingKnownFreeList(raw)
+	list, err := parseBillingKnownFreeList(raw)
+	if err != nil {
+		return nil, err
+	}
+	// 没配置过时解析结果是 nil；返回空切片，接口的 entries 才永远是数组。
+	return nonNilEntries(list), nil
 }
 
 // Preview 预览一次名单变更：列出删掉的条目，以及改后会变成违规的白名单单元格。不写入、不加锁。
@@ -131,7 +138,7 @@ func (s *KnownFreeListService) Preview(ctx context.Context, entries []BillingKno
 		return nil, err
 	}
 	reader := s.store.Reader()
-	raw, err := s.list.GetKnownFreeListTx(ctx, reader)
+	raw, err := s.list.GetKnownFreeList(ctx, reader)
 	if err != nil {
 		return nil, err
 	}

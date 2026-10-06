@@ -21,7 +21,55 @@ const (
 	maxCellExtraMultiplier = 1000.0
 	// extraMultiplierScale 额外倍率保留 6 位小数，与列定义一致；先取整再写，保证前后对比与库里一致。
 	extraMultiplierScale = 1e6
+	// MaxCustomTokenPrice token 类单价的业务上限：每 token 0.01 美元（即每百万 token 1 万美元）。
+	MaxCustomTokenPrice = 0.01
+	// MaxCustomPerRequestPrice 按次 / 图片单价的业务上限：每次 1000 美元。
+	MaxCustomPerRequestPrice = 1000.0
+	// ReasonPriceTooHigh 价格超过业务上限时 metadata.reason 的取值。
+	ReasonPriceTooHigh = "PRICE_TOO_HIGH"
 )
+
+// customPriceLimitViolation 检查自定义价格是否超过业务上限（含区间价格）；返回超限的字段名，没有超限返回空串。
+// 写成 !(v <= max)，NaN 与 +Inf 也算超限。
+func customPriceLimitViolation(cp MatrixCustomPrice) string {
+	over := func(v *float64, limit float64) bool { return v != nil && !(*v <= limit) }
+	token := []struct {
+		field string
+		val   *float64
+	}{
+		{"input_price", cp.InputPrice},
+		{"output_price", cp.OutputPrice},
+		{"cache_write_price", cp.CacheWritePrice},
+		{"cache_read_price", cp.CacheReadPrice},
+		{"image_output_price", cp.ImageOutputPrice},
+	}
+	for _, c := range token {
+		if over(c.val, MaxCustomTokenPrice) {
+			return c.field
+		}
+	}
+	if over(cp.PerRequestPrice, MaxCustomPerRequestPrice) {
+		return "per_request_price"
+	}
+	for i, iv := range cp.Intervals {
+		prefix := "intervals[" + strconv.Itoa(i) + "]."
+		for _, c := range []struct {
+			field string
+			val   *float64
+		}{
+			{"input_price", iv.InputPrice}, {"output_price", iv.OutputPrice},
+			{"cache_write_price", iv.CacheWritePrice}, {"cache_read_price", iv.CacheReadPrice},
+		} {
+			if over(c.val, MaxCustomTokenPrice) {
+				return prefix + c.field
+			}
+		}
+		if over(iv.PerRequestPrice, MaxCustomPerRequestPrice) {
+			return prefix + "per_request_price"
+		}
+	}
+	return ""
+}
 
 type cellOpKey struct {
 	groupID  int64
@@ -176,6 +224,14 @@ func normalizeCellCustom(op *CellOp) error {
 	}
 	if err := validatePricingIntervals(pricing); err != nil {
 		return cellOpError(*op, infraerrors.Reason(err), infraerrors.Message(err))
+	}
+	if field := customPriceLimitViolation(cp); field != "" {
+		return infraerrors.BadRequest(ReasonCellOpInvalid, "custom price exceeds the allowed maximum").WithMetadata(map[string]string{
+			"group_id":  strconv.FormatInt(op.GroupID, 10),
+			"model_key": op.ModelKey,
+			"field":     field,
+			"reason":    ReasonPriceTooHigh,
+		})
 	}
 	op.CustomPrice = &cp
 	return nil

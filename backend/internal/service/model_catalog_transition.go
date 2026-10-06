@@ -131,6 +131,7 @@ func (s *ModelCatalogTransitionService) Transition(ctx context.Context, id int64
 	}
 	out := p.Entry
 	out.Status = to
+	out.UpdatedAt = s.now()
 	return &out, nil
 }
 

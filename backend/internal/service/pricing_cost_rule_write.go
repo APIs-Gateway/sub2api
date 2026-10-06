@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
@@ -91,7 +92,7 @@ func normalizeCostRuleIDs(field string, in []int64) ([]int64, error) {
 // NormalizeCostRuleSpec 校验并规范一条规则：名字、命中条件、价格行（与渠道保存同一套价格校验）。
 func NormalizeCostRuleSpec(in CostRuleSpec) (CostRuleSpec, error) {
 	in.Name = strings.TrimSpace(in.Name)
-	if in.Name == "" || len(in.Name) > maxCostRuleNameLen {
+	if in.Name == "" || utf8.RuneCountInString(in.Name) > maxCostRuleNameLen {
 		return CostRuleSpec{}, costRuleInvalid("name must be 1 to " + strconv.Itoa(maxCostRuleNameLen) + " characters")
 	}
 	var err error
@@ -148,6 +149,12 @@ func normalizeCostRulePrice(p MatrixCostRulePrice) (MatrixCostRulePrice, error) 
 	}
 	if err := validatePricingIntervals(pricing); err != nil {
 		return p, costRuleInvalid(infraerrors.Message(err))
+	}
+	if field := customPriceLimitViolation(p.Price); field != "" {
+		return p, infraerrors.BadRequest(ReasonCostRuleInvalid, "price exceeds the allowed maximum").WithMetadata(map[string]string{
+			"field":  field,
+			"reason": ReasonPriceTooHigh,
+		})
 	}
 	return p, nil
 }

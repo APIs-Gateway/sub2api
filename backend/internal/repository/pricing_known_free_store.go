@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -19,10 +20,23 @@ type pricingKnownFreeStore struct{}
 // NewPricingKnownFreeStore 创建名单存储。
 func NewPricingKnownFreeStore() service.KnownFreeListStore { return pricingKnownFreeStore{} }
 
-// GetKnownFreeListTx 读名单原文；没有这一行返回空串。读的时候锁住这一行（没有这一行时没有可锁的，
+// GetKnownFreeListTx 读名单原文并锁住这一行，给写入事务用；没有这一行返回空串（没有这一行时没有可锁的，
 // 由写入者的 upsert 在提交时竞争，最坏是后写覆盖先写，两者都已通过校验）。
 func (pricingKnownFreeStore) GetKnownFreeListTx(ctx context.Context, exec service.MatrixExecutor) (string, error) {
-	rows, err := exec.QueryContext(ctx, `SELECT value FROM settings WHERE key = $1 FOR UPDATE`, service.SettingKeyBillingKnownFreeList)
+	return readKnownFreeList(ctx, exec, true)
+}
+
+// GetKnownFreeList 读名单原文，不加锁，给只读路径（读接口与预览）用，不会被进行中的写入阻塞。
+func (pricingKnownFreeStore) GetKnownFreeList(ctx context.Context, exec service.MatrixExecutor) (string, error) {
+	return readKnownFreeList(ctx, exec, false)
+}
+
+func readKnownFreeList(ctx context.Context, exec service.MatrixExecutor, lock bool) (string, error) {
+	q := `SELECT value FROM settings WHERE key = $1`
+	if lock {
+		q += ` FOR UPDATE`
+	}
+	rows, err := exec.QueryContext(ctx, q, service.SettingKeyBillingKnownFreeList)
 	if err != nil {
 		return "", fmt.Errorf("query known free list: %w", err)
 	}
@@ -144,22 +158,27 @@ func (s *pricingCatalogStatusStore) UpdateStatus(ctx context.Context, id int64, 
 }
 
 // CountModelUsageSince 统计自 since 以来 models 里任一名字出现在 model 或 requested_model 上的用量。
-// 两个列各有索引，分开查再合并，不用 OR，避免退化成全表扫描。
+// 名字按小写比较（历史日志里的大小写不一定一致）；单条查询里一行只算一次，同一行 model 与 requested_model
+// 同时命中不会重复计数。created_at 范围条件在前，走 (created_at, model, upstream_model) 与
+// (created_at, requested_model, upstream_model) 两个复合索引或 created_at 索引先把范围收窄到窗口内。
 func (s *pricingCatalogStatusStore) CountModelUsageSince(ctx context.Context, models []string, since time.Time) (service.CatalogUsage, error) {
 	out := service.CatalogUsage{}
-	if len(models) == 0 {
+	names := make([]string, 0, len(models))
+	for _, m := range models {
+		if m = strings.ToLower(strings.TrimSpace(m)); m != "" {
+			names = append(names, m)
+		}
+	}
+	if len(names) == 0 {
 		return out, nil
 	}
 	var count int64
 	var last sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(n), 0), MAX(last_at) FROM (
-		   SELECT COUNT(*) AS n, MAX(created_at) AS last_at FROM usage_logs
-		    WHERE model = ANY($1) AND created_at >= $2
-		   UNION ALL
-		   SELECT COUNT(*) AS n, MAX(created_at) AS last_at FROM usage_logs
-		    WHERE requested_model = ANY($1) AND created_at >= $2
-		 ) u`, pq.Array(models), since,
+		`SELECT COUNT(*), MAX(created_at) FROM usage_logs
+		  WHERE created_at >= $2
+		    AND (lower(model) = ANY($1) OR lower(requested_model) = ANY($1))`,
+		pq.Array(names), since,
 	).Scan(&count, &last)
 	if err != nil {
 		return out, fmt.Errorf("count model usage: %w", err)

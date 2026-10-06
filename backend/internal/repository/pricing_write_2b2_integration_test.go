@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,6 +46,16 @@ func TestPricingKnownFreeStore_Integration(t *testing.T) {
 	var raw string
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = $1`, service.SettingKeyBillingKnownFreeList).Scan(&raw))
 	require.Equal(t, `[]`, raw)
+
+	// 只读路径不加锁：写事务持有这一行的锁时也能读到（不会阻塞）。
+	require.NoError(t, pw2Tx(t, func(ctx context.Context, tx service.MatrixTx) error {
+		_, err := store.GetKnownFreeListTx(ctx, tx)
+		require.NoError(t, err)
+		got, err := store.GetKnownFreeList(ctx, NewPricingWriteStore(integrationDB).Reader())
+		require.NoError(t, err)
+		require.Equal(t, `[]`, got)
+		return nil
+	}))
 
 	// 只返回 v2 白名单分组的 open 单元格：v2 开放分组、legacy 白名单分组都不算。
 	allow := pwiV2Group(t)
@@ -163,10 +174,13 @@ func TestModelCatalogStatusStore_Integration(t *testing.T) {
 	add("upstream-x", alias, now.Add(-2*time.Hour))
 	add(key, "", now.Add(-10*24*time.Hour))
 	add("someone-else", "", now.Add(-time.Hour))
+	// model 与 requested_model 同时命中的行只算一次；历史日志里大小写不同的名字也算。
+	add(key, key, now.Add(-90*time.Minute))
+	add(strings.ToUpper(key), "", now.Add(-3*time.Hour))
 
-	usage, err := store.CountModelUsageSince(ctx, []string{key, alias}, now.Add(-service.CatalogUsageWindow))
+	usage, err := store.CountModelUsageSince(ctx, []string{strings.ToUpper(key), alias}, now.Add(-service.CatalogUsageWindow))
 	require.NoError(t, err)
-	require.Equal(t, int64(2), usage.Requests)
+	require.Equal(t, int64(4), usage.Requests)
 	require.NotNil(t, usage.LastUsedAt)
 	require.WithinDuration(t, now.Add(-time.Hour), *usage.LastUsedAt, time.Second)
 
@@ -189,7 +203,7 @@ func pw2RuleCount(t *testing.T, gid int64) (rules, prices int) {
 }
 
 func pw2Spec(name string) service.CostRuleSpec {
-	one, two := 1.0, 2.0
+	one, two := 1e-6, 2e-6
 	return service.CostRuleSpec{
 		Name: name, GroupIDs: []int64{1}, AccountIDs: []int64{2}, SortOrder: 3, Enabled: true,
 		Prices: []service.MatrixCostRulePrice{{

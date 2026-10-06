@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -95,6 +96,7 @@ func TestModelCatalogTransition_PreviewAndTransition(t *testing.T) {
 		out, err := svc.Transition(ctx, 4, ModelCatalogRetired, true)
 		require.NoError(t, err)
 		require.Equal(t, ModelCatalogRetired, out.Status)
+		require.Equal(t, pwNow, out.UpdatedAt, "返回的 updated_at 是转换时间，不是旧值")
 		require.Equal(t, [][3]string{{"", "active", "retired"}}, store.updates)
 	})
 
@@ -206,6 +208,12 @@ type w2FreeStore struct {
 	cells    []ExposureCell
 	sets     []string
 	locks    []bool
+	reads    int // 不加锁读的次数
+}
+
+func (s *w2FreeStore) GetKnownFreeList(_ context.Context, _ MatrixExecutor) (string, error) {
+	s.reads++
+	return s.raw, s.getErr
 }
 
 func (s *w2FreeStore) GetKnownFreeListTx(_ context.Context, _ MatrixExecutor) (string, error) {
@@ -246,6 +254,20 @@ func TestNormalizeKnownFreeList(t *testing.T) {
 func w2FreeService(store *w2FreeStore) (*KnownFreeListService, *pwFakeStore) {
 	ps := &pwFakeStore{}
 	return NewKnownFreeListService(ps, store, exOfficial), ps
+}
+
+func TestKnownFreeListService_CurrentNeverConfiguredIsEmptyArray(t *testing.T) {
+	store := &w2FreeStore{raw: ""}
+	svc, _ := w2FreeService(store)
+	cur, err := svc.Current(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, cur, "没配置过时返回空切片，JSON 才是 [] 而不是 null")
+	require.Empty(t, cur)
+	b, err := json.Marshal(map[string]any{"entries": cur})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"entries":[]}`, string(b))
+	require.Equal(t, 1, store.reads, "读接口不加锁")
+	require.Empty(t, store.locks)
 }
 
 func TestKnownFreeListService_CurrentAndPreview(t *testing.T) {
@@ -396,7 +418,7 @@ func w2Spec() CostRuleSpec {
 		Name: " rule ", GroupIDs: []int64{3, 1}, AccountIDs: []int64{2}, Enabled: true,
 		Prices: []MatrixCostRulePrice{{
 			Platform: "openai", Models: []string{"b", " a "},
-			Price: MatrixCustomPrice{InputPrice: pwF(1), OutputPrice: pwF(2)},
+			Price: MatrixCustomPrice{InputPrice: pwF(1e-6), OutputPrice: pwF(2e-6)},
 		}},
 	}
 }
@@ -422,6 +444,14 @@ func TestNormalizeCostRuleSpec(t *testing.T) {
 		"unknown mode":     func(s *CostRuleSpec) { s.Prices[0].Price.BillingMode = "weird" },
 		"per request bare": func(s *CostRuleSpec) { s.Prices[0].Price = MatrixCustomPrice{BillingMode: BillingModePerRequest} },
 		"negative price":   func(s *CostRuleSpec) { s.Prices[0].Price.InputPrice = pwF(-1) },
+		"token price cap":  func(s *CostRuleSpec) { s.Prices[0].Price.OutputPrice = pwF(0.011) },
+		"cache price cap":  func(s *CostRuleSpec) { s.Prices[0].Price.CacheReadPrice = pwF(1) },
+		"per request cap": func(s *CostRuleSpec) {
+			s.Prices[0].Price = MatrixCustomPrice{BillingMode: BillingModePerRequest, PerRequestPrice: pwF(1000.01)}
+		},
+		"interval price cap": func(s *CostRuleSpec) {
+			s.Prices[0].Price = MatrixCustomPrice{Intervals: []MatrixPriceInterval{{MinTokens: 0, InputPrice: pwF(5)}}}
+		},
 	}
 	for name, f := range mut {
 		s := w2Spec()
@@ -429,6 +459,26 @@ func TestNormalizeCostRuleSpec(t *testing.T) {
 		_, err := NormalizeCostRuleSpec(s)
 		require.Equal(t, ReasonCostRuleInvalid, w2Reason(t, err), name)
 	}
+	// 名字按字符数算：100 个汉字可以，101 个不行。
+	s0 := w2Spec()
+	s0.Name = strings.Repeat("成", maxCostRuleNameLen)
+	_, err = NormalizeCostRuleSpec(s0)
+	require.NoError(t, err)
+	s0.Name += "本"
+	_, err = NormalizeCostRuleSpec(s0)
+	require.Equal(t, ReasonCostRuleInvalid, w2Reason(t, err))
+
+	// 价格超过上限时 metadata 带 field 与 reason；恰好等于上限放行。
+	s0 = w2Spec()
+	s0.Prices[0].Price.InputPrice = pwF(MaxCustomTokenPrice)
+	_, err = NormalizeCostRuleSpec(s0)
+	require.NoError(t, err)
+	s0.Prices[0].Price.InputPrice = pwF(MaxCustomTokenPrice * 2)
+	_, err = NormalizeCostRuleSpec(s0)
+	require.Equal(t, ReasonCostRuleInvalid, w2Reason(t, err))
+	require.Equal(t, "input_price", infraerrors.FromError(err).Metadata["field"])
+	require.Equal(t, ReasonPriceTooHigh, infraerrors.FromError(err).Metadata["reason"])
+
 	ids := make([]int64, maxCostRuleIDs+1)
 	for i := range ids {
 		ids[i] = int64(i + 1)
