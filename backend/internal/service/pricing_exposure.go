@@ -137,12 +137,24 @@ func (v *ExposureValidator) evaluate(groupID int64, c MatrixCell, free []Billing
 	if billingKnownFreeMatches(free, groupID, c.ModelKey) {
 		return "", false
 	}
-	var st OfficialPriceState
-	if v.prices != nil {
-		st = v.prices.LookupOfficialPriceState(c.ModelKey)
+	var cp *MatrixCustomPrice
+	if c.PriceMode == MatrixPriceCustom {
+		cp = c.CustomPrice
 	}
-	if c.PriceMode == MatrixPriceCustom && c.CustomPrice != nil {
-		cp := c.CustomPrice
+	return exposurePriceVerdict(cp, func() OfficialPriceState {
+		if v.prices == nil {
+			return OfficialPriceState{}
+		}
+		return v.prices.LookupOfficialPriceState(c.ModelKey)
+	})
+}
+
+// exposurePriceVerdict 是「这个模型有没有价」的唯一判定（保存时校验与运行时无价检查共用，B1）。
+// cp 为 nil 表示单元格没有自定义价（inherit、extra，或窗口外的 custom），official 惰性取官方价事实，
+// 只在需要回落官方价时才调用。返回 bad 为 true 时 reason 是 ExposureUnpriced 或 ExposureZeroPrice；
+// 运行时只把 ExposureUnpriced 当成无价，0 元（zero_price）由保存时校验与已知免费名单负责。
+func exposurePriceVerdict(cp *MatrixCustomPrice, official func() OfficialPriceState) (ExposureViolationReason, bool) {
+	if cp != nil {
 		switch cp.BillingMode {
 		case BillingModePerRequest, BillingModeImage:
 			if customPerRequestHasPositive(cp) {
@@ -165,6 +177,7 @@ func (v *ExposureValidator) evaluate(groupID int64, c MatrixCell, free []Billing
 				return ExposureZeroPrice, true
 			}
 			// 全部留空：回落官方的 token 价，图片能力不算。
+			st := official()
 			switch {
 			case !st.Known:
 				return ExposureUnpriced, true
@@ -174,6 +187,7 @@ func (v *ExposureValidator) evaluate(groupID int64, c MatrixCell, free []Billing
 			return "", false
 		}
 	}
+	st := official()
 	switch {
 	case !st.Known:
 		return ExposureUnpriced, true

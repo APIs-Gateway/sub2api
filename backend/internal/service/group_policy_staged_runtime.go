@@ -143,16 +143,21 @@ const (
 	runtimePricedTTL        = 30 * time.Second
 	runtimePricedMaxEntries = 4096
 	runtimePolicyTTL        = 15 * time.Second
+	runtimeFreeErrorTTL     = 2 * time.Second
+	runtimeFreeReadTimeout  = 3 * time.Second
 	runtimeLogInterval      = time.Minute
 	runtimeLogMaxKeys       = 1024
 )
 
 // RuntimePriceInputs 是网关交给 RuntimeAccess 的、策略自己没有的价格事实。
 type RuntimePriceInputs struct {
-	// OfficialPriced 判断官方价（动态目录或内置兜底）里有没有这个模型的价格。
-	OfficialPriced func(model string) bool
+	// OfficialState 查官方价（动态目录或内置兜底）里关于这个模型的事实（有没有价、token 价是否非零、是否图片模型），
+	// 与保存时校验用同一份 OfficialPriceState；为 nil 按「官方没有价」。
+	OfficialState func(model string) OfficialPriceState
 	// PricingSnapshotID 是当前生效的价格快照 id（auto 模式为 0），HasPrice 缓存键的一部分。
 	PricingSnapshotID int64
+	// ReadKnownFree 读取已知免费名单（billing_unpriced 观测用的同一份）；为 nil 按空名单；出错时沿用上一次读到的名单。只在候选链无价时才会读，进程内缓存 15 秒。
+	ReadKnownFree func(ctx context.Context) ([]BillingKnownFreeEntry, error)
 	// ReadPolicy 读取 billing_unpriced_policy 的当前值；为 nil 按 observe。
 	ReadPolicy func(ctx context.Context) string
 }
@@ -171,12 +176,15 @@ type runtimePricedEntry struct {
 
 // runtimePricingState 是无价检查的进程内状态：HasPrice 缓存、开关值缓存、日志限速与计数。
 type runtimePricingState struct {
-	mu       sync.Mutex
-	priced   map[runtimePricedKey]runtimePricedEntry
-	policy   string
-	policyAt time.Time
-	policyOK bool
-	logged   map[string]time.Time
+	mu        sync.Mutex
+	priced    map[runtimePricedKey]runtimePricedEntry
+	policy    string
+	policyAt  time.Time
+	policyOK  bool
+	free      []BillingKnownFreeEntry
+	freeUntil time.Time
+	freeOK    bool
+	logged    map[string]time.Time
 
 	observed atomic.Int64
 	blocked  atomic.Int64
@@ -232,13 +240,44 @@ func (r *runtimePricingState) policyValue(ctx context.Context, now time.Time, re
 	}
 	r.mu.Unlock()
 	value := BillingUnpricedPolicyObserve
-	if read != nil && read(ctx) == BillingUnpricedPolicyBlockAllowlist {
+	// 用独立的带超时 ctx 读：请求被客户端取消时不会把 observe 缓存给所有请求。
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), runtimeFreeReadTimeout)
+	defer cancel()
+	if read != nil && read(readCtx) == BillingUnpricedPolicyBlockAllowlist {
 		value = BillingUnpricedPolicyBlockAllowlist
 	}
 	r.mu.Lock()
 	r.policy, r.policyAt, r.policyOK = value, now, true
 	r.mu.Unlock()
 	return value
+}
+
+// knownFreeList 返回已知免费名单（成功读到后缓存 15 秒，读取方为 nil 按空名单）。
+//   - 读取用独立的带超时 ctx，不用请求自己的 ctx：客户端在读名单时断开，不会让空名单被缓存给所有请求；
+//   - 读取出错（数据库抖动、名单 JSON 写坏）时保留上一次成功读到的名单，只缓存 runtimeFreeErrorTTL 后重试；冷启动就出错则是空名单。
+//     注意：空名单对 block 模式是多拦（名单里的免费模型会被当成无价），对 observe 模式才是多观测，所以不能把一次抖动缓存 15 秒。
+func (r *runtimePricingState) knownFreeList(now time.Time, read func(context.Context) ([]BillingKnownFreeEntry, error)) []BillingKnownFreeEntry {
+	if read == nil {
+		return nil
+	}
+	r.mu.Lock()
+	if r.freeOK && now.Before(r.freeUntil) {
+		v := r.free
+		r.mu.Unlock()
+		return v
+	}
+	r.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), runtimeFreeReadTimeout)
+	list, err := read(ctx)
+	cancel()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err != nil {
+		r.freeOK, r.freeUntil = true, now.Add(runtimeFreeErrorTTL)
+		return r.free // 沿用上一次的名单；冷启动时为空
+	}
+	r.free, r.freeOK, r.freeUntil = list, true, now.Add(runtimePolicyTTL)
+	return list
 }
 
 // RuntimeAccess 是调度阶段对白名单 v2 分组的无价检查（设计 5.2「运行时」）。candidates 是调度前能拿到的计费候选链
@@ -261,7 +300,7 @@ func (s *stagedPolicy) RuntimeAccess(ctx context.Context, groupID int64, candida
 	key := runtimePricedKey{snapshotID: in.PricingSnapshotID, groupID: groupID, revision: snap.revision, chain: strings.Join(candidates, "\x00")}
 	priced := s.runtime.pricedCached(now, key, func() bool {
 		for _, candidate := range candidates {
-			if snap.hasPrice(candidate, now, in.OfficialPriced) {
+			if snap.hasPrice(candidate, now, in.OfficialState) {
 				return true
 			}
 		}
@@ -270,6 +309,15 @@ func (s *stagedPolicy) RuntimeAccess(ctx context.Context, groupID int64, candida
 	if priced {
 		yes := true
 		return QuoteAccess{OK: true, Priced: &yes}
+	}
+
+	// 已知免费名单里的（分组、模型）是有意免费：不算无价，不记观测，也不拦（与保存时校验、unpriced_billing_rows 同一份名单）。
+	if free := s.runtime.knownFreeList(now, in.ReadKnownFree); len(free) > 0 {
+		for _, candidate := range candidates {
+			if billingKnownFreeMatches(free, groupID, candidate) {
+				return QuoteAccess{OK: true}
+			}
+		}
 	}
 
 	block := s.runtime.policyValue(ctx, now, in.ReadPolicy) == BillingUnpricedPolicyBlockAllowlist
@@ -285,26 +333,21 @@ func (s *stagedPolicy) RuntimeAccess(ctx context.Context, groupID int64, candida
 	return QuoteAccess{OK: !block, Reason: QuoteAccessReasonUnpriced, Priced: &no}
 }
 
-// hasPrice 判断分组快照里某个模型有没有价格：单元格是 custom 且带显式价格字段（含区间）就有价；
-// 其余情况（inherit、extra、没有单元格、custom 但字段全空）回落官方价。生效窗口外的 custom 按 inherit 处理。
-func (s *matrixSnapshot) hasPrice(model string, at time.Time, officialPriced func(string) bool) bool {
-	if cell := s.lookupCell(model); cell != nil && cell.mode == MatrixPriceCustom && cell.pricing != nil &&
-		cell.activeAt(at) && channelPricingHasExplicitPrice(cell.pricing) {
-		return true
+// hasPrice 判断分组快照里某个模型有没有价格，按计费模式区分（B1）：判定本身是保存时校验用的 exposurePriceVerdict，
+// 这里不再另写一份。生效窗口外的 custom 按 inherit 处理。只有「没有任何价格来源」才算无价：
+// 0 元（zero_price）不算，它由保存时校验与已知免费名单管，运行时不因此拦截。
+// 按次、图片模式的 custom 看按次价；inherit、extra 的图片模型（无 token 价）算有价。
+func (s *matrixSnapshot) hasPrice(model string, at time.Time, officialState func(string) OfficialPriceState) bool {
+	var cp *MatrixCustomPrice
+	if cell := s.lookupCell(model); cell != nil && cell.mode == MatrixPriceCustom && cell.pricing != nil && cell.activeAt(at) {
+		c := MatrixCustomPriceFromPricing(*cell.pricing)
+		cp = &c
 	}
-	return officialPriced != nil && officialPriced(model)
-}
-
-// channelPricingHasExplicitPrice 单元格的自定义价是否带任何显式价格字段（顶层或区间，不论是否为 0）。
-func channelPricingHasExplicitPrice(p *ChannelModelPricing) bool {
-	if p.InputPrice != nil || p.OutputPrice != nil || p.CacheWritePrice != nil || p.CacheReadPrice != nil ||
-		p.ImageOutputPrice != nil || p.PerRequestPrice != nil {
-		return true
-	}
-	for _, iv := range p.Intervals {
-		if iv.InputPrice != nil || iv.OutputPrice != nil || iv.CacheWritePrice != nil || iv.CacheReadPrice != nil || iv.PerRequestPrice != nil {
-			return true
+	reason, bad := exposurePriceVerdict(cp, func() OfficialPriceState {
+		if officialState == nil {
+			return OfficialPriceState{}
 		}
-	}
-	return false
+		return officialState(model)
+	})
+	return !bad || reason != ExposureUnpriced
 }

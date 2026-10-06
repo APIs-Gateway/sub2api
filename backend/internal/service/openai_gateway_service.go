@@ -600,6 +600,7 @@ func (s *OpenAIGatewayService) isUpstreamModelRestrictedByChannel(ctx context.Co
 	if gp == nil {
 		return false
 	}
+	originalModel := requestedModel
 	if compactForwardModel, ok := openAIForwardModelFromContext(ctx); ok {
 		requestedModel = compactForwardModel.model
 		requireCompact = compactForwardModel.useCompactModelMapping
@@ -608,7 +609,14 @@ func (s *OpenAIGatewayService) isUpstreamModelRestrictedByChannel(ctx context.Co
 	if upstreamModel == "" {
 		return false
 	}
-	return !gp.UpstreamAccess(ctx, groupID, upstreamModel).OK
+	if !gp.UpstreamAccess(ctx, groupID, upstreamModel).OK {
+		return true
+	}
+	// 计费来源为 upstream 的白名单 v2 分组：运行时无价检查（W6 PR7b-2a）。候选链与计费的取价回退一致：
+	// 上游模型无价时计费会回退到原始请求模型或渠道映射后的模型（forward model 覆盖之前的原值也在计费链里），
+	// 所以三者任一有价就算有价（R2-S-5）。
+	// 只有 billing_unpriced_policy = block_allowlist 才会拦；legacy、shadow、开放分组直接放行。
+	return runtimeUnpricedBlocked(ctx, gp, s.billingService, s.settingService, groupID, originalModel, upstreamModel, requestedModel)
 }
 
 func (s *OpenAIGatewayService) needsUpstreamChannelRestrictionCheck(ctx context.Context, groupID *int64) bool {

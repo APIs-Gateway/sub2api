@@ -349,6 +349,8 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 	payload.OpenAIAdvancedSchedulerWeightUpstreamCost = settings.OpenAIAdvancedSchedulerWeightUpstreamCost
 	payload.OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost = settings.OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost
 
+	payload.BillingUnpricedPolicy = h.settingService.BillingUnpricedPolicy(c.Request.Context())
+
 	// OpenAI fast policy (stored under a dedicated setting key)
 	if fastPolicy, err := h.settingService.GetOpenAIFastPolicySettings(c.Request.Context()); err != nil {
 		slog.Error("openai_fast_policy_settings_get_failed", "error", err)
@@ -735,6 +737,9 @@ type UpdateSettingsRequest struct {
 
 	// OpenAI fast/flex policy (optional, only updated when provided)
 	OpenAIFastPolicySettings *dto.OpenAIFastPolicySettings `json:"openai_fast_policy_settings,omitempty"`
+
+	// 白名单分组运行时无价拦截开关（observe / block_allowlist，省略时不改）。会改变用户请求是否被拒，只有交互式管理员会话能写。
+	BillingUnpricedPolicy *string `json:"billing_unpriced_policy"`
 
 	// 系统全局 platform quota 默认值（整体替换语义：nil = 不修改，non-nil = 整体覆盖）。
 	DefaultPlatformQuotas map[string]*service.DefaultPlatformQuotaSetting `json:"default_platform_quotas"`
@@ -1634,6 +1639,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	sessionBindingEnabled := previousSettings.SessionBindingEnabled
 	sessionBindingEnabled = resolveSessionBindingEnabled(sessionBindingEnabled, req.SessionBindingEnabled)
+	billingUnpricedPolicy, ok := resolveBillingUnpricedPolicyWrite(c, req.BillingUnpricedPolicy)
+	if !ok {
+		return
+	}
 	stepUpEnabled := previousSettings.StepUpEnabled
 	if req.StepUpEnabled != nil {
 		stepUpEnabled = *req.StepUpEnabled
@@ -2112,6 +2121,14 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		},
 		ForceEmailOnThirdPartySignup: boolValueOrDefault(req.ForceEmailOnThirdPartySignup, previousAuthSourceDefaults.ForceEmailOnThirdPartySignup),
 	}
+	// 白名单分组无价拦截开关（受保护键，走仓储的专用写入）。放在主更新之前、所有校验之后：写入失败时其它设置一个都没落库，
+	// 不会出现「其它设置已保存、接口却报错」；合法值与权限已在 resolveBillingUnpricedPolicyWrite 校验。
+	if billingUnpricedPolicy != "" {
+		if err := h.settingService.SetBillingUnpricedPolicy(c.Request.Context(), billingUnpricedPolicy); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
 	if err := h.settingService.UpdateSettingsWithAuthSourceDefaultsOmitting(c.Request.Context(), settings, authSourceDefaults, omittedSettingKeys); err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -2420,6 +2437,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	payload.OpenAIOAuthSchedulingRateMultiplier = updatedSettings.OpenAIOAuthSchedulingRateMultiplier
 	payload.OpenAIAdvancedSchedulerWeightUpstreamCost = updatedSettings.OpenAIAdvancedSchedulerWeightUpstreamCost
 	payload.OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost = updatedSettings.OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost
+	payload.BillingUnpricedPolicy = h.settingService.BillingUnpricedPolicy(c.Request.Context())
 	if fastPolicy, err := h.settingService.GetOpenAIFastPolicySettings(c.Request.Context()); err != nil {
 		slog.Error("openai_fast_policy_settings_get_failed", "error", err)
 	} else if fastPolicy != nil {
@@ -2609,6 +2627,28 @@ func detectOmittedSettingKeys(raw map[string]json.RawMessage) service.OmittedSet
 		}
 	}
 	return omitted
+}
+
+// resolveBillingUnpricedPolicyWrite 校验 billing_unpriced_policy 的写入请求，返回规范化后的值（未提供时为空串）。
+// 提供了字段就必须是交互式管理员会话（JWT）：这个开关会改变用户请求是否被拒，全局管理员密钥与机器令牌（admin token）都不行，
+// 与价格写入口同口径（鉴权方式取自中间件写进上下文的 auth_method，请求方无法自报）。非法取值返回 400。
+// 失败时已写好响应，调用方直接返回。
+func resolveBillingUnpricedPolicyWrite(c *gin.Context, requested *string) (string, bool) {
+	if requested == nil {
+		return "", true
+	}
+	value, valid := service.NormalizeBillingUnpricedPolicy(*requested)
+	if !valid {
+		response.BadRequest(c, "billing_unpriced_policy must be observe or block_allowlist")
+		return "", false
+	}
+	if c.GetString("auth_method") != service.AuditAuthMethodJWT {
+		response.ErrorWithDetails(c, http.StatusForbidden,
+			"billing_unpriced_policy changes must be made in an interactive administrator session",
+			"BILLING_UNPRICED_POLICY_INTERACTIVE", nil)
+		return "", false
+	}
+	return value, true
 }
 
 func hasPaymentFields(req UpdateSettingsRequest) bool {
@@ -3147,6 +3187,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	// Default platform quotas（JSON map，整体比较）
 	if !equalPlatformQuotaSettings(before.DefaultPlatformQuotas, after.DefaultPlatformQuotas) {
 		changed = append(changed, service.SettingKeyDefaultPlatformQuotas)
+	}
+	if req.BillingUnpricedPolicy != nil {
+		changed = append(changed, service.SettingKeyBillingUnpricedPolicy)
 	}
 	changed = appendAuthSourceDefaultChanges(changed, beforeAuthSourceDefaults, afterAuthSourceDefaults)
 	return changed

@@ -323,9 +323,9 @@ type spPriceInputs struct {
 
 func (p *spPriceInputs) inputs() RuntimePriceInputs {
 	return RuntimePriceInputs{
-		OfficialPriced: func(model string) bool {
+		OfficialState: func(model string) OfficialPriceState {
 			p.officialCalls.Add(1)
-			return p.official[model]
+			return OfficialPriceState{Known: p.official[model], TokenNonZero: p.official[model]}
 		},
 		PricingSnapshotID: p.snapshotID,
 		ReadPolicy: func(context.Context) string {
@@ -482,5 +482,5 @@ func TestMatrixSnapshot_HasPriceHonorsTheEffectiveWindow(t *testing.T) {
 	snap := buildMatrixSnapshot(1, PlatformOpenAI, GroupStateSnapshot{Cells: []StoredMatrixCell{cell}})
 	require.False(t, snap.hasPrice("m", mpT0, nil), "the window has not started: the custom price is not in effect")
 	require.True(t, snap.hasPrice("m", future.Add(time.Second), nil))
-	require.True(t, snap.hasPrice("m", mpT0, func(string) bool { return true }), "falls back to the official price")
+	require.True(t, snap.hasPrice("m", mpT0, func(string) OfficialPriceState { return OfficialPriceState{Known: true, TokenNonZero: true} }), "falls back to the official price")
 }
