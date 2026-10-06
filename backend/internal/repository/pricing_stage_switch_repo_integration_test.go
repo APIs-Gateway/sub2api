@@ -108,9 +108,14 @@ func TestPricingStageSwitch_EndToEnd(t *testing.T) {
 	require.Equal(t, "consumed", stageIntScalar[string](t, `SELECT status FROM pricing_write_approvals WHERE id = $1`, p.ApprovalID))
 	require.Equal(t, 1, stageIntScalar[int](t, `SELECT COUNT(*) FROM pricing_stage_audit WHERE group_id = $1 AND kind = 'advance' AND from_stage = 'shadow' AND to_stage = 'v2' AND interactive AND approval_id = $2`, gid, p.ApprovalID))
 
-	// 凭证只能用一次。
-	_, err = sw.Commit(ctx, service.PricingStageSwitchRequest{GroupID: gid, To: service.PricingStageV2, OperatorID: 1, Confirm: true, ApprovalID: p.ApprovalID, AuthMethod: service.AuditAuthMethodJWT})
-	require.Error(t, err)
+	// 分组已经是 v2：用同一个凭证再提交是幂等的空操作（成功返回，不写任何东西，也不再碰凭证）。
+	// 凭证一次性的语义在真实库上由 pricing_write_integration_test.go 覆盖。
+	again, err := sw.Commit(ctx, service.PricingStageSwitchRequest{GroupID: gid, To: service.PricingStageV2, OperatorID: 1, Confirm: true, ApprovalID: p.ApprovalID, AuthMethod: service.AuditAuthMethodJWT})
+	require.NoError(t, err)
+	require.False(t, again.Changed)
+	require.Equal(t, "noop", again.Kind)
+	require.Equal(t, 1, stageIntScalar[int](t, `SELECT COUNT(*) FROM pricing_stage_audit WHERE group_id = $1`, gid), "a noop leaves no audit row")
+	require.Equal(t, "consumed", stageIntScalar[string](t, `SELECT status FROM pricing_write_approvals WHERE id = $1`, p.ApprovalID))
 
 	// v2 分组上有人手工加了一行、改了一行：回拨时归档并删除，再按渠道当前配置重新派生。
 	_, err = integrationDB.ExecContext(ctx, `INSERT INTO model_group_prices (group_id, model_key, source) VALUES ($1, 'edited', 'manual')`, gid)
