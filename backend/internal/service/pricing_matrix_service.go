@@ -310,27 +310,47 @@ type GroupDeriveView struct {
 	Plan   MatrixPlanSummary `json:"plan"`
 }
 
-// ViewGroup 实时派生一个分组并与库里现状对照。分组不存在返回 ErrGroupNotFound。
-func (s *PricingDerivationService) ViewGroup(ctx context.Context, groupID int64) (*GroupDeriveView, error) {
+// loadGroupAndOwner 读取分组元信息与它当前所属的渠道（没有渠道为 nil）。分组不存在返回 ErrGroupNotFound。
+func (s *PricingDerivationService) loadGroupAndOwner(ctx context.Context, groupID int64) (DeriveGroup, *Channel, error) {
 	meta, err := s.repo.GetGroupMeta(ctx, []int64{groupID})
 	if err != nil {
-		return nil, fmt.Errorf("get group meta: %w", err)
+		return DeriveGroup{}, nil, fmt.Errorf("get group meta: %w", err)
 	}
 	group, ok := meta[groupID]
 	if !ok {
-		return nil, ErrGroupNotFound
+		return DeriveGroup{}, nil, ErrGroupNotFound
 	}
 	group.ID = groupID
 
 	var owner *Channel
 	ownerID, err := s.channels.GetChannelIDByGroupID(ctx, groupID)
 	if err != nil {
-		return nil, fmt.Errorf("get channel of group: %w", err)
+		return DeriveGroup{}, nil, fmt.Errorf("get channel of group: %w", err)
 	}
 	if ownerID != 0 {
 		if owner, err = s.loadChannel(ctx, ownerID); err != nil {
-			return nil, err
+			return DeriveGroup{}, nil, err
 		}
+	}
+	return group, owner, nil
+}
+
+// DeriveGroupCurrent 按渠道当前配置实时派生一个分组，返回派生结果与分组平台（只读，不写任何东西）。
+// 阶段切换在事务里拿到分组配置行的锁之后调用它，用派生出的 revision 与回放绑定的 revision 比对。
+func (s *PricingDerivationService) DeriveGroupCurrent(ctx context.Context, groupID int64) (DerivedGroupState, string, error) {
+	group, owner, err := s.loadGroupAndOwner(ctx, groupID)
+	if err != nil {
+		return DerivedGroupState{}, "", err
+	}
+	facts := s.collectFacts([]DeriveGroup{group}, map[int64]*Channel{group.ID: owner})
+	return DeriveGroupState(owner, group, facts), group.Platform, nil
+}
+
+// ViewGroup 实时派生一个分组并与库里现状对照。分组不存在返回 ErrGroupNotFound。
+func (s *PricingDerivationService) ViewGroup(ctx context.Context, groupID int64) (*GroupDeriveView, error) {
+	group, owner, err := s.loadGroupAndOwner(ctx, groupID)
+	if err != nil {
+		return nil, err
 	}
 	return s.buildView(ctx, group, owner)
 }

@@ -28,6 +28,8 @@ type modelCatalogLister interface {
 // pricingStageOperator 是 PricingMatrixHandler 对 service.PricingStageService 的最小依赖（W6 PR5）。
 type pricingStageOperator interface {
 	Switch(ctx context.Context, req service.PricingStageSwitchRequest) (*service.PricingStageSwitchResult, error)
+	Preview(ctx context.Context, req service.PricingStagePreviewRequest) (*service.PricingStagePreview, error)
+	Audit(ctx context.Context, groupID int64, limit int) ([]service.StageAuditEntry, error)
 	ShadowStats() service.PricingShadowStats
 	MatrixSnapshotStats() service.MatrixSnapshotStats
 	ShadowSamples(ctx context.Context, groupID int64, limit int) ([]service.PricingShadowSample, error)
@@ -50,10 +52,18 @@ func NewPricingMatrixHandler(derive *service.PricingDerivationService, catalog *
 type switchPricingStageRequest struct {
 	Stage   string `json:"stage" binding:"required"`
 	Confirm bool   `json:"confirm"`
+	// ApprovalID 预览凭证；切到 v2 必须带（先 POST .../stage/preview）。
+	ApprovalID int64 `json:"approval_id"`
 }
 
-// SwitchStage 切换分组的价格体系阶段（登记为 pricing.stage_switch）。PR7 合并之前只允许 legacy 与 shadow。
-// PUT /api/v1/admin/pricing-matrix/groups/:id/stage  {"stage": "shadow", "confirm": true}
+// previewPricingStageRequest 阶段切换预览请求体。
+type previewPricingStageRequest struct {
+	Stage string `json:"stage" binding:"required"`
+}
+
+// SwitchStage 切换分组的价格体系阶段（登记为 pricing.stage_switch）。路由挂了 RequireAdminJWT：机器令牌不能切换阶段。
+// 切到 v2 要先预览（POST .../stage/preview）拿到 approval_id，再带着它提交；v2 回拨到 shadow 或 legacy 不需要凭证。
+// PUT /api/v1/admin/pricing-matrix/groups/:id/stage  {"stage": "v2", "confirm": true, "approval_id": 12}
 func (h *PricingMatrixHandler) SwitchStage(c *gin.Context) {
 	id, ok := parsePricingMatrixID(c)
 	if !ok {
@@ -74,12 +84,67 @@ func (h *PricingMatrixHandler) SwitchStage(c *gin.Context) {
 		To:         service.PricingStage(strings.TrimSpace(req.Stage)),
 		OperatorID: subject.UserID,
 		Confirm:    req.Confirm,
+		ApprovalID: req.ApprovalID,
+		AuthMethod: c.GetString("auth_method"),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 	response.Success(c, result)
+}
+
+// PreviewStage 预览阶段切换：评估闸门、估算价格方向、列出被接受的差异，目标是 v2 且闸门通过时登记预览凭证。
+// 不改任何数据。
+// POST /api/v1/admin/pricing-matrix/groups/:id/stage/preview  {"stage": "v2"}
+func (h *PricingMatrixHandler) PreviewStage(c *gin.Context) {
+	id, ok := parsePricingMatrixID(c)
+	if !ok {
+		return
+	}
+	var req previewPricingStageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.ErrorFrom(c, infraerrors.BadRequest("VALIDATION_ERROR", err.Error()))
+		return
+	}
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	preview, err := h.stage.Preview(c.Request.Context(), service.PricingStagePreviewRequest{
+		GroupID: id, To: service.PricingStage(strings.TrimSpace(req.Stage)), OperatorID: subject.UserID,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, preview)
+}
+
+// StageAudit 返回分组最近的阶段变更审计（谁、何时、从哪到哪、闸门证据），新的在前。
+// GET /api/v1/admin/pricing-matrix/groups/:id/stage/audit?limit=50
+func (h *PricingMatrixHandler) StageAudit(c *gin.Context) {
+	id, ok := parsePricingMatrixID(c)
+	if !ok {
+		return
+	}
+	limit := 50
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v <= 0 {
+			response.ErrorFrom(c, infraerrors.BadRequest("INVALID_PARAMETER", "limit must be a positive integer").
+				WithMetadata(map[string]string{"param": "limit"}))
+			return
+		}
+		limit = v
+	}
+	items, err := h.stage.Audit(c.Request.Context(), id, limit)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"items": items})
 }
 
 // ShadowStats 返回影子比对的进程内计数（指标 pricing_shadow_compared_total、pricing_shadow_diff_total 等）

@@ -258,6 +258,7 @@ var adminReviewedWriteRules = []AdminRouteRule{
 	// pricing snapshots: candidates never change effective prices until approved.
 	{http.MethodPost, "/pricing/snapshots/fetch", "downloads a candidate snapshot; the effective prices do not change"},
 	{http.MethodPost, "/pricing/snapshots/:id/preview", "dry-run of an approval; persists nothing"},
+	{http.MethodPost, "/pricing-matrix/groups/:id/stage/preview", "dry-run of a pricing stage switch; only registers a preview ticket, the commit itself is JWT-only"},
 	{http.MethodPost, "/pricing/snapshots/:id/reject", "discards an unapproved candidate; the effective prices do not change"},
 
 	// pricing matrix previews: they record one preview row; no price changes until an interactive session commits.

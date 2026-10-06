@@ -40,7 +40,7 @@ import (
 
 const pricingReplayUsage = "usage: pricing-replay [--days 30] [--until RFC3339] [--groups 16,18,...] [--out-dir DIR] " +
 	"[--matrix-source derived|stored] [--pricing-file PATH] [--workers N] [--batch-size 5000] " +
-	"[--statement-timeout 120s] [--max-diff-rows N] [--sample 20] [--strict]"
+	"[--statement-timeout 120s] [--max-diff-rows N] [--sample 20] [--strict] [--record]"
 
 const (
 	replayMatrixDerived = "derived"
@@ -62,6 +62,7 @@ type pricingReplayArgs struct {
 	maxDiffRows      int
 	sample           int
 	strict           bool
+	record           bool
 }
 
 // parsePricingReplayGroups 解析逗号分隔的分组 id 列表；空串表示自动（窗口内有用量的全部未软删分组）。
@@ -103,6 +104,7 @@ func parsePricingReplayArgs(args []string, errOut io.Writer, now time.Time) (pri
 	maxDiff := fs.Int("max-diff-rows", service.DefaultPricingReplayMaxDiffRows, "maximum rows written to the diff CSV (diffs are always counted)")
 	sample := fs.Int("sample", service.DefaultPricingReplaySampleSize, "translation diffs kept as samples in the summary")
 	strict := fs.Bool("strict", false, "exit with an error when the replay does not pass")
+	record := fs.Bool("record", false, "write each group's result to pricing_replay_evidence (the stage switch gate reads it); needs a writable database user")
 	if err := fs.Parse(args); err != nil {
 		return a, err
 	}
@@ -139,7 +141,7 @@ func parsePricingReplayArgs(args []string, errOut io.Writer, now time.Time) (pri
 	}
 	a.days, a.groups, a.outDir, a.matrixSource, a.pricingFile = *days, ids, *outDir, *source, *pricingFile
 	a.workers, a.batchSize, a.statementTimeout, a.lockTimeout = *workers, *batch, *stmt, *lock
-	a.maxDiffRows, a.sample, a.strict = *maxDiff, *sample, *strict
+	a.maxDiffRows, a.sample, a.strict, a.record = *maxDiff, *sample, *strict, *record
 	return a, nil
 }
 
@@ -267,6 +269,13 @@ func runPricingReplayCommand(args []string, out io.Writer) error {
 	}
 
 	printPricingReplayResult(out, summary, base)
+	if a.record {
+		n, err := recordPricingReplayEvidence(ctx, cfg, summary)
+		if err != nil {
+			return fmt.Errorf("record replay evidence: %w", err)
+		}
+		_, _ = fmt.Fprintf(out, "recorded: %d group result(s) in pricing_replay_evidence\n", n)
+	}
 	if a.strict && !summary.Verdict.Pass {
 		return fmt.Errorf("replay did not pass: %s", strings.Join(summary.Verdict.Reasons, "; "))
 	}
@@ -286,4 +295,20 @@ func printPricingReplayResult(out io.Writer, s *service.PricingReplaySummary, ba
 		_, _ = fmt.Fprintf(out, "not passed: %s\n", reason)
 	}
 	_, _ = fmt.Fprintf(out, "summary: %s-summary.json\ndiffs:   %s-diffs.csv (%d rows)\n", base, base, s.DiffCSVRows)
+}
+
+// recordPricingReplayEvidence 用一个可写连接把每个分组的回放结果记进 pricing_replay_evidence。
+// 回放本身用的是只读会话，不能复用；这里只在回放结束后插入证据行，不动任何计费数据。
+func recordPricingReplayEvidence(ctx context.Context, cfg *config.Config, summary *service.PricingReplaySummary) (int, error) {
+	db, err := sql.Open("postgres", cfg.Database.DSNWithTimezone(cfg.Timezone))
+	if err != nil {
+		return 0, fmt.Errorf("open database: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+	db.SetMaxOpenConns(1)
+	rows := service.ReplayEvidenceFromSummary(summary, time.Now().UTC())
+	if err := repository.NewPricingReplayEvidenceStore(db).RecordReplayEvidence(ctx, rows); err != nil {
+		return 0, err
+	}
+	return len(rows), nil
 }

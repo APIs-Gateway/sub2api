@@ -78,7 +78,7 @@ func (s *pricingStageStore) SwitchStage(ctx context.Context, groupID int64, to s
 }
 
 // classifyMissingStageRow 区分「分组不存在或已软删除」和「分组存在但还没有配置行」。
-func classifyMissingStageRow(ctx context.Context, tx *sql.Tx, groupID int64) error {
+func classifyMissingStageRow(ctx context.Context, tx dbExec, groupID int64) error {
 	var exists bool
 	if err := tx.QueryRowContext(ctx,
 		`SELECT EXISTS (SELECT 1 FROM groups WHERE id = $1 AND deleted_at IS NULL)`, groupID).Scan(&exists); err != nil {
@@ -88,6 +88,20 @@ func classifyMissingStageRow(ctx context.Context, tx *sql.Tx, groupID int64) err
 		return service.ErrGroupNotFound
 	}
 	return service.ErrPricingStageNotDerived
+}
+
+// setGroupStage 改分组阶段，记录改动时间与操作人，revision 加一并返回新值。调用方已持有配置行锁。
+// 这是除 SwitchStage 之外唯一写 pricing_stage 的地方（守卫测试按文件登记）。
+func setGroupStage(ctx context.Context, exec dbExec, groupID int64, to service.PricingStage, operatorID int64, now time.Time) (int64, error) {
+	var revision int64
+	err := exec.QueryRowContext(ctx,
+		`UPDATE group_model_config
+		 SET pricing_stage = $2, stage_changed_at = $3, stage_changed_by = $4, revision = revision + 1, updated_at = $3
+		 WHERE group_id = $1 RETURNING revision`, groupID, string(to), now, operatorID).Scan(&revision)
+	if err != nil {
+		return 0, fmt.Errorf("update pricing_stage: %w", err)
+	}
+	return revision, nil
 }
 
 type pricingShadowStore struct {

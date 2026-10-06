@@ -27,8 +27,15 @@ type ConfiguredGroupLister interface {
 
 // preload 同步加载这些分组的快照，返回加载失败（落入兜底状态）的分组。失败的分组会被标记失效，下一轮重试。
 func (p *matrixPolicy) preload(ctx context.Context, groupIDs []int64) (failed []int64) {
-	for _, id := range groupIDs {
-		if p.loadSnapshot(ctx, id).loadErr != nil {
+	for i, id := range groupIDs {
+		if ctx.Err() != nil {
+			// 超时或被取消：剩下的分组没有加载，算失败（loadSnapshot 自己带 10 秒超时，不受这里的 deadline 管）。
+			failed = append(failed, groupIDs[i:]...)
+			break
+		}
+		// 加载期间收到失效通知时，快照没有存进缓存（代数变了）却也没有 loadErr：只看 loadErr 会把它算成功，
+		// 所以还要确认缓存里确实有一份新鲜的好快照（W6 PR7a 审查 1(c)）。
+		if p.loadSnapshot(ctx, id).loadErr != nil || !p.cachedReady(id) {
 			failed = append(failed, id)
 		}
 	}
@@ -50,12 +57,18 @@ func (s *stagedPolicy) Preload(ctx context.Context, lister ConfiguredGroupLister
 	defer cancel()
 
 	var ids []int64
+	listed := false
 	for attempt := 1; attempt <= matrixPreloadAttempts; attempt++ {
 		var err error
-		if ids == nil {
+		if !listed {
 			ids, err = lister.ListConfiguredGroupIDs(ctx)
 		}
 		if err == nil {
+			if !listed {
+				listed = true
+				// 记下启动时有配置行的分组：之后快照加载不出来时，只有它们（可能是 v2）会被拒绝，其余按 legacy 处理。
+				s.matrix.setConfiguredList(ids)
+			}
 			if ids == nil {
 				ids = []int64{}
 			}
@@ -74,8 +87,14 @@ func (s *stagedPolicy) Preload(ctx context.Context, lister ConfiguredGroupLister
 			}
 		}
 	}
+	if !listed {
+		// 三次都没能列出有配置行的分组：不知道哪些是 v2，计一次失败，快照不可用时所有分组都按「可能是 v2」处理。
+		s.matrix.preloadFailures.Add(1)
+		slog.Error("pricing matrix preload failed: could not list the configured groups, a group whose snapshot cannot be loaded will be rejected")
+		return
+	}
 	s.matrix.preloadFailures.Add(int64(len(ids)))
-	slog.Error("pricing matrix preload incomplete: these groups stay on legacy until the background refresh succeeds",
+	slog.Error("pricing matrix preload incomplete: requests of these groups are rejected until a snapshot loads",
 		"group_ids", ids)
 }
 

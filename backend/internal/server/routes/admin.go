@@ -197,8 +197,11 @@ func registerPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		matrix.GET("/groups/:id/derive", h.Admin.PricingMatrix.ViewGroupDerive)
 		matrix.GET("/channels/:id/derive", h.Admin.PricingMatrix.ViewChannelDerive)
 		matrix.GET("/hook-stats", h.Admin.PricingMatrix.HookStats)
-		// W6 PR5：阶段切换（PR7 合并之前只允许 legacy 与 shadow）与影子比对结果。
-		matrix.PUT("/groups/:id/stage", h.Admin.PricingMatrix.SwitchStage)
+		// W6 PR5、PR7b：阶段切换与影子比对结果。切换提交是 C 档动作：必须是登录管理员的 JWT 会话，机器令牌一律 403
+		// （切到 v2 另有预览凭证与闸门）。预览不改数据，机器令牌可以看。
+		matrix.PUT("/groups/:id/stage", middleware.RequireAdminJWT(), h.Admin.PricingMatrix.SwitchStage)
+		matrix.POST("/groups/:id/stage/preview", h.Admin.PricingMatrix.PreviewStage)
+		matrix.GET("/groups/:id/stage/audit", h.Admin.PricingMatrix.StageAudit)
 		matrix.GET("/shadow/stats", h.Admin.PricingMatrix.ShadowStats)
 		matrix.GET("/shadow/diffs", h.Admin.PricingMatrix.ShadowDiffs)
 

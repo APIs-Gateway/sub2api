@@ -176,10 +176,10 @@ func TestStagedPolicy_PreloadGivesUpAndCountsTheGroupsThatNeverLoaded(t *testing
 	staged.Preload(ctx, &spLister{ids: []int64{1}})
 	require.EqualValues(t, 1, staged.MatrixSnapshotStats().PreloadFailures)
 
-	// 列表一直失败：没有分组可计数，也不 panic。
+	// 列表一直失败：没有分组可计数，单独记一次失败（不知道哪些分组是 v2），也不 panic。
 	staged2, _ := newColdStaged(newMPSource(PlatformOpenAI, nil))
 	staged2.Preload(ctx, &spLister{errs: []error{errors.New("a"), errors.New("b"), errors.New("c")}})
-	require.Zero(t, staged2.MatrixSnapshotStats().PreloadFailures)
+	require.EqualValues(t, 1, staged2.MatrixSnapshotStats().PreloadFailures)
 
 	// 没有 lister 或没有矩阵：什么也不做。
 	staged2.Preload(ctx, nil)
