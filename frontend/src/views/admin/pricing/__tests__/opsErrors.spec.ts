@@ -39,8 +39,9 @@ describe('opsErrorText', () => {
 
   it('闸门 409：按 metadata.failures 逐条翻译，缺失时用 reason', () => {
     const many = opsErrorText({ status: 409, reason: 'PRICING_GATE_REPLAY_MISSING', metadata: { failures: 'PRICING_GATE_REPLAY_MISSING;PRICING_GATE_REPLAY_STALE' } }, t, te)
-    expect(many).toContain('30 天回放记录')
-    expect(many).toContain('重新运行回放')
+    expect(many).toContain('30 天回放缺失')
+    expect(many).toContain('需重新执行回放')
+    expect(many).not.toContain('运行回放')
     expect(opsErrorText({ status: 409, reason: 'PRICING_GATE_NOT_IN_SHADOW' }, t, te)).toContain('先切到对照运行')
   })
 

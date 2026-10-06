@@ -2,7 +2,7 @@
   <div class="space-y-3" data-test="stage-preview">
     <p v-if="preview.kind === 'noop'" data-test="preview-line">{{ t('admin.pricingOps.stages.noopLine', { group: groupName, to: stageName(preview.to) }) }}</p>
     <p v-else data-test="preview-line">
-      {{ t(preview.kind === 'rollback' ? 'admin.pricingOps.stages.rollbackLine' : 'admin.pricingOps.stages.confirmLine', { group: groupName, from: stageName(preview.from), to: stageName(preview.to) }) }}
+      {{ t(fromV2Rollback ? 'admin.pricingOps.stages.rollbackLine' : 'admin.pricingOps.stages.confirmLine', { group: groupName, from: stageName(preview.from), to: stageName(preview.to) }) }}
     </p>
     <p v-if="preview.kind !== 'noop'">{{ noteText }}</p>
 
@@ -83,6 +83,7 @@ import { observationRemainingHours, roundHours } from '../stageSwitchModel'
 const props = defineProps<{ preview: StagePreview; groupName: string }>()
 const { t, te } = useI18n()
 
+const fromV2Rollback = computed(() => !!props.preview.rollback)
 const gate = computed(() => props.preview.gate ?? null)
 const drift = computed<StageDrift>(
   () => props.preview.rollback?.drift ?? { changed: false, config_changed: false, cells_inserted: 0, cells_updated: 0, cells_deleted: 0, rules_replaced: 0 }
@@ -93,9 +94,10 @@ function stageName(s: OpsStage) {
 }
 
 const noteText = computed(() => {
-  const { kind, to } = props.preview
+  const { to } = props.preview
   if (to === 'v2') return t('admin.pricingOps.stages.confirmNoteV2')
-  if (kind === 'rollback') return t('admin.pricingOps.stages.confirmNoteRollback')
+  // 只有从 v2 回拨才有 rollback；shadow 回 legacy 后端也叫 rollback，但分组本来就按渠道配置计费
+  if (props.preview.rollback) return t('admin.pricingOps.stages.confirmNoteRollback')
   return t(`admin.pricingOps.stages.confirmNote.${to}`)
 })
 

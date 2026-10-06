@@ -192,7 +192,8 @@ describe('StagesView', () => {
     expect(wrapper.find('[data-test="gate-observation"]').text()).toContain('还差 12.5 小时')
     expect(wrapper.find('[data-test="gate-binding"]').text()).toContain('需要重新回放')
     expect(wrapper.find('[data-test="failure-PRICING_GATE_OBSERVATION_SHORT"]').text()).toContain('不够 72 小时')
-    expect(wrapper.find('[data-test="failure-PRICING_GATE_REPLAY_STALE"]').text()).toContain('重新运行回放')
+    expect(wrapper.find('[data-test="failure-PRICING_GATE_REPLAY_STALE"]').text()).toContain('需重新执行回放')
+    expect(wrapper.find('[data-test="failure-PRICING_GATE_REPLAY_STALE"]').text()).not.toContain('运行回放')
     expect(wrapper.find('[data-test="stage-blocked"]').text()).toContain('切换条件没有满足')
     expect(confirmBtn(wrapper).attributes('disabled')).toBeDefined()
     await confirmBtn(wrapper).trigger('click')
@@ -286,7 +287,7 @@ describe('StagesView', () => {
     await confirmBtn(wrapper).trigger('click')
     await flushPromises()
     const text = wrapper.find('[data-test="stage-error"]').text()
-    expect(text).toContain('还没有这个分组的 30 天回放记录')
+    expect(text).toContain('30 天回放缺失')
     expect(text).toContain('不够 72 小时')
   })
 
@@ -303,9 +304,65 @@ describe('StagesView', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('部分服务实例稍后生效'))
   })
 
+  it('shadow 回 legacy（后端也叫 rollback，但没有 rollback 块）：不显示回拨说明', async () => {
+    api.previewGroupStage.mockResolvedValue(preview({ group_id: 2, from: 'shadow', to: 'legacy', kind: 'rollback' }))
+    const wrapper = await mountPricingView(StagesView)
+    await open(wrapper, 2, 'legacy')
+    const text = wrapper.find('[data-test="stage-dialog"]').text()
+    expect(text).toContain('切换到「渠道配置」')
+    expect(text).toContain('切回渠道配置，对照会停止')
+    expect(text).not.toContain('回拨')
+    expect(wrapper.find('[data-test="rollback"]').exists()).toBe(false)
+  })
+
+  it('提交返回 changed=false：不弹已切换，也不弹实例稍后生效，改提示无需切换并刷新', async () => {
+    api.switchGroupStage.mockResolvedValue({ kind: 'noop', group_id: 1, from: 'shadow', to: 'shadow', changed: false, revision: 4, changed_at: '', snapshot_ready: false })
+    const wrapper = await mountPricingView(StagesView)
+    const app = useAppStore()
+    const ok = vi.spyOn(app, 'showSuccess')
+    const warn = vi.spyOn(app, 'showWarning')
+    const info = vi.spyOn(app, 'showInfo')
+    await open(wrapper, 1, 'shadow')
+    const reads = api.getGroupOpsView.mock.calls.length
+    await confirmBtn(wrapper).trigger('click')
+    await flushPromises()
+    expect(ok).not.toHaveBeenCalled()
+    expect(warn).not.toHaveBeenCalled()
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('无需切换'))
+    expect(api.getGroupOpsView.mock.calls.length).toBeGreaterThan(reads)
+  })
+
+  it('从 v2 回拨成功才说已回拨；重复点确认只提交一次', async () => {
+    api.previewGroupStage.mockResolvedValue(preview({ group_id: 4, from: 'v2', to: 'shadow', kind: 'rollback', rollback: { archived_cells: 1, archived_rules: 0, drift: { changed: false, config_changed: false, cells_inserted: 0, cells_updated: 0, cells_deleted: 0, rules_replaced: 0 } } }))
+    let release: (v: unknown) => void = () => {}
+    api.switchGroupStage.mockReturnValue(new Promise((r) => (release = r)))
+    const wrapper = await mountPricingView(StagesView)
+    const ok = vi.spyOn(useAppStore(), 'showSuccess')
+    await open(wrapper, 4, 'shadow')
+    await confirmBtn(wrapper).trigger('click')
+    await confirmBtn(wrapper).trigger('click')
+    expect(api.switchGroupStage).toHaveBeenCalledTimes(1)
+    release({ kind: 'rollback', group_id: 4, from: 'v2', to: 'shadow', changed: true, revision: 9, changed_at: '', snapshot_ready: true, archived: { cells: 1, rules: 0 } })
+    await flushPromises()
+    expect(ok).toHaveBeenCalledWith(expect.stringContaining('已回拨'))
+  })
+
+  it('旧预览请求晚到，不会关掉新分组的加载态', async () => {
+    let releaseFirst: (v: unknown) => void = () => {}
+    api.previewGroupStage
+      .mockReturnValueOnce(new Promise((r) => (releaseFirst = r)))
+      .mockReturnValueOnce(new Promise(() => {}))
+    const wrapper = await mountPricingView(StagesView)
+    await wrapper.find('[data-test="stage-1-shadow"]').trigger('click')
+    await wrapper.find('[data-test="stage-2-legacy"]').trigger('click')
+    releaseFirst(preview())
+    await flushPromises()
+    expect(wrapper.find('[data-test="stage-previewing"]').exists()).toBe(true)
+  })
+
   it('切换记录：读取审计，新的在前，写明操作人与版本', async () => {
     api.getStageAudit.mockResolvedValue([
-      { id: 34, created_at: '2026-10-06T00:00:00Z', group_id: 2, from: 'v2', to: 'shadow', kind: 'rollback', operator_id: 1, interactive: true, price_delta: 'none', config_revision_before: 14, config_revision_after: 15 },
+      { id: 34, created_at: '2026-10-06T00:00:00Z', group_id: 2, from: 'v2', to: 'shadow', kind: 'rollback', operator_id: 1, interactive: true, price_delta: '', config_revision_before: 14, config_revision_after: 15 },
       { id: 33, created_at: '2026-10-05T00:00:00Z', group_id: 2, from: 'shadow', to: 'v2', kind: 'advance', operator_id: 1, interactive: true, approval_id: 512, price_delta: 'unknown', config_revision_before: 13, config_revision_after: 14 }
     ])
     const wrapper = await mountPricingView(StagesView)
@@ -315,6 +372,8 @@ describe('StagesView', () => {
     const items = wrapper.findAll('[data-test^="audit-item-"]')
     expect(items.map((i) => i.attributes('data-test'))).toEqual(['audit-item-34', 'audit-item-33'])
     expect(items[0].text()).toContain('回拨')
+    expect(items[0].find('[data-test="audit-delta"]').text()).toBe('—')
+    expect(items[0].text()).not.toContain('priceDelta')
     expect(items[1].text()).toContain('预览凭证 #512')
     expect(items[1].text()).toContain('价格可能变化')
     expect(items[1].text()).toContain('配置版本 13 到 14')

@@ -133,8 +133,8 @@
           <p class="flex flex-wrap items-baseline gap-x-3">
             <span class="font-medium text-gray-900 dark:text-white">{{ t(`admin.pricingOps.stages.switchKind.${e.kind}`) }}</span>
             <span>{{ t('admin.pricingOps.stages.audit.line', { from: stageName(e.from), to: stageName(e.to) }) }}</span>
-            <span v-if="e.price_delta !== 'none'" :class="e.price_delta === 'unknown' || e.price_delta === 'up' ? 'font-medium text-primary-700 dark:text-primary-300' : 'text-gray-500 dark:text-dark-300'">
-              {{ t(`admin.pricingOps.stages.priceDelta.${e.price_delta}`) }}
+            <span v-if="e.price_delta !== 'none'" :class="e.price_delta === 'unknown' || e.price_delta === 'up' ? 'font-medium text-primary-700 dark:text-primary-300' : 'text-gray-500 dark:text-dark-300'" data-test="audit-delta">
+              {{ e.price_delta ? t(`admin.pricingOps.stages.priceDelta.${e.price_delta}`) : '—' }}
             </span>
             <span class="num ml-auto text-xs text-gray-500 dark:text-dark-300">{{ formatDateTime(e.created_at) }}</span>
           </p>
@@ -288,9 +288,12 @@ function pretty(v: unknown): string {
   }
 }
 
+let previewSeq = 0
+
 async function runPreview() {
   const p = pending.value
   if (!p) return
+  const seq = ++previewSeq
   previewing.value = true
   pendingError.value = ''
   preview.value = null
@@ -300,7 +303,8 @@ async function runPreview() {
   } catch (err) {
     if (pending.value === p) pendingError.value = opsErrorText(err, t, te)
   } finally {
-    previewing.value = false
+    // 只有最新的一次预览能结束加载态，旧请求晚到不能关掉新分组的加载
+    if (seq === previewSeq) previewing.value = false
   }
 }
 
@@ -321,14 +325,20 @@ function closePending() {
 async function confirm() {
   const p = pending.value
   const pv = preview.value
-  if (!p || !pv || !canConfirm(pv, Date.now())) return
+  if (switching.value || !p || !pv || !canConfirm(pv, Date.now())) return
   switching.value = true
   pendingError.value = ''
   try {
     const r = await switchGroupStage(p.group.id, p.to, pv.approval_id || undefined)
-    const key = r.kind === 'rollback' ? 'rolledBack' : 'switched'
-    app.showSuccess(t(`admin.pricingOps.stages.${key}`, { group: p.group.name, to: stageName(r.to) }))
-    if (r.snapshot_ready === false) app.showWarning(t('admin.pricingOps.stages.snapshotLater'))
+    if (r.changed === false) {
+      // 别人先一步改了阶段，这次提交没有改任何东西：不报成功，也不提示实例延迟
+      app.showInfo(t('admin.pricingOps.stages.alreadyThere', { group: p.group.name, to: stageName(r.to) }))
+    } else {
+      // 只有从 v2 回拨（归档了非派生行）才说「已回拨」
+      const key = r.archived ? 'rolledBack' : 'switched'
+      app.showSuccess(t(`admin.pricingOps.stages.${key}`, { group: p.group.name, to: stageName(r.to) }))
+      if (r.snapshot_ready === false) app.showWarning(t('admin.pricingOps.stages.snapshotLater'))
+    }
     pending.value = null
     preview.value = null
     await reloadGroup(p.group.id)
