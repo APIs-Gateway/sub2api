@@ -309,6 +309,10 @@ func TestPricingCellWriter_WriteFailures(t *testing.T) {
 	}
 }
 
+// NaN 这类不可序列化的价格返回错误且不写库。以前是写入器序列化 custom_price 时才失败；现在价格上限校验
+// （NormalizeCellWriteRequest，写入器的第一步）先把它拦成 CELL_OP_INVALID / PRICE_TOO_HIGH：能序列化的价格都
+// 过得了上限，不可序列化的（NaN、Inf）过不了，所以 marshal 失败分支从这里已经构造不出来。
+// 没有为这个用例设置任何查询或写入的期望：sqlmock 遇到未预期的 SQL 会报错，ExpectationsWereMet 证明什么都没执行。
 func TestPricingCellWriter_UnserializableCustomPriceIsAnErrorNotAWrite(t *testing.T) {
 	writer := NewPricingCellWriter()
 	nan := &service.MatrixCustomPrice{InputPrice: pwxFloat(math.NaN())}
@@ -317,20 +321,18 @@ func TestPricingCellWriter_UnserializableCustomPriceIsAnErrorNotAWrite(t *testin
 
 	t.Run("create", func(t *testing.T) {
 		tx, mock := pwxTx(t)
-		pwxExpectStates(mock, true, pwxRow{int64(1), "v2", int64(3)})
-		pwxExpectCells(mock)
 		_, err := writer.ApplyTx(context.Background(), tx, pwxRequest(map[int64]int64{1: 3}, op))
-		require.ErrorContains(t, err, "marshal custom_price")
+		require.ErrorContains(t, err, "CELL_OP_INVALID")
+		require.ErrorContains(t, err, "PRICE_TOO_HIGH")
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 	t.Run("update", func(t *testing.T) {
 		tx, mock := pwxTx(t)
-		pwxExpectStates(mock, true, pwxRow{int64(1), "v2", int64(3)})
-		pwxExpectCells(mock, pwxCellRow(11, 1, "m", 4, true, "inherit", nil, "manual"))
 		update := op
 		update.BaselineRevision = 4
 		_, err := writer.ApplyTx(context.Background(), tx, pwxRequest(map[int64]int64{1: 3}, update))
-		require.ErrorContains(t, err, "marshal custom_price")
+		require.ErrorContains(t, err, "CELL_OP_INVALID")
+		require.ErrorContains(t, err, "PRICE_TOO_HIGH")
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }
