@@ -60,6 +60,8 @@ type MatrixSnapshotStats struct {
 	StaleServed int64 `json:"stale_served"`
 	// ColdFallbacks 加载失败且没有旧快照、退回默认状态的次数。
 	ColdFallbacks int64 `json:"cold_fallbacks"`
+	// PreloadFailures 启动预加载重试之后仍然没有加载成功的分组数（W6 PR7a）。非零表示这些分组在后台刷新成功之前按 legacy 处理。
+	PreloadFailures int64 `json:"preload_failures"`
 }
 
 // matrixCellView 单元格在快照里的编译形态。
@@ -92,6 +94,8 @@ func (c *matrixCellView) activeAt(at time.Time) bool {
 type matrixSnapshot struct {
 	platform string
 	stage    PricingStage
+	// revision 是 group_model_config 的 revision：运行时 HasPrice 缓存键的一部分（设计 5.2、S-5）。没有配置行为 0。
+	revision int64
 
 	accessMode MatrixAccessMode
 	// billingModelSource 为空串表示分组没有渠道（设计 S-1）：Mapping 原样返回空串。
@@ -119,7 +123,9 @@ type matrixSnapshot struct {
 func buildMatrixSnapshot(groupID int64, platform string, snap GroupStateSnapshot) *matrixSnapshot {
 	cfg := defaultMatrixGroupConfig()
 	stage := PricingStageLegacy
+	var revision int64
 	if snap.Config != nil {
+		revision = snap.Config.Revision
 		cfg = normalizeMatrixConfig(snap.Config.MatrixGroupConfig)
 		if snap.Config.PricingStage != "" {
 			stage = snap.Config.PricingStage
@@ -129,6 +135,7 @@ func buildMatrixSnapshot(groupID int64, platform string, snap GroupStateSnapshot
 	s := &matrixSnapshot{
 		platform:     platform,
 		stage:        stage,
+		revision:     revision,
 		accessMode:   MatrixAccessOpen,
 		costMode:     MatrixCostAccountRate,
 		features:     deepCopyFeaturesConfig(cfg.Features),
@@ -361,6 +368,8 @@ type matrixPolicy struct {
 	loadFailures  atomic.Int64
 	staleServed   atomic.Int64
 	coldFallbacks atomic.Int64
+	// preloadFailures 启动预加载最终失败的分组数。
+	preloadFailures atomic.Int64
 }
 
 var _ GroupPolicy = (*matrixPolicy)(nil)
@@ -391,6 +400,8 @@ func (p *matrixPolicy) Stats() MatrixSnapshotStats {
 		LoadFailures:  p.loadFailures.Load(),
 		StaleServed:   p.staleServed.Load(),
 		ColdFallbacks: p.coldFallbacks.Load(),
+
+		PreloadFailures: p.preloadFailures.Load(),
 	}
 }
 

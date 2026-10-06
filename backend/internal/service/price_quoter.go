@@ -165,10 +165,14 @@ type QuoteRequest struct {
 
 // QuoteAccess 是「该分组是否能用这个模型」的判定。Reason 取值：
 // closed_in_group（单元格显式关闭）、not_in_allowlist（白名单分组里没有它）、
-// catalog_draft、catalog_retired（模型目录里显式为草稿或已下线）。
+// catalog_draft、catalog_retired（模型目录里显式为草稿或已下线）；运行时对白名单 v2 分组的无价检查另有 unpriced。
+//
+// Priced 只由运行时检查（stagedPolicy.RuntimeAccess）填写，其余路径为 nil：true 表示调度前的候选链里任一有价，
+// false 表示都没有价（此时 Reason 为 unpriced；开关为 observe 时 OK 仍为 true）。
 type QuoteAccess struct {
 	OK     bool   `json:"ok"`
 	Reason string `json:"reason,omitempty"`
+	Priced *bool  `json:"priced,omitempty"`
 }
 
 // 模型目录状态造成的拒绝原因。未登记的模型视同 active，不产生拒绝原因（设计 S-3、Q2）。

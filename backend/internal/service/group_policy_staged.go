@@ -10,8 +10,9 @@ import (
 //   - legacy：转发给 legacyPolicy，与没有 stagedPolicy 时逐位相同；
 //   - shadow：legacyPolicy 的结果照常返回给调用方；同一个调用上 v2（matrixPolicy）同步算一遍并比较，
 //     只在不一致时写指标与采样。比对永不影响请求：v2 一侧的 panic 被吞掉并计数；
-//   - v2：PR7 才放开。本 PR 里 stagedPolicy 不会把真实请求路由到 matrixPolicy（v2Live 为 false），
-//     即使库里有行写着 v2，也按 legacy 处理。
+//   - v2：准入、映射、功能、定价、账号成本都读矩阵（matrixPolicy）。W6 PR7a 起路由是活的（v2Live 为 true），
+//     但阶段 API 仍然只允许 legacy 与 shadow（pricingStageAllowed），所以线上不会有分组处于 v2；
+//     v2 一侧运行时额外叠加模型目录状态（draft、retired 不放行）与白名单分组的无价检查（RuntimeAccess）。
 //
 // 阶段读取不阻塞：用 matrixPolicy.cachedSnapshot，缓存里没有（进程刚启动、分组第一次出现）就按 legacy 处理，
 // 后台加载。所以请求路径上不会多出任何数据库读取与等待，快照加载完成之前的行为与改动前相同。
@@ -24,8 +25,15 @@ type stagedPolicy struct {
 	legacy GroupPolicy
 	matrix *matrixPolicy
 	hub    *pricingShadowHub
-	// v2Live 为 true 时阶段为 v2 的分组才真正读矩阵。PR7 之前恒为 false。
+	// v2Live 为 true 时阶段为 v2 的分组才真正读矩阵。生产构造恒为 true；测试可以关掉它来验证 legacy 路径。
 	v2Live bool
+
+	// catalog 是运行时目录状态读取方（带缓存），由 SetModelCatalog 在装配阶段接上；为 nil 时 v2 准入不看目录。
+	catalog *runtimeCatalog
+	// runtime 是白名单分组无价检查的缓存与计数（runtime_pricing.go）。
+	runtime runtimePricingState
+	// retryDelay 是启动预加载的重试间隔，测试里缩短；零值取默认。
+	retryDelay time.Duration
 }
 
 var _ GroupPolicy = (*stagedPolicy)(nil)
@@ -35,7 +43,7 @@ type StagedGroupPolicy = stagedPolicy
 
 // newStagedGroupPolicy 创建 stagedPolicy。matrix 为 nil 时永远走 legacy。sink 可为 nil（只计数、不写样本）。
 func newStagedGroupPolicy(legacy GroupPolicy, matrix *matrixPolicy, sink PricingShadowSink) *stagedPolicy {
-	return &stagedPolicy{legacy: legacy, matrix: matrix, hub: newPricingShadowHub(sink)}
+	return &stagedPolicy{legacy: legacy, matrix: matrix, hub: newPricingShadowHub(sink), v2Live: true}
 }
 
 // Stats 返回影子比对的进程内计数。
@@ -136,6 +144,9 @@ func (s *stagedPolicy) Mapping(ctx context.Context, groupID int64, model string)
 func (s *stagedPolicy) ModelAccess(ctx context.Context, groupID int64, model string) QuoteAccess {
 	active, shadow := s.route(ctx, groupID)
 	got := active.ModelAccess(ctx, groupID, model)
+	if got.OK {
+		got = s.catalogAccess(ctx, active, groupID, model)
+	}
 	if shadow != nil {
 		s.compareAccess(ctx, groupID, shadow, model, got, func(v2ctx context.Context) QuoteAccess {
 			return s.matrix.ModelAccess(v2ctx, groupID, model)

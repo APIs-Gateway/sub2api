@@ -273,7 +273,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	pricingStageStore := repository.NewPricingStageStore(db)
 	pricingStageService := service.NewPricingStageService(pricingStageStore, stagedGroupPolicy, pricingShadowRecorder)
 	modelCatalogRepository := repository.NewModelCatalogRepository(db)
-	modelCatalogService := service.NewModelCatalogService(modelCatalogRepository)
+	modelCatalogService := service.ProvideModelCatalogService(modelCatalogRepository, stagedGroupPolicy, priceQuoter)
 	pricingMatrixHandler := admin.NewPricingMatrixHandler(pricingDerivationService, modelCatalogService, pricingStageService)
 	adminTokenRepository := repository.NewAdminTokenRepository(db)
 	adminTokenService := service.ProvideAdminTokenService(adminTokenRepository, userService)
