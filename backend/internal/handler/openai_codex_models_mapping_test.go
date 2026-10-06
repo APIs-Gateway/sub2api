@@ -289,7 +289,7 @@ func TestCodexAccountMapping_ActualHandlerExpandedCatalogRejected(t *testing.T) 
 	}
 	h, _ := newCodexMappingHandler(t, server, mapping)
 	response := requestCodexMappingHandler(t, h, "/v1/models?client_version=0.137.0", "", context.Background())
-	require.Equal(t, http.StatusBadGateway, response.Code, response.Body.String())
+	require.Equal(t, http.StatusBadGateway, response.Code, "expanded catalog must be rejected")
 	require.Contains(t, response.Body.String(), "upstream_error")
 	require.NotContains(t, response.Body.String(), `"models":`)
 	mu.Lock()
