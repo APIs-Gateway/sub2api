@@ -629,7 +629,17 @@ func (r *PricingReplayer) Run(ctx context.Context, src PricingReplayDataSource, 
 
 	// 每个分组一次的功能类比较。
 	for _, id := range ids {
-		for _, d := range r.CheckGroup(ctx, selected[id]) {
+		diffs, err := r.CheckGroup(ctx, selected[id])
+		if err != nil {
+			g := run.groupAgg(selected[id])
+			g.errored++
+			run.errored++
+			if len(run.errSample) < pricingReplayMaxErrorSamples {
+				run.errSample = append(run.errSample, err.Error())
+			}
+			continue
+		}
+		for _, d := range diffs {
 			run.addDiff(nil, run.groupAgg(selected[id]), d)
 		}
 	}

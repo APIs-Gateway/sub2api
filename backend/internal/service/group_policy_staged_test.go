@@ -314,6 +314,24 @@ func TestStagedPolicy_ShadowFeatureAndUpstreamCheckDiffs(t *testing.T) {
 	require.EqualValues(t, 1, h.diffCount(ShadowKindFeature, ShadowClassTranslation))
 }
 
+// 影子比对：web_search_emulation、bedrock_cc_compat 的「未配置」与 false 等价（读取方都把 nil 当 false），
+// codex 图片桥的「未配置」跟随全局开关，与 false 不同。
+func TestStagedPolicy_ShadowFeatureNilEqualsFalseExceptCodexBridge(t *testing.T) {
+	ctx := context.Background()
+	off := false
+	f := newSPFixture(t, shadowSnap(nil))
+	f.legacy.feature = &off
+	for _, feat := range []GroupFeature{GroupFeatureWebSearchEmulation, GroupFeatureBedrockCCCompat} {
+		_, err := f.staged.Feature(ctx, 1, PlatformOpenAI, feat)
+		require.NoError(t, err)
+	}
+	require.Zero(t, f.diffCount(ShadowKindFeature, ShadowClassTranslation))
+
+	_, err := f.staged.Feature(ctx, 1, PlatformOpenAI, GroupFeatureCodexImageGenerationBridge)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, f.diffCount(ShadowKindFeature, ShadowClassTranslation))
+}
+
 // v2Live 为 false（本 PR 恒为 false）时，库里写着 v2 的分组也走 legacy，并且不比对。
 func TestStagedPolicy_V2StageDoesNotRouteToMatrixUntilLive(t *testing.T) {
 	ctx := context.Background()

@@ -444,8 +444,10 @@ func TestPricingReplayRun_PanickingRowsAreCountedAsErrors(t *testing.T) {
 
 	sum, err := r.Run(context.Background(), prSource(), prFakeDeriver{}, opts)
 	require.NoError(t, err)
-	require.EqualValues(t, 7, sum.RowsErrored)
-	require.Len(t, sum.ErrorSamples, 7)
+	// 7 行出错，加上 2 个分组的分组级检查也各因 panic 记 1 次错误（不记成翻译差异）。
+	require.EqualValues(t, 9, sum.RowsErrored)
+	require.Len(t, sum.ErrorSamples, 9)
+	require.Zero(t, sum.Verdict.TranslationDiffs)
 	require.False(t, sum.Verdict.Pass)
 }
 

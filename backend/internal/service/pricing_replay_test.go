@@ -198,8 +198,12 @@ func TestPricingReplay_CheckGroupFeaturesAndUpstreamCheck(t *testing.T) {
 
 	same := prSnap(func(c *MatrixGroupConfig) { c.Features = map[string]any{featureKeyBedrockCCCompat: true} })
 	r := prReplayer(PlatformAnthropic, prSame(same), prSame(same))
-	require.Empty(t, r.CheckGroup(ctx, group))
-	require.Empty(t, r.CheckGroup(ctx, nil))
+	diffs, err := r.CheckGroup(ctx, group)
+	require.NoError(t, err)
+	require.Empty(t, diffs)
+	diffs, err = r.CheckGroup(ctx, nil)
+	require.NoError(t, err)
+	require.Empty(t, diffs)
 
 	// legacy 开了 bedrock 兼容、v2 没有；legacy 要求逐账号检查上游准入、v2 不要求。
 	legacy := prSnap(func(c *MatrixGroupConfig) {
@@ -208,7 +212,8 @@ func TestPricingReplay_CheckGroupFeaturesAndUpstreamCheck(t *testing.T) {
 		c.BillingModelSource = mpS(BillingModelSourceUpstream)
 	})
 	r = prReplayer(PlatformAnthropic, prSame(legacy), prSame(prSnap(nil)))
-	diffs := r.CheckGroup(ctx, group)
+	diffs, err = r.CheckGroup(ctx, group)
+	require.NoError(t, err)
 	models := map[string]bool{}
 	for _, d := range diffs {
 		require.Equal(t, ShadowKindFeature, d.Kind)
@@ -216,6 +221,62 @@ func TestPricingReplay_CheckGroupFeaturesAndUpstreamCheck(t *testing.T) {
 		models[d.Model] = true
 	}
 	require.Equal(t, map[string]bool{"upstream_check": true, string(GroupFeatureBedrockCCCompat): true}, models)
+}
+
+// 「未配置」与 false：web_search_emulation 和 bedrock_cc_compat 等价（运行时读取方都把 nil 当 false），
+// codex 图片桥不等价（nil 跟随全局开关），仍然严格比较。
+func TestPricingReplay_CheckGroupFeatureEquivalence(t *testing.T) {
+	ctx := context.Background()
+	group := &Group{ID: 1, Platform: PlatformOpenAI}
+	features := func(m map[string]any) func(*MatrixGroupConfig) {
+		return func(c *MatrixGroupConfig) { c.Features = m }
+	}
+	models := func(r *PricingReplayer) map[string]bool {
+		diffs, err := r.CheckGroup(ctx, group)
+		require.NoError(t, err)
+		out := map[string]bool{}
+		for _, d := range diffs {
+			out[d.Model] = true
+		}
+		return out
+	}
+
+	// legacy 显式关闭、v2 没有配置：两个开关都等价，没有差异。
+	off := prSnap(features(map[string]any{
+		featureKeyWebSearchEmulation: map[string]any{PlatformOpenAI: false}, featureKeyBedrockCCCompat: false,
+	}))
+	require.Empty(t, models(prReplayer(PlatformOpenAI, prSame(off), prSame(prSnap(nil)))))
+
+	// codex 桥：legacy 显式 false、v2 未配置，要求严格比较，有差异。
+	codexOff := prSnap(features(map[string]any{featureKeyCodexImageGenerationBridge: false}))
+	require.Equal(t, map[string]bool{string(GroupFeatureCodexImageGenerationBridge): true},
+		models(prReplayer(PlatformOpenAI, prSame(codexOff), prSame(prSnap(nil)))))
+
+	// 开启与未配置不等价。
+	on := prSnap(features(map[string]any{featureKeyBedrockCCCompat: true}))
+	require.Equal(t, map[string]bool{string(GroupFeatureBedrockCCCompat): true},
+		models(prReplayer(PlatformOpenAI, prSame(on), prSame(prSnap(nil)))))
+}
+
+func TestGroupFeatureEquivalent(t *testing.T) {
+	f, tr := false, true
+	for _, feat := range []GroupFeature{GroupFeatureWebSearchEmulation, GroupFeatureBedrockCCCompat} {
+		require.True(t, groupFeatureEquivalent(feat, nil, &f))
+		require.True(t, groupFeatureEquivalent(feat, &f, nil))
+		require.True(t, groupFeatureEquivalent(feat, nil, nil))
+		require.False(t, groupFeatureEquivalent(feat, nil, &tr))
+	}
+	require.False(t, groupFeatureEquivalent(GroupFeatureCodexImageGenerationBridge, nil, &f))
+	require.True(t, groupFeatureEquivalent(GroupFeatureCodexImageGenerationBridge, nil, nil))
+	require.True(t, groupFeatureEquivalent(GroupFeatureCodexImageGenerationBridge, &f, &f))
+}
+
+func TestPricingReplay_CheckGroupPanicIsAnError(t *testing.T) {
+	ok, _ := newMPForTest(newMPSource(PlatformOpenAI, prSame(prSnap(nil))), nil)
+	r := newPricingReplayer(newTestBillingService(), panicPolicy{}, ok)
+	diffs, err := r.CheckGroup(context.Background(), &Group{ID: 1, Platform: PlatformOpenAI})
+	require.ErrorContains(t, err, "policy panic")
+	require.Empty(t, diffs)
 }
 
 func TestPricingReplay_ClassifiesExpectedDifferences(t *testing.T) {

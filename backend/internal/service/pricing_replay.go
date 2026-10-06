@@ -459,22 +459,20 @@ func replayUnpricedZeroEquivalent(legacy, v2 *replaySide) bool {
 
 // CheckGroup 做每个分组只需要做一次的功能类比较：调度循环的上游准入检查与三个功能开关。
 // 这些不随请求变化，逐行比没有意义；差异按分组计一次（kind=feature，行号为 0）。
-func (r *PricingReplayer) CheckGroup(parent context.Context, group *Group) (diffs []PricingReplayDiff) {
+//
+// 策略实现出 panic 是引擎故障，不是翻译差异：以错误返回（调用方记入出错计数，判定不通过）。
+func (r *PricingReplayer) CheckGroup(parent context.Context, group *Group) (diffs []PricingReplayDiff, err error) {
 	if group == nil {
-		return nil
+		return nil, nil
 	}
 	gid := group.ID
 	lp, vp := r.policy[replayLegacy], r.policy[replayV2]
 	ctx := withReplayRecompute(parent)
 	vctx := pinGroupPolicySnapshots(ctx, vp)
 
-	// 策略实现出 panic 不能带倒整个回放：记成一条翻译差异，让判定不通过。
 	defer func() {
 		if rec := recover(); rec != nil {
-			diffs = append(diffs, PricingReplayDiff{
-				Kind: ShadowKindFeature, Class: ShadowClassTranslation, Model: "panic",
-				Legacy: nil, V2: map[string]any{"panic": fmt.Sprint(rec)},
-			})
+			diffs, err = nil, fmt.Errorf("group %d: policy panic: %v", gid, rec)
 		}
 	}()
 	lc, lerr := lp.UpstreamCheck(ctx, gid)
@@ -487,14 +485,19 @@ func (r *PricingReplayer) CheckGroup(parent context.Context, group *Group) (diff
 		})
 	}
 	for _, f := range []GroupFeature{GroupFeatureWebSearchEmulation, GroupFeatureBedrockCCCompat, GroupFeatureCodexImageGenerationBridge} {
-		lv, lerr := lp.Feature(ctx, gid, group.Platform, f)
-		vv, verr := vp.Feature(vctx, gid, group.Platform, f)
-		if (lerr == nil) != (verr == nil) || !shadowBoolPtrEqual(lv, vv) {
+		// codex 图片桥的运行时读取只按 openai 平台查（openai_gateway_service.go），其余按分组平台。
+		platform := group.Platform
+		if f == GroupFeatureCodexImageGenerationBridge {
+			platform = PlatformOpenAI
+		}
+		lv, lerr := lp.Feature(ctx, gid, platform, f)
+		vv, verr := vp.Feature(vctx, gid, platform, f)
+		if (lerr == nil) != (verr == nil) || !groupFeatureEquivalent(f, lv, vv) {
 			diffs = append(diffs, PricingReplayDiff{
 				Kind: ShadowKindFeature, Class: ShadowClassTranslation, Model: string(f),
 				Legacy: shadowBoolPtrView(lv), V2: shadowBoolPtrView(vv),
 			})
 		}
 	}
-	return diffs
+	return diffs, nil
 }
