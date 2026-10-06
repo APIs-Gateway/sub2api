@@ -410,6 +410,39 @@ func TestStageSwitchPreview_V2ReturnsGateAndRegistersAnApproval(t *testing.T) {
 	require.Empty(t, f.sync.invalidated)
 }
 
+// 预览里的观察期要求默认 72 小时，跟随配置（SetObservationHours）。
+func TestStageSwitchPreview_ObservationFollowsConfig(t *testing.T) {
+	f := newSSFixture(PricingStageShadow)
+	require.EqualValues(t, 72, f.preview(t).Gate.Observation.RequiredHours)
+
+	// 配置 1 小时：分组配置 30 分钟前改过，不满足，预览不登记审批，eligible_at 在 30 分钟后。
+	recent := newSSFixture(PricingStageShadow)
+	recent.sw.SetObservationHours(1)
+	recent.store.cfg.UpdatedAt = sgNow.Add(-30 * time.Minute)
+	recent.store.cfg.StageChangedAt = nil
+	p := recent.preview(t)
+	require.False(t, p.Gate.Passed)
+	require.EqualValues(t, 1, p.Gate.Observation.RequiredHours)
+	require.Equal(t, sgNow.Add(30*time.Minute), p.Gate.Observation.EligibleAt)
+	require.Contains(t, p.Gate.Failures[0].Message, "1 required")
+
+	// 2 小时前改过的满足。
+	ok := newSSFixture(PricingStageShadow)
+	ok.sw.SetObservationHours(1)
+	ok.store.cfg.UpdatedAt = sgNow.Add(-2 * time.Hour)
+	ok.store.cfg.StageChangedAt = nil
+	require.True(t, ok.preview(t).Gate.Passed)
+}
+
+func TestStageSwitchObservationHoursClamped(t *testing.T) {
+	sw := NewPricingStageSwitcher(nil, nil, nil, nil, nil, nil)
+	require.Equal(t, 72*time.Hour, sw.observation)
+	sw.SetObservationHours(-5)
+	require.Zero(t, sw.observation)
+	sw.SetObservationHours(100000)
+	require.Equal(t, 720*time.Hour, sw.observation)
+}
+
 func TestStageSwitchPreview_DirectionIsNoneOnlyWithEvidence(t *testing.T) {
 	f := newSSFixture(PricingStageShadow)
 	f.sw.catalog = &spCatalogSource{} // 目录可读、近 7 天没有被挡的模型

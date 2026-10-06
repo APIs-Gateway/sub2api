@@ -275,7 +275,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	modelCatalogService := service.ProvideModelCatalogService(modelCatalogRepository, stagedGroupPolicy, priceQuoter)
 	pricingStageSwitchStore := repository.NewPricingStageSwitchStore(db)
 	pricingStageFingerprinter := repository.NewPricingStageFingerprinter(db)
-	pricingStageSwitcher := service.ProvidePricingStageSwitcher(pricingStageSwitchStore, pricingDerivationService, pricingStageFingerprinter, modelCatalogService, stagedGroupPolicy)
+	pricingStageSwitcher := service.ProvidePricingStageSwitcher(pricingStageSwitchStore, pricingDerivationService, pricingStageFingerprinter, modelCatalogService, stagedGroupPolicy, configConfig)
 	pricingStageService := service.ProvidePricingStageService(pricingStageStore, stagedGroupPolicy, pricingShadowRecorder, pricingStageSwitcher)
 	pricingMatrixHandler := admin.NewPricingMatrixHandler(pricingDerivationService, modelCatalogService, pricingStageService)
 	adminTokenRepository := repository.NewAdminTokenRepository(db)
