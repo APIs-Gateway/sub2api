@@ -91,8 +91,8 @@ func TestGatewayModelOtherIngress_RejectsBeforeRouting(t *testing.T) {
 						ID: 7890, Platform: platform, Type: service.AccountTypeAPIKey,
 						Status: service.StatusActive, Schedulable: true, Concurrency: 3,
 						AccountGroups: []service.AccountGroup{{GroupID: group.ID}},
-						Credentials: map[string]any{"api_key": "fixture-key", "base_url": "https://api.example.com", "model_mapping": map[string]any{"claude-sonnet-4-5": mappedModel, "claude-opus-4-5": mappedModel}},
-						Extra:       map[string]any{"anthropic_passthrough": true},
+						Credentials:   map[string]any{"api_key": "fixture-key", "base_url": "https://api.example.com", "model_mapping": map[string]any{"claude-sonnet-4-5": mappedModel, "claude-opus-4-5": mappedModel}},
+						Extra:         map[string]any{"anthropic_passthrough": true},
 					}}
 				}
 				gatewayService := service.NewGatewayService(
