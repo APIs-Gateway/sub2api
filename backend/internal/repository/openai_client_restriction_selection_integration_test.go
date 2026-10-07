@@ -266,6 +266,26 @@ func TestClientRestrictedSelectionHTTP_MixedFailureChain(t *testing.T) {
 						f := newInflightHTTPFixtureForClientPolicy(t, service.PlatformOpenAI, inflightResponsesSSE, "text/event-stream", true)
 						clientPolicyFunding(t, f, card)
 						ctx := context.Background()
+						const homeModel, servedModel = "gpt-5.4", "gpt-5.4-mini"
+						homeFamily := service.ModelFamily(homeModel)
+						require.NotEmpty(t, homeFamily, "the actual home-hop model must enter the strict breaker family table")
+						require.NotEmpty(t, service.ModelFamily(servedModel), "the actual mapped served-hop model must enter the strict breaker family table")
+						// Reconfigure only these new chain fixtures through the existing
+						// repository before the fixture's channel cache is first read.
+						channelRepo := NewChannelRepository(inflightTestDB(t))
+						for _, gid := range []int64{*f.key.GroupID, f.stableGroup.ID} {
+							id, err := channelRepo.GetChannelIDByGroupID(ctx, gid)
+							require.NoError(t, err)
+							channel, err := channelRepo.GetByID(ctx, id)
+							require.NoError(t, err)
+							price := .2
+							channel.ModelPricing = []service.ChannelModelPricing{{Platform: service.PlatformOpenAI, Models: []string{homeModel, servedModel}, BillingMode: service.BillingModePerRequest, PerRequestPrice: &price}}
+							channel.ModelMapping = nil
+							if gid == f.stableGroup.ID {
+								channel.ModelMapping = map[string]map[string]string{service.PlatformOpenAI: {homeModel: servedModel}}
+							}
+							require.NoError(t, channelRepo.Update(ctx, channel))
+						}
 						f.key.StablePriorityEnabled = false
 						f.key.HasGroupRoutes = true
 						settingRepo := NewSettingRepository(inflightTestEntClient(t))
@@ -315,18 +335,29 @@ func TestClientRestrictedSelectionHTTP_MixedFailureChain(t *testing.T) {
 						var heldAtNext float64
 						f.upstream.script = func(req *http.Request, id int64) (*http.Response, error) {
 							calls = append(calls, id)
+							var payload struct {
+								Model string `json:"model"`
+							}
+							if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+								return nil, err
+							}
+							wantedModel := homeModel
+							if id == next.ID {
+								wantedModel = servedModel
+							}
+							require.Equal(t, wantedModel, payload.Model, "the real provider dispatch must match the recognized hop model, including served mapping")
 							if id == next.ID {
 								heldAtNext = inflightHeld(t, f.user.ID)
 							}
 							if id == a.ID || nextFails {
 								return &http.Response{StatusCode: 520, Header: http.Header{"Content-Type": {"text/html"}}, Body: io.NopCloser(strings.NewReader("<html>unknown dispatched attempt</html>")), Request: req}, nil
 							}
-							return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(strings.ReplaceAll(inflightResponsesSSE, "gpt-5", "gpt-5.1"))), Request: req}, nil
+							return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(strings.ReplaceAll(inflightResponsesSSE, "gpt-5", servedModel))), Request: req}, nil
 						}
 						close(f.upstream.release)
-						body, path, serve := `{"model":"gpt-5","max_output_tokens":8,"input":"hello"}`, "/v1/responses", f.openAI.Responses
+						body, path, serve := `{"model":"gpt-5.4","max_output_tokens":8,"input":"hello"}`, "/v1/responses", f.openAI.Responses
 						if route == "chat" {
-							body, path, serve = `{"model":"gpt-5","max_completion_tokens":8,"messages":[{"role":"user","content":"hello"}]}`, "/v1/chat/completions", f.openAI.ChatCompletions
+							body, path, serve = `{"model":"gpt-5.4","max_completion_tokens":8,"messages":[{"role":"user","content":"hello"}]}`, "/v1/chat/completions", f.openAI.ChatCompletions
 						}
 						rec := f.request(body, path, "", serve)
 						f.pool.Stop()
@@ -346,16 +377,15 @@ func TestClientRestrictedSelectionHTTP_MixedFailureChain(t *testing.T) {
 						require.Equal(t, b.ErrorMessage, afterB.ErrorMessage)
 						require.Equal(t, b.RateLimitedAt, afterB.RateLimitedAt)
 						require.Equal(t, b.OverloadUntil, afterB.OverloadUntil)
-						breakerKeys, err := f.rdb.Keys(ctx, fmt.Sprintf("fbchain:cb:{openai:%d:*}", *f.key.GroupID)).Result()
-						require.NoError(t, err)
-						for _, key := range breakerKeys {
-							count, err := f.rdb.HGet(ctx, key, "fail_count").Int64()
-							if err == redisclient.Nil {
-								continue
-							}
+						homeBreakerKey, _, _ := groupChainBreakerKeys(service.BreakerKey{Platform: service.PlatformOpenAI, GroupID: *f.key.GroupID, Family: homeFamily})
+						breakerCount, err := f.rdb.HGet(ctx, homeBreakerKey, "fail_count").Int64()
+						if err == redisclient.Nil {
+							breakerCount = 0
+						} else {
 							require.NoError(t, err)
-							require.Zero(t, count, "local policy never supplies whole-group breaker evidence")
 						}
+						t.Logf("actual recognized home family=%s exact Redis key=%s fail_count=%d", homeFamily, homeBreakerKey, breakerCount)
+						require.Zero(t, breakerCount, "local policy never supplies whole-group breaker evidence; OLD_REVIEW next-success controls must reproduce a nonzero count at this exact key")
 						var actualCost float64
 						var count int
 						require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*),COALESCE(sum(actual_cost),0) FROM usage_logs WHERE api_key_id=$1`, f.key.ID).Scan(&count, &actualCost))
