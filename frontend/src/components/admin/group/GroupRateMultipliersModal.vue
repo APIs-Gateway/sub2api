@@ -355,6 +355,12 @@ const adjustPage = () => {
 
 watch([() => props.show, () => props.group?.id], ([show]) => {
   loadVersion++
+  cancelPendingSearch()
+  loading.value = false
+  saving.value = false
+  serverEntries.value = []
+  localEntries.value = []
+  showDropdown.value = false
   if (show && props.group) {
     currentPage.value = 1
     batchFactor.value = null
@@ -363,11 +369,8 @@ watch([() => props.show, () => props.group?.id], ([show]) => {
     selectedUser.value = null
     newRate.value = null
     loadEntries()
-  } else if (!show) {
-    cancelPendingSearch()
-    showDropdown.value = false
   }
-})
+}, { immediate: true })
 
 const handlePageSizeChange = (newSize: number) => {
   pageSize.value = newSize
@@ -473,7 +476,9 @@ const handleCancel = () => {
 
 // 保存：一次性提交所有数据（只提交 rate_multiplier；rpm_override 由独立弹窗管理）
 const handleSave = async () => {
-  if (!props.group) return
+  if (!props.group || loading.value || saving.value) return
+  const version = loadVersion
+  const groupId = props.group.id
   saving.value = true
   try {
     const entries = localEntries.value
@@ -482,15 +487,17 @@ const handleSave = async () => {
         user_id: e.user_id,
         rate_multiplier: e.rate_multiplier as number
       }))
-    await adminAPI.groups.batchSetGroupRateMultipliers(props.group.id, entries)
+    await adminAPI.groups.batchSetGroupRateMultipliers(groupId, entries)
+    if (version !== loadVersion) return
     appStore.showSuccess(t('admin.groups.rateSaved'))
     emit('success')
     emit('close')
   } catch (error) {
+    if (version !== loadVersion) return
     appStore.showError(t('admin.groups.failedToSave'))
     console.error('Error saving rate multipliers:', error)
   } finally {
-    saving.value = false
+    if (version === loadVersion) saving.value = false
   }
 }
 
