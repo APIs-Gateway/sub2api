@@ -25,8 +25,8 @@ var chatgptCodexModelsURL = "https://chatgpt.com/backend-api/codex/models"
 
 const codexModelsManifestBodyLimit int64 = 8 << 20
 
-// CodexModelsManifest carries the raw upstream manifest payload plus caching
-// metadata so handlers can pass both through to the client untouched.
+// CodexModelsManifest carries the selected account's live model representation
+// and its validator, including projection through an existing account mapping.
 type CodexModelsManifest struct {
 	Body        []byte
 	ETag        string
@@ -148,11 +148,9 @@ func isRetryableCodexModelsManifestTransportError(err error) bool {
 // ChatGPT backend for OAuth accounts or from the configured OpenAI-compatible
 // upstream for API-key accounts.
 //
-// After validating the stable top-level envelope, the response body is passed
-// through verbatim: the manifest schema evolves with Codex client releases,
-// and interpreting model entries here would force the gateway to chase
-// upstream changes. Passing it through keeps the gateway schema-agnostic and
-// always reflects the account's real entitlements.
+// After validating the stable top-level envelope, existing account mappings
+// project public model names. Other metadata is opaque; unmapped/passthrough
+// accounts retain the original upstream representation.
 func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, account *Account, clientVersion, ifNoneMatch string) (*CodexModelsManifest, error) {
 	if account == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_CODEX_MODELS_ACCOUNT_REQUIRED", "account is required")
@@ -204,6 +202,11 @@ func (s *OpenAIGatewayService) handleCodexModelsManifestAccountAuthError(ctx con
 }
 
 func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Context, account *Account, clientVersion, ifNoneMatch string) (*CodexModelsManifest, error) {
+	projectAccount := codexModelsNeedAccountProjection(account)
+	upstreamIfNoneMatch := ifNoneMatch
+	if projectAccount {
+		upstreamIfNoneMatch = ""
+	}
 	requestURL := chatgptCodexModelsURL
 	authToken := ""
 	apiKeyUpstream := false
@@ -263,8 +266,8 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 	req.Header.Set("Version", clientVersion)
 	req.Header.Set("User-Agent", codexCLIUserAgent)
 	enforceCodexIdentityHeaders(req.Header)
-	if ifNoneMatch = strings.TrimSpace(ifNoneMatch); ifNoneMatch != "" {
-		req.Header.Set("If-None-Match", ifNoneMatch)
+	if upstreamIfNoneMatch = strings.TrimSpace(upstreamIfNoneMatch); upstreamIfNoneMatch != "" {
+		req.Header.Set("If-None-Match", upstreamIfNoneMatch)
 	}
 	if chatgptAccountID := account.GetChatGPTAccountID(); chatgptAccountID != "" {
 		req.Header.Set("chatgpt-account-id", chatgptAccountID)
@@ -276,6 +279,15 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 		req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 	}
 	account.ApplyHeaderOverrides(req.Header)
+	if projectAccount {
+		// Overrides can store noncanonical header keys directly. Delete every
+		// spelling so an account override cannot turn this into a partial fetch.
+		for name := range req.Header {
+			if strings.EqualFold(name, "If-None-Match") || strings.EqualFold(name, "If-Modified-Since") {
+				delete(req.Header, name)
+			}
+		}
+	}
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -308,6 +320,12 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotModified {
+		if projectAccount {
+			return nil, &codexModelsManifestUpstreamError{
+				err:       infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST", "projected Codex catalog requires a complete upstream representation"),
+				retryable: true,
+			}
+		}
 		return &CodexModelsManifest{ETag: resp.Header.Get("ETag"), NotModified: true}, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -333,6 +351,14 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 		return nil, &codexModelsManifestUpstreamError{
 			err:       infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "read codex models manifest response: %v", err),
 			retryable: isRetryableCodexModelsManifestTransportError(err),
+		}
+	}
+	if projectAccount {
+		if err := validateCodexProjectionKnownKeys(body); err != nil {
+			return nil, &codexModelsManifestUpstreamError{
+				err:       infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST", "ambiguous mapped Codex manifest: %v", err),
+				retryable: true,
+			}
 		}
 	}
 	if apiKeyUpstream {
@@ -362,7 +388,24 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 			retryable: true,
 		}
 	}
-	return &CodexModelsManifest{Body: body, ETag: resp.Header.Get("ETag")}, nil
+	etag := resp.Header.Get("ETag")
+	if projectAccount {
+		projected, projectErr := projectCodexModelsForAccount(body, account)
+		if projectErr != nil {
+			return nil, &codexModelsManifestUpstreamError{
+				err:       infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST", "project account Codex models: %v", projectErr),
+				retryable: true,
+			}
+		}
+		// Even identity mappings need a representation validator: separate
+		// accounts/providers can reuse the same upstream ETag for different bytes.
+		etag = codexModelsRepresentationETag(projected)
+		body = projected
+		if codexModelsETagMatches(ifNoneMatch, etag) {
+			return &CodexModelsManifest{ETag: etag, NotModified: true}, nil
+		}
+	}
+	return &CodexModelsManifest{Body: body, ETag: etag}, nil
 }
 
 // convertOpenAIModelListToCodexManifest rewrites a standard OpenAI
