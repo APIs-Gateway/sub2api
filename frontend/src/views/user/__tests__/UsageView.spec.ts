@@ -246,11 +246,13 @@ describe('user UsageView tooltip', () => {
     expect(text).toContain('Service tier')
     expect(text).toContain('Fast')
     expect(text).toContain('Rate')
-    expect(text).toContain('1.00x')
-    // tooltip 原本只有一行叫 Billed，已拆成「官方价 / 扣除余额 / 你的花费」三行。
-    // 这条 fixture 没有 billing_type，按钱包扣费展示。
-    expect(text).toContain('Balance deducted')
-    expect(text).toContain('$0.092883')
+    // 人民币钱包口径：缺 fiat_cost 的老行回落 1 / 13；官方价仍按 7 元汇率展示。
+    expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('0.0769x')
+    expect(text).toContain('Official price')
+    expect(text).toContain('¥0.6502')
+    expect(wrapper.get('[data-test="tip-spend"]').text()).toBe('¥0.007145 Balance')
+    expect(text).not.toContain('Balance deducted')
+    expect(text).not.toContain('$0.092883')
     expect(text).toContain('¥35.00 / 1M tokens')
     expect(text).toContain('¥210.00 / 1M tokens')
     expect(text).toContain('Cache write price')
@@ -970,11 +972,12 @@ describe('user UsageView currency display', () => {
     expect(text).toContain('Official price')
     expect(text).toContain('Plan quota deducted')
     expect(text).toContain('Your spend')
-    expect(text).toContain('¥11.67')
+    expect(text).toContain('$1.666667')
+    expect(text).not.toContain('¥11.67')
     expect(text).toContain('$5.00')
     expect(text).toMatch(/¥0\.25(?!\d)/)
     // 美元口径与改前逐字相同：原始倍率，花费后面不标来源。
-    expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('3x')
+    expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('3.00x')
     expect(wrapper.get('[data-test="tip-spend"]').text()).not.toMatch(/Plan|Balance/)
   })
 
@@ -1015,9 +1018,9 @@ describe('user UsageView currency display', () => {
       expect(wrapper.get('[data-test="tip-spend"]').text()).toBe('¥0.0646 Balance')
     })
 
-    it('套餐行：0.0654x，花费后标「套餐」', async () => {
+    it('套餐行按记录的实付 0.0392 / 0.6 显示 0.0653x，花费后标「套餐」', async () => {
       const wrapper = await openTip(planRow)
-      expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('0.0654x')
+      expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('0.0653x')
       expect(plain(wrapper)).not.toContain('Plan quota deducted')
       expect(wrapper.get('[data-test="tip-spend"]').text()).toBe('¥0.0392 Plan')
     })
@@ -1041,13 +1044,13 @@ describe('user UsageView currency display', () => {
 
     it('美元口径：原始倍率、扣除行都在，花费行不标来源', async () => {
       const wallet = await openTip(walletRow, 'usd')
-      expect(wallet.get('[data-test="tip-rate"]').text()).toBe('1.4x')
+      expect(wallet.get('[data-test="tip-rate"]').text()).toBe('1.40x')
       expect(plain(wallet)).toContain('Balance deducted')
       expect(plain(wallet)).toContain('$0.84')
       expect(wallet.get('[data-test="tip-spend"]').text()).toBe('¥0.0646')
 
       const plan = await openTip(planRow, 'usd')
-      expect(plan.get('[data-test="tip-rate"]').text()).toBe('1.4x')
+      expect(plan.get('[data-test="tip-rate"]').text()).toBe('1.40x')
       expect(plain(plan)).toContain('Plan quota deducted')
     })
 
@@ -1088,7 +1091,7 @@ describe('user UsageView currency display', () => {
       setupState.tooltipData = walletRow
       setupState.tooltipVisible = true
       await nextTick()
-      expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('1.4x')
+      expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('1.40x')
       expect(plain(wrapper)).toContain('Balance deducted')
       expect(wrapper.find('[data-test="tip-spend"]').exists()).toBe(false)
       expect(plain(wrapper)).not.toContain('Your spend')
@@ -1112,8 +1115,10 @@ describe('user UsageView currency display', () => {
 
       expect(wrapper.text()).not.toContain('Unit price')
       expect(wrapper.find('[data-test="cost-breakdown"]').exists()).toBe(false)
-      // 其余信息不受影响
-      expect(plain(wrapper)).toContain('Plan quota deducted')
+      // 人民币模式保留实付来源，美元扣除行隐藏；缺汇率时不显示官方金额。
+      expect(plain(wrapper)).not.toContain('Plan quota deducted')
+      expect(plain(wrapper)).not.toContain('Official price')
+      expect(wrapper.get('[data-test="tip-spend"]').text()).toBe('¥0.25 Plan')
       expect(plain(wrapper)).toContain('Your spend')
     })
 
