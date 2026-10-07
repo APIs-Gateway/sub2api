@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -202,14 +203,33 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				h.responsesErrorResponse(c, http.StatusServiceUnavailable, "api_error", "No available accounts")
 				return
 			}
-			accountReleaseFunc, err = h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(
-				c,
-				account.ID,
-				selection.WaitPlan.MaxConcurrency,
-				selection.WaitPlan.Timeout,
-				reqStream,
-				&streamStarted,
-			)
+			var acquired bool
+			accountReleaseFunc, acquired, err = h.concurrencyHelper.TryAcquireAccountSlot(requestCtx, account.ID, selection.WaitPlan.MaxConcurrency)
+			if err == nil && !acquired {
+				canWait, releaseWait := h.concurrencyHelper.RegisterAccountWait(requestCtx, account.ID, selection.WaitPlan.MaxWaiting)
+				if !canWait {
+					if streamStarted || (c.Writer.Written() && strings.HasPrefix(c.Writer.Header().Get("Content-Type"), "text/event-stream")) {
+						h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later", streamStarted)
+					} else {
+						h.responsesErrorResponse(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later")
+					}
+					return
+				}
+				if releaseWait != nil {
+					defer releaseWait()
+				}
+				accountReleaseFunc, err = h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(
+					c,
+					account.ID,
+					selection.WaitPlan.MaxConcurrency,
+					selection.WaitPlan.Timeout,
+					reqStream,
+					&streamStarted,
+				)
+				if releaseWait != nil {
+					releaseWait()
+				}
+			}
 			if err != nil {
 				reqLog.Warn("gateway.responses.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 				h.handleConcurrencyError(c, err, "account", streamStarted)
