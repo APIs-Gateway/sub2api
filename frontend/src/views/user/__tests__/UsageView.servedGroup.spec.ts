@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 
 import UsageView from '../UsageView.vue'
 
@@ -60,7 +61,7 @@ async function mountView(rows: unknown[]) {
 }
 
 describe('user UsageView group column', () => {
-  beforeEach(() => { query.mockReset(); getStatsByDateRange.mockReset(); list.mockReset() })
+  beforeEach(() => { setActivePinia(createPinia()); query.mockReset(); getStatsByDateRange.mockReset(); list.mockReset() })
 
   it('没有兜底时显示 Key 所属的分组，不带兜底标签', async () => {
     const w = await mountView([row('a')])
