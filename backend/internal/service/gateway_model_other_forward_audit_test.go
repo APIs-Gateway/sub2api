@@ -76,6 +76,8 @@ func TestGatewayModelOtherForward_RealOutboundGuards(t *testing.T) {
 				account := &Account{ID: 7890, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "fixture-key", "base_url": "https://api.example.com"}}
 				svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 				var err error
+				var chatResult *ForwardResult
+				var imageResult *OpenAIForwardResult
 				switch route {
 				case "count_tokens":
 					account.Platform = PlatformAnthropic
@@ -88,19 +90,21 @@ func TestGatewayModelOtherForward_RealOutboundGuards(t *testing.T) {
 					account.Platform = PlatformAnthropic
 					account.Credentials["model_mapping"] = map[string]any{"public-small": "claude-sonnet-4-5", "public-large": "claude-sonnet-4-5"}
 					upstream.response = namespaceToolAnthropicStream()
-					_, err = (&GatewayService{cfg: &config.Config{}, httpUpstream: upstream}).ForwardAsChatCompletions(context.Background(), c, account, body, nil)
+					chatResult, err = (&GatewayService{cfg: &config.Config{}, httpUpstream: upstream}).ForwardAsChatCompletions(context.Background(), c, account, body, nil)
 				case "gemini_chat":
-					account.Platform, account.Type = PlatformGemini, AccountTypeOAuth
-					account.Credentials = map[string]any{"access_token": "fixture-token", "project_id": "fixture-project", "model_mapping": map[string]any{"public-small": "gemini-2.5-flash", "public-large": "gemini-2.5-flash"}}
-					upstream.response = "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"audit\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":7,\"candidatesTokenCount\":3}}}\n\ndata: [DONE]\n\n"
-					_, err = (&GeminiMessagesCompatService{cfg: &config.Config{}, httpUpstream: upstream, tokenProvider: &GeminiTokenProvider{}}).ForwardAsChatCompletions(context.Background(), c, account, body)
+					// API-key accounts apply model_mapping; OAuth deliberately does not.
+					account.Platform = PlatformGemini
+					account.Credentials["model_mapping"] = map[string]any{"public-small": "gemini-2.5-flash", "public-large": "gemini-2.5-flash"}
+					upstream.response = `{"candidates":[{"content":{"parts":[{"text":"audit"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3}}`
+					chatResult, err = (&GeminiMessagesCompatService{cfg: &config.Config{}, httpUpstream: upstream}).ForwardAsChatCompletions(context.Background(), c, account, body)
 				case "images_json":
 					c.Request.URL.Path = openAIImagesGenerationsEndpoint
-					upstream.response = `{"created":1,"data":[{"b64_json":"aW1hZ2U="}]}`
+					account.Credentials["model_mapping"] = map[string]any{"gpt-image-2": "gpt-image-1"}
+					upstream.response = `{"created":1,"data":[{"b64_json":"aW1hZ2U="}],"usage":{"input_tokens":13,"output_tokens":5}}`
 					// Direct forwarding independently checks raw JSON. OLD receives
 					// the same valid parser result for the first model, as ingress did.
 					parsed := &OpenAIImagesRequest{Model: "gpt-image-2", Endpoint: openAIImagesGenerationsEndpoint, ContentType: "application/json", N: 1, Prompt: "draw a cat"}
-					_, err = svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+					imageResult, err = svc.ForwardImages(context.Background(), c, account, body, parsed, "")
 				default:
 					account.Credentials["model_mapping"] = map[string]any{"public-small": "provider-small", "public-large": "provider-large"}
 					err = svc.ForwardAlphaSearch(context.Background(), c, account, body)
@@ -118,6 +122,39 @@ func TestGatewayModelOtherForward_RealOutboundGuards(t *testing.T) {
 				require.Equal(t, 1, upstream.calls, "controls must prove the outbound harness is usable")
 				require.Equal(t, account.ID, upstream.accountID)
 				require.NotEmpty(t, upstream.rawBody)
+				if route == "anthropic_chat" || route == "gemini_chat" {
+					require.NotNil(t, chatResult)
+					require.Equal(t, "public-small", chatResult.Model)
+					require.False(t, chatResult.Stream)
+					require.Equal(t, "public-small", gjson.GetBytes(rec.Body.Bytes(), "model").String())
+					if route == "anthropic_chat" {
+						require.Equal(t, "claude-sonnet-4-5", gjson.GetBytes(upstream.rawBody, "model").String())
+						require.Equal(t, "claude-sonnet-4-5", chatResult.UpstreamModel)
+						require.Equal(t, ClaudeUsage{InputTokens: 10, OutputTokens: 5}, chatResult.Usage)
+						require.Equal(t, int64(10), gjson.GetBytes(rec.Body.Bytes(), "usage.prompt_tokens").Int())
+						require.Equal(t, int64(5), gjson.GetBytes(rec.Body.Bytes(), "usage.completion_tokens").Int())
+					} else {
+						require.Equal(t, "https://api.example.com/v1beta/models/gemini-2.5-flash:generateContent", upstream.requestURL)
+						require.Equal(t, "audit", gjson.GetBytes(upstream.rawBody, "contents.0.parts.0.text").String())
+						require.Equal(t, "gemini-2.5-flash", chatResult.UpstreamModel)
+						require.Equal(t, ClaudeUsage{InputTokens: 7, OutputTokens: 3}, chatResult.Usage)
+						require.Equal(t, int64(7), gjson.GetBytes(rec.Body.Bytes(), "usage.prompt_tokens").Int())
+						require.Equal(t, int64(3), gjson.GetBytes(rec.Body.Bytes(), "usage.completion_tokens").Int())
+					}
+				}
+				if route == "images_json" {
+					require.NotNil(t, imageResult)
+					require.Equal(t, "gpt-image-1", gjson.GetBytes(upstream.rawBody, "model").String())
+					require.Equal(t, "draw a cat", gjson.GetBytes(upstream.rawBody, "prompt").String())
+					require.Equal(t, "gpt-image-2", imageResult.Model)
+					require.Equal(t, "gpt-image-1", imageResult.UpstreamModel)
+					require.Empty(t, imageResult.BillingModel)
+					require.Equal(t, OpenAIUsage{InputTokens: 13, OutputTokens: 5}, imageResult.Usage)
+					require.Equal(t, 1, imageResult.ImageCount)
+					require.False(t, imageResult.Stream)
+					require.Equal(t, int64(13), gjson.GetBytes(rec.Body.Bytes(), "usage.input_tokens").Int())
+					require.Equal(t, int64(5), gjson.GetBytes(rec.Body.Bytes(), "usage.output_tokens").Int())
+				}
 				if route == "count_tokens" {
 					require.Equal(t, "claude-sonnet-4-5", gjson.GetBytes(upstream.rawBody, "model").String())
 					require.Equal(t, int64(42), gjson.GetBytes(rec.Body.Bytes(), "input_tokens").Int())
@@ -184,6 +221,12 @@ func TestGatewayModelOtherForward_ImagesParserContracts(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.Equal(t, 1, upstream.calls)
+		require.Equal(t, "gpt-image-2", result.Model)
+		require.Equal(t, "gpt-image-2", result.UpstreamModel)
+		require.Empty(t, result.BillingModel)
+		require.Equal(t, OpenAIUsage{}, result.Usage)
+		require.Equal(t, 1, result.ImageCount)
+		require.False(t, result.Stream)
 		_, params, err := mime.ParseMediaType(upstream.contentType)
 		require.NoError(t, err)
 		form, err := multipart.NewReader(bytes.NewReader(upstream.rawBody), params["boundary"]).ReadForm(1 << 20)

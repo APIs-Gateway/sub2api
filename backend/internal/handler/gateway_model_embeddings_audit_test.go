@@ -44,6 +44,23 @@ func (r *embeddingsModelAuditAccountRepo) ListByPlatform(ctx context.Context, pl
 	return r.openAIImagesFailoverAccountRepo.ListByPlatform(ctx, platform)
 }
 
+func (r *embeddingsModelAuditAccountRepo) ListSchedulableByPlatforms(_ context.Context, platforms []string) ([]service.Account, error) {
+	r.routingCalls.Add(1)
+	accounts := make([]service.Account, 0)
+	for _, platform := range platforms {
+		accounts = append(accounts, r.accountsForPlatform(platform)...)
+	}
+	return accounts, nil
+}
+
+func (r *embeddingsModelAuditAccountRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, _ int64, platforms []string) ([]service.Account, error) {
+	return r.ListSchedulableByPlatforms(ctx, platforms)
+}
+
+func (r *embeddingsModelAuditAccountRepo) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]service.Account, error) {
+	return r.ListSchedulableByPlatforms(ctx, platforms)
+}
+
 func TestGatewayModelEmbeddings_HandlerRejectsBeforeRouting(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
