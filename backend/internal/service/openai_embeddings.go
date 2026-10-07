@@ -26,6 +26,10 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 ) (*OpenAIForwardResult, error) {
 	startTime := time.Now()
 
+	if err := rejectAmbiguousGatewayModel(c, body); err != nil {
+		return nil, err
+	}
+
 	originalModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	if originalModel == "" {
 		writeOpenAIEmbeddingsError(c, http.StatusBadRequest, "invalid_request_error", "model is required")

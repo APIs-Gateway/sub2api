@@ -30,6 +30,10 @@ func (s *GeminiMessagesCompatService) ForwardAsChatCompletions(
 ) (*ForwardResult, error) {
 	startTime := time.Now()
 
+	if err := rejectAmbiguousGatewayModel(c, body); err != nil {
+		return nil, err
+	}
+
 	var ccReq apicompat.ChatCompletionsRequest
 	if err := json.Unmarshal(body, &ccReq); err != nil {
 		return nil, s.writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")

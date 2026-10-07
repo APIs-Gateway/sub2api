@@ -35,6 +35,10 @@ func (s *GatewayService) ForwardAsChatCompletions(
 ) (*ForwardResult, error) {
 	startTime := time.Now()
 
+	if err := rejectAmbiguousGatewayModel(c, body); err != nil {
+		return nil, err
+	}
+
 	// 1. Parse Chat Completions request
 	var ccReq apicompat.ChatCompletionsRequest
 	if err := json.Unmarshal(body, &ccReq); err != nil {

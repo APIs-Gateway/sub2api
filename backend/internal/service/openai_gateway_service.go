@@ -2921,6 +2921,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	clearOpenAIResponsesNamespaceNames(c)
 	clearOpenAIResponsesClientToolMapping(c)
 	s.prepareCodexAccountIdentitySource(c, account)
+	if err := rejectAmbiguousGatewayModel(c, body); err != nil {
+		return nil, err
+	}
 	startTime := time.Now()
 
 	restrictionResult := s.detectCodexClientRestriction(c, account)
