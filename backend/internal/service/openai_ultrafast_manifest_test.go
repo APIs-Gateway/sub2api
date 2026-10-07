@@ -90,3 +90,15 @@ func TestAstraUltrafast_OAuthDoesNotInferFromPlan(t *testing.T) {
 		})
 	}
 }
+
+func TestAstraUltrafast_ManifestExpansionBound(t *testing.T) {
+	body := `{"models":[{"slug":"gpt-6-astra","opaque":"` + strings.Repeat("x", int(codexModelsManifestBodyLimit)-100) + `"}]}`
+	require.Less(t, len(body), int(codexModelsManifestBodyLimit))
+	u := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: u}
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "fixture-only", "base_url": "https://api.openai.com"}}
+	manifest, err := svc.FetchCodexModelsManifest(context.Background(), account, "0.153.0", "")
+	require.ErrorContains(t, err, "exceeds")
+	require.True(t, IsRetryableCodexModelsManifestError(err))
+	require.Nil(t, manifest)
+}

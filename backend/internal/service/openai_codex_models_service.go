@@ -391,7 +391,14 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 		}
 	}
 	if officialTiers {
-		body = addOfficialAstraServiceTiers(body)
+		adjusted, tierErr := addOfficialAstraServiceTiers(body)
+		if tierErr != nil {
+			return nil, &codexModelsManifestUpstreamError{
+				err:       infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST", "adjust Astra service tiers: %v", tierErr),
+				retryable: true,
+			}
+		}
+		body = adjusted
 	}
 	etag := resp.Header.Get("ETag")
 	if projectAccount {

@@ -1,9 +1,10 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/tidwall/sjson"
@@ -22,27 +23,49 @@ func officialOpenAIAstraServiceTiers(account *Account) bool {
 
 // The envelope was validated by the live-manifest reader. RawMessage keeps all
 // provider metadata, and a present service_tiers (including null or []) wins.
-func addOfficialAstraServiceTiers(body []byte) []byte {
+func addOfficialAstraServiceTiers(body []byte) ([]byte, error) {
 	var envelope map[string]json.RawMessage
 	_ = json.Unmarshal(body, &envelope)
 	var models []json.RawMessage
 	if json.Unmarshal(envelope["models"], &models) != nil {
-		return body
+		return body, nil
 	}
+	changed := false
+	size := len(body) - len(envelope["models"]) + 2
 	for i, raw := range models {
 		var model map[string]json.RawMessage
-		if json.Unmarshal(raw, &model) != nil {
-			continue
-		}
 		var slug string
-		if json.Unmarshal(model["slug"], &slug) != nil || !isOpenAIGPT6AstraModel(normalizeKnownOpenAICodexModel(slug)) {
-			continue
+		if json.Unmarshal(raw, &model) == nil && json.Unmarshal(model["slug"], &slug) == nil && isOpenAIGPT6AstraModel(normalizeKnownOpenAICodexModel(slug)) {
+			if _, exists := model["service_tiers"]; !exists {
+				raw, _ = sjson.SetRawBytes(raw, "service_tiers", []byte(`[{"id":"priority","name":"Fast","description":"Priority processing for lower latency."},{"id":"ultrafast","name":"Ultrafast","description":"Lowest latency; 6x Standard token pricing."}]`))
+				changed = true
+			}
 		}
-		if _, exists := model["service_tiers"]; exists {
-			continue
+		models[i] = raw
+		size += len(raw)
+		if i > 0 {
+			size++
 		}
-		// Splice just the known field, preserving all other opaque metadata bytes.
-		body, _ = sjson.SetRawBytes(body, "models."+strconv.Itoa(i)+".service_tiers", []byte(`[{"id":"priority","name":"Fast","description":"Priority processing for lower latency."},{"id":"ultrafast","name":"Ultrafast","description":"Lowest latency; 6x Standard token pricing."}]`))
+		if size > int(codexModelsManifestBodyLimit) {
+			return nil, fmt.Errorf("Astra service-tier manifest exceeds %d bytes", codexModelsManifestBodyLimit)
+		}
 	}
-	return body
+	if !changed {
+		return body, nil
+	}
+	// Each model is spliced once; rebuild the array without re-encoding opaque
+	// metadata, then replace the large envelope just once. Enforce the original
+	// response bound before allocating its transformed representation.
+	var array bytes.Buffer
+	array.Grow(size - (len(body) - len(envelope["models"])))
+	array.WriteByte('[')
+	for i, raw := range models {
+		if i > 0 {
+			array.WriteByte(',')
+		}
+		array.Write(raw)
+	}
+	array.WriteByte(']')
+	result, _ := sjson.SetRawBytes(body, "models", array.Bytes())
+	return result, nil
 }
