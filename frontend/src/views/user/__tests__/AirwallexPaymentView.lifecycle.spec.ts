@@ -45,7 +45,8 @@ describe('Airwallex checkout lifecycle', () => {
     mocks.init.mockReturnValue(new Promise(resolve => { finish = resolve }))
     const wrapper = mountView()
     await flushPromises()
-    expect(mocks.init).toHaveBeenCalledExactlyOnceWith({
+    expect(mocks.init).toHaveBeenCalledOnce()
+    expect(mocks.init).toHaveBeenCalledWith({
       env: 'demo', enabledElements: ['payments'], locale: 'zh'
     })
     if (leave) wrapper.unmount()
