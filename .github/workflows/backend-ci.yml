@@ -26,6 +26,21 @@ jobs:
           /bin/sh deploy/tests/docker-compose-security-test.sh
           /bin/sh deploy/test-caddyfile-cache.sh
           python3 deploy/tests/docker-compose-redis-command-test.py
+          python3 deploy/tests/admin-bootstrap-defaults-test.py
+      - name: Fresh admin credential login, bcrypt and CLI dialogue contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestSetupAdminCredentials_|^TestPrepareAdminCredentials|^TestBootstrapAdminUser|^TestSetupDefaultAdminConcurrency$' ./internal/setup/
+      - name: Fresh admin actual PostgreSQL creation, concurrent bootstrap and existing-user preservation (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+          SETUP_CLI_COVERPROFILE: ${{ github.workspace }}/backend/coverage-setup-cli.out
+        run: |
+          go test -tags=integration -race -coverpkg=./internal/setup -covermode=atomic -count=1 -v -run '^TestSetupAdminBootstrapPostgres_' ./internal/setup/
+          test -s coverage-setup-cli.out
+          bash ./tools/normalize-go-coverprofile.sh coverage-setup-cli.out
       - name: Anthropic start output metering and interrupted native attempts (race)
         working-directory: backend
         env:
@@ -206,6 +221,7 @@ jobs:
           path: |
             backend/coverage-unit.out
             backend/coverage-integration.out
+            backend/coverage-setup-cli.out
           if-no-files-found: ignore
           retention-days: 14
       - name: Responses input token regression tests (actual results)
@@ -219,7 +235,7 @@ jobs:
       - name: Upload backend coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          files: backend/coverage-unit.out,backend/coverage-integration.out
+          files: backend/coverage-unit.out,backend/coverage-integration.out,backend/coverage-setup-cli.out
           flags: backend
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: APIs-Gateway/sub2api
