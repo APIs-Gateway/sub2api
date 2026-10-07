@@ -87,9 +87,9 @@ func TestGatewayModelField_WSLaterFramesBeforeUpstream(t *testing.T) {
 						}
 					}
 					upstream.mu.Lock()
-						writes := len(upstream.writes)
-						upstream.mu.Unlock()
-						require.Equal(t, 2, writes)
+					writes := len(upstream.writes)
+					upstream.mu.Unlock()
+					require.Equal(t, 2, writes)
 				})
 			}
 		}

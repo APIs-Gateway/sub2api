@@ -2974,8 +2974,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	if strings.TrimSpace(token) == "" {
 		return errors.New("token is empty")
 	}
-	if err := validateGatewayWSModelPayload(firstClientMessage); err != nil {
-		return err
+	if gjson.ValidBytes(firstClientMessage) {
+		if err := validateGatewayWSModelPayload(firstClientMessage); err != nil {
+			return err
+		}
 	}
 	if err := s.rejectOpenAIResponsesWebSocketImageGeneration(firstClientMessage); err != nil {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
