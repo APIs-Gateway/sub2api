@@ -141,7 +141,7 @@ func decodeRefundPendingSnapshot(body string, detail *refundPendingAuditDetail) 
 		// encoding/json accepts case-insensitive aliases for struct fields.
 		// Reject those aliases before decoding so they cannot overwrite a
 		// canonical financial value or bypass the null check below.
-		for _, canonical := range []string{"refundID", "deductionRollbackOK", "deductionType", "balanceToDeduct", "subDaysToDeduct", "subscriptionID", "gatewayBaseAmount", "gatewayAmount", "refundFeeRate", "refundFeeAmount", "refundAmount", "subDaysToRestore", "subExpireDayToRestore", "subTodayRemainingToRestore", "subTodayDayToRestore"} {
+		for _, canonical := range []string{"refundID", "deductionRollbackOK", "deductionType", "balanceToDeduct", "subDaysToDeduct", "subscriptionID", "gatewayBaseAmount", "gatewayAmount", "refundFeeRate", "refundFeeAmount", "refundAmount", "subDaysToRestore", "subExpireDayToRestore", "subTodayRemainingToRestore", "subTodayDayToRestore", "subscriptionAdjustmentID"} {
 			if strings.EqualFold(key, canonical) && key != canonical {
 				return fmt.Errorf("non-canonical financial snapshot field %s", key)
 			}
@@ -152,7 +152,7 @@ func decodeRefundPendingSnapshot(body string, detail *refundPendingAuditDetail) 
 			return err
 		}
 		switch key {
-		case "deductionType", "deductionRollbackOK", "balanceToDeduct", "subDaysToDeduct", "subscriptionID", "refundAmount", "gatewayBaseAmount", "gatewayAmount", "refundFeeRate", "refundFeeAmount", "subDaysToRestore", "subExpireDayToRestore", "subTodayRemainingToRestore", "subTodayDayToRestore":
+		case "deductionType", "deductionRollbackOK", "balanceToDeduct", "subDaysToDeduct", "subscriptionID", "refundAmount", "gatewayBaseAmount", "gatewayAmount", "refundFeeRate", "refundFeeAmount", "subDaysToRestore", "subExpireDayToRestore", "subTodayRemainingToRestore", "subTodayDayToRestore", "subscriptionAdjustmentID":
 			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 				return fmt.Errorf("null financial snapshot field %s", key)
 			}
@@ -164,5 +164,13 @@ func decodeRefundPendingSnapshot(body string, detail *refundPendingAuditDetail) 
 	if _, err := decoder.Token(); err != io.EOF {
 		return fmt.Errorf("invalid trailing snapshot data")
 	}
-	return json.Unmarshal([]byte(body), detail)
+	if err := json.Unmarshal([]byte(body), detail); err != nil {
+		return err
+	}
+	// Only absence is a legacy snapshot. A present zero/negative owner must
+	// never downgrade an adjustment-backed attempt to absolute restoration.
+	if seen["subscriptionAdjustmentID"] && detail.SubscriptionAdjustmentID <= 0 {
+		return fmt.Errorf("invalid refund subscription adjustment reference")
+	}
+	return nil
 }

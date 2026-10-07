@@ -1099,6 +1099,12 @@ pricing:
   # Hash check interval in minutes
   # 哈希检查间隔（分钟）
   hash_check_interval_minutes: 10
+  # Minimum shadow observation time (hours) before a group may move from shadow to v2 (price stage gate).
+  # Integer 0-720, default 72; 0 skips the duration requirement only (the in-process translation-difference
+  # check and the 30-day replay checks still apply). Env: PRICING_GATE_OBSERVATION_HOURS
+  # 价格阶段闸门：分组从 shadow 切到 v2 前的最短影子观察时长（小时）。整数 0-720，默认 72；
+  # 0 只免去时长要求（进程内翻译差异检查与 30 天回放检查照常）。环境变量：PRICING_GATE_OBSERVATION_HOURS
+  gate_observation_hours: 72
 
 # =============================================================================
 # Billing Configuration

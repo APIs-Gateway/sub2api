@@ -28,6 +28,7 @@ type Usage struct {
 	CacheCreationInputTokens int
 	CacheReadInputTokens     int
 	ImageOutputTokens        int
+	ImageInputTokens         int
 }
 
 type RelayResult struct {
@@ -43,6 +44,9 @@ type RelayResult struct {
 }
 
 type RelayTurnResult struct {
+	// HasGeneratedImage retains terminal output presence, never image contents.
+	// It does not infer or alter provider usage counters.
+	HasGeneratedImage bool
 	RequestModel      string
 	Usage             Usage
 	RequestID         string
@@ -113,12 +117,13 @@ type relayExitSignal struct {
 }
 
 type observedUpstreamEvent struct {
-	terminal   bool
-	eventType  string
-	responseID string
-	usage      Usage
-	duration   time.Duration
-	firstToken *int
+	hasGeneratedImage bool
+	terminal          bool
+	eventType         string
+	responseID        string
+	usage             Usage
+	duration          time.Duration
+	firstToken        *int
 }
 
 type relayTurnTiming struct {
@@ -738,6 +743,7 @@ func observeUpstreamMessage(
 		return observed
 	}
 	observed.terminal = true
+	observed.hasGeneratedImage = terminalHasGeneratedImage(message, eventType)
 	state.pendingTurn.Store(false)
 	if responseID == "" {
 		// A terminal without a response id cannot be matched to a turn timing;
@@ -759,6 +765,40 @@ func observeUpstreamMessage(
 	return observed
 }
 
+// Observe actual completed output, not the request's generation intent. Keep no
+// image result, URL or encrypted payload in connection lineage metadata.
+func terminalHasGeneratedImage(message []byte, eventType string) bool {
+	// The outer response can fail or stop after an image tool completed.
+	// Potential image input follows the actual product, independently of the
+	// response status, without changing its outcome or charged counters.
+	if !isTerminalEvent(eventType) {
+		return false
+	}
+	output := gjson.GetBytes(message, "response.output")
+	if !output.IsArray() {
+		return false
+	}
+	found := false
+	output.ForEach(func(_, item gjson.Result) bool {
+		result := item.Get("result")
+		found = item.Get("type").String() == "image_generation_call" &&
+			!imageOutputStatusIsUnfinished(item.Get("status")) && result.Type == gjson.String && strings.TrimSpace(result.Str) != ""
+		return !found
+	})
+	return found
+}
+
+// Providers can omit status on output items. A nonempty image result is still
+// potential input; explicit unfinished or failed item states exclude it.
+func imageOutputStatusIsUnfinished(status gjson.Result) bool {
+	switch status.String() {
+	case "failed", "cancelled", "canceled", "in_progress", "generating", "queued", "incomplete":
+		return true
+	default:
+		return false
+	}
+}
+
 func emitTurnComplete(
 	onTurnComplete func(turn RelayTurnResult),
 	state *relayState,
@@ -776,6 +816,7 @@ func emitTurnComplete(
 		requestModel = state.requestModel
 	}
 	onTurnComplete(RelayTurnResult{
+		HasGeneratedImage: observed.hasGeneratedImage,
 		RequestModel:      requestModel,
 		Usage:             observed.usage,
 		RequestID:         responseID,
@@ -926,6 +967,22 @@ func parseUsageAndAccumulate(
 	if imageTokens == 0 {
 		imageTokens = usageResult.Get("completion_tokens_details.image_tokens").Int()
 	}
+	imageInputTokens := usageResult.Get("input_tokens_details.image_tokens").Int()
+	if imageInputTokens == 0 {
+		imageInputTokens = usageResult.Get("prompt_tokens_details.image_tokens").Int()
+	}
+	// Match HTTP usage extraction: only the tool usage beside this response's
+	// usage can backfill a zero image bucket. Positive usage wins; negative
+	// usage retains the existing HTTP semantics rather than being overwritten.
+	imageGen := gjson.GetBytes(message, "response.tool_usage.image_gen")
+	if imageGen.IsObject() {
+		if imageInputTokens == 0 && imageGen.Get("input_tokens_details.image_tokens").Int() > 0 {
+			imageInputTokens = imageGen.Get("input_tokens_details.image_tokens").Int()
+		}
+		if imageTokens == 0 && imageGen.Get("output_tokens_details.image_tokens").Int() > 0 {
+			imageTokens = imageGen.Get("output_tokens_details.image_tokens").Int()
+		}
+	}
 
 	inputTokens, inputOK := parseUsageIntField(inputResult, true)
 	outputTokens, outputOK := parseUsageIntField(outputResult, true)
@@ -954,6 +1011,7 @@ func parseUsageAndAccumulate(
 		CacheCreationInputTokens: cacheCreationTokens,
 		CacheReadInputTokens:     cachedTokens,
 		ImageOutputTokens:        int(imageTokens),
+		ImageInputTokens:         int(imageInputTokens),
 	}
 
 	state.usage.InputTokens += parsedUsage.InputTokens
@@ -961,6 +1019,7 @@ func parseUsageAndAccumulate(
 	state.usage.CacheCreationInputTokens += parsedUsage.CacheCreationInputTokens
 	state.usage.CacheReadInputTokens += parsedUsage.CacheReadInputTokens
 	state.usage.ImageOutputTokens += parsedUsage.ImageOutputTokens
+	state.usage.ImageInputTokens += parsedUsage.ImageInputTokens
 	return parsedUsage
 }
 

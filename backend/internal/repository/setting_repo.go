@@ -87,12 +87,29 @@ func (r *settingRepository) GetValue(ctx context.Context, key string) (string, e
 }
 
 func (r *settingRepository) Set(ctx context.Context, key, value string) error {
+	if err := service.W6GenericWriteGuard(key); err != nil {
+		return err
+	}
 	now := time.Now()
 	return r.client.Setting.
 		Create().
 		SetKey(key).
 		SetValue(value).
 		SetUpdatedAt(now).
+		OnConflictColumns(setting.FieldKey).
+		UpdateNewValues().
+		Exec(ctx)
+}
+
+// SetBillingUnpricedPolicy 是 billing_unpriced_policy 的专用写入（W6 PR7b-2a）：与 Set 同一条 upsert，但不经
+// W6GenericWriteGuard（那里把这个键登记为受保护键，通用写入一律 403）。值的合法性与交互式管理员会话由
+// service.SettingService.SetBillingUnpricedPolicy 和 handler 负责，这里只写一个已经校验过的值。
+func (r *settingRepository) SetBillingUnpricedPolicy(ctx context.Context, value string) error {
+	return r.client.Setting.
+		Create().
+		SetKey(service.SettingKeyBillingUnpricedPolicy).
+		SetValue(value).
+		SetUpdatedAt(time.Now()).
 		OnConflictColumns(setting.FieldKey).
 		UpdateNewValues().
 		Exec(ctx)
@@ -117,6 +134,11 @@ func (r *settingRepository) GetMultiple(ctx context.Context, keys []string) (map
 func (r *settingRepository) SetMultiple(ctx context.Context, settings map[string]string) error {
 	if len(settings) == 0 {
 		return nil
+	}
+	for key := range settings {
+		if err := service.W6GenericWriteGuard(key); err != nil {
+			return err
+		}
 	}
 
 	now := time.Now()
@@ -145,6 +167,9 @@ func (r *settingRepository) GetAll(ctx context.Context) (map[string]string, erro
 }
 
 func (r *settingRepository) Delete(ctx context.Context, key string) error {
+	if err := service.W6GenericWriteGuard(key); err != nil {
+		return err
+	}
 	_, err := r.client.Setting.Delete().Where(setting.KeyEQ(key)).Exec(ctx)
 	return err
 }

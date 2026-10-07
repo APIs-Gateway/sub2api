@@ -208,6 +208,8 @@ type wsInflightBillingObserver struct {
 	service.BillingInflightRepository
 	commands       chan service.UsageBillingCommand
 	firstApplyGate chan struct{}
+	afterStage     func(context.Context, int64, string, string, string)
+	afterApply     func(context.Context, *service.UsageBillingCommand, *service.UsageBillingApplyResult, error)
 	calls          atomic.Int64
 }
 
@@ -221,7 +223,19 @@ func (b *wsInflightBillingObserver) Apply(ctx context.Context, cmd *service.Usag
 			return nil, ctx.Err()
 		}
 	}
-	return b.UsageBillingRepository.Apply(ctx, cmd)
+	result, err := b.UsageBillingRepository.Apply(ctx, cmd)
+	if b.afterApply != nil {
+		b.afterApply(ctx, cmd, result, err)
+	}
+	return result, err
+}
+
+func (b *wsInflightBillingObserver) StageBillingInflight(ctx context.Context, userID int64, ownerID, attemptID string, cmd *service.UsageBillingCommand, ttl time.Duration) (string, error) {
+	id, err := b.BillingInflightRepository.StageBillingInflight(ctx, userID, ownerID, attemptID, cmd, ttl)
+	if err == nil && b.afterStage != nil {
+		b.afterStage(ctx, userID, ownerID, attemptID, id)
+	}
+	return id, err
 }
 
 type wsInflightFixture struct {
@@ -240,7 +254,7 @@ type wsInflightFixture struct {
 	billingRepo *wsInflightBillingObserver
 }
 
-func newWSInflightFixture(t *testing.T, mode string, source string, prices map[string]float64) *wsInflightFixture {
+func newWSInflightFixture(t *testing.T, mode string, source string, prices map[string]float64, billingOverride ...*service.BillingService) *wsInflightFixture {
 	t.Helper()
 	logger.InitBootstrap()
 	gin.SetMode(gin.TestMode)
@@ -317,6 +331,9 @@ func newWSInflightFixture(t *testing.T, mode string, source string, prices map[s
 	snapshots := service.NewSchedulerSnapshotService(schedulerCache, NewSchedulerOutboxRepository(inflightTestDB(t)), accounts, groups, cfg)
 	t.Cleanup(snapshots.Stop)
 	billService := service.NewBillingService(cfg, nil)
+	if len(billingOverride) > 0 {
+		billService = billingOverride[0]
+	}
 	httpClient := &http.Client{}
 	t.Cleanup(httpClient.CloseIdleConnections)
 	realBilling := NewUsageBillingRepository(client, inflightTestDB(t))

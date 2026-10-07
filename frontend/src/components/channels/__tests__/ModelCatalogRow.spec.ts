@@ -42,6 +42,8 @@ vi.mock('vue-i18n', () => ({
         'availableChannels.tierName': 'Tier',
         'availableChannels.resolution': 'Resolution',
         'availableChannels.noPricing': 'No pricing',
+        'availableChannels.peakNote': 'peak note',
+        'availableChannels.peakShort': `peak ${params?.n}x`,
       })[key] ?? key,
   }),
 }))
@@ -373,5 +375,67 @@ describe('ModelCatalogRow', () => {
     expect(w.get('button').attributes('aria-expanded')).toBe('false')
     const empty = mount(ModelCatalogRow, { props: { model: { key: 'k', name: 'n', platform: 'openai', kind: null, entries: [], cheapest: null } } })
     expect(empty.get('button').attributes('disabled')).toBeDefined()
+  })
+  it('shows each group by its own billing mode when one model mixes token and per-request groups', () => {
+    const off = set({ input: 1e-6, output: 4e-6 })
+    const req = set({ unit: 0.5 })
+    const mk = (id: number, rate: number, over: Record<string, unknown>, official: UserPriceSet) => ({
+      group_id: id, rate, base_rate: rate, has_custom_rate: false, official, prices: scaled(official, rate), tiers: [], ...over,
+    })
+    const data = {
+      groups: [g(1, 'TokenG'), g(2, 'ReqG'), g(3, 'ReqCheap')],
+      models: [{
+        name: 'mixed', platform: 'openai',
+        entries: [
+          mk(1, 1, { billing_mode: 'token', kind: 'token' }, off),
+          // 每次价低于每 token 价换算后的数字，但不应因此排到前面
+          mk(2, 1, { billing_mode: 'per_request', kind: 'request' }, req),
+          mk(3, 0.4, { billing_mode: 'per_request', kind: 'request' }, req),
+        ],
+      }],
+    } as unknown as UserPriceCatalog
+    const m = buildPriceCatalog(data)[0]
+    expect(m.kinds).toEqual(['token', 'request'])
+    expect(m.entries.map((e) => e.group.name)).toEqual(['TokenG', 'ReqCheap', 'ReqG'])
+    const w = mount(ModelCatalogRow, { props: { model: m, expanded: true } })
+    const sections = w.findAll('[data-test="group-section"]')
+    expect(sections).toHaveLength(2)
+    expect(sections[0].text()).toContain('TokenG')
+    expect(sections[0].text()).not.toContain('Req')
+    expect(sections[0].text()).toContain('per 1M')
+    expect(sections[1].text()).toContain('ReqCheap')
+    expect(sections[1].text()).toContain('ReqG')
+    expect(sections[1].text()).toContain('per request')
+    expect(sections[1].findAll('[data-lowest="true"]')).toHaveLength(1)
+    expect(sections[1].findAll('td').some((td) => td.text() === '-')).toBe(false)
+    expect(sections[0].findAll('td').some((td) => td.text() === '-')).toBe(false)
+  })
+
+  it('marks the peak multiplier per group: only default-card groups are tagged', () => {
+    const off = set({ input: 1e-6, output: 4e-6 })
+    const mk = (id: number, rate: number, peak?: number) => ({
+      group_id: id, rate, base_rate: rate, has_custom_rate: false, billing_mode: 'token', kind: 'token',
+      official: off, prices: scaled(off, rate), tiers: [], peak_multiplier: peak,
+    })
+    const build = (cheapPeak: boolean) =>
+      buildPriceCatalog({
+        groups: [g(1, 'Stable'), g(2, 'Budget')],
+        // Budget 更便宜（起价所在分组）；Stable 走默认价卡带峰时倍率。
+        models: [{ name: 'ds', platform: 'openai', entries: [mk(1, 1.3, 2), mk(2, 0.65, cheapPeak ? 2 : undefined)] }],
+      } as unknown as UserPriceCatalog)[0]
+
+    const mixed = mount(ModelCatalogRow, { props: { model: build(false), expanded: true } })
+    const tags = mixed.findAll('[data-test="group-table"] tbody tr').map((r) => r.find('[data-test="peak-tag"]').exists())
+    expect(tags).toEqual([false, true]) // Budget（无）、Stable（有）
+    expect(mixed.get('[data-test="peak-note"]').text()).toBe('peak note')
+    // 起价所在分组没有峰时倍率：列表行不标
+    expect(mixed.find('[data-test="peak-note-row"]').exists()).toBe(false)
+
+    const cheapPeak = mount(ModelCatalogRow, { props: { model: build(true), expanded: true } })
+    expect(cheapPeak.get('[data-test="peak-note-row"]').text()).toBe('peak 2x')
+    expect(cheapPeak.findAll('[data-test="peak-tag"]')).toHaveLength(2)
+    const plain = mount(ModelCatalogRow, { props: { model: model(), expanded: true } })
+    expect(plain.find('[data-test="peak-note-row"]').exists()).toBe(false)
+    expect(plain.find('[data-test="peak-note"]').exists()).toBe(false)
   })
 })

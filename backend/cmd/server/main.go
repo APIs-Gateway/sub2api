@@ -74,6 +74,22 @@ func main() {
 		return
 	}
 
+	// 一次性运维命令：pricing-replay（离线只读，回放近 N 天用量的价格翻译，不启动服务）
+	if args := flag.Args(); len(args) > 0 && args[0] == "pricing-replay" {
+		if err := runPricingReplayCommand(args[1:], os.Stdout); err != nil {
+			log.Fatalf("pricing-replay: %v", err)
+		}
+		return
+	}
+
+	// 一次性运维命令：pricing-matrix derive（批量派生矩阵表，默认 dry-run，--apply 才写；不启动服务）
+	if args := flag.Args(); len(args) > 0 && args[0] == "pricing-matrix" {
+		if err := runPricingMatrixCommand(args[1:], os.Stdout); err != nil {
+			log.Fatalf("pricing-matrix: %v", err)
+		}
+		return
+	}
+
 	// CLI setup mode
 	if *setupMode {
 		if err := setup.RunCLI(); err != nil {

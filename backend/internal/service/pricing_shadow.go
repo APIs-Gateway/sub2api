@@ -192,7 +192,9 @@ type pricingShadowHub struct {
 	compared sync.Map // int64 -> *atomic.Int64
 	diffs    sync.Map // shadowDiffKey -> *atomic.Int64
 	skipped  sync.Map // string -> *atomic.Int64
-	keys     atomic.Int64
+	// lastTranslation 每个分组最近一次 translation 类差异的时间（unix 纳秒）：阶段切换闸门只看观察期起点之后的差异。
+	lastTranslation sync.Map // int64 -> *atomic.Int64
+	keys            atomic.Int64
 
 	panics  atomic.Int64
 	dropped atomic.Int64
@@ -252,9 +254,33 @@ func (h *pricingShadowHub) guard(where string, fn func()) (ok bool) {
 	return true
 }
 
+// noteTranslation 记下这个分组最近一次 translation 差异的时间。键只有分组 id，不受计数器键数上限影响。
+func (h *pricingShadowHub) noteTranslation(groupID int64) {
+	ns := h.now().UnixNano()
+	actual, _ := h.lastTranslation.LoadOrStore(groupID, &atomic.Int64{})
+	if c, ok := actual.(*atomic.Int64); ok {
+		c.Store(ns)
+	}
+}
+
+// lastTranslationDiffAt 返回分组最近一次 translation 差异的时间；本进程里没有过为零值。
+func (h *pricingShadowHub) lastTranslationDiffAt(groupID int64) time.Time {
+	if v, ok := h.lastTranslation.Load(groupID); ok {
+		if c, ok := v.(*atomic.Int64); ok {
+			if ns := c.Load(); ns > 0 {
+				return time.Unix(0, ns)
+			}
+		}
+	}
+	return time.Time{}
+}
+
 // noteDiff 记一次差异：计数加一，并按采样规则写样本。views 序列化失败只丢样本，不影响计数。
 func (h *pricingShadowHub) noteDiff(groupID int64, kind, class, model, usageRef string, legacyView, v2View any) {
 	addCounter(&h.diffs, shadowDiffKey{GroupID: groupID, Kind: kind, Class: class}, &h.keys, shadowDiffKey{Kind: "_other", Class: "_other"})
+	if class == ShadowClassTranslation {
+		h.noteTranslation(groupID)
+	}
 	if h.sink == nil {
 		return
 	}

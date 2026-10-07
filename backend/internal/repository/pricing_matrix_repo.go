@@ -26,6 +26,12 @@ func NewPricingMatrixRepository(db *sql.DB) service.PricingMatrixRepository {
 // pricingMatrixLockTimeout 钩子事务等待行锁的上限：与阶段切换互斥时不无限等待。
 const pricingMatrixLockTimeout = "5s"
 
+// pricingDeriveAdvisoryLockKey 派生落库的事务级咨询锁（pg_advisory_xact_lock）。渠道保存钩子与批量派生命令
+// （另一个进程）都走 ApplyPlans，所以这把锁把两个写入方跨进程串行化：首次填充时表里还没有 group_model_config 行，
+// FOR UPDATE 锁不住任何东西，咨询锁补上这一环。每个事务很短，用一个全局固定的 key，不按渠道细分
+// （ApplyPlans 只拿到分组 id，分组可以在渠道之间移动）。取值是一个固定常量。
+const pricingDeriveAdvisoryLockKey int64 = 0x70726963656472 // ASCII "pricedr"
+
 func (r *pricingMatrixRepository) GetGroupMeta(ctx context.Context, groupIDs []int64) (map[int64]service.DeriveGroup, error) {
 	out := make(map[int64]service.DeriveGroup, len(groupIDs))
 	if len(groupIDs) == 0 {
@@ -72,6 +78,28 @@ func (r *pricingMatrixRepository) ListDerivedRuleGroupIDs(ctx context.Context, c
 	return out, nil
 }
 
+func (r *pricingMatrixRepository) ListDerivedRuleChannels(ctx context.Context) (map[int64][]int64, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT DISTINCT source_channel_id, scope_group_id FROM cost_accounting_rules
+		 WHERE source = 'legacy_derived' AND source_channel_id IS NOT NULL ORDER BY source_channel_id, scope_group_id`)
+	if err != nil {
+		return nil, fmt.Errorf("query derived rule channels: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[int64][]int64)
+	for rows.Next() {
+		var channelID, groupID int64
+		if err := rows.Scan(&channelID, &groupID); err != nil {
+			return nil, fmt.Errorf("scan derived rule channel: %w", err)
+		}
+		out[channelID] = append(out[channelID], groupID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate derived rule channels: %w", err)
+	}
+	return out, nil
+}
+
 func (r *pricingMatrixRepository) LoadGroupSnapshots(ctx context.Context, groupIDs []int64) (map[int64]service.GroupStateSnapshot, error) {
 	return loadMatrixSnapshots(ctx, r.db, groupIDs)
 }
@@ -93,6 +121,10 @@ func (r *pricingMatrixRepository) ApplyPlans(
 
 	if _, err = tx.ExecContext(ctx, "SET LOCAL lock_timeout = '"+pricingMatrixLockTimeout+"'"); err != nil {
 		return fmt.Errorf("set lock_timeout: %w", err)
+	}
+	// 先拿咨询锁再拿行锁：同一时刻只有一个派生落库事务在读现状并写入。
+	if _, err = tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1)", pricingDeriveAdvisoryLockKey); err != nil {
+		return fmt.Errorf("acquire derive advisory lock: %w", err)
 	}
 	// 与阶段切换互斥：两边都先按 group_id 升序 SELECT ... FOR UPDATE 取 group_model_config 行，再判断阶段。
 	if err = lockGroupConfigRows(ctx, tx, groupIDs); err != nil {

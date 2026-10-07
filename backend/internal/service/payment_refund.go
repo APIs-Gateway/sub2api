@@ -485,17 +485,18 @@ func (s *PaymentService) ExecuteRefund(ctx context.Context, p *RefundPlan) (*Ref
 	}
 	if p.DeductionType == payment.DeductionTypeSubscription && p.SubscriptionID > 0 {
 		if !rollbackOutstanding {
-			var err error
-			if isRenewSubscriptionRefundPlan(p) {
-				err = s.subscriptionSvc.revokeRenewalDaysForRefund(ctx, p.SubscriptionID, p.SubDaysToDeduct)
-			} else {
-				err = s.subscriptionSvc.closeSubscriptionForRefund(ctx, p.SubscriptionID)
-			}
+			err := s.deductRefundSubscription(ctx, p, s.refundSettlementSubscriptionService())
 			if err != nil {
 				s.restoreStatus(ctx, p)
 				return nil, fmt.Errorf("deduct subscription for refund: %w", err)
 			}
 		} else {
+			if s.subscriptionSvc != nil && s.subscriptionSvc.entClient != nil {
+				if err := s.bindHeldRefundSubscriptionAdjustment(ctx, p); err != nil {
+					s.restoreStatus(ctx, p)
+					return nil, err
+				}
+			}
 			slog.Warn("skipping subscription deduction on retry (previous rollback failed)", "orderID", p.OrderID)
 			p.SubDaysToDeduct = 0
 			p.SubDaysToRestore = 0
@@ -793,19 +794,20 @@ func (s *PaymentService) refundFinalizePlan(ctx context.Context, o *dbent.Paymen
 		reason = fmt.Sprintf("refund order:%d", o.ID)
 	}
 	p := &RefundPlan{
-		OrderID:           o.ID,
-		Order:             o,
-		RefundAmount:      o.RefundAmount,
-		GatewayBaseAmount: d.GatewayBaseAmount,
-		RefundFeeRate:     d.RefundFeeRate,
-		RefundFeeAmount:   d.RefundFeeAmount,
-		GatewayAmount:     d.GatewayAmount,
-		Reason:            reason,
-		Force:             o.ForceRefund,
-		DeductionType:     d.DeductionType,
-		BalanceToDeduct:   d.BalanceToDeduct,
-		SubDaysToDeduct:   d.SubDaysToDeduct,
-		SubscriptionID:    d.SubscriptionID,
+		OrderID:                  o.ID,
+		Order:                    o,
+		RefundAmount:             o.RefundAmount,
+		GatewayBaseAmount:        d.GatewayBaseAmount,
+		RefundFeeRate:            d.RefundFeeRate,
+		RefundFeeAmount:          d.RefundFeeAmount,
+		GatewayAmount:            d.GatewayAmount,
+		Reason:                   reason,
+		Force:                    o.ForceRefund,
+		DeductionType:            d.DeductionType,
+		BalanceToDeduct:          d.BalanceToDeduct,
+		SubDaysToDeduct:          d.SubDaysToDeduct,
+		SubscriptionID:           d.SubscriptionID,
+		subscriptionAdjustmentID: d.SubscriptionAdjustmentID,
 	}
 	if p.GatewayAmount <= 0 {
 		p.RefundFeeRate = s.refundFeeRate(ctx)
@@ -873,9 +875,9 @@ func (s *PaymentService) applyRefundFinalDeductionWithSubscription(ctx context.C
 				p.SubDaysToDeduct = 0
 				return s.writeRefundAuditStrict(ctx, p.OrderID, "REFUND_FINALIZE_NO_RENEW_DAYS", map[string]any{"subscriptionID": p.SubscriptionID})
 			}
-			err = subscriptionSvc.revokeRenewalDaysForRefund(ctx, p.SubscriptionID, p.SubDaysToDeduct)
+			err = s.deductRefundSubscription(ctx, p, subscriptionSvc)
 		} else {
-			err = subscriptionSvc.closeSubscriptionForRefund(ctx, p.SubscriptionID)
+			err = s.deductRefundSubscription(ctx, p, subscriptionSvc)
 		}
 		if err != nil {
 			if errors.Is(err, ErrSubscriptionNotFound) {
@@ -937,11 +939,15 @@ func (s *PaymentService) finalizeRefundFailed(ctx context.Context, o *dbent.Paym
 			return nil, infraerrors.InternalServer("REFUND_ROLLBACK_FAILED",
 				"the refund failed but restoring the refund pre-deduction failed; the order stays REFUND_PENDING, retry later")
 		}
-		if err := s.writeRefundAuditStrict(txCtx, o.ID, refundAttemptAuditAction("REFUND_ROLLBACK_RECOVERED"), map[string]any{
-			"deductionType": rb.DeductionType, "balanceRestored": rb.BalanceToDeduct,
-			"subscriptionID": rb.SubscriptionID, "subDaysRestored": rb.SubDaysToRestore,
-		}); err != nil {
-			return nil, err
+		// New adjustment compensation owns its strict recovered audit; legacy
+		// wallet/card compensation keeps the original caller-owned audit.
+		if rb.subscriptionAdjustmentID == 0 {
+			if err := s.writeRefundAuditStrict(txCtx, o.ID, refundAttemptAuditAction("REFUND_ROLLBACK_RECOVERED"), map[string]any{
+				"deductionType": rb.DeductionType, "balanceRestored": rb.BalanceToDeduct,
+				"subscriptionID": rb.SubscriptionID, "subDaysRestored": rb.SubDaysToRestore,
+			}); err != nil {
+				return nil, err
+			}
 		}
 	}
 	now := time.Now()
@@ -1019,6 +1025,7 @@ func refundRollbackPlanFromSnapshot(o *dbent.PaymentOrder, d refundPendingAuditD
 		DeductionType:              d.DeductionType,
 		BalanceToDeduct:            d.BalanceToDeduct,
 		SubscriptionID:             d.SubscriptionID,
+		subscriptionAdjustmentID:   d.SubscriptionAdjustmentID,
 		SubDaysToDeduct:            d.SubDaysToDeduct,
 		SubDaysToRestore:           d.SubDaysToRestore,
 		SubExpireDayToRestore:      d.SubExpireDayToRestore,
@@ -1048,17 +1055,18 @@ func (s *PaymentService) hasOutstandingRefundRollbackFailure(ctx context.Context
 }
 
 type refundPendingAuditDetail struct {
-	RefundID            string  `json:"refundID"`
-	DeductionRollbackOK bool    `json:"deductionRollbackOK"`
-	DeductionType       string  `json:"deductionType"`
-	BalanceToDeduct     float64 `json:"balanceToDeduct"`
-	SubDaysToDeduct     int     `json:"subDaysToDeduct"`
-	SubscriptionID      int64   `json:"subscriptionID"`
-	GatewayBaseAmount   float64 `json:"gatewayBaseAmount"`
-	GatewayAmount       float64 `json:"gatewayAmount"`
-	RefundFeeRate       float64 `json:"refundFeeRate"`
-	RefundFeeAmount     float64 `json:"refundFeeAmount"`
-	RefundAmount        float64 `json:"refundAmount"`
+	RefundID                 string  `json:"refundID"`
+	DeductionRollbackOK      bool    `json:"deductionRollbackOK"`
+	DeductionType            string  `json:"deductionType"`
+	BalanceToDeduct          float64 `json:"balanceToDeduct"`
+	SubDaysToDeduct          int     `json:"subDaysToDeduct"`
+	SubscriptionID           int64   `json:"subscriptionID"`
+	SubscriptionAdjustmentID int64   `json:"subscriptionAdjustmentID"`
+	GatewayBaseAmount        float64 `json:"gatewayBaseAmount"`
+	GatewayAmount            float64 `json:"gatewayAmount"`
+	RefundFeeRate            float64 `json:"refundFeeRate"`
+	RefundFeeAmount          float64 `json:"refundFeeAmount"`
+	RefundAmount             float64 `json:"refundAmount"`
 
 	// Pre-deduction restore targets, used to retry a failed rollback.
 	SubDaysToRestore           int     `json:"subDaysToRestore"`
@@ -1123,6 +1131,9 @@ func (s *PaymentService) latestRefundPendingDetail(ctx context.Context, oid int6
 	}
 	if detail.SubDaysToDeduct < 0 || detail.SubscriptionID < 0 {
 		return detail, fmt.Errorf("invalid pending refund subscription deduction")
+	}
+	if err := s.validateRefundSubscriptionAdjustment(ctx, oid, detail); err != nil {
+		return detail, err
 	}
 	return detail, nil
 }
@@ -1321,6 +1332,9 @@ func (s *PaymentService) markRefundPending(ctx context.Context, p *RefundPlan, r
 		"subDaysRolledBack":          subDaysDeducted,
 		"deductionRollbackOK":        rollbackOK,
 	}
+	if p.subscriptionAdjustmentID > 0 {
+		detail["subscriptionAdjustmentID"] = p.subscriptionAdjustmentID
+	}
 	// Per-attempt action: payment_audit_logs is unique on (order_id, action),
 	// and every pending attempt needs its own snapshot (deduct choice and
 	// rollback outcome can differ between attempts).
@@ -1360,6 +1374,13 @@ func (s *PaymentService) rollbackRefundWithSubscription(ctx context.Context, p *
 		}
 	}
 	if p.DeductionType == payment.DeductionTypeSubscription && p.SubscriptionID > 0 {
+		if p.subscriptionAdjustmentID > 0 {
+			if err := s.restoreRefundSubscriptionAdjustment(ctx, p); err != nil {
+				s.writeAuditLog(ctx, p.OrderID, refundAttemptAuditAction("REFUND_ROLLBACK_FAILED"), "admin", map[string]any{"rollbackError": psErrMsg(err), "subscriptionAdjustmentID": p.subscriptionAdjustmentID})
+				return false
+			}
+			return true
+		}
 		restoreDays := p.SubDaysToRestore
 		if restoreDays <= 0 {
 			restoreDays = p.SubDaysToDeduct

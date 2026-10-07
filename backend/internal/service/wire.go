@@ -723,8 +723,10 @@ var ProviderSet = wire.NewSet(
 	ProvidePricingDerivationService,
 	NewPricingShadowRecorder,
 	ProvideStagedGroupPolicy,
-	NewPricingStageService,
-	NewModelCatalogService,
+	ProvidePricingWriteServices,
+	ProvidePricingStageService,
+	ProvidePricingStageSwitcher,
+	ProvideModelCatalogService,
 	NewUserPriceCatalogService,
 	NewContentModerationService,
 	NewAffiliateService,
@@ -773,7 +775,74 @@ func ProvideStagedGroupPolicy(
 	openAIGateway.policyOverride = policy
 	resolver.policyOverride = policy
 	derive.SetSnapshotInvalidator(matrix)
+	// 启动预加载（W6 PR7a）：有配置行的分组的快照在开始处理请求之前同步加载，v2 分组不会在冷启动的窗口里退回 legacy。
+	// 没有分组配置行（全部是 legacy）时只多一次轻量查询；失败只记日志，见 Preload。
+	if lister, ok := repo.(ConfiguredGroupLister); ok {
+		policy.Preload(context.Background(), lister)
+	}
 	return policy
+}
+
+// ProvideModelCatalogService 创建模型目录服务，并把带缓存的目录读取方接到 v2 运行时准入（stagedPolicy）与价格报价器上。
+// 两处共用同一个读取方，Quote.Access 与网关的运行时准入口径一致。目录状态只对 v2 阶段的分组生效，其余分组不受影响。
+func ProvideModelCatalogService(repo ModelCatalogRepository, policy *StagedGroupPolicy, quoter *PriceQuoter) *ModelCatalogService {
+	svc := NewModelCatalogService(repo)
+	if cached := policy.SetModelCatalog(svc); cached != nil && quoter != nil {
+		quoter.SetModelCatalog(cached)
+	}
+	return svc
+}
+
+// ProvidePricingStageSwitcher 创建阶段切换器（W6 PR7b）。
+// 提交之后失效并同步加载本实例的分组快照靠 stagedPolicy；影子样本数取自同一个 stagedPolicy 的进程内计数；
+// 切到 v2 时的无价与开放范围检查用 exposureReader、billing（官方价）与 settings（已知免费名单）。
+func ProvidePricingStageSwitcher(
+	store PricingStageSwitchStore,
+	derive *PricingDerivationService,
+	fingerprint PricingStageFingerprinter,
+	catalog *ModelCatalogService,
+	policy *StagedGroupPolicy,
+	cfg *config.Config,
+	exposureReader ExposureReader,
+	billing *BillingService,
+	settings SettingRepository,
+) *PricingStageSwitcher {
+	compared := func(groupID int64) int64 {
+		for _, c := range policy.Stats().ComparedTotal {
+			if c.GroupID == groupID {
+				return c.Count
+			}
+		}
+		return 0
+	}
+	sw := NewPricingStageSwitcher(store, derive, fingerprint, catalog, policy, compared)
+	var prices OfficialPriceStateSource // 不能直接传 nil 的 *BillingService：那会得到一个非 nil 的接口值
+	if billing != nil {
+		prices = billing
+	}
+	// 切到 v2 的暴露检查与价格写入路径共用同一口径：官方价、已知免费名单、保存时校验的读取器。
+	sw.SetExposureChecker(NewStageExposureChecker(exposureReader, NewExposureValidator(prices, settings), prices))
+	if cfg != nil {
+		sw.SetObservationHours(cfg.Pricing.GateObservationHours)
+	}
+	sw.SetInProcessTranslationDiffs(func(groupID int64) (int64, time.Time) {
+		var n int64
+		for _, c := range policy.Stats().DiffTotal {
+			if c.GroupID == groupID && c.Class == ShadowClassTranslation {
+				n += c.Count
+			}
+		}
+		return n, policy.hub.lastTranslationDiffAt(groupID)
+	})
+	return sw
+}
+
+// ProvidePricingStageService 创建阶段服务并接上阶段切换器：之后 v2 才是允许的目标阶段。
+// 阶段服务依赖切换器，管理接口只依赖阶段服务，所以切换器一定会被装配进来。
+func ProvidePricingStageService(store PricingStageStore, policy *StagedGroupPolicy, recorder *PricingShadowRecorder, switcher *PricingStageSwitcher) *PricingStageService {
+	svc := NewPricingStageService(store, policy, recorder)
+	svc.SetSwitcher(switcher)
+	return svc
 }
 
 // ProvideUserPlatformQuotaUsageFlusher 创建并启动 UserPlatformQuotaUsageFlusher。

@@ -150,6 +150,7 @@ type RefundPlan struct {
 	SubTodayRemainingToRestore float64
 	SubTodayDayToRestore       int
 	SubscriptionID             int64
+	subscriptionAdjustmentID   int64
 }
 
 type RefundResult struct {

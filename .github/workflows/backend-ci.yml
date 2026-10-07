@@ -36,6 +36,16 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=integration -race -count=1 -v -run '^TestAnthropicStartOutputHTTP_' ./internal/repository/
+      - name: WS image input usage and bounded lineage (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestWSImageInput' ./internal/service/ ./internal/service/openai_ws_v2/
+      - name: WS image input actual funding and settlement (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestWSImageInputHTTP_' ./internal/repository/
       - name: Integration tests (chat ping actual account failover and billing)
         working-directory: backend
         run: go test -tags=integration -count=1 -v -run '^TestChatPingHTTP_' ./internal/repository/
@@ -76,6 +86,12 @@ jobs:
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover
+      - name: Refund subscription compensation and paid renewal (actual PostgreSQL)
+        working-directory: backend
+        run: |
+          go test -tags=integration -count=1 -v -run '^TestRefundSubscriptionAdjustmentPG_' ./internal/service/
+          go test -tags=integration -count=1 -v -run '^TestRefundSubscriptionActualRepo_' ./internal/repository/
+          go test -tags=unit -count=1 -v -run '^TestRefundSubscriptionAdjustmentSnapshot' ./internal/service/
       - name: Refund storage failure regressions (named)
         working-directory: backend
         run: go test -tags=unit -count=1 -v -run '^TestRefundPendingStorageFailures|^TestRefundConfirmedSettlementStorageFailure|^TestRefundSettlementDeletedUser|^TestRefundMalformedSnapshot|^TestRefundBlockedDiagnostics' ./internal/service/

@@ -185,34 +185,86 @@ func TestStagedPolicy_LegacyStageForwardsToLegacyWithoutComparing(t *testing.T) 
 	require.Empty(t, f.sink.all())
 }
 
-// 分组还没有快照（进程刚启动）：按 legacy 处理，不阻塞，不比对。
-func TestStagedPolicy_ColdSnapshotFallsBackToLegacy(t *testing.T) {
+// 分组还没有快照（进程刚启动之后第一次出现）：同步加载一次，读到真实阶段，不再先按 legacy 处理（PR7a 审查 1(b)）。
+func TestStagedPolicy_ColdSnapshotLoadsSynchronously(t *testing.T) {
+	ctx := context.Background()
 	src := newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{1: shadowSnap(nil)})
-	// Keep the asynchronous warm-up cold until both cold-state assertions finish.
-	// Scheduler speed must not decide whether the second read sees shadow.
-	releaseLoad := make(chan struct{})
-	var releaseOnce sync.Once
-	release := func() { releaseOnce.Do(func() { close(releaseLoad) }) }
-	src.afterLoad = func() { <-releaseLoad }
-	t.Cleanup(release)
 	matrix, _ := newMPForTest(src, nil)
 	legacy := &spLegacy{mapping: ChannelMappingResult{MappedModel: "a"}, access: QuoteAccess{OK: true}}
 	staged := newStagedGroupPolicy(legacy, matrix, nil)
 
-	require.Equal(t, legacy.mapping, staged.Mapping(context.Background(), 1, "a"))
-	require.Equal(t, PricingStageLegacy, staged.Stage(context.Background(), 1), "unknown stage is legacy")
-	require.Empty(t, staged.Stats().ComparedTotal)
-
-	release()
-	require.Equal(t, PricingStageShadow, matrix.Stage(context.Background(), 1), "released load reaches the real warm state")
-	require.Equal(t, PricingStageShadow, staged.Stage(context.Background(), 1), "a warm stage must not stay legacy")
+	require.Equal(t, legacy.mapping, staged.Mapping(ctx, 1, "a"))
+	require.EqualValues(t, 1, src.snapCalls.Load(), "the first request loaded the snapshot itself")
+	require.Equal(t, PricingStageShadow, staged.Stage(ctx, 1), "the real stage is known right away")
+	require.EqualValues(t, 1, src.snapCalls.Load(), "and it is cached afterwards")
 
 	// 没有矩阵策略：永远 legacy。
 	bare := newStagedGroupPolicy(legacy, nil, nil)
-	require.Equal(t, legacy.mapping, bare.Mapping(context.Background(), 1, "a"))
-	require.Equal(t, PricingStageLegacy, bare.Stage(context.Background(), 1))
+	require.Equal(t, legacy.mapping, bare.Mapping(ctx, 1, "a"))
+	require.Equal(t, PricingStageLegacy, bare.Stage(ctx, 1))
 	require.Equal(t, MatrixSnapshotStats{}, bare.MatrixSnapshotStats())
 	bare.InvalidateGroups(1) // 不 panic
+}
+
+// 快照加载不出来、也没有旧快照，分组又可能是 v2：拒绝请求，不按 legacy 或默认状态（0 元）计费（PR7a 审查 1）。
+// 启动时的列表取到了的话，列表之外的分组没有配置行，一定是 legacy，照旧放行。
+func TestStagedPolicy_UnavailableSnapshotRejectsPossibleV2Groups(t *testing.T) {
+	ctx := context.Background()
+	src := newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{
+		1: {Config: mpStoredConfig(PricingStageV2, nil), Cells: []StoredMatrixCell{mpExtra("gpt-5.4", 2)}},
+		2: {},
+	})
+	src.setErrors(nil, errors.New("database is down"))
+	matrix, _ := newMPForTest(src, nil)
+	legacy := &spLegacy{access: QuoteAccess{OK: true}}
+	staged := newStagedGroupPolicy(legacy, matrix, nil)
+	denied := QuoteAccess{OK: false, Reason: QuoteAccessReasonSnapshotUnavailable}
+
+	// 启动时的列表没取到：不知道哪些分组是 v2，都按「可能是 v2」处理。
+	require.Equal(t, denied, staged.ModelAccess(ctx, 1, "gpt-5.4"))
+	require.Equal(t, denied, staged.UpstreamAccess(ctx, 1, "gpt-5.4"))
+	_, err := staged.UpstreamCheck(ctx, 1)
+	require.Error(t, err)
+	_, err = staged.Feature(ctx, 1, PlatformOpenAI, GroupFeatureBedrockCCCompat)
+	require.Error(t, err)
+	require.Zero(t, legacy.calls.Load(), "nothing was answered by legacy")
+	require.GreaterOrEqual(t, matrix.Stats().SnapshotUnavailable, int64(1))
+
+	// 启动时的列表取到了，分组 1 在里面、分组 2 不在。
+	matrix.setConfiguredList([]int64{1})
+	require.True(t, staged.ModelAccess(ctx, 2, "gpt-5.4").OK, "no config row, so legacy")
+	require.Equal(t, denied, staged.ModelAccess(ctx, 1, "gpt-5.4"))
+
+	// 数据库恢复：失效之后后台刷新成功，分组 1 回到 v2，路由读到额外倍率。
+	src.setErrors(nil, nil)
+	matrix.InvalidateGroups(1)
+	require.Eventually(t, func() bool {
+		return staged.ModelAccess(ctx, 1, "gpt-5.4").Reason != QuoteAccessReasonSnapshotUnavailable
+	}, 5*time.Second, 5*time.Millisecond)
+	require.Equal(t, PricingStageV2, staged.Stage(ctx, 1))
+	require.Equal(t, 2.0, staged.ExtraMultiplier(ctx, 1, "gpt-5.4", time.Time{}))
+}
+
+// 阶段切换提交之后本实例同步把快照加载好；加载失败或只有沿用的旧数据都报错。
+func TestStagedPolicy_EnsureGroupsLoaded(t *testing.T) {
+	ctx := context.Background()
+	src := newMPSource(PlatformOpenAI, map[int64]GroupStateSnapshot{1: shadowSnap(nil)})
+	matrix, _ := newMPForTest(src, nil)
+	staged := newStagedGroupPolicy(&spLegacy{}, matrix, nil)
+	require.Equal(t, PricingStageShadow, matrix.Stage(ctx, 1))
+
+	src.setSnapshot(1, GroupStateSnapshot{Config: mpStoredConfig(PricingStageV2, nil)})
+	staged.InvalidateGroups(1)
+	require.NoError(t, staged.EnsureGroupsLoaded(ctx, 1))
+	require.Equal(t, PricingStageV2, staged.Stage(ctx, 1))
+
+	src.setErrors(nil, errors.New("database is down"))
+	staged.InvalidateGroups(1)
+	require.Error(t, staged.EnsureGroupsLoaded(ctx, 1), "only the stale snapshot is left")
+
+	var nilStaged *stagedPolicy
+	require.NoError(t, nilStaged.EnsureGroupsLoaded(ctx, 1))
+	require.NoError(t, newStagedGroupPolicy(&spLegacy{}, nil, nil).EnsureGroupsLoaded(ctx, 1))
 }
 
 func TestStagedPolicy_ShadowReturnsLegacyAndCountsMappingDiff(t *testing.T) {
@@ -314,13 +366,32 @@ func TestStagedPolicy_ShadowFeatureAndUpstreamCheckDiffs(t *testing.T) {
 	require.EqualValues(t, 1, h.diffCount(ShadowKindFeature, ShadowClassTranslation))
 }
 
-// v2Live 为 false（本 PR 恒为 false）时，库里写着 v2 的分组也走 legacy，并且不比对。
+// 影子比对：web_search_emulation、bedrock_cc_compat 的「未配置」与 false 等价（读取方都把 nil 当 false），
+// codex 图片桥的「未配置」跟随全局开关，与 false 不同。
+func TestStagedPolicy_ShadowFeatureNilEqualsFalseExceptCodexBridge(t *testing.T) {
+	ctx := context.Background()
+	off := false
+	f := newSPFixture(t, shadowSnap(nil))
+	f.legacy.feature = &off
+	for _, feat := range []GroupFeature{GroupFeatureWebSearchEmulation, GroupFeatureBedrockCCCompat} {
+		_, err := f.staged.Feature(ctx, 1, PlatformOpenAI, feat)
+		require.NoError(t, err)
+	}
+	require.Zero(t, f.diffCount(ShadowKindFeature, ShadowClassTranslation))
+
+	_, err := f.staged.Feature(ctx, 1, PlatformOpenAI, GroupFeatureCodexImageGenerationBridge)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, f.diffCount(ShadowKindFeature, ShadowClassTranslation))
+}
+
+// v2Live 为 false 时，库里写着 v2 的分组也走 legacy，并且不比对（PR7a 起生产构造默认放开 v2Live，这里手动关掉验证 legacy 路径）。
 func TestStagedPolicy_V2StageDoesNotRouteToMatrixUntilLive(t *testing.T) {
 	ctx := context.Background()
 	f := newSPFixture(t, GroupStateSnapshot{
 		Config: mpStoredConfig(PricingStageV2, nil),
 		Cells:  []StoredMatrixCell{mpClosed(mpInherit("gpt-5.4"))},
 	})
+	f.staged.v2Live = false
 	require.Equal(t, QuoteAccess{OK: true}, f.staged.ModelAccess(ctx, 1, "gpt-5.4"), "legacy answer, the closed cell is not read")
 	require.Empty(t, f.staged.Stats().ComparedTotal)
 	require.Equal(t, PricingStageV2, f.staged.Stage(ctx, 1), "the configured stage is still reported")
