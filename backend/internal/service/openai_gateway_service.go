@@ -1020,6 +1020,12 @@ func SnapshotOpenAICompatibilityFallbackMetrics() OpenAICompatibilityFallbackMet
 	}
 }
 
+// DetectOpenAIClientRestriction exposes the same inbound-client policy used by
+// the defensive forwarding gates, before a handler dispatches funding/upstream.
+func (s *OpenAIGatewayService) DetectOpenAIClientRestriction(c *gin.Context, account *Account) CodexClientRestrictionDetectionResult {
+	return s.detectCodexClientRestriction(c, account)
+}
+
 func (s *OpenAIGatewayService) detectCodexClientRestriction(c *gin.Context, account *Account) CodexClientRestrictionDetectionResult {
 	var globalAllowedClients []string
 	if account != nil && account.IsCodexCLIOnlyEnabled() && s != nil && s.settingService != nil {

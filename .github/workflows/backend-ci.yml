@@ -98,6 +98,16 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=unit -race -count=1 -v -run '^Test(MatrixPolicy|StagedPolicy|PricingShadow)_' ./internal/service/
+      - name: Original client account selection actual HTTP and slot contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestClientRestrictedSelection' ./internal/handler/
+      - name: Original client account selection actual PG Redis wallet card and held lease contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestClientRestrictedSelectionHTTP_' ./internal/repository/
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover

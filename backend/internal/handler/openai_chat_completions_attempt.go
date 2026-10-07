@@ -96,6 +96,7 @@ func (r *openAIChatRun) attempt(args chatHopArgs) service.HopResult {
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
+	var clientPolicy openAIClientRestrictionSelection
 	attempts := 0
 
 	stream := func() bool { return r.streamNow(args.output) }
@@ -174,21 +175,33 @@ func (r *openAIChatRun) attempt(args chatHopArgs) service.HopResult {
 			// model into a false 404, so keep the established 503 response.
 			modelAvailabilityDiagnoser = nil
 		}
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerStable(
-			policy.selectionContext(c.Request.Context()),
-			key.Group,
-			key.GroupID,
-			"",
-			sessionHash,
-			forwardModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportAny,
-			service.OpenAIEndpointCapabilityChatCompletions,
-			false,
-			true,
-			stableIntent,
-			r.requestPlatform,
-		)
+		selectAccount := func() (*service.AccountSelectionResult, service.OpenAIAccountScheduleDecision, error) {
+			if clientPolicy.pending && clientPolicy.pinnedGroupID != nil {
+				selection, decision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
+					policy.selectionContext(c.Request.Context()), clientPolicy.pinnedGroupID, "", sessionHash,
+					forwardModel, failedAccountIDs, service.OpenAIUpstreamTransportAny,
+					service.OpenAIEndpointCapabilityChatCompletions, false, true, r.requestPlatform,
+				)
+				clientPolicy.preserveStableDecision(&decision)
+				return selection, decision, err
+			}
+			return h.gatewayService.SelectAccountWithSchedulerStable(
+				policy.selectionContext(c.Request.Context()),
+				key.Group,
+				key.GroupID,
+				"",
+				sessionHash,
+				forwardModel,
+				failedAccountIDs,
+				service.OpenAIUpstreamTransportAny,
+				service.OpenAIEndpointCapabilityChatCompletions,
+				false,
+				true,
+				stableIntent,
+				r.requestPlatform,
+			)
+		}
+		selection, scheduleDecision, err := selectAccount()
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai_chat_completions.account_select_aborted_client_disconnected", zap.Error(err))
@@ -199,6 +212,9 @@ func (r *openAIChatRun) attempt(args chatHopArgs) service.HopResult {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if lastFailoverErr == nil {
+				if clientPolicy.rejectExhausted(h, c, err, stream()) {
+					return terminal()
+				}
 				return fail(noAccountFacts(err), func() {
 					h.respondNoAccountError(c, modelAvailabilityDiagnoser, key, r.reqModel, r.reqModel, service.PlatformOpenAI, "Service temporarily unavailable", err, noAccountCapacityMarkIfNoAvailable, openAINoAccountResponseStreaming, stream())
 				})
@@ -206,9 +222,24 @@ func (r *openAIChatRun) attempt(args chatHopArgs) service.HopResult {
 			return failoverExhausted(lastFailoverErr)
 		}
 		if selection == nil || selection.Account == nil {
+			if lastFailoverErr != nil {
+				return failoverExhausted(lastFailoverErr)
+			}
+			if clientPolicy.rejectExhausted(h, c, nil, stream()) {
+				return terminal()
+			}
 			return fail(noAccountFacts(nil), func() {
 				h.respondNoAccountError(c, modelAvailabilityDiagnoser, key, r.reqModel, r.reqModel, service.PlatformOpenAI, "No available accounts", nil, noAccountCapacityMarkAlways, openAINoAccountResponseStreaming, stream())
 			})
+		}
+		if failoverClientGone(c) {
+			releaseOpenAIClientPolicySelection(selection)
+			return terminal()
+		}
+		if clientPolicy.exclude(h.gatewayService, c, selection, failedAccountIDs) {
+			clientPolicy.pinStableGroup(key.GroupID, scheduleDecision)
+			reqLog.Debug("openai_chat_completions.account_client_incompatible", zap.Int64("account_id", selection.Account.ID))
+			continue
 		}
 		account := selection.Account
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
