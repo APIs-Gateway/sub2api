@@ -417,12 +417,19 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 	if sign == "" {
 		return nil, fmt.Errorf("missing sign")
 	}
+	if err := easyPayRejectAmbiguousNotify(params); err != nil {
+		return nil, err
+	}
 	if !easyPayVerifySign(params, e.config["pkey"], sign) {
 		return nil, fmt.Errorf("invalid signature")
 	}
 	status := payment.ProviderStatusFailed
 	if easyPayNotifyStatusIsSuccess(params) {
 		status = payment.ProviderStatusSuccess
+		// 真实的成功回调一定带上游订单号；缺失视为伪造。
+		if strings.TrimSpace(params["trade_no"]) == "" {
+			return nil, fmt.Errorf("missing trade_no in success notification")
+		}
 	}
 	amount, _ := strconv.ParseFloat(params["money"], 64)
 
@@ -675,6 +682,35 @@ func easyPaySign(params map[string]string, pkey string) string {
 	_, _ = buf.WriteString(pkey)
 	hash := md5.Sum([]byte(buf.String()))
 	return hex.EncodeToString(hash[:])
+}
+
+// easyPayNotifyGuardedFields 是通知里必须“干净”的关键字段。
+// name、param 是商品名/自由文本，正常内容可能含 & 或 =，因此不在此列。
+var easyPayNotifyGuardedFields = []string{
+	"pid", "trade_no", "out_trade_no", "type", "money", "trade_status", "status", "sign_type",
+}
+
+// easyPayRejectAmbiguousNotify 在验签前拒绝会让拼接签名产生歧义的通知：
+// EasyPay 签名是未转义的 k=v&k=v 拼接，参数值里夹带 & 或 = 可以把一个参数“拆”成多个。
+// 回调不会携带 notify_url / return_url（它们只出现在下单请求里）。
+func easyPayRejectAmbiguousNotify(params map[string]string) error {
+	if _, ok := params["notify_url"]; ok {
+		return fmt.Errorf("unexpected notify_url in notification")
+	}
+	if _, ok := params["return_url"]; ok {
+		return fmt.Errorf("unexpected return_url in notification")
+	}
+	for k := range params {
+		if strings.ContainsAny(k, "&=") {
+			return fmt.Errorf("invalid parameter name in notification")
+		}
+	}
+	for _, k := range easyPayNotifyGuardedFields {
+		if strings.ContainsAny(params[k], "&=") {
+			return fmt.Errorf("invalid character in notification field %s", k)
+		}
+	}
+	return nil
 }
 
 func easyPayVerifySign(params map[string]string, pkey string, sign string) bool {
