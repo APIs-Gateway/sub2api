@@ -168,4 +168,110 @@ describe('error passthrough enabled state', () => {
     expect(reloaded.attributes('disabled')).toBeUndefined()
     expect(mocks.toggleEnabled).toHaveBeenCalledTimes(1)
   })
+
+  it.each([true, false])('preserves a confirmed save when the older reopen list arrives last (initial=%s)', async (enabled) => {
+    let finishSave!: (value: unknown) => void
+    let finishList!: (value: unknown) => void
+    mocks.toggleEnabled.mockReturnValueOnce(new Promise(resolve => { finishSave = resolve }))
+    const wrapper = await openRules(enabled)
+    await wrapper.get('tbody button.relative').trigger('click')
+    await wrapper.setProps({ show: false })
+    mocks.list.mockReturnValueOnce(new Promise(resolve => { finishList = resolve }))
+    await wrapper.setProps({ show: true })
+    finishSave(rule(!enabled))
+    await flushPromises()
+    finishList([rule(enabled)])
+    await flushPromises()
+    const reloaded = wrapper.get('tbody button.relative')
+    expect(reloaded.classes().includes('bg-primary-600')).toBe(!enabled)
+    expect(reloaded.attributes('disabled')).toBeUndefined()
+    mocks.toggleEnabled.mockResolvedValueOnce(rule(enabled))
+    await reloaded.trigger('click')
+    await flushPromises()
+    expect(mocks.toggleEnabled.mock.calls).toEqual([[7, !enabled], [7, enabled]])
+    expect(reloaded.classes().includes('bg-primary-600')).toBe(enabled)
+  })
+
+  it('accepts a new server state from a list started after a confirmed save', async () => {
+    mocks.toggleEnabled.mockResolvedValueOnce(rule(false))
+    const wrapper = await openRules()
+    await wrapper.get('tbody button.relative').trigger('click')
+    await flushPromises()
+    await wrapper.setProps({ show: false })
+    mocks.list.mockResolvedValueOnce([rule(true)])
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect(wrapper.get('tbody button.relative').classes()).toContain('bg-primary-600')
+  })
+
+  it('only lets the latest list finish the loading state and replace rows', async () => {
+    let finishOld!: (value: unknown) => void
+    let finishNew!: (value: unknown) => void
+    const wrapper = await openRules()
+    await wrapper.setProps({ show: false })
+    mocks.list.mockReturnValueOnce(new Promise(resolve => { finishOld = resolve }))
+    await wrapper.setProps({ show: true })
+    await wrapper.setProps({ show: false })
+    mocks.list.mockReturnValueOnce(new Promise(resolve => { finishNew = resolve }))
+    await wrapper.setProps({ show: true })
+    finishOld([rule(true)])
+    await flushPromises()
+    expect(wrapper.find('tbody').exists()).toBe(false)
+    finishNew([rule(false, 8)])
+    await flushPromises()
+    expect(wrapper.get('tbody button.relative').classes()).not.toContain('bg-primary-600')
+    mocks.toggleEnabled.mockResolvedValueOnce(rule(true, 8))
+    await wrapper.get('tbody button.relative').trigger('click')
+    await flushPromises()
+    expect(mocks.toggleEnabled).toHaveBeenCalledWith(8, true)
+  })
+
+  it('does not resurrect a deleted row when an in-flight toggle finishes', async () => {
+    let finishSave!: (value: unknown) => void
+    let finishList!: (value: unknown) => void
+    mocks.toggleEnabled.mockReturnValueOnce(new Promise(resolve => { finishSave = resolve }))
+    const wrapper = await openRules()
+    await wrapper.get('tbody button.relative').trigger('click')
+    await wrapper.setProps({ show: false })
+    mocks.list.mockReturnValueOnce(new Promise(resolve => { finishList = resolve }))
+    await wrapper.setProps({ show: true })
+    finishSave(rule(false))
+    await flushPromises()
+    finishList([])
+    await flushPromises()
+    expect(wrapper.find('tbody').exists()).toBe(false)
+    expect(wrapper.text()).toContain('admin.errorPassthrough.noRules')
+  })
+
+
+  it('ignores an obsolete list failure while the current list is still loading', async () => {
+    let failOld!: (error: unknown) => void
+    let finishNew!: (value: unknown) => void
+    const wrapper = await openRules()
+    await wrapper.setProps({ show: false })
+    mocks.list.mockReturnValueOnce(new Promise((_resolve, reject) => { failOld = reject }))
+    await wrapper.setProps({ show: true })
+    await wrapper.setProps({ show: false })
+    mocks.list.mockReturnValueOnce(new Promise(resolve => { finishNew = resolve }))
+    await wrapper.setProps({ show: true })
+    failOld(new Error('obsolete list failure'))
+    await flushPromises()
+    expect(mocks.showError).not.toHaveBeenCalled()
+    expect(wrapper.find('tbody').exists()).toBe(false)
+    finishNew([rule(false)])
+    await flushPromises()
+    expect(wrapper.get('tbody button.relative').classes()).not.toContain('bg-primary-600')
+  })
+
+  it('does not report a failed toggle after its component has been unmounted', async () => {
+    let fail!: (error: unknown) => void
+    mocks.toggleEnabled.mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject }))
+    const wrapper = await openRules()
+    await wrapper.get('tbody button.relative').trigger('click')
+    wrapper.unmount()
+    fail(new Error('disposed toggle failure'))
+    await flushPromises()
+    expect(mocks.showError).not.toHaveBeenCalled()
+  })
+
 })
