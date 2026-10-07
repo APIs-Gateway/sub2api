@@ -1,221 +1,55 @@
-name: CI
-
+name: Passthrough toggle SAME fixture four-flavor proof
 on:
   push:
-  pull_request:
-
+    branches:
+      - codex/passthrough-1681-proof
 permissions:
   contents: read
-
 jobs:
-  test:
+  proof:
+    name: ${{ matrix.target }}-actual-toggle-component
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: NEW
+            ref: a3bb0f8f5de35afaf523d114ec77aca7ddab1b92
+            overlay: none
+          - target: OLD
+            ref: 1ce91b75289578739bfed7545a2210afbf1e9ca7
+            overlay: none
+          - target: UPSTREAM_ONLY
+            ref: 1ce91b75289578739bfed7545a2210afbf1e9ca7
+            overlay: upstream
+          - target: PARTIAL_SERIALIZATION
+            ref: 1ce91b75289578739bfed7545a2210afbf1e9ca7
+            overlay: partial
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
         with:
-          go-version-file: backend/go.mod
-          check-latest: false
-          cache: true
-          cache-dependency-path: backend/go.sum
-      - name: Verify Go version
+          fetch-depth: 0
+      - name: Freeze identical fixture and exact adapted intermediate components
         run: |
-          go version | grep -q 'go1.26.6'
-      - name: Deployment shell contracts
-        run: |
-          /bin/sh deploy/tests/docker-compose-security-test.sh
-          /bin/sh deploy/test-caddyfile-cache.sh
-          python3 deploy/tests/docker-compose-redis-command-test.py
-      - name: Anthropic start output metering and interrupted native attempts (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestAnthropicStartOutput_' ./internal/service/
-      - name: Anthropic start output actual wallet and card settlement (PG Redis race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -v -run '^TestAnthropicStartOutputHTTP_' ./internal/repository/
-      - name: WS payload TTFT and first-output deadline (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestResponsesStreamHasOutput|^TestWSEmptyTTFT|^TestOpenAIWSPassthroughDeadlineAndLifecycleHelpers$|^TestOpenAIWSPassthroughEventClassification$' ./internal/pkg/openai/ ./internal/service/ ./internal/service/openai_ws_v2/
-      - name: WS TTFT actual two-turn wallet and card settlement (PG Redis race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -v -run '^TestWSEmptyTTFTHTTP_' ./internal/repository/
-      - name: WS image input usage and bounded lineage (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestWSImageInput' ./internal/service/ ./internal/service/openai_ws_v2/
-      - name: WS image input actual funding and settlement (PG Redis race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -v -run '^TestWSImageInputHTTP_' ./internal/repository/
-      - name: Integration tests (chat ping actual account failover and billing)
-        working-directory: backend
-        run: go test -tags=integration -count=1 -v -run '^TestChatPingHTTP_' ./internal/repository/
-      - name: Tool-name restoration protocol fields and opaque content (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestToolNameRestoreProtocol_|^TestRestoreToolNamesInBytes|^TestApplyToolNameRewriteToBody' ./internal/service/
-      - name: Google/GitHub bound identity email drift and authentication controls
-        working-directory: backend
-        run: go test -tags=unit -count=1 -run '^TestEmailOAuthBoundIdentity|^TestEmailOAuthCallbackDoesNotAutoLinkLocalAccount|^TestLogin2FACompletesPendingOAuthBindAndConsumesSession' -v ./internal/handler/
-      - name: Configured ops thresholds actual dashboard regressions
-        working-directory: backend
-        run: go test -tags=unit -race -count=1 -v -run '^TestOpsConfiguredThresholds|^TestComputeDashboardHealthScore|^TestComputeBusinessHealth|^TestComputeInfraHealth' ./internal/service/
-      - name: OpenAI OAuth rejection recovery boundaries (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -run '^TestOpenAI401Recovery' -v ./internal/service/
-      - name: OpenAI OAuth HTTP recovery and funded billing (actual PG Redis race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -run '^TestOpenAI401HTTP_' -v ./internal/repository/
-      - name: Responses refusal conversion and actual Chat output (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestResponsesRefusal_|^TestResponsesToChatCompletions_RefusalPreserved|^TestResponsesEventToChatChunks_RefusalDelta|^TestBufferedResponseAccumulator_RefusalRebuiltFromDeltas' ./internal/pkg/apicompat/ ./internal/service/
-      - name: Responses refusal actual wallet and card settlement (PG Redis)
-        working-directory: backend
-        run: go test -tags=integration -count=1 -v -run '^TestResponsesRefusalHTTP_' ./internal/repository/
-      - name: Codex live selected-account catalog contracts (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestCodexAccountMapping_' ./internal/service/ ./internal/handler/
-      - name: Unit tests (coverage)
-        working-directory: backend
-        run: make test-unit-cover
-      - name: Refund subscription compensation and paid renewal (actual PostgreSQL)
-        working-directory: backend
-        run: |
-          go test -tags=integration -count=1 -v -run '^TestRefundSubscriptionAdjustmentPG_' ./internal/service/
-          go test -tags=integration -count=1 -v -run '^TestRefundSubscriptionActualRepo_' ./internal/repository/
-          go test -tags=unit -count=1 -v -run '^TestRefundSubscriptionAdjustmentSnapshot' ./internal/service/
-      - name: Refund storage failure regressions (named)
-        working-directory: backend
-        run: go test -tags=unit -count=1 -v -run '^TestRefundPendingStorageFailures|^TestRefundConfirmedSettlementStorageFailure|^TestRefundSettlementDeletedUser|^TestRefundMalformedSnapshot|^TestRefundBlockedDiagnostics' ./internal/service/
-      - name: Account test structured failure metadata (named)
-        working-directory: backend
-        run: go test -tags=unit -count=1 -run '^TestAccountTestLogging_' -v ./internal/service/
-      - name: CC length terminal event and real readers
-        working-directory: backend
-        run: go test -tags=unit -count=1 -v -run '^TestChatLengthTerminal_|^TestStream_ValidToolCallAtOutputLimitKeepsIncompleteResponse$|^TestStream_ReasoningOnlySynthesizesVisibleText$' ./internal/pkg/apicompat/ ./internal/service/
-      - name: Unit tests (converted Responses input recovery)
-        working-directory: backend
-        run: go test -tags=unit -count=1 -run '^TestStructuredInputRecovery_|^TestConvertedResponsesInputStringRejection|^TestForwardAsChatCompletions_(ResponsesSupportedFallsBack|StructuredInput)' -v ./internal/service/
-      - name: Chat-to-Responses legacy calls, developer and named choice contracts (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestChatResponsesContracts_|^TestChatCompletionsToResponses_(ToolChoiceShape|DeveloperRolePreserved|LegacyFunction)' ./internal/pkg/apicompat/ ./internal/service/
-      - name: Unit tests (cache write wire and accounting agreement)
-        working-directory: backend
-        run: go test -tags=unit -count=1 -run '^TestCacheWriteUsage_' -v ./internal/pkg/apicompat/ ./internal/service/
-      - name: Unit tests (Chat input audio boundaries)
-        working-directory: backend
-        run: go test -tags=unit -count=1 -run '^TestChatInputAudio_' -v ./internal/pkg/apicompat/ ./internal/service/
-      - name: HTTP bridge continuation history actual wire (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestOpenAIWSHTTPBridgeHistory_|^TestOpenAIWSHTTPBridgeKeepsContinuation|^TestOpenAIWSHTTPBridgeFullCustomToolHistory|^TestOpenAIWSHTTPBridgeObjectToolOutput' ./internal/service/
-      # 分组策略矩阵实现带快照缓存、singleflight 与失效通知，并发路径靠 -race 守住。
-      # 只跑矩阵、阶段与影子比对相关测试；流式 ping 保留独立命名门槛。
-      - name: Chat ping and disconnect regression tests (actual results)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestHandleCCStreamingFromAnthropic_Ping|^TestCompatStream|^TestCompatProviderSSEError|^TestCompatReadersOversizedLine' ./internal/service/
-      - name: Unit tests (race, matrix policy and shadow comparison)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -run '^Test(MatrixPolicy|StagedPolicy|PricingShadow)_' ./internal/service/
-      - name: Unit tests (race, Antigravity partial metering)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -run '^TestAntigravityInterruptedUsage' -v ./internal/service/
-      - name: Integration tests (coverage)
-        working-directory: backend
-        run: make test-integration-cover
-      - name: Account test actual logger Ops PostgreSQL attribution (race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -run '^TestAccountTestLogging_ActualLoggerOpsPostgres$' -v ./internal/repository/
-      - name: Integration tests (Antigravity actual partial billing)
-        working-directory: backend
-        run: go test -tags=integration -count=1 -run '^TestAntigravityPartialBilling_' -v ./internal/repository/
-      - name: CC length actual Responses and Messages wallet/card billing
-        working-directory: backend
-        run: go test -tags=integration -count=1 -v -run '^TestChatLengthTerminalHTTP_' ./internal/repository/
-      - name: Integration tests (converted Responses fallback actual billing)
-        working-directory: backend
-        run: go test -tags=integration -count=1 -run '^TestStructuredInputFallbackHTTP_' -v ./internal/repository/
-      - name: Integration tests (cache write wire and wallet card agreement)
-        working-directory: backend
-        run: go test -tags=integration -count=1 -run '^TestCacheWriteUsageHTTP_' -v ./internal/repository/
-      - name: Integration tests (Gemini Chat audio and local funding release)
-        working-directory: backend
-        run: go test -tags=integration -count=1 -run '^TestChatInputAudioHTTP_' -v ./internal/repository/
-      - name: HTTP bridge continuation history actual funded turns (PG Redis race)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -v -run '^TestOpenAIWSBridgeHistoryHTTP_|^TestBillingInflightWS_RealTurnReservesBillsOnceAndReleases|^TestBillingInflightWS_LaterModelUsesActualBillingSource' ./internal/repository/
-      - name: Integration tests (race, TOTP login claims)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -run '^TestLoginTotpAtomic' -v ./internal/handler/
-      - name: Refund transaction regressions (named)
-        working-directory: backend
-        run: go test -tags=integration -count=1 -v -run '^TestRefundPendingAtomicPostgres_|^TestRefundAtomicPostgres_' ./internal/service/ ./internal/repository/
-      - name: Preserve actual Go coverage profiles
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: backend-go-coverage-${{ github.run_id }}
-          path: |
-            backend/coverage-unit.out
-            backend/coverage-integration.out
-          if-no-files-found: ignore
-          retention-days: 14
-      - name: Responses input token regression tests (actual results)
-        working-directory: backend
-        run: go test -tags=unit -count=1 -v -run '^TestResponsesInputTokens|^TestGatewayResponsesInputTokens' ./internal/service/ ./internal/handler/ ./internal/server/routes/
-      - name: Cold snapshot stage barrier (100 race iterations)
-        working-directory: backend
-        env:
-          CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=100 -timeout=2m -v -run '^TestStagedPolicy_ColdSnapshotFallsBackToLegacy$' ./internal/service/
-      - name: Upload backend coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          files: backend/coverage-unit.out,backend/coverage-integration.out
-          flags: backend
-          token: ${{ secrets.CODECOV_TOKEN }}
-          slug: APIs-Gateway/sub2api
-          override_pr: ${{ github.event.pull_request.number }}
-          base_sha: ${{ github.event.pull_request.base.sha }}
-          fail_ci_if_error: false
-
-  frontend:
-    runs-on: ubuntu-latest
-    steps:
+          mkdir -p "$RUNNER_TEMP/toggle-same"
+          cp frontend/src/components/admin/__tests__/ErrorPassthroughRulesModal.toggle.spec.ts "$RUNNER_TEMP/toggle-same/toggle.ts"
+          git show 84f09aa0f368d0270fc88c86a5b3080b7fb3367b:frontend/src/components/admin/ErrorPassthroughRulesModal.vue > "$RUNNER_TEMP/toggle-same/upstream.vue"
+          git show cc1e24c0ac852d2498dcbde40acffb128de1571f:frontend/src/components/admin/ErrorPassthroughRulesModal.vue > "$RUNNER_TEMP/toggle-same/partial.vue"
+          git hash-object frontend/src/components/admin/__tests__/ErrorPassthroughRulesModal.toggle.spec.ts "$RUNNER_TEMP/toggle-same/upstream.vue" "$RUNNER_TEMP/toggle-same/partial.vue"
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 0
+      - name: Verify exact checkout, fixture and intended production component
+        env:
+          PROOF_OVERLAY: ${{ matrix.overlay }}
+        run: |
+          git rev-parse HEAD
+          cp "$RUNNER_TEMP/toggle-same/toggle.ts" frontend/src/components/admin/__tests__/ErrorPassthroughRulesModal.toggle.spec.ts
+          if [ "$PROOF_OVERLAY" != none ]; then
+            cp "$RUNNER_TEMP/toggle-same/$PROOF_OVERLAY.vue" frontend/src/components/admin/ErrorPassthroughRulesModal.vue
+          fi
+          git hash-object frontend/src/components/admin/__tests__/ErrorPassthroughRulesModal.toggle.spec.ts frontend/src/components/admin/ErrorPassthroughRulesModal.vue
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -226,89 +60,9 @@ jobs:
           node-version: '20'
           cache: 'pnpm'
           cache-dependency-path: frontend/pnpm-lock.yaml
-      - name: Install frontend dependencies
+      - name: Install exact frozen frontend dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
-      - name: Stripe page disposal actual mocked payment regressions
-        working-directory: frontend
-        run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/StripePaymentView.lifecycle.spec.ts src/views/user/__tests__/StripePaymentView.spec.ts
-      - name: Rewrite deletion actual component and admission regressions
-        working-directory: frontend
-        run: pnpm exec vitest run --reporter=verbose src/composables/__tests__/useModelWhitelist.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts src/components/account/__tests__/BulkEditAccountModal.spec.ts src/components/account/__tests__/CreateAccountModal.modelPreview.spec.ts
-      - name: Configured ops thresholds actual header regressions
-        working-directory: frontend
-        run: pnpm exec vitest run --reporter=verbose src/views/admin/ops/components/__tests__/OpsDashboardHeader.thresholds.spec.ts src/views/admin/ops/utils/__tests__/metricThresholds.spec.ts src/views/admin/ops/__tests__/OpsDashboard.spec.ts
-      - name: Channel default prices actual edit and stale-request regressions
-        working-directory: frontend
-        run: pnpm exec vitest run --reporter=verbose src/components/admin/channel/__tests__/PricingEntryCard.modelDefaultPrice.spec.ts
-      - name: Passthrough rule per-rule toggle serialization and late response contracts (actual component)
+      - name: Actual per-rule toggle serialization, late response, reopened-row and failure controls
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/components/admin/__tests__/ErrorPassthroughRulesModal.toggle.spec.ts
-      - name: Frontend typecheck and critical vitest
-        run: make test-frontend
-      - name: Custom Markdown actual page ordering and loading regressions
-        working-directory: frontend
-        run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/CustomPageView.race.spec.ts
-      - name: Frontend production build
-        working-directory: frontend
-        run: pnpm run build
-
-  golangci-lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      # 充值倍率只能在白名单文件里读取（额度 → 人民币记账重构的换算闸门），见 tools/check_credit_multiplier.py。
-      # 放在 lint job 里随它一起跑，不单独成为 required check。
-      - name: Credit multiplier gate
-        run: |
-          python3 tools/test_check_credit_multiplier.py
-          python3 tools/check_credit_multiplier.py
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: backend/go.mod
-          check-latest: false
-          cache: true
-          cache-dependency-path: backend/go.sum
-      - name: Verify Go version
-        run: |
-          go version | grep -q 'go1.26.6'
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.9
-          args: --timeout=30m
-          working-directory: backend
-
-  frontend-coverage:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-          cache-dependency-path: frontend/pnpm-lock.yaml
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: pnpm install --frozen-lockfile
-      # 全量跑 vitest 出覆盖率(非 required:允许存量未铺满的测试失败,仍上传已生成的覆盖)
-      - name: Frontend coverage (full vitest)
-        working-directory: frontend
-        run: pnpm run test:coverage
-        continue-on-error: true
-      - name: Upload frontend coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          files: frontend/coverage/lcov.info
-          flags: frontend
-          token: ${{ secrets.CODECOV_TOKEN }}
-          slug: APIs-Gateway/sub2api
-          override_pr: ${{ github.event.pull_request.number }}
-          base_sha: ${{ github.event.pull_request.base.sha }}
-          fail_ci_if_error: false
