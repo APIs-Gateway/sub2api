@@ -1559,7 +1559,7 @@
     lowest: '最低',
     planRate: '套餐倍率',
     yourPlanRate: '你的套餐倍率',
-    planRateCell: '低至 {rate}x',
+    planRateLead: '低至',
     rateNote: '倍率是相對官方價的計費倍數，已包含在價格中',
     rateNoteFiat: '價格已包含倍率，倍率越低越省。開通套餐後倍率更低，同樣的價格扣得更少。',
     rateNoteFiatNoPlan: '倍率越低越省。',

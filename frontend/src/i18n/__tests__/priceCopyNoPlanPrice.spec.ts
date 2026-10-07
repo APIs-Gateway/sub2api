@@ -28,11 +28,12 @@ describe('价格页 / 计费规则卡文案', () => {
 
     it(`${name}：套餐倍率相关的键齐全`, () => {
       const ac = messages.availableChannels as Record<string, string>
-      for (const key of ['planRate', 'yourPlanRate', 'planRateCell', 'rateNoteFiat', 'rateNoteFiatNoPlan']) {
+      for (const key of ['planRate', 'yourPlanRate', 'planRateLead', 'rateNoteFiat', 'rateNoteFiatNoPlan']) {
         expect(typeof ac[key]).toBe('string')
       }
       for (const key of ['planPrice', 'yourPlanPrice', 'inOut']) expect(ac[key]).toBeUndefined()
-      expect(ac.planRateCell).toContain('{rate}')
+      expect(ac.planRateLead).not.toContain('{')
+      expect(ac.planRateCell).toBeUndefined()
       const fiat = (messages.billingRules as { fiat: Record<string, string> }).fiat
       expect(typeof fiat.rate).toBe('string')
       expect(fiat.balance).toBeUndefined()

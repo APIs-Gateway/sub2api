@@ -46,7 +46,7 @@ vi.mock('vue-i18n', () => ({
         'availableChannels.lowest': 'Lowest',
         'availableChannels.planRate': 'Plan rate',
         'availableChannels.yourPlanRate': 'Your plan rate',
-        'availableChannels.planRateCell': `As low as ${params?.rate}x`,
+        'availableChannels.planRateLead': 'As low as',
         'availableChannels.tierUpTo': `Up to ${params?.n}`,
         'availableChannels.tierAbove': `Over ${params?.n}`,
         'availableChannels.officialPrice': 'Official price',
@@ -159,7 +159,7 @@ describe('ModelCatalogRow', () => {
     expect(rows[0].attributes('data-lowest')).toBe('true')
     expect(rows[1].text()).not.toContain('Lowest')
     // 套餐倍率：0.65 * 0.04 = 0.026
-    expect(rows[0].get('[data-test="plan-cell"]').text()).toBe('As low as 0.026x')
+    expect(rows[0].get('[data-test="plan-cell"]').text()).toBe('As low as0.026x')
   })
 
   it('hides official price when the backend does not provide a rate', () => {
@@ -363,7 +363,7 @@ describe('ModelCatalogRow', () => {
     expect(headers).not.toContain('Input')
     expect(headers).not.toContain('Output')
     // 套餐倍率只看分组倍率：0.65 * 0.04 = 0.026
-    expect(w.get('[data-test="plan-cell"]').text()).toBe('As low as 0.026x')
+    expect(w.get('[data-test="plan-cell"]').text()).toBe('As low as0.026x')
   })
 
   it('shows 0 as free instead of treating it as not configured', () => {
@@ -515,16 +515,50 @@ describe('ModelCatalogRow 等效倍率与套餐倍率列（DR-3）', () => {
     const rows = groupRows(w)
     expect(rows.map((r) => r.get('[data-test="rate-tag"]').text())).toEqual(['0.108x', '0.231x', '0.308x', '0.385x'])
     expect(rows.map((r) => r.get('[data-test="plan-cell"]').text())).toEqual([
-      'As low as 0.056x',
-      'As low as 0.12x',
-      'As low as 0.16x',
-      'As low as 0.2x',
+      'As low as0.056x',
+      'As low as0.12x',
+      'As low as0.16x',
+      'As low as0.2x',
     ])
     expect(headers(w)).toEqual(['availableChannels.group', 'Input', 'Output', 'Plan rate'])
     expect(rows[0].text()).toContain('¥0.54')
     expect(rows[0].text()).toContain('¥3.23')
     expect(rows[0].attributes('data-lowest')).toBe('true')
     expect(w.get('[data-test="rate-note"]').text()).toBe('rate note fiat with plan')
+  })
+
+  it('「低至」是单独的小字前缀，和数字之间有间距', async () => {
+    const w = await open()
+    const cell = w.get('[data-test="plan-cell"]')
+    const lead = cell.get('[data-test="plan-lead"]')
+    expect(lead.text()).toBe('As low as')
+    expect(lead.classes()).toContain('mr-1')
+    // 前缀在数字之前，数字部分不再带前缀
+    expect(cell.html().indexOf('plan-lead')).toBeLessThan(cell.html().indexOf('0.056'))
+    expect(cell.text()).toBe('As low as0.056x')
+    // 有生效卡时没有前缀
+    activeCards.value = [{ status: 'active', fiat_per_credit: 0.0467 }]
+    const withCard = await open()
+    expect(withCard.find('[data-test="plan-lead"]').exists()).toBe(false)
+  })
+
+  it('¥ 模式价格：≥ ¥0.01 固定 2 位小数，< ¥0.01 保留 4 位有效数字', async () => {
+    const official = set({ input: 0.538462e-6, output: 3.230769e-6, cache_read: 0.0038e-6 })
+    const m = buildPriceCatalog({
+      groups: [g(1, 'codex特惠分组')],
+      models: [{
+        name: 'gpt-5.5', platform: 'openai',
+        entries: [{ group_id: 1, rate: 13, base_rate: 13, has_custom_rate: false, billing_mode: 'token', kind: 'token', official, prices: scaled(official, 13), tiers: [] }] as never,
+      }],
+    } as unknown as UserPriceCatalog)[0]
+    const w = await open(m)
+    const hero = w.get('[data-test="hero-prices"]').text()
+    expect(hero).toContain('¥0.54')
+    expect(hero).not.toContain('¥0.538')
+    expect(hero).toContain('¥3.23')
+    expect(hero).not.toContain('¥3.230')
+    expect(hero).toContain('¥0.0038')
+    expect(groupRows(w)[0].text()).toContain('¥0.54')
   })
 
   it('官方价仍是 ¥ 划线，价格只有一套', async () => {
@@ -555,7 +589,7 @@ describe('ModelCatalogRow 等效倍率与套餐倍率列（DR-3）', () => {
     const row = groupRows(w).find((r) => r.text().includes('codex特惠分组'))!
     expect(row.get('[data-test="rate-tag"]').text()).toBe('0.045x')
     expect(row.get('[data-test="rate-custom"]').text()).toBe('your rate, default 0.108x')
-    expect(row.get('[data-test="plan-cell"]').text()).toBe('As low as 0.0234x')
+    expect(row.get('[data-test="plan-cell"]').text()).toBe('As low as0.0234x')
     // 其余分组没有专属倍率说明
     expect(w.findAll('[data-test="rate-custom"]')).toHaveLength(1)
   })
@@ -571,7 +605,7 @@ describe('ModelCatalogRow 等效倍率与套餐倍率列（DR-3）', () => {
     } as unknown as UserPriceCatalog)[0]
     const w = await open(m)
     expect(w.get('[data-test="rate-tag"]').text()).toBe('0.108x')
-    expect(w.get('[data-test="plan-cell"]').text()).toBe('As low as 0.056x')
+    expect(w.get('[data-test="plan-cell"]').text()).toBe('As low as0.056x')
   })
 
   describe('不显示套餐倍率列', () => {

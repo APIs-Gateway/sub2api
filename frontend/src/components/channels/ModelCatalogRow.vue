@@ -94,7 +94,7 @@
                   <td v-for="col in sec.columns" :key="col" class="px-3 py-2 text-right"><NumText tier="secondary" :text="row.cells[col]" /></td>
                 </template>
                 <td v-else class="px-3 py-2 text-right"><NumText tier="secondary" :text="row.cells.unit" /></td>
-                <td v-if="sec.showPlan" class="px-3 py-2 text-right text-gray-700 dark:text-gray-300" data-test="plan-cell"><NumText tier="secondary" :text="row.plan" /></td>
+                <td v-if="sec.showPlan" class="px-3 py-2 text-right text-gray-700 dark:text-gray-300" data-test="plan-cell"><span v-if="row.plan.lead" class="mr-1 text-xs text-gray-500 dark:text-gray-400" data-test="plan-lead">{{ row.plan.lead }}</span><NumText tier="secondary" :text="row.plan.value" /></td>
               </tr>
             </tbody>
           </table>
@@ -199,8 +199,16 @@ const unitLabel = computed(() =>
  * 保留到 4 位小数（1.875 不会被写成 1.88），< 1 保留 4 位有效数字。
  */
 const UNIT_PRICE = { unitPrice: true } as const
+/**
+ * 人民币模式的价格位数（仅本页）：≥ ¥0.01 固定 2 位小数；< ¥0.01 走统一规则（4 位有效数字），
+ * 避免极便宜的缓存价写成 ¥0.00；0 沿用 unitPrice 的显示。美元模式与 free 站仍用 UNIT_PRICE。
+ */
+function fiatDigits(amount: number) {
+  if (amount >= 0.01) return { fractionDigits: 2 }
+  return amount > 0 ? undefined : UNIT_PRICE
+}
 function money(n: number): string {
-  return isFiat.value ? formatFiat(n, UNIT_PRICE) : formatUsd(n, UNIT_PRICE)
+  return isFiat.value ? formatFiat(n, fiatDigits(n)) : formatUsd(n, UNIT_PRICE)
 }
 
 /** token 计费可能出现的价格列，按展示顺序排列。 */
@@ -265,7 +273,7 @@ function linesOf(entry: GroupPrice | null): PriceLine[] {
       const price = money(balance)
       // 官方价是乘倍率之前的单价；后端没给时退回额度价，不会比展示价更高。
       const official = officialPrice(d.o ?? d.v, kind.value)
-      const officialText = formatOfficial(official, UNIT_PRICE)
+      const officialText = formatOfficial(official, isFiat.value ? fiatDigits(official * officialCnyRate.value) : UNIT_PRICE)
       // 与展示价同一币种下比较；展示出来的数字相同时不算「更高」。
       const officialAmount = isFiat.value ? official * officialCnyRate.value : official
       return {
@@ -323,10 +331,10 @@ const sections = computed(() =>
 )
 
 /** 套餐倍率单元格：有生效卡写卡的精确倍率，否则写「低至」最低倍率；没有值写 `-`。 */
-function planCell(view: RateView): string {
-  if (view.yourPlan !== undefined) return `${view.yourPlan}x`
-  if (view.plan !== undefined) return t('availableChannels.planRateCell', { rate: view.plan })
-  return '-'
+function planCell(view: RateView): { lead: string; value: string } {
+  if (view.yourPlan !== undefined) return { lead: '', value: `${view.yourPlan}x` }
+  if (view.plan !== undefined) return { lead: t('availableChannels.planRateLead'), value: `${view.plan}x` }
+  return { lead: '', value: '-' }
 }
 
 /** 峰时倍率按分组标注：只有走默认价卡的分组带倍数，渠道自定义价的分组不带。 */

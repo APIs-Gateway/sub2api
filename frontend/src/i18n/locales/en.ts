@@ -1555,7 +1555,7 @@
     lowest: 'Lowest',
     planRate: 'Plan rate',
     yourPlanRate: 'Your plan rate',
-    planRateCell: 'As low as {rate}x',
+    planRateLead: 'As low as',
     rateNote: 'Each rate is a multiple of the official price and is already included in the prices',
     rateNoteFiat: 'Prices already include the rate; a lower rate costs less. With a plan the rate is lower, so the same price deducts less.',
     rateNoteFiatNoPlan: 'A lower rate costs less.',
