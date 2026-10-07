@@ -118,8 +118,7 @@ function isEquivalentMode(ctx: RateContext): boolean {
  *
  * 响应里的 u_min 是 SUBSCRIPTION_MAX_PLAN_RATIO（每日额度达到 d_floor 之后的单价，最便宜），
  * u_max 是 SUBSCRIPTION_MIN_PLAN_RATIO（最小档，最贵）。后端算单价时会把结果夹在
- * [min(u_min, u_max), max(u_min, u_max)] 里（配置写反时也成立），所以这里也取两者较小的，
- * 与 modelCatalog.resolveSubscriptionUnit 一致。u_min 非正 / 缺失返回 null（R2 条件 b）。
+ * [min(u_min, u_max), max(u_min, u_max)] 里（配置写反时也成立），所以这里也取两者较小的。u_min 非正 / 缺失返回 null（R2 条件 b）。
  */
 export function resolvePlanUnitMin(
   bounds: { u_min?: number | null; u_max?: number | null } | null | undefined
