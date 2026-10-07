@@ -8,9 +8,9 @@ permissions:
   contents: read
 
 env:
-  NEW_SOURCE: ed54fa7c51a9abe364e4d51aa145ef04299e5ccd
+  NEW_SOURCE: 3e0d1e4ec53c6afca36679c609bce6f97abc9a62
   OLD_SOURCE: 421b500495b9c49900ef548290db4d25b798fc9b
-  PUBLIC_BLOB: eb53aa7f018193b122c42a64577c802be2dbee29
+  PUBLIC_BLOB: 66819bbe2450547d42a7c2cc9a364fe567b85345
   STATE_BLOB: 38ad0dc2f28fb88645ba5118927b54447e17323b
   CGO_ENABLED: "1"
 
@@ -24,7 +24,7 @@ jobs:
       matrix:
         include:
           - label: NEW
-            source: ed54fa7c51a9abe364e4d51aa145ef04299e5ccd
+            source: 3e0d1e4ec53c6afca36679c609bce6f97abc9a62
           - label: OLD
             source: 421b500495b9c49900ef548290db4d25b798fc9b
     steps:
@@ -62,8 +62,12 @@ jobs:
             cp "$RUNNER_TEMP/queue-frozen/state.go" backend/internal/service/concurrency_account_wait_registration_test.go
             test "$(git hash-object backend/internal/service/concurrency_account_wait_registration_test.go)" = "$STATE_BLOB"
             git hash-object backend/internal/service/concurrency_account_wait_registration_test.go
+            set +e
             gofmt -d backend/internal/handler/gateway_handler_responses.go backend/internal/handler/gateway_helper.go backend/internal/service/concurrency_service.go backend/internal/handler/gateway_responses_wait_queue_integration_test.go backend/internal/service/concurrency_account_wait_registration_test.go > "$RUNNER_TEMP/queue-results/format.diff"
+            format_exit=$?
+            set -e
             cat "$RUNNER_TEMP/queue-results/format.diff"
+            test "$format_exit" -eq 0
             test ! -s "$RUNNER_TEMP/queue-results/format.diff"
           fi
       - name: NEW private registration ownership controls (four actual leaves)

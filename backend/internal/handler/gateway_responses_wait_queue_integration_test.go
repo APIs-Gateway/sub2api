@@ -164,7 +164,7 @@ func newResponsesQueueFixture(t *testing.T, rdb *redis.Client) *responsesQueueFi
 	f.group = &service.Group{ID: 9755, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive, RateMultiplier: 1}
 	f.account = &service.Account{ID: 9756, Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey,
 		Status: service.StatusActive, Schedulable: true, Concurrency: 1,
-		Credentials: map[string]any{"api_key": "fixture-only", "pool_mode": false},
+		Credentials:   map[string]any{"api_key": "fixture-only", "pool_mode": false},
 		AccountGroups: []service.AccountGroup{{AccountID: 9756, GroupID: 9755}}}
 	f.snapshot = &responsesQueueSnapshot{account: f.account}
 	realCache := repository.NewConcurrencyCache(rdb, 1, 60)
@@ -476,10 +476,15 @@ func TestGenericResponsesWaitQueue_RealRedis(t *testing.T) {
 		recorder, done := f.request(context.Background(), 7)
 		responsesQueueDone(t, done)
 		assert.Equal(t, http.StatusBadGateway, recorder.Code, "preserve the existing 503 upstream to 502 client mapping")
-		var response map[string]map[string]string
+		var response struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
 		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
-		assert.Equal(t, "upstream_error", response["error"]["code"])
-		assert.Equal(t, "Upstream service temporarily unavailable", response["error"]["message"])
+		assert.Equal(t, "upstream_error", response.Error.Code)
+		assert.Equal(t, "Upstream service temporarily unavailable", response.Error.Message)
 		assert.False(t, f.wire.bad.Load(), "the actual failed wire still used the authorized account model and Messages path")
 		assert.Zero(t, f.count(t))
 		assert.EqualValues(t, 1, f.cache.decrements.Load())
