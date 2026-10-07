@@ -207,6 +207,22 @@ jobs:
       - name: Integration tests (converted Responses fallback actual billing)
         working-directory: backend
         run: go test -tags=integration -count=1 -run '^TestStructuredInputFallbackHTTP_' -v ./internal/repository/
+      - name: Original client account selection source formatting
+        working-directory: backend
+        run: |
+          files="internal/handler/openai_client_restriction_selection.go internal/handler/openai_responses_attempt.go internal/handler/openai_chat_completions_attempt.go internal/handler/openai_client_restriction_selection_handler_test.go internal/handler/openai_client_restriction_selection_state_test.go internal/repository/openai_client_restriction_selection_integration_test.go"
+          gofmt -d $files
+          test -z "$(gofmt -l $files)"
+      - name: Original client account selection actual HTTP and slot contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestClientRestrictedSelection' ./internal/handler/
+      - name: Original client account selection actual PG Redis wallet card and held lease contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestClientRestrictedSelectionHTTP_' ./internal/repository/
       - name: Integration tests (cache write wire and wallet card agreement)
         working-directory: backend
         run: go test -tags=integration -count=1 -run '^TestCacheWriteUsageHTTP_' -v ./internal/repository/
