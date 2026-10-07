@@ -241,6 +241,9 @@ jobs:
       - name: Channel default prices actual edit and stale-request regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/components/admin/channel/__tests__/PricingEntryCard.modelDefaultPrice.spec.ts
+      - name: Username draft ownership, server synchronization and API error controls (actual components)
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/components/user/profile/__tests__/ProfileEditForm.draft.spec.ts src/components/user/profile/__tests__/ProfileEditForm.spec.ts
       - name: Frontend typecheck and critical vitest
         run: make test-frontend
       - name: Custom Markdown actual page ordering and loading regressions
