@@ -8267,7 +8267,7 @@
       price: '價格',
       renewPrice: '續費支付',
       changeDiff: '補差支付',
-      newPlanPriceFiat: '新套餐價格',
+      newPlanPriceFiat: '新套餐金額',
       oldRemainingValueFiat: '舊套餐剩餘價值',
       caps: '周封頂 {weekly} · 月封頂 {monthly}',
       quoteFailed: '報價獲取失敗，請調整額度/時長後重試',
@@ -8305,6 +8305,13 @@
 
   // 自定義訂閱購買（無固定套餐：自填每日額度 D + 有效期 T，按量大優惠 u(D) 計價）。
   subscriptionPurchase: {
+    ratesTitle: '開通後各分組的倍率，同樣的價格扣得更少',
+    ratesGroup: '分組',
+    ratesBalance: '餘額倍率',
+    ratesPlan: '套餐倍率',
+    ratesMore: '查看全部分組',
+    ratesLess: '收起',
+    rateValue: '{rate}x',
     title: '購買訂閱',
     desc: '自定義每日額度與有效期，量大單價更低',
     group: '平台/分組',

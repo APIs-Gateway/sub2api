@@ -8273,7 +8273,7 @@
       price: 'Price',
       renewPrice: 'Renewal payment',
       changeDiff: 'Difference payment',
-      newPlanPriceFiat: 'New plan price',
+      newPlanPriceFiat: 'New plan amount',
       oldRemainingValueFiat: 'Remaining value of current plan',
       caps: 'Weekly cap {weekly} · Monthly cap {monthly}',
       quoteFailed: 'Failed to get a quote; adjust amount/duration and retry.',
@@ -8311,6 +8311,13 @@
 
   // Custom subscription purchase (no fixed plans: pick daily amount D + validity T, priced by volume u(D)).
   subscriptionPurchase: {
+    ratesTitle: 'Rates per group once active: the same price deducts less',
+    ratesGroup: 'Group',
+    ratesBalance: 'Balance rate',
+    ratesPlan: 'Plan rate',
+    ratesMore: 'Show all groups',
+    ratesLess: 'Show fewer',
+    rateValue: '{rate}x',
     title: 'Buy a subscription',
     desc: 'Customize daily amount and validity; larger daily amounts get a lower unit price',
     group: 'Platform / group',
