@@ -98,11 +98,17 @@ func TestGatewayModelField_WSLaterFramesBeforeUpstream(t *testing.T) {
 							t.Fatal("valid turn did not produce a forwarding result")
 						}
 					}
+					// OAuth pooled forwarding normalizes the legacy gpt-5.1 alias
+					// to gpt-5.4; raw passthrough retains the provider payload.
+					upstreamModel := "gpt-5.1"
+					if mode == OpenAIWSIngressModeCtxPool {
+						upstreamModel = "gpt-5.4"
+					}
 					complete := func(id string) {
-						upstream.Send(`{"type":"response.completed","response":{"id":"` + id + `","model":"gpt-5.1","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"model field control"}]}],"usage":{"input_tokens":1,"output_tokens":1}}}`)
+						upstream.Send(`{"type":"response.completed","response":{"id":"` + id + `","model":"` + upstreamModel + `","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"model field control"}]}],"usage":{"input_tokens":1,"output_tokens":1}}}`)
 					}
 					writePassthroughBeforeTurnTestFrame(t, client, `{"type":"response.create","model":"gpt-5.1","input":[]}`)
-					require.Equal(t, "gpt-5.1", gjson.GetBytes(readWrite(), "model").String())
+					require.Equal(t, upstreamModel, gjson.GetBytes(readWrite(), "model").String())
 					complete("resp_model_field_1")
 					require.Equal(t, "resp_model_field_1", gjson.GetBytes(readPassthroughBeforeTurnTestFrame(t, client), "response.id").String())
 					readResult()
@@ -139,7 +145,7 @@ func TestGatewayModelField_WSLaterFramesBeforeUpstream(t *testing.T) {
 					}
 					secondWrite := readWrite()
 					if mode == OpenAIWSIngressModeCtxPool {
-						require.Equal(t, "gpt-5.1", gjson.GetBytes(secondWrite, "model").String())
+						require.Equal(t, upstreamModel, gjson.GetBytes(secondWrite, "model").String())
 					} else {
 						require.False(t, gjson.GetBytes(secondWrite, "model").Exists(), "passthrough retains provider session inheritance")
 					}
