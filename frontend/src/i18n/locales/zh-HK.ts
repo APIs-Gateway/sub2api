@@ -1534,8 +1534,8 @@
     fiat: {
       intro: '按實際用量計費，從餘額或套餐中扣除。',
       pricesLink: '各模型價格可在「價格與計費」頁查看。',
-      balance: '餘額價：用餘額支付時的價格。',
-      plan: '套餐價：開通套餐後優先從套餐扣費，價格更低。',
+      rate: '倍率：每個分組的倍率不同，越低越省。',
+      plan: '套餐：開通後優先從套餐扣費，倍率更低，同樣的價格扣得更少。',
       group: '分組：同一個模型在不同分組下價格不同，展開模型即可比較。',
       groupBrief: '分組：同一個模型在不同分組下價格不同。'
     }
@@ -1557,10 +1557,12 @@
     price: '價格',
     officialPrice: '官方價',
     lowest: '最低',
-    planPrice: '套餐價',
-    yourPlanPrice: '你的套餐價',
-    inOut: '輸入 / 輸出',
+    planRate: '套餐倍率',
+    yourPlanRate: '你的套餐倍率',
+    planRateLead: '低至',
     rateNote: '倍率是相對官方價的計費倍數，已包含在價格中',
+    rateNoteFiat: '價格已包含倍率，倍率越低越省。開通套餐後倍率更低，同樣的價格扣得更少。',
+    rateNoteFiatNoPlan: '倍率越低越省。',
     rateCustom: '專屬倍率，默認 {base}x',
     tiersFor: '分檔價格（{group}）',
     context: '上下文長度',
@@ -8267,7 +8269,7 @@
       price: '價格',
       renewPrice: '續費支付',
       changeDiff: '補差支付',
-      newPlanPriceFiat: '新套餐價格',
+      newPlanPriceFiat: '新套餐金額',
       oldRemainingValueFiat: '舊套餐剩餘價值',
       caps: '周封頂 {weekly} · 月封頂 {monthly}',
       quoteFailed: '報價獲取失敗，請調整額度/時長後重試',
@@ -8305,6 +8307,13 @@
 
   // 自定義訂閱購買（無固定套餐：自填每日額度 D + 有效期 T，按量大優惠 u(D) 計價）。
   subscriptionPurchase: {
+    ratesTitle: '開通後各分組的倍率，同樣的價格扣得更少',
+    ratesGroup: '分組',
+    ratesBalance: '餘額倍率',
+    ratesPlan: '套餐倍率',
+    ratesMore: '查看全部分組',
+    ratesLess: '收起',
+    rateValue: '{rate}x',
     title: '購買訂閱',
     desc: '自定義每日額度與有效期，量大單價更低',
     group: '平台/分組',
