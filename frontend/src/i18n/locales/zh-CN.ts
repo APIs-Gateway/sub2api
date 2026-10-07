@@ -8270,7 +8270,7 @@
       price: '价格',
       renewPrice: '续费支付',
       changeDiff: '补差支付',
-      newPlanPriceFiat: '新套餐价格',
+      newPlanPriceFiat: '新套餐金额',
       oldRemainingValueFiat: '旧套餐剩余价值',
       caps: '周封顶 {weekly} · 月封顶 {monthly}',
       quoteFailed: '报价获取失败，请调整额度/时长后重试',
@@ -8308,6 +8308,13 @@
 
   // 自定义订阅购买（无固定套餐：自填每日额度 D + 有效期 T，按量大优惠 u(D) 计价）。
   subscriptionPurchase: {
+    ratesTitle: '开通后各分组的倍率，同样的价格扣得更少',
+    ratesGroup: '分组',
+    ratesBalance: '余额倍率',
+    ratesPlan: '套餐倍率',
+    ratesMore: '查看全部分组',
+    ratesLess: '收起',
+    rateValue: '{rate}x',
     title: '购买订阅',
     desc: '自定义每日额度与有效期，量大单价更低',
     group: '平台/分组',

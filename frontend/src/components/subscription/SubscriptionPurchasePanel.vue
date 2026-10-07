@@ -125,6 +125,48 @@
               <dd class="text-sm text-gray-900 dark:text-white"><NumText tier="secondary" :text="formatCap(quote?.monthly_cap_usd ?? 0)" /></dd>
             </div>
           </dl>
+          <!-- 开通后各分组的倍率：人民币模式、报价就绪、套餐确实更低时才出现。 -->
+          <div
+            v-if="rateRows.length > 0"
+            data-testid="subscription-purchase-rates"
+            class="mt-3 border-t border-gray-200 pt-3 dark:border-dark-700"
+          >
+            <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('subscriptionPurchase.ratesTitle') }}</p>
+            <table class="mt-2 w-full text-sm">
+              <thead>
+                <tr class="text-xs text-gray-600 dark:text-gray-400">
+                  <th scope="col" class="py-1 pr-3 text-left font-normal">{{ t('subscriptionPurchase.ratesGroup') }}</th>
+                  <th scope="col" class="px-3 py-1 text-right font-normal">{{ t('subscriptionPurchase.ratesBalance') }}</th>
+                  <th scope="col" class="py-1 pl-3 text-right font-normal">{{ t('subscriptionPurchase.ratesPlan') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="row in visibleRateRows"
+                  :key="row.id"
+                  data-testid="subscription-purchase-rate-row"
+                  class="border-t border-gray-200/70 dark:border-dark-700/70"
+                >
+                  <td class="min-w-0 break-words py-1.5 pr-3 text-gray-900 dark:text-white">{{ row.name }}</td>
+                  <td data-testid="subscription-purchase-rate-balance" class="num px-3 py-1.5 text-right text-gray-700 dark:text-gray-300">
+                    {{ t('subscriptionPurchase.rateValue', { rate: row.balance }) }}
+                  </td>
+                  <td data-testid="subscription-purchase-rate-plan" class="num py-1.5 pl-3 text-right font-semibold text-gray-900 dark:text-white">
+                    {{ t('subscriptionPurchase.rateValue', { rate: row.plan }) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <button
+              v-if="rateRows.length > RATE_ROWS_COLLAPSED"
+              type="button"
+              data-testid="subscription-purchase-rates-toggle"
+              class="mt-1 text-xs text-gray-700 underline underline-offset-2 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+              @click="showAllRates = !showAllRates"
+            >
+              {{ showAllRates ? t('subscriptionPurchase.ratesLess') : t('subscriptionPurchase.ratesMore') }}
+            </button>
+          </div>
         </template>
       </div>
 
@@ -150,6 +192,9 @@ import subscriptionsAPI, {
 import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
 import NumText from '@/components/common/NumText.vue'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { useRateDisplay } from '@/composables/useRateDisplay'
+import { userGroupsAPI } from '@/api/groups'
+import type { Group } from '@/types'
 
 const emit = defineEmits<{
   // 购买意向：把校验过的 D/T 与当前报价交给父组件去走下单流程（订单创建/支付）。
@@ -168,6 +213,7 @@ const props = withDefaults(defineProps<{
 
 const { t } = useI18n()
 const { isFiat, formatFiat, formatSubscription, formatUsd } = useCurrencyDisplay()
+const { balanceRate, planRateForUnit, formatRate } = useRateDisplay()
 
 const pricing = ref<SubscriptionPricingBounds | null>(null)
 const loadError = ref(false)
@@ -204,6 +250,48 @@ const fiatPerCredit = computed(() => {
   const unit = quote.value?.unit_price
   return typeof unit === 'number' && unit > 0 ? unit / subscriptionPaymentMultiplier.value : null
 })
+
+// 开通后各分组的倍率：分组清单与密钥选分组同源（getAvailable），专属倍率优先。
+// 换算全部走 useRateDisplay：余额倍率 r ÷ m，套餐倍率 r × 报价里的精确单价 u(D)。
+const RATE_ROWS_COLLAPSED = 5
+const availableGroups = ref<Group[]>([])
+const userGroupRates = ref<Record<number, number>>({})
+const showAllRates = ref(false)
+
+async function loadRateGroups() {
+  try {
+    const [groups, rates] = await Promise.all([
+      userGroupsAPI.getAvailable(),
+      userGroupsAPI.getUserGroupRates().catch(() => ({}) as Record<number, number>)
+    ])
+    availableGroups.value = Array.isArray(groups) ? groups : []
+    userGroupRates.value = rates ?? {}
+  } catch {
+    // 倍率对照只是展示增强，取不到就不显示这一块。
+    availableGroups.value = []
+  }
+}
+
+const rateRows = computed(() => {
+  if (!isFiat.value || quoting.value || quoteError.value || !quote.value) return []
+  const unit = fiatPerCredit.value
+  const rows: { id: number; name: string; r: number; balance: string; plan: string }[] = []
+  for (const group of availableGroups.value) {
+    // 订阅型分组按自己的额度计费，不走余额倍率，不列入对照。
+    if (group.status === 'inactive' || group.subscription_type === 'subscription') continue
+    const custom = userGroupRates.value[group.id]
+    const r = typeof custom === 'number' && Number.isFinite(custom) ? custom : group.rate_multiplier
+    const plan = planRateForUnit(r, unit)
+    if (plan === null) continue
+    rows.push({ id: group.id, name: group.name, r, balance: formatRate(balanceRate(r)), plan: formatRate(plan) })
+  }
+  return rows.sort((a, b) => a.r - b.r)
+})
+const visibleRateRows = computed(() =>
+  showAllRates.value ? rateRows.value : rateRows.value.slice(0, RATE_ROWS_COLLAPSED)
+)
+
+watch(isFiat, (fiat) => { if (fiat && availableGroups.value.length === 0) void loadRateGroups() }, { immediate: true })
 
 /** 周/月封顶：人民币模式按报价单价折算；报价未出来时显示 0，不回落到美元。 */
 function formatCap(credits: number): string {
