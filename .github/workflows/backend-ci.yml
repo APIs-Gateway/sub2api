@@ -78,6 +78,11 @@ jobs:
       - name: Responses refusal actual wallet and card settlement (PG Redis)
         working-directory: backend
         run: go test -tags=integration -count=1 -v -run '^TestResponsesRefusalHTTP_' ./internal/repository/
+      - name: Codex live selected-account catalog contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestCodexAccountMapping_' ./internal/service/ ./internal/handler/
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover
