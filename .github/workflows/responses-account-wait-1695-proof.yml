@@ -1,0 +1,138 @@
+name: Generic Responses account waiting same-fixture proof 1695
+
+on:
+  push:
+    branches: [codex/responses-account-wait-1695-proof]
+
+permissions:
+  contents: read
+
+env:
+  NEW_SOURCE: ed54fa7c51a9abe364e4d51aa145ef04299e5ccd
+  OLD_SOURCE: 421b500495b9c49900ef548290db4d25b798fc9b
+  PUBLIC_BLOB: eb53aa7f018193b122c42a64577c802be2dbee29
+  STATE_BLOB: 38ad0dc2f28fb88645ba5118927b54447e17323b
+  CGO_ENABLED: "1"
+
+jobs:
+  redis-contracts:
+    name: ${{ matrix.label }} actual Redis public Responses queue contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: NEW
+            source: ed54fa7c51a9abe364e4d51aa145ef04299e5ccd
+          - label: OLD
+            source: 421b500495b9c49900ef548290db4d25b798fc9b
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Install the identical public fixture on its exact source
+        env:
+          SOURCE: ${{ matrix.source }}
+          PROOF_LABEL: ${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          go version
+          go version | grep -q 'go1.26.6'
+          git merge-base --is-ancestor "$NEW_SOURCE" HEAD
+          git merge-base --is-ancestor "$OLD_SOURCE" HEAD
+          git ls-tree "$SOURCE" backend/internal/handler/gateway_handler_responses.go backend/internal/handler/gateway_helper.go backend/internal/service/concurrency_service.go
+          mkdir -p "$RUNNER_TEMP/queue-frozen" "$RUNNER_TEMP/queue-results"
+          cp backend/internal/handler/gateway_responses_wait_queue_integration_test.go "$RUNNER_TEMP/queue-frozen/public.go"
+          cp backend/internal/service/concurrency_account_wait_registration_test.go "$RUNNER_TEMP/queue-frozen/state.go"
+          test "$(git hash-object "$RUNNER_TEMP/queue-frozen/public.go")" = "$PUBLIC_BLOB"
+          test "$(git hash-object "$RUNNER_TEMP/queue-frozen/state.go")" = "$STATE_BLOB"
+          git hash-object "$RUNNER_TEMP/queue-frozen/public.go" "$RUNNER_TEMP/queue-frozen/state.go"
+          git checkout --detach "$SOURCE"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          cp "$RUNNER_TEMP/queue-frozen/public.go" backend/internal/handler/gateway_responses_wait_queue_integration_test.go
+          test "$(git hash-object backend/internal/handler/gateway_responses_wait_queue_integration_test.go)" = "$PUBLIC_BLOB"
+          git rev-parse HEAD
+          git hash-object backend/internal/handler/gateway_responses_wait_queue_integration_test.go
+          if [ "$PROOF_LABEL" = NEW ]; then
+            cp "$RUNNER_TEMP/queue-frozen/state.go" backend/internal/service/concurrency_account_wait_registration_test.go
+            test "$(git hash-object backend/internal/service/concurrency_account_wait_registration_test.go)" = "$STATE_BLOB"
+            git hash-object backend/internal/service/concurrency_account_wait_registration_test.go
+            gofmt -d backend/internal/handler/gateway_handler_responses.go backend/internal/handler/gateway_helper.go backend/internal/service/concurrency_service.go backend/internal/handler/gateway_responses_wait_queue_integration_test.go backend/internal/service/concurrency_account_wait_registration_test.go > "$RUNNER_TEMP/queue-results/format.diff"
+            cat "$RUNNER_TEMP/queue-results/format.diff"
+            test ! -s "$RUNNER_TEMP/queue-results/format.diff"
+          fi
+      - name: NEW private registration ownership controls (four actual leaves)
+        if: matrix.label == 'NEW'
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          set +e
+          go test -tags=unit -race -count=1 -timeout=5m -json -run '^TestAccountWaitRegistration_Ownership$' ./internal/service/ > "$RUNNER_TEMP/queue-results/state.jsonl" 2> "$RUNNER_TEMP/queue-results/state.stderr"
+          actual_exit=$?
+          set -e
+          export ACTUAL_STATE_EXIT="$actual_exit"
+          cat "$RUNNER_TEMP/queue-results/state.jsonl"
+          cat "$RUNNER_TEMP/queue-results/state.stderr"
+          python3 - <<'STATE'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'queue-results'
+          events = [json.loads(x) for x in (root / 'state.jsonl').read_text().splitlines() if x.strip()]
+          expected = {'TestAccountWaitRegistration_Ownership/' + x for x in ('confirmed', 'full', 'failed_open', 'nil_cache')}
+          passed = {x['Test'] for x in events if x.get('Action') == 'pass' and x.get('Test') in expected}
+          assert int(os.environ['ACTUAL_STATE_EXIT']) == 0 and passed == expected, (os.environ['ACTUAL_STATE_EXIT'], passed, expected)
+          assert not any(x.get('Action') in ('fail', 'skip') for x in events), events
+          assert not any(token in ''.join(x.get('Output', '') for x in events) + (root / 'state.stderr').read_text() for token in ('panic:', 'WARNING: DATA RACE', '[build failed]', 'no tests to run', 'test timed out', 'fatal error:'))
+          STATE
+      - name: Execute twelve actual Redis public handler leaves
+        working-directory: backend
+        env:
+          PROOF_LABEL: ${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          set +e
+          go test -tags=integration -race -coverpkg=./internal/handler,./internal/service -covermode=atomic -coverprofile="$RUNNER_TEMP/queue-results/coverage.out" -count=1 -timeout=8m -json -run '^TestGenericResponsesWaitQueue_RealRedis$' ./internal/handler/ > "$RUNNER_TEMP/queue-results/public.jsonl" 2> "$RUNNER_TEMP/queue-results/public.stderr"
+          actual_exit=$?
+          set -e
+          cat "$RUNNER_TEMP/queue-results/public.jsonl"
+          cat "$RUNNER_TEMP/queue-results/public.stderr"
+          test -s "$RUNNER_TEMP/queue-results/coverage.out"
+          export ACTUAL_EXIT="$actual_exit"
+          python3 - <<'PUBLIC'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'queue-results'
+          events = [json.loads(x) for x in (root / 'public.jsonl').read_text().splitlines() if x.strip()]
+          names = ('one_waiter_then_overflow_before_provider', 'cancel_retains_foreign_slot', 'timeout_retains_foreign_slot', 'full_queue_preserves_existing_sticky_owner', 'owned_cancel_preserves_foreign_waiter', 'preacquired_slot_ignores_full_queue', 'capacity_freed_after_selection_ignores_full_queue', 'capacity_between_registration_and_second_try', 'provider_failure_after_acquire_releases_queue', 'stream_timeout_keeps_ping_terminal_and_owned_cleanup', 'user_wait_ping_then_full_account_queue_has_one_Responses_terminal', 'Redis_timeout_failopen_never_decrements_recovered_foreign_wait')
+          expected = {'TestGenericResponsesWaitQueue_RealRedis/' + x for x in names}
+          ran = {x['Test'] for x in events if x.get('Action') == 'run' and x.get('Test') in expected}
+          passed = {x['Test'] for x in events if x.get('Action') == 'pass' and x.get('Test') in expected}
+          failed = {x['Test'] for x in events if x.get('Action') == 'fail' and x.get('Test') in expected}
+          assert ran == expected and passed | failed == expected and not passed & failed, (ran, passed, failed)
+          assert not any(x.get('Action') == 'skip' for x in events), events
+          output = ''.join(x.get('Output', '') for x in events) + (root / 'public.stderr').read_text()
+          assert not any(token in output for token in ('panic:', 'WARNING: DATA RACE', '[build failed]', 'no tests to run', 'test timed out', 'fatal error:')), output
+          exit_code = int(os.environ['ACTUAL_EXIT'])
+          package = [x['Action'] for x in events if not x.get('Test') and x.get('Action') in ('pass', 'fail')]
+          if os.environ['PROOF_LABEL'] == 'NEW':
+              assert exit_code == 0 and passed == expected and not failed and package == ['pass'], (exit_code, passed, failed, package)
+          else:
+              controls = {'TestGenericResponsesWaitQueue_RealRedis/' + x for x in ('preacquired_slot_ignores_full_queue', 'capacity_freed_after_selection_ignores_full_queue')}
+              assert exit_code == 1 and passed == controls and failed == expected - controls and package == ['fail'], (exit_code, passed, failed, package)
+          facts = {'label': os.environ['PROOF_LABEL'], 'source': os.environ['NEW_SOURCE'] if os.environ['PROOF_LABEL'] == 'NEW' else os.environ['OLD_SOURCE'], 'actual_exit': exit_code, 'public_leaves': 12, 'passed': sorted(passed), 'failed': sorted(failed), 'actual_redis': True, 'simple_mode': True, 'wallet_card_claim': False}
+          print(json.dumps(facts, indent=2))
+          (root / 'actual.json').write_text(json.dumps(facts, indent=2))
+          PUBLIC
+          # Preserve OLD's actual business RED in the provider result.
+          exit "$actual_exit"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: responses-queue-${{ matrix.label }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/queue-results/
+          if-no-files-found: error
