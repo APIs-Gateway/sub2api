@@ -92,7 +92,7 @@ func newEasyPayBoundaryHTTPFixture(t *testing.T, upstreamStatus int, money, upst
 	}
 	instanceID := strconv.FormatInt(inst.ID, 10)
 	f.order, err = c.PaymentOrder.Create().SetUserID(u.ID).SetUserEmail(u.Email).SetUserName(u.Username).
-		SetAmount(80).SetPayAmount(88).SetFeeRate(10).SetRechargeCode(uuid.NewString()).SetOutTradeNo(outTradeNo).
+		SetAmount(80).SetPayAmount(88).SetFeeRate(10).SetRechargeCode(strings.ReplaceAll(uuid.NewString(), "-", "")).SetOutTradeNo(outTradeNo).
 		SetPaymentType(payment.TypeAlipay).SetProviderKey(payment.TypeEasyPay).SetProviderInstanceID(instanceID).
 		SetPaymentTradeNo("").SetOrderType(payment.OrderTypeBalance).SetStatus(service.OrderStatusPending).
 		SetExpiresAt(time.Now().Add(time.Hour)).SetClientIP("127.0.0.1").SetSrcHost("site.example.com").
