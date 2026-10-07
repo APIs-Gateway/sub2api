@@ -208,9 +208,63 @@ func TestCodexAccountMapping_Validators(t *testing.T) {
 	for _, value := range []string{first.ETag, strings.TrimPrefix(first.ETag, "W/"), `"wrong", ` + first.ETag, "*"} {
 		require.True(t, f.fetch(t, value).NotModified)
 	}
-	for _, value := range []string{`bad`, `"missing`, `"wrong"`, `W/"wrong"`, `"wrong" extra`} {
+	for _, value := range []string{`bad`, `"missing`, `"wrong"`, `W/"wrong"`, `"wrong" extra`, `"wrong",`, `"wrong",   `} {
 		require.False(t, f.fetch(t, value).NotModified)
 	}
+}
+
+// Direct projection also has defensive contracts for callers which have not
+// run the public manifest validator. Keep these separate from business RED
+// evidence, and never invent an sjson failure on valid constant paths.
+func TestCodexAccountMapping_ProjectionInputBoundaries(t *testing.T) {
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"model_mapping": map[string]any{"alias": "gpt-5.4"}}}
+	for _, body := range []string{`not-json`, `{"models":`, `{"models":{}}`, `{}`} {
+		t.Run(body, func(t *testing.T) {
+			projected, err := projectCodexModelsForAccount([]byte(body), account)
+			require.Error(t, err)
+			require.Nil(t, projected)
+		})
+	}
+	t.Run("unusable_entries_do_not_become_aliases", func(t *testing.T) {
+		body := []byte(`{"opaque":900719925474099312345,"models":[1,null,[],{}, {"slug":12},{"slug":""},{"slug":"gpt-*"},{"slug":"gpt-5.4","future":900719925474099312345}]}`)
+		projected, err := projectCodexModelsForAccount(body, account)
+		require.NoError(t, err)
+		require.Equal(t, []string{"alias"}, codexMappingSlugs(t, projected))
+		require.Contains(t, string(projected), `"opaque":900719925474099312345`)
+		require.Contains(t, string(projected), `"future":900719925474099312345`)
+	})
+	for _, mode := range []string{"unmapped", "passthrough"} {
+		t.Run(mode+"_is_an_opaque_bypass", func(t *testing.T) {
+			bypass := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+			if mode == "passthrough" {
+				bypass.Credentials = account.Credentials
+				bypass.Extra = map[string]any{"openai_passthrough": true}
+			}
+			body := []byte(`opaque input is not decoded here`)
+			projected, err := projectCodexModelsForAccount(body, bypass)
+			require.NoError(t, err)
+			require.Equal(t, body, projected)
+		})
+	}
+}
+
+func TestCodexAccountMapping_KnownKeyScannerMalformedInput(t *testing.T) {
+	for _, raw := range []string{`{`, `{:1}`, `{"models":`, `{"models":[]`, `{"models":[],`} {
+		t.Run(raw, func(t *testing.T) {
+			require.Error(t, rejectCodexProjectionDuplicateKeys([]byte(raw), "models"))
+		})
+	}
+	for _, raw := range []string{"", "  ", `[]`, `null`, `1`} {
+		t.Run("non_object/"+raw, func(t *testing.T) {
+			require.NoError(t, rejectCodexProjectionDuplicateKeys([]byte(raw), "models"))
+		})
+	}
+	// This valid array reaches the envelope decoder rather than a scanner
+	// syntax error, and still cannot be accepted as a manifest envelope.
+	require.Error(t, validateCodexProjectionKnownKeys([]byte(`[]`)))
+	require.False(t, codexModelsETagMatches("", `W/"catalog"`))
+	require.False(t, codexModelsETagMatches(`"catalog"`, ""))
 }
 
 func TestCodexAccountMapping_StarWithoutUpstreamValidator(t *testing.T) {
