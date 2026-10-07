@@ -150,7 +150,7 @@ func (r *openAIChatRun) attempt(args chatHopArgs) service.HopResult {
 		})
 	}
 	failoverExhausted := func(failoverErr *service.UpstreamFailoverError) service.HopResult {
-		return failoverExhaustedBy(failoverErr, false)
+		return failoverExhaustedBy(failoverErr, clientPolicy.policyExcluded)
 	}
 	// attemptsExhausted：有链时受每请求总尝试次数约束（AttemptsRemaining 为 0 视为未设置）。
 	attemptsExhausted := func() bool {

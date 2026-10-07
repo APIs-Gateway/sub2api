@@ -4,6 +4,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -176,4 +177,44 @@ func TestClientRestrictedSelection_StableHomePolicyDoesNotEnterFallback(t *testi
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Zero(t, store.enters, "client policy exclusion must not enter stable fallback state")
+}
+
+// These cases keep the actual chain runtime enabled. The local exclusion is
+// observed in either selection order and remains non-evidence after a later
+// compatible account fails and the runner proceeds into an authorized hop.
+func TestClientRestrictedSelection_MixedFailureChain(t *testing.T) {
+	for _, route := range []string{"responses", "chat"} {
+		for _, policyFirst := range []bool{false, true} {
+			for _, nextFails := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/policyFirst=%t/nextFails=%t", route, policyFirst, nextFails), func(t *testing.T) {
+					o := chainRespBase()
+					a, b := clientPolicyAccount(10, false), clientPolicyAccount(11, true)
+					if policyFirst {
+						b.Priority = -10
+					}
+					o.schedulable[1] = []service.Account{a, b}
+					o.replies = map[int64]chainRespReply{10: chainRespUpstreamError()}
+					if nextFails {
+						o.replies[21] = chainRespUpstreamError()
+					}
+					hs := newChainRespHarness(t, o)
+					rec := clientPolicyRequest(hs, route, "unofficial-original-client/1.0", nil)
+					require.Equal(t, []int64{10, 21}, hs.upstream.accountCalls(), "the incompatible account never dispatches; real failure still permits the authorized next hop")
+					require.NotContains(t, o.breaker.failedGroups(), int64(1), "mixed local-policy exclusions cannot prove whole-group upstream failure")
+					if nextFails {
+						require.GreaterOrEqual(t, rec.Code, 500, rec.Body.String())
+						require.Empty(t, hs.usageLogs)
+					} else {
+						require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+						usage := hs.waitUsage(t, 1)[0]
+						require.EqualValues(t, 21, usage.AccountID)
+						require.EqualValues(t, 1, *usage.GroupID)
+						require.NotNil(t, usage.ServedGroupID)
+						require.EqualValues(t, 2, *usage.ServedGroupID)
+						require.Empty(t, o.breaker.failedGroups())
+					}
+				})
+			}
+		}
+	}
 }

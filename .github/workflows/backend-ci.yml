@@ -98,6 +98,12 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=unit -race -count=1 -v -run '^Test(MatrixPolicy|StagedPolicy|PricingShadow)_' ./internal/service/
+      - name: Original client account selection source formatting
+        working-directory: backend
+        run: |
+          files="internal/handler/openai_client_restriction_selection.go internal/handler/openai_responses_attempt.go internal/handler/openai_chat_completions_attempt.go internal/handler/openai_client_restriction_selection_handler_test.go internal/handler/openai_client_restriction_selection_state_test.go internal/repository/openai_client_restriction_selection_integration_test.go"
+          gofmt -d $files
+          test -z "$(gofmt -l $files)"
       - name: Original client account selection actual HTTP and slot contracts (race)
         working-directory: backend
         env:

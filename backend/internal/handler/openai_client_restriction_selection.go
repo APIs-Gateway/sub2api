@@ -11,11 +11,12 @@ import (
 // Client policy rejects a selection, not the caller's group or model permission.
 // This state is local to one hop and never marks an upstream account unhealthy.
 type openAIClientRestrictionSelection struct {
-	pending       bool
-	lastAccountID int64
-	lastPlatform  string
-	pinnedGroupID *int64
-	stable        service.OpenAIAccountScheduleDecision
+	pending        bool
+	policyExcluded bool
+	lastAccountID  int64
+	lastPlatform   string
+	pinnedGroupID  *int64
+	stable         service.OpenAIAccountScheduleDecision
 }
 
 func releaseOpenAIClientPolicySelection(selection *service.AccountSelectionResult) {
@@ -47,6 +48,10 @@ func (s *openAIClientRestrictionSelection) exclude(
 	}
 	releaseOpenAIClientPolicySelection(selection)
 	excluded[selection.Account.ID] = struct{}{}
+	// Durable evidence: accepting a later account clears the immediate policy
+	// response state, but does not turn this mixed exclusion set into evidence
+	// that the entire upstream group failed. This state resets at each hop.
+	s.policyExcluded = true
 	s.pending = true
 	s.lastAccountID = selection.Account.ID
 	s.lastPlatform = selection.Account.Platform

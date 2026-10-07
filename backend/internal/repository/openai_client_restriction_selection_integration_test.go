@@ -13,9 +13,11 @@ import (
 	"testing"
 	"time"
 
+	userhandler "github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	redisclient "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -248,6 +250,150 @@ func TestClientRestrictedSelectionHTTP_FundingAndOriginalError(t *testing.T) {
 						require.Zero(t, waiting, "policy-incompatible account must not retain a waiting ticket")
 					}
 				})
+			}
+		}
+	}
+}
+
+// This runs the public handler through the actual chain resolver and runner,
+// with real PG route rows, funding and usage, and the real Redis breaker/slots.
+func TestClientRestrictedSelectionHTTP_MixedFailureChain(t *testing.T) {
+	for _, route := range []string{"responses", "chat"} {
+		for _, policyFirst := range []bool{false, true} {
+			for _, nextFails := range []bool{false, true} {
+				for _, card := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s/policyFirst=%t/nextFails=%t/card=%t", route, policyFirst, nextFails, card), func(t *testing.T) {
+						f := newInflightHTTPFixtureForClientPolicy(t, service.PlatformOpenAI, inflightResponsesSSE, "text/event-stream", true)
+						clientPolicyFunding(t, f, card)
+						ctx := context.Background()
+						f.key.StablePriorityEnabled = false
+						f.key.HasGroupRoutes = true
+						settingRepo := NewSettingRepository(inflightTestEntClient(t))
+						previous, previousErr := settingRepo.GetValue(ctx, service.SettingKeyGroupFallbackEnabled)
+						require.NoError(t, settingRepo.Set(ctx, service.SettingKeyGroupFallbackEnabled, "true"))
+						t.Cleanup(func() {
+							if previousErr != nil {
+								_ = settingRepo.Delete(ctx, service.SettingKeyGroupFallbackEnabled)
+							} else {
+								_ = settingRepo.Set(ctx, service.SettingKeyGroupFallbackEnabled, previous)
+							}
+						})
+						settings := service.NewSettingService(settingRepo, f.cfg)
+						_, err := inflightTestDB(t).Exec(`INSERT INTO api_key_group_routes (api_key_id,group_id,platform,source,placement,position) VALUES ($1,$2,'openai','user','tail',0)`, f.key.ID, f.stableGroup.ID)
+						require.NoError(t, err)
+						groups := NewGroupRepository(inflightTestEntClient(t), inflightTestDB(t))
+						routes := service.NewGroupRouteService(NewAPIKeyGroupRouteRepository(inflightTestDB(t)), groups, settings)
+						chain, err := routes.ResolveEffectiveChain(ctx, f.key, f.user, service.ResolveOptions{})
+						require.NoError(t, err)
+						require.Len(t, chain.Hops, 2, "the user chain must pass real group/platform/permission eligibility")
+						users := NewUserRepository(inflightTestEntClient(t), inflightTestDB(t))
+						subs := NewUserSubscriptionRepository(inflightTestEntClient(t))
+						rates := NewUserGroupRateRepository(inflightTestDB(t))
+						billingCache := service.NewBillingCacheService(NewBillingCache(f.rdb), users, subs, nil, nil, rates, f.cfg, nil, settings)
+						t.Cleanup(billingCache.Stop)
+						concurrency := service.NewConcurrencyService(NewConcurrencyCache(f.rdb, 15, 30))
+						keyService := service.NewAPIKeyService(NewAPIKeyRepository(inflightTestEntClient(t), inflightTestDB(t)), users, groups, subs, rates, nil, f.cfg)
+						f.openAI = userhandler.ProvideOpenAIGatewayHandler(f.openAIService, concurrency, billingCache, keyService, f.pool, nil, nil, nil, f.cfg, nil, routes, settings, NewGroupChainBreaker(f.rdb))
+						a, err := f.accounts.GetByID(ctx, f.accountID)
+						require.NoError(t, err)
+						a.Priority = -20
+						require.NoError(t, f.accounts.Update(ctx, a))
+						priority := -10
+						if policyFirst {
+							priority = -30
+						}
+						b := clientPolicyFundedAccount(t, f, true, priority)
+						next := clientPolicyFundedAccount(t, f, false, 1)
+						require.NoError(t, f.accounts.BindGroups(ctx, next.ID, []int64{f.stableGroup.ID}))
+						fundingRepo := NewUsageBillingRepository(inflightTestEntClient(t), inflightTestDB(t)).(service.BillingInflightRepository)
+						priorID := uuid.NewString()
+						ok, err := fundingRepo.ReserveBillingInflight(ctx, f.user.ID, priorID, .25, false, time.Minute)
+						require.NoError(t, err)
+						require.True(t, ok)
+						beforeWallet := userBalance(t, f.user.ID)
+						var calls []int64
+						var heldAtNext float64
+						f.upstream.script = func(req *http.Request, id int64) (*http.Response, error) {
+							calls = append(calls, id)
+							if id == next.ID {
+								heldAtNext = inflightHeld(t, f.user.ID)
+							}
+							if id == a.ID || nextFails {
+								return &http.Response{StatusCode: 520, Header: http.Header{"Content-Type": {"text/html"}}, Body: io.NopCloser(strings.NewReader("<html>unknown dispatched attempt</html>")), Request: req}, nil
+							}
+							return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(strings.ReplaceAll(inflightResponsesSSE, "gpt-5", "gpt-5.1"))), Request: req}, nil
+						}
+						close(f.upstream.release)
+						body, path, serve := `{"model":"gpt-5","max_output_tokens":8,"input":"hello"}`, "/v1/responses", f.openAI.Responses
+						if route == "chat" {
+							body, path, serve = `{"model":"gpt-5","max_completion_tokens":8,"messages":[{"role":"user","content":"hello"}]}`, "/v1/chat/completions", f.openAI.ChatCompletions
+						}
+						rec := f.request(body, path, "", serve)
+						f.pool.Stop()
+						t.Logf("actual runtime chain status=%d calls=%v held-at-next=%v held-final=%v body=%s", rec.Code, calls, heldAtNext, inflightHeld(t, f.user.ID), rec.Body.String())
+						require.Equal(t, []int64{a.ID, next.ID}, calls)
+						require.Greater(t, heldAtNext, .25, "the real dispatched first attempt remains funded when the next hop begins")
+						require.Greater(t, inflightHeld(t, f.user.ID), .25, "later success/failure cannot erase the prior unknown dispatched lease or the independent control")
+						var priorAmount, unknownAmount float64
+						require.NoError(t, inflightTestDB(t).QueryRow(`SELECT amount FROM billing_inflight_leases WHERE user_id=$1 AND id=$2 AND phase='attempt'`, f.user.ID, priorID+":initial").Scan(&priorAmount))
+						require.InDelta(t, .25, priorAmount, 1e-9, "the independent prior control must survive exactly")
+						require.NoError(t, inflightTestDB(t).QueryRow(`SELECT COALESCE(sum(amount),0) FROM billing_inflight_leases WHERE user_id=$1 AND owner_id<>$2 AND phase='attempt'`, f.user.ID, priorID).Scan(&unknownAmount))
+						require.Positive(t, unknownAmount, "the real earlier dispatched unknown attempt is retained independently of the prior control")
+						afterB, err := f.accounts.GetByID(ctx, b.ID)
+						require.NoError(t, err)
+						require.Equal(t, b.Status, afterB.Status)
+						require.Equal(t, b.Schedulable, afterB.Schedulable)
+						require.Equal(t, b.ErrorMessage, afterB.ErrorMessage)
+						require.Equal(t, b.RateLimitedAt, afterB.RateLimitedAt)
+						require.Equal(t, b.OverloadUntil, afterB.OverloadUntil)
+						breakerKeys, err := f.rdb.Keys(ctx, fmt.Sprintf("fbchain:cb:{openai:%d:*}", *f.key.GroupID)).Result()
+						require.NoError(t, err)
+						for _, key := range breakerKeys {
+							count, err := f.rdb.HGet(ctx, key, "fail_count").Int64()
+							if err == redisclient.Nil {
+								continue
+							}
+							require.NoError(t, err)
+							require.Zero(t, count, "local policy never supplies whole-group breaker evidence")
+						}
+						var actualCost float64
+						var count int
+						require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*),COALESCE(sum(actual_cost),0) FROM usage_logs WHERE api_key_id=$1`, f.key.ID).Scan(&count, &actualCost))
+						if nextFails {
+							require.GreaterOrEqual(t, rec.Code, 500, rec.Body.String())
+							require.Zero(t, count)
+						} else {
+							require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+							row := latestServedBillingRow(t, f.key.ID, 1)
+							require.Equal(t, *f.key.GroupID, row.groupID.Int64)
+							require.Equal(t, f.stableGroup.ID, row.servedGroup.Int64)
+							require.EqualValues(t, 1, row.servedSource.Int64)
+							require.InDelta(t, .2, row.totalCost, 1e-9)
+							require.InDelta(t, .4, row.actualCost, 1e-9)
+							var accountID int64
+							require.NoError(t, inflightTestDB(t).QueryRow(`SELECT account_id FROM usage_logs WHERE api_key_id=$1`, f.key.ID).Scan(&accountID))
+							require.Equal(t, next.ID, accountID)
+						}
+						if card {
+							var d, w, m float64
+							require.NoError(t, inflightTestDB(t).QueryRow(`SELECT daily_usage_usd,weekly_usage_usd,monthly_usage_usd FROM user_subscriptions WHERE user_id=$1 AND status='active'`, f.user.ID).Scan(&d, &w, &m))
+							require.InDelta(t, actualCost, d, 1e-8)
+							require.InDelta(t, actualCost, w, 1e-8)
+							require.InDelta(t, actualCost, m, 1e-8)
+						} else {
+							require.InDelta(t, actualCost, beforeWallet-userBalance(t, f.user.ID), 1e-8)
+						}
+						cache := NewConcurrencyCache(f.rdb, 15, 30)
+						for _, id := range []int64{a.ID, b.ID, next.ID} {
+							active, err := cache.GetAccountConcurrency(ctx, id)
+							require.NoError(t, err)
+							require.Zero(t, active)
+							waiting, err := cache.GetAccountWaitingCount(ctx, id)
+							require.NoError(t, err)
+							require.Zero(t, waiting)
+						}
+					})
+				}
 			}
 		}
 	}

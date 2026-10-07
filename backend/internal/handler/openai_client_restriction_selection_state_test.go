@@ -33,12 +33,13 @@ func TestClientRestrictedSelectionState_CompatibleBusyAndBudgetAreNotAllRestrict
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	h := &OpenAIGatewayHandler{}
-	s := &openAIClientRestrictionSelection{pending: true, lastAccountID: 11}
+	s := &openAIClientRestrictionSelection{pending: true, policyExcluded: true, lastAccountID: 11}
 	require.False(t, s.rejectExhausted(h, c, service.NewOpenAISelectionBudgetExhaustedErrorForTest("gpt-5.4"), false))
 	require.False(t, s.rejectExhausted(h, c, errors.New("snapshot unavailable"), false))
 	require.False(t, c.Writer.Written())
 	s.exclude(&service.OpenAIGatewayService{}, c, &service.AccountSelectionResult{Account: &service.Account{ID: 12, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}}, map[int64]struct{}{})
 	require.False(t, s.pending)
+	require.True(t, s.policyExcluded, "compatible selection clears immediate denial but not durable whole-group evidence")
 	require.False(t, s.rejectExhausted(h, c, service.ErrNoAvailableAccounts, false))
 }
 
