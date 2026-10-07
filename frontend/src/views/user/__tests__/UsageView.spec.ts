@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
 
 import UsageView from '../UsageView.vue'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
@@ -130,6 +131,11 @@ const DataTableStub = {
     </div>
   `,
 }
+
+// UsageView 经 useRateDisplay 用到 auth / subscriptions store，没有激活的 Pinia 会在 setup 里抛错。
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
 
 describe('user UsageView tooltip', () => {
   beforeEach(() => {
