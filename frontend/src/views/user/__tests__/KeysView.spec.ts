@@ -711,10 +711,11 @@ describe('user KeysView overview and connect actions', () => {
   it('每行（有上限）：已用和上限同口径，都是额度折算；近 30 天消费单独一行', async () => {
     const wrapper = await mountView(RowsTableStub)
     const rowA = wrapper.get('[data-row="1"]')
-    // quota=100、quota_used=40、倍率 10：已用 ≈¥4.00，上限 ≈¥10.00（不是近 30 天消费 ¥2.00）
-    expect(rowA.get('[data-test="row-used"]').text()).toBe('≈¥4.00')
-    expect(rowA.get('[data-test="row-limit"]').text()).toBe('≈¥10.00')
+    // quota=100、quota_used=40、倍率 10：已用 ¥4.00，上限 ¥10.00（不是近 30 天消费 ¥2.00）
+    expect(rowA.get('[data-test="row-used"]').text()).toBe('¥4.00')
+    expect(rowA.get('[data-test="row-limit"]').text()).toBe('¥10.00')
     expect(rowA.get('[data-test="row-recent"]').text()).toBe('¥2.00')
+    expect(rowA.text()).not.toContain('≈')
     // 「累计已用」「近 30 天」「今日」标签直接写在行里，不靠悬停提示
     expect(rowA.text()).toContain('keys.usedLabel')
     expect(rowA.text()).toContain('keys.total')
@@ -732,7 +733,7 @@ describe('user KeysView overview and connect actions', () => {
     })
     const wrapper = await mountView(RowsTableStub)
     const rowA = wrapper.get('[data-row="1"]')
-    expect(rowA.get('[data-test="row-used"]').text()).toBe('≈¥4.00')
+    expect(rowA.get('[data-test="row-used"]').text()).toBe('¥4.00')
     expect(rowA.get('[data-test="row-recent"]').text()).toBe('¥99.90')
     wrapper.unmount()
   })
@@ -742,7 +743,7 @@ describe('user KeysView overview and connect actions', () => {
     listKeys.mockResolvedValue({ items: [full, keyB], total: 2, page: 1, page_size: 20, pages: 1 })
     const wrapper = await mountView(RowsTableStub)
     const rowA = wrapper.get('[data-row="1"]')
-    expect(rowA.get('[data-test="row-used"]').text()).toBe('≈¥10.00')
+    expect(rowA.get('[data-test="row-used"]').text()).toBe('¥10.00')
     expect(rowA.get('[data-test="row-used"]').classes()).toContain('text-primary-700')
     expect(rowA.get('[data-test="row-limit"]').classes()).toContain('text-primary-700')
     wrapper.unmount()
