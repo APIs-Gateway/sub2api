@@ -12,6 +12,13 @@ vi.mock('@/api/subscriptions', () => ({
   },
 }))
 
+vi.mock('@/api/groups', () => ({
+  userGroupsAPI: {
+    getAvailable: vi.fn().mockResolvedValue([]),
+    getUserGroupRates: vi.fn().mockResolvedValue({}),
+  },
+}))
+
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
