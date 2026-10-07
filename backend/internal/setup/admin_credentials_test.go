@@ -18,7 +18,10 @@ func TestSetupAdminCredentials_TransactionFailures(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer func() { require.NoError(t, db.Close()) }()
+			t.Cleanup(func() {
+				require.NoError(t, db.Close())
+				require.NoError(t, mock.ExpectationsWereMet())
+			})
 			failure := errors.New("fixture storage failure")
 			if phase == "begin" {
 				mock.ExpectBegin().WillReturnError(failure)
@@ -53,10 +56,10 @@ func TestSetupAdminCredentials_TransactionFailures(t *testing.T) {
 					mock.ExpectRollback()
 				}
 			}
+			mock.ExpectClose()
 			created, _, err := bootstrapAdminUser(context.Background(), db, &SetupConfig{Admin: AdminConfig{Email: "owner@example.com", Password: "valid-password"}})
 			require.ErrorIs(t, err, failure)
 			require.False(t, created)
-			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
 }
