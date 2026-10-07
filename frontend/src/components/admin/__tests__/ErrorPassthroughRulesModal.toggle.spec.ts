@@ -10,13 +10,13 @@ enableAutoUnmount(afterEach)
 afterEach(() => vi.restoreAllMocks())
 beforeEach(() => vi.resetAllMocks())
 
-function rule(enabled: boolean) {
-  return { id: 7, name: 'Rule', enabled, priority: 1, error_codes: [429], keywords: [],
+function rule(enabled: boolean, id = 7) {
+  return { id, name: 'Rule', enabled, priority: 1, error_codes: [429], keywords: [],
     platforms: [], match_mode: 'any', passthrough_code: true, passthrough_body: true, skip_monitoring: false }
 }
 
-async function openRules(enabled = true) {
-  mocks.list.mockResolvedValue([rule(enabled)])
+async function openRules(enabled = true, rows = [rule(enabled)]) {
+  mocks.list.mockResolvedValue(rows)
   const wrapper = mount(ErrorPassthroughRulesModal, {
     props: { show: false },
     global: { stubs: {
@@ -37,12 +37,14 @@ describe('error passthrough enabled state', () => {
     const toggle = wrapper.get('tbody button.relative')
     await toggle.trigger('click')
     await toggle.trigger('click')
-    expect(mocks.toggleEnabled.mock.calls).toEqual([[7, !enabled], [7, !enabled]])
+    expect(mocks.toggleEnabled.mock.calls).toEqual([[7, !enabled]])
+    expect(toggle.attributes('disabled')).toBeDefined()
     for (const finish of finishes) {
       finish(rule(!enabled))
       await flushPromises()
       expect(toggle.classes().includes('bg-primary-600')).toBe(!enabled)
     }
+    expect(toggle.attributes('disabled')).toBeUndefined()
   })
 
   it('allows sequential toggles in both directions', async () => {
@@ -67,5 +69,85 @@ describe('error passthrough enabled state', () => {
     await flushPromises()
     expect(toggle.classes()).toContain('bg-primary-600')
     expect(mocks.showError).toHaveBeenCalledWith('admin.errorPassthrough.failedToToggle')
+  })
+
+  it.each([true, false])('does not let an older response undo the next opposite saved state (initial=%s)', async (enabled) => {
+    const pending: Array<{ target: boolean; finish: (value: unknown) => void }> = []
+    mocks.toggleEnabled.mockImplementation((_id: number, target: boolean) => new Promise(resolve => {
+      pending.push({ target, finish: resolve })
+    }))
+    const wrapper = await openRules(enabled)
+    const toggle = wrapper.get('tbody button.relative')
+    await toggle.trigger('click')
+    await toggle.trigger('click')
+    // Both older writes, if admitted, committed before their responses arrived.
+    let serverEnabled = !enabled
+    pending[0]!.finish(rule(serverEnabled))
+    await flushPromises()
+    await toggle.trigger('click')
+    const next = pending[pending.length - 1]!
+    expect(next.target).toBe(enabled)
+    serverEnabled = enabled
+    next.finish(rule(serverEnabled))
+    await flushPromises()
+    // An already-committed older response can arrive after the newer response.
+    if (pending.length === 3) {
+      pending[1]!.finish(rule(!enabled))
+      await flushPromises()
+    }
+    expect(toggle.classes().includes('bg-primary-600')).toBe(serverEnabled)
+    expect(mocks.toggleEnabled.mock.calls).toEqual([[7, !enabled], [7, enabled]])
+  })
+
+  it('lets different rules save concurrently and releases only the completed rule', async () => {
+    const pending = new Map<number, (value: unknown) => void>()
+    mocks.toggleEnabled.mockImplementation((id: number) => new Promise(resolve => { pending.set(id, resolve) }))
+    const wrapper = await openRules(true, [rule(true, 7), rule(false, 8)])
+    const [first, second] = wrapper.findAll('tbody button.relative')
+    await first!.trigger('click')
+    await second!.trigger('click')
+    expect(mocks.toggleEnabled.mock.calls).toEqual([[7, false], [8, true]])
+    expect(first!.attributes('disabled')).toBeDefined()
+    expect(second!.attributes('disabled')).toBeDefined()
+    pending.get(7)!(rule(false, 7))
+    await flushPromises()
+    expect(first!.attributes('disabled')).toBeUndefined()
+    expect(second!.attributes('disabled')).toBeDefined()
+    expect(first!.classes()).not.toContain('bg-primary-600')
+    pending.get(8)!(rule(true, 8))
+    await flushPromises()
+    expect(second!.attributes('disabled')).toBeUndefined()
+    expect(second!.classes()).toContain('bg-primary-600')
+  })
+
+  it('releases a failed toggle so the same rule can be retried', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    let fail!: (error: unknown) => void
+    mocks.toggleEnabled.mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject }))
+    const wrapper = await openRules()
+    const toggle = wrapper.get('tbody button.relative')
+    await toggle.trigger('click')
+    expect(toggle.attributes('disabled')).toBeDefined()
+    fail(new Error('offline'))
+    await flushPromises()
+    expect(toggle.attributes('disabled')).toBeUndefined()
+    expect(toggle.classes()).toContain('bg-primary-600')
+    expect(mocks.showError).toHaveBeenCalledTimes(1)
+    mocks.toggleEnabled.mockResolvedValueOnce(rule(false))
+    await toggle.trigger('click')
+    await flushPromises()
+    expect(toggle.classes()).not.toContain('bg-primary-600')
+    expect(mocks.toggleEnabled.mock.calls).toEqual([[7, false], [7, false]])
+  })
+
+  it('applies the saved response state even when it differs from the requested target', async () => {
+    mocks.toggleEnabled.mockResolvedValue(rule(true))
+    const wrapper = await openRules()
+    const toggle = wrapper.get('tbody button.relative')
+    await toggle.trigger('click')
+    await flushPromises()
+    expect(mocks.toggleEnabled).toHaveBeenCalledWith(7, false)
+    expect(toggle.classes()).toContain('bg-primary-600')
+    expect(toggle.attributes('disabled')).toBeUndefined()
   })
 })
