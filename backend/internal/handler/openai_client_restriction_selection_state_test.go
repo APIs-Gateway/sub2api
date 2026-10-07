@@ -70,3 +70,19 @@ func TestClientRestrictedSelectionState_StableDecisionKeepsNewAccountAndServedPr
 	require.Equal(t, &price, d.StableServedImagePrice2K)
 	require.Equal(t, &price, d.StableServedImagePrice4K)
 }
+
+func TestClientRestrictedSelectionState_NilSelectionDoesNotCreateOwnershipOrPolicyEvidence(t *testing.T) {
+	// Defensive empty results have no owned callback to release and must not be
+	// classified as an incompatible account or alter the caller's exclusions.
+	releaseOpenAIClientPolicySelection(nil)
+	s := &openAIClientRestrictionSelection{}
+	excluded := map[int64]struct{}{99: {}}
+	selection := &service.AccountSelectionResult{Acquired: true}
+	require.False(t, s.exclude(nil, nil, selection, excluded))
+	require.False(t, s.exclude(&service.OpenAIGatewayService{}, nil, nil, excluded))
+	require.False(t, s.exclude(&service.OpenAIGatewayService{}, nil, selection, excluded))
+	require.True(t, selection.Acquired)
+	require.Equal(t, map[int64]struct{}{99: {}}, excluded)
+	require.False(t, s.pending)
+	require.False(t, s.policyExcluded)
+}

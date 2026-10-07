@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -212,6 +214,76 @@ func TestClientRestrictedSelection_MixedFailureChain(t *testing.T) {
 						require.NotNil(t, usage.ServedGroupID)
 						require.EqualValues(t, 2, *usage.ServedGroupID)
 						require.Empty(t, o.breaker.failedGroups())
+					}
+				})
+			}
+		}
+	}
+}
+
+// This counter observes the real admission call. It deliberately denies funding
+// without creating a mocked lease; settlement is covered by the PG/Redis suite.
+type clientPolicyCancelFundingRepo struct {
+	service.UsageBillingRepository
+	service.BillingInflightRepository
+	reserves int32
+}
+
+func (r *clientPolicyCancelFundingRepo) ReserveBillingInflight(context.Context, int64, string, float64, bool, time.Duration) (bool, error) {
+	atomic.AddInt32(&r.reserves, 1)
+	return false, service.ErrInsufficientBalance
+}
+
+func TestClientRestrictedSelection_PostSelectionCancellation(t *testing.T) {
+	for _, route := range []string{"responses", "chat"} {
+		for _, chain := range []bool{false, true} {
+			for _, cancelAfterAcquire := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/chain=%t/cancelAfterAcquire=%t", route, chain, cancelAfterAcquire), func(t *testing.T) {
+					o := chainRespBase()
+					o.noRuntime = !chain
+					o.schedulable[1] = []service.Account{clientPolicyAccount(12, false)}
+					hs := newChainRespHarness(t, o)
+					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
+					var acquired int32
+					cache := &concurrencyCacheMock{
+						acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+						acquireAccountSlotFn: func(slotCtx context.Context, accountID int64, _ int, _ string) (bool, error) {
+							require.NoError(t, slotCtx.Err(), "entry and selector must reach the live account acquisition")
+							require.EqualValues(t, 12, accountID)
+							atomic.AddInt32(&acquired, 1)
+							if cancelAfterAcquire {
+								cancel()
+							}
+							return true, nil
+						},
+					}
+					concurrency := service.NewConcurrencyService(cache)
+					funding := &clientPolicyCancelFundingRepo{}
+					cfg := hs.handler.cfg
+					cfg.Billing.InflightReservation.Enabled = true
+					gateway := service.NewOpenAIGatewayService(
+						&chainRespAccountRepo{schedulable: o.schedulable, configured: o.configured},
+						&openAIWSUsageHandlerUsageLogRepoStub{created: hs.usageLogs}, funding,
+						nil, nil, nil, nil, cfg, nil, concurrency, service.NewBillingService(cfg, nil),
+						nil, hs.handler.billingCacheService, hs.upstream, &service.DeferredService{},
+						nil, nil, nil, nil, nil, nil, nil, nil, nil,
+					)
+					hs.handler.gatewayService = gateway
+					hs.handler.concurrencyHelper = NewConcurrencyHelper(concurrency, SSEPingFormatNone, time.Second)
+					rec := clientPolicyRequest(hs, route, "unofficial-original-client/1.0", ctx)
+					require.EqualValues(t, 1, atomic.LoadInt32(&acquired), "the selector actually acquired one account slot")
+					require.EqualValues(t, 1, atomic.LoadInt32(&cache.releaseAccountCalled), "scheduler ownership is released exactly once, including handler completion")
+					require.Empty(t, hs.upstream.accountCalls())
+					require.Empty(t, hs.usageLogs)
+					require.Empty(t, o.breaker.failedGroups())
+					if cancelAfterAcquire {
+						require.ErrorIs(t, ctx.Err(), context.Canceled)
+						require.Zero(t, atomic.LoadInt32(&funding.reserves), "post-selection cancellation terminates before admission")
+					} else {
+						require.NoError(t, ctx.Err())
+						require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+						require.EqualValues(t, 1, atomic.LoadInt32(&funding.reserves), "the live control proves enabled funding reaches the instrumented admission repository")
 					}
 				})
 			}
