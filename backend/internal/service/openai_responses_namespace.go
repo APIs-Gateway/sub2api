@@ -229,22 +229,21 @@ func stripOpenAIResponsesInputNamespacesWhere(body []byte, shouldStrip func(item
 	copyFrom := 0
 	var stripErr error
 	input.ForEach(func(_, item gjson.Result) bool {
-		if !item.IsObject() || !item.Get("namespace").Exists() || !shouldStrip(item) {
-			return true
+		if item.IsObject() && item.Get("namespace").Exists() && shouldStrip(item) {
+			itemBody := []byte(item.Raw)
+			itemBody, stripErr = sjson.DeleteBytes(itemBody, "namespace")
+			if stripErr != nil {
+				return false
+			}
+			if !changed {
+				rebuilt.Grow(len(input.Raw))
+				changed = true
+			}
+			itemStart := item.Index - input.Index
+			_, _ = rebuilt.WriteString(input.Raw[copyFrom:itemStart])
+			_, _ = rebuilt.Write(itemBody)
+			copyFrom = itemStart + len(item.Raw)
 		}
-		itemBody, err := sjson.DeleteBytes([]byte(item.Raw), "namespace")
-		if err != nil {
-			stripErr = err
-			return false
-		}
-		if !changed {
-			rebuilt.Grow(len(input.Raw))
-			changed = true
-		}
-		itemStart := item.Index - input.Index
-		_, _ = rebuilt.WriteString(input.Raw[copyFrom:itemStart])
-		_, _ = rebuilt.Write(itemBody)
-		copyFrom = itemStart + len(item.Raw)
 		return true
 	})
 	if stripErr != nil {
