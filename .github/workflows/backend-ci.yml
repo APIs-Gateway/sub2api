@@ -15,10 +15,10 @@ jobs:
         include:
           - target: NEW
             suite: unit
-            ref: 53df624c3acf786ae860aacd0509583c22a664d6
+            ref: e478fe31fed16ba59988db95f9436e9b92cbe8d7
           - target: NEW
             suite: postgres
-            ref: 53df624c3acf786ae860aacd0509583c22a664d6
+            ref: e478fe31fed16ba59988db95f9436e9b92cbe8d7
           - target: OLD
             suite: unit
             ref: 1ce91b75289578739bfed7545a2210afbf1e9ca7
