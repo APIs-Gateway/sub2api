@@ -404,8 +404,14 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 	}
 	// url.ParseQuery already decodes values — no additional decode needed.
 	params := make(map[string]string)
-	for k := range values {
-		params[k] = values.Get(k)
+	for k, entries := range values {
+		if !easyPayNotifyAllowedParams[k] {
+			return nil, fmt.Errorf("unexpected notify param: %s", k)
+		}
+		if len(entries) != 1 {
+			return nil, fmt.Errorf("ambiguous duplicate notify param: %s", k)
+		}
+		params[k] = entries[0]
 	}
 	sign := params["sign"]
 	if sign == "" {
@@ -704,4 +710,15 @@ func easyPayNotifyStatusIsSuccess(params map[string]string) bool {
 		return tradeStatus == tradeStatusSuccess
 	}
 	return strings.TrimSpace(params["status"]) == strconv.Itoa(easypayStatusPaid)
+}
+
+// Notify and order-creation fields are separate signing domains. EasyPay's
+// unescaped value concatenation otherwise lets return_url query pairs promote
+// an order signature to a success callback (upstream #7888). Keep the fork's
+// KeyingPay status=1 dialect; the active QueryOrder confirmation is independent
+// and still required before any balance or subscription fulfillment.
+var easyPayNotifyAllowedParams = map[string]bool{
+	"pid": true, "trade_no": true, "out_trade_no": true, "type": true,
+	"name": true, "money": true, "trade_status": true, "status": true,
+	"param": true, "sign": true, "sign_type": true,
 }
