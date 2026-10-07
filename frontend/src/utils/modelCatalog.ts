@@ -87,22 +87,9 @@ export interface CatalogModel {
   hasPeakGroup: boolean
 }
 
-export interface SubscriptionUnitRange {
-  min: number
-  max: number
-  exact: boolean
-}
-
 export interface PricingContext {
   isFiat: boolean
   rechargeMultiplier: number
-  subscriptionUnit: SubscriptionUnitRange | null
-}
-
-export interface PlanPrice {
-  min: number
-  max: number
-  exact: boolean
 }
 
 /** 0 表示免费，是有效价格；只有 null / 非法值才算未配置。 */
@@ -231,34 +218,6 @@ export function creditPrice(credit: number, kind: PriceKind): number {
 export function balancePrice(credit: number, kind: PriceKind, ctx: PricingContext): number {
   const scaled = credit * scaleOf(kind)
   return clean(ctx.isFiat ? scaled / ctx.rechargeMultiplier : scaled)
-}
-
-/** 套餐价：仅人民币模式且拿得到卡单价时有值。 */
-export function planPrice(credit: number, kind: PriceKind, ctx: PricingContext): PlanPrice | null {
-  const u = ctx.subscriptionUnit
-  if (!ctx.isFiat || !u || !(u.min > 0) || !(u.max > 0)) return null
-  const scaled = credit * scaleOf(kind)
-  const min = clean(scaled * u.min)
-  const max = u.exact ? min : clean(scaled * u.max)
-  return { min, max, exact: u.exact || Math.abs(u.max - u.min) < 1e-12 }
-}
-
-/**
- * 套餐单价 u：有生效套餐卡时用那张卡的 fiat_per_credit（精确）；
- * 否则用可购买套餐的区间。
- */
-export function resolveSubscriptionUnit(
-  activeSubscriptions: Array<{ status?: string; fiat_per_credit?: number | null }>,
-  bounds: { u_min: number; u_max: number } | null | undefined,
-): SubscriptionUnitRange | null {
-  for (const sub of activeSubscriptions) {
-    const rate = sub.fiat_per_credit
-    if (sub.status === 'active' && typeof rate === 'number' && Number.isFinite(rate) && rate > 0) {
-      return { min: rate, max: rate, exact: true }
-    }
-  }
-  if (!bounds || !(bounds.u_min > 0) || !(bounds.u_max > 0)) return null
-  return { min: Math.min(bounds.u_min, bounds.u_max), max: Math.max(bounds.u_min, bounds.u_max), exact: false }
 }
 
 /** 200000 → "200K"，1000000 → "1M"。 */

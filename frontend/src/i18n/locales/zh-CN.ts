@@ -1537,8 +1537,8 @@
     fiat: {
       intro: '按实际用量计费，从余额或套餐中扣除。',
       pricesLink: '各模型价格可在「价格与计费」页查看。',
-      balance: '余额价：用余额支付时的价格。',
-      plan: '套餐价：开通套餐后优先从套餐扣费，价格更低。',
+      rate: '倍率：每个分组的倍率不同，越低越省。',
+      plan: '套餐：开通后优先从套餐扣费，倍率更低，同样的价格扣得更少。',
       group: '分组：同一个模型在不同分组下价格不同，展开模型即可对比。',
       groupBrief: '分组：同一个模型在不同分组下价格不同。'
     }
@@ -1560,10 +1560,12 @@
     price: '价格',
     officialPrice: '官方价',
     lowest: '最低',
-    planPrice: '套餐价',
-    yourPlanPrice: '你的套餐价',
-    inOut: '输入 / 输出',
+    planRate: '套餐倍率',
+    yourPlanRate: '你的套餐倍率',
+    planRateLead: '低至',
     rateNote: '倍率是相对官方价的计费倍数，已包含在价格中',
+    rateNoteFiat: '价格已包含倍率，倍率越低越省。开通套餐后倍率更低，同样的价格扣得更少。',
+    rateNoteFiatNoPlan: '倍率越低越省。',
     rateCustom: '专属倍率，默认 {base}x',
     tiersFor: '分档价格（{group}）',
     context: '上下文长度',
