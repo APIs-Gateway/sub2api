@@ -55,7 +55,6 @@
           :key="m.key"
           :model="m"
           :expanded="expandedKeys.has(m.key)"
-          :subscription-unit="subscriptionUnit"
           @toggle="toggleModel(m.key)"
         />
       </ul>
@@ -80,24 +79,13 @@ import Icon from '@/components/icons/Icon.vue'
 import BillingRulesCard from '@/components/common/BillingRulesCard.vue'
 import ModelCatalogRow from '@/components/channels/ModelCatalogRow.vue'
 import userChannelsAPI, { type UserPriceCatalog } from '@/api/channels'
-import subscriptionsAPI, { type SubscriptionPricingBounds } from '@/api/subscriptions'
 import { useAppStore } from '@/stores/app'
-import { useSubscriptionStore } from '@/stores/subscriptions'
-import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { platformLabel } from '@/utils/platformColors'
-import { buildPriceCatalog, resolveSubscriptionUnit, type SubscriptionUnitRange } from '@/utils/modelCatalog'
+import { buildPriceCatalog } from '@/utils/modelCatalog'
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const subscriptionStore = useSubscriptionStore()
-const { rechargeMultiplier } = useCurrencyDisplay()
-const pricingBounds = ref<SubscriptionPricingBounds | null>(null)
-
-/** 套餐价用的卡单价：有生效卡取那张卡（精确），否则取可购买套餐的区间。 */
-const subscriptionUnit = computed<SubscriptionUnitRange | null>(() =>
-  resolveSubscriptionUnit(subscriptionStore.activeSubscriptions, pricingBounds.value),
-)
 
 const prices = ref<UserPriceCatalog | null>(null)
 const loading = ref(false)
@@ -139,15 +127,8 @@ async function loadChannels() {
   try {
     // 价格与倍率都由后端按各分组的价格阶段取好、乘好（含用户专属倍率），前端不再自己乘。
     prices.value = await userChannelsAPI.getPrices()
-    // 套餐单价区间只是展示增强，取不到时不显示套餐价
-    if (rechargeMultiplier.value !== 1 && !pricingBounds.value) {
-      subscriptionsAPI
-        .getSubscriptionPricing()
-        .then((b) => {
-          pricingBounds.value = b
-        })
-        .catch(() => {})
-    }
+    // 套餐倍率列所需的 /subscriptions/pricing 由 useRateDisplay 共享缓存请求（只在人民币模式、
+    // 支付开启时请求，失败静默，整列隐藏），这里不再单独取。
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {
