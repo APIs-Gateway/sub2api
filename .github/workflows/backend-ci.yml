@@ -15,16 +15,16 @@ jobs:
         include:
           - target: NEW
             suite: unit
-            ref: 86b302e661f9c398826ec08a4ae6838d6a25642d
+            ref: cc3ae5631fb29a61156cfe858faa684b0274d785
           - target: NEW
             suite: postgres
-            ref: 86b302e661f9c398826ec08a4ae6838d6a25642d
+            ref: cc3ae5631fb29a61156cfe858faa684b0274d785
           - target: OLD
             suite: unit
-            ref: 56cd6fb849306ad18553845173006009392ce85a
+            ref: 14d48cfd2ee9bac4b094b9d79addc17ac5317fd5
           - target: OLD
             suite: postgres
-            ref: 56cd6fb849306ad18553845173006009392ce85a
+            ref: 14d48cfd2ee9bac4b094b9d79addc17ac5317fd5
     steps:
       - uses: actions/checkout@v6
         with:
