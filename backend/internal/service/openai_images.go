@@ -229,6 +229,9 @@ func (s *OpenAIGatewayService) ParseOpenAIImagesRequest(c *gin.Context, body []b
 		if !gjson.ValidBytes(body) {
 			return nil, fmt.Errorf("failed to parse request body")
 		}
+		if err := ValidateGatewayModelField(body); err != nil {
+			return nil, err
+		}
 		if parseErr := parseOpenAIImagesJSONRequest(body, req); parseErr != nil {
 			return nil, parseErr
 		}
@@ -653,6 +656,11 @@ func (s *OpenAIGatewayService) ForwardImages(
 ) (*OpenAIForwardResult, error) {
 	if parsed == nil {
 		return nil, fmt.Errorf("parsed images request is required")
+	}
+	if !parsed.Multipart {
+		if err := rejectAmbiguousGatewayModel(c, body); err != nil {
+			return nil, err
+		}
 	}
 	switch account.Type {
 	case AccountTypeAPIKey:
