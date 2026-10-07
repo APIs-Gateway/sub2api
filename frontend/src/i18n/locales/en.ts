@@ -1530,8 +1530,8 @@
     fiat: {
       intro: 'Billed by actual usage, deducted from your balance or plan.',
       pricesLink: 'Model prices are on the "Pricing & Billing" page.',
-      balance: 'Balance price: what you pay when using balance.',
-      plan: 'Plan price: once you have a plan, usage is charged to it first at a lower price.',
+      rate: 'Rate: each group has its own rate; a lower rate costs less.',
+      plan: 'Plans: once active, usage is charged to the plan first at a lower rate, so the same price deducts less.',
       group: 'Groups: the same model costs different amounts in different groups. Expand a model to compare.',
       groupBrief: 'Groups: the same model costs different amounts in different groups.'
     }
@@ -1553,10 +1553,12 @@
     price: 'Price',
     officialPrice: 'Official price',
     lowest: 'Lowest',
-    planPrice: 'Plan price',
-    yourPlanPrice: 'Your plan price',
-    inOut: 'Input / Output',
+    planRate: 'Plan rate',
+    yourPlanRate: 'Your plan rate',
+    planRateLead: 'As low as',
     rateNote: 'Each rate is a multiple of the official price and is already included in the prices',
+    rateNoteFiat: 'Prices already include the rate; a lower rate costs less. With a plan the rate is lower, so the same price deducts less.',
+    rateNoteFiatNoPlan: 'A lower rate costs less.',
     rateCustom: 'Your rate, default {base}x',
     tiersFor: 'Tiered prices ({group})',
     context: 'Context length',
@@ -8273,7 +8275,7 @@
       price: 'Price',
       renewPrice: 'Renewal payment',
       changeDiff: 'Difference payment',
-      newPlanPriceFiat: 'New plan price',
+      newPlanPriceFiat: 'New plan amount',
       oldRemainingValueFiat: 'Remaining value of current plan',
       caps: 'Weekly cap {weekly} · Monthly cap {monthly}',
       quoteFailed: 'Failed to get a quote; adjust amount/duration and retry.',
@@ -8311,6 +8313,13 @@
 
   // Custom subscription purchase (no fixed plans: pick daily amount D + validity T, priced by volume u(D)).
   subscriptionPurchase: {
+    ratesTitle: 'Rates per group once active: the same price deducts less',
+    ratesGroup: 'Group',
+    ratesBalance: 'Balance rate',
+    ratesPlan: 'Plan rate',
+    ratesMore: 'Show all groups',
+    ratesLess: 'Show fewer',
+    rateValue: '{rate}x',
     title: 'Buy a subscription',
     desc: 'Customize daily amount and validity; larger daily amounts get a lower unit price',
     group: 'Platform / group',
