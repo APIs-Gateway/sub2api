@@ -35,7 +35,7 @@ describe('BillingRulesCard', () => {
     it('points to the pricing page and does not mention expanding models on pages without a model list', () => {
       expect(bullets(false)).toEqual([
         'billingRules.fiat.pricesLink',
-        'billingRules.fiat.balance',
+        'billingRules.fiat.rate',
         'billingRules.fiat.plan',
         'billingRules.fiat.groupBrief',
       ])
@@ -43,7 +43,7 @@ describe('BillingRulesCard', () => {
 
     it('tells users to expand a model on the pricing page itself', () => {
       expect(bullets(true)).toEqual([
-        'billingRules.fiat.balance',
+        'billingRules.fiat.rate',
         'billingRules.fiat.plan',
         'billingRules.fiat.group',
       ])

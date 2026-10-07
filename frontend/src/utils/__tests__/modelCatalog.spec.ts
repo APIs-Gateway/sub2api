@@ -7,8 +7,6 @@ import {
   exceeds,
   formatTokenCount,
   officialPrice,
-  planPrice,
-  resolveSubscriptionUnit,
   type PricingContext,
 } from '../modelCatalog'
 
@@ -48,27 +46,16 @@ const group = (id: number, name: string) => ({
   is_exclusive: false,
 })
 
-const fiat: PricingContext = { isFiat: true, rechargeMultiplier: 13, subscriptionUnit: { min: 0.05, max: 0.1, exact: false } }
-const usd: PricingContext = { isFiat: false, rechargeMultiplier: 1, subscriptionUnit: null }
+const fiat: PricingContext = { isFiat: true, rechargeMultiplier: 13 }
+const usd: PricingContext = { isFiat: false, rechargeMultiplier: 1 }
 
 describe('price math', () => {
-  it('credit, balance, plan and official prices (the credit price already carries the rate)', () => {
+  it('credit, balance and official prices (the credit price already carries the rate)', () => {
     const credit = 3e-6 * 1.4
     expect(creditPrice(credit, 'token')).toBeCloseTo(4.2)
     expect(balancePrice(credit, 'token', fiat)).toBeCloseTo(4.2 / 13, 9)
     expect(balancePrice(credit, 'token', usd)).toBeCloseTo(4.2)
     expect(officialPrice(3e-6, 'token')).toBe(3)
-    const p = planPrice(credit, 'token', fiat)!
-    expect(p.min).toBeCloseTo(0.21)
-    expect(p.max).toBeCloseTo(0.42)
-    expect(p.exact).toBe(false)
-  })
-
-  it('plan price is exact with a card and absent in USD mode or without unit', () => {
-    const exact = planPrice(2, 'request', { ...fiat, subscriptionUnit: { min: 0.07, max: 0.07, exact: true } })!
-    expect(exact).toMatchObject({ min: 0.14, max: 0.14, exact: true })
-    expect(planPrice(2, 'request', usd)).toBeNull()
-    expect(planPrice(2, 'request', { ...fiat, subscriptionUnit: null })).toBeNull()
   })
 
   it('m=1 keeps the credit price in fiat context', () => {
@@ -81,22 +68,6 @@ describe('price math', () => {
     expect(exceeds(5, 5)).toBe(false)
     expect(exceeds(7.000000000001, 7)).toBe(false)
     expect(exceeds(0, 0)).toBe(false)
-  })
-})
-
-describe('resolveSubscriptionUnit', () => {
-  it('prefers the first active card with a positive fiat_per_credit', () => {
-    const u = resolveSubscriptionUnit(
-      [{ status: 'expired', fiat_per_credit: 0.01 }, { status: 'active', fiat_per_credit: 0 }, { status: 'active', fiat_per_credit: 0.06 }],
-      { u_min: 0.05, u_max: 0.1 },
-    )
-    expect(u).toEqual({ min: 0.06, max: 0.06, exact: true })
-  })
-
-  it('falls back to the purchasable range, ordering min and max', () => {
-    expect(resolveSubscriptionUnit([], { u_min: 0.1, u_max: 0.05 })).toEqual({ min: 0.05, max: 0.1, exact: false })
-    expect(resolveSubscriptionUnit([], null)).toBeNull()
-    expect(resolveSubscriptionUnit([], { u_min: 0, u_max: 0.1 })).toBeNull()
   })
 })
 
