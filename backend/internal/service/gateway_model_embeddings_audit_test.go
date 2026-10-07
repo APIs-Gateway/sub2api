@@ -79,7 +79,7 @@ func TestGatewayModelEmbeddings_ForwardWireAndPolicy(t *testing.T) {
 			}
 			for _, tc := range []struct {
 				name, fields, input string
-				ambiguous          bool
+				ambiguous           bool
 			}{
 				{"plain_duplicate", `"model":"text-embedding-3-small","model":"text-embedding-3-large"`, `["hello","world"]`, true},
 				{"escaped_duplicate", `"model":"text-embedding-3-small","\u006dodel":"text-embedding-3-large"`, `["hello","world"]`, true},
@@ -118,11 +118,11 @@ func TestGatewayModelEmbeddings_ForwardWireAndPolicy(t *testing.T) {
 					}
 					require.NoError(t, err)
 					require.NotNil(t, result)
-						require.Equal(t, 1, upstream.calls)
-						require.Equal(t, account.ID, upstream.accountID)
-						require.Equal(t, account.Concurrency, upstream.concurrency)
-						require.Equal(t, "https://api.example.com/v1/embeddings", upstream.requestURL)
-						require.Equal(t, "Bearer sk-embeddings-fixture", upstream.authorization)
+					require.Equal(t, 1, upstream.calls)
+					require.Equal(t, account.ID, upstream.accountID)
+					require.Equal(t, account.Concurrency, upstream.concurrency)
+					require.Equal(t, "https://api.example.com/v1/embeddings", upstream.requestURL)
+					require.Equal(t, "Bearer sk-embeddings-fixture", upstream.authorization)
 					wantModel := "text-embedding-3-small"
 					if mapped {
 						wantModel = "provider-embedding"
