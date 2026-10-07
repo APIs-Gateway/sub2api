@@ -146,7 +146,16 @@ func TestChatFallbackTerminal_NoMarker(t *testing.T) {
 				}
 				if tc.name == "multiple_tools" {
 					require.Contains(t, output, "call_a")
-					require.Contains(t, output, "call_b")
+					require.Contains(t, output, "first")
+					if mode == "messages_indirect" {
+						// The existing serializer queues the next tool until the first
+						// block closes. EOF must not fabricate that successful close.
+						require.NotContains(t, output, "call_b")
+						require.NotContains(t, output, "event: content_block_stop\n")
+					} else {
+						require.Contains(t, output, "call_b")
+						require.Contains(t, output, "second")
+					}
 				}
 				if tc.name == "reasoning" {
 					require.Contains(t, output, "late thinking")
