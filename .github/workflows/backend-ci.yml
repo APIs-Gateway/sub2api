@@ -249,6 +249,9 @@ jobs:
       - name: Username draft ownership, server synchronization and API error controls (actual components)
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/components/user/profile/__tests__/ProfileEditForm.draft.spec.ts src/components/user/profile/__tests__/ProfileEditForm.spec.ts
+      - name: Usage tooltip currency and equivalent-rate actual regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/UsageView.spec.ts src/views/user/__tests__/UsageView.servedGroup.spec.ts src/utils/__tests__/rateDisplay.spec.ts
       - name: Frontend typecheck and critical vitest
         run: make test-frontend
       - name: Custom Markdown actual page ordering and loading regressions
