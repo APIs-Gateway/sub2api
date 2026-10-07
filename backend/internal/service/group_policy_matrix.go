@@ -558,6 +558,16 @@ func (p *matrixPolicy) loadSnapshot(ctx context.Context, groupID int64) *matrixS
 	}
 
 	v, _, _ := p.sf.Do(fmt.Sprintf("%d:%d", groupID, gen), func() (any, error) {
+		// A previous flight may have completed after the caller checked the cache.
+		// Reuse its result only while this generation and the entry remain valid.
+		now := p.now()
+		p.mu.RLock()
+		e := p.entries[groupID]
+		fresh := p.generation == gen && e != nil && !e.invalidated && now.Before(e.expiresAt)
+		p.mu.RUnlock()
+		if fresh {
+			return e.snap, nil
+		}
 		return p.load(ctx, groupID, gen), nil
 	})
 	// load 永远返回非 nil 的 *matrixSnapshot，所以这里的断言不会失败。
