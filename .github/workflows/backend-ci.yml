@@ -205,7 +205,7 @@ jobs:
         working-directory: backend
         env:
           CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=100 -timeout=2m -v -run '^TestStagedPolicy_ColdSnapshotLoadsSynchronously$|^TestMatrixPolicy_ConcurrentFastSnapshotReads$' ./internal/service/
+        run: go test -tags=unit -race -count=100 -timeout=2m -v -run '^(TestStagedPolicy_ColdSnapshotLoadsSynchronously|TestMatrixPolicy_ConcurrentFastSnapshotReads)$' ./internal/service/
       - name: Upload backend coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
