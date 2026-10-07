@@ -2974,6 +2974,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	if strings.TrimSpace(token) == "" {
 		return errors.New("token is empty")
 	}
+	if err := validateGatewayWSModelPayload(firstClientMessage); err != nil {
+		return err
+	}
 	if err := s.rejectOpenAIResponsesWebSocketImageGeneration(firstClientMessage); err != nil {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
 		return err
@@ -3112,6 +3115,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		if !gjson.ValidBytes(trimmed) {
 			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", "Failed to parse request body", ErrOpenAIWSInvalidJSONPayload))
+		}
+
+		if err := validateGatewayWSModelPayload(trimmed); err != nil {
+			return openAIWSClientPayload{}, err
 		}
 
 		values := gjson.GetManyBytes(trimmed, "type", "model", "prompt_cache_key", "previous_response_id")

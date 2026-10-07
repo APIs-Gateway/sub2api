@@ -147,6 +147,13 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=unit -race -count=1 -run '^TestAntigravityInterruptedUsage' -v ./internal/service/
+      - name: Model field ambiguity and upstream mismatch regression gate
+        working-directory: backend
+        run: |
+          git rev-parse HEAD
+          git hash-object internal/service/gateway_model_field.go internal/service/duplicate_model_upstream_audit_test.go internal/service/gateway_model_field_test.go internal/service/gateway_model_ws_forward_test.go internal/handler/gateway_model_field_test.go
+          test -z "$(gofmt -l internal/service/gateway_model_field.go internal/service/duplicate_model_upstream_audit_test.go internal/service/gateway_model_field_test.go internal/service/gateway_model_ws_forward_test.go internal/handler/gateway_model_field_test.go)"
+          go test -tags=unit -race -count=1 -v -run '^(TestGatewayModelField_|TestDuplicateModelAudit_|TestUpstreamModelMismatch_)' ./internal/service/ ./internal/handler/
       - name: Integration tests (coverage)
         working-directory: backend
         run: make test-integration-cover

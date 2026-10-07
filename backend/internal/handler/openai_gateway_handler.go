@@ -343,6 +343,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 
+	if err := service.ValidateGatewayModelField(body); err != nil {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+
 	setOpsRequestContext(c, "", false)
 	sessionHashBody := body
 	body, ok = h.normalizeOpenAIResponsesCompactRequest(c, reqLog, body)
@@ -365,6 +370,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 
 	// 入口先去掉 model 首尾空白，之后的映射、调度、转发、计价、日志都用同一个名字。
+	if err := service.ValidateGatewayModelField(body); err != nil {
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+
 	body = service.TrimRequestBodyModel(body)
 	// 使用 gjson 只读提取字段做校验，避免完整 Unmarshal
 	modelResult := gjson.GetBytes(body, "model")
@@ -1920,6 +1930,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 
 	// 首条消息的 model 也在入口去掉首尾空白，转发给上游的 payload 与 reqModel 保持一致。
+	if err := service.ValidateGatewayWSModelFields(firstMessage); err != nil {
+		writeOpenAIWSRejection(ctx, wsConn, http.StatusBadRequest, "invalid_request_error", "", err.Error())
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, err.Error())
+		return
+	}
+
 	firstMessage = service.TrimRequestBodyModel(firstMessage)
 	reqModel := strings.TrimSpace(gjson.GetBytes(firstMessage, "model").String())
 	if reqModel == "" {
@@ -2325,6 +2341,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if !gjson.ValidBytes(payload) {
 					writeOpenAIWSRejection(ctx, wsConn, http.StatusBadRequest, "invalid_request_error", "", "Failed to parse request body")
 					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json"))
+				}
+				if err := service.ValidateGatewayWSModelFields(payload); err != nil {
+					writeOpenAIWSRejection(ctx, wsConn, http.StatusBadRequest, "invalid_request_error", "", err.Error())
+					return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, err.Error(), err)
 				}
 				model := strings.TrimSpace(originalModel)
 				if model == "" {

@@ -684,6 +684,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		writeOpenAIWSLocalRejectionEvent(ctx, clientConn, rejection)
 		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, closeReason, rejection)
 	}
+	if err := ValidateGatewayWSModelFields(firstClientMessage); err != nil {
+		return rejectLocalPayload(err.Error(), err.Error(), err)
+	}
 	promptCacheKey := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "prompt_cache_key").String())
 	if isOpenAIResponsesLiteWebSocketPayload(firstClientMessage) {
 		liteFirstMessage, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(firstClientMessage, account)
@@ -954,6 +957,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		// capturedSessionModel 的读写都发生在该 goroutine 内，因此无需
 		// 加锁/原子化。
 		filter: func(msgType coderws.MessageType, payload []byte) (out []byte, blocked *OpenAIFastBlockedError, filterErr error) {
+			if msgType == coderws.MessageText || msgType == coderws.MessageBinary {
+				if err := ValidateGatewayWSModelFields(payload); err != nil {
+					return payload, nil, rejectLocalPayload(err.Error(), err.Error(), err)
+				}
+			}
 			// JSON can be carried in either a text or binary WebSocket frame.
 			// Check this policy before hooks/Fast Policy so a later
 			// response.create or session.update cannot activate image generation

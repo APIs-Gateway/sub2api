@@ -81,6 +81,9 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsFromStart(
 	defaultMappedModel string,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
+	if err := rejectAmbiguousGatewayModel(c, body); err != nil {
+		return nil, err
+	}
 	// 1. Parse minimal fields needed for routing/billing
 	originalModel := gjson.GetBytes(body, "model").String()
 	if originalModel == "" {
