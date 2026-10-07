@@ -18,7 +18,7 @@ import (
 
 func TestGatewayModelOtherIngress_RejectsBeforeRouting(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, route := range []string{"anthropic_chat", "gemini_chat", "alpha_search", "images_generation", "images_edits"} {
+	for _, route := range []string{"anthropic_chat", "gemini_chat", "alpha_search", "images_generation", "images_edits", "count_tokens"} {
 		for _, tc := range []struct {
 			name, fields string
 			ambiguous    bool
@@ -50,6 +50,8 @@ func TestGatewayModelOtherIngress_RejectsBeforeRouting(t *testing.T) {
 				path := "/v1/chat/completions"
 				invoke := native.ChatCompletions
 				switch route {
+				case "count_tokens":
+					path, invoke = "/v1/messages/count_tokens", native.CountTokens
 				case "alpha_search":
 					path, invoke = "/v1/alpha/search", openAI.AlphaSearch
 				case "images_generation":
@@ -59,13 +61,13 @@ func TestGatewayModelOtherIngress_RejectsBeforeRouting(t *testing.T) {
 				}
 				// Chat must use a supported text model, not the Images-only guard.
 				fields := tc.fields
-				if route == "anthropic_chat" || route == "gemini_chat" {
+				if route == "anthropic_chat" || route == "gemini_chat" || route == "count_tokens" {
 					fields = stringsForModelAuditChat(fields)
 				}
 				c, rec := newOpenAIFailoverTestContext(t, context.Background(), path, `{`+fields+`,"stream":false,"prompt":"draw a cat","input":"audit","messages":[{"role":"user","content":"audit"}],"commands":{},"images":[{"image_url":"https://example.com/input.png"}]}`, true)
 				key, ok := middleware.GetAPIKeyFromContext(c)
 				require.True(t, ok)
-				if route == "anthropic_chat" || route == "gemini_chat" {
+				if route == "anthropic_chat" || route == "gemini_chat" || route == "count_tokens" {
 					key.Group.Platform = platform
 				}
 				require.NotPanics(t, func() { invoke(c) })

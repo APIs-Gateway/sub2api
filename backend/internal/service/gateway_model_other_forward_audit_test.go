@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -21,17 +22,19 @@ import (
 
 type otherModelAuditUpstream struct {
 	HTTPUpstream
-	calls      int
-	accountID  int64
-	rawBody    []byte
-	response   string
-	requestURL string
+	calls       int
+	accountID   int64
+	rawBody     []byte
+	response    string
+	requestURL  string
+	contentType string
 }
 
 func (u *otherModelAuditUpstream) Do(req *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
 	u.calls++
 	u.accountID = accountID
 	u.requestURL = req.URL.String()
+	u.contentType = req.Header.Get("Content-Type")
 	var err error
 	u.rawBody, err = io.ReadAll(req.Body)
 	if err != nil {
@@ -46,7 +49,7 @@ func (u *otherModelAuditUpstream) DoWithTLS(req *http.Request, proxy string, acc
 
 func TestGatewayModelOtherForward_RealOutboundGuards(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, route := range []string{"anthropic_chat", "gemini_chat", "alpha_raw", "alpha_sanitized", "images_json"} {
+	for _, route := range []string{"anthropic_chat", "gemini_chat", "alpha_raw", "alpha_sanitized", "images_json", "count_tokens"} {
 		for _, tc := range []struct {
 			name, fields string
 			ambiguous    bool
@@ -74,6 +77,13 @@ func TestGatewayModelOtherForward_RealOutboundGuards(t *testing.T) {
 				svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 				var err error
 				switch route {
+				case "count_tokens":
+					account.Platform = PlatformAnthropic
+					account.Extra = map[string]any{"anthropic_passthrough": true}
+					account.Credentials["model_mapping"] = map[string]any{"public-small": "claude-sonnet-4-5", "public-large": "claude-opus-4-5"}
+					upstream.response = `{"input_tokens":42}`
+					parsed := &ParsedRequest{Body: NewRequestBodyRef(body), Model: "public-small"}
+					err = (&GatewayService{cfg: &config.Config{}, httpUpstream: upstream}).ForwardCountTokens(context.Background(), c, account, parsed)
 				case "anthropic_chat":
 					account.Platform = PlatformAnthropic
 					account.Credentials["model_mapping"] = map[string]any{"public-small": "claude-sonnet-4-5", "public-large": "claude-sonnet-4-5"}
@@ -108,6 +118,10 @@ func TestGatewayModelOtherForward_RealOutboundGuards(t *testing.T) {
 				require.Equal(t, 1, upstream.calls, "controls must prove the outbound harness is usable")
 				require.Equal(t, account.ID, upstream.accountID)
 				require.NotEmpty(t, upstream.rawBody)
+				if route == "count_tokens" {
+					require.Equal(t, "claude-sonnet-4-5", gjson.GetBytes(upstream.rawBody, "model").String())
+					require.Equal(t, int64(42), gjson.GetBytes(rec.Body.Bytes(), "input_tokens").Int())
+				}
 				if strings.HasPrefix(route, "alpha_") {
 					require.Equal(t, "provider-small", gjson.GetBytes(upstream.rawBody, "model").String())
 					require.Equal(t, gjson.GetBytes(body, "commands").Raw, gjson.GetBytes(upstream.rawBody, "commands").Raw)
@@ -148,6 +162,7 @@ func TestGatewayModelOtherForward_ImagesParserContracts(t *testing.T) {
 		var body bytes.Buffer
 		writer := multipart.NewWriter(&body)
 		require.NoError(t, writer.WriteField("model", "gpt-image-2"))
+		require.NoError(t, writer.WriteField("stream", "false"))
 		require.NoError(t, writer.WriteField("prompt", `keep {"model":"a","model":"b"} as text`))
 		part, err := writer.CreateFormFile("image", "input.png")
 		require.NoError(t, err)
@@ -163,6 +178,26 @@ func TestGatewayModelOtherForward_ImagesParserContracts(t *testing.T) {
 		require.Equal(t, "gpt-image-2", parsed.Model)
 		require.Len(t, parsed.Uploads, 1)
 		require.Equal(t, "fixture-image", string(parsed.Uploads[0].Data))
+		upstream := &otherModelAuditUpstream{response: `{"created":1,"data":[{"b64_json":"aW1hZ2U="}]}`}
+		account := &Account{ID: 7890, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "fixture-key", "base_url": "https://api.example.com"}}
+		result, err := (&OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}).ForwardImages(context.Background(), c, account, body.Bytes(), parsed, "")
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, 1, upstream.calls)
+		_, params, err := mime.ParseMediaType(upstream.contentType)
+		require.NoError(t, err)
+		form, err := multipart.NewReader(bytes.NewReader(upstream.rawBody), params["boundary"]).ReadForm(1 << 20)
+		require.NoError(t, err)
+		defer func() { _ = form.RemoveAll() }()
+		require.Equal(t, []string{"gpt-image-2"}, form.Value["model"])
+		require.Equal(t, []string{`keep {"model":"a","model":"b"} as text`}, form.Value["prompt"])
+		require.Len(t, form.File["image"], 1)
+		file, err := form.File["image"][0].Open()
+		require.NoError(t, err)
+		defer func() { _ = file.Close() }()
+		data, err := io.ReadAll(file)
+		require.NoError(t, err)
+		require.Equal(t, "fixture-image", string(data))
 	})
 }
 
