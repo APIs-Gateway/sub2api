@@ -143,9 +143,10 @@
                         step="1"
                         min="0"
                         autocomplete="off"
-                        :value="entry.rpm_override"
+                        :value="rpmInputDrafts.get(entry.user_id) ?? entry.rpm_override"
+                        :aria-invalid="invalidRpmUserIds.has(entry.user_id)"
                         class="hide-spinner w-20 rounded border border-gray-200 bg-white px-2 py-1 text-center text-sm font-medium transition-colors focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/20 dark:border-dark-500 dark:bg-dark-700 dark:focus:border-primary-500"
-                        @change="updateLocalRpm(entry.user_id, ($event.target as HTMLInputElement).value)"
+                        @input="updateLocalRpm(entry.user_id, ($event.target as HTMLInputElement).value)"
                       />
                     </td>
                     <td class="px-2 py-2">
@@ -193,7 +194,7 @@
             v-if="isDirty"
             type="button"
             class="btn btn-primary btn-sm px-4 py-1.5"
-            :disabled="saving"
+            :disabled="saving || invalidRpmUserIds.size > 0"
             @click="handleSave"
           >
             <Icon v-if="saving" name="refresh" size="sm" class="mr-1 animate-spin" />
@@ -206,7 +207,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
@@ -236,6 +237,12 @@ const loading = ref(false)
 const saving = ref(false)
 const serverEntries = ref<GroupRPMOverrideEntry[]>([])
 const localEntries = ref<LocalEntry[]>([])
+const rpmInputDrafts = reactive(new Map<number, string>())
+const invalidRpmUserIds = reactive(new Set<number>())
+const resetRpmInputs = () => {
+  rpmInputDrafts.clear()
+  invalidRpmUserIds.clear()
+}
 const searchQuery = ref('')
 const searchResults = ref<AdminUser[]>([])
 const showDropdown = ref(false)
@@ -296,7 +303,10 @@ const adjustPage = () => {
   if (currentPage.value > totalPages) currentPage.value = totalPages
 }
 
+watch(() => props.group?.id, resetRpmInputs)
+
 watch(() => props.show, (val) => {
+  resetRpmInputs()
   if (val && props.group) {
     currentPage.value = 1
     searchQuery.value = ''
@@ -348,6 +358,8 @@ const selectUser = (user: AdminUser) => {
 const handleAddLocal = () => {
   if (!selectedUser.value || newRpm.value == null || !Number.isInteger(newRpm.value) || newRpm.value < 0) return
   const user = selectedUser.value
+  rpmInputDrafts.delete(user.id)
+  invalidRpmUserIds.delete(user.id)
   const idx = localEntries.value.findIndex(e => e.user_id === user.id)
   const entry: LocalEntry = {
     user_id: user.id,
@@ -369,14 +381,21 @@ const handleAddLocal = () => {
 }
 
 const updateLocalRpm = (userId: number, value: string) => {
-  if (!value.trim()) return
-  const num = Number(value)
-  if (!Number.isInteger(num) || num < 0) return
   const entry = localEntries.value.find(e => e.user_id === userId)
-  if (entry) entry.rpm_override = num
+  if (!entry) return
+  rpmInputDrafts.set(userId, value)
+  const num = Number(value)
+  if (!value.trim() || !Number.isInteger(num) || num < 0) {
+    invalidRpmUserIds.add(userId)
+    return
+  }
+  invalidRpmUserIds.delete(userId)
+  entry.rpm_override = num
 }
 
 const removeLocal = (userId: number) => {
+  rpmInputDrafts.delete(userId)
+  invalidRpmUserIds.delete(userId)
   localEntries.value = localEntries.value.filter(e => e.user_id !== userId)
   adjustPage()
 }
@@ -389,6 +408,7 @@ const clearAllLocal = async () => {
     await adminAPI.groups.clearGroupRPMOverrides(props.group.id)
     localEntries.value = []
     serverEntries.value = []
+    resetRpmInputs()
     appStore.showSuccess(t('admin.groups.rpmSaved'))
   } catch (error) {
     appStore.showError(t('admin.groups.failedToSave'))
@@ -399,12 +419,13 @@ const clearAllLocal = async () => {
 }
 
 const handleCancel = () => {
+  resetRpmInputs()
   localEntries.value = cloneEntries(serverEntries.value)
   adjustPage()
 }
 
 const handleSave = async () => {
-  if (!props.group) return
+  if (!props.group || saving.value || invalidRpmUserIds.size > 0) return
   saving.value = true
   try {
     const entries = localEntries.value.map(e => ({
@@ -424,6 +445,7 @@ const handleSave = async () => {
 }
 
 const handleClose = () => {
+  resetRpmInputs()
   if (isDirty.value) {
     localEntries.value = cloneEntries(serverEntries.value)
   }
