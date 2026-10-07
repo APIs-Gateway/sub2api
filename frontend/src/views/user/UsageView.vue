@@ -613,9 +613,7 @@
           </div>
           <div class="flex items-center justify-between gap-6">
             <span class="text-gray-400">{{ t('usage.rate') }}</span>
-            <span class="num font-semibold text-white"
-              >{{ formatMultiplier(tooltipData?.rate_multiplier || 1) }}x</span
-            >
+            <span class="num font-semibold text-white" data-test="tip-rate">{{ tooltipRateText }}</span>
           </div>
           <!--
             三行拆开三个不同的概念，这是整个改动的核心：
@@ -629,7 +627,10 @@
               >{{ tipCost(tooltipData?.total_cost ?? 0) }}</span
             >
           </div>
-          <div class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5">
+          <div
+            v-if="!isFiat"
+            class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5"
+          >
             <span class="text-gray-400">{{ tooltipDeductedLabel }}</span>
             <span class="num font-medium text-white">{{
               formatUsd(tooltipData?.actual_cost ?? 0, EXACT_DIGITS)
@@ -640,9 +641,9 @@
             class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5"
           >
             <span class="text-gray-400">{{ t('usage.yourSpend') }}</span>
-            <span class="num font-semibold text-white">{{
+            <span class="num font-semibold text-white" data-test="tip-spend">{{
               formatFiat(tooltipFiatCost)
-            }}</span>
+            }}<template v-if="isFiat">{{ ` ${tooltipSpendSource}` }}</template></span>
           </div>
         </div>
         <!-- Tooltip Arrow (left side) -->
@@ -676,6 +677,8 @@ import { EXACT_DIGITS, type MoneyDigits, useCurrencyDisplay } from '@/composable
 import CurrencyModeSwitch from '@/components/common/CurrencyModeSwitch.vue'
 import NumText from '@/components/common/NumText.vue'
 import { formatMultiplier } from '@/utils/formatters'
+import { useRateDisplay } from '@/composables/useRateDisplay'
+import { formatRate } from '@/utils/rateDisplay'
 import { formatCompactCount, formatCount, formatDurationMs } from '@/utils/numberFormat'
 import { calculateTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
@@ -713,6 +716,8 @@ const {
   officialCnyRate,
   formatOfficial
 } = useCurrencyDisplay()
+
+const { usageRowRate } = useRateDisplay()
 
 // 官方价：人民币模式按后台汇率换成 ¥；后端没提供汇率时整块官方价隐藏，不混排 $。
 const officialAvailable = computed(() => !isFiat.value || officialCnyRate.value > 0)
@@ -774,6 +779,22 @@ const tooltipDeductedLabel = computed(() =>
   tooltipData.value?.billing_type === 1
     ? t('usage.subscriptionDeducted')
     : t('usage.balanceDeducted')
+)
+
+/**
+ * 悬停里的倍率。人民币模式按「这行实付 ÷ 官方价」的等效口径（余额行 r ÷ m、套餐行 r × u），
+ * 官方价为 0 时显示 `-`；美元模式和 m = 1 的站点沿用原来的原始倍率，逐字不变。
+ */
+const tooltipRateText = computed(() => {
+  const row = tooltipData.value
+  if (!isFiat.value) return `${formatMultiplier(row?.rate_multiplier || 1)}x`
+  const rate = row ? usageRowRate(row) : null
+  return rate === null ? '-' : `${formatRate(rate)}x`
+})
+
+/** 人民币模式下，花费后面标出这笔是从余额还是从套餐扣的（billing_type 1 = 套餐）。 */
+const tooltipSpendSource = computed(() =>
+  tooltipData.value?.billing_type === 1 ? t('usage.spendFromPlan') : t('usage.spendFromBalance')
 )
 
 // Token tooltip state

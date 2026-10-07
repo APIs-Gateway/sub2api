@@ -1319,6 +1319,8 @@
     balanceDeducted: 'Balance deducted',
     subscriptionDeducted: 'Plan quota deducted',
     yourSpend: 'Your spend',
+    spendFromBalance: 'Balance',
+    spendFromPlan: 'Plan',
     currencyFiat: '¥',
     currencyUsd: '$',
     currencySwitchLabel: 'Switch display unit',
