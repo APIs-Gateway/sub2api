@@ -53,7 +53,7 @@
       <!-- 按分组 -->
       <div class="mt-5">
         <h3 class="mb-1 text-sm font-semibold text-gray-900 dark:text-white">{{ t('availableChannels.byGroup') }}</h3>
-        <p class="mb-2 text-xs text-gray-500 dark:text-gray-400" data-test="rate-note">{{ t('availableChannels.rateNote') }}</p>
+        <p class="mb-2 text-xs text-gray-500 dark:text-gray-400" data-test="rate-note">{{ rateNote }}</p>
         <div v-for="sec in sections" :key="sec.kind" :class="sec.first ? '' : 'mt-3'" data-test="group-section">
           <h4 v-if="sections.length > 1" class="mb-1 text-xs text-gray-500 dark:text-gray-400" data-test="section-unit">{{ sec.unitLabel }}</h4>
           <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-dark-700">
@@ -65,9 +65,8 @@
                   <th v-for="col in sec.columns" :key="col" scope="col" class="px-3 py-2 text-right font-medium">{{ columnLabels[col] }}</th>
                 </template>
                 <th v-else scope="col" class="px-3 py-2 text-right font-medium">{{ t('availableChannels.price') }}</th>
-                <th v-if="sec.showPlan" scope="col" class="px-3 py-2 text-right font-medium">
-                  {{ unit?.exact ? t('availableChannels.yourPlanPrice') : t('availableChannels.planPrice') }}
-                  <span v-if="sec.showInOut" class="block text-[11px] font-normal text-gray-500 dark:text-gray-400">{{ t('availableChannels.inOut') }}</span>
+                <th v-if="sec.showPlan" scope="col" class="px-3 py-2 text-right font-medium" data-test="plan-header">
+                  {{ sec.hasCard ? t('availableChannels.yourPlanRate') : t('availableChannels.planRate') }}
                 </th>
               </tr>
             </thead>
@@ -148,38 +147,44 @@ import {
   exceeds,
   formatTokenCount,
   officialPrice,
-  planPrice,
   type CatalogModel,
   type GroupPrice,
   type ModelTier,
-  type PlanPrice,
   type PriceKind,
   type PriceSet,
   type PricingContext,
-  type SubscriptionUnitRange,
 } from '@/utils/modelCatalog'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { useRateDisplay } from '@/composables/useRateDisplay'
+import type { RateView } from '@/utils/rateDisplay'
 import type { GroupPlatform } from '@/types'
 
 const props = withDefaults(
   defineProps<{
     model: CatalogModel
     expanded?: boolean
-    subscriptionUnit?: SubscriptionUnitRange | null
   }>(),
-  { expanded: false, subscriptionUnit: null },
+  { expanded: false },
 )
 const emit = defineEmits<{ (e: 'toggle'): void }>()
 
 const { t } = useI18n()
 const { isFiat, rechargeMultiplier, officialCnyRate, formatFiat, formatUsd, formatOfficial } = useCurrencyDisplay()
 
-const unit = computed(() => (isFiat.value ? props.subscriptionUnit : null))
+const { rateView, planAvailable } = useRateDisplay()
 const ctx = computed<PricingContext>(() => ({
   isFiat: isFiat.value,
   rechargeMultiplier: rechargeMultiplier.value,
-  subscriptionUnit: props.subscriptionUnit,
 }))
+
+/**
+ * 说明文字：人民币模式下倍率是等效倍率，价格里已包含；能开通套餐时再补一句套餐更省。
+ * 美元模式、free 站（isFiat 为假）保持原来的说法。
+ */
+const rateNote = computed(() => {
+  if (!isFiat.value) return t('availableChannels.rateNote')
+  return planAvailable.value ? t('availableChannels.rateNoteFiat') : t('availableChannels.rateNoteFiatNoPlan')
+})
 
 const panelId = computed(() => `model-panel-${props.model.key.replace(/[^a-zA-Z0-9_-]/g, '_')}`)
 const expandable = computed(() => props.model.entries.length > 0)
@@ -196,10 +201,6 @@ const unitLabel = computed(() =>
 const UNIT_PRICE = { unitPrice: true } as const
 function money(n: number): string {
   return isFiat.value ? formatFiat(n, UNIT_PRICE) : formatUsd(n, UNIT_PRICE)
-}
-function formatPlan(p: PlanPrice | null): string {
-  if (!p) return '-'
-  return p.exact ? formatFiat(p.min, UNIT_PRICE) : `${formatFiat(p.min, UNIT_PRICE)}–${formatFiat(p.max, UNIT_PRICE)}`
 }
 
 /** token 计费可能出现的价格列，按展示顺序排列。 */
@@ -233,13 +234,6 @@ function cellsOf(set: PriceSet, k: PriceKind = kind.value): Cells {
     imageOutput: f(set.imageOutput),
     unit: f(set.unit),
   }
-}
-
-function planOf(set: PriceSet, k: PriceKind = kind.value): string {
-  const p = (v: number | null) => (v == null ? null : planPrice(v, k, ctx.value))
-  if (k !== 'token') return formatPlan(p(set.unit))
-  if (set.input == null && set.output == null) return formatPlan(p(set.imageOutput))
-  return `${formatPlan(p(set.input))} / ${formatPlan(p(set.output))}`
 }
 
 interface PriceLine {
@@ -300,33 +294,40 @@ const sections = computed(() =>
   props.model.kinds.map((k, i) => {
     const entries = props.model.entries.filter((e) => e.pricing.kind === k)
     const sets = entries.map((e) => e.pricing.first)
+    // 余额倍率 r ÷ m、套餐倍率 r × u 都走 useRateDisplay，这里不自己换算。
+    const views = entries.map((e) => rateView(e.group.baseRate, e.group.hasCustomRate ? e.group.rate : null))
     return {
       kind: k,
       first: i === 0,
       unitLabel: k === 'token' ? t('availableChannels.pricing.perMillion') : t('availableChannels.pricing.perRequest'),
       columns: k === 'token' ? visibleColumns(sets) : [],
-      showInOut: k === 'token' && visibleColumns(sets).includes('input'),
-      showPlan: entries.some((e) =>
-        [e.pricing.first.input, e.pricing.first.output, e.pricing.first.imageOutput, e.pricing.first.unit].some(
-          (v) => v != null && planPrice(v, k, ctx.value) != null,
-        ),
-      ),
+      // 套餐倍率列：能出现套餐倍率（人民币模式、m ≠ 1、支付开启、取到 u_min）才整列显示。
+      showPlan: planAvailable.value,
+      hasCard: views.some((v) => v.yourPlan !== undefined),
       rows: entries.map((e, idx) => {
         const g = e.group
+        const view = views[idx]
         return {
           id: g.id,
           name: g.name,
-          rateText: formatRate(g.rate),
-          customRateNote: g.hasCustomRate ? t('availableChannels.rateCustom', { base: formatRate(g.baseRate) }) : '',
+          rateText: view.main,
+          customRateNote: view.mainStruck !== undefined ? t('availableChannels.rateCustom', { base: view.mainStruck }) : '',
           peakText: e.pricing.peakMultiplier ? peakShortOf(e.pricing.peakMultiplier) : '',
           lowest: entries.length > 1 && idx === 0,
           cells: cellsOf(e.pricing.first, k),
-          plan: planOf(e.pricing.first, k),
+          plan: planCell(view),
         }
       }),
     }
   }),
 )
+
+/** 套餐倍率单元格：有生效卡写卡的精确倍率，否则写「低至」最低倍率；没有值写 `-`。 */
+function planCell(view: RateView): string {
+  if (view.yourPlan !== undefined) return `${view.yourPlan}x`
+  if (view.plan !== undefined) return t('availableChannels.planRateCell', { rate: view.plan })
+  return '-'
+}
 
 /** 峰时倍率按分组标注：只有走默认价卡的分组带倍数，渠道自定义价的分组不带。 */
 function peakShortOf(n: number): string {
