@@ -247,6 +247,8 @@ func TestOpenAIWSPassthroughDeadlineAndLifecycleHelpers(t *testing.T) {
 	require.False(t, wrapper.deadlineState().armed)
 
 	wrapper.observeUpstreamActivity(coderws.MessageText, []byte(`{"type":"response.output_text.delta"}`))
+	require.False(t, wrapper.deadlineState().armed, "a missing delta cannot start active reading")
+	wrapper.observeUpstreamActivity(coderws.MessageText, []byte(`{"type":"response.output_text.delta","delta":" "}`))
 	state = wrapper.deadlineState()
 	require.True(t, state.armed)
 	wrapper.observeUpstreamActivity(coderws.MessageText, []byte(`{"type":"response.done"}`))
@@ -329,8 +331,17 @@ func TestOpenAIWSPassthroughEventClassification(t *testing.T) {
 		require.False(t, openAIWSPassthroughStartsSemanticOutput(payload), eventType)
 		require.False(t, openAIWSPassthroughIsTerminalOutput(payload), eventType)
 	}
-	for _, eventType := range []string{"response.function_call_arguments.delta", "response.output_text.done", "response.output_audio.delta"} {
-		require.True(t, openAIWSPassthroughStartsSemanticOutput([]byte(`{"type":"`+eventType+`"}`)), eventType)
+	for _, payload := range []string{
+		`{"type":"response.function_call_arguments.delta","delta":"{}"}`,
+		`{"type":"response.output_text.done","text":"content"}`,
+		`{"type":"response.output_audio.delta","delta":"YQ=="}`,
+	} {
+		require.True(t, openAIWSPassthroughStartsSemanticOutput([]byte(payload)), payload)
+	}
+	for _, eventType := range []string{"response.function_call_arguments.delta", "response.output_text.delta", "response.output_audio.delta"} {
+		for _, value := range []string{"", `,"delta":""`, `,"delta":null`, `,"delta":{}`, `,"delta":1`} {
+			require.False(t, openAIWSPassthroughStartsSemanticOutput([]byte(`{"type":"`+eventType+`"`+value+`}`)), eventType+value)
+		}
 	}
 	require.False(t, openAIWSPassthroughStartsSemanticOutput([]byte(`not-json`)))
 }
