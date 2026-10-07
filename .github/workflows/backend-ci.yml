@@ -167,6 +167,13 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=unit -race -count=1 -run '^TestAntigravityInterruptedUsage' -v ./internal/service/
+      - name: Model field ambiguity and upstream mismatch regression gate
+        working-directory: backend
+        run: |
+          git rev-parse HEAD
+          git hash-object internal/service/gateway_model_field.go internal/service/duplicate_model_upstream_audit_test.go internal/service/gateway_model_field_test.go internal/service/gateway_model_ws_forward_test.go internal/handler/gateway_model_field_test.go internal/service/gateway_model_embeddings_audit_test.go internal/handler/gateway_model_embeddings_audit_test.go internal/service/gateway_model_other_forward_audit_test.go internal/handler/gateway_model_other_ingress_audit_test.go
+          test -z "$(gofmt -l internal/service/gateway_model_field.go internal/service/duplicate_model_upstream_audit_test.go internal/service/gateway_model_field_test.go internal/service/gateway_model_ws_forward_test.go internal/handler/gateway_model_field_test.go internal/service/gateway_model_embeddings_audit_test.go internal/handler/gateway_model_embeddings_audit_test.go internal/service/gateway_model_other_forward_audit_test.go internal/handler/gateway_model_other_ingress_audit_test.go)"
+          go test -tags=unit -race -count=1 -v -run '^(TestGatewayModelField_|TestGatewayModelEmbeddings_|TestGatewayModelOtherIngress_|TestGatewayModelOtherForward_|TestDuplicateModelAudit_|TestUpstreamModelMismatch_|TestOpenAIResponsesWebSocket|TestOpenAIGatewayResponses_|TestForwardAsAnthropic_ForceChatCompletionsRequestValidationErrors|TestOpenAIGatewayServiceForwardRejectsUndecodableReasoningReplay)' ./internal/service/ ./internal/handler/
       - name: Integration tests (coverage)
         working-directory: backend
         run: make test-integration-cover
@@ -253,6 +260,9 @@ jobs:
       - name: Stripe page disposal actual mocked payment regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/StripePaymentView.lifecycle.spec.ts src/views/user/__tests__/StripePaymentView.spec.ts
+      - name: Group RPM edits and multiplier dialog actual ownership regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/components/admin/group/__tests__/
       - name: Rewrite deletion actual component and admission regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/composables/__tests__/useModelWhitelist.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts src/components/account/__tests__/BulkEditAccountModal.spec.ts src/components/account/__tests__/CreateAccountModal.modelPreview.spec.ts
