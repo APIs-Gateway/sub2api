@@ -123,8 +123,8 @@ func TestResponsesNamespaceLazyMalformedNoPanic(t *testing.T) {
 	for _, body := range []string{
 		``,
 		`{"input":[`,
-		`{"input":[{"namespace":"x"}`, 
-		`{"input":[{"namespace":"x","content":}]}`, 
+		`{"input":[{"namespace":"x"}`,
+		`{"input":[{"namespace":"x","content":}]}`,
 		`{"input":[{"type":"function_call","namespace":"x"}],`,
 	} {
 		t.Run(body, func(t *testing.T) {
