@@ -13,6 +13,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSetupAdminCredentials_InvalidInputRollsBackBeforeInsert(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		admin     AdminConfig
+		errorText string
+	}{
+		{"unloginable_email", AdminConfig{Email: "a@b", Password: "valid-password"}, "invalid admin email"},
+		{"bcrypt_oversize_password", AdminConfig{Email: "owner@example.com", Password: strings.Repeat("x", 73)}, "invalid admin password"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, db.Close())
+				require.NoError(t, mock.ExpectationsWereMet())
+			})
+			mock.ExpectBegin()
+			mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock($1, $2)")).WithArgs(int32(0x53554232), int32(0x41444d4e)).WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(1) FROM users")).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+			mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(1) FROM users WHERE role = $1")).WithArgs(service.RoleAdmin).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+			// An attempted INSERT is unexpected, even if a later rollback occurs.
+			mock.ExpectRollback()
+			mock.ExpectClose()
+			created, message, err := bootstrapAdminUser(context.Background(), db, &SetupConfig{Admin: tc.admin})
+			require.ErrorContains(t, err, tc.errorText)
+			require.False(t, created)
+			require.Empty(t, message)
+		})
+	}
+}
+
 func TestSetupAdminCredentials_TransactionFailures(t *testing.T) {
 	for _, phase := range []string{"begin", "lock", "total_count", "admin_count", "insert", "commit"} {
 		t.Run(phase, func(t *testing.T) {

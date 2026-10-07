@@ -36,7 +36,11 @@ jobs:
         working-directory: backend
         env:
           CGO_ENABLED: "1"
-        run: go test -tags=integration -race -count=1 -v -run '^TestSetupAdminBootstrapPostgres_' ./internal/setup/
+          SETUP_CLI_COVERPROFILE: ${{ github.workspace }}/backend/coverage-setup-cli.out
+        run: |
+          go test -tags=integration -race -coverpkg=./internal/setup -covermode=atomic -count=1 -v -run '^TestSetupAdminBootstrapPostgres_' ./internal/setup/
+          test -s coverage-setup-cli.out
+          bash ./tools/normalize-go-coverprofile.sh coverage-setup-cli.out
       - name: Anthropic start output metering and interrupted native attempts (race)
         working-directory: backend
         env:
@@ -187,6 +191,7 @@ jobs:
           path: |
             backend/coverage-unit.out
             backend/coverage-integration.out
+            backend/coverage-setup-cli.out
           if-no-files-found: ignore
           retention-days: 14
       - name: Responses input token regression tests (actual results)
@@ -200,7 +205,7 @@ jobs:
       - name: Upload backend coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          files: backend/coverage-unit.out,backend/coverage-integration.out
+          files: backend/coverage-unit.out,backend/coverage-integration.out,backend/coverage-setup-cli.out
           flags: backend
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: APIs-Gateway/sub2api
