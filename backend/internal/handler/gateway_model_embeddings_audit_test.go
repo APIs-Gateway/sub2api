@@ -61,6 +61,31 @@ func (r *embeddingsModelAuditAccountRepo) ListSchedulableUngroupedByPlatforms(ct
 	return r.ListSchedulableByPlatforms(ctx, platforms)
 }
 
+func (r *embeddingsModelAuditAccountRepo) ListByGroup(_ context.Context, groupID int64) ([]service.Account, error) {
+	r.routingCalls.Add(1)
+	accounts := make([]service.Account, 0)
+	for _, account := range r.accounts {
+		for _, group := range account.AccountGroups {
+			if group.GroupID == groupID {
+				accounts = append(accounts, account)
+				break
+			}
+		}
+	}
+	return accounts, nil
+}
+
+func (r *embeddingsModelAuditAccountRepo) ListActive(_ context.Context) ([]service.Account, error) {
+	r.routingCalls.Add(1)
+	accounts := make([]service.Account, 0)
+	for _, account := range r.accounts {
+		if account.Status == service.StatusActive {
+			accounts = append(accounts, account)
+		}
+	}
+	return accounts, nil
+}
+
 func TestGatewayModelEmbeddings_HandlerRejectsBeforeRouting(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
