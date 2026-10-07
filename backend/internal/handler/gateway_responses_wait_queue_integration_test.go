@@ -164,7 +164,7 @@ func newResponsesQueueFixture(t *testing.T, rdb *redis.Client) *responsesQueueFi
 	f.group = &service.Group{ID: 9755, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive, RateMultiplier: 1}
 	f.account = &service.Account{ID: 9756, Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey,
 		Status: service.StatusActive, Schedulable: true, Concurrency: 1,
-		Credentials: map[string]any{"api_key": "fixture-only", "pool_mode": false},
+		Credentials:   map[string]any{"api_key": "fixture-only", "pool_mode": false},
 		AccountGroups: []service.AccountGroup{{AccountID: 9756, GroupID: 9755}}}
 	f.snapshot = &responsesQueueSnapshot{account: f.account}
 	realCache := repository.NewConcurrencyCache(rdb, 1, 60)
