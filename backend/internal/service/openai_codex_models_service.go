@@ -203,8 +203,10 @@ func (s *OpenAIGatewayService) handleCodexModelsManifestAccountAuthError(ctx con
 
 func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Context, account *Account, clientVersion, ifNoneMatch string) (*CodexModelsManifest, error) {
 	projectAccount := codexModelsNeedAccountProjection(account)
+	officialTiers := officialOpenAIAstraServiceTiers(account)
+	transformRepresentation := projectAccount || officialTiers
 	upstreamIfNoneMatch := ifNoneMatch
-	if projectAccount {
+	if transformRepresentation {
 		upstreamIfNoneMatch = ""
 	}
 	requestURL := chatgptCodexModelsURL
@@ -279,7 +281,7 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 		req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 	}
 	account.ApplyHeaderOverrides(req.Header)
-	if projectAccount {
+	if transformRepresentation {
 		// Overrides can store noncanonical header keys directly. Delete every
 		// spelling so an account override cannot turn this into a partial fetch.
 		for name := range req.Header {
@@ -320,7 +322,7 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotModified {
-		if projectAccount {
+		if transformRepresentation {
 			return nil, &codexModelsManifestUpstreamError{
 				err:       infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST", "projected Codex catalog requires a complete upstream representation"),
 				retryable: true,
@@ -353,7 +355,7 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 			retryable: isRetryableCodexModelsManifestTransportError(err),
 		}
 	}
-	if projectAccount {
+	if transformRepresentation {
 		if err := validateCodexProjectionKnownKeys(body); err != nil {
 			return nil, &codexModelsManifestUpstreamError{
 				err:       infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST", "ambiguous mapped Codex manifest: %v", err),
@@ -388,6 +390,9 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 			retryable: true,
 		}
 	}
+	if officialTiers {
+		body = addOfficialAstraServiceTiers(body)
+	}
 	etag := resp.Header.Get("ETag")
 	if projectAccount {
 		projected, projectErr := projectCodexModelsForAccount(body, account)
@@ -397,10 +402,12 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 				retryable: true,
 			}
 		}
+		body = projected
+	}
+	if transformRepresentation {
 		// Even identity mappings need a representation validator: separate
 		// accounts/providers can reuse the same upstream ETag for different bytes.
-		etag = codexModelsRepresentationETag(projected)
-		body = projected
+		etag = codexModelsRepresentationETag(body)
 		if codexModelsETagMatches(ifNoneMatch, etag) {
 			return &CodexModelsManifest{ETag: etag, NotModified: true}, nil
 		}
