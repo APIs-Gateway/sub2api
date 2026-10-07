@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -47,7 +46,7 @@ func addOfficialAstraServiceTiers(body []byte) ([]byte, error) {
 			size++
 		}
 		if size > int(codexModelsManifestBodyLimit) {
-			return nil, fmt.Errorf("Astra service-tier manifest exceeds %d bytes", codexModelsManifestBodyLimit)
+			return nil, fmt.Errorf("astra service-tier manifest exceeds %d bytes", codexModelsManifestBodyLimit)
 		}
 	}
 	if !changed {
@@ -56,16 +55,15 @@ func addOfficialAstraServiceTiers(body []byte) ([]byte, error) {
 	// Each model is spliced once; rebuild the array without re-encoding opaque
 	// metadata, then replace the large envelope just once. Enforce the original
 	// response bound before allocating its transformed representation.
-	var array bytes.Buffer
-	array.Grow(size - (len(body) - len(envelope["models"])))
-	array.WriteByte('[')
+	array := make([]byte, 0, size-(len(body)-len(envelope["models"])))
+	array = append(array, '[')
 	for i, raw := range models {
 		if i > 0 {
-			array.WriteByte(',')
+			array = append(array, ',')
 		}
-		array.Write(raw)
+		array = append(array, raw...)
 	}
-	array.WriteByte(']')
-	result, _ := sjson.SetRawBytes(body, "models", array.Bytes())
+	array = append(array, ']')
+	result, _ := sjson.SetRawBytes(body, "models", array)
 	return result, nil
 }
