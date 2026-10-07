@@ -51,6 +51,16 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=integration -race -count=1 -v -run '^TestAnthropicStartOutputHTTP_' ./internal/repository/
+      - name: WS payload TTFT and first-output deadline (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestResponsesStreamHasOutput|^TestWSEmptyTTFT|^TestOpenAIWSPassthroughDeadlineAndLifecycleHelpers$|^TestOpenAIWSPassthroughEventClassification$' ./internal/pkg/openai/ ./internal/service/ ./internal/service/openai_ws_v2/
+      - name: WS TTFT actual two-turn wallet and card settlement (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestWSEmptyTTFTHTTP_' ./internal/repository/
       - name: WS image input usage and bounded lineage (race)
         working-directory: backend
         env:
@@ -93,6 +103,11 @@ jobs:
       - name: Responses refusal actual wallet and card settlement (PG Redis)
         working-directory: backend
         run: go test -tags=integration -count=1 -v -run '^TestResponsesRefusalHTTP_' ./internal/repository/
+      - name: Codex live selected-account catalog contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestCodexAccountMapping_' ./internal/service/ ./internal/handler/
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover
