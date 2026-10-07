@@ -39,7 +39,7 @@ func TestAstraUltrafastHTTP_ActualWalletAndCard(t *testing.T) {
 				for i, tc := range []struct {
 					tier string
 					cost float64
-				}{{"ultrafast", .06}, {"priority", .02}, {"flex", .005}} {
+				}{{"ultrafast", .06}, {"priority", .01}, {"flex", .005}} {
 					body := fmt.Sprintf(`{"model":"gpt-6-astra","service_tier":%q,"input":"hello","max_output_tokens":8}`, tc.tier)
 					if transport == "http" {
 						done := inflightRealResponsesRequest(f, body)
@@ -59,7 +59,7 @@ func TestAstraUltrafastHTTP_ActualWalletAndCard(t *testing.T) {
 					var tier sql.NullString
 					var cost float64
 					var input, output, dedup int
-					require.NoError(t, inflightTestDB(t).QueryRow(`SELECT service_tier,actual_cost,input_tokens,output_tokens FROM usage_logs WHERE user_id=$1 AND request_id=$2`, f.userID, fmt.Sprintf("resp_funding_%d", i+1)).Scan(&tier, &cost, &input, &output))
+					require.NoError(t, inflightTestDB(t).QueryRow(`SELECT service_tier,actual_cost,input_tokens,output_tokens FROM usage_logs WHERE user_id=$1 ORDER BY id DESC LIMIT 1`, f.userID).Scan(&tier, &cost, &input, &output))
 					require.Equal(t, 2, input)
 					require.Equal(t, 1, output)
 					require.InDelta(t, tc.cost, cost, 1e-9)

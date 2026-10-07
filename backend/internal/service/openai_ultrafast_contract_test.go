@@ -20,7 +20,7 @@ import (
 // This fixture uses only APIs present on origin/main, so OLD failures must be
 // observable contract differences rather than new-helper compilation failures.
 func TestAstraUltrafast_PriceAndQuote(t *testing.T) {
-	for _, model := range []string{"gpt-6-astra", "gpt-6", "openai/gpt-6-astra", "gpt-6-astra-high"} {
+	for _, model := range []string{"gpt-6-astra", "gpt-6", "openai/gpt-6-astra"} {
 		for _, contextSize := range []int{272000, 272001} {
 			t.Run(fmt.Sprintf("%s/%d", model, contextSize), func(t *testing.T) {
 				f := newQuoteTestFixture(nil, nil, []*Group{quoteTestGroup(1.25)}, nil)
@@ -151,4 +151,9 @@ func TestAstraUltrafast_WSAndSettingsPolicy(t *testing.T) {
 	repo := &openAIFastPolicyRepoStub{values: map[string]string{}}
 	svc := NewSettingService(repo, &config.Config{})
 	require.NoError(t, svc.SetOpenAIFastPolicySettings(context.Background(), &OpenAIFastPolicySettings{Rules: []OpenAIFastPolicyRule{{ServiceTier: " UltraFast ", Action: "filter", Scope: BetaPolicyScopeAll}}}))
+}
+
+func TestAstraUltrafast_UnknownSuffixRemainsUnpriced(t *testing.T) {
+	_, err := newTestBillingService().CalculateCostWithServiceTier("gpt-6-astra-high", UsageTokens{InputTokens: 1}, 1, "ultrafast")
+	require.ErrorIs(t, err, ErrModelPricingUnavailable)
 }
