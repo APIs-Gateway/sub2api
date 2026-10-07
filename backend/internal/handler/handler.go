@@ -43,6 +43,7 @@ type AdminHandlers struct {
 	PromptAudit            *securityaudit.PromptEventAdminHandler
 	PricingQuote           *admin.PricingQuoteHandler
 	PricingMatrix          *admin.PricingMatrixHandler
+	PricingWrite           *admin.PricingWriteHandler
 	AdminToken             *admin.AdminTokenHandler
 	AuditLog               *admin.AuditLogHandler
 	APIKeyFallback         *admin.APIKeyFallbackHandler

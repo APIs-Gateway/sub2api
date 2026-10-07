@@ -116,6 +116,14 @@ var adminDangerRules = []AdminRouteRule{
 	{http.MethodPost, "/channels", "channel pricing / routing"},
 	{http.MethodPut, "/channels/:id", "channel pricing / routing"},
 	{http.MethodPut, "/pricing-matrix/groups/:id/stage", "pricing stage switch (pricing.stage_switch, touches price)"},
+	{http.MethodPost, "/pricing-matrix/cells/commit", "writes matrix price cells (changes what customers are charged; interactive session only)"},
+	{http.MethodPut, "/pricing-matrix/groups/:id/config", "group pricing configuration (billing source, model mapping, access mode)"},
+	{http.MethodPost, "/pricing-matrix/groups/:id/cost-rules", "cost accounting rule (account cost, not customer price)"},
+	{http.MethodPut, "/pricing-matrix/groups/:id/cost-rules/:rule_id", "cost accounting rule (account cost, not customer price)"},
+	{http.MethodDelete, "/pricing-matrix/groups/:id/cost-rules/:rule_id", "cost accounting rule (delete)"},
+	{http.MethodPut, "/pricing-matrix/known-free-list", "known-free pricing list (C tier: lets unpriced models be exposed on purpose)"},
+	{http.MethodPost, "/model-catalog", "creates a model catalog entry (decides which models are sellable)"},
+	{http.MethodPut, "/model-catalog/:id/status", "model catalog status (blocks or opens a model for customers)"},
 	{http.MethodDelete, "/channels/:id", "channel pricing / routing (delete)"},
 	{http.MethodPost, "/payment/plans", "subscription plan pricing"},
 	{http.MethodPut, "/payment/plans/:id", "subscription plan pricing"},
@@ -250,7 +258,13 @@ var adminReviewedWriteRules = []AdminRouteRule{
 	// pricing snapshots: candidates never change effective prices until approved.
 	{http.MethodPost, "/pricing/snapshots/fetch", "downloads a candidate snapshot; the effective prices do not change"},
 	{http.MethodPost, "/pricing/snapshots/:id/preview", "dry-run of an approval; persists nothing"},
+	{http.MethodPost, "/pricing-matrix/groups/:id/stage/preview", "dry-run of a pricing stage switch; only registers a preview ticket, the commit itself is JWT-only"},
 	{http.MethodPost, "/pricing/snapshots/:id/reject", "discards an unapproved candidate; the effective prices do not change"},
+
+	// pricing matrix previews: they record one preview row; no price changes until an interactive session commits.
+	{http.MethodPost, "/pricing-matrix/cells/preview", "dry-run of a cell write; persists only a preview record"},
+	{http.MethodPost, "/pricing-matrix/groups/:id/config/preview", "dry-run of a group configuration write; persists only a preview record"},
+	{http.MethodPost, "/pricing-matrix/known-free-list/preview", "dry-run of a known-free list change; persists nothing"},
 }
 
 // adminReviewedReadRules lists GET routes that look like they could expose a

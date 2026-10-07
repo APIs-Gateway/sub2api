@@ -29,6 +29,13 @@ func expectEmptySnapshotReads(mock sqlmock.Sqlmock) {
 	mock.ExpectQuery(`FROM cost_accounting_rules WHERE scope_group_id = ANY`).WillReturnRows(sqlmock.NewRows(matrixRuleCols))
 }
 
+// expectDeriveAdvisoryLock 事务里 lock_timeout 之后、行锁之前的那条咨询锁。
+func expectDeriveAdvisoryLock(mock sqlmock.Sqlmock) {
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(\$1\)`).
+		WithArgs(pricingDeriveAdvisoryLockKey).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+}
+
 func TestPricingMatrixRepo_GetGroupMeta(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := NewPricingMatrixRepository(db)
@@ -67,6 +74,23 @@ func TestPricingMatrixRepo_ListDerivedRuleGroupIDs(t *testing.T) {
 
 	mock.ExpectQuery(`FROM cost_accounting_rules`).WillReturnError(errors.New("boom"))
 	_, err = repo.ListDerivedRuleGroupIDs(context.Background(), 5)
+	require.Error(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPricingMatrixRepo_ListDerivedRuleChannels(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := NewPricingMatrixRepository(db)
+
+	mock.ExpectQuery(`SELECT DISTINCT source_channel_id, scope_group_id FROM cost_accounting_rules\s+WHERE source = 'legacy_derived' AND source_channel_id IS NOT NULL`).
+		WillReturnRows(sqlmock.NewRows([]string{"source_channel_id", "scope_group_id"}).
+			AddRow(int64(5), int64(10)).AddRow(int64(5), int64(11)).AddRow(int64(6), int64(20)))
+	got, err := repo.ListDerivedRuleChannels(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, map[int64][]int64{5: {10, 11}, 6: {20}}, got)
+
+	mock.ExpectQuery(`FROM cost_accounting_rules`).WillReturnError(errors.New("boom"))
+	_, err = repo.ListDerivedRuleChannels(context.Background())
 	require.Error(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -179,6 +203,7 @@ func TestPricingMatrixRepo_ApplyPlans_LocksThenReadsThenWritesInOneTx(t *testing
 
 	mock.ExpectBegin()
 	mock.ExpectExec(`SET LOCAL lock_timeout = '5s'`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectDeriveAdvisoryLock(mock)
 	mock.ExpectQuery(`SELECT group_id FROM group_model_config WHERE group_id = ANY\(\$1\) ORDER BY group_id FOR UPDATE`).
 		WillReturnRows(sqlmock.NewRows([]string{"group_id"}))
 	expectEmptySnapshotReads(mock)
@@ -229,6 +254,7 @@ func TestPricingMatrixRepo_ApplyPlans_UpdatesAndDeletesOnlyDerivedRows(t *testin
 
 	mock.ExpectBegin()
 	mock.ExpectExec(`SET LOCAL lock_timeout`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectDeriveAdvisoryLock(mock)
 	mock.ExpectQuery(`FOR UPDATE`).WillReturnRows(sqlmock.NewRows([]string{"group_id"}))
 	expectEmptySnapshotReads(mock)
 	mock.ExpectExec(`DELETE FROM model_group_prices WHERE id = ANY\(\$1\) AND source = 'legacy_derived'`).
@@ -259,6 +285,7 @@ func TestPricingMatrixRepo_ApplyPlans_V2RowStopsTheWholeGroup(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec(`SET LOCAL lock_timeout`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectDeriveAdvisoryLock(mock)
 	mock.ExpectQuery(`FOR UPDATE`).WillReturnRows(sqlmock.NewRows([]string{"group_id"}))
 	expectEmptySnapshotReads(mock)
 	mock.ExpectExec(`INSERT INTO group_model_config`).WillReturnResult(sqlmock.NewResult(0, 0))
@@ -282,6 +309,7 @@ func TestPricingMatrixRepo_ApplyPlans_SkippedAndEmptyPlansWriteNothing(t *testin
 
 	mock.ExpectBegin()
 	mock.ExpectExec(`SET LOCAL lock_timeout`).WillReturnResult(sqlmock.NewResult(0, 0))
+	expectDeriveAdvisoryLock(mock)
 	mock.ExpectQuery(`FOR UPDATE`).WillReturnRows(sqlmock.NewRows([]string{"group_id"}))
 	expectEmptySnapshotReads(mock)
 	mock.ExpectCommit()
@@ -301,6 +329,7 @@ func TestPricingMatrixRepo_ApplyPlans_FailuresRollBack(t *testing.T) {
 		db, mock := newSQLMock(t)
 		mock.ExpectBegin()
 		mock.ExpectExec(`SET LOCAL lock_timeout`).WillReturnResult(sqlmock.NewResult(0, 0))
+		expectDeriveAdvisoryLock(mock)
 		mock.ExpectQuery(`FOR UPDATE`).WillReturnError(errors.New("canceling statement due to lock timeout"))
 		mock.ExpectRollback()
 		err := NewPricingMatrixRepository(db).ApplyPlans(context.Background(), []int64{10}, func(map[int64]service.GroupStateSnapshot) ([]service.GroupApplyPlan, error) {
@@ -310,10 +339,24 @@ func TestPricingMatrixRepo_ApplyPlans_FailuresRollBack(t *testing.T) {
 		require.ErrorContains(t, err, "lock group_model_config rows")
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
+	t.Run("咨询锁失败时不碰行锁", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		mock.ExpectBegin()
+		mock.ExpectExec(`SET LOCAL lock_timeout`).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(`pg_advisory_xact_lock`).WithArgs(pricingDeriveAdvisoryLockKey).WillReturnError(errors.New("canceling statement due to lock timeout"))
+		mock.ExpectRollback()
+		err := NewPricingMatrixRepository(db).ApplyPlans(context.Background(), []int64{10}, func(map[int64]service.GroupStateSnapshot) ([]service.GroupApplyPlan, error) {
+			t.Fatal("拿不到咨询锁不应生成计划")
+			return nil, nil
+		})
+		require.ErrorContains(t, err, "advisory lock")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
 	t.Run("计划生成失败", func(t *testing.T) {
 		db, mock := newSQLMock(t)
 		mock.ExpectBegin()
 		mock.ExpectExec(`SET LOCAL lock_timeout`).WillReturnResult(sqlmock.NewResult(0, 0))
+		expectDeriveAdvisoryLock(mock)
 		mock.ExpectQuery(`FOR UPDATE`).WillReturnRows(sqlmock.NewRows([]string{"group_id"}))
 		expectEmptySnapshotReads(mock)
 		mock.ExpectRollback()
@@ -328,6 +371,7 @@ func TestPricingMatrixRepo_ApplyPlans_FailuresRollBack(t *testing.T) {
 		db, mock := newSQLMock(t)
 		mock.ExpectBegin()
 		mock.ExpectExec(`SET LOCAL lock_timeout`).WillReturnResult(sqlmock.NewResult(0, 0))
+		expectDeriveAdvisoryLock(mock)
 		mock.ExpectQuery(`FOR UPDATE`).WillReturnRows(sqlmock.NewRows([]string{"group_id"}))
 		expectEmptySnapshotReads(mock)
 		mock.ExpectExec(`INSERT INTO model_group_prices`).WillReturnError(errors.New("check constraint violated"))

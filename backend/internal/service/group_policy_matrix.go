@@ -60,6 +60,11 @@ type MatrixSnapshotStats struct {
 	StaleServed int64 `json:"stale_served"`
 	// ColdFallbacks 加载失败且没有旧快照、退回默认状态的次数。
 	ColdFallbacks int64 `json:"cold_fallbacks"`
+	// PreloadFailures 启动预加载重试之后仍然没有加载成功的分组数（W6 PR7a）。非零表示这些分组在后台刷新成功之前按 legacy 处理。
+	PreloadFailures int64 `json:"preload_failures"`
+	// SnapshotUnavailable 分组可能是 v2、快照又加载不出来（没有可用的旧快照）时，请求被拒绝的次数（W6 PR7b）。
+	// 非零表示矩阵表读取在失败：这些请求没有按 legacy 或 0 元计费，而是被挡下了。
+	SnapshotUnavailable int64 `json:"snapshot_unavailable"`
 }
 
 // matrixCellView 单元格在快照里的编译形态。
@@ -92,6 +97,8 @@ func (c *matrixCellView) activeAt(at time.Time) bool {
 type matrixSnapshot struct {
 	platform string
 	stage    PricingStage
+	// revision 是 group_model_config 的 revision：运行时 HasPrice 缓存键的一部分（设计 5.2、S-5）。没有配置行为 0。
+	revision int64
 
 	accessMode MatrixAccessMode
 	// billingModelSource 为空串表示分组没有渠道（设计 S-1）：Mapping 原样返回空串。
@@ -119,7 +126,9 @@ type matrixSnapshot struct {
 func buildMatrixSnapshot(groupID int64, platform string, snap GroupStateSnapshot) *matrixSnapshot {
 	cfg := defaultMatrixGroupConfig()
 	stage := PricingStageLegacy
+	var revision int64
 	if snap.Config != nil {
+		revision = snap.Config.Revision
 		cfg = normalizeMatrixConfig(snap.Config.MatrixGroupConfig)
 		if snap.Config.PricingStage != "" {
 			stage = snap.Config.PricingStage
@@ -129,6 +138,7 @@ func buildMatrixSnapshot(groupID int64, platform string, snap GroupStateSnapshot
 	s := &matrixSnapshot{
 		platform:     platform,
 		stage:        stage,
+		revision:     revision,
 		accessMode:   MatrixAccessOpen,
 		costMode:     MatrixCostAccountRate,
 		features:     deepCopyFeaturesConfig(cfg.Features),
@@ -361,6 +371,25 @@ type matrixPolicy struct {
 	loadFailures  atomic.Int64
 	staleServed   atomic.Int64
 	coldFallbacks atomic.Int64
+	// preloadFailures 启动预加载最终失败的分组数。
+	preloadFailures atomic.Int64
+	// unavailable 因为快照不可用而被拒绝的请求数（见 stagedPolicy.route）。
+	unavailable atomic.Int64
+
+	// configured 是「可能有配置行（所以可能是 v2）」的分组：启动时列出的有配置行的分组，加上之后加载到非 legacy 阶段的分组。
+	// configuredKnown 为 true 表示启动时的列表取到了，列表之外的分组在启动时没有配置行。
+	configuredMu    sync.RWMutex
+	configured      map[int64]struct{}
+	configuredKnown bool
+
+	// 重新列出配置分组（W6 PR7b-1 复审 1）：别的实例切换阶段时，本实例只收到不带分组的失效通知，所以收到通知（去抖）
+	// 和每 60 秒各重新列一次，只往 configured 里加 shadow/v2 的分组。lister 由 Preload 设置。
+	relistMu       sync.Mutex
+	lister         ConfiguredGroupLister
+	relistOnce     sync.Once
+	relistPending  atomic.Bool
+	relistInterval time.Duration // 零值用默认值；测试里调小
+	relistDebounce time.Duration
 }
 
 var _ GroupPolicy = (*matrixPolicy)(nil)
@@ -379,7 +408,7 @@ func NewMatrixGroupPolicy(src MatrixSnapshotSource, pubsub ChannelCachePubSub) *
 	}
 	if pubsub != nil {
 		// 收到其他实例（或本实例）的通知只清本地，不再转发，避免通知回环（与 ChannelService.clearCache 同理）。
-		pubsub.SubscribeUpdates(context.Background(), p.invalidateAll)
+		pubsub.SubscribeUpdates(context.Background(), p.onPeerInvalidate)
 	}
 	return p
 }
@@ -391,7 +420,53 @@ func (p *matrixPolicy) Stats() MatrixSnapshotStats {
 		LoadFailures:  p.loadFailures.Load(),
 		StaleServed:   p.staleServed.Load(),
 		ColdFallbacks: p.coldFallbacks.Load(),
+
+		PreloadFailures:     p.preloadFailures.Load(),
+		SnapshotUnavailable: p.unavailable.Load(),
 	}
+}
+
+// setConfiguredList 记下启动时列出的、有配置行的分组；之后列表之外的分组按「启动时没有配置行」处理。
+func (p *matrixPolicy) setConfiguredList(ids []int64) {
+	p.configuredMu.Lock()
+	defer p.configuredMu.Unlock()
+	if p.configured == nil {
+		p.configured = make(map[int64]struct{}, len(ids))
+	}
+	for _, id := range ids {
+		p.configured[id] = struct{}{}
+	}
+	p.configuredKnown = true
+}
+
+// noteConfigured 记下一个已经加载到非 legacy 阶段的分组（它一定有配置行）。
+func (p *matrixPolicy) noteConfigured(groupID int64) {
+	p.configuredMu.Lock()
+	defer p.configuredMu.Unlock()
+	if p.configured == nil {
+		p.configured = make(map[int64]struct{})
+	}
+	p.configured[groupID] = struct{}{}
+}
+
+// mayBeConfigured 分组可能有配置行吗（也就是可能是 v2）：启动时的列表没取到就一律算可能；取到了就看列表与之后的加载。
+// 没有配置行的分组一定是 legacy，快照加载失败时退回默认状态与 legacy 一致，不会错。
+func (p *matrixPolicy) mayBeConfigured(groupID int64) bool {
+	p.configuredMu.RLock()
+	defer p.configuredMu.RUnlock()
+	if !p.configuredKnown {
+		return true
+	}
+	_, ok := p.configured[groupID]
+	return ok
+}
+
+// cachedReady 缓存里是不是有这个分组一份新鲜、加载成功的快照（没有被失效、不是兜底）。
+func (p *matrixPolicy) cachedReady(groupID int64) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	e := p.entries[groupID]
+	return e != nil && !e.invalidated && e.snap != nil && e.snap.loadErr == nil
 }
 
 // InvalidateGroups 写入矩阵表之后调用：丢弃本进程里这些分组的快照，并通知其他实例。
@@ -409,6 +484,12 @@ func (p *matrixPolicy) InvalidateGroups(groupIDs ...int64) {
 func (p *matrixPolicy) InvalidateAll() {
 	p.invalidate(nil)
 	p.notify()
+}
+
+// onPeerInvalidate 订阅回调：丢弃全部快照，并（去抖）重新列一次配置分组，让别的实例切到 shadow/v2 的分组进入集合。
+func (p *matrixPolicy) onPeerInvalidate() {
+	p.invalidateAll()
+	p.kickRelist()
 }
 
 // invalidateAll 丢弃本进程里全部分组的快照，不发通知。订阅回调用它。
@@ -558,6 +639,9 @@ func (p *matrixPolicy) load(ctx context.Context, groupID int64, gen uint64) *mat
 	if err == nil {
 		p.loads.Add(1)
 		p.store(gen, groupID, &matrixSnapshotEntry{snap: snap, expiresAt: now.Add(p.ttl)})
+		if snap.stage != PricingStageLegacy {
+			p.noteConfigured(groupID)
+		}
 		return snap
 	}
 

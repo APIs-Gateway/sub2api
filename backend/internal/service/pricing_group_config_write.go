@@ -2,9 +2,13 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
@@ -13,9 +17,13 @@ import (
 //
 // 与单元格写入器同一套约定：只写 pricing_stage = 'v2' 的分组；先锁 group_model_config 行（与派生钩子、
 // 阶段切换互斥）；带基线 revision，对不上就拒绝；内容变了才把 revision 加一（它是 HasPrice 缓存键的一部分）；
-// 只能在事务里写（MatrixTx）。分组配置不是「价格字段」，所以不走审批，但会让白名单分组出现无价单元格的改动
-// （改成白名单、改映射、改计费来源）在同一事务里过一次 ExposureGuard.CheckGroups。
-// 本 PR 不新增分组配置的历史表：revision 与 updated_at 是仅有的痕迹，审计留给 W5 change-set。
+// 只能在事务里写（MatrixTx），而且只经 MatrixTxWriter.ApplyGroupConfigTx 写（写入与保存时校验做成一体）。
+//
+// PR4b-2b-1：改计费来源、改模型映射会改变「请求按哪个模型计费」，等于改价，所以走审批（pricing_write_approvals，
+// kind = group_config）：先 Propose（估算器给出价格方向，summary 存前后对比与操作人），再带着凭证 Commit；
+// 方向不是 none 的要求交互式管理员会话。改准入、功能开关、成本模式不涉价，不需要凭证，但仍要二次确认。
+// 会让白名单分组出现无价单元格的改动（改成白名单）在同一事务里过一次 ExposureGuard.CheckGroups。
+// 审批行是涉价的分组配置写入的审计记录；不涉价的写入，revision 与 updated_at 是仅有的痕迹，审计留给 W5 change-set。
 
 // 分组配置写入的错误原因。
 const (
@@ -64,7 +72,10 @@ type GroupConfigWriteResult struct {
 type GroupConfigWriter interface {
 	// ApplyTx 在调用方的事务里写入：按 group_id 对配置行 SELECT ... FOR UPDATE，确认分组是 v2、基线未变，
 	// 内容变了才写并把 revision 加一。提交之后调用方必须失效分组快照缓存。
+	// 只能经 MatrixTxWriter.ApplyGroupConfigTx 调用（pricing_write_tx_guard_test.go 守着）。
 	ApplyTx(ctx context.Context, tx MatrixTx, req GroupConfigWriteRequest) (*GroupConfigWriteResult, error)
+	// PlanTx 读取现状并规划，不写入、不加锁（预览用）；校验（v2、基线）与 ApplyTx 完全一致。
+	PlanTx(ctx context.Context, exec MatrixExecutor, req GroupConfigWriteRequest) (*GroupConfigWriteResult, error)
 }
 
 func groupConfigError(reason, msg string) error {
@@ -237,22 +248,81 @@ func GroupConfigChange(before, after MatrixGroupConfig) (changed, exposureReleva
 	return changed, exposureRelevant
 }
 
-// GroupConfigService 分组配置写入的服务层：事务只经 PriceWriteStore.WithTx 打开。
+// GroupConfigTouchesPrice 改动是否涉价：计费来源或模型映射变了。它们决定请求按哪个模型计费，所以按改价处理；
+// 准入模式、功能开关、成本模式不改用户实付的价格。
+func GroupConfigTouchesPrice(before, after MatrixGroupConfig) bool {
+	return matrixCanonicalJSON(before.BillingModelSource) != matrixCanonicalJSON(after.BillingModelSource) ||
+		matrixCanonicalJSON(before.ModelMapping) != matrixCanonicalJSON(after.ModelMapping)
+}
+
+// GroupConfigPlanHash 计划指纹：规范化之后的请求（含基线 revision，不含操作人）的 SHA-256。
+// req 必须已经过 NormalizeGroupConfigWrite。
+func GroupConfigPlanHash(req GroupConfigWriteRequest) string {
+	sum := sha256.Sum256([]byte(matrixCanonicalJSON(req)))
+	return hex.EncodeToString(sum[:])
+}
+
+// groupConfigSummary 审批行的 summary：前后对比、价格方向与操作人，兼作涉价的分组配置写入的审计记录。
+type groupConfigSummary struct {
+	GroupID    int64             `json:"group_id"`
+	OperatorID int64             `json:"operator_id"`
+	Delta      PriceDelta        `json:"price_delta"`
+	Before     MatrixGroupConfig `json:"before"`
+	After      MatrixGroupConfig `json:"after"`
+}
+
+// GroupConfigService 分组配置写入的服务层：事务只经 PriceWriteStore.WithTx 打开，写入只经 MatrixTxWriter。
 type GroupConfigService struct {
 	store       PriceWriteStore
-	writer      GroupConfigWriter
-	exposure    *ExposureGuard
+	tx          *MatrixTxWriter
+	estimator   PriceDeltaEstimator
 	invalidator MatrixSnapshotInvalidator
+	precheck    *OpenPrechecker
+	now         func() time.Time
 }
 
-// NewGroupConfigService 创建服务。exposure 为 nil 时改动准入、映射、计费来源的写入失败关闭；
-// invalidator 可为 nil（没有读取方）。
-func NewGroupConfigService(store PriceWriteStore, writer GroupConfigWriter, exposure *ExposureGuard, invalidator MatrixSnapshotInvalidator) *GroupConfigService {
-	return &GroupConfigService{store: store, writer: writer, exposure: exposure, invalidator: invalidator}
+// WithOpenPrecheck 接上开放时预检（W6 PR4b-2b-2）：预览时按分组配置的目标态检查，白名单分组的阻止项直接拒绝
+// （包括映射目标没有可用价格），开放分组的问题随凭证返回。
+func (s *GroupConfigService) WithOpenPrecheck(p *OpenPrechecker) *GroupConfigService {
+	s.precheck = p
+	return s
 }
 
-// Apply 写入一个分组的配置。保存时校验在写入之后、提交之前：违规整个事务回滚。
-func (s *GroupConfigService) Apply(ctx context.Context, req GroupConfigWriteRequest) (*GroupConfigWriteResult, error) {
+// NewGroupConfigService 创建服务。tx 是写入与保存时校验的唯一入口（nil 则失败关闭）；
+// estimator 是价格方向的唯一来源（nil 时涉价写入一律按 unknown，即必须交互式会话）；invalidator 可为 nil（没有读取方）。
+func NewGroupConfigService(store PriceWriteStore, tx *MatrixTxWriter, estimator PriceDeltaEstimator, invalidator MatrixSnapshotInvalidator) *GroupConfigService {
+	return &GroupConfigService{store: store, tx: tx, estimator: estimator, invalidator: invalidator, now: time.Now}
+}
+
+// GroupConfigTicket 一次分组配置预览的结果。
+type GroupConfigTicket struct {
+	// ApprovalID 预览凭证；0 表示不涉价（或没有变化），不需要凭证。
+	ApprovalID       int64             `json:"approval_id"`
+	PlanHash         string            `json:"plan_hash"`
+	Changed          bool              `json:"changed"`
+	ExposureRelevant bool              `json:"exposure_relevant"`
+	TouchesPrice     bool              `json:"touches_price"`
+	Delta            PriceDelta        `json:"price_delta"`
+	ExpiresAt        time.Time         `json:"expires_at"`
+	Before           MatrixGroupConfig `json:"before"`
+	After            MatrixGroupConfig `json:"after"`
+	// Precheck 开放时预检的报告（只含这次改动新增的问题）；没接预检器、分组不适用或改动不影响开放范围时为 nil。
+	Precheck *OpenPrecheckReport `json:"precheck,omitempty"`
+}
+
+// GroupConfigCommit 提交请求。
+type GroupConfigCommit struct {
+	// ApprovalID 预览凭证；0 表示没有预览，只允许不涉价的写入。
+	ApprovalID int64
+	Request    GroupConfigWriteRequest
+	// Confirm 管理员的二次确认。
+	Confirm bool
+	Actor   PriceWriteActor
+}
+
+// Propose 登记一次分组配置预览：读取现状、规划、做保存时校验（只作提示），涉价时由估算器给出价格方向并记录审批行。
+// 没有变化或不涉价的改动不登记审批行，返回的凭证 ApprovalID 为 0。
+func (s *GroupConfigService) Propose(ctx context.Context, req GroupConfigWriteRequest) (*GroupConfigTicket, error) {
 	if req.OperatorID <= 0 {
 		return nil, infraerrors.Forbidden(ReasonPriceWriteActorRequired, "an administrator is required")
 	}
@@ -260,16 +330,94 @@ func (s *GroupConfigService) Apply(ctx context.Context, req GroupConfigWriteRequ
 	if err != nil {
 		return nil, err
 	}
+	res, err := s.tx.PreviewGroupConfig(ctx, s.store.Reader(), norm)
+	if err != nil {
+		return nil, err
+	}
+	var precheck *OpenPrecheckReport
+	// 只有影响开放范围的改动（准入模式、计费来源、模型映射）才预检；只改成本模式或功能开关不会改变预检结果，
+	// 分组里已有的问题也就不该挡住它。
+	if s.precheck != nil && res.Changed && res.ExposureRelevant {
+		if precheck, err = s.precheck.PrecheckGroupConfig(ctx, norm.GroupID, res.After.MatrixGroupConfig); err != nil {
+			return nil, err
+		}
+		if err := BlockingError([]OpenPrecheckReport{*precheck}); err != nil {
+			return nil, err
+		}
+	}
+	touches := res.Changed && GroupConfigTouchesPrice(res.Before.MatrixGroupConfig, res.After.MatrixGroupConfig)
+	ticket := &GroupConfigTicket{Precheck: precheck,
+		PlanHash: GroupConfigPlanHash(norm), Changed: res.Changed, ExposureRelevant: res.ExposureRelevant,
+		TouchesPrice: touches, Delta: PriceDeltaNone, Before: res.Before.MatrixGroupConfig, After: res.After.MatrixGroupConfig,
+	}
+	if !touches {
+		return ticket, nil
+	}
+	ticket.Delta = s.estimateDelta(ctx, norm.GroupID, res)
+
+	now := s.now()
+	approval := PriceWriteApproval{
+		Kind:         PriceWriteKindGroupConfig,
+		PlanHash:     ticket.PlanHash,
+		TouchesPrice: true,
+		Delta:        ticket.Delta,
+		GroupIDs:     []int64{norm.GroupID},
+		Summary: []byte(matrixCanonicalJSON(groupConfigSummary{
+			GroupID: norm.GroupID, OperatorID: norm.OperatorID, Delta: ticket.Delta,
+			Before: ticket.Before, After: ticket.After,
+		})),
+		PreviewedBy: norm.OperatorID,
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(PriceWriteApprovalTTL),
+	}
+	id, err := s.store.InsertApproval(ctx, approval)
+	if err != nil {
+		return nil, err
+	}
+	if _, perr := s.store.PurgeStale(ctx, now.Add(-priceWriteStaleAfter)); perr != nil {
+		slog.Warn("purge stale price write previews failed", "error", perr)
+	}
+	ticket.ApprovalID = id
+	ticket.ExpiresAt = approval.ExpiresAt
+	return ticket, nil
+}
+
+// estimateDelta 价格方向只取估算器的结果；估算器缺失、出错或返回不认识的值都是 unknown。
+func (s *GroupConfigService) estimateDelta(ctx context.Context, groupID int64, res *GroupConfigWriteResult) PriceDelta {
+	if s.estimator == nil {
+		return PriceDeltaUnknown
+	}
+	return safePriceDelta(s.estimator.EstimateGroupConfig(ctx, groupID, res.Before.MatrixGroupConfig, res.After.MatrixGroupConfig))
+}
+
+// Commit 写入一个分组的配置。写入与保存时校验在同一个事务里（ApplyGroupConfigTx），违规整个事务回滚；
+// 涉价的写入还要在同一个事务里消耗预览凭证，方向不是 none 的要求交互式管理员会话。
+func (s *GroupConfigService) Commit(ctx context.Context, in GroupConfigCommit) (*GroupConfigWriteResult, error) {
+	if in.Actor.ID <= 0 {
+		return nil, infraerrors.Forbidden(ReasonPriceWriteActorRequired, "an administrator is required")
+	}
+	if !in.Confirm {
+		return nil, infraerrors.BadRequest(ReasonPriceWriteConfirm, "the write must be confirmed a second time")
+	}
+	norm, err := NormalizeGroupConfigWrite(in.Request)
+	if err != nil {
+		return nil, err
+	}
+	norm.OperatorID = in.Actor.ID
+	hash := GroupConfigPlanHash(norm)
+
 	var result *GroupConfigWriteResult
 	err = s.store.WithTx(ctx, func(ctx context.Context, tx MatrixTx) error {
-		res, err := s.writer.ApplyTx(ctx, tx, norm)
+		res, err := s.tx.ApplyGroupConfigTx(ctx, tx, norm)
 		if err != nil {
 			return err
 		}
-		if res.Changed && res.ExposureRelevant && res.After.AccessMode == MatrixAccessAllowlist {
-			if err := s.exposure.CheckGroups(ctx, tx, []int64{norm.GroupID}); err != nil {
-				return err
-			}
+		// 提交时再预检一次（只看这次改动新增的问题）：只改准入模式这类不涉价的改动可以不带凭证，不能绕过预检。
+		if err := s.precheckCommit(ctx, norm.GroupID, res); err != nil {
+			return err
+		}
+		if err := s.authorize(ctx, tx, in, hash, res); err != nil {
+			return err
 		}
 		result = res
 		return nil
@@ -281,4 +429,37 @@ func (s *GroupConfigService) Apply(ctx context.Context, req GroupConfigWriteRequ
 		s.invalidator.InvalidateGroups(norm.GroupID)
 	}
 	return result, nil
+}
+
+// precheckCommit 提交时的开放时预检；回滚由调用方（事务回调返回错误）负责。
+//
+// 注意：预检必须读已提交状态（OpenPrechecker 的数据源走连接池，不走本事务），不能改成在 tx 里读。
+// 前态（写入前的分组现状）靠它读到的已提交状态得到，后态是前态叠加本次写入；本事务已对分组配置行加了 FOR UPDATE，
+// 别的写入者提交不了同一分组的改动，所以已提交状态正好是本事务的基线。要是改成在 tx 里读，前态就会包含本次写入，
+// 前后差集恒为空，提交时预检会悄悄失效（没有任何报错）。
+func (s *GroupConfigService) precheckCommit(ctx context.Context, groupID int64, res *GroupConfigWriteResult) error {
+	if s.precheck == nil || !res.Changed || !res.ExposureRelevant {
+		return nil
+	}
+	rep, err := s.precheck.PrecheckGroupConfig(ctx, groupID, res.After.MatrixGroupConfig)
+	if err != nil {
+		return err
+	}
+	return BlockingError([]OpenPrecheckReport{*rep})
+}
+
+// authorize 在写入事务里核对并消耗审批；返回错误会让整个事务回滚。
+func (s *GroupConfigService) authorize(ctx context.Context, tx MatrixExecutor, in GroupConfigCommit, hash string, res *GroupConfigWriteResult) error {
+	touches := res.Changed && GroupConfigTouchesPrice(res.Before.MatrixGroupConfig, res.After.MatrixGroupConfig)
+	if in.ApprovalID == 0 {
+		if touches {
+			return infraerrors.Forbidden(ReasonPriceWriteApproval, "a write that touches prices needs a previewed approval")
+		}
+		return nil
+	}
+	a, err := s.store.ConsumeApproval(ctx, tx, in.ApprovalID, hash, PriceWriteKindGroupConfig, in.Actor.ID, s.now())
+	if err != nil {
+		return err
+	}
+	return checkApprovalForWrite(a, touches, in.Actor)
 }

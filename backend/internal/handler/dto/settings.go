@@ -292,6 +292,9 @@ type SystemSettings struct {
 	// OpenAI fast/flex policy
 	OpenAIFastPolicySettings *OpenAIFastPolicySettings `json:"openai_fast_policy_settings,omitempty"`
 
+	// 白名单分组运行时无价拦截开关：observe（只观测）/ block_allowlist（拦白名单分组里无价的请求）
+	BillingUnpricedPolicy string `json:"billing_unpriced_policy"`
+
 	// 系统全局默认平台配额（key = platform，nil/缺省 = 不限制）
 	DefaultPlatformQuotas map[string]*service.DefaultPlatformQuotaSetting `json:"default_platform_quotas,omitempty"`
 

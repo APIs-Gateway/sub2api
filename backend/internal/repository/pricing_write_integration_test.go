@@ -201,7 +201,7 @@ func TestPricingCellWriter_Integration_CreateUpdateDeleteWithHistory(t *testing.
 	require.Equal(t, int64(5), pwiConfigRevision(t, gid))
 	require.Len(t, pwiHistory(t, gid), 5)
 
-	// 删除两个 inherit 单元格：不涉价，历史只有前态。
+	// 删除两个 inherit 单元格：删除一律算涉价（可能放开被字面名遮住的基名价），历史只有前态。
 	res, err = pwiApply(store, service.CellWriteRequest{
 		Ops: []service.CellOp{
 			{GroupID: gid, ModelKey: "pw-inherit", Kind: service.CellOpDelete, BaselineRevision: 1},
@@ -210,7 +210,7 @@ func TestPricingCellWriter_Integration_CreateUpdateDeleteWithHistory(t *testing.
 		GroupRevisions: map[int64]int64{gid: 5}, OperatorID: 11,
 	})
 	require.NoError(t, err)
-	require.False(t, res.TouchesPrice)
+	require.True(t, res.TouchesPrice)
 	require.Equal(t, int64(6), pwiConfigRevision(t, gid))
 	require.Len(t, pwiCells(t, gid), 2)
 	hist = pwiHistory(t, gid)
@@ -422,7 +422,7 @@ func TestInterimPriceWriteGate_Integration_PreviewConfirmCommit(t *testing.T) {
 	gid := pwiV2Group(t) // revision 3
 	store := NewPricingWriteStore(integrationDB)
 	inv := &pwiInvalidator{}
-	gate := service.NewInterimPriceWriteGate(store, NewPricingCellWriter(), pwiGuard(nil), inv)
+	gate := service.NewInterimPriceWriteGate(store, service.NewMatrixTxWriter(NewPricingCellWriter(), nil, pwiGuard(nil)), nil, inv)
 	priceReq := func(key string, extra float64, groupRev, baseline int64) service.CellWriteRequest {
 		return service.CellWriteRequest{
 			Ops: []service.CellOp{pwiExtra(gid, key, extra, baseline)}, GroupRevisions: map[int64]int64{gid: groupRev}, OperatorID: 21,
@@ -497,23 +497,36 @@ func TestInterimPriceWriteGate_Integration_PreviewConfirmCommit(t *testing.T) {
 	require.Equal(t, service.ReasonApprovalExpired, pwiReason(t, commit(expiring.ApprovalID, priceReq("pw-gate-2", 1.2, 4, 0), true, true)))
 	require.NotContains(t, pwiCells(t, gid), "pw-gate-2")
 
-	// 不涉价的写入（关闭一个新单元格）可以不带预览，但仍要二次确认并留历史。
-	closed := service.CellWriteRequest{
+	// 新建单元格一律算涉价，要先预览：这里新建一个关闭的 inherit 单元格。
+	create := service.CellWriteRequest{
 		Ops:            []service.CellOp{pwiUpsert(gid, "pw-closed", false, service.MatrixPriceInherit, 0)},
-		GroupRevisions: map[int64]int64{gid: 4},
+		GroupRevisions: map[int64]int64{gid: 4}, OperatorID: 21,
 	}
-	require.Equal(t, service.ReasonPriceWriteConfirm, pwiReason(t, commit(0, closed, false, false)))
-	require.NoError(t, commit(0, closed, true, false))
+	require.Equal(t, service.ReasonPriceWriteApproval, pwiReason(t, commit(0, create, true, true)), "新建没有预览不行")
+	created, err := gate.Propose(ctx, service.PriceWriteProposal{Request: create})
+	require.NoError(t, err)
+	require.True(t, created.TouchesPrice)
+	require.NoError(t, commit(created.ApprovalID, create, true, true))
 	require.Equal(t, int64(5), pwiConfigRevision(t, gid))
+
+	// 不涉价的写入（只开关已有的单元格、价格不变）可以不带预览，但仍要二次确认并留历史。
+	flip := service.CellWriteRequest{
+		Ops:            []service.CellOp{pwiUpsert(gid, "pw-closed", true, service.MatrixPriceInherit, 1)},
+		GroupRevisions: map[int64]int64{gid: 5},
+	}
+	require.Equal(t, service.ReasonPriceWriteConfirm, pwiReason(t, commit(0, flip, false, false)))
+	require.NoError(t, commit(0, flip, true, false))
+	require.Equal(t, int64(6), pwiConfigRevision(t, gid))
 	hist = pwiHistory(t, gid)
-	require.Len(t, hist, 2)
-	require.False(t, hist[1].Appr.Valid)
-	require.Equal(t, []int64{gid, gid}, inv.groups)
+	require.Len(t, hist, 3)
+	require.True(t, hist[1].Appr.Valid)
+	require.False(t, hist[2].Appr.Valid)
+	require.Equal(t, []int64{gid, gid, gid}, inv.groups)
 }
 
 func TestInterimPriceWriteGate_Integration_ProposeRefusesLegacyGroups(t *testing.T) {
 	gid := pwiGroup(t, "legacy", 1)
-	gate := service.NewInterimPriceWriteGate(NewPricingWriteStore(integrationDB), NewPricingCellWriter(), pwiGuard(nil), nil)
+	gate := service.NewInterimPriceWriteGate(NewPricingWriteStore(integrationDB), service.NewMatrixTxWriter(NewPricingCellWriter(), nil, pwiGuard(nil)), nil, nil)
 	_, err := gate.Propose(context.Background(), service.PriceWriteProposal{Request: service.CellWriteRequest{
 		Ops: []service.CellOp{pwiExtra(gid, "pw-m", 1.5, 0)}, GroupRevisions: map[int64]int64{gid: 1}, OperatorID: 21,
 	}})

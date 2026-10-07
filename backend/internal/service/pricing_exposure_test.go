@@ -73,6 +73,9 @@ func TestExposureValidator_Check(t *testing.T) {
 	extra.Cell.ExtraMultiplier = pwF(1.5)
 	closed := exCell(1, "unknown-closed", MatrixPriceInherit)
 	closed.Cell.Open = false
+	closedPattern := exCell(1, "gpt-*", MatrixPriceInherit)
+	closedPattern.Cell.Open = false
+	closedPattern.Cell.IsPattern = true
 	pattern := exCell(1, "claude-*", MatrixPriceInherit)
 	pattern.Cell.IsPattern = true
 
@@ -116,7 +119,8 @@ func TestExposureValidator_Check(t *testing.T) {
 		{"token zero top-level price with a positive interval price", exCustom(1, "nothing", MatrixCustomPrice{BillingMode: BillingModeToken,
 			InputPrice: pwF(0), Intervals: []MatrixPriceInterval{{MinTokens: 0, InputPrice: pwF(3e-6)}}}), ""},
 		{"closed cells are not checked", closed, ""},
-		{"wildcard cells are not checked", pattern, ""},
+		{"an open wildcard cell cannot be verified", pattern, ExposureWildcardUnverifiable},
+		{"a closed wildcard cell is fine", closedPattern, ""},
 	}
 	v := NewExposureValidator(exOfficial, nil)
 	for _, tc := range cases {
@@ -263,4 +267,23 @@ func TestExposureGuard_CheckGroups(t *testing.T) {
 	require.EqualError(t, exGuard(r).CheckGroups(ctx, nil, []int64{1}), "boom")
 	r = &exFakeReader{modesErr: errors.New("boom2")}
 	require.EqualError(t, exGuard(r).CheckGroups(ctx, nil, []int64{1}), "boom2")
+}
+
+func TestExposureGuard_CheckGroupAsAllowlist(t *testing.T) {
+	ctx := context.Background()
+	// 不读库里的准入模式：分组现在还是开放的，也按白名单校验它的 open 单元格。
+	r := &exFakeReader{cells: []ExposureCell{exCell(1, "priced", MatrixPriceInherit), exCell(1, "nothing", MatrixPriceInherit)}}
+	err := exGuard(r).CheckGroupAsAllowlist(ctx, nil, 1)
+	require.Equal(t, ReasonExposureUnpriced, pwReason(t, err))
+	require.Equal(t, [][]int64{{1}}, r.cellCalls)
+	require.Empty(t, r.modeCalls)
+
+	r = &exFakeReader{cells: []ExposureCell{exCell(1, "priced", MatrixPriceInherit)}}
+	require.NoError(t, exGuard(r).CheckGroupAsAllowlist(ctx, nil, 1))
+
+	r = &exFakeReader{cellsErr: errors.New("boom")}
+	require.EqualError(t, exGuard(r).CheckGroupAsAllowlist(ctx, nil, 1), "boom")
+
+	var nilGuard *ExposureGuard
+	require.Equal(t, ReasonExposureGuardMissing, pwReason(t, nilGuard.CheckGroupAsAllowlist(ctx, nil, 1)))
 }

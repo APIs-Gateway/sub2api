@@ -12,8 +12,8 @@ func TestPricingSnapshotExposureSource_AllowlistGroupIDsTx(t *testing.T) {
 	db, mock := newSQLMock(t)
 	src := NewPricingSnapshotExposureSource()
 
-	mock.ExpectQuery(`FROM group_model_config c\s+JOIN groups g ON g.id = c.group_id\s+WHERE c.access_mode = \$1 AND g.deleted_at IS NULL`).
-		WithArgs("allowlist").
+	mock.ExpectQuery(`FROM group_model_config c\s+JOIN groups g ON g.id = c.group_id\s+WHERE c.access_mode = \$1 AND c.pricing_stage = \$2 AND g.deleted_at IS NULL`).
+		WithArgs("allowlist", "v2").
 		WillReturnRows(sqlmock.NewRows([]string{"group_id"}).AddRow(int64(3)).AddRow(int64(9)))
 	ids, err := src.AllowlistGroupIDsTx(context.Background(), db)
 	require.NoError(t, err)

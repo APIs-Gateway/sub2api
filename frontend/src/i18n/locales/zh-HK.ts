@@ -1548,6 +1548,8 @@
     allPlatforms: '全部',
     platform: '平台',
     startingFrom: '起價',
+    peakNote: '表內為標準價；標有高峰倍數的分組，工作日 9–12、14–18 點（北京時間）輸入、輸出、緩存讀取按該倍數計費',
+    peakShort: '工作日高峰 {n} 倍',
     expand: '展開',
     collapse: '收起',
     group: '分組',

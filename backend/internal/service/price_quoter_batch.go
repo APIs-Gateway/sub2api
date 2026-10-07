@@ -12,6 +12,11 @@ import (
 // 同一个分组会出现几百次）。取价、倍率、准入全部还是 Quote 自己的逻辑，所以每个结果与单独调用 Quote 逐位相同。
 // 返回的 Quote 可以继续调用 Cost。
 func (q *PriceQuoter) BatchQuote(ctx context.Context, reqs []QuoteRequest) []*Quote {
+	return q.batchQuote(ctx, reqs)
+}
+
+// batchQuote 是 BatchQuote 的实现；BatchQuoteWith 在带单元格叠加的报价器上复用它。
+func (q *PriceQuoter) batchQuote(ctx context.Context, reqs []QuoteRequest) []*Quote {
 	out := make([]*Quote, len(reqs))
 	if q == nil || q.resolver == nil || q.billing == nil || q.groups == nil {
 		return out

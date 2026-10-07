@@ -10,8 +10,10 @@ import (
 
 // W6 PR5：阶段切换（设计 4.3）。
 //
-// PR7 合并之前只允许 legacy 与 shadow 两个值（S-13）：没有任何路径会把真实请求路由到矩阵，
+// PR5 只允许 legacy 与 shadow 两个值（S-13）：没有任何路径会把真实请求路由到矩阵，
 // 所以切到 shadow 对用户的账单与准入零影响，price_delta 恒为 none。
+// PR7b 起接上 PricingStageSwitcher（pricing_stage_switch.go）：目标是 v2 时走闸门、预览与事务，v2 回拨走归档与重新派生，
+// 所有阶段变更（含 legacy 与 shadow 之间）都在事务里记审计。没有接 switcher 时（单元测试）仍然只允许 legacy 与 shadow。
 // 切换登记为 W5 的 change-set 动作 pricing.stage_switch（Category 不是 price，touches_price=true，
 // 档位由 W5 的 TierEngine 按 price_delta 得出，W6 不硬编码）。W5 落地之前，登记的含义是：
 // 响应与日志里带上动作名与涉价字段，group_model_config 记下 stage_changed_at / stage_changed_by。
@@ -61,6 +63,11 @@ type PricingStageSwitchRequest struct {
 	OperatorID int64
 	// Confirm 管理员的二次确认。
 	Confirm bool
+	// ApprovalID 预览凭证；切到 v2 必须带，其余变更不需要。
+	ApprovalID int64
+	// AuthMethod 是鉴权中间件记下的 auth_method（c.GetString("auth_method")），不取自请求体；
+	// 只有 JWT 会话算交互式管理员（PriceWriteActorFromAuthMethod）。
+	AuthMethod string
 }
 
 // PricingStageSwitchResult 切换结果，带上登记的动作信息。
@@ -69,6 +76,14 @@ type PricingStageSwitchResult struct {
 	Category     string     `json:"category"`
 	TouchesPrice bool       `json:"touches_price"`
 	PriceDelta   PriceDelta `json:"price_delta"`
+	// Kind 是 advance（向后推进）、rollback（回拨）或 noop（已经是目标阶段，没有写任何东西）。
+	Kind       string `json:"kind,omitempty"`
+	ApprovalID int64  `json:"approval_id,omitempty"`
+	AuditID    int64  `json:"audit_id,omitempty"`
+	// SnapshotReady 为 false 表示变更已经提交，但本实例没能把分组快照同步加载好（其他实例经通知失效，TTL 60 秒兜底）。
+	SnapshotReady bool                 `json:"snapshot_ready"`
+	Gate          *StageGateReport     `json:"gate,omitempty"`
+	Archived      *StageArchiveSummary `json:"archived,omitempty"`
 	PricingStageChange
 }
 
@@ -77,6 +92,8 @@ type PricingStageService struct {
 	store    PricingStageStore
 	policy   *stagedPolicy
 	recorder *PricingShadowRecorder
+	// switcher 为 nil 时只允许 legacy 与 shadow，走 store.SwitchStage（PR5 的路径）。
+	switcher *PricingStageSwitcher
 	now      func() time.Time
 }
 
@@ -85,9 +102,14 @@ func NewPricingStageService(store PricingStageStore, policy *StagedGroupPolicy, 
 	return &PricingStageService{store: store, policy: policy, recorder: recorder, now: time.Now}
 }
 
-// pricingStageAllowed 判断 to 是不是 PR7 合并之前允许切到的阶段。PR7 才加入 v2。
-func pricingStageAllowed(to PricingStage) bool {
-	return to == PricingStageLegacy || to == PricingStageShadow
+// SetSwitcher 接上阶段切换器（PR7b）。只在装配阶段调用；之后 v2 才是允许的目标阶段。
+func (s *PricingStageService) SetSwitcher(sw *PricingStageSwitcher) {
+	s.switcher = sw
+}
+
+// pricingStageAllowed 判断 to 是不是允许切到的阶段：legacy 与 shadow 一直允许，v2 要接上切换器（闸门、预览、事务）才允许。
+func pricingStageAllowed(to PricingStage, v2Open bool) bool {
+	return to == PricingStageLegacy || to == PricingStageShadow || (to == PricingStageV2 && v2Open)
 }
 
 // Switch 切换分组的价格体系阶段。
@@ -98,12 +120,15 @@ func (s *PricingStageService) Switch(ctx context.Context, req PricingStageSwitch
 	if req.GroupID <= 0 {
 		return nil, infraerrors.BadRequest("INVALID_PARAMETER", "group id must be a positive integer")
 	}
-	if !pricingStageAllowed(req.To) {
+	if !pricingStageAllowed(req.To, s.switcher != nil) {
 		return nil, infraerrors.BadRequest(ReasonPricingStageNotAllowed,
 			"only legacy and shadow are allowed; the v2 stage is not available yet")
 	}
 	if !req.Confirm {
 		return nil, infraerrors.BadRequest(ReasonPricingStageConfirm, "confirm the stage switch explicitly")
+	}
+	if s.switcher != nil {
+		return s.switcher.Commit(ctx, req)
 	}
 
 	change, err := s.store.SwitchStage(ctx, req.GroupID, req.To, req.OperatorID, s.now())
@@ -127,6 +152,22 @@ func (s *PricingStageService) Switch(ctx context.Context, req PricingStageSwitch
 		PriceDelta:         PriceDeltaNone,
 		PricingStageChange: *change,
 	}, nil
+}
+
+// Preview 预览一次阶段变更（PR7b）：目标是 v2 时评估闸门并登记预览凭证。没有接切换器时返回「不允许」。
+func (s *PricingStageService) Preview(ctx context.Context, req PricingStagePreviewRequest) (*PricingStagePreview, error) {
+	if s.switcher == nil {
+		return nil, infraerrors.BadRequest(ReasonPricingStageNotAllowed, "stage preview is not available")
+	}
+	return s.switcher.Preview(ctx, req)
+}
+
+// Audit 返回分组最近的阶段变更审计。
+func (s *PricingStageService) Audit(ctx context.Context, groupID int64, limit int) ([]StageAuditEntry, error) {
+	if s.switcher == nil {
+		return []StageAuditEntry{}, nil
+	}
+	return s.switcher.Audit(ctx, groupID, limit)
 }
 
 // ShadowStats 返回影子比对的进程内计数。

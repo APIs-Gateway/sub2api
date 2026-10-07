@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
+	"strconv"
 	"time"
 )
 
@@ -10,11 +13,13 @@ import (
 //   - legacy：转发给 legacyPolicy，与没有 stagedPolicy 时逐位相同；
 //   - shadow：legacyPolicy 的结果照常返回给调用方；同一个调用上 v2（matrixPolicy）同步算一遍并比较，
 //     只在不一致时写指标与采样。比对永不影响请求：v2 一侧的 panic 被吞掉并计数；
-//   - v2：PR7 才放开。本 PR 里 stagedPolicy 不会把真实请求路由到 matrixPolicy（v2Live 为 false），
-//     即使库里有行写着 v2，也按 legacy 处理。
+//   - v2：准入、映射、功能、定价、账号成本都读矩阵（matrixPolicy）。W6 PR7a 起路由是活的（v2Live 为 true），
+//     但阶段 API 仍然只允许 legacy 与 shadow（pricingStageAllowed），所以线上不会有分组处于 v2；
+//     v2 一侧运行时额外叠加模型目录状态（draft、retired 不放行）与白名单分组的无价检查（RuntimeAccess）。
 //
-// 阶段读取不阻塞：用 matrixPolicy.cachedSnapshot，缓存里没有（进程刚启动、分组第一次出现）就按 legacy 处理，
-// 后台加载。所以请求路径上不会多出任何数据库读取与等待，快照加载完成之前的行为与改动前相同。
+// 阶段读取：用 matrixPolicy.cachedSnapshot，缓存里有快照（哪怕过期，后台刷新）就不阻塞；缓存里没有（进程刚启动之后
+// 第一次出现的分组）同步加载一次，因为它可能已经是 v2，不能按 legacy 处理（W6 PR7b，PR7a 审查 1）。加载失败又没有旧快照时，
+// 分组可能是 v2 就拒绝它的请求（snapshotUnavailablePolicy），不是 v2（启动时没有配置行）就按 legacy。
 //
 // 一次计算固定同一份快照：阶段判断、v2 一侧的全部读取都从 ctx 里的固定器（pinGroupPolicySnapshots）取。
 //
@@ -24,8 +29,15 @@ type stagedPolicy struct {
 	legacy GroupPolicy
 	matrix *matrixPolicy
 	hub    *pricingShadowHub
-	// v2Live 为 true 时阶段为 v2 的分组才真正读矩阵。PR7 之前恒为 false。
+	// v2Live 为 true 时阶段为 v2 的分组才真正读矩阵。生产构造恒为 true；测试可以关掉它来验证 legacy 路径。
 	v2Live bool
+
+	// catalog 是运行时目录状态读取方（带缓存），由 SetModelCatalog 在装配阶段接上；为 nil 时 v2 准入不看目录。
+	catalog *runtimeCatalog
+	// runtime 是白名单分组无价检查的缓存与计数（runtime_pricing.go）。
+	runtime runtimePricingState
+	// retryDelay 是启动预加载的重试间隔，测试里缩短；零值取默认。
+	retryDelay time.Duration
 }
 
 var _ GroupPolicy = (*stagedPolicy)(nil)
@@ -35,15 +47,20 @@ type StagedGroupPolicy = stagedPolicy
 
 // newStagedGroupPolicy 创建 stagedPolicy。matrix 为 nil 时永远走 legacy。sink 可为 nil（只计数、不写样本）。
 func newStagedGroupPolicy(legacy GroupPolicy, matrix *matrixPolicy, sink PricingShadowSink) *stagedPolicy {
-	return &stagedPolicy{legacy: legacy, matrix: matrix, hub: newPricingShadowHub(sink)}
+	return &stagedPolicy{legacy: legacy, matrix: matrix, hub: newPricingShadowHub(sink), v2Live: true}
 }
 
 // Stats 返回影子比对的进程内计数。
 func (s *stagedPolicy) Stats() PricingShadowStats { return s.hub.Stats() }
 
 // InvalidateGroups 让矩阵快照失效，供阶段切换在写库之后调用。
+// 调用方只有阶段切换：被切换的分组此后有（或刚被改过）配置行，记进「可能是 v2」集合。启动时是 legacy、没有配置行的分组
+// 切到 shadow/v2 之后，本实例即使第一次加载就失败，也会被拒绝而不是按 legacy 放行（W6 PR7b-1 审查 B1）。
 func (s *stagedPolicy) InvalidateGroups(groupIDs ...int64) {
 	if s.matrix != nil {
+		for _, id := range groupIDs {
+			s.matrix.noteConfigured(id)
+		}
 		s.matrix.InvalidateGroups(groupIDs...)
 	}
 }
@@ -69,7 +86,13 @@ func (s *stagedPolicy) route(ctx context.Context, groupID int64) (active GroupPo
 	}
 	snap := s.matrix.cachedSnapshot(ctx, groupID)
 	if snap == nil {
-		return s.legacy, nil
+		// 缓存里没有（进程刚启动之后第一次出现的分组，或预加载之后才有配置行的分组）：同步加载，同一个分组只会等这一次。
+		// 不能再按 legacy 处理：它可能已经是 v2，退回 legacy 会丢掉额外倍率、把只有 custom 价的模型按 0 元计费（PR7a 审查 1(b)）。
+		snap = s.matrix.snapshot(ctx, groupID)
+	}
+	if snap.loadErr != nil && s.v2Live && s.matrix.mayBeConfigured(groupID) {
+		// 快照加载不出来、也没有旧快照可用，而分组可能是 v2：不知道它的阶段，不能按 legacy 或默认状态计费。
+		return s.snapshotUnavailable(groupID, snap.loadErr), nil
 	}
 	switch snap.stage {
 	case PricingStageV2:
@@ -80,6 +103,104 @@ func (s *stagedPolicy) route(ctx context.Context, groupID int64) (active GroupPo
 		return s.legacy, snap
 	}
 	return s.legacy, nil
+}
+
+// snapshotUnavailable 返回「快照不可用」策略，并计数、限速记 Error 日志。
+func (s *stagedPolicy) snapshotUnavailable(groupID int64, err error) GroupPolicy {
+	s.matrix.unavailable.Add(1)
+	s.runtime.logLimited(s.hub.now(), "snapshot_unavailable:"+strconv.FormatInt(groupID, 10), func() {
+		slog.Error("pricing matrix snapshot unavailable for a group that may be on v2, rejecting its requests",
+			"group_id", groupID, "error", err)
+	})
+	return snapshotUnavailablePolicy{err: err}
+}
+
+const (
+	// ensureReloadAttempts 与 ensureReloadDelay：EnsureGroupsLoaded 发现快照没有存进缓存时的补加载次数与间隔。
+	ensureReloadAttempts = 2
+	ensureReloadDelay    = 20 * time.Millisecond
+)
+
+// EnsureGroupsLoaded 同步把这些分组的快照重新加载进本实例的缓存。加载失败，或只拿到沿用的旧数据，都返回错误。
+// 阶段切换提交之后调用，确认本实例已经读到新阶段。
+func (s *stagedPolicy) EnsureGroupsLoaded(ctx context.Context, groupIDs ...int64) error {
+	if s == nil || s.matrix == nil {
+		return nil
+	}
+	for _, id := range groupIDs {
+		snap := s.matrix.loadSnapshot(ctx, id)
+		if snap.loadErr != nil {
+			return snap.loadErr
+		}
+		if snap.stale {
+			return fmt.Errorf("group %d: only a stale snapshot is available", id)
+		}
+		// 加载期间收到失效通知（代数变了）时快照没有存进缓存，却也没有 loadErr（与预加载的检查一致）。
+		// 本实例自己发出的通知会回到自己的订阅上，这种回声是常态，所以再同步加载一到两次，每次都重新读代数。
+		for i := 0; i < ensureReloadAttempts && !s.matrix.cachedReady(id); i++ {
+			select {
+			case <-ctx.Done():
+			case <-time.After(ensureReloadDelay):
+			}
+			snap = s.matrix.loadSnapshot(ctx, id)
+			if snap.loadErr != nil {
+				return snap.loadErr
+			}
+		}
+		if !s.matrix.cachedReady(id) {
+			return fmt.Errorf("group %d: the loaded snapshot was not cached", id)
+		}
+	}
+	return nil
+}
+
+// snapshotUnavailablePolicy 是快照不可用时使用的策略：准入一律拒绝，两个返回错误的读口把错误交给调用方，其余是中性值。
+// 请求在调度阶段的准入（ModelAccess）就被挡下，不会走到计费；拒绝只发生在「快照加载失败且没有旧快照」这种矩阵表读取故障里。
+type snapshotUnavailablePolicy struct{ err error }
+
+var _ GroupPolicy = snapshotUnavailablePolicy{}
+
+// QuoteAccessReasonSnapshotUnavailable 分组的价格配置读不出来，请求被拒绝（原因只写日志，不出现在用户可见的文案里）。
+const QuoteAccessReasonSnapshotUnavailable = "snapshot_unavailable"
+
+func (snapshotUnavailablePolicy) Mapping(_ context.Context, _ int64, model string) ChannelMappingResult {
+	return ChannelMappingResult{MappedModel: model}
+}
+
+func (snapshotUnavailablePolicy) ModelAccess(context.Context, int64, string) QuoteAccess {
+	return QuoteAccess{OK: false, Reason: QuoteAccessReasonSnapshotUnavailable}
+}
+
+func (snapshotUnavailablePolicy) UpstreamAccess(context.Context, int64, string) QuoteAccess {
+	return QuoteAccess{OK: false, Reason: QuoteAccessReasonSnapshotUnavailable}
+}
+
+func (p snapshotUnavailablePolicy) UpstreamCheck(context.Context, int64) (bool, error) {
+	return false, p.err
+}
+
+func (p snapshotUnavailablePolicy) Feature(context.Context, int64, string, GroupFeature) (*bool, error) {
+	return nil, p.err
+}
+
+func (snapshotUnavailablePolicy) PriceOverride(context.Context, int64, string, time.Time) *ChannelModelPricing {
+	return nil
+}
+
+func (snapshotUnavailablePolicy) ExtraMultiplier(context.Context, int64, string, time.Time) float64 {
+	return 1
+}
+
+func (snapshotUnavailablePolicy) CostMode(context.Context, int64) MatrixCostMode {
+	return MatrixCostAccountRate
+}
+
+func (snapshotUnavailablePolicy) CostRules(context.Context, int64) ([]AccountStatsPricingRule, string) {
+	return nil, ""
+}
+
+func (snapshotUnavailablePolicy) Stage(context.Context, int64) PricingStage {
+	return PricingStageLegacy
 }
 
 // shadowReady 判断这次调用能不能比对：快照不能是兜底或沿用的旧数据，渠道与矩阵快照最近没有失效过，
@@ -136,6 +257,9 @@ func (s *stagedPolicy) Mapping(ctx context.Context, groupID int64, model string)
 func (s *stagedPolicy) ModelAccess(ctx context.Context, groupID int64, model string) QuoteAccess {
 	active, shadow := s.route(ctx, groupID)
 	got := active.ModelAccess(ctx, groupID, model)
+	if got.OK {
+		got = s.catalogAccess(ctx, active, groupID, model)
+	}
 	if shadow != nil {
 		s.compareAccess(ctx, groupID, shadow, model, got, func(v2ctx context.Context) QuoteAccess {
 			return s.matrix.ModelAccess(v2ctx, groupID, model)
@@ -192,7 +316,7 @@ func (s *stagedPolicy) Feature(ctx context.Context, groupID int64, platform stri
 	if shadow != nil {
 		s.compareCall(ctx, groupID, shadow, func(v2ctx context.Context) {
 			v2, v2err := s.matrix.Feature(v2ctx, groupID, platform, f)
-			if (err == nil) != (v2err == nil) || !shadowBoolPtrEqual(got, v2) {
+			if (err == nil) != (v2err == nil) || !groupFeatureEquivalent(f, got, v2) {
 				s.hub.noteDiff(groupID, ShadowKindFeature, ShadowClassTranslation, string(f), "",
 					shadowBoolPtrView(got), shadowBoolPtrView(v2))
 			}
@@ -241,6 +365,19 @@ func (s *stagedPolicy) Stage(ctx context.Context, groupID int64) PricingStage {
 
 func shadowMappingView(r ChannelMappingResult) map[string]any {
 	return map[string]any{"mapped_model": r.MappedModel, "mapped": r.Mapped, "billing_model_source": r.BillingModelSource}
+}
+
+// groupFeatureEquivalent 按运行时读取方的语义比较开关值（与 PR4 等价测试的 mqEffective 一致）：
+// web_search_emulation、bedrock_cc_compat 的读取方把 nil 当 false（gateway_websearch_emulation.go、gateway_service.go 的
+// isBedrockCCCompatEnabled），而派生按设计 2.3 在开关不存在时不写键，所以「未配置」与 false 等价；
+// codex_image_generation_bridge 的 nil 表示跟随全局开关（openai_gateway_service.go），与 false 效果不同，严格比较。
+func groupFeatureEquivalent(f GroupFeature, a, b *bool) bool {
+	switch f {
+	case GroupFeatureWebSearchEmulation, GroupFeatureBedrockCCCompat:
+		return (a != nil && *a) == (b != nil && *b)
+	default:
+		return shadowBoolPtrEqual(a, b)
+	}
 }
 
 func shadowBoolPtrEqual(a, b *bool) bool {

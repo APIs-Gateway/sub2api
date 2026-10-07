@@ -200,6 +200,61 @@ describe('buildPriceCatalog', () => {
     expect(free.cheapest?.pricing.first).toMatchObject({ input: 0, output: 0, cacheRead: null })
   })
 
+  it('sorts groups by billing kind first and only compares prices within a kind', () => {
+    const data: UserPriceCatalog = {
+      groups: [group(1, 'A'), group(2, 'B'), group(3, 'C')],
+      models: [
+        {
+          name: 'mixed',
+          platform: 'openai',
+          entries: [
+            entry(1, 1, { unit: 0.000001 }, { billing_mode: 'per_request', kind: 'request' }),
+            entry(2, 1, { input: 5e-6, output: 9e-6 }),
+            entry(3, 1, { input: 2e-6, output: 4e-6 }),
+          ],
+        },
+      ],
+    }
+    const [m] = buildPriceCatalog(data)
+    expect(m.kinds).toEqual(['token', 'request'])
+    expect(m.kind).toBe('token')
+    expect(m.entries.map((e) => e.group.name)).toEqual(['C', 'B', 'A'])
+    expect(m.cheapest?.group.name).toBe('C')
+  })
+
+  it('carries the peak multiplier only when it is above 1', () => {
+    const data: UserPriceCatalog = {
+      groups: [group(1, 'A'), group(2, 'B')],
+      models: [
+        { name: 'ds', platform: 'openai', entries: [entry(1, 1, { input: 1e-6 }, { peak_multiplier: 2 })] },
+        { name: 'plain', platform: 'openai', entries: [entry(2, 1, { input: 1e-6 }), entry(1, 1, { input: 1e-6 }, { peak_multiplier: 0 })] },
+      ],
+    }
+    const byName = Object.fromEntries(buildPriceCatalog(data).map((m) => [m.name, m]))
+    expect(byName.ds.peakMultiplier).toBe(2)
+    expect(byName.ds.hasPeakGroup).toBe(true)
+    expect(byName.plain.peakMultiplier).toBeNull()
+    expect(byName.plain.hasPeakGroup).toBe(false)
+  })
+
+  it('takes the row peak multiplier from the cheapest group only', () => {
+    const data: UserPriceCatalog = {
+      groups: [group(1, 'Default card'), group(2, 'Custom price')],
+      models: [
+        {
+          name: 'ds',
+          platform: 'openai',
+          entries: [entry(1, 1.3, { input: 1e-6 }, { peak_multiplier: 2 }), entry(2, 0.5, { input: 1e-6 })],
+        },
+      ],
+    }
+    const [m] = buildPriceCatalog(data)
+    expect(m.cheapest?.group.name).toBe('Custom price')
+    expect(m.peakMultiplier).toBeNull()
+    expect(m.hasPeakGroup).toBe(true)
+    expect(m.entries.map((e) => e.pricing.peakMultiplier)).toEqual([null, 2])
+  })
+
   it('returns an empty catalog for no data', () => {
     expect(buildPriceCatalog(null)).toEqual([])
     expect(buildPriceCatalog({ groups: [], models: [] })).toEqual([])

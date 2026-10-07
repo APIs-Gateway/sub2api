@@ -10558,7 +10558,9 @@ func (s *GatewayService) calculateImageCost(
 			Resolved:       resolved,
 		})
 		if err != nil {
-			logger.LegacyPrintf("service.gateway", "Calculate image token cost failed: %v", err)
+			if !isShadowRecompute(ctx) {
+				logger.LegacyPrintf("service.gateway", "Calculate image token cost failed: %v", err)
+			}
 			noteUnpricedBilling(ctx, apiKey, result.Model, UnpricedBillingReasonImageCalcError, err,
 				"zero_cost", billingModel)
 			return &CostBreakdown{ActualCost: 0}
@@ -10653,7 +10655,9 @@ func (s *GatewayService) calculateTokenCost(
 		cost, err = s.billingService.CalculateCost(billingModel, tokens, multiplier)
 	}
 	if err != nil {
-		logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
+		if !isShadowRecompute(ctx) {
+			logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
+		}
 		reason := UnpricedBillingReasonCalcError
 		if isUsagePricingUnavailableError(err) {
 			reason = UnpricedBillingReasonMissingPrice
@@ -10807,7 +10811,12 @@ func (s *GatewayService) checkChannelPricingRestriction(ctx context.Context, gro
 	if billingModel == "" {
 		return false
 	}
-	return !gp.ModelAccess(ctx, *groupID, billingModel).OK
+	if !gp.ModelAccess(ctx, *groupID, billingModel).OK {
+		return true
+	}
+	// 白名单 v2 分组的运行时无价检查（W6 PR7a）：只有 billing_unpriced_policy = block_allowlist 才会拦，其余时候只观测。
+	// legacy、shadow、开放分组与非 stagedPolicy 的策略在这里直接放行。
+	return runtimeUnpricedBlocked(ctx, gp, s.billingService, s.settingService, *groupID, requestedModel, billingModel, mapping.MappedModel)
 }
 
 // billingModelForRestriction 根据计费基准确定限制检查使用的模型。
@@ -10836,7 +10845,14 @@ func (s *GatewayService) isUpstreamModelRestrictedByChannel(ctx context.Context,
 	if upstreamModel == "" {
 		return false
 	}
-	return !gp.UpstreamAccess(ctx, groupID, upstreamModel).OK
+	if !gp.UpstreamAccess(ctx, groupID, upstreamModel).OK {
+		return true
+	}
+	// 计费来源为 upstream 的白名单 v2 分组：运行时无价检查（W6 PR7b-2a）。候选链与计费的取价回退一致：
+	// 上游模型无价时计费回退到渠道映射后的模型（Forward 收到的就是它，不是映射前的请求模型），任一有价就算有价（R2-S-5）。
+	// 只有 billing_unpriced_policy = block_allowlist 才会拦；legacy、shadow、开放分组直接放行。
+	mappedModel := gp.Mapping(ctx, groupID, requestedModel).MappedModel
+	return runtimeUnpricedBlocked(ctx, gp, s.billingService, s.settingService, groupID, mappedModel, upstreamModel, "")
 }
 
 // resolveAccountUpstreamModel 确定账号将请求模型映射为什么上游模型。

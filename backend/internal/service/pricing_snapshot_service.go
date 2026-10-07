@@ -103,6 +103,12 @@ func (s *PricingService) readSnapshotMode(ctx context.Context) (string, error) {
 		}
 		return "", fmt.Errorf("read %s: %w", SettingKeyPricingSnapshotMode, err)
 	}
+	return normalizePricingSnapshotMode(value)
+}
+
+// normalizePricingSnapshotMode 把 pricing_snapshot_mode 的原始值规范成 auto 或 pinned；其余值视为配置损坏。
+// 服务进程与离线命令（LoadServicePricing）共用这一处判定。
+func normalizePricingSnapshotMode(value string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", PricingSnapshotModeAuto:
 		return PricingSnapshotModeAuto, nil
