@@ -1326,6 +1326,8 @@
     balanceDeducted: '扣除余额',
     subscriptionDeducted: '扣除套餐额度',
     yourSpend: '你的花费',
+    spendFromBalance: '余额',
+    spendFromPlan: '套餐',
     currencyFiat: '¥',
     currencyUsd: '$',
     currencySwitchLabel: '切换计价单位',

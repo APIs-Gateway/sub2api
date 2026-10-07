@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
 
 import UsageView from '../UsageView.vue'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
@@ -74,6 +75,8 @@ const messages: Record<string, string> = {
   'usage.balanceDeducted': 'Balance deducted',
   'usage.subscriptionDeducted': 'Plan quota deducted',
   'usage.yourSpend': 'Your spend',
+  'usage.spendFromBalance': 'Balance',
+  'usage.spendFromPlan': 'Plan',
   'usage.currencyFiat': '¥',
   'usage.currencyUsd': '$',
   'usage.currencySwitchLabel': 'Switch display unit',
@@ -128,6 +131,11 @@ const DataTableStub = {
     </div>
   `,
 }
+
+// UsageView 经 useRateDisplay 用到 auth / subscriptions store，没有激活的 Pinia 会在 setup 里抛错。
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
 
 describe('user UsageView tooltip', () => {
   beforeEach(() => {
@@ -916,6 +924,9 @@ describe('user UsageView currency display', () => {
   // 余额、发现没变而来问，所以措辞必须跟着 billing_type 走。
   it('扣除行的措辞跟着计费类型走：钱包说余额，订阅说套餐额度', async () => {
     const wrapper = await mountView()
+    // 人民币口径不再出现扣除行（见 DR-4 用例），措辞只在美元口径下检查。
+    useCurrencyDisplay().setMode('usd')
+    await nextTick()
     const setupState = (wrapper.vm as any).$?.setupState
 
     setupState.tooltipData = subscriptionRow
@@ -942,9 +953,11 @@ describe('user UsageView currency display', () => {
     expect(shown.get('[data-test="official-total"]').text()).toContain('¥11.67')
   })
 
-  it('tooltip 把官方价、扣除金额、你的花费拆成三行', async () => {
+  it('美元口径的 tooltip 把官方价、扣除金额、你的花费拆成三行', async () => {
     publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7 }
     const wrapper = await mountView()
+    useCurrencyDisplay().setMode('usd')
+    await nextTick()
     const setupState = (wrapper.vm as any).$?.setupState
 
     setupState.tooltipData = subscriptionRow
@@ -960,6 +973,126 @@ describe('user UsageView currency display', () => {
     expect(text).toContain('¥11.67')
     expect(text).toContain('$5.00')
     expect(text).toMatch(/¥0\.25(?!\d)/)
+    // 美元口径与改前逐字相同：原始倍率，花费后面不标来源。
+    expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('3x')
+    expect(wrapper.get('[data-test="tip-spend"]').text()).not.toMatch(/Plan|Balance/)
+  })
+
+  // DR-4：人民币口径的悬停按等效倍率（实付 ÷ 官方价）显示，去掉扣除行，花费后标来源。
+  describe('DR-4 人民币口径的悬停', () => {
+    // 官方价 $0.60，分组倍率 1.4，扣 $0.84 额度。
+    const walletRow = {
+      ...subscriptionRow,
+      request_id: 'req-wallet-dr4',
+      total_cost: 0.6,
+      actual_cost: 0.84,
+      fiat_cost: 0.0646,
+      rate_multiplier: 1.4,
+      billing_type: 0,
+      subscription_id: null,
+    }
+    const planRow = { ...walletRow, request_id: 'req-plan-dr4', fiat_cost: 0.0392, billing_type: 1, subscription_id: 7 }
+
+    async function openTip(row: Record<string, unknown>, mode: 'fiat' | 'usd' = 'fiat') {
+      publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7.2 }
+      const wrapper = await mountView()
+      useCurrencyDisplay().setMode(mode)
+      await nextTick()
+      const setupState = (wrapper.vm as any).$?.setupState
+      setupState.tooltipData = row
+      setupState.tooltipVisible = true
+      await nextTick()
+      return wrapper
+    }
+
+    it('余额行：0.108x，没有扣除行，花费后标「余额」', async () => {
+      const wrapper = await openTip(walletRow)
+      expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('0.108x')
+      const text = plain(wrapper)
+      expect(text).not.toContain('Balance deducted')
+      expect(text).not.toContain('Plan quota deducted')
+      expect(text).not.toContain('$0.84')
+      expect(wrapper.get('[data-test="tip-spend"]').text()).toBe('¥0.0646 Balance')
+    })
+
+    it('套餐行：0.0654x，花费后标「套餐」', async () => {
+      const wrapper = await openTip(planRow)
+      expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('0.0654x')
+      expect(plain(wrapper)).not.toContain('Plan quota deducted')
+      expect(wrapper.get('[data-test="tip-spend"]').text()).toBe('¥0.0392 Plan')
+    })
+
+    it('缺 fiat_cost 时倍率回落到 r ÷ m', async () => {
+      const wrapper = await openTip({ ...walletRow, fiat_cost: undefined })
+      // 1.4 ÷ 13 = 0.1077
+      expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('0.108x')
+    })
+
+    it('官方价为 0 时倍率显示 -', async () => {
+      const wrapper = await openTip({ ...walletRow, total_cost: 0, actual_cost: 0, fiat_cost: 0 })
+      expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('-')
+    })
+
+    it('官方价行仍是 ¥（官方美元价 × 官方价汇率）', async () => {
+      const wrapper = await openTip(walletRow)
+      // 0.6 × 7.2 = 4.32
+      expect(plain(wrapper)).toContain('¥4.32')
+    })
+
+    it('美元口径：原始倍率、扣除行都在，花费行不标来源', async () => {
+      const wallet = await openTip(walletRow, 'usd')
+      expect(wallet.get('[data-test="tip-rate"]').text()).toBe('1.4x')
+      expect(plain(wallet)).toContain('Balance deducted')
+      expect(plain(wallet)).toContain('$0.84')
+      expect(wallet.get('[data-test="tip-spend"]').text()).toBe('¥0.0646')
+
+      const plan = await openTip(planRow, 'usd')
+      expect(plan.get('[data-test="tip-rate"]').text()).toBe('1.4x')
+      expect(plain(plan)).toContain('Plan quota deducted')
+    })
+
+    it('CSV 导出不变：人民币口径下倍率列仍是原始倍率，金额列仍是原值', async () => {
+      const wrapper = await openTip(walletRow)
+      query.mockResolvedValue({ items: [{ ...walletRow, model: 'gpt-5.4', api_key: { name: 'k' } }], total: 1, pages: 1 })
+      let blob: Blob | null = null
+      const origCreate = window.URL.createObjectURL
+      const origRevoke = window.URL.revokeObjectURL
+      window.URL.createObjectURL = vi.fn((b: Blob | MediaSource) => {
+        blob = b as Blob
+        return 'blob:dr4'
+      }) as typeof window.URL.createObjectURL
+      window.URL.revokeObjectURL = vi.fn(() => {}) as typeof window.URL.revokeObjectURL
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+      await (wrapper.vm as any).$?.setupState.exportToCSV()
+      expect(blob).not.toBeNull()
+      const csv = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result))
+        reader.onerror = () => reject(reader.error)
+        reader.readAsText(blob as unknown as Blob)
+      })
+      expect(csv).toContain('Rate Multiplier,Deducted (USD),Official Cost (USD),Your Spend (CNY)')
+      expect(csv).toContain(',1.4,0.84000000,0.60000000,0.06460000,')
+      expect(csv).not.toContain('0.108')
+
+      window.URL.createObjectURL = origCreate
+      window.URL.revokeObjectURL = origRevoke
+      clickSpy.mockRestore()
+    })
+
+    it('free 站（m=1）：原始倍率、扣除行、无花费行，与改前相同', async () => {
+      publicSettings.value = { balance_recharge_multiplier: 1 }
+      const wrapper = await mountView({})
+      const setupState = (wrapper.vm as any).$?.setupState
+      setupState.tooltipData = walletRow
+      setupState.tooltipVisible = true
+      await nextTick()
+      expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('1.4x')
+      expect(plain(wrapper)).toContain('Balance deducted')
+      expect(wrapper.find('[data-test="tip-spend"]').exists()).toBe(false)
+      expect(plain(wrapper)).not.toContain('Your spend')
+    })
   })
 
   describe('缺少官方价汇率时的费用明细', () => {
