@@ -4,7 +4,6 @@ package setup
 import (
 	"bufio"
 	"fmt"
-	"net/mail"
 	"os"
 	"regexp"
 	"strconv"
@@ -27,11 +26,6 @@ func cliValidateDBName(name string) bool {
 func cliValidateUsername(name string) bool {
 	validName := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 	return validName.MatchString(name) && len(name) <= 63
-}
-
-func cliValidateEmail(email string) bool {
-	_, err := mail.ParseAddress(email)
-	return err == nil && len(email) <= 254
 }
 
 func cliValidatePort(port int) bool {
@@ -163,32 +157,11 @@ func RunCLI() error {
 	fmt.Println()
 	fmt.Println("── Admin Account ──")
 
-	for {
-		cfg.Admin.Email = promptString(reader, "Admin Email", "admin@example.com")
-		if cliValidateEmail(cfg.Admin.Email) {
-			break
-		}
-		fmt.Println("  Invalid email format.")
+	admin, err := promptAdminCredentials(reader, promptPassword)
+	if err != nil {
+		return err
 	}
-
-	for {
-		cfg.Admin.Password = promptPassword("Admin Password")
-		// SECURITY: Match Web API requirement of 8 characters minimum
-		if len(cfg.Admin.Password) < 8 {
-			fmt.Println("  Password must be at least 8 characters")
-			continue
-		}
-		if len(cfg.Admin.Password) > 128 {
-			fmt.Println("  Password must be at most 128 characters")
-			continue
-		}
-		confirm := promptPassword("Confirm Password")
-		if cfg.Admin.Password != confirm {
-			fmt.Println("  Passwords do not match")
-			continue
-		}
-		break
-	}
+	cfg.Admin = admin
 
 	// Server configuration with validation
 	fmt.Println()
@@ -237,6 +210,35 @@ func RunCLI() error {
 	fmt.Println()
 
 	return nil
+}
+
+// Keep terminal password reading unchanged; separating the credential dialogue
+// lets its validation/retry contract be exercised without a whole installation.
+func promptAdminCredentials(reader *bufio.Reader, readPassword func(string) string) (AdminConfig, error) {
+	defaultEmail, err := generateAdminEmail()
+	if err != nil {
+		return AdminConfig{}, err
+	}
+	admin := AdminConfig{}
+	for {
+		admin.Email = promptString(reader, "Admin Email (login username)", defaultEmail)
+		if validateEmail(admin.Email) {
+			break
+		}
+		fmt.Println("  Invalid email format.")
+	}
+	for {
+		admin.Password = readPassword("Admin Password")
+		if err := validatePassword(admin.Password); err != nil {
+			fmt.Printf("  Invalid password: %v\n", err)
+			continue
+		}
+		if admin.Password != readPassword("Confirm Password") {
+			fmt.Println("  Passwords do not match")
+			continue
+		}
+		return admin, nil
+	}
 }
 
 func promptString(reader *bufio.Reader, prompt, defaultVal string) string {
