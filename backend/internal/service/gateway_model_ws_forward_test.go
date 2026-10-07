@@ -29,19 +29,28 @@ func (c *modelFieldStagedWSConn) WriteJSON(ctx context.Context, payload any) err
 	return c.WriteFrame(ctx, coderws.MessageText, body)
 }
 
+type modelFieldWSCase struct {
+	name, payload string
+	invalid       bool
+}
+
 func TestGatewayModelField_WSLaterFramesBeforeUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, mode := range []string{OpenAIWSIngressModePassthrough, OpenAIWSIngressModeCtxPool} {
 		for _, messageType := range []coderws.MessageType{coderws.MessageText, coderws.MessageBinary} {
-			for _, tc := range []struct {
-				name, payload string
-				invalid       bool
-			}{
+			cases := []modelFieldWSCase{
 				{"duplicate", `{"type":"response.create","model":"gpt-5.1","model":"gpt-6-astra","input":[]}`, true},
 				{"escaped", `{"type":"response.create","model":"gpt-5.1","\u006dodel":"gpt-6-astra","input":[]}`, true},
 				{"case_alias", `{"type":"response.create","model":"gpt-5.1","Model":"gpt-6-astra","input":[]}`, true},
 				{"inherit", `{"type":"response.create","input":[]}`, false},
-			} {
+			}
+			if mode == OpenAIWSIngressModePassthrough {
+				cases = append(cases,
+					modelFieldWSCase{"session_duplicate_model", `{"type":"session.update","session":{"model":"gpt-5.1","model":"gpt-6-astra"}}`, true},
+					modelFieldWSCase{"session_duplicate_object", `{"type":"session.update","session":{"model":"gpt-5.1"},"session":{"model":"gpt-6-astra"}}`, true},
+				)
+			}
+			for _, tc := range cases {
 				t.Run(fmt.Sprintf("%s/%d/%s", mode, messageType, tc.name), func(t *testing.T) {
 					// Keep the upstream alive between turns. An exhausted capture
 					// array emits EOF, which breaks a pooled connection before its
