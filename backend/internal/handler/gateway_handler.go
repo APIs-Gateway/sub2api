@@ -30,6 +30,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
 
@@ -162,6 +163,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 
 	setOpsRequestContext(c, "", false)
+
+	if gjson.ValidBytes(body) {
+		if err := service.ValidateGatewayModelField(body); err != nil {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
+	}
 
 	bodyRef := service.NewRequestBodyRef(body)
 	parsedReq, err := service.ParseGatewayRequest(bodyRef, domain.PlatformAnthropic)
@@ -1953,6 +1961,14 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	}
 
 	setOpsRequestContext(c, "", false)
+
+	// Leave malformed JSON to the existing lenient parser diagnostics.
+	if gjson.ValidBytes(body) {
+		if err := service.ValidateGatewayModelField(body); err != nil {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
+	}
 
 	bodyRef := service.NewRequestBodyRef(body)
 	parsedReq, err := service.ParseGatewayRequest(bodyRef, domain.PlatformAnthropic)

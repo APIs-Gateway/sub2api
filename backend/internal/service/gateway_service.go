@@ -10915,6 +10915,9 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 		s.countTokensError(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return fmt.Errorf("parse request: empty request")
 	}
+	if err := rejectAmbiguousGatewayModel(c, parsed.Body.Bytes()); err != nil {
+		return err
+	}
 	if err := validateClaudeOpus55ForAccount(account, parsed); err != nil {
 		s.countTokensError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return err
