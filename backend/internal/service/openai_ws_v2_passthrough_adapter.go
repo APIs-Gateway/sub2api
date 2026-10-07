@@ -684,6 +684,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		writeOpenAIWSLocalRejectionEvent(ctx, clientConn, rejection)
 		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, closeReason, rejection)
 	}
+	if gjson.ValidBytes(firstClientMessage) {
+		if err := ValidateGatewayWSModelFields(firstClientMessage); err != nil {
+			return rejectLocalPayload(err.Error(), err.Error(), err)
+		}
+	}
 	promptCacheKey := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "prompt_cache_key").String())
 	if isOpenAIResponsesLiteWebSocketPayload(firstClientMessage) {
 		liteFirstMessage, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(firstClientMessage, account)
@@ -987,6 +992,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				rejection := newOpenAIWSLocalRejection(http.StatusBadRequest, "invalid_request_error", "", "Failed to parse request body", ErrOpenAIWSInvalidJSONPayload)
 				writeOpenAIWSLocalRejectionEvent(ctx, clientConn, rejection)
 				return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", rejection)
+			}
+			if err := ValidateGatewayWSModelFields(payload); err != nil {
+				return payload, nil, rejectLocalPayload(err.Error(), err.Error(), err)
 			}
 			if isResponseCreate {
 				previousResponseID := strings.TrimSpace(gjson.GetBytes(payload, "previous_response_id").String())

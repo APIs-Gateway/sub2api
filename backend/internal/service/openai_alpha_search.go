@@ -27,6 +27,10 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 	if s == nil || c == nil || account == nil {
 		return fmt.Errorf("service, context, and account are required")
 	}
+	if err := rejectAmbiguousGatewayModel(c, body); err != nil {
+		return err
+	}
+
 	s.prepareCodexAccountIdentitySource(c, account)
 	modelResult := gjson.GetBytes(body, "model")
 	requestedModel := strings.TrimSpace(modelResult.String())

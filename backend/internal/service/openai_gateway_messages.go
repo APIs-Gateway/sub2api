@@ -44,6 +44,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	} else if changed {
 		body = sanitized
 	}
+	if err := rejectAmbiguousGatewayModel(c, body); err != nil {
+		return nil, err
+	}
 	// API-key OpenAI-compatible upstreams that do not support /v1/responses
 	// must receive Anthropic /v1/messages traffic through /v1/chat/completions.
 	if shouldForwardAnthropicViaRawChatCompletions(account) {
