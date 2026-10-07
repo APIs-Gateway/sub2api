@@ -14,16 +14,16 @@ jobs:
       matrix:
         include:
           - target: NEW
-            ref: a3bb0f8f5de35afaf523d114ec77aca7ddab1b92
+            ref: 8b4f8f9918977412ee72284e0d69c7c77997425e
             overlay: none
           - target: OLD
-            ref: 1ce91b75289578739bfed7545a2210afbf1e9ca7
+            ref: 56cd6fb849306ad18553845173006009392ce85a
             overlay: none
           - target: UPSTREAM_ONLY
-            ref: 1ce91b75289578739bfed7545a2210afbf1e9ca7
+            ref: 56cd6fb849306ad18553845173006009392ce85a
             overlay: upstream
           - target: PARTIAL_SERIALIZATION
-            ref: 1ce91b75289578739bfed7545a2210afbf1e9ca7
+            ref: 56cd6fb849306ad18553845173006009392ce85a
             overlay: partial
     steps:
       - uses: actions/checkout@v6
