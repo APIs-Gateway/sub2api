@@ -98,6 +98,7 @@ func (r *openAIResponsesRun) attempt(args responsesHopArgs) service.HopResult {
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
+	var clientPolicy openAIClientRestrictionSelection
 	var passthroughFailoverState openAIPassthroughFailoverState
 	attempts := 0
 
@@ -152,7 +153,7 @@ func (r *openAIResponsesRun) attempt(args responsesHopArgs) service.HopResult {
 		})
 	}
 	failoverExhausted := func(failoverErr *service.UpstreamFailoverError) service.HopResult {
-		return failoverExhaustedBy(failoverErr, false)
+		return failoverExhaustedBy(failoverErr, clientPolicy.policyExcluded)
 	}
 	// attemptsExhausted：有链时受每请求总尝试次数约束（AttemptsRemaining 为 0 视为未设置）。
 	attemptsExhausted := func() bool {
@@ -188,6 +189,9 @@ func (r *openAIResponsesRun) attempt(args responsesHopArgs) service.HopResult {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if lastFailoverErr == nil {
+				if clientPolicy.rejectExhausted(h, c, err, stream()) {
+					return terminal()
+				}
 				// 仅 legacy 压缩端点才把选号失败解释成「无账号支持 /responses/compact」；
 				// 原生 v2 的选号失败属于普通无可用账号，不应套用该文案。
 				if r.legacyCompact && errors.Is(err, service.ErrNoAvailableCompactAccounts) {
@@ -206,9 +210,23 @@ func (r *openAIResponsesRun) attempt(args responsesHopArgs) service.HopResult {
 			return failoverExhausted(lastFailoverErr)
 		}
 		if selection == nil || selection.Account == nil {
+			if lastFailoverErr != nil {
+				return failoverExhausted(lastFailoverErr)
+			}
+			if clientPolicy.rejectExhausted(h, c, nil, stream()) {
+				return terminal()
+			}
 			return fail(noAccountFacts(nil), func() {
 				h.respondNoAccountError(c, h.gatewayService, key, r.reqModel, r.reqModel, service.PlatformOpenAI, "No available accounts", nil, noAccountCapacityMarkAlways, openAINoAccountResponseStreaming, stream())
 			})
+		}
+		if failoverClientGone(c) {
+			releaseOpenAIClientPolicySelection(selection)
+			return terminal()
+		}
+		if clientPolicy.exclude(h.gatewayService, c, selection, failedAccountIDs) {
+			reqLog.Debug("openai.account_client_incompatible", zap.Int64("account_id", selection.Account.ID))
+			continue
 		}
 		if r.previousResponseID != "" && selection != nil && selection.Account != nil {
 			reqLog.Debug("openai.account_selected_with_previous_response_id", zap.Int64("account_id", selection.Account.ID))
