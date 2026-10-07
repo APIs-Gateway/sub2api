@@ -40,7 +40,7 @@ jobs:
         working-directory: backend
         env:
           CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -v -run '^TestResponsesStreamHasOutput|^TestWSEmptyTTFT' ./internal/pkg/openai/ ./internal/service/ ./internal/service/openai_ws_v2/
+        run: go test -tags=unit -race -count=1 -v -run '^TestResponsesStreamHasOutput|^TestWSEmptyTTFT|^TestOpenAIWSPassthroughDeadlineAndLifecycleHelpers$|^TestOpenAIWSPassthroughEventClassification$' ./internal/pkg/openai/ ./internal/service/ ./internal/service/openai_ws_v2/
       - name: WS TTFT actual two-turn wallet and card settlement (PG Redis race)
         working-directory: backend
         env:
