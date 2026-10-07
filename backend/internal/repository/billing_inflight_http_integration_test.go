@@ -23,6 +23,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	redisclient "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -72,6 +73,9 @@ func (u *inflightHTTPUpstream) DoWithTLS(req *http.Request, proxy string, id int
 }
 
 type inflightHTTPFixture struct {
+	rdb            *redisclient.Client
+	stableGroup    *service.Group
+	stableNext     *service.Group
 	cfg            *config.Config
 	account        *service.Account
 	gatewayService *service.GatewayService
@@ -91,6 +95,12 @@ type inflightHTTPFixture struct {
 }
 
 func newInflightHTTPFixture(t *testing.T, platform, response, contentType string, poolOptions ...service.UsageRecordWorkerPoolOptions) *inflightHTTPFixture {
+	return newInflightHTTPFixtureForClientPolicy(t, platform, response, contentType, false, poolOptions...)
+}
+
+// Only the client-policy selection fixture opts into the existing stable
+// priority coordinator. All prior callers retain their original setup.
+func newInflightHTTPFixtureForClientPolicy(t *testing.T, platform, response, contentType string, stable bool, poolOptions ...service.UsageRecordWorkerPoolOptions) *inflightHTTPFixture {
 	t.Helper()
 	logger.InitBootstrap()
 	client := inflightTestEntClient(t)
@@ -104,6 +114,15 @@ func newInflightHTTPFixture(t *testing.T, platform, response, contentType string
 	user := mustCreateUser(t, client, &service.User{Email: uuid.NewString() + "@inflight-http.test", PasswordHash: "hash", Balance: 0.00000001, Concurrency: 100})
 	group := mustCreateGroup(t, client, &service.Group{Name: uuid.NewString(), Platform: platform, RateMultiplier: 1})
 	group.Hydrated = true
+	var stableGroup, stableNext *service.Group
+	if stable {
+		cfg.RunMode = config.RunModeStandard
+		stableNext = mustCreateGroup(t, client, &service.Group{Name: uuid.NewString(), Platform: platform, RateMultiplier: 4})
+		stableGroup = mustCreateGroup(t, client, &service.Group{Name: uuid.NewString(), Platform: platform, RateMultiplier: 2, StablePriorityFallbackGroupID: &stableNext.ID})
+		group.StablePriorityFallbackGroupID = &stableGroup.ID
+		_, err := inflightTestDB(t).Exec(`UPDATE groups SET stable_priority_fallback_group_id=$1 WHERE id=$2`, stableGroup.ID, group.ID)
+		require.NoError(t, err)
+	}
 	group.AllowImageGeneration = true
 	group.AllowMessagesDispatch = true
 	_, err := inflightTestDB(t).Exec(`UPDATE groups SET allow_image_generation=true, allow_messages_dispatch=true WHERE id=$1`, group.ID)
@@ -111,11 +130,25 @@ func newInflightHTTPFixture(t *testing.T, platform, response, contentType string
 	key := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, GroupID: &group.ID, Key: "sk-" + uuid.NewString(), Name: "inflight-http"})
 	key.User = user
 	key.Group = group
+	key.StablePriorityEnabled = stable
 	schedulerCache := NewSchedulerCache(rdb)
 	accounts := NewAccountRepository(client, inflightTestDB(t), schedulerCache)
 	account := mustCreateAccount(t, client, &service.Account{Name: uuid.NewString(), Platform: platform, Type: service.AccountTypeAPIKey, Concurrency: 100, Credentials: map[string]any{"api_key": "local-fixture", "base_url": "https://upstream.test", "pool_mode": true, "pool_mode_retry_count": 0}, Extra: map[string]any{"privacy_mode": service.PrivacyModeTrainingOff, "openai_responses_supported": true}})
 	require.NoError(t, accounts.BindGroups(context.Background(), account.ID, []int64{group.ID}))
 	groups := NewGroupRepository(client, inflightTestDB(t))
+	var policyChannels *service.ChannelService
+	var policyResolver *service.ModelPricingResolver
+	if stable {
+		channelRepo := NewChannelRepository(inflightTestDB(t))
+		price := .2
+		pricing := []service.ChannelModelPricing{{Platform: platform, Models: []string{"gpt-5.1"}, BillingMode: service.BillingModePerRequest, PerRequestPrice: &price}}
+		homeChannel := &service.Channel{Name: uuid.NewString(), Status: service.StatusActive, GroupIDs: []int64{group.ID}, BillingModelSource: service.BillingModelSourceUpstream, ModelPricing: pricing}
+		servedChannel := &service.Channel{Name: uuid.NewString(), Status: service.StatusActive, GroupIDs: []int64{stableGroup.ID}, BillingModelSource: service.BillingModelSourceUpstream, ModelPricing: pricing, ModelMapping: map[string]map[string]string{platform: {"gpt-5": "gpt-5.1"}}}
+		require.NoError(t, channelRepo.Create(context.Background(), homeChannel))
+		require.NoError(t, channelRepo.Create(context.Background(), servedChannel))
+		policyChannels = service.NewChannelService(channelRepo, groups, nil, nil, nil)
+		policyResolver = service.NewModelPricingResolver(policyChannels, service.NewBillingService(cfg, nil))
+	}
 	users := NewUserRepository(client, inflightTestDB(t))
 	subs := NewUserSubscriptionRepository(client)
 	rates := NewUserGroupRateRepository(inflightTestDB(t))
@@ -139,7 +172,11 @@ func newInflightHTTPFixture(t *testing.T, platform, response, contentType string
 	deferred := service.NewDeferredService(accounts, wheel, time.Minute)
 	t.Cleanup(deferred.Stop)
 	gatewaySvc := service.NewGatewayService(accounts, groups, usage, atomicBilling, users, subs, rates, cache, cfg, snapshot, concurrency, billing, rateLimit, billingCache, nil, upstream, deferred, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
-	openAISvc := service.NewOpenAIGatewayService(accounts, usage, atomicBilling, users, subs, rates, cache, cfg, snapshot, concurrency, billing, rateLimit, billingCache, upstream, deferred, nil, nil, nil, nil, nil, nil, nil, nil, groups)
+	var stableStore service.StablePriorityStateStore
+	if stable {
+		stableStore = NewStablePriorityStateStore(rdb)
+	}
+	openAISvc := service.NewOpenAIGatewayService(accounts, usage, atomicBilling, users, subs, rates, cache, cfg, snapshot, concurrency, billing, rateLimit, billingCache, upstream, deferred, nil, nil, policyResolver, policyChannels, nil, nil, nil, stableStore, groups)
 	t.Cleanup(openAISvc.CloseOpenAIWSPool)
 	keyService := service.NewAPIKeyService(NewAPIKeyRepository(client, inflightTestDB(t)), users, groups, subs, rates, nil, cfg)
 	gemini := service.NewGeminiMessagesCompatService(accounts, groups, cache, snapshot, nil, rateLimit, upstream, nil, cfg)
@@ -149,7 +186,7 @@ func newInflightHTTPFixture(t *testing.T, platform, response, contentType string
 	}
 	pool := service.NewUsageRecordWorkerPoolWithOptions(options)
 	t.Cleanup(pool.Stop)
-	fixture := &inflightHTTPFixture{cfg: cfg, account: account, accounts: accounts, accountID: account.ID, gatewayService: gatewaySvc, geminiService: gemini, rateLimit: rateLimit, settings: settings, user: user, key: key, pool: pool, upstream: upstream, openAIService: openAISvc,
+	fixture := &inflightHTTPFixture{rdb: rdb, stableGroup: stableGroup, stableNext: stableNext, cfg: cfg, account: account, accounts: accounts, accountID: account.ID, gatewayService: gatewaySvc, geminiService: gemini, rateLimit: rateLimit, settings: settings, user: user, key: key, pool: pool, upstream: upstream, openAIService: openAISvc,
 		gateway: userhandler.NewGatewayHandler(gatewaySvc, gemini, nil, nil, nil, concurrency, billingCache, nil, nil, pool, nil, nil, nil, cfg, nil, openAISvc),
 		openAI:  userhandler.NewOpenAIGatewayHandler(openAISvc, concurrency, billingCache, keyService, pool, nil, nil, nil, cfg)}
 	t.Cleanup(func() {
