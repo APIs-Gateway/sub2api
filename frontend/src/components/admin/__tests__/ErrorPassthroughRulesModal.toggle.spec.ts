@@ -150,4 +150,22 @@ describe('error passthrough enabled state', () => {
     expect(toggle.classes()).toContain('bg-primary-600')
     expect(toggle.attributes('disabled')).toBeUndefined()
   })
+
+  it('keeps the pending guard and applies the saved response to a reloaded row after reopen', async () => {
+    let finish!: (value: unknown) => void
+    mocks.toggleEnabled.mockReturnValue(new Promise(resolve => { finish = resolve }))
+    const wrapper = await openRules()
+    await wrapper.get('tbody button.relative').trigger('click')
+    await wrapper.setProps({ show: false })
+    mocks.list.mockResolvedValueOnce([rule(true)])
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    const reloaded = wrapper.get('tbody button.relative')
+    expect(reloaded.attributes('disabled')).toBeDefined()
+    finish(rule(false))
+    await flushPromises()
+    expect(reloaded.classes()).not.toContain('bg-primary-600')
+    expect(reloaded.attributes('disabled')).toBeUndefined()
+    expect(mocks.toggleEnabled).toHaveBeenCalledTimes(1)
+  })
 })
