@@ -393,12 +393,27 @@ func createAdminUser(cfg *SetupConfig) (bool, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	return bootstrapAdminUser(ctx, db, cfg)
+}
+
+func bootstrapAdminUser(ctx context.Context, db *sql.DB, cfg *SetupConfig) (bool, string, error) {
+	// Random default emails must not let simultaneous fresh installers create
+	// multiple admins. Use the two-int advisory namespace (separate from the
+	// runtime's bigint locks) and refresh the counts after acquiring the lock.
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return false, "", fmt.Errorf("begin admin bootstrap: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1, $2)", int32(0x53554232), int32(0x41444d4e)); err != nil {
+		return false, "", fmt.Errorf("lock admin bootstrap: %w", err)
+	}
 	var totalUsers int64
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&totalUsers); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&totalUsers); err != nil {
 		return false, "", err
 	}
 	var adminUsers int64
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(1) FROM users WHERE role = $1", service.RoleAdmin).Scan(&adminUsers); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(1) FROM users WHERE role = $1", service.RoleAdmin).Scan(&adminUsers); err != nil {
 		return false, "", err
 	}
 	decision := decideAdminBootstrap(totalUsers, adminUsers)
@@ -406,14 +421,9 @@ func createAdminUser(cfg *SetupConfig) (bool, string, error) {
 		return false, decision.reason, nil
 	}
 
-	if strings.TrimSpace(cfg.Admin.Password) == "" {
-		password, genErr := generateSecret(16)
-		if genErr != nil {
-			return false, "", fmt.Errorf("failed to generate admin password: %w", genErr)
-		}
-		cfg.Admin.Password = password
-		fmt.Printf("Generated admin password (one-time): %s\n", cfg.Admin.Password)
-		fmt.Println("IMPORTANT: Save this password! It will not be shown again.")
+	emailGenerated, passwordGenerated, err := prepareAdminCredentials(&cfg.Admin)
+	if err != nil {
+		return false, "", err
 	}
 
 	admin := &service.User{
@@ -430,7 +440,7 @@ func createAdminUser(cfg *SetupConfig) (bool, string, error) {
 		return false, "", err
 	}
 
-	_, err = db.ExecContext(
+	_, err = tx.ExecContext(
 		ctx,
 		`INSERT INTO users (email, password_hash, role, balance, concurrency, status, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -446,7 +456,58 @@ func createAdminUser(cfg *SetupConfig) (bool, string, error) {
 	if err != nil {
 		return false, "", err
 	}
+	if err := tx.Commit(); err != nil {
+		return false, "", fmt.Errorf("commit admin bootstrap: %w", err)
+	}
+	if emailGenerated {
+		fmt.Printf("Generated admin email (login username): %s\n", cfg.Admin.Email)
+	}
+	if passwordGenerated {
+		fmt.Printf("Generated admin password (one-time): %s\n", cfg.Admin.Password)
+		fmt.Println("IMPORTANT: Save this password! It will not be shown again.")
+	}
 	return true, decision.reason, nil
+}
+
+// prepareAdminCredentials fills in missing admin credentials with random values
+// and rejects invalid user-supplied emails and weak passwords. It only runs
+// when an admin is actually about to be created, so existing deployments are
+// never affected. A random email keeps fresh installs off the well-known
+// default username that brute-force scanners target (issue #7850).
+func prepareAdminCredentials(admin *AdminConfig) (emailGenerated, passwordGenerated bool, err error) {
+	admin.Email = strings.TrimSpace(admin.Email)
+	if admin.Email == "" {
+		email, genErr := generateAdminEmail()
+		if genErr != nil {
+			return false, false, genErr
+		}
+		admin.Email = email
+		emailGenerated = true
+	} else if !validateEmail(admin.Email) {
+		return false, false, fmt.Errorf("invalid admin email: %q is not a valid login email", admin.Email)
+	}
+
+	if strings.TrimSpace(admin.Password) == "" {
+		password, genErr := generateSecret(16)
+		if genErr != nil {
+			return false, false, fmt.Errorf("failed to generate admin password: %w", genErr)
+		}
+		admin.Password = password
+		passwordGenerated = true
+	} else if validateErr := validatePassword(admin.Password); validateErr != nil {
+		return false, false, fmt.Errorf("invalid admin password: %w", validateErr)
+	}
+
+	return emailGenerated, passwordGenerated, nil
+}
+
+// generateAdminEmail returns a random, non-guessable admin login email.
+func generateAdminEmail() (string, error) {
+	suffix, err := generateSecret(6)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate admin email: %w", err)
+	}
+	return fmt.Sprintf("admin-%s@sub2api.local", suffix), nil
 }
 
 func writeConfigFile(cfg *SetupConfig) error {
@@ -572,7 +633,7 @@ func AutoSetupFromEnv() error {
 			EnableTLS: getEnvOrDefault("REDIS_ENABLE_TLS", "false") == "true",
 		},
 		Admin: AdminConfig{
-			Email:    getEnvOrDefault("ADMIN_EMAIL", "admin@sub2api.local"),
+			Email:    getEnvOrDefault("ADMIN_EMAIL", ""),
 			Password: getEnvOrDefault("ADMIN_PASSWORD", ""),
 		},
 		Server: ServerConfig{
