@@ -28,13 +28,14 @@ func TestGatewayModelField_HTTPRejectsBeforeRouting(t *testing.T) {
 	for _, route := range []struct {
 		name, path string
 		handle     func(*gin.Context)
+		errorField string
 	}{
-		{"responses", "/v1/responses", openAI.Responses},
-		{"compact", "/v1/responses/compact", openAI.Responses},
-		{"chat", "/v1/chat/completions", openAI.ChatCompletions},
-		{"openai_messages", "/v1/messages", openAI.Messages},
-		{"anthropic_responses", "/v1/responses", gateway.Responses},
-		{"anthropic_messages", "/v1/messages", gateway.Messages},
+		{"responses", "/v1/responses", openAI.Responses, "error.type"},
+		{"compact", "/v1/responses/compact", openAI.Responses, "error.type"},
+		{"chat", "/v1/chat/completions", openAI.ChatCompletions, "error.type"},
+		{"openai_messages", "/v1/messages", openAI.Messages, "error.type"},
+		{"anthropic_responses", "/v1/responses", gateway.Responses, "error.code"},
+		{"anthropic_messages", "/v1/messages", gateway.Messages, "error.type"},
 	} {
 		for _, fields := range []string{
 			`"model":"gpt-5.6-luna","model":"gpt-6-astra"`,
@@ -58,9 +59,9 @@ func TestGatewayModelField_HTTPRejectsBeforeRouting(t *testing.T) {
 				c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 7890, Concurrency: 1})
 				// No usable scheduler/billing backend is installed. Any attempt
 				// to reach routing instead of rejecting cannot pass this case.
-				route.handle(c)
+				require.NotPanics(t, func() { route.handle(c) }, "ambiguous input must stop before unavailable routing dependencies")
 				require.Equal(t, http.StatusBadRequest, rec.Code)
-				require.Equal(t, "invalid_request_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+				require.Equal(t, "invalid_request_error", gjson.GetBytes(rec.Body.Bytes(), route.errorField).String())
 				require.Contains(t, rec.Body.String(), "canonical field name")
 			})
 		}

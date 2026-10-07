@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -13,6 +14,20 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+// The pooled forwarder writes typed JSON, while passthrough writes raw frames.
+// Capture both through the same staged queue and keep reads alive between turns.
+type modelFieldStagedWSConn struct {
+	*stagedPassthroughConn
+}
+
+func (c *modelFieldStagedWSConn) WriteJSON(ctx context.Context, payload any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return c.WriteFrame(ctx, coderws.MessageText, body)
+}
 
 func TestGatewayModelField_WSLaterFramesBeforeUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -35,11 +50,13 @@ func TestGatewayModelField_WSLaterFramesBeforeUpstream(t *testing.T) {
 					cfg := passthroughLifecycleConfig()
 					cfg.Gateway.OpenAIWS.OAuthEnabled = true
 					svc := newPassthroughLifecycleService(cfg, upstream)
+					wire := &modelFieldStagedWSConn{stagedPassthroughConn: upstream}
+					svc.openaiWSPassthroughDialer = &stagedPassthroughDialer{conn: wire}
 					account := newPassthroughBeforeTurnTestAccount()
 					account.Extra["openai_oauth_responses_websockets_v2_mode"] = mode
 					if mode == OpenAIWSIngressModeCtxPool {
 						pool := newOpenAIWSConnPool(cfg)
-						pool.setClientDialerForTest(&stagedPassthroughDialer{conn: upstream})
+						pool.setClientDialerForTest(&stagedPassthroughDialer{conn: wire})
 						svc.openaiWSPool = pool
 						defer pool.Close()
 					}
@@ -87,7 +104,11 @@ func TestGatewayModelField_WSLaterFramesBeforeUpstream(t *testing.T) {
 						// cannot deadlock the test harness.
 						readDone := make(chan struct{})
 						go func() {
-							_, _, _ = client.Read(ctx)
+							for {
+								if _, _, err := client.Read(ctx); err != nil {
+									break
+								}
+							}
 							close(readDone)
 						}()
 						select {

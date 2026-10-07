@@ -79,6 +79,11 @@ func ValidateGatewayWSModelFields(body []byte) error {
 }
 
 func rejectAmbiguousGatewayModel(c *gin.Context, body []byte) error {
+	// Preserve each forwarding path's existing malformed-JSON diagnostics.
+	// This guard only rejects model ambiguity in an otherwise valid object.
+	if !gjson.ValidBytes(body) {
+		return nil
+	}
 	if err := ValidateGatewayModelField(body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
 			"type": "invalid_request_error", "message": err.Error(), "param": "model",
