@@ -44,6 +44,20 @@ jobs:
           go test -tags=integration -race -coverpkg=./internal/setup -covermode=atomic -count=1 -v -run '^TestSetupAdminBootstrapPostgres_' ./internal/setup/
           test -s coverage-setup-cli.out
           bash ./tools/normalize-go-coverprofile.sh coverage-setup-cli.out
+      - name: CC fallback terminal source and fixture formatting (remote only)
+        run: |
+          gofmt -d backend/internal/service/openai_gateway_responses_chat_fallback.go backend/internal/service/openai_gateway_messages_chat_fallback.go backend/internal/service/openai_raw_stream_truncation.go backend/internal/service/chat_fallback_terminal_test.go backend/internal/repository/chat_fallback_terminal_integration_test.go
+          test -z "$(gofmt -l backend/internal/service/openai_gateway_responses_chat_fallback.go backend/internal/service/openai_gateway_messages_chat_fallback.go backend/internal/service/openai_raw_stream_truncation.go backend/internal/service/chat_fallback_terminal_test.go backend/internal/repository/chat_fallback_terminal_integration_test.go)"
+      - name: CC fallback actual three-mode terminal, tools and partial metering (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -timeout=10m -v -run '^TestChatFallbackTerminal_' ./internal/service/
+      - name: CC fallback actual wallet and card settlement, unknown holds and wire (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -timeout=10m -v -run '^TestChatFallbackTerminalHTTP_' ./internal/repository/
       - name: Anthropic start output metering and interrupted native attempts (race)
         working-directory: backend
         env:
