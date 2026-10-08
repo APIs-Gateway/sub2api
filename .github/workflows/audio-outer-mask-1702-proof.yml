@@ -1,0 +1,252 @@
+name: Audio outer1702 exact OLD NEW public wire funding proof
+on:
+  push:
+    branches: [codex/audio-outer-mask-1702-proof]
+permissions:
+  contents: read
+jobs:
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [OLD, NEW]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GOTOOLCHAIN: local
+      CGO_ENABLED: "1"
+      AUDIT_FLAVOR: ${{ matrix.flavor }}
+      OLD_SHA: de76de25f4039c6e86234c90703d07f9f533409f
+      NEW_SHA: 9ffe1743718d8bbc46f2a8ec69b7ff55ba8a348e
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Freeze exact six fixtures and measured retained323 control names
+        run: |
+          git merge-base --is-ancestor "$OLD_SHA" HEAD
+          git merge-base --is-ancestor "$NEW_SHA" HEAD
+          cp .github/audio-outer1702-retained-actual-leaves.json /tmp/audio-outer-retained.json
+          test "$(git hash-object /tmp/audio-outer-retained.json)" = 8ae9975883df0a7bd87c088e3dca39f10d17edbe
+          git hash-object /tmp/audio-outer-retained.json
+          mkdir -p /tmp/audio-outer-fixtures
+          git show "$NEW_SHA":backend/internal/pkg/apicompat/chat_input_audio_test.go > /tmp/audio-outer-fixtures/0.go
+          test "$(git hash-object /tmp/audio-outer-fixtures/0.go)" = d6d9362e1d4b16dfabf4ebd63ea00dae49480f8c
+          git show "$NEW_SHA":backend/internal/service/chat_input_audio_test.go > /tmp/audio-outer-fixtures/1.go
+          test "$(git hash-object /tmp/audio-outer-fixtures/1.go)" = 9d78990b7d0b67b1dff8f6e7dd572e8bc2802e69
+          git show "$NEW_SHA":backend/internal/service/chat_input_audio_boundaries_test.go > /tmp/audio-outer-fixtures/2.go
+          test "$(git hash-object /tmp/audio-outer-fixtures/2.go)" = 0140a1590c87425d80ad0d84fdb6bb35b06bab7c
+          git show "$NEW_SHA":backend/internal/repository/chat_input_audio_integration_test.go > /tmp/audio-outer-fixtures/3.go
+          test "$(git hash-object /tmp/audio-outer-fixtures/3.go)" = 14c1720f1e417a2deff01ac0de44ae251288449b
+          git show "$NEW_SHA":backend/internal/service/chat_input_audio_raw_audit_test.go > /tmp/audio-outer-fixtures/4.go
+          test "$(git hash-object /tmp/audio-outer-fixtures/4.go)" = 040d1026dce150d1e63e9db6b2c8ec9d848b0916
+          git show "$NEW_SHA":backend/internal/repository/chat_input_audio_raw_integration_test.go > /tmp/audio-outer-fixtures/5.go
+          test "$(git hash-object /tmp/audio-outer-fixtures/5.go)" = 853e9316cb8c451b246f26cb4ace712a4b989b83
+          selected_sha="$NEW_SHA"
+          if [ "$AUDIT_FLAVOR" = OLD ]; then selected_sha="$OLD_SHA"; fi
+          git checkout --detach "$selected_sha"
+          test "$(git rev-parse HEAD)" = "$selected_sha"
+          git rev-parse HEAD
+          git ls-tree HEAD backend/internal/pkg/apicompat/chat_input_audio_raw.go backend/internal/service/chat_input_audio_raw.go backend/internal/service/gateway_forward_as_chat_completions.go backend/internal/service/gemini_chat_completions_compat_service.go backend/internal/service/openai_gateway_chat_completions.go
+          {
+            test "$(git rev-parse HEAD)" = "$selected_sha"
+            expected_tree="$(git rev-parse "$selected_sha^{tree}")"
+            test "$(git rev-parse HEAD^{tree})" = "$expected_tree"
+            printf 'SOURCE %s TREE %s\n' "$selected_sha" "$expected_tree"
+            for file in backend/internal/pkg/apicompat/chat_input_audio_raw.go backend/internal/service/chat_input_audio_raw.go backend/internal/service/gateway_forward_as_chat_completions.go backend/internal/service/gemini_chat_completions_compat_service.go backend/internal/service/openai_gateway_chat_completions.go backend/go.mod backend/go.sum; do
+              expected_blob="$(git ls-tree "$selected_sha" -- "$file" | awk '{print $3}')"
+              if [ -z "$expected_blob" ]; then
+                test ! -e "$file"
+                printf 'ABSENT %s\n' "$file"
+              else
+                test -f "$file"
+                actual_blob="$(git hash-object "$file")"
+                test "$actual_blob" = "$expected_blob"
+                printf 'BLOB %s %s\n' "$file" "$actual_blob"
+              fi
+            done
+          } > /tmp/audio-outer-source-before.txt
+          cat /tmp/audio-outer-source-before.txt
+          cp /tmp/audio-outer-fixtures/0.go backend/internal/pkg/apicompat/chat_input_audio_test.go
+          test "$(git hash-object backend/internal/pkg/apicompat/chat_input_audio_test.go)" = d6d9362e1d4b16dfabf4ebd63ea00dae49480f8c
+          git hash-object backend/internal/pkg/apicompat/chat_input_audio_test.go
+          cp /tmp/audio-outer-fixtures/1.go backend/internal/service/chat_input_audio_test.go
+          test "$(git hash-object backend/internal/service/chat_input_audio_test.go)" = 9d78990b7d0b67b1dff8f6e7dd572e8bc2802e69
+          git hash-object backend/internal/service/chat_input_audio_test.go
+          cp /tmp/audio-outer-fixtures/2.go backend/internal/service/chat_input_audio_boundaries_test.go
+          test "$(git hash-object backend/internal/service/chat_input_audio_boundaries_test.go)" = 0140a1590c87425d80ad0d84fdb6bb35b06bab7c
+          git hash-object backend/internal/service/chat_input_audio_boundaries_test.go
+          cp /tmp/audio-outer-fixtures/3.go backend/internal/repository/chat_input_audio_integration_test.go
+          test "$(git hash-object backend/internal/repository/chat_input_audio_integration_test.go)" = 14c1720f1e417a2deff01ac0de44ae251288449b
+          git hash-object backend/internal/repository/chat_input_audio_integration_test.go
+          cp /tmp/audio-outer-fixtures/4.go backend/internal/service/chat_input_audio_raw_audit_test.go
+          test "$(git hash-object backend/internal/service/chat_input_audio_raw_audit_test.go)" = 040d1026dce150d1e63e9db6b2c8ec9d848b0916
+          git hash-object backend/internal/service/chat_input_audio_raw_audit_test.go
+          cp /tmp/audio-outer-fixtures/5.go backend/internal/repository/chat_input_audio_raw_integration_test.go
+          test "$(git hash-object backend/internal/repository/chat_input_audio_raw_integration_test.go)" = 853e9316cb8c451b246f26cb4ace712a4b989b83
+          git hash-object backend/internal/repository/chat_input_audio_raw_integration_test.go
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Remote source and six fixture formatting
+        run: |
+          go version | tee /tmp/audio-outer-go-version.txt
+          go version | grep -q 'go1.26.6'
+          format_files=""
+          for file in backend/internal/pkg/apicompat/chat_input_audio_raw.go backend/internal/service/chat_input_audio_raw.go backend/internal/service/gateway_forward_as_chat_completions.go backend/internal/service/gemini_chat_completions_compat_service.go backend/internal/service/openai_gateway_chat_completions.go backend/internal/pkg/apicompat/chat_input_audio_test.go backend/internal/service/chat_input_audio_test.go backend/internal/service/chat_input_audio_boundaries_test.go backend/internal/repository/chat_input_audio_integration_test.go backend/internal/service/chat_input_audio_raw_audit_test.go backend/internal/repository/chat_input_audio_raw_integration_test.go; do
+            if [ -f "$file" ]; then format_files="$format_files $file"; fi
+          done
+          set +e
+          gofmt -d $format_files > /tmp/audio-outer-format.diff 2> /tmp/audio-outer-format.stderr
+          actual_format_exit=$?
+          set -e
+          cat /tmp/audio-outer-format.diff
+          cat /tmp/audio-outer-format.stderr
+          test "$actual_format_exit" = 0
+          test ! -s /tmp/audio-outer-format.diff
+      - name: Actual unit retained and outer contracts
+        working-directory: backend
+        run: |
+          set +e
+          go test -tags=unit -race -parallel=1 -p=1 -count=1 -timeout=10m -json -run '^TestChatInputAudio_|^TestChatInputAudioOuter_' ./internal/pkg/apicompat/ ./internal/service/ > /tmp/audio-outer-unit.jsonl 2> /tmp/audio-outer-unit.stderr
+          actual_unit_exit=$?
+          set -e
+          printf '%s\n' "$actual_unit_exit" > /tmp/audio-outer-unit.exit
+          cat /tmp/audio-outer-unit.jsonl
+          cat /tmp/audio-outer-unit.stderr
+      - name: Actual pg retained and outer contracts
+        working-directory: backend
+        run: |
+          set +e
+          go test -tags=integration -race -parallel=1 -p=1 -count=1 -timeout=15m -json -run '^TestChatInputAudioHTTP_|^TestChatInputAudioOuterHTTP_' ./internal/repository/ > /tmp/audio-outer-pg.jsonl 2> /tmp/audio-outer-pg.stderr
+          actual_pg_exit=$?
+          set -e
+          printf '%s\n' "$actual_pg_exit" > /tmp/audio-outer-pg.exit
+          cat /tmp/audio-outer-pg.jsonl
+          cat /tmp/audio-outer-pg.stderr
+      - name: Verify exact source hashes and actual499 outcome sets
+        id: classify
+        if: always()
+        run: |
+          selected_sha="$NEW_SHA"
+          if [ "$AUDIT_FLAVOR" = OLD ]; then selected_sha="$OLD_SHA"; fi
+          test "$(git rev-parse HEAD)" = "$selected_sha"
+          git rev-parse HEAD
+          git ls-tree HEAD backend/internal/pkg/apicompat/chat_input_audio_raw.go backend/internal/service/chat_input_audio_raw.go backend/internal/service/gateway_forward_as_chat_completions.go backend/internal/service/gemini_chat_completions_compat_service.go backend/internal/service/openai_gateway_chat_completions.go
+          {
+            test "$(git rev-parse HEAD)" = "$selected_sha"
+            expected_tree="$(git rev-parse "$selected_sha^{tree}")"
+            test "$(git rev-parse HEAD^{tree})" = "$expected_tree"
+            printf 'SOURCE %s TREE %s\n' "$selected_sha" "$expected_tree"
+            for file in backend/internal/pkg/apicompat/chat_input_audio_raw.go backend/internal/service/chat_input_audio_raw.go backend/internal/service/gateway_forward_as_chat_completions.go backend/internal/service/gemini_chat_completions_compat_service.go backend/internal/service/openai_gateway_chat_completions.go backend/go.mod backend/go.sum; do
+              expected_blob="$(git ls-tree "$selected_sha" -- "$file" | awk '{print $3}')"
+              if [ -z "$expected_blob" ]; then
+                test ! -e "$file"
+                printf 'ABSENT %s\n' "$file"
+              else
+                test -f "$file"
+                actual_blob="$(git hash-object "$file")"
+                test "$actual_blob" = "$expected_blob"
+                printf 'BLOB %s %s\n' "$file" "$actual_blob"
+              fi
+            done
+          } > /tmp/audio-outer-source-after.txt
+          cat /tmp/audio-outer-source-after.txt
+          test "$(git hash-object backend/internal/pkg/apicompat/chat_input_audio_test.go)" = d6d9362e1d4b16dfabf4ebd63ea00dae49480f8c
+          git hash-object backend/internal/pkg/apicompat/chat_input_audio_test.go
+          test "$(git hash-object backend/internal/service/chat_input_audio_test.go)" = 9d78990b7d0b67b1dff8f6e7dd572e8bc2802e69
+          git hash-object backend/internal/service/chat_input_audio_test.go
+          test "$(git hash-object backend/internal/service/chat_input_audio_boundaries_test.go)" = 0140a1590c87425d80ad0d84fdb6bb35b06bab7c
+          git hash-object backend/internal/service/chat_input_audio_boundaries_test.go
+          test "$(git hash-object backend/internal/repository/chat_input_audio_integration_test.go)" = 14c1720f1e417a2deff01ac0de44ae251288449b
+          git hash-object backend/internal/repository/chat_input_audio_integration_test.go
+          test "$(git hash-object backend/internal/service/chat_input_audio_raw_audit_test.go)" = 040d1026dce150d1e63e9db6b2c8ec9d848b0916
+          git hash-object backend/internal/service/chat_input_audio_raw_audit_test.go
+          test "$(git hash-object backend/internal/repository/chat_input_audio_raw_integration_test.go)" = 853e9316cb8c451b246f26cb4ace712a4b989b83
+          git hash-object backend/internal/repository/chat_input_audio_raw_integration_test.go
+          test "$(git hash-object /tmp/audio-outer-retained.json)" = 8ae9975883df0a7bd87c088e3dca39f10d17edbe
+          git hash-object /tmp/audio-outer-retained.json
+          python3 - <<'PYACTUAL'
+          import json, os, pathlib, re
+          root = pathlib.Path('/tmp')
+          retained = json.loads((root/'audio-outer-retained.json').read_text())
+          all_leaves, leaf_output, exits, phase_counts = {}, {}, {}, {}
+          for phase in ('unit','pg'):
+              events = [json.loads(line) for line in (root/('audio-outer-'+phase+'.jsonl')).read_text().splitlines() if line.startswith('{')]
+              stderr = (root/('audio-outer-'+phase+'.stderr')).read_text()
+              output = ''.join(e.get('Output','') for e in events) + stderr
+              assert not re.search(r'panic:|WARNING: DATA RACE|fatal error:|\[build failed\]|no tests to run|test timed out',output), 'invalid bootstrap/build/runtime failure mechanism'
+              finished = {(e['Package'],e['Test']):e['Action'] for e in events if 'Test' in e and e['Action'] in ('pass','fail','skip')}
+              leaves = {k:v for k,v in finished.items() if not any(q[0] == k[0] and q[1].startswith(k[1]+'/') for q in finished)}
+              assert len({k[1] for k in leaves}) == len(leaves), 'colliding names require package classification'
+              phase_counts[phase] = len(leaves)
+              for k,v in leaves.items():
+                  assert k[1] not in all_leaves, 'cross-phase name collision'
+                  all_leaves[k[1]] = v
+                  leaf_output[k[1]] = ''.join(e.get('Output','') for e in events if e.get('Package') == k[0] and e.get('Test') == k[1])
+              exits[phase] = int((root/('audio-outer-'+phase+'.exit')).read_text())
+          variants = ('duplicate','casefold','escaped')
+          outer = {kind+'_'+v+'/reverse_'+b for kind in ('content','messages','role') for v in variants for b in ('false','true')}
+          unit_all = {'TestChatInputAudioOuter_ConvertedRealOutbound/'+route+'/'+case for route in ('gemini','anthropic','openai') for case in outer | {'plain_positive'}}
+          unit_all |= {'TestChatInputAudioOuter_ModelAndMalformedPriority/'+route+'/malformed_'+b for route in ('gemini','anthropic','openai') for b in ('false','true')}
+          unit_all |= {'TestChatInputAudioOuter_RawOpenAIAndGrokKeepExistingPolicy/'+platform+'/sanitize_'+b for platform in ('openai','grok') for b in ('false','true')}
+          unit_all |= {'TestChatInputAudioOuter_ResponsesShapeRetained'}
+          bad_unit = {'TestChatInputAudioOuter_ConvertedRealOutbound/gemini/'+case for case in outer if not (case.startswith('role_') and case.endswith('true'))}
+          bad_unit |= {'TestChatInputAudioOuter_ConvertedRealOutbound/'+route+'/'+kind+'_'+v+'/reverse_false' for route in ('anthropic','openai') for kind in ('content','messages') for v in variants}
+          pg_all = {'TestChatInputAudioOuterHTTP_LocalRejectActualWireAndFunding/'+case+'/stream_'+s+'/card_'+c for case in outer for s in ('false','true') for c in ('false','true')}
+          bad_pg = {n for n in pg_all if not ('/role_' in n and '/reverse_true/' in n)}
+          positive_cases = ('unique_outer_aliases','unique_escaped_outer_fields','ordinary_content_duplicate','ordinary_messages_duplicate','ordinary_other_message_duplicate','string_mention','metadata_mention_and_duplicates','unknown_and_file_filter')
+          pg_all |= {'TestChatInputAudioOuterHTTP_OrdinaryAndUniqueAliasPreserved/'+case+'/stream_'+s+'/card_'+c for case in positive_cases for s in ('false','true') for c in ('false','true')}
+          ping = {'TestChatInputAudioOuterHTTP_CommittedPingErrorAndNoCharge/write_failure_'+b for b in ('false','true')}
+          canceled = {'TestChatInputAudioOuterHTTP_CanceledLocalAttemptNoIO/committed_'+b for b in ('false','true')}
+          pg_all |= ping | canceled
+          prior = set(retained['retainedUnit']) | set(retained['retainedPG'])
+          assert len(prior)==323 and len(unit_all)==68 and len(pg_all)==108
+          assert len(bad_unit)==27 and len(bad_pg)==60 and len(ping)==2 and len(canceled)==2
+          expected = prior | unit_all | pg_all
+          assert len(expected)==499 and set(all_leaves)==expected, ('missing',sorted(expected-set(all_leaves)),'extra',sorted(set(all_leaves)-expected))
+          assert phase_counts=={'unit':234,'pg':265}, phase_counts
+          assert 'skip' not in all_leaves.values()
+          genuine = bad_unit | bad_pg | ping | canceled
+          controls = expected - genuine
+          assert len(controls)==408 and all(all_leaves[n]=='pass' for n in controls), 'retained/normal/no-charge refusal control failed'
+          if os.environ['AUDIT_FLAVOR']=='NEW':
+              assert set(all_leaves.values())=={'pass'} and exits=={'unit':0,'pg':0}, 'NEW must actually pass all499'
+          else:
+              assert {n for n,v in all_leaves.items() if v=='fail'}==genuine and exits=={'unit':1,'pg':1}, 'OLD must reach exact91 business assertion failures'
+              assert all('Error Trace:' in leaf_output[n] and 'Error:' in leaf_output[n] for n in genuine), 'OLD missing full assertion evidence'
+              assert all('OUTER_ACTUAL_OLD_OUTBOUND' in leaf_output[n] and 'calls=1 selected=' in leaf_output[n] for n in bad_unit), 'OLD27 did not actually reach outbound Do'
+              assert all('OUTER_ACTUAL_OLD_DISPATCH' in leaf_output[n] and 'calls=1' in leaf_output[n] and 'input=10 output=5 once_usage_dedup=true' in leaf_output[n] for n in bad_pg), 'OLD60 did not prove real mapped wire and stable PG settlement before failure'
+              assert all('OUTER_ACTUAL_OLD_COMMITTED_DISPATCH' in leaf_output[n] and 'calls=1 input=10 output=5' in leaf_output[n] for n in ping), 'OLD2 ping did not actually reach settlement before assertion failure'
+          result = {'flavor':os.environ['AUDIT_FLAVOR'],'source':os.environ['OLD_SHA'] if os.environ['AUDIT_FLAVOR']=='OLD' else os.environ['NEW_SHA'],'exits':exits,'actualCounts':{s:sum(v==s for v in all_leaves.values()) for s in ('pass','fail','skip')},'retainedActualCount':323,'newUnitCount':68,'newPGCount':108,'phaseCounts':phase_counts,'OLDTrueFailureCategories':{'outboundDo':sorted(bad_unit),'publicMappedWireSettlement':sorted(bad_pg),'committedPing':sorted(ping),'canceledServiceEntryWithPriorLease':sorted(canceled)},'canceledBoundaryOutcomesSeparatelyClassified':{n:all_leaves[n] for n in canceled},'leaves':all_leaves,'failedFullBodies':{n:leaf_output[n] for n,v in all_leaves.items() if v=='fail'}}
+          (root/'audio-outer-actual-leaves.json').write_text(json.dumps(result,indent=2))
+          print(json.dumps(result,indent=2))
+          PYACTUAL
+      - uses: actions/upload-artifact@v7
+        id: evidence
+        if: always()
+        with:
+          name: audio-outer1702-${{ matrix.flavor }}-actual
+          path: |
+            /tmp/audio-outer-source-before.txt
+            /tmp/audio-outer-source-after.txt
+            /tmp/audio-outer-unit.jsonl
+            /tmp/audio-outer-unit.stderr
+            /tmp/audio-outer-unit.exit
+            /tmp/audio-outer-pg.jsonl
+            /tmp/audio-outer-pg.stderr
+            /tmp/audio-outer-pg.exit
+            /tmp/audio-outer-actual-leaves.json
+            /tmp/audio-outer-retained.json
+            /tmp/audio-outer-go-version.txt
+            /tmp/audio-outer-format.diff
+            /tmp/audio-outer-format.stderr
+          if-no-files-found: error
+      - name: Preserve intentional OLD business RED after successful classification and evidence
+        if: ${{ success() && matrix.flavor == 'OLD' && steps.classify.conclusion == 'success' && steps.evidence.conclusion == 'success' }}
+        run: |
+          echo 'Classifier and artifact both SUCCESS; exact OLD408PASS91FAIL is intentionally a failed job.'
+          exit 1
