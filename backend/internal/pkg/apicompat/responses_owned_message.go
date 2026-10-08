@@ -69,9 +69,9 @@ func (e *ResponsesStreamEvent) UnmarshalJSON(data []byte) error {
 }
 
 type bufferedMessagePart struct {
-	index int
+	index   int
 	indexed bool
-	part  ResponsesContentPart
+	part    ResponsesContentPart
 }
 
 type bufferedMessage struct {
