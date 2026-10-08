@@ -108,22 +108,22 @@ func AnthropicToResponsesResponse(resp *AnthropicResponse) *ResponsesResponse {
 	if len(msgParts) > 0 {
 		outputs = append(outputs, ResponsesOutput{
 			ownedMessage: true,
-			Type:    "message",
-			ID:      generateItemID(),
-			Role:    "assistant",
-			Content: msgParts,
-			Status:  "completed",
+			Type:         "message",
+			ID:           generateItemID(),
+			Role:         "assistant",
+			Content:      msgParts,
+			Status:       "completed",
 		})
 	}
 
 	if len(outputs) == 0 {
 		outputs = append(outputs, ResponsesOutput{
 			ownedMessage: true,
-			Type:    "message",
-			ID:      generateItemID(),
-			Role:    "assistant",
-			Content: []ResponsesContentPart{{Type: "output_text", Text: ""}},
-			Status:  "completed",
+			Type:         "message",
+			ID:           generateItemID(),
+			Role:         "assistant",
+			Content:      []ResponsesContentPart{{Type: "output_text", Text: ""}},
+			Status:       "completed",
 		})
 	}
 	out.Output = outputs
@@ -369,10 +369,10 @@ func anthToResHandleContentBlockStart(evt *AnthropicStreamEvent, state *Anthropi
 				OutputIndex: state.OutputIndex,
 				Item: &ResponsesOutput{
 					ownedMessage: true,
-					Type:   "message",
-					ID:     state.CurrentItemID,
-					Role:   "assistant",
-					Status: "in_progress",
+					Type:         "message",
+					ID:           state.CurrentItemID,
+					Role:         "assistant",
+					Status:       "in_progress",
 				},
 			}))
 		}

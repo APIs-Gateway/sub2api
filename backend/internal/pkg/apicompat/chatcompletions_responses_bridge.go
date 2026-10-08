@@ -1395,9 +1395,9 @@ func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTool
 	if text != "" || len(message.ToolCalls) == 0 {
 		outputs = append(outputs, ResponsesOutput{
 			ownedMessage: true,
-			Type: "message",
-			ID:   generateItemID(),
-			Role: "assistant",
+			Type:         "message",
+			ID:           generateItemID(),
+			Role:         "assistant",
 			Content: []ResponsesContentPart{{
 				Type: "output_text",
 				Text: text,
@@ -1482,11 +1482,11 @@ func toolSearchCallArgumentsJSON(arguments string) json.RawMessage {
 func emptyResponsesMessageOutput() ResponsesOutput {
 	return ResponsesOutput{
 		ownedMessage: true,
-		Type:    "message",
-		ID:      generateItemID(),
-		Role:    "assistant",
-		Content: []ResponsesContentPart{{Type: "output_text", Text: ""}},
-		Status:  "completed",
+		Type:         "message",
+		ID:           generateItemID(),
+		Role:         "assistant",
+		Content:      []ResponsesContentPart{{Type: "output_text", Text: ""}},
+		Status:       "completed",
 	}
 }
 
@@ -1952,11 +1952,11 @@ func ensureChatToResponsesMessageItem(state *ChatCompletionsToResponsesStreamSta
 		OutputIndex: state.MessageIndex,
 		Item: &ResponsesOutput{
 			ownedMessage: true,
-			Type:    "message",
-			ID:      state.MessageItemID,
-			Role:    "assistant",
-			Status:  "in_progress",
-			Content: []ResponsesContentPart{{Type: "output_text"}},
+			Type:         "message",
+			ID:           state.MessageItemID,
+			Role:         "assistant",
+			Status:       "in_progress",
+			Content:      []ResponsesContentPart{{Type: "output_text"}},
 		},
 	})}
 }

@@ -498,9 +498,9 @@ type bufferedFuncCall struct {
 // so that non-streaming handlers can reconstruct output when the terminal event
 // (response.completed / response.done) carries an empty output array.
 type BufferedResponseAccumulator struct {
-	messages []bufferedMessage
-	messageIndexes map[string]int
-	terminalStatus string
+	messages             []bufferedMessage
+	messageIndexes       map[string]int
+	terminalStatus       string
 	text                 strings.Builder
 	refusal              strings.Builder
 	reasoning            strings.Builder

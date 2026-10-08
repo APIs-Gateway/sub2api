@@ -14,8 +14,8 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
-	"github.com/Wei-Shaw/sub2api/internal/service"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -63,7 +63,7 @@ func ownedMessagePublicRequest(t *testing.T, route, mode, providerBody, contentT
 	billingCache := service.NewBillingCacheService(nil, &chainRespUserRepo{}, nil, nil, nil, &hopRateRepo{}, cfg, nil, nil)
 	t.Cleanup(billingCache.Stop)
 	concurrency := service.NewConcurrencyService(&concurrencyCacheMock{
-		acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
 		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
 	})
 	gateway := service.NewOpenAIGatewayService(

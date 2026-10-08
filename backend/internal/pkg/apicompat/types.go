@@ -309,10 +309,10 @@ func (i *ResponsesInputItem) UnmarshalJSON(data []byte) error {
 
 // ResponsesContentPart is a typed content part in a Responses message.
 type ResponsesContentPart struct {
-	ownedOutputText bool
-	rawJSON json.RawMessage
-	Annotations json.RawMessage `json:"annotations,omitempty"`
-	Logprobs json.RawMessage `json:"logprobs,omitempty"`
+	ownedOutputText       bool
+	rawJSON               json.RawMessage
+	Annotations           json.RawMessage `json:"annotations,omitempty"`
+	Logprobs              json.RawMessage `json:"logprobs,omitempty"`
 	PromptCacheBreakpoint json.RawMessage `json:"prompt_cache_breakpoint,omitempty"`
 	Type                  string          `json:"type"` // "input_text" | "output_text" | "refusal" | "input_image" | "input_file"
 	Text                  string          `json:"text,omitempty"`
@@ -389,8 +389,8 @@ type ResponsesIncompleteDetails struct {
 // ResponsesOutput is one output item in a Responses API response.
 type ResponsesOutput struct {
 	ownedMessage bool
-	rawJSON json.RawMessage
-	Type string `json:"type"` // "message" | "reasoning" | "function_call" | "web_search_call"
+	rawJSON      json.RawMessage
+	Type         string `json:"type"` // "message" | "reasoning" | "function_call" | "web_search_call"
 
 	// type=message
 	ID      string                 `json:"id,omitempty"`
@@ -571,10 +571,10 @@ type ResponsesOutputTokensDetails struct {
 // ResponsesStreamEvent is a single SSE event in the Responses streaming protocol.
 // The Type field corresponds to the "type" in the JSON payload.
 type ResponsesStreamEvent struct {
-	hasOutputIndex bool
+	hasOutputIndex  bool
 	hasContentIndex bool
 	decodedFromJSON bool
-	Type string `json:"type"`
+	Type            string `json:"type"`
 
 	// response.created / response.completed / response.done / response.failed / response.incomplete
 	Response *ResponsesResponse `json:"response,omitempty"`
