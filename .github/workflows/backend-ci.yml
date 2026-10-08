@@ -307,6 +307,9 @@ jobs:
       - name: Stripe page disposal actual mocked payment regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/StripePaymentView.lifecycle.spec.ts src/views/user/__tests__/StripePaymentView.spec.ts
+      - name: Airwallex page disposal actual mocked SDK regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/AirwallexPaymentView.lifecycle.spec.ts src/views/user/__tests__/AirwallexPaymentView.spec.ts
       - name: Group RPM edits and multiplier dialog actual ownership regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/components/admin/group/__tests__/
