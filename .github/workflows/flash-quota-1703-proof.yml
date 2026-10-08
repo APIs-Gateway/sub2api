@@ -29,6 +29,20 @@ jobs:
         with:
           ref: ${{ matrix.ref }}
           fetch-depth: 0
+      - name: Preserve base Vitest behavior and disable assertion display truncation
+        run: |
+          set -euo pipefail
+          cat > frontend/flash-quota-proof.config.ts <<'PROOFCONFIG'
+          import { defineConfig, mergeConfig } from 'vitest/config'
+          import base from './vitest.config'
+          
+          export default mergeConfig(base, defineConfig({
+            test: {
+              chaiConfig: { truncateThreshold: 0 }
+            }
+          }))
+          PROOFCONFIG
+          test "$(git hash-object frontend/flash-quota-proof.config.ts)" = c3274a39b82f34cfd0854dee5406072f44d0e45b
       - name: Freeze exact source tree and identical shared fixture
         env:
           PROOF_SIDE: ${{ matrix.side }}
@@ -52,7 +66,7 @@ jobs:
           fixture = 'frontend/src/components/account/__tests__/AccountUsageCell.spec.ts'
           base = subprocess.check_output(['git', 'show', 'de76de25f4039c6e86234c90703d07f9f533409f:'+fixture])
           assert pathlib.Path(fixture).read_bytes().startswith(base), 'all 16 original fixtures must remain byte-identical'
-          paths = ['frontend/src/components/account/AccountUsageCell.vue', fixture, 'frontend/pnpm-lock.yaml', 'frontend/package.json', 'frontend/vitest.config.ts']
+          paths = ['frontend/src/components/account/AccountUsageCell.vue', fixture, 'frontend/pnpm-lock.yaml', 'frontend/package.json', 'frontend/vitest.config.ts', 'frontend/flash-quota-proof.config.ts']
           record = {'side': os.environ['PROOF_SIDE'], 'source_head': os.environ['PROOF_REF'], 'source_tree': os.environ['PROOF_TREE'], 'shared_fixture_source': 'afde4ac8df152506615e6395120174f378bc0114', 'files': {p: {'git_blob': subprocess.check_output(['git', 'hash-object', p], text=True).strip(), 'sha256': hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()} for p in paths}}
           pathlib.Path('proof-evidence/freeze.json').write_text(json.dumps(record, indent=2))
           print(json.dumps(record, indent=2))
@@ -73,7 +87,7 @@ jobs:
         run: |
           set -uo pipefail
           set +e
-          pnpm exec vitest run --reporter=verbose --reporter=json --outputFile="$GITHUB_WORKSPACE/proof-evidence/result.json" src/components/account/__tests__/AccountUsageCell.spec.ts 2>&1 | tee "$GITHUB_WORKSPACE/proof-evidence/verbose.log"
+          pnpm exec vitest run --config=flash-quota-proof.config.ts --reporter=verbose --reporter=json --outputFile="$GITHUB_WORKSPACE/proof-evidence/result.json" src/components/account/__tests__/AccountUsageCell.spec.ts 2>&1 | tee "$GITHUB_WORKSPACE/proof-evidence/verbose.log"
           actual_status=${PIPESTATUS[0]}
           set -e
           printf '%s\n' "$actual_status" > "$GITHUB_WORKSPACE/proof-evidence/actual-exit.txt"
@@ -101,6 +115,7 @@ jobs:
               'frontend/pnpm-lock.yaml': '948cc2d8f3d089b7800b1fabacd56f26cddde298',
               'frontend/package.json': 'eb12f1e956c2057268fd9a22e3e1c58848749df6',
               'frontend/vitest.config.ts': '5a81b4e5ed40aefa4ee2eef00ae35c3d29df1ff3',
+              'frontend/flash-quota-proof.config.ts': 'c3274a39b82f34cfd0854dee5406072f44d0e45b',
           }
           files = {}
           for path, blob in expected.items():
@@ -119,7 +134,7 @@ jobs:
           PROOF_SIDE: ${{ matrix.side }}
         run: |
           python3 - <<'PYRESULT'
-          import json, os, pathlib
+          import json, os, pathlib, re
           root = pathlib.Path('proof-evidence')
           before = json.loads((root/'freeze.json').read_text())
           after = json.loads((root/'post-freeze.json').read_text())
@@ -148,17 +163,30 @@ jobs:
           assert result['numFailedTests'] == (11 if side == 'OLD' else 0)
           assert result['numPassedTests'] == (29 if side == 'OLD' else 40)
           assert actual_exit == (1 if side == 'OLD' else 0), ('actual process exit',actual_exit)
+          clean_verbose = re.sub(r'\x1b\[[0-9;]*[mK]', '', verbose)
+          groups = re.findall(r'(?ms)((?:^ FAIL [^\n]*\n)+)(.*?)(?=^⎯[^\n]*\[\d+/\d+\]⎯|^ Test Files )', clean_verbose)
+          verbose_bodies = {}
+          for headers, body in groups:
+              for header in headers.splitlines():
+                  fixture, ancestor, title = header.removeprefix(' FAIL  ').split(' > ', 2)
+                  assert fixture == 'src/components/account/__tests__/AccountUsageCell.spec.ts', ('actual assertion fixture', fixture)
+                  key = (ancestor, title)
+                  assert key not in verbose_bodies, ('duplicate actual failure header', key)
+                  verbose_bodies[key] = body
+          assert set(verbose_bodies) == actual_fail, ('complete verbose failure title inventory', set(verbose_bodies), actual_fail)
           bodies = []
           for key in sorted(actual_fail):
               row = actual[key]
-              body = '\n'.join(row['failureMessages'])
+              body = verbose_bodies[key]
+              stack = '\n'.join(row['failureMessages'])
+              assert 'AssertionError' in stack and 'src/components/account/__tests__/AccountUsageCell.spec.ts' in stack, ('exact JSON business assertion stack', key, stack)
               assert 'AssertionError' in body, ('must fail on a business assertion', key, body)
               assert 'admin.accounts.usageWindow.gemini3Flash' in body, ('must fail on visible Flash output', key, body)
               assert 'src/components/account/__tests__/AccountUsageCell.spec.ts' in body, ('assertion must be in shared mounted fixture', key, body)
               assert red[key[1]] in body, ('fixed rendered output', key, body)
               if key[1] == 'keeps maximum utilization and earliest reset across legacy and exact new Flash keys':
                   assert '|20|2026-10-09T14:00:00Z|emerald' in body, ('OLD legacy visible output', body)
-              bodies.append({'ancestor':key[0], 'title':key[1], 'failureMessages':row['failureMessages']})
+              bodies.append({'ancestor':key[0], 'title':key[1], 'complete_actual_verbose_body':body, 'failureMessages':row['failureMessages']})
           (root/'complete-old-business-failure-bodies.json').write_text(json.dumps(bodies, ensure_ascii=False, indent=2))
           summary = {'side':side, 'actual_exit':actual_exit, 'total_leaves':40, 'passed':result['numPassedTests'], 'failed':result['numFailedTests'], 'prior16_all_pass':all(actual[('AccountUsageCell',title)]['status']=='passed' for title in prior), 'old_business_failures':bodies}
           (root/'actual-summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2))
