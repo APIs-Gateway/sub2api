@@ -174,6 +174,16 @@ jobs:
           go test -tags=integration -race -coverpkg=./internal/handler,./internal/service -covermode=atomic -coverprofile=coverage-responses-queue.out -count=1 -timeout=8m -v -run '^TestGenericResponsesWaitQueue_RealRedis$' ./internal/handler/
           test -s coverage-responses-queue.out
           bash ./tools/normalize-go-coverprofile.sh coverage-responses-queue.out
+      - name: Gemini audio known sibling required shapes and preserved filters (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestChatInputAudioShape_' ./internal/pkg/apicompat/
+      - name: Gemini audio public shape refusals and actual wallet card funding (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -timeout=10m -v -run '^TestChatInputAudioShapeHTTP_' ./internal/repository/
       - name: Chat-to-Responses legacy calls, developer and named choice contracts (race)
         working-directory: backend
         env:
