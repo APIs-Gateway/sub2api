@@ -1,26 +1,38 @@
-name: Owned Responses 1698 current-candidate content-index RED
+name: Owned Responses 1698 content-index same-fixture candidate and NEW repair
 on:
   push:
     branches: [codex/responses-owned-message-1698-proof]
 permissions:
   contents: read
 jobs:
-  candidate:
+  repaired:
+    name: ${{ matrix.variant }} content-index contracts
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: CANDIDATE
+            source: faff74124c1008f39c6ee00e126d878028745b13
+          - variant: NEW
+            source: c02bb7915ab271059a8fd1cb0108fcddc0189aa7
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      SOURCE: ${{ matrix.source }}
+      VARIANT: ${{ matrix.variant }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Freeze candidate and public regression fixture
         run: |
-          git merge-base --is-ancestor 4f926681f9eabdd2f96e0a8adb20c56b15a34bb9 HEAD
+          git merge-base --is-ancestor c02bb7915ab271059a8fd1cb0108fcddc0189aa7 HEAD
           git merge-base --is-ancestor faff74124c1008f39c6ee00e126d878028745b13 HEAD
-          test "$(git hash-object backend/internal/handler/openai_owned_responses_part_index_test.go)" = f97b19b264c4873768c2b74d307bb9e4d7a33043
+          test "$(git hash-object backend/internal/handler/openai_owned_responses_part_index_test.go)" = 2ee97bea2de1aa2637ca70192bace3e43ba1d56c
           git hash-object backend/internal/handler/openai_owned_responses_part_index_test.go
           cp backend/internal/handler/openai_owned_responses_part_index_test.go /tmp/part-index-fixture.go
-          git checkout --detach faff74124c1008f39c6ee00e126d878028745b13
-          test "$(git rev-parse HEAD)" = faff74124c1008f39c6ee00e126d878028745b13
+          git checkout --detach "$SOURCE"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
           git ls-tree HEAD backend/internal/pkg/apicompat/anthropic_to_responses_response.go backend/internal/pkg/apicompat/chatcompletions_responses_bridge.go backend/internal/pkg/apicompat/responses_stream_event_wire.go backend/internal/pkg/apicompat/responses_to_chatcompletions.go backend/internal/pkg/apicompat/types.go backend/internal/pkg/apicompat/responses_owned_message.go backend/internal/service/openai_gateway_service.go
           cp /tmp/part-index-fixture.go backend/internal/handler/openai_owned_responses_part_index_test.go
       - uses: actions/setup-go@v6
@@ -33,7 +45,7 @@ jobs:
         run: |
           go version | tee /tmp/part-index-go-version.txt
           go version | grep -q 'go1.26.6'
-          gofmt -l backend/internal/handler/openai_owned_responses_part_index_test.go > /tmp/part-index-format.txt
+          gofmt -l backend/internal/handler/openai_owned_responses_part_index_test.go backend/internal/pkg/apicompat/responses_owned_message.go > /tmp/part-index-format.txt
           cat /tmp/part-index-format.txt
           test ! -s /tmp/part-index-format.txt
           test "$(git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go)" = 84ac29522877dab61e3d821bdfcacfb97db752ac
@@ -42,7 +54,7 @@ jobs:
           git hash-object backend/internal/pkg/apicompat/responses_owned_message_wire_test.go
           test "$(git hash-object backend/internal/pkg/apicompat/responses_owned_message_state_test.go)" = e1ba6a2ea9374fb1849047636bcce816994ef5f3
           git hash-object backend/internal/pkg/apicompat/responses_owned_message_state_test.go
-      - name: Current candidate actual original86 and content-index14 race tests
+      - name: Actual original86 and expanded content-index16 race tests
         working-directory: backend
         run: |
           set +e
@@ -54,11 +66,11 @@ jobs:
           cat /tmp/part-index-tests.stderr
           test -s /tmp/part-index.cover
           head -1 /tmp/part-index.cover | grep -q '^mode: atomic$'
-      - name: Require exact eight business failures and every92 control PASS
+      - name: Verify NEW102PASS or exact candidate10 business failures and92 controls
         if: always()
         run: |
-          test "$(git rev-parse HEAD)" = faff74124c1008f39c6ee00e126d878028745b13
-          test "$(git hash-object backend/internal/handler/openai_owned_responses_part_index_test.go)" = f97b19b264c4873768c2b74d307bb9e4d7a33043
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git hash-object backend/internal/handler/openai_owned_responses_part_index_test.go)" = 2ee97bea2de1aa2637ca70192bace3e43ba1d56c
           git hash-object backend/internal/handler/openai_owned_responses_part_index_test.go
           test "$(git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go)" = 84ac29522877dab61e3d821bdfcacfb97db752ac
           git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go
@@ -76,11 +88,17 @@ jobs:
           expected = {'TestOwnedResponsesPartIndex_PublicHTTP/'+mode+'/'+case for mode in ('normal-stream','normal-unary','passthrough-unary') for case in ('empty_output_orders_explicit_parts',)}
           expected |= {'TestOwnedResponsesPartIndex_PublicHTTP/converted_'+route+'_empty_terminal_matches_before_part_insertion' for route in ('chat/completions','messages')}
           expected |= {'TestOwnedResponsesPartIndex_PublicHTTP/public_accumulator_'+case for case in ('build_explicit_parts','supplement_empty_terminal','supplement_partial_terminal')}
-          assert len(expected) == 8 and len(leaves) == 100, ('actual leaf count', len(leaves))
-          assert {k[1] for k,v in leaves.items() if v == 'fail'} == expected, 'wrong candidate failure mechanism'
-          assert sum(v == 'pass' for v in leaves.values()) == 92 and 'skip' not in leaves.values(), 'controls did not all pass'
-          assert int(pathlib.Path('/tmp/part-index-exit.txt').read_text()) == 1, 'actual RED missing'
-          result = {'source':'faff74124c1008f39c6ee00e126d878028745b13','actualExit':1,'leaves':[{'package':k[0],'test':k[1],'outcome':v} for k,v in leaves.items()]}
+          expected |= {'TestOwnedResponsesPartIndex_PublicHTTP/'+case for case in ('public_accumulator_reversed_mixed_parts_keep_opaque_metadata','public_accumulator_unindexed_legacy_keeps_its_arrival_slot')}
+          assert len(expected) == 10 and len(leaves) == 102, ('actual leaf count', len(leaves))
+          import os
+          code = int(pathlib.Path('/tmp/part-index-exit.txt').read_text())
+          assert 'skip' not in leaves.values()
+          if os.environ['VARIANT'] == 'CANDIDATE':
+              assert {k[1] for k,v in leaves.items() if v == 'fail'} == expected, 'wrong candidate failure mechanism'
+              assert sum(v == 'pass' for v in leaves.values()) == 92 and code == 1, 'candidate controls or actual RED missing'
+          else:
+              assert code == 0 and all(v == 'pass' for v in leaves.values()), 'NEW actual failure'
+          result = {'source':os.environ['SOURCE'],'variant':os.environ['VARIANT'],'actualExit':code,'leaves':[{'package':k[0],'test':k[1],'outcome':v} for k,v in leaves.items()]}
           pathlib.Path('/tmp/part-index-leaves.json').write_text(json.dumps(result,indent=2))
           print(json.dumps(result,indent=2))
           PYCANDIDATE
@@ -88,7 +106,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: owned-responses-1698-current-candidate-part-index-actual
+          name: owned-responses-1698-${{ matrix.variant }}-repaired-part-index-actual
           path: |
             /tmp/part-index-tests.jsonl
             /tmp/part-index-tests.stderr

@@ -2,6 +2,7 @@ package apicompat
 
 import (
 	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -150,6 +151,28 @@ func (m *bufferedMessage) part(index int, kind string, indexed bool) *ResponsesC
 	return &m.parts[len(m.parts)-1].part
 }
 
+// Valid explicit content indexes describe part order, independently of arrival.
+// Keep legacy unindexed slots in their existing positions; only indexed slots
+// exchange entries. Equal indexes keep their arrival order.
+func (m *bufferedMessage) orderedParts() []bufferedMessagePart {
+	ordered := append([]bufferedMessagePart(nil), m.parts...)
+	var indexed []bufferedMessagePart
+	for _, part := range ordered {
+		if part.indexed && part.index >= 0 {
+			indexed = append(indexed, part)
+		}
+	}
+	sort.SliceStable(indexed, func(i, j int) bool { return indexed[i].index < indexed[j].index })
+	next := 0
+	for i := range ordered {
+		if ordered[i].indexed && ordered[i].index >= 0 {
+			ordered[i] = indexed[next]
+			next++
+		}
+	}
+	return ordered
+}
+
 func (a *BufferedResponseAccumulator) observeMessageEvent(e *ResponsesStreamEvent) {
 	switch e.Type {
 	case "response.output_item.added", "response.output_item.done":
@@ -229,7 +252,7 @@ func (m *bufferedMessage) output(status string) (ResponsesOutput, bool) {
 		return ResponsesOutput{}, false
 	}
 	content := make([]ResponsesContentPart, 0, len(m.parts))
-	for _, entry := range m.parts {
+	for _, entry := range m.orderedParts() {
 		p := entry.part
 		p.ownedOutputText = p.Type == "output_text"
 		content = append(content, p)
@@ -323,12 +346,15 @@ func (a *BufferedResponseAccumulator) supplementMessages(resp *ResponsesResponse
 		}
 		if match >= 0 {
 			item := &resp.Output[match]
-			for _, entry := range m.parts {
+			// Match only the original terminal part indexes. A newly inserted
+			// part must not become authoritative evidence for another entry.
+			terminalContent := append([]ResponsesContentPart(nil), item.Content...)
+			var missingParts []ResponsesContentPart
+			for _, entry := range m.orderedParts() {
 				part := entry.part
 				if part.Type != "output_text" && part.Type != "refusal" {
-					if entry.index >= len(item.Content) {
-						item.Content = append(item.Content, part)
-						ensureSupplementedMessageFields(item, generated)
+					if entry.index >= len(terminalContent) {
+						missingParts = append(missingParts, part)
 					}
 					continue
 				}
@@ -338,7 +364,7 @@ func (a *BufferedResponseAccumulator) supplementMessages(resp *ResponsesResponse
 				part.ownedOutputText = part.Type == "output_text"
 				partIndex := entry.index
 				filled := false
-				if partIndex >= 0 && partIndex < len(item.Content) && item.Content[partIndex].Type == part.Type {
+				if partIndex >= 0 && partIndex < len(terminalContent) && terminalContent[partIndex].Type == part.Type {
 					current := &item.Content[partIndex]
 					if (part.Type == "output_text" && strings.TrimSpace(current.Text) == "") || (part.Type == "refusal" && current.Refusal == "") {
 						if part.Type == "output_text" {
@@ -354,16 +380,19 @@ func (a *BufferedResponseAccumulator) supplementMessages(resp *ResponsesResponse
 				if !filled {
 					// Preserve terminal content of this type when its index was not
 					// reported. Do not append a duplicate of authoritative text.
-					for _, current := range item.Content {
+					for _, current := range terminalContent {
 						if !entry.indexed && current.Type == part.Type && (strings.TrimSpace(current.Text) != "" || current.Refusal != "") {
 							filled = true
 						}
 					}
 					if !filled {
-						item.Content = append(item.Content, part)
-						ensureSupplementedMessageFields(item, generated)
+						missingParts = append(missingParts, part)
 					}
 				}
+			}
+			if len(missingParts) > 0 {
+				item.Content = append(item.Content, missingParts...)
+				ensureSupplementedMessageFields(item, generated)
 			}
 			continue
 		}
