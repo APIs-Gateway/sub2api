@@ -1,0 +1,41 @@
+name: Owned Responses 1698 remote formatting preparation
+on:
+  push:
+    branches: [codex/responses-owned-message-1698-proof]
+permissions:
+  contents: read
+jobs:
+  format-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Verify exact source ancestry and checkout
+        run: |
+          git merge-base --is-ancestor 1ef67f42fd3967d052a6243fc2c3976cfe7e6a78 HEAD
+          git checkout --detach 1ef67f42fd3967d052a6243fc2c3976cfe7e6a78
+          test "$(git rev-parse HEAD)" = 1ef67f42fd3967d052a6243fc2c3976cfe7e6a78
+          git ls-tree HEAD backend/internal/pkg/apicompat/anthropic_to_responses_response.go backend/internal/pkg/apicompat/chatcompletions_responses_bridge.go backend/internal/pkg/apicompat/responses_stream_event_wire.go backend/internal/pkg/apicompat/responses_to_chatcompletions.go backend/internal/pkg/apicompat/types.go backend/internal/pkg/apicompat/responses_owned_message.go backend/internal/pkg/apicompat/responses_owned_message_wire_test.go backend/internal/pkg/apicompat/responses_owned_message_state_test.go backend/internal/service/openai_gateway_service.go backend/internal/handler/openai_owned_responses_message_wire_test.go
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: false
+      - name: Produce remote formatting patch only (no tests or builds)
+        run: |
+          go version | tee format-go-version.txt
+          go version | grep -q 'go1.26.6'
+          gofmt -w backend/internal/pkg/apicompat/anthropic_to_responses_response.go backend/internal/pkg/apicompat/chatcompletions_responses_bridge.go backend/internal/pkg/apicompat/responses_stream_event_wire.go backend/internal/pkg/apicompat/responses_to_chatcompletions.go backend/internal/pkg/apicompat/types.go backend/internal/pkg/apicompat/responses_owned_message.go backend/internal/pkg/apicompat/responses_owned_message_wire_test.go backend/internal/pkg/apicompat/responses_owned_message_state_test.go backend/internal/service/openai_gateway_service.go backend/internal/handler/openai_owned_responses_message_wire_test.go
+          git diff --binary > owned-responses-format.patch
+          git diff --stat > owned-responses-format-stat.txt
+          printf '%s\n' 1ef67f42fd3967d052a6243fc2c3976cfe7e6a78 > format-source.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: owned-responses-1698-format-preparation
+          path: |
+            owned-responses-format.patch
+            owned-responses-format-stat.txt
+            format-go-version.txt
+            format-source.txt
+          if-no-files-found: error
