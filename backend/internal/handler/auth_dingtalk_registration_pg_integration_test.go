@@ -19,6 +19,7 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
+	"github.com/Wei-Shaw/sub2api/ent/identityadoptiondecision"
 	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
@@ -99,7 +100,7 @@ func TestDingTalkNoEmailRegistrationPG(t *testing.T) {
 		builder := client.PendingAuthSession.Create().SetSessionToken(key).SetBrowserSessionKey(key + "-browser").
 			SetIntent("login").SetProviderType("dingtalk").SetProviderKey("dingtalk").SetProviderSubject(key).
 			SetResolvedEmail(email).SetRedirectTo("/dashboard").SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
-			SetUpstreamIdentityClaims(map[string]any{"username": "PG DingTalk", "suggested_display_name": "PG DingTalk"}).
+			SetUpstreamIdentityClaims(buildDingTalkUpstreamClaims(&DingTalkStaffInfo{Name: "PG DingTalk"}, key, "fixture-corp")).
 			SetLocalFlowState(map[string]any{oauthCompletionResponseKey: map[string]any{"redirect": "/dashboard", "synthetic_email": email}})
 		if change != nil {
 			change(builder)
@@ -223,6 +224,7 @@ func TestDingTalkNoEmailRegistrationPG(t *testing.T) {
 		payload := decodeJSONResponseData(t, exchange)
 		require.Equal(t, session.ResolvedEmail, payload["synthetic_email"])
 		require.NotContains(t, payload, "access_token")
+		require.NotContains(t, payload, "suggested_display_name", "current DingTalk producer does not expose profile suggestions")
 		assertUntouched(t, session, before)
 		rec := request(h, session, session.BrowserSessionKey, `{"email":"attacker@example.com","username":"forged","provider":"oidc","adopt_display_name":true,"adopt_avatar":false}`, false)
 		account := assertLogin(t, h, session, rec)
@@ -237,6 +239,37 @@ func TestDingTalkNoEmailRegistrationPG(t *testing.T) {
 		account, err = client.User.Get(ctx, account.ID)
 		require.NoError(t, err)
 		require.InDelta(t, 9.5, account.Balance, 1e-9)
+	})
+
+	t.Run("explicit_profile_decline_preserves_account_and_avatar", func(t *testing.T) {
+		h, _, _ := newHandler(t, nil)
+		session := newSession(t, func(b *dbent.PendingAuthSessionCreate) {
+			// This is the supported pending/exchange profile contract. Current
+			// DingTalk producer has no suggested_* fields. Connector sync is
+			// disabled here; administrator enterprise sync policies are unchanged.
+			b.SetUpstreamIdentityClaims(map[string]any{"username": "PG DingTalk", "suggested_display_name": "Provider Display Name",
+				"suggested_avatar_url": "https://cdn.example/avatar.png"})
+		})
+		exchange := request(h, session, session.BrowserSessionKey, `{}`, true)
+		require.Equal(t, http.StatusOK, exchange.Code)
+		payload := decodeJSONResponseData(t, exchange)
+		require.Equal(t, true, payload["adoption_required"])
+		require.Equal(t, "Provider Display Name", payload["suggested_display_name"])
+		require.Equal(t, "https://cdn.example/avatar.png", payload["suggested_avatar_url"])
+		require.NotContains(t, payload, "access_token")
+		account := assertLogin(t, h, session, request(h, session, session.BrowserSessionKey,
+			`{"adopt_display_name":false,"adopt_avatar":false}`, false))
+		decision, err := client.IdentityAdoptionDecision.Query().Where(identityadoptiondecision.PendingAuthSessionIDEQ(session.ID)).Only(ctx)
+		require.NoError(t, err)
+		require.False(t, decision.AdoptDisplayName)
+		require.False(t, decision.AdoptAvatar)
+		identity, err := client.AuthIdentity.Query().Where(authidentity.ProviderSubjectEQ(session.ProviderSubject)).Only(ctx)
+		require.NoError(t, err)
+		require.NotContains(t, identity.Metadata, "display_name")
+		require.NotContains(t, identity.Metadata, "avatar_url")
+		var avatars int
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_avatars WHERE user_id=$1`, account.ID).Scan(&avatars))
+		require.Zero(t, avatars)
 	})
 
 	t.Run("existing_target_and_identity_cannot_be_registered_as_new", func(t *testing.T) {

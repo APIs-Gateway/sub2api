@@ -267,6 +267,8 @@ const { t, te } = useI18n()
 
 const authStore = useAuthStore()
 const appStore = useAppStore()
+const callbackSessionVersion = authStore.authSessionVersion
+let noEmailRegistrationSessionVersion: number | undefined
 
 const isProcessing = ref(true)
 const errorMessage = ref('')
@@ -283,6 +285,7 @@ const suggestedAvatarUrl = ref('')
 const adoptDisplayName = ref(true)
 const adoptAvatar = ref(true)
 const needsAdoptionConfirmation = ref(false)
+const needsNoEmailRegistration = ref(false)
 const pendingAccountAction = ref<'none' | 'choose_account_action' | 'create_account' | 'bind_login'>('none')
 const pendingAccountEmail = ref('')
 const bindLoginEmail = ref('')
@@ -561,7 +564,7 @@ function isCreateAccountRecoveryError(error: unknown): boolean {
     states.includes('existing_account_binding_required')
 }
 
-async function finalizeCompletion(completion: PendingOAuthExchangeResponse, redirect: string) {
+async function finalizeCompletion(completion: PendingOAuthExchangeResponse, redirect: string, expectedSessionVersion?: number) {
   if (getOAuthCompletionKind(completion) === 'bind') {
     const bindRedirect = sanitizeRedirectPath(completion.redirect || '/profile')
     clearPendingAuthSession()
@@ -575,14 +578,22 @@ async function finalizeCompletion(completion: PendingOAuthExchangeResponse, redi
     throw new Error(t('auth.dingtalk.callbackMissingToken'))
   }
 
-  persistOAuthTokenContext(completion)
-  await authStore.setToken(completion.access_token)
+  if (expectedSessionVersion !== undefined) {
+    await authStore.setToken(completion.access_token, {
+      refreshToken: completion.refresh_token,
+      expiresIn: completion.expires_in,
+      expectedSessionVersion
+    })
+  } else {
+    persistOAuthTokenContext(completion)
+    await authStore.setToken(completion.access_token)
+  }
   clearAllAffiliateReferralCodes()
   appStore.showSuccess(t('auth.loginSuccess'))
   await router.replace(redirect)
 }
 
-async function finalizePendingAccountResponse(completion: DingTalkPendingActionResponse, requiresLogin = false) {
+async function finalizePendingAccountResponse(completion: DingTalkPendingActionResponse, requiresLogin = false, expectedSessionVersion?: number) {
   applyAdoptionSuggestionState(completion)
   const redirect = sanitizeRedirectPath(completion.redirect || redirectTo.value)
 
@@ -627,7 +638,14 @@ async function finalizePendingAccountResponse(completion: DingTalkPendingActionR
   if (requiresLogin && !isOAuthLoginCompletion(completion)) {
     throw new Error(t('auth.dingtalk.callbackMissingToken'))
   }
-  await finalizeCompletion(completion, redirect)
+  await finalizeCompletion(completion, redirect, expectedSessionVersion)
+}
+
+function registrationSessionChanged(error: unknown, expectedSessionVersion?: number, responseAccepted = false): boolean {
+  return expectedSessionVersion !== undefined && (
+    (!responseAccepted && authStore.authSessionVersion !== expectedSessionVersion) ||
+    (error as { code?: string } | null)?.code === 'AUTH_SESSION_CHANGED'
+  )
 }
 
 async function handleSubmitInvitation() {
@@ -635,7 +653,10 @@ async function handleSubmitInvitation() {
   if (!invitationCode.value.trim()) return
 
   isSubmitting.value = true
+  const sessionVersion = noEmailRegistrationSessionVersion
+  let responseAccepted = false
   try {
+    if (registrationSessionChanged(null, sessionVersion)) return
     const affCode = loadOAuthAffiliateCode()
     const decision = currentAdoptionDecision()
     const { data: completion } = await apiClient.post<DingTalkPendingActionResponse>(
@@ -647,8 +668,11 @@ async function handleSubmitInvitation() {
         ...serializeAdoptionDecision(decision)
       }
     )
-    await finalizePendingAccountResponse(completion, true)
+    if (registrationSessionChanged(null, sessionVersion)) return
+    responseAccepted = true
+    await finalizePendingAccountResponse(completion, true, sessionVersion)
   } catch (e: unknown) {
+    if (registrationSessionChanged(e, sessionVersion, responseAccepted)) return
     const err = e as { message?: string; response?: { data?: { message?: string } } }
     invitationError.value =
       err.response?.data?.message || err.message || t('auth.dingtalk.completeRegistrationFailed')
@@ -660,6 +684,10 @@ async function handleSubmitInvitation() {
 async function handleContinueLogin() {
   isSubmitting.value = true
   try {
+    if (needsNoEmailRegistration.value) {
+      await completeNoEmailRegistration()
+      return
+    }
     const completion = await exchangePendingOAuthCompletion(currentAdoptionDecision()) as DingTalkPendingActionResponse
     await finalizePendingAccountResponse(completion)
   } catch (e: unknown) {
@@ -667,6 +695,38 @@ async function handleContinueLogin() {
     needsAdoptionConfirmation.value = false
   } finally {
     isSubmitting.value = false
+  }
+}
+
+async function completeNoEmailRegistration() {
+  const sessionVersion = noEmailRegistrationSessionVersion
+  if (registrationSessionChanged(null, sessionVersion)) return
+  let responseAccepted = false
+  try {
+    const { data: registered } = await apiClient.post<DingTalkPendingActionResponse>(
+      '/auth/oauth/dingtalk/complete-registration',
+      {
+        ...oauthAffiliatePayload(loadOAuthAffiliateCode()),
+        ...serializeAdoptionDecision(currentAdoptionDecision())
+      }
+    )
+    if (registrationSessionChanged(null, sessionVersion)) return
+    responseAccepted = true
+    await finalizePendingAccountResponse(registered, true, sessionVersion)
+    needsNoEmailRegistration.value = false
+  } catch (e: unknown) {
+    if (registrationSessionChanged(e, sessionVersion, responseAccepted)) return
+    if ((e as { reason?: string } | null)?.reason !== 'OAUTH_INVITATION_REQUIRED') {
+      throw e
+    }
+    await finalizePendingAccountResponse({
+      error: 'invitation_required',
+      redirect: redirectTo.value,
+      adoption_required: adoptionRequired.value,
+      suggested_display_name: suggestedDisplayName.value,
+      suggested_avatar_url: suggestedAvatarUrl.value
+    })
+    needsNoEmailRegistration.value = false
   }
 }
 
@@ -780,13 +840,20 @@ onMounted(async () => {
     }
 
     const completion = await exchangePendingOAuthCompletion()
+    const completionData = completion as DingTalkPendingActionResponse
+    const isNoEmailSignup = !isOAuthLoginCompletion(completion) &&
+      typeof completionData.synthetic_email === 'string' &&
+      completionData.synthetic_email.trim() !== ''
+    if (isNoEmailSignup) {
+      noEmailRegistrationSessionVersion = callbackSessionVersion
+      if (registrationSessionChanged(null, noEmailRegistrationSessionVersion)) return
+    }
     const completionRedirect = sanitizeRedirectPath(
       completion.redirect || (route.query.redirect as string | undefined) || '/dashboard'
     )
     applyAdoptionSuggestionState(completion)
     redirectTo.value = completionRedirect
 
-    const completionData = completion as DingTalkPendingActionResponse
     // 用户从补邮箱页"我已有账户"按钮跳回时携带 bind=1，跳过 email_completion 自动 redirect，
     // 直接进入 bind_login 输入密码绑定已有账户。
     const wantsBindExisting = (route.query.bind as string | undefined) === '1'
@@ -830,32 +897,19 @@ onMounted(async () => {
       return
     }
 
-    // The marker starts the flow; only the browser-bound server session supplies identity.
-    if (!isOAuthLoginCompletion(completion) &&
-        typeof completionData.synthetic_email === 'string' &&
-        completionData.synthetic_email.trim() !== '') {
-      try {
-        const { data: registered } = await apiClient.post<DingTalkPendingActionResponse>(
-          '/auth/oauth/dingtalk/complete-registration',
-          {
-            ...oauthAffiliatePayload(loadOAuthAffiliateCode()),
-            ...serializeAdoptionDecision(currentAdoptionDecision())
-          }
-        )
-        await finalizePendingAccountResponse(registered, true)
-      } catch (e: unknown) {
-        if ((e as { reason?: string } | null)?.reason !== 'OAUTH_INVITATION_REQUIRED') {
-          throw e
-        }
-        await finalizePendingAccountResponse({ ...completionData, error: 'invitation_required' })
-      }
-      return
-    }
+    // The marker selects registration; the server session supplies identity,
+    // and the existing profile choices must be confirmed before registration.
+    needsNoEmailRegistration.value = isNoEmailSignup
 
     if (adoptionRequired.value && hasSuggestedProfile(completionData)) {
       needsAdoptionConfirmation.value = true
       isProcessing.value = false
       persistPendingAuthSession(completionRedirect)
+      return
+    }
+
+    if (needsNoEmailRegistration.value) {
+      await completeNoEmailRegistration()
       return
     }
 
