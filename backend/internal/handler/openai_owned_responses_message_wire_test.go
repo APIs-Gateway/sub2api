@@ -4,6 +4,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -121,9 +122,19 @@ func ownedMessageTerminal(kind, status, output string) string {
 
 func ownedMessageFinals(t *testing.T, rec *httptest.ResponseRecorder, mode string) []gjson.Result {
 	t.Helper()
-	if !strings.Contains(rec.Header().Get("Content-Type"), "text/event-stream") {
-		return []gjson.Result{gjson.Parse(rec.Body.String())}
+	// The existing normal unary path retains the upstream SSE Content-Type
+	// while writing its extracted JSON body. Decode the actual body first;
+	// this fixture does not change that pre-existing header contract.
+	if mode == "normal-stream" || mode == "passthrough-stream" {
+		require.Contains(t, rec.Header().Get("Content-Type"), "text/event-stream")
+		require.False(t, json.Valid(rec.Body.Bytes()), "stream mode keeps SSE framing")
 	}
+	if json.Valid(rec.Body.Bytes()) {
+		wire := gjson.ParseBytes(rec.Body.Bytes())
+		require.True(t, wire.IsObject(), rec.Body.String())
+		return []gjson.Result{wire}
+	}
+	require.Contains(t, rec.Header().Get("Content-Type"), "text/event-stream")
 	var final []gjson.Result
 	for _, line := range strings.Split(rec.Body.String(), "\n") {
 		if !strings.HasPrefix(line, "data: ") {
@@ -347,23 +358,27 @@ func TestOwnedResponsesMessage_PublicHTTP(t *testing.T) {
 		terminal := ownedMessageTerminal("response.completed", "completed", "[]")
 		rec, _, _ := ownedMessagePublicRequest(t, "responses", "normal-stream", ownedMessageSSE(added, delta, late, terminal, terminal), "text/event-stream")
 		finals := ownedMessageFinals(t, rec, "normal-stream")
-		require.Len(t, finals, 2)
+		require.Len(t, finals, 1, "existing reader stops at its first terminal")
 		for _, final := range finals {
 			requireOwnedMessageWire(t, final.Get("output.0"), "msg_observed", "completed", "hello")
 		}
 		require.Contains(t, rec.Body.String(), `"id":"msg_observed"`, "first staged added payload is kept verbatim")
 	})
-	t.Run("normal_stream_generated_id_remains_after_terminal_then_late_observation", func(t *testing.T) {
+	t.Run("normal_stream_first_terminal_stops_before_late_provider_identity", func(t *testing.T) {
 		d := `{"type":"response.output_text.delta","output_index":0,"delta":"hello"}`
 		late := `{"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_late","role":"assistant","status":"in_progress","content":[]}}`
 		terminal := ownedMessageTerminal("response.completed", "completed", "[]")
 		rec, _, _ := ownedMessagePublicRequest(t, "responses", "normal-stream", ownedMessageSSE(d, terminal, late, terminal), "text/event-stream")
 		finals := ownedMessageFinals(t, rec, "normal-stream")
-		require.Len(t, finals, 2)
+		require.Len(t, finals, 1, "existing reader stops at its first terminal")
 		id := finals[0].Get("output.0.id").String()
 		require.NotEmpty(t, id)
 		require.NotEqual(t, "msg_late", id)
-		require.Equal(t, id, finals[1].Get("output.0.id").String())
+		// Frames after the first terminal are not consumed by this public path.
+		// Repeated builds after explicit wire commitment are NEW-only state
+		// controls; do not expand the reader's acceptance boundary here.
+		requireOwnedMessageWire(t, finals[0].Get("output.0"), id, "completed", "hello")
+		require.NotContains(t, rec.Body.String(), `"id":"msg_late"`, "frames after the first terminal are not forwarded")
 	})
 	for _, mode := range []string{"normal-unary", "passthrough-unary"} {
 		t.Run(mode+"_unfinished_event_keeps_existing_SSE_acceptance_boundary", func(t *testing.T) {
