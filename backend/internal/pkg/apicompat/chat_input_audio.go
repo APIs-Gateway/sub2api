@@ -82,10 +82,24 @@ func normalizeChatInputAudio(req *ChatCompletionsRequest, allowAudio bool) (*Cha
 					}
 				}
 			}
-			if text, exists := fields["text"]; exists {
+			if text, exists := fields["text"]; exists || contentType == "text" {
 				var value *string
 				if json.Unmarshal(text, &value) != nil || value == nil {
 					return nil, fmt.Errorf("%w: content part text must be a string", ErrInvalidInputAudio)
+				}
+			}
+			// Require known sibling payloads only on the validated audio route.
+			// Unknown parts and ordinary no-audio filtering retain their contract.
+			switch contentType {
+			case "image_url":
+				var image ChatImageURL
+				if json.Unmarshal(fields["image_url"], &image) != nil || image.URL == "" || isEmptyBase64DataURI(image.URL) {
+					return nil, fmt.Errorf("%w: expected non-empty image_url", ErrInvalidInputAudio)
+				}
+			case "file":
+				var file ChatFile
+				if json.Unmarshal(fields["file"], &file) != nil || (file.FileData == "" && file.FileID == "") {
+					return nil, fmt.Errorf("%w: expected file_data or file_id", ErrInvalidInputAudio)
 				}
 			}
 		}
