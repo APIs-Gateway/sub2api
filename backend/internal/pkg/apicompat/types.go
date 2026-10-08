@@ -309,6 +309,10 @@ func (i *ResponsesInputItem) UnmarshalJSON(data []byte) error {
 
 // ResponsesContentPart is a typed content part in a Responses message.
 type ResponsesContentPart struct {
+	ownedOutputText bool
+	rawJSON json.RawMessage
+	Annotations json.RawMessage `json:"annotations,omitempty"`
+	Logprobs json.RawMessage `json:"logprobs,omitempty"`
 	PromptCacheBreakpoint json.RawMessage `json:"prompt_cache_breakpoint,omitempty"`
 	Type                  string          `json:"type"` // "input_text" | "output_text" | "refusal" | "input_image" | "input_file"
 	Text                  string          `json:"text,omitempty"`
@@ -384,6 +388,8 @@ type ResponsesIncompleteDetails struct {
 
 // ResponsesOutput is one output item in a Responses API response.
 type ResponsesOutput struct {
+	ownedMessage bool
+	rawJSON json.RawMessage
 	Type string `json:"type"` // "message" | "reasoning" | "function_call" | "web_search_call"
 
 	// type=message
@@ -416,6 +422,9 @@ type ResponsesOutput struct {
 // 序列化，输出逐字节不变。
 func (o ResponsesOutput) MarshalJSON() ([]byte, error) {
 	type responsesOutputAlias ResponsesOutput
+	if o.Type == "message" && o.ownedMessage {
+		return marshalOwnedResponsesMessage(o)
+	}
 	if o.Type != "tool_search_call" {
 		return json.Marshal(responsesOutputAlias(o))
 	}
@@ -450,6 +459,7 @@ func (o *ResponsesOutput) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		*o = ResponsesOutput(decoded)
+		o.rawJSON = append(json.RawMessage(nil), data...)
 		return nil
 	}
 
@@ -561,6 +571,9 @@ type ResponsesOutputTokensDetails struct {
 // ResponsesStreamEvent is a single SSE event in the Responses streaming protocol.
 // The Type field corresponds to the "type" in the JSON payload.
 type ResponsesStreamEvent struct {
+	hasOutputIndex bool
+	hasContentIndex bool
+	decodedFromJSON bool
 	Type string `json:"type"`
 
 	// response.created / response.completed / response.done / response.failed / response.incomplete
@@ -576,6 +589,7 @@ type ResponsesStreamEvent struct {
 	ContentIndex int    `json:"content_index,omitempty"`
 	Delta        string `json:"delta,omitempty"`
 	Text         string `json:"text,omitempty"`
+	Refusal      string `json:"refusal,omitempty"`
 	ItemID       string `json:"item_id,omitempty"`
 
 	// response.function_call_arguments.delta / done

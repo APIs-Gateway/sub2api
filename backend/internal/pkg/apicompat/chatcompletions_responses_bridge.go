@@ -1394,6 +1394,7 @@ func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTool
 	}
 	if text != "" || len(message.ToolCalls) == 0 {
 		outputs = append(outputs, ResponsesOutput{
+			ownedMessage: true,
 			Type: "message",
 			ID:   generateItemID(),
 			Role: "assistant",
@@ -1480,6 +1481,7 @@ func toolSearchCallArgumentsJSON(arguments string) json.RawMessage {
 
 func emptyResponsesMessageOutput() ResponsesOutput {
 	return ResponsesOutput{
+		ownedMessage: true,
 		Type:    "message",
 		ID:      generateItemID(),
 		Role:    "assistant",
@@ -1949,6 +1951,7 @@ func ensureChatToResponsesMessageItem(state *ChatCompletionsToResponsesStreamSta
 	return []ResponsesStreamEvent{chatToResponsesEvent(state, "response.output_item.added", &ResponsesStreamEvent{
 		OutputIndex: state.MessageIndex,
 		Item: &ResponsesOutput{
+			ownedMessage: true,
 			Type:    "message",
 			ID:      state.MessageItemID,
 			Role:    "assistant",
@@ -1983,7 +1986,7 @@ func closeChatTextItem(state *ChatCompletionsToResponsesStreamState) []Responses
 	state.MessageItemID = ""
 	state.TextPartOpen = false
 	state.textSegment.Reset()
-	item := ResponsesOutput{Type: "message", ID: itemID, Role: "assistant", Content: []ResponsesContentPart{{Type: "output_text", Text: segment}}, Status: "completed"}
+	item := ResponsesOutput{ownedMessage: true, Type: "message", ID: itemID, Role: "assistant", Content: []ResponsesContentPart{{Type: "output_text", Text: segment}}, Status: "completed"}
 	state.recordOutput(index, item)
 	return []ResponsesStreamEvent{
 		chatToResponsesEvent(state, "response.output_text.done", &ResponsesStreamEvent{OutputIndex: index, ContentIndex: 0, Text: segment, ItemID: itemID}),

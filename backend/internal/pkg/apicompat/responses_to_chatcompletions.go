@@ -498,6 +498,9 @@ type bufferedFuncCall struct {
 // so that non-streaming handlers can reconstruct output when the terminal event
 // (response.completed / response.done) carries an empty output array.
 type BufferedResponseAccumulator struct {
+	messages []bufferedMessage
+	messageIndexes map[string]int
+	terminalStatus string
 	text                 strings.Builder
 	refusal              strings.Builder
 	reasoning            strings.Builder
@@ -516,6 +519,18 @@ func NewBufferedResponseAccumulator() *BufferedResponseAccumulator {
 // content it carries. Only delta events that contribute to the final output
 // are handled; all other event types are silently ignored.
 func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) {
+	if event == nil {
+		return
+	}
+	a.observeMessageEvent(event)
+	switch event.Type {
+	case "response.completed", "response.done", "response.incomplete", "response.cancelled", "response.canceled":
+		status := ""
+		if event.Response != nil {
+			status = event.Response.Status
+		}
+		a.terminalStatus = messageTerminalContext(event.Type, status)
+	}
 	switch event.Type {
 	case "response.output_text.delta":
 		if event.Delta != "" {
@@ -561,13 +576,22 @@ func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) 
 
 // HasContent reports whether any content has been accumulated.
 func (a *BufferedResponseAccumulator) HasContent() bool {
-	return a.text.Len() > 0 || a.refusal.Len() > 0 || len(a.funcCalls) > 0 || a.reasoning.Len() > 0
+	return a.hasMessageContent() || a.text.Len() > 0 || a.refusal.Len() > 0 || len(a.funcCalls) > 0 || a.reasoning.Len() > 0
 }
 
 // BuildOutput constructs a []ResponsesOutput from the accumulated delta
 // content. The order matches what ResponsesToChatCompletions expects:
 // reasoning → message → function_calls.
 func (a *BufferedResponseAccumulator) BuildOutput() []ResponsesOutput {
+	return a.BuildOutputForStatus(a.terminalStatus)
+}
+
+// BuildOutputForStatus keeps message completion tied to the actual terminal.
+// The legacy reasoning/message/function grouping is intentionally unchanged.
+func (a *BufferedResponseAccumulator) BuildOutputForStatus(status string) []ResponsesOutput {
+	if unfinishedMessageContext(a.terminalStatus) {
+		status = a.terminalStatus
+	}
 	var out []ResponsesOutput
 
 	if a.reasoning.Len() > 0 {
@@ -580,19 +604,10 @@ func (a *BufferedResponseAccumulator) BuildOutput() []ResponsesOutput {
 		})
 	}
 
-	if a.text.Len() > 0 || a.refusal.Len() > 0 {
-		var content []ResponsesContentPart
-		if a.text.Len() > 0 {
-			content = append(content, ResponsesContentPart{Type: "output_text", Text: a.text.String()})
+	for i := range a.messages {
+		if message, ok := a.messages[i].output(status); ok {
+			out = append(out, message)
 		}
-		if a.refusal.Len() > 0 {
-			content = append(content, ResponsesContentPart{Type: "refusal", Refusal: a.refusal.String()})
-		}
-		out = append(out, ResponsesOutput{
-			Type:    "message",
-			Role:    "assistant",
-			Content: content,
-		})
 	}
 
 	for i := range a.funcCalls {
@@ -616,7 +631,7 @@ func (a *BufferedResponseAccumulator) SupplementResponseOutput(resp *ResponsesRe
 	}
 	if len(resp.Output) == 0 {
 		if a.HasContent() {
-			resp.Output = a.BuildOutput()
+			resp.Output = a.BuildOutputForStatus(resp.Status)
 		}
 		return
 	}
@@ -641,82 +656,7 @@ func (a *BufferedResponseAccumulator) SupplementResponseOutput(resp *ResponsesRe
 		}
 	}
 
-	// The terminal event can carry a non-empty output array whose message has
-	// no usable text. Trusting it as-is silently drops the text that already
-	// streamed: the client gets an empty reply while usage still bills the
-	// terminal output_tokens. Refill it from the accumulated deltas; non-empty
-	// terminal text stays authoritative.
-	if a.text.Len() > 0 && !responsesOutputHasText(resp.Output) {
-		if !fillResponsesOutputText(resp.Output, a.text.String()) {
-			message := ResponsesOutput{
-				Type: "message",
-				Role: "assistant",
-				Content: []ResponsesContentPart{{
-					Type: "output_text",
-					Text: a.text.String(),
-				}},
-			}
-			insertAt := len(resp.Output)
-			for i := range resp.Output {
-				if resp.Output[i].Type == "function_call" {
-					insertAt = i
-					break
-				}
-			}
-			resp.Output = append(resp.Output, ResponsesOutput{})
-			copy(resp.Output[insertAt+1:], resp.Output[insertAt:])
-			resp.Output[insertAt] = message
-		}
-	}
-	// A nonempty terminal output may omit the refusal already streamed.
-	// Preserve any nonempty terminal refusal as authoritative.
-	if a.refusal.Len() > 0 {
-		hasRefusal := false
-		for _, item := range resp.Output {
-			if item.Type != "message" {
-				continue
-			}
-			for _, part := range item.Content {
-				if part.Type == "refusal" && part.Refusal != "" {
-					hasRefusal = true
-				}
-			}
-		}
-		if !hasRefusal {
-			part := ResponsesContentPart{Type: "refusal", Refusal: a.refusal.String()}
-			messageIndex := -1
-			for i := range resp.Output {
-				if resp.Output[i].Type == "message" {
-					messageIndex = i
-					break
-				}
-			}
-			if messageIndex >= 0 {
-				filled := false
-				for i := range resp.Output[messageIndex].Content {
-					if resp.Output[messageIndex].Content[i].Type == "refusal" {
-						resp.Output[messageIndex].Content[i] = part
-						filled = true
-						break
-					}
-				}
-				if !filled {
-					resp.Output[messageIndex].Content = append(resp.Output[messageIndex].Content, part)
-				}
-			} else {
-				insertAt := len(resp.Output)
-				for i := range resp.Output {
-					if resp.Output[i].Type == "function_call" {
-						insertAt = i
-						break
-					}
-				}
-				resp.Output = append(resp.Output, ResponsesOutput{})
-				copy(resp.Output[insertAt+1:], resp.Output[insertAt:])
-				resp.Output[insertAt] = ResponsesOutput{Type: "message", Role: "assistant", Content: []ResponsesContentPart{part}}
-			}
-		}
-	}
+	a.supplementMessages(resp)
 
 }
 
