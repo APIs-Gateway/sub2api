@@ -644,6 +644,38 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 	return err
 }
 
+// CheckWebSocketTurnFunding refreshes authoritative funding for a new turn on
+// an established connection. It does not count RPM or alter a prior turn's hold.
+func (s *BillingCacheService) CheckWebSocketTurnFunding(ctx context.Context, userID int64) error {
+	if s == nil || s.cfg == nil {
+		return ErrBillingServiceUnavailable
+	}
+	if s.cfg.RunMode == config.RunModeSimple {
+		return nil
+	}
+	if s.userRepo == nil {
+		return ErrBillingServiceUnavailable
+	}
+	if s.circuitBreaker != nil && !s.circuitBreaker.Allow() {
+		return ErrBillingServiceUnavailable
+	}
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		if s.circuitBreaker != nil {
+			s.circuitBreaker.OnFailure(err)
+		}
+		return ErrBillingServiceUnavailable.WithCause(err)
+	}
+	if user == nil || !user.IsActive() {
+		return ErrUserNotActive
+	}
+	if s.circuitBreaker != nil {
+		s.circuitBreaker.OnSuccess()
+	}
+	_, err = s.checkBalanceEligibilitySnapshot(ctx, user, user.Balance, true)
+	return err
+}
+
 // CheckBillingEligibilityForChain 是有回退链的请求使用的入口准入：除 RPM 外与 CheckBillingEligibility 完全相同。
 // RPM 的顺序与无链时一致：先「首跳分组层」，后「用户层」（整个请求只计一次）。
 // 首跳（有效链第 0 项）的分组层在这里计数，返回的 ticket 交给逐跳循环用于第 0 跳结束后的退回，
@@ -935,10 +967,13 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user 
 	if s.circuitBreaker != nil {
 		s.circuitBreaker.OnSuccess()
 	}
+	return s.checkBalanceEligibilitySnapshot(ctx, user, balance, false)
+}
 
+func (s *BillingCacheService) checkBalanceEligibilitySnapshot(ctx context.Context, user *User, balance float64, fresh bool) (bool, error) {
 	// 加载用户唯一生效卡（per-day 单卡，不按 group）；无卡（缓存命中或查无）→ 纯钱包。
 	// 复用 noSubLockUntil 缓存避免无卡用户每请求查 DB；购买/续费会 clear、卡到期下次查无即重置。
-	if s.subRepo != nil && !s.hasNoSubscriptionLockCached(user.ID) {
+	if s.subRepo != nil && (fresh || !s.hasNoSubscriptionLockCached(user.ID)) {
 		card, cerr := s.subRepo.GetActiveByUserID(ctx, user.ID)
 		switch {
 		case cerr == nil && card != nil:

@@ -161,6 +161,22 @@ jobs:
       - name: Unit tests (converted Responses input recovery)
         working-directory: backend
         run: go test -tags=unit -count=1 -run '^TestStructuredInputRecovery_|^TestConvertedResponsesInputStringRejection|^TestForwardAsChatCompletions_(ResponsesSupportedFallsBack|StructuredInput)' -v ./internal/service/
+      - name: WebSocket subsequent-turn fresh funding and credential formatting
+        working-directory: backend
+        run: |
+          files="internal/handler/openai_gateway_handler.go internal/service/api_key_service.go internal/service/billing_cache_service.go internal/service/ws_turn_funding_test.go internal/repository/billing_inflight_ws_integration_test.go internal/repository/ws_turn_funding_integration_test.go"
+          gofmt -d $files
+          test -z "$(gofmt -l $files)"
+      - name: WebSocket subsequent-turn fresh credit and identity controls (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -timeout=10m -v -run '^TestWSTurnFunding_' ./internal/service/
+      - name: WebSocket actual next-turn funding admission and once-only PG Redis settlement (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -parallel=1 -count=1 -timeout=15m -v -run '^TestWSTurnFundingWS_' ./internal/repository/
       - name: Chat-to-Responses legacy calls, developer and named choice contracts (race)
         working-directory: backend
         env:
