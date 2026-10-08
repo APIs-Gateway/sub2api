@@ -72,7 +72,7 @@ func needsOpenAIResponsesClientToolAdaptation(body []byte) bool {
 				needsAdaptation = true
 				return false
 			case "custom", "custom_tool_call", "custom_tool_call_output",
-				"tool_search", "tool_search_call", "tool_search_output":
+				"tool_search", "tool_search_call", "tool_search_output", "namespace":
 				needsAdaptation = true
 				return false
 			}
