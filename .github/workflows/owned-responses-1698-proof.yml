@@ -1,156 +1,100 @@
-name: Owned Responses 1698 same-fixture current-main proof
+name: Owned Responses 1698 current-candidate content-index RED
 on:
   push:
     branches: [codex/responses-owned-message-1698-proof]
 permissions:
   contents: read
 jobs:
-  public-wire:
-    name: ${{ matrix.variant }} real public wire
+  candidate:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - variant: OLD
-            source: 1bb7630faf8d24154fcfe9647d36e9e45a1bf322
-          - variant: NEW
-            source: 1d7c57c2c6527401f5fe8fe419804a3966439e58
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Freeze source ancestry and exact fixture blobs
-        env:
-          SOURCE: ${{ matrix.source }}
-          VARIANT: ${{ matrix.variant }}
+      - name: Freeze candidate and public regression fixture
         run: |
-          git merge-base --is-ancestor 1d7c57c2c6527401f5fe8fe419804a3966439e58 HEAD
-          git merge-base --is-ancestor 1bb7630faf8d24154fcfe9647d36e9e45a1bf322 HEAD
-          mkdir -p /tmp/owned-fixtures
-          test "$(git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go)" = 84ac29522877dab61e3d821bdfcacfb97db752ac
-          git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go
-          cp backend/internal/handler/openai_owned_responses_message_wire_test.go /tmp/owned-fixtures/public-0.go
-          test "$(git hash-object backend/internal/pkg/apicompat/responses_owned_message_wire_test.go)" = 1f09a46860aa4d3886a109fc6b259acdfc8f185c
-          git hash-object backend/internal/pkg/apicompat/responses_owned_message_wire_test.go
-          cp backend/internal/pkg/apicompat/responses_owned_message_wire_test.go /tmp/owned-fixtures/public-1.go
-          test "$(git hash-object backend/internal/pkg/apicompat/responses_owned_message_state_test.go)" = e1ba6a2ea9374fb1849047636bcce816994ef5f3
-          git hash-object backend/internal/pkg/apicompat/responses_owned_message_state_test.go
-          cp backend/internal/pkg/apicompat/responses_owned_message_state_test.go /tmp/owned-fixtures/state.go
-          git checkout --detach "$SOURCE"
-          test "$(git rev-parse HEAD)" = "$SOURCE"
+          git merge-base --is-ancestor 4f926681f9eabdd2f96e0a8adb20c56b15a34bb9 HEAD
+          git merge-base --is-ancestor faff74124c1008f39c6ee00e126d878028745b13 HEAD
+          test "$(git hash-object backend/internal/handler/openai_owned_responses_part_index_test.go)" = f97b19b264c4873768c2b74d307bb9e4d7a33043
+          git hash-object backend/internal/handler/openai_owned_responses_part_index_test.go
+          cp backend/internal/handler/openai_owned_responses_part_index_test.go /tmp/part-index-fixture.go
+          git checkout --detach faff74124c1008f39c6ee00e126d878028745b13
+          test "$(git rev-parse HEAD)" = faff74124c1008f39c6ee00e126d878028745b13
           git ls-tree HEAD backend/internal/pkg/apicompat/anthropic_to_responses_response.go backend/internal/pkg/apicompat/chatcompletions_responses_bridge.go backend/internal/pkg/apicompat/responses_stream_event_wire.go backend/internal/pkg/apicompat/responses_to_chatcompletions.go backend/internal/pkg/apicompat/types.go backend/internal/pkg/apicompat/responses_owned_message.go backend/internal/service/openai_gateway_service.go
-          cp /tmp/owned-fixtures/public-0.go backend/internal/handler/openai_owned_responses_message_wire_test.go
-          cp /tmp/owned-fixtures/public-1.go backend/internal/pkg/apicompat/responses_owned_message_wire_test.go
-          if [ "$VARIANT" = NEW ]; then
-            cp /tmp/owned-fixtures/state.go backend/internal/pkg/apicompat/responses_owned_message_state_test.go
-          else
-            test ! -e backend/internal/pkg/apicompat/responses_owned_message_state_test.go
-          fi
+          cp /tmp/part-index-fixture.go backend/internal/handler/openai_owned_responses_part_index_test.go
       - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
           check-latest: false
           cache: true
           cache-dependency-path: backend/go.sum
-      - name: Remote Go formatting must pass before tests
-        env:
-          VARIANT: ${{ matrix.variant }}
+      - name: Remote formatting and frozen original fixtures
         run: |
-          go version | tee /tmp/owned-go-version.txt
+          go version | tee /tmp/part-index-go-version.txt
           go version | grep -q 'go1.26.6'
-          gofmt -l backend/internal/pkg/apicompat/anthropic_to_responses_response.go backend/internal/pkg/apicompat/chatcompletions_responses_bridge.go backend/internal/pkg/apicompat/responses_stream_event_wire.go backend/internal/pkg/apicompat/responses_to_chatcompletions.go backend/internal/pkg/apicompat/types.go backend/internal/service/openai_gateway_service.go backend/internal/handler/openai_owned_responses_message_wire_test.go backend/internal/pkg/apicompat/responses_owned_message_wire_test.go > /tmp/owned-format.txt
-          if [ "$VARIANT" = NEW ]; then
-            gofmt -l backend/internal/pkg/apicompat/responses_owned_message.go backend/internal/pkg/apicompat/responses_owned_message_state_test.go >> /tmp/owned-format.txt
-          fi
-          cat /tmp/owned-format.txt
-          test ! -s /tmp/owned-format.txt
-      - name: Run actual public HTTP and converter tests with race and atomic profile
-        working-directory: backend
-        run: |
-          set +e
-          go test -tags=unit -race -count=1 -timeout=10m -coverpkg=./internal/handler,./internal/service,./internal/pkg/apicompat -covermode=atomic -coverprofile=/tmp/owned.cover -json -run '^TestOwnedResponsesMessage_' ./internal/handler/ ./internal/pkg/apicompat/ > /tmp/owned-tests.jsonl 2> /tmp/owned-tests.stderr
-          actual_exit=$?
-          set -e
-          printf '%s\n' "$actual_exit" > /tmp/owned-exit.txt
-          cat /tmp/owned-tests.jsonl
-          cat /tmp/owned-tests.stderr
-          test -s /tmp/owned.cover
-          head -1 /tmp/owned.cover | grep -q '^mode: atomic$'
-      - name: Verify every expected leaf and preserve actual OLD failure
-        if: always()
-        env:
-          VARIANT: ${{ matrix.variant }}
-          SOURCE: ${{ matrix.source }}
-        run: |
-          test "$(git rev-parse HEAD)" = "$SOURCE"
+          gofmt -l backend/internal/handler/openai_owned_responses_part_index_test.go > /tmp/part-index-format.txt
+          cat /tmp/part-index-format.txt
+          test ! -s /tmp/part-index-format.txt
           test "$(git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go)" = 84ac29522877dab61e3d821bdfcacfb97db752ac
           git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go
           test "$(git hash-object backend/internal/pkg/apicompat/responses_owned_message_wire_test.go)" = 1f09a46860aa4d3886a109fc6b259acdfc8f185c
           git hash-object backend/internal/pkg/apicompat/responses_owned_message_wire_test.go
-          if [ "$VARIANT" = NEW ]; then
-            test "$(git hash-object backend/internal/pkg/apicompat/responses_owned_message_state_test.go)" = e1ba6a2ea9374fb1849047636bcce816994ef5f3
-            git hash-object backend/internal/pkg/apicompat/responses_owned_message_state_test.go
-          fi
-          python3 - <<'PYPROOF'
-          import json, os, pathlib, re
-          p = pathlib.Path('/tmp/owned-tests.jsonl')
-          assert p.exists() and p.stat().st_size, 'no actual tests'
-          events = [json.loads(line) for line in p.read_text().splitlines() if line.startswith('{')]
-          outputs = ''.join(e.get('Output', '') for e in events)
-          stderr = pathlib.Path('/tmp/owned-tests.stderr').read_text()
-          assert not re.search(r'panic:|WARNING: DATA RACE|\[build failed\]|no tests to run|test timed out', outputs+stderr), 'invalid failure mechanism'
-          finished = {(e['Package'], e['Test']): e['Action'] for e in events if 'Test' in e and e['Action'] in ('pass','fail','skip')}
-          leaves = {key: value for key,value in finished.items() if not any(other[0] == key[0] and other[1].startswith(key[1]+'/') for other in finished)}
-          public = {key:value for key,value in leaves.items() if '_Public' in key[1]}
-          state = {key:value for key,value in leaves.items() if '_State' in key[1]}
-          assert len(public) == 82, ('public count', len(public))
-          assert len([key for key in public if 'PublicHTTP/' in key[1]]) == 68, 'public HTTP count'
-          assert len([key for key in public if 'PublicConverters/' in key[1]]) == 9, 'public converter count'
-          assert len([key for key in public if 'PublicAccumulator/' in key[1]]) == 5, 'public accumulator count'
-          assert 'skip' not in leaves.values(), 'skipped tests'
-          control_names = [
-              'TestOwnedResponsesMessage_PublicHTTP/'+mode+'/'+case
-              for mode in ('normal-stream','normal-unary','passthrough-unary')
-              for case in ('raw_done_and_terminal_remain_authoritative','raw_reasoning_delta_does_not_add_unannounced_reasoning')
-          ] + [
-              'TestOwnedResponsesMessage_PublicHTTP/'+mode+'_'+case
-              for mode in ('normal-unary','passthrough-unary')
-              for case in ('unfinished_event_keeps_existing_SSE_acceptance_boundary','raw_json_not_normalized')
-          ] + [
-              'TestOwnedResponsesMessage_PublicHTTP/passthrough_stream_is_not_a_global_normalizer',
-              'TestOwnedResponsesMessage_PublicConverters/request_input_parts_do_not_acquire_output_arrays',
-              'TestOwnedResponsesMessage_PublicConverters/zero_content_accumulator_creates_no_message',
-          ]
-          assert len(control_names) == 13
-          for name in control_names:
-              matches = [value for key,value in leaves.items() if key[1] == name]
-              assert matches == ['pass'], ('existing behavior control failed/missing',name,matches)
-          code = int(pathlib.Path('/tmp/owned-exit.txt').read_text())
-          if os.environ['VARIANT'] == 'NEW':
-              assert len(state) == 4 and len(leaves) == 86, ('NEW count', len(state),len(leaves))
-              assert code == 0 and all(v == 'pass' for v in leaves.values()), 'NEW real failure'
-          else:
-              assert not state and len(leaves) == 82, 'OLD contains NEW private state'
-              assert code == 1 and any(v == 'fail' for v in public.values()), 'OLD did not reproduce'
-          result = {'source': os.environ['SOURCE'], 'variant': os.environ['VARIANT'], 'actualExit':code, 'leaves':[{'package':k[0],'test':k[1],'outcome':v} for k,v in leaves.items()]}
-          pathlib.Path('/tmp/owned-leaves.json').write_text(json.dumps(result,indent=2))
+          test "$(git hash-object backend/internal/pkg/apicompat/responses_owned_message_state_test.go)" = e1ba6a2ea9374fb1849047636bcce816994ef5f3
+          git hash-object backend/internal/pkg/apicompat/responses_owned_message_state_test.go
+      - name: Current candidate actual original86 and content-index14 race tests
+        working-directory: backend
+        run: |
+          set +e
+          go test -tags=unit -race -count=1 -timeout=10m -coverpkg=./internal/handler,./internal/service,./internal/pkg/apicompat -covermode=atomic -coverprofile=/tmp/part-index.cover -json -run '^TestOwnedResponses(Message|PartIndex)_' ./internal/handler/ ./internal/pkg/apicompat/ > /tmp/part-index-tests.jsonl 2> /tmp/part-index-tests.stderr
+          actual_exit=$?
+          set -e
+          printf '%s\n' "$actual_exit" > /tmp/part-index-exit.txt
+          cat /tmp/part-index-tests.jsonl
+          cat /tmp/part-index-tests.stderr
+          test -s /tmp/part-index.cover
+          head -1 /tmp/part-index.cover | grep -q '^mode: atomic$'
+      - name: Require exact eight business failures and every92 control PASS
+        if: always()
+        run: |
+          test "$(git rev-parse HEAD)" = faff74124c1008f39c6ee00e126d878028745b13
+          test "$(git hash-object backend/internal/handler/openai_owned_responses_part_index_test.go)" = f97b19b264c4873768c2b74d307bb9e4d7a33043
+          git hash-object backend/internal/handler/openai_owned_responses_part_index_test.go
+          test "$(git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go)" = 84ac29522877dab61e3d821bdfcacfb97db752ac
+          git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go
+          test "$(git hash-object backend/internal/pkg/apicompat/responses_owned_message_wire_test.go)" = 1f09a46860aa4d3886a109fc6b259acdfc8f185c
+          git hash-object backend/internal/pkg/apicompat/responses_owned_message_wire_test.go
+          test "$(git hash-object backend/internal/pkg/apicompat/responses_owned_message_state_test.go)" = e1ba6a2ea9374fb1849047636bcce816994ef5f3
+          git hash-object backend/internal/pkg/apicompat/responses_owned_message_state_test.go
+          python3 - <<'PYCANDIDATE'
+          import json, pathlib, re
+          events = [json.loads(line) for line in pathlib.Path('/tmp/part-index-tests.jsonl').read_text().splitlines() if line.startswith('{')]
+          output = ''.join(e.get('Output','') for e in events) + pathlib.Path('/tmp/part-index-tests.stderr').read_text()
+          assert not re.search(r'panic:|WARNING: DATA RACE|\[build failed\]|no tests to run|test timed out', output), 'invalid failure mechanism'
+          finished = {(e['Package'],e['Test']):e['Action'] for e in events if 'Test' in e and e['Action'] in ('pass','fail','skip')}
+          leaves = {k:v for k,v in finished.items() if not any(q[0] == k[0] and q[1].startswith(k[1]+'/') for q in finished)}
+          expected = {'TestOwnedResponsesPartIndex_PublicHTTP/'+mode+'/'+case for mode in ('normal-stream','normal-unary','passthrough-unary') for case in ('empty_output_orders_explicit_parts',)}
+          expected |= {'TestOwnedResponsesPartIndex_PublicHTTP/converted_'+route+'_empty_terminal_matches_before_part_insertion' for route in ('chat/completions','messages')}
+          expected |= {'TestOwnedResponsesPartIndex_PublicHTTP/public_accumulator_'+case for case in ('build_explicit_parts','supplement_empty_terminal','supplement_partial_terminal')}
+          assert len(expected) == 8 and len(leaves) == 100, ('actual leaf count', len(leaves))
+          assert {k[1] for k,v in leaves.items() if v == 'fail'} == expected, 'wrong candidate failure mechanism'
+          assert sum(v == 'pass' for v in leaves.values()) == 92 and 'skip' not in leaves.values(), 'controls did not all pass'
+          assert int(pathlib.Path('/tmp/part-index-exit.txt').read_text()) == 1, 'actual RED missing'
+          result = {'source':'faff74124c1008f39c6ee00e126d878028745b13','actualExit':1,'leaves':[{'package':k[0],'test':k[1],'outcome':v} for k,v in leaves.items()]}
+          pathlib.Path('/tmp/part-index-leaves.json').write_text(json.dumps(result,indent=2))
           print(json.dumps(result,indent=2))
-          PYPROOF
-          actual_exit=$(cat /tmp/owned-exit.txt)
-          echo "preserving actual test exit=$actual_exit"
-          exit "$actual_exit"
+          PYCANDIDATE
+          exit "$(cat /tmp/part-index-exit.txt)"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: owned-responses-1698-${{ matrix.variant }}-actual
+          name: owned-responses-1698-current-candidate-part-index-actual
           path: |
-            /tmp/owned-tests.jsonl
-            /tmp/owned-tests.stderr
-            /tmp/owned-exit.txt
-            /tmp/owned.cover
-            /tmp/owned-leaves.json
-            /tmp/owned-go-version.txt
-            /tmp/owned-format.txt
+            /tmp/part-index-tests.jsonl
+            /tmp/part-index-tests.stderr
+            /tmp/part-index-exit.txt
+            /tmp/part-index.cover
+            /tmp/part-index-leaves.json
+            /tmp/part-index-go-version.txt
+            /tmp/part-index-format.txt
           if-no-files-found: error
