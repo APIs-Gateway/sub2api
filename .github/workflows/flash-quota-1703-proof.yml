@@ -1,0 +1,181 @@
+name: Flash quota exact API input OLD NEW proof
+
+on:
+  push:
+    branches:
+      - codex/antigravity-flash-1703-proof
+
+permissions:
+  contents: read
+
+jobs:
+  mounted-quota-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - side: OLD
+            ref: de76de25f4039c6e86234c90703d07f9f533409f
+            tree: ebbfab9dfa3e2f3ef47920253c62bd62d18f0b8a
+            component: 055f711e4e14a519ccd93c3ee523b759b3b94a10
+          - side: NEW
+            ref: afde4ac8df152506615e6395120174f378bc0114
+            tree: 8da9dbd23d0114304d6e5c4b538029996d3856e1
+            component: cc734082c35532f144f34e113abe4b02e2fe0603
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 0
+      - name: Freeze exact source tree and identical shared fixture
+        env:
+          PROOF_SIDE: ${{ matrix.side }}
+          PROOF_REF: ${{ matrix.ref }}
+          PROOF_TREE: ${{ matrix.tree }}
+          PROOF_COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          mkdir -p proof-evidence
+          test "$(git rev-parse HEAD)" = "$PROOF_REF"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$PROOF_TREE"
+          fixture=frontend/src/components/account/__tests__/AccountUsageCell.spec.ts
+          test "$(git hash-object frontend/src/components/account/AccountUsageCell.vue)" = "$PROOF_COMPONENT"
+          test "$(git hash-object frontend/pnpm-lock.yaml)" = 948cc2d8f3d089b7800b1fabacd56f26cddde298
+          test "$(git hash-object frontend/package.json)" = eb12f1e956c2057268fd9a22e3e1c58848749df6
+          test "$(git hash-object frontend/vitest.config.ts)" = 5a81b4e5ed40aefa4ee2eef00ae35c3d29df1ff3
+          git show "afde4ac8df152506615e6395120174f378bc0114:$fixture" > "$fixture"
+          test "$(git hash-object "$fixture")" = fce284b3b91c9cdf1459fdfde1efbcaa1ada7a67
+          python3 - <<'PYFREEZE'
+          import hashlib, json, os, pathlib, subprocess
+          fixture = 'frontend/src/components/account/__tests__/AccountUsageCell.spec.ts'
+          base = subprocess.check_output(['git', 'show', 'de76de25f4039c6e86234c90703d07f9f533409f:'+fixture])
+          assert pathlib.Path(fixture).read_bytes().startswith(base), 'all 16 original fixtures must remain byte-identical'
+          paths = ['frontend/src/components/account/AccountUsageCell.vue', fixture, 'frontend/pnpm-lock.yaml', 'frontend/package.json', 'frontend/vitest.config.ts']
+          record = {'side': os.environ['PROOF_SIDE'], 'source_head': os.environ['PROOF_REF'], 'source_tree': os.environ['PROOF_TREE'], 'shared_fixture_source': 'afde4ac8df152506615e6395120174f378bc0114', 'files': {p: {'git_blob': subprocess.check_output(['git', 'hash-object', p], text=True).strip(), 'sha256': hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()} for p in paths}}
+          pathlib.Path('proof-evidence/freeze.json').write_text(json.dumps(record, indent=2))
+          print(json.dumps(record, indent=2))
+          PYFREEZE
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frozen frontend dependencies remotely
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Execute all real mounted cases and retain actual exit status
+        working-directory: frontend
+        run: |
+          set -uo pipefail
+          set +e
+          pnpm exec vitest run --reporter=verbose --reporter=json --outputFile="$GITHUB_WORKSPACE/proof-evidence/result.json" src/components/account/__tests__/AccountUsageCell.spec.ts 2>&1 | tee "$GITHUB_WORKSPACE/proof-evidence/verbose.log"
+          actual_status=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$actual_status" > "$GITHUB_WORKSPACE/proof-evidence/actual-exit.txt"
+          printf 'ACTUAL vitest exit: %s\n' "$actual_status"
+      - name: Verify exact source and dependency evidence after execution
+        if: always()
+        env:
+          PROOF_SIDE: ${{ matrix.side }}
+          PROOF_REF: ${{ matrix.ref }}
+          PROOF_TREE: ${{ matrix.tree }}
+          PROOF_COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PYPOSTFREEZE'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path('proof-evidence')
+          before = json.loads((root/'freeze.json').read_text())
+          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          tree = subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip()
+          assert head == os.environ['PROOF_REF'] == before['source_head'], ('source HEAD changed', head)
+          assert tree == os.environ['PROOF_TREE'] == before['source_tree'], ('source tree changed', tree)
+          expected = {
+              'frontend/src/components/account/AccountUsageCell.vue': os.environ['PROOF_COMPONENT'],
+              'frontend/src/components/account/__tests__/AccountUsageCell.spec.ts': 'fce284b3b91c9cdf1459fdfde1efbcaa1ada7a67',
+              'frontend/pnpm-lock.yaml': '948cc2d8f3d089b7800b1fabacd56f26cddde298',
+              'frontend/package.json': 'eb12f1e956c2057268fd9a22e3e1c58848749df6',
+              'frontend/vitest.config.ts': '5a81b4e5ed40aefa4ee2eef00ae35c3d29df1ff3',
+          }
+          files = {}
+          for path, blob in expected.items():
+              actual = {'git_blob': subprocess.check_output(['git', 'hash-object', path], text=True).strip(), 'sha256': hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()}
+              assert actual['git_blob'] == blob, ('post-execution frozen blob changed', path, actual)
+              assert actual == before['files'][path], ('before/after evidence changed', path, actual)
+              files[path] = actual
+          after = {'side': os.environ['PROOF_SIDE'], 'source_head': head, 'source_tree': tree, 'files': files}
+          assert after['side'] == before['side']
+          (root/'post-freeze.json').write_text(json.dumps(after, indent=2))
+          print(json.dumps(after, indent=2))
+          PYPOSTFREEZE
+      - name: Enforce exact leaf inventory and genuine OLD rendered-output failures
+        if: always()
+        env:
+          PROOF_SIDE: ${{ matrix.side }}
+        run: |
+          python3 - <<'PYRESULT'
+          import json, os, pathlib
+          root = pathlib.Path('proof-evidence')
+          before = json.loads((root/'freeze.json').read_text())
+          after = json.loads((root/'post-freeze.json').read_text())
+          assert all(after[key] == before[key] for key in ('side', 'source_head', 'source_tree', 'files')), 'post-execution freeze must match pinned source evidence'
+          side = os.environ['PROOF_SIDE']
+          result = json.loads((root/'result.json').read_text())
+          actual_exit = int((root/'actual-exit.txt').read_text())
+          verbose = (root/'verbose.log').read_text()
+          prior = ['Antigravity 图片用量会聚合新旧 image 模型', 'Antigravity 会显示 AI Credits 余额信息', 'OpenAI OAuth 快照已过期时首屏会重新请求 usage', 'OpenAI OAuth 有 codex 快照时仍然使用 /usage API 数据渲染', 'OpenAI OAuth 有现成快照时，手动刷新信号会触发 usage 重拉', 'OpenAI OAuth 在无 codex 快照时会回退显示 usage 接口窗口', 'OpenAI OAuth 在行数据刷新但仍无 codex 快照时会重新拉取 usage', 'OpenAI OAuth 已限额时显示 /usage API 返回的限额数据', 'Key 账号会展示 today stats 徽章并带 A/U 提示', 'Key 账号在 today stats loading 时显示骨架屏', 'Key 账号在无 today stats 且无配额时显示兜底短横线', 'Vertex 账号会在 Gemini 用量窗口里展示 today stats 徽章', 'Anthropic OAuth 会渲染 7d F (Fable) 进度条，且 7d S 逻辑保留', 'Anthropic OAuth 无 Fable 数据时不渲染 7d F 进度条', 'Grok OAuth 会展示观测到的请求/Token配额、本地用量和重试提示', 'Grok OAuth 会区分待重新授权、禁止和未知配额状态']
+          new = ['renders the existing Flash category for exact gemini-3.8-flash', 'renders the existing Flash category for exact gemini-3.8-flash-low', 'renders the existing Flash category for exact gemini-3.8-flash-medium', 'renders the existing Flash category for exact gemini-3.8-flash-high', 'renders the existing Flash category for exact gemini-3.8-flash-tiered', 'renders real zero without synthesizing a reset ()', 'renders real zero without synthesizing a reset (undefined)', 'keeps maximum utilization and earliest reset across legacy and exact new Flash keys', 'retains legacy Flash output', 'does not interpret lookalike gemini-3.8-flash-image as a Flash quota', 'does not interpret lookalike prefix-gemini-3.8-flash as a Flash quota', 'does not interpret lookalike gemini-3.8-flash-high-other as a Flash quota', 'does not interpret lookalike gemini-3.8-flash-project as a Flash quota', 'does not interpret lookalike Gemini-3.8-Flash as a Flash quota', 'does not fabricate Flash from absent or empty quota ({})', 'does not fabricate Flash from absent or empty quota ({"antigravity_quota":{}})', 'keeps Image, Pro and Claude separate from new Flash', 'retains 403 validation precedence over supplied quota', 'retains 403 violation precedence over supplied quota', 'retains 401 reauthorization precedence over supplied quota', 'retains degraded rate_limited precedence over supplied quota', 'retains degraded network_error precedence over supplied quota', 'shows loading before the existing API resolves new Flash quota', 'retains AI credit balance, paid tier priority and ineligible warning alongside new Flash']
+          red = {'renders the existing Flash category for exact gemini-3.8-flash': 'admin.accounts.usageWindow.gemini3Flash|37|2026-10-09T12:00:00Z|emerald', 'renders the existing Flash category for exact gemini-3.8-flash-low': 'admin.accounts.usageWindow.gemini3Flash|37|2026-10-09T12:00:00Z|emerald', 'renders the existing Flash category for exact gemini-3.8-flash-medium': 'admin.accounts.usageWindow.gemini3Flash|37|2026-10-09T12:00:00Z|emerald', 'renders the existing Flash category for exact gemini-3.8-flash-high': 'admin.accounts.usageWindow.gemini3Flash|37|2026-10-09T12:00:00Z|emerald', 'renders the existing Flash category for exact gemini-3.8-flash-tiered': 'admin.accounts.usageWindow.gemini3Flash|37|2026-10-09T12:00:00Z|emerald', 'keeps Image, Pro and Claude separate from new Flash': 'admin.accounts.usageWindow.gemini3Flash|37|2026-10-09T12:00:00Z|emerald', 'shows loading before the existing API resolves new Flash quota': 'admin.accounts.usageWindow.gemini3Flash|37|2026-10-09T12:00:00Z|emerald', 'retains AI credit balance, paid tier priority and ineligible warning alongside new Flash': 'admin.accounts.usageWindow.gemini3Flash|37|2026-10-09T12:00:00Z|emerald', 'renders real zero without synthesizing a reset ()': 'admin.accounts.usageWindow.gemini3Flash|0||emerald', 'renders real zero without synthesizing a reset (undefined)': 'admin.accounts.usageWindow.gemini3Flash|0||emerald', 'keeps maximum utilization and earliest reset across legacy and exact new Flash keys': 'admin.accounts.usageWindow.gemini3Flash|70|2026-10-09T10:00:00Z|emerald'}
+          expected = {('AccountUsageCell', title) for title in prior} | {('AccountUsageCell exact Gemini 3.8 Flash quota display', title) for title in new}
+          assert len(prior) == 16 and len(new) == 24 and len(expected) == 40
+          assert len(result['testResults']) == 1, 'exact component fixture only'
+          rows = result['testResults'][0]['assertionResults']
+          actual = {(' '.join(row['ancestorTitles']), row['title']): row for row in rows}
+          assert len(rows) == len(actual) == 40 and set(actual) == expected, ('actual leaf inventory', len(rows), sorted(set(actual)-expected), sorted(expected-set(actual)))
+          assert result['numTotalTests'] == 40
+          assert result.get('numPendingTests', 0) == result.get('numTodoTests', 0) == 0
+          assert result.get('numRuntimeErrorTestSuites', 0) == 0
+          assert 'Unhandled Errors' not in verbose and 'Unhandled Rejection' not in verbose and 'Unhandled Exception' not in verbose
+          expected_fail = {('AccountUsageCell exact Gemini 3.8 Flash quota display', title) for title in red} if side == 'OLD' else set()
+          actual_fail = {key for key,row in actual.items() if row['status'] == 'failed'}
+          assert actual_fail == expected_fail, ('actual designated failures', actual_fail, expected_fail)
+          assert all(row['status'] == ('failed' if key in expected_fail else 'passed') for key,row in actual.items())
+          assert result['numFailedTests'] == (11 if side == 'OLD' else 0)
+          assert result['numPassedTests'] == (29 if side == 'OLD' else 40)
+          assert actual_exit == (1 if side == 'OLD' else 0), ('actual process exit',actual_exit)
+          bodies = []
+          for key in sorted(actual_fail):
+              row = actual[key]
+              body = '\n'.join(row['failureMessages'])
+              assert 'AssertionError' in body, ('must fail on a business assertion', key, body)
+              assert 'admin.accounts.usageWindow.gemini3Flash' in body, ('must fail on visible Flash output', key, body)
+              assert 'src/components/account/__tests__/AccountUsageCell.spec.ts' in body, ('assertion must be in shared mounted fixture', key, body)
+              assert red[key[1]] in body, ('fixed rendered output', key, body)
+              if key[1] == 'keeps maximum utilization and earliest reset across legacy and exact new Flash keys':
+                  assert '|20|2026-10-09T14:00:00Z|emerald' in body, ('OLD legacy visible output', body)
+              bodies.append({'ancestor':key[0], 'title':key[1], 'failureMessages':row['failureMessages']})
+          (root/'complete-old-business-failure-bodies.json').write_text(json.dumps(bodies, ensure_ascii=False, indent=2))
+          summary = {'side':side, 'actual_exit':actual_exit, 'total_leaves':40, 'passed':result['numPassedTests'], 'failed':result['numFailedTests'], 'prior16_all_pass':all(actual[('AccountUsageCell',title)]['status']=='passed' for title in prior), 'old_business_failures':bodies}
+          (root/'actual-summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2))
+          print(json.dumps(summary, ensure_ascii=False, indent=2))
+          PYRESULT
+      - name: Preserve complete actual remote proof records
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flash-quota-1703-${{ matrix.side }}-${{ github.run_id }}
+          path: proof-evidence/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve OLD actual business failure as a red job after artifacts
+        if: ${{ always() && matrix.side == 'OLD' }}
+        run: |
+          set -euo pipefail
+          test "$(cat proof-evidence/actual-exit.txt)" = 1
+          printf 'OLD vitest actual exit 1 is intentionally retained after complete evidence upload.\n'
+          exit 1
