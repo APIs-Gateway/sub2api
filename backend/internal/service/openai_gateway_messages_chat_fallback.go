@@ -353,6 +353,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawDone := false
+	var terminal openAIRawStreamTerminalState
 	// 上游模型不一致只在首个带 model 的 chunk 上比对一次。
 	upstreamModelChecked := false
 
@@ -374,6 +375,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			continue
 		}
 		if payload == "[DONE]" {
+			terminal.ObserveDataLine(payload)
 			sawDone = true
 			break
 		}
@@ -402,6 +404,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			)
 			continue
 		}
+		// Only a successfully decoded provider chunk can certify completion.
+		// gjson alone can extract terminal fields from malformed JSON.
+		terminal.ObserveDataLine(payload)
 		if firstTokenMs == nil && !isOpenAIChatUsageOnlyStreamChunk(payload) && chatChunkStartsResponsesOutput(&chunk) {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
@@ -455,6 +460,20 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			ClientDisconnect: clientDisconnected,
 		}, fmt.Errorf("stream usage incomplete: %w", err)
 	}
+	// Neither bridge may synthesize message_stop from unmarked EOF. No usage
+	// object in a valid decoded chunk was received, so nil preserves unknown
+	// funding instead of pricing
+	// a fabricated zero result. This ordinary error must not replay the attempt.
+	if !terminal.Terminated() {
+		if !clientDisconnected && c.Request.Context().Err() == nil {
+			writeStreamHeaders()
+			if _, err := fmt.Fprint(c.Writer, buildAnthropicStreamErrorSSE("api_error", "Upstream Chat Completions stream ended before completion")); err == nil {
+				c.Writer.Flush()
+			}
+		}
+		return nil, fmt.Errorf("stream usage incomplete: missing Chat Completions terminal signal")
+	}
+
 	if !directBridge {
 		if err := ccState.ValidateToolCallArguments(); err != nil {
 			return &OpenAIForwardResult{
