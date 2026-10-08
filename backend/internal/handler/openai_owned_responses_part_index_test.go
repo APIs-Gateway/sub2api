@@ -91,4 +91,51 @@ func TestOwnedResponsesPartIndex_PublicHTTP(t *testing.T) {
 			requireOwnedMessageWire(t, gjson.ParseBytes(wire).Get("output.0"), "msg_parts", "completed", texts...)
 		})
 	}
+	t.Run("public_accumulator_reversed_mixed_parts_keep_opaque_metadata", func(t *testing.T) {
+		acc := apicompat.NewBufferedResponseAccumulator()
+		for _, frame := range []string{
+			`{"type":"response.content_part.added","output_index":0,"content_index":2,"item_id":"msg_parts","part":{"type":"output_text","text":"","vendor":9007199254740993}}`,
+			`{"type":"response.refusal.delta","output_index":0,"content_index":1,"item_id":"msg_parts","delta":"declined"}`,
+			`{"type":"response.content_part.added","output_index":0,"content_index":0,"item_id":"msg_parts","part":{"type":"vendor_media","payload":{"id":9223372036854775807}}}`,
+			`{"type":"response.output_text.delta","output_index":0,"content_index":2,"item_id":"msg_parts","delta":"B"}`,
+		} {
+			var event apicompat.ResponsesStreamEvent
+			require.NoError(t, json.Unmarshal([]byte(frame), &event))
+			acc.ProcessEvent(&event)
+		}
+		wire, err := json.Marshal(acc.BuildOutputForStatus("completed"))
+		require.NoError(t, err)
+		parts := gjson.ParseBytes(wire).Get("0.content").Array()
+		require.Len(t, parts, 3)
+		require.Equal(t, "vendor_media", parts[0].Get("type").String())
+		require.Equal(t, "9223372036854775807", parts[0].Get("payload.id").Raw)
+		require.False(t, parts[0].Get("annotations").Exists())
+		require.Equal(t, "refusal", parts[1].Get("type").String())
+		require.Equal(t, "declined", parts[1].Get("refusal").String())
+		require.False(t, parts[1].Get("annotations").Exists())
+		require.Equal(t, "B", parts[2].Get("text").String())
+		require.Equal(t, "9007199254740993", parts[2].Get("vendor").Raw)
+		require.True(t, parts[2].Get("annotations").IsArray())
+	})
+	t.Run("public_accumulator_unindexed_legacy_keeps_its_arrival_slot", func(t *testing.T) {
+		acc := apicompat.NewBufferedResponseAccumulator()
+		for _, frame := range []string{
+			`{"type":"response.output_text.delta","output_index":0,"content_index":2,"item_id":"msg_parts","delta":"C"}`,
+			`{"type":"response.refusal.delta","output_index":0,"item_id":"msg_parts","delta":"legacy"}`,
+			`{"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_parts","delta":"A"}`,
+		} {
+			var event apicompat.ResponsesStreamEvent
+			require.NoError(t, json.Unmarshal([]byte(frame), &event))
+			acc.ProcessEvent(&event)
+		}
+		for repeat := 0; repeat < 2; repeat++ {
+			wire, err := json.Marshal(acc.BuildOutputForStatus("completed"))
+			require.NoError(t, err)
+			parts := gjson.ParseBytes(wire).Get("0.content").Array()
+			require.Len(t, parts, 3)
+			require.Equal(t, "A", parts[0].Get("text").String())
+			require.Equal(t, "legacy", parts[1].Get("refusal").String())
+			require.Equal(t, "C", parts[2].Get("text").String())
+		}
+	})
 }

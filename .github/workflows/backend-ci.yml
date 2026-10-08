@@ -106,7 +106,7 @@ jobs:
       - name: Owned Responses message source and fixture formatting
         working-directory: backend
         run: |
-          files="internal/pkg/apicompat/anthropic_to_responses_response.go internal/pkg/apicompat/chatcompletions_responses_bridge.go internal/pkg/apicompat/responses_stream_event_wire.go internal/pkg/apicompat/responses_to_chatcompletions.go internal/pkg/apicompat/types.go internal/pkg/apicompat/responses_owned_message.go internal/pkg/apicompat/responses_owned_message_wire_test.go internal/pkg/apicompat/responses_owned_message_state_test.go internal/service/openai_gateway_service.go internal/handler/openai_owned_responses_message_wire_test.go"
+          files="internal/pkg/apicompat/anthropic_to_responses_response.go internal/pkg/apicompat/chatcompletions_responses_bridge.go internal/pkg/apicompat/responses_stream_event_wire.go internal/pkg/apicompat/responses_to_chatcompletions.go internal/pkg/apicompat/types.go internal/pkg/apicompat/responses_owned_message.go internal/pkg/apicompat/responses_owned_message_wire_test.go internal/pkg/apicompat/responses_owned_message_state_test.go internal/service/openai_gateway_service.go internal/handler/openai_owned_responses_message_wire_test.go internal/handler/openai_owned_responses_part_index_test.go"
           gofmt -d $files
           test -z "$(gofmt -l $files)"
       - name: Owned Responses actual public HTTP and converter identity contracts (race)
@@ -116,16 +116,18 @@ jobs:
         run: |
           set -euo pipefail
           git rev-parse HEAD
-          go test -tags=unit -race -count=1 -timeout=10m -coverpkg=./internal/handler,./internal/service,./internal/pkg/apicompat -covermode=atomic -coverprofile=coverage-owned-responses-message.out -json -run '^TestOwnedResponsesMessage_' ./internal/handler/ ./internal/pkg/apicompat/ | tee owned-message-tests.jsonl
+          go test -tags=unit -race -count=1 -timeout=10m -coverpkg=./internal/handler,./internal/service,./internal/pkg/apicompat -covermode=atomic -coverprofile=coverage-owned-responses-message.out -json -run '^TestOwnedResponses(Message|PartIndex)_' ./internal/handler/ ./internal/pkg/apicompat/ | tee owned-message-tests.jsonl
           python3 - <<'PYOWNED'
           import json, pathlib
           events = [json.loads(line) for line in pathlib.Path('owned-message-tests.jsonl').read_text().splitlines() if line.startswith('{')]
           finished = {(e['Package'], e['Test']):e['Action'] for e in events if 'Test' in e and e['Action'] in ('pass','fail','skip')}
           leaves = {k:v for k,v in finished.items() if not any(other[0] == k[0] and other[1].startswith(k[1]+'/') for other in finished)}
-          assert len(leaves) == 86 and all(v == 'pass' for v in leaves.values()), ('actual owned wire results',len(leaves))
+          assert len(leaves) == 102 and all(v == 'pass' for v in leaves.values()), ('actual owned wire results',len(leaves))
           for prefix,count in (('PublicHTTP/',68),('PublicConverters/',9),('PublicAccumulator/',5),('StateIdentity/',4)):
-              assert sum(prefix in k[1] for k in leaves) == count, ('actual case scope',prefix)
-          print('ACTUAL owned message: 82 public cases + 4 NEW state controls PASS')
+              assert sum(k[1].startswith('TestOwnedResponsesMessage_') and prefix in k[1] for k in leaves) == count, ('actual case scope',prefix)
+          part_index = {k:v for k,v in leaves.items() if k[1].startswith('TestOwnedResponsesPartIndex_PublicHTTP/')}
+          assert len(part_index) == 16, ('actual part-index public controls', len(part_index))
+          print('ACTUAL owned message: 82 original public + 16 part-index public + 4 state controls PASS')
           PYOWNED
           test -s coverage-owned-responses-message.out
           bash ./tools/normalize-go-coverprofile.sh coverage-owned-responses-message.out
