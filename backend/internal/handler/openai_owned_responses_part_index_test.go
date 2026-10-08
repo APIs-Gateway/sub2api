@@ -3,8 +3,10 @@
 package handler
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -24,10 +26,16 @@ func TestOwnedResponsesPartIndex_PublicHTTP(t *testing.T) {
 				wire string
 			}{
 				{name: "empty_output_orders_explicit_parts", wire: "[]"},
-				{name: "empty_terminal_matches_before_part_insertion", wire: emptyMessage},
+				{name: "nonempty_terminal_output_keeps_raw_empty_content", wire: emptyMessage},
 			} {
 				t.Run(output.name, func(t *testing.T) {
 					rec, _, _ := ownedMessagePublicRequest(t, "responses", mode, ownedMessageSSE(added, second, first, ownedMessageTerminal("response.completed", "completed", output.wire)), "text/event-stream")
+					if output.wire != "[]" {
+						// These native consumers preserve any nonempty terminal
+						// output; only converted consumers supplement its parts.
+						require.JSONEq(t, emptyMessage, ownedMessageFinals(t, rec, mode)[0].Get("output").Raw)
+						return
+					}
 					requireOwnedMessageWire(t, ownedMessageFinals(t, rec, mode)[0].Get("output.0"), "msg_parts", "completed", "A", "B")
 				})
 			}
@@ -51,6 +59,36 @@ func TestOwnedResponsesPartIndex_PublicHTTP(t *testing.T) {
 				}
 			}
 			require.Equal(t, "AB", text)
+		})
+	}
+	for _, kind := range []string{"build_explicit_parts", "supplement_empty_terminal", "supplement_partial_terminal"} {
+		t.Run("public_accumulator_"+kind, func(t *testing.T) {
+			acc := apicompat.NewBufferedResponseAccumulator()
+			frames := []string{added, second, first}
+			texts := []string{"A", "B"}
+			if kind == "supplement_partial_terminal" {
+				third := `{"type":"response.output_text.delta","output_index":0,"content_index":2,"item_id":"msg_parts","delta":"C"}`
+				frames = []string{added, third, first, second}
+				texts = []string{"A", "B", "C"}
+			}
+			for _, frame := range frames {
+				var event apicompat.ResponsesStreamEvent
+				require.NoError(t, json.Unmarshal([]byte(frame), &event))
+				acc.ProcessEvent(&event)
+			}
+			response := &apicompat.ResponsesResponse{Status: "completed"}
+			if kind == "build_explicit_parts" {
+				response.Output = acc.BuildOutputForStatus("completed")
+			} else {
+				response.Output = []apicompat.ResponsesOutput{{Type: "message", ID: "msg_parts", Role: "assistant", Status: "completed"}}
+				if kind == "supplement_partial_terminal" {
+					response.Output[0].Content = []apicompat.ResponsesContentPart{{Type: "output_text", Text: ""}}
+				}
+				acc.SupplementResponseOutput(response)
+			}
+			wire, err := json.Marshal(response)
+			require.NoError(t, err)
+			requireOwnedMessageWire(t, gjson.ParseBytes(wire).Get("output.0"), "msg_parts", "completed", texts...)
 		})
 	}
 }
