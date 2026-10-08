@@ -1,0 +1,343 @@
+name: WS1706 frozen actual turn funding OLD NEW proof
+
+on:
+  push:
+    branches:
+      - codex/ws-turn-funding-1706-proof
+
+permissions:
+  contents: read
+
+jobs:
+  actual-turn-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        side: [OLD, NEW]
+    env:
+      CGO_ENABLED: "1"
+      PROOF_SIDE: ${{ matrix.side }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.side == 'NEW' && '68c1ce4c17abffe10ab3cfe9264e80e70752afe2' || '06b47e4dbff92cb8a1153e71a65deb6fd012dbc6' }}
+          fetch-depth: 0
+      - name: Pin source, production, dependencies and identical real integration fixtures
+        run: |
+          set -euo pipefail
+          mkdir -p proof-evidence
+          cat > proof-evidence/inventory.json <<'INVENTORY'
+          {
+            "source": "68c1ce4c17abffe10ab3cfe9264e80e70752afe2",
+            "newTree": "2ed2d5379d860720731cc8bfcb44cf904a0abd6b",
+            "old": "06b47e4dbff92cb8a1153e71a65deb6fd012dbc6",
+            "oldTree": "58ee6d5a19945b435a67ce88406a35d0fd5c18de",
+            "newBlobs": {
+              "backend/internal/handler/openai_gateway_handler.go": "6f5dd85ca782b66f60c3fee1105bbdb0de17a5f3",
+              "backend/internal/service/api_key_service.go": "c8b09e0d376889c853e59b0204d4d6bdddfc10d1",
+              "backend/internal/service/billing_cache_service.go": "99e1bd2d83efae0028fe77d5662ae5ffe3ae465a",
+              "backend/internal/repository/billing_inflight_ws_integration_test.go": "6f012dd39ab2944fe32b8f51042df6f1a8e7106f",
+              "backend/internal/repository/ws_turn_funding_integration_test.go": "c81b1d00adc0fe42d62081682d2da7b3e4299b10",
+              "backend/internal/service/ws_turn_funding_test.go": "298c9369c216212adb1c54ea51571233c2489d8b"
+            },
+            "oldProductionBlobs": {
+              "backend/internal/handler/openai_gateway_handler.go": "9eeeb66bb36655f8676aa5c6f7b0fbcba7c77496",
+              "backend/internal/service/api_key_service.go": "c870064c9dcb117944537c335d2ce3cba75af025",
+              "backend/internal/service/billing_cache_service.go": "dad44d28d9d1a3132816d32f0f7dc5f2a50f3425"
+            },
+            "deps": {
+              "backend/go.mod": "cded4352f0676d9842852055a8f62300824f0c63",
+              "backend/go.sum": "d207282161a9102ffcde69d7d050f9e185d70ddb"
+            },
+            "unitCases": [
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/positive_wallet",
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/zero_wallet",
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/negative_wallet",
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/negative_wallet_card_remaining",
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/zero_wallet_card_exhausted",
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/positive_wallet_card_exhausted",
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/negative_wallet_card_expired",
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/negative_wallet_new_card_ignores_no_card_cache",
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/positive_wallet_without_card_repo",
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/negative_wallet_without_card_repo",
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/inactive_user",
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/user_read_error",
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/missing_user",
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/card_read_error_negative_wallet",
+              "TestWSTurnFunding_FreshCreditAdmissionWithoutRPM/card_read_error_positive_wallet",
+              "TestWSTurnFunding_NoServiceAndSimpleMode",
+              "TestWSTurnFunding_CurrentIdentityKeepsConnectionGroup/active",
+              "TestWSTurnFunding_CurrentIdentityKeepsConnectionGroup/group_moved",
+              "TestWSTurnFunding_CurrentIdentityKeepsConnectionGroup/deleted",
+              "TestWSTurnFunding_CurrentIdentityKeepsConnectionGroup/disabled",
+              "TestWSTurnFunding_CurrentIdentityKeepsConnectionGroup/user_disabled",
+              "TestWSTurnFunding_CurrentIdentityKeepsConnectionGroup/user_identity_changed",
+              "TestWSTurnFunding_CurrentIdentityKeepsConnectionGroup/key_identity_changed",
+              "TestWSTurnFunding_CurrentIdentityKeepsConnectionGroup/expired_status",
+              "TestWSTurnFunding_CurrentIdentityKeepsConnectionGroup/expired_time",
+              "TestWSTurnFunding_CurrentIdentityKeepsConnectionGroup/quota_status",
+              "TestWSTurnFunding_CurrentIdentityKeepsConnectionGroup/quota_used",
+              "TestWSTurnFunding_CurrentIdentityKeepsConnectionGroup/read_error"
+            ],
+            "integrationCases": [
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/negative_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/zero_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/negative_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/zero_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/card_exhausted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/card_expired",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/positive_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/negative_wallet_card_added",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/negative_wallet_card_remaining",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/user_disabled",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/key_deleted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/key_expired",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/key_quota_exhausted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/changed_group_quote",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/key_group_moved_connection_group_kept",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/simple_mode",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/negative_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/zero_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/negative_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/zero_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/card_exhausted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/card_expired",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/positive_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/negative_wallet_card_added",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/negative_wallet_card_remaining",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/user_disabled",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/key_deleted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/key_expired",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/key_quota_exhausted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/changed_group_quote",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/key_group_moved_connection_group_kept",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/simple_mode",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/negative_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/zero_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/negative_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/zero_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/card_exhausted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/card_expired",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/positive_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/negative_wallet_card_added",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/negative_wallet_card_remaining",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/user_disabled",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/key_deleted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/key_expired",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/key_quota_exhausted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/changed_group_quote",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/key_group_moved_connection_group_kept",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/simple_mode",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_on/negative_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_on/negative_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_on/negative_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_on/negative_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_on/negative_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_on/negative_wallet_free"
+            ],
+            "retainedIntegrationCases": [
+              "TestBillingInflightWS_RealTurnReservesBillsOnceAndReleases/native",
+              "TestBillingInflightWS_RealTurnReservesBillsOnceAndReleases/passthrough",
+              "TestBillingInflightWS_RealTurnReservesBillsOnceAndReleases/bridge",
+              "TestBillingInflightWS_LocalBridgePrewarmDoesNotReserveOrBill",
+              "TestBillingInflightWS_LaterModelUsesActualBillingSource/native/requested/session_false",
+              "TestBillingInflightWS_LaterModelUsesActualBillingSource/native/upstream/session_false",
+              "TestBillingInflightWS_LaterModelUsesActualBillingSource/passthrough/requested/session_false",
+              "TestBillingInflightWS_LaterModelUsesActualBillingSource/passthrough/requested/session_true",
+              "TestBillingInflightWS_LaterModelUsesActualBillingSource/passthrough/upstream/session_false",
+              "TestBillingInflightWS_LaterModelUsesActualBillingSource/passthrough/upstream/session_true",
+              "TestBillingInflightWS_LaterModelUsesActualBillingSource/bridge/requested/session_false",
+              "TestBillingInflightWS_LaterModelUsesActualBillingSource/bridge/upstream/session_false",
+              "TestBillingInflightWS_ImageToolsMatchExistingSettlementWhenTextIsFree/native",
+              "TestBillingInflightWS_ImageToolsMatchExistingSettlementWhenTextIsFree/passthrough",
+              "TestBillingInflightWS_ImageToolsMatchExistingSettlementWhenTextIsFree/bridge",
+              "TestBillingInflightWS_UnknownBridgeProcessingRetainsBoundedHold/header_timeout",
+              "TestBillingInflightWS_UnknownBridgeProcessingRetainsBoundedHold/scanner",
+              "TestBillingInflightWS_QueuedTurnsCannotConsumeAnotherAttempt/native",
+              "TestBillingInflightWS_QueuedTurnsCannotConsumeAnotherAttempt/passthrough",
+              "TestBillingInflightWS_QueuedTurnsCannotConsumeAnotherAttempt/bridge",
+              "TestBillingInflightWS_ProviderReplayDoesNotBillOrRetainAnExtraObligation/native",
+              "TestBillingInflightWS_ProviderReplayDoesNotBillOrRetainAnExtraObligation/passthrough",
+              "TestBillingInflightWS_ProviderReplayDoesNotBillOrRetainAnExtraObligation/bridge",
+              "TestBillingInflightWS_CanonicalBridgeAuthRefusalReleasesItsTurn/401",
+              "TestBillingInflightWS_CanonicalBridgeAuthRefusalReleasesItsTurn/403",
+              "TestBillingInflightWS_BlockedModelMismatchAuditDoesNotStrandFunding/native",
+              "TestBillingInflightWS_BlockedModelMismatchAuditDoesNotStrandFunding/bridge",
+              "TestBillingInflightWS_InitialImageModelInheritanceRemainsPaid/native",
+              "TestBillingInflightWS_InitialImageModelInheritanceRemainsPaid/bridge",
+              "TestBillingInflightWS_PassthroughBaselineMismatchRemainsNormalSettlement"
+            ],
+            "expectedOldBehaviorFailures": [
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/negative_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/zero_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/negative_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/zero_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/card_exhausted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/card_expired",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/user_disabled",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/key_deleted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/key_expired",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_off/key_quota_exhausted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/negative_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/zero_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/negative_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/zero_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/card_exhausted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/card_expired",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/user_disabled",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/key_deleted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/key_expired",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/passthrough/hold_off/key_quota_exhausted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/negative_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/zero_wallet_paid",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/negative_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/zero_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/card_exhausted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/card_expired",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/user_disabled",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/key_deleted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/key_expired",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_off/key_quota_exhausted",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/native/hold_on/negative_wallet_free",
+              "TestWSTurnFundingWS_ActualSettlementThenAdmission/bridge/hold_on/negative_wallet_free"
+            ],
+            "claims": "Expected inventories only; no execution result asserted."
+          }
+          INVENTORY
+          python3 - <<'PYFREEZE'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path('proof-evidence')
+          pinned = json.loads((root/'inventory.json').read_text())
+          side = os.environ['PROOF_SIDE']
+          ref, tree = (pinned['source'], pinned['newTree']) if side == 'NEW' else (pinned['old'], pinned['oldTree'])
+          git = lambda *a: subprocess.check_output(['git', *a], text=True).strip()
+          assert git('rev-parse', 'HEAD') == ref and git('rev-parse', 'HEAD^{tree}') == tree
+          shared = ['backend/internal/repository/billing_inflight_ws_integration_test.go', 'backend/internal/repository/ws_turn_funding_integration_test.go']
+          for path in shared:
+              pathlib.Path(path).write_bytes(subprocess.check_output(['git', 'show', pinned['source']+':'+path]))
+          expected = dict(pinned['deps'])
+          expected.update({p:pinned['newBlobs'][p] for p in shared})
+          production = pinned['oldProductionBlobs'] if side == 'OLD' else {p:pinned['newBlobs'][p] for p in pinned['oldProductionBlobs']}
+          expected.update(production)
+          unit = 'backend/internal/service/ws_turn_funding_test.go'
+          if side == 'NEW':
+              expected[unit] = pinned['newBlobs'][unit]
+          else:
+              assert not pathlib.Path(unit).exists(), 'OLD cannot compile or fail a test that calls a missing new method'
+          files = {}
+          for path, blob in expected.items():
+              actual = {'blob':git('hash-object', path), 'sha256':hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()}
+              assert actual['blob'] == blob, (side, path, actual, blob)
+              files[path] = actual
+          record = {'side':side, 'head':ref, 'tree':tree, 'files':files}
+          (root/'freeze.json').write_text(json.dumps(record, indent=2)+'\n')
+          print(json.dumps(record, indent=2))
+          PYFREEZE
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Check frozen Go formatting remotely
+        run: |
+          set -euo pipefail
+          files="backend/internal/repository/billing_inflight_ws_integration_test.go backend/internal/repository/ws_turn_funding_integration_test.go"
+          if [ "$PROOF_SIDE" = NEW ]; then
+            files="$files backend/internal/handler/openai_gateway_handler.go backend/internal/service/api_key_service.go backend/internal/service/billing_cache_service.go backend/internal/service/ws_turn_funding_test.go"
+          fi
+          gofmt -d $files
+          test -z "$(gofmt -l $files)"
+      - name: NEW fresh funding and identity service controls, preserving actual exit
+        if: matrix.side == 'NEW'
+        working-directory: backend
+        run: |
+          set -uo pipefail
+          set +e
+          go test -tags=unit -race -parallel=1 -count=1 -timeout=10m -json -run '^TestWSTurnFunding_' ./internal/service/ 2>&1 | tee "$GITHUB_WORKSPACE/proof-evidence/unit.jsonl"
+          actual_status=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$actual_status" > "$GITHUB_WORKSPACE/proof-evidence/unit-exit.txt"
+      - name: Both identical real WS PG Redis fixtures and all original inflight controls
+        working-directory: backend
+        run: |
+          set -uo pipefail
+          set +e
+          go test -tags=integration -race -parallel=1 -count=1 -timeout=25m -json -run '^TestWSTurnFundingWS_|^TestBillingInflightWS_' ./internal/repository/ 2>&1 | tee "$GITHUB_WORKSPACE/proof-evidence/integration.jsonl"
+          actual_status=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$actual_status" > "$GITHUB_WORKSPACE/proof-evidence/integration-exit.txt"
+      - name: Preserve exact post-execution source and file evidence
+        if: always()
+        run: |
+          python3 - <<'PYPOST'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path('proof-evidence')
+          before = json.loads((root/'freeze.json').read_text())
+          git = lambda *a: subprocess.check_output(['git', *a], text=True).strip()
+          after = {'side':os.environ['PROOF_SIDE'], 'head':git('rev-parse', 'HEAD'), 'tree':git('rev-parse', 'HEAD^{tree}'), 'files':{p:{'blob':git('hash-object',p), 'sha256':hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()} for p in before['files']}}
+          (root/'post-freeze.json').write_text(json.dumps(after, indent=2)+'\n')
+          assert after == before, 'execution must not alter source, fixture or dependency files'
+          print(json.dumps(after, indent=2))
+          PYPOST
+      - name: Enforce exact actual leaves, original controls, real OLD wire failures and exits
+        if: always()
+        run: |
+          python3 - <<'PYRESULT'
+          import collections, json, os, pathlib, re
+          root = pathlib.Path('proof-evidence')
+          pinned = json.loads((root/'inventory.json').read_text())
+          assert json.loads((root/'freeze.json').read_text()) == json.loads((root/'post-freeze.json').read_text())
+          side = os.environ['PROOF_SIDE']
+          def records(path):
+              events = [json.loads(line) for line in (root/path).read_text().splitlines() if line.startswith('{')]
+              done = {e['Test']:e['Action'] for e in events if 'Test' in e and e['Action'] in ('pass','fail','skip')}
+              leaves = {n:a for n,a in done.items() if not any(other.startswith(n+'/') for other in done)}
+              output = collections.defaultdict(str)
+              for e in events:
+                  if 'Test' in e and 'Output' in e:
+                      output[e['Test']] += e['Output']
+              return leaves, output, events
+          actual, output, events = records('integration.jsonl')
+          expected = set(pinned['integrationCases']) | set(pinned['retainedIntegrationCases'])
+          assert len(expected) == 84 and set(actual) == expected, ('actual PG leaf inventory', len(actual), sorted(expected-set(actual)), sorted(set(actual)-expected))
+          assert all(actual[n] == 'pass' for n in pinned['retainedIntegrationCases']), 'all 30 original actual WS funding controls must pass on both sides'
+          exits = {'integration':int((root/'integration-exit.txt').read_text())}
+          failed = {n for n,a in actual.items() if a == 'fail'}
+          if side == 'NEW':
+              assert not failed and all(a == 'pass' for a in actual.values()) and exits['integration'] == 0, 'NEW all actual PG controls must pass without skips'
+              unit, _, _ = records('unit.jsonl')
+              assert set(unit) == set(pinned['unitCases']) and len(unit) == 28 and all(a == 'pass' for a in unit.values()), ('actual NEW unit leaves', unit)
+              exits['unit'] = int((root/'unit-exit.txt').read_text())
+              assert exits['unit'] == 0
+          else:
+              assert exits['integration'] == 1 and failed == set(pinned['expectedOldBehaviorFailures']), ('OLD actual missing-admission failures', exits, sorted(failed))
+              assert all(a == 'pass' for n,a in actual.items() if n not in failed), 'OLD all other controls must pass without skips'
+              for name in sorted(failed):
+                  body = output[name]
+                  assert 'ACTUAL first settlement observed:' in body and 'actual downstream wire:' in body and 'response.completed' in body, ('OLD missing actual first-settlement/provider evidence',name,body)
+                  assert re.search(r'expected:\s+"error"',body) and re.search(r'actual\s*:\s+"response.completed"',body), ('OLD must fail on actual wrong response type, not compile/timeout/missing method',name,body)
+              (root/'expected-real-wire-failures.json').write_text(json.dumps({n:output[n] for n in sorted(failed)},indent=2)+'\n')
+          result = {'side':side,'actualLeaves':actual,'actualExits':exits,'originalControlsPassed':30,'targetLeaves':54,'targetPass':sum(actual[n]=='pass' for n in pinned['integrationCases']),'targetFail':sum(actual[n]=='fail' for n in pinned['integrationCases'])}
+          (root/'classified-actual-result.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+          PYRESULT
+      - name: Upload original complete wire output, process exits and both freezes
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ws1706-${{ matrix.side }}-${{ github.run_id }}
+          path: proof-evidence/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve OLD actual red process exit after evidence upload
+        if: always()
+        run: |
+          set -euo pipefail
+          actual_status="$(cat proof-evidence/integration-exit.txt)"
+          if [ "$PROOF_SIDE" = NEW ]; then
+            test "$(cat proof-evidence/unit-exit.txt)" = 0
+          fi
+          exit "$actual_status"
