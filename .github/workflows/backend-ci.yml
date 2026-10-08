@@ -143,6 +143,16 @@ jobs:
       - name: Unit tests (coverage)
         working-directory: backend
         run: make test-unit-cover
+      - name: DingTalk no-email request and invitation policy (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestCompleteDingTalkOAuthRegistration(WithoutInvitationStillRequiresSession|NoEmailInvitationPolicy)$' ./internal/handler/
+      - name: DingTalk no-email actual account tokens admission and grants (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -timeout=10m -v -run '^TestDingTalkNoEmailRegistrationPG$' ./internal/handler/
       - name: Refund subscription compensation and paid renewal (actual PostgreSQL)
         working-directory: backend
         run: |
@@ -310,6 +320,9 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
+      - name: DingTalk no-email registration and preserved callback controls (actual components)
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/views/auth/__tests__/DingTalkCallbackView.noEmail.spec.ts src/views/auth/__tests__/DingTalkCallbackView.spec.ts
       - name: Stripe page disposal actual mocked payment regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/StripePaymentView.lifecycle.spec.ts src/views/user/__tests__/StripePaymentView.spec.ts

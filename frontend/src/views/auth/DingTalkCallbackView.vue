@@ -334,6 +334,7 @@ type DingTalkPendingActionResponse = PendingOAuthExchangeResponse & {
   pending_email?: string
   existing_account_email?: string
   suggested_email?: string
+  synthetic_email?: string
 }
 
 function persistPendingAuthSession(redirect?: string) {
@@ -581,7 +582,7 @@ async function finalizeCompletion(completion: PendingOAuthExchangeResponse, redi
   await router.replace(redirect)
 }
 
-async function finalizePendingAccountResponse(completion: DingTalkPendingActionResponse) {
+async function finalizePendingAccountResponse(completion: DingTalkPendingActionResponse, requiresLogin = false) {
   applyAdoptionSuggestionState(completion)
   const redirect = sanitizeRedirectPath(completion.redirect || redirectTo.value)
 
@@ -622,6 +623,10 @@ async function finalizePendingAccountResponse(completion: DingTalkPendingActionR
     return
   }
 
+  // A registration response cannot mean bind success just because tokens are missing.
+  if (requiresLogin && !isOAuthLoginCompletion(completion)) {
+    throw new Error(t('auth.dingtalk.callbackMissingToken'))
+  }
   await finalizeCompletion(completion, redirect)
 }
 
@@ -642,7 +647,7 @@ async function handleSubmitInvitation() {
         ...serializeAdoptionDecision(decision)
       }
     )
-    await finalizePendingAccountResponse(completion)
+    await finalizePendingAccountResponse(completion, true)
   } catch (e: unknown) {
     const err = e as { message?: string; response?: { data?: { message?: string } } }
     invitationError.value =
@@ -819,7 +824,35 @@ onMounted(async () => {
       return
     }
 
-    if (adoptionRequired.value && hasSuggestedProfile(completion)) {
+    if (completionData.auth_result === 'pending_session') {
+      isProcessing.value = false
+      persistPendingAuthSession(completionRedirect)
+      return
+    }
+
+    // The marker starts the flow; only the browser-bound server session supplies identity.
+    if (!isOAuthLoginCompletion(completion) &&
+        typeof completionData.synthetic_email === 'string' &&
+        completionData.synthetic_email.trim() !== '') {
+      try {
+        const { data: registered } = await apiClient.post<DingTalkPendingActionResponse>(
+          '/auth/oauth/dingtalk/complete-registration',
+          {
+            ...oauthAffiliatePayload(loadOAuthAffiliateCode()),
+            ...serializeAdoptionDecision(currentAdoptionDecision())
+          }
+        )
+        await finalizePendingAccountResponse(registered, true)
+      } catch (e: unknown) {
+        if ((e as { reason?: string } | null)?.reason !== 'OAUTH_INVITATION_REQUIRED') {
+          throw e
+        }
+        await finalizePendingAccountResponse({ ...completionData, error: 'invitation_required' })
+      }
+      return
+    }
+
+    if (adoptionRequired.value && hasSuggestedProfile(completionData)) {
       needsAdoptionConfirmation.value = true
       isProcessing.value = false
       persistPendingAuthSession(completionRedirect)
