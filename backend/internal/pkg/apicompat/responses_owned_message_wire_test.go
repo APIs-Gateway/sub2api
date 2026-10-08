@@ -90,27 +90,31 @@ func TestOwnedResponsesMessage_PublicConverters(t *testing.T) {
 		}
 		id := ""
 		seenDone, seenTerminal := false, false
+		var outputs []ResponsesStreamEvent
 		for _, chunk := range chunks {
-			for _, output := range ChatCompletionsChunkToResponsesEvents(chunk, state) {
-				wire := ownedMessageWireJSON(t, output)
-				switch output.Type {
-				case "response.output_item.added":
-					if wire.Get("item.type").String() == "message" {
-						id = wire.Get("item.id").String()
-						require.NotEmpty(t, id)
-						require.Equal(t, "in_progress", wire.Get("item.status").String())
-					}
-				case "response.output_item.done":
-					seenDone = true
-					require.Equal(t, id, wire.Get("item.id").String())
-					requireOwnedTextShape(t, wire.Get("item"), "hello")
-				case "response.completed":
-					seenTerminal = true
-					require.Equal(t, id, wire.Get("response.output.0.id").String())
-					requireOwnedTextShape(t, wire.Get("response.output.0"), "hello")
+			outputs = append(outputs, ChatCompletionsChunkToResponsesEvents(chunk, state)...)
+		}
+		outputs = append(outputs, FinalizeChatCompletionsResponsesStream(state)...)
+		for _, output := range outputs {
+			wire := ownedMessageWireJSON(t, output)
+			switch output.Type {
+			case "response.output_item.added":
+				if wire.Get("item.type").String() == "message" {
+					id = wire.Get("item.id").String()
+					require.NotEmpty(t, id)
+					require.Equal(t, "in_progress", wire.Get("item.status").String())
 				}
+			case "response.output_item.done":
+				seenDone = true
+				require.Equal(t, id, wire.Get("item.id").String())
+				requireOwnedTextShape(t, wire.Get("item"), "hello")
+			case "response.completed":
+				seenTerminal = true
+				require.Equal(t, id, wire.Get("response.output.0.id").String())
+				requireOwnedTextShape(t, wire.Get("response.output.0"), "hello")
 			}
 		}
+		require.Empty(t, FinalizeChatCompletionsResponsesStream(state), "existing finalizer is idempotent")
 		require.True(t, seenDone)
 		require.True(t, seenTerminal)
 	})

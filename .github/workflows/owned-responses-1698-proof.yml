@@ -16,7 +16,7 @@ jobs:
           - variant: OLD
             source: 1bb7630faf8d24154fcfe9647d36e9e45a1bf322
           - variant: NEW
-            source: 7dc34e7a6a93451a178926bfb51d9f9b7c81a659
+            source: 1d7c57c2c6527401f5fe8fe419804a3966439e58
     steps:
       - uses: actions/checkout@v6
         with:
@@ -26,13 +26,13 @@ jobs:
           SOURCE: ${{ matrix.source }}
           VARIANT: ${{ matrix.variant }}
         run: |
-          git merge-base --is-ancestor 7dc34e7a6a93451a178926bfb51d9f9b7c81a659 HEAD
+          git merge-base --is-ancestor 1d7c57c2c6527401f5fe8fe419804a3966439e58 HEAD
           git merge-base --is-ancestor 1bb7630faf8d24154fcfe9647d36e9e45a1bf322 HEAD
           mkdir -p /tmp/owned-fixtures
-          test "$(git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go)" = 2bb14bb34136b77c3637151fa5187b63ddb3a72d
+          test "$(git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go)" = 84ac29522877dab61e3d821bdfcacfb97db752ac
           git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go
           cp backend/internal/handler/openai_owned_responses_message_wire_test.go /tmp/owned-fixtures/public-0.go
-          test "$(git hash-object backend/internal/pkg/apicompat/responses_owned_message_wire_test.go)" = 645982302ecbb3b169ea9ccef8e39179710bfd65
+          test "$(git hash-object backend/internal/pkg/apicompat/responses_owned_message_wire_test.go)" = 1f09a46860aa4d3886a109fc6b259acdfc8f185c
           git hash-object backend/internal/pkg/apicompat/responses_owned_message_wire_test.go
           cp backend/internal/pkg/apicompat/responses_owned_message_wire_test.go /tmp/owned-fixtures/public-1.go
           test "$(git hash-object backend/internal/pkg/apicompat/responses_owned_message_state_test.go)" = e1ba6a2ea9374fb1849047636bcce816994ef5f3
@@ -85,9 +85,9 @@ jobs:
           SOURCE: ${{ matrix.source }}
         run: |
           test "$(git rev-parse HEAD)" = "$SOURCE"
-          test "$(git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go)" = 2bb14bb34136b77c3637151fa5187b63ddb3a72d
+          test "$(git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go)" = 84ac29522877dab61e3d821bdfcacfb97db752ac
           git hash-object backend/internal/handler/openai_owned_responses_message_wire_test.go
-          test "$(git hash-object backend/internal/pkg/apicompat/responses_owned_message_wire_test.go)" = 645982302ecbb3b169ea9ccef8e39179710bfd65
+          test "$(git hash-object backend/internal/pkg/apicompat/responses_owned_message_wire_test.go)" = 1f09a46860aa4d3886a109fc6b259acdfc8f185c
           git hash-object backend/internal/pkg/apicompat/responses_owned_message_wire_test.go
           if [ "$VARIANT" = NEW ]; then
             test "$(git hash-object backend/internal/pkg/apicompat/responses_owned_message_state_test.go)" = e1ba6a2ea9374fb1849047636bcce816994ef5f3
