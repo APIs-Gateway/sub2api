@@ -340,6 +340,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawDone := false
+	var terminal openAIRawStreamTerminalState
 	// 上游模型不一致只在首个带 model 的 chunk 上比对一次。
 	upstreamModelChecked := false
 
@@ -388,6 +389,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			continue
 		}
 		if payload == "[DONE]" {
+			terminal.ObserveDataLine(payload)
 			sawDone = true
 			break
 		}
@@ -416,6 +418,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			)
 			continue
 		}
+		// Only a successfully decoded provider chunk can certify completion.
+		// gjson alone can extract terminal fields from malformed JSON.
+		terminal.ObserveDataLine(payload)
 		if firstTokenMs == nil && !isOpenAIChatUsageOnlyStreamChunk(payload) && chatChunkStartsResponsesOutput(&chunk) {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
@@ -444,6 +449,15 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			Duration:        time.Since(startTime),
 			FirstTokenMs:    firstTokenMs,
 		}, fmt.Errorf("stream usage incomplete: %w", err)
+	}
+
+	// Clean EOF is not proof of completion. The accepted terminal union remains
+	// DONE, or finish_reason/object usage in a valid decoded chunk. Without any
+	// of them no trusted usage
+	// was observed; a non-nil zero result would falsely settle unknown execution
+	// as free. Leave its dispatched funding hold intact and do not replay it.
+	if !terminal.Terminated() {
+		return nil, fmt.Errorf("stream usage incomplete: missing Chat Completions terminal signal")
 	}
 
 	// A tool call whose argument stream was truncated (e.g. an upstream SSE parse
