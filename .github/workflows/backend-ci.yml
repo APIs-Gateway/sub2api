@@ -171,7 +171,9 @@ jobs:
         working-directory: backend
         env:
           CGO_ENABLED: "1"
-        run: go test -tags=unit -race -count=1 -timeout=10m -v -run '^TestWSTurnFunding_' ./internal/service/
+        run: |
+          go test -tags=unit -race -count=1 -timeout=10m -v -run '^TestWSTurnFunding_' ./internal/service/
+          go test -tags=unit -race -count=1 -timeout=10m -v -run '^(TestOpenAIResponsesWebSocket_BeforeRequestHookRecordsWSTurnInContext|TestOpenAIResponsesWebSocket_LaterTurnKeepsConnectionGroupWhenKeyMovesOrRefreshFails|TestOpenAIResponsesWebSocketV2PassthroughRejectsDisabledAccountBeforeSecondUpstreamTurn|TestOpenAIResponsesWebSocketV2PassthroughNonCyberTurnAllowsFollowup)$' ./internal/handler/
       - name: WebSocket actual next-turn funding admission and once-only PG Redis settlement (race)
         working-directory: backend
         env:
