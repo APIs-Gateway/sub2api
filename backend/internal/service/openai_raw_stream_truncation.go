@@ -13,7 +13,7 @@ import (
 // openAIRawStreamTruncatedUpstreamMessage 是 raw CC 直转路径上游截断的 ops 消息。
 const openAIRawStreamTruncatedUpstreamMessage = "Upstream Chat Completions stream ended before any terminal chunk"
 
-// openAIRawStreamTerminalState 记录 raw Chat Completions SSE 流是否收到过
+// openAIRawStreamTerminalState 记录 raw 或转换后的 Chat Completions SSE 流是否收到过
 // **终止信号**。
 //
 // 背景：CC 直转路径把上游 SSE 原样透传，此前只要 HTTP 状态是 200 就按成功收尾——
