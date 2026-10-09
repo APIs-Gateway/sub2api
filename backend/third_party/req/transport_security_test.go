@@ -356,7 +356,7 @@ func TestReqHTTP2Security_PublicFirefoxTLSProxyAndReuse(t *testing.T) {
 				}
 				for i, frame := range flight.priorities {
 					expected := firefoxPriorityFrames[i]
-					if frame.StreamID != expected.StreamID || frame.StreamDep != expected.StreamDep || frame.Exclusive != expected.Exclusive || frame.Weight != expected.Weight {
+					if frame.StreamID != expected.StreamID || frame.StreamDep != expected.PriorityParam.StreamDep || frame.Exclusive != expected.PriorityParam.Exclusive || frame.Weight != expected.PriorityParam.Weight {
 						t.Fatalf("priority %d changed: %+v", i, frame)
 					}
 				}
