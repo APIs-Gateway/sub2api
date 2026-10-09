@@ -824,3 +824,301 @@ describe('AccountUsageCell', () => {
     expect(unknown.text()).toContain('admin.accounts.usageWindow.grokUnknown')
   })
 })
+
+// These fixtures consume the real component's admin usage boundary. Literal
+// rendered outputs keep the OLD/NEW comparison independent of the selector.
+describe('AccountUsageCell exact Gemini 3.8 Flash quota display', () => {
+  let nextAccountID = 755800
+
+  beforeEach(() => {
+    getUsage.mockReset()
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation(() => ({
+        matches: true,
+        media: '(min-width: 768px)',
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }))
+    })
+  })
+
+  function mountUsage(extra: Account['extra'] = {}) {
+    // The production cache is keyed by account ID for five minutes.
+    const id = nextAccountID++
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ id, extra }) },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['label', 'utilization', 'resetsAt', 'color'],
+            template: '<div class="flash-quota-bar">{{ label }}|{{ utilization }}|{{ resetsAt }}|{{ color }}</div>'
+          },
+          AccountQuotaInfo: true
+        }
+      }
+    })
+    return { wrapper, id }
+  }
+
+  const onlyFlash = {
+    antigravity_quota: {
+      'gemini-3.8-flash': { utilization: 37, reset_time: '2026-10-09T12:00:00Z' }
+    }
+  }
+
+  it.each([
+    'gemini-3.8-flash',
+    'gemini-3.8-flash-low',
+    'gemini-3.8-flash-medium',
+    'gemini-3.8-flash-high',
+    'gemini-3.8-flash-tiered'
+  ])('renders the existing Flash category for exact %s', async (model) => {
+    getUsage.mockResolvedValue({
+      antigravity_quota: {
+        [model]: { utilization: 37, reset_time: '2026-10-09T12:00:00Z' }
+      }
+    })
+    const { wrapper, id } = mountUsage()
+    try {
+      await flushPromises()
+      expect(getUsage).toHaveBeenCalledTimes(1)
+      expect(getUsage).toHaveBeenCalledWith(id)
+      expect(wrapper.findAll('.flash-quota-bar').map(bar => bar.text())).toEqual([
+        'admin.accounts.usageWindow.gemini3Flash|37|2026-10-09T12:00:00Z|emerald'
+      ])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it.each(['', undefined])('renders real zero without synthesizing a reset (%s)', async (resetTime) => {
+    getUsage.mockResolvedValue({
+      antigravity_quota: {
+        'gemini-3.8-flash-low': { utilization: 0, reset_time: resetTime }
+      }
+    })
+    const { wrapper, id } = mountUsage()
+    try {
+      await flushPromises()
+      expect(getUsage).toHaveBeenCalledTimes(1)
+      expect(getUsage).toHaveBeenCalledWith(id)
+      expect(wrapper.findAll('.flash-quota-bar').map(bar => bar.text())).toEqual([
+        'admin.accounts.usageWindow.gemini3Flash|0||emerald'
+      ])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps maximum utilization and earliest reset across legacy and exact new Flash keys', async () => {
+    getUsage.mockResolvedValue({
+      antigravity_quota: {
+        'gemini-3-flash': { utilization: 20, reset_time: '2026-10-09T14:00:00Z' },
+        'gemini-3.8-flash-high': { utilization: 70, reset_time: '2026-10-09T10:00:00Z' },
+        'gemini-3.8-flash-low': { utilization: 15, reset_time: '2026-10-09T12:00:00Z' }
+      }
+    })
+    const { wrapper, id } = mountUsage()
+    try {
+      await flushPromises()
+      expect(getUsage).toHaveBeenCalledTimes(1)
+      expect(getUsage).toHaveBeenCalledWith(id)
+      expect(wrapper.findAll('.flash-quota-bar').map(bar => bar.text())).toEqual([
+        'admin.accounts.usageWindow.gemini3Flash|70|2026-10-09T10:00:00Z|emerald'
+      ])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('retains legacy Flash output', async () => {
+    getUsage.mockResolvedValue({
+      antigravity_quota: {
+        'gemini-3-flash': { utilization: 40, reset_time: '2026-10-09T12:00:00Z' }
+      }
+    })
+    const { wrapper, id } = mountUsage()
+    try {
+      await flushPromises()
+      expect(getUsage).toHaveBeenCalledTimes(1)
+      expect(getUsage).toHaveBeenCalledWith(id)
+      expect(wrapper.findAll('.flash-quota-bar').map(bar => bar.text())).toEqual([
+        'admin.accounts.usageWindow.gemini3Flash|40|2026-10-09T12:00:00Z|emerald'
+      ])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it.each([
+    'gemini-3.8-flash-image',
+    'prefix-gemini-3.8-flash',
+    'gemini-3.8-flash-high-other',
+    'gemini-3.8-flash-project',
+    'Gemini-3.8-Flash'
+  ])('does not interpret lookalike %s as a Flash quota', async (model) => {
+    getUsage.mockResolvedValue({
+      antigravity_quota: {
+        [model]: { utilization: 99, reset_time: '2026-10-09T09:00:00Z' }
+      }
+    })
+    const { wrapper, id } = mountUsage()
+    try {
+      await flushPromises()
+      expect(getUsage).toHaveBeenCalledTimes(1)
+      expect(getUsage).toHaveBeenCalledWith(id)
+      expect(wrapper.findAll('.flash-quota-bar')).toHaveLength(0)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it.each([{}, { antigravity_quota: {} }])('does not fabricate Flash from absent or empty quota (%j)', async (payload) => {
+    getUsage.mockResolvedValue(payload)
+    const { wrapper, id } = mountUsage()
+    try {
+      await flushPromises()
+      expect(getUsage).toHaveBeenCalledTimes(1)
+      expect(getUsage).toHaveBeenCalledWith(id)
+      expect(wrapper.findAll('.flash-quota-bar')).toHaveLength(0)
+      expect(wrapper.text().trim()).toBe('-')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps Image, Pro and Claude separate from new Flash', async () => {
+    getUsage.mockResolvedValue({
+      antigravity_quota: {
+        ...onlyFlash.antigravity_quota,
+        'gemini-3.1-flash-image': { utilization: 90, reset_time: '2026-10-09T09:00:00Z' },
+        'gemini-3-pro-high': { utilization: 62, reset_time: '2026-10-09T11:00:00Z' },
+        'claude-sonnet-4-6': { utilization: 21, reset_time: '2026-10-09T13:00:00Z' }
+      }
+    })
+    const { wrapper, id } = mountUsage()
+    try {
+      await flushPromises()
+      expect(getUsage).toHaveBeenCalledTimes(1)
+      expect(getUsage).toHaveBeenCalledWith(id)
+      // Read the unchanged family controls before the OLD missing-Flash assertion.
+      const bars = wrapper.findAll('.flash-quota-bar').map(bar => bar.text())
+      expect(bars).toContain('admin.accounts.usageWindow.gemini3Pro|62|2026-10-09T11:00:00Z|indigo')
+      expect(bars).toContain('admin.accounts.usageWindow.gemini3Image|90|2026-10-09T09:00:00Z|purple')
+      expect(bars).toContain('admin.accounts.usageWindow.claude|21|2026-10-09T13:00:00Z|amber')
+      expect(bars).toContain('admin.accounts.usageWindow.gemini3Flash|37|2026-10-09T12:00:00Z|emerald')
+      expect(bars).toHaveLength(4)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it.each([
+    ['validation', 'admin.accounts.forbiddenValidation'],
+    ['violation', 'admin.accounts.forbiddenViolation']
+  ])('retains 403 %s precedence over supplied quota', async (forbiddenType, label) => {
+    getUsage.mockResolvedValue({
+      ...onlyFlash,
+      is_forbidden: true,
+      forbidden_type: forbiddenType,
+      validation_url: 'https://accounts.example.com/verify-fixture'
+    })
+    const { wrapper, id } = mountUsage()
+    try {
+      await flushPromises()
+      expect(getUsage).toHaveBeenCalledTimes(1)
+      expect(getUsage).toHaveBeenCalledWith(id)
+      expect(wrapper.text()).toContain(label)
+      expect(wrapper.find('a').attributes('href')).toBe('https://accounts.example.com/verify-fixture')
+      expect(wrapper.find('a').text()).toBe('admin.accounts.openVerification')
+      expect(wrapper.findAll('.flash-quota-bar')).toHaveLength(0)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('retains 401 reauthorization precedence over supplied quota', async () => {
+    getUsage.mockResolvedValue({ ...onlyFlash, needs_reauth: true })
+    const { wrapper, id } = mountUsage()
+    try {
+      await flushPromises()
+      expect(getUsage).toHaveBeenCalledTimes(1)
+      expect(getUsage).toHaveBeenCalledWith(id)
+      expect(wrapper.text()).toContain('admin.accounts.needsReauth')
+      expect(wrapper.findAll('.flash-quota-bar')).toHaveLength(0)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it.each([
+    ['rate_limited', 'admin.accounts.rateLimited'],
+    ['network_error', 'admin.accounts.usageError']
+  ])('retains degraded %s precedence over supplied quota', async (errorCode, label) => {
+    getUsage.mockResolvedValue({ ...onlyFlash, error: 'isolated fixture error', error_code: errorCode })
+    const { wrapper, id } = mountUsage()
+    try {
+      await flushPromises()
+      expect(getUsage).toHaveBeenCalledTimes(1)
+      expect(getUsage).toHaveBeenCalledWith(id)
+      expect(wrapper.text()).toContain(label)
+      expect(wrapper.findAll('.flash-quota-bar')).toHaveLength(0)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('shows loading before the existing API resolves new Flash quota', async () => {
+    let resolveUsage!: (value: typeof onlyFlash) => void
+    getUsage.mockReturnValue(new Promise<typeof onlyFlash>(resolve => { resolveUsage = resolve }))
+    const { wrapper, id } = mountUsage()
+    try {
+      await flushPromises()
+      expect(getUsage).toHaveBeenCalledTimes(1)
+      expect(getUsage).toHaveBeenCalledWith(id)
+      expect(wrapper.findAll('.animate-pulse').length).toBeGreaterThan(0)
+      expect(wrapper.findAll('.flash-quota-bar')).toHaveLength(0)
+      resolveUsage(onlyFlash)
+      await flushPromises()
+      expect(wrapper.findAll('.flash-quota-bar').map(bar => bar.text())).toEqual([
+        'admin.accounts.usageWindow.gemini3Flash|37|2026-10-09T12:00:00Z|emerald'
+      ])
+    } finally {
+      resolveUsage(onlyFlash)
+      wrapper.unmount()
+    }
+  })
+
+  it('retains AI credit balance, paid tier priority and ineligible warning alongside new Flash', async () => {
+    getUsage.mockResolvedValue({
+      ...onlyFlash,
+      ai_credits: [{ credit_type: 'GOOGLE_ONE_AI', amount: 25, minimum_balance: 5 }]
+    })
+    const { wrapper, id } = mountUsage({
+      load_code_assist: {
+        currentTier: { id: 'free-tier' },
+        paidTier: { id: 'g1-pro-tier' },
+        ineligibleTiers: [{ id: 'fixture-ineligible' }]
+      }
+    })
+    try {
+      await flushPromises()
+      expect(getUsage).toHaveBeenCalledTimes(1)
+      expect(getUsage).toHaveBeenCalledWith(id)
+      expect(wrapper.text()).toContain('admin.accounts.aiCreditsBalance: 25')
+      expect(wrapper.text()).toContain('admin.accounts.tier.pro')
+      expect(wrapper.text()).not.toContain('admin.accounts.tier.free')
+      expect(wrapper.text()).toContain('admin.accounts.ineligibleWarning')
+      expect(wrapper.findAll('.flash-quota-bar').map(bar => bar.text())).toEqual([
+        'admin.accounts.usageWindow.gemini3Flash|37|2026-10-09T12:00:00Z|emerald'
+      ])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+})

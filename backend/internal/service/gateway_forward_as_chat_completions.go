@@ -38,6 +38,9 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	if err := rejectAmbiguousGatewayModel(c, body); err != nil {
 		return nil, err
 	}
+	if err := rejectAmbiguousChatInputAudio(ctx, c, body, false); err != nil {
+		return nil, err
+	}
 
 	// 1. Parse Chat Completions request
 	var ccReq apicompat.ChatCompletionsRequest
