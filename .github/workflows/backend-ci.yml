@@ -63,6 +63,15 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=unit -race -count=1 -v -run '^TestAnthropicStartOutput_' ./internal/service/
+      - name: Anthropic pre-visible transport heartbeat fixture formatting (remote only)
+        run: |
+          gofmt -d backend/internal/service/anthropic_visible_output_test.go
+          test -z "$(gofmt -l backend/internal/service/anthropic_visible_output_test.go)"
+      - name: Anthropic pre-visible actual transport flush and retry metering (repeated race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=10 -timeout=2m -v -run '^TestAnthropicVisibleOutput_BeforeVisibleHeartbeatIsOnlyTransportComment$' ./internal/service/
       - name: Anthropic start output actual wallet and card settlement (PG Redis race)
         working-directory: backend
         env:
