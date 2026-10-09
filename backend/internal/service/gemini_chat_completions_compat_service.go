@@ -33,6 +33,9 @@ func (s *GeminiMessagesCompatService) ForwardAsChatCompletions(
 	if err := rejectAmbiguousGatewayModel(c, body); err != nil {
 		return nil, err
 	}
+	if err := rejectAmbiguousChatInputAudio(ctx, c, body, true); err != nil {
+		return nil, err
+	}
 
 	var ccReq apicompat.ChatCompletionsRequest
 	if err := json.Unmarshal(body, &ccReq); err != nil {
