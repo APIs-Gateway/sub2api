@@ -95,6 +95,8 @@ type codexOAuthTransformOptions struct {
 	SkipDefaultInstructions             bool
 	PreserveToolCallIDs                 bool
 	OmitPromotedSystemMessagesFromInput bool
+	// ResponsesLite selects the carrier for an injected hosted tool.
+	ResponsesLite bool
 }
 
 const (
@@ -335,6 +337,10 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		} else {
 			reqBody["input"] = []any{}
 		}
+		result.Modified = true
+	}
+
+	if !opts.IsCompact && ensureOpenAIOAuthWebSearchToolForHistory(reqBody, opts.ResponsesLite) {
 		result.Modified = true
 	}
 

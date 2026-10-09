@@ -3192,6 +3192,13 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		if accountScoped {
 			normalized = accountScopedPayload
 		}
+		if eventType == "response.create" {
+			historyPayload, _, historyErr := normalizeOpenAIOAuthWebSearchHistoryForAccount(normalized, account, isOpenAIResponsesLiteWebSocketPayload(normalized), false)
+			if historyErr != nil {
+				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", historyErr)
+			}
+			normalized = historyPayload
+		}
 		if isOpenAIResponsesLiteWebSocketPayload(normalized) {
 			litePayload, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(normalized, account)
 			if liteErr != nil {

@@ -2967,7 +2967,17 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if toolSchemaSanitized {
 		body = sanitizedToolBody
 	}
-	if account.IsOpenAI() && isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) {
+	responsesLite := isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader))
+	if responsesLite {
+		historyBody, historyChanged, historyErr := normalizeOpenAIOAuthWebSearchHistoryForAccount(body, account, true, isOpenAIResponsesCompactPath(c))
+		if historyErr != nil {
+			return nil, historyErr
+		}
+		if historyChanged {
+			body = historyBody
+		}
+	}
+	if account.IsOpenAI() && responsesLite {
 		liteBody, changed, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
 		if liteErr != nil {
 			param := "tools"
@@ -3362,6 +3372,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				SkipDefaultInstructions:             true,
 				PreserveToolCallIDs:                 true,
 				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
+				ResponsesLite:                       responsesLite,
 			})
 			ensureCodexOAuthInstructionsField(decoded)
 			markDecodedModified()
@@ -3370,6 +3381,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				IsCodexCLI:                          isCodexCLI,
 				IsCompact:                           isCompactRequest,
 				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
+				ResponsesLite:                       responsesLite,
 			})
 		}
 		if codexResult.Modified {
@@ -4122,6 +4134,15 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		if normalized {
 			body = normalizedBody
+		}
+		historyBody, historyChanged, historyErr := normalizeOpenAIOAuthWebSearchHistoryForAccount(
+			body, account, isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)), isOpenAIResponsesCompactPath(c),
+		)
+		if historyErr != nil {
+			return nil, historyErr
+		}
+		if historyChanged {
+			body = historyBody
 		}
 		// OAuth requires upstream SSE, but the client still chooses its response
 		// framing. Compact always returns JSON regardless of the client flag.

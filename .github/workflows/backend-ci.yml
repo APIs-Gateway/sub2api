@@ -21,6 +21,44 @@ jobs:
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.26.6'
+      - name: OAuth web search history source and fixtures formatting (remote only)
+        working-directory: backend
+        run: |
+          git rev-parse HEAD
+          files="internal/service/openai_oauth_web_search_history.go internal/service/openai_oauth_web_search_history_test.go internal/service/openai_oauth_web_search_history_forward_test.go internal/service/openai_oauth_web_search_history_ws_test.go internal/repository/openai_oauth_web_search_history_integration_test.go internal/service/openai_codex_transform.go internal/service/openai_gateway_service.go internal/service/openai_ws_forwarder.go internal/service/openai_ws_http_bridge.go internal/service/openai_ws_v2_passthrough_adapter.go"
+          git hash-object $files
+          gofmt -d $files
+          test -z "$(gofmt -l $files)"
+      - name: OAuth web search history unchanged routing failure witness (actual remote HTTP)
+        working-directory: backend
+        run: |
+          baseline_dir="$RUNNER_TEMP/sub2api-oauth-websearch-7939-baseline"
+          git fetch --no-tags --depth=1 origin 06b47e4dbff92cb8a1153e71a65deb6fd012dbc6
+          git -c core.hooksPath=/dev/null worktree add --detach "$baseline_dir" 06b47e4dbff92cb8a1153e71a65deb6fd012dbc6
+          trap 'git -c core.hooksPath=/dev/null worktree remove --force "$baseline_dir"' EXIT
+          for file in openai_oauth_web_search_history.go openai_oauth_web_search_history_test.go openai_oauth_web_search_history_forward_test.go openai_oauth_web_search_history_ws_test.go; do
+            cp "internal/service/$file" "$baseline_dir/backend/internal/service/$file"
+          done
+          if (cd "$baseline_dir/backend" && go test -tags=unit -count=1 -timeout=2m -v -run '^TestOAuthWebSearchHistoryForward_ActualHTTP/passthrough_false/lite_false/none$' ./internal/service/) > "$RUNNER_TEMP/oauth-websearch-7939-baseline.log" 2>&1; then
+            cat "$RUNNER_TEMP/oauth-websearch-7939-baseline.log"
+            exit 1
+          else
+            baseline_status=$?
+          fi
+          cat "$RUNNER_TEMP/oauth-websearch-7939-baseline.log"
+          test "$baseline_status" -eq 1
+          grep -F -- '--- FAIL: TestOAuthWebSearchHistoryForward_ActualHTTP/passthrough_false/lite_false/none' "$RUNNER_TEMP/oauth-websearch-7939-baseline.log"
+          grep -F -- 'response protection is unavailable' "$RUNNER_TEMP/oauth-websearch-7939-baseline.log"
+      - name: OAuth web search history actual HTTP WS and guarded protocol routes (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -timeout=5m -v -run '^TestOAuthWebSearchHistory|^TestEnsureOpenAIOAuthWebSearchToolForHistory' ./internal/service/
+      - name: OAuth web search history actual wallet card settlement (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -timeout=10m -v -run '^TestOAuthWebSearchHistoryHTTP_' ./internal/repository/
       - name: Responses namespace contracts and lazy span boundaries (race)
         working-directory: backend
         run: go test -tags=unit -race -parallel=1 -count=1 -timeout=8m -v -run '(?i)namespace' ./internal/service/
