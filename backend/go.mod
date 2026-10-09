@@ -189,3 +189,6 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+// Controlled v3.57.0 snapshot with official HTTP/2 security backports; see third_party/req/UPSTREAM.md.
+replace github.com/imroc/req/v3 => ./third_party/req

@@ -57,6 +57,7 @@ WORKDIR /app/backend
 
 # Copy go mod files first (better caching)
 COPY backend/go.mod backend/go.sum ./
+COPY backend/third_party/req/ ./third_party/req/
 RUN go mod download
 
 # Copy backend source first
