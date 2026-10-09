@@ -7863,7 +7863,7 @@
         addUserId: '添加用戶 ID',
         removeUserId: '移除用戶 ID',
         title: 'OpenAI Fast/Flex 策略',
-        description: '基於請求體 service_tier 字段攔截/過濾/透傳 OpenAI fast(priority) 與 flex 請求；僅作用於 OpenAI 網關。',
+        description: '基於請求體 service_tier 字段攔截/過濾/透傳 OpenAI fast(priority)、Ultrafast 與 flex 請求；僅作用於 OpenAI 網關。',
         empty: '尚未配置任何規則。點擊下方按鈕新增。',
         ruleHeader: '規則 #{index}',
         removeRule: '刪除規則',
