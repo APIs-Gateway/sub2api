@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
@@ -20,7 +22,22 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.6'
+          go version | grep -q 'go1.26.9'
+      - name: Controlled req HTTP2 and dump/trace actual main-MVS tests, old-red witness and fix-block coverage
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+          REQ_SECURITY_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          REQ_SECURITY_EVIDENCE: ${{ runner.temp }}/req-http2-security-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash tools/req-http2-security-ci.sh
+      - name: Preserve controlled req complete actual evidence and raw atomic profiles
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: req-http2-security-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/req-http2-security-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
       - name: Responses namespace contracts and lazy span boundaries (race)
         working-directory: backend
         run: go test -tags=unit -race -parallel=1 -count=1 -timeout=8m -v -run '(?i)namespace' ./internal/service/
@@ -291,6 +308,7 @@ jobs:
             backend/coverage-unit.out
             backend/coverage-integration.out
             backend/coverage-setup-cli.out
+            backend/coverage-req-http2.out
           if-no-files-found: ignore
           retention-days: 14
       - name: Responses input token regression tests (actual results)
@@ -304,7 +322,7 @@ jobs:
       - name: Upload backend coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          files: backend/coverage-unit.out,backend/coverage-integration.out,backend/coverage-setup-cli.out
+          files: backend/coverage-unit.out,backend/coverage-integration.out,backend/coverage-setup-cli.out,backend/coverage-req-http2.out
           flags: backend
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: APIs-Gateway/sub2api
@@ -383,7 +401,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.6'
+          go version | grep -q 'go1.26.9'
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
