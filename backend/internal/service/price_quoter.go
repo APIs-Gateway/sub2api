@@ -99,7 +99,7 @@ var (
 	// ErrPriceQuoteGroupRequired 表示请求没有给出有效的分组 ID。
 	ErrPriceQuoteGroupRequired = infraerrors.BadRequest("PRICE_QUOTE_GROUP_REQUIRED", "group_id must be a positive integer")
 	// ErrPriceQuoteServiceTierInvalid 表示 service tier 不是网关认可的取值。
-	ErrPriceQuoteServiceTierInvalid = infraerrors.BadRequest("PRICE_QUOTE_SERVICE_TIER_INVALID", "service_tier must be one of priority, fast, flex, auto, default, scale")
+	ErrPriceQuoteServiceTierInvalid = infraerrors.BadRequest("PRICE_QUOTE_SERVICE_TIER_INVALID", "service_tier must be one of priority, fast, ultrafast, flex, auto, default, scale")
 )
 
 // quoteReferenceContextTokens 是报价展示单价所用的参考上下文长度。
@@ -620,7 +620,7 @@ func (q *PriceQuoter) fillTokenQuote(quote *Quote) {
 		}
 	} else if usePriorityServiceTierPricing(quote.serviceTier, pricing) {
 		serviceTier.Mode = "priority_card"
-	} else if multiplier := serviceTierCostMultiplier(quote.serviceTier); multiplier != 1 {
+	} else if multiplier := configuredServiceTierMultiplier(quote.serviceTier, pricing); multiplier != 1 {
 		serviceTier.Mode = "multiplier"
 		serviceTier.Multiplier = multiplier
 	}

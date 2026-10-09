@@ -198,6 +198,19 @@ jobs:
       - name: Unit tests (converted Responses input recovery)
         working-directory: backend
         run: go test -tags=unit -count=1 -run '^TestStructuredInputRecovery_|^TestConvertedResponsesInputStringRejection|^TestForwardAsChatCompletions_(ResponsesSupportedFallsBack|StructuredInput)' -v ./internal/service/
+      - name: Responses account waiting registration ownership (race, four controls)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestAccountWaitRegistration_Ownership$' ./internal/service/
+      - name: Responses actual Redis waiting cap, ownership and capacity races
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          go test -tags=integration -race -coverpkg=./internal/handler,./internal/service -covermode=atomic -coverprofile=coverage-responses-queue.out -count=1 -timeout=8m -v -run '^TestGenericResponsesWaitQueue_RealRedis$' ./internal/handler/
+          test -s coverage-responses-queue.out
+          bash ./tools/normalize-go-coverprofile.sh coverage-responses-queue.out
       - name: Gemini audio known sibling required shapes and preserved filters (race)
         working-directory: backend
         env:
@@ -231,6 +244,16 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=unit -race -count=1 -v -run '^TestHandleCCStreamingFromAnthropic_Ping|^TestCompatStream|^TestCompatProviderSSEError|^TestCompatReadersOversizedLine' ./internal/service/
+      - name: Astra Ultrafast forwarding, policy, live manifest and quote (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestAstraUltrafast_' ./internal/service/
+      - name: Astra Ultrafast actual HTTP WS wallet and card settlement (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestAstraUltrafastHTTP_' ./internal/repository/
       - name: Unit tests (race, matrix policy and shadow comparison)
         working-directory: backend
         env:
@@ -309,6 +332,7 @@ jobs:
             backend/coverage-unit.out
             backend/coverage-integration.out
             backend/coverage-setup-cli.out
+            backend/coverage-responses-queue.out
           if-no-files-found: ignore
           retention-days: 14
       - name: Responses input token regression tests (actual results)
@@ -322,7 +346,7 @@ jobs:
       - name: Upload backend coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          files: backend/coverage-unit.out,backend/coverage-integration.out,backend/coverage-setup-cli.out,backend/coverage-owned-responses-message.out
+          files: backend/coverage-unit.out,backend/coverage-integration.out,backend/coverage-setup-cli.out,backend/coverage-responses-queue.out,backend/coverage-owned-responses-message.out
           flags: backend
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: APIs-Gateway/sub2api
@@ -368,6 +392,9 @@ jobs:
       - name: Username draft ownership, server synchronization and API error controls (actual components)
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/components/user/profile/__tests__/ProfileEditForm.draft.spec.ts src/components/user/profile/__tests__/ProfileEditForm.spec.ts
+      - name: Passthrough rule per-rule toggle serialization and late response contracts (actual component)
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/components/admin/__tests__/ErrorPassthroughRulesModal.toggle.spec.ts
       - name: Usage tooltip currency and equivalent-rate actual regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/UsageView.spec.ts src/views/user/__tests__/UsageView.servedGroup.spec.ts src/utils/__tests__/rateDisplay.spec.ts
