@@ -2967,7 +2967,17 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if toolSchemaSanitized {
 		body = sanitizedToolBody
 	}
-	if account.IsOpenAI() && isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) {
+	responsesLite := isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader))
+	if responsesLite {
+		historyBody, historyChanged, historyErr := normalizeOpenAIOAuthWebSearchHistoryForAccount(body, account, true, isOpenAIResponsesCompactPath(c))
+		if historyErr != nil {
+			return nil, historyErr
+		}
+		if historyChanged {
+			body = historyBody
+		}
+	}
+	if account.IsOpenAI() && responsesLite {
 		liteBody, changed, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
 		if liteErr != nil {
 			param := "tools"
@@ -3362,6 +3372,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				SkipDefaultInstructions:             true,
 				PreserveToolCallIDs:                 true,
 				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
+				ResponsesLite:                       responsesLite,
 			})
 			ensureCodexOAuthInstructionsField(decoded)
 			markDecodedModified()
@@ -3370,6 +3381,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				IsCodexCLI:                          isCodexCLI,
 				IsCompact:                           isCompactRequest,
 				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
+				ResponsesLite:                       responsesLite,
 			})
 		}
 		if codexResult.Modified {
@@ -4122,6 +4134,15 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		if normalized {
 			body = normalizedBody
+		}
+		historyBody, historyChanged, historyErr := normalizeOpenAIOAuthWebSearchHistoryForAccount(
+			body, account, isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)), isOpenAIResponsesCompactPath(c),
+		)
+		if historyErr != nil {
+			return nil, historyErr
+		}
+		if historyChanged {
+			body = historyBody
 		}
 		// OAuth requires upstream SSE, but the client still chooses its response
 		// framing. Compact always returns JSON regardless of the client flag.
@@ -5879,7 +5900,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		// When the terminal event has an empty output array, reconstruct
 		// output from accumulated delta events so the client gets full content.
 		if len(gjson.GetBytes(finalResponse, "output").Array()) == 0 {
-			if outputJSON, reconstructed := reconstructResponseOutputFromSSE(bodyText); reconstructed {
+			if outputJSON, reconstructed := reconstructResponseOutputFromSSE(bodyText, gjson.GetBytes(finalResponse, "status").String()); reconstructed {
 				if patched, err := sjson.SetRawBytes(finalResponse, "output", outputJSON); err == nil {
 					finalResponse = patched
 				}
@@ -7077,6 +7098,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					handlePendingWriteError(err)
 				} else {
 					ObserveResponsesStreamSequence(c, dataBytes)
+					var queuedEvent apicompat.ResponsesStreamEvent
+					if json.Unmarshal(dataBytes, &queuedEvent) == nil {
+						streamOutputAccumulator.CommitWireEvent(&queuedEvent)
+					}
 					eventInProgress = true
 					if stageFirstOutput {
 						eventShouldFlush = eventShouldFlush || shouldFlush
@@ -7781,7 +7806,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		// output from accumulated delta events so the client gets full content.
 		// gjson Array() returns empty slice for null, missing, or empty arrays.
 		if len(gjson.GetBytes(finalResponse, "output").Array()) == 0 {
-			if outputJSON, reconstructed := reconstructResponseOutputFromSSE(bodyText); reconstructed {
+			if outputJSON, reconstructed := reconstructResponseOutputFromSSE(bodyText, gjson.GetBytes(finalResponse, "status").String()); reconstructed {
 				if patched, err := sjson.SetRawBytes(finalResponse, "output", outputJSON); err == nil {
 					finalResponse = patched
 				}
@@ -8224,7 +8249,7 @@ func normalizeResponsesStreamingTerminalOutput(data []byte, acc *apicompat.Buffe
 	// items arrive as done events too, so imageOutputs would duplicate them here.
 	if reconstructed, ok := doneItems.BuildOutput(); ok {
 		outputJSON = reconstructed
-	} else if reconstructed, ok := buildResponsesOutputJSON(acc, imageOutputs); ok {
+	} else if reconstructed, ok := buildResponsesOutputJSON(acc, imageOutputs, responsesTerminalMessageStatus(data)); ok {
 		outputJSON = reconstructed
 	}
 	updated, err := sjson.SetRawBytes(data, "response.output", outputJSON)
@@ -8234,10 +8259,32 @@ func normalizeResponsesStreamingTerminalOutput(data []byte, acc *apicompat.Buffe
 	return updated, true
 }
 
+func responsesTerminalMessageStatus(data []byte) string {
+	eventType := strings.TrimSpace(gjson.GetBytes(data, "type").String())
+	switch eventType {
+	case "response.incomplete", "response.cancelled", "response.canceled":
+		return eventType
+	}
+	if status := strings.TrimSpace(gjson.GetBytes(data, "response.status").String()); status != "" {
+		return status
+	}
+	return strings.TrimSpace(gjson.GetBytes(data, "type").String())
+}
+
 func responsesStreamEventMayContributeToOutput(eventType string) bool {
 	switch eventType {
 	case "response.output_text.delta",
+		"response.output_text.done",
 		"response.refusal.delta",
+		"response.refusal.done",
+		"response.content_part.added",
+		"response.content_part.done",
+		"response.output_item.done",
+		"response.completed",
+		"response.done",
+		"response.incomplete",
+		"response.cancelled",
+		"response.canceled",
 		"response.output_item.added",
 		"response.function_call_arguments.delta",
 		"response.reasoning_summary_text.delta":
@@ -8357,7 +8404,7 @@ func findRawCompactionItemFromSSE(bodyText string) (json.RawMessage, bool) {
 
 // reconstructResponseOutputFromSSE scans raw SSE body text for final output
 // items before falling back to delta reconstruction.
-func reconstructResponseOutputFromSSE(bodyText string) ([]byte, bool) {
+func reconstructResponseOutputFromSSE(bodyText string, terminalStatus ...string) ([]byte, bool) {
 	if outputJSON, ok := collectRawResponsesOutputItemsFromSSE(bodyText); ok {
 		return outputJSON, true
 	}
@@ -8376,16 +8423,26 @@ func reconstructResponseOutputFromSSE(bodyText string) ([]byte, bool) {
 			}
 		}
 	})
-	return buildResponsesOutputJSON(acc, imageOutputs)
+	status := ""
+	if len(terminalStatus) > 0 {
+		status = terminalStatus[0]
+	}
+	return buildResponsesOutputJSON(acc, imageOutputs, status)
 }
 
-func buildResponsesOutputJSON(acc *apicompat.BufferedResponseAccumulator, imageOutputs []json.RawMessage) ([]byte, bool) {
+func buildResponsesOutputJSON(acc *apicompat.BufferedResponseAccumulator, imageOutputs []json.RawMessage, terminalStatus ...string) ([]byte, bool) {
 	if (acc == nil || !acc.HasContent()) && len(imageOutputs) == 0 {
 		return nil, false
 	}
 	var output []json.RawMessage
 	if acc != nil && acc.HasContent() {
-		outputJSON, err := json.Marshal(acc.BuildOutput())
+		var items []apicompat.ResponsesOutput
+		if len(terminalStatus) > 0 && terminalStatus[0] != "" {
+			items = acc.BuildOutputForStatus(terminalStatus[0])
+		} else {
+			items = acc.BuildOutput()
+		}
+		outputJSON, err := json.Marshal(items)
 		if err == nil {
 			_ = json.Unmarshal(outputJSON, &output)
 		}
@@ -10302,7 +10359,7 @@ func normalizeOpenAIServiceTier(raw string) *string {
 	// 但能让直连 OpenAI SDK 的用户透传 auto/default/scale 以便抓包/调试。
 	// 真未知值仍返回 nil，由 normalizeResponsesBodyServiceTier 从 body 中删除。
 	switch value {
-	case "priority", "flex", "auto", "default", "scale":
+	case "priority", "ultrafast", "flex", "auto", "default", "scale":
 		return &value
 	default:
 		return nil

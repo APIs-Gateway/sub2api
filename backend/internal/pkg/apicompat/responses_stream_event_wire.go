@@ -8,7 +8,7 @@ import "encoding/json"
 // even when they hold a zero value: output_index/content_index/summary_index are
 // meaningful at 0, a function_call item must always carry call_id/name/arguments
 // (arguments may be ""), a message item must carry content:[] and an output_text
-// part must carry text/annotations/logprobs. Go's `omitempty` drops exactly those
+// part must carry text/annotations. The fork also emits optional logprobs:[]. Go's `omitempty` drops exactly those
 // zero values, and strict clients (Codex CLI) reject items/deltas whose required
 // fields are missing.
 //
@@ -131,16 +131,43 @@ func (e ResponsesStreamEvent) putItemID(m map[string]any) {
 // outputTextPartWire renders a content part for a message's output_text, always
 // carrying text/annotations/logprobs (matching cc-switch's push_text_delta).
 func outputTextPartWire(part *ResponsesContentPart) map[string]any {
-	text := ""
-	if part != nil {
-		text = part.Text
+	if part == nil {
+		part = &ResponsesContentPart{Type: "output_text"}
 	}
-	return map[string]any{
-		"type":        "output_text",
-		"text":        text,
-		"annotations": []any{},
-		"logprobs":    []any{},
+	// Do not turn refusal, input/media or other content into output_text.
+	m := make(map[string]any)
+	if len(part.rawJSON) > 0 {
+		var raw map[string]json.RawMessage
+		_ = json.Unmarshal(part.rawJSON, &raw)
+		for key, value := range raw {
+			m[key] = value
+		}
+	} else {
+		type alias ResponsesContentPart
+		encoded, _ := json.Marshal(alias(*part))
+		var raw map[string]json.RawMessage
+		_ = json.Unmarshal(encoded, &raw)
+		for key, value := range raw {
+			m[key] = value
+		}
 	}
+	if part.Type != "output_text" {
+		if part.Type == "refusal" {
+			m["refusal"] = part.Refusal
+		}
+		return m
+	}
+	m["type"] = "output_text"
+	m["text"] = part.Text
+	m["annotations"] = []any{}
+	m["logprobs"] = []any{}
+	if len(part.Annotations) > 0 && string(part.Annotations) != "null" {
+		m["annotations"] = part.Annotations
+	}
+	if len(part.Logprobs) > 0 && string(part.Logprobs) != "null" {
+		m["logprobs"] = part.Logprobs
+	}
+	return m
 }
 
 // summaryTextPartWire renders a reasoning summary part.
@@ -215,12 +242,8 @@ func responsesItemWire(item *ResponsesOutput) map[string]any {
 // (never null), with each output_text part carrying its text.
 func messageContentWire(parts []ResponsesContentPart) []map[string]any {
 	out := make([]map[string]any, 0, len(parts))
-	for _, p := range parts {
-		typ := p.Type
-		if typ == "" {
-			typ = "output_text"
-		}
-		out = append(out, map[string]any{"type": typ, "text": p.Text})
+	for i := range parts {
+		out = append(out, outputTextPartWire(&parts[i]))
 	}
 	return out
 }
