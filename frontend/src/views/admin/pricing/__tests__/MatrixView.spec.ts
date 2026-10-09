@@ -169,13 +169,15 @@ describe('MatrixView', () => {
     expect(wrapper.find('[data-test="matrix-empty"]').exists()).toBe(true)
   })
 
-  it('图例六种状态齐全，写操作按钮置灰', async () => {
+  it('图例六种状态齐全；没有分组切换到新配置时，批量调整按钮置灰并说明原因', async () => {
+    // 全部分组都还在用渠道配置
+    api.pricing.getGroupDerive.mockImplementation(async (id: number) => ({ ...derives[id], stored_config: { pricing_stage: 'legacy' } }))
     const wrapper = await mountPricingView(MatrixView)
     const legend = wrapper.find('[data-test="legend"]').text()
     for (const word of ['按官方价开放', '额外倍率', '自定义价', '没有任何价格', '不开放', '分组还没切换']) expect(legend).toContain(word)
     const edit = wrapper.find('[data-test="edit"]')
     expect(edit.attributes('disabled')).toBeDefined()
-    expect(edit.attributes('title')).toBe('即将开放')
+    expect(edit.attributes('title')).toContain('还没有分组切换')
   })
 
   it('点行头打开模型抽屉', async () => {

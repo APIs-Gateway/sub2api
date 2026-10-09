@@ -14,7 +14,7 @@ import {
   sourceKey,
   type PricingGroup
 } from '../pricingModel'
-import { catalog, derives, groupList, quotes } from './fixtures'
+import { catalog, derive, derives, groupList, quotes } from './fixtures'
 
 const legacyGroup: PricingGroup = { id: 1, name: 'g', platform: 'openai', rate: 1.4, stage: 'legacy', accessMode: 'open' }
 const v2Group: PricingGroup = { ...legacyGroup, id: 3, stage: 'v2' }
@@ -92,6 +92,18 @@ describe('分组与平台', () => {
     expect(buildGroup(groupList[2], derives[3])).toMatchObject({ stage: 'v2', accessMode: 'open', rate: 2 })
     expect(buildGroup(groupList[1], derives[2])).toMatchObject({ stage: 'legacy', accessMode: 'allowlist' })
     expect(buildGroup(groupList[0], null)).toMatchObject({ stage: 'legacy', accessMode: null })
+  })
+
+  it('v2 分组的准入模式以库里为准，派生值不一致时不用；非 v2 分组仍用派生值', () => {
+    const v2 = derive(3, 'anthropic', 'v2', 'open', ['m'], 'allowlist')
+    expect(buildGroup(groupList[2], v2)).toMatchObject({ stage: 'v2', accessMode: 'allowlist' })
+    // 库里没带准入模式（旧接口）时回落派生值
+    const noStored = { ...v2, stored_config: { pricing_stage: 'v2' as const, revision: 7 } }
+    expect(buildGroup(groupList[2], noStored)).toMatchObject({ accessMode: 'open' })
+    // legacy 分组即使带了 stored_config.access_mode 也不采用
+    const legacy = derive(1, 'openai', 'legacy', 'open', ['m'])
+    const withStored = { ...legacy, stored_config: { pricing_stage: 'legacy' as const, access_mode: 'allowlist' as const } }
+    expect(buildGroup(groupList[0], withStored)).toMatchObject({ accessMode: 'open' })
     expect(isGroupUnswitched(buildGroup(groupList[0], null))).toBe(true)
     expect(isGroupUnswitched(buildGroup(groupList[2], derives[3]))).toBe(false)
   })
