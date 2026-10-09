@@ -8,7 +8,7 @@
 # =============================================================================
 
 ARG NODE_IMAGE=node:24-alpine
-ARG GOLANG_IMAGE=golang:1.26.6-alpine
+ARG GOLANG_IMAGE=golang:1.26.9-alpine
 ARG ALPINE_IMAGE=alpine:3.21
 ARG POSTGRES_IMAGE=postgres:18-alpine
 ARG GOPROXY=https://goproxy.cn,direct
@@ -65,6 +65,7 @@ WORKDIR /app/backend
 
 # Copy go mod files first (better caching)
 COPY backend/go.mod backend/go.sum ./
+COPY backend/third_party/req/ ./third_party/req/
 RUN --mount=type=cache,id=sub2api-gomod,target=/go/pkg/mod \
     go mod download
 
