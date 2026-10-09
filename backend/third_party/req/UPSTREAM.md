@@ -92,6 +92,37 @@ coverage requirements. No existing original assertion, race detector or
 coverage threshold is removed. Candidate hashes and pending remote evidence
 are not approval.
 
+## Required default HTTP/2 TLS trace correction
+
+The [independent actual exact88 failure review](https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227)
+records two failed fresh HTTP/2 TLS trace assertions:
+`TestReqTraceSecurity_NormalTLSAndReuse/HTTP2` and
+`TestReqTraceSecurity_RequestReuse/HTTP2`. The default private transport used
+`tls.Dialer.DialContext` without TLS handshake trace callbacks; custom-handshake
+callbacks were already present. This is an additional controlled local repair
+in the already-adapted `internal/http2/transport.go`, not an official security
+port or a relaxed test expectation.
+
+The default branch follows the [Go1.26.9 TLS dial implementation](https://github.com/golang/go/blob/go1.26.9/src/crypto/tls/tls.go):
+TCP connection completes using a zero-value net.Dialer and the caller context;
+TLSHandshakeStart precedes only the actual TLS HandshakeContext. Failure closes
+the raw connection and reports TLSHandshakeDone with the error; success reports
+the actual ConnectionState. Nil/empty-server-name config normalization retains
+the original TLS dial semantics. The existing zero dialer timeout/deadline and
+caller cancellation apply as before; this correction does not introduce a new
+TLSHandshakeTimeout policy. Custom TLS handshakes/dialers, browser fingerprints,
+ALPN and connection reuse retain their paths.
+
+The original78 expected leaves remain required, with four additional real-socket
+default TLS callback leaves (82 total): explicit/derived SNI successful handshakes,
+nil-config certificate verification failure, and caller cancellation during a
+blocked handshake. Failure cases require raw connection closure and exact callback
+order/error; successful cases require the actual TLS state without input-config
+mutation. The failed exact88 run stopped original
+all-tests, old-wire-red and final repair-block85; its partial results do not
+approve this correction. New exact-head remote evidence and unchanged Codecov85
+remain mandatory.
+
 ## Licenses
 
 Retain the original MIT `LICENSE` for req and all original copyright notices.

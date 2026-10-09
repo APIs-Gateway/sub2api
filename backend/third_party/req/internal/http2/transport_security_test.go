@@ -3,13 +3,20 @@ package http2
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httptrace"
+	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -478,6 +485,221 @@ func TestReqHTTP2Security_ResponseFramingHeaders(t *testing.T) {
 		r := p.result(c)
 		if r.err != nil || string(r.body) != "ok" || r.response.Trailer.Get("X-End") != "retained" {
 			t.Fatalf("body/trailer lost: %+v", r)
+		}
+	})
+}
+
+// These fixtures use only APIs present in the unmodified v3.57.0 wire witness.
+type reqSecurityTLSCallbacks struct {
+	mu            sync.Mutex
+	starts, dones int
+	state         tls.ConnectionState
+	err           error
+	sequence      []string
+}
+
+func (r *reqSecurityTLSCallbacks) context(ctx context.Context) context.Context {
+	return httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		TLSHandshakeStart: func() {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.starts++
+			r.sequence = append(r.sequence, "start")
+		},
+		TLSHandshakeDone: func(state tls.ConnectionState, err error) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.dones++
+			r.state, r.err = state, err
+			r.sequence = append(r.sequence, "done")
+		},
+	})
+}
+
+func (r *reqSecurityTLSCallbacks) check(t *testing.T, actual error) tls.ConnectionState {
+	t.Helper()
+	r.mu.Lock()
+	starts, dones, state, err := r.starts, r.dones, r.state, r.err
+	sequence := append([]string(nil), r.sequence...)
+	r.mu.Unlock()
+	if starts != 1 || dones != 1 || len(sequence) != 2 || sequence[0] != "start" || sequence[1] != "done" {
+		t.Fatalf("TLS callbacks: starts=%d dones=%d sequence=%v", starts, dones, sequence)
+	}
+	if err != actual {
+		t.Fatalf("TLS Done error=%v, actual=%v", err, actual)
+	}
+	return state
+}
+
+func TestReqHTTP2Security_DefaultTLSCallbacks(t *testing.T) {
+	for _, name := range []string{"explicit_server_name", "inferred_server_name", "nil_config_certificate_error"} {
+		t.Run(name, func(t *testing.T) {
+			closed := make(chan struct{}, 1)
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			server.EnableHTTP2 = true
+			server.Config.ErrorLog = log.New(io.Discard, "", 0)
+			server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+				if state == http.StateClosed {
+					select {
+					case closed <- struct{}{}:
+					default:
+					}
+				}
+			}
+			server.StartTLS()
+			t.Cleanup(server.Close)
+			u, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel()
+			record := new(reqSecurityTLSCallbacks)
+			var cfg *tls.Config
+			originalName := ""
+			if name != "nil_config_certificate_error" {
+				roots := x509.NewCertPool()
+				roots.AddCert(server.Certificate())
+				cfg = &tls.Config{RootCAs: roots, NextProtos: []string{NextProtoTLS}}
+				if name == "explicit_server_name" {
+					cfg.ServerName = "example.com"
+				}
+				originalName = cfg.ServerName
+			}
+			conn, err := (&Transport{Options: &transport.Options{}}).dialTLSWithContext(record.context(ctx), "tcp", u.Host, cfg)
+			if conn != nil {
+				defer conn.Close()
+			}
+			state := record.check(t, err)
+			if name == "nil_config_certificate_error" {
+				var certificateError x509.UnknownAuthorityError
+				if conn != nil || err == nil || !errors.As(err, &certificateError) {
+					t.Fatalf("nil config must retain certificate verification: conn=%v error=%v", conn, err)
+				}
+				if state.HandshakeComplete {
+					t.Fatal("failed TLS Done reported completed handshake")
+				}
+				select {
+				case <-closed:
+				case <-ctx.Done():
+					t.Fatal("certificate failure did not close raw connection")
+				}
+				return
+			}
+			if err != nil || conn == nil {
+				t.Fatalf("TLS dial: %v", err)
+			}
+			if !state.HandshakeComplete || state.NegotiatedProtocol != NextProtoTLS || len(state.PeerCertificates) == 0 {
+				t.Fatalf("TLS Done missing actual successful state: %+v", state)
+			}
+			if cfg.ServerName != originalName {
+				t.Fatalf("TLS dial mutated input ServerName=%q", cfg.ServerName)
+			}
+			actual := conn.ConnectionState()
+			if actual.HandshakeComplete != state.HandshakeComplete || actual.NegotiatedProtocol != state.NegotiatedProtocol || actual.PeerCertificates[0] != state.PeerCertificates[0] {
+				t.Fatal("TLS Done state differs from returned connection")
+			}
+		})
+	}
+	t.Run("canceled_handshake", func(t *testing.T) {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		hello := make(chan error, 1)
+		peerDone := make(chan error, 1)
+		peerJoined := make(chan struct{})
+		acceptedReady := make(chan struct{})
+		var acceptedConn net.Conn
+		go func() {
+			defer close(peerJoined)
+			conn, err := listener.Accept()
+			acceptedConn = conn
+			close(acceptedReady)
+			if err != nil {
+				hello <- err
+				peerDone <- err
+				return
+			}
+			defer conn.Close()
+			conn.SetDeadline(time.Now().Add(8 * time.Second))
+			var first [1]byte
+			_, err = io.ReadFull(conn, first[:])
+			if err == nil && first[0] != 22 {
+				err = fmt.Errorf("expected TLS handshake record, got %d", first[0])
+			}
+			hello <- err
+			if err == nil {
+				_, err = io.Copy(io.Discard, conn)
+			}
+			peerDone <- err
+		}()
+		deadline, stop := context.WithTimeout(context.Background(), 8*time.Second)
+		defer stop()
+		ctx, cancel := context.WithCancel(deadline)
+		defer cancel()
+		type dialResult struct {
+			conn net.Conn
+			err  error
+		}
+		result := make(chan dialResult, 1)
+		dialJoined := make(chan struct{})
+		record := new(reqSecurityTLSCallbacks)
+		go func() {
+			defer close(dialJoined)
+			conn, err := (&Transport{Options: &transport.Options{}}).dialTLSWithContext(record.context(ctx), "tcp", listener.Addr().String(), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{NextProtoTLS}})
+			result <- dialResult{conn, err}
+		}()
+		t.Cleanup(func() {
+			cancel()
+			listener.Close()
+			select {
+			case <-acceptedReady:
+				if acceptedConn != nil {
+					acceptedConn.Close()
+				}
+			case <-time.After(2 * time.Second):
+				t.Error("peer accept did not join for cleanup")
+			}
+			for name, done := range map[string]<-chan struct{}{"dial": dialJoined, "peer": peerJoined} {
+				select {
+				case <-done:
+				case <-time.After(2 * time.Second):
+					t.Errorf("%s goroutine did not join", name)
+				}
+			}
+		})
+		select {
+		case err := <-hello:
+			if err != nil {
+				t.Fatalf("real TLS peer: %v", err)
+			}
+		case <-deadline.Done():
+			t.Fatal("TLS ClientHello was not observed")
+		}
+		cancel()
+		select {
+		case got := <-result:
+			if got.conn != nil {
+				got.conn.Close()
+			}
+			if got.conn != nil || !errors.Is(got.err, context.Canceled) {
+				t.Fatalf("canceled handshake: conn=%v error=%v", got.conn, got.err)
+			}
+			state := record.check(t, got.err)
+			if state.HandshakeComplete {
+				t.Fatal("canceled TLS Done reported completed handshake")
+			}
+		case <-deadline.Done():
+			t.Fatal("canceled TLS dial did not join")
+		}
+		select {
+		case err := <-peerDone:
+			if err != nil {
+				t.Fatalf("canceled TLS connection did not reach peer EOF: %v", err)
+			}
+		case <-deadline.Done():
+			t.Fatal("canceled raw connection did not close")
 		}
 	})
 }

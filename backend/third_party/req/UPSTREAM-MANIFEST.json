@@ -674,7 +674,8 @@
     "internal/http2/transport.go": [
       "cc7d34fd2dd5864bcafe3e5e0a84919240be98c0",
       "28247830e9fb37184c6be718f483a0c7d0949022",
-      "local-required-dump-terminal-ordering-after-verified-original-race"
+      "local-required-dump-terminal-ordering-after-verified-original-race",
+      "local-required-default-h2-tls-trace-after-verified-named-failure"
     ],
     "internal/http2/frame.go": [
       "57f4235f83712a299328015548240512213a3852"
@@ -718,12 +719,13 @@
     },
     {
       "path": "internal/http2/transport.go",
-      "sha256": "5e8658d55f41482b4224a447d33a42001fb87e3d001afcb6ddbdf4e2ddeb628b",
-      "bytes": 91881,
+      "sha256": "9a76375193314f3c6988501167d5304a6bda8ede9ab2cc1dcb0d6b7720900927",
+      "bytes": 92700,
       "sources": [
         "cc7d34fd2dd5864bcafe3e5e0a84919240be98c0",
         "28247830e9fb37184c6be718f483a0c7d0949022",
-        "local-required-dump-terminal-ordering-after-verified-original-race"
+        "local-required-dump-terminal-ordering-after-verified-original-race",
+        "local-required-default-h2-tls-trace-after-verified-named-failure"
       ]
     },
     {
@@ -767,7 +769,8 @@
       ]
     }
   ],
-  "adaptedCandidateStatus": "final remote-formatted source candidate, pending immutable Git freeze and independent exact-head review; no runtime/approval claim",
+  "adaptedCandidateStatus": "default H2 TLS trace source correction candidate after actual88 named failure; independent static review and new frozen-head remote evidence pending; no approval",
   "originalUnmodifiedFileCount": 125,
-  "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861"
+  "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
+  "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227"
 }

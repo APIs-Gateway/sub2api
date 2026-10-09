@@ -63,8 +63,18 @@ def inventory(backend):
 def verify_named(backend, evidence, filename):
     expected = inventory(backend)
     values, packages = successful_events(evidence / filename)
-    require(expected["privateCount"] == 37 and expected["publicCount"] == 4,
-            "Original HTTP2 named inventory must retain37 private+4 public leaves")
+    default_tls = {
+        "TestReqHTTP2Security_DefaultTLSCallbacks/explicit_server_name",
+        "TestReqHTTP2Security_DefaultTLSCallbacks/inferred_server_name",
+        "TestReqHTTP2Security_DefaultTLSCallbacks/nil_config_certificate_error",
+        "TestReqHTTP2Security_DefaultTLSCallbacks/canceled_handshake",
+    }
+    actual_default_tls = {name for name in expected["privateLeaves"]
+                          if name.startswith("TestReqHTTP2Security_DefaultTLSCallbacks/")}
+    require(expected["privateCount"] == 41 and expected["publicCount"] == 4 and
+            actual_default_tls == default_tls and
+            len(set(expected["privateLeaves"]) - default_tls) == 37,
+            "Retain37 original private+4 public HTTP2 leaves and4 default TLS leaves")
     proof = []
     kinds = ("private", "public", "dump", "trace", "dumpPublic")
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),

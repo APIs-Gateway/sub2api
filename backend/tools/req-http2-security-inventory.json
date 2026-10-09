@@ -37,9 +37,13 @@
     "TestReqHTTP2Security_TrailerExpansionBudget/limit_MaxUint32",
     "TestReqHTTP2Security_TruncatedContinuationIsBounded",
     "TestReqHTTP2Security_HeaderValidationAndDecoderState/invalid_pseudo_header",
-    "TestReqHTTP2Security_HeaderValidationAndDecoderState/dynamic_state_after_truncation"
+    "TestReqHTTP2Security_HeaderValidationAndDecoderState/dynamic_state_after_truncation",
+    "TestReqHTTP2Security_DefaultTLSCallbacks/explicit_server_name",
+    "TestReqHTTP2Security_DefaultTLSCallbacks/inferred_server_name",
+    "TestReqHTTP2Security_DefaultTLSCallbacks/nil_config_certificate_error",
+    "TestReqHTTP2Security_DefaultTLSCallbacks/canceled_handshake"
   ],
-  "privateCount": 37,
+  "privateCount": 41,
   "publicPackage": "github.com/imroc/req/v3",
   "publicLeaves": [
     "TestReqHTTP2Security_PublicFirefoxTLSProxyAndReuse/direct_firefox",
@@ -99,5 +103,5 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 78
+  "totalNamedLeaves": 82
 }

@@ -606,8 +606,8 @@ func (tlsHandshakeTimeoutError) Timeout() bool   { return true }
 func (tlsHandshakeTimeoutError) Temporary() bool { return true }
 func (tlsHandshakeTimeoutError) Error() string   { return "net/http: TLS handshake timeout" }
 
-// dialTLSWithContext uses tls.Dialer, added in Go 1.15, to open a TLS
-// connection.
+// dialTLSWithContext opens a TLS connection and traces the handshake separately
+// from the underlying TCP connection.
 func (t *Transport) dialTLSWithContext(ctx context.Context, network, addr string, cfg *tls.Config) (reqtls.Conn, error) {
 	if t.TLSHandshakeContext != nil {
 		conn, err := zeroDialer.DialContext(ctx, network, addr)
@@ -654,14 +654,38 @@ func (t *Transport) dialTLSWithContext(ctx context.Context, network, addr string
 			return tlsCn, nil
 		}
 	} else {
-		dialer := &tls.Dialer{
-			Config: cfg,
-		}
-		conn, err := dialer.DialContext(ctx, network, addr)
+		// Match tls.Dialer's nil NetDialer: a zero-value dialer uses the
+		// caller's context for both TCP connection and TLS handshake.
+		conn, err := new(net.Dialer).DialContext(ctx, network, addr)
 		if err != nil {
 			return nil, err
 		}
-		tlsCn := conn.(reqtls.Conn)
+		if cfg == nil {
+			cfg = new(tls.Config)
+		}
+		if cfg.ServerName == "" {
+			colonPos := strings.LastIndex(addr, ":")
+			if colonPos == -1 {
+				colonPos = len(addr)
+			}
+			cfg = cfg.Clone()
+			cfg.ServerName = addr[:colonPos]
+		}
+		tlsCn := tls.Client(conn, cfg)
+		trace := httptrace.ContextClientTrace(ctx)
+		if trace != nil && trace.TLSHandshakeStart != nil {
+			trace.TLSHandshakeStart()
+		}
+		if err := tlsCn.HandshakeContext(ctx); err != nil {
+			conn.Close()
+			if trace != nil && trace.TLSHandshakeDone != nil {
+				trace.TLSHandshakeDone(tls.ConnectionState{}, err)
+			}
+			return nil, err
+		}
+		if trace != nil && trace.TLSHandshakeDone != nil {
+			trace.TLSHandshakeDone(tlsCn.ConnectionState(), nil)
+		}
 		return tlsCn, nil
 	}
 }
