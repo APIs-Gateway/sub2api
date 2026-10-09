@@ -23,10 +23,10 @@ grep -q 'go1.26.9 ' "$evidence/go-version.txt"
 go list -m -json all > "$evidence/modules.json"
 go list -json "$module/..." > "$evidence/packages.json"
 python3 "$checker" packages "$backend" "$evidence"
-gofmt -d third_party/req/internal/http2/{flow,transport,frame}.go third_party/req/internal/http2/{flow,transport,frame}_security_test.go third_party/req/transport_security_test.go > "$evidence/gofmt.diff"
+gofmt -d third_party/req/internal/http2/{flow,transport,frame}.go third_party/req/internal/http2/{flow,transport,frame}_security_test.go third_party/req/transport_security_test.go third_party/req/internal/dump/{dump.go,dump_concurrency_test.go} third_party/req/{request,response,trace,dump_concurrency_test,trace_concurrency_test}.go > "$evidence/gofmt.diff"
 test ! -s "$evidence/gofmt.diff"
 # -p bounds compiler parallelism; -parallel bounds tests within each package.
-go test -p=1 -parallel=1 -race -count=1 -timeout=10m -json -run '^TestReqHTTP2Security_' -covermode=atomic -coverpkg="$module/..." -coverprofile="$evidence/named.raw.out" "$private" "$module" > "$evidence/named.json" 2> "$evidence/named.stderr"
+go test -p=1 -parallel=1 -race -count=1 -timeout=10m -json -run '^(TestReqHTTP2Security_|TestDumper|TestReqDumpSecurity_|TestReqTraceSecurity_)' -covermode=atomic -coverpkg="$module/..." -coverprofile="$evidence/named.raw.out" "$private" "$module/internal/dump" "$module" > "$evidence/named.json" 2> "$evidence/named.stderr"
 python3 "$checker" named "$backend" "$evidence"
 # Wildcard deliberately omits the original internal/testdata helper suite.
 # Its cert_test.go lacks an io import; retain both original files verbatim.

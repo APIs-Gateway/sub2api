@@ -63,11 +63,16 @@ def inventory(backend):
 def verify_named(backend, evidence, filename):
     expected = inventory(backend)
     values, packages = successful_events(evidence / filename)
+    require(expected["privateCount"] == 37 and expected["publicCount"] == 4,
+            "Original HTTP2 named inventory must retain37 private+4 public leaves")
     proof = []
-    for kind in ("private", "public"):
+    kinds = ("private", "public", "dump", "trace", "dumpPublic")
+    require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
+            "Incomplete total named leaf inventory")
+    for kind in kinds:
         package = expected[kind + "Package"]
         leaves = expected[kind + "Leaves"]
-        require(len(leaves) == expected[kind + "Count"] and len(leaves) == len(set(leaves)), "Invalid inventory")
+        require(len(leaves) == expected[kind + "Count"] and leaves and len(leaves) == len(set(leaves)), "Invalid inventory")
         require(package in packages, f"Missing package PASS: {package}")
         for test in leaves:
             actual = [v for v in values if v.get("Package") == package and v.get("Test") == test]
@@ -75,7 +80,8 @@ def verify_named(backend, evidence, filename):
             require(sum(v.get("Action") == "pass" for v in actual) == 1, f"Missing/duplicate PASS {test}")
             proof.append({"package": package, "test": test, "actions": [v["Action"] for v in actual]})
     # Detect new security leaves accidentally omitted from the frozen inventory.
-    runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith("TestReqHTTP2Security_")}
+    prefixes = ("TestReqHTTP2Security_", "TestDumper", "TestReqTraceSecurity_", "TestReqDumpSecurity_")
+    runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")
     report(evidence, filename + ".inventory-proof.json", proof)
@@ -121,11 +127,15 @@ def main():
             require(not path.is_symlink(), "Unexpected controlled module symlink")
             if path.is_file():
                 actual_paths.add(path.relative_to(controlled).as_posix())
-        require(len(expected_paths) == 139 and actual_paths == expected_paths,
-                "Controlled module must contain exactly132 originals+7 declared files")
+        require(len(manifest["originalFiles"]) == 132 and
+                len(expected_paths) == 132 + len(manifest["newOwnedFiles"]) and
+                actual_paths == expected_paths,
+                "Controlled module must contain exactly132 originals+declared owned files")
         adaptations = set(manifest["allowedProductionAdaptations"])
-        require(adaptations == {"internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go"}, "Unexpected production adaptation")
-        require(len(manifest["adaptedCandidateFiles"]) == 3 and
+        require(adaptations == {"internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
+                                "internal/dump/dump.go", "request.go", "response.go", "trace.go"},
+                "Unexpected or missing production adaptation")
+        require(len(manifest["adaptedCandidateFiles"]) == 7 and
                 {v["path"] for v in manifest["adaptedCandidateFiles"]} == adaptations,
                 "Incomplete adapted source hash inventory")
         for item in manifest["originalFiles"]:
@@ -246,8 +256,9 @@ def coverage(backend, evidence):
         (evidence / (kind + ".mapped.out")).write_text("\n".join(mapped) + "\n")
     report(evidence, "coverage-path-only-proof.json", proofs)
     result = []
-    for name in ("flow.go", "transport.go", "frame.go"):
-        relative = "internal/http2/" + name
+    adapted = ("internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
+               "internal/dump/dump.go", "request.go", "response.go", "trace.go")
+    for relative in adapted:
         old = (evidence / "original" / relative).read_text().splitlines()
         new = (backend / "third_party/req" / relative).read_text().splitlines()
         added = set()
@@ -264,7 +275,7 @@ def coverage(backend, evidence):
         total = sum(v["statements"] for v in selected)
         hit = sum(v["statements"] for v in selected if v["count"] > 0)
         result.append({"path": path, "addedLines": sorted(added), "blocks": selected, "coveredStatements": hit, "statements": total, "percent": 100 * hit / total if total else 0})
-    report(evidence, "official-adapted-fix-block-coverage.json", result)
+    report(evidence, "official-and-local-adapted-fix-block-coverage.json", result)
     require(all(v["statements"] > 0 and 100 * v["coveredStatements"] >= 85 * v["statements"] for v in result), "Actual added fix-block coverage below85; Codecov85 also remains required")
 
 

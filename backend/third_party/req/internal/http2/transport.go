@@ -1460,9 +1460,6 @@ func (cs *clientStream) writeRequest(req *http.Request, streamf func(*clientStre
 			}
 		} else {
 			cs.sentEndStream = true
-			for _, dump := range bodyDumps {
-				dump.DumpDefault([]byte("\r\n\r\n"))
-			}
 		}
 	}
 
@@ -1536,7 +1533,7 @@ func (cs *clientStream) encodeAndWriteHeaders(req *http.Request, dumps []*dump.D
 	// Write the request.
 	endStream := !hasBody && !hasTrailers
 	cs.sentHeaders = true
-	err = cc.writeHeaders(cs.ID, endStream, int(cc.maxFrameSize), hdrs)
+	err = cc.writeHeaders(cs.ID, endStream, int(cc.maxFrameSize), hdrs, nil)
 	traceWroteHeaders(cs.trace)
 	return err
 }
@@ -1641,7 +1638,15 @@ func (cc *ClientConn) awaitOpenSlotForStreamLocked(cs *clientStream) error {
 }
 
 // requires cc.wmu be held
-func (cc *ClientConn) writeHeaders(streamID uint32, endStream bool, maxFrameSize int, hdrs []byte) error {
+func (cc *ClientConn) writeHeaders(streamID uint32, endStream bool, maxFrameSize int, hdrs []byte, endDumps []*dump.Dumper) error {
+	if cc.werr == nil && endStream {
+		// Publish attempted terminal framing before any bufio automatic flush
+		// can make END_STREAM visible. A subsequent I/O failure cannot retract
+		// bytes already emitted to a caller's debug writer.
+		for _, d := range endDumps {
+			d.DumpDefault([]byte("\r\n\r\n"))
+		}
+	}
 	first := true // first frame written (HEADERS is first, then CONTINUATION)
 	for len(hdrs) > 0 && cc.werr == nil {
 		chunk := hdrs
@@ -1755,6 +1760,13 @@ func (cs *clientStream) writeRequestBody(req *http.Request, dumps []*dump.Dumper
 			for _, dump := range dumps {
 				dump.DumpRequestBody(data)
 			}
+			// WriteData may flush internally for large payloads; finish the
+			// debug representation before handing terminal bytes to the writer.
+			if endStream {
+				for _, d := range dumps {
+					d.DumpDefault([]byte("\r\n\r\n"))
+				}
+			}
 			return cc.fr.WriteData(streamID, endStream, data)
 		}
 	}
@@ -1856,9 +1868,9 @@ func (cs *clientStream) writeRequestBody(req *http.Request, dumps []*dump.Dumper
 	// Two ways to send END_STREAM: either with trailers, or
 	// with an empty DATA frame.
 	if len(trls) > 0 {
-		err = cc.writeHeaders(cs.ID, true, maxFrameSize, trls)
+		err = cc.writeHeaders(cs.ID, true, maxFrameSize, trls, dumps)
 	} else {
-		err = cc.fr.WriteData(cs.ID, true, nil)
+		err = writeData(cs.ID, true, nil)
 	}
 	if ferr := cc.bw.Flush(); ferr != nil && err == nil {
 		err = ferr

@@ -65,9 +65,25 @@ type Request struct {
 	outputFile               string
 	output                   io.Writer
 	trace                    *clientTrace
-	dumpBuffer               *bytes.Buffer
+	dumpBuffer               *dump.Buffer
 	responseReturnTime       time.Time
 	afterResponse            []ResponseMiddleware
+}
+
+// requestDumpContext owns only the request's dump value. Renewing an attempt
+// replaces this top-level wrapper, preserving the caller's context without
+// retaining every retired dumper in an unbounded WithValue parent chain.
+// Published wrappers remain immutable for transport goroutines of old attempts.
+type requestDumpContext struct {
+	context.Context
+	dumper *dump.Dumper
+}
+
+func (c *requestDumpContext) Value(key any) any {
+	if key == dump.DumperKey {
+		return c.dumper
+	}
+	return c.Context.Value(key)
 }
 
 type GetContentFunc func() (io.ReadCloser, error)
@@ -82,12 +98,13 @@ func (r *Request) getHeader(key string) string {
 // TraceInfo returns the trace information, only available if trace is enabled
 // (see Request.EnableTrace and Client.EnableTraceAll).
 func (r *Request) TraceInfo() TraceInfo {
-	ct := r.trace
+	trace := r.trace
 
-	if ct == nil {
+	if trace == nil {
 		return TraceInfo{}
 	}
 
+	ct := trace.snapshot()
 	ti := TraceInfo{
 		IsConnReused:  ct.gotConnInfo.Reused,
 		IsConnWasIdle: ct.gotConnInfo.WasIdle,
@@ -96,24 +113,24 @@ func (r *Request) TraceInfo() TraceInfo {
 
 	endTime := ct.endTime
 	if endTime.IsZero() { // in case timeout
-		endTime = r.responseReturnTime
+		endTime = ct.returnTime
 	}
 
 	if !ct.tlsHandshakeStart.IsZero() {
 		if !ct.tlsHandshakeDone.IsZero() {
-			ti.TLSHandshakeTime = ct.tlsHandshakeDone.Sub(ct.tlsHandshakeStart)
+			ti.TLSHandshakeTime = traceDuration(ct.tlsHandshakeDone, ct.tlsHandshakeStart)
 		} else {
-			ti.TLSHandshakeTime = endTime.Sub(ct.tlsHandshakeStart)
+			ti.TLSHandshakeTime = traceDuration(endTime, ct.tlsHandshakeStart)
 		}
 	}
 
 	if ct.gotConnInfo.Reused {
-		ti.TotalTime = endTime.Sub(ct.getConn)
+		ti.TotalTime = traceDuration(endTime, ct.getConn)
 	} else {
 		if ct.dnsStart.IsZero() {
-			ti.TotalTime = endTime.Sub(r.StartTime)
+			ti.TotalTime = traceDuration(endTime, r.StartTime)
 		} else {
-			ti.TotalTime = endTime.Sub(ct.dnsStart)
+			ti.TotalTime = traceDuration(endTime, ct.dnsStart)
 		}
 	}
 
@@ -123,23 +140,23 @@ func (r *Request) TraceInfo() TraceInfo {
 	}
 
 	if !ct.dnsStart.IsZero() {
-		ti.DNSLookupTime = dnsDone.Sub(ct.dnsStart)
+		ti.DNSLookupTime = traceDuration(dnsDone, ct.dnsStart)
 	}
 
 	// Only calculate on successful connections
 	if !ct.connectDone.IsZero() {
-		ti.TCPConnectTime = ct.connectDone.Sub(dnsDone)
+		ti.TCPConnectTime = traceDuration(ct.connectDone, dnsDone)
 	}
 
 	// Only calculate on successful connections
 	if !ct.gotConn.IsZero() {
-		ti.ConnectTime = ct.gotConn.Sub(ct.getConn)
+		ti.ConnectTime = traceDuration(ct.gotConn, ct.getConn)
 	}
 
 	// Only calculate on successful connections
 	if !ct.gotFirstResponseByte.IsZero() {
-		ti.FirstResponseTime = ct.gotFirstResponseByte.Sub(ct.gotConn)
-		ti.ResponseTime = endTime.Sub(ct.gotFirstResponseByte)
+		ti.FirstResponseTime = traceDuration(ct.gotFirstResponseByte, ct.gotConn)
+		ti.ResponseTime = traceDuration(endTime, ct.gotFirstResponseByte)
 	}
 
 	// Capture remote address info when connection is non-nil
@@ -646,12 +663,20 @@ func (r *Request) newErrorResponse(err error) *Response {
 // Do fires http request, 0 or 1 context is allowed, and returns the *Response which
 // is always not nil, and Response.Err is not nil if error occurs.
 func (r *Request) Do(ctx ...context.Context) *Response {
+	// Sequential reuse starts a new trace; callbacks retained by the previous
+	// transport attempt keep their own frozen state.
+	if r.trace != nil {
+		r.trace = &clientTrace{}
+	}
 	if len(ctx) > 0 && ctx[0] != nil {
 		r.ctx = ctx[0]
 	}
 
 	defer func() {
 		r.responseReturnTime = time.Now()
+		if r.trace != nil {
+			r.trace.finish(r.responseReturnTime, false)
+		}
 	}()
 	if r.error != nil {
 		return r.newErrorResponse(r.error)
@@ -685,6 +710,15 @@ func (r *Request) do() (resp *Response, err error) {
 		for _, f := range r.client.beforeRequest {
 			if err = f(r.client, r); err != nil {
 				return
+			}
+		}
+
+		// Snapshot the final request configuration after before-request hooks.
+		// Exported options may have been configured after EnableDump; only an
+		// already-enabled request gets a new immutable attempt sink.
+		if r.dumpOptions != nil {
+			if _, enabled := r.Context().Value(dump.DumperKey).(*dump.Dumper); enabled {
+				r.EnableDump()
 			}
 		}
 
@@ -736,6 +770,7 @@ func (r *Request) do() (resp *Response, err error) {
 			r.dumpBuffer.Reset()
 		}
 		if r.trace != nil {
+			r.trace.finish(time.Now(), false)
 			r.trace = &clientTrace{}
 		}
 		resp.body = nil
@@ -1025,9 +1060,9 @@ func (r *Request) EnableTrace() *Request {
 	return r
 }
 
-func (r *Request) getDumpBuffer() *bytes.Buffer {
+func (r *Request) getDumpBuffer() *dump.Buffer {
 	if r.dumpBuffer == nil {
-		r.dumpBuffer = new(bytes.Buffer)
+		r.dumpBuffer = new(dump.Buffer)
 	}
 	return r.dumpBuffer
 }
@@ -1075,12 +1110,30 @@ func (r *Request) SetDumpOptions(opt *DumpOptions) *Request {
 	} else {
 		r.dumpOptions = opt
 	}
+	if _, enabled := r.Context().Value(dump.DumperKey).(*dump.Dumper); enabled {
+		r.EnableDump()
+	}
 	return r
 }
 
 // EnableDump enables dump, including all content for the request and response by default.
 func (r *Request) EnableDump() *Request {
-	return r.SetContext(context.WithValue(r.Context(), dump.DumperKey, newDumper(r.getDumpOptions())))
+	opt := r.getDumpOptions().Clone()
+	if r.dumpBuffer != nil {
+		// Every attempt owns an immutable sink; old transport closures retain the
+		// retired generation rather than appending to the next attempt's buffer.
+		sink := r.dumpBuffer.Writer()
+		for _, output := range []*io.Writer{&opt.Output, &opt.RequestOutput, &opt.ResponseOutput, &opt.RequestHeaderOutput, &opt.RequestBodyOutput, &opt.ResponseHeaderOutput, &opt.ResponseBodyOutput} {
+			if *output == r.dumpBuffer {
+				*output = sink
+			}
+		}
+	}
+	base := r.Context()
+	if previous, ok := base.(*requestDumpContext); ok {
+		base = previous.Context
+	}
+	return r.SetContext(&requestDumpContext{Context: base, dumper: newDumper(opt)})
 }
 
 // EnableDumpWithoutBody enables dump only header for the request and response.

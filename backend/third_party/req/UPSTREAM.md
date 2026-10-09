@@ -13,8 +13,8 @@ Archive SHA256:
 
 The original archive contains 132 files and 1,109,806 uncompressed bytes.
 `UPSTREAM-MANIFEST.json` records every original file's exact SHA256 and size.
-All original files outside the declared three private HTTP/2 implementation
-files must remain byte-identical to that archive. The original module metadata,
+The seven declared production adaptations leave 125 of 132 original files
+byte-identical to that archive. The original module metadata,
 browser presets, TLS, HTTP/3, proxy, retry and transport option implementations
 are retained.
 
@@ -39,10 +39,58 @@ are retained.
   a correspondingly large fixture. The published advisory's server exploit
   does not establish identical client exposure; this is the shared parser port.
 
-Only `internal/http2/flow.go`, `internal/http2/transport.go`, and
-`internal/http2/frame.go` contain production adaptations. This module has no
+The official repairs affect `internal/http2/flow.go`,
+`internal/http2/transport.go` and `internal/http2/frame.go`. The transport also
+contains the necessary local dump delimiter ordering repair described below;
+it is not represented as an unchanged official port. This module has no
 HTTP/2 server or server write scheduler; server-only fixes remain in the
 backend's upgraded standard library and `golang.org/x/net` dependency.
+
+## Necessary local dump and trace race repairs
+
+[Independent exact-source race findings and original-version control](https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861)
+show two production race families in the unchanged official v3.57.0 archive
+under the same secured main module graph. Latest official tags/master do not
+contain an applicable fix. Reproduction in the original dependency does not
+waive these blocking findings. The local repairs additionally adapt
+`internal/dump/dump.go`, `request.go`, `response.go` and `trace.go`.
+
+- Actual writes to a shared sink serialize across synchronous/asynchronous
+  dumpers, clones and independent NewDumper instances. An active-write registry
+  retains no idle writer. Comparable identities receive independent locks;
+  non-comparable writer values conservatively serialize by dynamic type.
+  Configuration is performed before concurrent requests, as before.
+- Async payloads are copied, a bounded queue admits at most20 waiting tasks,
+  and workers start on demand and retire when idle. Each clone has an independent
+  queue. Stop is idempotent, rejects new work, and drains that dumper's admitted
+  writes; it does not join another clone or a network upload. Synchronous
+  request dumping requires no Start call.
+- Request buffers synchronize Write, String and Reset. Immutable attempt sinks
+  capture a generation; reset retires old sinks so canceled upload callbacks
+  cannot append into a retry's buffer. Configuring dump options alone does not
+  enable dumping, including during retry; changing options after EnableDump
+  and before the request keeps the original API's ordering semantics. Final
+  options are captured after before-request hooks for each enabled attempt.
+  An immutable dump context replaces only its own top-level wrapper, preserving
+  caller deadlines/cancellation/values and old transport sink identities without
+  retaining an unbounded parent chain during infinite retry.
+- Response.Dump snapshots bytes already captured; it does not wait for unknown
+  network completion. HTTP/2 publishes the final request delimiter before any
+  terminal DATA/trailer HEADERS write can implicitly flush END_STREAM. This
+  includes large frames and preserves full duplex/DisableAutoReadResponse.
+  The delimiter describes attempted terminal framing: a subsequent socket
+  write failure cannot retract bytes already emitted to an external writer.
+  Body read/cancellation errors before terminal framing do not add it.
+- All nine trace callbacks, completion times and pure-state snapshots share a
+  lock. Request completion freezes late callbacks; a streaming body may later
+  extend its received timestamp. Sequential request reuse and retries use
+  separate trace states. Missing/unreached stages remain zero and elapsed
+  durations are nonnegative. Conn address methods run after releasing the lock.
+
+These are controlled local adaptations, with distinct regression tests and
+coverage requirements. No existing original assertion, race detector or
+coverage threshold is removed. Candidate hashes and pending remote evidence
+are not approval.
 
 ## Licenses
 
@@ -55,8 +103,11 @@ terms in `LICENSE-GO-BSD`, copied from the exact official repair revision.
 Tests run remotely from `backend`, with `GOWORK=off`, under the backend's secured
 module graph. Running `go test ./...` in the backend does not select the nested
 module. Explicitly select `github.com/imroc/req/v3/internal/http2` and
-`github.com/imroc/req/v3/...`; retain `go list` module replacement and package
-directory evidence, actual named test events and raw coverage profiles.
+`github.com/imroc/req/v3/internal/dump` and `github.com/imroc/req/v3/...`;
+retain `go list` module replacement and package directory evidence, actual
+named HTTP/2/dump/trace test events and raw coverage profiles. The wildcard
+selects12 original test files; the two original internal/testdata helper files
+remain byte-identical but are not selected or claimed as passing.
 
 The behavioral red witness copies `internal/http2/transport_security_test.go`
 to an unchanged req v3.57.0 source tree under the same secured main module
@@ -68,7 +119,8 @@ version witness.
 
 The existing CI checks and Codecov 85% patch threshold remain required. Exact
 upstream hashes identify unchanged imported source; the actual adapted source
-lines need coverage and independent review. A blanket coverage exclusion or a
+lines in each of all seven adapted production files need actual added-block
+coverage of at least85% and independent review. A blanket coverage exclusion or a
 clean vulnerability database scan does not prove the private copy is fixed.
 Stage the complete frozen repository and shared fixtures for remote validation.
 

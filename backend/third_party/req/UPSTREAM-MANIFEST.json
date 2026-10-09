@@ -673,10 +673,23 @@
     ],
     "internal/http2/transport.go": [
       "cc7d34fd2dd5864bcafe3e5e0a84919240be98c0",
-      "28247830e9fb37184c6be718f483a0c7d0949022"
+      "28247830e9fb37184c6be718f483a0c7d0949022",
+      "local-required-dump-terminal-ordering-after-verified-original-race"
     ],
     "internal/http2/frame.go": [
       "57f4235f83712a299328015548240512213a3852"
+    ],
+    "internal/dump/dump.go": [
+      "local-required-dump-trace-race-repair-after-verified-original-race"
+    ],
+    "request.go": [
+      "local-required-dump-trace-race-repair-after-verified-original-race"
+    ],
+    "response.go": [
+      "local-required-dump-trace-race-repair-after-verified-original-race"
+    ],
+    "trace.go": [
+      "local-required-dump-trace-race-repair-after-verified-original-race"
     ]
   },
   "newOwnedFiles": [
@@ -686,37 +699,75 @@
     "internal/http2/flow_security_test.go",
     "internal/http2/transport_security_test.go",
     "internal/http2/frame_security_test.go",
-    "transport_security_test.go"
+    "transport_security_test.go",
+    "internal/dump/dump_concurrency_test.go",
+    "dump_concurrency_test.go",
+    "trace_concurrency_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "actual backend main MVS; explicit replaced-package directory proof, named test events, raw coverage and compatible wire old-red witness; no blanket source exclusion",
+  "validation": "exact full Git source/main MVS; HTTP2, dump, trace named JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all7 adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
       "sha256": "fedf89792079bcd134e4c41da64f5ac99a0881a681cf5b642c9e086d4e655250",
       "bytes": 5073,
-      "officialCommits": [
+      "sources": [
         "cc7d34fd2dd5864bcafe3e5e0a84919240be98c0"
       ]
     },
     {
       "path": "internal/http2/transport.go",
-      "sha256": "9ebd822eb966c96d940a036b1ee0e64f6c14cb6b77126dd72b804ae740032fd9",
-      "bytes": 91383,
-      "officialCommits": [
+      "sha256": "5e8658d55f41482b4224a447d33a42001fb87e3d001afcb6ddbdf4e2ddeb628b",
+      "bytes": 91881,
+      "sources": [
         "cc7d34fd2dd5864bcafe3e5e0a84919240be98c0",
-        "28247830e9fb37184c6be718f483a0c7d0949022"
+        "28247830e9fb37184c6be718f483a0c7d0949022",
+        "local-required-dump-terminal-ordering-after-verified-original-race"
       ]
     },
     {
       "path": "internal/http2/frame.go",
       "sha256": "077638fd39a581ba72f643e7ab0704f69cb24c63858d0c9dfd45b18e1021eb2b",
       "bytes": 51165,
-      "officialCommits": [
+      "sources": [
         "57f4235f83712a299328015548240512213a3852"
+      ]
+    },
+    {
+      "path": "internal/dump/dump.go",
+      "sha256": "49e1fb4153bb7a087c971cdd15c3ffffea32f4e8f8a6241da7365018ceeb2c9e",
+      "bytes": 7606,
+      "sources": [
+        "local-required-dump-trace-race-repair-after-verified-original-race"
+      ]
+    },
+    {
+      "path": "request.go",
+      "sha256": "ce6f26a4e74f4ac3cbe7fdaa8fee91101ed0eaac279ca743af9e13a70d3eb4fb",
+      "bytes": 38521,
+      "sources": [
+        "local-required-dump-trace-race-repair-after-verified-original-race"
+      ]
+    },
+    {
+      "path": "response.go",
+      "sha256": "e9b11e6e019ed7e528b4eb7bd934bfdaedd6236ea4cca926941b5f3dc82a4b95",
+      "bytes": 8642,
+      "sources": [
+        "local-required-dump-trace-race-repair-after-verified-original-race"
+      ]
+    },
+    {
+      "path": "trace.go",
+      "sha256": "61e14d875a2d3d2392ccc8085c0ba210c0db3f26f8cf5592cf5183f7ebb247aa",
+      "bytes": 5909,
+      "sources": [
+        "local-required-dump-trace-race-repair-after-verified-original-race"
       ]
     }
   ],
-  "adaptedCandidateStatus": "static candidate only; update these hashes if independent review changes source before frozen commit"
+  "adaptedCandidateStatus": "final remote-formatted source candidate, pending immutable Git freeze and independent exact-head review; no runtime/approval claim",
+  "originalUnmodifiedFileCount": 125,
+  "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861"
 }

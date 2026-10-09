@@ -146,7 +146,7 @@ func (r *Response) ReceivedAt() time.Time {
 func (r *Response) setReceivedAt() {
 	r.receivedAt = time.Now()
 	if r.Request.trace != nil {
-		r.Request.trace.endTime = r.receivedAt
+		r.Request.trace.finish(r.receivedAt, true)
 	}
 }
 
@@ -259,7 +259,10 @@ func (r *Response) ToBytes() (body []byte, err error) {
 // Dump return the string content that have been dumped for the request.
 // `Request.Dump` or `Request.DumpXXX` MUST have been called.
 func (r *Response) Dump() string {
-	return r.Request.getDumpBuffer().String()
+	if r.Request.dumpBuffer == nil {
+		return ""
+	}
+	return r.Request.dumpBuffer.String()
 }
 
 // GetStatus returns the response status.

@@ -23,7 +23,7 @@ jobs:
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.26.9'
-      - name: Controlled req HTTP2 actual main-MVS tests, old-red witness and fix-block coverage
+      - name: Controlled req HTTP2 and dump/trace actual main-MVS tests, old-red witness and fix-block coverage
         working-directory: backend
         env:
           CGO_ENABLED: "1"

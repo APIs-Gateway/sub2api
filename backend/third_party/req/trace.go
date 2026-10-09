@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http/httptrace"
+	"sync"
 	"time"
 )
 
@@ -109,7 +110,8 @@ type TraceInfo struct {
 	LocalAddr net.Addr
 }
 
-type clientTrace struct {
+// traceState is copied under clientTrace.mu; it contains no synchronization primitives.
+type traceState struct {
 	getConn              time.Time
 	dnsStart             time.Time
 	dnsDone              time.Time
@@ -119,7 +121,40 @@ type clientTrace struct {
 	gotConn              time.Time
 	gotFirstResponseByte time.Time
 	endTime              time.Time
+	returnTime           time.Time
 	gotConnInfo          httptrace.GotConnInfo
+}
+
+type clientTrace struct {
+	mu sync.Mutex
+	traceState
+	finished bool
+}
+
+func (t *clientTrace) snapshot() traceState {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.traceState
+}
+
+// finish freezes callbacks without waiting for transport goroutines. A streaming
+// response may subsequently publish its body completion time with received=true.
+func (t *clientTrace) finish(at time.Time, received bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.finished = true
+	if received {
+		t.endTime = at
+	} else {
+		t.returnTime = at
+	}
+}
+
+func traceDuration(end, start time.Time) time.Duration {
+	if start.IsZero() || end.IsZero() || end.Before(start) {
+		return 0
+	}
+	return end.Sub(start)
 }
 
 func (t *clientTrace) createContext(ctx context.Context) context.Context {
@@ -127,12 +162,27 @@ func (t *clientTrace) createContext(ctx context.Context) context.Context {
 		ctx,
 		&httptrace.ClientTrace{
 			DNSStart: func(_ httptrace.DNSStartInfo) {
+				t.mu.Lock()
+				defer t.mu.Unlock()
+				if t.finished {
+					return
+				}
 				t.dnsStart = time.Now()
 			},
 			DNSDone: func(_ httptrace.DNSDoneInfo) {
+				t.mu.Lock()
+				defer t.mu.Unlock()
+				if t.finished {
+					return
+				}
 				t.dnsDone = time.Now()
 			},
 			ConnectStart: func(_, _ string) {
+				t.mu.Lock()
+				defer t.mu.Unlock()
+				if t.finished {
+					return
+				}
 				if t.dnsDone.IsZero() {
 					t.dnsDone = time.Now()
 				}
@@ -141,22 +191,52 @@ func (t *clientTrace) createContext(ctx context.Context) context.Context {
 				}
 			},
 			ConnectDone: func(net, addr string, err error) {
+				t.mu.Lock()
+				defer t.mu.Unlock()
+				if t.finished {
+					return
+				}
 				t.connectDone = time.Now()
 			},
 			GetConn: func(_ string) {
+				t.mu.Lock()
+				defer t.mu.Unlock()
+				if t.finished {
+					return
+				}
 				t.getConn = time.Now()
 			},
 			GotConn: func(ci httptrace.GotConnInfo) {
+				t.mu.Lock()
+				defer t.mu.Unlock()
+				if t.finished {
+					return
+				}
 				t.gotConn = time.Now()
 				t.gotConnInfo = ci
 			},
 			GotFirstResponseByte: func() {
+				t.mu.Lock()
+				defer t.mu.Unlock()
+				if t.finished {
+					return
+				}
 				t.gotFirstResponseByte = time.Now()
 			},
 			TLSHandshakeStart: func() {
+				t.mu.Lock()
+				defer t.mu.Unlock()
+				if t.finished {
+					return
+				}
 				t.tlsHandshakeStart = time.Now()
 			},
 			TLSHandshakeDone: func(_ tls.ConnectionState, _ error) {
+				t.mu.Lock()
+				defer t.mu.Unlock()
+				if t.finished {
+					return
+				}
 				t.tlsHandshakeDone = time.Now()
 			},
 		},
