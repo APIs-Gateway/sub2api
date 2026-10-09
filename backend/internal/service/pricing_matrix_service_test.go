@@ -26,6 +26,10 @@ type mxFakeMatrixRepo struct {
 	applyCalls [][]int64
 	ctxErrSeen error
 
+	summaries    []GroupPricingSummary // LoadGroupSummaries 的全部可见分组（按 id 升序）
+	summaryErr   error
+	summaryCalls []summaryCall
+
 	metaErr    error
 	ruleErr    error
 	applyErr   error
@@ -100,6 +104,35 @@ func (r *mxFakeMatrixRepo) LoadGroupSnapshots(_ context.Context, ids []int64) (m
 	out := map[int64]GroupStateSnapshot{}
 	for _, id := range ids {
 		out[id] = r.state[id]
+	}
+	return out, nil
+}
+
+type summaryCall struct {
+	ids   []int64
+	limit int
+}
+
+func (r *mxFakeMatrixRepo) LoadGroupSummaries(_ context.Context, ids []int64, limit int) ([]GroupPricingSummary, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.summaryCalls = append(r.summaryCalls, summaryCall{ids: append([]int64(nil), ids...), limit: limit})
+	if r.summaryErr != nil {
+		return nil, r.summaryErr
+	}
+	want := map[int64]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+	var out []GroupPricingSummary
+	for _, g := range r.summaries {
+		if len(ids) > 0 && !want[g.GroupID] {
+			continue
+		}
+		if len(out) == limit {
+			break
+		}
+		out = append(out, g)
 	}
 	return out, nil
 }

@@ -94,25 +94,33 @@ func (s *ModelCatalogTransitionService) load(ctx context.Context, id int64, to M
 }
 
 // Preview 预览把条目转成 to：给出近 7 天的用量，以及提交时是否要带 confirm_usage。
+// 目标状态与当前状态相同（空操作）时也返回用量（confirm_required 为 false），
+// 前端在下拉里选回当前状态时不会丢掉用量展示；转成不会挡流量的其它状态（active）不查用量。
 func (s *ModelCatalogTransitionService) Preview(ctx context.Context, id int64, to ModelCatalogStatus) (*CatalogTransitionPreview, error) {
+	return s.preview(ctx, id, to, true)
+}
+
+// preview 的 includeNoop 为 false 时，空操作也不查用量（提交路径遇到空操作直接返回，不需要它）。
+func (s *ModelCatalogTransitionService) preview(ctx context.Context, id int64, to ModelCatalogStatus, includeNoop bool) (*CatalogTransitionPreview, error) {
 	entry, err := s.load(ctx, id, to)
 	if err != nil {
 		return nil, err
 	}
 	p := &CatalogTransitionPreview{Entry: *entry, From: entry.Status, To: to}
-	if entry.Status == to || !blocksTraffic(to) {
+	noop := entry.Status == to
+	if noop && !includeNoop || !noop && !blocksTraffic(to) {
 		return p, nil
 	}
 	if p.Usage, err = s.usage(ctx, entry); err != nil {
 		return nil, err
 	}
-	p.ConfirmRequired = p.Usage.Requests > 0
+	p.ConfirmRequired = !noop && p.Usage.Requests > 0
 	return p, nil
 }
 
 // Transition 把条目转成 to。目标是 draft 或 retired 且近 7 天有用量时，必须 confirmUsage。状态没变是空操作。
 func (s *ModelCatalogTransitionService) Transition(ctx context.Context, id int64, to ModelCatalogStatus, confirmUsage bool) (*ModelCatalogEntry, error) {
-	p, err := s.Preview(ctx, id, to)
+	p, err := s.preview(ctx, id, to, false)
 	if err != nil {
 		return nil, err
 	}

@@ -52,6 +52,7 @@ var matrixOwnFiles = map[string]struct{}{
 	"internal/service/pricing_known_free_list.go":        {}, // W6 PR4b-2b-2：已知免费名单的写入口（C 档）
 	"internal/service/model_catalog_transition.go":       {}, // W6 PR4b-2b-2：目录状态转换与 7 天用量检查
 	"internal/service/pricing_cost_rule_write.go":        {}, // W6 PR4b-2b-2：成本核算规则写服务
+	"internal/service/pricing_group_summary.go":          {}, // W6 分组批量摘要（#1660）：只读，管理端矩阵页用
 	"internal/service/pricing_write_services.go":         {}, // W6 PR4b-2b-2：价格写入路径的装配（所有分组默认 legacy，写入器只写 v2）
 
 	// W6 PR5：stagedPolicy 与影子比对。它们读矩阵快照，但只用来比对：阶段为 shadow 的分组才会比对，
