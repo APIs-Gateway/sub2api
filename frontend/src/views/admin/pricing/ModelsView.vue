@@ -44,20 +44,11 @@
                 <Icon name="refresh" size="md" :class="state.loading ? 'animate-spin' : ''" />
                 <span class="ml-1.5">{{ t('common.refresh') }}</span>
               </button>
-              <button
-                type="button"
-                class="btn btn-primary"
-                disabled
-                :title="t('admin.pricingConfig.comingSoon')"
-                data-test="create-model"
-              >
+              <button type="button" class="btn btn-primary" data-test="create-model" @click="createOpen = true">
                 {{ t('admin.pricingConfig.models.create') }}
               </button>
             </div>
           </div>
-          <p class="text-sm text-gray-500 dark:text-dark-300" data-test="readonly-note">
-            {{ t('admin.pricingConfig.models.readonlyNote') }}
-          </p>
           <p v-if="state.deriveFailed > 0" class="warn-note" data-test="derive-failed">
             <Icon name="exclamationTriangle" size="sm" class="flex-shrink-0" />
             {{ t('admin.pricingConfig.deriveFailed', { n: state.deriveFailed }) }}
@@ -150,7 +141,9 @@
       </template>
     </TablePageLayout>
 
-    <ModelDrawer :model="drawerModel" @close="drawerId = null" />
+    <ModelDrawer :model="drawerModel" @close="drawerId = null" @action="onModelAction" />
+    <ModelActionHost :action="modelAction" @close="modelAction = null" />
+    <CreateModelDialog :show="createOpen" @close="createOpen = false" />
   </AppLayout>
 </template>
 
@@ -165,6 +158,9 @@ import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import CurrencyModeSwitch from '@/components/common/CurrencyModeSwitch.vue'
 import ModelDrawer from './components/ModelDrawer.vue'
+import ModelActionHost from './components/ModelActionHost.vue'
+import CreateModelDialog from './components/CreateModelDialog.vue'
+import type { ModelAction } from './components/modelAction'
 import { usePricingData } from './usePricingData'
 import { usePricingFormat } from './usePricingFormat'
 import { asGroupPlatform, modelStats, platformLabel, sourceKey, type ModelRow } from './pricingModel'
@@ -179,6 +175,13 @@ const statusFilter = ref<string | number | boolean | null>('')
 const unpricedOnly = ref(false)
 const unregisteredOnly = ref(false)
 const drawerId = ref<string | null>(null)
+const createOpen = ref(false)
+const modelAction = ref<ModelAction | null>(null)
+
+function onModelAction(action: ModelAction) {
+  drawerId.value = null
+  modelAction.value = action
+}
 
 const platformOptions = computed(() => [
   { value: '', label: t('admin.pricingConfig.models.allPlatforms') },
