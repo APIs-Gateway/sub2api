@@ -79,7 +79,7 @@ func AnthropicToResponsesResponse(resp *AnthropicResponse) *ResponsesResponse {
 			// Opus 5.5 keeps text in its own message item so the relative order of
 			// signed thinking, text and tool_use survives the round trip.
 			if claude.IsOpus55(resp.Model) && block.Text != "" {
-				outputs = append(outputs, ResponsesOutput{Type: "message", ID: generateItemID(), Role: "assistant", Status: "completed", Content: []ResponsesContentPart{{Type: "output_text", Text: block.Text}}})
+				outputs = append(outputs, ResponsesOutput{ownedMessage: true, Type: "message", ID: generateItemID(), Role: "assistant", Status: "completed", Content: []ResponsesContentPart{{Type: "output_text", Text: block.Text}}})
 				continue
 			}
 			if block.Text != "" {
@@ -107,21 +107,23 @@ func AnthropicToResponsesResponse(resp *AnthropicResponse) *ResponsesResponse {
 	// Assemble message output item from text parts
 	if len(msgParts) > 0 {
 		outputs = append(outputs, ResponsesOutput{
-			Type:    "message",
-			ID:      generateItemID(),
-			Role:    "assistant",
-			Content: msgParts,
-			Status:  "completed",
+			ownedMessage: true,
+			Type:         "message",
+			ID:           generateItemID(),
+			Role:         "assistant",
+			Content:      msgParts,
+			Status:       "completed",
 		})
 	}
 
 	if len(outputs) == 0 {
 		outputs = append(outputs, ResponsesOutput{
-			Type:    "message",
-			ID:      generateItemID(),
-			Role:    "assistant",
-			Content: []ResponsesContentPart{{Type: "output_text", Text: ""}},
-			Status:  "completed",
+			ownedMessage: true,
+			Type:         "message",
+			ID:           generateItemID(),
+			Role:         "assistant",
+			Content:      []ResponsesContentPart{{Type: "output_text", Text: ""}},
+			Status:       "completed",
 		})
 	}
 	out.Output = outputs
@@ -366,10 +368,11 @@ func anthToResHandleContentBlockStart(evt *AnthropicStreamEvent, state *Anthropi
 			events = append(events, makeResponsesEvent(state, "response.output_item.added", &ResponsesStreamEvent{
 				OutputIndex: state.OutputIndex,
 				Item: &ResponsesOutput{
-					Type:   "message",
-					ID:     state.CurrentItemID,
-					Role:   "assistant",
-					Status: "in_progress",
+					ownedMessage: true,
+					Type:         "message",
+					ID:           state.CurrentItemID,
+					Role:         "assistant",
+					Status:       "in_progress",
 				},
 			}))
 		}
@@ -653,6 +656,7 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 	}
 	switch state.CurrentItemType {
 	case "message":
+		item.ownedMessage = true
 		item.Role = "assistant"
 		item.Content = state.CurrentContent
 	case "function_call":
