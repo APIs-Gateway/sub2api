@@ -414,6 +414,7 @@ const onTriggerKeyDown = () => {
 
 const onDropdownKeyDown = (e: KeyboardEvent) => {
   if (props.disabled || !isOpen.value) return
+  if (e.isComposing) return
   switch (e.key) {
     case 'ArrowDown':
       e.preventDefault()

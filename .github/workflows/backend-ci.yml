@@ -297,6 +297,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -316,6 +318,23 @@ jobs:
       - name: Airwallex page disposal actual mocked SDK regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/AirwallexPaymentView.lifecycle.spec.ts src/views/user/__tests__/AirwallexPaymentView.spec.ts
+      - name: Select IME four-key input and existing keyboard, highlight and disabled controls (actual results)
+        working-directory: frontend
+        env:
+          SELECT_IME_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          git rev-parse HEAD
+          test "$(git rev-parse HEAD)" = "$SELECT_IME_EXPECTED_HEAD"
+          pnpm exec vitest run --reporter=verbose --reporter=json --outputFile=select-ime-results.json src/components/common/__tests__/Select.ime.spec.ts src/components/common/__tests__/Select.spec.ts src/components/common/__tests__/Select.keyboard.spec.ts src/components/common/__tests__/Select.searchHighlight.spec.ts src/components/common/__tests__/disabledSelectors.spec.ts
+          test -s select-ime-results.json
+      - name: Preserve Select IME actual test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-select-ime-results-${{ github.run_id }}
+          path: frontend/select-ime-results.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Group RPM edits and multiplier dialog actual ownership regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/components/admin/group/__tests__/
