@@ -2828,6 +2828,11 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Acc
 	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, upstreamBody) {
 		return true
 	}
+	// 池模式账号的上游号池可用性错误（a6 等会用 400/403/404 携带）：与请求内容无关，
+	// 允许池内重试 / 换号 / 换组。非池账号恒为 false。
+	if openAIPoolAvailabilityHTTPErrorForAccount(account, statusCode, upstreamBody) {
+		return true
+	}
 	// A missing model is account/provider availability, not a malformed client
 	// request: another OpenAI-compatible account may serve it. Only a managed
 	// gateway (with an account repository, i.e. a handler that can exclude this
@@ -3980,11 +3985,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 				markBillingInflightProviderRefusal(c, resp.StatusCode, respBody, proofReadErr)
 				shouldDisable := s.handleFailoverSideEffects(ctx, resp, account, respBody, upstreamModel)
-				return nil, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
+				return nil, applyOpenAIPoolAvailabilityFailover(account, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 					StatusCode:             resp.StatusCode,
 					ResponseBody:           respBody,
 					RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, respBody, !shouldDisable && account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody))),
-				}, upstreamMsg, respBody)
+				}, upstreamMsg, respBody), respBody)
 			}
 			return s.handleErrorResponse(ctx, resp, c, account, body, billingModel)
 		}
@@ -4587,6 +4592,9 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 	if statusCode == http.StatusRequestEntityTooLarge {
 		return true
 	}
+	if openAIPoolAvailabilityHTTPErrorForAccount(account, statusCode, responseBody) {
+		return true
+	}
 	if account != nil && account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode) {
 		return true
 	}
@@ -4740,12 +4748,12 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 		Detail:               upstreamDetail,
 		UpstreamResponseBody: upstreamDetail,
 	})
-	return applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
+	return applyOpenAIPoolAvailabilityFailover(account, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 		StatusCode:             resp.StatusCode,
 		ResponseBody:           body,
 		ResponseHeaders:        resp.Header.Clone(),
 		RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, body, !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)),
-	}, upstreamMsg, body)
+	}, upstreamMsg, body), body)
 }
 
 func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
@@ -5290,6 +5298,11 @@ func openAIStreamFailedEventRetryableOnSameAccount(account *Account, payload []b
 	if !account.IsPoolMode() {
 		return false
 	}
+	// 池商家可用性错误（a6 的 smart_route_* / upstream_unavailable / upstream_timeout）：
+	// 先在池内重试 pool_mode_retry_count 次，用尽后再切号。
+	if openAIPoolAvailabilityErrorForAccount(account, payload) {
+		return true
+	}
 	semanticStatus := openAIStreamFailedEventSemanticStatus(payload, message)
 	return account.IsPoolModeRetryableStatus(semanticStatus) ||
 		isOpenAITransientProcessingError(http.StatusBadRequest, message, payload)
@@ -5309,6 +5322,10 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 		message = "OpenAI stream disconnected before completion"
 	}
 	statusCode := openAIStreamFailureStatus(payload, message)
+	if openAIPoolAvailabilityErrorForAccount(account, payload) {
+		// 语义状态统一按 502：耗尽后客户端拿到通用 502 文案，链分类判为可回退。
+		statusCode = http.StatusBadGateway
+	}
 	var headers http.Header
 	if len(responseHeaders) > 0 && responseHeaders[0] != nil {
 		headers = responseHeaders[0].Clone()
@@ -5366,6 +5383,9 @@ func (s *OpenAIGatewayService) nonStreamingTerminalFailureFailover(
 	shouldFailover := openAIStreamFailedEventShouldFailover(payload, message)
 	if terminalType == "error" {
 		shouldFailover = openAIStreamErrorEventShouldFailover(payload, message)
+	}
+	if !shouldFailover && openAIPoolAvailabilityErrorForAccount(account, payload) {
+		shouldFailover = true
 	}
 	if !shouldFailover {
 		return nil
@@ -5581,7 +5601,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					})
 					return resultWithUsage(), fmt.Errorf("upstream error event: passthrough rule matched message=%s", errMsg)
 				}
-				if openAIStreamErrorEventShouldFailover(rawDataBytes, errorMessage) {
+				if openAIStreamErrorEventShouldFailover(rawDataBytes, errorMessage) ||
+					openAIPoolAvailabilityErrorForAccount(account, rawDataBytes) {
 					return resultWithUsage(),
 						s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, rawDataBytes, errorMessage, resp.Header)
 				}
@@ -5604,7 +5625,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 					})
 				} else if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
-					if openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) {
+					if openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) ||
+						openAIPoolAvailabilityErrorForAccount(account, rawDataBytes) {
 						return resultWithUsage(),
 							s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, rawDataBytes, failedMessage, resp.Header)
 					}
@@ -6937,7 +6959,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					streamEarlyErr = fmt.Errorf("upstream error event: passthrough rule matched message=%s", errMsg)
 					return
 				}
-				if openAIStreamErrorEventShouldFailover(dataBytes, errorMessage) {
+				if openAIStreamErrorEventShouldFailover(dataBytes, errorMessage) ||
+					openAIPoolAvailabilityErrorForAccount(account, dataBytes) {
 					streamEarlyErr = s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, dataBytes, errorMessage, resp.Header)
 					return
 				}
@@ -6960,7 +6983,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 						UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 					})
 				} else if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
-					if openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) {
+					if openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) ||
+						openAIPoolAvailabilityErrorForAccount(account, dataBytes) {
 						sawFailedEvent = true
 						streamEarlyErr = s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, dataBytes, failedMessage, resp.Header)
 						return
