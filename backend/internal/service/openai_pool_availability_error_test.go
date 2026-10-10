@@ -710,3 +710,59 @@ func TestOpenAIPoolStreamVisibleOutputClassification(t *testing.T) {
 	require.False(t, openAIPoolStreamDataStartsClientOutput(a6EvMsgDone, "response.output_item.done"))
 	require.False(t, openAIPoolStreamDataStartsClientOutput(a6EvSearching, "response.web_search_call.in_progress"))
 }
+
+// 暂存期限：池账号已暂存结构事件，自首次尝试起超过期限仍没有可见输出 -> 提交全部暂存事件，
+// 之后收到的 failed 帧按已提交处理，不再 failover。用预置的计时起点代替 sleep。
+func TestOpenAIStreamPoolHoldDeadlineCommitsStagedEvents(t *testing.T) {
+	events := []string{a6EvCreated, a6EvMsgAdded, a6EvPartAdded, a6EvBlankDone, a6EvPartDone}
+	for _, runner := range a6StreamRunners {
+		t.Run(runner.name+"/超过期限提交", func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			c.Set(openAIPoolClientClockKey, time.Now().Add(-openAIPoolCommitHoldMaxWait-time.Second))
+			resp := &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(a6Frames(append(append([]string{}, events...), a6StreamCommitFailureFrame)...))),
+				Header:     http.Header{"X-Request-Id": []string{"rid-a6-hold"}},
+			}
+
+			err := runner.run(svc, c, resp, newA6PoolAccount())
+
+			require.Error(t, err)
+			var failoverErr *UpstreamFailoverError
+			require.False(t, errors.As(err, &failoverErr), "超过暂存期限已提交，不能再 failover: %v", err)
+			out := rec.Body.String()
+			last := -1
+			for _, ev := range events {
+				idx := strings.Index(out, ev)
+				require.GreaterOrEqual(t, idx, 0, "缺少暂存事件: %s", ev)
+				require.Greater(t, idx, last, "暂存事件顺序被打乱: %s", ev)
+				last = idx
+			}
+			require.Contains(t, out, "response.failed")
+		})
+		t.Run(runner.name+"/未到期限仍 failover", func(t *testing.T) {
+			rec, c, err := runA6Stream(t, runner, newA6PoolAccount(),
+				a6Frames(a6EvCreated, a6EvMsgAdded, a6EvPartAdded, a6EvBlankDone, a6StreamCommitFailureFrame))
+			require.Error(t, err)
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.False(t, c.Writer.Written())
+			require.Empty(t, rec.Body.String())
+		})
+	}
+}
+
+// 计时起点跨尝试共用：第一次落盘后，后续尝试传入新的 fallback 也不会重置。
+func TestOpenAIPoolClientClockStartIsSharedAcrossAttempts(t *testing.T) {
+	c, _ := a6NewPathContext(t, "/v1/responses", nil)
+	first := time.Now().Add(-150 * time.Second)
+	require.True(t, openAIPoolClientClockStart(c, first).Equal(first))
+	require.True(t, openAIPoolClientClockStart(c, time.Now()).Equal(first))
+	require.False(t, openAIPoolHoldExpired(first))
+	require.True(t, openAIPoolHoldExpired(time.Now().Add(-openAIPoolCommitHoldMaxWait)))
+	require.False(t, openAIPoolHoldExpired(time.Time{}))
+}

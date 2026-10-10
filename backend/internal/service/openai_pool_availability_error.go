@@ -3,7 +3,9 @@ package service
 import (
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
 
@@ -269,4 +271,34 @@ func openAIPoolStreamDataStartsClientOutput(data, eventType string) bool {
 		return openAIStreamDataStartsClientOutput(data, eventType)
 	}
 	return false
+}
+
+// openAIPoolCommitHoldMaxWait 池账号暂存结构事件的最长时间。
+//
+// 心跳是 SSE 注释行，不会重置 Codex 客户端 300 秒的 stream_idle_timeout（只有解析出的
+// SSE 数据事件才会）。旧逻辑在第一个结构事件就发给客户端；池账号现在要等首个可见输出，
+// 因此暂存超过该期限（给 300 秒留余量）就按原顺序提交全部暂存事件，保证不会比旧逻辑
+// 更早触发客户端空闲超时：旧逻辑在 T1 提交，这里最晚在 max(T1, 该期限) 提交。
+const openAIPoolCommitHoldMaxWait = 200 * time.Second
+
+// openAIPoolClientClockKey 在 gin context 里记录客户端视角的计时起点（首次尝试开始时间），
+// 跨 failover 尝试共用，不随每次尝试重置。起点取请求开始而非首个心跳字节，只会更早，更保守。
+const openAIPoolClientClockKey = "openai_pool_client_clock_start"
+
+// openAIPoolClientClockStart 返回计时起点；首次调用时以 fallback（本次尝试开始时间）落盘。
+func openAIPoolClientClockStart(c *gin.Context, fallback time.Time) time.Time {
+	if c == nil {
+		return fallback
+	}
+	if v, ok := c.Get(openAIPoolClientClockKey); ok {
+		if t, ok := v.(time.Time); ok && !t.IsZero() {
+			return t
+		}
+	}
+	c.Set(openAIPoolClientClockKey, fallback)
+	return fallback
+}
+
+func openAIPoolHoldExpired(origin time.Time) bool {
+	return !origin.IsZero() && time.Since(origin) >= openAIPoolCommitHoldMaxWait
 }
