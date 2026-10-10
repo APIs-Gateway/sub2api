@@ -233,7 +233,9 @@ const openAIPoolStageForceCommitBytes = openAIFirstOutputStageMaxBytes / 2
 // openAIPoolStreamDataIsVisibleOutput 池账号口径下「用户看得见」的输出：
 //   - 去掉空白后非空的 output_text.delta / output_text.done；
 //   - 去掉空白后非空的 reasoning_summary_text.delta / reasoning_text.delta；
-//   - 非空的 function_call_arguments.delta / custom_tool_call_input.delta。
+//   - 非空的 function_call_arguments.delta / custom_tool_call_input.delta；
+//   - 图片生成输出：image_generation_call 的 output_item.added/done、response.image_generation_call.*
+//     （含 partial_image）——图片流要和改动前一样一开始就提交，不能靠暂存扛几 MB 的 base64。
 //
 // 其余（空白文本、只带 encrypted_content 的 reasoning item、output_item.added /
 // content_part.added 空壳、web_search_call 状态事件、audio.delta 等）都按结构事件处理。
@@ -256,8 +258,10 @@ func openAIPoolStreamDataIsVisibleOutput(data, eventType string) bool {
 	case "response.function_call_arguments.delta",
 		"response.custom_tool_call_input.delta":
 		return gjson.Get(trimmed, "delta").String() != ""
+	case "response.output_item.added", "response.output_item.done":
+		return gjson.Get(trimmed, "item.type").String() == "image_generation_call"
 	}
-	return false
+	return strings.HasPrefix(eventType, "response.image_generation_call.")
 }
 
 // openAIPoolStreamDataStartsClientOutput 池账号是否应在该事件上把暂存内容提交给客户端：
@@ -281,11 +285,13 @@ func openAIPoolStreamDataStartsClientOutput(data, eventType string) bool {
 // 更早触发客户端空闲超时：旧逻辑在 T1 提交，这里最晚在 max(T1, 该期限) 提交。
 const openAIPoolCommitHoldMaxWait = 200 * time.Second
 
-// openAIPoolClientClockKey 在 gin context 里记录客户端视角的计时起点（首次尝试开始时间），
-// 跨 failover 尝试共用，不随每次尝试重置。起点取请求开始而非首个心跳字节，只会更早，更保守。
+// openAIPoolClientClockKey 在 gin context 里记录客户端视角的计时起点：第一次进入流处理入口
+// （无论是否池账号）的时间，之后不覆盖，跨 failover 尝试共用。起点取请求开始而非首个心跳
+// 字节，只会更早，更保守。
 const openAIPoolClientClockKey = "openai_pool_client_clock_start"
 
-// openAIPoolClientClockStart 返回计时起点；首次调用时以 fallback（本次尝试开始时间）落盘。
+// openAIPoolClientClockStart 返回计时起点；首次调用时以 fallback（该次尝试开始时间）落盘。
+// 两个流处理入口不分账号类型都会调用，所以先在非池账号上耗掉的时间也算在内。
 func openAIPoolClientClockStart(c *gin.Context, fallback time.Time) time.Time {
 	if c == nil {
 		return fallback

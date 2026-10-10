@@ -766,3 +766,84 @@ func TestOpenAIPoolClientClockStartIsSharedAcrossAttempts(t *testing.T) {
 	require.True(t, openAIPoolHoldExpired(time.Now().Add(-openAIPoolCommitHoldMaxWait)))
 	require.False(t, openAIPoolHoldExpired(time.Time{}))
 }
+
+func a6PaddedEvent(base string, padBytes int) string {
+	return strings.TrimSuffix(base, "}") + `,"padding":"` + strings.Repeat("x", padBytes) + `"}`
+}
+
+// 图片流：单个 5MB 的 image_generation_call output_item.done + 5MB 的 response.completed，
+// 池账号要完整送达客户端，不 failover、不报暂存超限。
+func TestOpenAIStreamPoolLargeImageEventsAreDeliveredWithoutStagingOverflow(t *testing.T) {
+	const imageBytes = 5 * 1024 * 1024
+	b64 := strings.Repeat("A", imageBytes)
+	imageDone := `{"type":"response.output_item.done","output_index":0,"item":{"type":"image_generation_call","id":"ig_a6","status":"completed","result":"` + b64 + `"}}`
+	completed := `{"type":"response.completed","response":{"id":"resp_a6","object":"response","status":"completed","output":[{"type":"image_generation_call","id":"ig_a6","status":"completed","result":"` + b64 + `"}],"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}`
+	for _, runner := range a6StreamRunners {
+		t.Run(runner.name, func(t *testing.T) {
+			rec, c, err := runA6Stream(t, runner, newA6PoolAccount(), a6Frames(a6EvCreated, a6EvInProgress, imageDone, completed))
+
+			require.NoError(t, err)
+			require.True(t, c.Writer.Written())
+			out := rec.Body.String()
+			require.GreaterOrEqual(t, strings.Count(out, b64), 2, "两份 5MB 图片数据都要完整送达")
+			require.Contains(t, out, `"type":"response.completed"`)
+		})
+	}
+}
+
+// 暂存 3MB 结构事件后来一个 2MB 事件：先提交已暂存的，再写本事件；之后的 failed 按已提交处理。
+func TestOpenAIStreamPoolLargeEventForcesCommitBeforeWrite(t *testing.T) {
+	big1 := a6PaddedEvent(a6EvMsgAdded, 3*1024*1024)
+	big2 := a6PaddedEvent(a6EvSearching, 2*1024*1024)
+	for _, runner := range a6StreamRunners {
+		t.Run(runner.name, func(t *testing.T) {
+			rec, c, err := runA6Stream(t, runner, newA6PoolAccount(),
+				a6Frames(a6EvCreated, big1, big2, a6StreamCommitFailureFrame))
+
+			require.Error(t, err)
+			var failoverErr *UpstreamFailoverError
+			require.False(t, errors.As(err, &failoverErr), "已强制提交，不能 failover / 暂存超限: %v", err)
+			require.True(t, c.Writer.Written())
+			out := rec.Body.String()
+			i1, i2 := strings.Index(out, big1), strings.Index(out, big2)
+			require.GreaterOrEqual(t, i1, 0)
+			require.Greater(t, i2, i1)
+			require.Contains(t, out, "response.failed")
+		})
+	}
+}
+
+func TestOpenAIPoolStreamImageEventsAreVisibleOutput(t *testing.T) {
+	for _, data := range []string{
+		`{"type":"response.output_item.added","item":{"type":"image_generation_call","id":"ig"}}`,
+		`{"type":"response.output_item.done","item":{"type":"image_generation_call","id":"ig","result":"QQ=="}}`,
+		`{"type":"response.image_generation_call.in_progress","item_id":"ig"}`,
+		`{"type":"response.image_generation_call.partial_image","partial_image_b64":"QQ=="}`,
+	} {
+		require.True(t, openAIPoolStreamDataIsVisibleOutput(data, a6EventType(data)), data)
+	}
+	require.False(t, openAIPoolStreamDataIsVisibleOutput(`{"type":"response.output_item.added","item":{"type":"message"}}`, "response.output_item.added"))
+}
+
+// 计时起点：先在非池账号上尝试，再切到池账号，起点是第一次尝试的时间。
+func TestOpenAIPoolClientClockStartsAtFirstAttemptEvenOnNonPoolAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	first := time.Now().Add(-150 * time.Second)
+
+	newResp := func() *http.Response {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{},
+			Body: io.NopCloser(strings.NewReader(a6Frames(a6EvCreated, a6StreamCommitFailureFrame)))}
+	}
+	_, _ = svc.handleStreamingResponse(c.Request.Context(), newResp(), c, newA6PlainAccount(), first, "model", "model")
+	got, ok := c.Get(openAIPoolClientClockKey)
+	require.True(t, ok)
+	require.True(t, got.(time.Time).Equal(first))
+
+	_, _ = svc.handleStreamingResponsePassthrough(c.Request.Context(), newResp(), c, newA6PoolAccount(), time.Now(), "model", "model")
+	got, _ = c.Get(openAIPoolClientClockKey)
+	require.True(t, got.(time.Time).Equal(first), "切到池账号后起点不能被覆盖")
+}

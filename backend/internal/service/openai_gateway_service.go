@@ -5449,10 +5449,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	pendingLineBytes := 0
 	// poolProgressStaged：已暂存过非元数据的结构事件（旧逻辑会在此刻提交）。
 	poolProgressStaged := false
-	poolHoldOrigin := time.Time{}
-	if poolCommitGate {
-		poolHoldOrigin = openAIPoolClientClockStart(c, startTime)
-	}
+	// 计时起点不分账号类型：请求先在非池账号上耗掉的时间也算进客户端空闲时间。
+	poolHoldOrigin := openAIPoolClientClockStart(c, startTime)
 
 	// pendingLines 会延迟首个可见输出前的前导事件；此期间发出 SSE 注释，
 	// 以提交响应头并避免中间代理因空闲超时而关闭连接。心跳字节会从
@@ -5769,7 +5767,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				// 池账号：只有首个可见输出 / 终止事件 / 失败帧转发才提交；暂存接近上限时强制提交。
 				lineStartsClientOutput = forceFlushFailedEvent ||
 					openAIPoolStreamDataStartsClientOutput(trimmedData, eventType) ||
-					pendingLineBytes >= openAIPoolStageForceCommitBytes
+					pendingLineBytes+len(line)+1 >= openAIPoolStageForceCommitBytes
 			}
 			if progressStartsOutput && trimmedData != "[DONE]" && !openAIStreamEventTypeIsTerminal(eventType) {
 				semanticOutputSeen = true
@@ -6669,10 +6667,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			c.Header("x-request-id", v)
 		}
 	}
+	attemptHeadersApplied := false
 	applyAttemptResponseHeaders := func() {
-		if !stageFirstOutput || len(attemptResponseHeaders) == 0 || c.Writer.Written() {
+		if !stageFirstOutput || len(attemptResponseHeaders) == 0 || c.Writer.Written() || attemptHeadersApplied {
 			return
 		}
+		attemptHeadersApplied = true
 		for key, values := range attemptResponseHeaders {
 			for _, value := range values {
 				c.Writer.Header().Add(key, value)
@@ -6821,10 +6821,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	// first-output 计时器与扫描守卫仍按结构事件（startsClientOutput）推进，超时语义不变。
 	poolCommitGate := stageFirstOutput && account.IsPoolMode()
 	poolCommitSeen := false
-	poolHoldOrigin := time.Time{}
-	if poolCommitGate {
-		poolHoldOrigin = openAIPoolClientClockStart(c, startTime)
-	}
+	// 计时起点不分账号类型：请求先在非池账号上耗掉的时间也算进客户端空闲时间。
+	poolHoldOrigin := openAIPoolClientClockStart(c, startTime)
 	upstreamRequestID := upstreamRequestIDFromHeader(resp.Header)
 	var streamEarlyErr error
 	// 上游模型不一致只在首个带 model 的事件上比对一次（无论结果如何）。
@@ -6910,6 +6908,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			return
 		}
 		errorEventSent = true
+		if poolCommitGate {
+			// 下面的 flushBuffered 会提交暂存事件：先带上本次尝试的上游头（头已写出则无操作）。
+			applyAttemptResponseHeaders()
+		}
 		// Responses error events use top-level code/message/param fields. A nested
 		// Chat Completions error envelope loses the classification in strict clients.
 		eventName := "error"
@@ -7213,11 +7215,19 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			commitsOutput := startsClientOutput
 			if poolCommitGate {
 				commitsOutput = forceFlushFailedEvent ||
-					openAIPoolStreamDataStartsClientOutput(data, eventType) ||
-					(!clientOutputStarted && pendingBytes() >= openAIPoolStageForceCommitBytes)
+					openAIPoolStreamDataStartsClientOutput(data, eventType)
+				// 暂存字节 + 本事件字节达到阈值：先把已暂存的按原顺序提交，本事件按已提交流写出，
+				// 不再进暂存（否则大图片事件会把 8MB 暂存写爆，被当成暂存超限去切号）。
+				if !clientOutputStarted && !clientDisconnected &&
+					pendingBytes()+int64(len(line))+1 >= openAIPoolStageForceCommitBytes {
+					commitPoolHold()
+					commitsOutput = true
+				}
 				if commitsOutput {
 					poolCommitSeen = true
 				}
+				// 池账号只在提交后的可见输出上记首 token，纯空白事件不记。
+				startsVisibleOutput = startsVisibleOutput && (commitsOutput || poolCommitSeen)
 			}
 			if stageFirstOutput {
 				eventStartsClientOutput = eventStartsClientOutput || startsClientOutput
@@ -7246,7 +7256,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			// 写入客户端（客户端断开后继续 drain 上游）
 			if !clientDisconnected {
 				shouldFlush := queueDrained && (clientOutputStarted || commitsOutput || poolCommitSeen)
-				if firstTokenMs == nil && startsVisibleOutput && (!poolCommitGate || commitsOutput || poolCommitSeen) {
+				if firstTokenMs == nil && startsVisibleOutput {
 					// 保证首个 token 事件尽快出站，避免影响 TTFT。
 					shouldFlush = true
 				}
