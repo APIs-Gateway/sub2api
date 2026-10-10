@@ -540,3 +540,173 @@ func a6SSEResponse(contentType, requestID, body string) *http.Response {
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
 }
+
+// ---------- 池账号的提交点后移：首个可见输出 / 终止事件才提交 ----------
+
+const (
+	a6EvCreated       = `{"type":"response.created","response":{"id":"resp_a6","status":"in_progress"}}`
+	a6EvInProgress    = `{"type":"response.in_progress","response":{"id":"resp_a6","status":"in_progress"}}`
+	a6EvMsgAdded      = `{"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_a6","role":"assistant","status":"in_progress","content":[]}}`
+	a6EvPartAdded     = `{"type":"response.content_part.added","output_index":0,"content_index":0,"item_id":"msg_a6","part":{"type":"output_text","text":""}}`
+	a6EvBlankDelta    = `{"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_a6","delta":" "}`
+	a6EvBlankDone     = `{"type":"response.output_text.done","output_index":0,"content_index":0,"item_id":"msg_a6","text":" "}`
+	a6EvPartDone      = `{"type":"response.content_part.done","output_index":0,"content_index":0,"item_id":"msg_a6","part":{"type":"output_text","text":" "}}`
+	a6EvMsgDone       = `{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_a6","role":"assistant","status":"completed","content":[{"type":"output_text","text":" "}]}}`
+	a6EvRealDelta     = `{"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_a6","delta":"hello-a6"}`
+	a6EvReasoningDone = `{"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_a6","encrypted_content":"ZW5jcnlwdGVk","summary":[]}}`
+	a6EvSearching     = `{"type":"response.web_search_call.in_progress","output_index":0,"item_id":"ws_a6"}`
+	a6EvSearchingDone = `{"type":"response.web_search_call.searching","output_index":0,"item_id":"ws_a6"}`
+	a6EvCompleted     = `{"type":"response.completed","response":{"id":"resp_a6","object":"response","status":"completed","output":[{"type":"message","id":"msg_a6","role":"assistant","status":"completed","content":[{"type":"output_text","text":" "}]}],"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}`
+)
+
+func a6EventType(data string) string { return gjson.Get(data, "type").String() }
+
+func a6Frames(datas ...string) string {
+	frames := make([][2]string, 0, len(datas))
+	for _, d := range datas {
+		frames = append(frames, [2]string{a6EventType(d), d})
+	}
+	return a6SSE(frames...)
+}
+
+func requireA6FailoverWithoutClientBytes(t *testing.T, runner a6StreamRunner, stream string) {
+	t.Helper()
+	rec, c, err := runA6Stream(t, runner, newA6PoolAccount(), stream)
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
+}
+
+// 池账号：失败帧之前只有空壳 / 空白 / 状态类结构事件 -> 仍可 failover，客户端 0 字节。
+func TestOpenAIStreamPoolStructuralEventsBeforeFailedStillFailOver(t *testing.T) {
+	cases := map[string][]string{
+		"空格 output_text.done + 空 message 项": {
+			a6EvCreated, a6EvMsgAdded, a6EvPartAdded, a6EvBlankDone, a6EvPartDone, a6EvMsgDone, a6StreamCommitFailureFrame,
+		},
+		"空白 delta": {a6EvCreated, a6EvMsgAdded, a6EvPartAdded, a6EvBlankDelta, a6StreamCommitFailureFrame},
+		"只带 encrypted_content 的 reasoning item": {
+			a6EvCreated, a6EvInProgress, a6EvReasoningDone, a6StreamCommitFailureFrame,
+		},
+		"web_search_call 状态事件": {
+			a6EvCreated, a6EvInProgress, a6EvSearching, a6EvSearchingDone, a6StreamCommitFailureFrame,
+		},
+	}
+	for _, runner := range a6StreamRunners {
+		for name, events := range cases {
+			t.Run(runner.name+"/"+name, func(t *testing.T) {
+				requireA6FailoverWithoutClientBytes(t, runner, a6Frames(events...))
+			})
+		}
+	}
+}
+
+// 空白 delta 之后紧跟非空 delta：在非空 delta 处提交，暂存事件按原顺序一字不差地 flush；
+// 提交之后再来的 failed 不再 failover。
+func TestOpenAIStreamPoolCommitsAtFirstVisibleDeltaAndFlushesStagedEventsInOrder(t *testing.T) {
+	events := []string{a6EvCreated, a6EvMsgAdded, a6EvPartAdded, a6EvBlankDelta, a6EvRealDelta}
+	for _, runner := range a6StreamRunners {
+		t.Run(runner.name, func(t *testing.T) {
+			stream := a6Frames(append(append([]string{}, events...), a6StreamCommitFailureFrame)...)
+			rec, c, err := runA6Stream(t, runner, newA6PoolAccount(), stream)
+
+			require.Error(t, err)
+			var failoverErr *UpstreamFailoverError
+			require.False(t, errors.As(err, &failoverErr), "已提交可见输出后不能 failover: %v", err)
+			require.True(t, c.Writer.Written())
+
+			out := rec.Body.String()
+			last := -1
+			for _, ev := range events {
+				idx := strings.Index(out, ev)
+				require.GreaterOrEqual(t, idx, 0, "缺少暂存事件: %s", ev)
+				require.Greater(t, idx, last, "暂存事件顺序被打乱: %s", ev)
+				last = idx
+			}
+			require.Contains(t, out, "response.failed")
+		})
+	}
+}
+
+// 只有空白文本、以 response.completed 正常结束：完整 flush，不 failover。
+func TestOpenAIStreamPoolBlankOnlyResponseCompletedIsFlushedWithoutFailover(t *testing.T) {
+	events := []string{a6EvCreated, a6EvMsgAdded, a6EvPartAdded, a6EvBlankDelta, a6EvBlankDone, a6EvPartDone, a6EvMsgDone}
+	for _, runner := range a6StreamRunners {
+		t.Run(runner.name, func(t *testing.T) {
+			stream := a6Frames(append(append([]string{}, events...), a6EvCompleted)...)
+			rec, c, err := runA6Stream(t, runner, newA6PoolAccount(), stream)
+
+			require.NoError(t, err)
+			require.True(t, c.Writer.Written())
+			out := rec.Body.String()
+			last := -1
+			for _, ev := range events {
+				idx := strings.Index(out, ev)
+				require.GreaterOrEqual(t, idx, 0, "缺少事件: %s", ev)
+				require.Greater(t, idx, last, "事件顺序被打乱: %s", ev)
+				last = idx
+			}
+			require.Contains(t, out, `"type":"response.completed"`)
+		})
+	}
+}
+
+// 非池账号行为完全不变：结构事件照旧立即提交，之后的 failed 帧不 failover、原样转发。
+func TestOpenAIStreamNonPoolStructuralEventsStillCommitImmediately(t *testing.T) {
+	events := []string{a6EvCreated, a6EvMsgAdded, a6EvPartAdded, a6EvBlankDone, a6EvPartDone, a6EvMsgDone, a6StreamCommitFailureFrame}
+	for _, runner := range a6StreamRunners {
+		t.Run(runner.name, func(t *testing.T) {
+			rec, c, err := runA6Stream(t, runner, newA6PlainAccount(), a6Frames(events...))
+
+			require.Error(t, err)
+			var failoverErr *UpstreamFailoverError
+			require.False(t, errors.As(err, &failoverErr), "非池账号结构事件已提交，不能 failover: %v", err)
+			require.True(t, c.Writer.Written())
+			require.Contains(t, rec.Body.String(), "response.output_text.done")
+			require.Contains(t, rec.Body.String(), "response.failed")
+		})
+	}
+}
+
+func TestOpenAIPoolStreamVisibleOutputClassification(t *testing.T) {
+	cases := []struct {
+		name string
+		data string
+		want bool
+	}{
+		{"非空 output_text.delta", a6EvRealDelta, true},
+		{"空白 output_text.delta", a6EvBlankDelta, false},
+		{"换行 output_text.delta", `{"type":"response.output_text.delta","delta":"\n\t "}`, false},
+		{"非空 output_text.done", `{"type":"response.output_text.done","text":"ok"}`, true},
+		{"空白 output_text.done", a6EvBlankDone, false},
+		{"非空 reasoning_summary_text.delta", `{"type":"response.reasoning_summary_text.delta","delta":"thinking"}`, true},
+		{"空白 reasoning_summary_text.delta", `{"type":"response.reasoning_summary_text.delta","delta":"  "}`, false},
+		{"非空 reasoning_text.delta", `{"type":"response.reasoning_text.delta","delta":"x"}`, true},
+		{"非空 function_call_arguments.delta", `{"type":"response.function_call_arguments.delta","delta":"{\"a\""}`, true},
+		{"空 function_call_arguments.delta", `{"type":"response.function_call_arguments.delta","delta":""}`, false},
+		{"非空 custom_tool_call_input.delta", `{"type":"response.custom_tool_call_input.delta","delta":"x"}`, true},
+		{"audio.delta 按结构事件", `{"type":"response.audio.delta","delta":"QUJD"}`, false},
+		{"output_item.added 空壳", a6EvMsgAdded, false},
+		{"content_part.added 空壳", a6EvPartAdded, false},
+		{"只带 encrypted_content 的 reasoning item", a6EvReasoningDone, false},
+		{"web_search_call 状态", a6EvSearching, false},
+		{"response.completed 本身不算可见（由终止事件规则提交）", a6EvCompleted, false},
+		{"非 JSON", `not json`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, openAIPoolStreamDataIsVisibleOutput(tc.data, a6EventType(tc.data)))
+		})
+	}
+
+	// 提交点 = 可见输出或终止 / error / 无类型事件；结构事件不提交。
+	require.True(t, openAIPoolStreamDataStartsClientOutput(a6EvRealDelta, "response.output_text.delta"))
+	require.True(t, openAIPoolStreamDataStartsClientOutput(a6EvCompleted, "response.completed"))
+	require.True(t, openAIPoolStreamDataStartsClientOutput("[DONE]", ""))
+	require.False(t, openAIPoolStreamDataStartsClientOutput(a6EvCreated, "response.created"))
+	require.False(t, openAIPoolStreamDataStartsClientOutput(a6EvMsgDone, "response.output_item.done"))
+	require.False(t, openAIPoolStreamDataStartsClientOutput(a6EvSearching, "response.web_search_call.in_progress"))
+}

@@ -5443,6 +5443,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	upstreamModelChecked := false
 	// pendingLines 在首个可见输出前保留前导事件，确保无输出失败仍可安全 failover。
 	pendingLines := make([]string, 0, 8)
+	// 池模式账号把「提交给客户端」的时机从首个结构事件后移到首个可见输出 / 终止事件
+	// （见 openAIPoolStreamDataStartsClientOutput），结构事件继续暂存在 pendingLines。
+	poolCommitGate := account != nil && account.IsPoolMode()
+	pendingLineBytes := 0
 
 	// pendingLines 会延迟首个可见输出前的前导事件；此期间发出 SSE 注释，
 	// 以提交响应头并避免中间代理因空闲超时而关闭连接。心跳字节会从
@@ -5494,6 +5498,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 		}
 		pendingLines = pendingLines[:0]
+		pendingLineBytes = 0
 		return true
 	}
 
@@ -5666,8 +5671,15 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				trimmedData = strings.TrimSpace(string(sanitizedData))
 				line = "data: " + string(sanitizedData)
 			}
-			lineStartsClientOutput = forceFlushFailedEvent || openAIStreamDataStartsClientOutput(trimmedData, eventType)
-			if lineStartsClientOutput && trimmedData != "[DONE]" && !openAIStreamEventTypeIsTerminal(eventType) {
+			progressStartsOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(trimmedData, eventType)
+			lineStartsClientOutput = progressStartsOutput
+			if poolCommitGate && !clientOutputStarted {
+				// 池账号：只有首个可见输出 / 终止事件 / 失败帧转发才提交；暂存接近上限时强制提交。
+				lineStartsClientOutput = forceFlushFailedEvent ||
+					openAIPoolStreamDataStartsClientOutput(trimmedData, eventType) ||
+					pendingLineBytes >= openAIPoolStageForceCommitBytes
+			}
+			if progressStartsOutput && trimmedData != "[DONE]" && !openAIStreamEventTypeIsTerminal(eventType) {
 				semanticOutputSeen = true
 			}
 			// OpenAI Responses streams that terminate with an empty
@@ -5689,6 +5701,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if !clientDisconnected {
 			if !clientOutputStarted && !lineStartsClientOutput {
 				pendingLines = append(pendingLines, line)
+				pendingLineBytes += len(line) + 1
 				continue
 			}
 			if !clientOutputStarted {
@@ -6709,6 +6722,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	capacityFailoverSuppressedLogged := false
 	failedMessage := ""
 	clientOutputStarted := false
+	// 池模式账号：提交给客户端的时机看首个可见输出 / 终止事件，而不是首个结构事件；
+	// first-output 计时器与扫描守卫仍按结构事件（startsClientOutput）推进，超时语义不变。
+	poolCommitGate := stageFirstOutput && account.IsPoolMode()
+	poolCommitSeen := false
 	upstreamRequestID := upstreamRequestIDFromHeader(resp.Header)
 	var streamEarlyErr error
 	// 上游模型不一致只在首个带 model 的事件上比对一次（无论结果如何）。
@@ -6738,10 +6755,15 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		shouldFlush := eventShouldFlush || (queueDrained && clientOutputStarted)
 		eventInProgress = false
 		if !clientDisconnected {
-			if completedProgressEvent {
+			if completedProgressEvent && !poolCommitGate {
 				applyAttemptResponseHeaders()
 			}
 			if shouldFlush {
+				if poolCommitGate {
+					// 池账号的结构事件只暂存不提交：暂存头延后到真正 flush 时才写入，
+					// 否则暂存期失败 failover 后上一次尝试的头会残留 / 重复。
+					applyAttemptResponseHeaders()
+				}
 				if err := flushBuffered(); err != nil {
 					clientDisconnected = true
 					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming flush, continuing to drain upstream for billing")
@@ -7065,6 +7087,16 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			line = alignClientVisibleModelInSSELine(line, originalModel)
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
 			startsVisibleOutput := openAIStreamDataStartsVisibleOutput(data, eventType)
+			// commitsOutput 决定暂存内容是否 flush 给客户端；非池账号恒等于 startsClientOutput。
+			commitsOutput := startsClientOutput
+			if poolCommitGate {
+				commitsOutput = forceFlushFailedEvent ||
+					openAIPoolStreamDataStartsClientOutput(data, eventType) ||
+					(!clientOutputStarted && pendingBytes() >= openAIPoolStageForceCommitBytes)
+				if commitsOutput {
+					poolCommitSeen = true
+				}
+			}
 			if stageFirstOutput {
 				eventStartsClientOutput = eventStartsClientOutput || startsClientOutput
 				eventStartsVisibleOutput = eventStartsVisibleOutput || startsVisibleOutput
@@ -7091,8 +7123,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 
 			// 写入客户端（客户端断开后继续 drain 上游）
 			if !clientDisconnected {
-				shouldFlush := queueDrained && (clientOutputStarted || startsClientOutput)
-				if firstTokenMs == nil && startsVisibleOutput {
+				shouldFlush := queueDrained && (clientOutputStarted || commitsOutput || poolCommitSeen)
+				if firstTokenMs == nil && startsVisibleOutput && (!poolCommitGate || commitsOutput || poolCommitSeen) {
 					// 保证首个 token 事件尽快出站，避免影响 TTFT。
 					shouldFlush = true
 				}

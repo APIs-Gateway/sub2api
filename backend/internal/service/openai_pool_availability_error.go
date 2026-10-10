@@ -223,3 +223,50 @@ func applyOpenAIPoolAvailabilityFailover(account *Account, failoverErr *Upstream
 	failoverErr.RetryableOnSameAccount = true
 	return failoverErr
 }
+
+// openAIPoolStageForceCommitBytes 池账号暂存累计到该字节数时强制提交：取 first-output
+// 暂存上限（8MB）的一半，避免继续累积后触发暂存溢出 failover。
+const openAIPoolStageForceCommitBytes = openAIFirstOutputStageMaxBytes / 2
+
+// openAIPoolStreamDataIsVisibleOutput 池账号口径下「用户看得见」的输出：
+//   - 去掉空白后非空的 output_text.delta / output_text.done；
+//   - 去掉空白后非空的 reasoning_summary_text.delta / reasoning_text.delta；
+//   - 非空的 function_call_arguments.delta / custom_tool_call_input.delta。
+//
+// 其余（空白文本、只带 encrypted_content 的 reasoning item、output_item.added /
+// content_part.added 空壳、web_search_call 状态事件、audio.delta 等）都按结构事件处理。
+func openAIPoolStreamDataIsVisibleOutput(data, eventType string) bool {
+	trimmed := strings.TrimSpace(data)
+	if trimmed == "" || !gjson.Valid(trimmed) {
+		return false
+	}
+	eventType = strings.TrimSpace(eventType)
+	if eventType == "" {
+		eventType = strings.TrimSpace(gjson.Get(trimmed, "type").String())
+	}
+	switch eventType {
+	case "response.output_text.delta",
+		"response.reasoning_summary_text.delta",
+		"response.reasoning_text.delta":
+		return strings.TrimSpace(gjson.Get(trimmed, "delta").String()) != ""
+	case "response.output_text.done":
+		return strings.TrimSpace(gjson.Get(trimmed, "text").String()) != ""
+	case "response.function_call_arguments.delta",
+		"response.custom_tool_call_input.delta":
+		return gjson.Get(trimmed, "delta").String() != ""
+	}
+	return false
+}
+
+// openAIPoolStreamDataStartsClientOutput 池账号是否应在该事件上把暂存内容提交给客户端：
+// 首个可见输出，或终止 / 失败 / error / 无类型（[DONE] 等）事件（后几类沿用原判定）。
+func openAIPoolStreamDataStartsClientOutput(data, eventType string) bool {
+	if openAIPoolStreamDataIsVisibleOutput(data, eventType) {
+		return true
+	}
+	et := strings.TrimSpace(eventType)
+	if et == "" || et == "error" || openAIStreamEventTypeIsTerminal(et) {
+		return openAIStreamDataStartsClientOutput(data, eventType)
+	}
+	return false
+}
