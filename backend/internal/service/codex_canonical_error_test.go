@@ -144,10 +144,10 @@ func TestCodexCanonicalErrorFor_SSEErrCodeMapping(t *testing.T) {
 		{"usage_not_included", 429, `{"error":{"type":"usage_not_included"}}`, CodexErrCodeUsageNotIncluded},
 		{"insufficient_quota 原样保留", 429, `{"error":{"code":"insufficient_quota"}}`, CodexErrCodeInsufficientQuota},
 		{"请求形 4xx", 422, "", CodexErrCodeInvalidPrompt},
-		{"429 非额度类", 429, "", CodexErrCodeServerOverloaded},
-		{"5xx", 502, "", CodexErrCodeServerOverloaded},
-		{"传输错误没有状态码", 0, "", CodexErrCodeServerOverloaded},
-		{"上游中文 response.failed", 0, upstreamChineseFailedEvent, CodexErrCodeServerOverloaded},
+		{"429 非额度类", 429, "", CodexErrCodeServerError},
+		{"5xx", 502, "", CodexErrCodeServerError},
+		{"传输错误没有状态码", 0, "", CodexErrCodeServerError},
+		{"上游中文 response.failed", 0, upstreamChineseFailedEvent, CodexErrCodeServerError},
 	}
 
 	for _, tc := range cases {
@@ -195,7 +195,7 @@ func TestSanitizeOpenAIResponseFailedEventForClient_RewritesUpstreamMessageOnRes
 
 	updated, sanitized := sanitizeOpenAIResponseFailedEventForClient(c, []byte(upstreamChineseFailedEvent), "response.failed", true)
 	require.True(t, sanitized)
-	require.Equal(t, CodexErrCodeServerOverloaded, gjson.GetBytes(updated, "response.error.code").String())
+	require.Equal(t, CodexErrCodeServerError, gjson.GetBytes(updated, "response.error.code").String())
 	require.False(t, gjson.GetBytes(updated, "response.error.message").Exists())
 	require.False(t, containsHan(string(updated)), "上游中文不能出现在下发给 Codex 的事件里")
 	require.NotContains(t, string(updated), "request_id")
@@ -259,12 +259,12 @@ func TestInboundIsResponses(t *testing.T) {
 
 func TestCodexResponsesFailedEventData(t *testing.T) {
 	c, _ := newResponsesTestContext(t, "/v1/responses")
-	data := codexResponsesFailedEventData(c, CodexErrCodeServerOverloaded)
+	data := codexResponsesFailedEventData(c, CodexErrCodeServerError)
 
 	// Codex 只解析带顶层 "type" 的 data 行，且只把 response.failed 之类当作终止事件。
 	require.Equal(t, "response.failed", gjson.Get(data, "type").String())
 	require.Equal(t, "failed", gjson.Get(data, "response.status").String())
-	require.Equal(t, CodexErrCodeServerOverloaded, gjson.Get(data, "response.error.code").String())
+	require.Equal(t, CodexErrCodeServerError, gjson.Get(data, "response.error.code").String())
 	require.True(t, gjson.Get(data, "response.output").IsArray())
 	require.Greater(t, gjson.Get(data, "response.created_at").Int(), int64(0))
 }
@@ -318,4 +318,30 @@ func TestOpenAIHandleErrorResponse_ResponsesRouteReplacesUpstreamBody(t *testing
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	require.Equal(t, "Unknown error", gjson.Get(rec.Body.String(), "error.message").String())
 	require.False(t, containsHan(rec.Body.String()), "上游中文不能出现在对外响应里")
+}
+
+// 网关补发/改写的流内 response.failed 不能用 server_is_overloaded：Codex 的
+// retry_delay 对没有 retry-after 的 ServerOverloaded 返回 None 并终止本轮。
+// 终态码（额度/上下文/策略）必须保持原样，客户端据此展示正确文案且不重试。
+func TestCodexCanonicalSSEErrCode_NeverFallsBackToServerOverloaded(t *testing.T) {
+	require.Equal(t, "server_error", CodexErrCodeServerError)
+	require.NotEqual(t, CodexErrCodeServerOverloaded, CodexErrCodeServerError)
+
+	for _, status := range []int{0, 429, 500, 502, 503, 529} {
+		require.Equal(t, CodexErrCodeServerError, codexCanonicalSSEErrCode(status, nil), "status=%d", status)
+	}
+
+	terminal := []string{
+		CodexErrCodeContextLengthExceeded,
+		CodexErrCodeInsufficientQuota,
+		CodexErrCodeUsageNotIncluded,
+	}
+	for _, code := range terminal {
+		body := []byte(`{"error":{"code":"` + code + `"}}`)
+		require.Equal(t, code, codexCanonicalSSEErrCode(400, body))
+	}
+	for _, code := range []string{CodexErrCodeCyberPolicy, CodexErrCodeMisalignmentPolicy} {
+		body := []byte(`{"error":{"code":"` + code + `"}}`)
+		require.Equal(t, "", codexCanonicalSSEErrCode(400, body), "策略类不改写")
+	}
 }

@@ -100,7 +100,7 @@ func TestOpenAIHandleFailoverExhausted_ResponsesStreamStartedEmitsCanonicalFaile
 
 	data := body[len("event: response.failed\ndata: "):]
 	assert.Equal(t, "response.failed", gjson.Get(data, "type").String())
-	assert.Equal(t, service.CodexErrCodeServerOverloaded, gjson.Get(data, "response.error.code").String())
+	assert.Equal(t, service.CodexErrCodeServerError, gjson.Get(data, "response.error.code").String())
 	assert.Empty(t, gjson.Get(data, "response.error.message").String())
 }
 
