@@ -331,17 +331,20 @@ func TestCodexCanonicalSSEErrCode_NeverFallsBackToServerOverloaded(t *testing.T)
 		require.Equal(t, CodexErrCodeServerError, codexCanonicalSSEErrCode(status, nil), "status=%d", status)
 	}
 
-	terminal := []string{
-		CodexErrCodeContextLengthExceeded,
-		CodexErrCodeInsufficientQuota,
-		CodexErrCodeUsageNotIncluded,
-	}
-	for _, code := range terminal {
-		body := []byte(`{"error":{"code":"` + code + `"}}`)
-		require.Equal(t, code, codexCanonicalSSEErrCode(400, body))
-	}
-	for _, code := range []string{CodexErrCodeCyberPolicy, CodexErrCodeMisalignmentPolicy} {
-		body := []byte(`{"error":{"code":"` + code + `"}}`)
-		require.Equal(t, "", codexCanonicalSSEErrCode(400, body), "策略类不改写")
+	// 终态/策略类 code：无论有无 type、状态码是 0 还是 502，都不能掉进 server_error 兜底。
+	for _, status := range []int{0, 400, 502} {
+		for _, code := range []string{
+			CodexErrCodeContextLengthExceeded,
+			CodexErrCodeInsufficientQuota,
+			CodexErrCodeUsageNotIncluded,
+			CodexErrCodeInvalidPrompt,
+		} {
+			body := []byte(`{"error":{"code":"` + code + `"}}`)
+			require.Equal(t, code, codexCanonicalSSEErrCode(status, body), "code=%s status=%d", code, status)
+		}
+		for _, code := range []string{CodexErrCodeCyberPolicy, CodexErrCodeMisalignmentPolicy, CodexErrCodeBioPolicy} {
+			body := []byte(`{"error":{"code":"` + code + `"}}`)
+			require.Equal(t, "", codexCanonicalSSEErrCode(status, body), "策略类不改写 code=%s status=%d", code, status)
+		}
 	}
 }

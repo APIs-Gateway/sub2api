@@ -36,6 +36,7 @@ const (
 	CodexErrCodeInvalidPrompt         = "invalid_prompt"
 	CodexErrCodeCyberPolicy           = "cyber_policy"
 	CodexErrCodeMisalignmentPolicy    = "misalignment_policy_violation"
+	CodexErrCodeBioPolicy             = "bio_policy"
 
 	codexErrTypeUsageLimitReached = "usage_limit_reached"
 	codexErrTypeUsageNotIncluded  = "usage_not_included"
@@ -142,7 +143,7 @@ func CodexCanonicalErrorFor(upstreamStatus int, upstreamBody []byte) CodexCanoni
 func codexCanonicalHTTPResponse(upstreamStatus int, upstreamBody []byte) (int, []byte) {
 	// 上游已经给出 Codex 原生识别的策略类 code：原样保留，Codex 自己有官方回落文案。
 	switch codexUpstreamErrorCode(upstreamBody) {
-	case CodexErrCodeCyberPolicy, CodexErrCodeMisalignmentPolicy:
+	case CodexErrCodeCyberPolicy, CodexErrCodeMisalignmentPolicy, CodexErrCodeBioPolicy:
 		return 0, nil
 	}
 
@@ -222,9 +223,11 @@ func codexCanonicalStatus(upstreamStatus int) int {
 func codexCanonicalSSEErrCode(upstreamStatus int, upstreamBody []byte) string {
 	code := codexUpstreamErrorCode(upstreamBody)
 	switch code {
-	case CodexErrCodeCyberPolicy, CodexErrCodeMisalignmentPolicy:
+	case CodexErrCodeCyberPolicy, CodexErrCodeMisalignmentPolicy, CodexErrCodeBioPolicy:
 		return ""
-	case CodexErrCodeInsufficientQuota, CodexErrCodeUsageNotIncluded, CodexErrCodeContextLengthExceeded:
+	case CodexErrCodeInsufficientQuota, CodexErrCodeUsageNotIncluded, CodexErrCodeContextLengthExceeded, CodexErrCodeInvalidPrompt:
+		// Codex 把这些 code 当终止错误；无 type、状态码为 0/502 时若掉进兜底会被
+		// 改成 server_error，客户端白白重试。
 		return code
 	}
 
