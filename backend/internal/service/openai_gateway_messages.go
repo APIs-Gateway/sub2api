@@ -1011,6 +1011,10 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				}
 				message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payloadBytes, message)
 				errStatus, errType, errMsg := http.StatusBadGateway, "api_error", message
+				if openAIPoolAvailabilityErrorForAccount(account, payloadBytes) {
+					// 池可用性错误的上游原文含厂商 / 「商家」字样，不透给客户端（ops 已记原文）。
+					_, _, errMsg, _ = MapUpstreamErrorDefault(http.StatusBadGateway)
+				}
 				if status, et, em, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, payloadBytes, message); matched {
 					if em == "" {
 						em = errMsg

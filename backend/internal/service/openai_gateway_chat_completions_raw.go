@@ -466,6 +466,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				if payloadType == "response.failed" || frameEvent == "response.failed" {
 					shouldFailover = openAIStreamFailedEventShouldFailover(payloadBytes, message)
 				}
+				if !shouldFailover && openAIPoolAvailabilityErrorForAccount(account, payloadBytes) {
+					shouldFailover = true
+				}
 				if !clientOutputStarted && !clientDisconnected && shouldFailover {
 					return s.newOpenAIStreamFailoverError(c, account, false, requestID, payloadBytes, message, resp.Header)
 				}

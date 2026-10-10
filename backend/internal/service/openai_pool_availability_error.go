@@ -98,11 +98,20 @@ func isOpenAIPoolAvailabilityErrorObject(errObj gjson.Result, extraCodes []strin
 	if !errObj.IsObject() {
 		return false
 	}
+	invalidRequest := false
 	for _, field := range []string{"code", "type"} {
 		value := strings.ToLower(strings.TrimSpace(errObj.Get(field).String()))
 		if openAIPoolAvailabilityCodeMatches(value, extraCodes) {
 			return true
 		}
+		if strings.HasPrefix(value, "invalid_request") {
+			invalidRequest = true
+		}
+	}
+	// invalid_request* 会回显用户请求里的参数：文案里恰好含关键词不能当作可用性错误，
+	// 否则请求会被放大重试。这类错误只认 code / type。
+	if invalidRequest {
+		return false
 	}
 	message := errObj.Get("message").String()
 	if message == "" {
@@ -122,19 +131,58 @@ func isOpenAIPoolAvailabilityErrorObject(errObj gjson.Result, extraCodes []strin
 //   - {"error":{...}}（HTTP 错误体、error 事件）
 //   - {"type":"error","code":"...","message":"..."}（扁平 error 事件）
 func isOpenAIPoolAvailabilityErrorPayload(payload []byte, extraCodes []string) bool {
-	if len(payload) == 0 || !gjson.ValidBytes(payload) {
-		return false
-	}
-	for _, path := range []string{"response.error", "error"} {
-		if isOpenAIPoolAvailabilityErrorObject(gjson.GetBytes(payload, path), extraCodes) {
+	for _, obj := range openAIPoolAvailabilityErrorObjects(payload) {
+		if isOpenAIPoolAvailabilityErrorObject(obj, extraCodes) {
 			return true
+		}
+	}
+	return false
+}
+
+// openAIPoolAvailabilityErrorObjects 返回 payload 里可能承载错误的对象（形态见上）。
+func openAIPoolAvailabilityErrorObjects(payload []byte) []gjson.Result {
+	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+		return nil
+	}
+	objs := make([]gjson.Result, 0, 3)
+	for _, path := range []string{"response.error", "error"} {
+		if obj := gjson.GetBytes(payload, path); obj.IsObject() {
+			objs = append(objs, obj)
 		}
 	}
 	if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(payload, "type").String()), "error") &&
 		!gjson.GetBytes(payload, "error").Exists() {
-		return isOpenAIPoolAvailabilityErrorObject(gjson.ParseBytes(payload), extraCodes)
+		objs = append(objs, gjson.ParseBytes(payload))
+	}
+	return objs
+}
+
+// isOpenAIPoolAvailabilityTimeoutPayload 判断可用性错误是否属于超时类（upstream_timeout /
+// 「等待响应超时」）。这类错误每次尝试都可能已经等满了上游自己的超时。
+func isOpenAIPoolAvailabilityTimeoutPayload(payload []byte) bool {
+	for _, obj := range openAIPoolAvailabilityErrorObjects(payload) {
+		for _, field := range []string{"code", "type"} {
+			if strings.ToLower(strings.TrimSpace(obj.Get(field).String())) == "upstream_timeout" {
+				return true
+			}
+		}
+		if strings.Contains(obj.Get("message").String(), "等待响应超时") {
+			return true
+		}
 	}
 	return false
+}
+
+// poolAvailabilityTimeoutSameAccountRetryLimit 超时类可用性错误的同号重试上限。
+const poolAvailabilityTimeoutSameAccountRetryLimit = 1
+
+// openAIPoolAvailabilityStreamRetryLimit 流内可用性错误的同号重试上限：超时类为 1，
+// 其余 0（沿用 pool_mode_retry_count）。
+func openAIPoolAvailabilityStreamRetryLimit(account *Account, payload []byte) int {
+	if openAIPoolAvailabilityErrorForAccount(account, payload) && isOpenAIPoolAvailabilityTimeoutPayload(payload) {
+		return poolAvailabilityTimeoutSameAccountRetryLimit
+	}
+	return 0
 }
 
 // openAIPoolAvailabilityErrorForAccount 只对池模式账号生效；非池账号恒为 false，行为不变。
@@ -167,6 +215,9 @@ func openAIPoolAvailabilityHTTPErrorForAccount(account *Account, statusCode int,
 func applyOpenAIPoolAvailabilityFailover(account *Account, failoverErr *UpstreamFailoverError, upstreamBody []byte) *UpstreamFailoverError {
 	if failoverErr == nil || !openAIPoolAvailabilityHTTPErrorForAccount(account, failoverErr.StatusCode, upstreamBody) {
 		return failoverErr
+	}
+	if failoverErr.StatusCode == http.StatusGatewayTimeout || isOpenAIPoolAvailabilityTimeoutPayload(upstreamBody) {
+		failoverErr.SameAccountRetryLimit = poolAvailabilityTimeoutSameAccountRetryLimit
 	}
 	failoverErr.StatusCode = http.StatusBadGateway
 	failoverErr.RetryableOnSameAccount = true

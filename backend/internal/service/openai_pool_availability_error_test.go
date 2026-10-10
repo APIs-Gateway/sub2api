@@ -1,3 +1,5 @@
+//go:build unit
+
 package service
 
 import (
@@ -337,6 +339,9 @@ func TestIsOpenAIPoolAvailabilityErrorPayload(t *testing.T) {
 		{"关键词出现在输出内容里不命中", `{"type":"response.output_text.delta","delta":"服务暂时不可用"}`, nil, false},
 		{"code 只是子串不命中", `{"error":{"code":"upstream_unavailable_for_legal_reasons"}}`, nil, false},
 		{"error 不是对象不命中", `{"error":"upstream_unavailable"}`, nil, false},
+		{"invalid_request_error 回显关键词不兜底", `{"error":{"type":"invalid_request_error","code":"invalid_value","message":"Invalid input: 服务暂时不可用"}}`, nil, false},
+		{"invalid_request 前缀的 code 回显关键词不兜底", `{"error":{"code":"invalid_request_body","message":"等待响应超时"}}`, nil, false},
+		{"invalid_request 前缀仍认 code 命中", `{"error":{"type":"invalid_request_error","code":"upstream_unavailable"}}`, nil, true},
 		{"空对象", `{}`, nil, false},
 		{"空 error 对象", `{"error":{}}`, nil, false},
 		{"空 response.error 对象", `{"response":{"error":{}}}`, nil, false},
@@ -376,4 +381,162 @@ func TestOpenAIPoolAvailabilityErrorForAccount(t *testing.T) {
 	require.Nil(t, (&Account{}).GetPoolModeAvailabilityErrorCodes())
 	bad := &Account{Credentials: map[string]any{poolModeAvailabilityErrorCodesCredentialKey: "upstream_unavailable"}}
 	require.Nil(t, bad.GetPoolModeAvailabilityErrorCodes())
+}
+
+func a6ChatPreOutputBody(errorFrame string) string {
+	return strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_a6","object":"response","status":"in_progress","output":[]}}`, "",
+		`data: {"type":"response.in_progress","response":{"id":"resp_a6","status":"in_progress"}}`, "",
+		`data: ` + errorFrame, "",
+	}, "\n")
+}
+
+func a6PostOutputBody(errorFrame string) string {
+	return strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_a6","object":"response","status":"in_progress","output":[]}}`, "",
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_a6","role":"assistant","status":"in_progress","content":[]}}`, "",
+		`data: {"type":"response.content_part.added","output_index":0,"content_index":0,"item_id":"msg_a6","part":{"type":"output_text","text":""}}`, "",
+		`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_a6","delta":"hello-a6"}`, "",
+		`data: ` + errorFrame, "",
+	}, "\n")
+}
+
+const a6BareErrorFrame = `{"error":{"code":"upstream_unavailable","message":"服务暂时不可用。 原因：上游服务、网络链路或代理返回异常响应。 解决方案：请稍后重试。如当前使用智能路由，请先重试；若仍失败，建议切换固定商家。"}}`
+
+// chat 转换流：池账号在首输出前收到可用性错误帧（无 type 的 {"error":...} 帧）-> failover，客户端 0 字节。
+func TestHandleChatStreamingResponsePoolAvailabilityErrorBeforeOutputFailsOver(t *testing.T) {
+	c, rec := a6NewPathContext(t, "/v1/chat/completions", nil)
+	resp := a6SSEResponse("text/event-stream", "rid_a6_chat", a6ChatPreOutputBody(a6BareErrorFrame))
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	result, err := svc.handleChatStreamingResponse(resp, c, newA6PoolAccount(), "model", "model", "model", time.Now(), 0)
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
+}
+
+// 非池账号同输入不 failover（原错误帧照旧写给客户端），确认新增分支只对池账号生效。
+func TestHandleChatStreamingResponseNonPoolAvailabilityErrorUnchanged(t *testing.T) {
+	c, _ := a6NewPathContext(t, "/v1/chat/completions", nil)
+	resp := a6SSEResponse("text/event-stream", "rid_a6_chat_plain", a6ChatPreOutputBody(a6BareErrorFrame))
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	_, err := svc.handleChatStreamingResponse(resp, c, newA6PlainAccount(), "model", "model", "model", time.Now(), 0)
+
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+}
+
+// raw chat 流：同上。
+func TestForwardAsRawChatCompletionsPoolAvailabilityErrorBeforeOutputFailsOver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
+	c.Request.Header.Set("Content-Type", "application/json")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_a6_raw"}},
+		Body:       io.NopCloser(strings.NewReader("data: " + a6BareErrorFrame + "\n\n")),
+	}}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+	account := rawChatCompletionsTestAccount()
+	account.Credentials["pool_mode"] = true
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, account, body, "")
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
+}
+
+// 已提交输出之后命中可用性错误：写给客户端的流内 error 文案换成通用文案，不带上游原文 / 「商家」。
+func TestHandleChatStreamingResponsePoolAvailabilityErrorAfterOutputUsesGenericMessage(t *testing.T) {
+	c, rec := a6NewPathContext(t, "/v1/chat/completions", nil)
+	resp := a6SSEResponse("text/event-stream", "rid_a6_chat_post", a6PostOutputBody(a6BareErrorFrame))
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	_, err := svc.handleChatStreamingResponse(resp, c, newA6PoolAccount(), "model", "model", "model", time.Now(), 0)
+
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	out := rec.Body.String()
+	require.Contains(t, out, "hello-a6")
+	require.Contains(t, out, "Upstream service temporarily unavailable")
+	require.NotContains(t, out, "商家")
+	require.NotContains(t, out, "智能路由")
+	require.NotContains(t, err.Error(), "商家")
+}
+
+func TestHandleAnthropicStreamingResponsePoolAvailabilityErrorAfterOutputUsesGenericMessage(t *testing.T) {
+	c, rec := a6NewPathContext(t, "/v1/messages", nil)
+	resp := a6SSEResponse("text/event-stream", "rid_a6_msg_post", a6PostOutputBody(`{"type":"error",`+strings.TrimPrefix(a6BareErrorFrame, "{")))
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	_, err := svc.handleAnthropicStreamingResponse(resp, c, newA6PoolAccount(), "model", "model", "model", time.Now())
+
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	out := rec.Body.String()
+	require.Contains(t, out, "hello-a6")
+	require.Contains(t, out, "Upstream service temporarily unavailable")
+	require.NotContains(t, out, "商家")
+	require.NotContains(t, out, "智能路由")
+	require.NotContains(t, err.Error(), "商家")
+}
+
+// 超时类可用性错误同号重试最多 1 次：HTTP 504 / upstream_timeout 体 / 流内 upstream_timeout 帧；
+// 非超时类不设额外上限。
+func TestPoolAvailabilityTimeoutLimitsSameAccountRetry(t *testing.T) {
+	pool := newA6PoolAccount()
+	apply := func(status int, body string) *UpstreamFailoverError {
+		return applyOpenAIPoolAvailabilityFailover(pool, &UpstreamFailoverError{StatusCode: status, ResponseBody: []byte(body)}, []byte(body))
+	}
+	require.Equal(t, 1, apply(http.StatusGatewayTimeout, a6UpstreamTimeoutBody).SameAccountRetryLimit)
+	require.Equal(t, 1, apply(http.StatusGatewayTimeout, a6UpstreamUnavailableBody).SameAccountRetryLimit)
+	require.Equal(t, 1, apply(http.StatusBadRequest, a6UpstreamTimeoutBody).SameAccountRetryLimit)
+	require.Zero(t, apply(http.StatusBadRequest, a6UpstreamUnavailableBody).SameAccountRetryLimit)
+	require.Zero(t, apply(http.StatusBadGateway, a6AllCandidatesFailedBody).SameAccountRetryLimit)
+
+	timeoutFrame := []byte(a6FailedFrame("upstream_timeout", "等待响应超时。 请稍后重试。"))
+	require.Equal(t, 1, openAIPoolAvailabilityStreamRetryLimit(pool, timeoutFrame))
+	require.Zero(t, openAIPoolAvailabilityStreamRetryLimit(pool, []byte(a6StreamCommitFailureFrame)))
+	require.Zero(t, openAIPoolAvailabilityStreamRetryLimit(newA6PlainAccount(), timeoutFrame))
+
+	svc := &OpenAIGatewayService{}
+	ferr := svc.newOpenAIStreamFailoverError(nil, pool, true, "rid", timeoutFrame, "等待响应超时", nil)
+	require.True(t, ferr.RetryableOnSameAccount)
+	require.Equal(t, 1, ferr.SameAccountRetryLimit)
+	ferr = svc.newOpenAIStreamFailoverError(nil, pool, true, "rid", []byte(a6StreamCommitFailureFrame), "x", nil)
+	require.Zero(t, ferr.SameAccountRetryLimit)
+}
+
+func a6NewPathContext(t *testing.T, path string, body io.Reader) (*gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, path, body)
+	c.Request.Header.Set("Content-Type", "application/json")
+	return c, rec
+}
+
+func a6SSEResponse(contentType, requestID, body string) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{contentType}, "x-request-id": []string{requestID}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
 }
