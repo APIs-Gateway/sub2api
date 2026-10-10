@@ -2828,6 +2828,11 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Acc
 	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, upstreamBody) {
 		return true
 	}
+	// 池模式账号的上游号池可用性错误（a6 等会用 400/403/404 携带）：与请求内容无关，
+	// 允许池内重试 / 换号 / 换组。非池账号恒为 false。
+	if openAIPoolAvailabilityHTTPErrorForAccount(account, statusCode, upstreamBody) {
+		return true
+	}
 	// A missing model is account/provider availability, not a malformed client
 	// request: another OpenAI-compatible account may serve it. Only a managed
 	// gateway (with an account repository, i.e. a handler that can exclude this
@@ -3980,11 +3985,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 				markBillingInflightProviderRefusal(c, resp.StatusCode, respBody, proofReadErr)
 				shouldDisable := s.handleFailoverSideEffects(ctx, resp, account, respBody, upstreamModel)
-				return nil, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
+				return nil, applyOpenAIPoolAvailabilityFailover(account, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 					StatusCode:             resp.StatusCode,
 					ResponseBody:           respBody,
 					RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, respBody, !shouldDisable && account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody))),
-				}, upstreamMsg, respBody)
+				}, upstreamMsg, respBody), respBody)
 			}
 			return s.handleErrorResponse(ctx, resp, c, account, body, billingModel)
 		}
@@ -4587,6 +4592,9 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 	if statusCode == http.StatusRequestEntityTooLarge {
 		return true
 	}
+	if openAIPoolAvailabilityHTTPErrorForAccount(account, statusCode, responseBody) {
+		return true
+	}
 	if account != nil && account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode) {
 		return true
 	}
@@ -4740,12 +4748,12 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 		Detail:               upstreamDetail,
 		UpstreamResponseBody: upstreamDetail,
 	})
-	return applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
+	return applyOpenAIPoolAvailabilityFailover(account, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 		StatusCode:             resp.StatusCode,
 		ResponseBody:           body,
 		ResponseHeaders:        resp.Header.Clone(),
 		RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, body, !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)),
-	}, upstreamMsg, body)
+	}, upstreamMsg, body), body)
 }
 
 func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
@@ -5290,6 +5298,11 @@ func openAIStreamFailedEventRetryableOnSameAccount(account *Account, payload []b
 	if !account.IsPoolMode() {
 		return false
 	}
+	// 池商家可用性错误（a6 的 smart_route_* / upstream_unavailable / upstream_timeout）：
+	// 先在池内重试 pool_mode_retry_count 次，用尽后再切号。
+	if openAIPoolAvailabilityErrorForAccount(account, payload) {
+		return true
+	}
 	semanticStatus := openAIStreamFailedEventSemanticStatus(payload, message)
 	return account.IsPoolModeRetryableStatus(semanticStatus) ||
 		isOpenAITransientProcessingError(http.StatusBadRequest, message, payload)
@@ -5309,6 +5322,10 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 		message = "OpenAI stream disconnected before completion"
 	}
 	statusCode := openAIStreamFailureStatus(payload, message)
+	if openAIPoolAvailabilityErrorForAccount(account, payload) {
+		// 语义状态统一按 502：耗尽后客户端拿到通用 502 文案，链分类判为可回退。
+		statusCode = http.StatusBadGateway
+	}
 	var headers http.Header
 	if len(responseHeaders) > 0 && responseHeaders[0] != nil {
 		headers = responseHeaders[0].Clone()
@@ -5341,6 +5358,7 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 		ResponseHeaders:        headers,
 		RetryableOnSameAccount: openAIStreamFailedEventRetryableOnSameAccount(account, payload, message),
 		RequestScopedTransient: isOpenAIUpstreamCapacityShedEvent(payload),
+		SameAccountRetryLimit:  openAIPoolAvailabilityStreamRetryLimit(account, payload),
 	}
 }
 
@@ -5366,6 +5384,9 @@ func (s *OpenAIGatewayService) nonStreamingTerminalFailureFailover(
 	shouldFailover := openAIStreamFailedEventShouldFailover(payload, message)
 	if terminalType == "error" {
 		shouldFailover = openAIStreamErrorEventShouldFailover(payload, message)
+	}
+	if !shouldFailover && openAIPoolAvailabilityErrorForAccount(account, payload) {
+		shouldFailover = true
 	}
 	if !shouldFailover {
 		return nil
@@ -5422,6 +5443,14 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	upstreamModelChecked := false
 	// pendingLines 在首个可见输出前保留前导事件，确保无输出失败仍可安全 failover。
 	pendingLines := make([]string, 0, 8)
+	// 池模式账号把「提交给客户端」的时机从首个结构事件后移到首个可见输出 / 终止事件
+	// （见 openAIPoolStreamDataStartsClientOutput），结构事件继续暂存在 pendingLines。
+	poolCommitGate := account != nil && account.IsPoolMode()
+	pendingLineBytes := 0
+	// poolProgressStaged：已暂存过非元数据的结构事件（旧逻辑会在此刻提交）。
+	poolProgressStaged := false
+	// 计时起点不分账号类型：请求先在非池账号上耗掉的时间也算进客户端空闲时间。
+	poolHoldOrigin := openAIPoolClientClockStart(c, startTime)
 
 	// pendingLines 会延迟首个可见输出前的前导事件；此期间发出 SSE 注释，
 	// 以提交响应头并避免中间代理因空闲超时而关闭连接。心跳字节会从
@@ -5473,6 +5502,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 		}
 		pendingLines = pendingLines[:0]
+		pendingLineBytes = 0
 		return true
 	}
 
@@ -5483,8 +5513,88 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 	scanBuf := getSSEScannerBuf64K()
 	scanner.Buffer(scanBuf[:0], maxLineSize)
-	defer putSSEScannerBuf64K(scanBuf)
+	if !poolCommitGate {
+		defer putSSEScannerBuf64K(scanBuf)
+	}
 	documentScanner := newOpenAISSEJSONDocumentScanner(scanner)
+
+	// 池账号：独立 goroutine 读上游，主循环才能在上游静默期间按暂存期限提交
+	// （提交期限见 openAIPoolCommitHoldMaxWait）。goroutine 可能在函数返回后仍阻塞在
+	// 读 body 上，scanBuf 因此不归还对象池（交给 GC）。
+	var poolLineCh chan string
+	poolScanFinished := false
+	if poolCommitGate {
+		poolLineCh = make(chan string, 16)
+		poolDone := make(chan struct{})
+		defer close(poolDone)
+		go func() {
+			defer close(poolLineCh)
+			for documentScanner.Scan() {
+				select {
+				case poolLineCh <- documentScanner.Text():
+				case <-poolDone:
+					return
+				}
+			}
+		}()
+	}
+	poolHoldExpired := func() bool {
+		return poolCommitGate && !clientOutputStarted && !clientDisconnected && poolProgressStaged &&
+			len(pendingLines) > 0 && openAIPoolHoldExpired(poolHoldOrigin)
+	}
+	// commitPoolHold 把暂存事件按原顺序提交给客户端（之后按普通已提交流处理）。
+	commitPoolHold := func() {
+		if clientOutputStarted || clientDisconnected {
+			return
+		}
+		stopKeepalive()
+		if !writePendingLines() {
+			return
+		}
+		flusher.Flush()
+		flushPending = false
+		clientOutputStarted = true
+	}
+	nextLine := func() (string, bool) {
+		if poolLineCh == nil {
+			if documentScanner.Scan() {
+				return documentScanner.Text(), true
+			}
+			return "", false
+		}
+		for {
+			var timer *time.Timer
+			var timerC <-chan time.Time
+			if poolProgressStaged && !clientOutputStarted && !clientDisconnected {
+				remaining := time.Until(poolHoldOrigin.Add(openAIPoolCommitHoldMaxWait))
+				if remaining < 0 {
+					remaining = 0
+				}
+				timer = time.NewTimer(remaining)
+				timerC = timer.C
+			}
+			select {
+			case l, ok := <-poolLineCh:
+				if timer != nil {
+					timer.Stop()
+				}
+				if !ok {
+					poolScanFinished = true
+				}
+				return l, ok
+			case <-timerC:
+				if poolHoldExpired() {
+					commitPoolHold()
+				}
+			}
+		}
+	}
+	scanErr := func() error {
+		if poolLineCh != nil && !poolScanFinished {
+			return nil
+		}
+		return documentScanner.Err()
+	}
 
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
 		return &openaiStreamingResultPassthrough{
@@ -5496,8 +5606,14 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		}
 	}
 
-	for documentScanner.Scan() {
-		line := documentScanner.Text()
+	for {
+		line, hasLine := nextLine()
+		if !hasLine {
+			break
+		}
+		if poolHoldExpired() {
+			commitPoolHold()
+		}
 		lineStartsClientOutput := false
 		forceFlushFailedEvent := false
 		if data, ok := extractOpenAISSEDataLine(line); ok {
@@ -5581,7 +5697,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					})
 					return resultWithUsage(), fmt.Errorf("upstream error event: passthrough rule matched message=%s", errMsg)
 				}
-				if openAIStreamErrorEventShouldFailover(rawDataBytes, errorMessage) {
+				if openAIStreamErrorEventShouldFailover(rawDataBytes, errorMessage) ||
+					openAIPoolAvailabilityErrorForAccount(account, rawDataBytes) {
 					return resultWithUsage(),
 						s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, rawDataBytes, errorMessage, resp.Header)
 				}
@@ -5604,7 +5721,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 					})
 				} else if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
-					if openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) {
+					if openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) ||
+						openAIPoolAvailabilityErrorForAccount(account, rawDataBytes) {
 						return resultWithUsage(),
 							s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, rawDataBytes, failedMessage, resp.Header)
 					}
@@ -5643,9 +5761,19 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				trimmedData = strings.TrimSpace(string(sanitizedData))
 				line = "data: " + string(sanitizedData)
 			}
-			lineStartsClientOutput = forceFlushFailedEvent || openAIStreamDataStartsClientOutput(trimmedData, eventType)
-			if lineStartsClientOutput && trimmedData != "[DONE]" && !openAIStreamEventTypeIsTerminal(eventType) {
+			progressStartsOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(trimmedData, eventType)
+			lineStartsClientOutput = progressStartsOutput
+			if poolCommitGate && !clientOutputStarted {
+				// 池账号：只有首个可见输出 / 终止事件 / 失败帧转发才提交；暂存接近上限时强制提交。
+				lineStartsClientOutput = forceFlushFailedEvent ||
+					openAIPoolStreamDataStartsClientOutput(trimmedData, eventType) ||
+					pendingLineBytes+len(line)+1 >= openAIPoolStageForceCommitBytes
+			}
+			if progressStartsOutput && trimmedData != "[DONE]" && !openAIStreamEventTypeIsTerminal(eventType) {
 				semanticOutputSeen = true
+				if poolCommitGate {
+					poolProgressStaged = true
+				}
 			}
 			// OpenAI Responses streams that terminate with an empty
 			// response.completed (no output, no usage, no error, nothing sent
@@ -5666,6 +5794,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if !clientDisconnected {
 			if !clientOutputStarted && !lineStartsClientOutput {
 				pendingLines = append(pendingLines, line)
+				pendingLineBytes += len(line) + 1
 				continue
 			}
 			if !clientOutputStarted {
@@ -5696,7 +5825,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			break
 		}
 	}
-	if err := documentScanner.Err(); err != nil {
+	if err := scanErr(); err != nil {
 		if sawTerminalEvent && !sawFailedEvent {
 			s.clearOpenAIProxyStreamDisconnect(account)
 			return resultWithUsage(), nil
@@ -6538,10 +6667,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			c.Header("x-request-id", v)
 		}
 	}
+	attemptHeadersApplied := false
 	applyAttemptResponseHeaders := func() {
-		if !stageFirstOutput || len(attemptResponseHeaders) == 0 || c.Writer.Written() {
+		if !stageFirstOutput || len(attemptResponseHeaders) == 0 || c.Writer.Written() || attemptHeadersApplied {
 			return
 		}
+		attemptHeadersApplied = true
 		for key, values := range attemptResponseHeaders {
 			for _, value := range values {
 				c.Writer.Header().Add(key, value)
@@ -6686,6 +6817,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	capacityFailoverSuppressedLogged := false
 	failedMessage := ""
 	clientOutputStarted := false
+	// 池模式账号：提交给客户端的时机看首个可见输出 / 终止事件，而不是首个结构事件；
+	// first-output 计时器与扫描守卫仍按结构事件（startsClientOutput）推进，超时语义不变。
+	poolCommitGate := stageFirstOutput && account.IsPoolMode()
+	poolCommitSeen := false
+	// 计时起点不分账号类型：请求先在非池账号上耗掉的时间也算进客户端空闲时间。
+	poolHoldOrigin := openAIPoolClientClockStart(c, startTime)
 	upstreamRequestID := upstreamRequestIDFromHeader(resp.Header)
 	var streamEarlyErr error
 	// 上游模型不一致只在首个带 model 的事件上比对一次（无论结果如何）。
@@ -6715,10 +6852,15 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		shouldFlush := eventShouldFlush || (queueDrained && clientOutputStarted)
 		eventInProgress = false
 		if !clientDisconnected {
-			if completedProgressEvent {
+			if completedProgressEvent && !poolCommitGate {
 				applyAttemptResponseHeaders()
 			}
 			if shouldFlush {
+				if poolCommitGate {
+					// 池账号的结构事件只暂存不提交：暂存头延后到真正 flush 时才写入，
+					// 否则暂存期失败 failover 后上一次尝试的头会残留 / 重复。
+					applyAttemptResponseHeaders()
+				}
 				if err := flushBuffered(); err != nil {
 					clientDisconnected = true
 					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming flush, continuing to drain upstream for billing")
@@ -6741,11 +6883,35 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		eventStartsVisibleOutput = false
 		eventShouldFlush = false
 	}
+	// 池账号暂存期限：已暂存过结构事件（旧逻辑会在此刻提交）、客户端仍没收到过 SSE 数据事件，
+	// 且自首次尝试开始已满 openAIPoolCommitHoldMaxWait 时，立即提交全部暂存事件。
+	poolHoldExpired := func() bool {
+		return poolCommitGate && !clientOutputStarted && !clientDisconnected && !eventInProgress &&
+			firstOutputProgressObserved && pendingBytes() > 0 && openAIPoolHoldExpired(poolHoldOrigin)
+	}
+	commitPoolHold := func() {
+		if clientDisconnected {
+			return
+		}
+		applyAttemptResponseHeaders()
+		if err := flushBuffered(); err != nil {
+			clientDisconnected = true
+			logger.LegacyPrintf("service.openai_gateway", "Client disconnected during pool hold commit, continuing to drain upstream for billing")
+			return
+		}
+		clientOutputStarted = true
+		poolCommitSeen = true
+		lastDownstreamWriteAt = time.Now()
+	}
 	sendErrorEvent := func(code, message string) {
 		if errorEventSent || clientDisconnected {
 			return
 		}
 		errorEventSent = true
+		if poolCommitGate {
+			// 下面的 flushBuffered 会提交暂存事件：先带上本次尝试的上游头（头已写出则无操作）。
+			applyAttemptResponseHeaders()
+		}
 		// Responses error events use top-level code/message/param fields. A nested
 		// Chat Completions error envelope loses the classification in strict clients.
 		eventName := "error"
@@ -6878,6 +7044,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if streamEarlyErr != nil {
 			return
 		}
+		if poolHoldExpired() {
+			commitPoolHold()
+		}
 		// Extract data from SSE line (supports both "data: " and "data:" formats)
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			dataBytes := []byte(data)
@@ -6937,7 +7106,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					streamEarlyErr = fmt.Errorf("upstream error event: passthrough rule matched message=%s", errMsg)
 					return
 				}
-				if openAIStreamErrorEventShouldFailover(dataBytes, errorMessage) {
+				if openAIStreamErrorEventShouldFailover(dataBytes, errorMessage) ||
+					openAIPoolAvailabilityErrorForAccount(account, dataBytes) {
 					streamEarlyErr = s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, dataBytes, errorMessage, resp.Header)
 					return
 				}
@@ -6960,7 +7130,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 						UpstreamCacheReadTok:     usage.CacheReadInputTokens,
 					})
 				} else if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
-					if openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) {
+					if openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) ||
+						openAIPoolAvailabilityErrorForAccount(account, dataBytes) {
 						sawFailedEvent = true
 						streamEarlyErr = s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, dataBytes, failedMessage, resp.Header)
 						return
@@ -7040,6 +7211,24 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			line = alignClientVisibleModelInSSELine(line, originalModel)
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
 			startsVisibleOutput := openAIStreamDataStartsVisibleOutput(data, eventType)
+			// commitsOutput 决定暂存内容是否 flush 给客户端；非池账号恒等于 startsClientOutput。
+			commitsOutput := startsClientOutput
+			if poolCommitGate {
+				commitsOutput = forceFlushFailedEvent ||
+					openAIPoolStreamDataStartsClientOutput(data, eventType)
+				// 暂存字节 + 本事件字节达到阈值：先把已暂存的按原顺序提交，本事件按已提交流写出，
+				// 不再进暂存（否则大图片事件会把 8MB 暂存写爆，被当成暂存超限去切号）。
+				if !clientOutputStarted && !clientDisconnected &&
+					pendingBytes()+int64(len(line))+1 >= openAIPoolStageForceCommitBytes {
+					commitPoolHold()
+					commitsOutput = true
+				}
+				if commitsOutput {
+					poolCommitSeen = true
+				}
+				// 池账号只在提交后的可见输出上记首 token，纯空白事件不记。
+				startsVisibleOutput = startsVisibleOutput && (commitsOutput || poolCommitSeen)
+			}
 			if stageFirstOutput {
 				eventStartsClientOutput = eventStartsClientOutput || startsClientOutput
 				eventStartsVisibleOutput = eventStartsVisibleOutput || startsVisibleOutput
@@ -7066,7 +7255,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 
 			// 写入客户端（客户端断开后继续 drain 上游）
 			if !clientDisconnected {
-				shouldFlush := queueDrained && (clientOutputStarted || startsClientOutput)
+				shouldFlush := queueDrained && (clientOutputStarted || commitsOutput || poolCommitSeen)
 				if firstTokenMs == nil && startsVisibleOutput {
 					// 保证首个 token 事件尽快出站，避免影响 TTFT。
 					shouldFlush = true
@@ -7265,6 +7454,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if eventInProgress {
 				continue
 			}
+			if poolHoldExpired() {
+				commitPoolHold()
+				continue
+			}
 			if time.Since(lastDownstreamWriteAt) < keepaliveInterval {
 				continue
 			}
@@ -7272,6 +7465,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			// addOpenAIStreamKeepaliveBytes，openAIStreamClientOutputStarted 会把它扣掉，
 			// 使上游模型不一致等 pre-output failover 在心跳后仍能零泄漏地切号。
 			if stageFirstOutput {
+				if poolCommitGate {
+					// 第一次写心跳就会提交响应头：先应用当前尝试的上游头（x-codex-* 限额头等），
+					// 否则它们会随暂存事件一起丢失。
+					applyAttemptResponseHeaders()
+				}
 				n, err := w.Write([]byte(":\n\n"))
 				if err != nil {
 					clientDisconnected = true
