@@ -375,11 +375,11 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 			if !tempUnscheduled {
 				shouldDisable = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
 			}
-			return nil, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
+			return nil, applyOpenAIPoolAvailabilityFailover(account, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
 				RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, respBody, !shouldDisable && account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody))),
-			}, upstreamMsg, respBody)
+			}, upstreamMsg, respBody), respBody)
 		}
 		return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
 	}
@@ -812,12 +812,19 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			if event.Type == "response.failed" {
 				shouldFailover = openAIStreamFailedEventShouldFailover(payloadBytes, message)
 			}
+			if !shouldFailover && openAIPoolAvailabilityErrorForAccount(account, payloadBytes) {
+				shouldFailover = true
+			}
 			if shouldFailover && !clientOutputStarted && !clientDisconnected {
 				streamFailoverErr = s.newOpenAIStreamFailoverError(c, account, false, requestID, payloadBytes, message, resp.Header)
 				return true
 			}
 			message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payloadBytes, message)
 			defaultStatus, defaultErrType, defaultMsg := http.StatusBadGateway, "upstream_error", message
+			if openAIPoolAvailabilityErrorForAccount(account, payloadBytes) {
+				// 池可用性错误的上游原文含厂商 / 「商家」字样，不透给客户端（ops 已记原文）。
+				_, _, defaultMsg, _ = MapUpstreamErrorDefault(http.StatusBadGateway)
+			}
 			if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, payloadBytes, message); matched {
 				if errMsg == "" {
 					errMsg = defaultMsg
