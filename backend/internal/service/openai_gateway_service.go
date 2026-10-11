@@ -5238,11 +5238,14 @@ func logOpenAICapacityFailoverSuppressed(
 }
 
 // openAICapacityShedRetryableClientCode 是把上游容量降载错误转发给客户端时改写
-// 使用的错误码。Codex CLI 按闭集对错误码分类：server_is_overloaded / slow_down
-// 被判为致命错误（客户端提示 "Selected model is at capacity. Please try a
-// different model." 并直接终止会话），而 server_error 等致命集之外的错误码会进入
-// 客户端内置的退避重试。
-const openAICapacityShedRetryableClientCode = "server_error"
+// 使用的错误码。依据 openai/codex 的 parse_failed_response（codex-api/src/sse/
+// responses_error.rs）与 retry_delay（protocol/src/error.rs）：server_is_overloaded
+// 解析为 ServerOverloaded，只有带服务端 retry-after 建议才重试，网关改写/补发的事件
+// 没有该建议，客户端会终止本轮（2026-10-02 之前的旧版 Codex 则一律终止，提示
+// "Selected model is at capacity"）；slow_down 虽归 RateLimitExceeded 可重试，但同样
+// 属容量降载信号，统一改写。server_error 等未知 code 落到 ApiError::Retryable，
+// 即 CodexErr::Stream，按 stream_max_retries 退避重试。
+const openAICapacityShedRetryableClientCode = CodexErrCodeServerError
 
 // sanitizeOpenAICapacityShedErrorCodeForClient 把即将写给下游客户端的
 // error / response.failed 事件中的容量降载错误码改写为客户端可重试的错误码。
@@ -5446,6 +5449,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	// sendResponsesFailedEvent 在流已经产生输出、HTTP 状态码已固化为 200 之后补一个
 	// Responses 协议的终止事件。Codex CLI 只认 response.completed/failed/incomplete/
 	// cancelled，缺终止事件会让它报 "stream closed before response.completed"。
+	// 错误码用可重试的 server_error 而不是 server_is_overloaded：Codex 的
+	// parse_failed_response 把后者解析为 ServerOverloaded，retry_delay 在没有
+	// retry-after 建议时返回 None 并终止本轮；未知 code 才走 CodexErr::Stream 退避重试。
 	sendResponsesFailedEvent := func() {
 		if clientDisconnected || !InboundIsResponses(c) {
 			return
@@ -5453,7 +5459,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
 			return
 		}
-		data := codexResponsesFailedEventData(c, CodexErrCodeServerOverloaded)
+		data := codexResponsesFailedEventData(c, CodexErrCodeServerError)
 		if data == "" {
 			return
 		}
@@ -6753,7 +6759,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		// Codex CLI 只解析带顶层 "type" 的 data 行，并且只把 response.completed/failed/
 		// incomplete/cancelled 当作终止事件；通用 {"type":"error"} 帧会被它静默丢弃。
 		if InboundIsResponses(c) {
-			if data := codexResponsesFailedEventData(c, CodexErrCodeServerOverloaded); data != "" {
+			if data := codexResponsesFailedEventData(c, CodexErrCodeServerError); data != "" {
 				eventName = "response.failed"
 				payload = data
 			}
