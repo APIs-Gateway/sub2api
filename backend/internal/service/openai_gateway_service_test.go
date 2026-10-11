@@ -1588,7 +1588,8 @@ func TestOpenAIStreamingReadErrorAfterOutputOnResponsesRouteEmitsSingleResponseF
 	require.NotContains(t, body, "event: error\n")
 	require.Equal(t, 1, strings.Count(body, "event: response.failed\n"))
 	require.Equal(t, 1, strings.Count(body, `"type":"response.failed"`))
-	require.Contains(t, body, `"code":"`+CodexErrCodeServerOverloaded+`"`)
+	require.Contains(t, body, `"code":"`+CodexErrCodeServerError+`"`)
+	require.NotContains(t, body, "server_is_overloaded")
 	require.True(t, IsResponseCommitted(c), "the handler must not append another failure")
 }
 
@@ -3968,4 +3969,50 @@ func (c *stubGatewayCache) SetReasoningContent(_ context.Context, _ string, _ st
 
 func (c *stubGatewayCache) GetReasoningContent(_ context.Context, _ string) (string, error) {
 	return "", ErrReasoningContentNotFound
+}
+
+// passthrough 路径中途断流后补发的 response.failed 必须是可重试码 server_error，
+// 而不是会让 Codex 终止本轮的 server_is_overloaded。
+func TestOpenAIStreamingPassthroughMidStreamBreakEmitsRetryableFailedCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const partial = "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"
+	cases := []struct {
+		name string
+		body io.ReadCloser
+	}{
+		{
+			name: "读流错误",
+			body: &openAIStreamReadThenErrorCloser{
+				reader: strings.NewReader(partial),
+				err:    errors.New("read tcp 192.0.2.1:1234->192.0.2.2:443: connection reset by peer"),
+			},
+		},
+		{
+			name: "EOF 前没有终止事件",
+			body: io.NopCloser(strings.NewReader(partial)),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: tc.body}
+
+			_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "", "")
+			require.Error(t, err)
+
+			out := rec.Body.String()
+			require.Contains(t, out, "partial")
+			require.Equal(t, 1, strings.Count(out, "event: response.failed\n"))
+			require.NotContains(t, out, "server_is_overloaded")
+			require.NotContains(t, out, "192.0.2.")
+			idx := strings.Index(out, "event: response.failed\ndata: ")
+			require.GreaterOrEqual(t, idx, 0)
+			data := strings.TrimSpace(strings.SplitN(out[idx+len("event: response.failed\ndata: "):], "\n", 2)[0])
+			require.Equal(t, "response.failed", gjson.Get(data, "type").String())
+			require.Equal(t, "server_error", gjson.Get(data, "response.error.code").String())
+		})
+	}
 }

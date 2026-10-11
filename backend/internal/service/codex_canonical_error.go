@@ -22,13 +22,21 @@ import (
 //
 // 注意两侧判定键不同：HTTP 429 的额度判定读 error.type，流内分派读 error.code。
 const (
-	CodexErrCodeServerOverloaded      = "server_is_overloaded"
+	CodexErrCodeServerOverloaded = "server_is_overloaded"
+	// CodexErrCodeServerError 是网关自己补发/改写 response.failed 时使用的可重试码。
+	// 依据 openai/codex：parse_failed_response（codex-api/src/sse/responses_error.rs）把
+	// server_is_overloaded 解析为 ApiError::ServerOverloaded，而 retry_delay
+	// （protocol/src/error.rs）只在带 retry-after 建议时才重试，网关补发的事件没有该头，
+	// 于是客户端终止本轮；未知 code（含 server_error）落到 ApiError::Retryable，
+	// 即 CodexErr::Stream，会按 stream_max_retries 退避重试。
+	CodexErrCodeServerError           = "server_error"
 	CodexErrCodeContextLengthExceeded = "context_length_exceeded"
 	CodexErrCodeInsufficientQuota     = "insufficient_quota"
 	CodexErrCodeUsageNotIncluded      = "usage_not_included"
 	CodexErrCodeInvalidPrompt         = "invalid_prompt"
 	CodexErrCodeCyberPolicy           = "cyber_policy"
 	CodexErrCodeMisalignmentPolicy    = "misalignment_policy_violation"
+	CodexErrCodeBioPolicy             = "bio_policy"
 
 	codexErrTypeUsageLimitReached = "usage_limit_reached"
 	codexErrTypeUsageNotIncluded  = "usage_not_included"
@@ -135,7 +143,7 @@ func CodexCanonicalErrorFor(upstreamStatus int, upstreamBody []byte) CodexCanoni
 func codexCanonicalHTTPResponse(upstreamStatus int, upstreamBody []byte) (int, []byte) {
 	// 上游已经给出 Codex 原生识别的策略类 code：原样保留，Codex 自己有官方回落文案。
 	switch codexUpstreamErrorCode(upstreamBody) {
-	case CodexErrCodeCyberPolicy, CodexErrCodeMisalignmentPolicy:
+	case CodexErrCodeCyberPolicy, CodexErrCodeMisalignmentPolicy, CodexErrCodeBioPolicy:
 		return 0, nil
 	}
 
@@ -209,14 +217,17 @@ func codexCanonicalStatus(upstreamStatus int) int {
 
 // codexCanonicalSSEErrCode 决定「流已开始」时 response.failed 里要写的 error.code。
 // 此时 HTTP 状态码已固化为 200，只能靠 code 让 Codex 选中官方文案；Codex 流内只认
-// 下面这几个 code，没有对应 code 的上游状态只能落到 server_is_overloaded。
-// 返回空串表示不改写。
+// 下面这几个终态 code（额度/上下文/请求形错误），其余上游失败一律落到可重试的
+// server_error：流内的 server_is_overloaded 没有 retry-after 时会让 Codex 终止本轮
+// （见 CodexErrCodeServerError 的依据）。返回空串表示不改写。
 func codexCanonicalSSEErrCode(upstreamStatus int, upstreamBody []byte) string {
 	code := codexUpstreamErrorCode(upstreamBody)
 	switch code {
-	case CodexErrCodeCyberPolicy, CodexErrCodeMisalignmentPolicy:
+	case CodexErrCodeCyberPolicy, CodexErrCodeMisalignmentPolicy, CodexErrCodeBioPolicy:
 		return ""
-	case CodexErrCodeInsufficientQuota, CodexErrCodeUsageNotIncluded, CodexErrCodeContextLengthExceeded:
+	case CodexErrCodeInsufficientQuota, CodexErrCodeUsageNotIncluded, CodexErrCodeContextLengthExceeded, CodexErrCodeInvalidPrompt:
+		// Codex 把这些 code 当终止错误；无 type、状态码为 0/502 时若掉进兜底会被
+		// 改成 server_error，客户端白白重试。
 		return code
 	}
 
@@ -236,7 +247,7 @@ func codexCanonicalSSEErrCode(upstreamStatus int, upstreamBody []byte) string {
 	if IsRequestShapedUpstream4xx(upstreamStatus) {
 		return CodexErrCodeInvalidPrompt
 	}
-	return CodexErrCodeServerOverloaded
+	return CodexErrCodeServerError
 }
 
 // codexUsageLimitReachedBody 只保留 Codex 渲染额度文案真正需要的字段，
