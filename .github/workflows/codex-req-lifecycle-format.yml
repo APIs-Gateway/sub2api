@@ -14,14 +14,14 @@ jobs:
     timeout-minutes: 10
     env:
       BASE_HEAD: bd19182073ff9ec6accfc2f30c02e3684a0ceef7
-      PARENT_HEAD: 53d39213f764f61cadfbdb24671201d86d422995
+      PARENT_HEAD: fe7a1c6af12c959660cf77de0b7dd85a0afbb698
       CI_SOURCE_HEAD: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-          fetch-depth: 4
+          fetch-depth: 5
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26.9'
@@ -141,7 +141,18 @@ jobs:
         run: |
           set -euo pipefail
           cp "$RUNNER_TEMP/req-lifecycle-go-version-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.txt" "$FORMAT_ROOT/go-version.txt"
-          gofmt -d "$FORMAT_ROOT/input/http1_lifecycle_test.go" "$FORMAT_ROOT/input/http1_upload_test.go" "$FORMAT_ROOT/input/proxy_lifecycle_test.go" > "$FORMAT_ROOT/gofmt.diff"
+          # Go 1.26.9 uses exit1 for an actual formatting diff, exit2 for errors.
+          set +e
+          gofmt -d "$FORMAT_ROOT/input/http1_lifecycle_test.go" "$FORMAT_ROOT/input/http1_upload_test.go" "$FORMAT_ROOT/input/proxy_lifecycle_test.go" > "$FORMAT_ROOT/gofmt.diff" 2> "$FORMAT_ROOT/gofmt-d.stderr"
+          diff_status=$?
+          set -e
+          printf '%s\n' "$diff_status" > "$FORMAT_ROOT/gofmt-d.exit"
+          case "$diff_status" in
+            0) test ! -s "$FORMAT_ROOT/gofmt.diff" ;;
+            1) test -s "$FORMAT_ROOT/gofmt.diff" ;;
+            *) exit "$diff_status" ;;
+          esac
+          test ! -s "$FORMAT_ROOT/gofmt-d.stderr"
           gofmt -w "$FORMAT_ROOT/output/http1_lifecycle_test.go" "$FORMAT_ROOT/output/http1_upload_test.go" "$FORMAT_ROOT/output/proxy_lifecycle_test.go"
           gofmt -l "$FORMAT_ROOT/output/http1_lifecycle_test.go" "$FORMAT_ROOT/output/http1_upload_test.go" "$FORMAT_ROOT/output/proxy_lifecycle_test.go" > "$FORMAT_ROOT/formatted-gofmt-list.txt"
           test ! -s "$FORMAT_ROOT/formatted-gofmt-list.txt"
