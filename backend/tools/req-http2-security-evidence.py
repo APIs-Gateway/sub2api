@@ -76,7 +76,7 @@ def verify_named(backend, evidence, filename):
             len(set(expected["privateLeaves"]) - default_tls) == 37,
             "Retain37 original private+4 public HTTP2 leaves and4 default TLS leaves")
     proof = []
-    kinds = ("private", "public", "dump", "trace", "dumpPublic")
+    kinds = ("private", "public", "dump", "trace", "dumpPublic", "http1", "proxy")
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
     for kind in kinds:
@@ -90,12 +90,79 @@ def verify_named(backend, evidence, filename):
             require(sum(v.get("Action") == "pass" for v in actual) == 1, f"Missing/duplicate PASS {test}")
             proof.append({"package": package, "test": test, "actions": [v["Action"] for v in actual]})
     # Detect new security leaves accidentally omitted from the frozen inventory.
-    prefixes = ("TestReqHTTP2Security_", "TestDumper", "TestReqTraceSecurity_", "TestReqDumpSecurity_")
+    prefixes = ("TestReqHTTP2Security_", "TestDumper", "TestReqTraceSecurity_", "TestReqDumpSecurity_",
+                "TestReqHTTP1Lifecycle_", "TestReqProxyLifecycle_")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")
     report(evidence, filename + ".inventory-proof.json", proof)
     return packages
+
+
+
+def compare_old_module_graphs(current, old, backend, evidence):
+    """Compare all MVS fields except proven modfile/req and optional cache paths."""
+    for values in (current, old):
+        require(len(values) == 365, "Incomplete secured 365-module graph")
+        paths = [value.get("Path") for value in values]
+        require(all(isinstance(path, str) and path for path in paths) and
+                len(paths) == len(set(paths)), "Empty/duplicate module paths")
+        require(sum(value.get("Main") is True for value in values) == 1,
+                "Expected exactly one main module")
+        require(sum(value["Path"] == MODULE for value in values) == 1,
+                "Expected exactly one controlled req module")
+    require([value["Path"] for value in current] == [value["Path"] for value in old],
+            "Old-red module path/order changed")
+    cache_changes = []
+
+    def normalized(value, replacement, replacement_path, main_modfile):
+        result = dict(value)
+        if value.get("Main"):
+            require("Replace" not in value, "Unexpected main replacement")
+            require(Path(value["GoMod"]).resolve() == main_modfile,
+                    "Unexpected main modfile")
+            result.pop("GoMod")
+        elif value["Path"] == MODULE:
+            require(Path(value["Dir"]).resolve() == replacement and
+                    Path(value["GoMod"]).resolve() == replacement / "go.mod",
+                    "Incorrect controlled req source directory/modfile")
+            replace = dict(value["Replace"])
+            require(replace["Path"] == replacement_path and
+                    Path(replace["Dir"]).resolve() == replacement and
+                    Path(replace["GoMod"]).resolve() == replacement / "go.mod",
+                    "Incorrect old/current replacement")
+            for key in ("Path", "Dir", "GoMod"):
+                replace.pop(key)
+            # Preserve every non-location replacement field, e.g. GoVersion.
+            result["Replace"] = replace
+            result.pop("Dir")
+            result.pop("GoMod")
+        else:
+            require(isinstance(value.get("Version"), str) and value["Version"],
+                    "External module is not versioned")
+            require("Replace" not in value, "Unexpected external replacement")
+            if "Dir" in value:
+                require(isinstance(value["Dir"], str) and value["Dir"] and
+                        Path(value["Dir"]).is_absolute(), "Invalid external cache Dir")
+            result.pop("Dir", None)
+        return result
+
+    for before, after in zip(current, old):
+        if not before.get("Main") and before["Path"] != MODULE:
+            if "Dir" in before and "Dir" in after:
+                require(before["Dir"] == after["Dir"], "External cache Dir moved")
+            elif ("Dir" in before) != ("Dir" in after):
+                cache_changes.append({"path": before["Path"],
+                                      "currentDir": before.get("Dir"),
+                                      "oldDir": after.get("Dir")})
+        require(normalized(before, backend / "third_party/req", "./third_party/req",
+                           backend / "go.mod") ==
+                normalized(after, evidence / "original", str(evidence / "original"),
+                           evidence / "old.mod"), "Old-red MVS changed")
+    return {"identicalModules": len(old),
+            "sourceLocationChange": "req replacement and main modfile locations only",
+            "optionalExternalCacheDirChanges": cache_changes,
+            "allOtherModuleAndReplacementFieldsIdentical": True}
 
 
 def main():
@@ -197,28 +264,17 @@ def main():
     elif operation == "old-graph":
         original = objects(evidence / "modules.json")
         old = objects(evidence / "old-modules.json")
-        def normalized(values, replacement, main_modfile):
-            result = []
-            for value in values:
-                value = dict(value)
-                if value.get("Main"):
-                    require(Path(value["GoMod"]).resolve() == main_modfile, "Unexpected main modfile")
-                    value.pop("GoMod")
-                if value["Path"] == MODULE:
-                    require(Path(value["Replace"]["Dir"]).resolve() == replacement, "Incorrect old/current replacement")
-                    value.pop("Dir", None)
-                    value.pop("GoMod", None)
-                    value.pop("Replace")
-                result.append(value)
-            return result
-        require(normalized(original, backend / "third_party/req", backend / "go.mod") ==
-                normalized(old, evidence / "original", evidence / "old.mod"), "Old-red MVS changed")
+        graph_proof = compare_old_module_graphs(original, old, backend, evidence)
         current = (backend / "go.mod").read_text()
         oldmod = (evidence / "old.mod").read_text()
         expected = current.replace("replace " + MODULE + " => ./third_party/req", "replace " + MODULE + " => " + str(evidence / "original"))
         require(oldmod == expected, "Old modfile changed more than replace path")
         require((backend / "go.sum").read_bytes() == (evidence / "old.sum").read_bytes(), "Old-red sums changed")
-        report(evidence, "old-graph-proof.json", {"identicalModules": len(old), "onlyChange": "req Replace path"})
+        graph_proof["rawGraphSHA256"] = {name: hashlib.sha256((evidence / name).read_bytes()).hexdigest()
+                                      for name in ("modules.json", "old-modules.json")}
+        graph_proof["oldModfileOnlyReqReplaceChanged"] = True
+        graph_proof["oldSumBytesIdentical"] = True
+        report(evidence, "old-graph-proof.json", graph_proof)
     elif operation == "old-red":
         expected = inventory(backend)
         values = events(evidence / "old-red.json")

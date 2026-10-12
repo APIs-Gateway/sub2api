@@ -18,15 +18,17 @@ test "$(cat "$evidence/head.txt")" = "${REQ_SECURITY_EXPECTED_HEAD:?Exact frozen
 git diff --exit-code HEAD -- > "$evidence/checkout.diff"
 git ls-files --stage > "$evidence/git-index.txt"
 python3 "$checker" inputs "$repo" "$evidence"
+# Actual cold/warm graphs and version/sum/replacement negative controls run in CI.
+python3 -B "$backend/tools/req-http2-security-evidence_test.py" > "$evidence/old-graph-regressions.stdout" 2> "$evidence/old-graph-regressions.stderr"
 go version | tee "$evidence/go-version.txt"
 grep -q 'go1.26.9 ' "$evidence/go-version.txt"
 go list -m -json all > "$evidence/modules.json"
 go list -json "$module/..." > "$evidence/packages.json"
 python3 "$checker" packages "$backend" "$evidence"
-gofmt -d third_party/req/internal/http2/{flow,transport,frame}.go third_party/req/internal/http2/{flow,transport,frame}_security_test.go third_party/req/transport_security_test.go third_party/req/internal/dump/{dump.go,dump_concurrency_test.go} third_party/req/{request,response,trace,dump_concurrency_test,trace_concurrency_test}.go > "$evidence/gofmt.diff"
+gofmt -d third_party/req/internal/http2/{flow,transport,frame}.go third_party/req/internal/http2/{flow,transport,frame}_security_test.go third_party/req/transport_security_test.go third_party/req/internal/dump/{dump.go,dump_concurrency_test.go} third_party/req/{request,response,trace,dump_concurrency_test,trace_concurrency_test,http1_lifecycle_test,http1_upload_test,proxy_lifecycle_test}.go > "$evidence/gofmt.diff"
 test ! -s "$evidence/gofmt.diff"
 # -p bounds compiler parallelism; -parallel bounds tests within each package.
-go test -p=1 -parallel=1 -race -count=1 -timeout=10m -json -run '^(TestReqHTTP2Security_|TestDumper|TestReqDumpSecurity_|TestReqTraceSecurity_)' -covermode=atomic -coverpkg="$module/..." -coverprofile="$evidence/named.raw.out" "$private" "$module/internal/dump" "$module" > "$evidence/named.json" 2> "$evidence/named.stderr"
+go test -p=1 -parallel=1 -race -count=1 -timeout=10m -json -run '^(TestReqHTTP2Security_|TestDumper|TestReqDumpSecurity_|TestReqTraceSecurity_|TestReqHTTP1Lifecycle_|TestReqProxyLifecycle_)' -covermode=atomic -coverpkg="$module/..." -coverprofile="$evidence/named.raw.out" "$private" "$module/internal/dump" "$module" > "$evidence/named.json" 2> "$evidence/named.stderr"
 python3 "$checker" named "$backend" "$evidence"
 # Wildcard deliberately omits the original internal/testdata helper suite.
 # Its cert_test.go lacks an io import; retain both original files verbatim.

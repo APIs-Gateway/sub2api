@@ -103,5 +103,28 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 82
+  "totalNamedLeaves": 97,
+  "http1Package": "github.com/imroc/req/v3",
+  "http1Leaves": [
+    "TestReqHTTP1Lifecycle_ResponseBody/chunked_trailers_reuse",
+    "TestReqHTTP1Lifecycle_ResponseBody/early_close",
+    "TestReqHTTP1Lifecycle_ResponseBody/cancel_read",
+    "TestReqHTTP1Lifecycle_ResponseBody/truncated_length",
+    "TestReqHTTP1Lifecycle_ResponseBody/truncated_chunk",
+    "TestReqHTTP1Lifecycle_ExpectContinue/informational_then_continue",
+    "TestReqHTTP1Lifecycle_ExpectContinue/final_close_without_body",
+    "TestReqHTTP1Lifecycle_ExpectContinue/final_keepalive_sends_body",
+    "TestReqHTTP1Lifecycle_ChunkedUploadTrailers"
+  ],
+  "http1Count": 9,
+  "proxyPackage": "github.com/imroc/req/v3",
+  "proxyLeaves": [
+    "TestReqProxyLifecycle_HTTPAbsoluteFormAndAuthIsolation",
+    "TestReqProxyLifecycle_CONNECTFailureClosesSocket/authentication_rejected",
+    "TestReqProxyLifecycle_CONNECTFailureClosesSocket/malformed_response",
+    "TestReqProxyLifecycle_CONNECTFailureClosesSocket/early_close",
+    "TestReqProxyLifecycle_CONNECTCallbackRejectsBeforeTLS",
+    "TestReqProxyLifecycle_CONNECTCancellationReturnsBeforeProxyReply"
+  ],
+  "proxyCount": 6
 }

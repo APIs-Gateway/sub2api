@@ -703,11 +703,14 @@
     "transport_security_test.go",
     "internal/dump/dump_concurrency_test.go",
     "dump_concurrency_test.go",
-    "trace_concurrency_test.go"
+    "trace_concurrency_test.go",
+    "http1_lifecycle_test.go",
+    "http1_upload_test.go",
+    "proxy_lifecycle_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "exact full Git source/main MVS; HTTP2, dump, trace named JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all7 adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
+  "validation": "exact full Git source/main MVS; original82 HTTP2/dump/trace plus9 HTTP1 lifecycle and6 proxy named JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all7 adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",

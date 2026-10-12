@@ -123,6 +123,52 @@ all-tests, old-wire-red and final repair-block85; its partial results do not
 approve this correction. New exact-head remote evidence and unchanged Codecov85
 remain mandatory.
 
+## Additional HTTP/1 lifecycle and proxy regressions
+
+The original82 named leaves remain required. Nine additional HTTP/1 leaves use
+the real Client.Do transport and loopback TCP peers to check chunked trailers
+and EOF ordering, complete-body connection reuse, truncated framing, early
+Body.Close/cancellation, and recovery on a new connection. Expect:100-continue
+cases distinguish informational/100 responses, a final closing response that
+does not consume the upload, and a final keepalive response that still finishes
+the upload before reusing its socket. A gated io.Pipe upload requires its first
+chunk to reach the peer before the producer may send its second chunk and final
+trailer; it cannot pass by buffering the entire body until EOF.
+
+Six proxy leaves use real HTTP forwarding and CONNECT peers: absolute-form
+requests/authentication without mutating caller credentials, failed or malformed
+CONNECT responses, callback rejection before TLS, and cancellation before a
+held proxy response. The last case preserves the existing detached-dial contract:
+request cancellation returns promptly, while a later failed CONNECT retires the
+socket. It does not require cancellation to immediately close an in-flight dial.
+
+All97 leaves require actual named JSON RUN/PASS events and the full selected
+original-package race suite. These fixtures do not change production code or
+waive full-PR Codecov85. The separate seven-repair-block85 gate and raw profiles
+remain intact. Candidate tests and their inventories are not passing evidence;
+new exact-head remote validation and independent review remain required.
+
+## Cold/warm module-cache identity regression
+
+A real GitHub CI run on the unchanged security source completed named and
+original-package race tests but stopped before the old-wire witness because
+11 external versioned modules acquired optional cache `Dir` fields between the
+two `go list -m -json all` snapshots. No module version or checksum changed.
+The graph comparator now records those optional cache-materialization changes
+while comparing every other field. A present directory in both snapshots must
+remain identical. External local replacements are rejected; main modfile and
+controlled req replacement/source paths retain exact validation, including
+non-location replacement metadata. Both graphs must contain all 365 unique
+module paths. The exact old.mod replacement-only and old.sum byte checks remain.
+
+CI executes regressions against both complete actual 365-module snapshots,
+including the 11 observed cache changes and cold/warm directions, and rejects
+version, sum, modfile, replacement, unknown-field, duplicate, cardinality and
+nonoptional directory drift. The raw graph snapshots and optional Dir changes
+are retained in evidence. This verifier correction does not waive the old-wire
+assertion, source provenance, races or either unchanged coverage requirement.
+New candidate CI execution and independent review remain required.
+
 ## Licenses
 
 Retain the original MIT `LICENSE` for req and all original copyright notices.
