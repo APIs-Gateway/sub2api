@@ -177,7 +177,6 @@ const createApiKey = (): ApiKey => ({
   reset_5h_at: null,
   reset_1d_at: null,
   reset_7d_at: null,
-  stable_priority_enabled: false,
 })
 
 const DataTableStub = {
@@ -480,7 +479,7 @@ describe('user KeysView fiat limit input', () => {
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
     expect(createKey).toHaveBeenCalledWith(
-      'new-key', 1, undefined, [], [], 50, undefined, expect.anything(), false
+      'new-key', 1, undefined, [], [], 50, undefined, expect.anything()
     )
     wrapper.unmount()
   })

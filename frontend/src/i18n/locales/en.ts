@@ -1267,11 +1267,6 @@
     rateLimit1d: 'Daily Limit ({currency})',
     rateLimit7d: '7-Day Limit ({currency})',
     rateLimitHint: 'Set the maximum spending for this key within each time window. 0 = unlimited.',
-    stablePriority: {
-      label: 'Enable Stable Priority',
-      description: 'When enabled, if all channels in your selected group become unavailable, requests automatically fall back across groups tier by tier to a more stable, higher-rate group; they switch back once the lower-rate group recovers.',
-      billingWarning: 'Note: during fallback, usage is billed from your balance at the actually-serving higher-rate group’s rate, which may be higher than your original group.',
-    },
     rateLimitUsage: 'Rate Limit Usage',
     resetRateLimitUsage: 'Reset Rate Limit Usage',
     resetRateLimitTitle: 'Confirm Reset Rate Limit',
@@ -2049,12 +2044,6 @@
       maxEmailsReached: 'Maximum number of notification emails reached',
       unverified: 'Unverified',
       verified: 'Verified',
-    },
-    stablePriority: {
-      title: 'Stable Priority',
-      description: 'When enabled, if every channel in your group becomes unavailable, requests automatically fail over up the tier chain to a more reliable higher-rate group, then switch back once the lower-rate group recovers.',
-      enabled: 'Enable stable priority',
-      billingHint: 'Note: during fallback you are billed from your balance at the actual higher-rate group rate, which may cost more than your original group.',
     },
     avatar: {
       title: 'Profile Avatar',
