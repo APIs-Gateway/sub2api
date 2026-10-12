@@ -339,6 +339,7 @@ jobs:
               'GroupRPMOverridesModal.requests.spec.ts': 30,
               'GroupRPMOverridesModal.edit.spec.ts': 14,
               'GroupRPMOverridesModal.spec.ts': 5,
+              'GroupModal.cleanup.spec.ts': 6,
           }
           for filename, count in expected.items():
               suites = [suite for suite in report['testResults'] if suite['name'].endswith('/' + filename)]

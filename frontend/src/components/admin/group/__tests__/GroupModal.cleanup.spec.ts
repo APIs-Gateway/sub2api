@@ -57,12 +57,16 @@ describe.each([GroupRPMOverridesModal, GroupRateMultipliersModal])('group modal 
 
   it('cancels queued searches on hide and unmount, then searches normally after re-show', async () => {
     const wrapper = open(true)
+    await flushPromises()
+    expect(wrapper.get('input[type="text"]').attributes('disabled')).toBeUndefined()
     await wrapper.get('input[type="text"]').setValue('hidden')
     await wrapper.setProps({ show: false })
     await vi.advanceTimersByTimeAsync(300)
     expect(mocks.list).not.toHaveBeenCalled()
 
     await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect(wrapper.get('input[type="text"]').attributes('disabled')).toBeUndefined()
     await wrapper.get('input[type="text"]').setValue('visible')
     await vi.advanceTimersByTimeAsync(300)
     await flushPromises()
@@ -80,6 +84,8 @@ describe.each([GroupRPMOverridesModal, GroupRateMultipliersModal])('group modal 
     let resolveSearch!: (result: { items: { id: number; email: string }[] }) => void
     mocks.list.mockImplementationOnce(() => new Promise(resolve => { resolveSearch = resolve }))
     const wrapper = open(true)
+    await flushPromises()
+    expect(wrapper.get('input[type="text"]').attributes('disabled')).toBeUndefined()
     await wrapper.get('input[type="text"]').setValue('stale')
     await vi.advanceTimersByTimeAsync(300)
     expect(mocks.list).toHaveBeenCalledTimes(1)
