@@ -22,9 +22,13 @@ func (r *usageBillingRepository) BillingInflightAvailable() bool {
 
 // Every operation locks user before lease rows. This serializes admission with
 // the existing user -> active card settlement/purchase/renewal lock order.
+//
+// FOR NO KEY UPDATE 而不是 FOR UPDATE：两者对其它准入/结算事务同样互斥，但前者不挡
+// 外键检查的 FOR KEY SHARE。用 FOR UPDATE 时，usage_logs 批量插入要对每行的 user_id
+// 做外键检查，会排在高并发用户的锁队列后面，整批超时丢日志（计费照扣，日志没了）。
 func lockBillingInflightUser(ctx context.Context, tx *sql.Tx, userID int64) (float64, error) {
 	var balance float64
-	err := tx.QueryRowContext(ctx, `SELECT balance FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, userID).Scan(&balance)
+	err := tx.QueryRowContext(ctx, `SELECT balance FROM users WHERE id=$1 AND deleted_at IS NULL FOR NO KEY UPDATE`, userID).Scan(&balance)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, service.ErrUserNotFound
 	}
@@ -54,7 +58,7 @@ func billingInflightCapacity(ctx context.Context, tx *sql.Tx, userID int64, bala
 	err := tx.QueryRowContext(ctx, `SELECT daily_limit_usd,weekly_limit_usd,monthly_limit_usd,
       daily_usage_usd,weekly_usage_usd,monthly_usage_usd,daily_window_start,weekly_window_start,monthly_window_start,expires_at,status
       FROM user_subscriptions WHERE user_id=$1 AND status='active' AND deleted_at IS NULL
-      ORDER BY expires_at DESC,id DESC LIMIT 1 FOR UPDATE`, userID).Scan(&dl, &wl, &ml, &card.DailyUsageUSD, &card.WeeklyUsageUSD, &card.MonthlyUsageUSD, &dw, &ww, &mw, &card.ExpiresAt, &card.Status)
+      ORDER BY expires_at DESC,id DESC LIMIT 1 FOR NO KEY UPDATE`, userID).Scan(&dl, &wl, &ml, &card.DailyUsageUSD, &card.WeeklyUsageUSD, &card.MonthlyUsageUSD, &dw, &ww, &mw, &card.ExpiresAt, &card.Status)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, false, err
 	}
