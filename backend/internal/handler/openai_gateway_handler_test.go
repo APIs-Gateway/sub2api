@@ -511,7 +511,8 @@ func TestOpenAIEnsureForwardErrorResponse_ResponsesRouteAfterWrittenEmitsRespons
 	assert.Contains(t, body, `"type":"response.failed"`)
 	// Codex 端点的上游错误统一归一化：error.code 用 Codex 认识的常量，
 	// message 留空，由 Codex 自己渲染官方文案。
-	assert.Contains(t, body, `"code":"server_is_overloaded"`)
+	assert.Contains(t, body, `"code":"server_error"`)
+	assert.NotContains(t, body, "server_is_overloaded")
 	assert.NotContains(t, body, "Upstream request failed")
 }
 

@@ -3793,6 +3793,9 @@ func poolModeSameAccountRetry(account *service.Account, failoverErr *service.Ups
 		return 0, 0, false
 	}
 	retryLimit = account.GetPoolModeRetryCount()
+	if failoverErr.SameAccountRetryLimit > 0 && failoverErr.SameAccountRetryLimit < retryLimit {
+		retryLimit = failoverErr.SameAccountRetryLimit
+	}
 	if sameAccountRetryCount[account.ID] >= retryLimit {
 		return sameAccountRetryCount[account.ID], retryLimit, false
 	}

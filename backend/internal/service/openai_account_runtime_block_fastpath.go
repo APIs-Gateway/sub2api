@@ -65,6 +65,11 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	if openAIAccountCapacityShedIsRequestScoped(account) && isOpenAIRequestScopedCapacityShed("", responseBody) {
 		return false
 	}
+	// 池模式账号的上游号池可用性错误同样描述这一次请求，不是账号健康：
+	// 不得据此（尤其 403）把整个池账号摘掉，由池内重试 / 换号 / 换组负责恢复。
+	if openAIPoolAvailabilityHTTPErrorForAccount(account, statusCode, responseBody) {
+		return false
+	}
 	stateCtx, cancel := openAIAccountStateContext(ctx)
 	defer cancel()
 

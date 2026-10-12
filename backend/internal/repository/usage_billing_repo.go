@@ -202,12 +202,14 @@ type subSettleResult struct {
 // 不会免费全覆盖（见 service.SubWindow.SubRemaining）。
 func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, officialCost, multiplier float64) (*subSettleResult, error) {
 	// 1) 锁 user 行（balance）。月度透支计数本路径不改（透支走独立接口），但一并读出构造 WalletState。
+	//    user 行和下面的卡行都用 FOR NO KEY UPDATE：结算之间照样互斥，但不挡 usage_logs
+	//    插入时外键检查要的 FOR KEY SHARE，否则高并发用户的锁队列会拖死整批用量日志写入。
 	var balance float64
 	var monthCount int
 	var monthStr string
 	if err := tx.QueryRowContext(ctx, `
 		SELECT balance, monthly_overdraft_count, monthly_overdraft_month
-		FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE
+		FROM users WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE
 	`, userID).Scan(&balance, &monthCount, &monthStr); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, service.ErrUserNotFound
@@ -245,7 +247,7 @@ func settleSubscriptionWindow(ctx context.Context, tx *sql.Tx, userID int64, off
 		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
 		ORDER BY expires_at DESC, id DESC
 		LIMIT 1
-		FOR UPDATE
+		FOR NO KEY UPDATE
 	`, userID).Scan(&cardID, &dLimit, &wLimit, &mLimit,
 		&dUsage, &wUsage, &mUsage, &dWin, &wWin, &mWin, &expiresAt, &status)
 	switch {
