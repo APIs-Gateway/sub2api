@@ -133,6 +133,11 @@ func ProvideHTTPServer(cfg *config.Config, router *gin.Engine) *http.Server {
 	// 根据配置决定是否启用 H2C
 	if cfg.Server.H2C.Enabled {
 		h2cConfig := cfg.Server.H2C
+		// Go 1.26.9 HTTP2Config has no independent idle timeout. Replacing this
+		// adapter would change HTTP/1's 120s or HTTP/2's 75s default, and remove
+		// the existing unencrypted dispatch and graceful-shutdown registration.
+		// Primary: go1.26.9/src/net/http/http.go (HTTP2Config), x/net/v0.60.0/http2/server.go.
+		//lint:ignore SA1019 Preserve the independently configured HTTP/2 idle timeout; native HTTP2Config cannot represent it.
 		if err := http2.ConfigureServer(server, &http2.Server{
 			MaxConcurrentStreams:         h2cConfig.MaxConcurrentStreams,
 			IdleTimeout:                  time.Duration(h2cConfig.IdleTimeout) * time.Second,

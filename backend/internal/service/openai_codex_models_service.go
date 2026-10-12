@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 
@@ -74,7 +75,15 @@ func IsRetryableCodexModelsManifestError(err error) bool {
 }
 
 func isRetryableCodexModelsManifestTransportError(err error) bool {
-	if err == nil || errors.Is(err, context.Canceled) {
+	if err == nil {
+		return false
+	}
+	// Validate before errors.Is/As and the retained text fallback: typed nil
+	// receivers or cyclic malformed wrappers must not panic or loop there.
+	if _, valid := codexModelsTransportErrorNodes(err); !valid {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
 		return false
 	}
 	if errors.Is(err, context.DeadlineExceeded) ||
@@ -92,8 +101,7 @@ func isRetryableCodexModelsManifestTransportError(err error) bool {
 	if errors.As(err, &dnsErr) {
 		return true
 	}
-	var goAwayErr http2.GoAwayError
-	if errors.As(err, &goAwayErr) {
+	if isCodexModelsGoAwayError(err) {
 		return true
 	}
 	var streamErr http2.StreamError
@@ -109,8 +117,9 @@ func isRetryableCodexModelsManifestTransportError(err error) bool {
 		return true
 	}
 
-	// net/http uses unexported HTTP/2 error types, so typed matching is not
-	// possible for errors produced by the standard library transport.
+	// Retain the existing string fallback for previously supported stream and
+	// connection errors. GOAWAY matching above uses the pinned provider/type
+	// identity even when an outer wrapper's Error method hides the message.
 	message := strings.ToLower(err.Error())
 	if strings.Contains(message, "http2:") &&
 		(strings.Contains(message, "goaway") ||
@@ -142,6 +151,119 @@ func isRetryableCodexModelsManifestTransportError(err error) bool {
 		}
 	}
 	return false
+}
+
+// isCodexModelsGoAwayError recognizes the pinned GOAWAY providers without
+// naming deprecated x/net types or parsing an error message. net/http's type
+// is unexported, and req's HTTP/2 package is internal to its own module.
+func isCodexModelsGoAwayError(err error) bool {
+	nodes, valid := codexModelsTransportErrorNodes(err)
+	if !valid {
+		return false
+	}
+	for _, current := range nodes {
+		if isPinnedCodexModelsGoAwayType(reflect.TypeOf(current)) {
+			return true
+		}
+	}
+	return false
+}
+
+// Transport error trees are small in practice. Bound the ordinary deterministic
+// unwrap traversal, including repeated shared nodes, before standard Is/As walk
+// it again. Custom Is/As methods retain their standard-library semantics.
+func codexModelsTransportErrorNodes(err error) ([]error, bool) {
+	const maxNodes = 4096
+	type frame struct {
+		err error
+		leave bool
+	}
+	pending := []frame{{err: err}}
+	state := make(map[error]uint8)
+	var nodes []error
+	for len(pending) > 0 {
+		item := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		current := item.err
+		if current == nil {
+			continue
+		}
+		value := reflect.ValueOf(current)
+		switch value.Kind() {
+		case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface:
+			if value.IsNil() {
+				return nil, false
+			}
+		}
+		// A nil terminal is legal for Unwrap, but url.Error's Error method
+		// dereferences Err unconditionally. Reject that specific malformed URL
+		// error before the retained text fallback can call it.
+		if urlErr, ok := current.(*url.Error); ok && urlErr.Err == nil { return nil, false }
+		if value.Comparable() {
+			if item.leave {
+				state[current] = 2
+				continue
+			}
+			switch state[current] {
+			case 1:
+				return nil, false
+			}
+			state[current] = 1
+			pending = append(pending, frame{err: current, leave: true})
+		}
+		if len(nodes) >= maxNodes {
+			return nil, false
+		}
+		nodes = append(nodes, current)
+		switch wrapped := current.(type) {
+		case interface{ Unwrap() []error }:
+			children := wrapped.Unwrap()
+			if len(children)+len(pending) > maxNodes {
+				return nil, false
+			}
+			for i := len(children)-1; i >= 0; i-- {
+				pending = append(pending, frame{err: children[i]})
+			}
+		case interface{ Unwrap() error }:
+			child := wrapped.Unwrap()
+			if child == nil {
+				continue
+			}
+			pending = append(pending, frame{err: child})
+		}
+	}
+	return nodes, true
+}
+
+func isPinnedCodexModelsGoAwayType(typ reflect.Type) bool {
+	if typ == nil { return false }
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ.Kind() != reflect.Struct || typ.NumField() != 3 {
+		return false
+	}
+	switch {
+	case typ.PkgPath() == "net/http" && typ.Name() == "http2GoAwayError":
+	case typ.PkgPath() == "golang.org/x/net/http2" && typ.Name() == "GoAwayError":
+	case typ.PkgPath() == "github.com/imroc/req/v3/internal/http2" && typ.Name() == "GoAwayError":
+	default:
+		return false
+	}
+	for _, field := range []struct {
+		name string
+		kind reflect.Kind
+	}{
+		{"LastStreamID", reflect.Uint32},
+		{"ErrCode", reflect.Uint32},
+		{"DebugData", reflect.String},
+	} {
+		got, ok := typ.FieldByName(field.name)
+		if !ok || got.PkgPath != "" || got.Type.Kind() != field.kind {
+			return false
+		}
+	}
+	return true
 }
 
 // FetchCodexModelsManifest fetches the live Codex models manifest from the
