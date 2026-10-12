@@ -14,15 +14,14 @@ jobs:
     timeout-minutes: 10
     env:
       BASE_HEAD: bd19182073ff9ec6accfc2f30c02e3684a0ceef7
-      PARENT_HEAD: 7ea17e1d3f359aa1dbcd77f2c8a5905648764a3c
+      PARENT_HEAD: 53d39213f764f61cadfbdb24671201d86d422995
       CI_SOURCE_HEAD: ${{ github.sha }}
-      FORMAT_ROOT: ${{ runner.temp }}/req-lifecycle-format-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-          fetch-depth: 3
+          fetch-depth: 4
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26.9'
@@ -32,6 +31,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          printf 'FORMAT_ROOT=%s\n' "$RUNNER_TEMP/req-lifecycle-format-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
           test "$(git rev-parse HEAD)" = "$CI_SOURCE_HEAD"
           test "$(git rev-parse HEAD^)" = "$PARENT_HEAD"
           git merge-base --is-ancestor "$BASE_HEAD" HEAD
@@ -166,6 +166,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: req-lifecycle-format-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.FORMAT_ROOT }}/
+          path: ${{ runner.temp }}/req-lifecycle-format-${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: error
           retention-days: 14
