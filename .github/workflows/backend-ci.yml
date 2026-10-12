@@ -35,7 +35,7 @@ jobs:
           GOBIN: ${{ runner.temp }}/nonembed-ci-tools
         run: |
           set -euo pipefail
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$GOBIN/actionlint" -version
           "$GOBIN/actionlint" -shellcheck= -pyflakes= .github/workflows/backend-ci.yml
       - name: Build exact-head independent Go server without frontend embedding
