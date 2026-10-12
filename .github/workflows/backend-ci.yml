@@ -8,6 +8,95 @@ permissions:
   contents: read
 
 jobs:
+  server-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: "0"
+      GOOS: linux
+      GOARCH: amd64
+      GOTOOLCHAIN: local
+      GOWORK: off
+      GOFLAGS: -mod=readonly
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Validate CI workflow syntax and expressions (remote only)
+        env:
+          GOBIN: ${{ runner.temp }}/nonembed-ci-tools
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$GOBIN/actionlint" -version
+          "$GOBIN/actionlint" -shellcheck= -pyflakes= .github/workflows/backend-ci.yml
+      - name: Build exact-head independent Go server without frontend embedding
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/nonembed-server-build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence"
+          git rev-parse HEAD > "$evidence/head.txt"
+          test "$(cat "$evidence/head.txt")" = "$EXPECTED_HEAD"
+          git rev-parse HEAD^{tree} > "$evidence/tree.txt"
+          git ls-files --stage > "$evidence/git-index.txt"
+          git diff --exit-code HEAD -- > "$evidence/checkout-before.diff"
+          test -z "$(git status --porcelain)"
+          sha256sum go.mod go.sum > "$evidence/modules-before.sha256"
+          go version | tee "$evidence/go-version.txt"
+          grep -Eq '^go version go1\.26\.9 linux/amd64$' "$evidence/go-version.txt"
+          go env CGO_ENABLED GOOS GOARCH GOTOOLCHAIN GOWORK GOFLAGS > "$evidence/go-env.txt"
+          go list -json ./cmd/server > "$evidence/server-package.json"
+          go list -json ./internal/web > "$evidence/web-package.json"
+          python3 -B - "$evidence" <<'PYMODE'
+          import json, sys
+          from pathlib import Path
+          evidence = Path(sys.argv[1])
+          server = json.loads((evidence / 'server-package.json').read_text())
+          web = json.loads((evidence / 'web-package.json').read_text())
+          assert server['Name'] == 'main' and server['ImportPath'] == 'github.com/Wei-Shaw/sub2api/cmd/server'
+          assert 'wire_gen.go' in server['GoFiles'] and 'wire.go' not in server['GoFiles']
+          assert 'embed_off.go' in web['GoFiles'] and 'embed_on.go' not in web['GoFiles']
+          assert 'docs_machine.go' not in web['GoFiles']
+          expected_env = ['0', 'linux', 'amd64', 'local', 'off', '-mod=readonly']
+          assert (evidence / 'go-env.txt').read_text().splitlines() == expected_env
+          PYMODE
+          version_value="$(tr -d '\r\n' < ./cmd/server/VERSION)"
+          test -n "$version_value"
+          printf '%s\n' "$version_value" > "$evidence/version.txt"
+          printf '%s\n' 'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOWORK=off GOTOOLCHAIN=local GOFLAGS=-mod=readonly go build -p=1 -trimpath -ldflags="-s -w -X main.Version=<version.txt>" -o <RUNNER_TEMP>/sub2api ./cmd/server' > "$evidence/build-command.txt"
+          set +e
+          go build -p=1 -trimpath -ldflags="-s -w -X main.Version=$version_value" -o "$evidence/sub2api" ./cmd/server > "$evidence/build.stdout" 2> "$evidence/build.stderr"
+          build_status=$?
+          set -e
+          printf '%s\n' "$build_status" > "$evidence/build.exit"
+          test "$build_status" -eq 0
+          test -s "$evidence/sub2api"
+          sha256sum "$evidence/sub2api" > "$evidence/binary.sha256"
+          go version -m "$evidence/sub2api" > "$evidence/binary-buildinfo.txt"
+          sha256sum go.mod go.sum > "$evidence/modules-after.sha256"
+          cmp "$evidence/modules-before.sha256" "$evidence/modules-after.sha256"
+          git diff --exit-code HEAD -- > "$evidence/checkout-after.diff"
+          test -z "$(git status --porcelain)"
+          printf '%s\n' 'complete' > "$evidence/complete.txt"
+      - name: Preserve actual independent server build evidence and binary
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nonembed-server-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nonembed-server-build-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
+
   test:
     runs-on: ubuntu-latest
     steps:
