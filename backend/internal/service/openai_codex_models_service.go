@@ -175,7 +175,7 @@ func isCodexModelsGoAwayError(err error) bool {
 func codexModelsTransportErrorNodes(err error) ([]error, bool) {
 	const maxNodes = 4096
 	type frame struct {
-		err error
+		err   error
 		leave bool
 	}
 	pending := []frame{{err: err}}
@@ -198,7 +198,9 @@ func codexModelsTransportErrorNodes(err error) ([]error, bool) {
 		// A nil terminal is legal for Unwrap, but url.Error's Error method
 		// dereferences Err unconditionally. Reject that specific malformed URL
 		// error before the retained text fallback can call it.
-		if urlErr, ok := current.(*url.Error); ok && urlErr.Err == nil { return nil, false }
+		if urlErr, ok := current.(*url.Error); ok && urlErr.Err == nil {
+			return nil, false
+		}
 		if value.Comparable() {
 			if item.leave {
 				state[current] = 2
@@ -221,7 +223,7 @@ func codexModelsTransportErrorNodes(err error) ([]error, bool) {
 			if len(children)+len(pending) > maxNodes {
 				return nil, false
 			}
-			for i := len(children)-1; i >= 0; i-- {
+			for i := len(children) - 1; i >= 0; i-- {
 				pending = append(pending, frame{err: children[i]})
 			}
 		case interface{ Unwrap() error }:
@@ -236,7 +238,9 @@ func codexModelsTransportErrorNodes(err error) ([]error, bool) {
 }
 
 func isPinnedCodexModelsGoAwayType(typ reflect.Type) bool {
-	if typ == nil { return false }
+	if typ == nil {
+		return false
+	}
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
