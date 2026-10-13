@@ -817,7 +817,31 @@
     viewUsage: '查看使用记录',
     checkDetailedLogs: '查看详细的使用日志',
     redeemCode: '兑换码',
-    addBalanceWithCode: '使用兑换码充值'
+    addBalanceWithCode: '使用兑换码充值',
+    topUp: '充值',
+    topUpDesc: '为账户余额充值',
+    readDocs: '阅读文档',
+    readDocsDesc: '查看接入指南与 API 参考',
+    copyAiPrompt: '复制接入说明给 AI',
+    copyAiPromptDesc: '粘贴给编程助手即可快速接入',
+    aiPromptCopied: '已复制',
+    aiPromptText: '我在使用一个 OpenAI 兼容的 API，地址是 {baseUrl}，请用这个 base URL 和我提供的 API Key 帮我接入。',
+    apiEntry: {
+      title: 'API 接入',
+      altLabel: '备用线路',
+      copyFailed: '复制失败，请手动选取文本后复制。',
+    },
+    needsAttention: {
+      title: '需要处理',
+      allGood: '当前无需处理',
+      lowBalance: '余额即将不足',
+      lowBalanceDesc: '当前余额 {balance}，低于提醒阈值',
+      topUp: '去充值',
+      keyNearLimit: '密钥「{name}」已用 {pct}% 额度',
+      keyExhausted: '密钥「{name}」已触达消费上限',
+      keyQuotaDesc: '已用 {used} / 上限 {limit}',
+      manageKey: '处理密钥',
+    },
   },
 
   // Groups (shared)
@@ -1271,11 +1295,6 @@
     rateLimit1d: '日限额 ({currency})',
     rateLimit7d: '7天限额 ({currency})',
     rateLimitHint: '设置此密钥在指定时间窗口内的最大消费额。0 = 无限制。',
-    stablePriority: {
-      label: '启用稳定优先',
-      description: '开启后，当你所用分组的渠道全部不可用时，请求会自动跨分组逐档兜底到更稳定的高倍率分组；低倍率分组恢复稳定后自动切回。',
-      billingWarning: '注意：兜底期间将按实际服务的高倍率分组费率从你的余额计费，费用可能高于原分组。',
-    },
     rateLimitUsage: '速率限制用量',
     resetRateLimitUsage: '重置速率限制用量',
     resetRateLimitTitle: '确认重置速率限制',
@@ -2056,12 +2075,6 @@
       maxEmailsReached: '已达到通知邮箱数量上限',
       unverified: '未验证',
       verified: '已验证',
-    },
-    stablePriority: {
-      title: '稳定优先',
-      description: '开启后，当你所用分组的渠道全部不可用时，请求会自动跨分组逐档兜底到更稳定的高倍率分组；低倍率分组恢复稳定后自动切回。',
-      enabled: '启用稳定优先',
-      billingHint: '注意：兜底期间将按实际服务的高倍率分组费率从你的余额计费，费用可能高于原分组。',
     },
     avatar: {
       title: '资料头像',

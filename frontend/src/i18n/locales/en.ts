@@ -818,7 +818,31 @@
     viewUsage: 'View Usage',
     checkDetailedLogs: 'Check detailed usage logs',
     redeemCode: 'Redeem Code',
-    addBalanceWithCode: 'Add balance with a code'
+    addBalanceWithCode: 'Add balance with a code',
+    topUp: 'Top Up',
+    topUpDesc: 'Add credit to your wallet',
+    readDocs: 'Read Docs',
+    readDocsDesc: 'Integration guides and API reference',
+    copyAiPrompt: 'Copy integration prompt for AI',
+    copyAiPromptDesc: 'Paste into any coding assistant to get started',
+    aiPromptCopied: 'Copied',
+    aiPromptText: 'I am using an OpenAI-compatible API at {baseUrl}. Please help me integrate it using this base URL and an API key I will provide.',
+    apiEntry: {
+      title: 'API Access',
+      altLabel: 'Alternate endpoints',
+      copyFailed: 'Copy failed. Please select the text and copy manually.',
+    },
+    needsAttention: {
+      title: 'Needs Attention',
+      allGood: 'Nothing needs attention right now',
+      lowBalance: 'Wallet balance is low',
+      lowBalanceDesc: 'Current balance {balance} is below your alert threshold',
+      topUp: 'Top up',
+      keyNearLimit: 'Key "{name}" has used {pct}% of its quota',
+      keyExhausted: 'Key "{name}" has reached its spending limit',
+      keyQuotaDesc: 'Used {used} of {limit}',
+      manageKey: 'Manage key',
+    },
   },
 
   // Groups (shared)
@@ -1267,11 +1291,6 @@
     rateLimit1d: 'Daily Limit ({currency})',
     rateLimit7d: '7-Day Limit ({currency})',
     rateLimitHint: 'Set the maximum spending for this key within each time window. 0 = unlimited.',
-    stablePriority: {
-      label: 'Enable Stable Priority',
-      description: 'When enabled, if all channels in your selected group become unavailable, requests automatically fall back across groups tier by tier to a more stable, higher-rate group; they switch back once the lower-rate group recovers.',
-      billingWarning: 'Note: during fallback, usage is billed from your balance at the actually-serving higher-rate group’s rate, which may be higher than your original group.',
-    },
     rateLimitUsage: 'Rate Limit Usage',
     resetRateLimitUsage: 'Reset Rate Limit Usage',
     resetRateLimitTitle: 'Confirm Reset Rate Limit',
@@ -2049,12 +2068,6 @@
       maxEmailsReached: 'Maximum number of notification emails reached',
       unverified: 'Unverified',
       verified: 'Verified',
-    },
-    stablePriority: {
-      title: 'Stable Priority',
-      description: 'When enabled, if every channel in your group becomes unavailable, requests automatically fail over up the tier chain to a more reliable higher-rate group, then switch back once the lower-rate group recovers.',
-      enabled: 'Enable stable priority',
-      billingHint: 'Note: during fallback you are billed from your balance at the actual higher-rate group rate, which may cost more than your original group.',
     },
     avatar: {
       title: 'Profile Avatar',

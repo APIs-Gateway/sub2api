@@ -195,6 +195,8 @@ func registerPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	matrix := admin.Group("/pricing-matrix")
 	{
 		matrix.GET("/groups/:id/derive", h.Admin.PricingMatrix.ViewGroupDerive)
+		// 批量只读摘要（阶段、配置 revision、成本核算规则概况），矩阵页一次拿全；机器令牌可读。
+		matrix.GET("/groups/summary", h.Admin.PricingMatrix.GroupSummaries)
 		matrix.GET("/channels/:id/derive", h.Admin.PricingMatrix.ViewChannelDerive)
 		matrix.GET("/hook-stats", h.Admin.PricingMatrix.HookStats)
 		// W6 PR5、PR7b：阶段切换与影子比对结果。切换提交是 C 档动作：必须是登录管理员的 JWT 会话，机器令牌一律 403

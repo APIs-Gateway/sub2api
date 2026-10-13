@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,7 +89,14 @@ type SnapshotApprovalPlan struct {
 	EffectiveChanges      []EffectivePriceChange `json:"effective_changes"`
 	EffectiveChangesError string                 `json:"effective_changes_error,omitempty"`
 	// ExposureError 非空表示批准会让某个白名单分组出现无价单元格（批准时会被拒绝）。
+	//
+	// Deprecated: 只为兼容旧前端保留一个版本，请改读 Violations（结构化）。
 	ExposureError string `json:"exposure_error,omitempty"`
+	// Violations 是 ExposureError 的结构化形式：每一项一个违例。没有违例时为空数组。
+	// 校验失败但不是违例（例如读库出错）时只有一项，code 为错误原因。
+	Violations []PricingPreviewViolation `json:"violations"`
+	// ViolationsTotal 是违例总数；Violations 最多列出 maxExposureViolationsListed 项，总数更大时表示列表被截断。
+	ViolationsTotal int `json:"violations_total"`
 
 	MergedPayload []byte `json:"-"`
 	mergedData    map[string]*LiteLLMModelPricing
@@ -360,11 +368,75 @@ func (a *PricingSnapshotAdminService) annotatePlan(ctx context.Context, plan *Sn
 	} else {
 		plan.EffectiveChanges = changes
 	}
+	plan.Violations = []PricingPreviewViolation{}
 	if a.checker != nil && a.readExec != nil {
 		if err := a.checker.CheckSnapshotApproval(ctx, a.readExec, plan.mergedData); err != nil {
 			plan.ExposureError = exposureErrorText(err)
+			plan.Violations, plan.ViolationsTotal = exposureViolationsFromError(err)
 		}
 	}
+}
+
+// PricingPreviewViolation 是预览里一条结构化的违例（取代 exposure_error 字符串）。
+type PricingPreviewViolation struct {
+	// Code 违例原因：unpriced、wildcard_unverifiable、zero_price；不是违例而是校验本身失败时为错误原因码。
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Model   string `json:"model,omitempty"`
+	GroupID int64  `json:"group_id,omitempty"`
+}
+
+// exposureViolationsFromError 把保存时校验错误还原成结构化违例，并返回违例总数。
+// 错误 metadata.violations 的格式是「分组id:模型:原因」以分号连接（模型名里可以有冒号，所以取第一个和最后一个冒号切分）。
+// 无法还原时返回一项，code 取错误原因码，让调用方至少能看到失败。
+func exposureViolationsFromError(err error) ([]PricingPreviewViolation, int) {
+	ae := infraerrors.FromError(err)
+	if ae != nil && ae.Metadata["violations"] != "" {
+		out := make([]PricingPreviewViolation, 0)
+		for _, part := range strings.Split(ae.Metadata["violations"], ";") {
+			first := strings.Index(part, ":")
+			last := strings.LastIndex(part, ":")
+			if first <= 0 || last <= first {
+				continue
+			}
+			gid, perr := strconv.ParseInt(part[:first], 10, 64)
+			if perr != nil {
+				continue
+			}
+			reason := part[last+1:]
+			model := part[first+1 : last]
+			out = append(out, PricingPreviewViolation{
+				Code: reason, Message: exposureViolationMessage(reason), Model: model, GroupID: gid,
+			})
+		}
+		if len(out) > 0 {
+			total := len(out)
+			if n, cerr := strconv.Atoi(ae.Metadata["count"]); cerr == nil && n > total {
+				total = n
+			}
+			return out, total
+		}
+	}
+	code, msg := UnknownExposureCheckCode, err.Error()
+	if ae != nil && ae.Reason != "" {
+		code, msg = ae.Reason, ae.Message // 应用错误只取它自己的文案，不带 error: code=... 前缀
+	}
+	return []PricingPreviewViolation{{Code: code, Message: msg}}, 1
+}
+
+// UnknownExposureCheckCode 是预览里校验本身失败（不是违例）且错误没有原因码时的 code。
+const UnknownExposureCheckCode = "EXPOSURE_CHECK_FAILED"
+
+func exposureViolationMessage(reason string) string {
+	switch ExposureViolationReason(reason) {
+	case ExposureUnpriced:
+		return "the model has no price"
+	case ExposureWildcardUnverifiable:
+		return "an open wildcard cell cannot be verified to be priced"
+	case ExposureZeroPrice:
+		return "the model price is zero and it is not on the known-free list"
+	}
+	return "the model cannot be exposed"
 }
 
 // exposureErrorText 把保存时校验的违规项（metadata.violations）带进预览文本，否则管理员只看到一句笼统的话。
