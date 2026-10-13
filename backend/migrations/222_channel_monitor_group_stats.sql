@@ -1,7 +1,7 @@
 -- C1: 渠道状态页二期 —— 分组真实成功率聚合表（Phase 2 Plan §1.2）
 --
 -- 新增 channel_monitor_group_stats 10 分钟桶聚合表，记录各分组的真实流量成功率。
--- 写入路径完全脱离请求主链，由后台定时任务填充（每 5 分钟聚合最近 20 分钟窗口）。
+-- 写入路径完全脱离请求主链，由后台定时任务填充（每 5 分钟聚合最近 30 分钟窗口）。
 --
 -- 同时给 channel_monitors 加 group_id 列，用于关联聚合数据。NULL = 纯探测模式。
 --
@@ -40,9 +40,6 @@ CREATE TABLE IF NOT EXISTS channel_monitor_group_stats (
 
     CONSTRAINT uq_cmgs_bucket UNIQUE (group_id, bucket_start, bucket_minutes)
 );
-
-CREATE INDEX IF NOT EXISTS idx_cmgs_group_bucket
-    ON channel_monitor_group_stats (group_id, bucket_start DESC);
 
 CREATE INDEX IF NOT EXISTS idx_cmgs_bucket_start
     ON channel_monitor_group_stats (bucket_start DESC);

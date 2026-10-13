@@ -17,23 +17,58 @@ func TestChannelMonitorGroupStatsAggregator_NilTask(t *testing.T) {
 	assert.Contains(t, err.Error(), "nil aggregation task")
 }
 
-// TestChannelMonitorGroupStatsAggregator_WindowCalculation 验证时间窗口计算逻辑。
-func TestChannelMonitorGroupStatsAggregator_WindowCalculation(t *testing.T) {
-	// 固定 now 为 2024-01-15 10:23:45 UTC
-	now := time.Date(2024, 1, 15, 10, 23, 45, 0, time.UTC)
+// TestComputeAggregationWindow 验证聚合窗口计算逻辑。
+func TestComputeAggregationWindow(t *testing.T) {
+	tests := []struct {
+		name            string
+		now             time.Time
+		expectedStart   time.Time
+		expectedEnd     time.Time
+		expectedSpanMin int
+		startOnBoundary bool
+	}{
+		{
+			name:            "aligned case - now at 10:23:45",
+			now:             time.Date(2024, 1, 15, 10, 23, 45, 0, time.UTC),
+			expectedEnd:     time.Date(2024, 1, 15, 10, 22, 0, 0, time.UTC),
+			expectedStart:   time.Date(2024, 1, 15, 9, 50, 0, 0, time.UTC),
+			expectedSpanMin: 32,
+			startOnBoundary: true,
+		},
+		{
+			name:            "windowEnd falls mid-bucket - now at 10:27:00",
+			now:             time.Date(2024, 1, 15, 10, 27, 0, 0, time.UTC),
+			expectedEnd:     time.Date(2024, 1, 15, 10, 26, 0, 0, time.UTC),
+			expectedStart:   time.Date(2024, 1, 15, 9, 50, 0, 0, time.UTC),
+			expectedSpanMin: 36,
+			startOnBoundary: true,
+		},
+		{
+			name:            "windowEnd at bucket boundary - now at 10:31:00",
+			now:             time.Date(2024, 1, 15, 10, 31, 0, 0, time.UTC),
+			expectedEnd:     time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+			expectedStart:   time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+			expectedSpanMin: 30,
+			startOnBoundary: true,
+		},
+	}
 
-	// 预期：windowEnd = now - 1min, truncate = 10:22:00
-	expectedEnd := time.Date(2024, 1, 15, 10, 22, 0, 0, time.UTC)
-	// windowStart = windowEnd - 30min = 09:52:00（实际实现用的是 channelMonitorGroupStatsWindowMinutes，当前为 30）
-	expectedStart := time.Date(2024, 1, 15, 9, 52, 0, 0, time.UTC)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			windowStart, windowEnd := computeAggregationWindow(tt.now)
 
-	// 模拟时间计算（不依赖 DB）
-	windowEnd := now.Add(-time.Duration(channelMonitorGroupStatsLagMinutes) * time.Minute).Truncate(time.Minute)
-	windowStart := windowEnd.Add(-time.Duration(channelMonitorGroupStatsWindowMinutes) * time.Minute)
+			assert.Equal(t, tt.expectedEnd, windowEnd, "windowEnd should match")
+			assert.Equal(t, tt.expectedStart, windowStart, "windowStart should match")
 
-	assert.Equal(t, expectedEnd, windowEnd, "windowEnd calculation")
-	assert.Equal(t, expectedStart, windowStart, "windowStart calculation")
-	assert.Equal(t, 30*time.Minute, windowEnd.Sub(windowStart), "window span")
+			span := int(windowEnd.Sub(windowStart).Minutes())
+			assert.Equal(t, tt.expectedSpanMin, span, "window span in minutes")
+
+			if tt.startOnBoundary {
+				// windowStart 必须对齐到 10 分钟边界
+				assert.Equal(t, 0, windowStart.Minute()%10, "windowStart must be on 10-minute boundary")
+			}
+		})
+	}
 }
 
 // TestNewChannelMonitorGroupStatsAggregationTask_NilProbeKeys 验证 nil probeKeyIDs 被初始化为空切片。

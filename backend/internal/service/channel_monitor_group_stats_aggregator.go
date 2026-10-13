@@ -10,7 +10,7 @@ import (
 	"github.com/lib/pq"
 )
 
-// ChannelMonitorGroupStatsAggregationTask 后台定时任务：每 5 分钟聚合最近 20 分钟窗口的分组真实成功率。
+// ChannelMonitorGroupStatsAggregationTask 后台定时任务：每 5 分钟聚合最近 30 分钟窗口的分组真实成功率。
 // 聚合逻辑：扫 usage_logs / ops_error_logs 按 (group_id, bucket_start) 聚合，写入 channel_monitor_group_stats。
 //
 // 排除规则（不计入成功或失败）：
@@ -31,6 +31,15 @@ type ChannelMonitorGroupStatsAggregationTask struct {
 	probeKeyIDs []int64
 }
 
+// computeAggregationWindow 计算聚合时间窗口。
+// 窗口结束时间：当前时间减去延迟余量，截断到分钟。
+// 窗口起始时间：窗口结束时间减去聚合窗口大小，再对齐到 10 分钟桶的边界。
+func computeAggregationWindow(now time.Time) (windowStart, windowEnd time.Time) {
+	windowEnd = now.Add(-time.Duration(channelMonitorGroupStatsLagMinutes) * time.Minute).Truncate(time.Minute)
+	windowStart = windowEnd.Add(-time.Duration(channelMonitorGroupStatsWindowMinutes) * time.Minute).Truncate(10 * time.Minute)
+	return windowStart, windowEnd
+}
+
 // NewChannelMonitorGroupStatsAggregationTask 构造聚合任务。
 // probeKeyIDs 从配置读取（C1 传空切片，C2 从 config.ChannelMonitor.ProbeKeyIDs 读取）。
 func NewChannelMonitorGroupStatsAggregationTask(db *sql.DB, probeKeyIDs []int64) *ChannelMonitorGroupStatsAggregationTask {
@@ -43,17 +52,14 @@ func NewChannelMonitorGroupStatsAggregationTask(db *sql.DB, probeKeyIDs []int64)
 	}
 }
 
-// RunAggregation 执行一次聚合：扫最近 20 分钟窗口（给 1 分钟延迟余量），按 (group_id, bucket_start) 聚合。
+// RunAggregation 执行一次聚合：扫最近 30 分钟窗口（给 1 分钟延迟余量），按 (group_id, bucket_start) 聚合。
 func (t *ChannelMonitorGroupStatsAggregationTask) RunAggregation(ctx context.Context) error {
 	if t == nil || t.db == nil {
 		return fmt.Errorf("nil aggregation task or db")
 	}
 
 	now := time.Now().UTC()
-	// 窗口结束时间：当前时间减去延迟余量，截断到分钟。
-	windowEnd := now.Add(-time.Duration(channelMonitorGroupStatsLagMinutes) * time.Minute).Truncate(time.Minute)
-	// 窗口起始时间：windowEnd 减去聚合窗口大小（20 分钟 = 2 个完整的 10 分钟桶）。
-	windowStart := windowEnd.Add(-time.Duration(channelMonitorGroupStatsWindowMinutes) * time.Minute)
+	windowStart, windowEnd := computeAggregationWindow(now)
 
 	slog.Info("channel_monitor_group_stats: aggregation start",
 		"window_start", windowStart.Format(time.RFC3339),
@@ -76,6 +82,21 @@ func (t *ChannelMonitorGroupStatsAggregationTask) RunAggregation(ctx context.Con
 // 返回 upsert 影响的行数（INSERT + UPDATE）。
 // 导出供集成测试使用。
 func (t *ChannelMonitorGroupStatsAggregationTask) UpsertGroupStats(ctx context.Context, windowStart, windowEnd time.Time) (int64, error) {
+	// 对齐窗口参数到 10 分钟边界，防止调用方传入未对齐的参数导致数据覆盖问题。
+	windowStart = windowStart.Truncate(10 * time.Minute)
+	windowEnd = windowEnd.Truncate(time.Minute)
+
+	// 开启事务，设置 statement_timeout（参考 pricing_snapshot_repo_admin.go RecentBillingModels）。
+	tx, err := t.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin aggregation tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = '30s'"); err != nil {
+		return 0, fmt.Errorf("set statement_timeout: %w", err)
+	}
+
 	// 单次 INSERT ... SELECT UNION 聚合成功 + 失败计数，idempotent upsert。
 	// 使用 date_trunc 将每分钟对齐到 10 分钟桶起点。
 	upsertSQL := `
@@ -149,10 +170,14 @@ ON CONFLICT (group_id, bucket_start, bucket_minutes) DO UPDATE SET
     success_rate = EXCLUDED.success_rate
 `
 
-	res, err := t.db.ExecContext(ctx, upsertSQL, windowStart, windowEnd, pq.Array(t.probeKeyIDs))
+	res, err := tx.ExecContext(ctx, upsertSQL, windowStart, windowEnd, pq.Array(t.probeKeyIDs))
 	if err != nil {
 		return 0, fmt.Errorf("upsert group_stats [%s, %s): %w",
 			windowStart.Format(time.RFC3339), windowEnd.Format(time.RFC3339), err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit aggregation tx: %w", err)
 	}
 
 	affected, _ := res.RowsAffected()
