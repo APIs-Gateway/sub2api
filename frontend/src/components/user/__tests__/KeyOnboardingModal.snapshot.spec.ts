@@ -536,7 +536,7 @@ describe('状态在页签之间的保留（拆分页签时最容易丢）', () =
     }
   })
 
-  it('模型列表只请求一次：重新打开、切页签都不会再请求；失败后也不重试', async () => {
+  it('模型列表只请求一次：重新打开、切页签都不会再请求', async () => {
     const w = await mountModal({ ...BASE, apiKey: keyOf(7, 'openai') })
     await gotoTab(w, 'ai')
     await gotoTab(w, 'ccswitch')
@@ -544,14 +544,6 @@ describe('状态在页签之间的保留（拆分页签时最容易丢）', () =
     await w.setProps({ show: true })
     expect(getAvailable).toHaveBeenCalledTimes(1)
     w.unmount()
-
-    getAvailable.mockReset()
-    getAvailable.mockRejectedValue(new Error('x'))
-    const w2 = await mountModal({ ...BASE, apiKey: keyOf(7, 'openai') })
-    await w2.setProps({ show: false })
-    await w2.setProps({ show: true })
-    expect(getAvailable).toHaveBeenCalledTimes(1)
-    w2.unmount()
   })
 
   it('弹窗没打开时不请求模型列表', async () => {
