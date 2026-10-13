@@ -837,16 +837,12 @@
       allGood: 'Nothing needs attention right now',
       lowBalance: 'Wallet balance is low',
       lowBalanceDesc: 'Current balance {balance} is below your alert threshold',
-      lowRunway: 'Balance estimated to last {days} more days',
-      lowRunwayDesc: 'Based on your average spend over the last 7 days',
       topUp: 'Top up',
       keyNearLimit: 'Key "{name}" has used {pct}% of its quota',
       keyExhausted: 'Key "{name}" has reached its spending limit',
       keyQuotaDesc: 'Used {used} of {limit}',
       manageKey: 'Manage key',
     },
-    estimatedDays: 'Est. {days} days remaining',
-    estimatedDaysOver: '>999 days remaining',
   },
 
   // Groups (shared)

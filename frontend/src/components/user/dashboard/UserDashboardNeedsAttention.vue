@@ -73,11 +73,24 @@ const threshold = computed<number>(() => {
 
 const balance = computed<number>(() => authStore.user?.balance ?? 0)
 
+// threshold_type 'percentage' requires calculating a fraction of balance and is not
+// yet implemented in the backend; only 'fixed' (absolute amount) is supported here.
+// Undefined defaults to 'fixed' since that is the backend default.
+const thresholdType = computed<'fixed' | 'percentage'>(() => {
+  return authStore.user?.balance_notify_threshold_type ?? 'fixed'
+})
+
 const items = computed<AttentionItem[]>(() => {
   const result: AttentionItem[] = []
 
-  // 1. Balance at threshold — balance=0 is intentional for subscription users, skip
-  if (threshold.value > 0 && balance.value > 0 && balance.value < threshold.value) {
+  // 1. Balance at threshold — only for fixed-type thresholds; percentage not yet implemented.
+  // balance=0 is intentional for subscription users, skip.
+  if (
+    thresholdType.value === 'fixed' &&
+    threshold.value > 0 &&
+    balance.value > 0 &&
+    balance.value < threshold.value
+  ) {
     result.push({
       key: 'low-balance',
       title: t('dashboard.needsAttention.lowBalance'),
@@ -88,8 +101,11 @@ const items = computed<AttentionItem[]>(() => {
     })
   }
 
-  // 2. Any API key used ≥ 80% of its quota (quota > 0 means a limit is set)
+  // 2. Any API key used ≥ 80% of its quota (quota > 0 means a limit is set).
+  // Only alert on active keys — inactive/expired/quota_exhausted keys are already
+  // stopped so alerting adds noise without any actionable path for the user.
   for (const key of props.apiKeys) {
+    if (key.status !== 'active') continue
     if (key.quota > 0 && key.quota_used >= 0) {
       const pct = key.quota_used / key.quota
       if (pct >= 0.8) {

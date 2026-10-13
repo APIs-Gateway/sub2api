@@ -836,16 +836,12 @@
       allGood: '当前无需处理',
       lowBalance: '余额即将不足',
       lowBalanceDesc: '当前余额 {balance}，低于提醒阈值',
-      lowRunway: '余额预计仅剩 {days} 天',
-      lowRunwayDesc: '按近 7 天平均消耗估算',
       topUp: '去充值',
       keyNearLimit: '密钥「{name}」已用 {pct}% 额度',
       keyExhausted: '密钥「{name}」已触达消费上限',
       keyQuotaDesc: '已用 {used} / 上限 {limit}',
       manageKey: '处理密钥',
     },
-    estimatedDays: '预计可用 {days} 天',
-    estimatedDaysOver: '可用 >999 天',
   },
 
   // Groups (shared)

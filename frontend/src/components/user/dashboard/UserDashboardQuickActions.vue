@@ -92,7 +92,8 @@
           <p class="text-sm font-medium text-gray-900 dark:text-white">
             {{ aiPromptCopied ? t('dashboard.aiPromptCopied') : t('dashboard.copyAiPrompt') }}
           </p>
-          <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('dashboard.copyAiPromptDesc') }}</p>
+          <p v-if="aiPromptCopyFailed" role="alert" class="text-xs text-red-600 dark:text-red-400">{{ t('dashboard.apiEntry.copyFailed') }}</p>
+          <p v-else class="text-xs text-gray-500 dark:text-dark-400">{{ t('dashboard.copyAiPromptDesc') }}</p>
         </div>
         <Icon name="chevronRight" size="md" class="text-gray-400 transition-colors group-hover:text-gray-700 dark:text-dark-500 dark:group-hover:text-gray-200" />
       </button>
@@ -112,6 +113,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 
 const aiPromptCopied = ref(false)
+const aiPromptCopyFailed = ref(false)
 
 const paymentEnabled = computed(() => appStore.cachedPublicSettings?.payment_enabled ?? false)
 
@@ -124,16 +126,16 @@ function openDocs() {
 }
 
 async function copyAiPrompt() {
+  aiPromptCopyFailed.value = false
   const prompt = t('dashboard.aiPromptText', { baseUrl: apiBaseUrl.value })
   try {
     await navigator.clipboard.writeText(prompt)
     aiPromptCopied.value = true
     setTimeout(() => { aiPromptCopied.value = false }, 1600)
   } catch {
-    // clipboard not available; silent as per GAP note about rivo's own failure — we don't silently fail though
-    // show the text in fallback
-    aiPromptCopied.value = true
-    setTimeout(() => { aiPromptCopied.value = false }, 1600)
+    // Clipboard API unavailable (e.g. non-HTTPS, browser policy).
+    // Show a manual-copy prompt instead of silently indicating success.
+    aiPromptCopyFailed.value = true
   }
 }
 </script>
