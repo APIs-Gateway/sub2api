@@ -1,0 +1,45 @@
+{
+  "requiredPassedNamesByFile": {
+    "src/components/layout/__tests__/AppHeader.spec.ts": [
+      "renders localized labels for the mobile and user menu buttons"
+    ],
+    "src/components/admin/payment/__tests__/AdminRefundDialog.balance.spec.ts": [
+      "compares the available balance with the edited refund amount",
+      "does not warn when the balance exactly covers the refund",
+      "uses the remaining amount for an already partially refunded order",
+      "keeps the warning hidden when balance deduction is disabled"
+    ],
+    "src/components/admin/usage/__tests__/UsageFilters.spec.ts": [
+      "trims and emits the exact request ID filter"
+    ],
+    "src/components/payment/__tests__/SubscriptionPlanCard.spec.ts": [
+      "shows server model scopes for openai plans",
+      "shows server model scopes for gemini plans",
+      "shows server model scopes for grok plans",
+      "shows server model scopes for anthropic plans",
+      "uses the platform label for missing server model scopes",
+      "uses the platform label for empty server model scopes",
+      "preserves an unrecognized server model scope label",
+      "shows model scopes for Antigravity plans"
+    ],
+    "src/utils/__tests__/viewport.spec.ts": [
+      "supports a custom dropdown width and gutter"
+    ],
+    "src/views/public/__tests__/LegalDocumentView.spec.ts": [
+      "uses the Chinese admin compliance document for zh-HK",
+      "renders the configured name from the actual public settings cache"
+    ],
+    "src/views/user/__tests__/StripePopupView.spec.ts": [
+      "shows an initialization timeout when the opener never sends Stripe details",
+      "stops polling and closes after a completed payment status",
+      "cleans up popup polling and its init listener on unmount",
+      "ignores a completed polling response that arrives after unmount",
+      "notifies its opener that the popup is ready"
+    ]
+  },
+  "preexistingTodo": {
+    "file": "src/components/subscription/__tests__/SubscriptionPurchasePanel.fiat.spec.ts",
+    "fullName": "购买面板：开通后各分组的倍率 SUBSCRIPTION_PAYMENT_MULTIPLIER ≠ 1 时套餐倍率按 unit_price ÷ 倍数计算"
+  },
+  "minimumFullPassedTests": 4790
+}

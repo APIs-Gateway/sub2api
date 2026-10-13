@@ -8,6 +8,119 @@ permissions:
   contents: read
 
 jobs:
+  frontend-fixture-contracts:
+    name: Complete Vitest and fork fixture contracts (actual results)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Freeze exact full checkout and fixture inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --exit-code HEAD --
+          test -z "$(git status --porcelain)"
+          evidence="$RUNNER_TEMP/frontend-fixture-contracts-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence"
+          printf '%s\n' "FIXTURE_EVIDENCE=$evidence" >> "$GITHUB_ENV"
+          git rev-parse HEAD > "$evidence/head.txt"
+          git rev-parse HEAD^{tree} > "$evidence/tree.txt"
+          git ls-files --stage > "$evidence/full-repository-index.txt"
+          git ls-files frontend/src > "$evidence/full-frontend-source-files.txt"
+          sha256sum frontend/package.json frontend/pnpm-lock.yaml frontend/vitest.config.ts frontend/tools/fixture-ci-inventory.json > "$evidence/inputs-before.sha256"
+          cp frontend/tools/fixture-ci-inventory.json "$evidence/inventory.json"
+      - name: Install frozen frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Run seven repaired fixtures and the complete Vitest suite with strict JSON proof
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          export FRONTEND_SOURCE_ROOT="$(pwd -P)"
+          run_phase() {
+            phase="$1"
+            shift
+            set +e
+            pnpm exec vitest run --reporter=json --outputFile="$FIXTURE_EVIDENCE/$phase.json" "$@" > "$FIXTURE_EVIDENCE/$phase.stdout" 2> "$FIXTURE_EVIDENCE/$phase.stderr"
+            actual_status=$?
+            set -e
+            printf '%s\n' "$actual_status" > "$FIXTURE_EVIDENCE/$phase.exit"
+          }
+          mapfile -t fixtures < <(python3 -c 'import json,os; print("\n".join(json.load(open(os.environ["FIXTURE_EVIDENCE"]+"/inventory.json"))["requiredPassedNamesByFile"]))')
+          test "${#fixtures[@]}" = 7
+          run_phase named "${fixtures[@]}"
+          run_phase full
+          python3 - <<'PYPROOF'
+          import collections, json, os, pathlib, re
+          root = pathlib.Path(os.environ['FIXTURE_EVIDENCE'])
+          frontend = pathlib.Path(os.environ['FRONTEND_SOURCE_ROOT'])
+          inventory = json.loads((root / 'inventory.json').read_text())
+          required = inventory['requiredPassedNamesByFile']
+          todo = inventory['preexistingTodo']
+          all_source = (root / 'full-frontend-source-files.txt').read_text().splitlines()
+          expected_full = {p.removeprefix('frontend/') for p in all_source if re.fullmatch(r'frontend/src/.*\.(?:test|spec)\.(?:js|ts|jsx|tsx)', p)}
+          proofs = {}
+          failures = []
+          for phase in ('named', 'full'):
+              result = json.loads((root / (phase + '.json')).read_text())
+              actual = collections.defaultdict(list)
+              suites = collections.Counter()
+              for suite in result['testResults']:
+                  path = pathlib.Path(suite['name']).relative_to(frontend).as_posix()
+                  suites[path] += 1
+                  actual[path].extend(suite['assertionResults'])
+              expected = set(required) if phase == 'named' else expected_full
+              nonpassed = [(path, case.get('fullName', ''), case.get('status')) for path, cases in actual.items() for case in cases if case.get('status') != 'passed']
+              legal_pending = phase == 'named' and not nonpassed or phase == 'full' and len(nonpassed) == 1 and nonpassed[0][0] == todo['file'] and nonpassed[0][1] == todo['fullName'] and nonpassed[0][2] in ('pending', 'todo')
+              mandatory_missing = []
+              for path, names in required.items():
+                  for name in names:
+                      hits = [case for case in actual[path] if case.get('fullName', '').endswith(name) and case.get('status') == 'passed']
+                      if len(hits) != 1:
+                          mandatory_missing.append([path, name, len(hits)])
+              problems = []
+              if (root / (phase + '.exit')).read_text().strip() != '0': problems.append('actual exit is nonzero')
+              if result.get('success') is not True or result.get('numFailedTests') != 0 or result.get('numFailedTestSuites') != 0: problems.append('summary records actual failure')
+              if set(suites) != expected or any(count != 1 for count in suites.values()): problems.append('complete source file inventory differs')
+              if not legal_pending: problems.append('unexpected nonpassed assertion')
+              if mandatory_missing: problems.append('mandatory fixture case missing or duplicated')
+              if phase == 'full' and result.get('numPassedTests', 0) < inventory['minimumFullPassedTests']: problems.append('full passing test count is incomplete')
+              proofs[phase] = {'exit': (root / (phase + '.exit')).read_text().strip(), 'actualFiles': len(suites), 'expectedFiles': len(expected), 'passedTests': result.get('numPassedTests'), 'nonpassed': nonpassed, 'mandatoryMissing': mandatory_missing, 'problems': problems}
+              failures.extend([phase + ': ' + problem for problem in problems])
+          (root / 'actual-proof.json').write_text(json.dumps(proofs, ensure_ascii=False, indent=2) + '\n')
+          assert (root / 'head.txt').read_text().strip() == os.environ['EXPECTED_HEAD'], 'source head differs'
+          assert not failures, failures
+          PYPROOF
+          (cd .. && sha256sum frontend/package.json frontend/pnpm-lock.yaml frontend/vitest.config.ts frontend/tools/fixture-ci-inventory.json) > "$FIXTURE_EVIDENCE/inputs-after.sha256"
+          cmp "$FIXTURE_EVIDENCE/inputs-before.sha256" "$FIXTURE_EVIDENCE/inputs-after.sha256"
+          git diff --exit-code HEAD --
+          test -z "$(git status --porcelain)"
+          printf '%s\n' complete > "$FIXTURE_EVIDENCE/complete.txt"
+      - name: Preserve complete actual Vitest results, exits and source evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-fixture-contracts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/frontend-fixture-contracts-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
+
   test:
     runs-on: ubuntu-latest
     steps:
