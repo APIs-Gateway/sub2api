@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   getDashboardModels: vi.fn(),
   getByDateRange: vi.fn(),
   getMyPlatformQuotas: vi.fn(),
-  refreshUser: vi.fn()
+  refreshUser: vi.fn(),
+  listKeys: vi.fn(),
 }))
 
 vi.mock('@/stores/auth', () => ({
@@ -26,6 +27,24 @@ vi.mock('@/api/usage', () => ({
     getDashboardModels: mocks.getDashboardModels,
     getByDateRange: mocks.getByDateRange
   }
+}))
+
+vi.mock('@/api/keys', () => ({
+  default: {
+    list: mocks.listKeys,
+  },
+}))
+
+vi.mock('@/stores/app', () => ({
+  useAppStore: () => ({
+    cachedPublicSettings: {
+      api_base_url: 'https://api.example.com',
+      payment_enabled: false,
+      custom_endpoints: [],
+      balance_low_notify_threshold: 0,
+    },
+    docUrl: '',
+  }),
 }))
 
 vi.mock('@/api/user', () => ({
@@ -49,6 +68,7 @@ describe('user DashboardView', () => {
     mocks.getByDateRange.mockResolvedValue({ items: [] })
     mocks.getMyPlatformQuotas.mockResolvedValue({ platform_quotas: [] })
     mocks.refreshUser.mockResolvedValue(undefined)
+    mocks.listKeys.mockResolvedValue({ items: [] })
   })
 
   it('shows a persistent error and retries the primary statistics request', async () => {
@@ -66,7 +86,9 @@ describe('user DashboardView', () => {
           UserDashboardStats: true,
           UserDashboardCharts: true,
           UserDashboardRecentUsage: true,
-          UserDashboardQuickActions: true
+          UserDashboardQuickActions: true,
+          UserDashboardNeedsAttention: true,
+          UserDashboardApiEntry: true,
         }
       }
     })

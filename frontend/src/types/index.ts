@@ -97,7 +97,6 @@ export interface User {
   /** 累计充值额（额度口径），百分比阈值用它折算。 */
   total_recharged?: number
   balance_notify_extra_emails: NotifyEmailEntry[]
-  stable_priority_enabled?: boolean // 稳定优先：所在组渠道全挂时跨分组逐档兜底
   subscriptions?: UserSubscription[] // User's active subscriptions
   last_active_at?: string | null
   created_at: string
@@ -605,7 +604,6 @@ export interface ApiKey {
   reset_5h_at: string | null
   reset_1d_at: string | null
   reset_7d_at: string | null
-  stable_priority_enabled: boolean // per-key 稳定优先开关
 }
 
 export interface CreateApiKeyRequest {
@@ -619,7 +617,6 @@ export interface CreateApiKeyRequest {
   rate_limit_5h?: number
   rate_limit_1d?: number
   rate_limit_7d?: number
-  stable_priority_enabled?: boolean // per-key 稳定优先开关
 }
 
 export interface UpdateApiKeyRequest {
@@ -635,7 +632,6 @@ export interface UpdateApiKeyRequest {
   rate_limit_1d?: number
   rate_limit_7d?: number
   reset_rate_limit_usage?: boolean
-  stable_priority_enabled?: boolean // per-key 稳定优先开关（不传 = 不变）
 }
 
 export interface CreateGroupRequest {
