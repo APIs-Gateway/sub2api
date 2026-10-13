@@ -6,7 +6,7 @@ vi.mock('@/api/client', () => ({ apiClient: { get } }))
 
 import pricingAPI, { getGroupDerive, listModelCatalog, quoteBatch } from '@/api/admin/pricing'
 
-describe('admin pricing api（只读）', () => {
+describe('admin pricing api', () => {
   beforeEach(() => {
     get.mockReset()
   })
@@ -36,7 +36,16 @@ describe('admin pricing api（只读）', () => {
     expect(get).toHaveBeenLastCalledWith('/admin/pricing/quote-batch', { params: { group_ids: '', models: 'a' } })
   })
 
-  it('默认导出汇总三个接口', () => {
-    expect(Object.keys(pricingAPI).sort()).toEqual(['getGroupDerive', 'listModelCatalog', 'quoteBatch'])
+  it('默认导出汇总所有接口', () => {
+    expect(Object.keys(pricingAPI).sort()).toEqual([
+      'commitCells',
+      'createCatalogEntry',
+      'getGroupDerive',
+      'listModelCatalog',
+      'previewCatalogTransition',
+      'previewCells',
+      'quoteBatch',
+      'transitionCatalog',
+    ])
   })
 })
