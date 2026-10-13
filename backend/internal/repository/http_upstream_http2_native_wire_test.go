@@ -109,7 +109,8 @@ func (p *nativeHTTP2WirePeer) serve(conn net.Conn, id int) {
 		result("closed", err)
 		return
 	}
-	if string(preface) != http2.ClientPreface || conn.(*tls.Conn).ConnectionState().NegotiatedProtocol != "h2" {
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok || string(preface) != http2.ClientPreface || tlsConn.ConnectionState().NegotiatedProtocol != "h2" {
 		result("closed", errors.New("missing actual h2 ALPN/preface"))
 		return
 	}
@@ -270,7 +271,9 @@ func testNativeOpenAIHTTP1Fallback(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/serverH2=%t", mode, supportsH2), func(t *testing.T) {
 				transport, err := buildUpstreamTransport(http2KeepAliveTestPoolSettings(), nil, mode)
 				require.NoError(t, err)
-				transport.TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+				trustedTransport, ok := server.Client().Transport.(*http.Transport)
+				require.True(t, ok, "TLS fixture must expose its trusted HTTP transport")
+				transport.TLSClientConfig = trustedTransport.TLSClientConfig.Clone()
 				defer transport.CloseIdleConnections()
 				response, err := (&http.Client{Transport: transport, Timeout: 4 * time.Second}).Get(server.URL)
 				require.NoError(t, err)
@@ -503,7 +506,12 @@ func testNativeOpenAIHTTP2Proxy(t *testing.T, scheme string) {
 			}
 			workers.Add(1)
 			defer workers.Done()
-			client, buffered, err := w.(http.Hijacker).Hijack()
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			client, buffered, err := hijacker.Hijack()
 			if err != nil {
 				return
 			}
