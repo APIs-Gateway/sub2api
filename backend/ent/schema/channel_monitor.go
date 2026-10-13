@@ -97,6 +97,12 @@ func (ChannelMonitor) Fields() []ent.Field {
 		field.String("response_format").
 			Default("json").
 			MaxLen(10),
+		// group_id: 关联的分组 ID，用于渠道状态页第二期的真实成功率统计。
+		// NULL = 纯探测模式（无真实流量统计）。
+		field.Int64("group_id").
+			Optional().
+			Nillable().
+			Comment("关联的分组 ID，NULL = 纯探测模式"),
 	}
 }
 

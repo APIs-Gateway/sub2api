@@ -448,6 +448,10 @@ const (
 	// pre-filled when creating a new channel monitor from the admin UI. Range: [15, 3600].
 	SettingKeyChannelMonitorDefaultIntervalSeconds = "channel_monitor_default_interval_seconds"
 
+	// SettingKeyChannelMonitorGroupStatsEnabled controls the background aggregation task
+	// for real traffic success rate. Default false (C1: build the infra; C2: enable).
+	SettingKeyChannelMonitorGroupStatsEnabled = "channel_monitor_group_stats_enabled"
+
 	// SettingKeyAvailableChannelsEnabled is a DB-backed soft switch for the "Available Channels"
 	// user-facing aggregate view. When false: user endpoint returns an empty list and the
 	// sidebar entry is hidden. Defaults to false (opt-in feature).
