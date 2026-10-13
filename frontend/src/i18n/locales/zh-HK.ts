@@ -3136,11 +3136,6 @@
         fallbackHint: '非 Claude Code 請求將使用此分組，留空則直接拒絕',
         noFallback: '不降級（直接拒絕）'
       },
-      stablePriority: {
-        fallbackGroup: '穩定優先兜底分組',
-        fallbackHint: '當本組所有渠道不可用時，開啟穩定優先的用戶請求將兜底到此分組；可逐檔串聯形成多檔兜底鏈，也可讓高檔位回指低檔位形成互備環——任意檔位掛掉都會臨時路由到環上其它正常分組，恢復後自動切回。留空表示本組不參與兜底。',
-        noFallback: '不兜底'
-      },
       openaiMessages: {
         title: 'OpenAI Messages 調度配置',
         allowDispatch: '允許 /v1/messages 調度',
