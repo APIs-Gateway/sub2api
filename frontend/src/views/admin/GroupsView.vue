@@ -364,7 +364,9 @@
               </button>
               <button
                 @click="handleDelete(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                :disabled="!canDeleteGroup(row)"
+                :title="deleteBlockReason(row) ?? undefined"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-500 dark:disabled:hover:bg-transparent dark:disabled:hover:text-gray-500"
               >
                 <Icon name="trash" size="sm" />
                 <span class="text-xs">{{ t("common.delete") }}</span>
@@ -4363,7 +4365,19 @@ const handleRPMOverrides = (group: AdminGroup) => {
   showRPMOverridesModal.value = true;
 };
 
+const canDeleteGroup = (group: AdminGroup): boolean => {
+  return deleteBlockReason(group) === null;
+};
+
+const deleteBlockReason = (group: AdminGroup): string | null => {
+  if (group.status !== 'inactive') {
+    return t('admin.groups.deleteBlockedNotInactive');
+  }
+  return null;
+};
+
 const handleDelete = (group: AdminGroup) => {
+  if (!canDeleteGroup(group)) return;
   deletingGroup.value = group;
   showDeleteDialog.value = true;
 };
@@ -4378,9 +4392,19 @@ const confirmDelete = async () => {
     deletingGroup.value = null;
     loadGroups();
   } catch (error: any) {
-    appStore.showError(
-      error.response?.data?.detail || t("admin.groups.failedToDelete"),
-    );
+    const reason = error.response?.data?.reason as string | undefined;
+    const metadata = error.response?.data?.metadata as Record<string, string> | undefined;
+    let msg: string;
+    if (reason === 'GROUP_DELETE_NOT_INACTIVE') {
+      msg = t('admin.groups.deleteBlockedNotInactive');
+    } else if (reason === 'GROUP_DELETE_HAS_KEYS') {
+      msg = t('admin.groups.deleteBlockedHasKeys', { count: metadata?.key_count ?? '?' });
+    } else if (reason === 'GROUP_DELETE_HAS_PLANS') {
+      msg = t('admin.groups.deleteBlockedHasPlans', { count: metadata?.plan_count ?? '?' });
+    } else {
+      msg = error.response?.data?.message || t("admin.groups.failedToDelete");
+    }
+    appStore.showError(msg);
     console.error("Error deleting group:", error);
   }
 };
