@@ -76,7 +76,10 @@ def verify_named(backend, evidence, filename):
             len(set(expected["privateLeaves"]) - default_tls) == 37,
             "Retain37 original private+4 public HTTP2 leaves and4 default TLS leaves")
     proof = []
-    kinds = ("private", "public", "dump", "trace", "dumpPublic", "http1", "proxy")
+    original_kinds = ("private", "public", "dump", "trace", "dumpPublic", "http1", "proxy")
+    require(sum(expected[kind + "Count"] for kind in original_kinds) == 97,
+            "Retain all97 original named HTTP2/dump/trace/HTTP1/proxy leaves")
+    kinds = original_kinds + ("http3Contract",)
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
     for kind in kinds:
@@ -91,7 +94,7 @@ def verify_named(backend, evidence, filename):
             proof.append({"package": package, "test": test, "actions": [v["Action"] for v in actual]})
     # Detect new security leaves accidentally omitted from the frozen inventory.
     prefixes = ("TestReqHTTP2Security_", "TestDumper", "TestReqTraceSecurity_", "TestReqDumpSecurity_",
-                "TestReqHTTP1Lifecycle_", "TestReqProxyLifecycle_")
+                "TestReqHTTP1Lifecycle_", "TestReqProxyLifecycle_", "TestReqHTTP3Contract_")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")
