@@ -215,6 +215,15 @@ const (
 	usageLogBestEffortRecentTTL     = 30 * time.Second
 )
 
+// usageLogFallbackTotalTimeout 是同一轮兜底写入（flushCreateBatch / flushBestEffortBatch）
+// 所有条目共用的总截止时间。声明为 var 允许测试注入。
+// 之所以共用而非每条各给独立超时：批次最大 256 条，串行下最坏耗时 = 256 × 10s ≈ 42 分钟，
+// 会长时间阻塞批处理器、让 32768 长度的队列堆满并引发写入压力翻倍。
+var (
+	usageLogFallbackTotalTimeout = 15 * time.Second
+	usageLogFallbackConcurrency  = 8
+)
+
 type usageLogCreateRequest struct {
 	log      *service.UsageLog
 	prepared usageLogInsertPrepared
@@ -694,10 +703,11 @@ func (r *usageLogRepository) flushCreateBatch(db *sql.DB, batch []usageLogCreate
 		return
 	}
 
-	// 兜底写入并发执行，避免串行最多 N×10s 卡住批处理器。
-	// 每条用独立 context，不受原批次 ctx 取消/超时影响。
-	const fallbackConcurrency = 8
-	sem := make(chan struct{}, fallbackConcurrency)
+	// 兜底写入并发执行：所有条目共用 usageLogFallbackTotalTimeout 总截止时间，
+	// 避免每条各给独立 10s、串行最多 N×10s 卡住批处理器。
+	fallbackCtx, fallbackCancel := context.WithTimeout(context.Background(), usageLogFallbackTotalTimeout)
+	defer fallbackCancel()
+	sem := make(chan struct{}, usageLogFallbackConcurrency)
 	var wg sync.WaitGroup
 	for _, req := range fallback {
 		req := req
@@ -706,9 +716,7 @@ func (r *usageLogRepository) flushCreateBatch(db *sql.DB, batch []usageLogCreate
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			fallbackCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			inserted, err := r.createSingle(fallbackCtx, db, req.log)
-			cancel()
 			completeUsageLogCreateRequest(req, usageLogCreateResult{inserted: inserted, err: err})
 		}()
 	}
@@ -758,26 +766,50 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	batchCtx, batchCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer batchCancel()
 
 	query, args := buildUsageLogBestEffortInsertQuery(preparedList)
-	if _, err := db.ExecContext(ctx, query, args...); err != nil {
+	if _, err := db.ExecContext(batchCtx, query, args...); err != nil {
 		logger.LegacyPrintf("repository.usage_log", "best-effort batch insert failed: %v", err)
-		for _, group := range groupOrder {
-			// 每条兜底用独立 context：批次 ctx 可能已超时，复用会导致兜底必然失败
-			singleCtx, singleCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			singleErr := execUsageLogInsertNoResult(singleCtx, db, group.prepared)
-			singleCancel()
-			if singleErr != nil {
-				logger.LegacyPrintf("repository.usage_log", "best-effort single fallback insert failed: %v", singleErr)
-			} else if group.prepared.requestID != "" && r != nil && r.bestEffortRecent != nil {
-				r.bestEffortRecent.SetDefault(group.key, struct{}{})
+
+		// ctx/lock 错误：批处理器内串行重试最坏耗时 256×10s ≈ 42 分钟，会堵满队列；
+		// 调用方 writeUsageLogBestEffort 对任何非 nil 错误都会同步兜底（repo.Create），
+		// 所以直接把错误回给调用方，不在批处理器里逐条重试。
+		if isCtxOrLockError(err) {
+			for _, group := range groupOrder {
+				for _, req := range group.reqs {
+					sendUsageLogBestEffortResult(req.resultCh, err)
+				}
 			}
-			for _, req := range group.reqs {
-				sendUsageLogBestEffortResult(req.resultCh, singleErr)
-			}
+			return
 		}
+
+		// 其他错误：并发兜底，所有条目共用 usageLogFallbackTotalTimeout 总截止时间，
+		// 避免每条独享 10s 导致串行耗尽批处理器。
+		fallbackCtx, fallbackCancel := context.WithTimeout(context.Background(), usageLogFallbackTotalTimeout)
+		defer fallbackCancel()
+		sem := make(chan struct{}, usageLogFallbackConcurrency)
+		var wg sync.WaitGroup
+		for _, group := range groupOrder {
+			group := group
+			wg.Add(1)
+			sem <- struct{}{}
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+				singleErr := execUsageLogInsertNoResult(fallbackCtx, db, group.prepared)
+				if singleErr != nil {
+					logger.LegacyPrintf("repository.usage_log", "best-effort single fallback insert failed: %v", singleErr)
+				} else if group.prepared.requestID != "" && r != nil && r.bestEffortRecent != nil {
+					r.bestEffortRecent.SetDefault(group.key, struct{}{})
+				}
+				for _, req := range group.reqs {
+					sendUsageLogBestEffortResult(req.resultCh, singleErr)
+				}
+			}()
+		}
+		wg.Wait()
 		return
 	}
 	for _, group := range groupOrder {
@@ -798,6 +830,27 @@ func sendUsageLogBestEffortResult(ch chan error, err error) {
 	case ch <- err:
 	default:
 	}
+}
+
+// isCtxOrLockError 判断 err 是否属于"本轮不应在批处理器内重试"的错误类型：
+//   - context.DeadlineExceeded / context.Canceled：ctx 已失效，新 ctx 也不确定有效；
+//   - PG SQLSTATE 55P03 (lock_not_available) / 57014 (canceling statement due to statement timeout)：
+//     锁拥堵下串行逐条重试会让批处理器停几十分钟。
+//
+// 这两类错误都应直接回给调用方，由调用方的同步兜底（repo.Create）负责重写。
+func isCtxOrLockError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) {
+		switch pqErr.Code {
+		case "55P03", // lock_not_available
+			"57014": // canceling statement due to statement timeout
+			return true
+		}
+	}
+	return false
 }
 
 func completeUsageLogCreateRequest(req usageLogCreateRequest, res usageLogCreateResult) {
