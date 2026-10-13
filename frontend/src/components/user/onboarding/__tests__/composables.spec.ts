@@ -46,14 +46,36 @@ describe('useGroupModels', () => {
     expect(models.value).toEqual(['gpt-5.6-sol', 'gpt-5.6-luna'])
   })
 
-  it('请求失败也回到 false，models 为空；之后不重试', async () => {
+  it('请求失败：loading 回到 false，loadFailed 为 true，models 为空；再次调 load() 会重新请求，成功后 loadFailed 回到 false', async () => {
     getAvailable.mockRejectedValue(new Error('x'))
-    const { models, loading, load } = useGroupModels(() => 7)
+    const { models, loading, loadFailed, load } = useGroupModels(() => 7)
     await load()
     expect(loading.value).toBe(false)
+    expect(loadFailed.value).toBe(true)
     expect(models.value).toEqual([])
+
+    // 改成成功，再调 load()，应该重新请求
+    getAvailable.mockResolvedValue(channels)
     await load()
+    expect(getAvailable).toHaveBeenCalledTimes(2)
+    expect(loadFailed.value).toBe(false)
+    expect(models.value).toEqual(['gpt-5.6-sol', 'gpt-5.6-luna'])
+  })
+
+  it('retry() 清除失败状态并发出新请求', async () => {
+    // 第一次请求失败
+    getAvailable.mockRejectedValueOnce(new Error('x'))
+    const { models, loadFailed, load, retry } = useGroupModels(() => 7)
+    await load()
+    expect(loadFailed.value).toBe(true)
     expect(getAvailable).toHaveBeenCalledTimes(1)
+
+    // mock 改为成功，调 retry()
+    getAvailable.mockResolvedValueOnce(channels)
+    await retry()
+    expect(getAvailable).toHaveBeenCalledTimes(2)
+    expect(loadFailed.value).toBe(false)
+    expect(models.value).toEqual(['gpt-5.6-sol', 'gpt-5.6-luna'])
   })
 
   it('加载中再调用 load 不会重复请求', async () => {
