@@ -15,7 +15,7 @@
         <UserDashboardCharts v-model:startDate="startDate" v-model:endDate="endDate" v-model:granularity="granularity" :loading="loadingCharts" :trend="trendData" :models="modelStats" @dateRangeChange="loadCharts" @granularityChange="loadCharts" @refresh="refreshAll" />
         <!-- 概览补充块：需要处理 + API 接入卡 -->
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <UserDashboardNeedsAttention :api-keys="apiKeys" :estimated-days="estimatedDays" />
+          <UserDashboardNeedsAttention :api-keys="apiKeys" />
           <UserDashboardApiEntry />
         </div>
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -64,27 +64,6 @@ const formatLD = (d: Date) => d.toISOString().split('T')[0]
 const startDate = ref(formatLD(new Date(Date.now() - 6 * 86400000)))
 const endDate = ref(formatLD(new Date()))
 const granularity = ref('day')
-
-/**
- * 余额预计续航天数：取最近 7 个日桶的实际扣费求日均，然后 balance ÷ 日均。
- * 返回 -1 表示无法计算（无消耗或数据不足）；999 以上显示 >999。
- * 只统计 actual_cost（余额扣费+订阅扣费都算），因为我们拿不到按 billing_type 拆分的
- * 日粒度数据；续航偏保守，订阅用户看到小数字时自然知道余额不是主要扣费来源。
- */
-const estimatedDays = computed<number>(() => {
-  const balance = user.value?.balance ?? 0
-  if (balance <= 0) return -1
-  // 取 day 粒度最近 7 个点
-  const dayPoints = [...trendData.value]
-    .filter((p) => p.actual_cost >= 0)
-    .slice(-7)
-  if (dayPoints.length === 0) return -1
-  const totalCost = dayPoints.reduce((sum, p) => sum + (p.actual_cost ?? 0), 0)
-  if (totalCost < 0.0001) return 999
-  const dailyAvg = totalCost / dayPoints.length
-  const days = Math.round(balance / dailyAvg)
-  return Math.min(days, 9999)
-})
 
 const loadStats = async () => {
   loading.value = true

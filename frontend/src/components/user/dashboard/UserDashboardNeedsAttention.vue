@@ -44,20 +44,16 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import type { ApiKey } from '@/types'
 import { useAuthStore } from '@/stores/auth'
-import { useAppStore } from '@/stores/app'
 import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 
 const props = defineProps<{
   /** Pre-fetched API keys list (from parent, no extra fetch needed). Pass empty array if not available. */
   apiKeys: ApiKey[]
-  /** Estimated days of runway based on last-7-day average burn. -1 means unknown/infinite. */
-  estimatedDays: number
 }>()
 
 const { t } = useI18n()
 const router = useRouter()
 const authStore = useAuthStore()
-const appStore = useAppStore()
 const { formatWallet } = useCurrencyDisplay()
 
 interface AttentionItem {
@@ -69,9 +65,10 @@ interface AttentionItem {
   urgent: boolean
 }
 
+// balance_notify_threshold is in USD quota credits, same unit as user.balance.
+// Source: backend/ent/user.go BalanceNotifyThreshold *float64, same field as balance.
 const threshold = computed<number>(() => {
-  // balance_low_notify_threshold is in USD quota credits; may be 0 if not set
-  return appStore.cachedPublicSettings?.balance_low_notify_threshold ?? 0
+  return authStore.user?.balance_notify_threshold ?? 0
 })
 
 const balance = computed<number>(() => authStore.user?.balance ?? 0)
@@ -91,19 +88,7 @@ const items = computed<AttentionItem[]>(() => {
     })
   }
 
-  // 2. Estimated runway < 14 days (only when runway is known and balance > 0)
-  if (props.estimatedDays >= 0 && props.estimatedDays < 14 && balance.value > 0) {
-    result.push({
-      key: 'low-runway',
-      title: t('dashboard.needsAttention.lowRunway', { days: props.estimatedDays }),
-      description: t('dashboard.needsAttention.lowRunwayDesc'),
-      actionLabel: t('dashboard.needsAttention.topUp'),
-      action: () => router.push('/purchase'),
-      urgent: props.estimatedDays < 7,
-    })
-  }
-
-  // 3. Any API key used ≥ 80% of its quota (quota > 0 means a limit is set)
+  // 2. Any API key used ≥ 80% of its quota (quota > 0 means a limit is set)
   for (const key of props.apiKeys) {
     if (key.quota > 0 && key.quota_used >= 0) {
       const pct = key.quota_used / key.quota

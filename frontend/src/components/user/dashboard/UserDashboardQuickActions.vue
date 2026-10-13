@@ -65,6 +65,21 @@
         <Icon name="chevronRight" size="md" class="text-gray-400 transition-colors group-hover:text-gray-700 dark:text-dark-500 dark:group-hover:text-gray-200" />
       </button>
 
+      <!-- Redeem code -->
+      <button
+        class="group flex w-full items-center gap-4 rounded-xl bg-gray-50 p-4 text-left transition-all duration-200 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 dark:bg-dark-800/50 dark:hover:bg-dark-800"
+        @click="router.push('/redeem')"
+      >
+        <div class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white transition-transform group-hover:scale-105 dark:border-dark-700 dark:bg-dark-900">
+          <Icon name="gift" size="lg" class="text-gray-700 dark:text-gray-300" />
+        </div>
+        <div class="min-w-0 flex-1">
+          <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('dashboard.redeemCode') }}</p>
+          <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('dashboard.addBalanceWithCode') }}</p>
+        </div>
+        <Icon name="chevronRight" size="md" class="text-gray-400 transition-colors group-hover:text-gray-700 dark:text-dark-500 dark:group-hover:text-gray-200" />
+      </button>
+
       <!-- Copy integration prompt for AI -->
       <button
         class="group flex w-full items-center gap-4 rounded-xl bg-gray-50 p-4 text-left transition-all duration-200 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 dark:bg-dark-800/50 dark:hover:bg-dark-800"
