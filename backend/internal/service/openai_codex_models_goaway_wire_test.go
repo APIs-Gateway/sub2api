@@ -87,7 +87,8 @@ func codexModelsWireGoAway(t *testing.T, private bool) error {
 			peerResult <- errors.New("missing real HTTP/2 preface")
 			return
 		}
-		if conn.(*tls.Conn).ConnectionState().NegotiatedProtocol != "h2" {
+		tlsConn, ok := conn.(*tls.Conn)
+		if !ok || tlsConn.ConnectionState().NegotiatedProtocol != "h2" {
 			peerResult <- errors.New("missing real h2 ALPN")
 			return
 		}
@@ -212,8 +213,14 @@ func testCodexModelsGoAwayWrappers(t *testing.T, real error) {
 	}
 	pointer := reflect.New(value.Type())
 	pointer.Elem().Set(value)
-	pointerError := pointer.Interface().(error)
-	nilTarget := reflect.Zero(pointer.Type()).Interface().(error)
+	pointerError, ok := pointer.Interface().(error)
+	if !ok {
+		t.Fatal("actual GOAWAY pointer does not implement error")
+	}
+	nilTarget, ok := reflect.Zero(pointer.Type()).Interface().(error)
+	if !ok {
+		t.Fatal("actual nil GOAWAY pointer does not implement error")
+	}
 	for name, wrapped := range map[string]error{
 		"opaque":             &codexModelsOpaqueTransportError{cause: real},
 		"double opaque":      &codexModelsOpaqueTransportError{cause: &codexModelsOpaqueTransportError{cause: real}},
@@ -246,7 +253,7 @@ func testCodexModelsGoAwayWrappers(t *testing.T, real error) {
 			}
 		})
 	}
-	var deep error = real
+	deep := real
 	for i := 0; i < 4096; i++ {
 		deep = &codexModelsOpaqueTransportError{cause: deep}
 	}
@@ -256,7 +263,7 @@ func testCodexModelsGoAwayWrappers(t *testing.T, real error) {
 	if isRetryableCodexModelsManifestTransportError(errors.Join(&codexModelsCyclicTransportError{}, context.Canceled)) {
 		t.Fatal("cyclic joined cancellation was accepted")
 	}
-	var shared error = real
+	shared := real
 	for i := 0; i < 12; i++ {
 		shared = errors.Join(shared, shared)
 	}

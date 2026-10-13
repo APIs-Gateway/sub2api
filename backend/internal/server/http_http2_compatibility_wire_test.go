@@ -171,7 +171,9 @@ func (wire *compatibilityH2Wire) request(t *testing.T, stream uint32) {
 		switch frame := frame.(type) {
 		case *http2.DataFrame:
 			require.Equal(t, stream, frame.StreamID)
-			body.Write(frame.Data())
+			written, writeErr := body.Write(frame.Data())
+			require.NoError(t, writeErr)
+			require.Equal(t, len(frame.Data()), written)
 			if frame.StreamEnded() {
 				require.Equal(t, "h2:", body.String())
 				require.NoError(t, wire.conn.SetDeadline(time.Time{}))
@@ -368,7 +370,9 @@ func TestProvideHTTPServerCompatibilityWire(t *testing.T) {
 			frame, err := h2.framer.ReadFrame()
 			require.NoError(t, err)
 			if data, ok := frame.(*http2.DataFrame); ok {
-				body.Write(data.Data())
+				written, writeErr := body.Write(data.Data())
+				require.NoError(t, writeErr)
+				require.Equal(t, len(data.Data()), written)
 				if data.StreamEnded() {
 					break
 				}

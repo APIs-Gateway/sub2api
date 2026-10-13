@@ -284,11 +284,14 @@ func testNativeOpenAIHTTP1Fallback(t *testing.T) {
 				require.Equal(t, major, response.ProtoMajor)
 				require.Equal(t, strconv.Itoa(major), string(body))
 				if supportsH2 {
-					alpn := "http/1.1"
 					if major == 2 {
-						alpn = "h2"
+						require.Equal(t, "h2", response.TLS.NegotiatedProtocol)
+					} else {
+						// H1-only native transports need not send an ALPN
+						// extension. Actual H1 framing above is mandatory;
+						// either valid H1 negotiation must still reject h2.
+						require.Contains(t, []string{"", "http/1.1"}, response.TLS.NegotiatedProtocol)
 					}
-					require.Equal(t, alpn, response.TLS.NegotiatedProtocol)
 				}
 			})
 		}
