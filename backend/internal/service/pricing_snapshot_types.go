@@ -67,21 +67,21 @@ var (
 
 // PricingSnapshotMeta 是快照的元数据（不含价格 JSON 本体）。
 type PricingSnapshotMeta struct {
-	ID                  int64
-	Label               string
-	Source              string
-	SourceURL           string
-	ContentSHA256       string
-	ModelCount          int
-	ParentSnapshotID    *int64
-	CandidateSnapshotID *int64
-	Status              string
-	FetchedBy           *int64
-	FetchedAt           time.Time
-	ApprovedBy          *int64
-	ApprovedAt          *time.Time
-	ChangeSetID         *int64
-	Note                string
+	ID                  int64      `json:"id"`
+	Label               string     `json:"label"`
+	Source              string     `json:"source"`
+	SourceURL           string     `json:"source_url"`
+	ContentSHA256       string     `json:"content_sha256"`
+	ModelCount          int        `json:"model_count"`
+	ParentSnapshotID    *int64     `json:"parent_snapshot_id"`
+	CandidateSnapshotID *int64     `json:"candidate_snapshot_id"`
+	Status              string     `json:"status"`
+	FetchedBy           *int64     `json:"fetched_by"`
+	FetchedAt           time.Time  `json:"fetched_at"`
+	ApprovedBy          *int64     `json:"approved_by"`
+	ApprovedAt          *time.Time `json:"approved_at"`
+	ChangeSetID         *int64     `json:"change_set_id"`
+	Note                string     `json:"note"`
 }
 
 // NewPricingSnapshot 是写入一份新快照所需的输入。Payload 是未压缩的 LiteLLM JSON 原文。

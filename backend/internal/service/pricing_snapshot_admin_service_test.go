@@ -5,11 +5,13 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -577,4 +579,86 @@ func TestActiveSnapshotID(t *testing.T) {
 	require.Zero(t, p.PricingSnapshotID())
 	require.Zero(t, (*PriceQuoter)(nil).PricingSnapshotID())
 	require.Zero(t, (&PriceQuoter{}).PricingSnapshotID())
+}
+
+func TestPricingSnapshotAdmin_PreviewExposesStructuredViolations(t *testing.T) {
+	env := newPSSAdminEnv(t)
+	env.admin.readExec = pssExec{}
+
+	// 没有违例：violations 是空数组（不是 null），exposure_error 不出现。
+	plan, err := env.admin.Preview(context.Background(), env.candID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, plan.Violations)
+	require.Empty(t, plan.Violations)
+	raw, err := json.Marshal(plan)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"violations":[]`)
+	require.NotContains(t, string(raw), "exposure_error")
+
+	// 保存时校验的违例：既保留旧字符串，也有结构化列表；模型名里的冒号不能切错。
+	env.checker.err = exposureError([]ExposureViolation{
+		{GroupID: 3, ModelKey: "gpt-5.1", Reason: ExposureUnpriced},
+		{GroupID: 4, ModelKey: "ft:gpt-4o:acme", Reason: ExposureZeroPrice},
+		{GroupID: 5, ModelKey: "claude-*", Reason: ExposureWildcardUnverifiable},
+	})
+	plan, err = env.admin.Preview(context.Background(), env.candID, nil)
+	require.NoError(t, err)
+	require.Contains(t, plan.ExposureError, "3:gpt-5.1:unpriced", "旧字符串字段保留一个版本")
+	require.Equal(t, 3, plan.ViolationsTotal)
+	require.Len(t, plan.Violations, 3)
+	require.Equal(t, PricingPreviewViolation{
+		Code: "unpriced", Message: "the model has no price", Model: "gpt-5.1", GroupID: 3,
+	}, plan.Violations[0])
+	require.Equal(t, "ft:gpt-4o:acme", plan.Violations[1].Model)
+	require.Equal(t, "zero_price", plan.Violations[1].Code)
+	require.Equal(t, int64(4), plan.Violations[1].GroupID)
+	require.Equal(t, "wildcard_unverifiable", plan.Violations[2].Code)
+	raw, err = json.Marshal(plan)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"exposure_error":`)
+	require.Contains(t, string(raw), `"violations":[{"code":"unpriced"`)
+}
+
+func TestExposureViolationsFromError_Fallbacks(t *testing.T) {
+	// 总数大于列出的条数（metadata 截断到 20 项）：保留真实总数。
+	many := make([]ExposureViolation, 0, 25)
+	for i := 0; i < 25; i++ {
+		many = append(many, ExposureViolation{GroupID: 1, ModelKey: "m", Reason: ExposureUnpriced})
+	}
+	got, total := exposureViolationsFromError(exposureError(many))
+	require.Len(t, got, maxExposureViolationsListed)
+	require.Equal(t, 25, total)
+
+	// 不是违例（读库出错）：一项，code 是错误原因码或兜底码。
+	got, total = exposureViolationsFromError(errors.New("db down"))
+	require.Equal(t, []PricingPreviewViolation{{Code: UnknownExposureCheckCode, Message: "db down"}}, got)
+	require.Equal(t, 1, total)
+	got, _ = exposureViolationsFromError(infraerrors.InternalServer(ReasonExposureGuardMissing, "no guard"))
+	require.Equal(t, ReasonExposureGuardMissing, got[0].Code)
+	require.Equal(t, "no guard", got[0].Message)
+
+	// metadata 格式损坏：退回一项，不丢失败。
+	bad := infraerrors.BadRequest(ReasonExposureUnpriced, "x").WithMetadata(map[string]string{"violations": "garbage;also-bad"})
+	got, total = exposureViolationsFromError(bad)
+	require.Len(t, got, 1)
+	require.Equal(t, ReasonExposureUnpriced, got[0].Code)
+	require.Equal(t, 1, total)
+}
+
+func TestPricingSnapshotMeta_JSONUsesSnakeCase(t *testing.T) {
+	by := int64(7)
+	at := time.Date(2026, 10, 6, 1, 2, 3, 0, time.UTC)
+	raw, err := json.Marshal(PricingSnapshotMeta{
+		ID: 3, Label: "l", Source: "litellm", SourceURL: "u", ContentSHA256: "abc", ModelCount: 9,
+		Status: "active", FetchedBy: &by, FetchedAt: at, ApprovedAt: &at, Note: "n",
+	})
+	require.NoError(t, err)
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(raw, &m))
+	for _, key := range []string{"id", "label", "source", "source_url", "content_sha256", "model_count", "parent_snapshot_id",
+		"candidate_snapshot_id", "status", "fetched_by", "fetched_at", "approved_by", "approved_at", "change_set_id", "note"} {
+		require.Contains(t, m, key)
+	}
+	require.Len(t, m, 15, "不应残留 Go 默认的大写字段名")
+	require.Equal(t, "abc", m["content_sha256"])
 }

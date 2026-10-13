@@ -410,3 +410,42 @@ func TestInsertMatrixCostRule_NullOrigin(t *testing.T) {
 	require.NoError(t, insertMatrixCostRule(context.Background(), db, 10, service.MatrixCostRule{Name: "m"}))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestPricingMatrixRepo_LoadGroupSummaries(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := NewPricingMatrixRepository(db)
+	cols := []string{"id", "name", "platform", "has_config", "pricing_stage", "revision", "access_mode", "cost_mode",
+		"stage_changed_at", "updated_at", "total", "enabled", "derived", "frozen", "manual"}
+	ts := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+
+	// 带 ids：一次查询，配置行缺失的分组用默认值，时间为空。
+	mock.ExpectQuery(`FROM groups g\s+LEFT JOIN group_model_config c ON c.group_id = g.id\s+LEFT JOIN \(`).
+		WithArgs(sqlmock.AnyArg(), 501).
+		WillReturnRows(sqlmock.NewRows(cols).
+			AddRow(int64(1), "plain", "openai", false, "legacy", int64(0), "open", "account_rate", nil, nil, int64(0), int64(0), int64(0), int64(0), int64(0)).
+			AddRow(int64(2), "codex", "openai", true, "shadow", int64(6), "allowlist", "follow_billing", ts, ts.Add(time.Hour), int64(4), int64(3), int64(2), int64(1), int64(1)))
+	got, err := repo.LoadGroupSummaries(context.Background(), []int64{1, 2}, 501)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, service.GroupPricingSummary{GroupID: 1, Name: "plain", Platform: "openai", Stage: service.PricingStageLegacy,
+		Access: service.MatrixAccessOpen, CostMode: service.MatrixCostAccountRate}, got[0])
+	require.True(t, got[1].HasConfig)
+	require.Equal(t, int64(6), got[1].Revision)
+	require.Equal(t, service.PricingStageShadow, got[1].Stage)
+	require.Equal(t, service.CostRuleSummary{Total: 4, Enabled: 3, LegacyDerived: 2, LegacyFrozen: 1, Manual: 1}, got[1].CostRules)
+	require.NotNil(t, got[1].StageChangedAt)
+	require.True(t, got[1].StageChangedAt.Equal(ts))
+	require.True(t, got[1].ConfigUpdatedAt.Equal(ts.Add(time.Hour)))
+
+	// 不带 ids：第一个参数是 NULL（全部未删除分组）。
+	mock.ExpectQuery(`g.deleted_at IS NULL`).WithArgs(nil, 10).WillReturnRows(sqlmock.NewRows(cols))
+	got, err = repo.LoadGroupSummaries(context.Background(), nil, 10)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Empty(t, got)
+
+	mock.ExpectQuery(`FROM groups g`).WillReturnError(errors.New("boom"))
+	_, err = repo.LoadGroupSummaries(context.Background(), []int64{1}, 10)
+	require.Error(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

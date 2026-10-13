@@ -101,6 +101,7 @@ func TestModelCatalogTransition_PreviewAndTransition(t *testing.T) {
 	})
 
 	t.Run("no recent usage and non blocking targets skip confirmation", func(t *testing.T) {
+		draft := &ModelCatalogEntry{ID: 4, ModelKey: "gpt-x", Aliases: []string{"gpt-x-latest"}, Status: ModelCatalogDraft}
 		store := &w2CatalogStore{entry: entry, updateOK: true}
 		svc, _ := w2NewTransition(store)
 		p, err := svc.Preview(ctx, 4, ModelCatalogDraft)
@@ -109,11 +110,13 @@ func TestModelCatalogTransition_PreviewAndTransition(t *testing.T) {
 		_, err = svc.Transition(ctx, 4, ModelCatalogDraft, false)
 		require.NoError(t, err)
 
-		store.usageReqs = nil
+		// draft -> active 是真转换且不挡流量：不查用量。
+		store = &w2CatalogStore{entry: draft, updateOK: true}
+		svc, _ = w2NewTransition(store)
 		p, err = svc.Preview(ctx, 4, ModelCatalogActive)
 		require.NoError(t, err)
 		require.False(t, p.ConfirmRequired)
-		require.Empty(t, store.usageReqs, "转成 active 不查用量")
+		require.Empty(t, store.usageReqs, "draft 转成 active 不查用量")
 	})
 
 	t.Run("same status is a no-op", func(t *testing.T) {
@@ -124,6 +127,25 @@ func TestModelCatalogTransition_PreviewAndTransition(t *testing.T) {
 		require.Equal(t, ModelCatalogActive, out.Status)
 		require.Empty(t, store.updates)
 		require.Empty(t, store.usageReqs)
+	})
+
+	t.Run("preview of the current status still reports usage", func(t *testing.T) {
+		store := &w2CatalogStore{entry: entry, usage: CatalogUsage{Requests: 5}}
+		svc, _ := w2NewTransition(store)
+		p, err := svc.Preview(ctx, 4, ModelCatalogActive)
+		require.NoError(t, err)
+		require.Equal(t, int64(5), p.Usage.Requests, "目标等于当前状态时也带近 7 天用量")
+		require.Equal(t, 7, p.Usage.WindowDays)
+		require.False(t, p.ConfirmRequired, "空操作不需要确认")
+		require.Len(t, store.usageReqs, 1)
+
+		retired := &ModelCatalogEntry{ID: 4, ModelKey: "gpt-x", Status: ModelCatalogRetired}
+		store = &w2CatalogStore{entry: retired, usage: CatalogUsage{Requests: 5}}
+		svc, _ = w2NewTransition(store)
+		p, err = svc.Preview(ctx, 4, ModelCatalogRetired)
+		require.NoError(t, err)
+		require.Equal(t, int64(5), p.Usage.Requests)
+		require.False(t, p.ConfirmRequired, "已是 retired：再转 retired 不会新挡流量，不要求确认")
 	})
 
 	t.Run("concurrent change is reported", func(t *testing.T) {
