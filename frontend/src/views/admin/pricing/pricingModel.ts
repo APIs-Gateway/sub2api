@@ -61,13 +61,17 @@ export function buildGroup(
   base: { id: number; name: string; platform: string; rate_multiplier: number },
   derive: GroupDeriveView | null | undefined
 ): PricingGroup {
+  const stage = derive?.stored_config?.pricing_stage ?? 'legacy'
+  // v2 分组生效的是库里的准入模式；其余分组本来不可写，只展示按渠道推出的值
+  const accessMode =
+    (stage === 'v2' ? derive?.stored_config?.access_mode : undefined) ?? derive?.derived?.config?.access_mode ?? null
   return {
     id: base.id,
     name: base.name,
     platform: base.platform,
     rate: base.rate_multiplier,
-    stage: derive?.stored_config?.pricing_stage ?? 'legacy',
-    accessMode: derive?.derived?.config?.access_mode ?? null
+    stage,
+    accessMode
   }
 }
 
@@ -138,12 +142,20 @@ export function cellKey(groupId: number, model: string): string {
 
 export type CellKind = 'open' | 'extra' | 'custom' | 'unpriced' | 'closed' | 'error'
 
+/** 用户实付单价（美元 / 百万 Token）；缓存读写只有报价或配置里有时才带。 */
+export interface CellUsd {
+  input: number
+  output: number
+  cache_write?: number
+  cache_read?: number
+}
+
 export interface CellView {
   kind: CellKind
   /** 分组还没切换，这个格子是由渠道配置推出的结果 */
   unswitched: boolean
   /** 用户实付单价（美元 / 百万 Token）；开放且有价时才有 */
-  usd: { input: number; output: number } | null
+  usd: CellUsd | null
   /** 按次计费的用户实付单价（美元 / 次） */
   perRequestUsd: number | null
   /** 按次计费只有区间价时的价格范围（美元 / 次） */
@@ -163,7 +175,15 @@ export function cellView(quote: QuoteBatchCell | undefined, group: PricingGroup)
   if (quote.error) return { ...base, kind: 'error' }
   if (!quote.access?.ok) return { ...base, kind: 'closed', reason: quote.access?.reason ?? null }
 
-  const usd = quote.final_per_mtok ? { input: quote.final_per_mtok.input, output: quote.final_per_mtok.output } : null
+  const f = quote.final_per_mtok
+  const usd: CellUsd | null = f
+    ? {
+        input: f.input,
+        output: f.output,
+        ...(typeof f.cache_write === 'number' ? { cache_write: f.cache_write } : {}),
+        ...(typeof f.cache_read === 'number' ? { cache_read: f.cache_read } : {})
+      }
+    : null
   const perRequestUsd = typeof quote.per_request_price === 'number' ? quote.per_request_price : null
   const perRequestRange =
     typeof quote.per_request_min === 'number' && typeof quote.per_request_max === 'number'

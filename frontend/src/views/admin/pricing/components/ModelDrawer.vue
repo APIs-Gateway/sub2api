@@ -81,8 +81,7 @@
     </div>
 
     <template #footer>
-      <span class="mr-auto text-xs text-gray-500 dark:text-dark-300">{{ t('admin.pricingConfig.comingSoon') }}</span>
-      <button v-if="model" type="button" class="btn btn-secondary" disabled :title="t('admin.pricingConfig.comingSoon')" data-test="drawer-action">
+      <button v-if="model" type="button" class="btn btn-secondary" data-test="drawer-action" @click="emit('action', { kind: actionKind, model })">
         {{ actionText }}
       </button>
     </template>
@@ -96,13 +95,14 @@ import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import CurrencyModeSwitch from '@/components/common/CurrencyModeSwitch.vue'
 import SideDrawer from './SideDrawer.vue'
+import type { ModelAction } from './modelAction'
 import CellFace from './CellFace.vue'
 import { usePricingData } from '../usePricingData'
 import { usePricingFormat } from '../usePricingFormat'
 import { asGroupPlatform, cellKey, cellView, isGroupUnswitched, platformLabel, sourceKey, type ModelRow, type PricingGroup } from '../pricingModel'
 
 const props = defineProps<{ model: ModelRow | null }>()
-const emit = defineEmits<{ (e: 'close'): void }>()
+const emit = defineEmits<{ (e: 'close'): void; (e: 'action', action: ModelAction): void }>()
 
 const { t } = useI18n()
 const { state } = usePricingData()
@@ -115,6 +115,14 @@ const subtitle = computed(() => (props.model && props.model.displayName !== prop
 const statusText = computed(() => t(`admin.pricingConfig.status.${props.model?.status ?? 'unregistered'}`))
 const officialIn = computed(() => official(officialRef.value?.per_mtok?.input))
 const officialOut = computed(() => official(officialRef.value?.per_mtok?.output))
+
+/** 草稿和未登记的模型是「上线」，已上线是「下线」，已下线是「重新上线」。 */
+const actionKind = computed<ModelAction['kind']>(() => {
+  const status = props.model?.status ?? null
+  if (status === 'active') return 'retire'
+  if (status === 'retired') return 'reactivate'
+  return 'launch'
+})
 
 const actionText = computed(() => {
   const status = props.model?.status ?? null
