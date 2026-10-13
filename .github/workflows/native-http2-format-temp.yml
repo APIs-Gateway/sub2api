@@ -1,0 +1,99 @@
+name: Native HTTP2 isolated formatter (temporary)
+
+on:
+  push:
+    branches: [codex/native-http2-1712]
+    paths: [.github/workflows/native-http2-format-temp.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_HEAD: 8e888ddcbb1fb311630cbb6f47cade64815b7556
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 8e888ddcbb1fb311630cbb6f47cade64815b7556
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.9
+          check-latest: false
+          cache: false
+      - name: Format only the eight independently reviewed frozen source files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          git diff --exit-code HEAD --
+          go version | tee "$RUNNER_TEMP/native-http2-formatter-go-version.txt"
+          go version | grep -q 'go1.26.9 '
+          evidence="$RUNNER_TEMP/native-http2-format-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence/original" "$evidence/formatted"
+          printf '%s\n' "$SOURCE_HEAD" > "$evidence/source-head.txt"
+          printf '%s\n' "$GITHUB_SHA" > "$evidence/workflow-event-head.txt"
+          cp "$RUNNER_TEMP/native-http2-formatter-go-version.txt" "$evidence/go-version.txt"
+          cat > "$evidence/input.sha256" <<'SHA'
+          02f7aa2c45b5c943441180aa5ed4b12ba2d8b9a0848f45429f4623a1ffc40bd0  backend/internal/repository/http_upstream.go
+          cb8dc4da2a427ce8013bdabd4a2731301ef2b9f79af801cebc997006d7a604c5  backend/internal/repository/http_upstream_http2_keepalive_test.go
+          5cb6dfc0ce90a067c4d1b49607819e32869f75cc5167d234cb3cf3fc8e12d602  backend/internal/server/http.go
+          a3236115b0d053e32df7a6a58da26110debdb7734fb6a9ac25c00a47faa38430  backend/internal/service/openai_codex_models_service.go
+          ad9065cf3baaa6ad8ae1a47eac77522aa052d1cbfd33ff78d730daa9dff5af65  backend/internal/service/openai_codex_models_service_test.go
+          36cbd5a224c27a4fa713f411fa2c80115561a3db980370eed80fce98e3db3fdb  backend/internal/repository/http_upstream_http2_native_wire_test.go
+          500761eac186012bb38f3188fd8ba1431e812e0bb15af873b45075894add0ca0  backend/internal/server/http_http2_compatibility_wire_test.go
+          0d40658634a92728859e8c233ddd20db0e441d1c5a105eec5618b8bee853cce0  backend/internal/service/openai_codex_models_goaway_wire_test.go
+          SHA
+          sha256sum --check "$evidence/input.sha256"
+          files=()
+          while read -r expected path; do
+            files+=("$path")
+            mkdir -p "$evidence/original/$(dirname "$path")" "$evidence/formatted/$(dirname "$path")"
+            cp -- "$path" "$evidence/original/$path"
+            cp -- "$path" "$evidence/formatted/$path"
+          done < "$evidence/input.sha256"
+          test "${#files[@]}" = 8
+          (cd "$evidence/original" && sha256sum --check "$evidence/input.sha256")
+          : > "$evidence/gofmt-original.diff"
+          for path in "${files[@]}"; do
+            mkdir -p "$evidence/diff/$(dirname "$path")"
+            set +e
+            gofmt -d "$evidence/formatted/$path" > "$evidence/diff/$path.diff" 2> "$evidence/diff/$path.stderr"
+            format_diff_status=$?
+            set -e
+            printf '%s\n' "$format_diff_status" > "$evidence/diff/$path.exit"
+            test ! -s "$evidence/diff/$path.stderr"
+            case "$format_diff_status" in
+              0) test ! -s "$evidence/diff/$path.diff" ;;
+              1) test -s "$evidence/diff/$path.diff" ;;
+              *) exit "$format_diff_status" ;;
+            esac
+            cat "$evidence/diff/$path.diff" >> "$evidence/gofmt-original.diff"
+            gofmt -w "$evidence/formatted/$path" > "$evidence/diff/$path.write.stdout" 2> "$evidence/diff/$path.write.stderr"
+            test ! -s "$evidence/diff/$path.write.stdout"
+            test ! -s "$evidence/diff/$path.write.stderr"
+          done
+          (cd "$evidence/formatted" && gofmt -l "${files[@]}") > "$evidence/gofmt-remaining.txt" 2> "$evidence/gofmt-remaining.stderr"
+          test ! -s "$evidence/gofmt-remaining.txt"
+          test ! -s "$evidence/gofmt-remaining.stderr"
+          (cd "$evidence/formatted" && sha256sum "${files[@]}") > "$evidence/output.sha256"
+          set +e
+          diff -ru "$evidence/original" "$evidence/formatted" > "$evidence/raw-original-to-formatted.diff"
+          diff_status=$?
+          set -e
+          test "$diff_status" -le 1
+          printf '%s\n' "$diff_status" > "$evidence/raw-diff.exit"
+          git diff --exit-code HEAD --
+      - name: Preserve exact inputs, formatted outputs and raw differences
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-http2-format-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-http2-format-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 7

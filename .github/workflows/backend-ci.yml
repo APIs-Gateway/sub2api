@@ -8,6 +8,78 @@ permissions:
   contents: read
 
 jobs:
+  native-http2-wire:
+    name: Native HTTP2 and GOAWAY actual wire contracts (race)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: "1"
+      GOMAXPROCS: "2"
+      GOTOOLCHAIN: local
+      GOWORK: "off"
+      GOFLAGS: -mod=readonly
+      SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Verify exact source and run original repository controls plus native wire contracts
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WIRE_EVIDENCE="$RUNNER_TEMP/native-http2-wire-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          git diff --exit-code HEAD --
+          test ! -e "$WIRE_EVIDENCE"
+          mkdir -p "$WIRE_EVIDENCE"
+          printf '%s\n' "$SOURCE_HEAD" > "$WIRE_EVIDENCE/source-head.txt"
+          git ls-files --stage > "$WIRE_EVIDENCE/git-index.txt"
+          cp tools/native-http2-wire-inventory.json "$WIRE_EVIDENCE/inventory.json"
+          sha256sum tools/native-http2-wire-inventory.json > "$WIRE_EVIDENCE/inventory.sha256"
+          go version | tee "$WIRE_EVIDENCE/go-version.txt"
+          go version | grep -q 'go1.26.9 '
+          set +e
+          go test -p=1 -parallel=1 -tags=unit -race -count=1 -timeout=4m -json -run '^(TestEnableOpenAIHTTP2KeepAliveEnablesPingHealthCheck|TestEnableOpenAIHTTP2KeepAlive_PropagatesConfigureError|TestBuildUpstreamTransportOpenAIH2EnablesPingHealthCheck|TestBuildUpstreamTransportNonOpenAIH2IsNotEagerlyConfigured|TestBuildUpstreamTransportOpenAIH2WithHTTPProxyEnablesKeepAlive|TestUpstreamIPModeDirectTransportAndHTTP2|TestGetSharedReqClient_ForceHTTP2SeparatesCache|TestCreateGeminiReqClient_ForceHTTP2Disabled|TestProvideHTTPServerCompatibilityWire|TestIsRetryableCodexModelsManifestTransportError)$' ./internal/repository/ ./internal/server/ ./internal/service/ > "$WIRE_EVIDENCE/tests.json" 2> "$WIRE_EVIDENCE/tests.stderr"
+          test_status=$?
+          set -e
+          printf '%s\n' "$test_status" > "$WIRE_EVIDENCE/tests.exit"
+          python3 - <<'PY'
+          import collections, json, os, pathlib
+          evidence = pathlib.Path(os.environ['WIRE_EVIDENCE'])
+          expected = json.loads((evidence / 'inventory.json').read_text())['expectedPassedExactlyOnce']
+          required = {(package, case) for package, cases in expected.items() for case in cases}
+          events = [json.loads(line) for line in (evidence / 'tests.json').read_text().splitlines()]
+          runs = collections.Counter((event['Package'], event['Test']) for event in events if event['Action'] == 'run' and 'Test' in event)
+          passes = collections.Counter((event['Package'], event['Test']) for event in events if event['Action'] == 'pass' and 'Test' in event)
+          bad = [event for event in events if event['Action'] in ('fail', 'skip')]
+          package_passes = collections.Counter(event['Package'] for event in events if event['Action'] == 'pass' and 'Test' not in event)
+          report = {'sourceHead': (evidence / 'source-head.txt').read_text().strip(), 'requiredCases': len(required), 'actualRuns': sum(runs.values()), 'actualPasses': sum(passes.values()), 'missingRuns': sorted(required - runs.keys()), 'missingPasses': sorted(required - passes.keys()), 'unexpectedRuns': sorted(runs.keys() - required), 'unexpectedPasses': sorted(passes.keys() - required), 'badEvents': bad, 'packagePasses': dict(package_passes)}
+          (evidence / 'actual-inventory.json').write_text(json.dumps(report, indent=2) + '\n')
+          assert (evidence / 'tests.exit').read_text().strip() == '0', 'actual Go test exit failed'
+          assert required and not bad, 'failed or skipped actual cases/packages'
+          assert set(runs) == required and set(passes) == required, 'actual test inventory differs'
+          assert all(runs[case] == passes[case] == 1 for case in required), 'case did not run/pass exactly once'
+          assert dict(package_passes) == {package: 1 for package in expected}, 'package results differ'
+          assert report['sourceHead'] == os.environ['SOURCE_HEAD'], 'actual source head differs'
+          PY
+          git diff --exit-code HEAD --
+      - name: Preserve actual wire JSON, exact source and mandatory case inventory
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-http2-wire-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-http2-wire-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
+
   test:
     runs-on: ubuntu-latest
     steps:
