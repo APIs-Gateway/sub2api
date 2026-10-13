@@ -694,12 +694,25 @@ func (r *usageLogRepository) flushCreateBatch(db *sql.DB, batch []usageLogCreate
 		return
 	}
 
+	// 兜底写入并发执行，避免串行最多 N×10s 卡住批处理器。
+	// 每条用独立 context，不受原批次 ctx 取消/超时影响。
+	const fallbackConcurrency = 8
+	sem := make(chan struct{}, fallbackConcurrency)
+	var wg sync.WaitGroup
 	for _, req := range fallback {
-		fallbackCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		inserted, err := r.createSingle(fallbackCtx, db, req.log)
-		cancel()
-		completeUsageLogCreateRequest(req, usageLogCreateResult{inserted: inserted, err: err})
+		req := req
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fallbackCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			inserted, err := r.createSingle(fallbackCtx, db, req.log)
+			cancel()
+			completeUsageLogCreateRequest(req, usageLogCreateResult{inserted: inserted, err: err})
+		}()
 	}
+	wg.Wait()
 }
 
 func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBestEffortRequest) {
@@ -752,7 +765,10 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 	if _, err := db.ExecContext(ctx, query, args...); err != nil {
 		logger.LegacyPrintf("repository.usage_log", "best-effort batch insert failed: %v", err)
 		for _, group := range groupOrder {
-			singleErr := execUsageLogInsertNoResult(ctx, db, group.prepared)
+			// 每条兜底用独立 context：批次 ctx 可能已超时，复用会导致兜底必然失败
+			singleCtx, singleCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			singleErr := execUsageLogInsertNoResult(singleCtx, db, group.prepared)
+			singleCancel()
 			if singleErr != nil {
 				logger.LegacyPrintf("repository.usage_log", "best-effort single fallback insert failed: %v", singleErr)
 			} else if group.prepared.requestID != "" && r != nil && r.bestEffortRecent != nil {

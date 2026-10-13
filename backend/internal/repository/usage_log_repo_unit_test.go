@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -125,5 +126,89 @@ func TestUsageLogRepositoryGetStatsWithFiltersUpstreamModelMismatch(t *testing.T
 	stats, err := repo.GetStatsWithFilters(context.Background(), filters)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), stats.TotalRequests)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestFlushBestEffortBatch_FallbackUsesIndependentCtx 验证 best-effort 批量写入失败后，
+// 单条兜底使用独立 context 而非已超时的批次 ctx，确保兜底能成功写入。
+func TestFlushBestEffortBatch_FallbackUsesIndependentCtx(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := &usageLogRepository{sql: db}
+
+	log := &service.UsageLog{
+		UserID:    1,
+		APIKeyID:  2,
+		AccountID: 3,
+		RequestID: "req-be-fallback-ctx",
+		Model:     "gpt-5",
+		CreatedAt: time.Now().UTC(),
+	}
+	prepared := prepareUsageLogInsert(log)
+
+	resultCh := make(chan error, 1)
+	req := usageLogBestEffortRequest{
+		prepared: prepared,
+		apiKeyID: log.APIKeyID,
+		resultCh: resultCh,
+	}
+
+	// 批量 INSERT 失败，触发单条兜底路径
+	mock.ExpectExec(`INSERT INTO usage_logs`).
+		WillReturnError(fmt.Errorf("simulated batch insert error"))
+	// 单条兜底 INSERT 成功
+	mock.ExpectExec(`INSERT INTO usage_logs`).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	repo.flushBestEffortBatch(db, []usageLogBestEffortRequest{req})
+
+	select {
+	case err := <-resultCh:
+		require.NoError(t, err, "单条兜底应使用独立 ctx 并写入成功")
+	case <-time.After(5 * time.Second):
+		t.Fatal("等待兜底结果超时")
+	}
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestFlushCreateBatch_FallbackAllItemsReceiveResults 验证 flushCreateBatch 兜底路径
+// （requestID 为空的条目）并发执行后，所有条目都能收到写入结果，批处理器不会被串行阻塞。
+func TestFlushCreateBatch_FallbackAllItemsReceiveResults(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := &usageLogRepository{sql: db}
+
+	const n = 6 // 超过 fallbackConcurrency/2，验证信号量不会死锁
+	reqs := make([]usageLogCreateRequest, n)
+	for i := range reqs {
+		ul := &service.UsageLog{
+			UserID:    int64(i + 1),
+			APIKeyID:  int64(i + 1),
+			AccountID: int64(i + 1),
+			// RequestID 为空 → 直接进入兜底路径，跳过批量 INSERT
+			Model:     "gpt-5",
+			CreatedAt: time.Now().UTC(),
+		}
+		reqs[i] = usageLogCreateRequest{
+			log:      ul,
+			prepared: prepareUsageLogInsert(ul),
+			resultCh: make(chan usageLogCreateResult, 1),
+		}
+		// createSingle 使用 QueryRowContext（INSERT … RETURNING id, created_at）
+		mock.ExpectQuery(`INSERT INTO usage_logs`).
+			WillReturnRows(
+				sqlmock.NewRows([]string{"id", "created_at"}).
+					AddRow(int64(i+1), time.Now().UTC()),
+			)
+	}
+
+	repo.flushCreateBatch(db, reqs)
+
+	for i, req := range reqs {
+		select {
+		case res := <-req.resultCh:
+			require.NoError(t, res.err, "req[%d] 兜底应写入成功", i)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("等待 req[%d] 结果超时", i)
+		}
+	}
 	require.NoError(t, mock.ExpectationsWereMet())
 }
