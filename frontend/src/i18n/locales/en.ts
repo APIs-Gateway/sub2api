@@ -3109,11 +3109,6 @@
         fallbackHint: 'Non-Claude Code requests will use this group. Leave empty to reject directly.',
         noFallback: 'No Fallback (Reject)'
       },
-      stablePriority: {
-        fallbackGroup: 'Stable Priority Fallback Group',
-        fallbackHint: 'When every channel in this group is unavailable, requests from stable-priority users fail over to this group. Chain groups tier by tier for a multi-tier fallback, or point higher tiers back to lower ones to form a mutual-backup ring — any tier that goes down is temporarily routed to another healthy group on the ring and switches back on recovery. Leave empty to opt this group out.',
-        noFallback: 'No Fallback'
-      },
       openaiMessages: {
         title: 'OpenAI Messages Dispatch',
         allowDispatch: 'Allow /v1/messages dispatch',

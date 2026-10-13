@@ -183,27 +183,3 @@ func TestAnnotateStableServed_CarriesServedImageRate(t *testing.T) {
 	require.Zero(t, homeDec.StableServedImageRateMultiplier)
 	require.Nil(t, homeDec.StableServedImagePrice1K)
 }
-
-func TestValidateStablePriorityFallbackGroup_AllowsRing(t *testing.T) {
-	ring := &groupRepoStubForFallbackCycle{groups: map[int64]*Group{
-		1: openaiGroup(1, ptrI64(2)),
-		2: openaiGroup(2, ptrI64(3)),
-		3: openaiGroup(3, ptrI64(1)),
-	}}
-	svc := &adminServiceImpl{groupRepo: ring}
-	// 设置 stable(3) -> cheap(1) 闭环，应被接受（允许互备环）。
-	require.NoError(t, svc.validateStablePriorityFallbackGroup(context.Background(), 3, 1, PlatformOpenAI))
-}
-
-func TestValidateStablePriorityFallbackGroup_Rejects(t *testing.T) {
-	repo := &groupRepoStubForFallbackCycle{groups: map[int64]*Group{
-		2: {ID: 2, Platform: PlatformAnthropic, Status: StatusActive},
-	}}
-	svc := &adminServiceImpl{groupRepo: repo}
-	// 非 openai home
-	require.Error(t, svc.validateStablePriorityFallbackGroup(context.Background(), 1, 2, PlatformAnthropic))
-	// 直接指向自己
-	require.Error(t, svc.validateStablePriorityFallbackGroup(context.Background(), 3, 3, PlatformOpenAI))
-	// 兜底链中存在非 openai 分组
-	require.Error(t, svc.validateStablePriorityFallbackGroup(context.Background(), 1, 2, PlatformOpenAI))
-}

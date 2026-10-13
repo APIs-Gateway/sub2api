@@ -1235,7 +1235,6 @@
     "remaining_usd?: number // 剩余订阅余额",
     "reset_time: string // 重置时间 ISO8601",
     "rpm: number // 近5分钟平均每分钟请求数",
-    "stable_priority_fallback_group_id: number | null // 稳定优先下一档兜底目标（仅 openai）",
     "stats_stale: boolean // 统计是否过期",
     "stats_updated_at: string // 统计更新时间（UTC RFC3339）",
     "today_account_cost: number // 今日账号成本",
