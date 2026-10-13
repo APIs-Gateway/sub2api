@@ -1271,11 +1271,6 @@
     rateLimit1d: '日限额 ({currency})',
     rateLimit7d: '7天限额 ({currency})',
     rateLimitHint: '设置此密钥在指定时间窗口内的最大消费额。0 = 无限制。',
-    stablePriority: {
-      label: '启用稳定优先',
-      description: '开启后，当你所用分组的渠道全部不可用时，请求会自动跨分组逐档兜底到更稳定的高倍率分组；低倍率分组恢复稳定后自动切回。',
-      billingWarning: '注意：兜底期间将按实际服务的高倍率分组费率从你的余额计费，费用可能高于原分组。',
-    },
     rateLimitUsage: '速率限制用量',
     resetRateLimitUsage: '重置速率限制用量',
     resetRateLimitTitle: '确认重置速率限制',
@@ -2056,12 +2051,6 @@
       maxEmailsReached: '已达到通知邮箱数量上限',
       unverified: '未验证',
       verified: '已验证',
-    },
-    stablePriority: {
-      title: '稳定优先',
-      description: '开启后，当你所用分组的渠道全部不可用时，请求会自动跨分组逐档兜底到更稳定的高倍率分组；低倍率分组恢复稳定后自动切回。',
-      enabled: '启用稳定优先',
-      billingHint: '注意：兜底期间将按实际服务的高倍率分组费率从你的余额计费，费用可能高于原分组。',
     },
     avatar: {
       title: '资料头像',

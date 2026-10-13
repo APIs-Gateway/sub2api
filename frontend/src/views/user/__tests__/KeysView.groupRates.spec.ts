@@ -101,7 +101,6 @@ const keyRow = (extra: Partial<ApiKey> = {}): ApiKey =>
     reset_5h_at: null,
     reset_1d_at: null,
     reset_7d_at: null,
-    stable_priority_enabled: false,
     ...extra
   }) as ApiKey
 
