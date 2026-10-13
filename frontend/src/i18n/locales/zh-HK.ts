@@ -817,7 +817,31 @@
     viewUsage: '查看使用記錄',
     checkDetailedLogs: '查看詳細的使用日志',
     redeemCode: '兌換碼',
-    addBalanceWithCode: '使用兌換碼充值'
+    addBalanceWithCode: '使用兌換碼充值',
+    topUp: '充值',
+    topUpDesc: '為帳戶餘額充值',
+    readDocs: '閱讀文件',
+    readDocsDesc: '查看接入指引與 API 參考',
+    copyAiPrompt: '複製接入說明給 AI',
+    copyAiPromptDesc: '貼給程式設計助手即可快速接入',
+    aiPromptCopied: '已複製',
+    aiPromptText: '我在使用一個 OpenAI 相容的 API，地址是 {baseUrl}，請用這個 base URL 和我提供的 API Key 幫我接入。',
+    apiEntry: {
+      title: 'API 接入',
+      altLabel: '備用線路',
+      copyFailed: '複製失敗，請手動選取文字後複製。',
+    },
+    needsAttention: {
+      title: '需要處理',
+      allGood: '當前無需處理',
+      lowBalance: '餘額即將不足',
+      lowBalanceDesc: '當前餘額 {balance}，低於提醒閾值',
+      topUp: '去充值',
+      keyNearLimit: '金鑰「{name}」已用 {pct}% 額度',
+      keyExhausted: '金鑰「{name}」已觸達消費上限',
+      keyQuotaDesc: '已用 {used} / 上限 {limit}',
+      manageKey: '處理金鑰',
+    },
   },
 
   // Groups (shared)

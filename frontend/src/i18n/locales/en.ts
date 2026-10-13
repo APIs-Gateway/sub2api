@@ -818,7 +818,31 @@
     viewUsage: 'View Usage',
     checkDetailedLogs: 'Check detailed usage logs',
     redeemCode: 'Redeem Code',
-    addBalanceWithCode: 'Add balance with a code'
+    addBalanceWithCode: 'Add balance with a code',
+    topUp: 'Top Up',
+    topUpDesc: 'Add credit to your wallet',
+    readDocs: 'Read Docs',
+    readDocsDesc: 'Integration guides and API reference',
+    copyAiPrompt: 'Copy integration prompt for AI',
+    copyAiPromptDesc: 'Paste into any coding assistant to get started',
+    aiPromptCopied: 'Copied',
+    aiPromptText: 'I am using an OpenAI-compatible API at {baseUrl}. Please help me integrate it using this base URL and an API key I will provide.',
+    apiEntry: {
+      title: 'API Access',
+      altLabel: 'Alternate endpoints',
+      copyFailed: 'Copy failed. Please select the text and copy manually.',
+    },
+    needsAttention: {
+      title: 'Needs Attention',
+      allGood: 'Nothing needs attention right now',
+      lowBalance: 'Wallet balance is low',
+      lowBalanceDesc: 'Current balance {balance} is below your alert threshold',
+      topUp: 'Top up',
+      keyNearLimit: 'Key "{name}" has used {pct}% of its quota',
+      keyExhausted: 'Key "{name}" has reached its spending limit',
+      keyQuotaDesc: 'Used {used} of {limit}',
+      manageKey: 'Manage key',
+    },
   },
 
   // Groups (shared)
