@@ -17,6 +17,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
+	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -2509,6 +2510,39 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 }
 
 func (s *adminServiceImpl) DeleteGroup(ctx context.Context, id int64) error {
+	// 前置条件校验：必须同时满足三条才允许删除
+	group, err := s.groupRepo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	// 条件 1：分组必须已停用
+	if group.Status != StatusInactive {
+		return infraerrors.New(422, "GROUP_DELETE_NOT_INACTIVE", "分组未停用，请先停用后再删除")
+	}
+
+	// 条件 2：分组下没有 API Key
+	keyCount, err := s.apiKeyRepo.CountByGroupID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("count group api keys: %w", err)
+	}
+	if keyCount > 0 {
+		return infraerrors.New(422, "GROUP_DELETE_HAS_KEYS", fmt.Sprintf("分组下仍有 %d 个 API Key，请先移除后再删除", keyCount)).
+			WithMetadata(map[string]string{"key_count": strconv.FormatInt(keyCount, 10)})
+	}
+
+	// 条件 3：分组没有在售套餐（for_sale = true）
+	planCount, err := s.entClient.SubscriptionPlan.Query().
+		Where(subscriptionplan.GroupIDEQ(id), subscriptionplan.ForSaleEQ(true)).
+		Count(ctx)
+	if err != nil {
+		return fmt.Errorf("count group for-sale plans: %w", err)
+	}
+	if planCount > 0 {
+		return infraerrors.New(422, "GROUP_DELETE_HAS_PLANS", fmt.Sprintf("分组下仍有 %d 个在售套餐，请先下架后再删除", planCount)).
+			WithMetadata(map[string]string{"plan_count": strconv.Itoa(planCount)})
+	}
+
 	var groupKeys []string
 	if s.authCacheInvalidator != nil {
 		keys, err := s.apiKeyRepo.ListKeysByGroupID(ctx, id)
