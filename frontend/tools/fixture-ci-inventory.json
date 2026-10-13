@@ -17,8 +17,8 @@
       "shows server model scopes for gemini plans",
       "shows server model scopes for grok plans",
       "shows server model scopes for anthropic plans",
-      "uses the platform label for missing server model scopes",
-      "uses the platform label for empty server model scopes",
+      "uses the platform label for 'missing' server model scopes",
+      "uses the platform label for 'empty' server model scopes",
       "preserves an unrecognized server model scope label",
       "shows model scopes for Antigravity plans"
     ],

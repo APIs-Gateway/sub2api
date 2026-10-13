@@ -43,7 +43,7 @@ vi.mock('@/stores/adminSettings', () => ({
 }))
 
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ meta: {}, name: 'Dashboard', params: {} }),
+  useRoute: () => ({ meta: {}, name: 'Dashboard', params: {}, path: '/dashboard' }),
   useRouter: () => ({ push: vi.fn() }),
 }))
 
