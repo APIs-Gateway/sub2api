@@ -35,13 +35,20 @@ func newDeletePreconditionsTestClient(t *testing.T) *dbent.Client {
 type groupRepoStubWithStatus struct {
 	groupRepoStub
 	status string
+	getErr error
 }
 
 func (s *groupRepoStubWithStatus) GetByID(_ context.Context, id int64) (*Group, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
 	return &Group{ID: id, Name: "test-group", Status: s.status}, nil
 }
 
 func (s *groupRepoStubWithStatus) GetByIDLite(_ context.Context, id int64) (*Group, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
 	return &Group{ID: id, Name: "test-group", Status: s.status}, nil
 }
 

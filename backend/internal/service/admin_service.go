@@ -2517,7 +2517,7 @@ func (s *adminServiceImpl) DeleteGroup(ctx context.Context, id int64) error {
 	}
 
 	// 条件 1：分组必须已停用
-	if group.Status != "inactive" {
+	if group.Status != StatusInactive {
 		return infraerrors.New(422, "GROUP_DELETE_NOT_INACTIVE", "分组未停用，请先停用后再删除")
 	}
 
