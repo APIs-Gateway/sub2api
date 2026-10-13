@@ -102,8 +102,10 @@
         :clients="clients"
         :models="models"
         :models-loading="modelsLoading"
+        :models-load-failed="modelsLoadFailed"
         :copied-id="copiedId"
         @copy="copy"
+        @retry-models="retryModels"
       />
 
       <!-- ===== CC Switch ===== -->
@@ -117,10 +119,12 @@
         :site-name="siteName"
         :models="models"
         :models-loading="modelsLoading"
+        :models-load-failed="modelsLoadFailed"
         :clients="ccsClients"
         :id-prefix="uid"
         :copied-id="copiedId"
         @copy="copy"
+        @retry-models="retryModels"
       />
 
       <!-- ===== 手动配置 ===== -->
@@ -298,7 +302,9 @@ const manualCodeTab = useManualCodeTab({ platform, allowMessagesDispatch: () => 
 const {
   models,
   loading: modelsLoading,
-  load: loadModels
+  loadFailed: modelsLoadFailed,
+  load: loadModels,
+  retry: retryModels
 } = useGroupModels(() => props.apiKey?.group?.id ?? props.apiKey?.group_id)
 
 // ===== 要跨页签保留的页签状态：页签是按需渲染的，状态放在页签组件里切走就丢了 =====

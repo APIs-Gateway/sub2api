@@ -52,7 +52,20 @@
           </select>
         </div>
       </div>
-      <p v-if="modelsHint" :id="hintId" class="input-hint mt-2 flex items-center gap-2" role="status" data-test="ccs-models-hint">
+      <!-- 模型加载失败：显示提示和重试入口 -->
+      <div v-if="modelsLoadFailed" class="mt-2 flex items-center gap-3" data-test="ccs-models-error">
+        <p class="input-hint flex-1 text-red-600 dark:text-red-400">{{ t('keyOnboarding.ccs.modelsError') }}</p>
+        <button
+          type="button"
+          class="btn btn-secondary btn-xs"
+          data-test="ccs-models-retry"
+          @click="emit('retryModels')"
+        >
+          <Icon name="refresh" size="sm" aria-hidden="true" />
+          {{ t('keyOnboarding.ccs.modelsRetry') }}
+        </button>
+      </div>
+      <p v-else-if="modelsHint" :id="hintId" class="input-hint mt-2 flex items-center gap-2" role="status" data-test="ccs-models-hint">
         <span
           v-if="modelsLoading"
           class="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600 motion-reduce:animate-none dark:border-dark-600 dark:border-t-gray-300"
@@ -61,7 +74,7 @@
         {{ modelsHint }}
       </p>
     </div>
-    <!-- 导入之后会怎样：Codex 先不启用，要用户自己启用并重启（黄色提醒）；Claude / Gemini 确认后立即切换 -->
+    <!-- 导入之后会怎样：Codex 先不启用，要用户自己启用并重启（黄色提醒）；Claude / Gemini 确认后立即切换（蓝色提示） -->
     <div
       v-if="!enableOnImport"
       role="note"
@@ -71,7 +84,16 @@
       <Icon name="exclamationTriangle" size="md" class="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
       <p>{{ t('keyOnboarding.ccs.codexWarning') }}</p>
     </div>
-    <p v-else class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-switch-note">{{ t('keyOnboarding.ccs.switchNote') }}</p>
+    <!-- 和 Codex 黄色提醒对等：「确认导入后立即切换」用蓝色 infoCircle，同样醒目，样式从 Codex warning 复制 -->
+    <div
+      v-else
+      role="note"
+      class="flex gap-2.5 rounded-lg border border-primary-200 bg-primary-50 px-3.5 py-3 text-sm text-primary-900 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-200"
+      data-test="ccs-switch-note"
+    >
+      <Icon name="infoCircle" size="md" class="mt-0.5 shrink-0 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+      <p>{{ t('keyOnboarding.ccs.switchNote') }}</p>
+    </div>
     <div class="flex flex-wrap items-center gap-2">
       <button
         type="button"
@@ -152,6 +174,8 @@ const props = defineProps<{
   models: string[]
   /** 模型列表还在加载 */
   modelsLoading?: boolean
+  /** 模型列表加载失败，显示重试入口 */
+  modelsLoadFailed?: boolean
   /** 这个平台能导入成哪些客户端；多于一个时显示客户端选择 */
   clients: CcsClient[]
   /** 同一页上多个弹窗实例时，页签内 id 的前缀，避免 id 重复 */
@@ -163,6 +187,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** 要复制的文本和按钮 id */
   copy: [text: string, id: string]
+  /** 模型列表加载失败时，用户点「重试」 */
+  retryModels: []
 }>()
 
 /** 表单：选中的客户端、自定义名称、各个模型。更新时换成新对象，交给外壳 */
