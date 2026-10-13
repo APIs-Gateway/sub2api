@@ -1041,6 +1041,7 @@
       docCatalog: 'Docs index for AI',
       detailHint: 'The detailed version includes the connection details, the requirements and the models this key can use.',
       detailLoading: 'Loading the models this key can use…',
+      modelsRetry: 'Retry loading models',
       detail: {
         intro: 'Please help me connect {tool} to {site} (an API service compatible with the OpenAI and Anthropic formats).',
         introChat: 'Please help me connect my chat app to {site} (an API service compatible with the OpenAI and Anthropic formats).',
@@ -1092,6 +1093,8 @@
       modelDefault: 'Optional; leave blank to use the CC Switch default',
       modelsLoading: 'Loading available models…',
       noModels: 'No models are available for this key. You can still import and leave the model fields blank.',
+      modelsError: 'Could not load models. You can still import and leave the fields blank.',
+      modelsRetry: 'Retry',
       codexWarning: 'The Codex profile is imported but not enabled. Enable it in CC Switch yourself, then restart Codex as prompted, so old and new settings are not mixed.',
       switchNote: 'Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time.',
       balanceNote: 'Balance lookup is imported with the profile and refreshes every {minutes} minutes.',

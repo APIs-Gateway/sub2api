@@ -194,15 +194,19 @@ function shortestMatch(list: string[], re: RegExp): string {
 
 /**
  * 某个客户端的模型下拉里该列哪些：去重、按字母排序；
- * Claude 把名字里带 claude 的排前面；Codex 只列 gpt-* 和带 codex 的对话模型；Gemini 只列带 gemini 的。
+ * Claude 把名字里带 claude 的排前面，过滤掉 TTS / 图片等非对话模型（NON_CHAT_MODEL）；
+ * Codex 只列 gpt-* 和带 codex 的对话模型；Gemini 只列带 gemini 的。
  * 筛选后一个都不剩时退回列出全部，不让下拉变空。
  */
 export function ccSwitchModelOptions(app: CcSwitchApp, models: readonly string[]): string[] {
   const all = [...new Set(models.map((m) => m.trim()).filter(Boolean))].sort(byName)
   switch (app) {
     case 'claude': {
-      const claude = all.filter((m) => /claude/i.test(m))
-      return [...claude, ...all.filter((m) => !/claude/i.test(m))]
+      // 过滤掉 tts、图片生成、语音、嵌入等非对话模型；规则同 NON_CHAT_MODEL（image|embed|tts|whisper|audio|...）
+      const chat = all.filter((m) => !NON_CHAT_MODEL.test(m))
+      const base = chat.length > 0 ? chat : all
+      const claude = base.filter((m) => /claude/i.test(m))
+      return [...claude, ...base.filter((m) => !/claude/i.test(m))]
     }
     case 'codex': {
       const chat = all.filter((m) => /^gpt-|codex/i.test(m) && !NON_CHAT_MODEL.test(m))

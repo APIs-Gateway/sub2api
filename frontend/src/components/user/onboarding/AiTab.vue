@@ -46,6 +46,17 @@
         ></span>
         {{ copiedId === 'ai-detail' ? t('keyOnboarding.copied') : t('keyOnboarding.ai.copyDetail') }}
       </button>
+      <!-- 模型加载失败：提供重试入口 -->
+      <button
+        v-if="modelsLoadFailed"
+        type="button"
+        class="btn btn-secondary btn-sm"
+        data-test="ai-models-retry"
+        @click="emit('retryModels')"
+      >
+        <Icon name="refresh" size="sm" class="mr-1.5" aria-hidden="true" />
+        {{ t('keyOnboarding.ai.modelsRetry') }}
+      </button>
       <button type="button" class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" @click="openExternal(chatgptUrl(aiShort))">
         {{ t('keyOnboarding.ai.openChatgpt') }}
       </button>
@@ -105,6 +116,8 @@ const props = defineProps<{
   models: string[]
   /** 模型列表还在加载：「复制详细版」先禁用，加载完（成功或失败）再可用 */
   modelsLoading?: boolean
+  /** 模型列表加载失败：「复制详细版」显示重试入口 */
+  modelsLoadFailed?: boolean
   /** 最近复制成功的按钮 id，对应的按钮显示「已复制」 */
   copiedId: string
 }>()
@@ -112,6 +125,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** 要复制的文本和按钮 id */
   copy: [text: string, id: string]
+  /** 模型列表加载失败时，用户点「重试」 */
+  retryModels: []
 }>()
 
 /** 选中的客户端 */

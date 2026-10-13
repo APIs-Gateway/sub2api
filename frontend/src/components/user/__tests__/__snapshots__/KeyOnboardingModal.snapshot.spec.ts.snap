@@ -23,6 +23,7 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > ai 页签 
   <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="详细版写好了接入地址、要求和这个密钥可用的模型。" type="button">
    <!--v-if-->
    "复制详细版"
+  <!--v-if-->
   <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
    "在 ChatGPT 中打开"
   <button class="btn btn-secondary btn-sm" data-test="ai-open-claude" type="button">
@@ -137,8 +138,11 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic 中文界面' > ccswitch �
      <option value="claude-sonnet-5">
       "claude-sonnet-5"
   <!--v-if-->
- <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-switch-note">
-  "确认导入后会立即切换到这个配置，之后可以在 CC Switch 里随时切换。"
+ <div class="flex gap-2.5 rounded-lg border border-primary-200 bg-primary-50 px-3.5 py-3 text-sm text-primary-900 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-200" data-test="ccs-switch-note" role="note">
+  <svg aria-hidden="true" class="h-5 w-5 mt-0.5 shrink-0 text-primary-600 dark:text-primary-400" fill="none" stroke-width="1.5" stroke="currentColor" viewBox="0 0 24 24">
+   <图标 sha1:02607decabeb>
+  <p>
+   "确认导入后会立即切换到这个配置，之后可以在 CC Switch 里随时切换。"
  <div class="flex flex-wrap items-center gap-2">
   <button class="btn btn-primary" data-test="ccs-open" type="button">
    "打开 CC Switch"
@@ -439,6 +443,7 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic' > ai 页签 1`] = `
      <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="The detailed version includes the connection details, the requirements and the models this key can use." type="button">
       <!--v-if-->
       "Copy detailed version"
+     <!--v-if-->
      <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
       "Open in ChatGPT"
      <button class="btn btn-secondary btn-sm" data-test="ai-open-claude" type="button">
@@ -584,8 +589,11 @@ exports[`KeyOnboardingModal 页签快照 > 'anthropic' > ccswitch 页签 1`] = `
         <option value="claude-sonnet-5">
          "claude-sonnet-5"
      <!--v-if-->
-    <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-switch-note">
-     "Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time."
+    <div class="flex gap-2.5 rounded-lg border border-primary-200 bg-primary-50 px-3.5 py-3 text-sm text-primary-900 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-200" data-test="ccs-switch-note" role="note">
+     <svg aria-hidden="true" class="h-5 w-5 mt-0.5 shrink-0 text-primary-600 dark:text-primary-400" fill="none" stroke-width="1.5" stroke="currentColor" viewBox="0 0 24 24">
+      <图标 sha1:02607decabeb>
+     <p>
+      "Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time."
     <div class="flex flex-wrap items-center gap-2">
      <button class="btn btn-primary" data-test="ccs-open" type="button">
       "Open CC Switch"
@@ -1112,6 +1120,7 @@ exports[`KeyOnboardingModal 页签快照 > 'antigravity' > ai 页签 1`] = `
   <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="The detailed version includes the connection details, the requirements and the models this key can use." type="button">
    <!--v-if-->
    "Copy detailed version"
+  <!--v-if-->
   <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
    "Open in ChatGPT"
   <button class="btn btn-secondary btn-sm" data-test="ai-open-claude" type="button">
@@ -1229,8 +1238,11 @@ exports[`KeyOnboardingModal 页签快照 > 'antigravity' > ccswitch 页签 1`] =
      <option value="gemini-3-pro">
       "gemini-3-pro"
   <!--v-if-->
- <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-switch-note">
-  "Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time."
+ <div class="flex gap-2.5 rounded-lg border border-primary-200 bg-primary-50 px-3.5 py-3 text-sm text-primary-900 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-200" data-test="ccs-switch-note" role="note">
+  <svg aria-hidden="true" class="h-5 w-5 mt-0.5 shrink-0 text-primary-600 dark:text-primary-400" fill="none" stroke-width="1.5" stroke="currentColor" viewBox="0 0 24 24">
+   <图标 sha1:02607decabeb>
+  <p>
+   "Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time."
  <div class="flex flex-wrap items-center gap-2">
   <button class="btn btn-primary" data-test="ccs-open" type="button">
    "Open CC Switch"
@@ -1497,6 +1509,7 @@ exports[`KeyOnboardingModal 页签快照 > 'gemini' > ai 页签 1`] = `
   <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="The detailed version includes the connection details, the requirements and the models this key can use." type="button">
    <!--v-if-->
    "Copy detailed version"
+  <!--v-if-->
   <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
    "Open in ChatGPT"
   <button class="btn btn-secondary btn-sm" data-test="ai-open-claude" type="button">
@@ -1569,8 +1582,11 @@ exports[`KeyOnboardingModal 页签快照 > 'gemini' > ccswitch 页签 1`] = `
      <option value="gemini-3-pro">
       "gemini-3-pro"
   <!--v-if-->
- <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-switch-note">
-  "Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time."
+ <div class="flex gap-2.5 rounded-lg border border-primary-200 bg-primary-50 px-3.5 py-3 text-sm text-primary-900 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-200" data-test="ccs-switch-note" role="note">
+  <svg aria-hidden="true" class="h-5 w-5 mt-0.5 shrink-0 text-primary-600 dark:text-primary-400" fill="none" stroke-width="1.5" stroke="currentColor" viewBox="0 0 24 24">
+   <图标 sha1:02607decabeb>
+  <p>
+   "Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time."
  <div class="flex flex-wrap items-center gap-2">
   <button class="btn btn-primary" data-test="ccs-open" type="button">
    "Open CC Switch"
@@ -1884,6 +1900,7 @@ exports[`KeyOnboardingModal 页签快照 > 'openai 备用线路 + 调度' > ai �
      <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="The detailed version includes the connection details, the requirements and the models this key can use." type="button">
       <!--v-if-->
       "Copy detailed version"
+     <!--v-if-->
      <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
       "Open in ChatGPT"
      <button class="btn btn-secondary btn-sm" data-test="ai-open-claude" type="button">
@@ -2808,6 +2825,7 @@ exports[`KeyOnboardingModal 页签快照 > 'openai' > ai 页签 1`] = `
      <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="The detailed version includes the connection details, the requirements and the models this key can use." type="button">
       <!--v-if-->
       "Copy detailed version"
+     <!--v-if-->
      <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
       "Open in ChatGPT"
      <button class="btn btn-secondary btn-sm" data-test="ai-open-claude" type="button">
@@ -3439,6 +3457,7 @@ exports[`KeyOnboardingModal 页签快照 > '未知平台' > ai 页签 1`] = `
   <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="The detailed version includes the connection details, the requirements and the models this key can use." type="button">
    <!--v-if-->
    "Copy detailed version"
+  <!--v-if-->
   <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
    "Open in ChatGPT"
   <button class="btn btn-secondary btn-sm" data-test="ai-open-claude" type="button">
@@ -3528,8 +3547,11 @@ exports[`KeyOnboardingModal 页签快照 > '未知平台' > ccswitch 页签 1`] 
   <p class="input-hint mt-2 flex items-center gap-2" data-test="ccs-models-hint" id="onboarding-N-ccs-models-hint" role="status">
    <!--v-if-->
    "No models are available for this key. You can still import and leave the model fields blank."
- <p class="text-sm text-gray-600 dark:text-dark-400" data-test="ccs-switch-note">
-  "Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time."
+ <div class="flex gap-2.5 rounded-lg border border-primary-200 bg-primary-50 px-3.5 py-3 text-sm text-primary-900 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-200" data-test="ccs-switch-note" role="note">
+  <svg aria-hidden="true" class="h-5 w-5 mt-0.5 shrink-0 text-primary-600 dark:text-primary-400" fill="none" stroke-width="1.5" stroke="currentColor" viewBox="0 0 24 24">
+   <图标 sha1:02607decabeb>
+  <p>
+   "Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time."
  <div class="flex flex-wrap items-center gap-2">
   <button class="btn btn-primary" data-test="ccs-open" type="button">
    "Open CC Switch"
@@ -3730,9 +3752,13 @@ exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 的
     <select aria-describedby="onboarding-N-ccs-models-hint" class="input" data-test="ccs-model" disabled="" id="onboarding-N-ccs-model" value="" :value="">
      <option value="">
       "Optional; leave blank to use the CC Switch default"
-  <p class="input-hint mt-2 flex items-center gap-2" data-test="ccs-models-hint" id="onboarding-N-ccs-models-hint" role="status">
-   <!--v-if-->
-   "No models are available for this key. You can still import and leave the model fields blank."
+  <div class="mt-2 flex items-center gap-3" data-test="ccs-models-error">
+   <p class="input-hint flex-1 text-red-600 dark:text-red-400">
+    "Could not load models. You can still import and leave the fields blank."
+   <button class="btn btn-secondary btn-xs" data-test="ccs-models-retry" type="button">
+    <svg aria-hidden="true" class="h-4 w-4" fill="none" stroke-width="1.5" stroke="currentColor" viewBox="0 0 24 24">
+     <图标 sha1:1b166254c900>
+    "Retry"
  <div class="flex gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100" data-test="ccs-codex-warning" role="note">
   <svg aria-hidden="true" class="h-5 w-5 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" fill="none" stroke-width="1.5" stroke="currentColor" viewBox="0 0 24 24">
    <图标 sha1:942e02c32e1f>
@@ -3754,7 +3780,7 @@ exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 的
 ### 复制与链接
 (单一客户端): placeholder = Hiyo - Codex
   ccs-model = ""（禁用） 选项 = ["Optional; leave blank to use the CC Switch default"]
-  模型提示 = "No models are available for this key. You can still import and leave the model fields blank."
+  模型提示 = null
   按钮禁用 = [false,false]
   复制链接 = {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"false","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
   打开 = ["_self"] {"host":"v1","path":"/import","params":{"resource":"provider","app":"codex","name":"Hiyo - Codex","homepage":"https://codex.hiyo.top","endpoint":"https://codex.hiyo.top","apiKey":"sk-SECRET-1234567890abcdef","configFormat":"json","enabled":"false","usageEnabled":"true","usageScript":"<688 字符 sha1:4d1d18499c78 开头:\\"KHsKICAgIHJlcXVlc3Q6IHsKICAgICAgdXJsOiAie3tiYXNlVXJsfX0iLnJl\\">","usageAutoInterval":"5"}}
@@ -3784,6 +3810,10 @@ exports[`KeyOnboardingModal 页签快照 > 取不到模型列表：CC Switch 的
   <button class="btn btn-secondary btn-sm" data-test="ai-copy-detail" title="The detailed version includes the connection details, the requirements and the models this key can use." type="button">
    <!--v-if-->
    "Copy detailed version"
+  <button class="btn btn-secondary btn-sm" data-test="ai-models-retry" type="button">
+   <svg aria-hidden="true" class="h-4 w-4 mr-1.5" fill="none" stroke-width="1.5" stroke="currentColor" viewBox="0 0 24 24">
+    <图标 sha1:1b166254c900>
+   "Retry loading models"
   <button class="btn btn-secondary btn-sm" data-test="ai-open-chatgpt" type="button">
    "Open in ChatGPT"
   <button class="btn btn-secondary btn-sm" data-test="ai-open-claude" type="button">

@@ -1040,6 +1040,7 @@
       docCatalog: '给 AI 读的文档目录',
       detailHint: '详细版写好了接入地址、要求和这个密钥可用的模型。',
       detailLoading: '正在读取这个密钥可用的模型…',
+      modelsRetry: '重试加载模型',
       detail: {
         intro: '请帮我把 {tool} 接入 {site}（兼容 OpenAI 和 Anthropic 格式的 API 服务）。',
         introChat: '请帮我把聊天客户端接入 {site}（兼容 OpenAI 和 Anthropic 格式的 API 服务）。',
@@ -1091,6 +1092,8 @@
       modelDefault: '可选；留空时使用 CC Switch 默认模型',
       modelsLoading: '加载可用模型中…',
       noModels: '当前密钥没有可选的模型，也可以留空继续导入。',
+      modelsError: '模型列表加载失败，可以留空继续导入。',
+      modelsRetry: '重试',
       codexWarning: 'Codex 配置会先以未启用状态导入。请在 CC Switch 中手动启用，并按提示重启 Codex，避免新旧配置混用。',
       switchNote: '确认导入后会立即切换到这个配置，之后可以在 CC Switch 里随时切换。',
       balanceNote: '余额查询已随配置导入，并每 {minutes} 分钟自动刷新。',
