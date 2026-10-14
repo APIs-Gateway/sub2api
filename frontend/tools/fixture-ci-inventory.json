@@ -29,6 +29,10 @@
     "src/components/user/onboarding/__tests__/shell.spec.ts": [
       "CC Switch：加载时禁用导入和复制，失败时提供可访问错误与重试，成功空列表仍可留空导入"
     ],
+    "src/views/admin/__tests__/GroupsView.deleteConfirm.spec.ts": [
+      "uses the single delete message for a 7-id standard group",
+      "uses the single delete message for a 8-id subscription group"
+    ],
     "src/utils/__tests__/viewport.spec.ts": [
       "supports a custom dropdown width and gutter"
     ],

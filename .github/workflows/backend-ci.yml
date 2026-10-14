@@ -224,7 +224,7 @@ jobs:
             printf '%s\n' "$actual_status" > "$FIXTURE_EVIDENCE/$phase.exit"
           }
           mapfile -t fixtures < <(python3 -c 'import json,os; print("\n".join(json.load(open(os.environ["FIXTURE_EVIDENCE"]+"/inventory.json"))["requiredPassedNamesByFile"]))')
-          test "${#fixtures[@]}" = 9
+          test "${#fixtures[@]}" = 10
           run_phase named "${fixtures[@]}"
           run_phase full
           python3 - <<'PYPROOF'
