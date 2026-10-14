@@ -151,6 +151,11 @@ func h3WireNewClient(t *testing.T, cfg *tls.Config) *Client {
 	// In particular, never assign Transport.t3.TLSClientConfig to hide a
 	// failure to propagate the public TLS configuration into forced HTTP3.
 	client := C().SetTLSClientConfig(cfg).SetProxy(nil).SetTimeout(6 * time.Second).EnableForceHTTP3()
+	return h3WireOwnClient(t, client)
+}
+
+func h3WireOwnClient(t *testing.T, client *Client) *Client {
+	t.Helper()
 	if client.Transport.t3 == nil {
 		t.Fatal("public ForceHTTP3 did not create the private HTTP3 transport")
 	}

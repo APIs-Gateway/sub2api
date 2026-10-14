@@ -103,7 +103,7 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 158,
+  "totalNamedLeaves": 169,
   "http1Package": "github.com/imroc/req/v3",
   "http1Leaves": [
     "TestReqHTTP1Lifecycle_ResponseBody/chunked_trailers_reuse",
@@ -195,5 +195,24 @@
     "TestReqHTTP3Wire_HandshakeCancellationNoFallback/cancel",
     "TestReqHTTP3Wire_HandshakeCancellationNoFallback/deadline"
   ],
-  "http3WireCount": 6
+  "http3WireCount": 6,
+  "http3PublicTLSPackage": "github.com/imroc/req/v3",
+  "http3PublicTLSLeaves": [
+    "TestReqHTTP3PublicTLS_Configuration/client_setter_before_enable",
+    "TestReqHTTP3PublicTLS_Configuration/client_setter_after_enable",
+    "TestReqHTTP3PublicTLS_Configuration/transport_setter_after_enable",
+    "TestReqHTTP3PublicTLS_Configuration/get_tls_pointer_after_enable",
+    "TestReqHTTP3PublicTLS_Configuration/insecure_before_enable",
+    "TestReqHTTP3PublicTLS_Configuration/insecure_after_enable"
+  ],
+  "http3PublicTLSCount": 6,
+  "http3TLSControlPackage": "github.com/imroc/req/v3/internal/http3",
+  "http3TLSControlLeaves": [
+    "TestReqHTTP3TLSControl_ConfigSelection/options_nil_default",
+    "TestReqHTTP3TLSControl_ConfigSelection/explicit_tls_without_options",
+    "TestReqHTTP3TLSControl_ConfigSelection/shared_options_tls",
+    "TestReqHTTP3TLSControl_ConfigSelection/explicit_trusted_overrides_untrusted_options",
+    "TestReqHTTP3TLSControl_ConfigSelection/explicit_untrusted_overrides_trusted_options"
+  ],
+  "http3TLSControlCount": 5
 }
