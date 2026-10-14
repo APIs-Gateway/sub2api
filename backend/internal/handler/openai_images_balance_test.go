@@ -65,7 +65,7 @@ func TestOpenAIImagesBalanceSwitchesToSecondAccountAndSucceeds(t *testing.T) {
 	}}}
 	upstream := &openAIImagesBalanceSwitchUpstream{}
 	cfg := &config.Config{RunMode: config.RunModeSimple, Gateway: config.GatewayConfig{DisableOpenAIImagesStreaming: true}}
-	gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, upstream, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, upstream, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil, nil)
 	t.Cleanup(billing.Stop)
 	handler := NewOpenAIGatewayHandler(gateway, service.NewConcurrencyService(nil), billing, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)

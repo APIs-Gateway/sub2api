@@ -16,7 +16,6 @@ type openAIClientRestrictionSelection struct {
 	lastAccountID  int64
 	lastPlatform   string
 	pinnedGroupID  *int64
-	stable         service.OpenAIAccountScheduleDecision
 }
 
 func releaseOpenAIClientPolicySelection(selection *service.AccountSelectionResult) {
@@ -71,11 +70,10 @@ func (s *openAIClientRestrictionSelection) rejectExhausted(
 	return true
 }
 
-// The stable selector may already have legitimately chosen a served group.
-// A client-policy exclusion must not turn its exhaustion into a new cross-group
-// fallback transition. Retry through the normal public selector in that same
-// group, preserving its stable billing decision and the original routing ctx.
-func (s *openAIClientRestrictionSelection) pinStableGroup(home *int64, decision service.OpenAIAccountScheduleDecision) {
+// pinStableGroup records the group that should be used for retries after a
+// client-policy exclusion, so the retry stays in the same group rather than
+// triggering a new account-selection cycle across groups.
+func (s *openAIClientRestrictionSelection) pinStableGroup(home *int64) {
 	if s.pinnedGroupID != nil {
 		return
 	}
@@ -83,24 +81,7 @@ func (s *openAIClientRestrictionSelection) pinStableGroup(home *int64, decision 
 	if home != nil {
 		groupID = *home
 	}
-	if decision.StableServedGroupID > 0 {
-		groupID = decision.StableServedGroupID
-	}
 	if groupID > 0 {
 		s.pinnedGroupID = &groupID
 	}
-	s.stable = decision
-}
-
-func (s *openAIClientRestrictionSelection) preserveStableDecision(decision *service.OpenAIAccountScheduleDecision) {
-	decision.StablePriorityState = s.stable.StablePriorityState
-	decision.StablePriorityFallback = s.stable.StablePriorityFallback
-	decision.StablePriorityReverted = s.stable.StablePriorityReverted
-	decision.StableServedGroupID = s.stable.StableServedGroupID
-	decision.StableServedRateMultiplier = s.stable.StableServedRateMultiplier
-	decision.StableServedImageRateIndependent = s.stable.StableServedImageRateIndependent
-	decision.StableServedImageRateMultiplier = s.stable.StableServedImageRateMultiplier
-	decision.StableServedImagePrice1K = s.stable.StableServedImagePrice1K
-	decision.StableServedImagePrice2K = s.stable.StableServedImagePrice2K
-	decision.StableServedImagePrice4K = s.stable.StableServedImagePrice4K
 }

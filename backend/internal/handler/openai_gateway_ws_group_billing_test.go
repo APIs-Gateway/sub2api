@@ -227,7 +227,7 @@ func TestOpenAIResponsesWebSocket_LaterCyberTurnBillsCurrentGroupOnce(t *testing
 	gateway := service.NewOpenAIGatewayService(
 		&openAIWSUsageHandlerAccountRepoStub{account: account}, usageRepo,
 		billingRepo, nil, nil, userRates, nil, &billingCfg, nil, nil, service.NewBillingService(&billingCfg, nil),
-		nil, billingCache, nil, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, billingCache, nil, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
 	)
 	cache := &concurrencyCacheMock{
 		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
@@ -389,7 +389,7 @@ func TestOpenAIResponsesWebSocket_LaterTurnFailoverKeepsNewGroupBilling(t *testi
 	gateway := service.NewOpenAIGatewayService(
 		accountRepo, usageRepo, billingRepo, nil, nil, userRates, nil, &billingCfg,
 		nil, nil, service.NewBillingService(&billingCfg, nil), service.NewRateLimitService(accountRepo, nil, cfg, nil, nil),
-		billingCache, upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		billingCache, upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
 	)
 	cache := &concurrencyCacheMock{
 		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
