@@ -28,9 +28,9 @@ import (
 type h3WireConnIDKey struct{}
 
 type h3WirePeer struct {
-	url string
+	url       string
 	clientTLS *tls.Config
-	stop chan struct{}
+	stop      chan struct{}
 }
 
 func h3WireWait[T any](t *testing.T, ch <-chan T, what string) T {
@@ -48,44 +48,56 @@ func h3WireWait[T any](t *testing.T, ch <-chan T, what string) T {
 func h3WireTLS(t *testing.T) (*tls.Config, *tls.Config) {
 	t.Helper()
 	caPublic, caPrivate, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	caTemplate := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{CommonName: "req owned HTTP3 test CA"},
-		NotBefore: time.Now().Add(-time.Hour),
-		NotAfter: time.Now().Add(24 * time.Hour),
-		IsCA: true,
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "req owned HTTP3 test CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
 		BasicConstraintsValid: true,
-		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 	}
 	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, caPublic, caPrivate)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	ca, err := x509.ParseCertificate(caDER)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	leafPublic, leafPrivate, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	leafTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
-		Subject: pkix.Name{CommonName: "req owned HTTP3 loopback peer"},
-		NotBefore: caTemplate.NotBefore,
-		NotAfter: caTemplate.NotAfter,
-		DNSNames: []string{"localhost"},
-		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
-		KeyUsage: x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		Subject:      pkix.Name{CommonName: "req owned HTTP3 loopback peer"},
+		NotBefore:    caTemplate.NotBefore,
+		NotAfter:     caTemplate.NotAfter,
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, ca, leafPublic, caPrivate)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
 	leaf, err := x509.ParseCertificate(leafDER)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: "127.0.0.1", KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
 		t.Fatalf("owned TLS certificate fixture is not trusted by its configured root pool: %v", err)
 	}
 	return &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		NextProtos: []string{peerhttp3.NextProtoH3},
+		MinVersion:   tls.VersionTLS13,
+		NextProtos:   []string{peerhttp3.NextProtoH3},
 		Certificates: []tls.Certificate{{Certificate: [][]byte{leafDER, caDER}, PrivateKey: leafPrivate}},
 	}, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}
 }
@@ -94,7 +106,9 @@ func h3WireNewPeer(t *testing.T, handler func(http.ResponseWriter, *http.Request
 	t.Helper()
 	serverTLS, clientTLS := h3WireTLS(t)
 	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	p := &h3WirePeer{url: "https://" + udp.LocalAddr().String(), clientTLS: clientTLS, stop: make(chan struct{})}
 	var connID atomic.Int64
 	var handlers sync.WaitGroup
@@ -117,7 +131,9 @@ func h3WireNewPeer(t *testing.T, handler func(http.ResponseWriter, *http.Request
 		_ = udp.Close()
 		closed := make(chan error, 1)
 		go func() { closed <- server.Close() }()
-		if err := h3WireWait(t, closed, "peer Close"); err != nil { t.Errorf("HTTP3 peer Close: %v", err) }
+		if err := h3WireWait(t, closed, "peer Close"); err != nil {
+			t.Errorf("HTTP3 peer Close: %v", err)
+		}
 		if err := h3WireWait(t, served, "peer Serve"); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			t.Errorf("HTTP3 peer Serve: %v", err)
 		}
@@ -135,14 +151,18 @@ func h3WireNewClient(t *testing.T, cfg *tls.Config) *Client {
 	// In particular, never assign Transport.t3.TLSClientConfig to hide a
 	// failure to propagate the public TLS configuration into forced HTTP3.
 	client := C().SetTLSClientConfig(cfg).SetProxy(nil).SetTimeout(6 * time.Second).EnableForceHTTP3()
-	if client.Transport.t3 == nil { t.Fatal("public ForceHTTP3 did not create the private HTTP3 transport") }
+	if client.Transport.t3 == nil {
+		t.Fatal("public ForceHTTP3 did not create the private HTTP3 transport")
+	}
 	t.Cleanup(func() {
 		client.GetTransport().CloseIdleConnections()
 		// t3 is accessed only to dispose of this test's owned UDP socket.
 		// No private connection/TLS/dial field is used to satisfy a contract.
 		closed := make(chan error, 1)
 		go func() { closed <- client.Transport.t3.Close() }()
-		if err := h3WireWait(t, closed, "owned client Close"); err != nil { t.Errorf("HTTP3 client Close: %v", err) }
+		if err := h3WireWait(t, closed, "owned client Close"); err != nil {
+			t.Errorf("HTTP3 client Close: %v", err)
+		}
 	})
 	return client
 }
@@ -155,7 +175,9 @@ func h3WireDo(t *testing.T, client *Client, req *http.Request, cancel context.Ca
 	t.Cleanup(func() {
 		cancel()
 		h3WireWait(t, joined, "request goroutine")
-		if response != nil { _ = response.Body.Close() }
+		if response != nil {
+			_ = response.Body.Close()
+		}
 	})
 	go func() {
 		defer close(joined)

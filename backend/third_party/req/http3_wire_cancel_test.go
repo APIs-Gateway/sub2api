@@ -16,14 +16,14 @@ import (
 )
 
 type h3WirePacket struct {
-	size int
+	size       int
 	longHeader bool
-	err error
+	err        error
 }
 
 type h3WireRequestResult struct {
 	response *http.Response
-	err error
+	err      error
 }
 
 func TestReqHTTP3Wire_HandshakeCancellationNoFallback(t *testing.T) {
@@ -41,7 +41,9 @@ func TestReqHTTP3Wire_HandshakeCancellationNoFallback(t *testing.T) {
 			t.Cleanup(tcp.Close)
 			addr := tcp.Listener.Addr().(*net.TCPAddr)
 			udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: addr.Port})
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			packets := make(chan h3WirePacket, 1)
 			readDone := make(chan struct{})
 			t.Cleanup(func() { _ = udp.Close(); h3WireWait(t, readDone, "owned UDP reader") })
@@ -61,12 +63,18 @@ func TestReqHTTP3Wire_HandshakeCancellationNoFallback(t *testing.T) {
 			}
 			var ctx context.Context
 			var cancel context.CancelFunc
-			if mode == "deadline" { ctx, cancel = context.WithTimeout(context.Background(), 500 * time.Millisecond) } else { ctx, cancel = context.WithCancel(context.Background()) }
+			if mode == "deadline" {
+				ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
+			} else {
+				ctx, cancel = context.WithCancel(context.Background())
+			}
 			t.Cleanup(cancel)
 			done := make(chan h3WireRequestResult, 1)
 			joined := make(chan struct{})
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, tcp.URL+"/no-fallback", nil)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			t.Cleanup(func() { cancel(); h3WireWait(t, joined, "canceled request goroutine") })
 			go func() {
 				defer close(joined)
@@ -74,14 +82,26 @@ func TestReqHTTP3Wire_HandshakeCancellationNoFallback(t *testing.T) {
 				done <- h3WireRequestResult{response: response, err: err}
 			}()
 			packet := h3WireWait(t, packets, "real QUIC Initial packet")
-			if packet.err != nil || packet.size < 1200 || !packet.longHeader { t.Fatalf("did not observe a genuine QUIC Initial datagram: %+v", packet) }
-			if mode == "cancel" { cancel() }
+			if packet.err != nil || packet.size < 1200 || !packet.longHeader {
+				t.Fatalf("did not observe a genuine QUIC Initial datagram: %+v", packet)
+			}
+			if mode == "cancel" {
+				cancel()
+			}
 			result := h3WireWait(t, done, "forced HTTP3 cancellation result")
-			if result.response != nil { _ = result.response.Body.Close() }
+			if result.response != nil {
+				_ = result.response.Body.Close()
+			}
 			want := context.Canceled
-			if mode == "deadline" { want = context.DeadlineExceeded }
-			if result.response != nil || !errors.Is(result.err, want) { t.Fatalf("forced HTTP3 returned response=%v error=%v, want %v", result.response, result.err, want) }
-			if tcpDials.Load() != 0 || tcpRequests.Load() != 0 { t.Fatalf("forced HTTP3 fell back to TCP: dials=%d requests=%d", tcpDials.Load(), tcpRequests.Load()) }
+			if mode == "deadline" {
+				want = context.DeadlineExceeded
+			}
+			if result.response != nil || !errors.Is(result.err, want) {
+				t.Fatalf("forced HTTP3 returned response=%v error=%v, want %v", result.response, result.err, want)
+			}
+			if tcpDials.Load() != 0 || tcpRequests.Load() != 0 {
+				t.Fatalf("forced HTTP3 fell back to TCP: dials=%d requests=%d", tcpDials.Load(), tcpRequests.Load())
+			}
 		})
 	}
 }
