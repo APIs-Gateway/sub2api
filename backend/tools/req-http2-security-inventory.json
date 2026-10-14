@@ -103,7 +103,7 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 152,
+  "totalNamedLeaves": 158,
   "http1Package": "github.com/imroc/req/v3",
   "http1Leaves": [
     "TestReqHTTP1Lifecycle_ResponseBody/chunked_trailers_reuse",
@@ -185,5 +185,15 @@
     "TestReqHTTP3Contract_RequestWriterConnect",
     "TestReqHTTP3Contract_RequestWriterExtendedConnect"
   ],
-  "http3ContractCount": 55
+  "http3ContractCount": 55,
+  "http3WirePackage": "github.com/imroc/req/v3",
+  "http3WireLeaves": [
+    "TestReqHTTP3Wire_PublicRootCAAndReuse",
+    "TestReqHTTP3Wire_UntrustedCertificate",
+    "TestReqHTTP3Wire_ResponseStreamRetirement/body_close",
+    "TestReqHTTP3Wire_ResponseStreamRetirement/context_cancel",
+    "TestReqHTTP3Wire_HandshakeCancellationNoFallback/cancel",
+    "TestReqHTTP3Wire_HandshakeCancellationNoFallback/deadline"
+  ],
+  "http3WireCount": 6
 }

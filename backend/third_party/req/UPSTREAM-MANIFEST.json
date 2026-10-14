@@ -710,7 +710,10 @@
     "internal/http3/frame_contract_test.go",
     "internal/http3/header_contract_test.go",
     "internal/http3/request_writer_contract_test.go",
-    "internal/http3/CONTRACT-TESTS-LICENSE"
+    "internal/http3/CONTRACT-TESTS-LICENSE",
+    "http3_wire_peer_test.go",
+    "http3_wire_contract_test.go",
+    "http3_wire_cancel_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
@@ -809,5 +812,27 @@
       }
     ],
     "adaptation": "Private parser/frame close callback only; actual private response functions receive dump arguments; no absent requestFromHeaders server API; exact decoded request and qlog assertions; public existing testutils/events uses stdlib only. No production or dependency changes. Formatting and runtime evidence pending CI."
+  },
+  "http3WireContractTestProvenance": {
+    "repository": "https://github.com/quic-go/quic-go",
+    "version": "v0.57.1",
+    "revision": "4b0ab7e48554e4440448c9252a92d7c065d88331",
+    "officialSources": [
+      "http3/http3_helper_test.go",
+      "http3/client_test.go",
+      "http3/transport_test.go",
+      "http3/body_test.go",
+      "http3/server.go",
+      "http3/response_writer.go"
+    ],
+    "license": "internal/http3/CONTRACT-TESTS-LICENSE",
+    "localFiles": [
+      "http3_wire_peer_test.go",
+      "http3_wire_contract_test.go",
+      "http3_wire_cancel_test.go"
+    ],
+    "requiredLeafCount": 6,
+    "testPrefix": "TestReqHTTP3Wire_",
+    "scope": "Explicit public C.SetTLSClientConfig().EnableForceHTTP3() requests against real TLS 1.3 h3 UDP peers; verified fresh CA, payload and ConnContext identity; real remote stream cancellation codes and peer writes; real QUIC Initial blackhole with a live TCP control. No private TLS or dial overrides, production or dependency changes, or gateway H3 enablement. Private t3 access is limited to owned resource cleanup. Formatting and runtime evidence await remote CI; public TLS propagation must be proven by actual CI, with no defect or PASS claim yet."
   }
 }
