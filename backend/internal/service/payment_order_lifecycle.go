@@ -61,6 +61,75 @@ func (s *PaymentService) checkCancelRateLimit(ctx context.Context, userID int64,
 	return nil
 }
 
+// checkOrderCreateRateLimit checks if the user has exceeded the order creation rate limit.
+// Unlike checkCancelRateLimit, this function fails closed (rejects on DB error) to protect
+// the upstream payment gateway from being bombarded by malicious create-cancel loops.
+func (s *PaymentService) checkOrderCreateRateLimit(ctx context.Context, userID int64, cfg *PaymentConfig) error {
+	if !cfg.OrderCreateRateLimitEnabled || cfg.OrderCreateRateLimitMax <= 0 {
+		return nil
+	}
+	windowStart := orderCreateRateLimitWindowStart(cfg)
+	operator := fmt.Sprintf("user:%d", userID)
+	count, err := s.entClient.PaymentAuditLog.Query().
+		Where(
+			paymentauditlog.ActionEQ("ORDER_CREATED"),
+			paymentauditlog.OperatorEQ(operator),
+			paymentauditlog.CreatedAtGTE(windowStart),
+		).Count(ctx)
+	if err != nil {
+		slog.Error("check order create rate limit failed", "userID", userID, "error", err)
+		// Fail closed: reject the request on DB error to prevent upstream gateway abuse.
+		// This differs from checkCancelRateLimit which fails open — the asymmetry is intentional:
+		// a create-cancel loop directly hammers the upstream payment gateway with real API calls,
+		// so the cost of wrongly allowing exceeds the cost of wrongly blocking.
+		return infraerrors.New(503, "RATE_LIMIT_CHECK_FAILED", "unable to verify rate limit, please try again later")
+	}
+	if count >= cfg.OrderCreateRateLimitMax {
+		return infraerrors.TooManyRequests("ORDER_CREATE_RATE_LIMITED", "order creation rate limited").
+			WithMetadata(map[string]string{
+				"max":    strconv.Itoa(cfg.OrderCreateRateLimitMax),
+				"window": strconv.Itoa(cfg.OrderCreateRateLimitWindow),
+				"unit":   cfg.OrderCreateRateLimitUnit,
+			})
+	}
+	return nil
+}
+
+func orderCreateRateLimitWindowStart(cfg *PaymentConfig) time.Time {
+	now := time.Now()
+	w := cfg.OrderCreateRateLimitWindow
+	if w <= 0 {
+		w = 1
+	}
+	unit := cfg.OrderCreateRateLimitUnit
+	if unit == "" {
+		unit = rateLimitUnitHour
+	}
+	if cfg.OrderCreateRateLimitMode == rateLimitModeFixed {
+		switch unit {
+		case rateLimitUnitMinute:
+			t := now.Truncate(time.Minute)
+			return t.Add(-time.Duration(w-1) * time.Minute)
+		case rateLimitUnitDay:
+			y, m, d := now.Date()
+			t := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+			return t.AddDate(0, 0, -(w - 1))
+		default: // hour
+			t := now.Truncate(time.Hour)
+			return t.Add(-time.Duration(w-1) * time.Hour)
+		}
+	}
+	// rolling window (default)
+	switch unit {
+	case rateLimitUnitMinute:
+		return now.Add(-time.Duration(w) * time.Minute)
+	case rateLimitUnitDay:
+		return now.AddDate(0, 0, -w)
+	default: // hour
+		return now.Add(-time.Duration(w) * time.Hour)
+	}
+}
+
 func cancelRateLimitWindowStart(cfg *PaymentConfig) time.Time {
 	now := time.Now()
 	w := cfg.CancelRateLimitWindow

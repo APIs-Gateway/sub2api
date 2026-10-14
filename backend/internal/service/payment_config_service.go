@@ -38,6 +38,11 @@ const (
 	SettingCancelWindowSize              = "CANCEL_RATE_LIMIT_WINDOW"
 	SettingCancelWindowUnit              = "CANCEL_RATE_LIMIT_UNIT"
 	SettingCancelWindowMode              = "CANCEL_RATE_LIMIT_WINDOW_MODE"
+	SettingOrderCreateRateLimitOn        = "ORDER_CREATE_RATE_LIMIT_ENABLED"
+	SettingOrderCreateRateLimitMax       = "ORDER_CREATE_RATE_LIMIT_MAX"
+	SettingOrderCreateWindowSize         = "ORDER_CREATE_RATE_LIMIT_WINDOW"
+	SettingOrderCreateWindowUnit         = "ORDER_CREATE_RATE_LIMIT_WINDOW_UNIT"
+	SettingOrderCreateWindowMode         = "ORDER_CREATE_RATE_LIMIT_WINDOW_MODE"
 	SettingAlipayForceQRCode             = "ALIPAY_FORCE_QRCODE"
 	SettingAlipayMobilePrecreateDeepLink = "ALIPAY_MOBILE_PRECREATE_DEEP_LINK"
 )
@@ -82,6 +87,13 @@ type PaymentConfig struct {
 	CancelRateLimitUnit    string `json:"cancel_rate_limit_unit"`
 	CancelRateLimitMode    string `json:"cancel_rate_limit_window_mode"`
 
+	// Order creation rate limit settings
+	OrderCreateRateLimitEnabled bool   `json:"order_create_rate_limit_enabled"`
+	OrderCreateRateLimitMax     int    `json:"order_create_rate_limit_max"`
+	OrderCreateRateLimitWindow  int    `json:"order_create_rate_limit_window"`
+	OrderCreateRateLimitUnit    string `json:"order_create_rate_limit_unit"`
+	OrderCreateRateLimitMode    string `json:"order_create_rate_limit_window_mode"`
+
 	// Force Alipay mobile users to use QR code instead of mobile redirect
 	AlipayForceQRCode bool `json:"alipay_force_qrcode"`
 	// Use Alipay face-to-face precreate and an app deep link on mobile clients.
@@ -117,6 +129,13 @@ type UpdatePaymentConfigRequest struct {
 	CancelRateLimitWindow  *int    `json:"cancel_rate_limit_window"`
 	CancelRateLimitUnit    *string `json:"cancel_rate_limit_unit"`
 	CancelRateLimitMode    *string `json:"cancel_rate_limit_window_mode"`
+
+	// Order creation rate limit settings
+	OrderCreateRateLimitEnabled *bool   `json:"order_create_rate_limit_enabled"`
+	OrderCreateRateLimitMax     *int    `json:"order_create_rate_limit_max"`
+	OrderCreateRateLimitWindow  *int    `json:"order_create_rate_limit_window"`
+	OrderCreateRateLimitUnit    *string `json:"order_create_rate_limit_unit"`
+	OrderCreateRateLimitMode    *string `json:"order_create_rate_limit_window_mode"`
 
 	// Force Alipay mobile users to use QR code instead of mobile redirect
 	AlipayForceQRCode *bool `json:"alipay_force_qrcode"`
@@ -235,6 +254,8 @@ func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentCo
 		SettingHelpImageURL, SettingHelpText,
 		SettingCancelRateLimitOn, SettingCancelRateLimitMax,
 		SettingCancelWindowSize, SettingCancelWindowUnit, SettingCancelWindowMode,
+		SettingOrderCreateRateLimitOn, SettingOrderCreateRateLimitMax,
+		SettingOrderCreateWindowSize, SettingOrderCreateWindowUnit, SettingOrderCreateWindowMode,
 		SettingAlipayForceQRCode, SettingAlipayMobilePrecreateDeepLink,
 		SettingPaymentVisibleMethodAlipayEnabled, SettingPaymentVisibleMethodAlipaySource,
 		SettingPaymentVisibleMethodWxpayEnabled, SettingPaymentVisibleMethodWxpaySource,
@@ -274,6 +295,12 @@ func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *Payme
 		CancelRateLimitWindow:  pcParseInt(vals[SettingCancelWindowSize], 1),
 		CancelRateLimitUnit:    vals[SettingCancelWindowUnit],
 		CancelRateLimitMode:    vals[SettingCancelWindowMode],
+
+		OrderCreateRateLimitEnabled: vals[SettingOrderCreateRateLimitOn] != "false",
+		OrderCreateRateLimitMax:     pcParseInt(vals[SettingOrderCreateRateLimitMax], 20),
+		OrderCreateRateLimitWindow:  pcParseInt(vals[SettingOrderCreateWindowSize], 1),
+		OrderCreateRateLimitUnit:    vals[SettingOrderCreateWindowUnit],
+		OrderCreateRateLimitMode:    vals[SettingOrderCreateWindowMode],
 
 		AlipayForceQRCode:             vals[SettingAlipayForceQRCode] == "true",
 		AlipayMobilePrecreateDeepLink: vals[SettingAlipayMobilePrecreateDeepLink] == "true",
@@ -438,6 +465,21 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 	}
 	if req.CancelRateLimitMode != nil {
 		m[SettingCancelWindowMode] = derefStr(req.CancelRateLimitMode)
+	}
+	if req.OrderCreateRateLimitEnabled != nil {
+		m[SettingOrderCreateRateLimitOn] = formatBoolOrEmpty(req.OrderCreateRateLimitEnabled)
+	}
+	if req.OrderCreateRateLimitMax != nil {
+		m[SettingOrderCreateRateLimitMax] = formatPositiveInt(req.OrderCreateRateLimitMax)
+	}
+	if req.OrderCreateRateLimitWindow != nil {
+		m[SettingOrderCreateWindowSize] = formatPositiveInt(req.OrderCreateRateLimitWindow)
+	}
+	if req.OrderCreateRateLimitUnit != nil {
+		m[SettingOrderCreateWindowUnit] = derefStr(req.OrderCreateRateLimitUnit)
+	}
+	if req.OrderCreateRateLimitMode != nil {
+		m[SettingOrderCreateWindowMode] = derefStr(req.OrderCreateRateLimitMode)
 	}
 	if req.AlipayForceQRCode != nil {
 		m[SettingAlipayForceQRCode] = formatBoolOrEmpty(req.AlipayForceQRCode)

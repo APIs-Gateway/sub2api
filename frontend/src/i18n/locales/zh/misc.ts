@@ -470,6 +470,7 @@ export default {
       PENDING_ORDERS: '该服务商有未完成的订单，请等待订单完成后再操作',
       PAYMENT_PROVIDER_CONFLICT: '该支付方式已有其他启用中的服务商实例，请先停用后再继续。',
       CANCEL_RATE_LIMITED: '取消订单过于频繁，请稍后再试',
+      ORDER_CREATE_RATE_LIMITED: '建单过于频繁，请稍后再试',
       NOT_FOUND: '订单不存在',
       FORBIDDEN: '无权限操作此订单',
       CONFLICT: '订单状态已变更，请刷新',

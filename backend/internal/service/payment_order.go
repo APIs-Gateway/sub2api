@@ -40,6 +40,9 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if err != nil {
 		return nil, err
 	}
+	if err := s.checkOrderCreateRateLimit(ctx, req.UserID, cfg); err != nil {
+		return nil, err
+	}
 	if err := s.checkCancelRateLimit(ctx, req.UserID, cfg); err != nil {
 		return nil, err
 	}

@@ -446,6 +446,7 @@ export default {
       PENDING_ORDERS: 'This provider has pending orders. Please wait for them to complete before making changes.',
       PAYMENT_PROVIDER_CONFLICT: 'Another enabled provider instance is already serving this payment method. Disable it before continuing.',
       CANCEL_RATE_LIMITED: 'Too many cancellations. Please try again later.',
+      ORDER_CREATE_RATE_LIMITED: 'Too many orders created. Please try again later.',
       NOT_FOUND: 'Order not found.',
       FORBIDDEN: 'No permission for this order.',
       CONFLICT: 'Order status has changed. Please refresh.',
