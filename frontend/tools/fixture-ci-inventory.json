@@ -22,6 +22,13 @@
       "preserves an unrecognized server model scope label",
       "shows model scopes for Antigravity plans"
     ],
+    "src/components/user/__tests__/KeyOnboardingModal.spec.ts": [
+      "取不到模型列表时：下拉只有留空一项，给出提示，仍然可以导入",
+      "成功返回空模型列表时保留空列表提示和留空导入，不显示重试"
+    ],
+    "src/components/user/onboarding/__tests__/shell.spec.ts": [
+      "CC Switch：加载时禁用导入和复制，失败时提供可访问错误与重试，成功空列表仍可留空导入"
+    ],
     "src/utils/__tests__/viewport.spec.ts": [
       "supports a custom dropdown width and gutter"
     ],

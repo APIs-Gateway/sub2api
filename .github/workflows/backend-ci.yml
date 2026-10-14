@@ -208,7 +208,7 @@ jobs:
       - name: Install frozen frontend dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
-      - name: Run seven repaired fixtures and the complete Vitest suite with strict JSON proof
+      - name: Run repaired fixtures and the complete Vitest suite with strict JSON proof
         working-directory: frontend
         shell: bash
         run: |
@@ -224,7 +224,7 @@ jobs:
             printf '%s\n' "$actual_status" > "$FIXTURE_EVIDENCE/$phase.exit"
           }
           mapfile -t fixtures < <(python3 -c 'import json,os; print("\n".join(json.load(open(os.environ["FIXTURE_EVIDENCE"]+"/inventory.json"))["requiredPassedNamesByFile"]))')
-          test "${#fixtures[@]}" = 7
+          test "${#fixtures[@]}" = 9
           run_phase named "${fixtures[@]}"
           run_phase full
           python3 - <<'PYPROOF'

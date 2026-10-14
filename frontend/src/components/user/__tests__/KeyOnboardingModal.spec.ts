@@ -877,8 +877,59 @@ describe('KeyOnboardingModal', () => {
       const w = await mountModal({ initialTab: 'ccswitch' })
       expect(w.findAll('[data-test="ccs-model"] option')).toHaveLength(1)
       expect(w.get('[data-test="ccs-model"]').attributes('disabled')).toBeDefined()
-      expect(w.get('[data-test="ccs-models-hint"]').text()).toContain('No models are available for this key')
+      const hint = w.get('[data-test="ccs-models-hint"]')
+      expect(hint.text()).toBe('Could not load models. You can still import and leave the fields blank.')
+      expect(hint.attributes('role')).toBe('status')
+      expect(hint.attributes('id')).toBeTruthy()
+      expect(w.get('[data-test="ccs-model"]').attributes('aria-describedby')).toBe(hint.attributes('id'))
+      expect(w.get('[data-test="ccs-models-error"]').exists()).toBe(true)
       expect(w.get('[data-test="ccs-open"]').attributes('disabled')).toBeUndefined()
+      expect(w.get('[data-test="ccs-copy-link"]').attributes('disabled')).toBeUndefined()
+
+      const open = vi.spyOn(window, 'open').mockReturnValue(null)
+      try {
+        await w.get('[data-test="ccs-open"]').trigger('click')
+        expect(open).toHaveBeenCalledTimes(1)
+        const url = new URL(String(open.mock.calls[0][0]).replace('ccswitch://', 'http://'))
+        expect(url.searchParams.has('model')).toBe(false)
+        expect(url.searchParams.get('apiKey')).toBe(SECRET)
+      } finally {
+        open.mockRestore()
+      }
+
+      getAvailable.mockResolvedValue([
+        { name: 'ch', description: '', platforms: [{ platform: 'openai', groups: [{ id: 7, name: 'g' }], supported_models: [{ name: 'gpt-5.6-sol' }] }] }
+      ])
+      await w.get('[data-test="ccs-models-retry"]').trigger('click')
+      await flushPromises()
+      expect(getAvailable).toHaveBeenCalledTimes(2)
+      expect(w.find('[data-test="ccs-models-error"]').exists()).toBe(false)
+      expect(w.find('[data-test="ccs-models-hint"]').exists()).toBe(false)
+      expect(w.find('[data-test="ccs-models-retry"]').exists()).toBe(false)
+      expect(w.findAll('[data-test="ccs-model"] option')).toHaveLength(2)
+      expect((w.get('[data-test="ccs-model"]').element as HTMLSelectElement).value).toBe('gpt-5.6-sol')
+    })
+
+    it('成功返回空模型列表时保留空列表提示和留空导入，不显示重试', async () => {
+      getAvailable.mockResolvedValue([])
+      const open = vi.spyOn(window, 'open').mockReturnValue(null)
+      try {
+        const w = await mountModal({ initialTab: 'ccswitch' })
+        const hint = w.get('[data-test="ccs-models-hint"]')
+        expect(hint.text()).toContain('No models are available for this key')
+        expect(hint.attributes('id')).toBeTruthy()
+        expect(w.get('[data-test="ccs-model"]').attributes('aria-describedby')).toBe(hint.attributes('id'))
+        expect(w.findAll('[data-test="ccs-model"] option')).toHaveLength(1)
+        expect(w.find('[data-test="ccs-models-error"]').exists()).toBe(false)
+        expect(w.find('[data-test="ccs-models-retry"]').exists()).toBe(false)
+        expect(w.get('[data-test="ccs-open"]').attributes('disabled')).toBeUndefined()
+        expect(w.get('[data-test="ccs-copy-link"]').attributes('disabled')).toBeUndefined()
+        await w.get('[data-test="ccs-open"]').trigger('click')
+        expect(open).toHaveBeenCalledTimes(1)
+        expect(new URL(String(open.mock.calls[0][0]).replace('ccswitch://', 'http://')).searchParams.has('model')).toBe(false)
+      } finally {
+        open.mockRestore()
+      }
     })
 
     it('antigravity 分组可以选 Claude 或 Gemini', async () => {
