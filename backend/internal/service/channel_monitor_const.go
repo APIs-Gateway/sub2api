@@ -123,18 +123,8 @@ const (
 
 	// ---- 分组真实成功率聚合（Phase 2）参数 ----
 
-	// channelMonitorGroupStatsRedThreshold 红线：近 30 分钟真实成功率低于此值判为 failed。
-	channelMonitorGroupStatsRedThreshold = 0.80
-	// channelMonitorGroupStatsYellowThreshold 黄线：低于此值判为 degraded。
-	channelMonitorGroupStatsYellowThreshold = 0.95
-	// channelMonitorGroupStatsMinValidRequests 30 分钟内有效请求少于此值时，回落到只看探测结果。
-	channelMonitorGroupStatsMinValidRequests = 20
 	// channelMonitorGroupStatsWindowMinutes 聚合判定窗口：近 N 分钟的桶。
 	channelMonitorGroupStatsWindowMinutes = 30
-	// channelMonitorGroupStatsBucketMinutes 单个桶的时间粒度（分钟）。
-	channelMonitorGroupStatsBucketMinutes = 10
-	// channelMonitorGroupStatsTickIntervalMinutes 聚合任务触发间隔（分钟）。
-	channelMonitorGroupStatsTickIntervalMinutes = 5
 	// channelMonitorGroupStatsLagMinutes 聚合窗口的延迟余量（分钟），给日志写入留余量。
 	channelMonitorGroupStatsLagMinutes = 1
 )
