@@ -368,7 +368,6 @@ func TestAPIContracts(t *testing.T) {
 						"allow_messages_dispatch": false,
 						"fallback_group_id": null,
 						"fallback_group_id_on_invalid_request": null,
-						"stable_priority_fallback_group_id": null,
 						"require_oauth_only": false,
 						"require_privacy_set": false,
 						"rpm_limit": 0,

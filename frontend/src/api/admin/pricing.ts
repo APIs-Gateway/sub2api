@@ -79,10 +79,38 @@ export interface DerivedCell {
   extra_multiplier?: number
 }
 
+export type PriceMode = 'inherit' | 'extra' | 'custom'
+
+export interface CustomPrice {
+  billing_mode: 'token' | 'per_request' | 'image'
+  input_price?: number | null
+  output_price?: number | null
+  cache_write_price?: number | null
+  cache_read_price?: number | null
+  image_output_price?: number | null
+  per_request_price?: number | null
+  intervals?: unknown[]
+}
+
+/** 库里存着的单元格（只有分组已经切到新配置才会有）。 */
+export interface StoredCell {
+  group_id: number
+  model_key: string
+  is_pattern: boolean
+  open: boolean
+  price_mode: PriceMode
+  extra_multiplier?: number | null
+  custom_price?: CustomPrice | null
+  source?: string
+  /** 写入时的基线 */
+  revision: number
+}
+
 export interface GroupDeriveView {
   group_id: number
   platform: string
   deleted: boolean
+  stored_cells?: StoredCell[] | null
   derived: {
     group_id: number
     channel_id: number
@@ -93,7 +121,8 @@ export interface GroupDeriveView {
     }
     cells: DerivedCell[]
   }
-  stored_config: { pricing_stage: PricingStage } | null
+  /** v2 分组生效的是这里的 access_mode；derived 只是按渠道实时推出的结果，两者可能不一致 */
+  stored_config: { pricing_stage: PricingStage; revision?: number; access_mode?: 'open' | 'allowlist' } | null
 }
 
 /** 一次批量报价最多带的分组数与模型数，与后端上限一致。 */
@@ -118,6 +147,149 @@ export async function quoteBatch(groupIds: number[], models: string[]): Promise<
   return { models: data.models ?? [], cells: data.cells ?? [] }
 }
 
-export const pricingAPI = { listModelCatalog, getGroupDerive, quoteBatch }
+// ---------------------------------------------------------------------------
+// 写入（后端契约：W6 PR4b-2b-2）。预览不需要交互式会话，提交需要。
+
+export interface CellOp {
+  group_id: number
+  model_key: string
+  kind: 'upsert' | 'delete'
+  open?: boolean
+  price_mode?: PriceMode
+  extra_multiplier?: number | null
+  custom_price?: CustomPrice | null
+  source?: 'manual' | 'copied'
+  /** 界面读到的单元格 revision；0 表示界面认为单元格不存在 */
+  baseline_revision: number
+}
+
+export interface CellsRequest {
+  ops: CellOp[]
+  /** 键是分组 id 的字符串，必须正好等于 ops 涉及的分组集合 */
+  group_revisions: Record<string, number>
+}
+
+export type PriceDelta = 'up' | 'down' | 'none' | 'unknown'
+
+export interface PlannedCellState {
+  model_key: string
+  is_pattern: boolean
+  open: boolean
+  price_mode: PriceMode
+  extra_multiplier?: number | null
+  custom_price?: CustomPrice | null
+  source?: string
+}
+
+export interface PlannedCell {
+  op: CellOp
+  action: 'create' | 'update' | 'delete' | 'noop'
+  before?: PlannedCellState
+  after?: PlannedCellState
+  touches_price: boolean
+}
+
+export interface PrecheckIssue {
+  group_id: number
+  model_key: string
+  reason: string
+  target?: string
+}
+
+export interface PrecheckReport {
+  group_id: number
+  stage: PricingStage
+  access_mode: 'open' | 'allowlist'
+  applicable: boolean
+  blocking: PrecheckIssue[]
+  warnings: PrecheckIssue[]
+}
+
+export interface CellsTicket {
+  approval_id: number
+  plan_hash: string
+  touches_price: boolean
+  price_delta: PriceDelta
+  expires_at: string
+  planned: PlannedCell[]
+  precheck?: PrecheckReport[]
+}
+
+export interface CellsCommitResult {
+  planned: PlannedCell[]
+  changed_group_ids: number[]
+  touches_price: boolean
+}
+
+export async function previewCells(request: CellsRequest): Promise<CellsTicket> {
+  const { data } = await apiClient.post<CellsTicket>('/admin/pricing-matrix/cells/preview', request)
+  return { ...data, planned: data.planned ?? [], precheck: data.precheck ?? [] }
+}
+
+/** approval_id 传预览返回的值；request 必须与预览时逐字段一致。 */
+export async function commitCells(approvalId: number, request: CellsRequest): Promise<CellsCommitResult> {
+  const { data } = await apiClient.post<CellsCommitResult>('/admin/pricing-matrix/cells/commit', {
+    approval_id: approvalId,
+    confirm: true,
+    request
+  })
+  return data
+}
+
+export interface CatalogUsage {
+  requests: number
+  last_used_at: string | null
+  window_days: number
+}
+
+export interface CatalogTransitionPreview {
+  entry: ModelCatalogEntry
+  from: CatalogStatus
+  to: CatalogStatus
+  usage: CatalogUsage
+  confirm_required: boolean
+}
+
+export async function previewCatalogTransition(id: number, to: CatalogStatus): Promise<CatalogTransitionPreview> {
+  const { data } = await apiClient.get<CatalogTransitionPreview>(`/admin/model-catalog/${id}/transition-preview`, {
+    params: { to }
+  })
+  return data
+}
+
+export async function transitionCatalog(id: number, to: CatalogStatus, confirmUsage: boolean): Promise<ModelCatalogEntry> {
+  const { data } = await apiClient.put<ModelCatalogEntry>(`/admin/model-catalog/${id}/status`, {
+    to,
+    confirm_usage: confirmUsage
+  })
+  return data
+}
+
+export interface CreateCatalogInput {
+  model_key: string
+  platform: string
+  display_name: string
+  aliases: string[]
+  reference_model: string | null
+  status: CatalogStatus
+  note: string
+  confirm_usage: boolean
+}
+
+export async function createCatalogEntry(input: CreateCatalogInput): Promise<ModelCatalogEntry> {
+  const { data } = await apiClient.post<ModelCatalogEntry>('/admin/model-catalog', input)
+  return data
+}
+
+export const pricingAPI = {
+  listModelCatalog,
+  getGroupDerive,
+  quoteBatch,
+  previewCells,
+  commitCells,
+  previewCatalogTransition,
+  transitionCatalog,
+  createCatalogEntry
+}
 
 export default pricingAPI
