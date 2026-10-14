@@ -15,6 +15,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"strings"
 	"testing"
 
 	reqhttp2 "github.com/imroc/req/v3/http2"
@@ -75,12 +76,35 @@ func TestReqHTTP2FrameContract_WriterWire(t *testing.T) {
 			h := f.(*HeadersFrame)
 			if !h.StreamEnded() || !h.HeadersEnded() || h.HasPriority() || string(h.HeaderBlockFragment()) != "abc" { t.Fatal(h) }
 		}},
+		{"headers_basic_open", func(f *Framer) error { return f.WriteHeaders(HeadersFrameParam{StreamID: 42, BlockFragment: []byte("abc")}) }, FrameHeaders, 0, 42, []byte("abc"), func(t *testing.T, f Frame) {
+			h := f.(*HeadersFrame)
+			if h.StreamEnded() || h.HeadersEnded() || h.HasPriority() || string(h.HeaderBlockFragment()) != "abc" { t.Fatal(h) }
+		}},
+		{"headers_padding_only", func(f *Framer) error { return f.WriteHeaders(HeadersFrameParam{StreamID: 42, BlockFragment: []byte("abc"), EndStream: true, EndHeaders: true, PadLength: 5}) }, FrameHeaders, FlagHeadersEndStream | FlagHeadersEndHeaders | FlagHeadersPadded, 42, []byte{5, 'a', 'b', 'c', 0, 0, 0, 0, 0}, func(t *testing.T, f Frame) {
+			h := f.(*HeadersFrame)
+			if !h.StreamEnded() || !h.HeadersEnded() || h.HasPriority() || string(h.HeaderBlockFragment()) != "abc" { t.Fatal(h) }
+		}},
+		{"headers_zero_length", func(f *Framer) error { return f.WriteHeaders(HeadersFrameParam{StreamID: 42}) }, FrameHeaders, 0, 42, nil, func(t *testing.T, f Frame) {
+			h := f.(*HeadersFrame)
+			if h.StreamEnded() || h.HeadersEnded() || h.HasPriority() || len(h.HeaderBlockFragment()) != 0 { t.Fatal(h) }
+		}},
+		{"headers_priority_end", func(f *Framer) error { return f.WriteHeaders(HeadersFrameParam{StreamID: 42, BlockFragment: []byte("abc"), EndStream: true, EndHeaders: true, Priority: reqhttp2.PriorityParam{StreamDep: 15, Exclusive: true, Weight: 127}, PadLength: 2}) }, FrameHeaders, FlagHeadersEndStream | FlagHeadersEndHeaders | FlagHeadersPriority | FlagHeadersPadded, 42, []byte{2, 0x80, 0, 0, 15, 127, 'a', 'b', 'c', 0, 0}, func(t *testing.T, f Frame) {
+			h := f.(*HeadersFrame)
+			if !h.StreamEnded() || !h.HeadersEnded() || !h.HasPriority() || h.Priority != (reqhttp2.PriorityParam{StreamDep: 15, Exclusive: true, Weight: 127}) || string(h.HeaderBlockFragment()) != "abc" { t.Fatal(h) }
+		}},
+		{"headers_priority_dependency_zero", func(f *Framer) error { return f.WriteHeaders(HeadersFrameParam{StreamID: 42, BlockFragment: []byte("abc"), EndStream: true, EndHeaders: true, Priority: reqhttp2.PriorityParam{Exclusive: true, Weight: 127}, PadLength: 2}) }, FrameHeaders, FlagHeadersEndStream | FlagHeadersEndHeaders | FlagHeadersPriority | FlagHeadersPadded, 42, []byte{2, 0x80, 0, 0, 0, 127, 'a', 'b', 'c', 0, 0}, func(t *testing.T, f Frame) {
+			h := f.(*HeadersFrame)
+			if !h.StreamEnded() || !h.HeadersEnded() || !h.HasPriority() || h.Priority != (reqhttp2.PriorityParam{Exclusive: true, Weight: 127}) || string(h.HeaderBlockFragment()) != "abc" { t.Fatal(h) }
+		}},
 		{"headers_priority_padding", func(f *Framer) error { return f.WriteHeaders(HeadersFrameParam{StreamID: 42, BlockFragment: []byte("abc"), EndHeaders: true, Priority: priority, PadLength: 2}) }, FrameHeaders, FlagHeadersEndHeaders | FlagHeadersPriority | FlagHeadersPadded, 42, []byte{2, 0x80, 0, 0, 3, 77, 'a', 'b', 'c', 0, 0}, func(t *testing.T, f Frame) {
 			h := f.(*HeadersFrame)
 			if h.StreamEnded() || !h.HeadersEnded() || !h.HasPriority() || h.Priority != priority || string(h.HeaderBlockFragment()) != "abc" { t.Fatal(h) }
 		}},
 		{"priority", func(f *Framer) error { return f.WritePriority(42, priority) }, FramePriority, 0, 42, []byte{0x80, 0, 0, 3, 77}, func(t *testing.T, f Frame) {
 			if f.(*PriorityFrame).PriorityParam != priority { t.Fatal(f) }
+		}},
+		{"priority_not_exclusive", func(f *Framer) error { return f.WritePriority(42, reqhttp2.PriorityParam{StreamDep: 2, Weight: 127}) }, FramePriority, 0, 42, []byte{0, 0, 0, 2, 127}, func(t *testing.T, f Frame) {
+			if f.(*PriorityFrame).PriorityParam != (reqhttp2.PriorityParam{StreamDep: 2, Weight: 127}) { t.Fatal(f) }
 		}},
 		{"settings", func(f *Framer) error { return f.WriteSettings(reqhttp2.Setting{ID: 1, Val: 2}, reqhttp2.Setting{ID: 3, Val: 4}) }, FrameSettings, 0, 0, []byte{0, 1, 0, 0, 0, 2, 0, 3, 0, 0, 0, 4}, func(t *testing.T, f Frame) {
 			s := f.(*SettingsFrame)
@@ -115,6 +139,10 @@ func TestReqHTTP2FrameContract_WriterWire(t *testing.T) {
 		{"push_promise_padding", func(f *Framer) error { return f.WritePushPromise(PushPromiseParam{StreamID: 1, PromiseID: 2, EndHeaders: true, PadLength: 2, BlockFragment: []byte("abc")}) }, FramePushPromise, FlagPushPromiseEndHeaders | FlagPushPromisePadded, 1, []byte{2, 0, 0, 0, 2, 'a', 'b', 'c', 0, 0}, func(t *testing.T, f Frame) {
 			p := f.(*PushPromiseFrame)
 			if p.PromiseID != 2 || !p.HeadersEnded() || string(p.HeaderBlockFragment()) != "abc" { t.Fatal(p) }
+		}},
+		{"push_promise_unpadded_open", func(f *Framer) error { return f.WritePushPromise(PushPromiseParam{StreamID: 42, PromiseID: 42, BlockFragment: []byte("abc")}) }, FramePushPromise, 0, 42, []byte{0, 0, 0, 42, 'a', 'b', 'c'}, func(t *testing.T, f Frame) {
+			p := f.(*PushPromiseFrame)
+			if p.PromiseID != 42 || p.HeadersEnded() || string(p.HeaderBlockFragment()) != "abc" { t.Fatal(p) }
 		}},
 	}
 	for _, tt := range cases {
@@ -637,4 +665,101 @@ func TestReqHTTP2FrameContract_MetadataReadErrors(t *testing.T) {
 		meta, ok := frame.(*MetaHeadersFrame)
 		if !ok || meta.StreamID != 1 || len(meta.Fields) != 0 || err != ConnectionError(ErrCodeProtocol) || peer.Len() != 17 { t.Fatalf("frame=%v err=%v unread=%d", frame, err, peer.Len()) }
 	})
+}
+
+func TestReqHTTP2FrameContract_HeaderOnly(t *testing.T) {
+	// The package-level ReadFrameHeader reads exactly nine bytes. Deliberately
+	// retain only a small sentinel after each header even when its advertised
+	// payload length is large; this API must not allocate or consume the body.
+	for _, tt := range []struct { name string; wire [9]byte; want FrameHeader }{
+		{"zero", [9]byte{}, FrameHeader{}},
+		{"mixed_bytes", [9]byte{1, 2, 3, 4, 5, 6, 7, 8, 9}, FrameHeader{Length: 66051, Type: 4, Flags: 5, StreamID: 0x06070809}},
+		{"max_reserved_stream", [9]byte{255, 255, 255, 255, 255, 255, 255, 255, 255}, FrameHeader{Length: 16777215, Type: 255, Flags: 255, StreamID: 2147483647}},
+		{"max_clear_stream", [9]byte{255, 255, 255, 255, 255, 127, 255, 255, 255}, FrameHeader{Length: 16777215, Type: 255, Flags: 255, StreamID: 2147483647}},
+		{"stream_0", [9]byte{0, 0, 0, 255, 1, 0, 0, 0, 0}, FrameHeader{Type: 255, Flags: 1}},
+		{"stream_1", [9]byte{0, 0, 0, 255, 1, 0, 0, 0, 1}, FrameHeader{Type: 255, Flags: 1, StreamID: 1}},
+		{"stream_255", [9]byte{0, 0, 0, 255, 1, 0, 0, 0, 255}, FrameHeader{Type: 255, Flags: 1, StreamID: 255}},
+		{"stream_256", [9]byte{0, 0, 0, 255, 1, 0, 0, 1, 0}, FrameHeader{Type: 255, Flags: 1, StreamID: 256}},
+		{"stream_65535", [9]byte{0, 0, 0, 255, 1, 0, 0, 255, 255}, FrameHeader{Type: 255, Flags: 1, StreamID: 65535}},
+		{"stream_65536", [9]byte{0, 0, 0, 255, 1, 0, 1, 0, 0}, FrameHeader{Type: 255, Flags: 1, StreamID: 65536}},
+		{"length_0", [9]byte{0, 0, 0, 1, 255, 0, 0, 0, 1}, FrameHeader{Type: 1, Flags: 255, StreamID: 1}},
+		{"length_255", [9]byte{0, 0, 255, 1, 255, 0, 0, 0, 1}, FrameHeader{Length: 255, Type: 1, Flags: 255, StreamID: 1}},
+		{"length_256", [9]byte{0, 1, 0, 1, 255, 0, 0, 0, 1}, FrameHeader{Length: 256, Type: 1, Flags: 255, StreamID: 1}},
+		{"length_65535", [9]byte{0, 255, 255, 1, 255, 0, 0, 0, 1}, FrameHeader{Length: 65535, Type: 1, Flags: 255, StreamID: 1}},
+		{"length_65536", [9]byte{1, 0, 0, 1, 255, 0, 0, 0, 1}, FrameHeader{Length: 65536, Type: 1, Flags: 255, StreamID: 1}},
+		{"length_maximum", [9]byte{255, 255, 255, 1, 255, 0, 0, 0, 1}, FrameHeader{Length: 16777215, Type: 1, Flags: 255, StreamID: 1}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			peer := bytes.NewReader(append(tt.wire[:], []byte("body")...))
+			got, err := ReadFrameHeader(peer)
+			want := tt.want
+			want.valid = true
+			if err != nil || !reflect.DeepEqual(got, want) || peer.Len() != 4 { t.Fatalf("header=%+v want=%+v err=%v unread=%d", got, want, err, peer.Len()) }
+			retained, err := io.ReadAll(peer)
+			if err != nil || string(retained) != "body" { t.Fatalf("retained=%q err=%v", retained, err) }
+		})
+	}
+	for _, tt := range []struct { name string; wire []byte; want error }{
+		{"empty_peer", nil, io.EOF},
+		{"short_header", []byte{0, 0, 0, 1, 0, 0, 0, 0}, io.ErrUnexpectedEOF},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			peer := bytes.NewReader(tt.wire)
+			got, err := ReadFrameHeader(peer)
+			if got != (FrameHeader{}) || err != tt.want || peer.Len() != 0 { t.Fatalf("header=%+v err=%v unread=%d", got, err, peer.Len()) }
+		})
+	}
+}
+
+func TestReqHTTP2FrameContract_RepeatedFrameLifetime(t *testing.T) {
+	for _, reuse := range []bool{false, true} {
+		name := "fresh_frames"
+		if reuse { name = "reuse_and_zero_payload" }
+		t.Run(name, func(t *testing.T) {
+			var wire bytes.Buffer
+			for _, data := range []string{"ABC", "XYZ", "", "HHH"} {
+				for i := 0; i < 10; i++ { wire.Write(reqH2ContractWire(FrameData, FlagDataEndStream, 0x01020304, []byte(data))) }
+			}
+			fr := NewFramer(io.Discard, &wire)
+			if reuse { fr.SetReuseFrames() }
+			var prior []*DataFrame
+			for _, data := range []string{"ABC", "XYZ", "", "HHH"} {
+				for i := 0; i < 10; i++ {
+					if reuse { fr.SetReuseFrames() }
+					frame, err := fr.ReadFrame()
+					if err != nil || frame == nil { t.Fatalf("data=%q iteration=%d frame=%v err=%v", data, i, frame, err) }
+					d := frame.(*DataFrame)
+					if string(d.Data()) != data || d.Length != uint32(len(data)) || d.StreamID != 0x01020304 || d.Flags != FlagDataEndStream || !d.StreamEnded() { t.Fatalf("data=%q iteration=%d got=%v", data, i, d) }
+					for _, old := range prior {
+						if (old == d) != reuse { t.Fatalf("reuse=%v old=%p current=%p", reuse, old, d) }
+					}
+					prior = append(prior, d)
+				}
+			}
+			if wire.Len() != 0 { t.Fatalf("unread=%d", wire.Len()) }
+		})
+	}
+}
+
+func TestReqHTTP2FrameContract_MetaStringLength(t *testing.T) {
+	fields := []hpack.HeaderField{{Name: ":method", Value: "GET"}, {Name: ":path", Value: "/"}, {Name: "foo", Value: strings.Repeat("a", 1024)}}
+	block := reqH2ContractBlock(t, fields)
+	for _, tt := range []struct { name string; limit uint32; want error }{
+		{"big_string_okay", 0, nil},
+		{"big_string_error", 512, ConnectionError(ErrCodeCompression)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			wire := reqH2ContractWire(FrameHeaders, FlagHeadersEndStream, 1, block[:2])
+			wire = append(wire, reqH2ContractWire(FrameContinuation, FlagContinuationEndHeaders, 1, block[2:])...)
+			peer := bytes.NewReader(wire)
+			fr := NewFramer(io.Discard, peer)
+			fr.MaxHeaderListSize = tt.limit
+			fr.ReadMetaHeaders = hpack.NewDecoder(4096, nil)
+			frame, err := fr.ReadFrame()
+			meta, ok := frame.(*MetaHeadersFrame)
+			wantFields := fields
+			if tt.want != nil { wantFields = fields[:2] }
+			if !ok || err != tt.want || !reflect.DeepEqual(meta.Fields, wantFields) || meta.Truncated || !meta.StreamEnded() || peer.Len() != 0 { t.Fatalf("frame=%v err=%v want=%v unread=%d", frame, err, tt.want, peer.Len()) }
+		})
+	}
 }
