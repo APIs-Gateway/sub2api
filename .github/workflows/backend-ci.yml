@@ -21,6 +21,15 @@ jobs:
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.26.6'
+      - name: Codex OAuth workspace import and existing identity contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -timeout=8m -v -run 'Codex.*(Identity|Import|AccountIndex)|ImportCodexSessions' ./internal/handler/admin/
+      - name: Codex OAuth workspace import formatting (remote only)
+        run: |
+          gofmt -d backend/internal/handler/admin/account_codex_import.go backend/internal/handler/admin/account_codex_import_test.go
+          test -z "$(gofmt -l backend/internal/handler/admin/account_codex_import.go backend/internal/handler/admin/account_codex_import_test.go)"
       - name: Responses namespace contracts and lazy span boundaries (race)
         working-directory: backend
         run: go test -tags=unit -race -parallel=1 -count=1 -timeout=8m -v -run '(?i)namespace' ./internal/service/
