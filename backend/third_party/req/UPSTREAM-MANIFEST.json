@@ -718,6 +718,7 @@
     "http3_wire_contract_test.go",
     "http3_wire_cancel_test.go",
     "http3_wire_tls_test.go",
+    "http3_wire_decompression_test.go",
     "internal/http3/tls_config_contract_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",

@@ -25,7 +25,7 @@ grep -q 'go1.26.9 ' "$evidence/go-version.txt"
 # New private H3 contract sources are formatted and checked only in remote CI.
 gofmt -l third_party/req/internal/http3/frame_contract_test.go third_party/req/internal/http3/header_contract_test.go third_party/req/internal/http3/request_writer_contract_test.go > "$evidence/http3-contract-gofmt.list"
 test ! -s "$evidence/http3-contract-gofmt.list"
-gofmt -l third_party/req/http3_wire_peer_test.go third_party/req/http3_wire_contract_test.go third_party/req/http3_wire_cancel_test.go third_party/req/http3_wire_tls_test.go third_party/req/internal/http3/tls_config_contract_test.go third_party/req/internal/http3/transport.go > "$evidence/http3-wire-gofmt.list"
+gofmt -l third_party/req/http3_wire_peer_test.go third_party/req/http3_wire_contract_test.go third_party/req/http3_wire_cancel_test.go third_party/req/http3_wire_tls_test.go third_party/req/http3_wire_decompression_test.go third_party/req/internal/http3/tls_config_contract_test.go third_party/req/internal/http3/transport.go > "$evidence/http3-wire-gofmt.list"
 test ! -s "$evidence/http3-wire-gofmt.list"
 go list -m -json all > "$evidence/modules.json"
 go list -json "$module/..." > "$evidence/packages.json"
