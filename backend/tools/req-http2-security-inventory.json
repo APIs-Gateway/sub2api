@@ -103,7 +103,7 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 169,
+  "totalNamedLeaves": 180,
   "http1Package": "github.com/imroc/req/v3",
   "http1Leaves": [
     "TestReqHTTP1Lifecycle_ResponseBody/chunked_trailers_reuse",
@@ -214,5 +214,20 @@
     "TestReqHTTP3TLSControl_ConfigSelection/explicit_trusted_overrides_untrusted_options",
     "TestReqHTTP3TLSControl_ConfigSelection/explicit_untrusted_overrides_trusted_options"
   ],
-  "http3TLSControlCount": 5
+  "http3TLSControlCount": 5,
+  "http3DecompressionPackage": "github.com/imroc/req/v3",
+  "http3DecompressionLeaves": [
+    "TestReqHTTP3Decompression_PublicResponseBody/enabled_identity",
+    "TestReqHTTP3Decompression_PublicResponseBody/enabled_manual_gzip",
+    "TestReqHTTP3Decompression_PublicResponseBody/enabled_manual_deflate",
+    "TestReqHTTP3Decompression_PublicResponseBody/disabled_identity",
+    "TestReqHTTP3Decompression_PublicResponseBody/disabled_manual_gzip",
+    "TestReqHTTP3Decompression_PublicResponseBody/disabled_manual_deflate",
+    "TestReqHTTP3Decompression_PublicResponseBody/enabled_automatic_gzip",
+    "TestReqHTTP3Decompression_PublicResponseBody/enabled_unknown_coding",
+    "TestReqHTTP3Decompression_PublicResponseBody/disabled_unknown_coding",
+    "TestReqHTTP3Decompression_PublicResponseBody/enabled_identity_coding",
+    "TestReqHTTP3Decompression_PublicResponseBody/disabled_identity_coding"
+  ],
+  "http3DecompressionCount": 11
 }

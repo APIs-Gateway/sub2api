@@ -13,15 +13,16 @@ import (
 	peerhttp3 "github.com/quic-go/quic-go/http3"
 )
 
-// This public contract keeps the failing implementation intact for an actual
-// remote RED witness. The owned peer sends real HTTP3 response DATA; neither
-// the private transport nor its response body is replaced by a test double.
+// The owned peer sends real HTTP3 response DATA; neither the private transport
+// nor its response body is replaced by a test double. The original seven cases
+// retain the actual RED witness from CI run 38735340631.
 func TestReqHTTP3Decompression_PublicResponseBody(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		encoding      string
 		auto          bool
 		automaticGzip bool
+		codingHeader  string
 	}{
 		{name: "enabled_identity", encoding: "identity", auto: true},
 		{name: "enabled_manual_gzip", encoding: "gzip", auto: true},
@@ -30,6 +31,10 @@ func TestReqHTTP3Decompression_PublicResponseBody(t *testing.T) {
 		{name: "disabled_manual_gzip", encoding: "gzip"},
 		{name: "disabled_manual_deflate", encoding: "deflate"},
 		{name: "enabled_automatic_gzip", encoding: "gzip", auto: true, automaticGzip: true},
+		{name: "enabled_unknown_coding", encoding: "identity", auto: true, codingHeader: "x-owned-unknown"},
+		{name: "disabled_unknown_coding", encoding: "identity", codingHeader: "x-owned-unknown"},
+		{name: "enabled_identity_coding", encoding: "identity", auto: true, codingHeader: "identity"},
+		{name: "disabled_identity_coding", encoding: "identity", codingHeader: "identity"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := []byte("owned HTTP3 response body survives automatic decompression\n")
@@ -75,6 +80,9 @@ func TestReqHTTP3Decompression_PublicResponseBody(t *testing.T) {
 				if tc.encoding != "identity" {
 					w.Header().Set("Content-Encoding", tc.encoding)
 				}
+				if tc.codingHeader != "" {
+					w.Header().Set("Content-Encoding", tc.codingHeader)
+				}
 				observation.written, observation.err = w.Write(wire)
 				observed <- observation
 			})
@@ -92,13 +100,20 @@ func TestReqHTTP3Decompression_PublicResponseBody(t *testing.T) {
 				// Explicit negotiation keeps requestedGzip false, reaching the
 				// public AutoDecompression branch rather than its gzip shortcut.
 				req.Header.Set("Accept-Encoding", tc.encoding)
+				if tc.codingHeader != "" {
+					req.Header.Set("Accept-Encoding", tc.codingHeader)
+				}
 			}
 			resp, requestErr := client.Do(req)
 			if resp != nil && resp.Body != nil {
 				t.Cleanup(func() { _ = resp.Body.Close() })
 			}
 			observation := h3WireWait(t, observed, "decompression peer response")
-			if observation.protocol != 3 || observation.alpn != peerhttp3.NextProtoH3 || observation.tlsVersion != tls.VersionTLS13 || observation.acceptEncoding != tc.encoding || observation.written != len(wire) || observation.err != nil {
+			wantAcceptEncoding := tc.encoding
+			if tc.codingHeader != "" {
+				wantAcceptEncoding = tc.codingHeader
+			}
+			if observation.protocol != 3 || observation.alpn != peerhttp3.NextProtoH3 || observation.tlsVersion != tls.VersionTLS13 || observation.acceptEncoding != wantAcceptEncoding || observation.written != len(wire) || observation.err != nil {
 				t.Fatalf("owned peer did not send the exact HTTP3 TLS/encoding/body contract: %+v", observation)
 			}
 			t.Logf("actual peer: protocol=%d ALPN=%s TLS=%#x Accept-Encoding=%s response-bytes=%d", observation.protocol, observation.alpn, observation.tlsVersion, observation.acceptEncoding, observation.written)
@@ -118,7 +133,7 @@ func TestReqHTTP3Decompression_PublicResponseBody(t *testing.T) {
 			wantLength := int64(len(wire))
 			wantUncompressed := tc.auto && tc.encoding != "identity"
 			if tc.encoding == "identity" {
-				wantEncoding = ""
+				wantEncoding = tc.codingHeader
 			} else if wantUncompressed {
 				wantBody = payload
 				wantEncoding = ""

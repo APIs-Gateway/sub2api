@@ -388,6 +388,7 @@ func (s *RequestStream) ReadResponse() (*http.Response, error) {
 	if (isInformational || isNoContent || isSuccessfulConnect) && res.ContentLength == -1 {
 		res.ContentLength = 0
 	}
+	s.responseBody = respBody
 	if s.requestedGzip && res.Header.Get("Content-Encoding") == "gzip" {
 		res.Header.Del("Content-Encoding")
 		res.Header.Del("Content-Length")
@@ -396,15 +397,13 @@ func (s *RequestStream) ReadResponse() (*http.Response, error) {
 		res.Uncompressed = true
 	} else if s.AutoDecompression {
 		contentEncoding := res.Header.Get("Content-Encoding")
-		if contentEncoding != "" {
+		if decodedBody := compress.NewCompressReader(respBody, contentEncoding); decodedBody != nil {
 			res.Header.Del("Content-Encoding")
 			res.Header.Del("Content-Length")
 			res.ContentLength = -1
 			res.Uncompressed = true
-			res.Body = compress.NewCompressReader(respBody, contentEncoding)
+			s.responseBody = decodedBody
 		}
-	} else {
-		s.responseBody = respBody
 	}
 	res.Body = s.responseBody
 	return res, nil
