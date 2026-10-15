@@ -691,6 +691,9 @@
     ],
     "trace.go": [
       "local-required-dump-trace-race-repair-after-verified-original-race"
+    ],
+    "internal/http3/transport.go": [
+      "local-required-public-http3-tls-options-propagation-after-ci38496709035-verified-unknown-authority"
     ]
   },
   "newOwnedFiles": [
@@ -710,11 +713,16 @@
     "internal/http3/frame_contract_test.go",
     "internal/http3/header_contract_test.go",
     "internal/http3/request_writer_contract_test.go",
-    "internal/http3/CONTRACT-TESTS-LICENSE"
+    "internal/http3/CONTRACT-TESTS-LICENSE",
+    "http3_wire_peer_test.go",
+    "http3_wire_contract_test.go",
+    "http3_wire_cancel_test.go",
+    "http3_wire_tls_test.go",
+    "internal/http3/tls_config_contract_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "exact full Git source/main MVS; original82 HTTP2/dump/trace plus9 HTTP1 lifecycle and6 proxy named JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all7 adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
+  "validation": "exact full Git source/main MVS; original82 HTTP2/dump/trace plus9 HTTP1 lifecycle and6 proxy named JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all8 explicitly adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -774,10 +782,18 @@
       "sources": [
         "local-required-dump-trace-race-repair-after-verified-original-race"
       ]
+    },
+    {
+      "path": "internal/http3/transport.go",
+      "sha256": "e95696a5f3ce8f7e6443ba253411ecc29fbdcfb2cb769fa506818b09734641a8",
+      "bytes": 15327,
+      "sources": [
+        "local-required-public-http3-tls-options-propagation-after-ci38496709035-verified-unknown-authority"
+      ]
     }
   ],
   "adaptedCandidateStatus": "default H2 TLS trace source correction candidate after actual88 named failure; independent static review and new frozen-head remote evidence pending; no approval",
-  "originalUnmodifiedFileCount": 125,
+  "originalUnmodifiedFileCount": 124,
   "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
   "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227",
   "http3ContractTestProvenance": {
@@ -809,5 +825,43 @@
       }
     ],
     "adaptation": "Private parser/frame close callback only; actual private response functions receive dump arguments; no absent requestFromHeaders server API; exact decoded request and qlog assertions; public existing testutils/events uses stdlib only. No production or dependency changes. Formatting and runtime evidence pending CI."
+  },
+  "http3WireContractTestProvenance": {
+    "repository": "https://github.com/quic-go/quic-go",
+    "version": "v0.57.1",
+    "revision": "4b0ab7e48554e4440448c9252a92d7c065d88331",
+    "officialSources": [
+      "http3/http3_helper_test.go",
+      "http3/client_test.go",
+      "http3/transport_test.go",
+      "http3/body_test.go",
+      "http3/server.go",
+      "http3/response_writer.go"
+    ],
+    "license": "internal/http3/CONTRACT-TESTS-LICENSE",
+    "localFiles": [
+      "http3_wire_peer_test.go",
+      "http3_wire_contract_test.go",
+      "http3_wire_cancel_test.go"
+    ],
+    "requiredLeafCount": 6,
+    "testPrefix": "TestReqHTTP3Wire_",
+    "scope": "Explicit public C.SetTLSClientConfig().EnableForceHTTP3() requests against real TLS 1.3 h3 UDP peers; verified fresh CA, payload and ConnContext identity; real remote stream cancellation codes and peer writes; real QUIC Initial blackhole with a live TCP control. No private TLS or dial overrides, production or dependency changes, or gateway H3 enablement. Private t3 access is limited to owned resource cleanup. Formatting and runtime evidence await remote CI; public TLS propagation must be proven by actual CI, with no defect or PASS claim yet."
+  },
+  "http3TLSOptionsRepair": {
+    "sourceRevision": "247aa96f489227c411c5ce35e557f8f3494709b2",
+    "sourcePath": "internal/http3/transport.go",
+    "actualRedHead": "6d0e42071f4374773283d305b33db523927a3f7c",
+    "actualRedRun": 38496709035,
+    "actualRedArtifact": 11864326025,
+    "actualRedArtifactSHA256": "fad00c7c6c63363c52385384964f03a9b778d3aa37ef45a1fe97c1f926266c09",
+    "problem": "Explicit public TLS RootCAs fail actual forced HTTP3 handshakes because the private H3 TLS field shadows shared Options. Three original wire leaves fail with local QUIC CRYPTO_ERROR0x12a and x509 unknown authority.",
+    "repair": "Preserve explicit H3 TLS config priority; when nil read the current shared Options TLS config if Options is nonnil. Keep clone/default/SNI/ALPN behavior.",
+    "newTestFiles": [
+      "http3_wire_tls_test.go",
+      "internal/http3/tls_config_contract_test.go"
+    ],
+    "newRequiredLeaves": 11,
+    "scope": "Public client setters before/after enabling HTTP3, transport setter, getter pointer mutation, insecure skip verify before/after; narrow private dial controls still perform real loopback QUIC TLS handshakes for nil Options/default and explicit TLS precedence. Gateway default H3 reachability is not claimed. No exact corresponding upstream issue or PR established."
   }
 }

@@ -368,11 +368,16 @@ func (t *Transport) getClient(ctx context.Context, hostname string, onlyCached b
 }
 
 func (t *Transport) dial(ctx context.Context, hostname string) (*quic.Conn, clientConn, error) {
+	tlsConfig := t.TLSClientConfig
+	// Keep explicit HTTP/3 configuration ahead of the shared public options.
+	if tlsConfig == nil && t.Options != nil {
+		tlsConfig = t.Options.TLSClientConfig
+	}
 	var tlsConf *tls.Config
-	if t.TLSClientConfig == nil {
+	if tlsConfig == nil {
 		tlsConf = &tls.Config{}
 	} else {
-		tlsConf = t.TLSClientConfig.Clone()
+		tlsConf = tlsConfig.Clone()
 	}
 	if tlsConf.ServerName == "" {
 		sni, _, err := net.SplitHostPort(hostname)
