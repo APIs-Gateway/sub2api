@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
+	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
 	"testing"
+	"time"
 
 	peerhttp3 "github.com/quic-go/quic-go/http3"
 )
@@ -151,6 +154,96 @@ func TestReqHTTP3Decompression_PublicResponseBody(t *testing.T) {
 			}
 			if resp.Header.Get("Content-Length") != wantLengthHeader {
 				t.Fatalf("mode=%s Content-Length=%q want=%q", tc.name, resp.Header.Get("Content-Length"), wantLengthHeader)
+			}
+		})
+	}
+}
+
+// A decoder must preserve Close on the owned HTTP3 stream after its first Read.
+// Keep the caller context live until the peer observes the body's Close, so
+// request cancellation, client timeouts and fixture cleanup cannot satisfy it.
+func TestReqHTTP3DeflateClose_PublicStreamRetirement(t *testing.T) {
+	for _, mode := range []string{"unread_close", "partial_read_close"} {
+		t.Run(mode, func(t *testing.T) {
+			ready := make(chan error, 1)
+			peerError := make(chan error, 1)
+			peer := h3WireNewPeer(t, func(w http.ResponseWriter, r *http.Request, stop <-chan struct{}) {
+				if r.ProtoMajor != 3 || r.TLS == nil || r.TLS.Version != tls.VersionTLS13 || r.TLS.NegotiatedProtocol != peerhttp3.NextProtoH3 || r.Header.Get("Accept-Encoding") != "deflate" {
+					ready <- errors.New("peer did not receive the real HTTP3 TLS1.3 deflate request")
+					return
+				}
+				w.Header().Set("Content-Encoding", "deflate")
+				w.Header().Set("Content-Type", "application/octet-stream")
+				deflater, err := flate.NewWriter(w, flate.DefaultCompression)
+				if err != nil {
+					ready <- err
+					return
+				}
+				defer deflater.Close()
+				_, err = io.WriteString(deflater, "prefix:owned-nonfinal-deflate-stream")
+				if err == nil {
+					err = deflater.Flush()
+				}
+				if err == nil {
+					err = http.NewResponseController(w).Flush()
+				}
+				ready <- err
+				if err != nil {
+					return
+				}
+				select {
+				case <-r.Context().Done():
+					// The compressed stream was flushed but never finalized.
+					// Demand a real remote stream error on the next peer write.
+					_, err := io.WriteString(deflater, "after-close")
+					if err == nil {
+						err = deflater.Flush()
+					}
+					if err == nil {
+						err = http.NewResponseController(w).Flush()
+					}
+					peerError <- err
+				case <-stop:
+					peerError <- errors.New("fixture cleanup preceded the deflate body Close contract")
+				}
+			})
+			client := h3WireNewClient(t, peer.clientTLS).EnableAutoDecompress().SetTimeout(0)
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, peer.url+"/deflate-close/"+mode, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Accept-Encoding", "deflate")
+			result := h3WireDo(t, client, req, cancel)
+			resp := result.response
+			if result.err != nil || resp == nil || resp.Body == nil {
+				t.Fatalf("real deflate response before Close: response=%v error=%v", resp, result.err)
+			}
+			if resp.ProtoMajor != 3 || resp.TLS == nil || !resp.TLS.HandshakeComplete || resp.TLS.NegotiatedProtocol != peerhttp3.NextProtoH3 || len(resp.TLS.VerifiedChains) == 0 || !resp.Uncompressed || resp.Header.Get("Content-Encoding") != "" {
+				t.Fatal("response did not enter the verified public HTTP3 deflate decoder")
+			}
+			if err := h3WireWait(t, ready, "nonfinal deflate peer flush"); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "partial_read_close" {
+				var prefix [6]byte
+				if err := h3WireReadFull(t, resp.Body, prefix[:], cancel); err != nil || string(prefix[:]) != "prefix" {
+					t.Fatalf("real partial decoded payload=%q read=%v", prefix, err)
+				}
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Fatalf("public deflate body Close: %v", err)
+			}
+			select {
+			case err := <-peerError:
+				var remote *peerhttp3.Error
+				if !errors.As(err, &remote) || !remote.Remote || remote.ErrorCode != peerhttp3.ErrCodeRequestCanceled || ctx.Err() != nil {
+					t.Fatalf("HTTP3_DEFLATE_CLOSE_ASSERT: body Close must deliver remote H3_REQUEST_CANCELLED with caller context live: peer=%v caller=%v", err, ctx.Err())
+				}
+				t.Logf("actual deflate Close: mode=%s peer=%v caller-context=%v", mode, err, ctx.Err())
+			case <-time.After(8 * time.Second):
+				t.Fatalf("HTTP3_DEFLATE_CLOSE_ASSERT: mode=%s body Close returned but the real nonfinal peer stream remained open; caller-context=%v", mode, ctx.Err())
 			}
 		})
 	}
