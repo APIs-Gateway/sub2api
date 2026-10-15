@@ -208,3 +208,28 @@ separately reviewed change, and retain the security regressions.
 Tracking: [fork issue #1711](https://github.com/APIs-Gateway/sub2api/issues/1711),
 [implementation PR #1712](https://github.com/APIs-Gateway/sub2api/pull/1712),
 [permanent tracker #291](https://github.com/APIs-Gateway/sub2api/issues/291).
+
+
+### Private HTTP/2 transport wire contract subset
+
+Two new owned test files, `internal/http2/transport_contract_peer_test.go` and
+`internal/http2/transport_contract_test.go`, adapt the behavioral subset of
+`golang/net@18ece0ce30bc35fa81fe72028bf309bb3ff3f4a5/http2/transport_test.go`.
+The client under test is private req `Transport.RoundTrip`; the independent peer
+uses x/net Framer over deadline-bounded `net.Pipe` and a persistent HPACK decoder.
+All outgoing requests assert method, path, scheme and authority. The 25 required
+leaves exercise actual GOAWAY retry/debug/drain, refused-stream body replay and
+refusal, retry-backoff cancellation, cached pool reuse and idle/single-use close,
+response trailers and invalid trailer rejection, response-header timeout,
+cancellation preserving another stream, Shutdown and Ping. Full retry-limit and
+pending-dial ownership, and whole-suite equivalence with the official 163 top
+functions, are not claimed. The Go BSD notices and exact source hashes are in
+the manifest.
+
+Remote formatter run 38737258610 produced sealed outputs independently verified
+by ROOT before import. No local/87 formatter, test, build or compilation ran.
+The inventory adds 25 private transport leaves to the preserved 318 (343 total),
+and both named and whole race suites must observe each actual RUN/PASS exactly
+once. Existing 25 graph regressions, 365-module graph, old-RED witness, source and
+coverage evidence and unchanged 85% gates remain mandatory. Formatting is not
+runtime PASS; new exact-head CI and actual full-PR coverage remain pending.

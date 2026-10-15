@@ -103,7 +103,7 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 318,
+  "totalNamedLeaves": 343,
   "http1Package": "github.com/imroc/req/v3",
   "http1Leaves": [
     "TestReqHTTP1Lifecycle_ResponseBody/chunked_trailers_reuse",
@@ -367,5 +367,34 @@
     "TestReqHTTP2FrameContract_MetaStringLength/big_string_okay",
     "TestReqHTTP2FrameContract_MetaStringLength/big_string_error"
   ],
-  "http2FrameContractCount": 149
+  "http2FrameContractCount": 149,
+  "http2TransportContractPackage": "github.com/imroc/req/v3/internal/http2",
+  "http2TransportContractCount": 25,
+  "http2TransportContractLeaves": [
+    "TestReqHTTP2TransportContract_CachedPoolAndIdleClose",
+    "TestReqHTTP2TransportContract_CancelKeepsOtherStream/before_headers",
+    "TestReqHTTP2TransportContract_CancelKeepsOtherStream/during_body",
+    "TestReqHTTP2TransportContract_CancelRetryBackoff",
+    "TestReqHTTP2TransportContract_ConnectionCloseSingleUse",
+    "TestReqHTTP2TransportContract_GOAWAYDebug/before_headers",
+    "TestReqHTTP2TransportContract_GOAWAYDebug/during_body",
+    "TestReqHTTP2TransportContract_GOAWAYRetry/first_stream_error_not_retried",
+    "TestReqHTTP2TransportContract_GOAWAYRetry/graceful_first_stream",
+    "TestReqHTTP2TransportContract_GOAWAYRetry/later_stream_retried_while_last_stream_finishes",
+    "TestReqHTTP2TransportContract_InvalidTrailers/missing_end_stream",
+    "TestReqHTTP2TransportContract_InvalidTrailers/pseudoheader",
+    "TestReqHTTP2TransportContract_Ping/ack",
+    "TestReqHTTP2TransportContract_Ping/cancel",
+    "TestReqHTTP2TransportContract_ProtocolErrorDoesNotRetry",
+    "TestReqHTTP2TransportContract_RefusedStreamReplay/getbody_error",
+    "TestReqHTTP2TransportContract_RefusedStreamReplay/no_body",
+    "TestReqHTTP2TransportContract_RefusedStreamReplay/replayable",
+    "TestReqHTTP2TransportContract_RefusedStreamReplay/unreplayable",
+    "TestReqHTTP2TransportContract_ResponseHeaderTimeout/no_body",
+    "TestReqHTTP2TransportContract_ResponseHeaderTimeout/with_body",
+    "TestReqHTTP2TransportContract_ResponseTrailers/declared",
+    "TestReqHTTP2TransportContract_ResponseTrailers/undeclared",
+    "TestReqHTTP2TransportContract_Shutdown/cancel_shutdown_keeps_active_stream",
+    "TestReqHTTP2TransportContract_Shutdown/drain"
+  ]
 }

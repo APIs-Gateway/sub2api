@@ -719,7 +719,9 @@
     "http3_wire_cancel_test.go",
     "http3_wire_tls_test.go",
     "internal/http3/tls_config_contract_test.go",
-    "internal/http2/frame_contract_test.go"
+    "internal/http2/frame_contract_test.go",
+    "internal/http2/transport_contract_peer_test.go",
+    "internal/http2/transport_contract_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
@@ -893,6 +895,39 @@
       "outputSHA256": "8df3b91ab676d86965f45b393d3afa4e308709a79916339577d4dd61925a7e89",
       "status": "Actual remote formatting success independently verified by root, exact single output imported; new301-leaf named/whole/race and all runtime/coverage approval pending remote CI.",
       "independentArtifactReviewSHA256": "a0578af522148d4607b16bb259633a4182c894d731c3b217918ba48c49fb6750"
+    }
+  },
+  "http2TransportContractTestProvenance": {
+    "repository": "https://github.com/golang/net",
+    "version": "v0.60.0",
+    "revision": "18ece0ce30bc35fa81fe72028bf309bb3ff3f4a5",
+    "upstreamPath": "http2/transport_test.go",
+    "upstreamSHA256": "f7d6f62c8aa2bc03fe605ac5e814021d988897c04083e3243b33ba774ade95d9",
+    "upstreamGitBlob": "1157e3156132d40151061d9174549712872d80ae",
+    "license": "LICENSE-GO-BSD",
+    "testPrefix": "TestReqHTTP2TransportContract_",
+    "requiredLeafCount": 25,
+    "files": [
+      {
+        "localPath": "internal/http2/transport_contract_peer_test.go",
+        "sourceBytes": 10069,
+        "sourceSHA256": "a35336817fb8556d9ab8431a1c8bd85534996a107e13f0ed8b89fa5ee7441fd9"
+      },
+      {
+        "localPath": "internal/http2/transport_contract_test.go",
+        "sourceBytes": 16981,
+        "sourceSHA256": "d9f950781c61537cde1dbbaa4b1c337e4d8fbe9a44e16e7ce890a180c82bae42"
+      }
+    ],
+    "adaptation": "Behavioral subset only: private Transport.RoundTrip and cached pool over deadline-bounded net.Pipe, independent x/net frame codec and stateful HPACK decoder. Assert exact outgoing method/path/scheme/authority and replay payload/GetBody calls, GOAWAY debug/retry/drain, genuine DATA-before-HEADERS error without retry, header timeout/cancellation RST and unrelated stream survival, valid/invalid trailers, cached reuse/idle close/single-use, Shutdown and Ping. No official client replaces the tested private Transport; explicit nonnil req Options; no production/dependency changes. Full retry-limit, pending-dial ownership and the official163 top suite are not claimed equivalent or covered.",
+    "formatEvidence": {
+      "run": 38737258610,
+      "workflowHead": "d36e3deca7b4b3dae36ed11d6ef96e68b3331774",
+      "sourceCandidate": "7fc63888ca592cb975b0714dabfda873ee56f22f",
+      "artifact": 11974452501,
+      "artifactSHA256": "9b678a9f36cf7588ef16b5b986555efdc44f8074c50bd5d771948efe3e657bdf",
+      "independentArtifactReviewSHA256": "61d6203714d09a6de3eccebc80e10896343cfae2f03d56e1ef92b8ff4d1fc56f",
+      "status": "Exact remote formatter outputs independently verified by ROOT and imported; actual named/whole race and coverage pending CI."
     }
   }
 }
