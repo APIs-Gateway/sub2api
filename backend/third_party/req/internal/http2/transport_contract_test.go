@@ -11,7 +11,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"

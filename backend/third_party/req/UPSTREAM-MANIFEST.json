@@ -915,8 +915,8 @@
       },
       {
         "localPath": "internal/http2/transport_contract_test.go",
-        "sourceBytes": 16981,
-        "sourceSHA256": "d9f950781c61537cde1dbbaa4b1c337e4d8fbe9a44e16e7ce890a180c82bae42"
+        "sourceBytes": 16969,
+        "sourceSHA256": "bc37d78144b35d68721ce42bd45d79e1205c3f200a664f8b1d5ab6baedc21412"
       }
     ],
     "adaptation": "Behavioral subset only: private Transport.RoundTrip and cached pool over deadline-bounded net.Pipe, independent x/net frame codec and stateful HPACK decoder. Assert exact outgoing method/path/scheme/authority and replay payload/GetBody calls, GOAWAY debug/retry/drain, genuine DATA-before-HEADERS error without retry, header timeout/cancellation RST and unrelated stream survival, valid/invalid trailers, cached reuse/idle close/single-use, Shutdown and Ping. No official client replaces the tested private Transport; explicit nonnil req Options; no production/dependency changes. Full retry-limit, pending-dial ownership and the official163 top suite are not claimed equivalent or covered.",
@@ -928,6 +928,15 @@
       "artifactSHA256": "9b678a9f36cf7588ef16b5b986555efdc44f8074c50bd5d771948efe3e657bdf",
       "independentArtifactReviewSHA256": "61d6203714d09a6de3eccebc80e10896343cfae2f03d56e1ef92b8ff4d1fc56f",
       "status": "Exact remote formatter outputs independently verified by ROOT and imported; actual named/whole race and coverage pending CI."
-    }
+    },
+    "postFormatReviewAdjustments": [
+      {
+        "path": "internal/http2/transport_contract_test.go",
+        "change": "Remove one unused net/http import detected by remote CI build; no test/production/control semantics change. Remote formatter originally produced the recorded output; final source hash above records this separately reviewed deletion.",
+        "failedRun": 38738396729,
+        "failedHead": "3acf1b7c6ac1fb2a9b8c9e2596f40a50bd862333",
+        "requiredRerun": "Exact-head named/whole race suites, graph/old-RED, format and coverage all remain mandatory."
+      }
+    ]
   }
 }
