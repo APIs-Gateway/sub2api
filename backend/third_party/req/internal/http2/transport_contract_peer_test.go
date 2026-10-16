@@ -51,6 +51,25 @@ type reqH2ContractFixture struct {
 	dials chan *reqH2ContractPeer
 	mu    sync.Mutex
 	peers []*reqH2ContractPeer
+	ccs   map[net.Conn]*ClientConn
+}
+
+// Observe results without changing the real private pool's selection, dialing,
+// reservation or removal. Connection: close returns a valid single-use ClientConn
+// directly from GetClientConn; it is intentionally absent from pool.keys.
+type reqH2ContractPool struct {
+	ClientConnPool
+	fixture *reqH2ContractFixture
+}
+
+func (p *reqH2ContractPool) GetClientConn(req *http.Request, addr string, dialOnMiss bool) (*ClientConn, error) {
+	cc, err := p.ClientConnPool.GetClientConn(req, addr, dialOnMiss)
+	if err == nil {
+		p.fixture.mu.Lock()
+		p.fixture.ccs[cc.tconn] = cc
+		p.fixture.mu.Unlock()
+	}
+	return cc, err
 }
 
 type reqH2ContractResult struct {
@@ -68,8 +87,9 @@ type reqH2ContractCall struct {
 
 func newReqH2ContractFixture(t *testing.T) *reqH2ContractFixture {
 	t.Helper()
-	f := &reqH2ContractFixture{t: t, dials: make(chan *reqH2ContractPeer, 16)}
+	f := &reqH2ContractFixture{t: t, dials: make(chan *reqH2ContractPeer, 16), ccs: make(map[net.Conn]*ClientConn)}
 	f.tr = &Transport{Options: &transport.Options{}}
+	f.tr.ConnPool = &reqH2ContractPool{ClientConnPool: &clientConnPool{t: f.tr}, fixture: f}
 	f.tr.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -379,14 +399,11 @@ func (f *reqH2ContractFixture) dialCount() int { f.mu.Lock(); defer f.mu.Unlock(
 
 func (f *reqH2ContractFixture) clientConn(p *reqH2ContractPeer) *ClientConn {
 	f.t.Helper()
-	pool := f.tr.connPool().(*clientConnPool)
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
-	for cc := range pool.keys {
-		if cc.tconn == p.client {
-			return cc
-		}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if cc := f.ccs[p.client]; cc != nil {
+		return cc
 	}
-	f.t.Fatal("active wire connection missing from private pool")
+	f.t.Fatal("wire connection was not returned by the real private pool")
 	return nil
 }
