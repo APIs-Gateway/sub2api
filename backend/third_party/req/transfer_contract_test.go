@@ -145,8 +145,8 @@ func TestReqHTTP1Transfer_ParseTransferEncoding(t *testing.T) {
 func TestReqHTTP1Transfer_ParseContentLength(t *testing.T) {
 	t.Setenv("GODEBUG", "httplaxcontentlength=0")
 	tests := []struct {
-		cl      string
-		wantErr error
+		cl         string
+		wantErr    error
 		wantLength int64
 	}{
 		{
@@ -154,8 +154,8 @@ func TestReqHTTP1Transfer_ParseContentLength(t *testing.T) {
 			wantErr: badStringError("invalid empty Content-Length", ""),
 		},
 		{
-			cl:      "3",
-			wantErr: nil,
+			cl:         "3",
+			wantErr:    nil,
 			wantLength: 3,
 		},
 		{
@@ -168,8 +168,8 @@ func TestReqHTTP1Transfer_ParseContentLength(t *testing.T) {
 		},
 		{
 			// max int64, for safe conversion before returning
-			cl:      "9223372036854775807",
-			wantErr: nil,
+			cl:         "9223372036854775807",
+			wantErr:    nil,
 			wantLength: 9223372036854775807,
 		},
 		{
@@ -190,8 +190,8 @@ func TestReqHTTP1Transfer_ParseContentLength(t *testing.T) {
 // implementation's choice of io.Copy optimization or internal reader type.
 type reqH1TransferOwnedBody struct {
 	io.Reader
-	closer io.Closer
-	closes int
+	closer   io.Closer
+	closes   int
 	closeErr error
 }
 
@@ -297,10 +297,10 @@ func TestReqHTTP1Transfer_WriterFailuresCloseBody(t *testing.T) {
 
 func TestReqHTTP1Transfer_ResponseFraming(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		headers string
-		wireBody string
-		wantErr string
+		name       string
+		headers    string
+		wireBody   string
+		wantErr    string
 		wantLength int64
 	}{
 		{name: "length", headers: "Content-Length: 3\r\n", wireBody: "abc", wantLength: 3},
