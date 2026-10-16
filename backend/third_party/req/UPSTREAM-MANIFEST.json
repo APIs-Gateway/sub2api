@@ -694,6 +694,12 @@
     ],
     "internal/http3/transport.go": [
       "local-required-public-http3-tls-options-propagation-after-ci38496709035-verified-unknown-authority"
+    ],
+    "internal/http3/stream.go": [
+      "local-required-public-http3-response-body-repair-after-ci38735340631-verified-three-reds"
+    ],
+    "internal/compress/deflate_reader.go": [
+      "local-required-deflate-underlying-body-close-after-ci38737227705-verified-stream-retention"
     ]
   },
   "newOwnedFiles": [
@@ -718,12 +724,14 @@
     "http3_wire_contract_test.go",
     "http3_wire_cancel_test.go",
     "http3_wire_tls_test.go",
+    "http3_wire_decompression_test.go",
     "internal/http3/tls_config_contract_test.go",
+    "internal/compress/deflate_close_test.go",
     "internal/http2/frame_contract_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "exact full Git source/main MVS; original82 HTTP2/dump/trace plus9 HTTP1 lifecycle and6 proxy named JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all8 explicitly adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
+  "validation": "exact full Git source/main MVS; all189 reviewed H3/TLS/body/Close and original contracts plus149 HTTP2 frame leaves =338 named/all JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all10 explicitly adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -791,10 +799,26 @@
       "sources": [
         "local-required-public-http3-tls-options-propagation-after-ci38496709035-verified-unknown-authority"
       ]
+    },
+    {
+      "path": "internal/http3/stream.go",
+      "sha256": "170be74e8af6dbd304b24ffc5db60a36079ef52b0dfa2bf4b553434a84a86f80",
+      "bytes": 13491,
+      "sources": [
+        "local-required-public-http3-response-body-repair-after-ci38735340631-verified-three-reds"
+      ]
+    },
+    {
+      "path": "internal/compress/deflate_reader.go",
+      "sha256": "56836c9d3d2c3c230e311a761a86039d7a965ad18eac70213aad67ea60eeddaf",
+      "bytes": 881,
+      "sources": [
+        "local-required-deflate-underlying-body-close-after-ci38737227705-verified-stream-retention"
+      ]
     }
   ],
   "adaptedCandidateStatus": "default H2 TLS trace source correction candidate after actual88 named failure; independent static review and new frozen-head remote evidence pending; no approval",
-  "originalUnmodifiedFileCount": 124,
+  "originalUnmodifiedFileCount": 122,
   "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
   "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227",
   "http3ContractTestProvenance": {
@@ -864,6 +888,35 @@
     ],
     "newRequiredLeaves": 11,
     "scope": "Public client setters before/after enabling HTTP3, transport setter, getter pointer mutation, insecure skip verify before/after; narrow private dial controls still perform real loopback QUIC TLS handshakes for nil Options/default and explicit TLS precedence. Gateway default H3 reachability is not claimed. No exact corresponding upstream issue or PR established."
+  },
+  "http3AutoDecompressionRepair": {
+    "sourcePath": "internal/http3/stream.go",
+    "actualRedHead": "b1d1615cc2bef040138797ad5bd31c5edaffd782",
+    "actualRedRun": 38735340631,
+    "actualRedArtifact": 11973630850,
+    "actualRedArtifactSHA256": "a7b0d302d01dd5d00a44db35bfc9dd4ea4d02a130c5731883319bbcfd64e771e",
+    "problem": "Public EnableAutoDecompress with forced HTTP3 loses response bodies: unencoded body returns nil Body with nonzero length; explicitly negotiated gzip and deflate return empty decoded payloads. Three genuine body-loss assertions fail while all169 previous mandatory leaves and four real-wire controls pass.",
+    "repair": "Initialize the response stream body to the actual wire body. Replace it and remove encoded length/encoding metadata only when a supported decoder is selected. Preserve unknown and explicit identity coding bodies, metadata, and Uncompressed=false.",
+    "newTestFiles": [
+      "http3_wire_decompression_test.go"
+    ],
+    "newRequiredLeaves": 11,
+    "scope": "Real verified TLS1.3 HTTP3 loopback responses via public client options. Retain original seven RED/control leaves and add enabled/disabled unknown and explicit identity coding transparency controls. Remote fixed-head named/all race results, all declared fix-block85 results and independent review remain required. Default gateway HTTP3 traffic is not claimed. No exact corresponding upstream issue or PR established."
+  },
+  "deflateUnderlyingCloseRepair": {
+    "sourcePath": "internal/compress/deflate_reader.go",
+    "actualRedHead": "0e5c29fd326a4e5a51869f266298fb68854bbbbd",
+    "actualRedRun": 38737227705,
+    "actualRedArtifact": 11974018137,
+    "actualRedArtifactSHA256": "b351ff52a6e06883094fca61c543ee26afedb271cbd310ed6e4fbc486c9511fb",
+    "problem": "After a genuine partial decoded Read, DeflateReader.Close closes only the decoder. The real nonfinal HTTP3 peer stream remains open with caller context live. Unread Close receives remote H3_REQUEST_CANCELLED and all180 prior mandatory leaves pass.",
+    "repair": "Always close the underlying body after attempting decoder Close. Preserve decoder error priority, otherwise return the underlying close error. Repeated Close delegates to both existing resources each time; add no shared state.",
+    "testFiles": [
+      "http3_wire_decompression_test.go",
+      "internal/compress/deflate_close_test.go"
+    ],
+    "newRequiredLeaves": 9,
+    "scope": "Retain both exact real QUIC stream-retirement cases, with client timeout disabled and caller context live. Seven narrow unit controls add unread/initialized closure, decoder/body/both errors and repeated Close; they do not replace actual peer cancellation evidence. Remote fixed-head189 named/all race tests, all10 fix-block85 results and independent review remain required. No gateway HTTP3 default traffic claim."
   },
   "http2FrameContractTestProvenance": {
     "repository": "https://github.com/golang/net",

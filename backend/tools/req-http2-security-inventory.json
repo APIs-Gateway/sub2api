@@ -103,7 +103,7 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 318,
+  "totalNamedLeaves": 338,
   "http1Package": "github.com/imroc/req/v3",
   "http1Leaves": [
     "TestReqHTTP1Lifecycle_ResponseBody/chunked_trailers_reuse",
@@ -215,6 +215,38 @@
     "TestReqHTTP3TLSControl_ConfigSelection/explicit_untrusted_overrides_trusted_options"
   ],
   "http3TLSControlCount": 5,
+  "http3DecompressionPackage": "github.com/imroc/req/v3",
+  "http3DecompressionLeaves": [
+    "TestReqHTTP3Decompression_PublicResponseBody/enabled_identity",
+    "TestReqHTTP3Decompression_PublicResponseBody/enabled_manual_gzip",
+    "TestReqHTTP3Decompression_PublicResponseBody/enabled_manual_deflate",
+    "TestReqHTTP3Decompression_PublicResponseBody/disabled_identity",
+    "TestReqHTTP3Decompression_PublicResponseBody/disabled_manual_gzip",
+    "TestReqHTTP3Decompression_PublicResponseBody/disabled_manual_deflate",
+    "TestReqHTTP3Decompression_PublicResponseBody/enabled_automatic_gzip",
+    "TestReqHTTP3Decompression_PublicResponseBody/enabled_unknown_coding",
+    "TestReqHTTP3Decompression_PublicResponseBody/disabled_unknown_coding",
+    "TestReqHTTP3Decompression_PublicResponseBody/enabled_identity_coding",
+    "TestReqHTTP3Decompression_PublicResponseBody/disabled_identity_coding"
+  ],
+  "http3DecompressionCount": 11,
+  "deflateCloseWirePackage": "github.com/imroc/req/v3",
+  "deflateCloseWireLeaves": [
+    "TestReqHTTP3DeflateClose_PublicStreamRetirement/unread_close",
+    "TestReqHTTP3DeflateClose_PublicStreamRetirement/partial_read_close"
+  ],
+  "deflateCloseWireCount": 2,
+  "deflateCloseUnitPackage": "github.com/imroc/req/v3/internal/compress",
+  "deflateCloseUnitLeaves": [
+    "TestReqDeflateClose_ResourcesAndErrors/unread_success",
+    "TestReqDeflateClose_ResourcesAndErrors/unread_body_error",
+    "TestReqDeflateClose_ResourcesAndErrors/initialized_success",
+    "TestReqDeflateClose_ResourcesAndErrors/decoder_error",
+    "TestReqDeflateClose_ResourcesAndErrors/body_error",
+    "TestReqDeflateClose_ResourcesAndErrors/both_errors_decoder_first",
+    "TestReqDeflateClose_ResourcesAndErrors/repeated_initialized_close"
+  ],
+  "deflateCloseUnitCount": 7,
   "http2FrameContractPackage": "github.com/imroc/req/v3/internal/http2",
   "http2FrameContractLeaves": [
     "TestReqHTTP2FrameContract_WriterWire/rst",

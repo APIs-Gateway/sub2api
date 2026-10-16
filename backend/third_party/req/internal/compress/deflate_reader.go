@@ -26,10 +26,15 @@ func (df *DeflateReader) Read(p []byte) (n int, err error) {
 }
 
 func (df *DeflateReader) Close() error {
+	var decoderErr error
 	if df.dr != nil {
-		return df.dr.Close()
+		decoderErr = df.dr.Close()
 	}
-	return df.Body.Close()
+	bodyErr := df.Body.Close()
+	if decoderErr != nil {
+		return decoderErr
+	}
+	return bodyErr
 }
 
 func (df *DeflateReader) GetUnderlyingBody() io.ReadCloser {
