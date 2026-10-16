@@ -103,7 +103,7 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 180,
+  "totalNamedLeaves": 189,
   "http1Package": "github.com/imroc/req/v3",
   "http1Leaves": [
     "TestReqHTTP1Lifecycle_ResponseBody/chunked_trailers_reuse",
@@ -229,5 +229,22 @@
     "TestReqHTTP3Decompression_PublicResponseBody/enabled_identity_coding",
     "TestReqHTTP3Decompression_PublicResponseBody/disabled_identity_coding"
   ],
-  "http3DecompressionCount": 11
+  "http3DecompressionCount": 11,
+  "deflateCloseWirePackage": "github.com/imroc/req/v3",
+  "deflateCloseWireLeaves": [
+    "TestReqHTTP3DeflateClose_PublicStreamRetirement/unread_close",
+    "TestReqHTTP3DeflateClose_PublicStreamRetirement/partial_read_close"
+  ],
+  "deflateCloseWireCount": 2,
+  "deflateCloseUnitPackage": "github.com/imroc/req/v3/internal/compress",
+  "deflateCloseUnitLeaves": [
+    "TestReqDeflateClose_ResourcesAndErrors/unread_success",
+    "TestReqDeflateClose_ResourcesAndErrors/unread_body_error",
+    "TestReqDeflateClose_ResourcesAndErrors/initialized_success",
+    "TestReqDeflateClose_ResourcesAndErrors/decoder_error",
+    "TestReqDeflateClose_ResourcesAndErrors/body_error",
+    "TestReqDeflateClose_ResourcesAndErrors/both_errors_decoder_first",
+    "TestReqDeflateClose_ResourcesAndErrors/repeated_initialized_close"
+  ],
+  "deflateCloseUnitCount": 7
 }

@@ -13,10 +13,9 @@ Archive SHA256:
 
 The original archive contains 132 files and 1,109,806 uncompressed bytes.
 `UPSTREAM-MANIFEST.json` records every original file's exact SHA256 and size.
-The seven declared production adaptations leave 125 of 132 original files
-byte-identical to that archive. The original module metadata,
-browser presets, TLS, HTTP/3, proxy, retry and transport option implementations
-are retained.
+The ten declared production adaptations leave 122 of 132 original files
+byte-identical to that archive. The manifest lists every adapted path and its
+candidate hash. The original module metadata and browser presets are retained.
 
 ## Official repair sources
 
@@ -144,9 +143,37 @@ socket. It does not require cancellation to immediately close an in-flight dial.
 
 All97 leaves require actual named JSON RUN/PASS events and the full selected
 original-package race suite. These fixtures do not change production code or
-waive full-PR Codecov85. The separate seven-repair-block85 gate and raw profiles
+waive full-PR Codecov85. The separate per-adaptation repair-block85 gate and raw profiles
 remain intact. Candidate tests and their inventories are not passing evidence;
 new exact-head remote validation and independent review remain required.
+
+## Public HTTP/3 TLS, response bodies and deflate Close
+
+Real loopback QUIC peers exercise the public optional HTTP/3 path. A verified
+certificate failure established that the private transport's TLS field shadowed
+the shared public options; the declared `internal/http3/transport.go` adaptation
+uses shared TLS options only when no explicit private override exists.
+
+[CI run 38735340631](https://github.com/APIs-Gateway/sub2api/actions/runs/38735340631)
+established three actual response body failures under public automatic
+decompression: nil unencoded body and empty manually negotiated gzip/deflate
+payloads. The declared `internal/http3/stream.go` adaptation retains the wire
+body and replaces it only when a supported decoder exists. Unknown and explicit
+identity codings preserve their body, encoding, length and Uncompressed state.
+
+[CI run 38737227705](https://github.com/APIs-Gateway/sub2api/actions/runs/38737227705)
+then established that partially reading deflate and closing the body left a real
+nonfinal QUIC response stream open with the caller context still live. Unread
+Close correctly delivered remote H3_REQUEST_CANCELLED. The declared
+`internal/compress/deflate_reader.go` candidate always closes the underlying
+body after decoder Close, retaining decoder error priority and adding no shared
+state. The exact two wire cases remain mandatory. Seven narrow unit controls
+cover unread/initialized closure, both error sources and repeated Close.
+
+All180 preceding required leaves plus these nine controls require189 actual
+named/all RUN/PASS events. Remote race suites, all ten repair-block85 results
+and independent review remain required. These optional public-library contracts
+do not establish default gateway HTTP/3 traffic.
 
 ## Cold/warm module-cache identity regression
 
@@ -196,7 +223,7 @@ version witness.
 
 The existing CI checks and Codecov 85% patch threshold remain required. Exact
 upstream hashes identify unchanged imported source; the actual adapted source
-lines in each of all seven adapted production files need actual added-block
+lines in each of all ten adapted production files need actual added-block
 coverage of at least85% and independent review. A blanket coverage exclusion or a
 clean vulnerability database scan does not prove the private copy is fixed.
 Stage the complete frozen repository and shared fixtures for remote validation.

@@ -25,7 +25,7 @@ grep -q 'go1.26.9 ' "$evidence/go-version.txt"
 # New private H3 contract sources are formatted and checked only in remote CI.
 gofmt -l third_party/req/internal/http3/frame_contract_test.go third_party/req/internal/http3/header_contract_test.go third_party/req/internal/http3/request_writer_contract_test.go > "$evidence/http3-contract-gofmt.list"
 test ! -s "$evidence/http3-contract-gofmt.list"
-gofmt -l third_party/req/http3_wire_peer_test.go third_party/req/http3_wire_contract_test.go third_party/req/http3_wire_cancel_test.go third_party/req/http3_wire_tls_test.go third_party/req/http3_wire_decompression_test.go third_party/req/internal/http3/tls_config_contract_test.go third_party/req/internal/http3/transport.go third_party/req/internal/http3/stream.go > "$evidence/http3-wire-gofmt.list"
+gofmt -l third_party/req/http3_wire_peer_test.go third_party/req/http3_wire_contract_test.go third_party/req/http3_wire_cancel_test.go third_party/req/http3_wire_tls_test.go third_party/req/http3_wire_decompression_test.go third_party/req/internal/http3/tls_config_contract_test.go third_party/req/internal/http3/transport.go third_party/req/internal/http3/stream.go third_party/req/internal/compress/deflate_reader.go third_party/req/internal/compress/deflate_close_test.go > "$evidence/http3-wire-gofmt.list"
 test ! -s "$evidence/http3-wire-gofmt.list"
 go list -m -json all > "$evidence/modules.json"
 go list -json "$module/..." > "$evidence/packages.json"
@@ -33,7 +33,7 @@ python3 "$checker" packages "$backend" "$evidence"
 gofmt -d third_party/req/internal/http2/{flow,transport,frame}.go third_party/req/internal/http2/{flow,transport,frame}_security_test.go third_party/req/transport_security_test.go third_party/req/internal/dump/{dump.go,dump_concurrency_test.go} third_party/req/{request,response,trace,dump_concurrency_test,trace_concurrency_test,http1_lifecycle_test,http1_upload_test,proxy_lifecycle_test}.go > "$evidence/gofmt.diff"
 test ! -s "$evidence/gofmt.diff"
 # -p bounds compiler parallelism; -parallel bounds tests within each package.
-go test -p=1 -parallel=1 -race -count=1 -timeout=10m -json -run '^(TestReqHTTP2Security_|TestDumper|TestReqDumpSecurity_|TestReqTraceSecurity_|TestReqHTTP1Lifecycle_|TestReqProxyLifecycle_|TestReqHTTP3Contract_|TestReqHTTP3Wire_|TestReqHTTP3PublicTLS_|TestReqHTTP3TLSControl_|TestReqHTTP3Decompression_)' -covermode=atomic -coverpkg="$module/..." -coverprofile="$evidence/named.raw.out" "$private" "$module/internal/dump" "$module" "$module/internal/http3" > "$evidence/named.json" 2> "$evidence/named.stderr"
+go test -p=1 -parallel=1 -race -count=1 -timeout=10m -json -run '^(TestReqHTTP2Security_|TestDumper|TestReqDumpSecurity_|TestReqTraceSecurity_|TestReqHTTP1Lifecycle_|TestReqProxyLifecycle_|TestReqHTTP3Contract_|TestReqHTTP3Wire_|TestReqHTTP3PublicTLS_|TestReqHTTP3TLSControl_|TestReqHTTP3Decompression_|TestReqHTTP3DeflateClose_|TestReqDeflateClose_)' -covermode=atomic -coverpkg="$module/..." -coverprofile="$evidence/named.raw.out" "$private" "$module/internal/dump" "$module" "$module/internal/http3" "$module/internal/compress" > "$evidence/named.json" 2> "$evidence/named.stderr"
 python3 "$checker" named "$backend" "$evidence"
 # Wildcard deliberately omits the original internal/testdata helper suite.
 # Its cert_test.go lacks an io import; retain both original files verbatim.

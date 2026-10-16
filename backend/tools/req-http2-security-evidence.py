@@ -87,7 +87,10 @@ def verify_named(backend, evidence, filename):
             "Retain all11 public and private HTTP3 TLS controls")
     require(expected["http3DecompressionCount"] == 11,
             "Require all11 public HTTP3 body/decompression and opaque coding controls")
-    kinds = original_kinds + ("http3Contract", "http3Wire", "http3PublicTLS", "http3TLSControl", "http3Decompression")
+    require(expected["deflateCloseWireCount"] == 2 and expected["deflateCloseUnitCount"] == 7,
+            "Require both real HTTP3 deflate close cases plus7 close/error unit controls")
+    kinds = original_kinds + ("http3Contract", "http3Wire", "http3PublicTLS", "http3TLSControl", "http3Decompression",
+                              "deflateCloseWire", "deflateCloseUnit")
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
     for kind in kinds:
@@ -103,7 +106,8 @@ def verify_named(backend, evidence, filename):
     # Detect new security leaves accidentally omitted from the frozen inventory.
     prefixes = ("TestReqHTTP2Security_", "TestDumper", "TestReqTraceSecurity_", "TestReqDumpSecurity_",
                 "TestReqHTTP1Lifecycle_", "TestReqProxyLifecycle_", "TestReqHTTP3Contract_", "TestReqHTTP3Wire_",
-                "TestReqHTTP3PublicTLS_", "TestReqHTTP3TLSControl_", "TestReqHTTP3Decompression_")
+                "TestReqHTTP3PublicTLS_", "TestReqHTTP3TLSControl_", "TestReqHTTP3Decompression_",
+                "TestReqHTTP3DeflateClose_", "TestReqDeflateClose_")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")
@@ -223,17 +227,18 @@ def main():
         adaptations = set(manifest["allowedProductionAdaptations"])
         require(adaptations == {"internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
                                 "internal/dump/dump.go", "request.go", "response.go", "trace.go",
-                                "internal/http3/transport.go", "internal/http3/stream.go"},
+                                "internal/http3/transport.go", "internal/http3/stream.go",
+                                "internal/compress/deflate_reader.go"},
                 "Unexpected or missing production adaptation")
-        require(len(manifest["adaptedCandidateFiles"]) == 9 and
+        require(len(manifest["adaptedCandidateFiles"]) == 10 and
                 {v["path"] for v in manifest["adaptedCandidateFiles"]} == adaptations,
                 "Incomplete adapted source hash inventory")
         production = {v["path"] for v in manifest["originalFiles"]
                       if v["path"].endswith(".go") and not v["path"].endswith("_test.go")}
         require(len(production) == 89 and adaptations <= production,
-                "Retain all89 original production Go files and exactly9 declared adaptations")
-        require(manifest["originalUnmodifiedFileCount"] == 123,
-                "Retain exactly123 unchanged originals after9 declared production adaptations")
+                "Retain all89 original production Go files and exactly10 declared adaptations")
+        require(manifest["originalUnmodifiedFileCount"] == 122,
+                "Retain exactly122 unchanged originals after10 declared production adaptations")
         for item in manifest["originalFiles"]:
             if item["path"] not in adaptations:
                 data = (controlled / item["path"]).read_bytes()
@@ -343,7 +348,7 @@ def coverage(backend, evidence):
     result = []
     adapted = ("internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
                "internal/dump/dump.go", "request.go", "response.go", "trace.go", "internal/http3/transport.go",
-               "internal/http3/stream.go")
+               "internal/http3/stream.go", "internal/compress/deflate_reader.go")
     for relative in adapted:
         old = (evidence / "original" / relative).read_text().splitlines()
         new = (backend / "third_party/req" / relative).read_text().splitlines()
