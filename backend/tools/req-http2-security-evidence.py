@@ -83,7 +83,12 @@ def verify_named(backend, evidence, filename):
             "Retain all55 first privateHTTP3 parser/writer contract leaves")
     require(expected["http3WireCount"] == 6,
             "Retain all6 original public HTTP3 wire contract leaves")
-    kinds = original_kinds + ("http3Contract", "http3Wire", "http3PublicTLS", "http3TLSControl", "http2FrameContract")
+    retained_kinds = original_kinds + ("http3Contract", "http3Wire", "http3PublicTLS", "http3TLSControl", "http2FrameContract")
+    require(sum(expected[kind + "Count"] for kind in retained_kinds) == 318,
+            "Retain all318 pre-transfer mandatory leaves")
+    require(expected["http1TransferContractCount"] == 30 and expected["totalNamedLeaves"] == 348,
+            "Require30 new private HTTP1 transfer leaves and348 total")
+    kinds = retained_kinds + ("http1TransferContract",)
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
     for kind in kinds:
@@ -99,7 +104,7 @@ def verify_named(backend, evidence, filename):
     # Detect new security leaves accidentally omitted from the frozen inventory.
     prefixes = ("TestReqHTTP2Security_", "TestDumper", "TestReqTraceSecurity_", "TestReqDumpSecurity_",
                 "TestReqHTTP1Lifecycle_", "TestReqProxyLifecycle_", "TestReqHTTP3Contract_", "TestReqHTTP3Wire_",
-                "TestReqHTTP3PublicTLS_", "TestReqHTTP3TLSControl_", "TestReqHTTP2FrameContract_")
+                "TestReqHTTP3PublicTLS_", "TestReqHTTP3TLSControl_", "TestReqHTTP2FrameContract_", "TestReqHTTP1Transfer_")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")

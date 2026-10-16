@@ -103,7 +103,7 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 318,
+  "totalNamedLeaves": 348,
   "http1Package": "github.com/imroc/req/v3",
   "http1Leaves": [
     "TestReqHTTP1Lifecycle_ResponseBody/chunked_trailers_reuse",
@@ -367,5 +367,39 @@
     "TestReqHTTP2FrameContract_MetaStringLength/big_string_okay",
     "TestReqHTTP2FrameContract_MetaStringLength/big_string_error"
   ],
-  "http2FrameContractCount": 149
+  "http2FrameContractCount": 149,
+  "http1TransferContractPackage": "github.com/imroc/req/v3",
+  "http1TransferContractCount": 30,
+  "http1TransferContractLeaves": [
+    "TestReqHTTP1Transfer_BadTrailer",
+    "TestReqHTTP1Transfer_FinalChunkEOF",
+    "TestReqHTTP1Transfer_ParseTransferEncoding",
+    "TestReqHTTP1Transfer_ParseContentLength",
+    "TestReqHTTP1Transfer_WriterWireAndOwnership/buffer/known_length",
+    "TestReqHTTP1Transfer_WriterWireAndOwnership/buffer/unknown_length",
+    "TestReqHTTP1Transfer_WriterWireAndOwnership/buffer/chunked_trailer",
+    "TestReqHTTP1Transfer_WriterWireAndOwnership/string/known_length",
+    "TestReqHTTP1Transfer_WriterWireAndOwnership/string/unknown_length",
+    "TestReqHTTP1Transfer_WriterWireAndOwnership/string/chunked_trailer",
+    "TestReqHTTP1Transfer_WriterWireAndOwnership/file/known_length",
+    "TestReqHTTP1Transfer_WriterWireAndOwnership/file/unknown_length",
+    "TestReqHTTP1Transfer_WriterWireAndOwnership/file/chunked_trailer",
+    "TestReqHTTP1Transfer_WriterFailuresCloseBody/short_body",
+    "TestReqHTTP1Transfer_WriterFailuresCloseBody/long_body",
+    "TestReqHTTP1Transfer_WriterFailuresCloseBody/read_error",
+    "TestReqHTTP1Transfer_WriterFailuresCloseBody/write_error",
+    "TestReqHTTP1Transfer_WriterFailuresCloseBody/close_error",
+    "TestReqHTTP1Transfer_ResponseFraming/length",
+    "TestReqHTTP1Transfer_ResponseFraming/same_duplicate_length",
+    "TestReqHTTP1Transfer_ResponseFraming/conflicting_length",
+    "TestReqHTTP1Transfer_ResponseFraming/signed_length",
+    "TestReqHTTP1Transfer_ResponseFraming/negative_length",
+    "TestReqHTTP1Transfer_ResponseFraming/overflow_length",
+    "TestReqHTTP1Transfer_ResponseFraming/comma_length",
+    "TestReqHTTP1Transfer_ResponseFraming/chunked_overrides_length",
+    "TestReqHTTP1Transfer_ResponseFraming/mixed_case_chunked",
+    "TestReqHTTP1Transfer_ResponseFraming/duplicate_encoding",
+    "TestReqHTTP1Transfer_ResponseFraming/encoding_list",
+    "TestReqHTTP1Transfer_ResponseFraming/identity_encoding"
+  ]
 }
