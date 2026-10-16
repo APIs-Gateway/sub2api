@@ -1220,7 +1220,10 @@ func (s *PaymentService) RetryFulfillment(ctx context.Context, oid int64) error 
 // assignment, so a retry never credits twice. FAILED orders stay manual.
 func (s *PaymentService) RecoverStuckFulfillments(ctx context.Context) (int, error) {
 	now := time.Now()
-	staleLease := max(balanceFulfillmentLeaseDuration, subscriptionFulfillmentLeaseDuration)
+	staleLease := balanceFulfillmentLeaseDuration
+	if subscriptionFulfillmentLeaseDuration > staleLease {
+		staleLease = subscriptionFulfillmentLeaseDuration
+	}
 	orders, err := s.entClient.PaymentOrder.Query().
 		Where(
 			paymentorder.PaidAtNotNil(),
