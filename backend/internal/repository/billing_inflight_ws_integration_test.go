@@ -25,6 +25,7 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	redisclient "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -239,6 +240,9 @@ func (b *wsInflightBillingObserver) StageBillingInflight(ctx context.Context, us
 }
 
 type wsInflightFixture struct {
+	cfg         *config.Config
+	rdb         *redisclient.Client
+	apiKeys     *service.APIKeyService
 	pool        *service.UsageRecordWorkerPool
 	accounts    service.AccountRepository
 	accountID   int64
@@ -372,7 +376,7 @@ func newWSInflightFixture(t *testing.T, mode string, source string, prices map[s
 			}
 		}
 	})
-	return &wsInflightFixture{pool: pool, accounts: accounts, accountID: account.ID, groupID: group.ID, userID: user.ID, key: key, gateway: gateway, billing: billing, router: router, server: server, provider: p, httpClient: httpClient, billingRepo: observedBilling}
+	return &wsInflightFixture{cfg: cfg, rdb: rdb, apiKeys: apiKeys, pool: pool, accounts: accounts, accountID: account.ID, groupID: group.ID, userID: user.ID, key: key, gateway: gateway, billing: billing, router: router, server: server, provider: p, httpClient: httpClient, billingRepo: observedBilling}
 }
 func (f *wsInflightFixture) dial(t *testing.T) *coderws.Conn {
 	t.Helper()
