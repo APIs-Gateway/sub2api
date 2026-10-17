@@ -379,6 +379,7 @@ def check(repo, evidence, head, base, profile_root=None):
     integrity = [{'path': file['path'], 'problems': file['integrityProblems']} for file in files if file['integrityProblems']]
     threshold = denominator == 0 or 100 * line_counts['hit'] >= 85 * denominator
     report = {'identity': frozen['identity'], 'profiles': profiles,
+              'profileCompletenessDefinition': 'All four mandatory profiles must exist. Expected source block completeness is checked on their union; individual profiles legitimately cover different test scopes. Removing a block from one profile is harmless when another retains that same expected block.',
               'metric': 'conservative lower bound for complete Git changed backend Go instrumented token lines; NOT Codecov line coverage',
               'lineDefinition': 'An added head line is in the denominator when a non-comment Go token overlaps an independent Go cover block. It is hit only if every such overlapping block has positive coverage in the union of four mandatory profiles. Uncompiled/unprofiled blocks count as zero. A partial line contributes zero to the numerator.',
               'targetPercent': 85, 'coveredLines': line_counts['hit'], 'instrumentedChangedLines': denominator,

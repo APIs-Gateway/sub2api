@@ -40,7 +40,15 @@ class CompleteGitCoverageControls(unittest.TestCase):
         shutil.copyfile(HERE.parents[1] / 'codecov.yml', cls.repo / 'codecov.yml')
         (cls.repo / 'backend/go.mod').write_text('module github.com/Wei-Shaw/sub2api\n\ngo 1.26.9\n\nrequire github.com/imroc/req/v3 v3.0.0\nreplace github.com/imroc/req/v3 => ./third_party/req\n')
         (cls.repo / 'backend/third_party/req/go.mod').write_text('module github.com/imroc/req/v3\n\ngo 1.26.9\n')
-        (cls.repo / 'backend/third_party/req/value.go').write_text('package req\nfunc Value() int { return 7 }\n')
+        (cls.repo / 'backend/third_party/req/value.go').write_text(
+            'package req\n'
+            'func Value() int { return Choose(true) + Choose(false) + 4 }\n'
+            'func Choose(flag bool) int {\n'
+            'if flag {\n'
+            'return 1\n'
+            '}\n'
+            'return 2\n'
+            '}\n')
         (cls.repo / 'backend/value.go').write_text('package app\nimport req "github.com/imroc/req/v3"\nfunc Value() int { return req.Value() }\n')
         (cls.repo / 'backend/value_test.go').write_text('package app\nimport "testing"\nfunc TestValue(t *testing.T) { if Value() != 7 { t.Fatal("value") } }\n')
         # More than 100 changed source files must all remain visible, even when
@@ -102,8 +110,23 @@ class CompleteGitCoverageControls(unittest.TestCase):
             self.check()
 
     def test_deleted_block_in_compiled_file(self):
-        self.rewrite_profiles(lambda text: '\n'.join(line for line in text.splitlines() if '/req/v3/value.go:' not in line) + '\n')
-        with self.assertRaisesRegex(coverage.IntegrityError, 'coverage profile/source integrity failed'):
+        # Keep this compiled file represented, removing just one expected block
+        # from every profile in the union. This must fail the independent
+        # all-represented-file baseline, not just a whole-file presence check.
+        original = (self.profiles / coverage.PROFILES[0]).read_text()
+        candidates = [line for line in original.splitlines() if '/req/v3/value.go:' in line]
+        self.assertGreater(len(candidates), 1)
+        removed = candidates[0]
+
+        def remove_exactly_one(text):
+            lines = text.splitlines()
+            self.assertEqual(lines.count(removed), 1)
+            changed = [line for line in lines if line != removed]
+            self.assertEqual(len(changed), len(lines) - 1)
+            self.assertTrue(any('/req/v3/value.go:' in line for line in changed))
+            return '\n'.join(changed) + '\n'
+        self.rewrite_profiles(remove_exactly_one)
+        with self.assertRaisesRegex(coverage.IntegrityError, 'legacy instrumenter and actual package coverage coordinates differ'):
             self.check()
 
     def test_corrupted_coordinates_fail_real_instrumenter_baseline(self):

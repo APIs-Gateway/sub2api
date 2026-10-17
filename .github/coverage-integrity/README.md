@@ -33,6 +33,13 @@ unit/integration duplicate records; these are called the actual uploaded profile
 not untouched raw test profiles. The req security artifact separately retains its
 original `named.raw.out` and `all.raw.out`.
 
+All four profiles are mandatory, but they cover different test scopes. Expected
+source block completeness is checked on their **union**, not separately on each
+profile. If a block is absent from one profile but another retains it, that is
+valid. The missing-block control deletes exactly one block from all four profiles
+of a real compiled multi-block file while keeping that file represented; the
+independent instrumenter baseline must then detect the incomplete block universe.
+
 The **single additional threshold** is a conservative lower bound of at least 85%
 for complete Git changed backend Go instrumented token lines:
 
