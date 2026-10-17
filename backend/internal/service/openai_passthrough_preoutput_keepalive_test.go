@@ -29,6 +29,19 @@ func waitForPassthroughKeepaliveBeats() {
 	time.Sleep(3 * passthroughKeepaliveTestInterval)
 }
 
+// The observer is installed before start. Only the timer-driven underlying
+// Flush releases this wait; callers stop the producer before reading rec.
+func waitForPassthroughKeepaliveFlush(t *testing.T, flushed <-chan struct{}) {
+	t.Helper()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-flushed:
+	case <-timer.C:
+		t.Fatal("passthrough keepalive did not flush before the deadline")
+	}
+}
+
 func newPassthroughKeepaliveTestContext(t *testing.T) (*gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -53,9 +66,12 @@ func TestStartOpenAISSEKeepalive_WorksWithoutCompactMarker(t *testing.T) {
 
 	// 内部入口不检查标记,应当真的开始打拍。
 	c, rec = newPassthroughKeepaliveTestContext(t)
+	flushed := make(chan struct{})
+	c.Writer = &compactKeepaliveSignalWriter{ResponseWriter: c.Writer, flushed: flushed}
 	stop = startOpenAISSEKeepalive(c, passthroughKeepaliveTestInterval)
 	defer stop()
-	waitForPassthroughKeepaliveBeats()
+	t.Cleanup(stop)
+	waitForPassthroughKeepaliveFlush(t, flushed)
 
 	require.True(t, StopOpenAICompactSSEKeepaliveCommitted(c), "心跳应当提交响应头")
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -69,9 +85,12 @@ func TestStartOpenAISSEKeepalive_WorksWithoutCompactMarker(t *testing.T) {
 // 透传路径的 pre-output failover 完全依赖它。
 func TestPassthroughKeepaliveDoesNotBlockPreOutputFailover(t *testing.T) {
 	c, rec := newPassthroughKeepaliveTestContext(t)
+	flushed := make(chan struct{})
+	c.Writer = &compactKeepaliveSignalWriter{ResponseWriter: c.Writer, flushed: flushed}
 	stop := startOpenAISSEKeepalive(c, passthroughKeepaliveTestInterval)
 	defer stop()
-	waitForPassthroughKeepaliveBeats()
+	t.Cleanup(stop)
+	waitForPassthroughKeepaliveFlush(t, flushed)
 	require.True(t, StopOpenAICompactSSEKeepaliveCommitted(c))
 	require.NotZero(t, rec.Body.Len(), "前提:心跳确实写出了字节")
 
@@ -89,8 +108,11 @@ func TestPassthroughKeepaliveDoesNotBlockPreOutputFailover(t *testing.T) {
 // 停拍之后不得再有心跳字节写出 —— 主循环接管 ResponseWriter 的前提。
 func TestPassthroughKeepaliveStopsBeforeHandingOverWriter(t *testing.T) {
 	c, rec := newPassthroughKeepaliveTestContext(t)
+	flushed := make(chan struct{})
+	c.Writer = &compactKeepaliveSignalWriter{ResponseWriter: c.Writer, flushed: flushed}
 	stop := startOpenAISSEKeepalive(c, passthroughKeepaliveTestInterval)
-	waitForPassthroughKeepaliveBeats()
+	t.Cleanup(stop)
+	waitForPassthroughKeepaliveFlush(t, flushed)
 	stop()
 
 	before := rec.Body.String()
