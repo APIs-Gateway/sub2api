@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
@@ -20,7 +22,22 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.6'
+          go version | grep -q 'go1.26.9'
+      - name: Controlled req HTTP2 and dump/trace actual main-MVS tests, old-red witness and fix-block coverage
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+          REQ_SECURITY_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          REQ_SECURITY_EVIDENCE: ${{ runner.temp }}/req-http2-security-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash tools/req-http2-security-ci.sh
+      - name: Preserve controlled req complete actual evidence and raw atomic profiles
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: req-http2-security-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/req-http2-security-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
       - name: Responses namespace contracts and lazy span boundaries (race)
         working-directory: backend
         run: go test -tags=unit -race -parallel=1 -count=1 -timeout=8m -v -run '(?i)namespace' ./internal/service/
@@ -63,6 +80,15 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=unit -race -count=1 -v -run '^TestAnthropicStartOutput_' ./internal/service/
+      - name: Anthropic pre-visible transport heartbeat fixture formatting (remote only)
+        run: |
+          gofmt -d backend/internal/service/anthropic_visible_output_test.go
+          test -z "$(gofmt -l backend/internal/service/anthropic_visible_output_test.go)"
+      - name: Anthropic pre-visible actual transport flush and retry metering (repeated race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=10 -timeout=2m -v -run '^TestAnthropicVisibleOutput_BeforeVisibleHeartbeatIsOnlyTransportComment$' ./internal/service/
       - name: Anthropic start output actual wallet and card settlement (PG Redis race)
         working-directory: backend
         env:
@@ -127,6 +153,43 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=unit -race -count=1 -v -run '^TestResponsesRefusal_|^TestResponsesToChatCompletions_RefusalPreserved|^TestResponsesEventToChatChunks_RefusalDelta|^TestBufferedResponseAccumulator_RefusalRebuiltFromDeltas' ./internal/pkg/apicompat/ ./internal/service/
+      - name: Owned Responses message source and fixture formatting
+        working-directory: backend
+        run: |
+          files="internal/pkg/apicompat/anthropic_to_responses_response.go internal/pkg/apicompat/chatcompletions_responses_bridge.go internal/pkg/apicompat/responses_stream_event_wire.go internal/pkg/apicompat/responses_to_chatcompletions.go internal/pkg/apicompat/types.go internal/pkg/apicompat/responses_owned_message.go internal/pkg/apicompat/responses_owned_message_wire_test.go internal/pkg/apicompat/responses_owned_message_state_test.go internal/service/openai_gateway_service.go internal/handler/openai_owned_responses_message_wire_test.go internal/handler/openai_owned_responses_part_index_test.go"
+          gofmt -d $files
+          test -z "$(gofmt -l $files)"
+      - name: Owned Responses actual public HTTP and converter identity contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          go test -tags=unit -race -count=1 -timeout=10m -coverpkg=./internal/handler,./internal/service,./internal/pkg/apicompat -covermode=atomic -coverprofile=coverage-owned-responses-message.out -json -run '^TestOwnedResponses(Message|PartIndex)_' ./internal/handler/ ./internal/pkg/apicompat/ | tee owned-message-tests.jsonl
+          python3 - <<'PYOWNED'
+          import json, pathlib
+          events = [json.loads(line) for line in pathlib.Path('owned-message-tests.jsonl').read_text().splitlines() if line.startswith('{')]
+          finished = {(e['Package'], e['Test']):e['Action'] for e in events if 'Test' in e and e['Action'] in ('pass','fail','skip')}
+          leaves = {k:v for k,v in finished.items() if not any(other[0] == k[0] and other[1].startswith(k[1]+'/') for other in finished)}
+          assert len(leaves) == 102 and all(v == 'pass' for v in leaves.values()), ('actual owned wire results',len(leaves))
+          for prefix,count in (('PublicHTTP/',68),('PublicConverters/',9),('PublicAccumulator/',5),('StateIdentity/',4)):
+              assert sum(k[1].startswith('TestOwnedResponsesMessage_') and prefix in k[1] for k in leaves) == count, ('actual case scope',prefix)
+          part_index = {k:v for k,v in leaves.items() if k[1].startswith('TestOwnedResponsesPartIndex_PublicHTTP/')}
+          assert len(part_index) == 16, ('actual part-index public controls', len(part_index))
+          print('ACTUAL owned message: 82 original public + 16 part-index public + 4 state controls PASS')
+          PYOWNED
+          test -s coverage-owned-responses-message.out
+          bash ./tools/normalize-go-coverprofile.sh coverage-owned-responses-message.out
+      - name: Preserve actual owned Responses test records and atomic profile
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: owned-responses-message-${{ github.run_id }}
+          path: |
+            backend/owned-message-tests.jsonl
+            backend/coverage-owned-responses-message.out
+          if-no-files-found: error
       - name: Responses refusal actual wallet and card settlement (PG Redis)
         working-directory: backend
         run: go test -tags=integration -count=1 -v -run '^TestResponsesRefusalHTTP_' ./internal/repository/
@@ -161,6 +224,53 @@ jobs:
       - name: Unit tests (converted Responses input recovery)
         working-directory: backend
         run: go test -tags=unit -count=1 -run '^TestStructuredInputRecovery_|^TestConvertedResponsesInputStringRejection|^TestForwardAsChatCompletions_(ResponsesSupportedFallsBack|StructuredInput)' -v ./internal/service/
+      - name: WebSocket subsequent-turn fresh funding and credential formatting
+        working-directory: backend
+        run: |
+          files="internal/handler/openai_gateway_handler.go internal/service/api_key_service.go internal/service/billing_cache_service.go internal/service/ws_turn_funding_test.go internal/repository/billing_inflight_ws_integration_test.go internal/repository/ws_turn_funding_integration_test.go"
+          gofmt -d $files
+          test -z "$(gofmt -l $files)"
+      - name: WebSocket subsequent-turn fresh credit and identity controls (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          go test -tags=unit -race -count=1 -timeout=10m -v -run '^TestWSTurnFunding_' ./internal/service/
+          go test -tags=unit -race -count=1 -timeout=10m -v -run '^(TestOpenAIResponsesWebSocket_BeforeRequestHookRecordsWSTurnInContext|TestOpenAIResponsesWebSocket_LaterTurnKeepsConnectionGroupWhenKeyMovesOrRefreshFails|TestOpenAIResponsesWebSocketV2PassthroughRejectsDisabledAccountBeforeSecondUpstreamTurn|TestOpenAIResponsesWebSocketV2PassthroughNonCyberTurnAllowsFollowup)$' ./internal/handler/
+      - name: WebSocket actual next-turn funding admission and once-only PG Redis settlement (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -parallel=1 -count=1 -timeout=15m -v -run '^TestWSTurnFundingWS_' ./internal/repository/
+      - name: Raw outer audio source and fixture formatting
+        working-directory: backend
+        run: |
+          files="internal/pkg/apicompat/chat_input_audio_raw.go internal/service/chat_input_audio_raw.go internal/service/gateway_forward_as_chat_completions.go internal/service/gemini_chat_completions_compat_service.go internal/service/openai_gateway_chat_completions.go internal/service/chat_input_audio_raw_audit_test.go internal/repository/chat_input_audio_raw_integration_test.go"
+          gofmt -d $files
+          test -z "$(gofmt -l $files)"
+      - name: Raw outer audio converted and preserved raw contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -parallel=1 -count=1 -timeout=10m -v -run '^TestChatInputAudioOuter_' ./internal/service/
+      - name: Raw outer audio public HTTP and actual wallet card funding (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -parallel=1 -count=1 -timeout=10m -v -run '^TestChatInputAudioOuterHTTP_' ./internal/repository/
+      - name: Responses account waiting registration ownership (race, four controls)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestAccountWaitRegistration_Ownership$' ./internal/service/
+      - name: Responses actual Redis waiting cap, ownership and capacity races
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          go test -tags=integration -race -coverpkg=./internal/handler,./internal/service -covermode=atomic -coverprofile=coverage-responses-queue.out -count=1 -timeout=8m -v -run '^TestGenericResponsesWaitQueue_RealRedis$' ./internal/handler/
+          test -s coverage-responses-queue.out
+          bash ./tools/normalize-go-coverprofile.sh coverage-responses-queue.out
       - name: Gemini audio known sibling required shapes and preserved filters (race)
         working-directory: backend
         env:
@@ -194,6 +304,16 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -tags=unit -race -count=1 -v -run '^TestHandleCCStreamingFromAnthropic_Ping|^TestCompatStream|^TestCompatProviderSSEError|^TestCompatReadersOversizedLine' ./internal/service/
+      - name: Astra Ultrafast forwarding, policy, live manifest and quote (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestAstraUltrafast_' ./internal/service/
+      - name: Astra Ultrafast actual HTTP WS wallet and card settlement (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestAstraUltrafastHTTP_' ./internal/repository/
       - name: Unit tests (race, matrix policy and shadow comparison)
         working-directory: backend
         env:
@@ -272,6 +392,8 @@ jobs:
             backend/coverage-unit.out
             backend/coverage-integration.out
             backend/coverage-setup-cli.out
+            backend/coverage-req-http2.out
+            backend/coverage-responses-queue.out
           if-no-files-found: ignore
           retention-days: 14
       - name: Responses input token regression tests (actual results)
@@ -285,7 +407,7 @@ jobs:
       - name: Upload backend coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          files: backend/coverage-unit.out,backend/coverage-integration.out,backend/coverage-setup-cli.out
+          files: backend/coverage-unit.out,backend/coverage-integration.out,backend/coverage-setup-cli.out,backend/coverage-req-http2.out,backend/coverage-responses-queue.out,backend/coverage-owned-responses-message.out
           flags: backend
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: APIs-Gateway/sub2api
@@ -331,9 +453,15 @@ jobs:
       - name: Username draft ownership, server synchronization and API error controls (actual components)
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/components/user/profile/__tests__/ProfileEditForm.draft.spec.ts src/components/user/profile/__tests__/ProfileEditForm.spec.ts
+      - name: Passthrough rule per-rule toggle serialization and late response contracts (actual component)
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/components/admin/__tests__/ErrorPassthroughRulesModal.toggle.spec.ts
       - name: Usage tooltip currency and equivalent-rate actual regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/UsageView.spec.ts src/views/user/__tests__/UsageView.servedGroup.spec.ts src/utils/__tests__/rateDisplay.spec.ts
+      - name: Antigravity exact Flash quota and retained usage controls (actual component)
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/components/account/__tests__/AccountUsageCell.spec.ts
       - name: Frontend typecheck and critical vitest
         run: make test-frontend
       - name: Custom Markdown actual page ordering and loading regressions
@@ -361,7 +489,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.6'
+          go version | grep -q 'go1.26.9'
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
