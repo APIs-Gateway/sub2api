@@ -1219,7 +1219,8 @@ func (s *PaymentService) RetryFulfillment(ctx context.Context, oid int64) error 
 // Fulfillment is idempotent on the order's redeem code / subscription
 // assignment, so a retry never credits twice. FAILED orders stay manual.
 func (s *PaymentService) RecoverStuckFulfillments(ctx context.Context) (int, error) {
-	now := time.Now()
+	// UTC to match the lease timestamps, which SQLite compares as text.
+	now := time.Now().UTC()
 	staleLease := balanceFulfillmentLeaseDuration
 	if subscriptionFulfillmentLeaseDuration > staleLease {
 		staleLease = subscriptionFulfillmentLeaseDuration

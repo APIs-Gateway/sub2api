@@ -76,7 +76,9 @@ func newStuckFulfillmentFixture(t *testing.T, client *dbent.Client) *stuckFulfil
 // with a matching redeem code that is optionally already used.
 func (fx *stuckFulfillmentFixture) seedOrder(t *testing.T, name, status string, age time.Duration, codeUsed bool) *dbent.PaymentOrder {
 	t.Helper()
-	at := time.Now().Add(-age)
+	// UTC like the lease writes: SQLite compares these timestamps as text and
+	// the package TestMain sets time.Local to Asia/Shanghai.
+	at := time.Now().UTC().Add(-age)
 	order, err := fx.client.PaymentOrder.Create().
 		SetUserID(fx.userID).
 		SetUserEmail("stuck-fulfillment@example.com").
