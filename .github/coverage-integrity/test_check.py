@@ -134,6 +134,15 @@ class CompleteGitCoverageControls(unittest.TestCase):
         with self.assertRaises(coverage.IntegrityError):
             self.check()
 
+    def test_one_profile_may_omit_block_retained_in_complete_union(self):
+        profile = self.profiles / coverage.PROFILES[0]
+        lines = profile.read_text().splitlines()
+        removed = next(line for line in lines if '/req/v3/value.go:' in line)
+        self.assertEqual(lines.count(removed), 1)
+        profile.write_text('\n'.join(line for line in lines if line != removed) + '\n')
+        self.check()
+        self.assertTrue(json.loads((self.evidence / 'report.json').read_text())['passed'])
+
     def test_source_bytes_changed(self):
         source = self.repo / 'backend/value.go'
         original = source.read_bytes()
