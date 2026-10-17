@@ -82,6 +82,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	if account.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(account.Extra) {
 		return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 	}
+	if err := rejectAmbiguousChatInputAudio(ctx, c, body, false); err != nil {
+		return nil, err
+	}
 
 	startTime := time.Now()
 

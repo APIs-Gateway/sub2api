@@ -97,6 +97,8 @@ type BillingCache interface {
 
 // ModelPricing 模型价格配置（per-token价格，与LiteLLM格式一致）
 type ModelPricing struct {
+	// UltrafastMultiplier belongs to the model, independently of priority prices.
+	UltrafastMultiplier                float64
 	InputPricePerToken                 float64 // 每token输入价格 (USD)
 	InputPricePerTokenPriority         float64 // priority service tier 下每token输入价格 (USD)
 	ImageInputPricePerToken            float64 // 图片输入 token 价格 (USD)，用于多模态 embedding 等图文不同价场景；为 0 时回退到 InputPricePerToken
@@ -206,6 +208,13 @@ func serviceTierCostMultiplier(serviceTier string) float64 {
 	default:
 		return 1.0
 	}
+}
+
+func configuredServiceTierMultiplier(serviceTier string, pricing *ModelPricing) float64 {
+	if pricing != nil && normalizeBillingServiceTier(serviceTier) == OpenAIFastTierUltrafast && pricing.UltrafastMultiplier > 0 {
+		return pricing.UltrafastMultiplier
+	}
+	return serviceTierCostMultiplier(serviceTier)
 }
 
 // UsageTokens 使用的token数量
@@ -1315,7 +1324,7 @@ func (s *BillingService) computeTokenBreakdown(
 			cacheReadPrice = pricing.CacheReadPricePerTokenPriority
 		}
 	} else {
-		tierMultiplier = serviceTierCostMultiplier(serviceTier)
+		tierMultiplier = configuredServiceTierMultiplier(serviceTier, pricing)
 	}
 
 	// Sol Fast is 2x the corresponding Standard context tier. Its explicit
@@ -1565,6 +1574,13 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 			cloned.OutputPricePerToken = deepseekFlashOffPeakOutputPrice
 			cloned.CacheReadPricePerToken = deepseekFlashOffPeakCacheRead
 		}
+		return &cloned
+	}
+	// Apply the tier to the selected base/interval price without overriding the
+	// operator's explicit prices (including zero) or long-context configuration.
+	if isOpenAIGPT6AstraModel(normalizeKnownOpenAICodexModel(model)) {
+		cloned := *pricing
+		cloned.UltrafastMultiplier = 6
 		return &cloned
 	}
 	isGPT56 := isOpenAIGPT56Model(model)

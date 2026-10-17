@@ -964,6 +964,34 @@ func (s *APIKeyService) CheckAPIKeyQuotaAndExpiry(apiKey *APIKey) error {
 	return nil
 }
 
+// RecheckWebSocketTurnIdentity reads the current credential directly, without
+// replacing the connection-bound group or its immutable billing identity.
+func (s *APIKeyService) RecheckWebSocketTurnIdentity(ctx context.Context, initial *APIKey) error {
+	if s == nil || s.apiKeyRepo == nil || initial == nil || initial.Key == "" {
+		return ErrInsufficientPerms
+	}
+	current, err := s.apiKeyRepo.GetByKeyForAuth(ctx, initial.Key)
+	if err != nil {
+		return err
+	}
+	if current == nil || current.ID != initial.ID || current.UserID != initial.UserID || current.User == nil || current.User.ID != initial.UserID {
+		return ErrInsufficientPerms
+	}
+	if !current.User.IsActive() {
+		return ErrUserNotActive
+	}
+	switch current.Status {
+	case StatusAPIKeyExpired:
+		return ErrAPIKeyExpired
+	case StatusAPIKeyQuotaExhausted:
+		return ErrAPIKeyQuotaExhausted
+	}
+	if !current.IsActive() {
+		return ErrInsufficientPerms
+	}
+	return s.CheckAPIKeyQuotaAndExpiry(current)
+}
+
 // UpdateQuotaUsed updates the quota_used field after a request
 // Also checks if quota is exhausted and updates status accordingly
 func (s *APIKeyService) UpdateQuotaUsed(ctx context.Context, apiKeyID int64, cost float64) error {
