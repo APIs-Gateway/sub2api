@@ -94,9 +94,9 @@ def verify_named(backend, evidence, filename):
     require(sum(expected[kind + "Count"] for kind in retained_kinds) == 338,
             "Retain all338 reviewed baseline leaves")
     require(expected["http2FrameContractCount"] == 149 and expected["http1TransferContractCount"] == 30 and
-            expected["totalNamedLeaves"] == 368,
-            "Retain149 HTTP2 frame leaves plus30 HTTP1 transfer leaves,368 total")
-    kinds = retained_kinds + ("http1TransferContract",)
+            expected["http2TransportContractCount"] == 25 and expected["totalNamedLeaves"] == 393,
+            "Retain149 HTTP2 frame leaves plus30 HTTP1 transfer and25 HTTP2 transport leaves,393 total")
+    kinds = retained_kinds + ("http1TransferContract", "http2TransportContract")
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
     for kind in kinds:
@@ -113,7 +113,8 @@ def verify_named(backend, evidence, filename):
     prefixes = ("TestReqHTTP2Security_", "TestDumper", "TestReqTraceSecurity_", "TestReqDumpSecurity_",
                 "TestReqHTTP1Lifecycle_", "TestReqProxyLifecycle_", "TestReqHTTP3Contract_", "TestReqHTTP3Wire_",
                 "TestReqHTTP3PublicTLS_", "TestReqHTTP3TLSControl_", "TestReqHTTP3Decompression_",
-                "TestReqHTTP3DeflateClose_", "TestReqDeflateClose_", "TestReqHTTP2FrameContract_", "TestReqHTTP1Transfer_")
+                "TestReqHTTP3DeflateClose_", "TestReqDeflateClose_", "TestReqHTTP2FrameContract_", "TestReqHTTP1Transfer_",
+                "TestReqHTTP2TransportContract_")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")

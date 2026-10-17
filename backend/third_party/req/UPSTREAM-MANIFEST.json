@@ -728,11 +728,13 @@
     "internal/http3/tls_config_contract_test.go",
     "internal/compress/deflate_close_test.go",
     "internal/http2/frame_contract_test.go",
-    "transfer_contract_test.go"
+    "transfer_contract_test.go",
+    "internal/http2/transport_contract_peer_test.go",
+    "internal/http2/transport_contract_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "exact full Git source/main MVS; reviewed338 baseline plus30 private HTTP1 transfer leaves =368 named/all JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all10 explicitly adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
+  "validation": "exact full Git source/main MVS; reviewed338 baseline plus30 private HTTP1 transfer and25 HTTP2 transport leaves =393 named/all JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all10 explicitly adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -972,5 +974,54 @@
       "independentReviewSHA256": "00be0aa224e79a0d3688a8bc247e3e2caa5e43954cf3bf7ea94b604580fa68bd",
       "status": "Actual remote formatter output independently verified before import; no runtime PASS; new348 named/all/race and all original gates remain required."
     }
+  },
+  "http2TransportContractTestProvenance": {
+    "repository": "https://github.com/golang/net",
+    "version": "v0.60.0",
+    "revision": "18ece0ce30bc35fa81fe72028bf309bb3ff3f4a5",
+    "upstreamPath": "http2/transport_test.go",
+    "upstreamSHA256": "f7d6f62c8aa2bc03fe605ac5e814021d988897c04083e3243b33ba774ade95d9",
+    "upstreamGitBlob": "1157e3156132d40151061d9174549712872d80ae",
+    "license": "LICENSE-GO-BSD",
+    "testPrefix": "TestReqHTTP2TransportContract_",
+    "requiredLeafCount": 25,
+    "files": [
+      {
+        "localPath": "internal/http2/transport_contract_peer_test.go",
+        "sourceBytes": 10781,
+        "sourceSHA256": "595d16977933cb1fefcde4d147c1669d890f3f343d239191943c6cb56011dee0"
+      },
+      {
+        "localPath": "internal/http2/transport_contract_test.go",
+        "sourceBytes": 16969,
+        "sourceSHA256": "bc37d78144b35d68721ce42bd45d79e1205c3f200a664f8b1d5ab6baedc21412"
+      }
+    ],
+    "adaptation": "Behavioral subset only: private Transport.RoundTrip and cached pool over deadline-bounded net.Pipe, independent x/net frame codec and stateful HPACK decoder. Assert exact outgoing method/path/scheme/authority and replay payload/GetBody calls, GOAWAY debug/retry/drain, genuine DATA-before-HEADERS error without retry, header timeout/cancellation RST and unrelated stream survival, valid/invalid trailers, cached reuse/idle close/single-use, Shutdown and Ping. No official client replaces the tested private Transport; explicit nonnil req Options; no production/dependency changes. Full retry-limit, pending-dial ownership and the official163 top suite are not claimed equivalent or covered.",
+    "formatEvidence": {
+      "run": 38737258610,
+      "workflowHead": "d36e3deca7b4b3dae36ed11d6ef96e68b3331774",
+      "sourceCandidate": "7fc63888ca592cb975b0714dabfda873ee56f22f",
+      "artifact": 11974452501,
+      "artifactSHA256": "9b678a9f36cf7588ef16b5b986555efdc44f8074c50bd5d771948efe3e657bdf",
+      "independentArtifactReviewSHA256": "61d6203714d09a6de3eccebc80e10896343cfae2f03d56e1ef92b8ff4d1fc56f",
+      "status": "Exact remote formatter outputs independently verified by ROOT and imported; actual named/whole race and coverage pending CI."
+    },
+    "postFormatReviewAdjustments": [
+      {
+        "path": "internal/http2/transport_contract_test.go",
+        "change": "Remove one unused net/http import detected by remote CI build; no test/production/control semantics change. Remote formatter originally produced the recorded output; final source hash above records this separately reviewed deletion.",
+        "failedRun": 38738396729,
+        "failedHead": "3acf1b7c6ac1fb2a9b8c9e2596f40a50bd862333",
+        "requiredRerun": "Exact-head named/whole race suites, graph/old-RED, format and coverage all remain mandatory."
+      },
+      {
+        "path": "internal/http2/transport_contract_peer_test.go",
+        "change": "Observe returned ClientConn through a delegating real-private-pool wrapper; single-use connections intentionally bypass pool.keys. Preserve actual selection/dial/reservation/MarkDead behavior and all single-use wire/EOF/dial-count assertions. No production change.",
+        "failedRun": 38838824935,
+        "failedHead": "693a8c9b7af7892e5ffc2cac4cf10685a80d2945",
+        "requiredRerun": "Exact-head 343 named/whole race suites and all original gates; previous 24/25 D leaves passed but package failed."
+      }
+    ]
   }
 }
