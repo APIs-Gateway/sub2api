@@ -1,0 +1,136 @@
+name: Temporary req meta charset genuine RED witness
+
+on:
+  push:
+    branches:
+      - codex/req-meta-charset-535-red
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      BASE_HEAD: 1ad6f911e5c266bea5fd8224cb21914504a0c06b
+      CI_SOURCE_HEAD: ${{ github.sha }}
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      GOMAXPROCS: '2'
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.9'
+          check-latest: false
+          cache: false
+      - name: Verify source contains the unchanged production decoder and original338 gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CI_SOURCE_HEAD"
+          test "$(git rev-list --parents -n 1 HEAD)" = "$CI_SOURCE_HEAD $BASE_HEAD"
+          test "$(git diff --name-only "$BASE_HEAD" HEAD)" = '.github/workflows/codex-req-meta-charset-535-red.yml'
+          test "$(git rev-parse HEAD:backend/third_party/req/decode.go)" = '825cffc66a1ae08cb4858ef0ae0d06cb0fc3120f'
+          test -z "$(git status --porcelain)"
+          evidence="$RUNNER_TEMP/req-meta-charset-535-red-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir "$evidence"
+          printf 'META_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+          git rev-parse HEAD > "$evidence/head.txt"
+          git ls-files --stage > "$evidence/git-index-before.txt"
+      - name: Run unchanged full338 baseline race tests source gates original witness and coverage
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          export REQ_SECURITY_EXPECTED_HEAD="$CI_SOURCE_HEAD"
+          export REQ_SECURITY_EVIDENCE="$META_EVIDENCE/baseline338"
+          bash tools/req-http2-security-ci.sh
+      - name: Install only the independently reviewed formatted regression source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYDATA'
+          import base64,hashlib,json,os,subprocess
+          from pathlib import Path
+          item = {"name":"backend/third_party/req/meta_charset_contract_test.go","bytes":6237,"sha256":"7dd43f9d65fc080332b47690822ebe14431cc1eea58980b591454644f2b9fcf5","base64":"Ly8gRGVyaXZlZCBmcm9tIGltcm9jL3JlcSBQUjUzNSwgY29tbWl0MDk5Mzg3ZTVlZTlhYzQ2MzE2MTEyODFlNjQxM2ViY2M3ZDA4NzFlYSwKLy8gZGVjb2RlX3Rlc3QuZ28vVGVzdEF1dG9EZWNvZGVSZWFkQ2xvc2VyU3BsaXRNdWx0aWJ5dGUgYW5kIGlzc3VlNTI1J3MgSFRUUAovLyByZXByb2R1Y3Rpb24uIFRoZSB1cHN0cmVhbSBtb2R1bGUncyBNSVQgdGVybXMgYXJlIHByZXNlcnZlZCBpbiBMSUNFTlNFLgovLyBGb3JrIGNoaWxkMTczNjsgc2hhcmVkIGludGVncmF0aW9uMTcxMjsgcGVybWFuZW50IHRyYWNraW5nMjkxLgpwYWNrYWdlIHJlcQoKaW1wb3J0ICgKCSJieXRlcyIKCSJjb250ZXh0IgoJImlvIgoJIm5ldC9odHRwIgoJIm5ldC9odHRwL2h0dHB0ZXN0IgoJInN0cmluZ3MiCgkidGVzdGluZyIKCSJ0aW1lIgoKCSJnb2xhbmcub3JnL3gvdGV4dC9lbmNvZGluZy9zaW1wbGlmaWVkY2hpbmVzZSIKKQoKLy8gQ29hbGVzY2Ugb25seSB0aGUgc25pZmZpbmcgcmVhZCBvZiB0aGUgYWN0dWFsIHNvY2tldC1iYWNrZWQgcmVzcG9uc2UgYm9keS4KLy8gVENQIHBhY2tldCBib3VuZGFyaWVzIG11c3Qgbm90IGNob29zZSB3aGV0aGVyIHRoZSBHQksgY2hhcmFjdGVyIGlzIHNwbGl0LgovLyBObyByZXNwb25zZSBieXRlcywgY2hhcnNldCBkZWNpc2lvbnMgb3IgZXJyb3JzIGFyZSByZXBsYWNlZCBieSBhIHRlc3QgZG91YmxlLgp0eXBlIG1ldGFDaGFyc2V0Rmlyc3RSZWFkIHN0cnVjdCB7Cglpby5SZWFkQ2xvc2VyCglmaXJzdCBbXWJ5dGUKCXNpemUgIGludAoJY2FsbHMgaW50CgljbG9zZSBpbnQKfQoKZnVuYyAociAqbWV0YUNoYXJzZXRGaXJzdFJlYWQpIFJlYWQocCBbXWJ5dGUpIChpbnQsIGVycm9yKSB7CglyLmNhbGxzKysKCWlmIHIuY2FsbHMgPT0gMSB7CgkJci5zaXplID0gbGVuKHApCgkJbiwgZXJyIDo9IGlvLlJlYWRGdWxsKHIuUmVhZENsb3NlciwgcCkKCQlyLmZpcnN0ID0gYXBwZW5kKFtdYnl0ZShuaWwpLCBwWzpuXS4uLikKCQlyZXR1cm4gbiwgZXJyCgl9CglyZXR1cm4gci5SZWFkQ2xvc2VyLlJlYWQocCkKfQoKZnVuYyAociAqbWV0YUNoYXJzZXRGaXJzdFJlYWQpIENsb3NlKCkgZXJyb3IgewoJci5jbG9zZSsrCglyZXR1cm4gci5SZWFkQ2xvc2VyLkNsb3NlKCkKfQoKZnVuYyBUZXN0UmVxTWV0YUNoYXJzZXRfUHVibGljSFRUUEJvdW5kYXJ5KHQgKnRlc3RpbmcuVCkgewoJZm9yIF8sIHRjIDo9IHJhbmdlIFtdc3RydWN0IHsKCQluYW1lICAgICAgc3RyaW5nCgkJY2hhcnNldCAgIHN0cmluZwoJCWZpcnN0UmVhZCBpbnQKCQlhbGlnbmVkICAgYm9vbAoJCWhlYWRlciAgICBib29sCgkJZGlzYWJsZWQgIGJvb2wKCQlub01ldGEgICAgYm9vbAoJfXsKCQl7bmFtZTogIm1ldGFfc3BsaXRfNTEyX2diayIsIGNoYXJzZXQ6ICJnYmsiLCBmaXJzdFJlYWQ6IDUxMn0sCgkJe25hbWU6ICJtZXRhX2FsaWduZWRfNTEyX2diayIsIGNoYXJzZXQ6ICJnYmsiLCBmaXJzdFJlYWQ6IDUxMiwgYWxpZ25lZDogdHJ1ZX0sCgkJe25hbWU6ICJoZWFkZXJfc3BsaXRfNTEyX2diayIsIGNoYXJzZXQ6ICJnYmsiLCBmaXJzdFJlYWQ6IDUxMiwgaGVhZGVyOiB0cnVlfSwKCQl7bmFtZTogIm1ldGFfc3BsaXRfMTI4X2diMjMxMiIsIGNoYXJzZXQ6ICJnYjIzMTIiLCBmaXJzdFJlYWQ6IDEyOH0sCgkJe25hbWU6ICJtZXRhX2FsaWduZWRfMTI4X2diMjMxMiIsIGNoYXJzZXQ6ICJnYjIzMTIiLCBmaXJzdFJlYWQ6IDEyOCwgYWxpZ25lZDogdHJ1ZX0sCgkJe25hbWU6ICJkaXNhYmxlZF9zcGxpdF81MTJfZ2JrIiwgY2hhcnNldDogImdiayIsIGZpcnN0UmVhZDogNTEyLCBkaXNhYmxlZDogdHJ1ZX0sCgkJe25hbWU6ICJub19tZXRhX3NwbGl0XzUxMiIsIGZpcnN0UmVhZDogNTEyLCBub01ldGE6IHRydWV9LAoJfSB7CgkJdC5SdW4odGMubmFtZSwgZnVuYyh0ICp0ZXN0aW5nLlQpIHsKCQkJZ2JrQ2hpbmEsIGVyciA6PSBzaW1wbGlmaWVkY2hpbmVzZS5HQksuTmV3RW5jb2RlcigpLkJ5dGVzKFtdYnl0ZSgi5Lit5Zu9IikpCgkJCWlmIGVyciAhPSBuaWwgewoJCQkJdC5GYXRhbChlcnIpCgkJCX0KCQkJYmFzZSA6PSBgPGh0bWw+PGhlYWQ+PG1ldGEgY2hhcnNldD0iYCArIHRjLmNoYXJzZXQgKyBgIj5gCgkJCWlmIHRjLm5vTWV0YSB7CgkJCQliYXNlID0gIjxodG1sPjxoZWFkPjwhLS0gbm8gY2hhcnNldCAtLT4iCgkJCX0KCQkJY29uc3Qgb3BlbiA9ICI8dGl0bGU+IgoJCQljb25zdCB0YWlsID0gIjwvdGl0bGU+PC9oZWFkPjxib2R5Pm93bmVkLWxvb3BiYWNrLXJlc3BvbnNlPC9ib2R5PjwvaHRtbD4iCgkJCXRpdGxlU3RhcnQgOj0gdGMuZmlyc3RSZWFkIC0gMwoJCQlpZiB0Yy5hbGlnbmVkIHsKCQkJCXRpdGxlU3RhcnQtLQoJCQl9CgkJCXBhZGRpbmcgOj0gdGl0bGVTdGFydCAtIGxlbihiYXNlKSAtIGxlbihvcGVuKQoJCQlpZiBwYWRkaW5nIDwgMCB8fCBsZW4oZ2JrQ2hpbmEpICE9IDQgewoJCQkJdC5GYXRhbCgiaW52YWxpZCBvd25lZCBtZXRhLWNoYXJzZXQgYm91bmRhcnkgZml4dHVyZSIpCgkJCX0KCQkJcHJlZml4IDo9IGJhc2UgKyBzdHJpbmdzLlJlcGVhdCgieCIsIHBhZGRpbmcpICsgb3BlbgoJCQl3aXJlIDo9IGFwcGVuZChbXWJ5dGUocHJlZml4KSwgZ2JrQ2hpbmEuLi4pCgkJCXdpcmUgPSBhcHBlbmQod2lyZSwgW11ieXRlKHRhaWwpLi4uKQoJCQlpZiAhdGMuYWxpZ25lZCAmJiAod2lyZVt0Yy5maXJzdFJlYWQtMV0gIT0gZ2JrQ2hpbmFbMl0gfHwgd2lyZVt0Yy5maXJzdFJlYWRdICE9IGdia0NoaW5hWzNdKSB7CgkJCQl0LkZhdGFsKCLlm70gaXMgbm90IHNwbGl0IGFjcm9zcyB0aGUgY29uZmlndXJlZCBmaXJzdC1yZWFkIGJvdW5kYXJ5IikKCQkJfQoJCQl3YW50IDo9IFtdYnl0ZShwcmVmaXggKyAi5Lit5Zu9IiArIHRhaWwpCgkJCWlmIHRjLmRpc2FibGVkIHx8IHRjLm5vTWV0YSB7CgkJCQl3YW50ID0gYXBwZW5kKFtdYnl0ZShuaWwpLCB3aXJlLi4uKQoJCQl9CgkJCXR5cGUgb2JzZXJ2YXRpb24gc3RydWN0IHsKCQkJCW1ldGhvZCAgIHN0cmluZwoJCQkJdXJpICAgICAgc3RyaW5nCgkJCQlwcm90b2NvbCBpbnQKCQkJCXdyaXR0ZW4gIGludAoJCQkJZXJyICAgICAgZXJyb3IKCQkJfQoJCQlvYnNlcnZlZCA6PSBtYWtlKGNoYW4gb2JzZXJ2YXRpb24sIDEpCgkJCXBlZXIgOj0gaHR0cHRlc3QuTmV3U2VydmVyKGh0dHAuSGFuZGxlckZ1bmMoZnVuYyh3IGh0dHAuUmVzcG9uc2VXcml0ZXIsIHIgKmh0dHAuUmVxdWVzdCkgewoJCQkJY29udGVudFR5cGUgOj0gInRleHQvaHRtbCIKCQkJCWlmIHRjLmhlYWRlciB7CgkJCQkJY29udGVudFR5cGUgKz0gIjsgY2hhcnNldD0iICsgdGMuY2hhcnNldAoJCQkJfQoJCQkJdy5IZWFkZXIoKS5TZXQoIkNvbnRlbnQtVHlwZSIsIGNvbnRlbnRUeXBlKQoJCQkJd3JpdHRlbiwgZXJyIDo9IHcuV3JpdGUod2lyZSkKCQkJCW9ic2VydmVkIDwtIG9ic2VydmF0aW9ue21ldGhvZDogci5NZXRob2QsIHVyaTogci5VUkwuUmVxdWVzdFVSSSgpLCBwcm90b2NvbDogci5Qcm90b01ham9yLCB3cml0dGVuOiB3cml0dGVuLCBlcnI6IGVycn0KCQkJfSkpCgkJCXQuQ2xlYW51cChwZWVyLkNsb3NlKQoJCQljbGllbnQgOj0gQygpLlNldFByb3h5KG5pbCkuU2V0VGltZW91dCgwKS5FbmFibGVGb3JjZUhUVFAxKCkKCQkJaWYgdGMuZGlzYWJsZWQgewoJCQkJY2xpZW50LkRpc2FibGVBdXRvRGVjb2RlKCkKCQkJfQoJCQl0LkNsZWFudXAoZnVuYygpIHsgY2xpZW50LkdldFRyYW5zcG9ydCgpLkNsb3NlSWRsZUNvbm5lY3Rpb25zKCkgfSkKCQkJY3R4LCBjYW5jZWwgOj0gY29udGV4dC5XaXRoVGltZW91dChjb250ZXh0LkJhY2tncm91bmQoKSwgNSp0aW1lLlNlY29uZCkKCQkJdC5DbGVhbnVwKGNhbmNlbCkKCQkJcmVzcCwgcmVxdWVzdEVyciA6PSBjbGllbnQuUigpLlNldENvbnRleHQoY3R4KS5EaXNhYmxlQXV0b1JlYWRSZXNwb25zZSgpLkdldChwZWVyLlVSTCArICIvbWV0YS1ib3VuZGFyeSIpCgkJCWlmIHJlc3AgIT0gbmlsICYmIHJlc3AuUmVzcG9uc2UgIT0gbmlsICYmIHJlc3AuQm9keSAhPSBuaWwgewoJCQkJdC5DbGVhbnVwKGZ1bmMoKSB7IF8gPSByZXNwLkJvZHkuQ2xvc2UoKSB9KQoJCQl9CgkJCWlmIHJlcXVlc3RFcnIgIT0gbmlsIHx8IHJlc3AgPT0gbmlsIHx8IHJlc3AuUmVzcG9uc2UgPT0gbmlsIHx8IHJlc3AuQm9keSA9PSBuaWwgfHwgcmVzcC5TdGF0dXNDb2RlICE9IGh0dHAuU3RhdHVzT0sgfHwgcmVzcC5Qcm90b01ham9yICE9IDEgewoJCQkJdC5GYXRhbGYoInJlYWwgcHVibGljIEhUVFAgcmVzcG9uc2UgYmVmb3JlIGNoYXJzZXQgcmVhZDogcmVzcG9uc2U9JXYgZXJyb3I9JXYiLCByZXNwLCByZXF1ZXN0RXJyKQoJCQl9CgkJCXZhciBmaXJzdCAqbWV0YUNoYXJzZXRGaXJzdFJlYWQKCQkJaWYgIXRjLmhlYWRlciAmJiAhdGMuZGlzYWJsZWQgewoJCQkJZGVjb2Rlciwgb2sgOj0gcmVzcC5Cb2R5LigqYXV0b0RlY29kZVJlYWRDbG9zZXIpCgkJCQlpZiAhb2sgewoJCQkJCXQuRmF0YWxmKCJwdWJsaWMgSFRUUCByZXNwb25zZSBkaWQgbm90IHNlbGVjdCB0aGUgcHJvZHVjdGlvbiBtZXRhIHJlYWRlcjogJVQiLCByZXNwLkJvZHkpCgkJCQl9CgkJCQlmaXJzdCA9ICZtZXRhQ2hhcnNldEZpcnN0UmVhZHtSZWFkQ2xvc2VyOiBkZWNvZGVyLlJlYWRDbG9zZXJ9CgkJCQlkZWNvZGVyLlJlYWRDbG9zZXIgPSBmaXJzdAoJCQl9CgkJCXZhciBnb3QgW11ieXRlCgkJCWJ1ZmZlciA6PSBtYWtlKFtdYnl0ZSwgdGMuZmlyc3RSZWFkKQoJCQlmb3IgcmVhZHMgOj0gMDsgOyByZWFkcysrIHsKCQkJCWlmIHJlYWRzID09IDY0IHsKCQkJCQl0LkZhdGFsKCJyZWFsIGNoYXJzZXQgYm9keSBkaWQgbm90IHJlYWNoIHRlcm1pbmFsIEVPRiIpCgkJCQl9CgkJCQluLCByZWFkRXJyIDo9IHJlc3AuQm9keS5SZWFkKGJ1ZmZlcikKCQkJCWlmIG4gPCAwIHx8IG4gPiBsZW4oYnVmZmVyKSB7CgkJCQkJdC5GYXRhbGYoImludmFsaWQgcHVibGljIFJlYWRlciBieXRlIGNvdW50ICVkIiwgbikKCQkJCX0KCQkJCWdvdCA9IGFwcGVuZChnb3QsIGJ1ZmZlcls6bl0uLi4pCgkJCQlpZiByZWFkRXJyID09IGlvLkVPRiB7CgkJCQkJYnJlYWsKCQkJCX0KCQkJCWlmIHJlYWRFcnIgIT0gbmlsIHsKCQkJCQl0LkZhdGFsZigicmVhbCBjaGFyc2V0IGJvZHkgcmVhZDogJXYiLCByZWFkRXJyKQoJCQkJfQoJCQl9CgkJCWlmIGNsb3NlRXJyIDo9IHJlc3AuQm9keS5DbG9zZSgpOyBjbG9zZUVyciAhPSBuaWwgewoJCQkJdC5GYXRhbGYoImFjdHVhbCByZXNwb25zZSBDbG9zZTogJXYiLCBjbG9zZUVycikKCQkJfQoJCQlpZiBmaXJzdCAhPSBuaWwgJiYgKGZpcnN0LnNpemUgIT0gdGMuZmlyc3RSZWFkIHx8IGxlbihmaXJzdC5maXJzdCkgIT0gdGMuZmlyc3RSZWFkIHx8ICFieXRlcy5FcXVhbChmaXJzdC5maXJzdCwgd2lyZVs6dGMuZmlyc3RSZWFkXSkgfHwgZmlyc3QuY2xvc2UgIT0gMSkgewoJCQkJdC5GYXRhbGYoImFjdHVhbCBmaXJzdCB3aXJlIHJlYWQvQ2xvc2UgZGlkIG5vdCBlc3RhYmxpc2ggdGhlIGZpeHR1cmU6IHNpemU9JWQgYnl0ZXM9JWQgY2xvc2U9JWQiLCBmaXJzdC5zaXplLCBsZW4oZmlyc3QuZmlyc3QpLCBmaXJzdC5jbG9zZSkKCQkJfQoJCQlzZWxlY3QgewoJCQljYXNlIG8gOj0gPC1vYnNlcnZlZDoKCQkJCWlmIG8ubWV0aG9kICE9IGh0dHAuTWV0aG9kR2V0IHx8IG8udXJpICE9ICIvbWV0YS1ib3VuZGFyeSIgfHwgby5wcm90b2NvbCAhPSAxIHx8IG8ud3JpdHRlbiAhPSBsZW4od2lyZSkgfHwgby5lcnIgIT0gbmlsIHsKCQkJCQl0LkZhdGFsZigib3duZWQgcGVlciBkaWQgbm90IHNlbmQgdGhlIGV4YWN0IHJlYWwgSFRUUCBmaXh0dXJlOiAlK3YiLCBvKQoJCQkJfQoJCQljYXNlIDwtY3R4LkRvbmUoKToKCQkJCXQuRmF0YWxmKCJvd25lZCBIVFRQIHBlZXIgZGlkIG5vdCBjb21wbGV0ZTogJXYiLCBjdHguRXJyKCkpCgkJCX0KCQkJaWYgIWJ5dGVzLkVxdWFsKGdvdCwgd2FudCkgewoJCQkJdC5GYXRhbGYoIk1FVEFfQ0hBUlNFVF9BU1NFUlQ6IG1vZGU9JXMgcmVhbCBIVFRQIGRlY29kZWQgYnl0ZXMgZGlmZmVyOiBnb3RMZW49JWQgd2FudExlbj0lZCBnb3Q9JXEgd2FudD0lcSIsIHRjLm5hbWUsIGxlbihnb3QpLCBsZW4od2FudCksIGdvdCwgd2FudCkKCQkJfQoJCQl0LkxvZ2YoImFjdHVhbCBIVFRQIGNoYXJzZXQ6IG1vZGU9JXMgZmlyc3Q9JWQgdGl0bGVTdGFydD0lZCB3aXJlQnl0ZXM9JWQgZGVjb2RlZEJ5dGVzPSVkIiwgdGMubmFtZSwgdGMuZmlyc3RSZWFkLCB0aXRsZVN0YXJ0LCBsZW4od2lyZSksIGxlbihnb3QpKQoJCX0pCgl9Cn0K"}
+          target = Path(item['name'])
+          assert not target.exists()
+          assert item['name'] == 'backend/third_party/req/meta_charset_contract_test.go'
+          data = base64.b64decode(item['base64'],validate=True)
+          assert len(data) == item['bytes'] and hashlib.sha256(data).hexdigest() == item['sha256']
+          target.write_bytes(data)
+          root = Path(os.environ['META_EVIDENCE'])
+          (root/'test-input.json').write_text(json.dumps({k:v for k,v in item.items() if k != 'base64'},indent=2)+'\n')
+          (root/'test-input.go').write_bytes(data)
+          assert subprocess.check_output(['git','diff','--name-only','HEAD']).strip() == b''
+          assert subprocess.check_output(['git','hash-object','backend/third_party/req/decode.go'],text=True).strip() == '825cffc66a1ae08cb4858ef0ae0d06cb0fc3120f'
+          PYDATA
+          gofmt -l backend/third_party/req/meta_charset_contract_test.go > "$META_EVIDENCE/gofmt.list"
+          test ! -s "$META_EVIDENCE/gofmt.list"
+      - name: Execute real public HTTP requests against unchanged decoder
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          go test -p=1 -parallel=1 -race -count=1 -timeout=2m -json -run '^TestReqMetaCharset_PublicHTTPBoundary$' github.com/imroc/req/v3 > "$META_EVIDENCE/charset-red.json" 2> "$META_EVIDENCE/charset-red.stderr"
+          red_status=$?
+          set -e
+          printf '%s\n' "$red_status" > "$META_EVIDENCE/charset-red.exit"
+          python3 - <<'PYPROOF'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          root=Path(os.environ['META_EVIDENCE'])
+          assert (root/'charset-red.exit').read_text().strip() == '1'
+          events=[json.loads(line) for line in (root/'charset-red.json').read_text().splitlines()]
+          package='github.com/imroc/req/v3'
+          prefix='TestReqMetaCharset_PublicHTTPBoundary'
+          failed={'meta_split_512_gbk','meta_split_128_gb2312'}
+          passed={'meta_aligned_512_gbk','header_split_512_gbk','meta_aligned_128_gb2312','disabled_split_512_gbk','no_meta_split_512'}
+          expected={prefix+'/'+case for case in failed|passed}
+          runs={v['Test'] for v in events if v.get('Package')==package and v.get('Action')=='run' and 'Test' in v}
+          assert runs == expected|{prefix}
+          proof=[]
+          for case in sorted(failed|passed):
+              test=prefix+'/'+case
+              actual=[v for v in events if v.get('Package')==package and v.get('Test')==test]
+              terminal='fail' if case in failed else 'pass'
+              assert sum(v.get('Action')=='run' for v in actual)==1
+              assert sum(v.get('Action')==terminal for v in actual)==1
+              assert not any(v.get('Action') in ({'skip','pass'} if terminal=='fail' else {'skip','fail'}) for v in actual)
+              output=''.join(v.get('Output','') for v in actual)
+              if terminal=='fail':
+                  assert 'META_CHARSET_ASSERT: mode='+case+' real HTTP decoded bytes differ:' in output
+              else:
+                  assert 'actual HTTP charset: mode='+case+' ' in output
+              proof.append({'test':test,'terminal':terminal,'actions':[v['Action'] for v in actual]})
+          assert {(v.get('Test')) for v in events if v.get('Action')=='fail' and 'Test' in v} == {prefix}|{prefix+'/'+case for case in failed}
+          assert sum(v.get('Action')=='fail' and v.get('Package')==package and 'Test' not in v for v in events)==1
+          assert not any(v.get('Action')=='skip' and 'Test' in v for v in events)
+          outputs=''.join(v.get('Output','') for v in events)+(root/'charset-red.stderr').read_text()
+          assert 'DATA RACE' not in outputs and 'panic:' not in outputs and 'build failed' not in outputs
+          assert subprocess.check_output(['git','diff','--name-only','HEAD']).strip() == b''
+          blob=subprocess.check_output(['git','hash-object','third_party/req/decode.go'],text=True).strip()
+          assert blob=='825cffc66a1ae08cb4858ef0ae0d06cb0fc3120f'
+          (root/'genuine-red-proof.json').write_text(json.dumps({'head':os.environ['CI_SOURCE_HEAD'],'base':os.environ['BASE_HEAD'],'unchangedDecoderBlob':blob,'actualFailureCount':2,'actualControlPassCount':5,'baseline338Complete':True,'testProof':proof},indent=2)+'\n')
+          PYPROOF
+          git diff --exit-code HEAD -- > "$META_EVIDENCE/checkout-after.diff"
+          git status --porcelain > "$META_EVIDENCE/status-after.txt"
+          printf 'complete\n' > "$META_EVIDENCE/complete.txt"
+      - name: Preserve actual baseline and genuine RED evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: req-meta-charset-535-red-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/req-meta-charset-535-red-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
