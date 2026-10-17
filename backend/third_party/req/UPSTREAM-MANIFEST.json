@@ -727,11 +727,12 @@
     "http3_wire_decompression_test.go",
     "internal/http3/tls_config_contract_test.go",
     "internal/compress/deflate_close_test.go",
-    "internal/http2/frame_contract_test.go"
+    "internal/http2/frame_contract_test.go",
+    "transfer_contract_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "exact full Git source/main MVS; all189 reviewed H3/TLS/body/Close and original contracts plus149 HTTP2 frame leaves =338 named/all JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all10 explicitly adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
+  "validation": "exact full Git source/main MVS; reviewed338 baseline plus30 private HTTP1 transfer leaves =368 named/all JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all10 explicitly adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -946,6 +947,30 @@
       "outputSHA256": "8df3b91ab676d86965f45b393d3afa4e308709a79916339577d4dd61925a7e89",
       "status": "Actual remote formatting success independently verified by root, exact single output imported; new301-leaf named/whole/race and all runtime/coverage approval pending remote CI.",
       "independentArtifactReviewSHA256": "a0578af522148d4607b16bb259633a4182c894d731c3b217918ba48c49fb6750"
+    }
+  },
+  "http1TransferContractTestProvenance": {
+    "repository": "https://github.com/golang/go",
+    "version": "go1.26.9",
+    "revision": "2ae494ef9fb90e0da0073c31800ba38870249994",
+    "upstreamPath": "src/net/http/transfer_test.go",
+    "upstreamSHA256": "7400e55c2af5ddfc23684689f7a13bf77d22bec82db04c136914b69822459308",
+    "upstreamGitBlob": "b1a5a931035c4b141f61b58d6543e1c5c8481759",
+    "license": "LICENSE-GO-BSD",
+    "testPrefix": "TestReqHTTP1Transfer_",
+    "requiredLeafCount": 30,
+    "localPath": "transfer_contract_test.go",
+    "sourceBytes": 12026,
+    "sourceSHA256": "8477c8641306e0991c8aa763c17efbbd1cf169bcaa9c22b34c317157f11d4eab",
+    "adaptation": "Four pinned original top contracts: malformed trailer exact error/closed state, final chunk exact EOF, seven Transfer-Encoding rejection/acceptance inputs and six Content-Length sign/overflow boundaries with actual returned values. Final response uses private persistConn._readResponse, not official net/http parser. Original reader-classification test omitted; original writeBody optimization test replaced by behavioral buffer/string/file output/ownership matrices, not claimed equivalent. Add exact writer chunk/trailer bytes and failure close/error rules; full private response framing validates normalized CL/TE and preserves next-response bytes. No sockets, production changes or dependency changes.",
+    "formatEvidence": {
+      "run": 38738382035,
+      "workflowHead": "07e957724d3cd2fe78e1fbb41e095ca317a95ad2",
+      "sourceCandidate": "80ceae177ddbaf9a662e25384e3207bbd8327133",
+      "artifact": 11974149217,
+      "artifactSHA256": "9845c647ecaa42b807a2ff91d393ef5157b3ee0fcd5bd7bcdae0cbead4842e9f",
+      "independentReviewSHA256": "00be0aa224e79a0d3688a8bc247e3e2caa5e43954cf3bf7ea94b604580fa68bd",
+      "status": "Actual remote formatter output independently verified before import; no runtime PASS; new348 named/all/race and all original gates remain required."
     }
   }
 }

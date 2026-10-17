@@ -171,7 +171,7 @@ state. The exact two wire cases remain mandatory. Seven narrow unit controls
 cover unread/initialized closure, both error sources and repeated Close.
 
 The189 preceding source contracts (180 plus these nine controls), together
-with the149 HTTP/2 frame contracts, require338 actual named/all RUN/PASS events. Remote race suites, all ten repair-block85 results
+with the149 HTTP/2 frame contracts, form338 baseline named/all contracts. Remote race suites, all ten repair-block85 results
 and independent review remain required. These optional public-library contracts
 do not establish default gateway HTTP/3 traffic.
 
@@ -235,3 +235,27 @@ separately reviewed change, and retain the security regressions.
 Tracking: [fork issue #1711](https://github.com/APIs-Gateway/sub2api/issues/1711),
 [implementation PR #1712](https://github.com/APIs-Gateway/sub2api/pull/1712),
 [permanent tracker #291](https://github.com/APIs-Gateway/sub2api/issues/291).
+
+
+### Private HTTP/1 transfer and response framing subset
+
+Owned `transfer_contract_test.go` adapts four top contracts from Go1.26.9
+`src/net/http/transfer_test.go` at revision
+`2ae494ef9fb90e0da0073c31800ba38870249994`. It tests the private req body and
+response parser, not net/http.ReadResponse. Exact trailer errors and closed-body
+state, final-chunk EOF, signed/overflow lengths, unsupported/duplicate transfer
+encodings and normalized Content-Length/TransferEncoding are asserted. Full
+response parsing preserves the following response prefix. Writer matrices check
+complete payload/chunk/trailer bytes from buffer/string/file sources and exact
+owned Close counts and errors. Internal reader optimization equivalence is not
+claimed. These are byte-input/writer contracts, not socket lifecycle tests.
+
+The Go BSD notice is retained. Pinned official blob/source hashes, final test
+source hash and independently verified remote formatter38738382035 output are
+recorded in the manifest. New30 mandatory named/all leaves augment the complete
+reviewed338 baseline to368. No production/dependency changes, test skips, coverage
+exclusions, threshold reduction or raw coverage-path changes are introduced.
+Actual new-head remote race suites, original25 graph regressions,365 MVS,
+unchanged old-RED and all10 repair-block85 gates remain required alongside fullPR85.
+No local or87 formatting/test/build/compilation runs; formatter success alone
+proves no runtime result or PR approval.
