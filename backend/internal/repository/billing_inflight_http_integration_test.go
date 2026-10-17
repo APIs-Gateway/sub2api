@@ -118,10 +118,7 @@ func newInflightHTTPFixtureForClientPolicy(t *testing.T, platform, response, con
 	if stable {
 		cfg.RunMode = config.RunModeStandard
 		stableNext = mustCreateGroup(t, client, &service.Group{Name: uuid.NewString(), Platform: platform, RateMultiplier: 4})
-		stableGroup = mustCreateGroup(t, client, &service.Group{Name: uuid.NewString(), Platform: platform, RateMultiplier: 2, StablePriorityFallbackGroupID: &stableNext.ID})
-		group.StablePriorityFallbackGroupID = &stableGroup.ID
-		_, err := inflightTestDB(t).Exec(`UPDATE groups SET stable_priority_fallback_group_id=$1 WHERE id=$2`, stableGroup.ID, group.ID)
-		require.NoError(t, err)
+		stableGroup = mustCreateGroup(t, client, &service.Group{Name: uuid.NewString(), Platform: platform, RateMultiplier: 2})
 	}
 	group.AllowImageGeneration = true
 	group.AllowMessagesDispatch = true
@@ -172,11 +169,7 @@ func newInflightHTTPFixtureForClientPolicy(t *testing.T, platform, response, con
 	deferred := service.NewDeferredService(accounts, wheel, time.Minute)
 	t.Cleanup(deferred.Stop)
 	gatewaySvc := service.NewGatewayService(accounts, groups, usage, atomicBilling, users, subs, rates, cache, cfg, snapshot, concurrency, billing, rateLimit, billingCache, nil, upstream, deferred, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
-	var stableStore service.StablePriorityStateStore
-	if stable {
-		stableStore = NewStablePriorityStateStore(rdb)
-	}
-	openAISvc := service.NewOpenAIGatewayService(accounts, usage, atomicBilling, users, subs, rates, cache, cfg, snapshot, concurrency, billing, rateLimit, billingCache, upstream, deferred, nil, nil, policyResolver, policyChannels, nil, nil, nil, stableStore, groups)
+	openAISvc := service.NewOpenAIGatewayService(accounts, usage, atomicBilling, users, subs, rates, cache, cfg, snapshot, concurrency, billing, rateLimit, billingCache, upstream, deferred, nil, nil, policyResolver, policyChannels, nil, nil, nil, groups)
 	t.Cleanup(openAISvc.CloseOpenAIWSPool)
 	keyService := service.NewAPIKeyService(NewAPIKeyRepository(client, inflightTestDB(t)), users, groups, subs, rates, nil, cfg)
 	gemini := service.NewGeminiMessagesCompatService(accounts, groups, cache, snapshot, nil, rateLimit, upstream, nil, cfg)

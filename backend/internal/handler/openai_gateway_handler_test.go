@@ -1689,8 +1689,6 @@ func runOpenAIRawChatUsageEndpointCase(t *testing.T, tc openAIRawChatUsageEndpoi
 		nil,
 		nil,
 		nil,
-		nil, // userPlatformQuotaRepo
-		nil, // stableStore
 		nil, // groupRepo
 	)
 
@@ -1927,8 +1925,6 @@ func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T
 		nil,
 		nil,
 		nil,
-		nil, // userPlatformQuotaRepo
-		nil, // stableStore
 		nil, // groupRepo
 	)
 
@@ -2094,8 +2090,6 @@ func TestOpenAIResponsesWebSocket_BeforeRequestHookRecordsWSTurnInContext(t *tes
 		nil,
 		nil,
 		nil,
-		nil, // userPlatformQuotaRepo
-		nil, // stableStore
 		nil, // groupRepo
 	)
 
@@ -2345,8 +2339,6 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		channelSvc,
 		nil,
 		nil,
-		nil, // userPlatformQuotaRepo
-		nil, // stableStore
 		nil, // groupRepo
 	)
 

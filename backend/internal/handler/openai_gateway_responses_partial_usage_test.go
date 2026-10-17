@@ -102,8 +102,6 @@ func TestOpenAIResponses_RawChatFallbackStreamReadErrorRecordsPartialUsage(t *te
 		nil,
 		nil,
 		nil,
-		nil, // userPlatformQuotaRepo
-		nil, // stableStore
 		nil, // groupRepo
 	)
 
@@ -245,8 +243,6 @@ func TestOpenAIResponses_ChannelModelMappingRewritesForwardModel(t *testing.T) {
 		channelSvc,
 		nil,
 		nil,
-		nil, // userPlatformQuotaRepo
-		nil, // stableStore
 		nil, // groupRepo
 	)
 
@@ -417,8 +413,6 @@ func TestOpenAIResponses_RecordUsageBillingErrorLogsFailure(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		nil, // userPlatformQuotaRepo
-		nil, // stableStore
 		nil, // groupRepo
 	)
 
@@ -547,8 +541,6 @@ func TestOpenAIResponses_ForwardGenericErrorWithNilResultSkipsUsageRecord(t *tes
 		nil,
 		nil,
 		nil,
-		nil, // userPlatformQuotaRepo
-		nil, // stableStore
 		nil, // groupRepo
 	)
 

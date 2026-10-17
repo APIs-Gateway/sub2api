@@ -38,7 +38,7 @@ func newCodexMappingHandler(t *testing.T, server *httptest.Server, mapping map[s
 	gateway := service.NewOpenAIGatewayService(
 		repo, nil, nil, nil, nil, nil, nil, cfg,
 		nil, nil, nil, nil, nil, &codexMappingHTTPTransport{client: server.Client()},
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	return &OpenAIGatewayHandler{gatewayService: gateway, maxAccountSwitches: 3}, repo
 }
