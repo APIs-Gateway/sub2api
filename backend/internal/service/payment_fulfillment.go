@@ -28,6 +28,16 @@ var ErrOrderNotFound = errors.New("payment order not found")
 const (
 	balanceFulfillmentLeaseDuration      = 5 * time.Minute
 	subscriptionFulfillmentLeaseDuration = 5 * time.Minute
+
+	// paymentNotificationTimeout bounds notification handling once it is
+	// detached from the caller. Webhook senders hang up long before a slow DB
+	// finishes; cancelling with them used to strand orders in PAID/RECHARGING.
+	paymentNotificationTimeout = 2 * time.Minute
+
+	// stuckPaidFulfillmentGrace is how long a PAID order may sit before the
+	// periodic job treats its fulfillment as abandoned and retries it.
+	stuckPaidFulfillmentGrace     = 2 * time.Minute
+	stuckFulfillmentRecoveryLimit = 20
 )
 
 // balanceFulfillmentLease fences the balance-order worker that most recently
@@ -49,6 +59,8 @@ func (s *PaymentService) HandlePaymentNotification(ctx context.Context, n *payme
 	if n.Status != payment.NotificationStatusSuccess {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), paymentNotificationTimeout)
+	defer cancel()
 	// Look up order by out_trade_no (the external order ID we sent to the provider)
 	order, err := s.entClient.PaymentOrder.Query().Where(paymentorder.OutTradeNo(n.OrderID)).Only(ctx)
 	if err != nil {
@@ -1198,4 +1210,50 @@ func (s *PaymentService) RetryFulfillment(ctx context.Context, oid int64) error 
 	}
 	s.writeAuditLog(ctx, oid, "RECHARGE_RETRY", "admin", map[string]any{"detail": "admin manual retry"})
 	return s.executeFulfillment(ctx, oid)
+}
+
+// RecoverStuckFulfillments retries paid orders whose fulfillment was abandoned
+// midway, e.g. the webhook request died after marking the order PAID. PAID
+// orders are retried after a short grace; RECHARGING orders only once their
+// lease is stale, which the fulfillment lease acquisition checks again.
+// Fulfillment is idempotent on the order's redeem code / subscription
+// assignment, so a retry never credits twice. FAILED orders stay manual.
+func (s *PaymentService) RecoverStuckFulfillments(ctx context.Context) (int, error) {
+	// UTC to match the lease timestamps, which SQLite compares as text.
+	now := time.Now().UTC()
+	staleLease := balanceFulfillmentLeaseDuration
+	if subscriptionFulfillmentLeaseDuration > staleLease {
+		staleLease = subscriptionFulfillmentLeaseDuration
+	}
+	orders, err := s.entClient.PaymentOrder.Query().
+		Where(
+			paymentorder.PaidAtNotNil(),
+			paymentorder.Or(
+				paymentorder.And(
+					paymentorder.StatusEQ(OrderStatusPaid),
+					paymentorder.UpdatedAtLTE(now.Add(-stuckPaidFulfillmentGrace)),
+				),
+				paymentorder.And(
+					paymentorder.StatusEQ(OrderStatusRecharging),
+					paymentorder.UpdatedAtLTE(now.Add(-staleLease)),
+				),
+			),
+		).
+		Order(dbent.Asc(paymentorder.FieldPaidAt)).
+		Limit(stuckFulfillmentRecoveryLimit).
+		All(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("query stuck payment fulfillments: %w", err)
+	}
+
+	recovered := 0
+	for _, o := range orders {
+		if err := s.executeFulfillment(ctx, o.ID); err != nil {
+			slog.Warn("recover stuck payment fulfillment failed", "orderID", o.ID, "status", o.Status, "error", err)
+			continue
+		}
+		s.writeAuditLog(ctx, o.ID, "FULFILLMENT_RECOVERED", "system", map[string]any{"previousStatus": o.Status})
+		recovered++
+	}
+	return recovered, nil
 }
