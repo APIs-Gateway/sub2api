@@ -193,6 +193,11 @@ func (h *ConcurrencyHelper) IncrementAccountWaitCount(ctx context.Context, accou
 	return h.concurrencyService.IncrementAccountWaitCount(ctx, accountID, maxWait)
 }
 
+// RegisterAccountWait returns cleanup only for a confirmed owned waiter.
+func (h *ConcurrencyHelper) RegisterAccountWait(ctx context.Context, accountID int64, maxWait int) (bool, func()) {
+	return h.concurrencyService.RegisterAccountWait(ctx, accountID, maxWait)
+}
+
 // DecrementAccountWaitCount decrements the wait count for an account
 func (h *ConcurrencyHelper) DecrementAccountWaitCount(ctx context.Context, accountID int64) {
 	h.concurrencyService.DecrementAccountWaitCount(ctx, accountID)
