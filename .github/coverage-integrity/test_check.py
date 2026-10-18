@@ -42,12 +42,18 @@ class CompleteGitCoverageControls(unittest.TestCase):
         (cls.repo / 'backend/third_party/req/go.mod').write_text('module github.com/imroc/req/v3\n\ngo 1.26.9\n')
         (cls.repo / 'backend/third_party/req/value.go').write_text(
             'package req\n'
-            'func Value() int { return Choose(true) + Choose(false) + 4 }\n'
+            'func Value() int { EmptyCase(true); EmptyCase(false); return Choose(true) + Choose(false) + 4 }\n'
             'func Choose(flag bool) int {\n'
             'if flag {\n'
             'return 1\n'
             '}\n'
             'return 2\n'
+            '}\n'
+            'func EmptyCase(flag bool) {\n'
+            'switch flag {\n'
+            'case true:\n'
+            'case false:\n'
+            '}\n'
             '}\n')
         (cls.repo / 'backend/value.go').write_text('package app\nimport req "github.com/imroc/req/v3"\nfunc Value() int { return req.Value() }\n')
         (cls.repo / 'backend/value_test.go').write_text('package app\nimport "testing"\nfunc TestValue(t *testing.T) { if Value() != 7 { t.Fatal("value") } }\n')
@@ -93,6 +99,11 @@ class CompleteGitCoverageControls(unittest.TestCase):
         baseline = json.loads((self.evidence / 'instrumenter-vs-actual-baseline.json').read_text())
         self.assertTrue(baseline)
         self.assertFalse(any(f['missing'] or f['unexpected'] or f['statementConflicts'] for f in baseline))
+        self.assertTrue(any(file['zeroWidthBlocks'] for file in baseline))
+        req = next(file for file in report['files'] if file['path'] == 'backend/third_party/req/value.go')
+        points = [block for block in req['blocks'] if block['zeroWidth']]
+        self.assertTrue(points)
+        self.assertTrue(all(block['statements'] == 0 and block['profiles'] for block in points))
 
     def test_missing_mandatory_profile(self):
         (self.profiles / coverage.PROFILES[0]).unlink()
@@ -169,13 +180,17 @@ class CompleteGitCoverageControls(unittest.TestCase):
     def test_partial_line_and_zero_statement_block(self):
         first = (2, 1, 2, 8)
         second = (2, 8, 2, 15)
-        result = coverage.assess_file('backend/partial.go', {first: 1, second: 0},
+        point = (2, 4, 2, 4)
+        result = coverage.assess_file('backend/partial.go', {first: 1, second: 0, point: 0},
             [{'line': 2, 'start': 1, 'end': 15}], {2},
             {first: {'statements': 1, 'hits': 1, 'profiles': ['unit']},
-             second: {'statements': 0, 'hits': 0, 'profiles': ['unit']}}, ['unit'])
+             second: {'statements': 0, 'hits': 0, 'profiles': ['unit']},
+             point: {'statements': 0, 'hits': 0, 'profiles': ['unit']}}, ['unit'])
         self.assertEqual(result['lines'][0]['state'], 'partial')
         self.assertEqual(result['changedBlockDiagnostic'], {'total': 2, 'hit': 1})
         self.assertFalse(result['integrityProblems'])
+        self.assertEqual(sum(block['zeroWidth'] for block in result['blocks']), 1)
+        self.assertFalse(coverage.overlaps(point, {'line': 2, 'start': 1, 'end': 15}))
 
     def test_uncompiled_platform_source_counts_miss_not_corruption(self):
         # Real platform classification and independent tool inventory: an
@@ -207,6 +222,16 @@ class CompleteGitCoverageControls(unittest.TestCase):
     def test_malformed_atomic_profile(self):
         self.rewrite_profiles(lambda text: text + 'malformed block\n')
         with self.assertRaisesRegex(coverage.IntegrityError, 'malformed profile record'):
+            self.check()
+
+    def test_equal_positive_statement_bounds_rejected(self):
+        self.rewrite_profiles(lambda text: text + 'github.com/Wei-Shaw/sub2api/value.go:3.5,3.5 1 0\n')
+        with self.assertRaisesRegex(coverage.IntegrityError, 'invalid coverage block bounds'):
+            self.check()
+
+    def test_inverted_profile_bounds_rejected(self):
+        self.rewrite_profiles(lambda text: text + 'github.com/Wei-Shaw/sub2api/value.go:3.10,3.2 0 0\n')
+        with self.assertRaisesRegex(coverage.IntegrityError, 'invalid coverage block bounds'):
             self.check()
 
     def test_real_token_spans_keep_multiline_raw_string_and_drop_comments(self):

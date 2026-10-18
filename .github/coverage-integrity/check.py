@@ -249,7 +249,8 @@ def read_profiles(repo, evidence, manifest, profile_root):
             rawpath, *numbers = match.groups()
             path = profile_source(rawpath, repo, manifest)
             sl, sc, el, ec, statements, hits = map(int, numbers)
-            require(sl > 0 and sc > 0 and (sl, sc) < (el, ec), 'invalid coverage block bounds')
+            require(sl > 0 and sc > 0 and ((sl, sc) < (el, ec) or
+                    ((sl, sc) == (el, ec) and statements == 0)), 'invalid coverage block bounds')
             key = sl, sc, el, ec
             previous = records[path].get(key)
             require(previous is None or previous['statements'] == statements, 'conflicting statement counts: ' + path)
@@ -276,7 +277,9 @@ def instrument(repo, path, scratch, helper):
     for block in result['blocks']:
         key = block['startLine'], block['startCol'], block['endLine'], block['endCol']
         sl, sc, el, ec = key
-        require(sl > 0 and sc > 0 and (sl, sc) < (el, ec) and el <= len(lines), 'instrumenter bounds outside source')
+        require(sl > 0 and sc > 0 and ((sl, sc) < (el, ec) or
+                ((sl, sc) == (el, ec) and block['statements'] == 0)) and
+                el <= len(lines), 'instrumenter bounds outside source')
         require(sc <= len(lines[sl - 1]) + 1 and ec <= len(lines[el - 1]) + 1, 'instrumenter columns outside source')
         require(key not in expected and block['statements'] >= 0, 'duplicate/invalid instrumenter block')
         expected[key] = block['statements']
@@ -285,6 +288,8 @@ def instrument(repo, path, scratch, helper):
 
 def overlaps(key, token):
     sl, sc, el, ec = key
+    if (sl, sc) == (el, ec):
+        return False
     return (sl, sc) < (token['line'], token['end']) and (token['line'], token['start']) < (el, ec)
 
 
@@ -314,6 +319,7 @@ def assess_file(path, expected, tokens, changed, actual, selected):
         lines.append({'line': line, 'state': state, 'blocks': [list(key) for key in sorted(keys)],
                       'reason': None if keys else 'no Go cover block overlaps changed non-comment tokens' if line in token_lines else 'comment or whitespace only'})
     blocks = [{'position': list(key), 'statements': statements,
+               'zeroWidth': key[:2] == key[2:],
                'state': 'unprofiled' if key not in actual else 'hit' if actual[key]['hits'] else 'miss',
                'profiles': actual[key]['profiles'] if key in actual else [],
                'hits': actual[key]['hits'] if key in actual else 0}
@@ -359,6 +365,7 @@ def check(repo, evidence, head, base, profile_root=None):
             missing = sorted(set(expected) - actual.keys())
             conflicts = [key for key in actual.keys() & expected.keys() if actual[key]['statements'] != expected[key]]
             baseline.append({'path': path, 'expectedBlocks': len(expected), 'profileBlocks': len(actual),
+                             'zeroWidthBlocks': [list(key) for key in expected if key[:2] == key[2:]],
                              'unexpected': extra, 'missing': missing, 'statementConflicts': conflicts})
         write_json(evidence / 'instrumenter-vs-actual-baseline.json', baseline)
         require(not any(row['unexpected'] or row['missing'] or row['statementConflicts'] for row in baseline),

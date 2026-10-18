@@ -48,6 +48,10 @@ for complete Git changed backend Go instrumented token lines:
 * A line enters the numerator only if **every** such overlapping block has a
   positive count in at least one of the four profiles. A partial line contributes
   zero to the numerator. Zero-statement instrumented blocks are retained.
+  Empty Go case clauses can produce zero-width, zero-statement point records;
+  those records remain in the exact block inventory and are reported explicitly,
+  but their empty half-open interval overlaps no physical token. Equal endpoints
+  with positive statements and all inverted ranges fail integrity.
 * Source files not selected by the actual platform/package build inventory stay
   in scope. Their unprofiled blocks count as misses. This is different from a
   selected/tested file whose expected profile records are missing, which fails
