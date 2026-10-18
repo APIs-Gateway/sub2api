@@ -347,7 +347,7 @@ def check(repo, evidence, head, base, profile_root=None):
     with tempfile.TemporaryDirectory(prefix='coverage-integrity-') as directory:
         scratch = Path(directory)
         helper = scratch / 'inventory'
-        subprocess.run(['go', 'build', '-o', str(helper), str(repo / '.github/coverage-integrity/inventory.go')], cwd=repo, check=True)
+        subprocess.run(['go', 'build', '-o', str(helper), str(Path(__file__).resolve().with_name('inventory.go'))], cwd=repo, check=True)
         # Validate the legacy instrumenter against ALL represented profile files,
         # not just changed files. Coordinate mismatches remain blocking.
         baseline = []

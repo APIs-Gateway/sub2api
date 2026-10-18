@@ -111,7 +111,7 @@ func main() {
 	}
 	blocks := make([]block, 0, len(statements))
 	for i, n := range statements {
-		blocks = append(blocks, block{positions[3*i], positions[3*i+2]&65535, positions[3*i+1], positions[3*i+2]>>16, n})
+		blocks = append(blocks, block{positions[3*i], positions[3*i+2] & 65535, positions[3*i+1], positions[3*i+2] >> 16, n})
 	}
 	// Token spans exclude comments, whitespace and inserted semicolons. Retain
 	// complete multiline token spans, including newlines inside raw strings.
@@ -161,6 +161,6 @@ func main() {
 	}
 	must(json.NewEncoder(os.Stdout).Encode(struct {
 		Blocks []block `json:"blocks"`
-		Tokens []span `json:"tokens"`
+		Tokens []span  `json:"tokens"`
 	}{blocks, tokens}))
 }
