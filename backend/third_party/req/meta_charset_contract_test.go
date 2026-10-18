@@ -24,6 +24,7 @@ type metaCharsetFirstRead struct {
 	io.ReadCloser
 	first []byte
 	size  int
+	limit int
 	calls int
 	close int
 }
@@ -32,7 +33,11 @@ func (r *metaCharsetFirstRead) Read(p []byte) (int, error) {
 	r.calls++
 	if r.calls == 1 {
 		r.size = len(p)
-		n, err := io.ReadFull(r.ReadCloser, p)
+		first := p
+		if r.limit > 0 && len(first) > r.limit {
+			first = first[:r.limit]
+		}
+		n, err := io.ReadFull(r.ReadCloser, first)
 		r.first = append([]byte(nil), p[:n]...)
 		return n, err
 	}
@@ -49,6 +54,7 @@ func TestReqMetaCharset_PublicHTTPBoundary(t *testing.T) {
 		name      string
 		charset   string
 		firstRead int
+		shortRead int
 		aligned   bool
 		header    bool
 		disabled  bool
@@ -61,6 +67,7 @@ func TestReqMetaCharset_PublicHTTPBoundary(t *testing.T) {
 		{name: "meta_aligned_128_gb2312", charset: "gb2312", firstRead: 128, aligned: true},
 		{name: "disabled_split_512_gbk", charset: "gbk", firstRead: 512, disabled: true},
 		{name: "no_meta_split_512", firstRead: 512, noMeta: true},
+		{name: "no_meta_short_128_stale_buffer", firstRead: 512, shortRead: 128, noMeta: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			gbkChina, err := simplifiedchinese.GBK.NewEncoder().Bytes([]byte("中国"))
@@ -73,7 +80,11 @@ func TestReqMetaCharset_PublicHTTPBoundary(t *testing.T) {
 			}
 			const open = "<title>"
 			const tail = "</title></head><body>owned-loopback-response</body></html>"
-			titleStart := tc.firstRead - 3
+			wireFirstRead := tc.firstRead
+			if tc.shortRead > 0 {
+				wireFirstRead = tc.shortRead
+			}
+			titleStart := wireFirstRead - 3
 			if tc.aligned {
 				titleStart--
 			}
@@ -84,7 +95,7 @@ func TestReqMetaCharset_PublicHTTPBoundary(t *testing.T) {
 			prefix := base + strings.Repeat("x", padding) + open
 			wire := append([]byte(prefix), gbkChina...)
 			wire = append(wire, []byte(tail)...)
-			if !tc.aligned && (wire[tc.firstRead-1] != gbkChina[2] || wire[tc.firstRead] != gbkChina[3]) {
+			if !tc.aligned && (wire[wireFirstRead-1] != gbkChina[2] || wire[wireFirstRead] != gbkChina[3]) {
 				t.Fatal("国 is not split across the configured first-read boundary")
 			}
 			want := []byte(prefix + "中国" + tail)
@@ -129,11 +140,16 @@ func TestReqMetaCharset_PublicHTTPBoundary(t *testing.T) {
 				if !ok {
 					t.Fatalf("public HTTP response did not select the production meta reader: %T", resp.Body)
 				}
-				first = &metaCharsetFirstRead{ReadCloser: decoder.ReadCloser}
+				first = &metaCharsetFirstRead{ReadCloser: decoder.ReadCloser, limit: tc.shortRead}
 				decoder.ReadCloser = first
 			}
 			var got []byte
 			buffer := make([]byte, tc.firstRead)
+			if tc.shortRead > 0 {
+				// A reused caller buffer must not supply metadata beyond the
+				// actual socket bytes returned by the first short Read.
+				copy(buffer[tc.shortRead:], `</title><meta charset="gbk">`)
+			}
 			for reads := 0; ; reads++ {
 				if reads == 64 {
 					t.Fatal("real charset body did not reach terminal EOF")
@@ -153,7 +169,7 @@ func TestReqMetaCharset_PublicHTTPBoundary(t *testing.T) {
 			if closeErr := resp.Body.Close(); closeErr != nil {
 				t.Fatalf("actual response Close: %v", closeErr)
 			}
-			if first != nil && (first.size != tc.firstRead || len(first.first) != tc.firstRead || !bytes.Equal(first.first, wire[:tc.firstRead]) || first.close != 1) {
+			if first != nil && (first.size != tc.firstRead || len(first.first) != wireFirstRead || !bytes.Equal(first.first, wire[:wireFirstRead]) || first.close != 1) {
 				t.Fatalf("actual first wire read/Close did not establish the fixture: size=%d bytes=%d close=%d", first.size, len(first.first), first.close)
 			}
 			select {

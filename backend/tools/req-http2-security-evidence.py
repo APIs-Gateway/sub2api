@@ -90,9 +90,10 @@ def verify_named(backend, evidence, filename):
     require(expected["deflateCloseWireCount"] == 2 and expected["deflateCloseUnitCount"] == 7,
             "Require both real HTTP3 deflate close cases plus7 close/error unit controls")
     kinds = original_kinds + ("http3Contract", "http3Wire", "http3PublicTLS", "http3TLSControl", "http3Decompression",
-                              "deflateCloseWire", "deflateCloseUnit", "http2FrameContract")
-    require(expected["http2FrameContractCount"] == 149 and expected["totalNamedLeaves"] == 338,
-            "Retain all149 HTTP2 frame leaves with all189 reviewed contracts,338 total")
+                              "deflateCloseWire", "deflateCloseUnit", "http2FrameContract", "metaCharset")
+    require(expected["http2FrameContractCount"] == 149 and expected["metaCharsetCount"] == 8 and
+            expected["totalNamedLeaves"] == 346,
+            "Retain all338 previous mandatory leaves and require8 actual HTTP charset leaves,346 total")
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
     for kind in kinds:
@@ -109,7 +110,8 @@ def verify_named(backend, evidence, filename):
     prefixes = ("TestReqHTTP2Security_", "TestDumper", "TestReqTraceSecurity_", "TestReqDumpSecurity_",
                 "TestReqHTTP1Lifecycle_", "TestReqProxyLifecycle_", "TestReqHTTP3Contract_", "TestReqHTTP3Wire_",
                 "TestReqHTTP3PublicTLS_", "TestReqHTTP3TLSControl_", "TestReqHTTP3Decompression_",
-                "TestReqHTTP3DeflateClose_", "TestReqDeflateClose_", "TestReqHTTP2FrameContract_")
+                "TestReqHTTP3DeflateClose_", "TestReqDeflateClose_", "TestReqHTTP2FrameContract_",
+                "TestReqMetaCharset_")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")
@@ -230,17 +232,17 @@ def main():
         require(adaptations == {"internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
                                 "internal/dump/dump.go", "request.go", "response.go", "trace.go",
                                 "internal/http3/transport.go", "internal/http3/stream.go",
-                                "internal/compress/deflate_reader.go"},
+                                "internal/compress/deflate_reader.go", "decode.go"},
                 "Unexpected or missing production adaptation")
-        require(len(manifest["adaptedCandidateFiles"]) == 10 and
+        require(len(manifest["adaptedCandidateFiles"]) == 11 and
                 {v["path"] for v in manifest["adaptedCandidateFiles"]} == adaptations,
                 "Incomplete adapted source hash inventory")
         production = {v["path"] for v in manifest["originalFiles"]
                       if v["path"].endswith(".go") and not v["path"].endswith("_test.go")}
         require(len(production) == 89 and adaptations <= production,
-                "Retain all89 original production Go files and exactly10 declared adaptations")
-        require(manifest["originalUnmodifiedFileCount"] == 122,
-                "Retain exactly122 unchanged originals after10 declared production adaptations")
+                "Retain all89 original production Go files and exactly11 declared adaptations")
+        require(manifest["originalUnmodifiedFileCount"] == 121,
+                "Retain exactly121 unchanged originals after11 declared production adaptations")
         for item in manifest["originalFiles"]:
             if item["path"] not in adaptations:
                 data = (controlled / item["path"]).read_bytes()
@@ -350,7 +352,7 @@ def coverage(backend, evidence):
     result = []
     adapted = ("internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
                "internal/dump/dump.go", "request.go", "response.go", "trace.go", "internal/http3/transport.go",
-               "internal/http3/stream.go", "internal/compress/deflate_reader.go")
+               "internal/http3/stream.go", "internal/compress/deflate_reader.go", "decode.go")
     for relative in adapted:
         old = (evidence / "original" / relative).read_text().splitlines()
         new = (backend / "third_party/req" / relative).read_text().splitlines()

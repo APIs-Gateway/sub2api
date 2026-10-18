@@ -700,6 +700,9 @@
     ],
     "internal/compress/deflate_reader.go": [
       "local-required-deflate-underlying-body-close-after-ci38737227705-verified-stream-retention"
+    ],
+    "decode.go": [
+      "099387e5ee9ac4631611281e6413ebcc7d0871ea"
     ]
   },
   "newOwnedFiles": [
@@ -727,11 +730,12 @@
     "http3_wire_decompression_test.go",
     "internal/http3/tls_config_contract_test.go",
     "internal/compress/deflate_close_test.go",
-    "internal/http2/frame_contract_test.go"
+    "internal/http2/frame_contract_test.go",
+    "meta_charset_contract_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "exact full Git source/main MVS; all189 reviewed H3/TLS/body/Close and original contracts plus149 HTTP2 frame leaves =338 named/all JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all10 explicitly adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
+  "validation": "exact full Git source/main MVS; retain all338 previous mandatory leaves and add8 actual HTTP charset cases =346 named/all JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all11 explicitly adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -815,10 +819,18 @@
       "sources": [
         "local-required-deflate-underlying-body-close-after-ci38737227705-verified-stream-retention"
       ]
+    },
+    {
+      "path": "decode.go",
+      "sha256": "9a032c80b73a67b04880249f7a26c1fc6ed9fbf28977ccedbc04dfe0606526e4",
+      "bytes": 2503,
+      "sources": [
+        "099387e5ee9ac4631611281e6413ebcc7d0871ea"
+      ]
     }
   ],
   "adaptedCandidateStatus": "default H2 TLS trace source correction candidate after actual88 named failure; independent static review and new frozen-head remote evidence pending; no approval",
-  "originalUnmodifiedFileCount": 122,
+  "originalUnmodifiedFileCount": 121,
   "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
   "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227",
   "http3ContractTestProvenance": {
@@ -947,5 +959,33 @@
       "status": "Actual remote formatting success independently verified by root, exact single output imported; new301-leaf named/whole/race and all runtime/coverage approval pending remote CI.",
       "independentArtifactReviewSHA256": "a0578af522148d4607b16bb259633a4182c894d731c3b217918ba48c49fb6750"
     }
+  },
+  "metaCharsetRepair": {
+    "repository": "https://github.com/imroc/req",
+    "upstreamIssue": 525,
+    "upstreamPR": 535,
+    "sourceCommit": "099387e5ee9ac4631611281e6413ebcc7d0871ea",
+    "mergeCommit": "4c03790d998f4d703b7389c2b4c543f3886c705a",
+    "forkIssue": 1736,
+    "implementationPR": 1712,
+    "permanentTrackingIssue": 291,
+    "sourcePath": "decode.go",
+    "upstreamParentBlob": "825cffc66a1ae08cb4858ef0ae0d06cb0fc3120f",
+    "fixedBlob": "60547d921be5ebb13ba808359d2e052ddce3702c",
+    "actualRedRun": 39039349373,
+    "actualRedHead": "7f298af72fb175645cfcbad7eae1d7cee22940a8",
+    "actualRedArtifact": 12103157716,
+    "actualRedArtifactSHA256": "60bc45097b30120234df4612fb2d54800ba89aa7a4deb51c981edceff928a83c",
+    "actualRedCases": 2,
+    "actualRedControlPasses": 5,
+    "priorRequiredLeavesPreserved": 338,
+    "requiredLeafCount": 8,
+    "testPrefix": "TestReqMetaCharset_",
+    "testFiles": [
+      "meta_charset_contract_test.go"
+    ],
+    "rawTestSourceSHA256": "c10f4eeedb6a9d2ad21e9636d75b3a7c87da706d8882dbc535ec15289c69e500",
+    "repair": "Replay the actual sniffed bytes through the same streaming decoder as the remaining body; sniff only p[:n]. Production decode.go is the exact official535 blob.",
+    "status": "Actual old-source two-failure/five-control RED and full338 baseline verified by author; independent RED review, fixed-source review, CI formatting, stale-tail mutation control, actual fixed named/all346 race and all11 added-block85 still required. No PR approval."
   }
 }

@@ -103,7 +103,7 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 338,
+  "totalNamedLeaves": 346,
   "http1Package": "github.com/imroc/req/v3",
   "http1Leaves": [
     "TestReqHTTP1Lifecycle_ResponseBody/chunked_trailers_reuse",
@@ -399,5 +399,17 @@
     "TestReqHTTP2FrameContract_MetaStringLength/big_string_okay",
     "TestReqHTTP2FrameContract_MetaStringLength/big_string_error"
   ],
-  "http2FrameContractCount": 149
+  "http2FrameContractCount": 149,
+  "metaCharsetPackage": "github.com/imroc/req/v3",
+  "metaCharsetCount": 8,
+  "metaCharsetLeaves": [
+    "TestReqMetaCharset_PublicHTTPBoundary/meta_split_512_gbk",
+    "TestReqMetaCharset_PublicHTTPBoundary/meta_aligned_512_gbk",
+    "TestReqMetaCharset_PublicHTTPBoundary/header_split_512_gbk",
+    "TestReqMetaCharset_PublicHTTPBoundary/meta_split_128_gb2312",
+    "TestReqMetaCharset_PublicHTTPBoundary/meta_aligned_128_gb2312",
+    "TestReqMetaCharset_PublicHTTPBoundary/disabled_split_512_gbk",
+    "TestReqMetaCharset_PublicHTTPBoundary/no_meta_split_512",
+    "TestReqMetaCharset_PublicHTTPBoundary/no_meta_short_128_stale_buffer"
+  ]
 }

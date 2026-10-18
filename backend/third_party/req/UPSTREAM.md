@@ -13,7 +13,7 @@ Archive SHA256:
 
 The original archive contains 132 files and 1,109,806 uncompressed bytes.
 `UPSTREAM-MANIFEST.json` records every original file's exact SHA256 and size.
-The ten declared production adaptations leave 122 of 132 original files
+The eleven declared production adaptations leave 121 of 132 original files
 byte-identical to that archive. The manifest lists every adapted path and its
 candidate hash. The original module metadata and browser presets are retained.
 
@@ -223,7 +223,7 @@ version witness.
 
 The existing CI checks and Codecov 85% patch threshold remain required. Exact
 upstream hashes identify unchanged imported source; the actual adapted source
-lines in each of all ten adapted production files need actual added-block
+lines in each of all eleven adapted production files need actual added-block
 coverage of at least85% and independent review. A blanket coverage exclusion or a
 clean vulnerability database scan does not prove the private copy is fixed.
 Stage the complete frozen repository and shared fixtures for remote validation.
@@ -235,3 +235,31 @@ separately reviewed change, and retain the security regressions.
 Tracking: [fork issue #1711](https://github.com/APIs-Gateway/sub2api/issues/1711),
 [implementation PR #1712](https://github.com/APIs-Gateway/sub2api/pull/1712),
 [permanent tracker #291](https://github.com/APIs-Gateway/sub2api/issues/291).
+
+## Official HTML meta charset streaming repair
+
+[imroc/req PR #535](https://github.com/imroc/req/pull/535), commit
+`099387e5ee9ac4631611281e6413ebcc7d0871ea` merged as
+`4c03790d998f4d703b7389c2b4c543f3886c705a`, fixes
+[upstream issue #525](https://github.com/imroc/req/issues/525). The copied
+`decode.go` exactly matched that patch's parent. The official repair replays
+the bytes used for HTML charset sniffing through one streaming decoder, so a
+GBK character crossing the initial read remains intact. Sniffing uses only the
+bytes actually returned by that read. The original `decode_test.go` remains
+unchanged; `meta_charset_contract_test.go` adapts the official boundary fixture
+to actual public HTTP loopback responses under the preserved MIT license.
+
+[Actual unchanged-source RED run39039349373](https://github.com/APIs-Gateway/sub2api/actions/runs/39039349373)
+first passed all338 prior mandatory leaves in both named and full race runs,
+then reproduced exactly two payload corruption assertions at512 and128 bytes.
+Five aligned/header/disabled/no-metadata controls passed. Eight fixed-phase
+leaves retain those seven cases and add a short actual read with stale caller
+buffer metadata; an isolated remote mutation must prove the latter rejects
+sniffing unread bytes. Fixed-head formatting, mutation control, named/full race
+results, all eleven adapted-file added-block85 results and independent review
+remain required before approval. This branch starts from the338-leaf base;
+later composition must retain every independently reviewed sibling contract.
+
+Child issue: [#1736](https://github.com/APIs-Gateway/sub2api/issues/1736).
+Shared implementation: [PR #1712](https://github.com/APIs-Gateway/sub2api/pull/1712).
+Permanent tracker: [#291](https://github.com/APIs-Gateway/sub2api/issues/291).
