@@ -73,3 +73,23 @@ func TestAccountNoAutoUnsched_NilSafe(t *testing.T) {
 	require.False(t, accountNoAutoUnsched(&config.Config{}, nil))
 	require.False(t, accountNoAutoUnsched(&config.Config{}, &Account{ID: 1}))
 }
+
+func TestAccountNoAutoUnsched_ExtraFlagAndConfigListAreUnioned(t *testing.T) {
+	cfg := &config.Config{Gateway: config.GatewayConfig{NoAutoUnschedAccountIDs: []int64{3230}}}
+
+	require.True(t, accountNoAutoUnsched(cfg, &Account{ID: 3230}))
+	require.True(t, accountNoAutoUnsched(nil, &Account{ID: 1, Extra: map[string]any{AccountExtraKeyNoAutoUnsched: true}}))
+	require.True(t, accountNoAutoUnsched(cfg, &Account{ID: 1, Extra: map[string]any{AccountExtraKeyNoAutoUnsched: true}}))
+	require.False(t, accountNoAutoUnsched(cfg, &Account{ID: 1, Extra: map[string]any{AccountExtraKeyNoAutoUnsched: false}}))
+	require.False(t, accountNoAutoUnsched(cfg, &Account{ID: 1, Extra: map[string]any{AccountExtraKeyNoAutoUnsched: "true"}}))
+	require.False(t, accountNoAutoUnsched(cfg, &Account{ID: 1}))
+	require.False(t, accountNoAutoUnsched(cfg, nil))
+}
+
+func TestHandleStreamTimeout_ExtraFlagStaysSchedulable(t *testing.T) {
+	svc, repo := newNoAutoUnschedRateLimitService(t, StreamTimeoutActionTempUnsched)
+
+	flagged := &Account{ID: 3240, Platform: PlatformOpenAI, Extra: map[string]any{AccountExtraKeyNoAutoUnsched: true}}
+	require.False(t, svc.HandleStreamTimeout(context.Background(), flagged, "gpt-6-luna"))
+	require.Zero(t, repo.tempCalls)
+}

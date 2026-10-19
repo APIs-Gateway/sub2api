@@ -4953,6 +4953,9 @@
         'When enabled, warmup requests like title generation will return mock responses without consuming upstream tokens',
       autoPauseOnExpired: 'Auto Pause On Expired',
       autoPauseOnExpiredDesc: 'When enabled, the account will auto pause scheduling after it expires',
+      noAutoUnsched: 'Never Auto-Pause Scheduling',
+      noAutoUnschedDesc:
+        'When enabled, no matter how many upstream errors this account hits in a short time, it will never be automatically cooled down or paused from scheduling. Manually disabling the account still takes effect.',
 	  autoPause5hThreshold: '5h Usage Threshold (%)',
 	  autoPause7dThreshold: '7d Usage Threshold (%)',
 	  autoPauseThresholdHint: 'Leave empty or set 0 to use the global default threshold (configured in Ops settings); set a value to override the global default. Reaching the threshold only skips the account during scheduling and does not modify schedulable.',

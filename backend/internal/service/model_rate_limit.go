@@ -37,6 +37,10 @@ func (a *Account) getRateLimitRemainingForKey(key string) time.Duration {
 }
 
 func (a *Account) isModelRateLimitedWithContext(ctx context.Context, requestedModel string) bool {
+	// 「不自动暂停调度」账号不受单模型限流影响（model_rate_limits 里的记录仍保留，后台可见）。
+	if a.NoAutoUnsched() {
+		return false
+	}
 	for _, key := range a.modelRateLimitKeysForRequest(ctx, requestedModel) {
 		if a.isRateLimitActiveForKey(key) {
 			return true
@@ -53,7 +57,7 @@ func (a *Account) isModelRateLimitedForFinalKeyWithContext(ctx context.Context, 
 		return false
 	}
 	finalKey = strings.TrimSpace(finalKey)
-	if finalKey == "" {
+	if finalKey == "" || a.NoAutoUnsched() {
 		return false
 	}
 	for _, key := range a.modelRateLimitFamilyKeys(ctx, finalKey, finalKey) {
@@ -71,6 +75,9 @@ func (a *Account) GetModelRateLimitRemainingTime(requestedModel string) time.Dur
 }
 
 func (a *Account) GetModelRateLimitRemainingTimeWithContext(ctx context.Context, requestedModel string) time.Duration {
+	if a.NoAutoUnsched() {
+		return 0
+	}
 	remaining := time.Duration(0)
 	for _, key := range a.modelRateLimitKeysForRequest(ctx, requestedModel) {
 		if keyRemaining := a.getRateLimitRemainingForKey(key); keyRemaining > remaining {
