@@ -9,7 +9,19 @@ The PR test job freezes the exact event head, tree, base and computed Git merge
 base before tests. It records every tracked input's blob identity and SHA256,
 the actual Go build file classification, Go version, environment and run identity.
 The final check runs after the original Codecov upload. A freeze failure is
-recorded and deferred to that final mandatory check, so it cannot suppress uploads.
+recorded and deferred to that final mandatory check to preserve the backend upload.
+
+Running the gate after the backend upload alone does not preserve all four
+uploads: `frontend-coverage` depends on `test` and its implicit success condition
+would skip it when the supplementary gate fails. The frontend coverage job keeps
+that dependency and explicitly uses `if: ${{ !cancelled() }}`, so an uncancelled
+backend failure still schedules the frontend report and upload. Its checkout is
+pinned to the same event head. The existing full Vitest coverage step still uses
+`continue-on-error`; its actual results require separate inspection and a green
+upload job is not test-pass evidence. A failed backend job and either failed 85%
+coverage requirement remain blocking. Four-upload completion must still be
+verified from both events' actual received uploads; cancellation or earlier test,
+dependency or upload failures cannot be treated as complete coverage evidence.
 
 The denominator comes from the complete Git diff, with per-file patch additions
 checked against the full `--numstat` and path inventories. It includes every changed

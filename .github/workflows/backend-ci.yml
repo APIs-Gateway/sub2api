@@ -710,9 +710,14 @@ jobs:
 
   frontend-coverage:
     needs: test
+    # The supplementary gate can fail after backend coverage was uploaded.
+    # Keep the dependent frontend upload scheduled unless the run was cancelled.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
