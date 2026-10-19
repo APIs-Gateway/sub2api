@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "component": "G public HTTP download and explicit caller-managed continuation contracts",
+  "baseHead": "2d6bf53dc3231dc4ccfce48211c43942ed18d656",
+  "createdAt": "2026-10-19T15:06:27.795084+00:00",
+  "authoringStatus": "RAW source only; no formatter/compiler/test/checker execution; no runtime PASS/RED claimed",
+  "package": "req_test (external package; exported APIs only)",
+  "files": {
+    "download_wire_peer_test.go": {
+      "sha256": "4a195318361273b17d6fe88c7828c203c75b08d2c53009a728e358d8d7bb71b2",
+      "bytes": 8640
+    },
+    "download_contract_test.go": {
+      "sha256": "5a79e838cfabb21f7df8d6061b7efc0063184803b55de88c348d06846179ae7e",
+      "bytes": 7203
+    },
+    "parallel_download_contract_test.go": {
+      "sha256": "34a1aa1ba975cb00b2bdaf456e3bf1cf9cdaecc9d1a6c9f21b77f34c67200bf1",
+      "bytes": 10792
+    },
+    "parallel_download_contract_windows_test.go": {
+      "sha256": "a1e67fe0237fce668dafda59d68b1c2ea46493d542882f634f614e9490eac00b",
+      "bytes": 2974
+    },
+    "DOWNLOAD-CONTRACTS-LICENSE": {
+      "sha256": "9629b9d5b0f233bb67619a30d56bf3e49d8cc5133c6f0e3509d4a952bc9beb39",
+      "bytes": 1064
+    }
+  },
+  "expectedParentCaseInventory": {
+    "linux": [
+      "TestReqDownloadContract/replace_existing_relative",
+      "TestReqDownloadContract/absolute_path",
+      "TestReqDownloadContract/empty_entity",
+      "TestReqDownloadContract/range_suffix_file",
+      "TestReqDownloadContract/if_range_200_visible",
+      "TestReqDownloadContract/range_416_visible",
+      "TestReqDownloadContract/short_body_error",
+      "TestReqDownloadContract/writer_error",
+      "TestReqDownloadContractCancellation",
+      "TestReqParallelDownloadContract/out_of_order",
+      "TestReqParallelDownloadContract/one_byte",
+      "TestReqParallelDownloadContract/exact_boundary",
+      "TestReqParallelDownloadContract/final_short_segment",
+      "TestReqParallelDownloadContract/segment_larger_than_entity",
+      "TestReqParallelDownloadContract/relative_existing_file",
+      "TestReqParallelDownloadContract/absolute_file",
+      "TestReqParallelDownloadContract/writer_error",
+      "TestReqParallelDownloadContract/head_zero_length",
+      "TestReqParallelDownloadContract/head_unknown_length",
+      "TestReqParallelDownloadContract/head_error_status",
+      "TestReqParallelDownloadContract/range_ignored_200",
+      "TestReqParallelDownloadContract/missing_content_range",
+      "TestReqParallelDownloadContract/wrong_range_start",
+      "TestReqParallelDownloadContract/reversed_range",
+      "TestReqParallelDownloadContract/invalid_range_total",
+      "TestReqParallelDownloadContract/unknown_range_unit",
+      "TestReqParallelDownloadContract/range_416",
+      "TestReqParallelDownloadContract/truncated_segment",
+      "TestReqParallelDownloadContract/empty_segment",
+      "TestReqParallelDownloadContract/cancel_head",
+      "TestReqParallelDownloadContract/cancel_segment",
+      "TestReqParallelDownloadContract/failure_during_dispatch"
+    ],
+    "windowsAdditional": [
+      "TestReqParallelDownloadWindowsClose/owned_output_released"
+    ],
+    "linuxCount": 32,
+    "windowsAdditionalCount": 1
+  },
+  "parallelChildIsolation": {
+    "sameRaceInstrumentedTestBinary": true,
+    "selector": "^TestReqParallelDownloadContract$/^<scenario>$ (or Windows Close top-level test)",
+    "parentOwnedScratch": "SUB2API_G_DOWNLOAD_SCRATCH; removed by parent only after child process exits",
+    "executionIdentityMarkers": [
+      "G_CHILD_EXECUTED",
+      "G_CHILD_BODY_DONE"
+    ],
+    "businessMarker": "G_DOWNLOAD_ASSERT",
+    "fixtureMarkers": [
+      "G_FIXTURE_OBSERVATION",
+      "G_FIXTURE_TRANSFER",
+      "G_FIXTURE_CHILD",
+      "G_FIXTURE_WINDOWS"
+    ],
+    "watchdogMarker": "G_CHILD_WATCHDOG (failure, never PASS or business RED)",
+    "observationContextSeconds": 6,
+    "ordinaryContextSeconds": 5,
+    "clientTimeoutSeconds": 3,
+    "childTestingTimeoutSeconds": 12,
+    "parentWatchdogSeconds": 15,
+    "noPrivateTaskOrFileIntrospection": true
+  },
+  "sourceAttribution": {
+    "newFixturesWrittenForThisTask": true,
+    "copiedUpstreamTestBodies": false,
+    "reqVersion": "v3.57.0",
+    "reqTagCommit": "247aa96f489227c411c5ce35e557f8f3494709b2",
+    "officialLatestObservedCommit": "2affd4787737e8315ff3ffd61a3388eda32d0755",
+    "parallelBlobBothOfficialAndFork": "cdff7288e9fdc71705fd9718d3f99819a547b58f",
+    "parallelSHA256": "77e671826d354ebd0975c46514d8da14fb87ed49e9ff3763198cd944cfebe60a",
+    "apiSource": "https://github.com/imroc/req/blob/247aa96f489227c411c5ce35e557f8f3494709b2/parallel_download.go",
+    "downloadDocumentation": "https://req.cool/docs/tutorial/download/",
+    "protocolSources": [
+      "https://httpwg.org/specs/rfc9110.html#field.range",
+      "https://httpwg.org/specs/rfc9110.html#field.content-range",
+      "https://httpwg.org/specs/rfc9110.html#combining.parts",
+      "https://httpwg.org/specs/rfc9110.html#status.416"
+    ],
+    "upstreamIssues": [
+      "https://github.com/imroc/req/issues/416",
+      "https://github.com/imroc/req/issues/417"
+    ],
+    "license": "DOWNLOAD-CONTRACTS-LICENSE is byte-identical to original req MIT LICENSE; API/protocol sources are references, not copied fixture code"
+  },
+  "scopeInvariants": {
+    "productionChanges": false,
+    "original132FilesChanged": false,
+    "original14TestFilesChanged": false,
+    "original89ProductionFilesChanged": false,
+    "F44Changes": false,
+    "inventoryCheckerManifestDependencyCoveragePolicyChanges": false,
+    "autoResumeAPIClaimed": false,
+    "genericRangeValidationOrRollbackStateMachineAdded": false,
+    "linuxRenameOrFDCountCloseProof": false,
+    "securityApplicationReachabilityClaimed": false
+  },
+  "knownOverlap": {
+    "openPRFileInventoriesReviewed": 41,
+    "inheritedReqImports": [
+      1672,
+      1682,
+      1697,
+      1699,
+      1704,
+      1705,
+      1708,
+      1710,
+      1712,
+      1717
+    ],
+    "fourRelevantProductionFilesAtEachHeadEqualBase": true,
+    "pending": "Root coordinates cross-links/integration after actual RED; refresh before publication/merge"
+  },
+  "remoteVerificationRequired": [
+    "Independent RAW source review before formatter or CI",
+    "Exact source remotely formatted; retain original/produced bytes and actual exits",
+    "Linux real parent JSON32 cases and actual child stdout/exits under race; all preexisting req suites remain mandatory",
+    "Windows real Close witness1 additional case on an approved isolated standard Windows runner",
+    "Business RED requires an intended assertion after complete relevant peer evidence; compiler/race/fixture/timeout/watchdog failures are distinct",
+    "Root-owned manifest/mandatory-inventory integration only after actual case identities/evidence",
+    "All original Codecov85, supplementary complete Git85 and independent approval requirements remain blocking"
+  ]
+}
