@@ -893,6 +893,9 @@ type GatewayConfig struct {
 	// UpstreamModelMismatchObserveAccountIDs：账号级观察名单。名单内账号的上游模型不一致只记录不拦截（同全局观察模式），
 	// 其余账号照常拦截。用于 openai_forced_account_routes 这类强制单账号路由：拦截后无号可切，客户端会直接收到 502。
 	UpstreamModelMismatchObserveAccountIDs []int64 `mapstructure:"upstream_model_mismatch_observe_account_ids"`
+	// NoAutoUnschedAccountIDs：名单内账号不触发流超时暂停（含 action=error 置错）和 OpenAI 单模型短冷却。
+	// 用于只有一个号的专用分组：号被暂停后整组无号可调，宁可继续打到这个号上，由池内重试兜底。
+	NoAutoUnschedAccountIDs []int64 `mapstructure:"no_auto_unsched_account_ids"`
 
 	// ModelDowngradeGuard quarantines configured model substitutions after repeated hits.
 	ModelDowngradeGuard GatewayModelDowngradeGuardConfig `mapstructure:"model_downgrade_guard"`
@@ -2204,6 +2207,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.disable_openai_responses_image_generation", false)
 	viper.SetDefault("gateway.disable_upstream_model_mismatch_block", false)
 	viper.SetDefault("gateway.upstream_model_mismatch_observe_account_ids", []int64{})
+	viper.SetDefault("gateway.no_auto_unsched_account_ids", []int64{})
 	viper.SetDefault("gateway.model_downgrade_guard.enabled", false)
 	viper.SetDefault("gateway.model_downgrade_guard.threshold_count", 5)
 	viper.SetDefault("gateway.model_downgrade_guard.window_minutes", 30)
