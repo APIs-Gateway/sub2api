@@ -1,0 +1,107 @@
+name: Sealed F44 genuine public client baseline RED proof
+on:
+  push:
+    branches: [codex/req-client-f-red-proof-oct19]
+permissions:
+  contents: read
+jobs:
+  genuine-red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CGO_ENABLED: '1'
+      GOMAXPROCS: '2'
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: -mod=readonly
+      BASE: c541f5a171fe85a053a6199e10304a386e852d22
+      CANDIDATE: 0eaabfbe18250716fb6017ec0b068d47bf7484a2
+      MODULE: github.com/imroc/req/v3
+    steps:
+      - name: Checkout reviewed controller head only for CI control
+        uses: actions/checkout@v6
+        with:
+          path: controller
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Checkout complete unchanged baseline repository
+        uses: actions/checkout@v6
+        with:
+          path: baseline
+          ref: c541f5a171fe85a053a6199e10304a386e852d22
+          persist-credentials: false
+      - name: Checkout complete exact formatted F44 source repository
+        uses: actions/checkout@v6
+        with:
+          path: candidate
+          ref: 0eaabfbe18250716fb6017ec0b068d47bf7484a2
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: candidate/backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: candidate/backend/go.sum
+      - name: Freeze every tracked Git input and verify source-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/req-f44-red-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf '%s\n' "EVIDENCE=$evidence" >> "$GITHUB_ENV"
+          python3 -B controller/.github/ci/req-client-f-red-proof.py setup "$GITHUB_WORKSPACE/baseline" "$GITHUB_WORKSPACE/candidate" "$evidence"
+          git -C controller rev-parse HEAD > "$evidence/controller-head.txt"
+          test "$(cat "$evidence/controller-head.txt")" = "$GITHUB_SHA"
+          git -C controller diff --exit-code HEAD -- > "$evidence/controller-before.diff"
+          sha256sum controller/.github/ci/req-client-f-red-proof.py controller/.github/workflows/req-client-f-red-proof.yml > "$evidence/controller-before.sha256"
+          cp controller/.github/ci/req-client-f-red-proof.py "$evidence/controller.py"
+          cp controller/.github/workflows/req-client-f-red-proof.yml "$evidence/workflow.yml"
+          go version > "$evidence/go-version.txt"
+          grep -Eq '^go version go1\.26\.9 linux/amd64$' "$evidence/go-version.txt"
+      - name: Execute original unchanged401 suite, original provenance, graph controls and oldRED
+        working-directory: baseline/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          REQ_SECURITY_EVIDENCE="$EVIDENCE/baseline" REQ_SECURITY_EXPECTED_HEAD="$BASE" bash tools/req-http2-security-ci.sh > "$EVIDENCE/baseline.stdout" 2> "$EVIDENCE/baseline.stderr"
+          actual=$?
+          set -e
+          printf '%s\n' "$actual" > "$EVIDENCE/baseline.exit"
+          test "$actual" -eq 0
+          go list -m -json all > "$EVIDENCE/baseline-modules-warm.json"
+      - name: Run exact F44 named and complete req suites with race, preserving every actual result
+        working-directory: candidate/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
+          go list -m -json all > "$EVIDENCE/candidate-modules-before.json"
+          go list -json "$MODULE/..." > "$EVIDENCE/candidate-packages.json"
+          gofmt -l third_party/req/client_behavior_peer_test.go third_party/req/client_behavior_observer_test.go third_party/req/client_behavior_contract_test.go third_party/req/client_redirect_cookie_contract_test.go third_party/req/client_response_contract_test.go > "$EVIDENCE/f-gofmt.list"
+          test ! -s "$EVIDENCE/f-gofmt.list"
+          set +e
+          go test -p=1 -parallel=1 -race -count=1 -timeout=10m -json -run '^TestReqClient(Digest|Redirect|Cookie|Response)_' -covermode=atomic -coverpkg="$MODULE/..." -coverprofile="$EVIDENCE/f-named.raw.out" "$MODULE" > "$EVIDENCE/f-named.json" 2> "$EVIDENCE/f-named.stderr"
+          named_status=$?
+          printf '%s\n' "$named_status" > "$EVIDENCE/f-named.exit"
+          go test -p=1 -parallel=1 -race -count=1 -timeout=15m -json -covermode=atomic -coverpkg="$MODULE/..." -coverprofile="$EVIDENCE/f-all.raw.out" "$MODULE/..." > "$EVIDENCE/f-all.json" 2> "$EVIDENCE/f-all.stderr"
+          all_status=$?
+          printf '%s\n' "$all_status" > "$EVIDENCE/f-all.exit"
+          set -e
+          go list -m -json all > "$EVIDENCE/candidate-modules-after.json"
+      - name: Verify genuine RED assertions and retained401 passes with unchanged full source and MVS
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B controller/.github/ci/req-client-f-red-proof.py finish "$GITHUB_WORKSPACE/baseline" "$GITHUB_WORKSPACE/candidate" "$EVIDENCE"
+          sha256sum controller/.github/ci/req-client-f-red-proof.py controller/.github/workflows/req-client-f-red-proof.yml > "$EVIDENCE/controller-after.sha256"
+          cmp "$EVIDENCE/controller-before.sha256" "$EVIDENCE/controller-after.sha256"
+          git -C controller diff --exit-code HEAD -- > "$EVIDENCE/controller-after.diff"
+      - name: Preserve all raw results, original profiles, full inputs and honest incomplete phases
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: req-f44-red-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/req-f44-red-${{ github.run_id }}-${{ github.run_attempt }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
