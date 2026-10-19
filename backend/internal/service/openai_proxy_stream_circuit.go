@@ -248,6 +248,10 @@ func (s *OpenAIGatewayService) isOpenAIProxyStreamQuarantined(ctx context.Contex
 	if !ok || openAIProxyStreamQuarantineBypassed(ctx) {
 		return false
 	}
+	// 隔离按代理计，但「不自动暂停调度」账号不因代理被隔离而退出候选。
+	if s != nil && accountNoAutoUnsched(s.cfg, account) {
+		return false
+	}
 	circuit := s.getOpenAIProxyStreamCircuit()
 	return circuit != nil && circuit.isBlocked(proxyID, time.Now())
 }

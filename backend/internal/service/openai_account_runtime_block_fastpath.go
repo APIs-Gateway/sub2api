@@ -240,7 +240,7 @@ func (s *OpenAIGatewayService) isOpenAIAccountModelRuntimeBlocked(account *Accou
 // isOpenAIAccountModelRuntimeBlockedForFinalModel checks a key used by a WS
 // forwarding path without applying account model_mapping a second time.
 func (s *OpenAIGatewayService) isOpenAIAccountModelRuntimeBlockedForFinalModel(account *Account, finalModel string) bool {
-	if s == nil || account == nil {
+	if s == nil || account == nil || accountNoAutoUnsched(s.cfg, account) {
 		return false
 	}
 	state := s.getOpenAIAccountModelTransientState()
@@ -292,6 +292,12 @@ func (s *OpenAIGatewayService) BlockAccountScheduling(account *Account, until ti
 	if s == nil || !isOpenAIAccount(account) {
 		return
 	}
+	// 「不自动暂停调度」账号不进入任何运行时冷却（429 / 上游禁用 / 临时不可调度 / 流超时 / 传输错误……
+	// 所有写入口最终都走到这里），选号时它始终留在候选里。
+	if accountNoAutoUnsched(s.cfg, account) {
+		LogNoAutoUnschedSkip(account.ID, "runtime_block", reason)
+		return
+	}
 	now := time.Now()
 	blockUntil := until
 	if blockUntil.IsZero() || !blockUntil.After(now) {
@@ -333,6 +339,10 @@ func (s *OpenAIGatewayService) ClearAccountSchedulingBlock(accountID int64) {
 
 func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) bool {
 	if s == nil || !isOpenAIAccount(account) {
+		return false
+	}
+	// 开关可能在冷却记录写入之后才被打开：读侧也放行，立即生效。
+	if accountNoAutoUnsched(s.cfg, account) {
 		return false
 	}
 	value, ok := s.openaiAccountRuntimeBlockUntil.Load(account.ID)

@@ -1022,6 +1022,9 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"auto_pause_5h_disabled",
 		"auto_pause_7d_disabled",
 		"model_rate_limits",
+		// 「不自动暂停调度」开关必须进投影：Account.IsSchedulable / 单模型限流判断读的是本投影，
+		// 缺失时带标记账号在快照里会被当成普通账号，冷却窗口照常把它剔出候选。
+		service.AccountExtraKeyNoAutoUnsched,
 		service.UpstreamBillingProbeExtraKey,
 	}
 	filtered := make(map[string]any)

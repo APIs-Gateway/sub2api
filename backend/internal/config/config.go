@@ -893,8 +893,11 @@ type GatewayConfig struct {
 	// UpstreamModelMismatchObserveAccountIDs：账号级观察名单。名单内账号的上游模型不一致只记录不拦截（同全局观察模式），
 	// 其余账号照常拦截。用于 openai_forced_account_routes 这类强制单账号路由：拦截后无号可切，客户端会直接收到 502。
 	UpstreamModelMismatchObserveAccountIDs []int64 `mapstructure:"upstream_model_mismatch_observe_account_ids"`
-	// NoAutoUnschedAccountIDs：名单内账号不触发流超时暂停（含 action=error 置错）和 OpenAI 单模型短冷却。
-	// 用于只有一个号的专用分组：号被暂停后整组无号可调，宁可继续打到这个号上，由池内重试兜底。
+	// NoAutoUnschedAccountIDs：名单内账号「不自动暂停调度」——因上游失败自动产生的任何停调度/冷却
+	// （429、529、401/403 置错、临时不可调度规则、流超时、单模型限流、运行时冷却、传输错误隔离、
+	// 代理流隔离）都不影响它被选中；管理员手动停用、过期、配额耗尽等仍然生效。
+	// 与账号 extra.no_auto_unsched=true 取并集。用于只有一个号的专用分组：冷却只会把用户拿到的
+	// 上游错误换成 503 no available accounts，还拦掉冷却期内本来能成功的请求。
 	NoAutoUnschedAccountIDs []int64 `mapstructure:"no_auto_unsched_account_ids"`
 
 	// ModelDowngradeGuard quarantines configured model substitutions after repeated hits.
