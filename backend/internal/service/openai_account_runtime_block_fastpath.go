@@ -130,7 +130,7 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	// failing model (not the whole account) instead of silently retrying
 	// the same model forever. See openai_account_model_transient.go.
 	if !shouldDisable && !modelTempMatched && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey &&
-		shouldCooldownOpenAITransientUpstreamError(statusCode, responseBody) {
+		!accountNoAutoUnsched(s.cfg, account) && shouldCooldownOpenAITransientUpstreamError(statusCode, responseBody) {
 		model := ""
 		if len(requestedModel) > 0 {
 			model = requestedModel[0]
