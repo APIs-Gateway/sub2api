@@ -1,18 +1,22 @@
 # F public client protocol source candidate
 
-Formatted candidate based on security PR1712 head
+Fixture-corrected candidate based on security PR1712 head
 `c541f5a171fe85a053a6199e10304a386e852d22`, tree
 `09e841970f893e41c4a8e4a02c8059545a03f238`. Child1711 and permanent291
 remain the governing issue links. This is source for independent review;
 no candidate test, formatter, compiler or build has executed locally or on87.
-The implementation branch remains unpushed. Only the separately sealed remote
-formatter controller has run; candidate tests and builds remain unexecuted.
+The implementation branch remains unpushed; its reviewed prior test-source
+ancestor became reachable through the separate proof branch. Remote formatter
+and initial genuine RED controllers have executed; the initial RED run failed
+overall. Current fixture-corrected bytes are not yet remotely formatted or
+behavior-validated.
 
 Initial raw candidate2fdf1e56 is retained in history. Independent review revised
 source-body closure timing, removed exact auth-int factory call count, added
 completed peer write/flush observations before401 body assertions, and clarified
-the charset coalescing fixture. Only the remote formatting described below has
-subsequently run; no candidate test execution occurred.
+the charset coalescing fixture. Remote formatter evidence below applies to the
+prior0eaabf candidate. Its subsequent actual RED run and this fixture correction
+are recorded below without replacing that failed result.
 
 The existing sole untracked peer draft was preserved before the worktree was
 fast-forwarded. Its original5588 bytes and SHA256
@@ -73,6 +77,9 @@ to the actual body. Exact decoded bytes and final EOF are still required.
 All HTTP peers use httptest loopback listeners on port0. Redirect authorities
 are virtual and resolved only by a DialContext allowlist to the owned listener.
 Unexpected authorities fail before DNS. The common client timeout is5 seconds;
+only the charset short-body fixture uses client Timeout0 with a per-subcase
+5-second context deadline to retain the production decoder body type. The
+request remains bounded and all other clients retain the common timeout;
 concurrent digest work is bounded to8 requests. Peer observations are copied
 under a mutex, request bodies are completely read before each response, connection
 identities are captured by ConnContext, and test cleanup closes idle transports
@@ -88,7 +95,7 @@ pool or retry assertions already owned by the HTTP1 lifecycle contracts.
 Existing GBK boundary coverage is not repeated. Deprecated request-level digest
 and Go308/GetBody redirect variants are deferred; these are documented subsets.
 
-## Hypotheses requiring genuine CI RED before production changes
+## Digest defects requiring a complete clean fixture RED proof before repair
 
 1. digest.go drains/closes a401 response before FindChallenge, including when
    there is no usable Digest challenge. Ordinary401, Basic-only and unsupported
@@ -98,10 +105,14 @@ and Go308/GetBody redirect variants are deferred; these are documented subsets.
    public RoundTripper contract requires closure including on errors. The
    candidate checks both the original body and any replay body already opened.
 
-These are source hypotheses only. No production edits have been made and no
-upstream defect is claimed from an unexecuted test. Exact-head remote RED,
-all-state duplicate/PR overlap inspection and root review must precede a fix.
-A real reachable defect or race remains blocking regardless of its age.
+These began as source hypotheses. Actual run39272637627 emitted all5 intended
+digest witness failures after their fixture prerequisites, in named and full
+race suites. They represent two production defect families. No production edits
+have been made. The complete strict RED proof still failed because8 separate
+charset fixture leaves failed before exercising decoding. A new exact-source
+5RED+39PASS matrix, all-state duplicate/PR overlap inspection and independent
+review must precede any production fix. A reachable defect or race remains
+blocking regardless of its age.
 
 ## Remote formatter evidence
 
@@ -116,7 +127,42 @@ commands returned0 with empty post-format output/stderr. Formatted outputs were
 byteexact to those from the first run. Root independently checked the new
 artifact before authorizing these exact copies. Provenance retains raw seals,
 formatted seals and both runs. No source, compiler or test failure is inferred
-from the formatter controller defect. No test/build result is claimed.
+from the formatter controller defect. This formatter pass applies only to the
+prior0eaabf bytes and does not cover the later corrected response fixture.
+Historical raw and formatted seals remain in provenance.
+
+## Initial genuine remote RED and corrected charset fixture
+
+Dedicated run39272637627 used controllerbaab0daa with separate complete pinned
+c541baseline and0eaabfcandidate checkouts. Artifact12196251287 SHA256
+`32210334d732c0280cfa8a97d916a99e13cb16318408c507786ab6ecfdbcab48`
+preserves actual exits/JSON, raw profiles, full4470/4478 Git inputs and before/after
+seals. Overall workflow conclusion was FAILURE with no completion marker:
+`f-named unexpected/missing test failure`. This failure is retained permanently
+in source/proof history and is not a passing production or F44 result.
+
+Original401 all passed in both the untouched baseline and candidate full suite.
+Baseline named468/468 and all611/611 actual tests passed. F named and full each
+had all44 leaves exactly once:31 PASS and13 FAIL. Five failures carried the
+intended digest body-loss/ownership assertion markers; the additional8 were
+charset fixture errors: `actual response did not select production sniffing
+reader: *http.cancelTimerBody`. No race, build failure or test-level skip was
+observed. Root and a separate independent reviewer audited the raw artifact.
+All365 MVS fields/order remained unchanged except proven checkout locations;
+15 optional external cache Dir presence changes between original cold/warm
+baseline snapshots were explicitly checked, with all other fields unchanged.
+
+The charset fixture had inherited the common http.Client5-second Timeout, which
+legally wraps Body before returning the public response. This correction changes
+only that test's timeout setup: each subcase has context.WithTimeout5seconds,
+client.SetTimeout0, and Request.SetContext. It follows the existing passed
+meta_charset_contract_test.go fixture. The actual decoder-type assertion, first
+chunk, exact byte/payload, EOF, close and all44 leaf names remain unchanged.
+No reflection, wrapper unwrapping, mock timer body or added accepted RED masks
+this error. Other clients retain their common5-second timeout. The changed
+response file is raw source pending independent review and remote gofmt-l plus
+behavioral proof; prior formatter evidence must not be attributed to these new
+bytes. No new controller run is authorized by this source commit alone.
 
 ## Independent review and integration gate
 
@@ -127,9 +173,9 @@ existing401 mandatory cases,89 production
 files,11 adaptations,29 owned files, frontend/build/race checks and both85 coverage
 gates are untouched. This candidate makes no coverage percentage promise.
 
-Next steps belong to root: independent review of this frozen formatted source,
-then a separately reviewed genuine F44 baseline RED controller using the complete
-frozen repository and unchanged401 baseline. Actual named/full/race results,
+Next steps belong to root: independent review of this fixture-corrected source,
+then a separately reviewed genuine F44 baseline RED controller that retains the
+initial failed proof history, complete frozen repository and unchanged401 baseline. Actual named/full/race results,
 exact source inputs and unchanged MVS must be observed. Only genuine body-loss or
 closure markers with completed fixture prerequisites can justify a production
 fix; other failures require investigation. Integrate the44 reviewed leaf names,

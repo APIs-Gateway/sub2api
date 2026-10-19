@@ -1,5 +1,5 @@
 {
-  "status": "formatted source candidate for independent review; remote formatter only passed; candidate tests/builds NOTRUN",
+  "status": "fixture-corrected source candidate pending independent review and remote formatting/behavior validation; prior remote baseline RED run failed overall with5 intended digest witnesses plus8 charset fixture failures",
   "baseHead": "c541f5a171fe85a053a6199e10304a386e852d22",
   "baseTree": "09e841970f893e41c4a8e4a02c8059545a03f238",
   "forkIssue": 1711,
@@ -77,8 +77,8 @@
     },
     {
       "path": "client_response_contract_test.go",
-      "bytes": 13166,
-      "sha256": "d42a957027d2c5186a43f5bf6e1501d79cc81c7024544dbdc6a721c159d02e1a"
+      "bytes": 13313,
+      "sha256": "5f6729384c2c0234ea2272fcc970b44bead466f2b1834005b6d0e7afcd84d505"
     },
     {
       "path": "CLIENT-BEHAVIOR-LICENSE",
@@ -261,11 +261,7 @@
     "Request.SetDigestAuth deprecated path is deferred; common client digest is the supported path exercised",
     "Go308/GetBody redirect variants deferred; request-body GetBody failures exercised through digest instead"
   ],
-  "knownUnprovenHypotheses": [
-    "Digest ordinary401 body is drained/closed before FindChallenge returns ErrNoChallenge",
-    "Digest GetBody clone failure may leave original caller Body unclosed; test asserts documented RoundTripper ownership"
-  ],
-  "nextGate": "Independent final source review, then separately reviewed genuine F44 baseline RED controller on complete frozen repository plus existing401 controls; no production edit before exact actual RED and root independent review",
+  "nextGate": "Independent review of current fixture-corrected source, then root-authorized new proof retaining initial failed history, baselinec541 and exact new candidate/tree. Remote gofmt-l all5 and actual5RED+39PASS with original401/source/MVS unchanged. No production edit before actual audit and official upstream all-state/overlap checks.",
   "preservedReqBaseline": {
     "repository": "https://github.com/imroc/req",
     "version": "v3.57.0",
@@ -331,7 +327,7 @@
     }
   ],
   "formatterHistory": {
-    "scope": "Remote gofmt only; no tests/builds/production execution. Current frozenRawFiles seal the exact formatted candidate bytes. Original raw seals remain preFormatterRawFiles.",
+    "scope": "Historical remote gofmt only for prior formatted candidate0eaabfbe18250716fb6017ec0b068d47bf7484a2. remoteFormattedFilesAt0eaabf retains those exact output seals. Current frozenRawFiles includes a subsequent fixture correction not yet remotely formatted or behavior-validated; no old formatter pass is claimed for that changed file.",
     "rawSourceHead": "c5fb66a3f58e3af00832fe9523e3697fdad0df97",
     "rawSourceTree": "8671aef66f9a56a4f36b6227427a802a33a63a11",
     "rawPayloadSHA256": "66dd0f7479ef686b19284ded5919d851cbb776c246a1d495abe777ae62586623",
@@ -355,5 +351,74 @@
       "formattedOutputsByteexactFirstRun": true,
       "rootIndependentReviewReceiptSHA256": "b4a717b3553d2aed0f80e2eff0b6d0aa077ccb314fba328c4be4e82608a56051"
     }
+  },
+  "remoteFormattedFilesAt0eaabf": [
+    {
+      "path": "client_behavior_peer_test.go",
+      "bytes": 5588,
+      "sha256": "0e6458474cec81c56a1fc29141811a02c7b256952d45c1118dd3c1934da9870b"
+    },
+    {
+      "path": "client_behavior_observer_test.go",
+      "bytes": 2961,
+      "sha256": "aaf8f968f7bb148200e50cb6351eb4b97b9d529f5ce9a6cef51ac3c96dc95626"
+    },
+    {
+      "path": "client_behavior_contract_test.go",
+      "bytes": 12996,
+      "sha256": "5a43df362be849aabbea3d3085f33d849a2bfa105a73005a3f38ea3d4a57ffcb"
+    },
+    {
+      "path": "client_redirect_cookie_contract_test.go",
+      "bytes": 10620,
+      "sha256": "2292e90a9c33cb97a774facdb05d97e05edf96ee555ac1e2b660437adc5c629c"
+    },
+    {
+      "path": "client_response_contract_test.go",
+      "bytes": 13166,
+      "sha256": "d42a957027d2c5186a43f5bf6e1501d79cc81c7024544dbdc6a721c159d02e1a"
+    },
+    {
+      "path": "CLIENT-BEHAVIOR-LICENSE",
+      "bytes": 2673,
+      "sha256": "0c1bf41cb4f1599676f758f3c99e680e4237e0dcffb95b04936d2a895f940b10"
+    }
+  ],
+  "originalSourceHypotheses": [
+    "Digest ordinary401 body is drained/closed before FindChallenge returns ErrNoChallenge",
+    "Digest GetBody clone failure may leave original caller Body unclosed; test asserts documented RoundTripper ownership"
+  ],
+  "knownActualDefectWitnesses": {
+    "run": 39272637627,
+    "controllerHead": "baab0daafa389c60275fd769b8db6f7d2f96010f",
+    "applicationHead": "0eaabfbe18250716fb6017ec0b068d47bf7484a2",
+    "baselineHead": "c541f5a171fe85a053a6199e10304a386e852d22",
+    "actualConclusion": "failure",
+    "artifact": 12196251287,
+    "artifactSHA256": "32210334d732c0280cfa8a97d916a99e13cb16318408c507786ab6ecfdbcab48",
+    "actualNamedAndFullExits": 1,
+    "intendedDigestFailedLeaves": {
+      "TestReqClientDigest_NoChallengeEvictsCache": "REQ_DIGEST_401_BODY_ASSERT:",
+      "TestReqClientDigest_GetBodyFailure/clone_1": "REQ_DIGEST_BODY_CLOSE_ASSERT:",
+      "TestReqClientDigest_GetBodyFailure/clone_2": "REQ_DIGEST_BODY_CLOSE_ASSERT:",
+      "TestReqClientDigest_ChallengeBoundary/basic_only": "REQ_DIGEST_401_BODY_ASSERT:",
+      "TestReqClientDigest_ChallengeBoundary/unsupported_digest": "REQ_DIGEST_401_BODY_ASSERT:"
+    },
+    "additionalFixtureFailedLeaves": 8,
+    "F44ActualLeafCounts": {
+      "pass": 31,
+      "fail": 13
+    },
+    "original401PassedInBaselineAndCandidateFull": true,
+    "noCompleteMarker": true,
+    "rootIndependentActualReviewReceiptSHA256": "976a6ebd39d437856852561749d7705d7edb9e80722afe4bcb4f290f6456dda1",
+    "claimLimit": "Five genuine digest assertions observed after fixture prerequisites, representing two production defect families. Overall strict5RED+39PASS proof failed because8 charset fixture leaves rejected legal timer wrapper. No production repair, approval, merge or passing F44 suite is claimed."
+  },
+  "fixtureCorrectionAfterInitialRed": {
+    "priorCandidateHead": "0eaabfbe18250716fb6017ec0b068d47bf7484a2",
+    "file": "client_response_contract_test.go",
+    "scope": "Only CharsetShortBodies per-subcase5s context plus SetTimeout(0) and SetContext; preserve44 names, type assertion, actual decoder/first chunk/payload/EOF/close behavior. Other clients retain common5s timeout. No unwrap, reflection, timer-body mock or additional acceptedRED.",
+    "reason": "http.Client.Timeout legally wraps production body as *http.cancelTimerBody, so prior direct decoder type assertion failed before charset behavior was reached.",
+    "validationStatus": "NOTRUN: changed source pending independent review, remote gofmt-l and genuine baseline RED matrix; no local or87 execution."
   }
 }
