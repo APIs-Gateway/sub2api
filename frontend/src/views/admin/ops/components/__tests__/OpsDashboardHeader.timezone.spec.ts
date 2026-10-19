@@ -218,7 +218,11 @@ describe('Ops custom time range local clock', () => {
     if (closeMethod === 'cancel button') {
       await clickButton(wrapper, 'common.cancel')
     } else {
-      wrapper.findComponent({ name: 'BaseDialog' }).vm.$emit('close')
+      const dialogs = wrapper.findAllComponents({ name: 'BaseDialog' }).filter(dialog =>
+        dialog.find('input[type="datetime-local"]').exists()
+      )
+      expect(dialogs).toHaveLength(1)
+      dialogs[0]!.vm.$emit('close')
       await flushPromises()
     }
     expect(wrapper.emitted('update:customTimeRange')).toBeUndefined()
