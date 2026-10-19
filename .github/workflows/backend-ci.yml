@@ -287,7 +287,6 @@ jobs:
     env:
       COVERAGE_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
       COVERAGE_SOURCE_BASE: ${{ github.event.pull_request.base.sha }}
-      COVERAGE_INTEGRITY_EVIDENCE: ${{ runner.temp }}/complete-git-go-coverage-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -302,6 +301,13 @@ jobs:
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.26.9'
+      - name: Initialize complete Git coverage evidence path (PR only)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'COVERAGE_INTEGRITY_EVIDENCE=%s/complete-git-go-coverage-%s-%s\n' \
+            "$RUNNER_TEMP" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
       - name: Freeze complete Git source and actual Go build classification (PR only)
         if: github.event_name == 'pull_request'
         # A freeze failure is recorded and makes the final mandatory check fail;
@@ -628,7 +634,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: complete-git-go-coverage-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/complete-git-go-coverage-${{ github.run_id }}-${{ github.run_attempt }}/
+          path: ${{ env.COVERAGE_INTEGRITY_EVIDENCE }}
           if-no-files-found: error
           retention-days: 14
 
