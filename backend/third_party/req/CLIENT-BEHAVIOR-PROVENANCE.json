@@ -1,5 +1,5 @@
 {
-  "status": "raw source candidate for independent review; never executed locally; not remote CI evidence",
+  "status": "formatted source candidate for independent review; remote formatter only passed; candidate tests/builds NOTRUN",
   "baseHead": "c541f5a171fe85a053a6199e10304a386e852d22",
   "baseTree": "09e841970f893e41c4a8e4a02c8059545a03f238",
   "forkIssue": 1711,
@@ -62,23 +62,23 @@
     },
     {
       "path": "client_behavior_observer_test.go",
-      "bytes": 2946,
-      "sha256": "2aef7a1074ea8e78afd148c44df719682249ffebb233933789e5016cd40c173c"
+      "bytes": 2961,
+      "sha256": "aaf8f968f7bb148200e50cb6351eb4b97b9d529f5ce9a6cef51ac3c96dc95626"
     },
     {
       "path": "client_behavior_contract_test.go",
-      "bytes": 12797,
-      "sha256": "d76f434b0f1906e6777605c87b4195daaee6398b5b47bb49e92ebd88c71924bf"
+      "bytes": 12996,
+      "sha256": "5a43df362be849aabbea3d3085f33d849a2bfa105a73005a3f38ea3d4a57ffcb"
     },
     {
       "path": "client_redirect_cookie_contract_test.go",
-      "bytes": 10354,
-      "sha256": "d4a8b9815d862772d87689743224cd38bc9a80c9aae5ba4849804c69f641f3a6"
+      "bytes": 10620,
+      "sha256": "2292e90a9c33cb97a774facdb05d97e05edf96ee555ac1e2b660437adc5c629c"
     },
     {
       "path": "client_response_contract_test.go",
-      "bytes": 12808,
-      "sha256": "1b772b08e47e142613777b07f8f28de6e42e0b225a67ad36c3dea8128b3f07ed"
+      "bytes": 13166,
+      "sha256": "d42a957027d2c5186a43f5bf6e1501d79cc81c7024544dbdc6a721c159d02e1a"
     },
     {
       "path": "CLIENT-BEHAVIOR-LICENSE",
@@ -265,7 +265,7 @@
     "Digest ordinary401 body is drained/closed before FindChallenge returns ErrNoChallenge",
     "Digest GetBody clone failure may leave original caller Body unclosed; test asserts documented RoundTripper ownership"
   ],
-  "nextGate": "Independent source review before any push, sealed remote formatter, real named/full/race CI; production edits require genuine exact-head RED and independent root review",
+  "nextGate": "Independent final source review, then separately reviewed genuine F44 baseline RED controller on complete frozen repository plus existing401 controls; no production edit before exact actual RED and root independent review",
   "preservedReqBaseline": {
     "repository": "https://github.com/imroc/req",
     "version": "v3.57.0",
@@ -297,5 +297,63 @@
       "Charset first chunk intentionally coalesced with io.ReadFull; no transparent error-preservation claim",
       "Original14 test manifest clarified as6 root+8 internal files including1 charset test"
     ]
+  },
+  "preFormatterRawFiles": [
+    {
+      "path": "client_behavior_peer_test.go",
+      "bytes": 5588,
+      "sha256": "0e6458474cec81c56a1fc29141811a02c7b256952d45c1118dd3c1934da9870b"
+    },
+    {
+      "path": "client_behavior_observer_test.go",
+      "bytes": 2946,
+      "sha256": "2aef7a1074ea8e78afd148c44df719682249ffebb233933789e5016cd40c173c"
+    },
+    {
+      "path": "client_behavior_contract_test.go",
+      "bytes": 12797,
+      "sha256": "d76f434b0f1906e6777605c87b4195daaee6398b5b47bb49e92ebd88c71924bf"
+    },
+    {
+      "path": "client_redirect_cookie_contract_test.go",
+      "bytes": 10354,
+      "sha256": "d4a8b9815d862772d87689743224cd38bc9a80c9aae5ba4849804c69f641f3a6"
+    },
+    {
+      "path": "client_response_contract_test.go",
+      "bytes": 12808,
+      "sha256": "1b772b08e47e142613777b07f8f28de6e42e0b225a67ad36c3dea8128b3f07ed"
+    },
+    {
+      "path": "CLIENT-BEHAVIOR-LICENSE",
+      "bytes": 2673,
+      "sha256": "0c1bf41cb4f1599676f758f3c99e680e4237e0dcffb95b04936d2a895f940b10"
+    }
+  ],
+  "formatterHistory": {
+    "scope": "Remote gofmt only; no tests/builds/production execution. Current frozenRawFiles seal the exact formatted candidate bytes. Original raw seals remain preFormatterRawFiles.",
+    "rawSourceHead": "c5fb66a3f58e3af00832fe9523e3697fdad0df97",
+    "rawSourceTree": "8671aef66f9a56a4f36b6227427a802a33a63a11",
+    "rawPayloadSHA256": "66dd0f7479ef686b19284ded5919d851cbb776c246a1d495abe777ae62586623",
+    "firstRun": {
+      "id": 39191156507,
+      "head": "664b5a53f1be00d354918b0b71eb1f1c585646be",
+      "actualConclusion": "failure",
+      "artifact": 12160201716,
+      "artifactSHA256": "62557497c6fff0d111b7bfacf70bfa89edeffdce2e98611f0c6f17e3caeea338",
+      "reason": "Controller wrongly rejected raw gofmt-d exit1 with actual formatting diff; no completion marker. Failure retained."
+    },
+    "correctedRun": {
+      "id": 39191408664,
+      "head": "4e0ab97faeb06c3d851be90b4569a49e28693935",
+      "tree": "ba6547cf6c7b3baa65110b5c7259f1b5f4133700",
+      "actualConclusion": "success",
+      "artifact": 12159319004,
+      "artifactSHA256": "e99b29b6801c491ee0af12d02fe62881d26c06070cf5883ca3a92d32fc15ae4b",
+      "allOriginalsByteexactRawGit": true,
+      "allWriteAfterDiffAfterListExit0AndEmpty": true,
+      "formattedOutputsByteexactFirstRun": true,
+      "rootIndependentReviewReceiptSHA256": "b4a717b3553d2aed0f80e2eff0b6d0aa077ccb314fba328c4be4e82608a56051"
+    }
   }
 }

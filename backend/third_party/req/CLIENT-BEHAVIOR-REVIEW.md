@@ -1,16 +1,18 @@
 # F public client protocol source candidate
 
-Raw candidate based on security PR1712 head
+Formatted candidate based on security PR1712 head
 `c541f5a171fe85a053a6199e10304a386e852d22`, tree
 `09e841970f893e41c4a8e4a02c8059545a03f238`. Child1711 and permanent291
 remain the governing issue links. This is source for independent review;
 no candidate test, formatter, compiler or build has executed locally or on87.
-No candidate source has been pushed or run in CI.
+The implementation branch remains unpushed. Only the separately sealed remote
+formatter controller has run; candidate tests and builds remain unexecuted.
 
 Initial raw candidate2fdf1e56 is retained in history. Independent review revised
 source-body closure timing, removed exact auth-int factory call count, added
 completed peer write/flush observations before401 body assertions, and clarified
-the charset coalescing fixture. No candidate execution occurred.
+the charset coalescing fixture. Only the remote formatting described below has
+subsequently run; no candidate test execution occurred.
 
 The existing sole untracked peer draft was preserved before the worktree was
 fast-forwarded. Its original5588 bytes and SHA256
@@ -101,6 +103,21 @@ upstream defect is claimed from an unexecuted test. Exact-head remote RED,
 all-state duplicate/PR overlap inspection and root review must precede a fix.
 A real reachable defect or race remains blocking regardless of its age.
 
+## Remote formatter evidence
+
+Raw revisionc5fb66a3 supplied five exact Go blobs to a formatter-only orphan
+controller. Initial run39191156507 failed because its verifier wrongly rejected
+gofmt-d exit1 with a real diff on unformatted input; reportFALSE and no complete
+marker remain preserved. The corrected controller4e0ab97f run39191408664 passed
+with artifact12159319004, SHA256
+`e99b29b6801c491ee0af12d02fe62881d26c06070cf5883ca3a92d32fc15ae4b`.
+All five originals matched rawc5fb Git bytes; all gofmt-w and post-format-d/-l
+commands returned0 with empty post-format output/stderr. Formatted outputs were
+byteexact to those from the first run. Root independently checked the new
+artifact before authorizing these exact copies. Provenance retains raw seals,
+formatted seals and both runs. No source, compiler or test failure is inferred
+from the formatter controller defect. No test/build result is claimed.
+
 ## Independent review and integration gate
 
 The candidate changes only new F test/license/provenance/review files. All
@@ -110,9 +127,12 @@ existing401 mandatory cases,89 production
 files,11 adaptations,29 owned files, frontend/build/race checks and both85 coverage
 gates are untouched. This candidate makes no coverage percentage promise.
 
-Next steps belong to root: independent review of the frozen source, then authorize
-a sealed remote formatter, review formatter-only differences, freeze the final
-head and execute actual named/full/race CI. Integrate the44 reviewed leaf names,
+Next steps belong to root: independent review of this frozen formatted source,
+then a separately reviewed genuine F44 baseline RED controller using the complete
+frozen repository and unchanged401 baseline. Actual named/full/race results,
+exact source inputs and unchanged MVS must be observed. Only genuine body-loss or
+closure markers with completed fixture prerequisites can justify a production
+fix; other failures require investigation. Integrate the44 reviewed leaf names,
 owned file list and final hashes into the existing inventories before requiring
 exact evidence. Any CI failure is evidence to inspect, not a passing phase.
 No approval, LGTM, merge or closing action is included here. Permanent291 must

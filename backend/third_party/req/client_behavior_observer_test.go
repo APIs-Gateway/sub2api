@@ -14,7 +14,7 @@ import (
 type clientBehaviorSource struct {
 	io.Reader
 	closed chan struct{}
-	once sync.Once
+	once   sync.Once
 }
 
 func newClientBehaviorSource(payload string) *clientBehaviorSource {
@@ -43,9 +43,9 @@ func clientBehaviorAwaitSourceClose(t *testing.T, ctx context.Context, body *cli
 }
 
 type clientBehaviorWriteObservation struct {
-	uri string
-	payload string
-	written int
+	uri      string
+	payload  string
+	written  int
 	writeErr error
 	flushErr error
 }
@@ -72,7 +72,9 @@ func clientBehaviorAwaitWrite(t *testing.T, ctx context.Context, observed <-chan
 // The assertion marker then identifies lost response bytes, not a broken peer.
 func clientBehaviorReadable401(t *testing.T, resp *http.Response, requestErr error, payload string) {
 	t.Helper()
-	if resp != nil && resp.Body != nil { t.Cleanup(func() { _ = resp.Body.Close() }) }
+	if resp != nil && resp.Body != nil {
+		t.Cleanup(func() { _ = resp.Body.Close() })
+	}
 	if requestErr != nil || resp == nil || resp.Body == nil || resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("ordinary401 request/status after validated wire: response=%v err=%v", resp, requestErr)
 	}
@@ -81,5 +83,7 @@ func clientBehaviorReadable401(t *testing.T, resp *http.Response, requestErr err
 	if readErr != nil || string(body) != payload {
 		t.Fatalf("REQ_DIGEST_401_BODY_ASSERT: validated owned401 payload lost: body=%q want=%q readErr=%v", body, payload, readErr)
 	}
-	if closeErr != nil { t.Fatalf("actual ordinary401 response Close: %v", closeErr) }
+	if closeErr != nil {
+		t.Fatalf("actual ordinary401 response Close: %v", closeErr)
+	}
 }

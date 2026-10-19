@@ -17,7 +17,7 @@ import (
 func TestReqClientDigest_ReplayAndCache(t *testing.T) {
 	for _, tc := range []struct {
 		name, algorithm, qop, method, body string
-		stream bool
+		stream                             bool
 	}{
 		{name: "md5_post", algorithm: "MD5", qop: "auth", method: http.MethodPost, body: "owned payload + &"},
 		{name: "sha256_auth_int", algorithm: "SHA-256", qop: "auth-int", method: http.MethodPost, body: "entity hash includes these bytes"},
@@ -50,13 +50,19 @@ func TestReqClientDigest_ReplayAndCache(t *testing.T) {
 			}
 			closeCtx, cancelClose := context.WithTimeout(context.Background(), 5*time.Second)
 			t.Cleanup(cancelClose)
-			if source != nil { clientBehaviorAwaitSourceClose(t, closeCtx, source, "buffered original stream") }
+			if source != nil {
+				clientBehaviorAwaitSourceClose(t, closeCtx, source, "buffered original stream")
+			}
 			if tc.qop == "auth-int" {
 				factoryMu.Lock()
 				opened := append([]*clientBehaviorSource(nil), factoryBodies...)
 				factoryMu.Unlock()
-				if len(opened) == 0 { t.Fatal("auth-int request did not use the public body factory") }
-				for i, body := range opened { clientBehaviorAwaitSourceClose(t, closeCtx, body, fmt.Sprintf("factory body%d", i)) }
+				if len(opened) == 0 {
+					t.Fatal("auth-int request did not use the public body factory")
+				}
+				for i, body := range opened {
+					clientBehaviorAwaitSourceClose(t, closeCtx, body, fmt.Sprintf("factory body%d", i))
+				}
 			}
 			if req.Header.Get("Authorization") != "" {
 				t.Fatal("digest wrapper mutated the caller's Authorization")
@@ -104,14 +110,22 @@ func TestReqClientDigest_NonceRotation(t *testing.T) {
 	for i, path := range []string{"/initial", "/rotated"} {
 		resp, err := client.Do(clientBehaviorRequest(t, http.MethodGet, peer.url+path, ""))
 		want := "accepted:nonce-old:1"
-		if i == 1 { want = "accepted:nonce-new:1" }
-		if got := clientBehaviorBody(t, resp, err); got != want { t.Fatalf("nonce response=%q want=%q", got, want) }
+		if i == 1 {
+			want = "accepted:nonce-new:1"
+		}
+		if got := clientBehaviorBody(t, resp, err); got != want {
+			t.Fatalf("nonce response=%q want=%q", got, want)
+		}
 	}
 	seen := peer.observations(t, 4)
 	old, err := clientBehaviorCredentials(seen[2], "MD5", "auth", "nonce-old")
-	if err != nil || old.Nc != 2 { t.Fatalf("cached rejected request: %+v %v", old, err) }
+	if err != nil || old.Nc != 2 {
+		t.Fatalf("cached rejected request: %+v %v", old, err)
+	}
 	fresh, err := clientBehaviorCredentials(seen[3], "MD5", "auth", "nonce-new")
-	if err != nil || fresh.Nc != 1 { t.Fatalf("rotated request: %+v %v", fresh, err) }
+	if err != nil || fresh.Nc != 1 {
+		t.Fatalf("rotated request: %+v %v", fresh, err)
+	}
 }
 
 // A normal 401 remains a readable HTTP response even when an earlier digest
@@ -135,7 +149,9 @@ func TestReqClientDigest_NoChallengeEvictsCache(t *testing.T) {
 	})
 	client := newClientBehaviorClient(t).SetCommonDigestAuth(clientBehaviorUser, clientBehaviorPassword)
 	resp, err := client.Do(clientBehaviorRequest(t, http.MethodGet, peer.url+"/prime", ""))
-	if got := clientBehaviorBody(t, resp, err); got != "primed" { t.Fatalf("prime body=%q", got) }
+	if got := clientBehaviorBody(t, resp, err); got != "primed" {
+		t.Fatalf("prime body=%q", got)
+	}
 	for i, path := range []string{"/expired", "/after-eviction"} {
 		resp, err = client.Do(clientBehaviorRequest(t, http.MethodGet, peer.url+path, ""))
 		clientBehaviorAwaitWrite(t, ctx, writes, path, "owned ordinary unauthorized body")
@@ -143,7 +159,9 @@ func TestReqClientDigest_NoChallengeEvictsCache(t *testing.T) {
 		clientBehaviorReadable401(t, resp, err, "owned ordinary unauthorized body")
 	}
 	seen := peer.observations(t, 4)
-	if seen[2].header.Get("Authorization") == "" || seen[3].header.Get("Authorization") != "" { t.Fatalf("nonce cache not evicted on ordinary 401: %+v", seen) }
+	if seen[2].header.Get("Authorization") == "" || seen[3].header.Get("Authorization") != "" {
+		t.Fatalf("nonce cache not evicted on ordinary 401: %+v", seen)
+	}
 }
 
 func TestReqClientDigest_BoundedRejection(t *testing.T) {
@@ -154,9 +172,13 @@ func TestReqClientDigest_BoundedRejection(t *testing.T) {
 	})
 	client := newClientBehaviorClient(t).SetCommonDigestAuth(clientBehaviorUser, "wrong-owned-password")
 	resp, err := client.Do(clientBehaviorRequest(t, http.MethodPost, peer.url+"/reject", "must replay once"))
-	if got := clientBehaviorBody(t, resp, err); got != "still unauthorized" || resp.StatusCode != http.StatusUnauthorized { t.Fatalf("rejected response=%v body=%q", resp, got) }
+	if got := clientBehaviorBody(t, resp, err); got != "still unauthorized" || resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("rejected response=%v body=%q", resp, got)
+	}
 	seen := peer.observations(t, 2)
-	if seen[0].header.Get("Authorization") != "" || seen[1].header.Get("Authorization") == "" || seen[0].body != "must replay once" || seen[1].body != seen[0].body { t.Fatalf("bounded challenge/replay: %+v", seen) }
+	if seen[0].header.Get("Authorization") != "" || seen[1].header.Get("Authorization") == "" || seen[0].body != "must replay once" || seen[1].body != seen[0].body {
+		t.Fatalf("bounded challenge/replay: %+v", seen)
+	}
 }
 
 func TestReqClientDigest_GetBodyFailure(t *testing.T) {
@@ -175,24 +197,34 @@ func TestReqClientDigest_GetBodyFailure(t *testing.T) {
 				factoryMu.Lock()
 				defer factoryMu.Unlock()
 				calls++
-				if calls == failAt { return nil, sentinel }
+				if calls == failAt {
+					return nil, sentinel
+				}
 				body := newClientBehaviorSource("owned body")
 				opened = append(opened, body)
 				return body, nil
 			}
 			resp, err := client.Do(req)
-			if resp != nil && resp.Body != nil { _ = resp.Body.Close() }
+			if resp != nil && resp.Body != nil {
+				_ = resp.Body.Close()
+			}
 			factoryMu.Lock()
 			actualCalls := calls
 			created := append([]*clientBehaviorSource(nil), opened...)
 			factoryMu.Unlock()
-			if !errors.Is(err, sentinel) || actualCalls != failAt { t.Fatalf("GetBody failure: resp=%v err=%v calls=%d", resp, err, actualCalls) }
+			if !errors.Is(err, sentinel) || actualCalls != failAt {
+				t.Fatalf("GetBody failure: resp=%v err=%v calls=%d", resp, err, actualCalls)
+			}
 			peer.observations(t, failAt-1)
 			closeCtx, cancelClose := context.WithTimeout(context.Background(), 5*time.Second)
 			t.Cleanup(cancelClose)
-			for i, body := range created { clientBehaviorAwaitSourceClose(t, closeCtx, body, fmt.Sprintf("already opened replay body%d", i)) }
+			for i, body := range created {
+				clientBehaviorAwaitSourceClose(t, closeCtx, body, fmt.Sprintf("already opened replay body%d", i))
+			}
 			clientBehaviorAwaitSourceClose(t, closeCtx, original, "caller body on failed public request")
-			if req.Header.Get("Authorization") != "" { t.Fatal("clone failure mutated caller auth") }
+			if req.Header.Get("Authorization") != "" {
+				t.Fatal("clone failure mutated caller auth")
+			}
 		})
 	}
 }
@@ -201,7 +233,9 @@ func TestReqClientDigest_ConcurrentCachedNonce(t *testing.T) {
 	peer := clientBehaviorDigestPeer(t, "MD5", "auth", "nonce-parallel")
 	client := newClientBehaviorClient(t).SetCommonDigestAuth(clientBehaviorUser, clientBehaviorPassword)
 	resp, err := client.Do(clientBehaviorRequest(t, http.MethodGet, peer.url+"/prime", ""))
-	if got := clientBehaviorBody(t, resp, err); got != "authorized:" { t.Fatalf("prime=%q", got) }
+	if got := clientBehaviorBody(t, resp, err); got != "authorized:" {
+		t.Fatalf("prime=%q", got)
+	}
 	const workers = 8
 	results := make(chan error, workers)
 	start := make(chan struct{})
@@ -212,30 +246,48 @@ func TestReqClientDigest_ConcurrentCachedNonce(t *testing.T) {
 			defer wg.Done()
 			<-start
 			req, err := http.NewRequest(http.MethodGet, peer.url+"/parallel", nil)
-			if err != nil { results <- err; return }
+			if err != nil {
+				results <- err
+				return
+			}
 			resp, err := client.Do(req)
-			if err != nil { results <- err; return }
+			if err != nil {
+				results <- err
+				return
+			}
 			body, readErr := io.ReadAll(resp.Body)
 			closeErr := resp.Body.Close()
-			if readErr != nil || closeErr != nil || resp.StatusCode != http.StatusOK || string(body) != "authorized:" { results <- fmt.Errorf("parallel response status=%d body=%q read=%v close=%v", resp.StatusCode, body, readErr, closeErr); return }
+			if readErr != nil || closeErr != nil || resp.StatusCode != http.StatusOK || string(body) != "authorized:" {
+				results <- fmt.Errorf("parallel response status=%d body=%q read=%v close=%v", resp.StatusCode, body, readErr, closeErr)
+				return
+			}
 			results <- nil
 		}()
 	}
 	close(start)
 	wg.Wait()
 	close(results)
-	for err := range results { if err != nil { t.Fatal(err) } }
+	for err := range results {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	seen := peer.observations(t, workers+2)
 	counts := make(map[int]bool)
 	for _, o := range seen[2:] {
 		cred, err := clientBehaviorCredentials(o, "MD5", "auth", "nonce-parallel")
-		if err != nil || cred.Nc < 2 || cred.Nc > workers+1 || counts[cred.Nc] { t.Fatalf("concurrent cached credentials=%+v err=%v previous=%v", cred, err, counts) }
+		if err != nil || cred.Nc < 2 || cred.Nc > workers+1 || counts[cred.Nc] {
+			t.Fatalf("concurrent cached credentials=%+v err=%v previous=%v", cred, err, counts)
+		}
 		counts[cred.Nc] = true
 	}
 }
 
 func TestReqClientDigest_ChallengeBoundary(t *testing.T) {
-	for _, tc := range []struct { name, challenge string; malformed bool }{
+	for _, tc := range []struct {
+		name, challenge string
+		malformed       bool
+	}{
 		{name: "basic_only", challenge: `Basic realm="owned-realm"`},
 		{name: "unsupported_digest", challenge: `Digest realm="owned-realm", nonce="owned-nonce", algorithm=OWNED-UNSUPPORTED, qop="auth"`},
 		{name: "malformed_digest", challenge: `Digest realm="unterminated`, malformed: true},
@@ -256,13 +308,19 @@ func TestReqClientDigest_ChallengeBoundary(t *testing.T) {
 			clientBehaviorAwaitWrite(t, ctx, writes, "/challenge-boundary", "owned unhandled challenge")
 			peer.observations(t, 1)
 			if tc.malformed {
-				if resp != nil && resp.Body != nil { _ = resp.Body.Close() }
-				if err == nil || !strings.Contains(err.Error(), "digest: invalid challenge:") { t.Fatalf("malformed wire challenge response=%v err=%v", resp, err) }
+				if resp != nil && resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+				if err == nil || !strings.Contains(err.Error(), "digest: invalid challenge:") {
+					t.Fatalf("malformed wire challenge response=%v err=%v", resp, err)
+				}
 			} else {
 				clientBehaviorReadable401(t, resp, err, "owned unhandled challenge")
 			}
 			seen := peer.observations(t, 1)
-			if seen[0].body != "owned caller payload" || seen[0].header.Get("Authorization") != "" || req.Header.Get("Authorization") != "" || req.Header.Get("X-Owned-Caller") != "preserved" { t.Fatalf("challenge boundary mutated/replayed caller request: %+v caller=%v", seen, req.Header) }
+			if seen[0].body != "owned caller payload" || seen[0].header.Get("Authorization") != "" || req.Header.Get("Authorization") != "" || req.Header.Get("X-Owned-Caller") != "preserved" {
+				t.Fatalf("challenge boundary mutated/replayed caller request: %+v caller=%v", seen, req.Header)
+			}
 		})
 	}
 }
