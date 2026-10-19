@@ -167,9 +167,10 @@ func TestReqClientResponse_AutomaticResultBoundaries(t *testing.T) {
 	}
 }
 
-// Coalesce only the first real socket read, so packet fragmentation cannot
-// decide whether a complete short metadata declaration is sniffed. No bytes or
-// errors are synthesized, and the reader remains the production decoder.
+// Coalesce the first production decoder input chunk to the owned fixture size,
+// so packet fragmentation cannot choose whether metadata is fully sniffed.
+// io.ReadFull controls that chunk's error semantics; later reads are delegated.
+// The production decoder and exact final byte/EOF assertions remain in use.
 type clientBehaviorFirstRead struct {
 	io.ReadCloser
 	size int
@@ -219,7 +220,7 @@ func TestReqClientResponse_CharsetShortBodies(t *testing.T) {
 					if readErr == io.EOF { break }
 					if readErr != nil { t.Fatalf("real charset read=%v", readErr) }
 				}
-				if first != nil && !bytes.Equal(first.first, []byte(tc.wire)) { t.Fatalf("actual first socket read=%q want short fixture=%q", first.first, tc.wire) }
+				if first != nil && !bytes.Equal(first.first, []byte(tc.wire)) { t.Fatalf("coalesced first decoder chunk=%q want short fixture=%q", first.first, tc.wire) }
 				if string(got) != tc.want { t.Fatalf("actual decoded bytes=%q len=%d want=%q len=%d", got, len(got), tc.want, len(tc.want)) }
 				if err := resp.Body.Close(); err != nil { t.Fatal(err) }
 				peer.observations(t, 1)

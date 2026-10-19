@@ -61,9 +61,14 @@
       "sha256": "0e6458474cec81c56a1fc29141811a02c7b256952d45c1118dd3c1934da9870b"
     },
     {
+      "path": "client_behavior_observer_test.go",
+      "bytes": 2946,
+      "sha256": "2aef7a1074ea8e78afd148c44df719682249ffebb233933789e5016cd40c173c"
+    },
+    {
       "path": "client_behavior_contract_test.go",
-      "bytes": 12274,
-      "sha256": "31b07792d797a5983b243090c3bcfdd84334c1aff0bf446a9529cfa46b3af9cd"
+      "bytes": 12797,
+      "sha256": "d76f434b0f1906e6777605c87b4195daaee6398b5b47bb49e92ebd88c71924bf"
     },
     {
       "path": "client_redirect_cookie_contract_test.go",
@@ -72,8 +77,8 @@
     },
     {
       "path": "client_response_contract_test.go",
-      "bytes": 12719,
-      "sha256": "056771851a078010f1601c9d78f7eb61af79cc0921c22d39ab92fe4fd1fd4f4e"
+      "bytes": 12808,
+      "sha256": "1b772b08e47e142613777b07f8f28de6e42e0b225a67ad36c3dea8128b3f07ed"
     },
     {
       "path": "CLIENT-BEHAVIOR-LICENSE",
@@ -244,7 +249,7 @@
   "integrationRequirements": [
     "Keep all current401 mandatory leaves and actual named/full/race test results",
     "Keep original132 provenance,89 production files,11 existing production adaptations and29 existing owned files",
-    "Add reviewed F files to newOwnedFiles and raw/final source hash seals; retain original12 test files byteexact",
+    "Add reviewed F files to newOwnedFiles and raw/final source hash seals; retain original14 test files (6 root,8 internal) byteexact",
     "Add exact F leaves to mandatory named/all evidence and remote-only formatting checks",
     "Keep both85 coverage gates, oldRED, existing frontend checks and builds unchanged"
   ],
@@ -282,5 +287,15 @@
     },
     "rootOriginalTestFileCount": 6,
     "totalOriginalTestFileCount": 14
+  },
+  "reviewRevisions": {
+    "priorRawHead": "2fdf1e56f35125feec2fec15c57ced22a4e78c5c",
+    "changes": [
+      "Owned request sources signal Close completion; bounded context waits permit asynchronous transport closure",
+      "Factory observations are mutex protected; auth-int requires nonzero factory use and every observed resource closed, without exact call count",
+      "Owned ordinary/unsupported401 payload write length/error and actual Flush error plus request cardinality verified before distinct body-loss assertion marker",
+      "Charset first chunk intentionally coalesced with io.ReadFull; no transparent error-preservation claim",
+      "Original14 test manifest clarified as6 root+8 internal files including1 charset test"
+    ]
   }
 }

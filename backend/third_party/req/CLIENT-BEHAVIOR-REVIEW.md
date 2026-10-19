@@ -7,6 +7,11 @@ remain the governing issue links. This is source for independent review;
 no candidate test, formatter, compiler or build has executed locally or on87.
 No candidate source has been pushed or run in CI.
 
+Initial raw candidate2fdf1e56 is retained in history. Independent review revised
+source-body closure timing, removed exact auth-int factory call count, added
+completed peer write/flush observations before401 body assertions, and clarified
+the charset coalescing fixture. No candidate execution occurred.
+
 The existing sole untracked peer draft was preserved before the worktree was
 fast-forwarded. Its original5588 bytes and SHA256
 `0e6458474cec81c56a1fc29141811a02c7b256952d45c1118dd3c1934da9870b`
@@ -30,8 +35,12 @@ nonce counts, nonce rotation, bounded wrong-password replay, initial/second
 GetBody failure, malformed/unsupported challenge handling, ordinary401 cache
 eviction and8 concurrent cached-nonce requests. The peer computes expected
 hashes using stdlib hashes from observed method, target, entity and credentials;
-it does not call digest.Digest as its oracle. Factory body creation and closure
-are observed for the auth-int replay. The concurrent peer validates each hash
+it does not call digest.Digest as its oracle. Factory body creation is observed
+under a mutex for auth-int replay, with
+nonzero factory use and completion signals for every observed resource. No
+exact factory call count is required. Source closure uses a bounded context
+wait because a RoundTripper may close request bodies after returning. The
+concurrent peer validates each hash
 and the test requires unique counts2 through9 without sleep ordering.
 
 *7 redirect leaves: each public allow policy reaches the actual destination;
@@ -51,9 +60,11 @@ automatic result/error publication, custom ErrorState on204, sticky truncated
 response read error with retained bytes, transformer sentinel ordering and body
 closure, and short Windows1252/UTF16 BOM/unknown/no-encoding streams using64/512
 byte caller buffers. Each stream requires exact bytes and terminal EOF. For
-metadata sniffing only, the first actual socket read is coalesced to the owned
-short fixture length and its bytes are checked, so TCP packet boundaries cannot
-choose whether a full metadata declaration reaches the production decoder.
+metadata sniffing only, the first production decoder input chunk is coalesced
+to the owned short fixture length and its bytes are checked, so TCP packet
+boundaries cannot choose whether full metadata reaches the decoder. This
+io.ReadFull fixture controls first-chunk error semantics; later reads delegate
+to the actual body. Exact decoded bytes and final EOF are still required.
 
 ## Ownership and overlap
 
@@ -63,7 +74,10 @@ Unexpected authorities fail before DNS. The common client timeout is5 seconds;
 concurrent digest work is bounded to8 requests. Peer observations are copied
 under a mutex, request bodies are completely read before each response, connection
 identities are captured by ConnContext, and test cleanup closes idle transports
-before the peer. Handlers never call testing.Fatal and contain no ordering sleeps.
+before the peer. Ordinary/unsupported401 peers record exact payload, written
+length, write error and actual Flush error; bounded observation and exact
+request count are required before REQ_DIGEST_401_BODY_ASSERT can be emitted.
+Handlers never call testing.Fatal and contain no ordering sleeps.
 
 Response close observers wrap the real transport body and preserve all reads and
 errors. The Content-Length short-response fixture drives public Response.ToBytes,
@@ -90,8 +104,9 @@ A real reachable defect or race remains blocking regardless of its age.
 ## Independent review and integration gate
 
 The candidate changes only new F test/license/provenance/review files. All
-original req tests are byteexact against the original132 manifest:12 root files
-and2 internal charset test files. The existing401 mandatory cases,89 production
+original req tests are byteexact against the original132 manifest:14 test files,
+comprising6 root files and8 internal files (including1 charset test file). The
+existing401 mandatory cases,89 production
 files,11 adaptations,29 owned files, frontend/build/race checks and both85 coverage
 gates are untouched. This candidate makes no coverage percentage promise.
 
