@@ -92,6 +92,10 @@ watch(
 const showCustomTimeRangeDialog = ref(false)
 const customStartTimeInput = ref('')
 const customEndTimeInput = ref('')
+let customTimeRangeDefaults: {
+  start: { input: string; utc: string }
+  end: { input: string; utc: string }
+} | null = null
 
 function formatCustomTimeRangeLabel(startTime: string, endTime: string): string {
   const start = new Date(startTime)
@@ -180,10 +184,14 @@ function handleTimeRangeChange(val: string | number | boolean | null) {
   const newValue = String(val || '1h')
   if (newValue === 'custom') {
     // 初始化为最近1小时
-    const now = new Date()
-    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000)
-    customStartTimeInput.value = formatDateTimeLocalInput(oneHourAgo.getTime() / 1000)
-    customEndTimeInput.value = formatDateTimeLocalInput(now.getTime() / 1000)
+    const endMs = Math.floor(Date.now() / 60000) * 60000
+    const startMs = endMs - 60 * 60 * 1000
+    customTimeRangeDefaults = {
+      start: { input: formatDateTimeLocalInput(startMs / 1000), utc: new Date(startMs).toISOString() },
+      end: { input: formatDateTimeLocalInput(endMs / 1000), utc: new Date(endMs).toISOString() }
+    }
+    customStartTimeInput.value = customTimeRangeDefaults.start.input
+    customEndTimeInput.value = customTimeRangeDefaults.end.input
     showCustomTimeRangeDialog.value = true
   } else {
     emit('update:timeRange', newValue)
@@ -192,17 +200,25 @@ function handleTimeRangeChange(val: string | number | boolean | null) {
 
 function handleCustomTimeRangeConfirm() {
   if (!customStartTimeInput.value || !customEndTimeInput.value) return
-  const startTime = new Date(customStartTimeInput.value).toISOString()
-  const endTime = new Date(customEndTimeInput.value).toISOString()
+  // Local inputs lose the UTC offset during a clock fold. Retain each unchanged
+  // default's minute instant while keeping existing parsing for edited values.
+  const startTime = customTimeRangeDefaults && customStartTimeInput.value === customTimeRangeDefaults.start.input
+    ? customTimeRangeDefaults.start.utc
+    : new Date(customStartTimeInput.value).toISOString()
+  const endTime = customTimeRangeDefaults && customEndTimeInput.value === customTimeRangeDefaults.end.input
+    ? customTimeRangeDefaults.end.utc
+    : new Date(customEndTimeInput.value).toISOString()
   // Emit custom time range first so the parent can build correct API params
   // when it reacts to timeRange switching to "custom".
   emit('update:customTimeRange', startTime, endTime)
   emit('update:timeRange', 'custom')
   showCustomTimeRangeDialog.value = false
+  customTimeRangeDefaults = null
 }
 
 function handleCustomTimeRangeCancel() {
   showCustomTimeRangeDialog.value = false
+  customTimeRangeDefaults = null
   // 如果当前不是 custom，不需要做任何事
   // 如果当前是 custom，保持不变
 }

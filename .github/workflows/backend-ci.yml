@@ -341,7 +341,8 @@ jobs:
           git rev-parse HEAD > "$evidence/head.txt"
           git rev-parse HEAD^{tree} > "$evidence/tree.txt"
           git ls-files --stage > "$evidence/frontend-index.txt"
-          git diff --exit-code HEAD -- > "$evidence/checkout-before.diff"
+          git -C .. ls-files --stage > "$evidence/full-index.txt"
+          git -C .. diff --exit-code HEAD -- > "$evidence/checkout-before.diff"
           files="src/views/admin/ops/components/OpsDashboardHeader.vue src/views/admin/ops/components/__tests__/OpsDashboardHeader.timezone.spec.ts src/utils/format.ts src/__tests__/setup.ts package.json pnpm-lock.yaml vitest.config.ts ../Makefile ../.github/workflows/backend-ci.yml"
           sha256sum $files > "$evidence/inputs-before.sha256"
           for item in shanghai:Asia/Shanghai utc:UTC new-york:America/New_York; do
@@ -356,7 +357,7 @@ jobs:
           done
           sha256sum $files > "$evidence/inputs-after.sha256"
           cmp "$evidence/inputs-before.sha256" "$evidence/inputs-after.sha256"
-          git diff --exit-code HEAD -- > "$evidence/checkout-after.diff"
+          git -C .. diff --exit-code HEAD -- > "$evidence/checkout-after.diff"
           python3 - "$evidence" <<'PY'
           import json, sys
           from pathlib import Path
@@ -368,6 +369,17 @@ jobs:
               'discards cancelled edits and initializes a reopened dialog from the new local hour',
               'submits explicit local input edits as their UTC instants',
               'preserves the previous elapsed hour across the autumn clock fold',
+              'preserves the later fold occurrence when the default hour starts after the rollback',
+              'keeps the unchanged end fold identity when only the start is edited',
+              'keeps the unchanged start fold identity when only the end is edited',
+              'floors default seconds and milliseconds on ordinary day',
+              'floors default seconds and milliseconds on clock fold',
+              'replaces the cancelled fold snapshot on reopen through cancel button',
+              'replaces the cancelled fold snapshot on reopen through dialog close',
+              'keeps the opening minute snapshot when the clock advances before confirmation',
+              'keeps the dialog and snapshot when the start endpoint is empty',
+              'keeps the dialog and snapshot when the end endpoint is empty',
+              'restores the captured fold identity after an edit returns to the displayed default',
           }
           proof = {}
           problems = []
@@ -379,6 +391,8 @@ jobs:
               success = ((root / (label + '.exit')).read_text().strip() == '0'
                          and (root / (label + '.tz')).read_text().strip() == zone
                          and result.get('success') is True and result.get('numFailedTests') == 0
+                         and result.get('numTotalTests') == len(expected) and result.get('numPassedTests') == len(expected)
+                         and result.get('numPendingTests') == 0 and result.get('numTodoTests') == 0
                          and result.get('numFailedTestSuites') == 0 and len(result['testResults']) == 1
                          and set(names) == expected and len(names) == len(expected) and not failures)
               proof[label] = {'timezone': zone, 'exit': (root / (label + '.exit')).read_text().strip(),
