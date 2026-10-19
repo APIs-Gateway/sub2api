@@ -297,6 +297,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -325,6 +327,90 @@ jobs:
       - name: Configured ops thresholds actual header regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/views/admin/ops/components/__tests__/OpsDashboardHeader.thresholds.spec.ts src/views/admin/ops/utils/__tests__/metricThresholds.spec.ts src/views/admin/ops/__tests__/OpsDashboard.spec.ts
+      - name: Ops custom range actual local and UTC instants in three process timezones
+        working-directory: frontend
+        env:
+          OPS_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/ops-custom-timezone-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence"
+          test "$(git rev-parse HEAD)" = "$OPS_SOURCE_HEAD"
+          git rev-parse HEAD > "$evidence/head.txt"
+          git rev-parse HEAD^{tree} > "$evidence/tree.txt"
+          git ls-files --stage > "$evidence/frontend-index.txt"
+          git -C .. ls-files --stage > "$evidence/full-index.txt"
+          git -C .. diff --exit-code HEAD -- > "$evidence/checkout-before.diff"
+          files="src/views/admin/ops/components/OpsDashboardHeader.vue src/views/admin/ops/components/__tests__/OpsDashboardHeader.timezone.spec.ts src/utils/format.ts src/__tests__/setup.ts package.json pnpm-lock.yaml vitest.config.ts ../Makefile ../.github/workflows/backend-ci.yml"
+          sha256sum $files > "$evidence/inputs-before.sha256"
+          for item in shanghai:Asia/Shanghai utc:UTC new-york:America/New_York; do
+            label="${item%%:*}"
+            zone="${item#*:}"
+            printf '%s\n' "$zone" > "$evidence/$label.tz"
+            set +e
+            TZ="$zone" OPS_TIMEZONE_EXPECTED_TZ="$zone" pnpm exec vitest run --reporter=json --outputFile="$evidence/$label.json" src/views/admin/ops/components/__tests__/OpsDashboardHeader.timezone.spec.ts > "$evidence/$label.stdout" 2> "$evidence/$label.stderr"
+            actual_status=$?
+            set -e
+            printf '%s\n' "$actual_status" > "$evidence/$label.exit"
+          done
+          sha256sum $files > "$evidence/inputs-after.sha256"
+          cmp "$evidence/inputs-before.sha256" "$evidence/inputs-after.sha256"
+          git -C .. diff --exit-code HEAD -- > "$evidence/checkout-after.diff"
+          python3 - "$evidence" <<'PY'
+          import json, sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          expected = {
+              'prefills the previous local hour at 14:23',
+              'prefills the previous local hour at 0:15',
+              'confirms the previous real hour and preserves custom-range event ordering',
+              'discards cancelled edits and initializes a reopened dialog from the new local hour',
+              'submits explicit local input edits as their UTC instants',
+              'preserves the previous elapsed hour across the autumn clock fold',
+              'preserves the later fold occurrence when the default hour starts after the rollback',
+              'keeps the unchanged end fold identity when only the start is edited',
+              'keeps the unchanged start fold identity when only the end is edited',
+              'floors default seconds and milliseconds on ordinary day',
+              'floors default seconds and milliseconds on clock fold',
+              'replaces the cancelled fold snapshot on reopen through cancel button',
+              'replaces the cancelled fold snapshot on reopen through dialog close',
+              'keeps the opening minute snapshot when the clock advances before confirmation',
+              'keeps the dialog and snapshot when the start endpoint is empty',
+              'keeps the dialog and snapshot when the end endpoint is empty',
+              'restores the captured fold identity after an edit returns to the displayed default',
+          }
+          proof = {}
+          problems = []
+          for label, zone in [('shanghai', 'Asia/Shanghai'), ('utc', 'UTC'), ('new-york', 'America/New_York')]:
+              result = json.loads((root / (label + '.json')).read_text())
+              cases = [case for suite in result['testResults'] for case in suite['assertionResults']]
+              names = [case['title'] for case in cases]
+              failures = [case for case in cases if case['status'] != 'passed']
+              success = ((root / (label + '.exit')).read_text().strip() == '0'
+                         and (root / (label + '.tz')).read_text().strip() == zone
+                         and result.get('success') is True and result.get('numFailedTests') == 0
+                         and result.get('numTotalTests') == len(expected) and result.get('numPassedTests') == len(expected)
+                         and result.get('numPendingTests') == 0 and result.get('numTodoTests') == 0
+                         and result.get('numFailedTestSuites') == 0 and len(result['testResults']) == 1
+                         and set(names) == expected and len(names) == len(expected) and not failures)
+              proof[label] = {'timezone': zone, 'exit': (root / (label + '.exit')).read_text().strip(),
+                              'actualNames': names, 'nonpassed': failures, 'passed': success}
+              if not success:
+                  problems.append(label)
+          (root / 'actual-proof.json').write_text(json.dumps(proof, indent=2) + '\n')
+          assert not problems, 'Actual timezone controls failed: ' + repr(problems)
+          PY
+          printf 'complete\n' > "$evidence/complete.txt"
+      - name: Preserve actual custom-range timezone results and source identity
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ops-custom-timezone-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ops-custom-timezone-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
       - name: Channel default prices actual edit and stale-request regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/components/admin/channel/__tests__/PricingEntryCard.modelDefaultPrice.spec.ts
