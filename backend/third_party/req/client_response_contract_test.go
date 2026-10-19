@@ -4,6 +4,7 @@ package req
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type clientBehaviorClosedBody struct {
@@ -274,8 +276,10 @@ func TestReqClientResponse_CharsetShortBodies(t *testing.T) {
 					w.Header().Set("Content-Type", tc.contentType)
 					_, _ = io.WriteString(w, tc.wire)
 				})
-				client := newClientBehaviorClient(t).EnableAutoDecode()
-				resp, err := client.R().DisableAutoReadResponse().Get(peer.url + "/short-charset")
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				t.Cleanup(cancel)
+				client := newClientBehaviorClient(t).SetTimeout(0).EnableAutoDecode()
+				resp, err := client.R().SetContext(ctx).DisableAutoReadResponse().Get(peer.url + "/short-charset")
 				if err != nil || resp == nil || resp.Body == nil {
 					t.Fatalf("real charset response=%v err=%v", resp, err)
 				}

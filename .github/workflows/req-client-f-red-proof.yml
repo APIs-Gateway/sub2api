@@ -15,7 +15,7 @@ jobs:
       GOWORK: 'off'
       GOFLAGS: -mod=readonly
       BASE: c541f5a171fe85a053a6199e10304a386e852d22
-      CANDIDATE: 0eaabfbe18250716fb6017ec0b068d47bf7484a2
+      CANDIDATE: e7338c328e20028aaac120c81026e6acf03c217c
       MODULE: github.com/imroc/req/v3
     steps:
       - name: Checkout reviewed controller head only for CI control
@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           path: candidate
-          ref: 0eaabfbe18250716fb6017ec0b068d47bf7484a2
+          ref: e7338c328e20028aaac120c81026e6acf03c217c
           persist-credentials: false
       - uses: actions/setup-go@v6
         with:
