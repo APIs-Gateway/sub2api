@@ -90,7 +90,11 @@ jobs:
                   after_diff = capture(['gofmt', '-d', str(formatted)], name + '.after-diff')
                   after_list = capture(['gofmt', '-l', str(formatted)], name + '.after-list')
                   commands = [before_diff, before_list, written, after_diff, after_list]
-                  if any(result.returncode != 0 or result.stderr for result in commands):
+                  # Pinned gofmt -d exits 1 when it emits a formatting diff.
+                  # That is expected on raw inputs; a parser/process error is not.
+                  if before_diff.returncode not in (0, 1) or before_diff.stderr or bool(before_diff.stdout) != (before_diff.returncode == 1):
+                      problems.append('raw diff process/result mismatch: ' + item['path'])
+                  if any(result.returncode != 0 or result.stderr for result in (before_list, written, after_diff, after_list)):
                       problems.append('formatter process error: ' + item['path'])
                   if written.stdout or after_diff.stdout or after_list.stdout:
                       problems.append('formatted output is not clean: ' + item['path'])
