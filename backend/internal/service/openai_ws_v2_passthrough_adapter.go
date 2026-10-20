@@ -690,6 +690,13 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		}
 	}
 	promptCacheKey := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "prompt_cache_key").String())
+	if strings.TrimSpace(gjson.GetBytes(firstClientMessage, "type").String()) == "response.create" {
+		historyFrame, _, historyErr := normalizeOpenAIOAuthWebSearchHistoryForAccount(firstClientMessage, account, isOpenAIResponsesLiteWebSocketPayload(firstClientMessage), false)
+		if historyErr != nil {
+			return rejectLocalPayload(historyErr.Error(), historyErr.Error(), historyErr)
+		}
+		firstClientMessage = historyFrame
+	}
 	if isOpenAIResponsesLiteWebSocketPayload(firstClientMessage) {
 		liteFirstMessage, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(firstClientMessage, account)
 		if liteErr != nil {
@@ -1037,6 +1044,13 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					sessionBillingChoice = choice.Raw
 					sessionImageChoice = openAIJSONToolChoiceSelectsExplicitImageGeneration(choice)
 				}
+			}
+			if isResponseCreate {
+				historyFrame, _, historyErr := normalizeOpenAIOAuthWebSearchHistoryForSession(payload, account, isOpenAIResponsesLiteWebSocketPayload(payload), sessionBillingTools, sessionBillingChoice)
+				if historyErr != nil {
+					return payload, nil, rejectLocalPayload(historyErr.Error(), historyErr.Error(), historyErr)
+				}
+				payload = historyFrame
 			}
 			if isResponseCreate && isOpenAIResponsesLiteWebSocketPayload(payload) {
 				litePayload, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(payload, account)

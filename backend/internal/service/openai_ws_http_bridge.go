@@ -468,6 +468,13 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	// The bridge forwards Lite turns with the Lite header over HTTP, so the
 	// payload must satisfy the same Lite contract as the HTTP and WS paths
 	// (OAuth tool carrier, parallel_tool_calls=false for every OpenAI account).
+	historyBody, historyChanged, historyErr := normalizeOpenAIOAuthWebSearchHistoryForAccount(body, account, isOpenAIResponsesLiteWebSocketPayload(payload), false)
+	if historyErr != nil {
+		return nil, fmt.Errorf("normalize OAuth web search history: %w", historyErr)
+	}
+	if historyChanged {
+		body = historyBody
+	}
 	if account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(payload) {
 		liteBody, liteChanged, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
 		if liteErr != nil {

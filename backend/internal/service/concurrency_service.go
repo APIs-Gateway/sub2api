@@ -365,6 +365,27 @@ func (s *ConcurrencyService) IncrementAccountWaitCount(ctx context.Context, acco
 	return result, nil
 }
 
+// RegisterAccountWait admits a waiter while retaining ownership of only a
+// confirmed registration. Cache failures keep the existing fail-open policy;
+// an uncertain increment must never authorize decrementing another waiter.
+func (s *ConcurrencyService) RegisterAccountWait(ctx context.Context, accountID int64, maxWait int) (bool, func()) {
+	if s.cache == nil {
+		return true, nil
+	}
+	registered, err := s.cache.IncrementAccountWaitCount(ctx, accountID, maxWait)
+	if err != nil {
+		logger.LegacyPrintf("service.concurrency", "Warning: register account wait failed for account %d: %v", accountID, err)
+		return true, nil
+	}
+	if !registered {
+		return false, nil
+	}
+	var once sync.Once
+	return true, func() {
+		once.Do(func() { s.DecrementAccountWaitCount(ctx, accountID) })
+	}
+}
+
 // DecrementAccountWaitCount decrements the wait queue counter for an account.
 func (s *ConcurrencyService) DecrementAccountWaitCount(ctx context.Context, accountID int64) {
 	if s.cache == nil {
