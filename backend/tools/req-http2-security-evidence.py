@@ -220,7 +220,7 @@ def main():
             relative = package["ImportPath"].removeprefix(MODULE).lstrip("/")
             require(Path(package["Dir"]).resolve() == controlled / relative, "Wrong package directory")
             for name in package.get("TestGoFiles", []) + package.get("XTestGoFiles", []):
-                selected.add(str(Path(relative) / name))
+                selected.add((Path(relative) / name).as_posix())
         manifest = json.loads((controlled / "UPSTREAM-MANIFEST.json").read_text())
         expected_paths = {v["path"] for v in manifest["originalFiles"]} | set(manifest["newOwnedFiles"])
         actual_paths = set()
