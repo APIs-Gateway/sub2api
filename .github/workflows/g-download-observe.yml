@@ -126,7 +126,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v6
         with:
-          ref: f44d79fd2013750d3a71b7fd9a3962a707d0dddd
+          ref: aa656edd6f2aed8c595368ee802516fa571e317d
           path: source
           fetch-depth: 0
           persist-credentials: false

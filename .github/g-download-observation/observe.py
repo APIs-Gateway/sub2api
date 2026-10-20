@@ -19,8 +19,8 @@ import traceback
 import uuid
 
 BASE = "2d6bf53dc3231dc4ccfce48211c43942ed18d656"
-SOURCE = "f44d79fd2013750d3a71b7fd9a3962a707d0dddd"
-TREE = "db2c114e32fa8db633cafd0f7fb4b4f2c03e7a15"
+SOURCE = "aa656edd6f2aed8c595368ee802516fa571e317d"
+TREE = "ae5ad3301926ca2681a7ddc4e1b875838426ce74"
 MODULE = "github.com/imroc/req/v3"
 G_FILES = {
     "DOWNLOAD-CONTRACTS-LICENSE", "DOWNLOAD-CONTRACTS-PROVENANCE.json",
@@ -220,37 +220,64 @@ def objects(raw):
 
 def module_graph(baseline, candidate):
     graphs = []
-    for label, root in (("baseline", baseline), ("candidate", candidate)):
+    roots = (("baseline", baseline), ("candidate", candidate))
+    for label, root in roots:
         command = capture(E / "commands" / (label + "-modules"),
                           ["go", "list", "-m", "-json", "all"], root / "backend")
         require_success(command)
         values = objects((E / "commands" / (label + "-modules") / "stdout").read_bytes())
         assert len(values) == 365 and len({item["Path"] for item in values}) == 365
+        assert all(isinstance(item["Path"], str) and item["Path"] for item in values)
+        assert sum(item.get("Main") is True for item in values) == 1
+        assert sum(item["Path"] == MODULE for item in values) == 1
+        graphs.append(values)
+    # Check raw graph path/order and actual external locations before normalization.
+    assert [item["Path"] for item in graphs[0]] == [item["Path"] for item in graphs[1]]
+    cache_presence_changes = []
+    for before, after in zip(*graphs):
+        if not before.get("Main") and before["Path"] != MODULE:
+            for item in (before, after):
+                if "Dir" in item:
+                    assert isinstance(item["Dir"], str) and item["Dir"] and Path(item["Dir"]).is_absolute()
+            if "Dir" in before and "Dir" in after:
+                assert before["Dir"] == after["Dir"], "Actual external cache Dir moved: " + before["Path"]
+            elif ("Dir" in before) != ("Dir" in after):
+                cache_presence_changes.append({"path": before["Path"], "baselineHasDir": "Dir" in before,
+                                               "candidateHasDir": "Dir" in after,
+                                               "baselineDir": before.get("Dir"), "candidateDir": after.get("Dir")})
+    normalized_graphs = []
+    for (_, root), values in zip(roots, graphs):
         normalized = []
         for value in values:
             item = dict(value)
             if item.get("Main") or item["Path"] == MODULE:
-                for key in ("Dir", "GoMod"):
+                expected = root / "backend" if item.get("Main") else root / "backend/third_party/req"
+                for key, location in (("Dir", expected), ("GoMod", expected / "go.mod")):
                     if key in item:
-                        item[key] = "CHECKOUT/" + Path(item[key]).resolve().relative_to(root).as_posix()
+                        assert Path(item[key]).resolve() == location
+                        item[key] = "CHECKOUT/" + location.relative_to(root).as_posix()
                 if "Replace" in item:
                     replacement = dict(item["Replace"])
                     assert replacement["Path"] == "./third_party/req"
-                    for key in ("Dir", "GoMod"):
-                        replacement[key] = "CHECKOUT/" + Path(replacement[key]).resolve().relative_to(root).as_posix()
+                    for key, location in (("Dir", expected), ("GoMod", expected / "go.mod")):
+                        assert Path(replacement[key]).resolve() == location
+                        replacement[key] = "CHECKOUT/" + location.relative_to(root).as_posix()
                     item["Replace"] = replacement
             else:
                 assert "Replace" not in item and item.get("Version")
-                # Existing old-graph policy permits cache-location presence differences.
-                if "Dir" in item:
-                    assert Path(item["Dir"]).is_absolute()
-                    item.pop("Dir")
+                # Only after exact raw Dir equality or recorded presence difference.
+                item.pop("Dir", None)
             normalized.append(item)
-        graphs.append(normalized)
-    assert graphs[0] == graphs[1], "Actual secured main-MVS differs"
+        normalized_graphs.append(normalized)
+    assert normalized_graphs[0] == normalized_graphs[1], "Actual secured main-MVS differs"
     for name in ("go.mod", "go.sum"):
         assert (baseline / "backend" / name).read_bytes() == (candidate / "backend" / name).read_bytes()
-    save(E / "mvs-comparison.json", {"actualModules": 365, "unchangedExceptCheckoutAndCacheLocations": True})
+    save(E / "mvs-comparison.json", {"actualModules": 365,
+                                    "rawPathOrderIdentical": True,
+                                    "externalDirsExactWhenBothPresent": True,
+                                    "optionalExternalDirPresenceChanges": cache_presence_changes,
+                                    "rawGraphSHA256": {label: sha((E / "commands" / (label + "-modules") / "stdout").read_bytes()) for label, _ in roots},
+                                    "allOtherFieldsPreservedAndEqual": True})
 
 
 def profile_blocks(path, source):
@@ -399,7 +426,11 @@ def observe(kind):
             original = {item["path"]: item for item in before["baseline"]["files"]}
             current = {item["path"]: item for item in before["candidate"]["files"]}
             manifest_path = "backend/third_party/req/UPSTREAM-MANIFEST.json"
-            assert all(current.get(path) == item for path, item in original.items() if path != manifest_path)
+            checker_path = "backend/tools/req-http2-security-evidence.py"
+            assert all(current.get(path) == item for path, item in original.items() if path not in (manifest_path, checker_path))
+            original_checker = (baseline / checker_path).read_bytes()
+            assert original_checker.count(b"selected.add(str(Path(relative) / name))") == 1
+            assert (source / checker_path).read_bytes() == original_checker.replace(b"selected.add(str(Path(relative) / name))", b"selected.add((Path(relative) / name).as_posix())")
             assert set(current) - set(original) == {"backend/third_party/req/" + name for name in G_FILES}
             old = json.loads((baseline / manifest_path).read_text(encoding="utf-8"))
             new = json.loads((source / manifest_path).read_text(encoding="utf-8"))
