@@ -24,6 +24,7 @@
           <div class="relative flex-1">
             <input
               v-model="searchQuery"
+              :disabled="busy"
               type="text"
               autocomplete="off"
               class="input w-full"
@@ -51,6 +52,7 @@
           <div class="w-24">
             <input
               v-model.number="newRpm"
+              :disabled="busy"
               type="number"
               step="1"
               min="0"
@@ -62,7 +64,7 @@
           <button
             type="button"
             class="btn btn-primary shrink-0"
-            :disabled="!selectedUser || newRpm == null || !Number.isInteger(newRpm) || newRpm < 0"
+            :disabled="busy || !selectedUser || newRpm == null || !Number.isInteger(newRpm) || newRpm < 0"
             @click="handleAddLocal"
           >
             {{ t('common.add') }}
@@ -72,7 +74,7 @@
         <div v-if="localEntries.length > 0" class="mt-3 flex items-center justify-end border-t border-gray-100 pt-3 dark:border-dark-600">
           <button
             type="button"
-            :disabled="clearing"
+            :disabled="busy"
             class="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-100 disabled:opacity-50 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40"
             @click="clearAllLocal"
           >
@@ -143,6 +145,7 @@
                         step="1"
                         min="0"
                         autocomplete="off"
+                        :disabled="busy"
                         :value="rpmInputDrafts.get(entry.user_id) ?? entry.rpm_override"
                         :aria-invalid="invalidRpmUserIds.has(entry.user_id)"
                         class="hide-spinner w-20 rounded border border-gray-200 bg-white px-2 py-1 text-center text-sm font-medium transition-colors focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/20 dark:border-dark-500 dark:bg-dark-700 dark:focus:border-primary-500"
@@ -153,6 +156,7 @@
                       <button
                         type="button"
                         class="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                        :disabled="busy"
                         @click="removeLocal(entry.user_id)"
                       >
                         <Icon name="trash" size="sm" />
@@ -181,6 +185,7 @@
           <button
             type="button"
             class="text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+            :disabled="busy"
             @click="handleCancel"
           >
             {{ t('admin.groups.revertChanges') }}
@@ -194,7 +199,7 @@
             v-if="isDirty"
             type="button"
             class="btn btn-primary btn-sm px-4 py-1.5"
-            :disabled="saving || invalidRpmUserIds.size > 0"
+            :disabled="busy || invalidRpmUserIds.size > 0"
             @click="handleSave"
           >
             <Icon v-if="saving" name="refresh" size="sm" class="mr-1 animate-spin" />
@@ -235,6 +240,9 @@ const appStore = useAppStore()
 
 const loading = ref(false)
 const saving = ref(false)
+const clearing = ref(false)
+const loadReady = ref(false)
+const busy = computed(() => !loadReady.value || loading.value || saving.value || clearing.value)
 const serverEntries = ref<GroupRPMOverrideEntry[]>([])
 const localEntries = ref<LocalEntry[]>([])
 const rpmInputDrafts = reactive(new Map<number, string>())
@@ -253,6 +261,20 @@ const pageSize = ref(10)
 
 let searchTimeout: ReturnType<typeof setTimeout>
 let searchGeneration = 0
+let requestVersion = 0
+// A reopened dialog for the same group must read after its earlier mutation.
+// Session invalidation discards UI callbacks; it cannot cancel a server write.
+const pendingWrites = new Map<number, Promise<void>>()
+
+const beginWrite = (groupId: number) => {
+  let settle!: () => void
+  const completion = new Promise<void>(resolve => { settle = resolve })
+  pendingWrites.set(groupId, completion)
+  return () => {
+    if (pendingWrites.get(groupId) === completion) pendingWrites.delete(groupId)
+    settle()
+  }
+}
 
 const cancelPendingSearch = () => {
   clearTimeout(searchTimeout)
@@ -283,18 +305,39 @@ const cloneEntries = (entries: GroupRPMOverrideEntry[]): LocalEntry[] => {
   return entries.map(e => ({ ...e }))
 }
 
+const ownsRequest = (version: number, groupId: number) =>
+  version === requestVersion && props.show && props.group?.id === groupId
+
+const invalidateRequests = () => {
+  requestVersion++
+  loadReady.value = false
+  cancelPendingSearch()
+  loading.value = false
+  saving.value = false
+  clearing.value = false
+}
+
 const loadEntries = async () => {
-  if (!props.group) return
+  if (!props.show || !props.group) return
+  const version = requestVersion
+  const groupId = props.group.id
   loading.value = true
   try {
-    serverEntries.value = await adminAPI.groups.getGroupRPMOverrides(props.group.id)
-    localEntries.value = cloneEntries(serverEntries.value)
+    const pendingWrite = pendingWrites.get(groupId)
+    if (pendingWrite) await pendingWrite
+    if (!ownsRequest(version, groupId)) return
+    const entries = await adminAPI.groups.getGroupRPMOverrides(groupId)
+    if (!ownsRequest(version, groupId)) return
+    serverEntries.value = entries
+    localEntries.value = cloneEntries(entries)
     adjustPage()
+    loadReady.value = true
   } catch (error) {
+    if (!ownsRequest(version, groupId)) return
     appStore.showError(t('admin.groups.failedToLoad'))
     console.error('Error loading RPM overrides:', error)
   } finally {
-    loading.value = false
+    if (ownsRequest(version, groupId)) loading.value = false
   }
 }
 
@@ -303,22 +346,19 @@ const adjustPage = () => {
   if (currentPage.value > totalPages) currentPage.value = totalPages
 }
 
-watch(() => props.group?.id, resetRpmInputs)
-
-watch(() => props.show, (val) => {
+watch([() => props.show, () => props.group?.id], ([show]) => {
+  invalidateRequests()
   resetRpmInputs()
-  if (val && props.group) {
-    currentPage.value = 1
-    searchQuery.value = ''
-    searchResults.value = []
-    selectedUser.value = null
-    newRpm.value = null
-    loadEntries()
-  } else if (!val) {
-    cancelPendingSearch()
-    showDropdown.value = false
-  }
-})
+  serverEntries.value = []
+  localEntries.value = []
+  currentPage.value = 1
+  searchQuery.value = ''
+  searchResults.value = []
+  selectedUser.value = null
+  newRpm.value = null
+  showDropdown.value = false
+  if (show && props.group) loadEntries()
+}, { immediate: true })
 
 const handlePageSizeChange = (newSize: number) => {
   pageSize.value = newSize
@@ -326,6 +366,7 @@ const handlePageSizeChange = (newSize: number) => {
 }
 
 const handleSearchUsers = () => {
+  if (!props.show || !props.group || busy.value) return
   cancelPendingSearch()
   const generation = searchGeneration
   selectedUser.value = null
@@ -356,6 +397,7 @@ const selectUser = (user: AdminUser) => {
 }
 
 const handleAddLocal = () => {
+  if (!props.show || !props.group || busy.value) return
   if (!selectedUser.value || newRpm.value == null || !Number.isInteger(newRpm.value) || newRpm.value < 0) return
   const user = selectedUser.value
   rpmInputDrafts.delete(user.id)
@@ -381,6 +423,7 @@ const handleAddLocal = () => {
 }
 
 const updateLocalRpm = (userId: number, value: string) => {
+  if (busy.value) return
   const entry = localEntries.value.find(e => e.user_id === userId)
   if (!entry) return
   rpmInputDrafts.set(userId, value)
@@ -394,57 +437,71 @@ const updateLocalRpm = (userId: number, value: string) => {
 }
 
 const removeLocal = (userId: number) => {
+  if (busy.value) return
   rpmInputDrafts.delete(userId)
   invalidRpmUserIds.delete(userId)
   localEntries.value = localEntries.value.filter(e => e.user_id !== userId)
   adjustPage()
 }
 
-const clearing = ref(false)
 const clearAllLocal = async () => {
-  if (!props.group || clearing.value) return
+  if (!props.show || !props.group || busy.value || pendingWrites.has(props.group.id)) return
+  const version = requestVersion
+  const groupId = props.group.id
+  const finishWrite = beginWrite(groupId)
   clearing.value = true
   try {
-    await adminAPI.groups.clearGroupRPMOverrides(props.group.id)
+    await adminAPI.groups.clearGroupRPMOverrides(groupId)
+    if (!ownsRequest(version, groupId)) return
     localEntries.value = []
     serverEntries.value = []
     resetRpmInputs()
     appStore.showSuccess(t('admin.groups.rpmSaved'))
   } catch (error) {
+    if (!ownsRequest(version, groupId)) return
     appStore.showError(t('admin.groups.failedToSave'))
     console.error('Error clearing RPM overrides:', error)
   } finally {
-    clearing.value = false
+    finishWrite()
+    if (ownsRequest(version, groupId)) clearing.value = false
   }
 }
 
 const handleCancel = () => {
+  if (busy.value) return
   resetRpmInputs()
   localEntries.value = cloneEntries(serverEntries.value)
   adjustPage()
 }
 
 const handleSave = async () => {
-  if (!props.group || saving.value || invalidRpmUserIds.size > 0) return
+  if (!props.show || !props.group || busy.value || pendingWrites.has(props.group.id) || invalidRpmUserIds.size > 0) return
+  const version = requestVersion
+  const groupId = props.group.id
+  const finishWrite = beginWrite(groupId)
   saving.value = true
   try {
     const entries = localEntries.value.map(e => ({
       user_id: e.user_id,
       rpm_override: e.rpm_override
     }))
-    await adminAPI.groups.batchSetGroupRPMOverrides(props.group.id, entries)
+    await adminAPI.groups.batchSetGroupRPMOverrides(groupId, entries)
+    if (!ownsRequest(version, groupId)) return
     appStore.showSuccess(t('admin.groups.rpmSaved'))
     emit('success')
     emit('close')
   } catch (error) {
+    if (!ownsRequest(version, groupId)) return
     appStore.showError(t('admin.groups.failedToSave'))
     console.error('Error saving RPM overrides:', error)
   } finally {
-    saving.value = false
+    finishWrite()
+    if (ownsRequest(version, groupId)) saving.value = false
   }
 }
 
 const handleClose = () => {
+  invalidateRequests()
   resetRpmInputs()
   if (isDirty.value) {
     localEntries.value = cloneEntries(serverEntries.value)
@@ -469,7 +526,7 @@ watch(() => props.show, (visible) => {
   }
 }, { immediate: true })
 onUnmounted(() => {
-  cancelPendingSearch()
+  invalidateRequests()
   removeClickListener()
 })
 </script>

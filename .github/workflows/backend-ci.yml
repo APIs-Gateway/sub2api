@@ -297,6 +297,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -318,7 +320,40 @@ jobs:
         run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/AirwallexPaymentView.lifecycle.spec.ts src/views/user/__tests__/AirwallexPaymentView.spec.ts
       - name: Group RPM edits and multiplier dialog actual ownership regressions
         working-directory: frontend
-        run: pnpm exec vitest run --reporter=verbose src/components/admin/group/__tests__/
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          mkdir -p "$RUNNER_TEMP/rpm-ownership"
+          git rev-parse HEAD > "$RUNNER_TEMP/rpm-ownership/head.txt"
+          pnpm exec vitest run --reporter=verbose --reporter=json --outputFile.json="$RUNNER_TEMP/rpm-ownership/results.json" src/components/admin/group/__tests__/
+          python3 - "$RUNNER_TEMP/rpm-ownership/results.json" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1]))
+          assert report['success'], report
+          cases = [case for suite in report['testResults'] for case in suite['assertionResults']]
+          assert cases and all(case['status'] == 'passed' for case in cases), cases
+          assert report['numPassedTests'] == report['numTotalTests'] == len(cases), report
+          expected = {
+              'GroupRPMOverridesModal.requests.spec.ts': 30,
+              'GroupRPMOverridesModal.edit.spec.ts': 14,
+              'GroupRPMOverridesModal.spec.ts': 5,
+              'GroupModal.cleanup.spec.ts': 6,
+          }
+          for filename, count in expected.items():
+              suites = [suite for suite in report['testResults'] if suite['name'].endswith('/' + filename)]
+              assert len(suites) == 1, (filename, suites)
+              assert len(suites[0]['assertionResults']) == count, (filename, suites[0])
+          print('Actual exact-head RPM ownership: 30 cases; retained RPM edit/add controls: 19 cases; all group tests passed without skips')
+          PY
+      - name: Preserve actual RPM ownership results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-ownership-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rpm-ownership/
+          if-no-files-found: error
       - name: Rewrite deletion actual component and admission regressions
         working-directory: frontend
         run: pnpm exec vitest run --reporter=verbose src/composables/__tests__/useModelWhitelist.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts src/components/account/__tests__/BulkEditAccountModal.spec.ts src/components/account/__tests__/CreateAccountModal.modelPreview.spec.ts
