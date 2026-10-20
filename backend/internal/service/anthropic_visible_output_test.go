@@ -256,11 +256,25 @@ func TestAnthropicVisibleOutput_TerminalDeadlineEndsContinuousPingStream(t *test
 	}
 }
 
+type anthropicVisibleOutputFlushRecorder struct {
+	*httptest.ResponseRecorder
+	flushed   chan struct{}
+	flushOnce sync.Once
+}
+
+func (r *anthropicVisibleOutputFlushRecorder) Flush() {
+	r.ResponseRecorder.Flush()
+	r.flushOnce.Do(func() { close(r.flushed) })
+}
+
 func TestAnthropicVisibleOutput_BeforeVisibleHeartbeatIsOnlyTransportComment(t *testing.T) {
 	for _, inputTokens := range []string{"7", "0"} {
 		t.Run("input_tokens="+inputTokens, func(t *testing.T) {
 			gin.SetMode(gin.TestMode)
-			recorder := httptest.NewRecorder()
+			recorder := &anthropicVisibleOutputFlushRecorder{
+				ResponseRecorder: httptest.NewRecorder(),
+				flushed:          make(chan struct{}),
+			}
 			c, _ := gin.CreateTestContext(recorder)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 			c.Request.Header.Set("User-Agent", "claude-cli/2.1.198 (external, cli)")
@@ -272,19 +286,48 @@ func TestAnthropicVisibleOutput_BeforeVisibleHeartbeatIsOnlyTransportComment(t *
 				rateLimitService: &RateLimitService{},
 			}
 			reader, writer := io.Pipe()
-			defer func() { _ = reader.Close() }()
-			defer func() { _ = writer.Close() }()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			producerDone := make(chan struct{})
+			producerErr := make(chan error, 1)
+			defer func() {
+				cancel()
+				_ = reader.Close()
+				_ = writer.Close()
+				select {
+				case <-producerDone:
+				case <-time.After(time.Second):
+					t.Error("upstream producer did not exit after pipe cleanup")
+				}
+			}()
 			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"X-Request-Id": []string{"attempt-private"}}, Body: reader}
 			const raw = `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`
 			go func() {
+				defer close(producerDone)
 				defer func() { _ = writer.Close() }()
-				_, _ = io.WriteString(writer, "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":"+inputTokens+"}}}\n\n"+
-					"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\"}}\n\n")
-				time.Sleep(1100 * time.Millisecond)
-				_, _ = io.WriteString(writer, "event: error\ndata: "+raw+"\n\n")
+				if _, err := io.WriteString(writer, "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":"+inputTokens+"}}}\n\n"+
+					"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\"}}\n\n"); err != nil {
+					producerErr <- err
+					return
+				}
+				// Observe the actual transport flush instead of racing a 1s timer
+				// with a fixed 1.1s sleep. Only the handler accesses the recorder.
+				select {
+				case <-recorder.flushed:
+				case <-ctx.Done():
+					producerErr <- ctx.Err()
+					return
+				}
+				_, err := io.WriteString(writer, "event: error\ndata: "+raw+"\n\n")
+				producerErr <- err
 			}()
 
-			result, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+			result, err := svc.handleStreamingResponse(ctx, resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+			select {
+			case <-producerDone:
+			case <-ctx.Done():
+				t.Fatal("upstream producer did not finish within the fixture deadline")
+			}
+			require.NoError(t, <-producerErr)
 			var streamErr *sseStreamErrorEventError
 			require.ErrorAs(t, err, &streamErr)
 			require.Equal(t, raw, streamErr.RawData)

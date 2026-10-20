@@ -163,6 +163,7 @@
               <td class="px-3 py-2">
                 <button
                   @click="toggleEnabled(rule)"
+                  :disabled="togglingRuleIds.has(rule.id)"
                   :class="[
                     'relative inline-flex h-4 w-7 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
                     rule.enabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
@@ -430,7 +431,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
@@ -456,6 +457,11 @@ const appStore = useAppStore()
 const rules = ref<ErrorPassthroughRule[]>([])
 const loading = ref(false)
 const submitting = ref(false)
+const togglingRuleIds = reactive(new Set<number>())
+let rulesLoadVersion = 0
+let toggleStateVersion = 0
+let disposed = false
+const confirmedToggleStates = new Map<number, { version: number; enabled: boolean }>()
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
 const showDeleteDialog = ref(false)
@@ -497,18 +503,38 @@ const platformOptions = [
 watch(() => props.show, (newVal) => {
   if (newVal) {
     loadRules()
+  } else {
+    rulesLoadVersion++
+    loading.value = false
   }
 })
 
+onBeforeUnmount(() => {
+  disposed = true
+  rulesLoadVersion++
+})
+
 const loadRules = async () => {
+  const loadVersion = ++rulesLoadVersion
+  const savedVersion = toggleStateVersion
+  const ownsLoad = () => !disposed && props.show && loadVersion === rulesLoadVersion
   loading.value = true
   try {
-    rules.value = await adminAPI.errorPassthrough.list()
+    const loaded = await adminAPI.errorPassthrough.list()
+    if (!ownsLoad()) return
+    // A GET started before a successful toggle can carry its older snapshot.
+    // Apply only saves confirmed after that GET began, and only to returned rows.
+    rules.value = loaded.map(rule => {
+      const saved = confirmedToggleStates.get(rule.id)
+      return saved && saved.version > savedVersion ? { ...rule, enabled: saved.enabled } : rule
+    })
+    confirmedToggleStates.clear()
   } catch (error) {
+    if (!ownsLoad()) return
     appStore.showError(t('admin.errorPassthrough.failedToLoad'))
     console.error('Error loading rules:', error)
   } finally {
-    loading.value = false
+    if (ownsLoad()) loading.value = false
   }
 }
 
@@ -625,12 +651,21 @@ const handleSubmit = async () => {
 }
 
 const toggleEnabled = async (rule: ErrorPassthroughRule) => {
+  const ruleId = rule.id
+  if (togglingRuleIds.has(ruleId)) return
+  togglingRuleIds.add(ruleId)
   try {
-    await adminAPI.errorPassthrough.toggleEnabled(rule.id, !rule.enabled)
-    rule.enabled = !rule.enabled
+    const updated = await adminAPI.errorPassthrough.toggleEnabled(ruleId, !rule.enabled)
+    if (disposed) return
+    confirmedToggleStates.set(ruleId, { version: ++toggleStateVersion, enabled: updated.enabled })
+    const currentRule = rules.value.find(entry => entry.id === ruleId)
+    if (currentRule) currentRule.enabled = updated.enabled
   } catch (error: any) {
+    if (disposed) return
     appStore.showError(error.response?.data?.detail || t('admin.errorPassthrough.failedToToggle'))
     console.error('Error toggling rule:', error)
+  } finally {
+    togglingRuleIds.delete(ruleId)
   }
 }
 

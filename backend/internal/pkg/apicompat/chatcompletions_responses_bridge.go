@@ -1394,9 +1394,10 @@ func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTool
 	}
 	if text != "" || len(message.ToolCalls) == 0 {
 		outputs = append(outputs, ResponsesOutput{
-			Type: "message",
-			ID:   generateItemID(),
-			Role: "assistant",
+			ownedMessage: true,
+			Type:         "message",
+			ID:           generateItemID(),
+			Role:         "assistant",
 			Content: []ResponsesContentPart{{
 				Type: "output_text",
 				Text: text,
@@ -1480,11 +1481,12 @@ func toolSearchCallArgumentsJSON(arguments string) json.RawMessage {
 
 func emptyResponsesMessageOutput() ResponsesOutput {
 	return ResponsesOutput{
-		Type:    "message",
-		ID:      generateItemID(),
-		Role:    "assistant",
-		Content: []ResponsesContentPart{{Type: "output_text", Text: ""}},
-		Status:  "completed",
+		ownedMessage: true,
+		Type:         "message",
+		ID:           generateItemID(),
+		Role:         "assistant",
+		Content:      []ResponsesContentPart{{Type: "output_text", Text: ""}},
+		Status:       "completed",
 	}
 }
 
@@ -1949,11 +1951,12 @@ func ensureChatToResponsesMessageItem(state *ChatCompletionsToResponsesStreamSta
 	return []ResponsesStreamEvent{chatToResponsesEvent(state, "response.output_item.added", &ResponsesStreamEvent{
 		OutputIndex: state.MessageIndex,
 		Item: &ResponsesOutput{
-			Type:    "message",
-			ID:      state.MessageItemID,
-			Role:    "assistant",
-			Status:  "in_progress",
-			Content: []ResponsesContentPart{{Type: "output_text"}},
+			ownedMessage: true,
+			Type:         "message",
+			ID:           state.MessageItemID,
+			Role:         "assistant",
+			Status:       "in_progress",
+			Content:      []ResponsesContentPart{{Type: "output_text"}},
 		},
 	})}
 }
@@ -1983,7 +1986,7 @@ func closeChatTextItem(state *ChatCompletionsToResponsesStreamState) []Responses
 	state.MessageItemID = ""
 	state.TextPartOpen = false
 	state.textSegment.Reset()
-	item := ResponsesOutput{Type: "message", ID: itemID, Role: "assistant", Content: []ResponsesContentPart{{Type: "output_text", Text: segment}}, Status: "completed"}
+	item := ResponsesOutput{ownedMessage: true, Type: "message", ID: itemID, Role: "assistant", Content: []ResponsesContentPart{{Type: "output_text", Text: segment}}, Status: "completed"}
 	state.recordOutput(index, item)
 	return []ResponsesStreamEvent{
 		chatToResponsesEvent(state, "response.output_text.done", &ResponsesStreamEvent{OutputIndex: index, ContentIndex: 0, Text: segment, ItemID: itemID}),
