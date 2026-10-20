@@ -202,10 +202,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	h.runChatChain(c, plan, run, apiKey, firstHopTicket, channelPlanFor, applyForwardModel, reqModel, reqStream, reqLog, &streamStarted)
 }
 
-func openAIStablePriorityCanFallback(apiKey *service.APIKey, intent service.StablePriorityIntent) bool {
-	return intent.Enabled && apiKey != nil && apiKey.Group != nil && apiKey.Group.StablePriorityFallbackGroupID != nil
-}
-
 // resolveOpenAIUpstreamEndpoint returns the actual upstream endpoint for an
 // OpenAI account, used by every OpenAI usage-recording site. APIKey accounts
 // whose upstream is forced or probed to not support the Responses API are

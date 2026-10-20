@@ -124,7 +124,7 @@ func newAGMeteredBillingFixture(t *testing.T, response string) *agMeteredBilling
 	deferred := service.NewDeferredService(accounts, wheel, time.Minute)
 	t.Cleanup(deferred.Stop)
 	gatewaySvc := service.NewGatewayService(accounts, groups, usage, atomicBilling, users, subs, rates, cache, cfg, snapshot, concurrency, billing, rateLimit, billingCache, nil, upstream, deferred, nil, nil, nil, nil, settings, nil, channels, service.NewModelPricingResolver(channels, billing), nil, nil)
-	openAISvc := service.NewOpenAIGatewayService(accounts, usage, atomicBilling, users, subs, rates, cache, cfg, snapshot, concurrency, billing, rateLimit, billingCache, upstream, deferred, nil, nil, nil, nil, nil, nil, nil, nil, groups)
+	openAISvc := service.NewOpenAIGatewayService(accounts, usage, atomicBilling, users, subs, rates, cache, cfg, snapshot, concurrency, billing, rateLimit, billingCache, upstream, deferred, nil, nil, nil, nil, nil, nil, nil, groups)
 	t.Cleanup(openAISvc.CloseOpenAIWSPool)
 	keyService := service.NewAPIKeyService(NewAPIKeyRepository(client, inflightTestDB(t)), users, groups, subs, rates, nil, cfg)
 	gemini := service.NewGeminiMessagesCompatService(accounts, groups, cache, snapshot, nil, rateLimit, upstream, nil, cfg)

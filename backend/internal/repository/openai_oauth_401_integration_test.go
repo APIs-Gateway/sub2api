@@ -195,7 +195,7 @@ func newOAuth401HTTPFixture(t *testing.T, passthrough bool) (*inflightHTTPFixtur
 	t.Cleanup(wheel.Stop)
 	deferred := service.NewDeferredService(accounts, wheel, time.Minute)
 	t.Cleanup(deferred.Stop)
-	svc := service.NewOpenAIGatewayService(accounts, NewUsageLogRepository(client, db), NewUsageBillingRepository(client, db), users, subs, rates, NewGatewayCache(rdb), cfg, snapshot, concurrency, service.NewBillingService(cfg, nil), service.NewRateLimitService(accounts, nil, cfg, nil, nil), billingCache, upstream, deferred, provider, nil, nil, nil, nil, settings, nil, nil, groups)
+	svc := service.NewOpenAIGatewayService(accounts, NewUsageLogRepository(client, db), NewUsageBillingRepository(client, db), users, subs, rates, NewGatewayCache(rdb), cfg, snapshot, concurrency, service.NewBillingService(cfg, nil), service.NewRateLimitService(accounts, nil, cfg, nil, nil), billingCache, upstream, deferred, provider, nil, nil, nil, nil, settings, nil, groups)
 	t.Cleanup(svc.CloseOpenAIWSPool)
 	keys := service.NewAPIKeyService(NewAPIKeyRepository(client, db), users, groups, subs, rates, nil, cfg)
 	f.openAIService = svc
