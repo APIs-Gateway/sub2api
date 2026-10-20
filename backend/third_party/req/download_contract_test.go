@@ -67,7 +67,7 @@ func TestReqDownloadContract(t *testing.T) {
 				// SetOutput downloads before Do returns its response. The caller
 				// explicitly chooses append; no automatic validation/rollback claim.
 				defer file.Close()
-				request = c.Get(p.server.URL + "/entity").SetHeader("Range", fmt.Sprintf("bytes=%d-", offset)).SetHeader("If-Range", `"g-download-v1"`).SetOutput(file)
+				request = c.Get(p.server.URL+"/entity").SetHeader("Range", fmt.Sprintf("bytes=%d-", offset)).SetHeader("If-Range", `"g-download-v1"`).SetOutput(file)
 			case "if_range_200_visible":
 				request.SetHeader("Range", fmt.Sprintf("bytes=%d-", offset)).SetHeader("If-Range", `"old-entity"`)
 			case "range_416_visible":

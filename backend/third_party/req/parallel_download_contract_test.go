@@ -16,9 +16,9 @@ import (
 
 func TestReqParallelDownloadContract(t *testing.T) {
 	cases := []struct {
-		name string
-		size int
-		segment int64
+		name        string
+		size        int
+		segment     int64
 		concurrency int
 	}{
 		{"out_of_order", 97, 17, 3},
@@ -92,7 +92,7 @@ func TestReqParallelDownloadContract(t *testing.T) {
 						e.FixtureError = err.Error()
 						return
 					}
-					body := entity[start:end+1]
+					body := entity[start : end+1]
 					rangeValue := fmt.Sprintf("bytes %d-%d/%d", start, end, len(entity))
 					switch tc.name {
 					case "out_of_order":
@@ -111,7 +111,7 @@ func TestReqParallelDownloadContract(t *testing.T) {
 						rangeValue = ""
 					case "wrong_range_start":
 						rangeValue = fmt.Sprintf("bytes 1-%d/%d", end, len(entity))
-						body = entity[1:end+1]
+						body = entity[1 : end+1]
 					case "reversed_range":
 						rangeValue = fmt.Sprintf("bytes %d-%d/%d", end, start, len(entity))
 					case "invalid_range_total":
