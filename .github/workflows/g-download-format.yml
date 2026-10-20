@@ -247,7 +247,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: g-download-format-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.G_FORMAT_EVIDENCE }}/
+          path: ${{ runner.temp }}/g-download-format-${{ github.run_id }}-${{ github.run_attempt }}/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
