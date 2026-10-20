@@ -1,0 +1,825 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-gray-200 dark:border-dark-700;
+  }
+
+  html {
+    @apply scroll-smooth antialiased;
+    color-scheme: light;
+  }
+
+  .dark {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-gray-50 text-gray-900 dark:bg-dark-950 dark:text-gray-100;
+    @apply min-h-screen;
+  }
+
+  /* 机器之声：所有等宽文本走表格数字 + 斜杠零，让账本列对齐 */
+  .font-mono,
+  code,
+  kbd,
+  samp,
+  pre {
+    font-feature-settings: 'tnum' 1, 'zero' 1;
+  }
+
+  /* 衬线只用于标题：标题里偶尔出现的数字走 lining，不出现在行高之外。
+     数字内容本身不要用衬线，见下方 .num-* 数字排印。 */
+  .font-serif {
+    font-feature-settings: 'lnum' 1, 'tnum' 1;
+  }
+
+  /* 自定义滚动条 - 仅针对 Firefox，避免 Chrome 取消 webkit 的全局定制 */
+  @supports (-moz-appearance:none) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+    }
+
+    *:hover,
+    *:focus-within {
+      scrollbar-color: rgba(184, 177, 161, 0.5) transparent;
+    }
+
+    .dark *:hover,
+    .dark *:focus-within {
+      scrollbar-color: rgba(82, 76, 66, 0.5) transparent;
+    }
+  }
+
+  ::-webkit-scrollbar {
+    @apply h-2 w-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-transparent;
+    transition: background-color 0.2s ease;
+  }
+
+  *:hover::-webkit-scrollbar-thumb {
+    @apply bg-gray-300/50 dark:bg-dark-600/50;
+  }
+
+  *:hover::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-400 dark:bg-dark-500;
+  }
+
+  /* 选中文本样式 */
+  ::selection {
+    @apply bg-primary-500/20 text-primary-900 dark:text-primary-100;
+  }
+
+  /* 无障碍：尊重"减少动态"——淡入/滑动等装饰性动画对所有人统一收敛 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* ============ 按钮样式 ============ */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2;
+    @apply rounded-md px-4 py-2.5 text-sm font-medium;
+    @apply transition-colors duration-150;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900/15 focus-visible:ring-offset-1 dark:focus-visible:ring-white/20;
+    @apply disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    /* Anthropic：主按钮暖黑扁平，无阴影、无弹跳 */
+    @apply bg-gray-900 text-white;
+    @apply hover:bg-gray-800;
+    @apply dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white;
+  }
+
+  .btn-secondary {
+    /* 单张纸：次按钮透明底 + 发丝描边，hover 落到 Paper-Sunk */
+    @apply bg-transparent;
+    @apply text-gray-700 dark:text-gray-200;
+    @apply border border-gray-300 dark:border-dark-600;
+    @apply hover:bg-gray-100 dark:hover:bg-dark-800;
+    @apply hover:border-gray-400 dark:hover:border-dark-500;
+  }
+
+  .btn-ghost {
+    @apply bg-transparent text-gray-600 dark:text-gray-300;
+    @apply hover:bg-gray-100 dark:hover:bg-dark-800;
+  }
+
+  .btn-danger {
+    /* 仅真·破坏性操作保留克制的红，作为唯一的非黏土语义按钮 */
+    @apply bg-red-600 text-white;
+    @apply hover:bg-red-700;
+  }
+
+  /* success/warning 不再用绿/琥珀填充——降级为中性，状态靠文案表达 */
+  .btn-success {
+    @apply bg-gray-900 text-white hover:bg-gray-800;
+    @apply dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white;
+  }
+
+  .btn-warning {
+    @apply bg-transparent text-gray-700 dark:text-gray-200;
+    @apply border border-gray-300 dark:border-dark-600;
+    @apply hover:bg-gray-100 dark:hover:bg-dark-800;
+  }
+
+  /* 支付按钮：去品牌色，统一收成发丝描边的中性按钮（保留 class 兼容标记） */
+  .btn-stripe,
+  .btn-airwallex,
+  .btn-alipay,
+  .btn-wxpay {
+    @apply bg-transparent text-gray-700 dark:text-gray-200;
+    @apply border border-gray-300 dark:border-dark-600;
+    @apply hover:bg-gray-100 dark:hover:bg-dark-800;
+    @apply hover:border-gray-400 dark:hover:border-dark-500;
+  }
+
+  .btn-sm {
+    @apply rounded-md px-3 py-1.5 text-xs;
+  }
+
+  .btn-md {
+    @apply rounded-md px-4 py-2 text-sm;
+  }
+
+  .btn-lg {
+    @apply rounded-lg px-6 py-3 text-base;
+  }
+
+  .btn-icon {
+    @apply rounded-md p-2.5;
+  }
+
+  /* ============ 输入框样式 ============ */
+  .input {
+    @apply w-full rounded-md px-4 py-2.5 text-sm;
+    @apply bg-white dark:bg-dark-800;
+    @apply border border-gray-300 dark:border-dark-600;
+    @apply text-gray-900 dark:text-gray-100;
+    @apply placeholder:text-gray-400 dark:placeholder:text-dark-400;
+    @apply transition-colors duration-150;
+    @apply focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900/10 dark:focus:border-dark-500 dark:focus:ring-white/10;
+    @apply disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-dark-900;
+  }
+
+  .input-error {
+    /* 错误唯一语义色：Signal（黏土族 primary-600） */
+    @apply border-primary-600 focus:border-primary-600 focus:ring-primary-600/20;
+  }
+
+  .input-label {
+    @apply mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300;
+  }
+
+  .input-hint {
+    @apply mt-1 text-xs text-gray-500 dark:text-dark-400;
+  }
+
+  .input-error-text {
+    @apply mt-1 text-xs text-primary-700 dark:text-primary-400;
+  }
+
+  /* Hide number input spinner buttons for cleaner UI */
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+
+  /* ============ 卡片样式（扁平：发丝描边、无阴影、小圆角） ============ */
+  .card {
+    @apply bg-white dark:bg-dark-800/50;
+    @apply rounded-md;
+    @apply border border-gray-200 dark:border-dark-700;
+    @apply transition-colors duration-200;
+  }
+
+  .card-hover {
+    @apply hover:border-gray-300 dark:hover:border-dark-600;
+  }
+
+  /* 旧 glass 卡片别名 → 收敛为统一扁平卡片 */
+  .card-glass {
+    @apply bg-white dark:bg-dark-800;
+    @apply rounded-md border border-gray-200 dark:border-dark-700;
+  }
+
+  .card-header {
+    @apply border-b border-gray-200 dark:border-dark-700;
+    @apply px-6 py-4;
+  }
+
+  .card-body {
+    @apply p-6;
+  }
+
+  .card-footer {
+    @apply border-t border-gray-200 dark:border-dark-700;
+    @apply px-6 py-4;
+  }
+
+  /* ============ 统计 / 指标 ============ */
+  /* 指标条：数字直接坐在纸上，靠竖发丝线分栏，无盒、无角标 */
+  .metric-strip {
+    @apply flex flex-wrap items-stretch;
+    @apply divide-x divide-gray-200 dark:divide-dark-700;
+    @apply border-y border-gray-200 dark:border-dark-700;
+  }
+
+  .metric-cell {
+    @apply flex flex-col gap-1 px-5 py-4;
+  }
+
+  .metric-label {
+    /* gray-600 以满足 AA 对比度（gray-500 在暖纸上约 3:1 不达标） */
+    @apply text-xs font-medium text-gray-600 dark:text-dark-400;
+  }
+
+  /* ============ 数字排印（全站统一） ============
+     数字一律用无衬线（Space Grotesk）+ 表格数字：不用等宽、不用衬线。
+     等宽只留给密钥、代码、命令；衬线只留给标题。
+     三档层级：
+       .num-primary   主指标：卡片里的大数字，所有卡片同字号同字重，不单独放大任何一个
+       .num-secondary 次级数值：表格、列表、明细行里的数（字号随所在行，字重 500）
+       .num-aux       辅助数字：副标题、说明行里的数
+     货币符号与单位（¥ $ M s RPM %）由 <NumText> 拆出来套 .num-unit：同族字体，
+     字号略小、颜色略浅，与数字的间距各档一致。 */
+  .num,
+  .num-primary,
+  .num-secondary,
+  .num-aux {
+    @apply font-sans;
+    font-variant-numeric: tabular-nums lining-nums;
+    font-feature-settings: 'tnum' 1, 'lnum' 1;
+  }
+
+  .num-primary {
+    @apply text-[1.625rem] font-medium leading-tight text-gray-900 dark:text-white;
+    letter-spacing: -0.015em;
+    --num-unit-size: 0.58em;
+  }
+
+  .num-secondary {
+    /* 字号跟随所在表格 / 列表行（表格 text-sm，密集明细行 text-xs），只统一字体和字重 */
+    @apply font-medium;
+    --num-unit-size: 0.86em;
+  }
+
+  .num-aux {
+    @apply text-xs text-gray-500 dark:text-gray-400;
+    --num-unit-size: 0.92em;
+  }
+
+  .num-unit {
+    font-size: var(--num-unit-size, 0.86em);
+    font-weight: 400;
+    letter-spacing: 0;
+    opacity: 0.68;
+  }
+
+  /* 辅助数字本身已是 gray-500 小字，单位再淡到 0.68 对比度不够，这里抬高 */
+  .num-aux .num-unit {
+    opacity: 0.88;
+  }
+
+  /* 符号在前、单位在后，与数字的间距固定（随各档字号等比缩放） */
+  .num-unit-pre {
+    margin-right: 0.04em;
+    /* 默认（secondary / aux / 句中行内）：符号与数字同字号、同颜色、同字重，紧贴数字 */
+    font-size: inherit;
+    font-weight: inherit;
+    opacity: 1;
+  }
+
+  /* 只有卡片主数字里的符号略小、略淡 */
+  .num-primary .num-unit-pre {
+    font-size: var(--num-unit-size);
+    font-weight: 400;
+    opacity: 0.68;
+  }
+
+  .num-unit-post {
+    margin-left: 0.22em;
+  }
+
+  .metric-value {
+    /* 主指标：与 .num-primary 同一档，仪表盘每格同字号同字重 */
+    @apply num-primary;
+  }
+
+  .stat-value {
+    @apply num-primary truncate;
+  }
+
+  .stat-label {
+    @apply text-sm text-gray-600 dark:text-dark-400;
+  }
+
+  .stat-trend {
+    @apply mt-1 flex items-center gap-1 text-xs font-medium;
+  }
+
+  /* 趋势不再用红绿编码——靠箭头符号 + 中性墨色，错误时才用 Signal */
+  .stat-trend-up {
+    @apply text-gray-600 dark:text-gray-300;
+  }
+
+  .stat-trend-down {
+    @apply text-primary-700 dark:text-primary-400;
+  }
+
+  /* ============ 表格样式（出版物账本） ============ */
+  .table-container {
+    @apply overflow-x-auto;
+  }
+
+  .table {
+    @apply w-full text-sm;
+  }
+
+  .table th {
+    @apply px-4 py-3 text-left text-xs font-medium;
+    @apply text-gray-500 dark:text-dark-400;
+    @apply border-b border-gray-300 dark:border-dark-600;
+  }
+
+  .table td {
+    @apply px-4 py-3;
+    @apply text-gray-700 dark:text-gray-300;
+    @apply border-b border-gray-100 dark:border-dark-800;
+  }
+
+  .table tr:last-child td {
+    @apply border-b-0;
+  }
+
+  .table tbody tr {
+    @apply transition-colors duration-150;
+    @apply hover:bg-gray-100 dark:hover:bg-dark-800/40;
+  }
+
+  /* 数字单元格：无衬线表格数字，小数点对齐（不再用等宽） */
+  .table .num,
+  .data {
+    @apply font-sans tabular-nums;
+  }
+
+  /* ============ 徽章样式（发丝标签 / 点+词，去彩虹） ============ */
+  .badge {
+    @apply inline-flex items-center gap-1.5;
+    @apply rounded-md border px-2 py-0.5 text-xs font-medium;
+    @apply border-gray-200 text-gray-700 dark:border-dark-700 dark:text-gray-300;
+  }
+
+  .badge-primary {
+    @apply border-primary-200 text-primary-700 dark:border-primary-900/50 dark:text-primary-400;
+  }
+
+  /* 成功/中性状态不着色——靠文字承载，标签保持中性发丝 */
+  .badge-success {
+    @apply border-gray-200 text-gray-700 dark:border-dark-700 dark:text-gray-300;
+  }
+
+  .badge-warning {
+    @apply border-gray-300 text-gray-600 dark:border-dark-600 dark:text-gray-400;
+  }
+
+  /* 仅 danger 用唯一语义色 Signal（黏土族） */
+  .badge-danger {
+    @apply border-primary-300 text-primary-700 dark:border-primary-900/50 dark:text-primary-400;
+  }
+
+  .badge-gray {
+    @apply border-transparent bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-dark-300;
+  }
+
+  .badge-purple {
+    @apply border-gray-200 text-gray-700 dark:border-dark-700 dark:text-gray-300;
+  }
+
+  /* ============ 下拉菜单 ============ */
+  .dropdown {
+    @apply absolute z-50;
+    @apply bg-white dark:bg-dark-800;
+    @apply rounded-md;
+    @apply border border-gray-200 dark:border-dark-700;
+    @apply shadow-overlay;
+    @apply py-1;
+    @apply origin-top-right animate-fade-in;
+  }
+
+  .dropdown-item {
+    @apply px-4 py-2 text-sm;
+    @apply text-gray-700 dark:text-gray-300;
+    @apply hover:bg-gray-100 dark:hover:bg-dark-700;
+    @apply cursor-pointer transition-colors;
+    @apply flex items-center gap-2;
+  }
+
+  /* ============ 模态框（唯一允许的浮层：极轻投影） ============ */
+  .modal-overlay {
+    @apply fixed inset-0 z-50;
+    @apply bg-black/40;
+    @apply flex items-center justify-center p-2 sm:p-4;
+  }
+
+  .modal-content {
+    @apply w-full;
+    @apply max-h-[95vh] sm:max-h-[90vh];
+    @apply bg-white dark:bg-dark-800;
+    @apply rounded-lg shadow-overlay;
+    @apply border border-gray-200 dark:border-dark-700;
+    @apply flex flex-col;
+  }
+
+  .modal-header {
+    @apply border-b border-gray-200 px-4 py-3 dark:border-dark-700;
+    @apply sm:px-6 sm:py-4;
+    @apply flex items-center justify-between;
+    @apply flex-shrink-0;
+  }
+
+  .modal-title {
+    @apply text-lg font-semibold text-gray-900 dark:text-white;
+  }
+
+  .modal-body {
+    @apply px-4 py-3;
+    @apply sm:px-6 sm:py-4;
+    @apply flex-1 overflow-y-auto;
+  }
+
+  .modal-footer {
+    @apply border-t border-gray-200 px-4 py-3 dark:border-dark-700;
+    @apply sm:px-6 sm:py-4;
+    @apply flex items-center justify-end gap-3;
+    @apply flex-shrink-0;
+  }
+
+  /* 防止body滚动的工具类 */
+  body.modal-open {
+    overflow: hidden;
+  }
+
+  .modal-enter-active {
+    transition: opacity 250ms ease-out;
+  }
+
+  .modal-leave-active {
+    transition: opacity 200ms ease-in;
+  }
+
+  .modal-enter-from,
+  .modal-leave-to {
+    opacity: 0;
+  }
+
+  .modal-enter-active .modal-content {
+    transition: transform 250ms ease-out, opacity 250ms ease-out;
+  }
+
+  .modal-leave-active .modal-content {
+    transition: transform 200ms ease-in, opacity 200ms ease-in;
+  }
+
+  .modal-enter-from .modal-content,
+  .modal-leave-to .modal-content {
+    transform: scale(0.98);
+    opacity: 0;
+  }
+
+  .modal-enter-to .modal-content,
+  .modal-leave-from .modal-content {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .modal-enter-active,
+    .modal-leave-active,
+    .modal-enter-active .modal-content,
+    .modal-leave-active .modal-content {
+      transition-duration: 1ms;
+      transition-delay: 0ms;
+    }
+
+    .modal-enter-from .modal-content,
+    .modal-leave-to .modal-content {
+      transform: none;
+    }
+  }
+
+  /* ============ Dialog ============ */
+  .dialog-overlay {
+    @apply fixed inset-0 z-50;
+    @apply bg-black/40 dark:bg-black/60;
+    @apply flex items-center justify-center p-4;
+  }
+
+  .dialog-container {
+    @apply flex w-full flex-col;
+    @apply max-h-[90vh];
+    @apply rounded-lg bg-white dark:bg-dark-800;
+    @apply border border-gray-200 dark:border-dark-700;
+    @apply shadow-overlay;
+  }
+
+  .dialog-header {
+    @apply border-b border-gray-200 px-6 py-4 dark:border-dark-700;
+    @apply flex items-center justify-between;
+  }
+
+  .dialog-body {
+    @apply overflow-y-auto px-6 py-4;
+  }
+
+  .dialog-footer {
+    @apply border-t border-gray-200 px-6 py-4 dark:border-dark-700;
+    @apply bg-gray-100/60 dark:bg-dark-900/40;
+    @apply flex items-center justify-end gap-3;
+  }
+
+  /* ============ Toast 通知（扁平发丝通知，去彩色左条） ============ */
+  .toast {
+    @apply fixed right-4 top-4 z-[100];
+    @apply min-w-[320px] max-w-md;
+    @apply bg-white dark:bg-dark-800;
+    @apply rounded-md shadow-overlay;
+    @apply border border-gray-200 dark:border-dark-700;
+    @apply p-4;
+    @apply animate-slide-down;
+  }
+
+  /* 成功/信息/警告：中性，严重度由文案与图标承载 */
+  .toast-success,
+  .toast-info,
+  .toast-warning {
+    @apply border-gray-200 dark:border-dark-700;
+  }
+
+  /* 仅错误用 Signal 左刻线 */
+  .toast-error {
+    @apply border-l-2 border-l-primary-600;
+  }
+
+  /* ============ 侧边栏（单张纸 + 单条竖发丝线） ============ */
+  .sidebar {
+    @apply fixed inset-y-0 left-0 z-40;
+    @apply w-64 bg-gray-50 dark:bg-dark-950;
+    @apply border-r border-gray-200 dark:border-dark-800;
+    @apply flex flex-col;
+    @apply transition-transform duration-300;
+    transition-property: width, transform;
+  }
+
+  .sidebar-header {
+    @apply h-16 px-6;
+    @apply flex items-center gap-3;
+    @apply border-b border-gray-200 dark:border-dark-800;
+    transition:
+      padding 0.2s ease,
+      gap 0.2s ease;
+  }
+
+  .sidebar-nav {
+    @apply flex-1 overflow-y-auto px-3 py-4;
+  }
+
+  .sidebar-link {
+    /* 去胶囊：纯文字行，hover 仅变墨色，不再整块填充 */
+    @apply flex items-center gap-3 py-2;
+    @apply overflow-hidden;
+    @apply text-sm;
+    @apply text-gray-600 dark:text-dark-300;
+    @apply transition-colors duration-150;
+    @apply hover:text-gray-900 dark:hover:text-white;
+    padding-left: 1rem;
+    padding-right: 0.875rem;
+  }
+
+  .sidebar-link-active {
+    /* 激活：墨色加重 + 左侧 2px 黏土刻线，无胶囊填充 */
+    @apply text-gray-900 dark:text-white;
+    @apply font-semibold;
+    box-shadow: inset 2px 0 0 0 theme('colors.primary.500');
+  }
+
+  .sidebar-section {
+    @apply mb-6;
+  }
+
+  .sidebar-section-title {
+    /* 报头式微标题：Fraunces 衬线、句首式、非全大写。
+       不用 italic——Noto Serif SC 无真斜体，中文会渲染成难看的伪斜体。 */
+    @apply mb-2 px-4;
+    @apply font-serif text-xs;
+    @apply text-gray-600 dark:text-dark-400;
+  }
+
+  /* ============ 页面头部 / 报头 ============ */
+  .page-header {
+    @apply mb-6;
+  }
+
+  .page-title {
+    @apply text-2xl font-bold text-gray-900 dark:text-white;
+  }
+
+  .page-description {
+    @apply mt-1 text-sm text-gray-500 dark:text-dark-400;
+  }
+
+  /* 报头标题：Fraunces 展示字 + 下方 Hairline-Strong 横规，给每页一个上沿 */
+  .masthead-title {
+    @apply font-serif text-3xl font-medium tracking-tight text-gray-900 dark:text-white;
+  }
+
+  .masthead {
+    @apply border-b border-gray-300 pb-4 dark:border-dark-600;
+  }
+
+  /* ============ 空状态 ============ */
+  .empty-state {
+    @apply flex flex-col items-center justify-center px-4 py-12;
+    @apply text-center;
+  }
+
+  .empty-state-icon {
+    @apply mb-4 h-16 w-16;
+    @apply text-gray-300 dark:text-dark-600;
+  }
+
+  .empty-state-title {
+    /* 安静的 Fraunces 一行，取代模板化收件箱图标 */
+    @apply mb-1 font-serif text-lg text-gray-900 dark:text-white;
+  }
+
+  .empty-state-description {
+    @apply max-w-sm text-sm text-gray-500 dark:text-dark-400;
+  }
+
+  /* ============ 加载状态 ============ */
+  .spinner {
+    @apply h-5 w-5 rounded-full border-2 border-current border-t-transparent;
+    @apply animate-spin;
+  }
+
+  .skeleton {
+    @apply animate-pulse rounded bg-gray-200 dark:bg-dark-700;
+  }
+
+  /* ============ 分隔线 ============ */
+  .divider {
+    @apply my-4 h-px bg-gray-200 dark:bg-dark-700;
+  }
+
+  /* ============ 标签页（下划线 tab） ============ */
+  .tabs {
+    @apply flex gap-6 border-b border-gray-200 dark:border-dark-700;
+  }
+
+  .tab {
+    @apply -mb-px border-b-2 border-transparent px-1 pb-2.5 pt-1 text-sm font-medium;
+    @apply text-gray-500 dark:text-dark-400;
+    @apply transition-colors duration-150;
+    @apply hover:text-gray-900 dark:hover:text-white;
+  }
+
+  .tab-active {
+    @apply border-gray-900 text-gray-900 dark:border-white dark:text-white;
+  }
+
+  /* ============ 进度条 ============ */
+  .progress {
+    @apply h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700;
+  }
+
+  .progress-bar {
+    /* 去渐变：实心黏土（图表/数据可视化是黏土的指定岗位之一） */
+    @apply h-full bg-primary-500;
+    @apply transition-all duration-300;
+  }
+
+  /* ============ 开关 ============ */
+  .switch {
+    @apply relative h-6 w-11 cursor-pointer rounded-full;
+    @apply bg-gray-300 dark:bg-dark-600;
+    @apply transition-colors duration-200;
+  }
+
+  .switch-active {
+    @apply bg-primary-500;
+  }
+
+  .switch-thumb {
+    @apply absolute left-0.5 top-0.5 h-5 w-5 rounded-full;
+    @apply bg-white shadow-sm;
+    @apply transition-transform duration-200;
+  }
+
+  .switch-active .switch-thumb {
+    @apply translate-x-5;
+  }
+
+  /* ============ 代码块 ============ */
+  .code {
+    @apply font-mono text-sm;
+    @apply bg-gray-100 dark:bg-dark-800;
+    @apply rounded px-1.5 py-0.5;
+    @apply text-primary-700 dark:text-primary-400;
+  }
+
+  .code-block {
+    @apply font-mono text-sm;
+    @apply bg-gray-900 text-gray-100;
+    @apply overflow-x-auto rounded-md p-4;
+  }
+
+  /* ============ Tour Description ============ */
+  .tour-step-description {
+    @apply space-y-3 text-sm leading-relaxed text-gray-700 dark:text-gray-200;
+  }
+
+  .tour-step-description ul {
+    @apply list-disc pl-5;
+  }
+
+  .tour-step-description ol {
+    @apply list-decimal pl-5;
+  }
+
+  .tour-step-description li + li {
+    @apply mt-1;
+  }
+
+  /* 提示框：蓝/绿/琥珀全部收成中性发丝通知，仅错误用 Signal 左刻线 */
+  .tour-info-box,
+  .tour-success-box,
+  .tour-warning-box {
+    @apply rounded-md border-l-2 border-gray-300 bg-gray-100 px-3 py-2 text-xs text-gray-700;
+    @apply dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300;
+  }
+
+  .tour-error-box {
+    @apply rounded-md border-l-2 border-primary-600 bg-gray-100 px-3 py-2 text-xs text-gray-700;
+    @apply dark:border-primary-500 dark:bg-dark-800 dark:text-gray-300;
+  }
+
+  /* ============ 表格页面布局优化 ============ */
+  .table-wrapper {
+    overflow-x: auto;
+  }
+
+  /* 表头固定时用发丝线分层，不再用投影 */
+  .table-wrapper thead.sticky {
+    @apply border-b border-gray-300 dark:border-dark-600;
+  }
+}
+
+@layer utilities {
+  /* 表格数字工具：等宽 + 表格数字 + 衬线 lining */
+  .tabular {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  /* 隐藏滚动条 */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 安全区域 */
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}

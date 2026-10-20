@@ -1,0 +1,574 @@
+<template>
+  <div class="card">
+    <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+      <h2 class="text-lg font-medium text-gray-900 dark:text-white">
+        {{ t('profile.balanceNotify.title') }}
+      </h2>
+      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+        {{ t('profile.balanceNotify.description') }}
+      </p>
+    </div>
+    <div class="px-6 py-6 space-y-6">
+      <!-- Enable toggle -->
+      <div class="flex items-center justify-between">
+        <label class="input-label mb-0">{{ t('profile.balanceNotify.enabled') }}</label>
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" v-model="notifyEnabled" @change="handleToggle" class="sr-only peer" />
+          <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 dark:peer-focus:ring-primary-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-gray-600 peer-checked:bg-primary-600"></div>
+        </label>
+      </div>
+
+      <template v-if="notifyEnabled">
+        <!-- Custom threshold with save button -->
+        <div>
+          <label class="input-label">
+            {{ t('profile.balanceNotify.threshold') }}
+            <span class="text-xs text-gray-400 ml-2">{{ t('profile.balanceNotify.thresholdHint') }}</span>
+          </label>
+          <div class="flex items-center gap-2">
+            <span class="text-gray-500">{{ currencySymbol }}</span>
+            <input
+              v-model.number="thresholdModel"
+              type="number"
+              min="0"
+              :step="isFiat ? 'any' : '0.01'"
+              class="input flex-1"
+              :placeholder="thresholdPlaceholder"
+            />
+            <button
+              @click="handleThresholdUpdate"
+              :disabled="savingThreshold"
+              class="btn btn-primary btn-sm whitespace-nowrap"
+            >
+              {{ savingThreshold ? t('common.saving') : t('common.save') }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Email list with toggles -->
+        <div>
+          <label class="input-label">{{ t('profile.balanceNotify.extraEmails') }}</label>
+          <p class="mb-2 text-xs text-yellow-600 dark:text-yellow-400">{{ t('profile.balanceNotify.extraEmailsHint') }}</p>
+
+          <!-- Saved email entries -->
+          <div v-if="emailEntries.length > 0" class="space-y-2 mb-3">
+            <div v-for="(entry, idx) in emailEntries" :key="idx"
+              class="flex items-center justify-between px-3 py-2 bg-gray-50 dark:bg-dark-700 rounded-lg">
+              <div class="flex items-center gap-2 min-w-0 flex-1">
+                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input type="checkbox" :checked="!entry.disabled" @change="handleEmailToggle(entry)" class="sr-only peer" />
+                  <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-gray-500 peer-checked:bg-primary-600"></div>
+                </label>
+                <span class="text-sm text-gray-700 dark:text-gray-300 truncate">{{ entry.email }}</span>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <template v-if="!entry.verified">
+                  <!-- Inline verify flow for saved unverified emails -->
+                  <template v-if="verifyingEmail === entry.email">
+                    <input
+                      v-model="verifyCode"
+                      type="text"
+                      maxlength="6"
+                      class="w-20 rounded border border-gray-300 px-2 py-1 text-xs dark:border-dark-500 dark:bg-dark-700"
+                      :placeholder="t('profile.balanceNotify.codePlaceholder')"
+                    />
+                    <button @click="verifySavedEmail(entry.email)" :disabled="!verifyCode || verifyCode.length !== 6 || verifyingSaved" class="text-xs text-primary-600 hover:text-primary-700">
+                      {{ t('profile.balanceNotify.verify') }}
+                    </button>
+                    <span v-if="verifyCountdown > 0" class="text-xs text-gray-400">{{ verifyCountdown }}s</span>
+                    <button v-else @click="sendCodeForSaved(entry.email)" :disabled="sendingSavedCode" class="text-xs text-gray-500 hover:text-gray-700">
+                      {{ t('profile.balanceNotify.resend') }}
+                    </button>
+                    <button @click="cancelSavedVerification" class="text-xs text-gray-400 hover:text-gray-700 dark:hover:text-gray-600">
+                      {{ t('common.cancel') }}
+                    </button>
+                  </template>
+                  <template v-else>
+                    <button @click="sendCodeForSaved(entry.email)" :disabled="sendingSavedCode" class="text-xs text-primary-600 hover:text-primary-700">
+                      {{ t('profile.balanceNotify.verify') }}
+                    </button>
+                    <span class="text-xs text-yellow-500">{{ t('profile.balanceNotify.unverified') }}</span>
+                  </template>
+                </template>
+                <span v-else class="text-xs text-green-500">{{ t('profile.balanceNotify.verified') }}</span>
+                <button @click="handleRemoveEmail(entry.email)" class="text-red-500 hover:text-red-700 text-xs">
+                  {{ t('profile.balanceNotify.removeEmail') }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Pending (unverified) emails in verification flow -->
+          <div v-if="pendingEmails.length > 0" class="space-y-2 mb-3">
+            <div v-for="(pe, idx) in pendingEmails" :key="pe.email"
+              class="flex items-center gap-2 px-3 py-2 bg-yellow-50 dark:bg-yellow-900/10 rounded-lg border border-yellow-200 dark:border-yellow-800">
+              <span class="flex-1 text-sm text-gray-700 dark:text-gray-300">{{ pe.email }}</span>
+              <div v-if="!pe.codeSent" class="flex items-center gap-1">
+                <button @click="sendCodeFor(idx)" :disabled="pe.sending" class="text-xs text-primary-600 hover:text-primary-700">
+                  {{ t('profile.balanceNotify.sendCode') }}
+                </button>
+                <button @click="pendingEmails.splice(idx, 1)" class="text-xs text-red-500 hover:text-red-700 ml-1">
+                  {{ t('profile.balanceNotify.removeEmail') }}
+                </button>
+              </div>
+              <div v-else class="flex items-center gap-1">
+                <input
+                  v-model="pe.code"
+                  type="text"
+                  maxlength="6"
+                  class="w-20 rounded border border-gray-300 px-2 py-1 text-xs dark:border-dark-500 dark:bg-dark-700"
+                  :placeholder="t('profile.balanceNotify.codePlaceholder')"
+                />
+                <button @click="verifyPending(idx)" :disabled="!pe.code || pe.code.length !== 6 || pe.verifying" class="text-xs text-primary-600 hover:text-primary-700">
+                  {{ t('profile.balanceNotify.verify') }}
+                </button>
+                <span v-if="pe.countdown > 0" class="text-xs text-gray-400">{{ pe.countdown }}s</span>
+                <button v-else @click="sendCodeFor(idx)" :disabled="pe.sending" class="text-xs text-gray-500 hover:text-gray-700">
+                  {{ t('profile.balanceNotify.resend') }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Add new email input (hidden when at limit) -->
+          <div v-if="canAddMore" class="flex gap-2">
+            <input
+              v-model="newEmail"
+              type="email"
+              class="input flex-1"
+              :placeholder="t('profile.balanceNotify.emailPlaceholder')"
+              @keyup.enter="addPendingEmail"
+            />
+            <button
+              @click="addPendingEmail"
+              :disabled="!newEmail"
+              class="btn btn-secondary whitespace-nowrap"
+            >
+              {{ t('common.add') }}
+            </button>
+          </div>
+          <p v-else class="text-xs text-gray-400">
+            {{ t('profile.balanceNotify.maxEmailsReached') }}
+          </p>
+        </div>
+      </template>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useAuthStore } from '@/stores/auth'
+import { useAppStore } from '@/stores/app'
+import { userAPI } from '@/api'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { extractApiErrorMessage } from '@/utils/apiError'
+import type { NotifyEmailEntry } from '@/types'
+
+const maxTotalEmails = 3
+
+interface PendingEmail {
+  email: string
+  codeSent: boolean
+  code: string
+  sending: boolean
+  verifying: boolean
+  countdown: number
+  timer: ReturnType<typeof setInterval> | null
+}
+
+const props = defineProps<{
+  enabled: boolean
+  threshold: number | null
+  extraEmails: NotifyEmailEntry[]
+  systemDefaultThreshold: number
+  userEmail: string
+}>()
+
+const { t } = useI18n()
+const authStore = useAuthStore()
+const appStore = useAppStore()
+const { isFiat, rechargeMultiplier, formatFiat, formatWallet } = useCurrencyDisplay()
+
+const notifyEnabled = ref(props.enabled)
+// 阈值始终以余额额度保存和提交；人民币模式只在输入框里换算显示，没改动时原样提交，避免四舍五入往返。
+const customThreshold = ref<number | null>(props.threshold)
+
+const currencySymbol = computed(() => (isFiat.value ? formatFiat(0).replace(/[0-9.,\s-]/g, '') : '$'))
+const THRESHOLD_ROUNDING = 1e4
+const thresholdModel = computed<number | null>({
+  get() {
+    const value = customThreshold.value
+    if (typeof value !== 'number' || !Number.isFinite(value) || !isFiat.value) return value
+    return Math.round((value / rechargeMultiplier.value) * THRESHOLD_ROUNDING) / THRESHOLD_ROUNDING
+  },
+  set(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || !isFiat.value) {
+      customThreshold.value = value
+      return
+    }
+    customThreshold.value = Math.round(value * rechargeMultiplier.value * THRESHOLD_ROUNDING) / THRESHOLD_ROUNDING
+  }
+})
+const thresholdPlaceholder = computed(() =>
+  props.systemDefaultThreshold > 0
+    ? `${t('profile.balanceNotify.systemDefault')} ${formatWallet(props.systemDefaultThreshold)}`
+    : t('profile.balanceNotify.thresholdPlaceholder')
+)
+const emailEntries = ref<NotifyEmailEntry[]>([...props.extraEmails])
+const pendingEmails = ref<PendingEmail[]>([])
+const newEmail = ref('')
+const savingThreshold = ref(false)
+
+// State for verifying saved unverified emails
+const verifyingEmail = ref('')
+const verifyCode = ref('')
+const verifyingSaved = ref(false)
+const sendingSavedCode = ref(false)
+const verifyCountdown = ref(0)
+let verifyTimer: ReturnType<typeof setInterval> | null = null
+let disposed = false
+let savedSendVersion = 0
+let savedSendingEmail: string | null = null
+// Keep a confirmed deletion hidden until a later authoritative profile refresh.
+const removedSavedEmails = new Set<string>()
+const removedAtProfileRefresh = new Map<string, number>()
+const confirmedVerifiedEmails = new Map<string, NotifyEmailEntry>()
+const confirmedAtProfileRefresh = new Map<string, number>()
+let savedEmailMutationVersion = 0
+
+const canAddMore = computed(() => {
+  return emailEntries.value.length + pendingEmails.value.length < maxTotalEmails
+})
+
+watch(() => props.enabled, (val) => { notifyEnabled.value = val })
+watch(() => props.threshold, (val) => { customThreshold.value = val })
+watch(() => props.extraEmails, replaceSavedEmails)
+watch(() => authStore.authSessionVersion, () => {
+  savedEmailMutationVersion++
+  savedSendVersion++
+  savedSendingEmail = null
+  sendingSavedCode.value = false
+  clearSavedVerification()
+  verifyingSaved.value = false
+  for (const pe of pendingEmails.value) {
+    if (pe.timer) clearInterval(pe.timer)
+  }
+  pendingEmails.value = []
+  newEmail.value = ''
+  removedSavedEmails.clear()
+  removedAtProfileRefresh.clear()
+  confirmedVerifiedEmails.clear()
+  confirmedAtProfileRefresh.clear()
+  replaceSavedEmails(props.extraEmails)
+})
+watch(() => authStore.profileRefreshVersion, (version) => {
+  for (const [key, removedAt] of removedAtProfileRefresh) {
+    if (version > removedAt) {
+      removedSavedEmails.delete(key)
+      removedAtProfileRefresh.delete(key)
+    }
+  }
+  for (const [key, confirmedAt] of confirmedAtProfileRefresh) {
+    if (version > confirmedAt) {
+      confirmedVerifiedEmails.delete(key)
+      confirmedAtProfileRefresh.delete(key)
+    }
+  }
+  replaceSavedEmails(props.extraEmails)
+})
+
+// When list is empty on mount, pre-fill the add input with user's email
+onMounted(() => {
+  if (emailEntries.value.length === 0 && props.userEmail) {
+    newEmail.value = props.userEmail
+  }
+})
+
+onUnmounted(() => {
+  disposed = true
+  savedSendVersion++
+  for (const pe of pendingEmails.value) {
+    if (pe.timer) clearInterval(pe.timer)
+  }
+  if (verifyTimer) clearInterval(verifyTimer)
+})
+
+const handleToggle = async () => {
+  const sessionVersion = authStore.authSessionVersion
+  try {
+    const updated = await userAPI.updateProfile({ balance_notify_enabled: notifyEnabled.value })
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    authStore.applyUserProfile(updated, sessionVersion)
+  } catch (err: unknown) {
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    notifyEnabled.value = !notifyEnabled.value
+  }
+}
+
+const handleThresholdUpdate = async () => {
+  const sessionVersion = authStore.authSessionVersion
+  savingThreshold.value = true
+  try {
+    const threshold = customThreshold.value && customThreshold.value > 0 ? customThreshold.value : 0
+    const updated = await userAPI.updateProfile({ balance_notify_threshold: threshold })
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    authStore.applyUserProfile(updated, sessionVersion)
+    appStore.showSuccess(t('common.saved'))
+  } catch (err: unknown) {
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+  } finally {
+    savingThreshold.value = false
+  }
+}
+
+async function handleEmailToggle(entry: NotifyEmailEntry) {
+  const sessionVersion = authStore.authSessionVersion
+  const newDisabled = !entry.disabled
+  try {
+    const updated = await userAPI.toggleNotifyEmail(entry.email, newDisabled)
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    savedEmailMutationVersion++
+    authStore.applyUserProfile(updated, sessionVersion)
+    replaceSavedEmails(updated.balance_notify_extra_emails)
+  } catch (err: unknown) {
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+  }
+}
+
+function addPendingEmail() {
+  const email = newEmail.value.trim()
+  if (!email) return
+  // Check duplicates
+  const isDuplicate = emailEntries.value.some(e => e.email.toLowerCase() === email.toLowerCase())
+    || pendingEmails.value.some(p => p.email.toLowerCase() === email.toLowerCase())
+  if (isDuplicate) {
+    appStore.showError(t('profile.balanceNotify.emailDuplicate'))
+    return
+  }
+  pendingEmails.value.push({ email, codeSent: false, code: '', sending: false, verifying: false, countdown: 0, timer: null })
+  newEmail.value = ''
+}
+
+async function sendCodeFor(idx: number) {
+  const pe = pendingEmails.value[idx]
+  if (!pe) return
+  const sessionVersion = authStore.authSessionVersion
+  pe.sending = true
+  try {
+    await userAPI.sendNotifyEmailCode(pe.email)
+    if (disposed || sessionVersion !== authStore.authSessionVersion || !pendingEmails.value.includes(pe)) return
+    pe.codeSent = true
+    pe.countdown = 60
+    pe.timer = setInterval(() => {
+      pe.countdown--
+      if (pe.countdown <= 0 && pe.timer) {
+        clearInterval(pe.timer)
+        pe.timer = null
+      }
+    }, 1000)
+    appStore.showSuccess(t('profile.balanceNotify.codeSent'))
+  } catch (err: unknown) {
+    if (!disposed && sessionVersion === authStore.authSessionVersion && pendingEmails.value.includes(pe)) {
+      appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    }
+  } finally {
+    if (sessionVersion === authStore.authSessionVersion) pe.sending = false
+  }
+}
+
+async function verifyPending(idx: number) {
+  const pe = pendingEmails.value[idx]
+  if (!pe || !pe.code || pe.code.length !== 6) return
+  const sessionVersion = authStore.authSessionVersion
+  pe.verifying = true
+  try {
+    await userAPI.verifyNotifyEmail(pe.email, pe.code)
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    const version = ++savedEmailMutationVersion
+    const key = savedEmailKey(pe.email)
+    removedSavedEmails.delete(key)
+    removedAtProfileRefresh.delete(key)
+    confirmedVerifiedEmails.set(key, { email: pe.email, disabled: false, verified: true })
+    confirmedAtProfileRefresh.set(key, authStore.profileRefreshVersion)
+    if (pe.timer) clearInterval(pe.timer)
+    pendingEmails.value = pendingEmails.value.filter(entry => entry !== pe)
+    replaceSavedEmails(emailEntries.value)
+    authStore.invalidateUserRefresh()
+    appStore.showSuccess(t('profile.balanceNotify.verifySuccess'))
+    try {
+      const refreshVersion = authStore.profileRefreshVersion
+      const updated = await userAPI.getProfile()
+      if (disposed || sessionVersion !== authStore.authSessionVersion ||
+        version !== savedEmailMutationVersion || refreshVersion !== authStore.profileRefreshVersion) return
+      confirmedVerifiedEmails.delete(key)
+      confirmedAtProfileRefresh.delete(key)
+      authStore.applyUserProfile(updated, sessionVersion, true)
+      replaceSavedEmails(updated.balance_notify_extra_emails)
+    } catch (err: unknown) {
+      if (!disposed && sessionVersion === authStore.authSessionVersion) {
+        console.error('Failed to refresh profile after verifying notification email:', err)
+      }
+    }
+  } catch (err: unknown) {
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+  } finally {
+    pe.verifying = false
+  }
+}
+
+const handleRemoveEmail = async (email: string) => {
+  const sessionVersion = authStore.authSessionVersion
+  try {
+    await userAPI.removeNotifyEmail(email)
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    const version = ++savedEmailMutationVersion
+    const key = savedEmailKey(email)
+    confirmedVerifiedEmails.delete(key)
+    confirmedAtProfileRefresh.delete(key)
+    removedSavedEmails.add(key)
+    removedAtProfileRefresh.set(key, authStore.profileRefreshVersion)
+    replaceSavedEmails(emailEntries.value)
+    authStore.invalidateUserRefresh()
+    appStore.showSuccess(t('profile.balanceNotify.removeSuccess'))
+    const refreshVersion = authStore.profileRefreshVersion
+    const updated = await userAPI.getProfile()
+    if (disposed || sessionVersion !== authStore.authSessionVersion ||
+      version !== savedEmailMutationVersion || refreshVersion !== authStore.profileRefreshVersion) return
+    authStore.applyUserProfile(updated, sessionVersion, true)
+    replaceSavedEmails(updated.balance_notify_extra_emails)
+  } catch (err: unknown) {
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+  }
+}
+
+// Verify saved unverified emails
+function savedEmailKey(email: string) {
+  return email.trim().toLowerCase()
+}
+
+function replaceSavedEmails(entries: NotifyEmailEntry[]) {
+  const visible = entries
+    .filter(item => !removedSavedEmails.has(savedEmailKey(item.email)))
+    .map(item => {
+      const key = savedEmailKey(item.email)
+      const confirmed = confirmedVerifiedEmails.get(key)
+      if (confirmed && !item.verified) return confirmed
+      return item
+    })
+  for (const [key, item] of confirmedVerifiedEmails) {
+    if (!removedSavedEmails.has(key) && !visible.some(entry => savedEmailKey(entry.email) === key)) {
+      visible.push(item)
+    }
+  }
+  if (savedSendingEmail && !visible.some(item => item.email === savedSendingEmail && !item.verified)) {
+    invalidateSavedSend(savedSendingEmail)
+  }
+  if (verifyingEmail.value && !visible.some(item => item.email === verifyingEmail.value && !item.verified)) {
+    clearSavedVerification()
+  }
+  emailEntries.value = [...visible]
+}
+
+function hasSavedEmail(email: string) {
+  return emailEntries.value.some(item => item.email === email && !item.verified)
+}
+
+function invalidateSavedSend(email: string) {
+  if (savedSendingEmail !== email) return
+  savedSendVersion++
+  savedSendingEmail = null
+  sendingSavedCode.value = false
+}
+
+function clearSavedVerification() {
+  verifyingEmail.value = ''
+  verifyCode.value = ''
+  verifyCountdown.value = 0
+  if (verifyTimer) { clearInterval(verifyTimer); verifyTimer = null }
+}
+
+function cancelSavedVerification() {
+  invalidateSavedSend(verifyingEmail.value)
+  clearSavedVerification()
+}
+
+async function sendCodeForSaved(email: string) {
+  if (!hasSavedEmail(email)) return
+  const sessionVersion = authStore.authSessionVersion
+  const version = ++savedSendVersion
+  savedSendingEmail = email
+  sendingSavedCode.value = true
+  try {
+    await userAPI.sendNotifyEmailCode(email)
+    if (disposed || sessionVersion !== authStore.authSessionVersion || version !== savedSendVersion || !hasSavedEmail(email)) return
+    verifyingEmail.value = email
+    verifyCode.value = ''
+    verifyCountdown.value = 60
+    if (verifyTimer) clearInterval(verifyTimer)
+    verifyTimer = setInterval(() => {
+      verifyCountdown.value--
+      if (verifyCountdown.value <= 0 && verifyTimer) {
+        clearInterval(verifyTimer)
+        verifyTimer = null
+      }
+    }, 1000)
+    appStore.showSuccess(t('profile.balanceNotify.codeSent'))
+  } catch (err: unknown) {
+    if (!disposed && sessionVersion === authStore.authSessionVersion && version === savedSendVersion && hasSavedEmail(email)) {
+      appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    }
+  } finally {
+    if (sessionVersion === authStore.authSessionVersion && version === savedSendVersion) {
+      sendingSavedCode.value = false
+      savedSendingEmail = null
+    }
+  }
+}
+
+async function verifySavedEmail(email: string) {
+  if (!verifyCode.value || verifyCode.value.length !== 6) return
+  const sessionVersion = authStore.authSessionVersion
+  verifyingSaved.value = true
+  try {
+    await userAPI.verifyNotifyEmail(email, verifyCode.value)
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    const version = ++savedEmailMutationVersion
+    const key = savedEmailKey(email)
+    const entry = emailEntries.value.find(item => savedEmailKey(item.email) === key)
+    if (entry) {
+      confirmedVerifiedEmails.set(key, { ...entry, verified: true })
+      confirmedAtProfileRefresh.set(key, authStore.profileRefreshVersion)
+      replaceSavedEmails(emailEntries.value)
+      authStore.invalidateUserRefresh()
+    }
+    clearSavedVerification()
+    appStore.showSuccess(t('profile.balanceNotify.verifySuccess'))
+    try {
+      const refreshVersion = authStore.profileRefreshVersion
+      const updated = await userAPI.getProfile()
+      if (disposed || sessionVersion !== authStore.authSessionVersion ||
+        version !== savedEmailMutationVersion || refreshVersion !== authStore.profileRefreshVersion) return
+      confirmedVerifiedEmails.delete(key)
+      confirmedAtProfileRefresh.delete(key)
+      authStore.applyUserProfile(updated, sessionVersion, true)
+      replaceSavedEmails(updated.balance_notify_extra_emails)
+    } catch (err: unknown) {
+      if (!disposed && sessionVersion === authStore.authSessionVersion) {
+        console.error('Failed to refresh profile after verifying notification email:', err)
+      }
+    }
+  } catch (err: unknown) {
+    if (disposed || sessionVersion !== authStore.authSessionVersion) return
+    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+  } finally {
+    verifyingSaved.value = false
+  }
+}
+</script>

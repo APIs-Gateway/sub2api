@@ -1,0 +1,1792 @@
+package handler
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+)
+
+func resetOpsErrorLoggerStateForTest(t *testing.T) {
+	t.Helper()
+
+	opsErrorLogMu.Lock()
+	ch := opsErrorLogQueue
+	opsErrorLogQueue = nil
+	opsErrorLogStopping = true
+	opsErrorLogMu.Unlock()
+
+	if ch != nil {
+		close(ch)
+	}
+	opsErrorLogWorkersWg.Wait()
+
+	opsErrorLogOnce = sync.Once{}
+	opsErrorLogStopOnce = sync.Once{}
+	opsErrorLogWorkersWg = sync.WaitGroup{}
+	opsErrorLogMu = sync.RWMutex{}
+	opsErrorLogStopping = false
+
+	opsErrorLogQueueLen.Store(0)
+	opsErrorLogEnqueued.Store(0)
+	opsErrorLogDropped.Store(0)
+	opsErrorLogProcessed.Store(0)
+	opsErrorLogSanitized.Store(0)
+	opsErrorLogLastDropLogAt.Store(0)
+
+	opsErrorLogShutdownCh = make(chan struct{})
+	opsErrorLogShutdownOnce = sync.Once{}
+	opsErrorLogDrained.Store(false)
+}
+
+func TestEnqueueOpsErrorLog_QueueFullDrop(t *testing.T) {
+	resetOpsErrorLoggerStateForTest(t)
+
+	// 禁止 enqueueOpsErrorLog 触发 workers，使用测试队列验证满队列降级。
+	opsErrorLogOnce.Do(func() {})
+
+	opsErrorLogMu.Lock()
+	opsErrorLogQueue = make(chan opsErrorLogJob, 1)
+	opsErrorLogMu.Unlock()
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	entry := &service.OpsInsertErrorLogInput{ErrorPhase: "upstream", ErrorType: "upstream_error"}
+
+	enqueueOpsErrorLog(ops, entry)
+	enqueueOpsErrorLog(ops, entry)
+
+	require.Equal(t, int64(1), OpsErrorLogEnqueuedTotal())
+	require.Equal(t, int64(1), OpsErrorLogDroppedTotal())
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+}
+
+func TestEnqueueOpsErrorLog_EarlyReturnBranches(t *testing.T) {
+	resetOpsErrorLoggerStateForTest(t)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	entry := &service.OpsInsertErrorLogInput{ErrorPhase: "upstream", ErrorType: "upstream_error"}
+
+	// nil 入参分支
+	enqueueOpsErrorLog(nil, entry)
+	enqueueOpsErrorLog(ops, nil)
+	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
+
+	// shutdown 分支
+	close(opsErrorLogShutdownCh)
+	enqueueOpsErrorLog(ops, entry)
+	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
+
+	// stopping 分支
+	resetOpsErrorLoggerStateForTest(t)
+	opsErrorLogMu.Lock()
+	opsErrorLogStopping = true
+	opsErrorLogMu.Unlock()
+	enqueueOpsErrorLog(ops, entry)
+	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
+
+	// queue nil 分支（防止启动 worker 干扰）
+	resetOpsErrorLoggerStateForTest(t)
+	opsErrorLogOnce.Do(func() {})
+	opsErrorLogMu.Lock()
+	opsErrorLogQueue = nil
+	opsErrorLogMu.Unlock()
+	enqueueOpsErrorLog(ops, entry)
+	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
+}
+
+func TestOpsCaptureWriterPool_ResetOnRelease(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
+
+	writer := acquireOpsCaptureWriter(c.Writer)
+	require.NotNil(t, writer)
+	_, err := writer.buf.WriteString("temp-error-body")
+	require.NoError(t, err)
+
+	releaseOpsCaptureWriter(writer)
+
+	reused := acquireOpsCaptureWriter(c.Writer)
+	defer releaseOpsCaptureWriter(reused)
+
+	require.Zero(t, reused.buf.Len(), "writer should be reset before reuse")
+}
+
+func TestOpsErrorLoggerMiddleware_SkipsIngressReject(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	r := gin.New()
+	r.GET("/v1/messages", OpsErrorLoggerMiddleware(ops), func(c *gin.Context) {
+		middleware2.MarkIngressRejected(c, middleware2.IngressRejectInvalidAPIKey)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/messages", nil))
+
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
+	require.Equal(t, 0, len(opsErrorLogQueue))
+}
+
+func TestOpsErrorLoggerMiddleware_DoesNotBreakOuterMiddlewares(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	r.Use(middleware2.Recovery())
+	r.Use(middleware2.RequestLogger())
+	r.Use(middleware2.Logger())
+	r.GET("/v1/messages", OpsErrorLoggerMiddleware(nil), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/messages", nil)
+
+	require.NotPanics(t, func() {
+		r.ServeHTTP(rec, req)
+	})
+	require.Equal(t, http.StatusNoContent, rec.Code)
+}
+
+// setupOpsErrorLogTestQueue 阻止 enqueueOpsErrorLog 启动真实 worker，改用可检查的测试队列。
+func setupOpsErrorLogTestQueue(t *testing.T, size int) {
+	t.Helper()
+	resetOpsErrorLoggerStateForTest(t)
+	opsErrorLogOnce.Do(func() {})
+	opsErrorLogMu.Lock()
+	opsErrorLogQueue = make(chan opsErrorLogJob, size)
+	opsErrorLogMu.Unlock()
+}
+
+// 就地(in-band) SSE 错误挂在已固化的 HTTP 200 流上：wire 状态码为 200，
+// 常规 status>=400 采集路径不会触发。logOpsStreamError 必须据 MarkOpsStreamError
+// 补记一条错误日志，且用 IntendedStatus(429) 分级、StatusCode 仍记 wire 的 200。
+func TestLogOpsStreamError_RecordsInBandConcurrencyLimit(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Set(opsModelKey, "test-model")
+
+	service.MarkOpsStreamError(c, "rate_limit_error",
+		"Concurrency limit exceeded for account, please retry later", http.StatusTooManyRequests)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	logOpsStreamError(c, ops, http.StatusOK)
+
+	require.Equal(t, int64(1), OpsErrorLogEnqueuedTotal())
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+
+	job := <-opsErrorLogQueue
+	require.NotNil(t, job.entry)
+	require.Equal(t, "rate_limit_error", job.entry.ErrorType)
+	require.Equal(t, "request", job.entry.ErrorPhase)
+	require.True(t, job.entry.IsBusinessLimited)
+	require.True(t, job.entry.Stream)
+	require.Equal(t, http.StatusOK, job.entry.StatusCode) // wire 状态码保持 200
+	require.Equal(t, "P1", job.entry.Severity)            // 用 IntendedStatus 429 分级
+	require.Equal(t, "test-model", job.entry.Model)
+	require.Equal(t, "Concurrency limit exceeded for account, please retry later", job.entry.ErrorMessage)
+}
+
+// 流内错误同样应带齐 Ops 上下文，避免错误看板只有消息而缺少 key、账号、模型和延迟信息。
+func TestLogOpsStreamError_EnrichesRequestContext(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.125.0")
+	c.Request.Header.Set("X-Forwarded-For", "203.0.113.10")
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.ClientRequestID, "client-rid"))
+	c.Header("X-Request-Id", "server-rid")
+	c.Set(opsModelKey, "gpt-5.6")
+	c.Set(opsAccountIDKey, int64(44))
+	c.Set(opsUpstreamModelKey, "gpt-5.6-terra")
+	c.Set(opsRequestTypeKey, 2)
+
+	groupID := int64(33)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		ID:      22,
+		Key:     "sk-test-ops-key",
+		GroupID: &groupID,
+		User:    &service.User{ID: 11},
+		Group:   &service.Group{Platform: service.PlatformOpenAI},
+	})
+	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, 1)
+	service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, 2)
+	service.SetOpsLatencyMs(c, service.OpsUpstreamLatencyMsKey, 3)
+	service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, 4)
+	service.SetOpsLatencyMs(c, service.OpsTimeToFirstTokenMsKey, 5)
+	service.MarkOpsStreamError(c, "upstream_error", "upstream stream failed", 0)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	logOpsStreamError(c, ops, http.StatusOK)
+
+	require.Equal(t, int64(1), OpsErrorLogEnqueuedTotal())
+	job := <-opsErrorLogQueue
+	require.NotNil(t, job.entry)
+	require.Equal(t, "server-rid", job.entry.RequestID)
+	require.Equal(t, "client-rid", job.entry.ClientRequestID)
+	require.Equal(t, int64(44), *job.entry.AccountID)
+	require.Equal(t, service.PlatformOpenAI, job.entry.Platform)
+	require.Equal(t, "gpt-5.6", job.entry.Model)
+	require.Equal(t, "gpt-5.6-terra", job.entry.UpstreamModel)
+	require.NotNil(t, job.entry.RequestType)
+	require.Equal(t, int16(2), *job.entry.RequestType)
+	require.NotNil(t, job.entry.APIKeyID)
+	require.Equal(t, int64(22), *job.entry.APIKeyID)
+	require.Equal(t, "sk-test-", job.entry.APIKeyPrefix)
+	require.NotNil(t, job.entry.UserID)
+	require.Equal(t, int64(11), *job.entry.UserID)
+	require.NotNil(t, job.entry.GroupID)
+	require.Equal(t, int64(33), *job.entry.GroupID)
+	require.False(t, job.entry.IsCountTokens)
+	require.NotNil(t, job.entry.AuthLatencyMs)
+	require.Equal(t, int64(1), *job.entry.AuthLatencyMs)
+	require.NotNil(t, job.entry.RoutingLatencyMs)
+	require.Equal(t, int64(2), *job.entry.RoutingLatencyMs)
+	require.NotNil(t, job.entry.UpstreamLatencyMs)
+	require.Equal(t, int64(3), *job.entry.UpstreamLatencyMs)
+	require.NotNil(t, job.entry.ResponseLatencyMs)
+	require.Equal(t, int64(4), *job.entry.ResponseLatencyMs)
+	require.NotNil(t, job.entry.TimeToFirstTokenMs)
+	require.Equal(t, int64(5), *job.entry.TimeToFirstTokenMs)
+}
+
+// handler 写出已固化 HTTP 200 的 SSE 错误后，middleware 仍应将该错误补记到 Ops。
+// 这条集成回归覆盖 MarkOpsStreamError 与 OpsErrorLoggerMiddleware 的实际接线。
+func TestOpsErrorLoggerMiddleware_RecordsInBandStreamError(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	r := gin.New()
+	r.POST("/v1/messages", OpsErrorLoggerMiddleware(ops), func(c *gin.Context) {
+		setOpsRequestContext(c, "test-model", true)
+		(&GatewayHandler{}).handleStreamingAwareError(
+			c,
+			http.StatusTooManyRequests,
+			"rate_limit_error",
+			"Concurrency limit exceeded for account, please retry later",
+			true,
+		)
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/messages", nil))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, int64(1), OpsErrorLogEnqueuedTotal())
+	job := <-opsErrorLogQueue
+	require.Equal(t, "rate_limit_error", job.entry.ErrorType)
+	require.Equal(t, http.StatusOK, job.entry.StatusCode)
+	require.True(t, job.entry.Stream)
+	require.Equal(t, "test-model", job.entry.Model)
+}
+
+func TestLogOpsStreamError_UpstreamFailureCountsTowardsSLA(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	c.Set(opsModelKey, "gpt-5.6-sol")
+
+	service.MarkOpsStreamFailure(
+		c,
+		"upstream_error",
+		service.OpenAIUpstreamHTTP2StreamErrorCode,
+		"Upstream HTTP/2 stream failed",
+		http.StatusBadGateway,
+	)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	logOpsStreamError(c, ops, http.StatusOK)
+
+	job := <-opsErrorLogQueue
+	require.NotNil(t, job.entry)
+	require.Equal(t, http.StatusBadGateway, job.entry.StatusCode)
+	require.Equal(t, "upstream_error", job.entry.ErrorType)
+	require.Equal(t, "upstream", job.entry.ErrorPhase)
+	require.Equal(t, "provider", job.entry.ErrorOwner)
+	require.False(t, job.entry.IsBusinessLimited)
+	require.Contains(t, job.entry.ErrorBody, service.OpenAIUpstreamHTTP2StreamErrorCode)
+}
+
+// 未标记流内错误时 logOpsStreamError 必须是 no-op（不误记正常的 200 流）。
+func TestLogOpsStreamError_NoopWhenNotMarked(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	logOpsStreamError(c, ops, http.StatusOK)
+
+	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
+}
+
+// 命中 skip_monitoring=true 透传规则时不落库，与其它采集分支一致。
+func TestLogOpsStreamError_SkipWhenPassthroughSkipMonitoring(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	service.MarkOpsStreamError(c, "upstream_error", "Upstream request failed", http.StatusBadGateway)
+	c.Set(service.OpsSkipPassthroughKey, true)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	logOpsStreamError(c, ops, http.StatusOK)
+
+	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
+}
+
+// MarkOpsStreamError 采用「首个标记生效」：后续的通用兜底帧不得覆盖根因错误。
+func TestMarkOpsStreamError_FirstWins(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	service.MarkOpsStreamError(c, "rate_limit_error", "Concurrency limit exceeded for account", http.StatusTooManyRequests)
+	service.MarkOpsStreamError(c, "upstream_error", "Upstream request failed", http.StatusBadGateway)
+
+	se, ok := service.GetOpsStreamError(c)
+	require.True(t, ok)
+	require.Equal(t, "rate_limit_error", se.ErrType)
+	require.Equal(t, "Concurrency limit exceeded for account", se.Message)
+	require.Equal(t, http.StatusTooManyRequests, se.IntendedStatus)
+}
+
+func TestIsKnownOpsErrorType(t *testing.T) {
+	known := []string{
+		"invalid_request_error",
+		"authentication_error",
+		"rate_limit_error",
+		"billing_error",
+		"subscription_error",
+		"upstream_error",
+		"overloaded_error",
+		"api_error",
+		"not_found_error",
+		"forbidden_error",
+	}
+	for _, k := range known {
+		require.True(t, isKnownOpsErrorType(k), "expected known: %s", k)
+	}
+
+	unknown := []string{"<nil>", "null", "", "random_error", "some_new_type", "<nil>\u003e"}
+	for _, u := range unknown {
+		require.False(t, isKnownOpsErrorType(u), "expected unknown: %q", u)
+	}
+}
+
+func TestNormalizeOpsErrorType(t *testing.T) {
+	tests := []struct {
+		name    string
+		errType string
+		code    string
+		want    string
+	}{
+		// Known types pass through.
+		{"known invalid_request_error", "invalid_request_error", "", "invalid_request_error"},
+		{"known rate_limit_error", "rate_limit_error", "", "rate_limit_error"},
+		{"known upstream_error", "upstream_error", "", "upstream_error"},
+
+		// Unknown/garbage types are rejected and fall through to code-based or default.
+		{"nil literal from upstream", "<nil>", "", "api_error"},
+		{"null string", "null", "", "api_error"},
+		{"random string", "something_weird", "", "api_error"},
+
+		// Unknown type but known code still maps correctly.
+		{"nil with INSUFFICIENT_BALANCE code", "<nil>", "INSUFFICIENT_BALANCE", "billing_error"},
+		{"nil with USAGE_LIMIT_EXCEEDED code", "<nil>", "USAGE_LIMIT_EXCEEDED", "subscription_error"},
+
+		// Empty type falls through to code-based mapping.
+		{"empty type with balance code", "", "INSUFFICIENT_BALANCE", "billing_error"},
+		{"empty type with subscription code", "", "SUBSCRIPTION_NOT_FOUND", "subscription_error"},
+		{"empty type no code", "", "", "api_error"},
+
+		// Known type overrides conflicting code-based mapping.
+		{"known type overrides conflicting code", "rate_limit_error", "INSUFFICIENT_BALANCE", "rate_limit_error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeOpsErrorType(tt.errType, tt.code)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestClassifyOpsNoAvailableAccountsExcludedFromSLA(t *testing.T) {
+	const message = "No available accounts"
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	markOpsRoutingCapacityLimited(c)
+
+	errType := normalizeOpsErrorType("api_error", "")
+	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, errType, message, "", http.StatusServiceUnavailable)
+
+	require.Equal(t, "api_error", errType)
+	require.Equal(t, "routing", phase)
+	require.True(t, isBusinessLimited)
+	require.Equal(t, "platform", errorOwner)
+	require.Equal(t, "gateway", errorSource)
+}
+
+func TestClassifyOpsRoutingCapacityMarkerExcludesMaskedSelectionFailureFromSLA(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	markOpsRoutingCapacityLimited(c)
+
+	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(
+		c,
+		"api_error",
+		"Service temporarily unavailable",
+		"",
+		http.StatusServiceUnavailable,
+	)
+
+	require.Equal(t, "routing", phase)
+	require.True(t, isBusinessLimited)
+	require.Equal(t, "platform", errorOwner)
+	require.Equal(t, "gateway", errorSource)
+}
+
+func TestClassifyOpsLocalModelConfigurationRejection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
+
+	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(
+		c,
+		"model_not_found",
+		"Model \"gpt-missing\" is not supported by any configured account in this group",
+		"",
+		http.StatusNotFound,
+	)
+
+	require.Equal(t, "routing", phase)
+	require.True(t, isBusinessLimited)
+	require.Equal(t, "platform", errorOwner)
+	require.Equal(t, "gateway", errorSource)
+}
+
+func TestClassifyOpsLocalModelConfigurationOverridesStaleUpstreamMarkers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
+	c.Set(service.OpsUpstreamStatusCodeKey, http.StatusUnauthorized)
+	c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
+		UpstreamStatusCode: http.StatusUnauthorized,
+	}})
+
+	phase, limited, owner, source := classifyOpsErrorLog(c, "model_not_found", "unsupported configured model", "", http.StatusNotFound)
+
+	require.Equal(t, "routing", phase)
+	require.True(t, limited)
+	require.Equal(t, "platform", owner)
+	require.Equal(t, "gateway", source)
+}
+
+func TestClassifyOpsLocalModelConfigurationRequiresMarkerAndReason(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set(service.OpsClientBusinessLimitedReasonKey, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
+	c.Set(service.OpsUpstreamStatusCodeKey, http.StatusBadGateway)
+
+	phase, limited, owner, source := classifyOpsErrorLog(c, "upstream_error", "provider failed", "", http.StatusBadGateway)
+
+	require.Equal(t, "upstream", phase)
+	require.False(t, limited)
+	require.Equal(t, "provider", owner)
+	require.Equal(t, "upstream_http", source)
+}
+
+func TestOpsErrorLoggerMiddleware_LocalModelConfigurationFields(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 1)
+	gin.SetMode(gin.TestMode)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1/chat/completions", func(c *gin.Context) {
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
+		c.Set(opsAccountIDKey, int64(99))
+		c.Set(opsUpstreamModelKey, "stale-upstream-model")
+		c.Set(service.OpsUpstreamStatusCodeKey, http.StatusUnauthorized)
+		c.Set(service.OpsUpstreamErrorMessageKey, "stale upstream error")
+		c.Set(service.OpsUpstreamErrorDetailKey, "stale upstream detail")
+		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
+			UpstreamStatusCode: http.StatusUnauthorized,
+			Message:            "stale auth failure",
+		}})
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{
+				"type":    "model_not_found",
+				"message": "Model \"gpt-missing\" is not supported by any configured account in this group",
+			},
+		})
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+	require.JSONEq(t, `{"error":{"type":"model_not_found","message":"Model \"gpt-missing\" is not supported by any configured account in this group"}}`, w.Body.String())
+	job := <-opsErrorLogQueue
+	require.Equal(t, http.StatusNotFound, job.entry.StatusCode)
+	require.Equal(t, "routing", job.entry.ErrorPhase)
+	require.True(t, job.entry.IsBusinessLimited)
+	require.Equal(t, "platform", job.entry.ErrorOwner)
+	require.Equal(t, "gateway", job.entry.ErrorSource)
+	require.Nil(t, job.entry.AccountID)
+	require.Nil(t, job.entry.UpstreamStatusCode)
+	require.Nil(t, job.entry.UpstreamErrors)
+	require.Nil(t, job.entry.UpstreamErrorMessage)
+	require.Nil(t, job.entry.UpstreamErrorDetail)
+	require.Empty(t, job.entry.UpstreamModel)
+	require.Empty(t, job.entry.UpstreamEndpoint)
+}
+
+func TestClassifyOpsAuthClientErrorsExcludedFromSLA(t *testing.T) {
+	tests := []struct {
+		name    string
+		errType string
+		message string
+		code    string
+		status  int
+	}{
+		{
+			name:    "standard invalid API key",
+			errType: "api_error",
+			message: "Invalid API key",
+			code:    "INVALID_API_KEY",
+			status:  http.StatusUnauthorized,
+		},
+		{
+			name:    "standard missing API key",
+			errType: "api_error",
+			message: "API key is required in Authorization header (Bearer scheme), x-api-key header, or x-goog-api-key header",
+			code:    "API_KEY_REQUIRED",
+			status:  http.StatusUnauthorized,
+		},
+		{
+			name:    "expired local API key",
+			errType: "api_error",
+			message: "API key 已过期",
+			code:    "API_KEY_EXPIRED",
+			status:  http.StatusForbidden,
+		},
+		{
+			name:    "disabled local API key",
+			errType: "api_error",
+			message: "API key is disabled",
+			code:    "API_KEY_DISABLED",
+			status:  http.StatusUnauthorized,
+		},
+		{
+			name:    "local API key user missing",
+			errType: "api_error",
+			message: "User associated with API key not found",
+			code:    "USER_NOT_FOUND",
+			status:  http.StatusUnauthorized,
+		},
+		{
+			name:    "inactive local API key user",
+			errType: "api_error",
+			message: "User account is not active",
+			code:    "USER_INACTIVE",
+			status:  http.StatusUnauthorized,
+		},
+		{
+			name:    "deleted local API key group",
+			errType: "api_error",
+			message: "API Key 所属分组已删除",
+			code:    "GROUP_DELETED",
+			status:  http.StatusForbidden,
+		},
+		{
+			name:    "disabled local API key group",
+			errType: "api_error",
+			message: "API Key 所属分组已停用",
+			code:    "GROUP_DISABLED",
+			status:  http.StatusForbidden,
+		},
+		{
+			name:    "google deleted API key group message without semantic code",
+			errType: "api_error",
+			message: "API Key 所属分组已删除",
+			code:    "403",
+			status:  http.StatusForbidden,
+		},
+		{
+			name:    "anthropic unassigned API key group",
+			errType: "permission_error",
+			message: "API Key is not assigned to any group and cannot be used. Please contact the administrator to assign it to a group.",
+			code:    "",
+			status:  http.StatusForbidden,
+		},
+		{
+			name:    "google invalid API key",
+			errType: "api_error",
+			message: "Invalid API key",
+			code:    "401",
+			status:  http.StatusUnauthorized,
+		},
+		{
+			name:    "google missing API key",
+			errType: "api_error",
+			message: "API key is required",
+			code:    "401",
+			status:  http.StatusUnauthorized,
+		},
+		{
+			name:    "google disabled API key",
+			errType: "api_error",
+			message: "API key is disabled",
+			code:    "401",
+			status:  http.StatusUnauthorized,
+		},
+		{
+			name:    "google local API key user missing",
+			errType: "api_error",
+			message: "User associated with API key not found",
+			code:    "401",
+			status:  http.StatusUnauthorized,
+		},
+		{
+			name:    "google inactive local API key user",
+			errType: "api_error",
+			message: "User account is not active",
+			code:    "401",
+			status:  http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+
+			errType := normalizeOpsErrorType(tt.errType, tt.code)
+			phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, errType, tt.message, tt.code, tt.status)
+
+			require.Equal(t, "api_error", errType)
+			require.Equal(t, "auth", phase)
+			require.True(t, isBusinessLimited)
+			require.Equal(t, "client", errorOwner)
+			require.Equal(t, "client_request", errorSource)
+		})
+	}
+}
+
+func TestClassifyOpsLocalBusinessLimitErrorsExcludedFromSLA(t *testing.T) {
+	tests := []struct {
+		name        string
+		errType     string
+		message     string
+		code        string
+		status      int
+		wantErrType string
+		wantPhase   string
+	}{
+		{
+			name:        "standard API key quota exhausted",
+			errType:     "api_error",
+			message:     "API key 额度已用完",
+			code:        "API_KEY_QUOTA_EXHAUSTED",
+			status:      http.StatusTooManyRequests,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "standard query API key deprecated",
+			errType:     "api_error",
+			message:     "API key in query parameter is deprecated. Please use Authorization header instead.",
+			code:        "api_key_in_query_deprecated",
+			status:      http.StatusBadRequest,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "google query API key deprecated",
+			errType:     "api_error",
+			message:     "Query parameter api_key is deprecated. Use Authorization header or key instead.",
+			code:        "400",
+			status:      http.StatusBadRequest,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "google no active subscription",
+			errType:     "api_error",
+			message:     "No active subscription found for this group",
+			code:        "403",
+			status:      http.StatusForbidden,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "gateway subscription invalid cache recheck",
+			errType:     "billing_error",
+			message:     "subscription is invalid or expired",
+			code:        "billing_error",
+			status:      http.StatusForbidden,
+			wantErrType: "billing_error",
+			wantPhase:   "request",
+		},
+		{
+			// SUBSCRIPTION_OVERDRAFT_LIMIT:每日额度限速、到点自动解锁(issue #16 Part A)。
+			// 原始 code 被 billingErrorDetails 压成 billing_error,ops 仅按 message 命中。
+			name:        "subscription overdraft daily allowance limit",
+			errType:     "billing_error",
+			message:     "subscription overdraft limit reached; daily allowance will unlock over time",
+			code:        "billing_error",
+			status:      http.StatusForbidden,
+			wantErrType: "billing_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "google insufficient account balance",
+			errType:     "api_error",
+			message:     "Insufficient account balance",
+			code:        "403",
+			status:      http.StatusForbidden,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "gateway billing cache insufficient balance",
+			errType:     "billing_error",
+			message:     "insufficient balance",
+			code:        "",
+			status:      http.StatusForbidden,
+			wantErrType: "billing_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "gemini group platform mismatch",
+			errType:     "api_error",
+			message:     "API key group platform is not gemini",
+			code:        "400",
+			status:      http.StatusBadRequest,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "gateway API key 5h rate limit",
+			errType:     "api_error",
+			message:     "api key 5小时限额已用完",
+			code:        "rate_limit_exceeded",
+			status:      http.StatusTooManyRequests,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "gateway group RPM limit",
+			errType:     "api_error",
+			message:     "group requests-per-minute limit exceeded",
+			code:        "rate_limit_exceeded",
+			status:      http.StatusTooManyRequests,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "google subscription daily limit",
+			errType:     "api_error",
+			message:     "daily usage limit exceeded",
+			code:        "429",
+			status:      http.StatusTooManyRequests,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "user platform daily quota exhausted",
+			errType:     "api_error",
+			message:     "Daily usage quota exhausted for this platform.",
+			code:        "rate_limit_exceeded",
+			status:      http.StatusTooManyRequests,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "local pending queue limit",
+			errType:     "rate_limit_error",
+			message:     "Too many pending requests, please retry later",
+			code:        "",
+			status:      http.StatusTooManyRequests,
+			wantErrType: "rate_limit_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "local concurrency limit",
+			errType:     "rate_limit_error",
+			message:     "Concurrency limit exceeded for user, please retry later",
+			code:        "",
+			status:      http.StatusTooManyRequests,
+			wantErrType: "rate_limit_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "group claude code only feature gate",
+			errType:     "permission_error",
+			message:     "This group is restricted to Claude Code clients (/v1/messages only)",
+			code:        "",
+			status:      http.StatusForbidden,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "group image generation feature gate",
+			errType:     "permission_error",
+			message:     "Image generation is not enabled for this group",
+			code:        "",
+			status:      http.StatusForbidden,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "route token counting platform unsupported",
+			errType:     "not_found_error",
+			message:     "Token counting is not supported for this platform",
+			code:        "",
+			status:      http.StatusNotFound,
+			wantErrType: "not_found_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "route images API platform unsupported",
+			errType:     "not_found_error",
+			message:     "Images API is not supported for this platform",
+			code:        "",
+			status:      http.StatusNotFound,
+			wantErrType: "not_found_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "antigravity model whitelist feature gate",
+			errType:     "permission_error",
+			message:     "model claude-3-5-sonnet not in whitelist",
+			code:        "",
+			status:      http.StatusForbidden,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "google antigravity model whitelist feature gate",
+			errType:     "api_error",
+			message:     "model gemini-2.5-pro not in whitelist",
+			code:        "403",
+			status:      http.StatusForbidden,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "claude beta policy block",
+			errType:     "invalid_request_error",
+			message:     "beta feature interleaved-thinking-2025-05-14 is not allowed",
+			code:        "",
+			status:      http.StatusBadRequest,
+			wantErrType: "invalid_request_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "openai fast policy block",
+			errType:     "permission_error",
+			message:     "openai service_tier=priority is not allowed for model gpt-5.5",
+			code:        "",
+			status:      http.StatusForbidden,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "codex official client policy block",
+			errType:     "forbidden_error",
+			message:     "This account only allows Codex official clients",
+			code:        "",
+			status:      http.StatusForbidden,
+			wantErrType: "forbidden_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "openai wsv1 unsupported feature gate",
+			errType:     "invalid_request_error",
+			message:     "OpenAI WSv1 is temporarily unsupported. Please enable responses_websockets_v2.",
+			code:        "",
+			status:      http.StatusBadRequest,
+			wantErrType: "invalid_request_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "openai passthrough instructions policy block",
+			errType:     "forbidden_error",
+			message:     "OpenAI codex passthrough requires a non-empty instructions field",
+			code:        "",
+			status:      http.StatusForbidden,
+			wantErrType: "forbidden_error",
+			wantPhase:   "request",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+
+			errType := normalizeOpsErrorType(tt.errType, tt.code)
+			phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, errType, tt.message, tt.code, tt.status)
+
+			require.Equal(t, tt.wantErrType, errType)
+			require.Equal(t, tt.wantPhase, phase)
+			require.True(t, isBusinessLimited)
+			require.Equal(t, "client", errorOwner)
+			require.Equal(t, "client_request", errorSource)
+		})
+	}
+}
+
+func TestClassifyOpsIPRestrictionAccessDeniedExcludedFromSLA(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonIPRestriction)
+
+	errType := normalizeOpsErrorType("api_error", "ACCESS_DENIED")
+	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, errType, "Access denied", "ACCESS_DENIED", http.StatusForbidden)
+
+	require.Equal(t, "api_error", errType)
+	require.Equal(t, "auth", phase)
+	require.True(t, isBusinessLimited)
+	require.Equal(t, "client", errorOwner)
+	require.Equal(t, "client_request", errorSource)
+}
+
+func TestClassifyOpsClientBusinessLimitedMarkerExcludesCustomPolicyDenialFromSLA(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)
+
+	errType := normalizeOpsErrorType("invalid_request_error", "")
+	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, errType, "custom admin policy message", "", http.StatusBadRequest)
+
+	require.Equal(t, "invalid_request_error", errType)
+	require.Equal(t, "auth", phase)
+	require.True(t, isBusinessLimited)
+	require.Equal(t, "client", errorOwner)
+	require.Equal(t, "client_request", errorSource)
+}
+
+// TestClassifyOpsUpstreamRequestShaped4xxOwnedByClientViaUpstream 覆盖 issue #16 Part B/A2:
+// 上游「请求本身的问题」4xx 归 client_via_upstream(SLA 排除),账号/鉴权/限流/5xx 仍 provider(计入)。
+func TestClassifyOpsUpstreamRequestShaped4xxOwnedByClientViaUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		status    int
+		wantOwner string
+	}{
+		{http.StatusBadRequest, "client_via_upstream"},            // 400
+		{http.StatusNotFound, "client_via_upstream"},              // 404
+		{http.StatusConflict, "client_via_upstream"},              // 409
+		{http.StatusRequestEntityTooLarge, "client_via_upstream"}, // 413
+		{http.StatusUnprocessableEntity, "client_via_upstream"},   // 422
+		{http.StatusUnauthorized, "provider"},                     // 401 账号侧
+		{http.StatusForbidden, "provider"},                        // 403
+		{http.StatusTooManyRequests, "provider"},                  // 429
+		{http.StatusInternalServerError, "provider"},              // 500
+		{http.StatusServiceUnavailable, "provider"},               // 503
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		service.SetOpsUpstreamError(c, tc.status, "upstream rejected", "")
+		_, isBiz, owner, _ := classifyOpsErrorLog(c, "upstream_error", "upstream rejected", "", http.StatusBadGateway)
+		require.Equal(t, tc.wantOwner, owner, "upstream status %d", tc.status)
+		require.False(t, isBiz, "upstream %d should not be business-limited", tc.status)
+	}
+}
+
+// TestClassifyOpsUpstreamRequestShaped4xxStreamingStatus200 覆盖 issue #16 Part B 的 T4:
+// 流式已开始(对外 status=200,无法再改 HTTP 状态码)但上游记的是请求形 4xx 时,
+// 归因仍须据「真实上游状态码」判为 client_via_upstream,不受对外 200 影响。
+// 否则 SLA 口径(裸表用 status_code>=400)虽因 200<400 自然不计,但列表/owner 维度会错记成 provider。
+func TestClassifyOpsUpstreamRequestShaped4xxStreamingStatus200(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	// 上游真实 422,但流式已开始 → 对外 status=200。
+	service.SetOpsUpstreamError(c, http.StatusUnprocessableEntity, "bad field foo", "")
+
+	phase, isBiz, owner, source := classifyOpsErrorLog(c, "upstream_error", "bad field foo", "", http.StatusOK)
+
+	require.Equal(t, "upstream", phase)
+	require.False(t, isBiz)
+	require.Equal(t, "client_via_upstream", owner, "对外 200 不应影响据上游状态码的归因")
+	require.Equal(t, "upstream_http", source)
+}
+
+// TestClassifyOpsRoutingCapacityBeatsUpstream4xxAttribution 锁定优先级:
+// 路由容量受限(无可用账号)即便恰好携带上游请求形 4xx 状态码,也保持 platform + business_limited,
+// A2 的 client_via_upstream 覆盖不得抢占 routing(否则容量限流会被错记成客户端请求错)。
+func TestClassifyOpsRoutingCapacityBeatsUpstream4xxAttribution(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	markOpsRoutingCapacityLimited(c)
+	service.SetOpsUpstreamError(c, http.StatusUnprocessableEntity, "no capacity", "")
+
+	phase, isBiz, owner, source := classifyOpsErrorLog(c, "upstream_error", "no capacity", "", http.StatusServiceUnavailable)
+
+	require.Equal(t, "routing", phase)
+	require.True(t, isBiz, "路由容量受限须计 business-limited(排除 SLA)")
+	require.Equal(t, "platform", owner, "routing 优先于 A2,不得重归 client_via_upstream")
+	require.Equal(t, "gateway", source)
+}
+
+// TestClassifyOpsUpstreamRequestShaped4xxExtraCodes 补齐请求形集合的其余成员(408/415/416)
+// 与集合外 4xx(405/451)的对照:集合外即便携带上游上下文也保持 provider(计入 SLA),
+// 与 service.IsRequestShapedUpstream4xx / MapUpstreamErrorDefault 的边界严格同源。
+func TestClassifyOpsUpstreamRequestShaped4xxExtraCodes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		status    int
+		wantOwner string
+	}{
+		{http.StatusRequestTimeout, "client_via_upstream"},               // 408
+		{http.StatusUnsupportedMediaType, "client_via_upstream"},         // 415
+		{http.StatusRequestedRangeNotSatisfiable, "client_via_upstream"}, // 416
+		{http.StatusMethodNotAllowed, "provider"},                        // 405 集合外
+		{http.StatusUnavailableForLegalReasons, "provider"},              // 451 集合外
+		{http.StatusGone, "provider"},                                    // 410 集合外
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		service.SetOpsUpstreamError(c, tc.status, "upstream rejected", "")
+		_, isBiz, owner, _ := classifyOpsErrorLog(c, "upstream_error", "upstream rejected", "", http.StatusBadGateway)
+		require.Equal(t, tc.wantOwner, owner, "upstream status %d", tc.status)
+		require.False(t, isBiz, "upstream %d should not be business-limited", tc.status)
+	}
+}
+
+func TestClassifyOpsOtherErrorsStillCountForSLA(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	errType := normalizeOpsErrorType("api_error", "INTERNAL_ERROR")
+	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, errType, "Failed to validate API key", "INTERNAL_ERROR", http.StatusInternalServerError)
+
+	require.Equal(t, "api_error", errType)
+	require.Equal(t, "internal", phase)
+	require.False(t, isBusinessLimited)
+	require.Equal(t, "platform", errorOwner)
+	require.Equal(t, "gateway", errorSource)
+}
+
+func TestClassifyOpsUnsupportedModelExcludedFromSLA(t *testing.T) {
+	tests := []string{
+		"No available accounts: no available accounts supporting model: made-up-model",
+		"No available accounts: no available OpenAI accounts supporting model: made-up-model",
+		"No available Gemini accounts: no available Gemini accounts supporting model: made-up-model",
+		"No available accounts: no available accounts supporting model: made-up-model (channel pricing restriction)",
+	}
+
+	for _, message := range tests {
+		t.Run(message, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			markOpsRoutingCapacityLimited(c)
+
+			errType := normalizeOpsErrorType("api_error", "")
+			phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, errType, message, "", http.StatusServiceUnavailable)
+
+			require.Equal(t, "api_error", errType)
+			require.Equal(t, "routing", phase)
+			require.True(t, isBusinessLimited)
+			require.Equal(t, "platform", errorOwner)
+			require.Equal(t, "gateway", errorSource)
+		})
+	}
+}
+
+func TestClassifyOpsUnmarkedNoAvailableTextStillCountsForSLA(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(
+		c,
+		"api_error",
+		"No available accounts",
+		"",
+		http.StatusServiceUnavailable,
+	)
+
+	require.Equal(t, "routing", phase)
+	require.False(t, isBusinessLimited)
+	require.Equal(t, "platform", errorOwner)
+	require.Equal(t, "gateway", errorSource)
+}
+
+func TestClassifyOpsUpstreamAuthTextStillCountsForSLA(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+		code    string
+		status  int
+	}{
+		{
+			name:    "invalid API key",
+			message: "Invalid API key",
+			code:    "401",
+			status:  http.StatusUnauthorized,
+		},
+		{
+			name:    "disabled API key",
+			message: "API key is disabled",
+			code:    "API_KEY_DISABLED",
+			status:  http.StatusUnauthorized,
+		},
+		{
+			name:    "gemini group platform mismatch",
+			message: "API key group platform is not gemini",
+			code:    "400",
+			status:  http.StatusBadRequest,
+		},
+		{
+			name:    "provider balance error",
+			message: "Insufficient account balance",
+			code:    "INSUFFICIENT_BALANCE",
+			status:  http.StatusForbidden,
+		},
+		{
+			name:    "provider subscription error",
+			message: "No active subscription found for this group",
+			code:    "SUBSCRIPTION_NOT_FOUND",
+			status:  http.StatusForbidden,
+		},
+		{
+			name:    "provider quota error",
+			message: "api key 额度已用完",
+			code:    "API_KEY_QUOTA_EXHAUSTED",
+			status:  http.StatusTooManyRequests,
+		},
+		{
+			name:    "provider deleted group shaped error",
+			message: "API Key 所属分组已删除",
+			code:    "GROUP_DELETED",
+			status:  http.StatusForbidden,
+		},
+		{
+			name:    "provider unassigned group shaped error",
+			message: "API Key is not assigned to any group and cannot be used. Please contact the administrator to assign it to a group.",
+			code:    "403",
+			status:  http.StatusForbidden,
+		},
+		{
+			name:    "provider local quota shaped error",
+			message: "Daily usage quota exhausted for this platform.",
+			code:    "rate_limit_exceeded",
+			status:  http.StatusTooManyRequests,
+		},
+		{
+			name:    "provider feature gate shaped error",
+			message: "Image generation is not enabled for this group",
+			code:    "403",
+			status:  http.StatusForbidden,
+		},
+		{
+			name:    "provider token counting unsupported shaped error",
+			message: "Token counting is not supported for this platform",
+			code:    "404",
+			status:  http.StatusNotFound,
+		},
+		{
+			name:    "provider image API unsupported shaped error",
+			message: "Images API is not supported for this platform",
+			code:    "404",
+			status:  http.StatusNotFound,
+		},
+		{
+			name:    "provider antigravity whitelist shaped error",
+			message: "model claude-3-5-sonnet not in whitelist",
+			code:    "403",
+			status:  http.StatusForbidden,
+		},
+		{
+			name:    "provider beta policy shaped error",
+			message: "beta feature interleaved-thinking-2025-05-14 is not allowed",
+			code:    "400",
+			status:  http.StatusBadRequest,
+		},
+		{
+			name:    "provider openai fast policy shaped error",
+			message: "openai service_tier=priority is not allowed for model gpt-5.5",
+			code:    "403",
+			status:  http.StatusForbidden,
+		},
+		{
+			name:    "provider codex client policy shaped error",
+			message: "This account only allows Codex official clients",
+			code:    "403",
+			status:  http.StatusForbidden,
+		},
+		{
+			name:    "provider wsv1 unsupported shaped error",
+			message: "OpenAI WSv1 is temporarily unsupported. Please enable responses_websockets_v2.",
+			code:    "400",
+			status:  http.StatusBadRequest,
+		},
+		{
+			name:    "provider passthrough instructions shaped error",
+			message: "OpenAI codex passthrough requires a non-empty instructions field",
+			code:    "403",
+			status:  http.StatusForbidden,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			service.SetOpsUpstreamError(c, tt.status, tt.message, "")
+
+			phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(
+				c,
+				"api_error",
+				tt.message,
+				tt.code,
+				tt.status,
+			)
+
+			require.Equal(t, "upstream", phase)
+			require.False(t, isBusinessLimited)
+			require.Equal(t, "provider", errorOwner)
+			require.Equal(t, "upstream_http", errorSource)
+		})
+	}
+}
+
+func TestClassifyOpsUpstreamNoAvailableTextStillCountsForSLA(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	service.SetOpsUpstreamError(c, http.StatusServiceUnavailable, "No available accounts", "")
+
+	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(
+		c,
+		"api_error",
+		"No available accounts",
+		"",
+		http.StatusServiceUnavailable,
+	)
+
+	require.Equal(t, "upstream", phase)
+	require.False(t, isBusinessLimited)
+	require.Equal(t, "provider", errorOwner)
+	require.Equal(t, "upstream_http", errorSource)
+}
+
+func TestParseOpsErrorResponsePreservesNestedStringCode(t *testing.T) {
+	parsed := parseOpsErrorResponse([]byte(`{"error":{"type":"permission_error","code":"GROUP_DELETED","message":"API Key 所属分组已删除"}}`))
+
+	require.Equal(t, "permission_error", parsed.ErrorType)
+	require.Equal(t, "GROUP_DELETED", parsed.Code)
+	require.Equal(t, "API Key 所属分组已删除", parsed.Message)
+}
+
+func TestSetOpsEndpointContext_SetsContextKeys(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	setOpsEndpointContext(c, "claude-3-5-sonnet-20241022", int16(2)) // stream
+
+	v, ok := c.Get(opsUpstreamModelKey)
+	require.True(t, ok)
+	vStr, ok := v.(string)
+	require.True(t, ok)
+	require.Equal(t, "claude-3-5-sonnet-20241022", vStr)
+
+	rt, ok := c.Get(opsRequestTypeKey)
+	require.True(t, ok)
+	rtVal, ok := rt.(int16)
+	require.True(t, ok)
+	require.Equal(t, int16(2), rtVal)
+}
+
+func TestSetOpsEndpointContext_EmptyModelNotStored(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	setOpsEndpointContext(c, "", int16(1))
+
+	_, ok := c.Get(opsUpstreamModelKey)
+	require.False(t, ok, "empty upstream model should not be stored")
+
+	rt, ok := c.Get(opsRequestTypeKey)
+	require.True(t, ok)
+	rtVal, ok := rt.(int16)
+	require.True(t, ok)
+	require.Equal(t, int16(1), rtVal)
+}
+
+func TestSetOpsEndpointContext_NilContext(t *testing.T) {
+	require.NotPanics(t, func() {
+		setOpsEndpointContext(nil, "model", int16(1))
+	})
+}
+
+func TestGetOpsAPIKeyFallsBackToOpsFallbackKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	// 主 key 缺席（鉴权早退场景）：返回 nil。
+	require.Nil(t, getOpsAPIKey(c))
+
+	// 写入 ops 专用 fallback key 后应能取到，且带齐 user/group。
+	groupID := int64(55)
+	apiKey := &service.APIKey{
+		ID:      100,
+		GroupID: &groupID,
+		User:    &service.User{ID: 7},
+		Group:   &service.Group{ID: groupID, Platform: service.PlatformAnthropic},
+	}
+	c.Set(string(middleware2.ContextKeyOpsFallbackAPIKey), apiKey)
+
+	got := getOpsAPIKey(c)
+	require.NotNil(t, got)
+	require.Equal(t, int64(100), got.ID)
+	require.NotNil(t, got.User)
+	require.Equal(t, int64(7), got.User.ID)
+	require.NotNil(t, got.Group)
+	require.Equal(t, service.PlatformAnthropic, got.Group.Platform)
+}
+
+func TestGetOpsAPIKeyPrefersPrimaryContextKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	primary := &service.APIKey{ID: 1}
+	fallback := &service.APIKey{ID: 2}
+	c.Set(string(middleware2.ContextKeyAPIKey), primary)
+	c.Set(string(middleware2.ContextKeyOpsFallbackAPIKey), fallback)
+
+	got := getOpsAPIKey(c)
+	require.NotNil(t, got)
+	require.Equal(t, int64(1), got.ID, "已鉴权请求应优先使用正式 api key")
+}
+
+// 带内错误也可能出现在非流式 2xx 响应体里（如 Gemini generateContent 的 finishReason）：
+// NonStream 标记落库 stream=false，未标记的沿用流式。
+func TestLogOpsStreamError_NonStreamInBandContentPolicy(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3.7-flash:generateContent", nil)
+	setOpsRequestContext(c, "gemini-3.7-flash", false)
+
+	service.MarkOpsStreamErrorValue(c, service.OpsStreamError{
+		ErrType:        "invalid_request_error",
+		Code:           "PROHIBITED_CONTENT",
+		Message:        "Gemini content policy stop (finishReason=PROHIBITED_CONTENT): Response stopped due to prohibited content.",
+		IntendedStatus: http.StatusBadRequest,
+		RequestScoped:  true,
+		NonStream:      true,
+	})
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	logOpsStreamError(c, ops, http.StatusOK)
+
+	job := <-opsErrorLogQueue
+	require.NotNil(t, job.entry)
+	require.False(t, job.entry.Stream)
+	require.Equal(t, "invalid_request_error", job.entry.ErrorType)
+	require.Equal(t, "request", job.entry.ErrorPhase)
+	require.Equal(t, "client", job.entry.ErrorOwner)
+	require.True(t, job.entry.IsBusinessLimited)
+	require.Equal(t, http.StatusBadRequest, job.entry.StatusCode, "请求级带内结果按 IntendedStatus 落库，才能进入错误列表")
+	require.Equal(t, "P3", job.entry.Severity)
+	require.Equal(t, "gemini-3.7-flash", job.entry.Model)
+	require.Contains(t, job.entry.ErrorBody, "PROHIBITED_CONTENT")
+}
+
+// 请求级带内结果（RequestScoped）：此前尝试残留的上游错误上下文不参与分类、不做上游归因，
+// 按业务限制计；透传规则的 skip_monitoring 残留也不影响它落库。
+func TestLogOpsStreamError_RequestScopedIgnoresResidualUpstreamContext(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3.7-flash:streamGenerateContent", nil)
+	setOpsRequestContext(c, "gemini-3.7-flash", true)
+	c.Set(service.OpsUpstreamStatusCodeKey, http.StatusTooManyRequests)
+	c.Set(service.OpsUpstreamErrorMessageKey, "earlier attempt was rate limited")
+	c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
+		UpstreamStatusCode: http.StatusTooManyRequests,
+		Message:            "earlier attempt was rate limited",
+	}})
+	// fork 适配：fork 的上游尝试事件没有 SkipMonitoring，透传规则的跳过标记在 OpsSkipPassthroughKey 上。
+	c.Set(service.OpsSkipPassthroughKey, true)
+
+	service.MarkOpsStreamErrorValue(c, service.OpsStreamError{
+		ErrType:        "invalid_request_error",
+		Code:           "PROHIBITED_CONTENT",
+		Message:        "Gemini content policy stop (finishReason=PROHIBITED_CONTENT): Response stopped due to prohibited content.",
+		IntendedStatus: http.StatusBadRequest,
+		RequestScoped:  true,
+	})
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	logOpsStreamError(c, ops, http.StatusOK)
+
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+	job := <-opsErrorLogQueue
+	require.NotNil(t, job.entry)
+	require.Equal(t, "invalid_request_error", job.entry.ErrorType)
+	require.Equal(t, "request", job.entry.ErrorPhase)
+	require.Equal(t, "client", job.entry.ErrorOwner)
+	require.Equal(t, "client_request", job.entry.ErrorSource)
+	require.True(t, job.entry.IsBusinessLimited)
+	require.True(t, job.entry.Stream)
+	require.Equal(t, http.StatusBadRequest, job.entry.StatusCode)
+	require.Nil(t, job.entry.UpstreamStatusCode, "残留的 429 不得贴到内容策略行上")
+	require.Nil(t, job.entry.UpstreamErrorMessage)
+	require.Empty(t, job.entry.UpstreamErrors)
+	require.Contains(t, job.entry.ErrorBody, "PROHIBITED_CONTENT")
+}
+
+// 请求级带内结果与此前尝试的上游错误并存时，中间件既落带内错误行，也保留恢复行的 provider 遥测。
+func TestOpsErrorLoggerMiddleware_RequestScopedInBandErrorKeepsRecoveredTelemetry(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+	gin.SetMode(gin.TestMode)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1beta/models/gemini-3.7-flash:generateContent", func(c *gin.Context) {
+		setOpsRequestContext(c, "gemini-3.7-flash", false)
+		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
+			UpstreamStatusCode: http.StatusTooManyRequests,
+			Message:            "earlier attempt was rate limited",
+		}})
+		service.MarkOpsStreamErrorValue(c, service.OpsStreamError{
+			ErrType:        "invalid_request_error",
+			Code:           "SAFETY",
+			Message:        "Gemini content policy stop (finishReason=SAFETY): Response stopped due to safety reasons.",
+			IntendedStatus: http.StatusBadRequest,
+			RequestScoped:  true,
+			NonStream:      true,
+		})
+		c.JSON(http.StatusOK, gin.H{"candidates": []any{}})
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3.7-flash:generateContent", nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	require.Equal(t, int64(2), OpsErrorLogQueueLength())
+	inBand := <-opsErrorLogQueue
+	require.Equal(t, "invalid_request_error", inBand.entry.ErrorType)
+	require.Equal(t, "request", inBand.entry.ErrorPhase)
+	require.Equal(t, "client", inBand.entry.ErrorOwner)
+	require.True(t, inBand.entry.IsBusinessLimited)
+	require.False(t, inBand.entry.Stream)
+	require.Equal(t, http.StatusBadRequest, inBand.entry.StatusCode)
+	require.Nil(t, inBand.entry.UpstreamStatusCode)
+	require.Empty(t, inBand.entry.UpstreamErrors)
+
+	recovered := <-opsErrorLogQueue
+	require.Equal(t, "upstream", recovered.entry.ErrorPhase)
+	require.Equal(t, "provider", recovered.entry.ErrorOwner)
+	require.Equal(t, http.StatusOK, recovered.entry.StatusCode)
+	require.Equal(t, "Recovered upstream error 429: earlier attempt was rate limited", recovered.entry.ErrorMessage)
+}
+
+// 上游归因的带内失败（如 Gemini 2xx 正文里的错误信封）：上游上下文参与分类并做归因，只落一行，
+// 不再记成恢复行。fork 适配：上游对所有带内标记都这样处理，fork 只对 UpstreamAttributed 标记这样处理。
+func TestOpsErrorLoggerMiddleware_UpstreamAttributedInBandFailureSingleRow(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+	gin.SetMode(gin.TestMode)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1beta/models/gemini-3.7-flash:streamGenerateContent", func(c *gin.Context) {
+		setOpsRequestContext(c, "gemini-3.7-flash", true)
+		service.SetOpsUpstreamError(c, http.StatusTooManyRequests, "quota", "")
+		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
+			UpstreamStatusCode: http.StatusTooManyRequests,
+			Message:            "quota",
+			Kind:               "stream_failed",
+		}})
+		service.MarkOpsStreamErrorValue(c, service.OpsStreamError{
+			ErrType:            "rate_limit_error",
+			Code:               "RESOURCE_EXHAUSTED",
+			Message:            "quota",
+			IntendedStatus:     http.StatusTooManyRequests,
+			CountTowardsSLA:    true,
+			UpstreamAttributed: true,
+		})
+		c.Data(http.StatusOK, "text/event-stream", []byte("data: {\"error\":{\"code\":429}}\n\n"))
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3.7-flash:streamGenerateContent", nil))
+
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+	job := <-opsErrorLogQueue
+	require.Equal(t, "rate_limit_error", job.entry.ErrorType)
+	require.Equal(t, "upstream", job.entry.ErrorPhase)
+	require.Equal(t, "provider", job.entry.ErrorOwner)
+	require.Equal(t, http.StatusTooManyRequests, job.entry.StatusCode)
+	require.True(t, job.entry.Stream)
+	require.NotNil(t, job.entry.UpstreamStatusCode)
+	require.Equal(t, http.StatusTooManyRequests, *job.entry.UpstreamStatusCode)
+}
+
+// Gemini 带内信号登记使用的错误类型必须都在 ops 白名单里，否则会被归一化成 api_error。
+// fork 适配：403 用 fork 白名单里的 forbidden_error。
+func TestNormalizeOpsErrorType_KeepsGeminiInBandSignalTypes(t *testing.T) {
+	for _, errType := range []string{
+		"invalid_request_error", "authentication_error", "forbidden_error",
+		"not_found_error", "rate_limit_error", "upstream_error",
+	} {
+		require.Equal(t, errType, normalizeOpsErrorType(errType, "PROHIBITED_CONTENT"), errType)
+	}
+}
+
+// fork 回归：普通带内标记（未设 RequestScoped / UpstreamAttributed）与上游错误上下文并存时，
+// 仍按 fork 既有语义只落恢复行，不额外落带内错误行。
+func TestOpsErrorLoggerMiddleware_PlainStreamErrorWithUpstreamContextKeepsRecoveredRow(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+	gin.SetMode(gin.TestMode)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1/responses", func(c *gin.Context) {
+		setOpsRequestContext(c, "gpt-5.6", true)
+		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
+			UpstreamStatusCode: http.StatusBadGateway,
+			Message:            "stream reset",
+		}})
+		service.MarkOpsStreamFailure(c, "upstream_error", "", "stream reset", http.StatusBadGateway)
+		c.Data(http.StatusOK, "text/event-stream", []byte("data: {}\n\n"))
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+	job := <-opsErrorLogQueue
+	require.Equal(t, "upstream_error", job.entry.ErrorType)
+	require.Equal(t, http.StatusOK, job.entry.StatusCode)
+	require.Equal(t, "Recovered upstream error 502: stream reset", job.entry.ErrorMessage)
+}
+
+// 请求级带内结果不继承透传规则的 skip_monitoring；普通带内标记仍被跳过。
+func TestLogOpsStreamError_RequestScopedIgnoresSkipPassthrough(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	plain, _ := gin.CreateTestContext(httptest.NewRecorder())
+	plain.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3.7-flash:generateContent", nil)
+	plain.Set(service.OpsSkipPassthroughKey, true)
+	service.MarkOpsStreamError(plain, "upstream_error", "skipped", http.StatusBadGateway)
+	logOpsStreamError(plain, ops, http.StatusOK)
+	require.Equal(t, int64(0), OpsErrorLogQueueLength())
+
+	scoped, _ := gin.CreateTestContext(httptest.NewRecorder())
+	scoped.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3.7-flash:generateContent", nil)
+	scoped.Set(service.OpsSkipPassthroughKey, true)
+	service.MarkOpsStreamErrorValue(scoped, service.OpsStreamError{
+		ErrType:        "invalid_request_error",
+		Code:           "SAFETY",
+		Message:        "Gemini content policy stop (finishReason=SAFETY)",
+		IntendedStatus: http.StatusBadRequest,
+		RequestScoped:  true,
+	})
+	logOpsStreamError(scoped, ops, http.StatusOK)
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+	job := <-opsErrorLogQueue
+	require.Equal(t, "invalid_request_error", job.entry.ErrorType)
+}
+
+type opsAdvancedSettingsRepoStub struct {
+	service.SettingRepository
+	advanced string
+}
+
+func (r *opsAdvancedSettingsRepoStub) GetValue(ctx context.Context, key string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if key == service.SettingKeyOpsAdvancedSettings {
+		return r.advanced, nil
+	}
+	return "", service.ErrSettingNotFound
+}
+
+func (r *opsAdvancedSettingsRepoStub) GetMultiple(context.Context, []string) (map[string]string, error) {
+	return map[string]string{service.SettingKeyOpsAdvancedSettings: r.advanced}, nil
+}
+
+func (r *opsAdvancedSettingsRepoStub) Set(context.Context, string, string) error {
+	return nil
+}
+
+// serveClientClosedRequest 以已取消的请求 context 走 failoverClientGone，复现网关标记 499 的收尾路径。
+func serveClientClosedRequest(t *testing.T, ops *service.OpsService, prepare func(c *gin.Context)) {
+	t.Helper()
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1/messages", func(c *gin.Context) {
+		if prepare != nil {
+			prepare(c)
+		}
+		failoverClientGone(c)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/messages", nil).WithContext(ctx))
+	require.Equal(t, statusClientClosedRequest, recorder.Code)
+	require.Zero(t, recorder.Body.Len())
+}
+
+func TestOpsErrorLoggerMiddleware_SkipsPureClientClosed(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	settings, err := ops.GetOpsAdvancedSettings(context.Background())
+	require.NoError(t, err)
+	require.True(t, settings.IgnoreContextCanceled)
+
+	serveClientClosedRequest(t, ops, nil)
+
+	require.Zero(t, OpsErrorLogQueueLength(), "纯客户端取消的 499 按 IgnoreContextCanceled 跳过")
+}
+
+func TestOpsErrorLoggerMiddleware_RecordsClientClosedAfterUpstreamFailure(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	serveClientClosedRequest(t, ops, func(c *gin.Context) {
+		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
+			AccountID: 7, UpstreamStatusCode: 524, Kind: "failover", Message: "upstream timeout",
+		}})
+	})
+
+	require.Equal(t, int64(1), OpsErrorLogQueueLength(), "上游失败后客户端离开仍按上游失败落库")
+	job := <-opsErrorLogQueue
+	require.Equal(t, statusClientClosedRequest, job.entry.StatusCode)
+	require.Equal(t, "upstream", job.entry.ErrorPhase)
+	require.NotNil(t, job.entry.UpstreamStatusCode)
+	require.Equal(t, 524, *job.entry.UpstreamStatusCode)
+}
+
+func TestOpsErrorLoggerMiddleware_RecordsPriorUpstreamFailureDespiteCanceledBody(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1beta/models/gemini-test:generateContent", func(c *gin.Context) {
+		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
+			AccountID: 7, UpstreamStatusCode: 524, Kind: "failover", Message: "upstream timeout",
+		}})
+		googleError(c, statusClientClosedRequest, "context canceled")
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-test:generateContent", nil).WithContext(ctx))
+
+	require.Equal(t, statusClientClosedRequest, recorder.Code)
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+	job := <-opsErrorLogQueue
+	require.Equal(t, "upstream", job.entry.ErrorPhase)
+	require.NotNil(t, job.entry.UpstreamStatusCode)
+	require.Equal(t, 524, *job.entry.UpstreamStatusCode)
+}
+
+func TestOpsErrorLoggerMiddleware_ClientClosedWithUpstreamStillHonorsOtherFilters(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+	settings := &opsAdvancedSettingsRepoStub{advanced: `{"ignore_context_canceled":true,"ignore_count_tokens_errors":true}`}
+	ops := service.NewOpsService(nil, settings, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1/messages/count_tokens", func(c *gin.Context) {
+		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
+			AccountID: 7, UpstreamStatusCode: 524, Kind: "failover", Message: "upstream timeout",
+		}})
+		googleError(c, statusClientClosedRequest, "context canceled")
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil).WithContext(ctx))
+
+	require.Equal(t, statusClientClosedRequest, recorder.Code)
+	require.Zero(t, OpsErrorLogQueueLength(), "the other configured filter must still run despite canceled request context")
+}
+
+func TestOpsErrorLoggerMiddleware_RecordsClientClosedWhenIgnoreContextCanceledDisabled(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+	settings := &opsAdvancedSettingsRepoStub{advanced: `{"ignore_context_canceled":false}`}
+	ops := service.NewOpsService(nil, settings, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	loaded, err := ops.GetOpsAdvancedSettings(context.Background())
+	require.NoError(t, err)
+	require.False(t, loaded.IgnoreContextCanceled)
+
+	serveClientClosedRequest(t, ops, nil)
+
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+	job := <-opsErrorLogQueue
+	require.Equal(t, statusClientClosedRequest, job.entry.StatusCode)
+}

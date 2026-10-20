@@ -1,0 +1,766 @@
+package handler
+
+import (
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+
+	"github.com/gin-gonic/gin"
+)
+
+// UsageHandler handles usage-related requests
+type UsageHandler struct {
+	usageService   *service.UsageService
+	apiKeyService  *service.APIKeyService
+	opsService     *service.OpsService
+	settingService *service.SettingService
+}
+
+// NewUsageHandler creates a new UsageHandler
+func NewUsageHandler(
+	usageService *service.UsageService,
+	apiKeyService *service.APIKeyService,
+	opsService *service.OpsService,
+	settingService *service.SettingService,
+) *UsageHandler {
+	return &UsageHandler{
+		usageService:   usageService,
+		apiKeyService:  apiKeyService,
+		opsService:     opsService,
+		settingService: settingService,
+	}
+}
+
+// List handles listing usage records with pagination
+// GET /api/v1/usage
+func (h *UsageHandler) List(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	page, pageSize := response.ParsePagination(c)
+
+	var apiKeyID int64
+	if apiKeyIDStr := c.Query("api_key_id"); apiKeyIDStr != "" {
+		id, err := strconv.ParseInt(apiKeyIDStr, 10, 64)
+		if err != nil {
+			response.BadRequest(c, "Invalid api_key_id")
+			return
+		}
+
+		// [Security Fix] Verify API Key ownership to prevent horizontal privilege escalation
+		apiKey, err := h.apiKeyService.GetByID(c.Request.Context(), id)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		if apiKey.UserID != subject.UserID {
+			response.Forbidden(c, "Not authorized to access this API key's usage records")
+			return
+		}
+
+		apiKeyID = id
+	}
+
+	// Parse additional filters
+	model := c.Query("model")
+
+	var requestType *int16
+	var stream *bool
+	if requestTypeStr := strings.TrimSpace(c.Query("request_type")); requestTypeStr != "" {
+		parsed, err := service.ParseUsageRequestType(requestTypeStr)
+		if err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+		value := int16(parsed)
+		requestType = &value
+	} else if streamStr := c.Query("stream"); streamStr != "" {
+		val, err := strconv.ParseBool(streamStr)
+		if err != nil {
+			response.BadRequest(c, "Invalid stream value, use true or false")
+			return
+		}
+		stream = &val
+	}
+
+	var billingType *int8
+	if billingTypeStr := c.Query("billing_type"); billingTypeStr != "" {
+		val, err := strconv.ParseInt(billingTypeStr, 10, 8)
+		if err != nil {
+			response.BadRequest(c, "Invalid billing_type")
+			return
+		}
+		bt := int8(val)
+		billingType = &bt
+	}
+
+	// Parse date range
+	var startTime, endTime *time.Time
+	userTZ := c.Query("timezone") // Get user's timezone from request
+	if startDateStr := c.Query("start_date"); startDateStr != "" {
+		t, err := timezone.ParseInUserLocation("2006-01-02", startDateStr, userTZ)
+		if err != nil {
+			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD")
+			return
+		}
+		startTime = &t
+	}
+
+	if endDateStr := c.Query("end_date"); endDateStr != "" {
+		t, err := timezone.ParseInUserLocation("2006-01-02", endDateStr, userTZ)
+		if err != nil {
+			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD")
+			return
+		}
+		// Use half-open range [start, end), move to next calendar day start (DST-safe).
+		t = t.AddDate(0, 0, 1)
+		endTime = &t
+	}
+
+	params := pagination.PaginationParams{
+		Page:      page,
+		PageSize:  pageSize,
+		SortBy:    c.DefaultQuery("sort_by", "created_at"),
+		SortOrder: c.DefaultQuery("sort_order", "desc"),
+	}
+	filters := usagestats.UsageLogFilters{
+		UserID:      subject.UserID, // Always filter by current user for security
+		APIKeyID:    apiKeyID,
+		Model:       model,
+		RequestType: requestType,
+		Stream:      stream,
+		BillingType: billingType,
+		StartTime:   startTime,
+		EndTime:     endTime,
+	}
+
+	records, result, err := h.usageService.ListWithFilters(c.Request.Context(), params, filters)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	// 把本页额度折算成法币：用户看到的 actual_cost 是站内额度，「扣了 5」既不是
+	// 5 美元也不是 5 元，必须给出法币锚点才不会被误读。折算按额度来源区分——
+	// 钱包按充值倍率、订阅按该卡的 u(D)，因为订阅额度显著更便宜。
+	rate := h.creditFiatRate(c, subject.UserID, records)
+
+	out := make([]dto.UsageLog, 0, len(records))
+	for i := range records {
+		item := *dto.UsageLogFromService(&records[i])
+		fillUsageLogFiat(&item, rate)
+		out = append(out, item)
+	}
+	response.Paginated(c, out, result.Total, page, pageSize)
+}
+
+// creditFiatRate 装配当前用户这批用量记录的额度→法币折算器。
+// 设置读取失败时返回按默认倍率构造的折算器（等价于不折算），而不是让请求失败：
+// 法币折算是展示增强，不该成为用量列表的新故障点。
+func (h *UsageHandler) creditFiatRate(c *gin.Context, userID int64, records []service.UsageLog) *service.CreditFiatRate {
+	ctx := c.Request.Context()
+	multiplier, cfg := h.creditFiatPricing(c)
+
+	if h.usageService == nil {
+		return service.NewCreditFiatRate(multiplier)
+	}
+	return h.usageService.BuildCreditFiatRate(ctx, userID, multiplier, cfg, records)
+}
+
+// creditFiatPricing 读取额度→法币折算参数。设置读取失败时返回默认值（倍率 1 = 不折算）。
+func (h *UsageHandler) creditFiatPricing(c *gin.Context) (float64, service.SubscriptionPricingConfig) {
+	if h.settingService == nil {
+		return 1.0, service.DefaultSubscriptionPricingConfig()
+	}
+	// 一次查询同时拿到充值倍率和定价公式——settings 没有缓存，这些接口高频。
+	return h.settingService.CreditFiatPricing(c.Request.Context())
+}
+
+// creditFiatTotals 计算一个筛选范围的法币合计（按扣费来源分桶折算后相加）。
+// ok=false 时调用方不填法币字段，前端回落到额度展示。
+func (h *UsageHandler) creditFiatTotals(c *gin.Context, filter usagestats.CreditCostBucketFilter) (*service.CreditFiatTotals, bool) {
+	if h.usageService == nil {
+		return nil, false
+	}
+	multiplier, cfg := h.creditFiatPricing(c)
+	return h.usageService.CreditFiatTotals(c.Request.Context(), multiplier, cfg, filter)
+}
+
+// fillUsageLogFiat 给单条用量记录填上法币单价和法币金额，口径与列表接口一致。
+func fillUsageLogFiat(item *dto.UsageLog, rate *service.CreditFiatRate) {
+	// SubscriptionID 是 *int64，钱包扣费的记录为 nil。传 0 表示「没有卡」，
+	// 折算器据此走钱包单价。
+	subID := int64(0)
+	if item.SubscriptionID != nil {
+		subID = *item.SubscriptionID
+	}
+	item.FiatPerCredit = rate.FiatPerCredit(item.BillingType, subID)
+	item.FiatCost = rate.Convert(item.ActualCost, item.BillingType, subID)
+}
+
+// ListErrors handles listing the current user's failed requests (redacted).
+// GET /api/v1/usage/errors
+func (h *UsageHandler) ListErrors(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	// Visibility switch (fail-closed). Defense-in-depth: frontend also hides the tab.
+	if h.settingService == nil || !h.settingService.IsUserErrorViewAllowed(c.Request.Context()) {
+		response.Forbidden(c, "Error requests view is disabled")
+		return
+	}
+	if h.opsService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
+		return
+	}
+
+	page, pageSize := response.ParsePagination(c)
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	filter := &service.OpsErrorLogFilter{Page: page, PageSize: pageSize}
+
+	// Date range (half-open [start, end)), reuse usage-list semantics.
+	userTZ := c.Query("timezone")
+	if startDateStr := c.Query("start_date"); startDateStr != "" {
+		t, err := timezone.ParseInUserLocation("2006-01-02", startDateStr, userTZ)
+		if err != nil {
+			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD")
+			return
+		}
+		filter.StartTime = &t
+	}
+	if endDateStr := c.Query("end_date"); endDateStr != "" {
+		t, err := timezone.ParseInUserLocation("2006-01-02", endDateStr, userTZ)
+		if err != nil {
+			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD")
+			return
+		}
+		t = t.AddDate(0, 0, 1)
+		filter.EndTime = &t
+	}
+
+	filter.Model = strings.TrimSpace(c.Query("model"))
+
+	if k := strings.TrimSpace(c.Query("api_key_id")); k != "" {
+		n, err := strconv.ParseInt(k, 10, 64)
+		if err != nil || n < 0 {
+			response.BadRequest(c, "Invalid api_key_id")
+			return
+		}
+		if n > 0 {
+			filter.APIKeyID = &n
+		}
+	}
+
+	if sc := strings.TrimSpace(c.Query("status_code")); sc != "" {
+		n, err := strconv.Atoi(sc)
+		if err != nil || n < 0 {
+			response.BadRequest(c, "Invalid status_code")
+			return
+		}
+		filter.StatusCodes = []int{n}
+	}
+
+	if cat := strings.TrimSpace(c.Query("category")); cat != "" {
+		phases, types := service.CategoryToFilter(cat)
+		filter.ErrorPhasesAny = phases
+		filter.ErrorTypesAny = types
+	}
+
+	result, err := h.opsService.ListUserErrorRequests(c.Request.Context(), subject.UserID, filter)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Paginated(c, result.Items, int64(result.Total), result.Page, result.PageSize)
+}
+
+// GetErrorDetail handles fetching one of the current user's failed-request details (redacted).
+// GET /api/v1/usage/errors/:id
+func (h *UsageHandler) GetErrorDetail(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if h.settingService == nil || !h.settingService.IsUserErrorViewAllowed(c.Request.Context()) {
+		response.Forbidden(c, "Error requests view is disabled")
+		return
+	}
+	if h.opsService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
+		return
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid id")
+		return
+	}
+	detail, err := h.opsService.GetUserErrorRequestDetail(c.Request.Context(), subject.UserID, id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, detail)
+}
+
+// GetByID handles getting a single usage record
+// GET /api/v1/usage/:id
+func (h *UsageHandler) GetByID(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	usageID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid usage ID")
+		return
+	}
+
+	record, err := h.usageService.GetByID(c.Request.Context(), usageID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	// 验证所有权
+	if record.UserID != subject.UserID {
+		response.Forbidden(c, "Not authorized to access this record")
+		return
+	}
+
+	item := dto.UsageLogFromService(record)
+	fillUsageLogFiat(item, h.creditFiatRate(c, subject.UserID, []service.UsageLog{*record}))
+	response.Success(c, item)
+}
+
+// Stats handles getting usage statistics
+// GET /api/v1/usage/stats
+func (h *UsageHandler) Stats(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	var apiKeyID int64
+	if apiKeyIDStr := c.Query("api_key_id"); apiKeyIDStr != "" {
+		id, err := strconv.ParseInt(apiKeyIDStr, 10, 64)
+		if err != nil {
+			response.BadRequest(c, "Invalid api_key_id")
+			return
+		}
+
+		// [Security Fix] Verify API Key ownership to prevent horizontal privilege escalation
+		apiKey, err := h.apiKeyService.GetByID(c.Request.Context(), id)
+		if err != nil {
+			response.NotFound(c, "API key not found")
+			return
+		}
+		if apiKey.UserID != subject.UserID {
+			response.Forbidden(c, "Not authorized to access this API key's statistics")
+			return
+		}
+
+		apiKeyID = id
+	}
+
+	// 获取时间范围参数
+	userTZ := c.Query("timezone") // Get user's timezone from request
+	now := timezone.NowInUserLocation(userTZ)
+	var startTime, endTime time.Time
+
+	// 优先使用 start_date 和 end_date 参数
+	startDateStr := c.Query("start_date")
+	endDateStr := c.Query("end_date")
+
+	if startDateStr != "" && endDateStr != "" {
+		// 使用自定义日期范围
+		var err error
+		startTime, err = timezone.ParseInUserLocation("2006-01-02", startDateStr, userTZ)
+		if err != nil {
+			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD")
+			return
+		}
+		endTime, err = timezone.ParseInUserLocation("2006-01-02", endDateStr, userTZ)
+		if err != nil {
+			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD")
+			return
+		}
+		// 与 SQL 条件 created_at < end 对齐，使用次日 00:00 作为上边界（DST-safe）。
+		endTime = endTime.AddDate(0, 0, 1)
+	} else {
+		// 使用 period 参数
+		period := c.DefaultQuery("period", "today")
+		switch period {
+		case "today":
+			startTime = timezone.StartOfDayInUserLocation(now, userTZ)
+		case "week":
+			startTime = now.AddDate(0, 0, -7)
+		case "month":
+			startTime = now.AddDate(0, -1, 0)
+		default:
+			startTime = timezone.StartOfDayInUserLocation(now, userTZ)
+		}
+		endTime = now
+	}
+
+	var stats *service.UsageStats
+	var err error
+	if apiKeyID > 0 {
+		stats, err = h.usageService.GetStatsByAPIKey(c.Request.Context(), apiKeyID, startTime, endTime)
+	} else {
+		stats, err = h.usageService.GetStatsByUser(c.Request.Context(), subject.UserID, startTime, endTime)
+	}
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	filter := usagestats.CreditCostBucketFilter{UserID: subject.UserID, StartTime: startTime, EndTime: endTime}
+	if apiKeyID > 0 {
+		filter.APIKeyIDs = []int64{apiKeyID}
+	}
+	if totals, ok := h.creditFiatTotals(c, filter); ok {
+		stats.TotalActualCostFiat = totals.Total[""]
+	}
+
+	response.Success(c, stats)
+}
+
+// parseUserTimeRange parses start_date, end_date query parameters for user dashboard
+// Uses user's timezone if provided, otherwise falls back to server timezone
+func parseUserTimeRange(c *gin.Context) (time.Time, time.Time) {
+	userTZ := c.Query("timezone") // Get user's timezone from request
+	now := timezone.NowInUserLocation(userTZ)
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+
+	var startTime, endTime time.Time
+
+	if startDate != "" {
+		if t, err := timezone.ParseInUserLocation("2006-01-02", startDate, userTZ); err == nil {
+			startTime = t
+		} else {
+			startTime = timezone.StartOfDayInUserLocation(now.AddDate(0, 0, -7), userTZ)
+		}
+	} else {
+		startTime = timezone.StartOfDayInUserLocation(now.AddDate(0, 0, -7), userTZ)
+	}
+
+	if endDate != "" {
+		if t, err := timezone.ParseInUserLocation("2006-01-02", endDate, userTZ); err == nil {
+			endTime = t.Add(24 * time.Hour) // Include the end date
+		} else {
+			endTime = timezone.StartOfDayInUserLocation(now.AddDate(0, 0, 1), userTZ)
+		}
+	} else {
+		endTime = timezone.StartOfDayInUserLocation(now.AddDate(0, 0, 1), userTZ)
+	}
+
+	return startTime, endTime
+}
+
+const (
+	defaultAPIKeyDailyUsageDays = 30
+	maxAPIKeyDailyUsageDays     = 90
+)
+
+func parseAPIKeyDailyUsageDays(raw string) (int, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return defaultAPIKeyDailyUsageDays, true
+	}
+	days, err := strconv.Atoi(raw)
+	if err != nil || days <= 0 || days > maxAPIKeyDailyUsageDays {
+		return 0, false
+	}
+	return days, true
+}
+
+func apiKeyDailyUsageRange(days int, userTZ string) (time.Time, time.Time) {
+	now := timezone.NowInUserLocation(userTZ)
+	startTime := timezone.StartOfDayInUserLocation(now.AddDate(0, 0, -(days-1)), userTZ)
+	endTime := timezone.StartOfDayInUserLocation(now.AddDate(0, 0, 1), userTZ)
+	return startTime, endTime
+}
+
+// DashboardStats handles getting user dashboard statistics
+// GET /api/v1/usage/dashboard/stats
+func (h *UsageHandler) DashboardStats(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	stats, err := h.usageService.GetUserDashboardStats(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	h.fillDashboardStatsFiat(c, subject.UserID, stats)
+
+	response.Success(c, stats)
+}
+
+// fillDashboardStatsFiat 给仪表盘的今日/累计花费填上法币合计。
+// 筛选口径与 GetUserDashboardStats 的 SQL 一一对应：总计/今日不过滤失败行、
+// 不设时间下界，今日以 timezone.Today() 为界；by_platform 用平台维度分桶。
+func (h *UsageHandler) fillDashboardStatsFiat(c *gin.Context, userID int64, stats *usagestats.UserDashboardStats) {
+	if stats == nil {
+		return
+	}
+	today := timezone.Today()
+	totals, ok := h.creditFiatTotals(c, usagestats.CreditCostBucketFilter{UserID: userID, SplitAt: today})
+	if !ok {
+		return
+	}
+	stats.TotalActualCostFiat = totals.Total[""]
+	stats.TodayActualCostFiat = totals.Since[""]
+
+	if len(stats.ByPlatform) == 0 {
+		return
+	}
+	platformTotals, ok := h.creditFiatTotals(c, usagestats.CreditCostBucketFilter{
+		UserID:    userID,
+		SplitAt:   today,
+		Dimension: usagestats.CreditBucketPlatform,
+	})
+	if !ok {
+		return
+	}
+	for i := range stats.ByPlatform {
+		p := &stats.ByPlatform[i]
+		p.TotalActualCostFiat = platformTotals.Total[p.Platform]
+		p.TodayActualCostFiat = platformTotals.Since[p.Platform]
+	}
+}
+
+// DashboardTrend handles getting user usage trend data
+// GET /api/v1/usage/dashboard/trend
+func (h *UsageHandler) DashboardTrend(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	startTime, endTime := parseUserTimeRange(c)
+	granularity := c.DefaultQuery("granularity", "day")
+
+	trend, err := h.usageService.GetUserUsageTrendByUserID(c.Request.Context(), subject.UserID, startTime, endTime, granularity)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if len(trend) > 0 {
+		if totals, ok := h.creditFiatTotals(c, usagestats.CreditCostBucketFilter{
+			UserID:      subject.UserID,
+			StartTime:   startTime,
+			EndTime:     endTime,
+			Dimension:   usagestats.CreditBucketDate,
+			Granularity: granularity,
+		}); ok {
+			for i := range trend {
+				trend[i].ActualCostFiat = totals.Total[trend[i].Date]
+			}
+		}
+	}
+
+	response.Success(c, gin.H{
+		"trend":       trend,
+		"start_date":  startTime.Format("2006-01-02"),
+		"end_date":    endTime.Add(-24 * time.Hour).Format("2006-01-02"),
+		"granularity": granularity,
+	})
+}
+
+// DashboardModels handles getting user model usage statistics
+// GET /api/v1/usage/dashboard/models
+func (h *UsageHandler) DashboardModels(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	startTime, endTime := parseUserTimeRange(c)
+
+	stats, err := h.usageService.GetUserModelStats(c.Request.Context(), subject.UserID, startTime, endTime)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if len(stats) > 0 {
+		if totals, ok := h.creditFiatTotals(c, usagestats.CreditCostBucketFilter{
+			UserID:      subject.UserID,
+			StartTime:   startTime,
+			EndTime:     endTime,
+			Dimension:   usagestats.CreditBucketModel,
+			ModelSource: usagestats.ModelSourceRequested,
+		}); ok {
+			for i := range stats {
+				stats[i].ActualCostFiat = totals.Total[stats[i].Model]
+			}
+		}
+	}
+
+	response.Success(c, gin.H{
+		"models":     stats,
+		"start_date": startTime.Format("2006-01-02"),
+		"end_date":   endTime.Add(-24 * time.Hour).Format("2006-01-02"),
+	})
+}
+
+// BatchAPIKeysUsageRequest represents the request for batch API keys usage
+type BatchAPIKeysUsageRequest struct {
+	APIKeyIDs []int64 `json:"api_key_ids" binding:"required"`
+}
+
+// DashboardAPIKeysUsage handles getting usage stats for user's own API keys
+// POST /api/v1/usage/dashboard/api-keys-usage
+func (h *UsageHandler) DashboardAPIKeysUsage(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	var req BatchAPIKeysUsageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	if len(req.APIKeyIDs) == 0 {
+		response.Success(c, gin.H{"stats": map[string]any{}})
+		return
+	}
+
+	// Limit the number of API key IDs to prevent SQL parameter overflow
+	if len(req.APIKeyIDs) > 100 {
+		response.BadRequest(c, "Too many API key IDs (maximum 100 allowed)")
+		return
+	}
+
+	validAPIKeyIDs, err := h.apiKeyService.VerifyOwnership(c.Request.Context(), subject.UserID, req.APIKeyIDs)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	if len(validAPIKeyIDs) == 0 {
+		response.Success(c, gin.H{"stats": map[string]any{}})
+		return
+	}
+
+	// 显式给出与仓储默认值相同的「最近 30 天」窗口，让法币合计和额度合计用同一个时间范围。
+	endTime := time.Now()
+	startTime := endTime.AddDate(0, 0, -30)
+	stats, err := h.usageService.GetBatchAPIKeyUsageStats(c.Request.Context(), validAPIKeyIDs, startTime, endTime)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if totals, ok := h.creditFiatTotals(c, usagestats.CreditCostBucketFilter{
+		UserID:    subject.UserID,
+		APIKeyIDs: validAPIKeyIDs,
+		StartTime: startTime,
+		EndTime:   endTime,
+		SplitAt:   timezone.Today(),
+		Dimension: usagestats.CreditBucketAPIKey,
+	}); ok {
+		for id, item := range stats {
+			key := strconv.FormatInt(id, 10)
+			item.TotalActualCostFiat = totals.Total[key]
+			item.TodayActualCostFiat = totals.Since[key]
+		}
+	}
+
+	response.Success(c, gin.H{"stats": stats})
+}
+
+// GetMyAPIKeyDailyUsage handles getting daily usage details for the current user's API key.
+// GET /api/v1/user/api-keys/:id/usage/daily?days=30
+func (h *UsageHandler) GetMyAPIKeyDailyUsage(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	apiKeyID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid API key ID")
+		return
+	}
+
+	days, ok := parseAPIKeyDailyUsageDays(c.DefaultQuery("days", ""))
+	if !ok {
+		response.BadRequest(c, "Invalid days, allowed range is 1-90")
+		return
+	}
+
+	if h.apiKeyService == nil {
+		response.InternalError(c, "API key service is not configured")
+		return
+	}
+
+	apiKey, err := h.apiKeyService.GetByID(c.Request.Context(), apiKeyID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if apiKey.UserID != subject.UserID {
+		response.Forbidden(c, "Not authorized to access this API key's usage")
+		return
+	}
+
+	userTZ := c.Query("timezone")
+	startTime, endTime := apiKeyDailyUsageRange(days, userTZ)
+	items, err := h.usageService.GetAPIKeyDailyUsage(c.Request.Context(), subject.UserID, apiKeyID, startTime, endTime)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if len(items) > 0 {
+		if totals, ok := h.creditFiatTotals(c, usagestats.CreditCostBucketFilter{
+			UserID:      subject.UserID,
+			APIKeyIDs:   []int64{apiKeyID},
+			StartTime:   startTime,
+			EndTime:     endTime,
+			Dimension:   usagestats.CreditBucketDate,
+			Granularity: "day",
+		}); ok {
+			for i := range items {
+				items[i].ActualCostFiat = totals.Total[items[i].Date]
+			}
+		}
+	}
+
+	response.Success(c, gin.H{
+		"items":      items,
+		"days":       days,
+		"start_date": startTime.Format("2006-01-02"),
+		"end_date":   endTime.AddDate(0, 0, -1).Format("2006-01-02"),
+	})
+}

@@ -1,0 +1,237 @@
+package handler
+
+import (
+	"context"
+	"database/sql"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
+	dbuser "github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+)
+
+// 注册流程走到最后一步才失败时，账号不能留在库里——连软删的行都不该有。
+//
+// 这是 2026-08-28 线上故障的直接教训。当时建号在事务外先提交，后面每一步失败都靠
+// RollbackOAuthEmailAccountCreation 软删补偿，结果 users 表里堆了一串软删行、自增 ID
+// 一路跳号，而补偿本身一旦失败就会留下真正的孤儿账号。现在建号也走同一个事务，
+// 失败路径只依赖事务回滚，不再有补偿代码。
+//
+// 触发晚期失败的手法是「注册码有效、但邀请人邀请码指向一个不存在的返利档案」：
+// 校验注册码那一步会放行，一直到 FinalizeOAuthEmailAccount 去绑定邀请人时才报错，
+// 那时账号在旧实现里已经落库了。
+func TestCompleteEmailOAuthRegistrationLeavesNoAccountWhenFinalizeFails(t *testing.T) {
+	affiliateRepo := newOAuthEmailAffiliateRepoStub(map[string]int64{"AFF456": 2002})
+	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
+		invitationEnabled: true,
+		settingValues: map[string]string{
+			service.SettingKeyAffiliateEnabled: "true",
+		},
+		affiliateFactory: func(_ *dbent.Client, settingSvc *service.SettingService) *service.AffiliateService {
+			return service.NewAffiliateService(affiliateRepo, settingSvc, nil, nil)
+		},
+	})
+	ctx := context.Background()
+
+	invitation, err := client.RedeemCode.Create().
+		SetCode("INVITE789").
+		SetType(service.RedeemTypeInvitation).
+		SetStatus(service.StatusUnused).
+		SetValue(0).
+		Save(ctx)
+	require.NoError(t, err)
+
+	const email = "rollback-target@example.com"
+	session, err := client.PendingAuthSession.Create().
+		SetSessionToken("email-oauth-rollback-session-token").
+		SetIntent(oauthIntentLogin).
+		SetProviderType("google").
+		SetProviderKey("google").
+		SetProviderSubject("google-rollback-user").
+		SetResolvedEmail(email).
+		SetRedirectTo("/dashboard").
+		SetBrowserSessionKey("browser-rollback-key").
+		SetUpstreamIdentityClaims(map[string]any{
+			"email":            email,
+			"email_verified":   true,
+			"username":         "rollback-target",
+			"provider":         "google",
+			"provider_key":     "google",
+			"provider_subject": "google-rollback-user",
+			// stub 只认得 AFF456，这个码会让绑定邀请人那一步失败
+			"aff_code": "NOSUCHCODE99",
+		}).
+		SetLocalFlowState(map[string]any{
+			"step":  oauthPendingChoiceStep,
+			"error": "invitation_required",
+		}).
+		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
+		Save(ctx)
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/google/complete-registration",
+		strings.NewReader(`{"password":"secret-123","invitation_code":"INVITE789"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: oauthPendingSessionCookieName, Value: encodeCookieValue(session.SessionToken)})
+	req.AddCookie(&http.Cookie{Name: oauthPendingBrowserCookieName, Value: encodeCookieValue("browser-rollback-key")})
+	c.Request = req
+
+	handler.completeEmailOAuthRegistration(c, "google")
+
+	require.NotEqual(t, http.StatusOK, recorder.Code, "绑定邀请人失败了，不能当成注册成功")
+	require.NotEmpty(t, affiliateRepo.ensureUserIDs,
+		"这个用例要覆盖的是「建号之后才失败」，如果连返利档案都没初始化，说明失败发生得太早，用例没测到目标路径")
+
+	// SkipSoftDelete 是这个断言的关键：普通查询会被软删过滤器挡掉，
+	// 「被软删的半成品账号」和「压根没建过」在那种查询下看起来一模一样。
+	rawCtx := mixins.SkipSoftDelete(ctx)
+	leftover, err := client.User.Query().Where(dbuser.EmailEQ(email)).Count(rawCtx)
+	require.NoError(t, err)
+	require.Zero(t, leftover, "注册没走完，users 表里不该留下任何一行，包括软删的")
+
+	// 一次性注册码在失败之后必须还能再用，否则用户换个邀请码重试就没码可用了。
+	storedInvitation, err := client.RedeemCode.Query().Where(redeemcode.IDEQ(invitation.ID)).Only(ctx)
+	require.NoError(t, err)
+	require.Nil(t, storedInvitation.UsedBy, "注册失败时一次性注册码不能被占用")
+	require.Equal(t, service.StatusUnused, storedInvitation.Status)
+}
+
+// 与上一个用例对照：这次失败发生在建号那一步本身，而不是建号之后。
+//
+// 两条路径都必须做到零残留，但走到的代码分支不同：这里 RegisterVerifiedOAuthEmailAccount
+// 直接返回错误，事务里连一行都没写过；上面那个用例则是账号已经写进事务、靠回滚撤销。
+// 分开测是因为「注册码无效」是线上最常见的失败原因，它必须干净利落地失败，
+// 不能顺手把邮箱占掉——否则用户拿到正确的码回来重试，只会撞 EMAIL_EXISTS。
+func TestCompleteEmailOAuthRegistrationLeavesNoAccountWhenInvitationInvalid(t *testing.T) {
+	affiliateRepo := newOAuthEmailAffiliateRepoStub(map[string]int64{"AFF456": 2002})
+	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
+		invitationEnabled: true,
+		settingValues: map[string]string{
+			service.SettingKeyAffiliateEnabled: "true",
+		},
+		affiliateFactory: func(_ *dbent.Client, settingSvc *service.SettingService) *service.AffiliateService {
+			return service.NewAffiliateService(affiliateRepo, settingSvc, nil, nil)
+		},
+	})
+	ctx := context.Background()
+
+	const email = "invalid-invite@example.com"
+	session, err := client.PendingAuthSession.Create().
+		SetSessionToken("email-oauth-invalid-invite-token").
+		SetIntent(oauthIntentLogin).
+		SetProviderType("google").
+		SetProviderKey("google").
+		SetProviderSubject("google-invalid-invite-user").
+		SetResolvedEmail(email).
+		SetRedirectTo("/dashboard").
+		SetBrowserSessionKey("browser-invalid-invite-key").
+		SetUpstreamIdentityClaims(map[string]any{
+			"email":            email,
+			"email_verified":   true,
+			"username":         "invalid-invite",
+			"provider":         "google",
+			"provider_key":     "google",
+			"provider_subject": "google-invalid-invite-user",
+		}).
+		SetLocalFlowState(map[string]any{
+			"step":  oauthPendingChoiceStep,
+			"error": "invitation_required",
+		}).
+		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
+		Save(ctx)
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	// 这个码库里根本不存在，注册码校验那一步就会挡下来
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/google/complete-registration",
+		strings.NewReader(`{"password":"secret-123","invitation_code":"NO-SUCH-INVITE"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: oauthPendingSessionCookieName, Value: encodeCookieValue(session.SessionToken)})
+	req.AddCookie(&http.Cookie{Name: oauthPendingBrowserCookieName, Value: encodeCookieValue("browser-invalid-invite-key")})
+	c.Request = req
+
+	handler.completeEmailOAuthRegistration(c, "google")
+
+	require.NotEqual(t, http.StatusOK, recorder.Code, "注册码无效不能算注册成功")
+	require.Empty(t, affiliateRepo.ensureUserIDs,
+		"这个用例要覆盖的是「建号那一步就失败」，返利档案不该被初始化——否则说明失败发生得比预期晚")
+
+	rawCtx := mixins.SkipSoftDelete(ctx)
+	leftover, err := client.User.Query().Where(dbuser.EmailEQ(email)).Count(rawCtx)
+	require.NoError(t, err)
+	require.Zero(t, leftover, "注册码没通过，这个邮箱不该被任何一行占住，包括软删的")
+}
+
+// 收养决策取不到时，注册要在开事务之前就失败。
+//
+// 这条对应 completeEmailOAuthRegistration 里那句注释：「收养决策只认 session，不依赖新账号，
+// 所以放在建号之前取：它失败时连事务都不必开。」顺序写反了也能跑通正常路径，只有在决策
+// 存取真的出问题时才看得出差别——那时账号已经建好，又得靠回滚去收拾。
+//
+// 触发手法是把 identity_adoption_decisions 表删掉，让决策读写失败而 session 读取照常。
+// 测完在 Cleanup 里用 Schema.Create 建回来，不影响同包的其他用例。
+func TestCompleteEmailOAuthRegistrationFailsBeforeCreatingUserWhenAdoptionDecisionUnavailable(t *testing.T) {
+	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{})
+	ctx := context.Background()
+
+	const email = "adoption-broken@example.com"
+	session, err := client.PendingAuthSession.Create().
+		SetSessionToken("email-oauth-adoption-broken-token").
+		SetIntent(oauthIntentLogin).
+		SetProviderType("google").
+		SetProviderKey("google").
+		SetProviderSubject("google-adoption-broken-user").
+		SetResolvedEmail(email).
+		SetRedirectTo("/dashboard").
+		SetBrowserSessionKey("browser-adoption-broken-key").
+		SetUpstreamIdentityClaims(map[string]any{
+			"email":            email,
+			"email_verified":   true,
+			"username":         "adoption-broken",
+			"provider":         "google",
+			"provider_key":     "google",
+			"provider_subject": "google-adoption-broken-user",
+		}).
+		SetLocalFlowState(map[string]any{"step": oauthPendingChoiceStep}).
+		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
+		Save(ctx)
+	require.NoError(t, err)
+
+	raw, err := sql.Open("sqlite", "file:auth_oauth_pending_flow_handler?mode=memory&cache=shared")
+	require.NoError(t, err)
+	defer func() { _ = raw.Close() }()
+	_, err = raw.Exec("DROP TABLE IF EXISTS identity_adoption_decisions")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, client.Schema.Create(context.Background()))
+	})
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/google/complete-registration",
+		strings.NewReader(`{"password":"secret-123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: oauthPendingSessionCookieName, Value: encodeCookieValue(session.SessionToken)})
+	req.AddCookie(&http.Cookie{Name: oauthPendingBrowserCookieName, Value: encodeCookieValue("browser-adoption-broken-key")})
+	c.Request = req
+
+	handler.completeEmailOAuthRegistration(c, "google")
+
+	require.NotEqual(t, http.StatusOK, recorder.Code, "决策取不到就不该继续注册")
+
+	rawCtx := mixins.SkipSoftDelete(ctx)
+	leftover, err := client.User.Query().Where(dbuser.EmailEQ(email)).Count(rawCtx)
+	require.NoError(t, err)
+	require.Zero(t, leftover, "决策是在建号之前取的，失败时库里不该有任何账号痕迹")
+}

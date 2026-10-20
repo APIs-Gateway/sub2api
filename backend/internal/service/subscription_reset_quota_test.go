@@ -1,0 +1,419 @@
+//go:build unit
+
+package service
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/stretchr/testify/require"
+)
+
+// resetQuotaUserSubRepoStub 支持 GetByID、ResetUsageWindows，
+// 其余方法继承 userSubRepoNoop（panic）。
+type resetQuotaUserSubRepoStub struct {
+	userSubRepoNoop
+
+	sub *UserSubscription
+
+	resetDailyCalled     bool
+	resetWeeklyCalled    bool
+	resetMonthlyCalled   bool
+	resetDailyErr        error
+	resetWeeklyErr       error
+	resetMonthlyErr      error
+	conditionalResetNoop bool
+	resetDailyExpected   *time.Time
+	activateCalled       bool
+	activateErr          error
+}
+
+type invalidateSubscriptionCacheErrorStub struct {
+	BillingCache
+	called bool
+}
+
+func (s *invalidateSubscriptionCacheErrorStub) InvalidateSubscriptionCache(context.Context, int64, int64) error {
+	s.called = true
+	return errors.New("redis unavailable")
+}
+
+func (r *resetQuotaUserSubRepoStub) GetByID(_ context.Context, id int64) (*UserSubscription, error) {
+	if r.sub == nil || r.sub.ID != id {
+		return nil, ErrSubscriptionNotFound
+	}
+	cp := *r.sub
+	return &cp, nil
+}
+
+func (r *resetQuotaUserSubRepoStub) ActivateWindows(_ context.Context, id int64, start time.Time) error {
+	r.activateCalled = true
+	if r.activateErr != nil {
+		return r.activateErr
+	}
+	if r.sub != nil && r.sub.ID == id {
+		r.sub.DailyWindowStart = &start
+		r.sub.WeeklyWindowStart = &start
+		r.sub.MonthlyWindowStart = &start
+	}
+	return nil
+}
+
+func (r *resetQuotaUserSubRepoStub) ResetUsageWindows(_ context.Context, _ int64, resetDaily, resetWeekly, resetMonthly bool, windowStart time.Time) error {
+	r.resetDailyCalled = resetDaily
+	r.resetWeeklyCalled = resetWeekly
+	r.resetMonthlyCalled = resetMonthly
+	if resetDaily && r.resetDailyErr != nil {
+		return r.resetDailyErr
+	}
+	if resetWeekly && r.resetWeeklyErr != nil {
+		return r.resetWeeklyErr
+	}
+	if resetMonthly && r.resetMonthlyErr != nil {
+		return r.resetMonthlyErr
+	}
+	if r.sub == nil {
+		return nil
+	}
+	if resetDaily {
+		r.sub.DailyUsageUSD = 0
+		r.sub.DailyWindowStart = &windowStart
+	}
+	if resetWeekly {
+		r.sub.WeeklyUsageUSD = 0
+		r.sub.WeeklyWindowStart = &windowStart
+	}
+	if resetMonthly {
+		r.sub.MonthlyUsageUSD = 0
+		r.sub.MonthlyWindowStart = &windowStart
+	}
+	return nil
+}
+
+func (r *resetQuotaUserSubRepoStub) ResetDailyUsage(_ context.Context, _ int64, expectedWindowStart *time.Time, windowStart time.Time) error {
+	r.resetDailyCalled = true
+	if expectedWindowStart != nil {
+		expected := *expectedWindowStart
+		r.resetDailyExpected = &expected
+	}
+	if r.resetDailyErr == nil && r.sub != nil && !r.conditionalResetNoop {
+		r.sub.DailyUsageUSD = 0
+		r.sub.DailyWindowStart = &windowStart
+	}
+	return r.resetDailyErr
+}
+
+func (r *resetQuotaUserSubRepoStub) ResetWeeklyUsage(_ context.Context, _ int64, _ *time.Time, _ time.Time) error {
+	r.resetWeeklyCalled = true
+	return r.resetWeeklyErr
+}
+
+func (r *resetQuotaUserSubRepoStub) ResetMonthlyUsage(_ context.Context, _ int64, _ *time.Time, _ time.Time) error {
+	r.resetMonthlyCalled = true
+	return r.resetMonthlyErr
+}
+
+func newResetQuotaSvc(stub *resetQuotaUserSubRepoStub) *SubscriptionService {
+	return NewSubscriptionService(groupRepoNoop{}, stub, nil, nil, nil, nil, nil, nil)
+}
+
+func TestAdminResetQuota_ResetBoth(t *testing.T) {
+	stub := &resetQuotaUserSubRepoStub{
+		sub: &UserSubscription{ID: 1, UserID: 10, GroupID: 20},
+	}
+	svc := newResetQuotaSvc(stub)
+
+	result, err := svc.AdminResetQuota(context.Background(), 1, true, true, false)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, stub.resetDailyCalled, "应调用 ResetDailyUsage")
+	require.True(t, stub.resetWeeklyCalled, "应调用 ResetWeeklyUsage")
+	require.False(t, stub.resetMonthlyCalled, "不应调用 ResetMonthlyUsage")
+}
+
+func TestAdminResetQuota_ResetDailyOnly(t *testing.T) {
+	stub := &resetQuotaUserSubRepoStub{
+		sub: &UserSubscription{ID: 2, UserID: 10, GroupID: 20},
+	}
+	svc := newResetQuotaSvc(stub)
+
+	result, err := svc.AdminResetQuota(context.Background(), 2, true, false, false)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, stub.resetDailyCalled, "应调用 ResetDailyUsage")
+	require.False(t, stub.resetWeeklyCalled, "不应调用 ResetWeeklyUsage")
+	require.False(t, stub.resetMonthlyCalled, "不应调用 ResetMonthlyUsage")
+}
+
+func TestAdminResetQuota_ResetWeeklyOnly(t *testing.T) {
+	stub := &resetQuotaUserSubRepoStub{
+		sub: &UserSubscription{ID: 3, UserID: 10, GroupID: 20},
+	}
+	svc := newResetQuotaSvc(stub)
+
+	result, err := svc.AdminResetQuota(context.Background(), 3, false, true, false)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, stub.resetDailyCalled, "不应调用 ResetDailyUsage")
+	require.True(t, stub.resetWeeklyCalled, "应调用 ResetWeeklyUsage")
+	require.False(t, stub.resetMonthlyCalled, "不应调用 ResetMonthlyUsage")
+}
+
+func TestAdminResetQuota_BothFalseReturnsError(t *testing.T) {
+	stub := &resetQuotaUserSubRepoStub{
+		sub: &UserSubscription{ID: 7, UserID: 10, GroupID: 20},
+	}
+	svc := newResetQuotaSvc(stub)
+
+	_, err := svc.AdminResetQuota(context.Background(), 7, false, false, false)
+
+	require.ErrorIs(t, err, ErrInvalidInput)
+	require.False(t, stub.resetDailyCalled)
+	require.False(t, stub.resetWeeklyCalled)
+	require.False(t, stub.resetMonthlyCalled)
+}
+
+func TestAdminResetQuota_SubscriptionNotFound(t *testing.T) {
+	stub := &resetQuotaUserSubRepoStub{sub: nil}
+	svc := newResetQuotaSvc(stub)
+
+	_, err := svc.AdminResetQuota(context.Background(), 999, true, true, true)
+
+	require.ErrorIs(t, err, ErrSubscriptionNotFound)
+	require.False(t, stub.resetDailyCalled)
+	require.False(t, stub.resetWeeklyCalled)
+	require.False(t, stub.resetMonthlyCalled)
+}
+
+func TestAdminResetQuota_ResetDailyUsageError(t *testing.T) {
+	dbErr := errors.New("db error")
+	stub := &resetQuotaUserSubRepoStub{
+		sub:           &UserSubscription{ID: 4, UserID: 10, GroupID: 20},
+		resetDailyErr: dbErr,
+	}
+	svc := newResetQuotaSvc(stub)
+
+	_, err := svc.AdminResetQuota(context.Background(), 4, true, true, false)
+
+	require.ErrorIs(t, err, dbErr)
+	require.True(t, stub.resetDailyCalled)
+	require.True(t, stub.resetWeeklyCalled, "原子重置会在一次调用中提交所选窗口")
+}
+
+func TestAdminResetQuota_ResetWeeklyUsageError(t *testing.T) {
+	dbErr := errors.New("db error")
+	stub := &resetQuotaUserSubRepoStub{
+		sub:            &UserSubscription{ID: 5, UserID: 10, GroupID: 20},
+		resetWeeklyErr: dbErr,
+	}
+	svc := newResetQuotaSvc(stub)
+
+	_, err := svc.AdminResetQuota(context.Background(), 5, false, true, false)
+
+	require.ErrorIs(t, err, dbErr)
+	require.True(t, stub.resetWeeklyCalled)
+}
+
+func TestAdminResetQuota_ResetMonthlyOnly(t *testing.T) {
+	stub := &resetQuotaUserSubRepoStub{
+		sub: &UserSubscription{ID: 8, UserID: 10, GroupID: 20},
+	}
+	svc := newResetQuotaSvc(stub)
+
+	result, err := svc.AdminResetQuota(context.Background(), 8, false, false, true)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, stub.resetDailyCalled, "不应调用 ResetDailyUsage")
+	require.False(t, stub.resetWeeklyCalled, "不应调用 ResetWeeklyUsage")
+	require.True(t, stub.resetMonthlyCalled, "应调用 ResetMonthlyUsage")
+}
+
+func TestAdminResetQuota_ResetMonthlyUsageError(t *testing.T) {
+	dbErr := errors.New("db error")
+	stub := &resetQuotaUserSubRepoStub{
+		sub:             &UserSubscription{ID: 9, UserID: 10, GroupID: 20},
+		resetMonthlyErr: dbErr,
+	}
+	svc := newResetQuotaSvc(stub)
+
+	_, err := svc.AdminResetQuota(context.Background(), 9, false, false, true)
+
+	require.ErrorIs(t, err, dbErr)
+	require.True(t, stub.resetMonthlyCalled)
+}
+
+func TestAdminResetQuota_ReturnsRefreshedSub(t *testing.T) {
+	stub := &resetQuotaUserSubRepoStub{
+		sub: &UserSubscription{
+			ID:            6,
+			UserID:        10,
+			GroupID:       20,
+			DailyUsageUSD: 99.9,
+		},
+	}
+
+	svc := newResetQuotaSvc(stub)
+	result, err := svc.AdminResetQuota(context.Background(), 6, true, false, false)
+
+	require.NoError(t, err)
+	// ResetUsageWindows stub 会将 sub.DailyUsageUSD 归零，
+	// 服务应返回第二次 GetByID 的刷新值而非初始的 99.9
+	require.Equal(t, float64(0), result.DailyUsageUSD, "返回的订阅应反映已归零的用量")
+	require.True(t, stub.resetDailyCalled)
+}
+
+func TestEnsureWindowMaintenance_ReturnsFreshSnapshotAfterStaleReset(t *testing.T) {
+	oldWindowStart := time.Now().Add(-48 * time.Hour)
+	currentWindowStart := time.Now()
+	stub := &resetQuotaUserSubRepoStub{
+		conditionalResetNoop: true,
+		sub: &UserSubscription{
+			ID:               10,
+			UserID:           20,
+			GroupID:          30,
+			StartsAt:         time.Now().Add(-72 * time.Hour),
+			ExpiresAt:        time.Now().Add(72 * time.Hour),
+			Status:           SubscriptionStatusActive,
+			DailyWindowStart: &currentWindowStart,
+			DailyUsageUSD:    3,
+		},
+	}
+	stale := *stub.sub
+	stale.DailyWindowStart = &oldWindowStart
+	stale.DailyUsageUSD = 10
+	svc := newResetQuotaSvc(stub)
+	cache := &invalidateSubscriptionCacheErrorStub{}
+	svc.billingCacheService = &BillingCacheService{cache: cache}
+
+	refreshed, err := svc.EnsureWindowMaintenance(context.Background(), &stale)
+
+	require.NoError(t, err)
+	require.True(t, stub.resetDailyCalled)
+	require.NotNil(t, stub.resetDailyExpected)
+	require.Equal(t, oldWindowStart, *stub.resetDailyExpected)
+	require.InDelta(t, 3, refreshed.DailyUsageUSD, 1e-9, "must return the winner's new-window usage")
+	require.Equal(t, currentWindowStart, *refreshed.DailyWindowStart)
+	require.Zero(t, stale.DailyUsageUSD, "local precheck snapshot may be zeroed but must not be used for admission")
+	require.True(t, cache.called, "billing cache invalidation should still be attempted")
+}
+
+func TestEnsureWindowMaintenance_RejectsNilSubscription(t *testing.T) {
+	svc := newResetQuotaSvc(&resetQuotaUserSubRepoStub{})
+
+	_, err := svc.EnsureWindowMaintenance(context.Background(), nil)
+
+	require.ErrorIs(t, err, ErrSubscriptionNilInput)
+}
+
+func TestEnsureWindowMaintenance_ActivatesUninitializedWindows(t *testing.T) {
+	stub := &resetQuotaUserSubRepoStub{
+		sub: &UserSubscription{
+			ID:        11,
+			UserID:    20,
+			GroupID:   30,
+			Status:    SubscriptionStatusActive,
+			StartsAt:  time.Now().Add(-time.Hour),
+			ExpiresAt: time.Now().Add(48 * time.Hour),
+		},
+	}
+	svc := newResetQuotaSvc(stub)
+	stale := *stub.sub
+
+	refreshed, err := svc.EnsureWindowMaintenance(context.Background(), &stale)
+
+	require.NoError(t, err)
+	require.True(t, stub.activateCalled)
+	require.NotNil(t, refreshed.DailyWindowStart)
+	require.NotNil(t, refreshed.WeeklyWindowStart)
+	require.NotNil(t, refreshed.MonthlyWindowStart)
+}
+
+func TestEnsureWindowMaintenance_ReturnsActivationAndReadErrors(t *testing.T) {
+	t.Run("activation error", func(t *testing.T) {
+		activationErr := errors.New("activation failed")
+		stub := &resetQuotaUserSubRepoStub{activateErr: activationErr}
+		svc := newResetQuotaSvc(stub)
+
+		_, err := svc.EnsureWindowMaintenance(context.Background(), &UserSubscription{ID: 12})
+
+		require.ErrorIs(t, err, activationErr)
+		require.True(t, stub.activateCalled)
+	})
+
+	t.Run("fresh read error", func(t *testing.T) {
+		windowStart := time.Now()
+		svc := newResetQuotaSvc(&resetQuotaUserSubRepoStub{})
+
+		_, err := svc.EnsureWindowMaintenance(context.Background(), &UserSubscription{
+			ID:               13,
+			DailyWindowStart: &windowStart,
+		})
+
+		require.ErrorIs(t, err, ErrSubscriptionNotFound)
+	})
+}
+
+func TestEnsureWindowMaintenance_WaitsForConfiguredL1Invalidation(t *testing.T) {
+	windowStart := time.Now()
+	stub := &resetQuotaUserSubRepoStub{
+		sub: &UserSubscription{
+			ID:               14,
+			UserID:           20,
+			GroupID:          30,
+			Status:           SubscriptionStatusActive,
+			StartsAt:         time.Now().Add(-time.Hour),
+			ExpiresAt:        time.Now().Add(48 * time.Hour),
+			DailyWindowStart: &windowStart,
+		},
+	}
+	svc := NewSubscriptionService(groupRepoNoop{}, stub, nil, nil, nil, nil, nil, &config.Config{
+		SubscriptionCache: config.SubscriptionCacheConfig{L1Size: 16, L1TTLSeconds: 60},
+	})
+	t.Cleanup(svc.Stop)
+	input := *stub.sub
+
+	refreshed, err := svc.EnsureWindowMaintenance(context.Background(), &input)
+
+	require.NoError(t, err)
+	require.NotNil(t, refreshed)
+	require.NotNil(t, svc.subCacheL1)
+}
+
+func TestCheckAndResetWindows_ResetsAllExpiredWindows(t *testing.T) {
+	now := time.Now()
+	dailyStart := now.Add(-48 * time.Hour)
+	weeklyStart := now.Add(-8 * 24 * time.Hour)
+	monthlyStart := now.AddDate(0, -2, 0)
+	stub := &resetQuotaUserSubRepoStub{}
+	svc := newResetQuotaSvc(stub)
+	sub := &UserSubscription{
+		ID:                 15,
+		UserID:             20,
+		GroupID:            30,
+		StartsAt:           now.Add(-72 * time.Hour),
+		ExpiresAt:          now.Add(72 * time.Hour),
+		DailyWindowStart:   &dailyStart,
+		WeeklyWindowStart:  &weeklyStart,
+		MonthlyWindowStart: &monthlyStart,
+		DailyUsageUSD:      1,
+		WeeklyUsageUSD:     2,
+		MonthlyUsageUSD:    3,
+	}
+
+	err := svc.CheckAndResetWindows(context.Background(), sub)
+
+	require.NoError(t, err)
+	require.True(t, stub.resetDailyCalled)
+	require.True(t, stub.resetWeeklyCalled)
+	require.True(t, stub.resetMonthlyCalled)
+	require.Zero(t, sub.DailyUsageUSD)
+	require.Zero(t, sub.WeeklyUsageUSD)
+	require.Zero(t, sub.MonthlyUsageUSD)
+}

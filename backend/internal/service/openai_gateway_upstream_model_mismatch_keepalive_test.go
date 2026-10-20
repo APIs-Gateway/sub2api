@@ -1,0 +1,308 @@
+//go:build unit
+
+package service
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+)
+
+// 上游模型不一致拦截 × SSE 心跳：等待上游首事件期间网关已按 stream_keepalive_interval
+// 写过心跳（Responses / Chat 是注释行 ":\n\n"，Anthropic 入站是 ping 事件），随后上游才给
+// 带错误 model 的首事件。心跳不算内容交付，必须仍能拦截并切号；
+// 客户端只收到心跳字节，不能收到任何业务事件。
+//
+// 上游 body 用 keepaliveGatedBody 门控：直到网关第一次 Flush（即心跳真正写出）才放出数据，
+// 不依赖固定 sleep。stream_keepalive_interval 只能配整秒，且首个 tick 距 lastDownstreamWriteAt
+// 略小于 1s 会被跳过，所以每个用例约等 2s。
+
+const (
+	upstreamModelMismatchKeepaliveComment = ":\n\n"
+	upstreamModelMismatchKeepalivePing    = "event: ping\ndata: {\"type\":\"ping\"}\n\n"
+)
+
+// keepaliveGatedBody 在首次 Read 时阻塞，直到 gate 关闭（网关首次 Flush）或超时兜底。
+type keepaliveGatedBody struct {
+	gate   <-chan struct{}
+	reader io.Reader
+	opened bool
+}
+
+func (b *keepaliveGatedBody) Read(p []byte) (int, error) {
+	if !b.opened {
+		select {
+		case <-b.gate:
+		case <-time.After(10 * time.Second):
+		}
+		b.opened = true
+	}
+	return b.reader.Read(p)
+}
+
+func (b *keepaliveGatedBody) Close() error { return nil }
+
+// roleThenGateBody delivers a complete role-only preamble, then waits for the
+// gateway's first flush before releasing semantic content.
+type roleThenGateBody struct {
+	first  []byte
+	later  io.Reader
+	gate   <-chan struct{}
+	opened bool
+}
+
+func (b *roleThenGateBody) Read(p []byte) (int, error) {
+	if len(b.first) > 0 {
+		n := copy(p, b.first)
+		b.first = b.first[n:]
+		return n, nil
+	}
+	if !b.opened {
+		select {
+		case <-b.gate:
+		case <-time.After(openAIChatPreambleMaxWait + 3*time.Second):
+			return 0, context.DeadlineExceeded
+		}
+		b.opened = true
+	}
+	return b.later.Read(p)
+}
+
+func (b *roleThenGateBody) Close() error { return nil }
+
+// installKeepaliveGate 把 c.Writer 换成首次 Flush 即发信号的包装，并返回门控后的上游 body。
+func installKeepaliveGate(c *gin.Context, body string) io.ReadCloser {
+	flushed := make(chan struct{})
+	c.Writer = &compactKeepaliveSignalWriter{ResponseWriter: c.Writer, flushed: flushed}
+	return &keepaliveGatedBody{gate: flushed, reader: strings.NewReader(body)}
+}
+
+func requireUpstreamModelMismatchKeepaliveFailover(t *testing.T, c *gin.Context, err error, gotBody, wantKeepalive string) {
+	t.Helper()
+	failoverErr := requireUpstreamModelMismatchFailover(t, err)
+	require.False(t, failoverErr.SafeToFailoverAfterWrite, "心跳后的拦截不占首输出超时的单次切号额度；放行由扣除心跳后的 Size 判定")
+	require.True(t, c.Writer.Written(), "心跳已提交响应头")
+	require.Equal(t, wantKeepalive, gotBody, "客户端只能收到心跳字节，不能有任何业务事件")
+	require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c), "扣除心跳后应视为未写")
+
+	mark := GetOpsUpstreamModelMismatch(c)
+	require.NotNil(t, mark)
+	require.True(t, mark.Blocked, "心跳后仍应拦截而不是只打标")
+	require.Equal(t, upstreamModelMismatchSentModel, mark.SentModel)
+	require.Equal(t, upstreamModelMismatchGotModel, mark.ResponseModel)
+	require.True(t, mark.Stream)
+}
+
+func newUpstreamModelMismatchKeepaliveResponsesTest(t *testing.T, firstOutputGuard bool) (*OpenAIGatewayService, *gin.Context, func() string, *Account) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	c, recorder := newOpenAIImageGenerationControlTestContext(true, "codex_cli_rs/0.144.1")
+	body := installKeepaliveGate(c, upstreamModelMismatchSSEBody(upstreamModelMismatchGotModel, upstreamModelMismatchGotModel, "leak"))
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       body,
+	}}
+	svc := newOpenAIImageGenerationControlTestService(upstream)
+	svc.cfg.Gateway.StreamKeepaliveInterval = 1
+	if firstOutputGuard {
+		svc.cfg.Gateway.OpenAIFirstOutputTimeoutSeconds = 30
+	}
+	return svc, c, func() string { return recorder.Body.String() }, newOpenAIImageGenerationControlTestAccount()
+}
+
+// Responses 主路径（普通模式，心跳经 bufferedWriter flush）：心跳后 response.created 带错模型 → 仍拦截
+func TestUpstreamModelMismatch_KeepaliveBeforeFirstEventStillBlocks_Responses(t *testing.T) {
+	svc, c, body, account := newUpstreamModelMismatchKeepaliveResponsesTest(t, false)
+
+	_, err := svc.Forward(context.Background(), c, account, []byte(upstreamModelMismatchTestRequestBody))
+
+	requireUpstreamModelMismatchKeepaliveFailover(t, c, err, body(), upstreamModelMismatchKeepaliveComment)
+}
+
+// Responses 主路径（首输出守卫模式，心跳直写 w）：同样拦截，staging 里的事件零泄漏
+func TestUpstreamModelMismatch_KeepaliveBeforeFirstEventStillBlocks_ResponsesFirstOutputGuard(t *testing.T) {
+	svc, c, body, account := newUpstreamModelMismatchKeepaliveResponsesTest(t, true)
+
+	_, err := svc.Forward(context.Background(), c, account, []byte(upstreamModelMismatchTestRequestBody))
+
+	requireUpstreamModelMismatchKeepaliveFailover(t, c, err, body(), upstreamModelMismatchKeepaliveComment)
+}
+
+func upstreamModelMismatchKeepaliveConfig() *config.Config {
+	cfg := rawChatCompletionsTestConfig()
+	cfg.Gateway.StreamKeepaliveInterval = 1
+	return cfg
+}
+
+// Anthropic 入站：心跳是 ping 事件，不置 clientOutputStarted → 仍拦截
+func TestUpstreamModelMismatch_KeepaliveBeforeFirstEventStillBlocks_Messages(t *testing.T) {
+	c, rec := newUpstreamModelMismatchPathContext(t, "/v1/messages", nil)
+	body := installKeepaliveGate(c, upstreamModelMismatchResponsesSSE(upstreamModelMismatchGotModel))
+	resp := upstreamModelMismatchHTTPResponse("text/event-stream", "rid_msg_keepalive", "")
+	resp.Body = body
+	svc := &OpenAIGatewayService{cfg: upstreamModelMismatchKeepaliveConfig()}
+
+	_, err := svc.handleAnthropicStreamingResponse(resp, c, upstreamModelMismatchTestAccount(),
+		upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, time.Now())
+
+	requireUpstreamModelMismatchKeepaliveFailover(t, c, err, rec.Body.String(), upstreamModelMismatchKeepalivePing)
+	require.NotContains(t, rec.Body.String(), "message_start")
+}
+
+// Chat 入站：心跳注释行后 response.created 带错模型 → 仍拦截
+func TestUpstreamModelMismatch_KeepaliveBeforeFirstEventStillBlocks_Chat(t *testing.T) {
+	c, rec := newUpstreamModelMismatchPathContext(t, "/v1/chat/completions", nil)
+	body := installKeepaliveGate(c, upstreamModelMismatchResponsesSSE(upstreamModelMismatchGotModel))
+	resp := upstreamModelMismatchHTTPResponse("text/event-stream", "rid_chat_keepalive", "")
+	resp.Body = body
+	svc := &OpenAIGatewayService{cfg: upstreamModelMismatchKeepaliveConfig()}
+
+	result, err := svc.handleChatStreamingResponse(resp, c, upstreamModelMismatchTestAccount(),
+		upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, time.Now(), 0)
+
+	require.NotNil(t, result, "已写过心跳时 finalizeStream 返回带 usage 的结果")
+	requireUpstreamModelMismatchKeepaliveFailover(t, c, err, rec.Body.String(), upstreamModelMismatchKeepaliveComment)
+	require.NotContains(t, rec.Body.String(), "chat.completion.chunk")
+}
+
+// With configured keepalives disabled, the preamble deadline still emits only
+// a replayable SSE comment while the first upstream model remains unknown.
+func TestUpstreamModelMismatch_ChatPreambleDeadlinePreservesFailover(t *testing.T) {
+	c, rec := newUpstreamModelMismatchPathContext(t, "/v1/chat/completions", nil)
+	body := installKeepaliveGate(c, upstreamModelMismatchResponsesSSE(upstreamModelMismatchGotModel))
+	resp := upstreamModelMismatchHTTPResponse("text/event-stream", "rid_chat_preamble_deadline", "")
+	resp.Body = body
+	cfg := upstreamModelMismatchKeepaliveConfig()
+	cfg.Gateway.StreamKeepaliveInterval = 0
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	result, err := svc.handleChatStreamingResponse(resp, c, upstreamModelMismatchTestAccount(),
+		upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, upstreamModelMismatchSentModel, time.Now(), 0)
+
+	require.NotNil(t, result)
+	requireUpstreamModelMismatchKeepaliveFailover(t, c, err, rec.Body.String(), upstreamModelMismatchKeepaliveComment)
+}
+
+func TestChatPreambleDeadlineReleasesValidatedRoleFrame(t *testing.T) {
+	c, rec := newUpstreamModelMismatchPathContext(t, "/v1/chat/completions", nil)
+	flushed := make(chan struct{})
+	c.Writer = &compactKeepaliveSignalWriter{ResponseWriter: c.Writer, flushed: flushed}
+	first := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_role","model":"gpt-5.5","status":"in_progress","output":[]}}`,
+		"",
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_role","role":"assistant","status":"in_progress","content":[]}}`,
+		"",
+	}, "\n") + "\n"
+	later := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_role","delta":"after wait"}`,
+		"",
+		`data: {"type":"response.completed","response":{"id":"resp_role","model":"gpt-5.5","status":"completed","usage":{"input_tokens":2,"output_tokens":1}}}`,
+		"",
+	}, "\n")
+	resp := upstreamModelMismatchHTTPResponse("text/event-stream", "rid_chat_role_deadline", "")
+	resp.Body = &roleThenGateBody{first: []byte(first), later: strings.NewReader(later), gate: flushed}
+	cfg := upstreamModelMismatchKeepaliveConfig()
+	cfg.Gateway.StreamKeepaliveInterval = 0
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	result, err := svc.handleChatStreamingResponse(resp, c, upstreamModelMismatchTestAccount(),
+		"gpt-5.5", "gpt-5.5", "gpt-5.5", time.Now(), 0)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, strings.HasPrefix(rec.Body.String(), "data: "), "validated role should be released at the deadline")
+	require.Contains(t, rec.Body.String(), `"role":"assistant"`)
+	require.Contains(t, rec.Body.String(), "after wait")
+}
+
+func TestRawChatPreambleDeadlineReleasesValidatedRoleFrame(t *testing.T) {
+	c, rec := newUpstreamModelMismatchPathContext(t, "/v1/chat/completions", nil)
+	flushed := make(chan struct{})
+	c.Writer = &compactKeepaliveSignalWriter{ResponseWriter: c.Writer, flushed: flushed}
+	first := `data: {"model":"gpt-5.5","choices":[{"index":0,"delta":{"role":"assistant"}}]}` + "\n\n"
+	later := strings.Join([]string{
+		`data: {"choices":[{"index":0,"delta":{"content":"after wait"}}]}`,
+		"",
+		`data: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	resp := upstreamModelMismatchHTTPResponse("text/event-stream", "rid_raw_role_deadline", "")
+	resp.Body = &roleThenGateBody{first: []byte(first), later: strings.NewReader(later), gate: flushed}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	result, err := svc.streamRawChatCompletions(c, resp, upstreamModelMismatchTestAccount(),
+		"gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), 0)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, strings.HasPrefix(rec.Body.String(), "data: "), "validated raw role should be released at the deadline")
+	require.Contains(t, rec.Body.String(), `"role":"assistant"`)
+	require.Contains(t, rec.Body.String(), "after wait")
+}
+
+func TestChatPreambleDeadlineLateSilentRefusalIsStreamError(t *testing.T) {
+	for _, raw := range []bool{false, true} {
+		name := "converted"
+		if raw {
+			name = "raw"
+		}
+		t.Run(name, func(t *testing.T) {
+			c, rec := newUpstreamModelMismatchPathContext(t, "/v1/chat/completions", nil)
+			flushed := make(chan struct{})
+			c.Writer = &compactKeepaliveSignalWriter{ResponseWriter: c.Writer, flushed: flushed}
+			var first, later string
+			if raw {
+				first = `data: {"model":"gpt-5.5","choices":[{"index":0,"delta":{"role":"assistant"}}]}` + "\n\n"
+				later = `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\ndata: [DONE]\n\n"
+			} else {
+				first = `data: {"type":"response.created","response":{"id":"resp_refusal","model":"gpt-5.5","status":"in_progress","output":[]}}` + "\n\n"
+				later = `data: {"type":"response.completed","response":{"id":"resp_refusal","model":"gpt-5.5","status":"completed","output":[]}}` + "\n\n"
+			}
+			resp := upstreamModelMismatchHTTPResponse("text/event-stream", "rid_late_refusal", "")
+			resp.Body = &roleThenGateBody{first: []byte(first), later: strings.NewReader(later), gate: flushed}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+			var result *OpenAIForwardResult
+			var err error
+			if raw {
+				result, err = svc.streamRawChatCompletions(c, resp, upstreamModelMismatchTestAccount(),
+					"gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), openAISilentRefusalMinRequestBodyBytes)
+			} else {
+				result, err = svc.handleChatStreamingResponse(resp, c, upstreamModelMismatchTestAccount(),
+					"gpt-5.5", "gpt-5.5", "gpt-5.5", time.Now(), openAISilentRefusalMinRequestBodyBytes)
+			}
+			require.ErrorContains(t, err, "upstream response failed")
+			require.NotNil(t, result)
+			require.True(t, strings.HasPrefix(rec.Body.String(), "data: "), "role must be released before the late refusal")
+			require.Contains(t, rec.Body.String(), `"code":"openai_silent_refusal"`)
+			require.NotContains(t, rec.Body.String(), "data: [DONE]")
+			require.Zero(t, result.Usage.InputTokens)
+			_, recorded := c.Get(OpsUpstreamErrorsKey)
+			require.True(t, recorded, "late refusal must be visible in Ops/SLA")
+		})
+	}
+}
+
+// 没写过心跳时：零字节、普通切号语义
+func TestUpstreamModelMismatch_NoKeepaliveKeepsSafeToFailoverAfterWriteFalse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := newUpstreamModelMismatchSSEUpstream(upstreamModelMismatchSSEBody("gpt-6-sol", "gpt-6-sol", "leak"))
+	svc := newOpenAIImageGenerationControlTestService(upstream)
+	c, recorder := newOpenAIImageGenerationControlTestContext(true, "codex_cli_rs/0.144.1")
+
+	_, err := svc.Forward(context.Background(), c, newOpenAIImageGenerationControlTestAccount(), []byte(upstreamModelMismatchTestRequestBody))
+
+	failoverErr := requireUpstreamModelMismatchFailover(t, err)
+	require.False(t, failoverErr.SafeToFailoverAfterWrite)
+	require.False(t, c.Writer.Written())
+	require.Empty(t, recorder.Body.String())
+}

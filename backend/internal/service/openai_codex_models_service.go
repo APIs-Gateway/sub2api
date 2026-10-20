@@ -1,0 +1,681 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"reflect"
+	"strings"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/common"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
+	"golang.org/x/net/http2"
+)
+
+// chatgptCodexModelsURL is the ChatGPT Codex models manifest endpoint.
+// Package-level variable so tests can point it at a stub server.
+var chatgptCodexModelsURL = "https://chatgpt.com/backend-api/codex/models"
+
+const codexModelsManifestBodyLimit int64 = 8 << 20
+
+// CodexModelsManifest carries the selected account's live model representation
+// and its validator, including projection through an existing account mapping.
+type CodexModelsManifest struct {
+	Body        []byte
+	ETag        string
+	NotModified bool
+}
+
+type codexModelsManifestUpstreamError struct {
+	err        error
+	retryable  bool
+	statusCode int
+	headers    http.Header
+	body       []byte
+}
+
+func (e *codexModelsManifestUpstreamError) Error() string { return e.err.Error() }
+
+func (e *codexModelsManifestUpstreamError) Unwrap() error { return e.err }
+
+// IsRetryableCodexModelsManifestError reports whether another selected account
+// may succeed without changing the request. Configuration and upstream 4xx
+// responses, except 429 and ChatGPT-backend 401, are intentionally not
+// retried. A manifest 401 from the ChatGPT Codex backend reflects the
+// selected OAuth account's upstream token rather than the client request, so
+// a different account may still serve the manifest. Custom API key upstreams
+// keep the old no-failover 401 behavior because their /models auth semantics
+// are not authoritative for the account.
+func IsRetryableCodexModelsManifestError(err error) bool {
+	var upstreamErr *codexModelsManifestUpstreamError
+	if errors.As(err, &upstreamErr) {
+		return upstreamErr.retryable
+	}
+	// Keep the classification stable for callers that preserve the canonical
+	// application error but do not retain the private wrapper type.
+	var appErr *infraerrors.ApplicationError
+	if errors.As(err, &appErr) {
+		if appErr.Reason == "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST" {
+			return true
+		}
+		if appErr.Reason == "OPENAI_CODEX_MODELS_UPSTREAM_FAILED" {
+			code := int(appErr.Code)
+			return code == http.StatusTooManyRequests || (code >= http.StatusInternalServerError && code < 600)
+		}
+	}
+	return false
+}
+
+func isRetryableCodexModelsManifestTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Validate before errors.Is/As and the retained text fallback: typed nil
+	// receivers or cyclic malformed wrappers must not panic or loop there.
+	if _, valid := codexModelsTransportErrorNodes(err); !valid {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, net.ErrClosed) {
+		return true
+	}
+
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	if isCodexModelsGoAwayError(err) {
+		return true
+	}
+	var streamErr http2.StreamError
+	if errors.As(err, &streamErr) {
+		return true
+	}
+	var connectionErr http2.ConnectionError
+	if errors.As(err, &connectionErr) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+
+	// Retain the existing string fallback for previously supported stream and
+	// connection errors. GOAWAY matching above uses the pinned provider/type
+	// identity even when an outer wrapper's Error method hides the message.
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "http2:") &&
+		(strings.Contains(message, "goaway") ||
+			strings.Contains(message, "refused_stream") ||
+			strings.Contains(message, "frame too large")) {
+		return true
+	}
+	if strings.Contains(message, "stream error: stream id ") {
+		return true
+	}
+	for _, code := range []http2.ErrCode{
+		http2.ErrCodeNo,
+		http2.ErrCodeProtocol,
+		http2.ErrCodeInternal,
+		http2.ErrCodeFlowControl,
+		http2.ErrCodeSettingsTimeout,
+		http2.ErrCodeStreamClosed,
+		http2.ErrCodeFrameSize,
+		http2.ErrCodeRefusedStream,
+		http2.ErrCodeCancel,
+		http2.ErrCodeCompression,
+		http2.ErrCodeConnect,
+		http2.ErrCodeEnhanceYourCalm,
+		http2.ErrCodeInadequateSecurity,
+		http2.ErrCodeHTTP11Required,
+	} {
+		if strings.Contains(message, "connection error: "+strings.ToLower(code.String())) {
+			return true
+		}
+	}
+	return false
+}
+
+// isCodexModelsGoAwayError recognizes the pinned GOAWAY providers without
+// naming deprecated x/net types or parsing an error message. net/http's type
+// is unexported, and req's HTTP/2 package is internal to its own module.
+func isCodexModelsGoAwayError(err error) bool {
+	nodes, valid := codexModelsTransportErrorNodes(err)
+	if !valid {
+		return false
+	}
+	for _, current := range nodes {
+		if isPinnedCodexModelsGoAwayType(reflect.TypeOf(current)) {
+			return true
+		}
+	}
+	return false
+}
+
+// Transport error trees are small in practice. Bound the ordinary deterministic
+// unwrap traversal, including repeated shared nodes, before standard Is/As walk
+// it again. Custom Is/As methods retain their standard-library semantics.
+func codexModelsTransportErrorNodes(err error) ([]error, bool) {
+	const maxNodes = 4096
+	type frame struct {
+		err   error
+		leave bool
+	}
+	pending := []frame{{err: err}}
+	state := make(map[error]uint8)
+	var nodes []error
+	for len(pending) > 0 {
+		item := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		current := item.err
+		if current == nil {
+			continue
+		}
+		value := reflect.ValueOf(current)
+		switch value.Kind() {
+		case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface:
+			if value.IsNil() {
+				return nil, false
+			}
+		}
+		// A nil terminal is legal for Unwrap, but url.Error's Error method
+		// dereferences Err unconditionally. Reject that specific malformed URL
+		// error before the retained text fallback can call it.
+		if urlErr, ok := current.(*url.Error); ok && urlErr.Err == nil {
+			return nil, false
+		}
+		if value.Comparable() {
+			if item.leave {
+				state[current] = 2
+				continue
+			}
+			switch state[current] {
+			case 1:
+				return nil, false
+			}
+			state[current] = 1
+			pending = append(pending, frame{err: current, leave: true})
+		}
+		if len(nodes) >= maxNodes {
+			return nil, false
+		}
+		nodes = append(nodes, current)
+		switch wrapped := current.(type) {
+		case interface{ Unwrap() []error }:
+			children := wrapped.Unwrap()
+			if len(children)+len(pending) > maxNodes {
+				return nil, false
+			}
+			for i := len(children) - 1; i >= 0; i-- {
+				pending = append(pending, frame{err: children[i]})
+			}
+		case interface{ Unwrap() error }:
+			child := wrapped.Unwrap()
+			if child == nil {
+				continue
+			}
+			pending = append(pending, frame{err: child})
+		}
+	}
+	return nodes, true
+}
+
+func isPinnedCodexModelsGoAwayType(typ reflect.Type) bool {
+	if typ == nil {
+		return false
+	}
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ.Kind() != reflect.Struct || typ.NumField() != 3 {
+		return false
+	}
+	switch {
+	case typ.PkgPath() == "net/http" && typ.Name() == "http2GoAwayError":
+	case typ.PkgPath() == "golang.org/x/net/http2" && typ.Name() == "GoAwayError":
+	case typ.PkgPath() == "github.com/imroc/req/v3/internal/http2" && typ.Name() == "GoAwayError":
+	default:
+		return false
+	}
+	for _, field := range []struct {
+		name string
+		kind reflect.Kind
+	}{
+		{"LastStreamID", reflect.Uint32},
+		{"ErrCode", reflect.Uint32},
+		{"DebugData", reflect.String},
+	} {
+		got, ok := typ.FieldByName(field.name)
+		if !ok || got.PkgPath != "" || got.Type.Kind() != field.kind {
+			return false
+		}
+	}
+	return true
+}
+
+// FetchCodexModelsManifest fetches the live Codex models manifest from the
+// ChatGPT backend for OAuth accounts or from the configured OpenAI-compatible
+// upstream for API-key accounts.
+//
+// After validating the stable top-level envelope, existing account mappings
+// project public model names. Other metadata is opaque; unmapped/passthrough
+// accounts retain the original upstream representation.
+func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, account *Account, clientVersion, ifNoneMatch string) (*CodexModelsManifest, error) {
+	if account == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_CODEX_MODELS_ACCOUNT_REQUIRED", "account is required")
+	}
+
+	clientVersion = strings.TrimSpace(clientVersion)
+	if clientVersion == "" {
+		clientVersion = openAICodexProbeVersion
+	}
+	manifest, fetchErr := s.fetchCodexModelsManifestUpstream(ctx, account, clientVersion, ifNoneMatch)
+	if !account.IsOpenAIAgentIdentity() || !isAgentIdentityTaskInvalidCodexModelsError(fetchErr) {
+		s.handleCodexModelsManifestAccountAuthError(ctx, account, account, fetchErr)
+		return manifest, fetchErr
+	}
+	expectedTaskID := strings.TrimSpace(account.GetCredential("task_id"))
+	if recoverErr := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); recoverErr != nil {
+		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_AUTH_FAILED", "agent identity task recovery failed: %v", recoverErr)
+	}
+	return s.fetchCodexModelsManifestUpstream(ctx, account, clientVersion, ifNoneMatch)
+}
+
+func isAgentIdentityTaskInvalidCodexModelsError(err error) bool {
+	var upstreamErr *codexModelsManifestUpstreamError
+	return errors.As(err, &upstreamErr) &&
+		isAgentIdentityTaskInvalidHTTPResponse(upstreamErr.statusCode, upstreamErr.body)
+}
+
+// handleCodexModelsManifestAccountAuthError feeds manifest 401s from the
+// ChatGPT Codex backend into the shared upstream-error state machinery.
+// Plain OAuth accounts use the same token for the manifest and chat requests,
+// while Agent Identity accounts have task-scoped 401 recovery and API-key
+// manifests come from custom upstreams with independent auth semantics.
+func (s *OpenAIGatewayService) handleCodexModelsManifestAccountAuthError(ctx context.Context, account, credAccount *Account, err error) {
+	if s == nil || account == nil || err == nil {
+		return
+	}
+	if credAccount == nil || !credAccount.IsOpenAIOAuth() || credAccount.IsOpenAIAgentIdentity() {
+		return
+	}
+	var upstreamErr *codexModelsManifestUpstreamError
+	if !errors.As(err, &upstreamErr) || upstreamErr.statusCode != http.StatusUnauthorized {
+		return
+	}
+	headers := upstreamErr.headers
+	if headers == nil {
+		headers = http.Header{}
+	}
+	s.handleOpenAIAccountUpstreamError(ctx, account, upstreamErr.statusCode, headers, upstreamErr.body)
+}
+
+func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Context, account *Account, clientVersion, ifNoneMatch string) (*CodexModelsManifest, error) {
+	projectAccount := codexModelsNeedAccountProjection(account)
+	upstreamIfNoneMatch := ifNoneMatch
+	if projectAccount {
+		upstreamIfNoneMatch = ""
+	}
+	requestURL := chatgptCodexModelsURL
+	authToken := ""
+	apiKeyUpstream := false
+	switch {
+	case account.IsOpenAIAgentIdentity():
+		requestURL += "?client_version=" + url.QueryEscape(clientVersion)
+	case account.IsOpenAIOAuth():
+		authToken = account.GetOpenAIAccessToken()
+		if authToken == "" {
+			return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_TOKEN_MISSING", "account has no Codex backend access token")
+		}
+		requestURL += "?client_version=" + url.QueryEscape(clientVersion)
+	case account.IsOpenAIApiKey():
+		authToken = account.GetOpenAIApiKey()
+		if authToken == "" {
+			return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_API_KEY_MISSING", "account has no API key for the Codex models upstream")
+		}
+		validatedURL, err := s.validateUpstreamBaseURL(account.GetOpenAIBaseURL())
+		if err != nil {
+			return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_API_KEY_UPSTREAM_INVALID", "invalid Codex models upstream base URL: %v", err)
+		}
+		requestURL = buildOpenAIModelsURL(validatedURL)
+		parsedURL, err := url.Parse(requestURL)
+		if err != nil {
+			return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_API_KEY_UPSTREAM_INVALID", "invalid Codex models upstream URL: %v", err)
+		}
+		query := parsedURL.Query()
+		query.Set("client_version", clientVersion)
+		parsedURL.RawQuery = query.Encode()
+		requestURL = parsedURL.String()
+		apiKeyUpstream = true
+	default:
+		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_ACCOUNT_TYPE_UNSUPPORTED", "account type %q cannot fetch the Codex models manifest", account.Type)
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, infraerrors.Newf(http.StatusInternalServerError, "OPENAI_CODEX_MODELS_REQUEST_FAILED", "create codex models request: %v", err)
+	}
+	if account.IsOpenAIAgentIdentity() {
+		authHeaders, authErr := BuildOpenAIAgentIdentityAuthenticationHeaders(reqCtx, s.accountRepo, account)
+		if authErr != nil {
+			return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_AUTH_FAILED", "build Codex models authentication: %v", authErr)
+		}
+		for key, values := range authHeaders {
+			for _, value := range values {
+				req.Header.Add(key, value)
+			}
+		}
+	} else {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Originator", "codex_cli_rs")
+	req.Header.Set("Version", clientVersion)
+	req.Header.Set("User-Agent", codexCLIUserAgent)
+	enforceCodexIdentityHeaders(req.Header)
+	if upstreamIfNoneMatch = strings.TrimSpace(upstreamIfNoneMatch); upstreamIfNoneMatch != "" {
+		req.Header.Set("If-None-Match", upstreamIfNoneMatch)
+	}
+	if chatgptAccountID := account.GetChatGPTAccountID(); chatgptAccountID != "" {
+		req.Header.Set("chatgpt-account-id", chatgptAccountID)
+	}
+	if apiKeyUpstream {
+		if userAgent := account.GetOpenAIUserAgent(); userAgent != "" {
+			req.Header.Set("User-Agent", userAgent)
+		}
+		req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+	}
+	account.ApplyHeaderOverrides(req.Header)
+	if projectAccount {
+		// Overrides can store noncanonical header keys directly. Delete every
+		// spelling so an account override cannot turn this into a partial fetch.
+		for name := range req.Header {
+			if strings.EqualFold(name, "If-None-Match") || strings.EqualFold(name, "If-Modified-Since") {
+				delete(req.Header, name)
+			}
+		}
+	}
+
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+	var client *http.Client
+	if !apiKeyUpstream || s.httpUpstream == nil {
+		client, err = httpclient.GetClient(httpclient.Options{
+			ProxyURL:              proxyURL,
+			Timeout:               15 * time.Second,
+			ResponseHeaderTimeout: 10 * time.Second,
+		})
+		if err != nil {
+			return nil, infraerrors.Newf(http.StatusInternalServerError, "OPENAI_CODEX_MODELS_PROXY_INVALID", "invalid proxy configuration: %v", err)
+		}
+	}
+
+	var resp *http.Response
+	if apiKeyUpstream && s.httpUpstream != nil {
+		resp, err = s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	} else {
+		resp, err = client.Do(req)
+	}
+	if err != nil {
+		return nil, &codexModelsManifestUpstreamError{
+			err:       infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "codex models manifest request failed: %v", err),
+			retryable: isRetryableCodexModelsManifestTransportError(err),
+		}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotModified {
+		if projectAccount {
+			return nil, &codexModelsManifestUpstreamError{
+				err:       infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST", "projected Codex catalog requires a complete upstream representation"),
+				retryable: true,
+			}
+		}
+		return &CodexModelsManifest{ETag: resp.Header.Get("ETag"), NotModified: true}, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		body = s.redactAgentIdentitySensitiveBody(reqCtx, account, body)
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			message = resp.Status
+		}
+		return nil, &codexModelsManifestUpstreamError{
+			err:        infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "codex models manifest upstream error %d: %s", resp.StatusCode, message),
+			statusCode: resp.StatusCode,
+			body:       body,
+			headers:    resp.Header.Clone(),
+			retryable: (resp.StatusCode == http.StatusUnauthorized && !apiKeyUpstream) ||
+				resp.StatusCode == http.StatusTooManyRequests ||
+				(resp.StatusCode >= http.StatusInternalServerError && resp.StatusCode < 600),
+		}
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, codexModelsManifestBodyLimit))
+	if err != nil {
+		return nil, &codexModelsManifestUpstreamError{
+			err:       infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "read codex models manifest response: %v", err),
+			retryable: isRetryableCodexModelsManifestTransportError(err),
+		}
+	}
+	if projectAccount {
+		if err := validateCodexProjectionKnownKeys(body); err != nil {
+			return nil, &codexModelsManifestUpstreamError{
+				err:       infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST", "ambiguous mapped Codex manifest: %v", err),
+				retryable: true,
+			}
+		}
+	}
+	if apiKeyUpstream {
+		body = convertOpenAIModelListToCodexManifest(body)
+		adjusted, adjustErr := adjustAPIKeyCodexModelsManifestFunc(body)
+		if adjustErr != nil {
+			return nil, &codexModelsManifestUpstreamError{
+				err: infraerrors.Newf(
+					http.StatusBadGateway,
+					"OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST",
+					"codex models manifest upstream could not be adjusted: %v",
+					adjustErr,
+				),
+				retryable: true,
+			}
+		}
+		body = adjusted
+	}
+	if err := validateCodexModelsManifestEnvelope(body); err != nil {
+		return nil, &codexModelsManifestUpstreamError{
+			err: infraerrors.Newf(
+				http.StatusBadGateway,
+				"OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST",
+				"codex models manifest upstream returned an invalid envelope: %v",
+				err,
+			),
+			retryable: true,
+		}
+	}
+	etag := resp.Header.Get("ETag")
+	if projectAccount {
+		projected, projectErr := projectCodexModelsForAccount(body, account)
+		if projectErr != nil {
+			return nil, &codexModelsManifestUpstreamError{
+				err:       infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST", "project account Codex models: %v", projectErr),
+				retryable: true,
+			}
+		}
+		// Even identity mappings need a representation validator: separate
+		// accounts/providers can reuse the same upstream ETag for different bytes.
+		etag = codexModelsRepresentationETag(projected)
+		body = projected
+		if codexModelsETagMatches(ifNoneMatch, etag) {
+			return &CodexModelsManifest{ETag: etag, NotModified: true}, nil
+		}
+	}
+	return &CodexModelsManifest{Body: body, ETag: etag}, nil
+}
+
+// convertOpenAIModelListToCodexManifest rewrites a standard OpenAI
+// GET /v1/models response ({"object":"list","data":[{"id":...},...]}) into the
+// Codex manifest envelope ({"models":[{"slug":...},...]}) so custom API key
+// upstreams that only implement the standard endpoint can serve Codex model
+// discovery. Bodies that already carry a top-level models field, are not the
+// standard list shape, or yield no usable model IDs are returned unchanged so
+// envelope validation reports the original payload.
+func convertOpenAIModelListToCodexManifest(body []byte) []byte {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil || envelope == nil {
+		return body
+	}
+	if _, ok := envelope["models"]; ok {
+		return body
+	}
+	data, ok := envelope["data"]
+	if !ok {
+		return body
+	}
+	var entries []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return body
+	}
+	type codexModelEntry struct {
+		Slug string `json:"slug"`
+	}
+	models := make([]codexModelEntry, 0, len(entries))
+	for _, entry := range entries {
+		id := strings.TrimSpace(entry.ID)
+		if id == "" {
+			continue
+		}
+		models = append(models, codexModelEntry{Slug: id})
+	}
+	if len(models) == 0 {
+		return body
+	}
+	converted, err := json.Marshal(map[string][]codexModelEntry{"models": models})
+	if err != nil {
+		return body
+	}
+	return converted
+}
+
+// apiKeyCodexModelsWithoutResponsesLite lists the models for which custom API
+// key Codex clients must not use Responses Lite: those clients do not install
+// web.run in Lite mode, so selecting it silently drops web search.
+var apiKeyCodexModelsWithoutResponsesLite = map[string]struct{}{
+	"gpt-6.1-sol":   {},
+	"gpt-6-astra":   {},
+	"gpt-6-sol":     {},
+	"gpt-6-luna":    {},
+	"gpt-5.6-sol":   {},
+	"gpt-5.6-terra": {},
+	"gpt-5.6-luna":  {},
+}
+
+// adjustAPIKeyCodexModelsManifestFunc is a seam over adjustAPIKeyCodexModelsManifest
+// so tests can force its (in practice unreachable, since it only fails when
+// re-marshaling already-validated json.RawMessage values) error path and
+// exercise the caller's error-wrapping branch.
+var adjustAPIKeyCodexModelsManifestFunc = adjustAPIKeyCodexModelsManifest
+
+// adjustAPIKeyCodexModelsManifest forces use_responses_lite to false for the
+// targeted models when a custom API-key upstream's manifest already carries a
+// Codex-native "models" envelope (e.g. another Codex-compatible gateway used
+// as the account's base URL). Bodies without a targeted true value, or that
+// fail to parse as the expected shape, are returned unchanged so the caller's
+// existing envelope validation reports the original payload.
+func adjustAPIKeyCodexModelsManifest(body []byte) ([]byte, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return body, nil
+	}
+	var models []json.RawMessage
+	if err := json.Unmarshal(envelope["models"], &models); err != nil {
+		return body, nil
+	}
+
+	changed := false
+	for i, rawModel := range models {
+		var model map[string]json.RawMessage
+		if err := json.Unmarshal(rawModel, &model); err != nil || model == nil {
+			continue
+		}
+		var slug string
+		if err := json.Unmarshal(model["slug"], &slug); err != nil {
+			continue
+		}
+		if _, targeted := apiKeyCodexModelsWithoutResponsesLite[slug]; !targeted {
+			continue
+		}
+		var useResponsesLite bool
+		if err := json.Unmarshal(model["use_responses_lite"], &useResponsesLite); err != nil || !useResponsesLite {
+			continue
+		}
+		model["use_responses_lite"] = json.RawMessage("false")
+		adjusted, err := json.Marshal(model)
+		if err != nil {
+			return nil, fmt.Errorf("encode model %q: %w", slug, err)
+		}
+		models[i] = adjusted
+		changed = true
+	}
+	if !changed {
+		return body, nil
+	}
+
+	adjustedModels, err := json.Marshal(models)
+	if err != nil {
+		return nil, fmt.Errorf("encode top-level models array: %w", err)
+	}
+	envelope["models"] = adjustedModels
+	adjusted, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("encode JSON object: %w", err)
+	}
+	return adjusted, nil
+}
+
+func validateCodexModelsManifestEnvelope(body []byte) error {
+	var envelope map[string]json.RawMessage
+	if err := common.Unmarshal(body, &envelope); err != nil {
+		return errors.New("decode JSON object: " + err.Error())
+	}
+	if envelope == nil {
+		return errors.New("expected a JSON object")
+	}
+
+	models, ok := envelope["models"]
+	if !ok {
+		return errors.New("missing top-level models array")
+	}
+	models = bytes.TrimSpace(models)
+	if len(models) == 0 || models[0] != '[' {
+		return errors.New("top-level models field is not an array")
+	}
+	var entries []json.RawMessage
+	if err := common.Unmarshal(models, &entries); err != nil {
+		return errors.New("decode top-level models array: " + err.Error())
+	}
+	return nil
+}

@@ -1,0 +1,2124 @@
+<template>
+  <AppLayout>
+    <TablePageLayout>
+      <template #filters>
+        <div class="flex flex-col gap-3">
+          <!-- 概览：接入地址是主角，数字只是一行说明 -->
+          <section class="rounded-md border border-gray-200 dark:border-dark-700" data-test="keys-overview">
+            <div class="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div class="flex min-w-0 items-center gap-3">
+                <span class="shrink-0 text-sm text-gray-600 dark:text-dark-400">{{ t('keys.overview.address') }}</span>
+                <code
+                  class="min-w-0 truncate font-mono text-sm text-gray-900 dark:text-gray-100"
+                  data-test="overview-address"
+                >{{ apiBaseUrl }}</code>
+                <button
+                  type="button"
+                  class="shrink-0 rounded-md border border-gray-200 px-2 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:border-dark-700 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                  data-test="overview-copy"
+                  @click="copyAddress"
+                >
+                  {{ addressCopied ? t('keys.overview.copied') : t('keys.overview.copy') }}
+                </button>
+              </div>
+              <EndpointPopover
+                v-if="(publicSettings?.custom_endpoints?.length ?? 0) > 0"
+                api-base-url=""
+                :custom-endpoints="publicSettings?.custom_endpoints || []"
+              />
+            </div>
+            <div
+              v-if="pagination.total > 0"
+              class="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-1 border-t border-gray-100 px-4 py-2.5 dark:border-dark-800"
+              data-test="overview-stats"
+            >
+              <p class="num text-sm text-gray-600 dark:text-dark-400" data-test="overview-enabled">
+                {{ overview.partial
+                  ? t('keys.overview.enabledList', { active: overview.enabled, shown: apiKeys.length })
+                  : t('keys.overview.enabled', { active: overview.enabled, total: pagination.total }) }}
+              </p>
+              <p class="num text-sm text-gray-600 dark:text-dark-400">
+                {{ overview.partial ? t('keys.overview.spentList') : t('keys.overview.spent') }}
+                <NumText class="ml-1 font-medium" data-test="overview-spent" :text="overview.spent" />
+              </p>
+            </div>
+          </section>
+          <div class="flex flex-wrap items-center gap-3">
+            <SearchInput
+              v-model="filterSearch"
+              :placeholder="t('keys.searchPlaceholder')"
+              class="w-full sm:w-64"
+              @search="onFilterChange"
+            />
+            <Select
+              :model-value="filterGroupId"
+              class="w-40"
+              :options="groupFilterOptions"
+              @update:model-value="onGroupFilterChange"
+            />
+            <Select
+              :model-value="filterStatus"
+              class="w-40"
+              :options="statusFilterOptions"
+              @update:model-value="onStatusFilterChange"
+            />
+          </div>
+        </div>
+      </template>
+
+      <template #actions>
+        <div class="flex justify-end gap-3">
+        <button
+          @click="loadApiKeys"
+          :disabled="loading"
+          class="btn btn-secondary"
+          :title="t('common.refresh')"
+        >
+          <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
+        </button>
+        <div ref="columnDropdownRef" class="relative">
+          <button
+            @click="showColumnDropdown = !showColumnDropdown"
+            class="btn btn-secondary px-2 md:px-3"
+            :title="t('keys.columnSettings')"
+          >
+            <svg class="h-4 w-4 md:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v12.75c0 .621.504 1.125 1.125 1.125z" />
+            </svg>
+            <span class="hidden md:inline">{{ t('keys.columnSettings') }}</span>
+          </button>
+          <div
+            v-if="showColumnDropdown"
+            class="absolute right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
+          >
+            <button
+              v-for="col in toggleableColumns"
+              :key="col.key"
+              @click="toggleColumn(col.key)"
+              class="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+            >
+              <span>{{ col.label }}</span>
+              <Icon
+                v-if="isColumnVisible(col.key)"
+                name="check"
+                size="sm"
+                class="text-primary-500"
+                :stroke-width="2"
+              />
+            </button>
+          </div>
+        </div>
+        <button @click="showCreateModal = true" class="btn btn-primary" data-tour="keys-create-btn">
+          <Icon name="plus" size="md" class="mr-2" />
+          {{ t('keys.createKey') }}
+        </button>
+      </div>
+      </template>
+
+      <template #table>
+        <DataTable
+          :columns="columns"
+          :data="apiKeys"
+          :loading="loading"
+          :server-side-sort="true"
+          default-sort-key="created_at"
+          default-sort-order="desc"
+          @sort="handleSort"
+        >
+          <template #cell-id="{ value }">
+            <span class="num text-xs text-gray-500 dark:text-gray-400">#{{ value }}</span>
+          </template>
+
+          <template #cell-key="{ value, row }">
+            <div class="flex items-center gap-2">
+              <code class="code text-xs">
+                {{ maskApiKey(value) }}
+              </code>
+              <button
+                @click="copyToClipboard(value, row.id)"
+                class="rounded-md p-1 transition-colors hover:bg-gray-100 dark:hover:bg-dark-800"
+                :class="
+                  copiedKeyId === row.id
+                    ? 'text-gray-900 dark:text-white'
+                    : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                "
+                :title="copiedKeyId === row.id ? t('keys.copied') : t('keys.copyToClipboard')"
+              >
+                <Icon
+                  v-if="copiedKeyId === row.id"
+                  name="check"
+                  size="sm"
+                  :stroke-width="2"
+                />
+                <Icon v-else name="clipboard" size="sm" />
+              </button>
+            </div>
+          </template>
+
+          <template #cell-name="{ value, row }">
+            <div class="flex items-center gap-1.5">
+              <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+              <Icon
+                v-if="row.ip_whitelist?.length > 0 || row.ip_blacklist?.length > 0"
+                name="shield"
+                size="sm"
+                class="text-gray-500 dark:text-gray-400"
+                :title="t('keys.ipRestrictionEnabled')"
+              />
+            </div>
+            <!-- 窄屏下操作列在表格右侧，需要横向滚动；接入入口在这里再放一份 -->
+            <div class="mt-1.5 flex gap-1.5 lg:hidden">
+              <button
+                type="button"
+                class="inline-flex items-center rounded-md bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-white dark:bg-gray-100 dark:text-gray-900"
+                data-test="name-connect"
+                @click="openOnboarding(row, 'install')"
+              >{{ t('keys.connect') }}</button>
+              <button
+                type="button"
+                class="inline-flex items-center rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 dark:border-dark-600 dark:text-gray-200"
+                data-test="name-ccswitch"
+                @click="openOnboarding(row, 'ccswitch')"
+              >CC Switch</button>
+            </div>
+          </template>
+
+          <template #cell-group="{ row }">
+            <div class="group/dropdown relative">
+              <button
+                :ref="(el) => setGroupButtonRef(row.id, el)"
+                @click="openGroupSelector(row)"
+                class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 transition-colors duration-200 hover:bg-gray-100 dark:hover:bg-dark-800"
+                :title="t('keys.clickToChangeGroup')"
+              >
+                <!-- 套餐低至放在徽标下一行：这一列横向放不下，窄屏只留悬停 -->
+                <div v-if="row.group" class="flex flex-col items-start gap-0.5">
+                  <GroupBadge
+                    :name="row.group.name"
+                    :platform="row.group.platform"
+                    :subscription-type="row.group.subscription_type"
+                    :rate-multiplier="row.group.rate_multiplier"
+                    :user-rate-multiplier="userGroupRates[row.group.id]"
+                    :rate-view="groupRateView(row.group, userGroupRates[row.group.id])"
+                    :inline-plan="false"
+                  />
+                  <PlanRateText
+                    v-if="listPlanView(row)"
+                    :rate-view="listPlanView(row)!"
+                    :title="listPlanView(row)!.tip"
+                    class="hidden pl-1 text-[10px] font-medium sm:block"
+                  />
+                </div>
+                <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
+                  t('keys.noGroup')
+                }}</span>
+                <span class="text-xs text-gray-600 dark:text-gray-400">{{ t('keys.selectGroup') }}</span>
+                <svg
+                  class="h-3.5 w-3.5 text-gray-400 opacity-60 transition-opacity group-hover/dropdown:opacity-100"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  stroke-width="2"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M8.25 15L12 18.75 15.75 15m-7.5-6L12 5.25 15.75 9"
+                  />
+                </svg>
+              </button>
+            </div>
+          </template>
+
+          <template #cell-usage="{ row }">
+            <!-- 给个宽度下限，列再窄也不会把「近30天 / 今日」折成竖排 -->
+            <div class="min-w-[9.5rem] text-sm">
+              <!-- 有上限：已用与上限同一口径（都是额度折算），与进度条、超额变色一致 -->
+              <template v-if="row.quota > 0">
+                <div class="flex flex-wrap items-baseline gap-x-1.5">
+                  <span class="text-gray-600 dark:text-gray-400">{{ t('keys.usedLabel') }}</span>
+                  <span
+                    data-test="row-used"
+                    :class="[
+                      'num-secondary',
+                      row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' : 'text-gray-900 dark:text-white'
+                    ]"
+                  >{{ formatLimit(row.quota_used) }}</span>
+                  <span class="text-gray-400 dark:text-dark-500">/</span>
+                  <span
+                    data-test="row-limit"
+                    :class="[
+                      'num',
+                      row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' : 'text-gray-600 dark:text-gray-400'
+                    ]"
+                  >{{ formatLimit(row.quota) }}</span>
+                </div>
+                <div class="mt-1.5 h-1.5 w-full max-w-[12rem] overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
+                  <div
+                    :class="[
+                      'h-full rounded-md transition-all',
+                      row.quota_used >= row.quota ? 'bg-primary-600' : 'bg-gray-900 dark:bg-gray-100'
+                    ]"
+                    :style="{ width: Math.min((row.quota_used / row.quota) * 100, 100) + '%' }"
+                  />
+                </div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('keys.total') }}
+                  <span class="num" data-test="row-recent">{{ recentSpent(row.id) }}</span>
+                </div>
+              </template>
+              <!-- 无上限：只有近 30 天消费，旁边直接标出不限额 -->
+              <div v-else class="flex flex-wrap items-baseline gap-x-1.5">
+                <span class="text-gray-600 dark:text-gray-400">{{ t('keys.total') }}</span>
+                <span class="num-secondary text-gray-900 dark:text-white" data-test="row-recent">{{ recentSpent(row.id) }}</span>
+                <span
+                  class="rounded-md border border-gray-200 px-1.5 py-px text-xs text-gray-600 dark:border-dark-700 dark:text-gray-400"
+                  data-test="row-limit"
+                >{{ t('keys.unlimited') }}</span>
+              </div>
+              <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('keys.today') }}
+                <span class="num">
+                  {{ formatMixed(usageStats[row.id]?.today_actual_cost ?? 0, usageStats[row.id]?.today_actual_cost_fiat) }}
+                </span>
+              </div>
+            </div>
+          </template>
+
+          <template #cell-rate_limit="{ row }">
+            <div v-if="row.rate_limit_5h > 0 || row.rate_limit_1d > 0 || row.rate_limit_7d > 0" class="space-y-1.5 min-w-[140px]">
+              <!-- 5h window -->
+              <div v-if="row.rate_limit_5h > 0">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-gray-600 dark:text-gray-400">5h</span>
+                  <span :class="[
+                    'num-secondary',
+                    row.usage_5h >= row.rate_limit_5h ? 'text-primary-700 dark:text-primary-400' :
+                    'text-gray-700 dark:text-gray-300'
+                  ]">
+                    {{ formatLimit(row.usage_5h) }}/{{ formatLimit(row.rate_limit_5h) }}
+                  </span>
+                </div>
+                <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
+                  <div
+                    :class="[
+                      'h-full rounded-md transition-all',
+                      row.usage_5h >= row.rate_limit_5h ? 'bg-primary-600' :
+                      'bg-gray-900 dark:bg-gray-100'
+                    ]"
+                    :style="{ width: Math.min((row.usage_5h / row.rate_limit_5h) * 100, 100) + '%' }"
+                  />
+                </div>
+                <div v-if="row.reset_5h_at && formatResetTime(row.reset_5h_at)" class="text-[10px] text-gray-600 dark:text-gray-400 tabular-nums">
+                  ⟳ {{ formatResetTime(row.reset_5h_at) }}
+                </div>
+              </div>
+              <!-- 1d window -->
+              <div v-if="row.rate_limit_1d > 0">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-gray-600 dark:text-gray-400">1d</span>
+                  <span :class="[
+                    'num-secondary',
+                    row.usage_1d >= row.rate_limit_1d ? 'text-primary-700 dark:text-primary-400' :
+                    'text-gray-700 dark:text-gray-300'
+                  ]">
+                    {{ formatLimit(row.usage_1d) }}/{{ formatLimit(row.rate_limit_1d) }}
+                  </span>
+                </div>
+                <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
+                  <div
+                    :class="[
+                      'h-full rounded-md transition-all',
+                      row.usage_1d >= row.rate_limit_1d ? 'bg-primary-600' :
+                      'bg-gray-900 dark:bg-gray-100'
+                    ]"
+                    :style="{ width: Math.min((row.usage_1d / row.rate_limit_1d) * 100, 100) + '%' }"
+                  />
+                </div>
+                <div v-if="row.reset_1d_at && formatResetTime(row.reset_1d_at)" class="text-[10px] text-gray-600 dark:text-gray-400 tabular-nums">
+                  ⟳ {{ formatResetTime(row.reset_1d_at) }}
+                </div>
+              </div>
+              <!-- 7d window -->
+              <div v-if="row.rate_limit_7d > 0">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-gray-600 dark:text-gray-400">7d</span>
+                  <span :class="[
+                    'num-secondary',
+                    row.usage_7d >= row.rate_limit_7d ? 'text-primary-700 dark:text-primary-400' :
+                    'text-gray-700 dark:text-gray-300'
+                  ]">
+                    {{ formatLimit(row.usage_7d) }}/{{ formatLimit(row.rate_limit_7d) }}
+                  </span>
+                </div>
+                <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
+                  <div
+                    :class="[
+                      'h-full rounded-md transition-all',
+                      row.usage_7d >= row.rate_limit_7d ? 'bg-primary-600' :
+                      'bg-gray-900 dark:bg-gray-100'
+                    ]"
+                    :style="{ width: Math.min((row.usage_7d / row.rate_limit_7d) * 100, 100) + '%' }"
+                  />
+                </div>
+                <div v-if="row.reset_7d_at && formatResetTime(row.reset_7d_at)" class="text-[10px] text-gray-600 dark:text-gray-400 tabular-nums">
+                  ⟳ {{ formatResetTime(row.reset_7d_at) }}
+                </div>
+              </div>
+              <!-- Reset button -->
+              <button
+                v-if="row.usage_5h > 0 || row.usage_1d > 0 || row.usage_7d > 0"
+                @click.stop="confirmResetRateLimitFromTable(row)"
+                class="mt-0.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                :title="t('keys.resetRateLimitUsage')"
+              >
+                <Icon name="refresh" size="xs" />
+                {{ t('keys.resetUsage') }}
+              </button>
+            </div>
+            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+          </template>
+
+          <template #cell-expires_at="{ value }">
+            <span v-if="value" :class="[
+              'text-sm',
+              new Date(value) < new Date() ? 'text-primary-700 dark:text-primary-400' : 'text-gray-600 dark:text-gray-400'
+            ]">
+              {{ formatDateTime(value) }}
+            </span>
+            <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{ t('keys.noExpiration') }}</span>
+          </template>
+
+          <template #cell-status="{ value }">
+            <span :class="[
+              'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium',
+              value === 'quota_exhausted' || value === 'expired'
+                ? 'border-primary-200 text-primary-700 dark:border-primary-500/40 dark:text-primary-400'
+                : 'border-gray-200 text-gray-700 dark:border-dark-700 dark:text-gray-300'
+            ]">
+              <span :class="[
+                'h-1.5 w-1.5 rounded-full',
+                value === 'quota_exhausted' || value === 'expired'
+                  ? 'bg-primary-600'
+                  : value === 'active' ? 'bg-gray-900 dark:bg-gray-100' : 'bg-gray-300 dark:bg-dark-600'
+              ]" />
+              {{ t('keys.status.' + value) }}
+            </span>
+          </template>
+
+          <template #cell-last_used_at="{ value }">
+            <span v-if="value" class="text-sm text-gray-600 dark:text-gray-400">
+              {{ formatDateTime(value) }}
+            </span>
+            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+          </template>
+
+          <template #cell-last_used_ip="{ value }">
+            <span v-if="value" class="text-sm text-gray-600 dark:text-gray-400">{{ value }}</span>
+            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+          </template>
+
+          <template #cell-created_at="{ value }">
+            <span class="text-sm text-gray-600 dark:text-gray-400">{{ formatDateTime(value) }}</span>
+          </template>
+
+          <template #cell-actions="{ row }">
+            <!-- 宽屏两行：第一行接入 / CC Switch，第二行四个图文小按钮；整列只有约 260px 宽，不会盖住左侧的用量与分组 -->
+            <div class="flex flex-col items-start gap-1 md:-mx-2">
+              <!-- 接入入口：窄屏在名称列里，这里只在宽屏显示 -->
+              <div class="hidden items-center gap-1 lg:flex">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1.5 rounded-md bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+                  data-test="action-connect"
+                  @click="openOnboarding(row, 'install')"
+                >
+                  <Icon name="bolt" size="sm" />
+                  {{ t('keys.connect') }}
+                </button>
+                <button
+                  type="button"
+                  class="inline-flex items-center rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:border-dark-600 dark:text-gray-200 dark:hover:bg-dark-800"
+                  data-test="action-ccswitch"
+                  @click="openOnboarding(row, 'ccswitch')"
+                >
+                  CC Switch
+                </button>
+              </div>
+              <div class="flex items-center gap-1 md:max-w-[15.5rem] md:flex-wrap md:gap-0">
+                <!-- Toggle Status Button -->
+                <button
+                  @click="toggleKeyStatus(row)"
+                  data-test="action-toggle"
+                  class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 md:flex-row md:gap-0.5 md:px-1.5 md:py-1 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                >
+                  <Icon v-if="row.status === 'active'" name="ban" size="sm" />
+                  <Icon v-else name="checkCircle" size="sm" />
+                  <span class="whitespace-nowrap text-xs">{{ row.status === 'active' ? t('keys.disable') : t('keys.enable') }}</span>
+                </button>
+                <!-- Edit Button -->
+                <button
+                  @click="editKey(row)"
+                  data-test="action-edit"
+                  class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 md:flex-row md:gap-0.5 md:px-1.5 md:py-1 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                >
+                  <Icon name="edit" size="sm" />
+                  <span class="whitespace-nowrap text-xs">{{ t('common.edit') }}</span>
+                </button>
+                <!-- 兜底设置：只有已绑定分组的密钥才有兜底链 -->
+                <button
+                  v-if="row.group_id && fallbackEntryVisible(row)"
+                  @click="openFallbackDrawer(row, $event)"
+                  class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 md:flex-row md:gap-0.5 md:px-1.5 md:py-1 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                  data-test="fallback-entry"
+                >
+                  <Icon name="arrowsUpDown" size="sm" />
+                  <span class="whitespace-nowrap text-xs">{{ t('keyFallback.entry') }}</span>
+                </button>
+                <!-- Delete Button -->
+                <button
+                  @click="confirmDelete(row)"
+                  data-test="action-delete"
+                  class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-700 md:flex-row md:gap-0.5 md:px-1.5 md:py-1 dark:text-gray-400 dark:hover:bg-primary-900/20 dark:hover:text-primary-400"
+                >
+                  <Icon name="trash" size="sm" />
+                  <span class="whitespace-nowrap text-xs">{{ t('common.delete') }}</span>
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <template #empty>
+            <EmptyState
+              :title="t('keys.noKeysYet')"
+              :description="t('keys.createFirstKey')"
+              :action-text="t('keys.createKey')"
+              @action="showCreateModal = true"
+            />
+          </template>
+        </DataTable>
+      </template>
+
+      <template #pagination>
+        <Pagination
+          v-if="pagination.total > 0"
+          :page="pagination.page"
+          :total="pagination.total"
+          :page-size="pagination.page_size"
+          @update:page="handlePageChange"
+          @update:pageSize="handlePageSizeChange"
+        />
+      </template>
+    </TablePageLayout>
+
+    <!-- Create/Edit Modal -->
+    <BaseDialog
+      :show="showCreateModal || showEditModal"
+      :title="createdKey ? t('keys.createdTitle') : showEditModal ? t('keys.editKey') : t('keys.createKey')"
+      width="normal"
+      @close="closeModals"
+    >
+      <!-- 创建成功：弹窗原地变成确认态，完整密钥只在这里一次性给出 -->
+      <div v-if="createdKey" class="space-y-4" data-test="key-created">
+        <div class="flex items-center gap-3">
+          <span class="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400">
+            <Icon name="check" size="md" />
+          </span>
+          <div class="min-w-0">
+            <div class="truncate text-sm font-medium text-gray-900 dark:text-white">{{ createdKey.name }}</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('keys.createdHint') }}</div>
+          </div>
+        </div>
+        <div class="flex items-stretch gap-2">
+          <code
+            data-test="key-created-value"
+            class="min-w-0 flex-1 select-all break-all rounded-md border border-gray-200 bg-gray-50 px-3 py-2.5 font-mono text-sm text-gray-900 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-100"
+          >{{ createdKey.key }}</code>
+          <button
+            type="button"
+            class="btn btn-secondary flex-none"
+            data-test="key-created-copy"
+            @click="copyToClipboard(createdKey.key, createdKey.id)"
+          >
+            <Icon :name="copiedKeyId === createdKey.id ? 'check' : 'copy'" size="sm" class="mr-1.5" />
+            {{ copiedKeyId === createdKey.id ? t('keys.copied') : t('common.copy') }}
+          </button>
+        </div>
+      </div>
+
+      <form v-else id="key-form" @submit.prevent="handleSubmit" class="space-y-5">
+        <div>
+          <label class="input-label">{{ t('keys.nameLabel') }}</label>
+          <input
+            v-model="formData.name"
+            type="text"
+            required
+            class="input"
+            :placeholder="t('keys.namePlaceholder')"
+            data-tour="key-form-name"
+          />
+        </div>
+
+        <div>
+          <label class="input-label inline-flex items-center">
+            {{ t('keys.groupLabel') }}
+            <HelpTooltip trigger="click" width-class="w-80">
+              <div class="space-y-1.5 text-left">
+                <p class="font-semibold text-white">{{ t('keys.billing.title') }}</p>
+                <p>{{ t('keys.billing.intro') }}</p>
+                <p>{{ t('keys.billing.rate') }}</p>
+              </div>
+            </HelpTooltip>
+          </label>
+          <Select
+            v-model="formData.group_id"
+            :options="groupOptions"
+            :placeholder="t('keys.selectGroup')"
+            :searchable="true"
+            :search-placeholder="t('keys.searchGroup')"
+            data-tour="key-form-group"
+          >
+            <template #selected="{ option }">
+              <GroupBadge
+                v-if="option"
+                :name="(option as unknown as GroupOption).label"
+                :platform="(option as unknown as GroupOption).platform"
+                :subscription-type="(option as unknown as GroupOption).subscriptionType"
+                :rate-multiplier="(option as unknown as GroupOption).rate"
+                :user-rate-multiplier="(option as unknown as GroupOption).userRate"
+                :rate-view="groupRateView((option as unknown as GroupOption).rate, (option as unknown as GroupOption).userRate)"
+              />
+              <span v-else class="text-gray-400">{{ t('keys.selectGroup') }}</span>
+            </template>
+            <template #option="{ option, selected }">
+              <GroupOptionItem
+                :name="(option as unknown as GroupOption).label"
+                :platform="(option as unknown as GroupOption).platform"
+                :subscription-type="(option as unknown as GroupOption).subscriptionType"
+                :rate-multiplier="(option as unknown as GroupOption).rate"
+                :user-rate-multiplier="(option as unknown as GroupOption).userRate"
+                :rate-view="groupRateView((option as unknown as GroupOption).rate, (option as unknown as GroupOption).userRate)"
+                :description="(option as unknown as GroupOption).description"
+                :selected="selected"
+              />
+            </template>
+          </Select>
+        </div>
+
+        <!-- Custom Key Section (only for create) -->
+        <div v-if="!showEditModal" class="space-y-3">
+          <div class="flex items-center justify-between">
+            <label class="input-label mb-0">{{ t('keys.customKeyLabel') }}</label>
+            <button
+              type="button"
+              @click="formData.use_custom_key = !formData.use_custom_key"
+              :class="[
+                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none',
+                formData.use_custom_key ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+              ]"
+            >
+              <span
+                :class="[
+                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                  formData.use_custom_key ? 'translate-x-4' : 'translate-x-0'
+                ]"
+              />
+            </button>
+          </div>
+          <div v-if="formData.use_custom_key">
+            <input
+              v-model="formData.custom_key"
+              type="text"
+              class="input font-mono"
+              :placeholder="t('keys.customKeyPlaceholder')"
+              :class="{ 'border-primary-600 dark:border-primary-500': customKeyError }"
+            />
+            <p v-if="customKeyError" class="mt-1 text-sm text-primary-700 dark:text-primary-400">{{ customKeyError }}</p>
+            <p v-else class="input-hint">{{ t('keys.customKeyHint') }}</p>
+          </div>
+        </div>
+
+        <div v-if="showEditModal">
+          <label class="input-label">{{ t('keys.statusLabel') }}</label>
+          <Select
+            v-model="formData.status"
+            :options="statusOptions"
+            :placeholder="t('keys.selectStatus')"
+          />
+        </div>
+
+        <!-- IP Restriction Section -->
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <label class="input-label mb-0">{{ t('keys.ipRestriction') }}</label>
+            <button
+              type="button"
+              @click="formData.enable_ip_restriction = !formData.enable_ip_restriction"
+              :class="[
+                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none',
+                formData.enable_ip_restriction ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+              ]"
+            >
+              <span
+                :class="[
+                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                  formData.enable_ip_restriction ? 'translate-x-4' : 'translate-x-0'
+                ]"
+              />
+            </button>
+          </div>
+
+          <div v-if="formData.enable_ip_restriction" class="space-y-4 pt-2">
+            <div>
+              <label class="input-label">{{ t('keys.ipWhitelist') }}</label>
+              <textarea
+                v-model="formData.ip_whitelist"
+                rows="3"
+                class="input font-mono text-sm"
+                :placeholder="t('keys.ipWhitelistPlaceholder')"
+              />
+              <p class="input-hint">{{ t('keys.ipWhitelistHint') }}</p>
+            </div>
+
+            <div>
+              <label class="input-label">{{ t('keys.ipBlacklist') }}</label>
+              <textarea
+                v-model="formData.ip_blacklist"
+                rows="3"
+                class="input font-mono text-sm"
+                :placeholder="t('keys.ipBlacklistPlaceholder')"
+              />
+              <p class="input-hint">{{ t('keys.ipBlacklistHint') }}</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quota Limit Section -->
+        <div class="space-y-3">
+          <label class="input-label">{{ t('keys.quotaLimit') }}</label>
+          <!-- Switch commented out - always show input, 0 = unlimited
+          <div class="flex items-center justify-between">
+            <label class="input-label mb-0">{{ t('keys.quotaLimit') }}</label>
+            <button
+              type="button"
+              @click="formData.enable_quota = !formData.enable_quota"
+              :class="[
+                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none',
+                formData.enable_quota ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+              ]"
+            >
+              <span
+                :class="[
+                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                  formData.enable_quota ? 'translate-x-4' : 'translate-x-0'
+                ]"
+              />
+            </button>
+          </div>
+          -->
+
+          <div class="space-y-4">
+            <div>
+              <div class="relative">
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
+                <input
+                  v-model.number="formData.quota"
+                  type="number"
+                  step="any"
+                  min="0"
+                  class="input pl-7"
+                  :placeholder="limitInputFiat ? t('keys.quotaAmountPlaceholderFiat') : t('keys.quotaAmountPlaceholder')"
+                />
+              </div>
+              <p class="input-hint">{{ t('keys.quotaAmountHint') }}</p>
+              <p v-if="limitInputFiat" class="input-hint">{{ limitFiatHint }}</p>
+            </div>
+
+            <!-- Quota used display (only in edit mode) -->
+            <div v-if="showEditModal && selectedKey && selectedKey.quota > 0">
+              <label class="input-label">{{ t('keys.quotaUsed') }}</label>
+              <div class="flex items-center gap-2">
+                <div :title="formatLimit(selectedKey.quota_used, EXACT_DIGITS)" class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800">
+                  <span class="num-secondary text-gray-900 dark:text-white">
+                    {{ formatLimit(selectedKey.quota_used) }}
+                  </span>
+                  <span class="mx-2 text-gray-400">/</span>
+                  <span class="num text-gray-600 dark:text-gray-400">
+                    {{ formatLimit(selectedKey.quota) }}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  @click="confirmResetQuota"
+                  class="btn btn-secondary text-sm"
+                  :title="t('keys.resetQuotaUsed')"
+                >
+                  {{ t('keys.reset') }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Rate Limit Section -->
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <label class="input-label mb-0">{{ t('keys.rateLimitSection') }}</label>
+            <button
+              type="button"
+              @click="formData.enable_rate_limit = !formData.enable_rate_limit"
+              :class="[
+                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none',
+                formData.enable_rate_limit ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+              ]"
+            >
+              <span
+                :class="[
+                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                  formData.enable_rate_limit ? 'translate-x-4' : 'translate-x-0'
+                ]"
+              />
+            </button>
+          </div>
+
+          <div v-if="formData.enable_rate_limit" class="space-y-4 pt-2">
+            <p class="input-hint -mt-2">{{ t('keys.rateLimitHint') }}</p>
+            <p v-if="limitInputFiat" class="input-hint -mt-2">{{ limitFiatHint }}</p>
+            <!-- 5-Hour Limit -->
+            <div>
+              <label class="input-label">{{ t('keys.rateLimit5h', { currency: limitInputCurrency }) }}</label>
+              <div class="relative">
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
+                <input
+                  v-model.number="formData.rate_limit_5h"
+                  type="number"
+                  step="any"
+                  min="0"
+                  class="input pl-7"
+                  :placeholder="'0'"
+                />
+              </div>
+              <!-- Usage info (edit mode only) -->
+              <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_5h > 0" class="mt-2">
+                <div class="flex items-center gap-2">
+                  <div :title="formatLimit(selectedKey.usage_5h, EXACT_DIGITS)" class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
+                    <span :class="[
+                      'num-secondary',
+                      selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'text-primary-700 dark:text-primary-400' :
+                      'text-gray-900 dark:text-white'
+                    ]">
+                      {{ formatLimit(selectedKey.usage_5h) }}
+                    </span>
+                    <span class="mx-2 text-gray-400">/</span>
+                    <span class="num text-gray-600 dark:text-gray-400">
+                      {{ formatLimit(selectedKey.rate_limit_5h) }}
+                    </span>
+                  </div>
+                </div>
+                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
+                  <div
+                    :class="[
+                      'h-full rounded-md transition-all',
+                      selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'bg-primary-600' :
+                      'bg-gray-900 dark:bg-gray-100'
+                    ]"
+                    :style="{ width: Math.min((selectedKey.usage_5h / selectedKey.rate_limit_5h) * 100, 100) + '%' }"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- Daily Limit -->
+            <div>
+              <label class="input-label">{{ t('keys.rateLimit1d', { currency: limitInputCurrency }) }}</label>
+              <div class="relative">
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
+                <input
+                  v-model.number="formData.rate_limit_1d"
+                  type="number"
+                  step="any"
+                  min="0"
+                  class="input pl-7"
+                  :placeholder="'0'"
+                />
+              </div>
+              <!-- Usage info (edit mode only) -->
+              <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_1d > 0" class="mt-2">
+                <div class="flex items-center gap-2">
+                  <div :title="formatLimit(selectedKey.usage_1d, EXACT_DIGITS)" class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
+                    <span :class="[
+                      'num-secondary',
+                      selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'text-primary-700 dark:text-primary-400' :
+                      'text-gray-900 dark:text-white'
+                    ]">
+                      {{ formatLimit(selectedKey.usage_1d) }}
+                    </span>
+                    <span class="mx-2 text-gray-400">/</span>
+                    <span class="num text-gray-600 dark:text-gray-400">
+                      {{ formatLimit(selectedKey.rate_limit_1d) }}
+                    </span>
+                  </div>
+                </div>
+                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
+                  <div
+                    :class="[
+                      'h-full rounded-md transition-all',
+                      selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'bg-primary-600' :
+                      'bg-gray-900 dark:bg-gray-100'
+                    ]"
+                    :style="{ width: Math.min((selectedKey.usage_1d / selectedKey.rate_limit_1d) * 100, 100) + '%' }"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- 7-Day Limit -->
+            <div>
+              <label class="input-label">{{ t('keys.rateLimit7d', { currency: limitInputCurrency }) }}</label>
+              <div class="relative">
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
+                <input
+                  v-model.number="formData.rate_limit_7d"
+                  type="number"
+                  step="any"
+                  min="0"
+                  class="input pl-7"
+                  :placeholder="'0'"
+                />
+              </div>
+              <!-- Usage info (edit mode only) -->
+              <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_7d > 0" class="mt-2">
+                <div class="flex items-center gap-2">
+                  <div :title="formatLimit(selectedKey.usage_7d, EXACT_DIGITS)" class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
+                    <span :class="[
+                      'num-secondary',
+                      selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'text-primary-700 dark:text-primary-400' :
+                      'text-gray-900 dark:text-white'
+                    ]">
+                      {{ formatLimit(selectedKey.usage_7d) }}
+                    </span>
+                    <span class="mx-2 text-gray-400">/</span>
+                    <span class="num text-gray-600 dark:text-gray-400">
+                      {{ formatLimit(selectedKey.rate_limit_7d) }}
+                    </span>
+                  </div>
+                </div>
+                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
+                  <div
+                    :class="[
+                      'h-full rounded-md transition-all',
+                      selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'bg-primary-600' :
+                      'bg-gray-900 dark:bg-gray-100'
+                    ]"
+                    :style="{ width: Math.min((selectedKey.usage_7d / selectedKey.rate_limit_7d) * 100, 100) + '%' }"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- Reset Rate Limit button (edit mode only) -->
+            <div v-if="showEditModal && selectedKey && (selectedKey.rate_limit_5h > 0 || selectedKey.rate_limit_1d > 0 || selectedKey.rate_limit_7d > 0)">
+              <button
+                type="button"
+                @click="confirmResetRateLimit"
+                class="btn btn-secondary text-sm"
+              >
+                {{ t('keys.resetRateLimitUsage') }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Expiration Section -->
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <label class="input-label mb-0">{{ t('keys.expiration') }}</label>
+            <button
+              type="button"
+              @click="formData.enable_expiration = !formData.enable_expiration"
+              :class="[
+                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none',
+                formData.enable_expiration ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+              ]"
+            >
+              <span
+                :class="[
+                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                  formData.enable_expiration ? 'translate-x-4' : 'translate-x-0'
+                ]"
+              />
+            </button>
+          </div>
+
+          <div v-if="formData.enable_expiration" class="space-y-4 pt-2">
+            <!-- Quick select buttons (for both create and edit mode) -->
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="days in ['7', '30', '90']"
+                :key="days"
+                type="button"
+                @click="setExpirationDays(parseInt(days))"
+                :class="[
+                  'rounded-md px-3 py-1.5 text-sm transition-colors',
+                  formData.expiration_preset === days
+                    ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600'
+                ]"
+              >
+                {{ showEditModal ? t('keys.extendDays', { days }) : t('keys.expiresInDays', { days }) }}
+              </button>
+              <button
+                type="button"
+                @click="formData.expiration_preset = 'custom'"
+                :class="[
+                  'rounded-md px-3 py-1.5 text-sm transition-colors',
+                  formData.expiration_preset === 'custom'
+                    ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600'
+                ]"
+              >
+                {{ t('keys.customDate') }}
+              </button>
+            </div>
+
+            <!-- Date picker (always show for precise adjustment) -->
+            <div>
+              <label class="input-label">{{ t('keys.expirationDate') }}</label>
+              <input
+                v-model="formData.expiration_date"
+                type="datetime-local"
+                class="input"
+              />
+              <p class="input-hint">{{ t('keys.expirationDateHint') }}</p>
+            </div>
+
+            <!-- Current expiration display (only in edit mode) -->
+            <div v-if="showEditModal && selectedKey?.expires_at" class="text-sm">
+              <span class="text-gray-500 dark:text-gray-400">{{ t('keys.currentExpiration') }}: </span>
+              <span class="font-medium text-gray-900 dark:text-white">
+                {{ formatDateTime(selectedKey.expires_at) }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </form>
+      <template #footer>
+        <div v-if="createdKey" class="flex justify-end gap-3">
+          <button @click="closeModals" type="button" class="btn btn-secondary" data-test="key-created-close">
+            {{ t('common.close') }}
+          </button>
+          <button @click="connectCreatedKey" type="button" class="btn btn-primary" data-test="key-created-connect">
+            {{ t('keys.goConnect') }}
+          </button>
+        </div>
+        <div v-else class="flex justify-end gap-3">
+          <button @click="closeModals" type="button" class="btn btn-secondary">
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            form="key-form"
+            type="submit"
+            :disabled="submitting"
+            class="btn btn-primary"
+            data-tour="key-form-submit"
+          >
+            <svg
+              v-if="submitting"
+              class="-ml-1 mr-2 h-4 w-4 animate-spin"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                class="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+              ></circle>
+              <path
+                class="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              ></path>
+            </svg>
+            {{
+              submitting
+                ? t('keys.saving')
+                : showEditModal
+                  ? t('common.update')
+                  : t('common.create')
+            }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
+
+    <!-- Delete Confirmation Dialog -->
+    <ConfirmDialog
+      :show="showDeleteDialog"
+      :title="t('keys.deleteKey')"
+      :message="t('keys.deleteConfirmMessage', { name: selectedKey?.name })"
+      :confirm-text="t('common.delete')"
+      :cancel-text="t('common.cancel')"
+      :danger="true"
+      @confirm="handleDelete"
+      @cancel="showDeleteDialog = false"
+    />
+
+    <!-- Reset Quota Confirmation Dialog -->
+    <ConfirmDialog
+      :show="showResetQuotaDialog"
+      :title="t('keys.resetQuotaTitle')"
+      :message="t('keys.resetQuotaConfirmMessage', { name: selectedKey?.name, used: formatLimit(selectedKey?.quota_used) })"
+      :confirm-text="t('keys.reset')"
+      :cancel-text="t('common.cancel')"
+      :danger="true"
+      @confirm="resetQuotaUsed"
+      @cancel="showResetQuotaDialog = false"
+    />
+
+    <!-- Reset Rate Limit Confirmation Dialog -->
+    <ConfirmDialog
+      :show="showResetRateLimitDialog"
+      :title="t('keys.resetRateLimitTitle')"
+      :message="t('keys.resetRateLimitConfirmMessage', { name: selectedKey?.name })"
+      :confirm-text="t('keys.reset')"
+      :cancel-text="t('common.cancel')"
+      :danger="true"
+      @confirm="resetRateLimitUsage"
+      @cancel="showResetRateLimitDialog = false"
+    />
+
+    <!-- 一键接入 Modal -->
+    <KeyOnboardingModal
+      :show="showOnboardingModal"
+      :api-key="onboardingKey"
+      :initial-tab="onboardingTab"
+      :base-url="apiBaseUrl"
+      :custom-endpoints="publicSettings?.custom_endpoints || []"
+      :site-name="publicSettings?.site_name || ''"
+      :doc-url="publicSettings?.doc_url || ''"
+      @close="closeOnboarding"
+    />
+
+    <KeyFallbackChainDrawer
+      :show="showFallbackDrawer"
+      :initial-key-id="fallbackDrawerKeyId"
+      :return-focus="fallbackTrigger"
+      @close="closeFallbackDrawer"
+    />
+
+    <!-- Group Selector Dropdown (Teleported to body to avoid overflow clipping) -->
+    <Teleport to="body">
+      <div
+        v-if="groupSelectorKeyId !== null && dropdownPosition"
+        ref="dropdownRef"
+        class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-max max-w-[calc(100vw-16px)] overflow-hidden rounded-md bg-white shadow-overlay ring-1 ring-black/5 duration-200 sm:min-w-[380px] dark:bg-dark-800 dark:ring-white/10"
+        style="pointer-events: auto !important;"
+        :style="{
+          top: dropdownPosition.top !== undefined ? dropdownPosition.top + 'px' : undefined,
+          bottom: dropdownPosition.bottom !== undefined ? dropdownPosition.bottom + 'px' : undefined,
+          left: dropdownPosition.left + 'px'
+        }"
+      >
+        <!-- Search box -->
+        <div class="border-b border-gray-100 p-2 dark:border-dark-700">
+          <div class="relative">
+            <svg class="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              v-model="groupSearchQuery"
+              type="text"
+              class="w-full rounded-md border border-gray-200 bg-gray-50 py-1.5 pl-8 pr-3 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-primary-300 focus:ring-1 focus:ring-primary-300 dark:border-dark-600 dark:bg-dark-700 dark:text-white dark:placeholder-gray-500 dark:focus:border-primary-600 dark:focus:ring-primary-600"
+              :placeholder="t('keys.searchGroup')"
+              @click.stop
+            />
+          </div>
+        </div>
+        <!-- Group list -->
+        <div class="max-h-80 overflow-y-auto p-1.5">
+          <button
+            v-for="option in filteredGroupOptions"
+            :key="option.value ?? 'null'"
+            @click="changeGroup(selectedKeyForGroup!, option.value)"
+            :class="[
+              'flex w-full items-center justify-between rounded-md px-3 py-2.5 text-sm transition-colors',
+              'border-b border-gray-100 last:border-0 dark:border-dark-700',
+              selectedKeyForGroup?.group_id === option.value ||
+              (!selectedKeyForGroup?.group_id && option.value === null)
+                ? 'bg-primary-50 dark:bg-primary-900/20'
+                : 'hover:bg-gray-100 dark:hover:bg-dark-700'
+            ]"
+            :title="option.description || undefined"
+          >
+            <GroupOptionItem
+              :name="option.label"
+              :platform="option.platform"
+              :subscription-type="option.subscriptionType"
+              :rate-multiplier="option.rate"
+              :user-rate-multiplier="option.userRate"
+              :rate-view="groupRateView(option.rate, option.userRate)"
+              :description="option.description"
+              :selected="
+                selectedKeyForGroup?.group_id === option.value ||
+                (!selectedKeyForGroup?.group_id && option.value === null)
+              "
+            />
+          </button>
+          <!-- Empty state when search has no results -->
+          <div v-if="filteredGroupOptions.length === 0" class="py-4 text-center text-sm text-gray-400 dark:text-gray-500">
+            {{ t('keys.noGroupFound') }}
+          </div>
+        </div>
+      </div>
+    </Teleport>
+  </AppLayout>
+</template>
+
+<script setup lang="ts">
+	import { ref, reactive, computed, watch, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+	import { useI18n } from 'vue-i18n'
+	import { useRoute, useRouter } from 'vue-router'
+	import { useAppStore } from '@/stores/app'
+	import { useOnboardingStore } from '@/stores/onboarding'
+	import { useClipboard } from '@/composables/useClipboard'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { EXACT_DIGITS, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import NumText from '@/components/common/NumText.vue'
+import { useSourceFiatRate } from '@/composables/useSourceFiatRate'
+import { useGroupRateView } from '@/composables/useGroupRateView'
+
+const { t } = useI18n()
+// 今日/累计花费用服务端分桶折算的人民币；额度上限与限额按当前扣费来源近似折算
+const { isFiat: currencyIsFiat, formatMixed } = useCurrencyDisplay()
+const { sourceFiatPerCredit, formatLimit } = useSourceFiatRate()
+// 分组徽标 / 下拉药丸的倍率：人民币模式显示等效倍率并补「套餐低至」，美元模式和 free 站原样
+const { groupRateView } = useGroupRateView()
+import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
+import AppLayout from '@/components/layout/AppLayout.vue'
+import TablePageLayout from '@/components/layout/TablePageLayout.vue'
+	import DataTable from '@/components/common/DataTable.vue'
+	import Pagination from '@/components/common/Pagination.vue'
+	import BaseDialog from '@/components/common/BaseDialog.vue'
+	import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+	import EmptyState from '@/components/common/EmptyState.vue'
+	import Select from '@/components/common/Select.vue'
+	import SearchInput from '@/components/common/SearchInput.vue'
+	import Icon from '@/components/icons/Icon.vue'
+import KeyOnboardingModal from '@/components/user/KeyOnboardingModal.vue'
+import KeyFallbackChainDrawer from '@/components/keys/KeyFallbackChainDrawer.vue'
+import { keyFallbackAPI } from '@/api/keyFallback'
+	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
+	import GroupBadge from '@/components/common/GroupBadge.vue'
+	import PlanRateText from '@/components/common/PlanRateText.vue'
+	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+	import HelpTooltip from '@/components/common/HelpTooltip.vue'
+	import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform } from '@/types'
+import type { Column } from '@/components/common/types'
+import type { BatchApiKeyUsageStats } from '@/api/usage'
+import { formatDateTime } from '@/utils/format'
+import { maskApiKey } from '@/utils/maskApiKey'
+import { getDropdownPosition } from '@/utils/viewport'
+
+// Helper to format date for datetime-local input
+const formatDateTimeLocal = (isoDate: string): string => {
+  const date = new Date(isoDate)
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+interface GroupOption {
+  value: number
+  label: string
+  description: string | null
+  rate: number
+  userRate: number | null
+  subscriptionType: SubscriptionType
+  platform: GroupPlatform
+}
+
+const appStore = useAppStore()
+const onboardingStore = useOnboardingStore()
+const { copyToClipboard: clipboardCopy } = useClipboard()
+
+const allColumns = computed<Column[]>(() => [
+  { key: 'name', label: t('common.name'), sortable: true },
+  { key: 'id', label: t('keys.id'), sortable: true },
+  { key: 'key', label: t('keys.apiKey'), sortable: false },
+  // 用量排在分组之前：表格宽度超出时右侧操作列是吸附的，靠后的列默认被它盖住，
+  // 用量放太靠后就只剩列首的「近 / 今」两个字露在外面
+  { key: 'usage', label: t('keys.usage'), sortable: false },
+  { key: 'group', label: t('keys.group'), sortable: false },
+  { key: 'current_concurrency', label: t('keys.currentConcurrency'), sortable: true },
+  { key: 'rate_limit', label: t('keys.rateLimitColumn'), sortable: false },
+  { key: 'expires_at', label: t('keys.expiresAt'), sortable: true },
+  { key: 'status', label: t('common.status'), sortable: true },
+  { key: 'last_used_at', label: t('keys.lastUsedAt'), sortable: true },
+  { key: 'last_used_ip', label: t('keys.lastUsedIP'), sortable: false },
+  { key: 'created_at', label: t('keys.created'), sortable: true },
+  { key: 'actions', label: t('common.actions'), sortable: false }
+])
+
+const ALWAYS_VISIBLE_COLUMNS = new Set(['name', 'actions'])
+const DEFAULT_HIDDEN_COLUMNS = ['id', 'rate_limit', 'last_used_at', 'last_used_ip']
+const HIDDEN_COLUMNS_KEY = 'api-key-hidden-columns'
+const COLUMN_SETTINGS_VERSION_KEY = 'api-key-column-settings-version'
+const COLUMN_SETTINGS_VERSION = 3
+const VERSION_NEW_HIDDEN_COLUMNS: Record<number, string[]> = {
+  2: ['last_used_ip'],
+  3: ['id']
+}
+
+const toggleableColumns = computed(() =>
+  allColumns.value.filter((col) => !ALWAYS_VISIBLE_COLUMNS.has(col.key))
+)
+
+const hiddenColumns = reactive<Set<string>>(new Set())
+
+const saveColumnsToStorage = () => {
+  try {
+    localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify([...hiddenColumns]))
+    localStorage.setItem(COLUMN_SETTINGS_VERSION_KEY, String(COLUMN_SETTINGS_VERSION))
+  } catch (error) {
+    console.error('Failed to save API key table columns:', error)
+  }
+}
+
+const loadSavedColumns = () => {
+  hiddenColumns.clear()
+  try {
+    const saved = localStorage.getItem(HIDDEN_COLUMNS_KEY)
+    if (saved) {
+      const parsed = JSON.parse(saved) as string[]
+      const validColumnKeys = new Set(allColumns.value.map((col) => col.key))
+      parsed
+        .filter((key) =>
+          typeof key === 'string' &&
+          validColumnKeys.has(key) &&
+          !ALWAYS_VISIBLE_COLUMNS.has(key)
+        )
+        .forEach((key) => hiddenColumns.add(key))
+
+      const storedVersion = Number(localStorage.getItem(COLUMN_SETTINGS_VERSION_KEY) ?? '1')
+      if (storedVersion < COLUMN_SETTINGS_VERSION) {
+        for (let version = storedVersion + 1; version <= COLUMN_SETTINGS_VERSION; version++) {
+          for (const key of VERSION_NEW_HIDDEN_COLUMNS[version] ?? []) {
+            if (validColumnKeys.has(key) && !ALWAYS_VISIBLE_COLUMNS.has(key)) {
+              hiddenColumns.add(key)
+            }
+          }
+        }
+        saveColumnsToStorage()
+      } else {
+        localStorage.setItem(COLUMN_SETTINGS_VERSION_KEY, String(COLUMN_SETTINGS_VERSION))
+      }
+    } else {
+      DEFAULT_HIDDEN_COLUMNS.forEach((key) => hiddenColumns.add(key))
+      localStorage.setItem(COLUMN_SETTINGS_VERSION_KEY, String(COLUMN_SETTINGS_VERSION))
+    }
+  } catch (error) {
+    console.error('Failed to load API key table columns:', error)
+    DEFAULT_HIDDEN_COLUMNS.forEach((key) => hiddenColumns.add(key))
+  }
+}
+
+const toggleColumn = (key: string) => {
+  if (ALWAYS_VISIBLE_COLUMNS.has(key)) return
+  if (hiddenColumns.has(key)) {
+    hiddenColumns.delete(key)
+  } else {
+    hiddenColumns.add(key)
+  }
+  saveColumnsToStorage()
+}
+
+const isColumnVisible = (key: string) => !hiddenColumns.has(key)
+
+const columns = computed<Column[]>(() =>
+  allColumns.value.filter((col) => ALWAYS_VISIBLE_COLUMNS.has(col.key) || !hiddenColumns.has(col.key))
+)
+
+const apiKeys = ref<ApiKey[]>([])
+const groups = ref<Group[]>([])
+const loading = ref(false)
+const submitting = ref(false)
+const now = ref(new Date())
+let resetTimer: ReturnType<typeof setInterval> | null = null
+const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
+const userGroupRates = ref<Record<number, number>>({})
+
+// 列表行里「套餐低至」放在徽标下一行。订阅分组的徽标显示「订阅」/剩余天数而不是倍率，
+// 不带套餐低至（和 GroupBadge 的规则一致）；没有套餐低至（美元、free、定价没取到）就是 undefined。
+const listPlanView = (row: ApiKey) => {
+  const group = row.group
+  if (!group) return undefined
+  const view = groupRateView(group, userGroupRates.value[group.id])
+  const labelShowsRate = group.subscription_type !== 'subscription' || view.mainStruck !== undefined
+  return labelShowsRate && view.plan !== undefined ? view : undefined
+}
+
+// 站点接入地址：公开设置里没配时退回当前站点
+const apiBaseUrl = computed(() => (publicSettings.value?.api_base_url || '').trim() || window.location.origin)
+const addressCopied = ref(false)
+let addressCopiedTimer: ReturnType<typeof setTimeout> | null = null
+const copyAddress = async () => {
+  const ok = await clipboardCopy(apiBaseUrl.value, t('keys.endpoints.copied'))
+  if (!ok) return
+  addressCopied.value = true
+  if (addressCopiedTimer) clearTimeout(addressCopiedTimer)
+  addressCopiedTimer = setTimeout(() => (addressCopied.value = false), 1500)
+}
+
+// 每行「近 30 天」消费（与额度上限口径不同，页面上分开标注）
+const recentSpent = (keyId: number) =>
+  formatMixed(usageStats.value[keyId]?.total_actual_cost ?? 0, usageStats.value[keyId]?.total_actual_cost_fiat)
+
+// 概览：已启用数、近 30 天消费合计。统计只覆盖当前列表：分页后只有当前页，带筛选条件时只有命中的密钥。
+const overview = computed(() => {
+  let credits = 0
+  let fiat = 0
+  let fiatMissing = false
+  for (const key of apiKeys.value) {
+    const stat = usageStats.value[key.id]
+    const c = stat?.total_actual_cost ?? 0
+    credits += c
+    const f = stat?.total_actual_cost_fiat
+    if (typeof f === 'number' && Number.isFinite(f)) fiat += f
+    else if (c) fiatMissing = true
+  }
+  return {
+    enabled: apiKeys.value.filter((k) => k.status === 'active').length,
+    partial: listFiltered.value || pagination.value.total > apiKeys.value.length,
+    // 有 Key 缺人民币值时不能拿部分合计冒充总数，交给 formatMixed 回落到美元
+    spent: formatMixed(credits, fiatMissing ? undefined : fiat)
+  }
+})
+
+const pagination = ref({
+  page: 1,
+  page_size: getPersistedPageSize(),
+  total: 0,
+  pages: 0
+})
+const sortState = ref({
+  sort_by: 'created_at',
+  sort_order: 'desc' as 'asc' | 'desc'
+})
+
+// Filter state
+const filterSearch = ref('')
+const filterStatus = ref('')
+const filterGroupId = ref<string | number>('')
+// 当前列表数据是否按筛选条件请求的（以请求时为准，输入框里还没生效的内容不算）
+const listFiltered = ref(false)
+
+const showCreateModal = ref(false)
+const showEditModal = ref(false)
+const showDeleteDialog = ref(false)
+const showResetQuotaDialog = ref(false)
+const showResetRateLimitDialog = ref(false)
+const showColumnDropdown = ref(false)
+const showOnboardingModal = ref(false)
+// 刚创建成功的密钥：非空时创建弹窗显示「密钥已创建」确认态
+const createdKey = ref<ApiKey | null>(null)
+const showFallbackDrawer = ref(false)
+const fallbackDrawerKeyId = ref<number | null>(null)
+const fallbackTrigger = ref<HTMLElement | null>(null)
+const openFallbackDrawer = (key: ApiKey, event?: Event) => {
+  fallbackDrawerKeyId.value = key.id
+  fallbackTrigger.value = (event?.currentTarget as HTMLElement | null) ?? null
+  showFallbackDrawer.value = true
+}
+const closeFallbackDrawer = () => {
+  showFallbackDrawer.value = false
+  // 抽屉里可能增删了兜底项，入口是否显示要跟着刷新
+  loadFallbackSummary()
+}
+
+// 入口显隐：沿用抽屉的批量摘要（has_available = 这把 Key 还有没加入链的同平台可用分组）。
+// 没有可添加的分组、链里也没有项，入口就不显示；链里已有项时照常显示，用户才能看到并删掉。
+// 摘要还没回来时先不显示，避免入口闪一下；读取失败就显示，不因此把入口藏起来。
+type FallbackEntryInfo = { hasAvailable: boolean; hasFallback: boolean }
+const fallbackEntryInfo = ref<Map<number, FallbackEntryInfo> | null>(null)
+const fallbackSummaryState = ref<'loading' | 'ok' | 'error'>('loading')
+const loadFallbackSummary = async () => {
+  try {
+    const res = await keyFallbackAPI.listChains()
+    const map = new Map<number, FallbackEntryInfo>()
+    for (const p of res?.platforms ?? []) {
+      for (const k of p.keys) {
+        map.set(k.key_id, {
+          hasAvailable: k.has_available,
+          hasFallback: k.items.some((i) => i.role === 'fallback')
+        })
+      }
+    }
+    fallbackEntryInfo.value = map
+    fallbackSummaryState.value = 'ok'
+  } catch {
+    fallbackSummaryState.value = 'error'
+  }
+}
+const fallbackEntryVisible = (key: ApiKey): boolean => {
+  if (fallbackSummaryState.value === 'error') return true
+  if (fallbackSummaryState.value === 'loading') return false
+  const info = fallbackEntryInfo.value?.get(key.id)
+  return !info || info.hasAvailable || info.hasFallback
+}
+const onboardingKey = ref<ApiKey | null>(null)
+const onboardingTab = ref<'install' | 'ai' | 'ccswitch' | 'manual'>('install')
+const selectedKey = ref<ApiKey | null>(null)
+const copiedKeyId = ref<number | null>(null)
+const groupSelectorKeyId = ref<number | null>(null)
+const publicSettings = ref<PublicSettings | null>(null)
+const dropdownRef = ref<HTMLElement | null>(null)
+const columnDropdownRef = ref<HTMLElement | null>(null)
+const dropdownPosition = ref<{ top?: number; bottom?: number; left: number } | null>(null)
+const groupButtonRefs = ref<Map<number, HTMLElement>>(new Map())
+let abortController: AbortController | null = null
+
+// Get the currently selected key for group change
+const selectedKeyForGroup = computed(() => {
+  if (groupSelectorKeyId.value === null) return null
+  return apiKeys.value.find((k) => k.id === groupSelectorKeyId.value) || null
+})
+
+const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance | null) => {
+  if (el instanceof HTMLElement) {
+    groupButtonRefs.value.set(keyId, el)
+  } else {
+    groupButtonRefs.value.delete(keyId)
+  }
+}
+
+const formData = ref({
+  name: '',
+  group_id: null as number | null,
+  status: 'active' as 'active' | 'inactive',
+  use_custom_key: false,
+  custom_key: '',
+  enable_ip_restriction: false,
+  ip_whitelist: '',
+  ip_blacklist: '',
+  // Quota settings (empty = unlimited)
+  enable_quota: false,
+  quota: null as number | null,
+  // Rate limit settings
+  enable_rate_limit: false,
+  rate_limit_5h: null as number | null,
+  rate_limit_1d: null as number | null,
+  rate_limit_7d: null as number | null,
+  enable_expiration: false,
+  expiration_preset: '30' as '7' | '30' | '90' | 'custom',
+  expiration_date: ''
+})
+
+/*
+ * 额度上限 / 5h·1d·7d 限额的输入单位（方案 K2）。
+ *
+ * 这些计数器累加的是额度，钱包和订阅卡混扣，没有精确的人民币值。人民币模式下
+ * 让用户直接填人民币，提交时按「当前扣费来源」单价换算回额度保存。
+ * 单位在弹窗打开时定格：弹窗开着时切换计价口径，不会把已填的数字按另一种单位解读。
+ */
+type LimitField = 'quota' | 'rate_limit_5h' | 'rate_limit_1d' | 'rate_limit_7d'
+const limitInputFiat = ref(false)
+// 回显和提交用同一个单价：弹窗打开后订阅卡数据才加载回来时，也不会前后口径不一致
+const limitInputRate = ref(0)
+const limitInputSymbol = computed(() => (limitInputFiat.value ? '¥' : '$'))
+// 限额标签上的币种代码，和输入框前面的符号同一口径（弹窗打开时定格）。
+const limitInputCurrency = computed(() => (limitInputFiat.value ? 'CNY' : 'USD'))
+// 编辑时记下每个字段回显的人民币值和原始额度：用户没改的字段原样提交额度，
+// 避免「额度 → 人民币（四舍五入）→ 额度」往返一次就把上限改掉几分。
+const limitOriginals = new Map<LimitField, { input: number; credits: number }>()
+
+const limitFiatHint = computed(() => t('keys.limitEstimateHint'))
+
+function beginLimitInput() {
+  limitInputFiat.value = currencyIsFiat.value
+  limitInputRate.value = sourceFiatPerCredit.value
+  limitOriginals.clear()
+}
+
+function limitToInput(field: LimitField, credits: number | null | undefined): number | null {
+  if (!credits || credits <= 0) return null
+  if (!limitInputFiat.value) return credits
+  const fiat = credits * limitInputRate.value
+  // 一般保留到分；极小的上限四舍五入会变成 0（看起来像「不限」），改为保留 3 位有效数字
+  let input = Math.round(fiat * 100) / 100
+  if (input === 0) input = Number(fiat.toPrecision(3))
+  limitOriginals.set(field, { input, credits })
+  return input
+}
+
+function limitFromInput(field: LimitField, input: number | null): number {
+  // 先看原值：用户没改的字段原样提交原始额度，不经过任何换算或「≤0 视为不限」的判断
+  const original = limitInputFiat.value ? limitOriginals.get(field) : undefined
+  if (original && original.input === input) return original.credits
+  if (!input || input <= 0) return 0
+  if (!limitInputFiat.value) return input
+  return Math.round((input / limitInputRate.value) * 1e8) / 1e8
+}
+
+watch(showCreateModal, (open) => {
+  if (open) beginLimitInput()
+})
+
+// /keys?new=1 直接打开创建弹窗；打开后立刻把参数从地址栏清掉，刷新或返回不会再弹
+const route = useRoute()
+const router = useRouter()
+watch(
+  () => route.query.new,
+  (flag) => {
+    if (flag === undefined) return
+    if (flag === '1') {
+      showEditModal.value = false
+      createdKey.value = null
+      showCreateModal.value = true
+    }
+    const rest = { ...route.query }
+    delete rest.new
+    void router.replace({ query: rest })
+  },
+  { immediate: true }
+)
+
+// 自定义Key验证
+const customKeyError = computed(() => {
+  if (!formData.value.use_custom_key || !formData.value.custom_key) {
+    return ''
+  }
+  const key = formData.value.custom_key
+  if (key.length < 16) {
+    return t('keys.customKeyTooShort')
+  }
+  // 检查字符：只允许字母、数字、下划线、连字符
+  if (!/^[a-zA-Z0-9_-]+$/.test(key)) {
+    return t('keys.customKeyInvalidChars')
+  }
+  return ''
+})
+
+const statusOptions = computed(() => [
+  { value: 'active', label: t('common.active') },
+  { value: 'inactive', label: t('common.inactive') }
+])
+
+// Filter dropdown options
+const groupFilterOptions = computed(() => [
+  { value: '', label: t('keys.allGroups') },
+  { value: 0, label: t('keys.noGroup') },
+  ...groups.value.map((g) => ({ value: g.id, label: g.name }))
+])
+
+const statusFilterOptions = computed(() => [
+  { value: '', label: t('keys.allStatus') },
+  { value: 'active', label: t('keys.status.active') },
+  { value: 'inactive', label: t('keys.status.inactive') },
+  { value: 'quota_exhausted', label: t('keys.status.quota_exhausted') },
+  { value: 'expired', label: t('keys.status.expired') }
+])
+
+const onFilterChange = () => {
+  pagination.value.page = 1
+  loadApiKeys()
+}
+
+const onGroupFilterChange = (value: string | number | boolean | null) => {
+  filterGroupId.value = value as string | number
+  onFilterChange()
+}
+
+const onStatusFilterChange = (value: string | number | boolean | null) => {
+  filterStatus.value = value as string
+  onFilterChange()
+}
+
+// Convert groups to Select options format with rate multiplier and subscription type
+const groupOptions = computed(() =>
+  groups.value.map((group) => ({
+    value: group.id,
+    label: group.name,
+    description: group.description,
+    rate: group.rate_multiplier,
+    userRate: userGroupRates.value[group.id] ?? null,
+    subscriptionType: group.subscription_type,
+    platform: group.platform
+  }))
+)
+
+// Group dropdown search
+const groupSearchQuery = ref('')
+const filteredGroupOptions = computed(() => {
+  const query = groupSearchQuery.value.trim().toLowerCase()
+  if (!query) return groupOptions.value
+  return groupOptions.value.filter((opt) => {
+    return opt.label.toLowerCase().includes(query) ||
+      (opt.description && opt.description.toLowerCase().includes(query))
+  })
+})
+
+const copyToClipboard = async (text: string, keyId: number) => {
+  const success = await clipboardCopy(text, t('keys.copied'))
+  if (success) {
+    copiedKeyId.value = keyId
+    setTimeout(() => {
+      copiedKeyId.value = null
+    }, 800)
+  }
+}
+
+const isAbortError = (error: unknown) => {
+  if (!error || typeof error !== 'object') return false
+  const { name, code } = error as { name?: string; code?: string }
+  return name === 'AbortError' || code === 'ERR_CANCELED'
+}
+
+const loadApiKeys = async () => {
+  abortController?.abort()
+  const controller = new AbortController()
+  abortController = controller
+  const { signal } = controller
+  loading.value = true
+  try {
+    // Build filters
+    const filters: {
+      search?: string
+      status?: string
+      group_id?: number | string
+      sort_by?: string
+      sort_order?: 'asc' | 'desc'
+    } = {}
+    if (filterSearch.value) filters.search = filterSearch.value
+    if (filterStatus.value) filters.status = filterStatus.value
+    if (filterGroupId.value !== '') filters.group_id = filterGroupId.value
+    filters.sort_by = sortState.value.sort_by
+    filters.sort_order = sortState.value.sort_order
+
+    const response = await keysAPI.list(pagination.value.page, pagination.value.page_size, filters, {
+      signal
+    })
+    if (signal.aborted) return
+    apiKeys.value = response.items
+    listFiltered.value = filters.search !== undefined || filters.status !== undefined || filters.group_id !== undefined
+    pagination.value.total = response.total
+    pagination.value.pages = response.pages
+
+    // Load usage stats for all API keys in the list
+    if (response.items.length > 0) {
+      const keyIds = response.items.map((k) => k.id)
+      try {
+        const usageResponse = await usageAPI.getDashboardApiKeysUsage(keyIds, { signal })
+        if (signal.aborted) return
+        usageStats.value = usageResponse.stats
+      } catch (e) {
+        if (!isAbortError(e)) {
+          console.error('Failed to load usage stats:', e)
+        }
+      }
+    }
+  } catch (error) {
+    if (isAbortError(error)) {
+      return
+    }
+    appStore.showError(t('keys.failedToLoad'))
+  } finally {
+    if (abortController === controller) {
+      loading.value = false
+    }
+  }
+}
+
+const loadGroups = async () => {
+  try {
+    groups.value = await userGroupsAPI.getAvailable()
+  } catch (error) {
+    console.error('Failed to load groups:', error)
+  }
+}
+
+const loadUserGroupRates = async () => {
+  try {
+    userGroupRates.value = await userGroupsAPI.getUserGroupRates()
+  } catch (error) {
+    console.error('Failed to load user group rates:', error)
+  }
+}
+
+const loadPublicSettings = async () => {
+  try {
+    publicSettings.value = await authAPI.getPublicSettings()
+  } catch (error) {
+    console.error('Failed to load public settings:', error)
+  }
+}
+
+const openOnboarding = (key: ApiKey, tab: 'install' | 'ccswitch' = 'install') => {
+  onboardingKey.value = key
+  onboardingTab.value = tab
+  showOnboardingModal.value = true
+}
+
+const closeOnboarding = () => {
+  showOnboardingModal.value = false
+  onboardingKey.value = null
+}
+
+const handlePageChange = (page: number) => {
+  pagination.value.page = page
+  loadApiKeys()
+}
+
+const handlePageSizeChange = (pageSize: number) => {
+  pagination.value.page_size = pageSize
+  pagination.value.page = 1
+  loadApiKeys()
+}
+
+const handleSort = (key: string, order: 'asc' | 'desc') => {
+  sortState.value.sort_by = key
+  sortState.value.sort_order = order
+  pagination.value.page = 1
+  loadApiKeys()
+}
+
+const editKey = (key: ApiKey) => {
+  selectedKey.value = key
+  beginLimitInput()
+  const hasIPRestriction = (key.ip_whitelist?.length > 0) || (key.ip_blacklist?.length > 0)
+  const hasExpiration = !!key.expires_at
+  formData.value = {
+    name: key.name,
+    group_id: key.group_id,
+    status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
+    use_custom_key: false,
+    custom_key: '',
+    enable_ip_restriction: hasIPRestriction,
+    ip_whitelist: (key.ip_whitelist || []).join('\n'),
+    ip_blacklist: (key.ip_blacklist || []).join('\n'),
+    enable_quota: key.quota > 0,
+    quota: limitToInput('quota', key.quota),
+    enable_rate_limit: (key.rate_limit_5h > 0) || (key.rate_limit_1d > 0) || (key.rate_limit_7d > 0),
+    rate_limit_5h: limitToInput('rate_limit_5h', key.rate_limit_5h),
+    rate_limit_1d: limitToInput('rate_limit_1d', key.rate_limit_1d),
+    rate_limit_7d: limitToInput('rate_limit_7d', key.rate_limit_7d),
+    enable_expiration: hasExpiration,
+    expiration_preset: 'custom',
+    expiration_date: key.expires_at ? formatDateTimeLocal(key.expires_at) : ''
+  }
+  showEditModal.value = true
+}
+
+const toggleKeyStatus = async (key: ApiKey) => {
+  const newStatus = key.status === 'active' ? 'inactive' : 'active'
+  try {
+    await keysAPI.toggleStatus(key.id, newStatus)
+    appStore.showSuccess(
+      newStatus === 'active' ? t('keys.keyEnabledSuccess') : t('keys.keyDisabledSuccess')
+    )
+    loadApiKeys()
+  } catch (error) {
+    appStore.showError(t('keys.failedToUpdateStatus'))
+  }
+}
+
+const openGroupSelector = (key: ApiKey) => {
+  if (groupSelectorKeyId.value === key.id) {
+    groupSelectorKeyId.value = null
+    dropdownPosition.value = null
+  } else {
+    const buttonEl = groupButtonRefs.value.get(key.id)
+    if (buttonEl) {
+      const rect = buttonEl.getBoundingClientRect()
+      // c8 ignore next: browser viewport interaction is covered by the pure helper tests.
+      dropdownPosition.value = getDropdownPosition(rect, window.innerWidth, window.innerHeight)
+    }
+    groupSelectorKeyId.value = key.id
+    groupSearchQuery.value = ''
+  }
+}
+
+const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
+  groupSelectorKeyId.value = null
+  dropdownPosition.value = null
+  if (key.group_id === newGroupId) return
+
+  try {
+    await keysAPI.update(key.id, { group_id: newGroupId })
+    appStore.showSuccess(t('keys.groupChangedSuccess'))
+    loadApiKeys()
+  } catch (error) {
+    appStore.showError(t('keys.failedToChangeGroup'))
+  }
+}
+
+const closeGroupSelector = (event: MouseEvent) => {
+  const target = event.target as HTMLElement
+  // Check if click is inside the dropdown or the trigger button
+  if (!target.closest('.group\\/dropdown') && !dropdownRef.value?.contains(target)) {
+    groupSelectorKeyId.value = null
+    dropdownPosition.value = null
+  }
+  if (columnDropdownRef.value && !columnDropdownRef.value.contains(target)) {
+    showColumnDropdown.value = false
+  }
+}
+
+const confirmDelete = (key: ApiKey) => {
+  selectedKey.value = key
+  showDeleteDialog.value = true
+}
+
+const handleSubmit = async () => {
+  // Validate group_id is required
+  if (formData.value.group_id === null) {
+    appStore.showError(t('keys.groupRequired'))
+    return
+  }
+
+  // Validate custom key if enabled
+  if (!showEditModal.value && formData.value.use_custom_key) {
+    if (!formData.value.custom_key) {
+      appStore.showError(t('keys.customKeyRequired'))
+      return
+    }
+    if (customKeyError.value) {
+      appStore.showError(customKeyError.value)
+      return
+    }
+  }
+
+  // Parse IP lists only if IP restriction is enabled
+  const parseIPList = (text: string): string[] =>
+    text.split('\n').map(ip => ip.trim()).filter(ip => ip.length > 0)
+  const ipWhitelist = formData.value.enable_ip_restriction ? parseIPList(formData.value.ip_whitelist) : []
+  const ipBlacklist = formData.value.enable_ip_restriction ? parseIPList(formData.value.ip_blacklist) : []
+
+  // Calculate quota value (null/empty/0 = unlimited, stored as 0)
+  const quota = limitFromInput('quota', formData.value.quota)
+
+  // Calculate expiration
+  let expiresInDays: number | undefined
+  let expiresAt: string | null | undefined
+  if (formData.value.enable_expiration && formData.value.expiration_date) {
+    if (!showEditModal.value) {
+      // Create mode: calculate days from date
+      const expDate = new Date(formData.value.expiration_date)
+      const now = new Date()
+      const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+      expiresInDays = diffDays > 0 ? diffDays : 1
+    } else {
+      // Edit mode: use custom date directly
+      expiresAt = new Date(formData.value.expiration_date).toISOString()
+    }
+  } else if (showEditModal.value) {
+    // Edit mode: if expiration disabled or date cleared, send empty string to clear
+    expiresAt = ''
+  }
+
+  // Calculate rate limit values (send 0 when toggle is off)
+  const rateLimitData = formData.value.enable_rate_limit ? {
+    rate_limit_5h: limitFromInput('rate_limit_5h', formData.value.rate_limit_5h),
+    rate_limit_1d: limitFromInput('rate_limit_1d', formData.value.rate_limit_1d),
+    rate_limit_7d: limitFromInput('rate_limit_7d', formData.value.rate_limit_7d),
+  } : { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }
+
+  submitting.value = true
+  try {
+    if (showEditModal.value && selectedKey.value) {
+      await keysAPI.update(selectedKey.value.id, {
+        name: formData.value.name,
+        group_id: formData.value.group_id,
+        status: formData.value.status,
+        ip_whitelist: ipWhitelist,
+        ip_blacklist: ipBlacklist,
+        quota: quota,
+        expires_at: expiresAt,
+        rate_limit_5h: rateLimitData.rate_limit_5h,
+        rate_limit_1d: rateLimitData.rate_limit_1d,
+        rate_limit_7d: rateLimitData.rate_limit_7d,
+      })
+      appStore.showSuccess(t('keys.keyUpdatedSuccess'))
+    } else {
+      const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
+      const created = await keysAPI.create(
+        formData.value.name,
+        formData.value.group_id,
+        customKey,
+        ipWhitelist,
+        ipBlacklist,
+        quota,
+        expiresInDays,
+        rateLimitData
+      )
+      appStore.showSuccess(t('keys.keyCreatedSuccess'))
+      // Only advance tour if active, on submit step, and creation succeeded
+      if (onboardingStore.isCurrentStep('[data-tour="key-form-submit"]')) {
+        onboardingStore.nextStep(500)
+      }
+      // 创建弹窗原地变成确认态，由用户关闭或去接入；列表在后台刷新
+      if (created?.key) {
+        createdKey.value = created
+        loadApiKeys()
+        return
+      }
+    }
+    closeModals()
+    loadApiKeys()
+  } catch (error: any) {
+    const errorMsg = error.response?.data?.detail || t('keys.failedToSave')
+    appStore.showError(errorMsg)
+    // Don't advance tour on error
+  } finally {
+    submitting.value = false
+  }
+}
+
+/**
+ * 处理删除 API Key 的操作
+ * 优化：错误处理改进，优先显示后端返回的具体错误消息（如权限不足等），
+ * 若后端未返回消息则显示默认的国际化文本
+ */
+const handleDelete = async () => {
+  if (!selectedKey.value) return
+
+  try {
+    await keysAPI.delete(selectedKey.value.id)
+    appStore.showSuccess(t('keys.keyDeletedSuccess'))
+    showDeleteDialog.value = false
+    loadApiKeys()
+  } catch (error: any) {
+    // 优先使用后端返回的错误消息，提供更具体的错误信息给用户
+    const errorMsg = error?.message || t('keys.failedToDelete')
+    appStore.showError(errorMsg)
+  }
+}
+
+const connectCreatedKey = () => {
+  const key = createdKey.value
+  closeModals()
+  if (key) openOnboarding(key, 'install')
+}
+
+const closeModals = () => {
+  showCreateModal.value = false
+  createdKey.value = null
+  showEditModal.value = false
+  selectedKey.value = null
+  formData.value = {
+    name: '',
+    group_id: null,
+    status: 'active',
+    use_custom_key: false,
+    custom_key: '',
+    enable_ip_restriction: false,
+    ip_whitelist: '',
+    ip_blacklist: '',
+    enable_quota: false,
+    quota: null,
+    enable_rate_limit: false,
+    rate_limit_5h: null,
+    rate_limit_1d: null,
+    rate_limit_7d: null,
+    enable_expiration: false,
+    expiration_preset: '30',
+    expiration_date: ''
+  }
+}
+
+// Show reset quota confirmation dialog
+const confirmResetQuota = () => {
+  showResetQuotaDialog.value = true
+}
+
+// Set expiration date based on quick select days
+const setExpirationDays = (days: number) => {
+  formData.value.expiration_preset = days.toString() as '7' | '30' | '90'
+  const expDate = new Date()
+  expDate.setDate(expDate.getDate() + days)
+  formData.value.expiration_date = formatDateTimeLocal(expDate.toISOString())
+}
+
+// Reset quota used for an API key
+const resetQuotaUsed = async () => {
+  const key = selectedKey.value
+  if (!key) return
+  showResetQuotaDialog.value = false
+  try {
+    const updatedKey = await keysAPI.update(key.id, { reset_quota: true })
+    appStore.showSuccess(t('keys.quotaResetSuccess'))
+    key.quota_used = updatedKey.quota_used
+    if (key.status !== updatedKey.status) {
+      key.status = updatedKey.status
+      if (selectedKey.value?.id === key.id) {
+        formData.value.status = updatedKey.status === 'active' ? 'active' : 'inactive'
+      }
+    }
+  } catch (error: any) {
+    const errorMsg = error.response?.data?.detail || t('keys.failedToResetQuota')
+    appStore.showError(errorMsg)
+  }
+}
+
+// Show reset rate limit confirmation dialog (from edit modal)
+const confirmResetRateLimit = () => {
+  showResetRateLimitDialog.value = true
+}
+
+// Show reset rate limit confirmation dialog (from table row)
+const confirmResetRateLimitFromTable = (row: ApiKey) => {
+  selectedKey.value = row
+  showResetRateLimitDialog.value = true
+}
+
+// Reset rate limit usage for an API key
+const resetRateLimitUsage = async () => {
+  if (!selectedKey.value) return
+  showResetRateLimitDialog.value = false
+  try {
+    await keysAPI.update(selectedKey.value.id, { reset_rate_limit_usage: true })
+    appStore.showSuccess(t('keys.rateLimitResetSuccess'))
+    // Refresh key data
+    await loadApiKeys()
+    // Update the editing key with fresh data
+    const refreshedKey = apiKeys.value.find(k => k.id === selectedKey.value!.id)
+    if (refreshedKey) {
+      selectedKey.value = refreshedKey
+    }
+  } catch (error: any) {
+    const errorMsg = error.response?.data?.detail || t('keys.failedToResetRateLimit')
+    appStore.showError(errorMsg)
+  }
+}
+
+
+function formatResetTime(resetAt: string | null): string {
+  if (!resetAt) return ''
+  const diff = new Date(resetAt).getTime() - now.value.getTime()
+  if (diff <= 0) return t('keys.resetNow')
+  const days = Math.floor(diff / 86400000)
+  const hours = Math.floor((diff % 86400000) / 3600000)
+  const mins = Math.floor((diff % 3600000) / 60000)
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${mins}m`
+  return `${mins}m`
+}
+
+onMounted(() => {
+  loadSavedColumns()
+  loadApiKeys()
+  loadFallbackSummary()
+  loadGroups()
+  loadUserGroupRates()
+  loadPublicSettings()
+  document.addEventListener('click', closeGroupSelector)
+  resetTimer = setInterval(() => { now.value = new Date() }, 60000)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', closeGroupSelector)
+  if (addressCopiedTimer) clearTimeout(addressCopiedTimer)
+  if (resetTimer) clearInterval(resetTimer)
+})
+</script>

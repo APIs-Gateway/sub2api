@@ -1,0 +1,64 @@
+import { describe, expect, it } from 'vitest'
+
+import en from '../locales/en'
+import zhCN from '../locales/zh-CN'
+import zhHK from '../locales/zh-HK'
+import { FALLBACK_LOCALES, completeLocaleMessages } from '../index'
+import type { LocaleCode } from '@/types'
+
+type LocaleObject = Record<string, unknown>
+
+function collectLeafKeys(value: unknown, prefix = ''): string[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return prefix ? [prefix] : []
+  }
+
+  return Object.entries(value as LocaleObject).flatMap(([key, child]) =>
+    collectLeafKeys(child, prefix ? `${prefix}.${key}` : key)
+  )
+}
+
+function expectSameKeys(baseName: string, base: LocaleObject, candidateName: string, candidate: LocaleObject) {
+  const baseKeys = collectLeafKeys(base).sort()
+  const candidateKeys = collectLeafKeys(candidate).sort()
+
+  expect(candidateKeys, `${candidateName} locale keys should match ${baseName}`).toEqual(baseKeys)
+}
+
+describe('locale key coverage', () => {
+  it('provides English labels for the completed admin overview and resource views', () => {
+    expect(en.admin.dashboard.totalApiKeys).toBe('Total API Keys')
+    expect(en.admin.users.searchPlaceholder).toBe('Search by email, username, notes, or API key...')
+    expect(en.admin.groups.form.nameLabel).toBe('Group Name')
+    expect(en.admin.proxies.columns.protocolLabel).toBe('Protocol')
+    expect(en.admin.redeem.codesGeneratedSuccess).toBe('Redeem codes generated successfully, {count} total')
+    expect(en.keys.currentConcurrency).toBe('Current Concurrency')
+  })
+
+  it('provides localized OpenAI OAuth account entry labels', () => {
+    expect(en.admin.accounts.oauth.openai.mobileRefreshTokenAuth).toBe('Manual Mobile RT Input')
+    expect(en.admin.accounts.oauth.openai.accessTokenAuth).toBe('Manual AT Input')
+    expect(zhCN.admin.accounts.oauth.openai.mobileRefreshTokenAuth).toBe('手动输入 Mobile RT')
+    expect(zhCN.admin.accounts.oauth.openai.accessTokenAuth).toBe('手动输入 AT')
+    expect(zhHK.admin.accounts.oauth.openai.mobileRefreshTokenAuth).toBe('手動輸入 Mobile RT')
+    expect(zhHK.admin.accounts.oauth.openai.accessTokenAuth).toBe('手動輸入 AT')
+  })
+
+  it('keeps zh-CN and zh-HK source leaf key sets aligned', () => {
+    expectSameKeys('zh-CN', zhCN, 'zh-HK', zhHK)
+  })
+
+  it('keeps en, zh-CN, and zh-HK effective leaf key sets aligned after fallback completion', () => {
+    // 兜底链与运行时保持同一份定义，避免测试和 loadLocaleMessages 漂移
+    const sources: Record<LocaleCode, LocaleObject> = { en, 'zh-CN': zhCN, 'zh-HK': zhHK }
+    const complete = (locale: LocaleCode) =>
+      completeLocaleMessages(sources[locale], FALLBACK_LOCALES[locale].map((code) => sources[code]))
+
+    const effectiveEn = complete('en')
+    const effectiveZhCN = complete('zh-CN')
+    const effectiveZhHK = complete('zh-HK')
+
+    expectSameKeys('en', effectiveEn, 'zh-CN', effectiveZhCN)
+    expectSameKeys('zh-CN', effectiveZhCN, 'zh-HK', effectiveZhHK)
+  })
+})

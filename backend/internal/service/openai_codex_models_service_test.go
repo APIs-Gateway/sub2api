@@ -1,0 +1,853 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"golang.org/x/net/http2"
+)
+
+func newCodexModelsTestAccount() *Account {
+	return &Account{
+		ID:       1,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":       "test-access-token",
+			"chatgpt_account_id": "acc-123",
+		},
+	}
+}
+
+func TestFetchCodexModelsManifestPassthrough(t *testing.T) {
+	manifestBody := `{"models":[{"slug":"gpt-5.5","display_name":"GPT-5.5"}]}`
+
+	var gotAuth, gotAccountID, gotOriginator, gotVersion, gotClientVersion string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotAccountID = r.Header.Get("chatgpt-account-id")
+		gotOriginator = r.Header.Get("Originator")
+		gotVersion = r.Header.Get("Version")
+		gotClientVersion = r.URL.Query().Get("client_version")
+		w.Header().Set("ETag", `W/"abc123"`)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(manifestBody))
+	}))
+	defer server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	s := &OpenAIGatewayService{}
+	manifest, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", "")
+	if err != nil {
+		t.Fatalf("FetchCodexModelsManifest returned error: %v", err)
+	}
+
+	if string(manifest.Body) != manifestBody {
+		t.Errorf("body not passed through verbatim: got %q", manifest.Body)
+	}
+	if manifest.ETag != `W/"abc123"` {
+		t.Errorf("etag not passed through: got %q", manifest.ETag)
+	}
+	if gotAuth != "Bearer test-access-token" {
+		t.Errorf("authorization header: got %q", gotAuth)
+	}
+	if gotAccountID != "acc-123" {
+		t.Errorf("chatgpt-account-id header: got %q", gotAccountID)
+	}
+	if gotOriginator != "codex_cli_rs" {
+		t.Errorf("originator header: got %q", gotOriginator)
+	}
+	if gotVersion != codexCLIVersion {
+		t.Errorf("version header: got %q, want %q", gotVersion, codexCLIVersion)
+	}
+	if gotClientVersion != "0.137.0" {
+		t.Errorf("client_version query: got %q", gotClientVersion)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyConvertsStandardOpenAIModelList(t *testing.T) {
+	upstreamBody := `{"object":"list","data":[{"id":"gpt-5.6","object":"model"},{"id":"  ","object":"model"},{"id":"gpt-5.6-codex","object":"model"}]}`
+	header := make(http.Header)
+	header.Set("ETag", `W/"openai-list"`)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     header,
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+
+	s := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID:       1,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "test-api-key",
+			"base_url": "https://upstream.example/v1",
+		},
+	}
+	manifest, err := s.FetchCodexModelsManifest(
+		context.Background(),
+		account,
+		"0.144.0",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("FetchCodexModelsManifest returned error: %v", err)
+	}
+	if got, want := string(manifest.Body), `{"models":[{"slug":"gpt-5.6"},{"slug":"gpt-5.6-codex"}]}`; got != want {
+		t.Errorf("converted body: got %q, want %q", got, want)
+	}
+	if manifest.ETag != `W/"openai-list"` {
+		t.Errorf("etag not passed through: got %q", manifest.ETag)
+	}
+}
+
+func TestConvertOpenAIModelListToCodexManifest(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "standard list",
+			body: `{"object":"list","data":[{"id":"m-1"},{"id":"m-2"}]}`,
+			want: `{"models":[{"slug":"m-1"},{"slug":"m-2"}]}`,
+		},
+		{
+			name: "codex manifest unchanged",
+			body: `{"models":[{"slug":"m-1"}]}`,
+			want: `{"models":[{"slug":"m-1"}]}`,
+		},
+		{
+			name: "empty data unchanged",
+			body: `{"object":"list","data":[]}`,
+			want: `{"object":"list","data":[]}`,
+		},
+		{
+			name: "data not an array unchanged",
+			body: `{"object":"list","data":{"id":"m-1"}}`,
+			want: `{"object":"list","data":{"id":"m-1"}}`,
+		},
+		{
+			name: "entries without usable IDs unchanged",
+			body: `{"object":"list","data":[{"id":""},{"object":"model"}]}`,
+			want: `{"object":"list","data":[{"id":""},{"object":"model"}]}`,
+		},
+		{
+			name: "invalid JSON unchanged",
+			body: `{"data":`,
+			want: `{"data":`,
+		},
+		{
+			name: "non-object unchanged",
+			body: `[]`,
+			want: `[]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := string(convertOpenAIModelListToCodexManifest([]byte(tt.body))); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAdjustAPIKeyCodexModelsManifest(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "targeted model with responses lite flipped off",
+			body: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":true}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false}]}`,
+		},
+		{
+			name: "multiple targeted models all adjusted",
+			body: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":true},{"slug":"gpt-5.6-luna","use_responses_lite":true}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false},{"slug":"gpt-5.6-luna","use_responses_lite":false}]}`,
+		},
+		{
+			name: "gpt-6-astra targeted model with responses lite flipped off",
+			body: `{"models":[{"slug":"gpt-6-astra","use_responses_lite":true}]}`,
+			want: `{"models":[{"slug":"gpt-6-astra","use_responses_lite":false}]}`,
+		},
+		{
+			name: "untargeted model unchanged",
+			body: `{"models":[{"slug":"gpt-5.6-nova","use_responses_lite":true}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-nova","use_responses_lite":true}]}`,
+		},
+		{
+			name: "targeted model already false unchanged",
+			body: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false}]}`,
+		},
+		{
+			name: "targeted model without the field unchanged",
+			body: `{"models":[{"slug":"gpt-5.6-sol"}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol"}]}`,
+		},
+		{
+			name: "converted manifest without the field unchanged",
+			body: `{"models":[{"slug":"gpt-5.6-sol"},{"slug":"gpt-5.6-luna"}]}`,
+			want: `{"models":[{"slug":"gpt-5.6-sol"},{"slug":"gpt-5.6-luna"}]}`,
+		},
+		{
+			name: "malformed body returned unchanged, not an error",
+			body: `not json`,
+			want: `not json`,
+		},
+		{
+			name: "missing models field returned unchanged, not an error",
+			body: `{"object":"list"}`,
+			want: `{"object":"list"}`,
+		},
+		{
+			name: "non-object model entry skipped, valid siblings still adjusted",
+			body: `{"models":[null,"not-an-object",{"slug":"gpt-5.6-sol","use_responses_lite":true}]}`,
+			want: `{"models":[null,"not-an-object",{"slug":"gpt-5.6-sol","use_responses_lite":false}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := adjustAPIKeyCodexModelsManifest([]byte(tt.body))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// adjustAPIKeyCodexModelsManifest 本身在正常输入下不会返回错误（它只在重新
+// 序列化已校验过的 json.RawMessage 时才可能失败，而这实际不可能发生）；
+// 用 adjustAPIKeyCodexModelsManifestFunc 这个测试注入点强制其失败，
+// 单独验证调用方把该错误包装成 OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST
+// 且可重试的逻辑是正确的。
+func TestFetchCodexModelsManifestAPIKeyAdjustErrorWraps(t *testing.T) {
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"models":[{"slug":"gpt-5.6-sol"}]}`)),
+	}}
+
+	prev := adjustAPIKeyCodexModelsManifestFunc
+	adjustErr := errors.New("boom")
+	adjustAPIKeyCodexModelsManifestFunc = func(body []byte) ([]byte, error) {
+		return nil, adjustErr
+	}
+	defer func() { adjustAPIKeyCodexModelsManifestFunc = prev }()
+
+	s := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID:       1,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "test-api-key",
+			"base_url": "https://upstream.example/v1",
+		},
+	}
+
+	_, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+	if err == nil {
+		t.Fatal("expected adjust error to be wrapped and returned")
+	}
+	if got, want := infraerrors.Reason(err), "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST"; got != want {
+		t.Fatalf("error reason: got %q, want %q", got, want)
+	}
+	if !IsRetryableCodexModelsManifestError(err) {
+		t.Fatal("adjust-manifest wrapping error must be retryable")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected wrapped error to mention underlying cause, got: %v", err)
+	}
+}
+
+func TestFetchCodexModelsManifestRejectsInvalidEnvelope(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "OpenAI models list", body: `{"object":"list","data":[]}`},
+		{name: "invalid JSON", body: `{"models":`},
+		{name: "non-object", body: `[]`},
+		{name: "null object", body: `null`},
+		{name: "missing models", body: `{}`},
+		{name: "models object", body: `{"models":{}}`},
+		{name: "models null", body: `{"models":null}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			original := chatgptCodexModelsURL
+			chatgptCodexModelsURL = server.URL
+			defer func() { chatgptCodexModelsURL = original }()
+
+			s := &OpenAIGatewayService{}
+			_, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", "")
+			if err == nil {
+				t.Fatal("expected invalid manifest error, got nil")
+			}
+			if got, want := infraerrors.Reason(err), "OPENAI_CODEX_MODELS_UPSTREAM_INVALID_MANIFEST"; got != want {
+				t.Fatalf("error reason: got %q, want %q", got, want)
+			}
+			if !IsRetryableCodexModelsManifestError(err) {
+				t.Fatal("invalid upstream manifest must be retryable")
+			}
+		})
+	}
+}
+
+func TestFetchCodexModelsManifestDefaultClientVersion(t *testing.T) {
+	var gotClientVersion string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotClientVersion = r.URL.Query().Get("client_version")
+		_, _ = w.Write([]byte(`{"models":[]}`))
+	}))
+	defer server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "", ""); err != nil {
+		t.Fatalf("FetchCodexModelsManifest returned error: %v", err)
+	}
+	if gotClientVersion != openAICodexProbeVersion {
+		t.Errorf("default client_version: got %q, want %q", gotClientVersion, openAICodexProbeVersion)
+	}
+}
+
+func TestFetchCodexModelsManifestUsesAPIKeyUpstream(t *testing.T) {
+	const manifestBody = `{"models":[{"id":"gpt-5.6"}]}`
+	var gotPath, gotClientVersion, gotAuthorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotClientVersion = r.URL.Query().Get("client_version")
+		gotAuthorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(manifestBody))
+	}))
+	defer server.Close()
+
+	account := &Account{
+		ID:       2,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":    "test-api-key",
+			"base_url":   server.URL,
+			"user_agent": "test-api-key-agent",
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	s := &OpenAIGatewayService{cfg: cfg}
+
+	manifest, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.2", "")
+	if err != nil {
+		t.Fatalf("FetchCodexModelsManifest returned error: %v", err)
+	}
+	if string(manifest.Body) != manifestBody {
+		t.Fatalf("manifest body: got %q, want %q", manifest.Body, manifestBody)
+	}
+	if gotPath != "/v1/models" {
+		t.Errorf("request path: got %q, want /v1/models", gotPath)
+	}
+	if gotClientVersion != "0.144.2" {
+		t.Errorf("client_version: got %q, want 0.144.2", gotClientVersion)
+	}
+	if gotAuthorization != "Bearer test-api-key" {
+		t.Errorf("authorization: got %q", gotAuthorization)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyMissing(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://example.com",
+		},
+	}
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.2", ""); err == nil {
+		t.Fatal("expected error for missing API key, got nil")
+	} else if !strings.Contains(err.Error(), "OPENAI_CODEX_MODELS_API_KEY_MISSING") {
+		t.Fatalf("unexpected missing API key error: %v", err)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyInvalidUpstream(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "test-api-key",
+			"base_url": "://bad-url",
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	s := &OpenAIGatewayService{cfg: cfg}
+
+	if _, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.2", ""); err == nil {
+		t.Fatal("expected error for invalid API key upstream, got nil")
+	} else if !strings.Contains(err.Error(), "OPENAI_CODEX_MODELS_API_KEY_UPSTREAM_INVALID") {
+		t.Fatalf("unexpected invalid upstream error: %v", err)
+	}
+}
+
+func TestFetchCodexModelsManifestUnsupportedAccountType(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeSetupToken,
+	}
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.2", ""); err == nil {
+		t.Fatal("expected error for unsupported account type, got nil")
+	} else if !strings.Contains(err.Error(), "OPENAI_CODEX_MODELS_ACCOUNT_TYPE_UNSUPPORTED") {
+		t.Fatalf("unexpected unsupported account error: %v", err)
+	}
+}
+
+func TestFetchCodexModelsManifestUsesAPIKeyHTTPUpstream(t *testing.T) {
+	const manifestBody = `{"models":[{"id":"gpt-5.6"}]}`
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(manifestBody)),
+	}}
+	account := &Account{
+		ID:          7,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 3,
+		Credentials: map[string]any{
+			"api_key":    "test-api-key",
+			"base_url":   "https://example.com",
+			"user_agent": "test-api-key-agent",
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	s := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
+
+	manifest, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.2", "")
+	if err != nil {
+		t.Fatalf("FetchCodexModelsManifest returned error: %v", err)
+	}
+	if string(manifest.Body) != manifestBody {
+		t.Fatalf("manifest body: got %q, want %q", manifest.Body, manifestBody)
+	}
+	if upstream.lastReq == nil {
+		t.Fatal("expected HTTP upstream to receive a request")
+	}
+	if upstream.lastReq.URL.String() != "https://example.com/v1/models?client_version=0.144.2" {
+		t.Errorf("request URL: got %q", upstream.lastReq.URL.String())
+	}
+	if got := upstream.lastReq.Header.Get("Authorization"); got != "Bearer test-api-key" {
+		t.Errorf("authorization header: got %q", got)
+	}
+	if got := upstream.lastReq.Header.Get("User-Agent"); got != "test-api-key-agent" {
+		t.Errorf("user-agent header: got %q", got)
+	}
+	if got := HTTPUpstreamProfileFromContext(upstream.lastReq.Context()); got != HTTPUpstreamProfileOpenAI {
+		t.Errorf("upstream profile: got %q, want %q", got, HTTPUpstreamProfileOpenAI)
+	}
+}
+
+func TestFetchCodexModelsManifestNotModified(t *testing.T) {
+	var gotIfNoneMatch string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotIfNoneMatch = r.Header.Get("If-None-Match")
+		w.Header().Set("ETag", `W/"abc123"`)
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	defer server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	s := &OpenAIGatewayService{}
+	manifest, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", `W/"abc123"`)
+	if err != nil {
+		t.Fatalf("FetchCodexModelsManifest returned error: %v", err)
+	}
+	if !manifest.NotModified {
+		t.Error("expected NotModified to be true")
+	}
+	if gotIfNoneMatch != `W/"abc123"` {
+		t.Errorf("if-none-match header: got %q", gotIfNoneMatch)
+	}
+}
+
+func TestFetchCodexModelsManifestUpstreamError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"detail":"boom"}`, http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", ""); err == nil {
+		t.Fatal("expected error for upstream 500, got nil")
+	} else if !IsRetryableCodexModelsManifestError(err) {
+		t.Fatalf("expected upstream 500 to be retryable, got %v", err)
+	}
+}
+
+func TestFetchCodexModelsManifestUpstreamErrorUsesStatusWhenBodyEmpty(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", ""); err == nil {
+		t.Fatal("expected error for empty upstream error body, got nil")
+	} else if !IsRetryableCodexModelsManifestError(err) {
+		t.Fatalf("expected upstream 429 to be retryable, got %v", err)
+	}
+}
+
+func TestFetchCodexModelsManifestPermanentUpstreamErrorIsNotRetryable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"detail":"bad request"}`, http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", ""); err == nil {
+		t.Fatal("expected error for permanent upstream status, got nil")
+	} else if IsRetryableCodexModelsManifestError(err) {
+		t.Fatalf("expected upstream 400 not to be retryable, got %v", err)
+	}
+}
+
+func TestFetchCodexModelsManifestNilAccount(t *testing.T) {
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), nil, "0.137.0", ""); err == nil {
+		t.Fatal("expected error for nil account, got nil")
+	}
+}
+
+func TestFetchCodexModelsManifestInvalidEndpoint(t *testing.T) {
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = "://bad-url"
+	defer func() { chatgptCodexModelsURL = original }()
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", ""); err == nil {
+		t.Fatal("expected error for invalid Codex models endpoint, got nil")
+	}
+}
+
+func TestFetchCodexModelsManifestRequestFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("closed server should not receive a request")
+	}))
+	requestURL := server.URL
+	server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = requestURL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.137.0", ""); err == nil {
+		t.Fatal("expected request failure, got nil")
+	}
+}
+
+func TestFetchCodexModelsManifestMissingToken(t *testing.T) {
+	account := newCodexModelsTestAccount()
+	delete(account.Credentials, "access_token")
+
+	s := &OpenAIGatewayService{}
+	if _, err := s.FetchCodexModelsManifest(context.Background(), account, "0.137.0", ""); err == nil {
+		t.Fatal("expected error for missing access token, got nil")
+	}
+}
+
+func TestIsRetryableCodexModelsManifestTransportError(t *testing.T) {
+	nativeGoAway := codexModelsWireGoAway(t, false)
+	privateGoAway := codexModelsWireGoAway(t, true)
+	t.Run("native opaque GOAWAY", func(t *testing.T) { testCodexModelsGoAwayWrappers(t, nativeGoAway) })
+	t.Run("private req opaque GOAWAY", func(t *testing.T) { testCodexModelsGoAwayWrappers(t, privateGoAway) })
+	tests := []struct {
+		name      string
+		err       error
+		retryable bool
+	}{
+		{name: "nil", err: nil},
+		{name: "configuration error", err: errors.New("invalid proxy URL")},
+		{name: "upstream configuration error", err: errors.New("upstream error: invalid proxy")},
+		{name: "redirect policy error", err: &url.Error{Op: "Get", URL: "https://upstream.example/v1/models", Err: errors.New("stopped after 10 redirects")}},
+		{name: "canceled", err: context.Canceled},
+		{name: "deadline", err: context.DeadlineExceeded, retryable: true},
+		{name: "eof", err: io.EOF, retryable: true},
+		{name: "unexpected eof", err: io.ErrUnexpectedEOF, retryable: true},
+		{name: "closed connection", err: net.ErrClosed, retryable: true},
+		{name: "network operation", err: &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset")}, retryable: true},
+		{name: "dns", err: &net.DNSError{Err: "temporary failure", Name: "upstream.example"}, retryable: true},
+		{name: "typed goaway", err: nativeGoAway, retryable: true},
+		{name: "private req typed goaway", err: privateGoAway, retryable: true},
+		{name: "typed stream error", err: http2.StreamError{Code: http2.ErrCodeRefusedStream}, retryable: true},
+		{name: "typed connection error", err: http2.ConnectionError(http2.ErrCodeProtocol), retryable: true},
+		{name: "stdlib goaway", err: errors.New("http2: server sent GOAWAY and closed the connection"), retryable: true},
+		{name: "stdlib refused stream", err: errors.New("stream error: stream ID 3; REFUSED_STREAM"), retryable: true},
+		{name: "stdlib frame too large", err: errors.New("http2: frame too large"), retryable: true},
+		{name: "stdlib connection error", err: errors.New("connection error: PROTOCOL_ERROR"), retryable: true},
+		{name: "timeout error", err: codexModelsTimeoutError{}, retryable: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isRetryableCodexModelsManifestTransportError(tt.err); got != tt.retryable {
+				t.Fatalf("retryable: got %v, want %v", got, tt.retryable)
+			}
+		})
+	}
+}
+
+func TestIsRetryableCodexModelsManifestHTTP2ConnectionCodes(t *testing.T) {
+	codes := []http2.ErrCode{
+		http2.ErrCodeNo,
+		http2.ErrCodeProtocol,
+		http2.ErrCodeInternal,
+		http2.ErrCodeFlowControl,
+		http2.ErrCodeSettingsTimeout,
+		http2.ErrCodeStreamClosed,
+		http2.ErrCodeFrameSize,
+		http2.ErrCodeRefusedStream,
+		http2.ErrCodeCancel,
+		http2.ErrCodeCompression,
+		http2.ErrCodeConnect,
+		http2.ErrCodeEnhanceYourCalm,
+		http2.ErrCodeInadequateSecurity,
+		http2.ErrCodeHTTP11Required,
+	}
+	for _, code := range codes {
+		t.Run(code.String(), func(t *testing.T) {
+			err := errors.New("connection error: " + strings.ToLower(code.String()))
+			if !isRetryableCodexModelsManifestTransportError(err) {
+				t.Fatalf("expected %s to be retryable", code)
+			}
+		})
+	}
+}
+
+type codexModelsTimeoutError struct{}
+
+func (codexModelsTimeoutError) Error() string   { return "request timed out" }
+func (codexModelsTimeoutError) Timeout() bool   { return true }
+func (codexModelsTimeoutError) Temporary() bool { return true }
+
+func TestIsRetryableCodexModelsManifestErrorUsesWrapper(t *testing.T) {
+	if !IsRetryableCodexModelsManifestError(&codexModelsManifestUpstreamError{err: errors.New("temporary"), retryable: true}) {
+		t.Fatal("expected retryable wrapped error")
+	}
+	if IsRetryableCodexModelsManifestError(errors.New("temporary")) {
+		t.Fatal("unwrapped error must not be retryable")
+	}
+}
+
+type codexModelsAccountStateRepo struct {
+	AccountRepository
+	mu                  sync.Mutex
+	setErrorCalls       int
+	lastErrorMsg        string
+	setTempUnschedCalls int
+	lastTempReason      string
+}
+
+func (r *codexModelsAccountStateRepo) SetError(_ context.Context, _ int64, errorMsg string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.setErrorCalls++
+	r.lastErrorMsg = errorMsg
+	return nil
+}
+
+func (r *codexModelsAccountStateRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time.Time, reason string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.setTempUnschedCalls++
+	r.lastTempReason = reason
+	return nil
+}
+
+func newCodexModels401TestService(repo AccountRepository) *OpenAIGatewayService {
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	rateLimitService := NewRateLimitService(repo, nil, cfg, nil, nil)
+	s := &OpenAIGatewayService{cfg: cfg, rateLimitService: rateLimitService}
+	rateLimitService.SetAccountRuntimeBlocker(s)
+	return s
+}
+
+func TestFetchCodexModelsManifestOAuth401MarksAccountUnschedulable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"detail":{"message":"invalid token"}}`))
+	}))
+	defer server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	repo := &codexModelsAccountStateRepo{}
+	s := newCodexModels401TestService(repo)
+	account := newCodexModelsTestAccount()
+	account.Credentials["refresh_token"] = "test-refresh-token"
+
+	_, err := s.FetchCodexModelsManifest(context.Background(), account, "0.137.0", "")
+	if err == nil {
+		t.Fatal("expected manifest 401 error")
+	}
+	if !IsRetryableCodexModelsManifestError(err) {
+		t.Fatal("manifest OAuth 401 should allow account failover")
+	}
+	if repo.setTempUnschedCalls != 1 {
+		t.Fatalf("OAuth 401 temp-unschedule calls: got %d, want 1", repo.setTempUnschedCalls)
+	}
+	if repo.setErrorCalls != 0 {
+		t.Fatalf("OAuth 401 permanent-disable calls: got %d, want 0", repo.setErrorCalls)
+	}
+	if !s.isOpenAIAccountRuntimeBlocked(account) {
+		t.Fatal("OAuth 401 should runtime-block the account")
+	}
+}
+
+func TestFetchCodexModelsManifestOAuth401TokenRevokedDisablesAccount(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"token_revoked","message":"token has been revoked"}}`))
+	}))
+	defer server.Close()
+
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	repo := &codexModelsAccountStateRepo{}
+	s := newCodexModels401TestService(repo)
+	account := newCodexModelsTestAccount()
+	account.Credentials["refresh_token"] = "test-refresh-token"
+
+	_, err := s.FetchCodexModelsManifest(context.Background(), account, "0.137.0", "")
+	if err == nil {
+		t.Fatal("expected manifest 401 error")
+	}
+	if !IsRetryableCodexModelsManifestError(err) {
+		t.Fatal("manifest OAuth 401 should allow account failover")
+	}
+	if repo.setErrorCalls != 1 {
+		t.Fatalf("token_revoked permanent-disable calls: got %d, want 1", repo.setErrorCalls)
+	}
+	if !strings.Contains(repo.lastErrorMsg, "Token revoked") {
+		t.Fatalf("unexpected permanent-disable message: %q", repo.lastErrorMsg)
+	}
+	if repo.setTempUnschedCalls != 0 {
+		t.Fatalf("token_revoked temp-unschedule calls: got %d, want 0", repo.setTempUnschedCalls)
+	}
+}
+
+func TestHandleCodexModelsManifestAccountAuthErrorAgentIdentity401DoesNotDisableAccount(t *testing.T) {
+	repo := &codexModelsAccountStateRepo{}
+	s := newCodexModels401TestService(repo)
+	account := &Account{
+		ID:       6,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"auth_mode": OpenAIAuthModeAgentIdentity,
+		},
+	}
+	err := &codexModelsManifestUpstreamError{
+		err:        errors.New("manifest unauthorized"),
+		statusCode: http.StatusUnauthorized,
+		body:       []byte(`{"detail":"some non-task 401"}`),
+	}
+
+	s.handleCodexModelsManifestAccountAuthError(context.Background(), account, account, err)
+	if repo.setErrorCalls != 0 || repo.setTempUnschedCalls != 0 {
+		t.Fatalf("Agent Identity 401 changed account state: set_error=%d temp_unsched=%d", repo.setErrorCalls, repo.setTempUnschedCalls)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKey401KeepsNoFailoverAndNoDisable(t *testing.T) {
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusUnauthorized,
+		Status:     "401 Unauthorized",
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"error":"invalid api key"}`)),
+	}}
+	repo := &codexModelsAccountStateRepo{}
+	s := newCodexModels401TestService(repo)
+	s.httpUpstream = upstream
+	account := &Account{
+		ID:       7,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "test-api-key",
+			"base_url": "https://example.com",
+		},
+	}
+
+	_, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+	if err == nil {
+		t.Fatal("expected manifest 401 error")
+	}
+	if IsRetryableCodexModelsManifestError(err) {
+		t.Fatal("custom upstream manifest 401 must keep no-failover behavior")
+	}
+	if repo.setErrorCalls != 0 || repo.setTempUnschedCalls != 0 {
+		t.Fatalf("API-key manifest 401 changed account state: set_error=%d temp_unsched=%d", repo.setErrorCalls, repo.setTempUnschedCalls)
+	}
+}

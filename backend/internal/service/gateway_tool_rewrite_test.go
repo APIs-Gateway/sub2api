@@ -1,0 +1,446 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
+)
+
+func TestBuildDynamicToolMap_BelowThreshold(t *testing.T) {
+	// Parrot 行为：tools 数量 ≤ 5 时不做动态映射。
+	names := []string{"bash", "edit", "read", "write", "search"}
+	require.Nil(t, buildDynamicToolMap(names))
+}
+
+func TestBuildDynamicToolMap_AboveThresholdIsStable(t *testing.T) {
+	// Parrot 不变量：同一组 tool_names 在同进程内映射稳定（保证 cache 命中）。
+	names := []string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta"}
+	a := buildDynamicToolMap(names)
+	b := buildDynamicToolMap(names)
+	require.NotNil(t, a)
+	require.Equal(t, a, b, "same input tool_names must yield identical mapping")
+	require.Len(t, a, 6)
+	for _, name := range names {
+		require.Contains(t, a, name)
+		require.NotEqual(t, name, a[name])
+	}
+}
+
+func TestSanitizeToolName_StaticPrefix(t *testing.T) {
+	require.Equal(t, "cc_sess_list", sanitizeToolName("sessions_list", nil))
+	require.Equal(t, "cc_ses_get", sanitizeToolName("session_get", nil))
+	require.Equal(t, "bash", sanitizeToolName("bash", nil))
+}
+
+func TestSanitizeToolName_DynamicTakesPrecedence(t *testing.T) {
+	dyn := map[string]string{"sessions_list": "analyze_ses00"}
+	got := sanitizeToolName("sessions_list", dyn)
+	require.Equal(t, "analyze_ses00", got, "dynamic mapping wins over static prefix")
+}
+
+func TestRestoreToolNamesInBytes_LongestFirst(t *testing.T) {
+	// 当假名 "abc_12" 是另一个更长假名的子串（真实场景极少但算法必须防御）时，
+	// 长的必须先替换。本测试用显式构造的映射来验证排序不变量。
+	rw := &ToolNameRewrite{
+		Forward: map[string]string{"foo": "abc_12", "bar": "abc_12_ext"},
+		Reverse: map[string]string{"abc_12": "foo", "abc_12_ext": "bar"},
+	}
+	// 手工构造 ReverseOrdered：长的在前
+	rw.ReverseOrdered = [][2]string{
+		{"abc_12_ext", "bar"},
+		{"abc_12", "foo"},
+	}
+	data := []byte(`{"type":"message","content":[{"type":"tool_use","name":"abc_12_ext"},{"type":"tool_use","name":"abc_12"}],"other":"abc_12"}`)
+	restored := string(restoreToolNamesInBytes(data, rw))
+	require.Equal(t, `{"type":"message","content":[{"type":"tool_use","name":"bar"},{"type":"tool_use","name":"foo"}],"other":"abc_12"}`, restored)
+}
+
+func TestRestoreToolNamesInBytes_StaticPrefixRollback(t *testing.T) {
+	data := []byte(`{"name":"sessions_list","id":"cc_ses_xyz"}`)
+	got := string(restoreToolNamesInBytes(data, nil))
+	require.Equal(t, string(data), got, "without a request mapping, opaque output remains unchanged")
+}
+
+func TestApplyToolNameRewriteToBody_RenamesToolsAndToolChoice(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"sessions_list","input_schema":{}},{"name":"session_get","input_schema":{}},{"name":"web_search","type":"web_search_20250305"}],"tool_choice":{"type":"tool","name":"sessions_list"}}`)
+	rw := buildToolNameRewriteFromBody(body)
+	require.NotNil(t, rw)
+	require.Contains(t, rw.Forward, "sessions_list")
+	require.Contains(t, rw.Forward, "session_get")
+	// web_search 是 server tool，不参与工具名改写
+	require.NotContains(t, rw.Forward, "web_search")
+
+	out := applyToolNameRewriteToBody(body, rw)
+
+	// tools[0].name 和 tools[1].name 被改写，tools[2].name 保持不变
+	require.Equal(t, "cc_sess_list", gjson.GetBytes(out, "tools.0.name").String())
+	require.Equal(t, "cc_ses_get", gjson.GetBytes(out, "tools.1.name").String())
+	require.Equal(t, "web_search", gjson.GetBytes(out, "tools.2.name").String())
+
+	// tool_choice.name 被同步改写
+	require.Equal(t, "cc_sess_list", gjson.GetBytes(out, "tool_choice.name").String())
+	require.Equal(t, "tool", gjson.GetBytes(out, "tool_choice.type").String())
+}
+
+func TestApplyToolNameRewriteToBody_RenamesToolUseInMessages(t *testing.T) {
+	// sessions_list 通过静态前缀规则改写为 cc_sess_list
+	// web_search 是 server tool（type != ""），不参与工具名改写
+	// messages 中的 tool_use.name 必须同步改写，才能和 tools[] 保持一致
+	body := []byte(`{"tools":[{"name":"sessions_list","input_schema":{}},{"name":"web_search","type":"web_search_20250305"}],"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]},{"role":"assistant","content":[{"type":"tool_use","id":"tu_01","name":"sessions_list","input":{}},{"type":"text","text":"thinking"}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_01","content":"ok"}]}]}`)
+	rw := buildToolNameRewriteFromBody(body)
+	require.NotNil(t, rw)
+	require.Equal(t, "cc_sess_list", rw.Forward["sessions_list"])
+
+	out := applyToolNameRewriteToBody(body, rw)
+
+	// tools[0].name 被改写
+	require.Equal(t, "cc_sess_list", gjson.GetBytes(out, "tools.0.name").String())
+	// tools[1].name 是 server tool，保持不变
+	require.Equal(t, "web_search", gjson.GetBytes(out, "tools.1.name").String())
+	// messages[1].content[0].name 是 tool_use，必须同步改写以匹配 tools[]
+	require.Equal(t, "cc_sess_list", gjson.GetBytes(out, "messages.1.content.0.name").String())
+	// messages[1].content[1] 是 text，保持不变
+	require.Equal(t, "thinking", gjson.GetBytes(out, "messages.1.content.1.text").String())
+	// messages[2].content[0] 是 tool_result，不包含 name 字段，保持不变
+	require.Equal(t, "ok", gjson.GetBytes(out, "messages.2.content.0.content").String())
+}
+
+func TestApplyToolNameRewriteToBody_RenamesToolUseWithDynamicMapping(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"alpha_search","input_schema":{}},{"name":"beta_lookup","input_schema":{}},{"name":"gamma_fetch","input_schema":{}},{"name":"delta_update","input_schema":{}},{"name":"epsilon_parse","input_schema":{}},{"name":"zeta_render","input_schema":{}},{"name":"web_search","type":"web_search_20250305"}],"tool_choice":{"type":"tool","name":"gamma_fetch"},"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"tu_dyn","name":"gamma_fetch","input":{}},{"type":"tool_use","id":"tu_srv","name":"web_search","input":{}},{"type":"text","text":"done"}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_dyn","content":"ok"}]}]}`)
+	rw := buildToolNameRewriteFromBody(body)
+	require.NotNil(t, rw)
+	require.Len(t, rw.Forward, 6)
+
+	fakeGamma := rw.Forward["gamma_fetch"]
+	require.NotEmpty(t, fakeGamma)
+	require.NotEqual(t, "gamma_fetch", fakeGamma)
+	require.NotContains(t, rw.Forward, "web_search")
+
+	out := applyToolNameRewriteToBody(body, rw)
+
+	// 动态映射会改写 tools[]、tool_choice 和历史 tool_use 中的同一个工具名
+	require.Equal(t, fakeGamma, gjson.GetBytes(out, "tools.2.name").String())
+	require.Equal(t, fakeGamma, gjson.GetBytes(out, "tool_choice.name").String())
+	require.Equal(t, fakeGamma, gjson.GetBytes(out, "messages.0.content.0.name").String())
+	// server tool 不参与动态映射，历史 tool_use 中同名引用也保持不变
+	require.Equal(t, "web_search", gjson.GetBytes(out, "tools.6.name").String())
+	require.Equal(t, "web_search", gjson.GetBytes(out, "messages.0.content.1.name").String())
+	// tool_result 依靠 tool_use_id 关联，不需要 name 字段
+	require.Equal(t, "ok", gjson.GetBytes(out, "messages.1.content.0.content").String())
+}
+
+func TestApplyToolNameRewriteToBody_EscapedRepeatedNamesAndCacheControl(t *testing.T) {
+	body := []byte(`{"metadata":{"literal":"sessions_\u4f60 <keep>"},"messages":[{"role":"assistant","content":[{"type":"tool_use","name":"sessions_\u4f60","input":{"literal":"sessions_\u4f60"}},{"type":"tool_use","name":"sessions_\u4f60","input":{}}]}],"tool_choice":{"type":"tool","name":"sessions_\u4f60"},"tools":[{"name":"sessions_\u4f60","input_schema":{},"cache_control":{"type":"ephemeral","ttl":"1h"}}]}`)
+	rw := buildToolNameRewriteFromBody(body)
+	require.NotNil(t, rw)
+	fake := rw.Forward["sessions_你"]
+	require.Equal(t, "cc_sess_你", fake)
+	out := applyToolNameRewriteToBody(body, rw)
+	require.True(t, gjson.ValidBytes(out))
+	require.Equal(t, fake, gjson.GetBytes(out, "tools.0.name").String())
+	require.Equal(t, fake, gjson.GetBytes(out, "tool_choice.name").String())
+	for i := 0; i < 2; i++ {
+		require.Equal(t, fake, gjson.GetBytes(out, fmt.Sprintf("messages.0.content.%d.name", i)).String())
+	}
+	require.Equal(t, "1h", gjson.GetBytes(out, "tools.0.cache_control.ttl").String())
+	require.Contains(t, string(out), `"literal":"sessions_\u4f60 <keep>"`)
+	require.Equal(t, "sessions_你", gjson.GetBytes(out, "messages.0.content.0.input.literal").String())
+	response, err := json.Marshal(map[string]string{"type": "tool_use", "name": fake})
+	require.NoError(t, err)
+	require.Equal(t, "sessions_你", gjson.GetBytes(restoreToolNamesInBytes(response, rw), "name").String())
+}
+
+func TestApplyToolNameRewriteToBody_ControlCharactersRemainValidJSON(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"sessions_line\u0001\"quote\"\\tail","input_schema":{}}],"tool_choice":{"type":"tool","name":"sessions_line\u0001\"quote\"\\tail"},"messages":[{"content":[{"type":"tool_use","name":"sessions_line\u0001\"quote\"\\tail"}]}]}`)
+	rw := buildToolNameRewriteFromBody(body)
+	require.NotNil(t, rw)
+	realName := "sessions_line\x01\"quote\"\\tail"
+	fake := rw.Forward[realName]
+	require.Equal(t, "cc_sess_line\x01\"quote\"\\tail", fake)
+	out := applyToolNameRewriteToBody(body, rw)
+	require.True(t, gjson.ValidBytes(out))
+	require.Equal(t, fake, gjson.GetBytes(out, "tools.0.name").String())
+	require.Equal(t, fake, gjson.GetBytes(out, "tool_choice.name").String())
+	require.Equal(t, fake, gjson.GetBytes(out, "messages.0.content.0.name").String())
+	require.Contains(t, string(out), `\u0001\"quote\"\\tail`)
+}
+
+func TestApplyToolNameRewriteToBody_UnmappedAndIncompleteItems(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"sessions_run","input_schema":{}},{"type":"web_search_20250305","name":"sessions_server"},{"name":""},{"name":"ordinary"}],"tool_choice":{"type":"auto","name":"sessions_run"},"messages":[{"content":"plain text"},{"content":[{"type":"tool_use","name":""},{"type":"tool_use","name":"ordinary"},{"type":"text","name":"sessions_run"},{"type":"tool_use","name":"sessions_run"}]}]}`)
+	rw := buildToolNameRewriteFromBody(body)
+	require.NotNil(t, rw)
+	out := applyToolNameRewriteToBody(body, rw)
+	require.True(t, gjson.ValidBytes(out))
+	require.Equal(t, "cc_sess_run", gjson.GetBytes(out, "tools.0.name").String())
+	require.Equal(t, "sessions_server", gjson.GetBytes(out, "tools.1.name").String())
+	require.Equal(t, "", gjson.GetBytes(out, "tools.2.name").String())
+	require.Equal(t, "ordinary", gjson.GetBytes(out, "tools.3.name").String())
+	require.Equal(t, "sessions_run", gjson.GetBytes(out, "tool_choice.name").String())
+	require.Equal(t, "plain text", gjson.GetBytes(out, "messages.0.content").String())
+	require.Equal(t, "ordinary", gjson.GetBytes(out, "messages.1.content.1.name").String())
+	require.Equal(t, "sessions_run", gjson.GetBytes(out, "messages.1.content.2.name").String())
+	require.Equal(t, "cc_sess_run", gjson.GetBytes(out, "messages.1.content.3.name").String())
+	require.Equal(t, "5m", gjson.GetBytes(out, "tools.3.cache_control.ttl").String())
+}
+
+func TestApplyToolNameRewriteToBody_NoApplicableNamesKeepsCacheBreakpoint(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"ordinary","input_schema":{}}],"tool_choice":{"type":"tool","name":"ordinary"},"messages":[{"content":[{"type":"tool_use","name":"ordinary"}]}]}`)
+	want := applyToolsLastCacheBreakpoint(body)
+	for _, rw := range []*ToolNameRewrite{
+		nil,
+		&ToolNameRewrite{Forward: map[string]string{}},
+		&ToolNameRewrite{Forward: map[string]string{"sessions_absent": "cc_sess_absent"}},
+	} {
+		rewritten := applyToolNameRewriteToBody(body, rw)
+		require.Equal(t, want, rewritten)
+		require.Equal(t, "5m", gjson.GetBytes(rewritten, "tools.0.cache_control.ttl").String())
+	}
+
+	malformed := []byte(`{"tools":{},"messages":{"content":"plain text"}}`)
+	rw := &ToolNameRewrite{Forward: map[string]string{"sessions_absent": "cc_sess_absent"}}
+	require.Equal(t, malformed, applyToolNameRewriteToBody(malformed, rw))
+}
+
+func TestApplyToolNameRewriteToBody_AmbiguousAndNonStringNamesMatchPriorBehavior(t *testing.T) {
+	for _, body := range [][]byte{
+		[]byte(`{"tools":[{"name":"sessions_first","name":"sessions_second","input_schema":{}}],"messages":[{"content":[{"type":"tool_use","name":"sessions_first","name":"sessions_second"}]}]}`),
+		[]byte(`{"tools":[{"name":123,"input_schema":{}},{"name":"sessions_keep","input_schema":{}}],"tool_choice":{"type":"tool","name":123},"messages":[{"content":[[{"type":"tool_use","name":123}],{"type":"tool_use","name":123}]}]}`),
+	} {
+		rw := buildToolNameRewriteFromBody(body)
+		require.NotNil(t, rw)
+		if gjson.GetBytes(body, "tools.0.name").Type == gjson.Number {
+			// A prebuilt mapping can still target an invalid numeric name. Preserve
+			// the old path's replacement behavior instead of dropping the value.
+			rw.Forward["123"] = "mapped_123"
+		}
+		out := applyToolNameRewriteToBody(body, rw)
+		require.True(t, gjson.ValidBytes(out))
+		require.Equal(t, applyToolNameRewriteToBodyLegacy(body, rw), out)
+	}
+}
+
+func TestApplyToolNameRewriteToBody_LongHistoryAndCountTokens(t *testing.T) {
+	const toolUseCount = 512
+	body := toolRewriteLongHistoryBody(toolUseCount)
+	rw := buildToolNameRewriteFromBody(body)
+	require.NotNil(t, rw)
+	out := applyToolNameRewriteToBody(body, rw)
+	require.True(t, gjson.ValidBytes(out))
+	require.Equal(t, "cc_sess_run", gjson.GetBytes(out, "tools.0.name").String())
+	require.Equal(t, "cc_sess_run", gjson.GetBytes(out, "tool_choice.name").String())
+	require.Equal(t, "cc_sess_run", gjson.GetBytes(out, "messages.0.content.0.name").String())
+	require.Equal(t, "cc_sess_run", gjson.GetBytes(out, fmt.Sprintf("messages.%d.content.0.name", toolUseCount-1)).String())
+	require.Zero(t, bytes.Count(out, []byte(`"name":"sessions_run"`)))
+	countTokens := applyCountTokensMimicToolBreakpoints(body)
+	require.True(t, gjson.ValidBytes(countTokens))
+	require.Equal(t, "cc_sess_run", gjson.GetBytes(countTokens, "tools.0.name").String())
+	require.Equal(t, "cc_sess_run", gjson.GetBytes(countTokens, fmt.Sprintf("messages.%d.content.0.name", toolUseCount-1)).String())
+	require.Equal(t, "5m", gjson.GetBytes(countTokens, "tools.0.cache_control.ttl").String())
+}
+
+func toolRewriteLongHistoryBody(toolUseCount int) []byte {
+	var messages strings.Builder
+	for i := 0; i < toolUseCount; i++ {
+		if i > 0 {
+			_ = messages.WriteByte(',')
+		}
+		_, _ = messages.WriteString(`{"role":"assistant","content":[{"type":"tool_use","name":"sessions_run","input":{"padding":"`)
+		_, _ = messages.WriteString(strings.Repeat("x", 512))
+		_, _ = messages.WriteString(`"}}]}`)
+	}
+	return []byte(fmt.Sprintf(`{"tools":[{"name":"sessions_run","input_schema":{}}],"messages":[%s],"tool_choice":{"type":"tool","name":"sessions_run"}}`, messages.String()))
+}
+
+func BenchmarkToolNameRewriteLongHistory(b *testing.B) {
+	for _, toolUseCount := range []int{512, 2048} {
+		body := toolRewriteLongHistoryBody(toolUseCount)
+		rw := buildToolNameRewriteFromBody(body)
+		for _, impl := range []struct {
+			name    string
+			rewrite func([]byte, *ToolNameRewrite) []byte
+		}{
+			{name: "one_copy", rewrite: applyToolNameRewriteToBody},
+			{name: "legacy", rewrite: applyToolNameRewriteToBodyLegacy},
+		} {
+			b.Run(fmt.Sprintf("%d_tool_uses/%s", toolUseCount, impl.name), func(b *testing.B) {
+				b.SetBytes(int64(len(body)))
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					if len(impl.rewrite(body, rw)) == 0 {
+						b.Fatal("empty rewritten body")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestApplyToolsLastCacheBreakpoint_InjectsDefault(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"a","input_schema":{}},{"name":"b","input_schema":{}}]}`)
+	out := applyToolsLastCacheBreakpoint(body)
+	require.Equal(t, "ephemeral", gjson.GetBytes(out, "tools.1.cache_control.type").String())
+	require.Equal(t, "5m", gjson.GetBytes(out, "tools.1.cache_control.ttl").String())
+	// First tool untouched
+	require.False(t, gjson.GetBytes(out, "tools.0.cache_control").Exists())
+}
+
+func TestApplyToolsLastCacheBreakpoint_PassesThroughClientTTL(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"a","input_schema":{},"cache_control":{"type":"ephemeral","ttl":"1h"}}]}`)
+	out := applyToolsLastCacheBreakpoint(body)
+	// User-provided ttl must be preserved.
+	require.Equal(t, "1h", gjson.GetBytes(out, "tools.0.cache_control.ttl").String())
+}
+
+func TestApplyToolsLastCacheBreakpoint_StripsDeferredToolCacheControl(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"a","custom":{"defer_loading":true},"cache_control":{"type":"ephemeral","ttl":"1h"}},{"name":"b","custom":{"defer_loading":true}}]}`)
+	out := applyToolsLastCacheBreakpoint(body)
+
+	require.False(t, gjson.GetBytes(out, "tools.0.cache_control").Exists())
+	require.False(t, gjson.GetBytes(out, "tools.1.cache_control").Exists())
+}
+
+func TestApplyToolsLastCacheBreakpoint_SkipsDeferredFinalTool(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"a","input_schema":{}},{"name":"b","defer_loading":true}]}`)
+	out := applyToolsLastCacheBreakpoint(body)
+
+	require.Equal(t, "ephemeral", gjson.GetBytes(out, "tools.0.cache_control.type").String())
+	require.Equal(t, "5m", gjson.GetBytes(out, "tools.0.cache_control.ttl").String())
+	require.False(t, gjson.GetBytes(out, "tools.1.cache_control").Exists())
+}
+
+func TestApplyToolsLastCacheBreakpoint_OnlyLiteralTrueIsDeferred(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"custom-true","custom":{"defer_loading":true},"cache_control":{"type":"ephemeral"}},{"name":"top-level-true","defer_loading":true,"cache_control":{"type":"ephemeral"}},{"name":"false","defer_loading":false,"cache_control":{"type":"ephemeral"}},{"name":"string","defer_loading":"true","cache_control":{"type":"ephemeral"}},{"name":"number","defer_loading":1,"cache_control":{"type":"ephemeral"}},{"name":"object","defer_loading":{},"cache_control":{"type":"ephemeral"}}]}`)
+	out := stripDeferredToolCacheControl(body)
+
+	require.False(t, gjson.GetBytes(out, "tools.0.cache_control").Exists())
+	require.False(t, gjson.GetBytes(out, "tools.1.cache_control").Exists())
+	for idx := 2; idx < 6; idx++ {
+		require.Equal(t, "ephemeral", gjson.GetBytes(out, fmt.Sprintf("tools.%d.cache_control.type", idx)).String())
+	}
+}
+
+func TestStripMessageCacheControl(t *testing.T) {
+	body := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`)
+	out := stripMessageCacheControl(body)
+	require.False(t, gjson.GetBytes(out, "messages.0.content.0.cache_control").Exists())
+}
+
+func TestAddMessageCacheBreakpoints_LastMessageOnly(t *testing.T) {
+	body := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
+	out := addMessageCacheBreakpoints(body)
+	require.Equal(t, "ephemeral", gjson.GetBytes(out, "messages.0.content.0.cache_control.type").String())
+	require.Equal(t, "5m", gjson.GetBytes(out, "messages.0.content.0.cache_control.ttl").String())
+}
+
+func TestAddMessageCacheBreakpoints_SecondToLastUserTurn(t *testing.T) {
+	// Parrot 不变量：messages ≥ 4 时才打第二个断点，且位置是"倒数第二个 user turn"。
+	body := []byte(`{"messages":[
+        {"role":"user","content":[{"type":"text","text":"q1"}]},
+        {"role":"assistant","content":[{"type":"text","text":"a1"}]},
+        {"role":"user","content":[{"type":"text","text":"q2"}]},
+        {"role":"assistant","content":[{"type":"text","text":"a2"}]}
+    ]}`)
+	out := addMessageCacheBreakpoints(body)
+	// 最后一条 assistant 被打断点
+	require.Equal(t, "ephemeral", gjson.GetBytes(out, "messages.3.content.0.cache_control.type").String())
+	// 倒数第二个 user turn = index 0（唯一另一个 user）
+	require.Equal(t, "ephemeral", gjson.GetBytes(out, "messages.0.content.0.cache_control.type").String())
+	// 其他不打断点
+	require.False(t, gjson.GetBytes(out, "messages.1.content.0.cache_control").Exists())
+	require.False(t, gjson.GetBytes(out, "messages.2.content.0.cache_control").Exists())
+}
+
+func TestAddMessageCacheBreakpoints_StringContentPromoted(t *testing.T) {
+	body := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
+	out := addMessageCacheBreakpoints(body)
+	// content 升级成数组
+	require.True(t, gjson.GetBytes(out, "messages.0.content").IsArray())
+	require.Equal(t, "text", gjson.GetBytes(out, "messages.0.content.0.type").String())
+	require.Equal(t, "hi", gjson.GetBytes(out, "messages.0.content.0.text").String())
+	require.Equal(t, "5m", gjson.GetBytes(out, "messages.0.content.0.cache_control.ttl").String())
+}
+
+func TestRewriteMessageCacheControlIfEnabled_DefaultKeepsClientAnchors(t *testing.T) {
+	body := []byte(`{"messages":[
+		{"role":"user","content":[{"type":"text","text":"stable","cache_control":{"type":"ephemeral","ttl":"1h"}}]},
+		{"role":"assistant","content":[{"type":"text","text":"ok"}]},
+		{"role":"user","content":[{"type":"text","text":"latest","cache_control":{"type":"ephemeral","ttl":"5m"}}]}
+	]}`)
+
+	out := (&GatewayService{}).rewriteMessageCacheControlIfEnabled(context.Background(), body)
+
+	require.JSONEq(t, string(body), string(out))
+	require.Equal(t, "1h", gjson.GetBytes(out, "messages.0.content.0.cache_control.ttl").String())
+	require.Equal(t, "5m", gjson.GetBytes(out, "messages.2.content.0.cache_control.ttl").String())
+}
+
+func TestRewriteMessageCacheControlIfEnabled_OptInPreservesLegacyRewrite(t *testing.T) {
+	body := []byte(`{"messages":[
+		{"role":"user","content":[{"type":"text","text":"stable","cache_control":{"type":"ephemeral","ttl":"1h"}}]},
+		{"role":"assistant","content":[{"type":"text","text":"ok"}]},
+		{"role":"user","content":[{"type":"text","text":"latest","cache_control":{"type":"ephemeral","ttl":"1h"}}]},
+		{"role":"assistant","content":[{"type":"text","text":"done"}]}
+	]}`)
+	repo := &gatewayTTLSettingRepo{data: map[string]string{
+		SettingKeyRewriteMessageCacheControl: "true",
+	}}
+	gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{})
+	svc := &GatewayService{settingService: NewSettingService(repo, &config.Config{})}
+
+	out := svc.rewriteMessageCacheControlIfEnabled(context.Background(), body)
+
+	require.Equal(t, "5m", gjson.GetBytes(out, "messages.0.content.0.cache_control.ttl").String())
+	require.False(t, gjson.GetBytes(out, "messages.2.content.0.cache_control").Exists())
+	require.Equal(t, "5m", gjson.GetBytes(out, "messages.3.content.0.cache_control.ttl").String())
+}
+
+func TestBuildToolNameRewriteFromBody_ReverseOrderedByLengthDesc(t *testing.T) {
+	// 超过阈值触发动态映射，验证 ReverseOrdered 按假名长度倒序排列
+	body := []byte(`{"tools":[
+        {"name":"t1","input_schema":{}},
+        {"name":"t2","input_schema":{}},
+        {"name":"t3","input_schema":{}},
+        {"name":"t4","input_schema":{}},
+        {"name":"t5","input_schema":{}},
+        {"name":"t6","input_schema":{}}
+    ]}`)
+	rw := buildToolNameRewriteFromBody(body)
+	require.NotNil(t, rw)
+	require.NotEmpty(t, rw.ReverseOrdered)
+	for i := 1; i < len(rw.ReverseOrdered); i++ {
+		require.GreaterOrEqual(t, len(rw.ReverseOrdered[i-1][0]), len(rw.ReverseOrdered[i][0]),
+			"ReverseOrdered must be sorted by fake-name length descending")
+	}
+}
+
+func TestRestoreToolNamesInBytes_NoMapping_NoStaticMatch_IsNoop(t *testing.T) {
+	data := []byte("plain text without any tool names")
+	require.Equal(t, string(data), string(restoreToolNamesInBytes(data, nil)))
+}
+
+// Ensure the fake name format follows Parrot's "{prefix}{name[:3]}{i:02d}".
+func TestBuildDynamicToolMap_FakeNameShape(t *testing.T) {
+	names := []string{"alphabet", "bravo", "charlie", "delta", "echo", "foxtrot"}
+	m := buildDynamicToolMap(names)
+	require.NotNil(t, m)
+	for _, name := range names {
+		fake, ok := m[name]
+		require.True(t, ok)
+		// fake = prefix + head3 + "%02d"
+		// ends with two decimal digits
+		require.Regexp(t, `^[a-z]+_[a-z0-9]{1,3}\d{2}$`, fake)
+		head := name
+		if len(head) > 3 {
+			head = head[:3]
+		}
+		require.True(t, strings.Contains(fake, head), "fake %q should contain head3 %q of %q", fake, head, name)
+	}
+}

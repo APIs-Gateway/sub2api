@@ -1,0 +1,209 @@
+package repository
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+var w6Migrations = []string{
+	"200_w6_model_catalog.sql",
+	"201_w6_group_model_config_and_prices.sql",
+	"202_w6_cost_accounting_rules.sql",
+}
+
+// sqlWithoutComments 去掉注释行后的语句文本。
+func sqlWithoutComments(sqlText string) string {
+	var kept []string
+	for _, line := range strings.Split(sqlText, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
+// W6-M1..M3 只建新表：不改、不删任何现有对象，不写数据，每个文件都带 lock_timeout，
+// 并且不使用 CONCURRENTLY（迁移在事务里执行）。
+func TestW6MigrationsOnlyCreateNewObjects(t *testing.T) {
+	forbidden := regexp.MustCompile(`(?i)\b(ALTER\s+TABLE|DROP\s|TRUNCATE|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|CONCURRENTLY)\b`)
+	for _, name := range w6Migrations {
+		t.Run(name, func(t *testing.T) {
+			text := readMigrationForTest(t, name)
+			code := sqlWithoutComments(text)
+			require.Contains(t, code, "SET LOCAL lock_timeout")
+			require.Contains(t, code, "SET LOCAL statement_timeout")
+			require.Empty(t, forbidden.FindString(code), "迁移只能建新表和新索引")
+			for _, line := range strings.Split(code, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "CREATE TABLE") {
+					require.Contains(t, trimmed, "IF NOT EXISTS")
+				}
+				if strings.HasPrefix(trimmed, "CREATE INDEX") {
+					require.Contains(t, trimmed, "IF NOT EXISTS")
+				}
+			}
+		})
+	}
+}
+
+func TestW6MigrationNumbersAreUniqueAndConsecutive(t *testing.T) {
+	entries, err := os.ReadDir(filepath.Join("..", "..", "migrations"))
+	require.NoError(t, err)
+	byNumber := map[string][]string{}
+	for _, e := range entries {
+		name := e.Name()
+		if i := strings.Index(name, "_"); i > 0 {
+			byNumber[name[:i]] = append(byNumber[name[:i]], name)
+		}
+	}
+	for _, prefix := range []string{"200", "201", "202"} {
+		require.Len(t, byNumber[prefix], 1, "迁移号 %s 只能有一个文件：%v", prefix, byNumber[prefix])
+	}
+}
+
+func TestW6ModelCatalogMigrationShape(t *testing.T) {
+	sqlText := readMigrationForTest(t, "200_w6_model_catalog.sql")
+	require.Contains(t, sqlText, "CREATE TABLE IF NOT EXISTS model_catalog")
+	require.Contains(t, sqlText, "CONSTRAINT model_catalog_uq UNIQUE (platform, model_key)")
+	require.Contains(t, sqlText, "CHECK (status IN ('draft', 'active', 'retired'))")
+	require.Contains(t, sqlText, "aliases          TEXT[]       NOT NULL DEFAULT '{}'")
+	require.NotContains(t, sqlWithoutComments(sqlText), "REFERENCES", "不建外键")
+}
+
+func TestW6MatrixMigrationShape(t *testing.T) {
+	sqlText := readMigrationForTest(t, "201_w6_group_model_config_and_prices.sql")
+	code := sqlWithoutComments(sqlText)
+
+	// group_model_config：billing_model_source 可空（S-1）；阶段与成本模式的取值范围。
+	require.Contains(t, code, "CREATE TABLE IF NOT EXISTS group_model_config")
+	require.Contains(t, code, "billing_model_source  VARCHAR(16),")
+	require.NotRegexp(t, `billing_model_source\s+VARCHAR\(16\)\s+NOT NULL`, code)
+	require.Contains(t, code, "pricing_stage         VARCHAR(8)  NOT NULL DEFAULT 'legacy'")
+	require.Contains(t, code, "CHECK (pricing_stage IN ('legacy', 'shadow', 'v2'))")
+	require.Contains(t, code, "CHECK (cost_mode IN ('account_rate', 'catalog_upstream', 'follow_billing'))")
+	require.Contains(t, code, "CHECK (access_mode IN ('open', 'allowlist'))")
+
+	// model_group_prices：三种价格模式互斥，(group_id, model_key, is_pattern) 唯一。
+	require.Contains(t, code, "CREATE TABLE IF NOT EXISTS model_group_prices")
+	require.Contains(t, code, "CHECK (price_mode IN ('inherit', 'extra', 'custom'))")
+	require.Contains(t, code, "CHECK ((price_mode = 'extra') = (extra_multiplier IS NOT NULL)")
+	require.Contains(t, code, "CHECK ((price_mode = 'custom') = (custom_price IS NOT NULL))")
+	require.Contains(t, code, "UNIQUE (group_id, model_key, is_pattern)")
+	require.Contains(t, code, "CHECK (source IN ('manual', 'copied', 'legacy_derived', 'legacy_frozen'))")
+
+	// 历史表只建不写。
+	require.Contains(t, code, "CREATE TABLE IF NOT EXISTS model_group_price_history")
+
+	// groups 是软删除：三张表都不建外键。
+	require.NotContains(t, code, "REFERENCES")
+}
+
+func TestW6CostAccountingRulesMigrationShape(t *testing.T) {
+	sqlText := readMigrationForTest(t, "202_w6_cost_accounting_rules.sql")
+	code := sqlWithoutComments(sqlText)
+
+	// R2-BK-1：按分组各存一份，带来源渠道与顺序。
+	require.Contains(t, code, "CREATE TABLE IF NOT EXISTS cost_accounting_rules")
+	require.Contains(t, code, "scope_group_id     BIGINT       NOT NULL")
+	require.Contains(t, code, "source_channel_id  BIGINT,")
+	require.Contains(t, code, "source_ordinal     INT,")
+	require.Contains(t, code, "CHECK (source IN ('legacy_derived', 'legacy_frozen', 'manual'))")
+	require.Contains(t, code, "CHECK (source = 'manual' OR (source_channel_id IS NOT NULL AND source_ordinal IS NOT NULL))")
+
+	// 价格行随规则行级联删除；platform 宽度与渠道侧一致。
+	require.Contains(t, code, "REFERENCES cost_accounting_rules(id) ON DELETE CASCADE")
+	require.Contains(t, code, "platform  VARCHAR(50) NOT NULL DEFAULT ''")
+	require.Equal(t, 1, strings.Count(code, "REFERENCES"), "只有价格行引用规则行")
+}
+
+// W6-M7（迁移 208，PR4b-1；设计 2.8 的 W6-M6 是 PR11 的渠道表归档，编号不同）：过渡审批记录表，外加给历史表补一个可空列。
+// 与 200 至 202 不同，它含一条 ALTER TABLE，所以单独校验：只能是「加一个可空列」。
+func TestW6PricingWriteApprovalsMigrationShape(t *testing.T) {
+	const name = "208_w6_pricing_write_approvals.sql"
+	code := sqlWithoutComments(readMigrationForTest(t, name))
+
+	require.Contains(t, code, "SET LOCAL lock_timeout")
+	require.Contains(t, code, "SET LOCAL statement_timeout")
+	require.Contains(t, code, "CREATE TABLE IF NOT EXISTS pricing_write_approvals")
+	require.Contains(t, code, "CHECK (status IN ('previewed', 'consumed'))")
+	require.Contains(t, code, "CHECK (price_delta IN ('up', 'down', 'none', 'unknown'))")
+	require.Contains(t, code, "CREATE INDEX IF NOT EXISTS idx_pwa_status_created")
+	require.NotContains(t, code, "REFERENCES", "不建外键")
+
+	forbidden := regexp.MustCompile(`(?i)\b(DROP\s|TRUNCATE|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|CONCURRENTLY)\b`)
+	require.Empty(t, forbidden.FindString(code), "迁移只能新增对象，不改数据")
+
+	alters := regexp.MustCompile(`(?i)ALTER\s+TABLE[^;]*;`).FindAllString(code, -1)
+	require.Equal(t, []string{"ALTER TABLE model_group_price_history ADD COLUMN IF NOT EXISTS approval_id BIGINT;"}, alters,
+		"唯一的 ALTER：给历史表加一个可空、无默认值的列")
+
+	entries, err := os.ReadDir(filepath.Join("..", "..", "migrations"))
+	require.NoError(t, err)
+	var sameNumber []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "208_") {
+			sameNumber = append(sameNumber, e.Name())
+		}
+	}
+	require.Equal(t, []string{name}, sameNumber, "迁移号 208 只能有一个文件")
+}
+
+// W6-M4（迁移 215，PR5）：影子比对差异样本表。只建新表和新索引，没有任何现有读取方。
+func TestW6PricingShadowDiffsMigrationShape(t *testing.T) {
+	const name = "215_w6_pricing_shadow_diffs.sql"
+	code := sqlWithoutComments(readMigrationForTest(t, name))
+
+	require.Contains(t, code, "SET LOCAL lock_timeout")
+	require.Contains(t, code, "SET LOCAL statement_timeout")
+	require.Contains(t, code, "CREATE TABLE IF NOT EXISTS pricing_shadow_diffs")
+	require.Contains(t, code, "CHECK (kind IN ('access', 'mapping', 'feature', 'cost', 'account_cost'))")
+	require.Contains(t, code, "CHECK (class IN ('translation', 'expected'))")
+	require.Contains(t, code, "CREATE INDEX IF NOT EXISTS idx_pricing_shadow_diffs_created")
+	require.NotContains(t, code, "REFERENCES", "不建外键")
+
+	forbidden := regexp.MustCompile(`(?i)\b(ALTER\s+TABLE|DROP\s|TRUNCATE|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|CONCURRENTLY)\b`)
+	require.Empty(t, forbidden.FindString(code), "迁移只能建新表和新索引")
+
+	entries, err := os.ReadDir(filepath.Join("..", "..", "migrations"))
+	require.NoError(t, err)
+	var sameNumber []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "215_") {
+			sameNumber = append(sameNumber, e.Name())
+		}
+	}
+	require.Equal(t, []string{name}, sameNumber, "迁移号 215 只能有一个文件")
+}
+
+// 迁移 221（PR4b-2b-2 跟进，审查非阻塞第 9 条）：成本核算规则的写入历史表。只建新表和新索引，不建外键（删除规则后历史要留着）。
+func TestW6CostAccountingRuleHistoryMigrationShape(t *testing.T) {
+	const name = "221_w6_cost_accounting_rule_history.sql"
+	code := sqlWithoutComments(readMigrationForTest(t, name))
+
+	require.Contains(t, code, "SET LOCAL lock_timeout")
+	require.Contains(t, code, "SET LOCAL statement_timeout")
+	require.Contains(t, code, "CREATE TABLE IF NOT EXISTS cost_accounting_rule_history")
+	require.Contains(t, code, "operator_id     BIGINT       NOT NULL")
+	require.Contains(t, code, "CHECK (action IN ('create', 'update', 'delete'))")
+	require.Contains(t, code, "CREATE INDEX IF NOT EXISTS idx_carh_group")
+	require.NotContains(t, code, "REFERENCES", "不建外键")
+
+	forbidden := regexp.MustCompile(`(?i)\b(ALTER\s+TABLE|DROP\s|TRUNCATE|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|CONCURRENTLY)\b`)
+	require.Empty(t, forbidden.FindString(code), "迁移只能建新表和新索引")
+
+	entries, err := os.ReadDir(filepath.Join("..", "..", "migrations"))
+	require.NoError(t, err)
+	var sameNumber []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "221_") {
+			sameNumber = append(sameNumber, e.Name())
+		}
+	}
+	require.Equal(t, []string{name}, sameNumber, "迁移号 221 只能有一个文件")
+}

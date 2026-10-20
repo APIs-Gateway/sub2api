@@ -1,0 +1,535 @@
+package service
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
+	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+)
+
+// forwardAnthropicViaRawChatCompletions serves /v1/messages clients through an
+// OpenAI-compatible upstream that only implements /v1/chat/completions.
+func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	defaultMappedModel string,
+) (*OpenAIForwardResult, error) {
+	startTime := time.Now()
+
+	var anthropicReq apicompat.AnthropicRequest
+	if err := json.Unmarshal(body, &anthropicReq); err != nil {
+		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+		return nil, fmt.Errorf("parse anthropic request: %w", err)
+	}
+	originalModel := anthropicReq.Model
+	if strings.TrimSpace(originalModel) == "" {
+		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
+		return nil, fmt.Errorf("missing model in request")
+	}
+	applyOpenAICompatModelNormalization(&anthropicReq)
+	clientStream := anthropicReq.Stream
+
+	billingModel := resolveOpenAIForwardModel(account, anthropicReq.Model, defaultMappedModel)
+	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	if err := validateGPT61SolCompatRequest(body, upstreamModel); err != nil {
+		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
+	}
+	if openai.IsGPT61SolModelSpelling(upstreamModel) && len(anthropicReq.Tools) > 0 {
+		err := errGPT61SolChatOnlyTools()
+		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
+	}
+	directBridge := shouldUseDirectAnthropicChatBridge(account)
+
+	var chatReq *apicompat.ChatCompletionsRequest
+	var err error
+	if directBridge {
+		chatReq, err = apicompat.AnthropicToChatCompletionsRequest(&anthropicReq)
+		if err != nil {
+			writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return nil, fmt.Errorf("convert anthropic to chat completions: %w", err)
+		}
+		chatReq.Model = upstreamModel
+		if containsBetaToken(c.GetHeader("anthropic-beta"), claude.BetaFastMode) {
+			chatReq.ServiceTier = "priority"
+		}
+	} else {
+		responsesReq, convertErr := apicompat.AnthropicToResponses(&anthropicReq)
+		if convertErr != nil {
+			writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", convertErr.Error())
+			return nil, fmt.Errorf("convert anthropic to responses: %w", convertErr)
+		}
+		responsesReq.Model = upstreamModel
+		responsesReq.Stream = clientStream
+		if containsBetaToken(c.GetHeader("anthropic-beta"), claude.BetaFastMode) {
+			responsesReq.ServiceTier = "priority"
+		}
+		chatReq, err = apicompat.ResponsesToChatCompletionsRequest(responsesReq)
+		if err != nil {
+			writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return nil, fmt.Errorf("convert responses to chat completions: %w", err)
+		}
+	}
+	chatReq.ReasoningEffort = openAICompatAnthropicReasoningEffort(&anthropicReq, upstreamModel, chatReq.ReasoningEffort)
+	chatReq.Stream = clientStream
+	if clientStream {
+		chatReq.StreamOptions = &apicompat.ChatStreamOptions{IncludeUsage: true}
+	}
+
+	// extractOpenAIReasoningEffortFromBody also recognizes fork-only raw-body
+	// shapes (e.g. a top-level reasoning_effort field on an otherwise
+	// Anthropic-shaped request) that the Anthropic->ChatCompletions bridge never
+	// sees; prefer it when it finds something, and fall back to the bridge's own
+	// chatReq.ReasoningEffort (always populated, defaults to "medium") otherwise.
+	baseEffort := chatReq.ReasoningEffort
+	// Explicitly disabled thinking wins over fork-only raw effort metadata too,
+	// so the usage result describes the effort actually sent upstream.
+	if baseEffort != "none" {
+		if extracted := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel); extracted != nil {
+			baseEffort = *extracted
+		}
+	}
+	convertedEffort := openAICompatAnthropicReasoningEffort(&anthropicReq, upstreamModel, baseEffort)
+	reasoningEffort := &convertedEffort
+	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
+	chatBody, err := json.Marshal(chatReq)
+	if err != nil {
+		return nil, fmt.Errorf("marshal chat completions request: %w", err)
+	}
+	if normalizedBody, normalized := normalizeGLMOpenAIReasoningEffortForRawChatBody(chatBody, upstreamModel); normalized {
+		chatBody = normalizedBody
+	}
+	updatedBody, policyErr := s.applyOpenAIFastPolicyToBody(ctx, account, upstreamModel, chatBody)
+	if policyErr != nil {
+		var blocked *OpenAIFastBlockedError
+		if errors.As(policyErr, &blocked) {
+			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
+			writeAnthropicError(c, http.StatusForbidden, "forbidden_error", blocked.Message)
+		}
+		return nil, policyErr
+	}
+	chatBody = updatedBody
+
+	logger.L().Debug("openai messages: forwarding via raw chat completions",
+		zap.Int64("account_id", account.ID),
+		zap.String("original_model", originalModel),
+		zap.String("billing_model", billingModel),
+		zap.String("upstream_model", upstreamModel),
+		zap.Bool("stream", clientStream),
+	)
+
+	apiKey := account.GetOpenAIApiKey()
+	if apiKey == "" {
+		return nil, fmt.Errorf("account %d missing api_key", account.ID)
+	}
+	baseURL := account.GetOpenAIBaseURL()
+	if baseURL == "" {
+		baseURL = "https://api.openai.com"
+	}
+	validatedURL, err := s.validateUpstreamBaseURL(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid base_url: %w", err)
+	}
+	targetURL := buildOpenAIChatCompletionsURL(validatedURL)
+	chatBody = ensureDeepSeekChatReasoningPlaceholders(targetURL, chatBody)
+	serviceTier := extractOpenAIServiceTierFromBody(chatBody)
+
+	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(chatBody))
+	releaseUpstreamCtx()
+	if err != nil {
+		return nil, fmt.Errorf("build upstream request: %w", err)
+	}
+	upstreamReq = upstreamReq.WithContext(WithHTTPUpstreamProfile(upstreamReq.Context(), HTTPUpstreamProfileOpenAI))
+	upstreamReq.Header.Set("Content-Type", "application/json")
+	upstreamReq.Header.Set("Authorization", "Bearer "+apiKey)
+	if clientStream {
+		upstreamReq.Header.Set("Accept", "text/event-stream")
+	} else {
+		upstreamReq.Header.Set("Accept", "application/json")
+	}
+	for key, values := range c.Request.Header {
+		lowerKey := strings.ToLower(key)
+		if openaiCCRawAllowedHeaders[lowerKey] {
+			for _, v := range values {
+				upstreamReq.Header.Add(key, v)
+			}
+		}
+	}
+	if customUA := account.GetOpenAIUserAgent(); customUA != "" {
+		upstreamReq.Header.Set("user-agent", customUA)
+	}
+	account.ApplyHeaderOverrides(upstreamReq.Header)
+
+	proxyURL := ""
+	if account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+	recordUpstream429Attempt(account.ID)
+	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	if err != nil {
+		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 400 {
+		respBody := s.readUpstreamErrorBody(resp)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(respBody))
+
+		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
+		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+		shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody)
+		var tempUnscheduled bool
+		shouldFailover, tempUnscheduled = s.openAIPromoteTempUnscheduleFailover(ctx, c, account, resp.StatusCode, respBody, shouldFailover, upstreamModel)
+		if shouldFailover {
+			upstreamDetail := ""
+			if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+				maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+				if maxBytes <= 0 {
+					maxBytes = 2048
+				}
+				upstreamDetail = truncateString(string(respBody), maxBytes)
+			}
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: resp.StatusCode,
+				UpstreamRequestID:  upstreamRequestIDFromHeader(resp.Header),
+				Kind:               "failover",
+				Message:            upstreamMsg,
+				Detail:             upstreamDetail,
+			})
+			shouldDisable := tempUnscheduled
+			if !tempUnscheduled {
+				shouldDisable = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
+			}
+			return nil, applyOpenAIPoolAvailabilityFailover(account, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
+				StatusCode:             resp.StatusCode,
+				ResponseBody:           respBody,
+				RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, respBody, !shouldDisable && account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody))),
+			}, upstreamMsg, respBody), respBody)
+		}
+		return s.handleAnthropicErrorResponse(resp, c, account, billingModel)
+	}
+
+	if clientStream {
+		return s.streamChatCompletionsAsAnthropic(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, directBridge)
+	}
+	return s.bufferChatCompletionsAsAnthropic(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, directBridge)
+}
+
+func shouldUseDirectAnthropicChatBridge(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	mode, _ := account.Extra[openai_compat.ExtraKeyResponsesMode].(string)
+	return openai_compat.NormalizeResponsesSupportMode(mode) == openai_compat.ResponsesSupportModeForceChatCompletions
+}
+
+func (s *OpenAIGatewayService) bufferChatCompletionsAsAnthropic(
+	c *gin.Context,
+	resp *http.Response,
+	account *Account,
+	originalModel string,
+	billingModel string,
+	upstreamModel string,
+	reasoningEffort *string,
+	serviceTier *string,
+	startTime time.Time,
+	directBridge bool,
+) (*OpenAIForwardResult, error) {
+	requestID := upstreamRequestIDFromHeader(resp.Header)
+	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+	if err != nil {
+		if !errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
+			writeAnthropicError(c, http.StatusBadGateway, "api_error", "Failed to read upstream response")
+		}
+		return nil, fmt.Errorf("read upstream body: %w", err)
+	}
+	var ccResp apicompat.ChatCompletionsResponse
+	if err := json.Unmarshal(respBody, &ccResp); err != nil {
+		writeAnthropicError(c, http.StatusBadGateway, "api_error", "Failed to parse upstream response")
+		return nil, fmt.Errorf("parse chat completions response: %w", err)
+	}
+	var anthropicResp *apicompat.AnthropicResponse
+	if directBridge {
+		anthropicResp = apicompat.ChatCompletionsResponseToAnthropic(&ccResp, originalModel)
+	} else {
+		responsesResp := apicompat.ChatCompletionsResponseToResponses(&ccResp, originalModel, nil, nil, false, nil)
+		anthropicResp = apicompat.ResponsesToAnthropic(responsesResp, originalModel)
+	}
+
+	usage := OpenAIUsage{}
+	if parsed, ok := extractOpenAIUsageFromJSONBytes(respBody); ok {
+		usage = parsed
+	}
+
+	// 上游模型不一致拦截：整包尚未写回客户端，直接按 failover 切号。
+	if got := extractUpstreamResponseModel(respBody); got != "" {
+		if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
+			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage, originalModel); ferr != nil {
+			return nil, ferr
+		}
+	}
+
+	if s.responseHeaderFilter != nil {
+		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	}
+	c.JSON(http.StatusOK, anthropicResp)
+
+	return &OpenAIForwardResult{
+		RequestID:       requestID,
+		Usage:           usage,
+		Model:           originalModel,
+		BillingModel:    billingModel,
+		UpstreamModel:   upstreamModel,
+		ReasoningEffort: reasoningEffort,
+		ServiceTier:     serviceTier,
+		Stream:          false,
+		Duration:        time.Since(startTime),
+	}, nil
+}
+
+func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
+	c *gin.Context,
+	resp *http.Response,
+	account *Account,
+	originalModel string,
+	billingModel string,
+	upstreamModel string,
+	reasoningEffort *string,
+	serviceTier *string,
+	startTime time.Time,
+	directBridge bool,
+) (*OpenAIForwardResult, error) {
+	requestID := upstreamRequestIDFromHeader(resp.Header)
+	headersWritten := false
+	writeStreamHeaders := func() {
+		if headersWritten {
+			return
+		}
+		headersWritten = true
+		if s.responseHeaderFilter != nil {
+			responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+		}
+		c.Writer.Header().Set("Content-Type", "text/event-stream")
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("Connection", "keep-alive")
+		c.Writer.Header().Set("X-Accel-Buffering", "no")
+		c.Writer.WriteHeader(http.StatusOK)
+	}
+
+	var directState *apicompat.ChatCompletionsToAnthropicStreamState
+	var ccState *apicompat.ChatCompletionsToResponsesStreamState
+	var anthropicState *apicompat.ResponsesEventToAnthropicState
+	if directBridge {
+		directState = apicompat.NewChatCompletionsToAnthropicStreamState(originalModel)
+	} else {
+		ccState = apicompat.NewChatCompletionsToResponsesStreamState(originalModel)
+		anthropicState = apicompat.NewResponsesEventToAnthropicState()
+		anthropicState.Model = originalModel
+	}
+	var usage OpenAIUsage
+	var firstTokenMs *int
+	clientDisconnected := false
+	sawDone := false
+	var terminal openAIRawStreamTerminalState
+	// 上游模型不一致只在首个带 model 的 chunk 上比对一次。
+	upstreamModelChecked := false
+
+	scanner := bufio.NewScanner(resp.Body)
+	maxLineSize := defaultMaxLineSize
+	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+		maxLineSize = s.cfg.Gateway.MaxLineSize
+	}
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		payload, ok := extractOpenAISSEDataLine(line)
+		if !ok {
+			continue
+		}
+		payload = strings.TrimSpace(payload)
+		if payload == "" {
+			continue
+		}
+		if payload == "[DONE]" {
+			terminal.ObserveDataLine(payload)
+			sawDone = true
+			break
+		}
+
+		if u := extractCCStreamUsage(payload); u != nil {
+			usage = *u
+		}
+
+		// 上游模型不一致拦截：在 chunk 转成 Anthropic 事件并写出之前比对；
+		// 响应头尚未写出即客户端零输出，此时按 failover 切号。
+		if !upstreamModelChecked {
+			if got := extractUpstreamResponseModel([]byte(payload)); got != "" {
+				upstreamModelChecked = true
+				if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
+					sentModelForCheck(upstreamModel, originalModel), got, true, !headersWritten, usage, originalModel); ferr != nil {
+					return nil, ferr
+				}
+			}
+		}
+
+		var chunk apicompat.ChatCompletionsChunk
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			logger.L().Warn("openai messages chat fallback: failed to parse chat stream chunk",
+				zap.Error(err),
+				zap.String("request_id", requestID),
+			)
+			continue
+		}
+		// Only a successfully decoded provider chunk can certify completion.
+		// gjson alone can extract terminal fields from malformed JSON.
+		terminal.ObserveDataLine(payload)
+		if firstTokenMs == nil && !isOpenAIChatUsageOnlyStreamChunk(payload) && chatChunkStartsResponsesOutput(&chunk) {
+			ms := int(time.Since(startTime).Milliseconds())
+			firstTokenMs = &ms
+		}
+
+		var anthropicEvents []apicompat.AnthropicStreamEvent
+		if directBridge {
+			anthropicEvents = apicompat.ChatCompletionsChunkToAnthropicEvents(&chunk, directState)
+		} else {
+			for _, responsesEvent := range apicompat.ChatCompletionsChunkToResponsesEvents(&chunk, ccState) {
+				anthropicEvents = append(anthropicEvents, apicompat.ResponsesEventToAnthropicEvents(&responsesEvent, anthropicState)...)
+			}
+		}
+		if clientDisconnected {
+			continue
+		}
+		for _, aEvt := range anthropicEvents {
+			sse, err := apicompat.ResponsesAnthropicEventToSSE(aEvt)
+			if err != nil {
+				continue
+			}
+			writeStreamHeaders()
+			if _, err := fmt.Fprint(c.Writer, sse); err != nil {
+				clientDisconnected = true
+				break
+			}
+		}
+		if !clientDisconnected && len(anthropicEvents) > 0 {
+			c.Writer.Flush()
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			logger.L().Warn("openai messages chat fallback: stream read error",
+				zap.Error(err),
+				zap.String("request_id", requestID),
+			)
+		}
+		return &OpenAIForwardResult{
+			RequestID:        requestID,
+			Usage:            usage,
+			Model:            originalModel,
+			BillingModel:     billingModel,
+			UpstreamModel:    upstreamModel,
+			ReasoningEffort:  reasoningEffort,
+			ServiceTier:      serviceTier,
+			Stream:           true,
+			Duration:         time.Since(startTime),
+			FirstTokenMs:     firstTokenMs,
+			ClientDisconnect: clientDisconnected,
+		}, fmt.Errorf("stream usage incomplete: %w", err)
+	}
+	// Neither bridge may synthesize message_stop from unmarked EOF. No usage
+	// object in a valid decoded chunk was received, so nil preserves unknown
+	// funding instead of pricing
+	// a fabricated zero result. This ordinary error must not replay the attempt.
+	if !terminal.Terminated() {
+		if !clientDisconnected && c.Request.Context().Err() == nil {
+			writeStreamHeaders()
+			if _, err := fmt.Fprint(c.Writer, buildAnthropicStreamErrorSSE("api_error", "Upstream Chat Completions stream ended before completion")); err == nil {
+				c.Writer.Flush()
+			}
+		}
+		return nil, fmt.Errorf("stream usage incomplete: missing Chat Completions terminal signal")
+	}
+
+	if !directBridge {
+		if err := ccState.ValidateToolCallArguments(); err != nil {
+			return &OpenAIForwardResult{
+				RequestID: requestID, Usage: usage, Model: originalModel,
+				BillingModel: billingModel, UpstreamModel: upstreamModel,
+				ReasoningEffort: reasoningEffort, ServiceTier: serviceTier,
+				Stream: true, Duration: time.Since(startTime),
+				FirstTokenMs: firstTokenMs, ClientDisconnect: clientDisconnected,
+			}, fmt.Errorf("invalid tool call arguments from upstream: %w", err)
+		}
+	}
+
+	var finalEvents []apicompat.AnthropicStreamEvent
+	if directBridge {
+		finalEvents = apicompat.FinalizeChatCompletionsAnthropicStream(directState)
+	} else {
+		for _, responsesEvent := range apicompat.FinalizeChatCompletionsResponsesStream(ccState) {
+			if responsesEvent.Response != nil && responsesEvent.Response.Usage != nil {
+				usage = copyOpenAIUsageFromResponsesUsage(responsesEvent.Response.Usage)
+			}
+			finalEvents = append(finalEvents, apicompat.ResponsesEventToAnthropicEvents(&responsesEvent, anthropicState)...)
+		}
+	}
+	if !clientDisconnected {
+		for _, aEvt := range finalEvents {
+			sse, err := apicompat.ResponsesAnthropicEventToSSE(aEvt)
+			if err != nil {
+				continue
+			}
+			writeStreamHeaders()
+			if _, err := fmt.Fprint(c.Writer, sse); err != nil {
+				clientDisconnected = true
+				break
+			}
+		}
+	}
+	if !clientDisconnected {
+		c.Writer.Flush()
+	}
+	if !sawDone {
+		logger.L().Debug("openai messages chat fallback: upstream stream ended without done sentinel",
+			zap.String("request_id", requestID),
+		)
+	}
+
+	return &OpenAIForwardResult{
+		RequestID:        requestID,
+		Usage:            usage,
+		Model:            originalModel,
+		BillingModel:     billingModel,
+		UpstreamModel:    upstreamModel,
+		ReasoningEffort:  reasoningEffort,
+		ServiceTier:      serviceTier,
+		Stream:           true,
+		Duration:         time.Since(startTime),
+		FirstTokenMs:     firstTokenMs,
+		ClientDisconnect: clientDisconnected,
+	}, nil
+}

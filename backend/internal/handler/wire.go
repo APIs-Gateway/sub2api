@@ -1,0 +1,312 @@
+package handler
+
+import (
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+
+	"github.com/google/wire"
+)
+
+// ProvideAdminHandlers creates the AdminHandlers struct
+func ProvideAdminHandlers(
+	dashboardHandler *admin.DashboardHandler,
+	userHandler *admin.UserHandler,
+	groupHandler *admin.GroupHandler,
+	accountHandler *admin.AccountHandler,
+	announcementHandler *admin.AnnouncementHandler,
+	dataManagementHandler *admin.DataManagementHandler,
+	backupHandler *admin.BackupHandler,
+	oauthHandler *admin.OAuthHandler,
+	openaiOAuthHandler *admin.OpenAIOAuthHandler,
+	geminiOAuthHandler *admin.GeminiOAuthHandler,
+	antigravityOAuthHandler *admin.AntigravityOAuthHandler,
+	grokOAuthHandler *admin.GrokOAuthHandler,
+	proxyHandler *admin.ProxyHandler,
+	redeemHandler *admin.RedeemHandler,
+	promoHandler *admin.PromoHandler,
+	settingHandler *admin.SettingHandler,
+	opsHandler *admin.OpsHandler,
+	systemHandler *admin.SystemHandler,
+	subscriptionHandler *admin.SubscriptionHandler,
+	usageHandler *admin.UsageHandler,
+	userAttributeHandler *admin.UserAttributeHandler,
+	errorPassthroughHandler *admin.ErrorPassthroughHandler,
+	tlsFingerprintProfileHandler *admin.TLSFingerprintProfileHandler,
+	apiKeyHandler *admin.AdminAPIKeyHandler,
+	scheduledTestHandler *admin.ScheduledTestHandler,
+	channelHandler *admin.ChannelHandler,
+	channelMonitorHandler *admin.ChannelMonitorHandler,
+	channelMonitorTemplateHandler *admin.ChannelMonitorRequestTemplateHandler,
+	contentModerationHandler *admin.ContentModerationHandler,
+	paymentHandler *admin.PaymentHandler,
+	affiliateHandler *admin.AffiliateHandler,
+	complianceHandler *admin.ComplianceHandler,
+	pointsHandler *admin.PointsHandler,
+	promptAuditHandler *securityaudit.PromptEventAdminHandler,
+	upstreamBillingProbe *service.UpstreamBillingProbeService,
+	pricingQuoteHandler *admin.PricingQuoteHandler,
+	pricingMatrixHandler *admin.PricingMatrixHandler,
+	adminTokenHandler *admin.AdminTokenHandler,
+	auditLogHandler *admin.AuditLogHandler,
+	apiKeyFallbackHandler *admin.APIKeyFallbackHandler,
+	pricingSnapshotHandler *admin.PricingSnapshotHandler,
+	pricingWriteHandler *admin.PricingWriteHandler,
+) *AdminHandlers {
+	if accountHandler != nil {
+		accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
+	}
+	return &AdminHandlers{
+		Dashboard:              dashboardHandler,
+		User:                   userHandler,
+		Group:                  groupHandler,
+		Account:                accountHandler,
+		Announcement:           announcementHandler,
+		DataManagement:         dataManagementHandler,
+		Backup:                 backupHandler,
+		OAuth:                  oauthHandler,
+		OpenAIOAuth:            openaiOAuthHandler,
+		GeminiOAuth:            geminiOAuthHandler,
+		AntigravityOAuth:       antigravityOAuthHandler,
+		GrokOAuth:              grokOAuthHandler,
+		Proxy:                  proxyHandler,
+		Redeem:                 redeemHandler,
+		Promo:                  promoHandler,
+		Setting:                settingHandler,
+		Ops:                    opsHandler,
+		System:                 systemHandler,
+		Subscription:           subscriptionHandler,
+		Usage:                  usageHandler,
+		UserAttribute:          userAttributeHandler,
+		ErrorPassthrough:       errorPassthroughHandler,
+		TLSFingerprintProfile:  tlsFingerprintProfileHandler,
+		APIKey:                 apiKeyHandler,
+		ScheduledTest:          scheduledTestHandler,
+		Channel:                channelHandler,
+		ChannelMonitor:         channelMonitorHandler,
+		ChannelMonitorTemplate: channelMonitorTemplateHandler,
+		ContentModeration:      contentModerationHandler,
+		Payment:                paymentHandler,
+		Affiliate:              affiliateHandler,
+		Compliance:             complianceHandler,
+		Points:                 pointsHandler,
+		PromptAudit:            promptAuditHandler,
+		PricingQuote:           pricingQuoteHandler,
+		PricingMatrix:          pricingMatrixHandler,
+		AdminToken:             adminTokenHandler,
+		AuditLog:               auditLogHandler,
+		APIKeyFallback:         apiKeyFallbackHandler,
+		PricingSnapshot:        pricingSnapshotHandler,
+		PricingWrite:           pricingWriteHandler,
+	}
+}
+
+func ProvideGatewayHandler(
+	gatewayService *service.GatewayService,
+	geminiCompatService *service.GeminiMessagesCompatService,
+	antigravityGatewayService *service.AntigravityGatewayService,
+	userService *service.UserService,
+	subscriptionService *service.SubscriptionService,
+	concurrencyService *service.ConcurrencyService,
+	billingCacheService *service.BillingCacheService,
+	usageService *service.UsageService,
+	apiKeyService *service.APIKeyService,
+	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	errorPassthroughService *service.ErrorPassthroughService,
+	contentModerationService *service.ContentModerationService,
+	userMsgQueueService *service.UserMessageQueueService,
+	cfg *config.Config,
+	settingService *service.SettingService,
+	openAIGatewayService *service.OpenAIGatewayService,
+	coordinator *securityaudit.Coordinator,
+) *GatewayHandler {
+	h := NewGatewayHandler(gatewayService, geminiCompatService, antigravityGatewayService,
+		userService, subscriptionService, concurrencyService, billingCacheService, usageService,
+		apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService,
+		userMsgQueueService, cfg, settingService, openAIGatewayService)
+	h.securityAuditCoordinator = coordinator
+	return h
+}
+
+func ProvideOpenAIGatewayHandler(
+	gatewayService *service.OpenAIGatewayService,
+	concurrencyService *service.ConcurrencyService,
+	billingCacheService *service.BillingCacheService,
+	apiKeyService *service.APIKeyService,
+	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	errorPassthroughService *service.ErrorPassthroughService,
+	contentModerationService *service.ContentModerationService,
+	opsService *service.OpsService,
+	cfg *config.Config,
+	coordinator *securityaudit.Coordinator,
+	groupRouteService service.GroupRouteService,
+	settingService *service.SettingService,
+	groupChainBreaker service.GroupChainBreakerGate,
+) *OpenAIGatewayHandler {
+	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
+		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
+	h.securityAuditCoordinator = coordinator
+	// Key 级分组回退链运行时：全局开关默认关闭，关闭时（以及 Key 没配链时）所有入口都走原路径。
+	// 显式判空，避免把 nil 指针装进接口造成「非 nil 接口、nil 指针」。
+	if settingService != nil {
+		h.groupFallback = newGroupFallbackRuntime(groupRouteService, settingService, groupChainBreaker)
+	}
+	return h
+}
+
+// ProvideSystemHandler creates admin.SystemHandler with UpdateService
+func ProvideSystemHandler(updateService *service.UpdateService, lockService *service.SystemOperationLockService) *admin.SystemHandler {
+	return admin.NewSystemHandler(updateService, lockService)
+}
+
+// ProvideSettingHandler creates SettingHandler with version from BuildInfo
+func ProvideSettingHandler(settingService *service.SettingService, buildInfo BuildInfo, notificationEmailService *service.NotificationEmailService) *SettingHandler {
+	h := NewSettingHandler(settingService, buildInfo.Version)
+	h.SetNotificationEmailService(notificationEmailService)
+	return h
+}
+
+// ProvideAdminSettingHandler creates admin.SettingHandler with notification template APIs.
+func ProvideAdminSettingHandler(settingService *service.SettingService, emailService *service.EmailService, turnstileService *service.TurnstileService, opsService *service.OpsService, paymentConfigService *service.PaymentConfigService, paymentService *service.PaymentService, userAttributeService *service.UserAttributeService, notificationEmailService *service.NotificationEmailService, totpService *service.TotpService, userService *service.UserService) *admin.SettingHandler {
+	h := admin.NewSettingHandler(settingService, emailService, turnstileService, opsService, paymentConfigService, paymentService, userAttributeService)
+	h.SetNotificationEmailService(notificationEmailService)
+	h.SetStepUpDeps(totpService, userService)
+	return h
+}
+
+// ProvideAdminUserHandler creates the admin user handler and wires its step-up switch.
+func ProvideAdminUserHandler(adminService service.AdminService, concurrencyService *service.ConcurrencyService, userPlatformQuotaRepo service.UserPlatformQuotaRepository, billingCache service.BillingCache, totpService *service.TotpService, userService *service.UserService, settingService *service.SettingService) *admin.UserHandler {
+	h := admin.NewUserHandler(adminService, concurrencyService, userPlatformQuotaRepo, billingCache, totpService, userService)
+	h.SetStepUpSettingService(settingService)
+	return h
+}
+
+// ProvideAdminBackupHandler creates the backup handler and wires its step-up switch.
+func ProvideAdminBackupHandler(backupService *service.BackupService, userService *service.UserService, totpService *service.TotpService, settingService *service.SettingService) *admin.BackupHandler {
+	h := admin.NewBackupHandler(backupService, userService)
+	h.SetStepUpDeps(totpService, settingService)
+	return h
+}
+
+// ProvideHandlers creates the Handlers struct
+func ProvideHandlers(
+	authHandler *AuthHandler,
+	userHandler *UserHandler,
+	apiKeyHandler *APIKeyHandler,
+	usageHandler *UsageHandler,
+	redeemHandler *RedeemHandler,
+	subscriptionHandler *SubscriptionHandler,
+	announcementHandler *AnnouncementHandler,
+	channelMonitorUserHandler *ChannelMonitorUserHandler,
+	adminHandlers *AdminHandlers,
+	gatewayHandler *GatewayHandler,
+	openaiGatewayHandler *OpenAIGatewayHandler,
+	settingHandler *SettingHandler,
+	totpHandler *TotpHandler,
+	paymentHandler *PaymentHandler,
+	paymentWebhookHandler *PaymentWebhookHandler,
+	providerPricingHandler *ProviderPricingHandler,
+	availableChannelHandler *AvailableChannelHandler,
+	checkinHandler *CheckinHandler,
+	pointsHandler *PointsHandler,
+	legacyInviteHandler *LegacyInviteHandler,
+	apiKeyFallbackHandler *APIKeyFallbackHandler,
+	_ *service.IdempotencyCoordinator,
+	_ *service.IdempotencyCleanupService,
+) *Handlers {
+	return &Handlers{
+		Auth:             authHandler,
+		User:             userHandler,
+		APIKey:           apiKeyHandler,
+		Usage:            usageHandler,
+		Redeem:           redeemHandler,
+		Subscription:     subscriptionHandler,
+		Announcement:     announcementHandler,
+		ChannelMonitor:   channelMonitorUserHandler,
+		Admin:            adminHandlers,
+		Gateway:          gatewayHandler,
+		OpenAIGateway:    openaiGatewayHandler,
+		Setting:          settingHandler,
+		Totp:             totpHandler,
+		Payment:          paymentHandler,
+		PaymentWebhook:   paymentWebhookHandler,
+		ProviderPricing:  providerPricingHandler,
+		AvailableChannel: availableChannelHandler,
+		Checkin:          checkinHandler,
+		Points:           pointsHandler,
+		LegacyInvite:     legacyInviteHandler,
+		APIKeyFallback:   apiKeyFallbackHandler,
+	}
+}
+
+// ProviderSet is the Wire provider set for all handlers
+var ProviderSet = wire.NewSet(
+	// Top-level handlers
+	NewAuthHandler,
+	NewUserHandler,
+	NewAPIKeyHandler,
+	NewUsageHandler,
+	NewRedeemHandler,
+	NewSubscriptionHandler,
+	NewAnnouncementHandler,
+	NewChannelMonitorUserHandler,
+	ProvideGatewayHandler,
+	ProvideOpenAIGatewayHandler,
+	NewTotpHandler,
+	ProvideSettingHandler,
+	NewPaymentHandler,
+	NewPaymentWebhookHandler,
+	NewProviderPricingHandler,
+	NewAvailableChannelHandler,
+	NewCheckinHandler,
+	NewPointsHandler,
+	NewLegacyInviteHandler,
+	NewAPIKeyFallbackHandler,
+
+	// Admin handlers
+	admin.NewDashboardHandler,
+	ProvideAdminUserHandler,
+	admin.NewGroupHandler,
+	admin.NewAccountHandler,
+	admin.NewAnnouncementHandler,
+	admin.NewDataManagementHandler,
+	ProvideAdminBackupHandler,
+	admin.NewOAuthHandler,
+	admin.NewOpenAIOAuthHandler,
+	admin.NewGeminiOAuthHandler,
+	admin.NewAntigravityOAuthHandler,
+	admin.NewGrokOAuthHandler,
+	admin.NewProxyHandler,
+	admin.NewRedeemHandler,
+	admin.NewPromoHandler,
+	ProvideAdminSettingHandler,
+	admin.NewOpsHandler,
+	ProvideSystemHandler,
+	admin.NewSubscriptionHandler,
+	admin.NewUsageHandler,
+	admin.NewUserAttributeHandler,
+	admin.NewErrorPassthroughHandler,
+	admin.NewTLSFingerprintProfileHandler,
+	admin.NewAdminAPIKeyHandler,
+	admin.NewScheduledTestHandler,
+	admin.NewChannelHandler,
+	admin.NewChannelMonitorHandler,
+	admin.NewChannelMonitorRequestTemplateHandler,
+	admin.NewContentModerationHandler,
+	admin.NewPaymentHandler,
+	admin.NewAffiliateHandler,
+	admin.NewComplianceHandler,
+	admin.NewPointsHandler,
+	admin.NewPricingQuoteHandler,
+	admin.NewPricingMatrixHandler,
+	admin.NewAdminTokenHandler,
+	admin.NewAuditLogHandler,
+	admin.NewAPIKeyFallbackHandler,
+	admin.NewPricingSnapshotHandler,
+	admin.NewPricingWriteHandler,
+
+	// AdminHandlers and Handlers constructors
+	ProvideAdminHandlers,
+	ProvideHandlers,
+)

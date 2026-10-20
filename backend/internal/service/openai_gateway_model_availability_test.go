@@ -1,0 +1,208 @@
+//go:build unit
+
+package service
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/stretchr/testify/require"
+)
+
+func TestOpenAIGatewayServiceDiagnoseModelAvailabilityForPlatform(t *testing.T) {
+	groupID := int64(7)
+
+	newService := func(accounts []Account) *OpenAIGatewayService {
+		return &OpenAIGatewayService{
+			accountRepo: newModelAvailabilityAccountRepo(accounts),
+			cfg:         testConfig(),
+		}
+	}
+
+	t.Run("nil receiver stays on the conservative fallback", func(t *testing.T) {
+		var svc *OpenAIGatewayService
+
+		diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "gpt-5", PlatformOpenAI)
+
+		require.True(t, diag.HasAccountsInPool)
+		require.True(t, diag.HasModelSupport)
+	})
+
+	t.Run("empty requested model stays on the conservative fallback", func(t *testing.T) {
+		diag := newService(nil).DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "  ", PlatformOpenAI)
+
+		require.True(t, diag.HasAccountsInPool)
+		require.True(t, diag.HasModelSupport)
+	})
+
+	t.Run("empty platform stays on the conservative fallback", func(t *testing.T) {
+		diag := newService(nil).DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "gpt-5", " ")
+
+		require.True(t, diag.HasAccountsInPool)
+		require.True(t, diag.HasModelSupport)
+	})
+
+	t.Run("lookup errors stay on the conservative fallback", func(t *testing.T) {
+		repo := newModelAvailabilityAccountRepo(nil)
+		repo.listByGroupErr = errors.New("database unavailable")
+		svc := &OpenAIGatewayService{
+			accountRepo: repo,
+			cfg:         testConfig(),
+		}
+
+		diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "gpt-5", PlatformOpenAI)
+
+		require.True(t, diag.HasAccountsInPool)
+		require.True(t, diag.HasModelSupport)
+	})
+
+	t.Run("empty pool remains a 503 signal", func(t *testing.T) {
+		diag := newService(nil).DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "gpt-5", PlatformOpenAI)
+
+		require.False(t, diag.HasAccountsInPool)
+		require.False(t, diag.HasModelSupport)
+	})
+
+	accounts := []Account{{
+		ID:          1,
+		Platform:    PlatformOpenAI,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{"gpt-5": "gpt-5"},
+		},
+	}}
+
+	t.Run("matching mapping keeps the service-unavailable classification", func(t *testing.T) {
+		diag := newService(accounts).DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "gpt-5", PlatformOpenAI)
+
+		require.True(t, diag.HasAccountsInPool)
+		require.True(t, diag.HasModelSupport)
+	})
+
+	t.Run("unsupported mapping emits the model-not-found signal", func(t *testing.T) {
+		diag := newService(accounts).DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "gpt-5-mini", PlatformOpenAI)
+
+		require.True(t, diag.HasAccountsInPool)
+		require.False(t, diag.HasModelSupport)
+	})
+
+	t.Run("simple mode uses the OpenAI platform pool", func(t *testing.T) {
+		cfg := testConfig()
+		cfg.RunMode = config.RunModeSimple
+		svc := &OpenAIGatewayService{
+			accountRepo: newModelAvailabilityAccountRepo(accounts),
+			cfg:         cfg,
+		}
+
+		diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "gpt-5-mini", PlatformOpenAI)
+
+		require.True(t, diag.HasAccountsInPool)
+		require.False(t, diag.HasModelSupport)
+	})
+}
+
+func TestOpenAIGatewayServiceDiagnoseModelAvailabilityForPlatform_SimpleModeIncludesGroupedAccounts(t *testing.T) {
+	cfg := testConfig()
+	cfg.RunMode = config.RunModeSimple
+	svc := &OpenAIGatewayService{
+		accountRepo: newModelAvailabilityAccountRepo([]Account{{
+			ID:            1,
+			Platform:      PlatformOpenAI,
+			Status:        StatusActive,
+			Schedulable:   true,
+			AccountGroups: []AccountGroup{{GroupID: 99}},
+			Credentials:   map[string]any{"model_mapping": map[string]any{"gpt-5": "gpt-5"}},
+		}}),
+		cfg: cfg,
+	}
+
+	diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), nil, "gpt-5", PlatformOpenAI)
+
+	require.True(t, diag.HasAccountsInPool)
+	require.True(t, diag.HasModelSupport)
+}
+
+func TestOpenAIGatewayServiceDiagnoseModelAvailabilityForPlatformScopesPlatform(t *testing.T) {
+	svc := &OpenAIGatewayService{
+		accountRepo: newModelAvailabilityAccountRepo([]Account{{
+			ID:          1,
+			Platform:    "grok",
+			Status:      StatusActive,
+			Schedulable: true,
+			Credentials: map[string]any{"model_mapping": map[string]any{"grok-4": "grok-4"}},
+		}}),
+		cfg: testConfig(),
+	}
+
+	diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), nil, "grok-4", PlatformOpenAI)
+	require.False(t, diag.HasAccountsInPool)
+
+	diag = svc.DiagnoseModelAvailabilityForPlatform(context.Background(), nil, "grok-4", "grok")
+	require.True(t, diag.HasAccountsInPool)
+	require.True(t, diag.HasModelSupport)
+}
+
+func TestOpenAIGatewayServiceDiagnoseModelAvailabilityForPlatformIgnoresTransientCooldown(t *testing.T) {
+	groupID := int64(43)
+	cooldownUntil := time.Now().Add(time.Hour)
+	svc := &OpenAIGatewayService{
+		accountRepo: newModelAvailabilityAccountRepo([]Account{{
+			ID:                     1,
+			Platform:               PlatformOpenAI,
+			Status:                 StatusActive,
+			Schedulable:            true,
+			RateLimitResetAt:       &cooldownUntil,
+			OverloadUntil:          &cooldownUntil,
+			TempUnschedulableUntil: &cooldownUntil,
+			AccountGroups:          []AccountGroup{{GroupID: groupID}},
+			Credentials:            map[string]any{"model_mapping": map[string]any{"gpt-5": "gpt-5"}},
+		}}),
+		cfg: testConfig(),
+	}
+
+	diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "gpt-5", PlatformOpenAI)
+
+	require.True(t, diag.HasAccountsInPool)
+	require.True(t, diag.HasModelSupport)
+}
+
+func TestOpenAIGatewayServiceDiagnoseModelAvailabilityForPlatformExcludesPersistentlyDisabledAccount(t *testing.T) {
+	svc := &OpenAIGatewayService{
+		accountRepo: newModelAvailabilityAccountRepo([]Account{{
+			ID:          1,
+			Platform:    PlatformOpenAI,
+			Status:      StatusActive,
+			Schedulable: false,
+			Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5": "gpt-5"}},
+		}}),
+		cfg: testConfig(),
+	}
+
+	diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), nil, "gpt-5", PlatformOpenAI)
+
+	require.False(t, diag.HasAccountsInPool)
+	require.False(t, diag.HasModelSupport)
+}
+
+func TestOpenAIGatewayServiceDiagnoseModelAvailabilityForPlatformExcludesGroupedAccountWithoutGroup(t *testing.T) {
+	svc := &OpenAIGatewayService{
+		accountRepo: newModelAvailabilityAccountRepo([]Account{{
+			ID:            1,
+			Platform:      PlatformOpenAI,
+			Status:        StatusActive,
+			Schedulable:   true,
+			AccountGroups: []AccountGroup{{GroupID: 46}},
+			Credentials:   map[string]any{"model_mapping": map[string]any{"gpt-5": "gpt-5"}},
+		}}),
+		cfg: testConfig(),
+	}
+
+	diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), nil, "gpt-5", PlatformOpenAI)
+
+	require.False(t, diag.HasAccountsInPool)
+	require.False(t, diag.HasModelSupport)
+}

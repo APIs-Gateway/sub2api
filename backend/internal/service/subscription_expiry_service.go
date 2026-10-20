@@ -1,0 +1,246 @@
+package service
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"log"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/google/uuid"
+)
+
+const (
+	subscriptionExpiryReminderSMTPWarningInterval = time.Minute
+	// subscriptionExpiryReminderLeaderLockKey gates the per-cycle reminder scan so
+	// that only one instance walks all active subscriptions and sends reminder
+	// emails, avoiding redundant full scans and duplicate emails.
+	subscriptionExpiryReminderLeaderLockKey = "subscription:expiry:reminder:leader"
+	// subscriptionExpiryReminderLeaderLockTTL bounds crash recovery; the scan can
+	// page through many subscriptions, so keep it comfortably above one cycle.
+	subscriptionExpiryReminderLeaderLockTTL = 5 * time.Minute
+)
+
+// SubscriptionExpiryService periodically updates expired subscription status.
+type SubscriptionExpiryService struct {
+	userSubRepo              UserSubscriptionRepository
+	settingRepo              SettingRepository
+	notificationEmailService *NotificationEmailService
+	billingCache             *BillingCacheService
+	interval                 time.Duration
+	stopCh                   chan struct{}
+	stopOnce                 sync.Once
+	wg                       sync.WaitGroup
+
+	lockCache  LeaderLockCache
+	db         *sql.DB
+	instanceID string
+
+	smtpWarningMu   sync.Mutex
+	lastSMTPWarning time.Time
+}
+
+func NewSubscriptionExpiryService(userSubRepo UserSubscriptionRepository, interval time.Duration) *SubscriptionExpiryService {
+	return &SubscriptionExpiryService{
+		userSubRepo: userSubRepo,
+		interval:    interval,
+		stopCh:      make(chan struct{}),
+		instanceID:  uuid.NewString(),
+	}
+}
+
+// SetLeaderLock injects the leader-lock cache and DB used to elect a single
+// instance for the periodic expiry-reminder scan. When both are nil the scan runs
+// ungated (single-instance / test behavior).
+func (s *SubscriptionExpiryService) SetLeaderLock(lockCache LeaderLockCache, db *sql.DB) {
+	if s == nil {
+		return
+	}
+	s.lockCache = lockCache
+	s.db = db
+}
+
+func (s *SubscriptionExpiryService) SetSettingRepository(settingRepo SettingRepository) {
+	s.settingRepo = settingRepo
+}
+
+func (s *SubscriptionExpiryService) SetNotificationEmailService(notificationEmailService *NotificationEmailService) {
+	s.notificationEmailService = notificationEmailService
+}
+
+func (s *SubscriptionExpiryService) SetBillingCacheService(billingCache *BillingCacheService) {
+	s.billingCache = billingCache
+}
+
+func (s *SubscriptionExpiryService) Start() {
+	if s == nil || s.userSubRepo == nil || s.interval <= 0 {
+		return
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		ticker := time.NewTicker(s.interval)
+		defer ticker.Stop()
+
+		s.runOnce()
+		for {
+			select {
+			case <-ticker.C:
+				s.runOnce()
+			case <-s.stopCh:
+				return
+			}
+		}
+	}()
+}
+
+func (s *SubscriptionExpiryService) Stop() {
+	if s == nil {
+		return
+	}
+	s.stopOnce.Do(func() {
+		close(s.stopCh)
+	})
+	s.wg.Wait()
+}
+
+func (s *SubscriptionExpiryService) runOnce() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// burn-down 模型：到期时标记 expired 并把剩余订阅余额作废（同时扣减用户余额）。
+	// ForfeitExpiredSubscriptions 内部分批排空所有已到期的活跃订阅。
+	now := time.Now()
+	affected, err := s.userSubRepo.ForfeitExpiredSubscriptions(ctx, now, 200)
+	if err != nil {
+		log.Printf("[SubscriptionExpiry] Forfeit expired subscriptions failed: %v", err)
+	} else {
+		// 失效被扣减用户的余额缓存
+		if s.billingCache != nil {
+			for _, uid := range affected {
+				_ = s.billingCache.InvalidateUserBalance(ctx, uid)
+			}
+		}
+		if len(affected) > 0 {
+			log.Printf("[SubscriptionExpiry] Forfeited remaining balance for %d expired subscriptions (with balance)", len(affected))
+		}
+	}
+	s.sendExpiryReminders(ctx)
+}
+
+func (s *SubscriptionExpiryService) sendExpiryReminders(ctx context.Context) {
+	if s == nil || s.userSubRepo == nil || s.notificationEmailService == nil {
+		return
+	}
+	if !s.expiryReminderEnabled(ctx) {
+		return
+	}
+	if !s.smtpConfigured(ctx) {
+		return
+	}
+
+	// Multi-instance guard: only the leader walks every active subscription and
+	// sends reminders, avoiding N× full scans and duplicate reminder emails.
+	release, ok := tryAcquireSingletonLeaderLock(ctx, s.lockCache, s.db, subscriptionExpiryReminderLeaderLockKey, s.instanceID, subscriptionExpiryReminderLeaderLockTTL)
+	if !ok {
+		return
+	}
+	defer release()
+	for page := 1; ; page++ {
+		subs, pag, err := s.userSubRepo.List(ctx, pagination.PaginationParams{Page: page, PageSize: 200}, nil, nil, SubscriptionStatusActive, "", "expires_at", "asc")
+		if err != nil {
+			log.Printf("[SubscriptionExpiry] List active subscriptions for reminder failed: %v", err)
+			return
+		}
+		for i := range subs {
+			s.sendExpiryReminderIfDue(ctx, &subs[i])
+		}
+		if pag == nil || page >= pag.Pages || len(subs) == 0 {
+			return
+		}
+	}
+}
+
+func (s *SubscriptionExpiryService) expiryReminderEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return true
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeySubscriptionExpiryNotifyEnabled)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return true
+		}
+		log.Printf("[SubscriptionExpiry] Read expiry reminder switch failed: %v", err)
+		return false
+	}
+	return !isFalseSettingValue(value)
+}
+
+func (s *SubscriptionExpiryService) smtpConfigured(ctx context.Context) bool {
+	if s == nil || s.notificationEmailService == nil || s.notificationEmailService.emailService == nil {
+		return false
+	}
+	_, err := s.notificationEmailService.emailService.GetSMTPConfig(ctx)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, ErrEmailNotConfigured) {
+		s.smtpWarningMu.Lock()
+		defer s.smtpWarningMu.Unlock()
+		now := time.Now()
+		if s.lastSMTPWarning.IsZero() || now.Sub(s.lastSMTPWarning) >= subscriptionExpiryReminderSMTPWarningInterval {
+			log.Printf("[SubscriptionExpiry] SMTP is not configured; skipping expiry reminders")
+			s.lastSMTPWarning = now
+		}
+		return false
+	}
+	log.Printf("[SubscriptionExpiry] Read SMTP configuration failed; skipping expiry reminders: %v", err)
+	return false
+}
+
+func (s *SubscriptionExpiryService) sendExpiryReminderIfDue(ctx context.Context, sub *UserSubscription) {
+	// 分组只用于邮件里的展示名，不是发送条件：自定义卡、转套餐卡（无 group 归属）和
+	// 来源分组已被删除的卡（Group==nil）同样要收到到期提醒。
+	if sub == nil || sub.User == nil || sub.User.Email == "" {
+		return
+	}
+	daysRemaining := sub.DaysRemaining()
+	if daysRemaining != 7 && daysRemaining != 3 && daysRemaining != 1 {
+		return
+	}
+	if err := s.notificationEmailService.Send(ctx, NotificationEmailSendInput{
+		Event:          NotificationEmailEventSubscriptionExpiryReminder,
+		RecipientEmail: sub.User.Email,
+		RecipientName:  firstNonEmpty(sub.User.Username, sub.User.Email),
+		UserID:         sub.UserID,
+		SourceType:     "user_subscription",
+		SourceID:       strconv.FormatInt(sub.ID, 10),
+		ReminderKey:    fmt.Sprintf("%dd", daysRemaining),
+		// 标记里记下卡当前的到期时间：续费延期后到期时间变了，同一档提醒在新周期里可以再发一次。
+		ReminderExpiresAt: sub.ExpiresAt,
+		Variables: map[string]string{
+			// 无分组名时传空串，由通知服务按收件人 locale 回退为「当前 / 目前 / current」，读作「您的当前订阅」。
+			"subscription_group": subscriptionGroupDisplayName(sub.Group),
+			"expiry_time":        sub.ExpiresAt.Format("2006-01-02 15:04"),
+			"days_remaining":     strconv.Itoa(daysRemaining),
+		},
+	}); err != nil {
+		log.Printf("[SubscriptionExpiry] Send expiry reminder failed: subscription=%d user=%d err=%v", sub.ID, sub.UserID, err)
+	}
+}
+
+// subscriptionGroupDisplayName 取订阅卡来源分组名用于通知展示。
+// 自定义 D+T 卡、转套餐卡无 group 归属（group_id NULL 或 0 → Group==nil），来源分组被软删后同样读不到分组。
+// 这些情况返回空串，不在这里写死某一种语言：locale 在 NotificationEmailService.Send 里才确定，
+// 空值会在那里回退为 notificationEmailSubscriptionFallbackName(event, locale)。
+func subscriptionGroupDisplayName(g *Group) string {
+	if g == nil {
+		return ""
+	}
+	return strings.TrimSpace(g.Name)
+}

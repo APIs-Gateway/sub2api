@@ -1,0 +1,1009 @@
+/**
+ * Vue Router configuration for Sub2API frontend
+ * Defines all application routes with lazy loading and navigation guards
+ */
+
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+import { useAppStore } from '@/stores/app'
+import { useAdminSettingsStore } from '@/stores/adminSettings'
+import { useAdminComplianceStore } from '@/stores/adminCompliance'
+import { getAdminComplianceSessionVersion } from '@/utils/adminComplianceSession'
+import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
+import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
+import { recoverFromChunkLoadError } from '@/utils/chunkLoadRecovery'
+import { isSafeRedirectPath } from '@/utils/redirect'
+import { getSetupStatus } from '@/api/setup'
+import { resolveCompletedSetupRedirectPath } from './setupRedirect'
+import { resolveRouteDocumentTitle } from './title'
+
+/**
+ * Route definitions with lazy loading
+ */
+const routes: RouteRecordRaw[] = [
+  // ==================== Setup Routes ====================
+  {
+    path: '/setup',
+    name: 'Setup',
+    component: () => import('@/views/setup/SetupWizardView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Setup'
+    }
+  },
+
+  // ==================== Public Routes ====================
+  {
+    path: '/home',
+    name: 'Home',
+    component: () => import('@/views/HomeView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Home'
+    }
+  },
+  {
+    path: '/login',
+    name: 'Login',
+    component: () => import('@/views/auth/LoginView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Login',
+      titleKey: 'home.login'
+    }
+  },
+  {
+    path: '/register',
+    name: 'Register',
+    component: () => import('@/views/auth/RegisterView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Register',
+      titleKey: 'auth.createAccount'
+    }
+  },
+  {
+    path: '/claim-invite',
+    name: 'LegacyInviteClaim',
+    component: () => import('@/views/auth/LegacyInviteClaimView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Claim Invite Code',
+      titleKey: 'legacyInvite.title'
+    }
+  },
+  {
+    path: '/email-verify',
+    name: 'EmailVerify',
+    component: () => import('@/views/auth/EmailVerifyView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Verify Email'
+    }
+  },
+  {
+    path: '/auth/callback',
+    name: 'OAuthCallback',
+    alias: '/auth/oauth/callback',
+    component: () => import('@/views/auth/OAuthCallbackView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'OAuth Callback',
+      titleKey: 'auth.oauthCallbackPageTitle'
+    }
+  },
+  {
+    path: '/auth/linuxdo/callback',
+    name: 'LinuxDoOAuthCallback',
+    component: () => import('@/views/auth/LinuxDoCallbackView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'LinuxDo OAuth Callback',
+      titleKey: 'auth.linuxdoCallbackPageTitle'
+    }
+  },
+  {
+    path: '/auth/wechat/callback',
+    name: 'WeChatOAuthCallback',
+    component: () => import('@/views/auth/WechatCallbackView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'WeChat OAuth Callback',
+      titleKey: 'auth.wechatCallbackPageTitle'
+    }
+  },
+  {
+    path: '/auth/wechat/payment/callback',
+    name: 'WeChatPaymentOAuthCallback',
+    component: () => import('@/views/auth/WechatPaymentCallbackView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'WeChat Payment Callback',
+      titleKey: 'auth.wechatPaymentCallbackPageTitle'
+    }
+  },
+  {
+    path: '/auth/dingtalk/callback',
+    name: 'DingTalkOAuthCallback',
+    component: () => import('@/views/auth/DingTalkCallbackView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'DingTalk OAuth Callback',
+      titleKey: 'auth.dingtalkCallbackPageTitle'
+    }
+  },
+  {
+    path: '/auth/dingtalk/email-completion',
+    name: 'dingtalk-email-completion',
+    component: () => import('@/views/auth/DingTalkEmailCompletionView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'DingTalk Email Completion'
+    }
+  },
+  {
+    path: '/auth/oidc/callback',
+    name: 'OIDCOAuthCallback',
+    component: () => import('@/views/auth/OidcCallbackView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'OIDC OAuth Callback',
+      titleKey: 'auth.oidcCallbackPageTitle'
+    }
+  },
+  {
+    path: '/forgot-password',
+    name: 'ForgotPassword',
+    component: () => import('@/views/auth/ForgotPasswordView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Forgot Password',
+      titleKey: 'auth.forgotPasswordTitle'
+    }
+  },
+  {
+    path: '/reset-password',
+    name: 'ResetPassword',
+    component: () => import('@/views/auth/ResetPasswordView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Reset Password'
+    }
+  },
+  {
+    path: '/key-usage',
+    name: 'KeyUsage',
+    component: () => import('@/views/KeyUsageView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Key Usage',
+    }
+  },
+  {
+    path: '/docs',
+    name: 'Docs',
+    component: () => import('@/views/docs/DocsView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Docs',
+      titleKey: 'nav.usageDocs',
+    }
+  },
+  {
+    path: '/legal/:documentId',
+    name: 'LegalDocument',
+    component: () => import('@/views/public/LegalDocumentView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Legal Document'
+    }
+  },
+
+  // ==================== User Routes ====================
+  {
+    path: '/',
+    redirect: '/home'
+  },
+  {
+    path: '/dashboard',
+    name: 'Dashboard',
+    component: () => import('@/views/user/DashboardView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Dashboard',
+      titleKey: 'dashboard.title',
+      descriptionKey: 'dashboard.welcomeMessage'
+    }
+  },
+  {
+    path: '/keys',
+    name: 'Keys',
+    component: () => import('@/views/user/KeysView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'API Keys',
+      titleKey: 'keys.title',
+      descriptionKey: 'keys.description'
+    }
+  },
+  {
+    path: '/usage',
+    name: 'Usage',
+    component: () => import('@/views/user/UsageView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Usage Records',
+      titleKey: 'usage.title',
+      descriptionKey: 'usage.description'
+    }
+  },
+  {
+    path: '/redeem',
+    name: 'Redeem',
+    component: () => import('@/views/user/RedeemView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Redeem Code',
+      titleKey: 'redeem.title',
+      descriptionKey: 'redeem.description'
+    }
+  },
+  {
+    // 旧「邀请返利（$ 返利）」页已退役，统一并入积分（issue #11，方案 C）。
+    // 保留重定向以兜住历史书签/外链。
+    path: '/affiliate',
+    redirect: '/points'
+  },
+  {
+    path: '/points',
+    name: 'Points',
+    component: () => import('@/views/user/PointsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Points',
+      titleKey: 'points.title',
+      descriptionKey: 'points.description'
+    }
+  },
+  {
+    path: '/available-channels',
+    name: 'UserAvailableChannels',
+    component: () => import('@/views/user/AvailableChannelsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Available Channels',
+      titleKey: 'availableChannels.title',
+      descriptionKey: 'availableChannels.description'
+    }
+  },
+  {
+    path: '/profile',
+    name: 'Profile',
+    component: () => import('@/views/user/ProfileView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Profile',
+      titleKey: 'profile.title',
+      descriptionKey: 'profile.description'
+    }
+  },
+  {
+    path: '/subscriptions',
+    name: 'Subscriptions',
+    component: () => import('@/views/user/SubscriptionsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'My Subscriptions',
+      titleKey: 'userSubscriptions.title',
+      descriptionKey: 'userSubscriptions.description'
+    }
+  },
+  {
+    path: '/purchase',
+    name: 'PurchaseSubscription',
+    component: () => import('@/views/user/PaymentView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Purchase Subscription',
+      titleKey: 'nav.buySubscription',
+      descriptionKey: 'purchase.description',
+      requiresPayment: true
+    }
+  },
+  {
+    path: '/payment',
+    redirect: to => ({ path: '/purchase', query: to.query, hash: to.hash })
+  },
+  {
+    path: '/orders',
+    name: 'OrderList',
+    component: () => import('@/views/user/UserOrdersView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'My Orders',
+      titleKey: 'nav.myOrders',
+      requiresPayment: true
+    }
+  },
+  {
+    path: '/payment/result',
+    name: 'PaymentResult',
+    component: () => import('@/views/user/PaymentResultView.vue'),
+    meta: {
+      requiresAuth: false,
+      requiresAdmin: false,
+      title: 'Payment Result',
+      titleKey: 'payment.result.success',
+      requiresPayment: false
+    }
+  },
+  {
+    path: '/payment/stripe',
+    name: 'StripePayment',
+    component: () => import('@/views/user/StripePaymentView.vue'),
+    meta: {
+      requiresAuth: false,
+      requiresAdmin: false,
+      title: 'Stripe Payment',
+      titleKey: 'payment.stripePay',
+      requiresPayment: false
+    }
+  },
+  {
+    path: '/payment/airwallex',
+    name: 'AirwallexPayment',
+    component: () => import('@/views/user/AirwallexPaymentView.vue'),
+    meta: {
+      requiresAuth: false,
+      requiresAdmin: false,
+      title: 'Airwallex Payment',
+      titleKey: 'payment.airwallexPay',
+      requiresPayment: false
+    }
+  },
+  {
+    path: '/payment/stripe-popup',
+    name: 'StripePopup',
+    component: () => import('@/views/user/StripePopupView.vue'),
+    meta: {
+      requiresAuth: false,
+      requiresAdmin: false,
+      title: 'Payment',
+      requiresPayment: false
+    }
+  },
+  {
+    path: '/custom/:id',
+    name: 'CustomPage',
+    component: () => import('@/views/user/CustomPageView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Custom Page',
+      titleKey: 'customPage.title',
+    }
+  },
+
+  // ==================== Admin Routes ====================
+  {
+    path: '/admin',
+    redirect: '/admin/dashboard'
+  },
+  {
+    path: '/admin/dashboard',
+    name: 'AdminDashboard',
+    component: () => import('@/views/admin/DashboardView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Admin Dashboard',
+      titleKey: 'admin.dashboard.title',
+      descriptionKey: 'admin.dashboard.description'
+    }
+  },
+  {
+    path: '/admin/ops',
+    name: 'AdminOps',
+    component: () => import('@/views/admin/ops/OpsDashboard.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Ops Monitoring',
+      titleKey: 'admin.ops.title',
+      descriptionKey: 'admin.ops.description'
+    }
+  },
+  {
+    path: '/admin/users',
+    name: 'AdminUsers',
+    component: () => import('@/views/admin/UsersView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'User Management',
+      titleKey: 'admin.users.title',
+      descriptionKey: 'admin.users.description'
+    }
+  },
+  {
+    path: '/admin/groups',
+    name: 'AdminGroups',
+    component: () => import('@/views/admin/GroupsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Group Management',
+      titleKey: 'admin.groups.title',
+      descriptionKey: 'admin.groups.description'
+    }
+  },
+  {
+    path: '/admin/pricing',
+    redirect: '/admin/pricing/models'
+  },
+  {
+    path: '/admin/pricing/models',
+    name: 'AdminPricingModels',
+    component: () => import('@/views/admin/pricing/ModelsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Models',
+      titleKey: 'admin.pricingConfig.models.title',
+      descriptionKey: 'admin.pricingConfig.models.description'
+    }
+  },
+  {
+    path: '/admin/pricing/matrix',
+    name: 'AdminPricingMatrix',
+    component: () => import('@/views/admin/pricing/MatrixView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Availability and pricing',
+      titleKey: 'admin.pricingConfig.matrix.title',
+      descriptionKey: 'admin.pricingConfig.matrix.description'
+    }
+  },
+  {
+    path: '/admin/channels',
+    redirect: '/admin/channels/pricing'
+  },
+  {
+    path: '/admin/channels/pricing',
+    name: 'AdminChannels',
+    component: () => import('@/views/admin/ChannelsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Channel Management',
+      titleKey: 'admin.channels.title',
+      descriptionKey: 'admin.channels.description'
+    }
+  },
+  {
+    path: '/admin/channels/monitor',
+    name: 'AdminChannelMonitor',
+    component: () => import('@/views/admin/ChannelMonitorView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Channel Monitor',
+      titleKey: 'admin.channelMonitor.title',
+      descriptionKey: 'admin.channelMonitor.description'
+    }
+  },
+  {
+    path: '/monitor',
+    name: 'ChannelStatus',
+    component: () => import('@/views/user/ChannelStatusView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Channel Status',
+      titleKey: 'nav.channelStatus'
+    }
+  },
+  {
+    path: '/admin/subscriptions',
+    name: 'AdminSubscriptions',
+    component: () => import('@/views/admin/SubscriptionsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Subscription Management',
+      titleKey: 'admin.subscriptions.title',
+      descriptionKey: 'admin.subscriptions.description'
+    }
+  },
+  {
+    path: '/admin/accounts',
+    name: 'AdminAccounts',
+    component: () => import('@/views/admin/AccountsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Account Management',
+      titleKey: 'admin.accounts.title',
+      descriptionKey: 'admin.accounts.description'
+    }
+  },
+  {
+    path: '/admin/announcements',
+    name: 'AdminAnnouncements',
+    component: () => import('@/views/admin/AnnouncementsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Announcements',
+      titleKey: 'admin.announcements.title',
+      descriptionKey: 'admin.announcements.description'
+    }
+  },
+  {
+    path: '/admin/proxies',
+    name: 'AdminProxies',
+    component: () => import('@/views/admin/ProxiesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Proxy Management',
+      titleKey: 'admin.proxies.title',
+      descriptionKey: 'admin.proxies.description'
+    }
+  },
+  {
+    path: '/admin/redeem',
+    name: 'AdminRedeem',
+    component: () => import('@/views/admin/RedeemView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Redeem Code Management',
+      titleKey: 'admin.redeem.title',
+      descriptionKey: 'admin.redeem.description'
+    }
+  },
+  {
+    path: '/admin/promo-codes',
+    name: 'AdminPromoCodes',
+    component: () => import('@/views/admin/PromoCodesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Promo Code Management',
+      titleKey: 'admin.promo.title',
+      descriptionKey: 'admin.promo.description'
+    }
+  },
+  {
+    path: '/admin/settings',
+    name: 'AdminSettings',
+    component: () => import('@/views/admin/SettingsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'System Settings',
+      titleKey: 'admin.settings.title',
+      descriptionKey: 'admin.settings.description'
+    }
+  },
+  {
+    path: '/admin/risk-control',
+    name: 'AdminRiskControl',
+    component: () => import('@/views/admin/RiskControlView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Risk Control',
+      titleKey: 'admin.riskControl.title',
+      descriptionKey: 'admin.riskControl.description',
+      requiresRiskControl: true
+    }
+  },
+  {
+    path: '/admin/prompt-audit',
+    name: 'AdminPromptAudit',
+    component: () => import('@/views/admin/promptAudit/AdminPromptAuditEventsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Prompt Audit',
+      titleKey: 'admin.promptAudit.title',
+      descriptionKey: 'admin.promptAudit.description'
+    }
+  },
+  {
+    path: '/admin/usage',
+    name: 'AdminUsage',
+    component: () => import('@/views/admin/UsageView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Usage Records',
+      titleKey: 'admin.usage.title',
+      descriptionKey: 'admin.usage.description'
+    }
+  },
+  {
+    path: '/admin/affiliates',
+    redirect: '/admin/points/config'
+  },
+  {
+    path: '/admin/affiliates/cashback',
+    redirect: '/admin/points/config'
+  },
+  {
+    path: '/admin/affiliates/invites',
+    name: 'AdminAffiliateInvites',
+    component: () => import('@/views/admin/affiliates/AdminAffiliateInvitesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Affiliate Invite Records',
+      titleKey: 'nav.affiliateInviteRecords',
+      descriptionKey: 'admin.affiliates.invitesDescription'
+    }
+  },
+  {
+    path: '/admin/affiliates/rebates',
+    redirect: '/admin/points/records'
+  },
+  {
+    path: '/admin/points',
+    redirect: '/admin/points/config'
+  },
+  {
+    path: '/admin/points/config',
+    redirect: { path: '/admin/settings', query: { tab: 'points' } }
+  },
+  {
+    path: '/admin/points/withdrawals',
+    name: 'AdminPointsWithdrawals',
+    component: () => import('@/views/admin/points/AdminPointsWithdrawalsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Withdrawal Review',
+      titleKey: 'nav.pointsWithdrawals'
+    }
+  },
+  {
+    path: '/admin/points/records',
+    name: 'AdminPointsRecords',
+    component: () => import('@/views/admin/points/AdminPointsRecordsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Points Records',
+      titleKey: 'nav.pointsRecords'
+    }
+  },
+
+
+  // ==================== Payment Admin Routes ====================
+  {
+    path: '/admin/orders/dashboard',
+    name: 'AdminPaymentDashboard',
+    component: () => import('@/views/admin/orders/AdminPaymentDashboardView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Payment Dashboard',
+      titleKey: 'nav.paymentDashboard',
+      requiresPayment: true
+    }
+  },
+  {
+    path: '/admin/orders/refunds',
+    name: 'AdminRefundOverview',
+    component: () => import('@/views/admin/orders/AdminOrdersView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Refund Overview',
+      titleKey: 'nav.refundOverview',
+      requiresPayment: true,
+      refundOverview: true
+    }
+  },
+  {
+    path: '/admin/orders',
+    name: 'AdminOrders',
+    component: () => import('@/views/admin/orders/AdminOrdersView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Order Management',
+      titleKey: 'nav.orderManagement',
+      requiresPayment: true
+    }
+  },
+  {
+    path: '/admin/orders/plans',
+    redirect: '/admin/orders'
+  },
+
+  // ==================== 404 Not Found ====================
+  {
+    path: '/:pathMatch(.*)*',
+    name: 'NotFound',
+    component: () => import('@/views/NotFoundView.vue'),
+    meta: {
+      title: '404 Not Found'
+    }
+  }
+]
+
+/**
+ * Create router instance
+ */
+const router = createRouter({
+  history: createWebHistory(import.meta.env.BASE_URL),
+  routes,
+  scrollBehavior(_to, _from, savedPosition) {
+    // Scroll to saved position when using browser back/forward
+    if (savedPosition) {
+      return savedPosition
+    }
+    // Scroll to top for new routes
+    return { top: 0 }
+  }
+})
+
+/**
+ * Navigation guard: Authentication check
+ */
+let authInitialized = false
+
+// 初始化导航加载状态和预加载
+const navigationLoading = useNavigationLoadingState()
+// 延迟初始化预加载，传入 router 实例
+let routePrefetch: ReturnType<typeof useRoutePrefetch> | null = null
+const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/key-usage', '/setup', '/payment/result', '/payment/airwallex', '/legal']
+const BACKEND_MODE_CALLBACK_PATHS = [
+  '/auth/callback',
+  '/auth/linuxdo/callback',
+  '/auth/dingtalk/callback',
+  '/auth/dingtalk/email-completion',
+  '/auth/oidc/callback',
+  '/auth/wechat/callback',
+  '/auth/wechat/payment/callback',
+]
+const BACKEND_MODE_PENDING_AUTH_PATHS = ['/register', '/email-verify']
+
+function isBackendModePublicRouteAllowed(path: string, hasPendingAuthSession: boolean): boolean {
+  if (BACKEND_MODE_ALLOWED_PATHS.some((allowedPath) => path === allowedPath || path.startsWith(allowedPath))) {
+    return true
+  }
+
+  if (BACKEND_MODE_CALLBACK_PATHS.some((callbackPath) => path === callbackPath)) {
+    return true
+  }
+
+  if (hasPendingAuthSession && BACKEND_MODE_PENDING_AUTH_PATHS.some((allowedPath) => path === allowedPath)) {
+    return true
+  }
+
+  return false
+}
+
+router.beforeEach(async (to, _from, next) => {
+  // 开始导航加载状态
+  navigationLoading.startNavigation()
+
+  const authStore = useAuthStore()
+
+  // Restore auth state from localStorage on first navigation (page refresh)
+  if (!authInitialized) {
+    authStore.checkAuth()
+    authInitialized = true
+  }
+
+  // Set page title
+  const appStore = useAppStore()
+  const adminSettingsStore = useAdminSettingsStore()
+  const customMenuItems = [
+    ...(appStore.cachedPublicSettings?.custom_menu_items ?? []),
+    ...(authStore.isAdmin ? adminSettingsStore.customMenuItems : []),
+  ]
+  document.title = resolveRouteDocumentTitle(to, appStore.siteName, customMenuItems)
+
+  // Check if route requires authentication
+  const requiresAuth = to.meta.requiresAuth !== false // Default to true
+  const requiresAdmin = to.meta.requiresAdmin === true
+  const protectedSessionVersion = getAdminComplianceSessionVersion()
+  const isCurrentProtectedSession = () =>
+    protectedSessionVersion === getAdminComplianceSessionVersion() &&
+    authStore.isAuthenticated &&
+    (!requiresAdmin || authStore.isAdmin)
+
+  if (to.path === '/setup') {
+    try {
+      const status = await getSetupStatus()
+      if (!status.needs_setup) {
+        next(resolveCompletedSetupRedirectPath(authStore.isAuthenticated, authStore.isAdmin))
+        return
+      }
+    } catch {
+      // If setup status cannot be determined, keep the setup page reachable.
+    }
+  }
+
+  // If route doesn't require auth, allow access
+  if (!requiresAuth) {
+    // If already authenticated and trying to access login/register, redirect to appropriate dashboard
+    if (authStore.isAuthenticated && (to.path === '/login' || to.path === '/register')) {
+      // In backend mode, non-admin users should NOT be redirected away from login
+      // (they are blocked from all protected routes, so redirecting would cause a loop)
+      if (appStore.backendModeEnabled && !authStore.isAdmin) {
+        next()
+        return
+      }
+      // 带着 redirect 来的（首页注册入口、守卫写入的原路径）直接去那里；
+      // 没带或不是站内路径，仍按角色回各自的首页。
+      // 后端模式下非管理员已在上面放行，不会走到这里，所以不会和"受保护页 -> /login"互相弹。
+      const redirect = to.query?.redirect
+      if (isSafeRedirectPath(redirect)) {
+        next(redirect)
+        return
+      }
+      // Admin users go to admin dashboard, regular users go to user dashboard
+      next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
+      return
+    }
+    // Backend mode: block public pages for unauthenticated users (except login, key-usage, setup)
+    if (appStore.backendModeEnabled && !authStore.isAuthenticated) {
+      const isAllowed = isBackendModePublicRouteAllowed(to.path, authStore.hasPendingAuthSession)
+      if (!isAllowed) {
+        next('/login')
+        return
+      }
+    }
+    next()
+    return
+  }
+
+  // Route requires authentication
+  if (!authStore.isAuthenticated) {
+    // Not authenticated, redirect to login
+    next({
+      path: '/login',
+      query: { redirect: to.fullPath } // Save intended destination
+    })
+    return
+  }
+
+  // Check admin requirement
+  if (requiresAdmin && !authStore.isAdmin) {
+    // User is authenticated but not admin, redirect to user dashboard
+    next('/dashboard')
+    return
+  }
+
+  if (requiresAdmin && authStore.isAdmin) {
+    const adminComplianceStore = useAdminComplianceStore()
+    if (!adminComplianceStore.initialized) {
+      try {
+        await adminComplianceStore.fetchStatus()
+      } catch (error) {
+        const err = error as { status?: number; code?: string; metadata?: Record<string, string> }
+        if (
+          err.status === 423 &&
+          err.code === 'ADMIN_COMPLIANCE_ACK_REQUIRED' &&
+          isCurrentProtectedSession()
+        ) {
+          adminComplianceStore.requireAcknowledgement(err.metadata)
+        }
+      }
+      if (!isCurrentProtectedSession()) {
+        next(false)
+        return
+      }
+    }
+  }
+
+  // Initial navigation can run before App.vue loads public settings.
+  if ((to.meta.requiresPayment || to.meta.requiresRiskControl) && !appStore.publicSettingsLoaded) {
+    try {
+      await appStore.fetchPublicSettings()
+    } catch (error) {
+      console.warn('Failed to load public settings in route guard', error)
+    }
+    if (!isCurrentProtectedSession()) {
+      next(false)
+      return
+    }
+  }
+
+  // A failed load is unknown state. Only a successfully loaded explicit false disables a route.
+  if (
+    to.meta.requiresPayment &&
+    appStore.publicSettingsLoaded &&
+    appStore.cachedPublicSettings?.payment_enabled === false
+  ) {
+    next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
+    return
+  }
+
+  if (
+    to.meta.requiresRiskControl &&
+    appStore.publicSettingsLoaded &&
+    appStore.cachedPublicSettings?.risk_control_enabled === false
+  ) {
+    next(authStore.isAdmin ? '/admin/settings' : '/dashboard')
+    return
+  }
+
+  // 简易模式下限制访问某些页面
+  if (authStore.isSimpleMode) {
+    const restrictedPaths = [
+      '/admin/groups',
+      '/admin/subscriptions',
+      '/admin/redeem',
+      '/subscriptions',
+      '/redeem'
+    ]
+
+    if (restrictedPaths.some((path) => to.path.startsWith(path))) {
+      // 简易模式下访问受限页面,重定向到仪表板
+      next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
+      return
+    }
+  }
+
+  // Backend mode: admin gets full access, non-admin blocked
+  if (appStore.backendModeEnabled) {
+    if (authStore.isAuthenticated && authStore.isAdmin) {
+      next()
+      return
+    }
+    const isAllowed = isBackendModePublicRouteAllowed(to.path, authStore.hasPendingAuthSession)
+    if (!isAllowed) {
+      next('/login')
+      return
+    }
+  }
+
+  // All checks passed, allow navigation
+  next()
+})
+
+/**
+ * Navigation guard: End loading and trigger prefetch
+ */
+router.afterEach((to) => {
+  // 结束导航加载状态
+  navigationLoading.endNavigation()
+
+  // 懒初始化预加载（首次导航时创建，传入 router 实例）
+  if (!routePrefetch) {
+    routePrefetch = useRoutePrefetch(router)
+  }
+  // 触发路由预加载（在浏览器空闲时执行）
+  routePrefetch.triggerPrefetch(to)
+})
+
+/**
+ * Navigation guard: Error handling
+ * Handles dynamic import failures caused by deployment updates
+ */
+router.onError((error) => {
+  console.error('Router error:', error)
+
+  if (!recoverFromChunkLoadError(error)) {
+    console.error('Router error could not be recovered automatically.')
+  }
+})
+
+export default router

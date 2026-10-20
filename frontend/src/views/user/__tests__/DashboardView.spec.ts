@@ -1,0 +1,109 @@
+import { flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import DashboardView from '../DashboardView.vue'
+
+const mocks = vi.hoisted(() => ({
+  getDashboardStats: vi.fn(),
+  getDashboardTrend: vi.fn(),
+  getDashboardModels: vi.fn(),
+  getByDateRange: vi.fn(),
+  getMyPlatformQuotas: vi.fn(),
+  refreshUser: vi.fn(),
+  listKeys: vi.fn(),
+}))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({
+    user: { balance: 0 },
+    isSimpleMode: false,
+    refreshUser: mocks.refreshUser
+  })
+}))
+
+vi.mock('@/api/usage', () => ({
+  usageAPI: {
+    getDashboardStats: mocks.getDashboardStats,
+    getDashboardTrend: mocks.getDashboardTrend,
+    getDashboardModels: mocks.getDashboardModels,
+    getByDateRange: mocks.getByDateRange
+  }
+}))
+
+vi.mock('@/api/keys', () => ({
+  default: {
+    list: mocks.listKeys,
+  },
+}))
+
+vi.mock('@/stores/app', () => ({
+  useAppStore: () => ({
+    cachedPublicSettings: {
+      api_base_url: 'https://api.example.com',
+      payment_enabled: false,
+      custom_endpoints: [],
+      balance_low_notify_threshold: 0,
+    },
+    docUrl: '',
+  }),
+}))
+
+vi.mock('@/api/user', () => ({
+  getMyPlatformQuotas: mocks.getMyPlatformQuotas
+}))
+
+vi.mock('vue-i18n', async () => {
+  const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
+  return {
+    ...actual,
+    useI18n: () => ({ t: (key: string) => key })
+  }
+})
+
+describe('user DashboardView', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.getDashboardStats.mockResolvedValue({ total_api_keys: 1 })
+    mocks.getDashboardTrend.mockResolvedValue({ trend: [] })
+    mocks.getDashboardModels.mockResolvedValue({ models: [] })
+    mocks.getByDateRange.mockResolvedValue({ items: [] })
+    mocks.getMyPlatformQuotas.mockResolvedValue({ platform_quotas: [] })
+    mocks.refreshUser.mockResolvedValue(undefined)
+    mocks.listKeys.mockResolvedValue({ items: [] })
+  })
+
+  it('shows a persistent error and retries the primary statistics request', async () => {
+    mocks.getDashboardStats
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockResolvedValueOnce({ total_api_keys: 1 })
+    mocks.refreshUser.mockRejectedValueOnce(new Error('profile refresh failed'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const wrapper = mount(DashboardView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          LoadingSpinner: true,
+          UserDashboardStats: true,
+          UserDashboardCharts: true,
+          UserDashboardRecentUsage: true,
+          UserDashboardQuickActions: true,
+          UserDashboardNeedsAttention: true,
+          UserDashboardApiEntry: true,
+        }
+      }
+    })
+
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('dashboard.loadFailed')
+
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+
+    expect(mocks.getDashboardStats).toHaveBeenCalledTimes(2)
+    expect(mocks.refreshUser).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'UserDashboardStats' }).exists()).toBe(true)
+    expect(warn).toHaveBeenCalledWith('Failed to refresh user on dashboard load:', expect.any(Error))
+    warn.mockRestore()
+  })
+})

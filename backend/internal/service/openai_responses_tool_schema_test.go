@@ -1,0 +1,499 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
+)
+
+// upstream issue #5364 的最小复现体：Codex Desktop 内置 automation_update 带
+// parameters.type = null，upstream 回 400 invalid_function_parameters。
+func TestSanitizeOpenAIResponsesToolParameterTypes_TopLevelFunctionTool(t *testing.T) {
+	body := []byte(`{
+		"model": "gpt-5.6-sol",
+		"input": "Reply with OK.",
+		"stream": false,
+		"tools": [
+			{
+				"type": "function",
+				"name": "automation_update",
+				"description": "Update an automation.",
+				"parameters": {"type": null, "properties": {}}
+			}
+		]
+	}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "object", gjson.GetBytes(sanitized, "tools.0.parameters.type").String())
+	// 只改 type，工具其余定义原样保留。
+	require.Equal(t, "automation_update", gjson.GetBytes(sanitized, "tools.0.name").String())
+	require.Equal(t, "Update an automation.", gjson.GetBytes(sanitized, "tools.0.description").String())
+	require.True(t, gjson.GetBytes(sanitized, "tools.0.parameters.properties").IsObject())
+	// 请求体其余字段不受影响。
+	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(sanitized, "model").String())
+	require.Equal(t, "Reply with OK.", gjson.GetBytes(sanitized, "input").String())
+}
+
+// 合法 Schema 必须原样返回：changed=false 且字节不变，避免无谓重写打散
+// prompt cache 前缀。
+func TestSanitizeOpenAIResponsesToolParameterTypes_ValidSchemaUntouched(t *testing.T) {
+	body := []byte(`{"tools":[{"type":"function","name":"ok","parameters":{"type":"object","properties":{}}}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(body), string(sanitized))
+}
+
+// 缺失 type 的 Schema 本身合法（等价于不约束），不得补写——补写会收窄客户端语义。
+func TestSanitizeOpenAIResponsesToolParameterTypes_MissingTypeNotInvented(t *testing.T) {
+	body := []byte(`{"tools":[{"type":"function","name":"ok","parameters":{"properties":{}}}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.False(t, gjson.GetBytes(sanitized, "tools.0.parameters.type").Exists())
+}
+
+// 多轮历史：工具定义沉进 input 后，upstream 报错路径形如
+// input[N].tools[i].tools[j].parameters，两层都要修。
+func TestSanitizeOpenAIResponsesToolParameterTypes_NestedHistoryTools(t *testing.T) {
+	body := []byte(`{
+		"input": [
+			{"type": "message", "role": "user", "content": "hi"},
+			{
+				"type": "additional_tools",
+				"role": "developer",
+				"tools": [
+					{
+						"type": "namespace",
+						"name": "codex_app",
+						"tools": [
+							{"type": "function", "name": "noop", "parameters": {"type": "object"}},
+							{"type": "function", "name": "automation_update", "parameters": {"type": null}}
+						]
+					},
+					{"type": "function", "name": "outer", "parameters": {"type": null}}
+				]
+			}
+		]
+	}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "object", gjson.GetBytes(sanitized, "input.1.tools.0.tools.1.parameters.type").String())
+	require.Equal(t, "object", gjson.GetBytes(sanitized, "input.1.tools.1.parameters.type").String())
+	// 原本合法的兄弟条目保持不变。
+	require.Equal(t, "object", gjson.GetBytes(sanitized, "input.1.tools.0.tools.0.parameters.type").String())
+	require.Equal(t, "hi", gjson.GetBytes(sanitized, "input.0.content").String())
+}
+
+// ChatCompletions 形态的工具（{type:"function", function:{...}}）同样可能出现在
+// Responses 请求里，见 normalizeCodexTools。
+func TestSanitizeOpenAIResponsesToolParameterTypes_ChatCompletionsShape(t *testing.T) {
+	body := []byte(`{"tools":[{"type":"function","function":{"name":"legacy","parameters":{"type":null}}}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "object", gjson.GetBytes(sanitized, "tools.0.function.parameters.type").String())
+	require.Equal(t, "legacy", gjson.GetBytes(sanitized, "tools.0.function.name").String())
+}
+
+// 索引映射：只有坏条目被改，前后兄弟条目按原下标保持不变。
+func TestSanitizeOpenAIResponsesToolParameterTypes_OnlyOffendingIndexRewritten(t *testing.T) {
+	body := []byte(`{"tools":[
+		{"type":"function","name":"a","parameters":{"type":"object"}},
+		{"type":"function","name":"b","parameters":{"type":null}},
+		{"type":"function","name":"c","parameters":{"type":"object"}}
+	]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "a", gjson.GetBytes(sanitized, "tools.0.name").String())
+	require.Equal(t, "b", gjson.GetBytes(sanitized, "tools.1.name").String())
+	require.Equal(t, "c", gjson.GetBytes(sanitized, "tools.2.name").String())
+	require.Equal(t, "object", gjson.GetBytes(sanitized, "tools.1.parameters.type").String())
+	require.Equal(t, 3, int(gjson.GetBytes(sanitized, "tools.#").Int()))
+}
+
+// 畸形/非常规形态不得 panic，且一律按不变处理。
+func TestSanitizeOpenAIResponsesToolParameterTypes_MalformedShapesAreNoOps(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"empty_body", ``},
+		{"no_tools", `{"model":"gpt-5.6-sol","input":"hi"}`},
+		{"tools_null", `{"tools":null}`},
+		{"tools_object", `{"tools":{"type":"function"}}`},
+		{"tool_is_string", `{"tools":["freeform"]}`},
+		{"parameters_is_string", `{"tools":[{"type":"function","parameters":"nope"}]}`},
+		{"parameters_null", `{"tools":[{"type":"function","parameters":null}]}`},
+		{"input_string", `{"input":"hi","tools":[]}`},
+		{"input_item_not_object", `{"input":["hi"]}`},
+		{"type_already_array", `{"tools":[{"type":"function","parameters":{"type":["object","null"]}}]}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes([]byte(tc.body))
+			require.NoError(t, err)
+			require.False(t, changed)
+			require.Equal(t, tc.body, string(sanitized))
+		})
+	}
+}
+
+// 递归深度守卫：超深嵌套只做截断，不递归到栈溢出，也不报错。
+func TestSanitizeOpenAIResponsesToolParameterTypes_DepthGuard(t *testing.T) {
+	tool := map[string]any{"type": "function", "name": "deep", "parameters": map[string]any{"type": nil}}
+	for i := 0; i < 12; i++ {
+		tool = map[string]any{"type": "namespace", "tools": []any{tool}}
+	}
+	body, err := json.Marshal(map[string]any{"tools": []any{tool}})
+	require.NoError(t, err)
+
+	require.NotPanics(t, func() {
+		_, _, sanitizeErr := sanitizeOpenAIResponsesToolParameterTypes(body)
+		require.NoError(t, sanitizeErr)
+	})
+}
+
+// 输出必须是合法 JSON，且除目标字段外与输入等价。
+func TestSanitizeOpenAIResponsesToolParameterTypes_OutputStaysValidJSON(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","tool_choice":"none","store":false,"tools":[{"type":"function","name":"automation_update","parameters":{"type":null,"properties":{}}}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(sanitized, &decoded))
+	require.Equal(t, "gpt-5.5", decoded["model"])
+	require.Equal(t, "none", decoded["tool_choice"])
+	require.Equal(t, false, decoded["store"])
+}
+
+// 输入 body 是调用方持有的缓冲区（Forward 里同一份 body 后续还要派生
+// reqModel/imageIntent 等判断），净化必须返回新切片，绝不能就地改写。
+func TestSanitizeOpenAIResponsesToolParameterTypes_DoesNotMutateInputBody(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.6-sol","tools":[{"type":"function","name":"a","parameters":{"type":null}}]}`)
+	original := append([]byte(nil), body...)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, string(original), string(body), "调用方的 body 不得被就地改写")
+	require.NotEqual(t, string(original), string(sanitized))
+}
+
+func buildToolSchemaNullTypeBody(t *testing.T, hits int) []byte {
+	t.Helper()
+	tools := make([]any, 0, hits)
+	for i := 0; i < hits; i++ {
+		tools = append(tools, map[string]any{
+			"type":       "function",
+			"name":       "automation_update",
+			"parameters": map[string]any{"type": nil, "properties": map[string]any{}},
+		})
+	}
+	body, err := json.Marshal(map[string]any{"model": "gpt-5.6-sol", "tools": tools})
+	require.NoError(t, err)
+	return body
+}
+
+// 复杂度守卫：重写次数必须与命中数无关。
+//
+// 逐个 sjson.SetBytes 的写法每命中一处就重扫并全量拷贝一次文档，命中 N 处即 N 次
+// 全量拷贝；/v1/responses 的 body 上限是 gateway.max_body_size（默认 256MB），
+// 构造请求可以塞进百万级命中，会被放大成 TB 级 memcpy。这里用分配次数锁死该行为：
+// 命中数放大 500 倍，分配次数不得随之增长。
+func TestSanitizeOpenAIResponsesToolParameterTypes_RewriteCountIndependentOfHits(t *testing.T) {
+	small := buildToolSchemaNullTypeBody(t, 4)
+	large := buildToolSchemaNullTypeBody(t, 2000)
+
+	smallAllocs := testing.AllocsPerRun(2, func() {
+		_, _, _ = sanitizeOpenAIResponsesToolParameterTypes(small)
+	})
+	largeAllocs := testing.AllocsPerRun(2, func() {
+		_, _, _ = sanitizeOpenAIResponsesToolParameterTypes(large)
+	})
+
+	// 干净环境实测 large 约 17 allocs，200 是 10 倍余量，同时容忍 CI 慢 pod 上
+	// 包内后台 goroutine（日志/ticker）对进程级 Mallocs 的噪声污染。
+	require.Less(t, largeAllocs, 200.0,
+		"分配次数随命中数线性增长，说明退回了逐路径全量重写 (small=%v large=%v)", smallAllocs, largeAllocs)
+
+	// 同时确认大 body 的结果确实全部修好了。
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(large)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, 2000, int(gjson.GetBytes(sanitized, "tools.#").Int()))
+	gjson.GetBytes(sanitized, "tools").ForEach(func(_, tool gjson.Result) bool {
+		require.Equal(t, "object", tool.Get("parameters.type").String())
+		return true
+	})
+}
+
+// 集成测试：Forward 必须在分流之前就把显式 null 的 parameters.type 修好，
+// 使得实际发给上游的请求体里已经不再含有非法的 null，覆盖
+// OpenAIGatewayService.Forward 里新增的净化分支。
+func TestOpenAIGatewayServiceForward_SanitizesResponsesToolParameterNullType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{
+		"model":"gpt-5.6-sol","stream":false,"input":"hi",
+		"tools":[{"type":"function","name":"automation_update","parameters":{"type":null,"properties":{}}}]
+	}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"resp_null_type","status":"completed","model":"gpt-5.6-sol","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`,
+		)),
+	}}
+	svc := &OpenAIGatewayService{httpUpstream: upstream}
+	account := &Account{
+		ID: 601, Name: "openai-oauth-null-type", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Concurrency: 1, Status: StatusActive, Schedulable: true,
+		Credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-account"},
+	}
+
+	result, err := svc.Forward(context.Background(), c, account, body)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "object", gjson.GetBytes(upstream.lastBody, "tools.0.parameters.type").String())
+	require.Equal(t, "automation_update", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
+}
+
+// 回归锁：客户端把 "required" 发成 null 时，xAI 返回
+// `/required: null is not of type "array"`，Moonshot 返回
+// `parameters is not a valid moonshot flavored json schema`，均为 400。
+func TestSanitizeOpenAIResponsesToolParameterTypes_DropsNullRequired(t *testing.T) {
+	body := []byte(`{
+		"model": "grok-4.7",
+		"tools": [
+			{
+				"type": "function",
+				"name": "read_file",
+				"parameters": {
+					"type": "object",
+					"properties": {"path": {"type": "string"}},
+					"required": null
+				}
+			}
+		]
+	}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.True(t, json.Valid(sanitized), string(sanitized))
+	// null 的 required 被整键删除：JSON Schema 里缺省 required 等价于无必填项。
+	require.False(t, gjson.GetBytes(sanitized, "tools.0.parameters.required").Exists())
+	// 其余定义原样保留。
+	require.Equal(t, "object", gjson.GetBytes(sanitized, "tools.0.parameters.type").String())
+	require.Equal(t, "string", gjson.GetBytes(sanitized, "tools.0.parameters.properties.path.type").String())
+	require.Equal(t, "read_file", gjson.GetBytes(sanitized, "tools.0.name").String())
+	require.Equal(t, "grok-4.7", gjson.GetBytes(sanitized, "model").String())
+}
+
+func TestSanitizeOpenAIResponsesToolParameterTypes_KeepsValidRequired(t *testing.T) {
+	body := []byte(`{
+		"tools": [
+			{
+				"type": "function",
+				"name": "read_file",
+				"parameters": {
+					"type": "object",
+					"properties": {"path": {"type": "string"}},
+					"required": ["path"]
+				}
+			}
+		]
+	}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(body), string(sanitized))
+}
+
+// 删除成员时要连带处理逗号：required 可能位于对象开头、中间、末尾，或是唯一成员，
+// 甚至以重复键出现；无论哪种位置，输出都必须仍是合法 JSON 且只少了 required。
+func TestSanitizeOpenAIResponsesToolParameterTypes_NullRequiredMemberPositions(t *testing.T) {
+	cases := []struct {
+		name   string
+		schema string
+		want   string
+	}{
+		{"only", `{"required":null}`, `{}`},
+		{"only_spaced", `{ "required" : null }`, `{}`},
+		{"first", `{"required":null,"type":"object"}`, `{"type":"object"}`},
+		{"middle", `{"type":"object", "required" : null ,"properties":{}}`, `{"type":"object","properties":{}}`},
+		{"last", `{"type":"object","properties":{},"required":null}`, `{"type":"object","properties":{}}`},
+		{"duplicate_leading", `{"required":null,"required":null,"type":"object"}`, `{"type":"object"}`},
+		{"duplicate_trailing", `{"type":"object","required":null,"required":null}`, `{"type":"object"}`},
+		{"all_duplicates", `{"required":null,"required":null}`, `{}`},
+		{"split", `{"required":null,"type":"object","required":null,"properties":{}}`, `{"type":"object","properties":{}}`},
+		{"with_null_type", `{"type":null,"required":null}`, `{"type":"object"}`},
+		{"multiline", "{\n  \"type\": \"object\",\n  \"required\": null\n}", `{"type":"object"}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"tools":[{"type":"function","name":"f","parameters":` + tc.schema + `}]}`)
+
+			sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+			require.NoError(t, err)
+			require.True(t, changed)
+			require.True(t, json.Valid(sanitized), string(sanitized))
+			require.JSONEq(t, tc.want, gjson.GetBytes(sanitized, "tools.0.parameters").Raw)
+		})
+	}
+}
+
+// required:null 可能出现在任意层级的子 schema 里，也可能出现在历史 input 的
+// 工具定义与 ChatCompletions 形态的 function.parameters 里。
+func TestSanitizeOpenAIResponsesToolParameterTypes_DropsNestedNullRequired(t *testing.T) {
+	body := []byte(`{
+		"tools":[{"type":"function","function":{"name":"chat","parameters":{"type":"object","required":null}}},
+			{"type":"function","name":"nested","parameters":{
+				"type":"object",
+				"properties":{"cfg":{"type":"object","required":null,"properties":{"inner":{"type":"object","required":null}}}},
+				"items":[{"required":null}],
+				"anyOf":[{"required":null},{"required":["a"]}],
+				"$defs":{"d":{"required":null}},
+				"additionalProperties":{"required":null},
+				"dependencies":{"a":["b"]},
+				"required":["cfg"]
+			}}],
+		"input":[{"type":"additional_tools","tools":[{"type":"function","name":"hist","parameters":{"type":"object","properties":{"x":{"items":{"required":null}}}}}]}]
+	}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.True(t, json.Valid(sanitized), string(sanitized))
+	for _, path := range []string{
+		"tools.0.function.parameters.required",
+		"tools.1.parameters.properties.cfg.required",
+		"tools.1.parameters.properties.cfg.properties.inner.required",
+		"tools.1.parameters.items.0.required",
+		"tools.1.parameters.anyOf.0.required",
+		"tools.1.parameters.$defs.d.required",
+		"tools.1.parameters.additionalProperties.required",
+		"input.0.tools.0.parameters.properties.x.items.required",
+	} {
+		require.False(t, gjson.GetBytes(sanitized, path).Exists(), path)
+	}
+	require.Equal(t, `["a"]`, gjson.GetBytes(sanitized, "tools.1.parameters.anyOf.1.required").Raw)
+	require.Equal(t, `["cfg"]`, gjson.GetBytes(sanitized, "tools.1.parameters.required").Raw)
+	require.Equal(t, `["b"]`, gjson.GetBytes(sanitized, "tools.1.parameters.dependencies.a").Raw)
+}
+
+// 回归锁：/v1/messages 的工具 schema 在 input_schema 下，早前只认 parameters，
+// 导致 Anthropic 协议的工具请求绕过清理，裸 null 直达上游触发 400。
+func TestSanitizeOpenAIResponsesToolParameterTypes_AnthropicInputSchema(t *testing.T) {
+	body := []byte(`{
+		"model": "grok-4.7",
+		"tools": [
+			{
+				"name": "read_file",
+				"description": "read",
+				"input_schema": {
+					"type": "object",
+					"properties": {"path": {"type": "string"}},
+					"required": null
+				}
+			}
+		]
+	}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(sanitized, "tools.0.input_schema.required").Exists())
+	require.Equal(t, "object", gjson.GetBytes(sanitized, "tools.0.input_schema.type").String())
+	require.Equal(t, "string", gjson.GetBytes(sanitized, "tools.0.input_schema.properties.path.type").String())
+	require.Equal(t, "read_file", gjson.GetBytes(sanitized, "tools.0.name").String())
+}
+
+func TestSanitizeOpenAIResponsesToolParameterTypes_AnthropicInputSchemaNullType(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"f","input_schema":{"type":null,"properties":{}}}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "object", gjson.GetBytes(sanitized, "tools.0.input_schema.type").String())
+}
+
+// contentSchema 同样承载子 schema，其中的 null required 必须一并修掉。
+func TestSanitizeOpenAIResponsesToolParameterTypes_ContentSchema(t *testing.T) {
+	body := []byte(`{"tools":[{"name":"f","input_schema":{"type":"object","contentSchema":{"required":null}}}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(sanitized, "tools.0.input_schema.contentSchema.required").Exists())
+}
+
+// default / examples / const / enum 里装的是实例数据，其中字面量 {"required": null}
+// 是客户端 payload，不能当成 schema 修改；tools 之外的 required:null 同理。
+func TestSanitizeOpenAIResponsesToolParameterTypes_PreservesInstanceData(t *testing.T) {
+	body := []byte(`{"metadata":{"required":null},"tools":[{"name":"f","input_schema":{"type":"object","properties":{"cfg":{"type":"object","default":{"required":null},"examples":[{"required":null}],"const":{"required":null},"enum":[{"required":null}]}}}}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(body), string(sanitized))
+}
+
+// Schema 嵌套深度守卫：超深 properties 链只截断，不递归到栈溢出。
+func TestSanitizeOpenAIResponsesToolParameterTypes_SchemaDepthGuard(t *testing.T) {
+	schema := `{"required":null}`
+	for i := 0; i < openAIResponsesToolSchemaMaxSchemaDepth+10; i++ {
+		schema = `{"type":"object","properties":{"p":` + schema + `}}`
+	}
+	body := []byte(`{"tools":[{"type":"function","name":"deep","parameters":` + schema + `}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+
+	require.NoError(t, err)
+	require.False(t, changed, "超出深度上限的 required:null 保持原样")
+	require.Equal(t, string(body), string(sanitized))
+}

@@ -1,0 +1,653 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestApplyErrorPassthroughRule_NoBoundService(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	status, errType, errMsg, matched := applyErrorPassthroughRule(
+		c,
+		PlatformAnthropic,
+		http.StatusUnprocessableEntity,
+		[]byte(`{"error":{"message":"invalid schema"}}`),
+		http.StatusBadGateway,
+		"upstream_error",
+		"Upstream request failed",
+	)
+
+	assert.False(t, matched)
+	assert.Equal(t, http.StatusBadGateway, status)
+	assert.Equal(t, "upstream_error", errType)
+	assert.Equal(t, "Upstream request failed", errMsg)
+}
+
+// 无规则时,上游请求形 4xx(422)保留真实状态码,但默认返回安全文案,
+// 原始上游 message 只保留在 ops 上下文/日志。
+func TestGatewayHandleErrorResponse_NoRuleKeeps4xxStatusWithSafeMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	svc := &GatewayService{}
+	respBody := []byte(`{"error":{"message":"Invalid type for 'input[84].arguments': expected an object, but got a string instead."}}`)
+	resp := &http.Response{
+		StatusCode: http.StatusUnprocessableEntity,
+		Body:       io.NopCloser(bytes.NewReader(respBody)),
+		Header:     http.Header{},
+	}
+	account := &Account{ID: 11, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}
+
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, account)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	errField, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "invalid_request_error", errField["type"])
+	assert.Equal(t, "Invalid request parameters, please check the request body and try again", errField["message"])
+	assert.NotContains(t, errField["message"], "input[84]")
+
+	v, ok := c.Get(OpsUpstreamErrorMessageKey)
+	require.True(t, ok)
+	assert.Contains(t, v, "input[84].arguments")
+}
+
+// OpenAI 非-failover 与 Anthropic 侧对齐:保留 422 状态码,但不默认暴露上游原文。
+func TestOpenAIHandleErrorResponse_NoRuleKeeps4xxStatusWithSafeMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	svc := &OpenAIGatewayService{}
+	respBody := []byte(`{"error":{"message":"Item with id 'rs_06ed1b22116e15af016a462c93ae6c819b8b311771dd12ae2d' not found."}}`)
+	resp := &http.Response{
+		StatusCode: http.StatusNotFound,
+		Body:       io.NopCloser(bytes.NewReader(respBody)),
+		Header:     http.Header{},
+	}
+	account := &Account{ID: 12, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, account, nil)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	errField, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "not_found_error", errField["type"])
+	assert.Equal(t, "Requested upstream resource was not found", errField["message"])
+	assert.NotContains(t, errField["message"], "rs_")
+}
+
+func TestGeminiWriteGeminiMappedError_NoRuleKeepsDefault(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	svc := &GeminiMessagesCompatService{}
+	respBody := []byte(`{"error":{"code":422,"message":"Invalid schema for field messages","status":"INVALID_ARGUMENT"}}`)
+	account := &Account{ID: 13, Platform: PlatformGemini, Type: AccountTypeAPIKey}
+
+	err := svc.writeGeminiMappedError(c, account, http.StatusUnprocessableEntity, "req-2", respBody)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	errField, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "invalid_request_error", errField["type"])
+	assert.Equal(t, "Upstream request failed", errField["message"])
+}
+
+func TestGatewayHandleErrorResponse_AppliesRuleFor422(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	ruleSvc := &ErrorPassthroughService{}
+	ruleSvc.setLocalCache([]*model.ErrorPassthroughRule{newNonFailoverPassthroughRule(http.StatusUnprocessableEntity, "invalid schema", http.StatusTeapot, "上游请求失败")})
+	BindErrorPassthroughService(c, ruleSvc)
+
+	svc := &GatewayService{}
+	respBody := []byte(`{"error":{"message":"Invalid schema for field messages"}}`)
+	resp := &http.Response{
+		StatusCode: http.StatusUnprocessableEntity,
+		Body:       io.NopCloser(bytes.NewReader(respBody)),
+		Header:     http.Header{},
+	}
+	account := &Account{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}
+
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, account)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusTeapot, rec.Code)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	errField, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "upstream_error", errField["type"])
+	assert.Equal(t, "上游请求失败", errField["message"])
+}
+
+func TestOpenAIHandleErrorResponse_AppliesRuleFor422(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	ruleSvc := &ErrorPassthroughService{}
+	ruleSvc.setLocalCache([]*model.ErrorPassthroughRule{newNonFailoverPassthroughRule(http.StatusUnprocessableEntity, "invalid schema", http.StatusTeapot, "OpenAI上游失败")})
+	BindErrorPassthroughService(c, ruleSvc)
+
+	svc := &OpenAIGatewayService{}
+	respBody := []byte(`{"error":{"message":"Invalid schema for field messages"}}`)
+	resp := &http.Response{
+		StatusCode: http.StatusUnprocessableEntity,
+		Body:       io.NopCloser(bytes.NewReader(respBody)),
+		Header:     http.Header{},
+	}
+	account := &Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, account, nil)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusTeapot, rec.Code)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	errField, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "upstream_error", errField["type"])
+	assert.Equal(t, "OpenAI上游失败", errField["message"])
+}
+
+func TestGeminiWriteGeminiMappedError_AppliesRuleFor422(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	ruleSvc := &ErrorPassthroughService{}
+	ruleSvc.setLocalCache([]*model.ErrorPassthroughRule{newNonFailoverPassthroughRule(http.StatusUnprocessableEntity, "invalid schema", http.StatusTeapot, "Gemini上游失败")})
+	BindErrorPassthroughService(c, ruleSvc)
+
+	svc := &GeminiMessagesCompatService{}
+	respBody := []byte(`{"error":{"code":422,"message":"Invalid schema for field messages","status":"INVALID_ARGUMENT"}}`)
+	account := &Account{ID: 3, Platform: PlatformGemini, Type: AccountTypeAPIKey}
+
+	err := svc.writeGeminiMappedError(c, account, http.StatusUnprocessableEntity, "req-1", respBody)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusTeapot, rec.Code)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	errField, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "upstream_error", errField["type"])
+	assert.Equal(t, "Gemini上游失败", errField["message"])
+}
+
+func TestApplyErrorPassthroughRule_SkipMonitoringSetsContextKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	rule := newNonFailoverPassthroughRule(http.StatusBadRequest, "prompt is too long", http.StatusBadRequest, "上下文超限")
+	rule.SkipMonitoring = true
+
+	ruleSvc := &ErrorPassthroughService{}
+	ruleSvc.setLocalCache([]*model.ErrorPassthroughRule{rule})
+	BindErrorPassthroughService(c, ruleSvc)
+
+	_, _, _, matched := applyErrorPassthroughRule(
+		c,
+		PlatformAnthropic,
+		http.StatusBadRequest,
+		[]byte(`{"error":{"message":"prompt is too long"}}`),
+		http.StatusBadGateway,
+		"upstream_error",
+		"Upstream request failed",
+	)
+
+	assert.True(t, matched)
+	v, exists := c.Get(OpsSkipPassthroughKey)
+	assert.True(t, exists, "OpsSkipPassthroughKey should be set when skip_monitoring=true")
+	boolVal, ok := v.(bool)
+	assert.True(t, ok, "value should be bool")
+	assert.True(t, boolVal)
+}
+
+func TestApplyErrorPassthroughRule_NoSkipMonitoringDoesNotSetContextKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	rule := newNonFailoverPassthroughRule(http.StatusBadRequest, "prompt is too long", http.StatusBadRequest, "上下文超限")
+	rule.SkipMonitoring = false
+
+	ruleSvc := &ErrorPassthroughService{}
+	ruleSvc.setLocalCache([]*model.ErrorPassthroughRule{rule})
+	BindErrorPassthroughService(c, ruleSvc)
+
+	_, _, _, matched := applyErrorPassthroughRule(
+		c,
+		PlatformAnthropic,
+		http.StatusBadRequest,
+		[]byte(`{"error":{"message":"prompt is too long"}}`),
+		http.StatusBadGateway,
+		"upstream_error",
+		"Upstream request failed",
+	)
+
+	assert.True(t, matched)
+	_, exists := c.Get(OpsSkipPassthroughKey)
+	assert.False(t, exists, "OpsSkipPassthroughKey should NOT be set when skip_monitoring=false")
+}
+
+// ---- ResponseCommittedKey: service 层写完错误响应后标记，handler 层检查跳过兜底写入 ----
+
+func TestHandleErrorResponse_SetsResponseCommitted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	svc := &GatewayService{}
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Body:       io.NopCloser(bytes.NewReader([]byte(`{"error":{"message":"temperature: range: 0..1"}}`))),
+		Header:     http.Header{},
+	}
+	account := &Account{ID: 100, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}
+
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, account)
+	require.Error(t, err)
+	assert.True(t, IsResponseCommitted(c), "non-failover error path must mark response committed")
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+}
+
+func TestHandleErrorResponse_PassthroughRuleSetsCommitted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	ruleSvc := &ErrorPassthroughService{}
+	ruleSvc.setLocalCache([]*model.ErrorPassthroughRule{
+		newNonFailoverPassthroughRule(http.StatusBadRequest, "temperature", http.StatusBadRequest, "参数错误"),
+	})
+	BindErrorPassthroughService(c, ruleSvc)
+
+	svc := &GatewayService{}
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Body:       io.NopCloser(bytes.NewReader([]byte(`{"error":{"message":"temperature: range: 0..1"}}`))),
+		Header:     http.Header{},
+	}
+	account := &Account{ID: 200, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}
+
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, account)
+	require.Error(t, err)
+	assert.True(t, IsResponseCommitted(c), "passthrough rule path must mark response committed")
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	errField, ok := payload["error"].(map[string]any)
+	require.True(t, ok, "payload[\"error\"] should be map[string]any")
+	assert.Equal(t, "参数错误", errField["message"])
+}
+
+func TestOpenAIHandleErrorResponse_SetsResponseCommitted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	svc := &OpenAIGatewayService{}
+	resp := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Body:       io.NopCloser(bytes.NewReader([]byte(`{"error":{"message":"rate limit exceeded"}}`))),
+		Header:     http.Header{},
+	}
+	account := &Account{ID: 101, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, account, nil)
+	require.Error(t, err)
+	assert.True(t, IsResponseCommitted(c), "OpenAI non-failover path must mark response committed")
+}
+
+func TestGeminiWriteGeminiMappedError_SetsResponseCommitted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	svc := &GeminiMessagesCompatService{}
+	body := []byte(`{"error":{"message":"invalid field"}}`)
+	account := &Account{ID: 102, Platform: PlatformGemini, Type: AccountTypeAPIKey}
+
+	err := svc.writeGeminiMappedError(c, account, http.StatusBadRequest, "req-99", body)
+	require.Error(t, err)
+	assert.True(t, IsResponseCommitted(c), "Gemini path must mark response committed")
+}
+
+func TestGeminiWriteGeminiMappedError_413KeepsStatusAndSafeMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "generic upstream error",
+			body: `{"error":{"code":413,"status":"UNKNOWN","message":"sensitive upstream token 123"}}`,
+		},
+		{
+			name: "body status contradicts HTTP 413",
+			body: `{"error":{"code":413,"status":"RESOURCE_EXHAUSTED","message":"sensitive upstream token 123"}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			svc := &GeminiMessagesCompatService{}
+			account := &Account{ID: 102, Platform: PlatformGemini, Type: AccountTypeAPIKey}
+
+			require.False(t, svc.shouldRetryGeminiUpstreamError(account, http.StatusRequestEntityTooLarge))
+			require.False(t, svc.shouldFailoverGeminiUpstreamError(account, http.StatusRequestEntityTooLarge))
+			err := svc.writeGeminiMappedError(c, account, http.StatusRequestEntityTooLarge, "req-413", []byte(tt.body))
+			require.Error(t, err)
+			require.True(t, IsResponseCommitted(c))
+			require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+			errField, ok := payload["error"].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, "invalid_request_error", errField["type"])
+			require.Equal(t, upstreamClientMessageForStatus(http.StatusRequestEntityTooLarge), errField["message"])
+			require.NotContains(t, rec.Body.String(), "sensitive upstream token")
+		})
+	}
+}
+
+func TestGeminiWriteGeminiMappedError_413HonorsExplicitPassthroughRule(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	ruleSvc := &ErrorPassthroughService{}
+	ruleSvc.setLocalCache([]*model.ErrorPassthroughRule{
+		newNonFailoverPassthroughRule(http.StatusRequestEntityTooLarge, "sensitive upstream token", http.StatusTeapot, "operator-configured response"),
+	})
+	BindErrorPassthroughService(c, ruleSvc)
+
+	svc := &GeminiMessagesCompatService{}
+	account := &Account{ID: 103, Platform: PlatformGemini, Type: AccountTypeAPIKey}
+	upstreamBody := []byte(`{"error":{"code":413,"message":"sensitive upstream token 123","status":"RESOURCE_EXHAUSTED"}}`)
+	err := svc.writeGeminiMappedError(c, account, http.StatusRequestEntityTooLarge, "req-413", upstreamBody)
+	require.Error(t, err)
+	require.Equal(t, http.StatusTeapot, rec.Code)
+	require.Contains(t, rec.Body.String(), "operator-configured response")
+	require.NotContains(t, rec.Body.String(), "sensitive upstream token")
+}
+
+// TestMapUpstreamErrorDefault 覆盖默认映射矩阵:请求形 4xx 保留状态码但不默认透传 body,其余保留 502/429/503。
+func TestMapUpstreamErrorDefault(t *testing.T) {
+	tests := []struct {
+		status      int
+		wantStatus  int
+		wantErrType string
+		wantPass    bool
+		wantMsg     string
+	}{
+		// 请求形 4xx(Q1 扩展集)→ 保留真实状态码,但默认安全文案
+		{400, 400, "invalid_request_error", false, "Invalid request parameters, please check the request body and try again"},
+		{404, 404, "not_found_error", false, "Requested upstream resource was not found"},
+		{408, 408, "invalid_request_error", false, "Upstream request timed out, please retry later"},
+		{409, 409, "invalid_request_error", false, "Request conflicts with upstream state, please retry or start a new request"},
+		{413, 413, "invalid_request_error", false, "Request body is too large, please reduce the input size and try again"},
+		{415, 415, "invalid_request_error", false, "Unsupported request content type"},
+		{416, 416, "invalid_request_error", false, "Requested range is not satisfiable"},
+		{422, 422, "invalid_request_error", false, "Invalid request parameters, please check the request body and try again"},
+		// 账号/鉴权/计费/限流/5xx/529 → 保留既有语义,不透传
+		{401, http.StatusBadGateway, "upstream_error", false, "Upstream authentication failed, please contact administrator"},
+		{402, http.StatusBadGateway, "upstream_error", false, "Upstream payment required: insufficient balance or billing issue"},
+		{403, http.StatusBadGateway, "upstream_error", false, "Upstream access forbidden, please contact administrator"},
+		{429, http.StatusTooManyRequests, "rate_limit_error", false, "Upstream rate limit exceeded, please retry later"},
+		{529, http.StatusServiceUnavailable, "overloaded_error", false, "Upstream service overloaded, please retry later"},
+		{500, http.StatusBadGateway, "upstream_error", false, "Upstream service temporarily unavailable"},
+		{502, http.StatusBadGateway, "upstream_error", false, "Upstream service temporarily unavailable"},
+		{503, http.StatusBadGateway, "upstream_error", false, "Upstream service temporarily unavailable"},
+		{504, http.StatusBadGateway, "upstream_error", false, "Upstream service temporarily unavailable"},
+		// 集合外的 4xx(405/406/414/451)与未知码 → 不透传,保留 502
+		{405, http.StatusBadGateway, "upstream_error", false, "Upstream request failed"},
+		{406, http.StatusBadGateway, "upstream_error", false, "Upstream request failed"},
+		{414, http.StatusBadGateway, "upstream_error", false, "Upstream request failed"},
+		{451, http.StatusBadGateway, "upstream_error", false, "Upstream request failed"},
+		{418, http.StatusBadGateway, "upstream_error", false, "Upstream request failed"},
+	}
+	for _, tt := range tests {
+		gotStatus, gotErrType, gotMsg, gotPass := MapUpstreamErrorDefault(tt.status)
+		assert.Equal(t, tt.wantStatus, gotStatus, "status %d -> code", tt.status)
+		assert.Equal(t, tt.wantErrType, gotErrType, "status %d -> errType", tt.status)
+		assert.Equal(t, tt.wantMsg, gotMsg, "status %d -> msg", tt.status)
+		assert.Equal(t, tt.wantPass, gotPass, "status %d -> passthrough", tt.status)
+	}
+}
+
+// TestGatewayFailoverStatusPolicyGuardsRequestShaped4xx locks the issue #19
+// boundary: malformed-client upstream 4xx must not trigger account switching.
+// 429 is intentionally excluded from this status-only guard: #19 treats it as
+// a sliding-window threshold decision, not an unconditional per-response switch.
+func TestGatewayFailoverStatusPolicyGuardsRequestShaped4xx(t *testing.T) {
+	tests := []struct {
+		name string
+		got  func(int) bool
+	}{
+		{
+			name: "anthropic gateway",
+			got:  (&GatewayService{}).shouldFailoverUpstreamError,
+		},
+		{
+			name: "openai gateway",
+			got:  (&OpenAIGatewayService{}).shouldFailoverUpstreamError,
+		},
+		{
+			name: "gemini compat",
+			got: func(status int) bool {
+				return (&GeminiMessagesCompatService{}).shouldFailoverGeminiUpstreamError(&Account{ID: 9101}, status)
+			},
+		},
+		{
+			name: "antigravity gateway",
+			got: func(status int) bool {
+				return (&AntigravityGatewayService{}).shouldFailoverUpstreamError(&Account{ID: 9102}, status)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, status := range []int{400, 404, 408, 409, 413, 415, 416, 422} {
+				assert.False(t, tt.got(status), "request-shaped upstream %d must not fail over", status)
+			}
+			for _, status := range []int{401, 403, 500, 502, 503, 504, 529} {
+				assert.True(t, tt.got(status), "provider/account upstream %d should fail over", status)
+			}
+		})
+	}
+}
+
+// TestResolveUpstreamErrorResponse 覆盖共享策略的四段式:静默拒绝/透传规则/请求形 4xx 安全文案/默认保留。
+func TestResolveUpstreamErrorResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	newCtx := func() *gin.Context {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		return c
+	}
+
+	t.Run("静默拒绝 → 502 + 客户端文案", func(t *testing.T) {
+		c := newCtx()
+		body := []byte(`{"error":{"code":"openai_silent_refusal","message":"empty stream"}}`)
+		status, errType, msg := ResolveUpstreamErrorResponse(c, PlatformOpenAI, http.StatusOK, body)
+		assert.Equal(t, http.StatusBadGateway, status)
+		assert.Equal(t, "upstream_error", errType)
+		assert.Equal(t, OpenAISilentRefusalClientMessage(), msg)
+	})
+
+	t.Run("请求形 4xx 默认保留真实状态码 + 安全文案", func(t *testing.T) {
+		c := newCtx()
+		body := []byte(`{"error":{"message":"Invalid type for 'input[84].arguments': expected an object, but got a string instead."}}`)
+		status, errType, msg := ResolveUpstreamErrorResponse(c, PlatformAnthropic, http.StatusUnprocessableEntity, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, status)
+		assert.Equal(t, "invalid_request_error", errType)
+		assert.Equal(t, "Invalid request parameters, please check the request body and try again", msg)
+		// 真实上游状态码须记入 context(A2 归因依赖)。
+		v, ok := c.Get(OpsUpstreamStatusCodeKey)
+		require.True(t, ok)
+		assert.Equal(t, http.StatusUnprocessableEntity, v)
+		raw, ok := c.Get(OpsUpstreamErrorMessageKey)
+		require.True(t, ok)
+		assert.Contains(t, raw, "input[84].arguments")
+	})
+
+	t.Run("请求形 4xx 上游无 message → 安全文案", func(t *testing.T) {
+		c := newCtx()
+		status, _, msg := ResolveUpstreamErrorResponse(c, PlatformAnthropic, http.StatusBadRequest, nil)
+		assert.Equal(t, http.StatusBadRequest, status)
+		assert.Equal(t, "Invalid request parameters, please check the request body and try again", msg)
+	})
+
+	t.Run("5xx 保留 502 语义", func(t *testing.T) {
+		c := newCtx()
+		status, errType, msg := ResolveUpstreamErrorResponse(c, PlatformAnthropic, http.StatusServiceUnavailable, []byte(`{"error":{"message":"upstream down"}}`))
+		assert.Equal(t, http.StatusBadGateway, status)
+		assert.Equal(t, "upstream_error", errType)
+		assert.Equal(t, "Upstream service temporarily unavailable", msg)
+	})
+
+	t.Run("429 保留限流语义", func(t *testing.T) {
+		c := newCtx()
+		status, errType, _ := ResolveUpstreamErrorResponse(c, PlatformAnthropic, http.StatusTooManyRequests, []byte(`{"error":{"message":"slow down"}}`))
+		assert.Equal(t, http.StatusTooManyRequests, status)
+		assert.Equal(t, "rate_limit_error", errType)
+	})
+
+	t.Run("透传规则命中覆盖默认", func(t *testing.T) {
+		c := newCtx()
+		ruleSvc := &ErrorPassthroughService{}
+		ruleSvc.setLocalCache([]*model.ErrorPassthroughRule{
+			newNonFailoverPassthroughRule(http.StatusUnprocessableEntity, "invalid", http.StatusTeapot, "自定义文案"),
+		})
+		BindErrorPassthroughService(c, ruleSvc)
+		status, errType, msg := ResolveUpstreamErrorResponse(c, PlatformAnthropic, http.StatusUnprocessableEntity, []byte(`{"error":{"message":"invalid schema"}}`))
+		assert.Equal(t, http.StatusTeapot, status)
+		assert.Equal(t, "upstream_error", errType)
+		assert.Equal(t, "自定义文案", msg)
+	})
+
+	t.Run("透传规则 body 文案会脱敏内部标识", func(t *testing.T) {
+		c := newCtx()
+		ruleSvc := &ErrorPassthroughService{}
+		respCode := http.StatusBadRequest
+		ruleSvc.setLocalCache([]*model.ErrorPassthroughRule{
+			{
+				ID:              2,
+				Name:            "body-passthrough-rule",
+				Enabled:         true,
+				Priority:        1,
+				ErrorCodes:      []int{http.StatusBadRequest},
+				Keywords:        []string{"input"},
+				MatchMode:       model.MatchModeAll,
+				PassthroughCode: false,
+				ResponseCode:    &respCode,
+				PassthroughBody: true,
+			},
+		})
+		BindErrorPassthroughService(c, ruleSvc)
+		body := []byte(`{"error":{"message":"Invalid type for 'input[84].arguments' with call_id call_2 and item rs_06ed1b22116e15af016a462c93ae6c819b8b311771dd12ae2d request_id: 2026070311."}}`)
+		status, errType, msg := ResolveUpstreamErrorResponse(c, PlatformOpenAI, http.StatusBadRequest, body)
+		assert.Equal(t, http.StatusBadRequest, status)
+		assert.Equal(t, "upstream_error", errType)
+		assert.Contains(t, msg, "request input field")
+		assert.Contains(t, msg, "tool call id")
+		assert.Contains(t, msg, "response item id")
+		assert.Contains(t, msg, "request_id: ***")
+		assert.NotContains(t, msg, "input[84]")
+		assert.NotContains(t, msg, "call_2")
+		assert.NotContains(t, msg, "rs_")
+		assert.NotContains(t, msg, "2026070311")
+	})
+}
+
+// erroringReadCloser returns data once, then always fails with err — simulating
+// an upstream connection that drops mid-body (network reset, truncated read).
+type erroringReadCloser struct {
+	data []byte
+	sent bool
+	err  error
+}
+
+func (r *erroringReadCloser) Read(p []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		return copy(p, r.data), nil
+	}
+	return 0, r.err
+}
+
+func (r *erroringReadCloser) Close() error { return nil }
+
+// 上游错误体读取到一半就失败时(网络中断等)，handleErrorResponse 仍要用已读到的
+// 部分数据完成错误分类与响应写出，只是多记一条日志，不能因为 readErr 而整体失败。
+func TestGatewayHandleErrorResponse_ContinuesWhenBodyReadFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	svc := &GatewayService{}
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Body: &erroringReadCloser{
+			data: []byte(`{"error":{"message":"partial upstream body"}}`),
+			err:  io.ErrUnexpectedEOF,
+		},
+		Header: http.Header{},
+	}
+	account := &Account{ID: 12, Name: "acc-12", Platform: PlatformAnthropic, Type: AccountTypeAPIKey}
+
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, account)
+	require.Error(t, err)
+	assert.True(t, IsResponseCommitted(c), "read-failure path must still commit a response instead of hanging the request")
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+}
+
+func newNonFailoverPassthroughRule(statusCode int, keyword string, respCode int, customMessage string) *model.ErrorPassthroughRule {
+	return &model.ErrorPassthroughRule{
+		ID:              1,
+		Name:            "non-failover-rule",
+		Enabled:         true,
+		Priority:        1,
+		ErrorCodes:      []int{statusCode},
+		Keywords:        []string{keyword},
+		MatchMode:       model.MatchModeAll,
+		PassthroughCode: false,
+		ResponseCode:    &respCode,
+		PassthroughBody: false,
+		CustomMessage:   &customMessage,
+	}
+}

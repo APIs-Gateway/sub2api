@@ -1,0 +1,818 @@
+//go:build unit
+
+package service
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+)
+
+// ---------------------------------------------------------------------------
+// TestShouldFailoverGeminiUpstreamError — verifies the failover decision
+// for the ErrorPolicyNone path (original logic preserved).
+// ---------------------------------------------------------------------------
+
+func TestShouldFailoverGeminiUpstreamError(t *testing.T) {
+	svc := &GeminiMessagesCompatService{}
+
+	tests := []struct {
+		name       string
+		statusCode int
+		expected   bool
+	}{
+		{"401_failover", 401, true},
+		{"403_failover", 403, true},
+		{"429_below_threshold_no_failover", 429, false},
+		{"529_failover", 529, true},
+		{"500_failover", 500, true},
+		{"502_failover", 502, true},
+		{"503_failover", 503, true},
+		{"400_no_failover", 400, false},
+		{"404_no_failover", 404, false},
+		{"422_no_failover", 422, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetUpstream429TrackerForTest()
+			account := &Account{ID: 44, Platform: PlatformGemini}
+			got := svc.shouldFailoverGeminiUpstreamError(account, tt.statusCode)
+			require.Equal(t, tt.expected, got)
+		})
+	}
+
+	t.Run("429_threshold_reached_failover", func(t *testing.T) {
+		resetUpstream429TrackerForTest()
+		account := &Account{ID: 45, Platform: PlatformGemini}
+		recordUpstream429AndShouldSwitch(account.ID, true)
+		require.True(t, svc.shouldFailoverGeminiUpstreamError(account, http.StatusTooManyRequests))
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestCheckErrorPolicy_GeminiAccounts — verifies CheckErrorPolicy works
+// correctly for Gemini platform accounts (API Key type).
+// ---------------------------------------------------------------------------
+
+func TestCheckErrorPolicy_GeminiAccounts(t *testing.T) {
+	tests := []struct {
+		name       string
+		account    *Account
+		statusCode int
+		body       []byte
+		expected   ErrorPolicyResult
+	}{
+		{
+			name: "gemini_apikey_custom_codes_429_uses_threshold_policy",
+			account: &Account{
+				ID:       100,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformGemini,
+				Credentials: map[string]any{
+					"custom_error_codes_enabled": true,
+					"custom_error_codes":         []any{float64(429), float64(500)},
+				},
+			},
+			statusCode: 429,
+			body:       []byte(`{"error":"rate limited"}`),
+			expected:   ErrorPolicyNone,
+		},
+		{
+			name: "gemini_apikey_custom_codes_429_miss_uses_threshold_policy",
+			account: &Account{
+				ID:       106,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformGemini,
+				Credentials: map[string]any{
+					"custom_error_codes_enabled": true,
+					"custom_error_codes":         []any{float64(500)},
+				},
+			},
+			statusCode: 429,
+			body:       []byte(`{"error":"rate limited"}`),
+			expected:   ErrorPolicyNone,
+		},
+		{
+			name: "gemini_apikey_custom_codes_miss",
+			account: &Account{
+				ID:       101,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformGemini,
+				Credentials: map[string]any{
+					"custom_error_codes_enabled": true,
+					"custom_error_codes":         []any{float64(429)},
+				},
+			},
+			statusCode: 500,
+			body:       []byte(`{"error":"internal"}`),
+			expected:   ErrorPolicySkipped,
+		},
+		{
+			name: "gemini_apikey_no_custom_codes_returns_none",
+			account: &Account{
+				ID:       102,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformGemini,
+			},
+			statusCode: 500,
+			body:       []byte(`{"error":"internal"}`),
+			expected:   ErrorPolicyNone,
+		},
+		{
+			name: "gemini_apikey_temp_unschedulable_hit",
+			account: &Account{
+				ID:       103,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformGemini,
+				Credentials: map[string]any{
+					"temp_unschedulable_enabled": true,
+					"temp_unschedulable_rules": []any{
+						map[string]any{
+							"error_code":       float64(503),
+							"keywords":         []any{"overloaded"},
+							"duration_minutes": float64(10),
+						},
+					},
+				},
+			},
+			statusCode: 503,
+			body:       []byte(`overloaded service`),
+			expected:   ErrorPolicyTempUnscheduled,
+		},
+		{
+			name: "gemini_apikey_temp_unschedulable_401_second_hit_returns_none",
+			account: &Account{
+				ID:                      105,
+				Type:                    AccountTypeAPIKey,
+				Platform:                PlatformGemini,
+				TempUnschedulableReason: `{"status_code":401,"until_unix":1735689600}`,
+				Credentials: map[string]any{
+					"temp_unschedulable_enabled": true,
+					"temp_unschedulable_rules": []any{
+						map[string]any{
+							"error_code":       float64(401),
+							"keywords":         []any{"unauthorized"},
+							"duration_minutes": float64(10),
+						},
+					},
+				},
+			},
+			statusCode: 401,
+			body:       []byte(`unauthorized`),
+			expected:   ErrorPolicyNone,
+		},
+		{
+			name: "gemini_custom_codes_override_temp_unschedulable",
+			account: &Account{
+				ID:       104,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformGemini,
+				Credentials: map[string]any{
+					"custom_error_codes_enabled": true,
+					"custom_error_codes":         []any{float64(503)},
+					"temp_unschedulable_enabled": true,
+					"temp_unschedulable_rules": []any{
+						map[string]any{
+							"error_code":       float64(503),
+							"keywords":         []any{"overloaded"},
+							"duration_minutes": float64(10),
+						},
+					},
+				},
+			},
+			statusCode: 503,
+			body:       []byte(`overloaded`),
+			expected:   ErrorPolicyMatched, // custom codes take precedence
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &errorPolicyRepoStub{}
+			svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+
+			result := svc.CheckErrorPolicy(context.Background(), tt.account, tt.statusCode, tt.body)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestGeminiErrorPolicyIntegration — verifies the Gemini error handling
+// paths produce the correct behavior for each ErrorPolicyResult.
+//
+// These tests simulate the inline error policy switch in handleClaudeCompat
+// and forwardNativeGemini by calling the same methods in the same order.
+// ---------------------------------------------------------------------------
+
+func TestGeminiErrorPolicyIntegration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name                 string
+		account              *Account
+		statusCode           int
+		respBody             []byte
+		expectFailover       bool // expect UpstreamFailoverError
+		expectHandleError    bool // expect handleGeminiUpstreamError to be called
+		expectShouldFailover bool // for None path, whether shouldFailover triggers
+		expectModelScope     string
+	}{
+		{
+			name: "custom_codes_429_below_threshold_no_failover",
+			account: &Account{
+				ID:       200,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformGemini,
+				Credentials: map[string]any{
+					"custom_error_codes_enabled": true,
+					"custom_error_codes":         []any{float64(429)},
+				},
+			},
+			statusCode:        429,
+			respBody:          []byte(`{"error":"rate limited"}`),
+			expectFailover:    false,
+			expectHandleError: true,
+		},
+		{
+			name: "custom_codes_skipped_500_no_failover",
+			account: &Account{
+				ID:       201,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformGemini,
+				Credentials: map[string]any{
+					"custom_error_codes_enabled": true,
+					"custom_error_codes":         []any{float64(429)},
+				},
+			},
+			statusCode:        500,
+			respBody:          []byte(`{"error":"internal"}`),
+			expectFailover:    false,
+			expectHandleError: false,
+		},
+		{
+			name: "temp_unschedulable_matched_failover",
+			account: &Account{
+				ID:       202,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformGemini,
+				Credentials: map[string]any{
+					"temp_unschedulable_enabled": true,
+					"temp_unschedulable_rules": []any{
+						map[string]any{
+							"error_code":       float64(503),
+							"keywords":         []any{"overloaded"},
+							"duration_minutes": float64(10),
+						},
+					},
+				},
+			},
+			statusCode:        503,
+			respBody:          []byte(`overloaded`),
+			expectFailover:    true,
+			expectHandleError: false,
+			expectModelScope:  "gemini-2.5-pro",
+		},
+		{
+			name: "no_policy_429_below_threshold_no_failover",
+			account: &Account{
+				ID:       203,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformGemini,
+			},
+			statusCode:           429,
+			respBody:             []byte(`{"error":"rate limited"}`),
+			expectFailover:       false,
+			expectHandleError:    true,
+			expectShouldFailover: false,
+		},
+		{
+			name: "no_policy_400_no_failover",
+			account: &Account{
+				ID:       204,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformGemini,
+			},
+			statusCode:        400,
+			respBody:          []byte(`{"error":"bad request"}`),
+			expectFailover:    false,
+			expectHandleError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &geminiErrorPolicyRepo{}
+			rlSvc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+			svc := &GeminiMessagesCompatService{
+				accountRepo:      repo,
+				rateLimitService: rlSvc,
+			}
+
+			writer := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(writer)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+			// Simulate the Claude compat error handling path (same logic as native).
+			// This mirrors the inline switch in handleClaudeCompat.
+			var handleErrorCalled bool
+			var gotFailover bool
+
+			ctx := context.Background()
+			statusCode := tt.statusCode
+			respBody := tt.respBody
+			account := tt.account
+			headers := http.Header{}
+
+			if svc.rateLimitService != nil {
+				policy := svc.rateLimitService.CheckErrorPolicy(ctx, account, statusCode, respBody, "gemini-2.5-pro")
+				switch policy {
+				case ErrorPolicySkipped:
+					// Skipped → return error directly (no handleGeminiUpstreamError, no failover)
+					gotFailover = false
+					handleErrorCalled = false
+					goto verify
+				case ErrorPolicyMatched:
+					svc.handleGeminiUpstreamError(ctx, account, statusCode, headers, respBody)
+					handleErrorCalled = true
+					gotFailover = true
+					goto verify
+				case ErrorPolicyTempUnscheduled:
+					handleErrorCalled = false
+					gotFailover = true
+					goto verify
+				}
+			}
+
+			// ErrorPolicyNone → original logic
+			svc.handleGeminiUpstreamError(ctx, account, statusCode, headers, respBody)
+			handleErrorCalled = true
+			if svc.shouldFailoverGeminiUpstreamError(account, statusCode) {
+				gotFailover = true
+			}
+
+		verify:
+			require.Equal(t, tt.expectFailover, gotFailover, "failover mismatch")
+			require.Equal(t, tt.expectHandleError, handleErrorCalled, "handleGeminiUpstreamError call mismatch")
+			if tt.expectModelScope != "" {
+				require.Equal(t, 1, repo.setModelRateLimitedCalls)
+				require.Equal(t, tt.expectModelScope, repo.lastModelScope)
+				require.Zero(t, repo.setTempCalls)
+				require.Zero(t, repo.setRateLimitedCalls, "model temp rule must not be widened into an account rate limit")
+			}
+
+			if tt.expectShouldFailover {
+				require.True(t, svc.shouldFailoverGeminiUpstreamError(account, statusCode),
+					"shouldFailoverGeminiUpstreamError should return true for status %d", statusCode)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestGeminiErrorPolicy_NilRateLimitService — verifies nil safety
+// ---------------------------------------------------------------------------
+
+func TestGeminiErrorPolicy_NilRateLimitService(t *testing.T) {
+	svc := &GeminiMessagesCompatService{
+		rateLimitService: nil,
+	}
+
+	// When rateLimitService is nil, error policy is skipped → falls through to
+	// shouldFailoverGeminiUpstreamError (original logic).
+	// Verify this doesn't panic and follows expected behavior.
+
+	ctx := context.Background()
+	account := &Account{
+		ID:       300,
+		Type:     AccountTypeAPIKey,
+		Platform: PlatformGemini,
+		Credentials: map[string]any{
+			"custom_error_codes_enabled": true,
+			"custom_error_codes":         []any{float64(429)},
+		},
+	}
+
+	// The nil check should prevent CheckErrorPolicy from being called
+	if svc.rateLimitService != nil {
+		t.Fatal("rateLimitService should be nil for this test")
+	}
+
+	// shouldFailoverGeminiUpstreamError still works and gates 429 by the sliding-window decision.
+	resetUpstream429TrackerForTest()
+	require.False(t, svc.shouldFailoverGeminiUpstreamError(account, 429))
+	recordUpstream429AndShouldSwitch(account.ID, true)
+	require.True(t, svc.shouldFailoverGeminiUpstreamError(account, 429))
+	require.False(t, svc.shouldFailoverGeminiUpstreamError(account, 400))
+
+	// handleGeminiUpstreamError should not panic with nil rateLimitService
+	require.NotPanics(t, func() {
+		svc.handleGeminiUpstreamError(ctx, account, 500, http.Header{}, []byte(`error`))
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestHandleGeminiUpstreamError_PoolMode429 — 池模式 Gemini 账号收到 429 时
+// 不应写账号级限流（SetRateLimited）：账号留在池内，由 failover / 同号重试消化。
+//
+// 429 的标记点分散在重试循环内（每次 429 都会先于 CheckErrorPolicy 调用一次
+// handleGeminiUpstreamError）和循环外的兜底分支，池模式豁免必须落在
+// handleGeminiUpstreamError 自身才能统一生效，否则一次上游 429 就会把账号锁到
+// PST 午夜，即便同账号重试已经成功返回客户端。
+//
+// 豁免只跳过 SetRateLimited；recordUpstream429AndShouldSwitch 滑窗记录必须
+// 照常执行——那是 shouldFailoverGeminiUpstreamError 判断本次请求要不要切号的
+// 唯一信号源，跳过记录会让池模式账号 429 时既不锁账号也切不了号，请求直接把
+// 429 透传给客户端，比修复前更差。
+//
+// 自定义错误码优先级高于池模式：显式配置 429 命中时仍写账号级限流。
+// ---------------------------------------------------------------------------
+
+func TestHandleGeminiUpstreamError_PoolMode429(t *testing.T) {
+	// 带 Retry-After 头，确保第一次调用就走"解析到显式重置时间"分支，
+	// 不依赖滑窗阈值，测试结果确定性更强。
+	headers := http.Header{"Retry-After": []string{"8"}}
+	body := []byte(`{"error":{"code":429,"message":"quota exceeded","status":"RESOURCE_EXHAUSTED"}}`)
+
+	tests := []struct {
+		name              string
+		account           *Account
+		expectRateLimited bool
+	}{
+		{
+			name: "pool_mode_apikey_stays_in_pool",
+			account: &Account{
+				ID:          700,
+				Platform:    PlatformGemini,
+				Type:        AccountTypeAPIKey,
+				Credentials: map[string]any{"pool_mode": true},
+			},
+			expectRateLimited: false,
+		},
+		{
+			name: "custom_error_codes_hit_overrides_pool_mode",
+			account: &Account{
+				ID:       701,
+				Platform: PlatformGemini,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"pool_mode":                  true,
+					"custom_error_codes_enabled": true,
+					"custom_error_codes":         []any{float64(429)},
+				},
+			},
+			expectRateLimited: true,
+		},
+		{
+			name: "non_pool_apikey_still_rate_limited",
+			account: &Account{
+				ID:       702,
+				Platform: PlatformGemini,
+				Type:     AccountTypeAPIKey,
+			},
+			expectRateLimited: true,
+		},
+		{
+			name: "oauth_account_ignores_pool_mode_flag",
+			account: &Account{
+				ID:          703,
+				Platform:    PlatformGemini,
+				Type:        AccountTypeOAuth,
+				Credentials: map[string]any{"pool_mode": true},
+			},
+			expectRateLimited: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetUpstream429TrackerForTest()
+			repo := &rateLimit429AccountRepoStub{}
+			svc := &GeminiMessagesCompatService{
+				accountRepo:      repo,
+				rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil),
+			}
+
+			svc.handleGeminiUpstreamError(context.Background(), tt.account, http.StatusTooManyRequests, headers, body)
+
+			require.True(t, ShouldSwitchAccountOn429(tt.account.ID),
+				"429 must still be recorded into the sliding window regardless of pool mode")
+
+			if !tt.expectRateLimited {
+				require.Zero(t, repo.rateLimitCalls, "池模式账号不应被标记账号级限流")
+				return
+			}
+			require.Equal(t, 1, repo.rateLimitCalls)
+			require.Equal(t, tt.account.ID, repo.lastRateLimitID)
+			require.True(t, repo.lastRateLimitReset.After(time.Now()))
+		})
+	}
+}
+
+// TestHandleGeminiUpstreamError_PoolMode429_ThresholdCrossedStillSkipsAccountLock
+// 覆盖响应体解析不出显式重置时间、只能靠 429 滑窗/PST 兜底的分支：非池模式账号
+// 越过滑窗阈值后会被 SetRateLimited 锁到 PST 午夜（见
+// TestHandleGeminiUpstreamError_GoogleOneCapacityExhaustedUsesTierCooldownAfterThreshold）；
+// 池模式账号必须继续留在池内，同时滑窗记录仍要生效。
+func TestHandleGeminiUpstreamError_PoolMode429_ThresholdCrossedStillSkipsAccountLock(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	repo := &rateLimit429AccountRepoStub{}
+	quotaSvc := NewGeminiQuotaService(&config.Config{}, nil)
+	rlSvc := NewRateLimitService(repo, nil, &config.Config{}, quotaSvc, nil)
+	svc := &GeminiMessagesCompatService{
+		accountRepo:      repo,
+		rateLimitService: rlSvc,
+	}
+
+	account := &Account{
+		ID:          704,
+		Platform:    PlatformGemini,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"pool_mode": true},
+	}
+	body := []byte(`{"error":{"code":429,"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","domain":"cloudcode-pa.googleapis.com","metadata":{"model":"gemini-3.1-pro-preview"},"reason":"MODEL_CAPACITY_EXHAUSTED"}],"message":"No capacity available for model gemini-3.1-pro-preview on the server","status":"RESOURCE_EXHAUSTED"}}`)
+
+	for i := 0; i < upstream429MinAttempts; i++ {
+		recordUpstream429Attempt(account.ID)
+	}
+	for i := 0; i < upstream429MinAttempts/2-1; i++ {
+		svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
+	}
+	require.Zero(t, repo.rateLimitCalls)
+
+	svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
+
+	require.Zero(t, repo.rateLimitCalls, "池模式账号越过 429 滑窗阈值也不应写账号级限流")
+	require.True(t, ShouldSwitchAccountOn429(account.ID), "滑窗记录仍要生效，否则本次请求既不锁账号也切不了号")
+}
+
+// ---------------------------------------------------------------------------
+// geminiErrorPolicyRepo — minimal AccountRepository stub for Gemini error
+// policy tests. Embeds mockAccountRepoForGemini and adds tracking.
+// ---------------------------------------------------------------------------
+
+func TestHandleGeminiUpstreamError_GoogleOneCapacityExhaustedBelowThresholdSkipsCooldown(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	repo := &rateLimit429AccountRepoStub{}
+	quotaSvc := NewGeminiQuotaService(&config.Config{}, nil)
+	rlSvc := NewRateLimitService(repo, nil, &config.Config{}, quotaSvc, nil)
+	svc := &GeminiMessagesCompatService{
+		accountRepo:      repo,
+		rateLimitService: rlSvc,
+	}
+
+	account := &Account{
+		ID:       510,
+		Platform: PlatformGemini,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"oauth_type": "google_one",
+			"tier_id":    "google_ai_pro",
+		},
+	}
+	body := []byte(`{"error":{"code":429,"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","domain":"cloudcode-pa.googleapis.com","metadata":{"model":"gemini-3.1-pro-preview"},"reason":"MODEL_CAPACITY_EXHAUSTED"}],"message":"No capacity available for model gemini-3.1-pro-preview on the server","status":"RESOURCE_EXHAUSTED"}}`)
+
+	for i := 0; i < upstream429MinAttempts; i++ {
+		recordUpstream429Attempt(account.ID)
+	}
+	svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
+
+	require.Zero(t, repo.rateLimitCalls)
+	require.False(t, ShouldSwitchAccountOn429(account.ID))
+}
+
+func TestHandleGeminiUpstreamError_UsesRequestedModelForTempUnschedulable(t *testing.T) {
+	repo := &geminiErrorPolicyRepo{}
+	svc := &GeminiMessagesCompatService{
+		rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil),
+	}
+	account := &Account{
+		ID:       513,
+		Platform: PlatformGemini,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       float64(http.StatusForbidden),
+					"keywords":         []any{"overloaded"},
+					"duration_minutes": float64(10),
+				},
+			},
+		},
+	}
+
+	svc.handleGeminiUpstreamError(
+		context.Background(),
+		account,
+		http.StatusForbidden,
+		http.Header{},
+		[]byte("overloaded"),
+		"gemini-2.5-pro",
+	)
+
+	require.Zero(t, repo.setTempCalls)
+	require.Equal(t, 1, repo.setModelRateLimitedCalls)
+	require.Equal(t, "gemini-2.5-pro", repo.lastModelScope)
+}
+
+func TestHandleGeminiUpstreamError_RetryAfterBypassesThreshold(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	repo := &rateLimit429AccountRepoStub{}
+	quotaSvc := NewGeminiQuotaService(&config.Config{}, nil)
+	rlSvc := NewRateLimitService(repo, nil, &config.Config{}, quotaSvc, nil)
+	svc := &GeminiMessagesCompatService{
+		accountRepo:      repo,
+		rateLimitService: rlSvc,
+	}
+
+	account := &Account{
+		ID:       512,
+		Platform: PlatformGemini,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"oauth_type": "google_one",
+			"tier_id":    "google_ai_pro",
+		},
+	}
+	headers := http.Header{"Retry-After": []string{"8"}}
+	body := []byte(`{"error":{"code":429,"message":"quota exceeded","status":"RESOURCE_EXHAUSTED"}}`)
+
+	recordUpstream429Attempt(account.ID)
+	before := time.Now()
+	svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, headers, body)
+	after := time.Now()
+
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.Equal(t, int64(512), repo.lastRateLimitID)
+	require.WithinDuration(t, before.Add(8*time.Second), repo.lastRateLimitReset, time.Second)
+	require.True(t, repo.lastRateLimitReset.Before(after.Add(8*time.Second).Add(time.Second)))
+	require.True(t, ShouldSwitchAccountOn429(account.ID))
+}
+
+func TestHandleGeminiUpstreamError_GoogleOneCapacityExhaustedUsesTierCooldownAfterThreshold(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	repo := &rateLimit429AccountRepoStub{}
+	quotaSvc := NewGeminiQuotaService(&config.Config{}, nil)
+	rlSvc := NewRateLimitService(repo, nil, &config.Config{}, quotaSvc, nil)
+	svc := &GeminiMessagesCompatService{
+		accountRepo:      repo,
+		rateLimitService: rlSvc,
+	}
+
+	account := &Account{
+		ID:       511,
+		Platform: PlatformGemini,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"oauth_type": "google_one",
+			"tier_id":    "google_ai_pro",
+		},
+	}
+	body := []byte(`{"error":{"code":429,"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","domain":"cloudcode-pa.googleapis.com","metadata":{"model":"gemini-3.1-pro-preview"},"reason":"MODEL_CAPACITY_EXHAUSTED"}],"message":"No capacity available for model gemini-3.1-pro-preview on the server","status":"RESOURCE_EXHAUSTED"}}`)
+
+	for i := 0; i < upstream429MinAttempts; i++ {
+		recordUpstream429Attempt(account.ID)
+	}
+	for i := 0; i < upstream429MinAttempts/2-1; i++ {
+		svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
+	}
+	require.Zero(t, repo.rateLimitCalls)
+
+	before := time.Now()
+	svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
+	after := time.Now()
+
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.Equal(t, int64(511), repo.lastRateLimitID)
+	require.WithinDuration(t, before.Add(5*time.Minute), repo.lastRateLimitReset, 2*time.Second)
+	require.True(t, repo.lastRateLimitReset.After(before))
+	require.True(t, repo.lastRateLimitReset.Before(after.Add(5*time.Minute).Add(2*time.Second)))
+	require.True(t, ShouldSwitchAccountOn429(account.ID))
+}
+
+// Vertex（service_account）429 响应带 google.rpc.RetryInfo 时，应按 retryDelay 冷却，
+// 而不是回退到 PST 午夜。
+func TestHandleGeminiUpstreamError_VertexRetryInfoUsesParsedDelay(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	repo := &rateLimit429AccountRepoStub{}
+	svc := &GeminiMessagesCompatService{accountRepo: repo}
+
+	account := &Account{
+		ID:       601,
+		Platform: PlatformGemini,
+		Type:     AccountTypeServiceAccount,
+		Credentials: map[string]any{
+			"project_id": "my-vertex-project",
+			"location":   "global",
+		},
+	}
+	body := []byte(`{"error":{"code":429,"message":"Resource exhausted. Please try again later.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"39s"}]}}`)
+
+	before := time.Now()
+	svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
+
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.Equal(t, int64(601), repo.lastRateLimitID)
+	require.WithinDuration(t, before.Add(39*time.Second), repo.lastRateLimitReset, 2*time.Second)
+}
+
+// Vertex（service_account）429 响应不带任何可解析的重置时间时，走短冷却兜底，
+// 不再冷却到 PST 午夜（按量付费没有每日配额，长冷却会导致整组不可用）。
+func TestHandleGeminiUpstreamError_VertexFallbackUsesShortCooldown(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	repo := &rateLimit429AccountRepoStub{}
+	svc := &GeminiMessagesCompatService{accountRepo: repo}
+
+	account := &Account{
+		ID:       602,
+		Platform: PlatformGemini,
+		Type:     AccountTypeServiceAccount,
+		Credentials: map[string]any{
+			"project_id": "my-vertex-project",
+		},
+	}
+	body := []byte(`{"error":{"code":429,"message":"Resource exhausted. Please try again later.","status":"RESOURCE_EXHAUSTED"}}`)
+	primeGemini429ThresholdForTest(t, svc, repo, account, body)
+
+	before := time.Now()
+	svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
+
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.Equal(t, int64(602), repo.lastRateLimitID)
+	require.WithinDuration(t, before.Add(geminiVertexFallbackCooldown), repo.lastRateLimitReset, 2*time.Second)
+	// 显式守护：不应被冷却超过 15 分钟（更不应到次日 PST 午夜）
+	require.True(t, repo.lastRateLimitReset.Before(before.Add(15*time.Minute)))
+}
+
+// API Key（AI Studio）无法解析重置时间时仍冷却到 PST 午夜，行为保持不变。
+func TestHandleGeminiUpstreamError_APIKeyFallbackStillPSTMidnight(t *testing.T) {
+	resetUpstream429TrackerForTest()
+	repo := &rateLimit429AccountRepoStub{}
+	svc := &GeminiMessagesCompatService{accountRepo: repo}
+
+	account := &Account{
+		ID:       603,
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+	}
+	body := []byte(`{"error":{"code":429,"message":"rate limit"}}`)
+	primeGemini429ThresholdForTest(t, svc, repo, account, body)
+
+	svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
+
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.Equal(t, int64(603), repo.lastRateLimitID)
+	expected := time.Unix(*nextGeminiDailyResetUnix(), 0)
+	require.WithinDuration(t, expected, repo.lastRateLimitReset, 5*time.Second)
+}
+
+// primeGemini429ThresholdForTest 让无重置时间的 429 越过 fork 的滑窗阈值：
+// 阈值以下只记录不冷却（fork 语义），下一次调用才会写账号级限流。
+func primeGemini429ThresholdForTest(t *testing.T, svc *GeminiMessagesCompatService, repo *rateLimit429AccountRepoStub, account *Account, body []byte) {
+	t.Helper()
+	for i := 0; i < upstream429MinAttempts; i++ {
+		recordUpstream429Attempt(account.ID)
+	}
+	for i := 0; i < upstream429MinAttempts/2-1; i++ {
+		svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body)
+	}
+	require.Zero(t, repo.rateLimitCalls)
+}
+
+type geminiErrorPolicyRepo struct {
+	mockAccountRepoForGemini
+	setErrorCalls            int
+	setRateLimitedCalls      int
+	setTempCalls             int
+	setModelRateLimitedCalls int
+	lastModelScope           string
+}
+
+func (r *geminiErrorPolicyRepo) SetError(_ context.Context, _ int64, _ string) error {
+	r.setErrorCalls++
+	return nil
+}
+
+func (r *geminiErrorPolicyRepo) SetRateLimited(_ context.Context, _ int64, _ time.Time) error {
+	r.setRateLimitedCalls++
+	return nil
+}
+
+func (r *geminiErrorPolicyRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time.Time, _ string) error {
+	r.setTempCalls++
+	return nil
+}
+
+func (r *geminiErrorPolicyRepo) SetModelRateLimit(_ context.Context, _ int64, scope string, _ time.Time, _ ...string) error {
+	r.setModelRateLimitedCalls++
+	r.lastModelScope = scope
+	return nil
+}

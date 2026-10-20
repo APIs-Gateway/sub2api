@@ -1,0 +1,200 @@
+<template>
+  <div class="flex min-h-screen items-center justify-center bg-gray-50 p-4 dark:bg-dark-900">
+    <div
+      class="w-full max-w-md space-y-4 rounded-md border border-gray-200 bg-white p-6 dark:border-dark-700 dark:bg-dark-800"
+    >
+      <!-- Amount + Order ID -->
+      <div v-if="amount" class="text-center">
+        <p class="num-primary">¥{{ amount }}</p>
+        <p v-if="orderId" class="mt-1 text-sm text-gray-600 dark:text-gray-400">
+          {{ t('payment.orders.orderId') }}: <span class="num">{{ orderId }}</span>
+        </p>
+      </div>
+
+      <!-- Error -->
+      <div v-if="error" class="space-y-3">
+        <div
+          class="rounded-md border border-primary-200 bg-primary-50 p-3 text-sm text-primary-700 dark:border-primary-700/50 dark:bg-primary-900/20 dark:text-primary-400"
+        >
+          {{ error }}
+        </div>
+        <button
+          class="w-full text-sm text-gray-700 underline hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+          @click="closeWindow"
+        >
+          {{ t('common.close') }}
+        </button>
+      </div>
+
+      <!-- Success -->
+      <div v-else-if="success" class="space-y-3 py-4 text-center">
+        <div class="text-5xl text-gray-900 dark:text-white">✓</div>
+        <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('payment.result.success') }}</p>
+        <button
+          class="text-sm text-gray-700 underline hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+          @click="closeWindow"
+        >
+          {{ t('common.close') }}
+        </button>
+      </div>
+
+      <!-- Loading / Redirecting -->
+      <div v-else class="flex items-center justify-center py-8">
+        <div
+          class="h-8 w-8 animate-spin rounded-full border-2 border-gray-400 border-t-transparent dark:border-gray-500"
+        />
+        <span class="ml-3 text-sm text-gray-600 dark:text-gray-400">{{ hint }}</span>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
+import { getAPIBaseURL } from '@/api/client'
+import { extractI18nErrorMessage } from '@/utils/apiError'
+import { isMobileDevice } from '@/utils/device'
+
+interface StripeWithWechatPay {
+  confirmWechatPayPayment(clientSecret: string, options: Record<string, unknown>): Promise<{ error?: { message?: string }; paymentIntent?: { status: string } }>
+}
+
+const { t } = useI18n()
+const route = useRoute()
+
+const orderId = String(route.query.order_id || '')
+const method = String(route.query.method || 'alipay')
+const amount = String(route.query.amount || '')
+
+const error = ref('')
+const success = ref(false)
+const hint = ref(t('payment.stripePopup.redirecting'))
+
+let pollTimer: ReturnType<typeof setInterval> | null = null
+let initTimeoutTimer: ReturnType<typeof setTimeout> | null = null
+let closeTimeoutTimer: ReturnType<typeof setTimeout> | null = null
+let messageHandler: ((event: MessageEvent) => void) | null = null
+
+function closeWindow() { window.close() }
+
+function clearInitTimeout() {
+  if (initTimeoutTimer) {
+    clearTimeout(initTimeoutTimer)
+    initTimeoutTimer = null
+  }
+}
+
+function scheduleCloseWindow() {
+  if (closeTimeoutTimer) clearTimeout(closeTimeoutTimer)
+  closeTimeoutTimer = setTimeout(closeWindow, 2000)
+}
+
+onMounted(() => {
+  messageHandler = (event: MessageEvent) => {
+    if (event.origin !== window.location.origin) return
+    if (event.data?.type !== 'STRIPE_POPUP_INIT') return
+    clearInitTimeout()
+    if (messageHandler) {
+      window.removeEventListener('message', messageHandler)
+      messageHandler = null
+    }
+    initStripe(event.data.clientSecret, event.data.publishableKey)
+  }
+  window.addEventListener('message', messageHandler)
+
+  if (window.opener) {
+    window.opener.postMessage({ type: 'STRIPE_POPUP_READY' }, window.location.origin)
+  }
+
+  initTimeoutTimer = setTimeout(() => {
+    if (!error.value && !success.value) {
+      error.value = t('payment.stripePopup.timeout')
+    }
+  }, 15000)
+})
+
+onUnmounted(() => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+  clearInitTimeout()
+  if (closeTimeoutTimer) {
+    clearTimeout(closeTimeoutTimer)
+    closeTimeoutTimer = null
+  }
+  if (messageHandler) {
+    window.removeEventListener('message', messageHandler)
+    messageHandler = null
+  }
+})
+
+async function initStripe(clientSecret: string, publishableKey: string) {
+  if (!clientSecret || !publishableKey) {
+    error.value = t('payment.stripeMissingParams')
+    return
+  }
+  try {
+    const { loadStripe } = await import('@stripe/stripe-js/pure')
+    const stripe = await loadStripe(publishableKey)
+    if (!stripe) { error.value = t('payment.stripeLoadFailed'); return }
+
+    const returnUrl = window.location.origin + '/payment/result?order_id=' + orderId + '&status=success'
+
+    if (method === 'alipay') {
+      // Alipay: redirect this popup to Alipay payment page
+      const { error: err } = await stripe.confirmAlipayPayment(clientSecret, { return_url: returnUrl })
+      if (err) error.value = err.message || t('payment.result.failed')
+    } else if (method === 'wechat_pay') {
+      // WeChat: Stripe shows its built-in QR dialog, user scans, promise resolves
+      hint.value = t('payment.stripePopup.loadingQr')
+      const result = await (stripe as unknown as StripeWithWechatPay).confirmWechatPayPayment(clientSecret, {
+        payment_method_options: { wechat_pay: { client: isMobileDevice() ? 'mobile_web' : 'web' } },
+      })
+      if (result.error) {
+        error.value = result.error.message || t('payment.result.failed')
+      } else if (result.paymentIntent?.status === 'succeeded') {
+        success.value = true
+        scheduleCloseWindow()
+      } else {
+        // Payment not completed (user closed QR dialog)
+        startPolling()
+      }
+    }
+  } catch (err: unknown) {
+    error.value = extractI18nErrorMessage(err, t, 'payment.errors', t('payment.stripeLoadFailed'))
+  }
+}
+
+function startPolling() {
+  let inFlight = false
+  const currentPollTimer = setInterval(async () => {
+    if (inFlight) return
+    inFlight = true
+    try {
+      const token = localStorage.getItem('auth_token') || ''
+      const res = await fetch(`${getAPIBaseURL()}/payment/orders/${orderId}`, {
+        headers: token ? { Authorization: 'Bearer ' + token } : {},
+        credentials: 'include',
+      })
+      if (pollTimer !== currentPollTimer || !res.ok) return
+      const data = await res.json()
+      if (pollTimer !== currentPollTimer) return
+      const status = data?.data?.status
+      if (status === 'COMPLETED' || status === 'PAID') {
+        clearInterval(currentPollTimer)
+        pollTimer = null
+        success.value = true
+        scheduleCloseWindow()
+      }
+    } catch {
+      // Polling is best-effort; the next interval retries.
+    } finally {
+      inFlight = false
+    }
+  }, 3000)
+  pollTimer = currentPollTimer
+}
+</script>

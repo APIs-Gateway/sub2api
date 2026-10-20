@@ -1,0 +1,248 @@
+<template>
+  <div
+    :class="[
+      'group relative flex flex-col overflow-hidden rounded-2xl border transition-all',
+      'hover:shadow-xl hover:-translate-y-0.5',
+      borderClass,
+      'bg-white dark:bg-dark-800',
+    ]"
+  >
+    <!-- Colored top accent bar -->
+    <div :class="['h-1.5', accentClass]" />
+
+    <div class="flex flex-1 flex-col p-4">
+      <!-- Header: name + badge + price -->
+      <div class="mb-3 flex items-start justify-between gap-2">
+        <div class="min-w-0 flex-1">
+          <h3
+            :title="plan.name"
+            class="h-12 min-w-0 break-words [overflow-wrap:anywhere] text-base font-bold leading-6 text-gray-900 dark:text-white line-clamp-2"
+          >
+            {{ plan.name }}
+          </h3>
+          <p v-if="plan.description" class="mt-0.5 text-xs leading-relaxed text-gray-500 dark:text-dark-400 line-clamp-2">
+            {{ plan.description }}
+          </p>
+        </div>
+        <div class="shrink-0 text-right">
+          <div class="flex items-baseline gap-1">
+            <NumText tier="primary" :class="textClass" :text="formattedPlanPrice" />
+            <span v-if="plan.currency" class="text-xs font-medium text-gray-400 dark:text-dark-500">{{ plan.currency }}</span>
+          </div>
+          <div class="flex items-center justify-end gap-1">
+            <span :class="['inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium', badgeLightClass]">
+              {{ capabilityLabel }}
+            </span>
+            <span class="text-[11px] text-gray-400 dark:text-dark-500">/ {{ validitySuffix }}</span>
+          </div>
+          <div v-if="plan.original_price" class="mt-0.5 flex items-center justify-end gap-1.5">
+            <span class="num text-xs text-gray-400 line-through dark:text-dark-500">{{ formattedOriginalPrice }}</span>
+            <span v-if="plan.currency" class="text-xs text-gray-400 dark:text-dark-500">{{ plan.currency }}</span>
+            <span :class="['rounded px-1 py-0.5 text-[10px] font-semibold', discountClass]">{{ discountText }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Group quota info (compact) -->
+      <div class="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-dark-700/50">
+        <div v-if="!isFiat" class="flex items-center justify-between">
+          <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.rate') }}</span>
+          <span class="num-secondary text-gray-700 dark:text-gray-300">{{ rateDisplay }}</span>
+        </div>
+        <div v-if="plan.daily_amount_usd != null && plan.daily_amount_usd > 0 && showQuota" class="flex items-center justify-between">
+          <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.dailyAmount') }}</span>
+          <span class="inline-flex items-baseline gap-1">
+            <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.daily_amount_usd)" />
+            <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+          </span>
+        </div>
+        <div v-if="planConcurrency > 0" class="flex items-center justify-between">
+          <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.concurrency') }}</span>
+          <span class="num-secondary text-gray-700 dark:text-gray-300">{{ planConcurrency }}</span>
+        </div>
+        <div v-if="plan.weekly_limit_usd != null && showQuota" class="flex items-center justify-between">
+          <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.weeklyLimit') }}</span>
+          <span class="inline-flex items-baseline gap-1">
+            <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.weekly_limit_usd)" />
+            <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+          </span>
+        </div>
+        <div v-if="plan.monthly_limit_usd != null && showQuota" class="flex items-center justify-between">
+          <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.monthlyLimit') }}</span>
+          <span class="inline-flex items-baseline gap-1">
+            <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.monthly_limit_usd)" />
+            <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+          </span>
+        </div>
+        <div v-if="(plan.daily_amount_usd == null || plan.daily_amount_usd <= 0) && plan.weekly_limit_usd == null && plan.monthly_limit_usd == null" class="flex items-center justify-between">
+          <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.quota') }}</span>
+          <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('payment.planCard.unlimited') }}</span>
+        </div>
+        <div v-if="modelScopeLabels.length > 0" class="col-span-2 flex items-center justify-between">
+          <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.models') }}</span>
+          <div class="flex flex-wrap justify-end gap-1">
+            <span v-for="scope in modelScopeLabels" :key="scope"
+              class="rounded bg-gray-200/80 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-dark-600 dark:text-gray-300">
+              {{ scope }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Features list (compact) -->
+      <div v-if="plan.features.length > 0" class="mb-3 space-y-1">
+        <div v-for="feature in plan.features" :key="feature" class="flex items-start gap-1.5">
+          <svg :class="['mt-0.5 h-3.5 w-3.5 flex-shrink-0', iconClass]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+          </svg>
+          <span class="text-xs text-gray-600 dark:text-gray-300">{{ feature }}</span>
+        </div>
+      </div>
+
+      <div class="flex-1" />
+
+      <!-- 叠加提示：已持有同分组有效订阅时，明确说明购买不续期、而是叠加一张独立卡 -->
+      <div
+        v-if="hasGroupSubscription"
+        class="mb-2 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-snug text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
+      >
+        <span class="font-semibold">{{ t('payment.planCard.repurchaseTitle') }}</span>
+        {{ t('payment.planCard.repurchaseNotice') }}
+        <span v-if="existingExpiry">{{ t('payment.planCard.currentExpiry', { date: existingExpiry }) }}</span>
+      </div>
+
+      <!-- Subscribe Button -->
+      <button
+        type="button"
+        :class="['w-full rounded-xl py-2.5 text-sm font-semibold transition-all active:scale-[0.98]', btnClass]"
+        @click="emit('select', plan)"
+      >
+        {{ t('payment.subscribeNow') }}
+      </button>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import type { SubscriptionPlan } from '@/types/payment'
+import type { UserSubscription } from '@/types'
+import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
+import NumText from '@/components/common/NumText.vue'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { planFiatPerCredit } from '@/utils/subscriptionFiat'
+import { planValiditySuffix } from '@/components/payment/validity'
+import {
+  platformAccentBarClass,
+  platformBadgeLightClass,
+  platformBorderClass,
+  platformTextClass,
+  platformIconClass,
+  platformButtonClass,
+  platformDiscountClass,
+  platformLabel,
+} from '@/utils/platformColors'
+
+const props = withDefaults(defineProps<{
+  plan: SubscriptionPlan
+  activeSubscriptions?: UserSubscription[]
+  paymentCurrency?: string
+  subscriptionPaymentMultiplier?: number
+  locale?: string
+}>(), {
+  activeSubscriptions: () => [],
+  paymentCurrency: 'CNY',
+  subscriptionPaymentMultiplier: 1,
+  locale: undefined,
+})
+const emit = defineEmits<{ select: [plan: SubscriptionPlan] }>()
+const { t } = useI18n()
+const { isFiat, formatSubscription, formatUsd } = useCurrencyDisplay()
+
+const platform = computed(() => props.plan.group_platform || '')
+// 用户是否已持有该套餐所属分组的有效订阅。注意 subscription_plans.group_id 非唯一
+// （一个分组可有多个套餐），故按分组判断、提示文案也用「同分组」措辞，避免误称「同套餐」。
+const hasGroupSubscription = computed(() =>
+  props.activeSubscriptions?.some(s => s.group_id === props.plan.group_id && s.status === 'active') ?? false
+)
+
+// 同分组有效订阅中到期最晚的一张，用于在叠加提示里展示当前到期时间。
+const existingSub = computed<UserSubscription | undefined>(() => {
+  const matches = (props.activeSubscriptions ?? []).filter(
+    s => s.group_id === props.plan.group_id && s.status === 'active',
+  )
+  if (matches.length === 0) return undefined
+  return matches.reduce((latest, s) =>
+    new Date(s.expires_at ?? 0).getTime() > new Date(latest.expires_at ?? 0).getTime() ? s : latest,
+  )
+})
+const existingExpiry = computed(() =>
+  existingSub.value?.expires_at ? new Date(existingSub.value.expires_at).toLocaleDateString() : '',
+)
+
+// Derived color classes from central config
+const accentClass = computed(() => platformAccentBarClass(platform.value))
+const borderClass = computed(() => platformBorderClass(platform.value))
+const badgeLightClass = computed(() => platformBadgeLightClass(platform.value))
+const textClass = computed(() => platformTextClass(platform.value))
+const iconClass = computed(() => platformIconClass(platform.value))
+const btnClass = computed(() => platformButtonClass(platform.value))
+const discountClass = computed(() => platformDiscountClass(platform.value))
+const capabilityLabel = computed(() =>
+  modelScopeLabels.value.length > 0 ? modelScopeLabels.value.join(' / ') : platformLabel(platform.value)
+)
+
+const paymentCurrency = computed(() => normalizePaymentCurrency(props.paymentCurrency))
+const subscriptionPaymentMultiplier = computed(() =>
+  props.subscriptionPaymentMultiplier > 0 ? props.subscriptionPaymentMultiplier : 1
+)
+function planValueToPaymentAmount(value: number): number {
+  if (value <= 0) return 0
+  return ceilPaymentAmount(value / subscriptionPaymentMultiplier.value, paymentCurrency.value)
+}
+const formattedPlanPrice = computed(() =>
+  formatPaymentAmount(planValueToPaymentAmount(props.plan.price), paymentCurrency.value, props.locale)
+)
+const formattedOriginalPrice = computed(() =>
+  formatPaymentAmount(planValueToPaymentAmount(props.plan.original_price || 0), paymentCurrency.value, props.locale)
+)
+
+// 人民币模式下按这个套餐的实付价折算额度；套餐没有每日额度或有效期时无法折算，隐藏额度行而不是混入美元。
+const fiatPerCredit = computed(() => planFiatPerCredit(props.plan, planValueToPaymentAmount(props.plan.price)))
+const showQuota = computed(() => !isFiat.value || fiatPerCredit.value !== null)
+function formatQuota(credits: number): string {
+  return isFiat.value ? formatSubscription(credits, fiatPerCredit.value) : formatUsd(credits)
+}
+
+const discountText = computed(() => {
+  if (!props.plan.original_price || props.plan.original_price <= 0) return ''
+  const pct = Math.round((1 - props.plan.price / props.plan.original_price) * 100)
+  return pct > 0 ? `-${pct}%` : ''
+})
+
+const rateDisplay = computed(() => {
+  const rate = props.plan.rate_multiplier ?? 1
+  return `×${Number(rate.toPrecision(10))}`
+})
+const planConcurrency = computed(() => {
+  const dailyAmount = props.plan.daily_amount_usd ?? props.plan.daily_limit_usd ?? 0
+  return dailyAmount > 0 ? Math.max(1, Math.ceil(dailyAmount / 10)) : 0
+})
+
+const MODEL_SCOPE_LABELS: Record<string, string> = {
+  claude: 'Claude',
+  gemini_text: 'Gemini',
+  gemini_image: 'Imagen',
+}
+
+const modelScopeLabels = computed(() => {
+  const scopes = props.plan.supported_model_scopes
+  if (!scopes || scopes.length === 0) return []
+  return scopes.map(s => MODEL_SCOPE_LABELS[s] || s)
+})
+
+const validitySuffix = computed(() => {
+  return planValiditySuffix(props.plan, t)
+})
+</script>

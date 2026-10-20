@@ -1,0 +1,278 @@
+package service
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+)
+
+const (
+	modelRateLimitsKey                 = "model_rate_limits"
+	antigravityGeminiModelRateLimitKey = "antigravity:gemini"
+	openAIImageGenerationRateLimitKey  = "openai:image_generation"
+	// anthropicFableRateLimitKey 是 Anthropic 7d_oi（Fable 专属 7d 窗口）限流的
+	// 家族级 scope：命中后所有 Fable 变体（含 [1m] 等后缀）都不再调度到该账号。
+	anthropicFableRateLimitKey = "claude-fable-5"
+)
+
+// isRateLimitActiveForKey 检查指定 key 的限流是否生效
+func (a *Account) isRateLimitActiveForKey(key string) bool {
+	resetAt := a.modelRateLimitResetAt(key)
+	return resetAt != nil && time.Now().Before(*resetAt)
+}
+
+// getRateLimitRemainingForKey 获取指定 key 的限流剩余时间，0 表示未限流或已过期
+func (a *Account) getRateLimitRemainingForKey(key string) time.Duration {
+	resetAt := a.modelRateLimitResetAt(key)
+	if resetAt == nil {
+		return 0
+	}
+	remaining := time.Until(*resetAt)
+	if remaining > 0 {
+		return remaining
+	}
+	return 0
+}
+
+func (a *Account) isModelRateLimitedWithContext(ctx context.Context, requestedModel string) bool {
+	// 「不自动暂停调度」账号不受单模型限流影响（model_rate_limits 里的记录仍保留，后台可见）。
+	if a.NoAutoUnsched() {
+		return false
+	}
+	for _, key := range a.modelRateLimitKeysForRequest(ctx, requestedModel) {
+		if a.isRateLimitActiveForKey(key) {
+			return true
+		}
+	}
+	return false
+}
+
+// isModelRateLimitedForFinalKeyWithContext checks a model already resolved for
+// upstream forwarding. Reapplying account model_mapping here can redirect a
+// wildcard mapping away from the key that was rate limited.
+func (a *Account) isModelRateLimitedForFinalKeyWithContext(ctx context.Context, finalKey string) bool {
+	if a == nil {
+		return false
+	}
+	finalKey = strings.TrimSpace(finalKey)
+	if finalKey == "" || a.NoAutoUnsched() {
+		return false
+	}
+	for _, key := range a.modelRateLimitFamilyKeys(ctx, finalKey, finalKey) {
+		if a.isRateLimitActiveForKey(key) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetModelRateLimitRemainingTime 获取模型限流剩余时间
+// 返回 0 表示未限流或已过期
+func (a *Account) GetModelRateLimitRemainingTime(requestedModel string) time.Duration {
+	return a.GetModelRateLimitRemainingTimeWithContext(context.Background(), requestedModel)
+}
+
+func (a *Account) GetModelRateLimitRemainingTimeWithContext(ctx context.Context, requestedModel string) time.Duration {
+	if a.NoAutoUnsched() {
+		return 0
+	}
+	remaining := time.Duration(0)
+	for _, key := range a.modelRateLimitKeysForRequest(ctx, requestedModel) {
+		if keyRemaining := a.getRateLimitRemainingForKey(key); keyRemaining > remaining {
+			remaining = keyRemaining
+		}
+	}
+	return remaining
+}
+
+func (a *Account) modelRateLimitKeysForRequest(ctx context.Context, requestedModel string) []string {
+	if a == nil {
+		return nil
+	}
+
+	modelKey := a.GetMappedModel(requestedModel)
+	switch a.Platform {
+	case PlatformAntigravity:
+		modelKey = resolveFinalAntigravityModelKey(ctx, a, requestedModel)
+	case PlatformOpenAI:
+		forwardModel := requestedModel
+		if fromContext, ok := openAIForwardModelFromContext(ctx); ok && strings.TrimSpace(fromContext.model) != "" {
+			forwardModel = fromContext.model
+		}
+		// Passthrough ignores account mapping. A stale mapping must not block
+		// its unrelated model.
+		if a.IsOpenAIPassthroughEnabled() && !shouldForwardOpenAIResponsesViaRawChatCompletions(a) {
+			modelKey = forwardModel
+		}
+	}
+	modelKey = strings.TrimSpace(modelKey)
+	if modelKey == "" {
+		return nil
+	}
+	keys := a.modelRateLimitFamilyKeys(ctx, requestedModel, modelKey)
+	if a.IsAnthropicOAuthOrSetupToken() {
+		// Retain the legacy request-side key for cooldowns already in Redis, and
+		// also check the final wire model used by native and bridged forwarding.
+		finalKey, _ := resolveAnthropicOAuthMappedModel(a, requestedModel)
+		finalKey = strings.TrimSpace(finalKey)
+		if finalKey != "" && finalKey != modelKey {
+			keys = append(keys, a.modelRateLimitFamilyKeys(ctx, requestedModel, finalKey)...)
+		}
+	}
+	if a.Platform == PlatformOpenAI {
+		// Keep the pre-normalization key for existing 429 cooldowns, and also
+		// check the actual wire model used by the downgrade guard.
+		forwardModel := requestedModel
+		requireCompact := false
+		if fromContext, ok := openAIForwardModelFromContext(ctx); ok && strings.TrimSpace(fromContext.model) != "" {
+			forwardModel = fromContext.model
+			requireCompact = fromContext.useCompactModelMapping
+		}
+		finalKey := strings.TrimSpace(resolveOpenAIAccountUpstreamModelForRequest(a, forwardModel, requireCompact))
+		if finalKey != "" && finalKey != modelKey {
+			keys = append(keys, finalKey)
+		}
+	}
+	return keys
+}
+
+func (a *Account) modelRateLimitFamilyKeys(ctx context.Context, requestedModel, modelKey string) []string {
+	keys := []string{modelKey}
+	switch a.Platform {
+	case PlatformAntigravity:
+		if isAntigravityGeminiModel(modelKey) && modelKey != antigravityGeminiModelRateLimitKey {
+			keys = append(keys, antigravityGeminiModelRateLimitKey)
+		}
+	case PlatformOpenAI:
+		if openAIImageGenerationRateLimitApplies(ctx, requestedModel, modelKey) && modelKey != openAIImageGenerationRateLimitKey {
+			keys = append(keys, openAIImageGenerationRateLimitKey)
+		}
+	case PlatformAnthropic:
+		if isAnthropicFableModel(modelKey) && modelKey != anthropicFableRateLimitKey {
+			keys = append(keys, anthropicFableRateLimitKey)
+		}
+	}
+	return keys
+}
+
+// isAnthropicFableModel 判断是否为 Anthropic Fable 5 的正式模型键或已知上游变体。
+// 不能按任意 "fable" 子串判断，否则用户自定义的无关模型名也会被 7d_oi 限流误伤。
+func isAnthropicFableModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == anthropicFableRateLimitKey || model == anthropicFableRateLimitKey+"[1m]" {
+		return true
+	}
+
+	version, ok := strings.CutPrefix(model, anthropicFableRateLimitKey+"-")
+	if !ok || len(version) != len("20060102") {
+		return false
+	}
+	for _, char := range version {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func openAIImageGenerationRateLimitApplies(ctx context.Context, requestedModel, modelKey string) bool {
+	if isOpenAIImageGenerationModel(requestedModel) || isOpenAIImageGenerationModel(modelKey) {
+		return true
+	}
+	return OpenAIImageGenerationIntentFromContext(ctx)
+}
+
+func WithOpenAIImageGenerationIntent(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, ctxkey.OpenAIImageGenerationIntent, true)
+}
+
+func OpenAIImageGenerationIntentFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	enabled, ok := ctx.Value(ctxkey.OpenAIImageGenerationIntent).(bool)
+	return ok && enabled
+}
+
+// openAIImagesEndpointCtxKey 标识请求是从 /v1/images/* 专用生图端点入站，而不只是
+// 携带生图意图（OpenAIImageGenerationIntent 在 /v1/responses 命中图片模型时也会
+// 置位，二者语义不同，见 shouldSkipCodexPlanGatedImageModelCooldown）。
+//
+// 这里没有像 OpenAIImageGenerationIntent 一样在 ctxkey 包里加常量，是因为读它的
+// 唯一消费者就在本包内（shouldSkipCodexPlanGatedImageModelCooldown），用一个仅本
+// 包可见的 key 类型即可，这也是本文件所在包里的既有写法（参见
+// httpUpstreamProfileContextKey、openAIForcedAccountRoutingContextKey 等）。
+type openAIImagesEndpointCtxKey struct{}
+
+// WithOpenAIImagesEndpoint 标记请求从 /v1/images/* 专用生图端点入站。
+func WithOpenAIImagesEndpoint(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, openAIImagesEndpointCtxKey{}, true)
+}
+
+// OpenAIImagesEndpointFromContext 报告请求是否来自 /v1/images/*。
+func OpenAIImagesEndpointFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	enabled, ok := ctx.Value(openAIImagesEndpointCtxKey{}).(bool)
+	return ok && enabled
+}
+
+func resolveFinalAntigravityModelKey(ctx context.Context, account *Account, requestedModel string) string {
+	modelKey := mapAntigravityModel(account, requestedModel)
+	if modelKey == "" {
+		return ""
+	}
+	// thinking 会影响 Antigravity 最终模型名（例如 claude-sonnet-4-5 -> claude-sonnet-4-5-thinking）
+	if enabled, ok := ThinkingEnabledFromContext(ctx); ok {
+		modelKey = applyThinkingModelSuffix(modelKey, enabled)
+	}
+	return modelKey
+}
+
+func isAntigravityGeminiModel(model string) bool {
+	return strings.HasPrefix(normalizeAntigravityModelName(model), "gemini-")
+}
+
+func antigravityModelRateLimitKeys(model string) []string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	keys := []string{model}
+	if isAntigravityGeminiModel(model) && model != antigravityGeminiModelRateLimitKey {
+		keys = append(keys, antigravityGeminiModelRateLimitKey)
+	}
+	return keys
+}
+
+func (a *Account) modelRateLimitResetAt(scope string) *time.Time {
+	if a == nil || a.Extra == nil || scope == "" {
+		return nil
+	}
+	rawLimits, ok := a.Extra[modelRateLimitsKey].(map[string]any)
+	if !ok {
+		return nil
+	}
+	rawLimit, ok := rawLimits[scope].(map[string]any)
+	if !ok {
+		return nil
+	}
+	resetAtRaw, ok := rawLimit["rate_limit_reset_at"].(string)
+	if !ok || strings.TrimSpace(resetAtRaw) == "" {
+		return nil
+	}
+	resetAt, err := time.Parse(time.RFC3339, resetAtRaw)
+	if err != nil {
+		return nil
+	}
+	return &resetAt
+}

@@ -1,0 +1,966 @@
+package antigravity
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// TestBuildParts_ThinkingBlockWithoutSignature 测试thinking block无signature时的处理
+func TestBuildParts_ThinkingBlockWithoutSignature(t *testing.T) {
+	tests := []struct {
+		name              string
+		content           string
+		allowDummyThought bool
+		expectedParts     int
+		description       string
+	}{
+		{
+			name: "Claude model - downgrade thinking to text without signature",
+			content: `[
+				{"type": "text", "text": "Hello"},
+				{"type": "thinking", "thinking": "Let me think...", "signature": ""},
+				{"type": "text", "text": "World"}
+			]`,
+			allowDummyThought: false,
+			expectedParts:     3, // thinking 内容降级为普通 text part
+			description:       "Claude模型缺少signature时应将thinking降级为text，并在上层禁用thinking mode",
+		},
+		{
+			name: "Claude model - preserve thinking block with signature",
+			content: `[
+				{"type": "text", "text": "Hello"},
+				{"type": "thinking", "thinking": "Let me think...", "signature": "sig_real_123"},
+				{"type": "text", "text": "World"}
+			]`,
+			allowDummyThought: false,
+			expectedParts:     3,
+			description:       "Claude模型应透传带 signature 的 thinking block（用于 Vertex 签名链路）",
+		},
+		{
+			name: "Gemini model - use dummy signature",
+			content: `[
+				{"type": "text", "text": "Hello"},
+				{"type": "thinking", "thinking": "Let me think...", "signature": ""},
+				{"type": "text", "text": "World"}
+			]`,
+			allowDummyThought: true,
+			expectedParts:     3, // 三个block都保留，thinking使用dummy signature
+			description:       "Gemini模型应该为无signature的thinking block使用dummy signature",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			toolIDToName := make(map[string]string)
+			parts, _, err := buildParts(json.RawMessage(tt.content), toolIDToName, tt.allowDummyThought)
+
+			if err != nil {
+				t.Fatalf("buildParts() error = %v", err)
+			}
+
+			if len(parts) != tt.expectedParts {
+				t.Errorf("%s: got %d parts, want %d parts", tt.description, len(parts), tt.expectedParts)
+			}
+
+			switch tt.name {
+			case "Claude model - preserve thinking block with signature":
+				if len(parts) != 3 {
+					t.Fatalf("expected 3 parts, got %d", len(parts))
+				}
+				if !parts[1].Thought || parts[1].ThoughtSignature != "sig_real_123" {
+					t.Fatalf("expected thought part with signature sig_real_123, got thought=%v signature=%q",
+						parts[1].Thought, parts[1].ThoughtSignature)
+				}
+			case "Claude model - downgrade thinking to text without signature":
+				if len(parts) != 3 {
+					t.Fatalf("expected 3 parts, got %d", len(parts))
+				}
+				if parts[1].Thought {
+					t.Fatalf("expected downgraded text part, got thought=%v signature=%q",
+						parts[1].Thought, parts[1].ThoughtSignature)
+				}
+				if parts[1].Text != "Let me think..." {
+					t.Fatalf("expected downgraded text %q, got %q", "Let me think...", parts[1].Text)
+				}
+			case "Gemini model - use dummy signature":
+				if len(parts) != 3 {
+					t.Fatalf("expected 3 parts, got %d", len(parts))
+				}
+				if !parts[1].Thought || parts[1].ThoughtSignature != DummyThoughtSignature {
+					t.Fatalf("expected dummy thought signature, got thought=%v signature=%q",
+						parts[1].Thought, parts[1].ThoughtSignature)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildParts_ToolUseSignatureHandling(t *testing.T) {
+	content := `[
+		{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}, "signature": "sig_tool_abc"}
+	]`
+
+	t.Run("Gemini preserves provided tool_use signature", func(t *testing.T) {
+		toolIDToName := make(map[string]string)
+		parts, _, err := buildParts(json.RawMessage(content), toolIDToName, true)
+		if err != nil {
+			t.Fatalf("buildParts() error = %v", err)
+		}
+		if len(parts) != 1 || parts[0].FunctionCall == nil {
+			t.Fatalf("expected 1 functionCall part, got %+v", parts)
+		}
+		if parts[0].ThoughtSignature != "sig_tool_abc" {
+			t.Fatalf("expected preserved tool signature %q, got %q", "sig_tool_abc", parts[0].ThoughtSignature)
+		}
+	})
+
+	t.Run("Gemini falls back to dummy tool_use signature when missing", func(t *testing.T) {
+		contentNoSig := `[
+			{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}
+		]`
+		toolIDToName := make(map[string]string)
+		parts, _, err := buildParts(json.RawMessage(contentNoSig), toolIDToName, true)
+		if err != nil {
+			t.Fatalf("buildParts() error = %v", err)
+		}
+		if len(parts) != 1 || parts[0].FunctionCall == nil {
+			t.Fatalf("expected 1 functionCall part, got %+v", parts)
+		}
+		if parts[0].ThoughtSignature != DummyThoughtSignature {
+			t.Fatalf("expected dummy tool signature %q, got %q", DummyThoughtSignature, parts[0].ThoughtSignature)
+		}
+	})
+
+	t.Run("Claude model - preserve valid signature for tool_use", func(t *testing.T) {
+		toolIDToName := make(map[string]string)
+		parts, _, err := buildParts(json.RawMessage(content), toolIDToName, false)
+		if err != nil {
+			t.Fatalf("buildParts() error = %v", err)
+		}
+		if len(parts) != 1 || parts[0].FunctionCall == nil {
+			t.Fatalf("expected 1 functionCall part, got %+v", parts)
+		}
+		// Claude 模型应透传有效的 signature（Vertex/Google 需要完整签名链路）
+		if parts[0].ThoughtSignature != "sig_tool_abc" {
+			t.Fatalf("expected preserved tool signature %q, got %q", "sig_tool_abc", parts[0].ThoughtSignature)
+		}
+	})
+}
+
+// TestBuildTools_CustomTypeTools 测试custom类型工具转换
+func TestBuildTools_CustomTypeTools(t *testing.T) {
+	tests := []struct {
+		name        string
+		tools       []ClaudeTool
+		expectedLen int
+		description string
+	}{
+		{
+			name: "Standard tool format",
+			tools: []ClaudeTool{
+				{
+					Name:        "get_weather",
+					Description: "Get weather information",
+					InputSchema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"location": map[string]any{"type": "string"},
+						},
+					},
+				},
+			},
+			expectedLen: 1,
+			description: "标准工具格式应该正常转换",
+		},
+		{
+			name: "Custom type tool (MCP format)",
+			tools: []ClaudeTool{
+				{
+					Type: "custom",
+					Name: "mcp_tool",
+					Custom: &ClaudeCustomToolSpec{
+						Description: "MCP tool description",
+						InputSchema: map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"param": map[string]any{"type": "string"},
+							},
+						},
+					},
+				},
+			},
+			expectedLen: 1,
+			description: "Custom类型工具应该从Custom字段读取description和input_schema",
+		},
+		{
+			name: "Mixed standard and custom tools",
+			tools: []ClaudeTool{
+				{
+					Name:        "standard_tool",
+					Description: "Standard tool",
+					InputSchema: map[string]any{"type": "object"},
+				},
+				{
+					Type: "custom",
+					Name: "custom_tool",
+					Custom: &ClaudeCustomToolSpec{
+						Description: "Custom tool",
+						InputSchema: map[string]any{"type": "object"},
+					},
+				},
+			},
+			expectedLen: 1, // 返回一个GeminiToolDeclaration，包含2个function declarations
+			description: "混合标准和custom工具应该都能正确转换",
+		},
+		{
+			name: "Invalid custom tool - nil Custom field",
+			tools: []ClaudeTool{
+				{
+					Type: "custom",
+					Name: "invalid_custom",
+					// Custom 为 nil
+				},
+			},
+			expectedLen: 0, // 应该被跳过
+			description: "Custom字段为nil的custom工具应该被跳过",
+		},
+		{
+			name: "Invalid custom tool - nil InputSchema",
+			tools: []ClaudeTool{
+				{
+					Type: "custom",
+					Name: "invalid_custom",
+					Custom: &ClaudeCustomToolSpec{
+						Description: "Invalid",
+						// InputSchema 为 nil
+					},
+				},
+			},
+			expectedLen: 0, // 应该被跳过
+			description: "InputSchema为nil的custom工具应该被跳过",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildTools(tt.tools)
+
+			if len(result) != tt.expectedLen {
+				t.Errorf("%s: got %d tool declarations, want %d", tt.description, len(result), tt.expectedLen)
+			}
+
+			// 验证function declarations存在
+			if len(result) > 0 && result[0].FunctionDeclarations != nil {
+				if len(result[0].FunctionDeclarations) != len(tt.tools) {
+					t.Errorf("%s: got %d function declarations, want %d",
+						tt.description, len(result[0].FunctionDeclarations), len(tt.tools))
+				}
+			}
+		})
+	}
+}
+
+func TestBuildTools_DropsWebSearchAlongsideFunctions(t *testing.T) {
+	tools := []ClaudeTool{
+		{
+			Name:        "get_weather",
+			Description: "Get weather information",
+			InputSchema: map[string]any{"type": "object"},
+		},
+		{
+			Type: "web_search_20250305",
+			Name: "web_search",
+		},
+	}
+
+	// Antigravity v1internal cannot mix googleSearch with functionDeclarations
+	// (upstream #6464): client function tools win and web_search is dropped.
+	result := buildTools(tools)
+	require.Len(t, result, 1)
+	require.Len(t, result[0].FunctionDeclarations, 1)
+	require.Equal(t, "get_weather", result[0].FunctionDeclarations[0].Name)
+	require.Nil(t, result[0].GoogleSearch)
+}
+
+func TestBuildTools_WebSearchOnlyKeepsGoogleSearch(t *testing.T) {
+	result := buildTools([]ClaudeTool{{Type: "web_search_20250305", Name: "web_search"}})
+	require.Len(t, result, 1)
+	require.Empty(t, result[0].FunctionDeclarations)
+	require.NotNil(t, result[0].GoogleSearch)
+	require.NotNil(t, result[0].GoogleSearch.EnhancedContent)
+	require.NotNil(t, result[0].GoogleSearch.EnhancedContent.ImageSearch)
+	require.Equal(t, 5, result[0].GoogleSearch.EnhancedContent.ImageSearch.MaxResultCount)
+}
+
+func TestHasClientFunctionTools(t *testing.T) {
+	require.False(t, hasClientFunctionTools(nil))
+	require.False(t, hasClientFunctionTools([]ClaudeTool{{Type: "web_search_20250305", Name: "web_search"}, {Name: "google_search"}}))
+	require.False(t, hasClientFunctionTools([]ClaudeTool{{Name: "   "}}))
+	require.True(t, hasClientFunctionTools([]ClaudeTool{{Type: "web_search_20250305", Name: "web_search"}, {Name: "shell"}}))
+}
+
+func TestBuildGenerationConfig_ThinkingDynamicBudget(t *testing.T) {
+	tests := []struct {
+		name        string
+		model       string
+		thinking    *ThinkingConfig
+		wantBudget  int
+		wantPresent bool
+	}{
+		{
+			name:        "enabled without budget defaults to dynamic (-1)",
+			model:       "claude-opus-4-6-thinking",
+			thinking:    &ThinkingConfig{Type: "enabled"},
+			wantBudget:  -1,
+			wantPresent: true,
+		},
+		{
+			name:        "enabled with budget uses the provided value",
+			model:       "claude-opus-4-6-thinking",
+			thinking:    &ThinkingConfig{Type: "enabled", BudgetTokens: 1024},
+			wantBudget:  1024,
+			wantPresent: true,
+		},
+		{
+			name:        "enabled with -1 budget uses dynamic (-1)",
+			model:       "claude-opus-4-6-thinking",
+			thinking:    &ThinkingConfig{Type: "enabled", BudgetTokens: -1},
+			wantBudget:  -1,
+			wantPresent: true,
+		},
+		{
+			name:        "adaptive on opus4.6 maps to high budget (24576)",
+			model:       "claude-opus-4-6-thinking",
+			thinking:    &ThinkingConfig{Type: "adaptive", BudgetTokens: 20000},
+			wantBudget:  ClaudeAdaptiveHighThinkingBudgetTokens,
+			wantPresent: true,
+		},
+		{
+			name:        "adaptive on non-opus model keeps default dynamic (-1)",
+			model:       "claude-sonnet-4-5-thinking",
+			thinking:    &ThinkingConfig{Type: "adaptive"},
+			wantBudget:  -1,
+			wantPresent: true,
+		},
+		{
+			name:        "disabled does not emit thinkingConfig",
+			model:       "claude-opus-4-6-thinking",
+			thinking:    &ThinkingConfig{Type: "disabled", BudgetTokens: 1024},
+			wantBudget:  0,
+			wantPresent: false,
+		},
+		{
+			name:        "nil thinking does not emit thinkingConfig",
+			model:       "claude-opus-4-6-thinking",
+			thinking:    nil,
+			wantBudget:  0,
+			wantPresent: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &ClaudeRequest{
+				Model:    tt.model,
+				Thinking: tt.thinking,
+			}
+			cfg := buildGenerationConfig(req)
+			if cfg == nil {
+				t.Fatalf("expected non-nil generationConfig")
+			}
+
+			if tt.wantPresent {
+				if cfg.ThinkingConfig == nil {
+					t.Fatalf("expected thinkingConfig to be present")
+				}
+				if !cfg.ThinkingConfig.IncludeThoughts {
+					t.Fatalf("expected includeThoughts=true")
+				}
+				if cfg.ThinkingConfig.ThinkingBudget != tt.wantBudget {
+					t.Fatalf("expected thinkingBudget=%d, got %d", tt.wantBudget, cfg.ThinkingConfig.ThinkingBudget)
+				}
+				return
+			}
+
+			if cfg.ThinkingConfig != nil {
+				t.Fatalf("expected thinkingConfig to be nil, got %+v", cfg.ThinkingConfig)
+			}
+		})
+	}
+}
+
+func TestBuildGenerationConfig_ReasoningModelSkipsUnsupportedParams(t *testing.T) {
+	temp := 0.7
+	topP := 0.9
+	topK := 40
+
+	tests := []struct {
+		name          string
+		model         string
+		wantReasoning bool
+	}{
+		{name: "reasoning model gemini-3.1-pro-high", model: "gemini-3.1-pro-high", wantReasoning: true},
+		{name: "reasoning model gemini-3-pro-high", model: "gemini-3-pro-high", wantReasoning: true},
+		{name: "non-reasoning model gemini-3.1-pro-low", model: "gemini-3.1-pro-low", wantReasoning: false},
+		{name: "non-reasoning model gemini-2.5-flash", model: "gemini-2.5-flash", wantReasoning: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &ClaudeRequest{
+				Model:       tt.model,
+				Temperature: &temp,
+				TopP:        &topP,
+				TopK:        &topK,
+			}
+			cfg := buildGenerationConfig(req)
+			if cfg == nil {
+				t.Fatalf("expected non-nil generationConfig")
+			}
+
+			if tt.wantReasoning {
+				if len(cfg.StopSequences) != 0 {
+					t.Fatalf("expected StopSequences to be omitted for reasoning model, got %v", cfg.StopSequences)
+				}
+				if cfg.Temperature != nil {
+					t.Fatalf("expected Temperature to be omitted for reasoning model, got %v", *cfg.Temperature)
+				}
+				if cfg.TopP != nil {
+					t.Fatalf("expected TopP to be omitted for reasoning model, got %v", *cfg.TopP)
+				}
+				if cfg.TopK != nil {
+					t.Fatalf("expected TopK to be omitted for reasoning model, got %v", *cfg.TopK)
+				}
+				return
+			}
+
+			if len(cfg.StopSequences) == 0 {
+				t.Fatalf("expected StopSequences to be set for non-reasoning model")
+			}
+			if cfg.Temperature == nil || *cfg.Temperature != temp {
+				t.Fatalf("expected Temperature=%v to be preserved for non-reasoning model, got %v", temp, cfg.Temperature)
+			}
+			if cfg.TopP == nil || *cfg.TopP != topP {
+				t.Fatalf("expected TopP=%v to be preserved for non-reasoning model, got %v", topP, cfg.TopP)
+			}
+			if cfg.TopK == nil || *cfg.TopK != topK {
+				t.Fatalf("expected TopK=%v to be preserved for non-reasoning model, got %v", topK, cfg.TopK)
+			}
+		})
+	}
+}
+
+func TestTransformClaudeToGeminiWithOptions_PreservesBillingHeaderSystemBlock(t *testing.T) {
+	tests := []struct {
+		name   string
+		system json.RawMessage
+	}{
+		{
+			name:   "system array",
+			system: json.RawMessage(`[{"type":"text","text":"x-anthropic-billing-header keep"}]`),
+		},
+		{
+			name:   "system string",
+			system: json.RawMessage(`"x-anthropic-billing-header keep"`),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			claudeReq := &ClaudeRequest{
+				Model:  "claude-3-5-sonnet-latest",
+				System: tt.system,
+				Messages: []ClaudeMessage{
+					{
+						Role:    "user",
+						Content: json.RawMessage(`[{"type":"text","text":"hello"}]`),
+					},
+				},
+			}
+
+			body, err := TransformClaudeToGeminiWithOptions(claudeReq, "project-1", "gemini-2.5-flash", DefaultTransformOptions())
+			require.NoError(t, err)
+
+			var req V1InternalRequest
+			require.NoError(t, json.Unmarshal(body, &req))
+			require.NotNil(t, req.Request.SystemInstruction)
+
+			found := false
+			for _, part := range req.Request.SystemInstruction.Parts {
+				if strings.Contains(part.Text, "x-anthropic-billing-header keep") {
+					found = true
+					break
+				}
+			}
+
+			require.True(t, found, "转换后的 systemInstruction 应保留 x-anthropic-billing-header 内容")
+		})
+	}
+}
+
+func TestTransformClaudeToGeminiWithOptions_MessageRoles(t *testing.T) {
+	transform := func(t *testing.T, claudeReq *ClaudeRequest) V1InternalRequest {
+		t.Helper()
+
+		body, err := TransformClaudeToGeminiWithOptions(claudeReq, "project-1", "gemini-2.5-flash", DefaultTransformOptions())
+		require.NoError(t, err)
+
+		var req V1InternalRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		return req
+	}
+
+	systemText := func(content *GeminiContent) string {
+		if content == nil {
+			return ""
+		}
+		var texts []string
+		for _, part := range content.Parts {
+			texts = append(texts, part.Text)
+		}
+		return strings.Join(texts, "\n")
+	}
+
+	t.Run("message system role moves to system instruction", func(t *testing.T) {
+		req := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{
+					Role:    "system",
+					Content: json.RawMessage(`[{"type":"text","text":"skills context"}]`),
+				},
+				{
+					Role:    "user",
+					Content: json.RawMessage(`"hello"`),
+				},
+			},
+		})
+
+		require.Len(t, req.Request.Contents, 1)
+		require.Equal(t, "user", req.Request.Contents[0].Role)
+		require.Contains(t, systemText(req.Request.SystemInstruction), "skills context")
+		for _, content := range req.Request.Contents {
+			require.NotEqual(t, "system", content.Role)
+		}
+	})
+
+	t.Run("assistant role still maps to model", func(t *testing.T) {
+		req := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{
+					Role:    "assistant",
+					Content: json.RawMessage(`"hello from assistant"`),
+				},
+			},
+		})
+
+		require.Len(t, req.Request.Contents, 1)
+		require.Equal(t, "model", req.Request.Contents[0].Role)
+		require.Equal(t, "hello from assistant", req.Request.Contents[0].Parts[0].Text)
+	})
+
+	t.Run("top level and message system instructions are merged", func(t *testing.T) {
+		req := transform(t, &ClaudeRequest{
+			Model:  "claude-3-5-sonnet-latest",
+			System: json.RawMessage(`"top level system"`),
+			Messages: []ClaudeMessage{
+				{
+					Role:    "system",
+					Content: json.RawMessage(`"message system"`),
+				},
+				{
+					Role:    "user",
+					Content: json.RawMessage(`"hello"`),
+				},
+			},
+		})
+
+		mergedSystem := systemText(req.Request.SystemInstruction)
+		require.Contains(t, mergedSystem, "top level system")
+		require.Contains(t, mergedSystem, "message system")
+		require.Less(t, strings.Index(mergedSystem, "top level system"), strings.Index(mergedSystem, "message system"))
+		require.Len(t, req.Request.Contents, 1)
+		require.Equal(t, "user", req.Request.Contents[0].Role)
+	})
+
+	t.Run("mid conversation system role stays in contents", func(t *testing.T) {
+		req := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{Role: "user", Content: json.RawMessage(`"question"`)},
+				{Role: "assistant", Content: json.RawMessage(`"answer"`)},
+				{Role: "user", Content: json.RawMessage(`"follow up"`)},
+				{Role: "system", Content: json.RawMessage(`"turn counter"`)},
+			},
+		})
+
+		// 中途的 system 不得被提到 systemInstruction，否则会插到已有 contents 前面
+		require.NotContains(t, systemText(req.Request.SystemInstruction), "turn counter")
+		require.Len(t, req.Request.Contents, 3)
+		require.Equal(t, "user", req.Request.Contents[2].Role)
+		require.Equal(t, "follow up", req.Request.Contents[2].Parts[0].Text)
+		require.Equal(t, "turn counter", req.Request.Contents[2].Parts[1].Text)
+	})
+
+	t.Run("mid conversation system after assistant becomes its own user turn", func(t *testing.T) {
+		req := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{Role: "user", Content: json.RawMessage(`"question"`)},
+				{Role: "assistant", Content: json.RawMessage(`"answer"`)},
+				{Role: "system", Content: json.RawMessage(`"turn counter"`)},
+			},
+		})
+
+		require.NotContains(t, systemText(req.Request.SystemInstruction), "turn counter")
+		require.Len(t, req.Request.Contents, 3)
+		require.Equal(t, "model", req.Request.Contents[1].Role)
+		require.Equal(t, "user", req.Request.Contents[2].Role)
+		require.Equal(t, "turn counter", req.Request.Contents[2].Parts[0].Text)
+	})
+
+	t.Run("user after mid conversation system keeps roles alternating", func(t *testing.T) {
+		base := []ClaudeMessage{
+			{Role: "user", Content: json.RawMessage(`"question"`)},
+			{Role: "assistant", Content: json.RawMessage(`"answer"`)},
+			{Role: "system", Content: json.RawMessage(`"turn counter"`)},
+		}
+		before := transform(t, &ClaudeRequest{Model: "claude-3-5-sonnet-latest", Messages: base})
+		after := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: append(append([]ClaudeMessage{}, base...),
+				ClaudeMessage{Role: "user", Content: json.RawMessage(`"next question"`)}),
+		})
+
+		require.Len(t, before.Request.Contents, 3)
+		require.Len(t, after.Request.Contents, 3)
+		require.Equal(t, []string{"user", "model", "user"}, []string{
+			after.Request.Contents[0].Role,
+			after.Request.Contents[1].Role,
+			after.Request.Contents[2].Role,
+		})
+		require.Equal(t, "turn counter", after.Request.Contents[2].Parts[0].Text)
+		require.Equal(t, "next question", after.Request.Contents[2].Parts[1].Text)
+		require.Equal(t, before.Request.Contents[:2], after.Request.Contents[:2],
+			"coalescing the next user may change only the last synthetic turn")
+		require.Equal(t, systemText(before.Request.SystemInstruction), systemText(after.Request.SystemInstruction))
+	})
+
+	t.Run("system between ordinary users stays in one user turn", func(t *testing.T) {
+		req := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{Role: "user", Content: json.RawMessage(`"first"`)},
+				{Role: "system", Content: json.RawMessage(`"turn counter"`)},
+				{Role: "user", Content: json.RawMessage(`"second"`)},
+			},
+		})
+
+		require.Len(t, req.Request.Contents, 1)
+		require.Equal(t, "user", req.Request.Contents[0].Role)
+		require.Equal(t, []string{"first", "turn counter", "second"}, []string{
+			req.Request.Contents[0].Parts[0].Text,
+			req.Request.Contents[0].Parts[1].Text,
+			req.Request.Contents[0].Parts[2].Text,
+		})
+	})
+
+	t.Run("appending a turn never rewrites the existing prefix", func(t *testing.T) {
+		base := []ClaudeMessage{
+			{Role: "user", Content: json.RawMessage(`"question"`)},
+			{Role: "system", Content: json.RawMessage(`"counter 1"`)},
+			{Role: "assistant", Content: json.RawMessage(`"answer"`)},
+			{Role: "user", Content: json.RawMessage(`"follow up"`)},
+			{Role: "system", Content: json.RawMessage(`"counter 2"`)},
+		}
+		next := append(append([]ClaudeMessage{}, base...),
+			ClaudeMessage{Role: "assistant", Content: json.RawMessage(`"second answer"`)},
+			ClaudeMessage{Role: "user", Content: json.RawMessage(`"more"`)},
+			ClaudeMessage{Role: "system", Content: json.RawMessage(`"counter 3"`)},
+		)
+
+		reqA := transform(t, &ClaudeRequest{Model: "claude-3-5-sonnet-latest", Messages: base})
+		reqB := transform(t, &ClaudeRequest{Model: "claude-3-5-sonnet-latest", Messages: next})
+
+		// systemInstruction 必须逐字节稳定
+		sa, err := json.Marshal(reqA.Request.SystemInstruction)
+		require.NoError(t, err)
+		sb, err := json.Marshal(reqB.Request.SystemInstruction)
+		require.NoError(t, err)
+		require.Equal(t, string(sa), string(sb))
+
+		// 已有的 contents 必须是新一轮的前缀，不能被改写或位移
+		require.Greater(t, len(reqB.Request.Contents), len(reqA.Request.Contents))
+		for i := range reqA.Request.Contents {
+			x, err := json.Marshal(reqA.Request.Contents[i])
+			require.NoError(t, err)
+			y, err := json.Marshal(reqB.Request.Contents[i])
+			require.NoError(t, err)
+			require.Equal(t, string(x), string(y), "contents[%d] 被改写，前缀缓存会失效", i)
+		}
+	})
+
+	t.Run("ordinary user assistant conversation is unchanged", func(t *testing.T) {
+		req := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{
+					Role:    "user",
+					Content: json.RawMessage(`"question"`),
+				},
+				{
+					Role:    "assistant",
+					Content: json.RawMessage(`"answer"`),
+				},
+			},
+		})
+
+		require.Len(t, req.Request.Contents, 2)
+		require.Equal(t, "user", req.Request.Contents[0].Role)
+		require.Equal(t, "question", req.Request.Contents[0].Parts[0].Text)
+		require.Equal(t, "model", req.Request.Contents[1].Role)
+		require.Equal(t, "answer", req.Request.Contents[1].Parts[0].Text)
+	})
+}
+
+// TestTransformClaudeToGeminiWithOptions_UpstreamPrefixIsAppendOnly 钉住上游 payload 的
+// 前缀不变量：一轮一轮追加的对话，转换出来的 systemInstruction 必须逐字节不变，
+// contents 必须是上一轮 contents 的严格追加。
+//
+// 这条不变量就是 Gemini 隐式缓存能不能命中的充要条件。它曾经被破坏过：开启了
+// anthropic-beta: mid-conversation-system 的客户端逐轮注入 role="system" 消息，
+// 而 buildContents 把它们全部上提到 systemInstruction 末尾，于是每一轮都在
+// contents 之前插入新文本。现场表现是 cache_read 卡在 "tools + 上一轮 systemInstruction"
+// 这个固定值上、随对话增长命中率从 62% 一路掉到 47%，整段对话历史永远进不了缓存。
+//
+// 因此这里检查的是**整个序列化 payload 的前缀**，而不只是某一条消息落在哪里：
+// 单条消息的位置断言看不出「前面被插入了东西」这种破坏方式。
+func TestTransformClaudeToGeminiWithOptions_UpstreamPrefixIsAppendOnly(t *testing.T) {
+	transform := func(t *testing.T, messages []ClaudeMessage) V1InternalRequest {
+		t.Helper()
+
+		body, err := TransformClaudeToGeminiWithOptions(&ClaudeRequest{
+			Model:    "gemini-2.5-flash",
+			System:   json.RawMessage(`[{"type":"text","text":"You are a coding agent."}]`),
+			Messages: messages,
+		}, "project-1", "gemini-2.5-flash", DefaultTransformOptions())
+		require.NoError(t, err)
+
+		var req V1InternalRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		return req
+	}
+
+	// 把 contents 序列化成一串字节，用于前缀比较
+	serializeContents := func(t *testing.T, contents []GeminiContent) string {
+		t.Helper()
+
+		var b strings.Builder
+		for i := range contents {
+			raw, err := json.Marshal(contents[i])
+			require.NoError(t, err)
+			_, _ = b.Write(raw)
+		}
+		return b.String()
+	}
+
+	// 模拟客户端逐轮追加：assistant 回复 + 用户新提问 + 一条逐轮注入的 system 提示
+	messages := []ClaudeMessage{
+		{Role: "user", Content: json.RawMessage(`"turn 0"`)},
+		{Role: "system", Content: json.RawMessage(`"<reminder>tokens left 1000</reminder>"`)},
+	}
+
+	prev := transform(t, messages)
+	prevSystem, err := json.Marshal(prev.Request.SystemInstruction)
+	require.NoError(t, err)
+	prevContents := serializeContents(t, prev.Request.Contents)
+
+	for turn := 1; turn <= 5; turn++ {
+		messages = append(messages,
+			ClaudeMessage{Role: "assistant", Content: json.RawMessage(fmt.Sprintf(`"answer %d"`, turn))},
+			ClaudeMessage{Role: "user", Content: json.RawMessage(fmt.Sprintf(`"turn %d"`, turn))},
+			// 逐轮变化的注入内容：这正是当初把 systemInstruction 撑得逐轮不同的东西
+			ClaudeMessage{Role: "system", Content: json.RawMessage(fmt.Sprintf(`"<reminder>tokens left %d</reminder>"`, 1000-turn))},
+		)
+
+		cur := transform(t, messages)
+
+		curSystem, err := json.Marshal(cur.Request.SystemInstruction)
+		require.NoError(t, err)
+		require.Equal(t, string(prevSystem), string(curSystem),
+			"第 %d 轮 systemInstruction 发生变化，上游前缀缓存会整段失效", turn)
+
+		curContents := serializeContents(t, cur.Request.Contents)
+		require.True(t, strings.HasPrefix(curContents, prevContents),
+			"第 %d 轮 contents 不是上一轮的追加，上游前缀缓存会整段失效", turn)
+		require.Greater(t, len(curContents), len(prevContents),
+			"第 %d 轮没有新增任何 contents", turn)
+
+		// 逐轮注入的内容必须确实进了 contents，而不是被丢掉
+		require.Contains(t, curContents, fmt.Sprintf("tokens left %d", 1000-turn))
+
+		prevSystem, prevContents = curSystem, curContents
+	}
+}
+
+func TestTransformClaudeToGeminiWithOptions_DropsWebSearchAlongsideFunctions(t *testing.T) {
+	claudeReq := &ClaudeRequest{
+		Model: "claude-3-5-sonnet-latest",
+		Messages: []ClaudeMessage{
+			{
+				Role:    "user",
+				Content: json.RawMessage(`[{"type":"text","text":"hello"}]`),
+			},
+		},
+		Tools: []ClaudeTool{
+			{
+				Name:        "get_weather",
+				Description: "Get weather information",
+				InputSchema: map[string]any{"type": "object"},
+			},
+			{
+				Type: "web_search_20250305",
+				Name: "web_search",
+			},
+		},
+	}
+
+	body, err := TransformClaudeToGeminiWithOptions(claudeReq, "project-1", "claude-sonnet-4-6", DefaultTransformOptions())
+	require.NoError(t, err)
+
+	var req V1InternalRequest
+	require.NoError(t, json.Unmarshal(body, &req))
+	// Antigravity v1internal cannot mix googleSearch with functionDeclarations
+	// (upstream #6464). Prefer client tools so Codex-style sessions keep working.
+	require.Equal(t, "agent", req.RequestType)
+	require.Equal(t, "claude-sonnet-4-6", req.Model)
+	require.Len(t, req.Request.Tools, 1)
+	require.Len(t, req.Request.Tools[0].FunctionDeclarations, 1)
+	require.Equal(t, "get_weather", req.Request.Tools[0].FunctionDeclarations[0].Name)
+	require.Nil(t, req.Request.Tools[0].GoogleSearch)
+}
+
+func TestTransformClaudeToGeminiWithOptions_ReasoningModelToolConfig(t *testing.T) {
+	baseReq := func(tools []ClaudeTool) *ClaudeRequest {
+		return &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{
+					Role:    "user",
+					Content: json.RawMessage(`[{"type":"text","text":"hello"}]`),
+				},
+			},
+			Tools: tools,
+		}
+	}
+
+	t.Run("reasoning model without tools sets toolConfig", func(t *testing.T) {
+		body, err := TransformClaudeToGeminiWithOptions(baseReq(nil), "project-1", "gemini-3.1-pro-high", DefaultTransformOptions())
+		require.NoError(t, err)
+
+		var req V1InternalRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		require.NotNil(t, req.Request.ToolConfig, "reasoning 模型即使没有 tools 也必须设置 toolConfig")
+		require.NotNil(t, req.Request.ToolConfig.FunctionCallingConfig)
+		require.Equal(t, "VALIDATED", req.Request.ToolConfig.FunctionCallingConfig.Mode)
+		require.Empty(t, req.Request.Tools)
+	})
+
+	t.Run("reasoning model with tools still sets toolConfig", func(t *testing.T) {
+		tools := []ClaudeTool{
+			{
+				Name:        "get_weather",
+				Description: "Get weather information",
+				InputSchema: map[string]any{"type": "object"},
+			},
+		}
+		body, err := TransformClaudeToGeminiWithOptions(baseReq(tools), "project-1", "gemini-3.1-pro-high", DefaultTransformOptions())
+		require.NoError(t, err)
+
+		var req V1InternalRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		require.NotNil(t, req.Request.ToolConfig, "reasoning 模型有 tools 时仍应设置 toolConfig")
+		require.Equal(t, "VALIDATED", req.Request.ToolConfig.FunctionCallingConfig.Mode)
+		require.Len(t, req.Request.Tools, 1)
+		require.Len(t, req.Request.Tools[0].FunctionDeclarations, 1)
+		require.Equal(t, "get_weather", req.Request.Tools[0].FunctionDeclarations[0].Name)
+	})
+
+	t.Run("non-reasoning model without tools still sets toolConfig", func(t *testing.T) {
+		body, err := TransformClaudeToGeminiWithOptions(baseReq(nil), "project-1", "gemini-2.5-flash", DefaultTransformOptions())
+		require.NoError(t, err)
+
+		var req V1InternalRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		require.NotNil(t, req.Request.ToolConfig, "非 reasoning 模型应始终设置 toolConfig，与官方客户端一致")
+		require.Equal(t, "VALIDATED", req.Request.ToolConfig.FunctionCallingConfig.Mode)
+		require.Empty(t, req.Request.Tools)
+	})
+}
+
+func TestGeminiToolConfig_DropsBuiltinsWhenClientFunctionsPresent(t *testing.T) {
+	functionTool := ClaudeTool{
+		Name:        "get_weather",
+		Description: "Get weather information",
+		InputSchema: map[string]any{"type": "object"},
+	}
+	webSearchTool := ClaudeTool{
+		Type: "web_search_20250305",
+		Name: "web_search",
+	}
+
+	transform := func(t *testing.T, tools []ClaudeTool, mappedModel string) (V1InternalRequest, string) {
+		t.Helper()
+		body, err := TransformClaudeToGeminiWithOptions(&ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{
+					Role:    "user",
+					Content: json.RawMessage(`[{"type":"text","text":"hello"}]`),
+				},
+			},
+			Tools: tools,
+		}, "project-1", mappedModel, DefaultTransformOptions())
+		require.NoError(t, err)
+
+		var req V1InternalRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		return req, string(body)
+	}
+
+	t.Run("mixed builtin and function tools keep only client functions", func(t *testing.T) {
+		req, raw := transform(t, []ClaudeTool{functionTool, webSearchTool}, "claude-sonnet-4-6")
+
+		require.Equal(t, "agent", req.RequestType)
+		require.Equal(t, "claude-sonnet-4-6", req.Model)
+		require.Len(t, req.Request.Tools, 1)
+		require.Len(t, req.Request.Tools[0].FunctionDeclarations, 1)
+		require.Nil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
+		require.NotContains(t, raw, "googleSearch")
+		require.NotContains(t, raw, "includeServerSideToolInvocations")
+	})
+
+	t.Run("function tools only leave the flag unset", func(t *testing.T) {
+		req, raw := transform(t, []ClaudeTool{functionTool}, "gemini-2.5-flash")
+
+		require.NotNil(t, req.Request.ToolConfig)
+		require.Nil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
+		require.NotContains(t, raw, "includeServerSideToolInvocations")
+	})
+
+	t.Run("web search only keeps googleSearch and fallback model", func(t *testing.T) {
+		req, raw := transform(t, []ClaudeTool{webSearchTool}, "claude-sonnet-4-6")
+
+		require.Equal(t, "web_search", req.RequestType)
+		require.Equal(t, "gemini-2.5-flash", req.Model)
+		require.Len(t, req.Request.Tools, 1)
+		require.NotNil(t, req.Request.Tools[0].GoogleSearch)
+		require.Nil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
+		require.NotContains(t, raw, "includeServerSideToolInvocations")
+	})
+}

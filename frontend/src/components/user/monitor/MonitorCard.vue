@@ -1,0 +1,137 @@
+<template>
+  <button
+    type="button"
+    class="group text-left p-5 rounded-md min-h-[280px] w-full bg-white border border-gray-200 dark:bg-dark-800 dark:border-dark-700 hover:border-gray-300 dark:hover:border-dark-600 transition-colors flex flex-col"
+    @click="emit('click')"
+  >
+    <!-- Header: icon + name/meta + status chip（图标和 meta 里的字段只在接口返回时才渲染） -->
+    <div class="flex items-start gap-3">
+      <span
+        v-if="item.provider"
+        class="w-9 h-9 rounded-md border border-gray-200 dark:border-dark-700 grid place-items-center flex-shrink-0 text-gray-600 dark:text-gray-400"
+      >
+        <ProviderIcon :provider="item.provider" :size="20" />
+      </span>
+      <div class="flex-1 min-w-0">
+        <div class="text-base font-semibold truncate text-gray-900 dark:text-gray-100">
+          {{ item.name }}
+        </div>
+        <div class="mt-0.5 flex items-center gap-1.5 min-w-0">
+          <span
+            v-if="item.provider"
+            class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium flex-shrink-0 border border-gray-200 text-gray-700 dark:border-dark-700 dark:text-gray-300"
+          >
+            {{ providerLabel(item.provider) }}
+          </span>
+          <span
+            v-if="item.primary_model"
+            class="num text-xs truncate text-gray-600 dark:text-gray-400"
+          >
+            {{ item.primary_model }}
+          </span>
+          <span
+            v-if="item.group_name"
+            class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300 flex-shrink-0"
+          >
+            {{ item.group_name }}
+          </span>
+          <!-- 什么标签都没有时留一行等高的空位，避免同一排的卡片内容上下错位 -->
+          <span
+            v-if="!item.provider && !item.primary_model && !item.group_name"
+            class="invisible inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium"
+            aria-hidden="true"
+          >&nbsp;</span>
+        </div>
+      </div>
+      <span
+        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium flex-shrink-0 border border-gray-200 dark:border-dark-700"
+        :class="statusIsSignal ? 'text-primary-700 dark:text-primary-300' : 'text-gray-700 dark:text-gray-300'"
+      >
+        <span
+          class="w-1.5 h-1.5 rounded-full"
+          :class="statusIsSignal ? 'bg-primary-600' : 'bg-gray-400 dark:bg-gray-500'"
+        ></span>
+        {{ viewStatusLabel(item.primary_status, adminView) }}
+      </span>
+    </div>
+
+    <!-- Metrics -->
+    <MonitorMetricPair
+      primary-icon="bolt"
+      :primary-label="t('monitorCommon.dialogLatency')"
+      :primary-value="formatLatency(item.primary_latency_ms)"
+      primary-unit="ms"
+      :secondary-icon="hasPing ? 'globe' : undefined"
+      :secondary-label="hasPing ? t('monitorCommon.endpointPing') : undefined"
+      :secondary-value="hasPing ? formatLatency(item.primary_ping_latency_ms) : undefined"
+      :secondary-unit="hasPing ? 'ms' : undefined"
+    />
+
+    <!-- Divider -->
+    <div class="mt-4 border-t border-gray-100 dark:border-dark-700/60"></div>
+
+    <!-- Availability row -->
+    <MonitorAvailabilityRow
+      :window-label="availabilityLabel"
+      :value="availabilityValue"
+      :samples-label="extraModelsCountLabel"
+    />
+
+    <!-- Timeline -->
+    <MonitorTimeline
+      :buckets="item.timeline"
+      :countdown-seconds="countdownSeconds"
+      :admin-view="adminView"
+    />
+  </button>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import type { UserMonitorView } from '@/api/channelMonitor'
+import { isHardFailureStatus, useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
+import ProviderIcon from './ProviderIcon.vue'
+import MonitorMetricPair from './MonitorMetricPair.vue'
+import MonitorAvailabilityRow from './MonitorAvailabilityRow.vue'
+import MonitorTimeline from './MonitorTimeline.vue'
+
+const props = defineProps<{
+  item: UserMonitorView
+  window: '7d' | '15d' | '30d'
+  availabilityValue: number | null
+  countdownSeconds: number
+}>()
+
+const emit = defineEmits<{
+  (e: 'click'): void
+}>()
+
+const { t } = useI18n()
+const {
+  viewStatusLabel,
+  providerLabel,
+  formatLatency,
+} = useChannelMonitorFormat()
+
+// 红卡（failed / error）用强调色；降级和正常用中性色。
+const statusIsSignal = computed(() => isHardFailureStatus(props.item.primary_status))
+
+// 管理员的响应带供应商等上游字段，普通用户的响应没有（见 api/channelMonitor.ts）。
+// 管理员保留 失败 / 错误 的细分文案；普通用户统一显示「不可用」。
+const adminView = computed(() => props.item.provider !== undefined)
+
+// 接口没返回 PING 字段（普通用户）时不渲染 PING 卡片；返回 null（管理员、暂无数据）仍显示 “-”。
+const hasPing = computed(() => props.item.primary_ping_latency_ms !== undefined)
+
+const availabilityLabel = computed(() => {
+  const win = t(`channelStatus.windowTab.${props.window}`)
+  return `${t('monitorCommon.availabilityPrefix')} · ${win}`
+})
+
+const extraModelsCountLabel = computed(() => {
+  const count = props.item.extra_models?.length ?? 0
+  if (count === 0) return undefined
+  return t('monitorCommon.extraModelsCount', { n: count })
+})
+</script>

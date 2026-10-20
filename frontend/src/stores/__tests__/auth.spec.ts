@@ -1,0 +1,758 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { setActivePinia, createPinia } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
+import { getAuthSessionVersion } from '@/utils/authSessionVersion'
+
+// Mock authAPI
+const mockLogin = vi.fn()
+const mockLogin2FA = vi.fn()
+const mockLogout = vi.fn()
+const mockGetCurrentUser = vi.fn()
+const mockRegister = vi.fn()
+const mockRefreshToken = vi.fn()
+
+vi.mock('@/api', () => ({
+  authAPI: {
+    login: (...args: any[]) => mockLogin(...args),
+    login2FA: (...args: any[]) => mockLogin2FA(...args),
+    logout: (...args: any[]) => mockLogout(...args),
+    getCurrentUser: (...args: any[]) => mockGetCurrentUser(...args),
+    register: (...args: any[]) => mockRegister(...args),
+    refreshToken: (...args: any[]) => mockRefreshToken(...args),
+  },
+  isTotp2FARequired: (response: any) => response?.requires_2fa === true,
+}))
+
+const fakeUser = {
+  id: 1,
+  username: 'testuser',
+  email: 'test@example.com',
+  role: 'user' as const,
+  balance: 100,
+  concurrency: 5,
+  status: 'active' as const,
+  allowed_groups: null,
+  created_at: '2024-01-01',
+  updated_at: '2024-01-01',
+}
+
+const fakeAdminUser = {
+  ...fakeUser,
+  id: 2,
+  username: 'admin',
+  email: 'admin@example.com',
+  role: 'admin' as const,
+}
+
+const fakeAuthResponse = {
+  access_token: 'test-token-123',
+  refresh_token: 'refresh-token-456',
+  expires_in: 3600,
+  token_type: 'Bearer',
+  user: { ...fakeUser },
+}
+
+describe('useAuthStore', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  // --- login ---
+
+  describe('login', () => {
+    it('成功登录后设置 token 和 user', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      expect(store.token).toBe('test-token-123')
+      expect(store.user).toEqual(fakeUser)
+      expect(store.isAuthenticated).toBe(true)
+      expect(localStorage.getItem('auth_token')).toBe('test-token-123')
+      expect(localStorage.getItem('auth_user')).toBe(JSON.stringify(fakeUser))
+    })
+
+    it('登录失败时清除状态并抛出错误', async () => {
+      mockLogin.mockRejectedValue(new Error('Invalid credentials'))
+      const store = useAuthStore()
+
+      await expect(store.login({ email: 'test@example.com', password: 'wrong' })).rejects.toThrow(
+        'Invalid credentials'
+      )
+
+      expect(store.token).toBeNull()
+      expect(store.user).toBeNull()
+      expect(store.isAuthenticated).toBe(false)
+    })
+
+    it('需要 2FA 时返回响应但不设置认证状态', async () => {
+      const twoFAResponse = { requires_2fa: true, temp_token: 'temp-123' }
+      mockLogin.mockResolvedValue(twoFAResponse)
+      const store = useAuthStore()
+
+      const result = await store.login({ email: 'test@example.com', password: '123456' })
+
+      expect(result).toEqual(twoFAResponse)
+      expect(store.token).toBeNull()
+      expect(store.isAuthenticated).toBe(false)
+    })
+  })
+
+  // --- login2FA ---
+
+  describe('login2FA', () => {
+    it('keeps an access-token-only 2FA expiry without inheriting the previous refresh token', async () => {
+      mockLogin.mockResolvedValueOnce(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+      mockLogin2FA.mockResolvedValueOnce({
+        ...fakeAuthResponse,
+        access_token: 'account-b-token',
+        refresh_token: undefined,
+        expires_in: 1800,
+        user: fakeAdminUser,
+      })
+      const expectedExpiry = Date.now() + 1800_000
+
+      await store.login2FA('account-b-temp-token', '123456')
+
+      expect(store.user?.id).toBe(fakeAdminUser.id)
+      expect(localStorage.getItem('refresh_token')).toBeNull()
+      expect(localStorage.getItem('token_expires_at')).toBe(String(expectedExpiry))
+      expect(store.token).toBe('account-b-token')
+    })
+
+    it('2FA 验证成功后设置认证状态', async () => {
+      mockLogin2FA.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+
+      const user = await store.login2FA('temp-123', '654321')
+
+      expect(store.token).toBe('test-token-123')
+      expect(store.user).toEqual(fakeUser)
+      expect(user).toEqual(fakeUser)
+      expect(mockLogin2FA).toHaveBeenCalledWith({
+        temp_token: 'temp-123',
+        totp_code: '654321',
+      })
+    })
+
+    it('2FA 验证失败时清除状态并抛出错误', async () => {
+      mockLogin2FA.mockRejectedValue(new Error('Invalid TOTP'))
+      const store = useAuthStore()
+
+      await expect(store.login2FA('temp-123', '000000')).rejects.toThrow('Invalid TOTP')
+      expect(store.token).toBeNull()
+      expect(store.isAuthenticated).toBe(false)
+    })
+  })
+
+  it.each([false, true])('keeps account B when account A setToken /auth/me finishes late (success: %s)', async (succeeds) => {
+    const store = useAuthStore()
+    let resolveOld!: (value: { data: typeof fakeUser }) => void
+    let rejectOld!: (reason: unknown) => void
+    mockGetCurrentUser.mockReturnValueOnce(new Promise((resolve, reject) => {
+      resolveOld = resolve
+      rejectOld = reject
+    }))
+    const oldLogin = store.setToken('account-a-token')
+    mockLogin.mockResolvedValueOnce({
+      ...fakeAuthResponse, access_token: 'account-b-token', refresh_token: 'account-b-refresh',
+      user: fakeAdminUser
+    })
+    await store.login({ email: 'admin@example.com', password: '123456' })
+    const currentTimers = vi.getTimerCount()
+
+    if (succeeds) resolveOld({ data: fakeUser })
+    else rejectOld({ status: 401, code: 'TOKEN_EXPIRED' })
+    await expect(oldLogin).rejects.toMatchObject(succeeds
+      ? { code: 'AUTH_SESSION_CHANGED' }
+      : { status: 401, code: 'TOKEN_EXPIRED' })
+
+    expect(store.user?.id).toBe(fakeAdminUser.id)
+    expect(store.token).toBe('account-b-token')
+    expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+    expect(JSON.parse(localStorage.getItem('auth_user')!).id).toBe(fakeAdminUser.id)
+    expect(localStorage.getItem('refresh_token')).toBe('account-b-refresh')
+    expect(vi.getTimerCount()).toBe(currentTimers)
+  })
+
+  it.each([undefined, 'account-b-refresh'])('replaces an old refresh context for 2FA completion (%s)', async (nextRefreshToken) => {
+    vi.clearAllTimers()
+    const store = useAuthStore()
+    mockLogin.mockResolvedValueOnce(fakeAuthResponse)
+    await store.login({ email: 'account-a@example.com', password: '123456' })
+    const oldSession = store.authSessionVersion
+    mockGetCurrentUser.mockResolvedValueOnce({ data: fakeAdminUser })
+
+    await store.setToken('account-b-token', {
+      refreshToken: nextRefreshToken,
+      expiresIn: nextRefreshToken ? 3600 : undefined,
+      expectedSessionVersion: oldSession
+    })
+
+    expect(store.user?.id).toBe(fakeAdminUser.id)
+    expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+    expect(localStorage.getItem('refresh_token')).toBe(nextRefreshToken ?? null)
+    if (nextRefreshToken) {
+      expect(Number(localStorage.getItem('token_expires_at'))).toBeGreaterThan(Date.now())
+    } else {
+      expect(localStorage.getItem('token_expires_at')).toBeNull()
+      // Cross the previous account's refresh deadline and observe behavior, not timer totals.
+      mockGetCurrentUser.mockResolvedValue({ data: fakeAdminUser })
+      const profileReadsBeforeAdvance = mockGetCurrentUser.mock.calls.length
+      const profileVersionBeforeAdvance = store.profileRefreshVersion
+      await vi.advanceTimersByTimeAsync(3_600_000)
+      expect(mockRefreshToken).not.toHaveBeenCalled()
+      expect(mockGetCurrentUser.mock.calls.length).toBeGreaterThan(profileReadsBeforeAdvance)
+      expect(store.profileRefreshVersion).toBeGreaterThan(profileVersionBeforeAdvance)
+    }
+  })
+
+  it('rejects a 2FA completion from an obsolete session before replacing its credentials', async () => {
+    const store = useAuthStore()
+    mockLogin.mockResolvedValueOnce(fakeAuthResponse).mockResolvedValueOnce({
+      ...fakeAuthResponse, access_token: 'account-b-token', user: fakeAdminUser
+    })
+    await store.login({ email: 'account-a@example.com', password: '123456' })
+    const oldSession = store.authSessionVersion
+    await store.login({ email: 'admin@example.com', password: '123456' })
+
+    await expect(store.setToken('old-2fa-token', {
+      refreshToken: 'old-2fa-refresh', expiresIn: 3600,
+      expectedSessionVersion: oldSession
+    })).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
+    expect(store.user?.id).toBe(fakeAdminUser.id)
+    expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+    expect(localStorage.getItem('refresh_token')).toBe(fakeAuthResponse.refresh_token)
+  })
+
+  it.each(['login', 'login2FA', 'register'] as const)('does not commit an old %s response over account B', async (operation) => {
+    const store = useAuthStore()
+    let resolveOld!: (value: typeof fakeAuthResponse) => void
+    const oldResponse = new Promise<typeof fakeAuthResponse>((resolve) => { resolveOld = resolve })
+    let oldAttempt: Promise<unknown>
+    if (operation === 'login') {
+      mockLogin.mockReturnValueOnce(oldResponse).mockResolvedValueOnce({
+        ...fakeAuthResponse, access_token: 'account-b-token', user: fakeAdminUser
+      })
+      oldAttempt = store.login({ email: 'account-a@example.com', password: '123456' })
+    } else if (operation === 'login2FA') {
+      mockLogin2FA.mockReturnValueOnce(oldResponse)
+      oldAttempt = store.login2FA('old-temp-token', '123456')
+    } else {
+      mockRegister.mockReturnValueOnce(oldResponse)
+      oldAttempt = store.register({ email: 'account-a@example.com', password: '123456' })
+    }
+    if (operation !== 'login') {
+      mockLogin.mockResolvedValueOnce({
+        ...fakeAuthResponse, access_token: 'account-b-token', user: fakeAdminUser
+      })
+    }
+    await store.login({ email: 'admin@example.com', password: '123456' })
+
+    resolveOld(fakeAuthResponse)
+    await expect(oldAttempt).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
+    expect(store.user?.id).toBe(fakeAdminUser.id)
+    expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+    expect(JSON.parse(localStorage.getItem('auth_user')!).id).toBe(fakeAdminUser.id)
+  })
+
+  it('does not schedule an old proactive refresh result into a new account', async () => {
+    const store = useAuthStore()
+    let resolveOldRefresh!: (value: { access_token: string; refresh_token: string; expires_in: number; token_type: string }) => void
+    mockRefreshToken.mockReturnValueOnce(new Promise((resolve) => { resolveOldRefresh = resolve }))
+    mockLogin.mockResolvedValueOnce({ ...fakeAuthResponse, expires_in: 60 })
+      .mockResolvedValueOnce({
+        ...fakeAuthResponse, access_token: 'account-b-token', refresh_token: 'account-b-refresh',
+        user: fakeAdminUser
+      })
+    await store.login({ email: 'account-a@example.com', password: '123456' })
+    await store.login({ email: 'admin@example.com', password: '123456' })
+    const bExpiry = localStorage.getItem('token_expires_at')
+    const bTimers = vi.getTimerCount()
+
+    resolveOldRefresh({ access_token: 'old-refreshed-token', refresh_token: 'old-refreshed-refresh',
+      expires_in: 60, token_type: 'Bearer' })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(store.token).toBe('account-b-token')
+    expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+    expect(localStorage.getItem('refresh_token')).toBe('account-b-refresh')
+    expect(localStorage.getItem('token_expires_at')).toBe(bExpiry)
+    expect(vi.getTimerCount()).toBe(bTimers)
+  })
+
+  // --- logout ---
+
+  describe('logout', () => {
+    it('does not clear account B when account A logout completes late', async () => {
+      const store = useAuthStore()
+      mockLogin.mockResolvedValueOnce(fakeAuthResponse).mockResolvedValueOnce({
+        ...fakeAuthResponse, access_token: 'account-b-token', user: fakeAdminUser
+      })
+      await store.login({ email: 'account-a@example.com', password: '123456' })
+      let resolveLogout!: () => void
+      mockLogout.mockReturnValueOnce(new Promise<void>((resolve) => { resolveLogout = resolve }))
+      const oldLogout = store.logout()
+      await store.login({ email: 'admin@example.com', password: '123456' })
+
+      resolveLogout()
+      await oldLogout
+      expect(store.user?.id).toBe(fakeAdminUser.id)
+      expect(store.token).toBe('account-b-token')
+      expect(localStorage.getItem('auth_token')).toBe('account-b-token')
+      expect(JSON.parse(localStorage.getItem('auth_user')!).id).toBe(fakeAdminUser.id)
+    })
+
+    it('注销后清除所有状态和 localStorage', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      mockLogout.mockResolvedValue(undefined)
+      const store = useAuthStore()
+
+      // 先登录
+      await store.login({ email: 'test@example.com', password: '123456' })
+      expect(store.isAuthenticated).toBe(true)
+
+      // 注销
+      await store.logout()
+
+      expect(store.token).toBeNull()
+      expect(store.user).toBeNull()
+      expect(store.isAuthenticated).toBe(false)
+      expect(localStorage.getItem('auth_token')).toBeNull()
+      expect(localStorage.getItem('auth_user')).toBeNull()
+      expect(localStorage.getItem('refresh_token')).toBeNull()
+      expect(localStorage.getItem('token_expires_at')).toBeNull()
+    })
+
+    it('服务端登出失败时仍清除本地会话', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      mockLogout.mockRejectedValue(new Error('network unavailable'))
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const store = useAuthStore()
+
+      await store.login({ email: 'test@example.com', password: '123456' })
+      await expect(store.logout()).resolves.toBeUndefined()
+
+      expect(store.isAuthenticated).toBe(false)
+      expect(localStorage.getItem('auth_token')).toBeNull()
+      expect(localStorage.getItem('refresh_token')).toBeNull()
+      expect(warn).toHaveBeenCalledOnce()
+    })
+  })
+
+  // --- checkAuth ---
+
+  describe('checkAuth', () => {
+    it('从 localStorage 恢复持久化状态', () => {
+      localStorage.setItem('auth_token', 'saved-token')
+      localStorage.setItem('auth_user', JSON.stringify(fakeUser))
+
+      // Mock refreshUser (getCurrentUser) 防止后台刷新报错
+      mockGetCurrentUser.mockResolvedValue({ data: fakeUser })
+
+      const store = useAuthStore()
+      store.checkAuth()
+
+      expect(store.token).toBe('saved-token')
+      expect(store.user).toEqual(fakeUser)
+      expect(store.isAuthenticated).toBe(true)
+    })
+
+    it('localStorage 无数据时保持未认证状态', () => {
+      const store = useAuthStore()
+      store.checkAuth()
+
+      expect(store.token).toBeNull()
+      expect(store.user).toBeNull()
+      expect(store.isAuthenticated).toBe(false)
+    })
+
+    it('localStorage 中用户数据损坏时清除状态', () => {
+      localStorage.setItem('auth_token', 'saved-token')
+      localStorage.setItem('auth_user', 'invalid-json{{{')
+
+      const store = useAuthStore()
+      store.checkAuth()
+
+      expect(store.token).toBeNull()
+      expect(store.user).toBeNull()
+      expect(localStorage.getItem('auth_token')).toBeNull()
+    })
+
+    it('恢复 refresh token 和过期时间', () => {
+      const futureTs = String(Date.now() + 3600_000)
+      localStorage.setItem('auth_token', 'saved-token')
+      localStorage.setItem('auth_user', JSON.stringify(fakeUser))
+      localStorage.setItem('refresh_token', 'saved-refresh')
+      localStorage.setItem('token_expires_at', futureTs)
+
+      mockGetCurrentUser.mockResolvedValue({ data: fakeUser })
+
+      const store = useAuthStore()
+      store.checkAuth()
+
+      expect(store.isAuthenticated).toBe(true)
+    })
+
+    it('恢复持久化 pending auth session', () => {
+      localStorage.setItem(
+        'pending_auth_session',
+        JSON.stringify({
+          token: 'pending-token',
+          token_field: 'pending_auth_token',
+          provider: 'wechat',
+          redirect: '/profile',
+        })
+      )
+
+      const store = useAuthStore()
+      store.checkAuth()
+
+      expect(store.hasPendingAuthSession).toBe(true)
+      expect(store.pendingAuthSession).toEqual({
+        token: 'pending-token',
+        token_field: 'pending_auth_token',
+        provider: 'wechat',
+        redirect: '/profile',
+      })
+    })
+  })
+
+  describe('pending auth session', () => {
+    it('persists and clears pending auth session state', () => {
+      const store = useAuthStore()
+
+      store.setPendingAuthSession({
+        token: 'pending-token',
+        token_field: 'pending_auth_token',
+        provider: 'wechat',
+        redirect: '/profile',
+      })
+
+      expect(store.hasPendingAuthSession).toBe(true)
+      expect(JSON.parse(localStorage.getItem('pending_auth_session') || 'null')).toEqual({
+        token: 'pending-token',
+        token_field: 'pending_auth_token',
+        provider: 'wechat',
+        redirect: '/profile',
+      })
+
+      store.clearPendingAuthSession()
+
+      expect(store.hasPendingAuthSession).toBe(false)
+      expect(localStorage.getItem('pending_auth_session')).toBeNull()
+    })
+
+    it('restores a persisted pending oauth session without requiring a token value', () => {
+      const firstStore = useAuthStore()
+
+      firstStore.setPendingAuthSession({
+        token: '',
+        token_field: 'pending_oauth_token',
+        provider: 'oidc',
+        redirect: '/welcome',
+        adoption_required: true,
+        suggested_display_name: 'OIDC Nick'
+      })
+
+      setActivePinia(createPinia())
+      const restoredStore = useAuthStore()
+      restoredStore.checkAuth()
+
+      expect(restoredStore.isAuthenticated).toBe(false)
+      expect(restoredStore.hasPendingAuthSession).toBe(true)
+      expect(restoredStore.pendingAuthSession).toEqual({
+        token: '',
+        token_field: 'pending_oauth_token',
+        provider: 'oidc',
+        redirect: '/welcome',
+        adoption_required: true,
+        suggested_display_name: 'OIDC Nick',
+        suggested_avatar_url: undefined
+      })
+    })
+
+    it('preserves pending auth session when registration fails', async () => {
+      const store = useAuthStore()
+      store.setPendingAuthSession({
+        token: 'pending-token',
+        token_field: 'pending_auth_token',
+        provider: 'oidc',
+        redirect: '/register',
+      })
+      mockRegister.mockRejectedValue(new Error('Register failed'))
+
+      await expect(
+        store.register({ email: 'user@example.com', password: 'secret-123' })
+      ).rejects.toThrow('Register failed')
+
+      expect(store.hasPendingAuthSession).toBe(true)
+      expect(store.pendingAuthSession).toEqual({
+        token: 'pending-token',
+        token_field: 'pending_auth_token',
+        provider: 'oidc',
+        redirect: '/register',
+      })
+    })
+  })
+
+  // --- isAdmin ---
+
+  describe('isAdmin', () => {
+    it('管理员用户返回 true', async () => {
+      const adminResponse = { ...fakeAuthResponse, user: { ...fakeAdminUser } }
+      mockLogin.mockResolvedValue(adminResponse)
+      const store = useAuthStore()
+
+      await store.login({ email: 'admin@example.com', password: '123456' })
+
+      expect(store.isAdmin).toBe(true)
+    })
+
+    it('普通用户返回 false', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      expect(store.isAdmin).toBe(false)
+    })
+
+    it('未登录时返回 false', () => {
+      const store = useAuthStore()
+      expect(store.isAdmin).toBe(false)
+    })
+  })
+
+  // --- refreshUser ---
+
+  describe('refreshUser', () => {
+    it.each([false, true])('does not let account A refresh change pending account B login (old request succeeds: %s)', async (succeeds) => {
+      mockLogin.mockResolvedValueOnce(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      let resolveOld!: (value: { data: typeof fakeUser }) => void
+      let rejectOld!: (reason: unknown) => void
+      mockGetCurrentUser.mockReturnValueOnce(new Promise((resolve, reject) => {
+        resolveOld = resolve
+        rejectOld = reject
+      }))
+      const oldRefresh = store.refreshUser()
+      let finishLogin!: (value: unknown) => void
+      mockLogin.mockReturnValueOnce(new Promise(resolve => { finishLogin = resolve }))
+      const newLogin = store.login({ email: 'admin@example.com', password: '123456' })
+      const pendingSession = store.authSessionVersion
+
+      if (succeeds) resolveOld({ data: { ...fakeUser, username: 'stale' } })
+      else rejectOld({ status: 401, code: 'AUTH_SESSION_CHANGED' })
+      await expect(oldRefresh).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
+      expect(store.authSessionVersion).toBe(pendingSession)
+
+      finishLogin({ ...fakeAuthResponse, access_token: 'account-b-token', user: fakeAdminUser })
+      await newLogin
+      expect(store.user?.id).toBe(fakeAdminUser.id)
+      expect(store.token).toBe('account-b-token')
+      expect(JSON.parse(localStorage.getItem('auth_user')!).id).toBe(fakeAdminUser.id)
+    })
+
+    it('刷新用户数据并更新 localStorage', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      const updatedUser = { ...fakeUser, username: 'updated-name' }
+      mockGetCurrentUser.mockResolvedValue({ data: updatedUser })
+
+      const result = await store.refreshUser()
+
+      expect(result).toEqual(updatedUser)
+      expect(store.user).toEqual(updatedUser)
+      expect(JSON.parse(localStorage.getItem('auth_user')!)).toEqual(updatedUser)
+    })
+
+    it('未认证时抛出错误', async () => {
+      const store = useAuthStore()
+      await expect(store.refreshUser()).rejects.toThrow('Not authenticated')
+    })
+
+    it('does not restore a profile fetched before a local email mutation', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      let resolveOld!: (value: { data: typeof fakeUser }) => void
+      mockGetCurrentUser.mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve }))
+      const oldRefresh = store.refreshUser()
+      store.invalidateUserRefresh()
+      store.applyUserProfile({ ...fakeUser, username: 'confirmed' }, store.authSessionVersion)
+      resolveOld({ data: { ...fakeUser, username: 'stale' } })
+      await oldRefresh
+      expect(store.user?.username).toBe('confirmed')
+      expect(JSON.parse(localStorage.getItem('auth_user')!).username).toBe('confirmed')
+      expect(store.profileRefreshVersion).toBe(0)
+
+      mockGetCurrentUser.mockResolvedValueOnce({ data: { ...fakeUser, username: 'current' } })
+      await store.refreshUser()
+      expect(store.user?.username).toBe('current')
+      expect(store.profileRefreshVersion).toBe(1)
+    })
+
+    it('does not log out for a stale 401 after a local email mutation', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      let rejectOld!: (reason: { status: number }) => void
+      mockGetCurrentUser.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectOld = reject }))
+      const oldRefresh = store.refreshUser()
+      store.invalidateUserRefresh()
+      rejectOld({ status: 401 })
+      await expect(oldRefresh).rejects.toEqual({ status: 401 })
+      expect(store.isAuthenticated).toBe(true)
+      expect(store.user?.id).toBe(fakeUser.id)
+    })
+
+    it('keeps the current session when a newer refresh fails', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+      const refreshVersion = store.profileRefreshVersion
+      mockGetCurrentUser.mockRejectedValueOnce(new Error('offline'))
+
+      await expect(store.refreshUser()).rejects.toThrow('offline')
+      expect(store.profileRefreshVersion).toBe(refreshVersion)
+      expect(store.isAuthenticated).toBe(true)
+    })
+
+    it('lets a newer in-flight refresh replace an earlier confirmed profile read', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+      store.invalidateUserRefresh()
+
+      let resolveNew!: (value: { data: typeof fakeUser }) => void
+      mockGetCurrentUser.mockReturnValueOnce(new Promise(resolve => { resolveNew = resolve }))
+      const newerRefresh = store.refreshUser()
+      store.applyUserProfile({ ...fakeUser, username: 'read-result' }, store.authSessionVersion, true)
+      expect(store.user?.username).toBe('read-result')
+
+      resolveNew({ data: { ...fakeUser, username: 'newer-result' } })
+      await newerRefresh
+      expect(store.user?.username).toBe('newer-result')
+      expect(JSON.parse(localStorage.getItem('auth_user')!).username).toBe('newer-result')
+    })
+
+    it('rejects an old profile update after logout and a new login', async () => {
+      mockLogin.mockResolvedValueOnce(fakeAuthResponse)
+        .mockResolvedValueOnce({ ...fakeAuthResponse, access_token: 'new-token', user: fakeAdminUser })
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+      const oldSession = store.authSessionVersion
+      expect(getAuthSessionVersion()).toBe(oldSession)
+      await store.logout()
+      await store.login({ email: 'admin@example.com', password: '123456' })
+
+      store.applyUserProfile({ ...fakeUser, username: 'old-response' }, oldSession)
+      expect(store.authSessionVersion).toBeGreaterThan(oldSession)
+      expect(getAuthSessionVersion()).toBe(store.authSessionVersion)
+      expect(store.user?.id).toBe(fakeAdminUser.id)
+      expect(JSON.parse(localStorage.getItem('auth_user')!).id).toBe(fakeAdminUser.id)
+    })
+  })
+
+  describe('setBalance', () => {
+    it('updates the authenticated user and persisted balance snapshot', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      store.setBalance(123.45)
+
+      expect(store.user?.balance).toBe(123.45)
+      expect(JSON.parse(localStorage.getItem('auth_user')!).balance).toBe(123.45)
+    })
+
+    it('keeps a newer balance when an older profile refresh resolves afterwards', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      let resolveProfile!: (value: { data: typeof fakeUser }) => void
+      mockGetCurrentUser.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveProfile = resolve
+        })
+      )
+
+      const refresh = store.refreshUser()
+      store.setBalance(123.45)
+      resolveProfile({ data: { ...fakeUser, balance: 100 } })
+      await refresh
+
+      expect(store.user?.balance).toBe(123.45)
+    })
+
+    it('rejects an outdated profile refresh after the user logs out', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      let resolveProfile!: (value: { data: typeof fakeUser }) => void
+      mockGetCurrentUser.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveProfile = resolve
+        })
+      )
+
+      const refresh = store.refreshUser()
+      await store.logout()
+      resolveProfile({ data: fakeUser })
+
+      await expect(refresh).rejects.toMatchObject({ code: 'AUTH_SESSION_CHANGED' })
+    })
+
+    it('ignores an invalid balance update', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      store.setBalance(Number.NaN)
+
+      expect(store.user?.balance).toBe(100)
+    })
+  })
+
+  // --- isSimpleMode ---
+
+  describe('isSimpleMode', () => {
+    it('run_mode 为 simple 时返回 true', async () => {
+      const simpleResponse = {
+        ...fakeAuthResponse,
+        user: { ...fakeUser, run_mode: 'simple' as const },
+      }
+      mockLogin.mockResolvedValue(simpleResponse)
+      const store = useAuthStore()
+
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      expect(store.isSimpleMode).toBe(true)
+    })
+
+    it('默认为 standard 模式', () => {
+      const store = useAuthStore()
+      expect(store.isSimpleMode).toBe(false)
+    })
+  })
+})

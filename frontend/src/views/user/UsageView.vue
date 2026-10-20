@@ -1,0 +1,1270 @@
+<template>
+  <AppLayout>
+    <TablePageLayout>
+      <template #actions>
+        <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <!-- Total Requests -->
+          <div class="card p-5">
+            <div class="mb-3 flex min-h-[1.625rem] items-start justify-between">
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
+                {{ t('usage.totalRequests') }}
+              </p>
+              <Icon name="document" size="sm" class="text-gray-300 dark:text-dark-600" :stroke-width="1.5" />
+            </div>
+            <NumText tier="primary" :text="formatCount(usageStats?.total_requests || 0)" class="block" />
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('usage.inSelectedRange') }}
+            </p>
+          </div>
+
+        <!-- Total Tokens -->
+        <div class="card p-5">
+          <div>
+            <div class="mb-3 flex min-h-[1.625rem] items-start justify-between">
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
+                {{ t('usage.totalTokens') }}
+              </p>
+              <Icon name="cube" size="sm" class="text-gray-300 dark:text-dark-600" :stroke-width="1.5" />
+            </div>
+            <div class="min-w-0 flex-1">
+              <NumText tier="primary" :text="formatTokens(usageStats?.total_tokens || 0)" :title="formatCount(usageStats?.total_tokens || 0)" class="block" />
+              <p class="num-aux mt-1">
+                <span>{{ t('usage.in') }} {{ formatTokens(usageStats?.total_input_tokens || 0) }}</span>
+                <span> · </span>
+                <span>{{ t('usage.out') }} {{ formatTokens(usageStats?.total_output_tokens || 0) }}</span>
+                <span> · </span>
+                <span><span class="text-gray-600 dark:text-gray-400">{{ t('usage.cacheHit') }}</span> <span class="num text-gray-700 dark:text-gray-300">{{ formatTokens(usageStats?.total_cache_read_tokens || 0) }}</span></span>
+                <span> · </span>
+                <span><span class="text-gray-600 dark:text-gray-400">{{ t('usage.cacheCreate') }}</span> <span class="num text-gray-700 dark:text-gray-300">{{ formatTokens(usageStats?.total_cache_creation_tokens || 0) }}</span></span>
+              </p>
+              <p class="text-xs text-gray-600 dark:text-gray-400">
+                {{ t('usage.cacheHitRate') }}:
+                <template v-if="cacheStats.totalInput > 0">
+                  <span class="num text-gray-700 dark:text-gray-300">{{ formatTokens(cacheStats.cacheRead) }}</span>
+                  <span class="text-gray-600 dark:text-gray-400">/</span>
+                  <span class="num text-gray-700 dark:text-gray-300">{{ formatTokens(cacheStats.totalInput) }}</span>
+                  <span class="num ml-1 text-gray-900 dark:text-white">{{ cacheStats.ratePercent }}</span>
+                </template>
+                <template v-else>-</template>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Total Cost -->
+        <div class="card p-5">
+          <div class="mb-3 flex min-h-[1.625rem] items-start justify-between">
+            <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
+              {{ t('usage.totalCost') }}
+            </p>
+            <!-- 切换器就放在最容易被误读的那个数字旁边，而不是藏进设置页 -->
+            <CurrencyModeSwitch v-if="currencyCanSwitch" size="sm" />
+            <Icon
+              v-else
+              name="dollar"
+              size="sm"
+              class="text-gray-300 dark:text-dark-600"
+              :stroke-width="1.5"
+            />
+          </div>
+          <!-- 合计用服务端分桶折算的人民币值：钱包与订阅卡单价不同，不能整体 ÷ 充值倍率 -->
+          <NumText
+            tier="primary"
+            class="block"
+            :text="formatMixed(usageStats?.total_actual_cost || 0, usageStats?.total_actual_cost_fiat)"
+            :title="formatMixed(usageStats?.total_actual_cost || 0, usageStats?.total_actual_cost_fiat, EXACT_DIGITS)"
+          />
+          <!--
+            官方价这一行以前是加删除线的「标准价」。但站内扣费是官方价 × 分组倍率，
+            倍率 >1 时被划掉的数反而比实扣更小，删除线等于在暗示用户占了便宜。
+            这里改成中性标注：官方价是可以对照模型官网的外部锚点，不是被优惠掉的原价。
+          -->
+          <p v-if="officialAvailable" class="num-aux mt-1" data-test="official-total" :title="officialCost(usageStats?.total_cost || 0, EXACT_DIGITS)">
+            {{ t('usage.officialPrice') }} {{ officialCost(usageStats?.total_cost || 0) }}
+          </p>
+        </div>
+
+        <!-- Average Duration -->
+        <div class="card p-5">
+          <div class="mb-3 flex min-h-[1.625rem] items-start justify-between">
+            <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
+              {{ t('usage.avgDuration') }}
+            </p>
+            <Icon name="clock" size="sm" class="text-gray-300 dark:text-dark-600" :stroke-width="1.5" />
+          </div>
+          <NumText tier="primary" :text="formatDuration(usageStats?.average_duration_ms || 0)" class="block" />
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('usage.perRequest') }}</p>
+        </div>
+        </div>
+      </template>
+
+      <template #filters>
+        <div class="card">
+          <div class="px-6 py-4">
+          <div class="flex flex-wrap items-end gap-4">
+            <!-- API Key Filter -->
+            <div class="min-w-[180px]">
+              <label class="input-label">{{ t('usage.apiKeyFilter') }}</label>
+              <Select
+                v-model="filters.api_key_id"
+                :options="apiKeyOptions"
+                :placeholder="t('usage.allApiKeys')"
+                @change="applyFilters"
+              />
+            </div>
+
+            <!-- Date Range Filter -->
+            <div>
+              <label class="input-label">{{ t('usage.timeRange') }}</label>
+              <DateRangePicker
+                v-model:start-date="startDate"
+                v-model:end-date="endDate"
+                @change="onDateRangeChange"
+              />
+            </div>
+
+            <!-- Actions -->
+            <div class="ml-auto flex items-center gap-3">
+              <button @click="applyFilters" :disabled="loading" class="btn btn-secondary">
+                {{ t('common.refresh') }}
+              </button>
+              <button @click="resetFilters" class="btn btn-secondary">
+                {{ t('common.reset') }}
+              </button>
+              <button @click="exportToCSV" :disabled="exporting" class="btn btn-primary">
+                <svg
+                  v-if="exporting"
+                  class="-ml-1 mr-2 h-4 w-4 animate-spin"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    class="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="4"
+                  ></circle>
+                  <path
+                    class="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  ></path>
+                </svg>
+                {{ exporting ? t('usage.exporting') : t('usage.exportCsv') }}
+              </button>
+            </div>
+          </div>
+        </div>
+        </div>
+      </template>
+
+      <template #table>
+        <!-- Tab 切换栏 -->
+        <div v-if="errorViewEnabled" class="mb-0 flex gap-2 border-b border-gray-200 px-4 pt-3 dark:border-dark-700">
+          <button class="tab" :class="{ 'tab-active': activeTab === 'usage' }" @click="activeTab = 'usage'">
+            {{ t('usage.tabs.usage') }}
+          </button>
+          <button class="tab" :class="{ 'tab-active': activeTab === 'errors' }" @click="switchToErrors">
+            {{ t('usage.tabs.errors') }}
+          </button>
+        </div>
+
+        <!-- 用量明细表 -->
+        <!-- flex 链让 DataTable 根 .table-wrapper(flex:1)拿到有界高度以启用内部滚动。
+             虚拟化器测高 race 导致的概率空白,已在 DataTable 内用「就绪门控 + initialRect 兜底」根治。 -->
+        <div v-show="activeTab === 'usage'" class="flex min-h-0 flex-1 flex-col">
+          <DataTable
+          :columns="columns"
+          :data="usageLogs"
+          :loading="loading"
+          :server-side-sort="true"
+          :estimate-row-height="88"
+          :overscan="12"
+          default-sort-key="created_at"
+          default-sort-order="desc"
+          @sort="handleSort"
+        >
+          <template #cell-api_key="{ row }">
+            <span class="text-sm text-gray-900 dark:text-white">{{
+              row.api_key?.name || '-'
+            }}</span>
+          </template>
+
+          <template #cell-group="{ row }">
+            <div class="flex flex-wrap items-center gap-1.5" data-test="usage-group-cell">
+              <template v-if="row.served_group || row.served_group_id">
+                <span class="text-sm text-gray-900 dark:text-white" data-test="served-group">{{
+                  row.served_group?.name || `#${row.served_group_id}`
+                }}</span>
+                <span
+                  class="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+                  :title="t('keyFallback.usage.servedTip')"
+                  data-test="served-tag"
+                  >{{ t('keyFallback.usage.servedTag') }}</span
+                >
+              </template>
+              <span v-else class="text-sm text-gray-900 dark:text-white">{{
+                row.group?.name || '-'
+              }}</span>
+            </div>
+          </template>
+
+          <template #cell-model="{ value }">
+            <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+          </template>
+
+          <template #cell-reasoning_effort="{ row }">
+            <span class="text-sm text-gray-900 dark:text-white">
+              {{ formatReasoningEffort(row.reasoning_effort) }}
+            </span>
+          </template>
+
+          <template #cell-endpoint="{ row }">
+            <span class="text-sm text-gray-600 dark:text-gray-300 block max-w-[320px] whitespace-normal break-all">
+              {{ formatUsageEndpoints(row) }}
+            </span>
+          </template>
+
+          <template #cell-stream="{ row }">
+            <span
+              class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium"
+              :class="getRequestTypeBadgeClass(row)"
+            >
+              {{ getRequestTypeLabel(row) }}
+            </span>
+          </template>
+
+          <template #cell-billing_mode="{ row }">
+            <span class="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium"
+                  :class="getBillingModeBadgeClass(getDisplayBillingMode(row))">
+              {{ getBillingModeLabel(getDisplayBillingMode(row), t) }}
+            </span>
+          </template>
+
+          <template #cell-tokens="{ row }">
+            <!-- 图片生成请求 -->
+            <div v-if="isImageUsage(row)" class="flex items-center gap-1.5">
+              <svg
+                class="h-4 w-4 text-gray-500 dark:text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
+              </svg>
+              <span class="num-secondary text-gray-900 dark:text-white">{{ row.image_count }}{{ t('usage.imageUnit') }}</span>
+              <span class="num text-gray-600 dark:text-gray-400">({{ formatImageBillingSize(row, t) }})</span>
+            </div>
+            <!-- Token 请求 -->
+            <div v-else class="flex items-center gap-1.5">
+              <div class="space-y-1.5 text-sm">
+                <!-- Input / Output Tokens -->
+                <div class="flex items-center gap-2">
+                  <!-- Input -->
+                  <div class="inline-flex items-center gap-1">
+                    <Icon name="arrowDown" size="sm" class="text-gray-500 dark:text-gray-400" />
+                    <span class="num-secondary text-gray-900 dark:text-white">{{
+                      formatCount(row.input_tokens)
+                    }}</span>
+                  </div>
+                  <!-- Output -->
+                  <div class="inline-flex items-center gap-1">
+                    <Icon name="arrowUp" size="sm" class="text-gray-500 dark:text-gray-400" />
+                    <span class="num-secondary text-gray-900 dark:text-white">{{
+                      formatCount(row.output_tokens)
+                    }}</span>
+                  </div>
+                </div>
+                <!-- Cache Tokens (Read + Write) -->
+                <div
+                  v-if="row.cache_read_tokens > 0 || row.cache_creation_tokens > 0"
+                  class="flex items-center gap-2"
+                >
+                  <!-- Cache Read -->
+                  <div v-if="row.cache_read_tokens > 0" class="inline-flex items-center gap-1">
+                    <Icon name="inbox" size="sm" class="text-gray-500 dark:text-gray-400" />
+                    <span class="num-secondary text-gray-700 dark:text-gray-300">{{
+                      formatCacheTokens(row.cache_read_tokens)
+                    }}</span>
+                  </div>
+                  <!-- Cache Write -->
+                  <div v-if="row.cache_creation_tokens > 0" class="inline-flex items-center gap-1">
+                    <Icon name="edit" size="sm" class="text-gray-500 dark:text-gray-400" />
+                    <span class="num-secondary text-gray-700 dark:text-gray-300">{{
+                      formatCacheTokens(row.cache_creation_tokens)
+                    }}</span>
+                    <span v-if="row.cache_creation_1h_tokens > 0" class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight border border-gray-200 text-gray-700 dark:border-dark-700 dark:text-gray-300">1h</span>
+                    <span v-if="row.cache_ttl_overridden" :title="t('usage.cacheTtlOverriddenHint')" class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight border border-gray-200 text-gray-700 dark:border-dark-700 dark:text-gray-300 cursor-help">R</span>
+                  </div>
+                </div>
+                <div v-if="hasImageOutputTokens(row)" class="flex items-center gap-2">
+                  <div class="inline-flex items-center gap-1">
+                    <svg class="h-3.5 w-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                    <span class="num-secondary text-gray-700 dark:text-gray-300">{{ formatCount(row.image_output_tokens) }}</span>
+                  </div>
+                </div>
+              </div>
+              <!-- Token Detail Tooltip -->
+              <div
+                class="group relative"
+                @mouseenter="showTokenTooltip($event, row)"
+                @mouseleave="hideTokenTooltip"
+              >
+                <div
+                  class="flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-gray-200 dark:bg-dark-700 dark:group-hover:bg-dark-800"
+                >
+                  <Icon
+                    name="infoCircle"
+                    size="xs"
+                    class="text-gray-500 group-hover:text-gray-700 dark:text-gray-400 dark:group-hover:text-gray-300"
+                  />
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <template #cell-cost="{ row }">
+            <div class="flex items-center gap-1.5 text-sm">
+              <!--
+                法币金额用服务端下发的 fiat_cost：钱包扣费按充值倍率、订阅扣费按该卡
+                的 u(D)，两者单价差 54%~92%，前端不能一律按充值倍率折算。
+              -->
+              <NumText
+                tier="secondary"
+                class="text-gray-900 dark:text-white"
+                :text="formatAmount(row.actual_cost ?? 0, row.fiat_cost)"
+                :title="formatAmount(row.actual_cost ?? 0, row.fiat_cost, EXACT_DIGITS)"
+              />
+              <!-- Cost Detail Tooltip -->
+              <div
+                class="group relative"
+                @mouseenter="showTooltip($event, row)"
+                @mouseleave="hideTooltip"
+              >
+                <div
+                  class="flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-gray-200 dark:bg-dark-700 dark:group-hover:bg-dark-800"
+                >
+                  <Icon
+                    name="infoCircle"
+                    size="xs"
+                    class="text-gray-500 group-hover:text-gray-700 dark:text-gray-400 dark:group-hover:text-gray-300"
+                  />
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <template #cell-first_token="{ row }">
+            <span
+              v-if="row.first_token_ms != null"
+              class="num text-sm text-gray-600 dark:text-gray-400"
+            >
+              {{ formatDuration(row.first_token_ms) }}
+            </span>
+            <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+          </template>
+
+          <template #cell-duration="{ row }">
+            <span class="num text-sm text-gray-600 dark:text-gray-400">{{
+              formatDuration(row.duration_ms)
+            }}</span>
+          </template>
+
+          <template #cell-created_at="{ value }">
+            <span class="text-sm text-gray-600 dark:text-gray-400">{{
+              formatDateTime(value)
+            }}</span>
+          </template>
+
+          <template #cell-user_agent="{ row }">
+            <span v-if="row.user_agent" class="text-sm text-gray-600 dark:text-gray-400 block max-w-[320px] whitespace-normal break-all" :title="row.user_agent">{{ formatUserAgent(row.user_agent) }}</span>
+            <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+          </template>
+
+          <template #empty>
+            <EmptyState :message="t('usage.noRecords')" />
+          </template>
+        </DataTable>
+        </div>
+
+        <!-- 错误请求表 -->
+        <div v-if="errorViewEnabled" v-show="activeTab === 'errors'" class="flex min-h-0 flex-1 flex-col">
+          <UserErrorRequestsTable
+            :rows="errorRows"
+            :total="errorTotal"
+            :loading="errorLoading"
+            :page="errorPage"
+            :page-size="errorPageSize"
+            :api-keys="apiKeys"
+            @filter="onErrorFilter"
+            @update:page="onErrorPage"
+            @update:pageSize="onErrorPageSize"
+          />
+        </div>
+      </template>
+
+      <template #pagination>
+        <Pagination
+          v-if="pagination.total > 0 && activeTab === 'usage'"
+          :page="pagination.page"
+          :total="pagination.total"
+          :page-size="pagination.page_size"
+          @update:page="handlePageChange"
+          @update:pageSize="handlePageSizeChange"
+        />
+      </template>
+    </TablePageLayout>
+  </AppLayout>
+
+  <!-- Token Tooltip Portal -->
+  <Teleport to="body">
+    <div
+      v-if="tokenTooltipVisible"
+      class="fixed z-[9999] pointer-events-none -translate-y-1/2"
+      :style="{
+        left: tokenTooltipPosition.x + 'px',
+        top: tokenTooltipPosition.y + 'px'
+      }"
+    >
+      <div
+        class="whitespace-nowrap rounded-lg border border-gray-700 bg-gray-900 px-3 py-2.5 text-xs text-white shadow-xl dark:border-gray-600 dark:bg-gray-800"
+      >
+        <div class="space-y-1.5">
+          <!-- Token Breakdown -->
+          <div>
+            <div class="text-xs font-semibold text-gray-300 mb-1">{{ t('usage.tokenDetails') }}</div>
+            <div v-if="tokenTooltipData && tokenTooltipData.input_tokens > 0" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('admin.usage.inputTokens') }}</span>
+              <span class="num font-medium text-white">{{ formatCount(tokenTooltipData.input_tokens) }}</span>
+            </div>
+            <div v-if="tokenTooltipData && tokenTooltipData.output_tokens > 0 && !hasImageOutputTokens(tokenTooltipData)" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('admin.usage.outputTokens') }}</span>
+              <span class="num font-medium text-white">{{ formatCount(tokenTooltipData.output_tokens) }}</span>
+            </div>
+            <div v-if="tokenTooltipData && hasImageOutputTokens(tokenTooltipData) && textOutputTokens(tokenTooltipData) > 0" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('admin.usage.outputTokens') }}</span>
+              <span class="num font-medium text-white">{{ formatCount(textOutputTokens(tokenTooltipData)) }}</span>
+            </div>
+            <div v-if="tokenTooltipData && hasImageOutputTokens(tokenTooltipData)" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('usage.imageOutputTokens') }}</span>
+              <span class="num font-medium text-white">{{ formatCount(tokenTooltipData.image_output_tokens) }}</span>
+            </div>
+            <div v-if="tokenTooltipData && tokenTooltipData.cache_creation_tokens > 0">
+              <!-- 有 5m/1h 明细时，展开显示 -->
+              <template v-if="tokenTooltipData.cache_creation_5m_tokens > 0 || tokenTooltipData.cache_creation_1h_tokens > 0">
+                <div v-if="tokenTooltipData.cache_creation_5m_tokens > 0" class="flex items-center justify-between gap-4">
+                  <span class="text-gray-400 flex items-center gap-1.5">
+                    {{ t('admin.usage.cacheCreation5mTokens') }}
+                    <span class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight border border-gray-600 text-gray-300">5m</span>
+                  </span>
+                  <span class="num font-medium text-white">{{ formatCount(tokenTooltipData.cache_creation_5m_tokens) }}</span>
+                </div>
+                <div v-if="tokenTooltipData.cache_creation_1h_tokens > 0" class="flex items-center justify-between gap-4">
+                  <span class="text-gray-400 flex items-center gap-1.5">
+                    {{ t('admin.usage.cacheCreation1hTokens') }}
+                    <span class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight border border-gray-600 text-gray-300">1h</span>
+                  </span>
+                  <span class="num font-medium text-white">{{ formatCount(tokenTooltipData.cache_creation_1h_tokens) }}</span>
+                </div>
+              </template>
+              <!-- 无明细时，只显示聚合值 -->
+              <div v-else class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('admin.usage.cacheCreationTokens') }}</span>
+                <span class="num font-medium text-white">{{ formatCount(tokenTooltipData.cache_creation_tokens) }}</span>
+              </div>
+            </div>
+            <div v-if="tokenTooltipData && tokenTooltipData.cache_ttl_overridden" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400 flex items-center gap-1.5">
+                {{ t('usage.cacheTtlOverriddenLabel') }}
+                <span class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight border border-primary-500/40 text-primary-400">R-{{ tokenTooltipData.cache_creation_1h_tokens > 0 ? '5m' : '1H' }}</span>
+              </span>
+              <span class="font-medium text-primary-400">{{ tokenTooltipData.cache_creation_1h_tokens > 0 ? t('usage.cacheTtlOverridden1h') : t('usage.cacheTtlOverridden5m') }}</span>
+            </div>
+            <div v-if="tokenTooltipData && tokenTooltipData.cache_read_tokens > 0" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('admin.usage.cacheReadTokens') }}</span>
+              <span class="num font-medium text-white">{{ formatCount(tokenTooltipData.cache_read_tokens) }}</span>
+            </div>
+          </div>
+          <!-- Total -->
+          <div class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5">
+            <span class="text-gray-400">{{ t('usage.totalTokens') }}</span>
+            <span class="num font-semibold text-white">{{ formatCount((tokenTooltipData?.input_tokens || 0) + (tokenTooltipData?.output_tokens || 0) + (tokenTooltipData?.cache_creation_tokens || 0) + (tokenTooltipData?.cache_read_tokens || 0)) }}</span>
+          </div>
+        </div>
+        <!-- Tooltip Arrow (left side) -->
+        <div
+          class="absolute right-full top-1/2 h-0 w-0 -translate-y-1/2 border-b-[6px] border-r-[6px] border-t-[6px] border-b-transparent border-r-gray-900 border-t-transparent dark:border-r-gray-800"
+        ></div>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- Tooltip Portal -->
+  <Teleport to="body">
+    <div
+      v-if="tooltipVisible"
+      class="fixed z-[9999] pointer-events-none -translate-y-1/2"
+      :style="{
+        left: tooltipPosition.x + 'px',
+        top: tooltipPosition.y + 'px'
+      }"
+    >
+      <div
+        class="whitespace-nowrap rounded-lg border border-gray-700 bg-gray-900 px-3 py-2.5 text-xs text-white shadow-xl dark:border-gray-600 dark:bg-gray-800"
+      >
+        <div class="space-y-1.5">
+          <!-- Cost Breakdown：没有可显示的行时整块隐藏，避免只剩一条底边框 -->
+          <div v-if="showCostBreakdown" class="mb-2 border-b border-gray-700 pb-1.5" data-test="cost-breakdown">
+            <div v-if="officialAvailable" class="text-xs font-semibold text-gray-300 mb-1">{{ t('usage.costDetails') }}</div>
+            <div v-if="officialAvailable && tooltipData && tooltipData.input_cost > 0" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('admin.usage.inputCost') }}</span>
+              <span class="num font-medium text-white">{{ tipCost(tooltipData.input_cost) }}</span>
+            </div>
+            <div v-if="officialAvailable && tooltipData && tooltipData.output_cost > 0" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('admin.usage.outputCost') }}</span>
+              <span class="num font-medium text-white">{{ tipCost(tooltipData.output_cost) }}</span>
+            </div>
+            <div v-if="officialAvailable && tooltipData && hasImageOutputCost(tooltipData)" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('usage.imageOutputCost') }}</span>
+              <span class="num font-medium text-white">{{ tipCost(tooltipData.image_output_cost) }}</span>
+            </div>
+            <!-- Token billing: show unit prices per 1M tokens -->
+            <template v-if="tooltipData && !isImageUsage(tooltipData) && (!tooltipData.billing_mode || tooltipData.billing_mode === BILLING_MODE_TOKEN)">
+              <div v-if="officialAvailable && tooltipData && tooltipData.input_tokens > 0" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.inputTokenPrice') }}</span>
+                <span class="num font-medium text-white">{{ officialPerMillion(tooltipData.input_cost, tooltipData.input_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+              </div>
+              <div v-if="officialAvailable && tooltipData && tooltipData.output_cost > 0 && textOutputTokens(tooltipData) > 0" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.outputTokenPrice') }}</span>
+                <span class="num font-medium text-white">{{ officialPerMillion(tooltipData.output_cost, textOutputTokens(tooltipData)) }} {{ t('usage.perMillionTokens') }}</span>
+              </div>
+              <div v-if="officialAvailable && tooltipData && tooltipData.cache_creation_tokens > 0" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.cacheWriteTokenPrice') }}</span>
+                <span class="num font-medium text-white">{{ officialPerMillion(tooltipData.cache_creation_cost, tooltipData.cache_creation_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+              </div>
+              <div v-if="officialAvailable && tooltipData && tooltipData.cache_read_tokens > 0" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.cacheReadTokenPrice') }}</span>
+                <span class="num font-medium text-white">{{ officialPerMillion(tooltipData.cache_read_cost, tooltipData.cache_read_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+              </div>
+              <div v-if="officialAvailable && tooltipData && hasImageOutputTokens(tooltipData)" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.imageOutputTokenPrice') }}</span>
+                <span class="num font-medium text-white">{{ officialPerMillion(tooltipData.image_output_cost ?? 0, tooltipData.image_output_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+              </div>
+            </template>
+            <!-- Per-image billing: show image metadata and unit price -->
+            <template v-else-if="tooltipData && isImageUsage(tooltipData)">
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.imageCount') }}</span>
+                <span class="num font-medium text-white">{{ tooltipData.image_count }}{{ t('usage.imageUnit') }}</span>
+              </div>
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.imageBillingSize') }}</span>
+                <span class="font-medium text-white">{{ formatImageBillingSize(tooltipData, t) }}</span>
+              </div>
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.imageSizeSource') }}</span>
+                <span class="font-medium text-white">{{ formatImageSizeSource(tooltipData, t) }}</span>
+              </div>
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.imageInputSize') }}</span>
+                <span class="font-medium text-white">{{ formatImageInputSize(tooltipData, t) }}</span>
+              </div>
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.imageOutputSize') }}</span>
+                <span class="font-medium text-white">{{ formatImageOutputSize(tooltipData, t) }}</span>
+              </div>
+              <div v-if="formatImageSizeBreakdown(tooltipData)" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.imageSizeBreakdown') }}</span>
+                <span class="font-medium text-white">{{ formatImageSizeBreakdown(tooltipData) }}</span>
+              </div>
+              <div v-if="officialAvailable" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.imageUnitPrice') }}</span>
+                <span class="num font-medium text-white">{{ tipCost(imageUnitPrice(tooltipData)) }}</span>
+              </div>
+              <div v-if="officialAvailable" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.imageTotalPrice') }}</span>
+                <span class="num font-medium text-white">{{ tipCost(tooltipData.total_cost ?? 0) }}</span>
+              </div>
+            </template>
+            <div v-else-if="officialAvailable" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('usage.unitPrice') }}</span>
+              <span class="num font-medium text-white">{{ tipCost(tooltipData?.total_cost ?? 0) }}</span>
+            </div>
+            <div v-if="officialAvailable && tooltipData && tooltipData.cache_creation_cost > 0" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('admin.usage.cacheCreationCost') }}</span>
+              <span class="num font-medium text-white">{{ tipCost(tooltipData.cache_creation_cost) }}</span>
+            </div>
+            <div v-if="officialAvailable && tooltipData && tooltipData.cache_read_cost > 0" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('admin.usage.cacheReadCost') }}</span>
+              <span class="num font-medium text-white">{{ tipCost(tooltipData.cache_read_cost) }}</span>
+            </div>
+          </div>
+          <!-- Rate and Summary -->
+          <div class="flex items-center justify-between gap-6">
+            <span class="text-gray-400">{{ t('usage.serviceTier') }}</span>
+            <span class="font-semibold text-white">{{ getUsageServiceTierLabel(tooltipData?.service_tier, t) }}</span>
+          </div>
+          <div class="flex items-center justify-between gap-6">
+            <span class="text-gray-400">{{ t('usage.rate') }}</span>
+            <span class="num font-semibold text-white" data-test="tip-rate">{{ tooltipRateText }}</span>
+          </div>
+          <!--
+            三行拆开三个不同的概念，这是整个改动的核心：
+            官方价（可对照模型官网的真实价）→ 实际扣除（官方价 × 分组倍率，同样以
+            美元计价）→ 你的花费（真金白银的人民币）。以前只有中间那一行，所以
+            「扣了 $5」会被读成「花了三十多块」，实际只有几毛钱。
+          -->
+          <div v-if="officialAvailable" class="flex items-center justify-between gap-6">
+            <span class="text-gray-400">{{ t('usage.officialPrice') }}</span>
+            <span class="num font-medium text-white"
+              >{{ tipCost(tooltipData?.total_cost ?? 0) }}</span
+            >
+          </div>
+          <div
+            v-if="!isFiat"
+            class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5"
+          >
+            <span class="text-gray-400">{{ tooltipDeductedLabel }}</span>
+            <span class="num font-medium text-white">{{
+              formatUsd(tooltipData?.actual_cost ?? 0, EXACT_DIGITS)
+            }}</span>
+          </div>
+          <div
+            v-if="tooltipFiatCost !== null"
+            class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5"
+          >
+            <span class="text-gray-400">{{ t('usage.yourSpend') }}</span>
+            <span class="num font-semibold text-white" data-test="tip-spend">{{
+              formatFiat(tooltipFiatCost)
+            }}<template v-if="isFiat">{{ ` ${tooltipSpendSource}` }}</template></span>
+          </div>
+        </div>
+        <!-- Tooltip Arrow (left side) -->
+        <div
+          class="absolute right-full top-1/2 h-0 w-0 -translate-y-1/2 border-b-[6px] border-r-[6px] border-t-[6px] border-b-transparent border-r-gray-900 border-t-transparent dark:border-r-gray-800"
+        ></div>
+      </div>
+    </div>
+  </Teleport>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, reactive, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useAppStore } from '@/stores/app'
+import { usageAPI, keysAPI } from '@/api'
+import AppLayout from '@/components/layout/AppLayout.vue'
+import TablePageLayout from '@/components/layout/TablePageLayout.vue'
+import DataTable from '@/components/common/DataTable.vue'
+import Pagination from '@/components/common/Pagination.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import Select from '@/components/common/Select.vue'
+import DateRangePicker from '@/components/common/DateRangePicker.vue'
+import Icon from '@/components/icons/Icon.vue'
+import UserErrorRequestsTable from '@/components/user/UserErrorRequestsTable.vue'
+import type { UsageLog, ApiKey, UsageQueryParams, UsageStatsResponse, UserErrorRequest } from '@/types'
+import type { Column } from '@/components/common/types'
+import { formatDateTime, formatReasoningEffort } from '@/utils/format'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { EXACT_DIGITS, type MoneyDigits, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import CurrencyModeSwitch from '@/components/common/CurrencyModeSwitch.vue'
+import NumText from '@/components/common/NumText.vue'
+import { formatMultiplier } from '@/utils/formatters'
+import { useRateDisplay } from '@/composables/useRateDisplay'
+import { formatRate } from '@/utils/rateDisplay'
+import { formatCompactCount, formatCount, formatDurationMs } from '@/utils/numberFormat'
+import { calculateTokenPricePerMillion } from '@/utils/usagePricing'
+import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
+import { resolveUsageRequestType } from '@/utils/usageRequestType'
+import {
+  BILLING_MODE_TOKEN,
+  getBillingModeBadgeClass,
+  getBillingModeLabel,
+  isImageUsage,
+  getDisplayBillingMode,
+  imageUnitPrice,
+} from '@/utils/billingMode'
+import {
+  formatImageBillingSize,
+  formatImageInputSize,
+  formatImageOutputSize,
+  formatImageSizeBreakdown,
+  formatImageSizeSource,
+  hasImageOutputTokens,
+  textOutputTokens,
+  hasImageOutputCost,
+} from '@/utils/imageUsage'
+
+const { t } = useI18n()
+const appStore = useAppStore()
+// 解构出来的 ref 在模板里会自动 unwrap，比 currency.isFiat.value 这种写法干净。
+const {
+  canSwitch: currencyCanSwitch,
+  usdToFiat,
+  formatFiat,
+  formatUsd,
+  formatAmount,
+  formatMixed,
+  isFiat,
+  officialCnyRate,
+  formatOfficial
+} = useCurrencyDisplay()
+
+const { usageRowRate } = useRateDisplay()
+
+// 官方价：人民币模式按后台汇率换成 ¥；后端没提供汇率时整块官方价隐藏，不混排 $。
+const officialAvailable = computed(() => !isFiat.value || officialCnyRate.value > 0)
+// 汇总卡等位置按统一规则收口（缺省）；费用明细 tooltip 是对账用的，用精确值保留全部精度。
+/** 缓存 token：K / M 缩写，缩写后带千分位（用户端统一计数规则）。 */
+const formatCacheTokens = (tokens: number): string => formatCompactCount(tokens, { allowBillions: false })
+
+function officialCost(usd: number, digits?: MoneyDigits): string {
+  return formatOfficial(usd, digits) ?? ''
+}
+function tipCost(usd: number): string {
+  // 美元额度按精确值展示；人民币是折算出来的，沿用统一规则，不放大折算误差。
+  return officialCost(usd, isFiat.value ? undefined : EXACT_DIGITS)
+}
+function officialPerMillion(cost: number | null | undefined, tokens: number | null | undefined): string {
+  const perMillion = calculateTokenPricePerMillion(cost, tokens)
+  if (perMillion == null) return '-'
+  // 每百万 Token 单价是报价，≥ 1 时不能被四舍五入吞掉第三、四位小数。
+  return formatOfficial(perMillion, { unitPrice: true }) ?? '-'
+}
+
+let abortController: AbortController | null = null
+
+// Tooltip state
+const tooltipVisible = ref(false)
+const tooltipPosition = ref({ x: 0, y: 0 })
+
+const tooltipData = ref<UsageLog | null>(null)
+
+/**
+ * 费用明细块有没有行可显示：金额行都受 officialAvailable 控制，
+ * 只有图片计费的尺寸 / 张数等元信息不带价格，缺汇率时也要显示。
+ */
+const showCostBreakdown = computed(
+  () => officialAvailable.value || (tooltipData.value != null && isImageUsage(tooltipData.value))
+)
+
+/**
+ * 这笔用量的法币花费。优先用服务端下发的 fiat_cost（按额度来源精确折算），
+ * 老后端不返回该字段时回落到按充值倍率估算；额度本身为 0 则整行不显示。
+ */
+const tooltipFiatCost = computed<number | null>(() => {
+  const row = tooltipData.value
+  // 倍率为 1（free 站）时没有「付了多少人民币」可言，不展示这一行。
+  if (!row || !currencyCanSwitch.value) return null
+  if (typeof row.fiat_cost === 'number' && Number.isFinite(row.fiat_cost) && row.fiat_cost !== 0) {
+    return row.fiat_cost
+  }
+  const usd = row.actual_cost ?? 0
+  return usd === 0 ? null : usdToFiat(usd)
+})
+
+/**
+ * 扣除行的措辞跟着计费类型走：订阅扣费不经过钱包余额，统一写「扣除余额」会让
+ * 订阅用户去对账户余额、发现没变而来问。billing_type 1 = 订阅套餐，0 = 钱包余额，
+ * 与 admin.usage.billingType* 的取值一致。
+ */
+const tooltipDeductedLabel = computed(() =>
+  tooltipData.value?.billing_type === 1
+    ? t('usage.subscriptionDeducted')
+    : t('usage.balanceDeducted')
+)
+
+/**
+ * 悬停里的倍率。人民币模式按「这行实付 ÷ 官方价」的等效口径（余额行 r ÷ m、套餐行 r × u），
+ * 官方价为 0 时显示 `-`；美元模式和 m = 1 的站点沿用原来的原始倍率，逐字不变。
+ */
+const tooltipRateText = computed(() => {
+  const row = tooltipData.value
+  if (!isFiat.value) return `${formatMultiplier(row?.rate_multiplier || 1)}x`
+  const rate = row ? usageRowRate(row) : null
+  return rate === null ? '-' : `${formatRate(rate)}x`
+})
+
+/** 人民币模式下，花费后面标出这笔是从余额还是从套餐扣的（billing_type 1 = 套餐）。 */
+const tooltipSpendSource = computed(() =>
+  tooltipData.value?.billing_type === 1 ? t('usage.spendFromPlan') : t('usage.spendFromBalance')
+)
+
+// Token tooltip state
+const tokenTooltipVisible = ref(false)
+const tokenTooltipPosition = ref({ x: 0, y: 0 })
+const tokenTooltipData = ref<UsageLog | null>(null)
+
+// Usage stats from API
+const usageStats = ref<UsageStatsResponse | null>(null)
+
+// 缓存命中率 = cache_read / (input + cache_read)
+// 分母为 0（无任何输入）时显示 '-'
+const cacheStats = computed(() => {
+  // 总输入 token = 普通输入 + 缓存写入 + 缓存读取（命中）
+  // 缓存命中率 = 缓存读取 / 总输入；总输入为 0 时返回零值，模板按 '-' 渲染。
+  const cacheRead = usageStats.value?.total_cache_read_tokens || 0
+  const cacheCreate = usageStats.value?.total_cache_creation_tokens || 0
+  const input = usageStats.value?.total_input_tokens || 0
+  const totalInput = input + cacheCreate + cacheRead
+  const ratePercent = totalInput > 0 ? `${((cacheRead / totalInput) * 100).toFixed(1)}%` : '-'
+  return { cacheRead, totalInput, ratePercent }
+})
+
+const columns = computed<Column[]>(() => [
+  { key: 'api_key', label: t('usage.apiKeyFilter'), sortable: false },
+  { key: 'group', label: t('keyFallback.usage.groupColumn'), sortable: false },
+  { key: 'model', label: t('usage.model'), sortable: true },
+  { key: 'reasoning_effort', label: t('usage.reasoningEffort'), sortable: false },
+  { key: 'endpoint', label: t('usage.endpoint'), sortable: false },
+  { key: 'stream', label: t('usage.type'), sortable: false },
+  { key: 'billing_mode', label: t('admin.usage.billingMode'), sortable: false },
+  { key: 'tokens', label: t('usage.tokens'), sortable: false },
+  { key: 'cost', label: t('usage.cost'), sortable: false },
+  { key: 'first_token', label: t('usage.firstToken'), sortable: false },
+  { key: 'duration', label: t('usage.duration'), sortable: false },
+  { key: 'created_at', label: t('usage.time'), sortable: true },
+  { key: 'user_agent', label: t('usage.userAgent'), sortable: false }
+])
+
+const usageLogs = ref<UsageLog[]>([])
+const apiKeys = ref<ApiKey[]>([])
+const loading = ref(false)
+const exporting = ref(false)
+
+const apiKeyOptions = computed(() => {
+  return [
+    { value: null, label: t('usage.allApiKeys') },
+    ...apiKeys.value.map((key) => ({
+      value: key.id,
+      label: key.name
+    }))
+  ]
+})
+
+// Helper function to format date in local timezone
+const formatLocalDate = (date: Date): string => {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+// Initialize date range immediately
+const now = new Date()
+const weekAgo = new Date(now)
+weekAgo.setDate(weekAgo.getDate() - 6)
+
+// Date range state
+const startDate = ref(formatLocalDate(weekAgo))
+const endDate = ref(formatLocalDate(now))
+
+const filters = ref<UsageQueryParams>({
+  api_key_id: undefined,
+  start_date: undefined,
+  end_date: undefined
+})
+
+// Initialize filters with date range
+filters.value.start_date = startDate.value
+filters.value.end_date = endDate.value
+
+// Handle date range change from DateRangePicker
+const onDateRangeChange = (range: {
+  startDate: string
+  endDate: string
+  preset: string | null
+}) => {
+  filters.value.start_date = range.startDate
+  filters.value.end_date = range.endDate
+  applyFilters()
+  errorPage.value = 1
+  if (activeTab.value === 'errors') {
+    loadErrors()
+  } else {
+    errorRows.value = []  // 失效，下次切到 errors tab 时按新日期重新加载
+  }
+}
+
+const pagination = reactive({
+  page: 1,
+  page_size: getPersistedPageSize(),
+  total: 0,
+  pages: 0
+})
+const sortState = reactive({
+  sort_by: 'created_at',
+  sort_order: 'desc' as 'asc' | 'desc'
+})
+
+const formatDuration = (ms: number | null | undefined): string => formatDurationMs(ms)
+
+
+const formatUserAgent = (ua: string): string => {
+  return ua
+}
+
+const getRequestTypeLabel = (log: UsageLog): string => {
+  const requestType = resolveUsageRequestType(log)
+  if (requestType === 'cyber') return t('usage.cyber')
+  if (requestType === 'ws_v2') return t('usage.ws')
+  if (requestType === 'stream') return t('usage.stream')
+  if (requestType === 'sync') return t('usage.sync')
+  return t('usage.unknown')
+}
+
+const getRequestTypeBadgeClass = (log: UsageLog): string => {
+  const requestType = resolveUsageRequestType(log)
+  if (requestType === 'cyber') return 'border border-primary-200 text-primary-700 dark:border-primary-700/40 dark:text-primary-400'
+  if (requestType === 'ws_v2') return 'border border-gray-200 text-gray-700 dark:border-dark-700 dark:text-gray-300'
+  if (requestType === 'stream') return 'border border-gray-200 text-gray-700 dark:border-dark-700 dark:text-gray-300'
+  if (requestType === 'sync') return 'border border-gray-200 text-gray-700 dark:border-dark-700 dark:text-gray-300'
+  return 'border border-gray-200 text-gray-700 dark:border-dark-700 dark:text-gray-300'
+}
+
+
+const getRequestTypeExportText = (log: UsageLog): string => {
+  const requestType = resolveUsageRequestType(log)
+  if (requestType === 'cyber') return 'Cyber'
+  if (requestType === 'ws_v2') return 'WS'
+  if (requestType === 'stream') return 'Stream'
+  if (requestType === 'sync') return 'Sync'
+  return 'Unknown'
+}
+
+const formatUsageEndpoints = (log: UsageLog): string => {
+  const inbound = log.inbound_endpoint?.trim()
+  return inbound || '-'
+}
+
+const formatTokens = (value: number): string => formatCompactCount(value, { allowBillions: false })
+
+type UsageTableQueryParams = UsageQueryParams & {
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
+}
+
+const buildUsageQueryParams = (page: number, pageSize: number): UsageTableQueryParams => ({
+  page,
+  page_size: pageSize,
+  ...filters.value,
+  sort_by: sortState.sort_by,
+  sort_order: sortState.sort_order
+})
+
+const loadUsageLogs = async () => {
+  if (abortController) {
+    abortController.abort()
+  }
+  const currentAbortController = new AbortController()
+  abortController = currentAbortController
+  const { signal } = currentAbortController
+  loading.value = true
+  try {
+    const response = await usageAPI.query(
+      buildUsageQueryParams(pagination.page, pagination.page_size),
+      { signal }
+    )
+    if (signal.aborted) {
+      return
+    }
+    usageLogs.value = response.items
+    pagination.total = response.total
+    pagination.pages = response.pages
+  } catch (error) {
+    if (signal.aborted) {
+      return
+    }
+    const abortError = error as { name?: string; code?: string }
+    if (abortError?.name === 'AbortError' || abortError?.code === 'ERR_CANCELED') {
+      return
+    }
+    appStore.showError(t('usage.failedToLoad'))
+  } finally {
+    if (abortController === currentAbortController) {
+      loading.value = false
+    }
+  }
+}
+
+// 用量 / 错误记录的 API Key 筛选要覆盖全部 key，而不只是第一页 100 个：按页拉取直到
+// 达到总页数或遇到空页（防止过期的 pages 计数导致死循环 / 多余请求）。
+const loadApiKeys = async () => {
+  try {
+    const firstPage = await keysAPI.list(1, 100)
+    const keys = [...firstPage.items]
+    for (let page = 2; page <= (firstPage.pages ?? 1) && keys.length > 0; page++) {
+      const response = await keysAPI.list(page, 100)
+      if (response.items.length === 0) break
+      keys.push(...response.items)
+    }
+    apiKeys.value = keys
+  } catch (error) {
+    console.error('Failed to load API keys:', error)
+  }
+}
+
+const loadUsageStats = async () => {
+  try {
+    const apiKeyId = filters.value.api_key_id ? Number(filters.value.api_key_id) : undefined
+    const stats = await usageAPI.getStatsByDateRange(
+      filters.value.start_date || startDate.value,
+      filters.value.end_date || endDate.value,
+      apiKeyId
+    )
+    usageStats.value = stats
+  } catch (error) {
+    console.error('Failed to load usage stats:', error)
+  }
+}
+
+const applyFilters = () => {
+  pagination.page = 1
+  loadUsageLogs()
+  loadUsageStats()
+}
+
+const resetFilters = () => {
+  filters.value = {
+    api_key_id: undefined,
+    start_date: undefined,
+    end_date: undefined
+  }
+  // Reset date range to default (last 7 days)
+  const now = new Date()
+  const weekAgo = new Date(now)
+  weekAgo.setDate(weekAgo.getDate() - 6)
+  startDate.value = formatLocalDate(weekAgo)
+  endDate.value = formatLocalDate(now)
+  filters.value.start_date = startDate.value
+  filters.value.end_date = endDate.value
+  pagination.page = 1
+  loadUsageLogs()
+  loadUsageStats()
+}
+
+const handlePageChange = (page: number) => {
+  pagination.page = page
+  loadUsageLogs()
+}
+
+const handlePageSizeChange = (pageSize: number) => {
+  pagination.page_size = pageSize
+  pagination.page = 1
+  loadUsageLogs()
+}
+
+const handleSort = (key: string, order: 'asc' | 'desc') => {
+  sortState.sort_by = key
+  sortState.sort_order = order
+  pagination.page = 1
+  loadUsageLogs()
+}
+
+/**
+ * Escape CSV value to prevent injection and handle special characters
+ */
+const escapeCSVValue = (value: unknown): string => {
+  if (value == null) return ''
+
+  const str = String(value)
+  const escaped = str.replace(/"/g, '""')
+
+  // A lone '-' is the missing-value marker (e.g. formatReasoningEffort);
+  // it cannot start a formula, so export it verbatim.
+  if (str === '-') return str
+
+  // Prevent formula injection by prefixing dangerous characters with single quote
+  if (/^[=+\-@\t\r]/.test(str)) {
+    return `"\'${escaped}"`
+  }
+
+  // Escape values containing comma, quote, or newline
+  if (/[,"\n\r]/.test(str)) {
+    return `"${escaped}"`
+  }
+
+  return str
+}
+
+const exportToCSV = async () => {
+  if (pagination.total === 0) {
+    appStore.showWarning(t('usage.noDataToExport'))
+    return
+  }
+
+  exporting.value = true
+  appStore.showInfo(t('usage.preparingExport'))
+
+  try {
+    const allLogs: UsageLog[] = []
+    const pageSize = 100 // Use a larger page size for export to reduce requests
+    // Snapshot filters/sort once so every page uses the same query even if the
+    // user changes the filters while the export is still running.
+    const exportParams = buildUsageQueryParams(1, pageSize)
+    const totalRequests = Math.ceil(pagination.total / pageSize)
+
+    for (let page = 1; page <= totalRequests; page++) {
+      const response = await usageAPI.query({ ...exportParams, page })
+      allLogs.push(...response.items)
+    }
+
+    if (allLogs.length === 0) {
+      appStore.showWarning(t('usage.noDataToExport'))
+      return
+    }
+
+    const headers = [
+      'Time',
+      'API Key Name',
+      'Model',
+      'Reasoning Effort',
+      'Inbound Endpoint',
+      'Type',
+      'Billing Mode',
+      'Input Tokens',
+      'Output Tokens',
+      'Cache Read Tokens',
+      'Cache Creation Tokens',
+      'Rate Multiplier',
+      // 列名如实说明单位：以前叫 Billed Cost / Original Cost，会让人以为
+      // 前者是花掉的钱、后者是被优惠掉的原价，两个理解都不对。
+      'Deducted (USD)',
+      'Official Cost (USD)',
+      'Your Spend (CNY)',
+      'First Token (ms)',
+      'Duration (ms)'
+    ]
+    const rows = allLogs.map((log) =>
+      [
+        log.created_at,
+        log.api_key?.name || '',
+        log.model,
+        formatReasoningEffort(log.reasoning_effort),
+        log.inbound_endpoint || '',
+        getRequestTypeExportText(log),
+        getBillingModeLabel(getDisplayBillingMode(log), t),
+        log.input_tokens,
+        log.output_tokens,
+        log.cache_read_tokens,
+        log.cache_creation_tokens,
+        log.rate_multiplier,
+        (log.actual_cost ?? 0).toFixed(8),
+        (log.total_cost ?? 0).toFixed(8),
+        (log.fiat_cost ?? usdToFiat(log.actual_cost ?? 0)).toFixed(8),
+        log.first_token_ms ?? '',
+        log.duration_ms
+      ].map(escapeCSVValue)
+    )
+
+    const csvContent = [
+      headers.map(escapeCSVValue).join(','),
+      ...rows.map((row) => row.join(','))
+    ].join('\n')
+
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `usage_${exportParams.start_date}_to_${exportParams.end_date}.csv`
+    link.click()
+    window.URL.revokeObjectURL(url)
+
+    appStore.showSuccess(t('usage.exportSuccess'))
+  } catch (error) {
+    appStore.showError(t('usage.exportFailed'))
+    console.error('CSV Export failed:', error)
+  } finally {
+    exporting.value = false
+  }
+}
+
+// Tooltip functions
+const showTooltip = (event: MouseEvent, row: UsageLog) => {
+  const target = event.currentTarget as HTMLElement
+  const rect = target.getBoundingClientRect()
+
+  tooltipData.value = row
+  // Position to the right of the icon, vertically centered
+  tooltipPosition.value.x = rect.right + 8
+  tooltipPosition.value.y = rect.top + rect.height / 2
+  tooltipVisible.value = true
+}
+
+const hideTooltip = () => {
+  tooltipVisible.value = false
+  tooltipData.value = null
+}
+
+// Token tooltip functions
+const showTokenTooltip = (event: MouseEvent, row: UsageLog) => {
+  const target = event.currentTarget as HTMLElement
+  const rect = target.getBoundingClientRect()
+
+  tokenTooltipData.value = row
+  tokenTooltipPosition.value.x = rect.right + 8
+  tokenTooltipPosition.value.y = rect.top + rect.height / 2
+  tokenTooltipVisible.value = true
+}
+
+const hideTokenTooltip = () => {
+  tokenTooltipVisible.value = false
+  tokenTooltipData.value = null
+}
+
+// ── Error Requests Tab ──────────────────────────────────────────────────────
+const activeTab = ref<'usage' | 'errors'>('usage')
+const errorViewEnabled = computed(() => appStore.cachedPublicSettings?.allow_user_view_error_requests ?? false)
+
+const errorRows = ref<UserErrorRequest[]>([])
+const errorLoading = ref(false)
+const errorPage = ref(1)
+const errorPageSize = ref(20)
+const errorTotal = ref(0)
+const errorFilter = ref<{ model: string; category: string; api_key_id: number | null }>({ model: '', category: '', api_key_id: null })
+
+const loadErrors = async () => {
+  errorLoading.value = true
+  try {
+    const resp = await usageAPI.listMyErrorRequests({
+      page: errorPage.value,
+      page_size: errorPageSize.value,
+      start_date: startDate.value,
+      end_date: endDate.value,
+      model: errorFilter.value.model || undefined,
+      category: errorFilter.value.category || undefined,
+      api_key_id: errorFilter.value.api_key_id ?? undefined,
+    })
+    errorRows.value = resp.items
+    errorTotal.value = resp.total
+  } catch (error) {
+    console.error('[UsageView] loadErrors failed:', error)
+    appStore.showError(t('usage.errors.failedToLoad'))
+  } finally {
+    errorLoading.value = false
+  }
+}
+
+const onErrorFilter = (f: { model: string; category: string; api_key_id: number | null }) => {
+  errorFilter.value = f
+  errorPage.value = 1
+  loadErrors()
+}
+const onErrorPage = (p: number) => { errorPage.value = p; loadErrors() }
+const onErrorPageSize = (s: number) => { errorPageSize.value = s; errorPage.value = 1; loadErrors() }
+
+const switchToErrors = () => {
+  activeTab.value = 'errors'
+  if (errorRows.value.length === 0) loadErrors()
+}
+
+onMounted(() => {
+  loadApiKeys()
+  loadUsageLogs()
+  loadUsageStats()
+})
+</script>

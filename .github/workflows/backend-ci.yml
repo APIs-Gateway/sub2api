@@ -1,0 +1,754 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  native-http2-wire:
+    name: Native HTTP2 and GOAWAY actual wire contracts (race)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: "1"
+      GOMAXPROCS: "2"
+      GOTOOLCHAIN: local
+      GOWORK: "off"
+      GOFLAGS: -mod=readonly
+      SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Verify exact source and run original repository controls plus native wire contracts
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WIRE_EVIDENCE="$RUNNER_TEMP/native-http2-wire-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          git diff --exit-code HEAD --
+          test ! -e "$WIRE_EVIDENCE"
+          mkdir -p "$WIRE_EVIDENCE"
+          printf '%s\n' "$SOURCE_HEAD" > "$WIRE_EVIDENCE/source-head.txt"
+          git ls-files --stage > "$WIRE_EVIDENCE/git-index.txt"
+          cp tools/native-http2-wire-inventory.json "$WIRE_EVIDENCE/inventory.json"
+          sha256sum tools/native-http2-wire-inventory.json > "$WIRE_EVIDENCE/inventory.sha256"
+          go version | tee "$WIRE_EVIDENCE/go-version.txt"
+          go version | grep -q 'go1.26.9 '
+          set +e
+          go test -p=1 -parallel=1 -tags=unit -race -count=1 -timeout=4m -json -run '^(TestEnableOpenAIHTTP2KeepAliveEnablesPingHealthCheck|TestEnableOpenAIHTTP2KeepAlive_PropagatesConfigureError|TestBuildUpstreamTransportOpenAIH2EnablesPingHealthCheck|TestBuildUpstreamTransportNonOpenAIH2IsNotEagerlyConfigured|TestBuildUpstreamTransportOpenAIH2WithHTTPProxyEnablesKeepAlive|TestUpstreamIPModeDirectTransportAndHTTP2|TestGetSharedReqClient_ForceHTTP2SeparatesCache|TestCreateGeminiReqClient_ForceHTTP2Disabled|TestProvideHTTPServerCompatibilityWire|TestIsRetryableCodexModelsManifestTransportError)$' ./internal/repository/ ./internal/server/ ./internal/service/ > "$WIRE_EVIDENCE/tests.json" 2> "$WIRE_EVIDENCE/tests.stderr"
+          test_status=$?
+          set -e
+          printf '%s\n' "$test_status" > "$WIRE_EVIDENCE/tests.exit"
+          python3 - <<'PY'
+          import collections, json, os, pathlib
+          evidence = pathlib.Path(os.environ['WIRE_EVIDENCE'])
+          expected = json.loads((evidence / 'inventory.json').read_text())['expectedPassedExactlyOnce']
+          required = {(package, case) for package, cases in expected.items() for case in cases}
+          events = [json.loads(line) for line in (evidence / 'tests.json').read_text().splitlines()]
+          runs = collections.Counter((event['Package'], event['Test']) for event in events if event['Action'] == 'run' and 'Test' in event)
+          passes = collections.Counter((event['Package'], event['Test']) for event in events if event['Action'] == 'pass' and 'Test' in event)
+          bad = [event for event in events if event['Action'] in ('fail', 'skip')]
+          package_passes = collections.Counter(event['Package'] for event in events if event['Action'] == 'pass' and 'Test' not in event)
+          report = {'sourceHead': (evidence / 'source-head.txt').read_text().strip(), 'requiredCases': len(required), 'actualRuns': sum(runs.values()), 'actualPasses': sum(passes.values()), 'missingRuns': sorted(required - runs.keys()), 'missingPasses': sorted(required - passes.keys()), 'unexpectedRuns': sorted(runs.keys() - required), 'unexpectedPasses': sorted(passes.keys() - required), 'badEvents': bad, 'packagePasses': dict(package_passes)}
+          (evidence / 'actual-inventory.json').write_text(json.dumps(report, indent=2) + '\n')
+          assert (evidence / 'tests.exit').read_text().strip() == '0', 'actual Go test exit failed'
+          assert required and not bad, 'failed or skipped actual cases/packages'
+          assert set(runs) == required and set(passes) == required, 'actual test inventory differs'
+          assert all(runs[case] == passes[case] == 1 for case in required), 'case did not run/pass exactly once'
+          assert dict(package_passes) == {package: 1 for package in expected}, 'package results differ'
+          assert report['sourceHead'] == os.environ['SOURCE_HEAD'], 'actual source head differs'
+          PY
+          git diff --exit-code HEAD --
+      - name: Preserve actual wire JSON, exact source and mandatory case inventory
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-http2-wire-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-http2-wire-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  server-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: "0"
+      GOOS: linux
+      GOARCH: amd64
+      GOTOOLCHAIN: local
+      GOWORK: off
+      GOFLAGS: -mod=readonly
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Validate CI workflow syntax and expressions (remote only)
+        env:
+          GOBIN: ${{ runner.temp }}/nonembed-ci-tools
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$GOBIN/actionlint" -version
+          "$GOBIN/actionlint" -shellcheck= -pyflakes= .github/workflows/backend-ci.yml
+      - name: Build exact-head independent Go server without frontend embedding
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/nonembed-server-build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence"
+          git rev-parse HEAD > "$evidence/head.txt"
+          test "$(cat "$evidence/head.txt")" = "$EXPECTED_HEAD"
+          git rev-parse HEAD^{tree} > "$evidence/tree.txt"
+          git ls-files --stage > "$evidence/git-index.txt"
+          git diff --exit-code HEAD -- > "$evidence/checkout-before.diff"
+          test -z "$(git status --porcelain)"
+          sha256sum go.mod go.sum > "$evidence/modules-before.sha256"
+          go version | tee "$evidence/go-version.txt"
+          grep -Eq '^go version go1\.26\.9 linux/amd64$' "$evidence/go-version.txt"
+          go env CGO_ENABLED GOOS GOARCH GOTOOLCHAIN GOWORK GOFLAGS > "$evidence/go-env.txt"
+          go list -json ./cmd/server > "$evidence/server-package.json"
+          go list -json ./internal/web > "$evidence/web-package.json"
+          python3 -B - "$evidence" <<'PYMODE'
+          import json, sys
+          from pathlib import Path
+          evidence = Path(sys.argv[1])
+          server = json.loads((evidence / 'server-package.json').read_text())
+          web = json.loads((evidence / 'web-package.json').read_text())
+          assert server['Name'] == 'main' and server['ImportPath'] == 'github.com/Wei-Shaw/sub2api/cmd/server'
+          assert 'wire_gen.go' in server['GoFiles'] and 'wire.go' not in server['GoFiles']
+          assert 'embed_off.go' in web['GoFiles'] and 'embed_on.go' not in web['GoFiles']
+          assert 'docs_machine.go' not in web['GoFiles']
+          expected_env = ['0', 'linux', 'amd64', 'local', 'off', '-mod=readonly']
+          assert (evidence / 'go-env.txt').read_text().splitlines() == expected_env
+          PYMODE
+          version_value="$(tr -d '\r\n' < ./cmd/server/VERSION)"
+          test -n "$version_value"
+          printf '%s\n' "$version_value" > "$evidence/version.txt"
+          printf '%s\n' 'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOWORK=off GOTOOLCHAIN=local GOFLAGS=-mod=readonly go build -p=1 -trimpath -ldflags="-s -w -X main.Version=<version.txt>" -o <RUNNER_TEMP>/sub2api ./cmd/server' > "$evidence/build-command.txt"
+          set +e
+          go build -p=1 -trimpath -ldflags="-s -w -X main.Version=$version_value" -o "$evidence/sub2api" ./cmd/server > "$evidence/build.stdout" 2> "$evidence/build.stderr"
+          build_status=$?
+          set -e
+          printf '%s\n' "$build_status" > "$evidence/build.exit"
+          test "$build_status" -eq 0
+          test -s "$evidence/sub2api"
+          sha256sum "$evidence/sub2api" > "$evidence/binary.sha256"
+          go version -m "$evidence/sub2api" > "$evidence/binary-buildinfo.txt"
+          sha256sum go.mod go.sum > "$evidence/modules-after.sha256"
+          cmp "$evidence/modules-before.sha256" "$evidence/modules-after.sha256"
+          git diff --exit-code HEAD -- > "$evidence/checkout-after.diff"
+          test -z "$(git status --porcelain)"
+          printf '%s\n' 'complete' > "$evidence/complete.txt"
+      - name: Preserve actual independent server build evidence and binary
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nonembed-server-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nonembed-server-build-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  frontend-fixture-contracts:
+    name: Complete Vitest and fork fixture contracts (actual results)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Freeze exact full checkout and fixture inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --exit-code HEAD --
+          test -z "$(git status --porcelain)"
+          evidence="$RUNNER_TEMP/frontend-fixture-contracts-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence"
+          printf '%s\n' "FIXTURE_EVIDENCE=$evidence" >> "$GITHUB_ENV"
+          git rev-parse HEAD > "$evidence/head.txt"
+          git rev-parse HEAD^{tree} > "$evidence/tree.txt"
+          git ls-files --stage > "$evidence/full-repository-index.txt"
+          git ls-files frontend/src > "$evidence/full-frontend-source-files.txt"
+          sha256sum frontend/package.json frontend/pnpm-lock.yaml frontend/vitest.config.ts frontend/tools/fixture-ci-inventory.json > "$evidence/inputs-before.sha256"
+          cp frontend/tools/fixture-ci-inventory.json "$evidence/inventory.json"
+      - name: Install frozen frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Run repaired fixtures and the complete Vitest suite with strict JSON proof
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          export FRONTEND_SOURCE_ROOT="$(pwd -P)"
+          run_phase() {
+            phase="$1"
+            shift
+            set +e
+            pnpm exec vitest run --reporter=json --outputFile="$FIXTURE_EVIDENCE/$phase.json" "$@" > "$FIXTURE_EVIDENCE/$phase.stdout" 2> "$FIXTURE_EVIDENCE/$phase.stderr"
+            actual_status=$?
+            set -e
+            printf '%s\n' "$actual_status" > "$FIXTURE_EVIDENCE/$phase.exit"
+          }
+          mapfile -t fixtures < <(python3 -c 'import json,os; print("\n".join(json.load(open(os.environ["FIXTURE_EVIDENCE"]+"/inventory.json"))["requiredPassedNamesByFile"]))')
+          test "${#fixtures[@]}" = 10
+          run_phase named "${fixtures[@]}"
+          run_phase full
+          python3 - <<'PYPROOF'
+          import collections, json, os, pathlib, re
+          root = pathlib.Path(os.environ['FIXTURE_EVIDENCE'])
+          frontend = pathlib.Path(os.environ['FRONTEND_SOURCE_ROOT'])
+          inventory = json.loads((root / 'inventory.json').read_text())
+          required = inventory['requiredPassedNamesByFile']
+          todo = inventory['preexistingTodo']
+          all_source = (root / 'full-frontend-source-files.txt').read_text().splitlines()
+          expected_full = {p.removeprefix('frontend/') for p in all_source if re.fullmatch(r'frontend/src/.*\.(?:test|spec)\.(?:js|ts|jsx|tsx)', p)}
+          proofs = {}
+          failures = []
+          for phase in ('named', 'full'):
+              result = json.loads((root / (phase + '.json')).read_text())
+              actual = collections.defaultdict(list)
+              suites = collections.Counter()
+              for suite in result['testResults']:
+                  path = pathlib.Path(suite['name']).relative_to(frontend).as_posix()
+                  suites[path] += 1
+                  actual[path].extend(suite['assertionResults'])
+              expected = set(required) if phase == 'named' else expected_full
+              nonpassed = [(path, case.get('fullName', ''), case.get('status')) for path, cases in actual.items() for case in cases if case.get('status') != 'passed']
+              legal_pending = phase == 'named' and not nonpassed or phase == 'full' and len(nonpassed) == 1 and nonpassed[0][0] == todo['file'] and nonpassed[0][1] == todo['fullName'] and nonpassed[0][2] in ('pending', 'todo')
+              mandatory_missing = []
+              for path, names in required.items():
+                  for name in names:
+                      hits = [case for case in actual[path] if case.get('fullName', '').endswith(name) and case.get('status') == 'passed']
+                      if len(hits) != 1:
+                          mandatory_missing.append([path, name, len(hits)])
+              problems = []
+              if (root / (phase + '.exit')).read_text().strip() != '0': problems.append('actual exit is nonzero')
+              if result.get('success') is not True or result.get('numFailedTests') != 0 or result.get('numFailedTestSuites') != 0: problems.append('summary records actual failure')
+              if set(suites) != expected or any(count != 1 for count in suites.values()): problems.append('complete source file inventory differs')
+              if not legal_pending: problems.append('unexpected nonpassed assertion')
+              if mandatory_missing: problems.append('mandatory fixture case missing or duplicated')
+              if phase == 'full' and result.get('numPassedTests', 0) < inventory['minimumFullPassedTests']: problems.append('full passing test count is incomplete')
+              proofs[phase] = {'exit': (root / (phase + '.exit')).read_text().strip(), 'actualFiles': len(suites), 'expectedFiles': len(expected), 'passedTests': result.get('numPassedTests'), 'nonpassed': nonpassed, 'mandatoryMissing': mandatory_missing, 'problems': problems}
+              failures.extend([phase + ': ' + problem for problem in problems])
+          (root / 'actual-proof.json').write_text(json.dumps(proofs, ensure_ascii=False, indent=2) + '\n')
+          assert (root / 'head.txt').read_text().strip() == os.environ['EXPECTED_HEAD'], 'source head differs'
+          assert not failures, failures
+          PYPROOF
+          (cd .. && sha256sum frontend/package.json frontend/pnpm-lock.yaml frontend/vitest.config.ts frontend/tools/fixture-ci-inventory.json) > "$FIXTURE_EVIDENCE/inputs-after.sha256"
+          cmp "$FIXTURE_EVIDENCE/inputs-before.sha256" "$FIXTURE_EVIDENCE/inputs-after.sha256"
+          git diff --exit-code HEAD --
+          test -z "$(git status --porcelain)"
+          printf '%s\n' complete > "$FIXTURE_EVIDENCE/complete.txt"
+      - name: Preserve complete actual Vitest results, exits and source evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-fixture-contracts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/frontend-fixture-contracts-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  test:
+    runs-on: ubuntu-latest
+    env:
+      COVERAGE_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+      COVERAGE_SOURCE_BASE: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.9'
+      - name: Initialize complete Git coverage evidence path (PR only)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'COVERAGE_INTEGRITY_EVIDENCE=%s/complete-git-go-coverage-%s-%s\n' \
+            "$RUNNER_TEMP" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - name: Freeze complete Git source and actual Go build classification (PR only)
+        if: github.event_name == 'pull_request'
+        # A freeze failure is recorded and makes the final mandatory check fail;
+        # it must not suppress the existing tests or Codecov uploads.
+        continue-on-error: true
+        run: >-
+          python3 -B .github/coverage-integrity/check.py freeze
+          --repo "$GITHUB_WORKSPACE"
+          --evidence "$COVERAGE_INTEGRITY_EVIDENCE"
+          --head "$COVERAGE_SOURCE_HEAD"
+          --base "$COVERAGE_SOURCE_BASE"
+      - name: Controlled req HTTP2 and dump/trace actual main-MVS tests, old-red witness and fix-block coverage
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+          REQ_SECURITY_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          REQ_SECURITY_EVIDENCE: ${{ runner.temp }}/req-http2-security-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash tools/req-http2-security-ci.sh
+      - name: Preserve controlled req complete actual evidence and raw atomic profiles
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: req-http2-security-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/req-http2-security-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Responses namespace contracts and lazy span boundaries (race)
+        working-directory: backend
+        run: go test -tags=unit -race -parallel=1 -count=1 -timeout=8m -v -run '(?i)namespace' ./internal/service/
+      - name: Deployment shell contracts
+        run: |
+          /bin/sh deploy/tests/docker-compose-security-test.sh
+          /bin/sh deploy/test-caddyfile-cache.sh
+          python3 deploy/tests/docker-compose-redis-command-test.py
+          python3 deploy/tests/admin-bootstrap-defaults-test.py
+      - name: Fresh admin credential login, bcrypt and CLI dialogue contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestSetupAdminCredentials_|^TestPrepareAdminCredentials|^TestBootstrapAdminUser|^TestSetupDefaultAdminConcurrency$' ./internal/setup/
+      - name: Fresh admin actual PostgreSQL creation, concurrent bootstrap and existing-user preservation (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+          SETUP_CLI_COVERPROFILE: ${{ github.workspace }}/backend/coverage-setup-cli.out
+        run: |
+          go test -tags=integration -race -coverpkg=./internal/setup -covermode=atomic -count=1 -v -run '^TestSetupAdminBootstrapPostgres_' ./internal/setup/
+          test -s coverage-setup-cli.out
+          bash ./tools/normalize-go-coverprofile.sh coverage-setup-cli.out
+      - name: CC fallback terminal source and fixture formatting (remote only)
+        run: |
+          gofmt -d backend/internal/service/openai_gateway_responses_chat_fallback.go backend/internal/service/openai_gateway_messages_chat_fallback.go backend/internal/service/openai_raw_stream_truncation.go backend/internal/service/chat_fallback_terminal_test.go backend/internal/repository/chat_fallback_terminal_integration_test.go
+          test -z "$(gofmt -l backend/internal/service/openai_gateway_responses_chat_fallback.go backend/internal/service/openai_gateway_messages_chat_fallback.go backend/internal/service/openai_raw_stream_truncation.go backend/internal/service/chat_fallback_terminal_test.go backend/internal/repository/chat_fallback_terminal_integration_test.go)"
+      - name: CC fallback actual three-mode terminal, tools and partial metering (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -timeout=10m -v -run '^TestChatFallbackTerminal_' ./internal/service/
+      - name: CC fallback actual wallet and card settlement, unknown holds and wire (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -timeout=10m -v -run '^TestChatFallbackTerminalHTTP_' ./internal/repository/
+      - name: Anthropic start output metering and interrupted native attempts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestAnthropicStartOutput_' ./internal/service/
+      - name: Anthropic start output actual wallet and card settlement (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestAnthropicStartOutputHTTP_' ./internal/repository/
+      - name: WS payload TTFT and first-output deadline (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestResponsesStreamHasOutput|^TestWSEmptyTTFT|^TestOpenAIWSPassthroughDeadlineAndLifecycleHelpers$|^TestOpenAIWSPassthroughEventClassification$' ./internal/pkg/openai/ ./internal/service/ ./internal/service/openai_ws_v2/
+      - name: WS TTFT actual two-turn wallet and card settlement (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestWSEmptyTTFTHTTP_' ./internal/repository/
+      - name: WS image input usage and bounded lineage (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestWSImageInput' ./internal/service/ ./internal/service/openai_ws_v2/
+      - name: WS image input actual funding and settlement (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestWSImageInputHTTP_' ./internal/repository/
+      - name: Integration tests (chat ping actual account failover and billing)
+        working-directory: backend
+        run: go test -tags=integration -count=1 -v -run '^TestChatPingHTTP_' ./internal/repository/
+      - name: Tool-name restoration protocol fields and opaque content (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestToolNameRestoreProtocol_|^TestRestoreToolNamesInBytes|^TestApplyToolNameRewriteToBody' ./internal/service/
+      - name: Google/GitHub bound identity email drift and authentication controls
+        working-directory: backend
+        run: go test -tags=unit -count=1 -run '^TestEmailOAuthBoundIdentity|^TestEmailOAuthCallbackDoesNotAutoLinkLocalAccount|^TestLogin2FACompletesPendingOAuthBindAndConsumesSession' -v ./internal/handler/
+      - name: Configured ops thresholds actual dashboard regressions
+        working-directory: backend
+        run: go test -tags=unit -race -count=1 -v -run '^TestOpsConfiguredThresholds|^TestComputeDashboardHealthScore|^TestComputeBusinessHealth|^TestComputeInfraHealth' ./internal/service/
+      - name: OpenAI OAuth rejection recovery boundaries (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -run '^TestOpenAI401Recovery' -v ./internal/service/
+      - name: OpenAI OAuth HTTP recovery and funded billing (actual PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -run '^TestOpenAI401HTTP_' -v ./internal/repository/
+      - name: EasyPay signing domain, return URL and retained dialect contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestEasyPayNotify|^TestEasyPayVerifyNotification|^TestEasyPaySign|^TestEasyPayVerifySign|^TestCanonicalizeReturnURL|^TestBuildPaymentReturnURL|^TestHandlePaymentNotification(RejectsEasyPaySimulatedSuccessWhenUpstreamPending|AcceptsEasyPaySuccessAfterUpstreamPaid)$' ./internal/payment/provider/ ./internal/service/
+      - name: EasyPay actual signed webhook and guarded wallet fulfillment (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestEasyPaySignReuseHTTP_' ./internal/repository/
+      - name: Responses refusal conversion and actual Chat output (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestResponsesRefusal_|^TestResponsesToChatCompletions_RefusalPreserved|^TestResponsesEventToChatChunks_RefusalDelta|^TestBufferedResponseAccumulator_RefusalRebuiltFromDeltas' ./internal/pkg/apicompat/ ./internal/service/
+      - name: Responses refusal actual wallet and card settlement (PG Redis)
+        working-directory: backend
+        run: go test -tags=integration -count=1 -v -run '^TestResponsesRefusalHTTP_' ./internal/repository/
+      - name: Codex live selected-account catalog contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestCodexAccountMapping_' ./internal/service/ ./internal/handler/
+      - name: Snapshot cache, invalidation, fail-closed and pinned policy contracts (actual race results)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^Test(MatrixPolicy|StagedPolicy|PricingShadow)_' ./internal/service/
+      - name: Unit tests (coverage)
+        working-directory: backend
+        run: make test-unit-cover
+      - name: Refund subscription compensation and paid renewal (actual PostgreSQL)
+        working-directory: backend
+        run: |
+          go test -tags=integration -count=1 -v -run '^TestRefundSubscriptionAdjustmentPG_' ./internal/service/
+          go test -tags=integration -count=1 -v -run '^TestRefundSubscriptionActualRepo_' ./internal/repository/
+          go test -tags=unit -count=1 -v -run '^TestRefundSubscriptionAdjustmentSnapshot' ./internal/service/
+      - name: Refund storage failure regressions (named)
+        working-directory: backend
+        run: go test -tags=unit -count=1 -v -run '^TestRefundPendingStorageFailures|^TestRefundConfirmedSettlementStorageFailure|^TestRefundSettlementDeletedUser|^TestRefundMalformedSnapshot|^TestRefundBlockedDiagnostics' ./internal/service/
+      - name: Account test structured failure metadata (named)
+        working-directory: backend
+        run: go test -tags=unit -count=1 -run '^TestAccountTestLogging_' -v ./internal/service/
+      - name: CC length terminal event and real readers
+        working-directory: backend
+        run: go test -tags=unit -count=1 -v -run '^TestChatLengthTerminal_|^TestStream_ValidToolCallAtOutputLimitKeepsIncompleteResponse$|^TestStream_ReasoningOnlySynthesizesVisibleText$' ./internal/pkg/apicompat/ ./internal/service/
+      - name: Unit tests (converted Responses input recovery)
+        working-directory: backend
+        run: go test -tags=unit -count=1 -run '^TestStructuredInputRecovery_|^TestConvertedResponsesInputStringRejection|^TestForwardAsChatCompletions_(ResponsesSupportedFallsBack|StructuredInput)' -v ./internal/service/
+      - name: Gemini audio known sibling required shapes and preserved filters (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestChatInputAudioShape_' ./internal/pkg/apicompat/
+      - name: Gemini audio public shape refusals and actual wallet card funding (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -timeout=10m -v -run '^TestChatInputAudioShapeHTTP_' ./internal/repository/
+      - name: Chat-to-Responses legacy calls, developer and named choice contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestChatResponsesContracts_|^TestChatCompletionsToResponses_(ToolChoiceShape|DeveloperRolePreserved|LegacyFunction)' ./internal/pkg/apicompat/ ./internal/service/
+      - name: Unit tests (cache write wire and accounting agreement)
+        working-directory: backend
+        run: go test -tags=unit -count=1 -run '^TestCacheWriteUsage_' -v ./internal/pkg/apicompat/ ./internal/service/
+      - name: Unit tests (Chat input audio boundaries)
+        working-directory: backend
+        run: go test -tags=unit -count=1 -run '^TestChatInputAudio_' -v ./internal/pkg/apicompat/ ./internal/service/
+      - name: HTTP bridge continuation history actual wire (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestOpenAIWSHTTPBridgeHistory_|^TestOpenAIWSHTTPBridgeKeepsContinuation|^TestOpenAIWSHTTPBridgeFullCustomToolHistory|^TestOpenAIWSHTTPBridgeObjectToolOutput' ./internal/service/
+      # 分组策略矩阵实现带快照缓存、singleflight 与失效通知，并发路径靠 -race 守住。
+      # 只跑矩阵、阶段与影子比对相关测试；流式 ping 保留独立命名门槛。
+      - name: Chat ping and disconnect regression tests (actual results)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestHandleCCStreamingFromAnthropic_Ping|^TestCompatStream|^TestCompatProviderSSEError|^TestCompatReadersOversizedLine' ./internal/service/
+      - name: Unit tests (race, matrix policy and shadow comparison)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -run '^Test(MatrixPolicy|StagedPolicy|PricingShadow)_' ./internal/service/
+      - name: Unit tests (race, Antigravity partial metering)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -run '^TestAntigravityInterruptedUsage' -v ./internal/service/
+      - name: Model field ambiguity and upstream mismatch regression gate
+        working-directory: backend
+        run: |
+          git rev-parse HEAD
+          git hash-object internal/service/gateway_model_field.go internal/service/duplicate_model_upstream_audit_test.go internal/service/gateway_model_field_test.go internal/service/gateway_model_ws_forward_test.go internal/handler/gateway_model_field_test.go internal/service/gateway_model_embeddings_audit_test.go internal/handler/gateway_model_embeddings_audit_test.go internal/service/gateway_model_other_forward_audit_test.go internal/handler/gateway_model_other_ingress_audit_test.go
+          test -z "$(gofmt -l internal/service/gateway_model_field.go internal/service/duplicate_model_upstream_audit_test.go internal/service/gateway_model_field_test.go internal/service/gateway_model_ws_forward_test.go internal/handler/gateway_model_field_test.go internal/service/gateway_model_embeddings_audit_test.go internal/handler/gateway_model_embeddings_audit_test.go internal/service/gateway_model_other_forward_audit_test.go internal/handler/gateway_model_other_ingress_audit_test.go)"
+          go test -tags=unit -race -count=1 -v -run '^(TestGatewayModelField_|TestGatewayModelEmbeddings_|TestGatewayModelOtherIngress_|TestGatewayModelOtherForward_|TestDuplicateModelAudit_|TestUpstreamModelMismatch_|TestOpenAIResponsesWebSocket|TestOpenAIGatewayResponses_|TestForwardAsAnthropic_ForceChatCompletionsRequestValidationErrors|TestOpenAIGatewayServiceForwardRejectsUndecodableReasoningReplay)' ./internal/service/ ./internal/handler/
+      - name: Integration tests (coverage)
+        working-directory: backend
+        run: make test-integration-cover
+      - name: Account test actual logger Ops PostgreSQL attribution (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -run '^TestAccountTestLogging_ActualLoggerOpsPostgres$' -v ./internal/repository/
+      - name: Integration tests (Antigravity actual partial billing)
+        working-directory: backend
+        run: go test -tags=integration -count=1 -run '^TestAntigravityPartialBilling_' -v ./internal/repository/
+      - name: CC length actual Responses and Messages wallet/card billing
+        working-directory: backend
+        run: go test -tags=integration -count=1 -v -run '^TestChatLengthTerminalHTTP_' ./internal/repository/
+      - name: Integration tests (converted Responses fallback actual billing)
+        working-directory: backend
+        run: go test -tags=integration -count=1 -run '^TestStructuredInputFallbackHTTP_' -v ./internal/repository/
+      - name: Original client account selection source formatting
+        working-directory: backend
+        run: |
+          files="internal/handler/openai_client_restriction_selection.go internal/handler/openai_responses_attempt.go internal/handler/openai_chat_completions_attempt.go internal/handler/openai_client_restriction_selection_handler_test.go internal/handler/openai_client_restriction_selection_state_test.go internal/repository/openai_client_restriction_selection_integration_test.go"
+          gofmt -d $files
+          test -z "$(gofmt -l $files)"
+      - name: Original client account selection actual HTTP and slot contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=1 -v -run '^TestClientRestrictedSelection' ./internal/handler/
+      - name: Original client account selection actual PG Redis wallet card and held lease contracts (race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestClientRestrictedSelectionHTTP_' ./internal/repository/
+      - name: Integration tests (cache write wire and wallet card agreement)
+        working-directory: backend
+        run: go test -tags=integration -count=1 -run '^TestCacheWriteUsageHTTP_' -v ./internal/repository/
+      - name: Integration tests (Gemini Chat audio and local funding release)
+        working-directory: backend
+        run: go test -tags=integration -count=1 -run '^TestChatInputAudioHTTP_' -v ./internal/repository/
+      - name: HTTP bridge continuation history actual funded turns (PG Redis race)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -v -run '^TestOpenAIWSBridgeHistoryHTTP_|^TestBillingInflightWS_RealTurnReservesBillsOnceAndReleases|^TestBillingInflightWS_LaterModelUsesActualBillingSource' ./internal/repository/
+      - name: Integration tests (race, TOTP login claims)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=integration -race -count=1 -run '^TestLoginTotpAtomic' -v ./internal/handler/
+      - name: Refund transaction regressions (named)
+        working-directory: backend
+        run: go test -tags=integration -count=1 -v -run '^TestRefundPendingAtomicPostgres_|^TestRefundAtomicPostgres_' ./internal/service/ ./internal/repository/
+      - name: Preserve actual Go coverage profiles
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-go-coverage-${{ github.run_id }}
+          path: |
+            backend/coverage-unit.out
+            backend/coverage-integration.out
+            backend/coverage-setup-cli.out
+            backend/coverage-req-http2.out
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Responses input token regression tests (actual results)
+        working-directory: backend
+        run: go test -tags=unit -count=1 -v -run '^TestResponsesInputTokens|^TestGatewayResponsesInputTokens' ./internal/service/ ./internal/handler/ ./internal/server/routes/
+      - name: Cold and fast concurrent snapshots (100 actual race iterations)
+        working-directory: backend
+        env:
+          CGO_ENABLED: "1"
+        run: go test -tags=unit -race -count=100 -timeout=2m -v -run '^(TestStagedPolicy_ColdSnapshotLoadsSynchronously|TestMatrixPolicy_ConcurrentFastSnapshotReads)$' ./internal/service/
+      - name: Upload backend coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: backend/coverage-unit.out,backend/coverage-integration.out,backend/coverage-setup-cli.out,backend/coverage-req-http2.out
+          flags: backend
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: APIs-Gateway/sub2api
+          override_pr: ${{ github.event.pull_request.number }}
+          base_sha: ${{ github.event.pull_request.base.sha }}
+          fail_ci_if_error: false
+      # Keep this supplementary gate after uploads: a lower-bound failure must
+      # not prevent Codecov from receiving its original four push/PR uploads.
+      - name: Remote negative controls for complete Git coverage verifier
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$COVERAGE_INTEGRITY_EVIDENCE"
+          set +e
+          python3 -B .github/coverage-integrity/test_check.py > "$COVERAGE_INTEGRITY_EVIDENCE/negative-controls.stdout" 2> "$COVERAGE_INTEGRITY_EVIDENCE/negative-controls.stderr"
+          actual_status=$?
+          set -e
+          printf '%s\n' "$actual_status" > "$COVERAGE_INTEGRITY_EVIDENCE/negative-controls.exit"
+          cat "$COVERAGE_INTEGRITY_EVIDENCE/negative-controls.stderr"
+          test "$actual_status" -eq 0
+      - name: Complete Git changed Go instrumented line lower bound (85%, PR only)
+        if: github.event_name == 'pull_request'
+        run: >-
+          python3 -B .github/coverage-integrity/check.py check
+          --repo "$GITHUB_WORKSPACE"
+          --evidence "$COVERAGE_INTEGRITY_EVIDENCE"
+          --head "$COVERAGE_SOURCE_HEAD"
+          --base "$COVERAGE_SOURCE_BASE"
+      - name: Preserve complete Git scope, independent block inventory and unchanged profiles
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: complete-git-go-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.COVERAGE_INTEGRITY_EVIDENCE }}
+          if-no-files-found: error
+          retention-days: 14
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Stripe page disposal actual mocked payment regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/StripePaymentView.lifecycle.spec.ts src/views/user/__tests__/StripePaymentView.spec.ts
+      - name: Airwallex page disposal actual mocked SDK regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/AirwallexPaymentView.lifecycle.spec.ts src/views/user/__tests__/AirwallexPaymentView.spec.ts
+      - name: Group RPM edits and multiplier dialog actual ownership regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/components/admin/group/__tests__/
+      - name: Rewrite deletion actual component and admission regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/composables/__tests__/useModelWhitelist.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts src/components/account/__tests__/BulkEditAccountModal.spec.ts src/components/account/__tests__/CreateAccountModal.modelPreview.spec.ts
+      - name: Configured ops thresholds actual header regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/views/admin/ops/components/__tests__/OpsDashboardHeader.thresholds.spec.ts src/views/admin/ops/utils/__tests__/metricThresholds.spec.ts src/views/admin/ops/__tests__/OpsDashboard.spec.ts
+      - name: Channel default prices actual edit and stale-request regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/components/admin/channel/__tests__/PricingEntryCard.modelDefaultPrice.spec.ts
+      - name: Username draft ownership, server synchronization and API error controls (actual components)
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/components/user/profile/__tests__/ProfileEditForm.draft.spec.ts src/components/user/profile/__tests__/ProfileEditForm.spec.ts
+      - name: Usage tooltip currency and equivalent-rate actual regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/UsageView.spec.ts src/views/user/__tests__/UsageView.servedGroup.spec.ts src/utils/__tests__/rateDisplay.spec.ts
+      - name: Frontend typecheck and critical vitest
+        run: make test-frontend
+      - name: Custom Markdown actual page ordering and loading regressions
+        working-directory: frontend
+        run: pnpm exec vitest run --reporter=verbose src/views/user/__tests__/CustomPageView.race.spec.ts
+      - name: Frontend production build
+        working-directory: frontend
+        run: pnpm run build
+
+  golangci-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      # 充值倍率只能在白名单文件里读取（额度 → 人民币记账重构的换算闸门），见 tools/check_credit_multiplier.py。
+      # 放在 lint job 里随它一起跑，不单独成为 required check。
+      - name: Credit multiplier gate
+        run: |
+          python3 tools/test_check_credit_multiplier.py
+          python3 tools/check_credit_multiplier.py
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.9'
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.9
+          args: --timeout=30m
+          working-directory: backend
+
+  frontend-coverage:
+    needs: test
+    # The supplementary gate can fail after backend coverage was uploaded.
+    # Keep the dependent frontend upload scheduled unless the run was cancelled.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      # 全量跑 vitest 出覆盖率(非 required:允许存量未铺满的测试失败,仍上传已生成的覆盖)
+      - name: Frontend coverage (full vitest)
+        working-directory: frontend
+        run: pnpm run test:coverage
+        continue-on-error: true
+      - name: Upload frontend coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: frontend/coverage/lcov.info
+          flags: frontend
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: APIs-Gateway/sub2api
+          override_pr: ${{ github.event.pull_request.number }}
+          base_sha: ${{ github.event.pull_request.base.sha }}
+          fail_ci_if_error: false
