@@ -176,13 +176,17 @@ func TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce(t *testing.T) {
 					assertState := func() {
 						t.Helper()
 						var logs, dedup, input, output, cache int
-						var cost, balance float64
+						var cost, balance, inputCost, cacheCost, totalCost float64
 						require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*),COALESCE(sum(input_tokens),0),COALESCE(sum(output_tokens),0),COALESCE(sum(cache_read_tokens),0),COALESCE(sum(actual_cost),0) FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&logs, &input, &output, &cache, &cost))
 						require.Equal(t, 1, logs)
 						require.Zero(t, input, "GEMINI_CACHE_USAGE_NORMALIZATION")
 						require.Zero(t, output)
 						require.Equal(t, 3, cache)
 						require.InDelta(t, .03, cost, 1e-8, "complete cache reads retain their existing price")
+						require.NoError(t, inflightTestDB(t).QueryRow(`SELECT input_cost,cache_read_cost,total_cost FROM usage_logs WHERE user_id=$1`, f.user.ID).Scan(&inputCost, &cacheCost, &totalCost))
+						require.Zero(t, inputCost)
+						require.InDelta(t, .03, cacheCost, 1e-8)
+						require.InDelta(t, .03, totalCost, 1e-8)
 						require.NoError(t, inflightTestDB(t).QueryRow(`SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=$1`, f.key.ID).Scan(&dedup))
 						require.Equal(t, 1, dedup)
 						require.NoError(t, inflightTestDB(t).QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user.ID).Scan(&balance))
