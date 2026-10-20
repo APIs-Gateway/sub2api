@@ -21,6 +21,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitor"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitordailyrollup"
+	"github.com/Wei-Shaw/sub2api/ent/channelmonitorgroupstats"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitorhistory"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitorrequesttemplate"
 	"github.com/Wei-Shaw/sub2api/ent/errorpassthroughrule"
@@ -69,6 +70,7 @@ const (
 	TypeAuthIdentityChannel           = "AuthIdentityChannel"
 	TypeChannelMonitor                = "ChannelMonitor"
 	TypeChannelMonitorDailyRollup     = "ChannelMonitorDailyRollup"
+	TypeChannelMonitorGroupStats      = "ChannelMonitorGroupStats"
 	TypeChannelMonitorHistory         = "ChannelMonitorHistory"
 	TypeChannelMonitorRequestTemplate = "ChannelMonitorRequestTemplate"
 	TypeErrorPassthroughRule          = "ErrorPassthroughRule"
@@ -8934,6 +8936,8 @@ type ChannelMonitorMutation struct {
 	body_override_mode      *string
 	body_override           *map[string]interface{}
 	response_format         *string
+	group_id                *int64
+	addgroup_id             *int64
 	clearedFields           map[string]struct{}
 	history                 map[int64]struct{}
 	removedhistory          map[int64]struct{}
@@ -9893,6 +9897,76 @@ func (m *ChannelMonitorMutation) ResetResponseFormat() {
 	m.response_format = nil
 }
 
+// SetGroupID sets the "group_id" field.
+func (m *ChannelMonitorMutation) SetGroupID(i int64) {
+	m.group_id = &i
+	m.addgroup_id = nil
+}
+
+// GroupID returns the value of the "group_id" field in the mutation.
+func (m *ChannelMonitorMutation) GroupID() (r int64, exists bool) {
+	v := m.group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldGroupID returns the old "group_id" field's value of the ChannelMonitor entity.
+// If the ChannelMonitor object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorMutation) OldGroupID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldGroupID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldGroupID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldGroupID: %w", err)
+	}
+	return oldValue.GroupID, nil
+}
+
+// AddGroupID adds i to the "group_id" field.
+func (m *ChannelMonitorMutation) AddGroupID(i int64) {
+	if m.addgroup_id != nil {
+		*m.addgroup_id += i
+	} else {
+		m.addgroup_id = &i
+	}
+}
+
+// AddedGroupID returns the value that was added to the "group_id" field in this mutation.
+func (m *ChannelMonitorMutation) AddedGroupID() (r int64, exists bool) {
+	v := m.addgroup_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearGroupID clears the value of the "group_id" field.
+func (m *ChannelMonitorMutation) ClearGroupID() {
+	m.group_id = nil
+	m.addgroup_id = nil
+	m.clearedFields[channelmonitor.FieldGroupID] = struct{}{}
+}
+
+// GroupIDCleared returns if the "group_id" field was cleared in this mutation.
+func (m *ChannelMonitorMutation) GroupIDCleared() bool {
+	_, ok := m.clearedFields[channelmonitor.FieldGroupID]
+	return ok
+}
+
+// ResetGroupID resets all changes to the "group_id" field.
+func (m *ChannelMonitorMutation) ResetGroupID() {
+	m.group_id = nil
+	m.addgroup_id = nil
+	delete(m.clearedFields, channelmonitor.FieldGroupID)
+}
+
 // AddHistoryIDs adds the "history" edge to the ChannelMonitorHistory entity by ids.
 func (m *ChannelMonitorMutation) AddHistoryIDs(ids ...int64) {
 	if m.history == nil {
@@ -10075,7 +10149,7 @@ func (m *ChannelMonitorMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ChannelMonitorMutation) Fields() []string {
-	fields := make([]string, 0, 20)
+	fields := make([]string, 0, 21)
 	if m.created_at != nil {
 		fields = append(fields, channelmonitor.FieldCreatedAt)
 	}
@@ -10136,6 +10210,9 @@ func (m *ChannelMonitorMutation) Fields() []string {
 	if m.response_format != nil {
 		fields = append(fields, channelmonitor.FieldResponseFormat)
 	}
+	if m.group_id != nil {
+		fields = append(fields, channelmonitor.FieldGroupID)
+	}
 	return fields
 }
 
@@ -10184,6 +10261,8 @@ func (m *ChannelMonitorMutation) Field(name string) (ent.Value, bool) {
 		return m.BodyOverride()
 	case channelmonitor.FieldResponseFormat:
 		return m.ResponseFormat()
+	case channelmonitor.FieldGroupID:
+		return m.GroupID()
 	}
 	return nil, false
 }
@@ -10233,6 +10312,8 @@ func (m *ChannelMonitorMutation) OldField(ctx context.Context, name string) (ent
 		return m.OldBodyOverride(ctx)
 	case channelmonitor.FieldResponseFormat:
 		return m.OldResponseFormat(ctx)
+	case channelmonitor.FieldGroupID:
+		return m.OldGroupID(ctx)
 	}
 	return nil, fmt.Errorf("unknown ChannelMonitor field %s", name)
 }
@@ -10382,6 +10463,13 @@ func (m *ChannelMonitorMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetResponseFormat(v)
 		return nil
+	case channelmonitor.FieldGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetGroupID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown ChannelMonitor field %s", name)
 }
@@ -10399,6 +10487,9 @@ func (m *ChannelMonitorMutation) AddedFields() []string {
 	if m.addcreated_by != nil {
 		fields = append(fields, channelmonitor.FieldCreatedBy)
 	}
+	if m.addgroup_id != nil {
+		fields = append(fields, channelmonitor.FieldGroupID)
+	}
 	return fields
 }
 
@@ -10413,6 +10504,8 @@ func (m *ChannelMonitorMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedJitterSeconds()
 	case channelmonitor.FieldCreatedBy:
 		return m.AddedCreatedBy()
+	case channelmonitor.FieldGroupID:
+		return m.AddedGroupID()
 	}
 	return nil, false
 }
@@ -10443,6 +10536,13 @@ func (m *ChannelMonitorMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddCreatedBy(v)
 		return nil
+	case channelmonitor.FieldGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddGroupID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown ChannelMonitor numeric field %s", name)
 }
@@ -10462,6 +10562,9 @@ func (m *ChannelMonitorMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(channelmonitor.FieldBodyOverride) {
 		fields = append(fields, channelmonitor.FieldBodyOverride)
+	}
+	if m.FieldCleared(channelmonitor.FieldGroupID) {
+		fields = append(fields, channelmonitor.FieldGroupID)
 	}
 	return fields
 }
@@ -10488,6 +10591,9 @@ func (m *ChannelMonitorMutation) ClearField(name string) error {
 		return nil
 	case channelmonitor.FieldBodyOverride:
 		m.ClearBodyOverride()
+		return nil
+	case channelmonitor.FieldGroupID:
+		m.ClearGroupID()
 		return nil
 	}
 	return fmt.Errorf("unknown ChannelMonitor nullable field %s", name)
@@ -10556,6 +10662,9 @@ func (m *ChannelMonitorMutation) ResetField(name string) error {
 		return nil
 	case channelmonitor.FieldResponseFormat:
 		m.ResetResponseFormat()
+		return nil
+	case channelmonitor.FieldGroupID:
+		m.ResetGroupID()
 		return nil
 	}
 	return fmt.Errorf("unknown ChannelMonitor field %s", name)
@@ -12102,6 +12211,934 @@ func (m *ChannelMonitorDailyRollupMutation) ResetEdge(name string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown ChannelMonitorDailyRollup edge %s", name)
+}
+
+// ChannelMonitorGroupStatsMutation represents an operation that mutates the ChannelMonitorGroupStats nodes in the graph.
+type ChannelMonitorGroupStatsMutation struct {
+	config
+	op                 Op
+	typ                string
+	id                 *int64
+	group_id           *int64
+	addgroup_id        *int64
+	bucket_start       *time.Time
+	bucket_minutes     *int16
+	addbucket_minutes  *int16
+	success_count      *int
+	addsuccess_count   *int
+	error_5xx_count    *int
+	adderror_5xx_count *int
+	total_count        *int
+	addtotal_count     *int
+	success_rate       *float64
+	addsuccess_rate    *float64
+	created_at         *time.Time
+	clearedFields      map[string]struct{}
+	done               bool
+	oldValue           func(context.Context) (*ChannelMonitorGroupStats, error)
+	predicates         []predicate.ChannelMonitorGroupStats
+}
+
+var _ ent.Mutation = (*ChannelMonitorGroupStatsMutation)(nil)
+
+// channelmonitorgroupstatsOption allows management of the mutation configuration using functional options.
+type channelmonitorgroupstatsOption func(*ChannelMonitorGroupStatsMutation)
+
+// newChannelMonitorGroupStatsMutation creates new mutation for the ChannelMonitorGroupStats entity.
+func newChannelMonitorGroupStatsMutation(c config, op Op, opts ...channelmonitorgroupstatsOption) *ChannelMonitorGroupStatsMutation {
+	m := &ChannelMonitorGroupStatsMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeChannelMonitorGroupStats,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withChannelMonitorGroupStatsID sets the ID field of the mutation.
+func withChannelMonitorGroupStatsID(id int64) channelmonitorgroupstatsOption {
+	return func(m *ChannelMonitorGroupStatsMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *ChannelMonitorGroupStats
+		)
+		m.oldValue = func(ctx context.Context) (*ChannelMonitorGroupStats, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().ChannelMonitorGroupStats.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withChannelMonitorGroupStats sets the old ChannelMonitorGroupStats of the mutation.
+func withChannelMonitorGroupStats(node *ChannelMonitorGroupStats) channelmonitorgroupstatsOption {
+	return func(m *ChannelMonitorGroupStatsMutation) {
+		m.oldValue = func(context.Context) (*ChannelMonitorGroupStats, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m ChannelMonitorGroupStatsMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m ChannelMonitorGroupStatsMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *ChannelMonitorGroupStatsMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *ChannelMonitorGroupStatsMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().ChannelMonitorGroupStats.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetGroupID sets the "group_id" field.
+func (m *ChannelMonitorGroupStatsMutation) SetGroupID(i int64) {
+	m.group_id = &i
+	m.addgroup_id = nil
+}
+
+// GroupID returns the value of the "group_id" field in the mutation.
+func (m *ChannelMonitorGroupStatsMutation) GroupID() (r int64, exists bool) {
+	v := m.group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldGroupID returns the old "group_id" field's value of the ChannelMonitorGroupStats entity.
+// If the ChannelMonitorGroupStats object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorGroupStatsMutation) OldGroupID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldGroupID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldGroupID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldGroupID: %w", err)
+	}
+	return oldValue.GroupID, nil
+}
+
+// AddGroupID adds i to the "group_id" field.
+func (m *ChannelMonitorGroupStatsMutation) AddGroupID(i int64) {
+	if m.addgroup_id != nil {
+		*m.addgroup_id += i
+	} else {
+		m.addgroup_id = &i
+	}
+}
+
+// AddedGroupID returns the value that was added to the "group_id" field in this mutation.
+func (m *ChannelMonitorGroupStatsMutation) AddedGroupID() (r int64, exists bool) {
+	v := m.addgroup_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetGroupID resets all changes to the "group_id" field.
+func (m *ChannelMonitorGroupStatsMutation) ResetGroupID() {
+	m.group_id = nil
+	m.addgroup_id = nil
+}
+
+// SetBucketStart sets the "bucket_start" field.
+func (m *ChannelMonitorGroupStatsMutation) SetBucketStart(t time.Time) {
+	m.bucket_start = &t
+}
+
+// BucketStart returns the value of the "bucket_start" field in the mutation.
+func (m *ChannelMonitorGroupStatsMutation) BucketStart() (r time.Time, exists bool) {
+	v := m.bucket_start
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldBucketStart returns the old "bucket_start" field's value of the ChannelMonitorGroupStats entity.
+// If the ChannelMonitorGroupStats object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorGroupStatsMutation) OldBucketStart(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldBucketStart is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldBucketStart requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldBucketStart: %w", err)
+	}
+	return oldValue.BucketStart, nil
+}
+
+// ResetBucketStart resets all changes to the "bucket_start" field.
+func (m *ChannelMonitorGroupStatsMutation) ResetBucketStart() {
+	m.bucket_start = nil
+}
+
+// SetBucketMinutes sets the "bucket_minutes" field.
+func (m *ChannelMonitorGroupStatsMutation) SetBucketMinutes(i int16) {
+	m.bucket_minutes = &i
+	m.addbucket_minutes = nil
+}
+
+// BucketMinutes returns the value of the "bucket_minutes" field in the mutation.
+func (m *ChannelMonitorGroupStatsMutation) BucketMinutes() (r int16, exists bool) {
+	v := m.bucket_minutes
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldBucketMinutes returns the old "bucket_minutes" field's value of the ChannelMonitorGroupStats entity.
+// If the ChannelMonitorGroupStats object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorGroupStatsMutation) OldBucketMinutes(ctx context.Context) (v int16, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldBucketMinutes is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldBucketMinutes requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldBucketMinutes: %w", err)
+	}
+	return oldValue.BucketMinutes, nil
+}
+
+// AddBucketMinutes adds i to the "bucket_minutes" field.
+func (m *ChannelMonitorGroupStatsMutation) AddBucketMinutes(i int16) {
+	if m.addbucket_minutes != nil {
+		*m.addbucket_minutes += i
+	} else {
+		m.addbucket_minutes = &i
+	}
+}
+
+// AddedBucketMinutes returns the value that was added to the "bucket_minutes" field in this mutation.
+func (m *ChannelMonitorGroupStatsMutation) AddedBucketMinutes() (r int16, exists bool) {
+	v := m.addbucket_minutes
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetBucketMinutes resets all changes to the "bucket_minutes" field.
+func (m *ChannelMonitorGroupStatsMutation) ResetBucketMinutes() {
+	m.bucket_minutes = nil
+	m.addbucket_minutes = nil
+}
+
+// SetSuccessCount sets the "success_count" field.
+func (m *ChannelMonitorGroupStatsMutation) SetSuccessCount(i int) {
+	m.success_count = &i
+	m.addsuccess_count = nil
+}
+
+// SuccessCount returns the value of the "success_count" field in the mutation.
+func (m *ChannelMonitorGroupStatsMutation) SuccessCount() (r int, exists bool) {
+	v := m.success_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSuccessCount returns the old "success_count" field's value of the ChannelMonitorGroupStats entity.
+// If the ChannelMonitorGroupStats object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorGroupStatsMutation) OldSuccessCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSuccessCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSuccessCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSuccessCount: %w", err)
+	}
+	return oldValue.SuccessCount, nil
+}
+
+// AddSuccessCount adds i to the "success_count" field.
+func (m *ChannelMonitorGroupStatsMutation) AddSuccessCount(i int) {
+	if m.addsuccess_count != nil {
+		*m.addsuccess_count += i
+	} else {
+		m.addsuccess_count = &i
+	}
+}
+
+// AddedSuccessCount returns the value that was added to the "success_count" field in this mutation.
+func (m *ChannelMonitorGroupStatsMutation) AddedSuccessCount() (r int, exists bool) {
+	v := m.addsuccess_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSuccessCount resets all changes to the "success_count" field.
+func (m *ChannelMonitorGroupStatsMutation) ResetSuccessCount() {
+	m.success_count = nil
+	m.addsuccess_count = nil
+}
+
+// SetError5xxCount sets the "error_5xx_count" field.
+func (m *ChannelMonitorGroupStatsMutation) SetError5xxCount(i int) {
+	m.error_5xx_count = &i
+	m.adderror_5xx_count = nil
+}
+
+// Error5xxCount returns the value of the "error_5xx_count" field in the mutation.
+func (m *ChannelMonitorGroupStatsMutation) Error5xxCount() (r int, exists bool) {
+	v := m.error_5xx_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldError5xxCount returns the old "error_5xx_count" field's value of the ChannelMonitorGroupStats entity.
+// If the ChannelMonitorGroupStats object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorGroupStatsMutation) OldError5xxCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldError5xxCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldError5xxCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldError5xxCount: %w", err)
+	}
+	return oldValue.Error5xxCount, nil
+}
+
+// AddError5xxCount adds i to the "error_5xx_count" field.
+func (m *ChannelMonitorGroupStatsMutation) AddError5xxCount(i int) {
+	if m.adderror_5xx_count != nil {
+		*m.adderror_5xx_count += i
+	} else {
+		m.adderror_5xx_count = &i
+	}
+}
+
+// AddedError5xxCount returns the value that was added to the "error_5xx_count" field in this mutation.
+func (m *ChannelMonitorGroupStatsMutation) AddedError5xxCount() (r int, exists bool) {
+	v := m.adderror_5xx_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetError5xxCount resets all changes to the "error_5xx_count" field.
+func (m *ChannelMonitorGroupStatsMutation) ResetError5xxCount() {
+	m.error_5xx_count = nil
+	m.adderror_5xx_count = nil
+}
+
+// SetTotalCount sets the "total_count" field.
+func (m *ChannelMonitorGroupStatsMutation) SetTotalCount(i int) {
+	m.total_count = &i
+	m.addtotal_count = nil
+}
+
+// TotalCount returns the value of the "total_count" field in the mutation.
+func (m *ChannelMonitorGroupStatsMutation) TotalCount() (r int, exists bool) {
+	v := m.total_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTotalCount returns the old "total_count" field's value of the ChannelMonitorGroupStats entity.
+// If the ChannelMonitorGroupStats object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorGroupStatsMutation) OldTotalCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTotalCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTotalCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTotalCount: %w", err)
+	}
+	return oldValue.TotalCount, nil
+}
+
+// AddTotalCount adds i to the "total_count" field.
+func (m *ChannelMonitorGroupStatsMutation) AddTotalCount(i int) {
+	if m.addtotal_count != nil {
+		*m.addtotal_count += i
+	} else {
+		m.addtotal_count = &i
+	}
+}
+
+// AddedTotalCount returns the value that was added to the "total_count" field in this mutation.
+func (m *ChannelMonitorGroupStatsMutation) AddedTotalCount() (r int, exists bool) {
+	v := m.addtotal_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTotalCount resets all changes to the "total_count" field.
+func (m *ChannelMonitorGroupStatsMutation) ResetTotalCount() {
+	m.total_count = nil
+	m.addtotal_count = nil
+}
+
+// SetSuccessRate sets the "success_rate" field.
+func (m *ChannelMonitorGroupStatsMutation) SetSuccessRate(f float64) {
+	m.success_rate = &f
+	m.addsuccess_rate = nil
+}
+
+// SuccessRate returns the value of the "success_rate" field in the mutation.
+func (m *ChannelMonitorGroupStatsMutation) SuccessRate() (r float64, exists bool) {
+	v := m.success_rate
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSuccessRate returns the old "success_rate" field's value of the ChannelMonitorGroupStats entity.
+// If the ChannelMonitorGroupStats object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorGroupStatsMutation) OldSuccessRate(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSuccessRate is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSuccessRate requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSuccessRate: %w", err)
+	}
+	return oldValue.SuccessRate, nil
+}
+
+// AddSuccessRate adds f to the "success_rate" field.
+func (m *ChannelMonitorGroupStatsMutation) AddSuccessRate(f float64) {
+	if m.addsuccess_rate != nil {
+		*m.addsuccess_rate += f
+	} else {
+		m.addsuccess_rate = &f
+	}
+}
+
+// AddedSuccessRate returns the value that was added to the "success_rate" field in this mutation.
+func (m *ChannelMonitorGroupStatsMutation) AddedSuccessRate() (r float64, exists bool) {
+	v := m.addsuccess_rate
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearSuccessRate clears the value of the "success_rate" field.
+func (m *ChannelMonitorGroupStatsMutation) ClearSuccessRate() {
+	m.success_rate = nil
+	m.addsuccess_rate = nil
+	m.clearedFields[channelmonitorgroupstats.FieldSuccessRate] = struct{}{}
+}
+
+// SuccessRateCleared returns if the "success_rate" field was cleared in this mutation.
+func (m *ChannelMonitorGroupStatsMutation) SuccessRateCleared() bool {
+	_, ok := m.clearedFields[channelmonitorgroupstats.FieldSuccessRate]
+	return ok
+}
+
+// ResetSuccessRate resets all changes to the "success_rate" field.
+func (m *ChannelMonitorGroupStatsMutation) ResetSuccessRate() {
+	m.success_rate = nil
+	m.addsuccess_rate = nil
+	delete(m.clearedFields, channelmonitorgroupstats.FieldSuccessRate)
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *ChannelMonitorGroupStatsMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *ChannelMonitorGroupStatsMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the ChannelMonitorGroupStats entity.
+// If the ChannelMonitorGroupStats object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorGroupStatsMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *ChannelMonitorGroupStatsMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// Where appends a list predicates to the ChannelMonitorGroupStatsMutation builder.
+func (m *ChannelMonitorGroupStatsMutation) Where(ps ...predicate.ChannelMonitorGroupStats) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the ChannelMonitorGroupStatsMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *ChannelMonitorGroupStatsMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.ChannelMonitorGroupStats, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *ChannelMonitorGroupStatsMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *ChannelMonitorGroupStatsMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (ChannelMonitorGroupStats).
+func (m *ChannelMonitorGroupStatsMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *ChannelMonitorGroupStatsMutation) Fields() []string {
+	fields := make([]string, 0, 8)
+	if m.group_id != nil {
+		fields = append(fields, channelmonitorgroupstats.FieldGroupID)
+	}
+	if m.bucket_start != nil {
+		fields = append(fields, channelmonitorgroupstats.FieldBucketStart)
+	}
+	if m.bucket_minutes != nil {
+		fields = append(fields, channelmonitorgroupstats.FieldBucketMinutes)
+	}
+	if m.success_count != nil {
+		fields = append(fields, channelmonitorgroupstats.FieldSuccessCount)
+	}
+	if m.error_5xx_count != nil {
+		fields = append(fields, channelmonitorgroupstats.FieldError5xxCount)
+	}
+	if m.total_count != nil {
+		fields = append(fields, channelmonitorgroupstats.FieldTotalCount)
+	}
+	if m.success_rate != nil {
+		fields = append(fields, channelmonitorgroupstats.FieldSuccessRate)
+	}
+	if m.created_at != nil {
+		fields = append(fields, channelmonitorgroupstats.FieldCreatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *ChannelMonitorGroupStatsMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case channelmonitorgroupstats.FieldGroupID:
+		return m.GroupID()
+	case channelmonitorgroupstats.FieldBucketStart:
+		return m.BucketStart()
+	case channelmonitorgroupstats.FieldBucketMinutes:
+		return m.BucketMinutes()
+	case channelmonitorgroupstats.FieldSuccessCount:
+		return m.SuccessCount()
+	case channelmonitorgroupstats.FieldError5xxCount:
+		return m.Error5xxCount()
+	case channelmonitorgroupstats.FieldTotalCount:
+		return m.TotalCount()
+	case channelmonitorgroupstats.FieldSuccessRate:
+		return m.SuccessRate()
+	case channelmonitorgroupstats.FieldCreatedAt:
+		return m.CreatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *ChannelMonitorGroupStatsMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case channelmonitorgroupstats.FieldGroupID:
+		return m.OldGroupID(ctx)
+	case channelmonitorgroupstats.FieldBucketStart:
+		return m.OldBucketStart(ctx)
+	case channelmonitorgroupstats.FieldBucketMinutes:
+		return m.OldBucketMinutes(ctx)
+	case channelmonitorgroupstats.FieldSuccessCount:
+		return m.OldSuccessCount(ctx)
+	case channelmonitorgroupstats.FieldError5xxCount:
+		return m.OldError5xxCount(ctx)
+	case channelmonitorgroupstats.FieldTotalCount:
+		return m.OldTotalCount(ctx)
+	case channelmonitorgroupstats.FieldSuccessRate:
+		return m.OldSuccessRate(ctx)
+	case channelmonitorgroupstats.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown ChannelMonitorGroupStats field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ChannelMonitorGroupStatsMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case channelmonitorgroupstats.FieldGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetGroupID(v)
+		return nil
+	case channelmonitorgroupstats.FieldBucketStart:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetBucketStart(v)
+		return nil
+	case channelmonitorgroupstats.FieldBucketMinutes:
+		v, ok := value.(int16)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetBucketMinutes(v)
+		return nil
+	case channelmonitorgroupstats.FieldSuccessCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSuccessCount(v)
+		return nil
+	case channelmonitorgroupstats.FieldError5xxCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetError5xxCount(v)
+		return nil
+	case channelmonitorgroupstats.FieldTotalCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTotalCount(v)
+		return nil
+	case channelmonitorgroupstats.FieldSuccessRate:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSuccessRate(v)
+		return nil
+	case channelmonitorgroupstats.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ChannelMonitorGroupStats field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *ChannelMonitorGroupStatsMutation) AddedFields() []string {
+	var fields []string
+	if m.addgroup_id != nil {
+		fields = append(fields, channelmonitorgroupstats.FieldGroupID)
+	}
+	if m.addbucket_minutes != nil {
+		fields = append(fields, channelmonitorgroupstats.FieldBucketMinutes)
+	}
+	if m.addsuccess_count != nil {
+		fields = append(fields, channelmonitorgroupstats.FieldSuccessCount)
+	}
+	if m.adderror_5xx_count != nil {
+		fields = append(fields, channelmonitorgroupstats.FieldError5xxCount)
+	}
+	if m.addtotal_count != nil {
+		fields = append(fields, channelmonitorgroupstats.FieldTotalCount)
+	}
+	if m.addsuccess_rate != nil {
+		fields = append(fields, channelmonitorgroupstats.FieldSuccessRate)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *ChannelMonitorGroupStatsMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case channelmonitorgroupstats.FieldGroupID:
+		return m.AddedGroupID()
+	case channelmonitorgroupstats.FieldBucketMinutes:
+		return m.AddedBucketMinutes()
+	case channelmonitorgroupstats.FieldSuccessCount:
+		return m.AddedSuccessCount()
+	case channelmonitorgroupstats.FieldError5xxCount:
+		return m.AddedError5xxCount()
+	case channelmonitorgroupstats.FieldTotalCount:
+		return m.AddedTotalCount()
+	case channelmonitorgroupstats.FieldSuccessRate:
+		return m.AddedSuccessRate()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ChannelMonitorGroupStatsMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case channelmonitorgroupstats.FieldGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddGroupID(v)
+		return nil
+	case channelmonitorgroupstats.FieldBucketMinutes:
+		v, ok := value.(int16)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddBucketMinutes(v)
+		return nil
+	case channelmonitorgroupstats.FieldSuccessCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSuccessCount(v)
+		return nil
+	case channelmonitorgroupstats.FieldError5xxCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddError5xxCount(v)
+		return nil
+	case channelmonitorgroupstats.FieldTotalCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTotalCount(v)
+		return nil
+	case channelmonitorgroupstats.FieldSuccessRate:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSuccessRate(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ChannelMonitorGroupStats numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *ChannelMonitorGroupStatsMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(channelmonitorgroupstats.FieldSuccessRate) {
+		fields = append(fields, channelmonitorgroupstats.FieldSuccessRate)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *ChannelMonitorGroupStatsMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *ChannelMonitorGroupStatsMutation) ClearField(name string) error {
+	switch name {
+	case channelmonitorgroupstats.FieldSuccessRate:
+		m.ClearSuccessRate()
+		return nil
+	}
+	return fmt.Errorf("unknown ChannelMonitorGroupStats nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *ChannelMonitorGroupStatsMutation) ResetField(name string) error {
+	switch name {
+	case channelmonitorgroupstats.FieldGroupID:
+		m.ResetGroupID()
+		return nil
+	case channelmonitorgroupstats.FieldBucketStart:
+		m.ResetBucketStart()
+		return nil
+	case channelmonitorgroupstats.FieldBucketMinutes:
+		m.ResetBucketMinutes()
+		return nil
+	case channelmonitorgroupstats.FieldSuccessCount:
+		m.ResetSuccessCount()
+		return nil
+	case channelmonitorgroupstats.FieldError5xxCount:
+		m.ResetError5xxCount()
+		return nil
+	case channelmonitorgroupstats.FieldTotalCount:
+		m.ResetTotalCount()
+		return nil
+	case channelmonitorgroupstats.FieldSuccessRate:
+		m.ResetSuccessRate()
+		return nil
+	case channelmonitorgroupstats.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown ChannelMonitorGroupStats field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *ChannelMonitorGroupStatsMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *ChannelMonitorGroupStatsMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *ChannelMonitorGroupStatsMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *ChannelMonitorGroupStatsMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *ChannelMonitorGroupStatsMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *ChannelMonitorGroupStatsMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *ChannelMonitorGroupStatsMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown ChannelMonitorGroupStats unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *ChannelMonitorGroupStatsMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown ChannelMonitorGroupStats edge %s", name)
 }
 
 // ChannelMonitorHistoryMutation represents an operation that mutates the ChannelMonitorHistory nodes in the graph.

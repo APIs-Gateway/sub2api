@@ -445,6 +445,7 @@ var (
 		{Name: "body_override_mode", Type: field.TypeString, Size: 10, Default: "off"},
 		{Name: "body_override", Type: field.TypeJSON, Nullable: true},
 		{Name: "response_format", Type: field.TypeString, Size: 10, Default: "json"},
+		{Name: "group_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "template_id", Type: field.TypeInt64, Nullable: true},
 	}
 	// ChannelMonitorsTable holds the schema information for the "channel_monitors" table.
@@ -455,7 +456,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "channel_monitors_channel_monitor_request_templates_request_template",
-				Columns:    []*schema.Column{ChannelMonitorsColumns[20]},
+				Columns:    []*schema.Column{ChannelMonitorsColumns[21]},
 				RefColumns: []*schema.Column{ChannelMonitorRequestTemplatesColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -484,7 +485,7 @@ var (
 			{
 				Name:    "channelmonitor_template_id",
 				Unique:  false,
-				Columns: []*schema.Column{ChannelMonitorsColumns[20]},
+				Columns: []*schema.Column{ChannelMonitorsColumns[21]},
 			},
 		},
 	}
@@ -529,6 +530,51 @@ var (
 				Name:    "channelmonitordailyrollup_bucket_date",
 				Unique:  false,
 				Columns: []*schema.Column{ChannelMonitorDailyRollupsColumns[2]},
+			},
+		},
+	}
+	// ChannelMonitorGroupStatsColumns holds the columns for the "channel_monitor_group_stats" table.
+	ChannelMonitorGroupStatsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "group_id", Type: field.TypeInt64},
+		{Name: "bucket_start", Type: field.TypeTime},
+		{Name: "bucket_minutes", Type: field.TypeInt16, Default: 10},
+		{Name: "success_count", Type: field.TypeInt, Default: 0},
+		{Name: "error_5xx_count", Type: field.TypeInt, Default: 0},
+		{Name: "total_count", Type: field.TypeInt, Default: 0},
+		{Name: "success_rate", Type: field.TypeFloat64, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// ChannelMonitorGroupStatsTable holds the schema information for the "channel_monitor_group_stats" table.
+	ChannelMonitorGroupStatsTable = &schema.Table{
+		Name:       "channel_monitor_group_stats",
+		Columns:    ChannelMonitorGroupStatsColumns,
+		PrimaryKey: []*schema.Column{ChannelMonitorGroupStatsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "channelmonitorgroupstats_group_id_bucket_start_bucket_minutes",
+				Unique:  true,
+				Columns: []*schema.Column{ChannelMonitorGroupStatsColumns[1], ChannelMonitorGroupStatsColumns[2], ChannelMonitorGroupStatsColumns[3]},
+			},
+			{
+				Name:    "channelmonitorgroupstats_group_id_bucket_start",
+				Unique:  false,
+				Columns: []*schema.Column{ChannelMonitorGroupStatsColumns[1], ChannelMonitorGroupStatsColumns[2]},
+				Annotation: &entsql.IndexAnnotation{
+					DescColumns: map[string]bool{
+						ChannelMonitorGroupStatsColumns[2].Name: true,
+					},
+				},
+			},
+			{
+				Name:    "channelmonitorgroupstats_bucket_start",
+				Unique:  false,
+				Columns: []*schema.Column{ChannelMonitorGroupStatsColumns[2]},
+				Annotation: &entsql.IndexAnnotation{
+					DescColumns: map[string]bool{
+						ChannelMonitorGroupStatsColumns[2].Name: true,
+					},
+				},
 			},
 		},
 	}
@@ -1850,6 +1896,7 @@ var (
 		AuthIdentityChannelsTable,
 		ChannelMonitorsTable,
 		ChannelMonitorDailyRollupsTable,
+		ChannelMonitorGroupStatsTable,
 		ChannelMonitorHistoriesTable,
 		ChannelMonitorRequestTemplatesTable,
 		ErrorPassthroughRulesTable,
@@ -1917,6 +1964,9 @@ func init() {
 	ChannelMonitorDailyRollupsTable.ForeignKeys[0].RefTable = ChannelMonitorsTable
 	ChannelMonitorDailyRollupsTable.Annotation = &entsql.Annotation{
 		Table: "channel_monitor_daily_rollups",
+	}
+	ChannelMonitorGroupStatsTable.Annotation = &entsql.Annotation{
+		Table: "channel_monitor_group_stats",
 	}
 	ChannelMonitorHistoriesTable.ForeignKeys[0].RefTable = ChannelMonitorsTable
 	ChannelMonitorHistoriesTable.Annotation = &entsql.Annotation{

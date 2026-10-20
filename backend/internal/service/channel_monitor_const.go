@@ -120,6 +120,13 @@ const (
 	monitorDialTimeout = 10 * time.Second
 	// monitorDialKeepAlive 自定义 dialer keep-alive 间隔。
 	monitorDialKeepAlive = 30 * time.Second
+
+	// ---- 分组真实成功率聚合（Phase 2）参数 ----
+
+	// channelMonitorGroupStatsWindowMinutes 聚合判定窗口：近 N 分钟的桶。
+	channelMonitorGroupStatsWindowMinutes = 30
+	// channelMonitorGroupStatsLagMinutes 聚合窗口的延迟余量（分钟），给日志写入留余量。
+	channelMonitorGroupStatsLagMinutes = 1
 )
 
 // 业务错误（统一在此声明，避免散落）。
