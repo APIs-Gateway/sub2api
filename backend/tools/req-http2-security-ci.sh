@@ -30,6 +30,9 @@ test ! -s "$evidence/http3-wire-gofmt.list"
 # Official meta charset repair and its actual HTTP contracts are checked only in remote CI.
 gofmt -l third_party/req/decode.go third_party/req/meta_charset_contract_test.go > "$evidence/meta-charset-gofmt.list"
 test ! -s "$evidence/meta-charset-gofmt.list"
+# Reviewed F44 and child1743 ownership sources are checked only in remote CI.
+gofmt -l third_party/req/client_behavior_peer_test.go third_party/req/client_behavior_observer_test.go third_party/req/client_behavior_contract_test.go third_party/req/client_redirect_cookie_contract_test.go third_party/req/client_response_contract_test.go third_party/req/digest_ownership_peer_test.go third_party/req/digest_ownership_contract_test.go > "$evidence/digest-client-contract-gofmt.list"
+test ! -s "$evidence/digest-client-contract-gofmt.list"
 # New private H2 frame contract source is checked only in remote CI.
 gofmt -l third_party/req/internal/http2/frame_contract_test.go > "$evidence/http2-frame-contract-gofmt.list"
 test ! -s "$evidence/http2-frame-contract-gofmt.list"
@@ -45,7 +48,7 @@ python3 "$checker" packages "$backend" "$evidence"
 gofmt -d third_party/req/internal/http2/{flow,transport,frame}.go third_party/req/internal/http2/{flow,transport,frame}_security_test.go third_party/req/transport_security_test.go third_party/req/internal/dump/{dump.go,dump_concurrency_test.go} third_party/req/{request,response,trace,dump_concurrency_test,trace_concurrency_test,http1_lifecycle_test,http1_upload_test,proxy_lifecycle_test}.go > "$evidence/gofmt.diff"
 test ! -s "$evidence/gofmt.diff"
 # -p bounds compiler parallelism; -parallel bounds tests within each package.
-go test -p=1 -parallel=1 -race -count=1 -timeout=10m -json -run '^(TestReqHTTP2Security_|TestDumper|TestReqDumpSecurity_|TestReqTraceSecurity_|TestReqHTTP1Lifecycle_|TestReqProxyLifecycle_|TestReqHTTP3Contract_|TestReqHTTP3Wire_|TestReqHTTP3PublicTLS_|TestReqHTTP3TLSControl_|TestReqHTTP3Decompression_|TestReqHTTP3DeflateClose_|TestReqDeflateClose_|TestReqHTTP2FrameContract_|TestReqHTTP1Transfer_|TestReqHTTP2TransportContract_|TestReqMetaCharset_)' -covermode=atomic -coverpkg="$module/..." -coverprofile="$evidence/named.raw.out" "$private" "$module/internal/dump" "$module" "$module/internal/http3" "$module/internal/compress" > "$evidence/named.json" 2> "$evidence/named.stderr"
+go test -p=1 -parallel=1 -race -count=1 -timeout=10m -json -run '^(TestReqHTTP2Security_|TestDumper|TestReqDumpSecurity_|TestReqTraceSecurity_|TestReqHTTP1Lifecycle_|TestReqProxyLifecycle_|TestReqHTTP3Contract_|TestReqHTTP3Wire_|TestReqHTTP3PublicTLS_|TestReqHTTP3TLSControl_|TestReqHTTP3Decompression_|TestReqHTTP3DeflateClose_|TestReqDeflateClose_|TestReqHTTP2FrameContract_|TestReqHTTP1Transfer_|TestReqHTTP2TransportContract_|TestReqMetaCharset_|TestReqClientDigest_|TestReqClientRedirect_|TestReqClientCookie_|TestReqClientResponse_|TestReqDigestOwnership_)' -covermode=atomic -coverpkg="$module/..." -coverprofile="$evidence/named.raw.out" "$private" "$module/internal/dump" "$module" "$module/internal/http3" "$module/internal/compress" > "$evidence/named.json" 2> "$evidence/named.stderr"
 python3 "$checker" named "$backend" "$evidence"
 # Wildcard deliberately omits the original internal/testdata helper suite.
 # Its cert_test.go lacks an io import; retain both original files verbatim.

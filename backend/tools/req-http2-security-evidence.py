@@ -94,10 +94,15 @@ def verify_named(backend, evidence, filename):
     require(sum(expected[kind + "Count"] for kind in retained_kinds) == 338,
             "Retain all338 reviewed baseline leaves")
     require(expected["http2FrameContractCount"] == 149 and expected["http1TransferContractCount"] == 30 and
-            expected["http2TransportContractCount"] == 25 and expected["metaCharsetCount"] == 8 and
-            expected["totalNamedLeaves"] == 401,
-            "Retain all393 reviewed leaves plus8 actual HTTP charset leaves,401 total")
-    kinds = retained_kinds + ("http1TransferContract", "http2TransportContract", "metaCharset")
+            expected["http2TransportContractCount"] == 25 and expected["metaCharsetCount"] == 8,
+            "Retain all393 reviewed leaves plus8 actual HTTP charset leaves")
+    baseline_kinds = retained_kinds + ("http1TransferContract", "http2TransportContract", "metaCharset")
+    require(sum(expected[kind + "Count"] for kind in baseline_kinds) == 401,
+            "Retain every original401 mandatory leaf")
+    require(expected["clientBehaviorCount"] == 44 and expected["digestOwnershipCount"] == 23 and
+            expected["totalNamedLeaves"] == 468,
+            "Retain reviewed F44 and all23 new Digest ownership leaves with original401")
+    kinds = baseline_kinds + ("clientBehavior", "digestOwnership")
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
     for kind in kinds:
@@ -115,7 +120,8 @@ def verify_named(backend, evidence, filename):
                 "TestReqHTTP1Lifecycle_", "TestReqProxyLifecycle_", "TestReqHTTP3Contract_", "TestReqHTTP3Wire_",
                 "TestReqHTTP3PublicTLS_", "TestReqHTTP3TLSControl_", "TestReqHTTP3Decompression_",
                 "TestReqHTTP3DeflateClose_", "TestReqDeflateClose_", "TestReqHTTP2FrameContract_", "TestReqHTTP1Transfer_",
-                "TestReqHTTP2TransportContract_", "TestReqMetaCharset_")
+                "TestReqHTTP2TransportContract_", "TestReqMetaCharset_", "TestReqClientDigest_", "TestReqClientRedirect_",
+                "TestReqClientCookie_", "TestReqClientResponse_", "TestReqDigestOwnership_")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")

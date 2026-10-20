@@ -1,0 +1,91 @@
+{
+  "childIssue": "https://github.com/APIs-Gateway/sub2api/issues/1743",
+  "parentIssue": 1711,
+  "sharedPR": 1712,
+  "permanentTrackingIssue": 291,
+  "state": "OLD test-source candidate: digest original; no formatting/tests/builds executed on this source; pending independent review and CI-only OLD/NEW proof",
+  "compositionHead": "85a001e5186b1c80c9c11eb19268d35f1054c420",
+  "compositionTree": "f9e6e82d080848a2bdc497f993c0f25a8a6ac511",
+  "freshOriginMain": "c3e3eed31c7783d1923e1afd9ce706f3501ece26",
+  "freshUpstreamMain": "8f2cbb53d9d1c40e1865b07ac460571f7d4c48de",
+  "formalSecurityHead": "2d6bf53dc3231dc4ccfce48211c43942ed18d656",
+  "reviewedFHead": "9c0c0641aa6a90accd4c688c5bcad7eebc53e699",
+  "governingRootDesignSHA256": "ab966a1ce42d92ce0facfe2e1a7f50e5ce31f7183aeb3070a16947f7b0f12afe",
+  "newMandatoryLeaves": [
+    "TestReqDigestOwnership_OriginalBody/getbody_success",
+    "TestReqDigestOwnership_OriginalBody/getbody_close_error_preserves_success",
+    "TestReqDigestOwnership_OriginalBody/stream_success",
+    "TestReqDigestOwnership_OriginalBody/stream_read_error",
+    "TestReqDigestOwnership_OriginalBody/stream_read_and_close_error",
+    "TestReqDigestOwnership_OriginalBody/stream_close_error",
+    "TestReqDigestOwnership_OriginalBody/nil_body",
+    "TestReqDigestOwnership_OriginalBody/http_no_body",
+    "TestReqDigestOwnership_FactoryErrorBody/first_clone",
+    "TestReqDigestOwnership_FactoryErrorBody/second_clone",
+    "TestReqDigestOwnership_FactoryErrorBody/fresh_auth_int_prepare",
+    "TestReqDigestOwnership_FactoryErrorBody/cached_auth_int_prepare",
+    "TestReqDigestOwnership_PrepareReaders/fresh_read_error",
+    "TestReqDigestOwnership_PrepareReaders/fresh_read_and_close_error",
+    "TestReqDigestOwnership_PrepareReaders/fresh_close_error_only",
+    "TestReqDigestOwnership_PrepareReaders/cached_read_error",
+    "TestReqDigestOwnership_PrepareReaders/cached_read_and_close_error",
+    "TestReqDigestOwnership_PrepareReaders/cached_close_error_only",
+    "TestReqDigestOwnership_ResponseBody/ordinary_401_caller_owned",
+    "TestReqDigestOwnership_ResponseBody/basic_only_caller_owned",
+    "TestReqDigestOwnership_ResponseBody/unsupported_digest_caller_owned",
+    "TestReqDigestOwnership_ResponseBody/malformed_closed_once",
+    "TestReqDigestOwnership_ResponseBody/replay_challenge_closed_once"
+  ],
+  "newMandatoryCount": 23,
+  "retainedOriginalCount": 401,
+  "retainedFCount": 44,
+  "combinedMandatoryCount": 468,
+  "rawRegressionFiles": [
+    {
+      "path": "digest_ownership_peer_test.go",
+      "bytes": 4481,
+      "sha256": "118615f529557ebeefc8a241a22a259a93b381e28597256aa265734b652245f2"
+    },
+    {
+      "path": "digest_ownership_contract_test.go",
+      "bytes": 11681,
+      "sha256": "ac6c002317e9292631c12bd39c455b9a8826f247efbee85d5a3cd2a1b21670fc"
+    }
+  ],
+  "existingF8ByteexactGitSource": [
+    "backend/third_party/req/CLIENT-BEHAVIOR-LICENSE",
+    "backend/third_party/req/CLIENT-BEHAVIOR-PROVENANCE.json",
+    "backend/third_party/req/CLIENT-BEHAVIOR-REVIEW.md",
+    "backend/third_party/req/client_behavior_contract_test.go",
+    "backend/third_party/req/client_behavior_observer_test.go",
+    "backend/third_party/req/client_behavior_peer_test.go",
+    "backend/third_party/req/client_redirect_cookie_contract_test.go",
+    "backend/third_party/req/client_response_contract_test.go"
+  ],
+  "initialDiagnostic": {
+    "run": 39355019380,
+    "artifact": 12235400344,
+    "artifactSHA256": "1a2de84ed264e8fb718b591e18f0f42eadc6bed44da8e7cddb3a68c2aef73f4b",
+    "actualLeaves": "5RED39PASS; original401 PASS; real Go named/all exits1",
+    "claimLimit": "Diagnostic success is not application PASS or aggregate coverage approval."
+  },
+  "officialSources": [
+    {
+      "url": "https://github.com/imroc/req/blob/2affd4787737e8315ff3ffd61a3388eda32d0755/digest.go",
+      "gitBlob": "0695d8c3063c448e29ab05d44f0f8fbbd9a1cf81"
+    },
+    {
+      "url": "https://github.com/icholy/digest/blob/b1b6f62b9a55549e464151d0d5ab78f8cbe2bbf4/digest.go",
+      "sha256": "ab977f02c8a1f28361426a18dd20b265bd4d66aab6bb90347752a317ddede540"
+    }
+  ],
+  "ownershipPolicy": [
+    "Non-idempotent Close invocation counters; sync.Once only signals completion",
+    "Distinct original/replay/hash/error-body resources; error identity and actual peer cardinality checked before ownership assertions",
+    "Read-only real peer response wrapper registered before Digest; no synthetic HTTP responses",
+    "Factory error/body boundaries include auth-int; successful hashbody readers retain helper closure/error policy",
+    "Allow asynchronous underlying RoundTripper Close with bounded channel waits; no sleeps or duplicate cleanup Close"
+  ],
+  "newOldFailureDisposition": "Unproven until remote actual JSON; no compiler/race/fixture failure accepted as bug; no whitelist expansion",
+  "productionDigestGitBlobAtOldSource": "0695d8c3063c448e29ab05d44f0f8fbbd9a1cf81"
+}
