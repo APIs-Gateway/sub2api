@@ -15,8 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      SOURCE_HEAD: b46887d2b82e4a1f668ef65fc28c8af326461cbf
-      OLD_HEAD: ebd32c7df6ed2700a871a1a01d797d9862f74f22
+      SOURCE_HEAD: f35ff7e9e21deaa0d608836d84b700fd5be10d9f
+      OLD_HEAD: 133c05ad12c888453a226395eef0e58b8fb6fcda
       BASE_HEAD: c3e3eed31c7783d1923e1afd9ce706f3501ece26
       EVIDENCE: ${{ runner.temp }}/gemini-cache-usage-format-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -28,7 +28,7 @@ jobs:
       - name: Checkout complete frozen source
         uses: actions/checkout@v6
         with:
-          ref: b46887d2b82e4a1f668ef65fc28c8af326461cbf
+          ref: f35ff7e9e21deaa0d608836d84b700fd5be10d9f
           path: frozen-source
           fetch-depth: 0
           persist-credentials: false
@@ -98,7 +98,10 @@ jobs:
 
           assert git(source, 'rev-parse', 'HEAD').decode().strip() == source_head
           assert git(source, 'rev-parse', source_head + '^').decode().strip() == old_head
-          assert git(source, 'rev-parse', old_head + '^').decode().strip() == base_head
+          subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor', base_head, old_head], check=True)
+          assert not git(source, 'diff', '--name-only', base_head, old_head, '--', files[2])
+          assert git(source, 'show', base_head + ':' + files[2]) == git(source, 'show', old_head + ':' + files[2])
+          assert set(git(source, 'diff', '--name-only', base_head, old_head).decode().splitlines()) == set(files[:2] + ['.github/workflows/gemini-cache-usage-format.yml'])
           assert git(source, 'diff', '--name-only', old_head, source_head).decode().splitlines() == [files[2]]
           for name in files[:2]:
               assert git(source, 'show', old_head + ':' + name) == git(source, 'show', source_head + ':' + name)
