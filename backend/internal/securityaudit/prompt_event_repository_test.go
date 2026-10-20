@@ -114,6 +114,10 @@ func TestPromptEventRepositoryRejectsUnavailableDatabase(t *testing.T) {
 	require.EqualError(t, err, "prompt audit database unavailable")
 	_, err = repo.GetEvent(context.Background(), 1)
 	require.EqualError(t, err, "prompt audit database unavailable")
+	_, err = repo.PreviewDelete(context.Background(), EventFilter{})
+	require.EqualError(t, err, "prompt audit database unavailable")
+	_, err = repo.DeleteEventsByFilter(context.Background(), EventFilter{}, 1, 1)
+	require.EqualError(t, err, "prompt audit database unavailable")
 }
 
 func TestPromptEventRepositoryGetEventMapsNotFound(t *testing.T) {
@@ -186,6 +190,224 @@ func TestBuildEventWhereUsesQuestionMarkDialect(t *testing.T) {
 	require.Contains(t, where, "LOWER(e.request_id) LIKE LOWER(?)")
 	require.NotContains(t, where, "ILIKE")
 	require.Equal(t, []any{groupID, "%Needle%", "%Needle%", "%Needle%", "%Needle%", "%Needle%", "%Needle%"}, args)
+}
+
+func TestPromptEventRepositoryPreviewDeleteBindsCanonicalFilterAndHighWaterMark(t *testing.T) {
+	db, mock := newPromptStorageSQLMock(t)
+	repo := NewPostgreSQLRepository(db)
+	start := time.Unix(1700000000, 0).UTC()
+	end := start.Add(time.Hour)
+
+	mock.ExpectQuery(`SELECT COUNT\(\*\), COALESCE\(MAX\(e.id\),0\) FROM prompt_audit_events e WHERE TRUE AND e.created_at >= \$1 AND e.created_at <= \$2`).
+		WithArgs(start, end).WillReturnRows(sqlmock.NewRows([]string{"count", "max"}).AddRow(int64(3), int64(42)))
+	preview, err := repo.PreviewDelete(context.Background(), EventFilter{StartAt: &start, EndAt: &end})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), preview.MatchedCount)
+	require.Equal(t, int64(42), preview.SnapshotMaxID)
+	require.Equal(t, FilterHash(preview.FilterSummary, 42), preview.FilterHash)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPromptEventRepositoryPreviewDeleteRejectsInvalidEmptyAndFailedSnapshots(t *testing.T) {
+	db, mock := newPromptStorageSQLMock(t)
+	repo := NewPostgreSQLRepository(db)
+	start := time.Unix(1700000000, 0).UTC()
+	end := start.Add(time.Hour)
+	filter := EventFilter{StartAt: &start, EndAt: &end}
+
+	_, err := repo.PreviewDelete(context.Background(), EventFilter{})
+	require.ErrorIs(t, err, ErrInvalidDeleteFilter)
+
+	mock.ExpectQuery(`SELECT COUNT\(\*\), COALESCE\(MAX\(e.id\),0\) FROM prompt_audit_events e WHERE TRUE AND e.created_at >= \$1 AND e.created_at <= \$2`).
+		WithArgs(start, end).WillReturnRows(sqlmock.NewRows([]string{"count", "max"}).AddRow(int64(0), int64(0)))
+	_, err = repo.PreviewDelete(context.Background(), filter)
+	require.ErrorIs(t, err, ErrDeleteNoMatches)
+
+	mock.ExpectQuery(`SELECT COUNT\(\*\), COALESCE\(MAX\(e.id\),0\) FROM prompt_audit_events e WHERE TRUE AND e.created_at >= \$1 AND e.created_at <= \$2`).
+		WithArgs(start, end).WillReturnError(errors.New("preview failed"))
+	_, err = repo.PreviewDelete(context.Background(), filter)
+	require.EqualError(t, err, "preview failed")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPromptEventRepositoryFilterDeleteIsBoundToPreviewHighWaterMark(t *testing.T) {
+	db, mock := newPromptStorageSQLMock(t)
+	repo := NewPostgreSQLRepository(db)
+	start := time.Unix(1700000000, 0).UTC()
+	end := start.Add(time.Hour)
+	filter := EventFilter{StartAt: &start, EndAt: &end}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT e.id, e.job_id FROM prompt_audit_events e WHERE TRUE AND e.created_at >= \$1 AND e.created_at <= \$2 AND e.id <= \$3 ORDER BY e.id LIMIT \$4`).
+		WithArgs(start, end, int64(42), 200).WillReturnRows(sqlmock.NewRows([]string{"id", "job_id"}).AddRow(int64(21), int64(11)))
+	mock.ExpectExec(`DELETE FROM prompt_audit_events WHERE id IN \(\$1\)`).WithArgs(int64(21)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DELETE FROM prompt_audit_jobs WHERE id IN \(\$1\)`).WithArgs(int64(11)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := repo.DeleteEventsByFilter(context.Background(), filter, 42, 200)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), result.DeletedEvents)
+	require.Equal(t, int64(1), result.DeletedJobs)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPromptEventRepositoryFilterDeleteRejectsStaleOrEmptySnapshot(t *testing.T) {
+	db, mock := newPromptStorageSQLMock(t)
+	repo := NewPostgreSQLRepository(db)
+	start := time.Unix(1700000000, 0).UTC()
+	end := start.Add(time.Hour)
+	filter := EventFilter{StartAt: &start, EndAt: &end}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT e.id, e.job_id FROM prompt_audit_events e WHERE TRUE AND e.created_at >= \$1 AND e.created_at <= \$2 AND e.id <= \$3 ORDER BY e.id LIMIT \$4`).
+		WithArgs(start, end, int64(42), 200).WillReturnRows(sqlmock.NewRows([]string{"id", "job_id"}))
+	mock.ExpectRollback()
+	_, err := repo.DeleteEventsByFilter(context.Background(), filter, 42, 200)
+	require.ErrorIs(t, err, ErrDeleteNoMatches)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPromptEventRepositoryFilterDeleteRejectsConcurrentZeroRowDelete(t *testing.T) {
+	db, mock := newPromptStorageSQLMock(t)
+	repo := NewPostgreSQLRepository(db)
+	start := time.Unix(1700000000, 0).UTC()
+	end := start.Add(time.Hour)
+	filter := EventFilter{StartAt: &start, EndAt: &end}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT e.id, e.job_id FROM prompt_audit_events e WHERE TRUE AND e.created_at >= \$1 AND e.created_at <= \$2 AND e.id <= \$3 ORDER BY e.id LIMIT \$4`).
+		WithArgs(start, end, int64(42), 200).WillReturnRows(sqlmock.NewRows([]string{"id", "job_id"}).AddRow(int64(21), int64(11)))
+	mock.ExpectExec(`DELETE FROM prompt_audit_events WHERE id IN \(\$1\)`).WithArgs(int64(21)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+	_, err := repo.DeleteEventsByFilter(context.Background(), filter, 42, 200)
+	require.ErrorIs(t, err, ErrDeleteNoMatches)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPromptEventRepositoryFilterDeleteFinishesAfterFullBatch(t *testing.T) {
+	db, mock := newPromptStorageSQLMock(t)
+	repo := NewPostgreSQLRepository(db)
+	start := time.Unix(1700000000, 0).UTC()
+	end := start.Add(time.Hour)
+	filter := EventFilter{StartAt: &start, EndAt: &end}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT e.id, e.job_id FROM prompt_audit_events e WHERE TRUE AND e.created_at >= \$1 AND e.created_at <= \$2 AND e.id <= \$3 ORDER BY e.id LIMIT \$4`).
+		WithArgs(start, end, int64(42), 1).WillReturnRows(sqlmock.NewRows([]string{"id", "job_id"}).AddRow(int64(21), int64(11)))
+	mock.ExpectExec(`DELETE FROM prompt_audit_events WHERE id IN \(\$1\)`).WithArgs(int64(21)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DELETE FROM prompt_audit_jobs WHERE id IN \(\$1\)`).WithArgs(int64(11)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT e.id, e.job_id FROM prompt_audit_events e WHERE TRUE AND e.created_at >= \$1 AND e.created_at <= \$2 AND e.id <= \$3 ORDER BY e.id LIMIT \$4`).
+		WithArgs(start, end, int64(42), 1).WillReturnRows(sqlmock.NewRows([]string{"id", "job_id"}))
+	mock.ExpectRollback()
+
+	result, err := repo.DeleteEventsByFilter(context.Background(), filter, 42, 1)
+	require.NoError(t, err)
+	require.Equal(t, &DeleteResult{DeletedEvents: 1, DeletedJobs: 1}, result)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPromptEventRepositoryFilterDeletePropagatesTransactionFailures(t *testing.T) {
+	start := time.Unix(1700000000, 0).UTC()
+	end := start.Add(time.Hour)
+	filter := EventFilter{StartAt: &start, EndAt: &end}
+
+	for _, test := range []struct {
+		name  string
+		setup func(sqlmock.Sqlmock)
+	}{
+		{
+			name: "begin",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin().WillReturnError(errors.New("begin failed"))
+			},
+		},
+		{
+			name: "select",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectQuery("SELECT e.id, e.job_id").WithArgs(start, end, int64(42), 200).WillReturnError(errors.New("select failed"))
+				mock.ExpectRollback()
+			},
+		},
+		{
+			name: "delete events",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectQuery("SELECT e.id, e.job_id").WithArgs(start, end, int64(42), 200).WillReturnRows(sqlmock.NewRows([]string{"id", "job_id"}).AddRow(int64(21), int64(11)))
+				mock.ExpectExec("DELETE FROM prompt_audit_events").WithArgs(int64(21)).WillReturnError(errors.New("delete events failed"))
+				mock.ExpectRollback()
+			},
+		},
+		{
+			name: "affected rows",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectQuery("SELECT e.id, e.job_id").WithArgs(start, end, int64(42), 200).WillReturnRows(sqlmock.NewRows([]string{"id", "job_id"}).AddRow(int64(21), int64(11)))
+				mock.ExpectExec("DELETE FROM prompt_audit_events").WithArgs(int64(21)).WillReturnResult(sqlmock.NewErrorResult(errors.New("affected rows failed")))
+				mock.ExpectRollback()
+			},
+		},
+		{
+			name: "delete orphan jobs",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectQuery("SELECT e.id, e.job_id").WithArgs(start, end, int64(42), 200).WillReturnRows(sqlmock.NewRows([]string{"id", "job_id"}).AddRow(int64(21), int64(11)))
+				mock.ExpectExec("DELETE FROM prompt_audit_events").WithArgs(int64(21)).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec("DELETE FROM prompt_audit_jobs").WithArgs(int64(11)).WillReturnError(errors.New("delete jobs failed"))
+				mock.ExpectRollback()
+			},
+		},
+		{
+			name: "commit",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectQuery("SELECT e.id, e.job_id").WithArgs(start, end, int64(42), 200).WillReturnRows(sqlmock.NewRows([]string{"id", "job_id"}).AddRow(int64(21), int64(11)))
+				mock.ExpectExec("DELETE FROM prompt_audit_events").WithArgs(int64(21)).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec("DELETE FROM prompt_audit_jobs").WithArgs(int64(11)).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, mock := newPromptStorageSQLMock(t)
+			test.setup(mock)
+			_, err := NewPostgreSQLRepository(db).DeleteEventsByFilter(context.Background(), filter, 42, 200)
+			require.Error(t, err)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestPromptEventRepositoryFilterDeleteValidatesBoundsAndBatchSize(t *testing.T) {
+	db, mock := newPromptStorageSQLMock(t)
+	repo := NewPostgreSQLRepository(db)
+	start := time.Unix(1700000000, 0).UTC()
+	end := start.Add(time.Hour)
+	filter := EventFilter{StartAt: &start, EndAt: &end}
+
+	result, err := repo.DeleteEventsByFilter(context.Background(), filter, 0, 200)
+	require.NoError(t, err)
+	require.Equal(t, &DeleteResult{}, result)
+	_, err = repo.DeleteEventsByFilter(context.Background(), EventFilter{}, 42, 200)
+	require.ErrorIs(t, err, ErrInvalidDeleteFilter)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT e.id, e.job_id FROM prompt_audit_events e WHERE TRUE AND e.created_at >= \$1 AND e.created_at <= \$2 AND e.id <= \$3 ORDER BY e.id LIMIT \$4`).
+		WithArgs(start, end, int64(42), 200).WillReturnRows(sqlmock.NewRows([]string{"id", "job_id"}))
+	mock.ExpectRollback()
+	_, err = repo.DeleteEventsByFilter(context.Background(), filter, 501, 501)
+	require.ErrorIs(t, err, ErrDeleteNoMatches)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPromptEventRepositoryFilterDeleteRequiresExplicitNonEmptyTimeRange(t *testing.T) {
+	start := time.Unix(1700000000, 0).UTC()
+	end := start.Add(time.Hour)
+	require.ErrorIs(t, validateDeleteFilter(EventFilter{}), ErrInvalidDeleteFilter)
+	require.ErrorIs(t, validateDeleteFilter(EventFilter{StartAt: &end, EndAt: &start}), ErrInvalidDeleteFilter)
+	require.NoError(t, validateDeleteFilter(EventFilter{StartAt: &start, EndAt: &end}))
 }
 
 func sqlmockRows(name string, value any) *sqlmock.Rows {
