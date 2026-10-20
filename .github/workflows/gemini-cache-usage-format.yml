@@ -1,0 +1,162 @@
+name: Gemini cache usage frozen source formatter
+
+on:
+  push:
+    branches:
+      - codex/gemini-cache-usage-1744
+    paths:
+      - .github/workflows/gemini-cache-usage-format.yml
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SOURCE_HEAD: b46887d2b82e4a1f668ef65fc28c8af326461cbf
+      OLD_HEAD: ebd32c7df6ed2700a871a1a01d797d9862f74f22
+      BASE_HEAD: c3e3eed31c7783d1923e1afd9ce706f3501ece26
+      EVIDENCE: ${{ runner.temp }}/gemini-cache-usage-format-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout exact controller
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout complete frozen source
+        uses: actions/checkout@v6
+        with:
+          ref: b46887d2b82e4a1f668ef65fc28c8af326461cbf
+          path: frozen-source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.9'
+          check-latest: false
+          cache: false
+      - name: Format copies and retain complete source evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          python3 - <<'PY_FORMAT'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+
+          evidence = Path(os.environ['EVIDENCE'])
+          source = Path('frozen-source').resolve()
+          controller = Path.cwd()
+          source_head = os.environ['SOURCE_HEAD']
+          old_head = os.environ['OLD_HEAD']
+          base_head = os.environ['BASE_HEAD']
+          files = [
+              'backend/internal/service/gemini_cache_usage_test.go',
+              'backend/internal/repository/gemini_cache_usage_integration_test.go',
+              'backend/internal/service/gemini_messages_compat_service.go',
+          ]
+
+          def git(root, *args):
+              return subprocess.check_output(['git', '-C', str(root), *args])
+
+          def save_json(name, value):
+              (evidence / name).write_text(json.dumps(value, indent=2) + '\n')
+
+          def snapshot(root):
+              records = []
+              for entry in git(root, 'ls-tree', '-rz', '--full-tree', 'HEAD').split(b'\0'):
+                  if not entry:
+                      continue
+                  meta, raw_path = entry.split(b'\t', 1)
+                  mode, kind, blob = meta.decode().split()
+                  path = os.fsdecode(raw_path)
+                  item = root / path
+                  if mode == '120000':
+                      content = os.fsencode(os.readlink(item))
+                  else:
+                      content = item.read_bytes()
+                  records.append({'path': path, 'mode': mode, 'type': kind,
+                                  'blob': blob, 'size': len(content),
+                                  'sha256': hashlib.sha256(content).hexdigest()})
+              return {'head': git(root, 'rev-parse', 'HEAD').decode().strip(),
+                      'tree': git(root, 'rev-parse', 'HEAD^{tree}').decode().strip(),
+                      'status': git(root, 'status', '--porcelain=v1', '--untracked-files=all').decode(),
+                      'index': git(root, 'ls-files', '--stage', '-z').hex(),
+                      'files': records}
+
+          assert git(source, 'rev-parse', 'HEAD').decode().strip() == source_head
+          assert git(source, 'rev-parse', source_head + '^').decode().strip() == old_head
+          assert git(source, 'rev-parse', old_head + '^').decode().strip() == base_head
+          assert git(source, 'diff', '--name-only', old_head, source_head).decode().splitlines() == [files[2]]
+          for name in files[:2]:
+              assert git(source, 'show', old_head + ':' + name) == git(source, 'show', source_head + ':' + name)
+          before = snapshot(source)
+          assert not before['status']
+          save_json('source-before.json', before)
+          # Exclude only the independently checked nested source checkout from
+          # controller untracked status; all controller tracked blobs are sealed.
+          controller_before = snapshot(controller)
+          save_json('controller-before.json', controller_before)
+          with (evidence / 'full-source.tar').open('wb') as archive:
+              subprocess.run(['git', '-C', str(source), 'archive', '--format=tar', source_head], stdout=archive, check=True)
+          archive = evidence / 'full-source.tar'
+          save_json('full-source-archive.json', {'head': source_head, 'tree': before['tree'],
+                    'size': archive.stat().st_size, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()})
+          gofmt = Path(shutil.which('gofmt'))
+          save_json('toolchain.json', {'go_version': subprocess.check_output(['go', 'version']).decode().strip(),
+                    'gofmt_path': str(gofmt), 'gofmt_sha256': hashlib.sha256(gofmt.read_bytes()).hexdigest()})
+          assert subprocess.check_output(['go', 'version']).decode().startswith('go version go1.26.9 ')
+          outcomes = []
+          for name in files:
+              raw = source / name
+              target = evidence / 'formatted' / name
+              original = evidence / 'raw' / name
+              target.parent.mkdir(parents=True, exist_ok=True)
+              original.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(raw, target)
+              shutil.copyfile(raw, original)
+              results = {}
+              for label, args in [('raw-diff', ['-d', str(original)]), ('format', ['-w', str(target)]),
+                                  ('post-diff', ['-d', str(target)]), ('post-list', ['-l', str(target)])]:
+                  completed = subprocess.run([str(gofmt), *args], capture_output=True)
+                  out = evidence / 'results' / name
+                  out.parent.mkdir(parents=True, exist_ok=True)
+                  Path(str(out) + '.' + label + '.stdout').write_bytes(completed.stdout)
+                  Path(str(out) + '.' + label + '.stderr').write_bytes(completed.stderr)
+                  Path(str(out) + '.' + label + '.exit').write_text(str(completed.returncode) + '\n')
+                  results[label] = {'args': [str(gofmt), *args], 'exit': completed.returncode,
+                                   'stdout_sha256': hashlib.sha256(completed.stdout).hexdigest(),
+                                   'stderr_sha256': hashlib.sha256(completed.stderr).hexdigest()}
+                  if label == 'raw-diff':
+                      assert completed.returncode in (0, 1) and not completed.stderr
+                      assert completed.returncode == 0 or completed.stdout
+                  else:
+                      assert completed.returncode == 0 and not completed.stdout and not completed.stderr
+              outcomes.append({'path': name, 'raw_sha256': hashlib.sha256(original.read_bytes()).hexdigest(),
+                               'formatted_sha256': hashlib.sha256(target.read_bytes()).hexdigest(),
+                               'formatted_size': target.stat().st_size, 'commands': results})
+          save_json('format-results.json', outcomes)
+          after = snapshot(source)
+          save_json('source-after.json', after)
+          assert before == after
+          controller_after = snapshot(controller)
+          save_json('controller-after.json', controller_after)
+          assert controller_before == controller_after
+          save_json('complete.json', {'status': 'formatted-copies-only', 'source_head': source_head,
+                    'old_head': old_head, 'controller_head': controller_after['head'],
+                    'runtime_tests': 'NOT_RUN', 'original_required_checks': 'NOT_REPLACED'})
+          PY_FORMAT
+      - name: Upload formatter and full source evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: gemini-cache-usage-format-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gemini-cache-usage-format-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
