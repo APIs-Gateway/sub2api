@@ -297,6 +297,7 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string, ingr
 	}
 	accountFailed := &atomic.Bool{}
 	h := &OpenAIGatewayHandler{
+		cfg:                      cfg,
 		gatewayService:           gatewaySvc,
 		billingCacheService:      billingCacheSvc,
 		apiKeyService:            &service.APIKeyService{},
