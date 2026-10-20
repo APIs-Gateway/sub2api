@@ -11,12 +11,12 @@
       "sha256": "f6760f89e9cf47b77134c8e624cd4fe3d67b8535b8634557ad9341ad8ff42194"
     },
     "download_contract_test.go": {
-      "bytes": 7203,
-      "sha256": "5a79e838cfabb21f7df8d6061b7efc0063184803b55de88c348d06846179ae7e"
+      "bytes": 7630,
+      "sha256": "81b985fc108ecdfa6806ceccfb1aed6c5168ef9e3a959fc57fbdb587fb09d6ce"
     },
     "parallel_download_contract_test.go": {
-      "bytes": 13310,
-      "sha256": "251a3b77bddec6e74b162b3e8292d2f613c2cab66fc2e29cab20fa1532767add"
+      "bytes": 13653,
+      "sha256": "ab3018e138ca2ade784e4666cee255c7ec98ff9472ccc9394a6a9d7e333858e1"
     },
     "parallel_download_contract_windows_test.go": {
       "bytes": 3785,
@@ -156,19 +156,20 @@
     "All original Codecov85, supplementary complete Git85 and independent approval requirements remain blocking"
   ],
   "rawRevision": {
-    "previousRawHead": "93abd553043ba53c979556e48b9c3b0ae86d0174",
-    "updatedAt": "2026-10-20T01:46:06.272794+00:00",
+    "previousRawHead": "3e71d1d501e07199cea71e5cdc15c12f6f4f3fb5",
+    "updatedAt": "2026-10-20T01:47:37.495810+00:00",
     "independentFindingReceiptSHA256": "7bd7b6c7144215715693ff1f3ac7d2df8252b9ccba91168939ced32619dcbb9d",
     "findingsImplemented": [
       "G1",
       "G2",
       "G3",
       "G4",
-      "G5"
+      "G5",
+      "G6"
     ],
     "status": "Narrow source revisions implemented; second independent review and all remote execution still pending",
-    "rootAuthorization": "Narrow G5 416 safe fallback and wrong-range discarded partial corrections; no production, publish or validation authorization",
-    "secondReviewFinding": "auditOps independently found range_416 unconditional success rejection and wrong_range_start false fixture failure after valid full fallback; root authorized narrow correction, fresh re-review pending"
+    "rootAuthorization": "G6 narrow cancellation and valid-positive failure classification; no production, publish or executable validation authorization",
+    "secondReviewFinding": "G5 auditOps independently found unconditional range_416 success rejection; root first identified wrong_range_start false fixture failure after valid full fallback and auditOps cross-reviewed it. G6 auditOps independently found concrete timeout/I/O failures in cancellation and positive contracts must remain unexpected failures, not business RED. Root authorized narrow corrections; fresh re-review pending"
   },
   "responseRejectionEvidence": {
     "observer": "Existing public Client.OnAfterResponse; read-only method, Range, status, Content-Range, Content-Length and Err snapshots; returns nil",
@@ -181,7 +182,8 @@
     "httpProtocolError": "Not blanket-excluded: may be a legitimate metadata rejection after the actual target response prerequisite; missing HTTP response remains a fixture precondition failure",
     "genericTransportCause": "Reject an observed no-response transport error when it is on the Do error chain, even if an outer URL wrapper has an otherwise plain underlying error",
     "range416": "Clear non-timeout rejection or actual full GET/200, complete wire body, matching observer and exact full output bytes/hash; 416 error representation alone cannot pass",
-    "wrongRangeStart": "A matching complete full GET/200 fallback may discard invalid partial Write/Flush failures; without it the necessary partial must complete before complete-entity assertions; FixtureError always rejected"
+    "wrongRangeStart": "A matching complete full GET/200 fallback may discard invalid partial Write/Flush failures; without it the necessary partial must complete before complete-entity assertions; FixtureError always rejected",
+    "cancellationAndPositiveFailures": "Expected context.Canceled accepted first after actual explicit cancellation; concrete timeout/context-deadline/network/I/O causes in mismatches and valid-positive error paths are G_DOWNLOAD_UNEXPECTED_ERROR, never cancellation/data business RED; nil cancellation result remains a true contract assertion"
   },
   "windowsCloseEvidence": {
     "openControl": "Same os.OpenFile O_RDWR|O_CREATE|O_TRUNC mode0600; open rename must fail",

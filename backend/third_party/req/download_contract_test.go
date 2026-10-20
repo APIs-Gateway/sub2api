@@ -79,6 +79,11 @@ func TestReqDownloadContract(t *testing.T) {
 			e := p.await(t, ctx, true, func(e downloadGExchange) bool { return e.Method == http.MethodGet })
 			downloadGAssertWire(t, e)
 			p.close()
+			if mode != "short_body_error" && mode != "writer_error" && response.Err != nil {
+				if why := downloadGUnrelatedError(response.Err); why != "" {
+					t.Fatalf("G_DOWNLOAD_UNEXPECTED_ERROR: unrelated ordinary download failure: %s: %v", why, response.Err)
+				}
+			}
 			if response.Response == nil {
 				t.Fatalf("G_DOWNLOAD_ASSERT: expected an actual HTTP response: %v", response.Err)
 			}
@@ -166,6 +171,9 @@ func TestReqDownloadContractCancellation(t *testing.T) {
 	downloadGAssertWire(t, e)
 	err := downloadGResult(t, observe, result)
 	if !errors.Is(err, context.Canceled) {
+		if why := downloadGUnrelatedError(err); why != "" {
+			t.Fatalf("G_DOWNLOAD_UNEXPECTED_ERROR: unrelated caller cancellation failure: %s: %v", why, err)
+		}
 		t.Fatalf("G_DOWNLOAD_ASSERT: caller cancellation not returned: %v", err)
 	}
 }

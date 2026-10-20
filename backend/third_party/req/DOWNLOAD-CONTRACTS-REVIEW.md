@@ -93,6 +93,10 @@ new child issue, production repair, exclusion or threshold reduction is authoriz
 
 ## Second independent source review: G5
 
-The 93abd RAW revision still rejected every successful `range_416` result, including a legitimate full GET/200 recovery. It also required the wrong-start partial body to complete even when a successful full recovery had legitimately discarded that body. auditOps identified both boundaries independently; root authorized this narrow revision.
+The 93abd RAW revision still rejected every successful `range_416` result, including a legitimate full GET/200 recovery. It also required the wrong-start partial body to complete even when a successful full recovery had legitimately discarded that body. auditOps independently identified the 416 boundary; root first identified the wrong-start partial boundary and auditOps cross-reviewed it. Root authorized this narrow revision.
 
 `range_416` now accepts only a clear non-timeout rejection, or a real matching full GET/200 with completed wire bytes and exact complete entity bytes/hash. An error representation is never successful output. `wrong_range_start` permits discarded partial Write/Flush aborts only when that same real safe full recovery is proven; otherwise the necessary partial must complete before entity assertions. FixtureError remains unconditionally rejected. No test names, production sources, inherited gates or profile accounting changed. This is unformatted RAW source; independent re-review and all remote executable evidence remain pending.
+
+## Second independent source review: G6
+
+Explicit cancellation mismatches previously assigned every error to the business assertion marker. A client timeout, deadline, or unrelated I/O failure could therefore masquerade as cancellation contract RED. The ordinary and parallel cancellation paths now accept expected `context.Canceled` first, then classify concrete unrelated causes using the existing chain-aware classifier before any remaining business assertion. A nil cancellation error still violates the cancellation contract. Valid-positive ordinary and parallel download errors use the same unexpected-error classification. Existing 3s timeout, 32+1 names, peer prerequisites, and all production sources remain unchanged; remote execution and independent re-review are pending.

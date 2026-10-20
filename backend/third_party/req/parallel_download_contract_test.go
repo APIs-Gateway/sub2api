@@ -172,6 +172,9 @@ func TestReqParallelDownloadContract(t *testing.T) {
 					downloadGAssertWire(t, e)
 					err := downloadGResult(t, observe, result)
 					if !errors.Is(err, context.Canceled) {
+						if why := downloadGUnrelatedError(err); why != "" {
+							t.Fatalf("G_DOWNLOAD_UNEXPECTED_ERROR: unrelated parallel cancellation failure: %s: %v", why, err)
+						}
 						t.Fatalf("G_DOWNLOAD_ASSERT: parallel cancellation lost: %v", err)
 					}
 					return
@@ -286,6 +289,9 @@ func TestReqParallelDownloadContract(t *testing.T) {
 						return
 					}
 				} else if err != nil {
+					if why := downloadGUnrelatedError(err); why != "" {
+						t.Fatalf("G_DOWNLOAD_UNEXPECTED_ERROR: unrelated valid parallel download failure: %s: %v", why, err)
+					}
 					for _, e := range finished {
 						downloadGAssertWire(t, e)
 					}
