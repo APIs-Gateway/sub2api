@@ -2372,6 +2372,16 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if turn == 1 {
 					return nil
 				}
+				if h.cfg == nil || h.cfg.RunMode != config.RunModeSimple {
+					billingErr := h.apiKeyService.RecheckWebSocketTurnIdentity(ctx, apiKey)
+					if billingErr == nil {
+						billingErr = h.billingCacheService.CheckWebSocketTurnFunding(ctx, apiKey.User.ID)
+					}
+					if billingErr != nil {
+						writeOpenAIWSBillingRejection(ctx, wsConn, billingErr)
+						return newOpenAIWSGatewayAdmissionCloseError(coderws.StatusPolicyViolation, "billing check failed", billingErr)
+					}
+				}
 				eligibilityModel := reqModel
 				if current := turnClientModel.Load(); current != nil && strings.TrimSpace(*current) != "" {
 					eligibilityModel = strings.TrimSpace(*current)
