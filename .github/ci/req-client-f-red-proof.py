@@ -246,12 +246,50 @@ def proof(candidate, evidence):
         if phase == 'f-all':
             require(all(runs[k] == passes[k] == 1 and not fails[k] for k in original), 'candidate lost original401 actual PASS')
             packages = objects(evidence / 'candidate-packages.json')
-            expected_pass = {p['ImportPath'] for p in packages if p.get('TestGoFiles') or p.get('XTestGoFiles')} - {MODULE}
-            actual_pass = collections.Counter(v['Package'] for v in values if v['Action'] == 'pass' and 'Test' not in v)
-            require(dict(actual_pass) == {p: 1 for p in expected_pass}, 'candidate complete test package results differ')
-            no_test = {p['ImportPath'] for p in packages if not (p.get('TestGoFiles') or p.get('XTestGoFiles'))}
-            skip = collections.Counter(v['Package'] for v in values if v['Action'] == 'skip' and 'Test' not in v)
-            require(dict(skip) == {p: 1 for p in no_test}, 'no-test package SKIP classification differs')
+            baseline_packages = objects(evidence / 'baseline/packages.json')
+            selected = {p['ImportPath'] for p in packages}
+            baseline_selected = {p['ImportPath'] for p in baseline_packages}
+            require(len(packages) == len(baseline_packages) == len(selected) == 23 and
+                    selected == baseline_selected, 'complete23 package selection missing/duplicate/changed')
+            test_bearing = {p['ImportPath'] for p in packages if p.get('TestGoFiles') or p.get('XTestGoFiles')}
+            baseline_test_bearing = {p['ImportPath'] for p in baseline_packages
+                                     if p.get('TestGoFiles') or p.get('XTestGoFiles')}
+            require(test_bearing == baseline_test_bearing and MODULE in test_bearing,
+                    'test-bearing package selection changed')
+            baseline_events = [json.loads(line) for line in
+                               (evidence / 'baseline/all.json').read_text().splitlines()]
+            require(not any(v['Action'] in ('fail', 'skip') and 'Test' in v for v in baseline_events),
+                    'baseline testcase failed/skipped')
+
+            def terminal_map(actual_events, label):
+                terminals = [v for v in actual_events if 'Test' not in v and
+                             v['Action'] in ('pass', 'fail', 'skip')]
+                counts = collections.Counter(v['Package'] for v in terminals)
+                require(set(counts) == selected and all(count == 1 for count in counts.values()),
+                        label + ' needs exactly one terminal for every selected package')
+                return {v['Package']: v['Action'] for v in terminals}
+
+            baseline_terminals = terminal_map(baseline_events, 'baseline')
+            candidate_terminals = terminal_map(values, 'candidate')
+            require(not any(action == 'fail' for action in baseline_terminals.values()),
+                    'baseline has a failing package')
+            require(all(baseline_terminals[p] == 'pass' for p in test_bearing),
+                    'baseline test-bearing package did not PASS')
+            require(all(candidate_terminals[p] == 'pass' for p in test_bearing - {MODULE}),
+                    'candidate non-root test-bearing package did not PASS')
+            expected_terminals = dict(baseline_terminals)
+            expected_terminals[MODULE] = 'fail'
+            require(candidate_terminals == expected_terminals,
+                    'complete package terminals differ beyond expected root RED')
+            no_tests = selected - test_bearing
+            save(evidence, 'candidate-complete-package-proof.json', {
+                'selectedPackageCount': len(selected), 'testBearingPackages': sorted(test_bearing),
+                'baselineActualTerminals': baseline_terminals,
+                'candidateActualTerminals': candidate_terminals,
+                'expectedOnlyTerminalChange': {MODULE: {'baseline': 'pass', 'candidate': 'fail'}},
+                'noTestPackagesWithCoveragePASS': sorted(p for p in no_tests if candidate_terminals[p] == 'pass'),
+                'noTestPackagesWithSKIP': sorted(p for p in no_tests if candidate_terminals[p] == 'skip'),
+                'claimLimit': 'No-test package PASS is a Go coverage package disposition, not evidence that testcase execution occurred.'})
         reports[phase] = {'requiredFLeaves': 44, 'actualRedLeaves': len(RED), 'actualPassingFLeaves': 44 - len(RED),
                           'leafResults': leaf_report, 'packageFailures': dict(package_fails),
                           'actualExit': 1, 'original401Passed': phase == 'f-all'}
