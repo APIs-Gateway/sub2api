@@ -21,6 +21,7 @@ This directory contains files for deploying Sub2API on Linux servers.
 | `install.sh` | One-click binary installation script |
 | `sub2api.service` | Systemd service unit file |
 | `config.example.yaml` | Example configuration file |
+| `EDGE_SECURITY.md` | Edge proxy, CDN, trusted-proxy, and streaming contract |
 
 ---
 
