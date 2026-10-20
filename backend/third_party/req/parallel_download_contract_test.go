@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -134,6 +135,7 @@ func TestReqParallelDownloadContract(t *testing.T) {
 					}
 				})
 				c := downloadGClient(t)
+				responses := downloadGObserve(c)
 				var output bytes.Buffer
 				pd := c.NewParallelDownload(p.server.URL + "/entity.bin").SetSegmentSize(tc.segment).SetConcurrency(tc.concurrency).SetTempRootDir(downloadGTempDir(t)).SetOutput(&output)
 				var destination string
@@ -174,28 +176,16 @@ func TestReqParallelDownloadContract(t *testing.T) {
 					}
 					return
 				}
-				// Confirm the actual HEAD and, for nonempty known lengths, at
-				// least one controlled response BEFORE an assertion about Do.
+				// Server-side preparation alone cannot establish protocol rejection:
+				// require the corresponding public response observation as well.
 				head := p.await(t, observe, true, func(e downloadGExchange) bool { return e.Method == http.MethodHead })
 				downloadGAssertWire(t, head)
-				if tc.name == "head_error_status" {
-					err := downloadGResult(t, observe, result)
-					if err != nil {
-						return // Correct early HEAD rejection need not issue any GET.
-					}
-					p.close()
-					_, finished := p.observations()
-					for _, e := range finished {
-						downloadGAssertWire(t, e)
-					}
-					if !bytes.Equal(output.Bytes(), entity) {
-						t.Fatalf("G_DOWNLOAD_ASSERT: unsuccessful HEAD produced a successful incomplete entity: bytes=%d want=%d", output.Len(), len(entity))
-					}
-					return
-				}
+				p.assertFixtures(t)
+				headOnly := tc.name == "head_error_status" || tc.name == "head_zero_length" || tc.name == "head_unknown_length"
 				var firstResponse *downloadGExchange
-				if tc.name != "head_zero_length" && tc.name != "head_unknown_length" {
+				if !headOnly {
 					e := p.await(t, observe, true, func(e downloadGExchange) bool { return e.Method == http.MethodGet })
+					p.assertFixtures(t)
 					firstResponse = &e
 					if tc.name == "truncated_segment" || tc.name == "empty_segment" || tc.name == "failure_during_dispatch" {
 						downloadGAssertWire(t, e)
@@ -204,27 +194,67 @@ func TestReqParallelDownloadContract(t *testing.T) {
 						}
 					}
 					if tc.name == "failure_during_dispatch" {
-						// Both transfer failure and explicit caller cancellation must
-						// be able to release the public Do operation. No private queue
-						// state is observed, and a watchdog kill is never a PASS.
+						// A timeout remains separately classified, even after an
+						// observed short transfer and caller cancellation.
 						cancel()
 					}
 				}
 				err := downloadGResult(t, observe, result)
 				p.close()
+				p.assertFixtures(t)
 				_, finished := p.observations()
+				metadataCase := false
+				switch tc.name {
+				case "range_ignored_200", "wrong_range_start", "missing_content_range", "reversed_range", "invalid_range_total", "unknown_range_unit", "range_416":
+					metadataCase = true
+				}
 				for _, e := range finished {
-					if err == nil {
+					if err == nil && !metadataCase && !headOnly {
 						downloadGAssertWire(t, e)
 					} else {
-						// A correct early rejection may close concurrent responses.
-						// Retain their actual result without requiring successful
-						// delivery of bodies the client correctly declined.
-						t.Logf("G_WIRE_FINISHED_AFTER_ERROR %+v", e)
+						// Correct early rejection may abort another body, but never
+						// excuses FixtureError or missing target response evidence.
+						t.Logf("G_WIRE_FINISHED error=%v exchange=%+v", err, e)
 					}
 				}
-				if err == nil && firstResponse != nil {
-					downloadGAssertWire(t, *firstResponse)
+				if headOnly {
+					target := downloadGTarget(t, p, responses, func(e downloadGExchange) bool { return e.Method == http.MethodHead })
+					if err != nil {
+						downloadGClearRejection(t, err, target, responses)
+						return
+					}
+					if tc.name == "head_zero_length" {
+						if output.Len() != 0 {
+							for _, e := range finished {
+								downloadGAssertWire(t, e)
+							}
+							t.Fatalf("G_DOWNLOAD_ASSERT: zero-length entity returned nonempty output: %x", output.Bytes())
+						}
+						return
+					}
+					if tc.name == "head_unknown_length" {
+						full, ok := downloadGFindTarget(p, responses, func(e downloadGExchange) bool {
+							return e.Method == http.MethodGet && e.Range == "" && e.Status == http.StatusOK && bytes.Equal(e.Body, entity) && downloadGWireComplete(e)
+						})
+						if !ok {
+							for _, e := range finished {
+								downloadGAssertWire(t, e)
+							}
+							t.Fatal("G_DOWNLOAD_ASSERT: HEAD recovery success has no actual complete full GET/200 response")
+						}
+						if full.cause != nil {
+							t.Fatalf("G_DOWNLOAD_UNEXPECTED_ERROR: full response recovery failed: %v", full.cause)
+						}
+					}
+					if tc.name == "head_error_status" {
+						for _, e := range finished {
+							downloadGAssertWire(t, e)
+						}
+					}
+					if !bytes.Equal(output.Bytes(), entity) || downloadGHash(output.Bytes()) != downloadGHash(entity) {
+						t.Fatalf("G_DOWNLOAD_ASSERT: HEAD recovery returned an incomplete entity: scenario=%s bytes=%d want=%d", tc.name, output.Len(), len(entity))
+					}
+					return
 				}
 				switch tc.name {
 				case "writer_error":
@@ -235,23 +265,42 @@ func TestReqParallelDownloadContract(t *testing.T) {
 						t.Fatalf("G_DOWNLOAD_ASSERT: parallel writer error lost: %v", err)
 					}
 					return
-				case "head_zero_length", "head_unknown_length", "range_416", "truncated_segment", "empty_segment", "failure_during_dispatch":
+				case "truncated_segment", "empty_segment", "failure_during_dispatch":
 					if err == nil {
-						t.Fatalf("G_DOWNLOAD_ASSERT: unsupported or failed transfer returned success: scenario=%s output=%x", tc.name, output.Bytes())
+						t.Fatalf("G_DOWNLOAD_ASSERT: failed transfer returned success: scenario=%s output=%x", tc.name, output.Bytes())
+					}
+					if tc.name == "failure_during_dispatch" && errors.Is(err, context.Canceled) {
+						return // Explicit cancellation followed the proven short transfer.
+					}
+					if !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+						if why := downloadGUnrelatedError(err); why != "" {
+							t.Fatalf("G_DOWNLOAD_UNEXPECTED_ERROR: unrelated short-transfer failure: %s: %v", why, err)
+						}
 					}
 					return
 				}
-				if err != nil {
-					switch tc.name {
-					case "range_ignored_200", "wrong_range_start", "missing_content_range", "reversed_range", "invalid_range_total", "unknown_range_unit":
-						return // Correct rejection may leave merger work to unwind.
-					default:
-						for _, e := range finished {
-							downloadGAssertWire(t, e)
-						}
-						t.Fatalf("G_DOWNLOAD_ASSERT: valid parallel download failed: %v", err)
+				if metadataCase {
+					target := downloadGTarget(t, p, responses, func(e downloadGExchange) bool { return e.Method == http.MethodGet && e.Range != "" })
+					if err != nil {
+						downloadGClearRejection(t, err, target, responses)
+						return
 					}
+					// A claimed success requires the actual controlled body to
+					// have completed before any metadata/data assertion.
+					if tc.name == "range_416" {
+						if firstResponse != nil {
+							downloadGAssertWire(t, *firstResponse)
+						}
+						t.Fatalf("G_DOWNLOAD_ASSERT: range416 error representation was accepted as successful download")
+					}
+				} else if err != nil {
+					for _, e := range finished {
+						downloadGAssertWire(t, e)
+					}
+					t.Fatalf("G_DOWNLOAD_ASSERT: valid parallel download failed: %v", err)
 				}
+				// Error branches return above: a merger may still unwind after
+				// an error, so only successful completion permits buffer reads.
 				actual := output.Bytes()
 				if destination != "" {
 					var readError error
@@ -261,15 +310,23 @@ func TestReqParallelDownloadContract(t *testing.T) {
 					}
 				}
 				switch tc.name {
-				case "range_ignored_200", "wrong_range_start":
-					// Successful fallback must still yield the exact full entity.
-				case "missing_content_range", "reversed_range", "invalid_range_total", "unknown_range_unit":
-					fullRecovery := false
-					for _, e := range finished {
-						fullRecovery = fullRecovery || (e.Method == http.MethodGet && e.Range == "" && e.Status == http.StatusOK && bytes.Equal(e.Body, entity))
+				case "missing_content_range", "reversed_range", "invalid_range_total", "unknown_range_unit", "range_ignored_200":
+					full, ok := downloadGFindTarget(p, responses, func(e downloadGExchange) bool {
+						fullRequest := e.Range == "" || tc.name == "range_ignored_200"
+						return e.Method == http.MethodGet && fullRequest && e.Status == http.StatusOK && bytes.Equal(e.Body, entity) && downloadGWireComplete(e)
+					})
+					if !ok || full.cause != nil {
+						if firstResponse != nil {
+							downloadGAssertWire(t, *firstResponse)
+						}
+						if ok && full.cause != nil {
+							t.Fatalf("G_DOWNLOAD_UNEXPECTED_ERROR: safe full response failed: %v", full.cause)
+						}
+						t.Fatal("G_DOWNLOAD_ASSERT: unusable partial response accepted without a real safe complete response")
 					}
-					if !fullRecovery {
-						t.Fatalf("G_DOWNLOAD_ASSERT: unusable partial metadata was accepted without a safe full response: scenario=%s", tc.name)
+				case "wrong_range_start":
+					if firstResponse != nil {
+						downloadGAssertWire(t, *firstResponse)
 					}
 				}
 				if !bytes.Equal(actual, entity) || downloadGHash(actual) != downloadGHash(entity) {

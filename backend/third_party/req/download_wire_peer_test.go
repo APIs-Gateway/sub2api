@@ -1,6 +1,7 @@
 package req_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,13 +9,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -65,7 +70,10 @@ func newDownloadGPeer(t *testing.T, serve func(http.ResponseWriter, *http.Reques
 		p.mu.Unlock()
 		p.notify()
 	}))
-	t.Cleanup(p.close)
+	t.Cleanup(func() {
+		p.close()
+		p.assertFixtures(t)
+	})
 	return p
 }
 
@@ -207,9 +215,13 @@ func downloadGShortReply(w http.ResponseWriter, e *downloadGExchange, contentRan
 	e.Closed = e.CloseError == ""
 }
 
+func downloadGWireComplete(e downloadGExchange) bool {
+	return e.FixtureError == "" && e.WriteError == "" && e.FlushError == "" && e.CloseError == "" && (e.Method == http.MethodHead || e.Written == len(e.Body))
+}
+
 func downloadGAssertWire(t *testing.T, e downloadGExchange) {
 	t.Helper()
-	if e.FixtureError != "" || e.WriteError != "" || e.FlushError != "" || e.CloseError != "" || (e.Method != http.MethodHead && e.Written != len(e.Body)) {
+	if !downloadGWireComplete(e) {
 		t.Fatalf("G_FIXTURE_TRANSFER: incomplete controlled peer transfer: %+v", e)
 	}
 	encoded, err := json.Marshal(e)
@@ -248,8 +260,23 @@ func downloadGIsolated(t *testing.T, top, scenario string, body func(*testing.T)
 		}
 	}
 	cmd.Env = append(cmd.Env, key+"="+top+"/"+scenario, "SUB2API_G_DOWNLOAD_SCRATCH="+t.TempDir())
+	profileDir := ""
+	if root := os.Getenv("SUB2API_G_DOWNLOAD_PROFILE_DIR"); root != "" {
+		var err error
+		profileDir, err = downloadGPrepareProfile(root)
+		if err != nil {
+			t.Fatalf("G_FIXTURE_PROFILE: cannot prepare optional raw child evidence: %v", err)
+		}
+		cmd.Args = append(cmd.Args, "-test.coverprofile="+filepath.Join(profileDir, "child.atomic.out"))
+	}
 	output, err := cmd.CombinedOutput()
 	t.Logf("G_CHILD_ACTUAL scenario=%s exit=%v\n%s", scenario, err, output)
+	if profileDir != "" {
+		t.Logf("G_CHILD_EVIDENCE_STATE watchdog=%v contextError=%v processError=%v", ctx.Err() != nil, ctx.Err(), err)
+		if saveErr := downloadGSaveProfile(profileDir, t.Name(), top, scenario, cmd, output, err, ctx.Err() != nil); saveErr != nil {
+			t.Fatalf("G_FIXTURE_PROFILE: raw child output was printed above; evidence save/completeness failed: %v", saveErr)
+		}
+	}
 	if ctx.Err() != nil {
 		t.Fatalf("G_CHILD_WATCHDOG: child did not exit; this is not a passing fixture or a business assertion: %v", ctx.Err())
 	}
@@ -267,7 +294,7 @@ func downloadGResult(t *testing.T, ctx context.Context, result <-chan error) err
 	case err := <-result:
 		return err
 	case <-ctx.Done():
-		t.Fatalf("G_DOWNLOAD_ASSERT: Do did not return after an observed controlled transfer/cancellation: %v", ctx.Err())
+		t.Fatalf("G_DOWNLOAD_COMPLETION_TIMEOUT: Do did not return after an observed controlled transfer/cancellation: %v", ctx.Err())
 		return ctx.Err()
 	}
 }
@@ -288,4 +315,292 @@ func downloadGTempDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// OnAfterResponse observes only exported response/request metadata. It does not
+// replace the transport, consume a body, change Err or implement range recovery.
+type downloadGReceived struct {
+	Method string
+	Range string
+	Status int
+	ContentRange string
+	ContentLength string
+	HasResponse bool
+	Error string
+	ErrorType string
+	cause error
+}
+
+type downloadGResponses struct {
+	mu sync.Mutex
+	items []downloadGReceived
+}
+
+func downloadGObserve(c *req.Client) *downloadGResponses {
+	r := &downloadGResponses{}
+	c.OnAfterResponse(func(_ *req.Client, response *req.Response) error {
+		if response == nil {
+			r.mu.Lock()
+			r.items = append(r.items, downloadGReceived{Error: "nil public response callback"})
+			r.mu.Unlock()
+			return nil
+		}
+		item := downloadGReceived{Error: downloadGError(response.Err), ErrorType: fmt.Sprintf("%T", response.Err), cause: response.Err}
+		if response.Request != nil {
+			item.Method = response.Request.Method
+			if response.Request.RawRequest != nil {
+				item.Range = response.Request.RawRequest.Header.Get("Range")
+			}
+		}
+		if response.Response != nil {
+			item.HasResponse = true
+			item.Status = response.StatusCode
+			item.ContentRange = response.Header.Get("Content-Range")
+			item.ContentLength = response.Header.Get("Content-Length")
+		}
+		r.mu.Lock()
+		r.items = append(r.items, item)
+		r.mu.Unlock()
+		return nil
+	})
+	return r
+}
+
+func (r *downloadGResponses) snapshot() []downloadGReceived {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]downloadGReceived(nil), r.items...)
+}
+
+func (p *downloadGPeer) assertFixtures(t *testing.T) {
+	t.Helper()
+	_, finished := p.observations()
+	for _, item := range finished {
+		if item.FixtureError != "" {
+			t.Fatalf("G_FIXTURE_TRANSFER: invalid controlled exchange, regardless of Do error: %+v", item)
+		}
+	}
+}
+
+func downloadGFindTarget(p *downloadGPeer, responses *downloadGResponses, match func(downloadGExchange) bool) (downloadGReceived, bool) {
+	_, finished := p.observations()
+	var fallback downloadGReceived
+	found := false
+	for _, sent := range finished {
+		if !match(sent) {
+			continue
+		}
+		for _, actual := range responses.snapshot() {
+			if actual.HasResponse && actual.Method == sent.Method && actual.Range == sent.Range && actual.Status == sent.Status && actual.ContentRange == sent.ContentRange && actual.ContentLength == sent.ContentLength {
+				if actual.cause == nil {
+					return actual, true
+				}
+				if !found || (downloadGUnrelatedError(fallback.cause) != "" && downloadGUnrelatedError(actual.cause) == "") {
+					fallback, found = actual, true
+				}
+			}
+		}
+	}
+	return fallback, found
+}
+
+func downloadGTarget(t *testing.T, p *downloadGPeer, responses *downloadGResponses, match func(downloadGExchange) bool) downloadGReceived {
+	t.Helper()
+	p.assertFixtures(t)
+	actual, ok := downloadGFindTarget(p, responses, match)
+	if !ok {
+		_, finished := p.observations()
+		t.Fatalf("G_FIXTURE_TARGET_RESPONSE: client did not receive the intended controlled response: finished=%+v received=%+v", finished, responses.snapshot())
+	}
+	t.Logf("G_CLIENT_RESPONSE %+v", actual)
+	return actual
+}
+
+// A url.Error is a wrapper, not proof of a network failure: inspect its cause.
+// Actual protocol rejection may legitimately be wrapped. With a real target
+// response prerequisite, reject concrete context/network/I/O causes instead of
+// matching a production error string or requiring a particular rejection type.
+func downloadGUnrelatedError(err error) string {
+	if err == nil {
+		return ""
+	}
+	for _, other := range []error{context.Canceled, context.DeadlineExceeded, io.EOF, io.ErrUnexpectedEOF, io.ErrClosedPipe, io.ErrShortWrite, net.ErrClosed} {
+		if errors.Is(err, other) {
+			return fmt.Sprintf("context/network/I/O cause %v", other)
+		}
+	}
+	var timed net.Error
+	if errors.As(err, &timed) && timed.Timeout() {
+		return "network timeout"
+	}
+	var op *net.OpError
+	if errors.As(err, &op) {
+		return "network operation error"
+	}
+	var path *os.PathError
+	if errors.As(err, &path) {
+		return "filesystem path error"
+	}
+	var link *os.LinkError
+	if errors.As(err, &link) {
+		return "filesystem link error"
+	}
+	var system syscall.Errno
+	if errors.As(err, &system) {
+		return "system I/O error"
+	}
+	var wrapped *url.Error
+	if errors.As(err, &wrapped) {
+		if wrapped.Err == nil {
+			return "URL error without a cause"
+		}
+		// errors.Is/As above walk the complete chain. A remaining wrapped
+		// protocol error (including http.ProtocolError) is judged using the
+		// actual response, not its wrapper or a fixed production error string.
+	}
+	return ""
+}
+
+func downloadGClearRejection(t *testing.T, err error, response downloadGReceived, responses *downloadGResponses) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("G_FIXTURE_REJECTION: no actual rejection error supplied")
+	}
+	for _, actual := range responses.snapshot() {
+		if !actual.HasResponse && actual.cause != nil && (errors.Is(err, actual.cause) || errors.Is(actual.cause, err)) {
+			t.Fatalf("G_DOWNLOAD_UNEXPECTED_ERROR: rejection error is the actual no-response transport failure, not the controlled HTTP response: %v", err)
+		}
+	}
+	if why := downloadGUnrelatedError(err); why != "" {
+		t.Fatalf("G_DOWNLOAD_UNEXPECTED_ERROR: unrelated failure cannot count as protocol rejection: %s: %T: %v", why, err, err)
+	}
+	if why := downloadGUnrelatedError(response.cause); why != "" {
+		t.Fatalf("G_DOWNLOAD_UNEXPECTED_ERROR: target response failed outside the tested metadata contract: %s: %v", why, response.cause)
+	}
+	t.Logf("G_CONTROLLED_REJECTION status=%d range=%q contentRange=%q errorType=%T error=%v", response.Status, response.Range, response.ContentRange, err, err)
+}
+
+func downloadGPrepareProfile(root string) (string, error) {
+	if testing.CoverMode() != "atomic" {
+		return "", fmt.Errorf("optional child profiles require an atomic-instrumented binary, actual mode %q", testing.CoverMode())
+	}
+	if !filepath.IsAbs(root) {
+		return "", fmt.Errorf("optional profile root is not absolute: %q", root)
+	}
+	info, err := os.Lstat(root)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("optional profile root must be an existing real directory: %q", root)
+	}
+	// CI owns and freezes this external root. Do not create/overwrite files in
+	// the checkout, and do not silently redirect a malformed root into it.
+	workspace := os.Getenv("GITHUB_WORKSPACE")
+	if workspace == "" {
+		workspace, err = os.Getwd()
+		if err != nil {
+			return "", err
+		}
+	}
+	if !filepath.IsAbs(workspace) {
+		return "", fmt.Errorf("source checkout path is not absolute: %q", workspace)
+	}
+	relative, err := filepath.Rel(workspace, root)
+	if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("optional profile root is inside the source checkout: %q", root)
+	}
+	return os.MkdirTemp(root, "download-g-")
+}
+
+type downloadGProcessEvidence struct {
+	ParentTest string `json:"parentTest"`
+	Top string `json:"top"`
+	Scenario string `json:"scenario"`
+	Arguments []string `json:"arguments"`
+	CoverageMode string `json:"coverageMode"`
+	Started bool `json:"started"`
+	Exited bool `json:"exited"`
+	ExitCode *int `json:"exitCode"`
+	ProcessError string `json:"processError"`
+	Watchdog bool `json:"watchdog"`
+	ExecutedMarker bool `json:"executedMarker"`
+	CompletedMarker bool `json:"completedMarker"`
+	RuntimeFailureMarkers []string `json:"runtimeFailureMarkers"`
+	OutputBytes int `json:"outputBytes"`
+	OutputSHA256 string `json:"outputSHA256"`
+	ProfilePath string `json:"profilePath"`
+	ProfileExists bool `json:"profileExists"`
+	ProfileBytes int `json:"profileBytes"`
+	ProfileSHA256 string `json:"profileSHA256"`
+	ProfileReadError string `json:"profileReadError"`
+	ProfileStatError string `json:"profileStatError"`
+	AtomicHeaderAndRecords bool `json:"atomicHeaderAndRecords"`
+	Classification string `json:"classification"`
+	Limitation string `json:"limitation"`
+}
+
+// This records standard runtime-produced bytes only. It never rewrites profiles,
+// maps paths, combines counters or supplies source/head identity from an env var.
+func downloadGSaveProfile(dir, parent, top, scenario string, cmd *exec.Cmd, output []byte, processErr error, watchdog bool) error {
+	e := downloadGProcessEvidence{
+		ParentTest: parent, Top: top, Scenario: scenario,
+		Arguments: append([]string(nil), cmd.Args...), CoverageMode: testing.CoverMode(),
+		Started: cmd.Process != nil, ProcessError: downloadGError(processErr), Watchdog: watchdog,
+		ExecutedMarker: bytes.Contains(output, []byte("G_CHILD_EXECUTED "+top+"/"+scenario)),
+		CompletedMarker: bytes.Contains(output, []byte("G_CHILD_BODY_DONE "+top+"/"+scenario)),
+		OutputBytes: len(output), OutputSHA256: downloadGHash(output),
+		ProfilePath: filepath.Join(dir, "child.atomic.out"),
+		Classification: "failed-test-forensics-only",
+		Limitation: "Not a coverage or test PASS attestation. Exact source/binary/MVS binding and full profile integrity remain independent CI review responsibilities; counters are not merged here.",
+	}
+	if cmd.ProcessState != nil {
+		e.Exited = cmd.ProcessState.Exited()
+		code := cmd.ProcessState.ExitCode()
+		e.ExitCode = &code
+	}
+	for _, marker := range []string{"WARNING: DATA RACE", "panic:", "fatal error:", "G_DOWNLOAD_COMPLETION_TIMEOUT", "G_FIXTURE_"} {
+		if bytes.Contains(output, []byte(marker)) {
+			e.RuntimeFailureMarkers = append(e.RuntimeFailureMarkers, marker)
+		}
+	}
+	if _, statErr := os.Lstat(e.ProfilePath); statErr == nil {
+		e.ProfileExists = true
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		e.ProfileStatError = statErr.Error()
+	}
+	profile, profileErr := os.ReadFile(e.ProfilePath)
+	if profileErr == nil {
+		e.ProfileExists = true
+		e.ProfileBytes = len(profile)
+		e.ProfileSHA256 = downloadGHash(profile)
+		header := []byte("mode: atomic\n")
+		e.AtomicHeaderAndRecords = bytes.HasPrefix(profile, header) && len(bytes.TrimSpace(bytes.TrimPrefix(profile, header))) > 0
+	} else {
+		e.ProfileReadError = profileErr.Error()
+	}
+	candidate := processErr == nil && e.Started && e.Exited && e.ExitCode != nil && *e.ExitCode == 0 && !watchdog && e.ExecutedMarker && e.CompletedMarker && len(e.RuntimeFailureMarkers) == 0 && e.ProfileExists && e.AtomicHeaderAndRecords
+	if candidate {
+		e.Classification = "candidate-pass-data-pending-independent-integrity-review"
+	} else if watchdog || !e.Exited || len(e.RuntimeFailureMarkers) != 0 {
+		e.Classification = "invalid-interrupted-or-runtime-failure-forensics-only"
+	} else if !e.ExecutedMarker || (processErr == nil && !e.CompletedMarker) {
+		e.Classification = "invalid-execution-identity-forensics-only"
+	} else if !e.ProfileExists || !e.AtomicHeaderAndRecords {
+		e.Classification = "invalid-profile-forensics-only"
+	}
+	var failures []error
+	if err := os.WriteFile(filepath.Join(dir, "child.stdout-stderr.txt"), output, 0600); err != nil {
+		failures = append(failures, err)
+	}
+	metadata, err := json.MarshalIndent(e, "", "  ")
+	if err != nil {
+		failures = append(failures, err)
+	} else if err := os.WriteFile(filepath.Join(dir, "process.json"), append(metadata, '\n'), 0600); err != nil {
+		failures = append(failures, err)
+	}
+	if processErr == nil && !candidate {
+		failures = append(failures, fmt.Errorf("zero-exit child has incomplete or invalid evidence: %s", e.Classification))
+	}
+	return errors.Join(failures...)
 }

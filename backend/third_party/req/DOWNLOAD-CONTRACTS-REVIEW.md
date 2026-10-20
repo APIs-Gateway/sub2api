@@ -1,63 +1,92 @@
-# G public download contract review handoff
+# G public download contract review handoff, revised RAW source
 
-RAW, unformatted and unexecuted. No source defect or passing result is claimed.
+Unformatted and unexecuted. This revision implements independently reported
+G1-G4 and the separately reviewed optional child-profile design. New independent
+source review and all remote validation remain pending; no LGTM, defect RED,
+coverage increase or passing result is claimed.
 
-## Scope
+## Scope retained
 
-Four new external-package test files exercise exported req APIs with real loopback
-HTTP1 peers. Ordinary SetOutput runs before Do returns; explicit Range/If-Range
-and file-append behavior is tested directly, without a caller validation/restart
-state machine or an automatic resume claim. Parallel tests check actual complete
-entity identity and error/metadata responsibility. No original file, production
-source, dependency, F44 fixture, current401 inventory/checker, manifest or coverage
-policy is changed. Expected parent inventory is32 Linux cases plus1 Windows-only
-case; source hashes and exact names are in DOWNLOAD-CONTRACTS-PROVENANCE.json.
+Four external-package test files use only exported req APIs with real loopback
+HTTP1 peers. Ordinary SetOutput happens before Do returns; explicit Range/If-Range
+and file append are tested directly, without a caller validation/restart state
+machine or invented automatic resume API. Exactly32 Linux parent cases and1
+additional Windows case retain their original names. All original132 files,
+original14 tests,89 production files, F44, current401 inventory/checker, manifest,
+dependencies and coverage policy remain untouched. Base remains exact2d6; unrelated
+Oct20 scheduling-main composition belongs to root, not this test change.
 
-## Independent review focus
+## G1-G4 source corrections requiring independent re-review
 
-1. The peer records actual HEAD/Range/status, controlled body writes/flushes and
-   explicit closes/cancellation. Complete relevant evidence precedes business
-   assertions. A safe early HEAD rejection need not issue a GET; a correct error
-   may abort concurrent bodies, which are logged honestly rather than required to
-   finish. Never classify a fixture write failure as proof of a production bug.
-2. Error/cancel source paths may strand goroutines: every parallel case runs in a
-   separate instance of the same test binary. The parent checks child execution
-   and completion markers, actual exit, full output and its independent watchdog.
-   Its scratch directory is parent-owned until the child exits, so Windows leaked
-   handles do not defeat cleanup or require GC. No watchdog kill is a PASS.
-3. The failure-during-dispatch case first verifies an actual valid Range response
-   with a fully written/flushed intentional short body and connection close,
-   then cancels and checks bounded Do return. The explicit assertion is separate
-   from the process watchdog. No private queue/waitgroup state is read.
-4. Invalid partial metadata may yield a clear error or a separately observed safe
-   full200 recovery; simply concatenating unusable206 parts cannot pass even if
-   the bytes happen to match. A server can legitimately ignore Range; that case
-   accepts error or exactly one correct entity, without prescribing scheduling.
-5. Close proof is Windows-only: successful controlled download, closed-file rename
-   control, then rename/remove the library-created destination. No Linux rename,
-   FD count, /proc introspection, runtime finalizer or caller-writer Close policy
-   is used. Platform exclusion on Linux is not a claimed Windows PASS.
-6. io.Writer errors remain identifiable; valid-positive entity bytes/hash and
-   existing-file truncation are checked. Output buffers are not read after an
-   error that may leave a merger goroutine unwinding.
+- G1: completion observation expiry uses G_DOWNLOAD_COMPLETION_TIMEOUT, separate
+  from G_DOWNLOAD_ASSERT and the parent's G_CHILD_WATCHDOG. Timeout alone is not
+  data/metadata business RED. For the known failure-dispatch hang, completed real
+  HEAD/Range/short-body flush/Close/cancellation remains manual review evidence;
+  the outcome is still a failed completion observation, never a passing fixture.
+- G2: FixtureError is rejected unconditionally, including cleanup/error paths.
+  A read-only existing Client.OnAfterResponse hook records actual client response
+  status/headers, request method/Range and Err; server preparation alone cannot
+  establish rejection. Accepted protocol errors need the intended actual target
+  response and exclude concrete context/network/timeout/I/O failures and the
+  observed no-response transport error. A url.Error wrapper alone is not enough
+  to reject a legitimate protocol error: inspect its cause and response evidence,
+  without depending on an implementation error string. Likewise http.ProtocolError
+  is not blanket-excluded once the actual target response is proven. Correct early
+  rejection or a successful complete fallback may abort unused concurrent bodies;
+  those write/flush outcomes remain honestly logged, with complete relevant body
+  evidence still required before any business assertion.
+  Error buffers are not read while merger work may still unwind.
+- G3: Windows calibration now opens an owned control with comparable OpenFile
+  flags/mode, proves rename fails while open, closes it explicitly, then proves
+  rename/remove succeeds. Only successful Do plus actual complete entity reaches
+  G_DOWNLOAD_FILE_CLOSE_ASSERT for destination rename/remove. Earlier Do or temp
+  deletion errors use G_DOWNLOAD_PRECONDITION and do not prove outputClose.
+  No Linux rename, FD count, /proc, forced GC/finalizer or caller-writer Close rule.
+- G4: known-zero HEAD permits actual empty success or a clear non-timeout
+  rejection. Unknown HEAD permits clear rejection or an observed full GET/200
+  response plus correct complete bytes/hash. Neither case pins the old private
+  bad-content-length implementation. Missing safe fallback after a proven bad
+  partial response and nil error is a business assertion, not a fixture timeout.
 
-## Official references / limitations
+## Child isolation and optional raw atomic evidence
 
-Official imroc/req416 and417 are CLOSED but do not cite a fix commit in fetched
-history/timelines. Fresh master parallel source equals v3.57.0/current fork. The
-file has no discovered application call outside imported req, so do not claim a
-currently triggered gateway-production failure. Those facts and all41 open PR
-filename inventories are retained in the root task's durable g-download evidence.
-Ten open PRs include the same imported source; all four relevant production blobs
-at their exact heads equal this base, and none implements the G tests. Root must
-coordinate any new issue/repair/overlap after genuine remote evidence.
+Every parallel case owns a child instance of the same test binary. The parent
+checks exact execution/body markers, actual process exit and its separate
+watchdog; parent-owned scratch survives until child exit, containing failed
+merger goroutines or Windows handles without GC or cross-case contamination.
 
-## Execution and integration
+Parent coverprofiles do not include child counters automatically. The optional
+G-only SUB2API_G_DOWNLOAD_PROFILE_DIR, when set by a future independently reviewed
+remote workflow, requires an atomic-instrumented binary and an existing absolute
+external directory. Each child gets a fresh unique directory and only the
+standard -test.coverprofile argument. Go testing writes child.atomic.out; the
+helper never fabricates hits, rewrites counts/paths, combines profiles or replaces
+existing named/all/uploaded inputs. After process exit it preserves raw output
+and records actual startup/exit/watchdog/markers/profile hash/size/status in JSON.
+The unset option adds no evidence/profile files or extra subprocess flags.
 
-All format, compile, race, test and verification execution is remote CI only.
-This RAW commit has not been formatted or compiled locally or on87. Root review
-and a separately reviewed remote workflow must precede any run/publication. Keep
-raw/full evidence and all existing suites; root will own final mandatory names,
-source manifest and proof integration. No invented skipped PASS, exclusion,
-threshold reduction or substitute coverage metric. No LGTM or merge authorization
-is implied by this handoff.
+Only normal exit0 with exact execution/completion markers, no failure markers and
+a readable nonempty atomic profile is candidate data pending independent full
+integrity/source review. Nonzero/race/panic/fixture/completion-timeout/kill/missing
+or malformed evidence remains failed forensic material, never passing coverage.
+The original child output/error and watchdog state are logged before evidence
+write failures; persistence failure also fails the fixture. Exact Git/binary/MVS
+binding, complete record validation, actual case results, always-upload and any
+later use/merge of child counters remain root workflow/review responsibilities.
+No G runtime/profile evidence exists yet and no coverage improvement is claimed.
+
+## References, overlap and next gate
+
+Official imroc/req416 and417 are CLOSED with no linked fix commit in fetched
+history/timelines; observed master parallel source equals v3.57.0/current fork.
+No application NewParallelDownload call was discovered outside imported req, so
+these are API hypotheses rather than claims of a triggered gateway-production
+failure. All41 open PR inventories and10 inherited-source overlaps are retained
+in durable root evidence; refresh/cross-link before any production repair/merge.
+
+Freeze revised RAW source and exact hashes/names for root plus independent review
+before remote formatting or execution. All executable validation is remote CI
+only, never local or87. Preserve raw child/named/all profiles, complete actual
+results, original401 and every inherited gate, original Codecov85 and complete
+Git85. Root owns final inventory/manifest/proof integration; no source publication,
+new child issue, production repair, exclusion or threshold reduction is authorized.

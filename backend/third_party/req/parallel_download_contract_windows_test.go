@@ -20,13 +20,28 @@ func TestReqParallelDownloadWindowsClose(t *testing.T) {
 			defer cancel()
 			entity := downloadGEntity(37)
 			root := downloadGTempDir(t)
-			control := filepath.Join(root, "closed-control.bin")
-			if err := os.WriteFile(control, []byte("closed control"), 0600); err != nil {
+			control := filepath.Join(root, "open-control.bin")
+			controlHandle, err := os.OpenFile(control, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Rename(control, filepath.Join(root, "renamed-control.bin")); err != nil {
-				t.Fatalf("G_FIXTURE_WINDOWS: rename of closed owned control failed: %v", err)
+			defer controlHandle.Close()
+			movedControl := filepath.Join(root, "renamed-control.bin")
+			openRenameErr := os.Rename(control, movedControl)
+			t.Logf("G_WINDOWS_OPEN_CONTROL renameError=%v", openRenameErr)
+			if openRenameErr == nil {
+				t.Fatal("G_FIXTURE_WINDOWS: same-mode open control could be renamed; this filesystem cannot prove the intended Close witness")
 			}
+			if err := controlHandle.Close(); err != nil {
+				t.Fatalf("G_FIXTURE_WINDOWS: control Close failed: %v", err)
+			}
+			if err := os.Rename(control, movedControl); err != nil {
+				t.Fatalf("G_FIXTURE_WINDOWS: same-mode closed control could not be renamed: %v", err)
+			}
+			if err := os.Remove(movedControl); err != nil {
+				t.Fatalf("G_FIXTURE_WINDOWS: same-mode closed control could not be removed: %v", err)
+			}
+			t.Log("G_WINDOWS_CLOSED_CONTROL rename/remove completed")
 			p := newDownloadGPeer(t, func(w http.ResponseWriter, r *http.Request, e *downloadGExchange) {
 				if r.Method == http.MethodHead {
 					downloadGReply(w, e, http.StatusOK, "", nil, len(entity))
@@ -50,25 +65,25 @@ func TestReqParallelDownloadWindowsClose(t *testing.T) {
 			downloadGAssertWire(t, head)
 			first := p.await(t, ctx, true, func(e downloadGExchange) bool { return e.Method == http.MethodGet })
 			downloadGAssertWire(t, first)
-			err := downloadGResult(t, ctx, result)
+			err = downloadGResult(t, ctx, result)
 			p.close()
 			_, finished := p.observations()
 			for _, e := range finished {
 				downloadGAssertWire(t, e)
 			}
 			if err != nil {
-				t.Fatalf("G_DOWNLOAD_ASSERT: valid Windows download failed: %v", err)
+				t.Fatalf("G_DOWNLOAD_PRECONDITION: Windows Do failed before destination Close/rename witness; inspect the actual stage: %v", err)
 			}
 			actual, err := os.ReadFile(filename)
 			if err != nil || !bytes.Equal(actual, entity) {
-				t.Fatalf("G_DOWNLOAD_ASSERT: Windows destination was not the complete entity: bytes=%d error=%v", len(actual), err)
+				t.Fatalf("G_DOWNLOAD_PRECONDITION: Windows destination bytes were not complete before the Close witness: bytes=%d error=%v", len(actual), err)
 			}
 			moved := filepath.Join(root, "renamed-download.bin")
 			if err := os.Rename(filename, moved); err != nil {
-				t.Fatalf("G_DOWNLOAD_ASSERT: completed library-owned output cannot be renamed; closed-file control succeeded: %v", err)
+				t.Fatalf("G_DOWNLOAD_FILE_CLOSE_ASSERT: completed library-owned output cannot be renamed; closed-file control succeeded: %v", err)
 			}
 			if err := os.Remove(moved); err != nil {
-				t.Fatalf("G_DOWNLOAD_ASSERT: completed library-owned output cannot be removed: %v", err)
+				t.Fatalf("G_DOWNLOAD_FILE_CLOSE_ASSERT: completed library-owned output cannot be removed: %v", err)
 			}
 		})
 	})

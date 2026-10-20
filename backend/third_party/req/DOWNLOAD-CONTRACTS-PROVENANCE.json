@@ -7,24 +7,24 @@
   "package": "req_test (external package; exported APIs only)",
   "files": {
     "download_wire_peer_test.go": {
-      "sha256": "4a195318361273b17d6fe88c7828c203c75b08d2c53009a728e358d8d7bb71b2",
-      "bytes": 8640
+      "bytes": 20889,
+      "sha256": "f6760f89e9cf47b77134c8e624cd4fe3d67b8535b8634557ad9341ad8ff42194"
     },
     "download_contract_test.go": {
-      "sha256": "5a79e838cfabb21f7df8d6061b7efc0063184803b55de88c348d06846179ae7e",
-      "bytes": 7203
+      "bytes": 7203,
+      "sha256": "5a79e838cfabb21f7df8d6061b7efc0063184803b55de88c348d06846179ae7e"
     },
     "parallel_download_contract_test.go": {
-      "sha256": "34a1aa1ba975cb00b2bdaf456e3bf1cf9cdaecc9d1a6c9f21b77f34c67200bf1",
-      "bytes": 10792
+      "bytes": 13192,
+      "sha256": "fb8af526d46316936f696aebc1450ec022cbd4985705f5ae895e333e97d0953f"
     },
     "parallel_download_contract_windows_test.go": {
-      "sha256": "a1e67fe0237fce668dafda59d68b1c2ea46493d542882f634f614e9490eac00b",
-      "bytes": 2974
+      "bytes": 3785,
+      "sha256": "a836799807639c5a422e1ddbf60cf9779ac0c3fadfa87a4f06c2231e22dbe2b2"
     },
     "DOWNLOAD-CONTRACTS-LICENSE": {
-      "sha256": "9629b9d5b0f233bb67619a30d56bf3e49d8cc5133c6f0e3509d4a952bc9beb39",
-      "bytes": 1064
+      "bytes": 1064,
+      "sha256": "9629b9d5b0f233bb67619a30d56bf3e49d8cc5133c6f0e3509d4a952bc9beb39"
     }
   },
   "expectedParentCaseInventory": {
@@ -89,7 +89,11 @@
     "clientTimeoutSeconds": 3,
     "childTestingTimeoutSeconds": 12,
     "parentWatchdogSeconds": 15,
-    "noPrivateTaskOrFileIntrospection": true
+    "noPrivateTaskOrFileIntrospection": true,
+    "fileCloseBusinessMarker": "G_DOWNLOAD_FILE_CLOSE_ASSERT",
+    "completionTimeoutMarker": "G_DOWNLOAD_COMPLETION_TIMEOUT (failed observation, not data/metadata RED)",
+    "unexpectedErrorMarker": "G_DOWNLOAD_UNEXPECTED_ERROR (failed, not accepted protocol rejection)",
+    "windowsPreconditionMarker": "G_DOWNLOAD_PRECONDITION (does not attest destination rename was reached)"
   },
   "sourceAttribution": {
     "newFixturesWrittenForThisTask": true,
@@ -150,5 +154,52 @@
     "Business RED requires an intended assertion after complete relevant peer evidence; compiler/race/fixture/timeout/watchdog failures are distinct",
     "Root-owned manifest/mandatory-inventory integration only after actual case identities/evidence",
     "All original Codecov85, supplementary complete Git85 and independent approval requirements remain blocking"
-  ]
+  ],
+  "rawRevision": {
+    "previousRawHead": "a2e2fffaef3a24e73e7e97d19e2196901695cea5",
+    "updatedAt": "2026-10-20T01:38:02.445454+00:00",
+    "independentFindingReceiptSHA256": "7bd7b6c7144215715693ff1f3ac7d2df8252b9ccba91168939ced32619dcbb9d",
+    "findingsImplemented": [
+      "G1",
+      "G2",
+      "G3",
+      "G4"
+    ],
+    "status": "Narrow source revisions implemented; second independent review and all remote execution still pending",
+    "rootAuthorization": "G1-G4 plus optional child raw atomic profile evidence only; no baseline/main composition, production, publish or validation authorization"
+  },
+  "responseRejectionEvidence": {
+    "observer": "Existing public Client.OnAfterResponse; read-only method, Range, status, Content-Range, Content-Length and Err snapshots; returns nil",
+    "fixtureErrors": "Always rejected including cleanup and error paths",
+    "clearRejection": "Requires actual intended server exchange and matching client response; excludes concrete context, network, timeout and I/O causes and the actual no-response transport failure",
+    "urlError": "Wrapper alone is not rejected; inspect chain and actual response/cause evidence, without matching production error strings",
+    "concurrentBodies": "Correct rejection or successful complete fallback may abort unused concurrent bodies; always reject FixtureError, require the actual target response, and require complete necessary body evidence before a business assertion",
+    "headZero": "Actual zero HEAD may yield successful empty output or clear non-timeout rejection",
+    "headUnknown": "Success requires actual complete full GET/200 and correct entity bytes/hash; otherwise clear non-timeout rejection",
+    "httpProtocolError": "Not blanket-excluded: may be a legitimate metadata rejection after the actual target response prerequisite; missing HTTP response remains a fixture precondition failure",
+    "genericTransportCause": "Reject an observed no-response transport error when it is on the Do error chain, even if an outer URL wrapper has an otherwise plain underlying error"
+  },
+  "windowsCloseEvidence": {
+    "openControl": "Same os.OpenFile O_RDWR|O_CREATE|O_TRUNC mode0600; open rename must fail",
+    "closedControl": "Explicit Close then rename/remove must succeed",
+    "requiredReachedStage": "Do success and complete entity precede actual destination rename/remove; early Do/temp-removal failure is only a precondition failure",
+    "noLinuxFDOrGCMirror": true
+  },
+  "optionalChildAtomicProfiles": {
+    "environment": "SUB2API_G_DOWNLOAD_PROFILE_DIR",
+    "default": "Unset keeps original subprocess invocation/evidence behavior; no profile/evidence files added",
+    "root": "Existing absolute real external directory; CI must verify task ownership, source/binary/MVS/run binding and later cleanup",
+    "requiresCoverageMode": "atomic",
+    "childArgument": "Standard -test.coverprofile=<fresh unique subdirectory>/child.atomic.out on same already-instrumented test binary",
+    "files": [
+      "child.atomic.out (Go testing runtime-produced bytes; never rewritten)",
+      "child.stdout-stderr.txt (exact CombinedOutput bytes)",
+      "process.json (actual startup/exit/watchdog/identity/runtime markers/hash/size/status)"
+    ],
+    "counterHandling": "No fabricated hits, path mapping, profile rewriting or merging. Existing parent/named/all profiles remain untouched",
+    "candidatePolicy": "Only actual normal zero exit, exact execution/completion markers, no runtime failure markers and readable nonempty atomic profile may be a candidate for independent integrity review, never an attested coverage PASS",
+    "failedPolicy": "Nonzero, interrupted, watchdog, runtime/race/fixture/timeout or invalid/missing profile is forensic material only, never passing coverage evidence",
+    "preservation": "CombinedOutput/actual process error and watchdog state logged before evidence write failures; child process fully exited before profile read; parent cleans scratch only after exit",
+    "pendingRemoteEvidence": true
+  }
 }
