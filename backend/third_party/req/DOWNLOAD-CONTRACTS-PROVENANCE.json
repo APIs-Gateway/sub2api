@@ -15,8 +15,8 @@
       "sha256": "5a79e838cfabb21f7df8d6061b7efc0063184803b55de88c348d06846179ae7e"
     },
     "parallel_download_contract_test.go": {
-      "bytes": 13192,
-      "sha256": "fb8af526d46316936f696aebc1450ec022cbd4985705f5ae895e333e97d0953f"
+      "bytes": 13310,
+      "sha256": "251a3b77bddec6e74b162b3e8292d2f613c2cab66fc2e29cab20fa1532767add"
     },
     "parallel_download_contract_windows_test.go": {
       "bytes": 3785,
@@ -156,17 +156,19 @@
     "All original Codecov85, supplementary complete Git85 and independent approval requirements remain blocking"
   ],
   "rawRevision": {
-    "previousRawHead": "a2e2fffaef3a24e73e7e97d19e2196901695cea5",
-    "updatedAt": "2026-10-20T01:38:02.445454+00:00",
+    "previousRawHead": "93abd553043ba53c979556e48b9c3b0ae86d0174",
+    "updatedAt": "2026-10-20T01:46:06.272794+00:00",
     "independentFindingReceiptSHA256": "7bd7b6c7144215715693ff1f3ac7d2df8252b9ccba91168939ced32619dcbb9d",
     "findingsImplemented": [
       "G1",
       "G2",
       "G3",
-      "G4"
+      "G4",
+      "G5"
     ],
     "status": "Narrow source revisions implemented; second independent review and all remote execution still pending",
-    "rootAuthorization": "G1-G4 plus optional child raw atomic profile evidence only; no baseline/main composition, production, publish or validation authorization"
+    "rootAuthorization": "Narrow G5 416 safe fallback and wrong-range discarded partial corrections; no production, publish or validation authorization",
+    "secondReviewFinding": "auditOps independently found range_416 unconditional success rejection and wrong_range_start false fixture failure after valid full fallback; root authorized narrow correction, fresh re-review pending"
   },
   "responseRejectionEvidence": {
     "observer": "Existing public Client.OnAfterResponse; read-only method, Range, status, Content-Range, Content-Length and Err snapshots; returns nil",
@@ -177,7 +179,9 @@
     "headZero": "Actual zero HEAD may yield successful empty output or clear non-timeout rejection",
     "headUnknown": "Success requires actual complete full GET/200 and correct entity bytes/hash; otherwise clear non-timeout rejection",
     "httpProtocolError": "Not blanket-excluded: may be a legitimate metadata rejection after the actual target response prerequisite; missing HTTP response remains a fixture precondition failure",
-    "genericTransportCause": "Reject an observed no-response transport error when it is on the Do error chain, even if an outer URL wrapper has an otherwise plain underlying error"
+    "genericTransportCause": "Reject an observed no-response transport error when it is on the Do error chain, even if an outer URL wrapper has an otherwise plain underlying error",
+    "range416": "Clear non-timeout rejection or actual full GET/200, complete wire body, matching observer and exact full output bytes/hash; 416 error representation alone cannot pass",
+    "wrongRangeStart": "A matching complete full GET/200 fallback may discard invalid partial Write/Flush failures; without it the necessary partial must complete before complete-entity assertions; FixtureError always rejected"
   },
   "windowsCloseEvidence": {
     "openControl": "Same os.OpenFile O_RDWR|O_CREATE|O_TRUNC mode0600; open rename must fail",

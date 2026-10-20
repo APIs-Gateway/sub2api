@@ -285,14 +285,6 @@ func TestReqParallelDownloadContract(t *testing.T) {
 						downloadGClearRejection(t, err, target, responses)
 						return
 					}
-					// A claimed success requires the actual controlled body to
-					// have completed before any metadata/data assertion.
-					if tc.name == "range_416" {
-						if firstResponse != nil {
-							downloadGAssertWire(t, *firstResponse)
-						}
-						t.Fatalf("G_DOWNLOAD_ASSERT: range416 error representation was accepted as successful download")
-					}
 				} else if err != nil {
 					for _, e := range finished {
 						downloadGAssertWire(t, e)
@@ -310,7 +302,7 @@ func TestReqParallelDownloadContract(t *testing.T) {
 					}
 				}
 				switch tc.name {
-				case "missing_content_range", "reversed_range", "invalid_range_total", "unknown_range_unit", "range_ignored_200":
+				case "missing_content_range", "reversed_range", "invalid_range_total", "unknown_range_unit", "range_ignored_200", "range_416":
 					full, ok := downloadGFindTarget(p, responses, func(e downloadGExchange) bool {
 						fullRequest := e.Range == "" || tc.name == "range_ignored_200"
 						return e.Method == http.MethodGet && fullRequest && e.Status == http.StatusOK && bytes.Equal(e.Body, entity) && downloadGWireComplete(e)
@@ -325,7 +317,13 @@ func TestReqParallelDownloadContract(t *testing.T) {
 						t.Fatal("G_DOWNLOAD_ASSERT: unusable partial response accepted without a real safe complete response")
 					}
 				case "wrong_range_start":
-					if firstResponse != nil {
+					// A safe complete fallback may discard an invalid partial body.
+					// Without that recovery, the necessary partial must complete
+					// before comparing the successful entity below.
+					full, ok := downloadGFindTarget(p, responses, func(e downloadGExchange) bool {
+						return e.Method == http.MethodGet && e.Range == "" && e.Status == http.StatusOK && bytes.Equal(e.Body, entity) && downloadGWireComplete(e)
+					})
+					if (!ok || full.cause != nil) && firstResponse != nil {
 						downloadGAssertWire(t, *firstResponse)
 					}
 				}

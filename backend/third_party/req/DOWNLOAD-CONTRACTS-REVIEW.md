@@ -90,3 +90,9 @@ only, never local or87. Preserve raw child/named/all profiles, complete actual
 results, original401 and every inherited gate, original Codecov85 and complete
 Git85. Root owns final inventory/manifest/proof integration; no source publication,
 new child issue, production repair, exclusion or threshold reduction is authorized.
+
+## Second independent source review: G5
+
+The 93abd RAW revision still rejected every successful `range_416` result, including a legitimate full GET/200 recovery. It also required the wrong-start partial body to complete even when a successful full recovery had legitimately discarded that body. auditOps identified both boundaries independently; root authorized this narrow revision.
+
+`range_416` now accepts only a clear non-timeout rejection, or a real matching full GET/200 with completed wire bytes and exact complete entity bytes/hash. An error representation is never successful output. `wrong_range_start` permits discarded partial Write/Flush aborts only when that same real safe full recovery is proven; otherwise the necessary partial must complete before entity assertions. FixtureError remains unconditionally rejected. No test names, production sources, inherited gates or profile accounting changed. This is unformatted RAW source; independent re-review and all remote executable evidence remain pending.
