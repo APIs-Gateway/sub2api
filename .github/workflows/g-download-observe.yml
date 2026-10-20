@@ -1,0 +1,153 @@
+name: G download actual Linux and Windows observation
+
+on:
+  push:
+    branches:
+      - codex/req-download-g-observation-oct20
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+  GOWORK: "off"
+  GOFLAGS: -mod=readonly
+  CGO_ENABLED: "1"
+  GOMAXPROCS: "2"
+  GORACE: log_path=stderr exitcode=66
+  CC: gcc
+
+jobs:
+  baseline401:
+    name: Exact 2d6 original mandatory401 baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Initialize isolated external evidence and raw checkout policy
+        shell: python {0}
+        run: |
+          import json, os, pathlib, platform, subprocess, sys
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          identity = '-'.join((os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT'], os.environ['GITHUB_JOB'], os.environ['RUNNER_OS']))
+          evidence = root / ('g-download-observe-' + identity)
+          evidence.mkdir(exist_ok=False)
+          values = {'G_OBSERVATION_EVIDENCE': str(evidence), 'GOOS': 'linux', 'GOARCH': 'amd64'}
+          for name in ('GOCACHE', 'GOMODCACHE', 'GOTMPDIR'):
+              path = root / ('g-download-' + name.lower() + '-' + identity)
+              path.mkdir(exist_ok=False)
+              values[name] = str(path)
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8', newline='\n') as output:
+              for key, value in values.items():
+                  output.write(key + '=' + value + '\n')
+          (evidence / 'initial-runner.json').write_text(json.dumps({'controller': os.environ['GITHUB_SHA'], 'platform': platform.platform(), 'machine': platform.machine(), 'python': sys.version, 'image': {key: os.environ.get(key) for key in ('ImageOS', 'ImageVersion', 'RUNNER_OS', 'RUNNER_ARCH')}}, indent=2) + '\n')
+          subprocess.run(['git', 'config', '--global', 'core.autocrlf', 'false'], check=True)
+          subprocess.run(['git', 'config', '--global', 'core.eol', 'lf'], check=True)
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: 2d6bf53dc3231dc4ccfce48211c43942ed18d656
+          path: baseline
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.9'
+          check-latest: false
+          cache: false
+      - name: Execute unchanged exact baseline script and retain actual failure
+        shell: python {0}
+        run: |
+          import os, pathlib, subprocess, sys
+          script = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'controller/.github/g-download-observation/observe.py'
+          result = subprocess.run([sys.executable, '-B', str(script), 'baseline'])
+          sys.exit(result.returncode)
+      - name: Always retain complete baseline source and actual original401 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: g-download-observe-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ runner.os }}
+          path: ${{ runner.temp }}/g-download-observe-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ runner.os }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+  candidate:
+    name: G actual race observation (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 100
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Initialize isolated native evidence and raw checkout policy
+        shell: python {0}
+        run: |
+          import json, os, pathlib, platform, subprocess, sys
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          identity = '-'.join((os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT'], os.environ['GITHUB_JOB'], os.environ['RUNNER_OS']))
+          evidence = root / ('g-download-observe-' + identity)
+          evidence.mkdir(exist_ok=False)
+          assert platform.machine().lower() in ('amd64', 'x86_64')
+          values = {'G_OBSERVATION_EVIDENCE': str(evidence), 'GOOS': 'windows' if sys.platform == 'win32' else 'linux', 'GOARCH': 'amd64'}
+          for name in ('GOCACHE', 'GOMODCACHE', 'GOTMPDIR'):
+              path = root / ('g-download-' + name.lower() + '-' + identity)
+              path.mkdir(exist_ok=False)
+              values[name] = str(path)
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8', newline='\n') as output:
+              for key, value in values.items():
+                  output.write(key + '=' + value + '\n')
+          (evidence / 'initial-runner.json').write_text(json.dumps({'controller': os.environ['GITHUB_SHA'], 'platform': platform.platform(), 'machine': platform.machine(), 'python': sys.version, 'image': {key: os.environ.get(key) for key in ('ImageOS', 'ImageVersion', 'RUNNER_OS', 'RUNNER_ARCH')}}, indent=2) + '\n')
+          subprocess.run(['git', 'config', '--global', 'core.autocrlf', 'false'], check=True)
+          subprocess.run(['git', 'config', '--global', 'core.eol', 'lf'], check=True)
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: 2d6bf53dc3231dc4ccfce48211c43942ed18d656
+          path: baseline
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: f44d79fd2013750d3a71b7fd9a3962a707d0dddd
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.9'
+          check-latest: false
+          cache: false
+      - name: Observe actual named and full race results without accepted REDs
+        shell: python {0}
+        run: |
+          import os, pathlib, subprocess, sys
+          script = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'controller/.github/g-download-observation/observe.py'
+          result = subprocess.run([sys.executable, '-B', str(script), 'candidate'])
+          sys.exit(result.returncode)
+      - name: Always retain full source, actual platform results and raw child profiles
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: g-download-observe-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ runner.os }}
+          path: ${{ runner.temp }}/g-download-observe-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ runner.os }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
