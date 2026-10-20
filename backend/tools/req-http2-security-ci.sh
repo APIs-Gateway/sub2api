@@ -31,7 +31,7 @@ test ! -s "$evidence/http3-wire-gofmt.list"
 gofmt -l third_party/req/decode.go third_party/req/meta_charset_contract_test.go > "$evidence/meta-charset-gofmt.list"
 test ! -s "$evidence/meta-charset-gofmt.list"
 # Reviewed F44 and child1743 ownership sources are checked only in remote CI.
-gofmt -l third_party/req/client_behavior_peer_test.go third_party/req/client_behavior_observer_test.go third_party/req/client_behavior_contract_test.go third_party/req/client_redirect_cookie_contract_test.go third_party/req/client_response_contract_test.go third_party/req/digest_ownership_peer_test.go third_party/req/digest_ownership_contract_test.go > "$evidence/digest-client-contract-gofmt.list"
+gofmt -l third_party/req/client_behavior_peer_test.go third_party/req/client_behavior_observer_test.go third_party/req/client_behavior_contract_test.go third_party/req/client_redirect_cookie_contract_test.go third_party/req/client_response_contract_test.go third_party/req/digest_ownership_peer_test.go third_party/req/digest_ownership_contract_test.go third_party/req/digest.go > "$evidence/digest-client-contract-gofmt.list"
 test ! -s "$evidence/digest-client-contract-gofmt.list"
 # New private H2 frame contract source is checked only in remote CI.
 gofmt -l third_party/req/internal/http2/frame_contract_test.go > "$evidence/http2-frame-contract-gofmt.list"

@@ -242,17 +242,17 @@ def main():
         require(adaptations == {"internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
                                 "internal/dump/dump.go", "request.go", "response.go", "trace.go",
                                 "internal/http3/transport.go", "internal/http3/stream.go",
-                                "internal/compress/deflate_reader.go", "decode.go"},
+                                "internal/compress/deflate_reader.go", "decode.go", "digest.go"},
                 "Unexpected or missing production adaptation")
-        require(len(manifest["adaptedCandidateFiles"]) == 11 and
+        require(len(manifest["adaptedCandidateFiles"]) == 12 and
                 {v["path"] for v in manifest["adaptedCandidateFiles"]} == adaptations,
                 "Incomplete adapted source hash inventory")
         production = {v["path"] for v in manifest["originalFiles"]
                       if v["path"].endswith(".go") and not v["path"].endswith("_test.go")}
         require(len(production) == 89 and adaptations <= production,
-                "Retain all89 original production Go files and exactly11 declared adaptations")
-        require(manifest["originalUnmodifiedFileCount"] == 121,
-                "Retain exactly121 unchanged originals after11 declared production adaptations")
+                "Retain all89 original production Go files and exactly12 declared adaptations")
+        require(manifest["originalUnmodifiedFileCount"] == 120,
+                "Retain exactly120 unchanged originals after12 declared production adaptations")
         for item in manifest["originalFiles"]:
             if item["path"] not in adaptations:
                 data = (controlled / item["path"]).read_bytes()
@@ -362,7 +362,7 @@ def coverage(backend, evidence):
     result = []
     adapted = ("internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
                "internal/dump/dump.go", "request.go", "response.go", "trace.go", "internal/http3/transport.go",
-               "internal/http3/stream.go", "internal/compress/deflate_reader.go", "decode.go")
+               "internal/http3/stream.go", "internal/compress/deflate_reader.go", "decode.go", "digest.go")
     for relative in adapted:
         old = (evidence / "original" / relative).read_text().splitlines()
         new = (backend / "third_party/req" / relative).read_text().splitlines()

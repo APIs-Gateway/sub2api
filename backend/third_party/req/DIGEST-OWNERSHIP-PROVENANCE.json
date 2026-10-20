@@ -3,7 +3,7 @@
   "parentIssue": 1711,
   "sharedPR": 1712,
   "permanentTrackingIssue": 291,
-  "state": "OLD test-source candidate: digest original; no formatting/tests/builds executed on this source; pending independent review and CI-only OLD/NEW proof",
+  "state": "NEW raw production source candidate; identical23 OLD Go fixtures and originalF8; no remote formatting/OLD/NEW tests/builds executed on this source; pending independent source review and separately reviewed CI proof",
   "compositionHead": "85a001e5186b1c80c9c11eb19268d35f1054c420",
   "compositionTree": "f9e6e82d080848a2bdc497f993c0f25a8a6ac511",
   "freshOriginMain": "c3e3eed31c7783d1923e1afd9ce706f3501ece26",
@@ -87,5 +87,16 @@
     "Allow asynchronous underlying RoundTripper Close with bounded channel waits; no sleeps or duplicate cleanup Close"
   ],
   "newOldFailureDisposition": "Unproven until remote actual JSON; no compiler/race/fixture failure accepted as bug; no whitelist expansion",
-  "productionDigestGitBlobAtOldSource": "0695d8c3063c448e29ab05d44f0f8fbbd9a1cf81"
+  "productionDigestGitBlobAtOldSource": "0695d8c3063c448e29ab05d44f0f8fbbd9a1cf81",
+  "oldTestSourceHead": "7b0d92fb4c6bd52a62218d505130944163b73464",
+  "oldTestSourceTree": "c34bdcd39f97ea0623ff0aad9cfcbf04b04d7612",
+  "productionRepair": {
+    "file": "digest.go",
+    "bytes": 6097,
+    "sha256": "265a58ec9ab21b8788575e7dcf40002dac773e29fc3fff06ac0ba6416b17e154",
+    "adaptations": 12,
+    "unchangedOriginals": 120,
+    "scope": "FindChallenge before draining caller-owned401; close original GetBody body once; close unsent prepare bodies; close stream after ReadAll errors preserving read precedence; local factory wrapper releases nonnil reader+error consistently including auth-int; no private dependency, default activation, retry/cache/algorithm/cookie policy change.",
+    "claimLimit": "Five previous realRED prove two base defects. Additional23 ownership edge cases remain unproven until exact same-fixture remoteOLD/NEW raw outcomes; no implementation pass, coverage, approval or merge."
+  }
 }
