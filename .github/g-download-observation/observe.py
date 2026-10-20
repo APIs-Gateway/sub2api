@@ -282,8 +282,8 @@ def profile_blocks(path, source):
 
 def actual_inventory(phase, source, windows):
     directory = E / "phases" / phase
-    events = [json.loads(line) for line in (directory / "command/stdout").read_text().splitlines()]
-    inventory = json.loads((source / "backend/third_party/req/DOWNLOAD-CONTRACTS-PROVENANCE.json").read_text())["expectedParentCaseInventory"]
+    events = [json.loads(line) for line in (directory / "command/stdout").read_text(encoding="utf-8").splitlines()]
+    inventory = json.loads((source / "backend/third_party/req/DOWNLOAD-CONTRACTS-PROVENANCE.json").read_text(encoding="utf-8"))["expectedParentCaseInventory"]
     expected = set(inventory["linux"] + (inventory["windowsAdditional"] if windows else []))
     assert len(expected) == (33 if windows else 32)
     runs = collections.Counter((event.get("Package"), event.get("Test")) for event in events if event.get("Action") == "run")
@@ -294,7 +294,7 @@ def actual_inventory(phase, source, windows):
     package_passes = collections.Counter(event.get("Package") for event in events if event.get("Action") == "pass" and not event.get("Test"))
     g_events = {name: {"run": runs[(MODULE, name)], "pass": passes[(MODULE, name)]} for name in sorted(expected)}
     unexpected = sorted(name for package, name in runs if package == MODULE and name and name.startswith(("TestReqDownload", "TestReqParallelDownload")) and name not in expected and not any(other.startswith(name + "/") for other in expected))
-    old = json.loads((source / "backend/tools/req-http2-security-inventory.json").read_text())
+    old = json.loads((source / "backend/tools/req-http2-security-inventory.json").read_text(encoding="utf-8"))
     original = {(old[key[:-6] + "Package"], leaf) for key, values in old.items() if key.endswith("Leaves") and isinstance(values, list) and key[:-6] + "Package" in old for leaf in values}
     assert len(original) == old["totalNamedLeaves"] == 401
     old_events = [{"package": package, "test": name, "run": runs[(package, name)], "pass": passes[(package, name)]} for package, name in sorted(original)] if phase == "full" else []
@@ -313,12 +313,12 @@ def actual_inventory(phase, source, windows):
 def child_profiles(phase, source, windows):
     directory = E / "phases" / phase
     errors, records, seen = [], [], set()
-    inventory = json.loads((source / "backend/third_party/req/DOWNLOAD-CONTRACTS-PROVENANCE.json").read_text())["expectedParentCaseInventory"]
+    inventory = json.loads((source / "backend/third_party/req/DOWNLOAD-CONTRACTS-PROVENANCE.json").read_text(encoding="utf-8"))["expectedParentCaseInventory"]
     expected = {name for name in inventory["linux"] if name.startswith("TestReqParallelDownloadContract/")}
     if windows:
         expected.update(inventory["windowsAdditional"])
     try:
-        identities = [(path.parent, json.loads(path.read_text())) for path in (directory / "binaries").glob("*/identity.json")]
+        identities = [(path.parent, json.loads(path.read_text(encoding="utf-8"))) for path in (directory / "binaries").glob("*/identity.json")]
         roots = [(path, identity) for path, identity in identities if identity["environment"].get("SUB2API_G_DOWNLOAD_PROFILE_DIR") == str(directory / "children") and (path / "actual/stdout").is_file() and b"G_CHILD_EXECUTED TestReqParallelDownloadContract/" in (path / "actual/stdout").read_bytes()]
         assert len(roots) == 1, "Actual G parent binary identity missing/duplicate"
         root, identity = roots[0]
@@ -327,7 +327,7 @@ def child_profiles(phase, source, windows):
         for path in sorted((directory / "children").glob("*/process.json")):
             record = {"metadata": str(path.relative_to(E)), "normalExitProfileCandidate": False}
             try:
-                item = json.loads(path.read_text())
+                item = json.loads(path.read_text(encoding="utf-8"))
                 name = item["top"] + "/" + item["scenario"]
                 record.update({"case": name, "actualExit": item["exitCode"], "watchdog": item["watchdog"], "classification": item["classification"]})
                 assert name in expected and name not in seen
@@ -377,16 +377,16 @@ def observe(kind):
         version = capture(E / "commands/go-version", ["go", "version"], WORKSPACE)
         require_success(version)
         platform = "windows/amd64" if os.name == "nt" else "linux/amd64"
-        assert (E / "commands/go-version/stdout").read_text().strip() == "go version go1.26.9 " + platform
+        assert (E / "commands/go-version/stdout").read_text(encoding="utf-8").strip() == "go version go1.26.9 " + platform
         require_success(capture(E / "commands/go-env", ["go", "env", "-json", "GOOS", "GOARCH", "CGO_ENABLED", "CC", "GOTOOLCHAIN", "GOWORK", "GOFLAGS"], WORKSPACE))
-        actual_env = json.loads((E / "commands/go-env/stdout").read_text())
+        actual_env = json.loads((E / "commands/go-env/stdout").read_text(encoding="utf-8"))
         assert actual_env["GOOS"] + "/" + actual_env["GOARCH"] == platform
         assert actual_env["CGO_ENABLED"] == "1" and actual_env["GOTOOLCHAIN"] == "local"
         assert actual_env["GOWORK"] == "off" and actual_env["GOFLAGS"] == "-mod=readonly"
         if os.name == "nt":
             require_success(capture(E / "commands/gcc-version", ["gcc", "--version"], WORKSPACE))
             require_success(capture(E / "commands/gcc-race-library", ["gcc", "--print-file-name", "libsynchronization.a"], WORKSPACE))
-            library = Path((E / "commands/gcc-race-library/stdout").read_text().strip())
+            library = Path((E / "commands/gcc-race-library/stdout").read_text(encoding="utf-8").strip())
             assert library.is_absolute() and library.is_file(), "Compatible native race compiler library missing"
         if kind == "baseline":
             env = dict(os.environ, REQ_SECURITY_EVIDENCE=str(E / "original401"), REQ_SECURITY_EXPECTED_HEAD=BASE)
@@ -401,8 +401,8 @@ def observe(kind):
             manifest_path = "backend/third_party/req/UPSTREAM-MANIFEST.json"
             assert all(current.get(path) == item for path, item in original.items() if path != manifest_path)
             assert set(current) - set(original) == {"backend/third_party/req/" + name for name in G_FILES}
-            old = json.loads((baseline / manifest_path).read_text())
-            new = json.loads((source / manifest_path).read_text())
+            old = json.loads((baseline / manifest_path).read_text(encoding="utf-8"))
+            new = json.loads((source / manifest_path).read_text(encoding="utf-8"))
             assert new["newOwnedFiles"][:len(old["newOwnedFiles"])] == old["newOwnedFiles"]
             assert set(new["newOwnedFiles"][len(old["newOwnedFiles"]):]) == G_FILES
             new["newOwnedFiles"] = old["newOwnedFiles"]
