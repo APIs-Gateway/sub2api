@@ -132,12 +132,25 @@ type trackingConcurrencyCache struct {
 	cleanupPrefix string
 }
 
+type activeIndexCleanerConcurrencyCache struct {
+	stubConcurrencyCacheForTest
+	cleanupCalls     chan struct{}
+	cleanupCallCount atomic.Int32
+}
+
 type concurrencyCacheWithoutAPIKeyTracking struct {
 	ConcurrencyCache
 }
 
 func (c *trackingConcurrencyCache) CleanupStaleProcessSlots(_ context.Context, prefix string) error {
 	c.cleanupPrefix = prefix
+	return c.cleanupErr
+}
+
+func (c *activeIndexCleanerConcurrencyCache) CleanupExpiredAccountSlotKeys(_ context.Context) error {
+	if c.cleanupCallCount.Add(1) <= 2 {
+		c.cleanupCalls <- struct{}{}
+	}
 	return c.cleanupErr
 }
 
@@ -151,6 +164,37 @@ func TestCleanupStaleProcessSlots_DelegatesPrefix(t *testing.T) {
 	svc := NewConcurrencyService(cache)
 	require.NoError(t, svc.CleanupStaleProcessSlots(context.Background()))
 	require.Equal(t, RequestIDPrefix(), cache.cleanupPrefix)
+}
+
+func TestStartSlotCleanupWorkerUsesActiveIndexCleaner(t *testing.T) {
+	cache := &activeIndexCleanerConcurrencyCache{cleanupCalls: make(chan struct{}, 1)}
+	NewConcurrencyService(cache).StartSlotCleanupWorker(nil, time.Hour)
+
+	select {
+	case <-cache.cleanupCalls:
+	case <-time.After(time.Second):
+		t.Fatal("active-index cleaner was not invoked")
+	}
+}
+
+func TestStartSlotCleanupWorkerContinuesAfterActiveIndexCleanerError(t *testing.T) {
+	cache := &activeIndexCleanerConcurrencyCache{
+		cleanupCalls: make(chan struct{}, 1),
+		stubConcurrencyCacheForTest: stubConcurrencyCacheForTest{cleanupErr: errors.New("redis unavailable")},
+	}
+	NewConcurrencyService(cache).StartSlotCleanupWorker(nil, 10*time.Millisecond)
+
+	select {
+	case <-cache.cleanupCalls:
+	case <-time.After(time.Second):
+		t.Fatal("active-index cleaner was not invoked")
+	}
+	select {
+	case <-cache.cleanupCalls:
+	case <-time.After(time.Second):
+		t.Fatal("active-index cleaner did not continue after its first error")
+	}
+	require.GreaterOrEqual(t, cache.cleanupCallCount.Load(), int32(2))
 }
 
 func TestAcquireAccountSlot_Success(t *testing.T) {
