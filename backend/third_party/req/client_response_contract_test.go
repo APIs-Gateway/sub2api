@@ -266,7 +266,7 @@ func TestReqClientResponse_CharsetShortBodies(t *testing.T) {
 	for _, tc := range []struct{ name, contentType, wire, want string }{
 		{name: "windows1252_meta", contentType: "text/html", wire: `<meta charset="windows-1252">R` + "\xe9sum\xe9", want: `<meta charset="windows-1252">Résumé`},
 		{name: "windows1252_header", contentType: "text/plain; charset=windows-1252", wire: "R\xe9sum\xe9", want: "Résumé"},
-		{name: "utf16le_bom", contentType: "text/html", wire: "\xff\xfeS0\x8c0o0\"oW[g0Y0\x020", want: "これは漢字です。"},
+		{name: "utf16le_bom", contentType: "text/html", wire: "\xff\xfeS0\x8c0o0\"oW[g0Y0\x020", want: "\ufeffこれは漢字です。"},
 		{name: "unknown_meta_raw", contentType: "text/html", wire: `<meta charset="x-owned-unknown">R` + "\xe9", want: `<meta charset="x-owned-unknown">R` + "\xe9"},
 		{name: "no_detection_raw", contentType: "text/html", wire: "owned raw \xe9 bytes", want: "owned raw \xe9 bytes"},
 	} {

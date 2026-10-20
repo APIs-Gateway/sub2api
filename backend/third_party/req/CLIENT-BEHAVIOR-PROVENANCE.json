@@ -1,5 +1,5 @@
 {
-  "status": "fixture-corrected source candidate pending independent review and remote formatting/behavior validation; prior remote baseline RED run failed overall with5 intended digest witnesses plus8 charset fixture failures",
+  "status": "BOM expected-literal corrected source candidate pending independent review and remote formatting/behavior validation; both prior genuine baseline RED runs failed overall and remain preserved",
   "baseHead": "c541f5a171fe85a053a6199e10304a386e852d22",
   "baseTree": "09e841970f893e41c4a8e4a02c8059545a03f238",
   "forkIssue": 1711,
@@ -77,8 +77,8 @@
     },
     {
       "path": "client_response_contract_test.go",
-      "bytes": 13313,
-      "sha256": "5f6729384c2c0234ea2272fcc970b44bead466f2b1834005b6d0e7afcd84d505"
+      "bytes": 13319,
+      "sha256": "b0b3a1b425bff490475357b7e8fcf0b579e0a238eaebefaab4cb36a3201fc325"
     },
     {
       "path": "CLIENT-BEHAVIOR-LICENSE",
@@ -157,6 +157,26 @@
       "sha256": "7302bfd28f45cfefb8ebda1d36f7ba5c9c75b8d241b428084a2a9abd2a2c4e66",
       "behavioralAnchors": [],
       "originalManifestSHA256": "7302bfd28f45cfefb8ebda1d36f7ba5c9c75b8d241b428084a2a9abd2a2c4e66"
+    },
+    {
+      "officialURL": "https://github.com/golang/text/blob/fafe4a06967e06550e69ee42787d9902845d2a3f/encoding/htmlindex/map.go",
+      "gitBlob": "c61439045d0e3c35e339dd658edccea390f81dce",
+      "bytes": 4147,
+      "sha256": "8094e6c1a15cc74160ecd3ed326d38fdc55af9e7b1caef53f5370e31f1e94cd5",
+      "behavioralAnchors": [
+        "utf16le maps to UTF16(LittleEndian, IgnoreBOM)"
+      ],
+      "originalManifestSHA256": "8094e6c1a15cc74160ecd3ed326d38fdc55af9e7b1caef53f5370e31f1e94cd5"
+    },
+    {
+      "officialURL": "https://github.com/golang/text/blob/fafe4a06967e06550e69ee42787d9902845d2a3f/encoding/unicode/unicode.go",
+      "gitBlob": "ce28c906288bfb088ff5d418060f1d452289c802",
+      "bytes": 15091,
+      "sha256": "277d0a491016a630f27ee7d5ee6eae73abe6a431e0b3a3962e69e7dfd4f151ef",
+      "behavioralAnchors": [
+        "UTF16 IgnoreBOM retains U+FEFF in UTF8 output"
+      ],
+      "originalManifestSHA256": "277d0a491016a630f27ee7d5ee6eae73abe6a431e0b3a3962e69e7dfd4f151ef"
     }
   ],
   "unchangedOriginalTestFiles": [
@@ -261,7 +281,7 @@
     "Request.SetDigestAuth deprecated path is deferred; common client digest is the supported path exercised",
     "Go308/GetBody redirect variants deferred; request-body GetBody failures exercised through digest instead"
   ],
-  "nextGate": "Independent review of current fixture-corrected source, then root-authorized new proof retaining initial failed history, baselinec541 and exact new candidate/tree. Remote gofmt-l all5 and actual5RED+39PASS with original401/source/MVS unchanged. No production edit before actual audit and official upstream all-state/overlap checks.",
+  "nextGate": "Root plus independent review of current literal-corrected source and normal proof merge retaining both failed controller heads; only then authorized remote gofmt-l all5 and strict5RED+39PASS with original401/source/MVS unchanged. No production edit or whitelist expansion.",
   "preservedReqBaseline": {
     "repository": "https://github.com/imroc/req",
     "version": "v3.57.0",
@@ -419,6 +439,42 @@
     "file": "client_response_contract_test.go",
     "scope": "Only CharsetShortBodies per-subcase5s context plus SetTimeout(0) and SetContext; preserve44 names, type assertion, actual decoder/first chunk/payload/EOF/close behavior. Other clients retain common5s timeout. No unwrap, reflection, timer-body mock or additional acceptedRED.",
     "reason": "http.Client.Timeout legally wraps production body as *http.cancelTimerBody, so prior direct decoder type assertion failed before charset behavior was reached.",
-    "validationStatus": "NOTRUN: changed source pending independent review, remote gofmt-l and genuine baseline RED matrix; no local or87 execution."
+    "validationStatus": "Context/Timeout fixture revision e7338c was remotely formatted (empty gofmt-l) and executed in run39275235120; previous8 timer-wrapper failures disappeared, but overall strictRED proof still failed due2 UTF16LE expected-literal errors. This is historical evidence, not a pass for the subsequent literal correction."
+  },
+  "secondBaselineRedAttempt": {
+    "run": 39275235120,
+    "controllerHead": "bfdf919675f7833b0903ef961feaf8f5bc7274b3",
+    "applicationHead": "e7338c328e20028aaac120c81026e6acf03c217c",
+    "baselineHead": "c541f5a171fe85a053a6199e10304a386e852d22",
+    "actualConclusion": "failure",
+    "artifact": 12196593511,
+    "artifactBytes": 6360581,
+    "artifactSHA256": "2bb02654928f84a15a289d2823821396f347d0d2e6fad0b2c80005669ac558f9",
+    "actualNamedAndFullExits": 1,
+    "F44ActualLeafCounts": {
+      "pass": 37,
+      "fail": 7
+    },
+    "intendedDigestFailedLeafCount": 5,
+    "additionalBomExpectedLiteralFailedLeaves": [
+      "TestReqClientResponse_CharsetShortBodies/utf16le_bom_buffer_64",
+      "TestReqClientResponse_CharsetShortBodies/utf16le_bom_buffer_512"
+    ],
+    "actualBomFailure": "actual decoded bytes=U+FEFF plus Japanese text27bytes; prior expected literal omitted U+FEFF and was24bytes",
+    "original401PassedInBaselineAndCandidateFull": true,
+    "remoteGofmtListEmpty": true,
+    "noCompleteMarker": true,
+    "authorActualReviewReceiptSHA256": "fa18f6c34fdcd27baf48d8783de65543674ee2439ca5125005c4fab0ea76a4a6",
+    "authorOfficialBomAnalysisSHA256": "1e458ec5934757120c8ea5e2d4d493d3389022fa4665a4468c1ce6dc1452bc8e",
+    "claimLimit": "Overall FAILURE remains preserved. Two residual charset failures were invalid expected literals under the pinned decoder BOM policy, not evidence for stripping production output. No production repair, approval or merge is claimed."
+  },
+  "bomExpectedLiteralCorrection": {
+    "priorCandidateHead": "e7338c328e20028aaac120c81026e6acf03c217c",
+    "file": "client_response_contract_test.go",
+    "scope": "Only utf16le_bom expected literal gains explicit \\ufeff. Input bytes,44 leaf names, exact body/firstchunk/EOF/Close assertions, context5s and all other source remain unchanged. No actual output stripping, runtime expected decoder, whitelist expansion or production edit.",
+    "officialTextVersion": "v0.42.0",
+    "officialTextCommit": "fafe4a06967e06550e69ee42787d9902845d2a3f",
+    "officialPolicy": "htmlindex/map.go:103 uses unicode.UTF16(LittleEndian, IgnoreBOM); unicode.go:209-215 specifies UTF8 U+FEFF is retained. Pinned x/net TestReader:185-187 compares the direct Lookup decoder output without stripping.",
+    "validationStatus": "NOTRUN: current literal-corrected raw source pending independent review and remote gofmt/behavioral proof; prior formatting results do not cover this changed file."
   }
 }
