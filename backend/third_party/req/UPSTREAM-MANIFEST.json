@@ -749,7 +749,14 @@
     "digest_ownership_peer_test.go",
     "digest_ownership_contract_test.go",
     "DIGEST-OWNERSHIP-PROVENANCE.json",
-    "DIGEST-OWNERSHIP-REVIEW.md"
+    "DIGEST-OWNERSHIP-REVIEW.md",
+    "DOWNLOAD-CONTRACTS-LICENSE",
+    "DOWNLOAD-CONTRACTS-PROVENANCE.json",
+    "DOWNLOAD-CONTRACTS-REVIEW.md",
+    "download_contract_test.go",
+    "download_wire_peer_test.go",
+    "parallel_download_contract_test.go",
+    "parallel_download_contract_windows_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
