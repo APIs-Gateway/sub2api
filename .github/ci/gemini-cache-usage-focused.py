@@ -76,7 +76,7 @@ def snapshot(phase):
     write_json(phase + ".json", result)
     require(index == expected, "index differs from HEAD")
     require(not raw_status, "tracked or untracked checkout changes")
-    require(head == os.environ["GITHUB_SHA"], "actual checkout differs from workflow SHA")
+    require(head == os.environ["EXPECTED_SOURCE_HEAD"], "actual checkout differs from exact expected source head")
     for name in (*SOURCES, HELPER, INVENTORY, WORKFLOW):
         path = ROOT / name
         physical = path.lstat()
@@ -129,13 +129,18 @@ def prepare():
     (EVIDENCE / "inventory.json").write_bytes((ROOT / INVENTORY).read_bytes())
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
     pull = event.get("pull_request") or {}
+    event_name = os.environ["GITHUB_EVENT_NAME"]
+    require(event_name in ("push", "pull_request"), "unsupported source event")
+    event_head = (pull.get("head") or {}).get("sha") if event_name == "pull_request" else os.environ["GITHUB_SHA"]
+    require(event_head and event_head == os.environ["EXPECTED_SOURCE_HEAD"] == before["head"], "event/source head does not match exact expected head")
     write_json("execution-identity.json", {
         "actualHead": before["head"], "actualTree": before["tree"],
+        "expectedSourceHead": os.environ["EXPECTED_SOURCE_HEAD"], "eventSourceHead": event_head,
         "workflowSHA": os.environ["GITHUB_SHA"], "workflowRef": os.environ.get("GITHUB_WORKFLOW_REF"),
         "workflowSourceSHA": os.environ.get("GITHUB_WORKFLOW_SHA"),
         "event": os.environ["GITHUB_EVENT_NAME"], "runID": os.environ["GITHUB_RUN_ID"],
         "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "pullRequestHead": (pull.get("head") or {}).get("sha"),
-        "note": "PR checkout may be GitHub's merge commit; actual checkout and PR head are recorded separately.",
+        "note": "Tests run at the exact PR head or push SHA; GITHUB_SHA may identify the separate PR merge trigger and is retained only as workflow identity.",
     })
     for label, args in (
         ("go-version", ["go", "version"]),

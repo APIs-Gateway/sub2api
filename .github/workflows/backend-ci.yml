@@ -10,8 +10,13 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      EXPECTED_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
