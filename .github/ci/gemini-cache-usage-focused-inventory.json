@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "childIssue": 1744,
+  "upstreamPR": "https://github.com/Wei-Shaw/sub2api/pull/8177",
+  "unit": {
+    "package": "github.com/Wei-Shaw/sub2api/internal/service",
+    "leaves": [
+      "TestGeminiCacheUsage_Extractor/cached_only",
+      "TestGeminiCacheUsage_Extractor/cached_greater_than_prompt",
+      "TestGeminiCacheUsage_Extractor/cached_equal_to_prompt",
+      "TestGeminiCacheUsage_Extractor/ordinary",
+      "TestGeminiCacheUsage_Extractor/zero",
+      "TestGeminiCacheUsage_Extractor/output_thought_image",
+      "TestGeminiCacheUsage_Extractor/missing_metadata",
+      "TestGeminiCacheUsage_ForwardBoundaries/native/stream_false/cached_only",
+      "TestGeminiCacheUsage_ForwardBoundaries/native/stream_false/cached_greater_than_prompt",
+      "TestGeminiCacheUsage_ForwardBoundaries/native/stream_false/cached_equal_to_prompt",
+      "TestGeminiCacheUsage_ForwardBoundaries/native/stream_false/ordinary",
+      "TestGeminiCacheUsage_ForwardBoundaries/native/stream_true/cached_only",
+      "TestGeminiCacheUsage_ForwardBoundaries/native/stream_true/cached_greater_than_prompt",
+      "TestGeminiCacheUsage_ForwardBoundaries/native/stream_true/cached_equal_to_prompt",
+      "TestGeminiCacheUsage_ForwardBoundaries/native/stream_true/ordinary",
+      "TestGeminiCacheUsage_ForwardBoundaries/claude/stream_false/cached_only",
+      "TestGeminiCacheUsage_ForwardBoundaries/claude/stream_false/cached_greater_than_prompt",
+      "TestGeminiCacheUsage_ForwardBoundaries/claude/stream_false/cached_equal_to_prompt",
+      "TestGeminiCacheUsage_ForwardBoundaries/claude/stream_false/ordinary",
+      "TestGeminiCacheUsage_ForwardBoundaries/claude/stream_true/cached_only",
+      "TestGeminiCacheUsage_ForwardBoundaries/claude/stream_true/cached_greater_than_prompt",
+      "TestGeminiCacheUsage_ForwardBoundaries/claude/stream_true/cached_equal_to_prompt",
+      "TestGeminiCacheUsage_ForwardBoundaries/claude/stream_true/ordinary",
+      "TestGeminiCacheUsage_ForwardBoundaries/chat/stream_false/cached_only",
+      "TestGeminiCacheUsage_ForwardBoundaries/chat/stream_false/cached_greater_than_prompt",
+      "TestGeminiCacheUsage_ForwardBoundaries/chat/stream_false/cached_equal_to_prompt",
+      "TestGeminiCacheUsage_ForwardBoundaries/chat/stream_false/ordinary",
+      "TestGeminiCacheUsage_ForwardBoundaries/chat/stream_true/cached_only",
+      "TestGeminiCacheUsage_ForwardBoundaries/chat/stream_true/cached_greater_than_prompt",
+      "TestGeminiCacheUsage_ForwardBoundaries/chat/stream_true/cached_equal_to_prompt",
+      "TestGeminiCacheUsage_ForwardBoundaries/chat/stream_true/ordinary",
+      "TestGeminiCacheUsage_BlockedNativeRetainsSignalAndWire/stream_false",
+      "TestGeminiCacheUsage_BlockedNativeRetainsSignalAndWire/stream_true"
+    ]
+  },
+  "integration": {
+    "package": "github.com/Wei-Shaw/sub2api/internal/repository",
+    "leaves": [
+      "TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce/native_blocked/stream_false/card_false",
+      "TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce/native_blocked/stream_false/card_true",
+      "TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce/native_blocked/stream_true/card_false",
+      "TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce/native_blocked/stream_true/card_true",
+      "TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce/claude/stream_false/card_false",
+      "TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce/claude/stream_false/card_true",
+      "TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce/claude/stream_true/card_false",
+      "TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce/claude/stream_true/card_true",
+      "TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce/chat/stream_false/card_false",
+      "TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce/chat/stream_false/card_true",
+      "TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce/chat/stream_true/card_false",
+      "TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce/chat/stream_true/card_true"
+    ]
+  },
+  "fixtureSHA256": {
+    "backend/internal/service/gemini_cache_usage_test.go": "e51f1c8769e1ece01f4e1700a989b2b7b178cd2fbdae02fd72ef0dbcdd4c6bc7",
+    "backend/internal/repository/gemini_cache_usage_integration_test.go": "64cfc40d13aa8b0fac9c6f6f8c90b9b9d30124136bd836d38ad04746b6aed2fd"
+  }
+}
