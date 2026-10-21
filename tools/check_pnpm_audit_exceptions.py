@@ -161,6 +161,29 @@ def validate_report(audit: object, audit_exit: str) -> None:
             "error containers or unsupported report format")
     require(isinstance(audit.get("actions"), list), "missing/invalid actions")
     require(isinstance(audit.get("muted"), list), "missing/invalid muted")
+    # Registry fixtures omit target for review actions and omit isMajor for
+    # all actions; validate these type-only fields when actually present.
+    for action in audit["actions"]:
+        require(isinstance(action, dict) and text(action.get("action"))
+                and text(action.get("module")), "invalid audit action")
+        require(not ({"error", "errors"} & action.keys()), "error container in audit action")
+        if "target" in action:
+            require(text(action["target"]), "invalid audit action target")
+        if "isMajor" in action:
+            require(type(action["isMajor"]) is bool, "invalid audit action isMajor")
+        if "depth" in action:
+            require(count(action["depth"]), "invalid audit action depth")
+        resolves = action.get("resolves")
+        require(isinstance(resolves, list), "invalid audit action resolutions")
+        for resolution in resolves:
+            require(isinstance(resolution, dict), "invalid audit action resolution")
+            require(not ({"error", "errors"} & resolution.keys()),
+                    "error container in audit action resolution")
+            require(type(resolution.get("id")) is int and resolution["id"] > 0
+                    and text(resolution.get("path")), "invalid resolution id/path")
+            require(all(type(resolution.get(flag)) is bool
+                        for flag in ("dev", "optional", "bundled")),
+                    "invalid resolution dependency flags")
     advisories = audit.get("advisories")
     require(isinstance(advisories, dict), "missing/invalid advisories")
     metadata = audit.get("metadata")

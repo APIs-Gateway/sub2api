@@ -59,6 +59,7 @@ class AuditPolicyControls(unittest.TestCase):
                 self.assertIn('Audit exceptions validated.', completed.stdout)
             else:
                 self.assertNotIn('Audit exceptions validated.', completed.stdout)
+            return completed
 
     def test_original_official_empty_report(self):
         self.assertEqual(hashlib.sha256(FIXTURE.read_bytes()).hexdigest(),
@@ -97,12 +98,47 @@ exceptions:
             'null-top': None, 'scalar-top': 5, 'empty-stream': '', 'malformed-json': '{',
         }
         for field in ('error', 'errors'):
-            report = clean_report()
-            report[field] = {}
-            bad['complete-with-' + field] = report
+            with self.subTest(field=field):
+                report = clean_report()
+                report[field] = {}
+                self.check_cli(report, '0', 1, 'error containers or unsupported report format')
         for name, value in bad.items():
             with self.subTest(name=name):
                 self.check_cli(value, '1', 1, 'Invalid pnpm 9 audit report:')
+
+    def test_original_official_full_report_reaches_vulnerability_policy(self):
+        fixture = ROOT / 'tools/testdata/pnpm-audit-v9-all-vulnerabilities.json'
+        self.assertEqual(hashlib.sha256(fixture.read_bytes()).hexdigest(),
+                         '5d8d4ac084b65b972d0a24098e3dc71925c4c7dd9e56cd68423e3c879b5bba5f')
+        result = self.check_cli(fixture.read_text(), '1', 1, 'missing exceptions')
+        self.assertNotIn('Invalid pnpm 9 audit report:', result.stderr)
+
+    def test_action_elements_fail_closed(self):
+        resolution = {'id': 1, 'path': '.>x', 'dev': False, 'optional': False, 'bundled': False}
+        action = {'action': 'review', 'module': 'x', 'resolves': [resolution]}
+        invalid = [
+            False, {'error': 'registry failed'},
+            {**action, 'action': ''}, {**action, 'module': 1},
+            {**action, 'resolves': 'invalid'}, {**action, 'target': ''},
+            {**action, 'isMajor': 1}, {**action, 'depth': True},
+            {**action, 'resolves': [False]},
+            {**action, 'resolves': [{**resolution, 'id': True}]},
+            {**action, 'resolves': [{**resolution, 'path': []}]},
+            {**action, 'resolves': [{**resolution, 'dev': 1}]},
+        ]
+        for index, value in enumerate(invalid):
+            with self.subTest(index=index):
+                report = clean_report()
+                report['actions'] = [value]
+                self.check_cli(report, '0', 1, 'Invalid pnpm 9 audit report:')
+
+    def test_valid_optional_action_fields(self):
+        report = with_advisory(severity='low')
+        report['actions'] = [{'action': 'update', 'module': 'follow-redirects', 'target': '1.16.1',
+                              'isMajor': False, 'depth': 1, 'resolves': [
+                                  {'id': 1, 'path': '.>axios>follow-redirects',
+                                   'dev': False, 'optional': False, 'bundled': False}]}]
+        self.check_cli(report, '1', 0)
 
     def test_invalid_counts_fail_closed(self):
         for value in (True, -1, 1.5, '0', None):
@@ -171,12 +207,12 @@ if __name__ == '__main__':
     expected = unittest.defaultTestLoader.getTestCaseNames(AuditPolicyControls)
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(AuditPolicyControls)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    passed = (result.wasSuccessful() and result.testsRun == len(expected) == 14
-              and len(CASE_OUTCOMES) == 48 and not result.skipped)
+    passed = (result.wasSuccessful() and result.testsRun == len(expected) == 17
+              and len(CASE_OUTCOMES) == 62 and not result.skipped)
     report = {'expectedTestNames': expected, 'testsRun': result.testsRun,
               'failures': len(result.failures), 'errors': len(result.errors),
               'skipped': len(result.skipped), 'passed': passed,
-              'expectedCLIInvocations': 48,
+              'expectedCLIInvocations': 62,
               'originalOfficialFixtureSHA256': hashlib.sha256(FIXTURE.read_bytes()).hexdigest(),
               'actualCLIInvocations': len(CASE_OUTCOMES), 'caseOutcomes': CASE_OUTCOMES}
     Path(os.environ['AUDIT_CONTROL_REPORT']).write_text(json.dumps(report, indent=2) + '\n')
