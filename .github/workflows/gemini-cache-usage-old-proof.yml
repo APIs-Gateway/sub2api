@@ -1,0 +1,104 @@
+name: Gemini cached usage OLD-only actual observations
+
+on:
+  push:
+    branches:
+      - codex/gemini-cache-usage-old-proof-1744
+    paths:
+      - .github/ci/gemini-cache-usage-old-proof.py
+      - .github/workflows/gemini-cache-usage-old-proof.yml
+
+permissions:
+  contents: read
+
+jobs:
+  observe-old:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: "off"
+      GOFLAGS: -mod=readonly
+      GOMAXPROCS: "2"
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: a0e34408a3f50393d91778269bd8bdc11730c3cf
+          path: old
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.6'
+          check-latest: false
+          cache: true
+          cache-dependency-path: old/backend/go.sum
+      - name: Initialize fresh external OLD evidence
+        id: old_init
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/gemini-cache-usage-old-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence"
+          printf 'GEMINI_CACHE_OLD_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+      - name: Freeze full OLD and controller inputs and accepted NEW reference
+        id: old_prepare
+        shell: bash
+        run: |
+          set +e
+          python3 -B controller/.github/ci/gemini-cache-usage-old-proof.py prepare > "$GEMINI_CACHE_OLD_EVIDENCE/prepare.stdout" 2> "$GEMINI_CACHE_OLD_EVIDENCE/prepare.stderr"
+          actual_exit=$?
+          printf '%s\n' "$actual_exit" > "$GEMINI_CACHE_OLD_EVIDENCE/prepare.exit"
+          cat "$GEMINI_CACHE_OLD_EVIDENCE/prepare.stdout"
+          cat "$GEMINI_CACHE_OLD_EVIDENCE/prepare.stderr" >&2
+          exit "$actual_exit"
+      - name: Capture both actual OLD commands and preserve failing statuses
+        if: always() && steps.old_prepare.outcome == 'success'
+        shell: bash
+        run: |
+          set +e
+          python3 -B controller/.github/ci/gemini-cache-usage-old-proof.py execute > "$GEMINI_CACHE_OLD_EVIDENCE/execute.stdout" 2> "$GEMINI_CACHE_OLD_EVIDENCE/execute.stderr"
+          actual_exit=$?
+          printf '%s\n' "$actual_exit" > "$GEMINI_CACHE_OLD_EVIDENCE/execute.exit"
+          cat "$GEMINI_CACHE_OLD_EVIDENCE/execute.stdout"
+          cat "$GEMINI_CACHE_OLD_EVIDENCE/execute.stderr" >&2
+          exit "$actual_exit"
+      - name: Always freeze OLD and controller after actual commands
+        if: always() && steps.old_init.outcome == 'success'
+        shell: bash
+        run: |
+          set +e
+          python3 -B controller/.github/ci/gemini-cache-usage-old-proof.py after > "$GEMINI_CACHE_OLD_EVIDENCE/after.stdout" 2> "$GEMINI_CACHE_OLD_EVIDENCE/after.stderr"
+          actual_exit=$?
+          printf '%s\n' "$actual_exit" > "$GEMINI_CACHE_OLD_EVIDENCE/after.exit"
+          cat "$GEMINI_CACHE_OLD_EVIDENCE/after.stdout"
+          cat "$GEMINI_CACHE_OLD_EVIDENCE/after.stderr" >&2
+          exit "$actual_exit"
+      - name: Always classify actual OLD evidence without a failure whitelist
+        if: always() && steps.old_init.outcome == 'success'
+        shell: bash
+        run: |
+          set +e
+          python3 -B controller/.github/ci/gemini-cache-usage-old-proof.py judge > "$GEMINI_CACHE_OLD_EVIDENCE/judge.stdout" 2> "$GEMINI_CACHE_OLD_EVIDENCE/judge.stderr"
+          actual_exit=$?
+          printf '%s\n' "$actual_exit" > "$GEMINI_CACHE_OLD_EVIDENCE/judge.exit"
+          cat "$GEMINI_CACHE_OLD_EVIDENCE/judge.stdout"
+          cat "$GEMINI_CACHE_OLD_EVIDENCE/judge.stderr" >&2
+          exit "$actual_exit"
+      - name: Always retain full frozen sources and actual OLD outcomes
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: gemini-cache-usage-old-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gemini-cache-usage-old-${{ github.run_id }}-${{ github.run_attempt }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
