@@ -66,7 +66,7 @@ jobs:
           FOLLOW_REDIRECTS_EVIDENCE: ${{ runner.temp }}/follow-redirects-wire-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set +e
-          node frontend/tools/follow-redirects-wire.cjs > frontend/redirect-contracts.stdout 2> frontend/redirect-contracts.stderr
+          node frontend/tools/follow-redirects-wire.mjs > frontend/redirect-contracts.stdout 2> frontend/redirect-contracts.stderr
           wire_status=$?
           set -e
           printf '%s\n' "$wire_status" > frontend/redirect-contracts.exit
@@ -83,7 +83,7 @@ jobs:
             frontend/redirect-contracts.stdout
             frontend/redirect-contracts.stderr
             frontend/redirect-contracts.exit
-            frontend/tools/follow-redirects-wire.cjs
+            frontend/tools/follow-redirects-wire.mjs
           if-no-files-found: error
           retention-days: 14
       - name: Audit report and exception policy negative controls (remote only)

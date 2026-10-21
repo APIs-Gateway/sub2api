@@ -1,12 +1,15 @@
-'use strict';
 // Run only in remote CI against the actual frozen axios transitive dependency.
-const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
-const fs = require('node:fs');
-const http = require('node:http');
-const path = require('node:path');
-const { createRequire } = require('node:module');
-const { execFileSync } = require('node:child_process');
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const cases = [
   { name: 'object-builtin-same', array: false, custom: false, cross: false },
