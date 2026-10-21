@@ -19,9 +19,9 @@ import (
 // total. Cache reads remain billable; only the non-cache input is floored.
 func TestGeminiCacheUsage_Extractor(t *testing.T) {
 	cases := []struct {
-		name string
+		name     string
 		metadata string
-		want ClaudeUsage
+		want     ClaudeUsage
 	}{
 		{"cached_only", `{"cachedContentTokenCount":12980}`, ClaudeUsage{CacheReadInputTokens: 12980}},
 		{"cached_greater_than_prompt", `{"promptTokenCount":10,"cachedContentTokenCount":30}`, ClaudeUsage{CacheReadInputTokens: 30}},
@@ -49,10 +49,10 @@ func TestGeminiCacheUsage_Extractor(t *testing.T) {
 func TestGeminiCacheUsage_ForwardBoundaries(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	counts := []struct {
-		name string
+		name   string
 		prompt *int
 		cached int
-		input int
+		input  int
 	}{
 		{"cached_only", nil, 30, 0},
 		{"cached_greater_than_prompt", geminiCacheUsageInt(10), 30, 0},
@@ -68,13 +68,13 @@ func TestGeminiCacheUsage_ForwardBoundaries(t *testing.T) {
 						metadata["promptTokenCount"] = *tc.prompt
 					}
 					raw, err := json.Marshal(map[string]any{
-						"candidates": []any{map[string]any{"content": map[string]any{"parts": []any{map[string]any{"text": "cache response"}}, "role": "model"}, "finishReason": "STOP"}},
+						"candidates":    []any{map[string]any{"content": map[string]any{"parts": []any{map[string]any{"text": "cache response"}}, "role": "model"}, "finishReason": "STOP"}},
 						"usageMetadata": metadata,
 					})
 					require.NoError(t, err)
 					body, contentType := string(raw), "application/json"
 					if stream {
-						body, contentType = "data: " + body + "\n\n", "text/event-stream"
+						body, contentType = "data: "+body+"\n\n", "text/event-stream"
 					}
 					svc := newGeminiSignalService(contentType, body)
 					c, rec := newGeminiNativeTestContext(t)
@@ -151,7 +151,7 @@ func TestGeminiCacheUsage_BlockedNativeRetainsSignalAndWire(t *testing.T) {
 			body := `{"promptFeedback":{"blockReason":"SAFETY"},"usageMetadata":{"cachedContentTokenCount":12980}}`
 			contentType, action := "application/json", "generateContent"
 			if stream {
-				body, contentType, action = "data: " + body + "\n\n", "text/event-stream", "streamGenerateContent"
+				body, contentType, action = "data: "+body+"\n\n", "text/event-stream", "streamGenerateContent"
 			}
 			svc := newGeminiSignalService(contentType, body)
 			c, rec := newGeminiNativeTestContext(t)

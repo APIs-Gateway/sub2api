@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -25,9 +24,9 @@ import (
 // methods; no billing, funding, deduplication or worker result is mocked.
 type geminiCacheUsageBillingRecorder struct {
 	*usageBillingRepository
-	mu sync.Mutex
+	mu       sync.Mutex
 	commands []service.UsageBillingCommand
-	applied []bool
+	applied  []bool
 }
 
 func (r *geminiCacheUsageBillingRecorder) Apply(ctx context.Context, cmd *service.UsageBillingCommand) (*service.UsageBillingApplyResult, error) {
@@ -114,7 +113,7 @@ func newGeminiCacheUsageFixture(t *testing.T, response, contentType string) (*in
 	t.Cleanup(pool.Stop)
 	fixture := &inflightHTTPFixture{user: user, key: key, pool: pool, upstream: upstream, openAIService: openAISvc, account: account,
 		gateway: userhandler.NewGatewayHandler(gatewaySvc, gemini, nil, nil, nil, concurrency, billingCache, nil, nil, pool, nil, nil, nil, cfg, nil, openAISvc),
-		openAI: userhandler.NewOpenAIGatewayHandler(openAISvc, concurrency, billingCache, keyService, pool, nil, nil, nil, cfg)}
+		openAI:  userhandler.NewOpenAIGatewayHandler(openAISvc, concurrency, billingCache, keyService, pool, nil, nil, nil, cfg)}
 	t.Cleanup(func() {
 		select {
 		case <-upstream.release:
@@ -144,7 +143,7 @@ func TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce(t *testing.T) {
 					}
 					response, contentType := payload, "application/json"
 					if stream {
-						response, contentType = "data: " + payload + "\n\n", "text/event-stream"
+						response, contentType = "data: "+payload+"\n\n", "text/event-stream"
 					}
 					f, recorder := newGeminiCacheUsageFixture(t, response, contentType)
 					if card {
@@ -162,7 +161,7 @@ func TestGeminiCacheUsageHTTP_CacheOnlySettlesOnce(t *testing.T) {
 						if stream {
 							method = "streamGenerateContent"
 						}
-						path, action, serve = "/v1beta/models/gemini-2.5-flash:" + method, "/gemini-2.5-flash:" + method, f.gateway.GeminiV1BetaModels
+						path, action, serve = "/v1beta/models/gemini-2.5-flash:"+method, "/gemini-2.5-flash:"+method, f.gateway.GeminiV1BetaModels
 					}
 					rec := f.request(body, path, action, serve)
 					require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
