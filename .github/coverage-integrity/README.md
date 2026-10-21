@@ -29,7 +29,7 @@ backend production Go file except the existing Codecov ignores. All other change
 paths remain in the report with an explicit disposition. No GitHub compare API
 data determines the denominator.
 
-Pinned Go 1.26.9 `go tool cover` independently instruments each source file. A
+Pinned Go 1.26.10 `go tool cover` independently instruments each source file. A
 small standard-library helper reads its block metadata and scans physical source
 token spans. Before counting coverage, the gate compares that inventory against
 **every represented file** in the four actual profiles, including unchanged files.
@@ -94,7 +94,7 @@ expected/passed test identities and the workflow records its actual exit.
 
 References: [Codecov notifications](https://docs.codecov.com/docs/notifications),
 [Codecov percentages](https://docs.codecov.com/docs/coverage-percentages), and
-[the pinned Go instrumenter](https://github.com/golang/go/blob/go1.26.9/src/cmd/cover/cover.go).
+[the pinned Go instrumenter](https://github.com/golang/go/blob/go1.26.10/src/cmd/cover/cover.go).
 
 Do not execute these tools locally or on server 87. All executable validation,
 including formatting and the verifier's own tests, must run in remote CI.

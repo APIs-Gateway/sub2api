@@ -21,7 +21,7 @@ python3 "$checker" inputs "$repo" "$evidence"
 # Actual cold/warm graphs and version/sum/replacement negative controls run in CI.
 python3 -B "$backend/tools/req-http2-security-evidence_test.py" > "$evidence/old-graph-regressions.stdout" 2> "$evidence/old-graph-regressions.stderr"
 go version | tee "$evidence/go-version.txt"
-grep -q 'go1.26.9 ' "$evidence/go-version.txt"
+grep -Eq '^go version go1\.26\.10 [^ ]+$' "$evidence/go-version.txt"
 # New private H3 contract sources are formatted and checked only in remote CI.
 gofmt -l third_party/req/internal/http3/frame_contract_test.go third_party/req/internal/http3/header_contract_test.go third_party/req/internal/http3/request_writer_contract_test.go > "$evidence/http3-contract-gofmt.list"
 test ! -s "$evidence/http3-contract-gofmt.list"
