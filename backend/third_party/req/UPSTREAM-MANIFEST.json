@@ -703,6 +703,9 @@
     ],
     "decode.go": [
       "099387e5ee9ac4631611281e6413ebcc7d0871ea"
+    ],
+    "digest.go": [
+      "local-required-common-digest-ownership-after-ci39355019380-verified-five-reds-child1743"
     ]
   },
   "newOwnedFiles": [
@@ -734,11 +737,23 @@
     "transfer_contract_test.go",
     "internal/http2/transport_contract_peer_test.go",
     "internal/http2/transport_contract_test.go",
-    "meta_charset_contract_test.go"
+    "meta_charset_contract_test.go",
+    "CLIENT-BEHAVIOR-LICENSE",
+    "CLIENT-BEHAVIOR-PROVENANCE.json",
+    "CLIENT-BEHAVIOR-REVIEW.md",
+    "client_behavior_contract_test.go",
+    "client_behavior_observer_test.go",
+    "client_behavior_peer_test.go",
+    "client_redirect_cookie_contract_test.go",
+    "client_response_contract_test.go",
+    "digest_ownership_peer_test.go",
+    "digest_ownership_contract_test.go",
+    "DIGEST-OWNERSHIP-PROVENANCE.json",
+    "DIGEST-OWNERSHIP-REVIEW.md"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "exact full Git source/main MVS; retain all393 reviewed mandatory leaves and add8 actual HTTP charset cases =401 named/all JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all11 explicitly adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
+  "validation": "Retain original401 and reviewed F44; add23 actual non-idempotent Digest ownership regressions=468 mandatory named/all leaves. NEW adds digest.go as12th adaptation/120 unchanged originals, preserving original132/89production/14tests/12wildcard selection and prior11 adapted source hashes. Raw atomic path-only profiles and all12 per-file added-block85 remain required along with unchanged original Codecov85 and supplementary complete-Git Go85. No execution or approval claimed.",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -830,10 +845,18 @@
       "sources": [
         "099387e5ee9ac4631611281e6413ebcc7d0871ea"
       ]
+    },
+    {
+      "path": "digest.go",
+      "sha256": "265a58ec9ab21b8788575e7dcf40002dac773e29fc3fff06ac0ba6416b17e154",
+      "bytes": 6097,
+      "sources": [
+        "local-required-common-digest-ownership-after-ci39355019380-verified-five-reds-child1743"
+      ]
     }
   ],
-  "adaptedCandidateStatus": "default H2 TLS trace source correction candidate after actual88 named failure; independent static review and new frozen-head remote evidence pending; no approval",
-  "originalUnmodifiedFileCount": 121,
+  "adaptedCandidateStatus": "Raw NEW CommonDigestAuth ownership correction under child1743 after complete independently reviewed five-red diagnostic.23 new edge-case OLD/NEW evidence and remote formatting/build/race/all85 gates NOTRUN; no approval.",
+  "originalUnmodifiedFileCount": 120,
   "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
   "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227",
   "http3ContractTestProvenance": {
@@ -1065,5 +1088,44 @@
     "status": "Unchanged-source two-failure/five-control RED and full338 baseline independently verified; exact fixed source and eight-case fixture statically reviewed; remote formatting39104489677 verified unchanged output. Fixed346/full mutation evidence and final combined401 exact-head named/all race, all11 added-block85 and Codecov85 remain required. No PR approval.",
     "combinedRequiredLeafCount": 401,
     "independentRedReviewSHA256": "79ca03997abfc7ef3deeed75ee154ed4869c9eef54d4fecab6b4391c6c1d57ab"
+  },
+  "digestOwnership1743": {
+    "childIssue": "https://github.com/APIs-Gateway/sub2api/issues/1743",
+    "parentIssue": 1711,
+    "sharedPR": 1712,
+    "permanentTrackingIssue": 291,
+    "state": "NEW raw production source candidate; same OLD Go fixtures; all new remote OLD/NEW gates pending",
+    "retainedOriginalLeaves": 401,
+    "reviewedPublicClientLeaves": 44,
+    "newOwnershipLeaves": 23,
+    "totalRequiredLeaves": 468,
+    "adaptationsAtThisOldSource": 11,
+    "unchangedOriginalsAtThisOldSource": 121,
+    "originalDigestGitBlob": "0695d8c3063c448e29ab05d44f0f8fbbd9a1cf81",
+    "newOwnedPaths": [
+      "CLIENT-BEHAVIOR-LICENSE",
+      "CLIENT-BEHAVIOR-PROVENANCE.json",
+      "CLIENT-BEHAVIOR-REVIEW.md",
+      "client_behavior_contract_test.go",
+      "client_behavior_observer_test.go",
+      "client_behavior_peer_test.go",
+      "client_redirect_cookie_contract_test.go",
+      "client_response_contract_test.go",
+      "digest_ownership_peer_test.go",
+      "digest_ownership_contract_test.go",
+      "DIGEST-OWNERSHIP-PROVENANCE.json",
+      "DIGEST-OWNERSHIP-REVIEW.md"
+    ],
+    "completePriorGenuineRed": {
+      "run": 39355019380,
+      "controllerHead": "510095bfe25f5db976e9c1315d810e19d560f664",
+      "candidateHead": "9c0c0641aa6a90accd4c688c5bcad7eebc53e699",
+      "artifact": 12235400344,
+      "sha256": "1a2de84ed264e8fb718b591e18f0f42eadc6bed44da8e7cddb3a68c2aef73f4b",
+      "claim": "Diagnostic complete5RED39PASS plus401, not applicationPASS."
+    },
+    "oldTestSourceHead": "7b0d92fb4c6bd52a62218d505130944163b73464",
+    "adaptationsAtThisNewSource": 12,
+    "unchangedOriginalsAtThisNewSource": 120
   }
 }

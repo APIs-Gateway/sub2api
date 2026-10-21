@@ -75,6 +75,11 @@ func (da *digestAuth) prepare(req *http.Request) error {
 
 func (da *digestAuth) HttpRoundTripWrapperFunc(rt http.RoundTripper) HttpRoundTripFunc {
 	return func(req *http.Request) (resp *http.Response, err error) {
+		// Replay factories supply the bodies sent to the transport. The
+		// original remains ours, including when cloning or preparation fails.
+		if req.GetBody != nil && req.Body != nil {
+			defer req.Body.Close()
+		}
 		clone, err := cloner(req)
 		if err != nil {
 			return nil, err
@@ -88,6 +93,9 @@ func (da *digestAuth) HttpRoundTripWrapperFunc(rt http.RoundTripper) HttpRoundTr
 
 		// prepare the first request using a cached challenge
 		if err := da.prepare(first); err != nil {
+			if first.Body != nil {
+				_ = first.Body.Close()
+			}
 			return nil, err
 		}
 
@@ -96,10 +104,6 @@ func (da *digestAuth) HttpRoundTripWrapperFunc(rt http.RoundTripper) HttpRoundTr
 		if err != nil || res.StatusCode != http.StatusUnauthorized {
 			return res, err
 		}
-
-		// drain and close the first message body
-		_, _ = io.Copy(io.Discard, res.Body)
-		_ = res.Body.Close()
 
 		// find and cache the challenge
 		host := req.URL.Hostname()
@@ -110,8 +114,11 @@ func (da *digestAuth) HttpRoundTripWrapperFunc(rt http.RoundTripper) HttpRoundTr
 			delete(da.cache, host)
 			da.cacheMu.Unlock()
 			if err == digest.ErrNoChallenge {
+				// No retry consumes this response; its body belongs to the caller.
 				return res, nil
 			}
+			_, _ = io.Copy(io.Discard, res.Body)
+			_ = res.Body.Close()
 			return nil, err
 		} else {
 			// found new challenge, so cache it
@@ -119,6 +126,10 @@ func (da *digestAuth) HttpRoundTripWrapperFunc(rt http.RoundTripper) HttpRoundTr
 			da.cache[host] = &cchal{c: chal}
 			da.cacheMu.Unlock()
 		}
+
+		// The usable challenge response is consumed internally for replay.
+		_, _ = io.Copy(io.Discard, res.Body)
+		_ = res.Body.Close()
 
 		// make a second copy of the request
 		second, err := clone()
@@ -128,6 +139,9 @@ func (da *digestAuth) HttpRoundTripWrapperFunc(rt http.RoundTripper) HttpRoundTr
 
 		// prepare the second request based on the new challenge
 		if err := da.prepare(second); err != nil {
+			if second.Body != nil {
+				_ = second.Body.Close()
+			}
 			return nil, err
 		}
 
@@ -192,6 +206,17 @@ func createDigestAuth(req *http.Request, resp *http.Response, username, password
 // cloner returns a function which makes clones of the provided request
 func cloner(req *http.Request) (func() (*http.Request, error), error) {
 	getbody := req.GetBody
+	if getbody != nil {
+		factory := getbody
+		getbody = func() (io.ReadCloser, error) {
+			body, err := factory()
+			if err != nil && body != nil {
+				_ = body.Close()
+				return nil, err
+			}
+			return body, err
+		}
+	}
 	// if there's no GetBody function set we have to copy the body
 	// into memory to use for future clones
 	if getbody == nil {
@@ -201,11 +226,12 @@ func cloner(req *http.Request) (func() (*http.Request, error), error) {
 			}
 		} else {
 			body, err := io.ReadAll(req.Body)
+			closeErr := req.Body.Close()
 			if err != nil {
 				return nil, err
 			}
-			if err := req.Body.Close(); err != nil {
-				return nil, err
+			if closeErr != nil {
+				return nil, closeErr
 			}
 			getbody = func() (io.ReadCloser, error) {
 				return io.NopCloser(bytes.NewReader(body)), nil

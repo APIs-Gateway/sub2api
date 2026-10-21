@@ -1,0 +1,80 @@
+name: Digest1743 genuine OLD observation with pinned unchanged fixtures
+on:
+  push:
+    branches: [codex/req-digest-ownership-proof-1743]
+permissions:
+  contents: read
+jobs:
+  old-observation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CGO_ENABLED: '1'
+      GOMAXPROCS: '2'
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: -mod=readonly
+    steps:
+      - name: Initialize owned external evidence before checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/digest1743-old-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence"
+          printf '%s\n' "EVIDENCE=$evidence" >> "$GITHUB_ENV"
+      - name: Checkout complete controller history
+        uses: actions/checkout@v6
+        with:
+          path: controller
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout complete exact OLD application including shared frontend
+        uses: actions/checkout@v6
+        with:
+          path: old
+          ref: 7b0d92fb4c6bd52a62218d505130944163b73464
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout complete exact NEW for byte identity and MVS comparison
+        uses: actions/checkout@v6
+        with:
+          path: new
+          ref: beed0eb87da3eeb8f88ca7706d0e54a6cb6452d2
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Go without checkout cache inputs
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.9'
+          check-latest: false
+          cache: false
+      - name: Freeze all three full Git inputs and identical fixtures
+        id: prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B controller/.github/ci/digest1743-behavior.py prepare "$GITHUB_WORKSPACE/controller" "$GITHUB_WORKSPACE/old" "$GITHUB_WORKSPACE/new" "$EVIDENCE"
+          go version > "$EVIDENCE/go-version.txt"
+          grep -Eq '^go version go1\.26\.9 linux/amd64$' "$EVIDENCE/go-version.txt"
+      - name: Capture both actual OLD named and full suites before returning their real failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B controller/.github/ci/digest1743-behavior.py execute "$GITHUB_WORKSPACE/old" "$GITHUB_WORKSPACE/new" "$EVIDENCE"
+      - name: Always audit raw leaf events and unchanged source after actual execution
+        if: ${{ always() && steps.prepare.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B controller/.github/ci/digest1743-behavior.py finish "$GITHUB_WORKSPACE/controller" "$GITHUB_WORKSPACE/old" "$GITHUB_WORKSPACE/new" "$EVIDENCE"
+      - name: Preserve actual failures and every completed or incomplete phase
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: digest1743-old-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/digest1743-old-${{ github.run_id }}-${{ github.run_attempt }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

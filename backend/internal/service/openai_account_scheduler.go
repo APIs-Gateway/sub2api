@@ -466,7 +466,8 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		return nil, false, nil
 	}
 	escapeCfg := s.service.openAIStickyEscapeConfig()
-	if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyAccount(accountID, escapeCfg); shouldEscape {
+	// 「不自动暂停调度」账号不因错误率/首字延迟被踢出粘性会话（并发已满的逃逸与失败无关，保持不变）。
+	if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyAccount(accountID, escapeCfg); shouldEscape && !accountNoAutoUnsched(s.service.cfg, account) {
 		slog.Info("sticky_escape_triggered",
 			"account_id", accountID,
 			"reason", reason,

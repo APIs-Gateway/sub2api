@@ -284,10 +284,14 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    env:
+      COVERAGE_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+      COVERAGE_SOURCE_BASE: ${{ github.event.pull_request.base.sha }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
@@ -297,6 +301,24 @@ jobs:
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.26.9'
+      - name: Initialize complete Git coverage evidence path (PR only)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'COVERAGE_INTEGRITY_EVIDENCE=%s/complete-git-go-coverage-%s-%s\n' \
+            "$RUNNER_TEMP" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - name: Freeze complete Git source and actual Go build classification (PR only)
+        if: github.event_name == 'pull_request'
+        # A freeze failure is recorded and makes the final mandatory check fail;
+        # it must not suppress the existing tests or Codecov uploads.
+        continue-on-error: true
+        run: >-
+          python3 -B .github/coverage-integrity/check.py freeze
+          --repo "$GITHUB_WORKSPACE"
+          --evidence "$COVERAGE_INTEGRITY_EVIDENCE"
+          --head "$COVERAGE_SOURCE_HEAD"
+          --base "$COVERAGE_SOURCE_BASE"
       - name: Controlled req HTTP2 and dump/trace actual main-MVS tests, old-red witness and fix-block coverage
         working-directory: backend
         env:
@@ -584,6 +606,37 @@ jobs:
           override_pr: ${{ github.event.pull_request.number }}
           base_sha: ${{ github.event.pull_request.base.sha }}
           fail_ci_if_error: false
+      # Keep this supplementary gate after uploads: a lower-bound failure must
+      # not prevent Codecov from receiving its original four push/PR uploads.
+      - name: Remote negative controls for complete Git coverage verifier
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$COVERAGE_INTEGRITY_EVIDENCE"
+          set +e
+          python3 -B .github/coverage-integrity/test_check.py > "$COVERAGE_INTEGRITY_EVIDENCE/negative-controls.stdout" 2> "$COVERAGE_INTEGRITY_EVIDENCE/negative-controls.stderr"
+          actual_status=$?
+          set -e
+          printf '%s\n' "$actual_status" > "$COVERAGE_INTEGRITY_EVIDENCE/negative-controls.exit"
+          cat "$COVERAGE_INTEGRITY_EVIDENCE/negative-controls.stderr"
+          test "$actual_status" -eq 0
+      - name: Complete Git changed Go instrumented line lower bound (85%, PR only)
+        if: github.event_name == 'pull_request'
+        run: >-
+          python3 -B .github/coverage-integrity/check.py check
+          --repo "$GITHUB_WORKSPACE"
+          --evidence "$COVERAGE_INTEGRITY_EVIDENCE"
+          --head "$COVERAGE_SOURCE_HEAD"
+          --base "$COVERAGE_SOURCE_BASE"
+      - name: Preserve complete Git scope, independent block inventory and unchanged profiles
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: complete-git-go-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.COVERAGE_INTEGRITY_EVIDENCE }}
+          if-no-files-found: error
+          retention-days: 14
 
   frontend:
     runs-on: ubuntu-latest
@@ -663,9 +716,14 @@ jobs:
 
   frontend-coverage:
     needs: test
+    # The supplementary gate can fail after backend coverage was uploaded.
+    # Keep the dependent frontend upload scheduled unless the run was cancelled.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
