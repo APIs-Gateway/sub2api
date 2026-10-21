@@ -81,7 +81,8 @@ async function main() {
     const axios = JSON.parse(fs.readFileSync(axiosManifest));
     const git = (...args) => execFileSync('git', args, { cwd: frontend, encoding: 'utf8' }).trim();
     report.source = {
-      head: git('rev-parse', 'HEAD'), tree: git('rev-parse', 'HEAD^{tree}'),
+      head: git('rev-parse', 'HEAD'), expectedHead: process.env.EXPECTED_SOURCE_HEAD,
+      tree: git('rev-parse', 'HEAD^{tree}'),
       nodeVersion: process.version, axiosVersion: axios.version,
       axiosManifest, indexPath, resolvedIndexPath: fs.realpathSync(indexPath), packagePath,
       followRedirectsVersion: manifest.version, indexSHA256: sha256(index),
@@ -92,6 +93,7 @@ async function main() {
       verifiedOfficialTarballSHA256: '6e075d999dc5ff568916954508397b11a537b18bde615986d7bd8b3d3fa1799f',
       note: 'Tarball digest is the independently verified official distribution reference; this run verifies installed index bytes, not a second downloaded tarball.',
     };
+    assert.equal(report.source.head, process.env.EXPECTED_SOURCE_HEAD, 'actual checkout differs from exact event head');
     fs.writeFileSync(path.join(evidence, 'installed-index.js'), index);
     fs.writeFileSync(path.join(evidence, 'installed-package.json'), packageBytes);
     assert.equal(axios.version, '1.20.0');
