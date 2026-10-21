@@ -171,10 +171,13 @@ if __name__ == '__main__':
     expected = unittest.defaultTestLoader.getTestCaseNames(AuditPolicyControls)
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(AuditPolicyControls)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
+    passed = (result.wasSuccessful() and result.testsRun == len(expected) == 14
+              and len(CASE_OUTCOMES) == 48 and not result.skipped)
     report = {'expectedTestNames': expected, 'testsRun': result.testsRun,
               'failures': len(result.failures), 'errors': len(result.errors),
-              'skipped': len(result.skipped), 'passed': result.wasSuccessful(),
+              'skipped': len(result.skipped), 'passed': passed,
+              'expectedCLIInvocations': 48,
               'originalOfficialFixtureSHA256': hashlib.sha256(FIXTURE.read_bytes()).hexdigest(),
               'actualCLIInvocations': len(CASE_OUTCOMES), 'caseOutcomes': CASE_OUTCOMES}
     Path(os.environ['AUDIT_CONTROL_REPORT']).write_text(json.dumps(report, indent=2) + '\n')
-    sys.exit(0 if result.wasSuccessful() and result.testsRun == len(expected) and not result.skipped else 1)
+    sys.exit(0 if passed else 1)
