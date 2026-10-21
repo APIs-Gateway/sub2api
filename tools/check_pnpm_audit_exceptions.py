@@ -139,14 +139,104 @@ def parse_date(value: str) -> date | None:
         return None
 
 
+def validate_report(audit: object, audit_exit: str) -> None:
+    """Accept the complete pnpm 9 --json report, never an error response.
+
+    pnpm v9.15.9 audit.ts returns 1 for ANY nonzero metadata vulnerability
+    count in JSON mode, even below --audit-level. Counts describe dependency
+    occurrences, so they need not equal the number of distinct advisories.
+    """
+    def require(condition: bool, message: str) -> None:
+        if not condition:
+            raise ValueError(message)
+
+    def count(value: object) -> bool:
+        return type(value) is int and value >= 0
+
+    def text(value: object) -> bool:
+        return isinstance(value, str) and bool(value.strip())
+
+    require(isinstance(audit, dict), "top level must be a pnpm 9 report object")
+    require(not ({"error", "errors", "vulnerabilities"} & audit.keys()),
+            "error containers or unsupported report format")
+    require(isinstance(audit.get("actions"), list), "missing/invalid actions")
+    require(isinstance(audit.get("muted"), list), "missing/invalid muted")
+    advisories = audit.get("advisories")
+    require(isinstance(advisories, dict), "missing/invalid advisories")
+    metadata = audit.get("metadata")
+    require(isinstance(metadata, dict), "missing/invalid metadata")
+    counts = metadata.get("vulnerabilities")
+    severities = {"info", "low", "moderate", "high", "critical"}
+    require(isinstance(counts, dict) and set(counts) == severities,
+            "missing/unsupported vulnerability counts")
+    require(all(count(value) for value in counts.values()),
+            "vulnerability counts must be nonnegative integers")
+    require(all(count(metadata.get(name)) for name in
+                ("dependencies", "devDependencies", "optionalDependencies", "totalDependencies")),
+            "missing/invalid dependency counts")
+    represented = set()
+    for key, advisory in advisories.items():
+        require(text(key) and isinstance(advisory, dict), "invalid advisory entry")
+        require(text(advisory.get("module_name")), "advisory lacks package")
+        severity = advisory.get("severity")
+        require(isinstance(severity, str) and severity in severities,
+                "advisory has missing/unsupported severity")
+        represented.add(severity)
+        identifiers = []
+        for field in ("github_advisory_id", "url"):
+            if field in advisory:
+                require(text(advisory[field]), "invalid advisory identifier: " + field)
+                identifiers.append(advisory[field])
+        if "id" in advisory:
+            require(type(advisory["id"]) is int and advisory["id"] > 0,
+                    "invalid advisory numeric id")
+            identifiers.append(advisory["id"])
+        if "cves" in advisory:
+            cves = advisory["cves"]
+            require(isinstance(cves, list) and all(text(value) for value in cves),
+                    "invalid advisory CVEs")
+            identifiers.extend(cves)
+        require(bool(identifiers), "advisory lacks stable identifier")
+        findings = advisory.get("findings")
+        require(isinstance(findings, list) and bool(findings), "advisory lacks findings")
+        for finding in findings:
+            require(isinstance(finding, dict) and text(finding.get("version")),
+                    "invalid finding version")
+            paths = finding.get("paths")
+            require(isinstance(paths, list) and all(text(value) for value in paths),
+                    "invalid finding dependency paths")
+    require(represented == {severity for severity, value in counts.items() if value > 0},
+            "metadata and represented advisory severities differ")
+    require(audit_exit in ("0", "1"), "unexpected pnpm audit exit status")
+    require(audit_exit == ("1" if sum(counts.values()) else "0"),
+            "pnpm audit exit status disagrees with complete report")
+
+
+def reject_duplicate_keys(pairs: list[tuple]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate audit JSON key: " + key)
+        result[key] = value
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--audit", required=True)
+    parser.add_argument("--audit-exit", required=True, help="File containing the actual pnpm 9 audit exit status")
     parser.add_argument("--exceptions", required=True)
     args = parser.parse_args()
 
-    with open(args.audit, "r", encoding="utf-8") as handle:
-        audit = json.load(handle)
+    try:
+        with open(args.audit, "r", encoding="utf-8") as handle:
+            audit = json.load(handle, object_pairs_hook=reject_duplicate_keys)
+        with open(args.audit_exit, "r", encoding="utf-8") as handle:
+            audit_exit = handle.read().strip()
+        validate_report(audit, audit_exit)
+    except (OSError, ValueError, TypeError) as error:
+        sys.stderr.write(f"Invalid pnpm 9 audit report: {error}\n")
+        return 1
 
     # 读取异常清单并建立索引，便于快速匹配包名 + advisory。
     exceptions = parse_exceptions(args.exceptions)

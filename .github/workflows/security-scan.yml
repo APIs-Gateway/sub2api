@@ -47,6 +47,18 @@ jobs:
       - name: Install dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
+      - name: Audit report and exception policy negative controls (remote only)
+        env:
+          AUDIT_CONTROL_REPORT: ${{ github.workspace }}/frontend/audit-controls.json
+        run: |
+          set +e
+          python3 -B tools/test_check_pnpm_audit_exceptions.py > frontend/audit-controls.stdout 2> frontend/audit-controls.stderr
+          control_status=$?
+          set -e
+          printf '%s\n' "$control_status" > frontend/audit-controls.exit
+          cat frontend/audit-controls.stdout
+          cat frontend/audit-controls.stderr
+          test "$control_status" -eq 0
       - name: Run pnpm audit
         working-directory: frontend
         run: |
@@ -58,12 +70,13 @@ jobs:
           audit_status=$?
           set -e
           printf '%s\n' "$audit_status" > audit.exit
-          # The unchanged exception checker below decides vulnerability policy.
+          # The exception policy below decides high/critical vulnerability acceptance.
           # Keep the real audit exit and JSON, including on checker failure.
       - name: Check audit exceptions
         run: |
           python tools/check_pnpm_audit_exceptions.py \
             --audit frontend/audit.json \
+            --audit-exit frontend/audit.exit \
             --exceptions .github/audit-exceptions.yml
       - name: Preserve raw frontend audit and exact policy inputs
         if: always()
@@ -77,10 +90,16 @@ jobs:
             frontend/audit-head.txt
             frontend/audit-tree.txt
             frontend/audit-inputs.sha256
+            frontend/audit-controls.json
+            frontend/audit-controls.stdout
+            frontend/audit-controls.stderr
+            frontend/audit-controls.exit
             frontend/package.json
             frontend/pnpm-lock.yaml
             .github/audit-exceptions.yml
             tools/check_pnpm_audit_exceptions.py
+            tools/test_check_pnpm_audit_exceptions.py
+            tools/testdata/pnpm-audit-v9-no-vulnerabilities.json
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
