@@ -10,8 +10,13 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      EXPECTED_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
@@ -21,6 +26,79 @@ jobs:
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.26.6'
+      - name: Initialize Gemini cached-usage focused evidence
+        id: gemini_cache_init
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/gemini-cache-usage-focused-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence"
+          printf 'GEMINI_CACHE_USAGE_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+      - name: Freeze Gemini cached-usage actual head, sources and toolchain
+        id: gemini_cache_prepare
+        env:
+          GOTOOLCHAIN: local
+          GOWORK: "off"
+          GOFLAGS: -mod=readonly
+          GOMAXPROCS: "2"
+          CGO_ENABLED: "1"
+        shell: bash
+        run: |
+          set +e
+          python3 -B .github/ci/gemini-cache-usage-focused.py prepare > "$GEMINI_CACHE_USAGE_EVIDENCE/prepare.stdout" 2> "$GEMINI_CACHE_USAGE_EVIDENCE/prepare.stderr"
+          actual_exit=$?
+          printf '%s\n' "$actual_exit" > "$GEMINI_CACHE_USAGE_EVIDENCE/prepare.exit"
+          cat "$GEMINI_CACHE_USAGE_EVIDENCE/prepare.stdout"
+          cat "$GEMINI_CACHE_USAGE_EVIDENCE/prepare.stderr" >&2
+          exit "$actual_exit"
+      - name: Gemini cached-usage actual 33 unit and 12 PostgreSQL Redis settlement contracts (race)
+        if: always() && steps.gemini_cache_prepare.outcome == 'success'
+        env:
+          GOTOOLCHAIN: local
+          GOWORK: "off"
+          GOFLAGS: -mod=readonly
+          GOMAXPROCS: "2"
+          CGO_ENABLED: "1"
+        shell: bash
+        run: |
+          set +e
+          python3 -B .github/ci/gemini-cache-usage-focused.py execute > "$GEMINI_CACHE_USAGE_EVIDENCE/execute.stdout" 2> "$GEMINI_CACHE_USAGE_EVIDENCE/execute.stderr"
+          actual_exit=$?
+          printf '%s\n' "$actual_exit" > "$GEMINI_CACHE_USAGE_EVIDENCE/execute.exit"
+          cat "$GEMINI_CACHE_USAGE_EVIDENCE/execute.stdout"
+          cat "$GEMINI_CACHE_USAGE_EVIDENCE/execute.stderr" >&2
+          exit "$actual_exit"
+      - name: Always freeze Gemini cached-usage sources after both actual commands
+        if: always() && steps.gemini_cache_init.outcome == 'success'
+        shell: bash
+        run: |
+          set +e
+          python3 -B .github/ci/gemini-cache-usage-focused.py after > "$GEMINI_CACHE_USAGE_EVIDENCE/after.stdout" 2> "$GEMINI_CACHE_USAGE_EVIDENCE/after.stderr"
+          actual_exit=$?
+          printf '%s\n' "$actual_exit" > "$GEMINI_CACHE_USAGE_EVIDENCE/after.exit"
+          cat "$GEMINI_CACHE_USAGE_EVIDENCE/after.stdout"
+          cat "$GEMINI_CACHE_USAGE_EVIDENCE/after.stderr" >&2
+          exit "$actual_exit"
+      - name: Always judge Gemini cached-usage exact actual leaves and failures
+        if: always() && steps.gemini_cache_init.outcome == 'success'
+        shell: bash
+        run: |
+          set +e
+          python3 -B .github/ci/gemini-cache-usage-focused.py judge > "$GEMINI_CACHE_USAGE_EVIDENCE/judge.stdout" 2> "$GEMINI_CACHE_USAGE_EVIDENCE/judge.stderr"
+          actual_exit=$?
+          printf '%s\n' "$actual_exit" > "$GEMINI_CACHE_USAGE_EVIDENCE/judge.exit"
+          cat "$GEMINI_CACHE_USAGE_EVIDENCE/judge.stdout"
+          cat "$GEMINI_CACHE_USAGE_EVIDENCE/judge.stderr" >&2
+          exit "$actual_exit"
+      - name: Upload Gemini cached-usage actual source and test evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: gemini-cache-usage-focused-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gemini-cache-usage-focused-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
       - name: Responses namespace contracts and lazy span boundaries (race)
         working-directory: backend
         run: go test -tags=unit -race -parallel=1 -count=1 -timeout=8m -v -run '(?i)namespace' ./internal/service/
