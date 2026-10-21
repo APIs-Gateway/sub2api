@@ -13,19 +13,445 @@ permissions:
 jobs:
   format:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       SOURCE_HEAD: f35ff7e9e21deaa0d608836d84b700fd5be10d9f
+      SOURCE_TREE: 6411f84b589a783ad85308e9579129dce100f773
       OLD_HEAD: 133c05ad12c888453a226395eef0e58b8fb6fcda
+      OLD_TREE: ef15b988f2dc2b053fea58d7bea6ab5ddbd808f7
       BASE_HEAD: c3e3eed31c7783d1923e1afd9ce706f3501ece26
       EVIDENCE: ${{ runner.temp }}/gemini-cache-usage-format-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - name: Initialize external evidence and phase controller
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          cat > "$EVIDENCE/formatter-controller.py" <<'PY_FORMAT'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import shutil
+          import stat
+          import subprocess
+          import sys
+          import tarfile
+          import traceback
+
+          EVIDENCE = Path(os.environ['EVIDENCE']).resolve()
+          WORKSPACE = Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          CONTROLLER = WORKSPACE / 'controller'
+          SOURCE = WORKSPACE / 'frozen-source'
+          WORKFLOW = '.github/workflows/gemini-cache-usage-format.yml'
+          SOURCE_HEAD = os.environ['SOURCE_HEAD']
+          SOURCE_TREE = os.environ['SOURCE_TREE']
+          OLD_HEAD = os.environ['OLD_HEAD']
+          OLD_TREE = os.environ['OLD_TREE']
+          BASE_HEAD = os.environ['BASE_HEAD']
+          CONTROLLER_HEAD = os.environ['GITHUB_SHA']
+          FILES = [
+              'backend/internal/service/gemini_cache_usage_test.go',
+              'backend/internal/repository/gemini_cache_usage_integration_test.go',
+              'backend/internal/service/gemini_messages_compat_service.go',
+          ]
+
+
+          def check(condition, message):
+              if not condition:
+                  raise AssertionError(message)
+
+
+          def dump(name, value):
+              (EVIDENCE / name).write_text(json.dumps(value, indent=2) + '\n')
+
+
+          def read_json(name):
+              return json.loads((EVIDENCE / name).read_text())
+
+
+          def sha(data):
+              return hashlib.sha256(data).hexdigest()
+
+
+          def git(root, *args):
+              return subprocess.check_output(['git', '-C', str(root), *args])
+
+
+          def tree_entries(root, ref):
+              records = {}
+              for entry in git(root, 'ls-tree', '-rz', '--full-tree', ref).split(b'\0'):
+                  if not entry:
+                      continue
+                  meta, raw_path = entry.split(b'\t', 1)
+                  mode, kind, blob = meta.decode().split()
+                  path = os.fsdecode(raw_path)
+                  check(path not in records, 'duplicate tree path: ' + path)
+                  records[path] = {'mode': mode, 'type': kind, 'blob': blob}
+              return records
+
+
+          def blob_oid(content):
+              return hashlib.sha1(b'blob ' + str(len(content)).encode() + b'\0' + content).hexdigest()
+
+
+          def snapshot(root):
+              result = {'root': str(root), 'errors': [], 'files': []}
+              try:
+                  check(git(root, 'rev-parse', '--show-object-format').strip() == b'sha1', 'unexpected Git object format')
+                  result['head'] = git(root, 'rev-parse', 'HEAD').decode().strip()
+                  result['tree'] = git(root, 'rev-parse', 'HEAD^{tree}').decode().strip()
+                  result['status'] = git(root, 'status', '--porcelain=v1', '--untracked-files=all').decode()
+                  raw_index = git(root, 'ls-files', '--stage', '-z')
+                  result['index'] = raw_index.hex()
+                  committed = tree_entries(root, 'HEAD')
+                  index = {}
+                  for entry in raw_index.split(b'\0'):
+                      if not entry:
+                          continue
+                      meta, raw_path = entry.split(b'\t', 1)
+                      mode, blob, stage = meta.decode().split()
+                      path = os.fsdecode(raw_path)
+                      if stage != '0' or path in index:
+                          result['errors'].append('unmerged or duplicate index entry: ' + path)
+                      index[path] = {'mode': mode, 'type': 'blob', 'blob': blob}
+                  if index != committed:
+                      result['errors'].append('index mode/blob/path set differs from HEAD')
+                  for path, entry in committed.items():
+                      record = {'path': path, **entry}
+                      try:
+                          check(entry['type'] == 'blob', 'unsupported tracked object type')
+                          item = root / path
+                          physical = item.lstat()
+                          if entry['mode'] == '120000':
+                              check(stat.S_ISLNK(physical.st_mode), 'tracked symlink has a different physical type')
+                              content = os.fsencode(os.readlink(item))
+                              actual_mode = '120000'
+                          else:
+                              check(entry['mode'] in ('100644', '100755'), 'unsupported Git file mode')
+                              check(stat.S_ISREG(physical.st_mode), 'tracked file is not a physical regular file')
+                              actual_mode = '100755' if physical.st_mode & 0o111 else '100644'
+                              content = item.read_bytes()
+                          record.update({'physicalMode': actual_mode, 'size': len(content),
+                                         'sha256': sha(content), 'actualBlob': blob_oid(content)})
+                          check(actual_mode == entry['mode'], 'physical mode differs from Git mode')
+                          check(record['actualBlob'] == entry['blob'], 'physical raw bytes differ from Git blob')
+                      except Exception as error:
+                          record['error'] = str(error)
+                          result['errors'].append(path + ': ' + str(error))
+                      result['files'].append(record)
+              except Exception as error:
+                  result['errors'].append(str(error))
+              return result
+
+
+          def run_command(label, args, *, stdout_path=None):
+              out = EVIDENCE / 'commands' / label
+              out.parent.mkdir(parents=True, exist_ok=True)
+              process = {'args': [str(arg) for arg in args], 'cwd': str(Path.cwd())}
+              try:
+                  if stdout_path is None:
+                      completed = subprocess.run(args, capture_output=True)
+                      stdout = completed.stdout
+                  else:
+                      with stdout_path.open('wb') as target:
+                          completed = subprocess.run(args, stdout=target, stderr=subprocess.PIPE)
+                      stdout = b''
+                      process['stdoutFile'] = str(stdout_path.relative_to(EVIDENCE))
+                      process['stdoutFileSHA256'] = sha(stdout_path.read_bytes())
+                  process['exit'] = completed.returncode
+                  stderr = completed.stderr
+              except OSError as error:
+                  process['exit'] = None
+                  process['osError'] = str(error)
+                  stdout, stderr = b'', str(error).encode()
+              Path(str(out) + '.stdout').write_bytes(stdout)
+              Path(str(out) + '.stderr').write_bytes(stderr)
+              Path(str(out) + '.exit').write_text(str(process['exit']) + '\n')
+              process.update({'stdoutSHA256': sha(stdout), 'stderrSHA256': sha(stderr)})
+              Path(str(out) + '.json').write_text(json.dumps(process, indent=2) + '\n')
+              return process, stdout, stderr
+
+
+          def verify_archive(target, snap):
+              expected = {item['path']: item for item in snap['files']}
+              seen = set()
+              with tarfile.open(target, 'r:') as archive_input:
+                  for member in archive_input:
+                      if member.isdir():
+                          continue
+                      check(member.name in expected and member.name not in seen, 'unexpected/duplicate archive entry: ' + member.name)
+                      item = expected[member.name]
+                      if item['mode'] == '120000':
+                          check(member.issym(), 'archive symlink type differs: ' + member.name)
+                          content = os.fsencode(member.linkname)
+                      else:
+                          check(member.isfile(), 'archive entry type differs: ' + member.name)
+                          mode = '100755' if member.mode & 0o111 else '100644'
+                          check(mode == item['mode'], 'archive executable mode differs: ' + member.name)
+                          content = archive_input.extractfile(member).read()
+                      check(blob_oid(content) == item['blob'] and sha(content) == item['sha256'], 'archive bytes differ from physical Git snapshot: ' + member.name)
+                      seen.add(member.name)
+              check(seen == set(expected), 'archive omits tracked source/controller inputs')
+              return len(seen)
+
+
+          def archive(root, label, snap):
+              head = snap.get('head')
+              if not head:
+                  return {'error': 'checkout HEAD unavailable'}
+              target = EVIDENCE / ('full-' + label + '.tar')
+              process, _, stderr = run_command(label + '-archive', ['git', '-C', str(root), 'archive', '--format=tar', head], stdout_path=target)
+              record = {'head': head, 'tree': snap.get('tree'), 'process': process,
+                        'size': target.stat().st_size if target.exists() else None,
+                        'sha256': sha(target.read_bytes()) if target.exists() else None}
+              dump('full-' + label + '-archive.json', record)
+              check(process['exit'] == 0 and not stderr, label + ' archive failed')
+              record['verifiedEntries'] = verify_archive(target, snap)
+              dump('full-' + label + '-archive.json', record)
+              return record
+
+
+          def verify_program(workflow_bytes):
+              # Bind the generated executable phase script to the exact heredoc
+              # in the Git-verified workflow, without parsing or executing YAML.
+              begin = b"          cat > \"$EVIDENCE/formatter-controller.py\" <<'PY_FORMAT'\n"
+              end = b'          PY_FORMAT\n'
+              check(workflow_bytes.count(begin) == 1 and workflow_bytes.count(end) == 1, 'ambiguous executable heredoc')
+              literal = workflow_bytes.split(begin, 1)[1].split(end, 1)[0]
+              lines = literal.splitlines(keepends=True)
+              check(all(line.startswith(b'          ') or line == b'\n' for line in lines), 'unexpected executable heredoc indentation')
+              program = b''.join(line[10:] if line.startswith(b'          ') else line for line in lines)
+              actual = (EVIDENCE / 'formatter-controller.py').read_bytes()
+              check(program == actual, 'executed generated script differs from actual Git workflow heredoc')
+              return {'path': 'formatter-controller.py', 'size': len(actual), 'sha256': sha(actual)}
+
+
+          def prepare():
+              check(EVIDENCE.parent == Path(os.environ['RUNNER_TEMP']).resolve(), 'evidence must use isolated runner.temp directory')
+              check(EVIDENCE.name == 'gemini-cache-usage-format-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'], 'unexpected evidence identity')
+              source = snapshot(SOURCE)
+              controller = snapshot(CONTROLLER)
+              dump('source-before.json', source)
+              dump('controller-before.json', controller)
+              # Archive the actual checked-out heads even if the later identity/composition
+              # assertions reject them; they are evidence, never an inferred passing input.
+              archives = {}
+              errors = []
+              for label, root, snap in [('source', SOURCE, source), ('controller', CONTROLLER, controller)]:
+                  try:
+                      archives[label] = archive(root, label, snap)
+                  except Exception as error:
+                      errors.append(label + ': ' + str(error))
+              dump('archive-results.json', archives)
+              workflow_bytes = (CONTROLLER / WORKFLOW).read_bytes()
+              (EVIDENCE / 'executed-workflow.yml').write_bytes(workflow_bytes)
+              program_identity = verify_program(workflow_bytes)
+              dump('execution-identity.json', {
+                  'githubSHA': CONTROLLER_HEAD, 'githubWorkflowSHA': os.environ.get('GITHUB_WORKFLOW_SHA'),
+                  'githubWorkflowRef': os.environ.get('GITHUB_WORKFLOW_REF'),
+                  'executedProgram': program_identity,
+                  'sourceHead': source.get('head'), 'sourceTree': source.get('tree'),
+                  'controllerHead': controller.get('head'), 'controllerTree': controller.get('tree'),
+                  'executedWorkflow': {'path': WORKFLOW, 'mode': '100644', 'blob': blob_oid(workflow_bytes), 'sha256': sha(workflow_bytes)},
+              })
+              check(not source['errors'] and not controller['errors'] and not errors, 'snapshot/archive integrity errors: ' + repr([source['errors'], controller['errors'], errors]))
+              check(not source['status'] and not controller['status'], 'source/controller checkout is not clean')
+              check(source['head'] == SOURCE_HEAD and source['tree'] == SOURCE_TREE, 'source HEAD/TREE mismatch')
+              check(controller['head'] == CONTROLLER_HEAD, 'controller HEAD is not GITHUB_SHA')
+              check(os.environ.get('GITHUB_WORKFLOW_SHA') == CONTROLLER_HEAD, 'executed workflow SHA differs from controller')
+              check(git(SOURCE, 'rev-parse', OLD_HEAD + '^{tree}').decode().strip() == OLD_TREE, 'OLD tree mismatch')
+              check(git(SOURCE, 'rev-parse', SOURCE_HEAD + '^').decode().strip() == OLD_HEAD, 'NEW parent is not OLD')
+              process, _, stderr = run_command('base-ancestor', ['git', '-C', str(SOURCE), 'merge-base', '--is-ancestor', BASE_HEAD, OLD_HEAD])
+              check(process['exit'] == 0 and not stderr, 'base is not OLD ancestor')
+              process, _, stderr = run_command('source-controller-ancestor', ['git', '-C', str(CONTROLLER), 'merge-base', '--is-ancestor', SOURCE_HEAD, CONTROLLER_HEAD])
+              check(process['exit'] == 0 and not stderr, 'source is not controller ancestor')
+              base_entries = tree_entries(SOURCE, BASE_HEAD)
+              old_entries = tree_entries(SOURCE, OLD_HEAD)
+              source_entries = tree_entries(SOURCE, SOURCE_HEAD)
+              controller_entries = tree_entries(CONTROLLER, CONTROLLER_HEAD)
+              changed = lambda a, b: sorted(path for path in set(a) | set(b) if a.get(path) != b.get(path))
+              check(changed(base_entries, old_entries) == sorted(FILES[:2] + [WORKFLOW]), 'OLD differs from base outside declared fixture/controller paths')
+              check(changed(old_entries, source_entries) == [FILES[2]], 'OLD/NEW production composition differs from one extractor path')
+              check(changed(source_entries, controller_entries) == [WORKFLOW], 'controller changed non-authorized source paths')
+              check(old_entries[FILES[2]] == base_entries[FILES[2]], 'OLD production extractor is not base exact')
+              for name in FILES[:2]:
+                  old_bytes = git(SOURCE, 'show', OLD_HEAD + ':' + name)
+                  new_bytes = git(SOURCE, 'show', SOURCE_HEAD + ':' + name)
+                  check(old_bytes == new_bytes == (SOURCE / name).read_bytes(), 'OLD/NEW/physical fixture bytes differ: ' + name)
+              check(controller_entries[WORKFLOW] == {'mode': '100644', 'type': 'blob', 'blob': blob_oid(workflow_bytes)}, 'actual YAML is not controller Git entry')
+              dump('composition.json', {'baseHead': BASE_HEAD, 'oldHead': OLD_HEAD, 'oldTree': OLD_TREE,
+                   'sourceHead': SOURCE_HEAD, 'sourceTree': SOURCE_TREE, 'controllerHead': CONTROLLER_HEAD,
+                   'controllerTree': controller['tree'], 'oldEntries': old_entries,
+                   'oldNewChanged': changed(old_entries, source_entries),
+                   'sourceControllerChanged': changed(source_entries, controller_entries),
+                   'testsExactOLDNEWPhysical': True})
+              version, stdout, stderr = run_command('go-version', ['go', 'version'])
+              gofmt = shutil.which('gofmt')
+              check(version['exit'] == 0 and not stderr and stdout.startswith(b'go version go1.26.9 '), 'unexpected remote Go toolchain')
+              check(gofmt is not None, 'remote gofmt unavailable')
+              dump('toolchain.json', {'goVersion': stdout.decode().strip(), 'gofmtPath': gofmt, 'gofmtSHA256': sha(Path(gofmt).read_bytes())})
+
+
+          def reconstruct_diff(original, patch, raw_path):
+              # Pinned input files end in LF. Apply every exact context/deletion byte;
+              # reject offsets, extra sections, unexplained records or missing hunks.
+              check(original.endswith(b'\n'), 'pinned raw input lacks final newline')
+              lines = patch.splitlines(keepends=True)
+              encoded = os.fsencode(str(raw_path))
+              check(lines[:3] == [b'diff ' + encoded + b'.orig ' + encoded + b'\n', b'--- ' + encoded + b'.orig\n', b'+++ ' + encoded + b'\n'], 'unexpected raw diff file headers')
+              raw_lines = original.splitlines(keepends=True)
+              output, cursor, at, hunks = [], 0, 3, 0
+              while at < len(lines):
+                  match = re.fullmatch(rb'@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@[^\n]*\n', lines[at])
+                  check(match is not None, 'unexpected raw diff hunk header')
+                  old_start, old_count = int(match[1]), int(match[2] or b'1')
+                  new_start, new_count = int(match[3]), int(match[4] or b'1')
+                  old_offset = old_start - 1 if old_count else old_start
+                  check(cursor <= old_offset <= len(raw_lines), 'raw diff old offset is inconsistent')
+                  output.extend(raw_lines[cursor:old_offset])
+                  cursor = old_offset
+                  check(new_start == len(output) + (1 if new_count else 0), 'raw diff new offset is inconsistent')
+                  at += 1
+                  consumed = produced = 0
+                  while at < len(lines) and not lines[at].startswith(b'@@ '):
+                      line = lines[at]
+                      check(line[:1] in (b' ', b'-', b'+'), 'unexpected raw diff line')
+                      if line[:1] in (b' ', b'-'):
+                          check(cursor < len(raw_lines) and raw_lines[cursor] == line[1:], 'raw diff context/deletion does not match original')
+                          cursor += 1
+                          consumed += 1
+                      if line[:1] in (b' ', b'+'):
+                          output.append(line[1:])
+                          produced += 1
+                      at += 1
+                  check(consumed == old_count and produced == new_count, 'raw diff hunk counts differ')
+                  hunks += 1
+              check(hunks > 0, 'changed output lacks raw diff hunks')
+              output.extend(raw_lines[cursor:])
+              return b''.join(output)
+
+
+          def verify_format_item(item):
+              name = item['path']
+              original = EVIDENCE / 'raw' / name
+              formatted = EVIDENCE / 'formatted' / name
+              raw, output = original.read_bytes(), formatted.read_bytes()
+              check(raw == (SOURCE / name).read_bytes(), 'raw formatter input differs from frozen source: ' + name)
+              check(item['rawSHA256'] == sha(raw) and item['formattedSHA256'] == sha(output), 'formatter output seal differs: ' + name)
+              changed = raw != output
+              check(item['changed'] == changed, 'formatter changed flag mismatch: ' + name)
+              for label in ('raw-diff', 'format', 'post-diff', 'post-list'):
+                  prefix = EVIDENCE / 'commands' / name
+                  process = json.loads(Path(str(prefix) + '.' + label + '.json').read_text())
+                  stdout = Path(str(prefix) + '.' + label + '.stdout').read_bytes()
+                  stderr = Path(str(prefix) + '.' + label + '.stderr').read_bytes()
+                  exit_text = Path(str(prefix) + '.' + label + '.exit').read_text()
+                  check(process == item['commands'][label], 'formatter process metadata changed: ' + name)
+                  check(exit_text == str(process['exit']) + '\n', 'formatter exit receipt differs: ' + name)
+                  check(sha(stdout) == process['stdoutSHA256'] and sha(stderr) == process['stderrSHA256'], 'formatter stdio receipt differs: ' + name)
+                  check(not stderr, 'formatter emitted stderr: ' + name + '/' + label)
+                  if label == 'raw-diff':
+                      check(process['exit'] == (1 if changed else 0), 'raw-diff exit differs from actual change: ' + name)
+                      check(bool(stdout) == changed, 'raw-diff presence differs from actual change: ' + name)
+                      reconstructed = reconstruct_diff(raw, stdout, original) if changed else raw
+                      check(reconstructed == output, 'raw diff does not reconstruct exact formatted bytes: ' + name)
+                  else:
+                      check(process['exit'] == 0 and not stdout, 'formatter/post-check did not complete cleanly: ' + name + '/' + label)
+
+
+          def format_copies():
+              verify_program((CONTROLLER / WORKFLOW).read_bytes())
+              toolchain = read_json('toolchain.json')
+              gofmt = Path(toolchain['gofmtPath'])
+              check(sha(gofmt.read_bytes()) == toolchain['gofmtSHA256'], 'remote formatter executable changed')
+              outcomes, errors = [], []
+              for name in FILES:
+                  original = EVIDENCE / 'raw' / name
+                  target = EVIDENCE / 'formatted' / name
+                  original.parent.mkdir(parents=True, exist_ok=True)
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  raw = (SOURCE / name).read_bytes()
+                  original.write_bytes(raw)
+                  target.write_bytes(raw)
+                  results = {}
+                  for label, args in [('raw-diff', ['-d', str(original)]), ('format', ['-w', str(target)]),
+                                      ('post-diff', ['-d', str(target)]), ('post-list', ['-l', str(target)])]:
+                      process, _, _ = run_command(name + '.' + label, [str(gofmt), *args])
+                      results[label] = process
+                  output = target.read_bytes()
+                  item = {'path': name, 'rawSHA256': sha(raw), 'formattedSHA256': sha(output),
+                          'formattedSize': len(output), 'changed': raw != output, 'commands': results}
+                  outcomes.append(item)
+                  try:
+                      verify_format_item(item)
+                  except Exception as error:
+                      errors.append(str(error))
+                  dump('format-results.json', {'files': outcomes, 'errors': errors})
+              check(not errors, 'formatter evidence inconsistent: ' + repr(errors))
+
+
+          def freeze_after():
+              # This is a separate always() step: no prepare/format assertion can skip it.
+              errors = []
+              for label, root in [('source', SOURCE), ('controller', CONTROLLER)]:
+                  result = snapshot(root)
+                  dump(label + '-after.json', result)
+                  errors.extend(label + ': ' + error for error in result['errors'])
+              check(not errors, 'after-snapshot integrity errors: ' + repr(errors))
+
+
+          def judge():
+              for phase in ('prepare', 'format', 'after'):
+                  check((EVIDENCE / (phase + '.exit')).read_text() == '0\n', phase + ' actual process failed or is missing')
+                  check(read_json(phase + '-result.json')['status'] == 'PASS', phase + ' did not complete')
+                  for channel in ('stdout', 'stderr'):
+                      check((EVIDENCE / (phase + '.' + channel)).is_file(), phase + ' captured output missing')
+              for label in ('source', 'controller'):
+                  before, after = read_json(label + '-before.json'), read_json(label + '-after.json')
+                  check(before == after and not after['errors'] and not after['status'], label + ' frozen checkout changed')
+                  archive_info = read_json('full-' + label + '-archive.json')
+                  contents = (EVIDENCE / ('full-' + label + '.tar')).read_bytes()
+                  check(archive_info['head'] == after['head'] and archive_info['tree'] == after['tree'], label + ' archive identity differs')
+                  check(archive_info['process']['exit'] == 0 and archive_info['size'] == len(contents) and archive_info['sha256'] == sha(contents), label + ' archive integrity differs')
+                  check(archive_info['verifiedEntries'] == verify_archive(EVIDENCE / ('full-' + label + '.tar'), after), label + ' full archive composition differs')
+              identity = read_json('execution-identity.json')
+              workflow = (EVIDENCE / 'executed-workflow.yml').read_bytes()
+              check(workflow == (CONTROLLER / WORKFLOW).read_bytes(), 'executed YAML artifact differs')
+              check(verify_program(workflow) == identity['executedProgram'], 'executed script identity differs')
+              check(identity['executedWorkflow']['blob'] == blob_oid(workflow) and identity['executedWorkflow']['sha256'] == sha(workflow), 'executed YAML artifact seal differs')
+              results = read_json('format-results.json')
+              check(not results['errors'] and [item['path'] for item in results['files']] == FILES, 'missing/failed formatter file results')
+              for item in results['files']:
+                  verify_format_item(item)
+              dump('complete.json', {'status': 'formatted-copies-only', 'sourceHead': SOURCE_HEAD,
+                   'sourceTree': SOURCE_TREE, 'oldHead': OLD_HEAD, 'oldTree': OLD_TREE,
+                   'controllerHead': CONTROLLER_HEAD, 'controllerTree': identity['controllerTree'],
+                   'runtimeTests': 'NOT_RUN', 'originalRequiredChecks': 'NOT_REPLACED'})
+
+
+          if __name__ == '__main__':
+              phase = sys.argv[1]
+              record = {'phase': phase, 'args': sys.argv, 'status': 'FAIL'}
+              try:
+                  {'prepare': prepare, 'format': format_copies, 'after': freeze_after, 'judge': judge}[phase]()
+                  record['status'] = 'PASS'
+              except Exception as error:
+                  record['error'] = str(error)
+                  traceback.print_exc()
+              finally:
+                  dump(phase + '-result.json', record)
+              sys.exit(0 if record['status'] == 'PASS' else 1)
+          PY_FORMAT
       - name: Checkout exact controller
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.sha }}
+          path: controller
           fetch-depth: 0
           persist-credentials: false
-      - name: Checkout complete frozen source
+      - name: Checkout complete frozen source as sibling
         uses: actions/checkout@v6
         with:
           ref: f35ff7e9e21deaa0d608836d84b700fd5be10d9f
@@ -37,132 +463,50 @@ jobs:
           go-version: '1.26.9'
           check-latest: false
           cache: false
-      - name: Format copies and retain complete source evidence
+      - name: Freeze complete Git input, controller and actual YAML
+        if: always()
         shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p "$EVIDENCE"
-          python3 - <<'PY_FORMAT'
-          import hashlib
-          import json
-          import os
-          from pathlib import Path
-          import shutil
-          import subprocess
-
-          evidence = Path(os.environ['EVIDENCE'])
-          source = Path('frozen-source').resolve()
-          controller = Path.cwd()
-          source_head = os.environ['SOURCE_HEAD']
-          old_head = os.environ['OLD_HEAD']
-          base_head = os.environ['BASE_HEAD']
-          files = [
-              'backend/internal/service/gemini_cache_usage_test.go',
-              'backend/internal/repository/gemini_cache_usage_integration_test.go',
-              'backend/internal/service/gemini_messages_compat_service.go',
-          ]
-
-          def git(root, *args):
-              return subprocess.check_output(['git', '-C', str(root), *args])
-
-          def save_json(name, value):
-              (evidence / name).write_text(json.dumps(value, indent=2) + '\n')
-
-          def snapshot(root, nested_checkout=False):
-              records = []
-              for entry in git(root, 'ls-tree', '-rz', '--full-tree', 'HEAD').split(b'\0'):
-                  if not entry:
-                      continue
-                  meta, raw_path = entry.split(b'\t', 1)
-                  mode, kind, blob = meta.decode().split()
-                  assert kind == 'blob'
-                  path = os.fsdecode(raw_path)
-                  item = root / path
-                  if mode == '120000':
-                      content = os.fsencode(os.readlink(item))
-                  else:
-                      content = item.read_bytes()
-                      actual_mode = '100755' if item.stat().st_mode & 0o111 else '100644'
-                      assert mode == actual_mode, path
-                  records.append({'path': path, 'mode': mode, 'type': kind,
-                                  'blob': blob, 'size': len(content),
-                                  'sha256': hashlib.sha256(content).hexdigest()})
-              status_args = ['status', '--porcelain=v1', '--untracked-files=all']
-              if nested_checkout:
-                  status_args += ['--', '.', ':(exclude)frozen-source']
-              return {'head': git(root, 'rev-parse', 'HEAD').decode().strip(),
-                      'tree': git(root, 'rev-parse', 'HEAD^{tree}').decode().strip(),
-                      'status': git(root, *status_args).decode(),
-                      'index': git(root, 'ls-files', '--stage', '-z').hex(),
-                      'files': records}
-
-          assert git(source, 'rev-parse', 'HEAD').decode().strip() == source_head
-          assert git(source, 'rev-parse', source_head + '^').decode().strip() == old_head
-          subprocess.run(['git', '-C', str(source), 'merge-base', '--is-ancestor', base_head, old_head], check=True)
-          assert not git(source, 'diff', '--name-only', base_head, old_head, '--', files[2])
-          assert git(source, 'show', base_head + ':' + files[2]) == git(source, 'show', old_head + ':' + files[2])
-          assert set(git(source, 'diff', '--name-only', base_head, old_head).decode().splitlines()) == set(files[:2] + ['.github/workflows/gemini-cache-usage-format.yml'])
-          assert git(source, 'diff', '--name-only', old_head, source_head).decode().splitlines() == [files[2]]
-          for name in files[:2]:
-              assert git(source, 'show', old_head + ':' + name) == git(source, 'show', source_head + ':' + name)
-          before = snapshot(source)
-          assert not before['status']
-          save_json('source-before.json', before)
-          # Exclude only the independently checked nested source checkout from
-          # controller untracked status; all controller tracked blobs are sealed.
-          controller_before = snapshot(controller, nested_checkout=True)
-          assert not controller_before['status']
-          save_json('controller-before.json', controller_before)
-          with (evidence / 'full-source.tar').open('wb') as archive:
-              subprocess.run(['git', '-C', str(source), 'archive', '--format=tar', source_head], stdout=archive, check=True)
-          archive = evidence / 'full-source.tar'
-          save_json('full-source-archive.json', {'head': source_head, 'tree': before['tree'],
-                    'size': archive.stat().st_size, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()})
-          gofmt = Path(shutil.which('gofmt'))
-          save_json('toolchain.json', {'go_version': subprocess.check_output(['go', 'version']).decode().strip(),
-                    'gofmt_path': str(gofmt), 'gofmt_sha256': hashlib.sha256(gofmt.read_bytes()).hexdigest()})
-          assert subprocess.check_output(['go', 'version']).decode().startswith('go version go1.26.9 ')
-          outcomes = []
-          for name in files:
-              raw = source / name
-              target = evidence / 'formatted' / name
-              original = evidence / 'raw' / name
-              target.parent.mkdir(parents=True, exist_ok=True)
-              original.parent.mkdir(parents=True, exist_ok=True)
-              shutil.copyfile(raw, target)
-              shutil.copyfile(raw, original)
-              results = {}
-              for label, args in [('raw-diff', ['-d', str(original)]), ('format', ['-w', str(target)]),
-                                  ('post-diff', ['-d', str(target)]), ('post-list', ['-l', str(target)])]:
-                  completed = subprocess.run([str(gofmt), *args], capture_output=True)
-                  out = evidence / 'results' / name
-                  out.parent.mkdir(parents=True, exist_ok=True)
-                  Path(str(out) + '.' + label + '.stdout').write_bytes(completed.stdout)
-                  Path(str(out) + '.' + label + '.stderr').write_bytes(completed.stderr)
-                  Path(str(out) + '.' + label + '.exit').write_text(str(completed.returncode) + '\n')
-                  results[label] = {'args': [str(gofmt), *args], 'exit': completed.returncode,
-                                   'stdout_sha256': hashlib.sha256(completed.stdout).hexdigest(),
-                                   'stderr_sha256': hashlib.sha256(completed.stderr).hexdigest()}
-                  if label == 'raw-diff':
-                      assert completed.returncode in (0, 1) and not completed.stderr
-                      assert completed.returncode == 0 or completed.stdout
-                  else:
-                      assert completed.returncode == 0 and not completed.stdout and not completed.stderr
-              outcomes.append({'path': name, 'raw_sha256': hashlib.sha256(original.read_bytes()).hexdigest(),
-                               'formatted_sha256': hashlib.sha256(target.read_bytes()).hexdigest(),
-                               'formatted_size': target.stat().st_size, 'commands': results})
-          save_json('format-results.json', outcomes)
-          after = snapshot(source)
-          save_json('source-after.json', after)
-          assert before == after
-          controller_after = snapshot(controller, nested_checkout=True)
-          save_json('controller-after.json', controller_after)
-          assert controller_before == controller_after
-          save_json('complete.json', {'status': 'formatted-copies-only', 'source_head': source_head,
-                    'old_head': old_head, 'controller_head': controller_after['head'],
-                    'runtime_tests': 'NOT_RUN', 'original_required_checks': 'NOT_REPLACED'})
-          PY_FORMAT
-      - name: Upload formatter and full source evidence
+          set +e
+          python3 "$EVIDENCE/formatter-controller.py" prepare > "$EVIDENCE/prepare.stdout" 2> "$EVIDENCE/prepare.stderr"
+          phase_exit=$?
+          printf '%s\n' "$phase_exit" > "$EVIDENCE/prepare.exit"
+          cat "$EVIDENCE/prepare.stdout"
+          cat "$EVIDENCE/prepare.stderr" >&2
+          exit "$phase_exit"
+      - name: Format isolated copies and reconcile actual raw diff
+        shell: bash
+        run: |
+          set +e
+          python3 "$EVIDENCE/formatter-controller.py" format > "$EVIDENCE/format.stdout" 2> "$EVIDENCE/format.stderr"
+          phase_exit=$?
+          printf '%s\n' "$phase_exit" > "$EVIDENCE/format.exit"
+          cat "$EVIDENCE/format.stdout"
+          cat "$EVIDENCE/format.stderr" >&2
+          exit "$phase_exit"
+      - name: Always freeze both complete checkouts after formatting
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          python3 "$EVIDENCE/formatter-controller.py" after > "$EVIDENCE/after.stdout" 2> "$EVIDENCE/after.stderr"
+          phase_exit=$?
+          printf '%s\n' "$phase_exit" > "$EVIDENCE/after.exit"
+          cat "$EVIDENCE/after.stdout"
+          cat "$EVIDENCE/after.stderr" >&2
+          exit "$phase_exit"
+      - name: Always judge phase exits, frozen inputs and formatter evidence
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          python3 "$EVIDENCE/formatter-controller.py" judge > "$EVIDENCE/judge.stdout" 2> "$EVIDENCE/judge.stderr"
+          phase_exit=$?
+          printf '%s\n' "$phase_exit" > "$EVIDENCE/judge.exit"
+          cat "$EVIDENCE/judge.stdout"
+          cat "$EVIDENCE/judge.stderr" >&2
+          exit "$phase_exit"
+      - name: Upload formatter and complete frozen evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:
