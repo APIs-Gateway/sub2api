@@ -20,13 +20,15 @@ jobs:
       OLD_HEAD: 133c05ad12c888453a226395eef0e58b8fb6fcda
       OLD_TREE: ef15b988f2dc2b053fea58d7bea6ab5ddbd808f7
       BASE_HEAD: c3e3eed31c7783d1923e1afd9ce706f3501ece26
-      EVIDENCE: ${{ runner.temp }}/gemini-cache-usage-format-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Initialize external evidence and phase controller
         shell: bash
         run: |
           set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/gemini-cache-usage-format-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$EVIDENCE"
           mkdir -p "$EVIDENCE"
+          printf 'EVIDENCE=%s\n' "$EVIDENCE" >> "$GITHUB_ENV"
           cat > "$EVIDENCE/formatter-controller.py" <<'PY_FORMAT'
           import hashlib
           import json
