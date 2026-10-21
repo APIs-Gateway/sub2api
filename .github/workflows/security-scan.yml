@@ -50,9 +50,37 @@ jobs:
       - name: Run pnpm audit
         working-directory: frontend
         run: |
-          pnpm audit --prod --audit-level=high --json > audit.json || true
+          git rev-parse HEAD > audit-head.txt
+          git rev-parse HEAD^{tree} > audit-tree.txt
+          sha256sum package.json pnpm-lock.yaml ../.github/audit-exceptions.yml ../tools/check_pnpm_audit_exceptions.py > audit-inputs.sha256
+          set +e
+          pnpm audit --prod --audit-level=high --json > audit.json 2> audit.stderr
+          audit_status=$?
+          set -e
+          printf '%s\n' "$audit_status" > audit.exit
+          # The unchanged exception checker below decides vulnerability policy.
+          # Keep the real audit exit and JSON, including on checker failure.
       - name: Check audit exceptions
         run: |
           python tools/check_pnpm_audit_exceptions.py \
             --audit frontend/audit.json \
             --exceptions .github/audit-exceptions.yml
+      - name: Preserve raw frontend audit and exact policy inputs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-security-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            frontend/audit.json
+            frontend/audit.stderr
+            frontend/audit.exit
+            frontend/audit-head.txt
+            frontend/audit-tree.txt
+            frontend/audit-inputs.sha256
+            frontend/package.json
+            frontend/pnpm-lock.yaml
+            .github/audit-exceptions.yml
+            tools/check_pnpm_audit_exceptions.py
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
