@@ -141,6 +141,8 @@ jobs:
             tools/test_check_pnpm_audit_exceptions.py
             tools/testdata/pnpm-audit-v9-no-vulnerabilities.json
             tools/testdata/pnpm-audit-v9-all-vulnerabilities.json
+            tools/testdata/pnpm-audit-v9-live-39604710139.json
+            tools/testdata/pnpm-audit-v9-live-39604710139.exit
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14

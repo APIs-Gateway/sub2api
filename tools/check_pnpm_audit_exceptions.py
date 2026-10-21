@@ -163,18 +163,28 @@ def validate_report(audit: object, audit_exit: str) -> None:
     require(isinstance(audit.get("muted"), list), "missing/invalid muted")
     # Registry fixtures omit target for review actions and omit isMajor for
     # all actions; validate these type-only fields when actually present.
+    nullable_resolution_ids = []
     for action in audit["actions"]:
-        require(isinstance(action, dict) and text(action.get("action"))
-                and text(action.get("module")), "invalid audit action")
+        require(isinstance(action, dict) and text(action.get("action")), "invalid audit action")
         require(not ({"error", "errors"} & action.keys()), "error container in audit action")
+        # A real registry may group recommendations for different packages and
+        # return update + explicit module:null,target:null. Advisory identities
+        # remain mandatory; bind these resolution IDs after validating them all.
+        nullable_update = (action["action"] == "update" and "module" in action
+                           and "target" in action and action["module"] is None
+                           and action["target"] is None)
+        require(text(action.get("module")) or nullable_update,
+                "invalid audit action module or nullable update recommendation")
         if "target" in action:
-            require(text(action["target"]), "invalid audit action target")
+            require(text(action["target"]) or nullable_update, "invalid audit action target")
         if "isMajor" in action:
             require(type(action["isMajor"]) is bool, "invalid audit action isMajor")
         if "depth" in action:
             require(count(action["depth"]), "invalid audit action depth")
         resolves = action.get("resolves")
         require(isinstance(resolves, list), "invalid audit action resolutions")
+        if nullable_update:
+            require(bool(resolves), "nullable update recommendation requires nonempty resolutions")
         for resolution in resolves:
             require(isinstance(resolution, dict), "invalid audit action resolution")
             require(not ({"error", "errors"} & resolution.keys()),
@@ -184,6 +194,8 @@ def validate_report(audit: object, audit_exit: str) -> None:
             require(all(type(resolution.get(flag)) is bool
                         for flag in ("dev", "optional", "bundled")),
                     "invalid resolution dependency flags")
+            if nullable_update:
+                nullable_resolution_ids.append(resolution["id"])
     advisories = audit.get("advisories")
     require(isinstance(advisories, dict), "missing/invalid advisories")
     metadata = audit.get("metadata")
@@ -198,6 +210,7 @@ def validate_report(audit: object, audit_exit: str) -> None:
                 ("dependencies", "devDependencies", "optionalDependencies", "totalDependencies")),
             "missing/invalid dependency counts")
     represented = set()
+    validated_advisory_ids = set()
     for key, advisory in advisories.items():
         require(text(key) and isinstance(advisory, dict), "invalid advisory entry")
         require(text(advisory.get("module_name")), "advisory lacks package")
@@ -228,6 +241,10 @@ def validate_report(audit: object, audit_exit: str) -> None:
             paths = finding.get("paths")
             require(isinstance(paths, list) and all(text(value) for value in paths),
                     "invalid finding dependency paths")
+        if "id" in advisory:
+            validated_advisory_ids.add(advisory["id"])
+    require(all(identifier in validated_advisory_ids for identifier in nullable_resolution_ids),
+            "nullable update resolution lacks complete validated advisory")
     require(represented == {severity for severity, value in counts.items() if value > 0},
             "metadata and represented advisory severities differ")
     require(audit_exit in ("0", "1"), "unexpected pnpm audit exit status")

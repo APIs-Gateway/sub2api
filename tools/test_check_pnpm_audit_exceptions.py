@@ -113,6 +113,54 @@ exceptions:
         result = self.check_cli(fixture.read_text(), '1', 1, 'missing exceptions')
         self.assertNotIn('Invalid pnpm 9 audit report:', result.stderr)
 
+    def test_original_live_report_with_nullable_recommendation(self):
+        fixture = ROOT / 'tools/testdata/pnpm-audit-v9-live-39604710139.json'
+        status = ROOT / 'tools/testdata/pnpm-audit-v9-live-39604710139.exit'
+        self.assertEqual(hashlib.sha256(fixture.read_bytes()).hexdigest(),
+                         '888060fd4d6c98daf05b7f8762e291039ee1de67f832cef33195d183f6b2111c')
+        self.assertEqual(status.read_text(), '1\n')
+        self.check_cli(fixture.read_text(), status.read_text().strip(), 0)
+
+    def test_live_report_unexcepted_high_not_hidden(self):
+        report = json.loads((ROOT / 'tools/testdata/pnpm-audit-v9-live-39604710139.json').read_text())
+        report['advisories']['1'] = with_advisory()['advisories']['1']
+        report['metadata']['vulnerabilities']['high'] += 1
+        result = self.check_cli(report, '1', 1, 'GHSA-q3jh-wrc6-jgq8')
+        self.assertIn('missing exceptions', result.stderr)
+        self.assertNotIn('Invalid pnpm 9 audit report:', result.stderr)
+
+    def test_live_report_registry_error_still_fails(self):
+        for field in ('error', 'errors'):
+            with self.subTest(field=field):
+                report = json.loads((ROOT / 'tools/testdata/pnpm-audit-v9-live-39604710139.json').read_text())
+                report[field] = {'code': 'ERR_PNPM_AUDIT_BAD_RESPONSE'}
+                self.check_cli(report, '1', 1, 'error containers or unsupported report format')
+
+    def test_nullable_recommendation_rejections(self):
+        cases = [
+            ('module-only-null', lambda action: action.update(target='1.16.1'),
+             'invalid audit action module or nullable update recommendation'),
+            ('target-only-null', lambda action: action.update(module='uuid'), 'invalid audit action target'),
+            ('missing-module', lambda action: action.pop('module'),
+             'invalid audit action module or nullable update recommendation'),
+            ('missing-target', lambda action: action.pop('target'),
+             'invalid audit action module or nullable update recommendation'),
+            ('review-null', lambda action: action.update(action='review'),
+             'invalid audit action module or nullable update recommendation'),
+            ('empty-resolutions', lambda action: action.update(resolves=[]),
+             'nullable update recommendation requires nonempty resolutions'),
+            ('unbound-resolution', lambda action: action['resolves'][0].update(id=2147483647),
+             'nullable update resolution lacks complete validated advisory'),
+            ('action-error', lambda action: action.update(error={}), 'error container in audit action'),
+        ]
+        for name, mutate, diagnostic in cases:
+            with self.subTest(name=name):
+                report = json.loads((ROOT / 'tools/testdata/pnpm-audit-v9-live-39604710139.json').read_text())
+                action = next(action for action in report['actions']
+                              if action.get('module', False) is None and action.get('target', False) is None)
+                mutate(action)
+                self.check_cli(report, '1', 1, diagnostic)
+
     def test_action_elements_fail_closed(self):
         resolution = {'id': 1, 'path': '.>x', 'dev': False, 'optional': False, 'bundled': False}
         action = {'action': 'review', 'module': 'x', 'resolves': [resolution]}
@@ -207,12 +255,12 @@ if __name__ == '__main__':
     expected = unittest.defaultTestLoader.getTestCaseNames(AuditPolicyControls)
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(AuditPolicyControls)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    passed = (result.wasSuccessful() and result.testsRun == len(expected) == 17
-              and len(CASE_OUTCOMES) == 62 and not result.skipped)
+    passed = (result.wasSuccessful() and result.testsRun == len(expected) == 21
+              and len(CASE_OUTCOMES) == 74 and not result.skipped)
     report = {'expectedTestNames': expected, 'testsRun': result.testsRun,
               'failures': len(result.failures), 'errors': len(result.errors),
               'skipped': len(result.skipped), 'passed': passed,
-              'expectedCLIInvocations': 62,
+              'expectedCLIInvocations': 74,
               'originalOfficialFixtureSHA256': hashlib.sha256(FIXTURE.read_bytes()).hexdigest(),
               'actualCLIInvocations': len(CASE_OUTCOMES), 'caseOutcomes': CASE_OUTCOMES}
     Path(os.environ['AUDIT_CONTROL_REPORT']).write_text(json.dumps(report, indent=2) + '\n')
