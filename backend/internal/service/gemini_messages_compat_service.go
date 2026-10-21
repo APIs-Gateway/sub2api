@@ -2930,10 +2930,11 @@ func extractGeminiUsage(data []byte) *ClaudeUsage {
 		})
 	}
 
-	// 注意：Gemini 的 promptTokenCount 包含 cachedContentTokenCount，
-	// 但 Claude 的 input_tokens 不包含 cache_read_input_tokens，需要减去
+	// Gemini 的 promptTokenCount 包含 cachedContentTokenCount，但 Claude 的
+	// input_tokens 不包含缓存读取。被拦截的 prompt 可能只返回缓存计数，
+	// 普通输入需归零，同时保留完整 cache_read_input_tokens 用于计费。
 	return &ClaudeUsage{
-		InputTokens:          prompt - cached,
+		InputTokens:          max(prompt-cached, 0),
 		OutputTokens:         cand + thoughts,
 		CacheReadInputTokens: cached,
 		ImageOutputTokens:    imageTokens,
