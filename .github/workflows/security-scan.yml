@@ -47,6 +47,31 @@ jobs:
       - name: Install dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
+      - name: Real follow-redirects cross-origin header contracts (remote only)
+        env:
+          FOLLOW_REDIRECTS_EVIDENCE: ${{ runner.temp }}/follow-redirects-wire-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set +e
+          node frontend/tools/follow-redirects-wire.cjs > frontend/redirect-contracts.stdout 2> frontend/redirect-contracts.stderr
+          wire_status=$?
+          set -e
+          printf '%s\n' "$wire_status" > frontend/redirect-contracts.exit
+          cat frontend/redirect-contracts.stdout
+          cat frontend/redirect-contracts.stderr
+          test "$wire_status" -eq 0
+      - name: Preserve actual redirect wire observations and implementation bytes
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: follow-redirects-wire-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/follow-redirects-wire-${{ github.run_id }}-${{ github.run_attempt }}/
+            frontend/redirect-contracts.stdout
+            frontend/redirect-contracts.stderr
+            frontend/redirect-contracts.exit
+            frontend/tools/follow-redirects-wire.cjs
+          if-no-files-found: error
+          retention-days: 14
       - name: Audit report and exception policy negative controls (remote only)
         env:
           AUDIT_CONTROL_REPORT: ${{ github.workspace }}/frontend/audit-controls.json
