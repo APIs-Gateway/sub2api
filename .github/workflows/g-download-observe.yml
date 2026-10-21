@@ -40,10 +40,14 @@ jobs:
               path = root / ('g-download-' + name.lower() + '-' + identity)
               path.mkdir(exist_ok=False)
               values[name] = str(path)
+          scratch = root / ('g-download-test-scratch-' + identity)
+          scratch.mkdir(exist_ok=False)
+          for name in ('TMP', 'TEMP', 'TMPDIR'):
+              values[name] = str(scratch)
           with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8', newline='\n') as output:
               for key, value in values.items():
                   output.write(key + '=' + value + '\n')
-          (evidence / 'initial-runner.json').write_text(json.dumps({'controller': os.environ['GITHUB_SHA'], 'platform': platform.platform(), 'machine': platform.machine(), 'python': sys.version, 'image': {key: os.environ.get(key) for key in ('ImageOS', 'ImageVersion', 'RUNNER_OS', 'RUNNER_ARCH')}}, indent=2) + '\n')
+          (evidence / 'initial-runner.json').write_text(json.dumps({'controller': os.environ['GITHUB_SHA'], 'platform': platform.platform(), 'machine': platform.machine(), 'python': sys.version, 'taskScratch': str(scratch), 'tempEnvironment': {key: values[key] for key in ('TMP', 'TEMP', 'TMPDIR')}, 'image': {key: os.environ.get(key) for key in ('ImageOS', 'ImageVersion', 'RUNNER_OS', 'RUNNER_ARCH')}}, indent=2) + '\n')
           subprocess.run(['git', 'config', '--global', 'core.autocrlf', 'false'], check=True)
           subprocess.run(['git', 'config', '--global', 'core.eol', 'lf'], check=True)
       - uses: actions/checkout@v6
@@ -106,10 +110,14 @@ jobs:
               path = root / ('g-download-' + name.lower() + '-' + identity)
               path.mkdir(exist_ok=False)
               values[name] = str(path)
+          scratch = root / ('g-download-test-scratch-' + identity)
+          scratch.mkdir(exist_ok=False)
+          for name in ('TMP', 'TEMP', 'TMPDIR'):
+              values[name] = str(scratch)
           with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8', newline='\n') as output:
               for key, value in values.items():
                   output.write(key + '=' + value + '\n')
-          (evidence / 'initial-runner.json').write_text(json.dumps({'controller': os.environ['GITHUB_SHA'], 'platform': platform.platform(), 'machine': platform.machine(), 'python': sys.version, 'image': {key: os.environ.get(key) for key in ('ImageOS', 'ImageVersion', 'RUNNER_OS', 'RUNNER_ARCH')}}, indent=2) + '\n')
+          (evidence / 'initial-runner.json').write_text(json.dumps({'controller': os.environ['GITHUB_SHA'], 'platform': platform.platform(), 'machine': platform.machine(), 'python': sys.version, 'taskScratch': str(scratch), 'tempEnvironment': {key: values[key] for key in ('TMP', 'TEMP', 'TMPDIR')}, 'image': {key: os.environ.get(key) for key in ('ImageOS', 'ImageVersion', 'RUNNER_OS', 'RUNNER_ARCH')}}, indent=2) + '\n')
           subprocess.run(['git', 'config', '--global', 'core.autocrlf', 'false'], check=True)
           subprocess.run(['git', 'config', '--global', 'core.eol', 'lf'], check=True)
       - uses: actions/checkout@v6

@@ -158,20 +158,24 @@ def snapshot(root, head, label, archive=False):
     return result
 
 
-def exec_mode(argv):
+def exec_mode(argv, timeout=1000):
     """Standard go test -exec: run supplied binary once, forward real streams/status."""
     phase = os.environ["G_OBSERVATION_PHASE"]
     directory = E / "phases" / phase / "binaries" / uuid.uuid4().hex
     directory.mkdir(parents=True, exist_ok=False)
-    binary = Path(argv[0]).resolve(strict=True)
-    before = binary.read_bytes()
-    identity = {"binary": str(binary), "beforeSHA256": sha(before), "bytes": len(before),
+    binary = Path(argv[0]).resolve()
+    identity = {"binary": str(binary),
                 "argv": argv, "phase": phase, "source": SOURCE,
                 "environment": {key: os.environ.get(key) for key in
                                 ("GOOS", "GOARCH", "CGO_ENABLED", "GOTOOLCHAIN", "GOWORK",
-                                 "GOFLAGS", "GOMAXPROCS", "GORACE", "SUB2API_G_DOWNLOAD_PROFILE_DIR")}}
+                                 "GOFLAGS", "GOMAXPROCS", "GORACE", "SUB2API_G_DOWNLOAD_PROFILE_DIR", "TMP", "TEMP", "TMPDIR", "GOTMPDIR")}}
+    try:
+        before = binary.read_bytes()
+        identity.update({"beforeSHA256": sha(before), "bytes": len(before)})
+    except OSError as error:
+        identity["binaryReadError"] = repr(error)
     save(directory / "identity.json", identity)
-    result = capture(directory / "actual", argv, Path.cwd(), timeout=1000, isolate=False)
+    result = capture(directory / "actual", argv, Path.cwd(), timeout=timeout, isolate=False)
     # Preserve original bytes before metadata failures can affect the wrapper exit.
     sys.stdout.buffer.write((directory / "actual/stdout").read_bytes())
     sys.stderr.buffer.write((directory / "actual/stderr").read_bytes())
@@ -197,13 +201,26 @@ def exec_mode(argv):
         metadata_ok = "parentProfile" in identity
     except Exception:
         identity["metadataError"] = traceback.format_exc()
+    identity["metadataComplete"] = metadata_ok
     save(directory / "identity.json", identity)
-    # Nonzero child status stays a failure; metadata failure can never turn it green.
-    if result["watchdog"] or not result["started"] or not result["streamsComplete"] or result["exitCode"] is None or not metadata_ok:
-        return 1
-    if result["exitCode"] < 0 and os.name != "nt":
-        os.kill(os.getpid(), -result["exitCode"])
-    return result["exitCode"]
+    # A known nonzero/signal has priority over missing metadata or watchdog flags.
+    # Its exact original status/streams remain in actual/process.json regardless.
+    if result["started"] and result["exitCode"] is not None and result["exitCode"] != 0:
+        if os.name == "nt":
+            import ctypes
+            exit_process = ctypes.WinDLL("kernel32", use_last_error=True).ExitProcess
+            exit_process.argtypes = [ctypes.c_uint32]
+            exit_process.restype = None
+            exit_process(ctypes.c_uint32(result["exitCode"]).value)
+        if result["exitCode"] < 0 and os.name != "nt":
+            signum = -result["exitCode"]
+            if signum not in (signal.SIGKILL, signal.SIGSTOP):
+                signal.signal(signum, signal.SIG_DFL)
+            os.kill(os.getpid(), signum)
+        return result["exitCode"]
+    if not successful(result) or not metadata_ok:
+        return 1  # Metadata failure may only turn actual zero/unknown into failure.
+    return 0
 
 
 def objects(raw):
@@ -278,6 +295,144 @@ def module_graph(baseline, candidate):
                                     "optionalExternalDirPresenceChanges": cache_presence_changes,
                                     "rawGraphSHA256": {label: sha((E / "commands" / (label + "-modules") / "stdout").read_bytes()) for label, _ in roots},
                                     "allOtherFieldsPreservedAndEqual": True})
+
+
+
+def compiler_preflight(actual_env):
+    record = {"goCCBinding": actual_env["CC"]}
+    try:
+        assert record["goCCBinding"] == "gcc", "Unexpected Go CC binding"
+        located = shutil.which(record["goCCBinding"])
+        record["whichPath"] = located
+        assert located, "Go CC executable cannot be resolved on actual PATH"
+        resolved = Path(located).resolve(strict=True)
+        record.update({"resolvedPath": str(resolved), "binarySHA256": sha(resolved.read_bytes())})
+        require_success(capture(E / "commands/gcc-version", [located, "--version"], WORKSPACE))
+        record["versionStdoutSHA256"] = sha((E / "commands/gcc-version/stdout").read_bytes())
+        if os.name == "nt":
+            require_success(capture(E / "commands/gcc-race-library", [located, "--print-file-name=libsynchronization.a"], WORKSPACE))
+            library = Path((E / "commands/gcc-race-library/stdout").read_text(encoding="utf-8").strip())
+            record["raceLibraryReported"] = str(library)
+            assert library.is_absolute() and library.is_file(), "Compatible native race compiler library missing"
+            record.update({"raceLibraryResolved": str(library.resolve()), "raceLibrarySHA256": sha(library.read_bytes())})
+    except Exception:
+        record["error"] = traceback.format_exc()
+    save(E / "compiler-identity.json", record)
+    assert "error" not in record, "Actual compiler prerequisite failed"
+
+
+def windows_storage_preflight():
+    # Match Go1.26.9 os.tempDir's native API choice, then query actual volumes.
+    import ctypes
+    from ctypes import wintypes
+    report = {"tempEnvironment": {key: os.environ.get(key) for key in ("TMP", "TEMP", "TMPDIR")},
+              "volumes": [], "errors": [],
+              "goTempAPIReference": "https://github.com/golang/go/blob/go1.26.9/src/os/file_windows.go#L264"}
+    try:
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        try:
+            get_temp = kernel.GetTempPath2W
+            report["goNativeTempAPI"] = "GetTempPath2W"
+        except AttributeError:
+            get_temp = kernel.GetTempPathW
+            report["goNativeTempAPI"] = "GetTempPathW"
+        get_temp.argtypes = [wintypes.DWORD, wintypes.LPWSTR]
+        get_temp.restype = wintypes.DWORD
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = get_temp(len(buffer), buffer)
+        assert 0 < length < len(buffer), "Native test TEMP query failed"
+        native_temp = Path(buffer.value).resolve(strict=True)
+        report["nativeGoTempPath"] = str(native_temp)
+        configured = [Path(os.environ[key]).resolve(strict=True) for key in ("TMP", "TEMP", "TMPDIR")]
+        report["nativeTempMatchesTaskScratch"] = all(value == native_temp for value in configured)
+        get_root = kernel.GetVolumePathNameW
+        get_root.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        get_root.restype = wintypes.BOOL
+        get_info = kernel.GetVolumeInformationW
+        get_info.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD,
+                             ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD),
+                             ctypes.POINTER(wintypes.DWORD), wintypes.LPWSTR, wintypes.DWORD]
+        get_info.restype = wintypes.BOOL
+        paths = {"evidence": E, "actualTestTemp": native_temp,
+                 "goBuildTemp": Path(os.environ["GOTMPDIR"]),
+                 "candidateCheckout": WORKSPACE / "source", "baselineCheckout": WORKSPACE / "baseline",
+                 "controllerCheckout": WORKSPACE / "controller"}
+        for label, path in paths.items():
+            record = {"role": label, "path": str(path)}
+            try:
+                resolved = path.resolve(strict=True)
+                record["resolvedPath"] = str(resolved)
+                volume, filesystem, name = (ctypes.create_unicode_buffer(32768) for _ in range(3))
+                if not get_root(str(resolved), volume, len(volume)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                serial, maximum, flags = wintypes.DWORD(), wintypes.DWORD(), wintypes.DWORD()
+                if not get_info(volume.value, name, len(name), ctypes.byref(serial),
+                                ctypes.byref(maximum), ctypes.byref(flags), filesystem, len(filesystem)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                record.update({"volumeRoot": volume.value, "filesystem": filesystem.value,
+                               "volumeName": name.value, "serial": serial.value, "flags": flags.value})
+                assert filesystem.value.upper() == "NTFS", "Unknown or non-NTFS actual volume"
+            except Exception:
+                record["error"] = traceback.format_exc()
+                report["errors"].append(record["error"])
+            report["volumes"].append(record)
+        assert report["nativeTempMatchesTaskScratch"], "Native Go TEMP is not assigned task scratch"
+    except Exception:
+        report["errors"].append(traceback.format_exc())
+    save(E / "windows-storage-prerequisites.json", report)
+    assert not report["errors"] and len(report["volumes"]) == 6, "Actual Windows storage prerequisite failed"
+
+
+def exec_controls():
+    # Only status/byte/metadata/watchdog controls, never evidence of a real Go race.
+    wrapper = Path(__file__).resolve()
+    controls = [("launch-failure", None, None), ("nonzero-missing-metadata", 17, None),
+                ("zero-missing-metadata", 0, None), ("synthetic-marker66", 66, None),
+                ("watchdog", None, 2)]
+    results, errors = [], []
+    for name, code, timeout in controls:
+        record = {"control": name, "passed": False, "scope": "Non-project wrapper status/stream control, not Go race or business evidence"}
+        try:
+            stdout = ("control-" + name + "\x00\n").encode()
+            stderr = b"WARNING: DATA RACE\nsynthetic wrapper status control only\n" if code == 66 else b"control-stderr\n"
+            if name == "launch-failure":
+                child = [str(E / "never-created-control-executable")]
+                stdout, stderr = b"", b""
+            else:
+                script = "import sys,threading;sys.stdout.buffer.write(" + repr(stdout) + ");sys.stdout.buffer.flush();sys.stderr.buffer.write(" + repr(stderr) + ");sys.stderr.buffer.flush();"
+                script += "threading.Event().wait(60)" if timeout else "sys.exit(" + str(code) + ")"
+                child = [sys.executable, "-c", script]
+            phase = "control-" + name
+            env = dict(os.environ, G_OBSERVATION_PHASE=phase)
+            outer = capture(E / "commands/wrapper-controls" / name,
+                            [sys.executable, "-B", str(wrapper), "control-exec", str(timeout or 10), *child],
+                            WORKSPACE, timeout=45, env=env)
+            identities = list((E / "phases" / phase / "binaries").glob("*/identity.json"))
+            assert len(identities) == 1
+            identity = json.loads(identities[0].read_text(encoding="utf-8"))
+            actual_dir = identities[0].parent / "actual"
+            actual = json.loads((actual_dir / "process.json").read_text(encoding="utf-8"))
+            record.update({"wrapperActual": outer, "binaryActual": actual, "metadataComplete": identity["metadataComplete"]})
+            assert not identity["metadataComplete"], "Controls intentionally provide no valid Go metadata/profile"
+            assert not outer["watchdog"] and outer["streamsComplete"]
+            assert (E / "commands/wrapper-controls" / name / "stdout").read_bytes() == (actual_dir / "stdout").read_bytes() == stdout
+            assert (E / "commands/wrapper-controls" / name / "stderr").read_bytes() == (actual_dir / "stderr").read_bytes() == stderr
+            if name == "launch-failure":
+                assert not actual["started"] and actual["exitCode"] is None and actual.get("launchError") and outer["exitCode"] != 0
+            elif name == "watchdog":
+                assert actual["started"] and actual["watchdog"] and actual["exitCode"] not in (None, 0)
+                assert outer["exitCode"] == actual["exitCode"], "Watchdog actual nonzero/signal not preserved"
+            else:
+                assert actual["started"] and not actual["watchdog"] and actual["exitCode"] == code
+                assert outer["exitCode"] == (code if code else 1), "Known status lost or actual zero metadata failure escaped"
+            record["passed"] = True
+        except Exception:
+            record["error"] = traceback.format_exc()
+            errors.append(record["error"])
+        results.append(record)
+    save(E / "wrapper-control-results.json", {"results": results, "errors": errors,
+                                               "limitation": "Synthetic marker66 proves status/stream handling only. Actual Go race evidence still requires real project -race execution."})
+    assert not errors and all(item["passed"] for item in results), "Remote wrapper controls failed; candidate execution blocked"
 
 
 def profile_blocks(path, source):
@@ -410,11 +565,11 @@ def observe(kind):
         assert actual_env["GOOS"] + "/" + actual_env["GOARCH"] == platform
         assert actual_env["CGO_ENABLED"] == "1" and actual_env["GOTOOLCHAIN"] == "local"
         assert actual_env["GOWORK"] == "off" and actual_env["GOFLAGS"] == "-mod=readonly"
+        compiler_preflight(actual_env)
         if os.name == "nt":
-            require_success(capture(E / "commands/gcc-version", ["gcc", "--version"], WORKSPACE))
-            require_success(capture(E / "commands/gcc-race-library", ["gcc", "--print-file-name", "libsynchronization.a"], WORKSPACE))
-            library = Path((E / "commands/gcc-race-library/stdout").read_text(encoding="utf-8").strip())
-            assert library.is_absolute() and library.is_file(), "Compatible native race compiler library missing"
+            windows_storage_preflight()
+        if kind == "candidate":
+            exec_controls()
         if kind == "baseline":
             env = dict(os.environ, REQ_SECURITY_EVIDENCE=str(E / "original401"), REQ_SECURITY_EXPECTED_HEAD=BASE)
             result = capture(E / "commands/original401", ["bash", "tools/req-http2-security-ci.sh"], WORKSPACE / "baseline/backend", timeout=3000, env=env)
@@ -490,4 +645,6 @@ def observe(kind):
 if __name__ == "__main__":
     if sys.argv[1] == "exec":
         sys.exit(exec_mode(sys.argv[2:]))
+    if sys.argv[1] == "control-exec":
+        sys.exit(exec_mode(sys.argv[3:], timeout=float(sys.argv[2])))
     sys.exit(observe(sys.argv[1]))
