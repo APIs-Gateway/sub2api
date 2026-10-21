@@ -17,7 +17,19 @@ OLD_TREE = 'c34bdcd39f97ea0623ff0aad9cfcbf04b04d7612'
 NEW = 'beed0eb87da3eeb8f88ca7706d0e54a6cb6452d2'
 NEW_TREE = 'c15e6475533244ae0736c6ed34700223a3d9b02f'
 PRIOR_PROOF = '510095bfe25f5db976e9c1315d810e19d560f664'
+COMPOSITION = 'fe91b3b22dea3e3f80f1609c7c77ac27bf4a8500'
 FROZEN_F = '9c0c0641aa6a90accd4c688c5bcad7eebc53e699'
+# Already independently established by genuine run39355019380 at the exact F
+# fixtures and original digest0695. These are retained observations, not guesses
+# about any of the 23 new ownership leaves.
+KNOWN_F_RED = {
+    'TestReqClientDigest_NoChallengeEvictsCache': 'REQ_DIGEST_401_BODY_ASSERT:',
+    'TestReqClientDigest_ChallengeBoundary/basic_only': 'REQ_DIGEST_401_BODY_ASSERT:',
+    'TestReqClientDigest_ChallengeBoundary/unsupported_digest': 'REQ_DIGEST_401_BODY_ASSERT:',
+    'TestReqClientDigest_GetBodyFailure/clone_1': 'REQ_DIGEST_BODY_CLOSE_ASSERT:',
+    'TestReqClientDigest_GetBodyFailure/clone_2': 'REQ_DIGEST_BODY_CLOSE_ASSERT:',
+}
+KNOWN_F_RUN = 39355019380
 PREFIX = 'backend/third_party/req/'
 MODULE = 'github.com/imroc/req/v3'
 FIXTURES = ('client_behavior_peer_test.go', 'client_behavior_observer_test.go',
@@ -119,7 +131,8 @@ def prepare(controller, old, new, evidence):
     for label, root in roots.items():
         snapshots[label] = snapshot(root, *expected[label], evidence / (label + '-before.json'))
         archives[label] = archive(root, evidence, label, snapshots[label])
-    assert git(controller, 'rev-list', '--parents', '-n', '1', 'HEAD').decode().split()[1:] == [PRIOR_PROOF, NEW], 'proof parents differ'
+    assert git(controller, 'rev-list', '--parents', '-n', '1', COMPOSITION).decode().split()[1:] == [PRIOR_PROOF, NEW], 'original composition parents differ'
+    assert subprocess.run(['git', '-C', str(controller), 'merge-base', '--is-ancestor', COMPOSITION, os.environ['GITHUB_SHA']]).returncode == 0, 'current proof lost original normal composition ancestry'
     new_files = {v['path']: v for v in snapshots['new']['files']}
     control_files = {v['path']: v for v in snapshots['controller']['files']}
     assert all(control_files.get(path) == item for path, item in new_files.items())
@@ -166,7 +179,8 @@ def prepare(controller, old, new, evidence):
     save(evidence / 'same-fixtures-and-scope.json', {'fixtures': fixture_records, 'mandatoryLeaves': 468,
          'originalLeaves': 401, 'FLeaves': 44, 'ownershipLeaves': 23, 'originalFiles': 132,
          'productionFiles': 89, 'originalTests': 14, 'oldAdaptations': 11, 'newAdaptations': 12,
-         'claimLimit': 'Source identity only. OLD23 actual dispositions remain unknown; aggregate85 gates remain HOLD.'})
+         'retainedFObservation': {'run': KNOWN_F_RUN, 'redMarkers': KNOWN_F_RED, 'otherFLeavesMustPASS': 39},
+         'claimLimit': 'Source identity plus retained F5RED39PASS contract only. OLD23 actual dispositions remain unknown; aggregate85 gates remain HOLD.'})
     save(evidence / 'complete-input-archives.json', archives)
     for name in CONTROL:
         shutil.copyfile(controller / name, evidence / ('executed-controller.py' if name.endswith('.py') else 'executed-workflow.yml'))
@@ -284,6 +298,8 @@ def actual_events(root, evidence):
     kinds = [key[:-6] for key in inventory if key.endswith('Leaves') and key[:-6] + 'Package' in inventory]
     required = {(inventory[kind + 'Package'], name): kind for kind in kinds for name in inventory[kind + 'Leaves']}
     assert len(required) == 468
+    f_leaves = {name for (package, name), kind in required.items() if kind == 'clientBehavior' and package == MODULE}
+    assert len(f_leaves) == 44 and set(KNOWN_F_RED) <= f_leaves, 'known F44 inventory lost'
     report = {'phase': 'old', 'suites': {}, 'errors': [], 'unknownOLD23': 'No predicted failure allowlist; inspect actual output and independently classify every failure.'}
     for suite in ('named', 'all'):
         try:
@@ -306,12 +322,20 @@ def actual_events(root, evidence):
             save(evidence / (suite + '-all468-actual-leaves.json'), leaves)
             for item in leaves:
                 assert item['runs'] == 1 and len(item['actualTerminals']) == 1 and item['actualTerminals'][0] in ('pass', 'fail'), 'missing/duplicate/skipped mandatory leaf: ' + item['test']
-                if item['kind'] not in ('clientBehavior', 'digestOwnership'):
+                if item['kind'] == 'clientBehavior':
+                    marker = KNOWN_F_RED.get(item['test'])
+                    if marker is not None:
+                        assert item['actualTerminals'] == ['fail'], 'known F RED did not fail: ' + item['test']
+                        assert item['output'].count(marker) == 1, 'known F RED lacks its single retained assertion marker: ' + item['test']
+                    else:
+                        assert item['actualTerminals'] == ['pass'], 'retained other39 F leaf did not PASS: ' + item['test']
+                elif item['kind'] != 'digestOwnership':
                     assert item['actualTerminals'] == ['pass'], 'mandatory retained leaf did not PASS: ' + item['test']
             assert not any(v['Action'] == 'skip' and 'Test' in v for v in values), 'test-level skip'
-            # OLD failures outside F44/new23 (or their parent names) are blockers.
+            # Retain known F5 failures/parents; new23 failures are observations only.
             failures = {key for key, actions in terminals.items() if 'fail' in actions}
-            relevant = {key for key, kind in required.items() if kind in ('clientBehavior', 'digestOwnership')}
+            relevant = {key for key, kind in required.items() if kind == 'digestOwnership' or
+                        (kind == 'clientBehavior' and key[1] in KNOWN_F_RED)}
             allowed_ancestry = set(relevant)
             for package, name in relevant:
                 parts = name.split('/')
@@ -340,6 +364,7 @@ def actual_events(root, evidence):
             report['suites'][suite] = {'actualGoExit': status, 'mandatoryLeaves': leaves,
                  'mandatoryPassCount': sum(v['actualTerminals'] == ['pass'] for v in leaves),
                  'mandatoryFailCount': sum(v['actualTerminals'] == ['fail'] for v in leaves),
+                 'retainedFContract': {'priorActualRun': KNOWN_F_RUN, 'redLeaves': 5, 'passingLeaves': 39, 'redMarkers': KNOWN_F_RED},
                  'actualPackageTerminals': packages, 'testBearingPackages': sorted(test_bearing),
                  'claimLimit': 'No-test coverage package PASS is not testcase execution.'}
         except (OSError, ValueError, KeyError, AssertionError) as error:
