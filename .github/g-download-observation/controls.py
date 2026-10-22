@@ -139,6 +139,7 @@ def metadata_controls(source, destination):
     parent = observer.profile_blocks(parent_profile, project, module=module, module_root=project)
     aggregate = observer.profile_blocks(destination / "aggregate.raw.out", project, aggregate=True, module=module, module_root=project)
     require(parent == aggregate, "Real aggregate lost metadata definitions")
+    require(len((destination / "aggregate.raw.out").read_text().splitlines()) - 1 > len(aggregate), "Real Go aggregate duplicate-row control missing")
     parent_counts = row_counts(parent_profile)
     records = json.loads((output / "results.json").read_text())
     require([v["Name"] for v in records] == ["positive", "missing-aux", "changed-collection", "changed-fragment", "wrong-association", "preseed"], "Metadata control cases incomplete")
@@ -154,11 +155,15 @@ def metadata_controls(source, destination):
             child = observer.profile_blocks(Path(item["Profile"]), project, module=module, module_root=project)
             require(child == parent and item["ActualExit"] == 0 and not item["VerifyError"], "Complete fresh child profile differs from actual same binary")
             counts = row_counts(Path(item["Profile"]))
+            witnesses = set()
             for key, value in parent_counts.items():
                 if key[0].endswith("/linked/linked.go") and key[1] == 2:
                     require(value > 0 and counts[key] == 0, "Parent counters contaminated child")
+                    witnesses.add("parent-only")
                 if key[0].endswith("/linked/linked.go") and key[1] == 3:
                     require(value == 0 and counts[key] > 0, "Child counters contaminated parent")
+                    witnesses.add("child-only")
+            require(witnesses == {"parent-only", "child-only"}, "Actual disjoint coverage witnesses missing")
             require(any(key[0].endswith("/auxiliary/auxiliary.go") and value == 0 for key, value in counts.items()), "Unlinked zero definition was not emitted by Go")
         elif name == "missing-aux":
             child = observer.profile_blocks(Path(item["Profile"]), project, module=module, module_root=project)
