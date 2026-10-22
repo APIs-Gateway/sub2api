@@ -251,7 +251,7 @@ type downloadGAuxMetadata struct {
 	ParentCoverDir string
 	ChildCoverDir  string
 	MetadataSHA256 string
-	Fragments     []downloadGAuxFragment
+	Fragments      []downloadGAuxFragment
 }
 
 func downloadGReadAuxCollection(root string) ([]byte, []downloadGAuxFragment, error) {
@@ -386,6 +386,7 @@ func downloadGVerifyChildCover(profileDir string) error {
 	}
 	return nil
 }
+
 // G_AUX_METADATA_HELPERS_END
 
 // Existing ParallelDownload error paths can strand internal goroutines. Every

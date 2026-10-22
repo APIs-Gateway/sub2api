@@ -126,3 +126,15 @@ are labelled negative-control data. No local/87 formatter, syntax/AST, checker,
 test or build ran. This raw helper awaits remote formatting and double source/
 actual review; historical formatting does not validate these changed bytes.
 Formal aggregate85 gates remain HOLD.
+
+
+## Actual remote formatting39742212554
+
+The exact b9f source and2ea controller were frozen as4513/4514 complete Git inputs.
+Go1.26.10 actually ran7 inputs x4 operations; all28 outcomes and original raw
+ZIP/tars/index/source before-and-after were independently checked. Only field
+alignment/blank lines/operator spacing changed. The helper output is imported
+verbatim here; its current hash is in provenance, alongside the historical raw
+seal. Production outputs were imported separately in8013 and normally merged.
+No local/87 formatter or project code executed. This is formatting evidence only;
+new Linux/Windows behavior, metadata controls and all85 gates remain required.
