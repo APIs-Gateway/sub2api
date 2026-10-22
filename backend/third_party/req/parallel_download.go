@@ -304,7 +304,7 @@ func (pd *ParallelDownload) fetchRanges(ctx context.Context, total int64) error 
 					}
 					if err := pd.fetchTask(workCtx, task, total, false); err != nil {
 						errorsFound <- taskError{
-							err: err,
+							err:             err,
 							secondaryCancel: errors.Is(err, context.Canceled) && workCtx.Err() != nil && ctx.Err() == nil,
 						}
 						cancel()

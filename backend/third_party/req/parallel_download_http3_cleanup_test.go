@@ -211,7 +211,7 @@ func TestReqParallelDownloadHTTP3Cleanup(t *testing.T) {
 		temporary := t.TempDir()
 		result := make(chan error, 1)
 		go func() {
-			result <- client.NewParallelDownload(url+"/entity").SetTempRootDir(temporary).
+			result <- client.NewParallelDownload(url + "/entity").SetTempRootDir(temporary).
 				SetConcurrency(3).SetSegmentSize(17).SetOutput(output).Do(ctx)
 		}()
 		head := parallelH3CleanupWait(t, ctx, headSeen, "actual HEAD")
@@ -270,7 +270,7 @@ func TestReqParallelDownloadHTTP3Cleanup(t *testing.T) {
 			t.Fatal("G1748_H3_RESOURCE_ASSERT: downloader closed caller's original connection")
 		default:
 		}
-		probe := client.Get(url+"/caller-check").DisableAutoReadResponse().Do(ctx)
+		probe := client.Get(url + "/caller-check").DisableAutoReadResponse().Do(ctx)
 		if probe.Response != nil && probe.Body != nil {
 			t.Cleanup(func() { _ = probe.Body.Close() })
 		}

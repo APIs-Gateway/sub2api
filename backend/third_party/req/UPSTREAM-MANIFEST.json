@@ -869,8 +869,8 @@
     },
     {
       "path": "parallel_download.go",
-      "sha256": "98d462f933c7878caaa0c6ae3bcc5792209ab6cd055e8f49e2451f7a426459c4",
-      "bytes": 13911,
+      "sha256": "100a432ad16b765f1d9b33090d61ec8eb13f4f9a0183b0313e8ec94313a4fe61",
+      "bytes": 13923,
       "sources": [
         "local-required-parallel-download-contract-repair-after-ci39529607848-and-upstream417-child1748"
       ]
@@ -1209,6 +1209,44 @@
         "runtimeStatus": "RAW only; no local/87 formatting/build/test/checker; all actual execution pending remoteCI."
       }
     ],
-    "newHTTP3OwnedResourceLeaves": 1
+    "newHTTP3OwnedResourceLeaves": 1,
+    "remoteFormat": {
+      "run": 39742212554,
+      "workflowController": "2ea71e8926bb8ac7dbb970f5dffdb87352d101b4",
+      "workflowSource": "b9f7ec3298ef4536164a32c533f475045df0e310",
+      "workflowSourceTree": "a0835c8e5ee2c15da09eca01e2106897f91db418",
+      "GoVersion": "go version go1.26.10 linux/amd64",
+      "artifact": 12410185722,
+      "artifactBytes": 30519812,
+      "artifactSHA256": "96d3f7eaba5cb8b3209324ba3bf75fd369ac01fcdf5f5e65b93439e86ae086ce",
+      "actualOperationCount": 28,
+      "actualRawDiffExitCounts": {
+        "1": 3,
+        "0": 4
+      },
+      "other21ActualOperations": "All exit0, empty stdout/stderr",
+      "authorActualReviewSHA256": "7d3f0c814948fded9bbfb51199f7a9a21323dabf7085b11da5603a40b2d15f50",
+      "independentRootActualReviewSHA256": "76ba8861f5615a5d135b8022bd1fcb78ed9baa1801c74a48d4199123400bb37e",
+      "importedProductionBranchFiles": [
+        {
+          "path": "backend/third_party/req/parallel_download.go",
+          "rawBytes": 13911,
+          "rawSHA256": "98d462f933c7878caaa0c6ae3bcc5792209ab6cd055e8f49e2451f7a426459c4",
+          "formattedBytes": 13923,
+          "formattedSHA256": "100a432ad16b765f1d9b33090d61ec8eb13f4f9a0183b0313e8ec94313a4fe61",
+          "import": "Exact actual artifact output bytes; no local formatter run"
+        },
+        {
+          "path": "backend/third_party/req/parallel_download_http3_cleanup_test.go",
+          "rawBytes": 12558,
+          "rawSHA256": "66d637147b24a2664d0fe87c298ba623ee6db060e21043382b8d497d9fd473d7",
+          "formattedBytes": 12562,
+          "formattedSHA256": "4c667d0cd82ffc4c1a191bb8eceacc49fc41fad2e075118e2aa52ff6ec495cd6",
+          "import": "Exact actual artifact output bytes; no local formatter run"
+        }
+      ],
+      "helperOwnership": "download_wire_peer_test.go formatted output is imported separately by root on observer infrastructure branch; not changed in this production commit.",
+      "scope": "Actual whitespace-only formatting accepted; no compiler/test/race/profile/coverage/Windows runtime PASS or PR approval."
+    }
   }
 }
