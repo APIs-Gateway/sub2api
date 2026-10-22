@@ -100,9 +100,12 @@ def verify_named(backend, evidence, filename):
     require(sum(expected[kind + "Count"] for kind in baseline_kinds) == 401,
             "Retain every original401 mandatory leaf")
     require(expected["clientBehaviorCount"] == 44 and expected["digestOwnershipCount"] == 23 and
-            expected["totalNamedLeaves"] == 468,
-            "Retain reviewed F44 and all23 new Digest ownership leaves with original401")
-    kinds = baseline_kinds + ("clientBehavior", "digestOwnership")
+            sum(expected[kind + "Count"] for kind in baseline_kinds + ("clientBehavior", "digestOwnership")) == 468,
+            "Retain reviewed F44 and all23 Digest ownership leaves with original401")
+    require(expected["downloadContractCount"] == 32 and expected["parallelDownloadFallbackCount"] == 1 and
+            expected["totalNamedLeaves"] == 501,
+            "Retain all468 prior leaves, frozen G32 and the real full-GET fallback control")
+    kinds = baseline_kinds + ("clientBehavior", "digestOwnership", "downloadContract", "parallelDownloadFallback")
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
     for kind in kinds:
@@ -121,7 +124,8 @@ def verify_named(backend, evidence, filename):
                 "TestReqHTTP3PublicTLS_", "TestReqHTTP3TLSControl_", "TestReqHTTP3Decompression_",
                 "TestReqHTTP3DeflateClose_", "TestReqDeflateClose_", "TestReqHTTP2FrameContract_", "TestReqHTTP1Transfer_",
                 "TestReqHTTP2TransportContract_", "TestReqMetaCharset_", "TestReqClientDigest_", "TestReqClientRedirect_",
-                "TestReqClientCookie_", "TestReqClientResponse_", "TestReqDigestOwnership_")
+                "TestReqClientCookie_", "TestReqClientResponse_", "TestReqDigestOwnership_",
+                "TestReqDownloadContract", "TestReqParallelDownloadContract", "TestReqParallelDownloadFallback")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")
@@ -242,17 +246,17 @@ def main():
         require(adaptations == {"internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
                                 "internal/dump/dump.go", "request.go", "response.go", "trace.go",
                                 "internal/http3/transport.go", "internal/http3/stream.go",
-                                "internal/compress/deflate_reader.go", "decode.go", "digest.go"},
+                                "internal/compress/deflate_reader.go", "decode.go", "digest.go", "parallel_download.go"},
                 "Unexpected or missing production adaptation")
-        require(len(manifest["adaptedCandidateFiles"]) == 12 and
+        require(len(manifest["adaptedCandidateFiles"]) == 13 and
                 {v["path"] for v in manifest["adaptedCandidateFiles"]} == adaptations,
                 "Incomplete adapted source hash inventory")
         production = {v["path"] for v in manifest["originalFiles"]
                       if v["path"].endswith(".go") and not v["path"].endswith("_test.go")}
         require(len(production) == 89 and adaptations <= production,
-                "Retain all89 original production Go files and exactly12 declared adaptations")
-        require(manifest["originalUnmodifiedFileCount"] == 120,
-                "Retain exactly120 unchanged originals after12 declared production adaptations")
+                "Retain all89 original production Go files and exactly13 declared adaptations")
+        require(manifest["originalUnmodifiedFileCount"] == 119,
+                "Retain exactly119 unchanged originals after13 declared production adaptations")
         for item in manifest["originalFiles"]:
             if item["path"] not in adaptations:
                 data = (controlled / item["path"]).read_bytes()
@@ -362,7 +366,7 @@ def coverage(backend, evidence):
     result = []
     adapted = ("internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
                "internal/dump/dump.go", "request.go", "response.go", "trace.go", "internal/http3/transport.go",
-               "internal/http3/stream.go", "internal/compress/deflate_reader.go", "decode.go", "digest.go")
+               "internal/http3/stream.go", "internal/compress/deflate_reader.go", "decode.go", "digest.go", "parallel_download.go")
     for relative in adapted:
         old = (evidence / "original" / relative).read_text().splitlines()
         new = (backend / "third_party/req" / relative).read_text().splitlines()
