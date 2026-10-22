@@ -268,7 +268,7 @@
   "evidenceInfrastructureRevision": {
     "scope": "Only optional child evidence argv/environment/metadata and exact full Git input validation; business assertions and timeouts unchanged.",
     "baseObserver": "abc37a6b2b8c5d05be26168b9ee9ad8d1d95d784",
-    "normalProductionComposition": "a79f937647c43e28ab940f25a5debbcc5f215b8b",
+    "normalProductionComposition": "9b084db1f4e5fea65d36d2fb3fb301cec93e5129",
     "previousHelperSeal": {
       "bytes": 21337,
       "sha256": "d2db5175252c1844778c0c2ca941f9bcbb22380407484777a08bb37ce881b11a"
