@@ -108,3 +108,21 @@ RAW source `425e03baf1067487842eddab9030ba3e72c48999` remains in Git history. Co
 Three raw `-d` commands actually exited1 with nonempty formatting diffs; the Windows file exited0 with no diff. All four `-w` and post-format `-d/-l` commands exited0 with empty stdout/stderr. Root review `3a7f2089783236b934b6986081f7a5738715065a1594237c19f6ce6a96c10c48` and independent review `dbc424b950ae44cf60e99f4f6f4f86b4a800309621561863d2efb7c909473f6d` accepted the actual evidence; the full diff changes only import ordering and whitespace. Four artifact output files are imported byte-for-byte; Windows is unchanged. Historical RAW seals are in provenance alongside the current formatted seals. No local or87 formatter/project execution occurred.
 
 Formatter SUCCESS proves only those formatting operations. Inherited RAW CI39356243844 failed its unchanged controlled-module exact132+declared-owned input preflight before req/G tests; subsequent backend tests were skipped. No runtime PASS or G business RED is inferred, and the input gate is preserved. Security39356243763 succeeded separately. All32+1 names, original132/14/89 sources, mandatory401 inventory, F files and85% policies remain unchanged. This formatted source awaits independent source review and later explicit remote compiler/test authorization; no new application push is authorized by this import.
+
+
+## Child coverage metadata and Windows full-input infrastructure (pending remote review)
+
+The original abc37 observation and its nine real G failures remain preserved.
+Current optional child evidence prepares fresh covdata, passes explicit
+test.gocoverdir, replaces child GOCOVERDIR, and records actual auxiliary inputs
+before/after. Complete selected definitions include unlinked zero blocks; no
+parent/other-child runtime counters are copied or merged. Business assertions,
+scenario names, request behavior and original timeouts remain unchanged.
+
+The inputs gate batches HEAD-tree/index metadata, still hashing every tracked raw
+blob and SHA256 with untracked/ignored and source-after checks. The preflight
+watchdog remains300s. Remote controls use real Go/Git processes; corrupted copies
+are labelled negative-control data. No local/87 formatter, syntax/AST, checker,
+test or build ran. This raw helper awaits remote formatting and double source/
+actual review; historical formatting does not validate these changed bytes.
+Formal aggregate85 gates remain HOLD.

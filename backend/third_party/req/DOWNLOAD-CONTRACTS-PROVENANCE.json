@@ -3,12 +3,12 @@
   "component": "G public HTTP download and explicit caller-managed continuation contracts",
   "baseHead": "2d6bf53dc3231dc4ccfce48211c43942ed18d656",
   "createdAt": "2026-10-19T15:06:27.795084+00:00",
-  "authoringStatus": "Remote Go1.26.9 formatter-produced bytes imported after root plus independent actual-artifact review; no G compilation/test/runtime PASS claimed",
+  "authoringStatus": "Historical G7 remote formatter evidence is preserved below; current child auxiliary-metadata infrastructure is raw source pending remote formatting and exact-head controls. Original G9 actual failures remain failures; no new runtime PASS claimed.",
   "package": "req_test (external package; exported APIs only)",
   "files": {
     "download_wire_peer_test.go": {
-      "bytes": 21337,
-      "sha256": "d2db5175252c1844778c0c2ca941f9bcbb22380407484777a08bb37ce881b11a"
+      "bytes": 27770,
+      "sha256": "4e275c6368babd9617bcd698146ce4eadcf98622cf6bf5d6ad10dcfcf926bfe7"
     },
     "download_contract_test.go": {
       "bytes": 7628,
@@ -196,17 +196,21 @@
     "default": "Unset keeps original subprocess invocation/evidence behavior; no profile/evidence files added",
     "root": "Existing absolute real external directory; CI must verify task ownership, source/binary/MVS/run binding and later cleanup",
     "requiresCoverageMode": "atomic",
-    "childArgument": "Standard -test.coverprofile=<fresh unique subdirectory>/child.atomic.out on same already-instrumented test binary",
+    "childArgument": "Standard -test.coverprofile=<fresh child>/child.atomic.out plus -test.gocoverdir=<fresh child>/covdata; same already-instrumented binary",
     "files": [
       "child.atomic.out (Go testing runtime-produced bytes; never rewritten)",
       "child.stdout-stderr.txt (exact CombinedOutput bytes)",
-      "process.json (actual startup/exit/watchdog/identity/runtime markers/hash/size/status)"
+      "process.json (actual startup/exit/watchdog/identity/runtime markers/hash/size/status)",
+      "aux-metadata.json (actual parent/child directory binding and auxiliary collection/fragment seals)",
+      "covdata/ (Go runtime metadata/counters plus exact copied metafiles.txt; no parent/other-child counters)"
     ],
     "counterHandling": "No fabricated hits, path mapping, profile rewriting or merging. Existing parent/named/all profiles remain untouched",
     "candidatePolicy": "Only actual normal zero exit, exact execution/completion markers, no runtime failure markers and readable nonempty atomic profile may be a candidate for independent integrity review, never an attested coverage PASS",
     "failedPolicy": "Nonzero, interrupted, watchdog, runtime/race/fixture/timeout or invalid/missing profile is forensic material only, never passing coverage evidence",
     "preservation": "CombinedOutput/actual process error and watchdog state logged before evidence write failures; child process fully exited before profile read; parent cleans scratch only after exit",
-    "pendingRemoteEvidence": true
+    "pendingRemoteEvidence": true,
+    "auxiliaryMetadata": "Sealed metafiles.txt and ordered actual fragment hashes; child uses same original read-only references; observer archives fragment bytes before/after. Parent runtime counter files never copied.",
+    "childEnvironment": "Replace GOCOVERDIR with same fresh child covdata; record actual command environment value; default unset evidence behavior remains unchanged."
   },
   "remoteFormatterHistory": [
     {
@@ -258,7 +262,23 @@
     "rootAuthorization": "Import exactly4 artifact formatted bytes and update provenance/review only, then freeze for dual review; no push or execution",
     "originalCaseNamesUnchanged": true,
     "sourceAndCoverageInvariantsUnchanged": true,
-    "currentSeals": "files map contains imported formatter output seals; raw historical seals retained in remoteFormatterHistory",
+    "currentSeals": "files contains current raw helper seal; original formatter-produced historical seals retained in remoteFormatterHistory and previousHelperSeal; new helper is not covered by old formatter artifact",
     "pending": "Dual formatted-source review; explicit later CI/source integration authorization"
+  },
+  "evidenceInfrastructureRevision": {
+    "scope": "Only optional child evidence argv/environment/metadata and exact full Git input validation; business assertions and timeouts unchanged.",
+    "baseObserver": "abc37a6b2b8c5d05be26168b9ee9ad8d1d95d784",
+    "normalProductionComposition": "a79f937647c43e28ab940f25a5debbcc5f215b8b",
+    "previousHelperSeal": {
+      "bytes": 21337,
+      "sha256": "d2db5175252c1844778c0c2ca941f9bcbb22380407484777a08bb37ce881b11a"
+    },
+    "currentRawHelperSeal": {
+      "bytes": 27770,
+      "sha256": "4e275c6368babd9617bcd698146ce4eadcf98622cf6bf5d6ad10dcfcf926bfe7"
+    },
+    "officialCoverageSources": "Go1.26.9 commit2ae494ef9fb90e0da0073c31800ba38870249994; decisive four files byteexact at Go1.26.10 commit4e8c85f5319d999bfd7617fdc191631e5634e3c5",
+    "sameDefinitionPolicy": "Each child owns fresh covdata; exact parent auxiliary metadata bytes/ordered fragment hashes, explicit -test.gocoverdir and GOCOVERDIR; no shared counters, missing-zero exemptions or counter merging.",
+    "status": "Not executed or formatted locally/on87. All executable controls and source formatting require later remote CI authorization."
   }
 }
