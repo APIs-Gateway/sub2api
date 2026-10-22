@@ -18,9 +18,14 @@ import tarfile
 import traceback
 import uuid
 
-BASE = "2d6bf53dc3231dc4ccfce48211c43942ed18d656"
-SOURCE = "aa656edd6f2aed8c595368ee802516fa571e317d"
-TREE = "ae5ad3301926ca2681a7ddc4e1b875838426ce74"
+BASE = "673c3fafa9ff9c4c32a6adbd8cd5f595c25f0c63"
+SOURCE = "b9f7ec3298ef4536164a32c533f475045df0e310"
+TREE = "a0835c8e5ee2c15da09eca01e2106897f91db418"
+PRODUCTION = "9b084db1f4e5fea65d36d2fb3fb301cec93e5129"
+INFRA_PATHS = {".github/g-download-observation/observe.py", ".github/g-download-observation/controls.py",
+               ".github/g-download-observation/metadata_control_test.go.txt", ".github/workflows/g-download-observe.yml",
+               "backend/tools/req-http2-security-evidence.py", "backend/third_party/req/download_wire_peer_test.go",
+               "backend/third_party/req/DOWNLOAD-CONTRACTS-PROVENANCE.json", "backend/third_party/req/DOWNLOAD-CONTRACTS-REVIEW.md"}
 MODULE = "github.com/imroc/req/v3"
 G_FILES = {
     "DOWNLOAD-CONTRACTS-LICENSE", "DOWNLOAD-CONTRACTS-PROVENANCE.json",
@@ -200,6 +205,8 @@ def exec_mode(argv, timeout=1000):
     binary = Path(argv[0]).resolve()
     identity = {"binary": str(binary),
                 "argv": argv, "phase": phase, "source": SOURCE,
+                "sourceScope": "Owned synthetic metadata control module projected from exact source helper" if phase == "metadata-controls" else "Actual frozen application test binary",
+                "actualWorkingDirectory": str(Path.cwd()),
                 "environment": {key: os.environ.get(key) for key in
                                 ("GOOS", "GOARCH", "CGO_ENABLED", "GOTOOLCHAIN", "GOWORK",
                                  "GOFLAGS", "GOMAXPROCS", "GORACE", "GOCOVERDIR", "SUB2API_G_DOWNLOAD_PROFILE_DIR", "TMP", "TEMP", "TMPDIR", "GOTMPDIR")}}
@@ -517,8 +524,13 @@ def actual_inventory(phase, source, windows):
     directory = E / "phases" / phase
     events = [json.loads(line) for line in (directory / "command/stdout").read_text(encoding="utf-8").splitlines()]
     inventory = json.loads((source / "backend/third_party/req/DOWNLOAD-CONTRACTS-PROVENANCE.json").read_text(encoding="utf-8"))["expectedParentCaseInventory"]
-    expected = set(inventory["linux"] + (inventory["windowsAdditional"] if windows else []))
-    assert len(expected) == (33 if windows else 32)
+    selected_inventory = json.loads((source / "backend/tools/req-http2-security-inventory.json").read_text(encoding="utf-8"))
+    assert set(inventory["linux"]) == set(selected_inventory["downloadContractLeaves"]) and len(inventory["linux"]) == 32
+    fallback = selected_inventory["parallelDownloadFallbackLeaves"]
+    cleanup = selected_inventory["parallelDownloadHTTP3CleanupLeaves"]
+    assert len(fallback) == len(cleanup) == 1
+    expected = set(inventory["linux"] + fallback + cleanup + (inventory["windowsAdditional"] if windows else []))
+    assert len(expected) == (35 if windows else 34)
     runs = collections.Counter((event.get("Package"), event.get("Test")) for event in events if event.get("Action") == "run")
     passes = collections.Counter((event.get("Package"), event.get("Test")) for event in events if event.get("Action") == "pass" and event.get("Test"))
     packages = objects((E / "commands/packages/stdout").read_bytes())
@@ -527,12 +539,15 @@ def actual_inventory(phase, source, windows):
     package_passes = collections.Counter(event.get("Package") for event in events if event.get("Action") == "pass" and not event.get("Test"))
     g_events = {name: {"run": runs[(MODULE, name)], "pass": passes[(MODULE, name)]} for name in sorted(expected)}
     unexpected = sorted(name for package, name in runs if package == MODULE and name and name.startswith(("TestReqDownload", "TestReqParallelDownload")) and name not in expected and not any(other.startswith(name + "/") for other in expected))
-    old = json.loads((source / "backend/tools/req-http2-security-inventory.json").read_text(encoding="utf-8"))
+    old = selected_inventory
     original = {(old[key[:-6] + "Package"], leaf) for key, values in old.items() if key.endswith("Leaves") and isinstance(values, list) and key[:-6] + "Package" in old for leaf in values}
-    assert len(original) == old["totalNamedLeaves"] == 401
+    assert len(original) == old["totalNamedLeaves"] == 502
+    baseline_inventory = json.loads((WORKSPACE / "baseline/backend/tools/req-http2-security-inventory.json").read_text(encoding="utf-8"))
+    retained = {(baseline_inventory[key[:-6] + "Package"], leaf) for key, values in baseline_inventory.items() if key.endswith("Leaves") and isinstance(values, list) and key[:-6] + "Package" in baseline_inventory for leaf in values}
+    assert len(retained) == baseline_inventory["totalNamedLeaves"] == 468 and retained < original
     old_events = [{"package": package, "test": name, "run": runs[(package, name)], "pass": passes[(package, name)]} for package, name in sorted(original)] if phase == "full" else []
     result = {"expectedGLeaves": len(expected), "gActual": g_events, "unexpectedGLeaves": unexpected,
-              "badEvents": bad, "original401Actual": old_events,
+              "badEvents": bad, "mandatory502Actual": old_events, "retainedBaselineLeaves": 468,
               "packageTerminals": [event for event in events if "Test" not in event and event.get("Action") in ("pass", "fail", "skip")],
               "classification": "Actual results; every failure remains failed, no accepted-RED list"}
     save(directory / "actual-inventory.json", result)
@@ -620,7 +635,7 @@ def observe(kind):
         version = capture(E / "commands/go-version", ["go", "version"], WORKSPACE)
         require_success(version)
         platform = "windows/amd64" if os.name == "nt" else "linux/amd64"
-        assert (E / "commands/go-version/stdout").read_text(encoding="utf-8").strip() == "go version go1.26.9 " + platform
+        assert (E / "commands/go-version/stdout").read_text(encoding="utf-8").strip() == "go version go1.26.10 " + platform
         require_success(capture(E / "commands/go-env", ["go", "env", "-json", "GOOS", "GOARCH", "CGO_ENABLED", "CC", "GOTOOLCHAIN", "GOWORK", "GOFLAGS"], WORKSPACE))
         actual_env = json.loads((E / "commands/go-env/stdout").read_text(encoding="utf-8"))
         assert actual_env["GOOS"] + "/" + actual_env["GOARCH"] == platform
@@ -639,21 +654,21 @@ def observe(kind):
         else:
             source, baseline = WORKSPACE / "source", WORKSPACE / "baseline"
             assert before["candidate"]["tree"] == TREE
-            original = {item["path"]: item for item in before["baseline"]["files"]}
             current = {item["path"]: item for item in before["candidate"]["files"]}
-            manifest_path = "backend/third_party/req/UPSTREAM-MANIFEST.json"
-            checker_path = "backend/tools/req-http2-security-evidence.py"
-            assert all(current.get(path) == item for path, item in original.items() if path not in (manifest_path, checker_path))
-            original_checker = (baseline / checker_path).read_bytes()
-            assert original_checker.count(b"selected.add(str(Path(relative) / name))") == 1
-            assert (source / checker_path).read_bytes() == original_checker.replace(b"selected.add(str(Path(relative) / name))", b"selected.add((Path(relative) / name).as_posix())")
-            assert set(current) - set(original) == {"backend/third_party/req/" + name for name in G_FILES}
-            old = json.loads((baseline / manifest_path).read_text(encoding="utf-8"))
-            new = json.loads((source / manifest_path).read_text(encoding="utf-8"))
-            assert new["newOwnedFiles"][:len(old["newOwnedFiles"])] == old["newOwnedFiles"]
-            assert set(new["newOwnedFiles"][len(old["newOwnedFiles"]):]) == G_FILES
-            new["newOwnedFiles"] = old["newOwnedFiles"]
-            assert new == old
+            anchor = {}
+            for row in git(source, "ls-tree", "--full-tree", "-r", "-z", PRODUCTION).split(b"\0"):
+                if row:
+                    header, name = row.split(b"\t", 1)
+                    mode, kind, blob = header.decode().split()
+                    assert kind == "blob"
+                    anchor[os.fsdecode(name)] = (mode, blob)
+            assert not set(anchor) - set(current), "Infrastructure omitted production inputs"
+            assert set(current) - set(anchor) == {name for name in INFRA_PATHS if name.startswith(".github/")}
+            assert all((current[path]["mode"], current[path]["blob"]) == value for path, value in anchor.items() if path not in INFRA_PATHS), "Infrastructure altered production/business inputs"
+            assert subprocess.run(["git", "-C", str(source), "merge-base", "--is-ancestor", PRODUCTION, SOURCE]).returncode == 0
+            provenance = json.loads((source / "backend/third_party/req/DOWNLOAD-CONTRACTS-PROVENANCE.json").read_text(encoding="utf-8"))
+            helper = (source / "backend/third_party/req/download_wire_peer_test.go").read_bytes()
+            assert provenance["files"]["download_wire_peer_test.go"] == {"bytes": len(helper), "sha256": sha(helper)}
             checker = source / "backend/tools/req-http2-security-evidence.py"
             preflight = E / "preflight"
             preflight.mkdir()
@@ -664,7 +679,10 @@ def observe(kind):
             shutil.copyfile(E / "commands/candidate-modules/stdout", preflight / "modules.json")
             shutil.copyfile(E / "commands/packages/stdout", preflight / "packages.json")
             require_success(capture(E / "commands/existing-packages-checker", [sys.executable, "-B", str(checker), "packages", str(source / "backend"), str(preflight)], source / "backend"))
+            controls = Path(__file__).with_name("controls.py")
+            require_success(capture(E / "commands/integrity-controls", [sys.executable, "-B", str(controls), str(source)], WORKSPACE, timeout=1000))
             selector = "^(TestReqDownloadContract|TestReqDownloadContractCancellation|TestReqParallelDownloadContract"
+            selector += "|TestReqParallelDownloadFallback|TestReqParallelDownloadHTTP3Cleanup"
             selector += "|TestReqParallelDownloadWindowsClose)$" if os.name == "nt" else ")$"
             wrapper = Path(__file__).resolve()
             # cmd/go's quoted.Split accepts quoted argv items; no shell expansion.
@@ -698,7 +716,7 @@ def observe(kind):
                 assert before[label] == after
             except Exception:
                 report["errors"].append({"check": label + "-after-freeze", "error": traceback.format_exc()})
-        report["policy"] = "Every actual failure fails this job; no accepted-RED list or profile counter merge. Baseline401 and platform jobs remain independent obligations."
+        report["policy"] = "Every actual failure fails this job; no accepted-RED list or profile counter merge. Exact673 retained468 baseline, original401 within it, and platform jobs remain independent obligations. Child profiles never contribute counters to the original four profiles or formal13-adapt coverage gates."
         save(E / "actual-observation.json", report)
     return 1 if report["errors"] else 0
 
