@@ -706,6 +706,9 @@
     ],
     "digest.go": [
       "local-required-common-digest-ownership-after-ci39355019380-verified-five-reds-child1743"
+    ],
+    "parallel_download.go": [
+      "local-required-parallel-download-contract-repair-after-ci39529607848-and-upstream417-child1748"
     ]
   },
   "newOwnedFiles": [
@@ -756,11 +759,13 @@
     "download_contract_test.go",
     "download_wire_peer_test.go",
     "parallel_download_contract_test.go",
-    "parallel_download_contract_windows_test.go"
+    "parallel_download_contract_windows_test.go",
+    "parallel_download_fallback_test.go",
+    "PARALLEL-DOWNLOAD-REPAIR.md"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "Retain original401 and reviewed F44; add23 actual non-idempotent Digest ownership regressions=468 mandatory named/all leaves. NEW adds digest.go as12th adaptation/120 unchanged originals, preserving original132/89production/14tests/12wildcard selection and prior11 adapted source hashes. Raw atomic path-only profiles and all12 per-file added-block85 remain required along with unchanged original Codecov85 and supplementary complete-Git Go85. No execution or approval claimed.",
+  "validation": "Retain original401+reviewed F44+Digest23=468 mandatory leaves, frozen G32 and one true full-GET fallback control=501 Linux named/all leaves; Windows G33 remains independently required. Child1748 adds parallel_download.go as13th adaptation/119 unchanged originals, preserving original132/89production/14tests/12wildcard selection and all prior12 adapted source hashes. Raw atomic profiles, all13 per-file added-block85, original Codecov85 and supplementary complete-Git Go85 remain required. No executable validation or approval claimed.",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -860,10 +865,18 @@
       "sources": [
         "local-required-common-digest-ownership-after-ci39355019380-verified-five-reds-child1743"
       ]
+    },
+    {
+      "path": "parallel_download.go",
+      "sha256": "4e33868f07973a9a10b330ab84b953a39e9e421b975882a96d72c7d74d58ff6d",
+      "bytes": 13546,
+      "sources": [
+        "local-required-parallel-download-contract-repair-after-ci39529607848-and-upstream417-child1748"
+      ]
     }
   ],
   "adaptedCandidateStatus": "Raw NEW CommonDigestAuth ownership correction under child1743 after complete independently reviewed five-red diagnostic.23 new edge-case OLD/NEW evidence and remote formatting/build/race/all85 gates NOTRUN; no approval.",
-  "originalUnmodifiedFileCount": 120,
+  "originalUnmodifiedFileCount": 119,
   "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
   "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227",
   "http3ContractTestProvenance": {
@@ -1134,5 +1147,56 @@
     "oldTestSourceHead": "7b0d92fb4c6bd52a62218d505130944163b73464",
     "adaptationsAtThisNewSource": 12,
     "unchangedOriginalsAtThisNewSource": 120
+  },
+  "parallelDownload1748": {
+    "childIssue": "https://github.com/APIs-Gateway/sub2api/issues/1748",
+    "sharedPR": 1712,
+    "permanentTrackingIssue": 291,
+    "upstreamReports": [
+      "https://github.com/imroc/req/issues/417",
+      "https://github.com/imroc/req/issues/416"
+    ],
+    "officialUnfixedBlob": "cdff7288e9fdc71705fd9718d3f99819a547b58f",
+    "baseSourceHead": "673c3fafa9ff9c4c32a6adbd8cd5f595c25f0c63",
+    "frozenGSourceHead": "aa656edd6f2aed8c595368ee802516fa571e317d",
+    "compositionMerge": "544a265751fc6a4740b99e7aa0f3a5efc96148f8",
+    "actualObservation": {
+      "run": 39529607848,
+      "linuxNamed": {
+        "run": 32,
+        "pass": 23,
+        "fail": 9
+      },
+      "linuxFull": {
+        "run": 32,
+        "pass": 23,
+        "fail": 9
+      },
+      "baseline401": "PASS; independent immutable baseline evidence",
+      "windows": "inputs watchdog; G not executed",
+      "failureClassification": "Eight data/status assertions; ninth short-transfer/cancel completion timeout is separate"
+    },
+    "retainedPriorLeaves": 468,
+    "frozenLinuxGLeaves": 32,
+    "newFullGetControlLeaves": 1,
+    "totalRequiredLinuxLeaves": 501,
+    "windowsGLeaves": 33,
+    "productionAdaptations": 13,
+    "unchangedOriginalFiles": 119,
+    "newOwnedPaths": [
+      "parallel_download_fallback_test.go",
+      "PARALLEL-DOWNLOAD-REPAIR.md"
+    ],
+    "repair": "Invocation-owned queues/temp directory; cancel dispatch and join workers; validate HEAD/206 metadata and exact body; real single header-absent full-GET200 fallback only after partial cleanup; close owned files/bodies, retain caller writer ownership.",
+    "status": "RAW source candidate; remote formatting/build/race/actual named/full/profile/Windows and all85 gates NOTRUN; no approval.",
+    "sourceReviewCorrections": [
+      {
+        "after": "24f00d4fd6ceb4b6fc3a1edf5e6bb73495e44147",
+        "withdrawnFinding": "Header is already deep-cloned through embedded Transport.Clone; no redundant clone added.",
+        "confirmedFinding": "Client.Clone overrides public http.Client.Transport, bypassing custom/nil caller transport only during common-Range recovery.",
+        "repair": "Preserve installed custom/nil transport using typed-pointer identity comparison, never interface equality; close only owned cloned req transport. Same existing full-GET leaf now uses an actual noncomparable delegating caller wrapper with peer-observed auth header and ownership/traversal assertions.",
+        "runtimeStatus": "RAW static source only; remote format/build/test/race evidence pending."
+      }
+    ]
   }
 }

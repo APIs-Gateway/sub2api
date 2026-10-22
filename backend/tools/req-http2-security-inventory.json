@@ -103,7 +103,7 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 468,
+  "totalNamedLeaves": 501,
   "http1Package": "github.com/imroc/req/v3",
   "http1Leaves": [
     "TestReqHTTP1Lifecycle_ResponseBody/chunked_trailers_reuse",
@@ -549,5 +549,46 @@
     "TestReqDigestOwnership_ResponseBody/unsupported_digest_caller_owned",
     "TestReqDigestOwnership_ResponseBody/malformed_closed_once",
     "TestReqDigestOwnership_ResponseBody/replay_challenge_closed_once"
+  ],
+  "downloadContractPackage": "github.com/imroc/req/v3",
+  "downloadContractCount": 32,
+  "downloadContractLeaves": [
+    "TestReqDownloadContract/replace_existing_relative",
+    "TestReqDownloadContract/absolute_path",
+    "TestReqDownloadContract/empty_entity",
+    "TestReqDownloadContract/range_suffix_file",
+    "TestReqDownloadContract/if_range_200_visible",
+    "TestReqDownloadContract/range_416_visible",
+    "TestReqDownloadContract/short_body_error",
+    "TestReqDownloadContract/writer_error",
+    "TestReqDownloadContractCancellation",
+    "TestReqParallelDownloadContract/out_of_order",
+    "TestReqParallelDownloadContract/one_byte",
+    "TestReqParallelDownloadContract/exact_boundary",
+    "TestReqParallelDownloadContract/final_short_segment",
+    "TestReqParallelDownloadContract/segment_larger_than_entity",
+    "TestReqParallelDownloadContract/relative_existing_file",
+    "TestReqParallelDownloadContract/absolute_file",
+    "TestReqParallelDownloadContract/writer_error",
+    "TestReqParallelDownloadContract/head_zero_length",
+    "TestReqParallelDownloadContract/head_unknown_length",
+    "TestReqParallelDownloadContract/head_error_status",
+    "TestReqParallelDownloadContract/range_ignored_200",
+    "TestReqParallelDownloadContract/missing_content_range",
+    "TestReqParallelDownloadContract/wrong_range_start",
+    "TestReqParallelDownloadContract/reversed_range",
+    "TestReqParallelDownloadContract/invalid_range_total",
+    "TestReqParallelDownloadContract/unknown_range_unit",
+    "TestReqParallelDownloadContract/range_416",
+    "TestReqParallelDownloadContract/truncated_segment",
+    "TestReqParallelDownloadContract/empty_segment",
+    "TestReqParallelDownloadContract/cancel_head",
+    "TestReqParallelDownloadContract/cancel_segment",
+    "TestReqParallelDownloadContract/failure_during_dispatch"
+  ],
+  "parallelDownloadFallbackPackage": "github.com/imroc/req/v3",
+  "parallelDownloadFallbackCount": 1,
+  "parallelDownloadFallbackLeaves": [
+    "TestReqParallelDownloadFallback/ordinary_server_full_get"
   ]
 }
