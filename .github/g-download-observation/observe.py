@@ -45,6 +45,40 @@ def git(root, *arguments):
     return subprocess.check_output(["git", "-C", str(root), *arguments])
 
 
+def unique_object(pairs):
+    result = {}
+    for name, value in pairs:
+        assert name not in result, "Duplicate metadata JSON field"
+        result[name] = value
+    return result
+
+
+def seal_aux_metadata(coverdir, destination):
+    """Archive only actual cmd/go auxiliary inputs, never runtime counters."""
+    destination.mkdir(parents=True, exist_ok=False)
+    collection = coverdir / "metafiles.txt"
+    assert collection.is_file() and not collection.is_symlink()
+    raw = collection.read_bytes()
+    data = json.loads(raw, object_pairs_hook=unique_object)
+    assert set(data) == {"ImportPaths", "MetaFileFragments"}
+    imports, paths = data["ImportPaths"], data["MetaFileFragments"]
+    assert isinstance(imports, list) and isinstance(paths, list) and len(imports) == len(paths) > 0
+    assert all(isinstance(value, str) and value for value in imports + paths)
+    assert len(set(imports)) == len(imports) and len(set(paths)) == len(paths)
+    (destination / "metafiles.txt").write_bytes(raw)
+    fragments = []
+    for index, (package, name) in enumerate(zip(imports, paths)):
+        path = Path(name)
+        assert path.is_absolute() and path.is_file() and not path.is_symlink()
+        value = path.read_bytes()
+        assert value, "Empty auxiliary coverage fragment"
+        (destination / (str(index) + ".covmeta")).write_bytes(value)
+        fragments.append({"ImportPath": package, "Path": name, "Bytes": len(value), "SHA256": sha(value)})
+    record = {"coverdir": str(coverdir), "MetadataSHA256": sha(raw), "Fragments": fragments}
+    save(destination / "seal.json", record)
+    return record
+
+
 def capture(directory, argv, cwd, timeout=300, env=None, isolate=True):
     """Capture actual bytes/status, including launch and bounded termination."""
     directory.mkdir(parents=True, exist_ok=False)
@@ -168,13 +202,21 @@ def exec_mode(argv, timeout=1000):
                 "argv": argv, "phase": phase, "source": SOURCE,
                 "environment": {key: os.environ.get(key) for key in
                                 ("GOOS", "GOARCH", "CGO_ENABLED", "GOTOOLCHAIN", "GOWORK",
-                                 "GOFLAGS", "GOMAXPROCS", "GORACE", "SUB2API_G_DOWNLOAD_PROFILE_DIR", "TMP", "TEMP", "TMPDIR", "GOTMPDIR")}}
+                                 "GOFLAGS", "GOMAXPROCS", "GORACE", "GOCOVERDIR", "SUB2API_G_DOWNLOAD_PROFILE_DIR", "TMP", "TEMP", "TMPDIR", "GOTMPDIR")}}
     try:
         before = binary.read_bytes()
         identity.update({"beforeSHA256": sha(before), "bytes": len(before)})
     except OSError as error:
         identity["binaryReadError"] = repr(error)
     save(directory / "identity.json", identity)
+    aux_before = None
+    try:
+        coverdirs = [value.split("=", 1)[1] for value in argv[1:] if value.startswith("-test.gocoverdir=")]
+        assert len(coverdirs) == 1 and Path(coverdirs[0]).is_absolute(), "Actual parent coverage directory missing/duplicate"
+        aux_before = seal_aux_metadata(Path(coverdirs[0]), directory / "aux-before")
+        identity["auxBefore"] = aux_before
+    except Exception:
+        identity["auxBeforeError"] = traceback.format_exc()
     result = capture(directory / "actual", argv, Path.cwd(), timeout=timeout, isolate=False)
     # Preserve original bytes before metadata failures can affect the wrapper exit.
     sys.stdout.buffer.write((directory / "actual/stdout").read_bytes())
@@ -198,6 +240,10 @@ def exec_mode(argv, timeout=1000):
             identity["parentProfile"] = {"originalPath": str(profile), "sha256": sha(raw), "bytes": len(raw)}
         else:
             identity["parentProfileError"] = "No actual runtime-produced parent profile"
+        assert aux_before is not None, "Complete original auxiliary metadata was not sealed"
+        aux_after = seal_aux_metadata(Path(aux_before["coverdir"]), directory / "aux-after")
+        assert aux_before == aux_after, "Actual cmd/go auxiliary metadata changed during test execution"
+        identity["auxAfter"] = aux_after
         metadata_ok = "parentProfile" in identity
     except Exception:
         identity["metadataError"] = traceback.format_exc()
@@ -435,7 +481,7 @@ def exec_controls():
     assert not errors and all(item["passed"] for item in results), "Remote wrapper controls failed; candidate execution blocked"
 
 
-def profile_blocks(path, source):
+def profile_blocks(path, source, aggregate=False, module=MODULE, module_root=None):
     raw = path.read_bytes()
     lines = raw.decode().splitlines()
     assert lines and lines[0] == "mode: atomic" and len(lines) > 1
@@ -444,10 +490,10 @@ def profile_blocks(path, source):
         match = re.fullmatch(r"(.+):(\d+)\.(\d+),(\d+)\.(\d+) (\d+) (\d+)", line)
         assert match, "Malformed actual profile block"
         name = match[1]
-        assert name.startswith(MODULE + "/")
-        relative = name[len(MODULE) + 1:]
+        assert name.startswith(module + "/")
+        relative = name[len(module) + 1:]
         assert not Path(relative).is_absolute() and ".." not in Path(relative).parts
-        file = source / "backend/third_party/req" / relative
+        file = (module_root if module_root is not None else source / "backend/third_party/req") / relative
         assert file.is_file() and not file.is_symlink() and file.suffix == ".go"
         start_line, start_col, end_line, end_col, statements, count = map(int, match.groups()[1:])
         source_lines = file.read_bytes().splitlines()
@@ -457,8 +503,13 @@ def profile_blocks(path, source):
         assert end_col <= len(source_lines[end_line-1]) + 1
         assert (start_line, start_col) <= (end_line, end_col)
         key = (name, start_line, start_col, end_line, end_col)
-        assert key not in blocks
+        if key in blocks:
+            assert aggregate and blocks[key] == statements, "Repeated profile definition has incompatible statements or context"
         blocks[key] = statements
+    if aggregate:
+        save(Path(str(path) + ".definitions.json"), {"rawSHA256": sha(raw), "rawRows": len(lines) - 1,
+             "distinctDefinitions": len(blocks), "repeatedRows": len(lines) - 1 - len(blocks),
+             "policy": "All original rows/counts remain untouched. This map compares definitions only; no counter addition or child merge."})
     return blocks
 
 
@@ -529,8 +580,18 @@ def child_profiles(phase, source, windows):
                     assert item["profileBytes"] == len(raw) and item["profileSHA256"] == sha(raw)
                     record["profileSHA256"] = sha(raw)
                     record["blockInventoryMatchesActualSameBinaryParent"] = profile_blocks(profile, source) == parent_blocks
+                    aux = json.loads((path.parent / "aux-metadata.json").read_text(encoding="utf-8"), object_pairs_hook=unique_object)
+                    child_coverdir = path.parent / "covdata"
+                    assert Path(aux["ChildCoverDir"]).resolve() == child_coverdir.resolve()
+                    assert "-test.gocoverdir=" + str(child_coverdir) in item["arguments"]
+                    assert item["goCoverDirEnvironment"] == [str(child_coverdir)]
+                    assert aux["MetadataSHA256"] == identity["auxBefore"]["MetadataSHA256"]
+                    assert aux["Fragments"] == identity["auxBefore"]["Fragments"]
+                    assert (child_coverdir / "metafiles.txt").read_bytes() == (root / "aux-before/metafiles.txt").read_bytes()
+                    assert Path(aux["ParentCoverDir"]).resolve() == Path(identity["auxBefore"]["coverdir"]).resolve()
+                    record["auxiliaryMetadataMatchesSameBinaryParent"] = True
                 markers = (b"WARNING: DATA RACE", b"panic:", b"fatal error:", b"G_DOWNLOAD_ASSERT", b"G_DOWNLOAD_FILE_CLOSE_ASSERT", b"G_DOWNLOAD_COMPLETION_TIMEOUT", b"G_DOWNLOAD_UNEXPECTED_ERROR", b"G_DOWNLOAD_PRECONDITION", b"G_FIXTURE_", b"G_CHILD_WATCHDOG")
-                record["normalExitProfileCandidate"] = bool(item["started"] and item["exited"] and item["exitCode"] == 0 and not item["processError"] and not item["watchdog"] and executed and completed and not item["runtimeFailureMarkers"] and not any(marker in output for marker in markers) and item["coverageMode"] == "atomic" and record.get("blockInventoryMatchesActualSameBinaryParent"))
+                record["normalExitProfileCandidate"] = bool(item["started"] and item["exited"] and item["exitCode"] == 0 and not item["processError"] and not item["watchdog"] and executed and completed and not item["runtimeFailureMarkers"] and not any(marker in output for marker in markers) and item["coverageMode"] == "atomic" and record.get("blockInventoryMatchesActualSameBinaryParent") and record.get("auxiliaryMetadataMatchesSameBinaryParent"))
             except Exception:
                 record["integrityError"] = traceback.format_exc()
                 errors.append(record["integrityError"])
@@ -622,7 +683,7 @@ def observe(kind):
                 report["commands"].append(result)
                 for label, check in (("actual-command", lambda: require_success(result)),
                                      ("inventory", lambda: actual_inventory(phase, source, os.name == "nt")),
-                                     ("raw-parent-profile", lambda: profile_blocks(phase_dir / "parent.raw.out", source)),
+                                     ("raw-parent-profile", lambda: profile_blocks(phase_dir / "parent.raw.out", source, aggregate=True)),
                                      ("child-profiles", lambda: child_profiles(phase, source, os.name == "nt"))):
                     try:
                         check()

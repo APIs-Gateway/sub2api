@@ -1,0 +1,126 @@
+package metacontrol
+
+import (
+ "bytes"
+ "context"
+ "crypto/sha256"
+ "encoding/json"
+ "fmt"
+ "io"
+ "os"
+ "os/exec"
+ "path/filepath"
+ "strings"
+ "testing"
+ "time"
+ "example.org/gmeta/linked"
+)
+
+// G_AUX_IMPLEMENTATION
+
+type metaControlResult struct {
+ Name string
+ Arguments []string
+ CoverEnvironment string
+ PrepareError string
+ VerifyError string
+ ActualExit int
+ Watchdog bool
+ Output string
+ Profile string
+}
+
+func TestCoverageMetadataIsolation(t *testing.T) {
+ if os.Getenv("G_META_CHILD") == "1" {
+  t.Log("META_CHILD_EXECUTED")
+  if linked.ChildOnly() != 2 { t.Fatal("child branch") }
+  t.Log("META_CHILD_BODY_DONE")
+  return
+ }
+ if linked.ParentOnly() != 1 { t.Fatal("parent branch") }
+ outputRoot := os.Getenv("G_META_CONTROL_OUTPUT")
+ if outputRoot == "" { t.Fatal("control output missing") }
+ var results []metaControlResult
+ for _, name := range []string{"positive", "missing-aux", "changed-collection", "changed-fragment", "wrong-association", "preseed"} {
+  profileDir, err := os.MkdirTemp(outputRoot, name+"-")
+  if err != nil { t.Fatal(err) }
+  item := metaControlResult{Name:name, Profile:filepath.Join(profileDir,"child.atomic.out"), ActualExit:-999}
+  arguments := os.Args[1:]
+  if name == "changed-fragment" {
+   parent := ""
+   for _, arg := range arguments { if strings.HasPrefix(arg,"-test.gocoverdir=") { parent=strings.TrimPrefix(arg,"-test.gocoverdir=") } }
+   _, fragments, err := downloadGReadAuxCollection(parent)
+   if err != nil { t.Fatal(err) }
+   copied := filepath.Join(profileDir,"owned-parent-metadata")
+   if err := os.Mkdir(copied,0700);err != nil { t.Fatal(err) }
+   collection := struct{ImportPaths []string;MetaFileFragments []string}{}
+   for i,fragment := range fragments {
+    data,err := os.ReadFile(fragment.Path);if err != nil { t.Fatal(err) }
+    target:=filepath.Join(copied,fmt.Sprintf("fragment%d",i))
+    if err := os.WriteFile(target,data,0600);err != nil { t.Fatal(err) }
+    collection.ImportPaths=append(collection.ImportPaths,fragment.ImportPath)
+    collection.MetaFileFragments=append(collection.MetaFileFragments,target)
+   }
+   data,err := json.Marshal(collection);if err != nil { t.Fatal(err) }
+   if err := os.WriteFile(filepath.Join(copied,"metafiles.txt"),data,0600);err != nil { t.Fatal(err) }
+   arguments=[]string{"-test.gocoverdir="+copied}
+  }
+  if name == "preseed" {
+   dir:=filepath.Join(profileDir,"covdata")
+   if err:=os.Mkdir(dir,0700);err != nil {t.Fatal(err)}
+   if err:=os.WriteFile(filepath.Join(dir,"foreign-counters"),[]byte("not accepted coverage"),0600);err != nil {t.Fatal(err)}
+  }
+  coverDir,err := downloadGPrepareChildCover(arguments,profileDir)
+  if err != nil {
+   item.PrepareError=err.Error()
+   if name != "preseed" || !strings.Contains(err.Error(),"fresh child coverage directory required") {t.Fatal(err)}
+   results=append(results,item)
+   continue
+  }
+  if name == "preseed" { t.Fatal("preseeded coverage directory accepted") }
+  if name == "missing-aux" {
+   if err:=os.Remove(filepath.Join(coverDir,"metafiles.txt"));err != nil {t.Fatal(err)}
+  }
+  if name == "changed-collection" {
+   file:=filepath.Join(coverDir,"metafiles.txt");data,err:=os.ReadFile(file);if err != nil {t.Fatal(err)}
+   if err:=os.WriteFile(file,append(data,'\n'),0600);err != nil {t.Fatal(err)}
+  }
+  if name == "wrong-association" {
+   file:=filepath.Join(coverDir,"metafiles.txt");data,err:=os.ReadFile(file);if err != nil {t.Fatal(err)}
+   var collection struct{ImportPaths []string;MetaFileFragments []string}
+   if err:=json.Unmarshal(data,&collection);err != nil {t.Fatal(err)}
+   if len(collection.ImportPaths)<2 {t.Fatal("auxiliary association control needs2packages")}
+   collection.ImportPaths[0],collection.ImportPaths[1]=collection.ImportPaths[1],collection.ImportPaths[0]
+   data,err=json.Marshal(collection);if err != nil {t.Fatal(err)}
+   if err:=os.WriteFile(file,data,0600);err != nil {t.Fatal(err)}
+  }
+  if name == "changed-fragment" {
+   parent:=strings.TrimPrefix(arguments[0],"-test.gocoverdir=")
+   _,fragments,err:=downloadGReadAuxCollection(parent);if err != nil {t.Fatal(err)}
+   found:=false
+   for _,fragment:=range fragments {
+    if strings.HasSuffix(fragment.ImportPath,"/auxiliary") {
+     if err:=os.WriteFile(fragment.Path,[]byte{0},0600);err != nil {t.Fatal(err)}
+     found=true
+    }
+   }
+   if !found {t.Fatal("unlinked auxiliary metadata missing")}
+  }
+  ctx,cancel:=context.WithTimeout(context.Background(),15*time.Second)
+  cmd:=exec.CommandContext(ctx,os.Args[0],"-test.run=^TestCoverageMetadataIsolation$","-test.v","-test.timeout=12s","-test.coverprofile="+item.Profile,"-test.gocoverdir="+coverDir)
+  for _,value:=range os.Environ() {if !strings.HasPrefix(value,"GOCOVERDIR=") && !strings.HasPrefix(value,"G_META_CHILD=") {cmd.Env=append(cmd.Env,value)}}
+  cmd.Env=append(cmd.Env,"GOCOVERDIR="+coverDir,"G_META_CHILD=1")
+  item.Arguments=cmd.Args;item.CoverEnvironment=coverDir
+  output,err:=cmd.CombinedOutput();item.Output=string(output);item.Watchdog=ctx.Err()!=nil;cancel()
+  if cmd.ProcessState!=nil {item.ActualExit=cmd.ProcessState.ExitCode()}
+  if item.Watchdog || !strings.Contains(item.Output,"META_CHILD_EXECUTED") || !strings.Contains(item.Output,"META_CHILD_BODY_DONE") {t.Fatalf("actual child invalid %+v",item)}
+  if name == "changed-fragment" {
+   if err == nil || item.ActualExit == 0 {t.Fatal("corrupted metadata fragment escaped actual Go decoder")}
+  } else if err != nil || item.ActualExit != 0 {t.Fatalf("unexpected actual child failure %+v",item)}
+  if err:=downloadGVerifyChildCover(profileDir);err != nil {item.VerifyError=err.Error()}
+  if (name=="positive") != (item.VerifyError=="") {t.Fatalf("metadata integrity verdict differs %+v",item)}
+  results=append(results,item)
+ }
+ data,err:=json.MarshalIndent(results,"","  ");if err != nil {t.Fatal(err)}
+ if err:=os.WriteFile(filepath.Join(outputRoot,"results.json"),append(data,'\n'),0600);err != nil {t.Fatal(err)}
+}

@@ -8,6 +8,7 @@ import difflib
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -38,6 +39,72 @@ def objects(path):
 
 def report(evidence, name, value):
     (evidence / name).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def verify_full_git_inputs(repo, evidence):
+    """Verify every raw checkout byte with a bounded number of Git processes."""
+    calls = []
+
+    def git(*args):
+        calls.append(list(args))
+        return subprocess.check_output(["git", "-C", str(repo), *args])
+
+    def no_extra():
+        for options in (("--others", "--exclude-standard"),
+                        ("--others", "--ignored", "--exclude-standard")):
+            extra = git("ls-files", "-z", *options)
+            require(not extra, "Untracked/ignored input outside frozen HEAD: " + repr(extra))
+
+    require(not evidence.is_relative_to(repo), "Evidence must be outside the frozen checkout")
+    identity = git("rev-parse", "HEAD", "HEAD^{tree}")
+    head, tree = identity.decode().splitlines()
+    require(git("rev-parse", "--show-object-format").strip() == b"sha1", "Unsupported Git object format")
+    no_extra()
+    expected = {}
+    for row in git("ls-tree", "--full-tree", "-r", "-z", tree).split(b"\0"):
+        if not row:
+            continue
+        header, name = row.split(b"\t", 1)
+        mode, kind, blob = header.decode().split()
+        require(kind == "blob" and mode in ("100644", "100755", "120000"), "Unsupported frozen Git entry")
+        require(name not in expected, "Duplicate frozen Git path")
+        expected[name] = (mode, blob)
+    index = git("ls-files", "--stage", "-z")
+    indexed = {}
+    for row in index.split(b"\0"):
+        if not row:
+            continue
+        header, name = row.split(b"\t", 1)
+        mode, blob, stage = header.decode().split()
+        require(stage == "0" and name not in indexed, "Unmerged/duplicate Git index input")
+        indexed[name] = (mode, blob)
+    require(indexed == expected, "Git index does not match frozen HEAD tree")
+    proof, modes = [], []
+    for rawname in sorted(expected):
+        name = os.fsdecode(rawname)
+        require(not Path(name).is_absolute() and ".." not in Path(name).parts, "Unsafe frozen Git input path")
+        mode, blob = expected[rawname]
+        path = repo / name
+        if mode == "120000":
+            require(path.is_symlink(), "Frozen symlink type differs: " + name)
+            raw = os.fsencode(os.readlink(path))
+        else:
+            require(path.is_file() and not path.is_symlink(), "Frozen regular file type differs: " + name)
+            raw = path.read_bytes()
+            if os.name != "nt":
+                require(bool(path.stat().st_mode & 0o111) == (mode == "100755"), "Frozen executable mode differs: " + name)
+        actual = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+        require(actual == blob, "Frozen input differs: " + name)
+        proof.append({"path": name, "gitBlob": blob, "sha256": hashlib.sha256(raw).hexdigest()})
+        modes.append({"path": name, "mode": mode, "bytes": len(raw)})
+    require(any(v["path"].startswith("frontend/") for v in proof), "Full repository/frontend fixtures missing")
+    require(git("rev-parse", "HEAD", "HEAD^{tree}") == identity, "Frozen Git HEAD/tree changed during input read")
+    require(git("ls-files", "--stage", "-z") == index, "Git index changed during input read")
+    no_extra()
+    report(evidence, "full-repository-inputs.json", proof)
+    report(evidence, "full-repository-input-modes.json", {"head": head, "tree": tree, "files": modes,
+           "gitCalls": calls, "gitProcessCount": len(calls), "rawBytePolicy": "Raw blob bytes; no clean-filter or EOL exemption",
+           "modePolicy": "Actual regular/symlink kind; executable bits on POSIX, frozen Git index modes on Windows"})
 
 
 def events(path):
@@ -199,21 +266,7 @@ def main():
     operation, source, destination = sys.argv[1:]
     backend, evidence = Path(source).resolve(), Path(destination).resolve()
     if operation == "inputs":
-        require(not evidence.is_relative_to(backend), "Evidence must be outside the frozen checkout")
-        for options in (["--others", "--exclude-standard"],
-                        ["--others", "--ignored", "--exclude-standard"]):
-            extra = subprocess.check_output(["git", "ls-files", "-z"] + options, cwd=backend)
-            require(not extra, "Untracked/ignored input outside frozen HEAD: " + repr(extra))
-        paths = subprocess.check_output(["git", "ls-files", "-z"], cwd=backend).split(b"\0")
-        proof = []
-        for raw in filter(None, paths):
-            name = raw.decode()
-            blob = subprocess.check_output(["git", "rev-parse", "HEAD:" + name], cwd=backend).decode().strip()
-            actual = subprocess.check_output(["git", "hash-object", "--", name], cwd=backend).decode().strip()
-            require(actual == blob, "Frozen input differs: " + name)
-            proof.append({"path": name, "gitBlob": blob, "sha256": hashlib.sha256((backend / name).read_bytes()).hexdigest()})
-        require(any(v["path"].startswith("frontend/") for v in proof), "Full repository/frontend fixtures missing")
-        report(evidence, "full-repository-inputs.json", proof)
+        verify_full_git_inputs(backend, evidence)
     elif operation == "packages":
         modules = objects(evidence / "modules.json")
         req = [v for v in modules if v["Path"] == MODULE]

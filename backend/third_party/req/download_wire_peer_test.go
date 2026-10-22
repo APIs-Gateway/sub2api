@@ -239,6 +239,155 @@ func (downloadGFailedWriter) Write([]byte) (int, error) {
 	return 0, downloadGWriterError
 }
 
+// G_AUX_METADATA_HELPERS_BEGIN: copied byteexact into remote metadata controls.
+type downloadGAuxFragment struct {
+	ImportPath string
+	Path       string
+	Bytes      int
+	SHA256     string
+}
+
+type downloadGAuxMetadata struct {
+	ParentCoverDir string
+	ChildCoverDir  string
+	MetadataSHA256 string
+	Fragments     []downloadGAuxFragment
+}
+
+func downloadGReadAuxCollection(root string) ([]byte, []downloadGAuxFragment, error) {
+	metadata := filepath.Join(root, "metafiles.txt")
+	info, err := os.Lstat(metadata)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("auxiliary metadata is not a regular file: %s: %v", metadata, err)
+	}
+	raw, err := os.ReadFile(metadata)
+	if err != nil {
+		return nil, nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil, nil, fmt.Errorf("invalid auxiliary metadata object: %v", err)
+	}
+	var imports, paths []string
+	seenFields := make(map[string]bool)
+	for decoder.More() {
+		token, err = decoder.Token()
+		name, ok := token.(string)
+		if err != nil || !ok || seenFields[name] {
+			return nil, nil, fmt.Errorf("duplicate/invalid auxiliary metadata field: %v", token)
+		}
+		seenFields[name] = true
+		switch name {
+		case "ImportPaths":
+			err = decoder.Decode(&imports)
+		case "MetaFileFragments":
+			err = decoder.Decode(&paths)
+		default:
+			return nil, nil, fmt.Errorf("unknown auxiliary metadata field: %s", name)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if token, err = decoder.Token(); err != nil || token != json.Delim('}') {
+		return nil, nil, fmt.Errorf("invalid auxiliary metadata closing object: %v", err)
+	}
+	var extra interface{}
+	if err = decoder.Decode(&extra); err != io.EOF {
+		return nil, nil, fmt.Errorf("trailing auxiliary metadata value: %v", err)
+	}
+	if len(seenFields) != 2 || len(imports) == 0 || len(imports) != len(paths) {
+		return nil, nil, fmt.Errorf("incomplete auxiliary metadata collection")
+	}
+	seenImports, seenPaths := make(map[string]bool), make(map[string]bool)
+	fragments := make([]downloadGAuxFragment, 0, len(paths))
+	for index, path := range paths {
+		if imports[index] == "" || seenImports[imports[index]] || !filepath.IsAbs(path) || seenPaths[path] {
+			return nil, nil, fmt.Errorf("duplicate/invalid auxiliary metadata association: %s %s", imports[index], path)
+		}
+		seenImports[imports[index]], seenPaths[path] = true, true
+		info, err = os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			return nil, nil, fmt.Errorf("auxiliary fragment is not a regular file: %s: %v", path, err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || len(data) == 0 {
+			return nil, nil, fmt.Errorf("missing/empty auxiliary fragment: %s: %v", path, err)
+		}
+		fragments = append(fragments, downloadGAuxFragment{ImportPath: imports[index], Path: path,
+			Bytes: len(data), SHA256: fmt.Sprintf("%x", sha256.Sum256(data))})
+	}
+	return raw, fragments, nil
+}
+
+func downloadGPrepareChildCover(arguments []string, profileDir string) (string, error) {
+	parent, matches := "", 0
+	for index, argument := range arguments {
+		if strings.HasPrefix(argument, "-test.gocoverdir=") {
+			parent, matches = strings.TrimPrefix(argument, "-test.gocoverdir="), matches+1
+		} else if argument == "-test.gocoverdir" && index+1 < len(arguments) {
+			parent, matches = arguments[index+1], matches+1
+		}
+	}
+	if matches != 1 || !filepath.IsAbs(parent) {
+		return "", fmt.Errorf("exactly one absolute parent -test.gocoverdir is required")
+	}
+	raw, fragments, err := downloadGReadAuxCollection(parent)
+	if err != nil {
+		return "", err
+	}
+	child := filepath.Join(profileDir, "covdata")
+	if err := os.Mkdir(child, 0700); err != nil {
+		return "", fmt.Errorf("fresh child coverage directory required: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(child, "metafiles.txt"), raw, 0600); err != nil {
+		return "", err
+	}
+	record := downloadGAuxMetadata{ParentCoverDir: parent, ChildCoverDir: child,
+		MetadataSHA256: fmt.Sprintf("%x", sha256.Sum256(raw)), Fragments: fragments}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(profileDir, "aux-metadata.json"), append(data, '\n'), 0600); err != nil {
+		return "", err
+	}
+	return child, nil
+}
+
+func downloadGVerifyChildCover(profileDir string) error {
+	data, err := os.ReadFile(filepath.Join(profileDir, "aux-metadata.json"))
+	if err != nil {
+		return err
+	}
+	var before downloadGAuxMetadata
+	if err := json.Unmarshal(data, &before); err != nil {
+		return err
+	}
+	if before.ChildCoverDir != filepath.Join(profileDir, "covdata") || !filepath.IsAbs(before.ParentCoverDir) {
+		return fmt.Errorf("auxiliary metadata directory binding differs")
+	}
+	raw, after, err := downloadGReadAuxCollection(before.ParentCoverDir)
+	if err != nil {
+		return err
+	}
+	if fmt.Sprintf("%x", sha256.Sum256(raw)) != before.MetadataSHA256 || len(after) != len(before.Fragments) {
+		return fmt.Errorf("parent auxiliary metadata changed during child execution")
+	}
+	for index := range after {
+		if after[index] != before.Fragments[index] {
+			return fmt.Errorf("parent auxiliary fragment changed during child execution: %s", after[index].Path)
+		}
+	}
+	child, err := os.ReadFile(filepath.Join(before.ChildCoverDir, "metafiles.txt"))
+	if err != nil || !bytes.Equal(child, raw) {
+		return fmt.Errorf("child auxiliary metadata differs from parent: %v", err)
+	}
+	return nil
+}
+// G_AUX_METADATA_HELPERS_END
+
 // Existing ParallelDownload error paths can strand internal goroutines. Every
 // parallel scenario owns a child test process so those goroutines cannot pollute
 // another case. The watchdog is a separate failure, never passing/RED evidence.
@@ -268,6 +417,18 @@ func downloadGIsolated(t *testing.T, top, scenario string, body func(*testing.T)
 			t.Fatalf("G_FIXTURE_PROFILE: cannot prepare optional raw child evidence: %v", err)
 		}
 		cmd.Args = append(cmd.Args, "-test.coverprofile="+filepath.Join(profileDir, "child.atomic.out"))
+		coverDir, err := downloadGPrepareChildCover(os.Args[1:], profileDir)
+		if err != nil {
+			t.Fatalf("G_FIXTURE_AUX_METADATA: cannot preserve complete coverage definitions: %v", err)
+		}
+		cmd.Args = append(cmd.Args, "-test.gocoverdir="+coverDir)
+		filtered := make([]string, 0, len(cmd.Env)+1)
+		for _, item := range cmd.Env {
+			if !strings.EqualFold(strings.SplitN(item, "=", 2)[0], "GOCOVERDIR") {
+				filtered = append(filtered, item)
+			}
+		}
+		cmd.Env = append(filtered, "GOCOVERDIR="+coverDir)
 	}
 	output, err := cmd.CombinedOutput()
 	t.Logf("G_CHILD_ACTUAL scenario=%s exit=%v\n%s", scenario, err, output)
@@ -275,6 +436,9 @@ func downloadGIsolated(t *testing.T, top, scenario string, body func(*testing.T)
 		t.Logf("G_CHILD_EVIDENCE_STATE watchdog=%v contextError=%v processError=%v", ctx.Err() != nil, ctx.Err(), err)
 		if saveErr := downloadGSaveProfile(profileDir, t.Name(), top, scenario, cmd, output, err, ctx.Err() != nil); saveErr != nil {
 			t.Fatalf("G_FIXTURE_PROFILE: raw child output was printed above; evidence save/completeness failed: %v", saveErr)
+		}
+		if metadataErr := downloadGVerifyChildCover(profileDir); metadataErr != nil {
+			t.Fatalf("G_FIXTURE_AUX_METADATA: actual child output/status retained; metadata changed: %v", metadataErr)
 		}
 	}
 	if ctx.Err() != nil {
@@ -518,6 +682,7 @@ type downloadGProcessEvidence struct {
 	Top                    string   `json:"top"`
 	Scenario               string   `json:"scenario"`
 	Arguments              []string `json:"arguments"`
+	GoCoverDir             []string `json:"goCoverDirEnvironment"`
 	CoverageMode           string   `json:"coverageMode"`
 	Started                bool     `json:"started"`
 	Exited                 bool     `json:"exited"`
@@ -553,6 +718,12 @@ func downloadGSaveProfile(dir, parent, top, scenario string, cmd *exec.Cmd, outp
 		ProfilePath:    filepath.Join(dir, "child.atomic.out"),
 		Classification: "failed-test-forensics-only",
 		Limitation:     "Not a coverage or test PASS attestation. Exact source/binary/MVS binding and full profile integrity remain independent CI review responsibilities; counters are not merged here.",
+	}
+	for _, value := range cmd.Env {
+		parts := strings.SplitN(value, "=", 2)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "GOCOVERDIR") {
+			e.GoCoverDir = append(e.GoCoverDir, parts[1])
+		}
 	}
 	if cmd.ProcessState != nil {
 		e.Exited = cmd.ProcessState.Exited()
