@@ -45,7 +45,7 @@ jobs:
           cp tools/native-http2-wire-inventory.json "$WIRE_EVIDENCE/inventory.json"
           sha256sum tools/native-http2-wire-inventory.json > "$WIRE_EVIDENCE/inventory.sha256"
           go version | tee "$WIRE_EVIDENCE/go-version.txt"
-          go version | grep -q 'go1.26.9 '
+          go version | grep -Eq '^go version go1\.26\.10 [^ ]+$'
           set +e
           go test -p=1 -parallel=1 -tags=unit -race -count=1 -timeout=4m -json -run '^(TestEnableOpenAIHTTP2KeepAliveEnablesPingHealthCheck|TestEnableOpenAIHTTP2KeepAlive_PropagatesConfigureError|TestBuildUpstreamTransportOpenAIH2EnablesPingHealthCheck|TestBuildUpstreamTransportNonOpenAIH2IsNotEagerlyConfigured|TestBuildUpstreamTransportOpenAIH2WithHTTPProxyEnablesKeepAlive|TestUpstreamIPModeDirectTransportAndHTTP2|TestGetSharedReqClient_ForceHTTP2SeparatesCache|TestCreateGeminiReqClient_ForceHTTP2Disabled|TestProvideHTTPServerCompatibilityWire|TestIsRetryableCodexModelsManifestTransportError)$' ./internal/repository/ ./internal/server/ ./internal/service/ > "$WIRE_EVIDENCE/tests.json" 2> "$WIRE_EVIDENCE/tests.stderr"
           test_status=$?
@@ -125,7 +125,7 @@ jobs:
           test -z "$(git status --porcelain)"
           sha256sum go.mod go.sum > "$evidence/modules-before.sha256"
           go version | tee "$evidence/go-version.txt"
-          grep -Eq '^go version go1\.26\.9 linux/amd64$' "$evidence/go-version.txt"
+          grep -Eq '^go version go1\.26\.10 linux/amd64$' "$evidence/go-version.txt"
           go env CGO_ENABLED GOOS GOARCH GOTOOLCHAIN GOWORK GOFLAGS > "$evidence/go-env.txt"
           go list -json ./cmd/server > "$evidence/server-package.json"
           go list -json ./internal/web > "$evidence/web-package.json"
@@ -300,7 +300,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.9'
+          go version | grep -Eq '^go version go1\.26\.10 [^ ]+$'
       - name: Initialize complete Git coverage evidence path (PR only)
         if: github.event_name == 'pull_request'
         shell: bash
@@ -706,7 +706,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.9'
+          go version | grep -Eq '^go version go1\.26\.10 [^ ]+$'
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:

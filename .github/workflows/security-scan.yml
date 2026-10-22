@@ -12,18 +12,27 @@ permissions:
 jobs:
   backend-security:
     runs-on: ubuntu-latest
+    env:
+      EXPECTED_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
           check-latest: false
           cache-dependency-path: backend/go.sum
-      - name: Verify Go version
+      - name: Verify exact source and Go version
         run: |
-          go version | grep -q 'go1.26.9'
+          git rev-parse HEAD HEAD^{tree}
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_HEAD"
+          go_version="$(go version)"
+          printf '%s\n' "$go_version"
+          printf '%s\n' "$go_version" | grep -Eq '^go version go1\.26\.10 [^ ]+$'
       - name: Run govulncheck
         working-directory: backend
         run: |
@@ -32,8 +41,13 @@ jobs:
 
   frontend-security:
     runs-on: ubuntu-latest
+    env:
+      EXPECTED_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -47,12 +61,88 @@ jobs:
       - name: Install dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
+      - name: Real follow-redirects cross-origin header contracts (remote only)
+        env:
+          FOLLOW_REDIRECTS_EVIDENCE: ${{ runner.temp }}/follow-redirects-wire-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set +e
+          node frontend/tools/follow-redirects-wire.mjs > frontend/redirect-contracts.stdout 2> frontend/redirect-contracts.stderr
+          wire_status=$?
+          set -e
+          printf '%s\n' "$wire_status" > frontend/redirect-contracts.exit
+          cat frontend/redirect-contracts.stdout
+          cat frontend/redirect-contracts.stderr
+          test "$wire_status" -eq 0
+      - name: Preserve actual redirect wire observations and implementation bytes
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: follow-redirects-wire-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/follow-redirects-wire-${{ github.run_id }}-${{ github.run_attempt }}/
+            frontend/redirect-contracts.stdout
+            frontend/redirect-contracts.stderr
+            frontend/redirect-contracts.exit
+            frontend/tools/follow-redirects-wire.mjs
+          if-no-files-found: error
+          retention-days: 14
+      - name: Audit report and exception policy negative controls (remote only)
+        env:
+          AUDIT_CONTROL_REPORT: ${{ github.workspace }}/frontend/audit-controls.json
+        run: |
+          set +e
+          python3 -B tools/test_check_pnpm_audit_exceptions.py > frontend/audit-controls.stdout 2> frontend/audit-controls.stderr
+          control_status=$?
+          set -e
+          printf '%s\n' "$control_status" > frontend/audit-controls.exit
+          cat frontend/audit-controls.stdout
+          cat frontend/audit-controls.stderr
+          test "$control_status" -eq 0
       - name: Run pnpm audit
         working-directory: frontend
         run: |
-          pnpm audit --prod --audit-level=high --json > audit.json || true
+          git rev-parse HEAD > audit-head.txt
+          test "$(cat audit-head.txt)" = "$EXPECTED_SOURCE_HEAD"
+          git rev-parse HEAD^{tree} > audit-tree.txt
+          sha256sum package.json pnpm-lock.yaml ../.github/audit-exceptions.yml ../tools/check_pnpm_audit_exceptions.py > audit-inputs.sha256
+          set +e
+          pnpm audit --prod --audit-level=high --json > audit.json 2> audit.stderr
+          audit_status=$?
+          set -e
+          printf '%s\n' "$audit_status" > audit.exit
+          # The exception policy below decides high/critical vulnerability acceptance.
+          # Keep the real audit exit and JSON, including on checker failure.
       - name: Check audit exceptions
         run: |
           python tools/check_pnpm_audit_exceptions.py \
             --audit frontend/audit.json \
+            --audit-exit frontend/audit.exit \
             --exceptions .github/audit-exceptions.yml
+      - name: Preserve raw frontend audit and exact policy inputs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-security-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            frontend/audit.json
+            frontend/audit.stderr
+            frontend/audit.exit
+            frontend/audit-head.txt
+            frontend/audit-tree.txt
+            frontend/audit-inputs.sha256
+            frontend/audit-controls.json
+            frontend/audit-controls.stdout
+            frontend/audit-controls.stderr
+            frontend/audit-controls.exit
+            frontend/package.json
+            frontend/pnpm-lock.yaml
+            .github/audit-exceptions.yml
+            tools/check_pnpm_audit_exceptions.py
+            tools/test_check_pnpm_audit_exceptions.py
+            tools/testdata/pnpm-audit-v9-no-vulnerabilities.json
+            tools/testdata/pnpm-audit-v9-all-vulnerabilities.json
+            tools/testdata/pnpm-audit-v9-live-39604710139.json
+            tools/testdata/pnpm-audit-v9-live-39604710139.exit
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

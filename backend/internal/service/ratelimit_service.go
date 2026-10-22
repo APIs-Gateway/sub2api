@@ -784,6 +784,11 @@ func (s *RateLimitService) GeminiCooldown(ctx context.Context, account *Account)
 
 // handleAuthError 处理认证类错误(401/403)，停止账号调度
 func (s *RateLimitService) handleAuthError(ctx context.Context, account *Account, errorMsg string) {
+	// 「不自动暂停调度」账号：401/403 等认证类错误不自动置 error（status=error 无法在读侧豁免，必须不写）。
+	if accountNoAutoUnsched(s.cfg, account) {
+		LogNoAutoUnschedSkip(account.ID, "auth_error", errorMsg)
+		return
+	}
 	s.notifyAccountSchedulingBlocked(account, time.Time{}, "auth_error")
 	if err := s.accountRepo.SetError(ctx, account.ID, errorMsg); err != nil {
 		slog.Warn("account_set_error_failed", "account_id", account.ID, "error", err)
@@ -848,6 +853,12 @@ func isHTMLResponse(body []byte) bool {
 }
 
 func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account, upstreamMsg string, responseBody []byte) (shouldDisable bool) {
+	// 「不自动暂停调度」账号：连续 403 计数（180 分钟窗口）与随之而来的临时冷却/永久置错都不触发；
+	// 仍返回 true 让本次请求按 403 换号/耗尽后把上游错误原样交给用户。
+	if accountNoAutoUnsched(s.cfg, account) {
+		LogNoAutoUnschedSkip(account.ID, "openai_403", upstreamMsg)
+		return true
+	}
 	// 上游代理 / CDN 在请求到达 OpenAI API 之前就拦下时，回的是 HTML 403 页面而
 	// 不是 {"error":{...}} 结构化错误。这类响应描述的是「这条链路/这个端点被
 	// 挡了」，不构成账号凭据或权限失效的证据。
@@ -979,6 +990,10 @@ func (s *RateLimitService) handleAntigravity403(ctx context.Context, account *Ac
 // handleCustomErrorCode 处理自定义错误码，停止账号调度
 func (s *RateLimitService) handleCustomErrorCode(ctx context.Context, account *Account, statusCode int, errorMsg string) {
 	msg := "Custom error code " + strconv.Itoa(statusCode) + ": " + errorMsg
+	if accountNoAutoUnsched(s.cfg, account) {
+		LogNoAutoUnschedSkip(account.ID, "custom_error_code", msg)
+		return
+	}
 	s.notifyAccountSchedulingBlocked(account, time.Time{}, "custom_error_code")
 	if err := s.accountRepo.SetError(ctx, account.ID, msg); err != nil {
 		slog.Warn("account_set_error_failed", "account_id", account.ID, "status_code", statusCode, "error", err)
@@ -1132,6 +1147,11 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 }
 
 func (s *RateLimitService) apply429FallbackRateLimit(ctx context.Context, account *Account, reason string) {
+	// 「不自动暂停调度」账号：无 reset 时间的 429 不套用默认回避冷却（线上 2026-10-19 的 pool=0 就是这条路径）。
+	if accountNoAutoUnsched(s.cfg, account) {
+		LogNoAutoUnschedSkip(account.ID, "429_fallback", reason)
+		return
+	}
 	cooldown, enabled := s.get429FallbackCooldown(ctx, account)
 	if !enabled {
 		slog.Info("rate_limit_429_fallback_ignored", "account_id", account.ID, "platform", account.Platform, "reason", reason)
@@ -2521,6 +2541,11 @@ func (s *RateLimitService) triggerTempUnschedulable(ctx context.Context, account
 	if rule.DurationMinutes <= 0 {
 		return false
 	}
+	// 「不自动暂停调度」账号：规则命中仍然让本次请求换号/重试（返回 true），但不记录任何暂停状态。
+	if accountNoAutoUnsched(s.cfg, account) {
+		LogNoAutoUnschedSkip(account.ID, "temp_unschedulable_rule", fmt.Sprintf("rule_index=%d status_code=%d", ruleIndex, statusCode))
+		return true
+	}
 
 	now := time.Now()
 	until := now.Add(time.Duration(rule.DurationMinutes) * time.Minute)
@@ -2588,6 +2613,9 @@ func truncateTempUnschedMessage(body []byte, maxBytes int) string {
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleStreamTimeout(ctx context.Context, account *Account, model string) bool {
 	if account == nil {
+		return false
+	}
+	if accountNoAutoUnsched(s.cfg, account) {
 		return false
 	}
 
