@@ -224,7 +224,7 @@ func TestReqPublicDefaultContract(t *testing.T) {
 		t.Cleanup(server.Close)
 		t.Cleanup(func() { close(release) })
 		installPublicDefault(t, server.URL)
-		ctx, cancel := context.WithTimeout(context.Background(), 5 * time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		t.Cleanup(cancel)
 		finished := make(chan error, 1)
 		go func() {

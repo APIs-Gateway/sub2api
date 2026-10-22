@@ -32,3 +32,22 @@ or server87 project execution, formatting, syntax/AST validation, tests or build
 were run. Independent review, authorized remote formatting, remote race/behavior
 execution and any later inventory/manifest registration remain pending. Existing
 formal test and coverage gates are unchanged by this candidate commit.
+
+## Actual remote formatting import
+
+Remote formatter run `39743686710`, exact controller
+`536c80016a12f250ffbbb089d766c4c5133f50c1`, processed the frozen
+`405d3ec84840102b568fe960ab4439303e33c3f7` source with Go1.26.10. Artifact
+`12410278040` ZIP SHA256
+`71dea8865d1bdc4c1398fcf164a696929d5efad1e98865aa7a2f389b4a65d2e3`
+contains complete4501 source /4502 controller inputs and all4 actual formatter
+operations. Author and independent root data review verified the exact Git
+archives, indexes, modes, before/after snapshots and raw outputs.
+
+The verbatim formatted test is10615 bytes, SHA256
+`4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7`.
+Its sole difference is expression whitespace `5 * time.Second` to
+`5*time.Second` in the cancellation context. No test assertion, API call or
+fixture changes. This records formatting only: focused remote behavior/race
+execution and independent review remain pending; full suite and85 gates remain
+separate requirements. Original manifest/inventory registration stays unchanged.
