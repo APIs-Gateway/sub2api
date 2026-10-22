@@ -1,0 +1,275 @@
+name: Public default API1712 focused remote race contracts
+
+on:
+  push:
+    branches:
+      - codex/req-public-default-focused-1712
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-public-default-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_HEAD: ae724579899d44281728a3daff15f60778178a67
+      APP_TREE: 9795541bae339f19748660fa4d7ef39befcc33b6
+      GOTOOLCHAIN: local
+      GOWORK: "off"
+      GOFLAGS: -mod=readonly
+      CGO_ENABLED: "1"
+      GOOS: linux
+      GOARCH: amd64
+      CC: gcc
+      GOMAXPROCS: "2"
+      GORACE: log_path=stderr exitcode=66
+    steps:
+      - name: Initialize external evidence before checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/public-default-contracts-focused-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence"
+          printf 'PUBLIC_DEFAULT_FOCUSED_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+          for variable in GOCACHE GOMODCACHE GOTMPDIR; do
+            location="$RUNNER_TEMP/public-default-focused-${variable}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            test ! -e "$location"
+            mkdir -p "$location"
+            printf '%s=%s\n' "$variable" "$location" >> "$GITHUB_ENV"
+          done
+          printf '%s\n' "$GITHUB_SHA" > "$evidence/controller-event-head.txt"
+          printf '%s\n' "$APP_HEAD" > "$evidence/app-expected-head.txt"
+          printf '%s\n' "$APP_TREE" > "$evidence/app-expected-tree.txt"
+          cp "$GITHUB_EVENT_PATH" "$evidence/event.json"
+          cat > "$evidence/snapshot.py" <<'PYDATA'
+          import hashlib, json, os, pathlib, stat, subprocess, sys
+          root = pathlib.Path(sys.argv[1]).resolve()
+          expected_head, expected_tree, output = sys.argv[2:5]
+          def git(*args, data=None):
+              return subprocess.check_output(['git', '-C', str(root), *args], input=data)
+          head = git('rev-parse', 'HEAD').decode().strip()
+          tree = git('rev-parse', 'HEAD^{tree}').decode().strip()
+          assert head == expected_head, (head, expected_head)
+          if expected_tree:
+              assert tree == expected_tree, (tree, expected_tree)
+          status = git('status', '--porcelain=v1', '--untracked-files=all')
+          pathlib.Path(output + '.status').write_bytes(status)
+          assert not status, 'checkout is not clean'
+          index = git('ls-files', '--stage', '-z')
+          pathlib.Path(output + '.index').write_bytes(index)
+          files = []
+          for row in index.split(b'\0'):
+              if not row:
+                  continue
+              header, name = row.split(b'\t', 1)
+              mode, blob, stage = header.decode().split()
+              assert stage == '0' and mode in ('100644', '100755', '120000')
+              path = root / os.fsdecode(name)
+              info = path.lstat()
+              if mode == '120000':
+                  assert stat.S_ISLNK(info.st_mode)
+                  raw = os.fsencode(os.readlink(path))
+              else:
+                  assert stat.S_ISREG(info.st_mode) and not path.is_symlink()
+                  assert bool(info.st_mode & 0o111) == (mode == '100755')
+                  raw = path.read_bytes()
+              actual_blob = git('hash-object', '--stdin', data=raw).decode().strip()
+              assert actual_blob == blob, os.fsdecode(name)
+              files.append({'path': os.fsdecode(name), 'mode': mode, 'blob': blob,
+                            'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)})
+          result = {'head': head, 'tree': tree, 'files': files}
+          pathlib.Path(output).write_text(json.dumps(result, indent=2) + '\n')
+          PYDATA
+      - name: Checkout exact controller with complete Git history
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout fixed complete application tree
+        uses: actions/checkout@v6
+        with:
+          ref: ae724579899d44281728a3daff15f60778178a67
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Freeze full source and controller input before tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$PUBLIC_DEFAULT_FOCUSED_EVIDENCE/snapshot.py" "$GITHUB_WORKSPACE/source" "$APP_HEAD" "$APP_TREE" "$PUBLIC_DEFAULT_FOCUSED_EVIDENCE/source-before.json"
+          python3 -B "$PUBLIC_DEFAULT_FOCUSED_EVIDENCE/snapshot.py" "$GITHUB_WORKSPACE/controller" "$GITHUB_SHA" '' "$PUBLIC_DEFAULT_FOCUSED_EVIDENCE/controller-before.json"
+          git -C controller merge-base --is-ancestor "$APP_HEAD" "$GITHUB_SHA"
+          git -C source archive --format=tar HEAD > "$PUBLIC_DEFAULT_FOCUSED_EVIDENCE/source-full-input.tar"
+          git -C controller archive --format=tar HEAD > "$PUBLIC_DEFAULT_FOCUSED_EVIDENCE/controller-full-input.tar"
+          cp controller/.github/workflows/public-default-contracts-focused.yml "$PUBLIC_DEFAULT_FOCUSED_EVIDENCE/executed-controller.yml"
+          python3 -B - <<'PYDATA'
+          import hashlib, json, os, pathlib, shutil, tarfile
+          evidence = pathlib.Path(os.environ['PUBLIC_DEFAULT_FOCUSED_EVIDENCE'])
+          source = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'source'
+          snapshots = {label: json.loads((evidence / (label + '-before.json')).read_text()) for label in ('source', 'controller')}
+          source_files = {item['path']: item for item in snapshots['source']['files']}
+          controller_files = {item['path']: item for item in snapshots['controller']['files']}
+          assert len(source_files) == 4501 and len(controller_files) == 4502
+          assert all(controller_files.get(name) == item for name, item in source_files.items())
+          assert set(controller_files) - set(source_files) == {'.github/workflows/public-default-contracts-focused.yml'}
+          archives = {}
+          for label in ('source', 'controller'):
+              expected = {item['path']: item for item in snapshots[label]['files']}
+              archive = evidence / (label + '-full-input.tar')
+              with tarfile.open(archive, 'r:') as package:
+                  actual = {item.name: item for item in package.getmembers() if not item.isdir()}
+                  assert set(actual) == set(expected), label + ' archive omitted or added tracked inputs'
+                  for name, item in actual.items():
+                      if expected[name]['mode'] == '120000':
+                          assert item.issym()
+                          raw = os.fsencode(item.linkname)
+                      else:
+                          assert item.isfile()
+                          raw = package.extractfile(item).read()
+                      assert len(raw) == expected[name]['bytes']
+                      assert hashlib.sha256(raw).hexdigest() == expected[name]['sha256']
+              archives[label] = {'bytes': archive.stat().st_size, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(), 'trackedFiles': len(expected)}
+          (evidence / 'complete-input-archives.json').write_text(json.dumps(archives, indent=2) + '\n')
+          files = ['backend/third_party/req/public_default_contract_test.go']
+          manifest = []
+          for name in files:
+              raw = (source / name).read_bytes()
+              for directory in ('raw',):
+                  target = evidence / directory / name
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copyfile(source / name, target)
+                  assert target.read_bytes() == raw
+              manifest.append({'path': name, 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()})
+          (evidence / 'fixture-input.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          PYDATA
+      - name: Install pinned Go without repository cache
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.10'
+          check-latest: false
+          cache: false
+      - name: Execute only six public default contracts with actual race results
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PYDATA'
+          import datetime, json, os, pathlib, signal, subprocess, sys
+          evidence = pathlib.Path(os.environ['PUBLIC_DEFAULT_FOCUSED_EVIDENCE'])
+          backend = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'source/backend'
+          version = subprocess.run(['go', 'version'], cwd=backend, capture_output=True)
+          (evidence / 'go-version.stdout').write_bytes(version.stdout)
+          (evidence / 'go-version.stderr').write_bytes(version.stderr)
+          (evidence / 'go-version.exit').write_text(str(version.returncode) + '\n')
+          assert version.returncode == 0 and version.stdout == b'go version go1.26.10 linux/amd64\n' and not version.stderr
+          actual_env = subprocess.run(['go', 'env', '-json', 'GOOS', 'GOARCH', 'CGO_ENABLED', 'CC', 'GOTOOLCHAIN', 'GOWORK', 'GOFLAGS'], cwd=backend, capture_output=True)
+          (evidence / 'go-env.stdout').write_bytes(actual_env.stdout)
+          (evidence / 'go-env.stderr').write_bytes(actual_env.stderr)
+          (evidence / 'go-env.exit').write_text(str(actual_env.returncode) + '\n')
+          assert actual_env.returncode == 0 and not actual_env.stderr
+          expected = {'GOOS': 'linux', 'GOARCH': 'amd64', 'CGO_ENABLED': '1', 'CC': 'gcc', 'GOTOOLCHAIN': 'local', 'GOWORK': 'off', 'GOFLAGS': '-mod=readonly'}
+          assert json.loads(actual_env.stdout) == expected
+          argv = ['go', 'test', '-mod=readonly', '-race', '-p=1', '-parallel=1', '-count=1', '-timeout=5m', '-json', '-run', '^TestReqPublicDefaultContract$', 'github.com/imroc/req/v3']
+          record = {'argv': argv, 'cwd': str(backend), 'sourceHead': os.environ['APP_HEAD'], 'sourceTree': os.environ['APP_TREE'], 'controllerHead': os.environ['GITHUB_SHA'], 'started': False, 'actualExit': None, 'watchdog': False, 'streamsComplete': False, 'startedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
+          stdout, stderr = b'', b''
+          try:
+              process = subprocess.Popen(argv, cwd=backend, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+              record['started'] = True
+              record['pid'] = process.pid
+              try:
+                  stdout, stderr = process.communicate(timeout=600)
+                  record['streamsComplete'] = True
+              except subprocess.TimeoutExpired:
+                  record['watchdog'] = True
+                  os.killpg(process.pid, signal.SIGKILL)
+                  stdout, stderr = process.communicate(timeout=30)
+                  record['streamsComplete'] = True
+              record['actualExit'] = process.returncode
+          except Exception as error:
+              record['captureError'] = repr(error)
+          (evidence / 'focused.stdout.json').write_bytes(stdout)
+          (evidence / 'focused.stderr').write_bytes(stderr)
+          record['finishedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+          (evidence / 'focused-process.json').write_text(json.dumps(record, indent=2) + '\n')
+          sys.exit(0 if record['started'] and record['actualExit'] == 0 and not record['watchdog'] and record['streamsComplete'] and 'captureError' not in record else 1)
+          PYDATA
+      - name: Freeze source and controller again even after tool failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          capture_snapshot() {
+            local label="$1" root="$2" head="$3" tree="$4"
+            set +e
+            python3 -B "$PUBLIC_DEFAULT_FOCUSED_EVIDENCE/snapshot.py" "$root" "$head" "$tree" "$PUBLIC_DEFAULT_FOCUSED_EVIDENCE/$label-after.json" > "$PUBLIC_DEFAULT_FOCUSED_EVIDENCE/$label-after.stdout" 2> "$PUBLIC_DEFAULT_FOCUSED_EVIDENCE/$label-after.stderr"
+            local actual_status=$?
+            set -e
+            printf '%s\n' "$actual_status" > "$PUBLIC_DEFAULT_FOCUSED_EVIDENCE/$label-after.exit"
+          }
+          capture_snapshot source "$GITHUB_WORKSPACE/source" "$APP_HEAD" "$APP_TREE"
+          capture_snapshot controller "$GITHUB_WORKSPACE/controller" "$GITHUB_SHA" ''
+      - name: Judge actual six-case results and unchanged complete inputs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PYDATA'
+          import collections, hashlib, json, os, pathlib, traceback
+          evidence = pathlib.Path(os.environ['PUBLIC_DEFAULT_FOCUSED_EVIDENCE'])
+          errors, proof = [], {}
+          try:
+              archives = json.loads((evidence / 'complete-input-archives.json').read_text())
+              assert set(archives) == {'source', 'controller'}
+              for label, item in archives.items():
+                  archive = evidence / (label + '-full-input.tar')
+                  assert archive.stat().st_size == item['bytes'] and hashlib.sha256(archive.read_bytes()).hexdigest() == item['sha256']
+              proof['archives'] = archives
+              for label in ('source', 'controller'):
+                  assert (evidence / (label + '-after.exit')).read_text().strip() == '0'
+                  assert (evidence / (label + '-before.json')).read_bytes() == (evidence / (label + '-after.json')).read_bytes()
+              before = {v['path']: v for v in json.loads((evidence / 'source-before.json').read_text())['files']}
+              canonical = {name: before[name] for name in ('backend/go.mod', 'backend/go.sum', 'backend/third_party/req/go.mod', 'backend/third_party/req/go.sum')}
+              proof['canonicalModuleInputs'] = canonical
+              fixture = 'backend/third_party/req/public_default_contract_test.go'
+              fixture_bytes = (evidence / 'raw' / fixture).read_bytes()
+              assert hashlib.sha256(fixture_bytes).hexdigest() == before[fixture]['sha256'] == '4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7'
+              process = json.loads((evidence / 'focused-process.json').read_text())
+              proof['actualProcess'] = process
+              assert process['sourceHead'] == os.environ['APP_HEAD'] and process['sourceTree'] == os.environ['APP_TREE'] and process['controllerHead'] == os.environ['GITHUB_SHA']
+              assert process['started'] and process['actualExit'] == 0 and not process['watchdog'] and process['streamsComplete'] and 'captureError' not in process
+              stdout, stderr = (evidence / 'focused.stdout.json').read_bytes(), (evidence / 'focused.stderr').read_bytes()
+              proof['rawStreams'] = {'stdoutBytes': len(stdout), 'stdoutSHA256': hashlib.sha256(stdout).hexdigest(), 'stderrBytes': len(stderr), 'stderrSHA256': hashlib.sha256(stderr).hexdigest()}
+              events = [json.loads(line) for line in stdout.decode().splitlines()]
+              assert events and all(v.get('Package') == 'github.com/imroc/req/v3' for v in events)
+              assert not any(v.get('Action') in ('fail', 'skip') for v in events)
+              assert b'WARNING: DATA RACE' not in stdout + stderr
+              parent = 'TestReqPublicDefaultContract'
+              leaves = [parent + '/' + name for name in ('replacement_binds_new_calls_only', 'escaped_path_query_and_header_precedence', 'form_auth_and_cookie_wire', 'json_request_and_success_result', 'http_error_result_preserves_body', 'context_cancellation_reaches_peer')]
+              expected = set([parent] + leaves)
+              assert {v['Test'] for v in events if 'Test' in v} == expected
+              runs = collections.Counter(v.get('Test') for v in events if v.get('Action') == 'run')
+              passes = collections.Counter(v.get('Test') for v in events if v.get('Action') == 'pass' and v.get('Test'))
+              proof['cases'] = [{'test': name, 'run': runs[name], 'pass': passes[name]} for name in [parent] + leaves]
+              assert all(v['run'] == v['pass'] == 1 for v in proof['cases'])
+              terminals = [v for v in events if 'Test' not in v and v.get('Action') in ('pass', 'fail', 'skip')]
+              assert len(terminals) == 1 and terminals[0]['Action'] == 'pass'
+              proof['packageTerminals'] = terminals
+          except Exception:
+              errors.append(traceback.format_exc())
+          report = {'appHead': os.environ['APP_HEAD'], 'appTree': os.environ['APP_TREE'], 'controllerHead': os.environ['GITHUB_SHA'], 'proof': proof, 'errors': errors, 'scope': 'Focused six public default API contracts only; no full468, coverage85 or merge approval.'}
+          (evidence / 'focused-actual-receipt.json').write_text(json.dumps(report, indent=2) + '\n')
+          assert not errors, errors
+          PYDATA
+      - name: Always retain complete frozen inputs and actual focused race evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: public-default-contracts-focused-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/public-default-contracts-focused-${{ github.run_id }}-${{ github.run_attempt }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
