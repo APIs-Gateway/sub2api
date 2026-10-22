@@ -42,7 +42,11 @@ repair does not assert a default gateway incident.
   Range or If-Range; require200, no Content-Range, matching known length and an
   exact complete entity. Output remains untouched until this transfer succeeds.
   Client-wide Range/If-Range are removed from a private cloned client only;
-  preserve the original cookie jar and other caller configuration. Independent
+  preserve the original cookie jar and other caller configuration. A caller's
+  custom or nil/default http.Client.Transport is retained by identity; only the
+  exact default req transport uses the private cloned transport. The caller's
+  transport is never closed. Typed-pointer comparison avoids panicking on an
+  otherwise valid noncomparable RoundTripper implementation. Independent
   protocol/I/O failures take precedence over a recoverable ignored-Range signal.
 - Every response body, segment, reopened input and internally opened output is
   closed before return; cleanup is attempted on every completed run path.
@@ -66,6 +70,10 @@ A real server ignores Range, observes the actual subsequent header-absent full
 GET, authenticates the caller cookie/header and sends the exact97-byte entity.
 It checks full bytes/SHA, actual response observation, no output before recovery,
 one full GET, caller-writer ownership and unchanged original client settings.
+A deliberately noncomparable delegating caller RoundTripper adds an actual
+peer-observed authentication header to HEAD, ranges and the full GET. The test
+requires all three real request kinds to traverse it and checks it was retained
+and not closed. This extends the same leaf, without increasing the501 inventory.
 It uses its own t.TempDir, not the isolated-child scratch protocol. Peer fixture
 errors, timeout and transport failures cannot count as success. This source is
 new original test code under this module's existing MIT license; shared helper
@@ -85,3 +93,13 @@ Child raw profiles must not be substituted with parent coverage; insufficient
 actual coverage is a blocking result, not permission to synthesize counters.
 The future remote formatter must retain this RAW commit and actual output;
 no runtime PASS, Windows Close proof, LGTM or merge approval is claimed here.
+
+## Source review correction after24f00d4fd
+
+The initial Header-sharing finding was withdrawn: Client.Headers is promoted
+from Transport, whose Clone already deep-copies Header. No redundant Header
+clone was added. A separate confirmed issue was corrected: Client.Clone always
+replaces http.Client.Transport with its req transport, discarding public caller
+custom/nil transport. The local fallback now retains that actual installed
+transport while retaining ownership of its own private clone only. This is a
+static correction; actual remote test/format/race evidence remains pending.

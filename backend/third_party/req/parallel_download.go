@@ -190,6 +190,14 @@ func (pd *ParallelDownload) fetchTask(ctx context.Context, task downloadTask, to
 			if strings.EqualFold(name, "Range") || strings.EqualFold(name, "If-Range") {
 				client = client.Clone()
 				client.httpClient.Jar = pd.client.httpClient.Jar
+				// Client.Clone installs its cloned req transport. Preserve an
+				// explicitly installed custom (or nil/default) http transport.
+				// Compare only typed pointers: a caller's RoundTripper value
+				// need not be comparable as an interface value.
+				original := pd.client.httpClient.Transport
+				if installed, ok := original.(*Transport); !ok || installed != pd.client.Transport {
+					client.httpClient.Transport = original
+				}
 				for key := range client.Headers {
 					if strings.EqualFold(key, "Range") || strings.EqualFold(key, "If-Range") {
 						delete(client.Headers, key)

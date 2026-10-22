@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -38,6 +39,36 @@ func (w *parallelFallbackWriter) snapshot() ([]byte, bool) {
 	return append([]byte(nil), w.body.Bytes()...), w.closed
 }
 
+type parallelFallbackTransportState struct {
+	mu       sync.Mutex
+	requests []string
+	closed   bool
+}
+
+// A slice makes this value deliberately noncomparable as an interface. The
+// wrapper still delegates every real HTTP exchange to the caller's transport.
+type parallelFallbackTransport struct {
+	next   http.RoundTripper
+	state  *parallelFallbackTransportState
+	marker []byte
+}
+
+func (tr parallelFallbackTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	copy := request.Clone(request.Context())
+	copy.Header.Set("X-Download-Transport", string(tr.marker))
+	tr.state.mu.Lock()
+	tr.state.requests = append(tr.state.requests, request.Method+" "+request.Header.Get("Range"))
+	tr.state.mu.Unlock()
+	return tr.next.RoundTrip(copy)
+}
+
+func (tr parallelFallbackTransport) CloseIdleConnections() {
+	// This transport belongs to the caller. The downloader must not close it.
+	tr.state.mu.Lock()
+	tr.state.closed = true
+	tr.state.mu.Unlock()
+}
+
 func TestReqParallelDownloadFallback(t *testing.T) {
 	t.Run("ordinary_server_full_get", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
@@ -50,6 +81,7 @@ func TestReqParallelDownloadFallback(t *testing.T) {
 			before     int
 			cookie     string
 			caller     string
+			transport  string
 		}
 		var mu sync.Mutex
 		var fullRequests []fullRequest
@@ -65,10 +97,11 @@ func TestReqParallelDownloadFallback(t *testing.T) {
 				_, hadIfRange := r.Header["If-Range"]
 				mu.Lock()
 				fullRequests = append(fullRequests, fullRequest{hadRange: hadRange, hadIfRange: hadIfRange,
-					before: len(before), cookie: cookieValue, caller: r.Header.Get("X-Download-Caller")})
+					before: len(before), cookie: cookieValue, caller: r.Header.Get("X-Download-Caller"),
+					transport: r.Header.Get("X-Download-Transport")})
 				mu.Unlock()
 			}
-			if cookieValue != "caller-session" || r.Header.Get("X-Download-Caller") != "retained" {
+			if cookieValue != "caller-session" || r.Header.Get("X-Download-Caller") != "retained" || r.Header.Get("X-Download-Transport") != "caller-wrapper" {
 				body := []byte("authentication context missing")
 				downloadGReply(w, e, http.StatusUnauthorized, "", body, len(body))
 				return
@@ -97,6 +130,10 @@ func TestReqParallelDownloadFallback(t *testing.T) {
 		}
 		jar.SetCookies(origin, []*http.Cookie{{Name: "download-session", Value: "caller-session", Path: "/"}})
 		c.GetClient().Jar = jar
+		transportState := &parallelFallbackTransportState{}
+		c.GetClient().Transport = parallelFallbackTransport{
+			next: c.GetTransport(), state: transportState, marker: []byte("caller-wrapper"),
+		}
 		responses := downloadGObserve(c)
 		temporary := t.TempDir()
 		result := make(chan error, 1)
@@ -107,7 +144,7 @@ func TestReqParallelDownloadFallback(t *testing.T) {
 		head := p.await(t, ctx, true, func(e downloadGExchange) bool { return e.Method == http.MethodHead })
 		downloadGAssertWire(t, head)
 		full := p.await(t, ctx, true, func(e downloadGExchange) bool {
-			return e.Method == http.MethodGet && e.Range == "" && e.Status == http.StatusOK
+			return e.Method == http.MethodGet && e.Range == ""
 		})
 		downloadGAssertWire(t, full)
 		err = downloadGResult(t, ctx, result)
@@ -126,16 +163,16 @@ func TestReqParallelDownloadFallback(t *testing.T) {
 			t.Fatal("G1748_PRECONDITION: no real ignored Range/200 response preceded recovery")
 		}
 		actualResponse := downloadGTarget(t, p, responses, func(e downloadGExchange) bool {
-			return e.Method == http.MethodGet && e.Range == "" && e.Status == http.StatusOK && bytes.Equal(e.Body, entity) && downloadGWireComplete(e)
+			return e.Method == http.MethodGet && e.Range == "" && e.Status == full.Status && bytes.Equal(e.Body, full.Body) && downloadGWireComplete(e)
 		})
-		if err != nil || actualResponse.cause != nil {
-			t.Fatalf("G1748_DOWNLOAD_ASSERT: ordinary non-Range server recovery failed: Do=%v response=%v", err, actualResponse.cause)
+		if full.Status != http.StatusOK || err != nil || actualResponse.cause != nil {
+			t.Fatalf("G1748_DOWNLOAD_ASSERT: ordinary non-Range server recovery failed: status=%d Do=%v response=%v", full.Status, err, actualResponse.cause)
 		}
 		mu.Lock()
 		fullObserved := append([]fullRequest(nil), fullRequests...)
 		mu.Unlock()
 		if len(fullObserved) != 1 || fullObserved[0].hadRange || fullObserved[0].hadIfRange || fullObserved[0].before != 0 ||
-			fullObserved[0].cookie != "caller-session" || fullObserved[0].caller != "retained" {
+			fullObserved[0].cookie != "caller-session" || fullObserved[0].caller != "retained" || fullObserved[0].transport != "caller-wrapper" {
 			t.Fatalf("G1748_DOWNLOAD_ASSERT: recovery must be one actual full GET before any output, preserving caller context: %+v", fullObserved)
 		}
 		actual, closed := output.snapshot()
@@ -145,6 +182,28 @@ func TestReqParallelDownloadFallback(t *testing.T) {
 		if c.Headers.Get("Range") != "bytes=0-0" || c.Headers.Get("If-Range") != "\"caller-validator\"" || c.GetClient().Jar != jar {
 			t.Fatal("G1748_DOWNLOAD_ASSERT: recovery mutated caller client configuration")
 		}
-		t.Logf("G1748_FULL_GET_COMPLETE bytes=%d hash=%s callerWriterClosed=%v", len(actual), downloadGHash(actual), closed)
+		installed, ok := c.GetClient().Transport.(parallelFallbackTransport)
+		if !ok || installed.state != transportState {
+			t.Fatal("G1748_DOWNLOAD_ASSERT: recovery replaced caller transport")
+		}
+		transportState.mu.Lock()
+		requests := append([]string(nil), transportState.requests...)
+		transportClosed := transportState.closed
+		transportState.mu.Unlock()
+		fullThroughWrapper, headThroughWrapper, rangeThroughWrapper := 0, false, false
+		for _, request := range requests {
+			switch {
+			case request == "GET ":
+				fullThroughWrapper++
+			case request == "HEAD bytes=0-0":
+				headThroughWrapper = true
+			case strings.HasPrefix(request, "GET bytes="):
+				rangeThroughWrapper = true
+			}
+		}
+		if transportClosed || fullThroughWrapper != 1 || !headThroughWrapper || !rangeThroughWrapper {
+			t.Fatalf("G1748_DOWNLOAD_ASSERT: caller transport ownership or actual HEAD/range/full traversal lost: closed=%v requests=%v", transportClosed, requests)
+		}
+		t.Logf("G1748_FULL_GET_COMPLETE bytes=%d hash=%s callerWriterClosed=%v callerTransportClosed=%v requests=%v", len(actual), downloadGHash(actual), closed, transportClosed, requests)
 	})
 }
