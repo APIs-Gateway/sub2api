@@ -203,7 +203,18 @@ func (pd *ParallelDownload) fetchTask(ctx context.Context, task downloadTask, to
 						delete(client.Headers, key)
 					}
 				}
-				defer client.CloseIdleConnections()
+				// This clone owns a separate forced-HTTP3 transport/socket.
+				// Register cleanup before the response-body defer below, so
+				// LIFO closes the body first. Never close the caller transport.
+				owned := client.Transport
+				defer func() {
+					owned.CloseIdleConnections()
+					if owned.t3 != nil {
+						if closeErr := owned.t3.Close(); err == nil {
+							err = closeErr
+						}
+					}
+				}()
 				break
 			}
 		}

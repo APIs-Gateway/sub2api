@@ -73,7 +73,7 @@ one full GET, caller-writer ownership and unchanged original client settings.
 A deliberately noncomparable delegating caller RoundTripper adds an actual
 peer-observed authentication header to HEAD, ranges and the full GET. The test
 requires all three real request kinds to traverse it and checks it was retained
-and not closed. This extends the same leaf, without increasing the501 inventory.
+and not closed. This extends the same leaf, without increasing the then-501 inventory.
 It uses its own t.TempDir, not the isolated-child scratch protocol. Peer fixture
 errors, timeout and transport failures cannot count as success. This source is
 new original test code under this module's existing MIT license; shared helper
@@ -83,8 +83,8 @@ attribution remains in DOWNLOAD-CONTRACTS-LICENSE and its provenance.
 
 RAW source only: no local/87 execution, formatting, build, test or checker run.
 Every executable check must run on remote CI after independent source review.
-Original401 + reviewed F44 + Digest23 =468 are retained, plus G32 and this1
-control =501 required named/full Linux leaves; Windows G33 is independently
+Original401 + reviewed F44 + Digest23 =468 are retained, plus G32 and the2
+new full-GET/HTTP3 ownership controls =502 required named/full Linux leaves; Windows G33 is independently
 required. Original132 files/89 production Go/14 tests/12 selected+2 retained
 helpers, MVS365/25 negative controls and old-wire RED remain. This production
 file becomes the13th declared adaptation, with119 unchanged originals. All13
@@ -103,3 +103,41 @@ replaces http.Client.Transport with its req transport, discarding public caller
 custom/nil transport. The local fallback now retains that actual installed
 transport while retaining ownership of its own private clone only. This is a
 static correction; actual remote test/format/race evidence remains pending.
+
+## Private forced-HTTP3 clone ownership aftera79f93764
+
+A separate confirmed resource leak affected the private fallback clone: forced
+HTTP3 creates a new t3 and UDP socket, while the outer CloseIdleConnections
+method closes only H1/H2. Only the local clone cleanup now calls its t3.Close in
+addition to its normal idle cleanup. Registration precedes the body defer, so
+the actual body and segment close first; cleanup still runs after an original
+error, and a new close error overrides only nil. The global method and all
+other production adaptation sources are unchanged. A caller/custom transport
+is never closed. The existing internal t3.Close error propagation is preserved;
+a close failure is not proof that every internal sub-resource was disposed.
+
+New leaf: TestReqParallelDownloadHTTP3Cleanup/owned_fallback_socket_released.
+New owned file: parallel_download_http3_cleanup_test.go, bringing owned paths
+to51 and total Linux mandatory leaves to502 without altering G32/Windows33 or
+the existing default HTTP1 fallback leaf. The test package is req solely to
+reuse h3WireTLS and its owned-client cleanup fixture; all tested requests use
+public client/NewParallelDownload/ForceHTTP3 APIs against real QUIC networking.
+No private production socket, dialer or task state supplies the oracle. TLS and
+peer setup attribution remains quic-go v0.57.1 MIT under the existing license.
+
+The peer's public quic.Conn identifies each actual client loopback UDP endpoint.
+Full GET headers must really arrive over TLS1.3/h3, with body completion held.
+The exact active endpoint bind must fail specifically with POSIX EADDRINUSE or
+Windows Winsock WSAEADDRINUSE10048; permission/invalid-address failures do not
+calibrate occupancy. After the real full body completes, Do succeeds, bytes/SHA
+match and the peer observes a normal remote QUIC close, rebinding the same owned
+endpoint must succeed. Meanwhile a real later GET must reuse the caller's
+original still-occupied connection. This is a network resource witness, not a
+Linux FD counter or Windows file Close claim. Windows exclusive-address/other
+precondition errors are explicit fixture failures, not a platform skip or PASS.
+
+Windows constants were checked against primary sources:
+[Go Windows synthetic errno](https://github.com/golang/go/blob/go1.26.10/src/syscall/zerrors_windows.go)
+and [Winsock errors](https://learn.microsoft.com/en-us/windows/win32/winsock/windows-sockets-error-codes-2).
+RAW source only: this new contract has not been formatted, compiled or executed;
+remote CI and independent source review remain required.

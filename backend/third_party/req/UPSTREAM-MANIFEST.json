@@ -761,11 +761,12 @@
     "parallel_download_contract_test.go",
     "parallel_download_contract_windows_test.go",
     "parallel_download_fallback_test.go",
-    "PARALLEL-DOWNLOAD-REPAIR.md"
+    "PARALLEL-DOWNLOAD-REPAIR.md",
+    "parallel_download_http3_cleanup_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "Retain original401+reviewed F44+Digest23=468 mandatory leaves, frozen G32 and one true full-GET fallback control=501 Linux named/all leaves; Windows G33 remains independently required. Child1748 adds parallel_download.go as13th adaptation/119 unchanged originals, preserving original132/89production/14tests/12wildcard selection and all prior12 adapted source hashes. Raw atomic profiles, all13 per-file added-block85, original Codecov85 and supplementary complete-Git Go85 remain required. No executable validation or approval claimed.",
+  "validation": "Retain original401+reviewed F44+Digest23=468 mandatory leaves, frozen G32 and one true full-GET fallback control+one real HTTP3 owned-resource control=502 Linux named/all leaves; Windows G33 remains independently required. Child1748 adds parallel_download.go as13th adaptation/119 unchanged originals, preserving original132/89production/14tests/12wildcard selection and all prior12 adapted source hashes. Raw atomic profiles, all13 per-file added-block85, original Codecov85 and supplementary complete-Git Go85 remain required. No executable validation or approval claimed.",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -868,8 +869,8 @@
     },
     {
       "path": "parallel_download.go",
-      "sha256": "4e33868f07973a9a10b330ab84b953a39e9e421b975882a96d72c7d74d58ff6d",
-      "bytes": 13546,
+      "sha256": "98d462f933c7878caaa0c6ae3bcc5792209ab6cd055e8f49e2451f7a426459c4",
+      "bytes": 13911,
       "sources": [
         "local-required-parallel-download-contract-repair-after-ci39529607848-and-upstream417-child1748"
       ]
@@ -1179,13 +1180,14 @@
     "retainedPriorLeaves": 468,
     "frozenLinuxGLeaves": 32,
     "newFullGetControlLeaves": 1,
-    "totalRequiredLinuxLeaves": 501,
+    "totalRequiredLinuxLeaves": 502,
     "windowsGLeaves": 33,
     "productionAdaptations": 13,
     "unchangedOriginalFiles": 119,
     "newOwnedPaths": [
       "parallel_download_fallback_test.go",
-      "PARALLEL-DOWNLOAD-REPAIR.md"
+      "PARALLEL-DOWNLOAD-REPAIR.md",
+      "parallel_download_http3_cleanup_test.go"
     ],
     "repair": "Invocation-owned queues/temp directory; cancel dispatch and join workers; validate HEAD/206 metadata and exact body; real single header-absent full-GET200 fallback only after partial cleanup; close owned files/bodies, retain caller writer ownership.",
     "status": "RAW source candidate; remote formatting/build/race/actual named/full/profile/Windows and all85 gates NOTRUN; no approval.",
@@ -1196,7 +1198,17 @@
         "confirmedFinding": "Client.Clone overrides public http.Client.Transport, bypassing custom/nil caller transport only during common-Range recovery.",
         "repair": "Preserve installed custom/nil transport using typed-pointer identity comparison, never interface equality; close only owned cloned req transport. Same existing full-GET leaf now uses an actual noncomparable delegating caller wrapper with peer-observed auth header and ownership/traversal assertions.",
         "runtimeStatus": "RAW static source only; remote format/build/test/race evidence pending."
+      },
+      {
+        "after": "a79f937647c43e28ab940f25a5debbcc5f215b8b",
+        "confirmedFinding": "Private fallback Client.Clone owns a separately created forced HTTP3 transport/UDP socket; outer CloseIdleConnections only releases H1/H2 and dropping that clone leaks its HTTP3 resources.",
+        "repair": "Only fetchTask clone cleanup closes owned embedded transport idle connections and owned t3.Close, after body/file defers; all cleanup calls attempted and original nonnil error retained. Global CloseIdleConnections and caller/custom transports are unchanged.",
+        "testLeaf": "TestReqParallelDownloadHTTP3Cleanup/owned_fallback_socket_released",
+        "testOracle": "Real ForceHTTP3 peer public connection/address, verified h3/TLS and held full body; exact loopback UDP endpoint must reject bind with EADDRINUSE while active, then Do+fullbytes/EOF+normal remote QUIC close and exact endpoint rebind must succeed; caller connection must remain occupied and be genuinely reused.",
+        "platform": "No platform skip. POSIX syscall.EADDRINUSE or Windows actual WSAEADDRINUSE10048 only; permission/invalid address/bind precondition failures are never success. This test does not prove Windows file Close.",
+        "runtimeStatus": "RAW only; no local/87 formatting/build/test/checker; all actual execution pending remoteCI."
       }
-    ]
+    ],
+    "newHTTP3OwnedResourceLeaves": 1
   }
 }
