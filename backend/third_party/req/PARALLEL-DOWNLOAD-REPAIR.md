@@ -141,3 +141,21 @@ Windows constants were checked against primary sources:
 and [Winsock errors](https://learn.microsoft.com/en-us/windows/win32/winsock/windows-sockets-error-codes-2).
 RAW source only: this new contract has not been formatted, compiled or executed;
 remote CI and independent source review remain required.
+
+## Actual remote formatter39742212554
+
+The prior RAW commit is retained. Remote Go1.26.10 formatter controller2ea71e892
+used the complete b9f7ec329 source and produced artifact12410185722, SHA256
+96d3f7eaba5cb8b3209324ba3bf75fd369ac01fcdf5f5e65b93439e86ae086ce.
+Author and independent root audits verified130 ZIP members,4513/4514 complete
+source/controller Git inputs and archives, unchanged before/after snapshots, all
+7 raw inputs and28 actual operations. Three raw-diff exits were1 with genuine
+whitespace-only diffs; four were0. All21 write/post-diff/post-list operations
+were0 with empty stdout/stderr. Actual diff hunks exactly reconstruct outputs.
+
+Only parallel_download.go and parallel_download_http3_cleanup_test.go actual
+formatted bytes are imported into this production branch. The changed shared
+helper output belongs to the separate observer infrastructure composition. No
+local formatter was run. This is formatting evidence only; compile, named/full
+race, Linux502, Windows G33, raw child profiles and all85 requirements remain
+pending or blocking until newly executed on the exact composed candidate.
