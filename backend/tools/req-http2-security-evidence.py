@@ -103,9 +103,9 @@ def verify_named(backend, evidence, filename):
             sum(expected[kind + "Count"] for kind in baseline_kinds + ("clientBehavior", "digestOwnership")) == 468,
             "Retain reviewed F44 and all23 Digest ownership leaves with original401")
     require(expected["downloadContractCount"] == 32 and expected["parallelDownloadFallbackCount"] == 1 and
-            expected["totalNamedLeaves"] == 501,
-            "Retain all468 prior leaves, frozen G32 and the real full-GET fallback control")
-    kinds = baseline_kinds + ("clientBehavior", "digestOwnership", "downloadContract", "parallelDownloadFallback")
+            expected["parallelDownloadHTTP3CleanupCount"] == 1 and expected["totalNamedLeaves"] == 502,
+            "Retain all468 prior leaves, frozen G32 and both real full-GET/HTTP3 ownership controls")
+    kinds = baseline_kinds + ("clientBehavior", "digestOwnership", "downloadContract", "parallelDownloadFallback", "parallelDownloadHTTP3Cleanup")
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
     for kind in kinds:
@@ -125,7 +125,8 @@ def verify_named(backend, evidence, filename):
                 "TestReqHTTP3DeflateClose_", "TestReqDeflateClose_", "TestReqHTTP2FrameContract_", "TestReqHTTP1Transfer_",
                 "TestReqHTTP2TransportContract_", "TestReqMetaCharset_", "TestReqClientDigest_", "TestReqClientRedirect_",
                 "TestReqClientCookie_", "TestReqClientResponse_", "TestReqDigestOwnership_",
-                "TestReqDownloadContract", "TestReqParallelDownloadContract", "TestReqParallelDownloadFallback")
+                "TestReqDownloadContract", "TestReqParallelDownloadContract", "TestReqParallelDownloadFallback",
+                "TestReqParallelDownloadHTTP3Cleanup")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")
