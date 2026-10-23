@@ -3,12 +3,12 @@
   "component": "G public HTTP download and explicit caller-managed continuation contracts",
   "baseHead": "2d6bf53dc3231dc4ccfce48211c43942ed18d656",
   "createdAt": "2026-10-19T15:06:27.795084+00:00",
-  "authoringStatus": "Actual remote Go1.26.10 formatted helper imported; fresh exact-head executable controls/race/Windows/coverage pending.",
+  "authoringStatus": "RAW normal merge of formatted836 metadata helper and b297 parent525 registration; current combined helper formatting/runtime evidence pending.",
   "package": "req_test (external package; exported APIs only)",
   "files": {
     "download_wire_peer_test.go": {
-      "bytes": 27772,
-      "sha256": "b7e545b8f140824faf4a71796dbeca5bcddca3a27589f6a71fae68559d9c2edb"
+      "bytes": 28274,
+      "sha256": "ccc47e90747ad88e718b72db46dd2ec35e299af29758c1448b4df0f08ea73d87"
     },
     "download_contract_test.go": {
       "bytes": 7628,
@@ -25,6 +25,10 @@
     "DOWNLOAD-CONTRACTS-LICENSE": {
       "bytes": 1064,
       "sha256": "9629b9d5b0f233bb67619a30d56bf3e49d8cc5133c6f0e3509d4a952bc9beb39"
+    },
+    "parallel_download_inprocess_contract_test.go": {
+      "bytes": 455,
+      "sha256": "6c0a49fd9bf93aa0328b509e4c69d572b47c881e791c7045638437cef00a2e6b"
     }
   },
   "expectedParentCaseInventory": {
@@ -283,8 +287,8 @@
     "rootAuthorization": "Import exactly4 artifact formatted bytes and update provenance/review only, then freeze for dual review; no push or execution",
     "originalCaseNamesUnchanged": true,
     "sourceAndCoverageInvariantsUnchanged": true,
-    "currentSeals": "files now binds current helper to actual formatter39742212554 output; prior currentRawHelperSeal and earlier remoteFormatterHistory retain historical inputs.",
-    "pending": "Independent combined-source review and new exact-head remoteCI; all original coverage requirements remain."
+    "currentSeals": "files binds the current RAW combined helper; prior actual formatted39742212554 seal is retained in remoteFormatterHistory/evidenceInfrastructureRevision/historicalHelperInputs.",
+    "pending": "Combined helper needs independent source review and fresh remote formatting before final source/controller pins and exact-head remoteCI."
   },
   "evidenceInfrastructureRevision": {
     "scope": "Only optional child evidence argv/environment/metadata and exact full Git input validation; business assertions and timeouts unchanged.",
@@ -327,5 +331,79 @@
       "authorActualReceiptSHA256": "7d3f0c814948fded9bbfb51199f7a9a21323dabf7085b11da5603a40b2d15f50",
       "scope": "Actual remote formatter only. Helper output imported verbatim; business assertions/timeouts unchanged. No build/race/runtime/coverage approval."
     }
+  },
+  "historicalHelperInputs": [
+    {
+      "stage": "Before explicit parent525 registration",
+      "input": {
+        "bytes": 21337,
+        "sha256": "d2db5175252c1844778c0c2ca941f9bcbb22380407484777a08bb37ce881b11a"
+      },
+      "source": "8013f0a39e22eb023df0c352eabea6ccfaf97fb8"
+    },
+    {
+      "stage": "Formatted metadata helper before parent525 composition",
+      "input": {
+        "bytes": 27772,
+        "sha256": "b7e545b8f140824faf4a71796dbeca5bcddca3a27589f6a71fae68559d9c2edb"
+      },
+      "source": "836c86fa5821057eaca1d0f506955d417400e7e2"
+    },
+    {
+      "stage": "Production parent525 helper before metadata composition",
+      "input": {
+        "bytes": 21839,
+        "sha256": "e79706300871f2bfc715036220d0831fe822ad70910507eb174e34125072e012"
+      },
+      "source": "b29760194991dbc88c6d2ae985a117a1e28aa4db"
+    }
+  ],
+  "inProcessContracts": {
+    "status": "RAW authoring; independent source review and remote formatting/runtime/profile evidence pending",
+    "leaves": [
+      "TestReqParallelDownloadInProcessContract/out_of_order",
+      "TestReqParallelDownloadInProcessContract/one_byte",
+      "TestReqParallelDownloadInProcessContract/exact_boundary",
+      "TestReqParallelDownloadInProcessContract/final_short_segment",
+      "TestReqParallelDownloadInProcessContract/segment_larger_than_entity",
+      "TestReqParallelDownloadInProcessContract/relative_existing_file",
+      "TestReqParallelDownloadInProcessContract/absolute_file",
+      "TestReqParallelDownloadInProcessContract/writer_error",
+      "TestReqParallelDownloadInProcessContract/head_zero_length",
+      "TestReqParallelDownloadInProcessContract/head_unknown_length",
+      "TestReqParallelDownloadInProcessContract/head_error_status",
+      "TestReqParallelDownloadInProcessContract/range_ignored_200",
+      "TestReqParallelDownloadInProcessContract/missing_content_range",
+      "TestReqParallelDownloadInProcessContract/wrong_range_start",
+      "TestReqParallelDownloadInProcessContract/reversed_range",
+      "TestReqParallelDownloadInProcessContract/invalid_range_total",
+      "TestReqParallelDownloadInProcessContract/unknown_range_unit",
+      "TestReqParallelDownloadInProcessContract/range_416",
+      "TestReqParallelDownloadInProcessContract/truncated_segment",
+      "TestReqParallelDownloadInProcessContract/empty_segment",
+      "TestReqParallelDownloadInProcessContract/cancel_head",
+      "TestReqParallelDownloadInProcessContract/cancel_segment",
+      "TestReqParallelDownloadInProcessContract/failure_during_dispatch"
+    ],
+    "count": 23,
+    "scope": "Original32/Windows33 and502 required remain; add23 exact named parent executions, total525. No environment mode and no child counter merge.",
+    "markers": [
+      "G_IN_PROCESS_EXECUTED",
+      "G_IN_PROCESS_BODY_DONE"
+    ],
+    "dispatch": "Only exact original top argument and exact new top/scenario testing identity execute directly; original top paths unchanged.",
+    "scratch": "New top uses own t.TempDir when no child scratch; child temp behavior unchanged.",
+    "currentActualCoverageBlocker": "29ee actual added parallel blocks142/222=63.963964% fails85; new source makes no PASS or85 claim."
+  },
+  "parent525ObserverComposition": {
+    "productionHead": "b29760194991dbc88c6d2ae985a117a1e28aa4db",
+    "metadataSourceHead": "836c86fa5821057eaca1d0f506955d417400e7e2",
+    "observerBaseHead": "29ee7f01467489c5c16b73840123fc1c9eae4560",
+    "currentRawCombinedHelperSeal": {
+      "bytes": 28274,
+      "sha256": "ccc47e90747ad88e718b72db46dd2ec35e299af29758c1448b4df0f08ea73d87"
+    },
+    "scope": "Normal ancestry composition preserves all original business fixtures, production inputs, metadata verification and exact newtop direct dispatch; no child counter merging.",
+    "status": "Independent review, further authorized probes/contracts composition, remote formatting and final source/controller pins pending; no push or execution."
   }
 }
