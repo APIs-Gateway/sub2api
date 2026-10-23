@@ -159,3 +159,42 @@ helper output belongs to the separate observer infrastructure composition. No
 local formatter was run. This is formatting evidence only; compile, named/full
 race, Linux502, Windows G33, raw child profiles and all85 requirements remain
 pending or blocking until newly executed on the exact composed candidate.
+
+
+## Actual Windows probe failure39744585493 and narrow fixture repair
+
+The composed836c86fa source/controller29ee7f01 actually ran Windows named/full
+G35 leaves each:34PASS and1FAIL. The H3 cleanup leaf failed the active-port
+calibration before releasing the held full body. Neither Do success nor normal
+remote QUIC close nor resource-release assertions were reached. Original
+TestSetFile/trace failures and two retained dump outputs also block the Windows
+full suite. This is not a Windows H3 cleanup PASS or a proven production leak.
+
+The Windows same-user socket binding table allows a specific-address probe to
+bind beside a default wildcard socket. A specific-address exclusive flag alone
+is insufficient. New Windows-only test code uses public ListenConfig.Control to
+set/read SO_EXCLUSIVEADDRUSE before binding a wildcard at the actual observed
+port. Only a bind syscall's actual WSAEADDRINUSE10048 proves occupancy; socket
+option failures/EACCES/other errors cannot count. Non-Windows retains the exact
+original IPv4 peer-endpoint probe. Both platforms first calibrate the identical
+probe against an independently owned real default wildcard UDP socket: live
+must reject, then explicit Close must permit binding/Close. This adds no leaf.
+The real h3 peer/header/body/bytes/hash/remote-close/caller-reuse contracts and
+6s/3s limits remain unchanged. No production socket hook or replacement is used.
+
+New owned helpers: parallel_download_http3_probe_windows_test.go and
+parallel_download_http3_probe_other_test.go. Total owned paths53; Linux502 and
+Windows G35 remain. Original132 archive/14 identities and all13 production
+adaptation hashes are unchanged. No original trace/file/dump test or production
+implementation is modified by this probe-only repair. All actual failures and
+85 gates remain unwaived. This new source is RAW and unexecuted/unformatted;
+remote CI after independent review is required.
+
+Primary sources:
+[Microsoft binding table](https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse),
+[Go1.26.10 pre-bind Control](https://raw.githubusercontent.com/golang/go/go1.26.10/src/net/sock_posix.go),
+[official SDK option definition](https://raw.githubusercontent.com/microsoft/win32metadata/main/generation/WinSDK/RecompiledIdlHeaders/um/WinSock2.h).
+The original actual artifact12411476184 SHA256 is
+5a9835fed2cf0e9583a33f697332cb412ed8ffe9b42fa28ccaf37a3720aae9c0.
+Historical remoteFormat39742212554 fields describe its prior input/output,
+not this subsequently changed probe fixture's formatting or runtime status.

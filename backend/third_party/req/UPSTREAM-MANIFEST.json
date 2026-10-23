@@ -762,7 +762,9 @@
     "parallel_download_contract_windows_test.go",
     "parallel_download_fallback_test.go",
     "PARALLEL-DOWNLOAD-REPAIR.md",
-    "parallel_download_http3_cleanup_test.go"
+    "parallel_download_http3_cleanup_test.go",
+    "parallel_download_http3_probe_windows_test.go",
+    "parallel_download_http3_probe_other_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
@@ -1187,7 +1189,9 @@
     "newOwnedPaths": [
       "parallel_download_fallback_test.go",
       "PARALLEL-DOWNLOAD-REPAIR.md",
-      "parallel_download_http3_cleanup_test.go"
+      "parallel_download_http3_cleanup_test.go",
+      "parallel_download_http3_probe_windows_test.go",
+      "parallel_download_http3_probe_other_test.go"
     ],
     "repair": "Invocation-owned queues/temp directory; cancel dispatch and join workers; validate HEAD/206 metadata and exact body; real single header-absent full-GET200 fallback only after partial cleanup; close owned files/bodies, retain caller writer ownership.",
     "status": "RAW source candidate; remote formatting/build/race/actual named/full/profile/Windows and all85 gates NOTRUN; no approval.",
@@ -1247,6 +1251,42 @@
       ],
       "helperOwnership": "download_wire_peer_test.go formatted output is imported separately by root on observer infrastructure branch; not changed in this production commit.",
       "scope": "Actual whitespace-only formatting accepted; no compiler/test/race/profile/coverage/Windows runtime PASS or PR approval."
+    },
+    "windowsProbeCalibration": {
+      "parentProductionHead": "8013f0a39e22eb023df0c352eabea6ccfaf97fb8",
+      "actualObservationRun": 39744585493,
+      "actualWindowsArtifact": 12411476184,
+      "actualArtifactSHA256": "5a9835fed2cf0e9583a33f697332cb412ed8ffe9b42fa28ccaf37a3720aae9c0",
+      "actualAuditReceiptSHA256": "e4ee160716df57024386ba138308225e013163575704f87470d01c7f5b5176f2",
+      "actualFailure": "Named/full H3 leaf failed the occupied-endpoint calibration before body release/Do/cleanup assertions; no Windows resource PASS. Both G phases35RUN/34PASS/1FAIL; original full-suite/dirty dump failures remain blocking.",
+      "windowsOracle": "Public ListenConfig.Control sets and reads back SO_EXCLUSIVEADDRUSE before actual wildcard same-port bind; require bind WSAEADDRINUSE10048 only. Independent real default wildcard UDP control must block probe while live and permit it after Close. Actual QUIC held/full/normal remote close/rebind/caller reuse assertions remain.",
+      "nonWindowsOracle": "Existing exact IPv4 peer-endpoint ListenUDP/EADDRINUSE probe retained; same live/released real wildcard control added.",
+      "primarySources": [
+        "https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse",
+        "https://raw.githubusercontent.com/golang/go/go1.26.10/src/net/sock_posix.go",
+        "https://raw.githubusercontent.com/microsoft/win32metadata/main/generation/WinSDK/RecompiledIdlHeaders/um/WinSock2.h"
+      ],
+      "ownedPathsAfterThisSource": 53,
+      "testLeavesUnchanged": true,
+      "productionAndOriginalFixtureBytesUnchanged": true,
+      "currentProbeSources": [
+        {
+          "path": "parallel_download_http3_cleanup_test.go",
+          "bytes": 13868,
+          "sha256": "b0b634b3ff59fd8ae9d828815b2984df2bf55bc9d21a0d7292308ee6cccb0174"
+        },
+        {
+          "path": "parallel_download_http3_probe_windows_test.go",
+          "bytes": 2121,
+          "sha256": "8a791aa3117f19c1fcf82d6d6bcbf236b5354cbb0a025fe16b3a0e09f3a10695"
+        },
+        {
+          "path": "parallel_download_http3_probe_other_test.go",
+          "bytes": 465,
+          "sha256": "9baa88622a909792140006e2647d71f7831a87e7667b96809e64d5dac0cdf6cc"
+        }
+      ],
+      "status": "RAW static source only; no local/87 execution or formatting; exact-head remote CI and independent source review required. No skipped test, permitted failure or coverage threshold change."
     }
   }
 }
