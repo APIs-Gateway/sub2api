@@ -530,6 +530,7 @@ def actual_inventory(phase, source, windows):
     fallback = selected_inventory["parallelDownloadFallbackLeaves"]
     cleanup = selected_inventory["parallelDownloadHTTP3CleanupLeaves"]
     in_process = selected_inventory["parallelDownloadInProcessLeaves"]
+    default_output = selected_inventory["parallelDownloadDefaultOutputLeaves"]
     assert len(fallback) == len(cleanup) == 1
     assert selected_inventory["parallelDownloadInProcessPackage"] == MODULE
     assert len(in_process) == len(set(in_process)) == selected_inventory["parallelDownloadInProcessCount"] == 23
@@ -538,8 +539,12 @@ def actual_inventory(phase, source, windows):
     assert in_process == [name.replace("TestReqParallelDownloadContract/", "TestReqParallelDownloadInProcessContract/", 1) for name in isolated_parallel]
     provenance = json.loads((source / "backend/third_party/req/DOWNLOAD-CONTRACTS-PROVENANCE.json").read_text(encoding="utf-8"))
     assert provenance["inProcessContracts"]["leaves"] == in_process and provenance["inProcessContracts"]["count"] == 23
-    expected = set(inventory["linux"] + fallback + cleanup + in_process + (inventory["windowsAdditional"] if windows else []))
-    assert len(expected) == (58 if windows else 57)
+    assert selected_inventory["parallelDownloadDefaultOutputPackage"] == MODULE
+    assert selected_inventory["parallelDownloadDefaultOutputCount"] == len(default_output) == 1
+    assert default_output == ["TestReqParallelDownloadDefaultOutput/url_path_filename"]
+    assert provenance["defaultOutputContract"]["leaves"] == default_output
+    expected = set(inventory["linux"] + fallback + cleanup + in_process + default_output + (inventory["windowsAdditional"] if windows else []))
+    assert len(expected) == (59 if windows else 58)
     runs = collections.Counter((event.get("Package"), event.get("Test")) for event in events if event.get("Action") == "run")
     passes = collections.Counter((event.get("Package"), event.get("Test")) for event in events if event.get("Action") == "pass" and event.get("Test"))
     packages = objects((E / "commands/packages/stdout").read_bytes())
@@ -554,25 +559,36 @@ def actual_inventory(phase, source, windows):
                                  "executedMarkers": output.count("G_IN_PROCESS_EXECUTED " + name + "\n"),
                                  "completedMarkers": output.count("G_IN_PROCESS_BODY_DONE " + name + "\n"),
                                  "childDelegationMarkers": "G_CHILD_ACTUAL" in output or "G_CHILD_EXECUTED" in output})
+    default_execution = []
+    for name in default_output:
+        output = "".join(event.get("Output", "") for event in events if event.get("Package") == MODULE and event.get("Test") == name)
+        default_execution.append({"test": name,
+                                  "completedMarkers": output.count("G1748_DEFAULT_OUTPUT_COMPLETE " + name + " "),
+                                  "childDelegationMarkers": "G_CHILD_ACTUAL" in output or "G_CHILD_EXECUTED" in output})
     unexpected = sorted(name for package, name in runs if package == MODULE and name and name.startswith(("TestReqDownload", "TestReqParallelDownload")) and name not in expected and not any(other.startswith(name + "/") for other in expected))
     old = selected_inventory
     original = {(old[key[:-6] + "Package"], leaf) for key, values in old.items() if key.endswith("Leaves") and isinstance(values, list) and key[:-6] + "Package" in old for leaf in values}
-    assert len(original) == old["totalNamedLeaves"] == 525
-    previous502 = original - {(MODULE, name) for name in in_process}
+    assert len(original) == old["totalNamedLeaves"] == 526
+    previous525 = original - {(MODULE, name) for name in default_output}
+    assert len(previous525) == 525
+    previous502 = previous525 - {(MODULE, name) for name in in_process}
     assert len(previous502) == 502
     baseline_inventory = json.loads((WORKSPACE / "baseline/backend/tools/req-http2-security-inventory.json").read_text(encoding="utf-8"))
     retained = {(baseline_inventory[key[:-6] + "Package"], leaf) for key, values in baseline_inventory.items() if key.endswith("Leaves") and isinstance(values, list) and key[:-6] + "Package" in baseline_inventory for leaf in values}
     assert len(retained) == baseline_inventory["totalNamedLeaves"] == 468 and retained < previous502 < original
     old_events = [{"package": package, "test": name, "run": runs[(package, name)], "pass": passes[(package, name)]} for package, name in sorted(original)] if phase == "full" else []
     previous_events = [item for item in old_events if (item["package"], item["test"]) in previous502]
+    previous525_events = [item for item in old_events if (item["package"], item["test"]) in previous525]
     result = {"expectedGLeaves": len(expected), "gActual": g_events, "unexpectedGLeaves": unexpected,
-              "badEvents": bad, "mandatory525Actual": old_events, "mandatory502Actual": previous_events,
+              "badEvents": bad, "mandatory526Actual": old_events, "mandatory525Actual": previous525_events,
+              "mandatory502Actual": previous_events, "defaultOutputActual": default_execution,
               "inProcess23Actual": parent_execution, "retainedBaselineLeaves": 468,
               "packageTerminals": [event for event in events if "Test" not in event and event.get("Action") in ("pass", "fail", "skip")],
               "classification": "Actual results; every failure remains failed, no accepted-RED list"}
     save(directory / "actual-inventory.json", result)
     assert not unexpected and all(value == {"run": 1, "pass": 1} for value in g_events.values())
     assert all(item["executedMarkers"] == item["completedMarkers"] == 1 and not item["childDelegationMarkers"] for item in parent_execution), "Missing/duplicate parent execution markers or incorrect child delegation"
+    assert all(item["completedMarkers"] == 1 and not item["childDelegationMarkers"] for item in default_execution), "Default output completion missing/duplicate or incorrectly delegated to child"
     assert not bad, "Actual failed or skipped test-bearing package/case"
     assert all(package_passes[package] == 1 for package in test_packages), "Test-bearing package completion missing/duplicate"
     if phase == "full":
@@ -704,6 +720,7 @@ def observe(kind):
             require_success(capture(E / "commands/integrity-controls", [sys.executable, "-B", str(controls), str(source)], WORKSPACE, timeout=1000))
             selector = "^(TestReqDownloadContract|TestReqDownloadContractCancellation|TestReqParallelDownloadContract"
             selector += "|TestReqParallelDownloadFallback|TestReqParallelDownloadHTTP3Cleanup|TestReqParallelDownloadInProcessContract"
+            selector += "|TestReqParallelDownloadDefaultOutput"
             selector += "|TestReqParallelDownloadWindowsClose)$" if os.name == "nt" else ")$"
             wrapper = Path(__file__).resolve()
             # cmd/go's quoted.Split accepts quoted argv items; no shell expansion.

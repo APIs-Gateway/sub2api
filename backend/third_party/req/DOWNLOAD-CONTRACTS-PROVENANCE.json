@@ -3,7 +3,7 @@
   "component": "G public HTTP download and explicit caller-managed continuation contracts",
   "baseHead": "2d6bf53dc3231dc4ccfce48211c43942ed18d656",
   "createdAt": "2026-10-19T15:06:27.795084+00:00",
-  "authoringStatus": "RAW normal merge of formatted836 metadata, b297 parent525 and e3 Windows probe calibration; combined helper/probe formatting and runtime evidence pending.",
+  "authoringStatus": "RAW parent526 source adds one real public default-output contract; remote formatting/runtime and final production/source/controller pins pending.",
   "package": "req_test (external package; exported APIs only)",
   "files": {
     "download_wire_peer_test.go": {
@@ -29,6 +29,10 @@
     "parallel_download_inprocess_contract_test.go": {
       "bytes": 455,
       "sha256": "6c0a49fd9bf93aa0328b509e4c69d572b47c881e791c7045638437cef00a2e6b"
+    },
+    "parallel_download_default_output_test.go": {
+      "bytes": 4417,
+      "sha256": "69a99b55e89dd70eb9ec5999e0a868663707dcb650063fc511c0c75ef67b0615"
     }
   },
   "expectedParentCaseInventory": {
@@ -405,9 +409,9 @@
     },
     "scope": "Normal ancestry composition preserves all original business fixtures, production inputs, metadata verification and exact newtop direct dispatch; no child counter merging.",
     "status": "Independent review, further authorized probes/contracts composition, remote formatting and final source/controller pins pending; no push or execution.",
-    "expectedLinuxGLeaves": 57,
-    "expectedWindowsGLeaves": 58,
-    "mandatoryTotal": 525,
+    "expectedLinuxGLeaves": 58,
+    "expectedWindowsGLeaves": 59,
+    "mandatoryTotal": 526,
     "previousMandatoryRetained": 502,
     "baselineMandatoryRetained": 468,
     "isolatedChildCounts": {
@@ -415,10 +419,26 @@
       "windows": 24
     },
     "inProcessEvidence": "Each exact23 name must RUN/PASS once and emit one G_IN_PROCESS_EXECUTED and G_IN_PROCESS_BODY_DONE; any G_CHILD_ACTUAL/G_CHILD_EXECUTED under that name fails.",
-    "pins": "SOURCE/TREE and workflow source ref deliberately PENDING until later authorized composition and remote formatting; PRODUCTION now0ab includes normal e7 parent/probe composition and exact remote-only two-probe formatting-list addition.",
+    "pins": "SOURCE/TREE/workflowref remainPENDING; current0ab production anchor is historical pending root production-anchor integration of the new default-output test/inventory before observer execution.",
     "currentProductionAnchor": "0abbb69afed23db92501b4e5abf170780a66dc9a",
     "windowsProbeSource": "e3e46f5544c74282d3c66717cd0e5fed8c203d92",
     "ownedPathsAfterProbeComposition": 54,
-    "probeScope": "Only existing H3 cleanup leaf changes calibrated platform-specific occupancy fixture; G57Linux/58Windows, mandatory525 and old23/24 child count unchanged. Production Go hashes and all original132 remain exact."
+    "probeScope": "Only existing H3 cleanup leaf changes calibrated platform-specific occupancy fixture; G57Linux/58Windows, mandatory525 and old23/24 child count unchanged. Production Go hashes and all original132 remain exact.",
+    "previous525Retained": true,
+    "currentOwnedPaths": 55
+  },
+  "defaultOutputContract": {
+    "leaves": [
+      "TestReqParallelDownloadDefaultOutput/url_path_filename"
+    ],
+    "count": 1,
+    "execution": "Direct test-process real HTTP fixture; complete marker after actual Do, peer, final file/neighbor/directory/temp assertions. No child profile counters.",
+    "marker": "G1748_DEFAULT_OUTPUT_COMPLETE",
+    "publicDefaults": "Filename/writer/segment size/concurrency left unset; observed small-entity success does not claim proof of exact1GiB default or WindowsClose.",
+    "ownedPaths": 55,
+    "mandatoryTotal": 526,
+    "previous525Retained": true,
+    "scope": "Independent caller-owned output/temp dirs; exact /assets/report.bin?download=1 peer requests, URL-derived report.bin, long existing destination truncated, exact complete bytes/hash, neighbor unchanged, temp root empty after Do.",
+    "status": "RAW only; root/a2 independent source review and remote formatter/runtime required. No85 claim."
   }
 }

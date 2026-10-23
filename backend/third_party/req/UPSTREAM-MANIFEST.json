@@ -765,7 +765,8 @@
     "parallel_download_http3_cleanup_test.go",
     "parallel_download_inprocess_contract_test.go",
     "parallel_download_http3_probe_windows_test.go",
-    "parallel_download_http3_probe_other_test.go"
+    "parallel_download_http3_probe_other_test.go",
+    "parallel_download_default_output_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
@@ -1299,5 +1300,18 @@
     "original502Retained": true,
     "original32Windows33Retained": true,
     "status": "RAW normal composition only; independent merge review and remote formatting required before actual CI. No runtime/coverage approval."
+  },
+  "defaultParallelDownloadOutputContract": {
+    "sourceBase": "17cbf851d29807fd7bf48c5791790099bb3657cc",
+    "file": "parallel_download_default_output_test.go",
+    "bytes": 4417,
+    "sha256": "69a99b55e89dd70eb9ec5999e0a868663707dcb650063fc511c0c75ef67b0615",
+    "newMandatoryLeaf": "TestReqParallelDownloadDefaultOutput/url_path_filename",
+    "mandatoryTotal": 526,
+    "prior525Retained": true,
+    "ownedPaths": 55,
+    "productionChanges": false,
+    "scope": "Actual public HTTP default output naming, path/query, truncation, complete entity/hash, neighbor preservation and temporary-work cleanup. No explicit output filename/writer/segment size/concurrency.",
+    "status": "RAW source only; independent review, remote formatting and exact-head runtime/coverage required. Existing188/222 failure and all85 gates remain blocking."
   }
 }

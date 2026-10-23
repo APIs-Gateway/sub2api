@@ -192,3 +192,23 @@ all20 operation outcomes, and preserve both checkouts before/after. Proposal
 preparation does not execute formatting. The original raw profile boundaries,
 controls, old-red/MVS and all85 gates stay unchanged. DOM1749 is separate. Final
 observer source/controller pins and any publication still require root review.
+
+
+## RAW default output registration526 (2026-10-23; no execution)
+
+A single separately named public HTTP contract now tests URL-derived output
+filename/default settings, long-file truncation, complete content/hash, adjacent
+caller-file preservation and temp cleanup after Do. It runs directly in the test
+process with fresh peer/client/directories and bounded cancellation; no original
+fixture/helper or production source changes. The original525 identities remain,
+with526 mandatory leaves/55 owned paths and58Linux/59Windows observation scope.
+Its real completion marker is checked in raw per-test JSON; child delegation
+cannot substitute. Original23 parent markers and23/24 isolated child profiles,
+all old controls and raw-counter boundaries remain unchanged.
+
+Natural16bf actual188/222 coverage remains a failed historical result. No local/
+87 executable validation ran, and no new coverage PASS is asserted. Current
+PRODUCTION0ab is an earlier anchor; root must integrate the new noninfra files
+and freeze a new production anchor before this pending observer can execute.
+SOURCE/TREE/checkout remainPENDING. Independent review and remote formatting
+must precede any runtime publication. No LGTM or merge approval is issued here.
