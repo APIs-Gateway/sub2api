@@ -22,7 +22,7 @@ BASE = "673c3fafa9ff9c4c32a6adbd8cd5f595c25f0c63"
 # Deliberately not executable until final composition/remote formatting is sealed.
 SOURCE = "PENDING_PARENT525_SOURCE_HEAD"
 TREE = "PENDING_PARENT525_SOURCE_TREE"
-PRODUCTION = "b29760194991dbc88c6d2ae985a117a1e28aa4db"
+PRODUCTION = "0abbb69afed23db92501b4e5abf170780a66dc9a"
 INFRA_PATHS = {".github/g-download-observation/observe.py", ".github/g-download-observation/controls.py",
                ".github/g-download-observation/metadata_control_test.go.txt", ".github/workflows/g-download-observe.yml",
                "backend/tools/req-http2-security-evidence.py", "backend/third_party/req/download_wire_peer_test.go",

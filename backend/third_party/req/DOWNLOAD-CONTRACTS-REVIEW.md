@@ -169,3 +169,26 @@ This branch has not been pushed or executed. Historical Linux502 observation
 PASS does not validate these changed bytes, Windows behavior or any85 gate.
 Current per-file parallel coverage and original aggregate85 failures remain
 blocking. No LGTM or merge approval is issued by this authoring step.
+
+
+## RAW calibrated probe composition (2026-10-23; pins remain pending)
+
+The normal merge now includes production anchor
+`0abbb69afed23db92501b4e5abf170780a66dc9a`, whose e7 parent/probe merge and
+one-line remote-only gofmt-list addition were independently reviewed. Manifest
+and repair document are exact production-anchor bytes. All other noninfra
+modes/blobs are also exact0ab, with the same eight infrastructure paths; the
+probe helpers do not expand that allowed set. There are54 declared owned paths,
+132 original inputs,13 production adaptations and525 mandatory leaves. Native
+Windows probe calibration is a changed test fixture awaiting actual CI, not a
+waiver of the prior calibration or original test failures. G57/58 and23/24
+isolated child profiles remain as registered above.
+
+A separate proposed Go1.26.10 formatter reuses the previously reviewed remote
+formatter framework for five files only: current combined wire helper, new
+parent contract, H3 cleanup test and both platform probe helpers. It will stage
+the complete exact Git source/controller, keep raw/formatted external copies and
+all20 operation outcomes, and preserve both checkouts before/after. Proposal
+preparation does not execute formatting. The original raw profile boundaries,
+controls, old-red/MVS and all85 gates stay unchanged. DOM1749 is separate. Final
+observer source/controller pins and any publication still require root review.
