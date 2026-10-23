@@ -1,0 +1,56 @@
+{
+  "requiredPassedNamesByFile": {
+    "src/components/layout/__tests__/AppHeader.spec.ts": [
+      "renders localized labels for the mobile and user menu buttons"
+    ],
+    "src/components/admin/payment/__tests__/AdminRefundDialog.balance.spec.ts": [
+      "compares the available balance with the edited refund amount",
+      "does not warn when the balance exactly covers the refund",
+      "uses the remaining amount for an already partially refunded order",
+      "keeps the warning hidden when balance deduction is disabled"
+    ],
+    "src/components/admin/usage/__tests__/UsageFilters.spec.ts": [
+      "trims and emits the exact request ID filter"
+    ],
+    "src/components/payment/__tests__/SubscriptionPlanCard.spec.ts": [
+      "shows server model scopes for openai plans",
+      "shows server model scopes for gemini plans",
+      "shows server model scopes for grok plans",
+      "shows server model scopes for anthropic plans",
+      "uses the platform label for 'missing' server model scopes",
+      "uses the platform label for 'empty' server model scopes",
+      "preserves an unrecognized server model scope label",
+      "shows model scopes for Antigravity plans"
+    ],
+    "src/components/user/__tests__/KeyOnboardingModal.spec.ts": [
+      "取不到模型列表时：下拉只有留空一项，给出提示，仍然可以导入",
+      "成功返回空模型列表时保留空列表提示和留空导入，不显示重试"
+    ],
+    "src/components/user/onboarding/__tests__/shell.spec.ts": [
+      "CC Switch：加载时禁用导入和复制，失败时提供可访问错误与重试，成功空列表仍可留空导入"
+    ],
+    "src/views/admin/__tests__/GroupsView.deleteConfirm.spec.ts": [
+      "uses the single delete message for a 7-id standard group",
+      "uses the single delete message for a 8-id subscription group"
+    ],
+    "src/utils/__tests__/viewport.spec.ts": [
+      "supports a custom dropdown width and gutter"
+    ],
+    "src/views/public/__tests__/LegalDocumentView.spec.ts": [
+      "uses the Chinese admin compliance document for zh-HK",
+      "renders the configured name from the actual public settings cache"
+    ],
+    "src/views/user/__tests__/StripePopupView.spec.ts": [
+      "shows an initialization timeout when the opener never sends Stripe details",
+      "stops polling and closes after a completed payment status",
+      "cleans up popup polling and its init listener on unmount",
+      "ignores a completed polling response that arrives after unmount",
+      "notifies its opener that the popup is ready"
+    ]
+  },
+  "preexistingTodo": {
+    "file": "src/components/subscription/__tests__/SubscriptionPurchasePanel.fiat.spec.ts",
+    "fullName": "购买面板：开通后各分组的倍率 SUBSCRIPTION_PAYMENT_MULTIPLIER ≠ 1 时套餐倍率按 unit_price ÷ 倍数计算"
+  },
+  "minimumFullPassedTests": 4790
+}

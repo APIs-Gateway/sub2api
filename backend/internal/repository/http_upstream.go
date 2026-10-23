@@ -20,7 +20,6 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
-	"golang.org/x/net/http2"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
@@ -1191,16 +1190,25 @@ func buildUpstreamTransport(settings poolSettings, proxyURL *url.URL, protocolMo
 
 // enableOpenAIHTTP2KeepAlive explicitly configures HTTP/2 and enables active
 // PING health checks so pooled dead connections are evicted promptly.
-func enableOpenAIHTTP2KeepAlive(transport *http.Transport) (*http2.Transport, error) {
-	h2, err := http2.ConfigureTransports(transport)
-	if err != nil {
-		return nil, err
+func enableOpenAIHTTP2KeepAlive(transport *http.Transport) (*http.HTTP2Config, error) {
+	if transport == nil {
+		return nil, errors.New("cannot configure HTTP/2 on a nil transport")
 	}
-	if h2 != nil {
-		h2.ReadIdleTimeout = openAIHTTP2ReadIdleTimeout
-		h2.PingTimeout = openAIHTTP2PingTimeout
+	if transport.HTTP2 != nil || transport.TLSNextProto["h2"] != nil {
+		return nil, errors.New("HTTP/2 transport is already configured")
 	}
-	return h2, nil
+	protocols := new(http.Protocols)
+	if transport.Protocols != nil {
+		*protocols = *transport.Protocols
+	}
+	protocols.SetHTTP1(true)
+	protocols.SetHTTP2(true)
+	transport.Protocols = protocols
+	transport.HTTP2 = &http.HTTP2Config{
+		SendPingTimeout: openAIHTTP2ReadIdleTimeout,
+		PingTimeout:     openAIHTTP2PingTimeout,
+	}
+	return transport.HTTP2, nil
 }
 
 // buildUpstreamTransportWithTLSFingerprint 构建带 TLS 指纹伪装的 Transport
