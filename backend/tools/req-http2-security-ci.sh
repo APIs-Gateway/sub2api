@@ -35,7 +35,7 @@ gofmt -l third_party/req/client_behavior_peer_test.go third_party/req/client_beh
 test ! -s "$evidence/digest-client-contract-gofmt.list"
 # Frozen G32/33, the child1748 repair and its additional true full-GET control.
 # No local formatter or executable source validation is permitted.
-gofmt -l third_party/req/download_contract_test.go third_party/req/download_wire_peer_test.go third_party/req/parallel_download_contract_test.go third_party/req/parallel_download_contract_windows_test.go third_party/req/parallel_download_fallback_test.go third_party/req/parallel_download_http3_cleanup_test.go third_party/req/parallel_download_inprocess_contract_test.go third_party/req/parallel_download.go > "$evidence/parallel-download-gofmt.list"
+gofmt -l third_party/req/download_contract_test.go third_party/req/download_wire_peer_test.go third_party/req/parallel_download_contract_test.go third_party/req/parallel_download_contract_windows_test.go third_party/req/parallel_download_fallback_test.go third_party/req/parallel_download_http3_cleanup_test.go third_party/req/parallel_download_http3_probe_other_test.go third_party/req/parallel_download_http3_probe_windows_test.go third_party/req/parallel_download_inprocess_contract_test.go third_party/req/parallel_download.go > "$evidence/parallel-download-gofmt.list"
 test ! -s "$evidence/parallel-download-gofmt.list"
 # New private H2 frame contract source is checked only in remote CI.
 gofmt -l third_party/req/internal/http2/frame_contract_test.go > "$evidence/http2-frame-contract-gofmt.list"
