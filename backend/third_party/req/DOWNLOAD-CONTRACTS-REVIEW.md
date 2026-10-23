@@ -138,3 +138,34 @@ verbatim here; its current hash is in provenance, alongside the historical raw
 seal. Production outputs were imported separately in8013 and normally merged.
 No local/87 formatter or project code executed. This is formatting evidence only;
 new Linux/Windows behavior, metadata controls and all85 gates remain required.
+
+
+## RAW parent525 observer composition (2026-10-23; not executable)
+
+Normal merge of production `b29760194991dbc88c6d2ae985a117a1e28aa4db`
+into observer `29ee7f01467489c5c16b73840123fc1c9eae4560` combines the actual
+formatted836 metadata helper with the exact parent-suite dispatch and temp-dir
+guards. The original case tables and business assertions, parallel/H3 production
+behavior, old mandatory502 and retained468 remain unchanged. The only new23 executions
+reuse the existing real HTTP contracts under their explicit new testing names;
+their counters arise in the parent runtime. The helper's combined RAW hash is
+current in provenance, with both input seals and actual formatter history kept.
+
+The observer now requires57 Linux /58 Windows G leaves. Both named/full phases
+record and require one start/completion marker for each new parent leaf and
+reject child-delegation markers under those names. Full execution additionally
+requires all525 mandatory leaves, reporting original502 separately. The old
+32 Linux/33 Windows fixtures and23/24 actual isolated child profiles keep their
+existing names, metadata associations, watchdogs and assertions. All raw parent
+and child profiles remain separate; original four formal profiles and13-file85
+checks cannot gain child counters. MVS, full frozen Git input checks, metadata/
+parser/input/wrapper controls, readonly modules and race execution stay required.
+
+The eight infrastructure paths are unchanged in scope; every other mode/blob
+must match production b297. SOURCE/TREE and workflow checkout use explicit
+PENDING markers until authorized remaining source composition, remote formatter
+output import and final exact source/controller freezes are independently read.
+This branch has not been pushed or executed. Historical Linux502 observation
+PASS does not validate these changed bytes, Windows behavior or any85 gate.
+Current per-file parallel coverage and original aggregate85 failures remain
+blocking. No LGTM or merge approval is issued by this authoring step.

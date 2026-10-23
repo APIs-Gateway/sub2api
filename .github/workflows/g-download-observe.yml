@@ -3,7 +3,7 @@ name: G download actual Linux and Windows observation
 on:
   push:
     branches:
-      - codex/req-g-profile-input-1748
+      - codex/req-g-parent-observe-1748
   workflow_dispatch:
 
 permissions:
@@ -134,7 +134,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v6
         with:
-          ref: 836c86fa5821057eaca1d0f506955d417400e7e2
+          ref: PENDING_PARENT525_SOURCE_HEAD
           path: source
           fetch-depth: 0
           persist-credentials: false

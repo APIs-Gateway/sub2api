@@ -304,7 +304,7 @@
     },
     "officialCoverageSources": "Go1.26.9 commit2ae494ef9fb90e0da0073c31800ba38870249994; decisive four files byteexact at Go1.26.10 commit4e8c85f5319d999bfd7617fdc191631e5634e3c5",
     "sameDefinitionPolicy": "Each child owns fresh covdata; exact parent auxiliary metadata bytes/ordered fragment hashes, explicit -test.gocoverdir and GOCOVERDIR; no shared counters, missing-zero exemptions or counter merging.",
-    "status": "Raw helper preserved as currentRawHelperSeal; actual remote formatted output is currentFormattedHelperSeal. Controls and project behavior still require new exact-head remoteCI.",
+    "status": "Historical pre-parent525 raw/formatted helper seals remain preserved here. Current RAW combined helper is bound by files/parent525ObserverComposition and still needs remote formatting and exact-head CI.",
     "rawProductionComposition": "9b084db1f4e5fea65d36d2fb3fb301cec93e5129",
     "currentFormattedHelperSeal": {
       "bytes": 27772,
@@ -404,6 +404,17 @@
       "sha256": "ccc47e90747ad88e718b72db46dd2ec35e299af29758c1448b4df0f08ea73d87"
     },
     "scope": "Normal ancestry composition preserves all original business fixtures, production inputs, metadata verification and exact newtop direct dispatch; no child counter merging.",
-    "status": "Independent review, further authorized probes/contracts composition, remote formatting and final source/controller pins pending; no push or execution."
+    "status": "Independent review, further authorized probes/contracts composition, remote formatting and final source/controller pins pending; no push or execution.",
+    "expectedLinuxGLeaves": 57,
+    "expectedWindowsGLeaves": 58,
+    "mandatoryTotal": 525,
+    "previousMandatoryRetained": 502,
+    "baselineMandatoryRetained": 468,
+    "isolatedChildCounts": {
+      "linux": 23,
+      "windows": 24
+    },
+    "inProcessEvidence": "Each exact23 name must RUN/PASS once and emit one G_IN_PROCESS_EXECUTED and G_IN_PROCESS_BODY_DONE; any G_CHILD_ACTUAL/G_CHILD_EXECUTED under that name fails.",
+    "pins": "SOURCE/TREE and workflow source ref deliberately PENDING until later authorized composition and remote formatting; PRODUCTION currently b297."
   }
 }
