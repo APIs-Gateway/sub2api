@@ -14,10 +14,8 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"runtime"
 	"strconv"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -85,25 +83,53 @@ func parallelH3CleanupEndpoint(t *testing.T, conn *quic.Conn) *net.UDPAddr {
 
 func parallelH3CleanupOccupied(t *testing.T, endpoint *net.UDPAddr) {
 	t.Helper()
-	listener, err := net.ListenUDP("udp4", endpoint)
+	listener, err := parallelH3CleanupBindProbe(t, endpoint)
 	if err == nil {
-		_ = listener.Close()
+		if closeErr := listener.Close(); closeErr != nil {
+			t.Fatalf("G1748_H3_FIXTURE: unexpected active probe Close: %v", closeErr)
+		}
 		t.Fatalf("G1748_H3_FIXTURE: active QUIC endpoint was bindable: %s", endpoint)
 	}
-	// Go's Windows EADDRINUSE is a synthetic errno, not Winsock10048.
-	// Accept only the actual address-in-use cause, never EACCES/invalid address.
-	inUse := errors.Is(err, syscall.EADDRINUSE)
-	if runtime.GOOS == "windows" {
-		inUse = errors.Is(err, syscall.Errno(10048)) // WSAEADDRINUSE.
-	}
+	inUse := parallelH3CleanupAddressInUse(err)
 	if !inUse {
 		t.Fatalf("G1748_H3_FIXTURE: binding active endpoint failed without address-in-use proof: %s: %v", endpoint, err)
 	}
 	t.Logf("G1748_H3_ACTIVE_ENDPOINT endpoint=%s cause=%v", endpoint, err)
 }
 
+// Calibrate the exact probe with a real default wildcard socket, matching the
+// public net.ListenUDP("udp", nil) used by the HTTP3 transport. This proves that
+// the platform-specific probe distinguishes a live owner from a released port
+// before it is used as a resource witness for the real QUIC connections.
+func parallelH3CleanupCalibrateProbe(t *testing.T) {
+	t.Helper()
+	control, err := net.ListenUDP("udp", nil)
+	if err != nil {
+		t.Fatalf("G1748_H3_FIXTURE: default wildcard UDP control: %v", err)
+	}
+	t.Cleanup(func() { _ = control.Close() })
+	address, ok := control.LocalAddr().(*net.UDPAddr)
+	if !ok || address.Port == 0 || !address.IP.IsUnspecified() {
+		t.Fatalf("G1748_H3_FIXTURE: control is not actual nonzero wildcard UDP: %v", control.LocalAddr())
+	}
+	endpoint := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: address.Port}
+	parallelH3CleanupOccupied(t, endpoint)
+	if err := control.Close(); err != nil {
+		t.Fatalf("G1748_H3_FIXTURE: default wildcard control Close: %v", err)
+	}
+	probe, err := parallelH3CleanupBindProbe(t, endpoint)
+	if err != nil {
+		t.Fatalf("G1748_H3_FIXTURE: probe did not bind after wildcard control Close: %v", err)
+	}
+	if err := probe.Close(); err != nil {
+		t.Fatalf("G1748_H3_FIXTURE: released control probe Close: %v", err)
+	}
+	t.Logf("G1748_H3_PROBE_CALIBRATED wildcard=%s peerEndpoint=%s occupiedCause=address-in-use releasedBind=true", address, endpoint)
+}
+
 func TestReqParallelDownloadHTTP3Cleanup(t *testing.T) {
 	t.Run("owned_fallback_socket_released", func(t *testing.T) {
+		parallelH3CleanupCalibrateProbe(t)
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
 		serverTLS, clientTLS := h3WireTLS(t)
@@ -258,7 +284,7 @@ func TestReqParallelDownloadHTTP3Cleanup(t *testing.T) {
 		if !errors.As(context.Cause(full.conn.Context()), &remoteClose) || !remoteClose.Remote || remoteClose.ErrorCode != 0 {
 			t.Fatalf("G1748_H3_RESOURCE_ASSERT: private connection did not receive a real normal remote close: %v", context.Cause(full.conn.Context()))
 		}
-		bound, err := net.ListenUDP("udp4", ownedEndpoint)
+		bound, err := parallelH3CleanupBindProbe(t, ownedEndpoint)
 		if err != nil {
 			t.Fatalf("G1748_H3_RESOURCE_ASSERT: owned endpoint not released after successful Do and peer closure: %s: %v", ownedEndpoint, err)
 		}
