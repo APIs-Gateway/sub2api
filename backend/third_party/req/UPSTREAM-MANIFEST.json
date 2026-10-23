@@ -762,7 +762,8 @@
     "parallel_download_contract_windows_test.go",
     "parallel_download_fallback_test.go",
     "PARALLEL-DOWNLOAD-REPAIR.md",
-    "parallel_download_http3_cleanup_test.go"
+    "parallel_download_http3_cleanup_test.go",
+    "parallel_download_inprocess_contract_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",

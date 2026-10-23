@@ -159,3 +159,21 @@ helper output belongs to the separate observer infrastructure composition. No
 local formatter was run. This is formatting evidence only; compile, named/full
 race, Linux502, Windows G33, raw child profiles and all85 requirements remain
 pending or blocking until newly executed on the exact composed candidate.
+
+
+## 2026-10-23 explicit parent contract registration (RAW, pending CI)
+
+Actual29ee req artifact12410344648 proves mandatory502 PASS but added parallel
+fix blocks142/222 below85. Isolated child coverage cannot be merged into the
+formal profiles. Add23 separately named parent contracts, total525, reusing the
+original23-case table and literal peer/response/body/error assertions verbatim.
+The original G32/Windows33 and child watchdog/metadata paths remain mandatory.
+Only exact new top/scenario identities bypass the child; there is no env mode.
+The helper emits distinct start/completion markers that both phases must prove
+once per new leaf, and rejects child-delegation markers for those identities.
+Parent temp dirs are owned by testing.T. All hang/race/error/timeout still fail.
+This is real extra parent execution, not a rewritten profile or coverage waiver.
+No production code or original132/14-test inputs change. 52 owned,13 adaptations.
+Root authored this change: independent source review and remote formatting must
+precede any runtime CI. Current Windows/H3/old fixture failures and original two
+aggregate85 gates remain blocking. No LGTM or coverage percentage claim.

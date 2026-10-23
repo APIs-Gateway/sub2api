@@ -7,8 +7,8 @@
   "package": "req_test (external package; exported APIs only)",
   "files": {
     "download_wire_peer_test.go": {
-      "bytes": 21337,
-      "sha256": "d2db5175252c1844778c0c2ca941f9bcbb22380407484777a08bb37ce881b11a"
+      "bytes": 21839,
+      "sha256": "e79706300871f2bfc715036220d0831fe822ad70910507eb174e34125072e012"
     },
     "download_contract_test.go": {
       "bytes": 7628,
@@ -25,6 +25,10 @@
     "DOWNLOAD-CONTRACTS-LICENSE": {
       "bytes": 1064,
       "sha256": "9629b9d5b0f233bb67619a30d56bf3e49d8cc5133c6f0e3509d4a952bc9beb39"
+    },
+    "parallel_download_inprocess_contract_test.go": {
+      "bytes": 455,
+      "sha256": "6c0a49fd9bf93aa0328b509e4c69d572b47c881e791c7045638437cef00a2e6b"
     }
   },
   "expectedParentCaseInventory": {
@@ -260,5 +264,52 @@
     "sourceAndCoverageInvariantsUnchanged": true,
     "currentSeals": "files map contains imported formatter output seals; raw historical seals retained in remoteFormatterHistory",
     "pending": "Dual formatted-source review; explicit later CI/source integration authorization"
+  },
+  "historicalHelperInputs": [
+    {
+      "stage": "Before explicit parent525 registration",
+      "input": {
+        "bytes": 21337,
+        "sha256": "d2db5175252c1844778c0c2ca941f9bcbb22380407484777a08bb37ce881b11a"
+      },
+      "source": "8013f0a39e22eb023df0c352eabea6ccfaf97fb8"
+    }
+  ],
+  "inProcessContracts": {
+    "status": "RAW authoring; independent source review and remote formatting/runtime/profile evidence pending",
+    "leaves": [
+      "TestReqParallelDownloadInProcessContract/out_of_order",
+      "TestReqParallelDownloadInProcessContract/one_byte",
+      "TestReqParallelDownloadInProcessContract/exact_boundary",
+      "TestReqParallelDownloadInProcessContract/final_short_segment",
+      "TestReqParallelDownloadInProcessContract/segment_larger_than_entity",
+      "TestReqParallelDownloadInProcessContract/relative_existing_file",
+      "TestReqParallelDownloadInProcessContract/absolute_file",
+      "TestReqParallelDownloadInProcessContract/writer_error",
+      "TestReqParallelDownloadInProcessContract/head_zero_length",
+      "TestReqParallelDownloadInProcessContract/head_unknown_length",
+      "TestReqParallelDownloadInProcessContract/head_error_status",
+      "TestReqParallelDownloadInProcessContract/range_ignored_200",
+      "TestReqParallelDownloadInProcessContract/missing_content_range",
+      "TestReqParallelDownloadInProcessContract/wrong_range_start",
+      "TestReqParallelDownloadInProcessContract/reversed_range",
+      "TestReqParallelDownloadInProcessContract/invalid_range_total",
+      "TestReqParallelDownloadInProcessContract/unknown_range_unit",
+      "TestReqParallelDownloadInProcessContract/range_416",
+      "TestReqParallelDownloadInProcessContract/truncated_segment",
+      "TestReqParallelDownloadInProcessContract/empty_segment",
+      "TestReqParallelDownloadInProcessContract/cancel_head",
+      "TestReqParallelDownloadInProcessContract/cancel_segment",
+      "TestReqParallelDownloadInProcessContract/failure_during_dispatch"
+    ],
+    "count": 23,
+    "scope": "Original32/Windows33 and502 required remain; add23 exact named parent executions, total525. No environment mode and no child counter merge.",
+    "markers": [
+      "G_IN_PROCESS_EXECUTED",
+      "G_IN_PROCESS_BODY_DONE"
+    ],
+    "dispatch": "Only exact original top argument and exact new top/scenario testing identity execute directly; original top paths unchanged.",
+    "scratch": "New top uses own t.TempDir when no child scratch; child temp behavior unchanged.",
+    "currentActualCoverageBlocker": "29ee actual added parallel blocks142/222=63.963964% fails85; new source makes no PASS or85 claim."
   }
 }

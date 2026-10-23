@@ -244,6 +244,14 @@ func (downloadGFailedWriter) Write([]byte) (int, error) {
 // another case. The watchdog is a separate failure, never passing/RED evidence.
 func downloadGIsolated(t *testing.T, top, scenario string, body func(*testing.T)) {
 	t.Helper()
+	// The explicitly registered parent suite reuses these exact wire assertions.
+	// Original G scenarios still execute in isolated child processes below.
+	if top == "TestReqParallelDownloadContract" && t.Name() == "TestReqParallelDownloadInProcessContract/"+scenario {
+		t.Logf("G_IN_PROCESS_EXECUTED %s", t.Name())
+		body(t)
+		t.Logf("G_IN_PROCESS_BODY_DONE %s", t.Name())
+		return
+	}
 	const key = "SUB2API_G_DOWNLOAD_CHILD"
 	if os.Getenv(key) == top+"/"+scenario {
 		t.Logf("G_CHILD_EXECUTED %s/%s", top, scenario)
@@ -307,6 +315,9 @@ var _ io.Writer = downloadGFailedWriter{}
 func downloadGTempDir(t *testing.T) string {
 	t.Helper()
 	root := os.Getenv("SUB2API_G_DOWNLOAD_SCRATCH")
+	if root == "" && strings.HasPrefix(t.Name(), "TestReqParallelDownloadInProcessContract/") {
+		return t.TempDir()
+	}
 	if root == "" {
 		t.Fatal("G_FIXTURE_CHILD: no parent-owned scratch directory")
 	}

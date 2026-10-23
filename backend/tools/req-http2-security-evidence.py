@@ -103,9 +103,10 @@ def verify_named(backend, evidence, filename):
             sum(expected[kind + "Count"] for kind in baseline_kinds + ("clientBehavior", "digestOwnership")) == 468,
             "Retain reviewed F44 and all23 Digest ownership leaves with original401")
     require(expected["downloadContractCount"] == 32 and expected["parallelDownloadFallbackCount"] == 1 and
-            expected["parallelDownloadHTTP3CleanupCount"] == 1 and expected["totalNamedLeaves"] == 502,
-            "Retain all468 prior leaves, frozen G32 and both real full-GET/HTTP3 ownership controls")
-    kinds = baseline_kinds + ("clientBehavior", "digestOwnership", "downloadContract", "parallelDownloadFallback", "parallelDownloadHTTP3Cleanup")
+            expected["parallelDownloadHTTP3CleanupCount"] == 1 and expected["parallelDownloadInProcessCount"] == 23 and
+            expected["totalNamedLeaves"] == 525,
+            "Retain original502 leaves and require23 separately registered parent wire contracts")
+    kinds = baseline_kinds + ("clientBehavior", "digestOwnership", "downloadContract", "parallelDownloadFallback", "parallelDownloadHTTP3Cleanup", "parallelDownloadInProcess")
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
     for kind in kinds:
@@ -117,6 +118,13 @@ def verify_named(backend, evidence, filename):
             actual = [v for v in values if v.get("Package") == package and v.get("Test") == test]
             require(sum(v.get("Action") == "run" for v in actual) == 1, f"Missing/duplicate RUN {test}")
             require(sum(v.get("Action") == "pass" for v in actual) == 1, f"Missing/duplicate PASS {test}")
+            if kind == "parallelDownloadInProcess":
+                output = "".join(v.get("Output", "") for v in actual)
+                require(output.count("G_IN_PROCESS_EXECUTED " + test + "\n") == 1 and
+                        output.count("G_IN_PROCESS_BODY_DONE " + test + "\n") == 1,
+                        f"Missing/duplicate actual parent execution markers: {test}")
+                require("G_CHILD_ACTUAL" not in output and "G_CHILD_EXECUTED" not in output,
+                        f"Parent contract incorrectly delegated to child: {test}")
             proof.append({"package": package, "test": test, "actions": [v["Action"] for v in actual]})
     # Detect new security leaves accidentally omitted from the frozen inventory.
     prefixes = ("TestReqHTTP2Security_", "TestDumper", "TestReqTraceSecurity_", "TestReqDumpSecurity_",
@@ -126,7 +134,7 @@ def verify_named(backend, evidence, filename):
                 "TestReqHTTP2TransportContract_", "TestReqMetaCharset_", "TestReqClientDigest_", "TestReqClientRedirect_",
                 "TestReqClientCookie_", "TestReqClientResponse_", "TestReqDigestOwnership_",
                 "TestReqDownloadContract", "TestReqParallelDownloadContract", "TestReqParallelDownloadFallback",
-                "TestReqParallelDownloadHTTP3Cleanup")
+                "TestReqParallelDownloadHTTP3Cleanup", "TestReqParallelDownloadInProcessContract")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")

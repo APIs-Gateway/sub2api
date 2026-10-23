@@ -103,7 +103,7 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 502,
+  "totalNamedLeaves": 525,
   "http1Package": "github.com/imroc/req/v3",
   "http1Leaves": [
     "TestReqHTTP1Lifecycle_ResponseBody/chunked_trailers_reuse",
@@ -595,5 +595,32 @@
   "parallelDownloadHTTP3CleanupCount": 1,
   "parallelDownloadHTTP3CleanupLeaves": [
     "TestReqParallelDownloadHTTP3Cleanup/owned_fallback_socket_released"
+  ],
+  "parallelDownloadInProcessPackage": "github.com/imroc/req/v3",
+  "parallelDownloadInProcessCount": 23,
+  "parallelDownloadInProcessLeaves": [
+    "TestReqParallelDownloadInProcessContract/out_of_order",
+    "TestReqParallelDownloadInProcessContract/one_byte",
+    "TestReqParallelDownloadInProcessContract/exact_boundary",
+    "TestReqParallelDownloadInProcessContract/final_short_segment",
+    "TestReqParallelDownloadInProcessContract/segment_larger_than_entity",
+    "TestReqParallelDownloadInProcessContract/relative_existing_file",
+    "TestReqParallelDownloadInProcessContract/absolute_file",
+    "TestReqParallelDownloadInProcessContract/writer_error",
+    "TestReqParallelDownloadInProcessContract/head_zero_length",
+    "TestReqParallelDownloadInProcessContract/head_unknown_length",
+    "TestReqParallelDownloadInProcessContract/head_error_status",
+    "TestReqParallelDownloadInProcessContract/range_ignored_200",
+    "TestReqParallelDownloadInProcessContract/missing_content_range",
+    "TestReqParallelDownloadInProcessContract/wrong_range_start",
+    "TestReqParallelDownloadInProcessContract/reversed_range",
+    "TestReqParallelDownloadInProcessContract/invalid_range_total",
+    "TestReqParallelDownloadInProcessContract/unknown_range_unit",
+    "TestReqParallelDownloadInProcessContract/range_416",
+    "TestReqParallelDownloadInProcessContract/truncated_segment",
+    "TestReqParallelDownloadInProcessContract/empty_segment",
+    "TestReqParallelDownloadInProcessContract/cancel_head",
+    "TestReqParallelDownloadInProcessContract/cancel_segment",
+    "TestReqParallelDownloadInProcessContract/failure_during_dispatch"
   ]
 }
