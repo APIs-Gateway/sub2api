@@ -765,7 +765,9 @@
     "parallel_download_http3_cleanup_test.go",
     "parallel_download_inprocess_contract_test.go",
     "parallel_download_http3_probe_windows_test.go",
-    "parallel_download_http3_probe_other_test.go"
+    "parallel_download_http3_probe_other_test.go",
+    "trace_elapsed_peer_test.go",
+    "WINDOWS-TRACE-TEST-ADAPTATION.md"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
@@ -880,7 +882,7 @@
     }
   ],
   "adaptedCandidateStatus": "Raw NEW CommonDigestAuth ownership correction under child1743 after complete independently reviewed five-red diagnostic.23 new edge-case OLD/NEW evidence and remote formatting/build/race/all85 gates NOTRUN; no approval.",
-  "originalUnmodifiedFileCount": 119,
+  "originalUnmodifiedFileCount": 118,
   "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
   "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227",
   "http3ContractTestProvenance": {
@@ -1186,7 +1188,7 @@
     "totalRequiredLinuxLeaves": 502,
     "windowsGLeaves": 33,
     "productionAdaptations": 13,
-    "unchangedOriginalFiles": 119,
+    "unchangedOriginalFiles": 118,
     "newOwnedPaths": [
       "parallel_download_fallback_test.go",
       "PARALLEL-DOWNLOAD-REPAIR.md",
@@ -1299,5 +1301,72 @@
     "original502Retained": true,
     "original32Windows33Retained": true,
     "status": "RAW normal composition only; independent merge review and remote formatting required before actual CI. No runtime/coverage approval."
+  },
+  "originalTestAdaptations": [
+    {
+      "path": "request_test.go",
+      "originalBytes": 28340,
+      "originalSHA256": "6e673154deec01ad15fb0980b00e47376c4e32aeae7ddaa394b98add9c218dd2",
+      "candidateBytes": 29048,
+      "candidateSHA256": "f6626e58531e2a1998542fff0385e421d0f6e5404d352653b22f452b5496ba47",
+      "requiredTests": [
+        "TestSetFile",
+        "TestTraceInfo"
+      ],
+      "reason": "Retain real upload/trace behavior while replacing Unix error wording with actual OS error identity and establishing real peer/public-callback elapsed prerequisites. No production timing or timeout change.",
+      "originalWindowsRun": 39744585493,
+      "originalWindowsArtifact": 12411476184,
+      "originalWindowsArtifactSHA256": "5a9835fed2cf0e9583a33f697332cb412ed8ffe9b42fa28ccaf37a3720aae9c0",
+      "scopeDocument": "WINDOWS-TRACE-TEST-ADAPTATION.md",
+      "status": "RAW reviewed-source preparation only; current candidate hash must be transparently updated after remote formatting; no runtimePASS."
+    }
+  ],
+  "windowsTraceTestPortability": {
+    "baseHead": "17cbf851d29807fd7bf48c5791790099bb3657cc",
+    "actualOldWindowsRun": 39744585493,
+    "originalArchiveAnd132ReferenceEntriesUnchanged": true,
+    "originalTestFiles": 14,
+    "originalSelectedTestFiles": 12,
+    "originalRetainedHelperFiles": 2,
+    "unchangedOriginalFiles": 118,
+    "productionAdaptations": 13,
+    "originalTestAdaptations": 1,
+    "currentSourceFiles": {
+      "request_test.go": {
+        "bytes": 29048,
+        "sha256": "f6626e58531e2a1998542fff0385e421d0f6e5404d352653b22f452b5496ba47"
+      },
+      "trace_concurrency_test.go": {
+        "bytes": 20127,
+        "sha256": "10157b01e5c04b6a8d2782547f4cf00c8420704d593f95e55c08c76adc8d630d"
+      },
+      "trace_elapsed_peer_test.go": {
+        "bytes": 9378,
+        "sha256": "50ebef3474ab2f5faece042a6c145f8b780a58f961d3f56be9bbf339aac3fd2f"
+      },
+      "WINDOWS-TRACE-TEST-ADAPTATION.md": {
+        "bytes": 6593,
+        "sha256": "96be84ed37f8b5be232f882a67f755f952dc4723dcf3d9ab9e79449de32e7e59"
+      }
+    },
+    "ownedFilesAfterThisSource": 56,
+    "requiredSecurityLeavesUnchanged": 525,
+    "newTestLeaves": 0,
+    "businessTimeouts": "No client/request/deadline changes; original5s fixture guard and500ms deadline retained. Clock sampling does not fabricate timestamp values.",
+    "causalOracle": "Real TLS peer; actual first fragment Flush then public GotFirstResponseByte before measured elapsed body suffix release; actual connected addresses/callbacks and body EOF/ReceivedAt. All connect/TCP durations may be zero but never negative, absent reused phases stay zero.",
+    "remoteNegativeControls": [
+      "clean",
+      "unregistered",
+      "wrong-hash",
+      "missing-selected-identity"
+    ],
+    "remoteControlsSource": "backend/tools/req-original-test-adaptation-controls.py",
+    "status": "RAW only; no local/87 project/format/AST/checker/test/build execution; remote exact-head actual validation and independent review required. Original failures remain blocking.",
+    "ownedTraceCasesScope": [
+      "LateDNSAfterCompletion explicit Cancel only",
+      "NormalTLSAndReuse actual fresh/reused body prerequisite",
+      "RequestReuse actual fresh/reused body prerequisite",
+      "ManualBodyEOF actual public first byte/snapshot before suffix prerequisite"
+    ]
   }
 }
