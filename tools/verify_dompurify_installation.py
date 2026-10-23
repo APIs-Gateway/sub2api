@@ -15,13 +15,18 @@ import traceback
 import urllib.request
 
 VERSION = "3.4.17"
+VITEST_VERSION = "2.1.9"
+JSDOM_VERSION = "24.1.3"
+# These exact unchanged source inputs pin the expected DOM test environment.
+LOCK_SHA256 = "ee70bcdbe28e4ba9af148199e0829e5b0ff021fe66c3a74ad9629004a8d4caeb"
+VITEST_CONFIG_SHA256 = "d1d6787bba644c810d5ee9ce3267a8dd469c2ce8c6247362e6b50792cdf53309"
 TARBALL = "https://registry.npmjs.org/dompurify/-/dompurify-3.4.17.tgz"
 SRI = "sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w=="
 SHA1 = "074bbb24eaa419535ac19ffe7f663104b0e1543d"
 
 # Node's real owner-context search paths locate package manifests without asking
-# packages to export a package.json subpath. Only DOMPurify entry resolution is
-# required; no dependency module is evaluated by this discovery code.
+# packages to export a package.json subpath. DOMPurify and the Vitest/jsdom
+# environment have require entries observed; no dependency module is evaluated.
 DISCOVER = r"""
 const fs = require('node:fs');
 const path = require('node:path');
@@ -51,10 +56,13 @@ function edge(owner, name) {
     const record = {owner: owner.value.name, ownerVersion: owner.value.version ?? null, ownerRoot: owner.root, ownerManifestSHA256: owner.manifestSHA256,
       requested: name, declarations, nodeSearchPaths: search, targetRoot: target.root,
       targetManifestSHA256: target.manifestSHA256, targetVersion: target.value.version};
-    if (name === 'dompurify') {
+    if (['dompurify', 'vitest', 'jsdom'].includes(name)) {
       record.actualEntry = fs.realpathSync(request.resolve(name));
-      if (!record.actualEntry.startsWith(target.root + path.sep)) throw new Error('DOMPurify entry escapes package');
+      if (!record.actualEntry.startsWith(target.root + path.sep)) throw new Error('Resolved require entry escapes package: ' + name);
       record.actualEntrySHA256 = digest(fs.readFileSync(record.actualEntry));
+    }
+    if (name === 'dompurify') {
+      record.moduleEntryInterpretation = 'Published manifest.module field; not actual ESM import resolution or execution';
       record.moduleEntry = fs.realpathSync(path.resolve(target.root, target.value.module));
       if (!record.moduleEntry.startsWith(target.root + path.sep)) throw new Error('DOMPurify module entry escapes package');
       record.moduleEntrySHA256 = digest(fs.readFileSync(record.moduleEntry));
@@ -71,6 +79,11 @@ const mermaid = edge(ui.target, 'mermaid');
 const nested = edge(mermaid.target, 'dompurify');
 const types = edge(root, '@types/dompurify');
 const typed = edge(types.target, 'dompurify');
+const vitest = edge(root, 'vitest');
+const testDom = edge(vitest.target, 'jsdom');
+const directDom = edge(root, 'jsdom');
+const testEnvironment = {name: 'vitest-jsdom', edges: [vitest.record, testDom.record],
+  directJsdom: directDom.record, interpretation: 'Actual installed owner-context require resolution; not Vitest or browser execution'};
 const logical = [
   {name: 'direct', edges: [direct.record]},
   {name: 'mermaid', edges: [icons.record, ui.record, mermaid.record, nested.record]},
@@ -108,13 +121,13 @@ function walk(directory) {
   }
 }
 const logicalManifests = new Map();
-for (const item of [root, icons.target, ui.target, mermaid.target, types.target, direct.target, nested.target, typed.target]) {
+for (const item of [root, icons.target, ui.target, mermaid.target, types.target, direct.target, nested.target, typed.target, vitest.target, testDom.target, directDom.target]) {
   logicalManifests.set(item.root, {root: item.root, name: item.value.name, version: item.value.version ?? null,
     sha256: item.manifestSHA256, rawBase64: item.manifestBase64});
 }
 const installedRoot = fs.realpathSync(path.join(frontend, 'node_modules'));
 walk(installedRoot);
-console.log(JSON.stringify({logicalPaths: logical, logicalManifests: [...logicalManifests.values()], physicalInstances: [...physical.values()].map(item =>
+console.log(JSON.stringify({logicalPaths: logical, testEnvironment, logicalManifests: [...logicalManifests.values()], physicalInstances: [...physical.values()].map(item =>
   ({root: item.root, name: item.value.name, version: item.value.version, manifestSHA256: item.manifestSHA256})),
   scan: {installedRoot, directoriesVisited, moduleManifests, followsDirectorySymlinks: false}}, null, 2));
 """
@@ -241,7 +254,12 @@ def inspect_package(evidence, discovery):
     logical_roots = set()
     chains = [["dompurify"], ["@lobehub/icons", "@lobehub/ui", "mermaid", "dompurify"],
               ["@types/dompurify", "dompurify"]]
-    for path, chain in zip(discovery["logicalPaths"], chains):
+    environment = discovery["testEnvironment"]
+    require(environment["name"] == "vitest-jsdom", "Actual DOM test environment chain missing")
+    checks = list(zip(discovery["logicalPaths"], chains)) + [
+        (environment, ["vitest", "jsdom"]),
+        ({"edges": [environment["directJsdom"]]}, ["jsdom"])]
+    for path, chain in checks:
         require([edge["requested"] for edge in path["edges"]] == chain, "Logical package chain differs")
         previous = str(Path(__file__).resolve().parent.parent / "frontend")
         for edge in path["edges"]:
@@ -254,15 +272,34 @@ def inspect_package(evidence, discovery):
                     and target["sha256"] == edge["targetManifestSHA256"], "Actual target manifest binding differs")
             require(edge["declarations"] and all(owner_value[d["field"]][edge["requested"]] == d["range"]
                     for d in edge["declarations"]), "Declared dependency differs from raw actual manifest")
+            if edge["requested"] in ("dompurify", "vitest", "jsdom"):
+                entry = Path(edge["actualEntry"])
+                require(entry.is_relative_to(Path(edge["targetRoot"])) and entry.resolve(strict=True) == entry
+                        and sha(entry.read_bytes()) == edge["actualEntrySHA256"],
+                        "Actual owner-context require entry changed")
             previous = edge["targetRoot"]
         final = path["edges"][-1]
-        for key, hash_key in (("actualEntry", "actualEntrySHA256"), ("moduleEntry", "moduleEntrySHA256")):
-            entry = Path(final[key])
+        if final["requested"] == "dompurify":
+            entry = Path(final["moduleEntry"])
             require(entry.is_relative_to(Path(final["targetRoot"])) and entry.resolve(strict=True) == entry
-                    and sha(entry.read_bytes()) == final[hash_key], "Actual resolved implementation entry changed")
-        require(final["requested"] == "dompurify" and final["targetVersion"] == VERSION,
-                "Reachable DOMPurify is not patched")
-        logical_roots.add(final["targetRoot"])
+                    and sha(entry.read_bytes()) == final["moduleEntrySHA256"], "Published module-field entry changed")
+            require(final["moduleEntryInterpretation"] ==
+                    "Published manifest.module field; not actual ESM import resolution or execution",
+                    "Published module-field evidence interpretation differs")
+            require(final["targetVersion"] == VERSION, "Reachable DOMPurify is not patched")
+            logical_roots.add(final["targetRoot"])
+        else:
+            require(final["requested"] == "jsdom" and final["targetVersion"] == JSDOM_VERSION,
+                    "Actual jsdom differs from frozen test environment")
+    require(environment["edges"][0]["targetVersion"] == VITEST_VERSION,
+            "Actual Vitest differs from frozen test environment")
+    require(environment["edges"][-1]["targetRoot"] == environment["directJsdom"]["targetRoot"],
+            "Vitest and frontend resolve different actual jsdom instances")
+    installed_root = Path(discovery["scan"]["installedRoot"]).resolve(strict=True)
+    for edge in environment["edges"] + [environment["directJsdom"]]:
+        root = Path(edge["targetRoot"])
+        require(root.is_absolute() and root.resolve(strict=True) == root and root.is_relative_to(installed_root),
+                "DOM test environment resolves outside actual project installation")
     instances = discovery["physicalInstances"]
     require(instances and len({p["root"] for p in instances}) == len(instances),
             "Missing/duplicate physical instance records")
@@ -362,7 +399,13 @@ def main():
                            "runnerSHA": os.environ.get("GITHUB_SHA"), "rawEventSHA256": sha(event_raw)}
         package = (repo / "frontend/package.json").read_bytes()
         lock = (repo / "frontend/pnpm-lock.yaml").read_bytes()
+        vitest_config = (repo / "frontend/vitest.config.ts").read_bytes()
+        require(sha(lock) == LOCK_SHA256 and sha(vitest_config) == VITEST_CONFIG_SHA256,
+                "Frozen lock or jsdom Vitest configuration differs")
         manifest = json.loads(package)
+        require(manifest["devDependencies"]["vitest"] == "^" + VITEST_VERSION and
+                manifest["devDependencies"]["jsdom"] == "^" + JSDOM_VERSION,
+                "Declared DOM test environment differs")
         require(manifest["dependencies"]["dompurify"] == "^" + VERSION and
                 manifest["pnpm"]["overrides"]["dompurify@<" + VERSION] == ">=" + VERSION,
                 "Direct dependency/override floor differs")
@@ -371,6 +414,10 @@ def main():
                 "Frozen lock identity differs")
         (evidence / "package.json").write_bytes(package)
         (evidence / "pnpm-lock.yaml").write_bytes(lock)
+        (evidence / "vitest.config.ts").write_bytes(vitest_config)
+        report["testEnvironmentInputs"] = {"lockSHA256": sha(lock), "vitestConfigSHA256": sha(vitest_config),
+                                           "expectedVitest": VITEST_VERSION, "expectedJsdom": JSDOM_VERSION,
+                                           "interpretation": "Exact existing lock/config bytes; installed resolution observed separately"}
         report["nodeVersion"] = capture(evidence, "node-version", ["node", "--version"], repo).decode().strip()
         report["pnpmVersion"] = capture(evidence, "pnpm-version", ["pnpm", "--version"], repo).decode().strip()
         require(report["nodeVersion"].startswith("v20.") and report["pnpmVersion"].startswith("9."),
@@ -379,6 +426,7 @@ def main():
         discovery = json.loads(capture(evidence, "resolution", ["node", "-e", DISCOVER, str(repo / "frontend")], repo))
         save(evidence / "discovery.json", discovery)
         report["logicalPaths"] = discovery["logicalPaths"]
+        report["testEnvironment"] = discovery["testEnvironment"]
         report["scan"] = discovery["scan"]
         report["packageBytes"] = inspect_package(evidence, discovery)
     except Exception:
