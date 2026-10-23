@@ -212,3 +212,16 @@ PRODUCTION0ab is an earlier anchor; root must integrate the new noninfra files
 and freeze a new production anchor before this pending observer can execute.
 SOURCE/TREE/checkout remainPENDING. Independent review and remote formatting
 must precede any runtime publication. No LGTM or merge approval is issued here.
+
+
+## Production1cbe source binding (2026-10-23; formatter pending)
+
+Root imported the exact five noninfra files from bdb into production-only
+`1cbe4fcc134dcf00637116f4209fad1118c26919`, parent0ab. Independent narrow
+import review verified exactly those five mode/blob/raw-byte inputs and no other
+delta. A normal merge now retains this anchor in source ancestry; all noninfra
+mode/blob values match1cbe and the original eight-path boundary remains. The
+observer PRODUCTION pin is1cbe; SOURCE/TREE/checkout deliberately remainPENDING
+until independent final source/controller review and remote formatting. No
+fixture/production inputs were rewritten by the binding update. Newfile actual
+formatting/runtime and all526/85/Windows obligations still require remote CI.
