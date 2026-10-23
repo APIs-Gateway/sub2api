@@ -103,7 +103,7 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 525,
+  "totalNamedLeaves": 526,
   "http1Package": "github.com/imroc/req/v3",
   "http1Leaves": [
     "TestReqHTTP1Lifecycle_ResponseBody/chunked_trailers_reuse",
@@ -622,5 +622,10 @@
     "TestReqParallelDownloadInProcessContract/cancel_head",
     "TestReqParallelDownloadInProcessContract/cancel_segment",
     "TestReqParallelDownloadInProcessContract/failure_during_dispatch"
+  ],
+  "parallelDownloadDefaultOutputPackage": "github.com/imroc/req/v3",
+  "parallelDownloadDefaultOutputCount": 1,
+  "parallelDownloadDefaultOutputLeaves": [
+    "TestReqParallelDownloadDefaultOutput/url_path_filename"
   ]
 }

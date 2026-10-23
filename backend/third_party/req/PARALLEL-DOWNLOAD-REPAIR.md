@@ -220,3 +220,31 @@ not this subsequently changed probe fixture's formatting or runtime status.
 
 Combined RAW parent23/probe composition retains525 Linux mandatory leaves and54 owned paths.
 All original source/test and coverage gates remain. No formatter or runtime evidence yet.
+
+
+## RAW public default output contract (2026-10-23; unexecuted)
+
+Natural CI39962372777 at16bf actually passed all525 required named/full leaves
+and both sets of23 new parent markers. The unchanged13-file coverage gate still
+failed: parallel_download.go188/222 =84.68468468468468%, below85 without rounding.
+Every subsequent backend business step was skipped; no aggregate85 PASS follows.
+The original raw profiles/counts and failure are retained in evidence.
+
+One new public contract leaves filename/writer/segment/concurrency settings
+unset and downloads from an actual peer at/assets/report.bin?download=1 into a
+private Client.SetOutputDirectory. It requires literal path/query on real HEAD
+and partial GET requests, complete matching public responses, returned Do, exact
+report.bin entity/hash and truncation of its preexisting longer bytes. A caller
+neighbor must remain unchanged, the output directory may contain only its two
+expected files, and the private temporary-segment root must be empty after Do.
+It uses no production/private hooks, environment mode or child-counter merging.
+This small entity exercises public defaults; it cannot prove an exact1GiB
+default configuration value or a Windows destination-Close contract.
+
+The separate name is
+TestReqParallelDownloadDefaultOutput/url_path_filename. Register526 mandatory
+leaves and55 owned paths, preserving every original525 identity,23 parent start/
+completion contracts and23Linux/24Windows isolated children. Observer scope is
+58Linux/59Windows. Production Go hashes, original132 inputs and all85 thresholds
+are unchanged. RAW source requires root/a2 independent review, remote formatting
+and actual exact-head CI. This change does not claim coverage has reached85.
