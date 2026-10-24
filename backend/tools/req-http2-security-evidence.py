@@ -282,6 +282,45 @@ def compare_old_module_graphs(current, old, backend, evidence):
             "allOtherModuleAndReplacementFieldsIdentical": True}
 
 
+
+def verify_original_test_adaptations(controlled, manifest, selected):
+    """Keep original archive identity separate from one reviewed portable test."""
+    entries = manifest.get("originalTestAdaptations")
+    require(isinstance(entries, list) and len(entries) == 1 and
+            isinstance(entries[0], dict) and entries[0].get("path") == "request_test.go",
+            "Original test adaptation registration differs")
+    item = entries[0]
+    references = [value for value in manifest["originalFiles"] if value["path"] == item["path"]]
+    require(len(references) == 1 and manifest["archiveSHA256"] == ZIP_SHA,
+            "Original test archive identity differs")
+    original = references[0]
+    require(item.get("originalBytes") == original["size"] and
+            item.get("originalSHA256") == original["sha256"] and
+            item.get("requiredTests") == ["TestSetFile", "TestTraceInfo"],
+            "Original test adaptation reference or test identities differ")
+    require(item["path"] in selected, "Adapted original test file not selected")
+    data = (controlled / item["path"]).read_bytes()
+    require(type(item.get("candidateBytes")) is int and len(data) == item["candidateBytes"] and
+            hashlib.sha256(data).hexdigest() == item.get("candidateSHA256"),
+            "Adapted original test hash mismatch: " + item["path"])
+    return {item["path"]}
+
+
+def verify_adapted_original_test_events(backend, evidence):
+    manifest = json.loads((backend / "third_party/req/UPSTREAM-MANIFEST.json").read_text())
+    values = events(evidence / "all.json")
+    proof = []
+    for item in manifest["originalTestAdaptations"]:
+        for test in item["requiredTests"]:
+            actual = [value for value in values if value.get("Package") == MODULE and value.get("Test") == test]
+            require(sum(value.get("Action") == "run" for value in actual) == 1 and
+                    sum(value.get("Action") == "pass" for value in actual) == 1 and
+                    not any(value.get("Action") in ("fail", "skip") for value in actual),
+                    "Adapted original test execution identity missing/failed: " + test)
+            proof.append({"path": item["path"], "test": test, "actions": [value["Action"] for value in actual]})
+    report(evidence, "adapted-original-test-execution-proof.json", proof)
+
+
 def main():
     operation, source, destination = sys.argv[1:]
     backend, evidence = Path(source).resolve(), Path(destination).resolve()
@@ -324,10 +363,12 @@ def main():
                       if v["path"].endswith(".go") and not v["path"].endswith("_test.go")}
         require(len(production) == 89 and adaptations <= production,
                 "Retain all89 original production Go files and exactly13 declared adaptations")
-        require(manifest["originalUnmodifiedFileCount"] == 119,
-                "Retain exactly119 unchanged originals after13 declared production adaptations")
+        test_adaptations = verify_original_test_adaptations(controlled, manifest, selected)
+        require(manifest["originalUnmodifiedFileCount"] == 118 and len(test_adaptations) == 1 and
+                not adaptations & test_adaptations,
+                "Retain exactly118 unchanged originals plus13 production and1 test adaptation")
         for item in manifest["originalFiles"]:
-            if item["path"] not in adaptations:
+            if item["path"] not in adaptations | test_adaptations:
                 data = (controlled / item["path"]).read_bytes()
                 require(len(data) == item["size"] and hashlib.sha256(data).hexdigest() == item["sha256"], "Original source modified: " + item["path"])
         for item in manifest["adaptedCandidateFiles"]:
@@ -337,11 +378,12 @@ def main():
         omitted = {"internal/testdata/cert_test.go", "internal/testdata/testdata_suite_test.go"}
         require(len(originals) == 14 and originals - selected == omitted, "Original wildcard test selection changed")
         require(len(originals & selected) == 12, "Expected 12 selected original test files")
-        report(evidence, "package-selection-proof.json", {"module": req[0], "selectedTests": sorted(selected), "originalSelected": sorted(originals & selected), "originalOmitted": sorted(omitted), "omission": "Original testdata helper suite is excluded by Go wildcard; cert_test.go lacks io import. No PASS claimed."})
+        report(evidence, "package-selection-proof.json", {"module": req[0], "selectedTests": sorted(selected), "originalSelected": sorted(originals & selected), "originalTestAdaptations": manifest["originalTestAdaptations"], "originalOmitted": sorted(omitted), "omission": "Original testdata helper suite is excluded by Go wildcard; cert_test.go lacks io import. No PASS claimed."})
     elif operation == "named":
         verify_named(backend, evidence, "named.json")
     elif operation == "all":
         passed = verify_named(backend, evidence, "all.json")
+        verify_adapted_original_test_events(backend, evidence)
         packages = objects(evidence / "packages.json")
         expected = {v["ImportPath"] for v in packages if v.get("TestGoFiles") or v.get("XTestGoFiles")}
         require(expected <= passed, "Original package tests did not complete: " + repr(sorted(expected - passed)))
