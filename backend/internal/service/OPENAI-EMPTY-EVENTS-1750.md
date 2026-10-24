@@ -48,3 +48,14 @@ payment/billing/scheduling changes. Existing per-attempt billing and request
 budgets, original added-item behavior and memory limits stay. Preserve and
 cross-review shared-file PRs1733/1717/1710/1708/1705/1704/1699/1697/1672/1022 and
 1712 before merge. No local resources or remote branch have been published.
+
+## NEW production source preparation
+
+The new source changes only the existing shared classifier module. Added/error/
+failed semantics and tool completion remain untouched. New known forms use a
+small duplicate-rejecting JSON-object reader, exact payload/event type pairing,
+and explicit empty-string bytes; nested done parts use the same object/type
+checks. Queued/metadata are exact lifecycle names, not a broad event wildcard.
+No production timing, retry count/delay, usage/billing, transport or scheduling
+code changes. OLD and NEW retain byte-identical test source. Formatting and
+actual OLD/NEW outcomes are pending independent review and remote CI.
