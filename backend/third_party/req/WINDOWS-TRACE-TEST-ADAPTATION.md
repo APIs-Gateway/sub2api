@@ -43,6 +43,13 @@ new transparent current test hash, retaining the original archive hash.
   another real elapsed gate before releasing the suffix. Whole body, actual
   protocol/peer completion, public TCP/TLS/GotConn events, real addresses,
   ReceivedAt, reuse, trace enable/disable and TotalTime equality are checked.
+  The two existing modes are explicit tc()/expectedHTTP2 and
+  tc().EnableForceHTTP1()/expectedHTTP1 without new test/subtest names. Both the
+  actual response and real peer must report that expected protocol. Default TLS
+  requires actual h2 ALPN; forced H1 accepts its legal empty or http/1.1 ALPN.
+  First-request public GotConn.Conn and peer ConnContext identities are saved;
+  requests2/3 explicitly require Reused=true and those same two real connection
+  objects, matching reversed endpoint addresses and no new TCP/TLS callbacks.
 - Every ConnectTime/TCPConnectTime is nonnegative; even a fresh loopback TCP
   phase can have same-tick endpoints. Public successful ConnectStart/Done and
   addresses witness actual fresh connection work. A reused connection must
@@ -102,3 +109,15 @@ RAW unformatted/unexecuted source only. No local/87 formatter, project checker,
 AST, test or compiler execution. Root plus independent review, remote formatter
 and exact-head Linux/Windows named/full/race and all existing security/85 gates
 are still required. Source changes do not waive old failures or approve1712.
+
+
+## Review correction after3d1b7ccf9
+
+Root found that3d1 compared response protocol only with the peer's actual
+protocol and branched on the observed Reused flag. A simultaneous downgrade or
+three fresh connections could therefore pass despite the stated mode/reuse
+contract. That source and finding remain historical evidence. The narrow
+follow-up pins expectedHTTP2/HTTP1 and the false/true/true reuse sequence, using
+both actual public client connection and independent public server ConnContext
+identity. No production path, duration, test identity or timeout changes. Actual
+runtime results remain pending; this correction is not an execution PASS.

@@ -834,29 +834,30 @@ func assertDisableTraceInfo(t *testing.T, resp *Response) {
 }
 
 func TestTraceInfo(t *testing.T) {
-	testWithAllTransport(t, testTraceInfo)
+	testTraceInfo(t, tc(), 2)
+	testTraceInfo(t, tc().EnableForceHTTP1(), 1)
 }
 
-func testTraceInfo(t *testing.T, c *Client) {
-	peer := newTracePortablePeer(t, c)
+func testTraceInfo(t *testing.T, c *Client, expectedProtocol int) {
+	peer := newTracePortablePeer(t, c, expectedProtocol)
 	// enable trace at client level
 	c.EnableTraceAll()
 	resp, err := c.R().Get("/")
 	assertSuccess(t, resp, err)
-	peer.assertCompleted(t, resp, true)
+	peer.assertCompleted(t, resp, true, false)
 	assertEnableTraceInfo(t, resp)
 
 	// disable trace at client level
 	c.DisableTraceAll()
 	resp, err = c.R().Get("/")
 	assertSuccess(t, resp, err)
-	peer.assertCompleted(t, resp, false)
+	peer.assertCompleted(t, resp, false, true)
 	assertDisableTraceInfo(t, resp)
 
 	// enable trace at request level
 	resp, err = c.R().EnableTrace().Get("/")
 	assertSuccess(t, resp, err)
-	peer.assertCompleted(t, resp, true)
+	peer.assertCompleted(t, resp, true, true)
 	assertEnableTraceInfo(t, resp)
 }
 
