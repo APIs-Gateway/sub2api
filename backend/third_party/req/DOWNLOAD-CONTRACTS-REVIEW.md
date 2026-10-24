@@ -225,3 +225,26 @@ observer PRODUCTION pin is1cbe; SOURCE/TREE/checkout deliberately remainPENDING
 until independent final source/controller review and remote formatting. No
 fixture/production inputs were rewritten by the binding update. Newfile actual
 formatting/runtime and all526/85/Windows obligations still require remote CI.
+
+
+## Oct24 normal union and production binding (RAW)
+
+Normal merge combines default526 source09e, final portable trace source7a42 and
+reviewed DOM source6cb. The manifest retains both additions:57 owned req paths,
+526 mandatory leaves,118 unchanged originals+13 production+1 original-test
+adaptation. All original132/archive/89 production hashes and original14/12+2
+test identities remain. Root resolved only the append-only manifest conflict;
+checker and permanent CI shell retained both branches' gates automatically.
+
+Production anchor3a97972cb8e41d23c1b06d308b2d8b8c2ebfa177 imports exactly13
+noninfra paths from the merged source, then is normally merged into source
+ancestry. Noninfra files are exact and the original eight-path infrastructure
+boundary remains. PRODUCTION is updated to this anchor. SOURCE/TREE/ref remain
+PENDING; the three changed trace/original Go test files are RAW and must use
+remote formatter outputs followed by transparent manifest hash updates.
+
+Default-only7809 actual526/194of222 and DOM-only6cb actual Security/new4consumer
+passes remain scoped to their own frozen inputs. They do not prove this union
+or Windows behavior. Explicit manual-observer integration of original-test
+negative controls and full original-test execution evidence is still needed.
+No local or87 project/syntax/format/test/build execution occurs. No LGTM.

@@ -3,7 +3,7 @@
   "component": "G public HTTP download and explicit caller-managed continuation contracts",
   "baseHead": "2d6bf53dc3231dc4ccfce48211c43942ed18d656",
   "createdAt": "2026-10-19T15:06:27.795084+00:00",
-  "authoringStatus": "RAW parent526 source normally includes exact production1cbe; root independent source review and new-file remote formatting/runtime plus final source/controller pins pending.",
+  "authoringStatus": "RAW normal union of independently reviewed default526, portable original trace P2fix and DOMPurify1749 inputs; three changed Go test files require remote formatting and transparent hash reseal before exact-head runtime.",
   "package": "req_test (external package; exported APIs only)",
   "files": {
     "download_wire_peer_test.go": {
@@ -442,5 +442,29 @@
     "status": "RAW fixture normally composed with exact production-only anchor1cbe; independent root/a2 review, remote formatting and exact-head CI pending. Old188/222 failure remains unwaived; no85 orWindowsPASS claim.",
     "productionAnchor": "1cbe4fcc134dcf00637116f4209fad1118c26919",
     "productionImportReviewReceiptSHA256": "2d616ae0fc9082ae98845117105be8cfa4be257076b250cb757e8b3522b984b2"
+  },
+  "normalCompositionOct24": {
+    "defaultSource": "09e637cc70a467aa477925945e50640ada000606",
+    "traceSource": "7a42eb3eca21dc97ce4acaca331aad72f4157f47",
+    "DOMSource": "6cbaddae9795d6a46c752e20fffd68fac2b49aa2",
+    "sourceMerge": "1f23a1b8e4e111cbdc93bb3d286ee9f343c15f9f",
+    "productionAnchor": "3a97972cb8e41d23c1b06d308b2d8b8c2ebfa177",
+    "productionAnchorTree": "d5e8210bb00dd31e42d543d2c6b292b5c6494d47",
+    "ownedReqPaths": 57,
+    "mandatoryLeaves": 526,
+    "originalPartition": {
+      "unchanged": 118,
+      "productionAdaptations": 13,
+      "testAdaptations": 1,
+      "originalTotal": 132
+    },
+    "runtimePins": "SOURCE/TREE/workflowref remain PENDING pending reviewed composition and remote format outputs. Prior-source counts above are historical, not this union runtime evidence.",
+    "remoteFormattingRequired": [
+      "backend/third_party/req/request_test.go",
+      "backend/third_party/req/trace_concurrency_test.go",
+      "backend/third_party/req/trace_elapsed_peer_test.go"
+    ],
+    "WindowsControls": "Permanent CI shell invokes4 original-test negative controls; manual observer requires explicit integration before any Windows pass claim.",
+    "decision": "RAW only; all85/Windows/dump blockers remain, no LGTM or source runtime pass."
   }
 }
