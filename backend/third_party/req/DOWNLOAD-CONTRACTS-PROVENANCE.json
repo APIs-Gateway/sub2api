@@ -464,7 +464,7 @@
       "backend/third_party/req/trace_concurrency_test.go",
       "backend/third_party/req/trace_elapsed_peer_test.go"
     ],
-    "WindowsControls": "Permanent CI shell invokes4 original-test negative controls; manual observer requires explicit integration before any Windows pass claim.",
+    "WindowsControls": "Candidate observer explicitly runs the same4 remote original-test controls against actual go-list preflight inputs on both OSes. Full raw JSON must show both original top tests onceRUNPASS, six independently expected protocol/reuse completion markers and one OS missing-file identity marker. Runtime not yet executed.",
     "decision": "RAW only; all85/Windows/dump blockers remain, no LGTM or source runtime pass."
   }
 }

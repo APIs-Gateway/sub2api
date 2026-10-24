@@ -248,3 +248,15 @@ passes remain scoped to their own frozen inputs. They do not prove this union
 or Windows behavior. Explicit manual-observer integration of original-test
 negative controls and full original-test execution evidence is still needed.
 No local or87 project/syntax/format/test/build execution occurs. No LGTM.
+
+
+Manual candidate observer now explicitly invokes the same remote-only four
+original-test registration controls after its real packages preflight, on Linux
+and Windows. It supplies actual existing module/package JSON and stores raw
+command exits/stdio plus all control evidence externally. Full phase also
+requires TestSetFile/TestTraceInfo once RUN/PASS with no fail/skip, the actual
+missing-file identity marker once, and six expected protocol/reuse completion
+markers (HTTP1/HTTP2 times client/request enabled and fresh/reused sequence).
+HTTP1 may legitimately have empty ALPN; HTTP2 must report h2. These are separate
+from the original526 leaves/23 parent markers and do not replace their checks.
+This code is unexecuted RAW pending independent review and exact-head remote CI.

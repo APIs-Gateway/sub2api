@@ -579,10 +579,28 @@ def actual_inventory(phase, source, windows):
     old_events = [{"package": package, "test": name, "run": runs[(package, name)], "pass": passes[(package, name)]} for package, name in sorted(original)] if phase == "full" else []
     previous_events = [item for item in old_events if (item["package"], item["test"]) in previous502]
     previous525_events = [item for item in old_events if (item["package"], item["test"]) in previous525]
+    adapted_original = []
+    trace_completions = []
+    file_identity_markers = 0
+    if phase == "full":
+        manifest = json.loads((source / "backend/third_party/req/UPSTREAM-MANIFEST.json").read_text(encoding="utf-8"))
+        assert len(manifest["originalTestAdaptations"]) == 1
+        assert manifest["originalTestAdaptations"][0]["requiredTests"] == ["TestSetFile", "TestTraceInfo"]
+        for name in ("TestSetFile", "TestTraceInfo"):
+            selected = [event for event in events if event.get("Package") == MODULE and event.get("Test") == name]
+            output = "".join(event.get("Output", "") for event in selected)
+            adapted_original.append({"test": name, "run": runs[(MODULE, name)], "pass": passes[(MODULE, name)],
+                                     "failedOrSkipped": any(event.get("Action") in ("fail", "skip") for event in selected)})
+            if name == "TestTraceInfo":
+                trace_completions = re.findall(r'TRACE_ACTUAL_COMPLETION enabled=(true|false) expectedHTTP=([12]) expectedReuse=(true|false) actualALPN="([^"]*)"', output)
+            else:
+                file_identity_markers = output.count("FILE_ACTUAL_MISSING_IDENTITY isNotExist=true ")
     result = {"expectedGLeaves": len(expected), "gActual": g_events, "unexpectedGLeaves": unexpected,
               "badEvents": bad, "mandatory526Actual": old_events, "mandatory525Actual": previous525_events,
               "mandatory502Actual": previous_events, "defaultOutputActual": default_execution,
               "inProcess23Actual": parent_execution, "retainedBaselineLeaves": 468,
+              "adaptedOriginalTests": adapted_original, "actualTraceCompletions": trace_completions,
+              "actualMissingFileIdentityMarkers": file_identity_markers,
               "packageTerminals": [event for event in events if "Test" not in event and event.get("Action") in ("pass", "fail", "skip")],
               "classification": "Actual results; every failure remains failed, no accepted-RED list"}
     save(directory / "actual-inventory.json", result)
@@ -593,6 +611,13 @@ def actual_inventory(phase, source, windows):
     assert all(package_passes[package] == 1 for package in test_packages), "Test-bearing package completion missing/duplicate"
     if phase == "full":
         assert all(item["run"] == item["pass"] == 1 for item in old_events)
+        assert len(adapted_original) == 2 and all(item["run"] == item["pass"] == 1 and not item["failedOrSkipped"] for item in adapted_original)
+        expected_trace = collections.Counter((enabled, protocol, reuse) for protocol in ("1", "2")
+                                             for enabled, reuse in (("true", "false"), ("false", "true"), ("true", "true")))
+        assert collections.Counter(item[:3] for item in trace_completions) == expected_trace
+        assert all(alpn == "h2" if protocol == "2" else alpn in ("", "http/1.1")
+                   for _, protocol, _, alpn in trace_completions)
+        assert file_identity_markers == 1
 
 
 def child_profiles(phase, source, windows):
@@ -716,6 +741,11 @@ def observe(kind):
             shutil.copyfile(E / "commands/candidate-modules/stdout", preflight / "modules.json")
             shutil.copyfile(E / "commands/packages/stdout", preflight / "packages.json")
             require_success(capture(E / "commands/existing-packages-checker", [sys.executable, "-B", str(checker), "packages", str(source / "backend"), str(preflight)], source / "backend"))
+            original_controls = source / "backend/tools/req-original-test-adaptation-controls.py"
+            require_success(capture(E / "commands/original-test-adaptation-controls",
+                                    [sys.executable, "-B", str(original_controls), "--backend", str(source / "backend"),
+                                     "--evidence", str(E / "original-test-adaptation-controls"), "--actual-inputs", str(preflight)],
+                                    source / "backend", timeout=300))
             controls = Path(__file__).with_name("controls.py")
             require_success(capture(E / "commands/integrity-controls", [sys.executable, "-B", str(controls), str(source)], WORKSPACE, timeout=1000))
             selector = "^(TestReqDownloadContract|TestReqDownloadContractCancellation|TestReqParallelDownloadContract"
