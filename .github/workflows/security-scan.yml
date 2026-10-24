@@ -59,9 +59,38 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: frontend/pnpm-lock.yaml
       - name: Install dependencies
+        id: frontend-install
         working-directory: frontend
         run: pnpm install --frozen-lockfile
+      - name: Observe actual DOMPurify installation paths and official package bytes
+        run: |
+          evidence="$RUNNER_TEMP/dompurify-installed-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          set +e
+          python3 -B tools/verify_dompurify_installation.py \
+            --expected-head "$EXPECTED_SOURCE_HEAD" --evidence "$evidence" \
+            > "$evidence.stdout" 2> "$evidence.stderr"
+          actual_status=$?
+          set -e
+          printf '%s\n' "$actual_status" > "$evidence.exit"
+          cat "$evidence.stdout"
+          cat "$evidence.stderr"
+          test "$actual_status" -eq 0
+      - name: Preserve actual DOMPurify installation observation even after failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dompurify-installed-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/dompurify-installed-${{ github.run_id }}-${{ github.run_attempt }}/
+            ${{ runner.temp }}/dompurify-installed-${{ github.run_id }}-${{ github.run_attempt }}.stdout
+            ${{ runner.temp }}/dompurify-installed-${{ github.run_id }}-${{ github.run_attempt }}.stderr
+            ${{ runner.temp }}/dompurify-installed-${{ github.run_id }}-${{ github.run_attempt }}.exit
+            tools/verify_dompurify_installation.py
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
       - name: Real follow-redirects cross-origin header contracts (remote only)
+        if: ${{ !cancelled() && steps.frontend-install.outcome == 'success' }}
         env:
           FOLLOW_REDIRECTS_EVIDENCE: ${{ runner.temp }}/follow-redirects-wire-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
@@ -87,6 +116,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Audit report and exception policy negative controls (remote only)
+        if: ${{ !cancelled() && steps.frontend-install.outcome == 'success' }}
         env:
           AUDIT_CONTROL_REPORT: ${{ github.workspace }}/frontend/audit-controls.json
         run: |
@@ -99,6 +129,7 @@ jobs:
           cat frontend/audit-controls.stderr
           test "$control_status" -eq 0
       - name: Run pnpm audit
+        if: ${{ !cancelled() && steps.frontend-install.outcome == 'success' }}
         working-directory: frontend
         run: |
           git rev-parse HEAD > audit-head.txt
@@ -113,6 +144,7 @@ jobs:
           # The exception policy below decides high/critical vulnerability acceptance.
           # Keep the real audit exit and JSON, including on checker failure.
       - name: Check audit exceptions
+        if: ${{ !cancelled() && steps.frontend-install.outcome == 'success' }}
         run: |
           python tools/check_pnpm_audit_exceptions.py \
             --audit frontend/audit.json \
