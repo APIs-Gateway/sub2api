@@ -1332,7 +1332,7 @@
       "originalWindowsArtifact": 12411476184,
       "originalWindowsArtifactSHA256": "5a9835fed2cf0e9583a33f697332cb412ed8ffe9b42fa28ccaf37a3720aae9c0",
       "scopeDocument": "WINDOWS-TRACE-TEST-ADAPTATION.md",
-      "status": "RAW reviewed-source preparation only; current candidate hash must be transparently updated after remote formatting; no runtimePASS."
+      "status": "Remote formatter actual run40075095188 produced identical candidate bytes; original archive hash retained. Exact-head runtime validation remains pending."
     }
   ],
   "windowsTraceTestPortability": {
@@ -1351,20 +1351,20 @@
         "sha256": "d0068e01bc27656e00a714ee4aae60349b113a4b4a8dce9bd58a18daedb75687"
       },
       "trace_concurrency_test.go": {
-        "bytes": 20127,
-        "sha256": "10157b01e5c04b6a8d2782547f4cf00c8420704d593f95e55c08c76adc8d630d"
+        "bytes": 20188,
+        "sha256": "7a7417f8591fc3cf38318ff27ba094b48776e9402b4e032290bcb8e55720f521"
       },
       "trace_elapsed_peer_test.go": {
-        "bytes": 11997,
-        "sha256": "daa5af1daca93db62b61b8a3962e7130fff6870419f3dd5bee4067f4e85963ef"
+        "bytes": 12245,
+        "sha256": "4661e3c1ba9f63984736e5b455f7d0c7856f93456e945ba46bd33b5a049d2eeb"
       },
       "WINDOWS-TRACE-TEST-ADAPTATION.md": {
-        "bytes": 7786,
-        "sha256": "999628b50d512d3fb3d41cdc85fbd6d17451886baa7feaadaecdcd4cd08bedd0"
+        "bytes": 9447,
+        "sha256": "fbde0b18dec41fecd5793fc557986c6229a3d29ed38a55b709a9ac0c51c864fb"
       }
     },
-    "ownedFilesAfterThisSource": 56,
-    "requiredSecurityLeavesUnchanged": 525,
+    "ownedFilesAfterThisSource": 57,
+    "requiredSecurityLeavesUnchanged": 526,
     "newTestLeaves": 0,
     "businessTimeouts": "No client/request/deadline changes; original5s fixture guard and500ms deadline retained. Clock sampling does not fabricate timestamp values.",
     "causalOracle": "Real TLS peer; actual first fragment Flush then public GotFirstResponseByte before measured elapsed body suffix release; actual connected addresses/callbacks and body EOF/ReceivedAt. All connect/TCP durations may be zero but never negative, absent reused phases stay zero.",
@@ -1375,7 +1375,7 @@
       "missing-selected-identity"
     ],
     "remoteControlsSource": "backend/tools/req-original-test-adaptation-controls.py",
-    "status": "RAW only; no local/87 project/format/AST/checker/test/build execution; remote exact-head actual validation and independent review required. Original failures remain blocking.",
+    "status": "Remote formatted by actual run40075095188 at controller9893c89cdeb5865ba8c0be23fe5c32edc4ed719c; request_test.go unchanged, two owned outputs imported exactly. Exact-head runtime and independent review remain required; no runtime PASS or waiver.",
     "ownedTraceCasesScope": [
       "LateDNSAfterCompletion explicit Cancel only",
       "NormalTLSAndReuse actual fresh/reused body prerequisite",
@@ -1396,7 +1396,18 @@
       ],
       "actualIdentity": "First actual public GotConn.Conn and public server ConnContext net.Conn identities retained; later requests must reuse both exact objects, with matching reversed endpoints and no new TCP/TLS callbacks. Comparable real identities are required before interface comparison.",
       "alpn": "Default HTTP2 requires h2 on actual client/peer TLS state; forced HTTP1 permits legal empty or http/1.1, not hardcoded http/1.1 only.",
-      "status": "RAW static correction only; not remotely formatted/compiled/executed."
+      "status": "Remote formatted; actual Linux/Windows original test and owned suite execution still pending."
+    },
+    "remoteFormatting": {
+      "run": 40075095188,
+      "controllerHead": "9893c89cdeb5865ba8c0be23fe5c32edc4ed719c",
+      "applicationHead": "e34056a04ab6ade971effac629b96dbb92c58b25",
+      "artifact": 12552922309,
+      "artifactSHA256": "ae9db239dbc1d25723f102d1fe553c1ead04d4caa0dca61ef76bbdc2127b10d6",
+      "go": "go1.26.10",
+      "operations": 12,
+      "originalAdaptedTestOutputUnchanged": true,
+      "runtimeApproval": false
     }
   }
 }

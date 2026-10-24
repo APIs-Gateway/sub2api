@@ -121,3 +121,29 @@ follow-up pins expectedHTTP2/HTTP1 and the false/true/true reuse sequence, using
 both actual public client connection and independent public server ConnContext
 identity. No production path, duration, test identity or timeout changes. Actual
 runtime results remain pending; this correction is not an execution PASS.
+
+## Remote formatting and evidence completeness, 2026-10-24
+
+Remote formatter run40075095188 at controller9893c89cdeb5865ba8c0be23fe5c32edc4ed719c
+used pinned Go1.26.10 and frozen application sourcee34056a04ab6ade971effac629b96dbb92c58b25.
+Its three input Go files and twelve actual format/diff/idempotence operations
+were independently audited against both complete frozen Git snapshots. The
+original adapted request_test.go output was byte-identical. The two owned
+trace test outputs are imported unchanged from that remote artifact. No local
+or server87 formatter, test, compiler or project checker was executed. The
+original archive hashes and132-file partition remain118+13+1.
+
+Natural CI40075095258 at the same controller actually passed the four original
+test adaptation controls (clean0, unregistered1, wrong-hash1, missing-selected1),
+then stopped at the expected raw format differences before named/full tests or
+profiles. Those unexecuted phases are not runtime evidence. Its uploaded
+controlled copies omitted17 hidden fixture files because upload-artifact
+defaults to excluding hidden paths. The permanent req evidence upload now
+explicitly includes hidden files so subsequent copies retain the complete
+189-file module. This changes evidence retention, not the test command or
+source acceptance gates. No production secrets or services are included.
+
+The current composition adds the independently reviewed default-output leaf:
+57 owned paths and526 mandatory security leaves. Original trace runtime,
+Linux/Windows suites, dump-file ownership and both PR85 coverage gates still
+require their actual exact-head results; formatting is not approval.
