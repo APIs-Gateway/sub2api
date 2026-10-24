@@ -260,3 +260,22 @@ markers (HTTP1/HTTP2 times client/request enabled and fresh/reused sequence).
 HTTP1 may legitimately have empty ALPN; HTTP2 must report h2. These are separate
 from the original526 leaves/23 parent markers and do not replace their checks.
 This code is unexecuted RAW pending independent review and exact-head remote CI.
+
+## Remote trace formatting import and complete evidence retention, Oct24
+
+Productionbf4dfe25dac427186ff32c93a5c9d45d89530418 retains the two exact Go
+outputs from actual remote formatter40075095188/artifact12552922309, updates
+their transparent current hashes and adds include-hidden-files to the permanent
+req evidence upload. Request_test.go original adaptation stayed byte-identical.
+The original132 reference entries,13 production adaptations,118+13+1 partition,
+57 owned paths,526 mandatory leaves,23 parent markers and separate23/24 child
+profile inventory remain. The two format diffs contain no assertion or timeout
+change. Normal merged0aa7a43197387f2e2999de0e5855603047d3cb6 includes the
+production anchor, leaving only the same8 explicit infra paths different.
+
+The previous natural CI40075095258 completed actual clean0/corrupt1/1/1 controls
+then failed on the two raw format diffs. Named/full/profile phases did not run.
+Its missing17 hidden fixture copies are a retained evidence limitation, repaired
+for future artifacts. This source has no new runtime result or approval.
+SOURCE/TREE/workflowref remain PENDING until independent static review and final
+controller pinning; all execution is exclusive to remote CI, never local/87.

@@ -466,5 +466,25 @@
     ],
     "WindowsControls": "Candidate observer explicitly runs the same4 remote original-test controls against actual go-list preflight inputs on both OSes. Full raw JSON must show both original top tests onceRUNPASS, six independently expected protocol/reuse completion markers and one OS missing-file identity marker. Runtime not yet executed.",
     "decision": "RAW only; all85/Windows/dump blockers remain, no LGTM or source runtime pass."
+  },
+  "remoteTraceFormatCompositionOct24": {
+    "productionAnchor": "bf4dfe25dac427186ff32c93a5c9d45d89530418",
+    "productionAnchorTree": "a48e9dd347c0d7420525d7d36698d18653913119",
+    "normalMerge": "d0aa7a43197387f2e2999de0e5855603047d3cb6",
+    "formattedFiles": [
+      "trace_concurrency_test.go",
+      "trace_elapsed_peer_test.go"
+    ],
+    "unchangedOriginalAdaptedTest": "request_test.go",
+    "remoteFormatterRun": 40075095188,
+    "controller": "9893c89cdeb5865ba8c0be23fe5c32edc4ed719c",
+    "artifact": 12552922309,
+    "rootActualReceiptSHA256": "08853ce0d8ee884d8a162b14694b4a7f37c7c033bc4bdfda1e57274ee155b357",
+    "independentActualReceiptSHA256": "8c25dc55872d8c8f5af620856a63a55a9955fd2e8ea7d50c1c2fa94d75fd883a",
+    "evidenceRetentionFix": "Permanent req upload includes hidden files; previous control copies had17 omitted hidden fixtures. Subsequent actual outputs must be complete.",
+    "mandatoryLeaves": 526,
+    "ownedReqPaths": 57,
+    "partition": "118 unchanged originals +13 production adaptations +1 original test adaptation =132",
+    "runtimeDecision": "No new source runtime PASS or LGTM; original Linux/Windows/dump/85 gates remain. SOURCE/TREE/ref remain PENDING until final independent source review."
   }
 }
