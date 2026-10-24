@@ -26,7 +26,9 @@ func tracePortableAdvance(ctx context.Context, start time.Time) (time.Time, erro
 	ticks := time.NewTicker(time.Millisecond)
 	defer ticks.Stop()
 	for {
-		if err := ctx.Err(); err != nil { return time.Time{}, fmt.Errorf("TRACE_FIXTURE: clock prerequisite canceled: %w", err) }
+		if err := ctx.Err(); err != nil {
+			return time.Time{}, fmt.Errorf("TRACE_FIXTURE: clock prerequisite canceled: %w", err)
+		}
 		now := time.Now()
 		if now.After(start) {
 			return now, nil
@@ -70,44 +72,44 @@ func tracePortableTLSConfig(t *testing.T) *tls.Config {
 type tracePortablePeerConnectionKey struct{}
 
 type tracePortableEvents struct {
-	connectStart int
-	connectDone int
-	connectError error
-	tlsStart int
-	tlsDone int
-	tlsError error
-	tlsComplete bool
-	gotConn int
-	firstByte int
-	connection net.Conn
+	connectStart   int
+	connectDone    int
+	connectError   error
+	tlsStart       int
+	tlsDone        int
+	tlsError       error
+	tlsComplete    bool
+	gotConn        int
+	firstByte      int
+	connection     net.Conn
 	peerConnection net.Conn
-	peerALPN string
-	reused bool
-	remote net.Addr
-	local net.Addr
-	protocol int
-	written int
-	fixtureError error
-	firstElapsed time.Duration
-	bodyElapsed time.Duration
+	peerALPN       string
+	reused         bool
+	remote         net.Addr
+	local          net.Addr
+	protocol       int
+	written        int
+	fixtureError   error
+	firstElapsed   time.Duration
+	bodyElapsed    time.Duration
 }
 
 type tracePortableRequest struct {
-	mu sync.Mutex
-	events tracePortableEvents
+	mu        sync.Mutex
+	events    tracePortableEvents
 	firstSeen chan struct{}
 	firstOnce sync.Once
-	peerDone chan struct{}
+	peerDone  chan struct{}
 }
 
 type tracePortablePeer struct {
-	mu sync.Mutex
-	sequence int
-	requests map[string]*tracePortableRequest
-	byRequest map[*Request]*tracePortableRequest
-	expectedProtocol int
+	mu                    sync.Mutex
+	sequence              int
+	requests              map[string]*tracePortableRequest
+	byRequest             map[*Request]*tracePortableRequest
+	expectedProtocol      int
 	firstClientConnection net.Conn
-	firstPeerConnection net.Conn
+	firstPeerConnection   net.Conn
 }
 
 const tracePortableBody = "portable-before-portable-after"
@@ -171,7 +173,9 @@ func newTracePortablePeer(t *testing.T, client *Client, expectedProtocol int) *t
 		observation.mu.Lock()
 		observation.events.protocol = request.ProtoMajor
 		observation.events.peerConnection, _ = request.Context().Value(tracePortablePeerConnectionKey{}).(net.Conn)
-		if request.TLS != nil { observation.events.peerALPN = request.TLS.NegotiatedProtocol }
+		if request.TLS != nil {
+			observation.events.peerALPN = request.TLS.NegotiatedProtocol
+		}
 		observation.events.written = written + n
 		observation.events.firstElapsed = end.Sub(start)
 		observation.events.bodyElapsed = bodyEnd.Sub(bodyStart)
@@ -196,12 +200,25 @@ func newTracePortablePeer(t *testing.T, client *Client, expectedProtocol int) *t
 		request.SetHeader("X-Trace-Portable-Token", token)
 		trace := &httptrace.ClientTrace{
 			ConnectStart: func(_, _ string) { observation.mu.Lock(); observation.events.connectStart++; observation.mu.Unlock() },
-			ConnectDone: func(_, _ string, err error) { observation.mu.Lock(); observation.events.connectDone++; observation.events.connectError = err; observation.mu.Unlock() },
+			ConnectDone: func(_, _ string, err error) {
+				observation.mu.Lock()
+				observation.events.connectDone++
+				observation.events.connectError = err
+				observation.mu.Unlock()
+			},
 			TLSHandshakeStart: func() { observation.mu.Lock(); observation.events.tlsStart++; observation.mu.Unlock() },
-			TLSHandshakeDone: func(state tls.ConnectionState, err error) { observation.mu.Lock(); observation.events.tlsDone++; observation.events.tlsComplete = state.HandshakeComplete; observation.events.tlsError = err; observation.mu.Unlock() },
+			TLSHandshakeDone: func(state tls.ConnectionState, err error) {
+				observation.mu.Lock()
+				observation.events.tlsDone++
+				observation.events.tlsComplete = state.HandshakeComplete
+				observation.events.tlsError = err
+				observation.mu.Unlock()
+			},
 			GotConn: func(info httptrace.GotConnInfo) {
 				var local, remote net.Addr
-				if info.Conn != nil { local, remote = info.Conn.LocalAddr(), info.Conn.RemoteAddr() }
+				if info.Conn != nil {
+					local, remote = info.Conn.LocalAddr(), info.Conn.RemoteAddr()
+				}
 				observation.mu.Lock()
 				observation.events.gotConn++
 				observation.events.connection = info.Conn
@@ -210,7 +227,9 @@ func newTracePortablePeer(t *testing.T, client *Client, expectedProtocol int) *t
 				observation.mu.Unlock()
 			},
 			GotFirstResponseByte: func() {
-				observation.mu.Lock(); observation.events.firstByte++; observation.mu.Unlock()
+				observation.mu.Lock()
+				observation.events.firstByte++
+				observation.mu.Unlock()
 				observation.firstOnce.Do(func() { close(observation.firstSeen) })
 			},
 		}
@@ -222,16 +241,24 @@ func newTracePortablePeer(t *testing.T, client *Client, expectedProtocol int) *t
 
 func (peer *tracePortablePeer) assertCompleted(t *testing.T, response *Response, enabled, expectedReuse bool) {
 	t.Helper()
-	if response == nil || response.Request == nil { t.Fatal("TRACE_FIXTURE: actual response/request missing") }
+	if response == nil || response.Request == nil {
+		t.Fatal("TRACE_FIXTURE: actual response/request missing")
+	}
 	peer.mu.Lock()
 	observation := peer.byRequest[response.Request]
 	peer.mu.Unlock()
-	if observation == nil { t.Fatal("TRACE_FIXTURE: response lacks actual peer/public trace observation") }
-	if err := tracePortableAwait(response.Request.Context(), observation.peerDone, "actual complete peer body"); err != nil { t.Fatal(err) }
+	if observation == nil {
+		t.Fatal("TRACE_FIXTURE: response lacks actual peer/public trace observation")
+	}
+	if err := tracePortableAwait(response.Request.Context(), observation.peerDone, "actual complete peer body"); err != nil {
+		t.Fatal(err)
+	}
 	observation.mu.Lock()
 	events := observation.events
 	observation.mu.Unlock()
-	if events.fixtureError != nil { t.Fatal(events.fixtureError) }
+	if events.fixtureError != nil {
+		t.Fatal(events.fixtureError)
+	}
 	if events.firstElapsed <= 0 || events.bodyElapsed <= 0 || events.written != len(tracePortableBody) || response.String() != tracePortableBody || response.ReceivedAt().IsZero() {
 		t.Fatalf("TRACE_FIXTURE: actual elapsed/body prerequisites incomplete: events=%+v received=%s body=%q", events, response.ReceivedAt(), response.String())
 	}
@@ -261,7 +288,9 @@ func (peer *tracePortablePeer) assertCompleted(t *testing.T, response *Response,
 		t.Fatalf("TRACE_CONTRACT: expectedReuse=%t actual=%t sameClient=%t samePeer=%t events=%+v", expectedReuse, events.reused, events.connection == firstClient, events.peerConnection == firstPeer, events)
 	}
 	if expectedReuse {
-		if events.connectStart != 0 || events.connectDone != 0 || events.tlsStart != 0 || events.tlsDone != 0 { t.Fatalf("TRACE_FIXTURE: reused connection had fresh connect/TLS events: %+v", events) }
+		if events.connectStart != 0 || events.connectDone != 0 || events.tlsStart != 0 || events.tlsDone != 0 {
+			t.Fatalf("TRACE_FIXTURE: reused connection had fresh connect/TLS events: %+v", events)
+		}
 	} else if events.connectStart != 1 || events.connectDone != 1 || events.connectError != nil || events.tlsStart != 1 || events.tlsDone != 1 || events.tlsError != nil || !events.tlsComplete {
 		t.Fatalf("TRACE_FIXTURE: actual fresh TCP/TLS completion missing: %+v", events)
 	}

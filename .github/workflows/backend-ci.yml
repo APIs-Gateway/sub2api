@@ -333,6 +333,7 @@ jobs:
           name: req-http2-security-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/req-http2-security-${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 14
       - name: Responses namespace contracts and lazy span boundaries (race)
         working-directory: backend
