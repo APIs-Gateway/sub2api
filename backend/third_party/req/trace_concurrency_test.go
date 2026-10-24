@@ -127,6 +127,10 @@ func TestReqTraceSecurity_LateDNSAfterCompletion(t *testing.T) {
 						t.Fatal("public request did not install DNS trace callbacks")
 					}
 					if completion == "Cancel" {
+						start := time.Now()
+						end, advanceErr := tracePortableAdvance(ctx, start)
+						if advanceErr != nil { t.Fatal(advanceErr) }
+						t.Logf("TRACE_CANCEL_ELAPSED dialEntered=true start=%s end=%s elapsed=%s", start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), end.Sub(start))
 						cancel()
 					}
 					var got outcome
@@ -365,6 +369,7 @@ func traceConcurrencyTLSClient(t *testing.T, protocol string, handler http.Handl
 	t.Helper()
 	server := httptest.NewUnstartedServer(handler)
 	server.EnableHTTP2 = true
+	server.TLS = tracePortableTLSConfig(t)
 	server.StartTLS()
 	t.Cleanup(server.Close)
 	client := C().SetProxy(nil).SetTimeout(5 * time.Second).EnableInsecureSkipVerify().EnableTraceAll()
@@ -383,6 +388,10 @@ func TestReqTraceSecurity_NormalTLSAndReuse(t *testing.T) {
 			var handled atomic.Int32
 			client, server := traceConcurrencyTLSClient(t, protocol, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				handled.Add(1)
+				start := time.Now()
+				end, advanceErr := tracePortableAdvance(r.Context(), start)
+				if advanceErr != nil { t.Error(advanceErr); w.WriteHeader(http.StatusServiceUnavailable); return }
+				t.Logf("TRACE_NORMAL_REUSE_PEER_ELAPSED start=%s end=%s elapsed=%s", start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), end.Sub(start))
 				fmt.Fprint(w, "trace-body")
 			}))
 			for i := 0; i < 2; i++ {
@@ -428,6 +437,10 @@ func TestReqTraceSecurity_RequestReuse(t *testing.T) {
 			var handled atomic.Int32
 			client, server := traceConcurrencyTLSClient(t, protocol, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				handled.Add(1)
+				start := time.Now()
+				end, advanceErr := tracePortableAdvance(r.Context(), start)
+				if advanceErr != nil { t.Error(advanceErr); w.WriteHeader(http.StatusServiceUnavailable); return }
+				t.Logf("TRACE_REUSE_PEER_ELAPSED start=%s end=%s elapsed=%s", start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), end.Sub(start))
 				fmt.Fprint(w, "repeated-request")
 			}))
 			request := client.R().EnableTrace()
@@ -484,7 +497,10 @@ func TestReqTraceSecurity_ManualBodyEOF(t *testing.T) {
 			}))
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			t.Cleanup(func() { cancel(); releaseOnce.Do(func() { close(release) }) })
-			response, err := client.R().SetContext(ctx).DisableAutoReadResponse().Get(server.URL)
+			firstByte := make(chan struct{})
+			var firstByteOnce sync.Once
+			traceContext := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotFirstResponseByte: func() { firstByteOnce.Do(func() { close(firstByte) }) }})
+			response, err := client.R().SetContext(traceContext).DisableAutoReadResponse().Get(server.URL)
 			if err != nil || response == nil {
 				t.Fatalf("manual response: %v", err)
 			}
@@ -499,6 +515,7 @@ func TestReqTraceSecurity_ManualBodyEOF(t *testing.T) {
 			if !response.ReceivedAt().IsZero() {
 				t.Fatal("manual response completed before body EOF")
 			}
+			if err := tracePortableAwait(ctx, firstByte, "actual manual-body GotFirstResponseByte after peer Flush"); err != nil { t.Fatal(err) }
 			before := response.TraceInfo()
 			traceConcurrencyNonnegative(t, before)
 			type bodyResult struct {
@@ -536,6 +553,10 @@ func TestReqTraceSecurity_ManualBodyEOF(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("manual snapshot did not start")
 			}
+			start := time.Now()
+			end, advanceErr := tracePortableAdvance(ctx, start)
+			if advanceErr != nil { t.Fatal(advanceErr) }
+			t.Logf("TRACE_MANUAL_EOF_ELAPSED publicFirstByte=true snapshotEntered=true start=%s end=%s elapsed=%s", start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), end.Sub(start))
 			releaseOnce.Do(func() { close(release) })
 			var got bodyResult
 			select {

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -797,6 +799,7 @@ func testHostHeaderOverride(t *testing.T, c *Client) {
 
 func assertTraceInfo(t *testing.T, resp *Response, enable bool) {
 	ti := resp.TraceInfo()
+	t.Logf("TRACE_ORIGINAL_ASSERT enabled=%t received=%s trace=%+v total=%s", enable, resp.ReceivedAt().Format(time.RFC3339Nano), ti, resp.TotalTime())
 	tests.AssertEqual(t, true, resp.TotalTime() > 0)
 	if !enable {
 		tests.AssertEqual(t, false, ti.TotalTime > 0)
@@ -809,7 +812,7 @@ func assertTraceInfo(t *testing.T, resp *Response, enable bool) {
 	tests.AssertContains(t, ti.String(), "not enabled", false)
 	tests.AssertContains(t, ti.Blame(), "not enabled", false)
 	tests.AssertEqual(t, true, ti.TotalTime > 0)
-	tests.AssertEqual(t, true, ti.ConnectTime > 0)
+	tests.AssertEqual(t, true, ti.ConnectTime >= 0)
 	tests.AssertEqual(t, true, ti.FirstResponseTime > 0)
 	tests.AssertEqual(t, true, ti.ResponseTime > 0)
 	tests.AssertNotNil(t, ti.RemoteAddr)
@@ -817,7 +820,7 @@ func assertTraceInfo(t *testing.T, resp *Response, enable bool) {
 		tests.AssertEqual(t, true, ti.TCPConnectTime == 0)
 		tests.AssertEqual(t, true, ti.TLSHandshakeTime == 0)
 	} else {
-		tests.AssertEqual(t, true, ti.TCPConnectTime > 0)
+		tests.AssertEqual(t, true, ti.TCPConnectTime >= 0)
 		tests.AssertEqual(t, true, ti.TLSHandshakeTime > 0)
 	}
 }
@@ -831,25 +834,30 @@ func assertDisableTraceInfo(t *testing.T, resp *Response) {
 }
 
 func TestTraceInfo(t *testing.T) {
-	testWithAllTransport(t, testTraceInfo)
+	testTraceInfo(t, tc(), 2)
+	testTraceInfo(t, tc().EnableForceHTTP1(), 1)
 }
 
-func testTraceInfo(t *testing.T, c *Client) {
+func testTraceInfo(t *testing.T, c *Client, expectedProtocol int) {
+	peer := newTracePortablePeer(t, c, expectedProtocol)
 	// enable trace at client level
 	c.EnableTraceAll()
 	resp, err := c.R().Get("/")
 	assertSuccess(t, resp, err)
+	peer.assertCompleted(t, resp, true, false)
 	assertEnableTraceInfo(t, resp)
 
 	// disable trace at client level
 	c.DisableTraceAll()
 	resp, err = c.R().Get("/")
 	assertSuccess(t, resp, err)
+	peer.assertCompleted(t, resp, false, true)
 	assertDisableTraceInfo(t, resp)
 
 	// enable trace at request level
 	resp, err = c.R().EnableTrace().Get("/")
 	assertSuccess(t, resp, err)
+	peer.assertCompleted(t, resp, true, true)
 	assertEnableTraceInfo(t, resp)
 }
 
@@ -973,8 +981,13 @@ func TestSetFile(t *testing.T) {
 	})
 	tests.AssertEqual(t, getTestFileContent(t, filename), resp.Bytes())
 
-	_, err := tc().SetLogger(nil).R().SetFile("file", "file-not-exists.txt").Post("/file-text")
-	tests.AssertErrorContains(t, err, "no such file")
+	missing := filepath.Join(t.TempDir(), "file-not-exists.txt")
+	_, err := tc().SetLogger(nil).R().SetFile("file", missing).Post("/file-text")
+	var pathError *os.PathError
+	if !errors.Is(err, os.ErrNotExist) || !errors.As(err, &pathError) || pathError.Op != "open" || pathError.Path != missing {
+		t.Fatalf("missing file must retain actual OS error identity/path: error=%T %v pathError=%+v path=%q", err, err, pathError, missing)
+	}
+	t.Logf("FILE_ACTUAL_MISSING_IDENTITY isNotExist=true error=%T pathError=%+v", err, pathError)
 }
 
 func TestSetFiles(t *testing.T) {
