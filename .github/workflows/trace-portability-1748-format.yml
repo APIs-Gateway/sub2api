@@ -1,0 +1,253 @@
+name: Trace portability1748 frozen remote formatter
+
+on:
+  push:
+    branches:
+      - codex/req-trace-portability-format-1748
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  format-frozen-g-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_HEAD: e34056a04ab6ade971effac629b96dbb92c58b25
+      APP_TREE: 3dac5692c7afdaf1522eed01f24887cfe9962be2
+      GOTOOLCHAIN: local
+      GOWORK: "off"
+    steps:
+      - name: Initialize external evidence before checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/trace-portability-1748-format-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence"
+          printf 'G_FORMAT_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+          printf '%s\n' "$GITHUB_SHA" > "$evidence/controller-event-head.txt"
+          printf '%s\n' "$APP_HEAD" > "$evidence/app-expected-head.txt"
+          printf '%s\n' "$APP_TREE" > "$evidence/app-expected-tree.txt"
+          cp "$GITHUB_EVENT_PATH" "$evidence/event.json"
+          cat > "$evidence/snapshot.py" <<'PYDATA'
+          import hashlib, json, os, pathlib, stat, subprocess, sys
+          root = pathlib.Path(sys.argv[1]).resolve()
+          expected_head, expected_tree, output = sys.argv[2:5]
+          def git(*args, data=None):
+              return subprocess.check_output(['git', '-C', str(root), *args], input=data)
+          head = git('rev-parse', 'HEAD').decode().strip()
+          tree = git('rev-parse', 'HEAD^{tree}').decode().strip()
+          assert head == expected_head, (head, expected_head)
+          if expected_tree:
+              assert tree == expected_tree, (tree, expected_tree)
+          status = git('status', '--porcelain=v1', '--untracked-files=all')
+          pathlib.Path(output + '.status').write_bytes(status)
+          assert not status, 'checkout is not clean'
+          index = git('ls-files', '--stage', '-z')
+          pathlib.Path(output + '.index').write_bytes(index)
+          files = []
+          for row in index.split(b'\0'):
+              if not row:
+                  continue
+              header, name = row.split(b'\t', 1)
+              mode, blob, stage = header.decode().split()
+              assert stage == '0' and mode in ('100644', '100755', '120000')
+              path = root / os.fsdecode(name)
+              info = path.lstat()
+              if mode == '120000':
+                  assert stat.S_ISLNK(info.st_mode)
+                  raw = os.fsencode(os.readlink(path))
+              else:
+                  assert stat.S_ISREG(info.st_mode) and not path.is_symlink()
+                  assert bool(info.st_mode & 0o111) == (mode == '100755')
+                  raw = path.read_bytes()
+              actual_blob = git('hash-object', '--stdin', data=raw).decode().strip()
+              assert actual_blob == blob, os.fsdecode(name)
+              files.append({'path': os.fsdecode(name), 'mode': mode, 'blob': blob,
+                            'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)})
+          result = {'head': head, 'tree': tree, 'files': files}
+          pathlib.Path(output).write_text(json.dumps(result, indent=2) + '\n')
+          PYDATA
+      - name: Checkout exact controller with complete Git history
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout fixed complete application tree
+        uses: actions/checkout@v6
+        with:
+          ref: e34056a04ab6ade971effac629b96dbb92c58b25
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Freeze full source and controller input before tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$G_FORMAT_EVIDENCE/snapshot.py" "$GITHUB_WORKSPACE/source" "$APP_HEAD" "$APP_TREE" "$G_FORMAT_EVIDENCE/source-before.json"
+          python3 -B "$G_FORMAT_EVIDENCE/snapshot.py" "$GITHUB_WORKSPACE/controller" "$GITHUB_SHA" '' "$G_FORMAT_EVIDENCE/controller-before.json"
+          git -C controller merge-base --is-ancestor "$APP_HEAD" "$GITHUB_SHA"
+          git -C source archive --format=tar HEAD > "$G_FORMAT_EVIDENCE/source-full-input.tar"
+          git -C controller archive --format=tar HEAD > "$G_FORMAT_EVIDENCE/controller-full-input.tar"
+          cp controller/.github/workflows/trace-portability-1748-format.yml "$G_FORMAT_EVIDENCE/executed-controller.yml"
+          python3 -B - <<'PYDATA'
+          import hashlib, json, os, pathlib, shutil, tarfile
+          evidence = pathlib.Path(os.environ['G_FORMAT_EVIDENCE'])
+          source = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'source'
+          snapshots = {label: json.loads((evidence / (label + '-before.json')).read_text()) for label in ('source', 'controller')}
+          source_files = {item['path']: item for item in snapshots['source']['files']}
+          controller_files = {item['path']: item for item in snapshots['controller']['files']}
+          assert all(controller_files.get(name) == item for name, item in source_files.items())
+          assert set(controller_files) - set(source_files) == {'.github/workflows/trace-portability-1748-format.yml'}
+          archives = {}
+          for label in ('source', 'controller'):
+              expected = {item['path']: item for item in snapshots[label]['files']}
+              archive = evidence / (label + '-full-input.tar')
+              with tarfile.open(archive, 'r:') as package:
+                  actual = {item.name: item for item in package.getmembers() if not item.isdir()}
+                  assert set(actual) == set(expected), label + ' archive omitted or added tracked inputs'
+                  for name, item in actual.items():
+                      if expected[name]['mode'] == '120000':
+                          assert item.issym()
+                          raw = os.fsencode(item.linkname)
+                      else:
+                          assert item.isfile()
+                          raw = package.extractfile(item).read()
+                      assert len(raw) == expected[name]['bytes']
+                      assert hashlib.sha256(raw).hexdigest() == expected[name]['sha256']
+              archives[label] = {'bytes': archive.stat().st_size, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(), 'trackedFiles': len(expected)}
+          (evidence / 'complete-input-archives.json').write_text(json.dumps(archives, indent=2) + '\n')
+          files = ['backend/third_party/req/' + name for name in (
+              'request_test.go', 'trace_concurrency_test.go', 'trace_elapsed_peer_test.go')]
+          manifest = []
+          for name in files:
+              raw = (source / name).read_bytes()
+              for directory in ('raw', 'formatted'):
+                  target = evidence / directory / name
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copyfile(source / name, target)
+                  assert target.read_bytes() == raw
+              manifest.append({'path': name, 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()})
+          (evidence / 'three-inputs.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          PYDATA
+      - name: Install pinned formatter without repository cache
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.10'
+          check-latest: false
+          cache: false
+      - name: Capture raw diff, format copies, and capture post-format results
+        shell: bash
+        run: |
+          set -euo pipefail
+          go version > "$G_FORMAT_EVIDENCE/go-version.txt"
+          grep -Eq '^go version go1\.26\.10 linux/amd64$' "$G_FORMAT_EVIDENCE/go-version.txt"
+          formatter="$(go env GOROOT)/bin/gofmt"
+          printf '%s\n' "$formatter" > "$G_FORMAT_EVIDENCE/formatter-path.txt"
+          sha256sum "$formatter" > "$G_FORMAT_EVIDENCE/formatter.sha256"
+          capture() {
+            local label="$1"
+            shift
+            set +e
+            "$@" > "$label.stdout" 2> "$label.stderr"
+            local actual_status=$?
+            set -e
+            printf '%s\n' "$actual_status" > "$label.exit"
+          }
+          for name in request_test.go trace_concurrency_test.go trace_elapsed_peer_test.go; do
+            relative="backend/third_party/req/$name"
+            result="$G_FORMAT_EVIDENCE/results/$name"
+            mkdir -p "$result"
+            capture "$result/raw-diff" "$formatter" -d "$G_FORMAT_EVIDENCE/raw/$relative"
+            capture "$result/write-copy" "$formatter" -w "$G_FORMAT_EVIDENCE/formatted/$relative"
+            capture "$result/formatted-diff" "$formatter" -d "$G_FORMAT_EVIDENCE/formatted/$relative"
+            capture "$result/formatted-list" "$formatter" -l "$G_FORMAT_EVIDENCE/formatted/$relative"
+          done
+      - name: Freeze source and controller again even after tool failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          capture_snapshot() {
+            local label="$1" root="$2" head="$3" tree="$4"
+            set +e
+            python3 -B "$G_FORMAT_EVIDENCE/snapshot.py" "$root" "$head" "$tree" "$G_FORMAT_EVIDENCE/$label-after.json" > "$G_FORMAT_EVIDENCE/$label-after.stdout" 2> "$G_FORMAT_EVIDENCE/$label-after.stderr"
+            local actual_status=$?
+            set -e
+            printf '%s\n' "$actual_status" > "$G_FORMAT_EVIDENCE/$label-after.exit"
+          }
+          capture_snapshot source "$GITHUB_WORKSPACE/source" "$APP_HEAD" "$APP_TREE"
+          capture_snapshot controller "$GITHUB_WORKSPACE/controller" "$GITHUB_SHA" ''
+      - name: Judge actual formatter results and unchanged full inputs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PYDATA'
+          import hashlib, json, os, pathlib
+          evidence = pathlib.Path(os.environ['G_FORMAT_EVIDENCE'])
+          errors, results = [], []
+          try:
+              archives = json.loads((evidence / 'complete-input-archives.json').read_text())
+              assert set(archives) == {'source', 'controller'}
+              for label, item in archives.items():
+                  archive = evidence / (label + '-full-input.tar')
+                  assert archive.stat().st_size == item['bytes']
+                  assert hashlib.sha256(archive.read_bytes()).hexdigest() == item['sha256']
+          except (OSError, ValueError, KeyError, AssertionError) as error:
+              archives = {}
+              errors.append('complete frozen input archive missing or changed: ' + str(error))
+          for label in ('source', 'controller'):
+              try:
+                  assert (evidence / (label + '-after.exit')).read_text().strip() == '0'
+                  assert (evidence / (label + '-before.json')).read_bytes() == (evidence / (label + '-after.json')).read_bytes()
+              except (OSError, AssertionError) as error:
+                  errors.append(label + ' full frozen input changed or snapshot incomplete: ' + str(error))
+          try:
+              inputs = json.loads((evidence / 'three-inputs.json').read_text())
+              assert len(inputs) == 3
+              for item in inputs:
+                  name = item['path']
+                  result = {'path': name, 'operations': {}}
+                  raw = (evidence / 'raw' / name).read_bytes()
+                  formatted = (evidence / 'formatted' / name).read_bytes()
+                  assert hashlib.sha256(raw).hexdigest() == item['sha256']
+                  result['rawSha256'] = hashlib.sha256(raw).hexdigest()
+                  result['formattedSha256'] = hashlib.sha256(formatted).hexdigest()
+                  result['rawChangedByFormatter'] = raw != formatted
+                  for operation in ('raw-diff', 'write-copy', 'formatted-diff', 'formatted-list'):
+                      prefix = evidence / 'results' / pathlib.Path(name).name / operation
+                      status = int(pathlib.Path(str(prefix) + '.exit').read_text().strip())
+                      stdout = pathlib.Path(str(prefix) + '.stdout').read_bytes()
+                      stderr = pathlib.Path(str(prefix) + '.stderr').read_bytes()
+                      result['operations'][operation] = {'actualExit': status, 'stdoutBytes': len(stdout), 'stderrBytes': len(stderr)}
+                      if operation == 'raw-diff':
+                          valid = not stderr and (status == 0 or (status == 1 and bool(stdout)))
+                          valid = valid and bool(stdout) == (raw != formatted)
+                      else:
+                          valid = status == 0 and not stdout and not stderr
+                      if not valid:
+                          errors.append(name + ': invalid actual ' + operation + ' outcome')
+                  results.append(result)
+          except (OSError, ValueError, KeyError, AssertionError) as error:
+              errors.append('formatter evidence incomplete: ' + str(error))
+          report = {'appHead': os.environ['APP_HEAD'], 'appTree': os.environ['APP_TREE'],
+                    'controllerHead': os.environ['GITHUB_SHA'], 'fullInputArchives': archives, 'results': results, 'errors': errors,
+                    'actualOperationCount': sum(len(item['operations']) for item in results),
+                    'scope': 'format external three-file copies only; no compilation or runtime approval'}
+          (evidence / 'formatter-actual-receipt.json').write_text(json.dumps(report, indent=2) + '\n')
+          assert not errors and len(results) == 3 and report['actualOperationCount'] == 12, errors
+          PYDATA
+      - name: Always retain complete frozen inputs, raw bytes and actual formatter evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trace-portability-1748-format-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/trace-portability-1748-format-${{ github.run_id }}-${{ github.run_attempt }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
