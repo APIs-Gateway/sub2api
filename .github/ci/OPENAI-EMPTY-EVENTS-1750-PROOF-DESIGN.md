@@ -24,10 +24,15 @@ Go 1.26.10 executes raw-diff, write-copy, formatted-diff and formatted-list on
 each OLD/NEW test and production copy, outside all checkouts: sixteen actual
 operations, with argv, cwd, process timing, actual exit, stdout and stderr.
 Actual Go/gofmt binary hashes and toolchain environment are retained. All
-post-format operations require zero exit and empty stdio. Raw-diff must agree
-with whether actual output bytes changed. Eight remote-only checker controls
+post-format operations require zero exit and empty stdio. Go 1.26.10 raw-diff
+must be exactly exit0/empty/unchanged or exit1/nonempty/changed, with empty
+stderr in both cases. Both valid raw-diff outcomes have positive controls.
+Nine remote-only checker controls
 must reject missing/signal/timeout exit, residual list, stderr, hidden/invented
-diff, and nonzero post-diff. These are checker controls, not application tests.
+diff, zero-exit with a real diff, and nonzero post-diff. These are checker
+controls, not application tests. This follows the pinned official
+[`gofmt` source](https://github.com/golang/go/blob/go1.26.10/src/cmd/gofmt/gofmt.go),
+which returns `errFormattingDiffers` after writing a diff and exits with one.
 OLD/NEW raw and formatted test copies must each be byte identical.
 
 **OLD production is evidence only. Do not import its formatted output.** It

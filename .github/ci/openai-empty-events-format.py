@@ -245,8 +245,8 @@ def validate_operation(operation, record, stdout, stderr, changed):
     require(type(status) is int and status >= 0, "operation actual exit missing or signaled")
     require(not stderr, "operation stderr")
     if operation == "raw-diff":
-        require(status == 0 or (status == 1 and bool(stdout)), "raw diff invalid exit")
-        require(bool(stdout) == changed, "raw diff and formatted bytes disagree")
+        require((status == 0 and not stdout and not changed) or
+                (status == 1 and bool(stdout) and changed), "raw diff exit, output and formatted bytes disagree")
     else:
         require(status == 0 and not stdout, "post-format operation failed or left output")
 
@@ -255,6 +255,8 @@ def controls(evidence):
     # Pure checker controls, run only in CI. They are not application tests.
     valid = {"actualExit": 0, "timedOut": False}
     validate_operation("formatted-list", valid, b"", b"", False)
+    validate_operation("raw-diff", valid, b"", b"", False)
+    validate_operation("raw-diff", {"actualExit": 1, "timedOut": False}, b"diff\n", b"", True)
     cases = [
         ("missing-exit", "formatted-list", {"actualExit": None, "timedOut": False}, b"", b"", False),
         ("signaled", "formatted-list", {"actualExit": -9, "timedOut": False}, b"", b"", False),
@@ -263,6 +265,7 @@ def controls(evidence):
         ("formatter-stderr", "write-copy", valid, b"", b"error\n", False),
         ("hidden-diff", "raw-diff", valid, b"", b"", True),
         ("invented-diff", "raw-diff", valid, b"diff\n", b"", False),
+        ("zero-exit-real-diff", "raw-diff", valid, b"diff\n", b"", True),
         ("nonzero-post-diff", "formatted-diff", {"actualExit": 1, "timedOut": False}, b"", b"", False),
     ]
     results = []
@@ -273,8 +276,12 @@ def controls(evidence):
             results.append({"name": name, "rejected": True, "reason": str(error)})
         else:
             results.append({"name": name, "rejected": False})
-    save(evidence / "formatter-negative-controls.json", {"validControlAccepted": True, "cases": results})
-    require(len(results) == 8 and all(item["rejected"] for item in results), "negative control accepted invalid evidence")
+    save(evidence / "formatter-negative-controls.json", {
+        "validControlAccepted": True,
+        "validRawDiffControlsAccepted": ["exit0-empty-unchanged", "exit1-diff-changed"],
+        "cases": results,
+    })
+    require(len(results) == 9 and all(item["rejected"] for item in results), "negative control accepted invalid evidence")
 
 
 def judge(evidence):
