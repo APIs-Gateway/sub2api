@@ -22,8 +22,8 @@ import (
 )
 
 type emptyRetryEvent struct {
-	name string
-	payload string
+	name       string
+	payload    string
 	eventLabel string
 }
 
@@ -60,28 +60,29 @@ var committedRetryEvents = []emptyRetryEvent{
 const emptyRetryFailure = `{"type":"response.failed","response":{"id":"resp_empty","status":"failed","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."},"usage":{"input_tokens":3,"output_tokens":0}}}`
 
 type emptyRetryExchange struct {
-	method string
-	uri string
+	method      string
+	uri         string
 	requestBody []byte
-	written int
-	writeErr error
-	flushErr error
+	written     int
+	writeErr    error
+	flushErr    error
 }
 
 type emptyRetryPeer struct {
-	server *httptest.Server
-	client *http.Client
+	server    *httptest.Server
+	client    *http.Client
 	completed chan emptyRetryExchange
-	requests atomic.Int32
-	stream string
+	requests  atomic.Int32
+	stream    string
 }
 
 func newEmptyRetryPeer(t *testing.T, event emptyRetryEvent) *emptyRetryPeer {
 	t.Helper()
 	label := event.eventLabel
-	if label == "" { label = gjson.Get(event.payload, "type").String() }
-	p := &emptyRetryPeer{completed: make(chan emptyRetryExchange, 2), stream:
-		"event: " + label + "\ndata: " + event.payload + "\n\n" +
+	if label == "" {
+		label = gjson.Get(event.payload, "type").String()
+	}
+	p := &emptyRetryPeer{completed: make(chan emptyRetryExchange, 2), stream: "event: " + label + "\ndata: " + event.payload + "\n\n" +
 		"event: response.failed\ndata: " + emptyRetryFailure + "\n\n"}
 	p.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p.requests.Add(1)
@@ -89,7 +90,10 @@ func newEmptyRetryPeer(t *testing.T, event emptyRetryEvent) *emptyRetryPeer {
 		defer func() { p.completed <- e }()
 		var readErr error
 		e.requestBody, readErr = io.ReadAll(io.LimitReader(r.Body, 4097))
-		if readErr != nil || len(e.requestBody) > 4096 { e.writeErr = fmt.Errorf("fixture request body: %v bytes=%d", readErr, len(e.requestBody)); return }
+		if readErr != nil || len(e.requestBody) > 4096 {
+			e.writeErr = fmt.Errorf("fixture request body: %v bytes=%d", readErr, len(e.requestBody))
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("X-Request-Id", "rid-empty-event-wire")
 		e.written, e.writeErr = io.WriteString(w, p.stream)
@@ -105,7 +109,8 @@ func (p *emptyRetryPeer) assertComplete(t *testing.T, ctx context.Context) {
 	var e emptyRetryExchange
 	select {
 	case e = <-p.completed:
-	case <-ctx.Done(): t.Fatalf("EMPTY_EVENT_FIXTURE: missing actual peer completion: %v", ctx.Err())
+	case <-ctx.Done():
+		t.Fatalf("EMPTY_EVENT_FIXTURE: missing actual peer completion: %v", ctx.Err())
 	}
 	if e.method != http.MethodPost || e.uri != "/backend-api/codex/responses" ||
 		e.writeErr != nil || e.flushErr != nil || e.written != len(p.stream) || p.requests.Load() != 1 ||
@@ -117,12 +122,16 @@ func (p *emptyRetryPeer) assertComplete(t *testing.T, ctx context.Context) {
 
 // This bridge port delivers the production-built HTTP request to an owned real
 // listener. It replaces only destination scheme/authority, never a response/body.
-type emptyRetryWireUpstream struct { peer *emptyRetryPeer }
+type emptyRetryWireUpstream struct{ peer *emptyRetryPeer }
 
 func (u emptyRetryWireUpstream) Do(request *http.Request, proxyURL string, _ int64, _ int) (*http.Response, error) {
-	if proxyURL != "" || request == nil || request.URL == nil { return nil, fmt.Errorf("EMPTY_EVENT_FIXTURE: unexpected upstream request/proxy") }
+	if proxyURL != "" || request == nil || request.URL == nil {
+		return nil, fmt.Errorf("EMPTY_EVENT_FIXTURE: unexpected upstream request/proxy")
+	}
 	target, err := url.Parse(u.peer.server.URL)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	actual := request.Clone(request.Context())
 	copyURL := *request.URL
 	copyURL.Scheme, copyURL.Host = target.Scheme, target.Host
@@ -131,14 +140,16 @@ func (u emptyRetryWireUpstream) Do(request *http.Request, proxyURL string, _ int
 }
 
 func (u emptyRetryWireUpstream) DoWithTLS(request *http.Request, proxyURL string, id int64, concurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
-	if profile != nil { return nil, fmt.Errorf("EMPTY_EVENT_FIXTURE: unexpected TLS profile") }
+	if profile != nil {
+		return nil, fmt.Errorf("EMPTY_EVENT_FIXTURE: unexpected TLS profile")
+	}
 	return u.Do(request, proxyURL, id, concurrency)
 }
 
 type emptyRetryOutcome struct {
-	err error
-	output string
-	firstToken *int
+	err         error
+	output      string
+	firstToken  *int
 	inputTokens int
 }
 
@@ -170,11 +181,21 @@ func runEmptyRetryWire(t *testing.T, path string, event emptyRetryEvent) emptyRe
 		if path == "native" {
 			result, err := svc.handleStreamingResponse(ctx, response, c, account, time.Now(), "model", "model")
 			out.err = err
-			if result != nil { out.firstToken = result.firstTokenMs; if result.usage != nil { out.inputTokens = result.usage.InputTokens } }
+			if result != nil {
+				out.firstToken = result.firstTokenMs
+				if result.usage != nil {
+					out.inputTokens = result.usage.InputTokens
+				}
+			}
 		} else {
 			result, err := svc.handleStreamingResponsePassthrough(ctx, response, c, account, time.Now(), "model", "model")
 			out.err = err
-			if result != nil { out.firstToken = result.firstTokenMs; if result.usage != nil { out.inputTokens = result.usage.InputTokens } }
+			if result != nil {
+				out.firstToken = result.firstTokenMs
+				if result.usage != nil {
+					out.inputTokens = result.usage.InputTokens
+				}
+			}
 		}
 		out.output = recorder.Body.String()
 	}
@@ -194,7 +215,10 @@ func TestOpenAIEmptyEventPreOutputRetry(t *testing.T) {
 					}
 					require.False(t, failover.BillingNoCharge, "empty output is not a no-charge proof")
 					require.False(t, failover.ForceCacheBilling, "safe retry must not invent a cache billing switch")
-					if path != "bridge" { require.Nil(t, out.firstToken); require.Equal(t, 3, out.inputTokens, "preserve real terminal input usage") }
+					if path != "bridge" {
+						require.Nil(t, out.firstToken)
+						require.Equal(t, 3, out.inputTokens, "preserve real terminal input usage")
+					}
 					t.Logf("OPENAI_EMPTY_PREOUTPUT_COMPLETE %s requestScoped=true outputBytes=0", t.Name())
 				})
 			}
@@ -219,7 +243,7 @@ func TestOpenAIEmptyEventCommittedOutputDoesNotReplay(t *testing.T) {
 }
 
 func TestOpenAIEmptyEventConservativeClassification(t *testing.T) {
-	cases := []struct { name, payload, eventType string }{
+	cases := []struct{ name, payload, eventType string }{
 		{"delta_missing", `{"type":"response.output_text.delta"}`, "response.output_text.delta"},
 		{"delta_null", `{"type":"response.output_text.delta","delta":null}`, "response.output_text.delta"},
 		{"delta_object", `{"type":"response.output_text.delta","delta":{}}`, "response.output_text.delta"},
@@ -252,7 +276,9 @@ func TestOpenAIEmptyEventConservativeClassification(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			if !openAIStreamDataStartsClientOutput(test.payload, test.eventType) { t.Fatalf("OPENAI_EMPTY_CONSERVATIVE_ASSERT: ambiguous frame permitted replay: %s", test.payload) }
+			if !openAIStreamDataStartsClientOutput(test.payload, test.eventType) {
+				t.Fatalf("OPENAI_EMPTY_CONSERVATIVE_ASSERT: ambiguous frame permitted replay: %s", test.payload)
+			}
 		})
 	}
 }

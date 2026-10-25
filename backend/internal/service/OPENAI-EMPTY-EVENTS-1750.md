@@ -48,3 +48,39 @@ payment/billing/scheduling changes. Existing per-attempt billing and request
 budgets, original added-item behavior and memory limits stay. Preserve and
 cross-review shared-file PRs1733/1717/1710/1708/1705/1704/1699/1697/1672/1022 and
 1712 before merge. No local resources or remote branch have been published.
+
+## Accepted remote format artifact (OLD source import)
+
+The earlier RAW preparation sections are retained as history. Formatter-only
+controller `837aa2bcf725d25c09a99f8dcdba1289e7b8d53c` actually ran Go1.26.10
+under [run40183164438](https://github.com/APIs-Gateway/sub2api/actions/runs/40183164438),
+attempt1. Its frozen application inputs were RAW OLD
+`5052c03eb672b7cd162bf3fa41042aa35d34cc25` and RAW NEW
+`a2cebe17c05e5c806bd4019f8085c35864345f09` (complete4307-file Git trees).
+Artifact12594229961 is44535218 bytes,134 members; original ZIP SHA256
+`943313c109e022414eb587b396ec338a19ef2c04aff82a7d882fee0fb9abb8a3`.
+All16 actual formatter operations, nine negative checker controls, two valid
+raw-diff controls, full Git archives and unchanged before/after inputs were
+reviewed. Root actual receipt SHA256
+`5571245999a87b0f33f241ce5a3476261759650c2e4d4ba11b4e0136c41404fc`;
+author raw-data receipt SHA256
+`778de8ba5b5adb54067242d24878ae1943f3a073cc492d7f5102962830f25e99`.
+
+Only the verbatim test output is imported here:14157 bytes, SHA256
+`b3c439eadee03165b218ab2490211574f2207a08af4375874535b4863c619a25`.
+OLD and NEW output copies are byte identical. This OLD source retains the
+complete original main production bytes; no production formatting was imported.
+Both production outputs were already byte identical to their RAW Git inputs.
+The formatter controller publication and its format run are actual events;
+application OLD/NEW testing, race/build and required formal checks remain pending.
+Formatting is not a business RED/PASS or coverage approval.
+
+The separately sealed existing-regression inventory is based on exacta2ce:
+159 top tests (90 service,69 handler),193 explicit subtests,352 RUN/terminal
+identities; frozen inventory SHA256
+`601584014f937747786d07cb8aa76e562a42d54779b04a776693ece1eabcbaa7`.
+All21 selected original test files and module inputs are unchanged in this
+import. Both OLD and NEW must actually PASS the original regressions. The new98
+remain separate: genuine OLD business RED must keep the job failed, while NEW
+must PASS all98. Compiler/fixture/race/timeout/incomplete phases are blockers.
+No local or87 project execution or future behavior workflow publication occurred.
