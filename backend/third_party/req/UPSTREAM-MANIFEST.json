@@ -749,7 +749,9 @@
     "digest_ownership_peer_test.go",
     "digest_ownership_contract_test.go",
     "DIGEST-OWNERSHIP-PROVENANCE.json",
-    "DIGEST-OWNERSHIP-REVIEW.md"
+    "DIGEST-OWNERSHIP-REVIEW.md",
+    "internal/http2/receive_flow_contract_test.go",
+    "internal/http2/RECEIVE-FLOW-CONTRACTS.md"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
@@ -1127,5 +1129,32 @@
     "oldTestSourceHead": "7b0d92fb4c6bd52a62218d505130944163b73464",
     "adaptationsAtThisNewSource": 12,
     "unchangedOriginalsAtThisNewSource": 120
+  },
+  "http2ReceiveFlowContracts": {
+    "baseHead": "6cbaddae9795d6a46c752e20fffd68fac2b49aa2",
+    "officialSource": "https://github.com/golang/net/blob/v0.48.0/http2/transport_test.go",
+    "officialBytes": 164358,
+    "officialSHA256": "a7592ef60371241ef909b01f6c3887e5180210e5fac0ad177ef59a4e935978cb",
+    "license": "LICENSE-GO-BSD",
+    "newFiles": {
+      "internal/http2/receive_flow_contract_test.go": {
+        "bytes": 13355,
+        "sha256": "f8014478e8f8dd86fc9e18691aab46db06aaea87644d63849362a5ef76d29234"
+      },
+      "internal/http2/RECEIVE-FLOW-CONTRACTS.md": {
+        "bytes": 8138,
+        "sha256": "19d1b9bd089339577ff93f8bad9759684b9f5324c336ea57d66bacc8c0905ab7"
+      }
+    },
+    "leaves": [
+      "TestReqHTTP2ReceiveFlowContract_UnreadRefund/single_frame",
+      "TestReqHTTP2ReceiveFlowContract_UnreadRefund/late_frame_after_cancel",
+      "TestReqHTTP2ReceiveFlowContract_PaddedData/read_to_eof",
+      "TestReqHTTP2ReceiveFlowContract_PaddedData/read_one_then_close",
+      "TestReqHTTP2ReceiveFlowContract_PaddedData/close_unread",
+      "TestReqHTTP2ReceiveFlowContract_DataBeforeHeaders"
+    ],
+    "scope": "Tests only, real private ClientConn byte-stream/body/frame contract; not TCP/TLS deployment proof. No production or counter/denominator/gate change. Original base468 mandatory inventory unchanged; separately register six actual leaves in reviewed remote composition before acceptance.",
+    "status": "RAW source only; no local/87 project/format/syntax/test/build execution; no push. Independent review and exact-head remote CI required."
   }
 }
