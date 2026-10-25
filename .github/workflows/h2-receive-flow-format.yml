@@ -1,0 +1,293 @@
+name: H2 receive-flow frozen remote formatter
+
+on:
+  push:
+    branches:
+      - codex/req-h2-receive-flow-format-1712
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  format-frozen-h2-receive-flow-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_HEAD: cf6ccbb4389edf4bae86e81438c87abf607289bb
+      APP_TREE: 3adb52fcbba5fd3cc582fb863a66e0a9f370fe61
+      GOTOOLCHAIN: local
+      GOWORK: "off"
+    steps:
+      - name: Initialize external evidence before checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/h2-receive-flow-format-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence"
+          printf 'H2_RECEIVE_FORMAT_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+          printf '%s\n' "$GITHUB_SHA" > "$evidence/controller-event-head.txt"
+          printf '%s\n' "$APP_HEAD" > "$evidence/app-expected-head.txt"
+          printf '%s\n' "$APP_TREE" > "$evidence/app-expected-tree.txt"
+          cp "$GITHUB_EVENT_PATH" "$evidence/event.json"
+          cat > "$evidence/snapshot.py" <<'PYDATA'
+          import hashlib, json, os, pathlib, stat, subprocess, sys
+          root = pathlib.Path(sys.argv[1]).resolve()
+          expected_head, expected_tree, output = sys.argv[2:5]
+          def git(*args, data=None):
+              return subprocess.check_output(['git', '-C', str(root), *args], input=data)
+          head = git('rev-parse', 'HEAD').decode().strip()
+          tree = git('rev-parse', 'HEAD^{tree}').decode().strip()
+          assert head == expected_head, (head, expected_head)
+          if expected_tree:
+              assert tree == expected_tree, (tree, expected_tree)
+          status = git('status', '--porcelain=v1', '--untracked-files=all')
+          pathlib.Path(output + '.status').write_bytes(status)
+          assert not status, 'checkout is not clean'
+          index = git('ls-files', '--stage', '-z')
+          pathlib.Path(output + '.index').write_bytes(index)
+          files = []
+          for row in index.split(b'\0'):
+              if not row:
+                  continue
+              header, name = row.split(b'\t', 1)
+              mode, blob, stage = header.decode().split()
+              assert stage == '0' and mode in ('100644', '100755', '120000')
+              path = root / os.fsdecode(name)
+              info = path.lstat()
+              if mode == '120000':
+                  assert stat.S_ISLNK(info.st_mode)
+                  raw = os.fsencode(os.readlink(path))
+              else:
+                  assert stat.S_ISREG(info.st_mode) and not path.is_symlink()
+                  assert bool(info.st_mode & 0o111) == (mode == '100755')
+                  raw = path.read_bytes()
+              actual_blob = git('hash-object', '--stdin', data=raw).decode().strip()
+              assert actual_blob == blob, os.fsdecode(name)
+              files.append({'path': os.fsdecode(name), 'mode': mode, 'blob': blob,
+                            'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)})
+          result = {'head': head, 'tree': tree, 'files': files}
+          pathlib.Path(output).write_text(json.dumps(result, indent=2) + '\n')
+          PYDATA
+      - name: Checkout exact controller with complete Git history
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout fixed complete application tree
+        uses: actions/checkout@v6
+        with:
+          ref: cf6ccbb4389edf4bae86e81438c87abf607289bb
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Freeze full source and controller input before tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          capture_before() {
+            local label="$1" root="$2" head="$3" tree="$4"
+            set +e
+            python3 -B "$H2_RECEIVE_FORMAT_EVIDENCE/snapshot.py" "$root" "$head" "$tree" "$H2_RECEIVE_FORMAT_EVIDENCE/$label-before.json" > "$H2_RECEIVE_FORMAT_EVIDENCE/$label-before.stdout" 2> "$H2_RECEIVE_FORMAT_EVIDENCE/$label-before.stderr"
+            local actual_status=$?
+            set -e
+            printf '%s\n' "$actual_status" > "$H2_RECEIVE_FORMAT_EVIDENCE/$label-before.exit"
+          }
+          capture_before source "$GITHUB_WORKSPACE/source" "$APP_HEAD" "$APP_TREE"
+          capture_before controller "$GITHUB_WORKSPACE/controller" "$GITHUB_SHA" ''
+          test "$(cat "$H2_RECEIVE_FORMAT_EVIDENCE/source-before.exit")" = 0
+          test "$(cat "$H2_RECEIVE_FORMAT_EVIDENCE/controller-before.exit")" = 0
+          git -C controller merge-base --is-ancestor "$APP_HEAD" "$GITHUB_SHA"
+          git -C source archive --format=tar HEAD > "$H2_RECEIVE_FORMAT_EVIDENCE/source-full-input.tar"
+          git -C controller archive --format=tar HEAD > "$H2_RECEIVE_FORMAT_EVIDENCE/controller-full-input.tar"
+          cp controller/.github/workflows/h2-receive-flow-format.yml "$H2_RECEIVE_FORMAT_EVIDENCE/executed-controller.yml"
+          python3 -B - <<'PYDATA'
+          import hashlib, json, os, pathlib, shutil, tarfile
+          evidence = pathlib.Path(os.environ['H2_RECEIVE_FORMAT_EVIDENCE'])
+          source = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'source'
+          snapshots = {label: json.loads((evidence / (label + '-before.json')).read_text()) for label in ('source', 'controller')}
+          source_files = {item['path']: item for item in snapshots['source']['files']}
+          controller_files = {item['path']: item for item in snapshots['controller']['files']}
+          assert all(controller_files.get(name) == item for name, item in source_files.items())
+          assert set(controller_files) - set(source_files) == {'.github/workflows/h2-receive-flow-format.yml'}
+          archives = {}
+          for label in ('source', 'controller'):
+              expected = {item['path']: item for item in snapshots[label]['files']}
+              archive = evidence / (label + '-full-input.tar')
+              with tarfile.open(archive, 'r:') as package:
+                  members = [item for item in package.getmembers() if not item.isdir()]
+                  actual = {item.name: item for item in members}
+                  assert len(members) == len(actual) == len(expected)
+                  assert set(actual) == set(expected), label + ' archive omitted or added tracked inputs'
+                  for name, item in actual.items():
+                      if expected[name]['mode'] == '120000':
+                          assert item.issym()
+                          raw = os.fsencode(item.linkname)
+                      else:
+                          assert item.isfile()
+                          assert item.mode & 0o777 == (0o755 if expected[name]['mode'] == '100755' else 0o644)
+                          raw = package.extractfile(item).read()
+                      assert len(raw) == expected[name]['bytes']
+                      assert hashlib.sha256(raw).hexdigest() == expected[name]['sha256']
+              archives[label] = {'bytes': archive.stat().st_size, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(), 'trackedFiles': len(expected)}
+          (evidence / 'complete-input-archives.json').write_text(json.dumps(archives, indent=2) + '\n')
+          files = ['backend/third_party/req/internal/http2/receive_flow_contract_test.go']
+          manifest = []
+          for name in files:
+              raw = (source / name).read_bytes()
+              for directory in ('raw', 'formatted'):
+                  target = evidence / directory / name
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copyfile(source / name, target)
+                  assert target.read_bytes() == raw
+              manifest.append({'path': name, 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()})
+          (evidence / 'one-input.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          PYDATA
+      - name: Install pinned formatter without repository cache
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.10'
+          check-latest: false
+          cache: false
+      - name: Capture raw diff, format copies, and capture post-format results
+        shell: bash
+        run: |
+          set -euo pipefail
+          go version > "$H2_RECEIVE_FORMAT_EVIDENCE/go-version.txt"
+          grep -Eq '^go version go1\.26\.10 linux/amd64$' "$H2_RECEIVE_FORMAT_EVIDENCE/go-version.txt"
+          formatter="$(go env GOROOT)/bin/gofmt"
+          printf '%s\n' "$formatter" > "$H2_RECEIVE_FORMAT_EVIDENCE/formatter-path.txt"
+          sha256sum "$formatter" > "$H2_RECEIVE_FORMAT_EVIDENCE/formatter.sha256"
+          capture() {
+            local label="$1"
+            shift
+            set +e
+            "$@" > "$label.stdout" 2> "$label.stderr"
+            local actual_status=$?
+            set -e
+            printf '%s\n' "$actual_status" > "$label.exit"
+          }
+          for name in receive_flow_contract_test.go; do
+            relative="backend/third_party/req/internal/http2/$name"
+            result="$H2_RECEIVE_FORMAT_EVIDENCE/results/$name"
+            mkdir -p "$result"
+            capture "$result/raw-diff" "$formatter" -d "$H2_RECEIVE_FORMAT_EVIDENCE/raw/$relative"
+            capture "$result/write-copy" "$formatter" -w "$H2_RECEIVE_FORMAT_EVIDENCE/formatted/$relative"
+            capture "$result/formatted-diff" "$formatter" -d "$H2_RECEIVE_FORMAT_EVIDENCE/formatted/$relative"
+            capture "$result/formatted-list" "$formatter" -l "$H2_RECEIVE_FORMAT_EVIDENCE/formatted/$relative"
+          done
+          sha256sum "$formatter" > "$H2_RECEIVE_FORMAT_EVIDENCE/formatter-after.sha256"
+          cmp "$H2_RECEIVE_FORMAT_EVIDENCE/formatter.sha256" "$H2_RECEIVE_FORMAT_EVIDENCE/formatter-after.sha256"
+      - name: Freeze source and controller again even after tool failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          capture_snapshot() {
+            local label="$1" root="$2" head="$3" tree="$4"
+            set +e
+            python3 -B "$H2_RECEIVE_FORMAT_EVIDENCE/snapshot.py" "$root" "$head" "$tree" "$H2_RECEIVE_FORMAT_EVIDENCE/$label-after.json" > "$H2_RECEIVE_FORMAT_EVIDENCE/$label-after.stdout" 2> "$H2_RECEIVE_FORMAT_EVIDENCE/$label-after.stderr"
+            local actual_status=$?
+            set -e
+            printf '%s\n' "$actual_status" > "$H2_RECEIVE_FORMAT_EVIDENCE/$label-after.exit"
+          }
+          capture_snapshot source "$GITHUB_WORKSPACE/source" "$APP_HEAD" "$APP_TREE"
+          capture_snapshot controller "$GITHUB_WORKSPACE/controller" "$GITHUB_SHA" ''
+      - name: Judge actual formatter results and unchanged full inputs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PYDATA'
+          import hashlib, json, os, pathlib
+          evidence = pathlib.Path(os.environ['H2_RECEIVE_FORMAT_EVIDENCE'])
+          errors, results = [], []
+          def valid_operation(operation, status, stdout, stderr, changed):
+              if stderr:
+                  return False
+              if operation == 'raw-diff':
+                  return (status == 0 and not stdout and not changed) or (status == 1 and bool(stdout) and changed)
+              return status == 0 and not stdout
+          controls = [
+              ('valid-unchanged', 0, b'', b'', False, True),
+              ('valid-changed', 1, b'diff\n', b'', True, True),
+              ('zero-exit-real-diff', 0, b'diff\n', b'', True, False),
+              ('hidden-change', 0, b'', b'', True, False),
+              ('invented-diff', 1, b'diff\n', b'', False, False),
+              ('empty-exit1', 1, b'', b'', False, False),
+              ('failed-diff', 2, b'diff\n', b'', True, False),
+              ('signaled-diff', -9, b'diff\n', b'', True, False),
+              ('stderr-diff', 1, b'diff\n', b'error\n', True, False),
+          ]
+          control_results = [{'name': name, 'expected': expected, 'actual': valid_operation('raw-diff', status, stdout, stderr, changed)}
+                             for name, status, stdout, stderr, changed, expected in controls]
+          (evidence / 'formatter-status-controls.json').write_text(json.dumps(control_results, indent=2) + '\n')
+          if not all(item['actual'] == item['expected'] for item in control_results):
+              errors.append('formatter status controls failed')
+          try:
+              assert (evidence / 'go-version.txt').read_text().strip() == 'go version go1.26.10 linux/amd64'
+              assert (evidence / 'formatter.sha256').read_bytes() == (evidence / 'formatter-after.sha256').read_bytes()
+          except (OSError, AssertionError) as error:
+              errors.append('pinned toolchain/formatter missing or changed: ' + str(error))
+          try:
+              archives = json.loads((evidence / 'complete-input-archives.json').read_text())
+              assert set(archives) == {'source', 'controller'}
+              for label, item in archives.items():
+                  archive = evidence / (label + '-full-input.tar')
+                  assert archive.stat().st_size == item['bytes']
+                  assert hashlib.sha256(archive.read_bytes()).hexdigest() == item['sha256']
+          except (OSError, ValueError, KeyError, AssertionError) as error:
+              archives = {}
+              errors.append('complete frozen input archive missing or changed: ' + str(error))
+          for label in ('source', 'controller'):
+              try:
+                  assert (evidence / (label + '-before.exit')).read_text().strip() == '0'
+                  assert (evidence / (label + '-after.exit')).read_text().strip() == '0'
+                  assert (evidence / (label + '-before.json')).read_bytes() == (evidence / (label + '-after.json')).read_bytes()
+              except (OSError, AssertionError) as error:
+                  errors.append(label + ' full frozen input changed or snapshot incomplete: ' + str(error))
+          try:
+              inputs = json.loads((evidence / 'one-input.json').read_text())
+              assert len(inputs) == 1
+              for item in inputs:
+                  name = item['path']
+                  result = {'path': name, 'operations': {}}
+                  raw = (evidence / 'raw' / name).read_bytes()
+                  formatted = (evidence / 'formatted' / name).read_bytes()
+                  assert hashlib.sha256(raw).hexdigest() == item['sha256']
+                  assert len(raw) == item['bytes']
+                  result['rawSha256'] = hashlib.sha256(raw).hexdigest()
+                  result['formattedSha256'] = hashlib.sha256(formatted).hexdigest()
+                  result['rawChangedByFormatter'] = raw != formatted
+                  for operation in ('raw-diff', 'write-copy', 'formatted-diff', 'formatted-list'):
+                      prefix = evidence / 'results' / pathlib.Path(name).name / operation
+                      status = int(pathlib.Path(str(prefix) + '.exit').read_text().strip())
+                      stdout = pathlib.Path(str(prefix) + '.stdout').read_bytes()
+                      stderr = pathlib.Path(str(prefix) + '.stderr').read_bytes()
+                      result['operations'][operation] = {'actualExit': status, 'stdoutBytes': len(stdout), 'stderrBytes': len(stderr),
+                                                            'stdoutSHA256': hashlib.sha256(stdout).hexdigest(), 'stderrSHA256': hashlib.sha256(stderr).hexdigest()}
+                      valid = valid_operation(operation, status, stdout, stderr, raw != formatted)
+                      if not valid:
+                          errors.append(name + ': invalid actual ' + operation + ' outcome')
+                  results.append(result)
+          except (OSError, ValueError, KeyError, AssertionError) as error:
+              errors.append('formatter evidence incomplete: ' + str(error))
+          report = {'appHead': os.environ['APP_HEAD'], 'appTree': os.environ['APP_TREE'],
+                    'controllerHead': os.environ['GITHUB_SHA'], 'fullInputArchives': archives, 'statusControls': control_results,
+                    'results': results, 'errors': errors,
+                    'scope': 'format external one-file copy only; no compilation or runtime approval'}
+          (evidence / 'formatter-actual-receipt.json').write_text(json.dumps(report, indent=2) + '\n')
+          assert not errors and len(results) == 1, errors
+          PYDATA
+      - name: Always retain complete frozen inputs, raw bytes and actual formatter evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: h2-receive-flow-format-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/h2-receive-flow-format-${{ github.run_id }}-${{ github.run_attempt }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
