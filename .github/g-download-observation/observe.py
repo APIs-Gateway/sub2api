@@ -19,9 +19,9 @@ import traceback
 import uuid
 
 BASE = "673c3fafa9ff9c4c32a6adbd8cd5f595c25f0c63"
-# Deliberately not executable until final composition/remote formatting is sealed.
-SOURCE = "PENDING_PARENT525_SOURCE_HEAD"
-TREE = "PENDING_PARENT525_SOURCE_TREE"
+# Exact independently reviewed, remote-formatted application source; runtime still pending.
+SOURCE = "8eee8388f0b5a24d635908e7268736b4d1d8f44d"
+TREE = "253a542f986b2e90c138bf866057eea77c541ded"
 PRODUCTION = "bf4dfe25dac427186ff32c93a5c9d45d89530418"
 INFRA_PATHS = {".github/g-download-observation/observe.py", ".github/g-download-observation/controls.py",
                ".github/g-download-observation/metadata_control_test.go.txt", ".github/workflows/g-download-observe.yml",
