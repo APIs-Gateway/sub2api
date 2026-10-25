@@ -117,6 +117,7 @@ jobs:
           for label in ('source', 'controller'):
               expected = {item['path']: item for item in snapshots[label]['files']}
               archive = evidence / (label + '-full-input.tar')
+              archive_members = []
               with tarfile.open(archive, 'r:') as package:
                   members = [item for item in package.getmembers() if not item.isdir()]
                   actual = {item.name: item for item in members}
@@ -124,15 +125,24 @@ jobs:
                   assert set(actual) == set(expected), label + ' archive omitted or added tracked inputs'
                   for name, item in actual.items():
                       if expected[name]['mode'] == '120000':
-                          assert item.issym()
+                          assert item.issym(), (label, name, 'expected symlink', item.type, oct(item.mode))
                           raw = os.fsencode(item.linkname)
                       else:
-                          assert item.isfile()
-                          assert item.mode & 0o777 == (0o755 if expected[name]['mode'] == '100755' else 0o644)
+                          assert item.isfile(), (label, name, 'expected regular file', item.type, oct(item.mode))
+                          assert bool(item.mode & 0o111) == (expected[name]['mode'] == '100755'), (label, name, 'archive executable bits differ from Git mode', expected[name]['mode'], oct(item.mode))
                           raw = package.extractfile(item).read()
-                      assert len(raw) == expected[name]['bytes']
-                      assert hashlib.sha256(raw).hexdigest() == expected[name]['sha256']
-              archives[label] = {'bytes': archive.stat().st_size, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(), 'trackedFiles': len(expected)}
+                      assert len(raw) == expected[name]['bytes'], (label, name, 'archive byte length differs')
+                      assert hashlib.sha256(raw).hexdigest() == expected[name]['sha256'], (label, name, 'archive SHA256 differs')
+                      actual_blob = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+                      assert actual_blob == expected[name]['blob'], (label, name, 'archive Git blob differs')
+                      archive_members.append({'path': name, 'tarMode': item.mode, 'tarModeOctal': oct(item.mode),
+                                              'tarType': item.type.decode('ascii'), 'gitMode': expected[name]['mode'],
+                                              'blob': actual_blob, 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()})
+              member_file = evidence / (label + '-archive-members.json')
+              member_file.write_text(json.dumps(archive_members, indent=2) + '\n')
+              archives[label] = {'bytes': archive.stat().st_size, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(), 'trackedFiles': len(expected),
+                                 'membersFile': member_file.name, 'membersBytes': member_file.stat().st_size,
+                                 'membersSHA256': hashlib.sha256(member_file.read_bytes()).hexdigest()}
           (evidence / 'complete-input-archives.json').write_text(json.dumps(archives, indent=2) + '\n')
           files = ['backend/third_party/req/internal/http2/receive_flow_contract_test.go']
           manifest = []
@@ -239,6 +249,11 @@ jobs:
                   archive = evidence / (label + '-full-input.tar')
                   assert archive.stat().st_size == item['bytes']
                   assert hashlib.sha256(archive.read_bytes()).hexdigest() == item['sha256']
+                  members = evidence / (label + '-archive-members.json')
+                  assert members.name == item['membersFile']
+                  assert members.stat().st_size == item['membersBytes']
+                  assert hashlib.sha256(members.read_bytes()).hexdigest() == item['membersSHA256']
+                  assert len(json.loads(members.read_text())) == item['trackedFiles']
           except (OSError, ValueError, KeyError, AssertionError) as error:
               archives = {}
               errors.append('complete frozen input archive missing or changed: ' + str(error))
