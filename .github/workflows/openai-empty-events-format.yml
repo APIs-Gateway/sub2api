@@ -1,0 +1,106 @@
+name: OpenAI empty events1750 frozen remote formatter
+
+on:
+  push:
+    branches:
+      - codex/openai-empty-events-format-1750
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frozen-raw-old-new-format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: "off"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Initialize independent external evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/openai-empty-events-format-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence"
+          printf 'OPENAI_EMPTY_FORMAT_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+      - name: Checkout complete exact controller history
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout complete fixed RAW OLD repository
+        uses: actions/checkout@v6
+        with:
+          ref: 5052c03eb672b7cd162bf3fa41042aa35d34cc25
+          path: old
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout complete fixed RAW NEW repository
+        uses: actions/checkout@v6
+        with:
+          ref: a2cebe17c05e5c806bd4019f8085c35864345f09
+          path: new
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Freeze every tracked input including hidden files and shared fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B controller/.github/ci/openai-empty-events-format.py prepare --workspace "$GITHUB_WORKSPACE" --evidence "$OPENAI_EMPTY_FORMAT_EVIDENCE"
+      - name: Install pinned Go formatter without project cache
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.10'
+          check-latest: false
+          cache: false
+      - name: Capture sixteen actual operations on four external copies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$OPENAI_EMPTY_FORMAT_EVIDENCE/executed-controller/.github/ci/openai-empty-events-format.py" format --workspace "$GITHUB_WORKSPACE" --evidence "$OPENAI_EMPTY_FORMAT_EVIDENCE"
+      - name: Freeze every checkout again after success or failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          script="$OPENAI_EMPTY_FORMAT_EVIDENCE/executed-controller/.github/ci/openai-empty-events-format.py"
+          if test ! -f "$script"; then
+            script="$GITHUB_WORKSPACE/controller/.github/ci/openai-empty-events-format.py"
+          fi
+          printf '%s\n' "$script" > "$OPENAI_EMPTY_FORMAT_EVIDENCE/after-script-path.txt"
+          set +e
+          python3 -B "$script" after --workspace "$GITHUB_WORKSPACE" --evidence "$OPENAI_EMPTY_FORMAT_EVIDENCE" > "$OPENAI_EMPTY_FORMAT_EVIDENCE/after.stdout" 2> "$OPENAI_EMPTY_FORMAT_EVIDENCE/after.stderr"
+          actual_status=$?
+          set -e
+          printf '%s\n' "$actual_status" > "$OPENAI_EMPTY_FORMAT_EVIDENCE/after.exit"
+          exit "$actual_status"
+      - name: Judge complete actual evidence and fail-closed negative controls
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          script="$OPENAI_EMPTY_FORMAT_EVIDENCE/executed-controller/.github/ci/openai-empty-events-format.py"
+          if test ! -f "$script"; then
+            script="$GITHUB_WORKSPACE/controller/.github/ci/openai-empty-events-format.py"
+          fi
+          printf '%s\n' "$script" > "$OPENAI_EMPTY_FORMAT_EVIDENCE/judge-script-path.txt"
+          set +e
+          python3 -B "$script" judge --workspace "$GITHUB_WORKSPACE" --evidence "$OPENAI_EMPTY_FORMAT_EVIDENCE" > "$OPENAI_EMPTY_FORMAT_EVIDENCE/judge.stdout" 2> "$OPENAI_EMPTY_FORMAT_EVIDENCE/judge.stderr"
+          actual_status=$?
+          set -e
+          printf '%s\n' "$actual_status" > "$OPENAI_EMPTY_FORMAT_EVIDENCE/judge.exit"
+          exit "$actual_status"
+      - name: Always preserve raw inputs, full Git archives, actual stdio and exits
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: openai-empty-events-format-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/openai-empty-events-format-${{ github.run_id }}-${{ github.run_attempt }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
