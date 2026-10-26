@@ -589,9 +589,20 @@ func (s *PricingService) downloadPricingDataWithContext(ctx context.Context, wai
 	}
 
 	// Persist the effective payload while holding the same lock as pinning.
+	// A normalized default payload must not inherit an older remote anchor.
+	if s.usesDefaultAutoPricingSource() {
+		if err := s.clearPricingSyncAnchor(); err != nil {
+			return err
+		}
+	}
 	pricingFile := s.getPricingFilePath()
 	if err := os.WriteFile(pricingFile, body, 0644); err != nil {
-		return fmt.Errorf("save pricing file: %w", err)
+		if s.usesDefaultAutoPricingSource() {
+			return fmt.Errorf("save pricing file: %w", err)
+		}
+		// Preserve custom catalogs' existing availability when the cache is
+		// unwritable. Pinning will still reject a missing or mismatched file.
+		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to save file: %v", err)
 	}
 
 	// 使用远程哈希作为同步锚点，防止重复下载
@@ -784,7 +795,7 @@ func (s *PricingService) loadAutoPricingData(filePath string) error {
 		return fmt.Errorf("read file failed: %w", err)
 	}
 	if !s.usesDefaultAutoPricingSource() {
-		return s.loadPricingPayload(filePath, data, false, false, "")
+		return s.loadPricingPayload(filePath, data, pricingPayloadLoadOptions{})
 	}
 	// A configured custom fallback may have populated this cache. Without
 	// provenance, preserve its prices rather than treating it as default data.
@@ -796,10 +807,10 @@ func (s *PricingService) loadAutoPricingData(filePath string) error {
 			return fmt.Errorf("normalize default pricing data: %w", err)
 		}
 	}
-	// The hash file is the remote synchronization anchor, not the effective
-	// payload's content SHA. Restoring it avoids downloading on every restart.
-	syncHash, _ := os.ReadFile(s.getHashFilePath())
-	return s.loadPricingPayload(filePath, normalized, !bytes.Equal(data, normalized), true, strings.TrimSpace(string(syncHash)))
+	// A legacy hash file is not bound to these cache bytes: an older fallback
+	// may have replaced them without updating it. Start with the effective
+	// content SHA and establish a remote anchor only after a real download.
+	return s.loadPricingPayload(filePath, normalized, pricingPayloadLoadOptions{persist: !bytes.Equal(data, normalized), preserveModTime: true})
 }
 
 // loadPricingData 从本地文件加载价格数据
@@ -809,10 +820,25 @@ func (s *PricingService) loadPricingData(filePath string) error {
 		return fmt.Errorf("read file failed: %w", err)
 	}
 
-	return s.loadPricingPayload(filePath, data, false, false, "")
+	return s.loadPricingPayload(filePath, data, pricingPayloadLoadOptions{})
 }
 
-func (s *PricingService) loadPricingPayload(filePath string, data []byte, persist, preserveModTime bool, syncHash string) error {
+type pricingPayloadLoadOptions struct {
+	persist         bool
+	preserveModTime bool
+	resetSyncAnchor bool
+}
+
+// clearPricingSyncAnchor must succeed before replacing a default-source cache
+// with bytes that cannot retain the old remote synchronization anchor.
+func (s *PricingService) clearPricingSyncAnchor() error {
+	if err := os.Remove(s.getHashFilePath()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("clear previous pricing sync anchor: %w", err)
+	}
+	return nil
+}
+
+func (s *PricingService) loadPricingPayload(filePath string, data []byte, options pricingPayloadLoadOptions) error {
 	// 使用灵活的解析方式
 	pricingData, err := s.parsePricingData(data)
 	if err != nil {
@@ -831,13 +857,19 @@ func (s *PricingService) loadPricingPayload(filePath string, data []byte, persis
 		return nil
 	}
 	info, _ := os.Stat(filePath)
-	if persist {
+	if options.persist {
+		if options.resetSyncAnchor {
+			if err := s.clearPricingSyncAnchor(); err != nil {
+				s.mu.Unlock()
+				return err
+			}
+		}
 		if err := os.WriteFile(filePath, data, 0644); err != nil {
 			s.mu.Unlock()
 			return fmt.Errorf("save effective pricing file: %w", err)
 		}
 		// Normalizing an existing cache is not a successful remote refresh.
-		if preserveModTime && info != nil {
+		if options.preserveModTime && info != nil {
 			if err := os.Chtimes(filePath, info.ModTime(), info.ModTime()); err != nil {
 				s.mu.Unlock()
 				return fmt.Errorf("preserve pricing cache age: %w", err)
@@ -846,9 +878,6 @@ func (s *PricingService) loadPricingPayload(filePath string, data []byte, persis
 	}
 	s.setPricingDataLocked(pricingData)
 	s.localHash = hashStr
-	if syncHash != "" {
-		s.localHash = syncHash
-	}
 
 	info, _ = os.Stat(filePath)
 	if info != nil {
@@ -886,7 +915,14 @@ func (s *PricingService) useFallbackPricing() error {
 			return fmt.Errorf("normalize default fallback: %w", err)
 		}
 	}
-	return s.loadPricingPayload(s.getPricingFilePath(), data, true, false, "")
+	err = s.loadPricingPayload(s.getPricingFilePath(), data, pricingPayloadLoadOptions{persist: true, resetSyncAnchor: true})
+	if err != nil && s.cfg.Pricing.FallbackFile != config.DefaultPricingFallbackFile {
+		// Legacy custom fallback loads from its readable source even when
+		// copying into data_dir fails. Never rewrite the source to normalize it.
+		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to cache custom fallback, loading source: %v", err)
+		return s.loadPricingPayload(fallbackFile, data, pricingPayloadLoadOptions{})
+	}
+	return err
 }
 
 // fetchRemoteHash 从远程获取哈希值

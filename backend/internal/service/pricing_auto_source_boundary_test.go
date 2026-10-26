@@ -59,10 +59,11 @@ func (c pricingBoundaryHTTPClient) FetchHashText(ctx context.Context, source str
 }
 
 type pricingBoundaryCatalog struct {
-	mu       sync.Mutex
-	body     []byte
-	status   int
-	requests int
+	mu         sync.Mutex
+	body       []byte
+	status     int
+	hashStatus int
+	requests   int
 }
 
 func (c *pricingBoundaryCatalog) set(body []byte) {
@@ -75,6 +76,12 @@ func (c *pricingBoundaryCatalog) setStatus(status int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.status = status
+}
+
+func (c *pricingBoundaryCatalog) setHashStatus(status int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.hashStatus = status
 }
 
 func (c *pricingBoundaryCatalog) downloads() int {
@@ -90,6 +97,9 @@ func newPricingBoundaryHTTP(t *testing.T, body []byte) (*pricingBoundaryCatalog,
 		catalog.mu.Lock()
 		defer catalog.mu.Unlock()
 		if strings.HasSuffix(r.URL.Path, ".sha256") {
+			if catalog.hashStatus != 0 {
+				w.WriteHeader(catalog.hashStatus)
+			}
 			_, _ = io.WriteString(w, pssSHA(catalog.body)+"\n")
 			return
 		}
@@ -188,7 +198,9 @@ func TestPricingAutoSource_RemoteRefreshPersistRestartAndPin(t *testing.T) {
 	restarted.ConfigureSnapshots(settings, store, nil)
 	require.NoError(t, restarted.Initialize())
 	t.Cleanup(restarted.Stop)
-	require.Equal(t, 2, catalog.downloads(), "restart restores remote hash independently of effective bytes")
+	require.Equal(t, 3, catalog.downloads(), "restart re-establishes an anchor from a real download rather than trusting a legacy hash file")
+	require.NoError(t, restarted.syncWithRemote())
+	require.Equal(t, 3, catalog.downloads(), "the verified in-memory remote anchor avoids repeated periodic downloads")
 	requirePricingBoundaryRates(t, restarted)
 	pin, err := restarted.PinCurrentPricing(ctx, 42)
 	require.NoError(t, err)
@@ -240,6 +252,7 @@ func TestPricingAutoSource_CustomAndMissingSKUPreservePayload(t *testing.T) {
 func TestPricingAutoSource_CachedAliasPreservesAgeAndCanPin(t *testing.T) {
 	raw := pricingBoundaryPayload("0.000009")
 	catalog, client := newPricingBoundaryHTTP(t, raw)
+	catalog.setHashStatus(http.StatusBadRequest)
 	svc := newPricingBoundaryService(t, t.TempDir(), client)
 	pssWriteFile(t, svc.cfg.Pricing.DataDir, raw)
 	old := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
@@ -444,7 +457,11 @@ func TestPricingAutoSource_CustomFallbackAndDefaultDownloadSurviveRestart(t *tes
 			afterDownload.ConfigureSnapshots(newPSSSettings("auto"), store, nil)
 			require.NoError(t, afterDownload.Initialize())
 			t.Cleanup(afterDownload.Stop)
-			require.Equal(t, 2, catalog.downloads())
+			wantDownloads := 2
+			if withHash {
+				wantDownloads++
+			}
+			require.Equal(t, wantDownloads, catalog.downloads(), "normalized cache is revalidated against the remote instead of trusting a bare saved hash")
 			requirePricingBoundaryRates(t, afterDownload)
 			require.Equal(t, effective, requirePricingBoundaryFileMatches(t, afterDownload))
 			require.Equal(t, wantAnchor, afterDownload.localHash)
@@ -537,4 +554,150 @@ func TestPricingAutoSource_ApproveOtherChangeKeepsHeldInternalSKU(t *testing.T) 
 	require.Equal(t, 2, info.Models)
 	require.Equal(t, 0.000009, offline.GetModelPricing("codex-auto-review").InputCostPerToken)
 	require.Equal(t, 0.000008, offline.GetModelPricing("other").InputCostPerToken)
+}
+
+func TestPricingAutoSource_FallbackInvalidatesPreviousRemoteAnchor(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.MkdirAll(filepath.Dir(config.DefaultPricingFallbackFile), 0o755))
+	fallback := pricingBoundaryPayload("0.000009")
+	require.NoError(t, os.WriteFile(config.DefaultPricingFallbackFile, fallback, 0o644))
+	customFile := filepath.Join(t.TempDir(), "custom-fallback.json")
+	require.NoError(t, os.WriteFile(customFile, fallback, 0o644))
+	remote := []byte(strings.ReplaceAll(string(pricingBoundaryPayload("0.000017")), "0.000007", "0.000008"))
+	for _, source := range []string{config.DefaultPricingFallbackFile, customFile} {
+		for _, restart := range []bool{false, true} {
+			t.Run(fmt.Sprintf("packaged=%t/restart=%t", source == config.DefaultPricingFallbackFile, restart), func(t *testing.T) {
+				catalog, client := newPricingBoundaryHTTP(t, remote)
+				original := newPricingBoundaryService(t, t.TempDir(), client)
+				original.cfg.Pricing.FallbackFile = source
+				require.NoError(t, original.Initialize())
+				t.Cleanup(original.Stop)
+				require.Equal(t, pssSHA(remote), original.localHash)
+				require.Equal(t, 0.000008, original.GetModelPricing("other").InputCostPerToken)
+				anchor, err := os.ReadFile(original.getHashFilePath())
+				require.NoError(t, err)
+				require.Equal(t, pssSHA(remote), strings.TrimSpace(string(anchor)))
+
+				// Keep H on disk while the cache becomes invalid and the remote
+				// catalog fails. The hash endpoint still advertises the same H.
+				require.NoError(t, os.WriteFile(original.getPricingFilePath(), []byte("invalid cache"), 0o644))
+				catalog.setStatus(http.StatusBadRequest)
+				usingFallback := NewPricingService(original.cfg, client)
+				require.NoError(t, usingFallback.Initialize())
+				t.Cleanup(usingFallback.Stop)
+				require.Equal(t, 2, catalog.downloads())
+				require.Equal(t, 0.000007, usingFallback.GetModelPricing("other").InputCostPerToken)
+				require.NotEqual(t, pssSHA(remote), usingFallback.localHash)
+				requirePricingBoundaryFileMatches(t, usingFallback)
+				_, err = os.Stat(usingFallback.getHashFilePath())
+				require.True(t, os.IsNotExist(err), "fallback F cannot inherit the old remote H")
+
+				catalog.setStatus(http.StatusOK)
+				recovered := usingFallback
+				if restart {
+					recovered = NewPricingService(original.cfg, client)
+					require.NoError(t, recovered.Initialize())
+					t.Cleanup(recovered.Stop)
+				} else {
+					require.NoError(t, recovered.syncWithRemote())
+				}
+				require.Equal(t, 3, catalog.downloads(), "same remote H must recover after fallback replacement")
+				require.Equal(t, 0.000008, recovered.GetModelPricing("other").InputCostPerToken)
+				requirePricingBoundaryRates(t, recovered)
+				requirePricingBoundaryFileMatches(t, recovered)
+				require.Equal(t, pssSHA(remote), recovered.localHash)
+			})
+		}
+	}
+}
+
+func TestPricingAutoSource_CustomRemoteCacheFailurePreservesAvailability(t *testing.T) {
+	raw := pricingBoundaryPayload("0.000009")
+	_, client := newPricingBoundaryHTTP(t, raw)
+	svc := newPricingBoundaryService(t, t.TempDir(), client)
+	svc.cfg.Pricing.RemoteURL = "https://custom.example/catalog.json"
+	require.NoError(t, os.Mkdir(svc.getPricingFilePath(), 0o755))
+	require.NoError(t, svc.Initialize(), "legacy custom remote loads actual remote data despite an unwritable cache")
+	t.Cleanup(svc.Stop)
+	require.Equal(t, 0.000009, svc.GetModelPricing("codex-auto-review").InputCostPerToken)
+	require.True(t, svc.GetModelPricing("codex-auto-review").SupportsServiceTier)
+	require.Equal(t, pssSHA(raw), svc.localHash)
+	info, err := os.Stat(svc.getPricingFilePath())
+	require.NoError(t, err)
+	require.True(t, info.IsDir(), "the failed cache must not be represented as persisted pricing")
+	// This legacy availability mode cannot promise a successful file pin.
+	svc.ConfigureSnapshots(newPSSSettings("auto"), newPSSStore(), nil)
+	_, err = svc.PinCurrentPricing(context.Background(), 42)
+	require.Error(t, err)
+}
+
+func TestPricingAutoSource_CustomFallbackCacheFailurePreservesAvailability(t *testing.T) {
+	raw := pricingBoundaryPayload("0.000009")
+	catalog, client := newPricingBoundaryHTTP(t, pricingBoundaryPayload("0.000017"))
+	catalog.setStatus(http.StatusBadRequest)
+	file := filepath.Join(t.TempDir(), "custom-fallback.json")
+	require.NoError(t, os.WriteFile(file, raw, 0o644))
+	for _, anchorBlocked := range []bool{false, true} {
+		t.Run(fmt.Sprintf("anchor_clear_blocked=%t", anchorBlocked), func(t *testing.T) {
+			svc := newPricingBoundaryService(t, t.TempDir(), client)
+			svc.cfg.Pricing.FallbackFile = file
+			if anchorBlocked {
+				// A nonempty directory makes anchor invalidation fail even with
+				// elevated filesystem permissions; do not replace the old cache.
+				require.NoError(t, os.WriteFile(svc.getPricingFilePath(), []byte("old invalid cache"), 0o644))
+				require.NoError(t, os.Mkdir(svc.getHashFilePath(), 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(svc.getHashFilePath(), "owned-test-marker"), []byte("keep"), 0o644))
+			} else {
+				require.NoError(t, os.Mkdir(svc.getPricingFilePath(), 0o755))
+			}
+			require.NoError(t, svc.Initialize(), "readable custom fallback remains available when caching fails")
+			t.Cleanup(svc.Stop)
+			require.Equal(t, 0.000009, svc.GetModelPricing("codex-auto-review").InputCostPerToken)
+			require.True(t, svc.GetModelPricing("codex-auto-review").SupportsServiceTier)
+			require.Equal(t, pssSHA(raw), svc.localHash)
+			unchanged, err := os.ReadFile(file)
+			require.NoError(t, err)
+			require.Equal(t, raw, unchanged)
+			if anchorBlocked {
+				cached, err := os.ReadFile(svc.getPricingFilePath())
+				require.NoError(t, err)
+				require.Equal(t, []byte("old invalid cache"), cached, "failed invalidation must prevent writing F beside an old anchor")
+			}
+		})
+	}
+}
+
+func TestPricingAutoSource_LegacyValidFallbackCacheDoesNotTrustStaleAnchor(t *testing.T) {
+	remote := []byte(strings.ReplaceAll(string(pricingBoundaryPayload("0.000017")), "0.000007", "0.000008"))
+	// Both forms can have been written by an older fallback. Already having
+	// the three default rates does not bind these bytes to remote hash H.
+	normalizedFallback := []byte(`{"other":{"input_cost_per_token":0.000007},"codex-auto-review":{"input_cost_per_token":2e-7,"output_cost_per_token":1.2e-6,"cache_read_input_token_cost":2e-8,"supports_service_tier":false,"litellm_provider":"openai","mode":"chat","supports_prompt_caching":true}}`)
+	for _, customFallback := range []bool{false, true} {
+		for _, cached := range [][]byte{pricingBoundaryPayload("0.000009"), normalizedFallback} {
+			t.Run(fmt.Sprintf("custom=%t/cacheSHA=%s", customFallback, pssSHA(cached)[:8]), func(t *testing.T) {
+				catalog, client := newPricingBoundaryHTTP(t, remote)
+				svc := newPricingBoundaryService(t, t.TempDir(), client)
+				if customFallback {
+					svc.cfg.Pricing.FallbackFile = filepath.Join(t.TempDir(), "unused-custom-fallback.json")
+				} else {
+					svc.cfg.Pricing.FallbackFile = config.DefaultPricingFallbackFile
+				}
+				pssWriteFile(t, svc.cfg.Pricing.DataDir, cached)
+				require.NoError(t, os.WriteFile(svc.getHashFilePath(), []byte(pssSHA(remote)), 0o644))
+				svc.ConfigureSnapshots(newPSSSettings("auto"), newPSSStore(), nil)
+				require.NoError(t, svc.Initialize(), "valid legacy cache must be compared by its own content, without another fallback load")
+				t.Cleanup(svc.Stop)
+				require.Equal(t, 1, catalog.downloads(), "legacy unbound H must not suppress recovery to R")
+				require.Equal(t, 0.000008, svc.GetModelPricing("other").InputCostPerToken)
+				requirePricingBoundaryRates(t, svc)
+				effective := requirePricingBoundaryFileMatches(t, svc)
+				require.Equal(t, pssSHA(remote), svc.localHash)
+				require.NoError(t, svc.syncWithRemote())
+				require.Equal(t, 1, catalog.downloads(), "after actual recovery the in-memory remote anchor is safe for periodic comparison")
+				pin, err := svc.PinCurrentPricing(context.Background(), 42)
+				require.NoError(t, err)
+				require.Equal(t, pssSHA(effective), pin.Snapshot.ContentSHA256)
+			})
+		}
+	}
 }

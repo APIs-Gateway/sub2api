@@ -147,7 +147,9 @@ jobs:
         run: |
           git rev-parse HEAD
           git hash-object internal/config/config.go internal/service/pricing_service.go internal/service/pricing_service_test.go internal/service/pricing_auto_source_boundary_test.go resources/model-pricing/model_prices_and_context_window.json
-          test -z "$(gofmt -l internal/config/config.go internal/service/pricing_service.go internal/service/pricing_service_test.go internal/service/pricing_auto_source_boundary_test.go)"
+          unformatted_files=$(gofmt -l internal/config/config.go internal/service/pricing_service.go internal/service/pricing_service_test.go internal/service/pricing_auto_source_boundary_test.go)
+          printf '%s\n' "$unformatted_files"
+          test -z "$unformatted_files"
           go test -tags=unit -race -count=1 -v -run '^TestPricingAutoSource_|^TestParsePricingDataPreservesCodexAutoReviewPayload$|^TestParsePricingDataDoesNotInjectCodexAutoReview$|^TestDefaultPricingUsesCurrentCodexAutoReviewBaseRates$|^TestPricingSnapshot|^TestFetchCandidateSnapshot|^TestLoadOfflinePricing|^TestLoadServicePricing' ./internal/service/
       - name: Unit tests (coverage)
         working-directory: backend
