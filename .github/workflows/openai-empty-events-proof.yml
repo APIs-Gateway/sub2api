@@ -48,14 +48,14 @@ jobs:
       - name: Checkout complete pinned formatted OLD repository
         uses: actions/checkout@v6
         with:
-          ref: 16ff3b8d2e4c67dab07df5c44ee3441b0eda775a
+          ref: 31e969780424990d022179f17fda0451c18f3aa2
           path: old
           fetch-depth: 0
           persist-credentials: false
       - name: Checkout complete pinned formatted NEW repository
         uses: actions/checkout@v6
         with:
-          ref: affe76ea781e3c9db4cf20867ee5fa6093620eb0
+          ref: ec45eff3b0a3a23b6a3a5779579a75f8f7a57c37
           path: new
           fetch-depth: 0
           persist-credentials: false

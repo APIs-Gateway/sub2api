@@ -21,11 +21,11 @@ import time
 
 READY = False
 PINS = {
-    "old": ("16ff3b8d2e4c67dab07df5c44ee3441b0eda775a", "369e22b64885fb2f13ac977fc923eea83321feed"),
-    "new": ("affe76ea781e3c9db4cf20867ee5fa6093620eb0", "f602e62f8f9c8eb58104eb72683025aaee3d49e4"),
+    "old": ("31e969780424990d022179f17fda0451c18f3aa2", "579822a97bcbce03b48da4ee10fab6e48df5968b"),
+    "new": ("ec45eff3b0a3a23b6a3a5779579a75f8f7a57c37", "98d90801efc16e44a3c446d6084b84483d7d8fc1"),
 }
 TEST = "backend/internal/service/openai_empty_event_retry_test.go"
-TEST_SHA = "b3c439eadee03165b218ab2490211574f2207a08af4375874535b4863c619a25"
+TEST_SHA = "dc69470f839738e67beba3ec9ca6bb1a9b62cbb5690ea2a5a2919dfe4502e06b"
 REGRESSION_SHA = "601584014f937747786d07cb8aa76e562a42d54779b04a776693ece1eabcbaa7"
 CONTROLLER_PATHS = {
     ".github/ci/openai-empty-events-proof.py",
@@ -196,7 +196,9 @@ def capture(prefix, argv, cwd, timeout_seconds):
                     pass
                 status = process.wait()
     result = {"argv": argv, "cwd": str(cwd), "startedUnixNs": started, "finishedUnixNs": time.time_ns(),
-              "actualExit": status, "timedOut": timed_out, "streamsClosed": True}
+              "actualExit": status, "timedOut": timed_out, "streamsClosed": True,
+              "environment": {name: os.environ.get(name) for name in
+                              ("GOTOOLCHAIN", "GOWORK", "GOFLAGS", "GOMAXPROCS", "GOGC", "GOMEMLIMIT", "GOCACHE", "GOMODCACHE")}}
     save(Path(str(prefix) + ".process.json"), result)
     Path(str(prefix) + ".exit").write_text(str(status) + "\n")
     return result
@@ -246,19 +248,26 @@ def execute(workspace, evidence):
             (evidence / "go-version.stdout").read_bytes() == b"go version go1.26.10 linux/amd64\n" and
             not (evidence / "go-version.stderr").read_bytes(), "wrong actual Go1.26.10 toolchain")
     save(evidence / "go-binary.json", {"path": go, "sha256": sha(Path(go).read_bytes())})
-    for name, argv, timeout_seconds in (
-        ("go-env", [go, "env", "-json", "GOMOD", "GOWORK", "GOROOT", "GOCACHE", "GOMODCACHE", "GOOS", "GOARCH", "GOVERSION"], 30),
-        ("deps-before", [go, "list", "-mod=readonly", "-tags=unit", "-race", "-p=1", "-deps", "-test", "-json", "./internal/service", "./internal/handler"], 600),
-        ("modules-before", [go, "list", "-mod=readonly", "-m", "-json", "all"], 120),
-    ):
-        record = capture(evidence / name, argv, backend, timeout_seconds)
-        require(record["actualExit"] == 0 and not record["timedOut"], "actual prerequisite failed: " + name)
+    environment = capture(evidence / "go-env", [go, "env", "-json", "GOMOD", "GOWORK", "GOROOT", "GOCACHE", "GOMODCACHE", "GOOS", "GOARCH", "GOVERSION"], backend, 30)
+    require(environment["actualExit"] == 0 and not environment["timedOut"], "actual Go environment capture failed")
     actual_env = json.loads((evidence / "go-env.stdout").read_text())
     require(actual_env["GOVERSION"] == "go1.26.10" and actual_env["GOOS"] == "linux" and actual_env["GOARCH"] == "amd64", "wrong test tool/platform")
     require(actual_env["GOMOD"] == str(backend / "go.mod") and actual_env["GOWORK"] == "off", "wrong module/workspace")
     for name in ("GOCACHE", "GOMODCACHE"):
         cache = Path(actual_env[name]).resolve()
         require(cache != workspace and workspace not in cache.parents, "cache inside frozen workspace")
+    formatter = Path(actual_env["GOROOT"]) / "bin/gofmt"
+    format_paths = [str(workspace / phase / path) for phase in PINS for path in (TEST, "backend/internal/service/openai_gateway_service.go")]
+    save(evidence / "gofmt-binary.json", {"path": str(formatter), "sha256": sha(formatter.read_bytes())})
+    formatted = capture(evidence / "readonly-format", [str(formatter), "-l", *format_paths], backend, 30)
+    require(formatted["actualExit"] == 0 and not formatted["timedOut"] and
+            not (evidence / "readonly-format.stdout").read_bytes() and not (evidence / "readonly-format.stderr").read_bytes(), "read-only format gate failed; source is never rewritten")
+    for name, argv, timeout_seconds in (
+        ("deps-before", [go, "list", "-mod=readonly", "-tags=unit", "-race", "-p=1", "-deps", "-test", "-json", "./internal/service", "./internal/handler"], 600),
+        ("modules-before", [go, "list", "-mod=readonly", "-m", "-json", "all"], 120),
+    ):
+        record = capture(evidence / name, argv, backend, timeout_seconds)
+        require(record["actualExit"] == 0 and not record["timedOut"], "actual prerequisite failed: " + name)
     commands = [
         ("new98", "./internal/service", "^(" + "|".join(NEW_TOPS) + ")$"),
         ("original-service", "./internal/service", original["regex"]["./internal/service"]),
@@ -273,6 +282,7 @@ def execute(workspace, evidence):
         save(evidence / "test-process-outcomes.json", outcomes)
     modules_after = capture(evidence / "modules-after", [go, "list", "-mod=readonly", "-m", "-json", "all"], backend, 120)
     save(evidence / "go-binary-after.json", {"path": go, "sha256": sha(Path(go).read_bytes())})
+    save(evidence / "gofmt-binary-after.json", {"path": str(formatter), "sha256": sha(formatter.read_bytes())})
     require(modules_after["actualExit"] == 0 and not modules_after["timedOut"], "module graph after failed")
     # This is the real command result, regardless of the later evidence audit.
     # In particular, complete genuine OLD business RED remains a failed job.
@@ -421,11 +431,15 @@ def judge(workspace, evidence):
             require(before.read_bytes() == (evidence / (label + "-after.json")).read_bytes(), "source bytes changed after execution")
             recorded = json.loads((evidence / "complete-input-archives.json").read_text())[label]
             require(verify_archive(evidence / (label + "-full-input.tar"), json.loads(before.read_text())) == recorded, "archive missing or changed")
-        require(all(item["snapshotValidationStatus"] == 0 for item in json.loads((evidence / "after-snapshot-results.json").read_text())), "after snapshot failure")
-        for name in ("go-version", "go-env", "deps-before", "modules-before", "modules-after"):
+        after_results = json.loads((evidence / "after-snapshot-results.json").read_text())
+        require(len(after_results) == 3 and {item["label"] for item in after_results} == {"old", "new", "controller"} and
+                all(item["snapshotValidationStatus"] == 0 for item in after_results), "after snapshot failure or incomplete result set")
+        for name in ("go-version", "go-env", "readonly-format", "deps-before", "modules-before", "modules-after"):
             process = json.loads((evidence / (name + ".process.json")).read_text())
             require(process["actualExit"] == 0 and process["timedOut"] is False and process["streamsClosed"] is True, "dependency/tool command failed")
             require((evidence / (name + ".exit")).read_text().strip() == "0", "dependency/tool raw exit mismatch")
+        require(not (evidence / "readonly-format.stdout").read_bytes() and not (evidence / "readonly-format.stderr").read_bytes(), "read-only format output is not empty")
+        require((evidence / "gofmt-binary.json").read_bytes() == (evidence / "gofmt-binary-after.json").read_bytes(), "formatter binary changed")
         modules_before = json_stream((evidence / "modules-before.stdout").read_bytes())
         modules_after = json_stream((evidence / "modules-after.stdout").read_bytes())
         require(modules_before == modules_after and modules_before, "actual warm MVS metadata changed")
@@ -455,6 +469,12 @@ def judge(workspace, evidence):
         ):
             process = json.loads((evidence / (name + ".process.json")).read_text())
             require((evidence / (name + ".exit")).read_text().strip() == str(process["actualExit"]), "test raw exit mismatch")
+            pattern = "^(" + "|".join(NEW_TOPS) + ")$" if name == "new98" else original["regex"]["./internal/" + suffix]
+            expected_argv = [json.loads((evidence / "go-binary.json").read_text())["path"], "test", "-tags=unit", "-mod=readonly", "-p=1", "-parallel=1", "-race", "-count=1", "-timeout=10m", "-json", "-run", pattern, "./internal/" + suffix]
+            require(process["argv"] == expected_argv and process["cwd"] == str(backend), "actual test command flags, selector, package or cwd mismatch")
+            require(all(process["environment"].get(key) == value for key, value in
+                        {"GOTOOLCHAIN": "local", "GOWORK": "off", "GOFLAGS": "-mod=readonly", "GOMAXPROCS": "2", "GOGC": "50", "GOMEMLIMIT": "4GiB"}.items()), "actual test process environment mismatch")
+            require(process["environment"]["GOCACHE"] == actual_env["GOCACHE"] and process["environment"]["GOMODCACHE"] == actual_env["GOMODCACHE"], "actual test cache roots changed")
             events = [json.loads(line) for line in (evidence / (name + ".stdout")).read_bytes().splitlines() if line.strip()]
             stderr = (evidence / (name + ".stderr")).read_bytes()
             package = "github.com/Wei-Shaw/sub2api/internal/" + suffix
@@ -467,6 +487,7 @@ def judge(workspace, evidence):
         errors.append(repr(error))
     save(evidence / "actual-scope-audit.json", {"head": PINS[os.environ["PROOF_LABEL"]][0], "label": os.environ["PROOF_LABEL"],
          "controllerHead": os.environ["GITHUB_SHA"], "ready": READY, "results": results, "errors": errors,
+         "crossJobMVS": "Full raw and path-root-only normalized module graphs retained; root and independent actual reviewers must compare both jobs before accepting scope",
          "scope": "selected original159tops/193subnames plus new98 only; not whole-package suite/85/security approval; OLD actual failure stays job FAIL"})
     require(not errors and len(results) == 3, "actual scope evidence failed closed: " + repr(errors))
 

@@ -115,3 +115,45 @@ for formatting by run40183164438 and its two actual reviews above. No OLD/NEW
 application runtime, test, race, compilation or build evidence is claimed here.
 Focused98 and existing159tops/193subnames remain pending exact-head remote CI.
 No local/87 project execution; no new application branch publication.
+
+## Actual lint finding and checked peer-body Close (OLD repair)
+
+[PR1751](https://github.com/APIs-Gateway/sub2api/pull/1751) CI
+[run40185221526](https://github.com/APIs-Gateway/sub2api/actions/runs/40185221526),
+job121144480222, actually rejected formatted NEW source
+`affe76ea781e3c9db4cf20867ee5fa6093620eb0`: errcheck reported the unchecked
+`defer response.Body.Close()` in openai_empty_event_retry_test.go:180.
+The original saved job log SHA256 is `c942e81a5b78c4441b9671cb741b3c8133c49de16340d7060d032af76d85ab77`. This is an actual
+lint blocker, not a business OLD RED and not waived by earlier formatting.
+
+This OLD fixture revision only expands that defer into a function which checks
+the actual response Body.Close error with require.NoError and an explicit
+EMPTY_EVENT_FIXTURE label. It runs in the same helper goroutine before the
+helper returns its result; a close failure cannot become a safe-retry business
+assertion or an accepted RED. Both OLD and NEW must carry identical revised test
+bytes. All98 names, real request/peer/Write/Flush prerequisites, business/usage/
+billing/conservative assertions, timeouts, source imports and production bytes
+remain unchanged. No additional source hook, mock body or ignored close exists.
+
+The 14157-byte/b3c439 format artifact above is historical evidence for its
+previous input. It does not claim to cover this narrow subsequent Close edit.
+Formatting/lint/race/tests for the revised exact input remain pending remote CI,
+with a read-only format gate in the future proof; no new formatter framework or
+local/87 project execution was introduced. Existing selected159tops/193subnames
+remain unchanged and must PASS separately on each side.
+
+## NEW checked-Close normal composition
+
+This NEW revision normally merges checked-Close OLD `31e969780424990d022179f17fda0451c18f3aa2`
+with prior formatted NEW `affe76ea781e3c9db4cf20867ee5fa6093620eb0`. The only
+merge conflict was append-only provenance; the complete prior NEW document and
+the entire checked-Close OLD repair record above are retained. This current
+NEW keeps the actual production bytes of a2ce/affe unchanged. Both sides carry
+the identical three-line deferred actual Close check and unchanged98 contracts.
+No production repair, test behavior relaxation or additional request was added.
+
+The only actual evidence for this narrow subsequent revision is static source
+review until its exact-head remote checks run. Prior14157-byte format output
+and prior affe lint failure remain historical inputs; neither is relabeled as
+runtime or formatting acceptance for the revised source. All required checks,
+selected original352 identities and new98 actual evidence remain pending.

@@ -177,7 +177,9 @@ func runEmptyRetryWire(t *testing.T, path string, event emptyRetryEvent) emptyRe
 		require.NoError(t, err)
 		response, err := peer.client.Do(request)
 		require.NoError(t, err, "EMPTY_EVENT_FIXTURE: actual HTTP request failed")
-		defer response.Body.Close()
+		defer func() {
+			require.NoError(t, response.Body.Close(), "EMPTY_EVENT_FIXTURE: closing actual peer response")
+		}()
 		if path == "native" {
 			result, err := svc.handleStreamingResponse(ctx, response, c, account, time.Now(), "model", "model")
 			out.err = err
