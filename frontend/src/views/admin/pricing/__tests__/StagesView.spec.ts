@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
+import type { ShadowSample } from '@/api/admin/pricingOps'
 import { mountPricingView } from './mountHelpers'
 
 const { api, admin } = vi.hoisted(() => ({
@@ -17,6 +18,28 @@ vi.mock('vue-i18n', async () => {
 })
 
 import StagesView from '../StagesView.vue'
+import SideDrawer from '../components/SideDrawer.vue'
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+const sample = (groupId: number, model: string): ShadowSample => ({
+  created_at: '2026-10-06T00:00:00Z', group_id: groupId, model, kind: 'cost', class: 'translation'
+})
+
+type SamplesState = {
+  samplesGroup: unknown
+  samples: ShadowSample[]
+  samplesLoading: boolean
+  samplesError: string
+}
 
 const view = (groupId: number, stage: string | null, revision: number | null = 3) => ({
   groupId, platform: 'openai', stage, stageChangedAt: null, revision, costRules: []
@@ -117,5 +140,124 @@ describe('StagesView', () => {
     expect(list).toContain('gpt-5.5')
     expect(list).toContain('用户费用')
     expect(list).toContain('异常')
+  })
+
+  it.each([
+    { stale: 'success', current: 'success' },
+    { stale: 'error', current: 'success' },
+    { stale: 'success', current: 'error' },
+    { stale: 'error', current: 'error' }
+  ] as const)('关闭 A 打开 B，B $current 后 A $stale 不覆盖 B', async ({ stale, current }) => {
+    api.getGroupOpsView.mockImplementation(async (id: number) => view(id, 'shadow'))
+    const old = deferred<ShadowSample[]>()
+    const latest = deferred<ShadowSample[]>()
+    api.getShadowSamples.mockReturnValueOnce(old.promise).mockReturnValueOnce(latest.promise)
+    const wrapper = await mountPricingView(StagesView)
+    await wrapper.find('[data-test="samples-2"]').trigger('click')
+    await wrapper.findComponent(SideDrawer).find('button').trigger('click')
+    await wrapper.find('[data-test="samples-1"]').trigger('click')
+
+    if (current === 'success') latest.resolve([sample(1, 'current-group-sample')])
+    else latest.reject({ status: 500, reason: 'CURRENT_SAMPLES' })
+    await flushPromises()
+    const drawer = wrapper.findComponent(SideDrawer)
+    expect(drawer.find('h2').text()).toContain('codex')
+    const currentContent = drawer.text()
+
+    if (stale === 'success') old.resolve([sample(2, 'stale-group-sample')])
+    else old.reject({ status: 500, reason: 'STALE_SAMPLES' })
+    await flushPromises()
+
+    expect(api.getShadowSamples.mock.calls).toEqual([[2], [1]])
+    expect(drawer.text()).toBe(currentContent)
+    expect(drawer.text()).not.toContain('stale-group-sample')
+    expect(drawer.text()).not.toContain('STALE_SAMPLES')
+    if (current === 'success') {
+      expect(drawer.find('[data-test="samples-list"]').text()).toContain('current-group-sample')
+      expect(drawer.find('[data-test="samples-error"]').exists()).toBe(false)
+    } else {
+      expect(drawer.find('[data-test="samples-error"]').text()).toContain('CURRENT_SAMPLES')
+      expect(drawer.find('[data-test="samples-list"]').exists()).toBe(false)
+    }
+    wrapper.unmount()
+  })
+
+  it.each(['success', 'error'] as const)('A 的晚到 %s 不会提前结束 B 的加载', async (outcome) => {
+    api.getGroupOpsView.mockImplementation(async (id: number) => view(id, 'shadow'))
+    const old = deferred<ShadowSample[]>()
+    const latest = deferred<ShadowSample[]>()
+    api.getShadowSamples.mockReturnValueOnce(old.promise).mockReturnValueOnce(latest.promise)
+    const wrapper = await mountPricingView(StagesView)
+    await wrapper.find('[data-test="samples-2"]').trigger('click')
+    await wrapper.findComponent(SideDrawer).find('button').trigger('click')
+    await wrapper.find('[data-test="samples-1"]').trigger('click')
+
+    if (outcome === 'success') old.resolve([sample(2, 'stale-group-sample')])
+    else old.reject({ status: 500, reason: 'STALE_SAMPLES' })
+    await flushPromises()
+    const drawer = wrapper.findComponent(SideDrawer)
+    expect(drawer.find('.state-block').exists()).toBe(true)
+    expect(drawer.find('[data-test="samples-list"]').exists()).toBe(false)
+    expect(drawer.find('[data-test="samples-error"]').exists()).toBe(false)
+
+    latest.resolve([sample(1, 'current-group-sample')])
+    await flushPromises()
+    expect(drawer.find('.state-block').exists()).toBe(false)
+    expect(drawer.find('[data-test="samples-list"]').text()).toContain('current-group-sample')
+    wrapper.unmount()
+  })
+
+  it('重新打开同一个分组时也只接受最新一次样本请求', async () => {
+    const old = deferred<ShadowSample[]>()
+    const latest = deferred<ShadowSample[]>()
+    api.getShadowSamples.mockReturnValueOnce(old.promise).mockReturnValueOnce(latest.promise)
+    const wrapper = await mountPricingView(StagesView)
+    await wrapper.find('[data-test="samples-2"]').trigger('click')
+    await wrapper.findComponent(SideDrawer).find('button').trigger('click')
+    await wrapper.find('[data-test="samples-2"]').trigger('click')
+    latest.resolve([sample(2, 'latest-same-group-sample')])
+    await flushPromises()
+    old.resolve([sample(2, 'stale-same-group-sample')])
+    await flushPromises()
+    const list = wrapper.find('[data-test="samples-list"]').text()
+    expect(list).toContain('latest-same-group-sample')
+    expect(list).not.toContain('stale-same-group-sample')
+    wrapper.unmount()
+  })
+
+  it.each([
+    { lifecycle: 'close', outcome: 'success' },
+    { lifecycle: 'close', outcome: 'error' },
+    { lifecycle: 'unmount', outcome: 'success' },
+    { lifecycle: 'unmount', outcome: 'error' }
+  ] as const)('$lifecycle 后 pending $outcome 不再更新样本状态', async ({ lifecycle, outcome }) => {
+    const request = deferred<ShadowSample[]>()
+    api.getShadowSamples.mockReturnValueOnce(request.promise)
+    const wrapper = await mountPricingView(StagesView)
+    await wrapper.find('[data-test="samples-2"]').trigger('click')
+    // Keep the actual component's reactive state observable after its DOM is removed.
+    const state = (wrapper.vm.$ as unknown as { setupState: SamplesState }).setupState
+    if (lifecycle === 'close') await wrapper.findComponent(SideDrawer).find('button').trigger('click')
+    else wrapper.unmount()
+    const before = {
+      samplesGroup: state.samplesGroup,
+      samples: state.samples,
+      samplesLoading: state.samplesLoading,
+      samplesError: state.samplesError
+    }
+    expect(before.samplesLoading).toBe(true)
+
+    if (outcome === 'success') request.resolve([sample(2, 'late-sample')])
+    else request.reject({ status: 500, reason: 'LATE_SAMPLES' })
+    await flushPromises()
+
+    expect(state.samplesGroup).toBe(before.samplesGroup)
+    expect(state.samples).toBe(before.samples)
+    expect(state.samplesLoading).toBe(before.samplesLoading)
+    expect(state.samplesError).toBe(before.samplesError)
+    if (lifecycle === 'close') {
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+      wrapper.unmount()
+    }
   })
 })

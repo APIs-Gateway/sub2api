@@ -114,7 +114,7 @@
     </BaseDialog>
 
     <!-- 差异样本 -->
-    <SideDrawer :show="!!samplesGroup" :title="t('admin.pricingOps.stages.samplesTitle', { group: samplesGroup?.name ?? '' })" :subtitle="t('admin.pricingOps.stages.samplesSubtitle')" width="wide" @close="samplesGroup = null">
+    <SideDrawer :show="!!samplesGroup" :title="t('admin.pricingOps.stages.samplesTitle', { group: samplesGroup?.name ?? '' })" :subtitle="t('admin.pricingOps.stages.samplesSubtitle')" width="wide" @close="closeSamples">
       <div v-if="samplesLoading" class="state-block !min-h-[8rem]"><LoadingSpinner /></div>
       <p v-else-if="samplesError" class="note note-signal" role="alert" data-test="samples-error">{{ samplesError }}</p>
       <p v-else-if="samples.length === 0" class="text-sm text-gray-500 dark:text-dark-300" data-test="samples-empty">{{ t('admin.pricingOps.stages.samplesEmpty') }}</p>
@@ -146,7 +146,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -183,6 +183,7 @@ const samplesGroup = ref<OpsGroup | null>(null)
 const samples = ref<ShadowSample[]>([])
 const samplesLoading = ref(false)
 const samplesError = ref('')
+let samplesRequestId = 0
 
 const summaries = computed(() => {
   const map = new Map<number, { compared: number; abnormal: number; expected: number }>()
@@ -262,17 +263,24 @@ async function confirm() {
   }
 }
 
+function closeSamples() {
+  samplesRequestId += 1
+  samplesGroup.value = null
+}
+
 async function openSamples(g: OpsGroup) {
+  const requestId = ++samplesRequestId
   samplesGroup.value = g
   samples.value = []
   samplesError.value = ''
   samplesLoading.value = true
   try {
-    samples.value = await getShadowSamples(g.id)
+    const result = await getShadowSamples(g.id)
+    if (requestId === samplesRequestId) samples.value = result
   } catch (err) {
-    samplesError.value = opsErrorText(err, t, te)
+    if (requestId === samplesRequestId) samplesError.value = opsErrorText(err, t, te)
   } finally {
-    samplesLoading.value = false
+    if (requestId === samplesRequestId) samplesLoading.value = false
   }
 }
 
@@ -290,6 +298,9 @@ async function refresh() {
 }
 
 onMounted(refresh)
+onBeforeUnmount(() => {
+  samplesRequestId += 1
+})
 </script>
 
 <style scoped>
