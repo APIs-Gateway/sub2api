@@ -49,6 +49,17 @@ budgets, original added-item behavior and memory limits stay. Preserve and
 cross-review shared-file PRs1733/1717/1710/1708/1705/1704/1699/1697/1672/1022 and
 1712 before merge. No local resources or remote branch have been published.
 
+## NEW production source preparation
+
+The new source changes only the existing shared classifier module. Added/error/
+failed semantics and tool completion remain untouched. New known forms use a
+small duplicate-rejecting JSON-object reader, exact payload/event type pairing,
+and explicit empty-string bytes; nested done parts use the same object/type
+checks. Queued/metadata are exact lifecycle names, not a broad event wildcard.
+No production timing, retry count/delay, usage/billing, transport or scheduling
+code changes. OLD and NEW retain byte-identical test source. Formatting and
+actual OLD/NEW outcomes are pending independent review and remote CI.
+
 ## Accepted remote format artifact (OLD source import)
 
 The earlier RAW preparation sections are retained as history. Formatter-only
@@ -85,6 +96,26 @@ remain separate: genuine OLD business RED must keep the job failed, while NEW
 must PASS all98. Compiler/fixture/race/timeout/incomplete phases are blockers.
 No local or87 project execution or future behavior workflow publication occurred.
 
+## NEW normal composition after accepted format import
+
+This NEW source normally merges the formatted OLD parent `16ff3b8d2e4c67dab07df5c44ee3441b0eda775a`
+with the original reviewed production commit
+`a2cebe17c05e5c806bd4019f8085c35864345f09`. The two append-only provenance
+sections conflicted during normal merge; this file preserves the complete RAW
+NEW document plus the entire accepted OLD-format record above. The OLD-format
+section describes the unchanged main production in that OLD parent. In this
+NEW composition, production is instead byte identical to originala2ce, SHA256
+`05f064685b60361a46b4e3524ab20c264518b9fc025c9b16a43e3f20ac57bc8b`;
+no production format output or new production change is imported. Test output
+is the same verbatim14157-byte/b3c439...619a25 artifact as the formatted OLD
+parent. All selected original21 regression sources remain unchanged.
+
+The earlier RAW NEW format-pending statement is historical and superseded only
+for formatting by run40183164438 and its two actual reviews above. No OLD/NEW
+application runtime, test, race, compilation or build evidence is claimed here.
+Focused98 and existing159tops/193subnames remain pending exact-head remote CI.
+No local/87 project execution; no new application branch publication.
+
 ## Actual lint finding and checked peer-body Close (OLD repair)
 
 [PR1751](https://github.com/APIs-Gateway/sub2api/pull/1751) CI
@@ -110,3 +141,19 @@ Formatting/lint/race/tests for the revised exact input remain pending remote CI,
 with a read-only format gate in the future proof; no new formatter framework or
 local/87 project execution was introduced. Existing selected159tops/193subnames
 remain unchanged and must PASS separately on each side.
+
+## NEW checked-Close normal composition
+
+This NEW revision normally merges checked-Close OLD `31e969780424990d022179f17fda0451c18f3aa2`
+with prior formatted NEW `affe76ea781e3c9db4cf20867ee5fa6093620eb0`. The only
+merge conflict was append-only provenance; the complete prior NEW document and
+the entire checked-Close OLD repair record above are retained. This current
+NEW keeps the actual production bytes of a2ce/affe unchanged. Both sides carry
+the identical three-line deferred actual Close check and unchanged98 contracts.
+No production repair, test behavior relaxation or additional request was added.
+
+The only actual evidence for this narrow subsequent revision is static source
+review until its exact-head remote checks run. Prior14157-byte format output
+and prior affe lint failure remain historical inputs; neither is relabeled as
+runtime or formatting acceptance for the revised source. All required checks,
+selected original352 identities and new98 actual evidence remain pending.
