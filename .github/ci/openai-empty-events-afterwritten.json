@@ -1,0 +1,55 @@
+{
+  "scope": "Explicit original AfterWritten supplement; the previously frozen159/193/352 inventory never contained these two tops and remains byte unchanged",
+  "sourceHead": "a2cebe17c05e5c806bd4019f8085c35864345f09",
+  "oldHead": "31e969780424990d022179f17fda0451c18f3aa2",
+  "newHead": "ec45eff3b0a3a23b6a3a5779579a75f8f7a57c37",
+  "package": "./internal/handler",
+  "topCount": 2,
+  "subtestCount": 0,
+  "eventCount": 2,
+  "sources": [
+    {
+      "path": "backend/internal/handler/openai_gateway_handler_test.go",
+      "bytes": 90524,
+      "sha256": "ed06c813f62c305e5369916c37ddf6178906e9da6766d06cbb09a609d890d078",
+      "oldNewByteIdentical": true
+    }
+  ],
+  "tests": [
+    {
+      "top": "TestOpenAIEnsureForwardErrorResponse_AppendsSSEAfterWritten",
+      "expectedEvents": [
+        "TestOpenAIEnsureForwardErrorResponse_AppendsSSEAfterWritten"
+      ],
+      "sourcePath": "backend/internal/handler/openai_gateway_handler_test.go",
+      "sourceLine": 476,
+      "sourceSHA256": "ed06c813f62c305e5369916c37ddf6178906e9da6766d06cbb09a609d890d078",
+      "oldSourceSHA256": "ed06c813f62c305e5369916c37ddf6178906e9da6766d06cbb09a609d890d078",
+      "newSourceSHA256": "ed06c813f62c305e5369916c37ddf6178906e9da6766d06cbb09a609d890d078"
+    },
+    {
+      "top": "TestOpenAIEnsureForwardErrorResponse_ResponsesRouteAfterWrittenEmitsResponseFailed",
+      "expectedEvents": [
+        "TestOpenAIEnsureForwardErrorResponse_ResponsesRouteAfterWrittenEmitsResponseFailed"
+      ],
+      "sourcePath": "backend/internal/handler/openai_gateway_handler_test.go",
+      "sourceLine": 496,
+      "sourceSHA256": "ed06c813f62c305e5369916c37ddf6178906e9da6766d06cbb09a609d890d078",
+      "oldSourceSHA256": "ed06c813f62c305e5369916c37ddf6178906e9da6766d06cbb09a609d890d078",
+      "newSourceSHA256": "ed06c813f62c305e5369916c37ddf6178906e9da6766d06cbb09a609d890d078"
+    }
+  ],
+  "regex": "^(TestOpenAIEnsureForwardErrorResponse_AppendsSSEAfterWritten|TestOpenAIEnsureForwardErrorResponse_ResponsesRouteAfterWrittenEmitsResponseFailed)$",
+  "reason": "Preserve actual Writer.Written after headers/keepalive: append SSE error or Responses response.failed, retain prior bytes/status, normalize terminal server_error and never leak server_is_overloaded. This is the original declared after-written no-replay boundary, not new test/production source or coverage quota.",
+  "selectionTotals": {
+    "baseOriginalTops": 159,
+    "baseOriginalSubnames": 193,
+    "baseOriginalEvents": 352,
+    "additionalTops": 2,
+    "additionalSubnames": 0,
+    "combinedOriginalTops": 161,
+    "combinedOriginalSubnames": 193,
+    "combinedOriginalEvents": 354
+  },
+  "status": "Static inventory only; actual events for both new exact heads require remoteCI. No local/87 project execution."
+}

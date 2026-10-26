@@ -1,6 +1,7 @@
 """REMOTE CI ONLY. Locked draft: READY remains False until source and controller reviews.
 
-98 new leaves are separate from the selected original159 tops/193subtests.
+98 new leaves are separate from original159 tops/193subtests plus two explicit
+AfterWritten tops: combined selected originals161tops/193subtests/354identities.
 OLD's genuine nonzero test exit is never converted into a green job.
 No runtime, compiler, syntax, checker or formatting validation occurred locally.
 """
@@ -27,10 +28,12 @@ PINS = {
 TEST = "backend/internal/service/openai_empty_event_retry_test.go"
 TEST_SHA = "dc69470f839738e67beba3ec9ca6bb1a9b62cbb5690ea2a5a2919dfe4502e06b"
 REGRESSION_SHA = "601584014f937747786d07cb8aa76e562a42d54779b04a776693ece1eabcbaa7"
+AFTERWRITTEN_SHA = "5a632be3a892f0da17809c77a04a7bc527f0ee588168e5f63e8c4dfaaa3437d7"
 CONTROLLER_PATHS = {
     ".github/ci/openai-empty-events-proof.py",
     ".github/ci/openai-empty-events-existing-regressions.json",
     ".github/ci/openai-empty-events-new98.json",
+    ".github/ci/openai-empty-events-afterwritten.json",
     ".github/workflows/openai-empty-events-proof.yml",
 }
 NEW_TOPS = ("TestOpenAIEmptyEventPreOutputRetry", "TestOpenAIEmptyEventCommittedOutputDoesNotReplay", "TestOpenAIEmptyEventConservativeClassification")
@@ -138,7 +141,22 @@ def inventory(controller):
     leaves = new["expectedNewLeaves"]
     require(len(leaves) == len(set(leaves)) == 98, "new leaf inventory incomplete")
     require(original["topCount"] == 159 and original["expectedSubTests"] == 193 and original["expectedEventCount"] == 352, "selected original inventory changed")
-    return original, leaves
+    extra_raw = (controller / ".github/ci/openai-empty-events-afterwritten.json").read_bytes()
+    require(sha(extra_raw) == AFTERWRITTEN_SHA, "AfterWritten inventory changed")
+    supplement = json.loads(extra_raw)
+    require(supplement["topCount"] == 2 and supplement["subtestCount"] == 0 and supplement["eventCount"] == 2, "AfterWritten scope changed")
+    return original, leaves, supplement
+
+
+def original_selection(original, supplement, package):
+    expected = {event for test in original["tests"] if test["package"] == package for event in test["expectedEvents"]}
+    pattern = original["regex"][package]
+    if package == supplement["package"]:
+        extra = {event for test in supplement["tests"] for event in test["expectedEvents"]}
+        require(len(extra) == 2 and not (expected & extra) and pattern.endswith(")$"), "AfterWritten supplement duplicates or changes original selection")
+        expected |= extra
+        pattern = pattern[:-2] + "|" + "|".join(test["top"] for test in supplement["tests"]) + ")$"
+    return pattern, expected
 
 
 def prepare(workspace, evidence, head):
@@ -155,19 +173,23 @@ def prepare(workspace, evidence, head):
         with archive.open("wb") as output:
             subprocess.run(["git", "-C", str(workspace / label), "archive", "--format=tar", "HEAD"], stdout=output, check=True)
         archives[label] = verify_archive(archive, data)
-    require(len(sources["old"]) == len(sources["new"]) == 4307 and len(sources["controller"]) == 4311, "wrong complete source counts")
+    require(len(sources["old"]) == len(sources["new"]) == 4307 and len(sources["controller"]) == 4312, "wrong complete source counts")
     require(set(sources["controller"]) - set(sources["new"]) == CONTROLLER_PATHS, "unexpected controller additions")
     require(all(sources["controller"].get(path) == item for path, item in sources["new"].items()), "controller changed application bytes")
-    original, leaves = inventory(workspace / "controller")
+    original, leaves, supplement = inventory(workspace / "controller")
     for label in PINS:
         require(sha((workspace / label / TEST).read_bytes()) == TEST_SHA, "wrong formatted test input")
-        for item in original["sources"] + original["auxiliarySources"]:
+        for item in original["sources"] + original["auxiliarySources"] + supplement["sources"]:
             raw = (workspace / label / item["path"]).read_bytes()
             require(len(raw) == item["bytes"] and sha(raw) == item["sha256"], "original regression/module/TestMain changed: " + item["path"])
         subprocess.run(["git", "-C", str(workspace / "controller"), "merge-base", "--is-ancestor", PINS[label][0], head], check=True)
     require((workspace / "old" / TEST).read_bytes() == (workspace / "new" / TEST).read_bytes(), "OLD/NEW fixture differs")
     save(evidence / "complete-input-archives.json", archives)
-    save(evidence / "expected-selection.json", {"newLeaves": leaves, "originalTests": original["tests"], "regex": original["regex"]})
+    require(sum(len(original_selection(original, supplement, package)[1]) for package in original["regex"]) == 354, "combined selected original identity count changed")
+    save(evidence / "expected-selection.json", {"newLeaves": leaves, "baseOriginalTests": original["tests"],
+         "baseOriginalRegex": original["regex"], "afterWrittenSupplement": supplement,
+         "actualRegex": {package: original_selection(original, supplement, package)[0] for package in original["regex"]},
+         "combinedOriginalSelectedIdentities": 354})
     for path in CONTROLLER_PATHS:
         target = evidence / "executed-controller" / path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -240,7 +262,7 @@ def execute(workspace, evidence):
     require(READY is True, "LOCKED: formatted application and controller require explicit reviewed readiness commit; elapsed time never authorizes execution")
     label = os.environ["PROOF_LABEL"]
     backend = workspace / label / "backend"
-    original, _ = inventory(workspace / "controller")
+    original, _, supplement = inventory(workspace / "controller")
     go = shutil.which("go")
     require(go is not None, "Go missing")
     version = capture(evidence / "go-version", [go, "version"], backend, 30)
@@ -270,8 +292,8 @@ def execute(workspace, evidence):
         require(record["actualExit"] == 0 and not record["timedOut"], "actual prerequisite failed: " + name)
     commands = [
         ("new98", "./internal/service", "^(" + "|".join(NEW_TOPS) + ")$"),
-        ("original-service", "./internal/service", original["regex"]["./internal/service"]),
-        ("original-handler", "./internal/handler", original["regex"]["./internal/handler"]),
+        ("original-service", "./internal/service", original_selection(original, supplement, "./internal/service")[0]),
+        ("original-handler", "./internal/handler", original_selection(original, supplement, "./internal/handler")[0]),
     ]
     outcomes = []
     for name, package, pattern in commands:
@@ -446,12 +468,14 @@ def judge(workspace, evidence):
         backend = workspace / os.environ["PROOF_LABEL"] / "backend"
         actual_env = json.loads((evidence / "go-env.stdout").read_text())
         dependencies = json_stream((evidence / "deps-before.stdout").read_bytes())
-        original, leaves = inventory(workspace / "controller")
+        original, leaves, supplement = inventory(workspace / "controller")
         for package in ("service", "handler"):
             targets = [item for item in dependencies if item.get("ImportPath") == "github.com/Wei-Shaw/sub2api/internal/" + package]
             require(len(targets) == 1 and targets[0].get("Dir") == str(backend / "internal" / package), "actual dependency graph belongs to another package or checkout")
             test_files = set(targets[0].get("TestGoFiles", []))
             selected = {Path(item["sourcePath"]).name for item in original["tests"] if item["package"] == "./internal/" + package}
+            if "./internal/" + package == supplement["package"]:
+                selected |= {Path(item["sourcePath"]).name for item in supplement["tests"]}
             if package == "service":
                 selected.add(Path(TEST).name)
             require(selected <= test_files, "actual unit-tag package graph omitted selected test sources")
@@ -464,12 +488,12 @@ def judge(workspace, evidence):
         require(len(new_expected) == 107, "new parent inventory changed")
         for name, suffix, expected in (
             ("new98", "service", new_expected),
-            ("original-service", "service", {event for test in original["tests"] if test["package"] == "./internal/service" for event in test["expectedEvents"]}),
-            ("original-handler", "handler", {event for test in original["tests"] if test["package"] == "./internal/handler" for event in test["expectedEvents"]}),
+            ("original-service", "service", original_selection(original, supplement, "./internal/service")[1]),
+            ("original-handler", "handler", original_selection(original, supplement, "./internal/handler")[1]),
         ):
             process = json.loads((evidence / (name + ".process.json")).read_text())
             require((evidence / (name + ".exit")).read_text().strip() == str(process["actualExit"]), "test raw exit mismatch")
-            pattern = "^(" + "|".join(NEW_TOPS) + ")$" if name == "new98" else original["regex"]["./internal/" + suffix]
+            pattern = "^(" + "|".join(NEW_TOPS) + ")$" if name == "new98" else original_selection(original, supplement, "./internal/" + suffix)[0]
             expected_argv = [json.loads((evidence / "go-binary.json").read_text())["path"], "test", "-tags=unit", "-mod=readonly", "-p=1", "-parallel=1", "-race", "-count=1", "-timeout=10m", "-json", "-run", pattern, "./internal/" + suffix]
             require(process["argv"] == expected_argv and process["cwd"] == str(backend), "actual test command flags, selector, package or cwd mismatch")
             require(all(process["environment"].get(key) == value for key, value in
@@ -488,7 +512,7 @@ def judge(workspace, evidence):
     save(evidence / "actual-scope-audit.json", {"head": PINS[os.environ["PROOF_LABEL"]][0], "label": os.environ["PROOF_LABEL"],
          "controllerHead": os.environ["GITHUB_SHA"], "ready": READY, "results": results, "errors": errors,
          "crossJobMVS": "Full raw and path-root-only normalized module graphs retained; root and independent actual reviewers must compare both jobs before accepting scope",
-         "scope": "selected original159tops/193subnames plus new98 only; not whole-package suite/85/security approval; OLD actual failure stays job FAIL"})
+         "scope": "selected original159tops/193subnames/352identities + explicit2AfterWritten tops =161tops/193subnames/354identities, plus new98 only; not whole-package suite/85/security approval; OLD actual failure stays job FAIL"})
     require(not errors and len(results) == 3, "actual scope evidence failed closed: " + repr(errors))
 
 
