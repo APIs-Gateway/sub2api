@@ -84,3 +84,29 @@ import. Both OLD and NEW must actually PASS the original regressions. The new98
 remain separate: genuine OLD business RED must keep the job failed, while NEW
 must PASS all98. Compiler/fixture/race/timeout/incomplete phases are blockers.
 No local or87 project execution or future behavior workflow publication occurred.
+
+## Actual lint finding and checked peer-body Close (OLD repair)
+
+[PR1751](https://github.com/APIs-Gateway/sub2api/pull/1751) CI
+[run40185221526](https://github.com/APIs-Gateway/sub2api/actions/runs/40185221526),
+job121144480222, actually rejected formatted NEW source
+`affe76ea781e3c9db4cf20867ee5fa6093620eb0`: errcheck reported the unchecked
+`defer response.Body.Close()` in openai_empty_event_retry_test.go:180.
+The original saved job log SHA256 is `c942e81a5b78c4441b9671cb741b3c8133c49de16340d7060d032af76d85ab77`. This is an actual
+lint blocker, not a business OLD RED and not waived by earlier formatting.
+
+This OLD fixture revision only expands that defer into a function which checks
+the actual response Body.Close error with require.NoError and an explicit
+EMPTY_EVENT_FIXTURE label. It runs in the same helper goroutine before the
+helper returns its result; a close failure cannot become a safe-retry business
+assertion or an accepted RED. Both OLD and NEW must carry identical revised test
+bytes. All98 names, real request/peer/Write/Flush prerequisites, business/usage/
+billing/conservative assertions, timeouts, source imports and production bytes
+remain unchanged. No additional source hook, mock body or ignored close exists.
+
+The 14157-byte/b3c439 format artifact above is historical evidence for its
+previous input. It does not claim to cover this narrow subsequent Close edit.
+Formatting/lint/race/tests for the revised exact input remain pending remote CI,
+with a read-only format gate in the future proof; no new formatter framework or
+local/87 project execution was introduced. Existing selected159tops/193subnames
+remain unchanged and must PASS separately on each side.
