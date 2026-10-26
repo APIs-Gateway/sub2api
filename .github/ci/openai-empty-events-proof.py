@@ -20,7 +20,7 @@ import subprocess
 import tarfile
 import time
 
-READY = False
+READY = True
 PINS = {
     "old": ("31e969780424990d022179f17fda0451c18f3aa2", "579822a97bcbce03b48da4ee10fab6e48df5968b"),
     "new": ("ec45eff3b0a3a23b6a3a5779579a75f8f7a57c37", "98d90801efc16e44a3c446d6084b84483d7d8fc1"),
