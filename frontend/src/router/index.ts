@@ -500,6 +500,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/pricing/cost-rules',
+    name: 'AdminPricingCostRules',
+    component: () => import('@/views/admin/pricing/CostRulesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Cost accounting',
+      titleKey: 'admin.pricingOps.costRules.title',
+      descriptionKey: 'admin.pricingOps.costRules.description'
+    }
+  },
+  {
     path: '/admin/channels',
     redirect: '/admin/channels/pricing'
   },

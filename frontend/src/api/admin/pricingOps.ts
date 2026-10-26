@@ -1,7 +1,7 @@
 /**
- * Admin pricing ops API（W6 PR10b-2）：价格快照审批、阶段切换与影子比对。
- * 接口契约见 API_CONTRACT.md 第 6、8 节；快照接口见后端 pricing_snapshot_handler。
- * 价格单位：LiteLLM 快照里是美元 / Token，界面换成美元 / 百万 Token 后再显示。
+ * Admin pricing ops API（W6 PR10b-2）：价格快照审批、阶段切换与影子比对、成本核算规则。
+ * 接口契约见 API_CONTRACT.md 第 5、6、8 节；快照接口见后端 pricing_snapshot_handler。
+ * 价格单位：LiteLLM 快照里是美元 / Token，界面换成美元 / 百万 Token 后再显示；成本核算规则是美元 / 百万 Token。
  */
 
 import { apiClient } from '../client'
@@ -245,9 +245,45 @@ export async function getShadowSamples(groupId: number, limit = 20): Promise<Sha
   return data.items ?? []
 }
 
-// ==================== 分组价格配置现状 ====================
+// ==================== 成本核算规则 ====================
 
-/** 分组的价格配置现状：阶段与基线 revision。读的是派生查看接口。 */
+export type CostRuleSource = 'manual' | 'copied' | 'legacy_derived' | 'legacy_frozen'
+export type CostBillingMode = 'token' | 'per_request' | 'image'
+
+export interface CostPrice {
+  billing_mode: CostBillingMode
+  input_price?: number | null
+  output_price?: number | null
+  cache_write_price?: number | null
+  cache_read_price?: number | null
+  image_output_price?: number | null
+  per_request_price?: number | null
+  intervals?: unknown[]
+}
+
+export interface CostRulePriceRow {
+  platform: string
+  models: string[]
+  price: CostPrice
+}
+
+/** 写入时的规则内容（契约 5）。 */
+export interface CostRuleBody {
+  name: string
+  group_ids: number[]
+  account_ids: number[]
+  sort_order: number
+  enabled: boolean
+  prices: CostRulePriceRow[]
+}
+
+export interface StoredCostRule extends CostRuleBody {
+  id: number
+  scope_group_id: number
+  source: CostRuleSource
+}
+
+/** 分组的价格配置现状：阶段、基线 revision、成本核算规则。读的是派生查看接口。 */
 export interface GroupOpsView {
   groupId: number
   platform: string
@@ -255,18 +291,56 @@ export interface GroupOpsView {
   stageChangedAt: string | null
   /** 没有价格配置行（还没派生过）时为 null */
   revision: number | null
+  costRules: StoredCostRule[]
 }
 
 export async function getGroupOpsView(groupId: number): Promise<GroupOpsView> {
   const { data } = await apiClient.get<Raw>(`/admin/pricing-matrix/groups/${groupId}/derive`)
   const cfg = data.stored_config as { pricing_stage?: OpsStage; revision?: number; stage_changed_at?: string } | null
+  const rules = (data.stored_cost_rules as StoredCostRule[] | null) ?? []
   return {
     groupId,
     platform: (data.platform as string) ?? '',
     stage: cfg?.pricing_stage ?? null,
     stageChangedAt: cfg?.stage_changed_at ?? null,
-    revision: cfg ? (cfg.revision ?? 0) : null
+    revision: cfg ? (cfg.revision ?? 0) : null,
+    costRules: rules.map((r) => ({
+      ...r,
+      group_ids: r.group_ids ?? [],
+      account_ids: r.account_ids ?? [],
+      prices: (r.prices ?? []).map((p) => ({ ...p, models: p.models ?? [] }))
+    }))
   }
+}
+
+export interface CostRuleWriteResult {
+  group_id: number
+  rule_id: number
+  revision: number
+}
+
+export async function createCostRule(groupId: number, baselineRevision: number, rule: CostRuleBody) {
+  const { data } = await apiClient.post<CostRuleWriteResult>(`/admin/pricing-matrix/groups/${groupId}/cost-rules`, {
+    baseline_revision: baselineRevision,
+    rule
+  })
+  return data
+}
+
+export async function updateCostRule(groupId: number, ruleId: number, baselineRevision: number, rule: CostRuleBody) {
+  const { data } = await apiClient.put<CostRuleWriteResult>(
+    `/admin/pricing-matrix/groups/${groupId}/cost-rules/${ruleId}`,
+    { baseline_revision: baselineRevision, rule }
+  )
+  return data
+}
+
+export async function deleteCostRule(groupId: number, ruleId: number, baselineRevision: number) {
+  const { data } = await apiClient.delete<CostRuleWriteResult>(
+    `/admin/pricing-matrix/groups/${groupId}/cost-rules/${ruleId}`,
+    { params: { baseline_revision: baselineRevision } }
+  )
+  return data
 }
 
 export const pricingOpsAPI = {
@@ -279,7 +353,10 @@ export const pricingOpsAPI = {
   switchGroupStage,
   getShadowStats,
   getShadowSamples,
-  getGroupOpsView
+  getGroupOpsView,
+  createCostRule,
+  updateCostRule,
+  deleteCostRule
 }
 
 export default pricingOpsAPI
