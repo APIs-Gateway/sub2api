@@ -75,7 +75,7 @@ onUnmounted(() => {
 })
 
 const pageStyle = computed<CSSProperties>(() => isDesktop.value
-  ? { height: 'calc(100vh - 64px - 4rem)' }
+  ? { height: 'calc(100vh - (64px + 4rem))' }
   : {}
 )
 
@@ -107,7 +107,7 @@ const worklistStyle = computed<CSSProperties>(() => isDesktop.value
 
 @media (min-width: 1024px) {
   .admin-task-page {
-    height: calc(100vh - 64px - 4rem);
+    height: calc(100vh - (64px + 4rem));
   }
 }
 
