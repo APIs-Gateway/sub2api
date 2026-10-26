@@ -940,7 +940,7 @@
     "supports_prompt_caching": true,
     "supports_reasoning": true,
     "supports_response_schema": true,
-    "supports_service_tier": true,
+    "supports_service_tier": false,
     "supports_system_messages": true,
     "supports_tool_choice": true,
     "supports_vision": true,
