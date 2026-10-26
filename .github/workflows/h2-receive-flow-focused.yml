@@ -173,7 +173,7 @@ jobs:
           python3 -B - <<'PYDATA'
           import hashlib, json, os, pathlib, re
           evidence = pathlib.Path(os.environ['H2_RECEIVE_FOCUSED_EVIDENCE'])
-          errors, operations, markers = [], {}, {}
+          errors, operations, markers, event_controls = [], {}, {}, []
           prefix = 'TestReqHTTP2ReceiveFlowContract_'
           leaves = [prefix + 'UnreadRefund/single_frame', prefix + 'UnreadRefund/late_frame_after_cancel', prefix + 'PaddedData/read_to_eof', prefix + 'PaddedData/read_one_then_close', prefix + 'PaddedData/close_unread', prefix + 'DataBeforeHeaders']
           tops = {prefix + name for name in ('UnreadRefund', 'PaddedData', 'DataBeforeHeaders')}
@@ -214,15 +214,7 @@ jobs:
               assert (evidence / 'toolchain.stdout').read_bytes() == b'go version go1.26.10 linux/amd64\n'
               assert not (evidence / 'format.stdout').read_bytes() and not (evidence / 'format.stderr').read_bytes()
           section('full frozen input and toolchain evidence', frozen)
-          def completed():
-              values = [json.loads(line) for line in (evidence / 'tests.stdout').read_text().splitlines()]
-              package = 'github.com/imroc/req/v3/internal/http2'
-              # Go help buildjson permits BuildEvents interleaved with TestEvents.
-              assert values and all(isinstance(item, dict) for item in values)
-              assert all(item.get('Package') == package or
-                         (item.get('Action') == 'build-output' and isinstance(item.get('ImportPath'), str) and isinstance(item.get('Output'), str) and 'Package' not in item and 'Test' not in item)
-                         for item in values), 'unexpected actual package/event'
-              assert not any(item.get('Action') in ('fail', 'skip', 'build-fail') for item in values), 'failed/skipped actual event'
+          def validate_test_events(values):
               states = {name: 'pending' for name in set(leaves) | tops}
               # These eight frozen sequential tests have no Parallel/benchmark
               # actions. Inspect every Test event, not just the RUN inventory.
@@ -242,6 +234,48 @@ jobs:
                       assert states[name] == 'running', 'missing RUN or duplicate terminal ' + name
                       states[name] = 'passed'
               assert all(state == 'passed' for state in states.values()), 'missing actual RUN/PASS: ' + repr(states)
+          def check_event_data_controls(values):
+              # Run only after genuine six-leaf/package completion. Copies below
+              # are synthetic checker data, never Go test results or profiles.
+              run_index = next(i for i, item in enumerate(values) if item.get('Test') == leaves[0] and item.get('Action') == 'run')
+              pass_index = next(i for i, item in enumerate(values) if item.get('Test') == leaves[0] and item.get('Action') == 'pass')
+              run, passed = values[run_index], values[pass_index]
+              cases = [
+                  ('actual-positive', values, True),
+                  ('unknown-pass', values + [dict(passed, Test='TestUnexpected')], False),
+                  ('unknown-output', values + [dict(run, Test='TestUnexpected', Action='output', Output='data-only unknown\n')], False),
+                  ('extra-identity', values + [dict(run, Test='TestUnexpected'), dict(passed, Test='TestUnexpected')], False),
+                  ('missing-run', values[:run_index] + values[run_index+1:], False),
+                  ('duplicate-run', values[:run_index] + [dict(run)] + values[run_index:], False),
+                  ('missing-pass', values[:pass_index] + values[pass_index+1:], False),
+                  ('duplicate-pass', values[:pass_index+1] + [dict(passed)] + values[pass_index+1:], False),
+                  ('pre-run-terminal', [dict(passed)] + values, False),
+                  ('pre-run-output', [dict(run, Action='output', Output='data-only before\n')] + values, False),
+                  ('illegal-action', values[:run_index+1] + [dict(run, Action='not-a-go-test-action')] + values[run_index+1:], False),
+                  ('post-terminal-output', values + [dict(passed, Action='output', Output='data-only after\n')], False),
+              ]
+              original_sha = sha((evidence / 'tests.stdout').read_bytes())
+              for name, derived, expected in cases:
+                  accepted, diagnostic = True, ''
+                  try: validate_test_events(derived)
+                  except (AssertionError, KeyError, TypeError) as error:
+                      accepted, diagnostic = False, str(error)
+                  event_controls.append({'name': name, 'expectedAccepted': expected, 'actualAccepted': accepted, 'diagnostic': diagnostic,
+                                         'eventCount': len(derived), 'sourceRawJSONSHA256': original_sha,
+                                         'derivedCanonicalJSONSHA256': sha(json.dumps(derived, separators=(',', ':')).encode()),
+                                         'scope': 'data-only derivative of actual successful stream; not a Go test/race/profile result'})
+              (evidence / 'event-data-controls.json').write_text(json.dumps(event_controls, indent=2) + '\n')
+              assert len(event_controls) == 12 and all(item['expectedAccepted'] == item['actualAccepted'] for item in event_controls), 'event data controls failed'
+          def completed():
+              values = [json.loads(line) for line in (evidence / 'tests.stdout').read_text().splitlines()]
+              package = 'github.com/imroc/req/v3/internal/http2'
+              # Go help buildjson permits BuildEvents interleaved with TestEvents.
+              assert values and all(isinstance(item, dict) for item in values)
+              assert all(item.get('Package') == package or
+                         (item.get('Action') == 'build-output' and isinstance(item.get('ImportPath'), str) and isinstance(item.get('Output'), str) and 'Package' not in item and 'Test' not in item)
+                         for item in values), 'unexpected actual package/event'
+              assert not any(item.get('Action') in ('fail', 'skip', 'build-fail') for item in values), 'failed/skipped actual event'
+              validate_test_events(values)
               assert sum(item.get('Action') == 'pass' and 'Test' not in item for item in values) == 1
               for name in leaves:
                   output = [item['Output'] for item in values if item.get('Action') == 'output' and item.get('Test') == name and 'RECEIVE_FLOW_ACTUAL_COMPLETE ' in item.get('Output', '')]
@@ -262,9 +296,10 @@ jobs:
                   markers[name] = fields
               raw = (evidence / 'h2-focused.raw.out').read_bytes()
               assert raw.startswith(b'mode: atomic\n') and len(raw.splitlines()) > 1
+              check_event_data_controls(values)
               return values
           section('actual six protocol-test completions', completed)
-          report = {'applicationHead': os.environ['APP_HEAD'], 'applicationTree': os.environ['APP_TREE'], 'controllerHead': os.environ['GITHUB_SHA'], 'expectedLeaves': leaves, 'actualCompletionMarkers': markers, 'operations': operations, 'errors': errors, 'scope': 'Focused actual six-leaf race evidence only; not full mandatory suite, original four-profile aggregate, either85 or PR approval'}
+          report = {'applicationHead': os.environ['APP_HEAD'], 'applicationTree': os.environ['APP_TREE'], 'controllerHead': os.environ['GITHUB_SHA'], 'expectedLeaves': leaves, 'actualCompletionMarkers': markers, 'eventDataControls': event_controls, 'operations': operations, 'errors': errors, 'scope': 'Focused actual six-leaf race evidence only; not full mandatory suite, original four-profile aggregate, either85 or PR approval'}
           (evidence / 'h2-focused-actual-receipt.json').write_text(json.dumps(report, indent=2) + '\n')
           assert not errors, errors
           PYDATA
