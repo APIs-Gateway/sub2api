@@ -223,12 +223,25 @@ jobs:
                          (item.get('Action') == 'build-output' and isinstance(item.get('ImportPath'), str) and isinstance(item.get('Output'), str) and 'Package' not in item and 'Test' not in item)
                          for item in values), 'unexpected actual package/event'
               assert not any(item.get('Action') in ('fail', 'skip', 'build-fail') for item in values), 'failed/skipped actual event'
-              runs = {item['Test'] for item in values if item.get('Action') == 'run' and 'Test' in item}
-              assert runs == set(leaves) | tops, 'missing/extra actual test identities'
-              for name in runs:
-                  actual = [item for item in values if item.get('Test') == name]
-                  assert sum(item.get('Action') == 'run' for item in actual) == 1, 'missing/duplicate RUN ' + name
-                  assert sum(item.get('Action') == 'pass' for item in actual) == 1, 'missing/duplicate PASS ' + name
+              states = {name: 'pending' for name in set(leaves) | tops}
+              # These eight frozen sequential tests have no Parallel/benchmark
+              # actions. Inspect every Test event, not just the RUN inventory.
+              for item in values:
+                  if 'Test' not in item:
+                      continue
+                  name, action = item['Test'], item.get('Action')
+                  assert isinstance(name, str) and name in states, 'unknown actual Test identity: ' + repr(name)
+                  assert action in ('run', 'output', 'pass'), 'unexpected Test action: ' + repr(action)
+                  if action == 'run':
+                      assert states[name] == 'pending', 'duplicate/out-of-order RUN ' + name
+                      states[name] = 'running'
+                  elif action == 'output':
+                      assert states[name] == 'running', 'Test output before RUN or after terminal ' + name
+                      assert isinstance(item.get('Output'), str), 'invalid Test output ' + name
+                  else:
+                      assert states[name] == 'running', 'missing RUN or duplicate terminal ' + name
+                      states[name] = 'passed'
+              assert all(state == 'passed' for state in states.values()), 'missing actual RUN/PASS: ' + repr(states)
               assert sum(item.get('Action') == 'pass' and 'Test' not in item for item in values) == 1
               for name in leaves:
                   output = [item['Output'] for item in values if item.get('Action') == 'output' and item.get('Test') == name and 'RECEIVE_FLOW_ACTUAL_COMPLETE ' in item.get('Output', '')]
