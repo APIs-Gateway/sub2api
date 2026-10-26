@@ -1138,12 +1138,12 @@
     "license": "LICENSE-GO-BSD",
     "newFiles": {
       "internal/http2/receive_flow_contract_test.go": {
-        "bytes": 13355,
-        "sha256": "f8014478e8f8dd86fc9e18691aab46db06aaea87644d63849362a5ef76d29234"
+        "bytes": 13697,
+        "sha256": "307939900113a97b360202b6d17e35a3b784d26019ffd2967d7dae1396007a70"
       },
       "internal/http2/RECEIVE-FLOW-CONTRACTS.md": {
-        "bytes": 8138,
-        "sha256": "19d1b9bd089339577ff93f8bad9759684b9f5324c336ea57d66bacc8c0905ab7"
+        "bytes": 10137,
+        "sha256": "d276b0fa098e7349a5acda9002d8778725073922ef8a85637b4766608bcd49d4"
       }
     },
     "leaves": [
@@ -1155,6 +1155,27 @@
       "TestReqHTTP2ReceiveFlowContract_DataBeforeHeaders"
     ],
     "scope": "Tests only, real private ClientConn byte-stream/body/frame contract; not TCP/TLS deployment proof. No production or counter/denominator/gate change. Original base468 mandatory inventory unchanged; separately register six actual leaves in reviewed remote composition before acceptance.",
-    "status": "RAW source only; no local/87 project/format/syntax/test/build execution; no push. Independent review and exact-head remote CI required."
+    "status": "Remote formatter output imported; no local/87 project/format/syntax/test/build execution. Independent source review and exact-head remote CI remain required; no protocol/race/85 PASS.",
+    "formatEvidence": {
+      "run": 40255136055,
+      "workflowHead": "63dcbd3aa4b2d033694aa8728dcfcfca0776b0f5",
+      "sourceCandidate": "cf6ccbb4389edf4bae86e81438c87abf607289bb",
+      "artifact": 12621803677,
+      "artifactBytes": 31077477,
+      "artifactSHA256": "297bbd3f7e9b7c9a1329ce253cf1a882b6f65cfc2d4b266693c7d83ee0a17664",
+      "toolchain": "go1.26.10 linux/amd64",
+      "actualOperationExits": {
+        "raw-diff": 1,
+        "write-copy": 0,
+        "formatted-diff": 0,
+        "formatted-list": 0
+      },
+      "rawTestBytes": 13355,
+      "rawTestSHA256": "f8014478e8f8dd86fc9e18691aab46db06aaea87644d63849362a5ef76d29234",
+      "authorActualReceiptSHA256": "3c7786e8d9809521928ed61043c3c32a297a3ef572ded87c5b07cd5a623e2548",
+      "independentRootActualReceiptSHA256": "ec380e8d45d02bfd1c760e6898f7ebd13e12c7f37210a2e15f85fff86a043cb0",
+      "status": "Actual one-Go formatter output independently verified and imported verbatim. No runtime/race/build/coverage PASS; six leaves still need exact-head remote evidence."
+    },
+    "executionDependency": "Official behavioral source and nested req/go.mod declare x/net v0.48.0; execution must use backend main MVS (declares v0.60.0), with actual go-list evidence for selected peer codec. Do not execute the nested module as a substitute."
   }
 }
