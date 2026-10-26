@@ -1,0 +1,117 @@
+name: OpenAI empty events1750 locked OLD NEW evidence draft
+
+on:
+  push:
+    branches:
+      - codex/openai-empty-events-proof-draft-1750
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  observe-frozen-scope:
+    name: ${{ matrix.phase }} actual selected scope (readiness locked in source)
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [old, new]
+    env:
+      PROOF_LABEL: ${{ matrix.phase }}
+      GOTOOLCHAIN: local
+      GOWORK: "off"
+      GOFLAGS: -mod=readonly
+      GOMAXPROCS: "2"
+      GOGC: "50"
+      GOMEMLIMIT: 4GiB
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Initialize evidence and isolated disk caches outside frozen inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/openai-empty-events-proof-${PROOF_LABEL}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence"
+          printf 'OPENAI_EMPTY_PROOF_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+          printf 'GOCACHE=%s\n' "$RUNNER_TEMP/openai-empty-events-gocache-${PROOF_LABEL}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+          printf 'GOMODCACHE=%s\n' "$RUNNER_TEMP/openai-empty-events-modcache-${PROOF_LABEL}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+      - name: Checkout exact controller history
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout complete pinned formatted OLD repository
+        uses: actions/checkout@v6
+        with:
+          ref: 16ff3b8d2e4c67dab07df5c44ee3441b0eda775a
+          path: old
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout complete pinned formatted NEW repository
+        uses: actions/checkout@v6
+        with:
+          ref: affe76ea781e3c9db4cf20867ee5fa6093620eb0
+          path: new
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Freeze all three complete Git inputs and fixtures before tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B controller/.github/ci/openai-empty-events-proof.py prepare --workspace "$GITHUB_WORKSPACE" --evidence "$OPENAI_EMPTY_PROOF_EVIDENCE"
+      - name: Install exact Go toolchain without repository cache
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.10'
+          check-latest: false
+          cache: false
+      - name: Run independent actual commands only after explicit readiness source review
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python3 -B "$OPENAI_EMPTY_PROOF_EVIDENCE/executed-controller/.github/ci/openai-empty-events-proof.py" execute --workspace "$GITHUB_WORKSPACE" --evidence "$OPENAI_EMPTY_PROOF_EVIDENCE" > "$OPENAI_EMPTY_PROOF_EVIDENCE/execute.stdout" 2> "$OPENAI_EMPTY_PROOF_EVIDENCE/execute.stderr"
+          actual_status=$?
+          set -e
+          printf '%s\n' "$actual_status" > "$OPENAI_EMPTY_PROOF_EVIDENCE/execute.exit"
+          exit "$actual_status"
+      - name: Always freeze every input after actual success or failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          script="$OPENAI_EMPTY_PROOF_EVIDENCE/executed-controller/.github/ci/openai-empty-events-proof.py"
+          if test ! -f "$script"; then script="$GITHUB_WORKSPACE/controller/.github/ci/openai-empty-events-proof.py"; fi
+          set +e
+          python3 -B "$script" after --workspace "$GITHUB_WORKSPACE" --evidence "$OPENAI_EMPTY_PROOF_EVIDENCE" > "$OPENAI_EMPTY_PROOF_EVIDENCE/after.stdout" 2> "$OPENAI_EMPTY_PROOF_EVIDENCE/after.stderr"
+          actual_status=$?
+          set -e
+          printf '%s\n' "$actual_status" > "$OPENAI_EMPTY_PROOF_EVIDENCE/after.exit"
+          exit "$actual_status"
+      - name: Always audit actual events and reject incomplete evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          script="$OPENAI_EMPTY_PROOF_EVIDENCE/executed-controller/.github/ci/openai-empty-events-proof.py"
+          if test ! -f "$script"; then script="$GITHUB_WORKSPACE/controller/.github/ci/openai-empty-events-proof.py"; fi
+          set +e
+          python3 -B "$script" judge --workspace "$GITHUB_WORKSPACE" --evidence "$OPENAI_EMPTY_PROOF_EVIDENCE" > "$OPENAI_EMPTY_PROOF_EVIDENCE/judge.stdout" 2> "$OPENAI_EMPTY_PROOF_EVIDENCE/judge.stderr"
+          actual_status=$?
+          set -e
+          printf '%s\n' "$actual_status" > "$OPENAI_EMPTY_PROOF_EVIDENCE/judge.exit"
+          exit "$actual_status"
+      - name: Always retain full hidden inputs and actual raw evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: openai-empty-events-proof-${{ matrix.phase }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/openai-empty-events-proof-${{ matrix.phase }}-${{ github.run_id }}-${{ github.run_attempt }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

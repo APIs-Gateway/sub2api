@@ -1,0 +1,3276 @@
+{
+  "scope": "Static exacta2ce selected regression inventory, not actual execution results",
+  "sourceHead": "a2cebe17c05e5c806bd4019f8085c35864345f09",
+  "sources": [
+    {
+      "path": "backend/internal/service/openai_capacity_shed_test.go",
+      "bytes": 31852,
+      "sha256": "22ac44c67aa35ffe7893db222472f9d511e9600f9239dab66b3e8ff9358cee9b",
+      "buildConstraints": "",
+      "importsRaw": "\"context\"\n\t\"errors\"\n\t\"io\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"strings\"\n\t\"testing\"\n\t\"time\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/config\"\n\t\"github.com/Wei-Shaw/sub2api/internal/model\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/service/openai_visible_ttft_test.go",
+      "bytes": 8459,
+      "sha256": "d3eb235b387c861dbb887dea335fa6858af463ceab0fc1e99ecf0095b6ef5816",
+      "buildConstraints": "",
+      "importsRaw": "\"context\"\n\t\"io\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"testing\"\n\t\"time\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/config\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/service/openai_first_output_timeout_test.go",
+      "bytes": 30652,
+      "sha256": "88964ba6709116213ac332bd23027ab779d8c9df9036a4777ccf02caff467e8c",
+      "buildConstraints": "",
+      "importsRaw": "\"bytes\"\n\t\"context\"\n\t\"errors\"\n\t\"io\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"os\"\n\t\"runtime\"\n\t\"strings\"\n\t\"sync\"\n\t\"sync/atomic\"\n\t\"testing\"\n\t\"time\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/config\"\n\t\"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/service/openai_passthrough_preoutput_keepalive_test.go",
+      "bytes": 9352,
+      "sha256": "156f8f801c629e2257f64e75809594a19050bd18fc30fc4aa50c22e33eb94f02",
+      "buildConstraints": "",
+      "importsRaw": "\"context\"\n\t\"io\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"strings\"\n\t\"sync\"\n\t\"testing\"\n\t\"time\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/config\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/service/openai_stream_keepalive_bytes_test.go",
+      "bytes": 4181,
+      "sha256": "a47a39b916d57878d925ac21cea329882adb0236d837e7360a11b82f4033abc4",
+      "buildConstraints": "//go:build unit",
+      "importsRaw": "\"testing\"\n\t\"time\"\n\n\t\"github.com/stretchr/testify/require\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/service/openai_stream_keepalive_disconnect_test.go",
+      "bytes": 5326,
+      "sha256": "7d748727b4ce38ddceedfa19e73a9ee5dcd5f302952f01403af7cf1dc7728d94",
+      "buildConstraints": "//go:build unit",
+      "importsRaw": "\"context\"\n\t\"errors\"\n\t\"net/http\"\n\t\"strings\"\n\t\"sync\"\n\t\"testing\"\n\t\"time\"\n\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "bytes": 132039,
+      "sha256": "1538fbb049d389ee06ee4b0d53b4254aeadca0006934c3306e90faa1460685ab",
+      "buildConstraints": "",
+      "importsRaw": "\"context\"\n\t\"errors\"\n\t\"fmt\"\n\t\"io\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"strings\"\n\t\"testing\"\n\t\"time\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/config\"\n\t\"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat\"\n\tcoderws \"github.com/coder/websocket\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"\n\t\"github.com/tidwall/gjson\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/service/openai_ws_http_bridge_resume_test.go",
+      "bytes": 10281,
+      "sha256": "0048ba136053c462d291db9532ffcc34b984ff45dac51cf7b5f3a8c4c9ab532e",
+      "buildConstraints": "",
+      "importsRaw": "\"context\"\n\t\"encoding/json\"\n\t\"errors\"\n\t\"io\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"strings\"\n\t\"testing\"\n\t\"time\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/config\"\n\t\"github.com/coder/websocket\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"\n\t\"github.com/tidwall/gjson\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/service/openai_stream_event_terminal_type_test.go",
+      "bytes": 2642,
+      "sha256": "0a9e13c0930ba19fce1227fed9ddc04fce2d72063b6e63566a4373dcfe2f31dc",
+      "buildConstraints": "",
+      "importsRaw": "\"strings\"\n\t\"testing\"\n\n\t\"github.com/stretchr/testify/require\"\n\t\"github.com/tidwall/gjson\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/service/openai_nonstreaming_terminal_failure_failover_test.go",
+      "bytes": 14680,
+      "sha256": "4c7c33cfd1b221fa2bb72930fec836c9af5f3942bdb65e866a06633d38725b86",
+      "buildConstraints": "",
+      "importsRaw": "\"errors\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"strings\"\n\t\"testing\"\n\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/config\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/handler/failover_loop_test.go",
+      "bytes": 33693,
+      "sha256": "525b34bc9997d3c9c29e1efdf59a802fa1d0bc8388166582af765766bc5df2bd",
+      "buildConstraints": "",
+      "importsRaw": "\"context\"\n\t\"testing\"\n\t\"time\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/service\"\n\n\t\"github.com/stretchr/testify/require\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/handler/openai_gateway_first_output_timeout_test.go",
+      "bytes": 2450,
+      "sha256": "68d1de28a831d708450a08164f9eb5eb49c4aa4e8c06b52e2f6e0c4483ade93e",
+      "buildConstraints": "",
+      "importsRaw": "\"context\"\n\t\"fmt\"\n\t\"net/http/httptest\"\n\t\"testing\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/service\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/handler/openai_gateway_keepalive_failover_test.go",
+      "bytes": 2302,
+      "sha256": "2140223e269214f245d57ab2efd986fe3a53666650e2700d08844d2cc023c1a6",
+      "buildConstraints": "//go:build unit",
+      "importsRaw": "\"fmt\"\n\t\"net/http/httptest\"\n\t\"testing\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/service\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/handler/openai_pool_availability_retry_limit_test.go",
+      "bytes": 1697,
+      "sha256": "12e01b062f63f7d1ca78db9393c9d44072f2fbeb418a5859af0ae7e3bd471f12",
+      "buildConstraints": "",
+      "importsRaw": "\"net/http\"\n\t\"testing\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/service\"\n\t\"github.com/stretchr/testify/require\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/handler/openai_gateway_messages_partial_usage_test.go",
+      "bytes": 26300,
+      "sha256": "78796b17496576f3a9fd506826a987b053bfd0fea0a093ddbc223e9923e839dd",
+      "buildConstraints": "",
+      "importsRaw": "\"context\"\n\t\"errors\"\n\t\"io\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"strings\"\n\t\"testing\"\n\t\"time\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/config\"\n\t\"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat\"\n\t\"github.com/Wei-Shaw/sub2api/internal/server/middleware\"\n\t\"github.com/Wei-Shaw/sub2api/internal/service\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/handler/openai_gateway_responses_partial_usage_test.go",
+      "bytes": 21148,
+      "sha256": "50fd2073f3f8cb0fb299d22e4599dc24f1258954ba5e6559c410fee18a1f9626",
+      "buildConstraints": "",
+      "importsRaw": "\"context\"\n\t\"errors\"\n\t\"io\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"strings\"\n\t\"testing\"\n\t\"time\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/config\"\n\t\"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat\"\n\t\"github.com/Wei-Shaw/sub2api/internal/server/middleware\"\n\t\"github.com/Wei-Shaw/sub2api/internal/service\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"\n\t\"github.com/tidwall/gjson\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/handler/openai_responses_failover_cancel_test.go",
+      "bytes": 14194,
+      "sha256": "f92d6dc8d5005349e7e81672673cbd9f245bfa7bd0d7b81c6a85cd5c8c79d651",
+      "buildConstraints": "//go:build unit",
+      "importsRaw": "\"bytes\"\n\t\"context\"\n\t\"io\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"sync\"\n\t\"testing\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/config\"\n\tmiddleware2 \"github.com/Wei-Shaw/sub2api/internal/server/middleware\"\n\t\"github.com/Wei-Shaw/sub2api/internal/service\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"\n\t\"github.com/tidwall/gjson\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/handler/openai_gateway_keepalive_mismatch_e2e_test.go",
+      "bytes": 24111,
+      "sha256": "b924d095a8b40be2f3762b134c838e3a77350baa88068eb7f846333ca8da3a2d",
+      "buildConstraints": "//go:build unit",
+      "importsRaw": "\"context\"\n\t\"fmt\"\n\t\"io\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"strings\"\n\t\"sync\"\n\t\"testing\"\n\t\"time\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/config\"\n\t\"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat\"\n\t\"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint\"\n\t\"github.com/Wei-Shaw/sub2api/internal/server/middleware\"\n\t\"github.com/Wei-Shaw/sub2api/internal/service\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/handler/openai_hop_slot_test.go",
+      "bytes": 31224,
+      "sha256": "adea5b56fc8de5215663d5c356e8e8bf56a47f226fb8ecef5bb8571059119851",
+      "buildConstraints": "",
+      "importsRaw": "\"context\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"sync/atomic\"\n\t\"testing\"\n\t\"time\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/config\"\n\t\"github.com/Wei-Shaw/sub2api/internal/service\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"\n\t\"go.uber.org/zap\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/handler/openai_chat_completions_chain_edge_test.go",
+      "bytes": 7952,
+      "sha256": "5c4a4e23a613892426f1a2b174e0081436312b350df26637e0f7d489a25b23c4",
+      "buildConstraints": "//go:build unit",
+      "importsRaw": "\"context\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"strings\"\n\t\"testing\"\n\n\t\"github.com/Wei-Shaw/sub2api/internal/service\"\n\t\"github.com/stretchr/testify/require\"",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/internal/handler/openai_client_disconnect_test.go",
+      "bytes": 688,
+      "sha256": "f47d6fb717287e04218fc115f94fbe63589132b46db15fa8c8f8a82951f59643",
+      "buildConstraints": "",
+      "importsRaw": "\"context\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"testing\"\n\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/stretchr/testify/require\"",
+      "oldNewByteIdentical": true
+    }
+  ],
+  "tests": [
+    {
+      "package": "./internal/service",
+      "top": "TestTempUnscheduleRetryableErrorSkipsRequestScopedTransient",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 35,
+      "sourceTestBlockSha256": "f70f89384d770a5d3e908abb1bc22d86265111eb87dbc7f3b2c4fddf4b5e8bce",
+      "runExpressions": [
+        "\"请求级瞬时故障不写账号状态\"",
+        "\"未标记时保持原有临时摘号语义\""
+      ],
+      "literalSubNames": [
+        "请求级瞬时故障不写账号状态",
+        "未标记时保持原有临时摘号语义"
+      ],
+      "expectedSubTests": [
+        "TestTempUnscheduleRetryableErrorSkipsRequestScopedTransient/请求级瞬时故障不写账号状态",
+        "TestTempUnscheduleRetryableErrorSkipsRequestScopedTransient/未标记时保持原有临时摘号语义"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestTempUnscheduleRetryableErrorSkipsRequestScopedTransient",
+        "TestTempUnscheduleRetryableErrorSkipsRequestScopedTransient/请求级瞬时故障不写账号状态",
+        "TestTempUnscheduleRetryableErrorSkipsRequestScopedTransient/未标记时保持原有临时摘号语义"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestStreamFailedEventCapacityShedRetriesOnSameAccount",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 65,
+      "sourceTestBlockSha256": "1fa4abc365a386573565fbd42fca9603a9b0168f22e2bbf4a3d5a6c619797741",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestStreamFailedEventCapacityShedRetriesOnSameAccount"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIHTTPCapacityShedIsRequestScopedForOAuthAccounts",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 82,
+      "sourceTestBlockSha256": "d584b4ace7cdd34a3feb39800fa8833a9f42791c5ddccbc1fd17da4b8e244042",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIHTTPCapacityShedIsRequestScopedForOAuthAccounts"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIHTTPCapacityShedRequestScopeBoundaries",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 112,
+      "sourceTestBlockSha256": "a51c0158034aa261127ce1f6f5d9da8ea4d681ac6a32788f125e10bf7256442b",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIHTTPCapacityShedRequestScopeBoundaries"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIStreamErrorFrameDoesNotStartClientOutput",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 145,
+      "sourceTestBlockSha256": "24481debfae1d71ca32acba5b33bc9a2d18ae9e628a62a6b0c431d1d918e6d1d",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIStreamErrorFrameDoesNotStartClientOutput"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIStreamMetadataPreambleAndMessageOnlyOverloadFailOver",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 189,
+      "sourceTestBlockSha256": "599dcd2533e483f32c09e3a38ffd575886d7469958711d53e3f9177971acd1d0",
+      "runExpressions": [
+        "tt.name"
+      ],
+      "literalSubNames": [
+        "native",
+        "passthrough"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIStreamMetadataPreambleAndMessageOnlyOverloadFailOver/native",
+        "TestOpenAIStreamMetadataPreambleAndMessageOnlyOverloadFailOver/passthrough"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestOpenAIStreamMetadataPreambleAndMessageOnlyOverloadFailOver",
+        "TestOpenAIStreamMetadataPreambleAndMessageOnlyOverloadFailOver/native",
+        "TestOpenAIStreamMetadataPreambleAndMessageOnlyOverloadFailOver/passthrough"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIImagesCapacityShedFailoverIsRequestScoped",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 254,
+      "sourceTestBlockSha256": "9e2007e7ecf63c794040d42267da9d6f1c653d7f515619fa129bb94d1d4c3fb6",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIImagesCapacityShedFailoverIsRequestScoped"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIStreamErrorFramePassthroughRuleBeforeOutput",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 291,
+      "sourceTestBlockSha256": "4b86b8b07754b3754e48481beed6e0d6ff19722f64fd056e05b9d23ce72470b5",
+      "runExpressions": [
+        "map[bool]string{false: \"native\", true: \"passthrough\"}[passthrough]"
+      ],
+      "literalSubNames": [
+        "native",
+        "passthrough"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIStreamErrorFramePassthroughRuleBeforeOutput/native",
+        "TestOpenAIStreamErrorFramePassthroughRuleBeforeOutput/passthrough"
+      ],
+      "subNameDerivation": "literal []bool{false,true} loop and native/passthrough map or assignment in this test",
+      "expectedEvents": [
+        "TestOpenAIStreamErrorFramePassthroughRuleBeforeOutput",
+        "TestOpenAIStreamErrorFramePassthroughRuleBeforeOutput/native",
+        "TestOpenAIStreamErrorFramePassthroughRuleBeforeOutput/passthrough"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIStreamCapacityShedErrorFramePrecedingFailedStillFailsOver",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 341,
+      "sourceTestBlockSha256": "02cf8004460580f4fac1d7c76ae39da0215142f5931485d83b5ae1d071a3997b",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIStreamCapacityShedErrorFramePrecedingFailedStillFailsOver"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIStreamKeepaliveBeforeOverloadFailsOver",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 383,
+      "sourceTestBlockSha256": "27f97fd043a72e45bfa948e7480ca06d3b3a88dd7b3f61df1ebfcd8c00736cd1",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIStreamKeepaliveBeforeOverloadFailsOver"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIStreamKeepaliveOnlyFailureDoesNotRecordFirstToken",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 421,
+      "sourceTestBlockSha256": "816de98ec7a1f6dd29dbd9f3d66124be9edbdd8afde35fc79ea0708c2d9c6ed0",
+      "runExpressions": [
+        "name"
+      ],
+      "literalSubNames": [
+        "native",
+        "passthrough"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIStreamKeepaliveOnlyFailureDoesNotRecordFirstToken/native",
+        "TestOpenAIStreamKeepaliveOnlyFailureDoesNotRecordFirstToken/passthrough"
+      ],
+      "subNameDerivation": "literal []bool{false,true} loop and native/passthrough map or assignment in this test",
+      "expectedEvents": [
+        "TestOpenAIStreamKeepaliveOnlyFailureDoesNotRecordFirstToken",
+        "TestOpenAIStreamKeepaliveOnlyFailureDoesNotRecordFirstToken/native",
+        "TestOpenAIStreamKeepaliveOnlyFailureDoesNotRecordFirstToken/passthrough"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIStreamCapacityShedAfterOutputRewritesCodeForClient",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 473,
+      "sourceTestBlockSha256": "2567c72155bb1539834c5564f82c1863d6c3a120544b8a082a402270cd97d7dd",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIStreamCapacityShedAfterOutputRewritesCodeForClient"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIStreamCapacityShedAfterOutputLogsSuppressedPassthrough",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 521,
+      "sourceTestBlockSha256": "42b71dfdbc176127933434aa8bad66904cdb8cf7b498bdf38e3c21ca1872818c",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIStreamCapacityShedAfterOutputLogsSuppressedPassthrough"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIStreamProcessingFailureAfterOutputIsRecorded",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 550,
+      "sourceTestBlockSha256": "c9c377b84ff437e3927dae4ba817b9a0c1d43951a387c9d7befb1094bd523988",
+      "runExpressions": [
+        "map[bool]string{false: \"native\", true: \"passthrough\"}[passthrough]"
+      ],
+      "literalSubNames": [
+        "native",
+        "passthrough"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIStreamProcessingFailureAfterOutputIsRecorded/native",
+        "TestOpenAIStreamProcessingFailureAfterOutputIsRecorded/passthrough"
+      ],
+      "subNameDerivation": "literal []bool{false,true} loop and native/passthrough map or assignment in this test",
+      "expectedEvents": [
+        "TestOpenAIStreamProcessingFailureAfterOutputIsRecorded",
+        "TestOpenAIStreamProcessingFailureAfterOutputIsRecorded/native",
+        "TestOpenAIStreamProcessingFailureAfterOutputIsRecorded/passthrough"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestSanitizeOpenAICapacityShedErrorCodeForClient",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 603,
+      "sourceTestBlockSha256": "2b215f76513cd142872814bfd52abcfeae863f077f041d05f0aa779669eda0a9",
+      "runExpressions": [
+        "tc.name"
+      ],
+      "literalSubNames": [
+        "failed事件嵌套code改写",
+        "error帧裸code改写",
+        "failed事件只有过载文案时补充code",
+        "error帧只有过载文案时补充code",
+        "rate_limit不改写",
+        "普通server_error不改写",
+        "非JSON不改写"
+      ],
+      "expectedSubTests": [
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient/failed事件嵌套code改写",
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient/error帧裸code改写",
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient/failed事件只有过载文案时补充code",
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient/error帧只有过载文案时补充code",
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient/rate_limit不改写",
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient/普通server_error不改写",
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient/非JSON不改写"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient",
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient/failed事件嵌套code改写",
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient/error帧裸code改写",
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient/failed事件只有过载文案时补充code",
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient/error帧只有过载文案时补充code",
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient/rate_limit不改写",
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient/普通server_error不改写",
+        "TestSanitizeOpenAICapacityShedErrorCodeForClient/非JSON不改写"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestCodexOutboundVersionHasSingleSource",
+      "sourcePath": "backend/internal/service/openai_capacity_shed_test.go",
+      "sourceLine": 668,
+      "sourceTestBlockSha256": "793a7738281687c4489e51cccf9d320d0e5c43007cee08aa494bf139e0e58848",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestCodexOutboundVersionHasSingleSource"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIVisibleOutputClassification",
+      "sourcePath": "backend/internal/service/openai_visible_ttft_test.go",
+      "sourceLine": 16,
+      "sourceTestBlockSha256": "dd7e346b946307bf2f3682452f73ade00cafcaf9d91411e20291120c656e0600",
+      "runExpressions": [
+        "tt.name"
+      ],
+      "literalSubNames": [
+        "keepalive",
+        "created",
+        "empty output item",
+        "empty delta",
+        "text delta",
+        "tool arguments",
+        "partial image",
+        "completed image item",
+        "empty completed",
+        "completed with output usage only",
+        "completed with text",
+        "done marker"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIVisibleOutputClassification/keepalive",
+        "TestOpenAIVisibleOutputClassification/created",
+        "TestOpenAIVisibleOutputClassification/empty_output_item",
+        "TestOpenAIVisibleOutputClassification/empty_delta",
+        "TestOpenAIVisibleOutputClassification/text_delta",
+        "TestOpenAIVisibleOutputClassification/tool_arguments",
+        "TestOpenAIVisibleOutputClassification/partial_image",
+        "TestOpenAIVisibleOutputClassification/completed_image_item",
+        "TestOpenAIVisibleOutputClassification/empty_completed",
+        "TestOpenAIVisibleOutputClassification/completed_with_output_usage_only",
+        "TestOpenAIVisibleOutputClassification/completed_with_text",
+        "TestOpenAIVisibleOutputClassification/done_marker"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestOpenAIVisibleOutputClassification",
+        "TestOpenAIVisibleOutputClassification/keepalive",
+        "TestOpenAIVisibleOutputClassification/created",
+        "TestOpenAIVisibleOutputClassification/empty_output_item",
+        "TestOpenAIVisibleOutputClassification/empty_delta",
+        "TestOpenAIVisibleOutputClassification/text_delta",
+        "TestOpenAIVisibleOutputClassification/tool_arguments",
+        "TestOpenAIVisibleOutputClassification/partial_image",
+        "TestOpenAIVisibleOutputClassification/completed_image_item",
+        "TestOpenAIVisibleOutputClassification/empty_completed",
+        "TestOpenAIVisibleOutputClassification/completed_with_output_usage_only",
+        "TestOpenAIVisibleOutputClassification/completed_with_text",
+        "TestOpenAIVisibleOutputClassification/done_marker"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIResponsesTTFTStartsAtVisibleOutput",
+      "sourcePath": "backend/internal/service/openai_visible_ttft_test.go",
+      "sourceLine": 44,
+      "sourceTestBlockSha256": "ae7db997f1bff6722a31596767b6fa08460902cbb3d9f185b1d4c8a7d99b9d6f",
+      "runExpressions": [
+        "name"
+      ],
+      "literalSubNames": [
+        "native",
+        "passthrough"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIResponsesTTFTStartsAtVisibleOutput/native",
+        "TestOpenAIResponsesTTFTStartsAtVisibleOutput/passthrough"
+      ],
+      "subNameDerivation": "literal []bool{false,true} loop and native/passthrough map or assignment in this test",
+      "expectedEvents": [
+        "TestOpenAIResponsesTTFTStartsAtVisibleOutput",
+        "TestOpenAIResponsesTTFTStartsAtVisibleOutput/native",
+        "TestOpenAIResponsesTTFTStartsAtVisibleOutput/passthrough"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIResponsesTTFTStartsAtCompletedImage",
+      "sourcePath": "backend/internal/service/openai_visible_ttft_test.go",
+      "sourceLine": 59,
+      "sourceTestBlockSha256": "94a2ea80cd9f0cb74461a49a3c371d82c7e9c520f938592ec0128d80f954fad6",
+      "runExpressions": [
+        "name"
+      ],
+      "literalSubNames": [
+        "native",
+        "passthrough"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIResponsesTTFTStartsAtCompletedImage/native",
+        "TestOpenAIResponsesTTFTStartsAtCompletedImage/passthrough"
+      ],
+      "subNameDerivation": "literal []bool{false,true} loop and native/passthrough map or assignment in this test",
+      "expectedEvents": [
+        "TestOpenAIResponsesTTFTStartsAtCompletedImage",
+        "TestOpenAIResponsesTTFTStartsAtCompletedImage/native",
+        "TestOpenAIResponsesTTFTStartsAtCompletedImage/passthrough"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAINativeMetadataDoesNotDisarmFirstOutputTimeout",
+      "sourcePath": "backend/internal/service/openai_visible_ttft_test.go",
+      "sourceLine": 76,
+      "sourceTestBlockSha256": "2ea76b71751d287f95e6b9196810587656480c515f31d186842c11bea7ff1637",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAINativeMetadataDoesNotDisarmFirstOutputTimeout"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAINativeKeepaliveDoesNotDisarmFirstOutputTimeout",
+      "sourcePath": "backend/internal/service/openai_visible_ttft_test.go",
+      "sourceLine": 111,
+      "sourceTestBlockSha256": "04984ee83473b4717532908748adff37a0a3a7f8e8dd0a7a5d44a6b3cb76d478",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAINativeKeepaliveDoesNotDisarmFirstOutputTimeout"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 74,
+      "sourceTestBlockSha256": "50d710340b8d770fd5027f7e68d0fdad85beb7497c3fe60eae2c863e5e0500ed",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAINativeFirstOutputTimeoutDisabledPreservesSynchronousStream",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 112,
+      "sourceTestBlockSha256": "7f435695257961cd492f029d7e525221f692bfac99c915781b5d9ceaa279a6da",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAINativeFirstOutputTimeoutDisabledPreservesSynchronousStream"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAINativeFirstOutputTimeoutIgnoresPreambleAndCleansReader",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 134,
+      "sourceTestBlockSha256": "7b8e92ebc557327b3d8f567dac95919fba70b890e66939886951d8781e248fed",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAINativeFirstOutputTimeoutIgnoresPreambleAndCleansReader"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIFirstOutputTimeoutForReasoningEffort",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 175,
+      "sourceTestBlockSha256": "437dbeb67e7b6f629b778945db73e90cb3db6cdc62d4311497e38cc396a36e1a",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIFirstOutputTimeoutForReasoningEffort"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIFirstOutputTimeoutDisabledForNilOrMissingConfig",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 187,
+      "sourceTestBlockSha256": "765856df09b6a3263b529d6cf6db2191e1f283b38848eb9264f56fcd8626b036",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIFirstOutputTimeoutDisabledForNilOrMissingConfig"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIFirstOutputStageDefensiveBranches",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 200,
+      "sourceTestBlockSha256": "7cb6387a14cb94fe7c803b445d5600f259f18a4d6da45c5f7553d95c9801dbb5",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIFirstOutputStageDefensiveBranches"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIFirstOutputStageReportsSpoolAndCommitErrors",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 218,
+      "sourceTestBlockSha256": "76f8e285f26787347b5c144bbf231e52391d851a55cc95a06f1c21319eb0e347",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIFirstOutputStageReportsSpoolAndCommitErrors"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIFirstOutputStageRetriesFailedCleanup",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 248,
+      "sourceTestBlockSha256": "5aaaccb40acf07a966a3db76eb107c9fd4e3fbbe1f044bb6f9d9c6fffb46def4",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIFirstOutputStageRetriesFailedCleanup"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIFirstOutputHeaderGuardStopsAndFires",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 264,
+      "sourceTestBlockSha256": "4ea95bdc8242709c217648275ff11aed956da2d3062c5d181e663dc19bc61bb5",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIFirstOutputHeaderGuardStopsAndFires"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIRequestContextReadCloserCleansUpOnce",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 285,
+      "sourceTestBlockSha256": "8344070c0e4ca2e1bd9831e5f6e37e6c75a25c8303dd6bc420ac49603cf83eab",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIRequestContextReadCloserCleansUpOnce"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIFirstOutputStageDefaultLimitIsIndependentFromScannerLimit",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 297,
+      "sourceTestBlockSha256": "2f669989fa2731d3956b21b0fbe1a8dad522a462af2e3af1c26dafd0b13ce246",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIFirstOutputStageDefaultLimitIsIndependentFromScannerLimit"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIFirstOutputEventQueueSizeBackpressuresGuardedStreams",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 306,
+      "sourceTestBlockSha256": "f68781564bb570d3ea0f8cc23cd35bf0cc516044ba6287d36db960b1014ba46f",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIFirstOutputEventQueueSizeBackpressuresGuardedStreams"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIFirstOutputDynamicScannerLimitsOnlyWhileGuardIsActive",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 311,
+      "sourceTestBlockSha256": "59fae492ad894bf4e37cdfd56a4f0e5a5f4eb77ca5a7b776fee2ed6b49e9ef17",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIFirstOutputDynamicScannerLimitsOnlyWhileGuardIsActive"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIFirstOutputStageOverflowIsAtomicAndCleanupRemovesSpool",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 328,
+      "sourceTestBlockSha256": "54d02dfc489ac68968d7df9907d1a1d365bc222063e8f3c1f6bc24c2d0987397",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIFirstOutputStageOverflowIsAtomicAndCleanupRemovesSpool"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIFirstOutputStageCommitCopiesSpoolAndRemovesTemp",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 362,
+      "sourceTestBlockSha256": "44ac0bb6af459e3e80f758349857fac500d9038ccc5f7c261a80ad6a03dcccb5",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIFirstOutputStageCommitCopiesSpoolAndRemovesTemp"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIFirstOutputStageUnlinkFailurePermanentlyFallsBackToMemoryAndRetriesCleanup",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 389,
+      "sourceTestBlockSha256": "d08619d4e3ea60e51da93f2e90ec0f99197ce29842739495043d30b5e5fec0f3",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIFirstOutputStageUnlinkFailurePermanentlyFallsBackToMemoryAndRetriesCleanup"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAINativeFirstOutputTimeoutDisarmsAfterSemanticOutput",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 433,
+      "sourceTestBlockSha256": "b83b77524d578143358ea04cd42eee3bf5db5ccbf3d52568b95a4599fe7bd041",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAINativeFirstOutputTimeoutDisarmsAfterSemanticOutput"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAINativeFirstOutputTimeoutWaitsForCompleteSemanticEvent",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 466,
+      "sourceTestBlockSha256": "2a5cc9d1040fb9164eeb1a4fbf02f95e5ba6177186c9e9853a275ce176a4ffa8",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAINativeFirstOutputTimeoutWaitsForCompleteSemanticEvent"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAINativeFirstOutputTimeoutDoesNotLeakLargePreambleEvent",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 475,
+      "sourceTestBlockSha256": "039ec6fe2e2b0b7aa87053b6d909382423bc487385d2362a56628b2992a762dd",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAINativeFirstOutputTimeoutDoesNotLeakLargePreambleEvent"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAINativeFirstOutputEOFDispatchesTerminalEventWithoutBlankLine",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 535,
+      "sourceTestBlockSha256": "60825475fe265e7a934f06d0772f4d040b28042ae91108e55fb54b0ce4eaac19",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAINativeFirstOutputEOFDispatchesTerminalEventWithoutBlankLine"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAINativeFirstOutputStageOverflowFailsOverWithoutAttemptBytes",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 570,
+      "sourceTestBlockSha256": "b04c8531546c1c1701b2a2fba9c2a172d134132110fe2c187ef679d4a90e890e",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAINativeFirstOutputStageOverflowFailsOverWithoutAttemptBytes"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAINativeFirstOutputScannerRejectsOversizedLineWithoutLeak",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 605,
+      "sourceTestBlockSha256": "de3aa38d6edf5581a17ccc5d49074181e15be7de9c6ba64e1c2f551c3b65ab8a",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAINativeFirstOutputScannerRejectsOversizedLineWithoutLeak"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAINativeFirstOutputScannerAllowsLargeEventAfterSemanticBoundary",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 637,
+      "sourceTestBlockSha256": "3b865b2c35f0ca88d68ee4232e93c6837e48a11f988564f4f08f182a7626cdd3",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAINativeFirstOutputScannerAllowsLargeEventAfterSemanticBoundary"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAINativeFirstOutputTimeoutDisabledKeepsPreamblePrivateAcrossKeepalive",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 675,
+      "sourceTestBlockSha256": "a17fe4f968503334181bdc2d970c9040011b87c1c30acc9a095ed6f946897b7d",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAINativeFirstOutputTimeoutDisabledKeepsPreamblePrivateAcrossKeepalive"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAINativeFirstOutputFailoverKeepsAttemptHeadersPrivateAfterKeepaliveCommit",
+      "sourcePath": "backend/internal/service/openai_first_output_timeout_test.go",
+      "sourceLine": 702,
+      "sourceTestBlockSha256": "45c5c463fd939920bf1869989d90327a6b12ee6143cda4dcc727b20b9ed262fa",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAINativeFirstOutputFailoverKeepsAttemptHeadersPrivateAfterKeepaliveCommit"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestStartOpenAISSEKeepalive_WorksWithoutCompactMarker",
+      "sourcePath": "backend/internal/service/openai_passthrough_preoutput_keepalive_test.go",
+      "sourceLine": 45,
+      "sourceTestBlockSha256": "c8f4b1ac45f9884b65d9edc100a40877d5cf218084a9ee163b2648885eb6640d",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestStartOpenAISSEKeepalive_WorksWithoutCompactMarker"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestPassthroughKeepaliveDoesNotBlockPreOutputFailover",
+      "sourcePath": "backend/internal/service/openai_passthrough_preoutput_keepalive_test.go",
+      "sourceLine": 70,
+      "sourceTestBlockSha256": "705540e655bf3b980066b1d0f2a95acdeedb226fb38ccba95234e2b9aa2af728",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestPassthroughKeepaliveDoesNotBlockPreOutputFailover"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestPassthroughKeepaliveStopsBeforeHandingOverWriter",
+      "sourcePath": "backend/internal/service/openai_passthrough_preoutput_keepalive_test.go",
+      "sourceLine": 90,
+      "sourceTestBlockSha256": "495bbbcc49401b2cd762a05c7436fc5a9e2a9d248248b91fefd773c6a11f088d",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestPassthroughKeepaliveStopsBeforeHandingOverWriter"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestPassthroughKeepaliveDisabledKeepsWriterUntouched",
+      "sourcePath": "backend/internal/service/openai_passthrough_preoutput_keepalive_test.go",
+      "sourceLine": 109,
+      "sourceTestBlockSha256": "1de6df6f5cf5ec8e8e4148696d62a929f21196820cdeb710e6c49ef02c605897",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestPassthroughKeepaliveDisabledKeepsWriterUntouched"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestHandleStreamingResponsePassthrough_KeepsAliveBeforeFirstEventAndStopsBeforeWriterHandoff",
+      "sourcePath": "backend/internal/service/openai_passthrough_preoutput_keepalive_test.go",
+      "sourceLine": 206,
+      "sourceTestBlockSha256": "38d4e2b76b25ffae2b0ef60e2c7f464ff14cec70404d080186911739ffe5d712",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestHandleStreamingResponsePassthrough_KeepsAliveBeforeFirstEventAndStopsBeforeWriterHandoff"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAICompactKeepaliveAdjustedWrittenSize_StreamKeepaliveOnlyIsUnwritten",
+      "sourcePath": "backend/internal/service/openai_stream_keepalive_bytes_test.go",
+      "sourceLine": 14,
+      "sourceTestBlockSha256": "b80b34b1b65c619349df831129a7bbf48282c96c515900cbc8d17f5f81d1ac09",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAICompactKeepaliveAdjustedWrittenSize_StreamKeepaliveOnlyIsUnwritten"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAICompactKeepaliveAdjustedWrittenSize_StreamKeepalivePlusApplicationByte",
+      "sourcePath": "backend/internal/service/openai_stream_keepalive_bytes_test.go",
+      "sourceLine": 31,
+      "sourceTestBlockSha256": "bffd7f32dae32ff0fbe237f813b16e19ea83a96276fb054b968f5a0244c2bc04",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAICompactKeepaliveAdjustedWrittenSize_StreamKeepalivePlusApplicationByte"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAICompactKeepaliveAdjustedWrittenSize_NoStreamKeepaliveUnchanged",
+      "sourcePath": "backend/internal/service/openai_stream_keepalive_bytes_test.go",
+      "sourceLine": 41,
+      "sourceTestBlockSha256": "f2993037657228fb05d4a3acaaa2491ca770d26a4b0b0c1052e61903e7ba3c05",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAICompactKeepaliveAdjustedWrittenSize_NoStreamKeepaliveUnchanged"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAICompactKeepaliveAdjustedWrittenSize_CompactAndStreamKeepaliveBothExcluded",
+      "sourcePath": "backend/internal/service/openai_stream_keepalive_bytes_test.go",
+      "sourceLine": 58,
+      "sourceTestBlockSha256": "9ce26d20625e51e980b84d4f508d4daae033897c81ce5d6b95faf9210ef43beb",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAICompactKeepaliveAdjustedWrittenSize_CompactAndStreamKeepaliveBothExcluded"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAICompactKeepaliveAdjustedWrittenSize_ExcludesKeepalivesFromPriorFailoverAttempts",
+      "sourcePath": "backend/internal/service/openai_stream_keepalive_bytes_test.go",
+      "sourceLine": 76,
+      "sourceTestBlockSha256": "b107af9c4866c9e57c363422439a773327367c7cd74a2f204a4ced4c3476790e",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAICompactKeepaliveAdjustedWrittenSize_ExcludesKeepalivesFromPriorFailoverAttempts"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIStreamKeepalive_WriteFailureMarksClientDisconnected_Chat",
+      "sourcePath": "backend/internal/service/openai_stream_keepalive_disconnect_test.go",
+      "sourceLine": 74,
+      "sourceTestBlockSha256": "b89cac80540646ba5e6dd8b99c4164b13480d165a56154d2a1f28fa05e2b672c",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIStreamKeepalive_WriteFailureMarksClientDisconnected_Chat"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIStreamKeepalive_WriteFailureMarksClientDisconnected_Messages",
+      "sourcePath": "backend/internal/service/openai_stream_keepalive_disconnect_test.go",
+      "sourceLine": 88,
+      "sourceTestBlockSha256": "bbc282f6e3a39da0a98e426c1a4bee891510b9f7b46286480baff3f29a1b200b",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIStreamKeepalive_WriteFailureMarksClientDisconnected_Messages"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIStreamKeepalive_WriteFailureMarksClientDisconnected_ResponsesFirstOutputGuard",
+      "sourcePath": "backend/internal/service/openai_stream_keepalive_disconnect_test.go",
+      "sourceLine": 102,
+      "sourceTestBlockSha256": "a246c94b85306c29e44dfad05e0920d6ca13045330987555fa2be69ae6fdac8b",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIStreamKeepalive_WriteFailureMarksClientDisconnected_ResponsesFirstOutputGuard"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnTransportErrorFailoverSafety",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 594,
+      "sourceTestBlockSha256": "26c83131e9e4a73e68de1d176375daf6abca84cbf7bbc548fe5c94b8f1a7b22c",
+      "runExpressions": [
+        "tt.name"
+      ],
+      "literalSubNames": [
+        "first_turn_fails_over_before_downstream_event",
+        "later_turn_does_not_replay_completed_turns"
+      ],
+      "expectedSubTests": [
+        "TestProxyOpenAIWSHTTPBridgeTurnTransportErrorFailoverSafety/first_turn_fails_over_before_downstream_event",
+        "TestProxyOpenAIWSHTTPBridgeTurnTransportErrorFailoverSafety/later_turn_does_not_replay_completed_turns"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnTransportErrorFailoverSafety",
+        "TestProxyOpenAIWSHTTPBridgeTurnTransportErrorFailoverSafety/first_turn_fails_over_before_downstream_event",
+        "TestProxyOpenAIWSHTTPBridgeTurnTransportErrorFailoverSafety/later_turn_does_not_replay_completed_turns"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 654,
+      "sourceTestBlockSha256": "c9b644ff821f77ba6e79245c14dfb5dcc0aa202ee0e3ea8d0656f06c6ab506a7",
+      "runExpressions": [
+        "tt.name"
+      ],
+      "literalSubNames": [
+        "first_turn_401",
+        "first_turn_429",
+        "first_turn_500",
+        "later_turn_500_does_not_replay"
+      ],
+      "expectedSubTests": [
+        "TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety/first_turn_401",
+        "TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety/first_turn_429",
+        "TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety/first_turn_500",
+        "TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety/later_turn_500_does_not_replay"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety",
+        "TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety/first_turn_401",
+        "TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety/first_turn_429",
+        "TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety/first_turn_500",
+        "TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety/later_turn_500_does_not_replay"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 707,
+      "sourceTestBlockSha256": "52ccf5ab7920896054d6afa4b65904156a4447adb83479e8008aab0f514aaa32",
+      "runExpressions": [
+        "fmt.Sprintf(\"turn_%d\", turn)"
+      ],
+      "literalSubNames": [
+        "turn_1",
+        "turn_2"
+      ],
+      "expectedSubTests": [
+        "TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety/turn_1",
+        "TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety/turn_2"
+      ],
+      "subNameDerivation": "literal []int{1,2} loop and fmt.Sprintf(turn_%d)",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety",
+        "TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety/turn_1",
+        "TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety/turn_2"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 748,
+      "sourceTestBlockSha256": "687a3b7f36b327e91a682e6424546bd52d127071f6796a23c61af9d6e7b0efb0",
+      "runExpressions": [
+        "tt.name"
+      ],
+      "literalSubNames": [
+        "turn2_error_frame",
+        "turn2_bare_response_failed"
+      ],
+      "expectedSubTests": [
+        "TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient/turn2_error_frame",
+        "TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient/turn2_bare_response_failed"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient",
+        "TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient/turn2_error_frame",
+        "TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient/turn2_bare_response_failed"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnStagesMetadataBeforeCapacityFailover",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 831,
+      "sourceTestBlockSha256": "9ade6f5f35bd836ff3c6553acca16f843e61b8f59790fc92a489bd506637e93e",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnStagesMetadataBeforeCapacityFailover"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnCapacityErrorFrameIsRequestScoped",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 856,
+      "sourceTestBlockSha256": "54dea1f7c2ea9a3521e7b9b09f882770ff35b780337c9a0433822a185c4f0b19",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnCapacityErrorFrameIsRequestScoped"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnDoesNotReplayCapacityAfterSemanticOutput",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 876,
+      "sourceTestBlockSha256": "8694d7b1176922d4a4dc822cebc29fb7614fd4585a52b47788e05a0e38614beb",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnDoesNotReplayCapacityAfterSemanticOutput"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnCommitsStagedMetadataWithTerminalEvent",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 907,
+      "sourceTestBlockSha256": "73cd6e007593fef2d597e0f992bda8d7d88c581c002440fc594d23ebcc25fe75",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnCommitsStagedMetadataWithTerminalEvent"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnStagingLimitFailsOver",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 930,
+      "sourceTestBlockSha256": "6eb1ac34200d7f18474eb1b7d2d360773af002e48d175e9c36d89509d2ef03ef",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnStagingLimitFailsOver"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnRequiresTerminalEvent",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 965,
+      "sourceTestBlockSha256": "4f6db758d7f604e971d65b03717b02cb7dc18646e8497f2b504288cabd044d19",
+      "runExpressions": [
+        "tt.name"
+      ],
+      "literalSubNames": [
+        "done_without_events_fails_over",
+        "created_then_done_fails_over_before_semantic_output"
+      ],
+      "expectedSubTests": [
+        "TestProxyOpenAIWSHTTPBridgeTurnRequiresTerminalEvent/done_without_events_fails_over",
+        "TestProxyOpenAIWSHTTPBridgeTurnRequiresTerminalEvent/created_then_done_fails_over_before_semantic_output"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnRequiresTerminalEvent",
+        "TestProxyOpenAIWSHTTPBridgeTurnRequiresTerminalEvent/done_without_events_fails_over",
+        "TestProxyOpenAIWSHTTPBridgeTurnRequiresTerminalEvent/created_then_done_fails_over_before_semantic_output"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnStreamReadErrorFailsOverBeforeWrite",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 1027,
+      "sourceTestBlockSha256": "19e3cd36ec6526ac6d3b9d78659dd151e56bebbf8268f52a8e85ccb92a411ba7",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnStreamReadErrorFailsOverBeforeWrite"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnKeepaliveDoesNotBlockPreOutputFailover",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 1055,
+      "sourceTestBlockSha256": "b52b497765acc08500fe7dd5893695ea636fe6596ede9ace3e4697c87ef4f58f",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnKeepaliveDoesNotBlockPreOutputFailover"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnKeepaliveWriteFailure",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 1093,
+      "sourceTestBlockSha256": "629dab72dc7c028bc2144e0cb78d4823f700c548732440f4ad4fc0d9523a0133",
+      "runExpressions": [
+        "tc.name"
+      ],
+      "literalSubNames": [
+        "write error",
+        "client disconnect"
+      ],
+      "expectedSubTests": [
+        "TestProxyOpenAIWSHTTPBridgeTurnKeepaliveWriteFailure/write_error",
+        "TestProxyOpenAIWSHTTPBridgeTurnKeepaliveWriteFailure/client_disconnect"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnKeepaliveWriteFailure",
+        "TestProxyOpenAIWSHTTPBridgeTurnKeepaliveWriteFailure/write_error",
+        "TestProxyOpenAIWSHTTPBridgeTurnKeepaliveWriteFailure/client_disconnect"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 1153,
+      "sourceTestBlockSha256": "e43cc7e81acf22501c91d234994292114e475d5e486156a1c5daaa14bddc5795",
+      "runExpressions": [
+        "tc.name"
+      ],
+      "literalSubNames": [
+        "failed with usage",
+        "retryable error frame",
+        "upstream read failure",
+        "upstream EOF without terminal",
+        "done without terminal"
+      ],
+      "expectedSubTests": [
+        "TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver/failed_with_usage",
+        "TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver/retryable_error_frame",
+        "TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver/upstream_read_failure",
+        "TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver/upstream_EOF_without_terminal",
+        "TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver/done_without_terminal"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver",
+        "TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver/failed_with_usage",
+        "TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver/retryable_error_frame",
+        "TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver/upstream_read_failure",
+        "TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver/upstream_EOF_without_terminal",
+        "TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver/done_without_terminal"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnFallsBackToStatusText",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 1223,
+      "sourceTestBlockSha256": "c41efdaac569e3543ae7b379d3791ac7043fb22d7719d6fc50a52694d15914c6",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnFallsBackToStatusText"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnSSEServerErrorFailsOver",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_test.go",
+      "sourceLine": 1253,
+      "sourceTestBlockSha256": "08fd2f9029eea2222074a00a8c9f5e11ff3d3d2f641a1df7b46f774f1330a4bd",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnSSEServerErrorFailsOver"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestBuildOpenAIWSCurrentTurnRetryPayloadRejectsOrphanToolOutput",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_resume_test.go",
+      "sourceLine": 21,
+      "sourceTestBlockSha256": "4c630a279b0f7f49044f88bdb28eb55ed472965d634a9580d86a30629c9e684d",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestBuildOpenAIWSCurrentTurnRetryPayloadRejectsOrphanToolOutput"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnLaterTurn429FailsOverBeforeClientWrite",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_resume_test.go",
+      "sourceLine": 34,
+      "sourceTestBlockSha256": "79df3e7b8843d77819802715f319869952bf15fc3960d8e0c96cac2c7a180666",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnLaterTurn429FailsOverBeforeClientWrite"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestProxyOpenAIWSHTTPBridgeTurnLaterTurnDoesNotFailOverAfterDownstreamOutput",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_resume_test.go",
+      "sourceLine": 66,
+      "sourceTestBlockSha256": "3b655f31375725117698e58fcd695b16dd17c2f3a8109c5d0c2b62eb0c8a95e1",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestProxyOpenAIWSHTTPBridgeTurnLaterTurnDoesNotFailOverAfterDownstreamOutput"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIWSHTTPBridgeLaterTurn429RetriesCurrentTurnOnReplacementAccount",
+      "sourcePath": "backend/internal/service/openai_ws_http_bridge_resume_test.go",
+      "sourceLine": 103,
+      "sourceTestBlockSha256": "6473bf1e27da59871a5dba427db6eebbb0ea86124d621f6c9ab0e5ef12d88575",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIWSHTTPBridgeLaterTurn429RetriesCurrentTurnOnReplacementAccount"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics",
+      "sourcePath": "backend/internal/service/openai_stream_event_terminal_type_test.go",
+      "sourceLine": 11,
+      "sourceTestBlockSha256": "31b60dc6d9e22d3387a0edf963c9c1877209b1f38226a71f69bbaba02a8e3622",
+      "runExpressions": [
+        "tt.name"
+      ],
+      "literalSubNames": [
+        "empty",
+        "whitespace",
+        "done",
+        "JSON outer whitespace",
+        "completed",
+        "response done",
+        "failed",
+        "incomplete",
+        "cancelled",
+        "canceled",
+        "delta",
+        "invalid JSON",
+        "terminal with trailing garbage",
+        "nonterminal with trailing garbage",
+        "type whitespace remains nonterminal"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/empty",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/whitespace",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/done",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/JSON_outer_whitespace",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/completed",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/response_done",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/failed",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/incomplete",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/cancelled",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/canceled",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/delta",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/invalid_JSON",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/terminal_with_trailing_garbage",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/nonterminal_with_trailing_garbage",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/type_whitespace_remains_nonterminal"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/empty",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/whitespace",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/done",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/JSON_outer_whitespace",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/completed",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/response_done",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/failed",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/incomplete",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/cancelled",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/canceled",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/delta",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/invalid_JSON",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/terminal_with_trailing_garbage",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/nonterminal_with_trailing_garbage",
+        "TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics/type_whitespace_remains_nonterminal"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestNonStreamingSSEToJSON_CapacityFailedEventFailsOver",
+      "sourcePath": "backend/internal/service/openai_nonstreaming_terminal_failure_failover_test.go",
+      "sourceLine": 68,
+      "sourceTestBlockSha256": "5e1f4c007a86f29b198d6c2e276dadca4ea4f205d5f922f1f9c17385e87c2264",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestNonStreamingSSEToJSON_CapacityFailedEventFailsOver"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestNonStreamingSSEToJSON_UnclassifiedFailedEventFailsOver",
+      "sourcePath": "backend/internal/service/openai_nonstreaming_terminal_failure_failover_test.go",
+      "sourceLine": 90,
+      "sourceTestBlockSha256": "6fea18445853471ad92e29f5abfb7bdca86f919ae8f8d206a9cf6e694248ebd2",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestNonStreamingSSEToJSON_UnclassifiedFailedEventFailsOver"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError",
+      "sourcePath": "backend/internal/service/openai_nonstreaming_terminal_failure_failover_test.go",
+      "sourceLine": 109,
+      "sourceTestBlockSha256": "b1528c28cc8a6e986dcaf58d2f19c5b7687ef98ea12015bdd45779a258cd51d7",
+      "runExpressions": [
+        "tc.name"
+      ],
+      "literalSubNames": [
+        "invalid_request",
+        "context_window",
+        "content_policy"
+      ],
+      "expectedSubTests": [
+        "TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError/invalid_request",
+        "TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError/context_window",
+        "TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError/content_policy"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError",
+        "TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError/invalid_request",
+        "TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError/context_window",
+        "TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError/content_policy"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier",
+      "sourcePath": "backend/internal/service/openai_nonstreaming_terminal_failure_failover_test.go",
+      "sourceLine": 153,
+      "sourceTestBlockSha256": "48f2f3d1b37015da8ee496365eeb4c98cb484b0668ea6c89a7dc54709cb0b376",
+      "runExpressions": [
+        "\"non_transient_stays_protocol_error\"",
+        "\"transient_fails_over\""
+      ],
+      "literalSubNames": [
+        "non_transient_stays_protocol_error",
+        "transient_fails_over"
+      ],
+      "expectedSubTests": [
+        "TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier/non_transient_stays_protocol_error",
+        "TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier/transient_fails_over"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier",
+        "TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier/non_transient_stays_protocol_error",
+        "TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier/transient_fails_over"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal",
+      "sourcePath": "backend/internal/service/openai_nonstreaming_terminal_failure_failover_test.go",
+      "sourceLine": 192,
+      "sourceTestBlockSha256": "a8a0a9ba31ad3d8141110a1f3127fc795a4518f3c8a49014ca77fc44f508c805",
+      "runExpressions": [
+        "tc.name"
+      ],
+      "literalSubNames": [
+        "cyber policy stays client actionable",
+        "context window stays client actionable",
+        "expired credentials may switch accounts",
+        "rate limit may switch accounts",
+        "overloaded server is transient",
+        "retry language is an explicit transient signal",
+        "unclassified error does not spend another account"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal/cyber_policy_stays_client_actionable",
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal/context_window_stays_client_actionable",
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal/expired_credentials_may_switch_accounts",
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal/rate_limit_may_switch_accounts",
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal/overloaded_server_is_transient",
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal/retry_language_is_an_explicit_transient_signal",
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal/unclassified_error_does_not_spend_another_account"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal",
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal/cyber_policy_stays_client_actionable",
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal/context_window_stays_client_actionable",
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal/expired_credentials_may_switch_accounts",
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal/rate_limit_may_switch_accounts",
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal/overloaded_server_is_transient",
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal/retry_language_is_an_explicit_transient_signal",
+        "TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal/unclassified_error_does_not_spend_another_account"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestNonStreamingPassthroughSSEToJSON_CapacityFailedEventFailsOver",
+      "sourcePath": "backend/internal/service/openai_nonstreaming_terminal_failure_failover_test.go",
+      "sourceLine": 251,
+      "sourceTestBlockSha256": "8ef36a0465d317efe631cd399434b178ae6aabea348a876e58cbbf65889b078b",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestNonStreamingPassthroughSSEToJSON_CapacityFailedEventFailsOver"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestNonStreamingPassthroughSSEToJSON_BareErrorRespectsConservativeClassifier",
+      "sourcePath": "backend/internal/service/openai_nonstreaming_terminal_failure_failover_test.go",
+      "sourceLine": 271,
+      "sourceTestBlockSha256": "d4452ea83a09547035aacdf3c3b717894906ec9d2f93739990896e872d09419c",
+      "runExpressions": [
+        "tc.name"
+      ],
+      "literalSubNames": [
+        "generic error remains protocol error",
+        "rate limit can fail over before response is written"
+      ],
+      "expectedSubTests": [
+        "TestNonStreamingPassthroughSSEToJSON_BareErrorRespectsConservativeClassifier/generic_error_remains_protocol_error",
+        "TestNonStreamingPassthroughSSEToJSON_BareErrorRespectsConservativeClassifier/rate_limit_can_fail_over_before_response_is_written"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestNonStreamingPassthroughSSEToJSON_BareErrorRespectsConservativeClassifier",
+        "TestNonStreamingPassthroughSSEToJSON_BareErrorRespectsConservativeClassifier/generic_error_remains_protocol_error",
+        "TestNonStreamingPassthroughSSEToJSON_BareErrorRespectsConservativeClassifier/rate_limit_can_fail_over_before_response_is_written"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict",
+      "sourcePath": "backend/internal/service/openai_nonstreaming_terminal_failure_failover_test.go",
+      "sourceLine": 312,
+      "sourceTestBlockSha256": "2936ca5ded7f055c9ebbedb524b3bce3127f6b5aca3ed62943450229471d7a45",
+      "runExpressions": [
+        "data[:min(len(data), 60)]"
+      ],
+      "literalSubNames": [
+        "{\"type\":\"response.failed\",\"error\":{\"message\":\"Selected model",
+        "{\"type\":\"response.failed\",\"error\":{\"message\":\"upstream rejec",
+        "{\"type\":\"response.failed\",\"error\":{\"type\":\"invalid_request_e",
+        "{\"type\":\"response.failed\",\"response\":{\"id\":\"r\",\"status\":\"fai",
+        "{\"type\":\"response.failed\",\"error\":{\"type\":\"content_policy_vi"
+      ],
+      "expectedSubTests": [
+        "TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict/{\"type\":\"response.failed\",\"error\":{\"message\":\"Selected_model",
+        "TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict/{\"type\":\"response.failed\",\"error\":{\"message\":\"upstream_rejec",
+        "TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict/{\"type\":\"response.failed\",\"error\":{\"type\":\"invalid_request_e",
+        "TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict/{\"type\":\"response.failed\",\"response\":{\"id\":\"r\",\"status\":\"fai",
+        "TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict/{\"type\":\"response.failed\",\"error\":{\"type\":\"content_policy_vi"
+      ],
+      "subNameDerivation": "literal payloads table first60 ASCII bytes; Go testing whitespace rewrite",
+      "expectedEvents": [
+        "TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict",
+        "TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict/{\"type\":\"response.failed\",\"error\":{\"message\":\"Selected_model",
+        "TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict/{\"type\":\"response.failed\",\"error\":{\"message\":\"upstream_rejec",
+        "TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict/{\"type\":\"response.failed\",\"error\":{\"type\":\"invalid_request_e",
+        "TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict/{\"type\":\"response.failed\",\"response\":{\"id\":\"r\",\"status\":\"fai",
+        "TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict/{\"type\":\"response.failed\",\"error\":{\"type\":\"content_policy_vi"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestNonStreamingSSEToJSON_CommittedResponseKeepsProtocolError",
+      "sourcePath": "backend/internal/service/openai_nonstreaming_terminal_failure_failover_test.go",
+      "sourceLine": 340,
+      "sourceTestBlockSha256": "4fa65de09935cb0b8b1c4aede45066d275a10199338d7f5b65764c21c14a84d9",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestNonStreamingSSEToJSON_CommittedResponseKeepsProtocolError"
+      ]
+    },
+    {
+      "package": "./internal/service",
+      "top": "TestNonStreamingTerminalFailureFailover_NilAccountProposesNothing",
+      "sourcePath": "backend/internal/service/openai_nonstreaming_terminal_failure_failover_test.go",
+      "sourceLine": 356,
+      "sourceTestBlockSha256": "c1f82829ab9207edd55ce917165f1a353104c4a8a0e45af6f1dc650cb1b0bb5e",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestNonStreamingTerminalFailureFailover_NilAccountProposesNothing"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestSameAccountRetryDelayFor",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 31,
+      "sourceTestBlockSha256": "adb508839c4c515b599f2e8493f14640ebdcd26cb5c52c2a05582f69b41f9a23",
+      "runExpressions": [
+        "tc.name",
+        "\"non request-scoped errors keep fixed delay\"",
+        "\"nil error keeps fixed delay\""
+      ],
+      "literalSubNames": [
+        "first retry",
+        "second retry",
+        "third retry",
+        "fourth retry",
+        "fifth retry",
+        "capped retry",
+        "non request-scoped errors keep fixed delay",
+        "nil error keeps fixed delay"
+      ],
+      "expectedSubTests": [
+        "TestSameAccountRetryDelayFor/first_retry",
+        "TestSameAccountRetryDelayFor/second_retry",
+        "TestSameAccountRetryDelayFor/third_retry",
+        "TestSameAccountRetryDelayFor/fourth_retry",
+        "TestSameAccountRetryDelayFor/fifth_retry",
+        "TestSameAccountRetryDelayFor/capped_retry",
+        "TestSameAccountRetryDelayFor/non_request-scoped_errors_keep_fixed_delay",
+        "TestSameAccountRetryDelayFor/nil_error_keeps_fixed_delay"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestSameAccountRetryDelayFor",
+        "TestSameAccountRetryDelayFor/first_retry",
+        "TestSameAccountRetryDelayFor/second_retry",
+        "TestSameAccountRetryDelayFor/third_retry",
+        "TestSameAccountRetryDelayFor/fourth_retry",
+        "TestSameAccountRetryDelayFor/fifth_retry",
+        "TestSameAccountRetryDelayFor/capped_retry",
+        "TestSameAccountRetryDelayFor/non_request-scoped_errors_keep_fixed_delay",
+        "TestSameAccountRetryDelayFor/nil_error_keeps_fixed_delay"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestNewFailoverState",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 76,
+      "sourceTestBlockSha256": "e93f79f551270c945dbcdd29b095ae0faccfa86c06760410be0db5e45bd3bbdf",
+      "runExpressions": [
+        "\"初始化字段正确\"",
+        "\"无绑定会话\"",
+        "\"零最大切换次数\""
+      ],
+      "literalSubNames": [
+        "初始化字段正确",
+        "无绑定会话",
+        "零最大切换次数"
+      ],
+      "expectedSubTests": [
+        "TestNewFailoverState/初始化字段正确",
+        "TestNewFailoverState/无绑定会话",
+        "TestNewFailoverState/零最大切换次数"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestNewFailoverState",
+        "TestNewFailoverState/初始化字段正确",
+        "TestNewFailoverState/无绑定会话",
+        "TestNewFailoverState/零最大切换次数"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestHandleFailoverError_429BelowThresholdDoesNotSwitch",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 102,
+      "sourceTestBlockSha256": "58fbc0a283d4e1992a7ddabe01ef57b10100048f29abf6b6ea68f6511c5d98dd",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestHandleFailoverError_429BelowThresholdDoesNotSwitch"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestHandleFailoverError_429BelowThresholdPreservesSameAccountRetry",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 116,
+      "sourceTestBlockSha256": "81808d262c4dc33ccb33ea906e52c639b885247e43808846b7c6fef2f85a1b9d",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestHandleFailoverError_429BelowThresholdPreservesSameAccountRetry"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestSleepWithContext",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 134,
+      "sourceTestBlockSha256": "503c75439d0b43cdc7de17ff7724c17a880173c65ffa409b483a72d821bb8696",
+      "runExpressions": [
+        "\"零时长立即返回true\"",
+        "\"负时长立即返回true\"",
+        "\"正常等待后返回true\"",
+        "\"已取消context立即返回false\"",
+        "\"等待期间context取消返回false\""
+      ],
+      "literalSubNames": [
+        "零时长立即返回true",
+        "负时长立即返回true",
+        "正常等待后返回true",
+        "已取消context立即返回false",
+        "等待期间context取消返回false"
+      ],
+      "expectedSubTests": [
+        "TestSleepWithContext/零时长立即返回true",
+        "TestSleepWithContext/负时长立即返回true",
+        "TestSleepWithContext/正常等待后返回true",
+        "TestSleepWithContext/已取消context立即返回false",
+        "TestSleepWithContext/等待期间context取消返回false"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestSleepWithContext",
+        "TestSleepWithContext/零时长立即返回true",
+        "TestSleepWithContext/负时长立即返回true",
+        "TestSleepWithContext/正常等待后返回true",
+        "TestSleepWithContext/已取消context立即返回false",
+        "TestSleepWithContext/等待期间context取消返回false"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestHandleFailoverError_BasicSwitch",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 187,
+      "sourceTestBlockSha256": "c6607b1378ef12631d4ce51aee938c6e119296a5ffa2f38fafc6cd5e05abbd17",
+      "runExpressions": [
+        "\"非重试错误_非Antigravity_直接切换\"",
+        "\"非重试错误_Antigravity_第一次切换无延迟\"",
+        "\"非重试错误_Antigravity_第二次切换有1秒延迟\"",
+        "\"连续切换直到耗尽\"",
+        "\"MaxSwitches为0时首次即耗尽\""
+      ],
+      "literalSubNames": [
+        "非重试错误_非Antigravity_直接切换",
+        "非重试错误_Antigravity_第一次切换无延迟",
+        "非重试错误_Antigravity_第二次切换有1秒延迟",
+        "连续切换直到耗尽",
+        "MaxSwitches为0时首次即耗尽"
+      ],
+      "expectedSubTests": [
+        "TestHandleFailoverError_BasicSwitch/非重试错误_非Antigravity_直接切换",
+        "TestHandleFailoverError_BasicSwitch/非重试错误_Antigravity_第一次切换无延迟",
+        "TestHandleFailoverError_BasicSwitch/非重试错误_Antigravity_第二次切换有1秒延迟",
+        "TestHandleFailoverError_BasicSwitch/连续切换直到耗尽",
+        "TestHandleFailoverError_BasicSwitch/MaxSwitches为0时首次即耗尽"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestHandleFailoverError_BasicSwitch",
+        "TestHandleFailoverError_BasicSwitch/非重试错误_非Antigravity_直接切换",
+        "TestHandleFailoverError_BasicSwitch/非重试错误_Antigravity_第一次切换无延迟",
+        "TestHandleFailoverError_BasicSwitch/非重试错误_Antigravity_第二次切换有1秒延迟",
+        "TestHandleFailoverError_BasicSwitch/连续切换直到耗尽",
+        "TestHandleFailoverError_BasicSwitch/MaxSwitches为0时首次即耗尽"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestHandleFailoverError_CacheBilling",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 283,
+      "sourceTestBlockSha256": "94ee4abb47ebac8a7f4bc04f866db5184d842d64af0cacfb82eaab22fe2b66cf",
+      "runExpressions": [
+        "\"hasBoundSession为true且实际切换时设置ForceCacheBilling\"",
+        "\"同账号重试时仅凭hasBoundSession不设置ForceCacheBilling\"",
+        "\"同账号重试耗尽并实际切换时设置ForceCacheBilling\"",
+        "\"failoverErr.ForceCacheBilling为true时设置\"",
+        "\"同账号重试保留显式ForceCacheBilling\"",
+        "\"两者均为false时不设置\"",
+        "\"一旦设置不会被后续错误重置\""
+      ],
+      "literalSubNames": [
+        "hasBoundSession为true且实际切换时设置ForceCacheBilling",
+        "同账号重试时仅凭hasBoundSession不设置ForceCacheBilling",
+        "同账号重试耗尽并实际切换时设置ForceCacheBilling",
+        "failoverErr.ForceCacheBilling为true时设置",
+        "同账号重试保留显式ForceCacheBilling",
+        "两者均为false时不设置",
+        "一旦设置不会被后续错误重置"
+      ],
+      "expectedSubTests": [
+        "TestHandleFailoverError_CacheBilling/hasBoundSession为true且实际切换时设置ForceCacheBilling",
+        "TestHandleFailoverError_CacheBilling/同账号重试时仅凭hasBoundSession不设置ForceCacheBilling",
+        "TestHandleFailoverError_CacheBilling/同账号重试耗尽并实际切换时设置ForceCacheBilling",
+        "TestHandleFailoverError_CacheBilling/failoverErr.ForceCacheBilling为true时设置",
+        "TestHandleFailoverError_CacheBilling/同账号重试保留显式ForceCacheBilling",
+        "TestHandleFailoverError_CacheBilling/两者均为false时不设置",
+        "TestHandleFailoverError_CacheBilling/一旦设置不会被后续错误重置"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestHandleFailoverError_CacheBilling",
+        "TestHandleFailoverError_CacheBilling/hasBoundSession为true且实际切换时设置ForceCacheBilling",
+        "TestHandleFailoverError_CacheBilling/同账号重试时仅凭hasBoundSession不设置ForceCacheBilling",
+        "TestHandleFailoverError_CacheBilling/同账号重试耗尽并实际切换时设置ForceCacheBilling",
+        "TestHandleFailoverError_CacheBilling/failoverErr.ForceCacheBilling为true时设置",
+        "TestHandleFailoverError_CacheBilling/同账号重试保留显式ForceCacheBilling",
+        "TestHandleFailoverError_CacheBilling/两者均为false时不设置",
+        "TestHandleFailoverError_CacheBilling/一旦设置不会被后续错误重置"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestHandleFailoverError_SameAccountRetry",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 368,
+      "sourceTestBlockSha256": "77ebd4187f6a095e0afaf1cc1156111c674097b8e0e495405169cad22f4da522",
+      "runExpressions": [
+        "\"第一次重试返回FailoverContinue\"",
+        "\"达到最大重试次数前均返回FailoverContinue\"",
+        "\"超过最大重试次数后触发TempUnschedule并切换\"",
+        "\"不同账号独立跟踪重试次数\"",
+        "\"重试耗尽后再次遇到同账号_直接切换\"",
+        "\"uses the configured retry limit instead of the legacy default\"",
+        "\"allows a configured retry limit of zero to disable same-account retry\""
+      ],
+      "literalSubNames": [
+        "第一次重试返回FailoverContinue",
+        "达到最大重试次数前均返回FailoverContinue",
+        "超过最大重试次数后触发TempUnschedule并切换",
+        "不同账号独立跟踪重试次数",
+        "重试耗尽后再次遇到同账号_直接切换",
+        "uses the configured retry limit instead of the legacy default",
+        "allows a configured retry limit of zero to disable same-account retry"
+      ],
+      "expectedSubTests": [
+        "TestHandleFailoverError_SameAccountRetry/第一次重试返回FailoverContinue",
+        "TestHandleFailoverError_SameAccountRetry/达到最大重试次数前均返回FailoverContinue",
+        "TestHandleFailoverError_SameAccountRetry/超过最大重试次数后触发TempUnschedule并切换",
+        "TestHandleFailoverError_SameAccountRetry/不同账号独立跟踪重试次数",
+        "TestHandleFailoverError_SameAccountRetry/重试耗尽后再次遇到同账号_直接切换",
+        "TestHandleFailoverError_SameAccountRetry/uses_the_configured_retry_limit_instead_of_the_legacy_default",
+        "TestHandleFailoverError_SameAccountRetry/allows_a_configured_retry_limit_of_zero_to_disable_same-account_retry"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestHandleFailoverError_SameAccountRetry",
+        "TestHandleFailoverError_SameAccountRetry/第一次重试返回FailoverContinue",
+        "TestHandleFailoverError_SameAccountRetry/达到最大重试次数前均返回FailoverContinue",
+        "TestHandleFailoverError_SameAccountRetry/超过最大重试次数后触发TempUnschedule并切换",
+        "TestHandleFailoverError_SameAccountRetry/不同账号独立跟踪重试次数",
+        "TestHandleFailoverError_SameAccountRetry/重试耗尽后再次遇到同账号_直接切换",
+        "TestHandleFailoverError_SameAccountRetry/uses_the_configured_retry_limit_instead_of_the_legacy_default",
+        "TestHandleFailoverError_SameAccountRetry/allows_a_configured_retry_limit_of_zero_to_disable_same-account_retry"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestHandleFailoverError_TempUnschedule",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 494,
+      "sourceTestBlockSha256": "dd1db0eb287a4f3ffe27f710e58c5a0013b9534d6acff6f2d24c8ab2dab10065",
+      "runExpressions": [
+        "\"非重试错误不调用TempUnschedule\"",
+        "\"重试错误耗尽后调用TempUnschedule_传入正确参数\""
+      ],
+      "literalSubNames": [
+        "非重试错误不调用TempUnschedule",
+        "重试错误耗尽后调用TempUnschedule_传入正确参数"
+      ],
+      "expectedSubTests": [
+        "TestHandleFailoverError_TempUnschedule/非重试错误不调用TempUnschedule",
+        "TestHandleFailoverError_TempUnschedule/重试错误耗尽后调用TempUnschedule_传入正确参数"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestHandleFailoverError_TempUnschedule",
+        "TestHandleFailoverError_TempUnschedule/非重试错误不调用TempUnschedule",
+        "TestHandleFailoverError_TempUnschedule/重试错误耗尽后调用TempUnschedule_传入正确参数"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestHandleFailoverError_ContextCanceled",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 526,
+      "sourceTestBlockSha256": "44a5befe8aaf6fec150054e1b1348a009d21eb57dd8759e60b0dfef6c6742774",
+      "runExpressions": [
+        "\"同账号重试sleep期间context取消\"",
+        "\"入口即已取消_不改动任何failover状态\"",
+        "\"Antigravity延迟期间context取消\""
+      ],
+      "literalSubNames": [
+        "同账号重试sleep期间context取消",
+        "入口即已取消_不改动任何failover状态",
+        "Antigravity延迟期间context取消"
+      ],
+      "expectedSubTests": [
+        "TestHandleFailoverError_ContextCanceled/同账号重试sleep期间context取消",
+        "TestHandleFailoverError_ContextCanceled/入口即已取消_不改动任何failover状态",
+        "TestHandleFailoverError_ContextCanceled/Antigravity延迟期间context取消"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestHandleFailoverError_ContextCanceled",
+        "TestHandleFailoverError_ContextCanceled/同账号重试sleep期间context取消",
+        "TestHandleFailoverError_ContextCanceled/入口即已取消_不改动任何failover状态",
+        "TestHandleFailoverError_ContextCanceled/Antigravity延迟期间context取消"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestHandleFailoverError_FailedAccountIDs",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 591,
+      "sourceTestBlockSha256": "a46b7c0bd084d5ab9be2a2e3af296fac113ae0b75633b78158b5cbaba830809c",
+      "runExpressions": [
+        "\"切换时添加到失败列表\"",
+        "\"耗尽时也添加到失败列表\"",
+        "\"同账号重试期间不添加到失败列表\"",
+        "\"同一账号多次切换不重复添加\""
+      ],
+      "literalSubNames": [
+        "切换时添加到失败列表",
+        "耗尽时也添加到失败列表",
+        "同账号重试期间不添加到失败列表",
+        "同一账号多次切换不重复添加"
+      ],
+      "expectedSubTests": [
+        "TestHandleFailoverError_FailedAccountIDs/切换时添加到失败列表",
+        "TestHandleFailoverError_FailedAccountIDs/耗尽时也添加到失败列表",
+        "TestHandleFailoverError_FailedAccountIDs/同账号重试期间不添加到失败列表",
+        "TestHandleFailoverError_FailedAccountIDs/同一账号多次切换不重复添加"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestHandleFailoverError_FailedAccountIDs",
+        "TestHandleFailoverError_FailedAccountIDs/切换时添加到失败列表",
+        "TestHandleFailoverError_FailedAccountIDs/耗尽时也添加到失败列表",
+        "TestHandleFailoverError_FailedAccountIDs/同账号重试期间不添加到失败列表",
+        "TestHandleFailoverError_FailedAccountIDs/同一账号多次切换不重复添加"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestHandleFailoverError_LastFailoverErr",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 636,
+      "sourceTestBlockSha256": "4023343b773cb9f5ede2b50db3f5f969dcc95157b8409ec8dd4196742bbcf736",
+      "runExpressions": [
+        "\"每次调用都更新LastFailoverErr\"",
+        "\"同账号重试时也更新LastFailoverErr\""
+      ],
+      "literalSubNames": [
+        "每次调用都更新LastFailoverErr",
+        "同账号重试时也更新LastFailoverErr"
+      ],
+      "expectedSubTests": [
+        "TestHandleFailoverError_LastFailoverErr/每次调用都更新LastFailoverErr",
+        "TestHandleFailoverError_LastFailoverErr/同账号重试时也更新LastFailoverErr"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestHandleFailoverError_LastFailoverErr",
+        "TestHandleFailoverError_LastFailoverErr/每次调用都更新LastFailoverErr",
+        "TestHandleFailoverError_LastFailoverErr/同账号重试时也更新LastFailoverErr"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestHandleFailoverError_IntegrationScenario",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 664,
+      "sourceTestBlockSha256": "01927facc3e570a203cad1dbae16b3af371877a2e040793b62e98b4d4083d336",
+      "runExpressions": [
+        "\"模拟完整failover流程_多账号混合重试与切换\"",
+        "\"模拟Antigravity平台完整流程\"",
+        "\"ForceCacheBilling通过错误标志设置\""
+      ],
+      "literalSubNames": [
+        "模拟完整failover流程_多账号混合重试与切换",
+        "模拟Antigravity平台完整流程",
+        "ForceCacheBilling通过错误标志设置"
+      ],
+      "expectedSubTests": [
+        "TestHandleFailoverError_IntegrationScenario/模拟完整failover流程_多账号混合重试与切换",
+        "TestHandleFailoverError_IntegrationScenario/模拟Antigravity平台完整流程",
+        "TestHandleFailoverError_IntegrationScenario/ForceCacheBilling通过错误标志设置"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestHandleFailoverError_IntegrationScenario",
+        "TestHandleFailoverError_IntegrationScenario/模拟完整failover流程_多账号混合重试与切换",
+        "TestHandleFailoverError_IntegrationScenario/模拟Antigravity平台完整流程",
+        "TestHandleFailoverError_IntegrationScenario/ForceCacheBilling通过错误标志设置"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestHandleFailoverError_EdgeCases",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 759,
+      "sourceTestBlockSha256": "a211fcb4221e7532645c4113b620fc195ae8cf0338899419dff0e596fa64868c",
+      "runExpressions": [
+        "\"StatusCode为0的错误也能正常处理\"",
+        "\"AccountID为0也能正常跟踪\"",
+        "\"负AccountID也能正常跟踪\"",
+        "\"空平台名称不触发Antigravity延迟\""
+      ],
+      "literalSubNames": [
+        "StatusCode为0的错误也能正常处理",
+        "AccountID为0也能正常跟踪",
+        "负AccountID也能正常跟踪",
+        "空平台名称不触发Antigravity延迟"
+      ],
+      "expectedSubTests": [
+        "TestHandleFailoverError_EdgeCases/StatusCode为0的错误也能正常处理",
+        "TestHandleFailoverError_EdgeCases/AccountID为0也能正常跟踪",
+        "TestHandleFailoverError_EdgeCases/负AccountID也能正常跟踪",
+        "TestHandleFailoverError_EdgeCases/空平台名称不触发Antigravity延迟"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestHandleFailoverError_EdgeCases",
+        "TestHandleFailoverError_EdgeCases/StatusCode为0的错误也能正常处理",
+        "TestHandleFailoverError_EdgeCases/AccountID为0也能正常跟踪",
+        "TestHandleFailoverError_EdgeCases/负AccountID也能正常跟踪",
+        "TestHandleFailoverError_EdgeCases/空平台名称不触发Antigravity延迟"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestHandleSelectionExhausted",
+      "sourcePath": "backend/internal/handler/failover_loop_test.go",
+      "sourceLine": 808,
+      "sourceTestBlockSha256": "eb7de2779060170846c3670e04fd758def08a73989de7475dbb24115d57f839c",
+      "runExpressions": [
+        "\"无LastFailoverErr时返回Exhausted\"",
+        "\"非503错误返回Exhausted\"",
+        "\"503且未耗尽_等待后返回Continue并清除失败列表\"",
+        "\"503但SwitchCount已超过MaxSwitches_返回Exhausted\"",
+        "\"503但context已取消_返回Canceled\"",
+        "\"503且SwitchCount等于MaxSwitches_仍可重试\""
+      ],
+      "literalSubNames": [
+        "无LastFailoverErr时返回Exhausted",
+        "非503错误返回Exhausted",
+        "503且未耗尽_等待后返回Continue并清除失败列表",
+        "503但SwitchCount已超过MaxSwitches_返回Exhausted",
+        "503但context已取消_返回Canceled",
+        "503且SwitchCount等于MaxSwitches_仍可重试"
+      ],
+      "expectedSubTests": [
+        "TestHandleSelectionExhausted/无LastFailoverErr时返回Exhausted",
+        "TestHandleSelectionExhausted/非503错误返回Exhausted",
+        "TestHandleSelectionExhausted/503且未耗尽_等待后返回Continue并清除失败列表",
+        "TestHandleSelectionExhausted/503但SwitchCount已超过MaxSwitches_返回Exhausted",
+        "TestHandleSelectionExhausted/503但context已取消_返回Canceled",
+        "TestHandleSelectionExhausted/503且SwitchCount等于MaxSwitches_仍可重试"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestHandleSelectionExhausted",
+        "TestHandleSelectionExhausted/无LastFailoverErr时返回Exhausted",
+        "TestHandleSelectionExhausted/非503错误返回Exhausted",
+        "TestHandleSelectionExhausted/503且未耗尽_等待后返回Continue并清除失败列表",
+        "TestHandleSelectionExhausted/503但SwitchCount已超过MaxSwitches_返回Exhausted",
+        "TestHandleSelectionExhausted/503但context已取消_返回Canceled",
+        "TestHandleSelectionExhausted/503且SwitchCount等于MaxSwitches_仍可重试"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIForwardMayFailoverAfterKeepaliveOnly",
+      "sourcePath": "backend/internal/handler/openai_gateway_first_output_timeout_test.go",
+      "sourceLine": 14,
+      "sourceTestBlockSha256": "af476cdc90048e67a5414b27891c9563a950724025e8cc6ac0801fd4ebbfc009",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIForwardMayFailoverAfterKeepaliveOnly"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIForwardFailoverGuardsNilAndUncommittedInputs",
+      "sourcePath": "backend/internal/handler/openai_gateway_first_output_timeout_test.go",
+      "sourceLine": 30,
+      "sourceTestBlockSha256": "f5f48d6a552eda8ea75c244e18f82763ad4cac3119fad9f5b130d0d92f6fcb42",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIForwardFailoverGuardsNilAndUncommittedInputs"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIFirstOutputFailoverSwitchesOnlyOnce",
+      "sourcePath": "backend/internal/handler/openai_gateway_first_output_timeout_test.go",
+      "sourceLine": 40,
+      "sourceTestBlockSha256": "9defd17f4620e8f0941906e4016e7a1b9a9c69f68a5d796032e4e16be79575e8",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIFirstOutputFailoverSwitchesOnlyOnce"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIFirstOutputFailoverExhaustionRequiresSafeErrorAndCounter",
+      "sourcePath": "backend/internal/handler/openai_gateway_first_output_timeout_test.go",
+      "sourceLine": 50,
+      "sourceTestBlockSha256": "c72297fa4d90450f95af1cc27a8ee3163ef015b13b1a12e3faa1b39dd14f04a5",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIFirstOutputFailoverExhaustionRequiresSafeErrorAndCounter"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIRequestDisallowsFailoverAfterClientCancellation",
+      "sourcePath": "backend/internal/handler/openai_gateway_first_output_timeout_test.go",
+      "sourceLine": 65,
+      "sourceTestBlockSha256": "cb118d7e6d4fc8fc6fa4a07534b762be3fd57e5e6e6c882372557eeba8111ad3",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIRequestDisallowsFailoverAfterClientCancellation"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIForwardMayFailover_KeepaliveOnlyBytesAllowFailover",
+      "sourcePath": "backend/internal/handler/openai_gateway_keepalive_failover_test.go",
+      "sourceLine": 19,
+      "sourceTestBlockSha256": "d749ab15510ac0d2b0c8d454db92fed103778d606d3a5b0422ce21c57f59322d",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIForwardMayFailover_KeepaliveOnlyBytesAllowFailover"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIForwardWroteKeepaliveOnly_FalseWhenUnwrittenOrApplicationBytes",
+      "sourcePath": "backend/internal/handler/openai_gateway_keepalive_failover_test.go",
+      "sourceLine": 33,
+      "sourceTestBlockSha256": "2e0e251816e03481f5d93f56cffbe0a4f7430d23074937830b82a362f1c20b86",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIForwardWroteKeepaliveOnly_FalseWhenUnwrittenOrApplicationBytes"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestPoolModeSameAccountRetry_TimeoutLimitCapsRetries",
+      "sourcePath": "backend/internal/handler/openai_pool_availability_retry_limit_test.go",
+      "sourceLine": 12,
+      "sourceTestBlockSha256": "f8ff7a4d57eacc06fce0b265a2cd0cc2a0b4e65036fea4744ce5eafe23f1be6e",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestPoolModeSameAccountRetry_TimeoutLimitCapsRetries"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIMessages_RawChatFallbackStreamReadErrorRecordsPartialUsage",
+      "sourcePath": "backend/internal/handler/openai_gateway_messages_partial_usage_test.go",
+      "sourceLine": 60,
+      "sourceTestBlockSha256": "e74d5f3567a4acee72c9df36582868a5e29fd5ac5443544f041225ef6e1dc815",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIMessages_RawChatFallbackStreamReadErrorRecordsPartialUsage"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIMessages_ResponsesClientCancelDuringReadErrorRecordsUsageWithoutFallback",
+      "sourcePath": "backend/internal/handler/openai_gateway_messages_partial_usage_test.go",
+      "sourceLine": 195,
+      "sourceTestBlockSha256": "da37980de626cf80997c3cc041a644184f1dd774aceeab5762b353b6523df72e",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIMessages_ResponsesClientCancelDuringReadErrorRecordsUsageWithoutFallback"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIMessages_RawChatFallbackClientDisconnectDuringStreamReadErrorRecordsPartialUsage",
+      "sourcePath": "backend/internal/handler/openai_gateway_messages_partial_usage_test.go",
+      "sourceLine": 341,
+      "sourceTestBlockSha256": "92362eae3a21b3bffbee4f474dd342a2b9e9dde75ec528b8f8525ce214d6db66",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIMessages_RawChatFallbackClientDisconnectDuringStreamReadErrorRecordsPartialUsage"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIMessages_RecordUsageBillingErrorLogsFailure",
+      "sourcePath": "backend/internal/handler/openai_gateway_messages_partial_usage_test.go",
+      "sourceLine": 476,
+      "sourceTestBlockSha256": "7a3092217f2022a663f3d6a0801d3ada9ff071f3cac716df91c836fec41c5c0b",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIMessages_RecordUsageBillingErrorLogsFailure"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIMessages_ForwardGenericErrorWithNilResultSkipsUsageRecord",
+      "sourcePath": "backend/internal/handler/openai_gateway_messages_partial_usage_test.go",
+      "sourceLine": 611,
+      "sourceTestBlockSha256": "2617cfcf3e3951cc65b64d049d755f27aa9bc0b13bd12a46d4b331800d890b76",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIMessages_ForwardGenericErrorWithNilResultSkipsUsageRecord"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIResponses_RawChatFallbackStreamReadErrorRecordsPartialUsage",
+      "sourcePath": "backend/internal/handler/openai_gateway_responses_partial_usage_test.go",
+      "sourceLine": 37,
+      "sourceTestBlockSha256": "00e0937d6868ee40e990aceb0a0d76b8239b88cfa8898b4065310d49512a6c4e",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIResponses_RawChatFallbackStreamReadErrorRecordsPartialUsage"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIResponses_ChannelModelMappingRewritesForwardModel",
+      "sourcePath": "backend/internal/handler/openai_gateway_responses_partial_usage_test.go",
+      "sourceLine": 168,
+      "sourceTestBlockSha256": "7724d887268189b6887ee09850bbb741b045e3a230e4a1e1c33524971fa9cf76",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIResponses_ChannelModelMappingRewritesForwardModel"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIResponses_RecordUsageBillingErrorLogsFailure",
+      "sourcePath": "backend/internal/handler/openai_gateway_responses_partial_usage_test.go",
+      "sourceLine": 352,
+      "sourceTestBlockSha256": "50d71b4d6bd0741cc89ab49ebb72e662d00866c874f1da09eafc43551d33d770",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIResponses_RecordUsageBillingErrorLogsFailure"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIResponses_ForwardGenericErrorWithNilResultSkipsUsageRecord",
+      "sourcePath": "backend/internal/handler/openai_gateway_responses_partial_usage_test.go",
+      "sourceLine": 487,
+      "sourceTestBlockSha256": "e2e161f7cd3ac34667267b075d36328c7ad22d25313c1bb1069f6395dfbc9fac",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIResponses_ForwardGenericErrorWithNilResultSkipsUsageRecord"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGatewayHandlerChatCompletions_FailoverAbortsWhenClientDisconnected",
+      "sourcePath": "backend/internal/handler/openai_responses_failover_cancel_test.go",
+      "sourceLine": 182,
+      "sourceTestBlockSha256": "936a92b89542d9414722a8ae61cd4281af3d02f90377cf2f304b797661aaf676",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIGatewayHandlerChatCompletions_FailoverAbortsWhenClientDisconnected"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGatewayHandlerEmbeddings_FailoverAbortsWhenClientDisconnected",
+      "sourcePath": "backend/internal/handler/openai_responses_failover_cancel_test.go",
+      "sourceLine": 198,
+      "sourceTestBlockSha256": "746b99328a259640fef77cfcb2668f9347b98a1e84b54bcc9d98622002b25b47",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIGatewayHandlerEmbeddings_FailoverAbortsWhenClientDisconnected"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGatewayHandlerImages_FailoverAbortsWhenClientDisconnected",
+      "sourcePath": "backend/internal/handler/openai_responses_failover_cancel_test.go",
+      "sourceLine": 213,
+      "sourceTestBlockSha256": "5322d9c822fc1187f09f26e370f8d6abff2112ac2b0d07ef9248f031e2cb4547",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIGatewayHandlerImages_FailoverAbortsWhenClientDisconnected"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGatewayHandlerMessages_FailoverAbortsWhenClientDisconnected",
+      "sourcePath": "backend/internal/handler/openai_responses_failover_cancel_test.go",
+      "sourceLine": 229,
+      "sourceTestBlockSha256": "4513f2037894c0e176695ae4825ab1d769f7d3fe79fd829ce5a19137a88ca63a",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIGatewayHandlerMessages_FailoverAbortsWhenClientDisconnected"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGatewayHandlerFailoverGuardsStopBeforeSelectingAnAccount",
+      "sourcePath": "backend/internal/handler/openai_responses_failover_cancel_test.go",
+      "sourceLine": 245,
+      "sourceTestBlockSha256": "d284b1256b9a51d97c08afcb8710e00594631c4ca428492a7666f394b0b62884",
+      "runExpressions": [
+        "tc.name"
+      ],
+      "literalSubNames": [
+        "responses",
+        "chat_completions",
+        "messages"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIGatewayHandlerFailoverGuardsStopBeforeSelectingAnAccount/responses",
+        "TestOpenAIGatewayHandlerFailoverGuardsStopBeforeSelectingAnAccount/chat_completions",
+        "TestOpenAIGatewayHandlerFailoverGuardsStopBeforeSelectingAnAccount/messages"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestOpenAIGatewayHandlerFailoverGuardsStopBeforeSelectingAnAccount",
+        "TestOpenAIGatewayHandlerFailoverGuardsStopBeforeSelectingAnAccount/responses",
+        "TestOpenAIGatewayHandlerFailoverGuardsStopBeforeSelectingAnAccount/chat_completions",
+        "TestOpenAIGatewayHandlerFailoverGuardsStopBeforeSelectingAnAccount/messages"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGatewayHandlerFailoverGuardsStopAfterAccountSelectionError",
+      "sourcePath": "backend/internal/handler/openai_responses_failover_cancel_test.go",
+      "sourceLine": 290,
+      "sourceTestBlockSha256": "da250dc580f32d4bb71f3bdfb73b2615a820a14ea158ea20013ecca4eded4f83",
+      "runExpressions": [
+        "tc.name"
+      ],
+      "literalSubNames": [
+        "responses",
+        "chat_completions",
+        "embeddings",
+        "images",
+        "messages"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIGatewayHandlerFailoverGuardsStopAfterAccountSelectionError/responses",
+        "TestOpenAIGatewayHandlerFailoverGuardsStopAfterAccountSelectionError/chat_completions",
+        "TestOpenAIGatewayHandlerFailoverGuardsStopAfterAccountSelectionError/embeddings",
+        "TestOpenAIGatewayHandlerFailoverGuardsStopAfterAccountSelectionError/images",
+        "TestOpenAIGatewayHandlerFailoverGuardsStopAfterAccountSelectionError/messages"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestOpenAIGatewayHandlerFailoverGuardsStopAfterAccountSelectionError",
+        "TestOpenAIGatewayHandlerFailoverGuardsStopAfterAccountSelectionError/responses",
+        "TestOpenAIGatewayHandlerFailoverGuardsStopAfterAccountSelectionError/chat_completions",
+        "TestOpenAIGatewayHandlerFailoverGuardsStopAfterAccountSelectionError/embeddings",
+        "TestOpenAIGatewayHandlerFailoverGuardsStopAfterAccountSelectionError/images",
+        "TestOpenAIGatewayHandlerFailoverGuardsStopAfterAccountSelectionError/messages"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestFailoverClientGoneStopsCommittedCompactKeepalive",
+      "sourcePath": "backend/internal/handler/openai_responses_failover_cancel_test.go",
+      "sourceLine": 354,
+      "sourceTestBlockSha256": "fedccde7463308f08aa48e45e0b68d5ac61ad936c0ea957f35f728f42989c7b0",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestFailoverClientGoneStopsCommittedCompactKeepalive"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected",
+      "sourcePath": "backend/internal/handler/openai_responses_failover_cancel_test.go",
+      "sourceLine": 368,
+      "sourceTestBlockSha256": "348cc40dc4f36ec3e0f15affefb3c2b6a3eaa9a3d53a45153493e92da58a9f82",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient",
+      "sourcePath": "backend/internal/handler/openai_responses_failover_cancel_test.go",
+      "sourceLine": 399,
+      "sourceTestBlockSha256": "bb7bf8abbb68d6f2ba9c62ec32d98ca9ff2db07e5936039a45c73af571d7046a",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_SwitchesAccount",
+      "sourcePath": "backend/internal/handler/openai_gateway_keepalive_mismatch_e2e_test.go",
+      "sourceLine": 349,
+      "sourceTestBlockSha256": "513bb4da01c953060ebf4af8da91e62124f3db77cdd55e8d8beee0b29feea0b7",
+      "runExpressions": [
+        "entry.name"
+      ],
+      "literalSubNames": [
+        "responses",
+        "chat_completions",
+        "messages"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_SwitchesAccount/responses",
+        "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_SwitchesAccount/chat_completions",
+        "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_SwitchesAccount/messages"
+      ],
+      "subNameDerivation": "keepaliveMismatchEntries() literal helper table at lines159-187; responses/chat_completions/messages",
+      "expectedEvents": [
+        "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_SwitchesAccount",
+        "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_SwitchesAccount/responses",
+        "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_SwitchesAccount/chat_completions",
+        "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_SwitchesAccount/messages"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGateway_RawChatPreambleDeadlineThenOverload_SwitchesAccount",
+      "sourcePath": "backend/internal/handler/openai_gateway_keepalive_mismatch_e2e_test.go",
+      "sourceLine": 393,
+      "sourceTestBlockSha256": "4d7436d15a616add0e8546c7199486f1a419a6a03a31c505ed81513265a1cd80",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIGateway_RawChatPreambleDeadlineThenOverload_SwitchesAccount"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_ExhaustedEndsInStream",
+      "sourcePath": "backend/internal/handler/openai_gateway_keepalive_mismatch_e2e_test.go",
+      "sourceLine": 429,
+      "sourceTestBlockSha256": "dec0f3605def283fc6dce57332cf9da1b38260b43ebcf8731cc685e1bda3a38c",
+      "runExpressions": [
+        "entry.name"
+      ],
+      "literalSubNames": [
+        "responses",
+        "chat_completions",
+        "messages"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_ExhaustedEndsInStream/responses",
+        "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_ExhaustedEndsInStream/chat_completions",
+        "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_ExhaustedEndsInStream/messages"
+      ],
+      "subNameDerivation": "keepaliveMismatchEntries() literal helper table at lines159-187; responses/chat_completions/messages",
+      "expectedEvents": [
+        "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_ExhaustedEndsInStream",
+        "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_ExhaustedEndsInStream/responses",
+        "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_ExhaustedEndsInStream/chat_completions",
+        "TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_ExhaustedEndsInStream/messages"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetriesSameAccount",
+      "sourcePath": "backend/internal/handler/openai_gateway_keepalive_mismatch_e2e_test.go",
+      "sourceLine": 468,
+      "sourceTestBlockSha256": "6c15b41707ee1500f8d233a7ff9fb2bb3ffddadd25043c7e4201f33b5a1c2e5b",
+      "runExpressions": [
+        "entry.name"
+      ],
+      "literalSubNames": [
+        "responses",
+        "chat_completions",
+        "messages"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetriesSameAccount/responses",
+        "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetriesSameAccount/chat_completions",
+        "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetriesSameAccount/messages"
+      ],
+      "subNameDerivation": "keepaliveMismatchEntries() literal helper table at lines159-187; responses/chat_completions/messages",
+      "expectedEvents": [
+        "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetriesSameAccount",
+        "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetriesSameAccount/responses",
+        "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetriesSameAccount/chat_completions",
+        "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetriesSameAccount/messages"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetryCanceledByClient",
+      "sourcePath": "backend/internal/handler/openai_gateway_keepalive_mismatch_e2e_test.go",
+      "sourceLine": 493,
+      "sourceTestBlockSha256": "e3bcc4fd77a3d5b12eafdee3fe302f543bb6705b9b9c4a83164f226f26682283",
+      "runExpressions": [
+        "entry.name"
+      ],
+      "literalSubNames": [
+        "responses",
+        "chat_completions",
+        "messages"
+      ],
+      "expectedSubTests": [
+        "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetryCanceledByClient/responses",
+        "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetryCanceledByClient/chat_completions",
+        "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetryCanceledByClient/messages"
+      ],
+      "subNameDerivation": "keepaliveMismatchEntries() literal helper table at lines159-187; responses/chat_completions/messages",
+      "expectedEvents": [
+        "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetryCanceledByClient",
+        "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetryCanceledByClient/responses",
+        "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetryCanceledByClient/chat_completions",
+        "TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetryCanceledByClient/messages"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGateway_PassthroughKeepaliveAcrossPreOutputFailovers_ReachesThirdAccount",
+      "sourcePath": "backend/internal/handler/openai_gateway_keepalive_mismatch_e2e_test.go",
+      "sourceLine": 538,
+      "sourceTestBlockSha256": "926bef777ebd3d707a880792293013f3f0ef549ce1f68d4758dd07483abcb69e",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIGateway_PassthroughKeepaliveAcrossPreOutputFailovers_ReachesThirdAccount"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIGateway_PassthroughKeepaliveAfterSemanticOutput_DoesNotSwitchAgain",
+      "sourcePath": "backend/internal/handler/openai_gateway_keepalive_mismatch_e2e_test.go",
+      "sourceLine": 568,
+      "sourceTestBlockSha256": "fc05402c6693792e8b597e88413789c16de134e6030a9d7f2e3b6b6c9d8df58a",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIGateway_PassthroughKeepaliveAfterSemanticOutput_DoesNotSwitchAgain"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestNewOpenAIHopSlotPolicy_OnlyForChainedNonLastHop",
+      "sourcePath": "backend/internal/handler/openai_hop_slot_test.go",
+      "sourceLine": 110,
+      "sourceTestBlockSha256": "7360b39787270957c6f2b7445b5e348657a298553bc68714e62333a43b49e10f",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestNewOpenAIHopSlotPolicy_OnlyForChainedNonLastHop"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIHopSlotPolicy_WaitFor",
+      "sourcePath": "backend/internal/handler/openai_hop_slot_test.go",
+      "sourceLine": 142,
+      "sourceTestBlockSha256": "269aae8272cc6cb1245920deab0f758651a0dfda24e8ae7bd3948e560352d396",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIHopSlotPolicy_WaitFor"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIHopSlotPolicy_OnCapacityFailure",
+      "sourcePath": "backend/internal/handler/openai_hop_slot_test.go",
+      "sourceLine": 175,
+      "sourceTestBlockSha256": "8136a74390bd1d0142ead0319d4a57ed84f77f15bb081c2b664c38fe0a3fea3a",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIHopSlotPolicy_OnCapacityFailure"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestAcquireSlotForHop_NilHopKeepsLegacyBehavior",
+      "sourcePath": "backend/internal/handler/openai_hop_slot_test.go",
+      "sourceLine": 210,
+      "sourceTestBlockSha256": "1fe4994033ada905fc55a4eb647cb204bc1b4b584eb6539fc7a470faca4bea5d",
+      "runExpressions": [
+        "\"等待超时：写 429 并返回 Failed\"",
+        "\"排队已满：写 429 并返回 Failed\"",
+        "\"旧入口 acquireResponsesAccountSlot 与 ForHop(nil) 一致\"",
+        "\"无链请求使用完整的 WaitPlan.Timeout（不被任何短等封顶）\"",
+        "\"快速抢到槽：直接返回 Acquired\"",
+        "\"selection / WaitPlan 为空：写 503\""
+      ],
+      "literalSubNames": [
+        "等待超时：写 429 并返回 Failed",
+        "排队已满：写 429 并返回 Failed",
+        "旧入口 acquireResponsesAccountSlot 与 ForHop(nil) 一致",
+        "无链请求使用完整的 WaitPlan.Timeout（不被任何短等封顶）",
+        "快速抢到槽：直接返回 Acquired",
+        "selection / WaitPlan 为空：写 503"
+      ],
+      "expectedSubTests": [
+        "TestAcquireSlotForHop_NilHopKeepsLegacyBehavior/等待超时：写_429_并返回_Failed",
+        "TestAcquireSlotForHop_NilHopKeepsLegacyBehavior/排队已满：写_429_并返回_Failed",
+        "TestAcquireSlotForHop_NilHopKeepsLegacyBehavior/旧入口_acquireResponsesAccountSlot_与_ForHop(nil)_一致",
+        "TestAcquireSlotForHop_NilHopKeepsLegacyBehavior/无链请求使用完整的_WaitPlan.Timeout（不被任何短等封顶）",
+        "TestAcquireSlotForHop_NilHopKeepsLegacyBehavior/快速抢到槽：直接返回_Acquired",
+        "TestAcquireSlotForHop_NilHopKeepsLegacyBehavior/selection_/_WaitPlan_为空：写_503"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestAcquireSlotForHop_NilHopKeepsLegacyBehavior",
+        "TestAcquireSlotForHop_NilHopKeepsLegacyBehavior/等待超时：写_429_并返回_Failed",
+        "TestAcquireSlotForHop_NilHopKeepsLegacyBehavior/排队已满：写_429_并返回_Failed",
+        "TestAcquireSlotForHop_NilHopKeepsLegacyBehavior/旧入口_acquireResponsesAccountSlot_与_ForHop(nil)_一致",
+        "TestAcquireSlotForHop_NilHopKeepsLegacyBehavior/无链请求使用完整的_WaitPlan.Timeout（不被任何短等封顶）",
+        "TestAcquireSlotForHop_NilHopKeepsLegacyBehavior/快速抢到槽：直接返回_Acquired",
+        "TestAcquireSlotForHop_NilHopKeepsLegacyBehavior/selection_/_WaitPlan_为空：写_503"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse",
+      "sourcePath": "backend/internal/handler/openai_hop_slot_test.go",
+      "sourceLine": 271,
+      "sourceTestBlockSha256": "dea114978b88599cd71875e17a2eebdb17a7458f233c8946269d297e7742d09c",
+      "runExpressions": [
+        "\"单账号等待超时：返回 RetrySelection，不写响应，短等生效\"",
+        "\"单账号排队已满：返回 RetrySelection，不写响应\"",
+        "\"GroupSaturated 等待超时：直接 BusyDeferred，不重选，不写响应\"",
+        "\"GroupSaturated 排队已满：BusyDeferred\"",
+        "\"总预算已用完：不排队直接按等待超时处理\"",
+        "\"构造器给出的剩余预算为 0：同样不排队（S1），而不是不限时\"",
+        "\"有链也能直接抢到槽：不受影响\""
+      ],
+      "literalSubNames": [
+        "单账号等待超时：返回 RetrySelection，不写响应，短等生效",
+        "单账号排队已满：返回 RetrySelection，不写响应",
+        "GroupSaturated 等待超时：直接 BusyDeferred，不重选，不写响应",
+        "GroupSaturated 排队已满：BusyDeferred",
+        "总预算已用完：不排队直接按等待超时处理",
+        "构造器给出的剩余预算为 0：同样不排队（S1），而不是不限时",
+        "有链也能直接抢到槽：不受影响"
+      ],
+      "expectedSubTests": [
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse/单账号等待超时：返回_RetrySelection，不写响应，短等生效",
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse/单账号排队已满：返回_RetrySelection，不写响应",
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse/GroupSaturated_等待超时：直接_BusyDeferred，不重选，不写响应",
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse/GroupSaturated_排队已满：BusyDeferred",
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse/总预算已用完：不排队直接按等待超时处理",
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse/构造器给出的剩余预算为_0：同样不排队（S1），而不是不限时",
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse/有链也能直接抢到槽：不受影响"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse",
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse/单账号等待超时：返回_RetrySelection，不写响应，短等生效",
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse/单账号排队已满：返回_RetrySelection，不写响应",
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse/GroupSaturated_等待超时：直接_BusyDeferred，不重选，不写响应",
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse/GroupSaturated_排队已满：BusyDeferred",
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse/总预算已用完：不排队直接按等待超时处理",
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse/构造器给出的剩余预算为_0：同样不排队（S1），而不是不限时",
+        "TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse/有链也能直接抢到槽：不受影响"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestAcquireSlotForHop_PreviousResponseLayerKeepsOriginalWaitAndError",
+      "sourcePath": "backend/internal/handler/openai_hop_slot_test.go",
+      "sourceLine": 346,
+      "sourceTestBlockSha256": "f00aae7c10a166d9109a578111c2b61a6027a8072a95340a7c517d658f25d4b6",
+      "runExpressions": [
+        "\"等待超时：用原 WaitPlan 时长，写原错误，不重选\"",
+        "\"排队已满：写原 429，不重选\""
+      ],
+      "literalSubNames": [
+        "等待超时：用原 WaitPlan 时长，写原错误，不重选",
+        "排队已满：写原 429，不重选"
+      ],
+      "expectedSubTests": [
+        "TestAcquireSlotForHop_PreviousResponseLayerKeepsOriginalWaitAndError/等待超时：用原_WaitPlan_时长，写原错误，不重选",
+        "TestAcquireSlotForHop_PreviousResponseLayerKeepsOriginalWaitAndError/排队已满：写原_429，不重选"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestAcquireSlotForHop_PreviousResponseLayerKeepsOriginalWaitAndError",
+        "TestAcquireSlotForHop_PreviousResponseLayerKeepsOriginalWaitAndError/等待超时：用原_WaitPlan_时长，写原错误，不重选",
+        "TestAcquireSlotForHop_PreviousResponseLayerKeepsOriginalWaitAndError/排队已满：写原_429，不重选"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestAcquireSlotForHop_LastHopWritesResponseLikeNoChain",
+      "sourcePath": "backend/internal/handler/openai_hop_slot_test.go",
+      "sourceLine": 372,
+      "sourceTestBlockSha256": "94ffb2f887032acd1ef72432a6e6b00d2fa3338256cfab4721b6bd790d405263",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestAcquireSlotForHop_LastHopWritesResponseLikeNoChain"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestAcquireSlotForHop_ReselectOutcomes",
+      "sourcePath": "backend/internal/handler/openai_hop_slot_test.go",
+      "sourceLine": 409,
+      "sourceTestBlockSha256": "b841f53e1e66f0ff1ef5c30891872406f24f4fa50fb3f8423f11698e4c68cbe0",
+      "runExpressions": [
+        "\"重选成功：忙号被排除，空闲号服务，不跨组，不占 switchCount\"",
+        "\"重选仍是 WaitPlan：按繁忙回退（BusyDeferred），不写响应\"",
+        "\"GroupSaturated：不重选，直接 BusyDeferred\"",
+        "\"命中 previous_response_id：不重选也不回退，保持原错误\"",
+        "\"请求带 previous_response_id 但选号没命中该层：按普通规则重选\""
+      ],
+      "literalSubNames": [
+        "重选成功：忙号被排除，空闲号服务，不跨组，不占 switchCount",
+        "重选仍是 WaitPlan：按繁忙回退（BusyDeferred），不写响应",
+        "GroupSaturated：不重选，直接 BusyDeferred",
+        "命中 previous_response_id：不重选也不回退，保持原错误",
+        "请求带 previous_response_id 但选号没命中该层：按普通规则重选"
+      ],
+      "expectedSubTests": [
+        "TestAcquireSlotForHop_ReselectOutcomes/重选成功：忙号被排除，空闲号服务，不跨组，不占_switchCount",
+        "TestAcquireSlotForHop_ReselectOutcomes/重选仍是_WaitPlan：按繁忙回退（BusyDeferred），不写响应",
+        "TestAcquireSlotForHop_ReselectOutcomes/GroupSaturated：不重选，直接_BusyDeferred",
+        "TestAcquireSlotForHop_ReselectOutcomes/命中_previous_response_id：不重选也不回退，保持原错误",
+        "TestAcquireSlotForHop_ReselectOutcomes/请求带_previous_response_id_但选号没命中该层：按普通规则重选"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestAcquireSlotForHop_ReselectOutcomes",
+        "TestAcquireSlotForHop_ReselectOutcomes/重选成功：忙号被排除，空闲号服务，不跨组，不占_switchCount",
+        "TestAcquireSlotForHop_ReselectOutcomes/重选仍是_WaitPlan：按繁忙回退（BusyDeferred），不写响应",
+        "TestAcquireSlotForHop_ReselectOutcomes/GroupSaturated：不重选，直接_BusyDeferred",
+        "TestAcquireSlotForHop_ReselectOutcomes/命中_previous_response_id：不重选也不回退，保持原错误",
+        "TestAcquireSlotForHop_ReselectOutcomes/请求带_previous_response_id_但选号没命中该层：按普通规则重选"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestWriteDeferredAccountSlotFailure_MatchesLegacyResponse",
+      "sourcePath": "backend/internal/handler/openai_hop_slot_test.go",
+      "sourceLine": 480,
+      "sourceTestBlockSha256": "bfb01a2c6379f68e718acfa572997813f8ca75bc9b82dcc2b89a31a95e8e6a64",
+      "runExpressions": [
+        "\"等待超时\"",
+        "\"排队已满\"",
+        "\"nil 策略是空操作\""
+      ],
+      "literalSubNames": [
+        "等待超时",
+        "排队已满",
+        "nil 策略是空操作"
+      ],
+      "expectedSubTests": [
+        "TestWriteDeferredAccountSlotFailure_MatchesLegacyResponse/等待超时",
+        "TestWriteDeferredAccountSlotFailure_MatchesLegacyResponse/排队已满",
+        "TestWriteDeferredAccountSlotFailure_MatchesLegacyResponse/nil_策略是空操作"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestWriteDeferredAccountSlotFailure_MatchesLegacyResponse",
+        "TestWriteDeferredAccountSlotFailure_MatchesLegacyResponse/等待超时",
+        "TestWriteDeferredAccountSlotFailure_MatchesLegacyResponse/排队已满",
+        "TestWriteDeferredAccountSlotFailure_MatchesLegacyResponse/nil_策略是空操作"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestNewOpenAIHopSlotPolicy_FallbackIdentityAndLastHop",
+      "sourcePath": "backend/internal/handler/openai_hop_slot_test.go",
+      "sourceLine": 522,
+      "sourceTestBlockSha256": "44c763dbc99a7be97dc82e8a25d65583224edcc54ca864ab712225d8d46e27cb",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestNewOpenAIHopSlotPolicy_FallbackIdentityAndLastHop"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIHopSlotPolicy_QueueLimit",
+      "sourcePath": "backend/internal/handler/openai_hop_slot_test.go",
+      "sourceLine": 549,
+      "sourceTestBlockSha256": "f8703dd727bac1b8ae234aa1c5d8f23ce914adc8ad7c386bb862cd8370cf7c02",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIHopSlotPolicy_QueueLimit"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIHopSlotPolicy_LimitOnlyKeepsLastHopBehaviourExceptBudgetCap",
+      "sourcePath": "backend/internal/handler/openai_hop_slot_test.go",
+      "sourceLine": 565,
+      "sourceTestBlockSha256": "8b47b02e0f3aff8df1b415257b1bbb70ec6a42bcc36e4e293a4444d1220f9e7f",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIHopSlotPolicy_LimitOnlyKeepsLastHopBehaviourExceptBudgetCap"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestAcquireSlotForHop_FallbackQueueUsesShareOfMaxWaiting",
+      "sourcePath": "backend/internal/handler/openai_hop_slot_test.go",
+      "sourceLine": 587,
+      "sourceTestBlockSha256": "04ac2adb2a7116e0d339ed19475e3906eeaed4cc5163841bc0614b3c699e855f",
+      "runExpressions": [
+        "\"兜底身份的非末跳：排队上限取份额\"",
+        "\"首跳：排队上限保持原值\"",
+        "\"无链：排队上限保持原值\"",
+        "\"兜底身份的末跳：份额生效，排队已满照原样写 429\"",
+        "\"兜底身份的末跳：等待被剩余总预算封顶，不用 WaitPlan 的原时长\""
+      ],
+      "literalSubNames": [
+        "兜底身份的非末跳：排队上限取份额",
+        "首跳：排队上限保持原值",
+        "无链：排队上限保持原值",
+        "兜底身份的末跳：份额生效，排队已满照原样写 429",
+        "兜底身份的末跳：等待被剩余总预算封顶，不用 WaitPlan 的原时长"
+      ],
+      "expectedSubTests": [
+        "TestAcquireSlotForHop_FallbackQueueUsesShareOfMaxWaiting/兜底身份的非末跳：排队上限取份额",
+        "TestAcquireSlotForHop_FallbackQueueUsesShareOfMaxWaiting/首跳：排队上限保持原值",
+        "TestAcquireSlotForHop_FallbackQueueUsesShareOfMaxWaiting/无链：排队上限保持原值",
+        "TestAcquireSlotForHop_FallbackQueueUsesShareOfMaxWaiting/兜底身份的末跳：份额生效，排队已满照原样写_429",
+        "TestAcquireSlotForHop_FallbackQueueUsesShareOfMaxWaiting/兜底身份的末跳：等待被剩余总预算封顶，不用_WaitPlan_的原时长"
+      ],
+      "subNameDerivation": "literal t.Run/table name fields in this test",
+      "expectedEvents": [
+        "TestAcquireSlotForHop_FallbackQueueUsesShareOfMaxWaiting",
+        "TestAcquireSlotForHop_FallbackQueueUsesShareOfMaxWaiting/兜底身份的非末跳：排队上限取份额",
+        "TestAcquireSlotForHop_FallbackQueueUsesShareOfMaxWaiting/首跳：排队上限保持原值",
+        "TestAcquireSlotForHop_FallbackQueueUsesShareOfMaxWaiting/无链：排队上限保持原值",
+        "TestAcquireSlotForHop_FallbackQueueUsesShareOfMaxWaiting/兜底身份的末跳：份额生效，排队已满照原样写_429",
+        "TestAcquireSlotForHop_FallbackQueueUsesShareOfMaxWaiting/兜底身份的末跳：等待被剩余总预算封顶，不用_WaitPlan_的原时长"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestChatChain_ClientGoneAfterUpstreamFailureStopsWithoutFallback",
+      "sourcePath": "backend/internal/handler/openai_chat_completions_chain_edge_test.go",
+      "sourceLine": 60,
+      "sourceTestBlockSha256": "28ad659e51dd595a73e6f0c8d8ac8bb09dcf768b477acedc9c5bd4a153be2bb5",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestChatChain_ClientGoneAfterUpstreamFailureStopsWithoutFallback"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestChatChain_PerHopSwitchLimitFallsBackToNextGroup",
+      "sourcePath": "backend/internal/handler/openai_chat_completions_chain_edge_test.go",
+      "sourceLine": 76,
+      "sourceTestBlockSha256": "9ec80b5eda5e2f8ee49bc4381e24256414c848b3a512ccf2c99a319be63a9dae",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestChatChain_PerHopSwitchLimitFallsBackToNextGroup"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestChatChain_TotalAttemptBudgetStopsTheChain",
+      "sourcePath": "backend/internal/handler/openai_chat_completions_chain_edge_test.go",
+      "sourceLine": 93,
+      "sourceTestBlockSha256": "9b26c5dca7dfc8527dd32aa660eb87454d1cf48c0cdd6360a386693b8515d2aa",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestChatChain_TotalAttemptBudgetStopsTheChain"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestChatChain_PoolModeRetriesSameAccountBeforeFallingBack",
+      "sourcePath": "backend/internal/handler/openai_chat_completions_chain_edge_test.go",
+      "sourceLine": 107,
+      "sourceTestBlockSha256": "29b2f5f137edfa228bf6848049bd185a67ab902546433f143b89f5bda2c499e5",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestChatChain_PoolModeRetriesSameAccountBeforeFallingBack"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestChatChain_PoolModeRetryRespectsTheTotalAttemptBudget",
+      "sourcePath": "backend/internal/handler/openai_chat_completions_chain_edge_test.go",
+      "sourceLine": 123,
+      "sourceTestBlockSha256": "3dd1b6b82f33568256869f3de2cbb40320553e9bcb910a80500534f309ce318e",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestChatChain_PoolModeRetryRespectsTheTotalAttemptBudget"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestChatChain_UpstreamClientErrorIsTerminalAndMatchesLegacy",
+      "sourcePath": "backend/internal/handler/openai_chat_completions_chain_edge_test.go",
+      "sourceLine": 140,
+      "sourceTestBlockSha256": "198a8c8621fec7cded940b105c53a476b1b7a24e94399d4063fb384b1c63f9f8",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestChatChain_UpstreamClientErrorIsTerminalAndMatchesLegacy"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestChatChain_LegacyStablePriorityStillFallsBackWhenTheChainIsOff",
+      "sourcePath": "backend/internal/handler/openai_chat_completions_chain_edge_test.go",
+      "sourceLine": 166,
+      "sourceTestBlockSha256": "67865325885ade891964c0032eb825aecc1369b910ac7ce3dec30a2c58c3bd4f",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestChatChain_LegacyStablePriorityStillFallsBackWhenTheChainIsOff"
+      ]
+    },
+    {
+      "package": "./internal/handler",
+      "top": "TestOpenAIEnsureForwardErrorResponse_SkipsCanceledClient",
+      "sourcePath": "backend/internal/handler/openai_client_disconnect_test.go",
+      "sourceLine": 13,
+      "sourceTestBlockSha256": "f42698984223d37d89cac7ec9cb8d7cce92cd776d3781cc9ad9227f0fef7c2c4",
+      "runExpressions": [],
+      "literalSubNames": [],
+      "expectedSubTests": [],
+      "subNameDerivation": "no t.Run in this function; top is a leaf",
+      "expectedEvents": [
+        "TestOpenAIEnsureForwardErrorResponse_SkipsCanceledClient"
+      ]
+    }
+  ],
+  "topCount": 159,
+  "expectedSubTests": 193,
+  "unresolved": [],
+  "runtimeRequirements": "OLD and NEW regressions must all RUN and PASS exactly once; new98 separate; unexpected/missing/duplicate events fail; source helper deps included in entire frozen repository",
+  "regex": {
+    "./internal/handler": "^(TestSameAccountRetryDelayFor|TestNewFailoverState|TestHandleFailoverError_429BelowThresholdDoesNotSwitch|TestHandleFailoverError_429BelowThresholdPreservesSameAccountRetry|TestSleepWithContext|TestHandleFailoverError_BasicSwitch|TestHandleFailoverError_CacheBilling|TestHandleFailoverError_SameAccountRetry|TestHandleFailoverError_TempUnschedule|TestHandleFailoverError_ContextCanceled|TestHandleFailoverError_FailedAccountIDs|TestHandleFailoverError_LastFailoverErr|TestHandleFailoverError_IntegrationScenario|TestHandleFailoverError_EdgeCases|TestHandleSelectionExhausted|TestOpenAIForwardMayFailoverAfterKeepaliveOnly|TestOpenAIForwardFailoverGuardsNilAndUncommittedInputs|TestOpenAIFirstOutputFailoverSwitchesOnlyOnce|TestOpenAIFirstOutputFailoverExhaustionRequiresSafeErrorAndCounter|TestOpenAIRequestDisallowsFailoverAfterClientCancellation|TestOpenAIForwardMayFailover_KeepaliveOnlyBytesAllowFailover|TestOpenAIForwardWroteKeepaliveOnly_FalseWhenUnwrittenOrApplicationBytes|TestPoolModeSameAccountRetry_TimeoutLimitCapsRetries|TestOpenAIMessages_RawChatFallbackStreamReadErrorRecordsPartialUsage|TestOpenAIMessages_ResponsesClientCancelDuringReadErrorRecordsUsageWithoutFallback|TestOpenAIMessages_RawChatFallbackClientDisconnectDuringStreamReadErrorRecordsPartialUsage|TestOpenAIMessages_RecordUsageBillingErrorLogsFailure|TestOpenAIMessages_ForwardGenericErrorWithNilResultSkipsUsageRecord|TestOpenAIResponses_RawChatFallbackStreamReadErrorRecordsPartialUsage|TestOpenAIResponses_ChannelModelMappingRewritesForwardModel|TestOpenAIResponses_RecordUsageBillingErrorLogsFailure|TestOpenAIResponses_ForwardGenericErrorWithNilResultSkipsUsageRecord|TestOpenAIGatewayHandlerChatCompletions_FailoverAbortsWhenClientDisconnected|TestOpenAIGatewayHandlerEmbeddings_FailoverAbortsWhenClientDisconnected|TestOpenAIGatewayHandlerImages_FailoverAbortsWhenClientDisconnected|TestOpenAIGatewayHandlerMessages_FailoverAbortsWhenClientDisconnected|TestOpenAIGatewayHandlerFailoverGuardsStopBeforeSelectingAnAccount|TestOpenAIGatewayHandlerFailoverGuardsStopAfterAccountSelectionError|TestFailoverClientGoneStopsCommittedCompactKeepalive|TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected|TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient|TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_SwitchesAccount|TestOpenAIGateway_RawChatPreambleDeadlineThenOverload_SwitchesAccount|TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_ExhaustedEndsInStream|TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetriesSameAccount|TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetryCanceledByClient|TestOpenAIGateway_PassthroughKeepaliveAcrossPreOutputFailovers_ReachesThirdAccount|TestOpenAIGateway_PassthroughKeepaliveAfterSemanticOutput_DoesNotSwitchAgain|TestNewOpenAIHopSlotPolicy_OnlyForChainedNonLastHop|TestOpenAIHopSlotPolicy_WaitFor|TestOpenAIHopSlotPolicy_OnCapacityFailure|TestAcquireSlotForHop_NilHopKeepsLegacyBehavior|TestAcquireSlotForHop_ChainedNonLastDoesNotWriteResponse|TestAcquireSlotForHop_PreviousResponseLayerKeepsOriginalWaitAndError|TestAcquireSlotForHop_LastHopWritesResponseLikeNoChain|TestAcquireSlotForHop_ReselectOutcomes|TestWriteDeferredAccountSlotFailure_MatchesLegacyResponse|TestNewOpenAIHopSlotPolicy_FallbackIdentityAndLastHop|TestOpenAIHopSlotPolicy_QueueLimit|TestOpenAIHopSlotPolicy_LimitOnlyKeepsLastHopBehaviourExceptBudgetCap|TestAcquireSlotForHop_FallbackQueueUsesShareOfMaxWaiting|TestChatChain_ClientGoneAfterUpstreamFailureStopsWithoutFallback|TestChatChain_PerHopSwitchLimitFallsBackToNextGroup|TestChatChain_TotalAttemptBudgetStopsTheChain|TestChatChain_PoolModeRetriesSameAccountBeforeFallingBack|TestChatChain_PoolModeRetryRespectsTheTotalAttemptBudget|TestChatChain_UpstreamClientErrorIsTerminalAndMatchesLegacy|TestChatChain_LegacyStablePriorityStillFallsBackWhenTheChainIsOff|TestOpenAIEnsureForwardErrorResponse_SkipsCanceledClient)$",
+    "./internal/service": "^(TestTempUnscheduleRetryableErrorSkipsRequestScopedTransient|TestStreamFailedEventCapacityShedRetriesOnSameAccount|TestOpenAIHTTPCapacityShedIsRequestScopedForOAuthAccounts|TestOpenAIHTTPCapacityShedRequestScopeBoundaries|TestOpenAIStreamErrorFrameDoesNotStartClientOutput|TestOpenAIStreamMetadataPreambleAndMessageOnlyOverloadFailOver|TestOpenAIImagesCapacityShedFailoverIsRequestScoped|TestOpenAIStreamErrorFramePassthroughRuleBeforeOutput|TestOpenAIStreamCapacityShedErrorFramePrecedingFailedStillFailsOver|TestOpenAIStreamKeepaliveBeforeOverloadFailsOver|TestOpenAIStreamKeepaliveOnlyFailureDoesNotRecordFirstToken|TestOpenAIStreamCapacityShedAfterOutputRewritesCodeForClient|TestOpenAIStreamCapacityShedAfterOutputLogsSuppressedPassthrough|TestOpenAIStreamProcessingFailureAfterOutputIsRecorded|TestSanitizeOpenAICapacityShedErrorCodeForClient|TestCodexOutboundVersionHasSingleSource|TestOpenAIVisibleOutputClassification|TestOpenAIResponsesTTFTStartsAtVisibleOutput|TestOpenAIResponsesTTFTStartsAtCompletedImage|TestOpenAINativeMetadataDoesNotDisarmFirstOutputTimeout|TestOpenAINativeKeepaliveDoesNotDisarmFirstOutputTimeout|TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait|TestOpenAINativeFirstOutputTimeoutDisabledPreservesSynchronousStream|TestOpenAINativeFirstOutputTimeoutIgnoresPreambleAndCleansReader|TestOpenAIFirstOutputTimeoutForReasoningEffort|TestOpenAIFirstOutputTimeoutDisabledForNilOrMissingConfig|TestOpenAIFirstOutputStageDefensiveBranches|TestOpenAIFirstOutputStageReportsSpoolAndCommitErrors|TestOpenAIFirstOutputStageRetriesFailedCleanup|TestOpenAIFirstOutputHeaderGuardStopsAndFires|TestOpenAIRequestContextReadCloserCleansUpOnce|TestOpenAIFirstOutputStageDefaultLimitIsIndependentFromScannerLimit|TestOpenAIFirstOutputEventQueueSizeBackpressuresGuardedStreams|TestOpenAIFirstOutputDynamicScannerLimitsOnlyWhileGuardIsActive|TestOpenAIFirstOutputStageOverflowIsAtomicAndCleanupRemovesSpool|TestOpenAIFirstOutputStageCommitCopiesSpoolAndRemovesTemp|TestOpenAIFirstOutputStageUnlinkFailurePermanentlyFallsBackToMemoryAndRetriesCleanup|TestOpenAINativeFirstOutputTimeoutDisarmsAfterSemanticOutput|TestOpenAINativeFirstOutputTimeoutWaitsForCompleteSemanticEvent|TestOpenAINativeFirstOutputTimeoutDoesNotLeakLargePreambleEvent|TestOpenAINativeFirstOutputEOFDispatchesTerminalEventWithoutBlankLine|TestOpenAINativeFirstOutputStageOverflowFailsOverWithoutAttemptBytes|TestOpenAINativeFirstOutputScannerRejectsOversizedLineWithoutLeak|TestOpenAINativeFirstOutputScannerAllowsLargeEventAfterSemanticBoundary|TestOpenAINativeFirstOutputTimeoutDisabledKeepsPreamblePrivateAcrossKeepalive|TestOpenAINativeFirstOutputFailoverKeepsAttemptHeadersPrivateAfterKeepaliveCommit|TestStartOpenAISSEKeepalive_WorksWithoutCompactMarker|TestPassthroughKeepaliveDoesNotBlockPreOutputFailover|TestPassthroughKeepaliveStopsBeforeHandingOverWriter|TestPassthroughKeepaliveDisabledKeepsWriterUntouched|TestHandleStreamingResponsePassthrough_KeepsAliveBeforeFirstEventAndStopsBeforeWriterHandoff|TestOpenAICompactKeepaliveAdjustedWrittenSize_StreamKeepaliveOnlyIsUnwritten|TestOpenAICompactKeepaliveAdjustedWrittenSize_StreamKeepalivePlusApplicationByte|TestOpenAICompactKeepaliveAdjustedWrittenSize_NoStreamKeepaliveUnchanged|TestOpenAICompactKeepaliveAdjustedWrittenSize_CompactAndStreamKeepaliveBothExcluded|TestOpenAICompactKeepaliveAdjustedWrittenSize_ExcludesKeepalivesFromPriorFailoverAttempts|TestOpenAIStreamKeepalive_WriteFailureMarksClientDisconnected_Chat|TestOpenAIStreamKeepalive_WriteFailureMarksClientDisconnected_Messages|TestOpenAIStreamKeepalive_WriteFailureMarksClientDisconnected_ResponsesFirstOutputGuard|TestProxyOpenAIWSHTTPBridgeTurnTransportErrorFailoverSafety|TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety|TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety|TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient|TestProxyOpenAIWSHTTPBridgeTurnStagesMetadataBeforeCapacityFailover|TestProxyOpenAIWSHTTPBridgeTurnCapacityErrorFrameIsRequestScoped|TestProxyOpenAIWSHTTPBridgeTurnDoesNotReplayCapacityAfterSemanticOutput|TestProxyOpenAIWSHTTPBridgeTurnCommitsStagedMetadataWithTerminalEvent|TestProxyOpenAIWSHTTPBridgeTurnStagingLimitFailsOver|TestProxyOpenAIWSHTTPBridgeTurnRequiresTerminalEvent|TestProxyOpenAIWSHTTPBridgeTurnStreamReadErrorFailsOverBeforeWrite|TestProxyOpenAIWSHTTPBridgeTurnKeepaliveDoesNotBlockPreOutputFailover|TestProxyOpenAIWSHTTPBridgeTurnKeepaliveWriteFailure|TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver|TestProxyOpenAIWSHTTPBridgeTurnFallsBackToStatusText|TestProxyOpenAIWSHTTPBridgeTurnSSEServerErrorFailsOver|TestBuildOpenAIWSCurrentTurnRetryPayloadRejectsOrphanToolOutput|TestProxyOpenAIWSHTTPBridgeTurnLaterTurn429FailsOverBeforeClientWrite|TestProxyOpenAIWSHTTPBridgeTurnLaterTurnDoesNotFailOverAfterDownstreamOutput|TestOpenAIWSHTTPBridgeLaterTurn429RetriesCurrentTurnOnReplacementAccount|TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics|TestNonStreamingSSEToJSON_CapacityFailedEventFailsOver|TestNonStreamingSSEToJSON_UnclassifiedFailedEventFailsOver|TestNonStreamingSSEToJSON_NonRetryableFailedEventStillWritesProtocolError|TestNonStreamingSSEToJSON_BareErrorEventUsesConservativeClassifier|TestOpenAIStreamErrorEventShouldFailover_RequiresPositiveSignal|TestNonStreamingPassthroughSSEToJSON_CapacityFailedEventFailsOver|TestNonStreamingPassthroughSSEToJSON_BareErrorRespectsConservativeClassifier|TestNonStreamingSSEToJSON_MatchesStreamingClassifierVerdict|TestNonStreamingSSEToJSON_CommittedResponseKeepsProtocolError|TestNonStreamingTerminalFailureFailover_NilAccountProposesNothing)$"
+  },
+  "auxiliarySources": [
+    {
+      "path": "backend/internal/service/subscription_window_test.go",
+      "bytes": 20577,
+      "sha256": "742c9b61c2e1719b69e8435fa16f07835f6017f7efe1bc3da60a5dab4e94e343",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/go.mod",
+      "bytes": 9006,
+      "sha256": "d1e5ad3743335bbe3cdf6385b537e7e436926072e19dc5cef6bce59e5aa71eb8",
+      "oldNewByteIdentical": true
+    },
+    {
+      "path": "backend/go.sum",
+      "bytes": 47900,
+      "sha256": "42f512b45f96a53c9b9b4c2ba21ebc490fa682a62682b895e1244426dce37a86",
+      "oldNewByteIdentical": true
+    }
+  ],
+  "sourceTree": "bcf2097c5193b1ffc24d8b540b9e35daf09f8244",
+  "oldSourceHead": "5052c03eb672b7cd162bf3fa41042aa35d34cc25",
+  "allSelectedFilesOldNewByteIdentical": true,
+  "expectedEventCount": 352,
+  "actualResultStatus": "NOT EXECUTED; static inventory only",
+  "runtimeDependencies": {
+    "requiredBuildTag": "unit",
+    "serviceTestMain": "subscription_window_test.go:13 -> timezone.Init(Asia/Shanghai); m.Run; no external service setup in TestMain",
+    "handlerTestMain": "none found by exactGit grep",
+    "platform": "Linux/amd64 Go1.26.10; original first-output cleanup test skips Windows at source line250; Linux proof permits no skip",
+    "dependencyClosure": "all package and helper sources compile normally; must capture actual go-list dependency/module JSON under readonly module mode remotely; entire Git tree includes all shared inputs; static import lists above are not substituted for an actual resolved graph",
+    "modules": "backend/go.mod and go.sum raw hashes frozen; no patch/toolchain rewrite allowed",
+    "originalFixtureKinds": "Existing tests include real listeners, in-memory streams, existing stubs/mocks and temporary files; do not describe all original regressions as real-wire; only new69 peer-marked leaves provide their stated actual wire prerequisites"
+  }
+}
