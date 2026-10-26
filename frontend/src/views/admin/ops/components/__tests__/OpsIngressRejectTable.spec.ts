@@ -137,7 +137,7 @@ describe('OpsIngressRejectTable', () => {
     await flushPromises()
     expect(listIngressRejects).toHaveBeenLastCalledWith(expect.objectContaining({ page: 4, page_size: 20 }))
 
-    await pagination.vm.$emit('update:pageSize', 50)
+    await wrapper.findComponent(PaginationStub).vm.$emit('update:pageSize', 50)
     await flushPromises()
 
     expect(listIngressRejects).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, page_size: 50 }))
