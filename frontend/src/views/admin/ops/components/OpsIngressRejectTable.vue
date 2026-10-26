@@ -24,6 +24,7 @@ const routeFamily = ref('')
 const protocol = ref('')
 const page = ref(1)
 const pageSize = ref(20)
+let requestGeneration = 0
 
 const items = computed(() => response.value?.items ?? [])
 const total = computed(() => response.value?.total ?? 0)
@@ -56,11 +57,12 @@ function buildParams() {
   }
 }
 
-async function loadData() {
+async function loadData(generation: number) {
   loading.value = true
   errorMessage.value = ''
   try {
     const next = await opsAPI.listIngressRejects(buildParams())
+    if (generation !== requestGeneration) return
     const totalPages = Math.max(1, Math.ceil(next.total / Math.max(1, next.page_size)))
     response.value = next
     if (next.total > 0 && page.value > totalPages) {
@@ -68,16 +70,19 @@ async function loadData() {
       return
     }
   } catch (err: any) {
+    if (generation !== requestGeneration) return
     response.value = null
     errorMessage.value = err?.message || t('admin.ops.ingressRejects.failedToLoad')
   } finally {
-    loading.value = false
+    if (generation === requestGeneration) loading.value = false
   }
 }
 
 watch(
   () => [timeRange.value, reason.value, routeFamily.value, protocol.value, page.value, pageSize.value, props.refreshToken] as const,
-  (next, previous) => {
+  (next, previous, onCleanup) => {
+    const generation = ++requestGeneration
+    onCleanup(() => { requestGeneration++ })
     const queryChanged = !!previous && (
       next.slice(0, 4).some((value, index) => value !== previous[index]) ||
       next[5] !== previous[5]
@@ -86,7 +91,7 @@ watch(
       page.value = 1
       return
     }
-    void loadData()
+    void loadData(generation)
   },
   { immediate: true }
 )
