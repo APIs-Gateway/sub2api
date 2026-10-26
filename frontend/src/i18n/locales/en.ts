@@ -3498,6 +3498,7 @@
         updated: 'Rule saved',
         deleted: 'Rule deleted',
         drawerSubtitle: 'Group: {group}',
+        reopenRequired: 'This group’s pricing has changed or is no longer editable. This draft cannot be saved again. Close the drawer, create or edit a rule from the refreshed list, and review the latest values.',
         createTitle: 'New cost accounting rule',
         editTitle: 'Edit cost accounting rule',
         field: {

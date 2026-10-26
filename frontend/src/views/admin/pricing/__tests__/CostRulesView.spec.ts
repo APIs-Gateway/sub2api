@@ -18,6 +18,19 @@ vi.mock('vue-i18n', async () => {
 
 import { useAppStore } from '@/stores/app'
 import CostRulesView from '../CostRulesView.vue'
+import CostRuleDrawer from '../components/CostRuleDrawer.vue'
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+const baselineConflict = { status: 409, reason: 'PRICE_BASELINE_CHANGED', metadata: { group_id: '7', revision: '13' } }
 
 const rule = (over: Record<string, unknown> = {}) => ({
   id: 41, scope_group_id: 7, source: 'manual', name: '官方成本', group_ids: [7], account_ids: [21, 22], sort_order: 0, enabled: true,
@@ -177,5 +190,135 @@ describe('CostRulesView', () => {
     await buttons[buttons.length - 1].trigger('click')
     await flushPromises()
     expect(api.deleteCostRule).toHaveBeenCalledWith(7, 41, 12)
+  })
+
+  it('冲突后按钮和表单都不能重试旧草稿，关闭重开后完整提交服务端新规则', async () => {
+    api.updateCostRule.mockRejectedValueOnce(baselineConflict)
+    const { wrapper } = await mountView()
+    const intervals = [{ max_tokens: 50, input_price: 1e-6 }]
+    api.getGroupOpsView.mockResolvedValue(view('v2', [rule({
+      name: '服务端新版', group_ids: [7, 8], account_ids: [30], sort_order: 4, enabled: false,
+      prices: [{ platform: 'anthropic', models: ['model-new'], price: {
+        billing_mode: 'token', input_price: 2e-6, output_price: 1.2e-5,
+        cache_write_price: 3e-6, cache_read_price: 4e-6, image_output_price: 5e-6, intervals
+      } }]
+    })], 13))
+    await wrapper.find('[data-test="edit-41"]').trigger('click')
+    await wrapper.find('[data-test="cr-name"]').setValue('本地旧草稿')
+    await wrapper.find('[data-test="cr-save"]').trigger('click')
+    await flushPromises()
+    expect(api.updateCostRule.mock.calls[0].slice(0, 3)).toEqual([7, 41, 12])
+    expect(api.updateCostRule.mock.calls[0][3].prices[0].price.output_price).toBeCloseTo(1e-5, 12)
+    expect((wrapper.find('[data-test="cr-name"]').element as HTMLInputElement).value).toBe('本地旧草稿')
+    expect(wrapper.find('[data-test="cr-error"]').text()).toContain('请关闭抽屉')
+    expect(wrapper.find('[data-test="cr-save"]').attributes('disabled')).toBeDefined()
+    await wrapper.find('[data-test="cr-save"]').trigger('click')
+    await wrapper.find('[data-test="cost-form"]').trigger('submit')
+    expect(api.updateCostRule).toHaveBeenCalledTimes(1)
+
+    await wrapper.findComponent(CostRuleDrawer).find('button').trigger('click')
+    await wrapper.find('[data-test="edit-41"]').trigger('click')
+    expect((wrapper.find('[data-test="cr-name"]').element as HTMLInputElement).value).toBe('服务端新版')
+    expect((wrapper.find('[data-test="cr-output-0"]').element as HTMLInputElement).value).toBe('12')
+    await wrapper.find('[data-test="cr-name"]').setValue('重新确认的名字')
+    await wrapper.find('[data-test="cr-save"]').trigger('click')
+    await flushPromises()
+    expect(api.updateCostRule).toHaveBeenCalledTimes(2)
+    expect(api.updateCostRule.mock.calls[1]).toEqual([7, 41, 13, {
+      name: '重新确认的名字', group_ids: [7, 8], account_ids: [30], sort_order: 4, enabled: false,
+      prices: [{ platform: 'anthropic', models: ['model-new'], price: {
+        billing_mode: 'token', input_price: expect.closeTo(2e-6, 12), output_price: expect.closeTo(1.2e-5, 12),
+        cache_write_price: expect.closeTo(3e-6, 12), cache_read_price: expect.closeTo(4e-6, 12),
+        image_output_price: expect.closeTo(5e-6, 12), intervals
+      } }]
+    }])
+    wrapper.unmount()
+  })
+
+  it.each(['deleted', 'readonly', 'derived', 'reload-failed'] as const)('冲突重读后 %s 也不能再次提交旧规则', async (outcome) => {
+    api.updateCostRule.mockRejectedValueOnce(baselineConflict)
+    const { wrapper } = await mountView()
+    if (outcome === 'reload-failed') api.getGroupOpsView.mockRejectedValue({ status: 500 })
+    else api.getGroupOpsView.mockResolvedValue(view(
+      outcome === 'readonly' ? 'legacy' : 'v2',
+      outcome === 'deleted' ? [] : [rule(outcome === 'derived' ? { source: 'legacy_derived' } : {})], 13
+    ))
+    await wrapper.find('[data-test="edit-41"]').trigger('click')
+    await wrapper.find('[data-test="cr-name"]').setValue('旧草稿')
+    await wrapper.find('[data-test="cr-save"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="cr-error"]').text()).toContain('当前草稿不能再保存')
+    expect(wrapper.find('[data-test="cr-save"]').attributes('disabled')).toBeDefined()
+    await wrapper.find('[data-test="cr-save"]').trigger('click')
+    await wrapper.find('[data-test="cost-form"]').trigger('submit')
+    expect(api.updateCostRule).toHaveBeenCalledTimes(1)
+    expect(api.createCostRule).not.toHaveBeenCalled()
+    await wrapper.findComponent(CostRuleDrawer).find('button').trigger('click')
+    if (outcome === 'deleted' || outcome === 'derived') expect(wrapper.find('[data-test="edit-41"]').exists()).toBe(false)
+    else expect(wrapper.find('[data-test="create-rule"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it.each(['revision', 'stage'] as const)('手动刷新改变 %s 时不把新基线附到打开的旧表单', async (change) => {
+    const { wrapper } = await mountView()
+    await wrapper.find('[data-test="edit-41"]').trigger('click')
+    await wrapper.find('[data-test="cr-name"]').setValue('旧草稿')
+    api.getGroupOpsView.mockResolvedValue(view(change === 'stage' ? 'legacy' : 'v2', [rule()], change === 'revision' ? 13 : 12))
+    await wrapper.find('[data-test="refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="cr-error"]').text()).toContain('请关闭抽屉')
+    expect(wrapper.find('[data-test="cr-save"]').attributes('disabled')).toBeDefined()
+    await wrapper.find('[data-test="cr-save"]').trigger('click')
+    await wrapper.find('[data-test="cost-form"]').trigger('submit')
+    expect(api.updateCostRule).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('请求期间切换分组后仍重读原请求分组，也不能将旧表单提交到新分组', async () => {
+    admin.groups.getAll.mockResolvedValue([{ id: 7, name: 'codex', platform: 'openai' }, { id: 8, name: 'other', platform: 'openai' }])
+    api.getGroupOpsView.mockImplementation(async (id: number) => ({ ...view('v2', [rule()]), groupId: id }))
+    const request = deferred<unknown>()
+    api.updateCostRule.mockReturnValueOnce(request.promise)
+    const { wrapper } = await mountView()
+    await wrapper.find('[data-test="edit-41"]').trigger('click')
+    await wrapper.find('[data-test="cr-save"]').trigger('click')
+    await wrapper.find('[data-test="cost-group"]').find('button').trigger('click')
+    const other = wrapper.findAll('[role="option"]').find((option) => option.text().includes('other'))!
+    await other.trigger('click')
+    const readsBeforeError = api.getGroupOpsView.mock.calls.length
+    request.reject(baselineConflict)
+    await flushPromises()
+    expect(api.getGroupOpsView.mock.calls.slice(readsBeforeError)).toEqual([[7]])
+    expect(wrapper.find('[data-test="cr-save"]').attributes('disabled')).toBeDefined()
+    await wrapper.find('[data-test="cost-form"]').trigger('submit')
+    expect(api.updateCostRule).toHaveBeenCalledTimes(1)
+    expect(api.updateCostRule.mock.calls[0].slice(0, 3)).toEqual([7, 41, 12])
+    wrapper.unmount()
+  })
+
+  it('新建冲突后必须关闭重开，新表单才使用刷新后的 revision', async () => {
+    api.createCostRule.mockRejectedValueOnce(baselineConflict)
+    const { wrapper } = await mountView()
+    api.getGroupOpsView.mockResolvedValue(view('v2', [rule()], 13))
+    await wrapper.find('[data-test="create-rule"]').trigger('click')
+    await wrapper.find('[data-test="cr-name"]').setValue('旧新建草稿')
+    await wrapper.find('[data-test="cr-models-0"]').setValue('old-model')
+    await wrapper.find('[data-test="cr-save"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="cost-form"]').trigger('submit')
+    expect(api.createCostRule).toHaveBeenCalledTimes(1)
+    expect(api.createCostRule.mock.calls[0].slice(0, 2)).toEqual([7, 12])
+    await wrapper.findComponent(CostRuleDrawer).find('button').trigger('click')
+    await wrapper.find('[data-test="create-rule"]').trigger('click')
+    expect((wrapper.find('[data-test="cr-name"]').element as HTMLInputElement).value).toBe('')
+    await wrapper.find('[data-test="cr-name"]').setValue('重新确认的新规则')
+    await wrapper.find('[data-test="cr-models-0"]').setValue('new-model')
+    await wrapper.find('[data-test="cr-save"]').trigger('click')
+    await flushPromises()
+    expect(api.createCostRule).toHaveBeenCalledTimes(2)
+    expect(api.createCostRule.mock.calls[1].slice(0, 2)).toEqual([7, 13])
+    expect(api.createCostRule.mock.calls[1][2].name).toBe('重新确认的新规则')
+    expect(api.createCostRule.mock.calls[1][2].prices[0].models).toEqual(['new-model'])
+    wrapper.unmount()
   })
 })

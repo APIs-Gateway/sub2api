@@ -95,7 +95,7 @@
 
     <template #footer>
       <button type="button" class="btn btn-secondary" :disabled="saving" @click="emit('close')">{{ t('common.cancel') }}</button>
-      <button type="button" class="btn btn-primary" :disabled="saving" data-test="cr-save" @click="submit">
+      <button type="button" class="btn btn-primary" :disabled="saving || saveDisabled" data-test="cr-save" @click="submit">
         {{ saving ? t('common.saving') : t('common.save') }}
       </button>
     </template>
@@ -117,6 +117,7 @@ const props = defineProps<{
   groupId: number
   groupName: string
   saving: boolean
+  saveDisabled: boolean
   /** 提交后服务端返回的错误文案 */
   serverError: string
 }>()
@@ -158,6 +159,7 @@ function removeRow(i: number) {
 }
 
 function submit() {
+  if (props.saving || props.saveDisabled) return
   localError.value = ''
   const r = buildRuleBody(form)
   if (!r.ok) {

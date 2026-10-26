@@ -3488,6 +3488,7 @@
         updated: '規則已儲存',
         deleted: '規則已刪除',
         drawerSubtitle: '分組：{group}',
+        reopenRequired: '這個分組的價格配置剛被別人改過或已無法編輯，目前的草稿不能再儲存。請關閉抽屜，從重新整理後的清單重新新增或編輯規則，並檢查最新值。',
         createTitle: '新增成本核算規則',
         editTitle: '編輯成本核算規則',
         field: {

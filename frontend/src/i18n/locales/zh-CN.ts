@@ -3491,6 +3491,7 @@
         updated: '规则已保存',
         deleted: '规则已删除',
         drawerSubtitle: '分组：{group}',
+        reopenRequired: '这个分组的价格配置刚被别人改过或已不可编辑，当前草稿不能再保存。请关闭抽屉，从刷新后的列表重新新建或编辑规则，并检查最新值。',
         createTitle: '新建成本核算规则',
         editTitle: '编辑成本核算规则',
         field: {

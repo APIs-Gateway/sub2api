@@ -98,7 +98,8 @@
       :group-id="group?.id ?? 0"
       :group-name="group?.name ?? ''"
       :saving="saving"
-      :server-error="serverError"
+      :save-disabled="!editorCanSave"
+      :server-error="editorError"
       @close="closeDrawer"
       @save="save"
     />
@@ -146,6 +147,10 @@ const drawerOpen = ref(false)
 const editing = ref<StoredCostRule | null>(null)
 const saving = ref(false)
 const serverError = ref('')
+// 草稿绑定打开时的基线，刷新后必须关闭重开，不能静默升级 revision。
+const editorGroupId = ref<number | null>(null)
+const editorRevision = ref<number | null>(null)
+const editorStale = ref(false)
 const deleting = ref<StoredCostRule | null>(null)
 
 const groupOptions = computed(() =>
@@ -157,6 +162,13 @@ const revision = computed(() => group.value?.view?.revision ?? null)
 
 /** 只有 v2 分组、且读到了价格配置的才能写；其余分组的规则是渠道配置推出的，只能看。 */
 const canWrite = computed(() => group.value?.view?.stage === 'v2' && revision.value !== null)
+const editorCanSave = computed(() => {
+  const ruleId = editing.value?.id
+  return !editorStale.value && canWrite.value && group.value?.id === editorGroupId.value &&
+    revision.value === editorRevision.value &&
+    (ruleId === undefined || rules.value.some((r) => r.id === ruleId && isRuleEditable(r)))
+})
+const editorError = computed(() => serverError.value || (drawerOpen.value && !editorCanSave.value ? t('admin.pricingOps.costRules.reopenRequired') : ''))
 const lockedReason = computed(() => {
   const v = group.value?.view
   if (!v) return t('admin.pricingOps.costRules.locked.unreadable')
@@ -188,12 +200,18 @@ function priceLine(p: CostPrice): string {
 }
 
 function openCreate() {
+  editorGroupId.value = group.value?.id ?? null
+  editorRevision.value = revision.value
+  editorStale.value = false
   editing.value = null
   serverError.value = ''
   drawerOpen.value = true
 }
 
 function openEdit(r: StoredCostRule) {
+  editorGroupId.value = group.value?.id ?? null
+  editorRevision.value = revision.value
+  editorStale.value = false
   editing.value = r
   serverError.value = ''
   drawerOpen.value = true
@@ -204,26 +222,31 @@ function closeDrawer() {
 }
 
 /** 写入出错时的统一处理：基线过期就重读这个分组，让管理员在最新数据上重来。 */
-async function handleWriteError(err: unknown): Promise<string> {
+async function handleWriteError(err: unknown, requestGroupId: number): Promise<string> {
   const text = opsErrorText(err, t, te)
-  if (isStaleError(err) && group.value) await reloadGroup(group.value.id)
+  if (isStaleError(err)) await reloadGroup(requestGroupId)
   return text
 }
 
 async function save(body: CostRuleBody) {
   const g = group.value
-  if (!g || revision.value === null) return
+  const baseline = editorRevision.value
+  const rule = editing.value
+  if (saving.value || !editorCanSave.value || !g || baseline === null) return
   saving.value = true
   serverError.value = ''
   try {
-    if (editing.value) await updateCostRule(g.id, editing.value.id, revision.value, body)
-    else await createCostRule(g.id, revision.value, body)
+    if (rule) await updateCostRule(g.id, rule.id, baseline, body)
+    else await createCostRule(g.id, baseline, body)
     // 以服务端为准重读：revision、规则顺序和价格行都不在本地拼
     await reloadGroup(g.id)
     drawerOpen.value = false
-    app.showSuccess(t(editing.value ? 'admin.pricingOps.costRules.updated' : 'admin.pricingOps.costRules.created'))
+    app.showSuccess(t(rule ? 'admin.pricingOps.costRules.updated' : 'admin.pricingOps.costRules.created'))
   } catch (err) {
-    serverError.value = await handleWriteError(err)
+    const stale = isStaleError(err)
+    if (stale) editorStale.value = true
+    const text = await handleWriteError(err, g.id)
+    serverError.value = stale ? t('admin.pricingOps.costRules.reopenRequired') : text
   } finally {
     saving.value = false
   }
@@ -243,7 +266,7 @@ async function remove() {
     await reloadGroup(g.id)
     app.showSuccess(t('admin.pricingOps.costRules.deleted'))
   } catch (err) {
-    app.showError(await handleWriteError(err))
+    app.showError(await handleWriteError(err, g.id))
   }
 }
 
