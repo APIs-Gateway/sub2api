@@ -36,8 +36,14 @@ type APIKey struct {
 	Status  string
 	// StablePriorityEnabled per-key 稳定优先开关；调度时与用户级开关取或生效。
 	StablePriorityEnabled bool
-	IPWhitelist           []string
-	IPBlacklist           []string
+	// HasGroupRoutes 该 Key 是否配置了回退链（user 或 admin 来源任一项）。
+	// 来自鉴权查询的 EXISTS 与鉴权快照；只是「有没有」的标志，链明细按需另读。不对外序列化。
+	HasGroupRoutes bool `json:"-"`
+	IPWhitelist    []string
+	IPBlacklist    []string
+	// HasGroupRoutesUnknown 为 true 表示鉴权查询里检查回退链的 EXISTS 失败了，HasGroupRoutes 的 false 不可信：
+	// 本次请求按无链处理，但鉴权缓存不得保存这个结果（审查 S4）。不持久化、不进快照。
+	HasGroupRoutesUnknown bool `json:"-"`
 	// 预编译的 IP 规则，用于认证热路径避免重复 ParseIP/ParseCIDR。
 	CompiledIPWhitelist *ip.CompiledIPRules `json:"-"`
 	CompiledIPBlacklist *ip.CompiledIPRules `json:"-"`
@@ -49,6 +55,12 @@ type APIKey struct {
 	CurrentConcurrency int
 	User               *User
 	Group              *Group
+
+	// HomeGroupID / RouteSource 仅由回退链的影子 Key（handler.NewServedAPIKey）在运行时填充：
+	// HomeGroupID 是原 Key 的主分组，RouteSource 是该跳的来源（primary / user / admin）。
+	// 不持久化、不进 auth cache；零值表示这不是影子 Key，行为与改动前完全一致。
+	HomeGroupID *int64 `json:"-"`
+	RouteSource string `json:"-"`
 
 	// Quota fields
 	Quota     float64    // Quota limit in USD (0 = unlimited)

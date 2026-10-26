@@ -4,7 +4,12 @@ import {
   applyAntigravityProjectID,
   applyInterceptWarmup,
   applyHeaderOverride,
+  buildBulkPoolModeCredentials,
+  buildBulkTempUnschedCredentials,
   buildHeaderOverridesObject,
+  buildTempUnschedRules,
+  normalizePoolModeRetryCount,
+  parsePoolModeRetryStatusCodes,
   validateHeaderOverrideRows
 } from '../credentialsBuilder'
 
@@ -108,5 +113,84 @@ describe('header overrides', () => {
     applyHeaderOverride(credentials, false, [], 'edit')
     expect(credentials).not.toHaveProperty('header_override_enabled')
     expect(credentials).not.toHaveProperty('header_overrides')
+  })
+})
+
+describe('pool mode helpers', () => {
+  it('normalizes retry count into 0..10 and falls back to default for invalid values', () => {
+    expect(normalizePoolModeRetryCount(5)).toBe(5)
+    expect(normalizePoolModeRetryCount(-2)).toBe(0)
+    expect(normalizePoolModeRetryCount(99)).toBe(10)
+    expect(normalizePoolModeRetryCount(2.9)).toBe(2)
+    expect(normalizePoolModeRetryCount(Number.NaN)).toBe(3)
+  })
+
+  it('parses status codes: keeps 100-599 integers, dedupes and sorts', () => {
+    expect(parsePoolModeRetryStatusCodes('429, 401 403,429, 99, 600, 4x, 1.5')).toEqual([401, 403, 429])
+    expect(parsePoolModeRetryStatusCodes('   ')).toEqual([])
+  })
+
+  it('bulk: disabled only writes pool_mode=false', () => {
+    expect(buildBulkPoolModeCredentials(false, 7, '401')).toEqual({ pool_mode: false })
+  })
+
+  it('bulk: enabled writes retry count, and status codes only when provided', () => {
+    expect(buildBulkPoolModeCredentials(true, 4, '')).toEqual({
+      pool_mode: true,
+      pool_mode_retry_count: 4
+    })
+    expect(buildBulkPoolModeCredentials(true, 4, '503, 429')).toEqual({
+      pool_mode: true,
+      pool_mode_retry_count: 4,
+      pool_mode_retry_status_codes: [429, 503]
+    })
+  })
+})
+
+describe('temp unschedulable helpers', () => {
+  const valid = {
+    error_code: 529,
+    keywords: 'overloaded; too many ,',
+    duration_minutes: 60,
+    description: '  busy  '
+  }
+
+  it('builds payload rules and drops invalid rows', () => {
+    expect(
+      buildTempUnschedRules([
+        valid,
+        { ...valid, error_code: 99 },
+        { ...valid, duration_minutes: 0 },
+        { ...valid, keywords: ' , ' },
+        { ...valid, error_code: null }
+      ])
+    ).toEqual([
+      {
+        error_code: 529,
+        keywords: ['overloaded', 'too many'],
+        duration_minutes: 60,
+        description: 'busy'
+      }
+    ])
+  })
+
+  it('bulk: disabled only writes temp_unschedulable_enabled=false', () => {
+    expect(buildBulkTempUnschedCredentials(false, [valid])).toEqual({
+      temp_unschedulable_enabled: false
+    })
+  })
+
+  it('bulk: enabled without a valid rule returns null', () => {
+    expect(buildBulkTempUnschedCredentials(true, [])).toBeNull()
+    expect(buildBulkTempUnschedCredentials(true, [{ ...valid, keywords: '' }])).toBeNull()
+  })
+
+  it('bulk: enabled writes rules', () => {
+    expect(buildBulkTempUnschedCredentials(true, [valid])).toEqual({
+      temp_unschedulable_enabled: true,
+      temp_unschedulable_rules: [
+        { error_code: 529, keywords: ['overloaded', 'too many'], duration_minutes: 60, description: 'busy' }
+      ]
+    })
   })
 })

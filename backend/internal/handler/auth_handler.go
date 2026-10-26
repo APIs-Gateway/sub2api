@@ -333,6 +333,14 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		return
 	}
 
+	// Preserve failed-code/account-check retries, but claim before OAuth binding
+	// or token issuance. A failure after this point requires a fresh login.
+	claimed, err := h.totpService.ConsumeLoginSession(c.Request.Context(), req.TempToken)
+	if err != nil || !sameTotpLoginSession(session, claimed) {
+		response.BadRequest(c, "Invalid or expired 2FA session")
+		return
+	}
+
 	if session.PendingOAuthBind != nil {
 		pendingSvc, err := h.pendingIdentityService()
 		if err != nil {
@@ -390,14 +398,22 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		}
 	}
 
-	// Delete the login session (only after all checks pass)
-	_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
-
 	if session.PendingOAuthBind == nil {
 		h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
 	}
 
 	h.respondWithTokenPair(c, user)
+}
+
+// Verify that the claimed payload is the session whose code and user were checked.
+func sameTotpLoginSession(expected, claimed *service.TotpLoginSession) bool {
+	if expected == nil || claimed == nil || expected.UserID != claimed.UserID || expected.Email != claimed.Email || !expected.TokenExpiry.Equal(claimed.TokenExpiry) {
+		return false
+	}
+	if expected.PendingOAuthBind == nil || claimed.PendingOAuthBind == nil {
+		return expected.PendingOAuthBind == nil && claimed.PendingOAuthBind == nil
+	}
+	return *expected.PendingOAuthBind == *claimed.PendingOAuthBind
 }
 
 // GetCurrentUser handles getting current authenticated user

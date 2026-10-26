@@ -14,22 +14,37 @@ func TestParseAuthorizationInput(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		raw       string
-		wantCode  string
-		wantState string
+		name              string
+		raw               string
+		wantCode          string
+		wantState         string
+		wantRequiresState bool
 	}{
 		{
-			name:      "full callback url",
-			raw:       "http://127.0.0.1:56121/callback?code=abc123&state=state456",
-			wantCode:  "abc123",
-			wantState: "state456",
+			name:              "full callback url",
+			raw:               "http://127.0.0.1:56121/callback?code=abc123&state=state456",
+			wantCode:          "abc123",
+			wantState:         "state456",
+			wantRequiresState: true,
 		},
 		{
-			name:      "query string",
-			raw:       "?code=abc123&state=state456",
-			wantCode:  "abc123",
-			wantState: "state456",
+			name:              "query string",
+			raw:               "?code=abc123&state=state456",
+			wantCode:          "abc123",
+			wantState:         "state456",
+			wantRequiresState: true,
+		},
+		{
+			name:              "full callback url missing state",
+			raw:               "http://127.0.0.1:56121/callback?code=abc123",
+			wantCode:          "abc123",
+			wantRequiresState: true,
+		},
+		{
+			name:              "query string missing state",
+			raw:               "code=abc123",
+			wantCode:          "abc123",
+			wantRequiresState: true,
 		},
 		{
 			name:     "bare code",
@@ -44,6 +59,7 @@ func TestParseAuthorizationInput(t *testing.T) {
 			got := ParseAuthorizationInput(tt.raw)
 			require.Equal(t, tt.wantCode, got.Code)
 			require.Equal(t, tt.wantState, got.State)
+			require.Equal(t, tt.wantRequiresState, got.RequiresState)
 		})
 	}
 }
@@ -123,10 +139,11 @@ func TestXAIEnvironmentOverridesAndAuthorizationInputEdges(t *testing.T) {
 	require.Equal(t, "https://override.example.test", EffectiveBaseURL(" https://override.example.test/ "))
 
 	require.Equal(t, AuthorizationInput{}, ParseAuthorizationInput(""))
-	require.Equal(t, AuthorizationInput{Code: "abc"}, ParseAuthorizationInput("code=abc&state="))
-	require.Equal(t, AuthorizationInput{Code: "abc"}, ParseAuthorizationInput("?code=abc&state="))
+	// 解析出回调 query 的 code 时一律要求 state（上游 f29ccc7df）：空 state 由服务层拒绝。
+	require.Equal(t, AuthorizationInput{Code: "abc", RequiresState: true}, ParseAuthorizationInput("code=abc&state="))
+	require.Equal(t, AuthorizationInput{Code: "abc", RequiresState: true}, ParseAuthorizationInput("?code=abc&state="))
 
-	require.Equal(t, AuthorizationInput{Code: "abc", State: "state"}, ParseAuthorizationInput("https://callback.test/?code=abc&state=state"))
+	require.Equal(t, AuthorizationInput{Code: "abc", State: "state", RequiresState: true}, ParseAuthorizationInput("https://callback.test/?code=abc&state=state"))
 	require.NotEmpty(t, BuildAuthorizationURL("state", "challenge", "", "nonce"))
 	require.Equal(t, "https://api.x.ai/v1/responses", BuildResponsesURL("https://api.x.ai/v1/"))
 }

@@ -285,6 +285,9 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		AntigravityUserAgentVersion:            settings.AntigravityUserAgentVersion,
 		OpenAICodexUserAgent:                   settings.OpenAICodexUserAgent,
 		OpenAIAllowClaudeCodeCodexPlugin:       settings.OpenAIAllowClaudeCodeCodexPlugin,
+		ClaudeCodeClientVersion:                settings.ClaudeCodeClientVersion,
+		ClaudeCodeClientVersionSynced:          settings.ClaudeCodeClientVersionSynced,
+		ClaudeCodeVersionAutoSyncEnabled:       settings.ClaudeCodeVersionAutoSyncEnabled,
 		WebSearchEmulationEnabled:              settings.WebSearchEmulationEnabled,
 		PaymentVisibleMethodAlipaySource:       settings.PaymentVisibleMethodAlipaySource,
 		PaymentVisibleMethodWxpaySource:        settings.PaymentVisibleMethodWxpaySource,
@@ -307,6 +310,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		PaymentBalanceDisabled:                 paymentCfg.BalanceDisabled,
 		PaymentBalanceRechargeMultiplier:       paymentCfg.BalanceRechargeMultiplier,
 		PaymentSubscriptionPayMultiplier:       paymentCfg.SubscriptionPayMultiplier,
+		PaymentOfficialPriceCNYRate:            paymentCfg.OfficialPriceCNYRate,
 		PaymentRechargeFeeRate:                 paymentCfg.RechargeFeeRate,
 		PaymentCryptoRechargeFeeRate:           paymentCfg.CryptoRechargeFeeRate,
 		PaymentRefundFeeRate:                   paymentCfg.RefundFeeRate,
@@ -344,6 +348,8 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 	payload.OpenAIOAuthSchedulingRateMultiplier = settings.OpenAIOAuthSchedulingRateMultiplier
 	payload.OpenAIAdvancedSchedulerWeightUpstreamCost = settings.OpenAIAdvancedSchedulerWeightUpstreamCost
 	payload.OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost = settings.OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost
+
+	payload.BillingUnpricedPolicy = h.settingService.BillingUnpricedPolicy(c.Request.Context())
 
 	// OpenAI fast policy (stored under a dedicated setting key)
 	if fastPolicy, err := h.settingService.GetOpenAIFastPolicySettings(c.Request.Context()); err != nil {
@@ -648,6 +654,8 @@ type UpdateSettingsRequest struct {
 	AntigravityUserAgentVersion            *string `json:"antigravity_user_agent_version"`
 	OpenAICodexUserAgent                   *string `json:"openai_codex_user_agent"`
 	OpenAIAllowClaudeCodeCodexPlugin       *bool   `json:"openai_allow_claude_code_codex_plugin"`
+	ClaudeCodeClientVersion                *string `json:"claude_code_client_version"`
+	ClaudeCodeVersionAutoSyncEnabled       *bool   `json:"claude_code_version_auto_sync_enabled"`
 
 	// Payment visible method routing
 	PaymentVisibleMethodAlipaySource  *string `json:"payment_visible_method_alipay_source"`
@@ -680,6 +688,7 @@ type UpdateSettingsRequest struct {
 	PaymentBalanceDisabled                *bool    `json:"payment_balance_disabled"`
 	PaymentBalanceRechargeMultiplier      *float64 `json:"payment_balance_recharge_multiplier"`
 	PaymentSubscriptionPayMultiplier      *float64 `json:"payment_subscription_payment_multiplier"`
+	PaymentOfficialPriceCNYRate           *float64 `json:"payment_official_price_cny_rate"`
 	PaymentRechargeFeeRate                *float64 `json:"payment_recharge_fee_rate"`
 	PaymentCryptoRechargeFeeRate          *float64 `json:"payment_crypto_recharge_fee_rate"`
 	PaymentRefundFeeRate                  *float64 `json:"payment_refund_fee_rate"`
@@ -728,6 +737,9 @@ type UpdateSettingsRequest struct {
 
 	// OpenAI fast/flex policy (optional, only updated when provided)
 	OpenAIFastPolicySettings *dto.OpenAIFastPolicySettings `json:"openai_fast_policy_settings,omitempty"`
+
+	// 白名单分组运行时无价拦截开关（observe / block_allowlist，省略时不改）。会改变用户请求是否被拒，只有交互式管理员会话能写。
+	BillingUnpricedPolicy *string `json:"billing_unpriced_policy"`
 
 	// 系统全局 platform quota 默认值（整体替换语义：nil = 不修改，non-nil = 整体覆盖）。
 	DefaultPlatformQuotas map[string]*service.DefaultPlatformQuotaSetting `json:"default_platform_quotas"`
@@ -1597,6 +1609,15 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			return
 		}
 	}
+	if req.ClaudeCodeClientVersion != nil {
+		// 该值会被拼进出站 User-Agent 与 billing attribution，必须是合法版本号；空串表示跟随自动同步。
+		normalized := strings.TrimSpace(*req.ClaudeCodeClientVersion)
+		if normalized != "" && service.NormalizeClaudeCodeClientVersion(normalized) == "" {
+			response.Error(c, http.StatusBadRequest, "claude_code_client_version must be empty or a valid version (e.g. 2.1.258)")
+			return
+		}
+		req.ClaudeCodeClientVersion = &normalized
+	}
 
 	// 交叉验证：如果同时设置了最低和最高版本号，最高版本号必须 >= 最低版本号
 	if req.MinClaudeCodeVersion != "" && req.MaxClaudeCodeVersion != "" {
@@ -1618,6 +1639,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	sessionBindingEnabled := previousSettings.SessionBindingEnabled
 	sessionBindingEnabled = resolveSessionBindingEnabled(sessionBindingEnabled, req.SessionBindingEnabled)
+	billingUnpricedPolicy, ok := resolveBillingUnpricedPolicyWrite(c, req.BillingUnpricedPolicy)
+	if !ok {
+		return
+	}
 	stepUpEnabled := previousSettings.StepUpEnabled
 	if req.StepUpEnabled != nil {
 		stepUpEnabled = *req.StepUpEnabled
@@ -1886,6 +1911,20 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAIAllowClaudeCodeCodexPlugin
 		}(),
+		ClaudeCodeClientVersion: func() string {
+			if req.ClaudeCodeClientVersion != nil {
+				return *req.ClaudeCodeClientVersion
+			}
+			return previousSettings.ClaudeCodeClientVersion
+		}(),
+		// 同步值由自动同步任务独占写入，面板保存时原样带回，避免被清空。
+		ClaudeCodeClientVersionSynced: previousSettings.ClaudeCodeClientVersionSynced,
+		ClaudeCodeVersionAutoSyncEnabled: func() bool {
+			if req.ClaudeCodeVersionAutoSyncEnabled != nil {
+				return *req.ClaudeCodeVersionAutoSyncEnabled
+			}
+			return previousSettings.ClaudeCodeVersionAutoSyncEnabled
+		}(),
 		PaymentVisibleMethodAlipaySource: func() string {
 			if req.PaymentVisibleMethodAlipaySource != nil {
 				return strings.TrimSpace(*req.PaymentVisibleMethodAlipaySource)
@@ -1916,9 +1955,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAILowUpstreamRatePriorityEnabled
 		}(),
-		OpenAIOAuthSchedulingRateMultiplier: func() float64 {
-			if req.OpenAIOAuthSchedulingRateMultiplier != nil {
-				return *req.OpenAIOAuthSchedulingRateMultiplier
+		OpenAIOAuthSchedulingRateMultiplier: func() *float64 {
+			// Omitted fields preserve the override; explicit null clears it.
+			if _, sent := raw[service.SettingKeyOpenAIOAuthSchedulingRateMultiplier]; sent {
+				return req.OpenAIOAuthSchedulingRateMultiplier
 			}
 			return previousSettings.OpenAIOAuthSchedulingRateMultiplier
 		}(),
@@ -2081,6 +2121,14 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		},
 		ForceEmailOnThirdPartySignup: boolValueOrDefault(req.ForceEmailOnThirdPartySignup, previousAuthSourceDefaults.ForceEmailOnThirdPartySignup),
 	}
+	// 白名单分组无价拦截开关（受保护键，走仓储的专用写入）。放在主更新之前、所有校验之后：写入失败时其它设置一个都没落库，
+	// 不会出现「其它设置已保存、接口却报错」；合法值与权限已在 resolveBillingUnpricedPolicyWrite 校验。
+	if billingUnpricedPolicy != "" {
+		if err := h.settingService.SetBillingUnpricedPolicy(c.Request.Context(), billingUnpricedPolicy); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
 	if err := h.settingService.UpdateSettingsWithAuthSourceDefaultsOmitting(c.Request.Context(), settings, authSourceDefaults, omittedSettingKeys); err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -2108,6 +2156,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			BalanceDisabled:                req.PaymentBalanceDisabled,
 			BalanceRechargeMultiplier:      req.PaymentBalanceRechargeMultiplier,
 			SubscriptionPayMultiplier:      req.PaymentSubscriptionPayMultiplier,
+			OfficialPriceCNYRate:           req.PaymentOfficialPriceCNYRate,
 			RechargeFeeRate:                req.PaymentRechargeFeeRate,
 			CryptoRechargeFeeRate:          req.PaymentCryptoRechargeFeeRate,
 			RefundFeeRate:                  req.PaymentRefundFeeRate,
@@ -2323,6 +2372,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AntigravityUserAgentVersion:            updatedSettings.AntigravityUserAgentVersion,
 		OpenAICodexUserAgent:                   updatedSettings.OpenAICodexUserAgent,
 		OpenAIAllowClaudeCodeCodexPlugin:       updatedSettings.OpenAIAllowClaudeCodeCodexPlugin,
+		ClaudeCodeClientVersion:                updatedSettings.ClaudeCodeClientVersion,
+		ClaudeCodeClientVersionSynced:          updatedSettings.ClaudeCodeClientVersionSynced,
+		ClaudeCodeVersionAutoSyncEnabled:       updatedSettings.ClaudeCodeVersionAutoSyncEnabled,
 		PaymentVisibleMethodAlipaySource:       updatedSettings.PaymentVisibleMethodAlipaySource,
 		PaymentVisibleMethodWxpaySource:        updatedSettings.PaymentVisibleMethodWxpaySource,
 		PaymentVisibleMethodAlipayEnabled:      updatedSettings.PaymentVisibleMethodAlipayEnabled,
@@ -2344,6 +2396,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentBalanceDisabled:                 updatedPaymentCfg.BalanceDisabled,
 		PaymentBalanceRechargeMultiplier:       updatedPaymentCfg.BalanceRechargeMultiplier,
 		PaymentSubscriptionPayMultiplier:       updatedPaymentCfg.SubscriptionPayMultiplier,
+		PaymentOfficialPriceCNYRate:            updatedPaymentCfg.OfficialPriceCNYRate,
 		PaymentRechargeFeeRate:                 updatedPaymentCfg.RechargeFeeRate,
 		PaymentCryptoRechargeFeeRate:           updatedPaymentCfg.CryptoRechargeFeeRate,
 		PaymentRefundFeeRate:                   updatedPaymentCfg.RefundFeeRate,
@@ -2384,6 +2437,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	payload.OpenAIOAuthSchedulingRateMultiplier = updatedSettings.OpenAIOAuthSchedulingRateMultiplier
 	payload.OpenAIAdvancedSchedulerWeightUpstreamCost = updatedSettings.OpenAIAdvancedSchedulerWeightUpstreamCost
 	payload.OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost = updatedSettings.OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost
+	payload.BillingUnpricedPolicy = h.settingService.BillingUnpricedPolicy(c.Request.Context())
 	if fastPolicy, err := h.settingService.GetOpenAIFastPolicySettings(c.Request.Context()); err != nil {
 		slog.Error("openai_fast_policy_settings_get_failed", "error", err)
 	} else if fastPolicy != nil {
@@ -2575,6 +2629,28 @@ func detectOmittedSettingKeys(raw map[string]json.RawMessage) service.OmittedSet
 	return omitted
 }
 
+// resolveBillingUnpricedPolicyWrite 校验 billing_unpriced_policy 的写入请求，返回规范化后的值（未提供时为空串）。
+// 提供了字段就必须是交互式管理员会话（JWT）：这个开关会改变用户请求是否被拒，全局管理员密钥与机器令牌（admin token）都不行，
+// 与价格写入口同口径（鉴权方式取自中间件写进上下文的 auth_method，请求方无法自报）。非法取值返回 400。
+// 失败时已写好响应，调用方直接返回。
+func resolveBillingUnpricedPolicyWrite(c *gin.Context, requested *string) (string, bool) {
+	if requested == nil {
+		return "", true
+	}
+	value, valid := service.NormalizeBillingUnpricedPolicy(*requested)
+	if !valid {
+		response.BadRequest(c, "billing_unpriced_policy must be observe or block_allowlist")
+		return "", false
+	}
+	if c.GetString("auth_method") != service.AuditAuthMethodJWT {
+		response.ErrorWithDetails(c, http.StatusForbidden,
+			"billing_unpriced_policy changes must be made in an interactive administrator session",
+			"BILLING_UNPRICED_POLICY_INTERACTIVE", nil)
+		return "", false
+	}
+	return value, true
+}
+
 func hasPaymentFields(req UpdateSettingsRequest) bool {
 	return req.PaymentEnabled != nil || req.PaymentMinAmount != nil ||
 		req.PaymentMaxAmount != nil || req.PaymentDailyLimit != nil ||
@@ -2582,7 +2658,7 @@ func hasPaymentFields(req UpdateSettingsRequest) bool {
 		req.PaymentEnabledTypes != nil || req.PaymentBalanceDisabled != nil ||
 		req.PaymentBalanceRechargeMultiplier != nil || req.PaymentRechargeFeeRate != nil || req.PaymentCryptoRechargeFeeRate != nil ||
 		req.PaymentRefundFeeRate != nil ||
-		req.PaymentSubscriptionPayMultiplier != nil ||
+		req.PaymentSubscriptionPayMultiplier != nil || req.PaymentOfficialPriceCNYRate != nil ||
 		req.PaymentSubscriptionMinDaily != nil || req.PaymentSubscriptionMinRatioStartDaily != nil || req.PaymentSubscriptionMaxDaily != nil ||
 		req.PaymentSubscriptionMaxDays != nil ||
 		req.PaymentSubscriptionMinPlanRatio != nil || req.PaymentSubscriptionMaxPlanRatio != nil ||
@@ -3035,6 +3111,12 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpenAIAllowClaudeCodeCodexPlugin != after.OpenAIAllowClaudeCodeCodexPlugin {
 		changed = append(changed, "openai_allow_claude_code_codex_plugin")
 	}
+	if before.ClaudeCodeClientVersion != after.ClaudeCodeClientVersion {
+		changed = append(changed, "claude_code_client_version")
+	}
+	if before.ClaudeCodeVersionAutoSyncEnabled != after.ClaudeCodeVersionAutoSyncEnabled {
+		changed = append(changed, "claude_code_version_auto_sync_enabled")
+	}
 	if before.PaymentVisibleMethodAlipaySource != after.PaymentVisibleMethodAlipaySource {
 		changed = append(changed, "payment_visible_method_alipay_source")
 	}
@@ -3053,7 +3135,7 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpenAILowUpstreamRatePriorityEnabled != after.OpenAILowUpstreamRatePriorityEnabled {
 		changed = append(changed, "openai_low_upstream_rate_priority_enabled")
 	}
-	if before.OpenAIOAuthSchedulingRateMultiplier != after.OpenAIOAuthSchedulingRateMultiplier {
+	if !equalNullableFloat(before.OpenAIOAuthSchedulingRateMultiplier, after.OpenAIOAuthSchedulingRateMultiplier) {
 		changed = append(changed, "openai_oauth_scheduling_rate_multiplier")
 	}
 	if before.OpenAIAdvancedSchedulerWeightUpstreamCost != after.OpenAIAdvancedSchedulerWeightUpstreamCost {
@@ -3105,6 +3187,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	// Default platform quotas（JSON map，整体比较）
 	if !equalPlatformQuotaSettings(before.DefaultPlatformQuotas, after.DefaultPlatformQuotas) {
 		changed = append(changed, service.SettingKeyDefaultPlatformQuotas)
+	}
+	if req.BillingUnpricedPolicy != nil {
+		changed = append(changed, service.SettingKeyBillingUnpricedPolicy)
 	}
 	changed = appendAuthSourceDefaultChanges(changed, beforeAuthSourceDefaults, afterAuthSourceDefaults)
 	return changed
@@ -3361,7 +3446,14 @@ type TestSMTPRequest struct {
 	SMTPPort     int    `json:"smtp_port"`
 	SMTPUsername string `json:"smtp_username"`
 	SMTPPassword string `json:"smtp_password"`
-	SMTPUseTLS   bool   `json:"smtp_use_tls"`
+	SMTPUseTLS   *bool  `json:"smtp_use_tls"`
+}
+
+func resolveSMTPUseTLS(requested *bool, savedConfig *service.SMTPConfig) bool {
+	if requested != nil {
+		return *requested
+	}
+	return savedConfig != nil && savedConfig.UseTLS
 }
 
 // TestSMTPConnection 测试SMTP连接
@@ -3408,7 +3500,7 @@ func (h *SettingHandler) TestSMTPConnection(c *gin.Context) {
 		Port:     req.SMTPPort,
 		Username: req.SMTPUsername,
 		Password: password,
-		UseTLS:   req.SMTPUseTLS,
+		UseTLS:   resolveSMTPUseTLS(req.SMTPUseTLS, savedConfig),
 	}
 
 	err := h.emailService.TestSMTPConnectionWithConfig(config)
@@ -3429,7 +3521,7 @@ type SendTestEmailRequest struct {
 	SMTPPassword string `json:"smtp_password"`
 	SMTPFrom     string `json:"smtp_from_email"`
 	SMTPFromName string `json:"smtp_from_name"`
-	SMTPUseTLS   bool   `json:"smtp_use_tls"`
+	SMTPUseTLS   *bool  `json:"smtp_use_tls"`
 }
 
 // SendTestEmail 发送测试邮件
@@ -3486,7 +3578,7 @@ func (h *SettingHandler) SendTestEmail(c *gin.Context) {
 		Password: password,
 		From:     req.SMTPFrom,
 		FromName: req.SMTPFromName,
-		UseTLS:   req.SMTPUseTLS,
+		UseTLS:   resolveSMTPUseTLS(req.SMTPUseTLS, savedConfig),
 	}
 
 	siteName := h.settingService.GetSiteName(c.Request.Context())

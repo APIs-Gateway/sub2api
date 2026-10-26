@@ -9,6 +9,7 @@
       <div>
         <label class="input-label">{{ t('admin.channelMonitor.form.name') }} <span class="text-red-500">*</span></label>
         <input v-model="form.name" type="text" required class="input" :placeholder="t('admin.channelMonitor.form.namePlaceholder')" />
+        <p class="mt-1 text-xs text-gray-400" data-testid="monitor-name-hint">{{ t('admin.channelMonitor.form.userVisibleHint') }}</p>
       </div>
 
       <div>
@@ -101,6 +102,7 @@
       <div>
         <label class="input-label">{{ t('admin.channelMonitor.form.groupName') }}</label>
         <input v-model="form.group_name" type="text" class="input" :placeholder="t('admin.channelMonitor.form.groupNamePlaceholder')" />
+        <p class="mt-1 text-xs text-gray-400" data-testid="monitor-group-hint">{{ t('admin.channelMonitor.form.userVisibleHint') }}</p>
       </div>
 
       <div>

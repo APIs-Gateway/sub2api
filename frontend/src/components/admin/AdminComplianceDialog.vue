@@ -107,6 +107,7 @@ import Icon from '@/components/icons/Icon.vue'
 import { useAdminComplianceStore, useAppStore, useAuthStore } from '@/stores'
 import { getLocale } from '@/i18n'
 import { isChineseLocale } from '@/i18n/localeUtils'
+import { getAdminComplianceSessionVersion } from '@/utils/adminComplianceSession'
 import zhDocument from '../../../../docs/legal/admin-compliance.zh.md?raw'
 import enDocument from '../../../../docs/legal/admin-compliance.en.md?raw'
 
@@ -165,14 +166,17 @@ async function submit(): Promise<void> {
     return
   }
 
+  const sessionVersion = getAdminComplianceSessionVersion()
   try {
     const status = await complianceStore.accept(typedPhrase.value.trim())
+    if (sessionVersion !== getAdminComplianceSessionVersion()) return
     if (!status.required) {
       appStore.showSuccess(t('adminCompliance.accepted'))
       typedPhrase.value = ''
       attemptedSubmit.value = false
     }
   } catch (error) {
+    if (sessionVersion !== getAdminComplianceSessionVersion()) return
     const message = (error as { message?: string })?.message || t('adminCompliance.acceptFailed')
     appStore.showError(message)
   }

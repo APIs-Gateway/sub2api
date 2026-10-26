@@ -88,8 +88,9 @@ type TrendDataPoint struct {
 	CacheCreationTokens int64   `json:"cache_creation_tokens"`
 	CacheReadTokens     int64   `json:"cache_read_tokens"`
 	TotalTokens         int64   `json:"total_tokens"`
-	Cost                float64 `json:"cost"`        // 标准计费
-	ActualCost          float64 `json:"actual_cost"` // 实际扣除
+	Cost                float64 `json:"cost"`                       // 标准计费
+	ActualCost          float64 `json:"actual_cost"`                // 实际扣除
+	ActualCostFiat      float64 `json:"actual_cost_fiat,omitempty"` // 实际扣除折合法币
 }
 
 // ModelStat represents usage statistics for a single model
@@ -101,9 +102,10 @@ type ModelStat struct {
 	CacheCreationTokens int64   `json:"cache_creation_tokens"`
 	CacheReadTokens     int64   `json:"cache_read_tokens"`
 	TotalTokens         int64   `json:"total_tokens"`
-	Cost                float64 `json:"cost"`         // 标准计费
-	ActualCost          float64 `json:"actual_cost"`  // 实际扣除
-	AccountCost         float64 `json:"account_cost"` // 账号成本
+	Cost                float64 `json:"cost"`                       // 标准计费
+	ActualCost          float64 `json:"actual_cost"`                // 实际扣除
+	ActualCostFiat      float64 `json:"actual_cost_fiat,omitempty"` // 实际扣除折合法币
+	AccountCost         float64 `json:"account_cost"`               // 账号成本
 }
 
 // EndpointStat represents usage statistics for a single request endpoint.
@@ -211,8 +213,9 @@ type APIKeyDailyUsagePoint struct {
 	CacheReadTokens  int64   `json:"cache_read_tokens"`
 	CacheWriteTokens int64   `json:"cache_write_tokens"`
 	TotalTokens      int64   `json:"total_tokens"`
-	Cost             float64 `json:"cost"`        // 标准计费
-	ActualCost       float64 `json:"actual_cost"` // 实际扣除
+	Cost             float64 `json:"cost"`                       // 标准计费
+	ActualCost       float64 `json:"actual_cost"`                // 实际扣除
+	ActualCostFiat   float64 `json:"actual_cost_fiat,omitempty"` // 实际扣除折合法币
 }
 
 // UserDashboardStats 用户仪表盘统计
@@ -228,8 +231,9 @@ type UserDashboardStats struct {
 	TotalCacheCreationTokens int64   `json:"total_cache_creation_tokens"`
 	TotalCacheReadTokens     int64   `json:"total_cache_read_tokens"`
 	TotalTokens              int64   `json:"total_tokens"`
-	TotalCost                float64 `json:"total_cost"`        // 累计标准计费
-	TotalActualCost          float64 `json:"total_actual_cost"` // 累计实际扣除
+	TotalCost                float64 `json:"total_cost"`                       // 累计标准计费
+	TotalActualCost          float64 `json:"total_actual_cost"`                // 累计实际扣除
+	TotalActualCostFiat      float64 `json:"total_actual_cost_fiat,omitempty"` // 累计实际扣除折合法币
 
 	// 今日 Token 使用统计
 	TodayRequests            int64   `json:"today_requests"`
@@ -238,8 +242,9 @@ type UserDashboardStats struct {
 	TodayCacheCreationTokens int64   `json:"today_cache_creation_tokens"`
 	TodayCacheReadTokens     int64   `json:"today_cache_read_tokens"`
 	TodayTokens              int64   `json:"today_tokens"`
-	TodayCost                float64 `json:"today_cost"`        // 今日标准计费
-	TodayActualCost          float64 `json:"today_actual_cost"` // 今日实际扣除
+	TodayCost                float64 `json:"today_cost"`                       // 今日标准计费
+	TodayActualCost          float64 `json:"today_actual_cost"`                // 今日实际扣除
+	TodayActualCostFiat      float64 `json:"today_actual_cost_fiat,omitempty"` // 今日实际扣除折合法币
 
 	// 性能统计
 	AverageDurationMs float64 `json:"average_duration_ms"`
@@ -254,13 +259,15 @@ type UserDashboardStats struct {
 
 // PlatformDashboardStats 单个平台的用量明细。
 type PlatformDashboardStats struct {
-	Platform        string  `json:"platform"`
-	TotalRequests   int64   `json:"total_requests"`
-	TotalTokens     int64   `json:"total_tokens"`
-	TotalActualCost float64 `json:"total_actual_cost"`
-	TodayRequests   int64   `json:"today_requests"`
-	TodayTokens     int64   `json:"today_tokens"`
-	TodayActualCost float64 `json:"today_actual_cost"`
+	Platform            string  `json:"platform"`
+	TotalRequests       int64   `json:"total_requests"`
+	TotalTokens         int64   `json:"total_tokens"`
+	TotalActualCost     float64 `json:"total_actual_cost"`
+	TotalActualCostFiat float64 `json:"total_actual_cost_fiat,omitempty"`
+	TodayRequests       int64   `json:"today_requests"`
+	TodayTokens         int64   `json:"today_tokens"`
+	TodayActualCost     float64 `json:"today_actual_cost"`
+	TodayActualCostFiat float64 `json:"today_actual_cost_fiat,omitempty"`
 }
 
 // UsageLogFilters represents filters for usage log queries
@@ -321,9 +328,11 @@ type BatchUserUsageStats struct {
 
 // BatchAPIKeyUsageStats represents usage stats for a single API key
 type BatchAPIKeyUsageStats struct {
-	APIKeyID        int64   `json:"api_key_id"`
-	TodayActualCost float64 `json:"today_actual_cost"`
-	TotalActualCost float64 `json:"total_actual_cost"`
+	APIKeyID            int64   `json:"api_key_id"`
+	TodayActualCost     float64 `json:"today_actual_cost"`
+	TotalActualCost     float64 `json:"total_actual_cost"`
+	TodayActualCostFiat float64 `json:"today_actual_cost_fiat,omitempty"`
+	TotalActualCostFiat float64 `json:"total_actual_cost_fiat,omitempty"`
 }
 
 // AccountUsageHistory represents daily usage history for an account

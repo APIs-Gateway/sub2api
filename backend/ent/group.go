@@ -51,6 +51,8 @@ type Group struct {
 	DefaultValidityDays int `json:"default_validity_days,omitempty"`
 	// 是否允许该分组使用图片生成能力
 	AllowImageGeneration bool `json:"allow_image_generation,omitempty"`
+	// 仅系统新建且管理员未显式设置图片权限的简易模式 OpenAI 默认组可使用的内部例外
+	SimpleModeAutoImageEligible bool `json:"simple_mode_auto_image_eligible,omitempty"`
 	// 图片生成是否使用独立倍率；false 表示共享分组有效倍率
 	ImageRateIndependent bool `json:"image_rate_independent,omitempty"`
 	// 图片生成独立倍率，仅 image_rate_independent=true 时生效
@@ -201,7 +203,7 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case group.FieldModelRouting, group.FieldSupportedModelScopes, group.FieldMessagesDispatchModelConfig, group.FieldModelsListConfig:
 			values[i] = new([]byte)
-		case group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldImageRateIndependent, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet:
+		case group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldSimpleModeAutoImageEligible, group.FieldImageRateIndependent, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet:
 			values[i] = new(sql.NullBool)
 		case group.FieldRateMultiplier, group.FieldDailyLimitUsd, group.FieldWeeklyLimitUsd, group.FieldMonthlyLimitUsd, group.FieldImageRateMultiplier, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k:
 			values[i] = new(sql.NullFloat64)
@@ -333,6 +335,12 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field allow_image_generation", values[i])
 			} else if value.Valid {
 				_m.AllowImageGeneration = value.Bool
+			}
+		case group.FieldSimpleModeAutoImageEligible:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field simple_mode_auto_image_eligible", values[i])
+			} else if value.Valid {
+				_m.SimpleModeAutoImageEligible = value.Bool
 			}
 		case group.FieldImageRateIndependent:
 			if value, ok := values[i].(*sql.NullBool); !ok {
@@ -609,6 +617,9 @@ func (_m *Group) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("allow_image_generation=")
 	builder.WriteString(fmt.Sprintf("%v", _m.AllowImageGeneration))
+	builder.WriteString(", ")
+	builder.WriteString("simple_mode_auto_image_eligible=")
+	builder.WriteString(fmt.Sprintf("%v", _m.SimpleModeAutoImageEligible))
 	builder.WriteString(", ")
 	builder.WriteString("image_rate_independent=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ImageRateIndependent))

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
@@ -67,6 +68,9 @@ func needsOpenAIResponsesClientToolAdaptation(body []byte) bool {
 	visit = func(value gjson.Result) bool {
 		if value.IsObject() {
 			switch strings.TrimSpace(value.Get("type").String()) {
+			case "additional_tools":
+				needsAdaptation = true
+				return false
 			case "custom", "custom_tool_call", "custom_tool_call_output",
 				"tool_search", "tool_search_call", "tool_search_output":
 				needsAdaptation = true
@@ -93,14 +97,99 @@ func adaptOpenAIResponsesClientTools(body []byte) ([]byte, apicompat.ResponsesCl
 	if err != nil {
 		return body, apicompat.ResponsesClientToolMapping{}, err
 	}
+	additionalToolsChanged, err := liftResponsesAdditionalTools(requestBody)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("lift OpenAI Responses Lite tools: %w", err)
+	}
 
 	mapping, changed, err := apicompat.AdaptResponsesClientTools(requestBody)
-	if err != nil || !changed {
+	if err != nil || (!changed && !additionalToolsChanged) {
 		return body, mapping, err
 	}
 	rebuilt, err := marshalOpenAIUpstreamJSON(requestBody)
 	if err != nil {
 		return body, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("encode OpenAI Responses client tools: %w", err)
+	}
+	return rebuilt, mapping, nil
+}
+
+func isOfficialCommandCodeResponsesBaseURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.User != nil || !strings.EqualFold(parsed.Scheme, "https") ||
+		!strings.EqualFold(parsed.Hostname(), "api.commandcode.ai") {
+		return false
+	}
+	return parsed.Port() == "" || parsed.Port() == "443"
+}
+
+func isOfficialDeepSeekResponsesBaseURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.User != nil || parsed.Opaque != "" || parsed.RawPath != "" ||
+		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" ||
+		!strings.EqualFold(parsed.Scheme, "https") || !strings.EqualFold(parsed.Hostname(), "api.deepseek.com") ||
+		(parsed.Port() != "" && parsed.Port() != "443") {
+		return false
+	}
+	switch parsed.Path {
+	case "", "/", "/v1", "/v1/":
+		return true
+	default:
+		return false
+	}
+}
+
+func adaptDeepSeekResponsesLiteClientTools(body []byte) ([]byte, apicompat.ResponsesClientToolMapping, error) {
+	requestBody, err := decodeOpenAIResponsesClientToolsRequestBody(body)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, err
+	}
+	changed, err := liftResponsesAdditionalTools(requestBody)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("lift DeepSeek Responses Lite tools: %w", err)
+	}
+	if !changed {
+		return body, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("DeepSeek Responses Lite tools require an additional_tools carrier")
+	}
+	mapping, _, err := apicompat.AdaptDeepSeekResponsesNamespaceCustomTools(requestBody)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, err
+	}
+	rebuilt, err := marshalOpenAIUpstreamJSON(requestBody)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("encode DeepSeek Responses Lite tools: %w", err)
+	}
+	return rebuilt, mapping, nil
+}
+
+// Command Code's native Responses endpoint needs the normal client-tool
+// adapter for declared tools. A follow-up with no tools field can still carry
+// tool_search history; lower only those history items without inserting a
+// synthetic declaration or assuming state from a previous account attempt.
+func adaptCommandCodeResponsesClientTools(body []byte) ([]byte, apicompat.ResponsesClientToolMapping, error) {
+	if !needsOpenAIResponsesClientToolAdaptation(body) {
+		return body, apicompat.ResponsesClientToolMapping{}, nil
+	}
+	requestBody, err := decodeOpenAIResponsesClientToolsRequestBody(body)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, err
+	}
+	additionalToolsChanged, err := liftResponsesAdditionalTools(requestBody)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("lift Command Code Responses Lite tools: %w", err)
+	}
+	var mapping apicompat.ResponsesClientToolMapping
+	var changed bool
+	if _, hasTools := requestBody["tools"]; hasTools {
+		mapping, changed, err = apicompat.AdaptResponsesClientTools(requestBody)
+	} else {
+		mapping, changed, err = apicompat.AdaptResponsesToolSearchHistoryWithoutTools(requestBody)
+	}
+	if err != nil || (!changed && !additionalToolsChanged) {
+		return body, mapping, err
+	}
+	rebuilt, err := marshalOpenAIUpstreamJSON(requestBody)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, fmt.Errorf("encode Command Code Responses client tools: %w", err)
 	}
 	return rebuilt, mapping, nil
 }
@@ -131,13 +220,17 @@ func adaptOpenAIResponsesClientToolsWithInheritedMapping(
 	if err != nil {
 		return body, apicompat.ResponsesClientToolMapping{}, nil, err
 	}
+	additionalToolsChanged, err := liftResponsesAdditionalTools(requestBody)
+	if err != nil {
+		return body, apicompat.ResponsesClientToolMapping{}, nil, fmt.Errorf("lift OpenAI Responses Lite tools: %w", err)
+	}
 
 	mapping, changed, err := apicompat.AdaptResponsesClientToolsWithInheritedMapping(requestBody, previousMapping, previousLoweredTools)
 	if err != nil {
 		return body, apicompat.ResponsesClientToolMapping{}, nil, err
 	}
 	loweredTools, _ := requestBody["tools"].([]any)
-	if !changed {
+	if !changed && !additionalToolsChanged {
 		return body, mapping, loweredTools, nil
 	}
 	rebuilt, err := marshalOpenAIUpstreamJSON(requestBody)

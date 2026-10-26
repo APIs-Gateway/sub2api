@@ -14,7 +14,15 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 15 // v15: per-key stable_priority_enabled
+const apiKeyAuthSnapshotVersion = 17 // v17: has_group_routes（回退链标志）；v16: simple-mode default image eligibility；v15: per-key stable_priority_enabled
+
+// currentAPIKeyAuthSnapshotVersion 是本进程写入、也只接受的快照版本：基础版本再叠加币种模式
+// （CreditUnit.AuthSnapshotVersion）。快照里缓存了余额、Key 额度与限额、分组倍率等「额度类」数值，
+// 单位随 CREDIT_CURRENCY 变；叠加后 USD 与 CNY 的版本号互不相等，切换（或回滚）后旧快照自然失效，
+// 不会把旧单位的数读成新单位。USD 模式下等于 apiKeyAuthSnapshotVersion，行为与引入前一致。
+func currentAPIKeyAuthSnapshotVersion() int {
+	return CurrentCreditUnit().AuthSnapshotVersion(apiKeyAuthSnapshotVersion)
+}
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -188,6 +196,12 @@ func (s *APIKeyService) loadAuthCacheEntry(ctx context.Context, key, cacheKey st
 		return nil, fmt.Errorf("get api key: %w", ErrAPIKeyNotFound)
 	}
 	entry := &APIKeyAuthCacheEntry{Snapshot: snapshot}
+	if apiKey.HasGroupRoutesUnknown {
+		// 回退链的 EXISTS 查询失败：本次按无链处理，但不缓存，下一次请求回源重查，
+		// 避免一次瞬时错误让有链的 Key 在整个缓存 TTL 内失去回退（审查 S4）。
+		slog.Warn("api_key_auth_cache.skip_write_group_routes_unknown", "api_key_id", apiKey.ID)
+		return entry, nil
+	}
 	s.setAuthCacheEntry(ctx, cacheKey, entry, s.authCfg.l2TTL)
 	return entry, nil
 }
@@ -202,7 +216,7 @@ func (s *APIKeyService) applyAuthCacheEntry(key string, entry *APIKeyAuthCacheEn
 	if entry.Snapshot == nil {
 		return nil, false, nil
 	}
-	if entry.Snapshot.Version != apiKeyAuthSnapshotVersion {
+	if entry.Snapshot.Version != currentAPIKeyAuthSnapshotVersion() {
 		return nil, false, nil
 	}
 	return s.snapshotToAPIKey(key, entry.Snapshot), true, nil
@@ -213,7 +227,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		return nil
 	}
 	snapshot := &APIKeyAuthSnapshot{
-		Version:               apiKeyAuthSnapshotVersion,
+		Version:               currentAPIKeyAuthSnapshotVersion(),
 		APIKeyID:              apiKey.ID,
 		UserID:                apiKey.UserID,
 		GroupID:               apiKey.GroupID,
@@ -228,6 +242,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		RateLimit1d:           apiKey.RateLimit1d,
 		RateLimit7d:           apiKey.RateLimit7d,
 		StablePriorityEnabled: apiKey.StablePriorityEnabled,
+		HasGroupRoutes:        apiKey.HasGroupRoutes,
 		User: APIKeyAuthUserSnapshot{
 			ID:                         apiKey.User.ID,
 			Status:                     apiKey.User.Status,
@@ -271,6 +286,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			WeeklyLimitUSD:                  apiKey.Group.WeeklyLimitUSD,
 			MonthlyLimitUSD:                 apiKey.Group.MonthlyLimitUSD,
 			AllowImageGeneration:            apiKey.Group.AllowImageGeneration,
+			SimpleModeAutoImageEligible:     apiKey.Group.SimpleModeAutoImageEligible,
 			ImageRateIndependent:            apiKey.Group.ImageRateIndependent,
 			ImageRateMultiplier:             apiKey.Group.ImageRateMultiplier,
 			ImagePrice1K:                    apiKey.Group.ImagePrice1K,
@@ -279,7 +295,6 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			ClaudeCodeOnly:                  apiKey.Group.ClaudeCodeOnly,
 			FallbackGroupID:                 apiKey.Group.FallbackGroupID,
 			FallbackGroupIDOnInvalidRequest: apiKey.Group.FallbackGroupIDOnInvalidRequest,
-			StablePriorityFallbackGroupID:   apiKey.Group.StablePriorityFallbackGroupID,
 			ModelRouting:                    apiKey.Group.ModelRouting,
 			ModelRoutingEnabled:             apiKey.Group.ModelRoutingEnabled,
 			MCPXMLInject:                    apiKey.Group.MCPXMLInject,
@@ -314,6 +329,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 		RateLimit1d:           snapshot.RateLimit1d,
 		RateLimit7d:           snapshot.RateLimit7d,
 		StablePriorityEnabled: snapshot.StablePriorityEnabled,
+		HasGroupRoutes:        snapshot.HasGroupRoutes,
 		User: &User{
 			ID:                         snapshot.User.ID,
 			Status:                     snapshot.User.Status,
@@ -350,6 +366,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			WeeklyLimitUSD:                  snapshot.Group.WeeklyLimitUSD,
 			MonthlyLimitUSD:                 snapshot.Group.MonthlyLimitUSD,
 			AllowImageGeneration:            snapshot.Group.AllowImageGeneration,
+			SimpleModeAutoImageEligible:     snapshot.Group.SimpleModeAutoImageEligible,
 			ImageRateIndependent:            snapshot.Group.ImageRateIndependent,
 			ImageRateMultiplier:             snapshot.Group.ImageRateMultiplier,
 			ImagePrice1K:                    snapshot.Group.ImagePrice1K,
@@ -358,7 +375,6 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			ClaudeCodeOnly:                  snapshot.Group.ClaudeCodeOnly,
 			FallbackGroupID:                 snapshot.Group.FallbackGroupID,
 			FallbackGroupIDOnInvalidRequest: snapshot.Group.FallbackGroupIDOnInvalidRequest,
-			StablePriorityFallbackGroupID:   snapshot.Group.StablePriorityFallbackGroupID,
 			ModelRouting:                    snapshot.Group.ModelRouting,
 			ModelRoutingEnabled:             snapshot.Group.ModelRoutingEnabled,
 			MCPXMLInject:                    snapshot.Group.MCPXMLInject,

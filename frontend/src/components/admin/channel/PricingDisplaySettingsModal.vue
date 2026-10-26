@@ -28,7 +28,7 @@
                 :placeholder="t('admin.channels.display.searchModels')"
                 class="flex-1 bg-transparent text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none dark:text-gray-100"
               />
-              <button v-if="selectedModels.length > 0" type="button" class="shrink-0 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" @click="selectedModels = []">
+              <button v-if="selectedModels.length > 0" type="button" class="shrink-0 text-xs text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" @click="selectedModels = []">
                 {{ t('admin.channels.display.clear') }}
               </button>
             </div>

@@ -27,19 +27,19 @@
         <AnnouncementBell v-if="user" />
 
         <!-- Docs Link -->
-        <a
-          v-if="docUrl"
-          :href="docUrl"
-          target="_blank"
-          rel="noopener noreferrer"
+        <router-link
+          to="/docs"
           class="hidden items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white sm:flex"
         >
           <Icon name="book" size="sm" />
           <span class="hidden sm:inline">{{ t('nav.docs') }}</span>
-        </a>
+        </router-link>
 
         <!-- Language Switcher -->
         <LocaleSwitcher />
+
+        <!-- 计价单位切换（¥ 实付 / $ 官方价口径）；倍率为 1 的站点不渲染 -->
+        <CurrencyModeSwitch v-if="showCurrencySwitch" class="hidden sm:flex" />
 
         <!-- Subscription Progress (for users with active subscriptions) -->
         <SubscriptionProgressMini v-if="user" />
@@ -74,6 +74,21 @@
                   {{ displayName }}
                 </div>
                 <div class="text-xs text-gray-500 dark:text-dark-400">{{ user.email }}</div>
+                <!-- User ID: one tap copies it, handy when contacting support -->
+                <button
+                  v-if="user.id"
+                  type="button"
+                  class="-mx-2 mt-2 flex w-[calc(100%+1rem)] items-center justify-between gap-2 rounded px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                  :title="t('common.clickToCopy')"
+                  data-testid="copy-user-id"
+                  @click="copyUserId"
+                >
+                  <span>{{ t('nav.userId') }}</span>
+                  <span class="flex items-center gap-1.5">
+                    <span class="num text-gray-700 dark:text-gray-300">{{ user.id }}</span>
+                    <Icon :name="userIdCopied ? 'check' : 'copy'" size="xs" />
+                  </span>
+                </button>
               </div>
 
               <div class="py-1">
@@ -82,10 +97,30 @@
                   {{ t('nav.profile') }}
                 </router-link>
 
+                <router-link
+                  v-if="showTopupEntry"
+                  to="/purchase"
+                  @click="closeDropdown"
+                  class="dropdown-item"
+                  data-testid="account-menu-topup"
+                >
+                  <Icon name="creditCard" size="sm" />
+                  {{ t('nav.topUp') }}
+                </router-link>
+
                 <router-link to="/keys" @click="closeDropdown" class="dropdown-item">
                   <Icon name="key" size="sm" />
                   {{ t('nav.apiKeys') }}
                 </router-link>
+
+                <!-- 窄屏顶栏放不下切换器，收进用户菜单 -->
+                <div
+                  v-if="showCurrencySwitch && currencyCanSwitch"
+                  class="flex items-center justify-between px-4 py-2 text-sm text-gray-700 dark:text-gray-300 sm:hidden"
+                >
+                  <span>{{ t('usage.currencySwitchLabel') }}</span>
+                  <CurrencyModeSwitch size="sm" />
+                </div>
 
               </div>
 
@@ -163,9 +198,12 @@ import { useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
+import CurrencyModeSwitch from '@/components/common/CurrencyModeSwitch.vue'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { sanitizeUrl } from '@/utils/url'
+import { useClipboard } from '@/composables/useClipboard'
+import { FeatureFlags, resolveFeatureFlag } from '@/utils/featureFlags'
 
 const router = useRouter()
 const route = useRoute()
@@ -176,11 +214,22 @@ const adminSettingsStore = useAdminSettingsStore()
 const onboardingStore = useOnboardingStore()
 
 const user = computed(() => authStore.user)
+const { canSwitch: currencyCanSwitch } = useCurrencyDisplay()
 const dropdownOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
 const contactInfo = computed(() => appStore.contactInfo)
-const docUrl = computed(() => sanitizeUrl(appStore.docUrl))
 const avatarUrl = computed(() => user.value?.avatar_url?.trim() || '')
+
+const { copied: userIdCopied, copyToClipboard } = useClipboard()
+
+// "Top up" opens the purchase page, so it follows the same gates as the
+// sidebar's recharge entry: hidden when payment is switched off, and in simple mode.
+const showTopupEntry = computed(
+  () => resolveFeatureFlag(FeatureFlags.payment, appStore.cachedPublicSettings) && !authStore.isSimpleMode
+)
+
+// 计价单位只影响用户侧页面；后台页面一律按额度展示，不放切换器免得误以为能切。
+const showCurrencySwitch = computed(() => !!user.value && !route.path.startsWith('/admin'))
 
 // 只在标准模式的管理员下显示新手引导按钮
 const showOnboardingButton = computed(() => {
@@ -251,6 +300,13 @@ async function handleLogout() {
     console.error('Logout error:', error)
   }
   await router.push('/login')
+}
+
+// useClipboard shows the success / failure toast itself.
+async function copyUserId() {
+  const id = user.value?.id
+  if (!id) return
+  await copyToClipboard(String(id), t('nav.userIdCopied'))
 }
 
 function handleReplayGuide() {

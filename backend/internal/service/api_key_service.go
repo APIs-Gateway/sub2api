@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -217,6 +218,7 @@ type APIKeyService struct {
 	cache                 APIKeyCache
 	rateLimitCacheInvalid RateLimitCacheInvalidator // optional: invalidate Redis rate limit cache
 	concurrencyService    *ConcurrencyService
+	groupRouteHooks       groupRouteKeyHooks // optional: Key 级分组回退链联动（改主分组 / 删除 Key）
 	cfg                   *config.Config
 	authCacheL1           *ristretto.Cache
 	authCfg               apiKeyAuthCacheConfig
@@ -258,6 +260,16 @@ func (s *APIKeyService) SetRateLimitCacheInvalidator(inv RateLimitCacheInvalidat
 
 func (s *APIKeyService) SetConcurrencyService(concurrencyService *ConcurrencyService) {
 	s.concurrencyService = concurrencyService
+}
+
+// SetGroupRouteHooks 注入 Key 级分组回退链的联动入口（可选）。
+// 改主分组与删除 Key 时用它保持链表一致；不注入则两处都是空操作。
+func (s *APIKeyService) SetGroupRouteHooks(hooks *GroupRouteKeyHooks) {
+	if hooks == nil {
+		s.groupRouteHooks = nil
+		return
+	}
+	s.groupRouteHooks = hooks
 }
 
 func (s *APIKeyService) compileAPIKeyIPRules(apiKey *APIKey) {
@@ -662,6 +674,8 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		apiKey.Name = html.EscapeString(*req.Name)
 	}
 
+	// 主分组真的换了才需要联动回退链（落库之后）。
+	var primaryChangedTo *Group
 	if req.GroupID != nil {
 		// 验证分组权限
 		user, err := s.userRepo.GetByID(ctx, userID)
@@ -678,6 +692,9 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 			return nil, ErrGroupNotAllowed
 		}
 
+		if apiKey.GroupID == nil || *apiKey.GroupID != group.ID {
+			primaryChangedTo = group
+		}
 		apiKey.GroupID = req.GroupID
 	}
 
@@ -754,8 +771,14 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		return nil, fmt.Errorf("update api key: %w", err)
 	}
 
-	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 	s.compileAPIKeyIPRules(apiKey)
+
+	// 主分组变更要先联动回退链（可能删掉与新主分组重复的项、换平台清空用户链），再失效鉴权缓存，
+	// 这样重算出来的 HasGroupRoutes 已经反映联动之后的链（审查 BK-A / S-1）。
+	if primaryChangedTo != nil {
+		notifyPrimaryGroupChanged(ctx, s.groupRouteHooks, apiKey, primaryChangedTo)
+	}
+	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 
 	// Invalidate Redis rate limit cache so reset takes effect immediately
 	if resetRateLimit && s.rateLimitCacheInvalid != nil {
@@ -788,6 +811,13 @@ func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) erro
 	}
 	s.InvalidateAuthCacheByKey(ctx, key)
 	s.lastUsedTouchL1.Delete(id)
+
+	// 回收该 Key 的回退链项（读取已过滤软删除的 Key，失败不影响正确性）。
+	if s.groupRouteHooks != nil {
+		if err := s.groupRouteHooks.OnKeyDeleted(ctx, id); err != nil {
+			slog.Warn("group fallback: cleanup routes of deleted api key failed", "api_key_id", id, "error", err)
+		}
+	}
 
 	return nil
 }
@@ -992,4 +1022,29 @@ func (s *APIKeyService) UpdateRateLimitUsage(ctx context.Context, apiKeyID int64
 		return nil
 	}
 	return s.apiKeyRepo.IncrementRateLimitUsage(ctx, apiKeyID, cost)
+}
+
+// GetCurrentImagePermissionGroup bypasses both auth caches for long-lived WS
+// image admission. A moved or disabled key must not reuse its handshake group.
+func (s *APIKeyService) GetCurrentImagePermissionGroup(ctx context.Context, initial *APIKey) (*Group, error) {
+	if s == nil || s.apiKeyRepo == nil || initial == nil || initial.Key == "" {
+		return nil, ErrInsufficientPerms
+	}
+	current, err := s.apiKeyRepo.GetByKeyForAuth(ctx, initial.Key)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil || current.ID != initial.ID || current.UserID != initial.UserID || !current.IsActive() || current.IsExpired() || current.User == nil || !current.User.IsActive() || current.User.ID != current.UserID {
+		return nil, ErrInsufficientPerms
+	}
+	if initial.GroupID == nil && initial.Group == nil && current.GroupID == nil && current.Group == nil {
+		return nil, nil
+	}
+	if initial.GroupID == nil || initial.Group == nil || current.GroupID == nil || *current.GroupID != *initial.GroupID || current.Group == nil || current.Group.ID != *current.GroupID || current.Group.Platform != initial.Group.Platform || !current.Group.Hydrated || !current.Group.IsActive() {
+		return nil, ErrInsufficientPerms
+	}
+	if !current.User.CanBindGroup(current.Group.ID, current.Group.IsExclusive) {
+		return nil, ErrInsufficientPerms
+	}
+	return current.Group, nil
 }

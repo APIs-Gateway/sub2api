@@ -15232,6 +15232,7 @@ type GroupMutation struct {
 	default_validity_days                   *int
 	adddefault_validity_days                *int
 	allow_image_generation                  *bool
+	simple_mode_auto_image_eligible         *bool
 	image_rate_independent                  *bool
 	image_rate_multiplier                   *float64
 	addimage_rate_multiplier                *float64
@@ -16140,6 +16141,42 @@ func (m *GroupMutation) OldAllowImageGeneration(ctx context.Context) (v bool, er
 // ResetAllowImageGeneration resets all changes to the "allow_image_generation" field.
 func (m *GroupMutation) ResetAllowImageGeneration() {
 	m.allow_image_generation = nil
+}
+
+// SetSimpleModeAutoImageEligible sets the "simple_mode_auto_image_eligible" field.
+func (m *GroupMutation) SetSimpleModeAutoImageEligible(b bool) {
+	m.simple_mode_auto_image_eligible = &b
+}
+
+// SimpleModeAutoImageEligible returns the value of the "simple_mode_auto_image_eligible" field in the mutation.
+func (m *GroupMutation) SimpleModeAutoImageEligible() (r bool, exists bool) {
+	v := m.simple_mode_auto_image_eligible
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSimpleModeAutoImageEligible returns the old "simple_mode_auto_image_eligible" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldSimpleModeAutoImageEligible(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSimpleModeAutoImageEligible is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSimpleModeAutoImageEligible requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSimpleModeAutoImageEligible: %w", err)
+	}
+	return oldValue.SimpleModeAutoImageEligible, nil
+}
+
+// ResetSimpleModeAutoImageEligible resets all changes to the "simple_mode_auto_image_eligible" field.
+func (m *GroupMutation) ResetSimpleModeAutoImageEligible() {
+	m.simple_mode_auto_image_eligible = nil
 }
 
 // SetImageRateIndependent sets the "image_rate_independent" field.
@@ -17548,7 +17585,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 37)
+	fields := make([]string, 0, 38)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -17596,6 +17633,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.allow_image_generation != nil {
 		fields = append(fields, group.FieldAllowImageGeneration)
+	}
+	if m.simple_mode_auto_image_eligible != nil {
+		fields = append(fields, group.FieldSimpleModeAutoImageEligible)
 	}
 	if m.image_rate_independent != nil {
 		fields = append(fields, group.FieldImageRateIndependent)
@@ -17700,6 +17740,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.DefaultValidityDays()
 	case group.FieldAllowImageGeneration:
 		return m.AllowImageGeneration()
+	case group.FieldSimpleModeAutoImageEligible:
+		return m.SimpleModeAutoImageEligible()
 	case group.FieldImageRateIndependent:
 		return m.ImageRateIndependent()
 	case group.FieldImageRateMultiplier:
@@ -17783,6 +17825,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldDefaultValidityDays(ctx)
 	case group.FieldAllowImageGeneration:
 		return m.OldAllowImageGeneration(ctx)
+	case group.FieldSimpleModeAutoImageEligible:
+		return m.OldSimpleModeAutoImageEligible(ctx)
 	case group.FieldImageRateIndependent:
 		return m.OldImageRateIndependent(ctx)
 	case group.FieldImageRateMultiplier:
@@ -17945,6 +17989,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAllowImageGeneration(v)
+		return nil
+	case group.FieldSimpleModeAutoImageEligible:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSimpleModeAutoImageEligible(v)
 		return nil
 	case group.FieldImageRateIndependent:
 		v, ok := value.(bool)
@@ -18441,6 +18492,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldAllowImageGeneration:
 		m.ResetAllowImageGeneration()
+		return nil
+	case group.FieldSimpleModeAutoImageEligible:
+		m.ResetSimpleModeAutoImageEligible()
 		return nil
 	case group.FieldImageRateIndependent:
 		m.ResetImageRateIndependent()
@@ -28290,33 +28344,36 @@ func (m *PromoCodeUsageMutation) ResetEdge(name string) error {
 // ProxyMutation represents an operation that mutates the Proxy nodes in the graph.
 type ProxyMutation struct {
 	config
-	op                  Op
-	typ                 string
-	id                  *int64
-	created_at          *time.Time
-	updated_at          *time.Time
-	deleted_at          *time.Time
-	name                *string
-	protocol            *string
-	host                *string
-	port                *int
-	addport             *int
-	username            *string
-	password            *string
-	status              *string
-	expires_at          *time.Time
-	fallback_mode       *string
-	expiry_warn_days    *int
-	addexpiry_warn_days *int
-	clearedFields       map[string]struct{}
-	accounts            map[int64]struct{}
-	removedaccounts     map[int64]struct{}
-	clearedaccounts     bool
-	backup_proxy        *int64
-	clearedbackup_proxy bool
-	done                bool
-	oldValue            func(context.Context) (*Proxy, error)
-	predicates          []predicate.Proxy
+	op                     Op
+	typ                    string
+	id                     *int64
+	created_at             *time.Time
+	updated_at             *time.Time
+	deleted_at             *time.Time
+	name                   *string
+	protocol               *string
+	host                   *string
+	port                   *int
+	addport                *int
+	username               *string
+	password               *string
+	status                 *string
+	expires_at             *time.Time
+	fallback_mode          *string
+	expiry_warn_days       *int
+	addexpiry_warn_days    *int
+	clearedFields          map[string]struct{}
+	accounts               map[int64]struct{}
+	removedaccounts        map[int64]struct{}
+	clearedaccounts        bool
+	primary_proxies        map[int64]struct{}
+	removedprimary_proxies map[int64]struct{}
+	clearedprimary_proxies bool
+	backup_proxy           *int64
+	clearedbackup_proxy    bool
+	done                   bool
+	oldValue               func(context.Context) (*Proxy, error)
+	predicates             []predicate.Proxy
 }
 
 var _ ent.Mutation = (*ProxyMutation)(nil)
@@ -29080,6 +29137,60 @@ func (m *ProxyMutation) ResetAccounts() {
 	m.removedaccounts = nil
 }
 
+// AddPrimaryProxyIDs adds the "primary_proxies" edge to the Proxy entity by ids.
+func (m *ProxyMutation) AddPrimaryProxyIDs(ids ...int64) {
+	if m.primary_proxies == nil {
+		m.primary_proxies = make(map[int64]struct{})
+	}
+	for i := range ids {
+		m.primary_proxies[ids[i]] = struct{}{}
+	}
+}
+
+// ClearPrimaryProxies clears the "primary_proxies" edge to the Proxy entity.
+func (m *ProxyMutation) ClearPrimaryProxies() {
+	m.clearedprimary_proxies = true
+}
+
+// PrimaryProxiesCleared reports if the "primary_proxies" edge to the Proxy entity was cleared.
+func (m *ProxyMutation) PrimaryProxiesCleared() bool {
+	return m.clearedprimary_proxies
+}
+
+// RemovePrimaryProxyIDs removes the "primary_proxies" edge to the Proxy entity by IDs.
+func (m *ProxyMutation) RemovePrimaryProxyIDs(ids ...int64) {
+	if m.removedprimary_proxies == nil {
+		m.removedprimary_proxies = make(map[int64]struct{})
+	}
+	for i := range ids {
+		delete(m.primary_proxies, ids[i])
+		m.removedprimary_proxies[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedPrimaryProxies returns the removed IDs of the "primary_proxies" edge to the Proxy entity.
+func (m *ProxyMutation) RemovedPrimaryProxiesIDs() (ids []int64) {
+	for id := range m.removedprimary_proxies {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// PrimaryProxiesIDs returns the "primary_proxies" edge IDs in the mutation.
+func (m *ProxyMutation) PrimaryProxiesIDs() (ids []int64) {
+	for id := range m.primary_proxies {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetPrimaryProxies resets all changes to the "primary_proxies" edge.
+func (m *ProxyMutation) ResetPrimaryProxies() {
+	m.primary_proxies = nil
+	m.clearedprimary_proxies = false
+	m.removedprimary_proxies = nil
+}
+
 // ClearBackupProxy clears the "backup_proxy" edge to the Proxy entity.
 func (m *ProxyMutation) ClearBackupProxy() {
 	m.clearedbackup_proxy = true
@@ -29521,9 +29632,12 @@ func (m *ProxyMutation) ResetField(name string) error {
 
 // AddedEdges returns all edge names that were set/added in this mutation.
 func (m *ProxyMutation) AddedEdges() []string {
-	edges := make([]string, 0, 2)
+	edges := make([]string, 0, 3)
 	if m.accounts != nil {
 		edges = append(edges, proxy.EdgeAccounts)
+	}
+	if m.primary_proxies != nil {
+		edges = append(edges, proxy.EdgePrimaryProxies)
 	}
 	if m.backup_proxy != nil {
 		edges = append(edges, proxy.EdgeBackupProxy)
@@ -29541,6 +29655,12 @@ func (m *ProxyMutation) AddedIDs(name string) []ent.Value {
 			ids = append(ids, id)
 		}
 		return ids
+	case proxy.EdgePrimaryProxies:
+		ids := make([]ent.Value, 0, len(m.primary_proxies))
+		for id := range m.primary_proxies {
+			ids = append(ids, id)
+		}
+		return ids
 	case proxy.EdgeBackupProxy:
 		if id := m.backup_proxy; id != nil {
 			return []ent.Value{*id}
@@ -29551,9 +29671,12 @@ func (m *ProxyMutation) AddedIDs(name string) []ent.Value {
 
 // RemovedEdges returns all edge names that were removed in this mutation.
 func (m *ProxyMutation) RemovedEdges() []string {
-	edges := make([]string, 0, 2)
+	edges := make([]string, 0, 3)
 	if m.removedaccounts != nil {
 		edges = append(edges, proxy.EdgeAccounts)
+	}
+	if m.removedprimary_proxies != nil {
+		edges = append(edges, proxy.EdgePrimaryProxies)
 	}
 	return edges
 }
@@ -29568,15 +29691,24 @@ func (m *ProxyMutation) RemovedIDs(name string) []ent.Value {
 			ids = append(ids, id)
 		}
 		return ids
+	case proxy.EdgePrimaryProxies:
+		ids := make([]ent.Value, 0, len(m.removedprimary_proxies))
+		for id := range m.removedprimary_proxies {
+			ids = append(ids, id)
+		}
+		return ids
 	}
 	return nil
 }
 
 // ClearedEdges returns all edge names that were cleared in this mutation.
 func (m *ProxyMutation) ClearedEdges() []string {
-	edges := make([]string, 0, 2)
+	edges := make([]string, 0, 3)
 	if m.clearedaccounts {
 		edges = append(edges, proxy.EdgeAccounts)
+	}
+	if m.clearedprimary_proxies {
+		edges = append(edges, proxy.EdgePrimaryProxies)
 	}
 	if m.clearedbackup_proxy {
 		edges = append(edges, proxy.EdgeBackupProxy)
@@ -29590,6 +29722,8 @@ func (m *ProxyMutation) EdgeCleared(name string) bool {
 	switch name {
 	case proxy.EdgeAccounts:
 		return m.clearedaccounts
+	case proxy.EdgePrimaryProxies:
+		return m.clearedprimary_proxies
 	case proxy.EdgeBackupProxy:
 		return m.clearedbackup_proxy
 	}
@@ -29613,6 +29747,9 @@ func (m *ProxyMutation) ResetEdge(name string) error {
 	switch name {
 	case proxy.EdgeAccounts:
 		m.ResetAccounts()
+		return nil
+	case proxy.EdgePrimaryProxies:
+		m.ResetPrimaryProxies()
 		return nil
 	case proxy.EdgeBackupProxy:
 		m.ResetBackupProxy()
@@ -35813,6 +35950,12 @@ type UsageLogMutation struct {
 	upstream_model              *string
 	upstream_model_mismatch     *bool
 	upstream_response_model     *string
+	served_group_id             *int64
+	addserved_group_id          *int64
+	served_route_source         *int16
+	addserved_route_source      *int16
+	cost_unit                   *int16
+	addcost_unit                *int16
 	channel_id                  *int64
 	addchannel_id               *int64
 	model_mapping_chain         *string
@@ -36339,6 +36482,216 @@ func (m *UsageLogMutation) UpstreamResponseModelCleared() bool {
 func (m *UsageLogMutation) ResetUpstreamResponseModel() {
 	m.upstream_response_model = nil
 	delete(m.clearedFields, usagelog.FieldUpstreamResponseModel)
+}
+
+// SetServedGroupID sets the "served_group_id" field.
+func (m *UsageLogMutation) SetServedGroupID(i int64) {
+	m.served_group_id = &i
+	m.addserved_group_id = nil
+}
+
+// ServedGroupID returns the value of the "served_group_id" field in the mutation.
+func (m *UsageLogMutation) ServedGroupID() (r int64, exists bool) {
+	v := m.served_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldServedGroupID returns the old "served_group_id" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldServedGroupID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldServedGroupID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldServedGroupID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldServedGroupID: %w", err)
+	}
+	return oldValue.ServedGroupID, nil
+}
+
+// AddServedGroupID adds i to the "served_group_id" field.
+func (m *UsageLogMutation) AddServedGroupID(i int64) {
+	if m.addserved_group_id != nil {
+		*m.addserved_group_id += i
+	} else {
+		m.addserved_group_id = &i
+	}
+}
+
+// AddedServedGroupID returns the value that was added to the "served_group_id" field in this mutation.
+func (m *UsageLogMutation) AddedServedGroupID() (r int64, exists bool) {
+	v := m.addserved_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearServedGroupID clears the value of the "served_group_id" field.
+func (m *UsageLogMutation) ClearServedGroupID() {
+	m.served_group_id = nil
+	m.addserved_group_id = nil
+	m.clearedFields[usagelog.FieldServedGroupID] = struct{}{}
+}
+
+// ServedGroupIDCleared returns if the "served_group_id" field was cleared in this mutation.
+func (m *UsageLogMutation) ServedGroupIDCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldServedGroupID]
+	return ok
+}
+
+// ResetServedGroupID resets all changes to the "served_group_id" field.
+func (m *UsageLogMutation) ResetServedGroupID() {
+	m.served_group_id = nil
+	m.addserved_group_id = nil
+	delete(m.clearedFields, usagelog.FieldServedGroupID)
+}
+
+// SetServedRouteSource sets the "served_route_source" field.
+func (m *UsageLogMutation) SetServedRouteSource(i int16) {
+	m.served_route_source = &i
+	m.addserved_route_source = nil
+}
+
+// ServedRouteSource returns the value of the "served_route_source" field in the mutation.
+func (m *UsageLogMutation) ServedRouteSource() (r int16, exists bool) {
+	v := m.served_route_source
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldServedRouteSource returns the old "served_route_source" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldServedRouteSource(ctx context.Context) (v *int16, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldServedRouteSource is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldServedRouteSource requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldServedRouteSource: %w", err)
+	}
+	return oldValue.ServedRouteSource, nil
+}
+
+// AddServedRouteSource adds i to the "served_route_source" field.
+func (m *UsageLogMutation) AddServedRouteSource(i int16) {
+	if m.addserved_route_source != nil {
+		*m.addserved_route_source += i
+	} else {
+		m.addserved_route_source = &i
+	}
+}
+
+// AddedServedRouteSource returns the value that was added to the "served_route_source" field in this mutation.
+func (m *UsageLogMutation) AddedServedRouteSource() (r int16, exists bool) {
+	v := m.addserved_route_source
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearServedRouteSource clears the value of the "served_route_source" field.
+func (m *UsageLogMutation) ClearServedRouteSource() {
+	m.served_route_source = nil
+	m.addserved_route_source = nil
+	m.clearedFields[usagelog.FieldServedRouteSource] = struct{}{}
+}
+
+// ServedRouteSourceCleared returns if the "served_route_source" field was cleared in this mutation.
+func (m *UsageLogMutation) ServedRouteSourceCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldServedRouteSource]
+	return ok
+}
+
+// ResetServedRouteSource resets all changes to the "served_route_source" field.
+func (m *UsageLogMutation) ResetServedRouteSource() {
+	m.served_route_source = nil
+	m.addserved_route_source = nil
+	delete(m.clearedFields, usagelog.FieldServedRouteSource)
+}
+
+// SetCostUnit sets the "cost_unit" field.
+func (m *UsageLogMutation) SetCostUnit(i int16) {
+	m.cost_unit = &i
+	m.addcost_unit = nil
+}
+
+// CostUnit returns the value of the "cost_unit" field in the mutation.
+func (m *UsageLogMutation) CostUnit() (r int16, exists bool) {
+	v := m.cost_unit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCostUnit returns the old "cost_unit" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldCostUnit(ctx context.Context) (v *int16, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCostUnit is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCostUnit requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCostUnit: %w", err)
+	}
+	return oldValue.CostUnit, nil
+}
+
+// AddCostUnit adds i to the "cost_unit" field.
+func (m *UsageLogMutation) AddCostUnit(i int16) {
+	if m.addcost_unit != nil {
+		*m.addcost_unit += i
+	} else {
+		m.addcost_unit = &i
+	}
+}
+
+// AddedCostUnit returns the value that was added to the "cost_unit" field in this mutation.
+func (m *UsageLogMutation) AddedCostUnit() (r int16, exists bool) {
+	v := m.addcost_unit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearCostUnit clears the value of the "cost_unit" field.
+func (m *UsageLogMutation) ClearCostUnit() {
+	m.cost_unit = nil
+	m.addcost_unit = nil
+	m.clearedFields[usagelog.FieldCostUnit] = struct{}{}
+}
+
+// CostUnitCleared returns if the "cost_unit" field was cleared in this mutation.
+func (m *UsageLogMutation) CostUnitCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldCostUnit]
+	return ok
+}
+
+// ResetCostUnit resets all changes to the "cost_unit" field.
+func (m *UsageLogMutation) ResetCostUnit() {
+	m.cost_unit = nil
+	m.addcost_unit = nil
+	delete(m.clearedFields, usagelog.FieldCostUnit)
 }
 
 // SetChannelID sets the "channel_id" field.
@@ -38326,7 +38679,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 43)
+	fields := make([]string, 0, 46)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -38353,6 +38706,15 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.upstream_response_model != nil {
 		fields = append(fields, usagelog.FieldUpstreamResponseModel)
+	}
+	if m.served_group_id != nil {
+		fields = append(fields, usagelog.FieldServedGroupID)
+	}
+	if m.served_route_source != nil {
+		fields = append(fields, usagelog.FieldServedRouteSource)
+	}
+	if m.cost_unit != nil {
+		fields = append(fields, usagelog.FieldCostUnit)
 	}
 	if m.channel_id != nil {
 		fields = append(fields, usagelog.FieldChannelID)
@@ -38482,6 +38844,12 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.UpstreamModelMismatch()
 	case usagelog.FieldUpstreamResponseModel:
 		return m.UpstreamResponseModel()
+	case usagelog.FieldServedGroupID:
+		return m.ServedGroupID()
+	case usagelog.FieldServedRouteSource:
+		return m.ServedRouteSource()
+	case usagelog.FieldCostUnit:
+		return m.CostUnit()
 	case usagelog.FieldChannelID:
 		return m.ChannelID()
 	case usagelog.FieldModelMappingChain:
@@ -38577,6 +38945,12 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldUpstreamModelMismatch(ctx)
 	case usagelog.FieldUpstreamResponseModel:
 		return m.OldUpstreamResponseModel(ctx)
+	case usagelog.FieldServedGroupID:
+		return m.OldServedGroupID(ctx)
+	case usagelog.FieldServedRouteSource:
+		return m.OldServedRouteSource(ctx)
+	case usagelog.FieldCostUnit:
+		return m.OldCostUnit(ctx)
 	case usagelog.FieldChannelID:
 		return m.OldChannelID(ctx)
 	case usagelog.FieldModelMappingChain:
@@ -38716,6 +39090,27 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUpstreamResponseModel(v)
+		return nil
+	case usagelog.FieldServedGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetServedGroupID(v)
+		return nil
+	case usagelog.FieldServedRouteSource:
+		v, ok := value.(int16)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetServedRouteSource(v)
+		return nil
+	case usagelog.FieldCostUnit:
+		v, ok := value.(int16)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCostUnit(v)
 		return nil
 	case usagelog.FieldChannelID:
 		v, ok := value.(int64)
@@ -38963,6 +39358,15 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 // this mutation.
 func (m *UsageLogMutation) AddedFields() []string {
 	var fields []string
+	if m.addserved_group_id != nil {
+		fields = append(fields, usagelog.FieldServedGroupID)
+	}
+	if m.addserved_route_source != nil {
+		fields = append(fields, usagelog.FieldServedRouteSource)
+	}
+	if m.addcost_unit != nil {
+		fields = append(fields, usagelog.FieldCostUnit)
+	}
 	if m.addchannel_id != nil {
 		fields = append(fields, usagelog.FieldChannelID)
 	}
@@ -39028,6 +39432,12 @@ func (m *UsageLogMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
+	case usagelog.FieldServedGroupID:
+		return m.AddedServedGroupID()
+	case usagelog.FieldServedRouteSource:
+		return m.AddedServedRouteSource()
+	case usagelog.FieldCostUnit:
+		return m.AddedCostUnit()
 	case usagelog.FieldChannelID:
 		return m.AddedChannelID()
 	case usagelog.FieldInputTokens:
@@ -39075,6 +39485,27 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case usagelog.FieldServedGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddServedGroupID(v)
+		return nil
+	case usagelog.FieldServedRouteSource:
+		v, ok := value.(int16)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddServedRouteSource(v)
+		return nil
+	case usagelog.FieldCostUnit:
+		v, ok := value.(int16)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddCostUnit(v)
+		return nil
 	case usagelog.FieldChannelID:
 		v, ok := value.(int64)
 		if !ok {
@@ -39225,6 +39656,15 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldUpstreamResponseModel) {
 		fields = append(fields, usagelog.FieldUpstreamResponseModel)
 	}
+	if m.FieldCleared(usagelog.FieldServedGroupID) {
+		fields = append(fields, usagelog.FieldServedGroupID)
+	}
+	if m.FieldCleared(usagelog.FieldServedRouteSource) {
+		fields = append(fields, usagelog.FieldServedRouteSource)
+	}
+	if m.FieldCleared(usagelog.FieldCostUnit) {
+		fields = append(fields, usagelog.FieldCostUnit)
+	}
 	if m.FieldCleared(usagelog.FieldChannelID) {
 		fields = append(fields, usagelog.FieldChannelID)
 	}
@@ -39295,6 +39735,15 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldUpstreamResponseModel:
 		m.ClearUpstreamResponseModel()
+		return nil
+	case usagelog.FieldServedGroupID:
+		m.ClearServedGroupID()
+		return nil
+	case usagelog.FieldServedRouteSource:
+		m.ClearServedRouteSource()
+		return nil
+	case usagelog.FieldCostUnit:
+		m.ClearCostUnit()
 		return nil
 	case usagelog.FieldChannelID:
 		m.ClearChannelID()
@@ -39378,6 +39827,15 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldUpstreamResponseModel:
 		m.ResetUpstreamResponseModel()
+		return nil
+	case usagelog.FieldServedGroupID:
+		m.ResetServedGroupID()
+		return nil
+	case usagelog.FieldServedRouteSource:
+		m.ResetServedRouteSource()
+		return nil
+	case usagelog.FieldCostUnit:
+		m.ResetCostUnit()
 		return nil
 	case usagelog.FieldChannelID:
 		m.ResetChannelID()

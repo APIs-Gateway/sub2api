@@ -11,6 +11,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/handler/quotaview"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -293,6 +294,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 		Concurrency:   req.Concurrency,
 		RPMLimit:      req.RPMLimit,
 		AllowedGroups: req.AllowedGroups,
+		ActorAdminID:  getAdminIDFromContext(c),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -329,7 +331,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 	}
 	if req.Role == service.RoleUser {
 		if userID == getAdminIDFromContext(c) {
-			response.BadRequest(c, "cannot demote yourself from admin")
+			response.ErrorFrom(c, infraerrors.BadRequest("CANNOT_DEMOTE_SELF", "cannot demote yourself from admin"))
 			return
 		}
 	}
@@ -347,6 +349,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 		Role:          req.Role,
 		AllowedGroups: req.AllowedGroups,
 		GroupRates:    req.GroupRates,
+		ActorAdminID:  getAdminIDFromContext(c),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -777,15 +780,21 @@ func (h *UserHandler) UpdateUserPlatformQuotas(c *gin.Context) {
 		}
 	}
 
+	// 三档全空的输入不落库：user_platform_quotas 只保存至少配置了一档限额的记录，
+	// 不存在的行等价于不限额。未进入 records 的平台由 UpsertForUser 软删，审计里记为 removed。
 	records := make([]service.UserPlatformQuotaRecord, 0, len(req.Quotas))
 	for _, q := range req.Quotas {
-		records = append(records, service.UserPlatformQuotaRecord{
+		rec := service.UserPlatformQuotaRecord{
 			UserID:          userID,
 			Platform:        q.Platform,
 			DailyLimitUSD:   q.DailyLimitUSD,
 			WeeklyLimitUSD:  q.WeeklyLimitUSD,
 			MonthlyLimitUSD: q.MonthlyLimitUSD,
-		})
+		}
+		if !rec.HasAnyLimit() {
+			continue
+		}
+		records = append(records, rec)
 	}
 
 	ctx := c.Request.Context()
@@ -847,6 +856,7 @@ func (h *UserHandler) UpdateUserPlatformQuotas(c *gin.Context) {
 	slog.Info("admin.quota_updated",
 		"actor_admin_id", getAdminIDFromContext(c),
 		"target_user_id", userID,
+		"submitted_count", len(req.Quotas),
 		"platform_count", len(records),
 		"before_snapshot_available", beforeErr == nil,
 		"changes", changes)

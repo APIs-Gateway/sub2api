@@ -96,6 +96,9 @@ func (e ResponsesStreamEvent) MarshalJSON() ([]byte, error) {
 		if e.Name != "" {
 			m["name"] = e.Name
 		}
+		if e.Namespace != "" {
+			m["namespace"] = e.Namespace
+		}
 		if e.Type == "response.custom_tool_call_input.done" {
 			m["input"] = e.Input
 		} else {
@@ -195,6 +198,9 @@ func responsesItemWire(item *ResponsesOutput) map[string]any {
 		m["call_id"] = item.CallID
 		m["name"] = item.Name
 		m["input"] = item.Input
+		if item.Namespace != "" {
+			m["namespace"] = item.Namespace
+		}
 	case "tool_search_call":
 		// tool_search 调用还原项：execution 必须为 "client"（否则 codex 忽略该
 		// 调用），arguments 在线上是 JSON 对象而非字符串。

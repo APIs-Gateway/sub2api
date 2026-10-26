@@ -21,6 +21,7 @@ import (
 // POST /v1/images/generations
 // POST /v1/images/edits
 func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
+	defer finishBillingInflightHTTP(c)
 	streamStarted := false
 	defer h.recoverResponsesPanic(c, &streamStarted)
 
@@ -85,7 +86,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		zap.String("img_size", parsed.Size),
 	)
 
-	if !service.GroupAllowsImageGeneration(apiKey.Group) {
+	if !service.GroupAllowsImageGenerationForMode(apiKey.Group, h.cfg) {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
 		return
 	}
@@ -157,7 +158,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			sessionHash,
 			requestModel,
 			failedAccountIDs,
-			parsed.RequiredCapability,
+			parsed.RequiredCapabilityForModel(channelMapping.MappedModel),
 		)
 		if err != nil {
 			if failoverClientGone(c) {
@@ -168,7 +169,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
-			if len(failedAccountIDs) == 0 {
+			if lastFailoverErr == nil {
 				h.respondNoAccountError(c, h.gatewayService, apiKey, requestModel, requestModel, service.PlatformOpenAI, "No available compatible accounts", err, noAccountCapacityMarkIfNoAvailable, openAINoAccountResponseStreaming, streamStarted)
 				return
 			}
@@ -198,8 +199,12 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		reqLog.Debug("openai.images.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, parsed.Stream, &streamStarted, reqLog)
-		if !acquired {
+		accountReleaseFunc, slotStatus := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, parsed.Stream, &streamStarted, reqLog)
+		if slotStatus == accountSlotRetrySelection {
+			failedAccountIDs[account.ID] = struct{}{}
+			continue
+		}
+		if slotStatus != accountSlotAcquired {
 			return
 		}
 
@@ -209,6 +214,12 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			jsonKeepaliveStarted = true
 		}
 		forwardStart := time.Now()
+		if !reserveBillingInflightHTTP(c, h.gatewayService, service.BillingInflightRequest{APIKey: apiKey, Account: account, Model: parsed.Model, Body: body, Images: parsed, ChannelUsageFields: channelMapping.ToUsageFields(parsed.Model, "")}, accountReleaseFunc, func(status int, code, message string) {
+			h.handleStreamingAwareError(c, status, code, message, streamStarted)
+		}) {
+			return
+		}
+		requestCtx = billingInflightForwardContext(c, requestCtx)
 		writerSizeBeforeForward := service.OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c)
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
@@ -255,6 +266,9 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				}
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
+					if result == nil && service.IsBillingInflightNoChargeError(err) && service.OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
+						service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+					}
 					if service.OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
 						reqLog.Warn("openai.images.upstream_failover_skipped_after_flush",

@@ -31,6 +31,7 @@ type stubAdminService struct {
 	createAccountErr     error
 	updateAccountErr     error
 	bulkUpdateAccountErr error
+	lastBulkUpdateInput  *service.BulkUpdateAccountsInput
 	checkMixedErr        error
 	lastMixedCheck       struct {
 		accountID int64
@@ -48,7 +49,18 @@ type stubAdminService struct {
 		sortOrder   string
 		calls       int
 	}
-	lastListUsers struct {
+	lastListAccountIDs struct {
+		platform    string
+		accountType string
+		status      string
+		search      string
+		groupID     int64
+		privacyMode string
+		calls       int
+	}
+	accountIDList    *service.AccountIDList
+	accountIDListErr error
+	lastListUsers    struct {
 		page      int
 		pageSize  int
 		filters   service.UserListFilters
@@ -72,6 +84,12 @@ type stubAdminService struct {
 		sortOrder string
 		calls     int
 	}
+
+	// getAccountResult overrides GetAccount's default account when set.
+	getAccountResult       *service.Account
+	updateAccountCalls     int
+	lastUpdateAccountInput *service.UpdateAccountInput
+
 	mu sync.Mutex
 }
 
@@ -343,7 +361,33 @@ func (s *stubAdminService) ListAccounts(ctx context.Context, page, pageSize int,
 	return s.accounts, int64(len(s.accounts)), nil
 }
 
+func (s *stubAdminService) ListAccountIDs(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) (*service.AccountIDList, error) {
+	s.lastListAccountIDs.platform = platform
+	s.lastListAccountIDs.accountType = accountType
+	s.lastListAccountIDs.status = status
+	s.lastListAccountIDs.search = search
+	s.lastListAccountIDs.groupID = groupID
+	s.lastListAccountIDs.privacyMode = privacyMode
+	s.lastListAccountIDs.calls++
+	if s.accountIDListErr != nil {
+		return nil, s.accountIDListErr
+	}
+	if s.accountIDList != nil {
+		return s.accountIDList, nil
+	}
+	list := &service.AccountIDList{IDs: []int64{}, Platforms: []string{}, Types: []string{}}
+	for _, account := range s.accounts {
+		list.IDs = append(list.IDs, account.ID)
+	}
+	list.Total = int64(len(list.IDs))
+	return list, nil
+}
+
 func (s *stubAdminService) GetAccount(ctx context.Context, id int64) (*service.Account, error) {
+	if s.getAccountResult != nil {
+		account := *s.getAccountResult
+		return &account, nil
+	}
 	account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
 	return &account, nil
 }
@@ -369,6 +413,10 @@ func (s *stubAdminService) CreateAccount(ctx context.Context, input *service.Cre
 }
 
 func (s *stubAdminService) UpdateAccount(ctx context.Context, id int64, input *service.UpdateAccountInput) (*service.Account, error) {
+	s.mu.Lock()
+	s.updateAccountCalls++
+	s.lastUpdateAccountInput = input
+	s.mu.Unlock()
 	if s.updateAccountErr != nil {
 		return nil, s.updateAccountErr
 	}
@@ -404,6 +452,7 @@ func (s *stubAdminService) SetAccountSchedulable(ctx context.Context, id int64, 
 }
 
 func (s *stubAdminService) BulkUpdateAccounts(ctx context.Context, input *service.BulkUpdateAccountsInput) (*service.BulkUpdateAccountsResult, error) {
+	s.lastBulkUpdateInput = input
 	if s.bulkUpdateAccountErr != nil {
 		return nil, s.bulkUpdateAccountErr
 	}
@@ -490,7 +539,13 @@ func (s *stubAdminService) CreateProxy(ctx context.Context, input *service.Creat
 	s.mu.Lock()
 	s.createdProxies = append(s.createdProxies, input)
 	s.mu.Unlock()
-	proxy := service.Proxy{ID: 400, Name: input.Name, Status: service.StatusActive}
+	proxy := service.Proxy{
+		ID:       400,
+		Name:     input.Name,
+		Username: input.Username,
+		Password: input.Password,
+		Status:   service.StatusActive,
+	}
 	return &proxy, nil
 }
 

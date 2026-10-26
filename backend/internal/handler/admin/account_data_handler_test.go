@@ -246,7 +246,17 @@ func TestImportDataReusesProxyAndSkipsDefaultGroup(t *testing.T) {
 					"port":      1080,
 					"username":  "u",
 					"password":  "p",
-					"status":    "active",
+					"status":    "inactive",
+				},
+				{
+					"proxy_key": "https|5.6.7.8|443|new-user|new-pass",
+					"name":      "new-proxy",
+					"protocol":  "https",
+					"host":      "5.6.7.8",
+					"port":      443,
+					"username":  "new-user",
+					"password":  "new-pass",
+					"status":    "inactive",
 				},
 			},
 			"accounts": []map[string]any{
@@ -271,7 +281,13 @@ func TestImportDataReusesProxyAndSkipsDefaultGroup(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	require.Len(t, adminSvc.createdProxies, 0)
+	require.Len(t, adminSvc.createdProxies, 1)
 	require.Len(t, adminSvc.createdAccounts, 1)
 	require.True(t, adminSvc.createdAccounts[0].SkipDefaultGroupBind)
+	require.Len(t, adminSvc.updatedProxies, 2)
+	require.Equal(t, []int64{1, 400}, adminSvc.updatedProxyIDs)
+	require.Equal(t, "u", *adminSvc.updatedProxies[0].Username)
+	require.Equal(t, "p", *adminSvc.updatedProxies[0].Password)
+	require.Equal(t, "new-user", *adminSvc.updatedProxies[1].Username)
+	require.Equal(t, "new-pass", *adminSvc.updatedProxies[1].Password)
 }

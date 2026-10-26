@@ -6,6 +6,8 @@
 import { apiClient } from '../client'
 import type {
   Account,
+  AccountPlatform,
+  AccountType,
   CreateAccountRequest,
   UpdateAccountRequest,
   PaginatedResponse,
@@ -55,6 +57,39 @@ export async function list(
       page_size: pageSize,
       ...filters
     },
+    signal: options?.signal
+  })
+  return data
+}
+
+export interface AccountIdListResult {
+  /** 命中的全部账号 ID（升序） */
+  ids: number[]
+  total: number
+  /** 命中账号涉及的平台和类型，批量编辑据此判断哪些字段可用 */
+  platforms: AccountPlatform[]
+  types: AccountType[]
+}
+
+/**
+ * List the IDs of every account matching the filters (same filters as `list`).
+ * The backend rejects the request (reason ACCOUNT_IDS_LIMIT_EXCEEDED, metadata total/limit) when too many accounts match.
+ */
+export async function listIds(
+  filters?: {
+    platform?: string
+    type?: string
+    status?: string
+    group?: string
+    search?: string
+    privacy_mode?: string
+  },
+  options?: {
+    signal?: AbortSignal
+  }
+): Promise<AccountIdListResult> {
+  const { data } = await apiClient.get<AccountIdListResult>('/admin/accounts/ids', {
+    params: filters,
     signal: options?.signal
   })
   return data
@@ -201,9 +236,13 @@ export async function testAccount(id: number): Promise<{
  * @param id - Account ID
  * @returns Updated account
  */
-export async function refreshCredentials(id: number): Promise<Account> {
-  const { data } = await apiClient.post<Account>(`/admin/accounts/${id}/refresh`)
-  return data
+export type RefreshCredentialsResult =
+  | { account: Account; message: string; warning: 'missing_project_id_temporary' }
+  | { account: Account; message?: never; warning?: never }
+
+export async function refreshCredentials(id: number): Promise<RefreshCredentialsResult> {
+  const { data } = await apiClient.post<Account | RefreshCredentialsResult>(`/admin/accounts/${id}/refresh`)
+  return 'account' in data ? data : { account: data }
 }
 
 /**
@@ -226,6 +265,18 @@ export async function applyOAuthCredentials(
   const { data } = await apiClient.post<Account>(
     `/admin/accounts/${id}/apply-oauth-credentials`,
     payload
+  )
+  return data
+}
+
+/** Update one existing OpenAI OAuth account from a Codex auth.json or accessToken. */
+export async function reauthCodexSession(
+  id: number,
+  content: string
+): Promise<{ account: Account; warnings?: string[] }> {
+  const { data } = await apiClient.post<{ account: Account; warnings?: string[] }>(
+    `/admin/accounts/${id}/reauth/codex-session`,
+    { content }
   )
   return data
 }
@@ -490,14 +541,16 @@ export async function syncUpstreamModels(id: number): Promise<SyncUpstreamModels
 }
 
 export interface SyncUpstreamPreviewParams {
+  account_id?: number
   platform: string
   type: string
   base_url?: string
   api_key: string
+  proxy_id?: number
 }
 
 /**
- * Preview upstream models without a saved account (create-flow)
+ * Preview a draft connection, optionally keeping a saved account's secret.
  * @param params - Connection credentials
  * @returns List of model IDs returned by the upstream
  */
@@ -818,6 +871,7 @@ export async function probeUpstreamBillingBatch(accountIds: number[]): Promise<U
 export const accountsAPI = {
   list,
   listWithEtag,
+  listIds,
   getById,
   create,
   update,
@@ -827,6 +881,7 @@ export const accountsAPI = {
   testAccount,
   refreshCredentials,
   applyOAuthCredentials,
+  reauthCodexSession,
   getStats,
   clearError,
   getUsage,

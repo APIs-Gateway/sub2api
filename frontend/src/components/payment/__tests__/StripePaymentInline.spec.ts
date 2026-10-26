@@ -7,6 +7,8 @@ const { loadStripe, stripeElements, paymentElement } = vi.hoisted(() => ({
   paymentElement: { mount: vi.fn(), on: vi.fn() },
 }))
 
+// 金额口径依赖 app store；未配置充值倍率时按美元展示（旧行为）。
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ cachedPublicSettings: null }) }))
 vi.mock('@stripe/stripe-js/pure', () => ({ loadStripe }))
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),

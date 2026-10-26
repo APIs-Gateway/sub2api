@@ -99,6 +99,7 @@ describe('ProfileIdentityBindingsSection', () => {
   beforeEach(() => {
     pinia = createPinia()
     setActivePinia(pinia)
+    useAuthStore().user = createUser()
     routeState.fullPath = '/profile'
     locationState.current = { href: 'http://localhost/profile' }
     Object.defineProperty(window, 'location', {

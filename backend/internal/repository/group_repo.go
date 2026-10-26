@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -212,7 +213,6 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetClaudeCodeOnly(groupIn.ClaudeCodeOnly).
 		SetNillableFallbackGroupID(groupIn.FallbackGroupID).
 		SetNillableFallbackGroupIDOnInvalidRequest(groupIn.FallbackGroupIDOnInvalidRequest).
-		SetNillableStablePriorityFallbackGroupID(groupIn.StablePriorityFallbackGroupID).
 		SetModelRoutingEnabled(groupIn.ModelRoutingEnabled).
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
@@ -300,6 +300,12 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetModelsListConfig(groupIn.ModelsListConfig).
 		SetRpmLimit(groupIn.RPMLimit)
 
+	// The seeder alone grants this internal exception. A stale service.Group
+	// from a concurrent update must never restore it after an admin cleared it.
+	if !groupIn.SimpleModeAutoImageEligible {
+		builder = builder.SetSimpleModeAutoImageEligible(false)
+	}
+
 	// 显式处理可空字段：nil 需要 clear，非 nil 需要 set。
 	if groupIn.DailyLimitUSD != nil {
 		builder = builder.SetDailyLimitUsd(*groupIn.DailyLimitUSD)
@@ -343,12 +349,6 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		builder = builder.SetFallbackGroupIDOnInvalidRequest(*groupIn.FallbackGroupIDOnInvalidRequest)
 	} else {
 		builder = builder.ClearFallbackGroupIDOnInvalidRequest()
-	}
-	// 处理 StablePriorityFallbackGroupID：nil 时清除，否则设置
-	if groupIn.StablePriorityFallbackGroupID != nil {
-		builder = builder.SetStablePriorityFallbackGroupID(*groupIn.StablePriorityFallbackGroupID)
-	} else {
-		builder = builder.ClearStablePriorityFallbackGroupID()
 	}
 
 	// 处理 ModelRouting：nil 时清除，否则设置
@@ -731,7 +731,7 @@ func (r *groupRepository) GetAccountCount(ctx context.Context, groupID int64) (t
 			COUNT(*) FILTER (WHERE %s),
 			COUNT(*) FILTER (WHERE %s)
 		FROM account_groups ag JOIN accounts a ON a.id = ag.account_id
-		WHERE ag.group_id = $1`, groupAccountAvailableSQL, groupAccountTemporarilyLimitedSQL),
+		WHERE ag.group_id = $1`, groupAccountAvailableSQL(), groupAccountTemporarilyLimitedSQL()),
 		[]any{groupID}, &total, &active, &rateLimited)
 	return
 }
@@ -791,33 +791,11 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 		return nil, service.ErrGroupNotFound
 	}
 
-	// per-day：订阅与 group 类型解耦，任何分组都可能挂有 user_subscriptions（卡的 group_id
-	// 仅作路由快照），删除分组时一律软删其下订阅并收集受影响用户。
-	var affectedUserIDs []int64
-	// 只查询未软删除的订阅，避免通知已取消订阅的用户
-	rows, err = exec.QueryContext(ctx, "SELECT user_id FROM user_subscriptions WHERE group_id = $1 AND deleted_at IS NULL", id)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var userID int64
-		if scanErr := rows.Scan(&userID); scanErr != nil {
-			_ = rows.Close()
-			return nil, scanErr
-		}
-		affectedUserIDs = append(affectedUserIDs, userID)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	// 软删除订阅：设置 deleted_at 而非硬删除
-	if _, err := exec.ExecContext(ctx, "UPDATE user_subscriptions SET deleted_at = NOW() WHERE group_id = $1 AND deleted_at IS NULL", id); err != nil {
-		return nil, err
-	}
+	// 订阅卡不随分组删除：per-day / 三窗口模型下卡归用户所有、可在任意 group 下使用，
+	// 卡上的 group_id 只是历史来源快照，不构成权限约束（见 ent/schema/user_subscription.go）。
+	// 分组软删后卡原样保留（group_id 保持原值，WithGroup 读到的 Group 边为 nil），
+	// 用户的剩余天数和额度不受影响。因此这里不查询、不软删 user_subscriptions，
+	// 返回的受影响用户列表恒为空。
 
 	// 2. Remove the group id from user_allowed_groups join table.
 	// Legacy users.allowed_groups 列已弃用，不再同步。
@@ -837,6 +815,25 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 	if _, err := txClient.Group.Delete().Where(group.IDEQ(id)).Exec(ctx); err != nil {
 		return nil, err
 	}
+	// Keep the selected moderation groups in sync with the soft delete. Locking
+	// the setting after the group row matches the lock order used by config saves.
+	var moderationValue string
+	err = scanSingleRow(ctx, exec, "SELECT value FROM settings WHERE key = $1 FOR UPDATE",
+		[]any{service.SettingKeyContentModerationConfig}, &moderationValue)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	// The TEXT config can contain valid JSON that PostgreSQL JSONB rejects
+	// (for example, an escaped NUL in a keyword). Only decode the group array
+	// in Go and keep every unrelated field as raw JSON.
+	if err == nil {
+		if next, changed := removeGroupFromModerationConfig(moderationValue, id); changed {
+			if _, err := exec.ExecContext(ctx, `UPDATE settings SET value = $1, updated_at = NOW() WHERE key = $2`,
+				next, service.SettingKeyContentModerationConfig); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	if tx != nil {
 		if err := tx.Commit(); err != nil {
@@ -847,7 +844,85 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group cascade delete failed: group=%d err=%v", id, err)
 	}
 
-	return affectedUserIDs, nil
+	// 订阅卡未被改动，没有需要失效订阅缓存的用户。
+	return nil, nil
+}
+
+func removeGroupFromModerationConfig(raw string, deletedID int64) (string, bool) {
+	if !json.Valid([]byte(raw)) {
+		return "", false
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return "", false
+	}
+	type edit struct {
+		start int
+		end   int
+		value string
+	}
+	var edits []edit
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return "", false
+		}
+		key, ok := token.(string)
+		if !ok {
+			return "", false
+		}
+		var rawIDs json.RawMessage
+		if err := decoder.Decode(&rawIDs); err != nil {
+			return "", false
+		}
+		if !strings.EqualFold(key, "group_ids") {
+			continue
+		}
+		if strings.TrimSpace(string(rawIDs)) == "null" {
+			continue
+		}
+		var groupIDs []json.RawMessage
+		if err := json.Unmarshal(rawIDs, &groupIDs); err != nil || groupIDs == nil {
+			return "", false
+		}
+		kept := make([]string, 0, len(groupIDs))
+		changed := false
+		for _, value := range groupIDs {
+			if strings.TrimSpace(string(value)) == "null" {
+				kept = append(kept, string(value))
+				continue
+			}
+			var groupID int64
+			if err := json.Unmarshal(value, &groupID); err != nil {
+				return "", false
+			}
+			if groupID == deletedID {
+				changed = true
+				continue
+			}
+			kept = append(kept, string(value))
+		}
+		if !changed {
+			continue
+		}
+		groups := "[" + strings.Join(kept, ",") + "]"
+		end := int(decoder.InputOffset())
+		start := end - len(rawIDs)
+		if start < 0 || end > len(raw) || raw[start:end] != string(rawIDs) {
+			return "", false
+		}
+		edits = append(edits, edit{start: start, end: end, value: groups})
+	}
+	if len(edits) == 0 {
+		return "", false
+	}
+	next := raw
+	for i := len(edits) - 1; i >= 0; i-- {
+		replacement := edits[i]
+		next = next[:replacement.start] + replacement.value + next[replacement.end:]
+	}
+	return next, true
 }
 
 type groupAccountCounts struct {
@@ -856,27 +931,36 @@ type groupAccountCounts struct {
 	RateLimited int64
 }
 
-const (
-	// 分组页的"可用"账号数必须与账号仓储的 ListSchedulableByGroupID 过滤口径一致。
-	groupAccountAvailableSQL = `a.deleted_at IS NULL
-				AND a.status = 'active'
-				AND a.schedulable = true
+// 分组页的"可用"账号数必须与账号仓储的 ListSchedulableByGroupID 过滤口径一致
+// （含「不自动暂停调度」账号对三类自动冷却窗口的豁免，见 account_no_auto_unsched.go）。
+func groupAccountAvailableSQL() string {
+	return `a.deleted_at IS NULL
 				AND (a.expires_at IS NULL OR a.expires_at > NOW() OR a.auto_pause_on_expired = FALSE)
-				AND (a.rate_limit_reset_at IS NULL OR a.rate_limit_reset_at <= NOW())
-				AND (a.overload_until IS NULL OR a.overload_until <= NOW())
-				AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())`
+				AND (
+					(` + noAutoUnschedRawSQL("a") + ` AND (a.status = 'error' OR (a.status = 'active' AND a.schedulable = true)))
+					OR (
+						a.status = 'active'
+						AND a.schedulable = true
+						AND (a.rate_limit_reset_at IS NULL OR a.rate_limit_reset_at <= NOW())
+						AND (a.overload_until IS NULL OR a.overload_until <= NOW())
+						AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
+					)
+				)`
+}
 
-	// 这里沿用历史字段名 RateLimitedAccountCount，但统计的是会让账号暂时退出调度的时间窗口。
-	groupAccountTemporarilyLimitedSQL = `a.deleted_at IS NULL
+// 这里沿用历史字段名 RateLimitedAccountCount，但统计的是会让账号暂时退出调度的时间窗口。
+func groupAccountTemporarilyLimitedSQL() string {
+	return `a.deleted_at IS NULL
 				AND a.status = 'active'
 				AND a.schedulable = true
 				AND (a.expires_at IS NULL OR a.expires_at > NOW() OR a.auto_pause_on_expired = FALSE)
+				AND NOT (` + noAutoUnschedRawSQL("a") + `)
 				AND (
 					a.rate_limit_reset_at > NOW() OR
 					a.overload_until > NOW() OR
 					a.temp_unschedulable_until > NOW()
 				)`
-)
+}
 
 func (r *groupRepository) loadAccountCounts(ctx context.Context, groupIDs []int64) (counts map[int64]groupAccountCounts, err error) {
 	counts = make(map[int64]groupAccountCounts, len(groupIDs))
@@ -893,7 +977,7 @@ func (r *groupRepository) loadAccountCounts(ctx context.Context, groupIDs []int6
 		FROM account_groups ag
 		JOIN accounts a ON a.id = ag.account_id
 		WHERE ag.group_id = ANY($1)
-		GROUP BY ag.group_id`, groupAccountAvailableSQL, groupAccountTemporarilyLimitedSQL),
+		GROUP BY ag.group_id`, groupAccountAvailableSQL(), groupAccountTemporarilyLimitedSQL()),
 		pq.Array(groupIDs),
 	)
 	if err != nil {

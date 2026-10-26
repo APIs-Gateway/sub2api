@@ -81,3 +81,12 @@ func TestGatewayServiceGetUserGroupRateMultiplier_FallbacksAndUsesExistingResolv
 	require.Equal(t, rate, got)
 	require.Equal(t, 1, repo.calls)
 }
+
+func TestUserGroupRateResolverMissingOverrideUsesCurrentGroupDefault(t *testing.T) {
+	repo := &userGroupRateResolverRepoStub{}
+	resolver := newUserGroupRateResolver(repo, nil, time.Minute, nil, "service.test")
+
+	require.Equal(t, 3.0, resolver.Resolve(context.Background(), 101, 202, 3.0))
+	require.Equal(t, 0.3, resolver.Resolve(context.Background(), 101, 202, 0.3))
+	require.Equal(t, 1, repo.calls, "the missing override itself is cached, not its old group default")
+}

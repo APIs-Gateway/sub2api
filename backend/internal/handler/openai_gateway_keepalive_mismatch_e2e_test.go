@@ -85,23 +85,32 @@ func (b *keepaliveMismatchGatedBody) Close() error { return nil }
 type keepaliveMismatchFlushSignalWriter struct {
 	gin.ResponseWriter
 	flushed chan struct{}
+	beats   chan<- struct{}
 	once    sync.Once
 }
 
 func (w *keepaliveMismatchFlushSignalWriter) Flush() {
 	w.ResponseWriter.Flush()
 	w.once.Do(func() { close(w.flushed) })
+	if w.beats != nil {
+		select {
+		case w.beats <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // keepaliveMismatchUpstream 按调用顺序出响应：bodies[i] 是第 i+1 次上游调用的 SSE；
 // gateFirst=true 时第一次调用的 body 门控在网关首次 Flush 之后放出。
 type keepaliveMismatchUpstream struct {
-	mu        sync.Mutex
-	calls     []int64
-	bodies    []string
-	gateFirst bool
-	gate      chan struct{}
-	onFirstDo func()
+	mu           sync.Mutex
+	calls        []int64
+	bodies       []string
+	gateFirst    bool
+	gate         chan struct{}
+	gateAttempts int
+	beats        <-chan struct{}
+	onFirstDo    func()
 }
 
 func (u *keepaliveMismatchUpstream) Do(_ *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
@@ -115,6 +124,8 @@ func (u *keepaliveMismatchUpstream) Do(_ *http.Request, _ string, accountID int6
 	var body io.ReadCloser = io.NopCloser(strings.NewReader(u.bodies[n-1]))
 	if n == 1 && u.gateFirst {
 		body = &keepaliveMismatchGatedBody{gate: u.gate, reader: strings.NewReader(u.bodies[0])}
+	} else if n <= u.gateAttempts {
+		body = &keepaliveMismatchGatedBody{gate: u.beats, reader: strings.NewReader(u.bodies[n-1])}
 	}
 	if n == 1 && u.onFirstDo != nil {
 		u.onFirstDo()
@@ -198,12 +209,17 @@ type keepaliveMismatchHarness struct {
 	router    *gin.Engine
 	usageLogs chan *service.UsageLog
 	flushed   chan struct{}
+	beats     chan struct{}
 	stop      func()
 }
 
 // newKeepaliveMismatchHarness 组装真实的 OpenAIGatewayService + handler（simple 模式，usage 落到 channel），
 // 中间件把 c.Writer 换成首次 Flush 即发信号的包装，供上游 body 门控。
 func newKeepaliveMismatchHarness(t *testing.T, accounts []service.Account, upstream service.HTTPUpstream) *keepaliveMismatchHarness {
+	return newKeepaliveMismatchHarnessWithInterval(t, accounts, upstream, 1)
+}
+
+func newKeepaliveMismatchHarnessWithInterval(t *testing.T, accounts []service.Account, upstream service.HTTPUpstream, keepaliveSeconds int) *keepaliveMismatchHarness {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -212,7 +228,7 @@ func newKeepaliveMismatchHarness(t *testing.T, accounts []service.Account, upstr
 	cfg.Default.RateMultiplier = 1
 	cfg.Security.URLAllowlist.Enabled = false
 	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
-	cfg.Gateway.StreamKeepaliveInterval = 1
+	cfg.Gateway.StreamKeepaliveInterval = keepaliveSeconds
 
 	accountRepo := &openAIWSFailoverHandlerAccountRepoStub{accounts: accounts}
 	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, 8)}
@@ -271,14 +287,15 @@ func newKeepaliveMismatchHarness(t *testing.T, accounts []service.Account, upstr
 		},
 	}
 	flushed := make(chan struct{})
+	beats := make(chan struct{}, len(accounts)+1)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
-		c.Writer = &keepaliveMismatchFlushSignalWriter{ResponseWriter: c.Writer, flushed: flushed}
+		c.Writer = &keepaliveMismatchFlushSignalWriter{ResponseWriter: c.Writer, flushed: flushed, beats: beats}
 		c.Next()
 	})
-	return &keepaliveMismatchHarness{handler: h, router: router, usageLogs: usageRepo.created, flushed: flushed, stop: billingCacheSvc.Stop}
+	return &keepaliveMismatchHarness{handler: h, router: router, usageLogs: usageRepo.created, flushed: flushed, beats: beats, stop: billingCacheSvc.Stop}
 }
 
 func (hs *keepaliveMismatchHarness) serve(t *testing.T, entry keepaliveMismatchEntry, reqCtx context.Context) *httptest.ResponseRecorder {
@@ -370,6 +387,43 @@ func TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_SwitchesAccount(t *tes
 	}
 }
 
+// The raw Chat path has no configured keepalive. Its 8-second preamble
+// deadline emits a replayable comment; a later retryable upstream error must
+// still switch accounts on the already committed 200 SSE connection.
+func TestOpenAIGateway_RawChatPreambleDeadlineThenOverload_SwitchesAccount(t *testing.T) {
+	accounts := []service.Account{keepaliveMismatchAccount(9961, 1, nil), keepaliveMismatchAccount(9962, 2, nil)}
+	for i := range accounts {
+		accounts[i].Extra = map[string]any{openai_compat.ExtraKeyResponsesSupported: false}
+	}
+	rawSuccess := strings.Join([]string{
+		`data: {"id":"chatcmpl_ok","object":"chat.completion.chunk","model":"gpt-5.1","choices":[{"index":0,"delta":{"content":"served"}}]}`,
+		"",
+		`data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &keepaliveMismatchUpstream{
+		bodies: []string{
+			"event: error\ndata: {\"error\":{\"type\":\"server_is_overloaded\",\"message\":\"try again later\"}}\n\n",
+			rawSuccess,
+		},
+		gateFirst: true,
+	}
+	hs := newKeepaliveMismatchHarnessWithInterval(t, accounts, upstream, 0)
+	defer hs.stop()
+	upstream.gate = hs.flushed
+	entry := keepaliveMismatchEntries()[1]
+	rec := hs.serve(t, entry, nil)
+
+	require.Equal(t, []int64{9961, 9962}, upstream.accountCalls())
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.True(t, strings.HasPrefix(rec.Body.String(), keepaliveMismatchSSEComment))
+	require.Contains(t, rec.Body.String(), "served")
+	require.NotContains(t, rec.Body.String(), "server_is_overloaded")
+	require.NotContains(t, rec.Body.String(), "event: error")
+}
+
 // 心跳后两个账号都返回错 model → 耗尽：响应头已被心跳提交为 200，必须以流内终止事件收尾，
 // 且不能泄漏任何上游事件或模型名。
 func TestOpenAIGateway_KeepaliveThenUpstreamModelMismatch_ExhaustedEndsInStream(t *testing.T) {
@@ -458,4 +512,81 @@ func TestOpenAIGateway_UpstreamModelMismatch_PoolModeRetryCanceledByClient(t *te
 			requireKeepaliveMismatchAuditRow(t, logs, 9961)
 		})
 	}
+}
+
+func keepaliveRetryableResponseFailedSSE() string {
+	return `event: response.failed
+data: {"type":"response.failed","response":{"id":"resp_retryable","object":"response","status":"failed","output":[],"error":{"code":"rate_limit_exceeded","type":"rate_limit_error","message":"rate limit reached"}}}
+
+`
+}
+
+func keepaliveOutputThenRetryableResponseFailedSSE() string {
+	return strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"partial output"}`,
+		"",
+		strings.TrimSpace(keepaliveRetryableResponseFailedSSE()),
+		"",
+	}, "\n")
+}
+
+// A passthrough response may retry across several accounts while its first
+// visible event is still buffered. Each attempt starts a new keepalive, so the
+// handler must continue treating comments from *all* previous attempts as
+// non-semantic output. Otherwise the second 429 is incorrectly terminal and
+// the healthy third account is never reached.
+func TestOpenAIGateway_PassthroughKeepaliveAcrossPreOutputFailovers_ReachesThirdAccount(t *testing.T) {
+	accounts := []service.Account{
+		keepaliveMismatchAccount(9971, 1, nil),
+		keepaliveMismatchAccount(9972, 2, nil),
+		keepaliveMismatchAccount(9973, 3, nil),
+	}
+	upstream := &keepaliveMismatchUpstream{
+		bodies:       []string{keepaliveRetryableResponseFailedSSE(), keepaliveRetryableResponseFailedSSE(), keepaliveMismatchResponsesSSE(keepaliveMismatchRequestedModel, "served by third")},
+		gateAttempts: 2,
+	}
+	hs := newKeepaliveMismatchHarness(t, accounts, upstream)
+	defer hs.stop()
+	upstream.beats = hs.beats
+
+	entry := keepaliveMismatchEntries()[0] // Responses is the passthrough path.
+	rec := hs.serve(t, entry, nil)
+
+	require.Equal(t, []int64{9971, 9972, 9973}, upstream.accountCalls(),
+		"both pre-output retryable failures must reach the next account")
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Equal(t, 2, strings.Count(body, keepaliveMismatchSSEComment),
+		"the first two accounts must each write a keepalive before failing")
+	require.Contains(t, body, "served by third")
+	require.NotContains(t, body, "rate limit reached", "pre-output failures must not leak")
+}
+
+// Once an account has delivered a semantic SSE event, its later retryable
+// terminal event is client-visible and must not be replayed to a fourth
+// account. This complements the previous test's pre-output-only failover.
+func TestOpenAIGateway_PassthroughKeepaliveAfterSemanticOutput_DoesNotSwitchAgain(t *testing.T) {
+	accounts := []service.Account{
+		keepaliveMismatchAccount(9981, 1, nil),
+		keepaliveMismatchAccount(9982, 2, nil),
+		keepaliveMismatchAccount(9983, 3, nil),
+		keepaliveMismatchAccount(9984, 4, nil),
+	}
+	upstream := &keepaliveMismatchUpstream{
+		bodies:       []string{keepaliveRetryableResponseFailedSSE(), keepaliveRetryableResponseFailedSSE(), keepaliveOutputThenRetryableResponseFailedSSE(), keepaliveMismatchResponsesSSE(keepaliveMismatchRequestedModel, "must not be served")},
+		gateAttempts: 2,
+	}
+	hs := newKeepaliveMismatchHarness(t, accounts, upstream)
+	defer hs.stop()
+	upstream.beats = hs.beats
+
+	entry := keepaliveMismatchEntries()[0]
+	rec := hs.serve(t, entry, nil)
+
+	require.Equal(t, []int64{9981, 9982, 9983}, upstream.accountCalls(),
+		"semantic output from the third account must prevent another account switch")
+	body := rec.Body.String()
+	require.Contains(t, body, "partial output")
+	require.Contains(t, body, "response.failed")
+	require.NotContains(t, body, "must not be served")
 }

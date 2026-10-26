@@ -250,7 +250,13 @@ func CanonicalizeReturnURL(raw string, srcHost string, srcURL string) (string, e
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must use http or https")
 	}
+	// 丢弃客户端传来的全部 query 与 fragment：回跳地址会被原样参与 EasyPay 的拼接签名，
+	// 客户端夹带的参数会造成签名拼接歧义。服务端自己的参数（order_id、out_trade_no、
+	// resume_token、status）由 buildPaymentReturnURL 在 canonicalize 之后再追加。
 	parsed.Fragment = ""
+	parsed.RawFragment = ""
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
 	if parsed.Path == "" {
 		parsed.Path = "/"
 	}

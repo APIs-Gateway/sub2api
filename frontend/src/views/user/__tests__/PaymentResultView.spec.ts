@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 
 const routeState = vi.hoisted(() => ({
@@ -10,6 +11,7 @@ const pollOrderStatus = vi.hoisted(() => vi.fn())
 const verifyOrder = vi.hoisted(() => vi.fn())
 const verifyOrderPublic = vi.hoisted(() => vi.fn())
 const resolveOrderPublicByResumeToken = vi.hoisted(() => vi.fn())
+const refreshUser = vi.hoisted(() => vi.fn())
 
 vi.mock('vue-router', async () => {
   const actual = await vi.importActual<typeof import('vue-router')>('vue-router')
@@ -36,6 +38,12 @@ vi.mock('@/stores/payment', () => ({
   }),
 }))
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({
+    refreshUser,
+  }),
+}))
+
 vi.mock('@/api/payment', () => ({
   paymentAPI: {
     verifyOrder,
@@ -47,6 +55,7 @@ vi.mock('@/api/payment', () => ({
 import PaymentResultView from '../PaymentResultView.vue'
 import { PAYMENT_RECOVERY_STORAGE_KEY } from '@/components/payment/paymentFlow'
 import { formatPaymentAmount } from '@/components/payment/currency'
+import { useAppStore } from '@/stores/app'
 
 const orderFactory = (status: string) => ({
   id: 42,
@@ -91,6 +100,8 @@ describe('PaymentResultView', () => {
     verifyOrder.mockReset()
     verifyOrderPublic.mockReset()
     resolveOrderPublicByResumeToken.mockReset()
+    refreshUser.mockReset()
+    refreshUser.mockResolvedValue({})
     window.localStorage.clear()
   })
 
@@ -171,7 +182,7 @@ describe('PaymentResultView', () => {
     }))
     resolveOrderPublicByResumeToken.mockResolvedValue({
       data: {
-        ...orderFactory('PAID'),
+        ...orderFactory('COMPLETED'),
         amount: 100,
         pay_amount: 103,
         fee_rate: 3,
@@ -190,13 +201,14 @@ describe('PaymentResultView', () => {
 
     expect(pollOrderStatus).not.toHaveBeenCalled()
     expect(resolveOrderPublicByResumeToken).toHaveBeenCalledWith('resume-authoritative')
+    expect(refreshUser).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('payment.result.success')
     expect(wrapper.text()).toContain('103.00')
     expect(wrapper.text()).toContain('100.00')
     expect(window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)).toBeNull()
   })
 
-  it('refreshes a pending resume-token result until the order becomes paid', async () => {
+  it('waits for completed fulfillment before refreshing the user balance', async () => {
     vi.useFakeTimers()
     routeState.query = {
       resume_token: 'resume-77',
@@ -210,7 +222,7 @@ describe('PaymentResultView', () => {
         data: orderFactory('PENDING'),
       })
       .mockResolvedValueOnce({
-        data: orderFactory('PAID'),
+        data: orderFactory('COMPLETED'),
       })
 
     const wrapper = mount(PaymentResultView, {
@@ -224,6 +236,7 @@ describe('PaymentResultView', () => {
     await flushPromises()
 
     expect(resolveOrderPublicByResumeToken).toHaveBeenCalledTimes(1)
+    expect(refreshUser).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('payment.result.processing')
     expect(window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)).not.toBeNull()
 
@@ -231,9 +244,157 @@ describe('PaymentResultView', () => {
     await flushPromises()
 
     expect(resolveOrderPublicByResumeToken).toHaveBeenCalledTimes(2)
+    expect(refreshUser).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('payment.result.success')
     expect(wrapper.text()).not.toContain('payment.result.failed')
     expect(window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)).toBeNull()
+  })
+
+  it('keeps the successful result when refreshing the user balance fails', async () => {
+    routeState.query = {
+      resume_token: 'resume-refresh-failure',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('COMPLETED'),
+    })
+    refreshUser.mockRejectedValueOnce(new Error('profile refresh failed'))
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(refreshUser).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('payment.result.success')
+    expect(wrapper.text()).not.toContain('payment.result.failed')
+  })
+
+  it('does not refresh the user balance for completed subscription orders', async () => {
+    routeState.query = {
+      resume_token: 'resume-subscription',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: {
+        ...orderFactory('COMPLETED'),
+        order_type: 'subscription',
+      },
+    })
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(refreshUser).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('payment.result.success')
+  })
+
+  it('does not refresh the user balance before fulfillment completes', async () => {
+    routeState.query = {
+      resume_token: 'resume-paid-only',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('PAID'),
+    })
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(refreshUser).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('payment.result.success')
+  })
+
+  it('does not refresh the user balance for failed orders', async () => {
+    routeState.query = {
+      resume_token: 'resume-failed',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('FAILED'),
+    })
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(refreshUser).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('payment.result.failed')
+  })
+
+  it('refreshes the user balance once for a normalized completed status', async () => {
+    routeState.query = {
+      resume_token: 'resume-lowercase',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory(' completed '),
+    })
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(refreshUser).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('payment.result.success')
+  })
+
+  it('refreshes the user balance for a completed minimal public verification result', async () => {
+    routeState.query = {
+      out_trade_no: 'legacy-minimal-completed',
+      trade_status: 'TRADE_SUCCESS',
+    }
+    verifyOrder.mockRejectedValue(new Error('auth required'))
+    verifyOrderPublic.mockResolvedValue({
+      data: {
+        out_trade_no: 'legacy-minimal-completed',
+        status: 'COMPLETED',
+        paid: true,
+        created_at: '2026-04-20T12:00:00Z',
+        expires_at: '2026-04-20T12:30:00Z',
+      },
+    })
+    refreshUser.mockRejectedValueOnce(new Error('Not authenticated'))
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(refreshUser).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('payment.result.success')
+    expect(wrapper.text()).toContain('legacy-minimal-completed')
   })
 
   it('falls back to order_id polling when resume-token recovery fails', async () => {
@@ -353,6 +514,37 @@ describe('PaymentResultView', () => {
     expect(wrapper.text()).toContain('payment.result.success')
   })
 
+  it('renders the minimal public out_trade_no verification result without payment_type', async () => {
+    routeState.query = {
+      out_trade_no: 'legacy-minimal',
+      trade_status: 'TRADE_SUCCESS',
+    }
+    verifyOrder.mockRejectedValue(new Error('auth required'))
+    verifyOrderPublic.mockResolvedValue({
+      data: {
+        out_trade_no: 'legacy-minimal',
+        status: 'PAID',
+        paid: true,
+        created_at: '2026-04-20T12:00:00Z',
+        expires_at: '2026-04-20T12:30:00Z',
+      },
+    })
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('payment.result.success')
+    expect(wrapper.text()).toContain('legacy-minimal')
+    expect(wrapper.text()).not.toContain('payment.orders.paymentMethod')
+  })
+
   it('prefers authenticated order verification before falling back to public lookup', async () => {
     routeState.query = {
       out_trade_no: 'auth-verify-123',
@@ -444,6 +636,23 @@ describe('PaymentResultView', () => {
     expect(wrapper.text()).toContain(formatPaymentAmount(103, 'HKD'))
   })
 
+  it('充值订单的到账金额按人民币展示，和实付一致', async () => {
+    // 倍率 13：实付 ¥100 到账 1300 个额度，展示时折回 ¥100。
+    useAppStore().cachedPublicSettings = { balance_recharge_multiplier: 13 } as never
+    routeState.query = { resume_token: 'resume-fiat', order_id: '42', status: 'success' }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: { ...orderFactory('COMPLETED'), amount: 1300, pay_amount: 100, fee_rate: 0 },
+    })
+
+    const wrapper = mount(PaymentResultView, { global: { stubs: { OrderStatusBadge: true } } })
+    await flushPromises()
+    const text = wrapper.text().replace(/\s+/g, '')
+
+    expect(text).toContain('payment.orders.creditedAmount¥100.00')
+    expect(text).not.toContain('$')
+    expect(text).not.toContain('1,300')
+  })
+
   it('normalizes aliased payment methods before rendering the label', async () => {
     routeState.query = {
       resume_token: 'resume-88',
@@ -468,4 +677,9 @@ describe('PaymentResultView', () => {
     expect(wrapper.text()).toContain('payment.methods.alipay')
     expect(wrapper.text()).not.toContain('payment.methods.alipay_direct')
   })
+})
+
+// 组件里用到的金额口径依赖 app store；未配置充值倍率时按美元展示（旧行为）。
+beforeEach(() => {
+  setActivePinia(createPinia())
 })

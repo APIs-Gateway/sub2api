@@ -21,6 +21,7 @@ import (
 // Embeddings handles the OpenAI-compatible Embeddings API.
 // POST /v1/embeddings
 func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
+	defer finishBillingInflightHTTP(c)
 	streamStarted := false
 	requestStart := time.Now()
 
@@ -66,6 +67,12 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		return
 	}
 
+	if err := service.ValidateGatewayModelField(body); err != nil {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+
+	body = service.TrimRequestBodyModel(body)
 	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || strings.TrimSpace(modelResult.String()) == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
@@ -81,6 +88,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 	}
 
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	forwardModel := openAIChannelForwardModel(channelMapping, reqModel)
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
@@ -118,7 +126,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 			apiKey.GroupID,
 			"",
 			"",
-			reqModel,
+			forwardModel,
 			failedAccountIDs,
 			service.OpenAIUpstreamTransportHTTPSSE,
 			service.OpenAIEndpointCapabilityEmbeddings,
@@ -134,7 +142,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
-			if len(failedAccountIDs) == 0 {
+			if lastFailoverErr == nil {
 				h.respondNoAccountError(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformOpenAI, "Service temporarily unavailable", err, noAccountCapacityMarkIfNoAvailable, openAINoAccountResponseJSON, false)
 				return
 			}
@@ -152,8 +160,12 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		account := selection.Account
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, accountAcquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", selection, false, &streamStarted, reqLog)
-		if !accountAcquired {
+		accountReleaseFunc, slotStatus := h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", selection, false, &streamStarted, reqLog)
+		if slotStatus == accountSlotRetrySelection {
+			failedAccountIDs[account.ID] = struct{}{}
+			continue
+		}
+		if slotStatus != accountSlotAcquired {
 			return
 		}
 
@@ -165,6 +177,9 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
 		writerSizeBeforeForward := c.Writer.Size()
+		if !reserveBillingInflightHTTP(c, h.gatewayService, service.BillingInflightRequest{APIKey: apiKey, Account: account, Model: reqModel, Body: forwardBody, Embeddings: true, ChannelUsageFields: channelMapping.ToUsageFields(reqModel, "")}, accountReleaseFunc, func(status int, code, message string) { h.errorResponse(c, status, code, message) }) {
+			return
+		}
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
@@ -185,6 +200,9 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
+				if result == nil && service.IsBillingInflightNoChargeError(err) && c.Writer.Size() == writerSizeBeforeForward {
+					service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+				}
 				if c.Writer.Size() != writerSizeBeforeForward {
 					h.handleFailoverExhausted(c, failoverErr, true)
 					return

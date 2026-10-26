@@ -18,6 +18,10 @@ import (
 
 type upstreamContextTestKey string
 
+// A completed text block commits real visible output before usage-only events
+// or an idle period; message_start alone is staged by the native gateway.
+const streamingTestVisibleTextSSE = "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"answer\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+
 func newStreamingResponseTestGatewayService() *GatewayService {
 	return &GatewayService{
 		cfg: &config.Config{
@@ -45,6 +49,7 @@ func TestGatewayService_StreamingReusesScannerBufferAndStillParsesUsage(t *testi
 		defer func() { _ = pw.Close() }()
 		// Minimal SSE event to trigger parseSSEUsage
 		_, _ = pw.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3}}}\n\n"))
+		_, _ = pw.Write([]byte(streamingTestVisibleTextSSE))
 		_, _ = pw.Write([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n\n"))
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
 	}()
@@ -56,6 +61,7 @@ func TestGatewayService_StreamingReusesScannerBufferAndStillParsesUsage(t *testi
 	require.NotNil(t, result.usage)
 	require.Equal(t, 3, result.usage.InputTokens)
 	require.Equal(t, 7, result.usage.OutputTokens)
+	require.Contains(t, rec.Body.String(), "answer")
 }
 
 func TestGatewayService_StreamingKeepaliveUsesIdleTimer(t *testing.T) {
@@ -73,6 +79,7 @@ func TestGatewayService_StreamingKeepaliveUsesIdleTimer(t *testing.T) {
 	go func() {
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n"))
+		_, _ = pw.Write([]byte(streamingTestVisibleTextSSE))
 		time.Sleep(1100 * time.Millisecond)
 		_, _ = pw.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
 	}()
@@ -82,6 +89,7 @@ func TestGatewayService_StreamingKeepaliveUsesIdleTimer(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Contains(t, rec.Body.String(), "event: ping")
+	require.Contains(t, rec.Body.String(), "answer")
 }
 
 func TestGatewayService_StreamingKeepaliveUsesNoopDeltaForAffectedClaudeCodeVersion(t *testing.T) {
@@ -100,7 +108,7 @@ func TestGatewayService_StreamingKeepaliveUsesNoopDeltaForAffectedClaudeCodeVers
 	go func() {
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n"))
-		_, _ = pw.Write([]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"))
+		_, _ = pw.Write([]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"answer\"}}\n\n"))
 		time.Sleep(1100 * time.Millisecond)
 		_, _ = pw.Write([]byte("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"))
 		_, _ = pw.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
@@ -113,6 +121,7 @@ func TestGatewayService_StreamingKeepaliveUsesNoopDeltaForAffectedClaudeCodeVers
 	body := rec.Body.String()
 	require.Contains(t, body, "event: content_block_delta")
 	require.Contains(t, body, `"delta":{"type":"text_delta","text":""}`)
+	require.Contains(t, body, "answer")
 }
 
 func TestGatewayService_StreamingKeepaliveUsesNoopDeltaDuringToolUseForAffectedClaudeCodeVersion(t *testing.T) {
@@ -131,6 +140,7 @@ func TestGatewayService_StreamingKeepaliveUsesNoopDeltaDuringToolUseForAffectedC
 	go func() {
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n"))
+		_, _ = pw.Write([]byte(streamingTestVisibleTextSSE))
 		_, _ = pw.Write([]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"Edit\",\"input\":{}}}\n\n"))
 		time.Sleep(1100 * time.Millisecond)
 		_, _ = pw.Write([]byte("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n"))
@@ -145,6 +155,7 @@ func TestGatewayService_StreamingKeepaliveUsesNoopDeltaDuringToolUseForAffectedC
 	require.Contains(t, body, "event: content_block_delta")
 	require.Contains(t, body, `"index":1`)
 	require.Contains(t, body, `"delta":{"type":"input_json_delta","partial_json":""}`)
+	require.Contains(t, body, "answer")
 }
 
 func TestGatewayService_StreamingKeepaliveKeepsPingForOlderClaudeCodeVersion(t *testing.T) {
@@ -163,7 +174,7 @@ func TestGatewayService_StreamingKeepaliveKeepsPingForOlderClaudeCodeVersion(t *
 	go func() {
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n"))
-		_, _ = pw.Write([]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"))
+		_, _ = pw.Write([]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"answer\"}}\n\n"))
 		time.Sleep(1100 * time.Millisecond)
 		_, _ = pw.Write([]byte("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"))
 		_, _ = pw.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
@@ -176,6 +187,7 @@ func TestGatewayService_StreamingKeepaliveKeepsPingForOlderClaudeCodeVersion(t *
 	body := rec.Body.String()
 	require.Contains(t, body, "event: ping")
 	require.NotContains(t, body, `"delta":{"type":"text_delta","text":""}`)
+	require.Contains(t, body, "answer")
 }
 
 func TestDetachUpstreamContextIgnoresClientCancel(t *testing.T) {

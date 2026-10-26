@@ -322,6 +322,7 @@ import { useAnnouncementStore } from '@/stores/announcements'
 import { formatRelativeTime, formatRelativeWithDateTime } from '@/utils/format'
 import type { UserAnnouncement } from '@/types'
 import Icon from '@/components/icons/Icon.vue'
+import '@/styles/announcement-markdown.css'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -341,6 +342,11 @@ const unreadCount = computed(() => announcementStore.unreadCount)
 const isModalOpen = ref(false)
 const detailModalOpen = ref(false)
 const selectedAnnouncement = ref<UserAnnouncement | null>(null)
+type ReadOutcome = { marked: boolean; error?: unknown }
+const pendingReadRequests = new Map<number, { session: number; request: Promise<ReadOutcome> }>()
+let reportedReadFailure: { generation: number; request: Promise<ReadOutcome> } | null = null
+let detailGeneration = 0
+let unmounted = false
 
 // Methods
 function renderMarkdown(content: string): string {
@@ -358,6 +364,7 @@ function closeModal() {
 }
 
 function openDetail(announcement: UserAnnouncement) {
+  detailGeneration++
   selectedAnnouncement.value = announcement
   detailModalOpen.value = true
   if (!announcement.read_at) {
@@ -366,30 +373,69 @@ function openDetail(announcement: UserAnnouncement) {
 }
 
 function closeDetail() {
+  detailGeneration++
   detailModalOpen.value = false
   selectedAnnouncement.value = null
 }
 
-async function markAsRead(id: number) {
-  try {
-    await announcementStore.markAsRead(id)
-  } catch (err: any) {
-    appStore.showError(err?.message || t('common.unknownError'))
+function readRequest(id: number): Promise<ReadOutcome> {
+  const session = announcementStore.sessionGeneration
+  const pending = pendingReadRequests.get(id)
+  if (pending?.session === session) return pending.request
+
+  const request: Promise<ReadOutcome> = (async () => {
+    try {
+      return { marked: await announcementStore.markAsRead(id) }
+    } catch (error: unknown) {
+      return { marked: false, error }
+    }
+  })()
+  pendingReadRequests.set(id, { session, request })
+  void request.then(() => {
+    if (pendingReadRequests.get(id)?.request === request) pendingReadRequests.delete(id)
+  })
+  return request
+}
+
+async function markAsRead(id: number, generation = detailGeneration) {
+  const session = announcementStore.sessionGeneration
+  const request = readRequest(id)
+  const outcome = await request
+  if (session !== announcementStore.sessionGeneration) return false
+  const marked = outcome.marked || Boolean(announcements.value.find(item => item.id === id)?.read_at)
+  const isCurrentDetail = !unmounted &&
+    generation === detailGeneration &&
+    detailModalOpen.value &&
+    selectedAnnouncement.value?.id === id
+  if (!marked && isCurrentDetail &&
+    (reportedReadFailure?.generation !== generation || reportedReadFailure?.request !== request)) {
+    reportedReadFailure = { generation, request }
+    const message = (outcome.error as { message?: string } | undefined)?.message
+    appStore.showError(message || t('common.unknownError'))
   }
+  return marked
 }
 
 async function markAsReadAndClose(id: number) {
-  await markAsRead(id)
+  const generation = detailGeneration
+  const session = announcementStore.sessionGeneration
+  if (!await markAsRead(id, generation)) return
+  if (unmounted || session !== announcementStore.sessionGeneration || generation !== detailGeneration || !detailModalOpen.value || selectedAnnouncement.value?.id !== id) return
   appStore.showSuccess(t('announcements.markedAsRead'))
   closeDetail()
 }
 
 async function markAllAsRead() {
+  const session = announcementStore.sessionGeneration
   try {
-    await announcementStore.markAllAsRead()
-    appStore.showSuccess(t('announcements.allMarkedAsRead'))
+    const marked = await announcementStore.markAllAsRead()
+    if (marked && !unmounted && session === announcementStore.sessionGeneration) {
+      appStore.showSuccess(t('announcements.allMarkedAsRead'))
+    }
   } catch (err: any) {
-    appStore.showError(err?.message || t('common.unknownError'))
+    if (!unmounted && session === announcementStore.sessionGeneration) {
+      appStore.showError(err?.message || t('common.unknownError'))
+    }
   }
 }
 
@@ -408,9 +454,21 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  unmounted = true
   document.removeEventListener('keydown', handleEscape)
   document.body.style.overflow = ''
 })
+
+watch(
+  () => announcementStore.sessionGeneration,
+  () => {
+    closeDetail()
+    closeModal()
+    pendingReadRequests.clear()
+    reportedReadFailure = null
+  },
+  { flush: 'sync' }
+)
 
 watch(
   [isModalOpen, detailModalOpen, () => announcementStore.currentPopup],
@@ -469,122 +527,5 @@ watch(
 
 .dark .overflow-y-auto::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(to bottom, #6b7280, #4b5563);
-}
-</style>
-
-<style>
-/* Enhanced Markdown Styles */
-.markdown-body {
-  @apply text-[15px] leading-[1.75];
-  @apply text-gray-700 dark:text-gray-300;
-}
-
-.markdown-body h1 {
-  @apply mb-6 mt-8 border-b border-gray-200 pb-3 text-3xl font-bold text-gray-900 dark:border-dark-600 dark:text-white;
-}
-
-.markdown-body h2 {
-  @apply mb-4 mt-7 border-b border-gray-100 pb-2 text-2xl font-bold text-gray-900 dark:border-dark-700 dark:text-white;
-}
-
-.markdown-body h3 {
-  @apply mb-3 mt-6 text-xl font-semibold text-gray-900 dark:text-white;
-}
-
-.markdown-body h4 {
-  @apply mb-2 mt-5 text-lg font-semibold text-gray-900 dark:text-white;
-}
-
-.markdown-body p {
-  @apply mb-4 leading-relaxed;
-}
-
-.markdown-body a {
-  @apply font-medium text-primary-600 underline decoration-primary-600/30 decoration-2 underline-offset-2 transition-all hover:decoration-primary-600 dark:text-primary-400 dark:decoration-primary-400/30 dark:hover:decoration-primary-400;
-}
-
-.markdown-body ul,
-.markdown-body ol {
-  @apply mb-4 ml-6 space-y-2;
-}
-
-.markdown-body ul {
-  @apply list-disc;
-}
-
-.markdown-body ol {
-  @apply list-decimal;
-}
-
-.markdown-body li {
-  @apply leading-relaxed;
-  @apply pl-2;
-}
-
-.markdown-body li::marker {
-  @apply text-primary-600 dark:text-primary-400;
-}
-
-.markdown-body blockquote {
-  @apply relative my-5 border-l-4 border-primary-500 bg-primary-50/50 py-3 pl-5 pr-4 italic text-gray-700 dark:border-primary-400 dark:bg-primary-900/10 dark:text-gray-300;
-}
-
-.markdown-body blockquote::before {
-  content: '"';
-  @apply absolute -left-1 top-0 text-5xl font-serif text-primary-500/20 dark:text-primary-400/20;
-}
-
-.markdown-body code {
-  @apply rounded-lg bg-gray-100 px-2 py-1 text-[13px] font-mono text-pink-600 dark:bg-dark-700 dark:text-pink-400;
-}
-
-.markdown-body pre {
-  @apply my-5 overflow-x-auto rounded-xl border border-gray-200 bg-gray-50 p-5 dark:border-dark-600 dark:bg-dark-900/50;
-}
-
-.markdown-body pre code {
-  @apply bg-transparent p-0 text-[13px] text-gray-800 dark:text-gray-200;
-}
-
-.markdown-body hr {
-  @apply my-8 border-0 border-t-2 border-gray-200 dark:border-dark-700;
-}
-
-.markdown-body table {
-  @apply mb-5 w-full overflow-hidden rounded-lg border border-gray-200 dark:border-dark-600;
-}
-
-.markdown-body th,
-.markdown-body td {
-  @apply border-r border-b border-gray-200 px-4 py-3 text-left dark:border-dark-600;
-}
-
-.markdown-body th:last-child,
-.markdown-body td:last-child {
-  @apply border-r-0;
-}
-
-.markdown-body tr:last-child td {
-  @apply border-b-0;
-}
-
-.markdown-body th {
-  @apply bg-gray-50 font-semibold text-gray-900 dark:bg-dark-700 dark:text-white;
-}
-
-.markdown-body tbody tr {
-  @apply transition-colors hover:bg-gray-50 dark:hover:bg-dark-700/30;
-}
-
-.markdown-body img {
-  @apply my-5 max-w-full rounded-xl border border-gray-200 shadow-md dark:border-dark-600;
-}
-
-.markdown-body strong {
-  @apply font-semibold text-gray-900 dark:text-white;
-}
-
-.markdown-body em {
-  @apply italic text-gray-600 dark:text-gray-400;
 }
 </style>

@@ -8,9 +8,11 @@ import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
 import { useAdminComplianceStore } from '@/stores/adminCompliance'
+import { getAdminComplianceSessionVersion } from '@/utils/adminComplianceSession'
 import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { recoverFromChunkLoadError } from '@/utils/chunkLoadRecovery'
+import { isSafeRedirectPath } from '@/utils/redirect'
 import { getSetupStatus } from '@/api/setup'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveRouteDocumentTitle } from './title'
@@ -178,6 +180,16 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/docs',
+    name: 'Docs',
+    component: () => import('@/views/docs/DocsView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Docs',
+      titleKey: 'nav.usageDocs',
+    }
+  },
+  {
     path: '/legal/:documentId',
     name: 'LegalDocument',
     component: () => import('@/views/public/LegalDocumentView.vue'),
@@ -324,18 +336,6 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/payment/qrcode',
-    name: 'PaymentQRCode',
-    component: () => import('@/views/user/PaymentQRCodeView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: false,
-      title: 'Payment',
-      titleKey: 'payment.qr.scanToPay',
-      requiresPayment: true
-    }
-  },
-  {
     path: '/payment/result',
     name: 'PaymentResult',
     component: () => import('@/views/user/PaymentResultView.vue'),
@@ -445,6 +445,34 @@ const routes: RouteRecordRaw[] = [
       title: 'Group Management',
       titleKey: 'admin.groups.title',
       descriptionKey: 'admin.groups.description'
+    }
+  },
+  {
+    path: '/admin/pricing',
+    redirect: '/admin/pricing/models'
+  },
+  {
+    path: '/admin/pricing/models',
+    name: 'AdminPricingModels',
+    component: () => import('@/views/admin/pricing/ModelsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Models',
+      titleKey: 'admin.pricingConfig.models.title',
+      descriptionKey: 'admin.pricingConfig.models.description'
+    }
+  },
+  {
+    path: '/admin/pricing/matrix',
+    name: 'AdminPricingMatrix',
+    component: () => import('@/views/admin/pricing/MatrixView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Availability and pricing',
+      titleKey: 'admin.pricingConfig.matrix.title',
+      descriptionKey: 'admin.pricingConfig.matrix.description'
     }
   },
   {
@@ -794,6 +822,11 @@ router.beforeEach(async (to, _from, next) => {
   // Check if route requires authentication
   const requiresAuth = to.meta.requiresAuth !== false // Default to true
   const requiresAdmin = to.meta.requiresAdmin === true
+  const protectedSessionVersion = getAdminComplianceSessionVersion()
+  const isCurrentProtectedSession = () =>
+    protectedSessionVersion === getAdminComplianceSessionVersion() &&
+    authStore.isAuthenticated &&
+    (!requiresAdmin || authStore.isAdmin)
 
   if (to.path === '/setup') {
     try {
@@ -815,6 +848,14 @@ router.beforeEach(async (to, _from, next) => {
       // (they are blocked from all protected routes, so redirecting would cause a loop)
       if (appStore.backendModeEnabled && !authStore.isAdmin) {
         next()
+        return
+      }
+      // 带着 redirect 来的（首页注册入口、守卫写入的原路径）直接去那里；
+      // 没带或不是站内路径，仍按角色回各自的首页。
+      // 后端模式下非管理员已在上面放行，不会走到这里，所以不会和"受保护页 -> /login"互相弹。
+      const redirect = to.query?.redirect
+      if (isSafeRedirectPath(redirect)) {
+        next(redirect)
         return
       }
       // Admin users go to admin dashboard, regular users go to user dashboard
@@ -857,9 +898,17 @@ router.beforeEach(async (to, _from, next) => {
         await adminComplianceStore.fetchStatus()
       } catch (error) {
         const err = error as { status?: number; code?: string; metadata?: Record<string, string> }
-        if (err.status === 423 && err.code === 'ADMIN_COMPLIANCE_ACK_REQUIRED') {
+        if (
+          err.status === 423 &&
+          err.code === 'ADMIN_COMPLIANCE_ACK_REQUIRED' &&
+          isCurrentProtectedSession()
+        ) {
           adminComplianceStore.requireAcknowledgement(err.metadata)
         }
+      }
+      if (!isCurrentProtectedSession()) {
+        next(false)
+        return
       }
     }
   }
@@ -870,6 +919,10 @@ router.beforeEach(async (to, _from, next) => {
       await appStore.fetchPublicSettings()
     } catch (error) {
       console.warn('Failed to load public settings in route guard', error)
+    }
+    if (!isCurrentProtectedSession()) {
+      next(false)
+      return
     }
   }
 

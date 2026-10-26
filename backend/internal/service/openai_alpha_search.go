@@ -27,6 +27,11 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 	if s == nil || c == nil || account == nil {
 		return fmt.Errorf("service, context, and account are required")
 	}
+	if err := rejectAmbiguousGatewayModel(c, body); err != nil {
+		return err
+	}
+
+	s.prepareCodexAccountIdentitySource(c, account)
 	modelResult := gjson.GetBytes(body, "model")
 	requestedModel := strings.TrimSpace(modelResult.String())
 	if modelResult.Type != gjson.String || requestedModel == "" {
@@ -84,17 +89,17 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 	if resp.StatusCode >= http.StatusBadRequest {
 		upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 		endpointUnsupported := isOpenAIAlphaSearchEndpointUnsupported(account, resp.StatusCode)
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMessage, respBody) || endpointUnsupported {
+		if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMessage, respBody) || endpointUnsupported {
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 			shouldDisable := false
 			if !endpointUnsupported && shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(resp.StatusCode) {
 				shouldDisable = s.handleFailoverSideEffects(ctx, resp, account, respBody, upstreamModel)
 			}
-			return &UpstreamFailoverError{
+			return applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
 				RetryableOnSameAccount: !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
-			}
+			}, upstreamMessage, respBody)
 		}
 	}
 
@@ -156,18 +161,18 @@ func (s *OpenAIGatewayService) forwardAlphaSearchViaResponsesWebSearch(
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMessage, respBody) {
+		if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMessage, respBody) {
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 			// 仍按 alpha/search 工具请求处理：PAT 的工具链路失败不能直接永久置错。
 			shouldDisable := false
 			if shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(resp.StatusCode) {
 				shouldDisable = s.handleFailoverSideEffects(ctx, resp, account, respBody, upstreamModel)
 			}
-			return &UpstreamFailoverError{
+			return applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
 				RetryableOnSameAccount: !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
-			}
+			}, upstreamMessage, respBody)
 		}
 	}
 
@@ -229,11 +234,12 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(c
 	}
 	apiKeyID := getAPIKeyIDFromContext(c)
 	if sessionID := strings.TrimSpace(gjson.GetBytes(alphaBody, "id").String()); sessionID != "" {
-		isolated := isolateOpenAISessionID(apiKeyID, sessionID)
+		isolated := isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), sessionID)
 		req.Header.Set("Session_ID", isolated)
 		req.Header.Set("Conversation_ID", isolated)
 	}
 	s.overrideBrowserUserAgent(ctx, account, req)
+	applyCodexAccountIdentityHeaders(req.Header, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
 	enforceCodexIdentityHeaders(req.Header)
 	account.ApplyHeaderOverrides(req.Header)
 	return req, nil
@@ -362,6 +368,7 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(ctx context.Context
 			req.Header.Set("User-Agent", codexCLIUserAgent)
 		}
 		s.overrideBrowserUserAgent(ctx, account, req)
+		applyCodexAccountIdentityHeaders(req.Header, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
 		enforceCodexIdentityHeaders(req.Header)
 	}
 
@@ -371,7 +378,10 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(ctx context.Context
 }
 
 func openAIAlphaSearchResponseFromResponsesSSE(body []byte) ([]byte, error) {
-	output, results := parseOpenAIResponsesSSEForAlphaSearch(body)
+	output, results, err := parseOpenAIResponsesSSEForAlphaSearch(body)
+	if err != nil {
+		return nil, err
+	}
 	resp := map[string]any{
 		"output": output,
 	}
@@ -381,37 +391,71 @@ func openAIAlphaSearchResponseFromResponsesSSE(body []byte) ([]byte, error) {
 	return common.Marshal(resp)
 }
 
-func parseOpenAIResponsesSSEForAlphaSearch(body []byte) (string, []any) {
+func parseOpenAIResponsesSSEForAlphaSearch(body []byte) (string, []any, error) {
 	text := strings.ReplaceAll(string(body), "\r\n", "\n")
 	var output strings.Builder
 	var completedResponse any
+	seenDone := false
 	results := make([]any, 0)
 	seenURLs := make(map[string]struct{})
 
 	for _, block := range strings.Split(text, "\n\n") {
 		data := openAIAlphaSearchSSEData(block)
-		if data == "" || data == "[DONE]" {
+		if data == "" {
+			continue
+		}
+		if seenDone {
+			return "", nil, fmt.Errorf("alpha search responses stream has data after [DONE]")
+		}
+		if data == "[DONE]" {
+			seenDone = true
 			continue
 		}
 		var event map[string]any
-		if err := common.Unmarshal([]byte(data), &event); err != nil {
-			continue
+		if err := common.Unmarshal([]byte(data), &event); err != nil || event == nil {
+			return "", nil, fmt.Errorf("alpha search responses stream has malformed event data")
 		}
-		if delta, _ := event["delta"].(string); delta != "" && event["type"] == "response.output_text.delta" {
+		eventType, ok := event["type"].(string)
+		if !ok || eventType == "" {
+			return "", nil, fmt.Errorf("alpha search responses stream event is missing its type")
+		}
+		if completedResponse != nil {
+			return "", nil, fmt.Errorf("alpha search responses stream has an event after completion")
+		}
+		switch eventType {
+		case "error", "response.failed", "response.incomplete":
+			return "", nil, fmt.Errorf("alpha search responses stream ended with %s", eventType)
+		case "response.completed":
+			response, ok := event["response"].(map[string]any)
+			if !ok || response == nil {
+				return "", nil, fmt.Errorf("alpha search responses completion is missing its response")
+			}
+			if response["status"] != "completed" {
+				return "", nil, fmt.Errorf("alpha search responses completion has a non-success status")
+			}
+			if _, ok := response["output"].([]any); !ok {
+				return "", nil, fmt.Errorf("alpha search responses completion is missing its output")
+			}
+			if response["error"] != nil {
+				return "", nil, fmt.Errorf("alpha search responses completion contains an error")
+			}
+			completedResponse = response
+		}
+		if delta, _ := event["delta"].(string); delta != "" && eventType == "response.output_text.delta" {
 			_, _ = output.WriteString(delta)
-		}
-		if event["type"] == "response.completed" {
-			completedResponse = event["response"]
 		}
 		collectOpenAIAlphaSearchURLCitations(event, &results, seenURLs)
 	}
+	if completedResponse == nil {
+		return "", nil, fmt.Errorf("alpha search responses stream ended before completion")
+	}
 
 	out := output.String()
-	if strings.TrimSpace(out) == "" && completedResponse != nil {
+	if strings.TrimSpace(out) == "" {
 		out = extractOpenAIResponsesCompletedText(completedResponse)
-		collectOpenAIAlphaSearchURLCitations(completedResponse, &results, seenURLs)
 	}
-	return out, results
+	collectOpenAIAlphaSearchURLCitations(completedResponse, &results, seenURLs)
+	return out, results, nil
 }
 
 func openAIAlphaSearchSSEData(block string) string {

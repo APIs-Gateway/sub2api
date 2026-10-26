@@ -350,3 +350,56 @@ func signedAirwallexHeaders(rawBody, timestamp, secret string) map[string]string
 		"x-signature": hex.EncodeToString(mac.Sum(nil)),
 	}
 }
+
+func TestAirwallexQueryRefundMapsStatus(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/authentication/login":
+			_, _ = w.Write([]byte(`{"token":"token-1","expires_at":"2099-01-01T00:00:00Z"}`))
+		case "/api/v1/pa/refunds/rfd_settled":
+			_, _ = w.Write([]byte(`{"id":"rfd_settled","status":"SETTLED"}`))
+		case "/api/v1/pa/refunds/rfd_noid":
+			_, _ = w.Write([]byte(`{"status":"FAILED"}`))
+		case "/api/v1/pa/refunds/rfd_pending":
+			_, _ = w.Write([]byte(`{"id":"rfd_pending","status":"RECEIVED"}`))
+		default:
+			http.Error(w, `{"code":"not_found"}`, http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	prov := mustTestAirwallexProvider(t, server)
+	resp, err := prov.QueryRefund(context.Background(), payment.RefundQueryRequest{RefundID: "rfd_settled"})
+	require.NoError(t, err)
+	require.Equal(t, payment.RefundResponse{RefundID: "rfd_settled", Status: payment.ProviderStatusSuccess}, *resp)
+
+	resp, err = prov.QueryRefund(context.Background(), payment.RefundQueryRequest{RefundID: " rfd_noid "})
+	require.NoError(t, err)
+	require.Equal(t, "rfd_noid", resp.RefundID)
+	require.Equal(t, payment.ProviderStatusFailed, resp.Status)
+
+	resp, err = prov.QueryRefund(context.Background(), payment.RefundQueryRequest{RefundID: "rfd_pending"})
+	require.NoError(t, err)
+	require.Equal(t, payment.ProviderStatusPending, resp.Status)
+
+	_, err = prov.QueryRefund(context.Background(), payment.RefundQueryRequest{RefundID: "rfd_missing"})
+	require.ErrorContains(t, err, "airwallex query refund")
+
+	_, err = prov.QueryRefund(context.Background(), payment.RefundQueryRequest{})
+	require.ErrorContains(t, err, "missing refund id")
+}
+
+func TestAirwallexQueryRefundAuthError(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"code":"unauthorized"}`, http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	prov := mustTestAirwallexProvider(t, server)
+	_, err := prov.QueryRefund(context.Background(), payment.RefundQueryRequest{RefundID: "rfd_1"})
+	require.ErrorContains(t, err, "airwallex auth")
+}

@@ -118,8 +118,6 @@ type Group struct {
 	FallbackGroupID *int64 `json:"fallback_group_id"`
 	// 无效请求兜底分组
 	FallbackGroupIDOnInvalidRequest *int64 `json:"fallback_group_id_on_invalid_request"`
-	// 稳定优先下一档兜底目标分组（仅 openai 平台）
-	StablePriorityFallbackGroupID *int64 `json:"stable_priority_fallback_group_id"`
 
 	// OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
 	AllowMessagesDispatch bool `json:"allow_messages_dispatch"`
@@ -452,7 +450,10 @@ type UsageLog struct {
 	// UpstreamEndpoint is the normalized upstream endpoint path, e.g. /v1/responses.
 	UpstreamEndpoint *string `json:"upstream_endpoint,omitempty"`
 
-	GroupID        *int64 `json:"group_id"`
+	GroupID *int64 `json:"group_id"`
+	// ServedGroupID 实际服务本次请求的兜底分组。用户端仅当该行来自用户自己配置的回退链时才有值；
+	// 管理员隐藏链的行在用户端不返回（按主分组展示）。
+	ServedGroupID  *int64 `json:"served_group_id,omitempty"`
 	SubscriptionID *int64 `json:"subscription_id"`
 
 	InputTokens         int `json:"input_tokens"`
@@ -512,6 +513,7 @@ type UsageLog struct {
 	User         *User             `json:"user,omitempty"`
 	APIKey       *APIKey           `json:"api_key,omitempty"`
 	Group        *Group            `json:"group,omitempty"`
+	ServedGroup  *Group            `json:"served_group,omitempty"` // 用户端仅当来源是用户链时才有值
 	Subscription *UserSubscription `json:"subscription,omitempty"`
 }
 
@@ -527,6 +529,9 @@ type AdminUsageLog struct {
 	UpstreamModelMismatch bool `json:"upstream_model_mismatch"`
 	// UpstreamResponseModel 上游响应体 model 原文，仅不一致时有值。
 	UpstreamResponseModel *string `json:"upstream_response_model,omitempty"`
+
+	// ServedRouteSource 回退来源：1=用户链 2=管理员链；缺省表示主分组。仅管理员可见。
+	ServedRouteSource *int16 `json:"served_route_source,omitempty"`
 
 	// ChannelID 渠道 ID
 	ChannelID *int64 `json:"channel_id,omitempty"`
@@ -624,6 +629,7 @@ type UserSubscription struct {
 	ConsumptionDay  float64    `json:"consumption_day"` // 消费进度天 = 累计消费/D（可超过日历天 = 已透支）
 	CalendarDay     int        `json:"calendar_day"`    // 自激活起经过的东八区自然日数，用于订阅实际服务进度
 	ActivatedAt     *time.Time `json:"activated_at,omitempty"`
+	FiatPerCredit   float64    `json:"fiat_per_credit,omitempty"` // 1 个额度的法币单价 u(D)，供前端折算人民币；不可用时省略
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

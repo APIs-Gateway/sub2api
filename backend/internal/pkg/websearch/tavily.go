@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 const (
@@ -39,7 +40,6 @@ func (t *TavilyProvider) Search(ctx context.Context, req SearchRequest) (*Search
 	}
 
 	payload := tavilyRequest{
-		APIKey:      t.apiKey,
 		Query:       req.Query,
 		MaxResults:  maxResults,
 		SearchDepth: tavilySearchDepthBasic,
@@ -55,6 +55,7 @@ func (t *TavilyProvider) Search(ctx context.Context, req SearchRequest) (*Search
 		return nil, fmt.Errorf("tavily: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(t.apiKey))
 
 	resp, err := t.httpClient.Do(httpReq)
 	if err != nil {
@@ -68,12 +69,12 @@ func (t *TavilyProvider) Search(ctx context.Context, req SearchRequest) (*Search
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tavily: status %d: %s", resp.StatusCode, truncateBody(body))
+		return nil, &providerHTTPStatusError{provider: tavilyProviderName, status: resp.StatusCode, body: truncateBody(body)}
 	}
 
 	var raw tavilyResponse
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("tavily: decode response: %w", err)
+		return nil, &providerDecodeError{provider: tavilyProviderName, cause: err}
 	}
 
 	results := make([]SearchResult, 0, len(raw.Results))
@@ -89,7 +90,6 @@ func (t *TavilyProvider) Search(ctx context.Context, req SearchRequest) (*Search
 }
 
 type tavilyRequest struct {
-	APIKey      string `json:"api_key"`
 	Query       string `json:"query"`
 	MaxResults  int    `json:"max_results"`
 	SearchDepth string `json:"search_depth"`

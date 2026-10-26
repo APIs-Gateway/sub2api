@@ -1,0 +1,438 @@
+//go:build unit
+
+package service
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"testing/iotest"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+)
+
+// compatDisconnectingWriter accepts a fixed number of writes, then fails every
+// later write the way a closed client connection does.
+type compatDisconnectingWriter struct {
+	header     http.Header
+	body       bytes.Buffer
+	writesLeft int
+}
+
+func (w *compatDisconnectingWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = http.Header{}
+	}
+	return w.header
+}
+
+func (w *compatDisconnectingWriter) WriteHeader(int) {}
+
+func (w *compatDisconnectingWriter) Write(p []byte) (int, error) {
+	if w.writesLeft <= 0 {
+		return 0, errors.New("write: broken pipe")
+	}
+	w.writesLeft--
+	return w.body.Write(p)
+}
+
+func (w *compatDisconnectingWriter) Flush() {}
+
+func compatAnthropicStream(withStop bool) string {
+	lines := []string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_cb","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-5","stop_reason":"","usage":{"input_tokens":10,"cache_read_input_tokens":3,"output_tokens":1}}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":15}}`,
+		``,
+	}
+	if withStop {
+		lines = append(lines, `event: message_stop`, `data: {"type":"message_stop"}`, ``)
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+type compatStreamHandler func(svc *GatewayService, resp *http.Response, c *gin.Context) (*ForwardResult, error)
+
+func compatStreamHandlers() map[string]compatStreamHandler {
+	return map[string]compatStreamHandler{
+		"chat_completions": func(svc *GatewayService, resp *http.Response, c *gin.Context) (*ForwardResult, error) {
+			return svc.handleCCStreamingFromAnthropic(resp, c, "claude-sonnet-4-5", "claude-sonnet-4-5", nil, time.Now())
+		},
+		"responses": func(svc *GatewayService, resp *http.Response, c *gin.Context) (*ForwardResult, error) {
+			return svc.handleResponsesStreamingResponse(resp, c, "claude-sonnet-4-5", "claude-sonnet-4-5", nil, time.Now(), apicompat.ResponsesClientToolMapping{})
+		},
+	}
+}
+
+// A client that disconnects mid-stream must not cut off upstream reading:
+// the terminal message_delta carries the billed output tokens.
+func TestCompatStreamClientDisconnectStillBillsTerminalUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for name, handle := range compatStreamHandlers() {
+		t.Run(name, func(t *testing.T) {
+			w := &compatDisconnectingWriter{writesLeft: 1}
+			c, _ := gin.CreateTestContext(w)
+			resp := &http.Response{Header: http.Header{"x-request-id": {"rid_disconnect"}}, Body: io.NopCloser(strings.NewReader(compatAnthropicStream(true)))}
+
+			result, err := handle(&GatewayService{}, resp, c)
+			require.NoError(t, err, "a complete upstream stream stays successful after the client left")
+			require.NotNil(t, result)
+			require.Equal(t, 10, result.Usage.InputTokens)
+			require.Equal(t, 3, result.Usage.CacheReadInputTokens)
+			require.Equal(t, 15, result.Usage.OutputTokens, "output usage from the terminal message_delta must be kept")
+			require.True(t, result.ClientDisconnect)
+		})
+	}
+}
+
+// An upstream that closes without message_stop is a truncated response: it is
+// reported as an error, never finalized as a synthetic completion, and the
+// usage the upstream already metered travels with the error for billing.
+func TestCompatStreamMissingMessageStopReturnsPartialUsageError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for name, handle := range compatStreamHandlers() {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			resp := &http.Response{Header: http.Header{"x-request-id": {"rid_truncated"}}, Body: io.NopCloser(strings.NewReader(compatAnthropicStream(false)))}
+
+			result, err := handle(&GatewayService{}, resp, c)
+			require.Error(t, err)
+			var failoverErr *UpstreamFailoverError
+			require.False(t, errors.As(err, &failoverErr), "output already reached the client; no failover")
+			require.NotNil(t, result, "metered usage must be returned with the error")
+			require.Equal(t, 10, result.Usage.InputTokens)
+			require.Equal(t, 15, result.Usage.OutputTokens)
+			require.NotContains(t, rec.Body.String(), "[DONE]")
+			require.NotContains(t, rec.Body.String(), "response.completed")
+		})
+	}
+}
+
+// A read failure before anything reached the client and before any usage was
+// metered fails over like the native /v1/messages path, with a nil result so a
+// successful retry is not billed twice.
+func TestCompatStreamReadErrorBeforeOutputFailsOver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for name, handle := range compatStreamHandlers() {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			resp := &http.Response{Header: http.Header{}, Body: io.NopCloser(iotest.ErrReader(errors.New("connection reset by peer")))}
+
+			result, err := handle(&GatewayService{}, resp, c)
+			require.Nil(t, result)
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+			require.False(t, c.Writer.Written(), "nothing may be written before the handler fails over")
+		})
+	}
+}
+
+// After the client is gone, a stalled upstream is abandoned once the stream
+// data interval elapses, so draining for usage cannot hang forever.
+func TestCompatStreamDrainAfterDisconnectIsBounded(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for name, handle := range compatStreamHandlers() {
+		t.Run(name, func(t *testing.T) {
+			pr, pw := io.Pipe()
+			defer func() { _ = pw.Close() }()
+			go func() {
+				head := strings.SplitAfter(compatAnthropicStream(false), "\n\n")
+				for _, frame := range head[:4] {
+					if _, err := pw.Write([]byte(frame)); err != nil {
+						return
+					}
+				}
+			}()
+			w := &compatDisconnectingWriter{writesLeft: 1}
+			c, _ := gin.CreateTestContext(w)
+			resp := &http.Response{Header: http.Header{}, Body: pr}
+			svc := &GatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{StreamDataIntervalTimeout: 1}}}
+
+			done := make(chan struct{})
+			var result *ForwardResult
+			var err error
+			go func() {
+				defer close(done)
+				result, err = handle(svc, resp, c)
+			}()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("draining a stalled upstream after client disconnect never stopped")
+			}
+			require.Error(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, 10, result.Usage.InputTokens)
+			require.True(t, result.ClientDisconnect)
+		})
+	}
+}
+
+// Request cancellation can happen while Scan is blocked, before a failed
+// downstream write. It must activate the drain timeout independently.
+func TestCompatStreamCancellationWhileReadingIsBounded(t *testing.T) {
+	for name, handle := range compatStreamHandlers() {
+		t.Run(name, func(t *testing.T) {
+			pr, pw := io.Pipe()
+			defer pw.Close()
+			defer pr.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/", nil).WithContext(ctx)
+			svc := &GatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{StreamDataIntervalTimeout: 1}}}
+			done := make(chan struct{})
+			var result *ForwardResult
+			var err error
+			go func() {
+				defer close(done)
+				result, err = handle(svc, &http.Response{Header: http.Header{}, Body: pr}, c)
+			}()
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("cancelled request did not stop blocked upstream reading")
+			}
+			require.Nil(t, result)
+			require.Error(t, err)
+			var failover *UpstreamFailoverError
+			require.False(t, errors.As(err, &failover), "a disconnected client cannot replay")
+		})
+	}
+}
+
+func TestCompatStreamTerminalEventWinsOverTrailingReadError(t *testing.T) {
+	for name, handle := range compatStreamHandlers() {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			body := io.NopCloser(io.MultiReader(strings.NewReader(compatAnthropicStream(true)), iotest.ErrReader(errors.New("trailing read failure"))))
+			result, err := handle(&GatewayService{}, &http.Response{Header: http.Header{}, Body: body}, c)
+			require.NoError(t, err)
+			require.Equal(t, 15, result.Usage.OutputTokens)
+			require.NotContains(t, rec.Body.String(), "trailing read failure")
+		})
+	}
+}
+
+func TestCompatStreamZeroUsageAfterOutputCannotFailOver(t *testing.T) {
+	for name, handle := range compatStreamHandlers() {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			payload := `event: message_start
+data: {"type":"message_start","message":{"id":"msg_zero","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-5","usage":{"input_tokens":0,"output_tokens":0}}}
+
+`
+			body := io.NopCloser(io.MultiReader(strings.NewReader(payload), iotest.ErrReader(errors.New("read failure after start"))))
+			result, err := handle(&GatewayService{}, &http.Response{Header: http.Header{}, Body: body}, c)
+			require.True(t, c.Writer.Written())
+			require.Nil(t, result)
+			require.Error(t, err)
+			var failover *UpstreamFailoverError
+			require.False(t, errors.As(err, &failover))
+			require.NotContains(t, rec.Body.String(), "[DONE]")
+			require.NotContains(t, rec.Body.String(), "response.completed")
+		})
+	}
+}
+
+func TestCompatStreamDisabledIdleStillBoundsDisconnectedDrain(t *testing.T) {
+	for name, handle := range compatStreamHandlers() {
+		for _, configuration := range []string{"nil", "zero"} {
+			for _, disconnect := range []string{"cancel", "write_failure"} {
+				t.Run(name+"/"+configuration+"/"+disconnect, func(t *testing.T) {
+					t.Parallel()
+					pr, pw := io.Pipe()
+					defer pw.Close()
+					defer pr.Close()
+					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
+					w := &compatDisconnectingWriter{writesLeft: 0}
+					if disconnect == "cancel" {
+						w.writesLeft = 100
+					}
+					c, _ := gin.CreateTestContext(w)
+					c.Request = httptest.NewRequest(http.MethodPost, "/", nil).WithContext(ctx)
+					svc := &GatewayService{}
+					if configuration == "zero" {
+						svc.cfg = &config.Config{}
+					}
+					sent := make(chan struct{})
+					go func() {
+						defer close(sent)
+						frame := strings.SplitAfter(compatAnthropicStream(false), "\n\n")[0]
+						_, _ = pw.Write([]byte(frame))
+						if disconnect == "cancel" {
+							cancel()
+						}
+					}()
+					done := make(chan struct{})
+					var result *ForwardResult
+					var err error
+					go func() {
+						defer close(done)
+						result, err = handle(svc, &http.Response{Header: http.Header{}, Body: pr}, c)
+					}()
+					select {
+					case <-done:
+					case <-time.After(anthropicCompatDefaultDrainTimeout + 10*time.Second):
+						t.Fatal("disabled connected idle timeout left detached drain blocked")
+					}
+					<-sent
+					require.Error(t, err)
+					require.NotNil(t, result)
+					require.Equal(t, 10, result.Usage.InputTokens)
+					require.Equal(t, 1, result.Usage.OutputTokens)
+					require.True(t, result.ClientDisconnect)
+					var failover *UpstreamFailoverError
+					require.False(t, errors.As(err, &failover))
+				})
+			}
+		}
+	}
+}
+
+type compatProviderPolicyRepo struct {
+	AccountRepository
+	overloaded []int64
+}
+
+func (r *compatProviderPolicyRepo) SetOverloaded(_ context.Context, id int64, _ time.Time) error {
+	r.overloaded = append(r.overloaded, id)
+	return nil
+}
+
+func TestCompatProviderSSEErrorPreservesNativeFailoverPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		kind   string
+		status int
+	}{
+		{"overloaded_error", 529},
+		{"authentication_error", http.StatusForbidden},
+		{"invalid_request_error", http.StatusForbidden},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			repo := &compatProviderPolicyRepo{}
+			cfg := &config.Config{}
+			svc := &GatewayService{cfg: cfg, rateLimitService: NewRateLimitService(repo, nil, cfg, nil, nil)}
+			account := &Account{ID: 7901, Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			raw := `{"type":"error","error":{"type":"` + tc.kind + `","message":"upstream denied request"}}`
+			result, err := anthropicCompatIncompleteStream(c, &ForwardResult{}, &sseStreamErrorEventError{RawData: raw})
+			require.Nil(t, result)
+			result, err = svc.anthropicCompatProviderError(context.Background(), &http.Response{Header: http.Header{}}, c, account, "claude-sonnet-4-5", result, err)
+			require.Nil(t, result)
+			var failover *UpstreamFailoverError
+			require.ErrorAs(t, err, &failover)
+			require.Equal(t, tc.status, failover.StatusCode)
+			require.False(t, failover.RetryableOnSameAccount)
+			require.JSONEq(t, raw, string(failover.ResponseBody))
+			require.False(t, c.Writer.Written())
+			if tc.kind == "overloaded_error" {
+				require.Equal(t, []int64{account.ID}, repo.overloaded, "529 must apply configured native cooldown")
+			} else {
+				require.Empty(t, repo.overloaded)
+			}
+		})
+	}
+}
+
+func TestCompatProviderSSEErrorAfterMeteringCannotReplay(t *testing.T) {
+	for name, handle := range compatStreamHandlers() {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			raw := `{"type":"error","error":{"type":"overloaded_error","message":"try later"}}`
+			payload := compatAnthropicStream(false) + "event: error\ndata: " + raw + "\n\n"
+			result, err := handle(&GatewayService{}, &http.Response{Header: http.Header{}, Body: io.NopCloser(strings.NewReader(payload))}, c)
+			require.Error(t, err)
+			require.NotNil(t, result)
+			result, err = (&GatewayService{}).anthropicCompatProviderError(context.Background(), &http.Response{Header: http.Header{}}, c, &Account{ID: 7901, Platform: PlatformAnthropic}, "claude-sonnet-4-5", result, err)
+			require.NotNil(t, result)
+			require.Equal(t, 15, result.Usage.OutputTokens)
+			var failover *UpstreamFailoverError
+			require.False(t, errors.As(err, &failover))
+			require.NotContains(t, rec.Body.String(), "[DONE]")
+			require.NotContains(t, rec.Body.String(), "response.completed")
+		})
+	}
+}
+
+func TestCompatProviderSSEErrorSupportsOptionalRateLimitService(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	err := &sseStreamErrorEventError{RawData: `{"type":"error","error":{"type":"overloaded_error"}}`}
+	result, gotErr := (&GatewayService{}).anthropicCompatProviderError(context.Background(), &http.Response{Header: http.Header{}}, c, &Account{ID: 7901, Platform: PlatformAnthropic}, "claude-sonnet-4-5", nil, err)
+	require.Nil(t, result)
+	var failover *UpstreamFailoverError
+	require.ErrorAs(t, gotErr, &failover)
+	require.Equal(t, 529, failover.StatusCode)
+	require.False(t, failover.RetryableOnSameAccount)
+}
+
+func TestCompatReadersOversizedLineNeverFailsOver(t *testing.T) {
+	handlers := map[string]compatStreamHandler{}
+	for name, handle := range compatStreamHandlers() {
+		handlers["stream/"+name] = handle
+	}
+	for name, handle := range compatBufferedHandlers() {
+		handlers["buffered/"+name] = handle
+	}
+	for name, handle := range handlers {
+		for _, metered := range []bool{false, true} {
+			t.Run(name+fmt.Sprintf("/metered=%t", metered), func(t *testing.T) {
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				payload := ""
+				if metered {
+					payload = strings.SplitAfter(compatAnthropicStream(false), "\n\n")[0]
+				}
+				payload += "event: content_block_delta\ndata: " + strings.Repeat("x", 128*1024) + "\n\n"
+				svc := &GatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: 64 * 1024}}}
+				result, err := handle(svc, &http.Response{Header: http.Header{}, Body: io.NopCloser(strings.NewReader(payload))}, c)
+				require.ErrorIs(t, err, bufio.ErrTooLong)
+				var failover *UpstreamFailoverError
+				require.False(t, errors.As(err, &failover), "an oversized frame must not replay or ban a healthy account")
+				if metered {
+					require.NotNil(t, result)
+					require.Equal(t, 10, result.Usage.InputTokens)
+				} else {
+					require.Nil(t, result)
+				}
+				if strings.HasPrefix(name, "buffered/") {
+					require.Equal(t, http.StatusBadGateway, rec.Code)
+					require.NotEmpty(t, compatBufferedErrorMessage(t, rec.Body.Bytes()))
+				}
+			})
+		}
+	}
+}

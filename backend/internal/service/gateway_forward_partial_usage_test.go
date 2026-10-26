@@ -185,7 +185,7 @@ func TestGatewayService_Forward_StreamReadErrorAfterOutputPreservesPartialUsage(
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 		Body: &streamReadCloser{
-			payload: []byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":9,\"cache_creation_input_tokens\":4}}}\n\n"),
+			payload: []byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":9,\"cache_creation_input_tokens\":4}}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"answer\"}}\n\n"),
 			err:     io.ErrUnexpectedEOF,
 		},
 	}}
@@ -221,7 +221,9 @@ func TestGatewayService_Forward_StreamErrorWithoutUsageReturnsNilResult(t *testi
 
 	result, err := svc.Forward(context.Background(), c, account, parsed)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "missing terminal event")
+	var failover *UpstreamFailoverError
+	require.True(t, errors.As(err, &failover))
+	require.Contains(t, string(failover.ResponseBody), "empty_visible_output")
 	require.Nil(t, result, "无已观测 usage 时不应返回部分结果")
 }
 

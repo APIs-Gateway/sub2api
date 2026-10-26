@@ -128,6 +128,28 @@ func TestWrapReleaseOnDone_ConcurrentCalls(t *testing.T) {
 	}
 }
 
+// TestWrapReleaseOnDone_AlreadyCanceledContextIsRaceFreeAndReleasesOnce 覆盖 ctx 已取消时
+// 包装：AfterFunc 会立即在新 goroutine 回调，与调用方的显式 release 并发（需 -race 验证）。
+func TestWrapReleaseOnDone_AlreadyCanceledContextIsRaceFreeAndReleasesOnce(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		var count int32
+		release := wrapReleaseOnDone(ctx, func() {
+			atomic.AddInt32(&count, 1)
+		})
+		release()
+		if got := atomic.LoadInt32(&count); got != 1 {
+			t.Fatalf("expected release count 1 right after explicit release, got %d", got)
+		}
+		time.Sleep(time.Millisecond)
+		if got := atomic.LoadInt32(&count); got != 1 {
+			t.Fatalf("expected release count to stay 1, got %d", got)
+		}
+	}
+}
+
 // BenchmarkWrapReleaseOnDone 性能基准测试
 func BenchmarkWrapReleaseOnDone(b *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())

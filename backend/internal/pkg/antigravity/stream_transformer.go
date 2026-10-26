@@ -27,6 +27,7 @@ type StreamingProcessor struct {
 	blockIndex        int
 	messageStartSent  bool
 	messageStopSent   bool
+	lastFinishReason  string
 	usedTool          bool
 	pendingSignature  string
 	trailingSignature string
@@ -40,6 +41,7 @@ type StreamingProcessor struct {
 	outputTokens      int
 	cacheReadTokens   int
 	imageOutputTokens int
+	hasContent        bool
 }
 
 // NewStreamingProcessor 创建流式响应处理器
@@ -140,7 +142,22 @@ func (p *StreamingProcessor) ProcessLine(line string) []byte {
 			}
 		}
 		if finishReason != "" {
-			_, _ = result.Write(p.emitFinish(finishReason))
+			p.lastFinishReason = finishReason
+			// A stop before substantive content stays buffered until EOF. The
+			// upstream may still send real content, which must precede message_stop.
+			if p.hasContent || buildGroundingText(&GeminiGroundingMetadata{
+				WebSearchQueries: p.webSearchQueries,
+				GroundingChunks:  p.groundingChunks,
+			}) != "" {
+				_, _ = result.Write(p.emitFinish(finishReason))
+			} else {
+				// Flush signature-only blocks into the bounded pre-content buffer.
+				_, _ = result.Write(p.endBlock())
+				if p.trailingSignature != "" {
+					_, _ = result.Write(p.emitEmptyThinkingWithSignature(p.trailingSignature))
+					p.trailingSignature = ""
+				}
+			}
 		}
 	}
 
@@ -164,7 +181,7 @@ func (p *StreamingProcessor) Finish() ([]byte, *ClaudeUsage) {
 
 	var result bytes.Buffer
 	if !p.messageStopSent {
-		_, _ = result.Write(p.emitFinish(""))
+		_, _ = result.Write(p.emitFinish(p.lastFinishReason))
 	}
 
 	return result.Bytes(), usage
@@ -173,6 +190,19 @@ func (p *StreamingProcessor) Finish() ([]byte, *ClaudeUsage) {
 // MessageStartSent 报告流中是否已发出过 message_start 事件（即是否收到过有效的上游数据）
 func (p *StreamingProcessor) MessageStartSent() bool {
 	return p.messageStartSent
+}
+
+// HasContent reports whether a user-visible text, thinking, or tool payload was emitted.
+// A message_start, stop reason, or thought signature alone is not a completion.
+func (p *StreamingProcessor) HasContent() bool {
+	return p.hasContent
+}
+
+// MalformedFunctionCallOnly reports a malformed terminal response with no
+// visible text, thinking, or tool call. Replaying the same request on the
+// same account cannot repair a deterministic malformed response.
+func (p *StreamingProcessor) MalformedFunctionCallOnly() bool {
+	return p.lastFinishReason == "MALFORMED_FUNCTION_CALL" && !p.hasContent
 }
 
 // emitMessageStart 发送 message_start 事件
@@ -290,12 +320,14 @@ func (p *StreamingProcessor) processThinking(text, signature string) []byte {
 	// 开始或继续 thinking 块
 	if p.blockType != BlockTypeThinking {
 		_, _ = result.Write(p.startBlock(BlockTypeThinking, map[string]any{
-			"type":     "thinking",
-			"thinking": "",
+			"type":      "thinking",
+			"thinking":  "",
+			"signature": "",
 		}))
 	}
 
 	if text != "" {
+		p.hasContent = true
 		_, _ = result.Write(p.emitDelta("thinking_delta", map[string]any{
 			"thinking": text,
 		}))
@@ -320,6 +352,7 @@ func (p *StreamingProcessor) processText(text, signature string) []byte {
 		}
 		return nil
 	}
+	p.hasContent = true
 
 	// 处理之前的 trailingSignature
 	if p.trailingSignature != "" {
@@ -362,6 +395,7 @@ func (p *StreamingProcessor) processFunctionCall(fc *GeminiFunctionCall, signatu
 	var result bytes.Buffer
 
 	p.usedTool = true
+	p.hasContent = true
 
 	toolID := fc.ID
 	if toolID == "" {
@@ -466,8 +500,9 @@ func (p *StreamingProcessor) emitEmptyThinkingWithSignature(signature string) []
 	var result bytes.Buffer
 
 	_, _ = result.Write(p.startBlock(BlockTypeThinking, map[string]any{
-		"type":     "thinking",
-		"thinking": "",
+		"type":      "thinking",
+		"thinking":  "",
+		"signature": "",
 	}))
 	_, _ = result.Write(p.emitDelta("thinking_delta", map[string]any{
 		"thinking": "",
@@ -499,6 +534,7 @@ func (p *StreamingProcessor) emitFinish(finishReason string) []byte {
 			GroundingChunks:  p.groundingChunks,
 		})
 		if groundingText != "" {
+			p.hasContent = true
 			_, _ = result.Write(p.startBlock(BlockTypeText, map[string]any{
 				"type": "text",
 				"text": "",

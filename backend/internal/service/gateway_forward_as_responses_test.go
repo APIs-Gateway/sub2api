@@ -3,6 +3,7 @@
 package service
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestAdaptResponsesClientToolsForAnthropic_FlattensNamespace(t *testing.T) {
@@ -165,6 +167,53 @@ func TestResponsesClientToolStreamRestorer_ConvertsCustomToolLifecycle(t *testin
 	require.Equal(t, "dir", closed[0].Item.Input)
 }
 
+// Codex 的 codex_app 工具（如 automation_update）把 parameters 根节点声明成对象
+// 联合；Responses→Anthropic 转换后 input_schema 顶部不能再出现联合关键字。
+func TestAdaptResponsesClientToolsForAnthropic_FlattensRootUnionSchema(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model":"claude-opus-5",
+		"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"create an automation"}]}],
+		"tools":[{"type":"namespace","name":"codex_app","tools":[{
+			"type":"function",
+			"name":"automation_update",
+			"description":"Create, update, view, or delete recurring automations",
+			"parameters":{"oneOf":[
+				{"type":"object","properties":{"mode":{"enum":["view"]},"id":{"type":"string"}},"required":["mode","id"]},
+				{"type":"object","properties":{"mode":{"enum":["update"]},"id":{"type":"string"}},"required":["mode","id"]}
+			]}
+		}]}]
+	}`)
+
+	adapted, _, err := adaptResponsesClientToolsForAnthropic(body)
+	require.NoError(t, err)
+
+	var responsesReq apicompat.ResponsesRequest
+	require.NoError(t, json.Unmarshal(adapted, &responsesReq))
+
+	claudeReq, err := apicompat.ResponsesToAnthropicRequest(&responsesReq)
+	require.NoError(t, err)
+	require.Len(t, claudeReq.Tools, 1)
+
+	tool := claudeReq.Tools[0]
+	require.Equal(t, "codex_app__automation_update", tool.Name)
+
+	var schema map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(tool.InputSchema, &schema))
+	require.JSONEq(t, `"object"`, string(schema["type"]))
+	require.NotContains(t, schema, "oneOf")
+	require.NotContains(t, schema, "anyOf")
+	require.NotContains(t, schema, "allOf")
+	require.JSONEq(t, `["mode","id"]`, string(schema["required"]))
+
+	wire, err := json.Marshal(tool)
+	require.NoError(t, err)
+	require.NotContains(t, string(wire), `"input_schema":{"oneOf"`)
+	require.NotContains(t, string(wire), `"input_schema":{"anyOf"`)
+	require.NotContains(t, string(wire), `"input_schema":{"allOf"`)
+}
+
 func namespaceToolAnthropicStream() string {
 	return strings.Join([]string{
 		`event: message_start`,
@@ -208,6 +257,64 @@ func TestHandleResponsesBufferedStreamingResponse_RestoresNamespaceTool(t *testi
 	require.NotContains(t, rec.Body.String(), `"name":"codex_app__read_thread"`)
 }
 
+// toolAnthropicSSEStream mirrors upstream's helper from
+// openai_gateway_anthropic_native_pump_test.go (not present in this fork):
+// tool_use starts with the {} input placeholder and streams the real input via
+// input_json_delta.
+func toolAnthropicSSEStream() string {
+	return strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_tool","type":"message","role":"assistant","content":[],"model":"glm-4.7","usage":{"input_tokens":10}}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"status\"}"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+}
+
+func TestHandleResponsesBufferedStreamingResponse_ToolArgumentsAreValidJSON(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	resp := &http.Response{Body: io.NopCloser(strings.NewReader(toolAnthropicSSEStream()))}
+
+	_, err := (&GatewayService{}).handleResponsesBufferedStreamingResponse(resp, c, "claude-fable-5", "claude-fable-5", nil, time.Now(), apicompat.ResponsesClientToolMapping{})
+	require.NoError(t, err)
+
+	var body struct {
+		Output []struct {
+			Type      string `json:"type"`
+			Arguments string `json:"arguments"`
+		} `json:"output"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Output, 1)
+	require.Equal(t, "function_call", body.Output[0].Type)
+	require.JSONEq(t, `{"query":"status"}`, body.Output[0].Arguments)
+}
+
+func TestAppendRawJSON_EmptyObjectPlaceholder(t *testing.T) {
+	t.Parallel()
+
+	fragment := `{"query":"status"}`
+	require.JSONEq(t, fragment, string(appendRawJSON(json.RawMessage("{ \n\t }"), fragment)))
+	require.Equal(t, `{"existing":true}{"query":"status"}`, string(appendRawJSON(json.RawMessage(`{"existing":true}`), fragment)))
+}
+
 func TestHandleResponsesStreamingResponse_RestoresNamespaceTool(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
@@ -223,6 +330,21 @@ func TestHandleResponsesStreamingResponse_RestoresNamespaceTool(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"name":"read_thread"`)
 	require.Contains(t, rec.Body.String(), `"namespace":"codex_app"`)
 	require.NotContains(t, rec.Body.String(), `"name":"codex_app__read_thread"`)
+	completed := 0
+	for _, line := range strings.Split(rec.Body.String(), "\n") {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimPrefix(line, "data: ")
+		if gjson.Get(payload, "type").String() != "response.completed" {
+			continue
+		}
+		completed++
+		require.Equal(t, "read_thread", gjson.Get(payload, "response.output.0.name").String())
+		require.Equal(t, "codex_app", gjson.Get(payload, "response.output.0.namespace").String())
+		require.JSONEq(t, `{"thread_id":"123"}`, gjson.Get(payload, "response.output.0.arguments").String())
+	}
+	require.Equal(t, 1, completed, "terminal snapshot must restore the same client namespace and name exactly once")
 }
 
 func TestExtractResponsesReasoningEffortFromBody(t *testing.T) {
@@ -258,6 +380,9 @@ func TestHandleResponsesBufferedStreamingResponse_PreservesMessageStartCacheUsag
 			`event: message_delta`,
 			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}`,
 			``,
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			``,
 		}, "\n"))),
 	}
 
@@ -292,6 +417,9 @@ func TestHandleResponsesBufferedStreamingResponse_RestoresCustomToolCall(t *test
 			``,
 			`event: message_delta`,
 			`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":3}}`,
+			``,
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
 			``,
 		}, "\n"))),
 	}
@@ -441,6 +569,11 @@ func TestHandleResponsesBufferedStreamingResponse_CompactSSEFormat(t *testing.T)
 			`data:{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}`,
 			``,
 			`event:ping`,
+			`data:{"type":"ping"}`,
+			``,
+			`event:message_stop`,
+			`data: {"type":"message_stop"}`,
+			``,
 		}, "\n"))),
 	}
 
@@ -476,6 +609,11 @@ func TestHandleResponsesStreamingResponse_CompactSSEFormat(t *testing.T) {
 			`data:{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":6}}`,
 			``,
 			`event:ping`,
+			`data:{"type":"ping"}`,
+			``,
+			`event:message_stop`,
+			`data: {"type":"message_stop"}`,
+			``,
 		}, "\n"))),
 	}
 

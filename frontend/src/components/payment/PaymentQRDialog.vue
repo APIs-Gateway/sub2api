@@ -27,7 +27,7 @@
       </div>
       <div v-else class="text-center">
         <p class="text-sm text-gray-500 dark:text-gray-400">{{ qrUrl ? t('payment.qr.expiresIn') : '' }}</p>
-        <p class="mt-1 text-2xl font-bold tabular-nums text-gray-900 dark:text-white">{{ countdownDisplay }}</p>
+        <p class="num-primary mt-1">{{ countdownDisplay }}</p>
         <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">{{ t('payment.qr.waitingPayment') }}</p>
       </div>
     </div>
@@ -41,15 +41,15 @@
         <div class="space-y-2 text-sm">
           <div class="flex justify-between">
             <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.orderId') }}</span>
-            <span class="font-medium text-gray-900 dark:text-white">#{{ paidOrder.id }}</span>
+            <span class="num-secondary text-gray-900 dark:text-white">#{{ paidOrder.id }}</span>
           </div>
           <div class="flex justify-between">
             <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.amount') }}</span>
-            <span class="font-medium text-gray-900 dark:text-white">{{ paidOrder.order_type === 'balance' ? '$' : '¥' }}{{ paidOrder.amount.toFixed(2) }}</span>
+            <span class="num-secondary text-gray-900 dark:text-white">{{ paidOrder.order_type === 'balance' ? formatWallet(paidOrder.amount) : formatCnyAmount(paidOrder.amount) }}</span>
           </div>
           <div class="flex justify-between">
             <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</span>
-            <span class="font-medium text-gray-900 dark:text-white">¥{{ paidOrder.pay_amount.toFixed(2) }}</span>
+            <span class="num-secondary text-gray-900 dark:text-white">{{ formatCnyAmount(paidOrder.pay_amount) }}</span>
           </div>
         </div>
       </div>
@@ -75,6 +75,8 @@ import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
+import { formatCnyAmount } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import { usePaymentStore } from '@/stores/payment'
 import { useAppStore } from '@/stores'
 import { paymentAPI } from '@/api/payment'
@@ -101,6 +103,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const { formatWallet } = useCurrencyDisplay()
 const paymentStore = usePaymentStore()
 const appStore = useAppStore()
 
@@ -116,6 +119,9 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 let verifyAttempts = 0
 let lastVerifyAt = 0
+let generation = 0
+let pollInFlight: Promise<PaymentOrder | null> | null = null
+let finalCheckInProgress = false
 
 const VERIFY_RETRY_INTERVAL_MS = 15000
 const VERIFY_RETRY_MAX_ATTEMPTS = 6
@@ -189,30 +195,39 @@ async function renderQR() {
   }
 }
 
-async function pollStatus() {
-  if (!props.orderId) return
-  let order = await paymentStore.pollOrderStatus(props.orderId)
-  if (!order) return
-  order = await tryRecoverPendingOrder(order)
-  if (order.status === 'COMPLETED' || order.status === 'PAID') {
-    cleanup()
-    paidOrder.value = order
-    success.value = true
-    emit('success')
-  } else if (order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'FAILED') {
-    cleanup()
-    expired.value = true
-  }
+async function pollStatus(forceVerify = false): Promise<PaymentOrder | null> {
+  if (!props.orderId || !props.show || cancelling.value || success.value || expired.value) return null
+  if (pollInFlight) return pollInFlight
+  const currentGeneration = generation
+  const currentOrderId = props.orderId
+  const request = (async () => {
+    let order = await paymentStore.pollOrderStatus(currentOrderId)
+    if (generation !== currentGeneration || props.orderId !== currentOrderId || !props.show || cancelling.value || !order) return null
+    order = await tryRecoverPendingOrder(order, forceVerify)
+    if (generation !== currentGeneration || props.orderId !== currentOrderId || !props.show || cancelling.value || !order) return null
+    if (order.status === 'COMPLETED' || order.status === 'PAID') {
+      cleanup()
+      paidOrder.value = order
+      success.value = true
+      emit('success')
+    } else if (order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'FAILED') {
+      cleanup()
+      expired.value = true
+    }
+    return order
+  })()
+  pollInFlight = request
+  try { return await request } finally { if (pollInFlight === request) pollInFlight = null }
 }
 
-async function tryRecoverPendingOrder(order: PaymentOrder): Promise<PaymentOrder> {
+async function tryRecoverPendingOrder(order: PaymentOrder, forceVerify = false): Promise<PaymentOrder | null> {
   if (!isWxpay.value) return order
   const outTradeNo = String(order.out_trade_no || '').trim()
   if (!outTradeNo) return order
   const normalizedStatus = String(order.status || '').trim().toUpperCase()
-  if (normalizedStatus !== 'PENDING') return order
+  if (normalizedStatus !== 'PENDING' && normalizedStatus !== 'EXPIRED') return order
   const now = Date.now()
-  if (verifyAttempts >= VERIFY_RETRY_MAX_ATTEMPTS || now - lastVerifyAt < VERIFY_RETRY_INTERVAL_MS) {
+  if (normalizedStatus === 'PENDING' && !forceVerify && (verifyAttempts >= VERIFY_RETRY_MAX_ATTEMPTS || now - lastVerifyAt < VERIFY_RETRY_INTERVAL_MS)) {
     return order
   }
 
@@ -222,36 +237,72 @@ async function tryRecoverPendingOrder(order: PaymentOrder): Promise<PaymentOrder
     const result = await paymentAPI.verifyOrder(outTradeNo)
     return result.data ?? order
   } catch {
-    return order
+    // A failed deadline reconciliation is not evidence that the order expired.
+    return forceVerify || normalizedStatus === 'EXPIRED' ? null : order
   }
 }
 
 function startCountdown(seconds: number) {
   remainingSeconds.value = Math.max(0, seconds)
+  const deadline = Date.now() + remainingSeconds.value * 1000
   if (remainingSeconds.value <= 0) {
-    expired.value = true
+    void checkExpiry()
     return
   }
   countdownTimer = setInterval(() => {
-    remainingSeconds.value--
+    remainingSeconds.value = Math.max(0, Math.ceil((deadline - Date.now()) / 1000))
     if (remainingSeconds.value <= 0) {
-      expired.value = true
-      cleanup()
+      void checkExpiry()
     }
   }, 1000)
 }
 
+async function checkExpiry() {
+  if (finalCheckInProgress || expired.value || success.value || !props.show) return
+  finalCheckInProgress = true
+  if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  const currentGeneration = generation
+  const currentOrderId = props.orderId
+  try {
+    // A poll started before the deadline may still be pending. Always query once more
+    // after it finishes so a missed provider notification can be reconciled.
+    if (pollInFlight) await pollInFlight
+    if (generation !== currentGeneration || props.orderId !== currentOrderId || !props.show || cancelling.value || success.value || expired.value) return
+    const order = await pollStatus(true)
+    if (generation !== currentGeneration || props.orderId !== currentOrderId || !props.show || cancelling.value || success.value || expired.value) return
+    if (order) { expired.value = true; cleanup() }
+    else scheduleFinalRetry()
+  } finally {
+    if (generation === currentGeneration) finalCheckInProgress = false
+  }
+}
+
+function scheduleFinalRetry() {
+  if (!pollTimer && props.show && !success.value && !expired.value) {
+    pollTimer = setInterval(() => { void checkExpiry() }, 3000)
+  }
+}
+
 async function handleCancel() {
   if (!props.orderId || cancelling.value) return
+  const currentGeneration = generation
+  const currentOrderId = props.orderId
   cancelling.value = true
   try {
-    await paymentAPI.cancelOrder(props.orderId)
+    await paymentAPI.cancelOrder(currentOrderId)
+    if (generation !== currentGeneration || props.orderId !== currentOrderId || !props.show) return
     cleanup()
     emit('close')
   } catch (err: unknown) {
-    appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+    if (generation === currentGeneration && props.orderId === currentOrderId && props.show) {
+      appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+    }
   } finally {
-    cancelling.value = false
+    if (generation === currentGeneration && props.orderId === currentOrderId) {
+      cancelling.value = false
+      if (!countdownTimer && remainingSeconds.value <= 0) scheduleFinalRetry()
+    }
   }
 }
 
@@ -266,11 +317,15 @@ function handleDone() {
 }
 
 function cleanup() {
+  generation += 1
+  finalCheckInProgress = false
+  pollInFlight = null
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null }
 }
 
 function init() {
+  cleanup()
   // Reset state
   success.value = false
   paidOrder.value = null
@@ -286,7 +341,7 @@ function init() {
     seconds = Math.floor((expiresAt.getTime() - Date.now()) / 1000)
   }
   startCountdown(seconds)
-  pollTimer = setInterval(pollStatus, 3000)
+  if (remainingSeconds.value > 0) pollTimer = setInterval(pollStatus, 3000)
   renderQR()
 }
 
@@ -297,6 +352,10 @@ watch(() => props.show, (isOpen) => {
   } else {
     cleanup()
   }
+})
+
+watch(() => props.orderId, () => {
+  if (props.show) init()
 })
 
 watch(qrUrl, () => renderQR())

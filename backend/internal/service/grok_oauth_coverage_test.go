@@ -17,7 +17,7 @@ type grokOAuthErrorClient struct {
 	refreshErr  error
 }
 
-func (c grokOAuthErrorClient) ExchangeCode(context.Context, string, string, string, string, string, string) (*xai.TokenResponse, error) {
+func (c grokOAuthErrorClient) ExchangeCode(context.Context, string, string, string, string, string) (*xai.TokenResponse, error) {
 	if c.exchangeErr != nil {
 		return nil, c.exchangeErr
 	}
@@ -58,7 +58,7 @@ func TestGrokOAuthServiceCoversInputProxyAndClientErrors(t *testing.T) {
 		SessionID:   authURL.SessionID,
 		Code:        callback,
 		State:       "",
-		RedirectURI: "http://localhost/override",
+		RedirectURI: "http://localhost/redirect",
 		ProxyID:     ptrInt64(1),
 	})
 	require.NoError(t, err)

@@ -76,6 +76,8 @@ func SetupRouter(
 				frontendServer.InvalidateCache()
 				refreshFrameOrigins()
 			})
+			// X-Forwarded-Proto on the llms.txt / docs/*.md files is honored only from trusted proxies.
+			frontendServer.SetTrustedProxies(cfg.Server.TrustedProxies)
 			r.Use(frontendServer.Middleware())
 		}
 	} else {

@@ -110,6 +110,12 @@ func (m *mockAccountRepoForGemini) AutoPauseExpiredAccounts(ctx context.Context,
 func (m *mockAccountRepoForGemini) BindGroups(ctx context.Context, accountID int64, groupIDs []int64) error {
 	return nil
 }
+func (m *mockAccountRepoForGemini) BulkBindGroups(ctx context.Context, accountIDs []int64, groupIDs []int64, mode AccountGroupBindMode) error {
+	return nil
+}
+func (m *mockAccountRepoForGemini) ListIDsWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string, limit int) (*AccountIDList, error) {
+	return &AccountIDList{}, nil
+}
 func (m *mockAccountRepoForGemini) ListSchedulable(ctx context.Context) ([]Account, error) {
 	return nil, nil
 }
@@ -183,7 +189,7 @@ func (m *mockAccountRepoForGemini) IncrementQuotaUsed(ctx context.Context, id in
 	return nil
 }
 
-func (m *mockAccountRepoForGemini) ResetQuotaUsed(ctx context.Context, id int64) error {
+func (m *mockAccountRepoForGemini) ResetQuotaUsedAndClearRateLimitCooldown(ctx context.Context, id int64) error {
 	return nil
 }
 
@@ -975,4 +981,12 @@ func TestGeminiMessagesCompatService_isModelSupportedByAccount(t *testing.T) {
 			require.Equal(t, tt.expected, got)
 		})
 	}
+}
+
+func (c *mockGatewayCacheForGemini) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (c *mockGatewayCacheForGemini) GetReasoningContent(_ context.Context, _ string) (string, error) {
+	return "", ErrReasoningContentNotFound
 }

@@ -341,3 +341,11 @@ func mustSelectedAccountID(t *testing.T, c *gin.Context) int64 {
 
 var _ service.HTTPUpstream = (*forceCacheBillingUpstream)(nil)
 var _ service.GatewayCache = (*forceCacheBillingGatewayCache)(nil)
+
+func (c *forceCacheBillingGatewayCache) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (c *forceCacheBillingGatewayCache) GetReasoningContent(_ context.Context, _ string) (string, error) {
+	return "", service.ErrReasoningContentNotFound
+}

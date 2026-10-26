@@ -18,6 +18,7 @@ func TestMergePreservingSensitiveCreds_PreservesSensitiveWhenIncomingMissing(t *
 	incoming := map[string]any{
 		"base_url":      "https://new.example.com",
 		"model_mapping": map[string]any{"foo": "bar"},
+		"model_mapping_allow_unlisted": true,
 	}
 
 	out := MergePreservingSensitiveCreds(existing, incoming)
@@ -27,6 +28,7 @@ func TestMergePreservingSensitiveCreds_PreservesSensitiveWhenIncomingMissing(t *
 	require.Equal(t, "sk-old", out["api_key"])
 	require.Equal(t, "https://new.example.com", out["base_url"], "非敏感键由 incoming 决定")
 	require.Equal(t, map[string]any{"foo": "bar"}, out["model_mapping"])
+	require.Equal(t, true, out["model_mapping_allow_unlisted"])
 }
 
 func TestMergePreservingSensitiveCreds_OverwritesWhenIncomingProvidesSensitive(t *testing.T) {

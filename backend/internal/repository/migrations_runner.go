@@ -58,6 +58,7 @@ const schedulerOutboxPendingDedupKeyIndex = "idx_scheduler_outbox_pending_dedup_
 const authCacheInvalidationOutboxMigration = "184_auth_cache_invalidation_outbox.sql"
 const latestAPIKeyIPIndexMigration = "185_add_usage_logs_api_key_latest_ip_index_notx.sql"
 const latestAPIKeyIPIndex = "idx_usage_logs_api_key_latest_ip"
+const userEmailDotStrippedIndexMigration = "191_add_users_email_dot_stripped_index_notx.sql"
 
 // opsIngressRejectAggregatesMigration is the default (Postgres) migration file for the
 // ops_ingress_reject_aggregates rollup table. Like authCacheInvalidationOutboxMigration
@@ -103,7 +104,7 @@ func migrationAppliesToDatabase(name string, dialect migrationDatabaseDialect) b
 		return dialect == migrationDatabaseMySQL
 	case strings.HasSuffix(name, "_sqlite.sql"):
 		return dialect == migrationDatabaseSQLite
-	case name == authCacheInvalidationOutboxMigration || name == latestAPIKeyIPIndexMigration || name == opsIngressRejectAggregatesMigration:
+	case name == authCacheInvalidationOutboxMigration || name == latestAPIKeyIPIndexMigration || name == userEmailDotStrippedIndexMigration || name == opsIngressRejectAggregatesMigration || name == "197_simple_mode_auto_image_eligibility.sql" || name == "198_billing_inflight_leases.sql":
 		return dialect == migrationDatabasePostgres
 	default:
 		return true
@@ -660,7 +661,15 @@ func stripSQLLineComment(s string) string {
 // pgAdvisoryLock 获取 PostgreSQL Advisory Lock。
 // Advisory Lock 是一种轻量级的锁机制，不与任何特定的数据库对象关联。
 // 它非常适合用于应用层面的分布式锁场景，如迁移序列化。
-func pgAdvisoryLock(ctx context.Context, db *sql.DB) error {
+//
+// advisoryLockConnection 同时由 *sql.DB 与 *sql.Conn 满足：备份 pg_dump 在独占
+// *sql.Conn 上持有同一把会话级锁（上游 95023e7d4）。
+type advisoryLockConnection interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func pgAdvisoryLock(ctx context.Context, db advisoryLockConnection) error {
 	ticker := time.NewTicker(migrationsLockRetryInterval)
 	defer ticker.Stop()
 
@@ -682,7 +691,7 @@ func pgAdvisoryLock(ctx context.Context, db *sql.DB) error {
 
 // pgAdvisoryUnlock 释放 PostgreSQL Advisory Lock。
 // 必须在获取锁后确保释放，否则会阻塞其他实例的迁移操作。
-func pgAdvisoryUnlock(ctx context.Context, db *sql.DB) error {
+func pgAdvisoryUnlock(ctx context.Context, db advisoryLockConnection) error {
 	_, err := db.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", migrationsAdvisoryLockID)
 	if err != nil {
 		return fmt.Errorf("release migrations lock: %w", err)

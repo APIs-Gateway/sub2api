@@ -41,6 +41,13 @@ type AdminHandlers struct {
 	Compliance             *admin.ComplianceHandler
 	Points                 *admin.PointsHandler
 	PromptAudit            *securityaudit.PromptEventAdminHandler
+	PricingQuote           *admin.PricingQuoteHandler
+	PricingMatrix          *admin.PricingMatrixHandler
+	PricingWrite           *admin.PricingWriteHandler
+	AdminToken             *admin.AdminTokenHandler
+	AuditLog               *admin.AuditLogHandler
+	APIKeyFallback         *admin.APIKeyFallbackHandler
+	PricingSnapshot        *admin.PricingSnapshotHandler
 }
 
 // Handlers contains all HTTP handlers
@@ -65,6 +72,7 @@ type Handlers struct {
 	Checkin          *CheckinHandler
 	Points           *PointsHandler
 	LegacyInvite     *LegacyInviteHandler
+	APIKeyFallback   *APIKeyFallbackHandler
 }
 
 // BuildInfo contains build-time information

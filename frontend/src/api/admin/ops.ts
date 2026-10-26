@@ -107,7 +107,7 @@ export interface OpsThroughputTrendResponse {
 
 export type OpsRequestKind = 'success' | 'error'
 export type OpsRequestDetailsKind = OpsRequestKind | 'all'
-export type OpsRequestDetailsSort = 'created_at_desc' | 'duration_desc'
+export type OpsRequestDetailsSort = 'created_at_desc' | 'duration_desc' | 'ttft_desc'
 
 export interface OpsRequestDetail {
   kind: OpsRequestKind
@@ -117,6 +117,7 @@ export interface OpsRequestDetail {
   platform?: string
   model?: string
   duration_ms?: number | null
+  first_token_ms?: number | null
   status_code?: number | null
 
   error_id?: number | null
@@ -687,6 +688,7 @@ export type MetricType =
   | 'account_error_ratio'
   | 'account_temp_unscheduled_count'
   | 'overload_account_count'
+  | 'unpriced_billing_rows'
 export type Operator = '>' | '>=' | '<' | '<=' | '==' | '!='
 
 export interface AlertRule {

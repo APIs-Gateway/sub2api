@@ -68,7 +68,7 @@
               type="button"
               :disabled="registrationActionDisabled"
               @click="showPassword = !showPassword"
-              class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-dark-300"
+              class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-gray-400 transition-colors hover:text-gray-700 dark:hover:text-dark-300"
             >
               <Icon v-if="showPassword" name="eyeOff" size="md" />
               <Icon v-else name="eye" size="md" />
@@ -290,6 +290,7 @@
         <EmailOAuthButtons
           :disabled="registrationActionDisabled"
           :aff-code="formData.aff_code"
+          :promo-code="formData.promo_code"
           :github-enabled="githubOAuthEnabled"
           :google-enabled="googleOAuthEnabled"
           :show-divider="false"
@@ -299,12 +300,14 @@
           v-if="linuxdoOAuthEnabled"
           :disabled="registrationActionDisabled"
           :aff-code="formData.aff_code"
+          :promo-code="formData.promo_code"
           :show-divider="false"
         />
         <WechatOAuthSection
           v-if="wechatOAuthEnabled"
           :disabled="registrationActionDisabled"
           :aff-code="formData.aff_code"
+          :promo-code="formData.promo_code"
           :show-divider="false"
         />
         <OidcOAuthSection
@@ -312,6 +315,7 @@
           :disabled="registrationActionDisabled"
           :provider-name="oidcOAuthProviderName"
           :aff-code="formData.aff_code"
+          :promo-code="formData.promo_code"
           :show-divider="false"
         />
       </div>
@@ -336,7 +340,7 @@
       <p class="text-gray-500 dark:text-dark-400">
         {{ t('auth.alreadyHaveAccount') }}
         <router-link
-          to="/login"
+          :to="{ path: '/login', query: authRedirectQuery }"
           class="font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
         >
           {{ t('auth.signIn') }}
@@ -368,6 +372,7 @@ import {
 } from '@/api/auth'
 import { getLegacyInviteStatus } from '@/api/legacyInvite'
 import { buildAuthErrorMessage } from '@/utils/authError'
+import { redirectQuery, sanitizeRedirectPath } from '@/utils/redirect'
 import {
   formatRegistrationEmailSuffixWhitelistForMessage,
   isRegistrationEmailSuffixAllowed,
@@ -390,6 +395,10 @@ const route = useRoute()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 
+// 注册成功后要回到的页面（首页「立即开始」带来的 /keys 等）。只认站内路径；
+// 邮箱验证、切到登录页都原样带着它，任何一步丢了都回落到 /dashboard。
+const authRedirectQuery = computed(() => redirectQuery(route.query.redirect))
+
 // ==================== State ====================
 
 const isLoading = ref<boolean>(false)
@@ -400,7 +409,13 @@ const showPassword = ref<boolean>(false)
 // Public settings
 const registrationEnabled = ref<boolean>(true)
 const emailVerifyEnabled = ref<boolean>(false)
-const promoCodeEnabled = ref<boolean>(true)
+// Public settings are injected into the app store before Vue mounts. Use that
+// value for the first render so a disabled promo-code field never flashes
+// while the async settings request is still in flight. If injection is
+// unavailable, fail closed until the request explicitly enables the field.
+const promoCodeEnabled = ref<boolean>(
+  appStore.cachedPublicSettings?.promo_code_enabled === true
+)
 const invitationCodeEnabled = ref<boolean>(false)
 // 账号密码注册是独立于注册总闸的来源开关，关掉后整个表单都不该再出现——
 // 否则用户填完一整页才会撞上 SIGNUP_SOURCE_DISABLED。
@@ -1033,7 +1048,9 @@ async function handleRegister(): Promise<void> {
           turnstile_token: turnstileToken.value,
           promo_code: formData.promo_code || undefined,
           invitation_code: formData.invitation_code || undefined,
-          ...(affCode ? { aff_code: affCode } : {})
+          ...(affCode ? { aff_code: affCode } : {}),
+          // 邮箱验证页验证成功后回到这里（缺省则是 /dashboard）
+          ...authRedirectQuery.value
         })
       )
 
@@ -1056,8 +1073,8 @@ async function handleRegister(): Promise<void> {
     // Show success toast
     appStore.showSuccess(t('auth.accountCreatedSuccess', { siteName: siteName.value }))
 
-    // Redirect to dashboard
-    await router.push('/dashboard')
+    // Redirect to the intended page (default: dashboard)
+    await router.push(sanitizeRedirectPath(route.query.redirect))
   } catch (error: unknown) {
     // Reset Turnstile on error
     if (turnstileRef.value) {

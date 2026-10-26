@@ -91,9 +91,9 @@ func TestIsOpenAIWSTokenEvent_TerminalEventsExcluded(t *testing.T) {
 		{name: "delta_function_call_arguments", eventType: "response.function_call_arguments.delta", want: true},
 
 		{name: "output_text_done", eventType: "response.output_text.done", want: true},
-		{name: "output_text_annotation_added", eventType: "response.output_text.annotation.added", want: true},
+		{name: "output_text_annotation_added", eventType: "response.output_text.annotation.added", want: false},
 
-		{name: "output_audio_done", eventType: "response.output_audio.done", want: true},
+		{name: "output_audio_done", eventType: "response.output_audio.done", want: false},
 
 		{name: "reasoning_summary_delta", eventType: "response.reasoning_summary_text.delta", want: true},
 
@@ -104,7 +104,7 @@ func TestIsOpenAIWSTokenEvent_TerminalEventsExcluded(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			got := isOpenAIWSTokenEvent(tc.eventType)
+			got := isOpenAIWSTokenEvent(tc.eventType, []byte(`{"delta":"x","text":"x","arguments":"{}"}`))
 			require.Equal(t, tc.want, got, "isOpenAIWSTokenEvent(%q)", tc.eventType)
 		})
 	}
@@ -178,7 +178,7 @@ func TestIsOpenAIWSTokenEvent_DisjointWithTerminal(t *testing.T) {
 		ev := ev
 		t.Run(ev, func(t *testing.T) {
 			require.True(t, isOpenAIWSTerminalEvent(ev), "expected terminal event %q to be classified as terminal", ev)
-			require.False(t, isOpenAIWSTokenEvent(ev), "terminal event %q must NOT be classified as token event (issue #2651)", ev)
+			require.False(t, isOpenAIWSTokenEvent(ev, []byte(`{"delta":"x","text":"x"}`)), "terminal event %q must NOT be classified as token event (issue #2651)", ev)
 		})
 	}
 }

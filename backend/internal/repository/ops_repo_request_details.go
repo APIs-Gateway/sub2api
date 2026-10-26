@@ -93,6 +93,7 @@ WITH combined AS (
     COALESCE(NULLIF(g.platform, ''), NULLIF(a.platform, ''), '') AS platform,
     ul.model AS model,
     ul.duration_ms AS duration_ms,
+    ul.first_token_ms AS first_token_ms,
     NULL::INT AS status_code,
     NULL::BIGINT AS error_id,
     NULL::TEXT AS phase,
@@ -107,6 +108,7 @@ WITH combined AS (
   LEFT JOIN groups g ON g.id = ul.group_id
   LEFT JOIN accounts a ON a.id = ul.account_id
   WHERE ul.created_at >= $1 AND ul.created_at < $2
+    AND ` + opsSuccessfulUsagePredicate("ul.request_type") + `
 
   UNION ALL
 
@@ -117,6 +119,7 @@ WITH combined AS (
     COALESCE(NULLIF(o.platform, ''), NULLIF(g.platform, ''), NULLIF(a.platform, ''), '') AS platform,
     o.model AS model,
     o.duration_ms AS duration_ms,
+    o.time_to_first_token_ms AS first_token_ms,
     o.status_code AS status_code,
     o.id AS error_id,
     o.error_phase AS phase,
@@ -131,7 +134,7 @@ WITH combined AS (
   LEFT JOIN groups g ON g.id = o.group_id
   LEFT JOIN accounts a ON a.id = o.account_id
   WHERE o.created_at >= $1 AND o.created_at < $2
-    AND COALESCE(o.status_code, 0) >= 400
+    AND ` + opsClientVisibleErrorPredicate("o.status_code", "o.error_type") + `
 )
 `
 
@@ -152,6 +155,8 @@ WITH combined AS (
 			// default
 		case "duration_desc":
 			sort = "ORDER BY duration_ms DESC NULLS LAST, created_at DESC"
+		case "ttft_desc":
+			sort = "ORDER BY first_token_ms DESC NULLS LAST, created_at DESC"
 		default:
 			return nil, 0, fmt.Errorf("invalid sort")
 		}
@@ -166,6 +171,7 @@ SELECT
   platform,
   model,
   duration_ms,
+  first_token_ms,
   status_code,
   error_id,
   phase,
@@ -213,9 +219,10 @@ LIMIT $%d OFFSET $%d
 			platform  sql.NullString
 			model     sql.NullString
 
-			durationMs sql.NullInt64
-			statusCode sql.NullInt64
-			errorID    sql.NullInt64
+			durationMs   sql.NullInt64
+			firstTokenMs sql.NullInt64
+			statusCode   sql.NullInt64
+			errorID      sql.NullInt64
 
 			phase    sql.NullString
 			severity sql.NullString
@@ -236,6 +243,7 @@ LIMIT $%d OFFSET $%d
 			&platform,
 			&model,
 			&durationMs,
+			&firstTokenMs,
 			&statusCode,
 			&errorID,
 			&phase,
@@ -257,12 +265,13 @@ LIMIT $%d OFFSET $%d
 			Platform:  strings.TrimSpace(platform.String),
 			Model:     strings.TrimSpace(model.String),
 
-			DurationMs: toIntPtr(durationMs),
-			StatusCode: toIntPtr(statusCode),
-			ErrorID:    toInt64Ptr(errorID),
-			Phase:      phase.String,
-			Severity:   severity.String,
-			Message:    message.String,
+			DurationMs:   toIntPtr(durationMs),
+			FirstTokenMs: toIntPtr(firstTokenMs),
+			StatusCode:   toIntPtr(statusCode),
+			ErrorID:      toInt64Ptr(errorID),
+			Phase:        phase.String,
+			Severity:     severity.String,
+			Message:      message.String,
 
 			UserID:    toInt64Ptr(userID),
 			APIKeyID:  toInt64Ptr(apiKeyID),

@@ -4,7 +4,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
 	"github.com/stretchr/testify/require"
@@ -263,4 +265,46 @@ func TestResetWebSearchUsage_NilManager(t *testing.T) {
 	err := ResetWebSearchUsage(context.Background(), "brave")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not initialized")
+}
+
+// --- loadWebSearchConfigFromDB ---
+
+func resetWebSearchEmulationCacheForTest(t *testing.T) {
+	t.Helper()
+	expired := &cachedWebSearchEmulationConfig{config: &WebSearchEmulationConfig{}}
+	webSearchEmulationCache.Store(expired)
+	t.Cleanup(func() { webSearchEmulationCache.Store(expired) })
+}
+
+// 全新部署从未保存过该设置时 repo 返回 ErrSettingNotFound：应视为首次启动常态，
+// 返回空的禁用配置且不报错，并按正常 TTL 缓存（而不是 5s 错误 TTL 反复查库）。
+func TestGetWebSearchEmulationConfig_MissingSettingReturnsEmptyDisabledConfig(t *testing.T) {
+	resetWebSearchEmulationCacheForTest(t)
+	svc := NewSettingService(&settingRepoStub{values: map[string]string{}}, nil)
+
+	cfg, err := svc.GetWebSearchEmulationConfig(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.False(t, cfg.Enabled)
+	require.Empty(t, cfg.Providers)
+
+	cached, ok := webSearchEmulationCache.Load().(*cachedWebSearchEmulationConfig)
+	require.True(t, ok)
+	require.Greater(t, cached.expiresAt, time.Now().Add(webSearchEmulationErrorTTL).UnixNano(),
+		"missing setting must use the normal cache TTL, not the error TTL")
+}
+
+func TestGetWebSearchEmulationConfig_OtherRepoErrorsStillFail(t *testing.T) {
+	resetWebSearchEmulationCacheForTest(t)
+	dbErr := errors.New("db down")
+	svc := NewSettingService(&settingRepoStub{err: dbErr}, nil)
+
+	cfg, err := svc.GetWebSearchEmulationConfig(context.Background())
+	require.ErrorIs(t, err, dbErr)
+	require.NotNil(t, cfg)
+	require.False(t, cfg.Enabled)
+
+	cached, ok := webSearchEmulationCache.Load().(*cachedWebSearchEmulationConfig)
+	require.True(t, ok)
+	require.LessOrEqual(t, cached.expiresAt, time.Now().Add(webSearchEmulationErrorTTL).UnixNano())
 }

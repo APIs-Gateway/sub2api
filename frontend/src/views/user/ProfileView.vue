@@ -36,16 +36,12 @@
 
       <ProfileBalanceNotifyCard
         v-if="user && balanceLowNotifyEnabled"
+        :key="authStore.authSessionVersion"
         :enabled="user.balance_notify_enabled ?? true"
         :threshold="user.balance_notify_threshold"
         :extra-emails="user.balance_notify_extra_emails ?? []"
         :system-default-threshold="systemDefaultThreshold"
         :user-email="user.email"
-      />
-
-      <ProfileStablePriorityCard
-        v-if="user"
-        :enabled="user.stable_priority_enabled ?? false"
       />
 
       <ProfileTotpCard />
@@ -61,7 +57,6 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import ProfileBalanceNotifyCard from '@/components/user/profile/ProfileBalanceNotifyCard.vue'
 import ProfileInfoCard from '@/components/user/profile/ProfileInfoCard.vue'
 import ProfilePasswordForm from '@/components/user/profile/ProfilePasswordForm.vue'
-import ProfileStablePriorityCard from '@/components/user/profile/ProfileStablePriorityCard.vue'
 import ProfileTotpCard from '@/components/user/profile/ProfileTotpCard.vue'
 import { isWeChatWebOAuthEnabled } from '@/api/auth'
 import { useAppStore } from '@/stores/app'

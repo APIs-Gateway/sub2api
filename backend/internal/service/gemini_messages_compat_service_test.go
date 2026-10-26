@@ -440,6 +440,74 @@ func TestGeminiForwardAsChatCompletions_StreamsOpenAIChunksFromGeminiSSE(t *test
 	require.Contains(t, out, "data: [DONE]")
 }
 
+func TestGeminiForwardAsChatCompletions_FunctionNamedWebSearchStaysClientSide(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	httpStub := &geminiCompatHTTPUpstreamStub{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(
+				`{"candidates":[{"content":{"parts":[{"text":"hello"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1}}`,
+			)),
+		},
+	}
+	svc := &GeminiMessagesCompatService{
+		httpUpstream: httpStub,
+		cfg:          &config.Config{},
+	}
+	account := &Account{
+		ID:       103,
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "gemini-api-key",
+		},
+		Concurrency: 1,
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{
+		"model":"gemini-3.6-flash-high",
+		"messages":[{"role":"user","content":"search and read"}],
+		"tools":[
+			{"type":"function","function":{"name":"web_search","description":"Search through the Hermes client","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}},
+			{"type":"function","function":{"name":"read_file","description":"Read a local file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}
+		]
+	}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, httpStub.lastReq)
+
+	postedBody, err := io.ReadAll(httpStub.lastReq.Body)
+	require.NoError(t, err)
+
+	var posted map[string]any
+	require.NoError(t, json.Unmarshal(postedBody, &posted))
+	tools, ok := posted["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1, "Chat Completions function tools must not be promoted to Gemini built-ins by name")
+
+	functionTool, ok := tools[0].(map[string]any)
+	require.True(t, ok)
+	functionDecls, ok := functionTool["functionDeclarations"].([]any)
+	require.True(t, ok)
+	require.Len(t, functionDecls, 2)
+	firstDecl, ok := functionDecls[0].(map[string]any)
+	require.True(t, ok)
+	secondDecl, ok := functionDecls[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "web_search", firstDecl["name"])
+	require.Equal(t, "read_file", secondDecl["name"])
+	require.NotContains(t, functionTool, "googleSearch")
+	require.NotContains(t, functionTool, "google_search")
+}
+
 // TestConvertClaudeToolsToGeminiTools_CustomType 测试custom类型工具转换
 func TestConvertClaudeToolsToGeminiTools_CustomType(t *testing.T) {
 	tests := []struct {
@@ -807,7 +875,7 @@ func TestGeminiHandleNativeNonStreamingResponse_DebugDisabledDoesNotEmitHeaderLo
 		Body: io.NopCloser(strings.NewReader(`{"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2}}`)),
 	}
 
-	usage, err := svc.handleNativeNonStreamingResponse(c, resp, false)
+	usage, err := svc.handleNativeNonStreamingResponse(c, resp, false, nil, "")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	require.False(t, logSink.ContainsMessage("[GeminiAPI]"), "debug 关闭时不应输出 Gemini 响应头日志")
@@ -1256,6 +1324,40 @@ func TestParseGeminiRateLimitResetTime(t *testing.T) {
 			wantNil:     false,
 			approxDelta: 10,
 		},
+		{
+			name:        "Vertex RetryInfo retryDelay",
+			input:       `{"error":{"code":429,"message":"Resource exhausted. Please try again later.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"39s"}]}}`,
+			wantNil:     false,
+			approxDelta: 39,
+		},
+		{
+			name:        "Vertex RetryInfo 小数秒向上取整",
+			input:       `{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"1.5s"}]}}`,
+			wantNil:     false,
+			approxDelta: 2,
+		},
+		{
+			name:        "Vertex RetryInfo 超过上限被截断到 15 分钟",
+			input:       `{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"3600s"}]}}`,
+			wantNil:     false,
+			approxDelta: 900,
+		},
+		{
+			name:    "retryDelay 存在但 @type 不是 RetryInfo 则忽略",
+			input:   `{"error":{"code":429,"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","retryDelay":"39s"}]}}`,
+			wantNil: true,
+		},
+		{
+			name:    "RetryInfo retryDelay 非法值忽略",
+			input:   `{"error":{"code":429,"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"soon"}]}}`,
+			wantNil: true,
+		},
+		{
+			name:        "quotaResetDelay 与 RetryInfo 并存时先到者优先",
+			input:       `{"error":{"code":429,"details":[{"metadata":{"quotaResetDelay":"120s"}},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"39s"}]}}`,
+			wantNil:     false,
+			approxDelta: 120,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1396,4 +1498,42 @@ func parseAnthropicContentBlockEvents(t *testing.T, raw string) []anthropicConte
 		})
 	}
 	return events
+}
+
+func TestCleanToolSchema_RemovesNestedDeprecatedAndNormalizesMixedScalarEnum(t *testing.T) {
+	schema := map[string]any{
+		"anyOf": []any{
+			map[string]any{
+				"type":       "string",
+				"deprecated": true,
+			},
+			map[string]any{
+				"enum": []any{"enabled", false, float64(1), nil},
+			},
+		},
+	}
+
+	cleaned, ok := cleanToolSchema(schema).(map[string]any)
+	require.True(t, ok)
+	anyOf, ok := cleaned["anyOf"].([]any)
+	require.True(t, ok)
+	require.Len(t, anyOf, 2)
+
+	deprecatedSchema, ok := anyOf[0].(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, deprecatedSchema, "deprecated")
+
+	enumSchema, ok := anyOf[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, []any{"enabled", "false", "1", "null"}, enumSchema["enum"])
+}
+
+func TestCleanToolSchema_DropsEnumWithNonScalarValue(t *testing.T) {
+	schema := map[string]any{
+		"enum": []any{"valid", map[string]any{"invalid": true}},
+	}
+
+	cleaned, ok := cleanToolSchema(schema).(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, cleaned, "enum")
 }

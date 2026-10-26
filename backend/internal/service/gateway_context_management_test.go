@@ -267,9 +267,8 @@ func TestComputeFinalCountTokensAnthropicBeta_OAuthMimic_PreservesClientBeta(t *
 		"同时补齐 token-counting beta")
 }
 
-// messages mimic 路径反向验证：原代码会跳过白名单透传，
-// 客户端 beta 不会进入 mimic 计算。重构后 messages computeFinalAnthropicBeta
-// mimic 分支依然不该使用 clientBeta。
+// messages mimic 路径仍丢弃未知客户端 beta；仅显式请求的 legacy
+// structured-outputs beta 例外。
 func TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBetaExplicit(t *testing.T) {
 	s := newTestGatewayServiceForBeta(false)
 	hdr := http.Header{}
@@ -277,7 +276,7 @@ func TestComputeFinalAnthropicBeta_OAuthMimic_IgnoresClientBetaExplicit(t *testi
 	final, ok := s.computeFinalAnthropicBeta("oauth", true, "claude-sonnet-4-6", hdr, []byte(`{}`), nil)
 	require.True(t, ok)
 	require.False(t, anthropicBetaTokensContains(final, "custom-experimental-beta"),
-		"messages mimic 原代码跳过白名单透传 → 客户端 beta 不进入计算。"+
+		"messages mimic 仍需丢弃未知客户端 beta。"+
 			"与 count_tokens mimic 是不同的设计，不能合并为同一函数。")
 }
 
@@ -363,6 +362,25 @@ func TestNormalizeClaudeOAuthRequestBody_NoThinking_NoInject(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-6","messages":[]}`)
 	out, _ := normalizeClaudeOAuthRequestBody(body, "claude-sonnet-4-6", claudeOAuthNormalizeOptions{})
 	require.False(t, gjson.GetBytes(out, "context_management").Exists())
+}
+
+func TestApplyClaudeCodeOAuthMimicryToBody_FableOmitsRefusedExpansion(t *testing.T) {
+	account := &Account{ID: 406, Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+	body := []byte(`{"model":"claude-fable-5","system":"Project instructions","messages":[{"role":"user","content":"hello"}]}`)
+	svc := &GatewayService{cfg: &config.Config{}}
+
+	out := svc.applyClaudeCodeOAuthMimicryToBody(
+		context.Background(), nil, account, body, "Project instructions", "claude-fable-5",
+	)
+
+	system := gjson.GetBytes(out, "system").Array()
+	require.Len(t, system, 2)
+	require.Contains(t, system[0].Get("text").String(), "x-anthropic-billing-header:")
+	require.Equal(t, claudeCodeSystemPrompt, system[1].Get("text").String())
+	require.NotContains(t, string(out), claudeCodeSystemPromptExpansion)
+	require.Contains(t, gjson.GetBytes(out, "messages.0.content.0.text").String(), "Project instructions")
+	require.Equal(t, "Understood. I will follow these instructions.", gjson.GetBytes(out, "messages.1.content.0.text").String())
+	require.Equal(t, "hello", gjson.GetBytes(out, "messages.2.content").String())
 }
 
 // ============================================================================

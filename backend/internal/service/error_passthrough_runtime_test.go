@@ -344,6 +344,65 @@ func TestGeminiWriteGeminiMappedError_SetsResponseCommitted(t *testing.T) {
 	assert.True(t, IsResponseCommitted(c), "Gemini path must mark response committed")
 }
 
+func TestGeminiWriteGeminiMappedError_413KeepsStatusAndSafeMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "generic upstream error",
+			body: `{"error":{"code":413,"status":"UNKNOWN","message":"sensitive upstream token 123"}}`,
+		},
+		{
+			name: "body status contradicts HTTP 413",
+			body: `{"error":{"code":413,"status":"RESOURCE_EXHAUSTED","message":"sensitive upstream token 123"}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			svc := &GeminiMessagesCompatService{}
+			account := &Account{ID: 102, Platform: PlatformGemini, Type: AccountTypeAPIKey}
+
+			require.False(t, svc.shouldRetryGeminiUpstreamError(account, http.StatusRequestEntityTooLarge))
+			require.False(t, svc.shouldFailoverGeminiUpstreamError(account, http.StatusRequestEntityTooLarge))
+			err := svc.writeGeminiMappedError(c, account, http.StatusRequestEntityTooLarge, "req-413", []byte(tt.body))
+			require.Error(t, err)
+			require.True(t, IsResponseCommitted(c))
+			require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+			errField, ok := payload["error"].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, "invalid_request_error", errField["type"])
+			require.Equal(t, upstreamClientMessageForStatus(http.StatusRequestEntityTooLarge), errField["message"])
+			require.NotContains(t, rec.Body.String(), "sensitive upstream token")
+		})
+	}
+}
+
+func TestGeminiWriteGeminiMappedError_413HonorsExplicitPassthroughRule(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	ruleSvc := &ErrorPassthroughService{}
+	ruleSvc.setLocalCache([]*model.ErrorPassthroughRule{
+		newNonFailoverPassthroughRule(http.StatusRequestEntityTooLarge, "sensitive upstream token", http.StatusTeapot, "operator-configured response"),
+	})
+	BindErrorPassthroughService(c, ruleSvc)
+
+	svc := &GeminiMessagesCompatService{}
+	account := &Account{ID: 103, Platform: PlatformGemini, Type: AccountTypeAPIKey}
+	upstreamBody := []byte(`{"error":{"code":413,"message":"sensitive upstream token 123","status":"RESOURCE_EXHAUSTED"}}`)
+	err := svc.writeGeminiMappedError(c, account, http.StatusRequestEntityTooLarge, "req-413", upstreamBody)
+	require.Error(t, err)
+	require.Equal(t, http.StatusTeapot, rec.Code)
+	require.Contains(t, rec.Body.String(), "operator-configured response")
+	require.NotContains(t, rec.Body.String(), "sensitive upstream token")
+}
+
 // TestMapUpstreamErrorDefault 覆盖默认映射矩阵:请求形 4xx 保留状态码但不默认透传 body,其余保留 502/429/503。
 func TestMapUpstreamErrorDefault(t *testing.T) {
 	tests := []struct {

@@ -27,6 +27,7 @@ type SubscriptionSummaryItem struct {
 	MonthlyUsedUSD  float64 `json:"monthly_used_usd,omitempty"`
 	MonthlyLimitUSD float64 `json:"monthly_limit_usd,omitempty"`
 	ExpiresAt       *string `json:"expires_at,omitempty"`
+	FiatPerCredit   float64 `json:"fiat_per_credit,omitempty"` // 1 个额度的法币单价 u(D)；不可用时省略
 }
 
 // SubscriptionProgressInfo represents subscription with progress info
@@ -66,8 +67,22 @@ func (h *SubscriptionHandler) List(c *gin.Context) {
 	for i := range subscriptions {
 		out = append(out, *dto.UserSubscriptionFromService(&subscriptions[i]))
 	}
+	h.stampFiatPerCredit(c.Request.Context(), out)
 	h.stampMonthlyOverdraftRemaining(c.Request.Context(), subject.UserID, out)
 	response.Success(c, out)
+}
+
+// stampFiatPerCredit 给一批订阅 DTO 填卡的额度法币单价 u(D)。定价配置只读一次。
+// 与用量折算（CreditFiatRate）共用 service.CardFiatPerCredit，保证同一张卡在
+// 订阅页和用量页折出来的人民币一致。
+func (h *SubscriptionHandler) stampFiatPerCredit(ctx context.Context, out []dto.UserSubscription) {
+	if len(out) == 0 {
+		return
+	}
+	cfg := h.subscriptionService.PricingConfig(ctx)
+	for i := range out {
+		out[i].FiatPerCredit = service.CardFiatPerCredit(cfg, out[i].DailyAmountUSD)
+	}
 }
 
 // stampMonthlyOverdraftRemaining 给一批订阅 DTO 填「用户级本月剩余透支次数」（per-user，全卡同值），
@@ -106,6 +121,7 @@ func (h *SubscriptionHandler) GetActive(c *gin.Context) {
 	for i := range subscriptions {
 		out = append(out, *dto.UserSubscriptionFromService(&subscriptions[i]))
 	}
+	h.stampFiatPerCredit(c.Request.Context(), out)
 	h.stampMonthlyOverdraftRemaining(c.Request.Context(), subject.UserID, out)
 	response.Success(c, out)
 }
@@ -127,6 +143,7 @@ func (h *SubscriptionHandler) GetProgress(c *gin.Context) {
 	}
 
 	result := make([]SubscriptionProgressInfo, 0, len(subscriptions))
+	cfg := h.subscriptionService.PricingConfig(c.Request.Context())
 	for i := range subscriptions {
 		sub := &subscriptions[i]
 		progress, err := h.subscriptionService.GetSubscriptionProgress(c.Request.Context(), sub.ID)
@@ -134,8 +151,10 @@ func (h *SubscriptionHandler) GetProgress(c *gin.Context) {
 			// Skip subscriptions with errors
 			continue
 		}
+		subDTO := dto.UserSubscriptionFromService(sub)
+		subDTO.FiatPerCredit = service.CardFiatPerCredit(cfg, subDTO.DailyAmountUSD)
 		result = append(result, SubscriptionProgressInfo{
-			Subscription: dto.UserSubscriptionFromService(sub),
+			Subscription: subDTO,
 			Progress:     progress,
 		})
 	}
@@ -239,6 +258,7 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 
 	var totalUsed float64
 	items := make([]SubscriptionSummaryItem, 0, len(subscriptions))
+	cfg := h.subscriptionService.PricingConfig(c.Request.Context())
 
 	for _, sub := range subscriptions {
 		item := SubscriptionSummaryItem{
@@ -248,6 +268,7 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 			DailyUsedUSD:   sub.DailyUsageUSD,
 			WeeklyUsedUSD:  sub.WeeklyUsageUSD,
 			MonthlyUsedUSD: sub.MonthlyUsageUSD,
+			FiatPerCredit:  service.CardFiatPerCredit(cfg, sub.DailyAmountUSD),
 		}
 
 		// Add group name if preloaded（仅取名字；限额已不挂 group）。

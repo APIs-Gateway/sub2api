@@ -7,6 +7,7 @@ import { defineStore } from 'pinia'
 import { ref, computed, readonly } from 'vue'
 import { authAPI, isTotp2FARequired, type LoginResponse } from '@/api'
 import type { User, LoginRequest, RegisterRequest, AuthResponse } from '@/types'
+import { getAuthSessionVersion, invalidateAuthSession } from '@/utils/authSessionVersion'
 
 const AUTH_TOKEN_KEY = 'auth_token'
 const AUTH_USER_KEY = 'auth_user'
@@ -81,6 +82,12 @@ export const useAuthStore = defineStore('auth', () => {
   let tokenRefreshTimeoutId: ReturnType<typeof setTimeout> | null = null
   let userStateVersion = 0
   let latestRefreshRequest = 0
+  const profileRefreshVersion = ref(0)
+  const authSessionVersion = ref(getAuthSessionVersion())
+
+  function advanceAuthSession(): void {
+    authSessionVersion.value = invalidateAuthSession()
+  }
 
   function setCurrentUser(nextUser: User | null): void {
     user.value = nextUser
@@ -89,6 +96,22 @@ export const useAuthStore = defineStore('auth', () => {
     if (nextUser) {
       localStorage.setItem(AUTH_USER_KEY, JSON.stringify(nextUser))
     }
+  }
+
+  function applyUserProfile(nextUser: User, expectedSessionVersion: number, allowNewerRefresh = false): void {
+    if (expectedSessionVersion !== authSessionVersion.value || !user.value || user.value.id !== nextUser.id) return
+    if (allowNewerRefresh) {
+      // The caller already invalidated requests started before its mutation.
+      // Let a later profile refresh supersede this snapshot if it succeeds.
+      user.value = nextUser
+      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(nextUser))
+      return
+    }
+    setCurrentUser(nextUser)
+  }
+
+  function invalidateUserRefresh(): void {
+    userStateVersion += 1
   }
 
   // ==================== Computed ====================
@@ -112,6 +135,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Also starts auto-refresh and immediately fetches latest user data
    */
   function checkAuth(): void {
+    advanceAuthSession()
     const savedToken = localStorage.getItem(AUTH_TOKEN_KEY)
     const savedUser = localStorage.getItem(AUTH_USER_KEY)
     const savedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
@@ -217,8 +241,10 @@ export const useAuthStore = defineStore('auth', () => {
       return
     }
 
+    const sessionVersion = authSessionVersion.value
     try {
       const response = await authAPI.refreshToken()
+      if (sessionVersion !== authSessionVersion.value) return
 
       // Update state
       token.value = response.access_token
@@ -249,8 +275,13 @@ export const useAuthStore = defineStore('auth', () => {
    * @throws Error if login fails
    */
   async function login(credentials: LoginRequest): Promise<LoginResponse> {
+    advanceAuthSession()
+    const sessionVersion = authSessionVersion.value
     try {
       const response = await authAPI.login(credentials)
+      if (sessionVersion !== authSessionVersion.value) {
+        throw { status: 401, code: 'AUTH_SESSION_CHANGED', message: 'Login session changed.' }
+      }
 
       // If 2FA is required, return the response without setting auth state
       if (isTotp2FARequired(response)) {
@@ -263,7 +294,9 @@ export const useAuthStore = defineStore('auth', () => {
       return response
     } catch (error) {
       // Clear any partial state on error
-      clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      if (sessionVersion === authSessionVersion.value) {
+        clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      }
       throw error
     }
   }
@@ -276,12 +309,19 @@ export const useAuthStore = defineStore('auth', () => {
    * @throws Error if 2FA verification fails
    */
   async function login2FA(tempToken: string, totpCode: string): Promise<User> {
+    advanceAuthSession()
+    const sessionVersion = authSessionVersion.value
     try {
       const response = await authAPI.login2FA({ temp_token: tempToken, totp_code: totpCode })
+      if (sessionVersion !== authSessionVersion.value) {
+        throw { status: 401, code: 'AUTH_SESSION_CHANGED', message: 'Login session changed.' }
+      }
       setAuthFromResponse(response)
       return user.value!
     } catch (error) {
-      clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      if (sessionVersion === authSessionVersion.value) {
+        clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      }
       throw error
     }
   }
@@ -291,13 +331,17 @@ export const useAuthStore = defineStore('auth', () => {
    * Internal helper function
    */
   function setAuthFromResponse(response: AuthResponse): void {
+    advanceAuthSession()
+    stopTokenRefresh()
     // Store token and user
     token.value = response.access_token
 
     // Store refresh token if present
+    refreshTokenValue.value = response.refresh_token || null
     if (response.refresh_token) {
-      refreshTokenValue.value = response.refresh_token
       localStorage.setItem(REFRESH_TOKEN_KEY, response.refresh_token)
+    } else {
+      localStorage.removeItem(REFRESH_TOKEN_KEY)
     }
 
     // Extract run_mode if present
@@ -318,6 +362,12 @@ export const useAuthStore = defineStore('auth', () => {
     // scheduleTokenRefresh will also store the expiry timestamp
     if (response.refresh_token && response.expires_in) {
       scheduleTokenRefresh(response.expires_in)
+    } else if (response.expires_in) {
+      tokenExpiresAt.value = Date.now() + response.expires_in * 1000
+      localStorage.setItem(TOKEN_EXPIRES_AT_KEY, String(tokenExpiresAt.value))
+    } else {
+      tokenExpiresAt.value = null
+      localStorage.removeItem(TOKEN_EXPIRES_AT_KEY)
     }
   }
 
@@ -328,8 +378,13 @@ export const useAuthStore = defineStore('auth', () => {
    * @throws Error if registration fails
    */
   async function register(userData: RegisterRequest): Promise<User> {
+    advanceAuthSession()
+    const sessionVersion = authSessionVersion.value
     try {
       const response = await authAPI.register(userData)
+      if (sessionVersion !== authSessionVersion.value) {
+        throw { status: 401, code: 'AUTH_SESSION_CHANGED', message: 'Registration session changed.' }
+      }
 
       // Use the common helper to set auth state
       setAuthFromResponse(response)
@@ -337,7 +392,9 @@ export const useAuthStore = defineStore('auth', () => {
       return user.value!
     } catch (error) {
       // Clear any partial state on error
-      clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      if (sessionVersion === authSessionVersion.value) {
+        clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      }
       throw error
     }
   }
@@ -347,7 +404,17 @@ export const useAuthStore = defineStore('auth', () => {
    * 会自动读取 localStorage 中已设置的 refresh_token 和 token_expires_in
    * @param newToken - 后端签发的 JWT access token
    */
-  async function setToken(newToken: string): Promise<User> {
+  async function setToken(newToken: string, context?: {
+    refreshToken?: string | null
+    expiresIn?: number | null
+    expectedSessionVersion?: number
+  }): Promise<User> {
+    if (context?.expectedSessionVersion !== undefined &&
+      context.expectedSessionVersion !== authSessionVersion.value) {
+      throw { status: 401, code: 'AUTH_SESSION_CHANGED', message: 'Login session changed.' }
+    }
+    advanceAuthSession()
+    const sessionVersion = authSessionVersion.value
     // Clear any previous state first (avoid mixing sessions)
     // Note: Don't clear localStorage here as OAuth callback may have set refresh_token
     stopAutoRefresh()
@@ -358,19 +425,30 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = newToken
     localStorage.setItem(AUTH_TOKEN_KEY, newToken)
 
+    // A completed 2FA response is authoritative for this new login. Missing fields must not
+    // inherit the previous account's refresh token or expiry.
+    if (context) {
+      if (context.refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, context.refreshToken)
+      else localStorage.removeItem(REFRESH_TOKEN_KEY)
+      if (context.expiresIn) {
+        localStorage.setItem(TOKEN_EXPIRES_AT_KEY, String(Date.now() + context.expiresIn * 1000))
+      } else {
+        localStorage.removeItem(TOKEN_EXPIRES_AT_KEY)
+      }
+    }
+
     // Read refresh token and expires_at from localStorage if set by OAuth callback
     const savedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
     const savedExpiresAt = localStorage.getItem(TOKEN_EXPIRES_AT_KEY)
 
-    if (savedRefreshToken) {
-      refreshTokenValue.value = savedRefreshToken
-    }
-    if (savedExpiresAt) {
-      tokenExpiresAt.value = parseInt(savedExpiresAt, 10)
-    }
+    refreshTokenValue.value = savedRefreshToken
+    tokenExpiresAt.value = savedExpiresAt ? parseInt(savedExpiresAt, 10) : null
 
     try {
       const userData = await refreshUser()
+      if (sessionVersion !== authSessionVersion.value) {
+        throw { status: 401, code: 'AUTH_SESSION_CHANGED', message: 'Login session changed.' }
+      }
       startAutoRefresh()
 
       // Start proactive token refresh if we have refresh token and expiry info
@@ -382,7 +460,9 @@ export const useAuthStore = defineStore('auth', () => {
       clearPendingAuthSession()
       return userData
     } catch (error) {
-      clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      if (sessionVersion === authSessionVersion.value) {
+        clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      }
       throw error
     }
   }
@@ -407,6 +487,8 @@ export const useAuthStore = defineStore('auth', () => {
    * Clears all authentication state and persisted data
    */
   async function logout(): Promise<void> {
+    advanceAuthSession()
+    const sessionVersion = authSessionVersion.value
     try {
       // Call API logout (revokes refresh token on server)
       await authAPI.logout()
@@ -414,7 +496,7 @@ export const useAuthStore = defineStore('auth', () => {
       // A failed server-side revoke must not keep the local session alive.
       console.warn('Logout API call failed, clearing local session anyway', err)
     } finally {
-      clearAuth()
+      if (sessionVersion === authSessionVersion.value) clearAuth()
     }
   }
 
@@ -429,10 +511,14 @@ export const useAuthStore = defineStore('auth', () => {
       throw new Error('Not authenticated')
     }
 
+    const refreshRequest = ++latestRefreshRequest
+    const stateVersion = userStateVersion
+    const sessionVersion = authSessionVersion.value
     try {
-      const refreshRequest = ++latestRefreshRequest
-      const stateVersion = userStateVersion
       const response = await authAPI.getCurrentUser()
+      if (sessionVersion !== authSessionVersion.value) {
+        throw { status: 401, code: 'AUTH_SESSION_CHANGED', message: 'Authentication session changed while refreshing.' }
+      }
       if (refreshRequest !== latestRefreshRequest || stateVersion !== userStateVersion) {
         if (!user.value) {
           throw new Error('Authenticated user changed while refreshing')
@@ -444,11 +530,14 @@ export const useAuthStore = defineStore('auth', () => {
       }
       const { run_mode: _run_mode, ...userData } = response.data
       setCurrentUser(userData)
+      profileRefreshVersion.value += 1
 
       return userData
     } catch (error) {
       // If refresh fails with 401, clear auth state
-      if ((error as { status?: number }).status === 401) {
+      if ((error as { status?: number }).status === 401 &&
+        refreshRequest === latestRefreshRequest && stateVersion === userStateVersion &&
+        sessionVersion === authSessionVersion.value) {
         clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
       }
       throw error
@@ -468,6 +557,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Internal helper function
    */
   function clearAuth(options?: { preservePendingAuthSession?: boolean }): void {
+    advanceAuthSession()
     // Stop auto-refresh
     stopAutoRefresh()
     // Stop token refresh
@@ -499,6 +589,8 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     runMode: readonly(runMode),
     pendingAuthSession: readonly(pendingAuthSession),
+    profileRefreshVersion: readonly(profileRefreshVersion),
+    authSessionVersion: readonly(authSessionVersion),
 
     // Computed
     isAuthenticated,
@@ -515,6 +607,8 @@ export const useAuthStore = defineStore('auth', () => {
     checkAuth,
     refreshUser,
     setBalance,
+    applyUserProfile,
+    invalidateUserRefresh,
     setPendingAuthSession,
     clearPendingAuthSession
   }

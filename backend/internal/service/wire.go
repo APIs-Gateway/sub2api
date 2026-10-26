@@ -3,12 +3,14 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/google/wire"
 	"github.com/redis/go-redis/v9"
@@ -21,13 +23,24 @@ type BuildInfo struct {
 }
 
 // ProvidePricingService creates and initializes PricingService
-func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient) (*PricingService, error) {
+func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient, settingRepo SettingRepository, snapshotRepo PricingSnapshotRepository, snapshotPubSub ChannelCachePubSub) (*PricingService, error) {
 	svc := NewPricingService(cfg, remoteClient)
+	svc.ConfigureSnapshots(settingRepo, snapshotRepo, snapshotPubSub)
 	if err := svc.Initialize(); err != nil {
+		// pinned 模式下加载生效快照失败必须 fail-closed：不能静默退回远端数据或内置文件，直接让启动失败。
+		if errors.Is(err, ErrPricingSnapshotStartup) {
+			return nil, err
+		}
 		// Pricing service initialization failure should not block startup, use fallback prices
 		println("[Service] Warning: Pricing service initialization failed:", err.Error())
 	}
 	return svc, nil
+}
+
+// ProvidePricingSnapshotAdminService 创建价格快照页的管理服务。
+// 批准事务里对所有白名单分组做保存时校验（ExposureGuard.CheckGroups）；读取器缺失时批准失败关闭。
+func ProvidePricingSnapshotAdminService(cfg *config.Config, pricing *PricingService, store PricingSnapshotRepository, reader SnapshotExposureReader, settings SettingRepository, db *sql.DB) *PricingSnapshotAdminService {
+	return NewPricingSnapshotAdminService(pricing, store, NewSnapshotExposureChecker(cfg, reader, settings), db)
 }
 
 // ProvideUpdateService creates UpdateService with BuildInfo
@@ -193,6 +206,18 @@ func ProvideAccountExpiryService(accountRepo AccountRepository) *AccountExpirySe
 	return svc
 }
 
+// ProvideClaudeCodeVersionSyncService creates and starts ClaudeCodeVersionSyncService.
+// 出站 Claude Code 身份的版本号靠它跟随官方发布，无需为了跟版本而发新版本；面板可关闭。
+func ProvideClaudeCodeVersionSyncService(
+	settingRepo SettingRepository,
+	settingService *SettingService,
+	githubClient GitHubReleaseClient,
+) *ClaudeCodeVersionSyncService {
+	svc := NewClaudeCodeVersionSyncService(settingRepo, settingService, githubClient, claudeCodeVersionSyncInterval)
+	svc.Start()
+	return svc
+}
+
 // ProvideProxyExpiryService creates and starts ProxyExpiryService.
 func ProvideProxyExpiryService(proxyRepo ProxyRepository) *ProxyExpiryService {
 	svc := NewProxyExpiryService(proxyRepo, time.Minute)
@@ -272,12 +297,19 @@ func ProvideRateLimitService(
 	tempUnschedCache TempUnschedCache,
 	timeoutCounterCache TimeoutCounterCache,
 	openAI403CounterCache OpenAI403CounterCache,
+	modelDowngradeCounter ModelDowngradeCounterCache,
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
 ) *RateLimitService {
+	// 账号级可调度判断（Account.IsSchedulable、调度快照 SQL）拿不到 cfg，启动时把
+	// gateway.no_auto_unsched_account_ids 装进包级副本。必须早于第一次选号/快照重建。
+	if cfg != nil {
+		SetNoAutoUnschedConfigIDs(cfg.Gateway.NoAutoUnschedAccountIDs)
+	}
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	svc.SetTimeoutCounterCache(timeoutCounterCache)
 	svc.SetOpenAI403CounterCache(openAI403CounterCache)
+	svc.SetModelDowngradeCounterCache(modelDowngradeCounter)
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
 	return svc
@@ -527,6 +559,11 @@ func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupReposit
 		logger.LegacyPrintf("service.setting", "Warning: load forwarded client ip settings failed: %v", err)
 	}
 	antigravity.SetUserAgentVersionResolver(svc.GetAntigravityUserAgentVersion)
+	// Claude CLI 伪装版本号运行期解析（面板手动值 → 后台同步值 → 环境变量/内置基线），
+	// 解析器内部自带 60s TTL 缓存，热路径不触库。
+	claude.SetCLIVersionResolver(func() string {
+		return svc.GetClaudeCodeClientVersion(context.Background())
+	})
 	return svc
 }
 
@@ -577,10 +614,12 @@ func ProvideAPIKeyService(
 	cfg *config.Config,
 	billingCacheService *BillingCacheService,
 	concurrencyService *ConcurrencyService,
+	groupRouteHooks *GroupRouteKeyHooks,
 ) *APIKeyService {
 	svc := NewAPIKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, userGroupRateRepo, cache, cfg)
 	svc.SetRateLimitCacheInvalidator(billingCacheService)
 	svc.SetConcurrencyService(concurrencyService)
+	svc.SetGroupRouteHooks(groupRouteHooks)
 	return svc
 }
 
@@ -597,12 +636,17 @@ var ProviderSet = wire.NewSet(
 	NewProxyService,
 	NewRedeemService,
 	NewCheckinService,
+	NewGroupRouteService, // Key 级分组回退链
+	NewGroupRouteKeyHooks,
+	NewKeyEditorPriceService,
+	NewKeyFallbackService,
 	NewLegacyInviteService,
 	ProvideLegacyInviteOptions,
 	NewPromoService,
 	NewUsageService,
 	NewDashboardService,
 	ProvidePricingService,
+	ProvidePricingSnapshotAdminService,
 	NewBillingService,
 	ProvideBillingCacheService,
 	NewAnnouncementService,
@@ -657,6 +701,7 @@ var ProviderSet = wire.NewSet(
 	ProvideUpdateService,
 	ProvideTokenRefreshService,
 	ProvideAccountExpiryService,
+	ProvideClaudeCodeVersionSyncService,
 	ProvideProxyExpiryService,
 	ProvideSubscriptionExpiryService,
 	ProvideTimingWheelService,
@@ -679,6 +724,15 @@ var ProviderSet = wire.NewSet(
 	NewGroupCapacityService,
 	NewChannelService,
 	NewModelPricingResolver,
+	NewPriceQuoter,
+	ProvidePricingDerivationService,
+	NewPricingShadowRecorder,
+	ProvideStagedGroupPolicy,
+	ProvidePricingWriteServices,
+	ProvidePricingStageService,
+	ProvidePricingStageSwitcher,
+	ProvideModelCatalogService,
+	NewUserPriceCatalogService,
 	NewContentModerationService,
 	NewAffiliateService,
 	ProvidePointsService,
@@ -690,7 +744,111 @@ var ProviderSet = wire.NewSet(
 	ProvideChannelMonitorRunner,
 	NewChannelMonitorRequestTemplateService,
 	ProvideUserPlatformQuotaUsageFlusher,
+	ProvideAdminTokenService,
+	ProvideAdminAuditWriter,
 )
+
+// ProvidePricingDerivationService 创建 W6 派生服务，并把它挂到 ChannelService 的保存钩子上。
+// 钩子是 best-effort：失败只记日志、计数，不影响渠道保存。
+func ProvidePricingDerivationService(repo PricingMatrixRepository, channels ChannelRepository, billing *BillingService, channelService *ChannelService) *PricingDerivationService {
+	svc := NewPricingDerivationService(repo, channels, billing)
+	channelService.SetSaveHook(svc)
+	return svc
+}
+
+// ProvideStagedGroupPolicy 创建 W6 的 stagedPolicy，并一次性注入三个读取方：两个网关与价格解析器。
+// 三处必须是同一个实例（报价器的策略取自 resolver，所以也是它）；派生钩子的快照失效器设成同一个 matrixPolicy。
+// 必须在开始处理请求之前完成，所以放在依赖注入里、不走运行时开关。
+// 所有分组默认是 legacy：stagedPolicy 把请求原样转发给 legacyPolicy，行为与注入之前逐位相同。
+func ProvideStagedGroupPolicy(
+	channelService *ChannelService,
+	repo PricingMatrixRepository,
+	pubsub ChannelCachePubSub,
+	recorder *PricingShadowRecorder,
+	gateway *GatewayService,
+	openAIGateway *OpenAIGatewayService,
+	resolver *ModelPricingResolver,
+	derive *PricingDerivationService,
+) *StagedGroupPolicy {
+	matrix := NewMatrixGroupPolicy(repo, pubsub)
+	var sink PricingShadowSink // 不能直接传 nil 的 *PricingShadowRecorder：那会得到一个非 nil 的接口值
+	if recorder != nil {
+		sink = recorder
+	}
+	policy := newStagedGroupPolicy(newLegacyGroupPolicy(channelService), matrix, sink)
+	gateway.policyOverride = policy
+	openAIGateway.policyOverride = policy
+	resolver.policyOverride = policy
+	derive.SetSnapshotInvalidator(matrix)
+	// 启动预加载（W6 PR7a）：有配置行的分组的快照在开始处理请求之前同步加载，v2 分组不会在冷启动的窗口里退回 legacy。
+	// 没有分组配置行（全部是 legacy）时只多一次轻量查询；失败只记日志，见 Preload。
+	if lister, ok := repo.(ConfiguredGroupLister); ok {
+		policy.Preload(context.Background(), lister)
+	}
+	return policy
+}
+
+// ProvideModelCatalogService 创建模型目录服务，并把带缓存的目录读取方接到 v2 运行时准入（stagedPolicy）与价格报价器上。
+// 两处共用同一个读取方，Quote.Access 与网关的运行时准入口径一致。目录状态只对 v2 阶段的分组生效，其余分组不受影响。
+func ProvideModelCatalogService(repo ModelCatalogRepository, policy *StagedGroupPolicy, quoter *PriceQuoter) *ModelCatalogService {
+	svc := NewModelCatalogService(repo)
+	if cached := policy.SetModelCatalog(svc); cached != nil && quoter != nil {
+		quoter.SetModelCatalog(cached)
+	}
+	return svc
+}
+
+// ProvidePricingStageSwitcher 创建阶段切换器（W6 PR7b）。
+// 提交之后失效并同步加载本实例的分组快照靠 stagedPolicy；影子样本数取自同一个 stagedPolicy 的进程内计数；
+// 切到 v2 时的无价与开放范围检查用 exposureReader、billing（官方价）与 settings（已知免费名单）。
+func ProvidePricingStageSwitcher(
+	store PricingStageSwitchStore,
+	derive *PricingDerivationService,
+	fingerprint PricingStageFingerprinter,
+	catalog *ModelCatalogService,
+	policy *StagedGroupPolicy,
+	cfg *config.Config,
+	exposureReader ExposureReader,
+	billing *BillingService,
+	settings SettingRepository,
+) *PricingStageSwitcher {
+	compared := func(groupID int64) int64 {
+		for _, c := range policy.Stats().ComparedTotal {
+			if c.GroupID == groupID {
+				return c.Count
+			}
+		}
+		return 0
+	}
+	sw := NewPricingStageSwitcher(store, derive, fingerprint, catalog, policy, compared)
+	var prices OfficialPriceStateSource // 不能直接传 nil 的 *BillingService：那会得到一个非 nil 的接口值
+	if billing != nil {
+		prices = billing
+	}
+	// 切到 v2 的暴露检查与价格写入路径共用同一口径：官方价、已知免费名单、保存时校验的读取器。
+	sw.SetExposureChecker(NewStageExposureChecker(exposureReader, NewExposureValidator(prices, settings), prices))
+	if cfg != nil {
+		sw.SetObservationHours(cfg.Pricing.GateObservationHours)
+	}
+	sw.SetInProcessTranslationDiffs(func(groupID int64) (int64, time.Time) {
+		var n int64
+		for _, c := range policy.Stats().DiffTotal {
+			if c.GroupID == groupID && c.Class == ShadowClassTranslation {
+				n += c.Count
+			}
+		}
+		return n, policy.hub.lastTranslationDiffAt(groupID)
+	})
+	return sw
+}
+
+// ProvidePricingStageService 创建阶段服务并接上阶段切换器：之后 v2 才是允许的目标阶段。
+// 阶段服务依赖切换器，管理接口只依赖阶段服务，所以切换器一定会被装配进来。
+func ProvidePricingStageService(store PricingStageStore, policy *StagedGroupPolicy, recorder *PricingShadowRecorder, switcher *PricingStageSwitcher) *PricingStageService {
+	svc := NewPricingStageService(store, policy, recorder)
+	svc.SetSwitcher(switcher)
+	return svc
+}
 
 // ProvideUserPlatformQuotaUsageFlusher 创建并启动 UserPlatformQuotaUsageFlusher。
 func ProvideUserPlatformQuotaUsageFlusher(cfg *config.Config, cache BillingCache, quotaRepo UserPlatformQuotaRepository, tw *TimingWheelService) *UserPlatformQuotaUsageFlusher {

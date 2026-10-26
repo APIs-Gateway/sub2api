@@ -1,6 +1,21 @@
-.PHONY: build build-backend build-frontend build-datamanagementd dev-db dev-local test test-backend test-frontend test-frontend-critical test-datamanagementd secret-scan
+.PHONY: build build-backend build-frontend dev-db dev-local test test-backend test-frontend test-frontend-critical secret-scan
 
 FRONTEND_CRITICAL_VITEST := \
+	src/components/admin/channel/__tests__/PricingEntryCard.modelDefaultPrice.spec.ts \
+	src/composables/__tests__/useModelWhitelist.spec.ts \
+	src/components/admin/monitor/__tests__/MonitorTemplateApplyPickerDialog.spec.ts \
+	src/components/admin/monitor/__tests__/MonitorTemplateApplyPickerDialog.apply.spec.ts \
+	src/components/admin/monitor/__tests__/MonitorTemplateManagerDialog.requests.spec.ts \
+	src/components/admin/account/__tests__/ScheduledTestsPanel.results.spec.ts \
+	src/views/admin/ops/components/__tests__/OpsAlertRulesCard.duration.spec.ts \
+	src/components/account/__tests__/BulkEditAccountModal.spec.ts \
+	src/components/account/__tests__/CreateAccountModal.modelPreview.spec.ts \
+	src/components/account/__tests__/ModelWhitelistSelector.spec.ts \
+	src/components/account/__tests__/EditAccountModal.spec.ts \
+	src/i18n/__tests__/localeKeyCompleteness.spec.ts \
+	src/api/__tests__/client.spec.ts \
+	src/api/__tests__/tokenRefresh.spec.ts \
+	src/components/admin/user/__tests__/UserPlatformQuotaModal.spec.ts \
 	src/views/auth/__tests__/LinuxDoCallbackView.spec.ts \
 	src/views/auth/__tests__/WechatCallbackView.spec.ts \
 	src/views/user/__tests__/PaymentView.spec.ts \
@@ -11,8 +26,36 @@ FRONTEND_CRITICAL_VITEST := \
 	src/__tests__/App.documentTitle.spec.ts \
 	src/stores/__tests__/auth.spec.ts \
 	src/components/user/profile/__tests__/ProfileInfoCard.spec.ts \
+	src/components/user/profile/__tests__/ProfileIdentityBindingsSection.spec.ts \
+	src/components/user/profile/__tests__/ProfileIdentityBindingsSection.emailDraft.spec.ts \
 	src/views/admin/__tests__/SettingsView.spec.ts \
-	src/views/admin/orders/__tests__/AdminOrdersView.spec.ts
+	src/views/admin/orders/__tests__/AdminOrdersView.spec.ts \
+	src/views/admin/ops/components/__tests__/OpsSettingsDialog.loading.spec.ts \
+	src/views/admin/ops/components/__tests__/OpsAlertEventsCard.pagination.spec.ts \
+	src/components/layout/__tests__/AppSidebar.userNav.spec.ts \
+	src/views/admin/pricing/__tests__/pricingModel.spec.ts \
+	src/views/admin/pricing/__tests__/usePricingData.spec.ts \
+	src/views/admin/pricing/__tests__/ModelsView.spec.ts \
+	src/views/admin/pricing/__tests__/MatrixView.spec.ts \
+	src/api/__tests__/admin.pricing.spec.ts \
+	src/components/layout/__tests__/AppHeader.userMenu.spec.ts \
+	src/components/layout/__tests__/AppHeader.docsLink.spec.ts \
+	src/components/layout/__tests__/userNav.spec.ts \
+	src/components/layout/__tests__/SidebarBalanceCard.spec.ts \
+	src/components/layout/__tests__/AppLayout.balanceCard.spec.ts \
+	src/composables/__tests__/useTopUpEntry.spec.ts \
+	src/utils/__tests__/subscriptionSummary.spec.ts \
+	src/components/layout/__tests__/LowBalanceBanner.spec.ts \
+	src/components/layout/__tests__/AppLayout.lowBalanceBanner.spec.ts \
+	src/stores/__tests__/lowBalance.spec.ts \
+	src/utils/__tests__/lowBalance.spec.ts \
+	src/components/user/__tests__/MonitorDetailDialog.spec.ts \
+	src/components/user/monitor/__tests__/MonitorCard.visibility.spec.ts \
+	src/views/user/__tests__/ChannelStatusView.visibility.spec.ts \
+	src/views/user/__tests__/ChannelStatusView.overall.spec.ts \
+	src/composables/__tests__/useChannelMonitorFormat.status.spec.ts \
+	src/api/__tests__/admin.channelMonitor.runNow.spec.ts \
+	src/components/admin/monitor/__tests__/MonitorFormDialog.userVisibleHint.spec.ts
 
 # 一键编译前后端
 build: build-backend build-frontend
@@ -24,10 +67,6 @@ build-backend:
 # 编译前端（需要已安装依赖）
 build-frontend:
 	@pnpm --dir frontend run build
-
-# 编译 datamanagementd（宿主机数据管理进程）
-build-datamanagementd:
-	@cd datamanagement && go build -o datamanagementd ./cmd/datamanagementd
 
 # 只启动真实 PostgreSQL/Redis，不构建应用镜像，适合本地热开发。
 dev-db:
@@ -50,9 +89,6 @@ test-frontend:
 
 test-frontend-critical:
 	@pnpm --dir frontend exec vitest run $(FRONTEND_CRITICAL_VITEST)
-
-test-datamanagementd:
-	@cd datamanagement && go test ./...
 
 secret-scan:
 	@python3 tools/secret_scan.py

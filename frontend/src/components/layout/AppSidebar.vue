@@ -146,6 +146,9 @@
       </template>
     </nav>
 
+    <!-- Balance card mount point (user view only): renders nothing unless a card is slotted in -->
+    <slot v-if="!isAdmin && !appStore.backendModeEnabled" name="balance-card" :collapsed="sidebarCollapsed" />
+
     <!-- Bottom Section -->
     <div class="mt-auto border-t border-gray-100 p-3 dark:border-dark-800">
       <!-- Theme Toggle -->
@@ -182,7 +185,7 @@
         :title="t('common.clickToCopy')"
       >
         <span class="block text-xs text-gray-500 dark:text-dark-400">{{ t('nav.supportQqGroup') }}</span>
-        <span class="block font-mono text-sm tabular-nums text-gray-700 dark:text-gray-300">{{ qqCopied ? `${t('common.copied')} ✓` : QQ_GROUP }}</span>
+        <span class="block num text-sm text-gray-700 dark:text-gray-300">{{ qqCopied ? `${t('common.copied')} ✓` : QQ_GROUP }}</span>
       </button>
     </div>
   </aside>
@@ -206,6 +209,7 @@ import { sanitizeSvg } from '@/utils/sanitize'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import BrandMark from '@/components/common/BrandMark.vue'
+import { USER_NAV_ENTRIES } from './userNav'
 
 interface NavItem {
   path: string
@@ -269,8 +273,11 @@ const homePath = computed(() => (isAdmin.value ? '/admin/dashboard' : '/dashboar
 const sidebarNavRef = ref<HTMLElement | null>(null)
 const isDark = ref(document.documentElement.classList.contains('dark'))
 
-// Track which parent nav groups are expanded
-const expandedGroups = ref<Set<string>>(new Set())
+// Per-group expand/collapse overrides. A group with no entry follows the
+// automatic behavior (expanded while the active route is one of its children);
+// a chevron click records the user's choice, which wins over the automatic
+// state so an active group can still be collapsed manually.
+const groupExpandOverrides = ref<Map<string, boolean>>(new Map())
 
 // Site settings from appStore (cached, no flicker)
 const siteName = computed(() => appStore.siteName)
@@ -318,6 +325,21 @@ const ChartIcon = {
           'stroke-linecap': 'round',
           'stroke-linejoin': 'round',
           d: 'M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z'
+        })
+      ]
+    )
+}
+
+const BookIcon = {
+  render: () =>
+    h(
+      'svg',
+      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
+      [
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          d: 'M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25'
         })
       ]
     )
@@ -676,34 +698,44 @@ const ChevronDownIcon = {
 // Public-settings flags go through the registry in utils/featureFlags.ts,
 // which handles the opt-in vs opt-out fallback when settings haven't loaded
 // yet. Admin-only flags (not in public settings) stay inline below.
+// The user-menu flags (payment, available channels, channel monitor) are declared
+// next to their entries in ./userNav.ts.
 const flagChannelMonitor = makeSidebarFlag(FeatureFlags.channelMonitor)
-const flagPayment = makeSidebarFlag(FeatureFlags.payment)
-const flagAvailableChannels = makeSidebarFlag(FeatureFlags.availableChannels)
 const flagRiskControl = makeSidebarFlag(FeatureFlags.riskControl)
 const flagOpsMonitoring = () => adminSettingsStore.opsMonitoringEnabled
 const flagAdminPayment = () => adminSettingsStore.paymentEnabled
 
-// buildSelfNavItems 构造用户自己的导航项（用户端主菜单和管理员的"我的账户"子菜单共享这组声明）。
-// withDashboard=true 时包含仪表盘（用户端），false 时不含（管理员的个人区已经有独立仪表盘入口）。
-//
-// 条目顺序：密钥 → 用量 → 可用渠道 → 渠道状态 → 订阅/支付 → 兑换/资料。
-// 可用渠道紧挨渠道状态之上，让用户"先看自己能用什么、再看对应状态"。
+// Icons of the user-menu entries, keyed by path (labels and gates live in ./userNav.ts).
+const SELF_NAV_ICONS: Record<string, unknown> = {
+  '/dashboard': DashboardIcon,
+  '/keys': KeyIcon,
+  '/usage': ChartIcon,
+  '/available-channels': ChannelIcon,
+  '/monitor': SignalIcon,
+  '/subscriptions': CreditCardIcon,
+  '/purchase': RechargeSubscriptionIcon,
+  '/orders': OrderListIcon,
+  '/redeem': GiftIcon,
+  '/points': UsersIcon,
+  '/docs': BookIcon,
+  '/profile': UserIcon,
+}
+
+// The user's own menu, shared by the user sidebar and the admin "My account"
+// section. It is the list from ./userNav.ts in its declared order, followed by the
+// site's custom menu items. withDashboard=false drops the dashboard entry
+// (the admin menu has its own dashboard link).
 function buildSelfNavItems(withDashboard: boolean): NavItem[] {
-  const items: NavItem[] = []
-  if (withDashboard) {
-    items.push({ path: '/dashboard', label: t('nav.dashboard'), icon: DashboardIcon })
-  }
+  const items: NavItem[] = USER_NAV_ENTRIES.filter((entry) => withDashboard || !entry.userOnly).map(
+    (entry): NavItem => ({
+      path: entry.path,
+      label: t(entry.labelKey),
+      icon: SELF_NAV_ICONS[entry.path],
+      hideInSimpleMode: entry.hideInSimpleMode,
+      featureFlag: entry.flag ? makeSidebarFlag(entry.flag) : undefined,
+    }),
+  )
   items.push(
-    { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
-    { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
-    { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
-    { path: '/monitor', label: t('nav.channelStatus'), icon: SignalIcon, featureFlag: flagChannelMonitor },
-    { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
-    { path: '/purchase', label: t('nav.buySubscription'), icon: RechargeSubscriptionIcon, hideInSimpleMode: true, featureFlag: flagPayment },
-    { path: '/orders', label: t('nav.myOrders'), icon: OrderListIcon, hideInSimpleMode: true, featureFlag: flagPayment },
-    { path: '/redeem', label: t('nav.redeem'), icon: GiftIcon, hideInSimpleMode: true },
-    { path: '/points', label: t('nav.points'), icon: UsersIcon, hideInSimpleMode: true },
-    { path: '/profile', label: t('nav.profile'), icon: UserIcon },
     ...customMenuItemsForUser.value.map((item): NavItem => ({
       path: `/custom/${item.id}`,
       label: item.label,
@@ -749,6 +781,17 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/ops', label: t('nav.ops'), icon: ChartIcon, featureFlag: flagOpsMonitoring },
     { path: '/admin/users', label: t('nav.users'), icon: UsersIcon, hideInSimpleMode: true },
     { path: '/admin/groups', label: t('nav.groups'), icon: FolderIcon, hideInSimpleMode: true },
+    {
+      path: '/admin/pricing',
+      label: t('nav.pricingConfig'),
+      icon: PriceTagIcon,
+      hideInSimpleMode: true,
+      expandOnly: true,
+      children: [
+        { path: '/admin/pricing/models', label: t('nav.pricingModels'), icon: CogIcon },
+        { path: '/admin/pricing/matrix', label: t('nav.pricingMatrix'), icon: FolderIcon },
+      ],
+    },
     {
       path: '/admin/channels',
       label: t('nav.channelManagement'),
@@ -860,15 +903,13 @@ function isGroupActive(item: NavItem): boolean {
 }
 
 function isGroupExpanded(item: NavItem): boolean {
-  return expandedGroups.value.has(item.path) || isGroupActive(item)
+  const override = groupExpandOverrides.value.get(item.path)
+  if (override !== undefined) return override
+  return isGroupActive(item)
 }
 
 function toggleGroup(item: NavItem) {
-  if (expandedGroups.value.has(item.path)) {
-    expandedGroups.value.delete(item.path)
-  } else {
-    expandedGroups.value.add(item.path)
-  }
+  groupExpandOverrides.value.set(item.path, !isGroupExpanded(item))
 }
 
 /**
@@ -888,9 +929,7 @@ function handleGroupClick(item: NavItem) {
   if (route.path !== item.path) {
     router.push(item.path)
   }
-  if (!expandedGroups.value.has(item.path)) {
-    expandedGroups.value.add(item.path)
-  }
+  groupExpandOverrides.value.set(item.path, true)
 }
 
 // Initialize theme

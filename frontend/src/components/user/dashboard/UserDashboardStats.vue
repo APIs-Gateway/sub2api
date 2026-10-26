@@ -1,36 +1,40 @@
 <template>
-  <!-- 核心指标：账本式指标条——数字坐在纸上、发丝线分格、无卡盒、无角标 -->
+  <!-- 核心指标：账本式指标条——数字坐在纸上、发丝线分格、无卡盒、无角标。
+       所有格子的主数字同字号同字重（.num-primary）：余额不再单独放大，靠排在第一格体现位置。 -->
   <div class="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-gray-200 bg-gray-200 dark:border-dark-700 dark:bg-dark-700 lg:grid-cols-4">
-    <!-- Balance（唯一英雄数字：Fraunces 黏土） -->
+    <!-- Balance -->
     <div v-if="!isSimple" class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.balance') }}</span>
-      <span class="metric-hero">${{ formatBalance(balance) }}</span>
-      <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('common.available') }}</span>
+      <NumText tier="primary" :text="formatWallet(balance)" data-test="balance-value" />
+      <span class="num-aux">{{ t('common.available') }}</span>
     </div>
 
     <!-- API Keys -->
     <div class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.apiKeys') }}</span>
-      <span class="metric-value">{{ stats?.total_api_keys || 0 }}</span>
-      <span class="text-xs text-gray-500 dark:text-gray-400">{{ stats?.active_api_keys || 0 }} {{ t('common.active') }}</span>
+      <NumText tier="primary" :text="formatNumber(stats?.total_api_keys || 0)" />
+      <span class="num-aux">{{ formatNumber(stats?.active_api_keys || 0) }} {{ t('common.active') }}</span>
     </div>
 
     <!-- Today Requests -->
     <div class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.todayRequests') }}</span>
-      <span class="metric-value">{{ stats?.today_requests || 0 }}</span>
-      <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('common.total') }}: {{ formatNumber(stats?.total_requests || 0) }}</span>
+      <NumText tier="primary" :text="formatNumber(stats?.today_requests || 0)" />
+      <span class="num-aux">{{ t('common.total') }}: {{ formatNumber(stats?.total_requests || 0) }}</span>
     </div>
 
-    <!-- Today Cost -->
+    <!-- Today Cost：悬停给出精确值（界面上按统一规则收口，不丢信息） -->
     <div class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.todayCost') }}</span>
-      <span class="metric-value" :title="t('dashboard.actual')">
-        ${{ formatCost(stats?.today_actual_cost || 0) }}
-        <span class="font-mono text-sm font-normal text-gray-400 dark:text-gray-500" :title="t('dashboard.standard')">/ ${{ formatCost(stats?.today_cost || 0) }}</span>
+      <span class="flex flex-wrap items-baseline gap-x-2">
+        <NumText
+          tier="primary"
+          :text="formatMixed(stats?.today_actual_cost || 0, stats?.today_actual_cost_fiat)"
+          :title="`${t('dashboard.actual')}: ${formatMixed(stats?.today_actual_cost || 0, stats?.today_actual_cost_fiat, EXACT_DIGITS)}`"
+        />
       </span>
-      <span class="text-xs text-gray-500 dark:text-gray-400">
-        {{ t('common.total') }}: <span class="text-gray-700 dark:text-gray-300">${{ formatCost(stats?.total_actual_cost || 0) }}</span>
+      <span class="num-aux" :title="formatMixed(stats?.total_actual_cost || 0, stats?.total_actual_cost_fiat, EXACT_DIGITS)">
+        {{ t('common.total') }}: {{ formatMixed(stats?.total_actual_cost || 0, stats?.total_actual_cost_fiat) }}
       </span>
     </div>
   </div>
@@ -40,29 +44,27 @@
     <!-- Today Tokens -->
     <div class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.todayTokens') }}</span>
-      <span class="metric-value">{{ formatTokens(stats?.today_tokens || 0) }}</span>
-      <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('dashboard.input') }} {{ formatTokens(stats?.today_input_tokens || 0) }} · {{ t('dashboard.output') }} {{ formatTokens(stats?.today_output_tokens || 0) }}</span>
+      <NumText tier="primary" :text="formatTokens(stats?.today_tokens || 0)" :title="formatNumber(stats?.today_tokens || 0)" />
     </div>
 
     <!-- Total Tokens -->
     <div class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.totalTokens') }}</span>
-      <span class="metric-value">{{ formatTokens(stats?.total_tokens || 0) }}</span>
-      <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('dashboard.input') }} {{ formatTokens(stats?.total_input_tokens || 0) }} · {{ t('dashboard.output') }} {{ formatTokens(stats?.total_output_tokens || 0) }}</span>
+      <NumText tier="primary" :text="formatTokens(stats?.total_tokens || 0)" :title="formatNumber(stats?.total_tokens || 0)" />
     </div>
 
     <!-- Performance (RPM/TPM) -->
     <div class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.performance') }}</span>
-      <span class="metric-value">{{ formatTokens(stats?.rpm || 0) }} <span class="text-xs font-normal text-gray-500 dark:text-gray-400">RPM</span></span>
-      <span class="text-xs text-gray-500 dark:text-gray-400">{{ formatTokens(stats?.tpm || 0) }} TPM</span>
+      <NumText tier="primary" :text="`${formatTokens(stats?.rpm || 0)} RPM`" />
+      <span class="num-aux">{{ formatTokens(stats?.tpm || 0) }} TPM</span>
     </div>
 
     <!-- Avg Response Time -->
     <div class="metric-cell bg-gray-50 dark:bg-dark-950">
       <span class="metric-label">{{ t('dashboard.avgResponse') }}</span>
-      <span class="metric-value">{{ formatDuration(stats?.average_duration_ms || 0) }}</span>
-      <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('dashboard.averageTime') }}</span>
+      <NumText tier="primary" :text="formatDuration(stats?.average_duration_ms || 0)" />
+      <span class="num-aux">{{ t('dashboard.averageTime') }}</span>
     </div>
   </div>
 
@@ -74,13 +76,15 @@
     <div class="mb-3 flex items-center justify-between">
       <h3 class="font-serif text-base text-gray-900 dark:text-white">{{ t('dashboard.platformBreakdown') }}</h3>
       <span class="text-xs text-gray-500 dark:text-gray-400">
-        {{ t('dashboard.platformCount', { count: sortedPlatforms.length }) }}
+        {{ t('dashboard.platformCount', { count: platformCount }) }}
       </span>
     </div>
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <div
         v-for="item in platformCards"
         :key="item.platform"
+        data-testid="platform-card"
+        :data-platform="item.platform"
         :class="[
           'rounded-md border p-3',
           item.isOther
@@ -92,26 +96,39 @@
           <span class="text-sm font-semibold text-gray-900 dark:text-white">
             {{ item.isOther ? t('dashboard.platformOther') : platformLabel(item.platform) }}
           </span>
-          <span class="font-mono text-sm tabular-nums text-gray-900 dark:text-white" :title="t('dashboard.actual')">
-            ${{ formatCost(item.total_actual_cost) }}
-          </span>
+          <NumText
+            tier="secondary"
+            class="text-sm text-gray-900 dark:text-white"
+            :text="formatMixed(item.total_actual_cost, item.total_actual_cost_fiat)"
+            :title="`${t('dashboard.actual')}: ${formatMixed(item.total_actual_cost, item.total_actual_cost_fiat, EXACT_DIGITS)}`"
+          />
         </div>
         <div class="mt-2 space-y-1 text-xs">
           <div class="flex items-center justify-between">
             <span class="text-gray-500 dark:text-gray-400">{{ t('dashboard.todayCost') }}</span>
-            <span class="font-mono tabular-nums text-gray-900 dark:text-white">${{ formatCost(item.today_actual_cost) }}</span>
+            <NumText
+              tier="secondary"
+              class="text-gray-900 dark:text-white"
+              :text="formatMixed(item.today_actual_cost, item.today_actual_cost_fiat)"
+              :title="formatMixed(item.today_actual_cost, item.today_actual_cost_fiat, EXACT_DIGITS)"
+            />
           </div>
           <div class="flex items-center justify-between">
             <span class="text-gray-500 dark:text-gray-400">{{ t('dashboard.requests') }}</span>
-            <span class="font-mono tabular-nums text-gray-700 dark:text-gray-300">
-              {{ item.total_requests > 0 ? formatNumber(item.total_requests) : '-' }}
-            </span>
+            <NumText
+              tier="secondary"
+              class="text-gray-700 dark:text-gray-300"
+              :text="item.total_requests > 0 ? formatNumber(item.total_requests) : '-'"
+            />
           </div>
           <div class="flex items-center justify-between">
             <span class="text-gray-500 dark:text-gray-400">{{ t('dashboard.tokens') }}</span>
-            <span class="font-mono tabular-nums text-gray-700 dark:text-gray-300">
-              {{ item.total_tokens > 0 ? formatTokens(item.total_tokens) : '-' }}
-            </span>
+            <NumText
+              tier="secondary"
+              class="text-gray-700 dark:text-gray-300"
+              :text="item.total_tokens > 0 ? formatTokens(item.total_tokens) : '-'"
+              :title="item.total_tokens > 0 ? formatNumber(item.total_tokens) : undefined"
+            />
           </div>
         </div>
 
@@ -126,7 +143,7 @@
               <template v-if="(quotaVal(item.quota, `${w}_limit_usd`) as number) === 0">
                 <div class="flex items-center justify-between text-xs">
                   <span class="text-gray-600 dark:text-gray-300">{{ t(`dashboard.platformQuota.${w}`) }}</span>
-                  <span class="font-mono text-primary-600 dark:text-primary-400">{{ t('dashboard.platformQuota.disabled') }}</span>
+                  <span class="text-primary-600 dark:text-primary-400">{{ t('dashboard.platformQuota.disabled') }}</span>
                 </div>
                 <div class="h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700">
                   <div class="h-full w-full rounded-full bg-primary-600" />
@@ -136,9 +153,7 @@
               <template v-else>
                 <div class="flex items-center justify-between text-xs">
                   <span class="text-gray-600 dark:text-gray-300">{{ t(`dashboard.platformQuota.${w}`) }}</span>
-                  <span class="font-mono tabular-nums text-gray-700 dark:text-gray-200">
-                    ${{ formatUsd((quotaVal(item.quota, `${w}_usage_usd`) as number) ?? 0) }} / ${{ formatUsd(quotaVal(item.quota, `${w}_limit_usd`) as number) }}
-                  </span>
+                  <span class="num-secondary text-gray-700 dark:text-gray-200">{{ formatLimit((quotaVal(item.quota, `${w}_usage_usd`) as number) ?? 0) }} / {{ formatLimit(quotaVal(item.quota, `${w}_limit_usd`) as number) }}</span>
                 </div>
                 <div class="h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700">
                   <div
@@ -147,7 +162,7 @@
                     :style="{ width: calcPercent((quotaVal(item.quota, `${w}_usage_usd`) as number) ?? 0, quotaVal(item.quota, `${w}_limit_usd`) as number) + '%' }"
                   />
                 </div>
-                <p v-if="quotaVal(item.quota, `${w}_window_resets_at`)" class="text-[10px] text-gray-400">
+                <p v-if="quotaVal(item.quota, `${w}_window_resets_at`)" class="num-aux text-[10px] text-gray-400 dark:text-gray-500">
                   {{ t('dashboard.platformQuota.resetsAt', { time: formatResetTime(quotaVal(item.quota, `${w}_window_resets_at`) as string) }) }}
                 </p>
               </template>
@@ -162,14 +177,21 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { UserDashboardStats as UserStatsType } from '@/api/usage'
+import type { PlatformDashboardStats, UserDashboardStats as UserStatsType } from '@/api/usage'
 import type { PlatformQuotaItem } from '@/types'
 import CheckinCard from '@/components/user/dashboard/CheckinCard.vue'
+import NumText from '@/components/common/NumText.vue'
+import { EXACT_DIGITS, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { useSourceFiatRate } from '@/composables/useSourceFiatRate'
+import { formatCompactCount, formatCount, formatDurationMs } from '@/utils/numberFormat'
 
 interface FusedPlatformCard {
   platform: string
   total_actual_cost: number
   today_actual_cost: number
+  // 服务端分桶折算的人民币值；缺省表示后端未提供（formatMixed 会回落到美元）
+  total_actual_cost_fiat?: number
+  today_actual_cost_fiat?: number
   total_requests: number
   total_tokens: number
   isOther?: boolean
@@ -183,6 +205,9 @@ const props = defineProps<{
   platformQuotas?: PlatformQuotaItem[] | null
 }>()
 const { t } = useI18n()
+const { formatWallet, formatMixed } = useCurrencyDisplay()
+// 平台限额统计的是额度（钱包和订阅卡混扣），只能按当前扣费来源近似折算
+const { formatLimit } = useSourceFiatRate()
 
 const PLATFORM_LABELS: Record<string, string> = {
   anthropic: 'Claude',
@@ -193,27 +218,27 @@ const PLATFORM_LABELS: Record<string, string> = {
 
 const platformLabel = (p: string) => PLATFORM_LABELS[p] ?? p
 
-const sortedPlatforms = computed(() => {
-  const list = props.stats?.by_platform ?? []
-  return [...list].sort((a, b) => b.total_actual_cost - a.total_actual_cost)
-})
-
 // 处理"各平台之和 < 总值"的差值：后端按平台聚合时过滤了无法归属平台的行
 // （group 与 account 都缺 platform）。这里把差值作为"其他"卡片显式展示，
 // 避免 Row 1 总值与 Row 3 平台拆分加总对不上、用户困惑。
 const OTHER_THRESHOLD = 0.0001
 const platformCards = computed<FusedPlatformCard[]>(() => {
   // 建立 by_platform Map
-  const byPlat = new Map<string, (typeof sortedPlatforms.value)[number]>()
+  const byPlat = new Map<string, PlatformDashboardStats>()
   for (const item of props.stats?.by_platform ?? []) byPlat.set(item.platform, item)
 
-  // 建立 quota Map
+  // 建立 quota Map。三档全空的记录不产生卡片，挂到卡片上也不渲染配额区。
   const byQuota = new Map<string, PlatformQuotaItem>()
   for (const q of props.platformQuotas ?? []) byQuota.set(q.platform, q)
 
-  // union 平台集合。后端 by_platform / quota 接口均不会返回 platform='__other__'，
+  // 卡片集合 = 有用量的平台 ∪ 至少配置了一档限额的平台。
+  // 三档全空的限额记录等价于不限额，不单独产生卡片。
+  // 后端 by_platform / quota 接口均不会返回 platform='__other__'，
   // 无需显式排除；__other__ 由下方差值补差逻辑单独追加。
-  const platforms = new Set<string>([...byPlat.keys(), ...byQuota.keys()])
+  const platforms = new Set<string>(byPlat.keys())
+  for (const [platform, q] of byQuota) {
+    if (hasAnyLimit(q)) platforms.add(platform)
+  }
 
   const PLATFORM_ORDER = ['anthropic', 'openai', 'gemini', 'antigravity', 'grok']
   const cards: FusedPlatformCard[] = []
@@ -224,6 +249,8 @@ const platformCards = computed<FusedPlatformCard[]>(() => {
       platform: p,
       total_actual_cost: stat?.total_actual_cost ?? 0,
       today_actual_cost: stat?.today_actual_cost ?? 0,
+      total_actual_cost_fiat: knownFiat(stat?.total_actual_cost, stat?.total_actual_cost_fiat),
+      today_actual_cost_fiat: knownFiat(stat?.today_actual_cost, stat?.today_actual_cost_fiat),
       total_requests: stat?.total_requests ?? 0,
       total_tokens: stat?.total_tokens ?? 0,
       quota: byQuota.get(p),
@@ -253,6 +280,15 @@ const platformCards = computed<FusedPlatformCard[]>(() => {
       platform: '__other__',
       total_actual_cost: diffTotal,
       today_actual_cost: diffToday,
+      // 人民币同样按「总值 − 各平台之和」补差；任何一方缺人民币值就整体缺省
+      total_actual_cost_fiat: fiatDiff(
+        knownFiat(total, props.stats?.total_actual_cost_fiat),
+        cards.map((c) => c.total_actual_cost_fiat)
+      ),
+      today_actual_cost_fiat: fiatDiff(
+        knownFiat(today, props.stats?.today_actual_cost_fiat),
+        cards.map((c) => c.today_actual_cost_fiat)
+      ),
       total_requests: 0,
       total_tokens: 0,
       isOther: true,
@@ -261,6 +297,24 @@ const platformCards = computed<FusedPlatformCard[]>(() => {
 
   return cards
 })
+
+/**
+ * 后端人民币字段带 omitempty：额度为 0 时字段缺省，此时人民币就是 0；
+ * 额度非 0 却缺字段，说明后端没提供，返回 undefined。
+ */
+function knownFiat(credits: number | undefined, fiat: number | undefined): number | undefined {
+  if (typeof fiat === 'number' && Number.isFinite(fiat)) return fiat
+  return credits ? undefined : 0
+}
+
+/** 「其他」卡的人民币 = 总值 − 各平台之和；任何一项未知就整体未知。 */
+function fiatDiff(total: number | undefined, parts: Array<number | undefined>): number | undefined {
+  if (total === undefined || parts.some((p) => p === undefined)) return undefined
+  return Math.max(0, total - parts.reduce<number>((sum, p) => sum + (p ?? 0), 0))
+}
+
+// 标题右侧的平台计数 = 实际渲染的平台卡片数，不含"其他"差额卡。
+const platformCount = computed(() => platformCards.value.filter((c) => !c.isOther).length)
 
 // Quota helpers
 
@@ -287,17 +341,6 @@ function quotaBarClass(p: number): string {
   return 'bg-primary-500'
 }
 
-// 与 formatBalance 一致使用 Intl.NumberFormat 做半偶舍入，避免 toFixed 在不同 JS 引擎
-// 下偶发截断而非四舍五入（与后端展示精度不一致）。
-const usdFormatter = new Intl.NumberFormat('en-US', {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})
-function formatUsd(n: number): string {
-  if (!Number.isFinite(n)) return '0.00'
-  return usdFormatter.format(n)
-}
-
 function formatResetTime(iso: string | null | undefined): string {
   if (!iso) return ''
   const d = new Date(iso)
@@ -311,18 +354,8 @@ function formatResetTime(iso: string | null | undefined): string {
   })
 }
 
-const formatBalance = (b: number) =>
-  new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(b)
-
-const formatNumber = (n: number) => n.toLocaleString()
-const formatCost = (c: number) => c.toFixed(4)
-const formatTokens = (t: number) => {
-  if (t >= 1_000_000) return `${(t / 1_000_000).toFixed(1)}M`
-  if (t >= 1000) return `${(t / 1000).toFixed(1)}K`
-  return t.toString()
-}
-const formatDuration = (ms: number) => ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms.toFixed(0)}ms`
+// 计数与 Token 的写法全站统一，见 utils/numberFormat
+const formatNumber = formatCount
+const formatTokens = (n: number) => formatCompactCount(n, { allowBillions: false })
+const formatDuration = formatDurationMs
 </script>

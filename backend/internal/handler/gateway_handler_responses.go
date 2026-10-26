@@ -20,6 +20,7 @@ import (
 // This converts Responses API requests to Anthropic format, forwards to Anthropic
 // upstream, and converts responses back to Responses format.
 func (h *GatewayHandler) Responses(c *gin.Context) {
+	defer finishBillingInflightHTTP(c)
 	streamStarted := false
 
 	requestStart := time.Now()
@@ -68,7 +69,13 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 
-	// Extract model and stream using gjson (like OpenAI handler)
+	// Extract model and stream using gjson (like OpenAI handler)（model 首尾空白先在入口去掉）
+	body = service.TrimRequestBodyModel(body)
+	if err := service.ValidateGatewayModelField(body); err != nil {
+		h.responsesErrorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+
 	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
 		h.responsesErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
@@ -97,13 +104,11 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(requestCtx, apiKey.GroupID, reqModel)
 
-	// Claude Code only restriction:
-	// /v1/responses is never a Claude Code endpoint.
-	// When claude_code_only is enabled, this endpoint is rejected.
-	// The existing service-layer checkClaudeCodeRestriction handles degradation
-	// to fallback groups when the Forward path calls SelectAccountForModelWithExclusions.
-	// Here we just reject at handler level since /v1/responses clients can't be Claude Code.
-	if apiKey.Group != nil && apiKey.Group.ClaudeCodeOnly {
+	// Claude Code only restriction: /v1/responses is never a Claude Code
+	// endpoint. With a fallback group the request continues and account selection
+	// (checkClaudeCodeRestriction) schedules it in the fallback group; without one
+	// it is rejected here.
+	if apiKey.Group != nil && apiKey.Group.ClaudeCodeOnly && apiKey.Group.FallbackGroupID == nil {
 		h.responsesErrorResponse(c, http.StatusForbidden, "permission_error",
 			"This group is restricted to Claude Code clients (/v1/messages only)")
 		return
@@ -162,8 +167,15 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	fs := NewFailoverState(h.maxAccountSwitches, false)
 
 	for {
+		if failoverClientGone(c) {
+			return
+		}
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(requestCtx, apiKey.GroupID, sessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
 		if err != nil {
+			if failoverClientGone(c) {
+				reqLog.Info("gateway.responses.account_select_aborted_client_disconnected", zap.Error(err))
+				return
+			}
 			if len(fs.FailedAccountIDs) == 0 {
 				h.respondNoAccountError(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformAnthropic, "No available accounts: "+err.Error(), err, noAccountCapacityMarkIfNoAvailable, gatewayNoAccountResponseResponses, false)
 				return
@@ -217,6 +229,10 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if channelMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
+		if !reserveBillingInflightHTTP(c, h.gatewayService, service.BillingInflightRequest{APIKey: apiKey, Account: account, Model: reqModel, Body: forwardBody, ChannelUsageFields: channelMapping.ToUsageFields(reqModel, "")}, accountReleaseFunc, func(status int, code, message string) { h.responsesErrorResponse(c, status, code, message) }) {
+			return
+		}
+		requestCtx = billingInflightForwardContext(c, requestCtx)
 		result, err := h.gatewayService.ForwardAsResponses(requestCtx, c, account, forwardBody, parsedReq)
 
 		if accountReleaseFunc != nil {
@@ -226,6 +242,9 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
+				if result == nil && service.IsBillingInflightNoChargeError(err) && c.Writer.Size() == writerSizeBeforeForward {
+					service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+				}
 				// Can't failover if streaming content already sent
 				if c.Writer.Size() != writerSizeBeforeForward {
 					h.handleResponsesFailoverExhausted(c, failoverErr, true)
@@ -254,7 +273,10 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				zap.Bool("upstream_error_response_already_written", upstreamErrorAlreadyCommunicated),
 				zap.Error(err),
 			)
-			return
+			// Metered partial usage is settled once; failover always returns nil.
+			if result == nil {
+				return
+			}
 		}
 
 		// 6. Record usage

@@ -178,8 +178,11 @@ type UserMonitorDetail struct {
 
 // ModelDetail 单个模型的可用率/延迟统计。
 type ModelDetail struct {
-	Model           string
-	LatestStatus    string
+	Model        string
+	LatestStatus string
+	// CardStatus 主模型最近几次探测的综合状态（与 /monitor 卡片同口径），只有主模型会填；
+	// 面向普通用户的详情用它代替 LatestStatus，保证卡片和详情弹窗说的是同一件事。
+	CardStatus      string
 	LatestLatencyMs *int
 	Availability7d  float64 // 0-100
 	Availability15d float64

@@ -11,6 +11,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -153,9 +154,12 @@ type BulkUpdateAccountsRequest struct {
 	Status                  string                    `json:"status" binding:"omitempty,oneof=active inactive error"`
 	Schedulable             *bool                     `json:"schedulable"`
 	GroupIDs                *[]int64                  `json:"group_ids"`
+	GroupMode               string                    `json:"group_mode"` // append | remove | replace，缺省按 replace 处理
 	Credentials             map[string]any            `json:"credentials"`
 	Extra                   map[string]any            `json:"extra"`
 	ProbeEnabled            *bool                     `json:"upstream_billing_probe_enabled"`
+	ExpiresAt               *int64                    `json:"expires_at"`                 // Unix 秒；<= 0 表示清除
+	AutoPauseOnExpired      *bool                     `json:"auto_pause_on_expired"`      // 过期后自动暂停调度
 	ConfirmMixedChannelRisk *bool                     `json:"confirm_mixed_channel_risk"` // 用户确认混合渠道风险
 }
 
@@ -231,43 +235,96 @@ func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, ac
 	return item
 }
 
+// accountListFilters 是账号列表和「选中全部筛选结果」共用的筛选条件。
+type accountListFilters struct {
+	platform    string
+	accountType string
+	status      string
+	search      string
+	privacyMode string
+	groupID     int64
+}
+
+// parseAccountListFilters 解析账号列表的筛选查询参数。List 和 ListIDs 共用它，
+// 保证「列表里看到的」和「选中全部结果」使用完全相同的筛选条件。
+func parseAccountListFilters(c *gin.Context) (accountListFilters, error) {
+	filters := accountListFilters{
+		platform:    c.Query("platform"),
+		accountType: c.Query("type"),
+		status:      c.Query("status"),
+		privacyMode: strings.TrimSpace(c.Query("privacy_mode")),
+		// 标准化和验证 search 参数
+		search: strings.TrimSpace(c.Query("search")),
+	}
+	if len(filters.search) > 100 {
+		filters.search = filters.search[:100]
+	}
+
+	if groupIDStr := c.Query("group"); groupIDStr != "" {
+		if groupIDStr == accountListGroupUngroupedQueryValue {
+			filters.groupID = service.AccountListGroupUngrouped
+		} else {
+			parsedGroupID, parseErr := strconv.ParseInt(groupIDStr, 10, 64)
+			if parseErr != nil || parsedGroupID < 0 {
+				return accountListFilters{}, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter")
+			}
+			filters.groupID = parsedGroupID
+		}
+	}
+	return filters, nil
+}
+
+// AccountIDListResponse 是 ListIDs 的响应体。
+type AccountIDListResponse struct {
+	IDs       []int64  `json:"ids"`
+	Total     int64    `json:"total"`
+	Platforms []string `json:"platforms"`
+	Types     []string `json:"types"`
+}
+
+// ListIDs returns the IDs of every account matching the list filters (at most service.AccountIDsMaxLimit).
+// Used by "select all filtered results" so bulk operations can act on more than one page.
+// GET /api/v1/admin/accounts/ids
+func (h *AccountHandler) ListIDs(c *gin.Context) {
+	filters, err := parseAccountListFilters(c)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	list, err := h.adminService.ListAccountIDs(c.Request.Context(), filters.platform, filters.accountType, filters.status, filters.search, filters.groupID, filters.privacyMode)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	resp := AccountIDListResponse{IDs: list.IDs, Total: list.Total, Platforms: list.Platforms, Types: list.Types}
+	if resp.IDs == nil {
+		resp.IDs = []int64{}
+	}
+	if resp.Platforms == nil {
+		resp.Platforms = []string{}
+	}
+	if resp.Types == nil {
+		resp.Types = []string{}
+	}
+	response.Success(c, resp)
+}
+
 // List handles listing all accounts with pagination
 // GET /api/v1/admin/accounts
 func (h *AccountHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
-	platform := c.Query("platform")
-	accountType := c.Query("type")
-	status := c.Query("status")
-	search := c.Query("search")
-	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
+	filters, err := parseAccountListFilters(c)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	sortBy := c.DefaultQuery("sort_by", "name")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
-	// 标准化和验证 search 参数
-	search = strings.TrimSpace(search)
-	if len(search) > 100 {
-		search = search[:100]
-	}
 	lite := parseBoolQueryWithDefault(c.Query("lite"), false)
 
-	var groupID int64
-	if groupIDStr := c.Query("group"); groupIDStr != "" {
-		if groupIDStr == accountListGroupUngroupedQueryValue {
-			groupID = service.AccountListGroupUngrouped
-		} else {
-			parsedGroupID, parseErr := strconv.ParseInt(groupIDStr, 10, 64)
-			if parseErr != nil {
-				response.ErrorFrom(c, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter"))
-				return
-			}
-			if parsedGroupID < 0 {
-				response.ErrorFrom(c, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter"))
-				return
-			}
-			groupID = parsedGroupID
-		}
-	}
-
-	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
+	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, filters.platform, filters.accountType, filters.status, filters.search, filters.groupID, filters.privacyMode, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -389,7 +446,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		result[i] = item
 	}
 
-	etag := buildAccountsListETag(result, total, page, pageSize, platform, accountType, status, search, lite)
+	etag := buildAccountsListETag(result, total, page, pageSize, filters.platform, filters.accountType, filters.status, filters.search, lite)
 	if etag != "" {
 		c.Header("ETag", etag)
 		c.Header("Vary", "If-None-Match")
@@ -983,6 +1040,7 @@ func (h *AccountHandler) Refresh(c *gin.Context) {
 
 	if warning == "missing_project_id_temporary" {
 		response.Success(c, gin.H{
+			"account": h.buildAccountResponseWithRuntime(c.Request.Context(), updatedAccount),
 			"message": "Token refreshed successfully, but project_id could not be retrieved (will retry automatically)",
 			"warning": "missing_project_id_temporary",
 		})
@@ -1037,6 +1095,11 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 		response.ErrorFrom(c, infraerrors.BadRequest("NOT_OAUTH", "cannot apply oauth credentials to non-OAuth account"))
 		return
 	}
+
+	// Re-auth only returns authentication fields. Preserve account configuration
+	// stored alongside them (for example model_mapping), while allowing the new
+	// OAuth values to replace their existing counterparts.
+	req.Credentials = service.MergeCredentials(existing.Credentials, req.Credentials)
 
 	updatedAccount, err := h.adminService.UpdateAccount(ctx, accountID, &service.UpdateAccountInput{
 		Type:        req.Type,
@@ -1544,6 +1607,19 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		response.BadRequest(c, "account_ids or filters is required")
 		return
 	}
+	groupMode, err := service.ParseAccountGroupBindMode(req.GroupMode)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if req.GroupIDs == nil && strings.TrimSpace(req.GroupMode) != "" {
+		response.ErrorFrom(c, service.ErrAccountGroupIDsRequired)
+		return
+	}
+	if req.GroupIDs != nil && groupMode != service.AccountGroupBindModeReplace && len(*req.GroupIDs) == 0 {
+		response.ErrorFrom(c, service.ErrAccountGroupIDsRequired)
+		return
+	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
 
@@ -1561,7 +1637,9 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		req.GroupIDs != nil ||
 		len(req.Credentials) > 0 ||
 		len(req.Extra) > 0 ||
-		req.ProbeEnabled != nil
+		req.ProbeEnabled != nil ||
+		req.ExpiresAt != nil ||
+		req.AutoPauseOnExpired != nil
 
 	if !hasUpdates {
 		response.BadRequest(c, "No updates provided")
@@ -1580,9 +1658,12 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		Status:                req.Status,
 		Schedulable:           req.Schedulable,
 		GroupIDs:              req.GroupIDs,
+		GroupMode:             groupMode,
 		Credentials:           req.Credentials,
 		Extra:                 req.Extra,
 		ProbeEnabled:          req.ProbeEnabled,
+		ExpiresAt:             req.ExpiresAt,
+		AutoPauseOnExpired:    req.AutoPauseOnExpired,
 		SkipMixedChannelCheck: skipCheck,
 	})
 	if err != nil {
@@ -1825,7 +1906,8 @@ func (h *AccountHandler) ResetQuota(c *gin.Context) {
 	}
 
 	if err := h.adminService.ResetAccountQuota(c.Request.Context(), accountID); err != nil {
-		response.InternalError(c, "Failed to reset account quota: "+err.Error())
+		// ErrAccountNotFound → 404；其它错误按 infraerrors 映射（未知错误为 500）。
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -2008,9 +2090,22 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			return
 		}
 
+		// The cached account mapping is shared by request routing; never mutate it.
+		modelIDs := make(map[string]struct{}, len(mapping)+len(openai.DefaultModels))
+		for id := range mapping {
+			modelIDs[id] = struct{}{}
+		}
+		// An opt-in rename-only mapping retains the normal model catalog.
+		if account.ModelMappingAllowsUnlisted() {
+			for _, dm := range openai.DefaultModels {
+				if account.IsModelSupported(dm.ID) {
+					modelIDs[dm.ID] = struct{}{}
+				}
+			}
+		}
 		// Return mapped models
 		var models []openai.Model
-		for requestedModel := range mapping {
+		for _, requestedModel := range orderedAccountTestModelIDs(modelIDs, openai.DefaultModels, func(model openai.Model) string { return model.ID }) {
 			var found bool
 			for _, dm := range openai.DefaultModels {
 				if dm.ID == requestedModel {
@@ -2034,8 +2129,14 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle Gemini accounts
 	if account.IsGemini() {
-		// For OAuth accounts: return default Gemini models
+		// Consumer Google One OAuth still uses the legacy Gemini CLI / Code
+		// Assist channel. Do not advertise newer 3.x or image models that the
+		// channel cannot serve.
 		if account.IsOAuth() {
+			if account.IsGeminiGoogleOne() {
+				response.Success(c, geminicli.GoogleOneModels)
+				return
+			}
 			response.Success(c, geminicli.DefaultModels)
 			return
 		}
@@ -2047,8 +2148,19 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			return
 		}
 
+		modelIDs := make(map[string]struct{}, len(mapping)+len(geminicli.DefaultModels))
+		for id := range mapping {
+			modelIDs[id] = struct{}{}
+		}
+		if account.ModelMappingAllowsUnlisted() {
+			for _, dm := range geminicli.DefaultModels {
+				if account.IsModelSupported(dm.ID) {
+					modelIDs[dm.ID] = struct{}{}
+				}
+			}
+		}
 		var models []geminicli.Model
-		for requestedModel := range mapping {
+		for _, requestedModel := range orderedAccountTestModelIDs(modelIDs, geminicli.DefaultModels, func(model geminicli.Model) string { return model.ID }) {
 			var found bool
 			for _, dm := range geminicli.DefaultModels {
 				if dm.ID == requestedModel {
@@ -2072,19 +2184,51 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle Antigravity accounts: return Claude + Gemini models
 	if account.Platform == service.PlatformAntigravity {
-		// 直接复用 antigravity.DefaultModels()，与 /v1/models 端点保持同步
-		response.Success(c, antigravity.DefaultModels())
+		models := antigravity.DefaultModels()
+		// A configured mapping restricts scheduling and the account test request.
+		// The test picker must not offer built-in models that this account rejects.
+		// Without an explicit mapping, retain the legacy full catalog.
+		rawMapping, _ := account.Credentials["model_mapping"].(map[string]any)
+		hasExplicitMapping := false
+		for _, target := range rawMapping {
+			if _, ok := target.(string); ok {
+				hasExplicitMapping = true
+				break
+			}
+		}
+		if !hasExplicitMapping {
+			response.Success(c, models)
+			return
+		}
+
+		available := make([]antigravity.ClaudeModel, 0, len(models))
+		seen := make(map[string]bool, len(models))
+		for _, model := range models {
+			if canTestAntigravityMappedModel(account, model.ID) {
+				available = append(available, model)
+				seen[model.ID] = true
+			}
+		}
+		// Effective mapping also contains the fork's implicit passthroughs.
+		// Include exact custom aliases, but never expose wildcard patterns as IDs.
+		var aliases []string
+		for modelID := range account.GetModelMapping() {
+			if strings.TrimSpace(modelID) != "" && !strings.Contains(modelID, "*") && !seen[modelID] && canTestAntigravityMappedModel(account, modelID) {
+				aliases = append(aliases, modelID)
+			}
+		}
+		sort.Strings(aliases)
+		for _, modelID := range aliases {
+			available = append(available, antigravity.ClaudeModel{
+				ID: modelID, Type: "model", DisplayName: modelID,
+			})
+		}
+		response.Success(c, available)
 		return
 	}
 
 	// Handle Claude/Anthropic accounts
-	// For OAuth and Setup-Token accounts: return default models
-	if account.IsOAuth() {
-		response.Success(c, claude.DefaultModels)
-		return
-	}
-
-	// For API Key accounts: return models based on model_mapping
+	// OAuth/setup-token and API Key accounts share the same account mapping.
 	mapping := account.GetModelMapping()
 	if len(mapping) == 0 {
 		// No mapping configured, return default models
@@ -2092,9 +2236,21 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	modelIDs := make(map[string]struct{}, len(mapping)+len(claude.DefaultModels))
+	for id := range mapping {
+		modelIDs[id] = struct{}{}
+	}
+	if account.ModelMappingAllowsUnlisted() {
+		for _, dm := range claude.DefaultModels {
+			if account.IsModelSupported(dm.ID) {
+				modelIDs[dm.ID] = struct{}{}
+			}
+		}
+	}
+
 	// Return mapped models (keys of the mapping are the available model IDs)
 	var models []claude.Model
-	for requestedModel := range mapping {
+	for _, requestedModel := range orderedAccountTestModelIDs(modelIDs, claude.DefaultModels, func(model claude.Model) string { return model.ID }) {
 		// Try to find display info from default models
 		var found bool
 		for _, dm := range claude.DefaultModels {
@@ -2116,6 +2272,38 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	}
 
 	response.Success(c, models)
+}
+
+// orderedAccountTestModelIDs retains the curated catalog order and appends
+// configured aliases that are absent from the catalog in stable ID order.
+// candidates is a fresh set built by GetAvailableModels and can be consumed.
+func orderedAccountTestModelIDs[T any](candidates map[string]struct{}, defaults []T, modelID func(T) string) []string {
+	ordered := make([]string, 0, len(candidates))
+	for _, model := range defaults {
+		id := modelID(model)
+		if _, ok := candidates[id]; ok {
+			ordered = append(ordered, id)
+			delete(candidates, id)
+		}
+	}
+	aliases := make([]string, 0, len(candidates))
+	for id := range candidates {
+		aliases = append(aliases, id)
+	}
+	sort.Strings(aliases)
+	return append(ordered, aliases...)
+}
+
+// The Antigravity account test chooses Gemini versus Claude from the requested
+// ID, before applying the mapping. A cross-family mapping would produce the
+// wrong test payload even if regular gateway scheduling accepts its public ID.
+func canTestAntigravityMappedModel(account *service.Account, modelID string) bool {
+	if !account.IsModelSupported(modelID) {
+		return false
+	}
+	mappedID := account.GetMappedModel(modelID)
+	return mappedID != "" && mappedID == strings.TrimSpace(mappedID) &&
+		strings.HasPrefix(modelID, "gemini-") == strings.HasPrefix(mappedID, "gemini-")
 }
 
 // SyncUpstreamModels handles syncing live supported models from an account's upstream.
@@ -2160,27 +2348,88 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 	response.Success(c, gin.H{"models": models})
 }
 
-// SyncUpstreamModelsPreview handles syncing live supported models using provided credentials (no account ID needed).
+// SyncUpstreamModelsPreview fetches models from a temporary draft connection without saving it.
 // POST /api/v1/admin/accounts/models/sync-upstream-preview
 func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 	var req struct {
-		Platform string `json:"platform" binding:"required"`
-		Type     string `json:"type" binding:"required"`
-		BaseURL  string `json:"base_url"`
-		APIKey   string `json:"api_key" binding:"required"`
+		AccountID int64           `json:"account_id" binding:"gte=0"`
+		Platform  string          `json:"platform" binding:"required"`
+		Type      string          `json:"type" binding:"required"`
+		BaseURL   *string         `json:"base_url"`
+		APIKey    string          `json:"api_key"`
+		ProxyID   json.RawMessage `json:"proxy_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
 
+	if req.Type != service.AccountTypeAPIKey {
+		response.BadRequest(c, "Draft model preview requires an API key account")
+		return
+	}
+	var draftProxyID int64
+	if len(req.ProxyID) > 0 && (json.Unmarshal(req.ProxyID, &draftProxyID) != nil || draftProxyID < 0) {
+		response.BadRequest(c, "Invalid proxy ID")
+		return
+	}
 	tempAccount := &service.Account{
-		Platform: req.Platform,
-		Type:     req.Type,
-		Credentials: map[string]any{
-			"api_key":  req.APIKey,
-			"base_url": req.BaseURL,
-		},
+		Platform:    req.Platform,
+		Type:        req.Type,
+		Credentials: map[string]any{},
+	}
+	if req.AccountID > 0 {
+		saved, err := h.adminService.GetAccount(c.Request.Context(), req.AccountID)
+		if err != nil || saved == nil {
+			response.NotFound(c, "Account not found")
+			return
+		}
+		if saved.Platform != req.Platform || saved.Type != req.Type {
+			response.BadRequest(c, "Draft connection must match the saved account platform and type")
+			return
+		}
+		// Credential/extra maps can contain nested headers and model mappings. Deep
+		// copy their JSON representation so preview helpers cannot mutate saved state.
+		for source, target := range map[*map[string]any]*map[string]any{
+			&saved.Credentials: &tempAccount.Credentials,
+			&saved.Extra:       &tempAccount.Extra,
+		} {
+			data, err := json.Marshal(*source)
+			if err != nil || json.Unmarshal(data, target) != nil {
+				response.InternalError(c, "Failed to prepare draft connection")
+				return
+			}
+		}
+		if tempAccount.Credentials == nil {
+			tempAccount.Credentials = map[string]any{}
+		}
+		tempAccount.Concurrency = saved.Concurrency
+		if saved.ProxyID != nil {
+			id := *saved.ProxyID
+			tempAccount.ProxyID = &id
+		}
+	}
+	if key := strings.TrimSpace(req.APIKey); key != "" {
+		tempAccount.Credentials["api_key"] = key
+	}
+	if req.BaseURL != nil {
+		tempAccount.Credentials["base_url"] = strings.TrimSpace(*req.BaseURL)
+	}
+	if len(req.ProxyID) > 0 {
+		tempAccount.ProxyID = nil
+		if draftProxyID > 0 {
+			id := draftProxyID
+			tempAccount.ProxyID = &id
+		}
+	}
+	if tempAccount.ProxyID != nil {
+		proxy, err := h.adminService.GetProxy(c.Request.Context(), *tempAccount.ProxyID)
+		if err != nil || proxy == nil {
+			response.BadRequest(c, "Proxy not found")
+			return
+		}
+		copy := *proxy
+		tempAccount.Proxy = &copy
 	}
 
 	if h.accountTestService == nil {

@@ -78,7 +78,7 @@ func TestProviderPricingHandlerGetPricing(t *testing.T) {
 
 	settingSvc := service.NewSettingService(repo, &config.Config{})
 	groupRepo := &providerPricingGroupRepoStub{groups: []service.Group{{Name: "codex  plus", RateMultiplier: 1.4}}}
-	h := NewProviderPricingHandler(service.NewPaymentConfigService(nil, repo, nil), pricingSvc, settingSvc, groupRepo)
+	h := NewProviderPricingHandler(service.NewPaymentConfigService(nil, repo, nil), pricingSvc, settingSvc, groupRepo, nil)
 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -93,7 +93,7 @@ func TestProviderPricingHandlerGetPricing(t *testing.T) {
 	require.True(t, resp.Success)
 	require.Equal(t, "Codex API", resp.Data.SiteName)
 	require.Equal(t, "codex.example.com", resp.Data.SiteDomain)
-	require.Len(t, resp.Data.Models, 5)
+	require.Len(t, resp.Data.Models, 7)
 	for _, model := range resp.Data.Models {
 		require.Equal(t, "codex plus", model.GroupName)
 		require.True(t, model.Enabled)
@@ -103,13 +103,23 @@ func TestProviderPricingHandlerGetPricing(t *testing.T) {
 	require.Equal(t, "gpt-5.5", resp.Data.Models[0].ModelName)
 	require.Equal(t, 7.0, resp.Data.Models[0].InputPrice)
 	require.Equal(t, "gpt-5.6-sol", resp.Data.Models[1].ModelName)
-	require.Equal(t, 14.0, resp.Data.Models[1].InputPrice)
+	require.Equal(t, 11.2, resp.Data.Models[1].InputPrice)
+	require.NotNil(t, resp.Data.Models[1].OutputPrice)
+	require.InDelta(t, 56.0, *resp.Data.Models[1].OutputPrice, 1e-12)
+	require.NotNil(t, resp.Data.Models[1].CacheInputPrice)
+	require.InDelta(t, 1.12, *resp.Data.Models[1].CacheInputPrice, 1e-12)
+	require.NotNil(t, resp.Data.Models[1].CacheCreatePrice)
+	require.InDelta(t, 14.0, *resp.Data.Models[1].CacheCreatePrice, 1e-12)
 	require.Equal(t, "gpt-5.6-terra", resp.Data.Models[2].ModelName)
 	require.Equal(t, 5.6, resp.Data.Models[2].InputPrice)
 	require.Equal(t, "gpt-5.6-luna", resp.Data.Models[3].ModelName)
 	require.Equal(t, 0.56, resp.Data.Models[3].InputPrice)
 	require.Equal(t, "gpt-6-astra", resp.Data.Models[4].ModelName)
 	require.Equal(t, 28.0, resp.Data.Models[4].InputPrice)
+	require.Equal(t, "gpt-6-sol", resp.Data.Models[5].ModelName)
+	require.Equal(t, 5.6, resp.Data.Models[5].InputPrice)
+	require.Equal(t, "gpt-6-luna", resp.Data.Models[6].ModelName)
+	require.Equal(t, 0.28, resp.Data.Models[6].InputPrice)
 }
 
 func TestProviderPricingHandlerGetPricingGroupError(t *testing.T) {
@@ -121,6 +131,7 @@ func TestProviderPricingHandlerGetPricingGroupError(t *testing.T) {
 		service.NewPricingService(nil, nil),
 		service.NewSettingService(repo, &config.Config{}),
 		&providerPricingGroupRepoStub{err: errors.New("db down")},
+		nil,
 	)
 
 	recorder := httptest.NewRecorder()
@@ -144,6 +155,7 @@ func TestProviderPricingHandlerGetPricingConfigError(t *testing.T) {
 		service.NewPricingService(nil, nil),
 		service.NewSettingService(repo, &config.Config{}),
 		&providerPricingGroupRepoStub{},
+		nil,
 	)
 
 	recorder := httptest.NewRecorder()

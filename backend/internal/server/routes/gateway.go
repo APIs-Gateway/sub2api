@@ -47,6 +47,18 @@ func RegisterGatewayRoutes(
 		}
 	}
 
+	responsesHandler := func(c *gin.Context) {
+		if service.IsOpenAIResponsesInputTokensPath(c.Request.URL.Path) {
+			h.OpenAIGateway.ResponsesInputTokens(c)
+			return
+		}
+		if isOpenAICompatibleGatewayPlatform(c) {
+			h.OpenAIGateway.Responses(c)
+			return
+		}
+		h.Gateway.Responses(c)
+	}
+
 	// API网关（Claude API兼容）
 	gateway := r.Group("/v1")
 	gateway.Use(bodyLimit)
@@ -86,20 +98,8 @@ func RegisterGatewayRoutes(
 		gateway.GET("/models", modelsHandler)
 		gateway.GET("/usage", h.Gateway.Usage)
 		// OpenAI Responses API: auto-route based on group platform
-		gateway.POST("/responses", func(c *gin.Context) {
-			if isOpenAICompatibleGatewayPlatform(c) {
-				h.OpenAIGateway.Responses(c)
-				return
-			}
-			h.Gateway.Responses(c)
-		})
-		gateway.POST("/responses/*subpath", func(c *gin.Context) {
-			if isOpenAICompatibleGatewayPlatform(c) {
-				h.OpenAIGateway.Responses(c)
-				return
-			}
-			h.Gateway.Responses(c)
-		})
+		gateway.POST("/responses", responsesHandler)
+		gateway.POST("/responses/*subpath", responsesHandler)
 		gateway.GET("/responses", h.OpenAIGateway.ResponsesWebSocket)
 		// OpenAI Chat Completions API: auto-route based on group platform
 		gateway.POST("/chat/completions", func(c *gin.Context) {
@@ -167,13 +167,6 @@ func RegisterGatewayRoutes(
 	}
 
 	// OpenAI Responses API（不带v1前缀的别名）— auto-route based on group platform
-	responsesHandler := func(c *gin.Context) {
-		if isOpenAICompatibleGatewayPlatform(c) {
-			h.OpenAIGateway.Responses(c)
-			return
-		}
-		h.Gateway.Responses(c)
-	}
 	r.POST("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, responsesHandler)
 	r.POST("/responses/*subpath", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, responsesHandler)
 	r.GET("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.OpenAIGateway.ResponsesWebSocket)

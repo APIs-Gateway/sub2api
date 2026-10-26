@@ -123,6 +123,14 @@ func (s *accountRepoStub) BindGroups(ctx context.Context, accountID int64, group
 	panic("unexpected BindGroups call")
 }
 
+func (s *accountRepoStub) BulkBindGroups(ctx context.Context, accountIDs []int64, groupIDs []int64, mode AccountGroupBindMode) error {
+	panic("unexpected BulkBindGroups call")
+}
+
+func (s *accountRepoStub) ListIDsWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string, limit int) (*AccountIDList, error) {
+	panic("unexpected ListIDsWithFilters call")
+}
+
 func (s *accountRepoStub) ListSchedulable(ctx context.Context) ([]Account, error) {
 	panic("unexpected ListSchedulable call")
 }
@@ -207,7 +215,7 @@ func (s *accountRepoStub) IncrementQuotaUsed(ctx context.Context, id int64, amou
 	return nil
 }
 
-func (s *accountRepoStub) ResetQuotaUsed(ctx context.Context, id int64) error {
+func (s *accountRepoStub) ResetQuotaUsedAndClearRateLimitCooldown(ctx context.Context, id int64) error {
 	return nil
 }
 

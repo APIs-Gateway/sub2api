@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -475,6 +476,40 @@ func TestForwardAsRawChatCompletions_PreservesMappedGPT56MaxEffort(t *testing.T)
 	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
+func TestForwardAsRawChatCompletions_MappedGPTCacheHints(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name, mappedModel string
+		strip             bool
+	}{
+		{name: "GPT destination", mappedModel: "gpt-6-sol", strip: true},
+		{name: "non-GPT destination", mappedModel: "custom-model", strip: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"model":"public","stream":false,"prompt_cache_options":{"mode":"explicit"},"prompt_cache_key":"keep","messages":[{"role":"user","content":[{"type":"text","text":"hello","prompt_cache_breakpoint":true}]}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"prompt_cache_breakpoint":{"type":"string"}}}}}]}`)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"stop before response parsing"}}`)),
+			}}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+			account := rawChatCompletionsTestAccount()
+			account.Credentials["model_mapping"] = map[string]any{"public": tc.mappedModel}
+
+			_, err := svc.forwardAsRawChatCompletions(context.Background(), c, account, body, "")
+			require.Error(t, err) // Deliberate recorder response after the request is captured.
+			require.NotNil(t, upstream.lastReq)
+			require.Equal(t, tc.mappedModel, gjson.GetBytes(upstream.lastBody, "model").String())
+			require.Equal(t, !tc.strip, gjson.GetBytes(upstream.lastBody, "prompt_cache_options").Exists())
+			require.Equal(t, !tc.strip, gjson.GetBytes(upstream.lastBody, "messages.0.content.0.prompt_cache_breakpoint").Exists())
+			require.Equal(t, "keep", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+			require.True(t, gjson.GetBytes(upstream.lastBody, "tools.0.function.parameters.properties.prompt_cache_breakpoint").Exists())
+		})
+	}
+}
+
 func TestForwardAsRawChatCompletions_NormalizesGLMReasoningEffortForUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -641,6 +676,236 @@ func TestForwardAsRawChatCompletions_SilentRefusalTriggersFailover(t *testing.T)
 	require.True(t, IsOpenAISilentRefusalErrorBody(failoverErr.ResponseBody))
 	require.False(t, c.Writer.Written(), "silent refusal must not commit a 200 response before failover")
 	require.Empty(t, rec.Body.String())
+}
+
+func TestForwardAsRawChatCompletions_StreamErrorBeforeAndAfterContent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name     string
+		event    string
+		payload  string
+		multi    bool
+		content  bool
+		failover bool
+	}{
+		{name: "bare overload", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, failover: true},
+		{name: "named overload", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, failover: true},
+		{name: "structured code without retry text", payload: `{"error":{"code":"server_is_overloaded","message":"The server is overloaded"}}`, failover: true},
+		{name: "structured type without retry text", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"The server is overloaded"}}`, failover: true},
+		{name: "multiline named overload", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, multi: true, failover: true},
+		{name: "multiline bare overload", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, multi: true, failover: true},
+		{name: "response failed", event: "response.failed", payload: `{"type":"response.failed","response":{"error":{"code":"server_error","message":"try again later"}}}`, failover: true},
+		{name: "after content", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, content: true},
+		{name: "after content multiline with later usage", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, multi: true, content: true},
+		{name: "invalid request", event: "error", payload: `{"error":{"type":"invalid_request_error","message":"invalid request"}}`},
+		{name: "context window", payload: `{"error":{"code":"context_length_exceeded","message":"input exceeds the context window"}}`},
+		{name: "policy overrides capacity code", event: "error", payload: `{"error":{"type":"content_policy","code":"server_is_overloaded","message":"blocked by policy"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			lines := []string{`data: {"id":"chatcmpl_overloaded","object":"chat.completion.chunk","model":"gpt-5.5","choices":[{"index":0,"delta":{"role":"assistant"}}]}`, ""}
+			if tc.content {
+				lines = append(lines, `data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}`, "")
+			}
+			if tc.event != "" {
+				lines = append(lines, "event: "+tc.event)
+			}
+			if tc.multi {
+				cut := strings.Index(tc.payload, `"message"`)
+				require.Positive(t, cut)
+				lines = append(lines, "data: "+tc.payload[:cut], "data: "+tc.payload[cut:])
+			} else {
+				lines = append(lines, "data: "+tc.payload)
+			}
+			lines = append(lines, "")
+			if tc.name == "after content multiline with later usage" {
+				lines = append(lines, `data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}`, "")
+			}
+			lines = append(lines, "data: [DONE]", "")
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(strings.Join(lines, "\n"))),
+			}}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+			result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+			require.Error(t, err)
+			var failoverErr *UpstreamFailoverError
+			require.Equal(t, tc.failover, errors.As(err, &failoverErr))
+			if tc.failover {
+				require.Nil(t, result)
+				require.False(t, c.Writer.Written())
+				require.Empty(t, rec.Body.String())
+			} else {
+				require.NotNil(t, result)
+				require.Contains(t, rec.Body.String(), "data: "+tc.payload+"\n\n")
+				require.NotContains(t, rec.Body.String(), "[DONE]")
+				if tc.name == "after content multiline with later usage" {
+					require.Equal(t, 7, result.Usage.InputTokens)
+					require.Equal(t, 3, result.Usage.OutputTokens)
+					require.NotContains(t, rec.Body.String(), `"total_tokens":10`)
+				}
+				if tc.content {
+					require.Contains(t, rec.Body.String(), "partial")
+				} else {
+					require.NotContains(t, rec.Body.String(), "chatcmpl_overloaded")
+				}
+			}
+		})
+	}
+}
+
+func TestStreamRawChatCompletions_MultilineJSONRemainsValidSSE(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+		`data: {"model":"upstream","choices":[{"index":0,`,
+		`data: "delta":{"content":"ok","tool_calls":[{"id":"","function":{"name":""}}]}}]}`,
+		"",
+		`data: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")))}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+	result, err := svc.streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "client", "client", "upstream", nil, nil, time.Now(), 0)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	firstData := strings.Split(strings.TrimPrefix(rec.Body.String(), "data: "), "\n")[0]
+	require.True(t, gjson.Valid(firstData), "collapsed frame must remain one valid SSE data line")
+	require.Equal(t, "client", gjson.Get(firstData, "model").String())
+	require.False(t, gjson.Get(firstData, "choices.0.delta.tool_calls.0.id").Exists())
+	require.Equal(t, 2, result.Usage.InputTokens)
+	require.Contains(t, rec.Body.String(), "data: [DONE]")
+}
+
+func TestStreamRawChatCompletions_LargeNormalChunkDoesNotHitPreambleLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	content := strings.Repeat("x", openAIChatPreambleMaxBytes+1024)
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+		`data: {"model":"gpt-5.5","choices":[{"index":0,"delta":{"content":"` + content + `"}}]}`,
+		"",
+		`data: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")))}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+	result, err := svc.streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), 0)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Contains(t, rec.Body.String(), content)
+	require.Equal(t, 2, result.Usage.InputTokens)
+	require.Contains(t, rec.Body.String(), "data: [DONE]")
+}
+
+func TestStreamRawChatCompletions_CommentStormIsBoundedBeforeModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	var upstream strings.Builder
+	comment := ":" + strings.Repeat("x", 256) + "\n\n"
+	for range 1100 {
+		upstream.WriteString(comment)
+	}
+	upstream.WriteString(`data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}` + "\n\n")
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(upstream.String()))}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	result, err := svc.streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), 0)
+
+	require.ErrorContains(t, err, "preamble exceeded")
+	require.NotNil(t, result)
+	require.Equal(t, 7, result.Usage.InputTokens, "usage after the bounded preamble still reaches billing")
+	require.Empty(t, rec.Body.String(), "unvalidated comments must not be released as partial SSE")
+}
+
+func TestStreamRawChatCompletions_UnterminatedCommentFrameIsBounded(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	comment := ":" + strings.Repeat("x", 1024) + "\n"
+	storm := strings.Repeat(comment, openAIChatMultiLineFrameMaxBytes/len(comment)+1)
+	body := storm + "\n" + `data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}` + "\n\n"
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+
+	result, err := svc.streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), 0)
+
+	require.ErrorContains(t, err, "multiline SSE frame exceeded")
+	require.NotNil(t, result)
+	require.Equal(t, 7, result.Usage.InputTokens, "later usage must still reach billing")
+	require.Empty(t, rec.Body.String(), "an incomplete frame must never leak to the client")
+}
+
+type rawChatErrorThenHangBody struct {
+	payload []byte
+	sent    bool
+	closed  chan struct{}
+	once    sync.Once
+}
+
+func (b *rawChatErrorThenHangBody) Read(p []byte) (int, error) {
+	if !b.sent {
+		b.sent = true
+		return copy(p, b.payload), nil
+	}
+	<-b.closed
+	return 0, io.EOF
+}
+
+func (b *rawChatErrorThenHangBody) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
+}
+
+func TestStreamRawChatCompletions_ErrorDrainDeadlinePreservesUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	body := &rawChatErrorThenHangBody{payload: []byte(strings.Join([]string{
+		`data: {"model":"gpt-5.5","choices":[{"index":0,"delta":{"content":"partial"}}]}`,
+		"",
+		`event: error`,
+		`data: {"error":{"type":"invalid_request_error","message":"invalid request"}}`,
+		"",
+		`data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}`,
+		"",
+	}, "\n")), closed: make(chan struct{})}
+	defer body.Close()
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: body}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
+	type outcome struct {
+		result *OpenAIForwardResult
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := svc.streamRawChatCompletions(c, resp, rawChatCompletionsTestAccount(), "gpt-5.5", "gpt-5.5", "gpt-5.5", nil, nil, time.Now(), 0)
+		done <- outcome{result: result, err: err}
+	}()
+	select {
+	case got := <-done:
+		require.Error(t, got.err)
+		require.NotNil(t, got.result)
+		require.Equal(t, 7, got.result.Usage.InputTokens)
+		require.Equal(t, 3, got.result.Usage.OutputTokens)
+		require.Contains(t, rec.Body.String(), "partial")
+		require.NotContains(t, rec.Body.String(), `"total_tokens":10`)
+	case <-time.After(openAIChatErrorDrainMaxWait + 3*time.Second):
+		t.Fatal("raw error drain waited indefinitely for upstream EOF")
+	}
 }
 
 func TestForwardAsRawChatCompletions_SilentRefusalToolCallsExempt(t *testing.T) {
@@ -835,6 +1100,441 @@ func TestForwardAsRawChatCompletions_StripsEmptyToolCallIdentity(t *testing.T) {
 	require.True(t, followUpSeen)
 }
 
+// 上游在生成中途干净 EOF（无 [DONE]/usage/finish_reason）且已向客户端写出内容：
+// 不能再记成 HTTP 200 成功，必须回带类型化的上游截断错误，由 handler 补 SSE error
+// 帧并计入 SLA 失败。
+func TestForwardAsRawChatCompletions_TruncatedStreamAfterOutputFailsRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_cut","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"half an ans"},"finish_reason":null}]}`,
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_truncated"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.Error(t, err)
+	require.NotNil(t, result, "已收字节的用量仍需带回，供 ops 记录首 token 时延")
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr), "已写出语义字节后不得再 failover")
+
+	code, message, ok := OpenAIUpstreamStreamReadErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, OpenAIUpstreamStreamTruncatedCode, code)
+	require.NotEmpty(t, message)
+	// 已写出的内容保持原样透传，客户端拿到的仍是它已经收到的那部分。
+	require.Contains(t, rec.Body.String(), `"content":"half an ans"`)
+	require.NotContains(t, rec.Body.String(), "data: [DONE]")
+}
+
+// 上游 200 但一个 SSE 字节都没发：响应头尚未提交，应换号重试而不是回 200 空流。
+func TestForwardAsRawChatCompletions_EmptyStreamBeforeOutputTriggersFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_empty"}},
+		Body:       io.NopCloser(strings.NewReader("")),
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr))
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Equal(t, OpenAIUpstreamStreamTruncatedCode,
+		gjson.GetBytes(failoverErr.ResponseBody, "error.code").String())
+	require.False(t, failoverErr.RetryableOnSameAccount, "截断应直接换号，而非同账号重试")
+	require.False(t, c.Writer.Written(), "换号重试前不得提交 200 响应头")
+	require.Empty(t, rec.Body.String())
+}
+
+// 传输层错误（Cloudflare edge reset 等）在写出后同样不能记成功，且分类要区别于
+// 干净 EOF，便于 ops 分辨 reset 与静默截断。
+func TestForwardAsRawChatCompletions_StreamReadErrorAfterOutputFailsRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_reset"}},
+		Body: &openAIChatStreamReadErrorCloser{
+			payload: []byte(`data: {"id":"chatcmpl_reset","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"partial"}}]}` + "\n\n"),
+			err:     errors.New("read tcp 172.18.0.4->172.65.90.23:443: read: connection reset by peer"),
+		},
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.Error(t, err)
+	require.NotNil(t, result)
+
+	code, _, ok := OpenAIUpstreamStreamReadErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, OpenAIUpstreamStreamReadErrorCode, code)
+	require.Contains(t, rec.Body.String(), `"content":"partial"`)
+}
+
+// 边界：缺 [DONE] 但收到了 usage 帧 —— 生成已完整，只是尾巴丢失。必须继续按成功
+// 计费，否则会误伤那些跑完就直接 EOF 的兼容上游并白送 token。
+func TestForwardAsRawChatCompletions_MissingDoneWithUsageStillSucceeds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_nodone","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"ok"}}]}`,
+		"",
+		`data: {"id":"chatcmpl_nodone","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":11,"completion_tokens":6,"total_tokens":17}}`,
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_nodone_usage"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 11, result.Usage.InputTokens)
+	require.Equal(t, 6, result.Usage.OutputTokens)
+}
+
+// 边界：缺 [DONE] 与 usage，但末帧带 finish_reason —— 生成正常结束，同样不判截断。
+func TestForwardAsRawChatCompletions_MissingDoneWithFinishReasonStillSucceeds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_finish","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"done"},"finish_reason":null}]}`,
+		"",
+		`data: {"id":"chatcmpl_finish","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_nodone_finish"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Contains(t, rec.Body.String(), `"finish_reason":"stop"`)
+}
+
+// openAIRawStreamDisconnectedWriter 模拟客户端已断开：raw 直转路径经
+// WriteString 写出，故两个方法都必须失败（只覆盖 Write 会被内嵌 writer 绕过）。
+type openAIRawStreamDisconnectedWriter struct {
+	gin.ResponseWriter
+}
+
+func (w *openAIRawStreamDisconnectedWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed: client disconnected")
+}
+
+func (w *openAIRawStreamDisconnectedWriter) WriteString(string) (int, error) {
+	return 0, errors.New("write failed: client disconnected")
+}
+
+// 客户端已断开时上游随后截断：两者不可区分，沿用既有语义按已收用量正常收尾计费，
+// 不得把客户端离场记成上游故障。
+func TestForwardAsRawChatCompletions_ClientDisconnectTruncationStillBills(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Writer = &openAIRawStreamDisconnectedWriter{ResponseWriter: c.Writer}
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_gone","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"ok"}}]}`,
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_gone"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.ClientDisconnect)
+}
+
+// 客户端取消会连带取消上游请求，上游读因此报 context.Canceled：同样不判为上游截断。
+func TestForwardAsRawChatCompletions_ClientCancelTruncationStillBills(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_cancel"}},
+		Body: &openAIChatStreamReadErrorCloser{
+			payload: []byte(`data: {"id":"chatcmpl_cancel","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"ok"}}]}` + "\n\n"),
+			err:     context.Canceled,
+		},
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+}
+
+// fork 适配：上游对 stream 请求回了裸 JSON（无 data: 行）。fork 在首个 data 行之前
+// 暂存非 data 行（holdPreDataLines），收尾 flush 前 clientOutputStarted 仍为 false；
+// 这类非 SSE 响应体必须保持原样透传，不能被截断判定误判为空流而换号。
+func TestForwardAsRawChatCompletions_NonSSEBodyOnStreamStillPassesThrough(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamBody := `{"id":"chatcmpl_json","object":"chat.completion","model":"deepseek-v4-pro","choices":[{"index":0,"message":{"role":"assistant","content":"plain json"},"finish_reason":"stop"}]}` + "\n"
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_non_sse"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Contains(t, rec.Body.String(), `"content":"plain json"`)
+}
+
+// fork 适配：上游只发了 SSE 注释（中转站的 ": OPENROUTER PROCESSING" 心跳）就 EOF，
+// 注释行被 holdPreDataLines 暂存、从未写出。这仍是没有任何内容的截断，应换号重试。
+func TestForwardAsRawChatCompletions_CommentOnlyStreamTriggersFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamBody := strings.Join([]string{
+		": OPENROUTER PROCESSING",
+		"",
+		": OPENROUTER PROCESSING",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{"rid_comment_only"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr))
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Equal(t, OpenAIUpstreamStreamTruncatedCode,
+		gjson.GetBytes(failoverErr.ResponseBody, "error.code").String())
+	require.Equal(t, "rid_comment_only", failoverErr.ResponseHeaders.Get("x-request-id"))
+	require.False(t, c.Writer.Written(), "换号重试前不得提交 200 响应头")
+}
+
+// 已写出后遇到传输层 reset 时，ops 上下文要记下带原因的上游错误，便于按账号归因。
+func TestForwardAsRawChatCompletions_TruncatedAfterOutputRecordsOpsUpstreamError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{"rid_ops"}},
+		Body: &openAIChatStreamReadErrorCloser{
+			payload: []byte(`data: {"id":"chatcmpl_ops","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"partial"}}]}` + "\n\n"),
+			err:     errors.New("read: connection reset by peer"),
+		},
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+	account := rawChatCompletionsTestAccount()
+
+	_, err := svc.forwardAsRawChatCompletions(context.Background(), c, account, body, "")
+	require.Error(t, err)
+
+	status, ok := c.Get(OpsUpstreamStatusCodeKey)
+	require.True(t, ok)
+	require.Equal(t, http.StatusBadGateway, status)
+	message, _ := c.Get(OpsUpstreamErrorMessageKey)
+	require.Contains(t, message, "connection reset by peer")
+
+	rawEvents, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := rawEvents.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.NotEmpty(t, events)
+	last := events[len(events)-1]
+	require.Equal(t, account.ID, last.AccountID)
+	require.Equal(t, "http_error", last.Kind)
+	require.Equal(t, "rid_ops", last.UpstreamRequestID)
+}
+
+func TestOpenAIRawStreamTerminalState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		payloads       []string
+		clientStarted  bool
+		wantTerminated bool
+		wantTruncated  bool
+	}{
+		{
+			name:           "done sentinel",
+			payloads:       []string{`{"choices":[{"delta":{"content":"a"}}]}`, "[DONE]"},
+			clientStarted:  true,
+			wantTerminated: true,
+		},
+		{
+			name:           "usage chunk",
+			payloads:       []string{`{"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}`},
+			clientStarted:  true,
+			wantTerminated: true,
+		},
+		{
+			name:           "finish reason",
+			payloads:       []string{`{"choices":[{"delta":{},"finish_reason":"length"}]}`},
+			clientStarted:  true,
+			wantTerminated: true,
+		},
+		{
+			name:          "null finish reason is not terminal",
+			payloads:      []string{`{"choices":[{"delta":{"content":"a"},"finish_reason":null}]}`},
+			clientStarted: true,
+			wantTruncated: true,
+		},
+		{
+			name:          "usage null is not terminal",
+			payloads:      []string{`{"choices":[{"delta":{"content":"a"}}],"usage":null}`},
+			clientStarted: true,
+			wantTruncated: true,
+		},
+		{
+			// 上游对 stream 请求回了裸 JSON：无 data: 行，既有行为是原样透传。
+			name:          "non-sse body already forwarded",
+			payloads:      nil,
+			clientStarted: true,
+		},
+		{
+			name:          "no bytes at all",
+			payloads:      nil,
+			clientStarted: false,
+			wantTruncated: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var state openAIRawStreamTerminalState
+			for _, payload := range tt.payloads {
+				state.ObserveDataLine(payload)
+			}
+			require.Equal(t, tt.wantTerminated, state.Terminated())
+			require.Equal(t, tt.wantTruncated, state.IsTruncated(tt.clientStarted))
+		})
+	}
+}
+
 func TestForwardAsRawChatCompletions_ClientDisconnectDrainsUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1017,4 +1717,35 @@ func largeRawChatCompletionsBody() []byte {
 	return []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"` +
 		strings.Repeat("x", openAISilentRefusalMinRequestBodyBytes) +
 		`"}],"stream":true}`)
+}
+
+func TestOpenAIRawStreamTerminalState_NonSSEBody(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		lines         []string
+		wantTruncated bool
+	}{
+		{name: "plain json body", lines: []string{`{"id":"chatcmpl_json","choices":[]}`}},
+		{name: "comments and blank lines only", lines: []string{": OPENROUTER PROCESSING", "", "  "}, wantTruncated: true},
+		{name: "sse field lines only", lines: []string{"event: message", "id: 1", "retry: 1000"}, wantTruncated: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var state openAIRawStreamTerminalState
+			for _, line := range tt.lines {
+				state.ObserveNonDataLine(line)
+			}
+			require.False(t, state.Terminated())
+			require.Equal(t, tt.wantTruncated, state.IsTruncated(false))
+		})
+	}
+
+	var nilState *openAIRawStreamTerminalState
+	nilState.ObserveNonDataLine("x")
+	nilState.ObserveDataLine("[DONE]")
+	require.False(t, nilState.IsTruncated(false))
 }

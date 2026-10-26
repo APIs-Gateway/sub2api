@@ -3,6 +3,46 @@
     <TablePageLayout>
       <template #filters>
         <div class="flex flex-col gap-3">
+          <!-- 概览：接入地址是主角，数字只是一行说明 -->
+          <section class="rounded-md border border-gray-200 dark:border-dark-700" data-test="keys-overview">
+            <div class="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div class="flex min-w-0 items-center gap-3">
+                <span class="shrink-0 text-sm text-gray-600 dark:text-dark-400">{{ t('keys.overview.address') }}</span>
+                <code
+                  class="min-w-0 truncate font-mono text-sm text-gray-900 dark:text-gray-100"
+                  data-test="overview-address"
+                >{{ apiBaseUrl }}</code>
+                <button
+                  type="button"
+                  class="shrink-0 rounded-md border border-gray-200 px-2 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:border-dark-700 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                  data-test="overview-copy"
+                  @click="copyAddress"
+                >
+                  {{ addressCopied ? t('keys.overview.copied') : t('keys.overview.copy') }}
+                </button>
+              </div>
+              <EndpointPopover
+                v-if="(publicSettings?.custom_endpoints?.length ?? 0) > 0"
+                api-base-url=""
+                :custom-endpoints="publicSettings?.custom_endpoints || []"
+              />
+            </div>
+            <div
+              v-if="pagination.total > 0"
+              class="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-1 border-t border-gray-100 px-4 py-2.5 dark:border-dark-800"
+              data-test="overview-stats"
+            >
+              <p class="num text-sm text-gray-600 dark:text-dark-400" data-test="overview-enabled">
+                {{ overview.partial
+                  ? t('keys.overview.enabledList', { active: overview.enabled, shown: apiKeys.length })
+                  : t('keys.overview.enabled', { active: overview.enabled, total: pagination.total }) }}
+              </p>
+              <p class="num text-sm text-gray-600 dark:text-dark-400">
+                {{ overview.partial ? t('keys.overview.spentList') : t('keys.overview.spent') }}
+                <NumText class="ml-1 font-medium" data-test="overview-spent" :text="overview.spent" />
+              </p>
+            </div>
+          </section>
           <div class="flex flex-wrap items-center gap-3">
             <SearchInput
               v-model="filterSearch"
@@ -23,11 +63,6 @@
               @update:model-value="onStatusFilterChange"
             />
           </div>
-          <EndpointPopover
-            v-if="publicSettings?.api_base_url || (publicSettings?.custom_endpoints?.length ?? 0) > 0"
-            :api-base-url="publicSettings?.api_base_url || ''"
-            :custom-endpoints="publicSettings?.custom_endpoints || []"
-          />
         </div>
       </template>
 
@@ -91,7 +126,7 @@
           @sort="handleSort"
         >
           <template #cell-id="{ value }">
-            <span class="font-mono text-xs text-gray-500 dark:text-gray-400">#{{ value }}</span>
+            <span class="num text-xs text-gray-500 dark:text-gray-400">#{{ value }}</span>
           </template>
 
           <template #cell-key="{ value, row }">
@@ -131,6 +166,21 @@
                 :title="t('keys.ipRestrictionEnabled')"
               />
             </div>
+            <!-- 窄屏下操作列在表格右侧，需要横向滚动；接入入口在这里再放一份 -->
+            <div class="mt-1.5 flex gap-1.5 lg:hidden">
+              <button
+                type="button"
+                class="inline-flex items-center rounded-md bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-white dark:bg-gray-100 dark:text-gray-900"
+                data-test="name-connect"
+                @click="openOnboarding(row, 'install')"
+              >{{ t('keys.connect') }}</button>
+              <button
+                type="button"
+                class="inline-flex items-center rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 dark:border-dark-600 dark:text-gray-200"
+                data-test="name-ccswitch"
+                @click="openOnboarding(row, 'ccswitch')"
+              >CC Switch</button>
+            </div>
           </template>
 
           <template #cell-group="{ row }">
@@ -141,14 +191,24 @@
                 class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 transition-colors duration-200 hover:bg-gray-100 dark:hover:bg-dark-800"
                 :title="t('keys.clickToChangeGroup')"
               >
-                <GroupBadge
-                  v-if="row.group"
-                  :name="row.group.name"
-                  :platform="row.group.platform"
-                  :subscription-type="row.group.subscription_type"
-                  :rate-multiplier="row.group.rate_multiplier"
-                  :user-rate-multiplier="userGroupRates[row.group.id]"
-                />
+                <!-- 套餐低至放在徽标下一行：这一列横向放不下，窄屏只留悬停 -->
+                <div v-if="row.group" class="flex flex-col items-start gap-0.5">
+                  <GroupBadge
+                    :name="row.group.name"
+                    :platform="row.group.platform"
+                    :subscription-type="row.group.subscription_type"
+                    :rate-multiplier="row.group.rate_multiplier"
+                    :user-rate-multiplier="userGroupRates[row.group.id]"
+                    :rate-view="groupRateView(row.group, userGroupRates[row.group.id])"
+                    :inline-plan="false"
+                  />
+                  <PlanRateText
+                    v-if="listPlanView(row)"
+                    :rate-view="listPlanView(row)!"
+                    :title="listPlanView(row)!.tip"
+                    class="hidden pl-1 text-[10px] font-medium sm:block"
+                  />
+                </div>
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
                   t('keys.noGroup')
                 }}</span>
@@ -171,41 +231,56 @@
           </template>
 
           <template #cell-usage="{ row }">
-            <div class="text-sm">
-              <div class="flex items-center gap-1.5">
-                <span class="text-gray-600 dark:text-gray-400">{{ t('keys.today') }}:</span>
-                <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">
-                  ${{ (usageStats[row.id]?.today_actual_cost ?? 0).toFixed(4) }}
-                </span>
-              </div>
-              <div class="mt-0.5 flex items-center gap-1.5">
-                <span class="text-gray-600 dark:text-gray-400">{{ t('keys.total') }}:</span>
-                <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">
-                  ${{ (usageStats[row.id]?.total_actual_cost ?? 0).toFixed(4) }}
-                </span>
-              </div>
-              <!-- Quota progress (if quota is set) -->
-              <div v-if="row.quota > 0" class="mt-1.5">
-                <div class="flex items-center gap-1.5">
-                  <span class="text-gray-600 dark:text-gray-400">{{ t('keys.quota') }}:</span>
-                  <span :class="[
-                    'font-mono tabular-nums font-medium',
-                    row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' :
-                    'text-gray-900 dark:text-white'
-                  ]">
-                    ${{ row.quota_used?.toFixed(2) || '0.00' }} / ${{ row.quota?.toFixed(2) }}
-                  </span>
+            <!-- 给个宽度下限，列再窄也不会把「近30天 / 今日」折成竖排 -->
+            <div class="min-w-[9.5rem] text-sm">
+              <!-- 有上限：已用与上限同一口径（都是额度折算），与进度条、超额变色一致 -->
+              <template v-if="row.quota > 0">
+                <div class="flex flex-wrap items-baseline gap-x-1.5">
+                  <span class="text-gray-600 dark:text-gray-400">{{ t('keys.usedLabel') }}</span>
+                  <span
+                    data-test="row-used"
+                    :class="[
+                      'num-secondary',
+                      row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' : 'text-gray-900 dark:text-white'
+                    ]"
+                  >{{ formatLimit(row.quota_used) }}</span>
+                  <span class="text-gray-400 dark:text-dark-500">/</span>
+                  <span
+                    data-test="row-limit"
+                    :class="[
+                      'num',
+                      row.quota_used >= row.quota ? 'text-primary-700 dark:text-primary-400' : 'text-gray-600 dark:text-gray-400'
+                    ]"
+                  >{{ formatLimit(row.quota) }}</span>
                 </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
+                <div class="mt-1.5 h-1.5 w-full max-w-[12rem] overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
                   <div
                     :class="[
                       'h-full rounded-md transition-all',
-                      row.quota_used >= row.quota ? 'bg-primary-600' :
-                      'bg-gray-900 dark:bg-gray-100'
+                      row.quota_used >= row.quota ? 'bg-primary-600' : 'bg-gray-900 dark:bg-gray-100'
                     ]"
                     :style="{ width: Math.min((row.quota_used / row.quota) * 100, 100) + '%' }"
                   />
                 </div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('keys.total') }}
+                  <span class="num" data-test="row-recent">{{ recentSpent(row.id) }}</span>
+                </div>
+              </template>
+              <!-- 无上限：只有近 30 天消费，旁边直接标出不限额 -->
+              <div v-else class="flex flex-wrap items-baseline gap-x-1.5">
+                <span class="text-gray-600 dark:text-gray-400">{{ t('keys.total') }}</span>
+                <span class="num-secondary text-gray-900 dark:text-white" data-test="row-recent">{{ recentSpent(row.id) }}</span>
+                <span
+                  class="rounded-md border border-gray-200 px-1.5 py-px text-xs text-gray-600 dark:border-dark-700 dark:text-gray-400"
+                  data-test="row-limit"
+                >{{ t('keys.unlimited') }}</span>
+              </div>
+              <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('keys.today') }}
+                <span class="num">
+                  {{ formatMixed(usageStats[row.id]?.today_actual_cost ?? 0, usageStats[row.id]?.today_actual_cost_fiat) }}
+                </span>
               </div>
             </div>
           </template>
@@ -217,11 +292,11 @@
                 <div class="flex items-center justify-between text-xs">
                   <span class="text-gray-600 dark:text-gray-400">5h</span>
                   <span :class="[
-                    'font-mono font-medium tabular-nums',
+                    'num-secondary',
                     row.usage_5h >= row.rate_limit_5h ? 'text-primary-700 dark:text-primary-400' :
                     'text-gray-700 dark:text-gray-300'
                   ]">
-                    ${{ row.usage_5h?.toFixed(2) || '0.00' }}/${{ row.rate_limit_5h?.toFixed(2) }}
+                    {{ formatLimit(row.usage_5h) }}/{{ formatLimit(row.rate_limit_5h) }}
                   </span>
                 </div>
                 <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
@@ -243,11 +318,11 @@
                 <div class="flex items-center justify-between text-xs">
                   <span class="text-gray-600 dark:text-gray-400">1d</span>
                   <span :class="[
-                    'font-mono font-medium tabular-nums',
+                    'num-secondary',
                     row.usage_1d >= row.rate_limit_1d ? 'text-primary-700 dark:text-primary-400' :
                     'text-gray-700 dark:text-gray-300'
                   ]">
-                    ${{ row.usage_1d?.toFixed(2) || '0.00' }}/${{ row.rate_limit_1d?.toFixed(2) }}
+                    {{ formatLimit(row.usage_1d) }}/{{ formatLimit(row.rate_limit_1d) }}
                   </span>
                 </div>
                 <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
@@ -269,11 +344,11 @@
                 <div class="flex items-center justify-between text-xs">
                   <span class="text-gray-600 dark:text-gray-400">7d</span>
                   <span :class="[
-                    'font-mono font-medium tabular-nums',
+                    'num-secondary',
                     row.usage_7d >= row.rate_limit_7d ? 'text-primary-700 dark:text-primary-400' :
                     'text-gray-700 dark:text-gray-300'
                   ]">
-                    ${{ row.usage_7d?.toFixed(2) || '0.00' }}/${{ row.rate_limit_7d?.toFixed(2) }}
+                    {{ formatLimit(row.usage_7d) }}/{{ formatLimit(row.rate_limit_7d) }}
                   </span>
                 </div>
                 <div class="h-1 w-full overflow-hidden rounded-md bg-gray-200 dark:bg-dark-700">
@@ -348,43 +423,68 @@
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-1.5">
-              <!-- 一键接入（突出的主操作：扁平墨黑按钮） -->
-              <button
-                @click="openOnboarding(row)"
-                class="inline-flex items-center gap-1.5 rounded-md bg-gray-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
-                :title="t('keys.quickConnect')"
-              >
-                <Icon name="bolt" size="sm" />
-                {{ t('keys.quickConnect') }}
-              </button>
-              <!-- Toggle Status Button -->
-              <button
-                @click="toggleKeyStatus(row)"
-                :class="[
-                  'flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white'
-                ]"
-              >
-                <Icon v-if="row.status === 'active'" name="ban" size="sm" />
-                <Icon v-else name="checkCircle" size="sm" />
-                <span class="text-xs">{{ row.status === 'active' ? t('keys.disable') : t('keys.enable') }}</span>
-              </button>
-              <!-- Edit Button -->
-              <button
-                @click="editKey(row)"
-                class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
-              >
-                <Icon name="edit" size="sm" />
-                <span class="text-xs">{{ t('common.edit') }}</span>
-              </button>
-              <!-- Delete Button -->
-              <button
-                @click="confirmDelete(row)"
-                class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-700 dark:text-gray-400 dark:hover:bg-primary-900/20 dark:hover:text-primary-400"
-              >
-                <Icon name="trash" size="sm" />
-                <span class="text-xs">{{ t('common.delete') }}</span>
-              </button>
+            <!-- 宽屏两行：第一行接入 / CC Switch，第二行四个图文小按钮；整列只有约 260px 宽，不会盖住左侧的用量与分组 -->
+            <div class="flex flex-col items-start gap-1 md:-mx-2">
+              <!-- 接入入口：窄屏在名称列里，这里只在宽屏显示 -->
+              <div class="hidden items-center gap-1 lg:flex">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1.5 rounded-md bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+                  data-test="action-connect"
+                  @click="openOnboarding(row, 'install')"
+                >
+                  <Icon name="bolt" size="sm" />
+                  {{ t('keys.connect') }}
+                </button>
+                <button
+                  type="button"
+                  class="inline-flex items-center rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:border-dark-600 dark:text-gray-200 dark:hover:bg-dark-800"
+                  data-test="action-ccswitch"
+                  @click="openOnboarding(row, 'ccswitch')"
+                >
+                  CC Switch
+                </button>
+              </div>
+              <div class="flex items-center gap-1 md:max-w-[15.5rem] md:flex-wrap md:gap-0">
+                <!-- Toggle Status Button -->
+                <button
+                  @click="toggleKeyStatus(row)"
+                  data-test="action-toggle"
+                  class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 md:flex-row md:gap-0.5 md:px-1.5 md:py-1 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                >
+                  <Icon v-if="row.status === 'active'" name="ban" size="sm" />
+                  <Icon v-else name="checkCircle" size="sm" />
+                  <span class="whitespace-nowrap text-xs">{{ row.status === 'active' ? t('keys.disable') : t('keys.enable') }}</span>
+                </button>
+                <!-- Edit Button -->
+                <button
+                  @click="editKey(row)"
+                  data-test="action-edit"
+                  class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 md:flex-row md:gap-0.5 md:px-1.5 md:py-1 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                >
+                  <Icon name="edit" size="sm" />
+                  <span class="whitespace-nowrap text-xs">{{ t('common.edit') }}</span>
+                </button>
+                <!-- 兜底设置：只有已绑定分组的密钥才有兜底链 -->
+                <button
+                  v-if="row.group_id && fallbackEntryVisible(row)"
+                  @click="openFallbackDrawer(row, $event)"
+                  class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 md:flex-row md:gap-0.5 md:px-1.5 md:py-1 dark:text-gray-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                  data-test="fallback-entry"
+                >
+                  <Icon name="arrowsUpDown" size="sm" />
+                  <span class="whitespace-nowrap text-xs">{{ t('keyFallback.entry') }}</span>
+                </button>
+                <!-- Delete Button -->
+                <button
+                  @click="confirmDelete(row)"
+                  data-test="action-delete"
+                  class="flex flex-col items-center gap-0.5 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-700 md:flex-row md:gap-0.5 md:px-1.5 md:py-1 dark:text-gray-400 dark:hover:bg-primary-900/20 dark:hover:text-primary-400"
+                >
+                  <Icon name="trash" size="sm" />
+                  <span class="whitespace-nowrap text-xs">{{ t('common.delete') }}</span>
+                </button>
+              </div>
             </div>
           </template>
 
@@ -414,11 +514,39 @@
     <!-- Create/Edit Modal -->
     <BaseDialog
       :show="showCreateModal || showEditModal"
-      :title="showEditModal ? t('keys.editKey') : t('keys.createKey')"
+      :title="createdKey ? t('keys.createdTitle') : showEditModal ? t('keys.editKey') : t('keys.createKey')"
       width="normal"
       @close="closeModals"
     >
-      <form id="key-form" @submit.prevent="handleSubmit" class="space-y-5">
+      <!-- 创建成功：弹窗原地变成确认态，完整密钥只在这里一次性给出 -->
+      <div v-if="createdKey" class="space-y-4" data-test="key-created">
+        <div class="flex items-center gap-3">
+          <span class="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400">
+            <Icon name="check" size="md" />
+          </span>
+          <div class="min-w-0">
+            <div class="truncate text-sm font-medium text-gray-900 dark:text-white">{{ createdKey.name }}</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('keys.createdHint') }}</div>
+          </div>
+        </div>
+        <div class="flex items-stretch gap-2">
+          <code
+            data-test="key-created-value"
+            class="min-w-0 flex-1 select-all break-all rounded-md border border-gray-200 bg-gray-50 px-3 py-2.5 font-mono text-sm text-gray-900 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-100"
+          >{{ createdKey.key }}</code>
+          <button
+            type="button"
+            class="btn btn-secondary flex-none"
+            data-test="key-created-copy"
+            @click="copyToClipboard(createdKey.key, createdKey.id)"
+          >
+            <Icon :name="copiedKeyId === createdKey.id ? 'check' : 'copy'" size="sm" class="mr-1.5" />
+            {{ copiedKeyId === createdKey.id ? t('keys.copied') : t('common.copy') }}
+          </button>
+        </div>
+      </div>
+
+      <form v-else id="key-form" @submit.prevent="handleSubmit" class="space-y-5">
         <div>
           <label class="input-label">{{ t('keys.nameLabel') }}</label>
           <input
@@ -439,7 +567,6 @@
                 <p class="font-semibold text-white">{{ t('keys.billing.title') }}</p>
                 <p>{{ t('keys.billing.intro') }}</p>
                 <p>{{ t('keys.billing.rate') }}</p>
-                <p>{{ t('keys.billing.effective') }}</p>
               </div>
             </HelpTooltip>
           </label>
@@ -459,6 +586,7 @@
                 :subscription-type="(option as unknown as GroupOption).subscriptionType"
                 :rate-multiplier="(option as unknown as GroupOption).rate"
                 :user-rate-multiplier="(option as unknown as GroupOption).userRate"
+                :rate-view="groupRateView((option as unknown as GroupOption).rate, (option as unknown as GroupOption).userRate)"
               />
               <span v-else class="text-gray-400">{{ t('keys.selectGroup') }}</span>
             </template>
@@ -469,6 +597,7 @@
                 :subscription-type="(option as unknown as GroupOption).subscriptionType"
                 :rate-multiplier="(option as unknown as GroupOption).rate"
                 :user-rate-multiplier="(option as unknown as GroupOption).userRate"
+                :rate-view="groupRateView((option as unknown as GroupOption).rate, (option as unknown as GroupOption).userRate)"
                 :description="(option as unknown as GroupOption).description"
                 :selected="selected"
               />
@@ -591,30 +720,31 @@
           <div class="space-y-4">
             <div>
               <div class="relative">
-                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
                 <input
                   v-model.number="formData.quota"
                   type="number"
-                  step="0.01"
+                  step="any"
                   min="0"
                   class="input pl-7"
-                  :placeholder="t('keys.quotaAmountPlaceholder')"
+                  :placeholder="limitInputFiat ? t('keys.quotaAmountPlaceholderFiat') : t('keys.quotaAmountPlaceholder')"
                 />
               </div>
               <p class="input-hint">{{ t('keys.quotaAmountHint') }}</p>
+              <p v-if="limitInputFiat" class="input-hint">{{ limitFiatHint }}</p>
             </div>
 
             <!-- Quota used display (only in edit mode) -->
             <div v-if="showEditModal && selectedKey && selectedKey.quota > 0">
               <label class="input-label">{{ t('keys.quotaUsed') }}</label>
               <div class="flex items-center gap-2">
-                <div class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800">
-                  <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">
-                    ${{ selectedKey.quota_used?.toFixed(4) || '0.0000' }}
+                <div :title="formatLimit(selectedKey.quota_used, EXACT_DIGITS)" class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800">
+                  <span class="num-secondary text-gray-900 dark:text-white">
+                    {{ formatLimit(selectedKey.quota_used) }}
                   </span>
                   <span class="mx-2 text-gray-400">/</span>
-                  <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
-                    ${{ selectedKey.quota?.toFixed(2) || '0.00' }}
+                  <span class="num text-gray-600 dark:text-gray-400">
+                    {{ formatLimit(selectedKey.quota) }}
                   </span>
                 </div>
                 <button
@@ -653,15 +783,16 @@
 
           <div v-if="formData.enable_rate_limit" class="space-y-4 pt-2">
             <p class="input-hint -mt-2">{{ t('keys.rateLimitHint') }}</p>
+            <p v-if="limitInputFiat" class="input-hint -mt-2">{{ limitFiatHint }}</p>
             <!-- 5-Hour Limit -->
             <div>
-              <label class="input-label">{{ t('keys.rateLimit5h') }}</label>
+              <label class="input-label">{{ t('keys.rateLimit5h', { currency: limitInputCurrency }) }}</label>
               <div class="relative">
-                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
                 <input
                   v-model.number="formData.rate_limit_5h"
                   type="number"
-                  step="0.01"
+                  step="any"
                   min="0"
                   class="input pl-7"
                   :placeholder="'0'"
@@ -670,17 +801,17 @@
               <!-- Usage info (edit mode only) -->
               <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_5h > 0" class="mt-2">
                 <div class="flex items-center gap-2">
-                  <div class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
+                  <div :title="formatLimit(selectedKey.usage_5h, EXACT_DIGITS)" class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
                     <span :class="[
-                      'font-mono tabular-nums font-medium',
+                      'num-secondary',
                       selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'text-primary-700 dark:text-primary-400' :
                       'text-gray-900 dark:text-white'
                     ]">
-                      ${{ selectedKey.usage_5h?.toFixed(4) || '0.0000' }}
+                      {{ formatLimit(selectedKey.usage_5h) }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
-                    <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
-                      ${{ selectedKey.rate_limit_5h?.toFixed(2) || '0.00' }}
+                    <span class="num text-gray-600 dark:text-gray-400">
+                      {{ formatLimit(selectedKey.rate_limit_5h) }}
                     </span>
                   </div>
                 </div>
@@ -699,13 +830,13 @@
 
             <!-- Daily Limit -->
             <div>
-              <label class="input-label">{{ t('keys.rateLimit1d') }}</label>
+              <label class="input-label">{{ t('keys.rateLimit1d', { currency: limitInputCurrency }) }}</label>
               <div class="relative">
-                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
                 <input
                   v-model.number="formData.rate_limit_1d"
                   type="number"
-                  step="0.01"
+                  step="any"
                   min="0"
                   class="input pl-7"
                   :placeholder="'0'"
@@ -714,17 +845,17 @@
               <!-- Usage info (edit mode only) -->
               <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_1d > 0" class="mt-2">
                 <div class="flex items-center gap-2">
-                  <div class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
+                  <div :title="formatLimit(selectedKey.usage_1d, EXACT_DIGITS)" class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
                     <span :class="[
-                      'font-mono tabular-nums font-medium',
+                      'num-secondary',
                       selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'text-primary-700 dark:text-primary-400' :
                       'text-gray-900 dark:text-white'
                     ]">
-                      ${{ selectedKey.usage_1d?.toFixed(4) || '0.0000' }}
+                      {{ formatLimit(selectedKey.usage_1d) }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
-                    <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
-                      ${{ selectedKey.rate_limit_1d?.toFixed(2) || '0.00' }}
+                    <span class="num text-gray-600 dark:text-gray-400">
+                      {{ formatLimit(selectedKey.rate_limit_1d) }}
                     </span>
                   </div>
                 </div>
@@ -743,13 +874,13 @@
 
             <!-- 7-Day Limit -->
             <div>
-              <label class="input-label">{{ t('keys.rateLimit7d') }}</label>
+              <label class="input-label">{{ t('keys.rateLimit7d', { currency: limitInputCurrency }) }}</label>
               <div class="relative">
-                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ limitInputSymbol }}</span>
                 <input
                   v-model.number="formData.rate_limit_7d"
                   type="number"
-                  step="0.01"
+                  step="any"
                   min="0"
                   class="input pl-7"
                   :placeholder="'0'"
@@ -758,17 +889,17 @@
               <!-- Usage info (edit mode only) -->
               <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_7d > 0" class="mt-2">
                 <div class="flex items-center gap-2">
-                  <div class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
+                  <div :title="formatLimit(selectedKey.usage_7d, EXACT_DIGITS)" class="flex-1 rounded-md bg-gray-100 px-3 py-2 dark:bg-dark-800 text-sm">
                     <span :class="[
-                      'font-mono tabular-nums font-medium',
+                      'num-secondary',
                       selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'text-primary-700 dark:text-primary-400' :
                       'text-gray-900 dark:text-white'
                     ]">
-                      ${{ selectedKey.usage_7d?.toFixed(4) || '0.0000' }}
+                      {{ formatLimit(selectedKey.usage_7d) }}
                     </span>
                     <span class="mx-2 text-gray-400">/</span>
-                    <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">
-                      ${{ selectedKey.rate_limit_7d?.toFixed(2) || '0.00' }}
+                    <span class="num text-gray-600 dark:text-gray-400">
+                      {{ formatLimit(selectedKey.rate_limit_7d) }}
                     </span>
                   </div>
                 </div>
@@ -795,38 +926,6 @@
                 {{ t('keys.resetRateLimitUsage') }}
               </button>
             </div>
-          </div>
-        </div>
-
-        <!-- Stable Priority Section -->
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <label class="input-label mb-0">{{ t('keys.stablePriority.label') }}</label>
-            <button
-              type="button"
-              @click="formData.stable_priority_enabled = !formData.stable_priority_enabled"
-              :class="[
-                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none',
-                formData.stable_priority_enabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                  formData.stable_priority_enabled ? 'translate-x-4' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </div>
-          <p class="input-hint -mt-1">{{ t('keys.stablePriority.description') }}</p>
-          <div
-            v-if="formData.stable_priority_enabled"
-            class="flex items-start gap-2 rounded-md border border-primary-200 bg-primary-50 px-3 py-2 text-xs text-primary-700 dark:border-primary-500/40 dark:bg-primary-500/10 dark:text-primary-400"
-          >
-            <svg class="mt-0.5 h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-            </svg>
-            <span>{{ t('keys.stablePriority.billingWarning') }}</span>
           </div>
         </div>
 
@@ -904,7 +1003,15 @@
         </div>
       </form>
       <template #footer>
-        <div class="flex justify-end gap-3">
+        <div v-if="createdKey" class="flex justify-end gap-3">
+          <button @click="closeModals" type="button" class="btn btn-secondary" data-test="key-created-close">
+            {{ t('common.close') }}
+          </button>
+          <button @click="connectCreatedKey" type="button" class="btn btn-primary" data-test="key-created-connect">
+            {{ t('keys.goConnect') }}
+          </button>
+        </div>
+        <div v-else class="flex justify-end gap-3">
           <button @click="closeModals" type="button" class="btn btn-secondary">
             {{ t('common.cancel') }}
           </button>
@@ -963,7 +1070,7 @@
     <ConfirmDialog
       :show="showResetQuotaDialog"
       :title="t('keys.resetQuotaTitle')"
-      :message="t('keys.resetQuotaConfirmMessage', { name: selectedKey?.name, used: selectedKey?.quota_used?.toFixed(4) })"
+      :message="t('keys.resetQuotaConfirmMessage', { name: selectedKey?.name, used: formatLimit(selectedKey?.quota_used) })"
       :confirm-text="t('keys.reset')"
       :cancel-text="t('common.cancel')"
       :danger="true"
@@ -987,10 +1094,19 @@
     <KeyOnboardingModal
       :show="showOnboardingModal"
       :api-key="onboardingKey"
-      :base-url="publicSettings?.api_base_url || ''"
+      :initial-tab="onboardingTab"
+      :base-url="apiBaseUrl"
+      :custom-endpoints="publicSettings?.custom_endpoints || []"
       :site-name="publicSettings?.site_name || ''"
       :doc-url="publicSettings?.doc_url || ''"
       @close="closeOnboarding"
+    />
+
+    <KeyFallbackChainDrawer
+      :show="showFallbackDrawer"
+      :initial-key-id="fallbackDrawerKeyId"
+      :return-focus="fallbackTrigger"
+      @close="closeFallbackDrawer"
     />
 
     <!-- Group Selector Dropdown (Teleported to body to avoid overflow clipping) -->
@@ -1043,6 +1159,7 @@
               :subscription-type="option.subscriptionType"
               :rate-multiplier="option.rate"
               :user-rate-multiplier="option.userRate"
+              :rate-view="groupRateView(option.rate, option.userRate)"
               :description="option.description"
               :selected="
                 selectedKeyForGroup?.group_id === option.value ||
@@ -1061,14 +1178,24 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, reactive, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+	import { ref, reactive, computed, watch, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 	import { useI18n } from 'vue-i18n'
+	import { useRoute, useRouter } from 'vue-router'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
 	import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { EXACT_DIGITS, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import NumText from '@/components/common/NumText.vue'
+import { useSourceFiatRate } from '@/composables/useSourceFiatRate'
+import { useGroupRateView } from '@/composables/useGroupRateView'
 
 const { t } = useI18n()
+// 今日/累计花费用服务端分桶折算的人民币；额度上限与限额按当前扣费来源近似折算
+const { isFiat: currencyIsFiat, formatMixed } = useCurrencyDisplay()
+const { sourceFiatPerCredit, formatLimit } = useSourceFiatRate()
+// 分组徽标 / 下拉药丸的倍率：人民币模式显示等效倍率并补「套餐低至」，美元模式和 free 站原样
+const { groupRateView } = useGroupRateView()
 import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -1081,8 +1208,11 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import SearchInput from '@/components/common/SearchInput.vue'
 	import Icon from '@/components/icons/Icon.vue'
 import KeyOnboardingModal from '@/components/user/KeyOnboardingModal.vue'
+import KeyFallbackChainDrawer from '@/components/keys/KeyFallbackChainDrawer.vue'
+import { keyFallbackAPI } from '@/api/keyFallback'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
+	import PlanRateText from '@/components/common/PlanRateText.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 	import HelpTooltip from '@/components/common/HelpTooltip.vue'
 	import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform } from '@/types'
@@ -1117,9 +1247,11 @@ const allColumns = computed<Column[]>(() => [
   { key: 'name', label: t('common.name'), sortable: true },
   { key: 'id', label: t('keys.id'), sortable: true },
   { key: 'key', label: t('keys.apiKey'), sortable: false },
+  // 用量排在分组之前：表格宽度超出时右侧操作列是吸附的，靠后的列默认被它盖住，
+  // 用量放太靠后就只剩列首的「近 / 今」两个字露在外面
+  { key: 'usage', label: t('keys.usage'), sortable: false },
   { key: 'group', label: t('keys.group'), sortable: false },
   { key: 'current_concurrency', label: t('keys.currentConcurrency'), sortable: true },
-  { key: 'usage', label: t('keys.usage'), sortable: false },
   { key: 'rate_limit', label: t('keys.rateLimitColumn'), sortable: false },
   { key: 'expires_at', label: t('keys.expiresAt'), sortable: true },
   { key: 'status', label: t('common.status'), sortable: true },
@@ -1217,6 +1349,53 @@ let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
 const userGroupRates = ref<Record<number, number>>({})
 
+// 列表行里「套餐低至」放在徽标下一行。订阅分组的徽标显示「订阅」/剩余天数而不是倍率，
+// 不带套餐低至（和 GroupBadge 的规则一致）；没有套餐低至（美元、free、定价没取到）就是 undefined。
+const listPlanView = (row: ApiKey) => {
+  const group = row.group
+  if (!group) return undefined
+  const view = groupRateView(group, userGroupRates.value[group.id])
+  const labelShowsRate = group.subscription_type !== 'subscription' || view.mainStruck !== undefined
+  return labelShowsRate && view.plan !== undefined ? view : undefined
+}
+
+// 站点接入地址：公开设置里没配时退回当前站点
+const apiBaseUrl = computed(() => (publicSettings.value?.api_base_url || '').trim() || window.location.origin)
+const addressCopied = ref(false)
+let addressCopiedTimer: ReturnType<typeof setTimeout> | null = null
+const copyAddress = async () => {
+  const ok = await clipboardCopy(apiBaseUrl.value, t('keys.endpoints.copied'))
+  if (!ok) return
+  addressCopied.value = true
+  if (addressCopiedTimer) clearTimeout(addressCopiedTimer)
+  addressCopiedTimer = setTimeout(() => (addressCopied.value = false), 1500)
+}
+
+// 每行「近 30 天」消费（与额度上限口径不同，页面上分开标注）
+const recentSpent = (keyId: number) =>
+  formatMixed(usageStats.value[keyId]?.total_actual_cost ?? 0, usageStats.value[keyId]?.total_actual_cost_fiat)
+
+// 概览：已启用数、近 30 天消费合计。统计只覆盖当前列表：分页后只有当前页，带筛选条件时只有命中的密钥。
+const overview = computed(() => {
+  let credits = 0
+  let fiat = 0
+  let fiatMissing = false
+  for (const key of apiKeys.value) {
+    const stat = usageStats.value[key.id]
+    const c = stat?.total_actual_cost ?? 0
+    credits += c
+    const f = stat?.total_actual_cost_fiat
+    if (typeof f === 'number' && Number.isFinite(f)) fiat += f
+    else if (c) fiatMissing = true
+  }
+  return {
+    enabled: apiKeys.value.filter((k) => k.status === 'active').length,
+    partial: listFiltered.value || pagination.value.total > apiKeys.value.length,
+    // 有 Key 缺人民币值时不能拿部分合计冒充总数，交给 formatMixed 回落到美元
+    spent: formatMixed(credits, fiatMissing ? undefined : fiat)
+  }
+})
+
 const pagination = ref({
   page: 1,
   page_size: getPersistedPageSize(),
@@ -1232,6 +1411,8 @@ const sortState = ref({
 const filterSearch = ref('')
 const filterStatus = ref('')
 const filterGroupId = ref<string | number>('')
+// 当前列表数据是否按筛选条件请求的（以请求时为准，输入框里还没生效的内容不算）
+const listFiltered = ref(false)
 
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
@@ -1240,7 +1421,54 @@ const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
 const showColumnDropdown = ref(false)
 const showOnboardingModal = ref(false)
+// 刚创建成功的密钥：非空时创建弹窗显示「密钥已创建」确认态
+const createdKey = ref<ApiKey | null>(null)
+const showFallbackDrawer = ref(false)
+const fallbackDrawerKeyId = ref<number | null>(null)
+const fallbackTrigger = ref<HTMLElement | null>(null)
+const openFallbackDrawer = (key: ApiKey, event?: Event) => {
+  fallbackDrawerKeyId.value = key.id
+  fallbackTrigger.value = (event?.currentTarget as HTMLElement | null) ?? null
+  showFallbackDrawer.value = true
+}
+const closeFallbackDrawer = () => {
+  showFallbackDrawer.value = false
+  // 抽屉里可能增删了兜底项，入口是否显示要跟着刷新
+  loadFallbackSummary()
+}
+
+// 入口显隐：沿用抽屉的批量摘要（has_available = 这把 Key 还有没加入链的同平台可用分组）。
+// 没有可添加的分组、链里也没有项，入口就不显示；链里已有项时照常显示，用户才能看到并删掉。
+// 摘要还没回来时先不显示，避免入口闪一下；读取失败就显示，不因此把入口藏起来。
+type FallbackEntryInfo = { hasAvailable: boolean; hasFallback: boolean }
+const fallbackEntryInfo = ref<Map<number, FallbackEntryInfo> | null>(null)
+const fallbackSummaryState = ref<'loading' | 'ok' | 'error'>('loading')
+const loadFallbackSummary = async () => {
+  try {
+    const res = await keyFallbackAPI.listChains()
+    const map = new Map<number, FallbackEntryInfo>()
+    for (const p of res?.platforms ?? []) {
+      for (const k of p.keys) {
+        map.set(k.key_id, {
+          hasAvailable: k.has_available,
+          hasFallback: k.items.some((i) => i.role === 'fallback')
+        })
+      }
+    }
+    fallbackEntryInfo.value = map
+    fallbackSummaryState.value = 'ok'
+  } catch {
+    fallbackSummaryState.value = 'error'
+  }
+}
+const fallbackEntryVisible = (key: ApiKey): boolean => {
+  if (fallbackSummaryState.value === 'error') return true
+  if (fallbackSummaryState.value === 'loading') return false
+  const info = fallbackEntryInfo.value?.get(key.id)
+  return !info || info.hasAvailable || info.hasFallback
+}
 const onboardingKey = ref<ApiKey | null>(null)
+const onboardingTab = ref<'install' | 'ai' | 'ccswitch' | 'manual'>('install')
 const selectedKey = ref<ApiKey | null>(null)
 const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
@@ -1282,12 +1510,79 @@ const formData = ref({
   rate_limit_5h: null as number | null,
   rate_limit_1d: null as number | null,
   rate_limit_7d: null as number | null,
-  // 稳定优先 per-key 开关
-  stable_priority_enabled: false,
   enable_expiration: false,
   expiration_preset: '30' as '7' | '30' | '90' | 'custom',
   expiration_date: ''
 })
+
+/*
+ * 额度上限 / 5h·1d·7d 限额的输入单位（方案 K2）。
+ *
+ * 这些计数器累加的是额度，钱包和订阅卡混扣，没有精确的人民币值。人民币模式下
+ * 让用户直接填人民币，提交时按「当前扣费来源」单价换算回额度保存。
+ * 单位在弹窗打开时定格：弹窗开着时切换计价口径，不会把已填的数字按另一种单位解读。
+ */
+type LimitField = 'quota' | 'rate_limit_5h' | 'rate_limit_1d' | 'rate_limit_7d'
+const limitInputFiat = ref(false)
+// 回显和提交用同一个单价：弹窗打开后订阅卡数据才加载回来时，也不会前后口径不一致
+const limitInputRate = ref(0)
+const limitInputSymbol = computed(() => (limitInputFiat.value ? '¥' : '$'))
+// 限额标签上的币种代码，和输入框前面的符号同一口径（弹窗打开时定格）。
+const limitInputCurrency = computed(() => (limitInputFiat.value ? 'CNY' : 'USD'))
+// 编辑时记下每个字段回显的人民币值和原始额度：用户没改的字段原样提交额度，
+// 避免「额度 → 人民币（四舍五入）→ 额度」往返一次就把上限改掉几分。
+const limitOriginals = new Map<LimitField, { input: number; credits: number }>()
+
+const limitFiatHint = computed(() => t('keys.limitEstimateHint'))
+
+function beginLimitInput() {
+  limitInputFiat.value = currencyIsFiat.value
+  limitInputRate.value = sourceFiatPerCredit.value
+  limitOriginals.clear()
+}
+
+function limitToInput(field: LimitField, credits: number | null | undefined): number | null {
+  if (!credits || credits <= 0) return null
+  if (!limitInputFiat.value) return credits
+  const fiat = credits * limitInputRate.value
+  // 一般保留到分；极小的上限四舍五入会变成 0（看起来像「不限」），改为保留 3 位有效数字
+  let input = Math.round(fiat * 100) / 100
+  if (input === 0) input = Number(fiat.toPrecision(3))
+  limitOriginals.set(field, { input, credits })
+  return input
+}
+
+function limitFromInput(field: LimitField, input: number | null): number {
+  // 先看原值：用户没改的字段原样提交原始额度，不经过任何换算或「≤0 视为不限」的判断
+  const original = limitInputFiat.value ? limitOriginals.get(field) : undefined
+  if (original && original.input === input) return original.credits
+  if (!input || input <= 0) return 0
+  if (!limitInputFiat.value) return input
+  return Math.round((input / limitInputRate.value) * 1e8) / 1e8
+}
+
+watch(showCreateModal, (open) => {
+  if (open) beginLimitInput()
+})
+
+// /keys?new=1 直接打开创建弹窗；打开后立刻把参数从地址栏清掉，刷新或返回不会再弹
+const route = useRoute()
+const router = useRouter()
+watch(
+  () => route.query.new,
+  (flag) => {
+    if (flag === undefined) return
+    if (flag === '1') {
+      showEditModal.value = false
+      createdKey.value = null
+      showCreateModal.value = true
+    }
+    const rest = { ...route.query }
+    delete rest.new
+    void router.replace({ query: rest })
+  },
+  { immediate: true }
+)
 
 // 自定义Key验证
 const customKeyError = computed(() => {
@@ -1406,6 +1701,7 @@ const loadApiKeys = async () => {
     })
     if (signal.aborted) return
     apiKeys.value = response.items
+    listFiltered.value = filters.search !== undefined || filters.status !== undefined || filters.group_id !== undefined
     pagination.value.total = response.total
     pagination.value.pages = response.pages
 
@@ -1458,8 +1754,9 @@ const loadPublicSettings = async () => {
   }
 }
 
-const openOnboarding = (key: ApiKey) => {
+const openOnboarding = (key: ApiKey, tab: 'install' | 'ccswitch' = 'install') => {
   onboardingKey.value = key
+  onboardingTab.value = tab
   showOnboardingModal.value = true
 }
 
@@ -1488,6 +1785,7 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
 
 const editKey = (key: ApiKey) => {
   selectedKey.value = key
+  beginLimitInput()
   const hasIPRestriction = (key.ip_whitelist?.length > 0) || (key.ip_blacklist?.length > 0)
   const hasExpiration = !!key.expires_at
   formData.value = {
@@ -1500,12 +1798,11 @@ const editKey = (key: ApiKey) => {
     ip_whitelist: (key.ip_whitelist || []).join('\n'),
     ip_blacklist: (key.ip_blacklist || []).join('\n'),
     enable_quota: key.quota > 0,
-    quota: key.quota > 0 ? key.quota : null,
+    quota: limitToInput('quota', key.quota),
     enable_rate_limit: (key.rate_limit_5h > 0) || (key.rate_limit_1d > 0) || (key.rate_limit_7d > 0),
-    rate_limit_5h: key.rate_limit_5h || null,
-    rate_limit_1d: key.rate_limit_1d || null,
-    rate_limit_7d: key.rate_limit_7d || null,
-    stable_priority_enabled: key.stable_priority_enabled,
+    rate_limit_5h: limitToInput('rate_limit_5h', key.rate_limit_5h),
+    rate_limit_1d: limitToInput('rate_limit_1d', key.rate_limit_1d),
+    rate_limit_7d: limitToInput('rate_limit_7d', key.rate_limit_7d),
     enable_expiration: hasExpiration,
     expiration_preset: 'custom',
     expiration_date: key.expires_at ? formatDateTimeLocal(key.expires_at) : ''
@@ -1599,7 +1896,7 @@ const handleSubmit = async () => {
   const ipBlacklist = formData.value.enable_ip_restriction ? parseIPList(formData.value.ip_blacklist) : []
 
   // Calculate quota value (null/empty/0 = unlimited, stored as 0)
-  const quota = formData.value.quota && formData.value.quota > 0 ? formData.value.quota : 0
+  const quota = limitFromInput('quota', formData.value.quota)
 
   // Calculate expiration
   let expiresInDays: number | undefined
@@ -1622,9 +1919,9 @@ const handleSubmit = async () => {
 
   // Calculate rate limit values (send 0 when toggle is off)
   const rateLimitData = formData.value.enable_rate_limit ? {
-    rate_limit_5h: formData.value.rate_limit_5h && formData.value.rate_limit_5h > 0 ? formData.value.rate_limit_5h : 0,
-    rate_limit_1d: formData.value.rate_limit_1d && formData.value.rate_limit_1d > 0 ? formData.value.rate_limit_1d : 0,
-    rate_limit_7d: formData.value.rate_limit_7d && formData.value.rate_limit_7d > 0 ? formData.value.rate_limit_7d : 0,
+    rate_limit_5h: limitFromInput('rate_limit_5h', formData.value.rate_limit_5h),
+    rate_limit_1d: limitFromInput('rate_limit_1d', formData.value.rate_limit_1d),
+    rate_limit_7d: limitFromInput('rate_limit_7d', formData.value.rate_limit_7d),
   } : { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }
 
   submitting.value = true
@@ -1641,12 +1938,11 @@ const handleSubmit = async () => {
         rate_limit_5h: rateLimitData.rate_limit_5h,
         rate_limit_1d: rateLimitData.rate_limit_1d,
         rate_limit_7d: rateLimitData.rate_limit_7d,
-        stable_priority_enabled: formData.value.stable_priority_enabled,
       })
       appStore.showSuccess(t('keys.keyUpdatedSuccess'))
     } else {
       const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
-      await keysAPI.create(
+      const created = await keysAPI.create(
         formData.value.name,
         formData.value.group_id,
         customKey,
@@ -1654,13 +1950,18 @@ const handleSubmit = async () => {
         ipBlacklist,
         quota,
         expiresInDays,
-        rateLimitData,
-        formData.value.stable_priority_enabled
+        rateLimitData
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
       if (onboardingStore.isCurrentStep('[data-tour="key-form-submit"]')) {
         onboardingStore.nextStep(500)
+      }
+      // 创建弹窗原地变成确认态，由用户关闭或去接入；列表在后台刷新
+      if (created?.key) {
+        createdKey.value = created
+        loadApiKeys()
+        return
       }
     }
     closeModals()
@@ -1694,8 +1995,15 @@ const handleDelete = async () => {
   }
 }
 
+const connectCreatedKey = () => {
+  const key = createdKey.value
+  closeModals()
+  if (key) openOnboarding(key, 'install')
+}
+
 const closeModals = () => {
   showCreateModal.value = false
+  createdKey.value = null
   showEditModal.value = false
   selectedKey.value = null
   formData.value = {
@@ -1713,7 +2021,6 @@ const closeModals = () => {
     rate_limit_5h: null,
     rate_limit_1d: null,
     rate_limit_7d: null,
-    stable_priority_enabled: false,
     enable_expiration: false,
     expiration_preset: '30',
     expiration_date: ''
@@ -1735,14 +2042,18 @@ const setExpirationDays = (days: number) => {
 
 // Reset quota used for an API key
 const resetQuotaUsed = async () => {
-  if (!selectedKey.value) return
+  const key = selectedKey.value
+  if (!key) return
   showResetQuotaDialog.value = false
   try {
-    await keysAPI.update(selectedKey.value.id, { reset_quota: true })
+    const updatedKey = await keysAPI.update(key.id, { reset_quota: true })
     appStore.showSuccess(t('keys.quotaResetSuccess'))
-    // Update local state
-    if (selectedKey.value) {
-      selectedKey.value.quota_used = 0
+    key.quota_used = updatedKey.quota_used
+    if (key.status !== updatedKey.status) {
+      key.status = updatedKey.status
+      if (selectedKey.value?.id === key.id) {
+        formData.value.status = updatedKey.status === 'active' ? 'active' : 'inactive'
+      }
     }
   } catch (error: any) {
     const errorMsg = error.response?.data?.detail || t('keys.failedToResetQuota')
@@ -1797,6 +2108,7 @@ function formatResetTime(resetAt: string | null): string {
 onMounted(() => {
   loadSavedColumns()
   loadApiKeys()
+  loadFallbackSummary()
   loadGroups()
   loadUserGroupRates()
   loadPublicSettings()
@@ -1806,6 +2118,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', closeGroupSelector)
+  if (addressCopiedTimer) clearTimeout(addressCopiedTimer)
   if (resetTimer) clearInterval(resetTimer)
 })
 </script>

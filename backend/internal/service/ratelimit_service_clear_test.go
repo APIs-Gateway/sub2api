@@ -20,7 +20,8 @@ type rateLimitClearRepoStub struct {
 	clearErrorCalls           int
 	clearRateLimitCalls       int
 	clearAntigravityCalls     int
-	clearModelRateLimitCalls  int
+	clearModelRateLimitCalls   int
+	clearModelExceptGuardCalls int
 	clearTempUnschedCalls     int
 	clearErrorErr             error
 	clearRateLimitErr         error
@@ -55,6 +56,32 @@ func (r *rateLimitClearRepoStub) ClearAntigravityQuotaScopes(ctx context.Context
 func (r *rateLimitClearRepoStub) ClearModelRateLimits(ctx context.Context, id int64) error {
 	r.clearModelRateLimitCalls++
 	return r.clearModelRateLimitErr
+}
+
+func (r *rateLimitClearRepoStub) ClearModelRateLimitsExceptDowngrade(ctx context.Context, id int64) error {
+	r.clearModelExceptGuardCalls++
+	return r.clearModelRateLimitErr
+}
+
+type rateLimitClearRepoWithoutSelective struct{ AccountRepository }
+
+func TestRateLimitServiceAutoRecoveryRequiresSelectiveClearWhenGuardEnabled(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.ModelDowngradeGuard.Enabled = true
+	svc := &RateLimitService{cfg: cfg, accountRepo: &rateLimitClearRepoWithoutSelective{}}
+	require.ErrorContains(t, svc.clearModelRateLimits(context.Background(), 17, true), "requires selective automatic recovery")
+}
+
+func TestHasClearableModelRateLimitsPreservesOnlyGuardEntries(t *testing.T) {
+	require.False(t, hasClearableModelRateLimits(map[string]any{"model_rate_limits": map[string]any{
+		"gpt-6-astra": map[string]any{"reason": ModelDowngradeGuardReason},
+	}}))
+	require.True(t, hasClearableModelRateLimits(map[string]any{"model_rate_limits": map[string]any{
+		"gpt-6-astra": map[string]any{"reason": ModelDowngradeGuardReason},
+		"gpt-5.6-luna": map[string]any{"reason": "upstream_429"},
+	}}))
+	require.True(t, hasClearableModelRateLimits(map[string]any{"model_rate_limits": map[string]any{"gpt-6-astra": "malformed"}}))
+	require.True(t, hasClearableModelRateLimits(map[string]any{"model_rate_limits": []any{"malformed"}}))
 }
 
 func (r *rateLimitClearRepoStub) ClearTempUnschedulable(ctx context.Context, id int64) error {
@@ -101,6 +128,7 @@ func TestRateLimitService_ClearRateLimit_AlsoClearsTempUnschedulable(t *testing.
 	require.Equal(t, 1, repo.clearRateLimitCalls)
 	require.Equal(t, 1, repo.clearAntigravityCalls)
 	require.Equal(t, 1, repo.clearModelRateLimitCalls)
+	require.Equal(t, 0, repo.clearModelExceptGuardCalls)
 	require.Equal(t, 1, repo.clearTempUnschedCalls)
 	require.Equal(t, []int64{42}, cache.deletedIDs)
 }
@@ -183,6 +211,7 @@ func TestRateLimitService_ClearRateLimit_CacheDeleteFailedShouldNotFail(t *testi
 	require.Equal(t, 1, repo.clearRateLimitCalls)
 	require.Equal(t, 1, repo.clearAntigravityCalls)
 	require.Equal(t, 1, repo.clearModelRateLimitCalls)
+	require.Equal(t, 0, repo.clearModelExceptGuardCalls)
 	require.Equal(t, 1, repo.clearTempUnschedCalls)
 	require.Equal(t, []int64{14}, cache.deletedIDs)
 }
@@ -233,7 +262,8 @@ func TestRateLimitService_RecoverAccountAfterSuccessfulTest_ClearsErrorAndRateLi
 	require.Equal(t, 1, repo.clearErrorCalls)
 	require.Equal(t, 1, repo.clearRateLimitCalls)
 	require.Equal(t, 1, repo.clearAntigravityCalls)
-	require.Equal(t, 1, repo.clearModelRateLimitCalls)
+	require.Equal(t, 0, repo.clearModelRateLimitCalls)
+	require.Equal(t, 1, repo.clearModelExceptGuardCalls)
 	require.Equal(t, 1, repo.clearTempUnschedCalls)
 	require.Equal(t, []int64{42}, cache.deletedIDs)
 	require.Equal(t, []int64{42}, blocker.clearedIDs)
@@ -264,6 +294,22 @@ func TestRateLimitService_RecoverAccountAfterSuccessfulTest_NoRecoverableStateIs
 	require.Equal(t, 0, repo.clearModelRateLimitCalls)
 	require.Equal(t, 0, repo.clearTempUnschedCalls)
 	require.Empty(t, cache.deletedIDs)
+}
+
+func TestRateLimitService_RecoverAccountAfterSuccessfulTest_GuardOnlyIsNoop(t *testing.T) {
+	repo := &rateLimitClearRepoStub{getByIDAccount: &Account{
+		ID: 8, Status: StatusActive, Schedulable: true,
+		Extra: map[string]any{"model_rate_limits": map[string]any{
+			"gpt-6-astra": map[string]any{"reason": ModelDowngradeGuardReason},
+		}},
+	}}
+	svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	result, err := svc.RecoverAccountAfterSuccessfulTest(context.Background(), 8)
+	require.NoError(t, err)
+	require.False(t, result.ClearedRateLimit)
+	require.Zero(t, repo.clearRateLimitCalls)
+	require.Zero(t, repo.clearModelRateLimitCalls)
+	require.Zero(t, repo.clearModelExceptGuardCalls)
 }
 
 func TestRateLimitService_RecoverAccountAfterSuccessfulTest_ClearErrorFailed(t *testing.T) {

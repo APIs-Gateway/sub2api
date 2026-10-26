@@ -39,9 +39,8 @@ func (c *CompositeTokenCacheInvalidator) InvalidateToken(ctx context.Context, ac
 		keysToDelete = append(keysToDelete, GeminiTokenCacheKey(account))
 		keysToDelete = append(keysToDelete, "gemini:"+accountIDKey)
 	case PlatformAntigravity:
-		// Antigravity 同样可能有两种缓存键
+		// Antigravity token 缓存始终按账号 ID 隔离；旧 project_id 键自然过期。
 		keysToDelete = append(keysToDelete, AntigravityTokenCacheKey(account))
-		keysToDelete = append(keysToDelete, "ag:"+accountIDKey)
 	case PlatformOpenAI:
 		keysToDelete = append(keysToDelete, OpenAITokenCacheKey(account))
 	case PlatformGrok:

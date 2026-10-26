@@ -12,100 +12,11 @@
     goToDashboard: 'Go to Dashboard',
     // Hero title & description (Anthropic-minimal style, OpenAI positioning)
     heroTitle: 'Powerful AI, made simple',
-    heroDesc: 'A fast, reliable, pay-as-you-go API for powerful AI models. Sign up, grab a key, and start building.',
-    // Legacy fields kept for compatibility
-    heroSubtitle: 'One key for powerful AI models',
-    heroDescription: 'A fast, reliable, pay-as-you-go API for powerful AI models',
-    tags: {
-      subscriptionToApi: 'Fast & Reliable',
-      stickySession: 'Session Persistence',
-      realtimeBilling: 'Pay As You Go'
-    },
-    // Pain points section
-    painPoints: {
-      title: 'Sound Familiar?',
-      items: {
-        expensive: {
-          title: 'High Subscription Costs',
-          desc: 'Paying for multiple AI subscriptions that add up every month'
-        },
-        complex: {
-          title: 'Account Chaos',
-          desc: 'Managing scattered accounts and API keys across different platforms'
-        },
-        unstable: {
-          title: 'Service Interruptions',
-          desc: 'Single accounts hitting rate limits and disrupting your workflow'
-        },
-        noControl: {
-          title: 'No Usage Control',
-          desc: "Can't track where your money goes or limit team member usage"
-        }
-      }
-    },
-    // Solutions section
-    solutions: {
-      title: 'We Solve These Problems',
-      subtitle: 'Three simple steps to stress-free AI access'
-    },
-    features: {
-      unifiedGateway: 'Fast & Reliable',
-      unifiedGatewayDesc: 'High-availability infrastructure with smart routing — low latency, high success rate.',
-      multiAccount: 'Simple to Integrate',
-      multiAccountDesc: 'Compatible with popular OpenAI SDKs. Grab one key and start calling.',
-      balanceQuota: 'Pay As You Go',
-      balanceQuotaDesc: 'Pay only for what you use, with real-time usage and quota visibility.'
-    },
-    // Comparison section
-    comparison: {
-      title: 'Why Choose Us?',
-      headers: {
-        feature: 'Comparison',
-        official: 'Official Subscriptions',
-        us: 'Our Platform'
-      },
-      items: {
-        pricing: {
-          feature: 'Pricing',
-          official: 'Fixed monthly fee, pay even if unused',
-          us: 'Pay only for what you use'
-        },
-        models: {
-          feature: 'Model Selection',
-          official: 'Single provider only',
-          us: 'Switch between models freely'
-        },
-        management: {
-          feature: 'Account Management',
-          official: 'Manage each service separately',
-          us: 'Unified key, one dashboard'
-        },
-        stability: {
-          feature: 'Stability',
-          official: 'Single account rate limits',
-          us: 'Multi-account pool, auto-failover'
-        },
-        control: {
-          feature: 'Usage Control',
-          official: 'Not available',
-          us: 'Quotas & detailed analytics'
-        }
-      }
-    },
-    providers: {
-      title: 'Supported models',
-      description: 'Powered by OpenAI models',
-      supported: 'Available',
-      soon: 'Soon',
-      claude: 'Claude',
-      gemini: 'Gemini',
-      antigravity: 'Antigravity',
-      more: 'More'
-    },
+    heroDesc: 'A fast, reliable API for powerful AI models. Sign up and create a key to connect.',
     // CTA section
     cta: {
       title: 'Ready to Get Started?',
-      description: 'Sign up now and get free trial credits to experience seamless AI access',
+      description: 'Create a key, then subscribe or top up your balance to start calling.',
       button: 'Sign Up Free'
     },
     footer: {
@@ -113,36 +24,90 @@
     },
     // Landing page marketing copy (previously hardcoded in HomeView.vue)
     marketing: {
-      eyebrow: 'Subscription · Daily-refreshing quota · Overdraft-friendly',
+      eyebrow: 'Two ways to pay: subscription or balance',
       endpointNote: '// OpenAI-compatible · one key',
-      valueTitle: 'Subscribe once, full every day',
-      valueDesc: 'Not a prepaid balance that drains away — a subscription whose quota refreshes daily. About ¥3.6 (≈ $0.5) a day unlocks usage equivalent to $2700 of official spend.',
-      stat1Value: '$90 / day',
-      stat1Label: 'Daily refreshing quota',
-      stat2Value: '¥3.6 / day',
-      stat2Label: 'Avg daily cost ≈ $0.5',
-      stat3Value: '$2700 / mo',
-      stat3Label: 'Equivalent official usage',
+      valueTitle: 'Subscribe once, quota refreshes every day',
+      valueDesc: 'Use a subscription and a balance together, or just one of them.',
       feature1Title: 'Fast & stable',
-      feature1Desc: 'High-availability gateway and smart routing — low latency, high success rate.',
+      feature1Desc: 'Low latency and a high success rate — stable and dependable.',
       feature2Title: 'Simple to connect',
-      feature2Desc: 'Compatible with mainstream OpenAI / Anthropic protocols — one key to start.',
+      feature2Desc: 'Compatible with mainstream OpenAI / Anthropic protocols — one key connects you.',
       feature3Title: 'Transparent metering',
       feature3Desc: 'Every call’s latency, tokens and cost are recorded — usage visible in real time.',
       integrateTitle: 'Connect anywhere',
       integrateDesc: 'Standard-compatible — plug into your IDE or agent in minutes. One key, many clients.',
       clientAnySdk: 'Any OpenAI SDK',
-      compareTitle: 'How it differs from pay-as-you-go',
-      paygTitle: 'Pay-as-you-go',
-      paygPoint1: 'Stops when balance runs out; constant top-ups',
-      paygPoint2: 'Unpredictable bills under heavy use',
-      paygPoint3: 'Price floats with usage, hard to estimate',
-      subTitle: 'This platform (subscription)',
-      subPoint1: 'Quota refreshes daily — usage resets, no balance burn',
-      subPoint2: 'Fixed per-cycle cost, clear and predictable',
-      subPoint3: 'High-availability gateway + smart routing',
-      overdraftTitle: 'Overdraft supported — bursts don’t cut you off',
-      overdraftDesc: 'When the daily quota is exceeded, you keep calling within an overdraft allowance, metered as days drawn forward — so a single heavy session never stalls you mid-task.'
+      compareTitle: 'How subscription and balance differ',
+      subscriptionTitle: 'Subscription',
+      subscriptionPoint1: 'Choose a daily quota and validity when you buy',
+      subscriptionPoint2: 'Quota refreshes daily, with weekly and monthly caps',
+      subscriptionPoint3: 'Fixed per-cycle cost, clear and predictable',
+      balanceTitle: 'Balance',
+      balancePoint1: 'Top up whenever you need to',
+      balancePoint2: 'Billed by actual usage — you pay for what you use',
+      balancePoint3: 'With a subscription, usage continues on your balance once the quota runs out',
+      overdraftTitle: 'Daily quota used up? Refresh it',
+      overdraftDesc: 'Open My Subscriptions and choose “Refresh daily allowance” to restore today’s quota right away and keep going. Up to 5 times per calendar month; weekly and monthly caps still apply.'
+    }
+  },
+
+  // Docs Page
+  docs: {
+    title: 'Docs',
+    intro: 'How to connect your tools to {site}. Every step comes with a config you can copy.',
+    contentNotice: 'The guide below is currently available in Simplified Chinese only.',
+    menu: 'Contents',
+    tocTitle: 'Documentation contents',
+    onThisPage: 'On this page',
+    copy: 'Copy',
+    copied: 'Copied',
+    groups: {
+      start: 'Get started',
+      clients: 'Command-line tools',
+      editors: 'Editors and extensions',
+      chat: 'Chat and translation',
+      developers: 'For developers',
+      reference: 'Reference'
+    },
+    connect: {
+      openai: 'OpenAI-compatible URL',
+      anthropic: 'Anthropic-compatible URL',
+      key: 'API key',
+      keyPlaceholder: 'sk-your-key',
+      createKey: 'Create a key',
+      endpointHint: 'If access is slow, switch to another address. Your API key works with all of them.'
+    },
+    ai: {
+      iWant: 'I want to connect:',
+      sentenceNamed: 'Follow this guide to connect {tool} to {site}: {url}',
+      tools: {
+        any: {
+          label: 'Any tool',
+          sentence: 'Follow this guide to connect the tool I use to {site}: {url}'
+        },
+        chat: {
+          label: 'Chat clients',
+          sentence: 'Follow this guide to connect my chat client to {site}: {url}'
+        },
+        code: {
+          label: 'Call from code',
+          sentence: 'Follow this guide to call {site} from my code: {url}'
+        }
+      },
+      copySentence: 'Copy',
+      copyFull: 'Copy the full guide',
+      more: 'More options',
+      hint: 'AI can’t open the link? Choose “Copy the full guide” and paste the whole text to it. AI tools can also read {url} directly.',
+      moreTitle: 'Full prompt',
+      moreDesc: 'The address and instructions are written into the prompt, so it works even when the AI can’t open links.',
+      copyPrompt: 'Copy prompt',
+      openChatgpt: 'Open in ChatGPT',
+      openClaude: 'Open in Claude'
+    },
+    models: {
+      open: 'Open Pricing and billing to see available models',
+      loginHint: 'Sign in to see the models and prices available to you.',
+      login: 'Sign in'
     }
   },
 
@@ -290,6 +255,12 @@
 
   // Common
   common: {
+    apply: 'Apply',
+    clear: 'Clear',
+    creating: 'Creating...',
+    required: 'Required',
+    sending: 'Sending...',
+    tryAgain: 'Please try again',
     loading: 'Loading...',
     submitting: 'Submitting...',
     justNow: 'just now',
@@ -445,6 +416,7 @@
     groups: 'Groups',
     channels: 'Channels',
     availableChannels: 'Pricing & Billing',
+    usageDocs: 'Docs',
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
     proxies: 'Proxies',
@@ -461,7 +433,7 @@
     github: 'GitHub',
     mySubscriptions: 'My Subscriptions',
     supportQqGroup: 'Support QQ Group',
-    buySubscription: 'Recharge / Subscription',
+    buySubscription: 'Top Up / Subscription',
     docs: 'Docs',
     myOrders: 'My Orders',
     orderManagement: 'Orders',
@@ -470,11 +442,23 @@
     paymentConfig: 'Payment Config',
     paymentPlans: 'Plans',
     channelManagement: 'Channels',
-    channelPricing: 'Pricing Config',
+    channelPricing: 'Channel Pricing',
+    pricingConfig: 'Pricing',
+    pricingModels: 'Models',
+    pricingMatrix: 'Availability & Pricing',
     channelMonitor: 'Channel Monitor',
     channelStatus: 'Channel Status',
     riskControl: 'Risk Control',
     promptAudit: 'Prompt Audit',
+    topUp: 'Top Up',
+    userId: 'User ID',
+    userIdCopied: 'User ID copied',
+    balanceCard: {
+      subscription: 'Subscription',
+      leftDaily: 'Left today',
+      leftWeekly: 'Left this week',
+      leftMonthly: 'Left this month',
+    },
   },
 
   // Auth
@@ -556,6 +540,7 @@
     reloginRequired: 'Session expired. Please log in again.',
     turnstileExpired: 'Verification expired, please try again',
     turnstileFailed: 'Verification failed, please try again',
+    captchaLoading: 'Loading verification…',
     completeVerification: 'Please complete the verification',
     verifyYourEmail: 'Verify Your Email',
     sessionExpired: 'Session expired',
@@ -822,9 +807,6 @@
     tokens: 'Tokens',
     actual: 'Actual',
     standard: 'Standard',
-    input: 'Input',
-    output: 'Output',
-    cache: 'Cache',
     recentUsage: 'Recent Usage',
     last7Days: 'Last 7 days',
     noUsageRecords: 'No usage records',
@@ -836,7 +818,31 @@
     viewUsage: 'View Usage',
     checkDetailedLogs: 'Check detailed usage logs',
     redeemCode: 'Redeem Code',
-    addBalanceWithCode: 'Add balance with a code'
+    addBalanceWithCode: 'Add balance with a code',
+    topUp: 'Top Up',
+    topUpDesc: 'Add credit to your wallet',
+    readDocs: 'Read Docs',
+    readDocsDesc: 'Integration guides and API reference',
+    copyAiPrompt: 'Copy integration prompt for AI',
+    copyAiPromptDesc: 'Paste into any coding assistant to get started',
+    aiPromptCopied: 'Copied',
+    aiPromptText: 'I am using an OpenAI-compatible API at {baseUrl}. Please help me integrate it using this base URL and an API key I will provide.',
+    apiEntry: {
+      title: 'API Access',
+      altLabel: 'Alternate endpoints',
+      copyFailed: 'Copy failed. Please select the text and copy manually.',
+    },
+    needsAttention: {
+      title: 'Needs Attention',
+      allGood: 'Nothing needs attention right now',
+      lowBalance: 'Wallet balance is low',
+      lowBalanceDesc: 'Current balance {balance} is below your alert threshold',
+      topUp: 'Top up',
+      keyNearLimit: 'Key "{name}" has used {pct}% of its quota',
+      keyExhausted: 'Key "{name}" has reached its spending limit',
+      keyQuotaDesc: 'Used {used} of {limit}',
+      manageKey: 'Manage key',
+    },
   },
 
   // Groups (shared)
@@ -844,51 +850,279 @@
     subscription: 'Sub',
     rateMultiplierTip: 'The "Nx rate" is how fast this group burns your balance relative to official pricing: a higher number means a more stable pool but also more balance consumed for the same usage. It is the billing coefficient, not the final price. See the group description for your effective fraction of official pricing after the plan discount.'
     ,
-    rateMultiplierLabel: '{rate}x rate'
+    rateMultiplierLabel: '{rate}x rate',
+    rateTipFiat: 'Rate {rate}x: you pay ¥{rate} for every $1 of usage at official pricing. A lower rate costs less.',
+    rateTipUsd: 'Rate {rate}x: every $1 of usage at official pricing deducts ${rate} of quota. A lower rate costs less.',
+    planRatePrefix: 'Plan as low as',
+    planRateTip: 'With a plan, the same usage is charged at {rate}x or lower.',
+    yourPlanRateTip: 'Your plan currently charges {rate}x.'
   },
 
-  // Key onboarding dialog (previously hardcoded in KeyOnboardingModal.vue)
+  keyFallback: {
+    entry: "Fallback groups",
+    drawer: {
+      title: "Fallback groups",
+      intro: "When the main group is busy or unavailable, requests move to the groups below in order. Whichever group handles a request, that group's price applies.",
+      close: "Close",
+      retry: "Retry",
+      loadFailed: "Failed to load. Please try again.",
+      emptyTitle: "No keys can have fallback groups yet",
+      emptyHint: "Pick a group for a key first, then set up its fallback groups.",
+      noFallback: "No fallback groups",
+      fallbackCount: "{n} fallback groups",
+      expand: "Show fallback groups for {name}",
+      collapse: "Hide fallback groups for {name}",
+    },
+    platforms: {
+      anthropic: "Anthropic",
+      openai: "OpenAI",
+      gemini: "Gemini",
+      antigravity: "Antigravity",
+      grok: "Grok",
+    },
+    editor: {
+      referenceModel: "Reference model {model}, price per million tokens",
+      orderHint: "Groups higher up are used first.",
+      primary: "Main",
+      primaryHint: "Main group. Change it when you edit the key.",
+      input: "Input {price}",
+      output: "Output {price}",
+      unpriced: "No price yet",
+      status: {
+        active: "Available",
+        disabled: "Disabled",
+        unavailable: "Unavailable",
+      },
+      reason: {
+        disabled: "This group is disabled, so requests skip it. Consider removing it.",
+        unavailable: "This group was deleted or you no longer have access, so requests skip it. Consider removing it.",
+        notUsable: "This group cannot be used right now, so requests skip it. Consider removing it.",
+        primary: "The main group is disabled. Change it when you edit the key.",
+      },
+      add: "+ Add fallback group",
+      pickTitle: "Choose a group to add",
+      pickEmpty: "No more groups to add",
+      limitReached: "You can add up to {max} fallback groups. Remove one first.",
+      remove: "Remove {name}",
+      removeUnusable: "Remove",
+      dragHandle: "Drag to reorder {name}, or use the up and down arrow keys",
+      moveUp: "Move {name} up",
+      moveDown: "Move {name} down",
+      saving: "Saving…",
+      saved: "Saved",
+      loadFailed: "Failed to load. Please try again.",
+      saveFailed: "Failed to save. Please try again later.",
+    },
+    errors: {
+      FALLBACK_GROUP_DUPLICATE: "This group is already in the list",
+      FALLBACK_GROUP_IS_PRIMARY: "The main group cannot also be a fallback group",
+      FALLBACK_CHAIN_TOO_LONG: "You have reached the fallback group limit",
+      FALLBACK_GROUP_PLATFORM_MISMATCH: "Fallback groups must be on the same platform as the main group",
+      FALLBACK_GROUP_NOT_ALLOWED: "You do not have access to this group",
+      FALLBACK_GROUP_NOT_FOUND: "This group does not exist",
+      FALLBACK_GROUP_UNAVAILABLE: "This group is disabled",
+      FALLBACK_KEY_NOT_GROUPED: "Pick a group for this key first",
+      FALLBACK_KEY_CHANGED: "This key was just changed. Reopen it and try again.",
+      FALLBACK_KEY_CHANGED_REFRESHED: "This key was just changed. It has been refreshed, so please try again.",
+      API_KEY_NOT_FOUND: "This key could not be found. Refresh the page and try again.",
+      API_KEY_NOT_FOUND_REFRESHED: "This key could not be found. It has been refreshed, so please try again.",
+      FALLBACK_INVALID_REQUEST: "The request was not valid. Refresh the page and try again.",
+      FALLBACK_UNAVAILABLE: "Fallback settings are temporarily unavailable. Please try again later.",
+    },
+    usage: {
+      groupColumn: "Group",
+      servedTag: "Fallback",
+      servedTip: "This request was handled by a fallback group and billed at its price",
+      sourceUser: "User chain",
+      sourceAdmin: "Hidden chain",
+    },
+    admin: {
+      entry: "Fallback (hidden)",
+      title: "Hidden fallback chain",
+      intro: "The hidden chain is not visible to the user. Head groups go before the main group; tail groups go after the groups the user set up.",
+      primary: "Main group",
+      userItems: "User fallback groups",
+      userItemsEmpty: "None",
+      head: "Head groups",
+      tail: "Tail groups",
+      headEmpty: "No head groups",
+      tailEmpty: "No tail groups",
+      addHead: "+ Add head group",
+      addTail: "+ Add tail group",
+      pickGroup: "Choose a group",
+      noGroupToAdd: "No groups to add",
+      moveUp: "Move {name} up",
+      moveDown: "Move {name} down",
+      remove: "Remove {name}",
+      rateCompare: "Head group rate {head}x, main group rate {primary}x (neither includes this user's own rate)",
+      rateWarn: "Requests are billed at the head group first. The user still sees the main group in the editor and prices. The mismatch is intentional, so record why in the note.",
+      note: "Note",
+      noteHint: "Required when you set a head group. At least 4 characters; say why this is configured.",
+      noteRequired: "Enter a note of at least 4 characters",
+      effective: "Effective order",
+      hopSource: {
+        admin_head: "Head",
+        primary: "Main",
+        user: "User fallback",
+        admin_tail: "Tail",
+      },
+      skipped: "Skipped: {reason}",
+      skipReason: {
+        group_missing: "Group deleted",
+        group_inactive: "Group disabled",
+        invalid_platform: "Platform differs from the main group",
+        not_allowed: "User has no access",
+        unknown: "Unavailable",
+      },
+      save: "Save",
+      clear: "Clear hidden chain",
+      clearConfirm: "Clear the hidden chain for this key?",
+      saved: "Hidden chain saved",
+      cleared: "Hidden chain cleared",
+      loadFailed: "Failed to load. Please try again.",
+      saveFailed: "Failed to save",
+      unknownGroup: "Group #{id}",
+    },
+  },
+
+  // Key connect dialog: one-click install / hand it to an AI / CC Switch / manual setup
   keyOnboarding: {
-    title: 'Quick connect',
-    currentKey: 'Current key',
-    endpoint: 'API endpoint',
+    title: 'Connect a key',
+    subtitle: 'Connect "{name}" to your client',
     copy: 'Copy',
     copied: 'Copied',
-    intro: 'Recommended: import via CC Switch for automatic per-client setup — or configure manually / via script.',
-    recommended: 'Recommended',
-    envVars: 'Environment variables',
-    genericSdk: 'Generic OpenAI SDK (any compatible client)',
-    methodScript: 'Script',
-    methodManual: 'Manual',
-    ccsIntro: 'CC Switch is a client config manager: click below to import this key and endpoint in one click — it writes the config for you. Easiest option.',
-    ccsSupports: 'Imports into:',
-    ccsImport: 'Import to CC Switch',
-    ccsHint: 'If CC Switch did not open, it may not be installed or the protocol is unregistered — install CC Switch, or copy the link below to import manually.',
-    ccsManualLink: 'Import link',
-    claudeIntro: 'Claude Code is Anthropic’s official CLI. After pointing it at the endpoint and key:',
-    claudeStep1: 'Set the env vars below, or save them to ~/.claude/settings.json.',
-    claudeStep2: 'Restart your terminal / client so the config takes effect.',
-    claudeStep3: 'Run claude in your project to start.',
-    claudeHint: 'Tip: settings.json avoids exporting env vars each time; restart the client after editing.',
-    codexIntro: 'For Codex CLI we recommend CC Switch (see the “CC Switch” tab). To configure manually, write ~/.codex/config.toml and set the key env var:',
-    codexStep1: 'Write the block below to ~/.codex/config.toml (a custom model provider pointing at this endpoint).',
-    codexStep2: 'Set the OPENAI_API_KEY env var to your key.',
-    codexStep3: 'Restart your terminal, then run codex.',
-    scriptIntro: 'Copy this script into your terminal to write the local config (fully visible, no network download).',
-    scriptHint: 'Restart your client afterwards. The script only writes a local config file — read it before running.',
-    scriptCommentCodex: 'Write Codex config + key env var',
-    scriptDoneCodex: 'Codex configured — run codex to start',
-    scriptDoneClaude: 'Claude Code configured — please restart the client',
-    manualIntro: 'None of the above worked? Fill your client config manually with the raw values and follow the checklist.',
-    troubleshootTitle: 'Troubleshooting',
-    troubleshoot1: 'Confirm base_url is complete with no trailing slash; OpenAI-style clients usually need /v1.',
-    troubleshoot2: 'Confirm the key is copied in full (starts with sk-), no spaces or line breaks.',
-    troubleshoot3: 'Restart the client after changing env vars or config files.',
-    troubleshoot4: 'Check that your local network / proxy can reach the endpoint.',
-    troubleshoot5: 'Make sure the client is up to date; older versions may not support custom endpoints.',
-    viewDocs: 'View docs',
-    model: 'Suggested model',
-    apiKeyFull: 'API key'
+    noGroup: 'Choose a group for this key before connecting it.',
+    endpointHint: 'If access is slow, switch to another API endpoint. Your API key works with all of them.',
+    tabs: {
+      install: 'Install',
+      ai: 'Ask an AI',
+      ccswitch: 'CC Switch',
+      manual: 'Manual'
+    },
+    install: {
+      tutorial: 'View guide',
+      modeFull: 'Full install',
+      modeRefresh: 'Refresh config only',
+      copyTile: 'Copy command: {client}, {label}',
+      codexModes: 'Full install sets up Codex CLI first (Node.js {min} or newer required). If it is already installed, choose "Refresh config only".',
+      footnote: 'Click to copy a command, paste it into a terminal, then restart the client. The script writes the {site} endpoint and key, and backs up your existing config first.',
+      viewScript: 'View script',
+      scriptDone: '{client} is set up. Restart it to start using it.',
+      script: {
+        pythonMissing: 'Python 3 is required to update the config file.',
+        xcodeMissing: 'This Mac does not have the command line developer tools yet. Use the CC Switch or Manual tab instead.',
+        backup: 'Backup: {path}',
+        updated: 'Updated: {path}',
+        failed: 'Failed: {error}',
+        nodeMissing: 'Node.js {min} or newer is required. Install the LTS version from nodejs.org, then run this again.',
+        nodeTooOld: 'Node.js {version} is too old. Install Node.js {min} or newer (the LTS version from nodejs.org), then run this again.',
+        npmMissing: 'npm was not found. It comes with Node.js, so reinstall Node.js from nodejs.org, then run this again.',
+        npmInstalling: 'Installing Codex CLI with npm...',
+        npmPermission: 'npm does not have permission to install global packages. Install Node.js with a version manager such as nvm, or set the npm prefix to a folder you own (npm config set prefix), then run this again.',
+        npmFailed: 'Codex CLI could not be installed. Check the error above, then run this again.'
+      }
+    },
+    ai: {
+      intro: 'Pick the app you want to use and send this message to an AI assistant. It will walk you through the setup.',
+      clientLabel: 'Client',
+      clients: {
+        claude: 'Claude Code',
+        codex: 'Codex',
+        cursor: 'Cursor',
+        chat: 'Chat app',
+        code: 'Calling from code',
+        other: 'Other'
+      },
+      copyDetail: 'Copy detailed version',
+      openChatgpt: 'Open in ChatGPT',
+      openClaude: 'Open in Claude',
+      keyNote: 'Your key is not in this message. Enter it yourself when you set things up.',
+      footnote: 'The AI opens the link and reads the guide itself. If it can’t open web pages, or you want to tell it which models this key can use, choose “Copy detailed version”.',
+      docCatalog: 'Docs index for AI',
+      detailHint: 'The detailed version includes the connection details, the requirements and the models this key can use.',
+      detailLoading: 'Loading the models this key can use…',
+      modelsRetry: 'Retry loading models',
+      detail: {
+        intro: 'Please help me connect {tool} to {site} (an API service compatible with the OpenAI and Anthropic formats).',
+        introChat: 'Please help me connect my chat app to {site} (an API service compatible with the OpenAI and Anthropic formats).',
+        introCode: 'Please help me call {site} from my code (an API service compatible with the OpenAI and Anthropic formats).',
+        introOther: 'Please help me connect the tool I use to {site} (an API service compatible with the OpenAI and Anthropic formats).',
+        read: 'Read this first: {docs}',
+        listSep: ', ',
+        followDoc: 'Follow the steps in the guide and walk me through the setup one step at a time.',
+        followChat: 'Ask me which chat app I use, find its section in the docs index, then walk me through the setup step by step.',
+        followCode: 'Use the examples in the guide to walk me through writing the call, step by step.',
+        followOther: 'Ask me which app I use, find its section in the docs index, then walk me through the setup step by step.',
+        infoTitle: 'Connection details:',
+        addrOpenai: '- OpenAI-compatible Base URL: {url}',
+        addrOpenaiAlt: '- OpenAI-compatible Base URL (for Cursor, chat apps and similar): {url}',
+        addrAnthropic: '- Anthropic-compatible Base URL (no /v1): {url}',
+        addrAnthropicClaude: '- Anthropic-compatible Base URL (no /v1; for Claude Code): {url}',
+        addrGemini: '- Gemini native address (for Gemini CLI; no /v1): {url}',
+        addrAntigravity: '- Address (no /v1; use it for both Claude Code and Gemini CLI): {url}',
+        key: '- Key: use sk-YOUR_API_KEY as a placeholder. I will fill in the real key myself, so do not ask me to send it to you.',
+        models: '- Models this key can call: {models}',
+        modelsPartial: '- Models this key can call (partial list): {models}',
+        modelsFull: '- Full, up-to-date model list: request GET {url} with this key. Do not fill in model names from memory.',
+        noteAntigravityBase: '- In the guide, replace every address {base} with {url} when you set things up.',
+        noteAntigravityFormat: '- This address only accepts Anthropic and Gemini format requests. Pick one of those two as the provider type or SDK, not OpenAI.',
+        noteExampleModel: '- Model names in the guide’s examples (such as {example}) are only examples. Use a model that is available to this key’s group.',
+        claudeKey: '- The key variable is ANTHROPIC_AUTH_TOKEN, not ANTHROPIC_API_KEY. Remove any leftover ANTHROPIC_API_KEY on my computer.',
+        claudeBetas: '- If a request returns 400 saying a field is not accepted, add CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 to env and restart.',
+        codexConfig: '- In config.toml, set wire_api to responses and keep model_provider and model at the very top of the file. After editing, fully quit Codex, reopen it and start a new session.',
+        cursorSettings: '- Override OpenAI Base URL must include /v1. Custom model names must match the model list exactly, and Auto must be turned off in the chat panel.',
+        codeAnthropic: '- The OpenAI SDK uses the OpenAI-compatible Base URL; the Anthropic SDK uses the Anthropic-compatible Base URL (no /v1).',
+        codeGemini: '- The OpenAI SDK uses the OpenAI-compatible Base URL; the official Gemini SDK uses the Gemini native address (no /v1).',
+        requirements: 'Requirements:',
+        req1File: '1. Say exactly which file path or setting needs to change.',
+        req1Code: '1. Read the key from an environment variable instead of hard-coding it; give me a minimal example I can run as is; turn on streaming (stream) for long replies.',
+        req2: '2. Ask me directly whenever you need to know about my system, tools or anything else.',
+        req3: '3. At the end, tell me how to check that it works. If something fails, use {url} to troubleshoot.',
+        req4: '4. If you are a coding assistant running on my computer, you may edit the config files for me, but tell me what you are going to change first.'
+      }
+    },
+    ccs: {
+      title: 'Import to CC Switch',
+      intro: 'Pick a client and models, then click "Open CC Switch" to import.',
+      client: 'Client',
+      name: 'Profile name',
+      modelMain: 'Primary model',
+      modelHaiku: 'Haiku model',
+      modelSonnet: 'Sonnet model',
+      modelOpus: 'Opus model',
+      modelDefault: 'Optional; leave blank to use the CC Switch default',
+      modelsLoading: 'Loading available models…',
+      noModels: 'No models are available for this key. You can still import and leave the model fields blank.',
+      modelsError: 'Could not load models. You can still import and leave the fields blank.',
+      modelsRetry: 'Retry',
+      codexWarning: 'The Codex profile is imported but not enabled. Enable it in CC Switch yourself, then restart Codex as prompted, so old and new settings are not mixed.',
+      switchNote: 'Once you confirm the import, CC Switch switches to this profile right away. You can switch again in CC Switch at any time.',
+      balanceNote: 'Balance lookup is imported with the profile and refreshes every {minutes} minutes.',
+      open: 'Open CC Switch',
+      copyLink: 'Copy import link',
+      notInstalled: 'Nothing happened? Install CC Switch first, then click again.',
+      download: 'Download CC Switch'
+    },
+    manual: {
+      address: 'Endpoint',
+      openaiAddress: 'OpenAI-compatible endpoint',
+      envVars: 'Environment variables',
+      troubleshootTitle: 'If it will not connect',
+      troubleshoot1: 'Do not add extra slashes to the address. OpenAI-compatible clients need an address ending in /v1.',
+      troubleshoot2: 'Copy the whole key, with no spaces or line breaks around it.',
+      troubleshoot3: 'Restart the client after changing its config.',
+      troubleshoot4: 'Check that your network or proxy can reach the endpoint, and update the client if it is old.',
+      viewDocs: 'View docs',
+      lineUsed: 'Used in the code below',
+      lineDefaultNote: 'Enter this address in your client.',
+      lineAltNote: 'If the default address is slow, use this one instead.',
+      codeLabel: 'Code examples',
+      keyFilled: 'Your key is filled in below',
+      keyMissing: 'The full key could not be read. Replace {placeholder} in the code with your key.',
+      keyMasked: 'The full key could not be read. Replace {placeholder} in the code with your key ({masked}).',
+      snippetsTitle: 'Save it in a config file',
+      keepSafe: 'Keep your key safe. Anyone who has it can spend your balance or plan.'
+    }
   },
 
   // API Keys
@@ -930,9 +1164,8 @@
     selectGroup: 'Select a group',
     billing: {
       title: 'How billing works',
-      intro: 'This site bills by usage, deducted from your balance (USD) in real time. A monthly plan gives you a large "official-price quota" for a low price — for example, ¥39 grants $2700 of quota, with models charged at official prices.',
-      rate: 'The "Nx rate" on the right of each group is how fast that pool burns your balance relative to official pricing: a higher number means a more stable pool but also more balance consumed for the same usage. It is the billing coefficient, not your final cost.',
-      effective: 'The "0.X rate" in the group description is your effective fraction of official pricing after the plan discount. For example, "full-power pro" is a 6x rate, which works out to about 0.25 of official pricing under a plan.'
+      intro: 'This site bills by usage from your balance. With a plan, usage is charged to the plan first, which costs less for the same usage.',
+      rate: 'A lower rate on the right of a group costs less: the same usage is charged less in a lower-rate group.'
     },
     statusLabel: 'Status',
     selectStatus: 'Select status',
@@ -955,11 +1188,24 @@
     usage: 'Usage',
     today: 'Today',
     total: 'Last 30d',
-    quota: 'Quota',
     lastUsedAt: 'Last Used',
     lastUsedIP: 'Last Used IP',
     useKey: 'Use Key',
-    quickConnect: 'Quick connect',
+    connect: 'Connect',
+    createdTitle: 'Key created',
+    createdHint: 'You can still find it in the list later.',
+    goConnect: 'Connect now',
+    usedLabel: 'Total used',
+    unlimited: 'No limit',
+    overview: {
+      address: 'Endpoint',
+      copy: 'Copy',
+      copied: 'Copied',
+      enabled: '{active} of {total} keys enabled',
+      enabledList: '{active} of the {shown} keys in the current list are enabled',
+      spent: 'Used in the last 30 days',
+      spentList: 'Used in the last 30 days by keys in the current list'
+    },
     useKeyModal: {
       title: 'Use API Key',
       description:
@@ -1031,26 +1277,23 @@
     quotaLimit: 'Quota Limit',
     quotaAmount: 'Quota Amount (USD)',
     quotaAmountPlaceholder: 'Enter quota limit in USD',
+    quotaAmountPlaceholderFiat: 'Enter a spending cap in CNY',
+    limitEstimateHint: 'Estimated at current prices.',
     quotaAmountHint: 'Set the maximum amount this key can spend. 0 = unlimited.',
     quotaUsed: 'Quota Used',
     reset: 'Reset',
     resetQuotaUsed: 'Reset used quota to 0',
     resetQuotaTitle: 'Confirm Reset Quota',
-    resetQuotaConfirmMessage: 'Are you sure you want to reset the used quota (${used}) for key "{name}" to 0? This action cannot be undone.',
+    resetQuotaConfirmMessage: 'Are you sure you want to reset the used quota ({used}) for key "{name}" to 0? This action cannot be undone.',
     quotaResetSuccess: 'Quota reset successfully',
     failedToResetQuota: 'Failed to reset quota',
     rateLimitColumn: 'Rate Limit',
     rateLimitSection: 'Rate Limit',
     resetUsage: 'Reset',
-    rateLimit5h: '5-Hour Limit (USD)',
-    rateLimit1d: 'Daily Limit (USD)',
-    rateLimit7d: '7-Day Limit (USD)',
+    rateLimit5h: '5-Hour Limit ({currency})',
+    rateLimit1d: 'Daily Limit ({currency})',
+    rateLimit7d: '7-Day Limit ({currency})',
     rateLimitHint: 'Set the maximum spending for this key within each time window. 0 = unlimited.',
-    stablePriority: {
-      label: 'Enable Stable Priority',
-      description: 'When enabled, if all channels in your selected group become unavailable, requests automatically fall back across groups tier by tier to a more stable, higher-rate group; they switch back once the lower-rate group recovers.',
-      billingWarning: 'Note: during fallback, usage is billed from your balance at the actually-serving higher-rate group’s rate, which may be higher than your original group.',
-    },
     rateLimitUsage: 'Rate Limit Usage',
     resetRateLimitUsage: 'Reset Rate Limit Usage',
     resetRateLimitTitle: 'Confirm Reset Rate Limit',
@@ -1098,7 +1341,8 @@
     balanceDeducted: 'Balance deducted',
     subscriptionDeducted: 'Plan quota deducted',
     yourSpend: 'Your spend',
-    fiatTotalApprox: 'estimated at top-up rate',
+    spendFromBalance: 'Balance',
+    spendFromPlan: 'Plan',
     currencyFiat: '¥',
     currencyUsd: '$',
     currencySwitchLabel: 'Switch display unit',
@@ -1228,6 +1472,7 @@
       degraded: 'Degraded',
       failed: 'Failed',
       error: 'Error',
+      unavailable: 'Unavailable',
       unknown: '-'
     },
     providers: {
@@ -1243,8 +1488,8 @@
     endpointPing: 'Endpoint PING',
     history60pts: 'HISTORY ({n} PTS)',
     nextUpdateIn: 'NEXT UPDATE IN {n}s',
-    past: 'PAST',
-    now: 'NOW',
+    past: 'Past',
+    now: 'Now',
     maintenancePaused: 'Maintenance · timeline paused',
     extraModelsCount: '+ {n} models',
     pollEvery: '{n}s polling',
@@ -1271,9 +1516,9 @@
       '30d': '30 days'
     },
     overall: {
-      operational: 'OPERATIONAL',
-      degraded: 'DEGRADED',
-      unavailable: 'UNAVAILABLE'
+      operational: 'Operational',
+      degraded: 'Degraded',
+      unavailable: 'Unavailable'
     },
     columns: {
       name: 'Name',
@@ -1301,30 +1546,54 @@
   // Available Channels (user-facing)
   billingRules: {
     title: 'Billing rules',
-    intro: 'This site bills by usage, deducted in real time from your balance (USD) or plan quota.',
-    formulaLabel: 'Amount charged',
-    formula: 'official model price × usage × group rate',
-    modelPriceHere: 'Official model price: same as the provider. See each model below (click a model name for input / output / cache prices).',
-    modelPriceLink: 'Official model price: same as the provider. Check input / output / cache prices for each model on the "Pricing & Billing" page.',
-    rate: 'Group rate (Nx): how fast your chosen group consumes balance relative to official pricing. A higher number means a more stable pool but more consumed for the same usage.',
-    plan: 'Monthly plan: a low price gets you a large "official-price quota" (for example, ¥39 grants $2700 of quota); with a plan your effective price drops to a fraction of official pricing — the "0.X" shown in each group description.'
+    intro: 'Billed by actual usage, deducted from your balance or plan.',
+    modelPriceHere: 'Click a model to see input / output / cache prices for each group.',
+    modelPriceLink: 'Model prices are on the "Pricing & Billing" page.',
+    rate: 'Group rate: groups have different rates, already included in the prices. A lower rate costs less.',
+    plan: 'Plans: once active, usage is charged to the plan first, at a better price.',
+    fiat: {
+      intro: 'Billed by actual usage, deducted from your balance or plan.',
+      pricesLink: 'Model prices are on the "Pricing & Billing" page.',
+      rate: 'Rate: each group has its own rate; a lower rate costs less.',
+      plan: 'Plans: once active, usage is charged to the plan first at a lower rate, so the same price deducts less.',
+      group: 'Groups: the same model costs different amounts in different groups. Expand a model to compare.',
+      groupBrief: 'Groups: the same model costs different amounts in different groups.'
+    }
   },
 
   availableChannels: {
     title: 'Pricing & Billing',
     description: 'Model prices and billing rules; see the models you can use, their unit prices, and each group rate',
-    searchPlaceholder: 'Search models or lines...',
-    tierLabel: 'Tiers',
+    searchPlaceholder: 'Search models',
+    allPlatforms: 'All',
+    platform: 'Platform',
+    startingFrom: 'From',
+    peakNote: 'Prices shown are standard; for groups marked with a peak multiplier, input, output and cache read are billed at that multiple on weekdays 9:00–12:00 and 14:00–18:00 (Beijing time)',
+    peakShort: 'Weekday peak {n}x',
+    expand: 'Show prices',
+    collapse: 'Hide',
+    group: 'Group',
+    byGroup: 'By group',
+    price: 'Price',
+    officialPrice: 'Official price',
+    lowest: 'Lowest',
+    planRate: 'Plan rate',
+    yourPlanRate: 'Your plan rate',
+    planRateLead: 'As low as',
+    rateNote: 'Each rate is a multiple of the official price and is already included in the prices',
+    rateNoteFiat: 'Prices already include the rate; a lower rate costs less. With a plan the rate is lower, so the same price deducts less.',
+    rateNoteFiatNoPlan: 'A lower rate costs less.',
+    rateCustom: 'Your rate, default {base}x',
+    tiersFor: 'Tiered prices ({group})',
+    context: 'Context length',
+    tierName: 'Tier',
+    resolution: 'Resolution',
+    tierUpTo: 'Up to {n}',
+    tierAbove: 'Over {n}',
+    tierBetween: '{min} to {max}',
+    noResults: 'No matching models',
     buyPlans: 'View plans',
-    payHint: 'Pay = unit price ×',
-    effectiveTitle: 'You pay here (× {rate})',
-    tiersTitle: 'Pay-as-you-go tiers',
-    tiersHint: 'A higher rate means a more stable pool but more balance consumed for the same usage; click a model name for its official price.',
-    plansTitle: 'Monthly plans',
-    plansHint: 'A low price buys a large official-price quota; with a plan your effective price drops to a small fraction of official pricing.',
-    goBuy: 'Buy',
     empty: 'No available lines',
-    noModels: 'No models configured',
     noPricing: 'Pricing not configured',
     exclusive: 'Exclusive',
     public: 'Public',
@@ -1350,16 +1619,18 @@
       perRequestPrice: 'Per Request',
       intervals: 'Tiered Pricing',
       unitPerMillion: '/ 1M tokens',
-      unitPerRequest: '/ request'
+      unitPerRequest: '/ request',
+      perMillion: 'per 1M tokens',
+      perRequest: 'per request'
     }
   },
 
   checkin: {
     title: 'Daily check-in',
     bonusBadge: '+{n} bonus',
-    rewardRange: 'Check in daily for a random ${min}–${max} bonus to your balance',
+    rewardRange: 'Check in daily for a random {min}–{max} bonus to your balance',
     todaySpend: 'Today spent',
-    nextBonusHint: 'Spend ${amount} more to unlock the next bonus check-in',
+    nextBonusHint: 'Spend {amount} more to unlock the next bonus check-in',
     activityNotMet: 'Activity threshold not met today',
     activityHint: 'Keep using the service, then check in later',
     claimDaily: 'Check in',
@@ -1369,7 +1640,7 @@
     doneSubtitle: 'Already checked in today — comes back after the daily reset',
     notActiveButton: 'Activity not met',
     notActiveEnough: 'Your activity has not reached today’s check-in threshold yet. Keep using the service, then check in later.',
-    claimedToast: 'Checked in — +${amount} added to your balance',
+    claimedToast: 'Checked in — +{amount} added to your balance',
     claimRecoveredToast: 'Check-in succeeded and the reward was added to your balance',
     claimFailed: 'Check-in failed, please try again'
   },
@@ -1409,10 +1680,10 @@
     },
     redeemBalance: {
       title: 'Redeem to balance',
-      desc: 'Convert points to wallet balance using the fiat value and current recharge rate.',
       points: 'Points to redeem',
+      descFiat: 'Redeem points for wallet balance at face value.',
       estimate: 'You will get {amount} balance.',
-      rateHint: '1 pt = {peg}; balance redemption uses 1 CNY = {rate} USD.',
+      rateHintFiat: '1 pt = {peg}',
       submit: 'Redeem',
       success: 'Redeemed to balance.',
     },
@@ -1445,9 +1716,10 @@
       title: 'Exchange for a plan',
       desc: 'Activate a plan, or renew/change your current plan when one is active.',
       plan: 'Plan',
-      planTitle: 'Daily USD {d}',
+      planTitle: 'Daily {d}',
+      planTitleFiat: 'Daily {d}',
       dailyAmount: 'Daily amount',
-      dailyOption: 'USD {d}',
+      dailyOption: '{d}',
       validityDays: 'Validity',
       pointsPrice: 'Points price',
       actionLabels: {
@@ -1799,12 +2071,6 @@
       maxEmailsReached: 'Maximum number of notification emails reached',
       unverified: 'Unverified',
       verified: 'Verified',
-    },
-    stablePriority: {
-      title: 'Stable Priority',
-      description: 'When enabled, if every channel in your group becomes unavailable, requests automatically fail over up the tier chain to a more reliable higher-rate group, then switch back once the lower-rate group recovers.',
-      enabled: 'Enable stable priority',
-      billingHint: 'Note: during fallback you are billed from your balance at the actual higher-rate group rate, which may cost more than your original group.',
     },
     avatar: {
       title: 'Profile Avatar',
@@ -2350,6 +2616,7 @@
 
     // Users
     users: {
+      passwordCopied: 'Password copied',
       title: 'User Management',
       description: 'Manage users and their permissions',
       createUser: 'Create User',
@@ -2411,6 +2678,8 @@
         statusLabel: 'Status',
         selectStatus: 'Select status',
         rpmLimit: 'Requests Per Minute (RPM)',
+        concurrencyPlaceholder: '0 = unlimited',
+        concurrencyHint: 'Max concurrent requests for this user; 0 = unlimited.',
         rpmLimitPlaceholder: '0 = unlimited',
         rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.'
       },
@@ -2471,11 +2740,13 @@
       failedToLoad: 'Failed to load users',
       failedToCreate: 'Failed to create user',
       failedToUpdate: 'Failed to update user',
+      lastAdminDemoteForbidden: 'Cannot demote the last admin. Promote another user to admin first.',
+      cannotDemoteSelf: 'You cannot demote yourself from admin.',
       failedToDelete: 'Failed to delete user',
       failedToToggle: 'Failed to update user status',
       failedToLoadApiKeys: 'Failed to load user API keys',
       emailRequired: 'Please enter email',
-      concurrencyMin: 'Concurrency must be at least 1',
+      concurrencyNonNegative: 'Concurrency cannot be negative; 0 = unlimited',
       soraStorageQuota: 'Sora Storage Quota',
       soraStorageQuotaHint: 'In GB, 0 means use group or system default quota',
       amountRequired: 'Please enter a valid amount',
@@ -2652,6 +2923,7 @@
         clearAllConfirm: 'Clear daily / weekly / monthly limits for ALL platforms? All platforms will become "unlimited" with no local undo — you must manually re-enter values before saving.',
         reset: {
           button: 'Reset window',
+          unavailable: 'No limit configured for this platform, so there is no usage window to reset',
           confirm: 'Reset the {window} usage for {platform} for this user? This is effective immediately.',
           success: 'Reset {platform} {window} usage',
           failed: 'Reset failed',
@@ -2717,7 +2989,7 @@
       accountsAvailable: 'Avail:',
       accountsRateLimited: 'Limited:',
       accountsTotal: 'Total:',
-      accountsUnit: '',
+      accountsUnit: 'accounts',
       rateAndAccounts: '{rate}x rate · {count} accounts',
       accountsCount: '{count} accounts',
       form: {
@@ -2787,6 +3059,9 @@
       failedToUpdate: 'Failed to update group',
       failedToSave: 'Failed to save group',
       failedToDelete: 'Failed to delete group',
+      deleteBlockedNotInactive: 'Disable the group before deleting it',
+      deleteBlockedHasKeys: 'Group still has {count} API key(s) — remove them first',
+      deleteBlockedHasPlans: 'Group still has {count} plan(s) on sale — take them off sale first',
       nameRequired: 'Please enter group name',
       rateMultipliers: 'Rate Multipliers',
       rateMultipliersTitle: 'Group Rate Multipliers',
@@ -2823,9 +3098,7 @@
         grok: 'Grok',
       },
       deleteConfirm:
-        "Are you sure you want to delete '{name}'? All associated API keys will no longer belong to any group.",
-      deleteConfirmSubscription:
-        "Are you sure you want to delete subscription group '{name}'? This will invalidate all API keys bound to this subscription and delete all related subscription records. This action cannot be undone.",
+        "Are you sure you want to delete '{name}'? Its account bindings will be cleared (the accounts themselves are kept), and API keys bound to this group will stop working until their owners switch to another group. Existing subscription cards are not affected. Plans still tied to this group can no longer be purchased, so take them off sale first. This action cannot be undone.",
       subscription: {
         title: 'Subscription Settings',
         type: 'Billing Type',
@@ -2852,8 +3125,8 @@
         notConfigured: 'Not configured'
       },
       modelsList: {
-        title: 'Custom /v1/models Model List',
-        hint: 'Only changes the /v1/models response. Whitelist model calls and account routing are unchanged.',
+        title: 'Custom {endpoint} Model List',
+        hint: 'Only changes the {endpoint} response. Whitelist model calls and account routing are unchanged.',
         loading: 'Loading model list...',
         empty: 'No displayable models'
       },
@@ -2865,11 +3138,6 @@
         fallbackGroup: 'Fallback Group',
         fallbackHint: 'Non-Claude Code requests will use this group. Leave empty to reject directly.',
         noFallback: 'No Fallback (Reject)'
-      },
-      stablePriority: {
-        fallbackGroup: 'Stable Priority Fallback Group',
-        fallbackHint: 'When every channel in this group is unavailable, requests from stable-priority users fail over to this group. Chain groups tier by tier for a multi-tier fallback, or point higher tiers back to lower ones to form a mutual-backup ring — any tier that goes down is temporarily routed to another healthy group on the ring and switches back on recovery. Leave empty to opt this group out.',
-        noFallback: 'No Fallback'
       },
       openaiMessages: {
         title: 'OpenAI Messages Dispatch',
@@ -2990,9 +3258,302 @@
       }
     },
 
+    // Pricing config (read-only): models and availability matrix
+    pricingConfig: {
+      comingSoon: 'Coming soon',
+      loadError: 'Could not load pricing data',
+      retry: 'Retry',
+      deriveFailed: "Couldn't read how {n} group(s) open models; showing them as channel settings for now.",
+      perMillionTokens: 'per 1M tokens',
+      models: {
+        title: 'Models',
+        description: 'Which models exist, their official prices, and how many groups they are open to',
+        searchPlaceholder: 'Search models',
+        allPlatforms: 'All platforms',
+        allStatuses: 'All statuses',
+        filterUnpriced: 'No price',
+        filterUnregistered: 'Unregistered',
+        create: 'New model',
+        columns: {
+          model: 'Model',
+          platform: 'Platform',
+          status: 'Status',
+          officialPrice: 'Official price',
+          source: 'Price source',
+          openGroups: 'Open groups'
+        },
+        officialPriceHint: 'input / output, per 1M tokens',
+        emptyTitle: 'No models match',
+        emptyHint: 'Try a different filter.'
+      },
+      status: {
+        draft: 'Draft',
+        active: 'Live',
+        retired: 'Retired',
+        unregistered: 'Unregistered'
+      },
+      source: {
+        litellm: 'Price list',
+        fallback: 'Built-in price',
+        cardPolicy: 'Official rate card',
+        channel: 'Channel price',
+        none: 'No price'
+      },
+      group: {
+        rate: 'Rate ×{rate}',
+        unswitched: 'Not switched yet',
+        access: {
+          open: 'Open',
+          allowlist: 'Allowlist'
+        }
+      },
+      cell: {
+        open: 'Open',
+        custom: 'Custom price',
+        unpriced: 'No price',
+        closed: 'Closed',
+        error: 'Unavailable',
+        unpricedHint: 'Calls are free',
+        perRequest: '{price} / request',
+        perRequestRange: '{min}–{max} / request',
+        tipPrice: 'Input {input} / output {output} (per 1M tokens, what the user pays)',
+        tipPerRequest: '{price} / request (what the user pays)',
+        tipPerRequestRange: '{min}–{max} / request (what the user pays, by tier)',
+        unpricedTip: 'No official price and no custom price, so calls to this model are not charged',
+        customTip: 'This group has its own price for this model instead of official price × rate',
+        errorTip: 'The price for this cell could not be loaded. Refresh to retry.',
+        unswitchedTip: 'This group has not been switched yet; this is the result worked out from its channel settings'
+      },
+      closedReason: {
+        closed_in_group: 'This group does not offer this model',
+        not_in_allowlist: 'This group is an allowlist and does not include this model',
+        catalog_draft: 'The model is still a draft and is closed in every group',
+        catalog_retired: 'The model is retired and is closed in every group'
+      },
+      drawer: {
+        basic: 'Details',
+        inOut: 'Input {input} / output {output}',
+        noOfficialPrice: 'No official price',
+        aliases: 'Aliases',
+        referenceModel: 'Reference model',
+        groups: 'Availability by group',
+        unregisteredHint: 'Not in the model catalog yet; it has only shown up in group settings.',
+        noGroups: 'This platform has no groups yet.',
+        derivedNote: 'For groups not switched yet, availability and prices are worked out from their channel settings.',
+        toMatrix: 'See all models in Availability and pricing',
+        actionRegister: 'Add to catalog and publish…',
+        action: {
+          draft: 'Publish…',
+          active: 'Retire…',
+          retired: 'Publish again'
+        }
+      },
+      matrix: {
+        title: 'Availability and pricing',
+        description: 'Which groups can use each model, and what users pay',
+        noticeTitle: 'This is the result worked out from channel settings',
+        noticeAll: 'No group has been switched to the new pricing setup yet. Availability and prices are still set under Channels; this page works them out and is view only.',
+        noticeSome: '{n} of {total} groups have not been switched yet. Their availability and prices are still set under Channels; this page works them out and is view only.',
+        noticeLink: 'Go to Channels',
+        groupCount: '{n} groups',
+        hideClosed: 'Hide models closed everywhere',
+        edit: 'Bulk edit',
+        legend: 'Legend',
+        legendOpen: 'Open at the official price',
+        legendExtra: 'Extra rate',
+        legendCustom: 'Custom price',
+        legendUnpriced: 'No price at all',
+        legendClosed: 'Not offered',
+        legendUnswitched: 'Group not switched; worked out from channel settings',
+        legendPaid: 'Cell prices are what a balance user actually pays',
+        cornerHint: 'Official price: input / output, per 1M tokens',
+        openDetail: 'View model details',
+        noGroupsTitle: 'No {platform} groups yet',
+        noGroupsHint: 'Create a group under Groups first, then come back to see availability and prices.',
+        empty: 'No models match'
+      },
+      write: {
+        nothingWritable: 'No group has been switched to the new pricing setup yet, so nothing can be edited',
+        doneEditing: 'Done',
+        selectHint: 'Click cells to select; you can pick several',
+        selectAll: 'Select all',
+        selectColumn: 'Select column',
+        selectRow: 'Select row',
+        cellTip: 'Click to select or deselect',
+        selected: '{n} cells selected',
+        selectedDetail: '({models} models × {groups} groups)',
+        op: {
+          open: 'Open',
+          close: 'Close',
+          extra: 'Extra rate…',
+          clear: 'Clear overrides',
+          custom: 'Set custom price…',
+          deselect: 'Clear selection'
+        },
+        nothingToChange: 'Nothing to change in the selected cells',
+        title: {
+          open: 'Preview: open',
+          close: 'Preview: close',
+          extra: 'Preview: set extra rate',
+          clear: 'Preview: clear overrides',
+          custom: 'Preview: set custom price'
+        },
+        refreshData: 'Refresh data',
+        previewAgain: 'Preview again',
+        refreshed: 'Data refreshed. Please start again.',
+        back: 'Back',
+        submit: 'Submit',
+        submitting: 'Submitting…',
+        submitted: 'Submitted',
+        toPreview: 'Preview changes',
+        delta: {
+          up: 'This change raises prices',
+          upHint: 'Some users will pay more. Check the table before you submit.',
+          unknown: 'Could not tell whether prices go up or down',
+          unknownHint: 'Treat it as a price increase and check each row before you submit.',
+          down: 'This change lowers prices.'
+        },
+        warnTitle: '{n} items still have problems once opened',
+        ack: 'I understand {n} items have the problems above and want to submit anyway',
+        col: {
+          group: 'Group',
+          before: 'Before',
+          after: 'After',
+          input: 'Input (per 1M tokens)',
+          output: 'Output (per 1M tokens)',
+          change: 'Change'
+        },
+        noChanges: 'No changes',
+        summary: '{n} items: {parts}. Nothing changes until you submit.',
+        change: {
+          open: 'Open',
+          close: 'Close',
+          up: 'Price up',
+          down: 'Price down',
+          adjust: 'Adjust',
+          mixed: 'Some up, some down',
+          server: 'See server result',
+          same: 'No change'
+        },
+        issue: {
+          unpriced: 'No price (no official price and no custom price)',
+          zero_price: 'Price is 0',
+          wildcard_unverifiable: 'Opens a wildcard, so prices cannot be checked one by one',
+          mapping_target_unpriced: 'The mapped model {target} has no price',
+          mapping_target_zero_price: 'The mapped model {target} has a price of 0'
+        },
+        error: {
+          ADMIN_TOKEN_MANAGEMENT_JWT_ONLY: 'Sign in to the admin console with an admin account to do this. Admin tokens cannot submit it.',
+          PRICE_WRITE_ACTOR_REQUIRED: 'Your admin identity could not be verified. Sign in again and retry.',
+          PRICE_WRITE_APPROVAL_REQUIRED: 'This change affects prices, so it has to be previewed before it is submitted.',
+          PRICE_WRITE_INTERACTIVE_REQUIRED: 'Changes that affect prices must be submitted from the admin console with an admin account.',
+          PRICE_WRITE_CONFIRM_REQUIRED: 'Confirmation is required before submitting. Preview again.',
+          PRICE_WRITE_APPROVAL_NOT_FOUND: 'The preview is no longer valid. Preview again.',
+          PRICE_WRITE_APPROVAL_EXPIRED: 'The preview expired (it is valid for 30 minutes). Preview again.',
+          PRICE_WRITE_APPROVAL_CONSUMED: 'This preview was already submitted. Preview again.',
+          PRICE_WRITE_APPROVAL_MISMATCH: 'What you are submitting differs from the preview. Preview again.',
+          PRICE_WRITE_PLAN_CHANGED: 'Things changed after the preview and this change now affects prices. Preview again.',
+          PRICE_BASELINE_CHANGED: 'Someone else changed this group after your preview. Refresh the data and start again.',
+          EXPOSURE_UNPRICED: '{count} items in allowlist groups would have no price or a price of 0 once open. Nothing was submitted:',
+          OPEN_PRECHECK_BLOCKED: '{count} items in allowlist groups cannot be opened:',
+          PRICE_WRITER_UNAVAILABLE: 'Price writing is not set up yet, so nothing can be submitted for now.',
+          EXPOSURE_GUARD_UNAVAILABLE: 'Price writing is not set up yet, so nothing can be submitted for now.',
+          CELL_OPS_EMPTY: 'There are no cells to change.',
+          CELL_OPS_TOO_MANY: 'You can change at most 500 cells at a time. Split it into batches.',
+          CELL_OP_INVALID: 'The requested setting for {model_key} in group #{group_id} is not valid.',
+          CELL_OP_DUPLICATE: '{model_key} in group #{group_id} was selected more than once.',
+          CELL_GROUP_BASELINE_MISSING: 'The current settings of group #{group_id} could not be read. Refresh the data and retry.',
+          CELL_GROUP_NOT_V2: 'Group #{group_id} has not been switched to the new pricing setup, so it cannot be edited here. Refresh the data.',
+          CELL_READONLY: 'Wildcard cells are maintained automatically and cannot be edited.',
+          MODEL_CATALOG_USAGE_CONFIRM_REQUIRED: 'This model had {requests} requests in the last {window_days} days. Confirm to continue.',
+          MODEL_CATALOG_STATUS_CHANGED: "Someone else changed this model's status. Refresh the data and retry.",
+          MODEL_CATALOG_INVALID: 'The model details are not valid. Check what you entered.',
+          MODEL_CATALOG_NOT_FOUND: 'This model could not be found. Refresh the data.',
+          MODEL_CATALOG_EXISTS: 'This platform already has a model with that name.',
+          MODEL_CATALOG_ALIAS_CONFLICT: 'The alias "{alias}" is already used by another model.',
+          NETWORK: 'Network error. Check your connection and retry.',
+          UNAUTHORIZED: 'Your session expired. Sign in again.',
+          FORBIDDEN: 'You do not have permission to do this.',
+          UNKNOWN: 'The request failed ({status}). Try again later.',
+          INVALID: 'What you submitted is not valid. Check the prices and settings you entered.'
+        },
+        extra: {
+          title: 'Set extra rate',
+          intro: 'Applies to the {n} selected open cells: users pay official price × group rate × extra rate.',
+          skipped: '{n} closed cells will not be changed.',
+          label: 'Extra rate',
+          placeholder: 'For example 1.2',
+          invalid: 'Enter a number greater than 0',
+          hint: 'Enter 1 for no markup.'
+        },
+        custom: {
+          title: 'Set custom price',
+          intro: 'Sets a fixed price for the {n} selected open cells instead of the official price. Users still pay it × the group rate.',
+          input: 'Input price',
+          output: 'Output price',
+          placeholder: 'Blank uses the official price',
+          hint: 'Unit: USD per 1M tokens. Fill in at least one.'
+        },
+        usage: {
+          requests: '{n} requests in the last {days} days',
+          lastUsed: 'Last used: {time}'
+        },
+        retire: {
+          title: 'Retire {model}',
+          intro: 'Once retired, new requests for this model are rejected. Past usage and bills are not affected.',
+          groups: 'Open in: {names}',
+          noGroups: 'Not open in any group.',
+          ack: 'I understand {n} recent requests will fail once it is retired',
+          confirm: 'Retire',
+          done: '{model} retired'
+        },
+        reactivate: {
+          title: 'Publish {model} again',
+          intro: "Once published, this model is available again according to each group's existing settings.",
+          confirm: 'Publish',
+          done: '{model} published again'
+        },
+        launch: {
+          title: 'Publish {model}',
+          usageNote: '{n} requests in the last {days} days',
+          usageHint: 'To keep things as they are, use "Publish as is".',
+          intro: 'Choose the groups to open this model in; unchecked groups stay closed. The price is the official price × group rate unless you add an extra rate.',
+          copyLabel: "Copy another model's selection",
+          copyPlaceholder: 'Pick a live model',
+          copyButton: 'Copy selection',
+          copyHint: 'Only ticks the groups it is open in; prices and rates are not copied. You can keep adjusting afterwards.',
+          unswitched: 'Not switched yet; availability is still set under Channels',
+          extraPlaceholder: 'Extra rate (optional)',
+          extraAria: 'Extra rate for {name}',
+          preview: 'Preview',
+          asIs: 'Publish as is',
+          confirm: 'Publish',
+          copied: 'Copied the selection of {model}. You can keep adjusting.',
+          unpicked: '{n} unchecked groups stay closed for this model: {names}.',
+          cellsDone: 'The group settings were submitted but the model is not live yet. Select "Publish" to retry.',
+          done: '{model} is live'
+        },
+        create: {
+          title: 'New model',
+          modelKey: 'Model name',
+          keyInvalid: 'The name cannot be empty or contain spaces or *',
+          displayName: 'Display name',
+          aliasPlaceholder: 'Separate aliases with commas',
+          referencePlaceholder: 'None',
+          referenceHint: 'When publishing, its open groups are offered as a shortcut. You can still change them.',
+          draftHint: 'New models start as drafts and are closed in every group. Publish when ready.',
+          usageAck: 'I understand this name already gets requests and they will be rejected while it is a draft',
+          submit: 'Create',
+          done: 'Created {model} as a draft'
+        }
+      }
+    },
+
     // Channel Management
     channels: {
-      title: 'Pricing Config',
+      noGroupsSelected: 'Select at least one group for {platform}',
+      emptyModelsInPricing: 'Add at least one model to the {platform} pricing rule',
+      title: 'Channel Pricing',
       description: 'Manage channels and model pricing, and configure which groups / models appear on the user pricing page',
       searchChannels: 'Search channels...',
       display: {
@@ -3411,7 +3972,7 @@
       workerActive: 'Processing an async audit or record task',
       workerIdle: 'Started, idle and ready',
       workerDisabled: 'Risk control or content audit is disabled',
-      processed: 'Processed',
+      processed: 'Async processed',
       droppedErrors: 'Dropped / Errors',
       autoRefresh: 'Auto refresh every 15s',
       lastCleanup: 'Last cleanup: {time}',
@@ -3531,6 +4092,7 @@
       form: {
         name: 'Name',
         namePlaceholder: 'Enter monitor name',
+        userVisibleHint: 'Shown to all users. Do not include the upstream vendor, upstream model, or internal account names.',
         provider: 'Platform',
         apiMode: 'OpenAI protocol',
         apiModeChatCompletions: 'OpenAI Compatible',
@@ -3662,7 +4224,9 @@
       quotaEndsInMinutes: 'Quota ends in {minutes}m',
       quotaEndsInHoursMinutes: 'Quota ends in {hours}h {minutes}m',
       quotaEndsInDaysHours: 'Quota ends in {days}d {hours}h',
-      daysRemaining: 'days remaining',
+      daysRemaining: '{days} days remaining',
+      hoursMinutesRemaining: '{hours}h {minutes}m remaining',
+      minutesRemaining: '{minutes}m remaining',
       remainingDays: 'Remaining days',
       noExpiration: 'No expiration',
       status: {
@@ -3758,6 +4322,11 @@
 
     // Accounts
     accounts: {
+      fromModel: 'Request model',
+      toModel: 'Target model',
+      antigravityProjectIdLabel: 'GCP Project ID (optional)',
+      antigravityProjectIdPlaceholder: 'your-gcp-project-id',
+      antigravityProjectIdHint: 'Antigravity standard-tier accounts that do not receive an automatic project_id need a user-owned GCP project.',
       title: 'Account Management',
       description: 'Manage AI platform accounts and credentials',
       createAccount: 'Create Account',
@@ -3878,6 +4447,7 @@
       status: {
         active: 'Active',
         inactive: 'Inactive',
+        expired: 'Expired',
         error: 'Error',
         cooldown: 'Cooldown',
         paused: 'Paused',
@@ -4097,7 +4667,13 @@
         probeUpstreamBilling: 'Probe Upstream Rate',
         resetStatusSuccess: 'Successfully reset {count} account(s) status',
         refreshTokenSuccess: 'Successfully refreshed {count} account(s) token',
-        partialSuccess: 'Partially completed: {success} succeeded, {failed} failed'
+        partialSuccess: 'Partially completed: {success} succeeded, {failed} failed',
+        pageSelected: '{count} on this page selected.',
+        selectAllFiltered: 'Select all {total} matching accounts?',
+        allFilteredSelected: 'All {count} matching accounts are selected.',
+        selectAllFilteredTooMany: '{total} accounts match, more than the {limit} that can be selected at once. Narrow the filters and try again.',
+        selectAllFilteredFailed: 'Failed to load the matching accounts',
+        confirmCount: 'Run this on the {count} selected account(s)?'
       },
       bulkEdit: {
         title: 'Bulk Edit Accounts',
@@ -4112,7 +4688,21 @@
         failed: 'Bulk update failed',
         noSelection: 'Please select accounts to edit',
         noFieldsSelected: 'Select at least one field to update',
-        mixedPlatformWarning: 'Selected accounts span multiple platforms ({platforms}). Model mapping presets shown are combined — ensure mappings are appropriate for each platform.'
+        mixedPlatformWarning: 'Selected accounts span multiple platforms ({platforms}). Model mapping presets shown are combined — ensure mappings are appropriate for each platform.',
+        groupModeLabel: 'How to change groups',
+        groupModeAppend: 'Add to groups',
+        groupModeRemove: 'Remove from groups',
+        groupModeReplace: 'Replace all groups',
+        groupModeAppendHint: 'Adds the selected groups. Each account keeps the groups it already has.',
+        groupModeRemoveHint: 'Removes only the selected groups. Other groups on each account are kept.',
+        groupModeReplaceHint: 'Sets each account to exactly the selected groups.',
+        groupModeReplaceWarning: 'This removes every other group these accounts currently belong to.',
+        groupModeReplaceEmptyWarning: 'No group selected: this removes all groups from the selected accounts.',
+        groupsRequired: 'Select at least one group',
+        poolModeRetryStatusCodesHint: 'Leave empty to keep each account\'s current status codes.',
+        tempUnschedOffHint: 'Turns off temporary unschedulable rules. Rules already saved on each account are kept.',
+        tempUnschedReplaceHint: 'The rules below replace the existing rules on every selected account.',
+        expiresAtClearNotice: 'Leave empty to clear the expiry time of the selected accounts.'
       },
       bulkDeleteTitle: 'Bulk Delete Accounts',
       bulkDeleteConfirm: 'Delete the selected {count} account(s)? This action cannot be undone.',
@@ -4180,6 +4770,9 @@
         oauthPassthrough: 'Auto passthrough (auth only)',
         oauthPassthroughDesc:
           'When enabled, this OpenAI account uses automatic passthrough: the gateway forwards request/response as-is and only swaps auth, while keeping billing/concurrency/audit and necessary safety filtering.',
+        flattenNamespaces: 'Flatten Codex namespace tools (compatibility)',
+        flattenNamespacesDesc:
+          'Disabled by default: Codex namespace tool declarations are forwarded as-is on /responses, which is what the ChatGPT Codex backend expects. Enable only when this OAuth account is routed to a relay that rejects namespace tools — flattening renames them to namespace__tool, which breaks models that address collaboration tools as functions.<namespace>.<tool>. Compaction requests always flatten regardless of this switch.',
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           'Disabled by default. Enable to allow responses_websockets_v2 capability (still gated by global and account-type switches).',
@@ -4191,9 +4784,9 @@
         wsModePassthrough: 'Passthrough (passthrough)',
         wsModeShared: 'Shared (shared)',
         wsModeDedicated: 'Dedicated (dedicated)',
-        wsModeConcurrencyHint:
-          'When WS mode is enabled, account concurrency becomes the WS connection pool limit for this account.',
-        wsModePassthroughHint: 'Passthrough mode does not use the WS connection pool.',
+        wsModeCtxPoolHint:
+          'Gateway → acquire upstream WS connections from the pool; capacity is determined by configuration.',
+        wsModePassthroughHint: 'Gateway → upstream WS, without a connection pool.',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           'Only applies to OpenAI OAuth. This account can use OpenAI WebSocket Mode only when enabled.',
@@ -4286,6 +4879,10 @@
       selectAllowedModels: 'Select allowed models. Leave empty to support all models.',
       mapRequestModels:
         'Map request models to actual models. Left is the requested model, right is the actual model sent to API.',
+      modelMappingAllowUnlisted: {
+        title: 'Mapping does not restrict other models',
+        hint: 'When enabled, unlisted models remain available unless a model whitelist is configured. Existing accounts keep the current restriction by default.'
+      },
       selectedModels: 'Selected {count} model(s)',
       supportsAllModels: '(supports all models)',
       requestModel: 'Request model',
@@ -4309,6 +4906,7 @@
       enterCustomModelName: 'Enter custom model name',
       addModel: 'Add',
       modelExists: 'Model already exists',
+      modelMappingConflict: 'Model Mapping sends {from} to {to}. Change or remove that mapping to keep {from} in the whitelist',
       modelCount: '{count} models',
       poolMode: 'Pool Mode',
       poolModeHint: 'Enable when upstream is an account pool; errors won\'t mark local account status',
@@ -4323,7 +4921,7 @@
       customErrorCodes: 'Custom Error Codes',
       customErrorCodesHint: 'Only stop scheduling for selected error codes',
       customErrorCodesWarning:
-        'Only selected error codes will stop scheduling. Other errors will return 500.',
+        'Custom error codes filter ordinary account-state handling for non-429 upstream errors. HTTP 429 can still trigger rate-limit handling when it is not listed. This list does not by itself determine retries or account switches. The client-visible status depends on the gateway path and error-passthrough rules; it is not always 500. An empty list applies no filtering.',
       headerOverride: {
         title: 'Request Header Override',
         hint: 'Set static request headers for compatible API key upstream accounts.',
@@ -4355,6 +4953,9 @@
         'When enabled, warmup requests like title generation will return mock responses without consuming upstream tokens',
       autoPauseOnExpired: 'Auto Pause On Expired',
       autoPauseOnExpiredDesc: 'When enabled, the account will auto pause scheduling after it expires',
+      noAutoUnsched: 'Never Auto-Pause Scheduling',
+      noAutoUnschedDesc:
+        'When enabled, no matter how many upstream errors this account hits in a short time, it will never be automatically cooled down or paused from scheduling. Manually disabling the account still takes effect.',
 	  autoPause5hThreshold: '5h Usage Threshold (%)',
 	  autoPause7dThreshold: '7d Usage Threshold (%)',
 	  autoPauseThresholdHint: 'Leave empty or set 0 to use the global default threshold (configured in Ops settings); set a value to override the global default. Reaching the threshold only skips the account during scheduling and does not modify schedulable.',
@@ -4458,6 +5059,7 @@
       billingRateMultiplierHint: '0 = free, affects account billing only',
       expiresAt: 'Expires At',
       expiresAtHint: 'Leave empty for no expiration',
+      expiresAtTimezoneHint: 'Input is interpreted in your browser time zone ({timezone}).',
       higherPriorityFirst: 'Lower value means higher priority',
       mixedScheduling: 'Use in /v1/messages',
       mixedSchedulingHint: 'Enable to participate in Anthropic/Gemini group scheduling',
@@ -4597,6 +5199,11 @@
           codexSessionPlaceholder: 'Multiple lines supported, one token or JSON per line',
           codexSessionHint: 'sessionToken will not be saved as refresh_token. Without refresh_token, the account expires with the accessToken expiry; import is rejected if the expiry cannot be parsed and step 1 has no expiration.',
           codexSessionImportAndCreate: 'Import & Create Account',
+          codexSessionReauthAuth: 'Codex auth.json / accessToken',
+          codexSessionReauthDesc: 'Paste this account\'s Codex OAuth auth.json or accessToken. Only its credentials will change; scheduling and billing settings stay unchanged.',
+          codexSessionReauthPlaceholder: 'Paste one auth.json object or accessToken for this account',
+          codexSessionReauthHint: 'One entry only. The token must identify this account and user. An accessToken without a new refresh_token cannot repair a revoked refresh_token.',
+          codexSessionReauthSubmit: 'Import & Update Account',
           codexSessionEmpty: 'Please enter Codex JSON or accessToken',
           codexSessionImportFailed: 'Failed to import Codex account',
           codexSessionImportSuccess: 'Import completed: created {created}, updated {updated}, skipped {skipped}',
@@ -5322,6 +5929,8 @@
       customExpiry: 'Custom',
       customExpiryDays: 'Custom days',
       expiryDaysRequired: 'Please enter a valid expiry day count',
+      expiryDateRequired: 'Please enter a valid expiry date and time',
+      localTimeZoneHint: 'Custom time is interpreted in your browser time zone ({timezone}).',
       groupRequired: 'Please select a subscription group',
       days: ' days',
       status: {
@@ -5368,6 +5977,7 @@
     announcements: {
       title: 'Announcements',
       description: 'Create announcements and target by conditions',
+      createFirstAnnouncement: 'No announcements yet. Create your first one.',
       createAnnouncement: 'Create Announcement',
       editAnnouncement: 'Edit Announcement',
       deleteAnnouncement: 'Delete Announcement',
@@ -6043,7 +6653,8 @@
           accountErrorCount: 'Error Accounts (excluding temporarily unschedulable)',
           accountErrorRatio: 'Error Account Ratio (%)',
           accountTempUnscheduledCount: 'Temporarily Unschedulable Accounts',
-          overloadAccountCount: 'Overloaded Accounts'
+          overloadAccountCount: 'Overloaded Accounts',
+          unpricedBillingRows: 'Unpriced Usage Records'
         },
         metricDescriptions: {
           successRate: 'Percentage of successful requests in the window (0-100).',
@@ -6061,7 +6672,8 @@
           accountErrorCount: 'Number of error accounts within the window (excluding temporarily unschedulable).',
           accountErrorRatio: 'Error account ratio within the window (0-100).',
           accountTempUnscheduledCount: 'Number of accounts currently temporarily unschedulable (e.g. proxy/credential failure auto-eviction).',
-          overloadAccountCount: 'Number of overloaded accounts within the window.'
+          overloadAccountCount: 'Number of overloaded accounts within the window.',
+          unpricedBillingRows: 'Number of usage records within the window that have token or image usage but a billed cost of 0 (groups with a 0 rate multiplier, entries on the known-free list and model-mismatch records are excluded).'
         },
         hints: {
           recommended: 'Recommended: operator {operator}, threshold {threshold}{unit}',
@@ -6105,6 +6717,16 @@
         }
       },
       runtime: {
+        metricThresholds: 'Metric Thresholds',
+        metricThresholdsHint: 'Configure alert thresholds for metrics, values exceeding thresholds will be displayed in red',
+        slaMinPercent: 'SLA Minimum Percentage',
+        slaMinPercentHint: 'SLA below this value will be displayed in red (default: 99.5%)',
+        ttftP99MaxMs: 'TTFT P99 Maximum (ms)',
+        ttftP99MaxMsHint: 'TTFT P99 above this value will be displayed in red (default: 500ms)',
+        requestErrorRateMaxPercent: 'Request Error Rate Maximum (%)',
+        requestErrorRateMaxPercentHint: 'Request error rate above this value will be displayed in red (default: 5%)',
+        upstreamErrorRateMaxPercent: 'Upstream Error Rate Maximum (%)',
+        upstreamErrorRateMaxPercentHint: 'Upstream error rate above this value will be displayed in red (default: 5%)',
         title: 'Ops Runtime Settings',
         description: 'Stored in database; changes take effect without editing config files.',
         loading: 'Loading...',
@@ -6677,7 +7299,7 @@
         subscriptionGroup: 'Subscription Group',
         subscriptionValidityDays: 'Validity (days)',
         defaultPlatformQuotas: 'Default Platform Quotas (on signup)',
-        defaultPlatformQuotasHint: 'Automatically assigned to new users on signup; existing users are not affected. Leave blank = unlimited.',
+        defaultPlatformQuotasHint: 'Applied to new users on signup; existing users are not affected. Leave blank = no limit for that platform and window.',
         platformQuotaNotice: 'Monthly quota uses a 30-day rolling window, not a calendar month.',
       },
       platformQuota: {
@@ -6753,6 +7375,11 @@
         openaiAllowClaudeCodeCodexPlugin: "Allow using the Codex plugin in Claude Code",
         openaiAllowClaudeCodeCodexPluginDesc:
           "Global switch; only affects OpenAI OAuth accounts that have 'Codex official clients only' enabled. When on, all such accounts additionally allow requests from the Claude Code Codex plugin (exact match on originator=Claude Code) without per-account config; upstream requests remain pass-through.",
+        claudeCodeClientVersion: 'Claude Code client version',
+        claudeCodeClientVersionHint: "The client version this gateway declares upstream when impersonating the official Claude Code CLI. Leave empty to use the auto-synced latest official release; setting a value pins it and stops following auto-sync. The SUB2API_CLAUDE_CLI_VERSION environment variable or built-in version is used only when neither the manual nor synced value is valid.",
+        claudeCodeVersionAutoSync: 'Auto-sync Claude Code version',
+        claudeCodeVersionAutoSyncHint: 'Fetches the latest Claude Code client version from the official release channel every hour, so you never need to upgrade this service just to keep the version current. When disabled, fetching stops but the previously synced version remains available. The manual version above always takes priority.',
+        claudeCodeVersionSyncedValue: 'Currently synced: {version}',
       },
       webSearchEmulation: {
         title: 'Web Search Emulation',
@@ -6798,7 +7425,7 @@
         siteNamePlaceholder: 'Sub2API',
         siteNameHint: 'Displayed in emails and page titles',
         siteSubtitle: 'Site Subtitle',
-        siteSubtitlePlaceholder: 'Subscription to API Conversion Platform',
+        siteSubtitlePlaceholder: 'Fast, reliable LLM API service',
         siteSubtitleHint: 'Displayed on login and register pages',
         defaultLocale: 'Default Language',
         defaultLocaleHint: 'Used when visitors have not selected a language on this device',
@@ -6832,7 +7459,7 @@
         contactInfoHint: 'Customer support contact info, displayed on redeem page, profile, etc.',
         docUrl: 'Documentation URL',
         docUrlPlaceholder: 'https://docs.example.com',
-        docUrlHint: 'Link to your documentation site. Leave empty to hide the documentation link.',
+        docUrlHint: 'Link to an external documentation site, shown only in the "Connect a key" dialog. The Docs links on the home page and header always open the built-in docs page. Leave empty to hide it.',
         siteLogo: 'Site Logo',
         uploadImage: 'Upload Image',
         remove: 'Remove',
@@ -6904,6 +7531,8 @@
         balanceRechargePreview: 'Preview: 1 CNY = {usd} USD',
         subscriptionPaymentMultiplier: 'Subscription Payment Multiplier',
         subscriptionPaymentMultiplierHint: 'Subscription payable amount = plan USD value divided by this multiplier',
+        officialPriceCnyRate: 'Official price CNY rate',
+        officialPriceCnyRateHint: 'When users view prices in CNY, official USD model prices are converted at this rate for reference. Display only; billing is unaffected.',
         subscriptionMinDaily: 'Minimum Plan Daily Amount',
         subscriptionMaxDaily: 'Maximum Plan Daily Amount',
         subscriptionMinRatioStartDaily: 'Minimum Ratio Start Daily Amount',
@@ -6964,7 +7593,7 @@
         validationFieldRequired: '{field} is required',
         validationEasyPayCustomMethodRequired: 'Each custom EasyPay method requires both a payment type and an upstream type',
         validationEasyPayCustomMethodTypeInvalid: 'Custom EasyPay payment types may only contain lowercase letters, digits, underscores, and hyphens',
-        validationEasyPayCustomMethodUpstreamTypeInvalid: 'EasyPay upstream types may only contain lowercase letters, digits, underscores, and hyphens',
+        validationEasyPayCustomMethodUpstreamTypeInvalid: 'EasyPay upstream types may only contain lowercase letters, digits, periods, underscores, and hyphens',
         validationEasyPayCustomMethodReserved: 'Custom EasyPay payment types cannot use built-in alipay or wxpay',
         validationEasyPayCustomMethodPrefixReserved: 'Custom EasyPay payment types cannot start with alipay, wxpay, or crypto',
         validationEasyPayCustomMethodDuplicate: 'Custom EasyPay payment types must be unique',
@@ -7021,6 +7650,7 @@
         customMethodType: 'Payment type',
         customMethodUpstreamType: 'Upstream type',
         customMethodDisplayName: 'Display name',
+        customMethodDisplayNamePlaceholder: 'e.g. Credit card',
         stripeWebhookHint: 'Configure the following URL as a Webhook endpoint in Stripe Dashboard:',
         stripeWebhookApiVersionHint: 'Set this Webhook endpoint API version to match the integrated Stripe SDK. Recommended: {version}. A mismatch can cause webhook parsing errors.',
         airwallexWebhookHint: 'Configure the following URL as a Webhook endpoint in Airwallex. Select at least Payment Intent -> Succeeded (payment_intent.succeeded), preferably also Payment Intent -> Cancelled (payment_intent.cancelled). Use the account default or latest stable API version.',
@@ -7421,6 +8051,11 @@
         commonPatterns: 'Common patterns'
       },
       openaiFastPolicy: {
+        userIds: 'Specific user IDs',
+        userIdsHint: 'Leave empty to apply to all users. User-specific rules take precedence over global rules.',
+        userIdPlaceholder: 'e.g. 1001',
+        addUserId: 'Add user ID',
+        removeUserId: 'Remove user ID',
         title: 'OpenAI Fast/Flex Policy',
         description: 'Intercept, filter, or pass OpenAI fast(priority) / flex requests based on the request body service_tier field. Applies to the OpenAI gateway only.',
         empty: 'No rules configured. Click the button below to add one.',
@@ -7523,7 +8158,8 @@
         lowRatePriorityTitle: 'Prefer lower upstream billing rates',
         lowRatePriorityDescription: 'Legacy scheduler mode prefers accounts with a lower observed upstream token-cost multiplier.',
         oauthRateTitle: 'OAuth scheduling rate multiplier',
-        oauthRateDescription: 'Set the OAuth reference rate used by legacy low-rate scheduling. Use 1 for the default reference.',
+        oauthRateDescription: 'Set the OAuth reference rate used by legacy low-rate scheduling. Use 1 for the default reference, or leave blank to use each OAuth account\'s own rate. API Key accounts use a valid probed rate when available, otherwise their account rate.',
+        oauthRateInvalid: 'The OAuth scheduling reference rate must be a non-negative number, or blank to use account rates.',
         upstreamCostWeightTitle: 'Upstream-cost score weight',
         upstreamCostWeightDescription: 'Weight the observed upstream token-cost signal in advanced scheduler ranking. Set 0 to disable it.',
       },
@@ -7707,6 +8343,11 @@
     unlimited: 'Unlimited'
   },
 
+  lowBalance: {
+    low: 'Only {amount} left in your balance. Please top up soon.',
+    depleted: 'Your balance has run out. Please top up.'
+  },
+
   // Version Badge
   version: {
     currentVersion: 'Current Version',
@@ -7731,16 +8372,16 @@
     retry: 'Retry'
   },
 
-  // Recharge / Subscription Page
+  // Top Up / Subscription Page
   purchase: {
-    title: 'Recharge / Subscription',
+    title: 'Top Up / Subscription',
     description: '',
     openInNewTab: 'Open in new tab',
     notEnabledTitle: 'Feature not enabled',
-    notEnabledDesc: 'The administrator has not enabled the recharge/subscription entry. Please contact admin.',
-    notConfiguredTitle: 'Recharge / Subscription URL not configured',
+    notEnabledDesc: 'The administrator has not enabled the top-up/subscription entry. Please contact admin.',
+    notConfiguredTitle: 'Top Up / Subscription URL not configured',
     notConfiguredDesc:
-      'The administrator enabled the entry but has not configured a recharge/subscription URL. Please contact admin.'
+      'The administrator enabled the entry but has not configured a top-up/subscription URL. Please contact admin.'
   },
 
   // Custom Page (iframe embed)
@@ -7784,7 +8425,9 @@
     description: 'View your subscription plans and usage',
     noActiveSubscriptions: 'No Active Subscriptions',
     noActiveSubscriptionsDesc:
-      "You don't have any active subscriptions. Contact administrator to get one.",
+      'Once you have a subscription, your daily allowance and usage will appear here.',
+    noActiveSubscriptionsNoPaymentDesc:
+      'Once a subscription is active, your daily allowance and usage will appear here.',
     failedToLoad: 'Failed to load subscriptions',
     overdraftBtn: {
       label: 'Refresh daily allowance',
@@ -7824,11 +8467,9 @@
       dFixed: 'unchanged on renewal',
       price: 'Price',
       renewPrice: 'Renewal payment',
-      renewValue: 'Renewal quota value',
       changeDiff: 'Difference payment',
-      changeDiffValue: 'Difference quota value',
-      newPlanPrice: 'New plan quota value',
-      oldRemainingValue: 'Current card remaining quota value',
+      newPlanPriceFiat: 'New plan amount',
+      oldRemainingValueFiat: 'Remaining value of current plan',
       caps: 'Weekly cap {weekly} · Monthly cap {monthly}',
       quoteFailed: 'Failed to get a quote; adjust amount/duration and retry.',
       loadFailed: 'Failed to load; please close and retry.',
@@ -7865,13 +8506,19 @@
 
   // Custom subscription purchase (no fixed plans: pick daily amount D + validity T, priced by volume u(D)).
   subscriptionPurchase: {
+    ratesTitle: 'Rates per group once active: the same price deducts less',
+    ratesGroup: 'Group',
+    ratesBalance: 'Balance rate',
+    ratesPlan: 'Plan rate',
+    ratesMore: 'Show all groups',
+    ratesLess: 'Show fewer',
+    rateValue: '{rate}x',
     title: 'Buy a subscription',
     desc: 'Customize daily amount and validity; larger daily amounts get a lower unit price',
     group: 'Platform / group',
     dailyAmount: 'Daily amount',
     dailyAmountUnit: 'USD / day',
     validityDays: 'Validity',
-    unitPrice: 'Unit price',
     price: 'Total',
     concurrency: 'Concurrency',
     weeklyCap: 'Weekly cap',
@@ -7882,7 +8529,8 @@
     validityHalfYear: 'Half year',
     validityYear: 'Yearly',
     capHint: '',
-    rangeHint: 'Daily {dMin}–{dMax}, in 30 USD steps; validity {tMin}–{tMax} days',
+    rangeHint: 'Daily amount {dMin}–{dMax}; validity {tMin}–{tMax} days, in steps of {tStep} days',
+    rangeHintFiat: 'Validity {tMin}–{tMax} days, in steps of {tStep} days',
     buy: 'Buy',
     quoting: 'Calculating…',
     quoteFailed: 'Quote failed — adjust the daily amount or validity',
@@ -8037,7 +8685,7 @@
 
   // Payment System
   payment: {
-    title: 'Recharge / Subscription',
+    title: 'Top Up / Subscription',
     amountLabel: 'Amount',
     paymentAmount: 'Payment Amount',
     paymentAmountWithCurrency: 'Payment Amount ({currency})',
@@ -8047,7 +8695,6 @@
     quickAmountsWithCurrency: 'Quick Amounts ({currency})',
     customAmount: 'Custom Amount',
     customAmountWithCurrency: 'Custom Amount ({currency})',
-    subscriptionValueWithCurrency: 'Plan Value ({currency})',
     enterAmount: 'Enter amount',
     paymentMethod: 'Payment Method',
     cryptoNetwork: 'USDT Network',
@@ -8082,6 +8729,7 @@
       failed: 'Failed',
       refund_requested: 'Refund Requested',
       refunding: 'Refunding',
+      refund_pending: 'Refund Pending',
       refunded: 'Refunded',
       partially_refunded: 'Partially Refunded',
       refund_failed: 'Refund Failed',
@@ -8130,12 +8778,12 @@
       processing: 'Payment Processing',
       processingHint: 'Payment confirmation is still pending. This page will refresh automatically.',
       failed: 'Payment Failed',
-      backToRecharge: 'Back to Recharge',
+      backToRecharge: 'Back to Top Up',
       viewOrders: 'View Orders',
     },
     currentBalance: 'Current Balance',
     groupFallback: 'Group #{id}',
-    rechargeAccount: 'Recharge Account',
+    rechargeAccount: 'Top-up Account',
     activeSubscription: 'Active Subscription',
     noActiveSubscription: 'No active subscription',
     tabTopUp: 'Top Up',
@@ -8150,8 +8798,6 @@
     amountTooLow: 'Minimum amount is {min}',
     amountTooHigh: 'Maximum amount is {max}',
     amountNoMethod: 'No payment method available for this amount',
-    rechargeMultiplier: 'Recharge rate: 1 {currency} = {usd} USD',
-    rechargeRatePreview: 'Current rate: 1 {currency} = {usd} USD',
     refundReason: 'Refund Reason',
     refundReasonPlaceholder: 'Please describe your refund reason',
     refundGatewayBase: 'Gateway refund base',
@@ -8207,6 +8853,7 @@
       INVALID_STATUS: 'The current order status does not allow this operation.',
       BALANCE_NOT_ENOUGH: 'Refund amount exceeds balance.',
       REFUND_AMOUNT_EXCEEDED: 'Refund amount exceeds the recharge amount.',
+      REFUND_AMOUNT_LOCKED: 'A refund of this order was already submitted to the gateway; retries must use the same amount.',
       REFUND_FAILED: 'Refund failed.',
     },
     airwallexPay: 'Airwallex Payment',
@@ -8226,6 +8873,7 @@
       rate: 'Rate',
       dailyLimit: 'Daily',
       dailyAmount: 'Daily Amount',
+      equivalentCny: 'CNY equivalent',
       concurrency: 'Concurrency',
       weeklyLimit: 'Weekly',
       monthlyLimit: 'Monthly',
@@ -8289,6 +8937,14 @@
       confirmRefund: 'Confirm Refund',
       refundSuccess: 'Refund successful',
       refundFailed: 'Refund failed',
+      refundPending: 'Refund pending gateway confirmation',
+      queryRefundStatus: 'Query refund status',
+      markRefundSucceeded: 'Mark refunded',
+      markRefundFailed: 'Mark failed',
+      resolveRefundTitle: 'Resolve pending refund',
+      resolveRefundSucceededConfirm: 'Only do this after confirming in the payment gateway\'s merchant console that the refund has arrived. The order will be settled as refunded and the planned balance/subscription deduction applied.',
+      resolveRefundFailedConfirm: 'Only do this after checking the payment gateway\'s merchant console and confirming the refund did not and will not arrive. The order becomes refund failed and a retry resubmits the same amount; gateway deduplication is not guaranteed (Stripe idempotency keys expire after 24 hours), so a wrong "failed" can lead to a double refund.',
+      refundMarkedFailed: 'Refund marked as failed',
       refundInfo: 'Refund Info',
       refundEnabled: 'Refund Enabled',
       allowUserRefund: 'Allow User Refund',

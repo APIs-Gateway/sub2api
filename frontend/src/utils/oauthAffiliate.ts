@@ -131,3 +131,13 @@ export function oauthAffiliatePayload(value?: unknown): { aff_code?: string } {
   const code = normalizeOAuthAffiliateCode(value)
   return code ? { aff_code: code } : {}
 }
+
+/**
+ * Builds the `&promo_code=...` suffix for an OAuth start URL. Blank or
+ * whitespace-only promo codes are omitted so the URL stays unchanged when the
+ * user did not enter one.
+ */
+export function promoCodeQuery(promoCode?: string | null): string {
+  const trimmed = promoCode?.trim()
+  return trimmed ? `&promo_code=${encodeURIComponent(trimmed)}` : ''
+}

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, shallowMount } from '@vue/test-utils'
+import { reactive } from 'vue'
 import PaymentView from '../PaymentView.vue'
 import { PAYMENT_RECOVERY_STORAGE_KEY } from '@/components/payment/paymentFlow'
 
@@ -564,4 +566,137 @@ describe('PaymentView subscription lifecycle checkout', () => {
       subscription_intent: 'change_plan',
     }))
   })
+})
+
+describe('PaymentView 充值标签入口（侧栏余额卡 / 低余额横幅）', () => {
+  beforeEach(() => {
+    routeState.path = '/purchase'
+    routeState.query = {}
+    routerReplace.mockReset().mockResolvedValue(undefined)
+    routerPush.mockReset().mockResolvedValue(undefined)
+    fetchActiveSubscriptions.mockReset().mockResolvedValue(undefined)
+    showError.mockReset()
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture())
+    window.localStorage.clear()
+  })
+
+  async function mountView() {
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    await flushPromises()
+    return wrapper
+  }
+
+  function activeTabLabel(wrapper: Awaited<ReturnType<typeof mountView>>) {
+    return wrapper
+      .findAll('button')
+      .filter(button => ['payment.tabSubscribe', 'payment.tabTopUp'].includes(button.text()))
+      .find(button => button.classes().includes('bg-white'))
+      ?.text()
+  }
+
+  it('?tab=recharge 直接落在充值标签', async () => {
+    routeState.query = { tab: 'recharge' }
+
+    expect(activeTabLabel(await mountView())).toBe('payment.tabTopUp')
+  })
+
+  it('不带 tab 时仍然默认订阅标签', async () => {
+    expect(activeTabLabel(await mountView())).toBe('payment.tabSubscribe')
+  })
+
+  it('?tab=subscription 不受影响', async () => {
+    routeState.query = { tab: 'subscription' }
+
+    expect(activeTabLabel(await mountView())).toBe('payment.tabSubscribe')
+  })
+
+  it('后台关掉余额充值时没有充值标签，?tab=recharge 不会把页面带到一个不存在的标签', async () => {
+    routeState.query = { tab: 'recharge' }
+    getCheckoutInfo.mockResolvedValue({
+      data: { ...checkoutInfoFixture().data, balance_disabled: true },
+    })
+
+    const wrapper = await mountView()
+
+    expect(wrapper.findAll('button').some(button => button.text() === 'payment.tabTopUp')).toBe(false)
+    expect(showError).not.toHaveBeenCalled()
+  })
+
+  // 人已经在购买页时，余额卡 / 横幅的「充值」只是把地址换成 /purchase?tab=recharge：
+  // 路由和组件都不变，onMounted 不会再跑。这里用响应式的 query 模拟「地址变了、组件没重建」。
+  function useLiveQuery(query: Record<string, unknown>) {
+    const live = reactive(query)
+    routeState.query = live
+    return live
+  }
+
+  it('已在购买页的订阅标签时，点「充值」把 ?tab=recharge 带进来，会切到充值标签', async () => {
+    const query = useLiveQuery({})
+    const wrapper = await mountView()
+    expect(activeTabLabel(wrapper)).toBe('payment.tabSubscribe')
+
+    query.tab = 'recharge'
+    await flushPromises()
+
+    expect(activeTabLabel(wrapper)).toBe('payment.tabTopUp')
+  })
+
+  it('?tab=subscription 回来时切回订阅标签', async () => {
+    const query = useLiveQuery({ tab: 'recharge' })
+    const wrapper = await mountView()
+    expect(activeTabLabel(wrapper)).toBe('payment.tabTopUp')
+
+    query.tab = 'subscription'
+    await flushPromises()
+
+    expect(activeTabLabel(wrapper)).toBe('payment.tabSubscribe')
+  })
+
+  it('后台关掉余额充值时，地址栏换成 ?tab=recharge 也不会切到不存在的标签', async () => {
+    getCheckoutInfo.mockResolvedValue({
+      data: { ...checkoutInfoFixture().data, balance_disabled: true },
+    })
+    const query = useLiveQuery({})
+    const wrapper = await mountView()
+
+    query.tab = 'recharge'
+    await flushPromises()
+
+    expect(activeTabLabel(wrapper)).toBeUndefined()
+    expect(wrapper.findAll('button').some(button => button.text() === 'payment.tabTopUp')).toBe(false)
+  })
+
+  it('手动点标签条会把 tab 写回地址栏（不然再点「充值」就是同一个地址，什么都不会发生）', async () => {
+    const wrapper = await mountView()
+    const topUpTab = wrapper.findAll('button').find(button => button.text() === 'payment.tabTopUp')!
+
+    await topUpTab.trigger('click')
+
+    expect(activeTabLabel(wrapper)).toBe('payment.tabTopUp')
+    expect(routerReplace).toHaveBeenCalledWith({ path: '/purchase', query: { tab: 'recharge' } })
+  })
+
+  it('标签条点的就是地址栏里已有的 tab 时不重复写地址', async () => {
+    routeState.query = { tab: 'subscription' }
+    const wrapper = await mountView()
+    const subscribeTab = wrapper.findAll('button').find(button => button.text() === 'payment.tabSubscribe')!
+
+    await subscribeTab.trigger('click')
+
+    expect(routerReplace).not.toHaveBeenCalled()
+  })
+})
+
+// 组件里用到的金额口径依赖 app store；未配置充值倍率时按美元展示（旧行为）。
+beforeEach(() => {
+  setActivePinia(createPinia())
 })

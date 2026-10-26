@@ -25,6 +25,8 @@ type EmailOAuthIdentityInput struct {
 	UpstreamMetadata map[string]any
 }
 
+var errEmailOAuthRegistrationRace = errors.New("email oauth registration raced with another account")
+
 func (s *AuthService) LoginOrRegisterVerifiedEmailOAuth(ctx context.Context, input EmailOAuthIdentityInput) (*TokenPair, *User, error) {
 	return s.loginOrRegisterVerifiedEmailOAuth(ctx, input, "", "", "")
 }
@@ -93,7 +95,9 @@ func (s *AuthService) loginOrRegisterVerifiedEmailOAuth(
 	if err != nil {
 		return nil, nil, err
 	}
-	if identityUser != nil && !strings.EqualFold(strings.TrimSpace(identityUser.Email), email) {
+	// Google/GitHub subjects remain stable when their verified email changes.
+	// Keep the fork's separate OIDC pending/login fast-path policy unchanged.
+	if providerType == "oidc" && identityUser != nil && !strings.EqualFold(strings.TrimSpace(identityUser.Email), email) {
 		return nil, nil, infraerrors.Conflict("AUTH_IDENTITY_EMAIL_MISMATCH", "oauth identity belongs to a different email")
 	}
 
@@ -104,14 +108,25 @@ func (s *AuthService) loginOrRegisterVerifiedEmailOAuth(
 		if err != nil {
 			if errors.Is(err, ErrUserNotFound) {
 				user, err = s.createEmailOAuthUser(ctx, email, input.Username, providerType, invitationCode, affiliateCode)
-				if err != nil {
+				if errors.Is(err, errEmailOAuthRegistrationRace) {
+					user, err = s.userRepo.GetByEmail(ctx, email)
+					if err != nil {
+						return nil, nil, ErrServiceUnavailable
+					}
+				} else if err != nil {
 					return nil, nil, err
+				} else {
+					created = true
 				}
-				created = true
 			} else {
 				logger.LegacyPrintf("service.auth", "[Auth] Database error during %s oauth login: %v", providerType, err)
 				return nil, nil, ErrServiceUnavailable
 			}
+		}
+		// A concurrent registration can win between GetByEmail and Create.
+		// Reloading the winner keeps that account on the existing-account path.
+		if !created && !emailOAuthCanAutoLinkExistingUser(user) {
+			return nil, nil, ErrOAuthExistingAccountBindRequired
 		}
 	}
 
@@ -192,11 +207,7 @@ func (s *AuthService) createEmailOAuthUser(ctx context.Context, email, username,
 	}
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		if errors.Is(err, ErrEmailExists) {
-			existing, loadErr := s.userRepo.GetByEmail(ctx, email)
-			if loadErr != nil {
-				return nil, ErrServiceUnavailable
-			}
-			return existing, nil
+			return nil, errEmailOAuthRegistrationRace
 		}
 		return nil, ErrServiceUnavailable
 	}
@@ -215,6 +226,21 @@ func (s *AuthService) createEmailOAuthUser(ctx context.Context, email, username,
 		}
 	}
 	return user, nil
+}
+
+// Existing local accounts do not store an email-verification marker. Only an
+// account originally created through an email-verifying OAuth provider can be
+// linked to another unbound identity solely by matching email.
+func emailOAuthCanAutoLinkExistingUser(user *User) bool {
+	if user == nil {
+		return false
+	}
+	switch normalizeOAuthSignupSource(user.SignupSource) {
+	case "google", "github":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *AuthService) findEmailOAuthIdentityOwner(ctx context.Context, providerType, providerKey, providerSubject string) (*User, error) {

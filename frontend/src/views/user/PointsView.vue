@@ -14,22 +14,22 @@
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div class="card p-5">
             <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('points.stats.available') }}</p>
-            <p class="mt-2 text-2xl font-semibold font-mono tabular-nums text-gray-900 dark:text-white">{{ overview.account.available.toLocaleString() }}</p>
+            <NumText tier="primary" class="mt-2 block" :text="formatCount(overview.account.available)" />
           </div>
           <div class="card p-5">
             <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('points.stats.frozen') }}</p>
-            <p class="mt-2 text-2xl font-semibold font-mono tabular-nums text-gray-900 dark:text-white">{{ overview.account.frozen.toLocaleString() }}</p>
+            <NumText tier="primary" class="mt-2 block" :text="formatCount(overview.account.frozen)" />
           </div>
           <div class="card p-5">
             <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('points.stats.lifetime') }}</p>
-            <p class="mt-2 text-2xl font-semibold font-mono tabular-nums text-gray-900 dark:text-white">{{ overview.account.lifetime_earned.toLocaleString() }}</p>
+            <NumText tier="primary" class="mt-2 block" :text="formatCount(overview.account.lifetime_earned)" />
           </div>
           <div class="card p-5">
             <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('points.stats.effectiveRate') }}</p>
-            <p class="mt-2 text-2xl font-semibold font-mono tabular-nums text-gray-900 dark:text-white">{{ formatPercent(firstPaymentRate) }}</p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">{{ t('points.stats.firstPaymentRate', { rate: formatPercent(firstPaymentRate) }) }}</p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">{{ t('points.stats.repeatPaymentRate', { rate: formatPercent(repeatPaymentRate) }) }}</p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">{{ t('points.stats.pegValue', { value: formatCurrency(overview.config.peg, 'CNY') }) }}</p>
+            <NumText tier="primary" class="mt-2 block" :text="formatPercent(firstPaymentRate)" />
+            <p class="num-aux mt-1">{{ t('points.stats.firstPaymentRate', { rate: formatPercent(firstPaymentRate) }) }}</p>
+            <p class="num-aux mt-1">{{ t('points.stats.repeatPaymentRate', { rate: formatPercent(repeatPaymentRate) }) }}</p>
+            <p class="num-aux mt-1">{{ t('points.stats.pegValue', { value: formatCurrency(overview.config.peg, 'CNY') }) }}</p>
           </div>
         </div>
 
@@ -57,7 +57,7 @@
             </div>
           </div>
           <p class="mt-4 text-sm text-gray-600 dark:text-gray-400">
-            {{ t('points.invite.count') }}: <span class="font-mono tabular-nums">{{ overview.affiliate.aff_count.toLocaleString() }}</span>
+            {{ t('points.invite.count') }}: <span class="num">{{ formatCount(overview.affiliate.aff_count) }}</span>
           </p>
           <div class="mt-4 rounded-md bg-gray-50 px-4 py-3 text-sm text-gray-700 dark:bg-dark-900 dark:text-gray-300">
             <template v-if="repeatPaymentRate > 0">
@@ -65,8 +65,8 @@
               <p class="mt-1">
                 {{ t('points.invite.rewardExample', {
                   amount: formatCurrency(inviteExampleAmount, 'CNY'),
-                  firstPoints: inviteFirstExamplePoints.toLocaleString(),
-                  repeatPoints: inviteRepeatExamplePoints.toLocaleString(),
+                  firstPoints: formatCount(inviteFirstExamplePoints),
+                  repeatPoints: formatCount(inviteRepeatExamplePoints),
                 }) }}
               </p>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">
@@ -89,13 +89,13 @@
           <div v-if="overview.config.redeem_balance_on" class="card p-6 space-y-4">
             <div>
               <h3 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('points.redeemBalance.title') }}</h3>
-              <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">{{ t('points.redeemBalance.desc') }}</p>
+              <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">{{ t('points.redeemBalance.descFiat') }}</p>
             </div>
             <div class="space-y-2">
               <label class="input-label">{{ t('points.redeemBalance.points') }}</label>
               <input v-model.number="redeemBalancePoints" type="number" min="1" class="input" />
-              <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.estimate', { amount: formatCurrency(redeemBalanceEstimate) }) }}</p>
-              <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.rateHint', { peg: formatCurrency(peg, 'CNY'), rate: balanceRedeemRate.toFixed(2) }) }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.estimate', { amount: formatWallet(redeemBalanceEstimate) }) }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-500">{{ t('points.redeemBalance.rateHintFiat', { peg: formatCurrency(peg, 'CNY') }) }}</p>
             </div>
             <button class="btn btn-primary w-full" :disabled="busy || !redeemBalancePoints" @click="onRedeemBalance">{{ t('points.redeemBalance.submit') }}</button>
           </div>
@@ -144,10 +144,10 @@
                 </div>
               </template>
               <div class="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-dark-900 dark:text-gray-400 space-y-1">
-                <div v-if="withdrawMethod === 'usdt'" class="flex justify-between"><span>{{ t('points.withdraw.usdtRate') }}</span><span class="font-mono">{{ withdrawUSDCNYEffectiveRate.toFixed(2) }}</span></div>
-                <div class="flex justify-between"><span>{{ t('points.withdraw.gross') }}</span><span class="font-mono">{{ formatWithdrawCurrency(withdrawGross) }}</span></div>
-                <div class="flex justify-between"><span>{{ t('points.withdraw.fee') }} ({{ overview.config.withdraw_fee_percent }}%)</span><span class="font-mono">-{{ formatWithdrawCurrency(withdrawFee) }}</span></div>
-                <div class="flex justify-between font-semibold text-gray-900 dark:text-white"><span>{{ t('points.withdraw.net') }}</span><span class="font-mono">{{ formatWithdrawCurrency(withdrawNet) }}</span></div>
+                <div v-if="withdrawMethod === 'usdt'" class="flex justify-between"><span>{{ t('points.withdraw.usdtRate') }}</span><span class="num">{{ withdrawUSDCNYEffectiveRate.toFixed(2) }}</span></div>
+                <div class="flex justify-between"><span>{{ t('points.withdraw.gross') }}</span><span class="num">{{ formatWithdrawCurrency(withdrawGross) }}</span></div>
+                <div class="flex justify-between"><span>{{ t('points.withdraw.fee') }} ({{ overview.config.withdraw_fee_percent }}%)</span><span class="num">-{{ formatWithdrawCurrency(withdrawFee) }}</span></div>
+                <div class="flex justify-between font-semibold text-gray-900 dark:text-white"><span>{{ t('points.withdraw.net') }}</span><span class="num">{{ formatWithdrawCurrency(withdrawNet) }}</span></div>
               </div>
             </div>
             <button class="btn btn-primary w-full" :disabled="busy || !withdrawPoints" @click="onWithdraw">{{ t('points.withdraw.submit') }}</button>
@@ -175,7 +175,7 @@
                     :aria-pressed="selectedPlanDaily === amount"
                     @click="selectedPlanDaily = amount"
                   >
-                    {{ t('points.redeemPlan.dailyOption', { d: amount }) }}
+                    {{ isFiat ? formatPlanQuota(amount, dailyUnitPrice(amount)) : t('points.redeemPlan.dailyOption', { d: formatUsd(amount) }) }}
                   </button>
                 </div>
               </div>
@@ -198,15 +198,15 @@
               <div v-if="selectedPlan" class="rounded-md bg-gray-50 px-3 py-3 text-sm text-gray-700 dark:bg-dark-900 dark:text-gray-300">
                 <div class="flex items-center justify-between gap-3">
                   <span>{{ selectedPlanActionLabel }}</span>
-                  <span class="font-mono tabular-nums text-gray-900 dark:text-white">
+                  <span class="num-secondary text-gray-900 dark:text-white">
                     <template v-if="planQuoteLoading">{{ t('points.redeemPlan.quoteLoading') }}</template>
-                    <template v-else>{{ selectedPlanPointsPrice.toLocaleString() }} {{ t('points.unit') }}</template>
+                    <template v-else>{{ formatCount(selectedPlanPointsPrice) }} {{ t('points.unit') }}</template>
                   </span>
                 </div>
                 <p v-if="planQuoteError" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ planQuoteError }}</p>
                 <div class="mt-1 flex items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-500">
                   <span>{{ t('points.redeemPlan.capSummary') }}</span>
-                  <span class="font-mono tabular-nums">{{ formatCurrency(selectedPlan.weekly_cap_usd) }} / {{ formatCurrency(selectedPlan.monthly_cap_usd) }}</span>
+                  <span class="num">{{ formatPlanQuota(selectedPlan.weekly_cap_usd, selectedPlan.unit_price) }} / {{ formatPlanQuota(selectedPlan.monthly_cap_usd, selectedPlan.unit_price) }}</span>
                 </div>
               </div>
               <button
@@ -240,8 +240,8 @@
                 <tr v-for="row in ledger" :key="row.id">
                   <td class="text-gray-600 dark:text-gray-400">{{ formatDateTime(row.created_at) }}</td>
                   <td>{{ kindLabel(row.kind) }}</td>
-                  <td class="text-right font-mono tabular-nums" :class="row.points >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-900 dark:text-white'">{{ row.points >= 0 ? '+' : '' }}{{ row.points.toLocaleString() }}</td>
-                  <td class="text-right font-mono tabular-nums text-gray-500">{{ row.available_after != null ? row.available_after.toLocaleString() : '—' }}</td>
+                  <td class="num-secondary text-right" :class="row.points >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-900 dark:text-white'">{{ row.points >= 0 ? '+' : '' }}{{ formatCount(row.points) }}</td>
+                  <td class="num text-right text-gray-500">{{ row.available_after != null ? formatCount(row.available_after) : '—' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -275,13 +275,17 @@ import { useAppStore } from '@/stores/app'
 import { useSubscriptionStore } from '@/stores/subscriptions'
 import { useClipboard } from '@/composables/useClipboard'
 import { extractApiErrorMessage } from '@/utils/apiError'
-import { formatCurrency, formatDateTime } from '@/utils/format'
+import { formatDateTime } from '@/utils/format'
+import { formatCount, formatCurrencyAmount as formatCurrency } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import NumText from '@/components/common/NumText.vue'
 import type { UserSubscription } from '@/types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
 const subscriptionStore = useSubscriptionStore()
 const { copyToClipboard } = useClipboard()
+const { isFiat, formatWallet, formatSubscription, formatUsd } = useCurrencyDisplay()
 
 const loading = ref(true)
 const busy = ref(false)
@@ -365,6 +369,16 @@ const inviteLink = computed(() => {
   if (typeof window === 'undefined') return `/register?aff=${encodeURIComponent(code)}`
   return `${window.location.origin}/register?aff=${encodeURIComponent(code)}`
 })
+
+/** 套餐额度金额：人民币模式按该档套餐的单价折算，美元模式沿用原来的美元额度。 */
+function formatPlanQuota(credits: number, unitPrice: number): string {
+  return isFiat.value ? formatSubscription(credits, unitPrice) : formatUsd(credits)
+}
+
+/** 某个每日额度档位的单价（同一档不同有效期单价相同）。 */
+function dailyUnitPrice(daily: number): number {
+  return plans.value.find((plan) => plan.daily_amount_usd === daily)?.unit_price ?? 0
+}
 
 function formatPercent(value: number): string {
   const rounded = Math.round(Number(value || 0) * 100) / 100
@@ -478,10 +492,12 @@ async function onRedeemPlan(plan: PointsPlanOption): Promise<void> {
     appStore.showError(planQuoteError.value)
     return
   }
-  const planName = t('points.redeemPlan.planTitle', { d: plan.daily_amount_usd })
+  const planName = isFiat.value
+    ? t('points.redeemPlan.planTitleFiat', { d: formatPlanQuota(plan.daily_amount_usd, plan.unit_price) })
+    : t('points.redeemPlan.planTitle', { d: formatUsd(plan.daily_amount_usd) })
   if (!window.confirm(t('points.redeemPlan.confirm', {
     action: selectedPlanSubmitLabel.value,
-    points: selectedPlanPointsPrice.value.toLocaleString(),
+    points: formatCount(selectedPlanPointsPrice.value),
     plan: planName,
   }))) return
   busy.value = true

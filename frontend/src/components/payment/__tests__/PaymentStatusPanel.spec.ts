@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 
 const pollOrderStatus = vi.hoisted(() => vi.fn())
@@ -174,6 +175,10 @@ describe('PaymentStatusPanel', () => {
 
   it.each(['EXPIRED', 'FAILED'])('settles %s orders as expired and stops polling', async (status) => {
     pollOrderStatus.mockResolvedValue(orderFactory(status))
+    if (status === 'EXPIRED') {
+      // An expired built-in order is terminal only after the provider check succeeds.
+      verifyOrder.mockResolvedValue({ data: orderFactory('EXPIRED') })
+    }
 
     const wrapper = mount(PaymentStatusPanel, {
       props: {
@@ -190,6 +195,8 @@ describe('PaymentStatusPanel', () => {
 
     expect(wrapper.text()).toContain('payment.qr.expired')
     expect(wrapper.emitted('settled')).toEqual([['expired']])
+    if (status === 'EXPIRED') expect(verifyOrder).toHaveBeenCalledWith('sub2_20260420abcd1234')
+    else expect(verifyOrder).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(9000)
     expect(pollOrderStatus).toHaveBeenCalledTimes(1)
@@ -332,6 +339,59 @@ describe('PaymentStatusPanel', () => {
     expect(wrapper.emitted('settled')).toEqual([['cancelled']])
   })
 
+  it('actively verifies a pending desktop Alipay order', async () => {
+    pollOrderStatus.mockResolvedValue(orderFactory('PENDING'))
+    verifyOrder.mockResolvedValue({ data: orderFactory('COMPLETED') })
+
+    const wrapper = mount(PaymentStatusPanel, {
+      props: {
+        orderId: 42,
+        amount: 88,
+        payAmount: 88,
+        qrCode: 'https://qr.alipay.com/desktop-order-42',
+        expiresAt: '2099-01-01T12:30:00Z',
+        paymentType: 'alipay',
+        orderType: 'balance',
+        outTradeNo: 'sub2_20260420abcd1234',
+      },
+      global: { stubs: { Icon: true } },
+    })
+
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+
+    expect(verifyOrder).toHaveBeenCalledWith('sub2_20260420abcd1234')
+    expect(wrapper.emitted('success')).toHaveLength(1)
+
+    wrapper.unmount()
+  })
+
+  it('does not actively verify pending orders for non-Alipay/WeChat methods', async () => {
+    pollOrderStatus.mockResolvedValue({ ...orderFactory('PENDING'), payment_type: 'stripe' })
+
+    const wrapper = mount(PaymentStatusPanel, {
+      props: {
+        orderId: 42,
+        qrCode: 'https://pay.example.com/qr/42',
+        expiresAt: '2099-01-01T12:30:00Z',
+        paymentType: 'stripe',
+        orderType: 'balance',
+      },
+      global: { stubs: { Icon: true } },
+    })
+
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+
+    expect(pollOrderStatus).toHaveBeenCalledWith(42)
+    expect(verifyOrder).not.toHaveBeenCalled()
+    expect(wrapper.emitted('success')).toBeUndefined()
+
+    wrapper.unmount()
+  })
+
   it('does not overlap polls while the previous request is pending', async () => {
     const pending = deferred<ReturnType<typeof orderFactory>>()
     pollOrderStatus.mockReturnValue(pending.promise)
@@ -386,4 +446,9 @@ describe('PaymentStatusPanel', () => {
     wrapper.unmount()
     expect(alipayDeepLinkLauncher.dispose).toHaveBeenCalledOnce()
   })
+})
+
+// 组件里用到的金额口径依赖 app store；未配置充值倍率时按美元展示（旧行为）。
+beforeEach(() => {
+  setActivePinia(createPinia())
 })

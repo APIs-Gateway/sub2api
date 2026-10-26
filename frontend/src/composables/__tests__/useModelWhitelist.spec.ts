@@ -4,9 +4,97 @@ vi.mock('@/api/admin/accounts', () => ({
   getAntigravityDefaultModelMapping: vi.fn()
 }))
 
-import { buildModelMappingObject, getModelsByPlatform, getPresetMappingsByPlatform, splitModelMappingObject } from '../useModelWhitelist'
+import { buildModelMappingObject, findModelMappingConflict, getModelsByPlatform, getPresetMappingsByPlatform, removeModelMappingEntry, splitModelMappingObject } from '../useModelWhitelist'
 
 describe('useModelWhitelist', () => {
+  it('keeps the admitted source when a strict saved rewrite is deleted and reopened', () => {
+    const { allowedModels, modelMappings } = splitModelMappingObject({ alias: 'gpt-6', stable: 'stable', other: 'gpt-5.6' })
+    removeModelMappingEntry(modelMappings, 0, allowedModels)
+    const saved = buildModelMappingObject('combined', allowedModels, modelMappings)
+    expect(saved).toEqual({ stable: 'stable', alias: 'alias', other: 'gpt-5.6' })
+    expect(splitModelMappingObject(saved!)).toEqual({ allowedModels: ['stable', 'alias'], modelMappings: [{ from: 'other', to: 'gpt-5.6' }] })
+  })
+
+  it('keeps the final strict source instead of changing an empty mapping to allow all models', () => {
+    const mappings = [{ from: ' alias ', to: ' gpt-6 ' }], allowed: string[] = []
+    removeModelMappingEntry(mappings, 0, allowed)
+    expect(buildModelMappingObject('combined', allowed, mappings)).toEqual({ alias: 'alias' })
+    expect(buildModelMappingObject('mapping', allowed, mappings)).toBeNull()
+  })
+
+  it('does not tighten permissive rename-only admission with an identity', () => {
+    const mappings = [{ from: 'alias', to: 'gpt-6' }], allowed: string[] = []
+    removeModelMappingEntry(mappings, 0, allowed, false)
+    expect(mappings).toEqual([])
+    expect(allowed).toEqual([])
+  })
+
+  it('deduplicates a trimmed whitelist source', () => {
+    const mappings = [{ from: ' alias ', to: 'gpt-6' }], allowed = [' alias ']
+    removeModelMappingEntry(mappings, 0, allowed)
+    expect(allowed).toEqual([' alias '])
+  })
+
+  it('keeps another effective rewrite without adding a conflicting identity', () => {
+    const mappings = [{ from: 'alias', to: 'gpt-6' }, { from: 'alias', to: 'gpt-5.6' }], allowed: string[] = []
+    removeModelMappingEntry(mappings, 0, allowed)
+    expect(allowed).toEqual([])
+    expect(buildModelMappingObject('combined', allowed, mappings)).toEqual({ alias: 'gpt-5.6' })
+  })
+
+  it('restores admission when remaining duplicate rows have no effective rewrite', () => {
+    const mappings = [{ from: 'alias', to: 'gpt-6' }, { from: 'alias', to: 'alias' }, { from: 'alias', to: 'invalid-*' }], allowed: string[] = []
+    removeModelMappingEntry(mappings, 0, allowed)
+    expect(allowed).toEqual(['alias'])
+    expect(findModelMappingConflict('alias', mappings)).toBeUndefined()
+  })
+
+  it.each([
+    { from: '', to: 'gpt-6' }, { from: ' ', to: 'gpt-6' }, { from: 'alias', to: '' },
+    { from: 'alias', to: ' ' }, { from: 'alias-*', to: 'gpt-6' }, { from: 'alias', to: 'gpt-*' }
+  ])('does not admit an invalid or wildcard source when deleting $from -> $to', mapping => {
+    const mappings = [mapping], allowed: string[] = []
+    removeModelMappingEntry(mappings, 0, allowed)
+    expect(mappings).toEqual([])
+    expect(allowed).toEqual([])
+  })
+
+  it.each([-1, 1, 0.5, NaN])('leaves both arrays unchanged for invalid index %s', index => {
+    const mappings = [{ from: 'alias', to: 'gpt-6' }], allowed = ['stable']
+    removeModelMappingEntry(mappings, index, allowed)
+    expect(mappings).toEqual([{ from: 'alias', to: 'gpt-6' }])
+    expect(allowed).toEqual(['stable'])
+  })
+
+  it('keeps mapping precedence over a duplicate whitelist identity on save and reopen', () => {
+    const saved = buildModelMappingObject('combined', ['gpt-latest', 'gpt-6'], [
+      { from: 'gpt-latest', to: 'deepseek-chat' }
+    ])
+    expect(saved).toEqual({ 'gpt-latest': 'deepseek-chat', 'gpt-6': 'gpt-6' })
+    expect(splitModelMappingObject(saved)).toEqual({
+      allowedModels: ['gpt-6'],
+      modelMappings: [{ from: 'gpt-latest', to: 'deepseek-chat' }]
+    })
+  })
+
+  it('keeps Create and Bulk Edit whitelist mode independent of mapping entries', () => {
+    expect(buildModelMappingObject('whitelist', ['gpt-6'], [
+      { from: 'gpt-6', to: 'different-target' }
+    ])).toEqual({ 'gpt-6': 'gpt-6' })
+  })
+
+  it('detects only the effective valid mapping when duplicate source rows exist', () => {
+    expect(findModelMappingConflict('gpt-6', [
+      { from: 'gpt-6', to: 'different-target' },
+      { from: 'gpt-6', to: 'gpt-6' }
+    ])).toBeUndefined()
+    expect(findModelMappingConflict('gpt-6', [
+      { from: 'gpt-6', to: 'gpt-6' },
+      { from: 'gpt-6', to: 'different-target' },
+      { from: 'gpt-6', to: 'invalid-*' }
+    ])).toEqual({ from: 'gpt-6', to: 'different-target' })
+  })
+
   it('openai 模型列表包含 GPT-5.4 官方快照', () => {
     const models = getModelsByPlatform('openai')
 
@@ -20,13 +108,17 @@ describe('useModelWhitelist', () => {
     expect(models).toContain('codex-auto-review')
     expect(models).toContain('gpt-6')
     expect(models).toContain('gpt-6-astra')
+    expect(models).toContain('gpt-6-sol')
+    expect(models).toContain('gpt-6-luna')
     expect(models.indexOf('gpt-5.6-sol')).toBeLessThan(models.indexOf('gpt-5.5'))
   })
 
   it('openai 预设映射包含 GPT-6 别名和 Astra', () => {
     expect(getPresetMappingsByPlatform('openai')).toEqual(expect.arrayContaining([
       expect.objectContaining({ label: 'GPT-6', from: 'gpt-6', to: 'gpt-6' }),
-      expect.objectContaining({ label: 'GPT-6 Astra', from: 'gpt-6-astra', to: 'gpt-6-astra' })
+      expect.objectContaining({ label: 'GPT-6 Astra', from: 'gpt-6-astra', to: 'gpt-6-astra' }),
+      expect.objectContaining({ label: 'GPT-6 Sol', from: 'gpt-6-sol', to: 'gpt-6-sol' }),
+      expect.objectContaining({ label: 'GPT-6 Luna', from: 'gpt-6-luna', to: 'gpt-6-luna' })
     ]))
   })
 
@@ -55,6 +147,11 @@ describe('useModelWhitelist', () => {
     expect(getModelsByPlatform('antigravity')).toContain('claude-fable-5')
     expect(getModelsByPlatform('claude')).toContain('claude-opus-4-8')
     expect(getModelsByPlatform('antigravity')).toContain('claude-opus-4-8')
+    expect(getModelsByPlatform('claude')).toContain('claude-opus-5-5')
+    expect(getModelsByPlatform('antigravity')).not.toContain('claude-opus-5-5')
+    expect(getPresetMappingsByPlatform('anthropic')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'Opus 5.5', from: 'claude-opus-5-5', to: 'claude-opus-5-5' })
+    ]))
   })
 
   it('provides Sonnet 5 mappings for Anthropic and Bedrock', () => {

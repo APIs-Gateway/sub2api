@@ -17,10 +17,12 @@ var ErrUsageBillingRequestConflict = errors.New("usage billing request fingerpri
 
 // UsageBillingCommand describes one billable request that must be applied at most once.
 type UsageBillingCommand struct {
-	RequestID          string
-	APIKeyID           int64
-	RequestFingerprint string
-	RequestPayloadHash string
+	// Reservation identity is bookkeeping only and must not change the existing financial fingerprint.
+	InflightObligationID string
+	RequestID            string
+	APIKeyID             int64
+	RequestFingerprint   string
+	RequestPayloadHash   string
 
 	UserID              int64
 	AccountID           int64

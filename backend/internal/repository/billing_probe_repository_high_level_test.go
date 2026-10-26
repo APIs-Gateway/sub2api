@@ -253,8 +253,6 @@ func TestProxyUpdateInvalidatesProbeSnapshotsAtomically(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
 				AddRow("http", "old.example", 8080, "user", "pass", service.StatusActive))
 		mock.ExpectExec(`(?s)UPDATE "proxies" SET`).WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectExec(`UPDATE "proxies" SET "backup_proxy_id" = NULL`).
-			WithArgs(int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
 		expectProxyReloadRow(mock, 9, "new.example", "user", "pass")
 		mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 			WithArgs(int64(9)).
@@ -281,8 +279,6 @@ func TestProxyUpdateInvalidatesProbeSnapshotsAtomically(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
 				AddRow("http", "same.example", 8080, "", "", service.StatusActive))
 		mock.ExpectExec(`(?s)UPDATE "proxies" SET`).WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectExec(`UPDATE "proxies" SET "backup_proxy_id" = NULL`).
-			WithArgs(int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
 		expectProxyReloadRow(mock, 9, "same.example", "", "")
 		mock.ExpectCommit()
 
@@ -306,8 +302,6 @@ func TestProxyUpdateRollsBackWhenProbeOutboxFails(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
 			AddRow("http", "old.example", 8080, "", "", service.StatusActive))
 	mock.ExpectExec(`(?s)UPDATE "proxies" SET`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE "proxies" SET "backup_proxy_id" = NULL`).
-		WithArgs(int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
 	expectProxyReloadRow(mock, 9, "new.example", "", "")
 	mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 		WithArgs(int64(9)).
@@ -338,8 +332,6 @@ func TestProxyUpdateUsesExistingTransaction(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"protocol", "host", "port", "username", "password", "status"}).
 			AddRow("http", "old.example", 8080, "", "", service.StatusActive))
 	mock.ExpectExec(`(?s)UPDATE "proxies" SET`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE "proxies" SET "backup_proxy_id" = NULL`).
-		WithArgs(int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
 	expectProxyReloadRow(mock, 9, "new.example", "", "")
 	mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 		WithArgs(int64(9)).
@@ -389,11 +381,29 @@ func TestBulkUpdateProbeClearUsesTransactionAndOutbox(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// sweepTestNow 固定过期扫描的 now，使条件 UPDATE 的参数在 sqlmock 中可精确匹配。
+var sweepTestNow = time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+
+// expiredProxySnapshot 构造一个已过期的 active 代理快照，供条件过期 UPDATE 使用。
+func expiredProxySnapshot(id int64) service.Proxy {
+	expiresAt := sweepTestNow.Add(-time.Hour)
+	return service.Proxy{ID: id, Status: service.StatusActive, ExpiresAt: &expiresAt, FallbackMode: service.FallbackModeNone}
+}
+
+// expectConditionalProxyExpiry 期望带快照校验的 proxies 条件 UPDATE。
+func expectConditionalProxyExpiry(mock sqlmock.Sqlmock, snapshot service.Proxy) *sqlmock.ExpectedExec {
+	var backup any
+	if snapshot.BackupProxyID != nil {
+		backup = *snapshot.BackupProxyID
+	}
+	return mock.ExpectExec(`(?s)UPDATE proxies SET status=\$1.*WHERE id=\$2.*status=\$3.*expires_at <= \$4 AND expires_at = \$5.*fallback_mode=\$6 AND backup_proxy_id IS NOT DISTINCT FROM \$7`).
+		WithArgs(service.StatusExpired, snapshot.ID, service.StatusActive, sweepTestNow, *snapshot.ExpiresAt, snapshot.FallbackMode, backup)
+}
+
 func TestSweepExpiredProxyClearsProbeForBothFallbackModes(t *testing.T) {
 	t.Run("without fallback clears snapshots", func(t *testing.T) {
 		db, mock := newSQLMock(t)
-		mock.ExpectExec(`UPDATE proxies SET status=\$1`).
-			WithArgs(service.StatusExpired, int64(9)).
+		expectConditionalProxyExpiry(mock, expiredProxySnapshot(9)).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).
 			WithArgs(int64(9)).
@@ -402,15 +412,14 @@ func TestSweepExpiredProxyClearsProbeForBothFallbackModes(t *testing.T) {
 			WillReturnResult(sqlmock.NewResult(1, 1))
 
 		repo := &proxyRepository{}
-		_, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, 9, nil, false)
+		_, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, expiredProxySnapshot(9), sweepTestNow, nil, false)
 		require.NoError(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
 	t.Run("fallback target updates accounts and clears snapshots", func(t *testing.T) {
 		db, mock := newSQLMock(t)
-		mock.ExpectExec(`UPDATE proxies SET status=\$1`).
-			WithArgs(service.StatusExpired, int64(9)).
+		expectConditionalProxyExpiry(mock, expiredProxySnapshot(9)).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		// The fallback-target branch of sweepOneExpiredProxyOnExec uses QueryContext with
 		// RETURNING id (not a plain Exec) so the caller can thread the actually-changed
@@ -422,7 +431,7 @@ func TestSweepExpiredProxyClearsProbeForBothFallbackModes(t *testing.T) {
 
 		target := int64(11)
 		repo := &proxyRepository{}
-		changed, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, 9, &target, true)
+		changed, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, expiredProxySnapshot(9), sweepTestNow, &target, true)
 		require.NoError(t, err)
 		require.Equal(t, []int64{21, 22}, changed)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -517,11 +526,10 @@ func TestBillingProbePersistenceErrorEdges(t *testing.T) {
 
 	t.Run("proxy expiry snapshot clear error", func(t *testing.T) {
 		db, mock := newSQLMock(t)
-		mock.ExpectExec(`UPDATE proxies SET status=\$1`).
-			WithArgs(service.StatusExpired, int64(9)).WillReturnResult(sqlmock.NewResult(0, 1))
+		expectConditionalProxyExpiry(mock, expiredProxySnapshot(9)).WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectQuery(`(?s)UPDATE accounts.*RETURNING id`).WillReturnError(errors.New("clear failed"))
 		repo := &proxyRepository{}
-		_, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, 9, nil, false)
+		_, err := repo.sweepOneExpiredProxyOnExec(context.Background(), nil, db, expiredProxySnapshot(9), sweepTestNow, nil, false)
 		require.EqualError(t, err, "clear failed")
 		require.NoError(t, mock.ExpectationsWereMet())
 	})

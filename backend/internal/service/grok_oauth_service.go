@@ -118,8 +118,16 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 	if state == "" {
 		state = strings.TrimSpace(parsed.State)
 	}
-	if state == "" || subtle.ConstantTimeCompare([]byte(state), []byte(session.State)) != 1 {
+	if state == "" {
+		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_STATE_REQUIRED", "oauth state is required")
+	}
+	if subtle.ConstantTimeCompare([]byte(state), []byte(session.State)) != 1 {
 		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_INVALID_STATE", "invalid oauth state")
+	}
+	// redirect_uri 与授权会话绑定：客户端传入的值必须与 session 一致，交换时始终用 session 记录的值。
+	if redirectURI := strings.TrimSpace(input.RedirectURI); redirectURI != "" &&
+		redirectURI != strings.TrimSpace(session.RedirectURI) {
+		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_REDIRECT_URI_MISMATCH", "redirect_uri does not match the OAuth session")
 	}
 
 	proxyURL := session.ProxyURL
@@ -130,16 +138,17 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 			return nil, err
 		}
 	}
-	redirectURI := session.RedirectURI
-	if strings.TrimSpace(input.RedirectURI) != "" {
-		redirectURI = input.RedirectURI
-	}
 
-	tokenResp, err := s.oauthClient.ExchangeCode(ctx, code, session.CodeVerifier, session.CodeChallenge, redirectURI, proxyURL, session.ClientID)
+	// OAuth session 一次性：参数校验通过、真正向 xAI 发起 code 交换后，无论成败都作废，
+	// 防止同一 session/code 被反复重放（upstream f29ccc7df；校验失败不消耗 session，与上游后续语义一致）。
+	defer s.sessionStore.Delete(input.SessionID)
+	tokenResp, err := s.oauthClient.ExchangeCode(ctx, code, session.CodeVerifier, session.RedirectURI, proxyURL, session.ClientID)
 	if err != nil {
 		return nil, err
 	}
-	s.sessionStore.Delete(input.SessionID)
+	if err := validateGrokTokenResponse(tokenResp); err != nil {
+		return nil, err
+	}
 	return s.tokenInfoFromResponse(tokenResp, session.ClientID, nil), nil
 }
 
@@ -152,7 +161,22 @@ func (s *GrokOAuthService) RefreshToken(ctx context.Context, refreshToken, proxy
 	if err != nil {
 		return nil, err
 	}
-	return s.tokenInfoFromResponse(tokenResp, clientID, nil), nil
+	if err := validateGrokTokenResponse(tokenResp); err != nil {
+		return nil, err
+	}
+	tokenInfo := s.tokenInfoFromResponse(tokenResp, clientID, nil)
+	if tokenInfo.RefreshToken == "" {
+		tokenInfo.RefreshToken = refreshToken
+	}
+	return tokenInfo, nil
+}
+
+// validateGrokTokenResponse 拒绝缺少 access_token 的上游 token 响应，避免把空凭证写进账号。
+func validateGrokTokenResponse(tokenResp *xai.TokenResponse) error {
+	if tokenResp == nil || strings.TrimSpace(tokenResp.AccessToken) == "" {
+		return infraerrors.New(http.StatusBadGateway, "GROK_OAUTH_INVALID_TOKEN_RESPONSE", "grok oauth token response missing access_token")
+	}
+	return nil
 }
 
 func (s *GrokOAuthService) ValidateRefreshToken(ctx context.Context, refreshToken string, proxyID *int64) (*GrokTokenInfo, error) {

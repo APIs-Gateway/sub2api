@@ -5,7 +5,9 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -44,6 +46,138 @@ func (s *GroupRepoSuite) SetupTest() {
 
 func TestGroupRepoSuite(t *testing.T) {
 	suite.Run(t, new(GroupRepoSuite))
+}
+
+func (s *GroupRepoSuite) TestDeleteCascadeRemovesOnlyDeletedModerationGroup() {
+	deleted := &service.Group{Name: "moderation-deleted", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	kept := &service.Group{Name: "moderation-kept", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	s.Require().NoError(s.repo.Create(s.ctx, deleted))
+	s.Require().NoError(s.repo.Create(s.ctx, kept))
+	settings := NewSettingRepository(s.tx.Client())
+	original := fmt.Sprintf(`{"all_groups":false,"group_ids":[%d,%d,%d],"mode":"observe","blocked_keywords":["keep"]}`, kept.ID, deleted.ID, deleted.ID)
+	s.Require().NoError(settings.Set(s.ctx, service.SettingKeyContentModerationConfig, original))
+	_, err := s.repo.DeleteCascade(s.ctx, deleted.ID)
+	s.Require().NoError(err)
+	stored, err := settings.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+	s.Require().NoError(err)
+	s.Require().JSONEq(fmt.Sprintf(`{"all_groups":false,"group_ids":[%d],"mode":"observe","blocked_keywords":["keep"]}`, kept.ID), stored)
+	_, err = s.repo.GetByID(s.ctx, deleted.ID)
+	s.Require().ErrorIs(err, service.ErrGroupNotFound)
+}
+
+func (s *GroupRepoSuite) TestFailedOrDuplicateDeletePreservesModerationConfig() {
+	group := &service.Group{Name: "moderation-delete-once", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	s.Require().NoError(s.repo.Create(s.ctx, group))
+	settings := NewSettingRepository(s.tx.Client())
+	original := fmt.Sprintf(`{"group_ids":[%d],"mode":"observe"}`, group.ID)
+	s.Require().NoError(settings.Set(s.ctx, service.SettingKeyContentModerationConfig, original))
+	_, err := s.repo.DeleteCascade(s.ctx, -1)
+	s.Require().ErrorIs(err, service.ErrGroupNotFound)
+	stored, err := settings.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+	s.Require().NoError(err)
+	s.Require().JSONEq(original, stored)
+	_, err = s.repo.DeleteCascade(s.ctx, group.ID)
+	s.Require().NoError(err)
+	_, err = s.repo.DeleteCascade(s.ctx, group.ID)
+	s.Require().ErrorIs(err, service.ErrGroupNotFound)
+	stored, err = settings.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+	s.Require().NoError(err)
+	s.Require().JSONEq(`{"group_ids":[],"mode":"observe"}`, stored)
+}
+
+func (s *GroupRepoSuite) TestDeleteCascadePreservesMalformedModerationConfig() {
+	group := &service.Group{Name: "moderation-malformed", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	s.Require().NoError(s.repo.Create(s.ctx, group))
+	settings := NewSettingRepository(s.tx.Client())
+	const malformed = `{"group_ids":[oops]}`
+	s.Require().NoError(settings.Set(s.ctx, service.SettingKeyContentModerationConfig, malformed))
+	_, err := s.repo.DeleteCascade(s.ctx, group.ID)
+	s.Require().NoError(err)
+	stored, err := settings.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+	s.Require().NoError(err)
+	s.Require().Equal(malformed, stored)
+}
+
+func (s *GroupRepoSuite) TestDeleteCascadeWithMissingOrNonArrayModerationSetting() {
+	settings := NewSettingRepository(s.tx.Client())
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "missing"},
+		{name: "non-array", raw: `{"group_ids":"legacy","mode":"observe"}`},
+	} {
+		s.Run(tc.name, func() {
+			group := &service.Group{Name: "moderation-" + tc.name, Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+			s.Require().NoError(s.repo.Create(s.ctx, group))
+			if tc.raw == "" {
+				s.Require().NoError(settings.Delete(s.ctx, service.SettingKeyContentModerationConfig))
+			} else {
+				s.Require().NoError(settings.Set(s.ctx, service.SettingKeyContentModerationConfig, tc.raw))
+			}
+			_, err := s.repo.DeleteCascade(s.ctx, group.ID)
+			s.Require().NoError(err)
+			stored, err := settings.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+			if tc.raw == "" {
+				s.Require().ErrorIs(err, service.ErrSettingNotFound)
+			} else {
+				s.Require().NoError(err)
+				s.Require().JSONEq(tc.raw, stored)
+			}
+		})
+	}
+}
+
+func (s *GroupRepoSuite) TestDeleteCascadePreservesJSONTextRejectedByJSONB() {
+	deleted := &service.Group{Name: "moderation-text-deleted", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	kept := &service.Group{Name: "moderation-text-kept", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	s.Require().NoError(s.repo.Create(s.ctx, deleted))
+	s.Require().NoError(s.repo.Create(s.ctx, kept))
+	settings := NewSettingRepository(s.tx.Client())
+	raw := fmt.Sprintf(`{"group_ids":[%d,%d],"blocked_keywords":["\u0000"],"very_large_number":1e1000000}`, deleted.ID, kept.ID)
+	s.Require().NoError(settings.Set(s.ctx, service.SettingKeyContentModerationConfig, raw))
+	_, err := s.repo.DeleteCascade(s.ctx, deleted.ID)
+	s.Require().NoError(err)
+	stored, err := settings.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+	s.Require().NoError(err)
+	var fields map[string]json.RawMessage
+	s.Require().NoError(json.Unmarshal([]byte(stored), &fields))
+	s.Require().JSONEq(fmt.Sprintf(`[%d]`, kept.ID), string(fields["group_ids"]))
+	s.Require().Equal(`["\u0000"]`, string(fields["blocked_keywords"]))
+	s.Require().Equal(`1e1000000`, string(fields["very_large_number"]))
+}
+
+func (s *GroupRepoSuite) TestDeleteCascadeCleansAllCaseVariantsAndNullScopeEntries() {
+	deleted := &service.Group{Name: "moderation-case-deleted", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	kept := &service.Group{Name: "moderation-case-kept", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard}
+	s.Require().NoError(s.repo.Create(s.ctx, deleted))
+	s.Require().NoError(s.repo.Create(s.ctx, kept))
+	settings := NewSettingRepository(s.tx.Client())
+	raw := fmt.Sprintf(`{"enabled":true,"enabled":null,"thresholds":{"violence":0.91},"thresholds":{"sexual":0.82},"all_groups":false,"ALL_GROUPS":true,"GROUP_IDS":[%d,null],"Group_Ids":null,"group_ids":[%d,%d],"mode":"observe"}`, deleted.ID, deleted.ID, kept.ID)
+	s.Require().NoError(settings.Set(s.ctx, service.SettingKeyContentModerationConfig, raw))
+	moderation := service.NewContentModerationService(settings, nil, nil, nil, nil, nil, nil, nil)
+	before, err := moderation.GetConfig(s.ctx)
+	s.Require().NoError(err)
+	s.Require().True(before.Enabled)
+	s.Require().True(before.AllGroups)
+	s.Require().Equal(0.91, before.Thresholds["violence"])
+	s.Require().Equal(0.82, before.Thresholds["sexual"])
+	_, err = s.repo.DeleteCascade(s.ctx, deleted.ID)
+	s.Require().NoError(err)
+	stored, err := settings.GetValue(s.ctx, service.SettingKeyContentModerationConfig)
+	s.Require().NoError(err)
+	var fields map[string]json.RawMessage
+	s.Require().NoError(json.Unmarshal([]byte(stored), &fields))
+	s.Require().JSONEq(`[null]`, string(fields["GROUP_IDS"]))
+	s.Require().Equal(`null`, string(fields["Group_Ids"]))
+	s.Require().JSONEq(fmt.Sprintf(`[%d]`, kept.ID), string(fields["group_ids"]))
+	view, err := moderation.GetConfig(s.ctx)
+	s.Require().NoError(err)
+	s.Require().Equal([]int64{kept.ID}, view.GroupIDs)
+	s.Require().True(view.Enabled)
+	s.Require().True(view.AllGroups)
+	s.Require().Equal(0.91, view.Thresholds["violence"])
+	s.Require().Equal(0.82, view.Thresholds["sexual"])
 }
 
 // --- Create / GetByID / Update / Delete ---

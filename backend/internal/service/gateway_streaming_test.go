@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ func TestParseSSEUsage_MessageStart(t *testing.T) {
 	require.Equal(t, 100, usage.InputTokens)
 	require.Equal(t, 50, usage.CacheCreationInputTokens)
 	require.Equal(t, 200, usage.CacheReadInputTokens)
-	require.Equal(t, 0, usage.OutputTokens, "message_start 不应设置 output_tokens")
+	require.Equal(t, 0, usage.OutputTokens, "omitted message_start output_tokens must remain zero")
 }
 
 func TestParseSSEUsage_MessageDelta(t *testing.T) {
@@ -82,6 +83,21 @@ func TestParseSSEUsage_DeltaOverwritesWithNonZero(t *testing.T) {
 	require.Equal(t, 60, usage.CacheReadInputTokens)
 }
 
+func TestParseSSEUsage_DeltaAuthoritativelyUpdatesCacheCreationBreakdown(t *testing.T) {
+	svc := newMinimalGatewayService()
+	usage := &ClaudeUsage{}
+
+	svc.parseSSEUsage(`{"type":"message_start","message":{"usage":{"cache_creation_input_tokens":463184,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":463184}}}}`, usage)
+	require.Equal(t, 463184, usage.CacheCreationInputTokens)
+	require.Equal(t, 0, usage.CacheCreation5mTokens)
+	require.Equal(t, 463184, usage.CacheCreation1hTokens)
+
+	svc.parseSSEUsage(`{"type":"message_delta","usage":{"cache_creation_input_tokens":463184,"cache_creation":{"ephemeral_5m_input_tokens":463184,"ephemeral_1h_input_tokens":0}}}`, usage)
+	require.Equal(t, 463184, usage.CacheCreationInputTokens)
+	require.Equal(t, 463184, usage.CacheCreation5mTokens)
+	require.Equal(t, 0, usage.CacheCreation1hTokens)
+}
+
 func TestParseSSEUsage_DeltaDoesNotResetCacheCreationBreakdown(t *testing.T) {
 	svc := newMinimalGatewayService()
 	usage := &ClaudeUsage{}
@@ -91,11 +107,50 @@ func TestParseSSEUsage_DeltaDoesNotResetCacheCreationBreakdown(t *testing.T) {
 	require.Equal(t, 30, usage.CacheCreation5mTokens)
 	require.Equal(t, 70, usage.CacheCreation1hTokens)
 
-	// 后续 delta 带默认 0，不应覆盖已有非零值
+	// 后续 delta 带全 0 占位明细，不应覆盖已有非零值
 	svc.parseSSEUsage(`{"type":"message_delta","usage":{"output_tokens":12,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}}}`, usage)
-	require.Equal(t, 30, usage.CacheCreation5mTokens, "delta 的 0 值不应重置 5m 明细")
-	require.Equal(t, 70, usage.CacheCreation1hTokens, "delta 的 0 值不应重置 1h 明细")
+	require.Equal(t, 30, usage.CacheCreation5mTokens, "delta 的全 0 明细不应重置 5m 明细")
+	require.Equal(t, 70, usage.CacheCreation1hTokens, "delta 的全 0 明细不应重置 1h 明细")
 	require.Equal(t, 12, usage.OutputTokens)
+}
+
+func TestParseSSEUsage_DeltaPartialBreakdownOverwritesOnlyPresentFields(t *testing.T) {
+	svc := newMinimalGatewayService()
+	usage := &ClaudeUsage{}
+
+	svc.parseSSEUsage(`{"type":"message_start","message":{"usage":{"cache_creation_input_tokens":100,"cache_creation":{"ephemeral_5m_input_tokens":40,"ephemeral_1h_input_tokens":60}}}}`, usage)
+	svc.parseSSEUsage(`{"type":"message_delta","usage":{"cache_creation":{"ephemeral_5m_input_tokens":100}}}`, usage)
+	require.Equal(t, 100, usage.CacheCreation5mTokens)
+	require.Equal(t, 60, usage.CacheCreation1hTokens, "delta 未携带的 1h 字段保持原值，计费侧由聚合值兜底")
+}
+
+// 端到端：流式合并后的 usage 送入计费，缓存创建计费 token 不超过聚合值。
+// 修复前合并结果为 5m=463184 且残留 1h=463184，计费 4.516044；修复后 5m=463184、1h=0，计费 1.73694。
+func TestParseSSEUsage_ContradictoryStreamBreakdownBilledOnce(t *testing.T) {
+	gw := newMinimalGatewayService()
+	usage := &ClaudeUsage{}
+	gw.parseSSEUsage(`{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":463184,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":463184}}}}`, usage)
+	gw.parseSSEUsage(`{"type":"message_delta","usage":{"output_tokens":5,"cache_creation_input_tokens":463184,"cache_creation":{"ephemeral_5m_input_tokens":463184,"ephemeral_1h_input_tokens":0}}}`, usage)
+
+	billing := &BillingService{
+		cfg: &config.Config{},
+		fallbackPrices: map[string]*ModelPricing{"claude-sonnet-4": {
+			InputPricePerToken:     3e-6,
+			OutputPricePerToken:    15e-6,
+			SupportsCacheBreakdown: true,
+			CacheCreation5mPrice:   3.75e-6,
+			CacheCreation1hPrice:   6e-6,
+		}},
+	}
+	cost, err := billing.CalculateCost("claude-sonnet-4", UsageTokens{
+		InputTokens:           usage.InputTokens,
+		OutputTokens:          usage.OutputTokens,
+		CacheCreationTokens:   usage.CacheCreationInputTokens,
+		CacheCreation5mTokens: usage.CacheCreation5mTokens,
+		CacheCreation1hTokens: usage.CacheCreation1hTokens,
+	}, 1.0)
+	require.NoError(t, err)
+	require.InDelta(t, 1.73694, cost.CacheCreationCost, 1e-9)
 }
 
 func TestParseSSEUsage_InvalidJSON(t *testing.T) {
@@ -151,6 +206,7 @@ func TestHandleStreamingResponse_CacheTokens(t *testing.T) {
 	go func() {
 		defer func() { _ = pw.Close() }()
 		_, _ = pw.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":20,\"cache_read_input_tokens\":30}}}\n\n"))
+		_, _ = pw.Write([]byte(streamingTestVisibleTextSSE))
 		_, _ = pw.Write([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":15}}\n\n"))
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
 	}()
@@ -164,6 +220,7 @@ func TestHandleStreamingResponse_CacheTokens(t *testing.T) {
 	require.Equal(t, 15, result.usage.OutputTokens)
 	require.Equal(t, 20, result.usage.CacheCreationInputTokens)
 	require.Equal(t, 30, result.usage.CacheReadInputTokens)
+	require.Contains(t, rec.Body.String(), "answer")
 }
 
 func TestHandleStreamingResponse_EmptyStream(t *testing.T) {
@@ -185,8 +242,14 @@ func TestHandleStreamingResponse_EmptyStream(t *testing.T) {
 	result, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
 	_ = pr.Close()
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "missing terminal event")
-	require.NotNil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.True(t, failoverErr.SafeToFailoverAfterWrite)
+	require.Contains(t, string(failoverErr.ResponseBody), "empty_visible_output")
+	require.Nil(t, result, "empty attempts must not create a second bill when failover succeeds")
+	require.Empty(t, rec.Body.String())
 }
 
 func TestHandleStreamingResponse_SpecialCharactersInJSON(t *testing.T) {
@@ -271,12 +334,12 @@ func TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough(t *tes
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 
-	// 第一次 Read 返回完整 SSE 事件让网关向 client 写入字节，第二次 Read 返回 EOF
+	// 先发送实际文本，随后读取失败；message_start 本身不提交客户端输出。
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 		Body: &streamReadCloser{
-			payload: []byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n"),
+			payload: []byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n" + streamingTestVisibleTextSSE),
 			err:     io.ErrUnexpectedEOF,
 		},
 	}
@@ -286,6 +349,8 @@ func TestHandleStreamingResponse_StreamReadErrorAfterOutput_PassesThrough(t *tes
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "stream read error", "已开始流后应透传普通 stream read error")
 	require.NotNil(t, result, "透传场景下应返回已收集的 streamingResult")
+	require.Equal(t, 5, result.usage.InputTokens)
+	require.Contains(t, rec.Body.String(), "answer")
 
 	// 不应被错误地包成 failover error
 	var failoverErr *UpstreamFailoverError
@@ -461,8 +526,7 @@ func TestHandleStreamingResponse_SSEErrorEvent_EmptyDataLine(t *testing.T) {
 	require.Equal(t, "", sseErr.RawData)
 }
 
-// 对抗用例：上游先发 message_start 再发 event:error，模拟"流已开始写客户端"+SSE error 帧。
-// 这是 ping 放大场景的服务侧近似（c.Writer 已被写后才出现 error）。
+// 对抗用例：上游先发 message_start 和真实文本，再发 event:error。
 // 必须仍然返回 *sseStreamErrorEventError 且 RawData 包含真实错误体，
 // 让 Forward 调用方能正确补全 ResponseBody 与 ops 事件。
 func TestHandleStreamingResponse_SSEErrorEvent_AfterPartialStreamOutput(t *testing.T) {
@@ -480,24 +544,28 @@ func TestHandleStreamingResponse_SSEErrorEvent_AfterPartialStreamOutput(t *testi
 
 	go func() {
 		defer func() { _ = pw.Close() }()
-		// 先发 message_start，让 handleStreamingResponse 把它转发到客户端 → c.Writer 已被写
+		// 先记录计量，再发送真实文本提交流。
 		_, _ = pw.Write([]byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":5}}}` + "\n\n"))
+		_, _ = pw.Write([]byte(streamingTestVisibleTextSSE))
 		// 紧接着发 event:error
 		_, _ = pw.Write([]byte("event: error\ndata: " + errorJSON + "\n\n"))
 	}()
 
-	_, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+	result, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
 	_ = pr.Close()
 
 	require.Error(t, err)
 	var sseErr *sseStreamErrorEventError
 	require.True(t, errors.As(err, &sseErr), "已发数据后再来的 SSE event:error 必须仍包成 typed error，期望: %v", err)
 	require.Equal(t, errorJSON, sseErr.RawData)
+	require.False(t, sseErr.SafeToFailoverAfterWrite, "已提交真实文本的尝试不能重放")
+	require.NotNil(t, result)
+	require.Equal(t, 5, result.usage.InputTokens)
 
-	// c.Writer 必定已被写过（message_start 已转发）— 这是 handler 838 行 streamStarted 守卫触发的条件，
-	// 修复前/后均会让 handler 直接走 handleFailoverExhausted 而非切账号；不变。
-	require.Greater(t, rec.Body.Len(), 0, "message_start 应被转发到客户端")
+	require.Greater(t, rec.Body.Len(), 0, "真实文本必须已提交客户端")
 	require.Contains(t, rec.Body.String(), "message_start")
+	require.Contains(t, rec.Body.String(), "answer")
+	require.Equal(t, 1, strings.Count(rec.Body.String(), "event: error\n"))
 }
 
 // 对抗用例：上游发 event:error 但 data 行不是合法 JSON。

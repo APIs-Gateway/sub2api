@@ -1486,6 +1486,10 @@ func (r *stubUserSubscriptionRepo) GetLatestActiveStatusForUpdate(ctx context.Co
 	return r.GetLatestActiveStatusByUserID(ctx, userID)
 }
 
+func (r *stubUserSubscriptionRepo) GetByIDForUpdate(ctx context.Context, id int64) (*service.UserSubscription, error) {
+	return r.GetByID(ctx, id)
+}
+
 func (r *stubUserSubscriptionRepo) ApplyManualOverdraft(ctx context.Context, sub *service.UserSubscription) error {
 	return nil
 }

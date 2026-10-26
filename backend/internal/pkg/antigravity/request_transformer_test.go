@@ -2,6 +2,7 @@ package antigravity
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -263,7 +264,7 @@ func TestBuildTools_CustomTypeTools(t *testing.T) {
 	}
 }
 
-func TestBuildTools_PreservesWebSearchAlongsideFunctions(t *testing.T) {
+func TestBuildTools_DropsWebSearchAlongsideFunctions(t *testing.T) {
 	tools := []ClaudeTool{
 		{
 			Name:        "get_weather",
@@ -276,14 +277,30 @@ func TestBuildTools_PreservesWebSearchAlongsideFunctions(t *testing.T) {
 		},
 	}
 
+	// Antigravity v1internal cannot mix googleSearch with functionDeclarations
+	// (upstream #6464): client function tools win and web_search is dropped.
 	result := buildTools(tools)
-	require.Len(t, result, 2)
+	require.Len(t, result, 1)
 	require.Len(t, result[0].FunctionDeclarations, 1)
 	require.Equal(t, "get_weather", result[0].FunctionDeclarations[0].Name)
-	require.NotNil(t, result[1].GoogleSearch)
-	require.NotNil(t, result[1].GoogleSearch.EnhancedContent)
-	require.NotNil(t, result[1].GoogleSearch.EnhancedContent.ImageSearch)
-	require.Equal(t, 5, result[1].GoogleSearch.EnhancedContent.ImageSearch.MaxResultCount)
+	require.Nil(t, result[0].GoogleSearch)
+}
+
+func TestBuildTools_WebSearchOnlyKeepsGoogleSearch(t *testing.T) {
+	result := buildTools([]ClaudeTool{{Type: "web_search_20250305", Name: "web_search"}})
+	require.Len(t, result, 1)
+	require.Empty(t, result[0].FunctionDeclarations)
+	require.NotNil(t, result[0].GoogleSearch)
+	require.NotNil(t, result[0].GoogleSearch.EnhancedContent)
+	require.NotNil(t, result[0].GoogleSearch.EnhancedContent.ImageSearch)
+	require.Equal(t, 5, result[0].GoogleSearch.EnhancedContent.ImageSearch.MaxResultCount)
+}
+
+func TestHasClientFunctionTools(t *testing.T) {
+	require.False(t, hasClientFunctionTools(nil))
+	require.False(t, hasClientFunctionTools([]ClaudeTool{{Type: "web_search_20250305", Name: "web_search"}, {Name: "google_search"}}))
+	require.False(t, hasClientFunctionTools([]ClaudeTool{{Name: "   "}}))
+	require.True(t, hasClientFunctionTools([]ClaudeTool{{Type: "web_search_20250305", Name: "web_search"}, {Name: "shell"}}))
 }
 
 func TestBuildGenerationConfig_ThinkingDynamicBudget(t *testing.T) {
@@ -571,6 +588,123 @@ func TestTransformClaudeToGeminiWithOptions_MessageRoles(t *testing.T) {
 		require.Equal(t, "user", req.Request.Contents[0].Role)
 	})
 
+	t.Run("mid conversation system role stays in contents", func(t *testing.T) {
+		req := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{Role: "user", Content: json.RawMessage(`"question"`)},
+				{Role: "assistant", Content: json.RawMessage(`"answer"`)},
+				{Role: "user", Content: json.RawMessage(`"follow up"`)},
+				{Role: "system", Content: json.RawMessage(`"turn counter"`)},
+			},
+		})
+
+		// 中途的 system 不得被提到 systemInstruction，否则会插到已有 contents 前面
+		require.NotContains(t, systemText(req.Request.SystemInstruction), "turn counter")
+		require.Len(t, req.Request.Contents, 3)
+		require.Equal(t, "user", req.Request.Contents[2].Role)
+		require.Equal(t, "follow up", req.Request.Contents[2].Parts[0].Text)
+		require.Equal(t, "turn counter", req.Request.Contents[2].Parts[1].Text)
+	})
+
+	t.Run("mid conversation system after assistant becomes its own user turn", func(t *testing.T) {
+		req := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{Role: "user", Content: json.RawMessage(`"question"`)},
+				{Role: "assistant", Content: json.RawMessage(`"answer"`)},
+				{Role: "system", Content: json.RawMessage(`"turn counter"`)},
+			},
+		})
+
+		require.NotContains(t, systemText(req.Request.SystemInstruction), "turn counter")
+		require.Len(t, req.Request.Contents, 3)
+		require.Equal(t, "model", req.Request.Contents[1].Role)
+		require.Equal(t, "user", req.Request.Contents[2].Role)
+		require.Equal(t, "turn counter", req.Request.Contents[2].Parts[0].Text)
+	})
+
+	t.Run("user after mid conversation system keeps roles alternating", func(t *testing.T) {
+		base := []ClaudeMessage{
+			{Role: "user", Content: json.RawMessage(`"question"`)},
+			{Role: "assistant", Content: json.RawMessage(`"answer"`)},
+			{Role: "system", Content: json.RawMessage(`"turn counter"`)},
+		}
+		before := transform(t, &ClaudeRequest{Model: "claude-3-5-sonnet-latest", Messages: base})
+		after := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: append(append([]ClaudeMessage{}, base...),
+				ClaudeMessage{Role: "user", Content: json.RawMessage(`"next question"`)}),
+		})
+
+		require.Len(t, before.Request.Contents, 3)
+		require.Len(t, after.Request.Contents, 3)
+		require.Equal(t, []string{"user", "model", "user"}, []string{
+			after.Request.Contents[0].Role,
+			after.Request.Contents[1].Role,
+			after.Request.Contents[2].Role,
+		})
+		require.Equal(t, "turn counter", after.Request.Contents[2].Parts[0].Text)
+		require.Equal(t, "next question", after.Request.Contents[2].Parts[1].Text)
+		require.Equal(t, before.Request.Contents[:2], after.Request.Contents[:2],
+			"coalescing the next user may change only the last synthetic turn")
+		require.Equal(t, systemText(before.Request.SystemInstruction), systemText(after.Request.SystemInstruction))
+	})
+
+	t.Run("system between ordinary users stays in one user turn", func(t *testing.T) {
+		req := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{Role: "user", Content: json.RawMessage(`"first"`)},
+				{Role: "system", Content: json.RawMessage(`"turn counter"`)},
+				{Role: "user", Content: json.RawMessage(`"second"`)},
+			},
+		})
+
+		require.Len(t, req.Request.Contents, 1)
+		require.Equal(t, "user", req.Request.Contents[0].Role)
+		require.Equal(t, []string{"first", "turn counter", "second"}, []string{
+			req.Request.Contents[0].Parts[0].Text,
+			req.Request.Contents[0].Parts[1].Text,
+			req.Request.Contents[0].Parts[2].Text,
+		})
+	})
+
+	t.Run("appending a turn never rewrites the existing prefix", func(t *testing.T) {
+		base := []ClaudeMessage{
+			{Role: "user", Content: json.RawMessage(`"question"`)},
+			{Role: "system", Content: json.RawMessage(`"counter 1"`)},
+			{Role: "assistant", Content: json.RawMessage(`"answer"`)},
+			{Role: "user", Content: json.RawMessage(`"follow up"`)},
+			{Role: "system", Content: json.RawMessage(`"counter 2"`)},
+		}
+		next := append(append([]ClaudeMessage{}, base...),
+			ClaudeMessage{Role: "assistant", Content: json.RawMessage(`"second answer"`)},
+			ClaudeMessage{Role: "user", Content: json.RawMessage(`"more"`)},
+			ClaudeMessage{Role: "system", Content: json.RawMessage(`"counter 3"`)},
+		)
+
+		reqA := transform(t, &ClaudeRequest{Model: "claude-3-5-sonnet-latest", Messages: base})
+		reqB := transform(t, &ClaudeRequest{Model: "claude-3-5-sonnet-latest", Messages: next})
+
+		// systemInstruction 必须逐字节稳定
+		sa, err := json.Marshal(reqA.Request.SystemInstruction)
+		require.NoError(t, err)
+		sb, err := json.Marshal(reqB.Request.SystemInstruction)
+		require.NoError(t, err)
+		require.Equal(t, string(sa), string(sb))
+
+		// 已有的 contents 必须是新一轮的前缀，不能被改写或位移
+		require.Greater(t, len(reqB.Request.Contents), len(reqA.Request.Contents))
+		for i := range reqA.Request.Contents {
+			x, err := json.Marshal(reqA.Request.Contents[i])
+			require.NoError(t, err)
+			y, err := json.Marshal(reqB.Request.Contents[i])
+			require.NoError(t, err)
+			require.Equal(t, string(x), string(y), "contents[%d] 被改写，前缀缓存会失效", i)
+		}
+	})
+
 	t.Run("ordinary user assistant conversation is unchanged", func(t *testing.T) {
 		req := transform(t, &ClaudeRequest{
 			Model: "claude-3-5-sonnet-latest",
@@ -594,7 +728,87 @@ func TestTransformClaudeToGeminiWithOptions_MessageRoles(t *testing.T) {
 	})
 }
 
-func TestTransformClaudeToGeminiWithOptions_PreservesWebSearchAlongsideFunctions(t *testing.T) {
+// TestTransformClaudeToGeminiWithOptions_UpstreamPrefixIsAppendOnly 钉住上游 payload 的
+// 前缀不变量：一轮一轮追加的对话，转换出来的 systemInstruction 必须逐字节不变，
+// contents 必须是上一轮 contents 的严格追加。
+//
+// 这条不变量就是 Gemini 隐式缓存能不能命中的充要条件。它曾经被破坏过：开启了
+// anthropic-beta: mid-conversation-system 的客户端逐轮注入 role="system" 消息，
+// 而 buildContents 把它们全部上提到 systemInstruction 末尾，于是每一轮都在
+// contents 之前插入新文本。现场表现是 cache_read 卡在 "tools + 上一轮 systemInstruction"
+// 这个固定值上、随对话增长命中率从 62% 一路掉到 47%，整段对话历史永远进不了缓存。
+//
+// 因此这里检查的是**整个序列化 payload 的前缀**，而不只是某一条消息落在哪里：
+// 单条消息的位置断言看不出「前面被插入了东西」这种破坏方式。
+func TestTransformClaudeToGeminiWithOptions_UpstreamPrefixIsAppendOnly(t *testing.T) {
+	transform := func(t *testing.T, messages []ClaudeMessage) V1InternalRequest {
+		t.Helper()
+
+		body, err := TransformClaudeToGeminiWithOptions(&ClaudeRequest{
+			Model:    "gemini-2.5-flash",
+			System:   json.RawMessage(`[{"type":"text","text":"You are a coding agent."}]`),
+			Messages: messages,
+		}, "project-1", "gemini-2.5-flash", DefaultTransformOptions())
+		require.NoError(t, err)
+
+		var req V1InternalRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		return req
+	}
+
+	// 把 contents 序列化成一串字节，用于前缀比较
+	serializeContents := func(t *testing.T, contents []GeminiContent) string {
+		t.Helper()
+
+		var b strings.Builder
+		for i := range contents {
+			raw, err := json.Marshal(contents[i])
+			require.NoError(t, err)
+			_, _ = b.Write(raw)
+		}
+		return b.String()
+	}
+
+	// 模拟客户端逐轮追加：assistant 回复 + 用户新提问 + 一条逐轮注入的 system 提示
+	messages := []ClaudeMessage{
+		{Role: "user", Content: json.RawMessage(`"turn 0"`)},
+		{Role: "system", Content: json.RawMessage(`"<reminder>tokens left 1000</reminder>"`)},
+	}
+
+	prev := transform(t, messages)
+	prevSystem, err := json.Marshal(prev.Request.SystemInstruction)
+	require.NoError(t, err)
+	prevContents := serializeContents(t, prev.Request.Contents)
+
+	for turn := 1; turn <= 5; turn++ {
+		messages = append(messages,
+			ClaudeMessage{Role: "assistant", Content: json.RawMessage(fmt.Sprintf(`"answer %d"`, turn))},
+			ClaudeMessage{Role: "user", Content: json.RawMessage(fmt.Sprintf(`"turn %d"`, turn))},
+			// 逐轮变化的注入内容：这正是当初把 systemInstruction 撑得逐轮不同的东西
+			ClaudeMessage{Role: "system", Content: json.RawMessage(fmt.Sprintf(`"<reminder>tokens left %d</reminder>"`, 1000-turn))},
+		)
+
+		cur := transform(t, messages)
+
+		curSystem, err := json.Marshal(cur.Request.SystemInstruction)
+		require.NoError(t, err)
+		require.Equal(t, string(prevSystem), string(curSystem),
+			"第 %d 轮 systemInstruction 发生变化，上游前缀缓存会整段失效", turn)
+
+		curContents := serializeContents(t, cur.Request.Contents)
+		require.True(t, strings.HasPrefix(curContents, prevContents),
+			"第 %d 轮 contents 不是上一轮的追加，上游前缀缓存会整段失效", turn)
+		require.Greater(t, len(curContents), len(prevContents),
+			"第 %d 轮没有新增任何 contents", turn)
+
+		// 逐轮注入的内容必须确实进了 contents，而不是被丢掉
+		require.Contains(t, curContents, fmt.Sprintf("tokens left %d", 1000-turn))
+
+		prevSystem, prevContents = curSystem, curContents
+	}
+}
+
+func TestTransformClaudeToGeminiWithOptions_DropsWebSearchAlongsideFunctions(t *testing.T) {
 	claudeReq := &ClaudeRequest{
 		Model: "claude-3-5-sonnet-latest",
 		Messages: []ClaudeMessage{
@@ -616,15 +830,19 @@ func TestTransformClaudeToGeminiWithOptions_PreservesWebSearchAlongsideFunctions
 		},
 	}
 
-	body, err := TransformClaudeToGeminiWithOptions(claudeReq, "project-1", "gemini-2.5-flash", DefaultTransformOptions())
+	body, err := TransformClaudeToGeminiWithOptions(claudeReq, "project-1", "claude-sonnet-4-6", DefaultTransformOptions())
 	require.NoError(t, err)
 
 	var req V1InternalRequest
 	require.NoError(t, json.Unmarshal(body, &req))
-	require.Len(t, req.Request.Tools, 2)
+	// Antigravity v1internal cannot mix googleSearch with functionDeclarations
+	// (upstream #6464). Prefer client tools so Codex-style sessions keep working.
+	require.Equal(t, "agent", req.RequestType)
+	require.Equal(t, "claude-sonnet-4-6", req.Model)
+	require.Len(t, req.Request.Tools, 1)
 	require.Len(t, req.Request.Tools[0].FunctionDeclarations, 1)
 	require.Equal(t, "get_weather", req.Request.Tools[0].FunctionDeclarations[0].Name)
-	require.NotNil(t, req.Request.Tools[1].GoogleSearch)
+	require.Nil(t, req.Request.Tools[0].GoogleSearch)
 }
 
 func TestTransformClaudeToGeminiWithOptions_ReasoningModelToolConfig(t *testing.T) {
@@ -685,7 +903,7 @@ func TestTransformClaudeToGeminiWithOptions_ReasoningModelToolConfig(t *testing.
 	})
 }
 
-func TestGeminiToolConfig_IncludeServerSideToolInvocations(t *testing.T) {
+func TestGeminiToolConfig_DropsBuiltinsWhenClientFunctionsPresent(t *testing.T) {
 	functionTool := ClaudeTool{
 		Name:        "get_weather",
 		Description: "Get weather information",
@@ -696,7 +914,7 @@ func TestGeminiToolConfig_IncludeServerSideToolInvocations(t *testing.T) {
 		Name: "web_search",
 	}
 
-	transform := func(t *testing.T, tools []ClaudeTool) (V1InternalRequest, string) {
+	transform := func(t *testing.T, tools []ClaudeTool, mappedModel string) (V1InternalRequest, string) {
 		t.Helper()
 		body, err := TransformClaudeToGeminiWithOptions(&ClaudeRequest{
 			Model: "claude-3-5-sonnet-latest",
@@ -707,7 +925,7 @@ func TestGeminiToolConfig_IncludeServerSideToolInvocations(t *testing.T) {
 				},
 			},
 			Tools: tools,
-		}, "project-1", "gemini-2.5-flash", DefaultTransformOptions())
+		}, "project-1", mappedModel, DefaultTransformOptions())
 		require.NoError(t, err)
 
 		var req V1InternalRequest
@@ -715,27 +933,33 @@ func TestGeminiToolConfig_IncludeServerSideToolInvocations(t *testing.T) {
 		return req, string(body)
 	}
 
-	t.Run("mixed builtin and function tools enable server-side tool invocations", func(t *testing.T) {
-		req, raw := transform(t, []ClaudeTool{functionTool, webSearchTool})
+	t.Run("mixed builtin and function tools keep only client functions", func(t *testing.T) {
+		req, raw := transform(t, []ClaudeTool{functionTool, webSearchTool}, "claude-sonnet-4-6")
 
-		require.NotNil(t, req.Request.ToolConfig)
-		require.NotNil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
-		require.True(t, *req.Request.ToolConfig.IncludeServerSideToolInvocations)
-		require.Contains(t, raw, `"includeServerSideToolInvocations":true`)
+		require.Equal(t, "agent", req.RequestType)
+		require.Equal(t, "claude-sonnet-4-6", req.Model)
+		require.Len(t, req.Request.Tools, 1)
+		require.Len(t, req.Request.Tools[0].FunctionDeclarations, 1)
+		require.Nil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
+		require.NotContains(t, raw, "googleSearch")
+		require.NotContains(t, raw, "includeServerSideToolInvocations")
 	})
 
 	t.Run("function tools only leave the flag unset", func(t *testing.T) {
-		req, raw := transform(t, []ClaudeTool{functionTool})
+		req, raw := transform(t, []ClaudeTool{functionTool}, "gemini-2.5-flash")
 
 		require.NotNil(t, req.Request.ToolConfig)
 		require.Nil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
 		require.NotContains(t, raw, "includeServerSideToolInvocations")
 	})
 
-	t.Run("web search only leaves the flag unset", func(t *testing.T) {
-		req, raw := transform(t, []ClaudeTool{webSearchTool})
+	t.Run("web search only keeps googleSearch and fallback model", func(t *testing.T) {
+		req, raw := transform(t, []ClaudeTool{webSearchTool}, "claude-sonnet-4-6")
 
-		require.NotNil(t, req.Request.ToolConfig)
+		require.Equal(t, "web_search", req.RequestType)
+		require.Equal(t, "gemini-2.5-flash", req.Model)
+		require.Len(t, req.Request.Tools, 1)
+		require.NotNil(t, req.Request.Tools[0].GoogleSearch)
 		require.Nil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
 		require.NotContains(t, raw, "includeServerSideToolInvocations")
 	})
