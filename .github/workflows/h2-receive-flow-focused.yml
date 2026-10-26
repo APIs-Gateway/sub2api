@@ -1,0 +1,266 @@
+name: H2 receive-flow exact six remote contracts
+
+on:
+  push:
+    branches:
+      - codex/req-h2-receive-flow-focused-1712
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  h2-receive-flow-six:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_HEAD: 00003c771f9f639e552dd6b51efbfe9831f061d1
+      APP_TREE: 81136271cf8b2cf1d2a5e94cd2b302e683686b34
+      GOTOOLCHAIN: local
+      GOWORK: "off"
+      GOFLAGS: -mod=readonly
+      GOMAXPROCS: "2"
+      CGO_ENABLED: "1"
+    steps:
+      - name: Initialize external evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/h2-receive-flow-focused-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence/before" "$evidence/after"
+          printf 'H2_RECEIVE_FOCUSED_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+          printf '%s\n' "$GITHUB_SHA" > "$evidence/controller-head.txt"
+          cp "$GITHUB_EVENT_PATH" "$evidence/event.json"
+      - name: Checkout fixed full application with complete Git history
+        uses: actions/checkout@v6
+        with:
+          ref: 00003c771f9f639e552dd6b51efbfe9831f061d1
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Go without repository cache
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.10'
+          check-latest: false
+          cache: false
+      - name: Freeze full source and controller before project execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$H2_RECEIVE_FOCUSED_EVIDENCE"
+          git -C source rev-parse HEAD > "$evidence/source-head-before.txt"
+          git -C source rev-parse 'HEAD^{tree}' > "$evidence/source-tree-before.txt"
+          test "$(cat "$evidence/source-head-before.txt")" = "$APP_HEAD"
+          test "$(cat "$evidence/source-tree-before.txt")" = "$APP_TREE"
+          git -C source merge-base --is-ancestor "$APP_HEAD" "$GITHUB_SHA"
+          git -C source ls-files --stage -z > "$evidence/source-index-before.raw"
+          git -C source -c core.fileMode=true status --porcelain=v1 --untracked-files=all > "$evidence/source-status-before.raw"
+          test ! -s "$evidence/source-status-before.raw"
+          git -C source -c core.fileMode=true diff --exit-code HEAD -- > "$evidence/source-before.diff"
+          git -C source ls-tree -r -z --full-tree "$APP_HEAD" > "$evidence/source-tree.raw"
+          git -C source ls-tree -r -z --full-tree "$GITHUB_SHA" > "$evidence/controller-tree.raw"
+          git -C source archive --format=tar "$APP_HEAD" > "$evidence/source-full-input.tar"
+          git -C source archive --format=tar "$GITHUB_SHA" > "$evidence/controller-full-input.tar"
+          git -C source show "$GITHUB_SHA:.github/workflows/h2-receive-flow-focused.yml" > "$evidence/executed-controller.yml"
+          sha256sum "$evidence/source-full-input.tar" "$evidence/controller-full-input.tar" "$evidence/executed-controller.yml" > "$evidence/frozen-archives-before.sha256"
+      - name: Existing full-input and package gates then actual six contracts
+        shell: bash
+        working-directory: source/backend
+        run: |
+          set -euo pipefail
+          evidence="$H2_RECEIVE_FOCUSED_EVIDENCE"
+          capture() {
+            local label="$1"
+            shift
+            set +e
+            "$@" > "$label.stdout" 2> "$label.stderr"
+            local actual_status=$?
+            set -e
+            printf '%s\n' "$actual_status" > "$label.exit"
+          }
+          require_success() {
+            local actual_status
+            actual_status="$(cat "$1.exit")"
+            if test "$actual_status" != 0; then exit "$actual_status"; fi
+          }
+          checker="$PWD/tools/req-http2-security-evidence.py"
+          capture "$evidence/before/inputs" python3 -B "$checker" inputs "$GITHUB_WORKSPACE/source" "$evidence/before"
+          require_success "$evidence/before/inputs"
+          capture "$evidence/toolchain" go version
+          require_success "$evidence/toolchain"
+          grep -Eq '^go version go1\.26\.10 linux/amd64$' "$evidence/toolchain.stdout"
+          capture "$evidence/go-env" go env -json GOMOD GOWORK GOFLAGS GOVERSION CGO_ENABLED GOOS GOARCH CC GOTOOLCHAIN
+          require_success "$evidence/go-env"
+          compiler="$(go env CC)"
+          command -v "$compiler" > "$evidence/compiler-path.txt"
+          capture "$evidence/compiler-version" "$compiler" --version
+          require_success "$evidence/compiler-version"
+          capture "$evidence/modules" go list -m -json all
+          require_success "$evidence/modules"
+          cp "$evidence/modules.stdout" "$evidence/modules.json"
+          capture "$evidence/packages" go list -json github.com/imroc/req/v3/...
+          require_success "$evidence/packages"
+          cp "$evidence/packages.stdout" "$evidence/packages.json"
+          capture "$evidence/packages-checker" python3 -B "$checker" packages "$PWD" "$evidence"
+          require_success "$evidence/packages-checker"
+          capture "$evidence/main-mvs" python3 -B - <<'PYDATA'
+          import json, os, pathlib
+          evidence = pathlib.Path(os.environ['H2_RECEIVE_FOCUSED_EVIDENCE'])
+          backend = pathlib.Path.cwd().resolve()
+          def objects(name):
+              text = (evidence / name).read_text()
+              decoder, values = json.JSONDecoder(), []
+              while text.strip():
+                  text = text.lstrip()
+                  value, offset = decoder.raw_decode(text)
+                  values.append(value)
+                  text = text[offset:]
+              return values
+          values = objects('modules.json')
+          modules = {item['Path']: item for item in values}
+          assert len(values) == len(modules) == 365, 'incomplete/duplicate main module graph'
+          main = [item for item in values if item.get('Main') is True]
+          assert len(main) == 1 and pathlib.Path(main[0]['Dir']).resolve() == backend
+          assert pathlib.Path(main[0]['GoMod']).resolve() == backend / 'go.mod'
+          req = modules['github.com/imroc/req/v3']
+          assert req['Version'] == 'v3.57.0' and pathlib.Path(req['Replace']['Dir']).resolve() == backend / 'third_party/req'
+          assert modules['golang.org/x/net']['Version'] == 'v0.60.0', 'wrong actual peer codec MVS'
+          packages = objects('packages.json')
+          target = [item for item in packages if item['ImportPath'] == 'github.com/imroc/req/v3/internal/http2']
+          assert len(target) == 1 and pathlib.Path(target[0]['Dir']).resolve() == backend / 'third_party/req/internal/http2'
+          assert 'receive_flow_contract_test.go' in target[0]['TestGoFiles'], 'new fixture not actually selected'
+          env = json.loads((evidence / 'go-env.stdout').read_text())
+          assert pathlib.Path(env['GOMOD']).resolve() == backend / 'go.mod'
+          assert env['GOWORK'] == 'off' and env['GOFLAGS'] == '-mod=readonly' and env['GOTOOLCHAIN'] == 'local'
+          assert env['GOVERSION'] == 'go1.26.10' and env['CGO_ENABLED'] == '1' and env['GOOS'] == 'linux' and env['GOARCH'] == 'amd64'
+          (evidence / 'main-mvs-proof.json').write_text(json.dumps({'moduleCount': len(values), 'main': main[0], 'req': req, 'peerCodec': modules['golang.org/x/net'], 'targetPackage': target[0], 'goEnv': env}, indent=2) + '\n')
+          PYDATA
+          require_success "$evidence/main-mvs"
+          formatter="$(go env GOROOT)/bin/gofmt"
+          printf '%s\n' "$formatter" > "$evidence/formatter-path.txt"
+          sha256sum "$formatter" > "$evidence/formatter-before.sha256"
+          capture "$evidence/format" "$formatter" -l third_party/req/internal/http2/receive_flow_contract_test.go
+          require_success "$evidence/format"
+          test ! -s "$evidence/format.stdout"
+          test ! -s "$evidence/format.stderr"
+          capture "$evidence/tests" go test -p=1 -parallel=1 -race -count=1 -timeout=2m -json -run '^TestReqHTTP2ReceiveFlowContract_(UnreadRefund|PaddedData|DataBeforeHeaders)$' -covermode=atomic -coverpkg=github.com/imroc/req/v3/... -coverprofile="$evidence/h2-focused.raw.out" github.com/imroc/req/v3/internal/http2
+          require_success "$evidence/tests"
+      - name: Always capture full source again without modifying it
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$H2_RECEIVE_FOCUSED_EVIDENCE"
+          set +e
+          python3 -B source/backend/tools/req-http2-security-evidence.py inputs "$GITHUB_WORKSPACE/source" "$evidence/after" > "$evidence/after/inputs.stdout" 2> "$evidence/after/inputs.stderr"
+          actual_status=$?
+          set -e
+          printf '%s\n' "$actual_status" > "$evidence/after/inputs.exit"
+          git -C source rev-parse HEAD > "$evidence/source-head-after.txt"
+          git -C source rev-parse 'HEAD^{tree}' > "$evidence/source-tree-after.txt"
+          git -C source ls-files --stage -z > "$evidence/source-index-after.raw"
+          git -C source -c core.fileMode=true status --porcelain=v1 --untracked-files=all > "$evidence/source-status-after.raw"
+          git -C source -c core.fileMode=true diff --exit-code HEAD -- > "$evidence/source-after.diff"
+          sha256sum "$evidence/source-full-input.tar" "$evidence/controller-full-input.tar" "$evidence/executed-controller.yml" > "$evidence/frozen-archives-after.sha256"
+          sha256sum "$(cat "$evidence/formatter-path.txt")" > "$evidence/formatter-after.sha256"
+      - name: Judge original exits, exact six raw completions and frozen inputs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PYDATA'
+          import hashlib, json, os, pathlib, re
+          evidence = pathlib.Path(os.environ['H2_RECEIVE_FOCUSED_EVIDENCE'])
+          errors, operations, markers = [], {}, {}
+          prefix = 'TestReqHTTP2ReceiveFlowContract_'
+          leaves = [prefix + 'UnreadRefund/single_frame', prefix + 'UnreadRefund/late_frame_after_cancel', prefix + 'PaddedData/read_to_eof', prefix + 'PaddedData/read_one_then_close', prefix + 'PaddedData/close_unread', prefix + 'DataBeforeHeaders']
+          tops = {prefix + name for name in ('UnreadRefund', 'PaddedData', 'DataBeforeHeaders')}
+          def sha(raw): return hashlib.sha256(raw).hexdigest()
+          def section(label, action):
+              try: action()
+              except (OSError, ValueError, KeyError, TypeError, AssertionError) as error: errors.append(label + ': ' + str(error))
+          def operation(label):
+              status = int((evidence / (label + '.exit')).read_text())
+              out, err = [(evidence / (label + suffix)).read_bytes() for suffix in ('.stdout', '.stderr')]
+              operations[label] = {'actualExit': status, 'stdoutBytes': len(out), 'stdoutSHA256': sha(out), 'stderrBytes': len(err), 'stderrSHA256': sha(err)}
+              assert status == 0, 'actual process exit ' + str(status)
+          for label in ('before/inputs', 'toolchain', 'go-env', 'compiler-version', 'modules', 'packages', 'packages-checker', 'main-mvs', 'format', 'tests', 'after/inputs'):
+              section(label, lambda label=label: operation(label))
+          def frozen():
+              for kind, expected in (('head', os.environ['APP_HEAD']), ('tree', os.environ['APP_TREE'])):
+                  assert (evidence / ('source-' + kind + '-before.txt')).read_text().strip() == expected
+                  assert (evidence / ('source-' + kind + '-after.txt')).read_text().strip() == expected
+              assert (evidence / 'source-index-before.raw').read_bytes() == (evidence / 'source-index-after.raw').read_bytes()
+              assert (evidence / 'before/full-repository-inputs.json').read_bytes() == (evidence / 'after/full-repository-inputs.json').read_bytes()
+              for phase in ('before', 'after'):
+                  assert not (evidence / ('source-status-' + phase + '.raw')).read_bytes()
+                  assert not (evidence / ('source-' + phase + '.diff')).read_bytes()
+              for name in ('frozen-archives', 'formatter'):
+                  assert (evidence / (name + '-before.sha256')).read_bytes() == (evidence / (name + '-after.sha256')).read_bytes()
+              def tree(name):
+                  values = {}
+                  for row in (evidence / (name + '-tree.raw')).read_bytes().split(b'\0'):
+                      if row:
+                          header, path = row.split(b'\t', 1)
+                          assert path not in values
+                          values[path] = header
+                  return values
+              source, controller = tree('source'), tree('controller')
+              assert len(source) == 4503 and len(controller) == 4504
+              assert set(controller) - set(source) == {b'.github/workflows/h2-receive-flow-focused.yml'}
+              assert all(controller.get(path) == header for path, header in source.items())
+              assert (evidence / 'toolchain.stdout').read_bytes() == b'go version go1.26.10 linux/amd64\n'
+              assert not (evidence / 'format.stdout').read_bytes() and not (evidence / 'format.stderr').read_bytes()
+          section('full frozen input and toolchain evidence', frozen)
+          def completed():
+              values = [json.loads(line) for line in (evidence / 'tests.stdout').read_text().splitlines()]
+              package = 'github.com/imroc/req/v3/internal/http2'
+              # Go help buildjson permits BuildEvents interleaved with TestEvents.
+              assert values and all(isinstance(item, dict) for item in values)
+              assert all(item.get('Package') == package or
+                         (item.get('Action') == 'build-output' and isinstance(item.get('ImportPath'), str) and isinstance(item.get('Output'), str) and 'Package' not in item and 'Test' not in item)
+                         for item in values), 'unexpected actual package/event'
+              assert not any(item.get('Action') in ('fail', 'skip', 'build-fail') for item in values), 'failed/skipped actual event'
+              runs = {item['Test'] for item in values if item.get('Action') == 'run' and 'Test' in item}
+              assert runs == set(leaves) | tops, 'missing/extra actual test identities'
+              for name in runs:
+                  actual = [item for item in values if item.get('Test') == name]
+                  assert sum(item.get('Action') == 'run' for item in actual) == 1, 'missing/duplicate RUN ' + name
+                  assert sum(item.get('Action') == 'pass' for item in actual) == 1, 'missing/duplicate PASS ' + name
+              assert sum(item.get('Action') == 'pass' and 'Test' not in item for item in values) == 1
+              for name in leaves:
+                  output = [item['Output'] for item in values if item.get('Action') == 'output' and item.get('Test') == name and 'RECEIVE_FLOW_ACTUAL_COMPLETE ' in item.get('Output', '')]
+                  assert len(output) == 1 and output[0].count('RECEIVE_FLOW_ACTUAL_COMPLETE ') == 1, 'missing/duplicate completion ' + name
+                  payload = output[0].split('RECEIVE_FLOW_ACTUAL_COMPLETE ', 1)[1].strip()
+                  pairs = payload.split()
+                  fields = dict(pair.split('=', 1) for pair in pairs)
+                  assert len(fields) == len(pairs)
+                  if name.startswith(prefix + 'UnreadRefund/'):
+                      assert fields == {'case': name.split('/')[-1], 'data': '5000', 'refunded': '5000', 'reset': 'CANCEL', 'followupStream': '3'}
+                  elif name.startswith(prefix + 'PaddedData/'):
+                      assert set(fields) == {'case', 'entity', 'paddingAndLength', 'refunded', 'followupStream'}
+                      assert fields['case'] == name.split('/')[-1] and fields['entity'] == '5008' and fields['paddingAndLength'] == '4096' and fields['followupStream'] == '3'
+                      assert re.fullmatch(r'[0-9]+', fields['refunded']) and int(fields['refunded']) <= 9104
+                      if fields['case'] != 'read_to_eof': assert fields['refunded'] == '9104'
+                  else:
+                      assert fields == {'case': 'data_before_headers', 'streamError': 'PROTOCOL_ERROR', 'isolatedStream': '3', 'completedStreams': '1,5'}
+                  markers[name] = fields
+              raw = (evidence / 'h2-focused.raw.out').read_bytes()
+              assert raw.startswith(b'mode: atomic\n') and len(raw.splitlines()) > 1
+              return values
+          section('actual six protocol-test completions', completed)
+          report = {'applicationHead': os.environ['APP_HEAD'], 'applicationTree': os.environ['APP_TREE'], 'controllerHead': os.environ['GITHUB_SHA'], 'expectedLeaves': leaves, 'actualCompletionMarkers': markers, 'operations': operations, 'errors': errors, 'scope': 'Focused actual six-leaf race evidence only; not full mandatory suite, original four-profile aggregate, either85 or PR approval'}
+          (evidence / 'h2-focused-actual-receipt.json').write_text(json.dumps(report, indent=2) + '\n')
+          assert not errors, errors
+          PYDATA
+      - name: Always retain full inputs and original focused evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: h2-receive-flow-focused-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/h2-receive-flow-focused-${{ github.run_id }}-${{ github.run_attempt }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
