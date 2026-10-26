@@ -494,3 +494,47 @@ func TestPricingAutoSource_FailedPersistenceDoesNotPublishEffectivePricing(t *te
 	_, err = os.Stat(svc.getHashFilePath())
 	require.True(t, os.IsNotExist(err), "a failed payload write must not persist a successful sync anchor")
 }
+
+func TestPricingAutoSource_ApproveOtherChangeKeepsHeldInternalSKU(t *testing.T) {
+	ctx := context.Background()
+	active := pricingBoundaryPayload("0.000009")
+	candidate := []byte(strings.ReplaceAll(string(pricingBoundaryPayload("0.000017")), "0.000007", "0.000008"))
+	_, client := newPricingBoundaryHTTP(t, candidate)
+	store := newPSSStore()
+	store.setActive(1, active)
+	settings := newPSSSettings("pinned")
+	svc := newPricingBoundaryService(t, t.TempDir(), client)
+	svc.ConfigureSnapshots(settings, store, nil)
+	require.NoError(t, svc.Initialize())
+	t.Cleanup(svc.Stop)
+	fetched, err := svc.FetchCandidateSnapshot(ctx, nil)
+	require.NoError(t, err)
+	admin := NewPricingSnapshotAdminService(svc, store, &pssChecker{}, nil)
+	held := []string{"codex-auto-review"}
+	plan, err := admin.Preview(ctx, fetched.Candidate.ID, held)
+	require.NoError(t, err)
+	require.Equal(t, 1, plan.Stats.Held)
+	require.Equal(t, 1, plan.Stats.Approved)
+	approved, err := admin.Approve(ctx, fetched.Candidate.ID, held, plan.PlanHash, 42)
+	require.NoError(t, err)
+	require.Equal(t, 0.000009, svc.GetModelPricing("codex-auto-review").InputCostPerToken)
+	require.True(t, svc.GetModelPricing("codex-auto-review").SupportsServiceTier)
+	require.Equal(t, 0.000008, svc.GetModelPricing("other").InputCostPerToken)
+	require.Equal(t, pssSHA(plan.MergedPayload), approved.ContentSHA256)
+	require.Equal(t, plan.MergedPayload, store.payloads[approved.ID])
+	require.Equal(t, active, store.payloads[1])
+	var old, merged map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(active, &old))
+	require.NoError(t, json.Unmarshal(plan.MergedPayload, &merged))
+	require.JSONEq(t, string(old["codex-auto-review"]), string(merged["codex-auto-review"]))
+	offline := newPricingBoundaryService(t, t.TempDir(), nil)
+	info, err := offline.LoadServicePricing(ctx, settings, store, func() (string, error) {
+		t.Fatal("held snapshot replay must not resolve a file")
+		return "", nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, pssSHA(plan.MergedPayload), info.SHA256)
+	require.Equal(t, 2, info.Models)
+	require.Equal(t, 0.000009, offline.GetModelPricing("codex-auto-review").InputCostPerToken)
+	require.Equal(t, 0.000008, offline.GetModelPricing("other").InputCostPerToken)
+}
