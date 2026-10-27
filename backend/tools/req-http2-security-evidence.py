@@ -104,9 +104,10 @@ def verify_named(backend, evidence, filename):
             "Retain reviewed F44 and all23 Digest ownership leaves with original401")
     require(expected["downloadContractCount"] == 32 and expected["parallelDownloadFallbackCount"] == 1 and
             expected["parallelDownloadHTTP3CleanupCount"] == 1 and expected["parallelDownloadInProcessCount"] == 23 and
-            expected["totalNamedLeaves"] == 525,
-            "Retain original502 leaves and require23 separately registered parent wire contracts")
-    kinds = baseline_kinds + ("clientBehavior", "digestOwnership", "downloadContract", "parallelDownloadFallback", "parallelDownloadHTTP3Cleanup", "parallelDownloadInProcess")
+            expected["parallelDownloadDefaultOutputCount"] == 1 and expected["http2ReceiveFlowCount"] == 6 and
+            expected["totalNamedLeaves"] == 532,
+            "Retain all526 original G leaves and require six reviewed HTTP2 receive-flow leaves")
+    kinds = baseline_kinds + ("clientBehavior", "digestOwnership", "downloadContract", "parallelDownloadFallback", "parallelDownloadHTTP3Cleanup", "parallelDownloadInProcess", "parallelDownloadDefaultOutput", "http2ReceiveFlow")
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
     for kind in kinds:
@@ -134,7 +135,8 @@ def verify_named(backend, evidence, filename):
                 "TestReqHTTP2TransportContract_", "TestReqMetaCharset_", "TestReqClientDigest_", "TestReqClientRedirect_",
                 "TestReqClientCookie_", "TestReqClientResponse_", "TestReqDigestOwnership_",
                 "TestReqDownloadContract", "TestReqParallelDownloadContract", "TestReqParallelDownloadFallback",
-                "TestReqParallelDownloadHTTP3Cleanup", "TestReqParallelDownloadInProcessContract")
+                "TestReqParallelDownloadHTTP3Cleanup", "TestReqParallelDownloadInProcessContract",
+                "TestReqParallelDownloadDefaultOutput", "TestReqHTTP2ReceiveFlowContract_")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")

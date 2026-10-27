@@ -103,7 +103,7 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 526,
+  "totalNamedLeaves": 532,
   "http1Package": "github.com/imroc/req/v3",
   "http1Leaves": [
     "TestReqHTTP1Lifecycle_ResponseBody/chunked_trailers_reuse",
@@ -627,5 +627,15 @@
   "parallelDownloadDefaultOutputCount": 1,
   "parallelDownloadDefaultOutputLeaves": [
     "TestReqParallelDownloadDefaultOutput/url_path_filename"
+  ],
+  "http2ReceiveFlowPackage": "github.com/imroc/req/v3/internal/http2",
+  "http2ReceiveFlowCount": 6,
+  "http2ReceiveFlowLeaves": [
+    "TestReqHTTP2ReceiveFlowContract_UnreadRefund/single_frame",
+    "TestReqHTTP2ReceiveFlowContract_UnreadRefund/late_frame_after_cancel",
+    "TestReqHTTP2ReceiveFlowContract_PaddedData/read_to_eof",
+    "TestReqHTTP2ReceiveFlowContract_PaddedData/read_one_then_close",
+    "TestReqHTTP2ReceiveFlowContract_PaddedData/close_unread",
+    "TestReqHTTP2ReceiveFlowContract_DataBeforeHeaders"
   ]
 }
