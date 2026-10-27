@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+import tempfile
 import unittest
 
 HERE = Path(__file__).resolve().parent
@@ -180,6 +181,88 @@ class OldGraphCacheRegression(unittest.TestCase):
         self.external(self.old)["Dir"] = "relative/cache"
         with self.assertRaises(SystemExit):
             self.compare()
+
+
+class NamedInventoryRegression(unittest.TestCase):
+    """Synthetic verifier inputs only; never Go execution or coverage evidence."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="req-named-verifier-")
+        self.addCleanup(self.temporary.cleanup)
+        self.evidence = Path(self.temporary.name)
+        self.backend = HERE.parent
+        self.inventory = json.loads((HERE / "req-http2-security-inventory.json").read_text())
+        self.values = []
+        packages = set()
+        for key, leaves in self.inventory.items():
+            if not key.endswith("Leaves") or not isinstance(leaves, list):
+                continue
+            kind = key.removesuffix("Leaves")
+            package = self.inventory[kind + "Package"]
+            packages.add(package)
+            for name in leaves:
+                self.values.append({"Action": "run", "Package": package, "Test": name})
+                if kind == "parallelDownloadInProcess":
+                    self.values.append({"Action": "output", "Package": package, "Test": name,
+                                        "Output": "G_IN_PROCESS_EXECUTED " + name + "\n" +
+                                                  "G_IN_PROCESS_BODY_DONE " + name + "\n"})
+                self.values.append({"Action": "pass", "Package": package, "Test": name})
+        self.values.extend({"Action": "pass", "Package": package} for package in sorted(packages))
+        self.proof = self.evidence / "synthetic.json.inventory-proof.json"
+
+    def verify(self, values):
+        (self.evidence / "synthetic.json").write_text("".join(json.dumps(value) + "\n" for value in values))
+        return CHECKER.verify_named(self.backend, self.evidence, "synthetic.json")
+
+    def rejected(self, values, diagnostic):
+        self.proof.unlink(missing_ok=True)
+        with self.assertRaisesRegex(SystemExit, diagnostic):
+            self.verify(values)
+        self.assertFalse(self.proof.exists(), "Rejected input must not publish a complete proof")
+
+    def test_complete_registered_events_are_accepted_as_verifier_control_only(self):
+        self.verify(self.values)
+        proof = json.loads(self.proof.read_text())
+        self.assertEqual(len(proof), 532)
+        self.assertEqual(len({(item["package"], item["test"]) for item in proof}), 532)
+
+    def test_missing_original_default_output_leaf_is_rejected(self):
+        name = self.inventory["parallelDownloadDefaultOutputLeaves"][0]
+        self.rejected([value for value in self.values if value.get("Test") != name], "Missing/duplicate RUN")
+
+    def test_each_missing_http2_receive_flow_leaf_is_rejected(self):
+        for name in self.inventory["http2ReceiveFlowLeaves"]:
+            with self.subTest(name=name):
+                self.rejected([value for value in self.values if value.get("Test") != name], "Missing/duplicate RUN")
+
+    def test_duplicate_registered_run_is_rejected(self):
+        name = self.inventory["http2ReceiveFlowLeaves"][0]
+        run = next(value for value in self.values if value.get("Test") == name and value["Action"] == "run")
+        self.rejected(self.values + [copy.deepcopy(run)], "Missing/duplicate RUN")
+
+    def test_unknown_http2_receive_flow_leaf_is_rejected(self):
+        unknown = {"Package": self.inventory["http2ReceiveFlowPackage"],
+                   "Test": "TestReqHTTP2ReceiveFlowContract_Unregistered"}
+        self.rejected(self.values + [dict(unknown, Action="run"), dict(unknown, Action="pass")],
+                      "Actual security leaf inventory differs")
+
+    def test_failed_registered_test_is_rejected(self):
+        values = copy.deepcopy(self.values)
+        name = self.inventory["http2ReceiveFlowLeaves"][0]
+        next(value for value in values if value.get("Test") == name and value["Action"] == "pass")["Action"] = "fail"
+        self.rejected(values, "Failed/skipped test event")
+
+    def test_actual_race_failure_event_shape_is_rejected(self):
+        values = copy.deepcopy(self.values)
+        name = self.inventory["http2ReceiveFlowLeaves"][0]
+        package = self.inventory["http2ReceiveFlowPackage"]
+        next(value for value in values if value.get("Test") == name and value["Action"] == "pass")["Action"] = "fail"
+        next(value for value in values if value.get("Package") == package and "Test" not in value)["Action"] = "fail"
+        values.append({"Action": "output", "Package": package, "Test": name,
+                       "Output": "WARNING: DATA RACE\n    testing.go: race detected during execution of test\n"})
+        # Go emits failure events and exits nonzero on a real race. A string
+        # containing "race" alongside an all-PASS stream is not this control.
+        self.rejected(values, "Failed/skipped test event")
 
 
 if __name__ == "__main__":
