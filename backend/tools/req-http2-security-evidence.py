@@ -394,7 +394,7 @@ def production_adaptation_paths(manifest):
                 "parallel_download.go", "client.go", "dump.go", "transport.go")
     declared = manifest["allowedProductionAdaptations"]
     candidates = [item["path"] for item in manifest["adaptedCandidateFiles"]]
-    require(len(declared) == len(candidates) == len(expected) == 16 and
+    require(isinstance(declared, dict) and len(declared) == len(candidates) == len(expected) == 16 and
             set(declared) == set(candidates) == set(expected),
             "Unexpected or missing production adaptation in source/per-file85 partition")
     return expected

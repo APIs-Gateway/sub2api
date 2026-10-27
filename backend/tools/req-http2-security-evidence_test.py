@@ -330,21 +330,33 @@ class ProductionAdaptationPartitionRegression(unittest.TestCase):
             for index in range(16):
                 with self.subTest(key=key, index=index):
                     manifest = copy.deepcopy(self.manifest)
-                    del manifest[key][index]
+                    if key == "allowedProductionAdaptations":
+                        del manifest[key][list(manifest[key])[index]]
+                    else:
+                        del manifest[key][index]
                     with self.assertRaisesRegex(SystemExit, "source/per-file85 partition"):
                         CHECKER.production_adaptation_paths(manifest)
 
-    def test_replaced_or_duplicate_path_is_rejected(self):
-        for key in ("allowedProductionAdaptations", "adaptedCandidateFiles"):
-            for replacement in ("unregistered.go", "internal/http2/flow.go"):
-                with self.subTest(key=key, replacement=replacement):
-                    manifest = copy.deepcopy(self.manifest)
-                    if key == "allowedProductionAdaptations":
-                        manifest[key][-1] = replacement
-                    else:
-                        manifest[key][-1]["path"] = replacement
-                    with self.assertRaisesRegex(SystemExit, "source/per-file85 partition"):
-                        CHECKER.production_adaptation_paths(manifest)
+    def test_same_count_unknown_declared_path_is_rejected(self):
+        manifest = copy.deepcopy(self.manifest)
+        provenance = manifest["allowedProductionAdaptations"].pop("transport.go")
+        manifest["allowedProductionAdaptations"]["unregistered.go"] = provenance
+        with self.assertRaisesRegex(SystemExit, "source/per-file85 partition"):
+            CHECKER.production_adaptation_paths(manifest)
+
+    def test_wrong_shape_declared_partition_is_rejected(self):
+        manifest = copy.deepcopy(self.manifest)
+        manifest["allowedProductionAdaptations"] = list(manifest["allowedProductionAdaptations"])
+        with self.assertRaisesRegex(SystemExit, "source/per-file85 partition"):
+            CHECKER.production_adaptation_paths(manifest)
+
+    def test_same_count_unknown_or_duplicate_candidate_path_is_rejected(self):
+        for replacement in ("unregistered.go", "internal/http2/flow.go"):
+            with self.subTest(replacement=replacement):
+                manifest = copy.deepcopy(self.manifest)
+                manifest["adaptedCandidateFiles"][-1]["path"] = replacement
+                with self.assertRaisesRegex(SystemExit, "source/per-file85 partition"):
+                    CHECKER.production_adaptation_paths(manifest)
 
 
 if __name__ == "__main__":
