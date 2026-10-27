@@ -652,7 +652,16 @@ func TestEnableDumpAllToFile(t *testing.T) {
 	resp, err := c.R().SetBody("test body").Post("/")
 	assertSuccess(t, resp, err)
 	dump := string(getTestFileContent(t, dumpFile))
-	os.Remove(tests.GetTestFilePath(dumpFile))
+	if closer, ok := any(c).(interface{ CloseDump() error }); ok {
+		if err := closer.CloseDump(); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		t.Log("CloseDump absent; retain actual same-process Remove oracle")
+	}
+	if err := os.Remove(tests.GetTestFilePath(dumpFile)); err != nil {
+		t.Fatal(err)
+	}
 	tests.AssertContains(t, dump, "user-agent", true)
 	tests.AssertContains(t, dump, "test body", true)
 	tests.AssertContains(t, dump, "date", true)
