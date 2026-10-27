@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -391,6 +392,58 @@ func TestApplyCodexOAuthTransform_StringifiesNonStringMessageContentText(t *test
 	part, ok := content[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, `["a","b"]`, part["text"])
+}
+
+func TestApplyCodexOAuthTransform_PreservesAllowedTools(t *testing.T) {
+	for _, placement := range []string{"top_level", "additional_tools"} {
+		for _, mode := range []string{"auto", "required"} {
+			t.Run(placement+"/"+mode, func(t *testing.T) {
+				decision := map[string]any{"type": "function", "name": "ProbeAccept"}
+				choice := map[string]any{
+					"type": "allowed_tools", "mode": mode,
+					"tools": []any{map[string]any{"type": "function", "name": "ProbeAccept"}},
+				}
+				tools := []any{
+					map[string]any{"type": "function", "name": "ProbeBase"},
+					map[string]any{"type": "web_search"},
+					map[string]any{"type": "image_generation"},
+				}
+				input := []any{map[string]any{"type": "message", "role": "user", "content": "probe"}}
+				if placement == "top_level" {
+					tools = append(tools, decision)
+				} else {
+					input = append(input, map[string]any{
+						"type": "additional_tools", "role": "developer", "tools": []any{decision},
+					})
+				}
+				reqBody := map[string]any{"tools": tools, "input": input, "tool_choice": choice}
+				before, err := json.Marshal(reqBody)
+				require.NoError(t, err)
+				reqBody["model"] = "gpt-6-astra"
+				applyCodexOAuthTransform(reqBody, true, false)
+				after, err := json.Marshal(map[string]any{
+					"tools": reqBody["tools"], "input": reqBody["input"], "tool_choice": reqBody["tool_choice"],
+				})
+				require.NoError(t, err)
+				require.JSONEq(t, string(before), string(after))
+			})
+		}
+	}
+}
+
+func TestNormalizeCodexToolChoice_InvalidAllowedToolsNeverBecomesAuto(t *testing.T) {
+	for _, choice := range []map[string]any{
+		{"type": "allowed_tools"},
+		{"type": "allowed_tools", "mode": "invalid", "tools": []any{}},
+		{"type": "allowed_tools", "mode": "required", "tools": "invalid"},
+		{"type": "allowed_tools", "mode": "required", "tools": []any{map[string]any{"type": "function", "name": "missing"}}},
+	} {
+		reqBody := map[string]any{"tool_choice": choice}
+		require.False(t, normalizeCodexToolChoice(reqBody))
+		// The upstream owns schema validation. A malformed restriction must never
+		// silently become permission to call every supplied tool.
+		require.Equal(t, choice, reqBody["tool_choice"])
+	}
 }
 
 func TestApplyCodexOAuthTransform_DowngradesUnknownToolChoice(t *testing.T) {
@@ -1602,6 +1655,20 @@ func TestApplyCodexOAuthTransform_GPT55SuppliesModelSpecificInstructions(t *test
 	require.True(t, result.Modified)
 }
 
+func TestApplyCodexOAuthTransform_GPT6AstraSuppliesModelSpecificInstructions(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-6-astra",
+	}
+
+	result := applyCodexOAuthTransform(reqBody, true, false)
+
+	instructions, ok := reqBody["instructions"].(string)
+	require.True(t, ok)
+	require.True(t, strings.HasPrefix(strings.TrimSpace(instructions), "You are Codex, an agent based on GPT-6."))
+	require.NotContains(t, instructions, "You are Codex, a coding agent based on GPT-5.")
+	require.True(t, result.Modified)
+}
+
 func TestApplyCodexOAuthTransform_NonCodexCLI_PreservesExistingInstructions(t *testing.T) {
 	// 非 Codex CLI 场景：已有 instructions 时保留客户端的值，不再覆盖
 
@@ -1771,7 +1838,8 @@ func TestExtractSystemMessagesFromInput(t *testing.T) {
 		third, ok := input[2].(map[string]any)
 		require.True(t, ok)
 		require.Equal(t, "assistant", third["role"])
-		require.Equal(t, "Sys prompt.", reqBody["instructions"])
+		_, hasInstructions := reqBody["instructions"]
+		require.False(t, hasInstructions, "a mid-conversation reminder must not change top-level instructions")
 	})
 
 	t.Run("existing instructions prepended", func(t *testing.T) {
@@ -1847,6 +1915,167 @@ func TestExtractSystemMessagesFromInput(t *testing.T) {
 		require.Equal(t, "developer", developer["role"])
 		require.Len(t, developer["content"], 2)
 	})
+}
+
+func requireCodexSystemInput(t *testing.T, reqBody map[string]any) []any {
+	t.Helper()
+	input, ok := reqBody["input"].([]any)
+	require.True(t, ok)
+	return input
+}
+
+func requireCodexSystemItem(t *testing.T, item any) map[string]any {
+	t.Helper()
+	m, ok := item.(map[string]any)
+	require.True(t, ok)
+	return m
+}
+
+func TestExtractSystemMessagesFromInput_StopsPromotionAtFirstNonSystemItem(t *testing.T) {
+	boundaries := []struct {
+		name string
+		item any
+	}{
+		{name: "user", item: map[string]any{"role": "user", "content": "Continue."}},
+		{name: "developer", item: map[string]any{"role": "developer", "content": "Original."}},
+		{name: "assistant", item: map[string]any{"role": "assistant", "content": "Working."}},
+		{name: "tool", item: map[string]any{"type": "function_call", "name": "bash"}},
+		{name: "missing_role", item: map[string]any{"content": "marker"}},
+		{name: "non_object", item: "marker"},
+	}
+	for _, boundary := range boundaries {
+		t.Run(boundary.name, func(t *testing.T) {
+			reqBody := map[string]any{
+				"instructions": "Stable instructions.",
+				"input": []any{
+					map[string]any{"role": "system", "content": "Opening policy."},
+					boundary.item,
+					map[string]any{"role": "system", "content": "Budget: 900.", "metadata": "keep"},
+				},
+			}
+			require.True(t, extractSystemMessagesFromInput(reqBody, false))
+			require.Equal(t, "Opening policy.\n\nStable instructions.", reqBody["instructions"])
+			input := requireCodexSystemInput(t, reqBody)
+			require.Len(t, input, 3)
+			require.Equal(t, "developer", requireCodexSystemItem(t, input[0])["role"])
+			require.Equal(t, boundary.item, input[1])
+			require.Equal(t, map[string]any{"role": "developer", "content": "Budget: 900.", "metadata": "keep"}, input[2])
+		})
+	}
+}
+
+func TestExtractSystemMessagesFromInput_OmitOnlyLeadingLosslessText(t *testing.T) {
+	midContent := []any{
+		map[string]any{"type": "input_text", "text": "Check screenshot."},
+		map[string]any{"type": "input_image", "image_url": "https://example.com/image.png"},
+	}
+	reqBody := map[string]any{
+		"instructions": "Stable instructions.",
+		"input": []any{
+			map[string]any{"role": "system", "content": "Opening A."},
+			map[string]any{"role": "system", "content": []any{map[string]any{"type": "text", "text": "Opening B."}}},
+			map[string]any{"role": "user", "content": "Start."},
+			map[string]any{"role": "system", "content": "Budget: 900.", "metadata": "keep"},
+			map[string]any{"role": "system", "content": midContent, "metadata": "keep image"},
+		},
+	}
+	require.True(t, extractSystemMessagesFromInput(reqBody, true))
+	require.Equal(t, "Opening A.\n\nOpening B.\n\nStable instructions.", reqBody["instructions"])
+	input := requireCodexSystemInput(t, reqBody)
+	require.Len(t, input, 3)
+	require.Equal(t, "user", requireCodexSystemItem(t, input[0])["role"])
+	require.Equal(t, map[string]any{"role": "developer", "content": "Budget: 900.", "metadata": "keep"}, input[1])
+	require.Equal(t, map[string]any{"role": "developer", "content": midContent, "metadata": "keep image"}, input[2])
+}
+
+func TestExtractSystemMessagesFromInput_AppendedReminderPreservesCachedPrefix(t *testing.T) {
+	newRequest := func(appendReminder bool) map[string]any {
+		input := []any{
+			map[string]any{"role": "system", "content": "Opening policy."},
+			map[string]any{"role": "user", "content": "Hello."},
+			map[string]any{"role": "system", "content": "Budget: 1000."},
+			map[string]any{"role": "assistant", "content": "Working."},
+		}
+		if appendReminder {
+			input = append(input,
+				map[string]any{"role": "user", "content": "Continue."},
+				map[string]any{"role": "system", "content": "Budget: 900."},
+			)
+		}
+		return map[string]any{"instructions": "Stable instructions.", "input": input}
+	}
+	for _, omitPromoted := range []bool{false, true} {
+		first := newRequest(false)
+		second := newRequest(true)
+		require.True(t, extractSystemMessagesFromInput(first, omitPromoted))
+		require.True(t, extractSystemMessagesFromInput(second, omitPromoted))
+		require.Equal(t, "Opening policy.\n\nStable instructions.", first["instructions"])
+		require.Equal(t, first["instructions"], second["instructions"])
+		firstInput := requireCodexSystemInput(t, first)
+		secondInput := requireCodexSystemInput(t, second)
+		require.Equal(t, firstInput, secondInput[:len(firstInput)])
+		require.Equal(t, "developer", requireCodexSystemItem(t, secondInput[len(secondInput)-1])["role"])
+	}
+}
+
+func TestExtractSystemMessagesFromInput_NoLeadingSystemKeepsInstructionsAndInputShape(t *testing.T) {
+	missing := map[string]any{"instructions": "Stable."}
+	require.False(t, extractSystemMessagesFromInput(missing, true))
+	require.Equal(t, "Stable.", missing["instructions"])
+	require.NotContains(t, missing, "input")
+
+	for _, input := range []any{nil, map[string]any{"role": "system"}, []any{}} {
+		reqBody := map[string]any{"instructions": "Stable.", "input": input}
+		require.False(t, extractSystemMessagesFromInput(reqBody, true))
+		require.Equal(t, "Stable.", reqBody["instructions"])
+		require.Equal(t, input, reqBody["input"])
+	}
+	reqBody := map[string]any{"instructions": "Stable.", "input": []any{
+		map[string]any{"role": "user", "content": "Hello."},
+		map[string]any{"role": "system", "content": "Late reminder."},
+	}}
+	require.True(t, extractSystemMessagesFromInput(reqBody, true))
+	require.Equal(t, "Stable.", reqBody["instructions"])
+	input := requireCodexSystemInput(t, reqBody)
+	require.Len(t, input, 2)
+	require.Equal(t, map[string]any{"role": "developer", "content": "Late reminder."}, input[1])
+}
+
+func TestApplyCodexOAuthTransform_MidConversationSystemStaysInInput(t *testing.T) {
+	for _, omitPromoted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("omit_promoted=%t", omitPromoted), func(t *testing.T) {
+			reqBody := map[string]any{
+				"model":        "gpt-5.4",
+				"instructions": "Stable instructions.",
+				"input": []any{
+					map[string]any{"role": "system", "content": "Opening policy."},
+					map[string]any{"role": "user", "content": "Hello."},
+					map[string]any{"role": "system", "content": "Budget: 900.", "metadata": "keep"},
+				},
+			}
+			if !omitPromoted {
+				reqBody["text"] = map[string]any{"format": map[string]any{"type": "json_object"}}
+			}
+			result := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
+				SkipDefaultInstructions:             true,
+				OmitPromotedSystemMessagesFromInput: omitPromoted,
+			})
+			require.True(t, result.Modified)
+			require.Equal(t, "Opening policy.\n\nStable instructions.", reqBody["instructions"])
+			input := requireCodexSystemInput(t, reqBody)
+			if omitPromoted {
+				require.Len(t, input, 2)
+			} else {
+				require.Len(t, input, 3)
+				require.Equal(t, "developer", requireCodexSystemItem(t, input[0])["role"])
+			}
+			require.Equal(t, "user", requireCodexSystemItem(t, input[len(input)-2])["role"])
+			midSystem := requireCodexSystemItem(t, input[len(input)-1])
+			require.Equal(t, "developer", midSystem["role"])
+			require.Equal(t, "Budget: 900.", midSystem["content"])
+			require.Equal(t, "keep", midSystem["metadata"])
+		})
+	}
 }
 
 func TestApplyCodexOAuthTransform_JsonObjectKeepsJsonInstructionInInput(t *testing.T) {

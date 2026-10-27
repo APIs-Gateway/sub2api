@@ -160,14 +160,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 	out := make([]dto.UsageLog, 0, len(records))
 	for i := range records {
 		item := *dto.UsageLogFromService(&records[i])
-		// SubscriptionID 是 *int64，钱包扣费的记录为 nil。传 0 表示「没有卡」，
-		// 折算器据此走钱包单价。
-		subID := int64(0)
-		if item.SubscriptionID != nil {
-			subID = *item.SubscriptionID
-		}
-		item.FiatPerCredit = rate.FiatPerCredit(item.BillingType, subID)
-		item.FiatCost = rate.Convert(item.ActualCost, item.BillingType, subID)
+		fillUsageLogFiat(&item, rate)
 		out = append(out, item)
 	}
 	response.Paginated(c, out, result.Total, page, pageSize)
@@ -178,18 +171,43 @@ func (h *UsageHandler) List(c *gin.Context) {
 // 法币折算是展示增强，不该成为用量列表的新故障点。
 func (h *UsageHandler) creditFiatRate(c *gin.Context, userID int64, records []service.UsageLog) *service.CreditFiatRate {
 	ctx := c.Request.Context()
-
-	multiplier := 1.0
-	cfg := service.DefaultSubscriptionPricingConfig()
-	if h.settingService != nil {
-		// 一次查询同时拿到充值倍率和定价公式——settings 没有缓存，这个接口高频。
-		multiplier, cfg = h.settingService.CreditFiatPricing(ctx)
-	}
+	multiplier, cfg := h.creditFiatPricing(c)
 
 	if h.usageService == nil {
 		return service.NewCreditFiatRate(multiplier)
 	}
 	return h.usageService.BuildCreditFiatRate(ctx, userID, multiplier, cfg, records)
+}
+
+// creditFiatPricing 读取额度→法币折算参数。设置读取失败时返回默认值（倍率 1 = 不折算）。
+func (h *UsageHandler) creditFiatPricing(c *gin.Context) (float64, service.SubscriptionPricingConfig) {
+	if h.settingService == nil {
+		return 1.0, service.DefaultSubscriptionPricingConfig()
+	}
+	// 一次查询同时拿到充值倍率和定价公式——settings 没有缓存，这些接口高频。
+	return h.settingService.CreditFiatPricing(c.Request.Context())
+}
+
+// creditFiatTotals 计算一个筛选范围的法币合计（按扣费来源分桶折算后相加）。
+// ok=false 时调用方不填法币字段，前端回落到额度展示。
+func (h *UsageHandler) creditFiatTotals(c *gin.Context, filter usagestats.CreditCostBucketFilter) (*service.CreditFiatTotals, bool) {
+	if h.usageService == nil {
+		return nil, false
+	}
+	multiplier, cfg := h.creditFiatPricing(c)
+	return h.usageService.CreditFiatTotals(c.Request.Context(), multiplier, cfg, filter)
+}
+
+// fillUsageLogFiat 给单条用量记录填上法币单价和法币金额，口径与列表接口一致。
+func fillUsageLogFiat(item *dto.UsageLog, rate *service.CreditFiatRate) {
+	// SubscriptionID 是 *int64，钱包扣费的记录为 nil。传 0 表示「没有卡」，
+	// 折算器据此走钱包单价。
+	subID := int64(0)
+	if item.SubscriptionID != nil {
+		subID = *item.SubscriptionID
+	}
+	item.FiatPerCredit = rate.FiatPerCredit(item.BillingType, subID)
+	item.FiatCost = rate.Convert(item.ActualCost, item.BillingType, subID)
 }
 
 // ListErrors handles listing the current user's failed requests (redacted).
@@ -330,7 +348,9 @@ func (h *UsageHandler) GetByID(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, dto.UsageLogFromService(record))
+	item := dto.UsageLogFromService(record)
+	fillUsageLogFiat(item, h.creditFiatRate(c, subject.UserID, []service.UsageLog{*record}))
+	response.Success(c, item)
 }
 
 // Stats handles getting usage statistics
@@ -416,6 +436,14 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		return
 	}
 
+	filter := usagestats.CreditCostBucketFilter{UserID: subject.UserID, StartTime: startTime, EndTime: endTime}
+	if apiKeyID > 0 {
+		filter.APIKeyIDs = []int64{apiKeyID}
+	}
+	if totals, ok := h.creditFiatTotals(c, filter); ok {
+		stats.TotalActualCostFiat = totals.Total[""]
+	}
+
 	response.Success(c, stats)
 }
 
@@ -489,8 +517,42 @@ func (h *UsageHandler) DashboardStats(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	h.fillDashboardStatsFiat(c, subject.UserID, stats)
 
 	response.Success(c, stats)
+}
+
+// fillDashboardStatsFiat 给仪表盘的今日/累计花费填上法币合计。
+// 筛选口径与 GetUserDashboardStats 的 SQL 一一对应：总计/今日不过滤失败行、
+// 不设时间下界，今日以 timezone.Today() 为界；by_platform 用平台维度分桶。
+func (h *UsageHandler) fillDashboardStatsFiat(c *gin.Context, userID int64, stats *usagestats.UserDashboardStats) {
+	if stats == nil {
+		return
+	}
+	today := timezone.Today()
+	totals, ok := h.creditFiatTotals(c, usagestats.CreditCostBucketFilter{UserID: userID, SplitAt: today})
+	if !ok {
+		return
+	}
+	stats.TotalActualCostFiat = totals.Total[""]
+	stats.TodayActualCostFiat = totals.Since[""]
+
+	if len(stats.ByPlatform) == 0 {
+		return
+	}
+	platformTotals, ok := h.creditFiatTotals(c, usagestats.CreditCostBucketFilter{
+		UserID:    userID,
+		SplitAt:   today,
+		Dimension: usagestats.CreditBucketPlatform,
+	})
+	if !ok {
+		return
+	}
+	for i := range stats.ByPlatform {
+		p := &stats.ByPlatform[i]
+		p.TotalActualCostFiat = platformTotals.Total[p.Platform]
+		p.TodayActualCostFiat = platformTotals.Since[p.Platform]
+	}
 }
 
 // DashboardTrend handles getting user usage trend data
@@ -509,6 +571,19 @@ func (h *UsageHandler) DashboardTrend(c *gin.Context) {
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+	if len(trend) > 0 {
+		if totals, ok := h.creditFiatTotals(c, usagestats.CreditCostBucketFilter{
+			UserID:      subject.UserID,
+			StartTime:   startTime,
+			EndTime:     endTime,
+			Dimension:   usagestats.CreditBucketDate,
+			Granularity: granularity,
+		}); ok {
+			for i := range trend {
+				trend[i].ActualCostFiat = totals.Total[trend[i].Date]
+			}
+		}
 	}
 
 	response.Success(c, gin.H{
@@ -534,6 +609,19 @@ func (h *UsageHandler) DashboardModels(c *gin.Context) {
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+	if len(stats) > 0 {
+		if totals, ok := h.creditFiatTotals(c, usagestats.CreditCostBucketFilter{
+			UserID:      subject.UserID,
+			StartTime:   startTime,
+			EndTime:     endTime,
+			Dimension:   usagestats.CreditBucketModel,
+			ModelSource: usagestats.ModelSourceRequested,
+		}); ok {
+			for i := range stats {
+				stats[i].ActualCostFiat = totals.Total[stats[i].Model]
+			}
+		}
 	}
 
 	response.Success(c, gin.H{
@@ -585,10 +673,27 @@ func (h *UsageHandler) DashboardAPIKeysUsage(c *gin.Context) {
 		return
 	}
 
-	stats, err := h.usageService.GetBatchAPIKeyUsageStats(c.Request.Context(), validAPIKeyIDs, time.Time{}, time.Time{})
+	// 显式给出与仓储默认值相同的「最近 30 天」窗口，让法币合计和额度合计用同一个时间范围。
+	endTime := time.Now()
+	startTime := endTime.AddDate(0, 0, -30)
+	stats, err := h.usageService.GetBatchAPIKeyUsageStats(c.Request.Context(), validAPIKeyIDs, startTime, endTime)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+	if totals, ok := h.creditFiatTotals(c, usagestats.CreditCostBucketFilter{
+		UserID:    subject.UserID,
+		APIKeyIDs: validAPIKeyIDs,
+		StartTime: startTime,
+		EndTime:   endTime,
+		SplitAt:   timezone.Today(),
+		Dimension: usagestats.CreditBucketAPIKey,
+	}); ok {
+		for id, item := range stats {
+			key := strconv.FormatInt(id, 10)
+			item.TotalActualCostFiat = totals.Total[key]
+			item.TodayActualCostFiat = totals.Since[key]
+		}
 	}
 
 	response.Success(c, gin.H{"stats": stats})
@@ -636,6 +741,20 @@ func (h *UsageHandler) GetMyAPIKeyDailyUsage(c *gin.Context) {
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+	if len(items) > 0 {
+		if totals, ok := h.creditFiatTotals(c, usagestats.CreditCostBucketFilter{
+			UserID:      subject.UserID,
+			APIKeyIDs:   []int64{apiKeyID},
+			StartTime:   startTime,
+			EndTime:     endTime,
+			Dimension:   usagestats.CreditBucketDate,
+			Granularity: "day",
+		}); ok {
+			for i := range items {
+				items[i].ActualCostFiat = totals.Total[items[i].Date]
+			}
+		}
 	}
 
 	response.Success(c, gin.H{

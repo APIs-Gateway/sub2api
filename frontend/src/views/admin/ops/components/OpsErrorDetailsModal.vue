@@ -5,10 +5,13 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import OpsErrorLogTable from './OpsErrorLogTable.vue'
 import { opsAPI, type OpsErrorLog } from '@/api/admin/ops'
+import { buildOpsErrorTimeParams } from '../utils/opsErrorParams'
 
 interface Props {
   show: boolean
   timeRange: string
+  customStartTime?: string | null
+  customEndTime?: string | null
   platform?: string
   groupId?: number | null
   errorType: 'request' | 'upstream'
@@ -94,9 +97,9 @@ async function fetchErrorLogs() {
     const params: Record<string, any> = {
       page: page.value,
       page_size: pageSize.value,
-      time_range: props.timeRange,
       view: viewMode.value
     }
+    Object.assign(params, buildOpsErrorTimeParams(props.timeRange, props.customStartTime, props.customEndTime))
 
     const platform = String(props.platform || '').trim()
     if (platform) params.platform = platform
@@ -149,7 +152,7 @@ watch(
 )
 
 watch(
-  () => [props.timeRange, props.platform, props.groupId] as const,
+  () => [props.timeRange, props.customStartTime, props.customEndTime, props.platform, props.groupId] as const,
   () => {
     if (!props.show) return
     page.value = 1

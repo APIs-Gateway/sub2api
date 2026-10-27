@@ -48,6 +48,8 @@ const (
 	FieldDefaultValidityDays = "default_validity_days"
 	// FieldAllowImageGeneration holds the string denoting the allow_image_generation field in the database.
 	FieldAllowImageGeneration = "allow_image_generation"
+	// FieldSimpleModeAutoImageEligible holds the string denoting the simple_mode_auto_image_eligible field in the database.
+	FieldSimpleModeAutoImageEligible = "simple_mode_auto_image_eligible"
 	// FieldImageRateIndependent holds the string denoting the image_rate_independent field in the database.
 	FieldImageRateIndependent = "image_rate_independent"
 	// FieldImageRateMultiplier holds the string denoting the image_rate_multiplier field in the database.
@@ -181,6 +183,7 @@ var Columns = []string{
 	FieldMonthlyLimitUsd,
 	FieldDefaultValidityDays,
 	FieldAllowImageGeneration,
+	FieldSimpleModeAutoImageEligible,
 	FieldImageRateIndependent,
 	FieldImageRateMultiplier,
 	FieldImagePrice1k,
@@ -261,6 +264,8 @@ var (
 	DefaultDefaultValidityDays int
 	// DefaultAllowImageGeneration holds the default value on creation for the "allow_image_generation" field.
 	DefaultAllowImageGeneration bool
+	// DefaultSimpleModeAutoImageEligible holds the default value on creation for the "simple_mode_auto_image_eligible" field.
+	DefaultSimpleModeAutoImageEligible bool
 	// DefaultImageRateIndependent holds the default value on creation for the "image_rate_independent" field.
 	DefaultImageRateIndependent bool
 	// DefaultImageRateMultiplier holds the default value on creation for the "image_rate_multiplier" field.
@@ -379,6 +384,11 @@ func ByDefaultValidityDays(opts ...sql.OrderTermOption) OrderOption {
 // ByAllowImageGeneration orders the results by the allow_image_generation field.
 func ByAllowImageGeneration(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAllowImageGeneration, opts...).ToFunc()
+}
+
+// BySimpleModeAutoImageEligible orders the results by the simple_mode_auto_image_eligible field.
+func BySimpleModeAutoImageEligible(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSimpleModeAutoImageEligible, opts...).ToFunc()
 }
 
 // ByImageRateIndependent orders the results by the image_rate_independent field.

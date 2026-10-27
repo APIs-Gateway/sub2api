@@ -124,6 +124,38 @@ func TestGetModelPricing_CaseInsensitive(t *testing.T) {
 	require.Equal(t, p1.InputPricePerToken, p2.InputPricePerToken)
 }
 
+// 无渠道分组的报价走 GetModelPricing：名字带首尾空白时不能查不到价（兜底价里有 == "kimi-k3"
+// 这类精确匹配），否则会被当成「无价」零计费。
+func TestGetModelPricing_TrimsSurroundingWhitespace(t *testing.T) {
+	svc := newTestBillingService()
+
+	for _, model := range []string{"kimi-k3", "grok-4.3", "qwen3-embedding-8b", "claude-sonnet-4", "gpt-5.6-sol"} {
+		want, err := svc.GetModelPricing(model)
+		require.NoError(t, err, "模型 %s", model)
+
+		for _, dirty := range []string{" " + model, model + " ", "\t" + model + "\n", "\u00a0" + model + "\u3000"} {
+			got, err := svc.GetModelPricing(dirty)
+			require.NoError(t, err, "带空白的名字 %q 必须能查到价", dirty)
+			require.Equal(t, want.InputPricePerToken, got.InputPricePerToken, "%q 输入价", dirty)
+			require.Equal(t, want.OutputPricePerToken, got.OutputPricePerToken, "%q 输出价", dirty)
+		}
+	}
+}
+
+func TestCalculateCost_TrimsSurroundingWhitespaceInModel(t *testing.T) {
+	svc := newTestBillingService()
+	tokens := UsageTokens{InputTokens: 1000, OutputTokens: 500}
+
+	want, err := svc.CalculateCost("kimi-k3", tokens, 1.0)
+	require.NoError(t, err)
+	require.Greater(t, want.TotalCost, 0.0)
+
+	got, err := svc.CalculateCost(" kimi-k3 ", tokens, 1.0)
+	require.NoError(t, err)
+	require.Equal(t, want.TotalCost, got.TotalCost)
+	require.Equal(t, want.ActualCost, got.ActualCost)
+}
+
 func TestGetModelPricing_FallbackWarningIsDeduplicatedPerNormalizedModel(t *testing.T) {
 	svc := newTestBillingService()
 	logs := captureBillingLog(t)
@@ -262,10 +294,10 @@ func TestGetModelPricing_OpenAIGPT56VariantsFallback(t *testing.T) {
 		cacheWrite    float64
 		priorityWrite float64
 	}{
-		{model: "gpt-5.6-sol", input: 5e-6, output: 30e-6, cacheRead: 0.5e-6, cacheWrite: 6.25e-6, priorityWrite: 12.5e-6},
+		{model: "gpt-5.6-sol", input: 4e-6, output: 20e-6, cacheRead: 0.4e-6, cacheWrite: 5e-6, priorityWrite: 10e-6},
 		{model: "gpt-5.6-terra", input: 2e-6, output: 12e-6, cacheRead: 0.2e-6, cacheWrite: 2.5e-6, priorityWrite: 5e-6},
 		{model: "gpt-5.6-luna", input: 0.2e-6, output: 1.2e-6, cacheRead: 0.02e-6, cacheWrite: 0.25e-6, priorityWrite: 0.5e-6},
-		{model: "gpt-5.6-sol-2026-06-08", input: 5e-6, output: 30e-6, cacheRead: 0.5e-6, cacheWrite: 6.25e-6, priorityWrite: 12.5e-6},
+		{model: "gpt-5.6-sol-2026-06-08", input: 4e-6, output: 20e-6, cacheRead: 0.4e-6, cacheWrite: 5e-6, priorityWrite: 10e-6},
 	} {
 		t.Run(tt.model, func(t *testing.T) {
 			pricing, err := svc.GetModelPricing(tt.model)
@@ -347,10 +379,10 @@ func TestCalculateCost_OpenAIGPT56AppliesLongContextPricingToWholeRequest(t *tes
 	cost, err := svc.CalculateCost("gpt-5.6-sol", tokens, 1.0)
 	require.NoError(t, err)
 
-	expectedInput := float64(tokens.InputTokens) * 5e-6 * 2
-	expectedOutput := float64(tokens.OutputTokens) * 30e-6 * 1.5
-	expectedCacheRead := float64(tokens.CacheReadTokens) * 0.5e-6 * 2
-	expectedCacheWrite := float64(tokens.CacheCreationTokens) * 6.25e-6 * 2
+	expectedInput := float64(tokens.InputTokens) * 4e-6 * 2
+	expectedOutput := float64(tokens.OutputTokens) * 20e-6 * 1.5
+	expectedCacheRead := float64(tokens.CacheReadTokens) * 0.4e-6 * 2
+	expectedCacheWrite := float64(tokens.CacheCreationTokens) * 5e-6 * 2
 	require.InDelta(t, expectedInput, cost.InputCost, 1e-10)
 	require.InDelta(t, expectedOutput, cost.OutputCost, 1e-10)
 	require.InDelta(t, expectedCacheRead, cost.CacheReadCost, 1e-10)
@@ -367,12 +399,12 @@ func TestCalculateCost_OpenAIGPT56SolLongCacheReadMatchesOfficial272KRate(t *tes
 	require.NoError(t, err)
 
 	// 951 + 327424 = 328375 > 272K. OpenAI's full-request long-context
-	// pricing is $10/M input-side, $1/M cache read, and $45/M output.
-	require.InDelta(t, 0.009510, cost.InputCost, 1e-12)
-	require.InDelta(t, 0.327424, cost.CacheReadCost, 1e-12)
-	require.InDelta(t, 0.001755, cost.OutputCost, 1e-12)
-	require.InDelta(t, 0.338689, cost.TotalCost, 1e-12)
-	require.InDelta(t, 0.338689, cost.ActualCost, 1e-12)
+	// pricing is $8/M input-side, $0.80/M cache read, and $30/M output.
+	require.InDelta(t, 951*8e-6, cost.InputCost, 1e-12)
+	require.InDelta(t, 327424*0.8e-6, cost.CacheReadCost, 1e-12)
+	require.InDelta(t, 39*30e-6, cost.OutputCost, 1e-12)
+	require.InDelta(t, 951*8e-6+327424*0.8e-6+39*30e-6, cost.TotalCost, 1e-12)
+	require.InDelta(t, 951*8e-6+327424*0.8e-6+39*30e-6, cost.ActualCost, 1e-12)
 }
 
 func TestCalculateCost_OpenAIGPT56At272KUsesBaseRate(t *testing.T) {
@@ -381,9 +413,9 @@ func TestCalculateCost_OpenAIGPT56At272KUsesBaseRate(t *testing.T) {
 
 	cost, err := svc.CalculateCost("gpt-5.6-sol", tokens, 1.0)
 	require.NoError(t, err)
-	require.InDelta(t, 272000*5e-6, cost.InputCost, 1e-12)
-	require.InDelta(t, 30e-6, cost.OutputCost, 1e-12)
-	require.InDelta(t, 272000*5e-6+30e-6, cost.TotalCost, 1e-12)
+	require.InDelta(t, 272000*4e-6, cost.InputCost, 1e-12)
+	require.InDelta(t, 20e-6, cost.OutputCost, 1e-12)
+	require.InDelta(t, 272000*4e-6+20e-6, cost.TotalCost, 1e-12)
 }
 
 func TestCalculateCost_OpenAIGPT56DynamicCatalogPrefersExplicitLongContextPrices(t *testing.T) {
@@ -422,10 +454,10 @@ func TestCalculateCost_OpenAIGPT56DynamicCatalogPrefersExplicitLongContextPrices
 func TestApplyModelSpecificPricingPolicy_GPT56CacheWritePolicy(t *testing.T) {
 	svc := newTestBillingService()
 
-	derived := svc.applyModelSpecificPricingPolicy("gpt-5.6-terra", &ModelPricing{
+	derived := svc.applyModelSpecificPricingPolicyEx("gpt-5.6-terra", &ModelPricing{
 		InputPricePerToken:         2.5e-6,
 		InputPricePerTokenPriority: 5e-6,
-	})
+	}, true, time.Time{})
 	require.InDelta(t, 3.125e-6, derived.CacheCreationPricePerToken, 1e-12)
 	require.InDelta(t, 6.25e-6, derived.CacheCreationPricePerTokenPriority, 1e-12)
 	require.Equal(t, 272000, derived.LongContextInputThreshold)
@@ -433,18 +465,18 @@ func TestApplyModelSpecificPricingPolicy_GPT56CacheWritePolicy(t *testing.T) {
 	require.InDelta(t, 1.5, derived.LongContextOutputMultiplier, 1e-12)
 	require.True(t, derived.PriorityExcludesLongContext)
 
-	explicitZero := svc.applyModelSpecificPricingPolicy("gpt-5.6-terra", &ModelPricing{
+	explicitZero := svc.applyModelSpecificPricingPolicyEx("gpt-5.6-terra", &ModelPricing{
 		InputPricePerToken:                 2.5e-6,
 		CacheCreationPriceExplicit:         true,
 		CacheCreationPricePerToken:         0,
 		CacheCreationPricePerTokenPriority: 0,
-	})
+	}, true, time.Time{})
 	require.Zero(t, explicitZero.CacheCreationPricePerToken)
 	require.Zero(t, explicitZero.CacheCreationPricePerTokenPriority)
 
-	legacy := svc.applyModelSpecificPricingPolicy("gpt-5.4", &ModelPricing{
+	legacy := svc.applyModelSpecificPricingPolicyEx("gpt-5.4", &ModelPricing{
 		InputPricePerToken: 2.5e-6,
-	})
+	}, true, time.Time{})
 	require.Equal(t, 272000, legacy.LongContextInputThreshold)
 	require.InDelta(t, 2.0, legacy.LongContextInputMultiplier, 1e-12)
 	require.InDelta(t, 1.5, legacy.LongContextOutputMultiplier, 1e-12)
@@ -632,43 +664,65 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 			expectedCacheRead: floatPtr(2.2e-8),
 		},
 		{
+			// V4.1-Flash 新名，与旧名 deepseek-v4-flash 同价（2026-09-10 官方价）。
+			name:              "deepseek flash",
+			model:             "deepseek-flash",
+			expectedInput:     1.5e-7,
+			expectedOutput:    floatPtr(6e-7),
+			expectedCacheRead: floatPtr(3e-9),
+		},
+		{
 			name:              "deepseek v4 flash",
 			model:             "deepseek-v4-flash",
-			expectedInput:     2.2e-7,
-			expectedOutput:    floatPtr(6.6e-7),
-			expectedCacheRead: floatPtr(7e-9),
+			expectedInput:     1.5e-7,
+			expectedOutput:    floatPtr(6e-7),
+			expectedCacheRead: floatPtr(3e-9),
 		},
 		{
 			name:              "deepseek v4 flash vision exp",
 			model:             "deepseek-v4-flash-vision-exp",
-			expectedInput:     2.2e-7,
-			expectedOutput:    floatPtr(6.6e-7),
-			expectedCacheRead: floatPtr(7e-9),
+			expectedInput:     1.5e-7,
+			expectedOutput:    floatPtr(6e-7),
+			expectedCacheRead: floatPtr(3e-9),
 		},
 		{
 			// deepseek-chat / deepseek-reasoner 已停止服务，统一按 flash 价兜底。
 			name:              "deepseek chat discontinued maps to flash",
 			model:             "deepseek-chat",
-			expectedInput:     2.2e-7,
-			expectedOutput:    floatPtr(6.6e-7),
-			expectedCacheRead: floatPtr(7e-9),
+			expectedInput:     1.5e-7,
+			expectedOutput:    floatPtr(6e-7),
+			expectedCacheRead: floatPtr(3e-9),
 		},
 		{
 			name:              "deepseek reasoner discontinued maps to flash",
 			model:             "deepseek-reasoner",
-			expectedInput:     2.2e-7,
-			expectedOutput:    floatPtr(6.6e-7),
-			expectedCacheRead: floatPtr(7e-9),
+			expectedInput:     1.5e-7,
+			expectedOutput:    floatPtr(6e-7),
+			expectedCacheRead: floatPtr(3e-9),
 		},
 		{
 			name:              "unknown deepseek maps to flash",
 			model:             "deepseek-foo",
-			expectedInput:     2.2e-7,
-			expectedOutput:    floatPtr(6.6e-7),
-			expectedCacheRead: floatPtr(7e-9),
+			expectedInput:     1.5e-7,
+			expectedOutput:    floatPtr(6e-7),
+			expectedCacheRead: floatPtr(3e-9),
 		},
 
 		// ---- 智谱 GLM（z.ai USD 口径）----
+		{
+			name:              "glm 5.3 flagship",
+			model:             "glm-5.3",
+			expectedInput:     1.4e-6,
+			expectedOutput:    floatPtr(4.4e-6),
+			expectedCacheRead: floatPtr(0.26e-6),
+		},
+		{
+			name:              "glm 5.3 flash",
+			model:             "glm-5.3-flash",
+			expectedInput:     0.15e-6,
+			expectedOutput:    floatPtr(0.5e-6),
+			expectedCacheRead: floatPtr(0.03e-6),
+		},
 		{
 			name:              "glm 5.2 flagship",
 			model:             "glm-5.2",
@@ -759,7 +813,21 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 			expectedInput:  0.1e-6,
 			expectedOutput: floatPtr(0.1e-6),
 		},
-		// 关键：5.1 / 5.2 必须先于 5 匹配（避免被 glm-5 抢走）
+		// 关键：5.1 / 5.2 / 5.3 必须先于 5 匹配（避免被 glm-5 抢走）
+		{
+			name:              "glm 5.3-flash vs glm 5.3 ordering (verbatim 5.3-flash)",
+			model:             "glm-5.3-flash",
+			expectedInput:     0.15e-6, // = glm-5.3-flash 价格（不是 glm-5.3 的 1.4e-6，更不是 glm-5 的 1e-6）
+			expectedOutput:    floatPtr(0.5e-6),
+			expectedCacheRead: floatPtr(0.03e-6),
+		},
+		{
+			name:              "glm 5.3 vs glm 5 ordering (verbatim 5.3)",
+			model:             "glm-5.3",
+			expectedInput:     1.4e-6, // = glm-5.3 价格（不是 glm-5 的 1e-6）
+			expectedOutput:    floatPtr(4.4e-6),
+			expectedCacheRead: floatPtr(0.26e-6),
+		},
 		{
 			name:              "glm 5.1 vs glm 5 ordering (verbatim 5.1)",
 			model:             "glm-5.1",
@@ -913,6 +981,13 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 			expectedCacheRead: floatPtr(0.03e-6),
 		},
 
+		// ---- 硅基流动 Qwen3 Embedding（仅输入计费）----
+		{name: "qwen3 embedding 8b vendor prefix", model: "Qwen/Qwen3-Embedding-8B", expectedInput: 0.04e-6, expectedOutput: floatPtr(0)},
+		{name: "qwen3 embedding 8b bare", model: "qwen3-embedding-8b", expectedInput: 0.04e-6, expectedOutput: floatPtr(0)},
+		{name: "qwen3 embedding 4b vendor prefix", model: "Qwen/Qwen3-Embedding-4B", expectedInput: 0.02e-6, expectedOutput: floatPtr(0)},
+		{name: "qwen3 embedding 0.6b vendor prefix", model: "Qwen/Qwen3-Embedding-0.6B", expectedInput: 0.01e-6, expectedOutput: floatPtr(0)},
+		{name: "qwen3 embedding 0.6b hyphen alias", model: "qwen3-embedding-0-6b", expectedInput: 0.01e-6, expectedOutput: floatPtr(0)},
+
 		// ---- 火山方舟 豆包 Embedding（多模态向量化）----
 		{
 			name:           "doubao embedding vision text rate",
@@ -928,6 +1003,10 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 
 		// ---- 负向用例 ----
 		{name: "qwen unknown no fallback", model: "qwen-max", expectNilPricing: true},
+		{name: "qwen3 embedding unknown size no fallback", model: "Qwen/Qwen3-Embedding-2B", expectNilPricing: true},
+		{name: "qwen3 embedding unknown suffix no fallback", model: "Qwen/Qwen3-Embedding-8B-Pro", expectNilPricing: true},
+		{name: "qwen3 embedding embedded name no fallback", model: "other-qwen3-embedding-8b", expectNilPricing: true},
+		{name: "qwen3 reranker absent endpoint no fallback", model: "Qwen/Qwen3-Reranker-8B", expectNilPricing: true},
 		// doubao-pro / doubao-embedding（纯文本）不在白名单，不回退；仅 doubao-embedding-vision 显式命中。
 		{name: "doubao unknown no fallback", model: "doubao-pro", expectNilPricing: true},
 		{name: "doubao text embedding no fallback", model: "doubao-embedding-text-240515", expectNilPricing: true},
@@ -973,6 +1052,49 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQwen3EmbeddingPricing_FallbackAndOverrides(t *testing.T) {
+	const model = "Qwen/Qwen3-Embedding-8B"
+	svc := newTestBillingService()
+
+	pricing, err := svc.GetModelPricing(model)
+	require.NoError(t, err)
+	require.InDelta(t, 0.04e-6, pricing.InputPricePerToken, 1e-12)
+	require.Zero(t, pricing.OutputPricePerToken)
+
+	usage := UsageTokens{InputTokens: 1000}
+	cost, err := svc.CalculateCost(model, usage, 1.0)
+	require.NoError(t, err)
+	require.InDelta(t, 1000*0.04e-6, cost.TotalCost, 1e-12)
+
+	channelPrice := 0.07e-6
+	channelPricing, err := svc.GetModelPricingWithChannel(model, &ChannelModelPricing{InputPrice: &channelPrice})
+	require.NoError(t, err)
+	require.InDelta(t, channelPrice, channelPricing.InputPricePerToken, 1e-12)
+	// Request-level overrides must not mutate the shared fallback price.
+	require.InDelta(t, 0.04e-6, svc.fallbackPrices["qwen3-embedding-8b"].InputPricePerToken, 1e-12)
+
+	dynamic := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		strings.ToLower(model): {InputCostPerToken: 0.09e-6},
+	}}
+	withCatalog := NewBillingService(&config.Config{}, dynamic)
+	catalogPricing, err := withCatalog.GetModelPricing(model)
+	require.NoError(t, err)
+	require.InDelta(t, 0.09e-6, catalogPricing.InputPricePerToken, 1e-12)
+}
+
+func TestCalculateOpenAIRecordUsageCost_Qwen3EmbeddingFallback(t *testing.T) {
+	const model = "Qwen/Qwen3-Embedding-8B"
+	svc := &OpenAIGatewayService{billingService: newTestBillingService()}
+	apiKey := &APIKey{Group: &Group{ID: 1, Platform: PlatformOpenAI}}
+	cost, err := svc.calculateOpenAIRecordUsageCost(
+		context.Background(), &OpenAIForwardResult{Model: model}, apiKey, []string{model},
+		1.0, 1.0, UsageTokens{InputTokens: 1000}, "", time.Time{},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, cost)
+	require.InDelta(t, 1000*0.04e-6, cost.TotalCost, 1e-12)
 }
 
 // doubao-embedding-vision 是首个图文不同价的 embedding：文本 ¥0.7/MTok、图片 ¥1.8/MTok。
@@ -1316,6 +1438,246 @@ func TestCalculateCost_SupportsCacheBreakdown(t *testing.T) {
 	expected5m := float64(tokens.CacheCreation5mTokens) * 4e-6
 	expected1h := float64(tokens.CacheCreation1hTokens) * 5e-6
 	require.InDelta(t, expected5m+expected1h, cost.CacheCreationCost, 1e-10)
+}
+
+func TestComputeCacheCreationCost_CapsContradictoryBreakdownAtAggregate(t *testing.T) {
+	svc := &BillingService{}
+	pricing := &ModelPricing{
+		SupportsCacheBreakdown: true,
+		CacheCreation5mPrice:   1,
+		CacheCreation1hPrice:   1,
+	}
+
+	tokens := UsageTokens{
+		CacheCreationTokens:   463184,
+		CacheCreation5mTokens: 463184,
+		CacheCreation1hTokens: 463184,
+	}
+
+	cost := svc.computeCacheCreationCost(pricing, tokens, 1, 0, false)
+	require.Equal(t, float64(tokens.CacheCreationTokens), cost,
+		"billed cache-creation token equivalent must not exceed the positive aggregate")
+}
+
+func TestNormalizeCacheCreationBreakdown_BillingSafetyInvariant(t *testing.T) {
+	tests := []struct {
+		name   string
+		tokens UsageTokens
+		want5m int
+		want1h int
+	}{
+		{
+			name:   "preserves ratio when capping",
+			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: 90, CacheCreation1hTokens: 60},
+			want5m: 60,
+			want1h: 40,
+		},
+		{
+			name:   "details below aggregate unchanged",
+			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: 30, CacheCreation1hTokens: 60},
+			want5m: 30,
+			want1h: 60,
+		},
+		{
+			name:   "absent 5m detail unchanged",
+			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation1hTokens: 60},
+			want5m: 0,
+			want1h: 60,
+		},
+		{
+			name:   "absent 1h detail unchanged",
+			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: 30},
+			want5m: 30,
+			want1h: 0,
+		},
+		{
+			name:   "negative detail clamped",
+			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: -50, CacheCreation1hTokens: 60},
+			want5m: 0,
+			want1h: 60,
+		},
+		{
+			name:   "negative detail cannot hide oversized positive detail",
+			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: -50, CacheCreation1hTokens: 150},
+			want5m: 0,
+			want1h: 100,
+		},
+		{
+			name:   "integer boundary details capped without overflow",
+			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: int(^uint(0) >> 1), CacheCreation1hTokens: int(^uint(0) >> 1)},
+			want5m: 50,
+			want1h: 50,
+		},
+		{
+			name:   "integer boundary aggregate avoids float conversion overflow",
+			tokens: UsageTokens{CacheCreationTokens: int(^uint(0) >> 1), CacheCreation5mTokens: int(^uint(0) >> 1), CacheCreation1hTokens: 1},
+			want5m: int(^uint(0) >> 1),
+			want1h: 0,
+		},
+		{
+			name:   "zero aggregate unchanged",
+			tokens: UsageTokens{CacheCreation5mTokens: 90, CacheCreation1hTokens: 60},
+			want5m: 90,
+			want1h: 60,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got5m, got1h := normalizeCacheCreationBreakdown(tt.tokens)
+			require.Equal(t, tt.want5m, got5m)
+			require.Equal(t, tt.want1h, got1h)
+		})
+	}
+}
+
+func TestComputeCacheCreationCost_PreservesZeroDetailFallback(t *testing.T) {
+	svc := &BillingService{}
+	pricing := &ModelPricing{
+		SupportsCacheBreakdown: true,
+		CacheCreation5mPrice:   4e-6,
+		CacheCreation1hPrice:   5e-6,
+	}
+
+	tests := []struct {
+		name   string
+		tokens UsageTokens
+	}{
+		{name: "zero details", tokens: UsageTokens{CacheCreationTokens: 100}},
+		{name: "one negative detail", tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: -25}},
+		{name: "both negative details", tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: -25, CacheCreation1hTokens: -75}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cost := svc.computeCacheCreationCost(pricing, tt.tokens, 1, 0, false)
+			require.InDelta(t, 100*4e-6, cost, 1e-12)
+		})
+	}
+}
+
+// newCacheBreakdownBillingService 使用 Claude Sonnet 公开价卡口径的 5m/1h 缓存创建单价，
+// 便于在回归测试中写出修复前后的精确金额。
+func newCacheBreakdownBillingService(pricing ModelPricing) *BillingService {
+	pricing.InputPricePerToken = 3e-6
+	pricing.OutputPricePerToken = 15e-6
+	pricing.SupportsCacheBreakdown = true
+	pricing.CacheCreation5mPrice = 3.75e-6
+	pricing.CacheCreation1hPrice = 6e-6
+	return &BillingService{
+		cfg:            &config.Config{},
+		fallbackPrices: map[string]*ModelPricing{"claude-sonnet-4": &pricing},
+	}
+}
+
+// 线上事故形态：message_start 报 1h=463184、message_delta 报 5m=463184，聚合值仍为 463184。
+// 修复前：463184*3.75e-6 + 463184*6e-6 = 1.73694 + 2.779104 = 4.516044（按 926368 token 计费，多收一倍）。
+// 修复后：按 1:1 比例缩放为 231592/231592 → 0.86847 + 1.389552 = 2.258022，计费 token 恰好等于聚合值。
+func TestCalculateCost_ContradictoryCacheBreakdownBilledOnceAtAggregate(t *testing.T) {
+	svc := newCacheBreakdownBillingService(ModelPricing{})
+	tokens := UsageTokens{
+		InputTokens:           10,
+		OutputTokens:          5,
+		CacheCreationTokens:   463184,
+		CacheCreation5mTokens: 463184,
+		CacheCreation1hTokens: 463184,
+	}
+
+	const doubleCountedCacheCreationCost = 4.516044
+	const cappedCacheCreationCost = 2.258022
+	baseCost := 10*3e-6 + 5*15e-6
+
+	cost, err := svc.CalculateCost("claude-sonnet-4", tokens, 1.5)
+	require.NoError(t, err)
+	require.InDelta(t, cappedCacheCreationCost, cost.CacheCreationCost, 1e-9)
+	require.Less(t, cost.CacheCreationCost, doubleCountedCacheCreationCost)
+	require.InDelta(t, baseCost+cappedCacheCreationCost, cost.TotalCost, 1e-9)
+	require.InDelta(t, (baseCost+cappedCacheCreationCost)*1.5, cost.ActualCost, 1e-9)
+
+	// usage 明细本身不被改写（日志字段保持上游原值），只有计费使用规范化后的明细。
+	require.Equal(t, 463184, tokens.CacheCreation5mTokens)
+	require.Equal(t, 463184, tokens.CacheCreation1hTokens)
+}
+
+// 不矛盾的明细（之和 <= 聚合值、聚合值缺失、只有聚合值）计费金额逐分不变。
+func TestCalculateCost_ConsistentCacheBreakdownUnchanged(t *testing.T) {
+	svc := newCacheBreakdownBillingService(ModelPricing{})
+	tests := []struct {
+		name   string
+		tokens UsageTokens
+		want   float64
+	}{
+		{
+			name:   "sum equals aggregate",
+			tokens: UsageTokens{CacheCreationTokens: 150000, CacheCreation5mTokens: 100000, CacheCreation1hTokens: 50000},
+			want:   100000*3.75e-6 + 50000*6e-6, // 0.375 + 0.3 = 0.675
+		},
+		{
+			name:   "sum below aggregate",
+			tokens: UsageTokens{CacheCreationTokens: 150000, CacheCreation5mTokens: 30000, CacheCreation1hTokens: 60000},
+			want:   30000*3.75e-6 + 60000*6e-6, // 0.1125 + 0.36 = 0.4725
+		},
+		{
+			name:   "aggregate missing keeps details",
+			tokens: UsageTokens{CacheCreation5mTokens: 100000, CacheCreation1hTokens: 50000},
+			want:   0.675,
+		},
+		{
+			name:   "aggregate only falls back to 5m price",
+			tokens: UsageTokens{CacheCreationTokens: 150000},
+			want:   150000 * 3.75e-6, // 0.5625
+		},
+		{
+			name:   "delta-authoritative breakdown after stream merge",
+			tokens: UsageTokens{CacheCreationTokens: 463184, CacheCreation5mTokens: 463184},
+			want:   463184 * 3.75e-6, // 1.73694
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cost, err := svc.CalculateCost("claude-sonnet-4", tt.tokens, 1.0)
+			require.NoError(t, err)
+			require.InDelta(t, tt.want, cost.CacheCreationCost, 1e-12)
+		})
+	}
+}
+
+// 长上下文倍率路径：规范化后的明细仍整体乘以 LongContextInputMultiplier。
+// 修复前：(463184*3.75e-6 + 463184*6e-6) * 2 = 9.032088；修复后：2.258022 * 2 = 4.516044。
+func TestCalculateCost_ContradictoryCacheBreakdownWithLongContextMultiplier(t *testing.T) {
+	svc := newCacheBreakdownBillingService(ModelPricing{
+		LongContextInputThreshold:   200000,
+		LongContextInputMultiplier:  2,
+		LongContextOutputMultiplier: 1.5,
+	})
+	tokens := UsageTokens{
+		CacheCreationTokens:   463184,
+		CacheCreation5mTokens: 463184,
+		CacheCreation1hTokens: 463184,
+	}
+
+	cost, err := svc.CalculateCost("claude-sonnet-4", tokens, 1.0)
+	require.NoError(t, err)
+	require.InDelta(t, 4.516044, cost.CacheCreationCost, 1e-9)
+}
+
+// 长上下文显式缓存创建价格路径按聚合值计费，不读 5m/1h 明细，修复前后都是 463184*7.5e-6 = 3.47388。
+func TestCalculateCost_ExplicitLongContextCacheCreationPriceIgnoresBreakdown(t *testing.T) {
+	svc := newCacheBreakdownBillingService(ModelPricing{
+		LongContextInputThreshold:   200000,
+		LongContextInputMultiplier:  2,
+		LongContextOutputMultiplier: 1.5,
+		CacheCreationPriceAbove272K: 7.5e-6,
+	})
+	tokens := UsageTokens{
+		CacheCreationTokens:   463184,
+		CacheCreation5mTokens: 463184,
+		CacheCreation1hTokens: 463184,
+	}
+
+	cost, err := svc.CalculateCost("claude-sonnet-4", tokens, 1.0)
+	require.NoError(t, err)
+	require.InDelta(t, 3.47388, cost.CacheCreationCost, 1e-9)
 }
 
 func TestCalculateCost_LargeTokenCount(t *testing.T) {
@@ -1798,8 +2160,9 @@ func TestGetModelPricingWithChannel_UnknownModelReturnsError(t *testing.T) {
 	require.Contains(t, err.Error(), "pricing not found")
 }
 
-func TestGetModelPricingWithChannel_NilImageOutputPriceZerosAndMarksExplicit(t *testing.T) {
+func TestGetModelPricingWithChannel_NilImageOutputPriceInheritsCatalog(t *testing.T) {
 	svc := newTestBillingService()
+	svc.fallbackPrices["claude-sonnet-4"].ImageOutputPricePerToken = 30e-6
 
 	chPricing := &ChannelModelPricing{
 		InputPrice:  testPtrFloat64(10e-6),
@@ -1809,8 +2172,52 @@ func TestGetModelPricingWithChannel_NilImageOutputPriceZerosAndMarksExplicit(t *
 	pricing, err := svc.GetModelPricingWithChannel("claude-sonnet-4", chPricing)
 	require.NoError(t, err)
 
-	require.Equal(t, 0.0, pricing.ImageOutputPricePerToken)
+	require.InDelta(t, 30e-6, pricing.ImageOutputPricePerToken, 1e-12)
+	require.False(t, pricing.ImageOutputPriceExplicit)
+	breakdown := svc.computeTokenBreakdown(pricing, UsageTokens{OutputTokens: 10, ImageOutputTokens: 10}, 1, "", true)
+	require.InDelta(t, 10*30e-6, breakdown.ImageOutputCost, 1e-12)
+}
+
+func TestGetModelPricingWithChannel_ExplicitZeroImageOutputPriceRemainsFree(t *testing.T) {
+	svc := newTestBillingService()
+	svc.fallbackPrices["claude-sonnet-4"].ImageOutputPricePerToken = 30e-6
+	pricing, err := svc.GetModelPricingWithChannel("claude-sonnet-4", &ChannelModelPricing{
+		ImageOutputPrice: testPtrFloat64(0),
+	})
+	require.NoError(t, err)
 	require.True(t, pricing.ImageOutputPriceExplicit)
+	require.Zero(t, pricing.ImageOutputPricePerToken)
+	breakdown := svc.computeTokenBreakdown(pricing, UsageTokens{OutputTokens: 10, ImageOutputTokens: 10}, 1, "", true)
+	require.Zero(t, breakdown.ImageOutputCost)
+}
+
+func TestGetModelPricingWithChannel_UnsetImagePriceUsesDynamicCatalogOrTextFallback(t *testing.T) {
+	svc := NewBillingService(&config.Config{}, newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
+		"image-with-catalog-price": {
+			InputCostPerToken: 5e-6, OutputCostPerToken: 10e-6,
+			InputCostPerImageToken: 8e-6, OutputCostPerImageToken: 30e-6,
+		},
+		"image-without-catalog-price": {
+			InputCostPerToken: 5e-6, OutputCostPerToken: 10e-6,
+		},
+	}))
+	for _, tc := range []struct {
+		model string
+		want  float64
+	}{
+		{model: "image-with-catalog-price", want: 30e-6},
+		{model: "image-without-catalog-price", want: 20e-6},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			pricing, err := svc.GetModelPricingWithChannel(tc.model, &ChannelModelPricing{
+				OutputPrice: testPtrFloat64(20e-6),
+			})
+			require.NoError(t, err)
+			require.False(t, pricing.ImageOutputPriceExplicit)
+			cost := svc.computeTokenBreakdown(pricing, UsageTokens{OutputTokens: 10, ImageOutputTokens: 10}, 1, "", false)
+			require.InDelta(t, 10*tc.want, cost.ImageOutputCost, 1e-12)
+		})
+	}
 }
 
 func TestGetModelPricingWithChannel_DoesNotPolluteFallbackPricing(t *testing.T) {
@@ -1824,7 +2231,7 @@ func TestGetModelPricingWithChannel_DoesNotPolluteFallbackPricing(t *testing.T) 
 	require.NoError(t, err)
 	require.InDelta(t, 10e-6, pricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, 50e-6, pricing.OutputPricePerToken, 1e-12)
-	require.True(t, pricing.ImageOutputPriceExplicit)
+	require.False(t, pricing.ImageOutputPriceExplicit)
 
 	fallback := svc.fallbackPrices["claude-sonnet-4"]
 	require.InDelta(t, 3e-6, fallback.InputPricePerToken, 1e-12)
@@ -1895,7 +2302,7 @@ func TestCalculateCostUnified_DeepseekDefaultCardForcesStaleJSONPriceAndAppliesP
 	resolver := NewModelPricingResolver(nil, bs)
 
 	tokens := UsageTokens{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 1000}
-	offPeakTotal := 1000*2.2e-7 + 500*6.6e-7 + 1000*7e-9
+	offPeakTotal := 1000*1.5e-7 + 500*6e-7 + 1000*3e-9
 
 	withDeepseekNow(t, time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)) // 周一低谷
 	offPeak, err := bs.CalculateCostUnified(CostInput{

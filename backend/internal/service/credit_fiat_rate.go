@@ -44,6 +44,23 @@ func NewCreditFiatRate(multiplier float64) *CreditFiatRate {
 	}
 }
 
+// CardFiatPerCredit 返回每日额度为 D 的订阅卡的额度法币单价 u(D)。
+// 用量折算（RegisterSubscription）和订阅卡展示（fiat_per_credit）共用这一个入口，
+// 保证「卡的额度值多少钱」在两处是同一个数。D 或单价非法时返回 0，调用方据此回落。
+//
+// 注意：这里按当前定价配置计算。管理员调整定价曲线后，老卡会按新曲线折算；
+// 要完全精确需改读下单快照里的 unit_price，目前未做。
+func CardFiatPerCredit(cfg SubscriptionPricingConfig, dailyAmountUSD float64) float64 {
+	if math.IsNaN(dailyAmountUSD) || math.IsInf(dailyAmountUSD, 0) || dailyAmountUSD <= 0 {
+		return 0
+	}
+	unit := cfg.UnitPrice(dailyAmountUSD)
+	if math.IsNaN(unit) || math.IsInf(unit, 0) || unit <= 0 {
+		return 0
+	}
+	return unit
+}
+
 // RegisterSubscription 登记一张订阅卡的法币单价，供该卡产生的用量记录折算。
 // dailyAmountUSD 是卡的每日额度 D；单价直接取定价公式的 u(D)，与下单时冻结的
 // 快照口径一致（ChangeSubscriptionPlan 估值也是这么反算的）。
@@ -52,11 +69,8 @@ func (r *CreditFiatRate) RegisterSubscription(subID int64, dailyAmountUSD float6
 	if r == nil || subID <= 0 {
 		return
 	}
-	if math.IsNaN(dailyAmountUSD) || math.IsInf(dailyAmountUSD, 0) || dailyAmountUSD <= 0 {
-		return
-	}
-	unit := cfg.UnitPrice(dailyAmountUSD)
-	if math.IsNaN(unit) || math.IsInf(unit, 0) || unit <= 0 {
+	unit := CardFiatPerCredit(cfg, dailyAmountUSD)
+	if unit <= 0 {
 		return
 	}
 	r.subFiatPerCredit[subID] = unit

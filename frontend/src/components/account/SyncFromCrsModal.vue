@@ -109,7 +109,7 @@
             >{{ t('admin.accounts.crsSelectAll') }}</button>
             <button
               type="button"
-              class="text-xs text-gray-500 hover:text-gray-600 dark:text-gray-400"
+              class="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400"
               @click="selectNone"
             >{{ t('admin.accounts.crsSelectNone') }}</button>
           </div>

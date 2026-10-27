@@ -1,10 +1,16 @@
 package service
 
 import (
+	"errors"
+
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 )
+
+const CodexOfficialClientsOnlyMessage = "This account only allows Codex official clients"
+
+var ErrCodexClientRestricted = errors.New("codex_cli_only restriction: only codex official clients are allowed")
 
 const (
 	// CodexClientRestrictionReasonDisabled 表示账号未开启 codex_cli_only。

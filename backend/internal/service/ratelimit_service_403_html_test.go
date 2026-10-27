@@ -68,6 +68,8 @@ func (h *openAI403HTMLTestHarness) requireNoAccountPenalty(t *testing.T) {
 const openAI403HTMLBody = "<!DOCTYPE html>\n<html><head><title>403 Forbidden</title></head>" +
 	"<body><h1>403 Forbidden</h1></body></html>"
 
+const openAI403Cloudflare1010Body = "error code: 1010\n"
+
 func TestHandleUpstreamError_OpenAIHTML403DoesNotPenalizeAccount(t *testing.T) {
 	cases := []struct {
 		name string
@@ -100,6 +102,51 @@ func TestHandleUpstreamError_OpenAIHTML403RepeatedNeverEscalates(t *testing.T) {
 	}
 
 	h.requireNoAccountPenalty(t)
+}
+
+// Cloudflare 1010（bot 特征拦截）在请求到达账号 API 之前发生：已在阈值边缘的
+// 账号也不得因此被禁用、临时下线或递增 403 计数。fork 没有 OpenCode 平台，
+// 覆盖 OpenAI 的 API key 与 OAuth 两类账号。
+func TestHandleUpstreamError_OpenAICloudflare1010DoesNotPenalizeAccount(t *testing.T) {
+	cases := []struct {
+		name        string
+		accountType string
+		body        string
+	}{
+		{"apikey_plain", AccountTypeAPIKey, openAI403Cloudflare1010Body},
+		{"oauth_plain", AccountTypeOAuth, openAI403Cloudflare1010Body},
+		{"uppercase_with_whitespace", AccountTypeAPIKey, "  Error Code: 1010  "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newOpenAI403HTMLTestHarness(t, 606, int64(openAI403DisableThreshold))
+			h.account.Type = tc.accountType
+
+			shouldDisable := h.handle(tc.body)
+
+			require.False(t, shouldDisable, "Cloudflare 1010 不得判定账号应下线")
+			h.requireNoAccountPenalty(t)
+		})
+	}
+}
+
+func TestIsCloudflareBotBlockResponse(t *testing.T) {
+	require.True(t, isCloudflareBotBlockResponse([]byte(openAI403Cloudflare1010Body)))
+	require.False(t, isCloudflareBotBlockResponse([]byte("error code: 1020")))
+	require.False(t, isCloudflareBotBlockResponse([]byte(`{"error":{"message":"Your account is not authorized"}}`)))
+	require.False(t, isCloudflareBotBlockResponse(nil))
+}
+
+// 作用域守卫：1010 放行只在 OpenAI 403 处理里生效，其它平台的 403 语义不变。
+func TestHandleUpstreamError_Cloudflare1010OnOtherPlatformsUnchanged(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{ID: 607, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}
+
+	require.True(t, svc.HandleUpstreamError(
+		context.Background(), account, http.StatusForbidden, http.Header{}, []byte(openAI403Cloudflare1010Body),
+	))
+	require.Equal(t, 1, repo.setErrorCalls)
 }
 
 // 对照不变式：真正的结构化 JSON 403 是账号级证据，处罚链路必须原样保留。

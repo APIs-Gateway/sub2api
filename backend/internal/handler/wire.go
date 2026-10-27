@@ -46,6 +46,13 @@ func ProvideAdminHandlers(
 	pointsHandler *admin.PointsHandler,
 	promptAuditHandler *securityaudit.PromptEventAdminHandler,
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
+	pricingQuoteHandler *admin.PricingQuoteHandler,
+	pricingMatrixHandler *admin.PricingMatrixHandler,
+	adminTokenHandler *admin.AdminTokenHandler,
+	auditLogHandler *admin.AuditLogHandler,
+	apiKeyFallbackHandler *admin.APIKeyFallbackHandler,
+	pricingSnapshotHandler *admin.PricingSnapshotHandler,
+	pricingWriteHandler *admin.PricingWriteHandler,
 ) *AdminHandlers {
 	if accountHandler != nil {
 		accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
@@ -85,6 +92,13 @@ func ProvideAdminHandlers(
 		Compliance:             complianceHandler,
 		Points:                 pointsHandler,
 		PromptAudit:            promptAuditHandler,
+		PricingQuote:           pricingQuoteHandler,
+		PricingMatrix:          pricingMatrixHandler,
+		AdminToken:             adminTokenHandler,
+		AuditLog:               auditLogHandler,
+		APIKeyFallback:         apiKeyFallbackHandler,
+		PricingSnapshot:        pricingSnapshotHandler,
+		PricingWrite:           pricingWriteHandler,
 	}
 }
 
@@ -126,10 +140,18 @@ func ProvideOpenAIGatewayHandler(
 	opsService *service.OpsService,
 	cfg *config.Config,
 	coordinator *securityaudit.Coordinator,
+	groupRouteService service.GroupRouteService,
+	settingService *service.SettingService,
+	groupChainBreaker service.GroupChainBreakerGate,
 ) *OpenAIGatewayHandler {
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
 	h.securityAuditCoordinator = coordinator
+	// Key 级分组回退链运行时：全局开关默认关闭，关闭时（以及 Key 没配链时）所有入口都走原路径。
+	// 显式判空，避免把 nil 指针装进接口造成「非 nil 接口、nil 指针」。
+	if settingService != nil {
+		h.groupFallback = newGroupFallbackRuntime(groupRouteService, settingService, groupChainBreaker)
+	}
 	return h
 }
 
@@ -189,6 +211,7 @@ func ProvideHandlers(
 	checkinHandler *CheckinHandler,
 	pointsHandler *PointsHandler,
 	legacyInviteHandler *LegacyInviteHandler,
+	apiKeyFallbackHandler *APIKeyFallbackHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 ) *Handlers {
@@ -213,6 +236,7 @@ func ProvideHandlers(
 		Checkin:          checkinHandler,
 		Points:           pointsHandler,
 		LegacyInvite:     legacyInviteHandler,
+		APIKeyFallback:   apiKeyFallbackHandler,
 	}
 }
 
@@ -238,6 +262,7 @@ var ProviderSet = wire.NewSet(
 	NewCheckinHandler,
 	NewPointsHandler,
 	NewLegacyInviteHandler,
+	NewAPIKeyFallbackHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,
@@ -273,6 +298,13 @@ var ProviderSet = wire.NewSet(
 	admin.NewAffiliateHandler,
 	admin.NewComplianceHandler,
 	admin.NewPointsHandler,
+	admin.NewPricingQuoteHandler,
+	admin.NewPricingMatrixHandler,
+	admin.NewAdminTokenHandler,
+	admin.NewAuditLogHandler,
+	admin.NewAPIKeyFallbackHandler,
+	admin.NewPricingSnapshotHandler,
+	admin.NewPricingWriteHandler,
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,

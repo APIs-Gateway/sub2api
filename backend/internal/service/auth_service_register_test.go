@@ -174,6 +174,31 @@ func (s *emailCacheStub) DeleteVerificationCode(ctx context.Context, email strin
 	return nil
 }
 
+func (s *emailCacheStub) VerifyVerificationCode(_ context.Context, _ string, code string, limit int) (VerificationCodeResult, error) {
+	if s.err != nil {
+		return VerificationCodeInvalid, s.err
+	}
+	if s.data == nil {
+		return VerificationCodeInvalid, nil
+	}
+	if s.data.Attempts >= limit {
+		return VerificationCodeMaxed, nil
+	}
+	s.data.Attempts++
+	if s.data.Code == code {
+		s.data = nil
+		return VerificationCodeValid, nil
+	}
+	if s.data.Attempts >= limit {
+		return VerificationCodeMaxed, nil
+	}
+	return VerificationCodeInvalid, nil
+}
+
+func (s *emailCacheStub) VerifyNotifyVerifyCode(context.Context, string, string, int) (VerificationCodeResult, error) {
+	return VerificationCodeInvalid, nil
+}
+
 func (s *emailCacheStub) GetNotifyVerifyCode(ctx context.Context, email string) (*VerificationCodeData, error) {
 	return nil, nil
 }
@@ -203,6 +228,26 @@ func (s *emailCacheStub) IsPasswordResetEmailInCooldown(ctx context.Context, ema
 }
 
 func (s *emailCacheStub) SetPasswordResetEmailCooldown(ctx context.Context, email string, ttl time.Duration) error {
+	return nil
+}
+
+func (s *emailCacheStub) StagePasswordResetToken(context.Context, string, string, *PasswordResetTokenData, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *emailCacheStub) PromotePasswordResetToken(context.Context, string, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *emailCacheStub) DiscardPendingPasswordResetToken(context.Context, string, string) error {
+	return nil
+}
+
+func (s *emailCacheStub) ReservePasswordResetEmailCooldown(context.Context, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *emailCacheStub) ReleasePasswordResetEmailCooldown(context.Context, string, string) error {
 	return nil
 }
 
@@ -288,17 +333,27 @@ func TestAuthService_Register_SnapshotsPlatformQuotaDefaults(t *testing.T) {
 	require.Len(t, quotaRepo.bulkInsertCalls, 1)
 
 	records := quotaRepo.bulkInsertCalls[0]
-	var openaiRecord *UserPlatformQuotaRecord
-	for i := range records {
-		if records[i].Platform == "openai" {
-			openaiRecord = &records[i]
-			break
-		}
-	}
-	require.NotNil(t, openaiRecord, "expected openai platform record")
+	require.Len(t, records, 1, "only platforms with a configured limit get a row")
+	openaiRecord := records[0]
+	require.Equal(t, "openai", openaiRecord.Platform)
 	require.Equal(t, int64(77), openaiRecord.UserID)
 	require.NotNil(t, openaiRecord.WeeklyLimitUSD)
 	require.InDelta(t, 12.34, *openaiRecord.WeeklyLimitUSD, 0.0001)
+}
+
+func TestAuthService_Register_NoDefaultQuotasSkipsSnapshot(t *testing.T) {
+	repo := &userRepoStub{nextID: 78}
+	quotaRepo := &userPlatformQuotaRepoStub{}
+
+	service := newAuthService(repo, map[string]string{
+		SettingKeyRegistrationEnabled: "true",
+	}, nil, quotaRepo)
+
+	_, user, err := service.Register(context.Background(), "newuser2@test.com", "password")
+	require.NoError(t, err)
+	require.NotNil(t, user)
+
+	require.Empty(t, quotaRepo.bulkInsertCalls, "no configured default limit must not create quota rows")
 }
 
 func TestAuthService_Register_DoesNotSnapshotOnDisabled(t *testing.T) {
@@ -842,4 +897,8 @@ func TestCanBypassRegistrationDisabledForOAuth(t *testing.T) {
 			require.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func (s *emailCacheStub) ConsumePasswordResetToken(context.Context, string, string) (bool, error) {
+	return false, nil
 }

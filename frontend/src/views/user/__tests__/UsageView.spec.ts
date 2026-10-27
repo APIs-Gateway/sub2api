@@ -1,8 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
 
 import UsageView from '../UsageView.vue'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import Select, { type SelectOption } from '@/components/common/Select.vue'
+import DateRangePicker from '@/components/common/DateRangePicker.vue'
 
 const { query, getStatsByDateRange, list, showError, showWarning, showSuccess, showInfo, publicSettings } =
   vi.hoisted(() => ({
@@ -63,6 +67,7 @@ const messages: Record<string, string> = {
   'usage.imageSizeUnknown': 'unknown',
   'usage.imageUnitPrice': 'Per-image price',
   'usage.imageTotalPrice': 'Image total price',
+  'usage.unitPrice': 'Unit price',
   'admin.usage.billingModeToken': 'Token',
   'admin.usage.billingModePerRequest': 'Per request',
   'admin.usage.billingModeImage': 'Image',
@@ -70,7 +75,8 @@ const messages: Record<string, string> = {
   'usage.balanceDeducted': 'Balance deducted',
   'usage.subscriptionDeducted': 'Plan quota deducted',
   'usage.yourSpend': 'Your spend',
-  'usage.fiatTotalApprox': 'estimated at top-up rate',
+  'usage.spendFromBalance': 'Balance',
+  'usage.spendFromPlan': 'Plan',
   'usage.currencyFiat': '¥',
   'usage.currencyUsd': '$',
   'usage.currencySwitchLabel': 'Switch display unit',
@@ -126,6 +132,11 @@ const DataTableStub = {
   `,
 }
 
+// UsageView 经 useRateDisplay 用到 auth / subscriptions store，没有激活的 Pinia 会在 setup 里抛错。
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
+
 describe('user UsageView tooltip', () => {
   beforeEach(() => {
     query.mockReset()
@@ -155,6 +166,8 @@ describe('user UsageView tooltip', () => {
   })
 
   it('shows fast service tier and unit prices in user tooltip', async () => {
+    // 官方价按后台汇率 7 换成人民币展示
+    publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7 }
     query.mockResolvedValue({
       items: [
         {
@@ -233,17 +246,20 @@ describe('user UsageView tooltip', () => {
     expect(text).toContain('Service tier')
     expect(text).toContain('Fast')
     expect(text).toContain('Rate')
-    expect(text).toContain('1.00x')
-    // tooltip 原本只有一行叫 Billed，已拆成「官方价 / 扣除余额 / 你的花费」三行。
-    // 这条 fixture 没有 billing_type，按钱包扣费展示。
-    expect(text).toContain('Balance deducted')
-    expect(text).toContain('$0.092883')
-    expect(text).toContain('$5.0000 / 1M tokens')
-    expect(text).toContain('$30.0000 / 1M tokens')
+    // 人民币钱包口径：缺 fiat_cost 的老行回落 1 / 13；官方价仍按 7 元汇率展示。
+    expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('0.0769x')
+    expect(text).toContain('Official price')
+    expect(text).toContain('¥0.6502')
+    expect(wrapper.get('[data-test="tip-spend"]').text()).toBe('¥0.007145 Balance')
+    expect(text).not.toContain('Balance deducted')
+    expect(text).not.toContain('$0.092883')
+    expect(text).toContain('¥35.00 / 1M tokens')
+    expect(text).toContain('¥210.00 / 1M tokens')
     expect(text).toContain('Cache write price')
-    expect(text).toContain('$6.2500 / 1M tokens')
+    expect(text).toContain('¥43.75 / 1M tokens')
     expect(text).toContain('Cache read price')
-    expect(text).toContain('$0.2500 / 1M tokens')
+    expect(text).toContain('¥1.75 / 1M tokens')
+    expect(text).not.toContain('$5.00')
   })
 
   it('exports csv with input and output unit price columns', async () => {
@@ -344,6 +360,193 @@ describe('user UsageView tooltip', () => {
     window.URL.createObjectURL = originalCreateObjectURL
     window.URL.revokeObjectURL = originalRevokeObjectURL
     clickSpy.mockRestore()
+  })
+
+  it('exports missing reasoning effort as a bare dash but still guards formula-like values', async () => {
+    query.mockResolvedValue({
+      items: [
+        {
+          request_id: 'req-user-export-dash',
+          actual_cost: 0.1,
+          total_cost: 0.1,
+          rate_multiplier: 1,
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_creation_tokens: 0,
+          cache_read_tokens: 0,
+          image_count: 0,
+          image_size: null,
+          first_token_ms: null,
+          duration_ms: 1,
+          created_at: '2026-03-08T00:00:00Z',
+          model: 'gpt-5.4',
+          reasoning_effort: null,
+          api_key: { name: '-1+1' },
+        },
+      ],
+      total: 1,
+      pages: 1,
+    })
+    getStatsByDateRange.mockResolvedValue({
+      total_requests: 1,
+      total_tokens: 2,
+      total_cost: 0.1,
+      avg_duration_ms: 1,
+    })
+    list.mockResolvedValue({ items: [] })
+
+    let exportedBlob: Blob | null = null
+    const originalCreateObjectURL = window.URL.createObjectURL
+    const originalRevokeObjectURL = window.URL.revokeObjectURL
+    window.URL.createObjectURL = vi.fn((blob: Blob | MediaSource) => {
+      exportedBlob = blob as Blob
+      return 'blob:usage-export'
+    }) as typeof window.URL.createObjectURL
+    window.URL.revokeObjectURL = vi.fn(() => {}) as typeof window.URL.revokeObjectURL
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Pagination: true,
+          EmptyState: true,
+          Select: true,
+          DateRangePicker: true,
+          DataTable: DataTableStub,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    const setupState = (wrapper.vm as any).$?.setupState
+    await setupState.exportToCSV()
+
+    expect(exportedBlob).not.toBeNull()
+    const csv = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsText(exportedBlob as Blob)
+    })
+    // Missing reasoning effort stays a plain "-" instead of the quoted "'-".
+    expect(csv).toContain(',"\'-1+1",gpt-5.4,-,')
+    expect(csv).not.toContain('"\'-"')
+    expect(showSuccess).toHaveBeenCalled()
+
+    window.URL.createObjectURL = originalCreateObjectURL
+    window.URL.revokeObjectURL = originalRevokeObjectURL
+    clickSpy.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('keeps the initial filters, sort, and filename while exporting multiple pages', async () => {
+    const exportRow = {
+      request_id: 'req-user-export-pages',
+      actual_cost: 0.1,
+      total_cost: 0.1,
+      rate_multiplier: 1,
+      input_tokens: 1,
+      output_tokens: 1,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      image_count: 0,
+      image_size: null,
+      first_token_ms: null,
+      duration_ms: 1,
+      created_at: '2026-03-08T00:00:00Z',
+      model: 'gpt-5.4',
+      reasoning_effort: null,
+      api_key: { name: 'demo-key' },
+    }
+    const pageResponse = { items: [exportRow], total: 101, pages: 2 }
+    query.mockResolvedValue(pageResponse)
+    getStatsByDateRange.mockResolvedValue({
+      total_requests: 101,
+      total_tokens: 202,
+      total_cost: 10.1,
+      avg_duration_ms: 1,
+    })
+    list.mockResolvedValue({ items: [{ id: 1, name: 'demo-key' }] })
+
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Pagination: true,
+          EmptyState: true,
+          Select: true,
+          DateRangePicker: true,
+          DataTable: DataTableStub,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    const datePicker = wrapper.findComponent(DateRangePicker)
+    datePicker.vm.$emit('change', { startDate: '2026-03-01', endDate: '2026-03-08', preset: null })
+    await flushPromises()
+
+    let resolveFirstPage!: (value: typeof pageResponse) => void
+    const firstPage = new Promise<typeof pageResponse>((resolve) => { resolveFirstPage = resolve })
+    query.mockClear()
+    query.mockImplementation((params: { page?: number }, options?: unknown) =>
+      !options && params.page === 1 ? firstPage : Promise.resolve(pageResponse)
+    )
+    const originalCreateObjectURL = window.URL.createObjectURL
+    const originalRevokeObjectURL = window.URL.revokeObjectURL
+    window.URL.createObjectURL = vi.fn(() => 'blob:usage-export') as typeof window.URL.createObjectURL
+    window.URL.revokeObjectURL = vi.fn(() => {}) as typeof window.URL.revokeObjectURL
+    let filename = ''
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      filename = this.download
+    })
+
+    try {
+      const setupState = (wrapper.vm as any).$?.setupState
+      const exporting = setupState.exportToCSV() as Promise<void>
+      await nextTick()
+      const initialParams = { ...query.mock.calls[0][0] }
+      expect(initialParams).toMatchObject({
+        page: 1, page_size: 100, start_date: '2026-03-01', end_date: '2026-03-08',
+        sort_by: 'created_at', sort_order: 'desc',
+      })
+
+      // 导出进行中用户改了 API Key、日期和排序：后续页仍必须沿用导出开始时的条件。
+      const keySelect = wrapper.findAllComponents(Select).find((select) =>
+        (select.props('options') as SelectOption[]).some((option) => option.label === 'All API Keys')
+      )!
+      keySelect.vm.$emit('update:modelValue', 1)
+      keySelect.vm.$emit('change', 1)
+      datePicker.vm.$emit('change', { startDate: '2026-04-01', endDate: '2026-04-08', preset: null })
+      setupState.handleSort('actual_cost', 'asc')
+      await flushPromises()
+      expect(query).toHaveBeenCalledWith(expect.objectContaining({
+        api_key_id: 1, start_date: '2026-04-01', end_date: '2026-04-08',
+        sort_by: 'actual_cost', sort_order: 'asc',
+      }), expect.anything())
+
+      resolveFirstPage(pageResponse)
+      await exporting
+      await flushPromises()
+
+      const exportCalls = query.mock.calls.filter((call) => call.length === 1)
+      expect(exportCalls).toEqual([[initialParams], [{ ...initialParams, page: 2 }]])
+      expect(filename).toBe('usage_2026-03-01_to_2026-03-08.csv')
+      expect(showSuccess).toHaveBeenCalledWith('usage.exportSuccess')
+      expect(showError).not.toHaveBeenCalled()
+    } finally {
+      window.URL.createObjectURL = originalCreateObjectURL
+      window.URL.revokeObjectURL = originalRevokeObjectURL
+      clickSpy.mockRestore()
+      wrapper.unmount()
+    }
   })
 
   it('exports historical image rows with image billing mode derived from image_count', async () => {
@@ -617,7 +820,7 @@ describe('user UsageView currency display', () => {
     }
   })
 
-  async function mountView() {
+  async function mountView(stats: Record<string, unknown> = { total_actual_cost_fiat: 0.25 }) {
     query.mockResolvedValue({ items: [subscriptionRow], total: 1, pages: 1 })
     getStatsByDateRange.mockResolvedValue({
       total_requests: 1,
@@ -625,6 +828,7 @@ describe('user UsageView currency display', () => {
       total_cost: 1.666667,
       total_actual_cost: 5,
       avg_duration_ms: 1,
+      ...stats,
     })
     list.mockResolvedValue({ items: [] })
 
@@ -646,7 +850,7 @@ describe('user UsageView currency display', () => {
     await flushPromises()
     await nextTick()
     // 展示口径是模块级单例，跨用例会串味，每次挂载后显式复位成默认的法币口径。
-    ;(wrapper.vm as any).$?.setupState?.setCurrencyMode('fiat')
+    useCurrencyDisplay().setMode('fiat')
     await nextTick()
     return wrapper
   }
@@ -661,26 +865,55 @@ describe('user UsageView currency display', () => {
 
     const text = plain(wrapper)
     // 明细：服务端按这张卡的 u(D)=0.05 算出 ¥0.25，是真实花费。
-    expect(text).toContain('0.250')
-    // 总计：本轮走聚合 SQL，仍按充值价 1/13 估算成 ¥0.385，并显式标注为估算。
-    // 两个数并存是当前的已知取舍，不是 bug——所以这里断言标注必须在。
-    expect(text).toContain('estimated at top-up rate')
+    expect(text).toMatch(/¥0\.25(?!\d)/)
+    // 总计：服务端分桶折算的 total_actual_cost_fiat，与明细同口径，
+    // 不再出现按充值价 1/13 估算的 ¥0.3846（5/13 = 0.384615，新格式 4 位有效数字）。
+    expect(text).not.toContain('0.3846')
+  })
+
+  it('总计缺少服务端人民币值时回落到美元，不按充值倍率估算', async () => {
+    const wrapper = await mountView({})
+
+    const text = plain(wrapper)
+    expect(text).toContain('$5.00')
+    expect(text).not.toContain('0.3846')
   })
 
   it('切到美元口径后展示原始美元金额', async () => {
     const wrapper = await mountView()
 
-    ;(wrapper.vm as any).$?.setupState?.setCurrencyMode('usd')
+    useCurrencyDisplay().setMode('usd')
     await nextTick()
 
-    expect(wrapper.text()).toContain('5.000000')
+    expect(wrapper.text()).toContain('$5.00')
   })
 
-  it('倍率为 1 时隐藏切换器——两个口径数字相同', async () => {
-    publicSettings.value = { balance_recharge_multiplier: 1 }
+  it('美元口径的 tooltip 给精确值（6 位小数、去尾零），不被统一规则四舍五入', async () => {
     const wrapper = await mountView()
+    useCurrencyDisplay().setMode('usd')
+    await nextTick()
+    const setupState = (wrapper.vm as any).$?.setupState
+
+    setupState.tooltipData = { ...subscriptionRow, actual_cost: 0.1234567 }
+    setupState.tooltipVisible = true
+    await nextTick()
+
+    expect(plain(wrapper)).toContain('$0.123457')
+  })
+
+  it('倍率为 1 时隐藏切换器，且全部按美元展示、不出现「你的花费」', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 1 }
+    const wrapper = await mountView({})
+    const setupState = (wrapper.vm as any).$?.setupState
 
     expect(wrapper.find('[role="group"]').exists()).toBe(false)
+
+    setupState.tooltipData = subscriptionRow
+    setupState.tooltipVisible = true
+    await nextTick()
+    const text = plain(wrapper)
+    expect(text).not.toContain('Your spend')
+    expect(text).not.toContain('¥')
   })
 
   it('倍率不为 1 时渲染切换器', async () => {
@@ -693,6 +926,9 @@ describe('user UsageView currency display', () => {
   // 余额、发现没变而来问，所以措辞必须跟着 billing_type 走。
   it('扣除行的措辞跟着计费类型走：钱包说余额，订阅说套餐额度', async () => {
     const wrapper = await mountView()
+    // 人民币口径不再出现扣除行（见 DR-4 用例），措辞只在美元口径下检查。
+    useCurrencyDisplay().setMode('usd')
+    await nextTick()
     const setupState = (wrapper.vm as any).$?.setupState
 
     setupState.tooltipData = subscriptionRow
@@ -707,8 +943,23 @@ describe('user UsageView currency display', () => {
     expect(walletText).not.toContain('Plan quota deducted')
   })
 
-  it('tooltip 把官方价、扣除金额、你的花费拆成三行', async () => {
+  it('官方价在人民币模式下按官方价汇率展示，缺汇率时整项隐藏而不是混排 $', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    const hidden = await mountView()
+    expect(hidden.find('[data-test="official-total"]').exists()).toBe(false)
+    expect(plain(hidden)).not.toContain('1.6667')
+
+    publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7 }
+    const shown = await mountView()
+    // 1.666667 * 7 = 11.666669
+    expect(shown.get('[data-test="official-total"]').text()).toContain('¥11.67')
+  })
+
+  it('美元口径的 tooltip 把官方价、扣除金额、你的花费拆成三行', async () => {
+    publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7 }
     const wrapper = await mountView()
+    useCurrencyDisplay().setMode('usd')
+    await nextTick()
     const setupState = (wrapper.vm as any).$?.setupState
 
     setupState.tooltipData = subscriptionRow
@@ -721,22 +972,308 @@ describe('user UsageView currency display', () => {
     expect(text).toContain('Official price')
     expect(text).toContain('Plan quota deducted')
     expect(text).toContain('Your spend')
-    expect(text).toContain('1.666667')
-    expect(text).toContain('5.000000')
-    expect(text).toContain('0.250')
+    expect(text).toContain('$1.666667')
+    expect(text).not.toContain('¥11.67')
+    expect(text).toContain('$5.00')
+    expect(text).toMatch(/¥0\.25(?!\d)/)
+    // 美元口径与改前逐字相同：原始倍率，花费后面不标来源。
+    expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('3.00x')
+    expect(wrapper.get('[data-test="tip-spend"]').text()).not.toMatch(/Plan|Balance/)
+  })
+
+  // DR-4：人民币口径的悬停按等效倍率（实付 ÷ 官方价）显示，去掉扣除行，花费后标来源。
+  describe('DR-4 人民币口径的悬停', () => {
+    // 官方价 $0.60，分组倍率 1.4，扣 $0.84 额度。
+    const walletRow = {
+      ...subscriptionRow,
+      request_id: 'req-wallet-dr4',
+      total_cost: 0.6,
+      actual_cost: 0.84,
+      fiat_cost: 0.0646,
+      rate_multiplier: 1.4,
+      billing_type: 0,
+      subscription_id: null,
+    }
+    const planRow = { ...walletRow, request_id: 'req-plan-dr4', fiat_cost: 0.0392, billing_type: 1, subscription_id: 7 }
+
+    async function openTip(row: Record<string, unknown>, mode: 'fiat' | 'usd' = 'fiat') {
+      publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7.2 }
+      const wrapper = await mountView()
+      useCurrencyDisplay().setMode(mode)
+      await nextTick()
+      const setupState = (wrapper.vm as any).$?.setupState
+      setupState.tooltipData = row
+      setupState.tooltipVisible = true
+      await nextTick()
+      return wrapper
+    }
+
+    it('余额行：0.108x，没有扣除行，花费后标「余额」', async () => {
+      const wrapper = await openTip(walletRow)
+      expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('0.108x')
+      const text = plain(wrapper)
+      expect(text).not.toContain('Balance deducted')
+      expect(text).not.toContain('Plan quota deducted')
+      expect(text).not.toContain('$0.84')
+      expect(wrapper.get('[data-test="tip-spend"]').text()).toBe('¥0.0646 Balance')
+    })
+
+    it('套餐行按记录的实付 0.0392 / 0.6 显示 0.0653x，花费后标「套餐」', async () => {
+      const wrapper = await openTip(planRow)
+      expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('0.0653x')
+      expect(plain(wrapper)).not.toContain('Plan quota deducted')
+      expect(wrapper.get('[data-test="tip-spend"]').text()).toBe('¥0.0392 Plan')
+    })
+
+    it('缺 fiat_cost 时倍率回落到 r ÷ m', async () => {
+      const wrapper = await openTip({ ...walletRow, fiat_cost: undefined })
+      // 1.4 ÷ 13 = 0.1077
+      expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('0.108x')
+    })
+
+    it('官方价为 0 时倍率显示 -', async () => {
+      const wrapper = await openTip({ ...walletRow, total_cost: 0, actual_cost: 0, fiat_cost: 0 })
+      expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('-')
+    })
+
+    it('官方价行仍是 ¥（官方美元价 × 官方价汇率）', async () => {
+      const wrapper = await openTip(walletRow)
+      // 0.6 × 7.2 = 4.32
+      expect(plain(wrapper)).toContain('¥4.32')
+    })
+
+    it('美元口径：原始倍率、扣除行都在，花费行不标来源', async () => {
+      const wallet = await openTip(walletRow, 'usd')
+      expect(wallet.get('[data-test="tip-rate"]').text()).toBe('1.40x')
+      expect(plain(wallet)).toContain('Balance deducted')
+      expect(plain(wallet)).toContain('$0.84')
+      expect(wallet.get('[data-test="tip-spend"]').text()).toBe('¥0.0646')
+
+      const plan = await openTip(planRow, 'usd')
+      expect(plan.get('[data-test="tip-rate"]').text()).toBe('1.40x')
+      expect(plain(plan)).toContain('Plan quota deducted')
+    })
+
+    it('CSV 导出不变：人民币口径下倍率列仍是原始倍率，金额列仍是原值', async () => {
+      const wrapper = await openTip(walletRow)
+      query.mockResolvedValue({ items: [{ ...walletRow, model: 'gpt-5.4', api_key: { name: 'k' } }], total: 1, pages: 1 })
+      let blob: Blob | null = null
+      const origCreate = window.URL.createObjectURL
+      const origRevoke = window.URL.revokeObjectURL
+      window.URL.createObjectURL = vi.fn((b: Blob | MediaSource) => {
+        blob = b as Blob
+        return 'blob:dr4'
+      }) as typeof window.URL.createObjectURL
+      window.URL.revokeObjectURL = vi.fn(() => {}) as typeof window.URL.revokeObjectURL
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+      await (wrapper.vm as any).$?.setupState.exportToCSV()
+      expect(blob).not.toBeNull()
+      const csv = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result))
+        reader.onerror = () => reject(reader.error)
+        reader.readAsText(blob as unknown as Blob)
+      })
+      expect(csv).toContain('Rate Multiplier,Deducted (USD),Official Cost (USD),Your Spend (CNY)')
+      expect(csv).toContain(',1.4,0.84000000,0.60000000,0.06460000,')
+      expect(csv).not.toContain('0.108')
+
+      window.URL.createObjectURL = origCreate
+      window.URL.revokeObjectURL = origRevoke
+      clickSpy.mockRestore()
+    })
+
+    it('free 站（m=1）：原始倍率、扣除行、无花费行，与改前相同', async () => {
+      publicSettings.value = { balance_recharge_multiplier: 1 }
+      const wrapper = await mountView({})
+      const setupState = (wrapper.vm as any).$?.setupState
+      setupState.tooltipData = walletRow
+      setupState.tooltipVisible = true
+      await nextTick()
+      expect(wrapper.get('[data-test="tip-rate"]').text()).toBe('1.40x')
+      expect(plain(wrapper)).toContain('Balance deducted')
+      expect(wrapper.find('[data-test="tip-spend"]').exists()).toBe(false)
+      expect(plain(wrapper)).not.toContain('Your spend')
+    })
+  })
+
+  describe('缺少官方价汇率时的费用明细', () => {
+    const perRequestRow = { ...subscriptionRow, billing_mode: 'per_request' }
+
+    async function openTooltip(wrapper: Awaited<ReturnType<typeof mountView>>, row: Record<string, unknown>) {
+      const setupState = (wrapper.vm as any).$?.setupState
+      setupState.tooltipData = row
+      setupState.tooltipVisible = true
+      await nextTick()
+    }
+
+    it('按次计费的单价行跟着官方价一起隐藏，空的明细块整体不渲染', async () => {
+      publicSettings.value = { balance_recharge_multiplier: 13 }
+      const wrapper = await mountView()
+      await openTooltip(wrapper, perRequestRow)
+
+      expect(wrapper.text()).not.toContain('Unit price')
+      expect(wrapper.find('[data-test="cost-breakdown"]').exists()).toBe(false)
+      // 人民币模式保留实付来源，美元扣除行隐藏；缺汇率时不显示官方金额。
+      expect(plain(wrapper)).not.toContain('Plan quota deducted')
+      expect(plain(wrapper)).not.toContain('Official price')
+      expect(wrapper.get('[data-test="tip-spend"]').text()).toBe('¥0.25 Plan')
+      expect(plain(wrapper)).toContain('Your spend')
+    })
+
+    it('token 计费同样没有可显示的行时整体隐藏', async () => {
+      publicSettings.value = { balance_recharge_multiplier: 13 }
+      const wrapper = await mountView()
+      await openTooltip(wrapper, subscriptionRow)
+
+      expect(wrapper.find('[data-test="cost-breakdown"]').exists()).toBe(false)
+    })
+
+    it('图片计费的尺寸信息不带价格，缺汇率时仍保留明细块，但不出现金额行', async () => {
+      publicSettings.value = { balance_recharge_multiplier: 13 }
+      const wrapper = await mountView()
+      await openTooltip(wrapper, {
+        ...subscriptionRow,
+        image_count: 2,
+        image_size: '4K',
+        image_output_size: '3840x2160',
+        image_size_source: 'output',
+        image_size_breakdown: { '4K': 2 },
+      })
+
+      expect(wrapper.get('[data-test="cost-breakdown"]').text()).toContain('Image count')
+      expect(wrapper.text()).not.toContain('Per-image price')
+      expect(wrapper.text()).not.toContain('Image total price')
+    })
+
+    it('有官方价汇率时显示单价行和明细块', async () => {
+      publicSettings.value = { balance_recharge_multiplier: 13, official_price_cny_rate: 7 }
+      const wrapper = await mountView()
+      await openTooltip(wrapper, perRequestRow)
+
+      const breakdown = wrapper.get('[data-test="cost-breakdown"]').text()
+      expect(breakdown).toContain('Unit price')
+      // 1.666667 * 7 = 11.666669
+      expect(breakdown).toContain('¥11.67')
+    })
+
+    it('美元口径不依赖汇率，单价行照常显示', async () => {
+      publicSettings.value = { balance_recharge_multiplier: 13 }
+      const wrapper = await mountView()
+      useCurrencyDisplay().setMode('usd')
+      await openTooltip(wrapper, perRequestRow)
+
+      const breakdown = wrapper.get('[data-test="cost-breakdown"]').text()
+      expect(breakdown).toContain('Unit price')
+      expect(breakdown).toContain('$1.666667')
+    })
   })
 
   it('缺少服务端折算值时回落到按充值倍率估算', async () => {
     const wrapper = await mountView()
     const setupState = (wrapper.vm as any).$?.setupState
 
-    // 用 3.9 额度而不是 5，是为了让回落值 0.300 与总计卡片的估算值 0.385 区分开，
-    // 否则断言会被总计那个数「假通过」。
+    // 用 3.9 额度而不是 5，是为了让回落值 0.300 与其他位置出现的数字区分开。
     setupState.tooltipData = { ...subscriptionRow, actual_cost: 3.9, fiat_cost: undefined }
     setupState.tooltipVisible = true
     await nextTick()
 
     // 3.9 ÷ 13 = 0.3
-    expect(plain(wrapper)).toContain('0.300')
+    expect(plain(wrapper)).toMatch(/¥0\.30(?!\d)/)
+  })
+})
+
+// 上游 dc6b318c3：筛选器需要加载全部 API Key（分页拉取），不止第一页 100 个。
+describe('user UsageView API key filter pagination', () => {
+  beforeEach(() => {
+    query.mockReset()
+    getStatsByDateRange.mockReset()
+    list.mockReset()
+    publicSettings.value = { balance_recharge_multiplier: 13 }
+    query.mockResolvedValue({ items: [], total: 0, pages: 0 })
+    getStatsByDateRange.mockResolvedValue({
+      total_requests: 0,
+      total_tokens: 0,
+      total_cost: 0,
+      avg_duration_ms: 0,
+    })
+    ;(globalThis as any).ResizeObserver = class {
+      observe() {}
+      disconnect() {}
+    }
+  })
+
+  function mountWithRealSelect() {
+    return mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Pagination: true,
+          EmptyState: true,
+          DateRangePicker: true,
+          DataTable: DataTableStub,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+  }
+
+  function apiKeySelect(wrapper: ReturnType<typeof mountWithRealSelect>) {
+    return wrapper.findAllComponents(Select).find((select) =>
+      (select.props('options') as SelectOption[]).some((option) => option.label === 'All API Keys')
+    )!
+  }
+
+  it('includes API keys after the first page in the usage key filter', async () => {
+    const firstPageKeys = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+      name: `key-${index + 1}`,
+    }))
+    const laterKey = { id: 101, name: 'key-from-second-page' }
+    list
+      .mockResolvedValueOnce({ items: firstPageKeys, total: 101, page: 1, page_size: 100, pages: 2 })
+      .mockResolvedValueOnce({ items: [laterKey], total: 101, page: 2, page_size: 100, pages: 2 })
+
+    const wrapper = mountWithRealSelect()
+    await flushPromises()
+
+    expect(list.mock.calls).toEqual([[1, 100], [2, 100]])
+    const select = apiKeySelect(wrapper)
+    expect(select.props('options')).toHaveLength(102)
+    expect(select.props('options')).toContainEqual({ value: laterKey.id, label: laterKey.name })
+    wrapper.unmount()
+  })
+
+  it('does not request another API key page when the user has no keys', async () => {
+    list.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 100, pages: 0 })
+
+    const wrapper = mountWithRealSelect()
+    await flushPromises()
+
+    expect(list.mock.calls).toEqual([[1, 100]])
+    expect(apiKeySelect(wrapper).props('options')).toEqual([{ value: null, label: 'All API Keys' }])
+    wrapper.unmount()
+  })
+
+  it('stops loading API keys when a later page is empty despite an outdated page count', async () => {
+    const firstPageKeys = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+      name: `key-${index + 1}`,
+    }))
+    list
+      .mockResolvedValueOnce({ items: firstPageKeys, total: 201, page: 1, page_size: 100, pages: 3 })
+      .mockResolvedValueOnce({ items: [], total: 201, page: 2, page_size: 100, pages: 3 })
+
+    const wrapper = mountWithRealSelect()
+    await flushPromises()
+
+    expect(list.mock.calls).toEqual([[1, 100], [2, 100]])
+    const select = apiKeySelect(wrapper)
+    expect(select.props('options')).toHaveLength(101)
+    expect(select.props('options')).toContainEqual({ value: 100, label: 'key-100' })
+    wrapper.unmount()
   })
 })

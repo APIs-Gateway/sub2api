@@ -26,6 +26,10 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 ) (*OpenAIForwardResult, error) {
 	startTime := time.Now()
 
+	if err := rejectAmbiguousGatewayModel(c, body); err != nil {
+		return nil, err
+	}
+
 	originalModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	if originalModel == "" {
 		writeOpenAIEmbeddingsError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
@@ -112,7 +116,7 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+		if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody) {
 			upstreamDetail := ""
 			if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 				maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
@@ -132,11 +136,11 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 				Detail:             upstreamDetail,
 			})
 			shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
-			return nil, &UpstreamFailoverError{
+			return nil, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
 				RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, respBody, !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)),
-			}
+			}, upstreamMsg, respBody)
 		}
 		writeOpenAIEmbeddingsUpstreamResponse(c, resp, respBody, s.responseHeaderFilter)
 		return nil, fmt.Errorf("upstream returned status %d", resp.StatusCode)

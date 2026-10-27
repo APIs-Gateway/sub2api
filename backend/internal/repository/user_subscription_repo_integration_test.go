@@ -980,13 +980,44 @@ func (s *UserSubscriptionRepoSuite) TestIncrementUsage_SoftDeletedGroup() {
 	group := s.mustCreateGroup("g-softdeleted")
 	sub := s.mustCreateSubscription(user.ID, group.ID, nil)
 
-	// 软删除分组
+	// 软删除分组：删除分组不再连带删卡，卡上的 group_id 只是历史来源快照。
 	_, err := s.client.Group.UpdateOneID(group.ID).SetDeletedAt(time.Now()).Save(s.ctx)
 	s.Require().NoError(err, "soft delete group")
 
-	// IncrementUsage 应该失败，因为分组已软删除
-	err = s.repo.IncrementUsage(s.ctx, sub.ID, 1.0)
-	s.Require().Error(err, "should fail for soft-deleted group")
+	// 卡仍然有效，记账不应因为来源分组已软删而失败。
+	s.Require().NoError(s.repo.IncrementUsage(s.ctx, sub.ID, 1.0))
+
+	got, err := s.repo.GetByID(s.ctx, sub.ID)
+	s.Require().NoError(err)
+	s.Require().InDelta(1.0, got.DailyUsageUSD, 1e-6)
+	s.Require().InDelta(1.0, got.WeeklyUsageUSD, 1e-6)
+	s.Require().InDelta(1.0, got.MonthlyUsageUSD, 1e-6)
+	s.Require().Nil(got.Group, "分组已软删，Group 边应为空")
+}
+
+func (s *UserSubscriptionRepoSuite) TestIncrementUsage_NoGroupCard() {
+	user := s.mustCreateUser("nogroup-usage@test.com", service.RoleUser)
+	group := s.mustCreateGroup("g-nogroup-usage")
+	card := s.mustCreateSubscription(user.ID, group.ID, nil)
+	// 自定义 / 转套餐卡没有来源分组（group_id 为 NULL）。
+	_, err := s.client.UserSubscription.UpdateOneID(card.ID).ClearGroupID().Save(s.ctx)
+	s.Require().NoError(err, "clear group_id")
+
+	s.Require().NoError(s.repo.IncrementUsage(s.ctx, card.ID, 2.0))
+
+	got, err := s.repo.GetByID(s.ctx, card.ID)
+	s.Require().NoError(err)
+	s.Require().InDelta(2.0, got.DailyUsageUSD, 1e-6)
+}
+
+func (s *UserSubscriptionRepoSuite) TestIncrementUsage_SoftDeletedCard() {
+	user := s.mustCreateUser("softdeleted-card@test.com", service.RoleUser)
+	group := s.mustCreateGroup("g-softdeleted-card")
+	sub := s.mustCreateSubscription(user.ID, group.ID, nil)
+
+	s.Require().NoError(s.client.UserSubscription.DeleteOneID(sub.ID).Exec(s.ctx), "soft delete card")
+
+	err := s.repo.IncrementUsage(s.ctx, sub.ID, 1.0)
 	s.Require().ErrorIs(err, service.ErrSubscriptionNotFound)
 }
 

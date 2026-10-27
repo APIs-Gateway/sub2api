@@ -10,6 +10,9 @@ import (
 type UserSubscriptionRepository interface {
 	Create(ctx context.Context, sub *UserSubscription) error
 	GetByID(ctx context.Context, id int64) (*UserSubscription, error)
+	// GetByIDForUpdate 按 ID 读取并加行级 FOR UPDATE；须在事务内调用（锁持有到事务结束），
+	// 供「先读再判定再写」的调整路径（管理员调天数、负数兑换码扣减）在锁内重读最新行。
+	GetByIDForUpdate(ctx context.Context, id int64) (*UserSubscription, error)
 	GetByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*UserSubscription, error)
 	GetActiveByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*UserSubscription, error)
 	// GetActiveByUserID 返回用户「唯一生效订阅卡」（三窗口单卡模式，不按 group 匹配）。

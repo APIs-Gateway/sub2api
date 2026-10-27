@@ -4,6 +4,7 @@
  */
 
 import { apiClient } from './client'
+import { reportMixedFiat } from '@/composables/useCurrencyDisplay'
 import type {
   UsageLog,
   UsageQueryParams,
@@ -26,6 +27,9 @@ export interface PlatformDashboardStats {
   today_requests: number
   today_tokens: number
   today_actual_cost: number
+  // 服务端按扣费来源分桶折算的人民币金额；倍率为 1 或后端未提供时缺省
+  total_actual_cost_fiat?: number
+  today_actual_cost_fiat?: number
 }
 
 export interface UserDashboardStats {
@@ -47,6 +51,9 @@ export interface UserDashboardStats {
   today_tokens: number
   today_cost: number // 今日标准计费
   today_actual_cost: number // 今日实际扣除
+  // 服务端按扣费来源分桶折算的人民币金额；倍率为 1 或后端未提供时缺省
+  total_actual_cost_fiat?: number
+  today_actual_cost_fiat?: number
   average_duration_ms: number
   rpm: number // 近5分钟平均每分钟请求数
   tpm: number // 近5分钟平均每分钟Token数
@@ -82,6 +89,7 @@ export interface ApiKeyDailyUsagePoint {
   total_tokens: number
   cost: number
   actual_cost: number
+  actual_cost_fiat?: number
 }
 
 export interface ApiKeyDailyUsageResponse {
@@ -153,6 +161,7 @@ export async function getStats(
   const { data } = await apiClient.get<UsageStatsResponse>('/usage/stats', {
     params
   })
+  reportMixedFiat(data.total_actual_cost, data.total_actual_cost_fiat)
   return data
 }
 
@@ -180,6 +189,7 @@ export async function getStatsByDateRange(
   const { data } = await apiClient.get<UsageStatsResponse>('/usage/stats', {
     params
   })
+  reportMixedFiat(data.total_actual_cost, data.total_actual_cost_fiat)
   return data
 }
 
@@ -230,6 +240,7 @@ export async function getById(id: number): Promise<UsageLog> {
  */
 export async function getDashboardStats(): Promise<UserDashboardStats> {
   const { data } = await apiClient.get<UserDashboardStats>('/usage/dashboard/stats')
+  reportMixedFiat(data.total_actual_cost, data.total_actual_cost_fiat)
   return data
 }
 
@@ -277,6 +288,8 @@ export interface BatchApiKeyUsageStats {
   api_key_id: number
   today_actual_cost: number
   total_actual_cost: number
+  today_actual_cost_fiat?: number
+  total_actual_cost_fiat?: number
 }
 
 export interface BatchApiKeysUsageResponse {
@@ -304,6 +317,9 @@ export async function getDashboardApiKeysUsage(
       signal: options?.signal
     }
   )
+  for (const stat of Object.values(data.stats ?? {})) {
+    reportMixedFiat(stat.total_actual_cost, stat.total_actual_cost_fiat)
+  }
   return data
 }
 

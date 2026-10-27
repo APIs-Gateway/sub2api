@@ -140,6 +140,26 @@ func TestRecordUpstreamModelMismatchIfMarked_RecordsAndClears(t *testing.T) {
 	requireNeverRecorded(t, rec, 1, "cleared mark must not be recorded again")
 }
 
+func TestRecordUpstreamModelMismatchIfMarked_UsesReplayedPrewarmInputWithoutUsage(t *testing.T) {
+	c := newUpstreamModelMismatchTestContext(t)
+	apiKey, account, sub := upstreamModelMismatchTestFixtures()
+	rec := newFakeUpstreamModelMismatchRecorder()
+	prewarmText := strings.Repeat("prewarm context ", 200)
+	outbound := []byte(`{"model":"gpt-5.4","input":[{"role":"user","content":"` + prewarmText + `"},{"role":"user","content":"go"}]}`)
+	currentOnly := []byte(`{"model":"gpt-5.4","input":[{"role":"user","content":"go"}]}`)
+	service.MarkOpsUpstreamModelMismatch(c, service.UpstreamModelMismatchMark{
+		SentModel: "gpt-5.4", ResponseModel: "gpt-5-mini", AccountID: account.ID, Blocked: true,
+	})
+	recordUpstreamModelMismatchIfMarked(
+		c, rec, nil, apiKey, account, sub, "gpt-5.4", service.ChannelUsageFields{},
+		service.HashUsageRequestPayload(outbound), outbound,
+	)
+	in := rec.waitOne(t)
+	require.Equal(t, service.HashUsageRequestPayload(outbound), in.RequestPayloadHash)
+	require.Equal(t, service.EstimateOpenAIRequestInputTokens(outbound), in.Mark.Usage.InputTokens)
+	require.Greater(t, in.Mark.Usage.InputTokens, service.EstimateOpenAIRequestInputTokens(currentOnly))
+}
+
 // 打标但 Blocked=false（观察模式放行 / 客户端已收到输出无法拦截）：
 // 即使随后 forward 因其他原因报错，也不记审计行，只清标；B 由成功/部分结果路径的 RecordUsage 落库。
 func TestRecordUpstreamModelMismatchIfMarked_UnblockedMarkDoesNotRecord(t *testing.T) {

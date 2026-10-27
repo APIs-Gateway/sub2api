@@ -5,15 +5,13 @@
         <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <!-- Total Requests -->
           <div class="card p-5">
-            <div class="mb-3 flex items-start justify-between">
+            <div class="mb-3 flex min-h-[1.625rem] items-start justify-between">
               <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
                 {{ t('usage.totalRequests') }}
               </p>
               <Icon name="document" size="sm" class="text-gray-300 dark:text-dark-600" :stroke-width="1.5" />
             </div>
-            <p class="text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
-              {{ usageStats?.total_requests?.toLocaleString() || '0' }}
-            </p>
+            <NumText tier="primary" :text="formatCount(usageStats?.total_requests || 0)" class="block" />
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('usage.inSelectedRange') }}
             </p>
@@ -22,32 +20,30 @@
         <!-- Total Tokens -->
         <div class="card p-5">
           <div>
-            <div class="mb-3 flex items-start justify-between">
+            <div class="mb-3 flex min-h-[1.625rem] items-start justify-between">
               <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
                 {{ t('usage.totalTokens') }}
               </p>
               <Icon name="cube" size="sm" class="text-gray-300 dark:text-dark-600" :stroke-width="1.5" />
             </div>
             <div class="min-w-0 flex-1">
-              <p class="text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
-                {{ formatTokens(usageStats?.total_tokens || 0) }}
-              </p>
-              <p class="text-xs text-gray-500 dark:text-gray-400">
+              <NumText tier="primary" :text="formatTokens(usageStats?.total_tokens || 0)" :title="formatCount(usageStats?.total_tokens || 0)" class="block" />
+              <p class="num-aux mt-1">
                 <span>{{ t('usage.in') }} {{ formatTokens(usageStats?.total_input_tokens || 0) }}</span>
                 <span> · </span>
                 <span>{{ t('usage.out') }} {{ formatTokens(usageStats?.total_output_tokens || 0) }}</span>
                 <span> · </span>
-                <span><span class="text-gray-600 dark:text-gray-400">{{ t('usage.cacheHit') }}</span> <span class="font-mono tabular-nums text-gray-700 dark:text-gray-300">{{ formatTokens(usageStats?.total_cache_read_tokens || 0) }}</span></span>
+                <span><span class="text-gray-600 dark:text-gray-400">{{ t('usage.cacheHit') }}</span> <span class="num text-gray-700 dark:text-gray-300">{{ formatTokens(usageStats?.total_cache_read_tokens || 0) }}</span></span>
                 <span> · </span>
-                <span><span class="text-gray-600 dark:text-gray-400">{{ t('usage.cacheCreate') }}</span> <span class="font-mono tabular-nums text-gray-700 dark:text-gray-300">{{ formatTokens(usageStats?.total_cache_creation_tokens || 0) }}</span></span>
+                <span><span class="text-gray-600 dark:text-gray-400">{{ t('usage.cacheCreate') }}</span> <span class="num text-gray-700 dark:text-gray-300">{{ formatTokens(usageStats?.total_cache_creation_tokens || 0) }}</span></span>
               </p>
               <p class="text-xs text-gray-600 dark:text-gray-400">
                 {{ t('usage.cacheHitRate') }}:
                 <template v-if="cacheStats.totalInput > 0">
-                  <span class="font-mono tabular-nums text-gray-700 dark:text-gray-300">{{ formatTokens(cacheStats.cacheRead) }}</span>
+                  <span class="num text-gray-700 dark:text-gray-300">{{ formatTokens(cacheStats.cacheRead) }}</span>
                   <span class="text-gray-600 dark:text-gray-400">/</span>
-                  <span class="font-mono tabular-nums text-gray-700 dark:text-gray-300">{{ formatTokens(cacheStats.totalInput) }}</span>
-                  <span class="ml-1 font-mono tabular-nums text-gray-900 dark:text-white">{{ cacheStats.ratePercent }}</span>
+                  <span class="num text-gray-700 dark:text-gray-300">{{ formatTokens(cacheStats.totalInput) }}</span>
+                  <span class="num ml-1 text-gray-900 dark:text-white">{{ cacheStats.ratePercent }}</span>
                 </template>
                 <template v-else>-</template>
               </p>
@@ -57,33 +53,12 @@
 
         <!-- Total Cost -->
         <div class="card p-5">
-          <div class="mb-3 flex items-start justify-between">
+          <div class="mb-3 flex min-h-[1.625rem] items-start justify-between">
             <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
               {{ t('usage.totalCost') }}
             </p>
             <!-- 切换器就放在最容易被误读的那个数字旁边，而不是藏进设置页 -->
-            <div
-              v-if="currencyCanSwitch"
-              class="flex items-center gap-0.5 rounded-md bg-gray-100 p-0.5 dark:bg-dark-700"
-              role="group"
-              :aria-label="t('usage.currencySwitchLabel')"
-            >
-              <button
-                v-for="opt in currencyOptions"
-                :key="opt.value"
-                type="button"
-                class="rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors"
-                :class="
-                  currencyMode === opt.value
-                    ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-600 dark:text-white'
-                    : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
-                "
-                :aria-pressed="currencyMode === opt.value"
-                @click="setCurrencyMode(opt.value)"
-              >
-                {{ opt.label }}
-              </button>
-            </div>
+            <CurrencyModeSwitch v-if="currencyCanSwitch" size="sm" />
             <Icon
               v-else
               name="dollar"
@@ -92,36 +67,32 @@
               :stroke-width="1.5"
             />
           </div>
-          <p class="text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
-            <template v-if="currencyIsFiat">
-              ≈{{ formatFiat(usdToFiat(usageStats?.total_actual_cost || 0)) }}
-            </template>
-            <template v-else>
-              {{ formatUsd(usageStats?.total_actual_cost || 0) }}
-            </template>
-          </p>
+          <!-- 合计用服务端分桶折算的人民币值：钱包与订阅卡单价不同，不能整体 ÷ 充值倍率 -->
+          <NumText
+            tier="primary"
+            class="block"
+            :text="formatMixed(usageStats?.total_actual_cost || 0, usageStats?.total_actual_cost_fiat)"
+            :title="formatMixed(usageStats?.total_actual_cost || 0, usageStats?.total_actual_cost_fiat, EXACT_DIGITS)"
+          />
           <!--
             官方价这一行以前是加删除线的「标准价」。但站内扣费是官方价 × 分组倍率，
             倍率 >1 时被划掉的数反而比实扣更小，删除线等于在暗示用户占了便宜。
             这里改成中性标注：官方价是可以对照模型官网的外部锚点，不是被优惠掉的原价。
           -->
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            <template v-if="currencyIsFiat">{{ t('usage.fiatTotalApprox') }} · </template>
-            {{ t('usage.officialPrice') }} ${{ (usageStats?.total_cost || 0).toFixed(4) }}
+          <p v-if="officialAvailable" class="num-aux mt-1" data-test="official-total" :title="officialCost(usageStats?.total_cost || 0, EXACT_DIGITS)">
+            {{ t('usage.officialPrice') }} {{ officialCost(usageStats?.total_cost || 0) }}
           </p>
         </div>
 
         <!-- Average Duration -->
         <div class="card p-5">
-          <div class="mb-3 flex items-start justify-between">
+          <div class="mb-3 flex min-h-[1.625rem] items-start justify-between">
             <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
               {{ t('usage.avgDuration') }}
             </p>
             <Icon name="clock" size="sm" class="text-gray-300 dark:text-dark-600" :stroke-width="1.5" />
           </div>
-          <p class="text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">
-            {{ formatDuration(usageStats?.average_duration_ms || 0) }}
-          </p>
+          <NumText tier="primary" :text="formatDuration(usageStats?.average_duration_ms || 0)" class="block" />
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('usage.perRequest') }}</p>
         </div>
         </div>
@@ -221,6 +192,25 @@
             }}</span>
           </template>
 
+          <template #cell-group="{ row }">
+            <div class="flex flex-wrap items-center gap-1.5" data-test="usage-group-cell">
+              <template v-if="row.served_group || row.served_group_id">
+                <span class="text-sm text-gray-900 dark:text-white" data-test="served-group">{{
+                  row.served_group?.name || `#${row.served_group_id}`
+                }}</span>
+                <span
+                  class="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+                  :title="t('keyFallback.usage.servedTip')"
+                  data-test="served-tag"
+                  >{{ t('keyFallback.usage.servedTag') }}</span
+                >
+              </template>
+              <span v-else class="text-sm text-gray-900 dark:text-white">{{
+                row.group?.name || '-'
+              }}</span>
+            </div>
+          </template>
+
           <template #cell-model="{ value }">
             <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
           </template>
@@ -269,8 +259,8 @@
                   d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
                 />
               </svg>
-              <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">{{ row.image_count }}{{ t('usage.imageUnit') }}</span>
-              <span class="font-mono tabular-nums text-gray-600 dark:text-gray-400">({{ formatImageBillingSize(row, t) }})</span>
+              <span class="num-secondary text-gray-900 dark:text-white">{{ row.image_count }}{{ t('usage.imageUnit') }}</span>
+              <span class="num text-gray-600 dark:text-gray-400">({{ formatImageBillingSize(row, t) }})</span>
             </div>
             <!-- Token 请求 -->
             <div v-else class="flex items-center gap-1.5">
@@ -280,15 +270,15 @@
                   <!-- Input -->
                   <div class="inline-flex items-center gap-1">
                     <Icon name="arrowDown" size="sm" class="text-gray-500 dark:text-gray-400" />
-                    <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">{{
-                      (row.input_tokens ?? 0).toLocaleString()
+                    <span class="num-secondary text-gray-900 dark:text-white">{{
+                      formatCount(row.input_tokens)
                     }}</span>
                   </div>
                   <!-- Output -->
                   <div class="inline-flex items-center gap-1">
                     <Icon name="arrowUp" size="sm" class="text-gray-500 dark:text-gray-400" />
-                    <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">{{
-                      (row.output_tokens ?? 0).toLocaleString()
+                    <span class="num-secondary text-gray-900 dark:text-white">{{
+                      formatCount(row.output_tokens)
                     }}</span>
                   </div>
                 </div>
@@ -300,14 +290,14 @@
                   <!-- Cache Read -->
                   <div v-if="row.cache_read_tokens > 0" class="inline-flex items-center gap-1">
                     <Icon name="inbox" size="sm" class="text-gray-500 dark:text-gray-400" />
-                    <span class="font-mono tabular-nums font-medium text-gray-700 dark:text-gray-300">{{
+                    <span class="num-secondary text-gray-700 dark:text-gray-300">{{
                       formatCacheTokens(row.cache_read_tokens)
                     }}</span>
                   </div>
                   <!-- Cache Write -->
                   <div v-if="row.cache_creation_tokens > 0" class="inline-flex items-center gap-1">
                     <Icon name="edit" size="sm" class="text-gray-500 dark:text-gray-400" />
-                    <span class="font-mono tabular-nums font-medium text-gray-700 dark:text-gray-300">{{
+                    <span class="num-secondary text-gray-700 dark:text-gray-300">{{
                       formatCacheTokens(row.cache_creation_tokens)
                     }}</span>
                     <span v-if="row.cache_creation_1h_tokens > 0" class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight border border-gray-200 text-gray-700 dark:border-dark-700 dark:text-gray-300">1h</span>
@@ -317,7 +307,7 @@
                 <div v-if="hasImageOutputTokens(row)" class="flex items-center gap-2">
                   <div class="inline-flex items-center gap-1">
                     <svg class="h-3.5 w-3.5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                    <span class="font-mono tabular-nums font-medium text-gray-700 dark:text-gray-300">{{ row.image_output_tokens.toLocaleString() }}</span>
+                    <span class="num-secondary text-gray-700 dark:text-gray-300">{{ formatCount(row.image_output_tokens) }}</span>
                   </div>
                 </div>
               </div>
@@ -346,9 +336,12 @@
                 法币金额用服务端下发的 fiat_cost：钱包扣费按充值倍率、订阅扣费按该卡
                 的 u(D)，两者单价差 54%~92%，前端不能一律按充值倍率折算。
               -->
-              <span class="font-mono tabular-nums font-medium text-gray-900 dark:text-white">
-                {{ formatAmount(row.actual_cost ?? 0, row.fiat_cost, 6) }}
-              </span>
+              <NumText
+                tier="secondary"
+                class="text-gray-900 dark:text-white"
+                :text="formatAmount(row.actual_cost ?? 0, row.fiat_cost)"
+                :title="formatAmount(row.actual_cost ?? 0, row.fiat_cost, EXACT_DIGITS)"
+              />
               <!-- Cost Detail Tooltip -->
               <div
                 class="group relative"
@@ -371,7 +364,7 @@
           <template #cell-first_token="{ row }">
             <span
               v-if="row.first_token_ms != null"
-              class="text-sm text-gray-600 dark:text-gray-400"
+              class="num text-sm text-gray-600 dark:text-gray-400"
             >
               {{ formatDuration(row.first_token_ms) }}
             </span>
@@ -379,7 +372,7 @@
           </template>
 
           <template #cell-duration="{ row }">
-            <span class="text-sm text-gray-600 dark:text-gray-400">{{
+            <span class="num text-sm text-gray-600 dark:text-gray-400">{{
               formatDuration(row.duration_ms)
             }}</span>
           </template>
@@ -449,19 +442,19 @@
             <div class="text-xs font-semibold text-gray-300 mb-1">{{ t('usage.tokenDetails') }}</div>
             <div v-if="tokenTooltipData && tokenTooltipData.input_tokens > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.inputTokens') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">{{ tokenTooltipData.input_tokens.toLocaleString() }}</span>
+              <span class="num font-medium text-white">{{ formatCount(tokenTooltipData.input_tokens) }}</span>
             </div>
             <div v-if="tokenTooltipData && tokenTooltipData.output_tokens > 0 && !hasImageOutputTokens(tokenTooltipData)" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.outputTokens') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">{{ tokenTooltipData.output_tokens.toLocaleString() }}</span>
+              <span class="num font-medium text-white">{{ formatCount(tokenTooltipData.output_tokens) }}</span>
             </div>
             <div v-if="tokenTooltipData && hasImageOutputTokens(tokenTooltipData) && textOutputTokens(tokenTooltipData) > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.outputTokens') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">{{ textOutputTokens(tokenTooltipData).toLocaleString() }}</span>
+              <span class="num font-medium text-white">{{ formatCount(textOutputTokens(tokenTooltipData)) }}</span>
             </div>
             <div v-if="tokenTooltipData && hasImageOutputTokens(tokenTooltipData)" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('usage.imageOutputTokens') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">{{ tokenTooltipData.image_output_tokens.toLocaleString() }}</span>
+              <span class="num font-medium text-white">{{ formatCount(tokenTooltipData.image_output_tokens) }}</span>
             </div>
             <div v-if="tokenTooltipData && tokenTooltipData.cache_creation_tokens > 0">
               <!-- 有 5m/1h 明细时，展开显示 -->
@@ -471,20 +464,20 @@
                     {{ t('admin.usage.cacheCreation5mTokens') }}
                     <span class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight border border-gray-600 text-gray-300">5m</span>
                   </span>
-                  <span class="font-mono tabular-nums font-medium text-white">{{ tokenTooltipData.cache_creation_5m_tokens.toLocaleString() }}</span>
+                  <span class="num font-medium text-white">{{ formatCount(tokenTooltipData.cache_creation_5m_tokens) }}</span>
                 </div>
                 <div v-if="tokenTooltipData.cache_creation_1h_tokens > 0" class="flex items-center justify-between gap-4">
                   <span class="text-gray-400 flex items-center gap-1.5">
                     {{ t('admin.usage.cacheCreation1hTokens') }}
                     <span class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight border border-gray-600 text-gray-300">1h</span>
                   </span>
-                  <span class="font-mono tabular-nums font-medium text-white">{{ tokenTooltipData.cache_creation_1h_tokens.toLocaleString() }}</span>
+                  <span class="num font-medium text-white">{{ formatCount(tokenTooltipData.cache_creation_1h_tokens) }}</span>
                 </div>
               </template>
               <!-- 无明细时，只显示聚合值 -->
               <div v-else class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('admin.usage.cacheCreationTokens') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">{{ tokenTooltipData.cache_creation_tokens.toLocaleString() }}</span>
+                <span class="num font-medium text-white">{{ formatCount(tokenTooltipData.cache_creation_tokens) }}</span>
               </div>
             </div>
             <div v-if="tokenTooltipData && tokenTooltipData.cache_ttl_overridden" class="flex items-center justify-between gap-4">
@@ -496,13 +489,13 @@
             </div>
             <div v-if="tokenTooltipData && tokenTooltipData.cache_read_tokens > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.cacheReadTokens') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">{{ tokenTooltipData.cache_read_tokens.toLocaleString() }}</span>
+              <span class="num font-medium text-white">{{ formatCount(tokenTooltipData.cache_read_tokens) }}</span>
             </div>
           </div>
           <!-- Total -->
           <div class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5">
             <span class="text-gray-400">{{ t('usage.totalTokens') }}</span>
-            <span class="font-mono tabular-nums font-semibold text-white">{{ ((tokenTooltipData?.input_tokens || 0) + (tokenTooltipData?.output_tokens || 0) + (tokenTooltipData?.cache_creation_tokens || 0) + (tokenTooltipData?.cache_read_tokens || 0)).toLocaleString() }}</span>
+            <span class="num font-semibold text-white">{{ formatCount((tokenTooltipData?.input_tokens || 0) + (tokenTooltipData?.output_tokens || 0) + (tokenTooltipData?.cache_creation_tokens || 0) + (tokenTooltipData?.cache_read_tokens || 0)) }}</span>
           </div>
         </div>
         <!-- Tooltip Arrow (left side) -->
@@ -527,49 +520,49 @@
         class="whitespace-nowrap rounded-lg border border-gray-700 bg-gray-900 px-3 py-2.5 text-xs text-white shadow-xl dark:border-gray-600 dark:bg-gray-800"
       >
         <div class="space-y-1.5">
-          <!-- Cost Breakdown -->
-          <div class="mb-2 border-b border-gray-700 pb-1.5">
-            <div class="text-xs font-semibold text-gray-300 mb-1">{{ t('usage.costDetails') }}</div>
-            <div v-if="tooltipData && tooltipData.input_cost > 0" class="flex items-center justify-between gap-4">
+          <!-- Cost Breakdown：没有可显示的行时整块隐藏，避免只剩一条底边框 -->
+          <div v-if="showCostBreakdown" class="mb-2 border-b border-gray-700 pb-1.5" data-test="cost-breakdown">
+            <div v-if="officialAvailable" class="text-xs font-semibold text-gray-300 mb-1">{{ t('usage.costDetails') }}</div>
+            <div v-if="officialAvailable && tooltipData && tooltipData.input_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.inputCost') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData.input_cost.toFixed(6) }}</span>
+              <span class="num font-medium text-white">{{ tipCost(tooltipData.input_cost) }}</span>
             </div>
-            <div v-if="tooltipData && tooltipData.output_cost > 0" class="flex items-center justify-between gap-4">
+            <div v-if="officialAvailable && tooltipData && tooltipData.output_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.outputCost') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData.output_cost.toFixed(6) }}</span>
+              <span class="num font-medium text-white">{{ tipCost(tooltipData.output_cost) }}</span>
             </div>
-            <div v-if="tooltipData && hasImageOutputCost(tooltipData)" class="flex items-center justify-between gap-4">
+            <div v-if="officialAvailable && tooltipData && hasImageOutputCost(tooltipData)" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('usage.imageOutputCost') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData.image_output_cost.toFixed(6) }}</span>
+              <span class="num font-medium text-white">{{ tipCost(tooltipData.image_output_cost) }}</span>
             </div>
             <!-- Token billing: show unit prices per 1M tokens -->
             <template v-if="tooltipData && !isImageUsage(tooltipData) && (!tooltipData.billing_mode || tooltipData.billing_mode === BILLING_MODE_TOKEN)">
-              <div v-if="tooltipData && tooltipData.input_tokens > 0" class="flex items-center justify-between gap-4">
+              <div v-if="officialAvailable && tooltipData && tooltipData.input_tokens > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.inputTokenPrice') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.input_cost, tooltipData.input_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="num font-medium text-white">{{ officialPerMillion(tooltipData.input_cost, tooltipData.input_tokens) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
-              <div v-if="tooltipData && tooltipData.output_cost > 0 && textOutputTokens(tooltipData) > 0" class="flex items-center justify-between gap-4">
+              <div v-if="officialAvailable && tooltipData && tooltipData.output_cost > 0 && textOutputTokens(tooltipData) > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.outputTokenPrice') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.output_cost, textOutputTokens(tooltipData)) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="num font-medium text-white">{{ officialPerMillion(tooltipData.output_cost, textOutputTokens(tooltipData)) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
-              <div v-if="tooltipData && tooltipData.cache_creation_tokens > 0" class="flex items-center justify-between gap-4">
+              <div v-if="officialAvailable && tooltipData && tooltipData.cache_creation_tokens > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.cacheWriteTokenPrice') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.cache_creation_cost, tooltipData.cache_creation_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="num font-medium text-white">{{ officialPerMillion(tooltipData.cache_creation_cost, tooltipData.cache_creation_tokens) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
-              <div v-if="tooltipData && tooltipData.cache_read_tokens > 0" class="flex items-center justify-between gap-4">
+              <div v-if="officialAvailable && tooltipData && tooltipData.cache_read_tokens > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.cacheReadTokenPrice') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.cache_read_cost, tooltipData.cache_read_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="num font-medium text-white">{{ officialPerMillion(tooltipData.cache_read_cost, tooltipData.cache_read_tokens) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
-              <div v-if="tooltipData && hasImageOutputTokens(tooltipData)" class="flex items-center justify-between gap-4">
+              <div v-if="officialAvailable && tooltipData && hasImageOutputTokens(tooltipData)" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageOutputTokenPrice') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">{{ formatTokenPricePerMillion(tooltipData.image_output_cost ?? 0, tooltipData.image_output_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="num font-medium text-white">{{ officialPerMillion(tooltipData.image_output_cost ?? 0, tooltipData.image_output_tokens) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
             </template>
             <!-- Per-image billing: show image metadata and unit price -->
             <template v-else-if="tooltipData && isImageUsage(tooltipData)">
               <div class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageCount') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">{{ tooltipData.image_count }}{{ t('usage.imageUnit') }}</span>
+                <span class="num font-medium text-white">{{ tooltipData.image_count }}{{ t('usage.imageUnit') }}</span>
               </div>
               <div class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageBillingSize') }}</span>
@@ -591,26 +584,26 @@
                 <span class="text-gray-400">{{ t('usage.imageSizeBreakdown') }}</span>
                 <span class="font-medium text-white">{{ formatImageSizeBreakdown(tooltipData) }}</span>
               </div>
-              <div class="flex items-center justify-between gap-4">
+              <div v-if="officialAvailable" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageUnitPrice') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">${{ imageUnitPrice(tooltipData).toFixed(6) }}</span>
+                <span class="num font-medium text-white">{{ tipCost(imageUnitPrice(tooltipData)) }}</span>
               </div>
-              <div class="flex items-center justify-between gap-4">
+              <div v-if="officialAvailable" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageTotalPrice') }}</span>
-                <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData.total_cost?.toFixed(6) || '0.000000' }}</span>
+                <span class="num font-medium text-white">{{ tipCost(tooltipData.total_cost ?? 0) }}</span>
               </div>
             </template>
-            <div v-else class="flex items-center justify-between gap-4">
+            <div v-else-if="officialAvailable" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('usage.unitPrice') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData?.total_cost?.toFixed(6) || '0.000000' }}</span>
+              <span class="num font-medium text-white">{{ tipCost(tooltipData?.total_cost ?? 0) }}</span>
             </div>
-            <div v-if="tooltipData && tooltipData.cache_creation_cost > 0" class="flex items-center justify-between gap-4">
+            <div v-if="officialAvailable && tooltipData && tooltipData.cache_creation_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.cacheCreationCost') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData.cache_creation_cost.toFixed(6) }}</span>
+              <span class="num font-medium text-white">{{ tipCost(tooltipData.cache_creation_cost) }}</span>
             </div>
-            <div v-if="tooltipData && tooltipData.cache_read_cost > 0" class="flex items-center justify-between gap-4">
+            <div v-if="officialAvailable && tooltipData && tooltipData.cache_read_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.cacheReadCost') }}</span>
-              <span class="font-mono tabular-nums font-medium text-white">${{ tooltipData.cache_read_cost.toFixed(6) }}</span>
+              <span class="num font-medium text-white">{{ tipCost(tooltipData.cache_read_cost) }}</span>
             </div>
           </div>
           <!-- Rate and Summary -->
@@ -620,9 +613,7 @@
           </div>
           <div class="flex items-center justify-between gap-6">
             <span class="text-gray-400">{{ t('usage.rate') }}</span>
-            <span class="font-mono tabular-nums font-semibold text-white"
-              >{{ formatMultiplier(tooltipData?.rate_multiplier || 1) }}x</span
-            >
+            <span class="num font-semibold text-white" data-test="tip-rate">{{ tooltipRateText }}</span>
           </div>
           <!--
             三行拆开三个不同的概念，这是整个改动的核心：
@@ -630,16 +621,19 @@
             美元计价）→ 你的花费（真金白银的人民币）。以前只有中间那一行，所以
             「扣了 $5」会被读成「花了三十多块」，实际只有几毛钱。
           -->
-          <div class="flex items-center justify-between gap-6">
+          <div v-if="officialAvailable" class="flex items-center justify-between gap-6">
             <span class="text-gray-400">{{ t('usage.officialPrice') }}</span>
-            <span class="font-mono tabular-nums font-medium text-white"
-              >${{ tooltipData?.total_cost.toFixed(6) }}</span
+            <span class="num font-medium text-white"
+              >{{ tipCost(tooltipData?.total_cost ?? 0) }}</span
             >
           </div>
-          <div class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5">
+          <div
+            v-if="!isFiat"
+            class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5"
+          >
             <span class="text-gray-400">{{ tooltipDeductedLabel }}</span>
-            <span class="font-mono tabular-nums font-medium text-white">{{
-              formatUsd(tooltipData?.actual_cost ?? 0, 6)
+            <span class="num font-medium text-white">{{
+              formatUsd(tooltipData?.actual_cost ?? 0, EXACT_DIGITS)
             }}</span>
           </div>
           <div
@@ -647,9 +641,9 @@
             class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5"
           >
             <span class="text-gray-400">{{ t('usage.yourSpend') }}</span>
-            <span class="font-mono tabular-nums font-semibold text-white">{{
+            <span class="num font-semibold text-white" data-test="tip-spend">{{
               formatFiat(tooltipFiatCost)
-            }}</span>
+            }}<template v-if="isFiat">{{ ` ${tooltipSpendSource}` }}</template></span>
           </div>
         </div>
         <!-- Tooltip Arrow (left side) -->
@@ -679,9 +673,14 @@ import type { UsageLog, ApiKey, UsageQueryParams, UsageStatsResponse, UserErrorR
 import type { Column } from '@/components/common/types'
 import { formatDateTime, formatReasoningEffort } from '@/utils/format'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
-import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
-import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
-import { formatTokenPricePerMillion } from '@/utils/usagePricing'
+import { EXACT_DIGITS, type MoneyDigits, useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import CurrencyModeSwitch from '@/components/common/CurrencyModeSwitch.vue'
+import NumText from '@/components/common/NumText.vue'
+import { formatMultiplier } from '@/utils/formatters'
+import { useRateDisplay } from '@/composables/useRateDisplay'
+import { formatRate } from '@/utils/rateDisplay'
+import { formatCompactCount, formatCount, formatDurationMs } from '@/utils/numberFormat'
+import { calculateTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
 import {
@@ -707,27 +706,54 @@ const { t } = useI18n()
 const appStore = useAppStore()
 // 解构出来的 ref 在模板里会自动 unwrap，比 currency.isFiat.value 这种写法干净。
 const {
-  isFiat: currencyIsFiat,
   canSwitch: currencyCanSwitch,
-  mode: currencyMode,
-  setMode: setCurrencyMode,
   usdToFiat,
   formatFiat,
   formatUsd,
-  formatAmount
+  formatAmount,
+  formatMixed,
+  isFiat,
+  officialCnyRate,
+  formatOfficial
 } = useCurrencyDisplay()
+
+const { usageRowRate } = useRateDisplay()
+
+// 官方价：人民币模式按后台汇率换成 ¥；后端没提供汇率时整块官方价隐藏，不混排 $。
+const officialAvailable = computed(() => !isFiat.value || officialCnyRate.value > 0)
+// 汇总卡等位置按统一规则收口（缺省）；费用明细 tooltip 是对账用的，用精确值保留全部精度。
+/** 缓存 token：K / M 缩写，缩写后带千分位（用户端统一计数规则）。 */
+const formatCacheTokens = (tokens: number): string => formatCompactCount(tokens, { allowBillions: false })
+
+function officialCost(usd: number, digits?: MoneyDigits): string {
+  return formatOfficial(usd, digits) ?? ''
+}
+function tipCost(usd: number): string {
+  // 美元额度按精确值展示；人民币是折算出来的，沿用统一规则，不放大折算误差。
+  return officialCost(usd, isFiat.value ? undefined : EXACT_DIGITS)
+}
+function officialPerMillion(cost: number | null | undefined, tokens: number | null | undefined): string {
+  const perMillion = calculateTokenPricePerMillion(cost, tokens)
+  if (perMillion == null) return '-'
+  // 每百万 Token 单价是报价，≥ 1 时不能被四舍五入吞掉第三、四位小数。
+  return formatOfficial(perMillion, { unitPrice: true }) ?? '-'
+}
 
 let abortController: AbortController | null = null
 
 // Tooltip state
 const tooltipVisible = ref(false)
 const tooltipPosition = ref({ x: 0, y: 0 })
-const currencyOptions = computed(() => [
-  { value: 'fiat' as const, label: t('usage.currencyFiat') },
-  { value: 'usd' as const, label: t('usage.currencyUsd') }
-])
 
 const tooltipData = ref<UsageLog | null>(null)
+
+/**
+ * 费用明细块有没有行可显示：金额行都受 officialAvailable 控制，
+ * 只有图片计费的尺寸 / 张数等元信息不带价格，缺汇率时也要显示。
+ */
+const showCostBreakdown = computed(
+  () => officialAvailable.value || (tooltipData.value != null && isImageUsage(tooltipData.value))
+)
 
 /**
  * 这笔用量的法币花费。优先用服务端下发的 fiat_cost（按额度来源精确折算），
@@ -735,7 +761,8 @@ const tooltipData = ref<UsageLog | null>(null)
  */
 const tooltipFiatCost = computed<number | null>(() => {
   const row = tooltipData.value
-  if (!row) return null
+  // 倍率为 1（free 站）时没有「付了多少人民币」可言，不展示这一行。
+  if (!row || !currencyCanSwitch.value) return null
   if (typeof row.fiat_cost === 'number' && Number.isFinite(row.fiat_cost) && row.fiat_cost !== 0) {
     return row.fiat_cost
   }
@@ -752,6 +779,22 @@ const tooltipDeductedLabel = computed(() =>
   tooltipData.value?.billing_type === 1
     ? t('usage.subscriptionDeducted')
     : t('usage.balanceDeducted')
+)
+
+/**
+ * 悬停里的倍率。人民币模式按「这行实付 ÷ 官方价」的等效口径（余额行 r ÷ m、套餐行 r × u），
+ * 官方价为 0 时显示 `-`；美元模式和 m = 1 的站点沿用原来的原始倍率，逐字不变。
+ */
+const tooltipRateText = computed(() => {
+  const row = tooltipData.value
+  if (!isFiat.value) return `${formatMultiplier(row?.rate_multiplier || 1)}x`
+  const rate = row ? usageRowRate(row) : null
+  return rate === null ? '-' : `${formatRate(rate)}x`
+})
+
+/** 人民币模式下，花费后面标出这笔是从余额还是从套餐扣的（billing_type 1 = 套餐）。 */
+const tooltipSpendSource = computed(() =>
+  tooltipData.value?.billing_type === 1 ? t('usage.spendFromPlan') : t('usage.spendFromBalance')
 )
 
 // Token tooltip state
@@ -777,6 +820,7 @@ const cacheStats = computed(() => {
 
 const columns = computed<Column[]>(() => [
   { key: 'api_key', label: t('usage.apiKeyFilter'), sortable: false },
+  { key: 'group', label: t('keyFallback.usage.groupColumn'), sortable: false },
   { key: 'model', label: t('usage.model'), sortable: true },
   { key: 'reasoning_effort', label: t('usage.reasoningEffort'), sortable: false },
   { key: 'endpoint', label: t('usage.endpoint'), sortable: false },
@@ -857,11 +901,7 @@ const sortState = reactive({
   sort_order: 'desc' as 'asc' | 'desc'
 })
 
-const formatDuration = (ms: number | null | undefined): string => {
-  if (ms == null) return '-'
-  if (ms < 1000) return `${ms.toFixed(0)}ms`
-  return `${(ms / 1000).toFixed(2)}s`
-}
+const formatDuration = (ms: number | null | undefined): string => formatDurationMs(ms)
 
 
 const formatUserAgent = (ua: string): string => {
@@ -901,16 +941,7 @@ const formatUsageEndpoints = (log: UsageLog): string => {
   return inbound || '-'
 }
 
-const formatTokens = (value: number): string => {
-  if (value >= 1_000_000_000) {
-    return `${(value / 1_000_000_000).toFixed(2)}B`
-  } else if (value >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(2)}M`
-  } else if (value >= 1_000) {
-    return `${(value / 1_000).toFixed(2)}K`
-  }
-  return value.toLocaleString()
-}
+const formatTokens = (value: number): string => formatCompactCount(value, { allowBillions: false })
 
 type UsageTableQueryParams = UsageQueryParams & {
   sort_by?: string
@@ -960,10 +991,18 @@ const loadUsageLogs = async () => {
   }
 }
 
+// 用量 / 错误记录的 API Key 筛选要覆盖全部 key，而不只是第一页 100 个：按页拉取直到
+// 达到总页数或遇到空页（防止过期的 pages 计数导致死循环 / 多余请求）。
 const loadApiKeys = async () => {
   try {
-    const response = await keysAPI.list(1, 100)
-    apiKeys.value = response.items
+    const firstPage = await keysAPI.list(1, 100)
+    const keys = [...firstPage.items]
+    for (let page = 2; page <= (firstPage.pages ?? 1) && keys.length > 0; page++) {
+      const response = await keysAPI.list(page, 100)
+      if (response.items.length === 0) break
+      keys.push(...response.items)
+    }
+    apiKeys.value = keys
   } catch (error) {
     console.error('Failed to load API keys:', error)
   }
@@ -1035,6 +1074,10 @@ const escapeCSVValue = (value: unknown): string => {
   const str = String(value)
   const escaped = str.replace(/"/g, '""')
 
+  // A lone '-' is the missing-value marker (e.g. formatReasoningEffort);
+  // it cannot start a formula, so export it verbatim.
+  if (str === '-') return str
+
   // Prevent formula injection by prefixing dangerous characters with single quote
   if (/^[=+\-@\t\r]/.test(str)) {
     return `"\'${escaped}"`
@@ -1060,10 +1103,13 @@ const exportToCSV = async () => {
   try {
     const allLogs: UsageLog[] = []
     const pageSize = 100 // Use a larger page size for export to reduce requests
+    // Snapshot filters/sort once so every page uses the same query even if the
+    // user changes the filters while the export is still running.
+    const exportParams = buildUsageQueryParams(1, pageSize)
     const totalRequests = Math.ceil(pagination.total / pageSize)
 
     for (let page = 1; page <= totalRequests; page++) {
-      const response = await usageAPI.query(buildUsageQueryParams(page, pageSize))
+      const response = await usageAPI.query({ ...exportParams, page })
       allLogs.push(...response.items)
     }
 
@@ -1124,7 +1170,7 @@ const exportToCSV = async () => {
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `usage_${filters.value.start_date}_to_${filters.value.end_date}.csv`
+    link.download = `usage_${exportParams.start_date}_to_${exportParams.end_date}.csv`
     link.click()
     window.URL.revokeObjectURL(url)
 

@@ -206,12 +206,10 @@ func TestGatewayHandlerMessages_StreamReadErrorRecordsPartialUsage(t *testing.T)
 	case usageLog := <-usageRepo.created:
 		require.NotNil(t, usageLog)
 		require.Equal(t, 13, usageLog.InputTokens)
-		// message_start 的 usage 块里即便携带 output_tokens，也不代表已经产生真实输出——
-		// 真实 Anthropic 上游此时输出尚未开始，output_tokens 只在 message_delta 里才有意义。
-		// parseSSEUsagePassthrough/parseSSEUsage 对 message_start 都只提取
-		// input/cache 相关字段、不提取 output_tokens，这里的 payload 故意在 message_start
-		// 中塞了 output_tokens 只是为了确认解析器不会误采信它；断言应为 0，不是 2。
-		require.Equal(t, 0, usageLog.OutputTokens)
+		// 上游 message_start 明确计量了 2 个 output_tokens；即使连接在
+		// message_delta 前中断，也应保留起始计量并只记录一次 partial usage。
+		// 不把尚未交付的可见文本当作丢弃已计量 usage 的依据（upstream #7873）。
+		require.Equal(t, 2, usageLog.OutputTokens)
 	case <-time.After(3 * time.Second):
 		t.Fatal("等待 partial usage 写入超时——流式错误路径未提交已探测到的 usage")
 	}

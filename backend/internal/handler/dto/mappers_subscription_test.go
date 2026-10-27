@@ -104,6 +104,36 @@ func TestUserSubscriptionFromService_PreservesUnboundedWindowsForDisplay(t *test
 	require.Nil(t, got.MonthlyWindowStart)
 }
 
+// 删除分组不再连带删卡：卡上的 group_id 仍指向已软删的分组，Group 边读不到（nil）。
+// 用户端和后台的订阅 DTO 都要能映射这样的卡，且不能凭空带出分组信息。
+func TestUserSubscriptionFromService_GroupDeletedKeepsGroupIDWithoutGroup(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	sub := &service.UserSubscription{
+		ID:              13,
+		UserID:          23,
+		GroupID:         31, // 来源分组已被软删
+		Group:           nil,
+		StartsAt:        now.AddDate(0, 0, -5),
+		ExpiresAt:       now.AddDate(0, 0, 25),
+		Status:          service.SubscriptionStatusActive,
+		DailyAmountUSD:  10,
+		GrantedTotalUSD: 300,
+	}
+
+	got := UserSubscriptionFromService(sub)
+	require.NotNil(t, got)
+	require.Equal(t, int64(31), got.GroupID)
+	require.Nil(t, got.Group)
+	require.Equal(t, service.SubscriptionStatusActive, got.Status)
+
+	admin := UserSubscriptionFromServiceAdmin(sub)
+	require.NotNil(t, admin)
+	require.Equal(t, int64(31), admin.GroupID)
+	require.Nil(t, admin.Group)
+}
+
 func floatPtr(v float64) *float64 {
 	return &v
 }

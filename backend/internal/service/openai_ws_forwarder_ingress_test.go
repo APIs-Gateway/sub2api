@@ -1,11 +1,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -141,6 +143,91 @@ func TestDropPreviousResponseIDFromRawPayload(t *testing.T) {
 		require.True(t, removed)
 		require.False(t, gjson.GetBytes(updated, "previous_response_id").Exists())
 	})
+}
+
+func TestNormalizeOpenAIWSContextWindowBoundary(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		payload          string
+		previousWindowID string
+		wantWindowID     string
+		wantChanged      bool
+		wantRemoved      bool
+	}{
+		{
+			name:             "same_window_keeps_continuation",
+			payload:          `{"type":"response.create","previous_response_id":"resp_old","client_metadata":{"x-codex-window-id":"window-a"}}`,
+			previousWindowID: "window-a",
+			wantWindowID:     "window-a",
+		},
+		{
+			name:             "new_window_breaks_continuation",
+			payload:          `{"type":"response.create","previous_response_id":"resp_old","client_metadata":{"x-codex-window-id":"window-b"}}`,
+			previousWindowID: "window-a",
+			wantWindowID:     "window-b",
+			wantChanged:      true,
+			wantRemoved:      true,
+		},
+		{
+			name:             "new_window_without_continuation_is_still_boundary",
+			payload:          `{"type":"response.create","client_metadata":{"x-codex-window-id":"window-b"}}`,
+			previousWindowID: "window-a",
+			wantWindowID:     "window-b",
+			wantChanged:      true,
+		},
+		{
+			name:             "embedded_turn_metadata_is_fallback",
+			payload:          `{"type":"response.create","previous_response_id":"resp_old","client_metadata":{"x-codex-turn-metadata":"{\"window_id\":\"window-b\"}"}}`,
+			previousWindowID: "window-a",
+			wantWindowID:     "window-b",
+			wantChanged:      true,
+			wantRemoved:      true,
+		},
+		{
+			name:             "direct_window_id_takes_precedence",
+			payload:          `{"type":"response.create","previous_response_id":"resp_old","client_metadata":{"x-codex-window-id":"window-a","x-codex-turn-metadata":"{\"window_id\":\"window-b\"}"}}`,
+			previousWindowID: "window-a",
+			wantWindowID:     "window-a",
+		},
+		{
+			name:             "missing_window_id_preserves_continuation",
+			payload:          `{"type":"response.create","previous_response_id":"resp_old","client_metadata":{"x-codex-turn-metadata":"invalid-json"}}`,
+			previousWindowID: "window-a",
+		},
+		{
+			name:         "first_window_preserves_continuation",
+			payload:      `{"type":"response.create","previous_response_id":"resp_old","client_metadata":{"x-codex-window-id":"window-a"}}`,
+			wantWindowID: "window-a",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			payload := []byte(test.payload)
+			updated, boundary, err := normalizeOpenAIWSContextWindowBoundary(payload, test.previousWindowID)
+			require.NoError(t, err)
+			require.Equal(t, test.wantWindowID, boundary.WindowID)
+			require.Equal(t, test.wantChanged, boundary.Changed)
+			require.Equal(t, test.wantRemoved, boundary.PreviousResponseIDRemoved)
+			if test.wantRemoved {
+				require.False(t, gjson.GetBytes(updated, "previous_response_id").Exists())
+			} else {
+				require.Equal(t, test.payload, string(updated))
+			}
+		})
+	}
+}
+
+func TestNormalizeOpenAIWSContextWindowBoundaryRejectsIncompleteRemoval(t *testing.T) {
+	t.Parallel()
+	payload := []byte(`{"type":"response.create"` + strings.Repeat(`,"previous_response_id":"resp_old"`, openAIWSMaxPrevResponseIDDeletePasses+1) + `,"client_metadata":{"x-codex-window-id":"window-b"}}`)
+	updated, boundary, err := normalizeOpenAIWSContextWindowBoundary(payload, "window-a")
+	require.ErrorContains(t, err, "previous_response_id remains")
+	require.True(t, boundary.Changed)
+	require.False(t, boundary.PreviousResponseIDRemoved)
+	require.Equal(t, string(payload), string(updated), "an incomplete deletion must never be forwarded")
 }
 
 func TestStripCodexSparkImageGenerationToolFromRawPayload(t *testing.T) {
@@ -908,18 +995,79 @@ func TestSetOpenAIWSPayloadInputSequence(t *testing.T) {
 	})
 }
 
-func TestCloneOpenAIWSRawMessages(t *testing.T) {
+func TestCombineOpenAIWSReplayItems(t *testing.T) {
 	t.Parallel()
 
-	t.Run("nil_slice", func(t *testing.T) {
-		cloned := cloneOpenAIWSRawMessages(nil)
-		require.Nil(t, cloned)
+	t.Run("empty_delta_returns_history", func(t *testing.T) {
+		history := []json.RawMessage{json.RawMessage(`{"a":1}`)}
+		require.Nil(t, combineOpenAIWSReplayItems(nil, nil))
+		combined := combineOpenAIWSReplayItems(history, nil)
+		require.Len(t, combined, 1)
 	})
 
-	t.Run("empty_slice", func(t *testing.T) {
-		items := make([]json.RawMessage, 0)
-		cloned := cloneOpenAIWSRawMessages(items)
-		require.NotNil(t, cloned)
-		require.Len(t, cloned, 0)
+	t.Run("new_header_shares_bodies", func(t *testing.T) {
+		history := []json.RawMessage{json.RawMessage(`{"a":1}`)}
+		delta := []json.RawMessage{json.RawMessage(`{"b":2}`)}
+		combined := combineOpenAIWSReplayItems(history, delta)
+		require.Len(t, combined, 2)
+		// 头数组必须是新建的：对 combined 追加不影响 history。
+		require.NotSame(t, &history[0], &combined[0])
+		// 正文共享：不发生字节级深拷贝。
+		require.Same(t, &history[0][0], &combined[0][0])
+		require.Same(t, &delta[0][0], &combined[1][0])
+	})
+}
+
+func TestOpenAIWSReplaySequenceSharesBodies(t *testing.T) {
+	t.Parallel()
+
+	t.Run("extract_shares_payload_backing_array", func(t *testing.T) {
+		payload := []byte(`{"input":[{"type":"input_text","text":"hello"},{"type":"input_text","text":"world"}]}`)
+		items, exists, err := openAIWSExtractNormalizedInputSequence(payload)
+		require.NoError(t, err)
+		require.True(t, exists)
+		require.Len(t, items, 2)
+		for _, item := range items {
+			start := bytes.Index(payload, []byte(item))
+			require.GreaterOrEqual(t, start, 0)
+			require.Same(t, &payload[start], &item[0], "extract 应零拷贝共享 payload 底层数组")
+		}
+	})
+
+	t.Run("build_transfers_current_items_ownership", func(t *testing.T) {
+		payload := []byte(`{"input":[{"type":"input_text","text":"hello"}]}`)
+		items, exists, err := buildOpenAIWSReplayInputSequence(nil, false, payload, false)
+		require.NoError(t, err)
+		require.True(t, exists)
+		require.Len(t, items, 1)
+		start := bytes.Index(payload, []byte(items[0]))
+		require.GreaterOrEqual(t, start, 0)
+		require.Same(t, &payload[start], &items[0][0])
+	})
+
+	t.Run("build_merge_shares_history_bodies", func(t *testing.T) {
+		history := []json.RawMessage{json.RawMessage(`{"type":"input_text","text":"hello"}`)}
+		items, exists, err := buildOpenAIWSReplayInputSequence(
+			history,
+			true,
+			[]byte(`{"previous_response_id":"resp_1","input":[{"type":"input_text","text":"world"}]}`),
+			true,
+		)
+		require.NoError(t, err)
+		require.True(t, exists)
+		require.Len(t, items, 2)
+		require.Same(t, &history[0][0], &items[0][0], "历史正文应共享而非深拷贝")
+	})
+
+	t.Run("build_prefix_hit_transfers_current_items", func(t *testing.T) {
+		history := []json.RawMessage{json.RawMessage(`{"type":"input_text","text":"hello"}`)}
+		payload := []byte(`{"previous_response_id":"resp_1","input":[{"type":"input_text","text":"hello"},{"type":"input_text","text":"world"}]}`)
+		items, exists, err := buildOpenAIWSReplayInputSequence(history, true, payload, true)
+		require.NoError(t, err)
+		require.True(t, exists)
+		require.Len(t, items, 2)
+		start := bytes.Index(payload, []byte(items[1]))
+		require.GreaterOrEqual(t, start, 0)
+		require.Same(t, &payload[start], &items[1][0], "prefix 命中应转移当前 items 所有权并共享 payload 底层数组")
 	})
 }

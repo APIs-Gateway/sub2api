@@ -168,7 +168,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import Icon from '@/components/icons/Icon.vue'
@@ -245,14 +245,22 @@ const toggle = () => {
   }
 }
 
+watch(() => props.disabled, (disabled) => {
+  if (disabled) {
+    isOpen.value = false
+    searchQuery.value = ''
+  }
+})
+
 const selectOption = (value: number | null) => {
+  if (props.disabled || !isOpen.value) return
   emit('update:modelValue', value)
   isOpen.value = false
   searchQuery.value = ''
 }
 
 const handleTestProxy = async (proxy: Proxy) => {
-  if (testingProxyIds.has(proxy.id)) return
+  if (props.disabled || !isOpen.value || testingProxyIds.has(proxy.id)) return
 
   testingProxyIds.add(proxy.id)
   try {
@@ -269,25 +277,12 @@ const handleTestProxy = async (proxy: Proxy) => {
 }
 
 const handleBatchTest = async () => {
-  if (batchTesting.value || props.proxies.length === 0) return
+  if (props.disabled || !isOpen.value || batchTesting.value || props.proxies.length === 0) return
 
   batchTesting.value = true
 
   // Test all proxies in parallel
-  const testPromises = props.proxies.map(async (proxy) => {
-    testingProxyIds.add(proxy.id)
-    try {
-      const result = await adminAPI.proxies.testProxy(proxy.id)
-      testResults[proxy.id] = result
-    } catch (error: any) {
-      testResults[proxy.id] = {
-        success: false,
-        message: error.response?.data?.detail || 'Test failed'
-      }
-    } finally {
-      testingProxyIds.delete(proxy.id)
-    }
-  })
+  const testPromises = props.proxies.map(handleTestProxy)
 
   await Promise.all(testPromises)
   batchTesting.value = false

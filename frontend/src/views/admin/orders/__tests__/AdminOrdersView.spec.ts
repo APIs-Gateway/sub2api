@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   cancelOrder: vi.fn(),
   retryRecharge: vi.fn(),
   refundOrder: vi.fn(),
+  queryRefund: vi.fn(),
+  resolveRefund: vi.fn(),
   getSettings: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
@@ -30,6 +32,8 @@ vi.mock('@/api/admin/payment', () => ({
     cancelOrder: mocks.cancelOrder,
     retryRecharge: mocks.retryRecharge,
     refundOrder: mocks.refundOrder,
+    queryRefund: mocks.queryRefund,
+    resolveRefund: mocks.resolveRefund,
   },
   default: {
     getOrders: mocks.getOrders,
@@ -37,6 +41,8 @@ vi.mock('@/api/admin/payment', () => ({
     cancelOrder: mocks.cancelOrder,
     retryRecharge: mocks.retryRecharge,
     refundOrder: mocks.refundOrder,
+    queryRefund: mocks.queryRefund,
+    resolveRefund: mocks.resolveRefund,
   },
 }))
 vi.mock('@/api/admin/settings', () => ({
@@ -126,6 +132,18 @@ const OrderTableStub = defineComponent({
       ),
     ),
 })
+const ConfirmDialogStub = defineComponent({
+  props: ['show', 'title', 'message', 'confirmText', 'danger'],
+  emits: ['confirm', 'cancel'],
+  setup: (props, { emit }) => () =>
+    props.show
+      ? h('div', { 'data-test': 'confirm-dialog', 'data-danger': String(Boolean(props.danger)) }, [
+          h('span', { 'data-test': 'confirm-message' }, String(props.message ?? '')),
+          h('button', { 'data-test': 'confirm-ok', onClick: () => emit('confirm') }, String(props.confirmText ?? '')),
+          h('button', { 'data-test': 'confirm-cancel', onClick: () => emit('cancel') }, 'cancel'),
+        ])
+      : null,
+})
 const AdminRefundDialogStub = defineComponent({
   props: ['show', 'order', 'submitting', 'requireForce', 'warning'],
   emits: ['confirm', 'cancel'],
@@ -143,6 +161,7 @@ function mountView() {
         Pagination: PaginationStub,
         BaseDialog: BaseDialogStub,
         AdminRefundDialog: AdminRefundDialogStub,
+        ConfirmDialog: ConfirmDialogStub,
         OrderStatusBadge: OrderStatusBadgeStub,
       },
     },
@@ -157,6 +176,8 @@ describe('AdminOrdersView refund management', () => {
     mocks.cancelOrder.mockReset()
     mocks.retryRecharge.mockReset()
     mocks.refundOrder.mockReset()
+    mocks.queryRefund.mockReset()
+    mocks.resolveRefund.mockReset()
     mocks.getSettings.mockReset()
     mocks.showError.mockReset()
     mocks.showSuccess.mockReset()
@@ -178,7 +199,7 @@ describe('AdminOrdersView refund management', () => {
       page: 1,
       page_size: 20,
       keyword: undefined,
-      status: 'REFUND_REQUESTED,REFUNDING,PARTIALLY_REFUNDED,REFUNDED,REFUND_FAILED',
+      status: 'REFUND_REQUESTED,REFUNDING,REFUND_PENDING,PARTIALLY_REFUNDED,REFUNDED,REFUND_FAILED',
       payment_type: undefined,
       order_type: undefined,
     })
@@ -257,5 +278,102 @@ describe('AdminOrdersView refund management', () => {
     const refundButton = wrapper.findAll('[data-test="order-row-44"] button').find((button) => button.text().includes('payment.admin.refund'))
     await refundButton?.trigger('click')
     expect(wrapper.find('[data-test="refund-dialog"]').text()).toBe('44')
+  })
+
+  it('queries a pending refund and reports each gateway outcome', async () => {
+    const pending = makeOrder({ id: 46, status: 'REFUND_PENDING', refund_amount: 100 })
+    mocks.getOrders.mockResolvedValue({ data: { items: [pending], total: 1 } })
+
+    const wrapper = mountView()
+    await flushPromises()
+    const button = () => wrapper.findAll('[data-test="order-row-46"] button').find((b) => b.text().includes('payment.admin.queryRefundStatus'))!
+    expect(button().exists()).toBe(true)
+
+    mocks.queryRefund.mockResolvedValueOnce({ data: { success: true } })
+    mocks.getOrders.mockClear()
+    await button().trigger('click')
+    await flushPromises()
+    expect(mocks.queryRefund).toHaveBeenLastCalledWith(46)
+    expect(mocks.showSuccess).toHaveBeenLastCalledWith('payment.admin.refundSuccess')
+    expect(mocks.getOrders).toHaveBeenCalled()
+
+    mocks.queryRefund.mockResolvedValueOnce({ data: { success: false, refund_pending: true } })
+    await button().trigger('click')
+    await flushPromises()
+    expect(mocks.showSuccess).toHaveBeenLastCalledWith('payment.admin.refundPending')
+
+    mocks.queryRefund.mockResolvedValueOnce({ data: { success: false, warning: 'gateway refund failed: closed' } })
+    await button().trigger('click')
+    await flushPromises()
+    expect(mocks.showError).toHaveBeenLastCalledWith('gateway refund failed: closed')
+
+    mocks.queryRefund.mockRejectedValueOnce(new Error('network'))
+    await button().trigger('click')
+    await flushPromises()
+    expect(mocks.showError).toHaveBeenCalledTimes(2)
+    expect(button().attributes('disabled')).toBeUndefined()
+  })
+
+  it('closes the refund dialog with a pending notice when the gateway only accepted the refund', async () => {
+    mocks.route.meta.refundOverview = false
+    const completed = makeOrder({ id: 47, status: 'COMPLETED', refund_amount: 0 })
+    mocks.getOrders.mockResolvedValue({ data: { items: [completed], total: 1 } })
+    mocks.refundOrder.mockResolvedValue({ data: { success: false, refund_pending: true, warning: 'gateway refund is pending confirmation' } })
+
+    const wrapper = mountView()
+    await flushPromises()
+    const refundButton = wrapper.findAll('[data-test="order-row-47"] button').find((b) => b.text().includes('payment.admin.refund'))
+    await refundButton?.trigger('click')
+    expect(wrapper.find('[data-test="refund-dialog"]').exists()).toBe(true)
+
+    wrapper.findComponent(AdminRefundDialogStub).vm.$emit('confirm', { amount: 10, reason: 'r', deduct_balance: true, force: false })
+    await flushPromises()
+    expect(mocks.refundOrder).toHaveBeenCalledWith(47, { amount: 10, reason: 'r', deduct_balance: true, force: false })
+    expect(mocks.showSuccess).toHaveBeenLastCalledWith('payment.admin.refundPending')
+    expect(wrapper.find('[data-test="refund-dialog"]').exists()).toBe(false)
+  })
+
+  it('lets an admin resolve a pending refund by hand after confirmation', async () => {
+    const pending = makeOrder({ id: 48, status: 'REFUND_PENDING', refund_amount: 100 })
+    mocks.getOrders.mockResolvedValue({ data: { items: [pending], total: 1 } })
+
+    const wrapper = mountView()
+    await flushPromises()
+    const row = () => wrapper.find('[data-test="order-row-48"]')
+    expect(row().find('[data-test="resolve-refund-succeeded"]').exists()).toBe(true)
+    expect(row().find('[data-test="resolve-refund-failed"]').exists()).toBe(true)
+
+    // Cancel does not call the API.
+    await row().find('[data-test="resolve-refund-failed"]').trigger('click')
+    expect(wrapper.find('[data-test="confirm-dialog"]').attributes('data-danger')).toBe('true')
+    expect(wrapper.find('[data-test="confirm-message"]').text()).toBe('payment.admin.resolveRefundFailedConfirm')
+    await wrapper.find('[data-test="confirm-cancel"]').trigger('click')
+    expect(wrapper.find('[data-test="confirm-dialog"]').exists()).toBe(false)
+    expect(mocks.resolveRefund).not.toHaveBeenCalled()
+
+    mocks.resolveRefund.mockResolvedValueOnce({ data: { success: false } })
+    await row().find('[data-test="resolve-refund-failed"]').trigger('click')
+    mocks.getOrders.mockClear()
+    await wrapper.find('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
+    expect(mocks.resolveRefund).toHaveBeenLastCalledWith(48, { outcome: 'failed' })
+    expect(mocks.showSuccess).toHaveBeenLastCalledWith('payment.admin.refundMarkedFailed')
+    expect(mocks.getOrders).toHaveBeenCalled()
+    expect(wrapper.find('[data-test="confirm-dialog"]').exists()).toBe(false)
+
+    mocks.resolveRefund.mockResolvedValueOnce({ data: { success: true } })
+    await row().find('[data-test="resolve-refund-succeeded"]').trigger('click')
+    expect(wrapper.find('[data-test="confirm-message"]').text()).toBe('payment.admin.resolveRefundSucceededConfirm')
+    await wrapper.find('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
+    expect(mocks.resolveRefund).toHaveBeenLastCalledWith(48, { outcome: 'succeeded' })
+    expect(mocks.showSuccess).toHaveBeenLastCalledWith('payment.admin.refundSuccess')
+
+    mocks.resolveRefund.mockRejectedValueOnce(new Error('conflict'))
+    await row().find('[data-test="resolve-refund-succeeded"]').trigger('click')
+    await wrapper.find('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
+    expect(mocks.showError).toHaveBeenCalled()
+    expect(wrapper.find('[data-test="confirm-dialog"]').exists()).toBe(true)
   })
 })

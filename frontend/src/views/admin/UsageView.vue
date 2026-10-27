@@ -64,7 +64,7 @@
           <TokenUsageTrend :trend-data="trendData" :loading="chartsLoading" />
         </div>
       </div>
-      <UsageFilters v-model="filters" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
+      <UsageFilters v-model="filters" ref="usageFiltersRef" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
         <template #after-reset>
           <div class="relative" ref="columnDropdownRef">
             <button
@@ -269,6 +269,7 @@ const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
 const defaultRange = getLast24HoursRangeDates()
 const startDate = ref(defaultRange.start); const endDate = ref(defaultRange.end)
 const filters = ref<AdminUsageQueryParams>({ user_id: undefined, model: undefined, group_id: undefined, request_type: undefined, billing_type: null, upstream_model_mismatch: null, start_date: startDate.value, end_date: endDate.value })
+const usageFiltersRef = ref<InstanceType<typeof UsageFilters> | null>(null)
 const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0 })
 const sortState = reactive({
   sort_by: 'created_at',
@@ -306,6 +307,26 @@ const applyRouteQueryFilters = () => {
     end_date: endDate.value
   }
   granularity.value = getGranularityForRange(startDate.value, endDate.value)
+}
+
+const loadRouteUserFilterLabel = async () => {
+  const requestedUserId = filters.value.user_id
+  if (!requestedUserId) return
+  const userSearchRevision = usageFiltersRef.value?.getUserSearchRevision?.()
+
+  const routeUserFilterIsCurrent = () => (
+    filters.value.user_id === requestedUserId
+    && usageFiltersRef.value?.getUserSearchRevision?.() === userSearchRevision
+  )
+
+  try {
+    const user = await adminAPI.users.getById(requestedUserId, true)
+    if (!routeUserFilterIsCurrent()) return
+    usageFiltersRef.value?.setUserKeyword?.(user.email || String(requestedUserId))
+  } catch {
+    if (!routeUserFilterIsCurrent()) return
+    usageFiltersRef.value?.setUserKeyword?.(String(requestedUserId))
+  }
 }
 
 const onDateRangeChange = (range: { startDate: string; endDate: string; preset: string | null }) => {
@@ -693,6 +714,7 @@ const handleColumnClickOutside = (event: MouseEvent) => {
 
 onMounted(() => {
   applyRouteQueryFilters()
+  void loadRouteUserFilterLabel()
   loadLogs()
   loadStats()
   loadModelStats(modelDistributionSource.value, true)

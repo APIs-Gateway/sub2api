@@ -202,6 +202,9 @@ type SystemSettings struct {
 	AntigravityUserAgentVersion            string `json:"antigravity_user_agent_version"`
 	OpenAICodexUserAgent                   string `json:"openai_codex_user_agent"`
 	OpenAIAllowClaudeCodeCodexPlugin       bool   `json:"openai_allow_claude_code_codex_plugin"`
+	ClaudeCodeClientVersion                string `json:"claude_code_client_version"`
+	ClaudeCodeClientVersionSynced          string `json:"claude_code_client_version_synced"`
+	ClaudeCodeVersionAutoSyncEnabled       bool   `json:"claude_code_version_auto_sync_enabled"`
 
 	// Web Search Emulation
 	WebSearchEmulationEnabled bool `json:"web_search_emulation_enabled"`
@@ -213,11 +216,11 @@ type SystemSettings struct {
 	PaymentVisibleMethodWxpayEnabled  bool   `json:"payment_visible_method_wxpay_enabled"`
 
 	// OpenAI account scheduling
-	OpenAILowUpstreamRatePriorityEnabled               bool    `json:"openai_low_upstream_rate_priority_enabled"`
-	OpenAIOAuthSchedulingRateMultiplier                float64 `json:"openai_oauth_scheduling_rate_multiplier"`
-	OpenAIAdvancedSchedulerEnabled                     bool    `json:"openai_advanced_scheduler_enabled"`
-	OpenAIAdvancedSchedulerWeightUpstreamCost          string  `json:"openai_advanced_scheduler_weight_upstream_cost"`
-	OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost string  `json:"openai_advanced_scheduler_effective_weight_upstream_cost"`
+	OpenAILowUpstreamRatePriorityEnabled               bool     `json:"openai_low_upstream_rate_priority_enabled"`
+	OpenAIOAuthSchedulingRateMultiplier                *float64 `json:"openai_oauth_scheduling_rate_multiplier"`
+	OpenAIAdvancedSchedulerEnabled                     bool     `json:"openai_advanced_scheduler_enabled"`
+	OpenAIAdvancedSchedulerWeightUpstreamCost          string   `json:"openai_advanced_scheduler_weight_upstream_cost"`
+	OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost string   `json:"openai_advanced_scheduler_effective_weight_upstream_cost"`
 
 	// Payment configuration
 	PaymentEnabled                        bool     `json:"payment_enabled"`
@@ -230,6 +233,7 @@ type SystemSettings struct {
 	PaymentBalanceDisabled                bool     `json:"payment_balance_disabled"`
 	PaymentBalanceRechargeMultiplier      float64  `json:"payment_balance_recharge_multiplier"`
 	PaymentSubscriptionPayMultiplier      float64  `json:"payment_subscription_payment_multiplier"`
+	PaymentOfficialPriceCNYRate           float64  `json:"payment_official_price_cny_rate"`
 	PaymentRechargeFeeRate                float64  `json:"payment_recharge_fee_rate"`
 	PaymentCryptoRechargeFeeRate          float64  `json:"payment_crypto_recharge_fee_rate"`
 	PaymentRefundFeeRate                  float64  `json:"payment_refund_fee_rate"`
@@ -287,6 +291,9 @@ type SystemSettings struct {
 
 	// OpenAI fast/flex policy
 	OpenAIFastPolicySettings *OpenAIFastPolicySettings `json:"openai_fast_policy_settings,omitempty"`
+
+	// 白名单分组运行时无价拦截开关：observe（只观测）/ block_allowlist（拦白名单分组里无价的请求）
+	BillingUnpricedPolicy string `json:"billing_unpriced_policy"`
 
 	// 系统全局默认平台配额（key = platform，nil/缺省 = 不限制）
 	DefaultPlatformQuotas map[string]*service.DefaultPlatformQuotaSetting `json:"default_platform_quotas,omitempty"`
@@ -355,6 +362,8 @@ type PublicSettings struct {
 
 	// BalanceRechargeMultiplier 让前端把站内额度折算回法币展示（额度 ÷ 倍率）。
 	BalanceRechargeMultiplier float64 `json:"balance_recharge_multiplier"`
+	// OfficialPriceCNYRate 让前端把模型官方美元价换算成人民币对照价（仅展示）。
+	OfficialPriceCNYRate float64 `json:"official_price_cny_rate"`
 
 	ChannelMonitorEnabled                bool `json:"channel_monitor_enabled"`
 	ChannelMonitorDefaultIntervalSeconds int  `json:"channel_monitor_default_interval_seconds"`

@@ -57,7 +57,7 @@
                   'flex items-center transition-colors',
                   copiedCode === value
                     ? 'text-green-500'
-                    : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
+                    : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
                 ]"
                 :title="copiedCode === value ? t('admin.promo.copied') : t('keys.copyToClipboard')"
               >

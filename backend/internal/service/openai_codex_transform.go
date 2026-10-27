@@ -11,6 +11,9 @@ import (
 )
 
 var codexModelMap = map[string]string{
+	"gpt-6.1-sol":                "gpt-6.1-sol",
+	"gpt-6-sol":                  "gpt-6-sol",
+	"gpt-6-luna":                 "gpt-6-luna",
 	"gpt-6-astra":                "gpt-6-astra",
 	"gpt-5.6-sol":                "gpt-5.6-sol",
 	"gpt-5.6-terra":              "gpt-5.6-terra",
@@ -64,6 +67,9 @@ var codexVersionModelPrefixes = []struct {
 	prefix string
 	target string
 }{
+	{prefix: "gpt-6.1-sol", target: "gpt-6.1-sol"},
+	{prefix: "gpt-6-sol", target: "gpt-6-sol"},
+	{prefix: "gpt-6-luna", target: "gpt-6-luna"},
 	{prefix: "gpt-5.6-sol", target: "gpt-5.6-sol"},
 	{prefix: "gpt-5.6-terra", target: "gpt-5.6-terra"},
 	{prefix: "gpt-5.6-luna", target: "gpt-5.6-luna"},
@@ -150,6 +156,25 @@ func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompact
 		IsCodexCLI: isCodexCLI,
 		IsCompact:  isCompact,
 	})
+}
+
+// stripOpenAIOAuthInputInternalMetadata removes the client-only metadata that
+// Codex may attach to top-level Responses input items. ChatGPT rejects it on
+// OAuth requests. Do not walk nested content: user content may legitimately
+// contain the same key.
+func stripOpenAIOAuthInputInternalMetadata(input []any) bool {
+	modified := false
+	for _, rawItem := range input {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, exists := item["internal_chat_message_metadata_passthrough"]; exists {
+			delete(item, "internal_chat_message_metadata_passthrough")
+			modified = true
+		}
+	}
+	return modified
 }
 
 func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuthTransformOptions) codexTransformResult {
@@ -290,6 +315,9 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 			PreserveReferences: needsToolContinuation,
 			PreserveCallIDs:    opts.PreserveToolCallIDs,
 		})
+		if stripOpenAIOAuthInputInternalMetadata(input) {
+			result.Modified = true
+		}
 		reqBody["input"] = input
 		result.Modified = true
 	} else if inputStr, ok := reqBody["input"].(string); ok {
@@ -324,6 +352,12 @@ func normalizeCodexToolChoice(reqBody map[string]any) bool {
 	}
 	choiceType := strings.TrimSpace(firstNonEmptyString(choiceMap["type"]))
 	if choiceType == "" {
+		return false
+	}
+	if choiceType == "allowed_tools" {
+		// This is a selection policy, not a declared tool type. Preserve it for
+		// upstream validation (including references to input.additional_tools);
+		// falling back to auto would silently discard the caller's restriction.
 		return false
 	}
 	modified := false
@@ -1102,10 +1136,11 @@ func normalizeOpenAIResponsesImageOnlyModel(reqBody map[string]any) bool {
 		reqBody["tool_choice"] = map[string]any{"type": "image_generation"}
 		modified = true
 	}
-	if imageModel != openAIImagesResponsesMainModel {
+	mainModel := openAIImagesResponsesMainModelValue()
+	if imageModel != mainModel {
 		modified = true
 	}
-	reqBody["model"] = openAIImagesResponsesMainModel
+	reqBody["model"] = mainModel
 	return modified
 }
 
@@ -1176,11 +1211,11 @@ func extractTextFromContent(content any) string {
 	}
 }
 
-// extractSystemMessagesFromInput scans input for role=="system" and mirrors
-// their text into reqBody["instructions"]. By default it maps those items to
-// developer so Responses JSON mode can still see JSON instructions in input.
-// When omitPromoted is true, text-only items are removed after their content is
-// losslessly promoted; mixed or malformed content is retained as developer.
+// extractSystemMessagesFromInput promotes only the leading run of system items
+// into instructions. Later system items stay in place as developer messages so
+// a reminder appended during a conversation does not change its cached prefix.
+// When omitPromoted is true, only leading text-only items are removed after
+// lossless promotion; mixed or malformed content is retained as developer.
 func extractSystemMessagesFromInput(reqBody map[string]any, omitPromoted bool) bool {
 	input, ok := reqBody["input"].([]any)
 	if !ok || len(input) == 0 {
@@ -1190,11 +1225,19 @@ func extractSystemMessagesFromInput(reqBody map[string]any, omitPromoted bool) b
 	var systemTexts []string
 	filteredInput := make([]any, 0, len(input))
 	modified := false
+	leadingSystem := true
 
 	for _, item := range input {
 		m, ok := item.(map[string]any)
 		if !ok || m["role"] != "system" {
+			leadingSystem = false
 			filteredInput = append(filteredInput, item)
+			continue
+		}
+		if !leadingSystem {
+			m["role"] = "developer"
+			filteredInput = append(filteredInput, item)
+			modified = true
 			continue
 		}
 
@@ -1285,8 +1328,7 @@ func extractPromptLikeInstructionsFromInput(reqBody map[string]any) string {
 
 // defaultCodexSynthInstructions 返回合成路径在 instructions 为空时应填入的默认提示词。
 //
-// 按 model 选择真实 Codex CLI 的 base instructions（codex 系→GPT-5-Codex，
-// gpt-5.2→GPT-5.2，gpt-5.1/gpt-5→GPT-5.1），使合成请求在提示词层面贴近真实 Codex 行为；
+// 按 model 选择真实 Codex CLI 的 base instructions，使合成请求在提示词层面贴近真实 Codex 行为；
 // 若内嵌 prompt 意外为空，回退到最小占位符以保证字段非空。
 func defaultCodexSynthInstructions(model string) string {
 	if instructions := strings.TrimSpace(openai.CodexBaseInstructionsForModel(model)); instructions != "" {

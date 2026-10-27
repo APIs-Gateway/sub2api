@@ -223,7 +223,7 @@ const form = reactive({
 
 const refundFeeRate = ref(0)
 
-// In REFUND_REQUESTED status, refund_amount is the REQUESTED amount, not actually refunded.
+// In REFUND_REQUESTED / REFUND_PENDING status, refund_amount is requested/pending, not actually refunded.
 // Only PARTIALLY_REFUNDED / REFUNDED have real refund amounts.
 const actuallyRefunded = computed(() => {
   if (!props.order) return 0
@@ -239,7 +239,7 @@ const maxRefundable = computed(() => {
 
 const balanceInsufficient = computed(() => {
   if (props.userBalance == null || !props.order) return false
-  return props.userBalance < props.order.amount
+  return props.userBalance < form.amount
 })
 
 const gatewayBaseAmount = computed(() => {

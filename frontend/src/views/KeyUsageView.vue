@@ -11,16 +11,14 @@
         </router-link>
         <div class="flex items-center gap-3">
           <LocaleSwitcher />
-          <a
-            v-if="docUrl"
-            :href="docUrl"
-            target="_blank"
-            rel="noopener noreferrer"
+          <router-link
+            to="/docs"
             class="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
             :title="t('home.viewDocs')"
+            :aria-label="t('home.viewDocs')"
           >
             <Icon name="book" size="md" />
-          </a>
+          </router-link>
           <button
             @click="toggleTheme"
             class="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
@@ -397,13 +395,10 @@
           &copy; {{ currentYear }} {{ siteName }}. {{ t('home.footer.allRightsReserved') }}
         </p>
         <div class="flex items-center gap-4">
-          <a
-            v-if="docUrl"
-            :href="docUrl"
-            target="_blank"
-            rel="noopener noreferrer"
+          <router-link
+            to="/docs"
             class="text-sm text-gray-500 transition-colors hover:text-gray-700 dark:text-dark-400 dark:hover:text-white"
-          >{{ t('home.docs') }}</a>
+          >{{ t('home.docs') }}</router-link>
         </div>
       </div>
     </footer>
@@ -418,6 +413,7 @@ import { isChineseLocale } from '@/i18n/localeUtils'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeUrl } from '@/utils/url'
+import { formatCount, formatUsdAmount } from '@/utils/numberFormat'
 
 const { t, locale } = useI18n()
 const appStore = useAppStore()
@@ -426,7 +422,6 @@ const appStore = useAppStore()
 
 const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
-const docUrl = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl || ''))
 
 // ==================== Theme (same as HomeView) ====================
 
@@ -824,12 +819,12 @@ const showDailyUsage = computed(() => Boolean(resultData.value && Array.isArray(
 
 function usd(value: number | null | undefined): string {
   if (value == null || value < 0) return '-'
-  return '$' + Number(value).toFixed(2)
+  return formatUsdAmount(value)
 }
 
 function fmtNum(val: number | null | undefined): string {
   if (val == null) return '-'
-  return val.toLocaleString()
+  return formatCount(val)
 }
 
 function formatDate(iso: string | null | undefined): string {
@@ -961,8 +956,14 @@ onUnmounted(() => {
   animation: shimmer-kv 1.8s ease-in-out infinite;
   border-radius: 8px;
 }
-:global(.dark) .skeleton {
-  background: linear-gradient(90deg, #334155 25%, #1e293b 50%, #334155 75%);
+/* 深色占位块取暖炭灰 token（与其他页面的 dark-700 占位同源），不再用蓝灰 slate */
+.dark .skeleton {
+  background: linear-gradient(
+    90deg,
+    theme('colors.dark.700') 25%,
+    theme('colors.dark.800') 50%,
+    theme('colors.dark.700') 75%
+  );
   background-size: 200% 100%;
 }
 

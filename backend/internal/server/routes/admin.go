@@ -31,6 +31,12 @@ func RegisterAdminRoutes(
 		// Prompt Audit 事件只读查询
 		registerPromptAuditRoutes(admin, h)
 
+		// 管理令牌（机器凭证）：只允许 JWT 登录的人类管理员管理
+		registerAdminTokenRoutes(admin, h)
+
+		// 管理操作审计日志（只读）
+		registerAuditLogRoutes(admin, h)
+
 		// 仪表盘
 		registerDashboardRoutes(admin, h)
 
@@ -117,7 +123,29 @@ func RegisterAdminRoutes(
 
 		// 邀请返利积分制（issue #11）
 		registerPointsRoutes(admin, h)
+
+		// 价格报价（只读）
+		registerPricingRoutes(admin, h)
 	}
+}
+
+// registerAdminTokenRoutes 注册管理令牌的增删查接口。
+// 整组强制 JWT：机器凭证（任何作用域的 admin token、旧的全局 admin API key）都不能签发或吊销令牌，
+// 否则机器可以自行扩权。
+func registerAdminTokenRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	tokens := admin.Group("/admin-tokens")
+	tokens.Use(middleware.RequireAdminJWT())
+	{
+		tokens.GET("", h.Admin.AdminToken.List)
+		tokens.POST("", h.Admin.AdminToken.Create)
+		tokens.DELETE("/:id", h.Admin.AdminToken.Revoke)
+	}
+}
+
+// registerAuditLogRoutes 注册管理操作审计日志查询（read 作用域即可）。
+func registerAuditLogRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	admin.GET("/audit-logs", h.Admin.AuditLog.List)
+	admin.GET("/audit-logs/stats", h.Admin.AuditLog.Stats)
 }
 
 func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
@@ -139,6 +167,66 @@ func registerPointsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		points.POST("/withdrawals/:id/reject", h.Admin.Points.RejectWithdrawal)
 		points.GET("/ledger", h.Admin.Points.ListLedger)
 	}
+}
+
+// registerPricingRoutes 注册价格报价与价格矩阵的管理端路由。除阶段切换（PUT，W6 PR5）外都是只读 GET：
+// 报价返回任意「模型 × 分组（× 用户）」按当前配置计费时的最终价格，与网关计费同源；
+// 价格矩阵返回渠道到矩阵的派生结果与模型目录，以及影子比对的计数与差异样本。
+func registerPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	pricing := admin.Group("/pricing")
+	{
+		pricing.GET("/quote", h.Admin.PricingQuote.Quote)
+		pricing.GET("/quote-batch", h.Admin.PricingQuote.QuoteBatch)
+
+		// W6 价格快照：固定当前价格（启动引导）、拉取候选、预览差异、批准、拒绝。
+		snapshots := pricing.Group("/snapshots")
+		{
+			snapshots.GET("", h.Admin.PricingSnapshot.Overview)
+			// 固定与批准是 C 档动作：必须是登录管理员的 JWT 会话，机器令牌与旧的全局 admin API key 一律 403。
+			snapshots.POST("/pin", middleware.RequireAdminJWT(), h.Admin.PricingSnapshot.Pin)
+			snapshots.POST("/fetch", h.Admin.PricingSnapshot.Fetch)
+			snapshots.POST("/:id/preview", h.Admin.PricingSnapshot.Preview)
+			snapshots.POST("/:id/approve", middleware.RequireAdminJWT(), h.Admin.PricingSnapshot.Approve)
+			snapshots.POST("/:id/reject", h.Admin.PricingSnapshot.Reject)
+		}
+	}
+
+	// W6 价格矩阵：只读，查看渠道到矩阵的派生结果与模型目录。
+	matrix := admin.Group("/pricing-matrix")
+	{
+		matrix.GET("/groups/:id/derive", h.Admin.PricingMatrix.ViewGroupDerive)
+		// 批量只读摘要（阶段、配置 revision、成本核算规则概况），矩阵页一次拿全；机器令牌可读。
+		matrix.GET("/groups/summary", h.Admin.PricingMatrix.GroupSummaries)
+		matrix.GET("/channels/:id/derive", h.Admin.PricingMatrix.ViewChannelDerive)
+		matrix.GET("/hook-stats", h.Admin.PricingMatrix.HookStats)
+		// W6 PR5、PR7b：阶段切换与影子比对结果。切换提交是 C 档动作：必须是登录管理员的 JWT 会话，机器令牌一律 403
+		// （切到 v2 另有预览凭证与闸门）。预览不改数据，机器令牌可以看。
+		matrix.PUT("/groups/:id/stage", middleware.RequireAdminJWT(), h.Admin.PricingMatrix.SwitchStage)
+		matrix.POST("/groups/:id/stage/preview", h.Admin.PricingMatrix.PreviewStage)
+		matrix.GET("/groups/:id/stage/audit", h.Admin.PricingMatrix.StageAudit)
+		matrix.GET("/shadow/stats", h.Admin.PricingMatrix.ShadowStats)
+		matrix.GET("/shadow/diffs", h.Admin.PricingMatrix.ShadowDiffs)
+
+		// W6 PR4b-2b-2：价格写入。预览只登记一条预览记录，不改价格；提交、成本核算规则与已知免费名单的写入
+		// 一律要登录管理员的 JWT 会话（RequireAdminJWT），机器令牌与旧的全局管理员密钥 403，不能改价。
+		matrix.POST("/cells/preview", h.Admin.PricingWrite.PreviewCells)
+		matrix.POST("/cells/commit", middleware.RequireAdminJWT(), h.Admin.PricingWrite.CommitCells)
+		matrix.POST("/groups/:id/config/preview", h.Admin.PricingWrite.PreviewGroupConfig)
+		matrix.PUT("/groups/:id/config", middleware.RequireAdminJWT(), h.Admin.PricingWrite.CommitGroupConfig)
+		matrix.GET("/groups/:id/publish-check", h.Admin.PricingWrite.PublishCheck)
+		matrix.POST("/groups/:id/cost-rules", middleware.RequireAdminJWT(), h.Admin.PricingWrite.CreateCostRule)
+		matrix.PUT("/groups/:id/cost-rules/:rule_id", middleware.RequireAdminJWT(), h.Admin.PricingWrite.UpdateCostRule)
+		matrix.DELETE("/groups/:id/cost-rules/:rule_id", middleware.RequireAdminJWT(), h.Admin.PricingWrite.DeleteCostRule)
+		// 已知免费名单是 C 档动作：写入只允许交互式管理员会话。
+		matrix.GET("/known-free-list", h.Admin.PricingWrite.GetKnownFreeList)
+		matrix.POST("/known-free-list/preview", h.Admin.PricingWrite.PreviewKnownFreeList)
+		matrix.PUT("/known-free-list", middleware.RequireAdminJWT(), h.Admin.PricingWrite.UpdateKnownFreeList)
+	}
+	admin.GET("/model-catalog", h.Admin.PricingMatrix.ListModelCatalog)
+	// 目录状态转换：近 7 天有流量的模型转 draft 或 retired 要二次确认；写入同样只允许交互式管理员会话。
+	admin.GET("/model-catalog/:id/transition-preview", h.Admin.PricingWrite.PreviewCatalogTransition)
+	admin.PUT("/model-catalog/:id/status", middleware.RequireAdminJWT(), h.Admin.PricingWrite.TransitionCatalog)
+	admin.POST("/model-catalog", middleware.RequireAdminJWT(), h.Admin.PricingWrite.CreateCatalogEntry)
 }
 
 func registerAdminComplianceRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
@@ -167,6 +255,21 @@ func registerAdminAPIKeyRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	apiKeys := admin.Group("/api-keys")
 	{
 		apiKeys.PUT("/:id", h.Admin.APIKey.UpdateGroup)
+
+		// Key 级分组回退链：有效链 dry-run / 隐藏链读写（scope 已在 middleware/admin_token_scope.go 登记：写接口 danger，GET 为 reviewed read）
+		apiKeys.GET("/:id/fallback-chain", h.Admin.APIKeyFallback.GetChain)
+		apiKeys.PUT("/:id/hidden-fallback-chain", h.Admin.APIKeyFallback.ReplaceHiddenChain)
+		apiKeys.DELETE("/:id/hidden-fallback-chain", h.Admin.APIKeyFallback.ClearHiddenChain)
+	}
+
+	// 反查：哪些 Key 的链里放了某分组
+	admin.GET("/groups/:id/fallback-routes", h.Admin.APIKeyFallback.ListRoutesByGroup)
+
+	// 编辑器参考模型（每个平台一个默认值）
+	keyEditor := admin.Group("/key-editor")
+	{
+		keyEditor.GET("/reference-models", h.Admin.APIKeyFallback.GetReferenceModels)
+		keyEditor.PUT("/reference-models", h.Admin.APIKeyFallback.SetReferenceModels)
 	}
 }
 
@@ -178,6 +281,9 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		ops.GET("/user-concurrency", h.Admin.Ops.GetUserConcurrencyStats)
 		ops.GET("/account-availability", h.Admin.Ops.GetAccountAvailability)
 		ops.GET("/realtime-traffic", h.Admin.Ops.GetRealtimeTrafficSummary)
+
+		// Unpriced usage (read-only): usage rows with tokens but zero cost, by group x model
+		ops.GET("/unpriced-usage", h.Admin.Ops.GetUnpricedUsage)
 
 		// Alerts (rules + events)
 		ops.GET("/alert-rules", h.Admin.Ops.ListAlertRules)
@@ -335,6 +441,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	accounts := admin.Group("/accounts")
 	{
 		accounts.GET("", h.Admin.Account.List)
+		accounts.GET("/ids", h.Admin.Account.ListIDs)
 		accounts.GET("/upstream-billing-probe/settings", h.Admin.Account.GetUpstreamBillingProbeSettings)
 		accounts.PUT("/upstream-billing-probe/settings", h.Admin.Account.UpdateUpstreamBillingProbeSettings)
 		accounts.POST("/upstream-billing-probe/batch", h.Admin.Account.ProbeUpstreamBillingBatch)
@@ -352,6 +459,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		accounts.POST("/:id/recover-state", h.Admin.Account.RecoverState)
 		accounts.POST("/:id/refresh", h.Admin.Account.Refresh)
 		accounts.POST("/:id/apply-oauth-credentials", h.Admin.Account.ApplyOAuthCredentials)
+		accounts.POST("/:id/reauth/codex-session", h.Admin.Account.ReauthCodexSession)
 		accounts.POST("/:id/set-privacy", h.Admin.Account.SetPrivacy)
 		accounts.POST("/:id/refresh-tier", h.Admin.Account.RefreshTier)
 		accounts.GET("/:id/stats", h.Admin.Account.GetStats)

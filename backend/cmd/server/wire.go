@@ -84,6 +84,7 @@ func provideCleanup(
 	schedulerSnapshot *service.SchedulerSnapshotService,
 	tokenRefresh *service.TokenRefreshService,
 	accountExpiry *service.AccountExpiryService,
+	claudeCodeVersionSync *service.ClaudeCodeVersionSyncService,
 	proxyExpiry *service.ProxyExpiryService,
 	subscriptionExpiry *service.SubscriptionExpiryService,
 	usageCleanup *service.UsageCleanupService,
@@ -108,6 +109,7 @@ func provideCleanup(
 	opsIngressRejectAggregator *service.OpsIngressRejectAggregator,
 	promptAudit *securityaudit.PromptService,
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
+	adminAuditWriter *service.AdminAuditWriter,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -186,6 +188,10 @@ func provideCleanup(
 			}},
 			{"AccountExpiryService", func() error {
 				accountExpiry.Stop()
+				return nil
+			}},
+			{"ClaudeCodeVersionSyncService", func() error {
+				claudeCodeVersionSync.Stop()
 				return nil
 			}},
 			{"ProxyExpiryService", func() error {
@@ -293,6 +299,13 @@ func provideCleanup(
 			{"UpstreamBillingProbeService", func() error {
 				if upstreamBillingProbe != nil {
 					upstreamBillingProbe.Stop()
+				}
+				return nil
+			}},
+			{"AdminAuditWriter", func() error {
+				// 先于数据库连接关闭：把队列里剩余的审计日志写完。
+				if adminAuditWriter != nil {
+					adminAuditWriter.Stop(ctx)
 				}
 				return nil
 			}},

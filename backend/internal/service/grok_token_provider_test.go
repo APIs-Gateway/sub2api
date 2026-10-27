@@ -184,9 +184,10 @@ func TestGrokTokenProviderGetAccessTokenCacheRefreshAndValidation(t *testing.T) 
 	require.Equal(t, 1, executor.refreshCalls)
 }
 
-func TestGrokTokenCacheKeyUsesEmailWhenAvailable(t *testing.T) {
+// 缓存 key 只按账号 ID 生成：同一 xAI 邮箱绑定多个账号时不能共享/互相覆盖 access token（upstream b2e2c7e69）。
+func TestGrokTokenCacheKeyIgnoresEmail(t *testing.T) {
 	require.Equal(t, "grok:account:0", GrokTokenCacheKey(nil))
-	require.Equal(t, "grok:user@example.com", GrokTokenCacheKey(&Account{
+	require.Equal(t, "grok:account:707", GrokTokenCacheKey(&Account{
 		ID:          707,
 		Credentials: map[string]any{"email": " user@example.com "},
 	}))

@@ -26,7 +26,7 @@
         </div>
         <div class="shrink-0 text-right">
           <div class="flex items-baseline gap-1">
-            <span :class="['text-2xl font-extrabold tracking-tight', textClass]">{{ formattedPlanPrice }}</span>
+            <NumText tier="primary" :class="textClass" :text="formattedPlanPrice" />
             <span v-if="plan.currency" class="text-xs font-medium text-gray-400 dark:text-dark-500">{{ plan.currency }}</span>
           </div>
           <div class="flex items-center justify-end gap-1">
@@ -36,7 +36,7 @@
             <span class="text-[11px] text-gray-400 dark:text-dark-500">/ {{ validitySuffix }}</span>
           </div>
           <div v-if="plan.original_price" class="mt-0.5 flex items-center justify-end gap-1.5">
-            <span class="text-xs text-gray-400 line-through dark:text-dark-500">{{ formattedOriginalPrice }}</span>
+            <span class="num text-xs text-gray-400 line-through dark:text-dark-500">{{ formattedOriginalPrice }}</span>
             <span v-if="plan.currency" class="text-xs text-gray-400 dark:text-dark-500">{{ plan.currency }}</span>
             <span :class="['rounded px-1 py-0.5 text-[10px] font-semibold', discountClass]">{{ discountText }}</span>
           </div>
@@ -45,25 +45,34 @@
 
       <!-- Group quota info (compact) -->
       <div class="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-dark-700/50">
-        <div class="flex items-center justify-between">
+        <div v-if="!isFiat" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.rate') }}</span>
-          <span class="font-medium text-gray-700 dark:text-gray-300">{{ rateDisplay }}</span>
+          <span class="num-secondary text-gray-700 dark:text-gray-300">{{ rateDisplay }}</span>
         </div>
-        <div v-if="plan.daily_amount_usd != null && plan.daily_amount_usd > 0" class="flex items-center justify-between">
+        <div v-if="plan.daily_amount_usd != null && plan.daily_amount_usd > 0 && showQuota" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.dailyAmount') }}</span>
-          <span class="font-medium text-gray-700 dark:text-gray-300">${{ plan.daily_amount_usd }}</span>
+          <span class="inline-flex items-baseline gap-1">
+            <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.daily_amount_usd)" />
+            <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+          </span>
         </div>
         <div v-if="planConcurrency > 0" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.concurrency') }}</span>
-          <span class="font-medium text-gray-700 dark:text-gray-300">{{ planConcurrency }}</span>
+          <span class="num-secondary text-gray-700 dark:text-gray-300">{{ planConcurrency }}</span>
         </div>
-        <div v-if="plan.weekly_limit_usd != null" class="flex items-center justify-between">
+        <div v-if="plan.weekly_limit_usd != null && showQuota" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.weeklyLimit') }}</span>
-          <span class="font-medium text-gray-700 dark:text-gray-300">${{ plan.weekly_limit_usd }}</span>
+          <span class="inline-flex items-baseline gap-1">
+            <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.weekly_limit_usd)" />
+            <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+          </span>
         </div>
-        <div v-if="plan.monthly_limit_usd != null" class="flex items-center justify-between">
+        <div v-if="plan.monthly_limit_usd != null && showQuota" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.monthlyLimit') }}</span>
-          <span class="font-medium text-gray-700 dark:text-gray-300">${{ plan.monthly_limit_usd }}</span>
+          <span class="inline-flex items-baseline gap-1">
+            <NumText tier="secondary" class="text-gray-700 dark:text-gray-300" :text="formatQuota(plan.monthly_limit_usd)" />
+            <span v-if="isFiat" class="text-[10px] text-gray-400 dark:text-dark-500">{{ t('payment.planCard.equivalentCny') }}</span>
+          </span>
         </div>
         <div v-if="(plan.daily_amount_usd == null || plan.daily_amount_usd <= 0) && plan.weekly_limit_usd == null && plan.monthly_limit_usd == null" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.quota') }}</span>
@@ -120,6 +129,9 @@ import { useI18n } from 'vue-i18n'
 import type { SubscriptionPlan } from '@/types/payment'
 import type { UserSubscription } from '@/types'
 import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
+import NumText from '@/components/common/NumText.vue'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { planFiatPerCredit } from '@/utils/subscriptionFiat'
 import { planValiditySuffix } from '@/components/payment/validity'
 import {
   platformAccentBarClass,
@@ -146,6 +158,7 @@ const props = withDefaults(defineProps<{
 })
 const emit = defineEmits<{ select: [plan: SubscriptionPlan] }>()
 const { t } = useI18n()
+const { isFiat, formatSubscription, formatUsd } = useCurrencyDisplay()
 
 const platform = computed(() => props.plan.group_platform || '')
 // 用户是否已持有该套餐所属分组的有效订阅。注意 subscription_plans.group_id 非唯一
@@ -195,6 +208,13 @@ const formattedOriginalPrice = computed(() =>
   formatPaymentAmount(planValueToPaymentAmount(props.plan.original_price || 0), paymentCurrency.value, props.locale)
 )
 
+// 人民币模式下按这个套餐的实付价折算额度；套餐没有每日额度或有效期时无法折算，隐藏额度行而不是混入美元。
+const fiatPerCredit = computed(() => planFiatPerCredit(props.plan, planValueToPaymentAmount(props.plan.price)))
+const showQuota = computed(() => !isFiat.value || fiatPerCredit.value !== null)
+function formatQuota(credits: number): string {
+  return isFiat.value ? formatSubscription(credits, fiatPerCredit.value) : formatUsd(credits)
+}
+
 const discountText = computed(() => {
   if (!props.plan.original_price || props.plan.original_price <= 0) return ''
   const pct = Math.round((1 - props.plan.price / props.plan.original_price) * 100)
@@ -217,7 +237,6 @@ const MODEL_SCOPE_LABELS: Record<string, string> = {
 }
 
 const modelScopeLabels = computed(() => {
-  if (platform.value !== 'antigravity') return []
   const scopes = props.plan.supported_model_scopes
   if (!scopes || scopes.length === 0) return []
   return scopes.map(s => MODEL_SCOPE_LABELS[s] || s)

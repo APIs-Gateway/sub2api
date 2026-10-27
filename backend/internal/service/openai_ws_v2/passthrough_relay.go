@@ -13,6 +13,7 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/tidwall/gjson"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
 
@@ -28,6 +29,7 @@ type Usage struct {
 	CacheCreationInputTokens int
 	CacheReadInputTokens     int
 	ImageOutputTokens        int
+	ImageInputTokens         int
 }
 
 type RelayResult struct {
@@ -43,6 +45,9 @@ type RelayResult struct {
 }
 
 type RelayTurnResult struct {
+	// HasGeneratedImage retains terminal output presence, never image contents.
+	// It does not infer or alter provider usage counters.
+	HasGeneratedImage bool
 	RequestModel      string
 	Usage             Usage
 	RequestID         string
@@ -94,6 +99,15 @@ type relayState struct {
 	firstTokenMs      *int
 	turnTimingByID    map[string]*relayTurnTiming
 	activeTurn        *relayTurnTiming
+	// pendingTurn marks a response.create that has been written upstream but
+	// whose response id has not been observed yet. It is set from the
+	// client-to-upstream goroutine and cleared from the upstream reader.
+	pendingTurn atomic.Bool
+	// turnWroteDownstream tracks whether the current turn (since the latest
+	// response.create) has written anything to the client, so a later turn's
+	// pre-output error is not treated as mid-stream just because an earlier
+	// turn produced output.
+	turnWroteDownstream atomic.Bool
 }
 
 type relayExitSignal struct {
@@ -104,12 +118,13 @@ type relayExitSignal struct {
 }
 
 type observedUpstreamEvent struct {
-	terminal   bool
-	eventType  string
-	responseID string
-	usage      Usage
-	duration   time.Duration
-	firstToken *int
+	hasGeneratedImage bool
+	terminal          bool
+	eventType         string
+	responseID        string
+	usage             Usage
+	duration          time.Duration
+	firstToken        *int
 }
 
 type relayTurnTiming struct {
@@ -150,6 +165,9 @@ func Relay(
 	}
 	startAt := nowFn()
 	state := &relayState{requestModel: result.RequestModel}
+	// Mark the turn pending before the frame reaches upstream so a fast
+	// response.created can never race ahead of the marker.
+	state.markPendingTurn(firstClientMessage)
 	onTrace := options.OnTrace
 
 	relayCtx, relayCancel := context.WithCancel(ctx)
@@ -223,7 +241,7 @@ func Relay(
 		if !clientReaderStarted.CompareAndSwap(false, true) {
 			return
 		}
-		go runClientToUpstream(relayCtx, clientConn, options.ReadClientFrame, writeUpstream, markActivity, clientToUpstreamFrames, onTrace, exitCh)
+		go runClientToUpstream(relayCtx, clientConn, options.ReadClientFrame, writeUpstream, markActivity, clientToUpstreamFrames, state, onTrace, exitCh)
 	}
 	if !options.StartClientAfterFirstDownstream {
 		startClientReader()
@@ -403,6 +421,7 @@ func runClientToUpstream(
 	writeUpstream func(msgType coderws.MessageType, payload []byte) error,
 	markActivity func(),
 	forwardedFrames *atomic.Int64,
+	state *relayState,
 	onTrace func(event RelayTraceEvent),
 	exitCh chan<- relayExitSignal,
 ) {
@@ -424,6 +443,7 @@ func runClientToUpstream(
 			return
 		}
 		markActivity()
+		state.markPendingTurn(payload)
 		if err := writeUpstream(msgType, payload); err != nil {
 			emitRelayTrace(onTrace, RelayTraceEvent{
 				Stage:        "write_upstream_failed",
@@ -466,24 +486,37 @@ func runUpstreamToClient(
 	for {
 		msgType, payload, err := upstreamConn.ReadFrame(ctx)
 		if err != nil {
+			graceful := isDisconnectError(err)
+			// A clean WebSocket close only describes the transport handshake. Once
+			// the upstream has started a Responses turn, success still requires a
+			// terminal protocol event. Treat an early 1000/EOF as a relay failure so
+			// the adapter does not report relay_completed with an unfinished turn.
+			if graceful && state.hasUnfinishedTurn() {
+				graceful = false
+				err = errors.New("upstream websocket closed before terminal event: " + err.Error())
+			}
 			emitRelayTrace(onTrace, RelayTraceEvent{
 				Stage:           "read_upstream_failed",
 				Direction:       "upstream_to_client",
 				Error:           err.Error(),
-				Graceful:        isDisconnectError(err),
+				Graceful:        graceful,
 				WroteDownstream: wroteDownstream,
 			})
 			exitCh <- relayExitSignal{
 				stage:           "read_upstream",
 				err:             err,
-				graceful:        isDisconnectError(err),
+				graceful:        graceful,
 				wroteDownstream: wroteDownstream,
 			}
 			return
 		}
 		markActivity()
 		if beforeWriteClient != nil {
-			if err := beforeWriteClient(msgType, payload, wroteDownstream); err != nil {
+			wroteDownstreamInTurn := wroteDownstream
+			if state != nil {
+				wroteDownstreamInTurn = state.turnWroteDownstream.Load()
+			}
+			if err := beforeWriteClient(msgType, payload, wroteDownstreamInTurn); err != nil {
 				emitRelayTrace(onTrace, RelayTraceEvent{
 					Stage:           "upstream_message_rejected",
 					Direction:       "upstream_to_client",
@@ -505,7 +538,16 @@ func runUpstreamToClient(
 		case coderws.MessageText:
 			observedEvent = observeUpstreamMessage(state, payload, startAt, nowFn, onUsageParseFailure)
 		case coderws.MessageBinary:
-			// binary frame 直接透传，不进入 JSON 观测路径（避免无效解析开销）。
+			// Binary frames remain opaque for usage/result observation, but a JSON
+			// terminal still settles relay lifecycle. Otherwise the pending-turn
+			// disconnect guard would turn an already-delivered terminal into a false
+			// missing-terminal failure when the upstream closes normally.
+			switch binaryEventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String()); {
+			case isTerminalEvent(binaryEventType):
+				state.settleTurnLifecycle()
+			case binaryEventType == "error":
+				state.settleTurnOnError()
+			}
 		}
 		emitTurnComplete(onTurnComplete, state, observedEvent)
 		if dropDownstreamWrites != nil && dropDownstreamWrites.Load() {
@@ -550,6 +592,9 @@ func runUpstreamToClient(
 			return
 		}
 		wroteDownstream = true
+		if state != nil {
+			state.turnWroteDownstream.Store(true)
+		}
 		if afterWriteClient != nil {
 			afterWriteClient(msgType, payload)
 		}
@@ -661,16 +706,11 @@ func observeUpstreamMessage(
 	}
 	now := nowFn()
 
-	if state.firstTokenMs == nil && isTokenEvent(eventType) {
+	startsTTFT := isTokenEvent(eventType, message)
+	if state.firstTokenMs == nil && startsTTFT {
 		ms := int(now.Sub(startAt).Milliseconds())
 		if ms >= 0 {
 			state.firstTokenMs = &ms
-		}
-		if state.activeTurn != nil && state.activeTurn.firstTokenMs == nil {
-			tms := int(now.Sub(state.activeTurn.startAt).Milliseconds())
-			if tms >= 0 {
-				state.activeTurn.firstTokenMs = &tms
-			}
 		}
 	}
 	parsedUsage := parseUsageAndAccumulate(state, message, eventType, onUsageParseFailure)
@@ -679,19 +719,38 @@ func observeUpstreamMessage(
 		responseID: responseID,
 		usage:      parsedUsage,
 	}
+	var turnTiming *relayTurnTiming
 	if responseID != "" {
-		turnTiming := openAIWSRelayGetOrInitTurnTiming(state, responseID, now)
-		if turnTiming != nil && turnTiming.firstTokenMs == nil && isTokenEvent(eventType) {
-			ms := int(now.Sub(turnTiming.startAt).Milliseconds())
-			if ms >= 0 {
-				turnTiming.firstTokenMs = &ms
-			}
+		turnTiming = openAIWSRelayGetOrInitTurnTiming(state, responseID, now)
+	} else {
+		turnTiming = state.activeTurn
+	}
+	// An explicit old response belongs to its own turn. ID-less content belongs
+	// to the current turn, independently of the connection's first-token value.
+	if turnTiming != nil && turnTiming.firstTokenMs == nil && startsTTFT {
+		ms := int(now.Sub(turnTiming.startAt).Milliseconds())
+		if ms >= 0 {
+			turnTiming.firstTokenMs = &ms
 		}
+	}
+	if eventType == "error" {
+		// A bare error event ends the in-flight turn on the Responses WS
+		// protocol even though it is not billed as a terminal here. Keep the
+		// turn timing so a trailing response.failed for the same id still
+		// reports its real duration.
+		state.settleTurnOnError()
 	}
 	if !isTerminalEvent(eventType) {
 		return observed
 	}
 	observed.terminal = true
+	observed.hasGeneratedImage = terminalHasGeneratedImage(message, eventType)
+	state.pendingTurn.Store(false)
+	if responseID == "" {
+		// A terminal without a response id cannot be matched to a turn timing;
+		// settle whatever turn is in flight so the close guard stays accurate.
+		state.settleTurnLifecycle()
+	}
 	state.terminalEventType = eventType
 	if responseID != "" {
 		state.lastResponseID = responseID
@@ -705,6 +764,40 @@ func observeUpstreamMessage(
 		}
 	}
 	return observed
+}
+
+// Observe actual completed output, not the request's generation intent. Keep no
+// image result, URL or encrypted payload in connection lineage metadata.
+func terminalHasGeneratedImage(message []byte, eventType string) bool {
+	// The outer response can fail or stop after an image tool completed.
+	// Potential image input follows the actual product, independently of the
+	// response status, without changing its outcome or charged counters.
+	if !isTerminalEvent(eventType) {
+		return false
+	}
+	output := gjson.GetBytes(message, "response.output")
+	if !output.IsArray() {
+		return false
+	}
+	found := false
+	output.ForEach(func(_, item gjson.Result) bool {
+		result := item.Get("result")
+		found = item.Get("type").String() == "image_generation_call" &&
+			!imageOutputStatusIsUnfinished(item.Get("status")) && result.Type == gjson.String && strings.TrimSpace(result.Str) != ""
+		return !found
+	})
+	return found
+}
+
+// Providers can omit status on output items. A nonempty image result is still
+// potential input; explicit unfinished or failed item states exclude it.
+func imageOutputStatusIsUnfinished(status gjson.Result) bool {
+	switch status.String() {
+	case "failed", "cancelled", "canceled", "in_progress", "generating", "queued", "incomplete":
+		return true
+	default:
+		return false
+	}
 }
 
 func emitTurnComplete(
@@ -724,6 +817,7 @@ func emitTurnComplete(
 		requestModel = state.requestModel
 	}
 	onTurnComplete(RelayTurnResult{
+		HasGeneratedImage: observed.hasGeneratedImage,
 		RequestModel:      requestModel,
 		Usage:             observed.usage,
 		RequestID:         responseID,
@@ -745,9 +839,63 @@ func openAIWSRelayGetOrInitTurnTiming(state *relayState, responseID string, now 
 		timing = &relayTurnTiming{startAt: now}
 		state.turnTimingByID[responseID] = timing
 		state.activeTurn = timing
+		state.pendingTurn.Store(false)
 		return timing
 	}
 	return timing
+}
+
+// markPendingTurn records that a response.create frame was written upstream.
+// Frames of any other type (session.update, response.cancel, ...) do not start
+// a turn and are ignored.
+func (s *relayState) markPendingTurn(payload []byte) {
+	if s == nil || len(payload) == 0 {
+		return
+	}
+	if strings.TrimSpace(gjson.GetBytes(payload, "type").String()) != "response.create" {
+		return
+	}
+	s.pendingTurn.Store(true)
+	// Reset before the frame is written upstream so an immediate upstream
+	// response cannot race with the transport returning from WriteFrame.
+	s.turnWroteDownstream.Store(false)
+}
+
+// hasUnfinishedTurn reports whether a turn was started (pending response.create
+// or an observed response id) without a terminal event having been seen.
+func (s *relayState) hasUnfinishedTurn() bool {
+	if s == nil {
+		return false
+	}
+	return s.pendingTurn.Load() || s.activeTurn != nil
+}
+
+// settleTurnLifecycle clears the pending/active turn markers after a terminal
+// that cannot be matched to a turn timing by response id (binary terminal
+// frames, id-less terminals).
+func (s *relayState) settleTurnLifecycle() {
+	if s == nil {
+		return
+	}
+	s.pendingTurn.Store(false)
+	if s.activeTurn != nil {
+		for id, timing := range s.turnTimingByID {
+			if timing == s.activeTurn {
+				delete(s.turnTimingByID, id)
+			}
+		}
+		s.activeTurn = nil
+	}
+}
+
+// settleTurnOnError clears the pending/active markers for a bare error event
+// while keeping the turn timing for a trailing response.failed.
+func (s *relayState) settleTurnOnError() {
+	if s == nil {
+		return
+	}
+	s.pendingTurn.Store(false)
+	s.activeTurn = nil
 }
 
 func openAIWSRelayDeleteTurnTiming(state *relayState, responseID string) (relayTurnTiming, bool) {
@@ -820,6 +968,22 @@ func parseUsageAndAccumulate(
 	if imageTokens == 0 {
 		imageTokens = usageResult.Get("completion_tokens_details.image_tokens").Int()
 	}
+	imageInputTokens := usageResult.Get("input_tokens_details.image_tokens").Int()
+	if imageInputTokens == 0 {
+		imageInputTokens = usageResult.Get("prompt_tokens_details.image_tokens").Int()
+	}
+	// Match HTTP usage extraction: only the tool usage beside this response's
+	// usage can backfill a zero image bucket. Positive usage wins; negative
+	// usage retains the existing HTTP semantics rather than being overwritten.
+	imageGen := gjson.GetBytes(message, "response.tool_usage.image_gen")
+	if imageGen.IsObject() {
+		if imageInputTokens == 0 && imageGen.Get("input_tokens_details.image_tokens").Int() > 0 {
+			imageInputTokens = imageGen.Get("input_tokens_details.image_tokens").Int()
+		}
+		if imageTokens == 0 && imageGen.Get("output_tokens_details.image_tokens").Int() > 0 {
+			imageTokens = imageGen.Get("output_tokens_details.image_tokens").Int()
+		}
+	}
 
 	inputTokens, inputOK := parseUsageIntField(inputResult, true)
 	outputTokens, outputOK := parseUsageIntField(outputResult, true)
@@ -848,6 +1012,7 @@ func parseUsageAndAccumulate(
 		CacheCreationInputTokens: cacheCreationTokens,
 		CacheReadInputTokens:     cachedTokens,
 		ImageOutputTokens:        int(imageTokens),
+		ImageInputTokens:         int(imageInputTokens),
 	}
 
 	state.usage.InputTokens += parsedUsage.InputTokens
@@ -855,6 +1020,7 @@ func parseUsageAndAccumulate(
 	state.usage.CacheCreationInputTokens += parsedUsage.CacheCreationInputTokens
 	state.usage.CacheReadInputTokens += parsedUsage.CacheReadInputTokens
 	state.usage.ImageOutputTokens += parsedUsage.ImageOutputTokens
+	state.usage.ImageInputTokens += parsedUsage.ImageInputTokens
 	return parsedUsage
 }
 
@@ -933,11 +1099,9 @@ func shouldParseUsage(eventType string) bool {
 	}
 }
 
-func isTokenEvent(eventType string) bool {
-	eventType = strings.TrimSpace(eventType)
-	return strings.HasSuffix(eventType, ".delta") ||
-		eventType == "response.output_text.done" ||
-		eventType == "response.function_call_arguments.done"
+// Terminal usage/output snapshots do not establish WS first-token timing.
+func isTokenEvent(eventType string, payload []byte) bool {
+	return !isTerminalEvent(eventType) && openai.ResponsesStreamHasOutput(string(payload), eventType, true)
 }
 
 func minDuration(a, b time.Duration) time.Duration {

@@ -37,6 +37,7 @@ import {
   type PendingOAuthExchangeResponse
 } from '@/api/auth'
 import { clearAllAffiliateReferralCodes } from '@/utils/oauthAffiliate'
+import { redirectQuery, sanitizeRedirectPath } from '@/utils/redirect'
 
 const route = useRoute()
 const router = useRouter()
@@ -49,15 +50,6 @@ const isSubmitting = ref(false)
 const accountActionError = ref('')
 
 const initialEmail = (route.query.email as string | undefined) || ''
-
-function sanitizeRedirectPath(path: string | null | undefined): string {
-  if (!path) return '/dashboard'
-  if (!path.startsWith('/')) return '/dashboard'
-  if (path.startsWith('//')) return '/dashboard'
-  if (path.includes('://')) return '/dashboard'
-  if (path.includes('\n') || path.includes('\r')) return '/dashboard'
-  return path
-}
 
 function getRequestErrorMessage(error: unknown, fallback: string): string {
   const err = error as { message?: string; response?: { data?: { detail?: string; message?: string } } }
@@ -121,8 +113,7 @@ async function handleCreateAccount(payload: PendingOAuthCreateAccountPayload) {
 function navigateToBindLogin(email: string) {
   const query: Record<string, string> = { bind: '1' }
   if (email) query.email = email
-  const redirect = route.query.redirect as string | undefined
-  if (redirect) query.redirect = redirect
+  Object.assign(query, redirectQuery(route.query.redirect))
   router.replace({ path: '/auth/dingtalk/callback', query })
 }
 

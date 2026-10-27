@@ -177,6 +177,11 @@
       <template #table>
         <AccountBulkActionsBar
           :selected-ids="selIds"
+          :page-selected-count="pageSelectedCount"
+          :total-count="pagination.total"
+          :can-select-all-filtered="canSelectAllFiltered"
+          :all-filtered-selected="allFilteredSelected"
+          :selecting-all-filtered="selectingAllFiltered"
           @delete="handleBulkDelete"
           @reset-status="handleBulkResetStatus"
           @refresh-token="handleBulkRefreshToken"
@@ -185,6 +190,7 @@
           @edit-filtered="openBulkEditFiltered"
           @clear="clearSelection"
           @select-page="selectPage"
+          @select-all-filtered="selectAllFilteredResults"
           @toggle-schedulable="handleBulkToggleSchedulable"
         />
         <div ref="accountTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -401,7 +407,7 @@
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal
@@ -503,12 +509,20 @@ type AccountBulkEditTarget =
       selectedPlatforms: AccountPlatform[]
       selectedTypes: AccountType[]
     }
+// 「选中全部筛选结果」后，后端返回的平台/类型汇总：跨页选中的账号不在当前页里，批量编辑要靠它判断哪些字段可用
+const selectAllFilteredSummary = ref<{ platforms: AccountPlatform[]; types: AccountType[] } | null>(null)
+// 选中全部筛选结果时的筛选条件和账号数，用来判断当前选择是否仍然等于「全部筛选结果」
+const selectAllFilteredSnapshot = ref<{ key: string; total: number } | null>(null)
+const selectingAllFiltered = ref(false)
+const ACCOUNT_IDS_LIMIT_EXCEEDED_REASON = 'ACCOUNT_IDS_LIMIT_EXCEEDED'
 const selPlatforms = computed<AccountPlatform[]>(() => {
   const platforms = new Set(
     accounts.value
       .filter(a => isSelected(a.id))
       .map(a => a.platform)
   )
+  // 跨页选中的账号不在当前页里，平台来自「选中全部筛选结果」时后端返回的汇总
+  selectAllFilteredSummary.value?.platforms.forEach(platform => platforms.add(platform))
   return [...platforms]
 })
 const selTypes = computed<AccountType[]>(() => {
@@ -517,6 +531,7 @@ const selTypes = computed<AccountType[]>(() => {
       .filter(a => isSelected(a.id))
       .map(a => a.type)
   )
+  selectAllFilteredSummary.value?.types.forEach(type => types.add(type))
   return [...types]
 })
 const showCreate = ref(false)
@@ -544,7 +559,7 @@ const showSchedulePanel = ref(false)
 const scheduleAcc = ref<Account | null>(null)
 const scheduleModelOptions = ref<SelectOption[]>([])
 const togglingSchedulable = ref<number | null>(null)
-const menu = reactive<{show:boolean, acc:Account|null, pos:{top:number, left:number}|null}>({ show: false, acc: null, pos: null })
+const menu = reactive<{show:boolean, acc:Account|null, anchorRect:DOMRect|null}>({ show: false, acc: null, anchorRect: null })
 const exportingData = ref(false)
 const probingUpstreamBilling = reactive(new Set<number>())
 const upstreamBillingProbeGloballyEnabled = ref<boolean | undefined>(undefined)
@@ -822,7 +837,7 @@ const {
   select,
   deselect,
   toggle: toggleSel,
-  clear: clearSelection,
+  clear: clearSelectionBase,
   removeMany: removeSelectedAccounts,
   toggleVisible,
   selectVisible: selectPage,
@@ -831,6 +846,84 @@ const {
   rows: accounts,
   getId: (account) => account.id
 })
+
+const clearSelection = () => {
+  selectAllFilteredSummary.value = null
+  selectAllFilteredSnapshot.value = null
+  clearSelectionBase()
+}
+
+// 选择清空后，之前「选中全部筛选结果」留下的汇总不再有意义
+watch(
+  () => selIds.value.length,
+  (count) => {
+    if (count === 0) {
+      selectAllFilteredSummary.value = null
+      selectAllFilteredSnapshot.value = null
+    }
+  }
+)
+
+const currentFilterKey = computed(() =>
+  JSON.stringify([
+    params.platform || '',
+    params.type || '',
+    params.status || '',
+    params.group || '',
+    params.privacy_mode || '',
+    params.search || ''
+  ])
+)
+const pageSelectedCount = computed(() => accounts.value.filter(account => isSelected(account.id)).length)
+const allFilteredSelected = computed(() => {
+  const snapshot = selectAllFilteredSnapshot.value
+  return (
+    snapshot !== null &&
+    snapshot.key === currentFilterKey.value &&
+    selIds.value.length === snapshot.total
+  )
+})
+// 表头全选已勾上，但筛选结果不止当前页：给出「选中全部筛选结果」入口
+const canSelectAllFiltered = computed(
+  () =>
+    !allFilteredSelected.value &&
+    allVisibleSelected.value &&
+    pagination.total > accounts.value.length
+)
+
+const selectAllFilteredResults = async () => {
+  if (selectingAllFiltered.value) return
+  const filterKey = currentFilterKey.value
+  selectingAllFiltered.value = true
+  try {
+    const result = await adminAPI.accounts.listIds({
+      platform: params.platform || '',
+      type: params.type || '',
+      status: params.status || '',
+      group: params.group || '',
+      privacy_mode: params.privacy_mode || '',
+      search: params.search || ''
+    })
+    // 请求期间筛选条件变了：结果已经不对应当前列表，丢弃
+    if (currentFilterKey.value !== filterKey) return
+    setSelectedIds(result.ids)
+    selectAllFilteredSummary.value = { platforms: result.platforms, types: result.types }
+    selectAllFilteredSnapshot.value = { key: filterKey, total: result.ids.length }
+  } catch (error: any) {
+    if (error?.reason === ACCOUNT_IDS_LIMIT_EXCEEDED_REASON) {
+      appStore.showError(
+        t('admin.accounts.bulkActions.selectAllFilteredTooMany', {
+          total: error.metadata?.total ?? pagination.total,
+          limit: error.metadata?.limit ?? ''
+        })
+      )
+    } else {
+      appStore.showError(error?.message || t('admin.accounts.bulkActions.selectAllFilteredFailed'))
+    }
+  } finally {
+    selectingAllFiltered.value = false
+  }
+}
 
 const swipeVirtualContext: SwipeSelectVirtualContext = {
   getVirtualizer: () => dataTableRef.value?.virtualizer ?? null,
@@ -1297,62 +1390,54 @@ const cols = computed(() =>
 const handleEdit = (a: Account) => { edAcc.value = a; showEdit.value = true }
 const openMenu = (a: Account, e: MouseEvent) => {
   menu.acc = a
-
   const target = e.currentTarget as HTMLElement
-  if (target) {
-    const rect = target.getBoundingClientRect()
-    const menuWidth = 200
-    const menuHeight = 240
-    const padding = 8
-    const viewportWidth = window.innerWidth
-    const viewportHeight = window.innerHeight
-
-    let left: number
-    let top: number
-
-    if (viewportWidth < 768) {
-      // 居中显示,水平位置
-      left = Math.max(padding, Math.min(
-        rect.left + rect.width / 2 - menuWidth / 2,
-        viewportWidth - menuWidth - padding
-      ))
-
-      // 优先显示在按钮下方
-      top = rect.bottom + 4
-
-      // 如果下方空间不够,显示在上方
-      if (top + menuHeight > viewportHeight - padding) {
-        top = rect.top - menuHeight - 4
-        // 如果上方也不够,就贴在视口顶部
-        if (top < padding) {
-          top = padding
-        }
-      }
-    } else {
-      left = Math.max(padding, Math.min(
-        e.clientX - menuWidth,
-        viewportWidth - menuWidth - padding
-      ))
-      top = e.clientY
-      if (top + menuHeight > viewportHeight - padding) {
-        top = viewportHeight - menuHeight - padding
-      }
-    }
-
-    menu.pos = { top, left }
-  } else {
-    menu.pos = { top: e.clientY, left: e.clientX - 200 }
-  }
-
+  menu.anchorRect = target.getBoundingClientRect()
   menu.show = true
 }
 const toggleSelectAllVisible = (event: Event) => {
   const target = event.target as HTMLInputElement
   toggleVisible(target.checked)
 }
-const handleBulkDelete = async () => { if(!confirm(t('common.confirm'))) return; try { await Promise.all(selIds.value.map(id => adminAPI.accounts.delete(id))); clearSelection(); reload() } catch (error) { console.error('Failed to bulk delete accounts:', error) } }
+const BULK_DELETE_CONCURRENCY = 20
+const bulkDeleting = ref(false)
+const handleBulkDelete = async () => {
+  if (bulkDeleting.value) return
+  const accountIds = [...selIds.value]
+  if (accountIds.length === 0) return
+  if (!confirm(t('admin.accounts.bulkDeleteConfirm', { count: accountIds.length }))) return
+
+  bulkDeleting.value = true
+  const failedIds: number[] = []
+  try {
+    // 没有批量删除接口，逐个删除；跨页选中最多 5000 个，限制并发避免一次发出几千个请求
+    for (let start = 0; start < accountIds.length; start += BULK_DELETE_CONCURRENCY) {
+      const chunk = accountIds.slice(start, start + BULK_DELETE_CONCURRENCY)
+      const results = await Promise.allSettled(chunk.map(id => adminAPI.accounts.delete(id)))
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          console.error('Failed to delete account:', chunk[index], result.reason)
+          failedIds.push(chunk[index])
+        }
+      })
+    }
+
+    const successCount = accountIds.length - failedIds.length
+    if (failedIds.length === 0) {
+      appStore.showSuccess(t('admin.accounts.bulkDeleteSuccess', { count: successCount }))
+      clearSelection()
+    } else if (successCount > 0) {
+      appStore.showError(t('admin.accounts.bulkDeletePartial', { success: successCount, failed: failedIds.length }))
+      setSelectedIds(failedIds)
+    } else {
+      appStore.showError(t('admin.accounts.bulkDeleteFailed'))
+    }
+    reload()
+  } finally {
+    bulkDeleting.value = false
+  }
+}
 const handleBulkResetStatus = async () => {
-  if (!confirm(t('common.confirm'))) return
+  if (!confirm(t('admin.accounts.bulkActions.confirmCount', { count: selIds.value.length }))) return
   try {
     const result = await adminAPI.accounts.batchClearError(selIds.value)
     if (result.failed > 0) {
@@ -1368,11 +1453,14 @@ const handleBulkResetStatus = async () => {
   }
 }
 const handleBulkRefreshToken = async () => {
-  if (!confirm(t('common.confirm'))) return
+  if (!confirm(t('admin.accounts.bulkActions.confirmCount', { count: selIds.value.length }))) return
+  const accountIds = [...selIds.value]
   try {
-    const result = await adminAPI.accounts.batchRefresh(selIds.value)
+    const result = await adminAPI.accounts.batchRefresh(accountIds)
     if (result.failed > 0) {
       appStore.showError(t('admin.accounts.bulkActions.partialSuccess', { success: result.success, failed: result.failed }))
+      const failedIds = result.errors?.map(error => error.account_id) ?? []
+      setSelectedIds(failedIds.length > 0 ? failedIds : accountIds)
     } else {
       appStore.showSuccess(t('admin.accounts.bulkActions.refreshTokenSuccess', { count: result.success }))
       clearSelection()
@@ -1589,7 +1677,16 @@ const accountMatchesCurrentFilters = (account: Account) => {
     }
   }
   const search = String(filters.search || '').trim().toLowerCase()
-  if (search && !account.name.toLowerCase().includes(search)) return false
+  if (search) {
+    // 与后端搜索一致：名称、备注、credentials.base_url 包含搜索词，或搜索词是纯数字且等于账号 ID
+    const baseUrl = typeof account.credentials?.base_url === 'string' ? account.credentials.base_url.toLowerCase() : ''
+    const matched =
+      account.name.toLowerCase().includes(search) ||
+      (account.notes ?? '').toLowerCase().includes(search) ||
+      baseUrl.includes(search) ||
+      (/^\d+$/.test(search) && Number(search) === account.id)
+    if (!matched) return false
+  }
   return true
 }
 const mergeRuntimeFields = (oldAccount: Account, updatedAccount: Account): Account => ({
@@ -1713,7 +1810,8 @@ const handleExportData = async () => {
   exportingData.value = true
   try {
     const dataPayload = await adminAPI.accounts.exportData(
-      selIds.value.length > 0
+      // 选中了全部筛选结果时按筛选条件导出：ids 走 GET 查询串，几千个 ID 会超出 URL 长度上限
+      selIds.value.length > 0 && !allFilteredSelected.value
         ? { ids: selIds.value, includeProxies: includeProxyOnExport.value }
         : {
             includeProxies: includeProxyOnExport.value,
@@ -1757,9 +1855,10 @@ const closeSchedulePanel = () => { showSchedulePanel.value = false; scheduleAcc.
 const handleReAuth = (a: Account) => { reAuthAcc.value = a; showReAuth.value = true }
 const handleRefresh = async (a: Account) => {
   try {
-    const updated = await adminAPI.accounts.refreshCredentials(a.id)
-    patchAccountInList(updated)
+    const result = await adminAPI.accounts.refreshCredentials(a.id)
+    patchAccountInList(result.account)
     enterAutoRefreshSilentWindow()
+    if (result.warning) appStore.showWarning(result.message)
   } catch (error) {
     console.error('Failed to refresh credentials:', error)
   }
@@ -1880,8 +1979,9 @@ const proxyExpiryText = (p: AccountProxy): string => {
   return params ? t(key, params) : t(key)
 }
 
-// 滚动时关闭操作菜单（不关闭列设置下拉菜单）
-const handleScroll = () => {
+// 表格滚动时关闭行操作菜单，并让顶部工具菜单继续贴紧触发按钮。
+const handleScroll = (event: Event) => {
+  if (event.target instanceof Element && event.target.closest('.action-menu-content')) return
   menu.show = false
   if (showAccountToolsDropdown.value) updateAccountToolsDropdownPosition()
 }
@@ -1904,12 +2004,19 @@ const handleClickOutside = (event: MouseEvent) => {
 onMounted(async () => {
   load()
   loadUpstreamBillingProbeGlobalState()
-  try {
-    const [p, g] = await Promise.all([adminAPI.proxies.getAll(), adminAPI.groups.getAll()])
-    proxies.value = p
-    groups.value = g
-  } catch (error) {
-    console.error('Failed to load proxies/groups:', error)
+  const [proxiesResult, groupsResult] = await Promise.allSettled([
+    adminAPI.proxies.getAll(),
+    adminAPI.groups.getAll()
+  ])
+  if (proxiesResult.status === 'fulfilled') {
+    proxies.value = proxiesResult.value
+  } else {
+    console.error('Failed to load proxies:', proxiesResult.reason)
+  }
+  if (groupsResult.status === 'fulfilled') {
+    groups.value = groupsResult.value
+  } else {
+    console.error('Failed to load groups:', groupsResult.reason)
   }
   window.addEventListener('scroll', handleScroll, true)
   window.addEventListener('resize', handleViewportResize)

@@ -108,9 +108,11 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamPreservesBodyAnd
 	c.Request.Header.Set("X-Api-Key", "inbound-api-key")
 	c.Request.Header.Set("X-Goog-Api-Key", "inbound-goog-key")
 	c.Request.Header.Set("Cookie", "secret=1")
-	c.Request.Header.Set("Anthropic-Beta", "interleaved-thinking-2025-05-14")
+	c.Request.Header.Set("Anthropic-Beta", "interleaved-thinking-2025-05-14,"+claude.BetaDangerousToolUse)
+	c.Request.Header.Set("Anthropic-Auto-Mode-Feature", "opaque-version")
+	c.Request.Header.Set("X-Claude-Code-Feature", "server-checks")
 
-	body := []byte(`{"model":"claude-3-7-sonnet-20250219","stream":true,"system":[{"type":"text","text":"x-anthropic-billing-header keep"}],"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
+	body := []byte(`{"model":"claude-3-7-sonnet-20250219","stream":true,"safeguards":{"opaque":{"action_id":"toolu_1"}},"system":[{"type":"text","text":"x-anthropic-billing-header keep"}],"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
 	parsed := &ParsedRequest{
 		Body:   NewRequestBodyRef(body),
 		Model:  "claude-3-7-sonnet-20250219",
@@ -118,7 +120,9 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamPreservesBodyAnd
 	}
 
 	upstreamSSE := strings.Join([]string{
-		`data: {"type":"message_start","message":{"usage":{"input_tokens":9,"cached_tokens":7}}}`,
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":9,"cached_tokens":7}},"safeguard_results":{"toolu_1":{"decision":"allow"}}}`,
+		"",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}}`,
 		"",
 		`data: {"type":"message_delta","usage":{"output_tokens":3}}`,
 		"",
@@ -129,9 +133,12 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamPreservesBodyAnd
 		resp: &http.Response{
 			StatusCode: http.StatusOK,
 			Header: http.Header{
-				"Content-Type": []string{"text/event-stream"},
-				"x-request-id": []string{"rid-anthropic-pass"},
-				"Set-Cookie":   []string{"secret=upstream"},
+				"Content-Type":                       []string{"text/event-stream"},
+				"x-request-id":                       []string{"rid-anthropic-pass"},
+				"X-Should-Retry":                     []string{"false"},
+				"Anthropic-Ratelimit-Unified-Status": []string{"allowed"},
+				"Anthropic-Organization-Id":          []string{"org-upstream"},
+				"Set-Cookie":                         []string{"secret=upstream"},
 			},
 			Body: io.NopCloser(strings.NewReader(upstreamSSE)),
 		},
@@ -175,16 +182,24 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamPreservesBodyAnd
 	require.True(t, result.Stream)
 
 	require.Equal(t, "claude-3-haiku-20240307", gjson.GetBytes(upstream.lastBody, "model").String(), "透传模式应应用账号级模型映射")
+	require.Equal(t, "toolu_1", gjson.GetBytes(upstream.lastBody, "safeguards.opaque.action_id").String())
+	require.Equal(t, "opaque-version", upstream.lastReq.Header.Get("Anthropic-Auto-Mode-Feature"))
+	require.Equal(t, "server-checks", upstream.lastReq.Header.Get("X-Claude-Code-Feature"))
 
 	require.Equal(t, "upstream-anthropic-key", getHeaderRaw(upstream.lastReq.Header, "x-api-key"))
 	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "authorization"))
 	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "x-goog-api-key"))
 	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "cookie"))
 	require.Equal(t, "2023-06-01", getHeaderRaw(upstream.lastReq.Header, "anthropic-version"))
-	require.Equal(t, "interleaved-thinking-2025-05-14", getHeaderRaw(upstream.lastReq.Header, "anthropic-beta"))
+	require.Equal(t, "interleaved-thinking-2025-05-14,"+claude.BetaDangerousToolUse, getHeaderRaw(upstream.lastReq.Header, "anthropic-beta"))
 	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "x-stainless-lang"), "API Key 透传不应注入 OAuth 指纹头")
 
 	require.Contains(t, rec.Body.String(), `"cached_tokens":7`)
+	require.Contains(t, rec.Body.String(), `"safeguard_results":{"toolu_1":{"decision":"allow"}}`)
+	require.Contains(t, rec.Body.String(), `"id":"toolu_1"`)
+	require.Equal(t, "false", rec.Header().Get("X-Should-Retry"))
+	require.Equal(t, "allowed", rec.Header().Get("Anthropic-Ratelimit-Unified-Status"))
+	require.Empty(t, rec.Header().Get("Anthropic-Organization-Id"))
 	require.NotContains(t, rec.Body.String(), `"cache_read_input_tokens":7`, "透传输出不应被网关改写")
 	require.Equal(t, 7, result.Usage.CacheReadInputTokens, "计费 usage 解析应保留 cached_tokens 兼容")
 	require.Empty(t, rec.Header().Get("Set-Cookie"), "响应头应经过安全过滤")
@@ -211,9 +226,11 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardCountTokensPreservesBo
 		resp: &http.Response{
 			StatusCode: http.StatusOK,
 			Header: http.Header{
-				"Content-Type": []string{"application/json"},
-				"x-request-id": []string{"rid-count"},
-				"Set-Cookie":   []string{"secret=upstream"},
+				"Content-Type":                       []string{"application/json"},
+				"x-request-id":                       []string{"rid-count"},
+				"X-Should-Retry":                     []string{"false"},
+				"Anthropic-Ratelimit-Unified-Status": []string{"allowed"},
+				"Set-Cookie":                         []string{"secret=upstream"},
 			},
 			Body: io.NopCloser(strings.NewReader(upstreamRespBody)),
 		},
@@ -258,6 +275,8 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardCountTokensPreservesBo
 	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "cookie"))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.JSONEq(t, upstreamRespBody, rec.Body.String())
+	require.Equal(t, "false", rec.Header().Get("X-Should-Retry"))
+	require.Equal(t, "allowed", rec.Header().Get("Anthropic-Ratelimit-Unified-Status"))
 	require.Empty(t, rec.Header().Get("Set-Cookie"))
 }
 
@@ -693,8 +712,13 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokens404PassthroughNotE
 			upstream := &anthropicHTTPUpstreamRecorder{
 				resp: &http.Response{
 					StatusCode: tt.statusCode,
-					Header:     http.Header{"Content-Type": []string{"application/json"}},
-					Body:       io.NopCloser(strings.NewReader(tt.respBody)),
+					Header: http.Header{
+						"Content-Type":                       []string{"application/json"},
+						"X-Should-Retry":                     []string{"false"},
+						"Anthropic-Ratelimit-Unified-Status": []string{"rejected"},
+						"Anthropic-Organization-Id":          []string{"org-upstream"},
+					},
+					Body: io.NopCloser(strings.NewReader(tt.respBody)),
 				},
 			}
 
@@ -722,6 +746,9 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokens404PassthroughNotE
 			}
 
 			err := svc.ForwardCountTokens(context.Background(), c, account, parsed)
+			require.Equal(t, "false", rec.Header().Get("X-Should-Retry"))
+			require.Equal(t, "rejected", rec.Header().Get("Anthropic-Ratelimit-Unified-Status"))
+			require.Empty(t, rec.Header().Get("Anthropic-Organization-Id"))
 
 			if tt.wantPassthrough {
 				// 返回 nil（不记录为错误），HTTP 状态码 404 + Anthropic 错误体
@@ -1142,9 +1169,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_NonStreamingSuc
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Request.Header.Set("Anthropic-Beta", claude.BetaDangerousToolUse)
 
-	body := []byte(`{"model":"claude-3-5-sonnet-latest","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
-	upstreamJSON := `{"id":"msg_1","type":"message","usage":{"input_tokens":12,"output_tokens":7,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":3},"cached_tokens":4}}`
+	body := []byte(`{"model":"claude-3-5-sonnet-latest","safeguards":{"opaque":{"action_id":"toolu_1"}},"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
+	upstreamJSON := `{"id":"msg_1","type":"message","safeguard_results":{"toolu_1":{"decision":"allow"}},"usage":{"input_tokens":12,"output_tokens":7,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":3},"cached_tokens":4}}`
 	upstream := &anthropicHTTPUpstreamRecorder{
 		resp: &http.Response{
 			StatusCode: http.StatusOK,
@@ -1164,11 +1192,43 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_NonStreamingSuc
 	result, err := svc.forwardAnthropicAPIKeyPassthrough(context.Background(), c, newAnthropicAPIKeyAccountForTest(), body, "claude-3-5-sonnet-latest", "claude-3-5-sonnet-latest", false, time.Now())
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	require.Equal(t, "toolu_1", gjson.GetBytes(upstream.lastBody, "safeguards.opaque.action_id").String())
+	require.Equal(t, "allow", gjson.Get(rec.Body.String(), "safeguard_results.toolu_1.decision").String())
 	require.Equal(t, 12, result.Usage.InputTokens)
 	require.Equal(t, 7, result.Usage.OutputTokens)
 	require.Equal(t, 5, result.Usage.CacheCreationInputTokens)
 	require.Equal(t, 4, result.Usage.CacheReadInputTokens)
 	require.Equal(t, upstreamJSON, rec.Body.String())
+}
+
+func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_ErrorResponseHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header: http.Header{
+			"Content-Type":                       []string{"application/json"},
+			"X-Should-Retry":                     []string{"false"},
+			"Anthropic-Ratelimit-Unified-Status": []string{"rejected"},
+			"Anthropic-Organization-Id":          []string{"org-upstream"},
+			"Set-Cookie":                         []string{"secret=upstream"},
+		},
+		Body: io.NopCloser(strings.NewReader(`{"type":"error","error":{"type":"invalid_request_error","message":"bad request"}}`)),
+	}}
+	svc := &GatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+
+	result, err := svc.forwardAnthropicAPIKeyPassthrough(context.Background(), c, newAnthropicAPIKeyAccountForTest(),
+		[]byte(`{"model":"claude-3-5-sonnet-latest","messages":[]}`), "claude-3-5-sonnet-latest", "claude-3-5-sonnet-latest", false, time.Now())
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, "false", rec.Header().Get("X-Should-Retry"))
+	require.Equal(t, "rejected", rec.Header().Get("Anthropic-Ratelimit-Unified-Status"))
+	require.Empty(t, rec.Header().Get("Anthropic-Organization-Id"))
+	require.Empty(t, rec.Header().Get("Set-Cookie"))
 }
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_InvalidTokenType(t *testing.T) {
@@ -1216,8 +1276,13 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_UpstreamRequest
 	result, err := svc.forwardAnthropicAPIKeyPassthrough(context.Background(), c, account, []byte(`{"model":"x"}`), "x", "x", false, time.Now())
 	require.Nil(t, result)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "upstream request failed")
-	require.Equal(t, http.StatusBadGateway, rec.Code)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.False(t, failoverErr.RequestScopedTransient)
+	// 传输层错误交给 handler failover，service 不得写响应。
+	require.False(t, c.Writer.Written())
 }
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_EmptyResponseBody(t *testing.T) {
@@ -1278,21 +1343,31 @@ func TestGatewayService_ParseSSEUsagePassthrough_MessageStartFallbacks(t *testin
 
 func TestGatewayService_ParseSSEUsagePassthrough_MessageDeltaSelectiveOverwrite(t *testing.T) {
 	svc := &GatewayService{}
-	usage := &ClaudeUsage{
-		InputTokens:           10,
-		CacheCreation5mTokens: 2,
-		CacheCreation1hTokens: 6,
-	}
-	data := `{"type":"message_delta","usage":{"input_tokens":0,"output_tokens":5,"cache_creation_input_tokens":8,"cache_read_input_tokens":0,"cached_tokens":11,"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":0}}}`
+	usage := &ClaudeUsage{}
+	start := `{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":463184,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":463184}}}}`
+	svc.parseSSEUsagePassthrough(start, usage)
+
+	data := `{"type":"message_delta","usage":{"input_tokens":0,"output_tokens":5,"cache_creation_input_tokens":463184,"cache_read_input_tokens":0,"cached_tokens":11,"cache_creation":{"ephemeral_5m_input_tokens":463184,"ephemeral_1h_input_tokens":0}}}`
 
 	svc.parseSSEUsagePassthrough(data, usage)
 
 	require.Equal(t, 10, usage.InputTokens, "message_delta 中 0 值不应覆盖已有 input_tokens")
 	require.Equal(t, 5, usage.OutputTokens)
-	require.Equal(t, 8, usage.CacheCreationInputTokens)
+	require.Equal(t, 463184, usage.CacheCreationInputTokens)
 	require.Equal(t, 11, usage.CacheReadInputTokens, "cache_read_input_tokens 为空时应回退到 cached_tokens")
-	require.Equal(t, 1, usage.CacheCreation5mTokens)
-	require.Equal(t, 6, usage.CacheCreation1hTokens, "message_delta 中 0 值不应覆盖已有 1h 明细")
+	require.Equal(t, 463184, usage.CacheCreation5mTokens)
+	require.Equal(t, 0, usage.CacheCreation1hTokens)
+}
+
+func TestGatewayService_ParseSSEUsagePassthrough_MessageDeltaZeroBreakdownKeepsStart(t *testing.T) {
+	svc := &GatewayService{}
+	usage := &ClaudeUsage{}
+	svc.parseSSEUsagePassthrough(`{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_creation":{"ephemeral_5m_input_tokens":30,"ephemeral_1h_input_tokens":70}}}}`, usage)
+	svc.parseSSEUsagePassthrough(`{"type":"message_delta","usage":{"output_tokens":5,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}}}`, usage)
+
+	require.Equal(t, 100, usage.CacheCreationInputTokens)
+	require.Equal(t, 30, usage.CacheCreation5mTokens, "全 0 占位明细不应重置 message_start 的 5m 明细")
+	require.Equal(t, 70, usage.CacheCreation1hTokens, "全 0 占位明细不应重置 message_start 的 1h 明细")
 }
 
 func TestGatewayService_ParseSSEUsagePassthrough_NoopCases(t *testing.T) {
@@ -1752,6 +1827,7 @@ func TestGatewayService_Forward_PostOutputSSEOverloadedErrorKeepsExistingStatus(
 
 	const errorJSON = `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`
 	fixture := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"answer\"}}\n\n" +
 		"event: error\ndata: " + errorJSON + "\n\n"
 	upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -1770,12 +1846,21 @@ func TestGatewayService_Forward_PostOutputSSEOverloadedErrorKeepsExistingStatus(
 
 	result, err := svc.Forward(context.Background(), c, newAnthropicOAuthAccountForSSEOverloadTest(), parsed)
 	require.Error(t, err)
-	require.Nil(t, result)
-
+	require.NotNil(t, result)
+	require.Equal(t, 1, result.Usage.InputTokens)
 	var failoverErr *UpstreamFailoverError
-	require.ErrorAs(t, err, &failoverErr)
-	require.Equal(t, http.StatusForbidden, failoverErr.StatusCode)
-	require.JSONEq(t, errorJSON, string(failoverErr.ResponseBody))
+	require.False(t, errors.As(err, &failoverErr), "visible output must not be replayed")
+	var streamErr *sseStreamErrorEventError
+	require.ErrorAs(t, err, &streamErr)
+	require.JSONEq(t, errorJSON, streamErr.RawData)
+	events, exists := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, exists)
+	opsEvents, ok := events.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, opsEvents, 1)
+	require.Equal(t, http.StatusForbidden, opsEvents[0].UpstreamStatusCode)
+	require.Contains(t, rec.Body.String(), "answer")
+	require.Equal(t, 1, strings.Count(rec.Body.String(), "event: error\n"))
 	require.Zero(t, repo.tempCalls)
 	require.Contains(t, rec.Body.String(), "message_start")
 }

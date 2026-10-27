@@ -2,12 +2,57 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"sort"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/setting"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
+
+// SetContentModerationConfig serializes config writes with group deletion.
+// Both operations lock live group rows before the moderation setting row, so
+// a validated group cannot disappear and be written back by a concurrent save.
+func (r *settingRepository) SetContentModerationConfig(ctx context.Context, value string, groupIDs []int64) error {
+	client := clientFromContext(ctx, r.client)
+	tx, err := client.Tx(ctx)
+	if err != nil && !errors.Is(err, ent.ErrTxStarted) {
+		return err
+	}
+	if err == nil {
+		defer func() { _ = tx.Rollback() }()
+		client = tx.Client()
+	}
+	ids := append([]int64(nil), groupIDs...)
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for i, id := range ids {
+		if id <= 0 {
+			return service.ErrGroupNotFound
+		}
+		if i > 0 && id == ids[i-1] {
+			continue
+		}
+		var liveID int64
+		if err := scanSingleRow(ctx, client, "SELECT id FROM groups WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+			[]any{id}, &liveID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return service.ErrGroupNotFound
+			}
+			return err
+		}
+	}
+	if err := client.Setting.Create().SetKey(service.SettingKeyContentModerationConfig).
+		SetValue(value).SetUpdatedAt(time.Now()).OnConflictColumns(setting.FieldKey).
+		UpdateNewValues().Exec(ctx); err != nil {
+		return err
+	}
+	if tx != nil {
+		return tx.Commit()
+	}
+	return nil
+}
 
 type settingRepository struct {
 	client *ent.Client
@@ -42,12 +87,29 @@ func (r *settingRepository) GetValue(ctx context.Context, key string) (string, e
 }
 
 func (r *settingRepository) Set(ctx context.Context, key, value string) error {
+	if err := service.W6GenericWriteGuard(key); err != nil {
+		return err
+	}
 	now := time.Now()
 	return r.client.Setting.
 		Create().
 		SetKey(key).
 		SetValue(value).
 		SetUpdatedAt(now).
+		OnConflictColumns(setting.FieldKey).
+		UpdateNewValues().
+		Exec(ctx)
+}
+
+// SetBillingUnpricedPolicy 是 billing_unpriced_policy 的专用写入（W6 PR7b-2a）：与 Set 同一条 upsert，但不经
+// W6GenericWriteGuard（那里把这个键登记为受保护键，通用写入一律 403）。值的合法性与交互式管理员会话由
+// service.SettingService.SetBillingUnpricedPolicy 和 handler 负责，这里只写一个已经校验过的值。
+func (r *settingRepository) SetBillingUnpricedPolicy(ctx context.Context, value string) error {
+	return r.client.Setting.
+		Create().
+		SetKey(service.SettingKeyBillingUnpricedPolicy).
+		SetValue(value).
+		SetUpdatedAt(time.Now()).
 		OnConflictColumns(setting.FieldKey).
 		UpdateNewValues().
 		Exec(ctx)
@@ -72,6 +134,11 @@ func (r *settingRepository) GetMultiple(ctx context.Context, keys []string) (map
 func (r *settingRepository) SetMultiple(ctx context.Context, settings map[string]string) error {
 	if len(settings) == 0 {
 		return nil
+	}
+	for key := range settings {
+		if err := service.W6GenericWriteGuard(key); err != nil {
+			return err
+		}
 	}
 
 	now := time.Now()
@@ -100,6 +167,9 @@ func (r *settingRepository) GetAll(ctx context.Context) (map[string]string, erro
 }
 
 func (r *settingRepository) Delete(ctx context.Context, key string) error {
+	if err := service.W6GenericWriteGuard(key); err != nil {
+		return err
+	}
 	_, err := r.client.Setting.Delete().Where(setting.KeyEQ(key)).Exec(ctx)
 	return err
 }

@@ -2,7 +2,9 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -20,6 +22,7 @@ import (
 // This converts Chat Completions requests to Anthropic format (via Responses format chain),
 // forwards to Anthropic upstream, and converts responses back to Chat Completions format.
 func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
+	defer finishBillingInflightHTTP(c)
 	streamStarted := false
 
 	requestStart := time.Now()
@@ -68,7 +71,13 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	// Extract model and stream
+	if err := service.ValidateGatewayModelField(body); err != nil {
+		h.chatCompletionsErrorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+
+	// Extract model and stream（model 首尾空白先在入口去掉）
+	body = service.TrimRequestBodyModel(body)
 	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
 		h.chatCompletionsErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
@@ -92,8 +101,11 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 
-	// Claude Code only restriction
-	if apiKey.Group != nil && apiKey.Group.ClaudeCodeOnly {
+	// Claude Code only restriction: /v1/chat/completions is never a Claude Code
+	// endpoint. With a fallback group the request continues and account selection
+	// (checkClaudeCodeRestriction) schedules it in the fallback group; without one
+	// it is rejected here.
+	if apiKey.Group != nil && apiKey.Group.ClaudeCodeOnly && apiKey.Group.FallbackGroupID == nil {
 		h.chatCompletionsErrorResponse(c, http.StatusForbidden, "permission_error",
 			"This group is restricted to Claude Code clients (/v1/messages only)")
 		return
@@ -163,8 +175,15 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	}
 
 	for {
+		if failoverClientGone(c) {
+			return
+		}
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, selectionSessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
 		if err != nil {
+			if failoverClientGone(c) {
+				reqLog.Info("gateway.cc.account_select_aborted_client_disconnected", zap.Error(err))
+				return
+			}
 			if len(fs.FailedAccountIDs) == 0 {
 				h.respondNoAccountError(c, h.gatewayService, apiKey, reqModel, reqModel, groupPlatform, "No available accounts: "+err.Error(), err, noAccountCapacityMarkIfNoAvailable, gatewayNoAccountResponseChatCompletions, false)
 				return
@@ -227,6 +246,9 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
 		var result *service.ForwardResult
+		if !reserveBillingInflightHTTP(c, h.gatewayService, service.BillingInflightRequest{APIKey: apiKey, Account: account, Model: reqModel, Body: forwardBody, ChannelUsageFields: channelMapping.ToUsageFields(reqModel, "")}, accountReleaseFunc, func(status int, code, message string) { h.chatCompletionsErrorResponse(c, status, code, message) }) {
+			return
+		}
 		if account.Platform == service.PlatformGemini {
 			if h.geminiCompatService == nil {
 				h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "Gemini compatibility service is not configured")
@@ -245,9 +267,16 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 
 		if err != nil {
+			heartbeatOnly := service.AnthropicChatHeartbeatOnly(c)
+			if heartbeatOnly {
+				streamStarted = true
+			}
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				if c.Writer.Size() != writerSizeBeforeForward {
+				if result == nil && service.IsBillingInflightNoChargeError(err) && (c.Writer.Size() == writerSizeBeforeForward || heartbeatOnly) {
+					service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+				}
+				if c.Writer.Size() != writerSizeBeforeForward && !heartbeatOnly {
 					h.handleCCFailoverExhausted(c, failoverErr, true)
 					return
 				}
@@ -274,7 +303,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				zap.Bool("upstream_error_response_already_written", upstreamErrorAlreadyCommunicated),
 				zap.Error(err),
 			)
-			return
+			// Metered partial usage is settled once; failover always returns nil.
+			if result == nil {
+				return
+			}
 		}
 
 		// 6. Record usage
@@ -313,6 +345,17 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 
 // chatCompletionsErrorResponse writes an error in OpenAI Chat Completions format.
 func (h *GatewayHandler) chatCompletionsErrorResponse(c *gin.Context, status int, errType, message string) {
+	if service.AnthropicChatHeartbeatOnly(c) {
+		service.MarkOpsStreamError(c, errType, message, status)
+		service.MarkResponseCommitted(c)
+		payload, err := json.Marshal(gin.H{"error": gin.H{"type": errType, "message": message}})
+		if err == nil {
+			if _, writeErr := fmt.Fprintf(c.Writer, "data: %s\n\ndata: [DONE]\n\n", payload); writeErr == nil {
+				c.Writer.Flush()
+			}
+		}
+		return
+	}
 	c.JSON(status, gin.H{
 		"error": gin.H{
 			"type":    errType,
@@ -324,6 +367,13 @@ func (h *GatewayHandler) chatCompletionsErrorResponse(c *gin.Context, status int
 // handleCCFailoverExhausted writes a failover-exhausted error in CC format.
 func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, streamStarted bool) {
 	if streamStarted {
+		if service.AnthropicChatHeartbeatOnly(c) {
+			status, errType, message := http.StatusBadGateway, "server_error", "All available accounts exhausted"
+			if lastErr != nil && lastErr.StatusCode > 0 {
+				status, errType, message = service.ResolveUpstreamErrorResponse(c, service.PlatformAnthropic, lastErr.StatusCode, lastErr.ResponseBody)
+			}
+			h.chatCompletionsErrorResponse(c, status, errType, message)
+		}
 		return
 	}
 	// 无具体上游错误(连失败状态码都没有)时,保留通用「账号穷尽」语义。

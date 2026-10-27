@@ -85,8 +85,8 @@ func TestCanonicalizeReturnURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CanonicalizeReturnURL returned error: %v", err)
 	}
-	if got != "https://example.com/payment/result?b=2" {
-		t.Fatalf("CanonicalizeReturnURL = %q, want %q", got, "https://example.com/payment/result?b=2")
+	if got != "https://example.com/payment/result" {
+		t.Fatalf("CanonicalizeReturnURL = %q, want %q", got, "https://example.com/payment/result")
 	}
 }
 
@@ -117,8 +117,8 @@ func TestCanonicalizeReturnURLAllowsConfiguredFrontendHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CanonicalizeReturnURL returned error: %v", err)
 	}
-	if got != "https://app.example.com/payment/result?from=checkout" {
-		t.Fatalf("CanonicalizeReturnURL = %q, want %q", got, "https://app.example.com/payment/result?from=checkout")
+	if got != "https://app.example.com/payment/result" {
+		t.Fatalf("CanonicalizeReturnURL = %q, want %q", got, "https://app.example.com/payment/result")
 	}
 }
 
@@ -826,4 +826,47 @@ func mustCreateFallbackSignedToken(t *testing.T, claims any) string {
 	_, _ = mac.Write([]byte(encodedPayload))
 	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	return encodedPayload + "." + signature
+}
+
+func TestCanonicalizeReturnURLDropsClientQuery(t *testing.T) {
+	t.Parallel()
+
+	got, err := CanonicalizeReturnURL(
+		"https://example.com/payment/result?order_id=1&status=success&trade_status=x&a=b#frag",
+		"example.com", "")
+	if err != nil {
+		t.Fatalf("CanonicalizeReturnURL returned error: %v", err)
+	}
+	if got != "https://example.com/payment/result" {
+		t.Fatalf("CanonicalizeReturnURL = %q, want query and fragment dropped", got)
+	}
+}
+
+func TestCanonicalizeThenBuildKeepsServerParamsOnly(t *testing.T) {
+	t.Parallel()
+
+	canonical, err := CanonicalizeReturnURL(
+		"https://example.com/payment/result?trade_status=TRADE_SUCCESS&order_id=999&resume_token=evil",
+		"example.com", "")
+	if err != nil {
+		t.Fatalf("CanonicalizeReturnURL returned error: %v", err)
+	}
+	got, err := buildPaymentReturnURL(canonical, 42, "sub2_abc", "tok")
+	if err != nil {
+		t.Fatalf("buildPaymentReturnURL returned error: %v", err)
+	}
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	q := parsed.Query()
+	want := map[string]string{"order_id": "42", "out_trade_no": "sub2_abc", "resume_token": "tok", "status": "success"}
+	if len(q) != len(want) {
+		t.Fatalf("query = %v, want exactly %v", q, want)
+	}
+	for k, v := range want {
+		if q.Get(k) != v {
+			t.Fatalf("query[%s] = %q, want %q", k, q.Get(k), v)
+		}
+	}
 }

@@ -148,6 +148,10 @@ func (s *ChannelMonitorService) GetUserDetail(ctx context.Context, id int64) (*U
 	}
 
 	models := mergeModelDetails(m, latest, availMap)
+	if len(models) > 0 {
+		// 主模型排第一；它的综合状态要与 /monitor 卡片同口径。
+		models[0].CardStatus = s.primaryCardStatus(ctx, m)
+	}
 	return &UserMonitorDetail{
 		ID:        m.ID,
 		Name:      m.Name,
@@ -155,6 +159,18 @@ func (s *ChannelMonitorService) GetUserDetail(ctx context.Context, id int64) (*U
 		GroupName: m.GroupName,
 		Models:    models,
 	}, nil
+}
+
+// primaryCardStatus 主模型最近 monitorVerdictWindow 次探测的综合状态（与卡片同口径）。
+// 查询失败只记日志并返回空串，调用方回落到最近一次状态。
+func (s *ChannelMonitorService) primaryCardStatus(ctx context.Context, m *ChannelMonitor) string {
+	rows, err := s.repo.ListRecentHistoryForMonitors(
+		ctx, []int64{m.ID}, map[int64]string{m.ID: m.PrimaryModel}, monitorVerdictWindow)
+	if err != nil {
+		slog.Warn("channel_monitor: detail card status failed", "monitor_id", m.ID, "error", err)
+		return ""
+	}
+	return cardStatusFromHistory(rows[m.ID])
 }
 
 // collectAvailabilityWindows 一次性查询 7/15/30 天三个窗口，按模型组织。
@@ -191,6 +207,58 @@ func indexAvailabilityByModel(rows []*ChannelMonitorAvailability) map[string]*Ch
 	return m
 }
 
+// isHardFailureStatus 硬失败：error / failed。degraded（慢、超时、4xx）不算。
+func isHardFailureStatus(status string) bool {
+	return status == MonitorStatusError || status == MonitorStatusFailed
+}
+
+// deriveCardStatus 由主模型最近几次探测（最新在前）算出卡片状态，只看前 monitorVerdictWindow 次：
+//   - 硬失败 ≥ monitorVerdictHardFailures 次：失败，沿用其中最近一次硬失败的状态（failed / error）；
+//   - 只有 1 次硬失败：degraded；
+//   - 没有硬失败：以最近一次探测为准（operational / degraded）。
+//
+// 一次探测只是从上游号池里抽了一个节点，单次结果不足以说明整条渠道不可用。
+// 没有历史时返回空串。
+func deriveCardStatus(newestFirst []string) string {
+	if len(newestFirst) == 0 {
+		return ""
+	}
+	window := newestFirst
+	if len(window) > monitorVerdictWindow {
+		window = window[:monitorVerdictWindow]
+	}
+	hard, latestHard := 0, ""
+	for _, st := range window {
+		if !isHardFailureStatus(st) {
+			continue
+		}
+		if hard == 0 {
+			latestHard = st
+		}
+		hard++
+	}
+	switch {
+	case hard >= monitorVerdictHardFailures:
+		return latestHard
+	case hard > 0:
+		return MonitorStatusDegraded
+	default:
+		return window[0]
+	}
+}
+
+// cardStatusFromHistory 对 history entry（最新在前）取状态后交给 deriveCardStatus。
+func cardStatusFromHistory(entries []*ChannelMonitorHistoryEntry) string {
+	statuses := make([]string, 0, monitorVerdictWindow)
+	for _, e := range entries {
+		if len(statuses) == monitorVerdictWindow {
+			break
+		}
+		statuses = append(statuses, e.Status)
+	}
+	return deriveCardStatus(statuses)
+}
+
 // buildStatusSummary 由 latest + availability 字典构造 MonitorStatusSummary。
 // 不做任何 IO，纯组装，便于在 batch 与单 monitor 路径复用。
 func buildStatusSummary(
@@ -221,7 +289,7 @@ func buildStatusSummary(
 }
 
 // buildUserViewFromSummary 用预聚合好的 MonitorStatusSummary + 主模型 latest + timeline 装填 UserMonitorView（无 IO）。
-// primaryLatest 可能为 nil（该监控尚无历史）；timelineEntries 可能为空。
+// primaryLatest 可能为 nil（该监控尚无历史）；timelineEntries 可能为空（最新在前，此时回落到 summary 的最近一次状态）。
 func buildUserViewFromSummary(
 	m *ChannelMonitor,
 	summary MonitorStatusSummary,
@@ -242,6 +310,10 @@ func buildUserViewFromSummary(
 	}
 	if primaryLatest != nil {
 		view.PrimaryPingLatencyMs = primaryLatest.PingLatencyMs
+	}
+	// 卡片状态由主模型最近几次探测综合决定；时间线每格仍是单次探测的原始状态。
+	if status := cardStatusFromHistory(timelineEntries); status != "" {
+		view.PrimaryStatus = status
 	}
 	return view
 }

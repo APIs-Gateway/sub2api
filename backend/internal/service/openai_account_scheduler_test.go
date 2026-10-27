@@ -96,9 +96,14 @@ type schedulerTestConcurrencyCache struct {
 	acquireResults  map[int64]bool
 	waitCounts      map[int64]int
 	skipDefaultLoad bool
+	acquiredIDs     *[]int64
+	releasedIDs     *[]int64
 }
 
 func (c schedulerTestConcurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
+	if c.acquiredIDs != nil {
+		*c.acquiredIDs = append(*c.acquiredIDs, accountID)
+	}
 	if c.acquireResults != nil {
 		if result, ok := c.acquireResults[accountID]; ok {
 			return result, nil
@@ -108,6 +113,9 @@ func (c schedulerTestConcurrencyCache) AcquireAccountSlot(ctx context.Context, a
 }
 
 func (c schedulerTestConcurrencyCache) ReleaseAccountSlot(ctx context.Context, accountID int64, requestID string) error {
+	if c.releasedIDs != nil {
+		*c.releasedIDs = append(*c.releasedIDs, accountID)
+	}
 	return nil
 }
 
@@ -1335,9 +1343,8 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_FreshUsageWind
 
 // Issue #2994: an account poisoned with an inflated used% (e.g. from the reverted #2918
 // inversion) gets excluded from scheduling, and a paused account never receives traffic to
-// refresh its snapshot. When the snapshot is stale (codex_usage_updated_at older than the
-// staleness bound) the account must be allowed a request so it can self-heal from the real
-// response headers — independent of the window's reset time.
+// refresh its snapshot. When the snapshot is stale and there is no known reset time,
+// the account must be allowed a request so it can self-heal from the real headers.
 func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_StaleUsageSnapshotSkipsPause_Issue2994(t *testing.T) {
 	ctx := context.Background()
 	primary := Account{
@@ -1351,8 +1358,7 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_StaleUsageSnap
 		Extra: map[string]any{
 			"codex_5h_used_percent":   99.0,
 			"auto_pause_5h_threshold": 0.95,
-			// Window has NOT reset yet, so the reset guard stays inactive.
-			"codex_5h_reset_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+			// No absolute reset time is available for this poisoned snapshot.
 			// Snapshot is stale: older than openAICodexAutoPauseStaleAfter (2h).
 			"codex_usage_updated_at": time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
 		},
@@ -1364,6 +1370,75 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_StaleUsageSnap
 	require.NoError(t, err)
 	require.NotNil(t, account)
 	require.Equal(t, int64(35701), account.ID)
+}
+
+// Upstream #7620: a known future reset must keep an exhausted account out of
+// scheduling even after the snapshot becomes older than the two-hour stale guard.
+func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_StaleExhaustedWindowWithFutureResetStaysPaused(t *testing.T) {
+	for _, window := range []string{"5h", "7d"} {
+		t.Run(window, func(t *testing.T) {
+			primary := Account{
+				ID:          35901,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Priority:    0,
+				Extra: map[string]any{
+					"codex_usage_updated_at": time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
+				},
+			}
+			primary.Extra["auto_pause_"+window+"_threshold"] = 0.95
+			primary.Extra["codex_"+window+"_used_percent"] = 100.0
+			primary.Extra["codex_"+window+"_reset_at"] = time.Now().Add(16 * time.Hour).Format(time.RFC3339)
+			secondary := Account{ID: 35902, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+			svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}}, cfg: &config.Config{}}
+
+			account, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, "", "gpt-5.1", nil)
+			require.NoError(t, err)
+			require.NotNil(t, account)
+			require.Equal(t, int64(35902), account.ID)
+		})
+	}
+}
+
+func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_StaleRelativeResetWindow(t *testing.T) {
+	for _, window := range []string{"5h", "7d"} {
+		for _, tc := range []struct {
+			name           string
+			resetAfter     int
+			wantSelectedID int64
+		}{
+			{name: "future reset pauses", resetAfter: 4 * 3600, wantSelectedID: 35912},
+			{name: "past reset self heals", resetAfter: 2 * 3600, wantSelectedID: 35911},
+		} {
+			t.Run(window+"/"+tc.name, func(t *testing.T) {
+				primary := Account{
+					ID:          35911,
+					Platform:    PlatformOpenAI,
+					Type:        AccountTypeAPIKey,
+					Status:      StatusActive,
+					Schedulable: true,
+					Concurrency: 1,
+					Priority:    0,
+					Extra: map[string]any{
+						"codex_usage_updated_at": time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
+					},
+				}
+				primary.Extra["auto_pause_"+window+"_threshold"] = 0.95
+				primary.Extra["codex_"+window+"_used_percent"] = 99.0
+				primary.Extra["codex_"+window+"_reset_after_seconds"] = tc.resetAfter
+				secondary := Account{ID: 35912, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+				svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}}, cfg: &config.Config{}}
+
+				account, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, "", "gpt-5.1", nil)
+				require.NoError(t, err)
+				require.NotNil(t, account)
+				require.Equal(t, tc.wantSelectedID, account.ID)
+			})
+		}
+	}
 }
 
 // Issue #2994 guardrail: a genuinely-exhausted account whose snapshot was refreshed recently
@@ -2885,4 +2960,12 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SkipsQuarantinedSharedP
 
 func int64PtrForTest(v int64) *int64 {
 	return &v
+}
+
+func (c *schedulerTestGatewayCache) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (c *schedulerTestGatewayCache) GetReasoningContent(_ context.Context, _ string) (string, error) {
+	return "", ErrReasoningContentNotFound
 }

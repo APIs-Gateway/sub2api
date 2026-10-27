@@ -139,7 +139,7 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
-              <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+              <ModelWhitelistSelector v-model="allowedModels" :model-mappings="modelMappings" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :sync-credentials="draftSyncCredentials" :sync-context="modelSyncContext" :active="show" />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -168,6 +168,7 @@
                   {{ t('admin.accounts.mapRequestModels') }}
                 </p>
               </div>
+              <ModelMappingAllowUnlistedToggle v-model="modelMappingAllowUnlisted" />
 
             <!-- Model Mapping List -->
             <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
@@ -444,9 +445,9 @@
 
       </div>
 
-      <!-- OpenAI OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
+      <!-- OAuth/setup-token model mapping (no API key editor container). -->
       <div
-        v-if="account.platform === 'openai' && account.type === 'oauth'"
+        v-if="isOAuthModelMappingEditable"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -491,7 +492,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+            <ModelWhitelistSelector v-model="allowedModels" :model-mappings="modelMappings" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :sync-credentials="draftSyncCredentials" :sync-context="modelSyncContext" :active="show" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -507,6 +508,7 @@
                 {{ t('admin.accounts.mapRequestModels') }}
               </p>
             </div>
+            <ModelMappingAllowUnlistedToggle v-model="modelMappingAllowUnlisted" />
 
             <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
               <div
@@ -703,7 +705,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+            <ModelWhitelistSelector v-model="allowedModels" :model-mappings="modelMappings" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :sync-credentials="draftSyncCredentials" :sync-context="modelSyncContext" :active="show" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -732,6 +734,7 @@
                 {{ t('admin.accounts.mapRequestModels') }}
               </p>
             </div>
+              <ModelMappingAllowUnlistedToggle v-model="modelMappingAllowUnlisted" />
 
             <!-- Model Mapping List -->
             <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
@@ -925,7 +928,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" platform="anthropic" />
+            <ModelWhitelistSelector v-model="allowedModels" :model-mappings="modelMappings" platform="anthropic" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{ t('admin.accounts.supportsAllModels') }}</span>
@@ -934,11 +937,12 @@
 
           <!-- Mapping Mode -->
           <div v-else class="space-y-3">
+            <ModelMappingAllowUnlistedToggle v-model="modelMappingAllowUnlisted" />
             <div v-for="(mapping, index) in modelMappings" :key="getModelMappingKey(mapping)" class="flex items-center gap-2">
               <input v-model="mapping.from" type="text" class="input flex-1" :placeholder="t('admin.accounts.fromModel')" />
               <span class="text-gray-400">→</span>
               <input v-model="mapping.to" type="text" class="input flex-1" :placeholder="t('admin.accounts.toModel')" />
-              <button type="button" @click="modelMappings.splice(index, 1)" class="text-red-500 hover:text-red-700">
+              <button type="button" @click="removeModelMapping(index)" class="text-red-500 hover:text-red-700">
                 <Icon name="trash" size="sm" />
               </button>
             </div>
@@ -1202,7 +1206,7 @@
                     type="button"
                     :disabled="index === 0"
                     @click="moveTempUnschedRule(index, -1)"
-                    class="rounded p-1 text-gray-400 transition-colors hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-gray-200"
+                    class="rounded p-1 text-gray-400 transition-colors hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-gray-200"
                   >
                     <Icon name="chevronUp" size="sm" :stroke-width="2" />
                   </button>
@@ -1210,7 +1214,7 @@
                     type="button"
                     :disabled="index === tempUnschedRules.length - 1"
                     @click="moveTempUnschedRule(index, 1)"
-                    class="rounded p-1 text-gray-400 transition-colors hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-gray-200"
+                    class="rounded p-1 text-gray-400 transition-colors hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-gray-200"
                   >
                     <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
@@ -1362,7 +1366,10 @@
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <label class="input-label">{{ t('admin.accounts.expiresAt') }}</label>
         <input v-model="expiresAtInput" type="datetime-local" class="input" />
-        <p class="input-hint">{{ t('admin.accounts.expiresAtHint') }}</p>
+        <p class="input-hint">
+          {{ t('admin.accounts.expiresAtHint') }}
+          {{ t('admin.accounts.expiresAtTimezoneHint', { timezone: browserTimeZone }) }}
+        </p>
       </div>
 
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
@@ -1389,6 +1396,37 @@
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
                 openaiPassthroughEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
+      <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
+      <div
+        v-if="account?.platform === 'openai' && account?.type === 'oauth'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.flattenNamespaces') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.flattenNamespacesDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="edit-openai-flatten-namespaces-toggle"
+            @click="openaiFlattenNamespacesEnabled = !openaiFlattenNamespacesEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openaiFlattenNamespacesEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openaiFlattenNamespacesEnabled ? 'translate-x-5' : 'translate-x-0'
               ]"
             />
           </button>
@@ -1466,8 +1504,8 @@
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.openai.wsModeDesc') }}
             </p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t(openAIWSModeConcurrencyHintKey) }}
+            <p v-if="openAIWSModeHintKey" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t(openAIWSModeHintKey) }}
             </p>
           </div>
           <div class="w-52">
@@ -1839,6 +1877,35 @@
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
                 autoPauseOnExpired ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <div class="flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label class="input-label mb-0">{{
+              t('admin.accounts.noAutoUnsched')
+            }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.noAutoUnschedDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="no-auto-unsched-toggle"
+            @click="noAutoUnsched = !noAutoUnsched"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              noAutoUnsched ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                noAutoUnsched ? 'translate-x-5' : 'translate-x-0'
               ]"
             />
           </button>
@@ -2372,7 +2439,7 @@
       <GroupSelector
         v-if="!authStore.isSimpleMode"
         v-model="form.group_ids"
-        :groups="groups"
+        :groups="selectableGroups"
         :platform="account?.platform"
         :mixed-scheduling="mixedScheduling"
         data-tour="account-form-groups"
@@ -2438,10 +2505,13 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
+import { useModelSyncRequest } from '@/composables/useModelSyncRequest'
+import type { SyncUpstreamPreviewParams } from '@/api/admin/accounts'
 import type {
   Account,
   Proxy,
   AdminGroup,
+  Group,
   CheckMixedChannelResponse,
   OpenAICompactMode,
   OpenAIResponsesMode,
@@ -2455,6 +2525,7 @@ import ProxySelector from '@/components/common/ProxySelector.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
+import ModelMappingAllowUnlistedToggle from '@/components/account/ModelMappingAllowUnlistedToggle.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import {
   applyAntigravityProjectID,
@@ -2465,7 +2536,12 @@ import {
   validateHeaderOverrideRows,
   type HeaderOverrideRow
 } from '@/components/account/credentialsBuilder'
-import { formatDateTime, formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
+import {
+  formatDateTime,
+  formatDateTimeLocalInput,
+  getBrowserTimeZone,
+  parseDateTimeLocalInput
+} from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
 import {
@@ -2473,7 +2549,7 @@ import {
   OPENAI_WS_MODE_OFF,
   OPENAI_WS_MODE_PASSTHROUGH,
   isOpenAIWSModeEnabled,
-  resolveOpenAIWSModeConcurrencyHintKey,
+  resolveOpenAIWSModeHintKey,
   type OpenAIWSMode,
   resolveOpenAIWSModeFromExtra
 } from '@/utils/openaiWsMode'
@@ -2481,7 +2557,9 @@ import {
   getPresetMappingsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
+  findModelMappingConflict,
   splitModelMappingObject,
+  removeModelMappingEntry,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
 
@@ -2501,6 +2579,20 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const appStore = useAppStore()
 const authStore = useAuthStore()
+const browserTimeZone = getBrowserTimeZone()
+
+// 可选分组 = 列表里的可选分组 ∪ 账号已绑定但不在列表中的分组（如已停用），
+// 否则已绑定的停用分组既看不到也无法移除。
+const selectableGroups = computed(() => {
+  const groups = new Map<number, Group>(props.groups.map(group => [group.id, group]))
+  const assignedIds = new Set(props.account?.group_ids ?? [])
+  for (const group of props.account?.groups ?? []) {
+    if (assignedIds.has(group.id) && !groups.has(group.id)) {
+      groups.set(group.id, group)
+    }
+  }
+  return Array.from(groups.values())
+})
 
 // Platform-specific hint for Base URL
 const baseUrlHint = computed(() => {
@@ -2548,6 +2640,7 @@ const modelMappings = ref<ModelMapping[]>([])
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
+const modelMappingAllowUnlisted = ref(false)
 const DEFAULT_POOL_MODE_RETRY_COUNT = 3
 const MAX_POOL_MODE_RETRY_COUNT = 10
 const DEFAULT_POOL_MODE_RETRY_STATUS_CODES = [401, 403, 429]
@@ -2593,6 +2686,7 @@ const headerOverrideEnabled = ref(false)
 const headerOverrideRows = ref<HeaderOverrideRow[]>([])
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(false)
+const noAutoUnsched = ref(false) // extra.no_auto_unsched: never auto-pause / cool down on upstream failures
 const autoPause5hThreshold = ref<number | null>(null)
 const autoPause7dThreshold = ref<number | null>(null)
 const autoPause5hDisabled = ref(false)
@@ -2603,7 +2697,7 @@ const antigravityProjectId = ref('')
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const antigravityWhitelistModels = ref<string[]>([])
 const antigravityModelMappings = ref<ModelMapping[]>([])
-const isSyncingAntigravityUpstream = ref(false)
+const modelSyncContext = ref(0)
 const tempUnschedEnabled = ref(false)
 const tempUnschedRules = ref<TempUnschedRuleForm[]>([])
 const getModelMappingKey = createStableObjectKeyResolver<ModelMapping>('edit-model-mapping')
@@ -2647,6 +2741,8 @@ const customBaseUrl = ref('')
 
 // OpenAI 自动透传开关（OAuth/API Key）
 const openaiPassthroughEnabled = ref(false)
+// OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
+const openaiFlattenNamespacesEnabled = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
@@ -2705,8 +2801,8 @@ const openaiResponsesWebSocketV2Mode = computed({
     openaiOAuthResponsesWebSocketV2Mode.value = mode
   }
 })
-const openAIWSModeConcurrencyHintKey = computed(() =>
-  resolveOpenAIWSModeConcurrencyHintKey(openaiResponsesWebSocketV2Mode.value)
+const openAIWSModeHintKey = computed(() =>
+  resolveOpenAIWSModeHintKey(openaiResponsesWebSocketV2Mode.value)
 )
 const codexImageGenerationBridgeOptions = computed<Array<{
   value: CodexImageGenerationBridgeMode
@@ -2847,6 +2943,11 @@ const normalizeOpenAIResponsesMode = (mode: unknown): OpenAIResponsesMode => {
 const isOpenAIModelRestrictionDisabled = computed(() =>
   props.account?.platform === 'openai' && openaiPassthroughEnabled.value
 )
+const isOAuthModelMappingEditable = computed(() =>
+  (props.account?.platform === 'openai' && props.account.type === 'oauth') ||
+  (props.account?.platform === 'anthropic' &&
+    (props.account.type === 'oauth' || props.account.type === 'setup-token'))
+)
 const openAIResponsesStatusKey = computed(() => {
   if (openAIResponsesMode.value === 'force_responses') {
     return 'admin.accounts.openai.responsesStatusForcedResponses'
@@ -2936,6 +3037,23 @@ const form = reactive({
   expires_at: null as number | null
 })
 
+const draftSyncCredentials = computed<SyncUpstreamPreviewParams | undefined>(() => {
+  const account = props.account
+  if (!account || account.type !== 'apikey') return undefined
+  return {
+    account_id: account.id,
+    platform: account.platform,
+    type: account.type,
+    base_url: editBaseUrl.value.trim() || defaultBaseUrl.value,
+    api_key: editApiKey.value.trim(),
+    proxy_id: form.proxy_id ?? 0
+  }
+})
+const { busy: isSyncingAntigravityUpstream, begin: beginAntigravitySync } = useModelSyncRequest(() =>
+  JSON.stringify([props.show, modelSyncContext.value, props.account?.id, props.account?.platform,
+    props.account?.type, draftSyncCredentials.value])
+)
+
 const statusOptions = computed(() => {
   const options = [
     { value: 'active', label: t('common.active') },
@@ -2982,10 +3100,27 @@ const loadModelRestrictionFromMapping = (rawMapping?: Record<string, unknown>) =
 const buildModelRestrictionMapping = () =>
   buildModelMappingObject('combined', allowedModels.value, modelMappings.value)
 
+const applyModelMappingAllowUnlisted = (updatePayload: Record<string, unknown>) => {
+  if (!props.account || props.account.platform === 'antigravity') return
+  const original = (props.account.credentials as Record<string, unknown>) || {}
+  const credentials: Record<string, unknown> = {
+    ...((updatePayload.credentials as Record<string, unknown>) || original)
+  }
+  const changed = (original.model_mapping_allow_unlisted === true) !== modelMappingAllowUnlisted.value
+  // An explicit false also lets the backend persist clearing the final visible
+  // mapping field while it retains a redacted OAuth token. Empty credential
+  // objects are currently treated as an omitted update by the backend.
+  if (!changed && Object.keys(credentials).length > 0) return
+  credentials.model_mapping_allow_unlisted = modelMappingAllowUnlisted.value
+  updatePayload.credentials = credentials
+}
+
 const syncFormFromAccount = (newAccount: Account | null) => {
   if (!newAccount) {
     return
   }
+  modelMappingAllowUnlisted.value =
+    (newAccount.credentials as Record<string, unknown> | undefined)?.model_mapping_allow_unlisted === true
   antigravityMixedChannelConfirmed.value = false
   showMixedChannelWarning.value = false
   mixedChannelWarningDetails.value = null
@@ -3024,6 +3159,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	const extra = newAccount.extra as Record<string, unknown> | undefined
 	mixedScheduling.value = extra?.mixed_scheduling === true
 	allowOverages.value = extra?.allow_overages === true
+	noAutoUnsched.value = extra?.no_auto_unsched === true
 	autoPause5hThreshold.value = typeof extra?.auto_pause_5h_threshold === 'number' ? extra.auto_pause_5h_threshold * 100 : null
 	autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
 	autoPause5hDisabled.value = extra?.auto_pause_5h_disabled === true
@@ -3031,6 +3167,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/API Key)
   openaiPassthroughEnabled.value = false
+  openaiFlattenNamespacesEnabled.value = false
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
   openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
@@ -3045,6 +3182,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
+    openaiFlattenNamespacesEnabled.value =
+      newAccount.type === 'oauth' && extra?.openai_responses_flatten_namespaces === true
     openAICompactMode.value = (extra?.openai_compact_mode as OpenAICompactMode) || 'auto'
     if (newAccount.type === 'apikey') {
       openAIResponsesMode.value = normalizeOpenAIResponsesMode(extra?.openai_responses_mode)
@@ -3251,8 +3390,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
           : 'https://api.anthropic.com'
     editBaseUrl.value = platformDefaultUrl
 
-    // Load model mappings for OpenAI OAuth accounts
-    if (newAccount.platform === 'openai' && newAccount.credentials) {
+    // Load model mappings for OpenAI and Anthropic OAuth/setup-token accounts.
+    if (isOAuthModelMappingEditable.value && newAccount.credentials) {
       const oauthCredentials = newAccount.credentials as Record<string, unknown>
       loadModelRestrictionFromMapping(oauthCredentials.model_mapping as Record<string, unknown> | undefined)
     } else {
@@ -3284,9 +3423,13 @@ watch(
   [() => props.show, () => props.account],
   ([show, newAccount], [wasShow, previousAccount]) => {
     if (!show || !newAccount) {
+      modelSyncContext.value++
       return
     }
-    if (!wasShow || newAccount !== previousAccount) {
+    // A list refresh may replace the prop object for the same account while the
+    // administrator is editing. Only a new edit session or account ID resets the form.
+    if (!wasShow || newAccount.id !== previousAccount?.id) {
+      modelSyncContext.value++
       syncFormFromAccount(newAccount)
       loadTLSProfiles()
     }
@@ -3300,7 +3443,10 @@ const addModelMapping = () => {
 }
 
 const removeModelMapping = (index: number) => {
-  modelMappings.value.splice(index, 1)
+  // An identity would disable the fork's permissive rename-only policy.
+  const hasExplicitWhitelist = buildModelMappingObject('whitelist', allowedModels.value, []) !== null
+  const preserveSourceAdmission = !modelMappingAllowUnlisted.value || hasExplicitWhitelist
+  removeModelMappingEntry(modelMappings.value, index, allowedModels.value, preserveSourceAdmission)
 }
 
 const addPresetMapping = (from: string, to: string) => {
@@ -3338,11 +3484,16 @@ const addAntigravityPresetMapping = (from: string, to: string) => {
 }
 
 const syncAntigravityUpstreamModels = async () => {
-  if (!props.account?.id || isSyncingAntigravityUpstream.value) return
-
-  isSyncingAntigravityUpstream.value = true
+  if (!props.show || !props.account?.id) return
+  const request = beginAntigravitySync()
+  if (!request) return
+  const accountId = props.account.id
+  const credentials = draftSyncCredentials.value ? { ...draftSyncCredentials.value } : undefined
   try {
-    const result = await adminAPI.accounts.syncUpstreamModels(props.account.id)
+    const result = credentials
+      ? await adminAPI.accounts.syncUpstreamModelsPreview(credentials)
+      : await adminAPI.accounts.syncUpstreamModels(accountId)
+    if (!request.current()) return
     const upstreamModels = result.models.map((model) => model.trim()).filter(Boolean)
     if (upstreamModels.length === 0) {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsEmpty'))
@@ -3364,10 +3515,11 @@ const syncAntigravityUpstreamModels = async () => {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
     }
   } catch (error) {
+    if (!request.current()) return
     const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
     appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
   } finally {
-    isSyncingAntigravityUpstream.value = false
+    request.finish()
   }
 }
 
@@ -3712,6 +3864,7 @@ const parseDateTimeLocal = parseDateTimeLocalInput
 
 // Methods
 const handleClose = () => {
+  modelSyncContext.value++
   antigravityMixedChannelConfirmed.value = false
   clearMixedChannelDialog()
   emit('close')
@@ -3748,6 +3901,21 @@ const handleSubmit = async () => {
   if (form.status !== 'active' && form.status !== 'inactive' && form.status !== 'error') {
     appStore.showError(t('admin.accounts.pleaseSelectStatus'))
     return
+  }
+
+  const savesModelMapping =
+    (props.account.type === 'apikey' && !(props.account.platform === 'openai' && openaiPassthroughEnabled.value)) ||
+    ((props.account.platform === 'gemini' || props.account.platform === 'anthropic') && props.account.type === 'service_account') ||
+    props.account.type === 'bedrock' ||
+    (isOAuthModelMappingEditable.value && !isOpenAIModelRestrictionDisabled.value)
+  if (savesModelMapping) {
+    for (const model of allowedModels.value) {
+      const conflict = findModelMappingConflict(model, modelMappings.value)
+      if (conflict) {
+        appStore.showError(t('admin.accounts.modelMappingConflict', { from: model.trim(), to: conflict.to.trim() }))
+        return
+      }
+    }
   }
 
   const updatePayload: Record<string, unknown> = { ...form }
@@ -3990,12 +4158,12 @@ const handleSubmit = async () => {
       updatePayload.credentials = newCredentials
     }
 
-    // OpenAI OAuth: persist model mapping to credentials
-    if (props.account.platform === 'openai' && props.account.type === 'oauth') {
+    // OAuth/setup-token: persist the same mapping edited in the shared panel.
+    if (isOAuthModelMappingEditable.value) {
       const currentCredentials = (updatePayload.credentials as Record<string, unknown>) ||
         ((props.account.credentials as Record<string, unknown>) || {})
       const newCredentials: Record<string, unknown> = { ...currentCredentials }
-      const shouldApplyModelMapping = !openaiPassthroughEnabled.value
+      const shouldApplyModelMapping = !isOpenAIModelRestrictionDisabled.value
 
       if (shouldApplyModelMapping) {
         const modelMapping = buildModelRestrictionMapping()
@@ -4008,11 +4176,13 @@ const handleSubmit = async () => {
         // 透传模式保留现有映射
         newCredentials.model_mapping = currentCredentials.model_mapping
       }
-      const compactModelMapping = buildModelMappingObject('mapping', [], openAICompactModelMappings.value)
-      if (compactModelMapping) {
-        newCredentials.compact_model_mapping = compactModelMapping
-      } else {
-        delete newCredentials.compact_model_mapping
+      if (props.account.platform === 'openai') {
+        const compactModelMapping = buildModelMappingObject('mapping', [], openAICompactModelMappings.value)
+        if (compactModelMapping) {
+          newCredentials.compact_model_mapping = compactModelMapping
+        } else {
+          delete newCredentials.compact_model_mapping
+        }
       }
 
       updatePayload.credentials = newCredentials
@@ -4195,6 +4365,12 @@ const handleSubmit = async () => {
         delete newExtra.openai_passthrough
         delete newExtra.openai_oauth_passthrough
       }
+      // 缺省即保留 namespace，不写空值，避免 extra 里堆积默认项
+      if (props.account.type === 'oauth' && openaiFlattenNamespacesEnabled.value) {
+        newExtra.openai_responses_flatten_namespaces = true
+      } else {
+        delete newExtra.openai_responses_flatten_namespaces
+      }
       if (openAICompactMode.value === 'auto') {
         delete newExtra.openai_compact_mode
       } else {
@@ -4308,6 +4484,25 @@ const handleSubmit = async () => {
       writeQuotaNotifyToExtra(newExtra, 'update')
       updatePayload.extra = newExtra
     }
+
+    // no_auto_unsched toggle (all platforms); only touch extra when the value changed
+    const hadNoAutoUnsched =
+      (props.account.extra as Record<string, unknown> | undefined)?.no_auto_unsched === true
+    if (noAutoUnsched.value !== hadNoAutoUnsched) {
+      const currentExtra =
+        (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) ||
+        {}
+      const newExtra: Record<string, unknown> = { ...currentExtra }
+      if (noAutoUnsched.value) {
+        newExtra.no_auto_unsched = true
+      } else {
+        delete newExtra.no_auto_unsched
+      }
+      updatePayload.extra = newExtra
+    }
+
+    applyModelMappingAllowUnlisted(updatePayload)
 
     const canContinue = await ensureAntigravityMixedChannelConfirmed(async () => {
       await submitUpdateAccount(accountID, updatePayload)

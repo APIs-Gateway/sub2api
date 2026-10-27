@@ -39,6 +39,9 @@ type AccountRepository interface {
 
 	List(ctx context.Context, params pagination.PaginationParams) ([]Account, *pagination.PaginationResult, error)
 	ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, *pagination.PaginationResult, error)
+	// ListIDsWithFilters 返回与 ListWithFilters 相同筛选条件命中的账号 ID（按 ID 升序）。
+	// 命中数超过 limit 时不返回 ID，只返回 Total，由调用方决定如何处理。
+	ListIDsWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string, limit int) (*AccountIDList, error)
 	ListByGroup(ctx context.Context, groupID int64) ([]Account, error)
 	ListActive(ctx context.Context) ([]Account, error)
 	ListOAuthRefreshCandidates(ctx context.Context) ([]Account, error)
@@ -51,6 +54,9 @@ type AccountRepository interface {
 	SetSchedulable(ctx context.Context, id int64, schedulable bool) error
 	AutoPauseExpiredAccounts(ctx context.Context, now time.Time) (int64, error)
 	BindGroups(ctx context.Context, accountID int64, groupIDs []int64) error
+	// BulkBindGroups 在同一个事务内对多个账号批量变更分组绑定：
+	// append 只补充缺少的绑定，remove 只移除列出的分组，replace 整体替换。
+	BulkBindGroups(ctx context.Context, accountIDs []int64, groupIDs []int64, mode AccountGroupBindMode) error
 
 	ListSchedulable(ctx context.Context) ([]Account, error)
 	ListSchedulableByGroupID(ctx context.Context, groupID int64) ([]Account, error)
@@ -77,8 +83,9 @@ type AccountRepository interface {
 	BulkUpdate(ctx context.Context, ids []int64, updates AccountBulkUpdate) (int64, error)
 	// IncrementQuotaUsed 原子递增 API Key 账号的配额用量（总/日/周）
 	IncrementQuotaUsed(ctx context.Context, id int64, amount float64) error
-	// ResetQuotaUsed 重置 API Key 账号所有维度的配额用量为 0
-	ResetQuotaUsed(ctx context.Context, id int64) error
+	// ResetQuotaUsedAndClearRateLimitCooldown atomically resets API Key quota usage
+	// and clears only the account-level rate-limit cooldown.
+	ResetQuotaUsedAndClearRateLimitCooldown(ctx context.Context, id int64) error
 	// RevertProxyFallback 将账号的 proxy_id 切回 proxy_fallback_origin_id，并清空 origin 字段。
 	// 仅当 proxy_fallback_origin_id IS NOT NULL 时更新，否则视为账号不存在（返回 ErrAccountNotFound）。
 	RevertProxyFallback(ctx context.Context, accountID int64) error
@@ -98,6 +105,9 @@ type AccountBulkUpdate struct {
 	Credentials    map[string]any
 	Extra          map[string]any
 	ProbeEnabled   *bool
+	// ExpiresAt 为 Unix 秒时间戳；<= 0 表示清除过期时间（与单账号编辑一致）。
+	ExpiresAt          *int64
+	AutoPauseOnExpired *bool
 }
 
 // CreateAccountRequest 创建账号请求

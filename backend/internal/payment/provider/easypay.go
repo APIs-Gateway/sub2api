@@ -203,7 +203,53 @@ func (e *EasyPay) createAPIPayment(ctx context.Context, req payment.CreatePaymen
 	if req.IsMobile && resp.PayURL2 != "" {
 		payURL = resp.PayURL2
 	}
-	return &payment.CreatePaymentResponse{TradeNo: resp.TradeNo, PayURL: payURL, QRCode: resp.QRCode}, nil
+	base := e.apiBase()
+	return &payment.CreatePaymentResponse{
+		TradeNo: resp.TradeNo,
+		PayURL:  resolveEasyPayReturnedRef(base, payURL),
+		QRCode:  resolveEasyPayReturnedRef(base, resp.QRCode),
+	}, nil
+}
+
+// resolveEasyPayReturnedRef absolutizes a payurl/payurl2/qrcode reference that
+// mapi.php returned, resolving it against the instance's configured apiBase.
+//
+// EasyPay-compatible upstreams disagree on this field: some answer with a full
+// checkout URL, others with a site-root-relative path such as
+// "/api/pay/toapp/<order>". createRedirectPayment already builds an absolute URL
+// itself (apiBase + "/submit.php?..."), but the mapi.php branch stored whatever
+// came back verbatim, and nothing downstream repairs it —
+// sanitizeCreatePaymentResponseDetails only strips NUL bytes before the value is
+// persisted to pay_url/qr_code. The frontend then feeds qr_code straight into
+// QRCode.toCanvas (PaymentStatusPanel / PaymentQRDialog), so a relative path becomes a QR
+// whose payload is a bare path: WeChat renders it as text, and pay_url resolves
+// against the gateway's own domain and 404s.
+//
+// That is precisely the outcome the Alipay provider already refuses to produce —
+// "Setting it as QRCode would let the frontend render an unscannable image"
+// (createPagePayTrade) — so EasyPay is brought in line with the same rule.
+//
+// Only references beginning with "/" are resolved. Anything carrying a scheme is
+// already actionable and is returned untouched, which covers both absolute
+// https:// checkout URLs and app deep links (weixin://, wxp://, alipays://). A
+// reference without a leading slash is left alone as well: QR payloads are
+// frequently opaque tokens rather than paths, and rewriting "OrderToken123" into
+// "<apiBase>/OrderToken123" would break a payload that works today — strictly
+// worse than the bug this fixes.
+func resolveEasyPayReturnedRef(apiBase, ref string) string {
+	trimmed := strings.TrimSpace(ref)
+	if !strings.HasPrefix(trimmed, "/") {
+		return ref
+	}
+	base, err := url.Parse(strings.TrimSpace(apiBase))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return ref
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme != "" {
+		return ref
+	}
+	return base.ResolveReference(parsed).String()
 }
 
 // resolveURLs returns (notifyURL, returnURL) preferring request values,
@@ -358,12 +404,21 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 	}
 	// url.ParseQuery already decodes values — no additional decode needed.
 	params := make(map[string]string)
-	for k := range values {
-		params[k] = values.Get(k)
+	for k, entries := range values {
+		if !easyPayNotifyAllowedParams[k] {
+			return nil, fmt.Errorf("unexpected notify param: %s", k)
+		}
+		if len(entries) != 1 {
+			return nil, fmt.Errorf("ambiguous duplicate notify param: %s", k)
+		}
+		params[k] = entries[0]
 	}
 	sign := params["sign"]
 	if sign == "" {
 		return nil, fmt.Errorf("missing sign")
+	}
+	if err := easyPayRejectAmbiguousNotify(params); err != nil {
+		return nil, err
 	}
 	if !easyPayVerifySign(params, e.config["pkey"], sign) {
 		return nil, fmt.Errorf("invalid signature")
@@ -371,6 +426,10 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 	status := payment.ProviderStatusFailed
 	if easyPayNotifyStatusIsSuccess(params) {
 		status = payment.ProviderStatusSuccess
+		// 真实的成功回调一定带上游订单号；缺失视为伪造。
+		if strings.TrimSpace(params["trade_no"]) == "" {
+			return nil, fmt.Errorf("missing trade_no in success notification")
+		}
 	}
 	amount, _ := strconv.ParseFloat(params["money"], 64)
 
@@ -625,6 +684,35 @@ func easyPaySign(params map[string]string, pkey string) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// easyPayNotifyGuardedFields 是通知里必须“干净”的关键字段。
+// name、param 是商品名/自由文本，正常内容可能含 & 或 =，因此不在此列。
+var easyPayNotifyGuardedFields = []string{
+	"pid", "trade_no", "out_trade_no", "type", "money", "trade_status", "status", "sign_type",
+}
+
+// easyPayRejectAmbiguousNotify 在验签前拒绝会让拼接签名产生歧义的通知：
+// EasyPay 签名是未转义的 k=v&k=v 拼接，参数值里夹带 & 或 = 可以把一个参数“拆”成多个。
+// 回调不会携带 notify_url / return_url（它们只出现在下单请求里）。
+func easyPayRejectAmbiguousNotify(params map[string]string) error {
+	if _, ok := params["notify_url"]; ok {
+		return fmt.Errorf("unexpected notify_url in notification")
+	}
+	if _, ok := params["return_url"]; ok {
+		return fmt.Errorf("unexpected return_url in notification")
+	}
+	for k := range params {
+		if strings.ContainsAny(k, "&=") {
+			return fmt.Errorf("invalid parameter name in notification")
+		}
+	}
+	for _, k := range easyPayNotifyGuardedFields {
+		if strings.ContainsAny(params[k], "&=") {
+			return fmt.Errorf("invalid character in notification field %s", k)
+		}
+	}
+	return nil
+}
+
 func easyPayVerifySign(params map[string]string, pkey string, sign string) bool {
 	return hmac.Equal([]byte(easyPaySign(params, pkey)), []byte(sign))
 }
@@ -658,4 +746,15 @@ func easyPayNotifyStatusIsSuccess(params map[string]string) bool {
 		return tradeStatus == tradeStatusSuccess
 	}
 	return strings.TrimSpace(params["status"]) == strconv.Itoa(easypayStatusPaid)
+}
+
+// Notify and order-creation fields are separate signing domains. EasyPay's
+// unescaped value concatenation otherwise lets return_url query pairs promote
+// an order signature to a success callback (upstream #7888). Keep the fork's
+// KeyingPay status=1 dialect; the active QueryOrder confirmation is independent
+// and still required before any balance or subscription fulfillment.
+var easyPayNotifyAllowedParams = map[string]bool{
+	"pid": true, "trade_no": true, "out_trade_no": true, "type": true,
+	"name": true, "money": true, "trade_status": true, "status": true,
+	"param": true, "sign": true, "sign_type": true,
 }

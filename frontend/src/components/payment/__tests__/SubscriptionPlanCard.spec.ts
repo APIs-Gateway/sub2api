@@ -1,7 +1,11 @@
 import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia';
 import { createI18n } from "vue-i18n";
+import { resetFiatDataMissingForTest, useCurrencyDisplay } from "@/composables/useCurrencyDisplay";
+import { useAppStore } from "@/stores/app";
 import SubscriptionPlanCard from "../SubscriptionPlanCard.vue";
+import type { SubscriptionPlan } from "@/types/payment";
 
 const i18n = createI18n({
   legacy: false,
@@ -24,7 +28,7 @@ const i18n = createI18n({
   },
 });
 
-const mountPlanCard = (groupPlatform: string) =>
+const mountPlanCard = (groupPlatform: string, overrides: Partial<SubscriptionPlan> = {}) =>
   mount(SubscriptionPlanCard, {
     props: {
       plan: {
@@ -40,6 +44,7 @@ const mountPlanCard = (groupPlatform: string) =>
         validity_unit: "day",
         supported_model_scopes: ["claude", "gemini_text", "gemini_image"],
         is_active: true,
+        ...overrides,
       },
     },
     global: { plugins: [i18n] },
@@ -69,12 +74,28 @@ describe("SubscriptionPlanCard", () => {
     expect(wrapper.text()).toContain("USD")
   })
 
-  it("does not show Antigravity model scopes for OpenAI plans", () => {
-    const text = mountPlanCard("openai").text();
+  it.each(['openai', 'gemini', 'grok', 'anthropic'])("shows server model scopes for %s plans", (platform) => {
+    const text = mountPlanCard(platform).text();
+    expect(text).toContain("Claude");
+    expect(text).toContain("Gemini");
+    expect(text).toContain("Imagen");
+  });
 
-    expect(text).not.toContain("Claude");
-    expect(text).not.toContain("Gemini");
-    expect(text).not.toContain("Imagen");
+  it.each([
+    { name: 'missing', scopes: undefined },
+    { name: 'empty', scopes: [] },
+  ])('uses the platform label for $name server model scopes', ({ scopes }) => {
+    const text = mountPlanCard('openai', { supported_model_scopes: scopes }).text();
+    expect(text).toContain('OpenAI');
+    expect(text).not.toContain('Claude');
+    expect(text).not.toContain('Gemini');
+    expect(text).not.toContain('Imagen');
+  });
+
+  it('preserves an unrecognized server model scope label', () => {
+    const text = mountPlanCard('openai', { supported_model_scopes: ['custom-capability'] }).text();
+    expect(text).toContain('custom-capability');
+    expect(text).not.toContain('Claude');
   });
 
   it("shows model scopes for Antigravity plans", () => {
@@ -142,5 +163,47 @@ describe("SubscriptionPlanCard", () => {
     const suffixSpan = badge?.element.nextElementSibling;
     expect(suffixSpan?.tagName).toBe("SPAN");
     expect(suffixSpan?.textContent?.trim().startsWith("/")).toBe(true);
+  });
+});
+
+// 组件里用到的金额口径依赖 app store；未配置充值倍率时按美元展示（旧行为）。
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
+
+describe("SubscriptionPlanCard equivalent CNY marker", () => {
+  const fixedPlan = {
+    id: 2,
+    group_id: 10,
+    group_platform: "openai",
+    name: "Fixed",
+    price: 90,
+    features: [],
+    rate_multiplier: 1,
+    validity_days: 30,
+    validity_unit: "day",
+    daily_amount_usd: 100,
+    weekly_limit_usd: 700,
+    monthly_limit_usd: 3000,
+    is_active: true,
+  };
+  const mountFixed = (multiplier: number, mode: "fiat" | "usd") => {
+    useAppStore().cachedPublicSettings = { balance_recharge_multiplier: multiplier } as never;
+    resetFiatDataMissingForTest();
+    useCurrencyDisplay().setMode(mode);
+    return mount(SubscriptionPlanCard, { props: { plan: fixedPlan }, global: { plugins: [i18n] } });
+  };
+
+  it("marks each quota amount in CNY mode", () => {
+    const wrapper = mountFixed(13, "fiat");
+    expect(wrapper.text().match(/payment\.planCard\.equivalentCny/g)).toHaveLength(3);
+  });
+
+  it("shows no marker in USD mode", () => {
+    expect(mountFixed(13, "usd").text()).not.toContain("payment.planCard.equivalentCny");
+  });
+
+  it("shows no marker on the free site (m=1)", () => {
+    expect(mountFixed(1, "fiat").text()).not.toContain("payment.planCard.equivalentCny");
   });
 });

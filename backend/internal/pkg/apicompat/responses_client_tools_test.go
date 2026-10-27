@@ -2,11 +2,168 @@ package apicompat
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func TestAdaptDeepSeekResponsesNamespaceCustomToolsRoundTrip(t *testing.T) {
+	req := map[string]any{
+		"tools": []any{
+			map[string]any{"type": "namespace", "name": "functions", "tools": []any{
+				map[string]any{"type": "custom", "name": "exec", "format": map[string]any{"type": "text"}},
+				map[string]any{"type": "function", "name": "wait", "parameters": map[string]any{"type": "object"}},
+			}},
+			map[string]any{"type": "custom", "name": "exec"},
+		},
+		"tool_choice": map[string]any{"type": "custom", "namespace": "functions", "name": "exec"},
+		"input": []any{
+			map[string]any{"type": "custom_tool_call", "id": "ctc_old", "call_id": "call_old", "namespace": "functions", "name": "exec", "input": "pwd"},
+			map[string]any{"type": "custom_tool_call_output", "call_id": "call_old", "output": "ok"},
+			map[string]any{"type": "function_call", "call_id": "call_wait", "namespace": "functions", "name": "wait", "arguments": "{}"},
+		},
+	}
+	mapping, changed, err := AdaptDeepSeekResponsesNamespaceCustomTools(req)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.True(t, mapping.CustomTools["functions__exec"])
+	require.True(t, mapping.CustomTools["exec"])
+	require.Equal(t, ResponsesNamespaceName{Namespace: "functions", Name: "exec"}, mapping.NamespaceTools["functions__exec"])
+	tools := requireResponsesClientToolValue[[]any](t, req["tools"])
+	require.Len(t, tools, 3)
+	first := requireResponsesClientToolValue[map[string]any](t, tools[0])
+	require.Equal(t, "function", first["type"])
+	require.Equal(t, "functions__exec", first["name"])
+	require.NotContains(t, first, "format")
+	require.JSONEq(t, customToolInputSchema, string(requireResponsesClientToolValue[json.RawMessage](t, first["parameters"])))
+	choice := requireResponsesClientToolValue[map[string]any](t, req["tool_choice"])
+	require.Equal(t, "function", choice["type"])
+	require.Equal(t, "functions__exec", choice["name"])
+	require.NotContains(t, choice, "namespace")
+	input := requireResponsesClientToolValue[[]any](t, req["input"])
+	call := requireResponsesClientToolValue[map[string]any](t, input[0])
+	require.Equal(t, "function_call", call["type"])
+	require.Equal(t, "functions__exec", call["name"])
+	require.Equal(t, "fc_old", call["id"])
+	require.JSONEq(t, `{"input":"pwd"}`, requireResponsesClientToolValue[string](t, call["arguments"]))
+	require.NotContains(t, call, "namespace")
+	require.Equal(t, "function_call_output", requireResponsesClientToolValue[map[string]any](t, input[1])["type"])
+	require.Equal(t, "functions__wait", requireResponsesClientToolValue[map[string]any](t, input[2])["name"])
+
+	restored, didRestore, err := RestoreResponsesClientToolPayload([]byte(`{"output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"functions__exec","arguments":"{\"input\":\"pwd\"}"},{"type":"function_call","id":"fc_2","call_id":"call_2","name":"exec","arguments":"{\"input\":\"ls\"}"},{"type":"function_call","id":"fc_3","call_id":"call_3","name":"functions__wait","arguments":"{}"}]}`), mapping)
+	require.NoError(t, err)
+	require.True(t, didRestore)
+	require.Equal(t, "custom_tool_call", gjson.GetBytes(restored, "output.0.type").String())
+	require.Equal(t, "functions", gjson.GetBytes(restored, "output.0.namespace").String())
+	require.Equal(t, "exec", gjson.GetBytes(restored, "output.0.name").String())
+	require.Equal(t, "pwd", gjson.GetBytes(restored, "output.0.input").String())
+	require.Equal(t, "ctc_1", gjson.GetBytes(restored, "output.0.id").String())
+	require.False(t, gjson.GetBytes(restored, "output.1.namespace").Exists())
+	require.Equal(t, "function_call", gjson.GetBytes(restored, "output.2.type").String())
+	require.Equal(t, "wait", gjson.GetBytes(restored, "output.2.name").String())
+	require.Equal(t, "functions", gjson.GetBytes(restored, "output.2.namespace").String())
+}
+
+func TestAdaptDeepSeekResponsesNamespaceCustomToolsRejectsAmbiguousDeclarations(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		tools []any
+		want  string
+	}{
+		{"empty declarations", []any{}, "non-empty tools array"},
+		{"non-object declaration", []any{"exec"}, "declaration must be an object"},
+		{"unsupported type", []any{map[string]any{"type": "remote_mcp", "name": "exec"}}, "unsupported type"},
+		{"unnamed direct custom", []any{map[string]any{"type": "custom"}}, "requires a name"},
+		{"flat collides with direct", []any{map[string]any{"type": "function", "name": "functions__exec"}, map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "custom", "name": "exec"}}}}, "conflicts with a top-level tool"},
+		{"duplicate child", []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "custom", "name": "exec"}, map[string]any{"type": "function", "name": "exec"}}}}, "duplicate flattened name"},
+		{"duplicate direct", []any{map[string]any{"type": "custom", "name": "exec"}, map[string]any{"type": "function", "name": "exec"}}, "duplicate name"},
+		{"missing child name", []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "custom"}}}}, "child requires a function/custom type and name"},
+		{"non-object child", []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{"exec"}}}, "child must be an object"},
+		{"unnamed namespace", []any{map[string]any{"type": "namespace", "tools": []any{map[string]any{"type": "custom", "name": "exec"}}}}, "namespace requires a name and children"},
+		{"malformed tools", []any{map[string]any{"type": "namespace", "name": "functions", "tools": "not-an-array"}}, "namespace tools must be an array"},
+		{"malformed children", []any{map[string]any{"type": "namespace", "name": "functions", "children": "not-an-array"}}, "namespace children must be an array"},
+		{"ambiguous child arrays", []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "custom", "name": "exec"}}, "children": []any{map[string]any{"type": "custom", "name": "exec"}}}}, "cannot declare both tools and children"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := AdaptDeepSeekResponsesNamespaceCustomTools(map[string]any{"tools": tc.tools})
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
+}
+
+func TestAdaptDeepSeekResponsesNamespaceFunctionOnlyKeepsFunctionType(t *testing.T) {
+	req := map[string]any{"tools": []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{map[string]any{"type": "function", "name": "wait", "parameters": map[string]any{"type": "object"}}}}}}
+	mapping, changed, err := AdaptDeepSeekResponsesNamespaceCustomTools(req)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Empty(t, mapping.CustomTools)
+	require.Equal(t, ResponsesNamespaceName{Namespace: "functions", Name: "wait"}, mapping.NamespaceTools["functions__wait"])
+	tools := requireResponsesClientToolValue[[]any](t, req["tools"])
+	require.Equal(t, "function", requireResponsesClientToolValue[map[string]any](t, tools[0])["type"])
+}
+
+func TestDeepSeekNamespacedCustomTypedOutputRestoresNamespace(t *testing.T) {
+	mapping := ResponsesClientToolMapping{
+		CustomTools:    map[string]bool{"functions__exec": true},
+		NamespaceTools: map[string]ResponsesNamespaceName{"functions__exec": {Namespace: "functions", Name: "exec"}},
+	}
+	output := []ResponsesOutput{{Type: "function_call", ID: "fc_1", CallID: "call_1", Name: "functions__exec", Arguments: `{"input":"pwd"}`}}
+	restoreResponsesOutputClientTools(output, &mapping)
+	require.Equal(t, "custom_tool_call", output[0].Type)
+	require.Equal(t, "ctc_1", output[0].ID)
+	require.Equal(t, "functions", output[0].Namespace)
+	require.Equal(t, "exec", output[0].Name)
+	require.Equal(t, "pwd", output[0].Input)
+	require.Empty(t, output[0].Arguments)
+}
+
+func TestDeepSeekNamespacedCustomStreamRestoresEveryLifecycleEvent(t *testing.T) {
+	mapping := ResponsesClientToolMapping{
+		CustomTools:    map[string]bool{"functions__exec": true},
+		NamespaceTools: map[string]ResponsesNamespaceName{"functions__exec": {Namespace: "functions", Name: "exec"}},
+	}
+	restorer := NewResponsesClientToolStreamRestorer(mapping)
+	frames := []string{
+		`{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"functions__exec","arguments":"","status":"in_progress"}}`,
+		`{"type":"response.function_call_arguments.done","sequence_number":1,"output_index":0,"item_id":"fc_1","call_id":"call_1","name":"functions__exec","arguments":"{\"input\":\"pwd\"}"}`,
+		`{"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"functions__exec","arguments":"{\"input\":\"pwd\"}","status":"completed"}}`,
+		`{"type":"response.completed","sequence_number":3,"response":{"id":"resp_1","status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"functions__exec","arguments":"{\"input\":\"pwd\"}"}]}}`,
+	}
+	var output []byte
+	for _, frame := range frames {
+		converted, changed, err := restorer.RestoreEvent([]byte(frame))
+		require.NoError(t, err)
+		require.True(t, changed)
+		for _, event := range converted {
+			output = append(output, event...)
+			output = append(output, '\n')
+		}
+	}
+	text := string(output)
+	require.Contains(t, text, `"type":"response.custom_tool_call_input.done"`)
+	require.NotContains(t, text, `"name":"functions__exec"`)
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	require.Len(t, lines, 5)
+	for _, line := range lines {
+		if strings.Contains(line, `"type":"response.custom_tool_call_input.delta"`) {
+			continue
+		}
+		if strings.Contains(line, `"type":"response.custom_tool_call_input.done"`) {
+			require.Equal(t, "functions", gjson.Get(line, "namespace").String())
+			require.Equal(t, "exec", gjson.Get(line, "name").String())
+			continue
+		}
+		path := "item"
+		if strings.Contains(line, `"type":"response.completed"`) {
+			path = "response.output.0"
+		}
+		require.Equal(t, "custom_tool_call", gjson.Get(line, path+".type").String())
+		require.Equal(t, "functions", gjson.Get(line, path+".namespace").String())
+		require.Equal(t, "exec", gjson.Get(line, path+".name").String())
+	}
+}
 
 func TestAdaptResponsesClientTools_LowersDeclarationsHistoryChoiceAndNamespaces(t *testing.T) {
 	req := map[string]any{
@@ -48,14 +205,14 @@ func TestAdaptResponsesClientTools_LowersDeclarationsHistoryChoiceAndNamespaces(
 	input := requireResponsesClientToolValue[[]any](t, req["input"])
 	customCall := requireResponsesClientToolValue[map[string]any](t, input[0])
 	require.Equal(t, "function_call", customCall["type"])
-	require.NotContains(t, customCall, "id")
+	require.Equal(t, "fc_client", customCall["id"])
 	require.JSONEq(t, `{"input":"dir"}`, requireResponsesClientToolValue[string](t, customCall["arguments"]))
 	customOutput := requireResponsesClientToolValue[map[string]any](t, input[1])
 	require.Equal(t, "function_call_output", customOutput["type"])
 	require.NotContains(t, customOutput, "id")
 	searchCall := requireResponsesClientToolValue[map[string]any](t, input[2])
 	require.Equal(t, "function_call", searchCall["type"])
-	require.NotContains(t, searchCall, "id")
+	require.Equal(t, "fc_client", searchCall["id"])
 	require.Equal(t, toolSearchProxyName, searchCall["name"])
 	require.JSONEq(t, `{"query":"git"}`, requireResponsesClientToolValue[string](t, searchCall["arguments"]))
 	searchOutput := requireResponsesClientToolValue[map[string]any](t, input[3])
@@ -93,17 +250,27 @@ func TestStripResponsesDeferredToolFlags_PreservesFlagsWithBuiltInToolSearch(t *
 	require.Equal(t, true, requireResponsesClientToolValue[map[string]any](t, tools[1])["defer_loading"])
 }
 
-func TestDropInvalidLoweredFunctionItemID_KeepsFcPrefixedID(t *testing.T) {
+func TestNormalizeLoweredFunctionItemID_KeepsFcAndRetypesKnownCallIDs(t *testing.T) {
 	kept := map[string]any{"id": "fc_client"}
-	dropInvalidLoweredFunctionItemID(kept)
+	normalizeLoweredFunctionItemID(kept)
 	require.Equal(t, "fc_client", kept["id"])
 
-	dropped := map[string]any{"id": "ctc_client"}
-	dropInvalidLoweredFunctionItemID(dropped)
+	// ctc_/tsc_ call IDs map back to the fc_ ID they were raised from.
+	retyped := map[string]any{"id": "ctc_client"}
+	normalizeLoweredFunctionItemID(retyped)
+	require.Equal(t, "fc_client", retyped["id"])
+
+	retypedSearch := map[string]any{"id": "tsc_client"}
+	normalizeLoweredFunctionItemID(retypedSearch)
+	require.Equal(t, "fc_client", retypedSearch["id"])
+
+	// IDs without a function-protocol counterpart are still dropped.
+	dropped := map[string]any{"id": "ctco_client_output"}
+	normalizeLoweredFunctionItemID(dropped)
 	require.NotContains(t, dropped, "id")
 
 	noID := map[string]any{}
-	dropInvalidLoweredFunctionItemID(noID)
+	normalizeLoweredFunctionItemID(noID)
 	require.NotContains(t, noID, "id")
 }
 
@@ -156,7 +323,8 @@ func TestAdaptResponsesClientTools_LowersDiscoveredToolSearchOutput(t *testing.T
 	require.Equal(t, toolSearchProxyName, call["name"])
 	require.JSONEq(t, `{"query":"codex app"}`, requireResponsesClientToolValue[string](t, call["arguments"]))
 	require.NotContains(t, call, "execution")
-	require.NotContains(t, call, "id")
+	// tsc_ call IDs map back to the upstream fc_ ID (upstream e0e5e45cd).
+	require.Equal(t, "fc_client", call["id"])
 
 	output := requireResponsesClientToolValue[map[string]any](t, firstInput[1])
 	require.Equal(t, "function_call_output", output["type"])
@@ -953,4 +1121,52 @@ func TestAdaptResponsesClientToolsWithInheritedMapping_ClonesLoweredToolsSlice(t
 	req["tools"] = tools
 
 	require.Len(t, previousLoweredTools, 1, "appending to the returned tools slice must not mutate the caller's remembered declaration")
+}
+
+func TestAdaptResponsesClientTools_NormalizesCustomToolOutput(t *testing.T) {
+	tests := []struct {
+		name       string
+		output     any
+		wantOutput any
+	}{
+		{
+			name: "supported content parts remain an array",
+			output: []any{
+				map[string]any{"type": "input_text", "text": "ok"},
+				map[string]any{"type": "input_image", "image_url": "https://example.com/image.png"},
+				map[string]any{"type": "input_file", "file_id": "file_123"},
+			},
+			wantOutput: []any{
+				map[string]any{"type": "input_text", "text": "ok"},
+				map[string]any{"type": "input_image", "image_url": "https://example.com/image.png"},
+				map[string]any{"type": "input_file", "file_id": "file_123"},
+			},
+		},
+		{name: "ordinary object is stringified", output: map[string]any{"ok": true}, wantOutput: `{"ok":true}`},
+		{name: "arbitrary array is stringified", output: []any{"ok"}, wantOutput: `["ok"]`},
+		{name: "empty array is stringified", output: []any{}, wantOutput: `[]`},
+		{name: "mixed array is stringified", output: []any{map[string]any{"type": "input_text", "text": "ok"}, "bad"}, wantOutput: `[{"text":"ok","type":"input_text"},"bad"]`},
+		{name: "unknown content type is stringified", output: []any{map[string]any{"type": "output_text", "text": "bad"}}, wantOutput: `[{"text":"bad","type":"output_text"}]`},
+		{name: "whitespace-padded content type is stringified", output: []any{map[string]any{"type": " input_text ", "text": "bad"}}, wantOutput: `[{"text":"bad","type":" input_text "}]`},
+		{name: "missing content type is stringified", output: []any{map[string]any{"text": "bad"}}, wantOutput: `[{"text":"bad"}]`},
+		{name: "non-string content type is stringified", output: []any{map[string]any{"type": 1}}, wantOutput: `[{"type":1}]`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := map[string]any{
+				"tools": []any{map[string]any{"type": "custom", "name": "exec"}},
+				"input": []any{map[string]any{
+					"type": "custom_tool_call_output", "call_id": "call_1", "output": tc.output,
+				}},
+			}
+
+			_, changed, err := AdaptResponsesClientTools(req)
+			require.NoError(t, err)
+			require.True(t, changed)
+			item := requireResponsesClientToolValue[map[string]any](t, requireResponsesClientToolValue[[]any](t, req["input"])[0])
+			require.Equal(t, "function_call_output", item["type"])
+			require.Equal(t, tc.wantOutput, item["output"])
+		})
+	}
 }

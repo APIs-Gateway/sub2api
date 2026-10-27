@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -102,27 +103,75 @@ func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyRejectsAmbiguousErrors(t 
 }
 
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyFindsNamespacePathInMessage(t *testing.T) {
-	body := []byte(`{"input":[{"type":"function_call","namespace":"keep","arguments":"{}"},{"type":"function_call","namespace":"remove","arguments":"{}"}]}`)
+	body := []byte(`{"input":[{"type":"message","namespace":"first","content":[]},{"type":"function_call","namespace":"remove","arguments":"{}"}]}`)
 	responseBody := []byte(`{"error":{"code":"unknown_parameter","message":"input[0] was accepted; Unknown parameter: 'input[1].namespace'."}}`)
 
 	retryBody, _, changed, err := normalizeOpenAIResponsesRejectedFieldRetryBody(http.StatusBadRequest, body, responseBody)
 
 	require.NoError(t, err)
 	require.True(t, changed)
-	require.Equal(t, "keep", gjson.GetBytes(retryBody, "input.0.namespace").String())
+	require.Equal(t, "first", gjson.GetBytes(retryBody, "input.0.namespace").String())
 	require.False(t, gjson.GetBytes(retryBody, "input.1.namespace").Exists())
 }
 
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyBindsNamespacePathToRejectionPhrase(t *testing.T) {
-	body := []byte(`{"input":[{"type":"function_call","namespace":"keep","arguments":"{}"},{"type":"function_call","namespace":"remove","arguments":"{}"}]}`)
+	body := []byte(`{"input":[{"type":"message","namespace":"first","content":[]},{"type":"function_call","namespace":"remove","arguments":"{}"}]}`)
 	responseBody := []byte(`{"error":{"code":"unknown_parameter","message":"input[0].namespace is supported; Unknown parameter: input[1].namespace."}}`)
 
 	retryBody, _, changed, err := normalizeOpenAIResponsesRejectedFieldRetryBody(http.StatusBadRequest, body, responseBody)
 
 	require.NoError(t, err)
 	require.True(t, changed)
-	require.Equal(t, "keep", gjson.GetBytes(retryBody, "input.0.namespace").String())
+	require.Equal(t, "first", gjson.GetBytes(retryBody, "input.0.namespace").String())
 	require.False(t, gjson.GetBytes(retryBody, "input.1.namespace").Exists())
+}
+
+func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsRejectedCallTypeInOnePass(t *testing.T) {
+	items := []string{`{"type":"message","namespace":"keep-message","content":[]}`}
+	for i := 0; i < 8; i++ {
+		items = append(items, fmt.Sprintf(`{"type":"function_call","namespace":"drop-%d","arguments":"{}","meta":{"namespace":"keep-nested"},"large":9007199254740993}`, i))
+	}
+	items = append(items, `{"type":"custom_tool_call","namespace":"keep-custom","input":"{}"}`)
+	body := []byte(`{"input":[` + strings.Join(items, ",") + `]}`)
+	responseBody := []byte(`{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'input[4].namespace'.","param":"input[4].namespace"}}`)
+
+	retryBody, _, changed, err := normalizeOpenAIResponsesRejectedFieldRetryBody(http.StatusBadRequest, body, responseBody)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "keep-message", gjson.GetBytes(retryBody, "input.0.namespace").String())
+	for i := 1; i <= 8; i++ {
+		itemPath := fmt.Sprintf("input.%d", i)
+		require.False(t, gjson.GetBytes(retryBody, itemPath+".namespace").Exists())
+		require.Equal(t, "keep-nested", gjson.GetBytes(retryBody, itemPath+".meta.namespace").String())
+		require.Equal(t, "9007199254740993", gjson.GetBytes(retryBody, itemPath+".large").Raw)
+	}
+	require.Equal(t, "keep-custom", gjson.GetBytes(retryBody, "input.9.namespace").String())
+}
+
+func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsEscapedNamespaceKeys(t *testing.T) {
+	items := make([]string, 0, 9)
+	for i := 0; i < 8; i++ {
+		items = append(items, fmt.Sprintf(`{"type":"function_call","na\u006despace":"drop-%d","arguments":"{}","meta":{"na\u006despace":"keep-nested"}}`, i))
+	}
+	items = append(items, `{"type":"custom_tool_call","na\u006despace":"keep-custom","input":"{}"}`)
+	body := []byte(`{"input":[` + strings.Join(items, ",") + `]}`)
+	responseBody := []byte(`{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'input[3].namespace'.","param":"input[3].namespace"}}`)
+	require.NotContains(t, string(body), `"namespace"`)
+	state := newOpenAIResponsesRejectedFieldRetryState(body)
+
+	retryBody, _, changed, err := normalizeOpenAIResponsesRejectedFieldRetryBody(http.StatusBadRequest, body, responseBody)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.NotEqual(t, string(body), string(retryBody))
+	require.True(t, state.Allow(retryBody))
+	for i := 0; i < 8; i++ {
+		itemPath := fmt.Sprintf("input.%d", i)
+		require.False(t, gjson.GetBytes(retryBody, itemPath+".namespace").Exists())
+		require.Equal(t, "keep-nested", gjson.GetBytes(retryBody, itemPath+".meta.namespace").String())
+	}
+	require.Equal(t, "keep-custom", gjson.GetBytes(retryBody, "input.8.namespace").String())
 }
 
 func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyDoesNotTreatMaxOutputTokensSuggestionAsRejection(t *testing.T) {
@@ -520,7 +569,9 @@ func TestOpenAIResponsesRejectedFieldRetryStateAllowsPromptCacheBreakpointVarian
 }
 
 func TestOpenAIGatewayService_RetriesRejectedIndexedNamespaceField(t *testing.T) {
-	body := []byte(`{"model":"gpt-5.5","stream":false,"input":[{"type":"function_call","name":"first","namespace":"keep","arguments":"{}"},{"type":"custom_tool_call","name":"second","namespace":"remove","input":"{}"}]}`)
+	// A namespace declaration keeps tool-call namespaces through the proactive
+	// strip, so the reactive retry is what removes the rejected index.
+	body := []byte(`{"model":"gpt-5.5","stream":false,"tools":[{"type":"namespace","name":"keep","tools":[]}],"input":[{"type":"function_call","name":"first","namespace":"keep","arguments":"{}"},{"type":"custom_tool_call","name":"second","namespace":"remove","input":"{}"}]}`)
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{
 		newOpenAIRejectedFieldTestResponse(http.StatusBadRequest, `{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'input[1].namespace'.","param":"input[1].namespace","type":"invalid_request_error"}}`),
 		newOpenAIRejectedFieldTestResponse(http.StatusOK, `{"output":[],"usage":{"input_tokens":1,"output_tokens":1,"input_tokens_details":{"cached_tokens":0}}}`),
@@ -538,6 +589,124 @@ func TestOpenAIGatewayService_RetriesRejectedIndexedNamespaceField(t *testing.T)
 	require.Len(t, upstream.bodies, 2)
 	require.Equal(t, "keep", gjson.GetBytes(upstream.bodies[1], "input.0.namespace").String())
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "input.1.namespace").Exists())
+}
+
+func TestOpenAIGatewayService_BatchesRejectedNamespaceAcrossLongHistory(t *testing.T) {
+	items := make([]string, 0, 9)
+	for i := 0; i < 8; i++ {
+		items = append(items, fmt.Sprintf(`{"type":"function_call","name":"call%d","namespace":"rejected","arguments":"{}"}`, i))
+	}
+	items = append(items, `{"type":"custom_tool_call","name":"other","namespace":"required","input":"{}"}`)
+	body := []byte(`{"model":"gpt-5.5","stream":false,"tools":[{"type":"namespace","name":"tools","tools":[]}],"input":[` + strings.Join(items, ",") + `]}`)
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		newOpenAIRejectedFieldTestResponse(http.StatusBadRequest, `{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'input[3].namespace'.","param":"input[3].namespace"}}`),
+		newOpenAIRejectedFieldTestResponse(http.StatusOK, `{"output":[],"usage":{"input_tokens":1,"output_tokens":1,"input_tokens_details":{"cached_tokens":0}}}`),
+	}}
+
+	result, err := newOpenAIRejectedFieldTestService(upstream).Forward(
+		context.Background(),
+		newOpenAIRejectedFieldTestContext(body),
+		newOpenAIRejectedFieldTestAccount(),
+		body,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.bodies, 2)
+	for i := 0; i < 8; i++ {
+		require.False(t, gjson.GetBytes(upstream.bodies[1], fmt.Sprintf("input.%d.namespace", i)).Exists())
+	}
+	require.Equal(t, "required", gjson.GetBytes(upstream.bodies[1], "input.8.namespace").String())
+}
+
+func TestOpenAIGatewayServiceProactivelyStripsCrossProviderReasoningContent(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","stream":false,"store":true,"input":[` +
+		`{"type":"message","role":"user","content":"one"},` +
+		`{"type":"message","role":"assistant","content":"two"},` +
+		`{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},` +
+		`{"type":"function_call_output","call_id":"call_1","output":"ok"},` +
+		`{"type":"message","role":"user","content":"five"},` +
+		`{"type":"reasoning","summary":[{"type":"summary_text","text":"keep"}],"content":[{"type":"reasoning_text","text":"remove"}]}` +
+		`]}`)
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		newOpenAIRejectedFieldTestResponse(http.StatusOK, `{"output":[],"usage":{"input_tokens":1,"output_tokens":1,"input_tokens_details":{"cached_tokens":0}}}`),
+	}}
+
+	result, err := newOpenAIRejectedFieldTestService(upstream).Forward(
+		context.Background(),
+		newOpenAIRejectedFieldTestContext(body),
+		newOpenAIRejectedFieldTestAccount(),
+		body,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.bodies, 1, "reasoning content should be normalized before the first upstream request")
+	require.Equal(t, "reasoning", gjson.GetBytes(upstream.bodies[0], "input.5.type").String())
+	require.False(t, gjson.GetBytes(upstream.bodies[0], "input.5.content").Exists())
+	require.Equal(t, "keep", gjson.GetBytes(upstream.bodies[0], "input.5.summary.0.text").String())
+}
+
+func TestNormalizeOpenAIResponsesReasoningContentReplayStripsCrossProviderArray(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.6-sol","input":[` +
+		`{"type":"message","role":"user","content":"one"},` +
+		`{"type":"message","role":"assistant","content":"two"},` +
+		`{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},` +
+		`{"type":"function_call_output","call_id":"call_1","output":"ok"},` +
+		`{"type":"message","role":"user","content":"five"},` +
+		`{"type":"reasoning","id":"rs_provider","summary":[{"type":"summary_text","text":"portable"}],"content":[{"type":"reasoning_text","text":"visible reasoning"}],"opaque":9007199254740993},` +
+		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}` +
+		`]}`)
+
+	normalized, changed, err := normalizeOpenAIResponsesReasoningContentReplay(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "reasoning", gjson.GetBytes(normalized, "input.5.type").String())
+	require.False(t, gjson.GetBytes(normalized, "input.5.content").Exists())
+	require.Equal(t, "portable", gjson.GetBytes(normalized, "input.5.summary.0.text").String())
+	require.Equal(t, "9007199254740993", gjson.GetBytes(normalized, "input.5.opaque").Raw)
+	require.Equal(t, "answer", gjson.GetBytes(normalized, "input.6.content.0.text").String())
+}
+
+func TestNormalizeOpenAIResponsesReasoningContentReplayKeepsPortableShapes(t *testing.T) {
+	for _, body := range []string{
+		`{"input":[{"type":"reasoning","summary":[]}]}`,
+		`{"input":[{"type":"reasoning","content":[],"summary":[]}]}`,
+		`{"input":[{"type":"message","content":[{"type":"input_text","text":"keep"}]}]}`,
+	} {
+		normalized, changed, err := normalizeOpenAIResponsesReasoningContentReplay([]byte(body))
+		require.NoError(t, err)
+		require.False(t, changed)
+		require.JSONEq(t, body, string(normalized))
+	}
+}
+
+// Upstream tests normalizeOpenAIResponsesWebSocketCompatibilityBody; the fork
+// runs the same normalization through normalizeOpenAIWSIngressReasoningContentReplay
+// on the WebSocket ingress path.
+func TestNormalizeOpenAIWSIngressReasoningContentReplayOnlyForOpenAI(t *testing.T) {
+	body := []byte(`{"type":"response.create","model":"gpt-5.6-sol","store":true,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"keep"}],"content":[{"type":"reasoning_text","text":"remove"}]}]}`)
+	for _, accountType := range []string{AccountTypeAPIKey, AccountTypeOAuth} {
+		normalized, changed, err := normalizeOpenAIWSIngressReasoningContentReplay(body, &Account{
+			Platform: PlatformOpenAI,
+			Type:     accountType,
+		})
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.False(t, gjson.GetBytes(normalized, "input.0.content").Exists())
+		require.Equal(t, "keep", gjson.GetBytes(normalized, "input.0.summary.0.text").String())
+	}
+
+	for _, account := range []*Account{
+		nil,
+		{Platform: PlatformAnthropic, Type: AccountTypeAPIKey},
+	} {
+		normalized, changed, err := normalizeOpenAIWSIngressReasoningContentReplay(body, account)
+		require.NoError(t, err)
+		require.False(t, changed)
+		require.JSONEq(t, string(body), string(normalized))
+	}
 }
 
 func TestOpenAIGatewayService_RetriesExplicitMaxOutputTokensRejection(t *testing.T) {
@@ -585,7 +754,9 @@ func TestOpenAIGatewayService_PreservesSecondRejectedFieldError(t *testing.T) {
 }
 
 func TestOpenAIGatewayService_ComposesDistinctRejectedFieldRetries(t *testing.T) {
-	body := []byte(`{"model":"gpt-5.5","stream":false,"max_output_tokens":2048,"input":[{"type":"function_call","name":"first","namespace":"keep","arguments":"{}"},{"type":"custom_tool_call","name":"second","namespace":"remove","input":"{}"}]}`)
+	// A namespace declaration keeps tool-call namespaces through the proactive
+	// strip, so the reactive retry is what removes the rejected index.
+	body := []byte(`{"model":"gpt-5.5","stream":false,"tools":[{"type":"namespace","name":"keep","tools":[]}],"max_output_tokens":2048,"input":[{"type":"function_call","name":"first","namespace":"keep","arguments":"{}"},{"type":"custom_tool_call","name":"second","namespace":"remove","input":"{}"}]}`)
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{
 		newOpenAIRejectedFieldTestResponse(http.StatusBadRequest, `{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'input[1].namespace'.","param":"input[1].namespace"}}`),
 		newOpenAIRejectedFieldTestResponse(http.StatusBadRequest, `{"error":{"code":"unsupported_parameter","message":"Unsupported parameter: max_output_tokens","param":"max_output_tokens"}}`),
@@ -654,4 +825,43 @@ func newOpenAIRejectedFieldTestResponse(status int, body string) *http.Response 
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
+}
+
+// A replayed conversation carries many items of the same type, each with a
+// status the upstream schema rejects. One rejection must clear all of them:
+// clearing one index per round trip exhausts the bounded retry budget.
+func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsStatusForWholeType(t *testing.T) {
+	input := make([]string, 0, 12)
+	for i := 0; i < 10; i++ {
+		input = append(input, `{"type":"tool_search_output","status":"completed","call_id":"call_`+strconv.Itoa(i)+`","tools":[]}`)
+	}
+	input = append(input, `{"type":"message","role":"user","status":"completed","content":"hi"}`)
+	body := []byte(`{"input":[` + strings.Join(input, ",") + `]}`)
+
+	responseBody := []byte(`{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'input[7].status'.","param":"input[7].status"}}`)
+	retryBody, reason, changed, err := normalizeOpenAIResponsesRejectedFieldRetryBody(http.StatusBadRequest, body, responseBody)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.NotEmpty(t, reason)
+
+	for i := 0; i < 10; i++ {
+		require.False(t, gjson.GetBytes(retryBody, "input."+strconv.Itoa(i)+".status").Exists(),
+			"every tool_search_output must lose its status in a single retry, index %d did not", i)
+		require.Equal(t, "call_"+strconv.Itoa(i), gjson.GetBytes(retryBody, "input."+strconv.Itoa(i)+".call_id").String(),
+			"unrelated fields must survive")
+	}
+	require.Equal(t, "completed", gjson.GetBytes(retryBody, "input.10.status").String(),
+		"a different item type keeps its status: the rejection only proves this type has none")
+}
+
+// The rejected item may carry no type to match on.
+func TestNormalizeOpenAIResponsesRejectedFieldRetryBodyClearsUntypedStatusAtIndexOnly(t *testing.T) {
+	body := []byte(`{"input":[{"status":"keep_a"},{"status":"remove"}]}`)
+	responseBody := []byte(`{"error":{"code":"unknown_parameter","message":"Unknown parameter: 'input[1].status'.","param":"input[1].status"}}`)
+
+	retryBody, _, changed, err := normalizeOpenAIResponsesRejectedFieldRetryBody(http.StatusBadRequest, body, responseBody)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "keep_a", gjson.GetBytes(retryBody, "input.0.status").String())
+	require.False(t, gjson.GetBytes(retryBody, "input.1.status").Exists())
 }

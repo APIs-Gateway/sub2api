@@ -72,7 +72,13 @@ func (s *UserMsgQueueCacheSuite) TestReconcileExpiredLockCandidatesRemovesNatura
 	require.NoError(s.T(), err)
 	require.Eventually(s.T(), func() bool {
 		nowMs, err := s.cache.GetCurrentTimeMs(s.ctx)
-		return err == nil && nowMs >= int64(score)
+		if err != nil || nowMs < int64(score) {
+			return false
+		}
+		// Redis can still report a live key with PTTL == 0 at the exact
+		// recorded deadline. Observe actual expiry before testing cleanup.
+		exists, err := s.rdb.Exists(s.ctx, umqLockKey(accountID)).Result()
+		return err == nil && exists == 0
 	}, time.Second, 10*time.Millisecond)
 
 	cleaned, err := s.cache.ReconcileExpiredLockCandidates(s.ctx, 1000)

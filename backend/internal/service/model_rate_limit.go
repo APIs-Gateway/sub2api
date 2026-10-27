@@ -37,7 +37,30 @@ func (a *Account) getRateLimitRemainingForKey(key string) time.Duration {
 }
 
 func (a *Account) isModelRateLimitedWithContext(ctx context.Context, requestedModel string) bool {
+	// 「不自动暂停调度」账号不受单模型限流影响（model_rate_limits 里的记录仍保留，后台可见）。
+	if a.NoAutoUnsched() {
+		return false
+	}
 	for _, key := range a.modelRateLimitKeysForRequest(ctx, requestedModel) {
+		if a.isRateLimitActiveForKey(key) {
+			return true
+		}
+	}
+	return false
+}
+
+// isModelRateLimitedForFinalKeyWithContext checks a model already resolved for
+// upstream forwarding. Reapplying account model_mapping here can redirect a
+// wildcard mapping away from the key that was rate limited.
+func (a *Account) isModelRateLimitedForFinalKeyWithContext(ctx context.Context, finalKey string) bool {
+	if a == nil {
+		return false
+	}
+	finalKey = strings.TrimSpace(finalKey)
+	if finalKey == "" || a.NoAutoUnsched() {
+		return false
+	}
+	for _, key := range a.modelRateLimitFamilyKeys(ctx, finalKey, finalKey) {
 		if a.isRateLimitActiveForKey(key) {
 			return true
 		}
@@ -52,6 +75,9 @@ func (a *Account) GetModelRateLimitRemainingTime(requestedModel string) time.Dur
 }
 
 func (a *Account) GetModelRateLimitRemainingTimeWithContext(ctx context.Context, requestedModel string) time.Duration {
+	if a.NoAutoUnsched() {
+		return 0
+	}
 	remaining := time.Duration(0)
 	for _, key := range a.modelRateLimitKeysForRequest(ctx, requestedModel) {
 		if keyRemaining := a.getRateLimitRemainingForKey(key); keyRemaining > remaining {
@@ -67,14 +93,52 @@ func (a *Account) modelRateLimitKeysForRequest(ctx context.Context, requestedMod
 	}
 
 	modelKey := a.GetMappedModel(requestedModel)
-	if a.Platform == PlatformAntigravity {
+	switch a.Platform {
+	case PlatformAntigravity:
 		modelKey = resolveFinalAntigravityModelKey(ctx, a, requestedModel)
+	case PlatformOpenAI:
+		forwardModel := requestedModel
+		if fromContext, ok := openAIForwardModelFromContext(ctx); ok && strings.TrimSpace(fromContext.model) != "" {
+			forwardModel = fromContext.model
+		}
+		// Passthrough ignores account mapping. A stale mapping must not block
+		// its unrelated model.
+		if a.IsOpenAIPassthroughEnabled() && !shouldForwardOpenAIResponsesViaRawChatCompletions(a) {
+			modelKey = forwardModel
+		}
 	}
 	modelKey = strings.TrimSpace(modelKey)
 	if modelKey == "" {
 		return nil
 	}
+	keys := a.modelRateLimitFamilyKeys(ctx, requestedModel, modelKey)
+	if a.IsAnthropicOAuthOrSetupToken() {
+		// Retain the legacy request-side key for cooldowns already in Redis, and
+		// also check the final wire model used by native and bridged forwarding.
+		finalKey, _ := resolveAnthropicOAuthMappedModel(a, requestedModel)
+		finalKey = strings.TrimSpace(finalKey)
+		if finalKey != "" && finalKey != modelKey {
+			keys = append(keys, a.modelRateLimitFamilyKeys(ctx, requestedModel, finalKey)...)
+		}
+	}
+	if a.Platform == PlatformOpenAI {
+		// Keep the pre-normalization key for existing 429 cooldowns, and also
+		// check the actual wire model used by the downgrade guard.
+		forwardModel := requestedModel
+		requireCompact := false
+		if fromContext, ok := openAIForwardModelFromContext(ctx); ok && strings.TrimSpace(fromContext.model) != "" {
+			forwardModel = fromContext.model
+			requireCompact = fromContext.useCompactModelMapping
+		}
+		finalKey := strings.TrimSpace(resolveOpenAIAccountUpstreamModelForRequest(a, forwardModel, requireCompact))
+		if finalKey != "" && finalKey != modelKey {
+			keys = append(keys, finalKey)
+		}
+	}
+	return keys
+}
 
+func (a *Account) modelRateLimitFamilyKeys(ctx context.Context, requestedModel, modelKey string) []string {
 	keys := []string{modelKey}
 	switch a.Platform {
 	case PlatformAntigravity:

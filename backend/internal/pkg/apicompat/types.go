@@ -66,6 +66,7 @@ type AnthropicContentBlock struct {
 	// Signature carries provider encrypted reasoning (e.g. xAI encrypted_content)
 	// so multi-turn Claude clients can round-trip it back on subsequent turns.
 	Signature string `json:"signature,omitempty"`
+	Data      string `json:"data,omitempty"` // redacted_thinking
 
 	// type=image
 	Source *AnthropicImageSource `json:"source,omitempty"`
@@ -94,10 +95,14 @@ func (b AnthropicContentBlock) MarshalJSON() ([]byte, error) {
 			anthropicContentBlock
 		}{Text: b.Text, anthropicContentBlock: anthropicContentBlock(b)})
 	case "thinking":
+		// Anthropic always sends `signature` on thinking blocks (empty on
+		// content_block_start); strict clients such as Grok Build reject the
+		// block with "missing field `signature`" when the key is absent.
 		return json.Marshal(struct {
-			Thinking string `json:"thinking"`
+			Thinking  string `json:"thinking"`
+			Signature string `json:"signature"`
 			anthropicContentBlock
-		}{Thinking: b.Thinking, anthropicContentBlock: anthropicContentBlock(b)})
+		}{Thinking: b.Thinking, Signature: b.Signature, anthropicContentBlock: anthropicContentBlock(b)})
 	default:
 		return json.Marshal(base)
 	}
@@ -183,6 +188,14 @@ type AnthropicStreamEvent struct {
 
 	// message_delta
 	Usage *AnthropicUsage `json:"usage,omitempty"`
+
+	// error
+	Error *AnthropicSSEError `json:"error,omitempty"`
+}
+
+type AnthropicSSEError struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
 }
 
 // AnthropicDelta carries incremental content in streaming events.
@@ -228,6 +241,7 @@ type ResponsesRequest struct {
 	ToolChoice         json.RawMessage     `json:"tool_choice,omitempty"`
 	ServiceTier        string              `json:"service_tier,omitempty"`
 	PromptCacheKey     string              `json:"prompt_cache_key,omitempty"`
+	PromptCacheOptions json.RawMessage     `json:"prompt_cache_options,omitempty"`
 	PreviousResponseID string              `json:"previous_response_id,omitempty"`
 }
 
@@ -247,7 +261,7 @@ type ResponsesText struct {
 // The Type field determines which other fields are populated.
 type ResponsesInputItem struct {
 	// Common
-	Type string `json:"type,omitempty"` // "" for role-based messages
+	Type string `json:"type,omitempty"` // "message" for role-based messages
 
 	// Role-based messages (developer/system/user/assistant)
 	Role    string          `json:"role,omitempty"`
@@ -295,9 +309,11 @@ func (i *ResponsesInputItem) UnmarshalJSON(data []byte) error {
 
 // ResponsesContentPart is a typed content part in a Responses message.
 type ResponsesContentPart struct {
-	Type     string `json:"type"` // "input_text" | "output_text" | "input_image" | "input_file"
-	Text     string `json:"text,omitempty"`
-	ImageURL string `json:"image_url,omitempty"` // data URI for input_image
+	PromptCacheBreakpoint json.RawMessage `json:"prompt_cache_breakpoint,omitempty"`
+	Type                  string          `json:"type"` // "input_text" | "output_text" | "refusal" | "input_image" | "input_file"
+	Text                  string          `json:"text,omitempty"`
+	Refusal               string          `json:"refusal,omitempty"`   // type=refusal
+	ImageURL              string          `json:"image_url,omitempty"` // data URI for input_image
 
 	// input_file fields.
 	Filename string `json:"filename,omitempty"`
@@ -336,12 +352,17 @@ func (t *ResponsesTool) UnmarshalJSON(data []byte) error {
 
 // ResponsesResponse is the non-streaming response from POST /v1/responses.
 type ResponsesResponse struct {
-	ID     string            `json:"id"`
-	Object string            `json:"object"` // "response"
-	Model  string            `json:"model"`
-	Status string            `json:"status"` // "completed" | "incomplete" | "failed"
-	Output []ResponsesOutput `json:"output"`
-	Usage  *ResponsesUsage   `json:"usage,omitempty"`
+	ID     string `json:"id"`
+	Object string `json:"object"` // "response"
+	// CreatedAt is the unix creation timestamp. Strict Responses clients declare
+	// it non-optional and abort with `missing field 'created_at'` when it is
+	// absent, so it is always emitted — no omitempty. Same rule as ID (see the
+	// "clients treat it as required" fallback in ChatCompletionsResponseToAnthropic).
+	CreatedAt int64             `json:"created_at"`
+	Model     string            `json:"model"`
+	Status    string            `json:"status"` // "completed" | "incomplete" | "failed"
+	Output    []ResponsesOutput `json:"output"`
+	Usage     *ResponsesUsage   `json:"usage,omitempty"`
 
 	// incomplete_details is present when status="incomplete"
 	IncompleteDetails *ResponsesIncompleteDetails `json:"incomplete_details,omitempty"`
@@ -487,28 +508,14 @@ type ResponsesUsage struct {
 
 func (u *ResponsesUsage) UnmarshalJSON(data []byte) error {
 	type responsesUsageAlias ResponsesUsage
-	type cacheTokenPresence struct {
-		CacheCreationTokens *int `json:"cache_creation_tokens"`
-		CacheWriteTokens    *int `json:"cache_write_tokens"`
-	}
 	var aux struct {
 		responsesUsageAlias
 		PromptTokens            int                           `json:"prompt_tokens"`
 		CompletionTokens        int                           `json:"completion_tokens"`
-		CacheCreationTokens     int                           `json:"cache_creation_tokens"`
-		CacheWriteInputTokens   int                           `json:"cache_write_input_tokens"`
-		CacheWriteTokens        int                           `json:"cache_write_tokens"`
 		PromptTokensDetails     *ResponsesInputTokensDetails  `json:"prompt_tokens_details,omitempty"`
 		CompletionTokensDetails *ResponsesOutputTokensDetails `json:"completion_tokens_details,omitempty"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-	var nestedPresence struct {
-		InputTokensDetails  *cacheTokenPresence `json:"input_tokens_details"`
-		PromptTokensDetails *cacheTokenPresence `json:"prompt_tokens_details"`
-	}
-	if err := json.Unmarshal(data, &nestedPresence); err != nil {
 		return err
 	}
 	*u = ResponsesUsage(aux.responsesUsageAlias)
@@ -518,36 +525,13 @@ func (u *ResponsesUsage) UnmarshalJSON(data []byte) error {
 	if u.OutputTokens == 0 && aux.CompletionTokens != 0 {
 		u.OutputTokens = aux.CompletionTokens
 	}
-	if u.CacheCreationInputTokens == 0 {
-		switch {
-		case aux.CacheWriteInputTokens > 0:
-			u.CacheCreationInputTokens = aux.CacheWriteInputTokens
-		case aux.CacheCreationTokens > 0:
-			u.CacheCreationInputTokens = aux.CacheCreationTokens
-		case aux.CacheWriteTokens > 0:
-			u.CacheCreationInputTokens = aux.CacheWriteTokens
-		}
-	}
 	if u.InputTokensDetails == nil && aux.PromptTokensDetails != nil {
 		u.InputTokensDetails = aux.PromptTokensDetails
 	}
 	if u.OutputTokensDetails == nil && aux.CompletionTokensDetails != nil {
 		u.OutputTokensDetails = aux.CompletionTokensDetails
 	}
-	var canonicalCacheCreationTokens *int
-	switch {
-	case nestedPresence.InputTokensDetails != nil && nestedPresence.InputTokensDetails.CacheWriteTokens != nil:
-		canonicalCacheCreationTokens = nestedPresence.InputTokensDetails.CacheWriteTokens
-	case nestedPresence.PromptTokensDetails != nil && nestedPresence.PromptTokensDetails.CacheWriteTokens != nil:
-		canonicalCacheCreationTokens = nestedPresence.PromptTokensDetails.CacheWriteTokens
-	case nestedPresence.InputTokensDetails != nil && nestedPresence.InputTokensDetails.CacheCreationTokens != nil:
-		canonicalCacheCreationTokens = nestedPresence.InputTokensDetails.CacheCreationTokens
-	case nestedPresence.PromptTokensDetails != nil && nestedPresence.PromptTokensDetails.CacheCreationTokens != nil:
-		canonicalCacheCreationTokens = nestedPresence.PromptTokensDetails.CacheCreationTokens
-	}
-	if canonicalCacheCreationTokens != nil {
-		u.CacheCreationInputTokens = max(*canonicalCacheCreationTokens, 0)
-	}
+	u.applyCacheWriteUsage(data)
 	if u.TotalTokens == 0 && (u.InputTokens != 0 || u.OutputTokens != 0) {
 		u.TotalTokens = u.InputTokens + u.OutputTokens
 	}
@@ -597,6 +581,7 @@ type ResponsesStreamEvent struct {
 	// response.function_call_arguments.delta / done
 	CallID    string `json:"call_id,omitempty"`
 	Name      string `json:"name,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
 
 	// response.custom_tool_call_input.done
@@ -639,6 +624,7 @@ type ChatCompletionsRequest struct {
 	ToolChoice          json.RawMessage    `json:"tool_choice,omitempty"`
 	ReasoningEffort     string             `json:"reasoning_effort,omitempty"` // "low" | "medium" | "high" | "xhigh"
 	ServiceTier         string             `json:"service_tier,omitempty"`
+	PromptCacheOptions  json.RawMessage    `json:"prompt_cache_options,omitempty"`
 	Stop                json.RawMessage    `json:"stop,omitempty"` // string or []string
 	ResponseFormat      json.RawMessage    `json:"response_format,omitempty"`
 
@@ -656,6 +642,7 @@ type ChatStreamOptions struct {
 type ChatMessage struct {
 	Role             string          `json:"role"` // "system" | "user" | "assistant" | "tool" | "function"
 	Content          json.RawMessage `json:"content,omitempty"`
+	Refusal          string          `json:"refusal,omitempty"`
 	ReasoningContent string          `json:"reasoning_content,omitempty"`
 	Reasoning        string          `json:"reasoning,omitempty"`
 	Name             string          `json:"name,omitempty"`
@@ -668,10 +655,12 @@ type ChatMessage struct {
 
 // ChatContentPart is a typed content part in a multi-modal message.
 type ChatContentPart struct {
-	Type     string        `json:"type"` // "text" | "image_url" | "file"
-	Text     string        `json:"text,omitempty"`
-	ImageURL *ChatImageURL `json:"image_url,omitempty"`
-	File     *ChatFile     `json:"file,omitempty"`
+	PromptCacheBreakpoint json.RawMessage `json:"prompt_cache_breakpoint,omitempty"`
+	Type                  string          `json:"type"` // "text" | "image_url" | "file"
+	Text                  string          `json:"text,omitempty"`
+	ImageURL              *ChatImageURL   `json:"image_url,omitempty"`
+	File                  *ChatFile       `json:"file,omitempty"`
+	InputAudio            json.RawMessage `json:"input_audio,omitempty"`
 }
 
 // ChatImageURL contains the URL for an image content part.
@@ -787,6 +776,7 @@ type ChatChunkChoice struct {
 type ChatDelta struct {
 	Role             string         `json:"role,omitempty"`
 	Content          *string        `json:"content,omitempty"` // pointer: omit when not present, null vs "" matters
+	Refusal          *string        `json:"refusal,omitempty"`
 	ReasoningContent *string        `json:"reasoning_content,omitempty"`
 	Reasoning        *string        `json:"reasoning,omitempty"`
 	ToolCalls        []ChatToolCall `json:"tool_calls,omitempty"`

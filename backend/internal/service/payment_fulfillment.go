@@ -28,6 +28,16 @@ var ErrOrderNotFound = errors.New("payment order not found")
 const (
 	balanceFulfillmentLeaseDuration      = 5 * time.Minute
 	subscriptionFulfillmentLeaseDuration = 5 * time.Minute
+
+	// paymentNotificationTimeout bounds notification handling once it is
+	// detached from the caller. Webhook senders hang up long before a slow DB
+	// finishes; cancelling with them used to strand orders in PAID/RECHARGING.
+	paymentNotificationTimeout = 2 * time.Minute
+
+	// stuckPaidFulfillmentGrace is how long a PAID order may sit before the
+	// periodic job treats its fulfillment as abandoned and retries it.
+	stuckPaidFulfillmentGrace     = 2 * time.Minute
+	stuckFulfillmentRecoveryLimit = 20
 )
 
 // balanceFulfillmentLease fences the balance-order worker that most recently
@@ -49,6 +59,8 @@ func (s *PaymentService) HandlePaymentNotification(ctx context.Context, n *payme
 	if n.Status != payment.NotificationStatusSuccess {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), paymentNotificationTimeout)
+	defer cancel()
 	// Look up order by out_trade_no (the external order ID we sent to the provider)
 	order, err := s.entClient.PaymentOrder.Query().Where(paymentorder.OutTradeNo(n.OrderID)).Only(ctx)
 	if err != nil {
@@ -425,21 +437,62 @@ const (
 
 // resolveRedeemAction decides the idempotency action based on an existing redeem code lookup.
 // existing is the result of GetByCode; lookupErr is the error from that call.
-func resolveRedeemAction(existing *RedeemCode, lookupErr error) redeemAction {
-	if existing == nil || lookupErr != nil {
-		return redeemActionCreate
+func resolveRedeemAction(existing *RedeemCode, lookupErr error) (redeemAction, error) {
+	if lookupErr != nil {
+		if errors.Is(lookupErr, ErrRedeemCodeNotFound) {
+			return redeemActionCreate, nil
+		}
+		return redeemActionCreate, fmt.Errorf("lookup payment redeem code: %w", lookupErr)
+	}
+	if existing == nil {
+		return redeemActionCreate, nil
 	}
 	if existing.IsUsed() {
-		return redeemActionSkipCompleted
+		return redeemActionSkipCompleted, nil
 	}
-	return redeemActionRedeem
+	return redeemActionRedeem, nil
+}
+
+func validatePaymentRedeemCode(o *dbent.PaymentOrder, code *RedeemCode) error {
+	if o == nil || code == nil {
+		return errors.New("payment redeem code validation requires an order and code")
+	}
+	if code.Code != o.RechargeCode {
+		return fmt.Errorf("payment redeem code mismatch for order %d", o.ID)
+	}
+	if code.Type != RedeemTypeBalance {
+		return fmt.Errorf("payment redeem code type mismatch for order %d: got %s", o.ID, code.Type)
+	}
+	if math.IsNaN(code.Value) || math.IsInf(code.Value, 0) || math.Abs(code.Value-o.Amount) > 1e-8 {
+		return fmt.Errorf("payment redeem code amount mismatch for order %d: expected %.8f, got %.8f", o.ID, o.Amount, code.Value)
+	}
+	switch code.Status {
+	case StatusUnused:
+		if code.UsedBy != nil {
+			return fmt.Errorf("unused payment redeem code has a user for order %d", o.ID)
+		}
+	case StatusUsed:
+		if code.UsedBy == nil || *code.UsedBy != o.UserID {
+			return fmt.Errorf("payment redeem code user mismatch for order %d", o.ID)
+		}
+	default:
+		return fmt.Errorf("payment redeem code has invalid status for order %d: %s", o.ID, code.Status)
+	}
+	return nil
 }
 
 // getOrCreateBalanceRedeemCode tolerates the window where another worker
 // creates this order's deterministic code after our initial lookup.
 func (s *PaymentService) getOrCreateBalanceRedeemCode(ctx context.Context, o *dbent.PaymentOrder) (*RedeemCode, error) {
 	existing, lookupErr := s.redeemService.GetByCode(ctx, o.RechargeCode)
-	if resolveRedeemAction(existing, lookupErr) != redeemActionCreate {
+	action, err := resolveRedeemAction(existing, lookupErr)
+	if err != nil {
+		return nil, err
+	}
+	if action != redeemActionCreate {
+		if err := validatePaymentRedeemCode(o, existing); err != nil {
+			return nil, err
+		}
 		return existing, nil
 	}
 
@@ -451,6 +504,9 @@ func (s *PaymentService) getOrCreateBalanceRedeemCode(ctx context.Context, o *db
 		// it before failing so the current lease holder can finish the order.
 		existing, lookupErr = s.redeemService.GetByCode(ctx, o.RechargeCode)
 		if lookupErr == nil {
+			if err := validatePaymentRedeemCode(o, existing); err != nil {
+				return nil, err
+			}
 			return existing, nil
 		}
 		return nil, fmt.Errorf("create redeem code: %w", err)
@@ -467,7 +523,7 @@ func (s *PaymentService) doBalance(ctx context.Context, o *dbent.PaymentOrder, l
 		// Code already created and redeemed — just mark completed
 		return s.markBalanceCompletedWithLease(ctx, o, lease, "RECHARGE_SUCCESS")
 	}
-	if _, err := s.redeemService.Redeem(ContextSkipRedeemAffiliate(ctx), o.UserID, o.RechargeCode); err != nil {
+	if _, err := s.redeemService.redeemForPaymentFulfillment(ctx, o.UserID, o.RechargeCode); err != nil {
 		return fmt.Errorf("redeem balance: %w", err)
 	}
 	s.applyPointsEarnForOrder(ctx, o)
@@ -582,7 +638,8 @@ func (s *PaymentService) sendBalanceRechargeSuccessNotification(ctx context.Cont
 
 func (s *PaymentService) sendSubscriptionPurchaseSuccessNotification(ctx context.Context, o *dbent.PaymentOrder) error {
 	variables := map[string]string{
-		"subscription_group": "Subscription",
+		// 空串表示没有分组名（自定义卡、转套餐卡、分组已删除），由通知服务按收件人 locale 回退。
+		"subscription_group": "",
 		"subscription_days":  "",
 		"expiry_time":        "",
 		"order_id":           strconv.FormatInt(o.ID, 10),
@@ -1153,4 +1210,50 @@ func (s *PaymentService) RetryFulfillment(ctx context.Context, oid int64) error 
 	}
 	s.writeAuditLog(ctx, oid, "RECHARGE_RETRY", "admin", map[string]any{"detail": "admin manual retry"})
 	return s.executeFulfillment(ctx, oid)
+}
+
+// RecoverStuckFulfillments retries paid orders whose fulfillment was abandoned
+// midway, e.g. the webhook request died after marking the order PAID. PAID
+// orders are retried after a short grace; RECHARGING orders only once their
+// lease is stale, which the fulfillment lease acquisition checks again.
+// Fulfillment is idempotent on the order's redeem code / subscription
+// assignment, so a retry never credits twice. FAILED orders stay manual.
+func (s *PaymentService) RecoverStuckFulfillments(ctx context.Context) (int, error) {
+	// UTC to match the lease timestamps, which SQLite compares as text.
+	now := time.Now().UTC()
+	staleLease := balanceFulfillmentLeaseDuration
+	if subscriptionFulfillmentLeaseDuration > staleLease {
+		staleLease = subscriptionFulfillmentLeaseDuration
+	}
+	orders, err := s.entClient.PaymentOrder.Query().
+		Where(
+			paymentorder.PaidAtNotNil(),
+			paymentorder.Or(
+				paymentorder.And(
+					paymentorder.StatusEQ(OrderStatusPaid),
+					paymentorder.UpdatedAtLTE(now.Add(-stuckPaidFulfillmentGrace)),
+				),
+				paymentorder.And(
+					paymentorder.StatusEQ(OrderStatusRecharging),
+					paymentorder.UpdatedAtLTE(now.Add(-staleLease)),
+				),
+			),
+		).
+		Order(dbent.Asc(paymentorder.FieldPaidAt)).
+		Limit(stuckFulfillmentRecoveryLimit).
+		All(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("query stuck payment fulfillments: %w", err)
+	}
+
+	recovered := 0
+	for _, o := range orders {
+		if err := s.executeFulfillment(ctx, o.ID); err != nil {
+			slog.Warn("recover stuck payment fulfillment failed", "orderID", o.ID, "status", o.Status, "error", err)
+			continue
+		}
+		s.writeAuditLog(ctx, o.ID, "FULFILLMENT_RECOVERED", "system", map[string]any{"previousStatus": o.Status})
+		recovered++
+	}
+	return recovered, nil
 }

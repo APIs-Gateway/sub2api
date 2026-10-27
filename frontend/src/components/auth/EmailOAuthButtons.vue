@@ -32,6 +32,7 @@ import { useI18n } from 'vue-i18n'
 import GitHubMark from './GitHubMark.vue'
 import GoogleMark from './GoogleMark.vue'
 import { resolveAffiliateReferralCode, storeOAuthAffiliateCode } from '@/utils/oauthAffiliate'
+import { sanitizeRedirectPath } from '@/utils/redirect'
 
 type EmailOAuthProvider = 'github' | 'google'
 const EMAIL_OAUTH_PENDING_PROVIDER_KEY = 'email_oauth_pending_provider'
@@ -39,6 +40,7 @@ const EMAIL_OAUTH_PENDING_PROVIDER_KEY = 'email_oauth_pending_provider'
 const props = withDefaults(defineProps<{
   disabled?: boolean
   affCode?: string
+  promoCode?: string
   githubEnabled?: boolean
   googleEnabled?: boolean
   showDivider?: boolean
@@ -71,7 +73,8 @@ function providerLabel(provider: EmailOAuthProvider): string {
 }
 
 function startLogin(provider: EmailOAuthProvider): void {
-  const redirectTo = (route.query.redirect as string) || '/dashboard'
+  // 只把站内路径交给后端；其余一律回 /dashboard
+  const redirectTo = sanitizeRedirectPath(route.query.redirect)
   const affiliateCode = resolveAffiliateReferralCode(props.affCode, route.query.aff, route.query.aff_code)
   storeOAuthAffiliateCode(affiliateCode)
   window.sessionStorage.setItem(EMAIL_OAUTH_PENDING_PROVIDER_KEY, provider)
@@ -80,6 +83,10 @@ function startLogin(provider: EmailOAuthProvider): void {
   const params = new URLSearchParams({ redirect: redirectTo })
   if (affiliateCode) {
     params.set('aff_code', affiliateCode)
+  }
+  const promoCode = props.promoCode?.trim()
+  if (promoCode) {
+    params.set('promo_code', promoCode)
   }
   const startURL = `${normalized}/auth/oauth/${provider}/start?${params.toString()}`
   window.location.href = startURL

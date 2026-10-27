@@ -216,6 +216,38 @@ func TestLogOpenAIInstructionsRequiredDebug_NonTargetErrorSkipped(t *testing.T) 
 }
 
 func TestIsOpenAITransientProcessingError(t *testing.T) {
+	// message-only 容量失败：没有结构化 code，任意 4xx/5xx 状态都识别为瞬时失败。
+	require.True(t, isOpenAITransientProcessingError(
+		http.StatusBadRequest,
+		"",
+		[]byte(`{"error":{"message":"Our servers are currently overloaded. Please try again later."}}`),
+	))
+	require.True(t, isOpenAITransientProcessingError(
+		http.StatusServiceUnavailable,
+		"Server is overloaded. Please try again later.",
+		nil,
+	))
+	require.True(t, isOpenAITransientProcessingError(
+		http.StatusBadGateway,
+		"",
+		[]byte(`{"error":{"message":"Our servers are currently overloaded. Please try again later."}}`),
+	))
+	require.True(t, isOpenAITransientProcessingError(
+		http.StatusBadGateway,
+		"",
+		[]byte(`{"response":{"error":{"message":"Servers are overloaded"}}}`),
+	))
+	require.False(t, isOpenAITransientProcessingError(
+		http.StatusOK,
+		"Server is overloaded.",
+		nil,
+	))
+	require.False(t, isOpenAITransientProcessingError(
+		http.StatusBadGateway,
+		"upstream exploded",
+		[]byte(`{"error":{"message":"upstream exploded"}}`),
+	))
+
 	require.True(t, isOpenAITransientProcessingError(
 		http.StatusBadRequest,
 		"An error occurred while processing your request.",

@@ -261,3 +261,35 @@ func TestSettingService_GetPublicSettings_FallsBackToConfigForWeChatOAuthCapabil
 	require.False(t, settings.WeChatOAuthMPEnabled)
 	require.False(t, settings.WeChatOAuthMobileEnabled)
 }
+
+func TestSettingService_SiteSubtitle_NoBackendDefault(t *testing.T) {
+	tests := []struct {
+		name   string
+		values map[string]string
+		want   string
+	}{
+		{name: "unset returns empty so the frontend uses its localized default", values: map[string]string{}, want: ""},
+		{name: "explicit empty value stays empty", values: map[string]string{SettingKeySiteSubtitle: ""}, want: ""},
+		{name: "configured value is returned unchanged", values: map[string]string{SettingKeySiteSubtitle: "Example subtitle"}, want: "Example subtitle"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewSettingService(&settingPublicRepoStub{values: tt.values}, &config.Config{})
+
+			publicSettings, err := svc.GetPublicSettings(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, tt.want, publicSettings.SiteSubtitle)
+
+			payload, err := svc.GetPublicSettingsForInjection(context.Background())
+			require.NoError(t, err)
+			injected, ok := payload.(*PublicSettingsInjectionPayload)
+			require.True(t, ok)
+			require.Equal(t, tt.want, injected.SiteSubtitle)
+
+			// 管理后台读取走 parseSettings，同样不能在未配置时返回写死的默认文案，
+			// 否则管理员保存设置时会把它写进数据库。
+			require.Equal(t, tt.want, svc.parseSettings(tt.values).SiteSubtitle)
+		})
+	}
+}

@@ -24,6 +24,7 @@ const (
 	alipayFundChangeYes    = "Y"
 	alipayErrTradeNotExist = "ACQ.TRADE_NOT_EXIST"
 	alipayRefundSuffix     = "-refund"
+	alipayRefundStatusOK   = "REFUND_SUCCESS"
 )
 
 var (
@@ -35,6 +36,9 @@ var (
 	}
 	alipayTradePagePay = func(client *alipay.Client, param alipay.TradePagePay) (*url.URL, error) {
 		return client.TradePagePay(param)
+	}
+	alipayTradeFastPayRefundQuery = func(ctx context.Context, client *alipay.Client, param alipay.TradeFastPayRefundQuery) (*alipay.TradeFastPayRefundQueryRsp, error) {
+		return client.TradeFastPayRefundQuery(ctx, param)
 	}
 )
 
@@ -362,6 +366,56 @@ func (a *Alipay) Refund(ctx context.Context, req payment.RefundRequest) (*paymen
 		RefundID: refundID,
 		Status:   refundStatus,
 	}, nil
+}
+
+// QueryRefund queries a refund previously submitted by Refund. Refund uses a
+// deterministic out_request_no derived from the merchant order id and the
+// gateway amount, so the query must be issued with the same pair.
+func (a *Alipay) QueryRefund(ctx context.Context, req payment.RefundQueryRequest) (*payment.RefundResponse, error) {
+	client, err := a.getClient()
+	if err != nil {
+		return nil, err
+	}
+	return a.queryRefundWithClient(ctx, client, req)
+}
+
+func (a *Alipay) queryRefundWithClient(ctx context.Context, client *alipay.Client, req payment.RefundQueryRequest) (*payment.RefundResponse, error) {
+	orderID := strings.TrimSpace(req.OrderID)
+	amount := strings.TrimSpace(req.Amount)
+	if orderID == "" || amount == "" {
+		return nil, fmt.Errorf("alipay query refund: missing order id or refund amount")
+	}
+	outRequestNo := payment.DeterministicRefundNo(orderID, amount)
+	result, err := alipayTradeFastPayRefundQuery(ctx, client, alipay.TradeFastPayRefundQuery{
+		OutTradeNo:   orderID,
+		OutRequestNo: outRequestNo,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("alipay TradeFastPayRefundQuery: %w", err)
+	}
+	status := payment.ProviderStatusPending
+	refundID := outRequestNo
+	if result != nil {
+		status = alipayRefundQueryStatus(result.RefundStatus)
+		if tradeNo := strings.TrimSpace(result.TradeNo); tradeNo != "" {
+			refundID = tradeNo
+		}
+	}
+	return &payment.RefundResponse{RefundID: refundID, Status: status}, nil
+}
+
+// alipayRefundQueryStatus maps alipay.trade.fastpay.refund.query refund_status.
+// Alipay only ever reports REFUND_SUCCESS; a missing refund_status means the
+// refund has not been confirmed yet (not received, still processing, or failed)
+// and is indistinguishable from an in-flight refund. It is therefore reported
+// as pending, never as failed: marking it failed would re-open the order for a
+// new refund while the original one may still land. Admins settle such orders
+// manually (ResolvePendingRefund) after checking the Alipay merchant console.
+func alipayRefundQueryStatus(status string) string {
+	if strings.TrimSpace(status) == alipayRefundStatusOK {
+		return payment.ProviderStatusSuccess
+	}
+	return payment.ProviderStatusPending
 }
 
 // CancelPayment closes a pending trade on Alipay.

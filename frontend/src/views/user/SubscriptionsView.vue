@@ -19,8 +19,30 @@
           {{ t('userSubscriptions.noActiveSubscriptions') }}
         </h3>
         <p class="text-gray-600 dark:text-gray-400">
-          {{ t('userSubscriptions.noActiveSubscriptionsDesc') }}
+          {{
+            paymentEnabled
+              ? t('userSubscriptions.noActiveSubscriptionsDesc')
+              : t('userSubscriptions.noActiveSubscriptionsNoPaymentDesc')
+          }}
         </p>
+        <!-- 购买入口只在支付开启时出现；兑换码不依赖支付，始终可用。 -->
+        <div class="mt-6 flex flex-wrap items-center justify-center gap-3">
+          <RouterLink
+            v-if="paymentEnabled"
+            to="/purchase?tab=subscription"
+            class="btn btn-primary"
+            data-testid="subscriptions-empty-purchase"
+          >
+            {{ t('subscriptionPurchase.title') }}
+          </RouterLink>
+          <RouterLink
+            to="/redeem"
+            :class="['btn', paymentEnabled ? 'btn-secondary' : 'btn-primary']"
+            data-testid="subscriptions-empty-redeem"
+          >
+            {{ t('redeem.title') }}
+          </RouterLink>
+        </div>
       </div>
 
       <template v-else>
@@ -47,12 +69,23 @@
               @saved="loadSubscriptions"
             />
           </div>
-          <p
+          <!-- 只剩已过期 / 已撤销的订阅时到不了上面的空态，购买入口就放在这里（同样只在支付开启时出现）。 -->
+          <div
             v-else
-            class="rounded-md border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400"
+            class="rounded-md border border-dashed border-gray-200 px-4 py-6 text-center dark:border-dark-700"
           >
-            {{ t('userSubscriptions.noActiveNow') }}
-          </p>
+            <p class="text-sm text-gray-500 dark:text-gray-400">
+              {{ t('userSubscriptions.noActiveNow') }}
+            </p>
+            <RouterLink
+              v-if="paymentEnabled"
+              to="/purchase?tab=subscription"
+              class="btn btn-primary btn-sm mt-3"
+              data-testid="subscriptions-ended-purchase"
+            >
+              {{ t('subscriptionPurchase.title') }}
+            </RouterLink>
+          </div>
         </section>
 
         <!-- 已结束（已过期 / 已撤销）：默认折叠 -->
@@ -106,6 +139,7 @@ import type { UserSubscription } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import UserSubscriptionCard from '@/components/subscription/UserSubscriptionCard.vue'
+import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 
 const { t, locale } = useI18n()
 const appStore = useAppStore()
@@ -115,6 +149,9 @@ const loading = ref(true)
 const showEnded = ref(false)
 const paymentCurrency = ref('CNY')
 const subscriptionPaymentMultiplier = ref(1)
+
+// 支付关闭时不展示购买入口（设置未加载时按「开启」处理，与侧栏一致）。
+const paymentEnabled = computed(() => isFeatureFlagEnabled(FeatureFlags.payment))
 
 const localeCode = computed(() => {
   const raw = locale as unknown

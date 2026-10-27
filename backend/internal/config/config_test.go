@@ -30,6 +30,27 @@ func TestLoadRedisUsernameFromEnvironment(t *testing.T) {
 	require.Equal(t, "app-user", cfg.Redis.Username)
 }
 
+func TestLoadGatewayUpstreamIPMode(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	loaded, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, UpstreamIPModeAuto, loaded.Gateway.UpstreamIPMode)
+
+	t.Setenv("GATEWAY_UPSTREAM_IP_MODE", UpstreamIPModeIPv4)
+	loaded, err = Load()
+	require.NoError(t, err)
+	require.Equal(t, UpstreamIPModeIPv4, loaded.Gateway.UpstreamIPMode)
+
+	t.Setenv("GATEWAY_UPSTREAM_IP_MODE", UpstreamIPModeIPv6)
+	loaded, err = Load()
+	require.NoError(t, err)
+	require.Equal(t, UpstreamIPModeIPv6, loaded.Gateway.UpstreamIPMode)
+
+	t.Setenv("GATEWAY_UPSTREAM_IP_MODE", "invalid")
+	_, err = Load()
+	require.ErrorContains(t, err, "gateway.upstream_ip_mode")
+}
+
 func TestLoadHonorsExplicitConfigFile(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	configFile := filepath.Join(t.TempDir(), "reporter-config.yaml")
@@ -219,11 +240,11 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	if !cfg.Gateway.OpenAIWS.DynamicMaxConnsByAccountConcurrencyEnabled {
 		t.Fatalf("Gateway.OpenAIWS.DynamicMaxConnsByAccountConcurrencyEnabled = false, want true")
 	}
-	if cfg.Gateway.OpenAIWS.OAuthMaxConnsFactor != 1.0 {
-		t.Fatalf("Gateway.OpenAIWS.OAuthMaxConnsFactor = %v, want 1.0", cfg.Gateway.OpenAIWS.OAuthMaxConnsFactor)
+	if cfg.Gateway.OpenAIWS.OAuthMaxConnsFactor != 5.0 {
+		t.Fatalf("Gateway.OpenAIWS.OAuthMaxConnsFactor = %v, want 5.0", cfg.Gateway.OpenAIWS.OAuthMaxConnsFactor)
 	}
-	if cfg.Gateway.OpenAIWS.APIKeyMaxConnsFactor != 1.0 {
-		t.Fatalf("Gateway.OpenAIWS.APIKeyMaxConnsFactor = %v, want 1.0", cfg.Gateway.OpenAIWS.APIKeyMaxConnsFactor)
+	if cfg.Gateway.OpenAIWS.APIKeyMaxConnsFactor != 5.0 {
+		t.Fatalf("Gateway.OpenAIWS.APIKeyMaxConnsFactor = %v, want 5.0", cfg.Gateway.OpenAIWS.APIKeyMaxConnsFactor)
 	}
 	if cfg.Gateway.OpenAIWS.StickySessionTTLSeconds != 3600 {
 		t.Fatalf("Gateway.OpenAIWS.StickySessionTTLSeconds = %d, want 3600", cfg.Gateway.OpenAIWS.StickySessionTTLSeconds)

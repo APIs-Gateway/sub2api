@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import SubscriptionPurchasePanel from '../SubscriptionPurchasePanel.vue'
 import zhLocale from '@/i18n/locales/zh'
 import subscriptionsAPI from '@/api/subscriptions'
@@ -8,6 +9,13 @@ vi.mock('@/api/subscriptions', () => ({
   default: {
     getSubscriptionPricing: vi.fn(),
     quoteSubscription: vi.fn(),
+  },
+}))
+
+vi.mock('@/api/groups', () => ({
+  userGroupsAPI: {
+    getAvailable: vi.fn().mockResolvedValue([]),
+    getUserGroupRates: vi.fn().mockResolvedValue({}),
   },
 }))
 
@@ -59,4 +67,9 @@ describe('SubscriptionPurchasePanel', () => {
       expect.arrayContaining(['block', 'w-full', 'max-w-full', 'break-all', 'text-right'])
     )
   })
+})
+
+// 组件里用到的金额口径依赖 app store；未配置充值倍率时按美元展示（旧行为）。
+beforeEach(() => {
+  setActivePinia(createPinia())
 })

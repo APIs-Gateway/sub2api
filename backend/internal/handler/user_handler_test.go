@@ -457,6 +457,17 @@ func (s *userHandlerEmailCacheStub) DeleteVerificationCode(context.Context, stri
 	return nil
 }
 
+func (s *userHandlerEmailCacheStub) VerifyVerificationCode(_ context.Context, _ string, code string, _ int) (service.VerificationCodeResult, error) {
+	if s.data != nil && s.data.Code == code {
+		return service.VerificationCodeValid, nil
+	}
+	return service.VerificationCodeInvalid, nil
+}
+
+func (s *userHandlerEmailCacheStub) VerifyNotifyVerifyCode(context.Context, string, string, int) (service.VerificationCodeResult, error) {
+	return service.VerificationCodeInvalid, nil
+}
+
 func (s *userHandlerEmailCacheStub) GetNotifyVerifyCode(context.Context, string) (*service.VerificationCodeData, error) {
 	return nil, nil
 }
@@ -486,6 +497,26 @@ func (s *userHandlerEmailCacheStub) IsPasswordResetEmailInCooldown(context.Conte
 }
 
 func (s *userHandlerEmailCacheStub) SetPasswordResetEmailCooldown(context.Context, string, time.Duration) error {
+	return nil
+}
+
+func (s *userHandlerEmailCacheStub) StagePasswordResetToken(context.Context, string, string, *service.PasswordResetTokenData, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *userHandlerEmailCacheStub) PromotePasswordResetToken(context.Context, string, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *userHandlerEmailCacheStub) DiscardPendingPasswordResetToken(context.Context, string, string) error {
+	return nil
+}
+
+func (s *userHandlerEmailCacheStub) ReservePasswordResetEmailCooldown(context.Context, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (s *userHandlerEmailCacheStub) ReleasePasswordResetEmailCooldown(context.Context, string, string) error {
 	return nil
 }
 
@@ -796,4 +827,8 @@ func TestUserHandlerStartIdentityBindingReturnsAuthorizeURL(t *testing.T) {
 
 func (s *userHandlerRepoStub) SetSubscriptionOverdraftGuard(context.Context, int64, bool) error {
 	return nil
+}
+
+func (s *userHandlerEmailCacheStub) ConsumePasswordResetToken(context.Context, string, string) (bool, error) {
+	return false, nil
 }

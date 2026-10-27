@@ -16,8 +16,11 @@ vi.mock('@/api/client', () => ({
 
 import {
   getUpstreamBillingProbeSettings,
+  listIds,
   probeUpstreamBilling,
   probeUpstreamBillingBatch,
+  refreshCredentials,
+  reauthCodexSession,
   setUpstreamBillingProbeEnabled,
   syncFromCrs,
   updateUpstreamBillingProbeSettings,
@@ -82,5 +85,40 @@ describe('admin accounts api', () => {
     expect(post).toHaveBeenCalledWith('/admin/accounts/upstream-billing-probe/batch', {
       account_ids: [7, 8]
     })
+  })
+
+  it('normalizes refresh responses with and without a partial refresh warning', async () => {
+    const account = { id: 42, name: 'antigravity' }
+    post.mockResolvedValueOnce({ data: account })
+    await expect(refreshCredentials(42)).resolves.toEqual({ account })
+    expect(post).toHaveBeenLastCalledWith('/admin/accounts/42/refresh')
+
+    const warned = {
+      account,
+      message: 'Token refreshed successfully, but project_id could not be retrieved (will retry automatically)',
+      warning: 'missing_project_id_temporary',
+    }
+    post.mockResolvedValueOnce({ data: warned })
+    await expect(refreshCredentials(42)).resolves.toEqual(warned)
+  })
+
+  it('sends Codex reauthorization only to the selected existing account', async () => {
+    const result = { account: { id: 17, name: 'existing' }, warnings: ['old RT not verified'] }
+    post.mockResolvedValueOnce({ data: result })
+
+    await expect(reauthCodexSession(17, '{"tokens":{"access_token":"at"}}')).resolves.toEqual(result)
+    expect(post).toHaveBeenLastCalledWith('/admin/accounts/17/reauth/codex-session', {
+      content: '{"tokens":{"access_token":"at"}}'
+    })
+  })
+
+  it('lists matching account ids with the same filters as the list endpoint', async () => {
+    const result = { ids: [1, 2, 3], total: 3, platforms: ['openai'], types: ['apikey'] }
+    get.mockResolvedValue({ data: result })
+    const filters = { platform: 'openai', type: 'apikey', status: 'active', group: '12', search: 'relay', privacy_mode: '' }
+
+    await expect(listIds(filters)).resolves.toEqual(result)
+
+    expect(get).toHaveBeenCalledWith('/admin/accounts/ids', { params: filters, signal: undefined })
   })
 })

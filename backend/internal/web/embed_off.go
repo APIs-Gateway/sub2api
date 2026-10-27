@@ -30,6 +30,9 @@ func NewFrontendServer(settingsProvider PublicSettingsProvider) (*FrontendServer
 // InvalidateCache is a no-op for non-embed builds
 func (s *FrontendServer) InvalidateCache() {}
 
+// SetTrustedProxies is a no-op for non-embed builds
+func (s *FrontendServer) SetTrustedProxies(entries []string) {}
+
 // Middleware returns a handler that returns 404 for non-embed builds
 func (s *FrontendServer) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {

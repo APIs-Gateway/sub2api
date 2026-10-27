@@ -20,7 +20,7 @@
           <label class="input-label">{{ t('userSubscriptions.lifecycle.dailyAmount') }}</label>
           <!-- 续费：D 固定为当前卡，只读展示 -->
           <div v-if="mode === 'renew'" class="input flex items-center justify-between bg-gray-50 dark:bg-dark-800/40">
-            <span class="font-mono tabular-nums">${{ dailyAmount }}</span>
+            <NumText tier="secondary" :text="dailyAmountText" />
             <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.perDay') }}（{{ t('userSubscriptions.lifecycle.dFixed') }}）</span>
           </div>
           <!-- 转套餐：D 可改 -->
@@ -34,13 +34,18 @@
               class="h-2 flex-1 accent-gray-900 dark:accent-gray-100"
               @change="onParamChange"
             />
+            <div v-if="isFiat" class="w-28 text-right">
+              <NumText tier="secondary" :text="dailyAmountText" />
+              <span class="ml-1 text-xs text-gray-500 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.perDay') }}</span>
+            </div>
             <input
+              v-else
               v-model.number="dailyAmount"
               type="number"
               :min="dailyAmountMin"
               :max="dailyAmountMax"
               :step="dailyAmountStep"
-              class="input w-24 text-right font-mono tabular-nums"
+              class="input num w-24 text-right"
               @change="clampDailyAndQuote"
             />
           </div>
@@ -67,7 +72,7 @@
           </div>
         </div>
 
-        <!-- 报价 -->
+        <!-- 报价：两种币种模式都只写实付币种的金额，不并列额度价值（两数相除即换算比例）。 -->
         <div class="rounded-md border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-800/40">
           <div v-if="quoting" class="text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</div>
           <div v-else-if="quoteErrorMsg" class="text-sm text-primary-700 dark:text-primary-400">
@@ -76,22 +81,18 @@
           <template v-else-if="mode === 'renew' && renewQuoteData">
             <div class="flex items-baseline justify-between">
               <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.renewPrice') }}</span>
-              <span class="text-lg font-bold text-gray-900 dark:text-white">{{ formatPaymentValue(renewQuoteData.price) }}</span>
-            </div>
-            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('userSubscriptions.lifecycle.renewValue') }}: {{ formatPlanValue(renewQuoteData.price) }}
+              <NumText tier="secondary" :text="formatPaymentValue(renewQuoteData.price)" />
             </div>
           </template>
           <template v-else-if="mode === 'change' && changeQuoteData">
             <div class="flex items-baseline justify-between">
               <span class="text-sm text-gray-600 dark:text-gray-400">{{ t('userSubscriptions.lifecycle.changeDiff') }}</span>
-              <span class="text-lg font-bold text-gray-900 dark:text-white">{{ formatPaymentValue(changeQuoteData.diff) }}</span>
+              <NumText tier="secondary" :text="formatPaymentValue(changeQuoteData.diff)" />
             </div>
             <div class="mt-1 space-y-0.5 text-xs text-gray-500 dark:text-gray-400">
-              <div>{{ t('userSubscriptions.lifecycle.changeDiffValue') }}: {{ formatPlanValue(changeQuoteData.diff) }}</div>
-              <div>{{ t('userSubscriptions.lifecycle.newPlanPrice') }}: {{ formatPlanValue(changeQuoteData.new_plan_price) }}</div>
-              <div>{{ t('userSubscriptions.lifecycle.oldRemainingValue') }}: {{ formatPlanValue(changeQuoteData.old_remaining_value) }}</div>
-              <div>{{ t('userSubscriptions.lifecycle.caps', { weekly: formatPlanValue(changeQuoteData.weekly_cap_usd), monthly: formatPlanValue(changeQuoteData.monthly_cap_usd) }) }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.newPlanPriceFiat') }}: {{ formatPaymentValue(changeQuoteData.new_plan_price) }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.oldRemainingValueFiat') }}: {{ formatPaymentValue(changeQuoteData.old_remaining_value) }}</div>
+              <div>{{ t('userSubscriptions.lifecycle.caps', { weekly: formatCap(changeQuoteData.weekly_cap_usd), monthly: formatCap(changeQuoteData.monthly_cap_usd) }) }}</div>
             </div>
           </template>
         </div>
@@ -129,6 +130,9 @@ import { ceilPaymentAmount, formatPaymentAmount, normalizePaymentCurrency } from
 import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 import type { UserSubscription } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import NumText from '@/components/common/NumText.vue'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
+import { formatUsdAmount } from '@/utils/numberFormat'
 
 const props = withDefaults(defineProps<{
   show: boolean
@@ -146,10 +150,11 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   close: []
   // 前往法币支付网关结账：父组件据此跳转 /purchase（intent + D/T + 预估金额 charge）。
-  purchase: [payload: { intent: 'renew' | 'change_plan'; dailyAmountUsd: number; validityDays: number; charge: number }]
+  purchase: [payload: { intent: 'renew' | 'change_plan'; dailyAmountUsd: number; validityDays: number; charge: number; unitPrice?: number }]
 }>()
 
 const { t } = useI18n()
+const { isFiat, formatFiat, formatSubscription } = useCurrencyDisplay()
 const appStore = useAppStore()
 
 const bounds = ref<SubscriptionPricingBounds | null>(null)
@@ -214,8 +219,25 @@ function roundMoney(value: number): number {
 }
 
 function formatPlanValue(value: number): string {
-  return `$${roundMoney(value).toFixed(2)}`
+  return formatUsdAmount(roundMoney(value))
 }
+
+// 新卡 1 个额度值多少人民币：转套餐用新档报价的 u(D)，续费沿用当前卡（报价里的单价同样是这张卡的 u(D)）。
+// 报价回来之前先用当前卡的单价；都没有时为 null。
+const fiatPerCredit = computed(() => {
+  const quoted = props.mode === 'renew' ? renewQuoteData.value?.unit_price : changeQuoteData.value?.unit_price
+  if (typeof quoted === 'number' && quoted > 0) return quoted / subscriptionPaymentMultiplier.value
+  const card = props.subscription.fiat_per_credit
+  return typeof card === 'number' && card > 0 ? card : null
+})
+
+/** 额度类金额（每日额度、周/月封顶）：人民币模式按新卡单价折算，单价未知时先显示 0，不混入美元。 */
+function formatCap(credits: number): string {
+  if (!isFiat.value) return formatPlanValue(credits)
+  return fiatPerCredit.value ? formatSubscription(credits, fiatPerCredit.value) : formatFiat(0)
+}
+
+const dailyAmountText = computed(() => formatCap(dailyAmount.value))
 
 function formatPaymentValue(value: number): string {
   return formatPaymentAmount(
@@ -320,9 +342,9 @@ watch(
 function handleConfirm() {
   if (!canConfirm.value) return
   if (props.mode === 'renew') {
-    emit('purchase', { intent: 'renew', dailyAmountUsd: dailyAmount.value, validityDays: validityDays.value, charge: renewCharge.value })
+    emit('purchase', { intent: 'renew', dailyAmountUsd: dailyAmount.value, validityDays: validityDays.value, charge: renewCharge.value, unitPrice: renewQuoteData.value?.unit_price })
   } else {
-    emit('purchase', { intent: 'change_plan', dailyAmountUsd: dailyAmount.value, validityDays: validityDays.value, charge: changeCharge.value })
+    emit('purchase', { intent: 'change_plan', dailyAmountUsd: dailyAmount.value, validityDays: validityDays.value, charge: changeCharge.value, unitPrice: changeQuoteData.value?.unit_price })
   }
   emit('close')
 }

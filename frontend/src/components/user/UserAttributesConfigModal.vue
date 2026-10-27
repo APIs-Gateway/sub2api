@@ -42,7 +42,7 @@
           class="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3 dark:border-dark-600 dark:bg-dark-800"
         >
           <!-- Drag Handle -->
-          <div class="cursor-move text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" :title="t('admin.users.attributes.dragToReorder')">
+          <div class="cursor-move text-gray-400 hover:text-gray-700 dark:hover:text-gray-300" :title="t('admin.users.attributes.dragToReorder')">
             <Icon name="menu" size="md" />
           </div>
 
@@ -353,8 +353,8 @@ const handleSave = async () => {
       key: form.key,
       name: form.name,
       type: form.type,
-      description: form.description || undefined,
-      placeholder: form.placeholder || undefined,
+      description: form.description,
+      placeholder: form.placeholder,
       required: form.required,
       enabled: form.enabled,
       options: (form.type === 'select' || form.type === 'multi_select') ? form.options : undefined

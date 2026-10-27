@@ -12,7 +12,7 @@ Both LoginView and RegisterView use the AuthLayout component, which provides:
 │  ┌─────────────────────────────────────┐   │
 │  │                                     │   │
 │  │         Sub2API Logo                │   │
-│  │  "Subscription to API Conversion"   │   │
+│  │  "Fast, reliable LLM API service"   │   │
 │  │                                     │   │
 │  └─────────────────────────────────────┘   │
 │                                             │
@@ -40,7 +40,7 @@ Centered: Both horizontally and vertically
 ┌─────────────────────────────────────────────┐
 │                                             │
 │         🔷 Sub2API                          │
-│    Subscription to API Conversion Platform  │
+│       Fast, reliable LLM API service        │
 │                                             │
 │  ┌─────────────────────────────────────┐   │
 │  │                                     │   │
@@ -134,7 +134,7 @@ Centered: Both horizontally and vertically
 ┌─────────────────────────────────────────────┐
 │                                             │
 │         🔷 Sub2API                          │
-│    Subscription to API Conversion Platform  │
+│       Fast, reliable LLM API service        │
 │                                             │
 │  ┌─────────────────────────────────────┐   │
 │  │                                     │   │

@@ -546,6 +546,12 @@ func defaultOpsMetricThresholds() *OpsMetricThresholds {
 }
 
 func (s *OpsService) GetMetricThresholds(ctx context.Context) (*OpsMetricThresholds, error) {
+	return s.getMetricThresholds(ctx, true)
+}
+
+// Dashboard reads must not initialize settings: a missing-row observation can
+// race with an administrator saving a configured value before default Set.
+func (s *OpsService) getMetricThresholds(ctx context.Context, persistDefaults bool) (*OpsMetricThresholds, error) {
 	defaultCfg := defaultOpsMetricThresholds()
 	if s == nil || s.settingRepo == nil {
 		return defaultCfg, nil
@@ -557,8 +563,10 @@ func (s *OpsService) GetMetricThresholds(ctx context.Context) (*OpsMetricThresho
 	raw, err := s.settingRepo.GetValue(ctx, SettingKeyOpsMetricThresholds)
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
-			if b, mErr := json.Marshal(defaultCfg); mErr == nil {
-				_ = s.settingRepo.Set(ctx, SettingKeyOpsMetricThresholds, string(b))
+			if persistDefaults {
+				if b, mErr := json.Marshal(defaultCfg); mErr == nil {
+					_ = s.settingRepo.Set(ctx, SettingKeyOpsMetricThresholds, string(b))
+				}
 			}
 			return defaultCfg, nil
 		}

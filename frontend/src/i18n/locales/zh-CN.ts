@@ -12,100 +12,11 @@
     goToDashboard: '进入控制台',
     // Hero 主标题与描述（Anthropic 极简风，OpenAI 定位）
     heroTitle: '强大的 AI 能力，触手可及',
-    heroDesc: '稳定、快速、按量计费的大模型 API 服务。注册即可获取密钥，立即开始调用。',
-    // 旧字段保留兼容
-    heroSubtitle: '一个密钥，畅用强大的 AI 模型',
-    heroDescription: '稳定、快速、按量计费的大模型 API 服务',
-    tags: {
-      subscriptionToApi: '极速稳定',
-      stickySession: '会话保持',
-      realtimeBilling: '按量计费'
-    },
-    // 用户痛点区块
-    painPoints: {
-      title: '你是否也遇到这些问题？',
-      items: {
-        expensive: {
-          title: '订阅费用高',
-          desc: '每个 AI 服务都要单独订阅，每月支出越来越多'
-        },
-        complex: {
-          title: '多账号难管理',
-          desc: '不同平台的账号、密钥分散各处，管理起来很麻烦'
-        },
-        unstable: {
-          title: '服务不稳定',
-          desc: '单一账号容易触发限制，影响正常使用'
-        },
-        noControl: {
-          title: '用量无法控制',
-          desc: '不知道钱花在哪了，也无法限制团队成员的使用'
-        }
-      }
-    },
-    // 解决方案区块
-    solutions: {
-      title: '我们帮你解决',
-      subtitle: '简单三步，开始省心使用 AI'
-    },
-    features: {
-      unifiedGateway: '极速稳定',
-      unifiedGatewayDesc: '高可用架构与智能调度，低延迟、高成功率，稳定可靠。',
-      multiAccount: '简单接入',
-      multiAccountDesc: '兼容主流 OpenAI SDK，获取一个密钥即可开始调用。',
-      balanceQuota: '按量计费',
-      balanceQuotaDesc: '用多少付多少，实时查看用量与额度，清晰可控。'
-    },
-    // 优势对比
-    comparison: {
-      title: '为什么选择我们？',
-      headers: {
-        feature: '对比项',
-        official: '官方订阅',
-        us: '本平台'
-      },
-      items: {
-        pricing: {
-          feature: '付费方式',
-          official: '固定月费，用不完也付',
-          us: '按量付费，用多少付多少'
-        },
-        models: {
-          feature: '模型选择',
-          official: '单一服务商',
-          us: '多模型随意切换'
-        },
-        management: {
-          feature: '账号管理',
-          official: '每个服务单独管理',
-          us: '统一密钥，一站管理'
-        },
-        stability: {
-          feature: '服务稳定性',
-          official: '单账号易触发限制',
-          us: '多账号池，自动切换'
-        },
-        control: {
-          feature: '用量控制',
-          official: '无法限制',
-          us: '可设配额、查明细'
-        }
-      }
-    },
-    providers: {
-      title: '支持的模型',
-      description: '基于 OpenAI 模型构建',
-      supported: '可用',
-      soon: '即将推出',
-      claude: 'Claude',
-      gemini: 'Gemini',
-      antigravity: 'Antigravity',
-      more: '更多'
-    },
+    heroDesc: '稳定、快速的大模型 API 服务。注册后创建密钥即可接入。',
     // CTA 区块
     cta: {
       title: '准备好开始了吗？',
-      description: '注册即可获得免费试用额度，体验一站式 AI 服务',
+      description: '创建密钥后，订阅或充值余额即可开始调用。',
       button: '免费注册'
     },
     footer: {
@@ -113,36 +24,90 @@
     },
     // 落地页营销文案（原先写死在 HomeView.vue 内，已收归 i18n）
     marketing: {
-      eyebrow: '订阅制 · 每日刷新额度 · 可透支',
+      eyebrow: '订阅与余额，两种用法',
       endpointNote: '// OpenAI 兼容 · 一个密钥即用',
-      valueTitle: '订阅一次，每天都满',
-      valueDesc: '不是预存余额慢慢扣，而是订阅制：额度每日自动刷新。平均每天约 ¥3.6（≈ $0.5），即可调用相当于官方 $2700 的用量。',
-      stat1Value: '$90 / 日',
-      stat1Label: '每日刷新额度',
-      stat2Value: '¥3.6 / 日',
-      stat2Label: '平均每日成本 ≈ $0.5',
-      stat3Value: '$2700 / 月',
-      stat3Label: '相当于官方用量',
+      valueTitle: '订阅一次，额度每天刷新',
+      valueDesc: '订阅和余额可以搭配使用，也可以只用其中一种。',
       feature1Title: '极速稳定',
-      feature1Desc: '高可用网关与智能调度，低延迟、高成功率，稳定可靠。',
+      feature1Desc: '低延迟、高成功率，稳定可靠。',
       feature2Title: '简单接入',
-      feature2Desc: '兼容主流 OpenAI / Anthropic 协议，获取一个密钥即可开始。',
+      feature2Desc: '兼容主流 OpenAI / Anthropic 协议，一个密钥即可接入。',
       feature3Title: '透明可计量',
       feature3Desc: '每一次调用的耗时、Token 与费用都精确记录，用量实时可视。',
       integrateTitle: '随处接入',
       integrateDesc: '兼容主流协议，几分钟内接入你的 IDE 或 Agent；一个密钥，多端通用。',
       clientAnySdk: '任意 OpenAI SDK',
-      compareTitle: '和传统按量付费有什么不同',
-      paygTitle: '传统按量付费',
-      paygPoint1: '余额扣完即停，需要不断充值',
-      paygPoint2: '高强度使用时账单不可预期',
-      paygPoint3: '价格随用量浮动，难以估算',
-      subTitle: '本平台（订阅制）',
-      subPoint1: '额度每日刷新，用量重置不烧余额',
-      subPoint2: '固定周期费用，成本清晰可预期',
-      subPoint3: '高可用网关 + 智能调度，稳定可靠',
-      overdraftTitle: '支持透支，临时超额也不断流',
-      overdraftDesc: '当日额度用超时可在透支额度内继续调用，按「往后预支天数」计量，不会因为一次高强度使用就瞬间停摆——赶进度时尤其省心。'
+      compareTitle: '订阅和余额有什么不同',
+      subscriptionTitle: '订阅',
+      subscriptionPoint1: '购买时选好每日额度和有效期',
+      subscriptionPoint2: '每日额度每天刷新，另有周封顶和月封顶',
+      subscriptionPoint3: '固定周期费用，成本清晰可预期',
+      balanceTitle: '余额',
+      balancePoint1: '先充值，随时可以再充值',
+      balancePoint2: '按实际用量扣费，用多少扣多少',
+      balancePoint3: '搭配订阅时，订阅额度用完后继续扣余额',
+      overdraftTitle: '当日额度用完，可以透支刷新',
+      overdraftDesc: '在「我的订阅」点「透支刷新当日额度」，当日额度立即恢复，继续使用。每个自然月最多 5 次，周封顶和月封顶仍然生效。'
+    }
+  },
+
+  // Docs Page
+  docs: {
+    title: '使用文档',
+    intro: '怎样把你的工具接入 {site}。每一步都附了可以直接复制的配置。',
+    contentNotice: '文档正文目前只有简体中文版本。',
+    menu: '目录',
+    tocTitle: '文档目录',
+    onThisPage: '本页内容',
+    copy: '复制',
+    copied: '已复制',
+    groups: {
+      start: '开始',
+      clients: '命令行工具',
+      editors: '编辑器与插件',
+      chat: '聊天与翻译',
+      developers: '开发者',
+      reference: '参考'
+    },
+    connect: {
+      openai: 'OpenAI 兼容地址',
+      anthropic: 'Anthropic 兼容地址',
+      key: 'API 密钥',
+      keyPlaceholder: 'sk-你的密钥',
+      createKey: '去创建密钥',
+      endpointHint: '访问慢时可以换用其他地址，密钥通用。'
+    },
+    ai: {
+      iWant: '我要接入：',
+      sentenceNamed: '请按这份文档，帮我把 {tool} 接入 {site}：{url}',
+      tools: {
+        any: {
+          label: '任意工具',
+          sentence: '请按这份文档，帮我把正在用的工具接入 {site}：{url}'
+        },
+        chat: {
+          label: '聊天客户端',
+          sentence: '请按这份文档，帮我把聊天客户端接入 {site}：{url}'
+        },
+        code: {
+          label: '写代码调用',
+          sentence: '请按这份文档，帮我在代码里调用 {site}：{url}'
+        }
+      },
+      copySentence: '一键复制',
+      copyFull: '复制整份文档',
+      more: '更多方式',
+      hint: 'AI 打不开网页？点「复制整份文档」，把全文直接粘贴给它。AI 工具也可以直接读取 {url}。',
+      moreTitle: '完整提示词',
+      moreDesc: '把接入地址和要求都写在提示词里，AI 打不开链接时也能用。',
+      copyPrompt: '复制提示词',
+      openChatgpt: '在 ChatGPT 中打开',
+      openClaude: '在 Claude 中打开'
+    },
+    models: {
+      open: '打开价格与计费页，查看可用模型',
+      loginHint: '登录后可以查看你能用的模型和价格。',
+      login: '去登录'
     }
   },
 
@@ -290,6 +255,12 @@
 
   // Common
   common: {
+    apply: '应用',
+    clear: '清除',
+    creating: '创建中...',
+    required: '必填',
+    sending: '发送中...',
+    tryAgain: '请重试',
     loading: '加载中...',
     submitting: '提交中...',
     justNow: '刚刚',
@@ -445,6 +416,7 @@
     groups: '分组管理',
     channels: '渠道管理',
     availableChannels: '价格与计费',
+    usageDocs: '使用文档',
     subscriptions: '订阅管理',
     accounts: '账号管理',
     proxies: 'IP管理',
@@ -470,11 +442,23 @@
     paymentConfig: '支付配置',
     paymentPlans: '订阅套餐',
     channelManagement: '渠道管理',
-    channelPricing: '价格配置',
+    channelPricing: '渠道定价',
+    pricingConfig: '价格配置',
+    pricingModels: '模型',
+    pricingMatrix: '开放与价格',
     channelMonitor: '渠道监控',
     channelStatus: '渠道状态',
     riskControl: '风控中心',
     promptAudit: '提示词审计',
+    topUp: '充值',
+    userId: '用户 ID',
+    userIdCopied: '已复制用户 ID',
+    balanceCard: {
+      subscription: '订阅',
+      leftDaily: '今日剩余',
+      leftWeekly: '本周剩余',
+      leftMonthly: '本月剩余',
+    },
   },
 
   // Auth
@@ -555,6 +539,7 @@
     reloginRequired: '会话已过期，请重新登录。',
     turnstileExpired: '验证已过期，请重试',
     turnstileFailed: '验证失败，请重试',
+    captchaLoading: '正在加载验证码…',
     completeVerification: '请完成验证',
     verifyYourEmail: '验证您的邮箱',
     sessionExpired: '会话已过期',
@@ -821,9 +806,6 @@
     tokens: 'Token',
     actual: '实际',
     standard: '标准',
-    input: '输入',
-    output: '输出',
-    cache: '缓存',
     recentUsage: '最近使用',
     last7Days: '近 7 天',
     noUsageRecords: '暂无使用记录',
@@ -835,7 +817,31 @@
     viewUsage: '查看使用记录',
     checkDetailedLogs: '查看详细的使用日志',
     redeemCode: '兑换码',
-    addBalanceWithCode: '使用兑换码充值'
+    addBalanceWithCode: '使用兑换码充值',
+    topUp: '充值',
+    topUpDesc: '为账户余额充值',
+    readDocs: '阅读文档',
+    readDocsDesc: '查看接入指南与 API 参考',
+    copyAiPrompt: '复制接入说明给 AI',
+    copyAiPromptDesc: '粘贴给编程助手即可快速接入',
+    aiPromptCopied: '已复制',
+    aiPromptText: '我在使用一个 OpenAI 兼容的 API，地址是 {baseUrl}，请用这个 base URL 和我提供的 API Key 帮我接入。',
+    apiEntry: {
+      title: 'API 接入',
+      altLabel: '备用线路',
+      copyFailed: '复制失败，请手动选取文本后复制。',
+    },
+    needsAttention: {
+      title: '需要处理',
+      allGood: '当前无需处理',
+      lowBalance: '余额即将不足',
+      lowBalanceDesc: '当前余额 {balance}，低于提醒阈值',
+      topUp: '去充值',
+      keyNearLimit: '密钥「{name}」已用 {pct}% 额度',
+      keyExhausted: '密钥「{name}」已触达消费上限',
+      keyQuotaDesc: '已用 {used} / 上限 {limit}',
+      manageKey: '处理密钥',
+    },
   },
 
   // Groups (shared)
@@ -843,55 +849,284 @@
     subscription: '订阅',
     rateMultiplierTip: '「Nx 倍率」是该分组相对官方价的扣额度速度：数字越大、池子越稳定，同样的用量扣得也越多；它是系统扣费的系数，不是最终价格。叠加套餐折扣后你实际相当于官方价几折，见分组描述。'
     ,
-    rateMultiplierLabel: '{rate}x 倍率'
+    rateMultiplierLabel: '{rate}x 倍率',
+    rateTipFiat: '倍率 {rate}x：官方价每 $1 的用量，实付 ¥{rate}。倍率越低越省。',
+    rateTipUsd: '倍率 {rate}x：官方价每 $1 的用量，扣 ${rate} 额度。倍率越低越省。',
+    planRatePrefix: '套餐低至',
+    planRateTip: '开通套餐后，同样的用量最低按 {rate}x 扣费。',
+    yourPlanRateTip: '你的套餐当前按 {rate}x 扣费。'
   },
 
-  // 密钥一键接入弹窗（原先写死在 KeyOnboardingModal.vue 内，已收归 i18n）
+  keyFallback: {
+    entry: "兜底设置",
+    drawer: {
+      title: "兜底设置",
+      intro: "主分组繁忙或不可用时，按顺序改用下面的分组；请求由哪个分组处理，就按该分组的价格计费。",
+      close: "关闭",
+      retry: "重试",
+      loadFailed: "加载失败，请重试",
+      emptyTitle: "还没有可设置兜底的密钥",
+      emptyHint: "先给密钥选择分组，再来设置兜底。",
+      noFallback: "未设置兜底",
+      fallbackCount: "{n} 个兜底分组",
+      expand: "展开 {name} 的兜底分组",
+      collapse: "收起 {name} 的兜底分组",
+    },
+    platforms: {
+      anthropic: "Anthropic",
+      openai: "OpenAI",
+      gemini: "Gemini",
+      antigravity: "Antigravity",
+      grok: "Grok",
+    },
+    editor: {
+      referenceModel: "参考模型 {model}，每百万 Token 的价格",
+      orderHint: "靠前的先被使用",
+      primary: "主要",
+      primaryHint: "主分组，更换请在编辑密钥时修改",
+      input: "输入 {price}",
+      output: "输出 {price}",
+      unpriced: "未定价",
+      status: {
+        active: "可用",
+        disabled: "已停用",
+        unavailable: "不可用",
+      },
+      reason: {
+        disabled: "该分组已停用，请求会跳过它，建议移除",
+        unavailable: "该分组已删除，或你已无权使用，请求会跳过它，建议移除",
+        notUsable: "暂时无法使用，请求会跳过它，建议移除",
+        primary: "主分组已停用，请在编辑密钥时更换",
+      },
+      add: "+ 添加兜底分组",
+      pickTitle: "选择要添加的分组",
+      pickEmpty: "没有更多可添加的分组",
+      limitReached: "最多添加 {max} 个兜底分组，请先移除一个",
+      remove: "移除 {name}",
+      removeUnusable: "移除",
+      dragHandle: "拖动调整 {name} 的顺序，也可以按上下方向键",
+      moveUp: "上移 {name}",
+      moveDown: "下移 {name}",
+      saving: "正在保存…",
+      saved: "已保存",
+      loadFailed: "加载失败，请重试",
+      saveFailed: "保存失败，请稍后重试",
+    },
+    errors: {
+      FALLBACK_GROUP_DUPLICATE: "该分组已在兜底列表中",
+      FALLBACK_GROUP_IS_PRIMARY: "主分组不能再作为兜底分组",
+      FALLBACK_CHAIN_TOO_LONG: "兜底分组数量已达上限",
+      FALLBACK_GROUP_PLATFORM_MISMATCH: "兜底分组需与主分组属于同一平台",
+      FALLBACK_GROUP_NOT_ALLOWED: "你没有该分组的使用权限",
+      FALLBACK_GROUP_NOT_FOUND: "该分组不存在",
+      FALLBACK_GROUP_UNAVAILABLE: "该分组已停用",
+      FALLBACK_KEY_NOT_GROUPED: "请先为密钥选择分组",
+      FALLBACK_KEY_CHANGED: "密钥刚刚被修改，请重新打开后再试",
+      FALLBACK_KEY_CHANGED_REFRESHED: "密钥刚刚被修改，已为你刷新，请重试",
+      API_KEY_NOT_FOUND: "找不到这把密钥，请刷新页面后重试",
+      API_KEY_NOT_FOUND_REFRESHED: "找不到这把密钥，已为你刷新，请重试",
+      FALLBACK_INVALID_REQUEST: "提交的内容有误，请刷新页面后重试",
+      FALLBACK_UNAVAILABLE: "兜底设置暂时无法使用，请稍后再试",
+    },
+    usage: {
+      groupColumn: "分组",
+      servedTag: "兜底",
+      servedTip: "本次请求由兜底分组处理，按兜底分组的价格计费",
+      sourceUser: "用户兜底链",
+      sourceAdmin: "隐藏链",
+    },
+    admin: {
+      entry: "兜底（隐藏）",
+      title: "隐藏兜底链",
+      intro: "隐藏链对用户不可见。头部分组排在主分组之前，尾部分组排在用户自己设置的兜底分组之后。",
+      primary: "主分组",
+      userItems: "用户自己设置的兜底",
+      userItemsEmpty: "无",
+      head: "头部分组",
+      tail: "尾部分组",
+      headEmpty: "未设置头部分组",
+      tailEmpty: "未设置尾部分组",
+      addHead: "+ 添加头部分组",
+      addTail: "+ 添加尾部分组",
+      pickGroup: "选择分组",
+      noGroupToAdd: "没有可添加的分组",
+      moveUp: "上移 {name}",
+      moveDown: "下移 {name}",
+      remove: "移除 {name}",
+      rateCompare: "头部分组倍率 {head}x，主分组倍率 {primary}x（均不含该用户的专属倍率）",
+      rateWarn: "请求会先按头部分组计费。用户在编辑器和价格里看到的仍是主分组，二者不一致是刻意的，请在备注里写明原因。",
+      note: "备注",
+      noteHint: "设置头部分组时必填，至少 4 个字符，写明为什么这样配置",
+      noteRequired: "请填写备注，至少 4 个字符",
+      effective: "实际顺序",
+      hopSource: {
+        admin_head: "头部",
+        primary: "主分组",
+        user: "用户兜底",
+        admin_tail: "尾部",
+      },
+      skipped: "已跳过：{reason}",
+      skipReason: {
+        group_missing: "分组已删除",
+        group_inactive: "分组已停用",
+        invalid_platform: "与主分组平台不一致",
+        not_allowed: "用户无权使用",
+        unknown: "不可用",
+      },
+      save: "保存",
+      clear: "清空隐藏链",
+      clearConfirm: "确定清空这把密钥的隐藏链吗？",
+      saved: "隐藏链已保存",
+      cleared: "隐藏链已清空",
+      loadFailed: "加载失败，请重试",
+      saveFailed: "保存失败",
+      unknownGroup: "分组 #{id}",
+    },
+  },
+
+  // 密钥接入弹窗：一键安装 / 交给 AI / CC Switch / 手动配置
   keyOnboarding: {
-    title: '一键接入',
-    currentKey: '当前密钥',
-    endpoint: 'API 端点',
+    title: '接入密钥',
+    subtitle: '把「{name}」接入你的客户端',
     copy: '复制',
     copied: '已复制',
-    intro: '推荐用 CC Switch 一键导入，自动完成各客户端配置；也可手动配置或用脚本。',
-    recommended: '推荐',
-    envVars: '环境变量',
-    genericSdk: '通用 OpenAI SDK（任意兼容客户端）',
-    methodScript: '一键脚本',
-    methodManual: '手动 / 排障',
-    ccsIntro: 'CC Switch 是客户端配置管理器：点击下方按钮即可把本密钥与端点一键导入，自动写好配置，最省心。',
-    ccsSupports: '支持导入：',
-    ccsImport: '导入到 CC Switch',
-    ccsHint: '若未弹出 CC Switch，说明尚未安装或未关联协议；先安装 CC Switch，或复制下方链接手动导入。',
-    ccsManualLink: '导入链接',
-    claudeIntro: 'Claude Code 是 Anthropic 官方命令行客户端。配置好端点与密钥后即可使用：',
-    claudeStep1: '把下面的环境变量写入终端，或保存到 ~/.claude/settings.json。',
-    claudeStep2: '重启终端 / 客户端，让配置生效。',
-    claudeStep3: '在项目目录运行 claude 开始对话。',
-    claudeHint: '提示：settings.json 方式无需每次设置环境变量；修改后需重启客户端。',
-    codexIntro: 'Codex CLI 推荐用 CC Switch 一键导入（见上面的「CC Switch」标签）。若要手动配置，写入 ~/.codex/config.toml 并设置密钥环境变量：',
-    codexStep1: '把下面内容写入 ~/.codex/config.toml（自定义模型供应商指向本端点）。',
-    codexStep2: '设置环境变量 OPENAI_API_KEY 为你的密钥。',
-    codexStep3: '重启终端后运行 codex 即可。',
-    scriptIntro: '复制下面这段脚本到终端执行，自动写入本地配置（脚本完全可见、不联网下载）。',
-    scriptHint: '执行后重启客户端即可。脚本仅写入本地配置文件，可先通读再运行。',
-    scriptCommentCodex: '写入 Codex 配置 + 密钥环境变量',
-    scriptDoneCodex: 'Codex 已配置，运行 codex 开始',
-    scriptDoneClaude: 'Claude Code 已配置完成，请重启客户端',
-    manualIntro: '以上方式都不行？用下面的原始值手动填写客户端配置，并对照排障清单。',
-    troubleshootTitle: '排障清单',
-    troubleshoot1: '确认 base_url 完整且无多余斜杠，OpenAI 系客户端通常需要带 /v1。',
-    troubleshoot2: '确认密钥完整复制（以 sk- 开头），无空格或换行。',
-    troubleshoot3: '修改环境变量或配置文件后，需重启客户端使其生效。',
-    troubleshoot4: '检查本地网络 / 代理是否能访问该端点。',
-    troubleshoot5: '确认客户端为较新版本，老版本可能不支持自定义端点。',
-    viewDocs: '查看文档',
-    model: '推荐模型',
-    apiKeyFull: 'API 密钥'
+    noGroup: '先给这个密钥选择分组，再来接入。',
+    endpointHint: '访问慢时可以换用其他 API 端点，密钥通用。',
+    tabs: {
+      install: '一键安装',
+      ai: '交给 AI',
+      ccswitch: 'CC Switch',
+      manual: '手动配置'
+    },
+    install: {
+      tutorial: '查看教程',
+      modeFull: '完整安装',
+      modeRefresh: '只刷新配置',
+      copyTile: '复制命令：{client}，{label}',
+      codexModes: '完整安装会先装好 Codex CLI（需要 Node.js {min} 或更高版本）。已经装过的话，选「只刷新配置」。',
+      footnote: '点击复制命令，粘贴到终端运行，完成后重启客户端。脚本会写入 {site} 地址和密钥，并在修改前备份原配置。',
+      viewScript: '查看脚本内容',
+      scriptDone: '{client} 已配置完成，重启后即可使用。',
+      script: {
+        pythonMissing: '更新配置文件需要 Python 3。',
+        xcodeMissing: '这台 Mac 还没有命令行开发工具，请改用「CC Switch」或「手动配置」页签。',
+        backup: '已备份：{path}',
+        updated: '已更新：{path}',
+        failed: '失败：{error}',
+        nodeMissing: '需要先安装 Node.js {min} 或更高版本。到 nodejs.org 下载 LTS 版本，装好后再运行一次。',
+        nodeTooOld: 'Node.js {version} 版本过低，需要 {min} 或更高版本。到 nodejs.org 下载 LTS 版本，装好后再运行一次。',
+        npmMissing: '没有找到 npm。npm 随 Node.js 一起安装，请重新安装 Node.js（nodejs.org），再运行一次。',
+        npmInstalling: '正在用 npm 安装 Codex CLI…',
+        npmPermission: 'npm 没有权限全局安装。请改用 nvm 之类的版本管理工具安装 Node.js，或把 npm 的 prefix 设到你自己的目录（npm config set prefix），再运行一次。',
+        npmFailed: 'Codex CLI 安装失败，请看上面的错误信息，处理后再运行一次。'
+      }
+    },
+    ai: {
+      intro: '选好要用的软件，把下面这句话发给 AI 助手，它会带着你配置。',
+      clientLabel: '客户端',
+      clients: {
+        claude: 'Claude Code',
+        codex: 'Codex',
+        cursor: 'Cursor',
+        chat: '聊天客户端',
+        code: '写代码调用',
+        other: '其他'
+      },
+      copyDetail: '复制详细版',
+      openChatgpt: '在 ChatGPT 中打开',
+      openClaude: '在 Claude 中打开',
+      keyNote: '这句话里没有你的密钥，配置时请自己填写。',
+      footnote: 'AI 会自己打开链接读文档。如果它打不开网页，或者你想把这个密钥能用的模型一起告诉它，请用「复制详细版」。',
+      docCatalog: '给 AI 读的文档目录',
+      detailHint: '详细版写好了接入地址、要求和这个密钥可用的模型。',
+      detailLoading: '正在读取这个密钥可用的模型…',
+      modelsRetry: '重试加载模型',
+      detail: {
+        intro: '请帮我把 {tool} 接入 {site}（兼容 OpenAI 和 Anthropic 格式的 API 服务）。',
+        introChat: '请帮我把聊天客户端接入 {site}（兼容 OpenAI 和 Anthropic 格式的 API 服务）。',
+        introCode: '请帮我在代码里调用 {site}（兼容 OpenAI 和 Anthropic 格式的 API 服务）。',
+        introOther: '请帮我把正在用的工具接入 {site}（兼容 OpenAI 和 Anthropic 格式的 API 服务）。',
+        read: '请先阅读：{docs}',
+        listSep: '、',
+        followDoc: '按文档里的步骤一步步带我配置。',
+        followChat: '先问我用的是哪一个聊天客户端，再从文档目录里找到对应的那一节，按步骤带我配置。',
+        followCode: '按文档里的示例，一步步带我把调用写出来。',
+        followOther: '先问我用的是什么软件，再从文档目录里找到对应的那一节，按步骤带我配置。',
+        infoTitle: '接入信息：',
+        addrOpenai: '- OpenAI 兼容 Base URL：{url}',
+        addrOpenaiAlt: '- OpenAI 兼容 Base URL（Cursor、聊天客户端等用）：{url}',
+        addrAnthropic: '- Anthropic 兼容 Base URL（不带 /v1）：{url}',
+        addrAnthropicClaude: '- Anthropic 兼容 Base URL（不带 /v1，Claude Code 用）：{url}',
+        addrGemini: '- Gemini 原生地址（Gemini CLI 用，不带 /v1）：{url}',
+        addrAntigravity: '- 地址（不带 /v1；Claude Code 和 Gemini CLI 都填这个）：{url}',
+        key: '- 密钥：用 sk-你的密钥 占位，我会自己填，不要让我把真实密钥发给你。',
+        models: '- 这个密钥可以调用的模型：{models}',
+        modelsPartial: '- 这个密钥可以调用的模型（部分）：{models}',
+        modelsFull: '- 完整、最新的模型列表：用这个密钥请求 GET {url} 查看，不要凭记忆填写模型名。',
+        noteAntigravityBase: '- 文档里所有写着 {base} 的接入地址，配置时都换成 {url} 使用。',
+        noteAntigravityFormat: '- 这个地址只接受 Anthropic 和 Gemini 格式的请求，服务商类型或 SDK 请选这两种，不要选 OpenAI。',
+        noteExampleModel: '- 文档示例里的模型名（如 {example}）只是示例，请换成这个密钥的分组里有的模型。',
+        claudeKey: '- 密钥变量用 ANTHROPIC_AUTH_TOKEN，不是 ANTHROPIC_API_KEY；电脑上残留的 ANTHROPIC_API_KEY 要删掉。',
+        claudeBetas: '- 如果返回 400，提示字段不被接受，在 env 里加 CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1，重启后再试。',
+        codexConfig: '- config.toml 的 wire_api 用 responses，model_provider 和 model 要放在文件最前面；改完要完全退出 Codex 再打开，新建会话。',
+        cursorSettings: '- Override OpenAI Base URL 必须带 /v1；自定义模型名要和模型列表一字不差，聊天面板里要关掉 Auto。',
+        codeAnthropic: '- OpenAI SDK 用 OpenAI 兼容 Base URL，Anthropic SDK 用 Anthropic 兼容 Base URL（不带 /v1）。',
+        codeGemini: '- OpenAI SDK 用 OpenAI 兼容 Base URL，Gemini 官方 SDK 用 Gemini 原生地址（不带 /v1）。',
+        requirements: '要求：',
+        req1File: '1. 要改的文件路径或设置项写清楚。',
+        req1Code: '1. 密钥从环境变量里读取，不要写死在代码里；给我可以直接运行的最小示例；回复较长时开启流式输出（stream）。',
+        req2: '2. 需要我的系统、工具等信息时直接问我。',
+        req3: '3. 最后告诉我怎么验证是否成功；出错时对照 {url} 排查。',
+        req4: '4. 如果你本身就是运行在我电脑上的编程助手，可以直接帮我修改配置文件，但动手前先告诉我要改哪些内容。'
+      }
+    },
+    ccs: {
+      title: '一键导入 CC Switch',
+      intro: '选好客户端和模型后，点「打开 CC Switch」即可导入。',
+      client: '客户端',
+      name: '配置名称',
+      modelMain: '主模型',
+      modelHaiku: 'Haiku 模型',
+      modelSonnet: 'Sonnet 模型',
+      modelOpus: 'Opus 模型',
+      modelDefault: '可选；留空时使用 CC Switch 默认模型',
+      modelsLoading: '加载可用模型中…',
+      noModels: '当前密钥没有可选的模型，也可以留空继续导入。',
+      modelsError: '模型列表加载失败，可以留空继续导入。',
+      modelsRetry: '重试',
+      codexWarning: 'Codex 配置会先以未启用状态导入。请在 CC Switch 中手动启用，并按提示重启 Codex，避免新旧配置混用。',
+      switchNote: '确认导入后会立即切换到这个配置，之后可以在 CC Switch 里随时切换。',
+      balanceNote: '余额查询已随配置导入，并每 {minutes} 分钟自动刷新。',
+      open: '打开 CC Switch',
+      copyLink: '复制导入链接',
+      notInstalled: '点了没反应？请先安装 CC Switch，再点一次。',
+      download: '下载 CC Switch'
+    },
+    manual: {
+      address: '接入地址',
+      openaiAddress: 'OpenAI 兼容地址',
+      envVars: '环境变量',
+      troubleshootTitle: '连不上时检查',
+      troubleshoot1: '地址不要多带斜杠；OpenAI 兼容的客户端要用以 /v1 结尾的地址。',
+      troubleshoot2: '密钥要完整复制，前后不能有空格或换行。',
+      troubleshoot3: '改完配置后重启客户端。',
+      troubleshoot4: '确认网络或代理可以访问接入地址；客户端版本太旧时先升级。',
+      viewDocs: '查看文档',
+      lineUsed: '下方代码使用此地址',
+      lineDefaultNote: '在客户端里填写这个地址。',
+      lineAltNote: '默认地址访问慢时，可以改用这个地址。',
+      codeLabel: '代码示例',
+      keyFilled: '密钥已填入下方',
+      keyMissing: '没有读到完整密钥，请把代码里的 {placeholder} 换成你的密钥。',
+      keyMasked: '没有读到完整密钥，请把代码里的 {placeholder} 换成你的密钥（{masked}）。',
+      snippetsTitle: '写进配置文件',
+      keepSafe: '请妥善保管密钥，任何拿到它的人都能消耗你的余额或套餐。'
+    }
   },
 
   // API Keys
   keys: {
+    grokSetupTemplates: 'Grok 配置模板',
     title: 'API 密钥',
     description: '管理您的 API 密钥和访问令牌',
     searchPlaceholder: '搜索名称或Key...',
@@ -929,9 +1164,8 @@
     selectGroup: '选择分组',
     billing: {
       title: '计费怎么算？',
-      intro: '本站按量从余额（USD）实时扣费。开通月套餐后，你会用很低的价格拿到一大笔「官方价额度」——例如 ¥39 得到 $2700 额度，模型按官方价计费。',
-      rate: '分组右侧的「Nx 倍率」是这个池子相对官方价的扣额度速度：数字越大、池子越稳定，同样的用量扣得也越多。它是系统扣费用的系数，不是你最终掏的钱。',
-      effective: '分组描述里的「0.X 倍率」才是叠加套餐折扣后、你实际相当于官方价的几折。例如「满血 pro」是 6x 倍率，叠加套餐后约为官方价的 0.25。'
+      intro: '本站按量从余额扣费。开通套餐后，用量会优先从套餐扣，同样的用量更划算。',
+      rate: '分组右侧的倍率越低越省：同样的用量，倍率低的分组扣得更少。'
     },
     statusLabel: '状态',
     selectStatus: '选择状态',
@@ -954,11 +1188,24 @@
     usage: '用量',
     today: '今日',
     total: '近30天',
-    quota: '额度',
     lastUsedAt: '上次使用时间',
     lastUsedIP: '最近使用 IP',
     useKey: '使用密钥',
-    quickConnect: '一键接入',
+    connect: '接入',
+    createdTitle: '密钥已创建',
+    createdHint: '之后仍可在列表中查看。',
+    goConnect: '去接入',
+    usedLabel: '累计已用',
+    unlimited: '不限额',
+    overview: {
+      address: '接入地址',
+      copy: '复制',
+      copied: '已复制',
+      enabled: '已启用 {active} 个，共 {total} 个密钥',
+      enabledList: '当前列表的 {shown} 个密钥中已启用 {active} 个',
+      spent: '近 30 天已用',
+      spentList: '当前列表密钥近 30 天已用'
+    },
     useKeyModal: {
       title: '使用 API 密钥',
       description: '将以下环境变量添加到您的终端配置文件或直接在终端中运行。',
@@ -980,6 +1227,7 @@
           '按 Win+R，输入 %userprofile%\\.codex 打开配置目录。如目录不存在，请先手动创建。'
       },
       cliTabs: {
+        grokCli: 'Grok Build',
         claudeCode: 'Claude Code',
         geminiCli: 'Gemini CLI',
         codexCli: 'Codex CLI',
@@ -1002,6 +1250,7 @@
         note: '这些环境变量将在当前终端会话中生效。如需永久配置，请将其添加到 ~/.bashrc、~/.zshrc 或相应的配置文件中。'
       },
       grok: {
+        cmdSettingsOnly: '此地址请使用下方 settings.json 配置，不使用命令提示符命令。',
         description: '配置 Grok Build、Claude Code、Codex 或 OpenCode，通过您的 Sub2API Grok 分组发送请求。',
         claudeDescription: '配置 Claude Code，通过您的 Sub2API Grok 分组发送 Messages API 请求。',
         codexDescription: '配置 Codex，通过您的 Sub2API Grok 分组发送 Responses API 请求。',
@@ -1047,26 +1296,23 @@
     quotaLimit: '额度限制',
     quotaAmount: '额度金额 (USD)',
     quotaAmountPlaceholder: '输入 USD 额度限制',
+    quotaAmountPlaceholderFiat: '输入人民币金额上限',
+    limitEstimateHint: '按当前价格估算。',
     quotaAmountHint: '设置此密钥可消费的最大金额。0 = 无限制。',
     quotaUsed: '已用额度',
     reset: '重置',
     resetQuotaUsed: '将已用额度重置为 0',
     resetQuotaTitle: '确认重置额度',
-    resetQuotaConfirmMessage: '确定要将密钥 "{name}" 的已用额度（${used}）重置为 0 吗？此操作不可撤销。',
+    resetQuotaConfirmMessage: '确定要将密钥 "{name}" 的已用额度（{used}）重置为 0 吗？此操作不可撤销。',
     quotaResetSuccess: '额度重置成功',
     failedToResetQuota: '重置额度失败',
     rateLimitColumn: '速率限制',
     rateLimitSection: '速率限制',
     resetUsage: '重置',
-    rateLimit5h: '5小时限额 (USD)',
-    rateLimit1d: '日限额 (USD)',
-    rateLimit7d: '7天限额 (USD)',
+    rateLimit5h: '5小时限额 ({currency})',
+    rateLimit1d: '日限额 ({currency})',
+    rateLimit7d: '7天限额 ({currency})',
     rateLimitHint: '设置此密钥在指定时间窗口内的最大消费额。0 = 无限制。',
-    stablePriority: {
-      label: '启用稳定优先',
-      description: '开启后，当你所用分组的渠道全部不可用时，请求会自动跨分组逐档兜底到更稳定的高倍率分组；低倍率分组恢复稳定后自动切回。',
-      billingWarning: '注意：兜底期间将按实际服务的高倍率分组费率从你的余额计费，费用可能高于原分组。',
-    },
     rateLimitUsage: '速率限制用量',
     resetRateLimitUsage: '重置速率限制用量',
     resetRateLimitTitle: '确认重置速率限制',
@@ -1117,7 +1363,8 @@
     balanceDeducted: '扣除余额',
     subscriptionDeducted: '扣除套餐额度',
     yourSpend: '你的花费',
-    fiatTotalApprox: '按充值价估算',
+    spendFromBalance: '余额',
+    spendFromPlan: '套餐',
     currencyFiat: '¥',
     currencyUsd: '$',
     currencySwitchLabel: '切换计价单位',
@@ -1247,6 +1494,7 @@
       degraded: '降级',
       failed: '失败',
       error: '错误',
+      unavailable: '不可用',
       unknown: '-'
     },
     providers: {
@@ -1261,9 +1509,9 @@
     dialogLatency: '对话延迟',
     endpointPing: '端点 PING',
     history60pts: '近 {n} 次记录',
-    nextUpdateIn: '{n}s 后刷新',
-    past: 'PAST',
-    now: 'NOW',
+    nextUpdateIn: '{n} 秒后刷新',
+    past: '过去',
+    now: '现在',
     maintenancePaused: '维护中 · 已暂停时间线采集',
     extraModelsCount: '+ {n} 模型',
     pollEvery: '{n}s 轮询',
@@ -1290,9 +1538,9 @@
       '30d': '30 天'
     },
     overall: {
-      operational: 'OPERATIONAL',
-      degraded: 'DEGRADED',
-      unavailable: 'UNAVAILABLE'
+      operational: '正常',
+      degraded: '降级',
+      unavailable: '不可用'
     },
     columns: {
       name: '名称',
@@ -1320,30 +1568,54 @@
   // Available Channels (user-facing)
   billingRules: {
     title: '计费规则',
-    intro: '本站按量计费，实时从你的余额（USD）或套餐额度中扣除。',
-    formulaLabel: '实际扣费',
-    formula: '模型官方价 × 本次用量 × 分组倍率',
-    modelPriceHere: '模型官方价：与官方计价一致，见下方各模型（点模型名查看输入 / 输出 / 缓存单价）。',
-    modelPriceLink: '模型官方价：与官方计价一致，可在「价格与计费」页查看每个模型的输入 / 输出 / 缓存单价。',
-    rate: '分组倍率（Nx）：你所选分组相对官方价的消耗倍数，数字越大、池子越稳定，同样用量扣得也越多。',
-    plan: '月套餐：用很低的价格换一大笔「官方价额度」（例如 ¥39 得到 $2700 额度）；叠加套餐后你实际相当于官方价的「0.X」，即各分组描述里标注的折扣。'
+    intro: '按实际用量计费，从余额或套餐中扣除。',
+    modelPriceHere: '点击模型展开，查看各分组的输入 / 输出 / 缓存价格。',
+    modelPriceLink: '各模型价格可在「价格与计费」页查看。',
+    rate: '分组倍率：不同分组倍率不同，价格里已包含倍率，倍率越低越便宜。',
+    plan: '套餐：开通后优先从套餐额度扣费，更划算。',
+    fiat: {
+      intro: '按实际用量计费，从余额或套餐中扣除。',
+      pricesLink: '各模型价格可在「价格与计费」页查看。',
+      rate: '倍率：每个分组的倍率不同，越低越省。',
+      plan: '套餐：开通后优先从套餐扣费，倍率更低，同样的价格扣得更少。',
+      group: '分组：同一个模型在不同分组下价格不同，展开模型即可对比。',
+      groupBrief: '分组：同一个模型在不同分组下价格不同。'
+    }
   },
 
   availableChannels: {
     title: '价格与计费',
     description: '模型价格与计费规则；查看你可用的模型、单价与各分组倍率',
-    searchPlaceholder: '搜索模型或线路...',
-    tierLabel: '档位',
+    searchPlaceholder: '搜索模型',
+    allPlatforms: '全部',
+    platform: '平台',
+    startingFrom: '起价',
+    peakNote: '表内为标准价；标有高峰倍数的分组，工作日 9–12、14–18 点（北京时间）输入、输出、缓存读取按该倍数计费',
+    peakShort: '工作日高峰 {n} 倍',
+    expand: '展开',
+    collapse: '收起',
+    group: '分组',
+    byGroup: '按分组',
+    price: '价格',
+    officialPrice: '官方价',
+    lowest: '最低',
+    planRate: '套餐倍率',
+    yourPlanRate: '你的套餐倍率',
+    planRateLead: '低至',
+    rateNote: '倍率是相对官方价的计费倍数，已包含在价格中',
+    rateNoteFiat: '价格已包含倍率，倍率越低越省。开通套餐后倍率更低，同样的价格扣得更少。',
+    rateNoteFiatNoPlan: '倍率越低越省。',
+    rateCustom: '专属倍率，默认 {base}x',
+    tiersFor: '分档价格（{group}）',
+    context: '上下文长度',
+    tierName: '档位',
+    resolution: '分辨率',
+    tierUpTo: '不超过 {n}',
+    tierAbove: '超过 {n}',
+    tierBetween: '{min} 至 {max}',
+    noResults: '没有匹配的模型',
     buyPlans: '查看套餐',
-    payHint: '实付 = 模型单价 ×',
-    effectiveTitle: '本档位实付（× {rate}）',
-    tiersTitle: '按量档位',
-    tiersHint: '倍率越高的池子越稳定、同样用量扣得也越多；点模型名查看官方单价。',
-    plansTitle: '月套餐',
-    plansHint: '低价换大额官方价额度，叠加套餐后实际相当于官方价的很低折扣。',
-    goBuy: '去购买',
     empty: '暂无可用线路',
-    noModels: '未配置模型',
     noPricing: '未配置定价',
     exclusive: '专属',
     public: '公开',
@@ -1369,16 +1641,18 @@
       perRequestPrice: '每次请求',
       intervals: '阶梯定价',
       unitPerMillion: '/ 1M token',
-      unitPerRequest: '/ 次'
+      unitPerRequest: '/ 次',
+      perMillion: '每百万 token',
+      perRequest: '每次'
     }
   },
 
   checkin: {
     title: '每日签到',
     bonusBadge: '额外 {n} 次',
-    rewardRange: '每天签到领取 ${min}–${max} 随机奖励到余额',
+    rewardRange: '每天签到领取 {min}–{max} 随机奖励到余额',
     todaySpend: '今日消费',
-    nextBonusHint: '再消费 ${amount} 解锁下一次额外签到',
+    nextBonusHint: '再消费 {amount} 解锁下一次额外签到',
     activityNotMet: '今日活跃度未达标',
     activityHint: '继续使用后可再来签到',
     claimDaily: '立即签到',
@@ -1388,7 +1662,7 @@
     doneSubtitle: '今日已签到，明日刷新后可再次签到',
     notActiveButton: '活跃度未达标',
     notActiveEnough: '今日活跃度还未达签到门槛，继续使用后即可签到。',
-    claimedToast: '签到成功，+${amount} 已到账余额',
+    claimedToast: '签到成功，+{amount} 已到账余额',
     claimRecoveredToast: '签到已成功，奖励已到账余额',
     claimFailed: '签到失败，请稍后再试'
   },
@@ -1428,10 +1702,10 @@
     },
     redeemBalance: {
       title: '兑换余额',
-      desc: '按积分法币面值和当前充值倍率折算为钱包余额。',
       points: '兑换积分数',
+      descFiat: '按积分面值兑换为钱包余额。',
       estimate: '将获得 {amount} 余额。',
-      rateHint: '1 积分 = {peg}，兑换余额按 1 CNY = {rate} USD 折算。',
+      rateHintFiat: '1 积分 = {peg}',
       submit: '兑换',
       success: '已兑换为余额。',
     },
@@ -1464,9 +1738,10 @@
       title: '兑换套餐',
       desc: '无套餐时开通；已有套餐时自动续费或换套餐。',
       plan: '套餐',
-      planTitle: '每日 USD {d}',
+      planTitle: '每日 {d}',
+      planTitleFiat: '每日 {d}',
       dailyAmount: '每日额度',
-      dailyOption: 'USD {d}',
+      dailyOption: '{d}',
       validityDays: '有效期',
       pointsPrice: '积分价',
       actionLabels: {
@@ -1818,12 +2093,6 @@
       maxEmailsReached: '已达到通知邮箱数量上限',
       unverified: '未验证',
       verified: '已验证',
-    },
-    stablePriority: {
-      title: '稳定优先',
-      description: '开启后，当你所用分组的渠道全部不可用时，请求会自动跨分组逐档兜底到更稳定的高倍率分组；低倍率分组恢复稳定后自动切回。',
-      enabled: '启用稳定优先',
-      billingHint: '注意：兜底期间将按实际服务的高倍率分组费率从你的余额计费，费用可能高于原分组。',
     },
     avatar: {
       title: '资料头像',
@@ -2363,6 +2632,7 @@
 
     // Users Management
     users: {
+      passwordCopied: '密码已复制',
       title: '用户管理',
       description: '管理用户账户和权限',
       createUser: '创建用户',
@@ -2464,6 +2734,8 @@
       failedToLoad: '加载用户列表失败',
       failedToCreate: '创建用户失败',
       failedToUpdate: '更新用户失败',
+      lastAdminDemoteForbidden: '不能降级最后一个管理员，请先将其他用户设为管理员',
+      cannotDemoteSelf: '不能将自己降级为普通用户',
       failedToDelete: '删除用户失败',
       failedToToggle: '更新用户状态失败',
       failedToLoadApiKeys: '加载用户 API 密钥失败',
@@ -2489,6 +2761,8 @@
         statusLabel: '状态',
         selectStatus: '选择状态',
         rpmLimit: '每分钟请求数 (RPM)',
+        concurrencyPlaceholder: '0 表示不限制',
+        concurrencyHint: '该用户的最大并发请求数，0 = 不限制',
         rpmLimitPlaceholder: '0 表示不限制',
         rpmLimitHint: '该用户每分钟最大请求数，0 = 不限制；仅在所用分组未设置 rpm_limit 时作为兜底生效'
       },
@@ -2509,7 +2783,7 @@
       failedToSave: '保存用户失败',
       failedToAdjust: '调整失败',
       emailRequired: '请输入邮箱',
-      concurrencyMin: '并发数不能小于1',
+      concurrencyNonNegative: '并发数不能为负数，0 表示不限制',
       soraStorageQuota: 'Sora 存储配额',
       soraStorageQuotaHint: '单位 GB，0 表示使用分组或系统默认配额',
       amountRequired: '请输入有效金额',
@@ -2662,6 +2936,7 @@
         clearAllConfirm: '确认清空全部平台的日 / 周 / 月限额？所有平台将变为"无限额"，本地无法撤销，需要在保存前手动重填。',
         reset: {
           button: '重置该窗口',
+          unavailable: '该平台未配置限额，没有可重置的用量窗口',
           confirm: '确认重置该用户 {platform} 平台的 {window} 用量？此操作立即生效。',
           success: '已重置 {platform} {window} 用量',
           failed: '重置失败',
@@ -2692,9 +2967,8 @@
       sortOrderHint: '拖拽分组调整显示顺序，排在前面的分组会优先显示',
       sortOrderUpdated: '排序已更新',
       failedToUpdateSortOrder: '更新排序失败',
-      deleteConfirm: "确定要删除分组 '{name}' 吗？所有关联的 API 密钥将不再属于任何分组。",
-      deleteConfirmSubscription:
-        "确定要删除订阅分组 '{name}' 吗？此操作会让所有绑定此订阅的用户的 API Key 失效，并删除所有相关的订阅记录。此操作无法撤销。",
+      deleteConfirm:
+        "确定要删除分组 '{name}' 吗？该分组下的账号绑定会被清除（账号本身保留）；绑定了该分组的 API 密钥将无法继续使用，需要用户改选其他分组。用户已有的订阅卡不受影响。仍绑定该分组的套餐将无法购买，请先下架。此操作无法撤销。",
       columns: {
         name: '名称',
         platform: '平台',
@@ -2782,6 +3056,9 @@
       failedToLoad: '加载分组列表失败',
       failedToSave: '保存分组失败',
       failedToDelete: '删除分组失败',
+      deleteBlockedNotInactive: '请先停用分组再删除',
+      deleteBlockedHasKeys: '分组下仍有 {count} 个 API 密钥，请先移除',
+      deleteBlockedHasPlans: '分组下仍有 {count} 个在售套餐，请先下架',
       allPlatforms: '全部平台',
       allStatus: '全部状态',
       allGroups: '全部分组',
@@ -2862,8 +3139,8 @@
         notConfigured: '未配置'
       },
       modelsList: {
-        title: '自定义 /v1/models 模型列表',
-        hint: '仅影响 /v1/models 展示结果，不影响白名单模型调用和账号调度。',
+        title: '自定义 {endpoint} 模型列表',
+        hint: '仅影响 {endpoint} 展示结果，不影响白名单模型调用和账号调度。',
         loading: '正在加载模型列表...',
         empty: '暂无可展示模型'
       },
@@ -2876,11 +3153,6 @@
         fallbackGroup: '降级分组',
         fallbackHint: '非 Claude Code 请求将使用此分组，留空则直接拒绝',
         noFallback: '不降级（直接拒绝）'
-      },
-      stablePriority: {
-        fallbackGroup: '稳定优先兜底分组',
-        fallbackHint: '当本组所有渠道不可用时，开启稳定优先的用户请求将兜底到此分组；可逐档串联形成多档兜底链，也可让高档位回指低档位形成互备环——任意档位挂掉都会临时路由到环上其它正常分组，恢复后自动切回。留空表示本组不参与兜底。',
-        noFallback: '不兜底'
       },
       openaiMessages: {
         title: 'OpenAI Messages 调度配置',
@@ -2994,9 +3266,302 @@
       }
     },
 
+    // Pricing config (read-only): models and availability matrix
+    pricingConfig: {
+      comingSoon: '即将开放',
+      loadError: '价格数据没有加载出来',
+      retry: '重试',
+      deriveFailed: '有 {n} 个分组的开放方式没有读到，先按渠道配置显示。',
+      perMillionTokens: '每百万 Token',
+      models: {
+        title: '模型',
+        description: '有哪些模型、官方价是多少、开放给了几个分组',
+        searchPlaceholder: '搜索模型',
+        allPlatforms: '全部平台',
+        allStatuses: '全部状态',
+        filterUnpriced: '无价',
+        filterUnregistered: '未登记',
+        create: '新建模型',
+        columns: {
+          model: '模型',
+          platform: '平台',
+          status: '状态',
+          officialPrice: '官方参考价',
+          source: '价格来源',
+          openGroups: '已开放分组'
+        },
+        officialPriceHint: '输入 / 输出，每百万 Token',
+        emptyTitle: '没有符合条件的模型',
+        emptyHint: '换个筛选条件试试。'
+      },
+      status: {
+        draft: '草稿',
+        active: '上线',
+        retired: '下线',
+        unregistered: '未登记'
+      },
+      source: {
+        litellm: '价目表',
+        fallback: '内置价',
+        cardPolicy: '官方定价',
+        channel: '渠道价',
+        none: '无价'
+      },
+      group: {
+        rate: '倍率 ×{rate}',
+        unswitched: '尚未切换',
+        access: {
+          open: '开放',
+          allowlist: '白名单'
+        }
+      },
+      cell: {
+        open: '开放',
+        custom: '自定义价',
+        unpriced: '未定价',
+        closed: '关闭',
+        error: '无法取价',
+        unpricedHint: '调用不扣费',
+        perRequest: '{price} / 次',
+        perRequestRange: '{min}–{max} / 次',
+        tipPrice: '输入 {input} / 输出 {output}（每百万 Token，用户实付）',
+        tipPerRequest: '{price} / 次（用户实付）',
+        tipPerRequestRange: '{min}–{max} / 次（用户实付，按区间）',
+        unpricedTip: '官方价和自定义价都没有，用户调用这个模型不会产生费用',
+        customTip: '这个分组给该模型设了专门的价格，不是官方价 × 倍率',
+        errorTip: '这个格子的价格没有取到，稍后刷新重试',
+        unswitchedTip: '分组还没切换，这是按渠道配置推出的结果'
+      },
+      closedReason: {
+        closed_in_group: '这个分组没有开放该模型',
+        not_in_allowlist: '这个分组是白名单，没有加入该模型',
+        catalog_draft: '模型还是草稿，所有分组都不开放',
+        catalog_retired: '模型已下线，所有分组都不开放'
+      },
+      drawer: {
+        basic: '基本信息',
+        inOut: '输入 {input} / 输出 {output}',
+        noOfficialPrice: '没有官方价',
+        aliases: '别名',
+        referenceModel: '参考模型',
+        groups: '各分组开放情况',
+        unregisteredHint: '还没加入模型目录，目前只在分组配置里出现过。',
+        noGroups: '这个平台还没有分组。',
+        derivedNote: '尚未切换的分组，开放范围和价格是按渠道配置推出的结果。',
+        toMatrix: '去「开放与价格」看全部模型',
+        actionRegister: '加入目录并上线…',
+        action: {
+          draft: '上线…',
+          active: '下线…',
+          retired: '重新上线'
+        }
+      },
+      matrix: {
+        title: '开放与价格',
+        description: '每个模型在哪些分组里可用，以及用户实付多少',
+        noticeTitle: '现在展示的是由渠道配置推出的结果',
+        noticeAll: '所有分组还没有切换到新的价格配置，开放范围和价格仍在「渠道管理」里设置，这里按它们推算，只能查看。',
+        noticeSome: '还有 {n} / {total} 个分组没有切换，它们的开放范围和价格仍在「渠道管理」里设置，这里按它们推算，只能查看。',
+        noticeLink: '前往渠道管理',
+        groupCount: '{n} 个分组',
+        hideClosed: '隐藏全部关闭的模型',
+        edit: '批量调整',
+        legend: '图例',
+        legendOpen: '按官方价开放',
+        legendExtra: '额外倍率',
+        legendCustom: '自定义价',
+        legendUnpriced: '没有任何价格',
+        legendClosed: '不开放',
+        legendUnswitched: '分组还没切换，按渠道配置推出',
+        legendPaid: '格子里是余额用户的实付价',
+        cornerHint: '官方价：输入 / 输出，每百万 Token',
+        openDetail: '查看模型详情',
+        noGroupsTitle: '{platform} 还没有分组',
+        noGroupsHint: '先在「分组管理」里新建分组，再回来看开放与价格。',
+        empty: '没有匹配的模型'
+      },
+      write: {
+        nothingWritable: '还没有分组切换到新的价格配置，暂时不能改',
+        doneEditing: '完成',
+        selectHint: '点格子选中，可以多选',
+        selectAll: '全选',
+        selectColumn: '选整列',
+        selectRow: '选整行',
+        cellTip: '点击选中或取消选中',
+        selected: '已选 {n} 个格子',
+        selectedDetail: '（{models} 个模型 × {groups} 个分组）',
+        op: {
+          open: '开放',
+          close: '关闭',
+          extra: '额外倍率…',
+          clear: '清除覆盖',
+          custom: '设为自定义价…',
+          deselect: '清除选择'
+        },
+        nothingToChange: '选中的格子没有需要改的',
+        title: {
+          open: '预览：开放',
+          close: '预览：关闭',
+          extra: '预览：设置额外倍率',
+          clear: '预览：清除覆盖',
+          custom: '预览：设为自定义价'
+        },
+        refreshData: '刷新数据',
+        previewAgain: '重新预览',
+        refreshed: '数据已刷新，请重新操作',
+        back: '返回修改',
+        submit: '提交',
+        submitting: '提交中…',
+        submitted: '已提交',
+        toPreview: '预览改动',
+        delta: {
+          up: '这次改动会涨价',
+          upHint: '有用户实付的价格会变高，确认没问题再提交。',
+          unknown: '没能确认价格是涨是跌',
+          unknownHint: '按涨价对待，请逐项看下面的表再提交。',
+          down: '这次改动会降价。'
+        },
+        warnTitle: '有 {n} 项开放后还有问题',
+        ack: '我知道有 {n} 项存在上面的问题，仍然提交',
+        col: {
+          group: '分组',
+          before: '改前',
+          after: '改后',
+          input: '输入（每百万 Token）',
+          output: '输出（每百万 Token）',
+          change: '变化'
+        },
+        noChanges: '没有改动',
+        summary: '共 {n} 项：{parts}。点「提交」后才会生效。',
+        change: {
+          open: '开放',
+          close: '关闭',
+          up: '涨价',
+          down: '降价',
+          adjust: '调整',
+          mixed: '有涨有跌',
+          server: '以服务端为准',
+          same: '无变化'
+        },
+        issue: {
+          unpriced: '没有价格（官方价和自定义价都没有）',
+          zero_price: '价格是 0',
+          wildcard_unverifiable: '开放了通配符，没法逐个核对价格',
+          mapping_target_unpriced: '映射到的模型 {target} 没有价格',
+          mapping_target_zero_price: '映射到的模型 {target} 价格是 0'
+        },
+        error: {
+          ADMIN_TOKEN_MANAGEMENT_JWT_ONLY: '这个操作要用管理员账号登录后台来做，管理员令牌不能提交。',
+          PRICE_WRITE_ACTOR_REQUIRED: '没有识别到管理员身份，请重新登录后再试。',
+          PRICE_WRITE_APPROVAL_REQUIRED: '这次改动涉及价格，需要先预览再提交。',
+          PRICE_WRITE_INTERACTIVE_REQUIRED: '价格有变化的改动，要用管理员账号登录后台来提交。',
+          PRICE_WRITE_CONFIRM_REQUIRED: '提交前需要再确认一次，请重新预览。',
+          PRICE_WRITE_APPROVAL_NOT_FOUND: '预览记录已经失效，请重新预览。',
+          PRICE_WRITE_APPROVAL_EXPIRED: '预览已过期（有效期 30 分钟），请重新预览。',
+          PRICE_WRITE_APPROVAL_CONSUMED: '这次预览已经提交过了，请重新预览。',
+          PRICE_WRITE_APPROVAL_MISMATCH: '提交的内容和预览不一致，请重新预览。',
+          PRICE_WRITE_PLAN_CHANGED: '预览之后情况有变化，这次改动现在会影响价格，请重新预览。',
+          PRICE_BASELINE_CHANGED: '这个分组的设置在你预览之后被别人改过了，请刷新数据后重新操作。',
+          EXPOSURE_UNPRICED: '白名单分组里有 {count} 项开放后没有价格或价格为 0，这次改动整体没有提交：',
+          OPEN_PRECHECK_BLOCKED: '白名单分组里有 {count} 项不能开放：',
+          PRICE_WRITER_UNAVAILABLE: '价格写入功能还没有配置好，暂时不能提交。',
+          EXPOSURE_GUARD_UNAVAILABLE: '价格写入功能还没有配置好，暂时不能提交。',
+          CELL_OPS_EMPTY: '没有要改的格子。',
+          CELL_OPS_TOO_MANY: '一次最多改 500 个格子，请分批操作。',
+          CELL_OP_INVALID: '分组 #{group_id} 里 {model_key} 的目标设置不合法。',
+          CELL_OP_DUPLICATE: '分组 #{group_id} 里的 {model_key} 被选了多次。',
+          CELL_GROUP_BASELINE_MISSING: '没有读到分组 #{group_id} 当前的设置，请刷新数据后重试。',
+          CELL_GROUP_NOT_V2: '分组 #{group_id} 还没有切换到新的价格配置，不能在这里改。请刷新数据。',
+          CELL_READONLY: '通配符格子由系统维护，不能修改。',
+          MODEL_CATALOG_USAGE_CONFIRM_REQUIRED: '近 {window_days} 天这个模型有 {requests} 次请求，需要确认后才能继续。',
+          MODEL_CATALOG_STATUS_CHANGED: '这个模型的状态已经被别人改了，请刷新数据后重试。',
+          MODEL_CATALOG_INVALID: '模型信息不合法，请检查填写的内容。',
+          MODEL_CATALOG_NOT_FOUND: '找不到这个模型，请刷新数据。',
+          MODEL_CATALOG_EXISTS: '这个平台下已经有同名模型。',
+          MODEL_CATALOG_ALIAS_CONFLICT: '别名「{alias}」已经被别的模型占用。',
+          NETWORK: '网络不通，请检查连接后重试。',
+          UNAUTHORIZED: '登录已失效，请重新登录。',
+          FORBIDDEN: '没有权限做这个操作。',
+          UNKNOWN: '提交没有成功（{status}），请稍后重试。',
+          INVALID: '提交的内容不合法，请检查填写的价格和设置。'
+        },
+        extra: {
+          title: '设置额外倍率',
+          intro: '给选中的 {n} 个开放的格子加价：用户实付 = 官方价 × 分组倍率 × 额外倍率。',
+          skipped: '另有 {n} 个关闭的格子不会改动。',
+          label: '额外倍率',
+          placeholder: '例如 1.2',
+          invalid: '请输入大于 0 的数字',
+          hint: '填 1 就是不加价。'
+        },
+        custom: {
+          title: '设为自定义价',
+          intro: '给选中的 {n} 个开放的格子填固定价格，代替官方价。用户实付仍然要乘分组倍率。',
+          input: '输入价',
+          output: '输出价',
+          placeholder: '不填用官方价',
+          hint: '单位：美元，每百万 Token。至少填一项。'
+        },
+        usage: {
+          requests: '近 {days} 天有 {n} 次请求',
+          lastUsed: '最近一次：{time}'
+        },
+        retire: {
+          title: '下线 {model}',
+          intro: '下线后，这个模型的新请求都会被拒绝；历史用量和账单不受影响。',
+          groups: '开放的分组：{names}',
+          noGroups: '没有开放的分组。',
+          ack: '我知道近期还有 {n} 次请求，下线后这些请求会失败',
+          confirm: '确认下线',
+          done: '{model} 已下线'
+        },
+        reactivate: {
+          title: '重新上线 {model}',
+          intro: '重新上线后，这个模型按各分组现有的开放设置恢复可用。',
+          confirm: '确认上线',
+          done: '{model} 已重新上线'
+        },
+        launch: {
+          title: '上线 {model}',
+          usageNote: '近 {days} 天已有 {n} 次请求',
+          usageHint: '想保持现状，可以直接点「按现状上线」。',
+          intro: '选择要开放这个模型的分组，没勾选的分组不会开放。价格默认是官方价 × 分组倍率，不用另外填。',
+          copyLabel: '照抄某个模型的勾选',
+          copyPlaceholder: '选一个已上线的模型',
+          copyButton: '照抄勾选',
+          copyHint: '只勾上它开放的分组，价格和倍率不会照抄。照抄之后还可以继续增减。',
+          unswitched: '尚未切换，开放范围仍在渠道里设置',
+          extraPlaceholder: '额外倍率（可不填）',
+          extraAria: '{name} 的额外倍率',
+          preview: '预览',
+          asIs: '按现状上线',
+          confirm: '确认上线',
+          copied: '已照抄 {model} 的勾选，可以继续调整',
+          unpicked: '没勾选的 {n} 个分组不开放这个模型：{names}。',
+          cellsDone: '分组的开放设置已经提交，但模型状态还没改成上线。点「确认上线」重试。',
+          done: '{model} 已上线'
+        },
+        create: {
+          title: '新建模型',
+          modelKey: '模型名',
+          keyInvalid: '模型名不能为空，不能带空格或 *',
+          displayName: '显示名',
+          aliasPlaceholder: '多个别名用逗号隔开',
+          referencePlaceholder: '不选',
+          referenceHint: '上线时，会默认选中它在哪些分组开放，仍可调整。',
+          draftHint: '新建后是草稿，所有分组都不开放。准备好之后再上线。',
+          usageAck: '我知道这个名字近期已有请求，新建为草稿后这些请求会被拒绝',
+          submit: '新建',
+          done: '已新建 {model}（草稿）'
+        }
+      }
+    },
+
     // Channel Management
     channels: {
-      title: '价格配置',
+      noGroupsSelected: '请为 {platform} 至少选择一个分组',
+      emptyModelsInPricing: '请为 {platform} 定价规则至少添加一个模型',
+      title: '渠道定价',
       description: '管理渠道与模型定价，并配置用户价格页展示哪些分组 / 模型',
       searchChannels: '搜索渠道...',
       display: {
@@ -3415,7 +3980,7 @@
       workerActive: '正在处理异步审计或记录任务',
       workerIdle: '已启动，当前空闲可用',
       workerDisabled: '风控或内容审计未启用',
-      processed: '已处理',
+      processed: '异步已处理',
       droppedErrors: '丢弃/异常',
       autoRefresh: '每 15 秒自动刷新',
       lastCleanup: '上次清理：{time}',
@@ -3535,6 +4100,7 @@
       form: {
         name: '名称',
         namePlaceholder: '输入监控名称',
+        userVisibleHint: '会显示给所有用户，不要写上游厂商、上游模型或内部账号名。',
         provider: '平台',
         apiMode: 'OpenAI 协议',
         apiModeChatCompletions: 'OpenAI Compatible',
@@ -3666,7 +4232,9 @@
       quotaEndsInMinutes: '额度将在 {minutes} 分钟后结束',
       quotaEndsInHoursMinutes: '额度将在 {hours} 小时 {minutes} 分钟后结束',
       quotaEndsInDaysHours: '额度将在 {days} 天 {hours} 小时后结束',
-      daysRemaining: '天剩余',
+      daysRemaining: '剩余 {days} 天',
+      hoursMinutesRemaining: '剩余 {hours} 小时 {minutes} 分钟',
+      minutesRemaining: '剩余 {minutes} 分钟',
       remainingDays: '剩余天数',
       noExpiration: '无过期时间',
       status: {
@@ -3761,6 +4329,11 @@
 
     // Accounts Management
     accounts: {
+      fromModel: '请求模型',
+      toModel: '目标模型',
+      antigravityProjectIdLabel: 'GCP Project ID（可选）',
+      antigravityProjectIdPlaceholder: 'your-gcp-project-id',
+      antigravityProjectIdHint: 'standard-tier 且未自动返回 project_id 的 Antigravity 账号需要填写用户自有的 GCP project。',
       title: '账号管理',
       description: '管理 AI 平台账号和 Cookie',
       createAccount: '添加账号',
@@ -4030,6 +4603,7 @@
       status: {
         active: '正常',
         inactive: '停用',
+        expired: '已过期',
         error: '错误',
         cooldown: '冷却中',
         paused: '暂停',
@@ -4189,7 +4763,13 @@
         probeUpstreamBilling: '批量探测上游倍率',
         resetStatusSuccess: '已成功重置 {count} 个账号状态',
         refreshTokenSuccess: '已成功刷新 {count} 个账号令牌',
-        partialSuccess: '操作部分完成：{success} 成功，{failed} 失败'
+        partialSuccess: '操作部分完成：{success} 成功，{failed} 失败',
+        pageSelected: '已选本页 {count} 个，',
+        selectAllFiltered: '选中全部筛选结果 {total} 个？',
+        allFilteredSelected: '已选中全部 {count} 个筛选结果',
+        selectAllFilteredTooMany: '筛选结果共 {total} 个账号，超过一次最多可选的 {limit} 个，请缩小筛选范围后再试',
+        selectAllFilteredFailed: '获取筛选结果失败',
+        confirmCount: '确定对选中的 {count} 个账号执行此操作吗？'
       },
       bulkEdit: {
         title: '批量编辑账号',
@@ -4203,7 +4783,21 @@
         failed: '批量更新失败',
         noSelection: '请选择要编辑的账号',
         noFieldsSelected: '请至少选择一个要更新的字段',
-        mixedPlatformWarning: '所选账号跨越多个平台（{platforms}）。显示的模型映射预设为合并结果——请确保映射对每个平台都适用。'
+        mixedPlatformWarning: '所选账号跨越多个平台（{platforms}）。显示的模型映射预设为合并结果——请确保映射对每个平台都适用。',
+        groupModeLabel: '分组修改方式',
+        groupModeAppend: '追加到分组',
+        groupModeRemove: '从分组移除',
+        groupModeReplace: '替换全部分组',
+        groupModeAppendHint: '为账号加入所选分组，账号原有的其他分组保持不变。',
+        groupModeRemoveHint: '只把账号从所选分组中移除，其他分组保持不变。',
+        groupModeReplaceHint: '把每个账号的分组整体设置为所选分组。',
+        groupModeReplaceWarning: '会移除这些账号原有的其他分组',
+        groupModeReplaceEmptyWarning: '未选择任何分组：会清空所选账号的全部分组',
+        groupsRequired: '请至少选择一个分组',
+        poolModeRetryStatusCodesHint: '留空则保持各账号原有设置',
+        tempUnschedOffHint: '关闭临时不可调度规则；各账号已保存的规则会保留。',
+        tempUnschedReplaceHint: '下列规则会覆盖所选账号上已有的全部规则。',
+        expiresAtClearNotice: '留空表示清除所选账号的过期时间。'
       },
       bulkDeleteTitle: '批量删除账号',
       bulkDeleteConfirm: '确定要删除选中的 {count} 个账号吗？此操作无法撤销。',
@@ -4273,6 +4867,9 @@
         oauthPassthrough: '自动透传（仅替换认证）',
         oauthPassthroughDesc:
           '开启后，该 OpenAI 账号将自动透传请求与响应，仅替换认证并保留计费/并发/审计及必要安全过滤；如遇兼容性问题可随时关闭回滚。',
+        flattenNamespaces: '摊平 Codex namespace 工具（兼容）',
+        flattenNamespacesDesc:
+          '默认关闭：/responses 上的 namespace 工具声明原样转发，这正是 ChatGPT Codex 后端期望的形态。仅当该 OAuth 账号指向不认识 namespace 的兼容上游时才开启——摊平会把工具改名为 namespace__tool，使按 functions.<命名空间>.<工具> 寻址的模型（如 gpt-5.6 多智能体）无法调用。压缩（compact）请求不受该开关影响，始终摊平。',
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           '默认关闭。开启后可启用 responses_websockets_v2 协议能力（受网关全局开关与账号类型开关约束）。',
@@ -4284,8 +4881,8 @@
         wsModePassthrough: '透传（passthrough）',
         wsModeShared: '共享（shared）',
         wsModeDedicated: '独享（dedicated）',
-        wsModeConcurrencyHint: '启用 WS mode 后，该账号并发数将作为该账号 WS 连接池上限。',
-        wsModePassthroughHint: 'passthrough 模式不使用 WS 连接池。',
+        wsModeCtxPoolHint: '网关 → 从连接池获取上游 WS 连接，数量由配置决定。',
+        wsModePassthroughHint: '网关 → 上游 WS，不使用连接池。',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           '仅对 OpenAI OAuth 生效。开启后该账号才允许使用 OpenAI WebSocket Mode 协议。',
@@ -4373,6 +4970,10 @@
       modelMapping: '模型映射',
       selectAllowedModels: '选择允许的模型。留空则支持所有模型。',
       mapRequestModels: '将请求模型映射到实际模型。左边是请求的模型，右边是发送到 API 的实际模型。',
+      modelMappingAllowUnlisted: {
+        title: '映射不限制其他模型',
+        hint: '开启后，未列出的模型仍可使用，除非另外配置模型白名单。已有账号默认保持原有限制。'
+      },
       selectedModels: '已选择 {count} 个模型',
       supportsAllModels: '（支持所有模型）',
       requestModel: '请求模型',
@@ -4396,6 +4997,7 @@
       enterCustomModelName: '输入自定义模型名称',
       addModel: '填入',
       modelExists: '该模型已存在',
+      modelMappingConflict: '模型映射将 {from} 指向 {to}。请修改或删除该映射，以保留白名单中的 {from}',
       modelCount: '{count} 个模型',
       poolMode: '池模式',
       poolModeHint: '上游为账号池时启用，错误不标记本地账号状态',
@@ -4407,7 +5009,7 @@
       poolModeRetryStatusCodesHint: '仅在池模式下生效。以英文逗号分隔的 HTTP 状态码（100-599），命中时触发同账号重试。留空使用默认值（{default}）。',
       customErrorCodes: '自定义错误码',
       customErrorCodesHint: '仅对选中的错误码停止调度',
-      customErrorCodesWarning: '仅选中的错误码会停止调度，其他错误将返回 500。',
+      customErrorCodesWarning: '自定义错误码用于筛选非 429 上游错误的常规账号状态处理。即使未列入列表，HTTP 429 仍可能触发限流处理。此列表本身不决定是否重试或切换账号；返回客户端的状态码取决于网关路径及错误透传规则，并非统一为 500。列表为空时不做筛选。',
       headerOverride: {
         title: '请求头覆写',
         hint: '为兼容的 API Key 上游账号设置静态请求头。',
@@ -4438,6 +5040,9 @@
       interceptWarmupRequestsDesc: '启用后，标题生成等预热请求将返回 mock 响应，不消耗上游 token',
       autoPauseOnExpired: '过期自动暂停调度',
       autoPauseOnExpiredDesc: '启用后，账号过期将自动暂停调度',
+      noAutoUnsched: '不自动暂停调度',
+      noAutoUnschedDesc:
+        '开启后，无论该账号短时间内出现多少次上游错误，都不会被自动冷却或暂停调度；手动停用仍然生效。',
 	  autoPause5hThreshold: '5h 用量阈值(%)',
 	  autoPause7dThreshold: '7d 用量阈值(%)',
 	  autoPauseThresholdHint: '留空或填 0 表示使用全局默认阈值（在运维设置中配置）；填具体值则覆盖全局默认。达到阈值后仅在调度时跳过账号，不修改 schedulable。',
@@ -4541,6 +5146,7 @@
       billingRateMultiplierHint: '0 表示不计费，仅影响账号计费',
       expiresAt: '过期时间',
       expiresAtHint: '留空表示不过期',
+      expiresAtTimezoneHint: '输入按浏览器本地时区（{timezone}）解释。',
       higherPriorityFirst: '数值越小优先级越高',
       mixedScheduling: '在 /v1/messages 中使用',
       mixedSchedulingHint: '启用后可参与 Anthropic/Gemini 分组的调度',
@@ -4674,6 +5280,11 @@
           codexSessionPlaceholder: '支持多行，每行一个 token 或 JSON',
           codexSessionHint: 'sessionToken 不会作为 refresh_token 保存；未包含 refresh_token 时会按 accessToken 过期时间设置账号过期，无法解析且第一步未设置过期时间时会拒绝导入。',
           codexSessionImportAndCreate: '导入并创建账号',
+          codexSessionReauthAuth: 'Codex auth.json / accessToken',
+          codexSessionReauthDesc: '粘贴当前账号的 Codex OAuth auth.json 或 accessToken。仅更新凭据，保留调度和计费配置。',
+          codexSessionReauthPlaceholder: '粘贴属于当前账号的一份 auth.json 或一条 accessToken',
+          codexSessionReauthHint: '只接受一条凭据，token 必须包含当前账号和用户身份。若原 refresh_token 已撤销，仅导入 accessToken 无法修复自动续期。',
+          codexSessionReauthSubmit: '导入并更新账号',
           codexSessionEmpty: '请输入 Codex JSON 或 accessToken',
           codexSessionImportFailed: 'Codex 账号导入失败',
           codexSessionImportSuccess: '导入完成：新增 {created}，更新 {updated}，跳过 {skipped}',
@@ -5333,6 +5944,8 @@
       customExpiry: '自定义',
       customExpiryDays: '自定义天数',
       expiryDaysRequired: '请输入有效的过期天数',
+      expiryDateRequired: '请输入有效的过期日期和时间',
+      localTimeZoneHint: '自定义时间按浏览器本地时区（{timezone}）解释。',
       groupRequired: '请选择订阅分组',
       days: '天',
       status: {
@@ -5385,6 +5998,7 @@
     announcements: {
       title: '公告管理',
       description: '创建公告并按条件投放',
+      createFirstAnnouncement: '还没有公告，创建您的第一条公告。',
       createAnnouncement: '创建公告',
       editAnnouncement: '编辑公告',
       deleteAnnouncement: '删除公告',
@@ -6060,7 +6674,8 @@
           accountErrorCount: '错误账号数（不含临时不可调度）',
           accountErrorRatio: '错误账号比例 (%)',
           accountTempUnscheduledCount: '临时不可调度账号数',
-          overloadAccountCount: '过载账号数'
+          overloadAccountCount: '过载账号数',
+          unpricedBillingRows: '未定价使用记录数'
         },
         metricDescriptions: {
           successRate: '统计窗口内成功请求占比（0~100）。',
@@ -6078,7 +6693,8 @@
           accountErrorCount: '统计窗口内产生错误的账号数量（不含临时不可调度）。',
           accountErrorRatio: '统计窗口内错误账号占比（0~100）。',
           accountTempUnscheduledCount: '当前处于临时不可调度状态的账号数量（如代理/凭据故障被自动摘除）。',
-          overloadAccountCount: '统计窗口内过载账号数量。'
+          overloadAccountCount: '统计窗口内过载账号数量。',
+          unpricedBillingRows: '统计窗口内有 token 或图片用量、但计费金额为 0 的使用记录数（倍率为 0 的分组、已知免费名单内的条目、模型不一致的记录不计入）。'
         },
         hints: {
           recommended: '推荐：运算符 {operator}，阈值 {threshold}{unit}',
@@ -6122,6 +6738,16 @@
         }
       },
       runtime: {
+        metricThresholds: '指标阈值配置',
+        metricThresholdsHint: '配置各项指标的告警阈值，超出阈值时将以红色显示',
+        slaMinPercent: 'SLA最低百分比',
+        slaMinPercentHint: 'SLA低于此值时显示为红色（默认：99.5%）',
+        ttftP99MaxMs: 'TTFT P99最大值（毫秒）',
+        ttftP99MaxMsHint: 'TTFT P99高于此值时显示为红色（默认：500ms）',
+        requestErrorRateMaxPercent: '请求错误率最大值（%）',
+        requestErrorRateMaxPercentHint: '请求错误率高于此值时显示为红色（默认：5%）',
+        upstreamErrorRateMaxPercent: '上游错误率最大值（%）',
+        upstreamErrorRateMaxPercentHint: '上游错误率高于此值时显示为红色（默认：5%）',
         title: '运维监控运行设置',
         description: '配置存储在数据库中，无需修改 config 文件即可生效。',
         loading: '加载中...',
@@ -6689,7 +7315,7 @@
         subscriptionGroup: '订阅分组',
         subscriptionValidityDays: '有效期（天）',
         defaultPlatformQuotas: '默认平台限额（注册时分配）',
-        defaultPlatformQuotasHint: '新用户注册时自动写入平台限额记录；已有用户不受影响。留空 = 该平台该窗口不限制。',
+        defaultPlatformQuotasHint: '新用户注册时自动获得这里配置的限额；已有用户不受影响。留空 = 该平台该窗口不限制。',
         platformQuotaNotice: '月限额为 30 天滚动窗口，非自然月',
       },
       platformQuota: {
@@ -6763,6 +7389,11 @@
         openaiAllowClaudeCodeCodexPlugin: '允许在 Claude Code 中使用 Codex 插件',
         openaiAllowClaudeCodeCodexPluginDesc:
           '全局开关，仅对已开启「仅允许 Codex 官方客户端」的 OpenAI OAuth 账号生效。开启后，所有此类账号都额外放行通过 Claude Code 的 Codex 插件发起的请求（精确匹配 originator=Claude Code），无需逐账号配置；上游请求仍保持透传。',
+        claudeCodeClientVersion: 'Claude Code 客户端版本号',
+        claudeCodeClientVersionHint: '网关伪装为官方 Claude Code CLI 时对上游声明的客户端版本号。留空表示使用自动同步到的官方最新版本；填写后固定为该版本，不再跟随同步。仅在手填值和同步值均不可用时，才回退到环境变量 SUB2API_CLAUDE_CLI_VERSION 或内置版本。',
+        claudeCodeVersionAutoSync: '自动同步 Claude Code 版本号',
+        claudeCodeVersionAutoSyncHint: '每小时从官方发布渠道获取最新版本的 Claude Code 客户端版本号，无需为了跟版本而升级本服务。关闭后停止获取新版本，已同步的版本仍可使用；上方手填版本始终优先。',
+        claudeCodeVersionSyncedValue: '当前同步到：{version}',
       },
       webSearchEmulation: {
         title: 'Web Search 模拟',
@@ -6809,7 +7440,7 @@
         siteNamePlaceholder: 'Sub2API',
         siteSubtitle: '站点副标题',
         siteSubtitleHint: '显示在登录和注册页面',
-        siteSubtitlePlaceholder: '订阅转 API 转换平台',
+        siteSubtitlePlaceholder: '快速稳定的大模型 API 服务',
         defaultLocale: '默认语言',
         defaultLocaleHint: '访客未在本设备手动选择语言时使用',
         apiBaseUrl: 'API 端点地址',
@@ -6840,7 +7471,7 @@
         contactInfoPlaceholder: '例如：QQ: 123456789',
         contactInfoHint: '填写客服联系方式，将展示在兑换页面、个人资料等位置',
         docUrl: '文档链接',
-        docUrlHint: '文档网站的链接。留空则隐藏文档链接。',
+        docUrlHint: '外部文档网站的链接，只在「接入密钥」弹窗里作为文档入口。首页和顶栏的「文档」固定打开站内文档页。留空则不显示。',
         docUrlPlaceholder: 'https://docs.example.com',
         siteLogo: '站点Logo',
         uploadImage: '上传图片',
@@ -6916,6 +7547,8 @@
         balanceRechargePreview: '预览：1 CNY = {usd} USD',
         subscriptionPaymentMultiplier: '订阅付款倍率',
         subscriptionPaymentMultiplierHint: '订阅应付金额 = 套餐美元价值 ÷ 该倍率',
+        officialPriceCnyRate: '官方价换算汇率',
+        officialPriceCnyRateHint: '用户端按人民币显示时，模型官方美元价按这个汇率换算成人民币对照价。只影响显示，不影响扣费。',
         subscriptionMinDaily: '最低套餐每日额度',
         subscriptionMaxDaily: '最高套餐每日额度',
         subscriptionMinRatioStartDaily: '最低倍率生效额度（USD/天）',
@@ -6976,7 +7609,7 @@
         validationFieldRequired: '{field} 不能为空',
         validationEasyPayCustomMethodRequired: '每个易支付自定义方式都必须填写支付方式和上游 type',
         validationEasyPayCustomMethodTypeInvalid: '易支付自定义支付方式只能包含小写字母、数字、下划线和短横线',
-        validationEasyPayCustomMethodUpstreamTypeInvalid: '易支付上游 type 只能包含小写字母、数字、下划线和短横线',
+        validationEasyPayCustomMethodUpstreamTypeInvalid: '易支付上游 type 只能包含小写字母、数字、点号、下划线和短横线',
         validationEasyPayCustomMethodReserved: '易支付自定义支付方式不能使用内置的 alipay 或 wxpay',
         validationEasyPayCustomMethodPrefixReserved: '易支付自定义支付方式不能以 alipay、wxpay 或 crypto 开头',
         validationEasyPayCustomMethodDuplicate: '易支付自定义支付方式不能重复',
@@ -7033,6 +7666,7 @@
         customMethodType: '支付方式',
         customMethodUpstreamType: '上游 type',
         customMethodDisplayName: '显示名称',
+        customMethodDisplayNamePlaceholder: '如：信用卡',
         stripeWebhookHint: '请在 Stripe Dashboard 中将以下地址配置为 Webhook 端点：',
         stripeWebhookApiVersionHint: 'Webhook 端点的 API 版本请与当前集成的 Stripe SDK 对齐，建议选择 {version}；版本不一致可能导致回调事件解析失败。',
         airwallexWebhookHint: '请在 Airwallex 后台将以下地址配置为 Webhook 端点；事件至少选择 Payment Intent -> Succeeded（payment_intent.succeeded），建议同时选择 Payment Intent -> Cancelled（payment_intent.cancelled）；API version 选择账户默认或最新稳定版本。',
@@ -7432,6 +8066,11 @@
         commonPatterns: '常用模式'
       },
       openaiFastPolicy: {
+        userIds: '指定用户 ID',
+        userIdsHint: '留空表示对全部用户生效。指定用户规则优先于全局规则。',
+        userIdPlaceholder: '例如：1001',
+        addUserId: '添加用户 ID',
+        removeUserId: '移除用户 ID',
         title: 'OpenAI Fast/Flex 策略',
         description: '基于请求体 service_tier 字段拦截/过滤/透传 OpenAI fast(priority) 与 flex 请求；仅作用于 OpenAI 网关。',
         empty: '尚未配置任何规则。点击下方按钮新增。',
@@ -7534,7 +8173,8 @@
         lowRatePriorityTitle: '优先选择上游倍率较低的账号',
         lowRatePriorityDescription: '传统调度模式下，优先选择已观测上游 Token 计费倍率较低的账号。',
         oauthRateTitle: 'OAuth 调度参考倍率',
-        oauthRateDescription: '设置传统低倍率调度使用的 OAuth 参考倍率，默认参考值为 1。',
+        oauthRateDescription: '设置传统低倍率调度使用的 OAuth 参考倍率，默认参考值为 1；留空时 OAuth 账号使用各自的账号倍率。API Key 账号优先使用有效探测倍率，无有效探测时使用账号倍率。',
+        oauthRateInvalid: 'OAuth 调度参考倍率必须是非负数字，或留空以使用账号倍率。',
         upstreamCostWeightTitle: '上游计费倍率权重',
         upstreamCostWeightDescription: '设置高级调度中上游 Token 计费信号的排序权重，填 0 可关闭该信号。',
       },
@@ -7718,6 +8358,11 @@
     unlimited: '无限制'
   },
 
+  lowBalance: {
+    low: '余额仅剩 {amount}，请及时充值。',
+    depleted: '余额已用完，请及时充值。'
+  },
+
   // Version Badge
   version: {
     currentVersion: '当前版本',
@@ -7793,7 +8438,8 @@
     title: '我的订阅',
     description: '查看您的订阅计划和用量',
     noActiveSubscriptions: '暂无有效订阅',
-    noActiveSubscriptionsDesc: '您没有任何有效订阅。请联系管理员获取订阅。',
+    noActiveSubscriptionsDesc: '购买订阅后，每日额度和用量会显示在这里。',
+    noActiveSubscriptionsNoPaymentDesc: '订阅生效后，每日额度和用量会显示在这里。',
     failedToLoad: '加载订阅失败',
     overdraftBtn: {
       label: '透支刷新当日额度',
@@ -7833,11 +8479,9 @@
       dFixed: '续费不改每日额度',
       price: '价格',
       renewPrice: '续费支付',
-      renewValue: '续费额度价值',
       changeDiff: '补差支付',
-      changeDiffValue: '补差额度价值',
-      newPlanPrice: '新套餐额度价值',
-      oldRemainingValue: '旧卡剩余额度价值',
+      newPlanPriceFiat: '新套餐金额',
+      oldRemainingValueFiat: '旧套餐剩余价值',
       caps: '周封顶 {weekly} · 月封顶 {monthly}',
       quoteFailed: '报价获取失败，请调整额度/时长后重试',
       loadFailed: '加载失败，请关闭后重试',
@@ -7874,13 +8518,19 @@
 
   // 自定义订阅购买（无固定套餐：自填每日额度 D + 有效期 T，按量大优惠 u(D) 计价）。
   subscriptionPurchase: {
+    ratesTitle: '开通后各分组的倍率，同样的价格扣得更少',
+    ratesGroup: '分组',
+    ratesBalance: '余额倍率',
+    ratesPlan: '套餐倍率',
+    ratesMore: '查看全部分组',
+    ratesLess: '收起',
+    rateValue: '{rate}x',
     title: '购买订阅',
     desc: '自定义每日额度与有效期，量大单价更低',
     group: '平台/分组',
     dailyAmount: '每日额度',
     dailyAmountUnit: 'USD / 天',
     validityDays: '有效期',
-    unitPrice: '每刀单价',
     price: '应付',
     concurrency: '并发',
     weeklyCap: '周封顶',
@@ -7891,7 +8541,8 @@
     validityHalfYear: '半年',
     validityYear: '年',
     capHint: '',
-    rangeHint: '每日额度 {dMin}–{dMax}，每 30 刀一档；有效期 {tMin}–{tMax} 天',
+    rangeHint: '每日额度 {dMin}–{dMax}；有效期 {tMin}–{tMax} 天，按 {tStep} 天为一档',
+    rangeHintFiat: '有效期 {tMin}–{tMax} 天，按 {tStep} 天为一档',
     buy: '购买',
     quoting: '计算中…',
     quoteFailed: '报价失败，请调整每日额度或有效期',
@@ -8083,7 +8734,6 @@
     quickAmountsWithCurrency: '快捷金额（{currency}）',
     customAmount: '自定义金额',
     customAmountWithCurrency: '自定义金额（{currency}）',
-    subscriptionValueWithCurrency: '套餐价值（{currency}）',
     enterAmount: '输入金额',
     paymentMethod: '支付方式',
     cryptoNetwork: 'USDT 支付网络',
@@ -8118,6 +8768,7 @@
       failed: '失败',
       refund_requested: '退款申请中',
       refunding: '退款中',
+      refund_pending: '退款处理中',
       refunded: '已退款',
       partially_refunded: '部分退款',
       refund_failed: '退款失败',
@@ -8186,8 +8837,6 @@
     amountTooLow: '最低金额为 {min}',
     amountTooHigh: '最高金额为 {max}',
     amountNoMethod: '该金额没有可用的支付方式',
-    rechargeMultiplier: '充值倍率：1 {currency} = {usd} USD',
-    rechargeRatePreview: '当前倍率：1 {currency} = {usd} USD',
     refundReason: '退款原因',
     refundReasonPlaceholder: '请描述您的退款原因',
     refundGatewayBase: '原路退款基数',
@@ -8243,6 +8892,7 @@
       INVALID_STATUS: '当前订单状态不允许此操作',
       BALANCE_NOT_ENOUGH: '退款金额超过余额',
       REFUND_AMOUNT_EXCEEDED: '退款金额超过充值金额',
+      REFUND_AMOUNT_LOCKED: '该订单已有一笔退款提交到网关，重试必须使用相同金额',
       REFUND_FAILED: '退款失败',
     },
     airwallexPay: 'Airwallex 支付',
@@ -8262,6 +8912,7 @@
       rate: '倍率',
       dailyLimit: '日限额',
       dailyAmount: '每日额度',
+      equivalentCny: '等效人民币',
       concurrency: '并发',
       weeklyLimit: '周限额',
       monthlyLimit: '月限额',
@@ -8325,6 +8976,14 @@
       confirmRefund: '确认退款',
       refundSuccess: '退款成功',
       refundFailed: '退款失败',
+      refundPending: '退款处理中，待网关确认',
+      queryRefundStatus: '查询退款状态',
+      markRefundSucceeded: '标记为已退款',
+      markRefundFailed: '标记为退款失败',
+      resolveRefundTitle: '手动处理待确认退款',
+      resolveRefundSucceededConfirm: '请先在支付网关商户后台确认该退款已到账再操作。订单将按已退款结算，并执行原计划的余额/订阅扣回。',
+      resolveRefundFailedConfirm: '请先登录支付网关商户后台核实：该退款未到账且不会再到账，再执行此操作。订单将变为退款失败，重试时按原金额重新提交；网关去重并不总能兜底（Stripe 幂等键 24 小时后失效），误标失败可能导致重复退款。',
+      refundMarkedFailed: '已标记为退款失败',
       refundInfo: '退款信息',
       refundEnabled: '允许退款',
       alreadyRefunded: '已退款',

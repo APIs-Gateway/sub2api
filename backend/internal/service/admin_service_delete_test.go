@@ -258,6 +258,10 @@ type deleteGroupAPIKeyRepoStub struct {
 	listGroupIDs []int64
 }
 
+func (s *deleteGroupAPIKeyRepoStub) CountByGroupID(_ context.Context, _ int64) (int64, error) {
+	return 0, nil
+}
+
 func (s *deleteGroupAPIKeyRepoStub) ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error) {
 	s.listGroupIDs = append(s.listGroupIDs, groupID)
 	if s.listErr != nil {
@@ -597,10 +601,17 @@ func TestAdminService_DeleteUser_DeleteError(t *testing.T) {
 
 func TestAdminService_DeleteGroup_Success_WithCacheInvalidation(t *testing.T) {
 	cache := newBillingCacheStub(2)
-	repo := &groupRepoStub{affectedUserIDs: []int64{11, 12}}
+	repo := &groupRepoStubWithStatus{
+		groupRepoStub: groupRepoStub{affectedUserIDs: []int64{11, 12}},
+		status:        StatusInactive,
+	}
+	apiKeyRepo := &countOnlyAPIKeyRepoStub{keyCount: 0}
+	client := newDeletePreconditionsTestClient(t)
 	svc := &adminServiceImpl{
 		groupRepo:           repo,
+		apiKeyRepo:          apiKeyRepo,
 		billingCacheService: &BillingCacheService{cache: cache},
+		entClient:           client,
 	}
 
 	err := svc.DeleteGroup(context.Background(), 5)
@@ -615,13 +626,15 @@ func TestAdminService_DeleteGroup_Success_WithCacheInvalidation(t *testing.T) {
 }
 
 func TestAdminService_DeleteGroup_InvalidatesAuthCacheForBoundKeys(t *testing.T) {
-	repo := &groupRepoStub{}
+	repo := &groupRepoStubWithStatus{status: StatusInactive}
 	apiKeyRepo := &deleteGroupAPIKeyRepoStub{keys: []string{"k1", "k2"}}
 	invalidator := &authCacheInvalidatorStub{}
+	client := newDeletePreconditionsTestClient(t)
 	svc := &adminServiceImpl{
 		groupRepo:            repo,
 		apiKeyRepo:           apiKeyRepo,
 		authCacheInvalidator: invalidator,
+		entClient:            client,
 	}
 
 	err := svc.DeleteGroup(context.Background(), 5)
@@ -632,7 +645,11 @@ func TestAdminService_DeleteGroup_InvalidatesAuthCacheForBoundKeys(t *testing.T)
 }
 
 func TestAdminService_DeleteGroup_NotFound(t *testing.T) {
-	repo := &groupRepoStub{deleteErr: ErrGroupNotFound}
+	repo := &groupRepoStubWithStatus{
+		groupRepoStub: groupRepoStub{},
+		status:        StatusInactive,
+		getErr:        ErrGroupNotFound,
+	}
 	svc := &adminServiceImpl{groupRepo: repo}
 
 	err := svc.DeleteGroup(context.Background(), 99)
@@ -641,8 +658,17 @@ func TestAdminService_DeleteGroup_NotFound(t *testing.T) {
 
 func TestAdminService_DeleteGroup_Error(t *testing.T) {
 	deleteErr := errors.New("delete failed")
-	repo := &groupRepoStub{deleteErr: deleteErr}
-	svc := &adminServiceImpl{groupRepo: repo}
+	repo := &groupRepoStubWithStatus{
+		groupRepoStub: groupRepoStub{deleteErr: deleteErr},
+		status:        StatusInactive,
+	}
+	apiKeyRepo := &countOnlyAPIKeyRepoStub{keyCount: 0}
+	client := newDeletePreconditionsTestClient(t)
+	svc := &adminServiceImpl{
+		groupRepo:  repo,
+		apiKeyRepo: apiKeyRepo,
+		entClient:  client,
+	}
 
 	err := svc.DeleteGroup(context.Background(), 42)
 	require.ErrorIs(t, err, deleteErr)

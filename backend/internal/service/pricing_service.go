@@ -5,16 +5,21 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
@@ -22,8 +27,19 @@ import (
 )
 
 var (
-	openAIModelDatePattern     = regexp.MustCompile(`-\d{8}$`)
-	openAIModelBasePattern     = regexp.MustCompile(`^(gpt-\d+(?:\.\d+)?)(?:-|$)`)
+	openAIModelDatePattern = regexp.MustCompile(`-\d{8}$`)
+	openAIModelBasePattern = regexp.MustCompile(`^(gpt-\d+(?:\.\d+)?)(?:-|$)`)
+	// Official GPT Image 2.5 token rates (2026-09-08):
+	// https://developers.openai.com/api/docs/pricing#image-generation-models
+	openAIGPTImage25FallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:       5e-06,
+		CacheReadInputTokenCost: 1.25e-06,
+		InputCostPerImageToken:  8e-06, CacheReadInputImageTokenCost: 2e-06,
+		OutputCostPerImageToken: 3e-05,
+		LiteLLMProvider:         "openai",
+		Mode:                    "image_generation",
+		SupportsPromptCaching:   true,
+	}
 	openAIGPT54FallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken:               2.5e-06, // $2.5 per MTok
 		OutputCostPerToken:              1.5e-05, // $15 per MTok
@@ -73,19 +89,89 @@ var (
 		Mode:                                "chat",
 		SupportsPromptCaching:               true,
 	}
+	// GPT-6 Sol / Luna 与 Astra 同理：priority 与长上下文倍率叠加，只设倍率字段，
+	// 不设 *Above272KTokens 绝对值字段。价格同步自上游 #7509（2026-09-22 官方价）。
+	openAIGPT6SolFallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                   2e-06,
+		InputCostPerTokenPriority:           4e-06,
+		OutputCostPerToken:                  1e-05,
+		OutputCostPerTokenPriority:          2e-05,
+		CacheCreationInputTokenCost:         2.5e-06,
+		CacheCreationInputTokenCostPriority: 5e-06,
+		CacheReadInputTokenCost:             2e-07,
+		CacheReadInputTokenCostPriority:     4e-07,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		LiteLLMProvider:                     "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
+	// GPT-6.1 Sol（同步自上游 9688571a8）：与 GPT-6 Sol 同价，仅 cache read 减半。
+	openAIGPT61SolFallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                   2e-06,
+		InputCostPerTokenPriority:           4e-06,
+		OutputCostPerToken:                  1e-05,
+		OutputCostPerTokenPriority:          2e-05,
+		CacheCreationInputTokenCost:         2.5e-06,
+		CacheCreationInputTokenCostPriority: 5e-06,
+		CacheReadInputTokenCost:             1e-07,
+		CacheReadInputTokenCostPriority:     2e-07,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		LiteLLMProvider:                     "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
+	openAIGPT6LunaFallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                   1e-07,
+		InputCostPerTokenPriority:           2e-07,
+		OutputCostPerToken:                  5e-07,
+		OutputCostPerTokenPriority:          1e-06,
+		CacheCreationInputTokenCost:         1.25e-07,
+		CacheCreationInputTokenCostPriority: 2.5e-07,
+		CacheReadInputTokenCost:             1e-08,
+		CacheReadInputTokenCostPriority:     2e-08,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		LiteLLMProvider:                     "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
+	// Claude Opus 5.5 官方价（同步自上游 #7509）；priority 为标准价 2 倍（Fast）。
+	claudeOpus55FallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                   4e-06,
+		OutputCostPerToken:                  2e-05,
+		CacheCreationInputTokenCost:         5e-06,
+		CacheCreationInputTokenCostAbove1hr: 8e-06,
+		CacheReadInputTokenCost:             2e-07,
+		InputCostPerTokenPriority:           8e-06,
+		OutputCostPerTokenPriority:          4e-05,
+		CacheCreationInputTokenCostPriority: 1e-05,
+		CacheReadInputTokenCostPriority:     4e-07,
+		SupportsServiceTier:                 true,
+		LiteLLMProvider:                     "anthropic",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
 	openAIGPT56SolFallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                          5e-06,
-		InputCostPerTokenAbove272KTokens:           1e-05,
-		InputCostPerTokenPriority:                  1e-05,
-		OutputCostPerToken:                         3e-05,
-		OutputCostPerTokenAbove272KTokens:          4.5e-05,
-		OutputCostPerTokenPriority:                 6e-05,
-		CacheCreationInputTokenCost:                6.25e-06,
-		CacheCreationInputTokenCostAbove272KTokens: 1.25e-05,
-		CacheCreationInputTokenCostPriority:        1.25e-05,
-		CacheReadInputTokenCost:                    5e-07,
-		CacheReadInputTokenCostAbove272KTokens:     1e-06,
-		CacheReadInputTokenCostPriority:            1e-06,
+		InputCostPerToken:                          4e-06,
+		InputCostPerTokenAbove272KTokens:           8e-06,
+		InputCostPerTokenPriority:                  8e-06,
+		OutputCostPerToken:                         2e-05,
+		OutputCostPerTokenAbove272KTokens:          3e-05,
+		OutputCostPerTokenPriority:                 4e-05,
+		CacheCreationInputTokenCost:                5e-06,
+		CacheCreationInputTokenCostAbove272KTokens: 1e-05,
+		CacheCreationInputTokenCostPriority:        1e-05,
+		CacheReadInputTokenCost:                    4e-07,
+		CacheReadInputTokenCostAbove272KTokens:     8e-07,
+		CacheReadInputTokenCostPriority:            8e-07,
 		LongContextInputTokenThreshold:             gpt56LongContextTokenThreshold,
 		LongContextInputCostMultiplier:             gpt56LongContextInputMultiplier,
 		LongContextOutputCostMultiplier:            gpt56LongContextOutputMultiplier,
@@ -161,12 +247,25 @@ type LiteLLMModelPricing struct {
 	OutputCostPerImage                         float64 `json:"output_cost_per_image"`       // 图片生成模型每张图片价格
 	OutputCostPerImageToken                    float64 `json:"output_cost_per_image_token"` // 图片输出 token 价格
 	InputCostPerImageToken                     float64 `json:"input_cost_per_image_token"`  // 图片输入 token 价格
+	CacheReadInputImageTokenCost               float64 `json:"cache_read_input_image_token_cost"`
 }
 
 // PricingRemoteClient 远程价格数据获取接口
 type PricingRemoteClient interface {
 	FetchPricingJSON(ctx context.Context, url string) ([]byte, error)
 	FetchHashText(ctx context.Context, url string) (string, error)
+}
+
+// ErrPricingRemoteProxySetup marks a configuration failure that must not be retried.
+var ErrPricingRemoteProxySetup = errors.New("proxy client init failed and direct fallback is disabled; set security.proxy_fallback.allow_direct_on_error=true to allow fallback")
+
+// PricingRemoteHTTPStatusError preserves the remote status for retry classification.
+type PricingRemoteHTTPStatusError struct {
+	StatusCode int
+}
+
+func (e *PricingRemoteHTTPStatusError) Error() string {
+	return fmt.Sprintf("HTTP %d", e.StatusCode)
 }
 
 // LiteLLMRawEntry 用于解析原始JSON数据
@@ -194,6 +293,7 @@ type LiteLLMRawEntry struct {
 	OutputCostPerImage                         *float64 `json:"output_cost_per_image"`
 	OutputCostPerImageToken                    *float64 `json:"output_cost_per_image_token"`
 	InputCostPerImageToken                     *float64 `json:"input_cost_per_image_token"`
+	CacheReadInputImageTokenCost               *float64 `json:"cache_read_input_image_token_cost"`
 }
 
 // PricingService 动态价格服务
@@ -202,8 +302,12 @@ type PricingService struct {
 	remoteClient PricingRemoteClient
 	mu           sync.RWMutex
 	pricingData  map[string]*LiteLLMModelPricing
+	pricingKeys  []string // pricingData 键的有序副本（sortedPricingKeys），只能经 setPricingDataLocked 与 pricingData 一起替换
 	lastUpdated  time.Time
 	localHash    string
+
+	// snap 是固定快照（W6 PR9）的状态；nil 表示没有接快照存储，行为与固定快照上线前完全一致。
+	snap *pricingSnapshotState
 
 	// 停止信号
 	stopCh chan struct{}
@@ -228,6 +332,21 @@ func (s *PricingService) Initialize() error {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to create data directory: %v", err)
 	}
 
+	// 固定快照：auto 模式下只确认模式；pinned 模式下加载生效快照，失败即 fail-closed（不退回远端数据或内置文件）。
+	if s.snap != nil {
+		if err := s.startSnapshots(); err != nil {
+			return err
+		}
+		if s.isPinned() {
+			s.startUpdateScheduler()
+			s.mu.RLock()
+			modelCount := len(s.pricingData)
+			s.mu.RUnlock()
+			logger.LegacyPrintf("service.pricing", "[Pricing] Service initialized with %d models (pinned snapshot)", modelCount)
+			return nil
+		}
+	}
+
 	// 首次加载价格数据
 	if err := s.checkAndUpdatePricing(); err != nil {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Initial load failed, using fallback: %v", err)
@@ -246,6 +365,7 @@ func (s *PricingService) Initialize() error {
 // Stop 停止价格服务
 func (s *PricingService) Stop() {
 	close(s.stopCh)
+	s.stopSnapshots()
 	s.wg.Wait()
 	logger.LegacyPrintf("service.pricing", "%s", "[Pricing] Service stopped")
 }
@@ -343,9 +463,25 @@ func (s *PricingService) checkAndUpdatePricing() error {
 
 // syncWithRemote 与远程同步（基于哈希校验）
 func (s *PricingService) syncWithRemote() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-s.stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	// pinned 模式下计费只读生效快照，定时同步不得下载进生效数据：只把远程内容拉成候选快照（每天一次）。
+	if s.isPinned() {
+		s.autoFetchSnapshotCandidate(ctx)
+		return nil
+	}
+
 	// 如果配置了哈希URL，从远程获取哈希进行比对
 	if s.cfg.Pricing.HashURL != "" {
-		remoteHash, err := s.fetchRemoteHash()
+		remoteHash, err := s.fetchRemoteHashWithContext(ctx, pricingPeriodicHashBudget, nil)
 		if err != nil {
 			logger.LegacyPrintf("service.pricing", "[Pricing] Failed to fetch remote hash: %v", err)
 			return nil // 哈希获取失败不影响正常使用
@@ -358,7 +494,7 @@ func (s *PricingService) syncWithRemote() error {
 		if localHash == "" || remoteHash != localHash {
 			logger.LegacyPrintf("service.pricing", "[Pricing] Remote hash differs (local=%s remote=%s), downloading new version...",
 				localHash[:min(8, len(localHash))], remoteHash[:min(8, len(remoteHash))])
-			return s.downloadPricingData()
+			return s.downloadPricingDataWithParentContext(ctx)
 		}
 		logger.LegacyPrintf("service.pricing", "%s", "[Pricing] Hash check passed, no update needed")
 		return nil
@@ -368,7 +504,7 @@ func (s *PricingService) syncWithRemote() error {
 	pricingFile := s.getPricingFilePath()
 	info, err := os.Stat(pricingFile)
 	if err != nil {
-		return s.downloadPricingData()
+		return s.downloadPricingDataWithParentContext(ctx)
 	}
 
 	fileAge := time.Since(info.ModTime())
@@ -376,7 +512,7 @@ func (s *PricingService) syncWithRemote() error {
 
 	if fileAge > maxAge {
 		logger.LegacyPrintf("service.pricing", "[Pricing] File is %v old, downloading...", fileAge.Round(time.Hour))
-		return s.downloadPricingData()
+		return s.downloadPricingDataWithParentContext(ctx)
 	}
 
 	return nil
@@ -384,25 +520,34 @@ func (s *PricingService) syncWithRemote() error {
 
 // downloadPricingData 从远程下载价格数据
 func (s *PricingService) downloadPricingData() error {
+	return s.downloadPricingDataWithParentContext(context.Background())
+}
+
+func (s *PricingService) downloadPricingDataWithParentContext(parent context.Context) error {
+	// The existing 30-second budget begins before the optional hash probe. Keep
+	// the hash, catalog attempts, and retry waits inside this one deadline.
+	ctx, cancel := context.WithTimeout(parent, pricingDownloadBudget)
+	defer cancel()
+	return s.downloadPricingDataWithContext(ctx, nil)
+}
+
+func (s *PricingService) downloadPricingDataWithContext(ctx context.Context, wait pricingRetryWaitFunc) error {
 	remoteURL, err := s.validatePricingURL(s.cfg.Pricing.RemoteURL)
 	if err != nil {
 		return err
 	}
 	logger.LegacyPrintf("service.pricing", "[Pricing] Downloading from %s", remoteURL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
 	// 获取远程哈希（用于同步锚点，不作为完整性校验）
 	var remoteHash string
 	if strings.TrimSpace(s.cfg.Pricing.HashURL) != "" {
-		remoteHash, err = s.fetchRemoteHash()
+		remoteHash, err = s.fetchRemoteHashWithContext(ctx, pricingStartupHashBudget, wait)
 		if err != nil {
 			logger.LegacyPrintf("service.pricing", "[Pricing] Failed to fetch remote hash (continuing): %v", err)
 		}
 	}
 
-	body, err := s.remoteClient.FetchPricingJSON(ctx, remoteURL)
+	body, err := s.fetchPricingJSONWithContext(ctx, remoteURL, wait)
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
@@ -420,6 +565,11 @@ func (s *PricingService) downloadPricingData() error {
 	data, err := s.parsePricingData(body)
 	if err != nil {
 		return fmt.Errorf("parse pricing data: %w", err)
+	}
+
+	// pinned 模式下不改写价格文件与生效数据；这里只拦在进入前，换入内存处还有一次持锁复核。
+	if s.isPinned() {
+		return ErrPricingPinned
 	}
 
 	// 保存到本地文件
@@ -441,7 +591,11 @@ func (s *PricingService) downloadPricingData() error {
 
 	// 更新内存数据
 	s.mu.Lock()
-	s.pricingData = data
+	if s.pinnedLocked() {
+		s.mu.Unlock()
+		return ErrPricingPinned
+	}
+	s.setPricingDataLocked(data)
 	s.lastUpdated = time.Now()
 	s.localHash = syncHash
 	s.mu.Unlock()
@@ -544,6 +698,9 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 		if entry.InputCostPerImageToken != nil {
 			pricing.InputCostPerImageToken = *entry.InputCostPerImageToken
 		}
+		if entry.CacheReadInputImageTokenCost != nil {
+			pricing.CacheReadInputImageTokenCost = *entry.CacheReadInputImageTokenCost
+		}
 
 		result[modelName] = pricing
 	}
@@ -577,7 +734,13 @@ func (s *PricingService) loadPricingData(filePath string) error {
 	hashStr := hex.EncodeToString(hash[:])
 
 	s.mu.Lock()
-	s.pricingData = pricingData
+	// 启动期间模式可能被切成 pinned（轮询已经装入了快照）：此时不能再用文件里的数据覆盖它。
+	if s.pinnedLocked() {
+		s.mu.Unlock()
+		logger.LegacyPrintf("service.pricing", "[Pricing] Skipped loading %s: pricing became pinned while loading", filePath)
+		return nil
+	}
+	s.setPricingDataLocked(pricingData)
 	s.localHash = hashStr
 
 	info, _ := os.Stat(filePath)
@@ -618,19 +781,109 @@ func (s *PricingService) useFallbackPricing() error {
 
 // fetchRemoteHash 从远程获取哈希值
 func (s *PricingService) fetchRemoteHash() (string, error) {
+	return s.fetchRemoteHashWithContext(context.Background(), pricingStartupHashBudget, nil)
+}
+
+const (
+	pricingRemoteAttempts     = 3
+	pricingRetryBaseBackoff   = 250 * time.Millisecond
+	pricingStartupHashBudget  = 10 * time.Second
+	pricingPeriodicHashBudget = 25 * time.Second
+	pricingDownloadBudget     = 30 * time.Second
+)
+
+type pricingRetryWaitFunc func(context.Context, time.Duration) error
+
+func waitForPricingRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func isTransientPricingRemoteError(err error) bool {
+	if err == nil || errors.Is(err, ErrPricingRemoteProxySetup) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var statusErr *PricingRemoteHTTPStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.StatusCode == 408 || statusErr.StatusCode == 429 || statusErr.StatusCode >= 500
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func retryPricingRemote(ctx context.Context, label string, wait pricingRetryWaitFunc, op func(context.Context) error) (int, error) {
+	if wait == nil {
+		wait = waitForPricingRetry
+	}
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return attempt - 1, err
+		}
+		err := op(ctx)
+		if err == nil {
+			return attempt, nil
+		}
+		if !isTransientPricingRemoteError(err) || attempt == pricingRemoteAttempts || ctx.Err() != nil {
+			return attempt, err
+		}
+		delay := pricingRetryBaseBackoff * time.Duration(1<<(attempt-1))
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= delay {
+			return attempt, err
+		}
+		logger.LegacyPrintf("service.pricing", "[Pricing] %s attempt %d/%d failed, retrying in %v: %v",
+			label, attempt, pricingRemoteAttempts, delay, err)
+		if waitErr := wait(ctx, delay); waitErr != nil {
+			return attempt, waitErr
+		}
+	}
+}
+
+func (s *PricingService) fetchRemoteHashWithContext(parent context.Context, budget time.Duration, wait pricingRetryWaitFunc) (string, error) {
 	hashURL, err := s.validatePricingURL(s.cfg.Pricing.HashURL)
 	if err != nil {
 		return "", err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(parent, budget)
 	defer cancel()
 
-	hash, err := s.remoteClient.FetchHashText(ctx, hashURL)
+	var hash string
+	attempts, err := retryPricingRemote(ctx, "remote hash fetch", wait, func(ctx context.Context) error {
+		value, fetchErr := s.remoteClient.FetchHashText(ctx, hashURL)
+		if fetchErr == nil {
+			hash = value
+		}
+		return fetchErr
+	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("remote hash fetch stopped after %d attempt(s): %w", attempts, err)
 	}
 	return strings.TrimSpace(hash), nil
+}
+
+func (s *PricingService) fetchPricingJSONWithContext(ctx context.Context, remoteURL string, wait pricingRetryWaitFunc) ([]byte, error) {
+	var body []byte
+	attempts, err := retryPricingRemote(ctx, "pricing download", wait, func(ctx context.Context) error {
+		value, fetchErr := s.remoteClient.FetchPricingJSON(ctx, remoteURL)
+		if fetchErr == nil {
+			body = value
+		}
+		return fetchErr
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pricing download stopped after %d attempt(s): %w", attempts, err)
+	}
+	return body, nil
 }
 
 func (s *PricingService) validatePricingURL(raw string) (string, error) {
@@ -652,12 +905,72 @@ func (s *PricingService) validatePricingURL(raw string) (string, error) {
 	return normalized, nil
 }
 
+// pricingKeyScopePattern 匹配带厂商或区域前缀的键，如 us.anthropic.claude-...、anthropic.claude-...。
+// 目录里的版本号小数点（gpt-5.2、claude-opus-4.5、kimi-k2.5）前面是字母数字和连字符、后面是数字，不会被误判。
+var pricingKeyScopePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*\.[a-z]`)
+
+// isScopedPricingKey 判断键是否带厂商或区域前缀（bedrock/…、vertex_ai/…、us.anthropic.… 这类）。
+// 这类键的价格可能是区域价，模糊匹配时排在无前缀键之后。
+func isScopedPricingKey(key string) bool {
+	return strings.Contains(key, "/") || pricingKeyScopePattern.MatchString(strings.ToLower(key))
+}
+
+// sortedPricingKeys 返回价格目录全部键的确定顺序，供两处模糊匹配（GetModelPricing 第 3 步的
+// 基名匹配、matchByModelFamily 第 3 阶段的系列匹配）遍历，使多个键同时命中时的结果不再
+// 取决于 Go map 的随机遍历顺序。顺序依次为：
+//  1. 不带 "/"、不带厂商或区域前缀的键在前；
+//  2. 键更短的在前；
+//  3. 字节序字典序。
+func sortedPricingKeys(data map[string]*LiteLLMModelPricing) []string {
+	type rankedKey struct {
+		key    string
+		scoped bool
+	}
+	ranked := make([]rankedKey, 0, len(data))
+	for key := range data {
+		ranked = append(ranked, rankedKey{key: key, scoped: isScopedPricingKey(key)})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		a, b := ranked[i], ranked[j]
+		if a.scoped != b.scoped {
+			return !a.scoped
+		}
+		if len(a.key) != len(b.key) {
+			return len(a.key) < len(b.key)
+		}
+		return a.key < b.key
+	})
+	keys := make([]string, len(ranked))
+	for i, r := range ranked {
+		keys[i] = r.key
+	}
+	return keys
+}
+
+// setPricingDataLocked 替换价格目录，同时重建排好序的键切片，保证两者永远成对出现
+// （热更新时不会出现新 map 配旧切片）。调用方必须持有 s.mu 的写锁。
+func (s *PricingService) setPricingDataLocked(data map[string]*LiteLLMModelPricing) {
+	s.pricingData = data
+	s.pricingKeys = sortedPricingKeys(data)
+}
+
+// pricingKeyOrderLocked 返回模糊匹配使用的键顺序，调用方必须持有 s.mu（读锁即可）。
+// 正式路径下 pricingKeys 由 setPricingDataLocked 与 pricingData 一起维护；不经加载函数、
+// 直接给 pricingData 赋值的构造方式（主要是测试）键数对不上，此时现算一份，顺序规则相同。
+func (s *PricingService) pricingKeyOrderLocked() []string {
+	if len(s.pricingKeys) == len(s.pricingData) {
+		return s.pricingKeys
+	}
+	return sortedPricingKeys(s.pricingData)
+}
+
 // GetModelPricing 获取模型价格（带模糊匹配）
 func (s *PricingService) GetModelPricing(modelName string) (result *LiteLLMModelPricing) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	defer func() {
 		result = applyGPT56CacheWriteFallback(modelName, result)
+		result = s.applyGPT56SolPromotionalPricing(modelName, result)
 	}()
 
 	if modelName == "" {
@@ -689,12 +1002,25 @@ func (s *PricingService) GetModelPricing(modelName string) (result *LiteLLMModel
 
 	// 3. 尝试模糊匹配（去掉版本号后缀）
 	// claude-opus-4-5-20251101 -> claude-opus-4.5
+	// 多个键基名相同时，键名恰好等于基名的优先，其余按 sortedPricingKeys 的顺序取第一个，
+	// 结果与 map 遍历顺序无关。
 	baseName := s.extractBaseName(lookupCandidates[0])
-	for key, pricing := range s.pricingData {
-		keyBase := s.extractBaseName(strings.ToLower(key))
-		if keyBase == baseName {
-			return pricing
+	baseMatchKey := ""
+	for _, key := range s.pricingKeyOrderLocked() {
+		keyLower := strings.ToLower(key)
+		if s.extractBaseName(keyLower) != baseName {
+			continue
 		}
+		if keyLower == baseName {
+			baseMatchKey = key
+			break
+		}
+		if baseMatchKey == "" {
+			baseMatchKey = key
+		}
+	}
+	if baseMatchKey != "" {
+		return s.pricingData[baseMatchKey]
 	}
 
 	// 4. 基于模型系列匹配（Claude）
@@ -708,6 +1034,47 @@ func (s *PricingService) GetModelPricing(modelName string) (result *LiteLLMModel
 	}
 
 	return nil
+}
+
+const defaultPricingRemoteURL = "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.json"
+
+func (s *PricingService) usesDefaultPricingCatalog() bool {
+	if s == nil || s.cfg == nil {
+		return true
+	}
+	remoteURL := strings.TrimSpace(s.cfg.Pricing.RemoteURL)
+	return remoteURL == "" || remoteURL == defaultPricingRemoteURL
+}
+
+func isOpenAIGPT56SolModel(model string) bool {
+	return normalizeKnownOpenAICodexModel(model) == "gpt-5.6-sol"
+}
+
+// The default remote catalog can lag the official Sol promotion and is loaded
+// ahead of the bundled and hardcoded fallbacks. Correct only its known old rate
+// card; a configured third-party catalog remains operator-controlled. This is
+// a rate review item for 2026-11-21, not an automatic expiration on that date.
+func (s *PricingService) applyGPT56SolPromotionalPricing(model string, pricing *LiteLLMModelPricing) *LiteLLMModelPricing {
+	if pricing == nil || !isOpenAIGPT56SolModel(model) || !s.usesDefaultPricingCatalog() {
+		return pricing
+	}
+	if pricing.InputCostPerToken != 5e-6 || pricing.CacheReadInputTokenCost != 0.5e-6 || pricing.OutputCostPerToken != 30e-6 {
+		return pricing
+	}
+	cloned := *pricing
+	cloned.InputCostPerToken = 4e-6
+	cloned.InputCostPerTokenAbove272KTokens = 8e-6
+	cloned.InputCostPerTokenPriority = 8e-6
+	cloned.OutputCostPerToken = 20e-6
+	cloned.OutputCostPerTokenAbove272KTokens = 30e-6
+	cloned.OutputCostPerTokenPriority = 40e-6
+	cloned.CacheCreationInputTokenCost = 5e-6
+	cloned.CacheCreationInputTokenCostAbove272KTokens = 10e-6
+	cloned.CacheCreationInputTokenCostPriority = 10e-6
+	cloned.CacheReadInputTokenCost = 0.4e-6
+	cloned.CacheReadInputTokenCostAbove272KTokens = 0.8e-6
+	cloned.CacheReadInputTokenCostPriority = 0.8e-6
+	return &cloned
 }
 
 // applyGPT56CacheWriteFallback keeps stale local catalogs billable until their
@@ -751,7 +1118,7 @@ func (s *PricingService) buildModelLookupCandidates(modelLower string) []string 
 	normalized := normalizeModelNameForPricing(modelLower)
 
 	// A tier-specific entry should take precedence when the pricing catalog gains
-	// one later. Today Antigravity's Gemini 3.6 Flash tiers share the base rate,
+	// one later. Antigravity's Gemini Flash thinking tiers share the base rate,
 	// so the normalized base remains the fallback after the exact aliases.
 	candidates := rawCandidates
 	if normalizeGeminiThinkingTierAlias(lastSegment(modelLower)) != lastSegment(modelLower) {
@@ -802,6 +1169,11 @@ func normalizeModelNameForPricing(model string) string {
 		if canonical == "gpt-6" {
 			return "gpt-6-astra"
 		}
+		// gpt-6-sol-max / gpt-6-luna-openai-compact / gpt-6.1-sol-max 等本地后缀写法归一到官方 ID，
+		// 让目录里的 gpt-6-sol / gpt-6-luna / gpt-6.1-sol 条目（含自定义覆盖）优先命中。
+		if openai.IsGPT6SolOrLunaModelSpelling(canonical) || openai.IsGPT61SolModelSpelling(canonical) {
+			return normalizeKnownOpenAICodexModel(canonical)
+		}
 		// Mirror normalizeKnownOpenAICodexModel's bare "gpt-5.6" -> "gpt-5.6-sol"
 		// redirect so pricing lookups hit the dynamic pricing source instead of
 		// silently falling back to the static Go fallback table.
@@ -813,15 +1185,16 @@ func normalizeModelNameForPricing(model string) string {
 	return normalizeGeminiThinkingTierAlias(model)
 }
 
-// normalizeGeminiThinkingTierAlias maps Antigravity's Gemini 3.6 Flash
+// normalizeGeminiThinkingTierAlias maps Antigravity's Gemini Flash
 // thinking-tier model IDs to the public base model. The tier controls reasoning
 // behavior, not the published token rate, so this keeps -high/-low/-medium and
-// -tiered requests on the same price card as gemini-3.6-flash.
+// -tiered requests on the corresponding base model's price card.
 func normalizeGeminiThinkingTierAlias(model string) string {
-	const baseModel = "gemini-3.6-flash"
-	for _, tier := range []string{"-high", "-low", "-medium", "-tiered"} {
-		if model == baseModel+tier {
-			return baseModel
+	for _, baseModel := range []string{"gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"} {
+		for _, tier := range []string{"-high", "-low", "-medium", "-tiered"} {
+			if model == baseModel+tier {
+				return baseModel
+			}
 		}
 	}
 	return model
@@ -855,6 +1228,13 @@ func (s *PricingService) extractBaseName(model string) string {
 
 // matchByModelFamily 基于模型系列匹配
 func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
+	// Opus 5.5 有独立价格，不能被下面 "claude-opus-5" 的子串匹配归到 Opus 5。
+	if claude.IsOpus55(model) {
+		if pricing, ok := s.pricingData[claude.Opus55ModelID]; ok {
+			return pricing
+		}
+		return claudeOpus55FallbackPricing
+	}
 	// modelFamily 定义一个模型系列的匹配和定价查找规则。
 	type modelFamily struct {
 		name    string   // 系列名称
@@ -951,12 +1331,17 @@ func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
 	if lookups == nil {
 		lookups = matched.match
 	}
+	// 同一个 pattern 命中多个键时按 sortedPricingKeys 的顺序取第一个，结果与 map 遍历顺序无关。
+	keys := s.pricingKeyOrderLocked()
 	for _, pattern := range lookups {
-		for key, pricing := range s.pricingData {
+		for _, key := range keys {
 			keyLower := strings.ToLower(key)
+			if matched.name == "opus-5" && claude.IsOpus55(keyLower) {
+				continue
+			}
 			if strings.Contains(keyLower, pattern) {
 				logger.LegacyPrintf("service.pricing", "[Pricing] Fuzzy matched %s -> %s", model, key)
-				return pricing
+				return s.pricingData[key]
 			}
 		}
 	}
@@ -980,6 +1365,25 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 				Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, "gpt-5.1-codex"))
 			return pricing
 		}
+	}
+
+	// GPT-6.1 Sol / GPT-6 Sol / Luna 必须在基础版本号回退之前处理：generateOpenAIModelVariants
+	// 会把 gpt-6-sol 截成 gpt-6，从而错误命中 Astra（gpt-6 别名）的价格。
+	if openai.IsGPT61SolModelSpelling(model) {
+		if pricing, ok := s.pricingData["gpt-6.1-sol"]; ok {
+			return pricing
+		}
+		return openAIGPT61SolFallbackPricing
+	}
+	if openai.IsGPT6SolOrLunaModelSpelling(model) {
+		base := normalizeKnownOpenAICodexModel(model)
+		if pricing, ok := s.pricingData[base]; ok {
+			return pricing
+		}
+		if base == "gpt-6-sol" {
+			return openAIGPT6SolFallbackPricing
+		}
+		return openAIGPT6LunaFallbackPricing
 	}
 
 	// 尝试的回退变体
@@ -1038,6 +1442,13 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 		return openAIGPT54FallbackPricing
 	}
 
+	// Remote price mirrors can lag new releases. Never bill GPT Image 2.5
+	// using the older image model's rates when its entry is absent.
+	for _, imageModel := range []string{"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"} {
+		if model == imageModel || model == imageModel+"-2026-09-08" {
+			return openAIGPTImage25FallbackPricing
+		}
+	}
 	if isOpenAIImageGenerationModel(model) {
 		for _, candidate := range []string{"gpt-image-2", "gpt-image-1.5", "gpt-image-1"} {
 			if pricing, ok := s.pricingData[candidate]; ok {
@@ -1106,6 +1517,9 @@ func (s *PricingService) GetStatus() map[string]any {
 
 // ForceUpdate 强制更新
 func (s *PricingService) ForceUpdate() error {
+	if s.isPinned() {
+		return ErrPricingPinned
+	}
 	return s.downloadPricingData()
 }
 

@@ -74,7 +74,10 @@ function resolveAvailability(item: UserMonitorView): number | null {
   }
   const detail = props.detailCache[item.id]
   if (!detail) return null
-  const primary = detail.models.find(m => m.model === item.primary_model)
+  // 普通用户的详情里没有模型名，models 只有主模型一项。
+  const primary = item.primary_model
+    ? detail.models.find(m => m.model === item.primary_model)
+    : detail.models[0]
   if (!primary) return null
   return props.window === '15d' ? primary.availability_15d ?? null : primary.availability_30d ?? null
 }

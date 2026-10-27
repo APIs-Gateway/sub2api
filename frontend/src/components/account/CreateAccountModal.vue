@@ -1708,7 +1708,7 @@
               <input v-model="mapping.from" type="text" class="input flex-1" :placeholder="t('admin.accounts.fromModel')" />
               <span class="text-gray-400">→</span>
               <input v-model="mapping.to" type="text" class="input flex-1" :placeholder="t('admin.accounts.toModel')" />
-              <button type="button" @click="modelMappings.splice(index, 1)" class="text-red-500 hover:text-red-700">
+              <button type="button" @click="removeModelMapping(index)" class="text-red-500 hover:text-red-700">
                 <Icon name="trash" size="sm" />
               </button>
             </div>
@@ -2096,7 +2096,7 @@
                     type="button"
                     :disabled="index === 0"
                     @click="moveTempUnschedRule(index, -1)"
-                    class="rounded p-1 text-gray-400 transition-colors hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-gray-200"
+                    class="rounded p-1 text-gray-400 transition-colors hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-gray-200"
                   >
                     <Icon name="chevronUp" size="sm" :stroke-width="2" />
                   </button>
@@ -2104,7 +2104,7 @@
                     type="button"
                     :disabled="index === tempUnschedRules.length - 1"
                     @click="moveTempUnschedRule(index, 1)"
-                    class="rounded p-1 text-gray-400 transition-colors hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-gray-200"
+                    class="rounded p-1 text-gray-400 transition-colors hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-gray-200"
                   >
                     <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
@@ -2636,7 +2636,10 @@
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <label class="input-label">{{ t('admin.accounts.expiresAt') }}</label>
         <input v-model="expiresAtInput" type="datetime-local" class="input" />
-        <p class="input-hint">{{ t('admin.accounts.expiresAtHint') }}</p>
+        <p class="input-hint">
+          {{ t('admin.accounts.expiresAtHint') }}
+          {{ t('admin.accounts.expiresAtTimezoneHint', { timezone: browserTimeZone }) }}
+        </p>
       </div>
 
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
@@ -2669,6 +2672,37 @@
         </div>
       </div>
 
+      <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
+      <div
+        v-if="form.platform === 'openai' && form.type === 'oauth'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.flattenNamespaces') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.flattenNamespacesDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="create-openai-flatten-namespaces-toggle"
+            @click="openaiFlattenNamespacesEnabled = !openaiFlattenNamespacesEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openaiFlattenNamespacesEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openaiFlattenNamespacesEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
       <div
         v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
@@ -2680,8 +2714,8 @@
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.openai.wsModeDesc') }}
             </p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t(openAIWSModeConcurrencyHintKey) }}
+            <p v-if="openAIWSModeHintKey" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t(openAIWSModeHintKey) }}
             </p>
           </div>
           <div class="w-52">
@@ -2925,6 +2959,35 @@
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
                 autoPauseOnExpired ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <div class="flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label class="input-label mb-0">{{
+              t('admin.accounts.noAutoUnsched')
+            }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.noAutoUnschedDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="no-auto-unsched-toggle"
+            @click="noAutoUnsched = !noAutoUnsched"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              noAutoUnsched ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                noAutoUnsched ? 'translate-x-5' : 'translate-x-0'
               ]"
             />
           </button>
@@ -3358,6 +3421,7 @@ import {
   commonErrorCodes,
   buildModelMappingObject,
   fetchAntigravityDefaultMappings,
+  removeModelMappingEntry,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
 import { useAuthStore } from '@/stores/auth'
@@ -3403,7 +3467,11 @@ import {
   validateHeaderOverrideRows,
   type HeaderOverrideRow
 } from '@/components/account/credentialsBuilder'
-import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
+import {
+  formatDateTimeLocalInput,
+  getBrowserTimeZone,
+  parseDateTimeLocalInput
+} from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
 import {
@@ -3411,7 +3479,7 @@ import {
   OPENAI_WS_MODE_OFF,
   OPENAI_WS_MODE_PASSTHROUGH,
   isOpenAIWSModeEnabled,
-  resolveOpenAIWSModeConcurrencyHintKey,
+  resolveOpenAIWSModeHintKey,
   type OpenAIWSMode
 } from '@/utils/openaiWsMode'
 import OAuthAuthorizationFlow from './OAuthAuthorizationFlow.vue'
@@ -3432,6 +3500,7 @@ interface OAuthFlowExposed {
 
 const { t } = useI18n()
 const authStore = useAuthStore()
+const browserTimeZone = getBrowserTimeZone()
 
 const oauthStepTitle = computed(() => {
   if (form.platform === 'openai' && accountCategory.value === 'agent-identity') {
@@ -3544,7 +3613,8 @@ const syncPreviewCredentials = computed(() => {
     platform: form.platform,
     type: form.type,
     base_url: apiKeyBaseUrl.value || undefined,
-    api_key: apiKeyValue.value
+    api_key: apiKeyValue.value,
+    proxy_id: form.proxy_id ?? 0
   }
 })
 
@@ -3591,7 +3661,10 @@ const headerOverrideEnabled = ref(false)
 const headerOverrideRows = ref<HeaderOverrideRow[]>([])
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(true)
+const noAutoUnsched = ref(false) // extra.no_auto_unsched: never auto-pause / cool down on upstream failures
 const openaiPassthroughEnabled = ref(false)
+// OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
+const openaiFlattenNamespacesEnabled = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
@@ -3714,6 +3787,10 @@ const applyOpenAIEndpointCapabilities = (credentials: Record<string, unknown>) =
   credentials.openai_capabilities = capabilities
 }
 
+// Merge no_auto_unsched into extra only when the toggle is on (absent means off)
+const withNoAutoUnsched = (extra?: Record<string, unknown>): Record<string, unknown> | undefined =>
+  noAutoUnsched.value ? { ...(extra || {}), no_auto_unsched: true } : extra
+
 function buildAntigravityExtra(): Record<string, unknown> | undefined {
   const extra: Record<string, unknown> = {}
   if (mixedScheduling.value) extra.mixed_scheduling = true
@@ -3800,8 +3877,8 @@ const openaiResponsesWebSocketV2Mode = computed({
   }
 })
 
-const openAIWSModeConcurrencyHintKey = computed(() =>
-  resolveOpenAIWSModeConcurrencyHintKey(openaiResponsesWebSocketV2Mode.value)
+const openAIWSModeHintKey = computed(() =>
+  resolveOpenAIWSModeHintKey(openaiResponsesWebSocketV2Mode.value)
 )
 
 const isOpenAIModelRestrictionDisabled = computed(() =>
@@ -4036,6 +4113,7 @@ watch(
     }
     if (newPlatform !== 'openai') {
       openaiPassthroughEnabled.value = false
+      openaiFlattenNamespacesEnabled.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
       openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
@@ -4132,7 +4210,7 @@ const removeOpenAICompactModelMapping = (index: number) => {
 }
 
 const removeModelMapping = (index: number) => {
-  modelMappings.value.splice(index, 1)
+  removeModelMappingEntry(modelMappings.value, index, allowedModels.value)
 }
 
 const addPresetMapping = (from: string, to: string) => {
@@ -4454,7 +4532,9 @@ const resetForm = () => {
   headerOverrideRows.value = []
   interceptWarmupRequests.value = false
   autoPauseOnExpired.value = true
+  noAutoUnsched.value = false
   openaiPassthroughEnabled.value = false
+  openaiFlattenNamespacesEnabled.value = false
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
   openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
@@ -4537,6 +4617,12 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     delete extra.openai_passthrough
     delete extra.openai_oauth_passthrough
   }
+  // 缺省即保留 namespace，不写空值，避免 extra 里堆积默认项
+  if (form.type === 'oauth' && openaiFlattenNamespacesEnabled.value) {
+    extra.openai_responses_flatten_namespaces = true
+  } else {
+    delete extra.openai_responses_flatten_namespaces
+  }
 
   if (accountCategory.value === 'oauth-based' && codexCLIOnlyEnabled.value) {
     extra.codex_cli_only = true
@@ -4597,7 +4683,8 @@ const buildAnthropicExtra = (base?: Record<string, unknown>): Record<string, unk
 }
 
 // Helper function to create account with mixed channel warning handling
-const doCreateAccount = async (payload: CreateAccountRequest) => {
+const doCreateAccount = async (rawPayload: CreateAccountRequest) => {
+  const payload: CreateAccountRequest = { ...rawPayload, extra: withNoAutoUnsched(rawPayload.extra) }
   const canContinue = await ensureAntigravityMixedChannelConfirmed(async () => {
     await submitCreateAccount(payload)
   })
@@ -5086,7 +5173,7 @@ const handleGrokValidateRT = async (refreshTokenInput: string) => {
           platform: 'grok',
           type: 'oauth',
           credentials,
-          extra,
+          extra: withNoAutoUnsched(extra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -5180,7 +5267,7 @@ const handleOpenAIExchange = async (authCode: string) => {
         platform: 'openai',
         type: 'oauth',
         credentials,
-        extra,
+        extra: withNoAutoUnsched(extra),
         proxy_id: form.proxy_id,
         concurrency: form.concurrency,
         load_factor: form.load_factor ?? undefined,
@@ -5295,7 +5382,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
       expires_at: form.expires_at,
       auto_pause_on_expired: autoPauseOnExpired.value,
       credential_extras: Object.keys(credentialExtras).length > 0 ? credentialExtras : undefined,
-      extra,
+      extra: withNoAutoUnsched(extra),
       update_existing: true
     })
 
@@ -5412,7 +5499,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             platform: 'openai',
             type: 'oauth',
             credentials,
-            extra,
+            extra: withNoAutoUnsched(extra),
             proxy_id: form.proxy_id,
             concurrency: form.concurrency,
             load_factor: form.load_factor ?? undefined,
@@ -5511,7 +5598,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
           platform: 'antigravity',
           type: 'oauth',
           credentials,
-          extra: {},
+          extra: withNoAutoUnsched({}),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -5890,7 +5977,7 @@ const handleCookieAuth = async (sessionKey: string) => {
           platform: form.platform,
           type: addMethod.value, // Use addMethod as type: 'oauth' or 'setup-token'
           credentials,
-          extra,
+          extra: withNoAutoUnsched(extra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,

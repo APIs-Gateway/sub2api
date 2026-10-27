@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -154,4 +155,57 @@ func TestBuildPlatformSections_GroupsByPlatform(t *testing.T) {
 	require.Equal(t, int64(2), sections[0].Groups[0].ID)
 	require.Len(t, sections[0].SupportedModels, 1)
 	require.Equal(t, "claude-sonnet-4-6", sections[0].SupportedModels[0].Name)
+}
+
+func TestListPrices_Unauthenticated401(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &AvailableChannelHandler{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/channels/prices", nil)
+
+	h.ListPrices(c)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// 功能开关未开（这里没有 settingService）时返回空目录，不触达分组与报价依赖。
+func TestListPrices_FeatureDisabledReturnsEmptyCatalog(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &AvailableChannelHandler{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/channels/prices", nil)
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 7})
+
+	h.ListPrices(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body struct {
+		Data struct {
+			Groups []any `json:"groups"`
+			Models []any `json:"models"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.NotNil(t, body.Data.Groups)
+	require.Empty(t, body.Data.Groups)
+	require.NotNil(t, body.Data.Models)
+	require.Empty(t, body.Data.Models)
+}
+
+func TestDisplayFilterSets(t *testing.T) {
+	groupIDs, models := displayFilterSets(service.PricingDisplaySettings{})
+	require.Nil(t, groupIDs)
+	require.Nil(t, models)
+
+	groupIDs, models = displayFilterSets(service.PricingDisplaySettings{
+		GroupIDs: []int64{1, 3},
+		Models:   []string{"gpt-5.5", "claude-sonnet-4-6"},
+	})
+	require.Len(t, groupIDs, 2)
+	require.Contains(t, groupIDs, int64(1))
+	require.Contains(t, groupIDs, int64(3))
+	require.Len(t, models, 2)
+	require.Contains(t, models, "gpt-5.5")
 }

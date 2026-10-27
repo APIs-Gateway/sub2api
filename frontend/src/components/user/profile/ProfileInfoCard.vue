@@ -66,9 +66,7 @@
                 <p class="text-xs font-medium uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
                   {{ t('profile.accountBalance') }}
                 </p>
-                <p class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
-                  {{ formatCurrency(user?.balance || 0) }}
-                </p>
+                <NumText tier="primary" class="mt-1 block" :text="formatCurrency(user?.balance || 0)" />
               </div>
               <div
                 data-testid="profile-overview-metric-concurrency"
@@ -77,9 +75,7 @@
                 <p class="text-xs font-medium uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
                   {{ t('profile.concurrencyLimit') }}
                 </p>
-                <p class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
-                  {{ user?.concurrency || 0 }}
-                </p>
+                <NumText tier="primary" class="mt-1 block" :text="formatCount(user?.concurrency || 0)" />
               </div>
               <div
                 data-testid="profile-overview-metric-member-since"
@@ -88,7 +84,7 @@
                 <p class="text-xs font-medium uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
                   {{ t('profile.memberSince') }}
                 </p>
-                <p class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
+                <p class="num num-primary mt-1 break-words">
                   {{ memberSinceLabel }}
                 </p>
               </div>
@@ -183,6 +179,9 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
+import NumText from '@/components/common/NumText.vue'
+import { formatCount } from '@/utils/numberFormat'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 import ProfileAvatarCard from '@/components/user/profile/ProfileAvatarCard.vue'
 import ProfileEditForm from '@/components/user/profile/ProfileEditForm.vue'
 import ProfileIdentityBindingsSection from '@/components/user/profile/ProfileIdentityBindingsSection.vue'
@@ -208,6 +207,7 @@ const props = withDefaults(defineProps<{
 })
 
 const { t } = useI18n()
+const { formatWallet } = useCurrencyDisplay()
 
 function normalizeBindingStatus(binding: boolean | UserAuthBindingStatus | undefined): boolean | null {
   if (typeof binding === 'boolean') {
@@ -273,7 +273,7 @@ const providerLabels = computed<Record<UserAuthProvider, string>>(() => ({
 }))
 
 function formatCurrency(value: number): string {
-  return `$${value.toFixed(2)}`
+  return formatWallet(value)
 }
 
 function normalizeProvider(value: string): UserAuthProvider | null {
@@ -281,6 +281,7 @@ function normalizeProvider(value: string): UserAuthProvider | null {
   if (
     normalized === 'email' ||
     normalized === 'linuxdo' ||
+    normalized === 'dingtalk' ||
     normalized === 'wechat' ||
     normalized === 'github' ||
     normalized === 'google'

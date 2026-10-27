@@ -34,6 +34,10 @@ vi.mock('@/stores', () => ({
   useOnboardingStore: () => stores.onboarding,
 }))
 
+vi.mock('@/stores/app', () => ({
+  useAppStore: () => stores.app,
+}))
+
 vi.mock('@/stores/adminSettings', () => ({
   useAdminSettingsStore: () => stores.adminSettings,
 }))

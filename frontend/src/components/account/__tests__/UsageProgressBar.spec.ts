@@ -20,9 +20,10 @@ describe('UsageProgressBar', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
-  it('showNowWhenIdle=true 且利用率为 0 时显示“现在”', () => {
+  it('showNowWhenIdle=true 且利用率为 0 但有未来 resetsAt 时显示倒计时', () => {
     const wrapper = mount(UsageProgressBar, {
       props: {
         label: '5h',
@@ -33,8 +34,8 @@ describe('UsageProgressBar', () => {
       }
     })
 
-    expect(wrapper.text()).toContain('usage.resetNow')
-    expect(wrapper.text()).not.toContain('2h 30m')
+    expect(wrapper.text()).toContain('2h 30m')
+    expect(wrapper.text()).not.toContain('usage.resetNow')
   })
 
   it('showNowWhenIdle=true 但利用率大于 0 时显示倒计时', () => {
@@ -53,6 +54,55 @@ describe('UsageProgressBar', () => {
     expect(wrapper.text()).not.toContain('usage.resetPending')
   })
 
+  it('showNowWhenIdle=true 且没有 resetsAt 时显示“现在”', () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '5h',
+        utilization: 0,
+        resetsAt: null,
+        showNowWhenIdle: true,
+        color: 'indigo'
+      }
+    })
+
+    expect(wrapper.text()).toContain('usage.resetNow')
+    expect(wrapper.text()).not.toContain('NaN')
+  })
+
+  it.each([
+    { utilization: 18, showNowWhenIdle: true },
+    { utilization: 0, showNowWhenIdle: false }
+  ])('没有 resetsAt 且非空闲展示条件时隐藏重置文案 (%o)', ({ utilization, showNowWhenIdle }) => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '5h',
+        utilization,
+        resetsAt: null,
+        showNowWhenIdle,
+        color: 'indigo'
+      }
+    })
+
+    expect(wrapper.text()).not.toContain('usage.resetNow')
+    expect(wrapper.text()).not.toContain('usage.resetPending')
+  })
+
+  it('无效 resetsAt 不显示 NaN 或“现在”', () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '5h',
+        utilization: 0,
+        resetsAt: 'invalid-date',
+        showNowWhenIdle: true,
+        color: 'indigo'
+      }
+    })
+
+    expect(wrapper.text()).toContain('-')
+    expect(wrapper.text()).not.toContain('NaN')
+    expect(wrapper.text()).not.toContain('usage.resetNow')
+  })
+
   it('showNowWhenIdle=false 时保持原有倒计时行为', () => {
     const wrapper = mount(UsageProgressBar, {
       props: {
@@ -66,6 +116,49 @@ describe('UsageProgressBar', () => {
 
     expect(wrapper.text()).toContain('2h 30m')
     expect(wrapper.text()).not.toContain('usage.resetNow')
+  })
+
+  it.each([0, 12])('标签页恢复可见时刷新 %i%% 用量窗口倒计时', async utilization => {
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '5h',
+        utilization,
+        resetsAt: '2026-03-17T02:30:00Z',
+        showNowWhenIdle: true,
+        color: 'indigo'
+      }
+    })
+
+    expect(wrapper.text()).toContain('2h 30m')
+    vi.setSystemTime(new Date('2026-03-17T01:00:00Z'))
+    document.dispatchEvent(new Event('visibilitychange'))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('2h 30m')
+
+    hidden.mockReturnValue(false)
+    document.dispatchEvent(new Event('visibilitychange'))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('1h 30m')
+    wrapper.unmount()
+  })
+
+  it('卸载时清理可见性监听器', () => {
+    const added = vi.spyOn(document, 'addEventListener')
+    const removed = vi.spyOn(document, 'removeEventListener')
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '5h',
+        utilization: 12,
+        resetsAt: '2026-03-17T02:30:00Z',
+        color: 'indigo'
+      }
+    })
+
+    const listener = added.mock.calls.find(([event]) => event === 'visibilitychange')?.[1]
+    expect(listener).toBeDefined()
+    wrapper.unmount()
+    expect(removed).toHaveBeenCalledWith('visibilitychange', listener)
   })
 
   it('resetsAt 已过期且利用率大于 0 时显示「待刷新」', () => {
@@ -89,6 +182,7 @@ describe('UsageProgressBar', () => {
         label: '5h',
         utilization: 0,
         resetsAt: '2026-03-16T22:00:00Z',
+        showNowWhenIdle: true,
         color: 'indigo'
       }
     })

@@ -184,4 +184,61 @@ describe('admin RedeemView batch update', () => {
     })
     expect(showSuccess).toHaveBeenCalledWith('admin.redeem.batchUpdateSuccess')
   })
+
+  const mountWithCustomExpiry = async (localValue: string) => {
+    const wrapper = mount(RedeemView, {
+      attachTo: document.body,
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          Select: SelectStub,
+          GroupBadge: true,
+          GroupOptionItem: true,
+          Icon: true,
+          Teleport: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await wrapper.findAll('[data-test="select-code"]')[0].setValue(true)
+    await wrapper.get('[data-test="batch-update-open"]').trigger('click')
+    await flushPromises()
+
+    const expiryLabel = wrapper.findAll('label').find((label) => label.text().includes('admin.redeem.batchFields.expiresAt'))!
+    await expiryLabel.get('input[type="checkbox"]').setValue(true)
+    const modeSelect = wrapper.findAll('select').find((select) =>
+      select.findAll('option').some((option) => option.element.value === 'custom'))!
+    await modeSelect.setValue('custom')
+    await wrapper.get('input[type="datetime-local"]').setValue(localValue)
+    return wrapper
+  }
+
+  it('rejects an impossible custom expiry instead of normalizing it', async () => {
+    const wrapper = await mountWithCustomExpiry('2026-02-30T10:00')
+    expect(wrapper.text()).toContain('admin.redeem.localTimeZoneHint')
+
+    await wrapper.get('[data-test="batch-update-form"]').trigger('submit')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith('admin.redeem.expiryDateRequired')
+    expect(batchUpdateRedeemCodes).not.toHaveBeenCalled()
+  })
+
+  it('submits a custom expiry interpreted in the browser time zone', async () => {
+    const wrapper = await mountWithCustomExpiry('2026-03-01T10:30')
+
+    await wrapper.get('[data-test="batch-update-form"]').trigger('submit')
+    await flushPromises()
+
+    expect(batchUpdateRedeemCodes).toHaveBeenCalledWith([1], {
+      expires_at: new Date(2026, 2, 1, 10, 30).toISOString()
+    })
+  })
 })

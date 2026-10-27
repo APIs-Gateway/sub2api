@@ -139,6 +139,27 @@ func TestGatewayHandlerKeyBillingInfoUsesOpenAIResolver(t *testing.T) {
 	require.Equal(t, userRate, response.ResolvedRateMultiplier)
 }
 
+func TestGatewayHandlerKeyBillingInfoUsesOpenAIResolverForGrok(t *testing.T) {
+	groupID := int64(7)
+	userRate := 0.6
+	repo := &keyBillingUserGroupRateRepo{rate: &userRate}
+	apiKey := &service.APIKey{
+		UserID:  11,
+		GroupID: &groupID,
+		Group:   &service.Group{ID: groupID, Platform: service.PlatformGrok, RateMultiplier: 0.9},
+	}
+	context, recorder := newKeyBillingContext(apiKey)
+	handler := &GatewayHandler{openAIGatewayService: newKeyBillingOpenAIGatewayService(repo)}
+
+	handler.KeyBillingInfo(context)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, 1, repo.calls)
+	var response keyBillingInfoResponse
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Equal(t, userRate, response.ResolvedRateMultiplier)
+}
+
 func TestGatewayHandlerKeyBillingInfoErrorsAreSafe(t *testing.T) {
 	groupID := int64(7)
 	tests := []struct {

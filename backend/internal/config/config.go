@@ -548,6 +548,9 @@ type PricingConfig struct {
 	UpdateIntervalHours int `mapstructure:"update_interval_hours"`
 	// 哈希校验间隔（分钟）
 	HashCheckIntervalMinutes int `mapstructure:"hash_check_interval_minutes"`
+	// W6 价格阶段切换闸门里 shadow 观察期的最短时长（小时，整数，0-720，默认 72；0 表示不要求观察时长）。
+	// 环境变量 PRICING_GATE_OBSERVATION_HOURS。30 天回放零差异的硬检查不受它影响。
+	GateObservationHours int `mapstructure:"gate_observation_hours"`
 }
 
 type ServerConfig struct {
@@ -772,7 +775,8 @@ func normalizeProxyProbeURLs(targets []ProbeURLConfig) ([]ProbeURLConfig, error)
 }
 
 type BillingConfig struct {
-	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
+	InflightReservation BillingInflightReservationConfig `mapstructure:"inflight_reservation"`
+	CircuitBreaker      CircuitBreakerConfig             `mapstructure:"circuit_breaker"`
 	// UserPlatformQuotaCacheTTLSeconds 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口。
 	// 消费点：
 	//   - billing_cache_service.cacheWriteWorker 异步累加
@@ -782,6 +786,13 @@ type BillingConfig struct {
 	// UserPlatformQuotaSentinelTTLSeconds sentinel(无 limit 占位)entry 的 TTL,
 	// 显著短于 quota cache 默认 86400s 以控 Redis 内存;默认 3600=1h。
 	UserPlatformQuotaSentinelTTLSeconds int `mapstructure:"user_platform_quota_sentinel_ttl_seconds"`
+}
+
+// Bounded concurrency admission protection, not a hard per-request spending cap.
+type BillingInflightReservationConfig struct {
+	Enabled                bool `mapstructure:"enabled"`
+	TTLSeconds             int  `mapstructure:"ttl_seconds"`
+	DefaultMaxOutputTokens int  `mapstructure:"default_max_output_tokens"`
 }
 
 type CircuitBreakerConfig struct {
@@ -814,6 +825,28 @@ const (
 	ImageConcurrencyOverflowModeWait   = "wait"
 )
 
+const (
+	UpstreamIPModeAuto = "auto"
+	UpstreamIPModeIPv4 = "ipv4"
+	UpstreamIPModeIPv6 = "ipv6"
+)
+
+// GatewayModelDowngradeGuardConfig is opt-in. Pairs must name the exact model
+// sent upstream and the model returned by that upstream.
+type GatewayModelDowngradeGuardConfig struct {
+	Enabled         bool                        `mapstructure:"enabled"`
+	Pairs           []GatewayModelDowngradePair `mapstructure:"pairs"`
+	ThresholdCount  int                         `mapstructure:"threshold_count"`
+	WindowMinutes   int                         `mapstructure:"window_minutes"`
+	BlockHours      int                         `mapstructure:"block_hours"`
+	MaxBlockedRatio float64                     `mapstructure:"max_blocked_ratio"`
+}
+
+type GatewayModelDowngradePair struct {
+	SentModel     string `mapstructure:"sent_model"`
+	ResponseModel string `mapstructure:"response_model"`
+}
+
 // GatewayConfig API网关相关配置
 type GatewayConfig struct {
 	// 等待上游响应头的超时时间（秒），0表示无超时
@@ -840,6 +873,9 @@ type GatewayConfig struct {
 	GeminiDebugResponseHeaders bool `mapstructure:"gemini_debug_response_headers"`
 	// ConnectionPoolIsolation: 上游连接池隔离策略（proxy/account/account_proxy）
 	ConnectionPoolIsolation string `mapstructure:"connection_pool_isolation"`
+	// UpstreamIPMode selects the address family for direct upstream connections.
+	// Proxy connections retain their own address resolution.
+	UpstreamIPMode string `mapstructure:"upstream_ip_mode"`
 	// ForceCodexCLI: 强制将 OpenAI `/v1/responses` 请求按 Codex CLI 处理。
 	// 用于网关未透传/改写 User-Agent 时的兼容兜底（默认关闭，避免影响其他客户端）。
 	ForceCodexCLI bool `mapstructure:"force_codex_cli"`
@@ -857,6 +893,15 @@ type GatewayConfig struct {
 	// UpstreamModelMismatchObserveAccountIDs：账号级观察名单。名单内账号的上游模型不一致只记录不拦截（同全局观察模式），
 	// 其余账号照常拦截。用于 openai_forced_account_routes 这类强制单账号路由：拦截后无号可切，客户端会直接收到 502。
 	UpstreamModelMismatchObserveAccountIDs []int64 `mapstructure:"upstream_model_mismatch_observe_account_ids"`
+	// NoAutoUnschedAccountIDs：名单内账号「不自动暂停调度」——因上游失败自动产生的任何停调度/冷却
+	// （429、529、401/403 置错、临时不可调度规则、流超时、单模型限流、运行时冷却、传输错误隔离、
+	// 代理流隔离）都不影响它被选中；管理员手动停用、过期、配额耗尽等仍然生效。
+	// 与账号 extra.no_auto_unsched=true 取并集。用于只有一个号的专用分组：冷却只会把用户拿到的
+	// 上游错误换成 503 no available accounts，还拦掉冷却期内本来能成功的请求。
+	NoAutoUnschedAccountIDs []int64 `mapstructure:"no_auto_unsched_account_ids"`
+
+	// ModelDowngradeGuard quarantines configured model substitutions after repeated hits.
+	ModelDowngradeGuard GatewayModelDowngradeGuardConfig `mapstructure:"model_downgrade_guard"`
 	// ForcedCodexInstructionsTemplateFile: 服务端强制附加到 Codex 顶层 instructions 的模板文件路径。
 	// 模板渲染后会直接覆盖最终 instructions；若需要保留客户端 system 转换结果，请在模板中显式引用 {{ .ExistingInstructions }}。
 	ForcedCodexInstructionsTemplateFile string `mapstructure:"forced_codex_instructions_template_file"`
@@ -1079,11 +1124,15 @@ type GatewayOpenAIWSConfig struct {
 	MaxConnsPerAccount int `mapstructure:"max_conns_per_account"`
 	MinIdlePerAccount  int `mapstructure:"min_idle_per_account"`
 	MaxIdlePerAccount  int `mapstructure:"max_idle_per_account"`
-	// DynamicMaxConnsByAccountConcurrencyEnabled: 是否按账号并发动态计算连接池上限
+	// DynamicMaxConnsByAccountConcurrencyEnabled: 是否按账号并发动态计算连接池上限。
+	// 旧版及 mode_router_v2 的 ctx_pool 共用此开关和类型系数；关闭后使用 max_conns_per_account。
+	// mode_router_v2 下并发数 <= 0 的账号仍不可调度。
 	DynamicMaxConnsByAccountConcurrencyEnabled bool `mapstructure:"dynamic_max_conns_by_account_concurrency_enabled"`
-	// OAuthMaxConnsFactor: OAuth 账号连接池系数（effective=ceil(concurrency*factor)）
+	// OAuthMaxConnsFactor: OAuth 账号连接池系数（effective=ceil(concurrency*factor)，再受 max_conns_per_account 封顶）。
+	// ctx_pool 接入下每个客户端会话在整个生命周期（含轮次之间）持有一条上游连接，此上限限制的是同时持有连接的会话数，
+	// 在飞请求数另由账号并发槽限制；系数 1.0 会让存活会话数一到并发数就返回 1013 busy，默认 5.0。
 	OAuthMaxConnsFactor float64 `mapstructure:"oauth_max_conns_factor"`
-	// APIKeyMaxConnsFactor: API Key 账号连接池系数（effective=ceil(concurrency*factor)）
+	// APIKeyMaxConnsFactor: API Key 账号连接池系数，含义与 OAuthMaxConnsFactor 相同，默认 5.0。
 	APIKeyMaxConnsFactor  float64 `mapstructure:"apikey_max_conns_factor"`
 	DialTimeoutSeconds    int     `mapstructure:"dial_timeout_seconds"`
 	ReadTimeoutSeconds    int     `mapstructure:"read_timeout_seconds"`
@@ -1324,21 +1373,57 @@ func (d *DatabaseConfig) DSN() string {
 	)
 }
 
+// 连接 PostgreSQL 时设置的 application_name，让运维能在 pg_stat_activity 里认出是哪类连接
+// （例如停服窗口里确认「已经没有应用连接」才动手迁移数据）。
+// 只用固定的服务名：不带主机名、版本号或任何密钥，因为 application_name 对所有能查
+// pg_stat_activity 的角色可见，还会出现在数据库日志里。
+const (
+	// DBApplicationName 是主服务（含 jwtgen 这类走 repository.InitEnt 的进程）的主库连接。
+	DBApplicationName = "sub2api-app"
+	// DBApplicationNameCLI 是一次性运维子命令（如 model-catalog seed）开的主库连接。
+	DBApplicationNameCLI = "sub2api-cli"
+	// DBApplicationNameLegacyInvite 是「旧站付费用户领码」功能连到旧站库的只读连接。
+	DBApplicationNameLegacyInvite = "sub2api-legacy-invite"
+)
+
+// sanitizeDBApplicationName 保证 application_name 能安全拼进 key=value 形式的 DSN：
+// 只留字母数字和 . _ -，其它字符换成 _；空串回落到 DBApplicationName。PostgreSQL 会把超过 63 字节的截断。
+func sanitizeDBApplicationName(name string) string {
+	if name == "" {
+		return DBApplicationName
+	}
+	b := []byte(name)
+	for i, c := range b {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '_', c == '-':
+		default:
+			b[i] = '_'
+		}
+	}
+	return string(b)
+}
+
 // DSNWithTimezone returns DSN with timezone setting
 func (d *DatabaseConfig) DSNWithTimezone(tz string) string {
+	return d.DSNWithTimezoneAndApplicationName(tz, DBApplicationName)
+}
+
+// DSNWithTimezoneAndApplicationName 同 DSNWithTimezone，并把连接的 application_name 设为 appName。
+func (d *DatabaseConfig) DSNWithTimezoneAndApplicationName(tz, appName string) string {
 	if tz == "" {
 		tz = "Asia/Shanghai"
 	}
+	appName = sanitizeDBApplicationName(appName)
 	// 当密码为空时不包含 password 参数，避免 libpq 解析错误
 	if d.Password == "" {
 		return fmt.Sprintf(
-			"host=%s port=%d user=%s dbname=%s sslmode=%s TimeZone=%s",
-			d.Host, d.Port, d.User, d.DBName, d.SSLMode, tz,
+			"host=%s port=%d user=%s dbname=%s sslmode=%s TimeZone=%s application_name=%s",
+			d.Host, d.Port, d.User, d.DBName, d.SSLMode, tz, appName,
 		)
 	}
 	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s TimeZone=%s",
-		d.Host, d.Port, d.User, d.Password, d.DBName, d.SSLMode, tz,
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s TimeZone=%s application_name=%s",
+		d.Host, d.Port, d.User, d.Password, d.DBName, d.SSLMode, tz, appName,
 	)
 }
 
@@ -1383,16 +1468,18 @@ type LegacyInviteConfig struct {
 
 // DSN 返回旧站库的连接串。与主库不同，这里不追加 TimeZone：
 // 判定只做金额求和，不依赖时区，少一个可能配错的参数。
+// 连接带固定的 application_name（DBApplicationNameLegacyInvite），旧站运维停服迁移时能在
+// pg_stat_activity 里把这条只读连接和真正的应用连接区分开。
 func (c *LegacyInviteConfig) DSN() string {
 	if c.Password == "" {
 		return fmt.Sprintf(
-			"host=%s port=%d user=%s dbname=%s sslmode=%s",
-			c.Host, c.Port, c.User, c.DBName, c.SSLMode,
+			"host=%s port=%d user=%s dbname=%s sslmode=%s application_name=%s",
+			c.Host, c.Port, c.User, c.DBName, c.SSLMode, DBApplicationNameLegacyInvite,
 		)
 	}
 	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		c.Host, c.Port, c.User, c.Password, c.DBName, c.SSLMode,
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s application_name=%s",
+		c.Host, c.Port, c.User, c.Password, c.DBName, c.SSLMode, DBApplicationNameLegacyInvite,
 	)
 }
 
@@ -1867,6 +1954,9 @@ func setDefaults() {
 	viper.SetDefault("security.proxy_fallback.allow_direct_on_error", false)
 
 	// Billing
+	viper.SetDefault("billing.inflight_reservation.enabled", true)
+	viper.SetDefault("billing.inflight_reservation.ttl_seconds", 900)
+	viper.SetDefault("billing.inflight_reservation.default_max_output_tokens", 8192)
 	viper.SetDefault("billing.circuit_breaker.enabled", true)
 	viper.SetDefault("billing.circuit_breaker.failure_threshold", 5)
 	viper.SetDefault("billing.circuit_breaker.reset_timeout_seconds", 30)
@@ -2043,6 +2133,7 @@ func setDefaults() {
 	viper.SetDefault("pricing.fallback_file", "./resources/model-pricing/model_prices_and_context_window.json")
 	viper.SetDefault("pricing.update_interval_hours", 24)
 	viper.SetDefault("pricing.hash_check_interval_minutes", 10)
+	viper.SetDefault("pricing.gate_observation_hours", 72)
 
 	// Timezone (default to Asia/Shanghai for Chinese users)
 	viper.SetDefault("timezone", "Asia/Shanghai")
@@ -2119,6 +2210,12 @@ func setDefaults() {
 	viper.SetDefault("gateway.disable_openai_responses_image_generation", false)
 	viper.SetDefault("gateway.disable_upstream_model_mismatch_block", false)
 	viper.SetDefault("gateway.upstream_model_mismatch_observe_account_ids", []int64{})
+	viper.SetDefault("gateway.no_auto_unsched_account_ids", []int64{})
+	viper.SetDefault("gateway.model_downgrade_guard.enabled", false)
+	viper.SetDefault("gateway.model_downgrade_guard.threshold_count", 5)
+	viper.SetDefault("gateway.model_downgrade_guard.window_minutes", 30)
+	viper.SetDefault("gateway.model_downgrade_guard.block_hours", 24)
+	viper.SetDefault("gateway.model_downgrade_guard.max_blocked_ratio", 0.3)
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
 	// OpenAI Responses WebSocket（默认开启；可通过 force_http 紧急回滚）
 	viper.SetDefault("gateway.openai_ws.enabled", true)
@@ -2143,8 +2240,8 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_ws.min_idle_per_account", 4)
 	viper.SetDefault("gateway.openai_ws.max_idle_per_account", 12)
 	viper.SetDefault("gateway.openai_ws.dynamic_max_conns_by_account_concurrency_enabled", true)
-	viper.SetDefault("gateway.openai_ws.oauth_max_conns_factor", 1.0)
-	viper.SetDefault("gateway.openai_ws.apikey_max_conns_factor", 1.0)
+	viper.SetDefault("gateway.openai_ws.oauth_max_conns_factor", 5.0)
+	viper.SetDefault("gateway.openai_ws.apikey_max_conns_factor", 5.0)
 	viper.SetDefault("gateway.openai_ws.dial_timeout_seconds", 10)
 	viper.SetDefault("gateway.openai_ws.read_timeout_seconds", 900)
 	viper.SetDefault("gateway.openai_ws.write_timeout_seconds", 120)
@@ -2197,6 +2294,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.image_nonstream_keepalive_interval", 0)
 	viper.SetDefault("gateway.gemini_debug_response_headers", false)
 	viper.SetDefault("gateway.connection_pool_isolation", ConnectionPoolIsolationAccountProxy)
+	viper.SetDefault("gateway.upstream_ip_mode", UpstreamIPModeAuto)
 	viper.SetDefault("gateway.openai_forced_account_routes", []OpenAIForcedAccountRoute{})
 	// HTTP 上游连接池配置（针对 5000+ 并发用户优化）
 	viper.SetDefault("gateway.max_idle_conns", 2560)          // 最大空闲连接总数（高并发场景可调大）
@@ -2350,6 +2448,14 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("dingtalk_connect.sync_corp_email_attr_name", "")
 }
 
+// validatePricingGateObservationHours 校验价格阶段闸门的观察期小时数：0-720，越界启动报错（与其它配置项的校验一致，不静默钳制）。
+func validatePricingGateObservationHours(hours int) error {
+	if hours < 0 || hours > 720 {
+		return fmt.Errorf("pricing.gate_observation_hours must be between 0 and 720, got %d", hours)
+	}
+	return nil
+}
+
 func (c *Config) Validate() error {
 	forwardedClientIPHeaders, err := NormalizeForwardedClientIPHeaders(c.Security.ForwardedClientIPHeaders)
 	if err != nil {
@@ -2375,6 +2481,9 @@ func (c *Config) Validate() error {
 		if c.APIKeyAuth.InvalidAbuse.Capacity < 256 || c.APIKeyAuth.InvalidAbuse.Capacity > 1_000_000 {
 			return fmt.Errorf("api_key_auth_cache.invalid_abuse.capacity must be between 256 and 1000000")
 		}
+	}
+	if err := validatePricingGateObservationHours(c.Pricing.GateObservationHours); err != nil {
+		return err
 	}
 	jwtSecret := strings.TrimSpace(c.JWT.Secret)
 	if jwtSecret == "" {
@@ -2873,6 +2982,12 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("gateway.connection_pool_isolation must be one of: %s/%s/%s",
 				ConnectionPoolIsolationProxy, ConnectionPoolIsolationAccount, ConnectionPoolIsolationAccountProxy)
 		}
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Gateway.UpstreamIPMode)) {
+	case "", UpstreamIPModeAuto, UpstreamIPModeIPv4, UpstreamIPModeIPv6:
+	default:
+		return fmt.Errorf("gateway.upstream_ip_mode must be one of: %s/%s/%s",
+			UpstreamIPModeAuto, UpstreamIPModeIPv4, UpstreamIPModeIPv6)
 	}
 	if c.Gateway.ImageConcurrency.MaxConcurrentRequests < 0 {
 		return fmt.Errorf("gateway.image_concurrency.max_concurrent_requests must be non-negative")

@@ -30,7 +30,7 @@ import (
 	gocache "github.com/patrickmn/go-cache"
 )
 
-const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, image_input_tokens, image_input_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, service_tier, reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, created_at, upstream_model_mismatch, upstream_response_model"
+const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, image_input_tokens, image_input_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, service_tier, reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, created_at, upstream_model_mismatch, upstream_response_model, served_group_id, served_route_source, cost_unit"
 
 // usageLogInsertArgTypes must stay in the same order as:
 //  1. prepareUsageLogInsert().args
@@ -94,6 +94,9 @@ var usageLogInsertArgTypes = [...]string{
 	"timestamptz", // created_at
 	"boolean",     // upstream_model_mismatch
 	"text",        // upstream_response_model
+	"bigint",      // served_group_id
+	"smallint",    // served_route_source
+	"smallint",    // cost_unit
 }
 
 const rawUsageLogModelColumn = "model"
@@ -210,6 +213,15 @@ const (
 	usageLogBestEffortBatchWindow   = 20 * time.Millisecond
 	usageLogBestEffortBatchQueueCap = 32768
 	usageLogBestEffortRecentTTL     = 30 * time.Second
+)
+
+// usageLogFallbackTotalTimeout 是同一轮兜底写入（flushCreateBatch / flushBestEffortBatch）
+// 所有条目共用的总截止时间。声明为 var 允许测试注入。
+// 之所以共用而非每条各给独立超时：批次最大 256 条，串行下最坏耗时 = 256 × 10s ≈ 42 分钟，
+// 会长时间阻塞批处理器、让 32768 长度的队列堆满并引发写入压力翻倍。
+var (
+	usageLogFallbackTotalTimeout = 15 * time.Second
+	usageLogFallbackConcurrency  = 8
 )
 
 type usageLogCreateRequest struct {
@@ -424,7 +436,10 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			account_stats_cost,
 			created_at,
 			upstream_model_mismatch,
-			upstream_response_model
+			upstream_response_model,
+			served_group_id,
+			served_route_source,
+			cost_unit
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
 			$8, $9,
@@ -432,7 +447,7 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			$14, $15, $16, $17,
 			$18, $19, $20, $21, $22, $23,
 			$24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52,
-			$53, $54
+			$53, $54, $55, $56, $57
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 		RETURNING id, created_at
@@ -688,12 +703,24 @@ func (r *usageLogRepository) flushCreateBatch(db *sql.DB, batch []usageLogCreate
 		return
 	}
 
+	// 兜底写入并发执行：所有条目共用 usageLogFallbackTotalTimeout 总截止时间，
+	// 避免每条各给独立 10s、串行最多 N×10s 卡住批处理器。
+	fallbackCtx, fallbackCancel := context.WithTimeout(context.Background(), usageLogFallbackTotalTimeout)
+	defer fallbackCancel()
+	sem := make(chan struct{}, usageLogFallbackConcurrency)
+	var wg sync.WaitGroup
 	for _, req := range fallback {
-		fallbackCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		inserted, err := r.createSingle(fallbackCtx, db, req.log)
-		cancel()
-		completeUsageLogCreateRequest(req, usageLogCreateResult{inserted: inserted, err: err})
+		req := req
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			inserted, err := r.createSingle(fallbackCtx, db, req.log)
+			completeUsageLogCreateRequest(req, usageLogCreateResult{inserted: inserted, err: err})
+		}()
 	}
+	wg.Wait()
 }
 
 func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBestEffortRequest) {
@@ -739,23 +766,50 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	batchCtx, batchCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer batchCancel()
 
 	query, args := buildUsageLogBestEffortInsertQuery(preparedList)
-	if _, err := db.ExecContext(ctx, query, args...); err != nil {
+	if _, err := db.ExecContext(batchCtx, query, args...); err != nil {
 		logger.LegacyPrintf("repository.usage_log", "best-effort batch insert failed: %v", err)
-		for _, group := range groupOrder {
-			singleErr := execUsageLogInsertNoResult(ctx, db, group.prepared)
-			if singleErr != nil {
-				logger.LegacyPrintf("repository.usage_log", "best-effort single fallback insert failed: %v", singleErr)
-			} else if group.prepared.requestID != "" && r != nil && r.bestEffortRecent != nil {
-				r.bestEffortRecent.SetDefault(group.key, struct{}{})
+
+		// ctx/lock 错误：批处理器内串行重试最坏耗时 256×10s ≈ 42 分钟，会堵满队列；
+		// 调用方 writeUsageLogBestEffort 对任何非 nil 错误都会同步兜底（repo.Create），
+		// 所以直接把错误回给调用方，不在批处理器里逐条重试。
+		if isCtxOrLockError(err) {
+			for _, group := range groupOrder {
+				for _, req := range group.reqs {
+					sendUsageLogBestEffortResult(req.resultCh, err)
+				}
 			}
-			for _, req := range group.reqs {
-				sendUsageLogBestEffortResult(req.resultCh, singleErr)
-			}
+			return
 		}
+
+		// 其他错误：并发兜底，所有条目共用 usageLogFallbackTotalTimeout 总截止时间，
+		// 避免每条独享 10s 导致串行耗尽批处理器。
+		fallbackCtx, fallbackCancel := context.WithTimeout(context.Background(), usageLogFallbackTotalTimeout)
+		defer fallbackCancel()
+		sem := make(chan struct{}, usageLogFallbackConcurrency)
+		var wg sync.WaitGroup
+		for _, group := range groupOrder {
+			group := group
+			wg.Add(1)
+			sem <- struct{}{}
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+				singleErr := execUsageLogInsertNoResult(fallbackCtx, db, group.prepared)
+				if singleErr != nil {
+					logger.LegacyPrintf("repository.usage_log", "best-effort single fallback insert failed: %v", singleErr)
+				} else if group.prepared.requestID != "" && r != nil && r.bestEffortRecent != nil {
+					r.bestEffortRecent.SetDefault(group.key, struct{}{})
+				}
+				for _, req := range group.reqs {
+					sendUsageLogBestEffortResult(req.resultCh, singleErr)
+				}
+			}()
+		}
+		wg.Wait()
 		return
 	}
 	for _, group := range groupOrder {
@@ -776,6 +830,27 @@ func sendUsageLogBestEffortResult(ch chan error, err error) {
 	case ch <- err:
 	default:
 	}
+}
+
+// isCtxOrLockError 判断 err 是否属于"本轮不应在批处理器内重试"的错误类型：
+//   - context.DeadlineExceeded / context.Canceled：ctx 已失效，新 ctx 也不确定有效；
+//   - PG SQLSTATE 55P03 (lock_not_available) / 57014 (canceling statement due to statement timeout)：
+//     锁拥堵下串行逐条重试会让批处理器停几十分钟。
+//
+// 这两类错误都应直接回给调用方，由调用方的同步兜底（repo.Create）负责重写。
+func isCtxOrLockError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) {
+		switch pqErr.Code {
+		case "55P03", // lock_not_available
+			"57014": // canceling statement due to statement timeout
+			return true
+		}
+	}
+	return false
 }
 
 func completeUsageLogCreateRequest(req usageLogCreateRequest, res usageLogCreateResult) {
@@ -875,10 +950,13 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 			account_stats_cost,
 			created_at,
 			upstream_model_mismatch,
-			upstream_response_model
+			upstream_response_model,
+			served_group_id,
+			served_route_source,
+			cost_unit
 		) AS (VALUES `)
 
-	args := make([]any, 0, len(keys)*54)
+	args := make([]any, 0, len(keys)*57)
 	argPos := 1
 	for idx, key := range keys {
 		if idx > 0 {
@@ -960,7 +1038,10 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 				account_stats_cost,
 				created_at,
 				upstream_model_mismatch,
-				upstream_response_model
+				upstream_response_model,
+				served_group_id,
+				served_route_source,
+				cost_unit
 			)
 			SELECT
 				user_id,
@@ -1016,7 +1097,10 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 				account_stats_cost,
 				created_at,
 				upstream_model_mismatch,
-				upstream_response_model
+				upstream_response_model,
+				served_group_id,
+				served_route_source,
+				cost_unit
 			FROM input
 			ON CONFLICT (request_id, api_key_id) DO NOTHING
 			RETURNING request_id, api_key_id, id, created_at
@@ -1112,10 +1196,13 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			account_stats_cost,
 			created_at,
 			upstream_model_mismatch,
-			upstream_response_model
+			upstream_response_model,
+			served_group_id,
+			served_route_source,
+			cost_unit
 		) AS (VALUES `)
 
-	args := make([]any, 0, len(preparedList)*54)
+	args := make([]any, 0, len(preparedList)*57)
 	argPos := 1
 	for idx, prepared := range preparedList {
 		if idx > 0 {
@@ -1194,7 +1281,10 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			account_stats_cost,
 			created_at,
 			upstream_model_mismatch,
-			upstream_response_model
+			upstream_response_model,
+			served_group_id,
+			served_route_source,
+			cost_unit
 		)
 		SELECT
 			user_id,
@@ -1250,7 +1340,10 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			account_stats_cost,
 			created_at,
 			upstream_model_mismatch,
-			upstream_response_model
+			upstream_response_model,
+			served_group_id,
+			served_route_source,
+			cost_unit
 		FROM input
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 	`)
@@ -1314,7 +1407,10 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			account_stats_cost,
 			created_at,
 			upstream_model_mismatch,
-			upstream_response_model
+			upstream_response_model,
+			served_group_id,
+			served_route_source,
+			cost_unit
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
 			$8, $9,
@@ -1322,7 +1418,7 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			$14, $15, $16, $17,
 			$18, $19, $20, $21, $22, $23,
 			$24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52,
-			$53, $54
+			$53, $54, $55, $56, $57
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 	`, prepared.args...)
@@ -1341,6 +1437,12 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 	rateMultiplier := log.RateMultiplier
 	log.SyncRequestTypeAndLegacyFields()
 	requestType := int16(log.RequestType)
+
+	// cost_unit 由写入层统一盖章：CNY 模式写 1，USD 模式写 NULL。usage_logs 的所有 INSERT
+	// （单条、批量、best-effort、事务内）都先经过本函数，所以这里是 cost_unit 的唯一赋值点，
+	// 不信任调用方预先填的值，也不让业务代码各自去判断币种。
+	costUnit := service.CurrentCreditUnit().CostUnit()
+	log.CostUnit = costUnit
 
 	groupID := nullInt64(log.GroupID)
 	subscriptionID := nullInt64(log.SubscriptionID)
@@ -1432,6 +1534,9 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 			createdAt,
 			log.UpstreamModelMismatch,
 			nullString(log.UpstreamResponseModel), // upstream_response_model
+			nullInt64(log.ServedGroupID),          // served_group_id
+			nullInt16(log.ServedRouteSource),      // served_route_source
+			nullInt16(costUnit),                   // cost_unit
 		},
 	}
 }
@@ -4143,6 +4248,11 @@ func (r *usageLogRepository) hydrateUsageLogAssociations(ctx context.Context, lo
 				logs[i].Group = group
 			}
 		}
+		if logs[i].ServedGroupID != nil {
+			if group, ok := groups[*logs[i].ServedGroupID]; ok {
+				logs[i].ServedGroup = group
+			}
+		}
 		if logs[i].SubscriptionID != nil {
 			if sub, ok := subs[*logs[i].SubscriptionID]; ok {
 				logs[i].Subscription = sub
@@ -4175,6 +4285,9 @@ func collectUsageLogIDs(logs []service.UsageLog) usageLogIDs {
 		accountIDs[logs[i].AccountID] = struct{}{}
 		if logs[i].GroupID != nil {
 			groupIDs[*logs[i].GroupID] = struct{}{}
+		}
+		if logs[i].ServedGroupID != nil {
+			groupIDs[*logs[i].ServedGroupID] = struct{}{}
 		}
 		if logs[i].SubscriptionID != nil {
 			subscriptionIDs[*logs[i].SubscriptionID] = struct{}{}
@@ -4323,6 +4436,9 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		createdAt             time.Time
 		upstreamModelMismatch bool
 		upstreamResponseModel sql.NullString
+		servedGroupID         sql.NullInt64
+		servedRouteSource     sql.NullInt16
+		costUnit              sql.NullInt16
 	)
 
 	if err := scanner.Scan(
@@ -4381,6 +4497,9 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		&createdAt,
 		&upstreamModelMismatch,
 		&upstreamResponseModel,
+		&servedGroupID,
+		&servedRouteSource,
+		&costUnit,
 	); err != nil {
 		return nil, err
 	}
@@ -4491,6 +4610,18 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 	}
 	if upstreamResponseModel.Valid {
 		log.UpstreamResponseModel = &upstreamResponseModel.String
+	}
+	if servedGroupID.Valid {
+		v := servedGroupID.Int64
+		log.ServedGroupID = &v
+	}
+	if servedRouteSource.Valid {
+		v := servedRouteSource.Int16
+		log.ServedRouteSource = &v
+	}
+	if costUnit.Valid {
+		v := costUnit.Int16
+		log.CostUnit = &v
 	}
 	if accountStatsCost.Valid {
 		log.AccountStatsCost = &accountStatsCost.Float64
@@ -4614,6 +4745,13 @@ func nullInt64(v *int64) sql.NullInt64 {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: *v, Valid: true}
+}
+
+func nullInt16(v *int16) sql.NullInt16 {
+	if v == nil {
+		return sql.NullInt16{}
+	}
+	return sql.NullInt16{Int16: *v, Valid: true}
 }
 
 func nullInt(v *int) sql.NullInt64 {

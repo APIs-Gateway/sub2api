@@ -368,7 +368,6 @@ func TestAPIContracts(t *testing.T) {
 						"allow_messages_dispatch": false,
 						"fallback_group_id": null,
 						"fallback_group_id_on_invalid_request": null,
-						"stable_priority_fallback_group_id": null,
 						"require_oauth_only": false,
 						"require_privacy_set": false,
 						"rpm_limit": 0,
@@ -871,12 +870,16 @@ func TestAPIContracts(t *testing.T) {
 					"openai_advanced_scheduler_effective_weight_upstream_cost": "0",
 					"openai_codex_user_agent":           "",
 					"openai_allow_claude_code_codex_plugin": false,
+					"claude_code_client_version": "",
+					"claude_code_client_version_synced": "",
+					"claude_code_version_auto_sync_enabled": true,
 					"openai_fast_policy_settings": {
 						"rules": []
 					},
 					"custom_menu_items": [],
 					"custom_endpoints": [],
 					"payment_enabled": false,
+					"payment_official_price_cny_rate": 0,
 					"payment_min_amount": 0,
 					"payment_max_amount": 0,
 					"payment_daily_limit": 0,
@@ -911,6 +914,7 @@ func TestAPIContracts(t *testing.T) {
 					"account_quota_notify_enabled": false,
 					"subscription_expiry_notify_enabled": true,
 					"balance_low_notify_threshold": 0,
+					"billing_unpriced_policy": "observe",
 					"balance_low_notify_recharge_url": "",
 					"account_quota_notify_emails": [],
 					"channel_monitor_enabled": true,
@@ -1066,7 +1070,7 @@ func TestAPIContracts(t *testing.T) {
 					"google_oauth_frontend_redirect_url": "/auth/oauth/callback",
 					"site_name": "Sub2API",
 					"site_logo": "",
-					"site_subtitle": "Subscription to API Conversion Platform",
+					"site_subtitle": "",
 					"api_base_url": "",
 					"api_key_acl_trust_forwarded_ip": false,
 					"forwarded_client_ip_headers": [],
@@ -1148,10 +1152,14 @@ func TestAPIContracts(t *testing.T) {
 					"openai_advanced_scheduler_effective_weight_upstream_cost": "0",
 					"openai_codex_user_agent":           "",
 					"openai_allow_claude_code_codex_plugin": false,
+					"claude_code_client_version": "",
+					"claude_code_client_version_synced": "",
+					"claude_code_version_auto_sync_enabled": true,
 					"openai_fast_policy_settings": {
 						"rules": []
 					},
 					"payment_enabled": false,
+					"payment_official_price_cny_rate": 0,
 					"payment_min_amount": 0,
 					"payment_max_amount": 0,
 					"payment_daily_limit": 0,
@@ -1186,6 +1194,7 @@ func TestAPIContracts(t *testing.T) {
 					"account_quota_notify_enabled": false,
 					"subscription_expiry_notify_enabled": true,
 					"balance_low_notify_threshold": 0,
+					"billing_unpriced_policy": "observe",
 					"balance_low_notify_recharge_url": "",
 					"account_quota_notify_emails": [],
 					"channel_monitor_enabled": true,
@@ -1402,7 +1411,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 	settingRepo := newStubSettingRepo()
 	settingService := service.NewSettingService(settingRepo, cfg)
 
-	adminService := service.NewAdminService(userRepo, groupRepo, &accountRepo, proxyRepo, apiKeyRepo, redeemRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	adminService := service.NewAdminService(userRepo, groupRepo, &accountRepo, proxyRepo, apiKeyRepo, redeemRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	authHandler := handler.NewAuthHandler(cfg, nil, userService, settingService, nil, redeemService, nil, nil)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	usageHandler := handler.NewUsageHandler(usageService, apiKeyService, nil, nil)
@@ -1834,6 +1843,14 @@ func (s *stubAccountRepo) BindGroups(ctx context.Context, accountID int64, group
 	return errors.New("not implemented")
 }
 
+func (s *stubAccountRepo) BulkBindGroups(ctx context.Context, accountIDs []int64, groupIDs []int64, mode service.AccountGroupBindMode) error {
+	return errors.New("not implemented")
+}
+
+func (s *stubAccountRepo) ListIDsWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string, limit int) (*service.AccountIDList, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (s *stubAccountRepo) ListSchedulable(ctx context.Context) ([]service.Account, error) {
 	return nil, errors.New("not implemented")
 }
@@ -1914,7 +1931,7 @@ func (s *stubAccountRepo) IncrementQuotaUsed(ctx context.Context, id int64, amou
 	return errors.New("not implemented")
 }
 
-func (s *stubAccountRepo) ResetQuotaUsed(ctx context.Context, id int64) error {
+func (s *stubAccountRepo) ResetQuotaUsedAndClearRateLimitCooldown(ctx context.Context, id int64) error {
 	return errors.New("not implemented")
 }
 
@@ -2110,6 +2127,10 @@ func (stubUserSubscriptionRepo) GetLatestActiveStatusByUserID(ctx context.Contex
 }
 
 func (stubUserSubscriptionRepo) GetLatestActiveStatusForUpdate(ctx context.Context, userID int64) (*service.UserSubscription, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (stubUserSubscriptionRepo) GetByIDForUpdate(context.Context, int64) (*service.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }
 

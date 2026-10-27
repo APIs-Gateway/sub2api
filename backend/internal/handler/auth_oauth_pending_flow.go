@@ -1757,6 +1757,14 @@ func (h *AuthHandler) createPendingOAuthAccount(c *gin.Context, provider string)
 		response.ErrorFrom(c, err)
 		return
 	}
+	if err := h.ensureGitHubAccountOldEnough(
+		c.Request.Context(),
+		session.ProviderType,
+		pendingSessionStringValue(session.UpstreamIdentityClaims, githubCreatedAtClaimKey),
+	); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	tokenPair, user, err := h.authService.RegisterOAuthEmailAccount(
 		c.Request.Context(),

@@ -16,12 +16,29 @@ func defaultOpenAIAdvancedSchedulerWeightUpstreamCost(cfg *config.Config) float6
 	return cfg.Gateway.OpenAIWS.SchedulerScoreWeights.UpstreamCost
 }
 
-func parseOpenAIOAuthSchedulingRateMultiplier(raw string) float64 {
+// parseOpenAIOAuthSchedulingRateMultiplier resolves the OAuth scheduling
+// reference rate from stored settings. An absent key keeps the legacy default;
+// an explicitly cleared (empty) or invalid value returns nil so OAuth accounts
+// fall back to their own account rates.
+func parseOpenAIOAuthSchedulingRateMultiplier(settings map[string]string) *float64 {
+	raw, exists := settings[SettingKeyOpenAIOAuthSchedulingRateMultiplier]
+	if !exists {
+		value := defaultOpenAIOAuthSchedulingRateMultiplier
+		return &value
+	}
 	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 	if err != nil || value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-		return defaultOpenAIOAuthSchedulingRateMultiplier
+		return nil
 	}
-	return value
+	return &value
+}
+
+func cloneFloat64Ptr(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
 }
 
 func parseNonNegativeFiniteSchedulerWeight(raw string) (float64, error) {

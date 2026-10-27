@@ -125,6 +125,12 @@ func (m *mockAccountRepoForPlatform) AutoPauseExpiredAccounts(ctx context.Contex
 func (m *mockAccountRepoForPlatform) BindGroups(ctx context.Context, accountID int64, groupIDs []int64) error {
 	return nil
 }
+func (m *mockAccountRepoForPlatform) BulkBindGroups(ctx context.Context, accountIDs []int64, groupIDs []int64, mode AccountGroupBindMode) error {
+	return nil
+}
+func (m *mockAccountRepoForPlatform) ListIDsWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string, limit int) (*AccountIDList, error) {
+	return &AccountIDList{}, nil
+}
 func (m *mockAccountRepoForPlatform) ListSchedulable(ctx context.Context) ([]Account, error) {
 	return nil, nil
 }
@@ -194,7 +200,7 @@ func (m *mockAccountRepoForPlatform) IncrementQuotaUsed(ctx context.Context, id 
 	return nil
 }
 
-func (m *mockAccountRepoForPlatform) ResetQuotaUsed(ctx context.Context, id int64) error {
+func (m *mockAccountRepoForPlatform) ResetQuotaUsedAndClearRateLimitCooldown(ctx context.Context, id int64) error {
 	return nil
 }
 
@@ -3246,8 +3252,8 @@ func TestGatewayService_GroupResolution_ReusesContextGroup(t *testing.T) {
 	account, err := svc.SelectAccountForModelWithExclusions(ctx, &groupID, "", "claude-3-5-sonnet-20241022", nil)
 	require.NoError(t, err)
 	require.NotNil(t, account)
-	require.Equal(t, 1, groupRepo.getByIDCalls) // +1 for require_privacy_set check
-	require.Equal(t, 0, groupRepo.getByIDLiteCalls)
+	require.Equal(t, 0, groupRepo.getByIDCalls)
+	require.Equal(t, 1, groupRepo.getByIDLiteCalls) // require_privacy_set，不走账号计数聚合
 }
 
 func TestGatewayService_GroupResolution_IgnoresInvalidContextGroup(t *testing.T) {
@@ -3289,8 +3295,8 @@ func TestGatewayService_GroupResolution_IgnoresInvalidContextGroup(t *testing.T)
 	account, err := svc.SelectAccountForModelWithExclusions(ctx, &groupID, "", "claude-3-5-sonnet-20241022", nil)
 	require.NoError(t, err)
 	require.NotNil(t, account)
-	require.Equal(t, 1, groupRepo.getByIDCalls) // +1 for require_privacy_set check
-	require.Equal(t, 1, groupRepo.getByIDLiteCalls)
+	require.Equal(t, 0, groupRepo.getByIDCalls)
+	require.Equal(t, 2, groupRepo.getByIDLiteCalls) // 分组解析 + require_privacy_set
 }
 
 func TestGatewayService_GroupContext_OverwritesInvalidContextGroup(t *testing.T) {
@@ -3359,8 +3365,8 @@ func TestGatewayService_GroupResolution_FallbackUsesLiteOnce(t *testing.T) {
 	account, err := svc.SelectAccountForModelWithExclusions(ctx, &groupID, "", "claude-3-5-sonnet-20241022", nil)
 	require.NoError(t, err)
 	require.NotNil(t, account)
-	require.Equal(t, 1, groupRepo.getByIDCalls) // +1 for require_privacy_set check
-	require.Equal(t, 1, groupRepo.getByIDLiteCalls)
+	require.Equal(t, 0, groupRepo.getByIDCalls)
+	require.Equal(t, 2, groupRepo.getByIDLiteCalls) // fallback 解析 + require_privacy_set
 }
 
 func TestGatewayService_ResolveGatewayGroup_DetectsFallbackCycle(t *testing.T) {
@@ -3399,4 +3405,12 @@ func TestGatewayService_ResolveGatewayGroup_DetectsFallbackCycle(t *testing.T) {
 	require.Nil(t, gotGroup)
 	require.Nil(t, gotID)
 	require.Contains(t, err.Error(), "fallback group cycle")
+}
+
+func (c *mockGatewayCacheForPlatform) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (c *mockGatewayCacheForPlatform) GetReasoningContent(_ context.Context, _ string) (string, error) {
+	return "", ErrReasoningContentNotFound
 }

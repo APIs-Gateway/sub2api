@@ -364,7 +364,9 @@
               </button>
               <button
                 @click="handleDelete(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                :disabled="!canDeleteGroup(row)"
+                :title="deleteBlockReason(row) ?? undefined"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-500 dark:disabled:hover:bg-transparent dark:disabled:hover:text-gray-500"
               >
                 <Icon name="trash" size="sm" />
                 <span class="text-xs">{{ t("common.delete") }}</span>
@@ -698,10 +700,10 @@
           <div class="mb-3 flex items-center justify-between gap-3">
             <div>
               <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                {{ t("admin.groups.modelsList.title") }}
+                {{ t("admin.groups.modelsList.title", { endpoint: modelsListEndpoint(createForm.platform) }) }}
               </label>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t("admin.groups.modelsList.hint") }}
+                {{ t("admin.groups.modelsList.hint", { endpoint: modelsListEndpoint(createForm.platform) }) }}
               </p>
             </div>
             <button
@@ -1106,24 +1108,6 @@
               {{ t("admin.groups.claudeCode.fallbackHint") }}
             </p>
           </div>
-        </div>
-
-        <!-- 稳定优先兜底分组（仅 openai 平台） -->
-        <div
-          v-if="createForm.platform === 'openai'"
-          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
-        >
-          <label class="input-label">{{
-            t("admin.groups.stablePriority.fallbackGroup")
-          }}</label>
-          <Select
-            v-model="createForm.stable_priority_fallback_group_id"
-            :options="stablePriorityFallbackOptions"
-            :placeholder="t('admin.groups.stablePriority.noFallback')"
-          />
-          <p class="input-hint">
-            {{ t("admin.groups.stablePriority.fallbackHint") }}
-          </p>
         </div>
 
         <!-- OpenAI-compatible Messages 调度配置（OpenAI/Grok） -->
@@ -2004,10 +1988,10 @@
           <div class="mb-3 flex items-center justify-between gap-3">
             <div>
               <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                {{ t("admin.groups.modelsList.title") }}
+                {{ t("admin.groups.modelsList.title", { endpoint: modelsListEndpoint(editForm.platform) }) }}
               </label>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t("admin.groups.modelsList.hint") }}
+                {{ t("admin.groups.modelsList.hint", { endpoint: modelsListEndpoint(editForm.platform) }) }}
               </p>
             </div>
             <button
@@ -2408,24 +2392,6 @@
               {{ t("admin.groups.claudeCode.fallbackHint") }}
             </p>
           </div>
-        </div>
-
-        <!-- 稳定优先兜底分组（仅 openai 平台） -->
-        <div
-          v-if="editForm.platform === 'openai'"
-          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
-        >
-          <label class="input-label">{{
-            t("admin.groups.stablePriority.fallbackGroup")
-          }}</label>
-          <Select
-            v-model="editForm.stable_priority_fallback_group_id"
-            :options="stablePriorityFallbackOptionsForEdit"
-            :placeholder="t('admin.groups.stablePriority.noFallback')"
-          />
-          <p class="input-hint">
-            {{ t("admin.groups.stablePriority.fallbackHint") }}
-          </p>
         </div>
 
         <!-- OpenAI-compatible Messages 调度配置（OpenAI/Grok） -->
@@ -3281,36 +3247,6 @@ const fallbackGroupOptionsForEdit = computed(() => {
   return options;
 });
 
-// 稳定优先兜底分组选项（创建时）- 仅包含 openai 平台的 active 分组
-const stablePriorityFallbackOptions = computed(() => {
-  const options: { value: number | null; label: string }[] = [
-    { value: null, label: t("admin.groups.stablePriority.noFallback") },
-  ];
-  groups.value
-    .filter((g) => g.platform === "openai" && g.status === "active")
-    .forEach((g) => {
-      options.push({ value: g.id, label: g.name });
-    });
-  return options;
-});
-
-// 稳定优先兜底分组选项（编辑时）- 排除自身
-const stablePriorityFallbackOptionsForEdit = computed(() => {
-  const options: { value: number | null; label: string }[] = [
-    { value: null, label: t("admin.groups.stablePriority.noFallback") },
-  ];
-  const currentId = editingGroup.value?.id;
-  groups.value
-    .filter(
-      (g) =>
-        g.platform === "openai" && g.status === "active" && g.id !== currentId,
-    )
-    .forEach((g) => {
-      options.push({ value: g.id, label: g.name });
-    });
-  return options;
-});
-
 // 无效请求兜底分组选项（创建时）- 仅包含 anthropic 平台、非订阅且未配置兜底的分组
 const invalidRequestFallbackOptions = computed(() => {
   const options: { value: number | null; label: string }[] = [
@@ -3431,6 +3367,8 @@ const createMessagesDispatchDefaults = createDefaultMessagesDispatchFormState();
 const editMessagesDispatchDefaults = createDefaultMessagesDispatchFormState();
 const createModelsListState = reactive(createInitialModelsListState());
 const editModelsListState = reactive(createInitialModelsListState());
+const modelsListEndpoint = (platform: string) =>
+  platform === "gemini" ? "/v1beta/models" : "/v1/models";
 const createModelsListLoading = ref(false);
 const editModelsListLoading = ref(false);
 const modelsListCandidatesTracker = createModelsListCandidatesTracker();
@@ -3462,8 +3400,6 @@ const createForm = reactive({
   claude_code_only: false,
   fallback_group_id: null as number | null,
   fallback_group_id_on_invalid_request: null as number | null,
-  // 稳定优先下一档兜底目标分组（仅 openai 平台使用）
-  stable_priority_fallback_group_id: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   allow_messages_dispatch: false,
   opus_mapped_model: createMessagesDispatchDefaults.opus_mapped_model,
@@ -3795,8 +3731,6 @@ const editForm = reactive({
   claude_code_only: false,
   fallback_group_id: null as number | null,
   fallback_group_id_on_invalid_request: null as number | null,
-  // 稳定优先下一档兜底目标分组（仅 openai 平台使用）
-  stable_priority_fallback_group_id: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   allow_messages_dispatch: false,
   default_mapped_model: '',
@@ -3875,15 +3809,10 @@ const editImageFinalPricePreview = computed(() =>
   buildImageFinalPricePreview(editForm),
 );
 
-// 根据分组类型返回不同的删除确认消息
+// 删除确认文案：订阅卡不随分组删除，也不区分分组类型，所有分组共用同一条。
 const deleteConfirmMessage = computed(() => {
   if (!deletingGroup.value) {
     return "";
-  }
-  if (deletingGroup.value.subscription_type === "subscription") {
-    return t("admin.groups.deleteConfirmSubscription", {
-      name: deletingGroup.value.name,
-    });
   }
   return t("admin.groups.deleteConfirm", { name: deletingGroup.value.name });
 });
@@ -4067,7 +3996,6 @@ const closeCreateModal = () => {
   createForm.claude_code_only = false;
   createForm.fallback_group_id = null;
   createForm.fallback_group_id_on_invalid_request = null;
-  createForm.stable_priority_fallback_group_id = null;
   resetMessagesDispatchFormState(createForm, createForm.platform);
   createForm.require_oauth_only = false;
   createForm.require_privacy_set = false;
@@ -4164,7 +4092,7 @@ const handleCreateGroup = async () => {
     }
   } catch (error: any) {
     appStore.showError(
-      error.response?.data?.detail || t("admin.groups.failedToCreate"),
+      extractApiErrorMessage(error, t("admin.groups.failedToCreate")),
     );
     console.error("Error creating group:", error);
     // Don't advance tour on error
@@ -4195,8 +4123,6 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.fallback_group_id = group.fallback_group_id;
   editForm.fallback_group_id_on_invalid_request =
     group.fallback_group_id_on_invalid_request;
-  editForm.stable_priority_fallback_group_id =
-    group.stable_priority_fallback_group_id ?? null;
   const messagesDispatchFormState = messagesDispatchConfigToFormState(
     group.messages_dispatch_model_config,
     group.platform,
@@ -4288,10 +4214,6 @@ const handleUpdateGroup = async () => {
         editForm.fallback_group_id_on_invalid_request === null
           ? 0
           : editForm.fallback_group_id_on_invalid_request,
-      stable_priority_fallback_group_id:
-        editForm.stable_priority_fallback_group_id === null
-          ? 0
-          : editForm.stable_priority_fallback_group_id,
       model_routing: convertRoutingRulesToApiFormat(
         editModelRoutingRules.value,
       ),
@@ -4325,7 +4247,7 @@ const handleUpdateGroup = async () => {
     loadGroups();
   } catch (error: any) {
     appStore.showError(
-      error.response?.data?.detail || t("admin.groups.failedToUpdate"),
+      extractApiErrorMessage(error, t("admin.groups.failedToUpdate")),
     );
     console.error("Error updating group:", error);
   } finally {
@@ -4367,7 +4289,19 @@ const handleRPMOverrides = (group: AdminGroup) => {
   showRPMOverridesModal.value = true;
 };
 
+const canDeleteGroup = (group: AdminGroup): boolean => {
+  return deleteBlockReason(group) === null;
+};
+
+const deleteBlockReason = (group: AdminGroup): string | null => {
+  if (group.status !== 'inactive') {
+    return t('admin.groups.deleteBlockedNotInactive');
+  }
+  return null;
+};
+
 const handleDelete = (group: AdminGroup) => {
+  if (!canDeleteGroup(group)) return;
   deletingGroup.value = group;
   showDeleteDialog.value = true;
 };
@@ -4382,9 +4316,19 @@ const confirmDelete = async () => {
     deletingGroup.value = null;
     loadGroups();
   } catch (error: any) {
-    appStore.showError(
-      error.response?.data?.detail || t("admin.groups.failedToDelete"),
-    );
+    const reason = error.response?.data?.reason as string | undefined;
+    const metadata = error.response?.data?.metadata as Record<string, string> | undefined;
+    let msg: string;
+    if (reason === 'GROUP_DELETE_NOT_INACTIVE') {
+      msg = t('admin.groups.deleteBlockedNotInactive');
+    } else if (reason === 'GROUP_DELETE_HAS_KEYS') {
+      msg = t('admin.groups.deleteBlockedHasKeys', { count: metadata?.key_count ?? '?' });
+    } else if (reason === 'GROUP_DELETE_HAS_PLANS') {
+      msg = t('admin.groups.deleteBlockedHasPlans', { count: metadata?.plan_count ?? '?' });
+    } else {
+      msg = error.response?.data?.message || t("admin.groups.failedToDelete");
+    }
+    appStore.showError(msg);
     console.error("Error deleting group:", error);
   }
 };
@@ -4402,7 +4346,7 @@ watch(
 
 watch(
   () => createForm.platform,
-  (newVal) => {
+  (newVal, oldVal) => {
     if (!["anthropic", "antigravity"].includes(newVal)) {
       createForm.fallback_group_id_on_invalid_request = null;
     }
@@ -4410,6 +4354,14 @@ watch(
       resetMessagesDispatchFormState(createForm, newVal);
     } else if (newVal === "grok") {
       resetMessagesDispatchFormState(createForm, newVal);
+    } else if (oldVal === "grok") {
+      // Only defaults introduced by selecting Grok follow the platform back.
+      // Keep explicitly entered family values and exact-model mappings.
+      const grokDefaults = createDefaultMessagesDispatchFormState("grok");
+      const openaiDefaults = createDefaultMessagesDispatchFormState("openai");
+      for (const field of ["opus_mapped_model", "sonnet_mapped_model", "haiku_mapped_model"] as const) {
+        if (createForm[field] === grokDefaults[field]) createForm[field] = openaiDefaults[field];
+      }
     }
     if (!["openai", "antigravity", "anthropic", "gemini"].includes(newVal)) {
       createForm.require_oauth_only = false;

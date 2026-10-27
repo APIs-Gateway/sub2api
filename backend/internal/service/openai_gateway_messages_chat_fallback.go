@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
@@ -47,6 +48,15 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 
 	billingModel := resolveOpenAIForwardModel(account, anthropicReq.Model, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	if err := validateGPT61SolCompatRequest(body, upstreamModel); err != nil {
+		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
+	}
+	if openai.IsGPT61SolModelSpelling(upstreamModel) && len(anthropicReq.Tools) > 0 {
+		err := errGPT61SolChatOnlyTools()
+		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
+	}
 	directBridge := shouldUseDirectAnthropicChatBridge(account)
 
 	var chatReq *apicompat.ChatCompletionsRequest
@@ -90,18 +100,16 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	// sees; prefer it when it finds something, and fall back to the bridge's own
 	// chatReq.ReasoningEffort (always populated, defaults to "medium") otherwise.
 	baseEffort := chatReq.ReasoningEffort
-	if extracted := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel); extracted != nil {
-		baseEffort = *extracted
+	// Explicitly disabled thinking wins over fork-only raw effort metadata too,
+	// so the usage result describes the effort actually sent upstream.
+	if baseEffort != "none" {
+		if extracted := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel); extracted != nil {
+			baseEffort = *extracted
+		}
 	}
 	convertedEffort := openAICompatAnthropicReasoningEffort(&anthropicReq, upstreamModel, baseEffort)
 	reasoningEffort := &convertedEffort
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
-	var serviceTier *string
-	if chatReq.ServiceTier != "" {
-		st := chatReq.ServiceTier
-		serviceTier = &st
-	}
-
 	chatBody, err := json.Marshal(chatReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat completions request: %w", err)
@@ -119,9 +127,6 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 		return nil, policyErr
 	}
 	chatBody = updatedBody
-	if serviceTier == nil {
-		serviceTier = extractOpenAIServiceTierFromBody(chatBody)
-	}
 
 	logger.L().Debug("openai messages: forwarding via raw chat completions",
 		zap.Int64("account_id", account.ID),
@@ -144,6 +149,8 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 		return nil, fmt.Errorf("invalid base_url: %w", err)
 	}
 	targetURL := buildOpenAIChatCompletionsURL(validatedURL)
+	chatBody = ensureDeepSeekChatReasoningPlaceholders(targetURL, chatBody)
+	serviceTier := extractOpenAIServiceTierFromBody(chatBody)
 
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(chatBody))
@@ -190,7 +197,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-		shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
+		shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody)
 		var tempUnscheduled bool
 		shouldFailover, tempUnscheduled = s.openAIPromoteTempUnscheduleFailover(ctx, c, account, resp.StatusCode, respBody, shouldFailover, upstreamModel)
 		if shouldFailover {
@@ -216,11 +223,11 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 			if !tempUnscheduled {
 				shouldDisable = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
 			}
-			return nil, &UpstreamFailoverError{
+			return nil, applyOpenAIPoolAvailabilityFailover(account, applyOpenAIRequestScopedCapacityFailover(account, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
 				RetryableOnSameAccount: openAIRetryableOnSameAccount(resp.StatusCode, upstreamMsg, respBody, !shouldDisable && account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody))),
-			}
+			}, upstreamMsg, respBody), respBody)
 		}
 		return s.handleAnthropicErrorResponse(resp, c, account, billingModel)
 	}
@@ -280,7 +287,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsAnthropic(
 	// 上游模型不一致拦截：整包尚未写回客户端，直接按 failover 切号。
 	if got := extractUpstreamResponseModel(respBody); got != "" {
 		if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
-			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage); ferr != nil {
+			sentModelForCheck(upstreamModel, originalModel), got, false, true, usage, originalModel); ferr != nil {
 			return nil, ferr
 		}
 	}
@@ -346,6 +353,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawDone := false
+	var terminal openAIRawStreamTerminalState
 	// 上游模型不一致只在首个带 model 的 chunk 上比对一次。
 	upstreamModelChecked := false
 
@@ -367,6 +375,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			continue
 		}
 		if payload == "[DONE]" {
+			terminal.ObserveDataLine(payload)
 			sawDone = true
 			break
 		}
@@ -381,7 +390,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			if got := extractUpstreamResponseModel([]byte(payload)); got != "" {
 				upstreamModelChecked = true
 				if ferr := s.checkUpstreamModelMismatch(c, account, requestID, resp.Header,
-					sentModelForCheck(upstreamModel, originalModel), got, true, !headersWritten, usage); ferr != nil {
+					sentModelForCheck(upstreamModel, originalModel), got, true, !headersWritten, usage, originalModel); ferr != nil {
 					return nil, ferr
 				}
 			}
@@ -395,6 +404,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			)
 			continue
 		}
+		// Only a successfully decoded provider chunk can certify completion.
+		// gjson alone can extract terminal fields from malformed JSON.
+		terminal.ObserveDataLine(payload)
 		if firstTokenMs == nil && !isOpenAIChatUsageOnlyStreamChunk(payload) && chatChunkStartsResponsesOutput(&chunk) {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
@@ -447,6 +459,31 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			FirstTokenMs:     firstTokenMs,
 			ClientDisconnect: clientDisconnected,
 		}, fmt.Errorf("stream usage incomplete: %w", err)
+	}
+	// Neither bridge may synthesize message_stop from unmarked EOF. No usage
+	// object in a valid decoded chunk was received, so nil preserves unknown
+	// funding instead of pricing
+	// a fabricated zero result. This ordinary error must not replay the attempt.
+	if !terminal.Terminated() {
+		if !clientDisconnected && c.Request.Context().Err() == nil {
+			writeStreamHeaders()
+			if _, err := fmt.Fprint(c.Writer, buildAnthropicStreamErrorSSE("api_error", "Upstream Chat Completions stream ended before completion")); err == nil {
+				c.Writer.Flush()
+			}
+		}
+		return nil, fmt.Errorf("stream usage incomplete: missing Chat Completions terminal signal")
+	}
+
+	if !directBridge {
+		if err := ccState.ValidateToolCallArguments(); err != nil {
+			return &OpenAIForwardResult{
+				RequestID: requestID, Usage: usage, Model: originalModel,
+				BillingModel: billingModel, UpstreamModel: upstreamModel,
+				ReasoningEffort: reasoningEffort, ServiceTier: serviceTier,
+				Stream: true, Duration: time.Since(startTime),
+				FirstTokenMs: firstTokenMs, ClientDisconnect: clientDisconnected,
+			}, fmt.Errorf("invalid tool call arguments from upstream: %w", err)
+		}
 	}
 
 	var finalEvents []apicompat.AnthropicStreamEvent

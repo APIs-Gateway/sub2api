@@ -91,7 +91,7 @@ func TestUpdateGroupWithoutChannelCacheInvalidator(t *testing.T) {
 func TestAttachChannelCacheInvalidator(t *testing.T) {
 	spy := &channelCacheInvalidatorSpy{}
 	svc := NewAdminService(
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	AttachChannelCacheInvalidator(svc, spy)
 
@@ -107,7 +107,7 @@ func TestAttachChannelCacheInvalidator(t *testing.T) {
 // 必须保持 nil，不能意外拿到非 nil 默认值。
 func TestNewAdminServiceLeavesChannelCacheInvalidatorNilByDefault(t *testing.T) {
 	svc := NewAdminService(
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 
 	impl, ok := svc.(*adminServiceImpl)

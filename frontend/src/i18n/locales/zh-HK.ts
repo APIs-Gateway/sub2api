@@ -12,100 +12,11 @@
     goToDashboard: '進入控制台',
     // Hero 主標題與描述（Anthropic 極簡風，OpenAI 定位）
     heroTitle: '強大的 AI 能力，觸手可及',
-    heroDesc: '穩定、快速、按量計費的大模型 API 服務。註冊即可獲取金鑰，立即開始調用。',
-    // 舊字段保留兼容
-    heroSubtitle: '一個金鑰，暢用強大的 AI 模型',
-    heroDescription: '穩定、快速、按量計費的大模型 API 服務',
-    tags: {
-      subscriptionToApi: '極速穩定',
-      stickySession: '會話保持',
-      realtimeBilling: '按量計費'
-    },
-    // 用戶痛點區塊
-    painPoints: {
-      title: '你是否也遇到這些問題？',
-      items: {
-        expensive: {
-          title: '訂閱費用高',
-          desc: '每個 AI 服務都要單獨訂閱，每月支出越來越多'
-        },
-        complex: {
-          title: '多帳號難管理',
-          desc: '不同平台的帳號、金鑰分散各處，管理起來很麻煩'
-        },
-        unstable: {
-          title: '服務不穩定',
-          desc: '單一帳號容易觸發限制，影響正常使用'
-        },
-        noControl: {
-          title: '用量無法控制',
-          desc: '不知道錢花在哪了，也無法限制團隊成員的使用'
-        }
-      }
-    },
-    // 解決方案區塊
-    solutions: {
-      title: '我們幫你解決',
-      subtitle: '簡單三步，開始省心使用 AI'
-    },
-    features: {
-      unifiedGateway: '極速穩定',
-      unifiedGatewayDesc: '高可用架構與智能調度，低延遲、高成功率，穩定可靠。',
-      multiAccount: '簡單接入',
-      multiAccountDesc: '兼容主流 OpenAI SDK，獲取一個金鑰即可開始調用。',
-      balanceQuota: '按量計費',
-      balanceQuotaDesc: '用多少付多少，實時查看用量與額度，清晰可控。'
-    },
-    // 優勢對比
-    comparison: {
-      title: '為什么選擇我們？',
-      headers: {
-        feature: '對比項',
-        official: '官方訂閱',
-        us: '本平台'
-      },
-      items: {
-        pricing: {
-          feature: '付費方式',
-          official: '固定月費，用不完也付',
-          us: '按量付費，用多少付多少'
-        },
-        models: {
-          feature: '模型選擇',
-          official: '單一服務商',
-          us: '多模型隨意切換'
-        },
-        management: {
-          feature: '帳號管理',
-          official: '每個服務單獨管理',
-          us: '統一金鑰，一站管理'
-        },
-        stability: {
-          feature: '服務穩定性',
-          official: '單帳號易觸發限制',
-          us: '多帳號池，自動切換'
-        },
-        control: {
-          feature: '用量控制',
-          official: '無法限制',
-          us: '可設配額、查明細'
-        }
-      }
-    },
-    providers: {
-      title: '支持的模型',
-      description: '基於 OpenAI 模型構建',
-      supported: '可用',
-      soon: '即將推出',
-      claude: 'Claude',
-      gemini: 'Gemini',
-      antigravity: 'Antigravity',
-      more: '更多'
-    },
+    heroDesc: '穩定、快速的大模型 API 服務。註冊後創建金鑰即可接入。',
     // CTA 區塊
     cta: {
       title: '準備好開始了嗎？',
-      description: '註冊即可獲得免費試用額度，體驗一站式 AI 服務',
+      description: '創建金鑰後，訂閱或充值餘額即可開始調用。',
       button: '免費註冊'
     },
     footer: {
@@ -113,36 +24,90 @@
     },
     // 落地頁營銷文案（原先寫死在 HomeView.vue 內，已收歸 i18n）
     marketing: {
-      eyebrow: '訂閱制 · 每日刷新額度 · 可透支',
+      eyebrow: '訂閱與餘額，兩種用法',
       endpointNote: '// OpenAI 兼容 · 一個金鑰即用',
-      valueTitle: '訂閱一次，每天都滿',
-      valueDesc: '不是預存餘額慢慢扣，而是訂閱制：額度每日自動刷新。平均每天約 ¥3.6（≈ $0.5），即可調用相當於官方 $2700 的用量。',
-      stat1Value: '$90 / 日',
-      stat1Label: '每日刷新額度',
-      stat2Value: '¥3.6 / 日',
-      stat2Label: '平均每日成本 ≈ $0.5',
-      stat3Value: '$2700 / 月',
-      stat3Label: '相當於官方用量',
+      valueTitle: '訂閱一次，額度每天刷新',
+      valueDesc: '訂閱和餘額可以搭配使用，也可以只用其中一種。',
       feature1Title: '極速穩定',
-      feature1Desc: '高可用網關與智能調度，低延遲、高成功率，穩定可靠。',
+      feature1Desc: '低延遲、高成功率，穩定可靠。',
       feature2Title: '簡單接入',
-      feature2Desc: '兼容主流 OpenAI / Anthropic 協議，獲取一個金鑰即可開始。',
+      feature2Desc: '兼容主流 OpenAI / Anthropic 協議，一個金鑰即可接入。',
       feature3Title: '透明可計量',
       feature3Desc: '每一次調用的耗時、Token 與費用都精確記錄，用量實時可視。',
       integrateTitle: '隨處接入',
       integrateDesc: '兼容主流協議，幾分鐘內接入你的 IDE 或 Agent；一個金鑰，多端通用。',
       clientAnySdk: '任意 OpenAI SDK',
-      compareTitle: '和傳統按量付費有甚麼不同',
-      paygTitle: '傳統按量付費',
-      paygPoint1: '餘額扣完即停，需要不斷充值',
-      paygPoint2: '高強度使用時賬單不可預期',
-      paygPoint3: '價格隨用量浮動，難以估算',
-      subTitle: '本平台（訂閱制）',
-      subPoint1: '額度每日刷新，用量重置不燒餘額',
-      subPoint2: '固定週期費用，成本清晰可預期',
-      subPoint3: '高可用網關 + 智能調度，穩定可靠',
-      overdraftTitle: '支持透支，臨時超額也不斷流',
-      overdraftDesc: '當日額度用超時可在透支額度內繼續調用，按「往後預支天數」計量，不會因為一次高強度使用就瞬間停擺——趕進度時尤其省心。'
+      compareTitle: '訂閱和餘額有甚麼不同',
+      subscriptionTitle: '訂閱',
+      subscriptionPoint1: '購買時選好每日額度和有效期',
+      subscriptionPoint2: '每日額度每天刷新，另有周封頂和月封頂',
+      subscriptionPoint3: '固定週期費用，成本清晰可預期',
+      balanceTitle: '餘額',
+      balancePoint1: '先充值，隨時可以再充值',
+      balancePoint2: '按實際用量扣費，用多少扣多少',
+      balancePoint3: '搭配訂閱時，訂閱額度用完後繼續扣餘額',
+      overdraftTitle: '當日額度用完，可以透支刷新',
+      overdraftDesc: '在「我的訂閱」點「透支刷新當日額度」，當日額度立即恢復，繼續使用。每個自然月最多 5 次，周封頂和月封頂仍然生效。'
+    }
+  },
+
+  // Docs Page
+  docs: {
+    title: '使用文件',
+    intro: '如何把你的工具接入 {site}。每一步都附有可直接複製的設定。',
+    contentNotice: '文件正文目前只有簡體中文版本。',
+    menu: '目錄',
+    tocTitle: '文件目錄',
+    onThisPage: '本頁內容',
+    copy: '複製',
+    copied: '已複製',
+    groups: {
+      start: '開始',
+      clients: '命令行工具',
+      editors: '編輯器與插件',
+      chat: '聊天與翻譯',
+      developers: '開發者',
+      reference: '參考'
+    },
+    connect: {
+      openai: 'OpenAI 相容地址',
+      anthropic: 'Anthropic 相容地址',
+      key: 'API 金鑰',
+      keyPlaceholder: 'sk-你的密鑰',
+      createKey: '前往建立金鑰',
+      endpointHint: '訪問慢時可以換用其他地址，金鑰通用。'
+    },
+    ai: {
+      iWant: '我要接入：',
+      sentenceNamed: '請按這份文件，幫我把 {tool} 接入 {site}：{url}',
+      tools: {
+        any: {
+          label: '任意工具',
+          sentence: '請按這份文件，幫我把正在用的工具接入 {site}：{url}'
+        },
+        chat: {
+          label: '聊天客戶端',
+          sentence: '請按這份文件，幫我把聊天客戶端接入 {site}：{url}'
+        },
+        code: {
+          label: '寫程式碼調用',
+          sentence: '請按這份文件，幫我在程式碼裡調用 {site}：{url}'
+        }
+      },
+      copySentence: '一鍵複製',
+      copyFull: '複製整份文件',
+      more: '更多方式',
+      hint: 'AI 打不開網頁？點「複製整份文件」，把全文直接貼給它。AI 工具也可以直接讀取 {url}。',
+      moreTitle: '完整提示詞',
+      moreDesc: '把接入地址和要求都寫在提示詞裡，AI 打不開連結時也能用。',
+      copyPrompt: '複製提示詞',
+      openChatgpt: '在 ChatGPT 中開啟',
+      openClaude: '在 Claude 中開啟'
+    },
+    models: {
+      open: '開啟價格與計費頁，查看可用模型',
+      loginHint: '登入後可以查看你能用的模型和價格。',
+      login: '前往登入'
     }
   },
 
@@ -290,6 +255,12 @@
 
   // Common
   common: {
+    apply: '應用',
+    clear: '清除',
+    creating: '創建中...',
+    required: '必填',
+    sending: '發送中...',
+    tryAgain: '請重試',
     loading: '加載中...',
     submitting: '提交中...',
     justNow: '剛剛',
@@ -445,6 +416,7 @@
     groups: '分組管理',
     channels: '渠道管理',
     availableChannels: '價格與計費',
+    usageDocs: '使用文件',
     subscriptions: '訂閱管理',
     accounts: '帳號管理',
     proxies: 'IP管理',
@@ -470,11 +442,23 @@
     paymentConfig: '支付配置',
     paymentPlans: '訂閱套餐',
     channelManagement: '渠道管理',
-    channelPricing: '價格配置',
+    channelPricing: '渠道定價',
+    pricingConfig: '價格配置',
+    pricingModels: '模型',
+    pricingMatrix: '開放與價格',
     channelMonitor: '渠道監控',
     channelStatus: '渠道狀態',
     riskControl: '風控中心',
     promptAudit: '提示詞審計',
+    topUp: '充值',
+    userId: '用戶 ID',
+    userIdCopied: '已複製用戶 ID',
+    balanceCard: {
+      subscription: '訂閱',
+      leftDaily: '今日剩餘',
+      leftWeekly: '本周剩餘',
+      leftMonthly: '本月剩餘',
+    },
   },
 
   // Auth
@@ -555,6 +539,7 @@
     reloginRequired: '會話已過期，請重新登入。',
     turnstileExpired: '驗證已過期，請重試',
     turnstileFailed: '驗證失敗，請重試',
+    captchaLoading: '正在載入驗證碼…',
     completeVerification: '請完成驗證',
     verifyYourEmail: '驗證您的郵箱',
     sessionExpired: '會話已過期',
@@ -821,9 +806,6 @@
     tokens: 'Token',
     actual: '實際',
     standard: '標準',
-    input: '輸入',
-    output: '輸出',
-    cache: '緩存',
     recentUsage: '最近使用',
     last7Days: '近 7 天',
     noUsageRecords: '暫無使用記錄',
@@ -835,7 +817,31 @@
     viewUsage: '查看使用記錄',
     checkDetailedLogs: '查看詳細的使用日志',
     redeemCode: '兌換碼',
-    addBalanceWithCode: '使用兌換碼充值'
+    addBalanceWithCode: '使用兌換碼充值',
+    topUp: '充值',
+    topUpDesc: '為帳戶餘額充值',
+    readDocs: '閱讀文件',
+    readDocsDesc: '查看接入指引與 API 參考',
+    copyAiPrompt: '複製接入說明給 AI',
+    copyAiPromptDesc: '貼給程式設計助手即可快速接入',
+    aiPromptCopied: '已複製',
+    aiPromptText: '我在使用一個 OpenAI 相容的 API，地址是 {baseUrl}，請用這個 base URL 和我提供的 API Key 幫我接入。',
+    apiEntry: {
+      title: 'API 接入',
+      altLabel: '備用線路',
+      copyFailed: '複製失敗，請手動選取文字後複製。',
+    },
+    needsAttention: {
+      title: '需要處理',
+      allGood: '當前無需處理',
+      lowBalance: '餘額即將不足',
+      lowBalanceDesc: '當前餘額 {balance}，低於提醒閾值',
+      topUp: '去充值',
+      keyNearLimit: '金鑰「{name}」已用 {pct}% 額度',
+      keyExhausted: '金鑰「{name}」已觸達消費上限',
+      keyQuotaDesc: '已用 {used} / 上限 {limit}',
+      manageKey: '處理金鑰',
+    },
   },
 
   // Groups (shared)
@@ -843,55 +849,284 @@
     subscription: '訂閱',
     rateMultiplierTip: '「Nx 倍率」是該分組相對官方價的扣額度速度：數字越大、池子越穩定，同樣的用量扣得也越多；它是系統扣費的系數，不是最終價格。疊加套餐折扣後你實際相當於官方價幾折，見分組描述。'
     ,
-    rateMultiplierLabel: '{rate}x 倍率'
+    rateMultiplierLabel: '{rate}x 倍率',
+    rateTipFiat: '倍率 {rate}x：官方價每 $1 的用量，實付 ¥{rate}。倍率越低越省。',
+    rateTipUsd: '倍率 {rate}x：官方價每 $1 的用量，扣 ${rate} 額度。倍率越低越省。',
+    planRatePrefix: '套餐低至',
+    planRateTip: '開通套餐後，同樣的用量最低按 {rate}x 扣費。',
+    yourPlanRateTip: '你的套餐當前按 {rate}x 扣費。'
   },
 
-  // 金鑰一鍵接入彈窗（原先寫死在 KeyOnboardingModal.vue 內，已收歸 i18n）
+  keyFallback: {
+    entry: "兜底設定",
+    drawer: {
+      title: "兜底設定",
+      intro: "主分組繁忙或不可用時，按順序改用下面的分組；請求由哪個分組處理，就按該分組的價格計費。",
+      close: "關閉",
+      retry: "重試",
+      loadFailed: "加載失敗，請重試",
+      emptyTitle: "還沒有可設定兜底的金鑰",
+      emptyHint: "先為金鑰選擇分組，再來設定兜底。",
+      noFallback: "未設定兜底",
+      fallbackCount: "{n} 個兜底分組",
+      expand: "展開 {name} 的兜底分組",
+      collapse: "收起 {name} 的兜底分組",
+    },
+    platforms: {
+      anthropic: "Anthropic",
+      openai: "OpenAI",
+      gemini: "Gemini",
+      antigravity: "Antigravity",
+      grok: "Grok",
+    },
+    editor: {
+      referenceModel: "參考模型 {model}，每百萬 Token 的價格",
+      orderHint: "靠前的先被使用",
+      primary: "主要",
+      primaryHint: "主分組，更換請在編輯金鑰時修改",
+      input: "輸入 {price}",
+      output: "輸出 {price}",
+      unpriced: "未定價",
+      status: {
+        active: "可用",
+        disabled: "已停用",
+        unavailable: "不可用",
+      },
+      reason: {
+        disabled: "該分組已停用，請求會跳過它，建議移除",
+        unavailable: "該分組已刪除，或你已無權使用，請求會跳過它，建議移除",
+        notUsable: "暫時無法使用，請求會跳過它，建議移除",
+        primary: "主分組已停用，請在編輯金鑰時更換",
+      },
+      add: "+ 添加兜底分組",
+      pickTitle: "選擇要添加的分組",
+      pickEmpty: "沒有更多可添加的分組",
+      limitReached: "最多添加 {max} 個兜底分組，請先移除一個",
+      remove: "移除 {name}",
+      removeUnusable: "移除",
+      dragHandle: "拖拽調整 {name} 的順序，也可以按上下方向鍵",
+      moveUp: "上移 {name}",
+      moveDown: "下移 {name}",
+      saving: "正在儲存…",
+      saved: "已儲存",
+      loadFailed: "加載失敗，請重試",
+      saveFailed: "儲存失敗，請稍後重試",
+    },
+    errors: {
+      FALLBACK_GROUP_DUPLICATE: "該分組已在兜底列表中",
+      FALLBACK_GROUP_IS_PRIMARY: "主分組不能再作為兜底分組",
+      FALLBACK_CHAIN_TOO_LONG: "兜底分組數量已達上限",
+      FALLBACK_GROUP_PLATFORM_MISMATCH: "兜底分組需與主分組屬於同一平台",
+      FALLBACK_GROUP_NOT_ALLOWED: "你沒有該分組的使用權限",
+      FALLBACK_GROUP_NOT_FOUND: "該分組不存在",
+      FALLBACK_GROUP_UNAVAILABLE: "該分組已停用",
+      FALLBACK_KEY_NOT_GROUPED: "請先為金鑰選擇分組",
+      FALLBACK_KEY_CHANGED: "金鑰剛剛被修改，請重新打開後再試",
+      FALLBACK_KEY_CHANGED_REFRESHED: "金鑰剛剛被修改，已為你刷新，請重試",
+      API_KEY_NOT_FOUND: "找不到這把金鑰，請刷新頁面後重試",
+      API_KEY_NOT_FOUND_REFRESHED: "找不到這把金鑰，已為你刷新，請重試",
+      FALLBACK_INVALID_REQUEST: "提交的內容有誤，請刷新頁面後重試",
+      FALLBACK_UNAVAILABLE: "兜底設定暫時無法使用，請稍後再試",
+    },
+    usage: {
+      groupColumn: "分組",
+      servedTag: "兜底",
+      servedTip: "本次請求由兜底分組處理，按兜底分組的價格計費",
+      sourceUser: "用戶兜底鏈",
+      sourceAdmin: "隱藏鏈",
+    },
+    admin: {
+      entry: "兜底（隱藏）",
+      title: "隱藏兜底鏈",
+      intro: "隱藏鏈對用戶不可見。頭部分組排在主分組之前，尾部分組排在用戶自己設定的兜底分組之後。",
+      primary: "主分組",
+      userItems: "用戶自己設定的兜底",
+      userItemsEmpty: "無",
+      head: "頭部分組",
+      tail: "尾部分組",
+      headEmpty: "未設定頭部分組",
+      tailEmpty: "未設定尾部分組",
+      addHead: "+ 添加頭部分組",
+      addTail: "+ 添加尾部分組",
+      pickGroup: "選擇分組",
+      noGroupToAdd: "沒有可添加的分組",
+      moveUp: "上移 {name}",
+      moveDown: "下移 {name}",
+      remove: "移除 {name}",
+      rateCompare: "頭部分組倍率 {head}x，主分組倍率 {primary}x（均不含該用戶的專屬倍率）",
+      rateWarn: "請求會先按頭部分組計費。用戶在編輯器和價格裡看到的仍是主分組，二者不一致是刻意的，請在備注裡寫明原因。",
+      note: "備注",
+      noteHint: "設定頭部分組時必填，至少 4 個字符，寫明為什麼這樣設定",
+      noteRequired: "請填寫備注，至少 4 個字符",
+      effective: "實際順序",
+      hopSource: {
+        admin_head: "頭部",
+        primary: "主分組",
+        user: "用戶兜底",
+        admin_tail: "尾部",
+      },
+      skipped: "已跳過：{reason}",
+      skipReason: {
+        group_missing: "分組已刪除",
+        group_inactive: "分組已停用",
+        invalid_platform: "與主分組平台不一致",
+        not_allowed: "用戶無權使用",
+        unknown: "不可用",
+      },
+      save: "儲存",
+      clear: "清空隱藏鏈",
+      clearConfirm: "確定清空這把金鑰的隱藏鏈嗎？",
+      saved: "隱藏鏈已儲存",
+      cleared: "隱藏鏈已清空",
+      loadFailed: "加載失敗，請重試",
+      saveFailed: "儲存失敗",
+      unknownGroup: "分組 #{id}",
+    },
+  },
+
+  // 金鑰接入彈窗：一鍵安裝 / 交給 AI / CC Switch / 手動設定
   keyOnboarding: {
-    title: '一鍵接入',
-    currentKey: '當前金鑰',
-    endpoint: 'API 端點',
+    title: '接入金鑰',
+    subtitle: '把「{name}」接入你的客戶端',
     copy: '複製',
     copied: '已複製',
-    intro: '推薦用 CC Switch 一鍵導入，自動完成各客戶端配置；也可手動配置或用腳本。',
-    recommended: '推薦',
-    envVars: '環境變量',
-    genericSdk: '通用 OpenAI SDK（任意兼容客戶端）',
-    methodScript: '一鍵腳本',
-    methodManual: '手動 / 排障',
-    ccsIntro: 'CC Switch 是客戶端配置管理器：點擊下方按鈕即可把本金鑰與端點一鍵導入，自動寫好配置，最省心。',
-    ccsSupports: '支持導入：',
-    ccsImport: '導入到 CC Switch',
-    ccsHint: '若未彈出 CC Switch，說明尚未安裝或未關聯協議；先安裝 CC Switch，或複製下方連結手動導入。',
-    ccsManualLink: '導入連結',
-    claudeIntro: 'Claude Code 是 Anthropic 官方命令行客戶端。配置好端點與金鑰後即可使用：',
-    claudeStep1: '把下面的環境變量寫入終端，或儲存到 ~/.claude/settings.json。',
-    claudeStep2: '重啟終端 / 客戶端，讓配置生效。',
-    claudeStep3: '在項目目錄運行 claude 開始對話。',
-    claudeHint: '提示：settings.json 方式無需每次設置環境變量；修改後需重啟客戶端。',
-    codexIntro: 'Codex CLI 推薦用 CC Switch 一鍵導入（見上面的「CC Switch」標籤）。若要手動配置，寫入 ~/.codex/config.toml 並設置金鑰環境變量：',
-    codexStep1: '把下面內容寫入 ~/.codex/config.toml（自定義模型供應商指向本端點）。',
-    codexStep2: '設置環境變量 OPENAI_API_KEY 為你的金鑰。',
-    codexStep3: '重啟終端後運行 codex 即可。',
-    scriptIntro: '複製下面這段腳本到終端執行，自動寫入本地配置（腳本完全可見、不聯網下載）。',
-    scriptHint: '執行後重啟客戶端即可。腳本僅寫入本地配置文件，可先通讀再運行。',
-    scriptCommentCodex: '寫入 Codex 配置 + 金鑰環境變量',
-    scriptDoneCodex: 'Codex 已配置，運行 codex 開始',
-    scriptDoneClaude: 'Claude Code 已配置完成，請重啟客戶端',
-    manualIntro: '以上方式都不行？用下面的原始值手動填寫客戶端配置，並對照排障清單。',
-    troubleshootTitle: '排障清單',
-    troubleshoot1: '確認 base_url 完整且無多餘斜杠，OpenAI 系客戶端通常需要帶 /v1。',
-    troubleshoot2: '確認金鑰完整複製（以 sk- 開頭），無空格或換行。',
-    troubleshoot3: '修改環境變量或配置文件後，需重啟客戶端使其生效。',
-    troubleshoot4: '檢查本地網絡 / 代理是否能訪問該端點。',
-    troubleshoot5: '確認客戶端為較新版本，舊版本可能不支持自定義端點。',
-    viewDocs: '查看文檔',
-    model: '推薦模型',
-    apiKeyFull: 'API 金鑰'
+    noGroup: '先為這個金鑰選擇分組，再來接入。',
+    endpointHint: '訪問慢時可以換用其他 API 端點，金鑰通用。',
+    tabs: {
+      install: '一鍵安裝',
+      ai: '交給 AI',
+      ccswitch: 'CC Switch',
+      manual: '手動設定'
+    },
+    install: {
+      tutorial: '查看教學',
+      modeFull: '完整安裝',
+      modeRefresh: '只更新設定',
+      copyTile: '複製指令：{client}，{label}',
+      codexModes: '完整安裝會先裝好 Codex CLI（需要 Node.js {min} 或更高版本）。已經裝過的話，選「只更新設定」。',
+      footnote: '點擊複製指令，貼到終端機執行，完成後重新啟動客戶端。腳本會寫入 {site} 地址和金鑰，並在修改前備份原設定。',
+      viewScript: '查看腳本內容',
+      scriptDone: '{client} 已設定完成，重新啟動後即可使用。',
+      script: {
+        pythonMissing: '更新設定檔需要 Python 3。',
+        xcodeMissing: '這部 Mac 還沒有命令列開發工具，請改用「CC Switch」或「手動設定」頁籤。',
+        backup: '已備份：{path}',
+        updated: '已更新：{path}',
+        failed: '失敗：{error}',
+        nodeMissing: '需要先安裝 Node.js {min} 或更高版本。到 nodejs.org 下載 LTS 版本，裝好後再執行一次。',
+        nodeTooOld: 'Node.js {version} 版本過低，需要 {min} 或更高版本。到 nodejs.org 下載 LTS 版本，裝好後再執行一次。',
+        npmMissing: '找不到 npm。npm 隨 Node.js 一起安裝，請重新安裝 Node.js（nodejs.org），再執行一次。',
+        npmInstalling: '正在用 npm 安裝 Codex CLI…',
+        npmPermission: 'npm 沒有權限全域安裝。請改用 nvm 之類的版本管理工具安裝 Node.js，或把 npm 的 prefix 設到你自己的目錄（npm config set prefix），再執行一次。',
+        npmFailed: 'Codex CLI 安裝失敗，請查看上面的錯誤訊息，處理後再執行一次。'
+      }
+    },
+    ai: {
+      intro: '選好要用的軟件，把下面這句話發給 AI 助手，它會帶着你設定。',
+      clientLabel: '客戶端',
+      clients: {
+        claude: 'Claude Code',
+        codex: 'Codex',
+        cursor: 'Cursor',
+        chat: '聊天客戶端',
+        code: '寫程式呼叫',
+        other: '其他'
+      },
+      copyDetail: '複製詳細版',
+      openChatgpt: '在 ChatGPT 中開啟',
+      openClaude: '在 Claude 中開啟',
+      keyNote: '這句話裏沒有你的金鑰，設定時請自己填寫。',
+      footnote: 'AI 會自己開啟連結讀文件。如果它打不開網頁，或者你想把這個金鑰能用的模型一起告訴它，請用「複製詳細版」。',
+      docCatalog: '給 AI 讀的文件目錄',
+      detailHint: '詳細版寫好了接入地址、要求和這個金鑰可用的模型。',
+      detailLoading: '正在讀取這個金鑰可用的模型…',
+      modelsRetry: '重試讀取模型',
+      detail: {
+        intro: '請幫我把 {tool} 接入 {site}（相容 OpenAI 和 Anthropic 格式的 API 服務）。',
+        introChat: '請幫我把聊天客戶端接入 {site}（相容 OpenAI 和 Anthropic 格式的 API 服務）。',
+        introCode: '請幫我在程式碼裏呼叫 {site}（相容 OpenAI 和 Anthropic 格式的 API 服務）。',
+        introOther: '請幫我把正在用的工具接入 {site}（相容 OpenAI 和 Anthropic 格式的 API 服務）。',
+        read: '請先閱讀：{docs}',
+        listSep: '、',
+        followDoc: '按文件裏的步驟一步步帶我設定。',
+        followChat: '先問我用的是哪一個聊天客戶端，再從文件目錄裏找到對應的那一節，按步驟帶我設定。',
+        followCode: '按文件裏的示例，一步步帶我把呼叫寫出來。',
+        followOther: '先問我用的是甚麼軟件，再從文件目錄裏找到對應的那一節，按步驟帶我設定。',
+        infoTitle: '接入資料：',
+        addrOpenai: '- OpenAI 相容 Base URL：{url}',
+        addrOpenaiAlt: '- OpenAI 相容 Base URL（Cursor、聊天客戶端等用）：{url}',
+        addrAnthropic: '- Anthropic 相容 Base URL（不帶 /v1）：{url}',
+        addrAnthropicClaude: '- Anthropic 相容 Base URL（不帶 /v1，Claude Code 用）：{url}',
+        addrGemini: '- Gemini 原生地址（Gemini CLI 用，不帶 /v1）：{url}',
+        addrAntigravity: '- 地址（不帶 /v1；Claude Code 和 Gemini CLI 都填這個）：{url}',
+        key: '- 金鑰：用 sk-你的金鑰 佔位，我會自己填，不要讓我把真實金鑰發給你。',
+        models: '- 這個金鑰可以呼叫的模型：{models}',
+        modelsPartial: '- 這個金鑰可以呼叫的模型（部分）：{models}',
+        modelsFull: '- 完整、最新的模型列表：用這個金鑰請求 GET {url} 查看，不要憑記憶填寫模型名稱。',
+        noteAntigravityBase: '- 文件裏所有寫着 {base} 的接入地址，設定時都換成 {url} 使用。',
+        noteAntigravityFormat: '- 這個地址只接受 Anthropic 和 Gemini 格式的請求，服務商類型或 SDK 請選這兩種，不要選 OpenAI。',
+        noteExampleModel: '- 文件示例裏的模型名稱（如 {example}）只是示例，請換成這個金鑰的分組裏有的模型。',
+        claudeKey: '- 金鑰變數用 ANTHROPIC_AUTH_TOKEN，不是 ANTHROPIC_API_KEY；電腦上殘留的 ANTHROPIC_API_KEY 要刪掉。',
+        claudeBetas: '- 如果返回 400，提示欄位不被接受，在 env 裏加 CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1，重新啟動後再試。',
+        codexConfig: '- config.toml 的 wire_api 用 responses，model_provider 和 model 要放在檔案最前面；改完要完全退出 Codex 再開啟，新建會話。',
+        cursorSettings: '- Override OpenAI Base URL 必須帶 /v1；自訂模型名稱要和模型列表一字不差，聊天面板裏要關掉 Auto。',
+        codeAnthropic: '- OpenAI SDK 用 OpenAI 相容 Base URL，Anthropic SDK 用 Anthropic 相容 Base URL（不帶 /v1）。',
+        codeGemini: '- OpenAI SDK 用 OpenAI 相容 Base URL，Gemini 官方 SDK 用 Gemini 原生地址（不帶 /v1）。',
+        requirements: '要求：',
+        req1File: '1. 要改的檔案路徑或設定項寫清楚。',
+        req1Code: '1. 金鑰從環境變數裏讀取，不要寫死在程式碼裏；給我可以直接執行的最小示例；回覆較長時開啟串流輸出（stream）。',
+        req2: '2. 需要我的系統、工具等資料時直接問我。',
+        req3: '3. 最後告訴我怎麼驗證是否成功；出錯時對照 {url} 排查。',
+        req4: '4. 如果你本身就是運行在我電腦上的程式設計助手，可以直接幫我修改設定檔，但動手前先告訴我要改哪些內容。'
+      }
+    },
+    ccs: {
+      title: '一鍵匯入 CC Switch',
+      intro: '選好客戶端和模型後，點「開啟 CC Switch」即可匯入。',
+      client: '客戶端',
+      name: '設定名稱',
+      modelMain: '主模型',
+      modelHaiku: 'Haiku 模型',
+      modelSonnet: 'Sonnet 模型',
+      modelOpus: 'Opus 模型',
+      modelDefault: '可選；留空時使用 CC Switch 預設模型',
+      modelsLoading: '載入可用模型中…',
+      noModels: '目前金鑰沒有可選的模型，也可以留空繼續匯入。',
+      modelsError: '模型列表讀取失敗，可以留空繼續匯入。',
+      modelsRetry: '重試',
+      codexWarning: 'Codex 設定會先以未啟用狀態匯入。請在 CC Switch 中手動啟用，並依提示重新啟動 Codex，避免新舊設定混用。',
+      switchNote: '確認匯入後會立即切換到這個設定，之後可以在 CC Switch 裡隨時切換。',
+      balanceNote: '餘額查詢已隨設定匯入，並每 {minutes} 分鐘自動刷新。',
+      open: '開啟 CC Switch',
+      copyLink: '複製匯入連結',
+      notInstalled: '點了沒反應？請先安裝 CC Switch，再點一次。',
+      download: '下載 CC Switch'
+    },
+    manual: {
+      address: '接入地址',
+      openaiAddress: 'OpenAI 相容地址',
+      envVars: '環境變數',
+      troubleshootTitle: '連不上時檢查',
+      troubleshoot1: '地址不要多帶斜線；OpenAI 相容的客戶端要用以 /v1 結尾的地址。',
+      troubleshoot2: '金鑰要完整複製，前後不能有空格或換行。',
+      troubleshoot3: '改完設定後重新啟動客戶端。',
+      troubleshoot4: '確認網絡或代理可以連到接入地址；客戶端版本太舊時先升級。',
+      viewDocs: '查看文件',
+      lineUsed: '下方程式碼使用此地址',
+      lineDefaultNote: '在客戶端裡填寫這個地址。',
+      lineAltNote: '預設地址訪問慢時，可以改用這個地址。',
+      codeLabel: '程式碼示例',
+      keyFilled: '金鑰已填入下方',
+      keyMissing: '沒有讀到完整金鑰，請把程式碼裡的 {placeholder} 換成你的金鑰。',
+      keyMasked: '沒有讀到完整金鑰，請把程式碼裡的 {placeholder} 換成你的金鑰（{masked}）。',
+      snippetsTitle: '寫進設定檔',
+      keepSafe: '請妥善保管金鑰，任何拿到它的人都能消耗你的餘額或套餐。'
+    }
   },
 
   // API Keys
   keys: {
+    grokSetupTemplates: 'Grok 設定模板',
     title: 'API 金鑰',
     description: '管理您的 API 金鑰和訪問令牌',
     searchPlaceholder: '搜索名稱或Key...',
@@ -929,9 +1164,8 @@
     selectGroup: '選擇分組',
     billing: {
       title: '計費怎么算？',
-      intro: '本站按量從餘額（USD）實時扣費。開通月套餐後，你會用很低的價格拿到一大筆「官方價額度」——例如 ¥39 得到 $2700 額度，模型按官方價計費。',
-      rate: '分組右側的「Nx 倍率」是這個池子相對官方價的扣額度速度：數字越大、池子越穩定，同樣的用量扣得也越多。它是系統扣費用的系數，不是你最終掏的錢。',
-      effective: '分組描述裡的「0.X 倍率」才是疊加套餐折扣後、你實際相當於官方價的幾折。例如「滿血 pro」是 6x 倍率，疊加套餐後約為官方價的 0.25。'
+      intro: '本站按量從餘額扣費。開通套餐後，用量會優先從套餐扣，同樣的用量更划算。',
+      rate: '分組右側的倍率越低越省：同樣的用量，倍率低的分組扣得更少。'
     },
     statusLabel: '狀態',
     selectStatus: '選擇狀態',
@@ -954,11 +1188,24 @@
     usage: '用量',
     today: '今日',
     total: '近30天',
-    quota: '額度',
     lastUsedAt: '上次使用時間',
     lastUsedIP: '最近使用 IP',
     useKey: '使用金鑰',
-    quickConnect: '一鍵接入',
+    connect: '接入',
+    createdTitle: '金鑰已創建',
+    createdHint: '之後仍可在列表中查看。',
+    goConnect: '去接入',
+    usedLabel: '累計已用',
+    unlimited: '不限額',
+    overview: {
+      address: '接入地址',
+      copy: '複製',
+      copied: '已複製',
+      enabled: '已啟用 {active} 個，共 {total} 個金鑰',
+      enabledList: '目前列表的 {shown} 個金鑰中已啟用 {active} 個',
+      spent: '近 30 天已用',
+      spentList: '目前列表金鑰近 30 天已用'
+    },
     useKeyModal: {
       title: '使用 API 金鑰',
       description: '將以下環境變量添加到您的終端配置文件或直接在終端中運行。',
@@ -980,6 +1227,7 @@
           '按 Win+R，輸入 %userprofile%\\.codex 打開配置目錄。如目錄不存在，請先手動創建。'
       },
       cliTabs: {
+        grokCli: 'Grok Build',
         claudeCode: 'Claude Code',
         geminiCli: 'Gemini CLI',
         codexCli: 'Codex CLI',
@@ -1002,6 +1250,7 @@
         note: '這些環境變量將在當前終端會話中生效。如需永久配置，請將其添加到 ~/.bashrc、~/.zshrc 或相應的配置文件中。'
       },
       grok: {
+        cmdSettingsOnly: '此位址請使用下方 settings.json 設定，不使用命令提示字元指令。',
         description: '配置 Grok Build、Claude Code、Codex 或 OpenCode，透過您的 Sub2API Grok 分組發送請求。',
         claudeDescription: '配置 Claude Code，透過您的 Sub2API Grok 分組發送 Messages API 請求。',
         codexDescription: '配置 Codex，透過您的 Sub2API Grok 分組發送 Responses API 請求。',
@@ -1047,26 +1296,23 @@
     quotaLimit: '額度限制',
     quotaAmount: '額度金額 (USD)',
     quotaAmountPlaceholder: '輸入 USD 額度限制',
+    quotaAmountPlaceholderFiat: '輸入人民幣金額上限',
+    limitEstimateHint: '按目前價格估算。',
     quotaAmountHint: '設定此金鑰可消費的最大金額。0 = 無限制。',
     quotaUsed: '已用額度',
     reset: '重置',
     resetQuotaUsed: '將已用額度重置為 0',
     resetQuotaTitle: '確認重置額度',
-    resetQuotaConfirmMessage: '確定要將金鑰 "{name}" 的已用額度（${used}）重置為 0 嗎？此操作不可撤銷。',
+    resetQuotaConfirmMessage: '確定要將金鑰 "{name}" 的已用額度（{used}）重置為 0 嗎？此操作不可撤銷。',
     quotaResetSuccess: '額度重置成功',
     failedToResetQuota: '重置額度失敗',
     rateLimitColumn: '速率限制',
     rateLimitSection: '速率限制',
     resetUsage: '重置',
-    rateLimit5h: '5小時限額 (USD)',
-    rateLimit1d: '日限額 (USD)',
-    rateLimit7d: '7天限額 (USD)',
+    rateLimit5h: '5小時限額 ({currency})',
+    rateLimit1d: '日限額 ({currency})',
+    rateLimit7d: '7天限額 ({currency})',
     rateLimitHint: '設定此金鑰在指定時間窗口內的最大消費額。0 = 無限制。',
-    stablePriority: {
-      label: '啟用穩定優先',
-      description: '開啟後，當你所用分組的渠道全部不可用時，請求會自動跨分組逐檔兜底到更穩定的高倍率分組；低倍率分組恢復穩定後自動切回。',
-      billingWarning: '注意：兜底期間將按實際服務的高倍率分組費率從你的餘額計費，費用可能高於原分組。',
-    },
     rateLimitUsage: '速率限制用量',
     resetRateLimitUsage: '重置速率限制用量',
     resetRateLimitTitle: '確認重置速率限制',
@@ -1114,7 +1360,8 @@
     balanceDeducted: '扣除餘額',
     subscriptionDeducted: '扣除套餐額度',
     yourSpend: '你的花費',
-    fiatTotalApprox: '按充值價估算',
+    spendFromBalance: '餘額',
+    spendFromPlan: '套餐',
     currencyFiat: '¥',
     currencyUsd: '$',
     currencySwitchLabel: '切換計價單位',
@@ -1244,6 +1491,7 @@
       degraded: '降級',
       failed: '失敗',
       error: '錯誤',
+      unavailable: '不可用',
       unknown: '-'
     },
     providers: {
@@ -1258,9 +1506,9 @@
     dialogLatency: '對話延遲',
     endpointPing: '端點 PING',
     history60pts: '近 {n} 次記錄',
-    nextUpdateIn: '{n}s 後刷新',
-    past: 'PAST',
-    now: 'NOW',
+    nextUpdateIn: '{n} 秒後刷新',
+    past: '過去',
+    now: '現在',
     maintenancePaused: '維護中 · 已暫停時間線采集',
     extraModelsCount: '+ {n} 模型',
     pollEvery: '{n}s 輪詢',
@@ -1287,9 +1535,9 @@
       '30d': '30 天'
     },
     overall: {
-      operational: 'OPERATIONAL',
-      degraded: 'DEGRADED',
-      unavailable: 'UNAVAILABLE'
+      operational: '正常',
+      degraded: '降級',
+      unavailable: '不可用'
     },
     columns: {
       name: '名稱',
@@ -1317,30 +1565,54 @@
   // Available Channels (user-facing)
   billingRules: {
     title: '計費規則',
-    intro: '本站按量計費，實時從你的餘額（USD）或套餐額度中扣除。',
-    formulaLabel: '實際扣費',
-    formula: '模型官方價 × 本次用量 × 分組倍率',
-    modelPriceHere: '模型官方價：與官方計價一致，見下方各模型（點模型名查看輸入 / 輸出 / 緩存單價）。',
-    modelPriceLink: '模型官方價：與官方計價一致，可在「價格與計費」頁查看每個模型的輸入 / 輸出 / 緩存單價。',
-    rate: '分組倍率（Nx）：你所選分組相對官方價的消耗倍數，數字越大、池子越穩定，同樣用量扣得也越多。',
-    plan: '月套餐：用很低的價格換一大筆「官方價額度」（例如 ¥39 得到 $2700 額度）；疊加套餐後你實際相當於官方價的「0.X」，即各分組描述裡標注的折扣。'
+    intro: '按實際用量計費，從餘額或套餐中扣除。',
+    modelPriceHere: '點擊模型展開，查看各分組的輸入 / 輸出 / 緩存價格。',
+    modelPriceLink: '各模型價格可在「價格與計費」頁查看。',
+    rate: '分組倍率：不同分組倍率不同，價格裡已包含倍率，倍率越低越便宜。',
+    plan: '套餐：開通後優先從套餐額度扣費，更划算。',
+    fiat: {
+      intro: '按實際用量計費，從餘額或套餐中扣除。',
+      pricesLink: '各模型價格可在「價格與計費」頁查看。',
+      rate: '倍率：每個分組的倍率不同，越低越省。',
+      plan: '套餐：開通後優先從套餐扣費，倍率更低，同樣的價格扣得更少。',
+      group: '分組：同一個模型在不同分組下價格不同，展開模型即可比較。',
+      groupBrief: '分組：同一個模型在不同分組下價格不同。'
+    }
   },
 
   availableChannels: {
     title: '價格與計費',
     description: '模型價格與計費規則；查看你可用的模型、單價與各分組倍率',
-    searchPlaceholder: '搜索模型或線路...',
-    tierLabel: '檔位',
+    searchPlaceholder: '搜索模型',
+    allPlatforms: '全部',
+    platform: '平台',
+    startingFrom: '起價',
+    peakNote: '表內為標準價；標有高峰倍數的分組，工作日 9–12、14–18 點（北京時間）輸入、輸出、緩存讀取按該倍數計費',
+    peakShort: '工作日高峰 {n} 倍',
+    expand: '展開',
+    collapse: '收起',
+    group: '分組',
+    byGroup: '按分組',
+    price: '價格',
+    officialPrice: '官方價',
+    lowest: '最低',
+    planRate: '套餐倍率',
+    yourPlanRate: '你的套餐倍率',
+    planRateLead: '低至',
+    rateNote: '倍率是相對官方價的計費倍數，已包含在價格中',
+    rateNoteFiat: '價格已包含倍率，倍率越低越省。開通套餐後倍率更低，同樣的價格扣得更少。',
+    rateNoteFiatNoPlan: '倍率越低越省。',
+    rateCustom: '專屬倍率，默認 {base}x',
+    tiersFor: '分檔價格（{group}）',
+    context: '上下文長度',
+    tierName: '檔位',
+    resolution: '分辨率',
+    tierUpTo: '不超過 {n}',
+    tierAbove: '超過 {n}',
+    tierBetween: '{min} 至 {max}',
+    noResults: '沒有匹配的模型',
     buyPlans: '查看套餐',
-    payHint: '實付 = 模型單價 ×',
-    effectiveTitle: '本檔位實付（× {rate}）',
-    tiersTitle: '按量檔位',
-    tiersHint: '倍率越高的池子越穩定、同樣用量扣得也越多；點模型名查看官方單價。',
-    plansTitle: '月套餐',
-    plansHint: '低價換大額官方價額度，疊加套餐後實際相當於官方價的很低折扣。',
-    goBuy: '去購買',
     empty: '暫無可用線路',
-    noModels: '未配置模型',
     noPricing: '未配置定價',
     exclusive: '專屬',
     public: '公開',
@@ -1366,16 +1638,18 @@
       perRequestPrice: '每次請求',
       intervals: '階梯定價',
       unitPerMillion: '/ 1M token',
-      unitPerRequest: '/ 次'
+      unitPerRequest: '/ 次',
+      perMillion: '每百萬 token',
+      perRequest: '每次'
     }
   },
 
   checkin: {
     title: '每日簽到',
     bonusBadge: '額外 {n} 次',
-    rewardRange: '每天簽到領取 ${min}–${max} 隨機獎勵到餘額',
+    rewardRange: '每天簽到領取 {min}–{max} 隨機獎勵到餘額',
     todaySpend: '今日消費',
-    nextBonusHint: '再消費 ${amount} 解鎖下一次額外簽到',
+    nextBonusHint: '再消費 {amount} 解鎖下一次額外簽到',
     activityNotMet: '今日活躍度未達標',
     activityHint: '繼續使用後可再來簽到',
     claimDaily: '立即簽到',
@@ -1385,7 +1659,7 @@
     doneSubtitle: '今日已簽到，明日刷新後可再次簽到',
     notActiveButton: '活躍度未達標',
     notActiveEnough: '今日活躍度還未達簽到門檻，繼續使用後即可簽到。',
-    claimedToast: '簽到成功，+${amount} 已到賬餘額',
+    claimedToast: '簽到成功，+{amount} 已到賬餘額',
     claimRecoveredToast: '簽到已成功，獎勵已到賬餘額',
     claimFailed: '簽到失敗，請稍後再試'
   },
@@ -1425,10 +1699,10 @@
     },
     redeemBalance: {
       title: '兌換餘額',
-      desc: '按積分法幣面值和當前充值倍率折算為錢包餘額。',
       points: '兌換積分數',
+      descFiat: '按積分面值兌換為錢包餘額。',
       estimate: '將獲得 {amount} 餘額。',
-      rateHint: '1 積分 = {peg}，兌換餘額按 1 CNY = {rate} USD 折算。',
+      rateHintFiat: '1 積分 = {peg}',
       submit: '兌換',
       success: '已兌換為餘額。',
     },
@@ -1461,9 +1735,10 @@
       title: '兌換套餐',
       desc: '無套餐時開通；已有套餐時自動續費或換套餐。',
       plan: '套餐',
-      planTitle: '每日 USD {d}',
+      planTitle: '每日 {d}',
+      planTitleFiat: '每日 {d}',
       dailyAmount: '每日額度',
-      dailyOption: 'USD {d}',
+      dailyOption: '{d}',
       validityDays: '有效期',
       pointsPrice: '積分價',
       actionLabels: {
@@ -1815,12 +2090,6 @@
       maxEmailsReached: '已達到通知郵箱數量上限',
       unverified: '未驗證',
       verified: '已驗證',
-    },
-    stablePriority: {
-      title: '穩定優先',
-      description: '開啟後，當你所用分組的渠道全部不可用時，請求會自動跨分組逐檔兜底到更穩定的高倍率分組；低倍率分組恢復穩定後自動切回。',
-      enabled: '啟用穩定優先',
-      billingHint: '注意：兜底期間將按實際服務的高倍率分組費率從你的餘額計費，費用可能高於原分組。',
     },
     avatar: {
       title: '資料頭像',
@@ -2360,6 +2629,7 @@
 
     // Users Management
     users: {
+      passwordCopied: '密碼已複製',
       title: '用戶管理',
       description: '管理用戶帳戶和權限',
       createUser: '創建用戶',
@@ -2461,6 +2731,8 @@
       failedToLoad: '加載用戶列表失敗',
       failedToCreate: '創建用戶失敗',
       failedToUpdate: '更新用戶失敗',
+      lastAdminDemoteForbidden: '不能降級最後一個管理員，請先將其他用戶設為管理員',
+      cannotDemoteSelf: '不能將自己降級為普通用戶',
       failedToDelete: '刪除用戶失敗',
       failedToToggle: '更新用戶狀態失敗',
       failedToLoadApiKeys: '加載用戶 API 金鑰失敗',
@@ -2486,6 +2758,8 @@
         statusLabel: '狀態',
         selectStatus: '選擇狀態',
         rpmLimit: '每分鐘請求數 (RPM)',
+        concurrencyPlaceholder: '0 表示不限制',
+        concurrencyHint: '該用戶的最大並發請求數，0 = 不限制',
         rpmLimitPlaceholder: '0 表示不限制',
         rpmLimitHint: '該用戶每分鐘最大請求數，0 = 不限制；僅在所用分組未設定 rpm_limit 時作為兜底生效'
       },
@@ -2506,7 +2780,7 @@
       failedToSave: '儲存用戶失敗',
       failedToAdjust: '調整失敗',
       emailRequired: '請輸入郵箱',
-      concurrencyMin: '并發數不能小於1',
+      concurrencyNonNegative: '並發數不能為負數，0 表示不限制',
       soraStorageQuota: 'Sora 存儲配額',
       soraStorageQuotaHint: '單位 GB，0 表示使用分組或系統預設配額',
       amountRequired: '請輸入有效金額',
@@ -2659,6 +2933,7 @@
         clearAllConfirm: '確認清空全部平台的日 / 周 / 月限額？所有平台將變為"無限額"，本地無法撤銷，需要在儲存前手動重填。',
         reset: {
           button: '重置該窗口',
+          unavailable: '該平台未配置限額，沒有可重置的用量窗口',
           confirm: '確認重置該用戶 {platform} 平台的 {window} 用量？此操作立即生效。',
           success: '已重置 {platform} {window} 用量',
           failed: '重置失敗',
@@ -2689,9 +2964,8 @@
       sortOrderHint: '拖拽分組調整顯示順序，排在前面的分組會優先顯示',
       sortOrderUpdated: '排序已更新',
       failedToUpdateSortOrder: '更新排序失敗',
-      deleteConfirm: "確定要刪除分組 '{name}' 嗎？所有關聯的 API 金鑰將不再屬於任何分組。",
-      deleteConfirmSubscription:
-        "確定要刪除訂閱分組 '{name}' 嗎？此操作會讓所有綁定此訂閱的用戶的 API Key 失效，并刪除所有相關的訂閱記錄。此操作無法撤銷。",
+      deleteConfirm:
+        "確定要刪除分組 '{name}' 嗎？該分組下的帳號綁定會被清除（帳號本身保留）；綁定了該分組的 API 金鑰將無法繼續使用，需要用戶改選其他分組。用戶已有的訂閱卡不受影響。仍綁定該分組的套餐將無法購買，請先下架。此操作無法撤銷。",
       columns: {
         name: '名稱',
         platform: '平台',
@@ -2779,6 +3053,9 @@
       failedToLoad: '加載分組列表失敗',
       failedToSave: '儲存分組失敗',
       failedToDelete: '刪除分組失敗',
+      deleteBlockedNotInactive: '請先停用分組再刪除',
+      deleteBlockedHasKeys: '分組下仍有 {count} 個 API 金鑰，請先移除',
+      deleteBlockedHasPlans: '分組下仍有 {count} 個在售套餐，請先下架',
       allPlatforms: '全部平台',
       allStatus: '全部狀態',
       allGroups: '全部分組',
@@ -2859,8 +3136,8 @@
         notConfigured: '未配置'
       },
       modelsList: {
-        title: '自定義 /v1/models 模型列表',
-        hint: '僅影響 /v1/models 展示結果，不影響白名單模型調用和帳號調度。',
+        title: '自定義 {endpoint} 模型列表',
+        hint: '僅影響 {endpoint} 展示結果，不影響白名單模型調用和帳號調度。',
         loading: '正在加載模型列表...',
         empty: '暫無可展示模型'
       },
@@ -2873,11 +3150,6 @@
         fallbackGroup: '降級分組',
         fallbackHint: '非 Claude Code 請求將使用此分組，留空則直接拒絕',
         noFallback: '不降級（直接拒絕）'
-      },
-      stablePriority: {
-        fallbackGroup: '穩定優先兜底分組',
-        fallbackHint: '當本組所有渠道不可用時，開啟穩定優先的用戶請求將兜底到此分組；可逐檔串聯形成多檔兜底鏈，也可讓高檔位回指低檔位形成互備環——任意檔位掛掉都會臨時路由到環上其它正常分組，恢復後自動切回。留空表示本組不參與兜底。',
-        noFallback: '不兜底'
       },
       openaiMessages: {
         title: 'OpenAI Messages 調度配置',
@@ -2991,9 +3263,302 @@
       }
     },
 
+    // Pricing config (read-only): models and availability matrix
+    pricingConfig: {
+      comingSoon: '即將開放',
+      loadError: '價格資料沒有載入',
+      retry: '重試',
+      deriveFailed: '有 {n} 個分組的開放方式沒有讀取到，先按渠道配置顯示。',
+      perMillionTokens: '每百萬 Token',
+      models: {
+        title: '模型',
+        description: '有哪些模型、官方價是多少、開放給了幾個分組',
+        searchPlaceholder: '搜尋模型',
+        allPlatforms: '全部平台',
+        allStatuses: '全部狀態',
+        filterUnpriced: '無價',
+        filterUnregistered: '未登記',
+        create: '新增模型',
+        columns: {
+          model: '模型',
+          platform: '平台',
+          status: '狀態',
+          officialPrice: '官方參考價',
+          source: '價格來源',
+          openGroups: '已開放分組'
+        },
+        officialPriceHint: '輸入 / 輸出，每百萬 Token',
+        emptyTitle: '沒有符合條件的模型',
+        emptyHint: '換個篩選條件試試。'
+      },
+      status: {
+        draft: '草稿',
+        active: '上線',
+        retired: '下線',
+        unregistered: '未登記'
+      },
+      source: {
+        litellm: '價目表',
+        fallback: '內置價',
+        cardPolicy: '官方定價',
+        channel: '渠道價',
+        none: '無價'
+      },
+      group: {
+        rate: '倍率 ×{rate}',
+        unswitched: '尚未切換',
+        access: {
+          open: '開放',
+          allowlist: '白名單'
+        }
+      },
+      cell: {
+        open: '開放',
+        custom: '自定義價',
+        unpriced: '未定價',
+        closed: '關閉',
+        error: '無法取價',
+        unpricedHint: '調用不扣費',
+        perRequest: '{price} / 次',
+        perRequestRange: '{min}–{max} / 次',
+        tipPrice: '輸入 {input} / 輸出 {output}（每百萬 Token，用戶實付）',
+        tipPerRequest: '{price} / 次（用戶實付）',
+        tipPerRequestRange: '{min}–{max} / 次（用戶實付，按區間）',
+        unpricedTip: '官方價和自定義價都沒有，用戶調用這個模型不會產生費用',
+        customTip: '這個分組給該模型設了專門的價格，不是官方價 × 倍率',
+        errorTip: '這個格子的價格沒有取得，稍後重新整理再試',
+        unswitchedTip: '分組還沒切換，這是按渠道配置推出的結果'
+      },
+      closedReason: {
+        closed_in_group: '這個分組沒有開放該模型',
+        not_in_allowlist: '這個分組是白名單，沒有加入該模型',
+        catalog_draft: '模型還是草稿，所有分組都不開放',
+        catalog_retired: '模型已下線，所有分組都不開放'
+      },
+      drawer: {
+        basic: '基本資料',
+        inOut: '輸入 {input} / 輸出 {output}',
+        noOfficialPrice: '沒有官方價',
+        aliases: '別名',
+        referenceModel: '參考模型',
+        groups: '各分組開放情況',
+        unregisteredHint: '還沒加入模型目錄，目前只在分組配置裏出現過。',
+        noGroups: '這個平台還沒有分組。',
+        derivedNote: '尚未切換的分組，開放範圍和價格是按渠道配置推出的結果。',
+        toMatrix: '去「開放與價格」看全部模型',
+        actionRegister: '加入目錄並上線…',
+        action: {
+          draft: '上線…',
+          active: '下線…',
+          retired: '重新上線'
+        }
+      },
+      matrix: {
+        title: '開放與價格',
+        description: '每個模型在哪些分組裏可用，以及用戶實付多少',
+        noticeTitle: '現在顯示的是由渠道配置推出的結果',
+        noticeAll: '所有分組還沒有切換到新的價格配置，開放範圍和價格仍在「渠道管理」裏設定，這裏按它們推算，只能查看。',
+        noticeSome: '還有 {n} / {total} 個分組沒有切換，它們的開放範圍和價格仍在「渠道管理」裏設定，這裏按它們推算，只能查看。',
+        noticeLink: '前往渠道管理',
+        groupCount: '{n} 個分組',
+        hideClosed: '隱藏全部關閉的模型',
+        edit: '批量調整',
+        legend: '圖例',
+        legendOpen: '按官方價開放',
+        legendExtra: '額外倍率',
+        legendCustom: '自定義價',
+        legendUnpriced: '沒有任何價格',
+        legendClosed: '不開放',
+        legendUnswitched: '分組還沒切換，按渠道配置推出',
+        legendPaid: '格子裡是餘額用戶的實付價',
+        cornerHint: '官方價：輸入 / 輸出，每百萬 Token',
+        openDetail: '查看模型詳情',
+        noGroupsTitle: '{platform} 還沒有分組',
+        noGroupsHint: '先在「分組管理」裏新增分組，再回來看開放與價格。',
+        empty: '沒有符合的模型'
+      },
+      write: {
+        nothingWritable: '還沒有分組切換到新的價格配置，暫時不能改',
+        doneEditing: '完成',
+        selectHint: '點格子選中，可以多選',
+        selectAll: '全選',
+        selectColumn: '選整列',
+        selectRow: '選整行',
+        cellTip: '點擊選中或取消選中',
+        selected: '已選 {n} 個格子',
+        selectedDetail: '（{models} 個模型 × {groups} 個分組）',
+        op: {
+          open: '開放',
+          close: '關閉',
+          extra: '額外倍率…',
+          clear: '清除覆蓋',
+          custom: '設為自定義價…',
+          deselect: '清除選擇'
+        },
+        nothingToChange: '選中的格子沒有需要改的',
+        title: {
+          open: '預覽：開放',
+          close: '預覽：關閉',
+          extra: '預覽：設定額外倍率',
+          clear: '預覽：清除覆蓋',
+          custom: '預覽：設為自定義價'
+        },
+        refreshData: '重新整理資料',
+        previewAgain: '重新預覽',
+        refreshed: '資料已重新整理，請重新操作',
+        back: '返回修改',
+        submit: '提交',
+        submitting: '提交中…',
+        submitted: '已提交',
+        toPreview: '預覽改動',
+        delta: {
+          up: '這次改動會漲價',
+          upHint: '有用戶實付的價格會變高，確認沒問題再提交。',
+          unknown: '沒能確認價格是漲是跌',
+          unknownHint: '按漲價對待，請逐項看下面的表再提交。',
+          down: '這次改動會降價。'
+        },
+        warnTitle: '有 {n} 項開放後還有問題',
+        ack: '我知道有 {n} 項存在上面的問題，仍然提交',
+        col: {
+          group: '分組',
+          before: '改前',
+          after: '改後',
+          input: '輸入（每百萬 Token）',
+          output: '輸出（每百萬 Token）',
+          change: '變化'
+        },
+        noChanges: '沒有改動',
+        summary: '共 {n} 項：{parts}。點「提交」後才會生效。',
+        change: {
+          open: '開放',
+          close: '關閉',
+          up: '漲價',
+          down: '降價',
+          adjust: '調整',
+          mixed: '有漲有跌',
+          server: '以伺服器結果為準',
+          same: '無變化'
+        },
+        issue: {
+          unpriced: '沒有價格（官方價和自定義價都沒有）',
+          zero_price: '價格是 0',
+          wildcard_unverifiable: '開放了通配符，沒法逐個核對價格',
+          mapping_target_unpriced: '映射到的模型 {target} 沒有價格',
+          mapping_target_zero_price: '映射到的模型 {target} 價格是 0'
+        },
+        error: {
+          ADMIN_TOKEN_MANAGEMENT_JWT_ONLY: '這個操作要用管理員帳號登入後台來做，管理員令牌不能提交。',
+          PRICE_WRITE_ACTOR_REQUIRED: '沒有識別到管理員身份，請重新登入後再試。',
+          PRICE_WRITE_APPROVAL_REQUIRED: '這次改動涉及價格，需要先預覽再提交。',
+          PRICE_WRITE_INTERACTIVE_REQUIRED: '價格有變化的改動，要用管理員帳號登入後台來提交。',
+          PRICE_WRITE_CONFIRM_REQUIRED: '提交前需要再確認一次，請重新預覽。',
+          PRICE_WRITE_APPROVAL_NOT_FOUND: '預覽記錄已經失效，請重新預覽。',
+          PRICE_WRITE_APPROVAL_EXPIRED: '預覽已過期（有效期 30 分鐘），請重新預覽。',
+          PRICE_WRITE_APPROVAL_CONSUMED: '這次預覽已經提交過了，請重新預覽。',
+          PRICE_WRITE_APPROVAL_MISMATCH: '提交的內容和預覽不一致，請重新預覽。',
+          PRICE_WRITE_PLAN_CHANGED: '預覽之後情況有變化，這次改動現在會影響價格，請重新預覽。',
+          PRICE_BASELINE_CHANGED: '這個分組的設定在你預覽之後被別人改過了，請重新整理資料後重新操作。',
+          EXPOSURE_UNPRICED: '白名單分組裏有 {count} 項開放後沒有價格或價格為 0，這次改動整體沒有提交：',
+          OPEN_PRECHECK_BLOCKED: '白名單分組裏有 {count} 項不能開放：',
+          PRICE_WRITER_UNAVAILABLE: '價格寫入功能還沒有配置好，暫時不能提交。',
+          EXPOSURE_GUARD_UNAVAILABLE: '價格寫入功能還沒有配置好，暫時不能提交。',
+          CELL_OPS_EMPTY: '沒有要改的格子。',
+          CELL_OPS_TOO_MANY: '一次最多改 500 個格子，請分批操作。',
+          CELL_OP_INVALID: '分組 #{group_id} 裏 {model_key} 的目標設定不合法。',
+          CELL_OP_DUPLICATE: '分組 #{group_id} 裏的 {model_key} 被選了多次。',
+          CELL_GROUP_BASELINE_MISSING: '沒有讀取到分組 #{group_id} 當前的設定，請重新整理資料後重試。',
+          CELL_GROUP_NOT_V2: '分組 #{group_id} 還沒有切換到新的價格配置，不能在這裏改。請重新整理資料。',
+          CELL_READONLY: '通配符格子由系統維護，不能修改。',
+          MODEL_CATALOG_USAGE_CONFIRM_REQUIRED: '近 {window_days} 天這個模型有 {requests} 次請求，需要確認後才能繼續。',
+          MODEL_CATALOG_STATUS_CHANGED: '這個模型的狀態已經被別人改了，請重新整理資料後重試。',
+          MODEL_CATALOG_INVALID: '模型資料不合法，請檢查填寫的內容。',
+          MODEL_CATALOG_NOT_FOUND: '找不到這個模型，請重新整理資料。',
+          MODEL_CATALOG_EXISTS: '這個平台下已經有同名模型。',
+          MODEL_CATALOG_ALIAS_CONFLICT: '別名「{alias}」已經被別的模型佔用。',
+          NETWORK: '網絡不通，請檢查連線後重試。',
+          UNAUTHORIZED: '登入已失效，請重新登入。',
+          FORBIDDEN: '沒有權限做這個操作。',
+          UNKNOWN: '提交沒有成功（{status}），請稍後重試。',
+          INVALID: '提交的內容不合法，請檢查填寫的價格和設定。'
+        },
+        extra: {
+          title: '設定額外倍率',
+          intro: '給選中的 {n} 個開放的格子加價：用戶實付 = 官方價 × 分組倍率 × 額外倍率。',
+          skipped: '另有 {n} 個關閉的格子不會改動。',
+          label: '額外倍率',
+          placeholder: '例如 1.2',
+          invalid: '請輸入大於 0 的數字',
+          hint: '填 1 就是不加價。'
+        },
+        custom: {
+          title: '設為自定義價',
+          intro: '給選中的 {n} 個開放的格子填固定價格，代替官方價。用戶實付仍然要乘分組倍率。',
+          input: '輸入價',
+          output: '輸出價',
+          placeholder: '不填用官方價',
+          hint: '單位：美元，每百萬 Token。至少填一項。'
+        },
+        usage: {
+          requests: '近 {days} 天有 {n} 次請求',
+          lastUsed: '最近一次：{time}'
+        },
+        retire: {
+          title: '下線 {model}',
+          intro: '下線後，這個模型的新請求都會被拒絕；歷史用量和賬單不受影響。',
+          groups: '開放的分組：{names}',
+          noGroups: '沒有開放的分組。',
+          ack: '我知道近期還有 {n} 次請求，下線後這些請求會失敗',
+          confirm: '確認下線',
+          done: '{model} 已下線'
+        },
+        reactivate: {
+          title: '重新上線 {model}',
+          intro: '重新上線後，這個模型按各分組現有的開放設定恢復可用。',
+          confirm: '確認上線',
+          done: '{model} 已重新上線'
+        },
+        launch: {
+          title: '上線 {model}',
+          usageNote: '近 {days} 天已有 {n} 次請求',
+          usageHint: '想保持現狀，可以直接點「按現狀上線」。',
+          intro: '選擇要開放這個模型的分組，沒勾選的分組不會開放。價格默認是官方價 × 分組倍率，不用另外填。',
+          copyLabel: '照抄某個模型的勾選',
+          copyPlaceholder: '選一個已上線的模型',
+          copyButton: '照抄勾選',
+          copyHint: '只勾上它開放的分組，價格和倍率不會照抄。照抄之後還可以繼續增減。',
+          unswitched: '尚未切換，開放範圍仍在渠道裏設定',
+          extraPlaceholder: '額外倍率（可不填）',
+          extraAria: '{name} 的額外倍率',
+          preview: '預覽',
+          asIs: '按現狀上線',
+          confirm: '確認上線',
+          copied: '已照抄 {model} 的勾選，可以繼續調整',
+          unpicked: '沒勾選的 {n} 個分組不開放這個模型：{names}。',
+          cellsDone: '分組的開放設定已經提交，但模型狀態還沒改成上線。點「確認上線」重試。',
+          done: '{model} 已上線'
+        },
+        create: {
+          title: '新增模型',
+          modelKey: '模型名',
+          keyInvalid: '模型名不能為空，不能帶空格或 *',
+          displayName: '顯示名',
+          aliasPlaceholder: '多個別名用逗號隔開',
+          referencePlaceholder: '不選',
+          referenceHint: '上線時，會默認選中它在哪些分組開放，仍可調整。',
+          draftHint: '新增後是草稿，所有分組都不開放。準備好之後再上線。',
+          usageAck: '我知道這個名字近期已有請求，新增為草稿後這些請求會被拒絕',
+          submit: '新增',
+          done: '已新增 {model}（草稿）'
+        }
+      }
+    },
+
     // Channel Management
     channels: {
-      title: '價格配置',
+      noGroupsSelected: '請為 {platform} 至少選擇一個分組',
+      emptyModelsInPricing: '請為 {platform} 定價規則至少添加一個模型',
+      title: '渠道定價',
       description: '管理渠道與模型定價，并配置用戶價格頁展示哪些分組 / 模型',
       searchChannels: '搜索渠道...',
       display: {
@@ -3412,7 +3977,7 @@
       workerActive: '正在處理異步審計或記錄任務',
       workerIdle: '已啟動，當前空閒可用',
       workerDisabled: '風控或內容審計未啟用',
-      processed: '已處理',
+      processed: '異步已處理',
       droppedErrors: '丟棄/異常',
       autoRefresh: '每 15 秒自動刷新',
       lastCleanup: '上次清理：{time}',
@@ -3532,6 +4097,7 @@
       form: {
         name: '名稱',
         namePlaceholder: '輸入監控名稱',
+        userVisibleHint: '會顯示給所有用戶，不要寫上游廠商、上游模型或內部帳號名。',
         provider: '平台',
         apiMode: 'OpenAI 協議',
         apiModeChatCompletions: 'OpenAI Compatible',
@@ -3663,7 +4229,9 @@
       quotaEndsInMinutes: '額度將在 {minutes} 分鐘後結束',
       quotaEndsInHoursMinutes: '額度將在 {hours} 小時 {minutes} 分鐘後結束',
       quotaEndsInDaysHours: '額度將在 {days} 天 {hours} 小時後結束',
-      daysRemaining: '天剩餘',
+      daysRemaining: '剩餘 {days} 天',
+      hoursMinutesRemaining: '剩餘 {hours} 小時 {minutes} 分鐘',
+      minutesRemaining: '剩餘 {minutes} 分鐘',
       remainingDays: '剩餘天數',
       noExpiration: '無過期時間',
       status: {
@@ -3758,6 +4326,11 @@
 
     // Accounts Management
     accounts: {
+      fromModel: '請求模型',
+      toModel: '目標模型',
+      antigravityProjectIdLabel: 'GCP Project ID（可選）',
+      antigravityProjectIdPlaceholder: 'your-gcp-project-id',
+      antigravityProjectIdHint: 'standard-tier 且未自動返回 project_id 的 Antigravity 帳號需要填寫用戶自有的 GCP project。',
       title: '帳號管理',
       description: '管理 AI 平台帳號和 Cookie',
       createAccount: '添加帳號',
@@ -4027,6 +4600,7 @@
       status: {
         active: '正常',
         inactive: '停用',
+        expired: '已過期',
         error: '錯誤',
         cooldown: '冷卻中',
         paused: '暫停',
@@ -4186,7 +4760,13 @@
         probeUpstreamBilling: '批量探測上游倍率',
         resetStatusSuccess: '已成功重置 {count} 個帳號狀態',
         refreshTokenSuccess: '已成功刷新 {count} 個帳號令牌',
-        partialSuccess: '操作部分完成：{success} 成功，{failed} 失敗'
+        partialSuccess: '操作部分完成：{success} 成功，{failed} 失敗',
+        pageSelected: '已選本頁 {count} 個，',
+        selectAllFiltered: '選中全部篩選結果 {total} 個？',
+        allFilteredSelected: '已選中全部 {count} 個篩選結果',
+        selectAllFilteredTooMany: '篩選結果共 {total} 個帳號，超過一次最多可選的 {limit} 個，請縮小篩選範圍後再試',
+        selectAllFilteredFailed: '獲取篩選結果失敗',
+        confirmCount: '確定對選中的 {count} 個帳號執行此操作嗎？'
       },
       bulkEdit: {
         title: '批量編輯帳號',
@@ -4200,7 +4780,21 @@
         failed: '批量更新失敗',
         noSelection: '請選擇要編輯的帳號',
         noFieldsSelected: '請至少選擇一個要更新的字段',
-        mixedPlatformWarning: '所選帳號跨越多個平台（{platforms}）。顯示的模型映射預設為合并結果——請確保映射對每個平台都適用。'
+        mixedPlatformWarning: '所選帳號跨越多個平台（{platforms}）。顯示的模型映射預設為合并結果——請確保映射對每個平台都適用。',
+        groupModeLabel: '分組修改方式',
+        groupModeAppend: '追加到分組',
+        groupModeRemove: '從分組移除',
+        groupModeReplace: '替換全部分組',
+        groupModeAppendHint: '為帳號加入所選分組，帳號原有的其他分組保持不變。',
+        groupModeRemoveHint: '只把帳號從所選分組中移除，其他分組保持不變。',
+        groupModeReplaceHint: '把每個帳號的分組整體設置為所選分組。',
+        groupModeReplaceWarning: '會移除這些帳號原有的其他分組',
+        groupModeReplaceEmptyWarning: '未選擇任何分組：會清空所選帳號的全部分組',
+        groupsRequired: '請至少選擇一個分組',
+        poolModeRetryStatusCodesHint: '留空則保持各帳號原有設置',
+        tempUnschedOffHint: '關閉臨時不可調度規則；各帳號已保存的規則會保留。',
+        tempUnschedReplaceHint: '下列規則會覆蓋所選帳號上已有的全部規則。',
+        expiresAtClearNotice: '留空表示清除所選帳號的過期時間。'
       },
       bulkDeleteTitle: '批量刪除帳號',
       bulkDeleteConfirm: '確定要刪除選中的 {count} 個帳號嗎？此操作無法撤銷。',
@@ -4270,6 +4864,9 @@
         oauthPassthrough: '自動透傳（僅替換認證）',
         oauthPassthroughDesc:
           '開啟後，該 OpenAI 帳號將自動透傳請求與回應，僅替換認證并保留計費/并發/審計及必要安全過濾；如遇兼容性問題可隨時關閉回滾。',
+        flattenNamespaces: '攤平 Codex namespace 工具（相容）',
+        flattenNamespacesDesc:
+          '預設關閉：/responses 上的 namespace 工具宣告原樣轉發，這正是 ChatGPT Codex 後端期望的形態。僅當該 OAuth 帳號指向不認識 namespace 的相容上游時才開啟——攤平會把工具改名為 namespace__tool，使按 functions.<命名空間>.<工具> 定址的模型（如 gpt-5.6 多智能體）無法呼叫。壓縮（compact）請求不受該開關影響，始終攤平。',
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           '預設關閉。開啟後可啟用 responses_websockets_v2 協議能力（受網關全局開關與帳號類型開關約束）。',
@@ -4281,8 +4878,8 @@
         wsModePassthrough: '透傳（passthrough）',
         wsModeShared: '共享（shared）',
         wsModeDedicated: '獨享（dedicated）',
-        wsModeConcurrencyHint: '啟用 WS mode 後，該帳號并發數將作為該帳號 WS 連接池上限。',
-        wsModePassthroughHint: 'passthrough 模式不使用 WS 連接池。',
+        wsModeCtxPoolHint: '網關 → 從連接池獲取上游 WS 連接，數量由配置決定。',
+        wsModePassthroughHint: '網關 → 上游 WS，不使用連接池。',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           '僅對 OpenAI OAuth 生效。開啟後該帳號才允許使用 OpenAI WebSocket Mode 協議。',
@@ -4370,6 +4967,10 @@
       modelMapping: '模型映射',
       selectAllowedModels: '選擇允許的模型。留空則支持所有模型。',
       mapRequestModels: '將請求模型映射到實際模型。左邊是請求的模型，右邊是發送到 API 的實際模型。',
+      modelMappingAllowUnlisted: {
+        title: '映射不限制其他模型',
+        hint: '開啟後，未列出的模型仍可使用，除非另外設定模型白名單。現有帳號預設維持原有限制。'
+      },
       selectedModels: '已選擇 {count} 個模型',
       supportsAllModels: '（支持所有模型）',
       requestModel: '請求模型',
@@ -4393,6 +4994,7 @@
       enterCustomModelName: '輸入自定義模型名稱',
       addModel: '填入',
       modelExists: '該模型已存在',
+      modelMappingConflict: '模型映射將 {from} 指向 {to}。請修改或刪除該映射，以保留白名單中的 {from}',
       modelCount: '{count} 個模型',
       poolMode: '池模式',
       poolModeHint: '上游為帳號池時啟用，錯誤不標記本地帳號狀態',
@@ -4404,7 +5006,7 @@
       poolModeRetryStatusCodesHint: '僅在池模式下生效。以英文逗號分隔的 HTTP 狀態碼（100-599），命中時觸發同帳號重試。留空使用預設值（{default}）。',
       customErrorCodes: '自定義錯誤碼',
       customErrorCodesHint: '僅對選中的錯誤碼停止調度',
-      customErrorCodesWarning: '僅選中的錯誤碼會停止調度，其他錯誤將返回 500。',
+      customErrorCodesWarning: '自訂錯誤碼用於篩選非 429 上游錯誤的一般帳號狀態處理。即使未列入清單，HTTP 429 仍可能觸發限流處理。此清單本身不決定是否重試或切換帳號；客戶端最終收到的狀態碼取決於網關路徑及錯誤透傳規則，並非一律為 500。清單為空時不進行篩選。',
       headerOverride: {
         title: '請求頭覆寫',
         hint: '為兼容的 API Key 上游帳號設置靜態請求頭。',
@@ -4435,6 +5037,9 @@
       interceptWarmupRequestsDesc: '啟用後，標題生成等預熱請求將返回 mock 回應，不消耗上游 token',
       autoPauseOnExpired: '過期自動暫停調度',
       autoPauseOnExpiredDesc: '啟用後，帳號過期將自動暫停調度',
+      noAutoUnsched: '不自動暫停調度',
+      noAutoUnschedDesc:
+        '開啟後，無論該帳號短時間內出現多少次上游錯誤，都不會被自動冷卻或暫停調度；手動停用仍然生效。',
 	  autoPause5hThreshold: '5h 用量閾值(%)',
 	  autoPause7dThreshold: '7d 用量閾值(%)',
 	  autoPauseThresholdHint: '留空或填 0 表示使用全局預設閾值（在運維設定中配置）；填具體值則覆蓋全局預設。達到閾值後僅在調度時跳過帳號，不修改 schedulable。',
@@ -4538,6 +5143,7 @@
       billingRateMultiplierHint: '0 表示不計費，僅影響帳號計費',
       expiresAt: '過期時間',
       expiresAtHint: '留空表示不過期',
+      expiresAtTimezoneHint: '輸入按瀏覽器本地時區（{timezone}）解釋。',
       higherPriorityFirst: '數值越小優先級越高',
       mixedScheduling: '在 /v1/messages 中使用',
       mixedSchedulingHint: '啟用後可參與 Anthropic/Gemini 分組的調度',
@@ -4671,6 +5277,11 @@
           codexSessionPlaceholder: '支持多行，每行一個 token 或 JSON',
           codexSessionHint: 'sessionToken 不會作為 refresh_token 儲存；未包含 refresh_token 時會按 accessToken 過期時間設定帳號過期，無法解析且第一步未設定過期時間時會拒絕匯入。',
           codexSessionImportAndCreate: '匯入并創建帳號',
+          codexSessionReauthAuth: 'Codex auth.json / accessToken',
+          codexSessionReauthDesc: '貼上目前帳號的 Codex OAuth auth.json 或 accessToken。只更新憑據，保留排程和計費設定。',
+          codexSessionReauthPlaceholder: '貼上屬於目前帳號的一份 auth.json 或一條 accessToken',
+          codexSessionReauthHint: '只接受一條憑據，token 必須包含目前帳號和使用者身分。若原 refresh_token 已撤銷，只匯入 accessToken 無法修復自動續期。',
+          codexSessionReauthSubmit: '匯入並更新帳號',
           codexSessionEmpty: '請輸入 Codex JSON 或 accessToken',
           codexSessionImportFailed: 'Codex 帳號匯入失敗',
           codexSessionImportSuccess: '匯入完成：新增 {created}，更新 {updated}，跳過 {skipped}',
@@ -5330,6 +5941,8 @@
       customExpiry: '自定義',
       customExpiryDays: '自定義天數',
       expiryDaysRequired: '請輸入有效的過期天數',
+      expiryDateRequired: '請輸入有效的過期日期和時間',
+      localTimeZoneHint: '自定義時間按瀏覽器本地時區（{timezone}）解釋。',
       groupRequired: '請選擇訂閱分組',
       days: '天',
       status: {
@@ -5382,6 +5995,7 @@
     announcements: {
       title: '公告管理',
       description: '創建公告并按條件投放',
+      createFirstAnnouncement: '還沒有公告，創建您的第一條公告。',
       createAnnouncement: '創建公告',
       editAnnouncement: '編輯公告',
       deleteAnnouncement: '刪除公告',
@@ -6057,7 +6671,8 @@
           accountErrorCount: '錯誤帳號數（不含臨時不可調度）',
           accountErrorRatio: '錯誤帳號比例 (%)',
           accountTempUnscheduledCount: '臨時不可調度帳號數',
-          overloadAccountCount: '過載帳號數'
+          overloadAccountCount: '過載帳號數',
+          unpricedBillingRows: '未定價使用記錄數'
         },
         metricDescriptions: {
           successRate: '統計窗口內成功請求占比（0~100）。',
@@ -6075,7 +6690,8 @@
           accountErrorCount: '統計窗口內產生錯誤的帳號數量（不含臨時不可調度）。',
           accountErrorRatio: '統計窗口內錯誤帳號占比（0~100）。',
           accountTempUnscheduledCount: '當前處於臨時不可調度狀態的帳號數量（如代理/憑據故障被自動摘除）。',
-          overloadAccountCount: '統計窗口內過載帳號數量。'
+          overloadAccountCount: '統計窗口內過載帳號數量。',
+          unpricedBillingRows: '統計窗口內有 token 或圖片用量、但計費金額為 0 的使用記錄數（倍率為 0 的分組、已知免費名單內的條目、模型不一致的記錄不計入）。'
         },
         hints: {
           recommended: '推薦：運算符 {operator}，閾值 {threshold}{unit}',
@@ -6119,6 +6735,16 @@
         }
       },
       runtime: {
+        metricThresholds: '指標閾值配置',
+        metricThresholdsHint: '配置各項指標的告警閾值，超出閾值時將以紅色顯示',
+        slaMinPercent: 'SLA最低百分比',
+        slaMinPercentHint: 'SLA低於此值時顯示為紅色（預設：99.5%）',
+        ttftP99MaxMs: 'TTFT P99最大值（毫秒）',
+        ttftP99MaxMsHint: 'TTFT P99高於此值時顯示為紅色（預設：500ms）',
+        requestErrorRateMaxPercent: '請求錯誤率最大值（%）',
+        requestErrorRateMaxPercentHint: '請求錯誤率高於此值時顯示為紅色（預設：5%）',
+        upstreamErrorRateMaxPercent: '上游錯誤率最大值（%）',
+        upstreamErrorRateMaxPercentHint: '上游錯誤率高於此值時顯示為紅色（預設：5%）',
         title: '運維監控運行設定',
         description: '配置存儲在數據庫中，無需修改 config 文件即可生效。',
         loading: '加載中...',
@@ -6686,7 +7312,7 @@
         subscriptionGroup: '訂閱分組',
         subscriptionValidityDays: '有效期（天）',
         defaultPlatformQuotas: '預設平台限額（註冊時分配）',
-        defaultPlatformQuotasHint: '新用戶註冊時自動寫入平台限額記錄；已有用戶不受影響。留空 = 該平台該窗口不限制。',
+        defaultPlatformQuotasHint: '新用戶註冊時自動獲得這裡配置的限額；已有用戶不受影響。留空 = 該平台該窗口不限制。',
         platformQuotaNotice: '月限額為 30 天滾動窗口，非自然月',
       },
       platformQuota: {
@@ -6760,6 +7386,11 @@
         openaiAllowClaudeCodeCodexPlugin: '允許在 Claude Code 中使用 Codex 插件',
         openaiAllowClaudeCodeCodexPluginDesc:
           '全局開關，僅對已開啟「僅允許 Codex 官方客戶端」的 OpenAI OAuth 帳號生效。開啟後，所有此類帳號都額外放行通過 Claude Code 的 Codex 插件發起的請求（精確匹配 originator=Claude Code），無需逐帳號配置；上游請求仍保持透傳。',
+        claudeCodeClientVersion: 'Claude Code 客戶端版本號',
+        claudeCodeClientVersionHint: '網關偽裝為官方 Claude Code CLI 時對上游聲明的客戶端版本號。留空表示使用自動同步到的官方最新版本；填寫後固定為該版本，不再跟隨同步。僅在手填值和同步值均不可用時，才回退到環境變數 SUB2API_CLAUDE_CLI_VERSION 或內置版本。',
+        claudeCodeVersionAutoSync: '自動同步 Claude Code 版本號',
+        claudeCodeVersionAutoSyncHint: '每小時從官方發佈渠道獲取最新版本的 Claude Code 客戶端版本號，無需為了跟版本而升級本服務。關閉後停止獲取新版本，已同步的版本仍可使用；上方手填版本始終優先。',
+        claudeCodeVersionSyncedValue: '當前同步到：{version}',
       },
       webSearchEmulation: {
         title: 'Web Search 模擬',
@@ -6806,7 +7437,7 @@
         siteNamePlaceholder: 'Sub2API',
         siteSubtitle: '站點副標題',
         siteSubtitleHint: '顯示在登入和註冊頁面',
-        siteSubtitlePlaceholder: '訂閱轉 API 轉換平台',
+        siteSubtitlePlaceholder: '快速穩定的大模型 API 服務',
         defaultLocale: '預設語言',
         defaultLocaleHint: '訪客未在本裝置手動選擇語言時使用',
         apiBaseUrl: 'API 端點地址',
@@ -6837,7 +7468,7 @@
         contactInfoPlaceholder: '例如：QQ: 123456789',
         contactInfoHint: '填寫客服聯系方式，將展示在兌換頁面、個人資料等位置',
         docUrl: '文件連結',
-        docUrlHint: '文件網站的連結。留空則隱藏文件連結。',
+        docUrlHint: '外部文件網站的連結，只在「接入金鑰」彈窗裡作為文件入口。首頁和頂欄的「文件」固定打開站內文件頁。留空則不顯示。',
         docUrlPlaceholder: 'https://docs.example.com',
         siteLogo: '站點Logo',
         uploadImage: '上傳圖片',
@@ -6913,6 +7544,8 @@
         balanceRechargePreview: '預覽：1 CNY = {usd} USD',
         subscriptionPaymentMultiplier: '訂閱付款倍率',
         subscriptionPaymentMultiplierHint: '訂閱應付金額 = 套餐美元價值 ÷ 該倍率',
+        officialPriceCnyRate: '官方價換算匯率',
+        officialPriceCnyRateHint: '用戶端以人民幣顯示時，模型官方美元價按此匯率換算成人民幣對照價。只影響顯示，不影響扣費。',
         subscriptionMinDaily: '最低套餐每日額度',
         subscriptionMaxDaily: '最高套餐每日額度',
         subscriptionMinRatioStartDaily: '最低倍率生效額度（USD/天）',
@@ -6973,7 +7606,7 @@
         validationFieldRequired: '{field} 不能為空',
         validationEasyPayCustomMethodRequired: '每個易支付自定義方式都必須填寫支付方式和上游 type',
         validationEasyPayCustomMethodTypeInvalid: '易支付自定義支付方式只能包含小寫字母、數字、下劃線和短橫線',
-        validationEasyPayCustomMethodUpstreamTypeInvalid: '易支付上游 type 只能包含小寫字母、數字、下劃線和短橫線',
+        validationEasyPayCustomMethodUpstreamTypeInvalid: '易支付上游 type 只能包含小寫字母、數字、點號、下劃線和短橫線',
         validationEasyPayCustomMethodReserved: '易支付自定義支付方式不能使用內置的 alipay 或 wxpay',
         validationEasyPayCustomMethodPrefixReserved: '易支付自定義支付方式不能以 alipay、wxpay 或 crypto 開頭',
         validationEasyPayCustomMethodDuplicate: '易支付自定義支付方式不能重複',
@@ -7030,6 +7663,7 @@
         customMethodType: '支付方式',
         customMethodUpstreamType: '上游 type',
         customMethodDisplayName: '顯示名稱',
+        customMethodDisplayNamePlaceholder: '如：信用卡',
         stripeWebhookHint: '請在 Stripe Dashboard 中將以下地址配置為 Webhook 端點：',
         stripeWebhookApiVersionHint: 'Webhook 端點的 API 版本請與當前集成的 Stripe SDK 對齊，建議選擇 {version}；版本不一致可能導致回調事件解析失敗。',
         airwallexWebhookHint: '請在 Airwallex 後台將以下地址配置為 Webhook 端點；事件至少選擇 Payment Intent -> Succeeded（payment_intent.succeeded），建議同時選擇 Payment Intent -> Cancelled（payment_intent.cancelled）；API version 選擇帳戶預設或最新穩定版本。',
@@ -7429,6 +8063,11 @@
         commonPatterns: '常用模式'
       },
       openaiFastPolicy: {
+        userIds: '指定用戶 ID',
+        userIdsHint: '留空表示對全部用戶生效。指定用戶規則優先於全局規則。',
+        userIdPlaceholder: '例如：1001',
+        addUserId: '添加用戶 ID',
+        removeUserId: '移除用戶 ID',
         title: 'OpenAI Fast/Flex 策略',
         description: '基於請求體 service_tier 字段攔截/過濾/透傳 OpenAI fast(priority) 與 flex 請求；僅作用於 OpenAI 網關。',
         empty: '尚未配置任何規則。點擊下方按鈕新增。',
@@ -7531,7 +8170,8 @@
         lowRatePriorityTitle: '優先選擇上游倍率較低的帳號',
         lowRatePriorityDescription: '傳統調度模式下，優先選擇已觀測上游 Token 計費倍率較低的帳號。',
         oauthRateTitle: 'OAuth 調度參考倍率',
-        oauthRateDescription: '設定傳統低倍率調度使用的 OAuth 參考倍率，預設參考值為 1。',
+        oauthRateDescription: '設定傳統低倍率調度使用的 OAuth 參考倍率，預設參考值為 1；留空時 OAuth 帳號使用各自的帳號倍率。API Key 帳號優先使用有效探測倍率，無有效探測時使用帳號倍率。',
+        oauthRateInvalid: 'OAuth 調度參考倍率必須是非負數字，或留空以使用帳號倍率。',
         upstreamCostWeightTitle: '上游計費倍率權重',
         upstreamCostWeightDescription: '設定高級調度中上游 Token 計費信號的排序權重，填 0 可關閉該信號。'
       },
@@ -7715,6 +8355,11 @@
     unlimited: '無限制'
   },
 
+  lowBalance: {
+    low: '餘額僅剩 {amount}，請及時充值。',
+    depleted: '餘額已用完，請及時充值。'
+  },
+
   // Version Badge
   version: {
     currentVersion: '當前版本',
@@ -7790,7 +8435,8 @@
     title: '我的訂閱',
     description: '查看您的訂閱計劃和用量',
     noActiveSubscriptions: '暫無有效訂閱',
-    noActiveSubscriptionsDesc: '您沒有任何有效訂閱。請聯系管理員獲取訂閱。',
+    noActiveSubscriptionsDesc: '購買訂閱後，每日額度和用量會顯示在這裡。',
+    noActiveSubscriptionsNoPaymentDesc: '訂閱生效後，每日額度和用量會顯示在這裡。',
     failedToLoad: '加載訂閱失敗',
     overdraftBtn: {
       label: '透支刷新當日額度',
@@ -7830,11 +8476,9 @@
       dFixed: '續費不改每日額度',
       price: '價格',
       renewPrice: '續費支付',
-      renewValue: '續費額度價值',
       changeDiff: '補差支付',
-      changeDiffValue: '補差額度價值',
-      newPlanPrice: '新套餐額度價值',
-      oldRemainingValue: '舊卡剩餘額度價值',
+      newPlanPriceFiat: '新套餐金額',
+      oldRemainingValueFiat: '舊套餐剩餘價值',
       caps: '周封頂 {weekly} · 月封頂 {monthly}',
       quoteFailed: '報價獲取失敗，請調整額度/時長後重試',
       loadFailed: '加載失敗，請關閉後重試',
@@ -7871,13 +8515,19 @@
 
   // 自定義訂閱購買（無固定套餐：自填每日額度 D + 有效期 T，按量大優惠 u(D) 計價）。
   subscriptionPurchase: {
+    ratesTitle: '開通後各分組的倍率，同樣的價格扣得更少',
+    ratesGroup: '分組',
+    ratesBalance: '餘額倍率',
+    ratesPlan: '套餐倍率',
+    ratesMore: '查看全部分組',
+    ratesLess: '收起',
+    rateValue: '{rate}x',
     title: '購買訂閱',
     desc: '自定義每日額度與有效期，量大單價更低',
     group: '平台/分組',
     dailyAmount: '每日額度',
     dailyAmountUnit: 'USD / 天',
     validityDays: '有效期',
-    unitPrice: '每刀單價',
     price: '應付',
     concurrency: '并發',
     weeklyCap: '周封頂',
@@ -7888,7 +8538,8 @@
     validityHalfYear: '半年',
     validityYear: '年',
     capHint: '',
-    rangeHint: '每日額度 {dMin}–{dMax}，每 30 刀一檔；有效期 {tMin}–{tMax} 天',
+    rangeHint: '每日額度 {dMin}–{dMax}；有效期 {tMin}–{tMax} 天，以 {tStep} 天為一檔',
+    rangeHintFiat: '有效期 {tMin}–{tMax} 天，以 {tStep} 天為一檔',
     buy: '購買',
     quoting: '計算中…',
     quoteFailed: '報價失敗，請調整每日額度或有效期',
@@ -8080,7 +8731,6 @@
     quickAmountsWithCurrency: '快捷金額（{currency}）',
     customAmount: '自定義金額',
     customAmountWithCurrency: '自定義金額（{currency}）',
-    subscriptionValueWithCurrency: '套餐價值（{currency}）',
     enterAmount: '輸入金額',
     paymentMethod: '支付方式',
     cryptoNetwork: 'USDT 支付網絡',
@@ -8115,6 +8765,7 @@
       failed: '失敗',
       refund_requested: '退款申請中',
       refunding: '退款中',
+      refund_pending: '退款處理中',
       refunded: '已退款',
       partially_refunded: '部分退款',
       refund_failed: '退款失敗',
@@ -8183,8 +8834,6 @@
     amountTooLow: '最低金額為 {min}',
     amountTooHigh: '最高金額為 {max}',
     amountNoMethod: '該金額沒有可用的支付方式',
-    rechargeMultiplier: '充值倍率：1 {currency} = {usd} USD',
-    rechargeRatePreview: '當前倍率：1 {currency} = {usd} USD',
     refundReason: '退款原因',
     refundReasonPlaceholder: '請描述您的退款原因',
     refundGatewayBase: '原路退款基數',
@@ -8240,6 +8889,7 @@
       INVALID_STATUS: '當前訂單狀態不允許此操作',
       BALANCE_NOT_ENOUGH: '退款金額超過餘額',
       REFUND_AMOUNT_EXCEEDED: '退款金額超過充值金額',
+      REFUND_AMOUNT_LOCKED: '該訂單已有一筆退款提交到網關，重試必須使用相同金額',
       REFUND_FAILED: '退款失敗',
     },
     airwallexPay: 'Airwallex 支付',
@@ -8259,6 +8909,7 @@
       rate: '倍率',
       dailyLimit: '日限額',
       dailyAmount: '每日額度',
+      equivalentCny: '等效人民幣',
       concurrency: '并發',
       weeklyLimit: '周限額',
       monthlyLimit: '月限額',
@@ -8322,6 +8973,14 @@
       confirmRefund: '確認退款',
       refundSuccess: '退款成功',
       refundFailed: '退款失敗',
+      refundPending: '退款處理中，待網關確認',
+      queryRefundStatus: '查詢退款狀態',
+      markRefundSucceeded: '標記為已退款',
+      markRefundFailed: '標記為退款失敗',
+      resolveRefundTitle: '手動處理待確認退款',
+      resolveRefundSucceededConfirm: '請先在支付網關商戶後台確認該退款已到賬再操作。訂單將按已退款結算，並執行原計劃的餘額/訂閱扣回。',
+      resolveRefundFailedConfirm: '請先登入支付網關商戶後台核實：該退款未到賬且不會再到賬，再執行此操作。訂單將變為退款失敗，重試時按原金額重新提交；網關去重並不總能兜底（Stripe 冪等鍵 24 小時後失效），誤標失敗可能導致重複退款。',
+      refundMarkedFailed: '已標記為退款失敗',
       refundInfo: '退款信息',
       refundEnabled: '允許退款',
       alreadyRefunded: '已退款',

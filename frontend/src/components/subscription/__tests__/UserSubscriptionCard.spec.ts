@@ -1,7 +1,9 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { shallowMount } from '@vue/test-utils'
 import UserSubscriptionCard from '../UserSubscriptionCard.vue'
-import type { UserSubscription } from '@/types'
+import { useAppStore as useRealAppStore } from '@/stores/app'
+import type { PublicSettings, UserSubscription } from '@/types'
 
 const routerPush = vi.hoisted(() => vi.fn())
 
@@ -94,4 +96,161 @@ describe('UserSubscriptionCard lifecycle checkout', () => {
       },
     })
   })
+})
+
+describe('UserSubscriptionCard lifecycle checkout unit price', () => {
+  beforeEach(() => {
+    routerPush.mockReset()
+  })
+
+  async function mountAndOpen() {
+    const wrapper = shallowMount(UserSubscriptionCard, {
+      props: { subscription: activeSubscriptionFixture() },
+      global: { stubs: { ConfirmDialog: true } },
+    })
+    const changeButton = wrapper.findAll('button').find(button => button.text() === 'userSubscriptions.lifecycle.changeTitle')
+    await changeButton!.trigger('click')
+    return wrapper
+  }
+
+  it('带了报价单价就写进结账 query，供结账页把每日额度写成人民币', async () => {
+    const wrapper = await mountAndOpen()
+    wrapper.findComponent({ name: 'SubscriptionLifecycleDialog' }).vm.$emit('purchase', {
+      intent: 'renew',
+      dailyAmountUsd: 90,
+      validityDays: 30,
+      charge: 121.5,
+      unitPrice: 0.045,
+    })
+
+    expect(routerPush).toHaveBeenCalledWith({
+      path: '/purchase',
+      query: {
+        tab: 'subscription',
+        intent: 'renew',
+        daily_amount_usd: '90',
+        validity_days: '30',
+        charge: '121.50',
+        unit_price: '0.045',
+      },
+    })
+  })
+
+  it('单价缺失或为 0 时不带 unit_price', async () => {
+    const wrapper = await mountAndOpen()
+    wrapper.findComponent({ name: 'SubscriptionLifecycleDialog' }).vm.$emit('purchase', {
+      intent: 'renew',
+      dailyAmountUsd: 90,
+      validityDays: 30,
+      charge: 121.5,
+      unitPrice: 0,
+    })
+
+    const query = routerPush.mock.calls[0][0].query
+    expect(query).not.toHaveProperty('unit_price')
+  })
+})
+
+describe('UserSubscriptionCard expiry labels', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 6, 30, 9, 0))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function mountWithExpiry(expiresAt: string) {
+    return shallowMount(UserSubscriptionCard, {
+      props: {
+        subscription: { ...activeSubscriptionFixture(), expires_at: expiresAt },
+      },
+      global: {
+        stubs: {
+          ConfirmDialog: true,
+        },
+      },
+    })
+  }
+
+  it('labels a same-day expiry under 24 hours away as today, not tomorrow', () => {
+    const text = mountWithExpiry(new Date(2026, 6, 30, 18, 0).toISOString()).text()
+
+    expect(text).toContain('common.today')
+    expect(text).not.toContain('common.tomorrow')
+  })
+
+  it('labels a next-calendar-day expiry as tomorrow', () => {
+    const text = mountWithExpiry(new Date(2026, 6, 31, 8, 0).toISOString()).text()
+
+    expect(text).toContain('common.tomorrow')
+  })
+
+  it('labels an expiry that elapsed less than a day ago as expired', () => {
+    const wrapper = mountWithExpiry(new Date(2026, 6, 30, 8, 0).toISOString())
+
+    expect(wrapper.text()).toContain('userSubscriptions.status.expired')
+    expect(wrapper.text()).not.toContain('common.today')
+    expect(wrapper.find('span.font-medium.text-primary-700').exists()).toBe(true)
+  })
+
+  it('shows remaining days for expiries further out', () => {
+    const text = mountWithExpiry(new Date(2026, 7, 4, 9, 0).toISOString()).text()
+
+    expect(text).toContain('userSubscriptions.daysRemaining')
+    expect(text).not.toContain('common.today')
+    expect(text).not.toContain('common.tomorrow')
+  })
+
+  it('renders no expiry label for an invalid expiry timestamp', () => {
+    const text = mountWithExpiry('not-a-date').text()
+
+    expect(text).not.toContain('userSubscriptions.status.expired')
+    expect(text).not.toContain('common.today')
+    expect(text).not.toContain('common.tomorrow')
+  })
+})
+
+describe('UserSubscriptionCard payment gating', () => {
+  function mountActive() {
+    return shallowMount(UserSubscriptionCard, {
+      props: { subscription: activeSubscriptionFixture() },
+      global: { stubs: { ConfirmDialog: true } },
+    })
+  }
+
+  function buttonLabels(wrapper: ReturnType<typeof mountActive>) {
+    return wrapper.findAll('button').map(button => button.text())
+  }
+
+  it('shows renew and change-plan while public settings are unknown', () => {
+    const labels = buttonLabels(mountActive())
+
+    expect(labels).toContain('payment.renewNow')
+    expect(labels).toContain('userSubscriptions.lifecycle.changeTitle')
+  })
+
+  it('shows renew and change-plan when payment is enabled', () => {
+    useRealAppStore().cachedPublicSettings = { payment_enabled: true } as PublicSettings
+    const labels = buttonLabels(mountActive())
+
+    expect(labels).toContain('payment.renewNow')
+    expect(labels).toContain('userSubscriptions.lifecycle.changeTitle')
+  })
+
+  it('hides renew and change-plan when payment is disabled, keeping the card usable', () => {
+    useRealAppStore().cachedPublicSettings = { payment_enabled: false } as PublicSettings
+    const wrapper = mountActive()
+    const labels = buttonLabels(wrapper)
+
+    expect(labels).not.toContain('payment.renewNow')
+    expect(labels).not.toContain('userSubscriptions.lifecycle.changeTitle')
+    expect(wrapper.text()).toContain('userSubscriptions.status.active')
+  })
+})
+
+// 组件里用到的金额口径依赖 app store；未配置充值倍率时按美元展示（旧行为）。
+beforeEach(() => {
+  setActivePinia(createPinia())
 })

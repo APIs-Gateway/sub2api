@@ -92,8 +92,11 @@ export interface User {
   allowed_groups: number[] | null // Allowed group IDs (null = all non-exclusive groups)
   balance_notify_enabled: boolean
   balance_notify_threshold: number | null
+  /** 阈值类型：fixed 为额度，percentage 为累计充值额的百分比（用户设置页只能设 fixed）。 */
+  balance_notify_threshold_type?: 'fixed' | 'percentage'
+  /** 累计充值额（额度口径），百分比阈值用它折算。 */
+  total_recharged?: number
   balance_notify_extra_emails: NotifyEmailEntry[]
-  stable_priority_enabled?: boolean // 稳定优先：所在组渠道全挂时跨分组逐档兜底
   subscriptions?: UserSubscription[] // User's active subscriptions
   last_active_at?: string | null
   created_at: string
@@ -235,6 +238,7 @@ export interface PublicSettings {
   balance_low_notify_threshold: number
   /** 1 单位法币充值可兑多少站内额度，用于把额度折算回法币展示。缺省/损坏为 1（不折算）。 */
   balance_recharge_multiplier?: number
+  official_price_cny_rate?: number
   channel_monitor_enabled: boolean
   channel_monitor_default_interval_seconds: number
   available_channels_enabled: boolean
@@ -528,7 +532,6 @@ export interface Group {
   claude_code_only: boolean
   fallback_group_id: number | null
   fallback_group_id_on_invalid_request: number | null
-  stable_priority_fallback_group_id: number | null // 稳定优先下一档兜底目标（仅 openai）
   // OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
   allow_messages_dispatch?: boolean
   default_mapped_model?: string
@@ -600,7 +603,6 @@ export interface ApiKey {
   reset_5h_at: string | null
   reset_1d_at: string | null
   reset_7d_at: string | null
-  stable_priority_enabled: boolean // per-key 稳定优先开关
 }
 
 export interface CreateApiKeyRequest {
@@ -614,7 +616,6 @@ export interface CreateApiKeyRequest {
   rate_limit_5h?: number
   rate_limit_1d?: number
   rate_limit_7d?: number
-  stable_priority_enabled?: boolean // per-key 稳定优先开关
 }
 
 export interface UpdateApiKeyRequest {
@@ -630,7 +631,6 @@ export interface UpdateApiKeyRequest {
   rate_limit_1d?: number
   rate_limit_7d?: number
   reset_rate_limit_usage?: boolean
-  stable_priority_enabled?: boolean // per-key 稳定优先开关（不传 = 不变）
 }
 
 export interface CreateGroupRequest {
@@ -652,7 +652,6 @@ export interface CreateGroupRequest {
   claude_code_only?: boolean
   fallback_group_id?: number | null
   fallback_group_id_on_invalid_request?: number | null
-  stable_priority_fallback_group_id?: number | null
   mcp_xml_inject?: boolean
   supported_model_scopes?: string[]
   models_list_config?: ModelsListConfig
@@ -688,7 +687,6 @@ export interface UpdateGroupRequest {
   claude_code_only?: boolean
   fallback_group_id?: number | null
   fallback_group_id_on_invalid_request?: number | null
-  stable_priority_fallback_group_id?: number | null
   mcp_xml_inject?: boolean
   supported_model_scopes?: string[]
   models_list_config?: ModelsListConfig
@@ -1348,6 +1346,11 @@ export interface UsageLog {
 
   created_at: string
 
+  // 实际服务本次请求的兜底分组。用户端只在该次请求走的是用户自己配置的兜底链时才返回，
+  // 其余情况一律缺省，按 group 展示。
+  served_group_id?: number | null
+  served_group?: { id: number; name: string } | null
+
   user?: User
   api_key?: ApiKey
   group?: Group
@@ -1360,6 +1363,8 @@ export interface UsageLogAccountSummary {
 }
 
 export interface AdminUsageLog extends UsageLog {
+  // 兜底来源：1 = 用户自己的兜底链，2 = 管理员隐藏链；缺省表示主分组
+  served_route_source?: number | null
   upstream_model?: string | null
   model_mapping_chain?: string | null
   upstream_model_mismatch?: boolean
@@ -1517,6 +1522,8 @@ export interface UsageStatsResponse {
   total_tokens: number
   total_cost: number // 标准计费
   total_actual_cost: number // 实际扣除
+  // 服务端按扣费来源分桶折算的人民币金额；倍率为 1 或后端未提供时缺省
+  total_actual_cost_fiat?: number
   average_duration_ms: number
   models?: Record<string, number>
 }
@@ -1533,6 +1540,7 @@ export interface TrendDataPoint {
   total_tokens: number
   cost: number // 标准计费
   actual_cost: number // 实际扣除
+  actual_cost_fiat?: number
 }
 
 export interface ModelStat {
@@ -1545,6 +1553,7 @@ export interface ModelStat {
   total_tokens: number
   cost: number // 标准计费
   actual_cost: number // 实际扣除
+  actual_cost_fiat?: number
   account_cost: number // 账号成本
 }
 
@@ -1670,6 +1679,8 @@ export interface UserSubscription {
   // remaining_overdraft_uses/can_enable_overdraft）已退役：三窗口模型改用用户级月度透支
   // （monthly_overdraft_remaining + POST /subscriptions/overdraft）。
   activated_at?: string | null
+  // 这张卡 1 个额度值多少人民币（u(D)）；倍率为 1 或卡数据无效时缺省
+  fiat_per_credit?: number
   created_at: string
   updated_at: string
   expires_at: string | null
@@ -2063,3 +2074,121 @@ export type {
   PlatformQuotaWindow,
   PlatformQuotasResponse,
 } from '@/api/admin/users'
+
+
+// ==================== Key 级分组兜底链 ====================
+
+/** 链上一项的状态：active 可用；disabled 分组已停用；unavailable 已删除或用户无权使用 */
+export type KeyFallbackItemStatus = 'active' | 'disabled' | 'unavailable'
+
+export interface KeyFallbackCnyPrice {
+  input_per_mtok: number
+  output_per_mtok: number
+}
+
+/**
+ * 参考模型每百万 Token 的价格。priced=false 时其余字段都不出现。
+ * cny 是余额价口径（和价格页一致，已含分组倍率与用户专属倍率），是用户端人民币展示的唯一来源；
+ * input/output_usd_per_mtok 是同一价格的美元口径，供全站切到美元或 free 站时使用。
+ */
+export interface KeyFallbackReferencePrice {
+  priced: boolean
+  input_usd_per_mtok?: number
+  output_usd_per_mtok?: number
+  official_input_usd_per_mtok?: number
+  official_output_usd_per_mtok?: number
+  cny?: KeyFallbackCnyPrice
+}
+
+export interface KeyFallbackChainItem {
+  group_id: number
+  name: string
+  role: 'primary' | 'fallback'
+  position: number
+  status: KeyFallbackItemStatus
+  usable: boolean
+  rate_multiplier: number
+  user_rate_multiplier: number | null
+  effective_multiplier: number
+  reference_price?: KeyFallbackReferencePrice
+}
+
+export interface KeyFallbackAvailableGroup {
+  group_id: number
+  name: string
+  status: KeyFallbackItemStatus
+  rate_multiplier: number
+  user_rate_multiplier?: number | null
+  effective_multiplier: number
+  reference_price?: KeyFallbackReferencePrice
+}
+
+export interface KeyFallbackChain {
+  key_id: number
+  platform: GroupPlatform
+  reference_model: string
+  max_fallbacks: number
+  /** 总开关。关着时接口照常可保存，界面不做任何区别对待 */
+  enabled?: boolean
+  items: KeyFallbackChainItem[]
+  available: KeyFallbackAvailableGroup[]
+}
+
+export interface KeyFallbackSummaryKey {
+  key_id: number
+  name: string
+  items: Array<Pick<KeyFallbackChainItem, 'group_id' | 'name' | 'role' | 'position' | 'status' | 'usable'>>
+  has_available: boolean
+}
+
+export interface KeyFallbackSummary {
+  enabled?: boolean
+  platforms: Array<{ platform: GroupPlatform; keys: KeyFallbackSummaryKey[] }>
+}
+
+/** 管理端：隐藏链的一项 */
+export interface AdminHiddenChainItem {
+  group_id: number
+  name?: string
+  position: number
+  note?: string
+  created_by?: number
+  updated_at?: string
+}
+
+export interface AdminEffectiveHop {
+  hop: number
+  group_id: number
+  name?: string
+  source: 'admin_head' | 'primary' | 'user' | 'admin_tail'
+  eligible: boolean
+}
+
+/** 被跳过的链项及原因（独立数组，不在 effective 里交错） */
+export interface AdminSkippedHop {
+  group_id: number
+  name?: string
+  source: 'user' | 'admin'
+  skip_reason: string
+}
+
+export interface AdminKeyFallbackChain {
+  key_id: number
+  user_id: number
+  platform: GroupPlatform
+  primary_group: { group_id: number; name: string }
+  enabled?: boolean
+  user_items: Array<{ group_id: number; name?: string; position: number }>
+  hidden_head: AdminHiddenChainItem[]
+  hidden_tail: AdminHiddenChainItem[]
+  effective: AdminEffectiveHop[]
+  skipped?: AdminSkippedHop[]
+  truncated?: boolean
+}
+
+export interface AdminHiddenChainPayload {
+  head?: number[]
+  tail?: number[]
+  /** 有 head 项时必填 */
+  note?: string
+}

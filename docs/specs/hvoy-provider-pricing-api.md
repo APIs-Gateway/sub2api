@@ -15,6 +15,8 @@ Expose `GET /api/provider/pricing` for hvoy.ai provider price crawling.
   - `gpt-5.6-terra` with group `codex plus`.
   - `gpt-5.6-luna` with group `codex plus`.
   - `gpt-6-astra` with group `codex plus`.
+  - `gpt-6-sol` with group `codex plus`.
+  - `gpt-6-luna` with group `codex plus`.
 - `group_name` is the stable public group identifier for each combination.
 
 ## Pricing Rule
@@ -45,4 +47,4 @@ Invalid or missing multipliers normalize to the existing default `1.0`.
 
 Model prices come from `PricingService.GetModelPricing`.
 
-That preserves the existing service fallback behavior where `gpt-5.5` resolves to the built-in GPT-5.4 static pricing, and `gpt-5.6-sol` / `gpt-5.6-terra` / `gpt-5.6-luna` / `gpt-6-astra` resolve to their built-in GPT-5.6 / GPT-6 Astra static pricing when the remote LiteLLM catalog is missing or stale.
+That preserves the existing service fallback behavior where `gpt-5.5` resolves to the built-in GPT-5.4 static pricing, and `gpt-5.6-sol` / `gpt-5.6-terra` / `gpt-5.6-luna` / `gpt-6-astra` / `gpt-6-sol` / `gpt-6-luna` resolve to their built-in GPT-5.6 / GPT-6 static pricing when the remote LiteLLM catalog is missing or stale.

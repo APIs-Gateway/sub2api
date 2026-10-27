@@ -13,14 +13,16 @@ type ProviderPricingHandler struct {
 	pricingService       *service.PricingService
 	settingService       *service.SettingService
 	groupRepo            service.GroupRepository
+	quoter               *service.PriceQuoter
 }
 
-func NewProviderPricingHandler(paymentConfigService *service.PaymentConfigService, pricingService *service.PricingService, settingService *service.SettingService, groupRepo service.GroupRepository) *ProviderPricingHandler {
+func NewProviderPricingHandler(paymentConfigService *service.PaymentConfigService, pricingService *service.PricingService, settingService *service.SettingService, groupRepo service.GroupRepository, quoter *service.PriceQuoter) *ProviderPricingHandler {
 	return &ProviderPricingHandler{
 		paymentConfigService: paymentConfigService,
 		pricingService:       pricingService,
 		settingService:       settingService,
 		groupRepo:            groupRepo,
+		quoter:               quoter,
 	}
 }
 
@@ -35,7 +37,20 @@ func (h *ProviderPricingHandler) GetPricing(c *gin.Context) {
 		return
 	}
 
-	groupMultipliers, err := service.LoadHvoyProviderGroupMultipliers(c.Request.Context(), h.groupRepo)
+	// 一个空接口值（groupRepo 为 nil 的场景）不能直接传进去，否则 ListActive 会对 nil 解引用。
+	var lister service.HvoyProviderGroupLister
+	if h.groupRepo != nil {
+		lister = h.groupRepo
+	}
+	resp, err := h.pricingService.BuildHvoyProviderPricingQuoted(
+		c.Request.Context(),
+		h.quoter,
+		lister,
+		cfg.BalanceRechargeMultiplier,
+		h.settingService.GetSiteName(c.Request.Context()),
+		h.settingService.GetFrontendURL(c.Request.Context()),
+		time.Now(),
+	)
 	if err != nil {
 		c.JSON(http.StatusOK, service.HvoyProviderPricingResponse{
 			SchemaVersion: service.HvoyProviderPricingSchemaVersion,
@@ -44,13 +59,5 @@ func (h *ProviderPricingHandler) GetPricing(c *gin.Context) {
 		})
 		return
 	}
-
-	resp := h.pricingService.BuildHvoyProviderPricing(
-		cfg.BalanceRechargeMultiplier,
-		groupMultipliers,
-		h.settingService.GetSiteName(c.Request.Context()),
-		h.settingService.GetFrontendURL(c.Request.Context()),
-		time.Now(),
-	)
 	c.JSON(http.StatusOK, resp)
 }

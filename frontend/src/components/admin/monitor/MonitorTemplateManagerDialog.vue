@@ -3,7 +3,7 @@
     :show="show"
     :title="t('admin.channelMonitor.template.managerTitle')"
     width="wide"
-    @close="$emit('close')"
+    @close="closeDialog"
   >
     <!-- provider tabs -->
     <div class="mb-4 border-b border-gray-200 dark:border-dark-700">
@@ -197,7 +197,7 @@
         </div>
         <!-- Right: save or close -->
         <div class="flex gap-2">
-          <button class="btn btn-secondary" @click="$emit('close')">
+          <button class="btn btn-secondary" @click="closeDialog">
             {{ t('common.close') }}
           </button>
           <button v-if="editing" class="btn btn-primary" :disabled="submitting" @click="handleSubmit">
@@ -229,7 +229,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -276,6 +276,30 @@ const providerTabs = computed<{ value: Provider; label: string }[]>(() => [
 const activeProvider = ref<Provider>(PROVIDER_ANTHROPIC)
 const templates = ref<ChannelMonitorTemplate[]>([])
 const loading = ref(false)
+let listRequestId = 0
+let dialogGeneration = 0
+let editorGeneration = 0
+let dialogActive = false
+
+function isCurrentDialog(generation: number): boolean {
+  return dialogActive && props.show && generation === dialogGeneration
+}
+
+function invalidateDialog() {
+  dialogActive = false
+  dialogGeneration++
+  editorGeneration++
+  listRequestId++
+  loading.value = false
+  submitting.value = false
+}
+
+function closeDialog() {
+  invalidateDialog()
+  emit('close')
+}
+
+onBeforeUnmount(invalidateDialog)
 
 const templatesForActiveProvider = computed(() =>
   templates.value.filter((t) => t.provider === activeProvider.value),
@@ -334,47 +358,55 @@ function loadForm(tpl: ChannelMonitorTemplate) {
   form.response_format = tpl.response_format || RESPONSE_FORMAT_JSON
 }
 
+function invalidateEditor() {
+  editorGeneration++
+  submitting.value = false
+}
+
 function openCreateForm() {
+  invalidateEditor()
   Object.assign(form, emptyForm(activeProvider.value))
   editing.value = 'new'
 }
 
 function openEditForm(tpl: ChannelMonitorTemplate) {
+  invalidateEditor()
   loadForm(tpl)
   editing.value = tpl.id
 }
 
 function backToList() {
+  invalidateEditor()
   editing.value = null
 }
 
 // --- data fetch ---
 async function fetchTemplates() {
+  const generation = dialogGeneration
+  if (!isCurrentDialog(generation)) return false
+  const requestId = ++listRequestId
+  const isCurrentRequest = () => isCurrentDialog(generation) && requestId === listRequestId
   loading.value = true
   try {
     const { items } = await adminAPI.channelMonitorTemplate.list()
+    if (!isCurrentRequest()) return false
     templates.value = items
+    return true
   } catch (err: unknown) {
+    if (!isCurrentRequest()) return false
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    return true
   } finally {
-    loading.value = false
+    if (isCurrentDialog(generation) && requestId === listRequestId) loading.value = false
   }
 }
 
-watch(
-  () => props.show,
-  (show) => {
-    if (show) {
-      editing.value = null
-      fetchTemplates()
-    }
-  },
-  { immediate: true },
-)
-
 // --- submit ---
 async function handleSubmit() {
-  if (submitting.value) return
+  const generation = dialogGeneration
+  const editor = editorGeneration
+  const isCurrentSubmit = () => isCurrentDialog(generation) && editor === editorGeneration
+  if (!isCurrentSubmit() || submitting.value || editing.value === null) return
   if (!form.name.trim()) {
     appStore.showError(t('admin.channelMonitor.template.missingName'))
     return
@@ -392,6 +424,7 @@ async function handleSubmit() {
         body_override: form.body_override,
         response_format: form.response_format,
       })
+      if (!isCurrentDialog(generation)) return
       appStore.showSuccess(t('admin.channelMonitor.template.createSuccess'))
     } else if (typeof editing.value === 'number') {
       await adminAPI.channelMonitorTemplate.update(editing.value, {
@@ -403,15 +436,19 @@ async function handleSubmit() {
         body_override: form.body_override,
         response_format: form.response_format,
       })
+      if (!isCurrentDialog(generation)) return
       appStore.showSuccess(t('admin.channelMonitor.template.updateSuccess'))
     }
+    // A committed mutation still belongs to this opening, even if Back
+    // selected another editor. Reconcile the list and parent independently.
     await fetchTemplates()
+    if (!isCurrentDialog(generation)) return
     emit('updated')
-    editing.value = null
+    if (isCurrentSubmit()) editing.value = null
   } catch (err: unknown) {
-    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    if (isCurrentSubmit()) appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {
-    submitting.value = false
+    if (isCurrentSubmit()) submitting.value = false
   }
 }
 
@@ -428,8 +465,9 @@ function confirmApply(tpl: ChannelMonitorTemplate) {
 
 // picker 提交后触发：刷新模板列表（拿最新 associated_monitors）+ 通知父组件
 async function onApplied(_affected: number) {
-  await fetchTemplates()
-  emit('updated')
+  const generation = dialogGeneration
+  if (!isCurrentDialog(generation)) return
+  if (await fetchTemplates() && isCurrentDialog(generation)) emit('updated')
 }
 
 // --- delete ---
@@ -453,18 +491,37 @@ const confirmDeleteMessage = computed(() => {
 })
 
 async function doDelete() {
+  const generation = dialogGeneration
+  if (!isCurrentDialog(generation)) return
   const tpl = confirmDelete.tpl
   confirmDelete.show = false
   if (!tpl) return
   try {
     await adminAPI.channelMonitorTemplate.del(tpl.id)
+    if (!isCurrentDialog(generation)) return
     appStore.showSuccess(t('admin.channelMonitor.template.deleteSuccess'))
-    await fetchTemplates()
-    emit('updated')
+    if (await fetchTemplates() && isCurrentDialog(generation)) emit('updated')
   } catch (err: unknown) {
-    appStore.showError(extractApiErrorMessage(err, t('common.error')))
+    if (isCurrentDialog(generation)) appStore.showError(extractApiErrorMessage(err, t('common.error')))
   }
 }
+
+// Initialize after all form/picker state exists, including the hidden-on-mount case.
+watch(
+  () => props.show,
+  (show) => {
+    invalidateDialog()
+    editing.value = null
+    applyPicker.show = false
+    confirmDelete.show = false
+    if (show) {
+      dialogActive = true
+      void fetchTemplates()
+    }
+  },
+  { immediate: true, flush: 'sync' },
+)
+
 
 // --- misc ---
 function tabClass(value: Provider): string {

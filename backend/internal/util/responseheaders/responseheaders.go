@@ -115,3 +115,26 @@ func WriteFilteredHeaders(dst http.Header, src http.Header, filter *CompiledHead
 		}
 	}
 }
+
+// WriteClaudeCodeResponseHeaders forwards only the native passthrough headers
+// read by Claude Code. Upstream account metadata and cookies remain filtered.
+func WriteClaudeCodeResponseHeaders(dst, src http.Header, filter *CompiledHeaderFilter) {
+	if filter == nil {
+		filter = defaultCompiledHeaderFilter
+	}
+	for key, values := range src {
+		lower := strings.ToLower(strings.TrimSpace(key))
+		if lower != "x-should-retry" && !strings.HasPrefix(lower, "anthropic-ratelimit-unified-") {
+			continue
+		}
+		if _, removed := filter.forceRemove[lower]; removed {
+			continue
+		}
+		if len(dst.Values(key)) > 0 {
+			continue
+		}
+		for _, value := range values {
+			dst.Add(key, value)
+		}
+	}
+}

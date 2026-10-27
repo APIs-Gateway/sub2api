@@ -111,6 +111,7 @@ func isOpenAICompatPreviousResponseNotFound(statusCode int, upstreamMsg string, 
 	check := func(s string) bool {
 		lower := strings.ToLower(strings.TrimSpace(s))
 		return strings.Contains(lower, "previous_response_not_found") ||
+			lower == "previous_response_id is not available for this user" ||
 			(strings.Contains(lower, "previous response") && strings.Contains(lower, "not found")) ||
 			(strings.Contains(lower, "unsupported parameter") && strings.Contains(lower, "previous_response_id"))
 	}
@@ -259,30 +260,6 @@ func (s *OpenAIGatewayService) disableOpenAICompatSessionContinuation(_ context.
 		}
 	}
 	s.openaiCompatSessionResponses.Store(key, binding)
-}
-
-func (s *OpenAIGatewayService) isOpenAICompatSessionContinuationDisabled(_ context.Context, c *gin.Context, account *Account, promptCacheKey string) bool {
-	if s == nil {
-		return false
-	}
-	key := openAICompatSessionResponseKey(c, account, promptCacheKey)
-	if key == "" {
-		return false
-	}
-	raw, ok := s.openaiCompatSessionResponses.Load(key)
-	if !ok {
-		return false
-	}
-	binding, ok := raw.(openAICompatSessionResponseBinding)
-	if !ok {
-		s.openaiCompatSessionResponses.Delete(key)
-		return false
-	}
-	if !binding.ExpiresAt.IsZero() && time.Now().After(binding.ExpiresAt) {
-		s.openaiCompatSessionResponses.Delete(key)
-		return false
-	}
-	return binding.ContinuationDisabled
 }
 
 func (s *OpenAIGatewayService) getOpenAICompatSessionTurnState(_ context.Context, c *gin.Context, account *Account, promptCacheKey string) string {

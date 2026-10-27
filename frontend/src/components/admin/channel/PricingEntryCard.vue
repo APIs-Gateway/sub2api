@@ -227,7 +227,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick, onUnmounted, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -303,27 +303,48 @@ function removeInterval(idx: number) {
   emit('update', { ...props.entry, intervals })
 }
 
+let defaultPriceVersion = 0
+let disposed = false
+// Replacements and in-place edits both invalidate a pending default-price read.
+watch([() => props.entry, () => props.platform], () => { defaultPriceVersion++ }, {
+  deep: true,
+  flush: 'sync'
+})
+onUnmounted(() => {
+  disposed = true
+  defaultPriceVersion++
+})
+
+function hasConfiguredPricing(entry: PricingFormEntry): boolean {
+  return entry.input_price != null || entry.output_price != null ||
+    entry.cache_write_price != null || entry.cache_read_price != null ||
+    entry.image_output_price != null || entry.per_request_price != null ||
+    entry.intervals.length > 0
+}
+
 async function onModelsUpdate(newModels: string[]) {
-  const oldModels = props.entry.models
-  emit('update', { ...props.entry, models: newModels })
+  defaultPriceVersion++
+  const previousEntry = props.entry
+  const platform = props.platform
+  const updatedEntry = { ...previousEntry, models: [...newModels] }
+  emit('update', updatedEntry)
 
-  // 只在新增模型且当前无价格时自动填充
-  const addedModels = newModels.filter(m => !oldModels.includes(m))
-  if (addedModels.length === 0) return
+  // NULL prices preserve each model's own default. Only the first, single-model
+  // addition to an otherwise unconfigured entry may populate a shared price.
+  if (previousEntry.models.length !== 0 || newModels.length !== 1 || hasConfiguredPricing(previousEntry)) return
 
-  // 检查是否所有价格字段都为空
-  const e = props.entry
-  const hasPrice = e.input_price != null || e.output_price != null ||
-                   e.cache_write_price != null || e.cache_read_price != null
-  if (hasPrice) return
-
-  // 查询第一个新增模型的默认价格
+  // Wait for the parent to accept this exact edit before querying. A reused card
+  // or a newer edit must not receive the result of the previous entry's query.
+  await nextTick()
+  if (disposed || toRaw(props.entry) !== updatedEntry || props.platform !== platform ||
+      props.entry.models.length !== 1 || props.entry.models[0] !== newModels[0] ||
+      hasConfiguredPricing(props.entry)) return
+  const version = defaultPriceVersion
   try {
-    const result = await channelsAPI.getModelDefaultPricing(addedModels[0])
-    if (result.found) {
+    const result = await channelsAPI.getModelDefaultPricing(newModels[0])
+    if (!disposed && version === defaultPriceVersion && result.found) {
       emit('update', {
         ...props.entry,
-        models: newModels,
         input_price: perTokenToMTok(result.input_price ?? null),
         output_price: perTokenToMTok(result.output_price ?? null),
         cache_write_price: perTokenToMTok(result.cache_write_price ?? null),

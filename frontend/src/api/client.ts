@@ -6,10 +6,22 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios'
 import type { ApiResponse } from '@/types'
 import { getLocale } from '@/i18n'
+import { API_BASE_URL, refreshAuthTokens, type RefreshTokenResponse } from './tokenRefresh'
+import { getAdminComplianceSessionVersion } from '@/utils/adminComplianceSession'
+import { getAnnouncementReadSessionVersion } from '@/utils/announcementReadSession'
+import { getAuthSessionVersion } from '@/utils/authSessionVersion'
+
+type SessionRequestConfig = InternalAxiosRequestConfig & {
+  _authSessionVersion?: number
+  _complianceSessionVersion?: number
+  _announcementReadSessionVersion?: number
+}
+
+function isAnnouncementReadRequest(url: string): boolean {
+  return /^\/announcements\/\d+\/read(?:$|\?)/.test(url)
+}
 
 // ==================== Axios Instance Configuration ====================
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
 export function getAPIBaseURL(): string {
   return API_BASE_URL
@@ -26,24 +38,34 @@ export const apiClient: AxiosInstance = axios.create({
 
 // ==================== Token Refresh State ====================
 
-// Track if a token refresh is in progress to prevent multiple simultaneous refresh requests
-let isRefreshing = false
-// Queue of requests waiting for token refresh
-let refreshSubscribers: Array<(token: string) => void> = []
-
-/**
- * Subscribe to token refresh completion
- */
-function subscribeTokenRefresh(callback: (token: string) => void): void {
-  refreshSubscribers.push(callback)
+type TokenRefreshUnavailableError = {
+  status: number
+  code: 'TOKEN_REFRESH_UNAVAILABLE'
+  message: string
 }
 
+// Shared refresh promises that were rejected and already cleared the session. Concurrent 401s that
+// awaited the same refresh keep rejecting with their own original error instead of AUTH_SESSION_CHANGED.
+const expiredSessionRefreshes = new WeakSet<Promise<RefreshTokenResponse>>()
+
 /**
- * Notify all subscribers that token has been refreshed
+ * Classify a refresh failure that means "refresh endpoint temporarily unavailable" rather than
+ * "refresh token rejected": network errors, 429 and 5xx keep the session and surface the real status.
  */
-function onTokenRefreshed(token: string): void {
-  refreshSubscribers.forEach((callback) => callback(token))
-  refreshSubscribers = []
+function toTokenRefreshUnavailableError(refreshError: unknown): TokenRefreshUnavailableError | undefined {
+  if (!axios.isAxiosError(refreshError)) {
+    return undefined
+  }
+  const refreshStatus = refreshError.response?.status ?? 0
+  if (refreshStatus === 0 || refreshStatus === 429 || refreshStatus >= 500) {
+    const responseData = refreshError.response?.data as { message?: string } | undefined
+    return {
+      status: refreshStatus,
+      code: 'TOKEN_REFRESH_UNAVAILABLE',
+      message: responseData?.message || refreshError.message
+    }
+  }
+  return undefined
 }
 
 // ==================== Request Interceptor ====================
@@ -59,6 +81,38 @@ const getUserTimezone = (): string => {
 
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    const sessionRequest = config as SessionRequestConfig
+    if (sessionRequest._authSessionVersion !== getAuthSessionVersion()) {
+      return Promise.reject({
+        status: 401,
+        code: 'AUTH_SESSION_CHANGED',
+        message: 'Authentication session changed before sending the request.'
+      })
+    }
+    // Keep the original version on retries so an old acceptance cannot use a new session's token.
+    if (sessionRequest._complianceSessionVersion === undefined) {
+      sessionRequest._complianceSessionVersion = getAdminComplianceSessionVersion()
+    }
+    if (
+      /^\/admin\/compliance(?:\/|$|\?)/.test(String(config.url || '')) &&
+      sessionRequest._complianceSessionVersion !== getAdminComplianceSessionVersion()
+    ) {
+      return Promise.reject({
+        status: 401,
+        code: 'AUTH_SESSION_CHANGED',
+        message: 'Authentication session changed before sending the compliance request.'
+      })
+    }
+    if (
+      isAnnouncementReadRequest(String(config.url || '')) &&
+      sessionRequest._announcementReadSessionVersion !== getAnnouncementReadSessionVersion()
+    ) {
+      return Promise.reject({
+        status: 401,
+        code: 'AUTH_SESSION_CHANGED',
+        message: 'Authentication session changed before sending the announcement read request.'
+      })
+    }
     // Attach token from localStorage
     const token = localStorage.getItem('auth_token')
     if (token && config.headers) {
@@ -82,6 +136,19 @@ apiClient.interceptors.request.use(
   },
   (error) => {
     return Promise.reject(error)
+  },
+  {
+    // Axios runs runWhen synchronously while assembling its asynchronous interceptor chain.
+    // Capture the caller's session now, so a session switch before the interceptor runs
+    // rejects the old request without sending it with the new account's token. Retries
+    // keep their original version.
+    runWhen: (config) => {
+      const sessionRequest = config as SessionRequestConfig
+      if (sessionRequest._authSessionVersion === undefined) {
+        sessionRequest._authSessionVersion = getAuthSessionVersion()
+      }
+      return true
+    }
   }
 )
 
@@ -110,18 +177,47 @@ apiClient.interceptors.response.use(
     return response
   },
   async (error: AxiosError<ApiResponse<unknown>>) => {
+    if (error.code === 'AUTH_SESSION_CHANGED') {
+      return Promise.reject(error)
+    }
     // Request cancellation: keep the original axios cancellation error so callers can ignore it.
     // Otherwise we'd misclassify it as a generic "network error".
     if (error.code === 'ERR_CANCELED' || axios.isCancel(error)) {
       return Promise.reject(error)
     }
 
-    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
+    const originalRequest = error.config as SessionRequestConfig & { _retry?: boolean }
+    const staleAuthRequest = () =>
+      originalRequest?._authSessionVersion !== undefined &&
+      originalRequest._authSessionVersion !== getAuthSessionVersion()
+    if (staleAuthRequest()) {
+      return Promise.reject({
+        status: 401,
+        code: 'AUTH_SESSION_CHANGED',
+        message: 'Authentication session changed while the request was in flight.'
+      })
+    }
 
     // Handle common errors
     if (error.response) {
       const { status, data } = error.response
       const url = String(error.config?.url || '')
+      const isComplianceRequest = /^\/admin\/compliance(?:\/|$|\?)/.test(url)
+      const staleComplianceRequest = () =>
+        isComplianceRequest &&
+        originalRequest?._complianceSessionVersion !== getAdminComplianceSessionVersion()
+      const staleAnnouncementReadRequest = () =>
+        isAnnouncementReadRequest(url) &&
+        originalRequest?._announcementReadSessionVersion !== getAnnouncementReadSessionVersion()
+      const sessionChangedError = {
+        status: 401,
+        code: 'AUTH_SESSION_CHANGED',
+        message: 'Authentication session changed while refreshing.'
+      }
+
+      if (staleAnnouncementReadRequest()) {
+        return Promise.reject(sessionChangedError)
+      }
 
       // Validate `data` shape to avoid HTML error pages breaking our error handling.
       const apiData = (typeof data === 'object' && data !== null ? data : {}) as Record<string, any>
@@ -153,12 +249,14 @@ apiClient.interceptors.response.use(
       }
 
       if (status === 423 && apiData.code === 'ADMIN_COMPLIANCE_ACK_REQUIRED') {
-        try {
-          window.dispatchEvent(new CustomEvent('admin-compliance-required', {
-            detail: apiData.metadata || {}
-          }))
-        } catch {
-          // ignore event failures
+        if (originalRequest?._complianceSessionVersion === getAdminComplianceSessionVersion()) {
+          try {
+            window.dispatchEvent(new CustomEvent('admin-compliance-required', {
+              detail: apiData.metadata || {}
+            }))
+          } catch {
+            // ignore event failures
+          }
         }
 
         return Promise.reject({
@@ -167,6 +265,10 @@ apiClient.interceptors.response.use(
           message: apiData.message || error.message,
           metadata: apiData.metadata,
         })
+      }
+
+      if (status === 401 && staleComplianceRequest()) {
+        return Promise.reject(sessionChangedError)
       }
 
       // 401: Try to refresh the token if we have a refresh token
@@ -178,75 +280,68 @@ apiClient.interceptors.response.use(
 
         // If we have a refresh token and this is not an auth endpoint, try to refresh
         if (refreshToken && !isAuthEndpoint) {
-          if (isRefreshing) {
-            // Wait for the ongoing refresh to complete
-            return new Promise((resolve, reject) => {
-              subscribeTokenRefresh((newToken: string) => {
-                if (newToken) {
-                  // Mark as retried to prevent infinite loop if retry also returns 401
-                  originalRequest._retry = true
-                  if (originalRequest.headers) {
-                    originalRequest.headers.Authorization = `Bearer ${newToken}`
-                  }
-                  resolve(apiClient(originalRequest))
-                } else {
-                  // Refresh failed, reject with original error
-                  reject({
-                    status,
-                    code: apiData.code,
-                    message: apiData.message || apiData.detail || error.message
-                  })
-                }
-              })
-            })
-          }
-
+          const refreshSessionUser = localStorage.getItem('auth_user')
           originalRequest._retry = true
-          isRefreshing = true
+          let refreshPromise: Promise<RefreshTokenResponse> | undefined
 
           try {
-            // Call refresh endpoint directly to avoid circular dependency
-            const refreshResponse = await axios.post(
-              `${API_BASE_URL}/auth/refresh`,
-              { refresh_token: refreshToken },
-              {
-                headers: { 'Content-Type': 'application/json' },
-                timeout: 30000,
-              }
-            )
+            const headers = originalRequest.headers as Record<string, unknown> | undefined
+            const authHeader = headers?.Authorization ?? headers?.authorization
+            const failedAccessToken =
+              typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+                ? authHeader.slice('Bearer '.length)
+                : null
+            // The shared helper coordinates this 401 path with the auth store's proactive refresh
+            // (and with other tabs) so a rotating refresh token is never submitted twice.
+            refreshPromise = refreshAuthTokens({ failedAccessToken })
+            const tokens = await refreshPromise
 
-            const refreshData = refreshResponse.data as ApiResponse<{
-              access_token: string
-              refresh_token: string
-              expires_in: number
-            }>
-
-            if (refreshData.code === 0 && refreshData.data) {
-              const { access_token, refresh_token: newRefreshToken, expires_in } = refreshData.data
-
-              // Update tokens in localStorage (convert expires_in to timestamp)
-              localStorage.setItem('auth_token', access_token)
-              localStorage.setItem('refresh_token', newRefreshToken)
-              localStorage.setItem('token_expires_at', String(Date.now() + expires_in * 1000))
-
-              // Notify subscribers with new token
-              onTokenRefreshed(access_token)
-
-              // Retry the original request with new token
-              if (originalRequest.headers) {
-                originalRequest.headers.Authorization = `Bearer ${access_token}`
-              }
-
-              isRefreshing = false
-              return apiClient(originalRequest)
+            if (staleAuthRequest() || staleComplianceRequest() || staleAnnouncementReadRequest()) {
+              return Promise.reject(sessionChangedError)
             }
 
-            // Refresh response was not successful, fall through to clear auth
-            throw new Error('Token refresh failed')
+            // Retry the original request with the refreshed token
+            if (originalRequest.headers) {
+              originalRequest.headers.Authorization = `Bearer ${tokens.access_token}`
+            }
+            return apiClient(originalRequest)
           } catch (refreshError) {
-            // Refresh failed - notify subscribers with empty token
-            onTokenRefreshed('')
-            isRefreshing = false
+            if (staleAuthRequest()) {
+              return Promise.reject(sessionChangedError)
+            }
+            // Another request awaiting the same failed refresh already cleared the session and
+            // redirected; keep rejecting with this request's own 401 error.
+            if (refreshPromise && expiredSessionRefreshes.has(refreshPromise)) {
+              return Promise.reject({
+                status,
+                code: apiData.code,
+                message: apiData.message || apiData.detail || error.message
+              })
+            }
+
+            // A stale request must never destroy a session that was logged out or replaced while
+            // its refresh was in flight (for example, when another tab signs in as another user).
+            const sessionChanged =
+              localStorage.getItem('refresh_token') !== refreshToken ||
+              localStorage.getItem('auth_user') !== refreshSessionUser
+            if (sessionChanged) {
+              return Promise.reject({
+                status: 401,
+                code: 'AUTH_SESSION_CHANGED',
+                message: 'Authentication session changed while refreshing.'
+              })
+            }
+
+            // A temporarily unavailable refresh endpoint must not log the user out; every request
+            // sharing the refresh rejects with the same classified upstream failure.
+            const unavailableError = toTokenRefreshUnavailableError(refreshError)
+            if (unavailableError) {
+              return Promise.reject(unavailableError)
+            }
+
+            if (refreshPromise) {
+              expiredSessionRefreshes.add(refreshPromise)
+            }
 
             // Clear tokens and redirect to login
             localStorage.removeItem('auth_token')

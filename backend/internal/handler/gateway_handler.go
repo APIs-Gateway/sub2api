@@ -30,6 +30,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
 
@@ -123,6 +124,7 @@ func NewGatewayHandler(
 // Messages handles Claude API compatible messages endpoint
 // POST /v1/messages
 func (h *GatewayHandler) Messages(c *gin.Context) {
+	defer finishBillingInflightHTTP(c)
 	// 从context获取apiKey和user（ApiKeyAuth中间件已设置）
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok {
@@ -161,6 +163,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 
 	setOpsRequestContext(c, "", false)
+
+	if gjson.ValidBytes(body) {
+		if err := service.ValidateGatewayModelField(body); err != nil {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
+	}
 
 	bodyRef := service.NewRequestBodyRef(body)
 	parsedReq, err := service.ParseGatewayRequest(bodyRef, domain.PlatformAnthropic)
@@ -310,6 +319,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		for {
 			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0)) // Gemini 不使用会话限制
 			if err != nil {
+				if failoverClientGone(c) {
+					reqLog.Info("gateway.account_select_aborted_client_disconnected", zap.Error(err))
+					return
+				}
 				if len(fs.FailedAccountIDs) == 0 {
 					reqLog.Warn("gateway.select_account_no_available",
 						zap.String("model", reqModel),
@@ -417,6 +430,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 			// 转发请求 - 根据账号平台分流
 			var result *service.ForwardResult
+			if !reserveBillingInflightHTTP(c, h.gatewayService, service.BillingInflightRequest{APIKey: apiKey, Account: account, Model: reqModel, Body: body, ChannelUsageFields: channelMapping.ToUsageFields(reqModel, "")}, accountReleaseFunc, func(status int, code, message string) {
+				h.handleStreamingAwareError(c, status, code, message, streamStarted)
+			}) {
+				return
+			}
 			requestCtx := c.Request.Context()
 			if fs.SwitchCount > 0 {
 				requestCtx = service.WithAccountSwitchCount(requestCtx, fs.SwitchCount, h.metadataBridgeEnabled())
@@ -447,6 +465,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			if err != nil {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
+					if result == nil && service.IsBillingInflightNoChargeError(err) && c.Writer.Size() == writerSizeBeforeForward {
+						service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+					}
 					// 流式内容已写入客户端，无法撤销，禁止 failover 以防止流拼接腐化
 					if c.Writer.Size() != writerSizeBeforeForward {
 						h.handleFailoverExhausted(c, failoverErr, service.PlatformGemini, true)
@@ -604,6 +625,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			)
 			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), currentAPIKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, parsedReq.MetadataUserID, subject.UserID)
 			if err != nil {
+				if failoverClientGone(c) {
+					reqLog.Info("gateway.account_select_aborted_client_disconnected", zap.Error(err))
+					return
+				}
 				if len(fs.FailedAccountIDs) == 0 {
 					reqLog.Warn("gateway.select_account_no_available",
 						zap.String("model", reqModel),
@@ -792,6 +817,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				return
 			}
 			attemptBody := attemptParsedReq.Body.Bytes()
+			if !reserveBillingInflightHTTP(c, h.gatewayService, service.BillingInflightRequest{APIKey: currentAPIKey, Account: account, Model: reqModel, Body: attemptBody, ChannelUsageFields: channelMapping.ToUsageFields(reqModel, "")}, accountReleaseFunc, func(status int, code, message string) {
+				h.handleStreamingAwareError(c, status, code, message, streamStarted)
+			}) {
+				return
+			}
 
 			// 转发请求 - 根据账号平台分流
 			c.Set("parsed_request", attemptParsedReq)
@@ -941,8 +971,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
+					if result == nil && service.IsBillingInflightNoChargeError(err) && c.Writer.Size() == writerSizeBeforeForward {
+						service.MarkBillingInflightAttemptNoCharge(c.Request.Context())
+					}
 					// 流式内容已写入客户端，无法撤销，禁止 failover 以防止流拼接腐化
-					if c.Writer.Size() != writerSizeBeforeForward {
+					if c.Writer.Size() != writerSizeBeforeForward && !failoverErr.SafeToFailoverAfterWrite {
 						h.handleFailoverExhausted(c, failoverErr, account.Platform, true)
 						return
 					}
@@ -1047,12 +1080,12 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
 		fallbackModels := defaultModelIDsForPlatform(platform)
 		availableModels = filterModelsByCustomList(customModelsListSource(platform, availableModels, fallbackModels), fallbackModels, apiKey.Group.ModelsListConfig.Models)
-		writeCustomModelsList(c, platform, availableModels)
+		writeModelsList(c, platform, availableModels)
 		return
 	}
 
 	if len(availableModels) > 0 {
-		writeModelsList(c, availableModels)
+		writeModelsList(c, platform, availableModels)
 		return
 	}
 
@@ -1079,7 +1112,11 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	})
 }
 
-func writeModelsList(c *gin.Context, modelIDs []string) {
+func writeModelsList(c *gin.Context, platform string, modelIDs []string) {
+	if platform == service.PlatformOpenAI {
+		writeOpenAIModelsList(c, modelIDs)
+		return
+	}
 	models := make([]claude.Model, 0, len(modelIDs))
 	for _, modelID := range modelIDs {
 		models = append(models, claude.Model{
@@ -1093,14 +1130,6 @@ func writeModelsList(c *gin.Context, modelIDs []string) {
 		"object": "list",
 		"data":   models,
 	})
-}
-
-func writeCustomModelsList(c *gin.Context, platform string, modelIDs []string) {
-	if platform == service.PlatformOpenAI {
-		writeOpenAIModelsList(c, modelIDs)
-		return
-	}
-	writeModelsList(c, modelIDs)
 }
 
 func writeOpenAIModelsList(c *gin.Context, modelIDs []string) {
@@ -1738,7 +1767,7 @@ func (h *GatewayHandler) handleConcurrencyError(c *gin.Context, err error, slotT
 // handleFailoverExhausted 走共享的「上游错误 → 对外响应」策略(issue #16 Part B):
 // 静默拒绝特判 → 记录真实上游状态 → 透传规则 → 默认(请求形 4xx 透传)。
 func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, platform string, streamStarted bool) {
-	status, errType, errMsg := service.ResolveUpstreamErrorResponse(c, platform, failoverErr.StatusCode, failoverErr.ResponseBody)
+	status, errType, errMsg := service.ResolveUpstreamFailoverErrorResponse(c, platform, failoverErr)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 
@@ -1750,6 +1779,11 @@ func (h *GatewayHandler) handleFailoverExhaustedSimple(c *gin.Context, statusCod
 
 // handleStreamingAwareError handles errors that may occur after streaming has started
 func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool) {
+	// Native first-visible staging can commit only transport comments while the
+	// handler's local streamStarted flag remains false across account retries.
+	if !streamStarted && c.Writer.Written() && strings.HasPrefix(c.Writer.Header().Get("Content-Type"), "text/event-stream") {
+		streamStarted = true
+	}
 	if streamStarted {
 		// 响应状态码已固化为 200（ping/部分数据已 flush），错误只能就地以 SSE 帧回传。
 		// 标记本次流内错误，供 ops_error_logger 补记——否则该中间件按 status>=400 采集，
@@ -1769,8 +1803,10 @@ func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, e
 		if ok {
 			// SSE 错误事件固定 schema，使用 Quote 直拼可避免额外 Marshal 分配。
 			errorEvent := `data: {"type":"error","error":{"type":` + strconv.Quote(errType) + `,"message":` + strconv.Quote(message) + `}}` + "\n\n"
+			service.MarkResponseCommitted(c)
 			if _, err := fmt.Fprint(c.Writer, errorEvent); err != nil {
 				_ = c.Error(err)
+				return
 			}
 			flusher.Flush()
 		}
@@ -1785,8 +1821,13 @@ func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, e
 // Writer 已被写过时（ping 已 flush）走 streamStarted 分支，
 // 让 handleStreamingAwareError 通过 SSE 发协议合规的终止事件，
 // 否则下游收到的就是 silent EOF。
+// 客户端已断开时不补写，响应未提交则标记 499（见 failoverClientGone）。
 func (h *GatewayHandler) ensureForwardErrorResponse(c *gin.Context, streamStarted bool) bool {
 	if c == nil || c.Writer == nil {
+		return false
+	}
+	if c.Request != nil && errors.Is(c.Request.Context().Err(), context.Canceled) {
+		failoverClientGone(c)
 		return false
 	}
 	if service.IsResponseCommitted(c) {
@@ -1920,6 +1961,14 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	}
 
 	setOpsRequestContext(c, "", false)
+
+	// Leave malformed JSON to the existing lenient parser diagnostics.
+	if gjson.ValidBytes(body) {
+		if err := service.ValidateGatewayModelField(body); err != nil {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
+	}
 
 	bodyRef := service.NewRequestBodyRef(body)
 	parsedReq, err := service.ParseGatewayRequest(bodyRef, domain.PlatformAnthropic)
@@ -2299,9 +2348,12 @@ func (h *GatewayHandler) submitUsageRecordTask(parent context.Context, task serv
 	if task == nil {
 		return
 	}
-	task = wrapUsageRecordTaskContext(parent, task)
+	task, abandon := wrapUsageRecordTaskContext(parent, task)
 	if h.usageRecordWorkerPool != nil {
 		if mode := h.usageRecordWorkerPool.Submit(task); mode != service.UsageRecordSubmitModeDroppedStopped {
+			if mode.Dropped() {
+				abandon()
+			}
 			return
 		}
 		// 池已停止（进程关停窗口）：计费任务不能静默丢失，降级为内联同步执行。

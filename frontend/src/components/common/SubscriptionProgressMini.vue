@@ -17,7 +17,7 @@
             :class="getProgressDotClass(sub)"
           ></div>
         </div>
-        <span class="font-mono text-xs font-medium tabular-nums text-gray-900 dark:text-white">
+        <span class="num-secondary text-xs text-gray-900 dark:text-white">
           {{ activeSubscriptions.length }}
         </span>
       </div>
@@ -46,11 +46,11 @@
           >
             <div class="mb-2 flex items-center justify-between">
               <span class="text-sm font-medium text-gray-900 dark:text-white">
-                {{ subscription.group?.name || `Group #${subscription.group_id}` }}
+                {{ subscriptionTitle(subscription) }}
               </span>
               <span
                 v-if="subscription.expires_at"
-                class="font-mono text-xs tabular-nums"
+                class="num text-xs"
                 :class="getDaysRemainingClass(subscription.expires_at)"
               >
                 {{ formatDaysRemaining(subscription.expires_at) }}
@@ -64,7 +64,7 @@
                 v-if="isUnlimited(subscription)"
                 class="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 dark:border-dark-700 dark:bg-dark-800/40"
               >
-                <span class="font-mono text-lg text-gray-700 dark:text-gray-300">∞</span>
+                <span class="text-lg text-gray-700 dark:text-gray-300">∞</span>
                 <span class="text-xs font-medium text-gray-600 dark:text-gray-400">
                   {{ t('subscriptionProgress.unlimited') }}
                 </span>
@@ -87,8 +87,8 @@
                       :style="{ width: getProgressWidth(w.used, w.limit) }"
                     ></div>
                   </div>
-                  <span class="w-24 flex-shrink-0 text-right font-mono text-[10px] tabular-nums text-gray-700 dark:text-gray-300">
-                    {{ formatUsage(w.used, w.limit) }}
+                  <span class="num w-28 flex-shrink-0 text-right text-[10px] text-gray-700 dark:text-gray-300">
+                    {{ formatUsage(subscription, w.used, w.limit) }}
                   </span>
                 </div>
               </template>
@@ -116,8 +116,11 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { useSubscriptionStore } from '@/stores'
 import type { UserSubscription } from '@/types'
+import { getExpirationDateRelation, subscriptionDisplayName } from '@/utils/subscriptionQuota'
+import { useCurrencyDisplay } from '@/composables/useCurrencyDisplay'
 
 const { t } = useI18n()
+const { isFiat, formatSubscription } = useCurrencyDisplay()
 
 const subscriptionStore = useSubscriptionStore()
 
@@ -198,20 +201,31 @@ function getProgressWidth(used: number | undefined, limit: number | null | undef
   return `${percentage}%`
 }
 
-function formatUsage(used: number | undefined, limit: number | null | undefined): string {
-  const usedValue = (used || 0).toFixed(2)
-  const limitValue = limit?.toFixed(2) || '∞'
-  return `$${usedValue}/$${limitValue}`
+// 没有来源分组的卡回退到「每日 X」，金额和下面的用量同一口径（人民币模式下是 ¥）。
+function subscriptionTitle(sub: UserSubscription): string {
+  return subscriptionDisplayName(sub, t, (amount) => formatSubscription(amount, sub.fiat_per_credit))
+}
+
+function formatUsage(
+  sub: UserSubscription,
+  used: number | undefined,
+  limit: number | null | undefined
+): string {
+  const usedValue = formatSubscription(used || 0, sub.fiat_per_credit)
+  const limitValue =
+    limit == null ? (isFiat.value ? '∞' : '$∞') : formatSubscription(limit, sub.fiat_per_credit)
+  return `${usedValue}/${limitValue}`
 }
 
 function formatDaysRemaining(expiresAt: string): string {
   const now = new Date()
   const expires = new Date(expiresAt)
   const diff = expires.getTime() - now.getTime()
-  if (diff < 0) return t('subscriptionProgress.expired')
+  const relation = getExpirationDateRelation(expires, now)
+  if (relation === 'expired') return t('subscriptionProgress.expired')
+  if (relation === 'today') return t('subscriptionProgress.expiresToday')
+  if (relation === 'tomorrow') return t('subscriptionProgress.expiresTomorrow')
   const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
-  if (days === 0) return t('subscriptionProgress.expiresToday')
-  if (days === 1) return t('subscriptionProgress.expiresTomorrow')
   return t('subscriptionProgress.daysRemaining', { days })
 }
 

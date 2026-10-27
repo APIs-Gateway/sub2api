@@ -179,4 +179,28 @@ describe('App document title refresh', () => {
     warn.mockRestore()
     wrapper.unmount()
   })
+
+  it('ignores compliance events while logged out and accepts them for the current admin', async () => {
+    const { default: App } = await import('../App.vue')
+    const wrapper = mount(App)
+    await nextTick()
+
+    window.dispatchEvent(new CustomEvent('admin-compliance-required', {
+      detail: { version: 'old-admin-version' }
+    }))
+    expect(adminComplianceStore.requireAcknowledgement).not.toHaveBeenCalled()
+
+    authStore.isAuthenticated = true
+    authStore.isAdmin = true
+    await nextTick()
+    window.dispatchEvent(new CustomEvent('admin-compliance-required', {
+      detail: { version: 'current-admin-version' }
+    }))
+    expect(adminComplianceStore.requireAcknowledgement).toHaveBeenCalledOnce()
+    expect(adminComplianceStore.requireAcknowledgement).toHaveBeenCalledWith({
+      version: 'current-admin-version'
+    })
+
+    wrapper.unmount()
+  })
 })

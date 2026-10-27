@@ -196,12 +196,33 @@ func TestShouldStripOpenAIResponsesInputItemID(t *testing.T) {
 		{"local_shell_call item id", "local_shell_call", "item_x", true},
 		{"function_call_output unconstrained", "function_call_output", "item_x", false},
 		{"unconstrained type", "web_search_call", "ws_001", false},
+		{"message msg id at 64 chars", "message", "msg_" + strings.Repeat("x", 60), false},
+		{"message msg id over 64 chars", "message", "msg_" + strings.Repeat("x", 61), true},
+		{"reasoning rs id at 64 chars", "reasoning", "rs_" + strings.Repeat("x", 61), false},
+		{"reasoning rs id over 64 chars", "reasoning", "rs_" + strings.Repeat("x", 62), true},
+		{"function_call fc id at 64 chars", "function_call", "fc_" + strings.Repeat("x", 61), false},
+		{"function_call fc id over 64 chars", "function_call", "fc_" + strings.Repeat("x", 62), true},
+		{"unconstrained oversized id", "function_call_output", "item_" + strings.Repeat("x", 100), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, shouldStripOpenAIResponsesInputItemID(tc.itemType, tc.id))
 		})
 	}
+}
+
+func TestSanitizeOpenAIResponsesInputItemIDs_StripsOversizedIDs(t *testing.T) {
+	validID := "fc_" + strings.Repeat("x", 61)
+	oversizedID := "fc_" + strings.Repeat("x", 62)
+	body := []byte(`{"input":[{"type":"function_call","id":"` + validID + `","call_id":"call_1","name":"f","arguments":"{}"},{"type":"function_call","id":"` + oversizedID + `","call_id":"call_2","name":"f","arguments":"{}"}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesInputItemIDs(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, validID, gjson.GetBytes(sanitized, "input.0.id").String())
+	require.False(t, gjson.GetBytes(sanitized, "input.1.id").Exists())
+	require.Equal(t, "call_2", gjson.GetBytes(sanitized, "input.1.call_id").String())
 }
 
 // TestSanitizeOpenAIResponsesInputItemIDs_NonArrayInputIsNoOp verifies bodies

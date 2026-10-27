@@ -1,23 +1,35 @@
-import { describe, expect, it, vi } from 'vitest'
-import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { defineComponent, reactive } from 'vue'
+import { flushPromises, mount } from '@vue/test-utils'
+import { invalidateAuthSession } from '@/utils/authSessionVersion'
 
-const { updateAccountMock, checkMixedChannelRiskMock } = vi.hoisted(() => ({
+const { updateAccountMock, checkMixedChannelRiskMock, showErrorMock, authState, syncSavedMock, syncPreviewMock, showSuccessMock, showInfoMock } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
-  checkMixedChannelRiskMock: vi.fn()
+  checkMixedChannelRiskMock: vi.fn(),
+  showErrorMock: vi.fn(),
+  showSuccessMock: vi.fn(),
+  showInfoMock: vi.fn(),
+  syncSavedMock: vi.fn(),
+  syncPreviewMock: vi.fn(),
+  authState: { isSimpleMode: true }
 }))
+const loginState = reactive({ authSessionVersion: 0, user: { id: 1 } })
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
-    showError: vi.fn(),
-    showSuccess: vi.fn(),
-    showInfo: vi.fn()
+    showError: showErrorMock,
+    showSuccess: showSuccessMock,
+    showInfo: showInfoMock
   })
 }))
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
-    isSimpleMode: true
+    get authSessionVersion() { return loginState.authSessionVersion },
+    get user() { return loginState.user },
+    get isSimpleMode() {
+      return authState.isSimpleMode
+    }
   })
 }))
 
@@ -25,6 +37,8 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       update: updateAccountMock,
+      syncUpstreamModels: syncSavedMock,
+      syncUpstreamModelsPreview: syncPreviewMock,
       checkMixedChannelRisk: checkMixedChannelRiskMock
     },
     settings: {
@@ -52,6 +66,7 @@ vi.mock('vue-i18n', async () => {
 })
 
 import EditAccountModal from '../EditAccountModal.vue'
+import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
 
 const BaseDialogStub = defineComponent({
   name: 'BaseDialog',
@@ -67,10 +82,17 @@ const BaseDialogStub = defineComponent({
 const ModelWhitelistSelectorStub = defineComponent({
   name: 'ModelWhitelistSelector',
   props: {
+    modelMappings: {
+      type: Array,
+      default: () => []
+    },
     modelValue: {
       type: Array,
       default: () => []
-    }
+    },
+    syncCredentials: Object,
+    syncContext: Number,
+    active: Boolean
   },
   emits: ['update:modelValue'],
   template: `
@@ -192,7 +214,7 @@ function buildAntigravityAccount(projectId = 'configured-project') {
   } as any
 }
 
-function mountModal(account = buildAccount()) {
+function mountModal(account = buildAccount(), renderGroupSelector = false, renderModelWhitelist = false) {
   return mount(EditAccountModal, {
     props: {
       show: true,
@@ -206,14 +228,242 @@ function mountModal(account = buildAccount()) {
         Select: SelectStub,
         Icon: true,
         ProxySelector: true,
-        GroupSelector: true,
-        ModelWhitelistSelector: ModelWhitelistSelectorStub
+        GroupSelector: !renderGroupSelector,
+        ModelWhitelistSelector: renderModelWhitelist ? false : ModelWhitelistSelectorStub
       }
     }
   })
 }
 
+describe('EditAccountModal model preview', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    syncSavedMock.mockReset()
+    syncPreviewMock.mockReset()
+    loginState.authSessionVersion = invalidateAuthSession()
+    loginState.user = { id: 1 }
+  })
+  const deferred = () => {
+    let resolve!: (value: { models: string[] }) => void
+    let reject!: (error: Error) => void
+    const promise = new Promise<{ models: string[] }>((yes, no) => { resolve = yes; reject = no })
+    return { promise, resolve, reject }
+  }
+  const button = (wrapper: ReturnType<typeof mountModal>) => wrapper.findAll('button')
+    .find(item => item.text().includes('admin.accounts.syncUpstreamModels'))!
+  const apiKeyAG = () => ({ ...buildAntigravityAccount(), type: 'apikey', credentials: { api_key: 'redacted', base_url: 'https://saved.example/antigravity' } })
+  const values = (wrapper: ReturnType<typeof mountModal>) => wrapper.findAll('input').map(input => (input.element as HTMLInputElement).value)
+
+  it('passes the current URL/key/cleared proxy to the API-key selector without exposing the saved secret', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('input[placeholder="https://api.openai.com"]').setValue(' https://draft.example ')
+    await wrapper.get('input[type="password"]').setValue(' new-key ')
+    expect(wrapper.findComponent(ModelWhitelistSelectorStub).props('syncCredentials')).toEqual({
+      account_id: 1, platform: 'openai', type: 'apikey', base_url: 'https://draft.example', api_key: 'new-key', proxy_id: 0
+    })
+    await wrapper.get('input[type="password"]').setValue('')
+    expect(wrapper.findComponent(ModelWhitelistSelectorStub).props('syncCredentials').api_key).toBe('')
+    await wrapper.setProps({ account: { ...buildAccount(), name: 'background poll' } })
+    expect(wrapper.findComponent(ModelWhitelistSelectorStub).props('syncCredentials').base_url).toBe('https://draft.example')
+    wrapper.unmount()
+  })
+
+  it('uses the separate Antigravity API-key button to preview a draft', async () => {
+    syncPreviewMock.mockResolvedValue({ models: ['ag-draft'] })
+    const wrapper = mountModal(apiKeyAG())
+    await wrapper.get('input[placeholder="https://cloudcode-pa.googleapis.com"]').setValue('https://draft.example/antigravity')
+    await wrapper.get('input[type="password"]').setValue('new-key')
+    await button(wrapper).trigger('click')
+    await flushPromises()
+    expect(syncPreviewMock).toHaveBeenCalledWith({ account_id: 3, platform: 'antigravity', type: 'apikey', base_url: 'https://draft.example/antigravity', api_key: 'new-key', proxy_id: 0 })
+    expect(syncSavedMock).not.toHaveBeenCalled()
+    expect(values(wrapper)).toContain('ag-draft')
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps Antigravity OAuth on the saved account endpoint', async () => {
+    syncSavedMock.mockResolvedValue({ models: ['ag-oauth'] })
+    const wrapper = mountModal(buildAntigravityAccount())
+    await button(wrapper).trigger('click')
+    await flushPromises()
+    expect(syncSavedMock).toHaveBeenCalledWith(3)
+    expect(syncPreviewMock).not.toHaveBeenCalled()
+    expect(values(wrapper)).toContain('ag-oauth')
+    wrapper.unmount()
+  })
+
+  for (const change of ['account', 'close/reopen', 'close event', 'URL', 'key', 'proxy', 'login session', 'unmount'] as const) {
+    for (const result of ['success', 'error'] as const) {
+      it(`ignores Antigravity ${result} after ${change} and protects the next request`, async () => {
+        const old = deferred(), latest = deferred()
+        syncPreviewMock.mockReturnValueOnce(old.promise).mockReturnValueOnce(latest.promise)
+        const wrapper = mountModal(apiKeyAG())
+        await button(wrapper).trigger('click')
+        expect(syncPreviewMock).toHaveBeenCalledTimes(1)
+        if (change === 'account') await wrapper.setProps({ account: { ...apiKeyAG(), id: 4 } })
+        if (change === 'close/reopen') { await wrapper.setProps({ show: false }); await wrapper.setProps({ show: true }) }
+        if (change === 'close event') await wrapper.findAll('button').find(item => item.text() === 'common.cancel')!.trigger('click')
+        if (change === 'URL') await wrapper.get('input[placeholder="https://cloudcode-pa.googleapis.com"]').setValue('https://new.example/antigravity')
+        if (change === 'key') await wrapper.get('input[type="password"]').setValue('new-key')
+        if (change === 'proxy') wrapper.findComponent({ name: 'ProxySelector' }).vm.$emit('update:modelValue', 8)
+        if (change === 'login session') loginState.authSessionVersion = invalidateAuthSession()
+        if (change === 'unmount') wrapper.unmount()
+        else { await wrapper.vm.$nextTick(); await button(wrapper).trigger('click') }
+        if (change !== 'unmount') expect(syncPreviewMock).toHaveBeenCalledTimes(2)
+        if (result === 'success') old.resolve({ models: ['stale-ag'] })
+        else old.reject(new Error('stale failure'))
+        await flushPromises()
+        expect(values(wrapper)).not.toContain('stale-ag')
+        expect(showErrorMock).not.toHaveBeenCalled()
+        expect(showSuccessMock).not.toHaveBeenCalled()
+        if (change !== 'unmount') {
+          expect(syncPreviewMock).toHaveBeenCalledTimes(2)
+          expect(button(wrapper).attributes('disabled')).toBeDefined()
+          latest.resolve({ models: ['current-ag'] })
+          await flushPromises()
+          expect(values(wrapper)).toContain('current-ag')
+          wrapper.unmount()
+        }
+      })
+    }
+  }
+
+  it('keeps the Antigravity draft on a current error and allows retry', async () => {
+    syncPreviewMock.mockRejectedValue(new Error('safe preview error'))
+    const wrapper = mountModal(apiKeyAG())
+    await button(wrapper).trigger('click')
+    await flushPromises()
+    expect(showErrorMock).toHaveBeenCalled()
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    expect(button(wrapper).attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+})
+
 describe('EditAccountModal', () => {
+  afterEach(() => {
+    authState.isSimpleMode = true
+  })
+
+  for (const custom of ['claude-*', 'valid-custom']) {
+    it(`uses actual saved whitelist validity for a permissive account with ${custom} draft`, async () => {
+      const account = buildAccount()
+      account.credentials = { api_key: 'sk-test', model_mapping: { alias: 'gpt-6' }, model_mapping_allow_unlisted: true }
+      updateAccountMock.mockReset()
+      showErrorMock.mockReset()
+      checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+      updateAccountMock.mockResolvedValue(account)
+      const wrapper = mountModal(account, false, true)
+      await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelWhitelist')!.trigger('click')
+      const selector = wrapper.getComponent(ModelWhitelistSelector)
+      await selector.get('input[placeholder="admin.accounts.enterCustomModelName"]').setValue(custom)
+      await selector.findAll('button').find(button => button.text() === 'admin.accounts.addModel')!.trigger('click')
+      expect(selector.props('modelValue')).toEqual([custom])
+      await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelMapping')!.trigger('click')
+      const row = wrapper.get('input[placeholder="admin.accounts.requestModel"]').element.parentElement!
+      await wrapper.findAll('button').find(button => button.element.parentElement === row)!.trigger('click')
+      await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+      expect(updateAccountMock).toHaveBeenCalledTimes(1)
+      const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+      expect(credentials.model_mapping).toEqual(custom === 'claude-*' ? undefined : { 'valid-custom': 'valid-custom', alias: 'alias' })
+      expect(credentials.model_mapping_allow_unlisted).toBe(true)
+      expect(showErrorMock).not.toHaveBeenCalled()
+      expect(account.credentials.model_mapping).toEqual({ alias: 'gpt-6' })
+      wrapper.unmount()
+    })
+  }
+
+  for (const scenario of [
+    { label: 'mixed whitelist and rewrites', mapping: { alias: 'gpt-6', stable: 'stable' }, permissive: false, expected: { alias: 'alias', stable: 'stable' } },
+    { label: 'the final strict rewrite', mapping: { alias: 'gpt-6' }, permissive: false, expected: { alias: 'alias' } },
+    { label: 'permissive rename-only admission', mapping: { alias: 'gpt-6' }, permissive: true, expected: undefined },
+    { label: 'an explicit whitelist with the permissive flag', mapping: { alias: 'gpt-6', stable: 'stable' }, permissive: true, expected: { alias: 'alias', stable: 'stable' } },
+    { label: 'Bedrock strict admission', mapping: { alias: 'us.anthropic.claude-sonnet-5-v1' }, permissive: false, expected: { alias: 'alias' } }
+  ]) {
+    it(`preserves ${scenario.label} when deleting a rewrite through the real editor`, async () => {
+      const account = buildAccount()
+      account.credentials = { api_key: 'sk-test', model_mapping: scenario.mapping, model_mapping_allow_unlisted: scenario.permissive }
+      if (scenario.label === 'Bedrock strict admission') {
+        account.platform = 'anthropic'
+        account.type = 'bedrock'
+        account.credentials.auth_mode = 'apikey'
+        account.credentials.aws_region = 'us-east-1'
+      }
+      const original = structuredClone(account.credentials)
+      updateAccountMock.mockReset()
+      showErrorMock.mockReset()
+      checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+      updateAccountMock.mockResolvedValue(account)
+      const wrapper = mountModal(account)
+      await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelMapping')!.trigger('click')
+      const sourceSelector = scenario.label === 'Bedrock strict admission'
+        ? 'input[placeholder="admin.accounts.fromModel"]'
+        : 'input[placeholder="admin.accounts.requestModel"]'
+      const row = wrapper.get(sourceSelector).element.parentElement!
+      expect(row.querySelector<HTMLInputElement>('input')?.value).toBe('alias')
+      await wrapper.findAll('button').find(button => button.element.parentElement === row)!.trigger('click')
+      await flushPromises()
+      expect(wrapper.find(sourceSelector).exists()).toBe(false)
+      await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+      expect(updateAccountMock).toHaveBeenCalledTimes(1)
+      const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+      expect(credentials?.model_mapping).toEqual(scenario.expected)
+      expect(credentials?.model_mapping_allow_unlisted).toBe(scenario.permissive)
+      expect(showErrorMock).not.toHaveBeenCalledWith('admin.accounts.modelMappingConflict')
+      expect(account.credentials).toEqual(original)
+      wrapper.unmount()
+    })
+  }
+
+  it('allows removing assigned inactive groups and undoing the selection before saving', async () => {
+    authState.isSimpleMode = false
+    const account = buildAccount()
+    const activeGroup = {
+      id: 1,
+      name: 'Active group',
+      platform: 'openai',
+      status: 'active',
+      subscription_type: 'standard',
+      rate_multiplier: 1
+    }
+    const inactiveGroup = { ...activeGroup, id: 2, name: 'Paused group', status: 'inactive' }
+    account.group_ids = [1, 2]
+    account.groups = [
+      { ...activeGroup, name: 'Outdated name' },
+      inactiveGroup,
+      inactiveGroup,
+      { ...inactiveGroup, id: 3, name: 'Unassigned paused group' }
+    ]
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account, true)
+    await wrapper.setProps({ groups: [activeGroup] as any })
+    const selector = wrapper.get('[data-tour="account-form-groups"]')
+    expect(selector.findAll('input[type="checkbox"]').map(input => input.attributes('value')))
+      .toEqual(['1', '2'])
+    expect(selector.text()).toContain('Active group')
+    expect(selector.text()).not.toContain('Outdated name')
+    const pausedCheckbox = selector.get<HTMLInputElement>('input[value="2"]')
+    expect(pausedCheckbox.element.checked).toBe(true)
+
+    await pausedCheckbox.setValue(false)
+    expect(selector.get<HTMLInputElement>('input[value="2"]').element.checked).toBe(false)
+    await pausedCheckbox.setValue(true)
+    expect(pausedCheckbox.element.checked).toBe(true)
+    await pausedCheckbox.setValue(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.group_ids).toEqual([1])
+    expect(account.group_ids).toEqual([1, 2])
+  })
+
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()
@@ -241,6 +491,58 @@ describe('EditAccountModal', () => {
     })
   })
 
+  it('keeps unsaved edits when the parent refreshes the same account', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get<HTMLInputElement>('input[data-tour="edit-account-form-name"]').setValue('Draft name')
+    await wrapper.get('[data-testid="rewrite-to-snapshot"]').trigger('click')
+
+    await wrapper.setProps({
+      account: {
+        ...account,
+        name: 'Server refreshed name',
+        extra: { upstream_model_metadata: { models: {} } }
+      }
+    })
+
+    expect(wrapper.get<HTMLInputElement>('input[data-tour="edit-account-form-name"]').element.value).toBe('Draft name')
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toBe('gpt-5.2-2025-12-11')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[0]).toBe(account.id)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.name).toBe('Draft name')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
+      'gpt-5.2-2025-12-11': 'gpt-5.2-2025-12-11'
+    })
+  })
+
+  it('rehydrates the form when switching to a different account ID', async () => {
+    const account = buildAccount()
+    const nextAccount = {
+      ...account,
+      id: 2,
+      name: 'Second account',
+      credentials: {
+        ...account.credentials,
+        model_mapping: { 'gpt-6-sol': 'gpt-6-sol' }
+      }
+    }
+    const wrapper = mountModal(account)
+    await wrapper.get<HTMLInputElement>('input[data-tour="edit-account-form-name"]').setValue('Draft name')
+    await wrapper.get('[data-testid="rewrite-to-snapshot"]').trigger('click')
+
+    await wrapper.setProps({ account: nextAccount })
+
+    expect(wrapper.get<HTMLInputElement>('input[data-tour="edit-account-form-name"]').element.value).toBe('Second account')
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toBe('gpt-6-sol')
+  })
+
   it('preserves model mappings when editing the whitelist', async () => {
     const account = buildAccount()
     account.credentials.model_mapping = {
@@ -255,6 +557,9 @@ describe('EditAccountModal', () => {
     const wrapper = mountModal(account)
 
     expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toBe('gpt-5.2')
+    expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('modelMappings')).toEqual([
+      { from: 'gpt-latest', to: 'gpt-5.2' }
+    ])
 
     await wrapper.get('[data-testid="rewrite-to-snapshot"]').trigger('click')
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
@@ -264,6 +569,193 @@ describe('EditAccountModal', () => {
       'gpt-5.2-2025-12-11': 'gpt-5.2-2025-12-11',
       'gpt-latest': 'gpt-5.2'
     })
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true, account: { ...account } })
+    expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('modelMappings')).toEqual([
+      { from: 'gpt-latest', to: 'gpt-5.2' }
+    ])
+  })
+
+  it('rejects a newly conflicting mapping before saving an existing whitelist model', async () => {
+    const account = buildAccount()
+    account.credentials.model_mapping = {
+      'gpt-5.2': 'gpt-5.2',
+      'gpt-latest': 'gpt-5.4'
+    }
+    updateAccountMock.mockReset()
+    showErrorMock.mockReset()
+    const wrapper = mountModal(account)
+
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toBe('gpt-5.2')
+    const mappingTab = wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelMapping')
+    expect(mappingTab).toBeTruthy()
+    await mappingTab!.trigger('click')
+    await wrapper.get('input[placeholder="admin.accounts.requestModel"]').setValue('gpt-5.2')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    expect(showErrorMock).toHaveBeenCalledWith('admin.accounts.modelMappingConflict')
+  })
+
+  it('saves an identity mapping for a selected whitelist model', async () => {
+    const account = buildAccount()
+    account.credentials.model_mapping = {
+      'gpt-5.2': 'gpt-5.2',
+      'gpt-latest': 'gpt-5.2'
+    }
+    updateAccountMock.mockReset()
+    updateAccountMock.mockResolvedValue(account)
+    showErrorMock.mockReset()
+    const wrapper = mountModal(account)
+
+    const mappingTab = wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelMapping')
+    await mappingTab!.trigger('click')
+    await wrapper.get('input[placeholder="admin.accounts.requestModel"]').setValue('gpt-5.2')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(showErrorMock).not.toHaveBeenCalledWith('admin.accounts.modelMappingConflict')
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
+      'gpt-5.2': 'gpt-5.2'
+    })
+  })
+
+  it('loads Anthropic setup-token mapping and saves the mapping-only opt in without exposing its token', async () => {
+    const account = {
+      ...buildAccount(),
+      platform: 'anthropic',
+      type: 'setup-token',
+      credentials: {
+        model_mapping: { 'custom-sonnet': 'claude-sonnet-4-6' },
+        oauth_type: 'claude'
+      },
+      credentials_status: { has_access_token: true }
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLInputElement>('input[placeholder="admin.accounts.requestModel"]').element.value).toBe('custom-sonnet')
+    expect(wrapper.get<HTMLInputElement>('input[placeholder="admin.accounts.actualModel"]').element.value).toBe('claude-sonnet-4-6')
+    const toggle = wrapper.get('[data-testid="model-mapping-allow-unlisted-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+    expect(credentials?.model_mapping).toEqual({ 'custom-sonnet': 'claude-sonnet-4-6' })
+    expect(credentials?.model_mapping_allow_unlisted).toBe(true)
+    expect(credentials?.oauth_type).toBe('claude')
+    expect(credentials).not.toHaveProperty('access_token')
+  })
+
+  it('clears Anthropic mapping and the mapping-only opt in while retaining other credential fields', async () => {
+    const account = {
+      ...buildAccount(),
+      platform: 'anthropic',
+      type: 'setup-token',
+      credentials: {
+        model_mapping: { 'custom-sonnet': 'claude-sonnet-4-6' },
+        model_mapping_allow_unlisted: true,
+        oauth_type: 'claude'
+      },
+      credentials_status: { has_access_token: true }
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="model-mapping-allow-unlisted-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+    await toggle.trigger('click')
+    await wrapper.get<HTMLInputElement>('input[placeholder="admin.accounts.requestModel"]').setValue('')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+    expect(credentials).not.toHaveProperty('model_mapping')
+    expect(credentials?.model_mapping_allow_unlisted).toBe(false)
+    expect(credentials?.oauth_type).toBe('claude')
+    expect(credentials).not.toHaveProperty('access_token')
+  })
+
+  it('persists clearing the final visible OAuth mapping field with a redacted token', async () => {
+    const account = {
+      ...buildAccount(),
+      platform: 'anthropic',
+      type: 'setup-token',
+      credentials: { model_mapping: { 'custom-sonnet': 'claude-sonnet-4-6' } },
+      credentials_status: { has_access_token: true }
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get<HTMLInputElement>('input[placeholder="admin.accounts.requestModel"]').setValue('')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toEqual({
+      model_mapping_allow_unlisted: false
+    })
+  })
+
+  it('loads and clears the OAuth-only Codex namespace flatten toggle', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = {
+      openai_responses_flatten_namespaces: true
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="edit-openai-flatten-namespaces-toggle"]')
+
+    // 关闭后应从 extra 中删除该键，而不是写入 false
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty(
+      'openai_responses_flatten_namespaces'
+    )
+  })
+
+  it('submits the Codex namespace flatten toggle when switched on', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="edit-openai-flatten-namespaces-toggle"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_responses_flatten_namespaces).toBe(
+      true
+    )
+  })
+
+  it('hides the Codex namespace flatten toggle for non-OAuth OpenAI accounts', async () => {
+    const account = buildAccount()
+    const wrapper = mountModal(account)
+
+    expect(wrapper.find('[data-testid="edit-openai-flatten-namespaces-toggle"]').exists()).toBe(
+      false
+    )
   })
 
   it('submits OpenAI compact mode and compact-only model mapping', async () => {
@@ -397,6 +889,42 @@ describe('EditAccountModal', () => {
 	  expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.auto_pause_5h_disabled).toBe(true)
 	  expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.auto_pause_7d_disabled).toBeUndefined()
 	})
+
+  it('submits no_auto_unsched in extra when the toggle is switched on', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+
+    await wrapper.get('[data-testid="no-auto-unsched-toggle"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.no_auto_unsched).toBe(true)
+  })
+
+  it('removes no_auto_unsched from extra when the toggle is switched off', async () => {
+    const account = buildAccount()
+    account.extra = { no_auto_unsched: true, base_rpm: 10 }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+
+    await wrapper.get('[data-testid="no-auto-unsched-toggle"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra).toBeDefined()
+    expect('no_auto_unsched' in extra).toBe(false)
+    expect(extra.base_rpm).toBe(10)
+  })
 
   it('keeps at least one OpenAI APIKey endpoint capability selected', async () => {
     const account = buildAccount()

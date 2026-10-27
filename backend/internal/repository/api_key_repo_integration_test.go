@@ -125,6 +125,34 @@ func (s *APIKeyRepoSuite) TestGetByKeyForAuth_PreservesMessagesDispatchModelConf
 	s.Require().Equal("gpt-5.4-nano", got.Group.MessagesDispatchModelConfig.ExactModelMappings["claude-sonnet-4.5"])
 }
 
+func (s *APIKeyRepoSuite) TestGetByKeyForAuth_HasGroupRoutes() {
+	user := s.mustCreateUser("getbykey-auth-routes@test.com")
+	primary := s.mustCreateGroup("g-auth-routes-primary")
+	fallback := s.mustCreateGroup("g-auth-routes-fallback")
+
+	key := &service.APIKey{
+		UserID:  user.ID,
+		Key:     "sk-getbykey-auth-routes",
+		Name:    "Routes Key",
+		GroupID: &primary.ID,
+		Status:  service.StatusActive,
+	}
+	s.Require().NoError(s.repo.Create(s.ctx, key))
+
+	got, err := s.repo.GetByKeyForAuth(s.ctx, key.Key)
+	s.Require().NoError(err)
+	s.Require().False(got.HasGroupRoutes, "没有链的 Key 标志为 false")
+
+	_, err = s.repo.sql.ExecContext(s.ctx,
+		`INSERT INTO api_key_group_routes (api_key_id, group_id, platform, source, placement, position)
+		 VALUES ($1, $2, 'openai', 'user', 'tail', 0)`, key.ID, fallback.ID)
+	s.Require().NoError(err)
+
+	got, err = s.repo.GetByKeyForAuth(s.ctx, key.Key)
+	s.Require().NoError(err)
+	s.Require().True(got.HasGroupRoutes, "有链（任意 source）的 Key 标志为 true")
+}
+
 // --- Update ---
 
 func (s *APIKeyRepoSuite) TestUpdate() {

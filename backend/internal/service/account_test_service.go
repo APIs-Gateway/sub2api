@@ -33,8 +33,9 @@ import (
 var sseDataPrefix = regexp.MustCompile(`^data:\s*`)
 
 const (
-	testClaudeAPIURL   = "https://api.anthropic.com/v1/messages?beta=true"
-	chatgptCodexAPIURL = "https://chatgpt.com/backend-api/codex/responses"
+	testClaudeAPIURL            = "https://api.anthropic.com/v1/messages?beta=true"
+	chatgptCodexAPIURL          = "https://chatgpt.com/backend-api/codex/responses"
+	defaultAntigravityTestModel = "claude-sonnet-4-6"
 )
 
 // TestEvent represents a SSE event for account testing
@@ -113,7 +114,7 @@ func (s *AccountTestService) validateUpstreamBaseURL(raw string) (string, error)
 }
 
 // generateSessionString generates a Claude Code style session string.
-// The output format is determined by the UA version in claude.DefaultHeaders,
+// The output format is determined by the UA version in claude.DefaultHeaders(),
 // ensuring consistency between the user_id format and the UA sent to upstream.
 func generateSessionString() (string, error) {
 	b := make([]byte, 32)
@@ -122,7 +123,7 @@ func generateSessionString() (string, error) {
 	}
 	hex64 := hex.EncodeToString(b)
 	sessionUUID := uuid.New().String()
-	uaVersion := ExtractCLIVersion(claude.DefaultHeaders["User-Agent"])
+	uaVersion := ExtractCLIVersion(claude.DefaultHeaders()["User-Agent"])
 	return FormatMetadataUserID(hex64, "", sessionUUID, uaVersion), nil
 }
 
@@ -172,6 +173,7 @@ func createTestPayload(modelID string) (map[string]any, error) {
 // modelID is optional - if empty, defaults to claude.DefaultTestModel
 // mode is optional - "compact" routes OpenAI accounts to the /responses/compact probe path
 func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int64, modelID string, prompt string, mode string) error {
+	beginAccountTestLogging(c, accountID, modelID)
 	ctx := c.Request.Context()
 
 	// Get account
@@ -179,6 +181,8 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Account not found")
 	}
+
+	setAccountTestLogPlatform(c, account.Platform)
 
 	// Route to platform-specific test method
 	//
@@ -285,7 +289,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	// Apply Claude Code client headers
-	for key, value := range claude.DefaultHeaders {
+	for key, value := range claude.DefaultHeaders() {
 		req.Header.Set(key, value)
 	}
 
@@ -894,12 +898,7 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 
 	// For static upstream credentials with model mapping, map the model
 	if account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount {
-		mapping := account.GetModelMapping()
-		if len(mapping) > 0 {
-			if mappedModel, exists := mapping[testModelID]; exists {
-				testModelID = mappedModel
-			}
-		}
+		testModelID = account.GetMappedModel(testModelID)
 	}
 
 	// Set SSE headers
@@ -972,11 +971,7 @@ func (s *AccountTestService) routeAntigravityTest(c *gin.Context, account *Accou
 func (s *AccountTestService) testAntigravityAccountConnection(c *gin.Context, account *Account, modelID string) error {
 	ctx := c.Request.Context()
 
-	// 默认模型：Claude 使用 claude-sonnet-4-5，Gemini 使用 gemini-3-pro-preview
-	testModelID := modelID
-	if testModelID == "" {
-		testModelID = "claude-sonnet-4-5"
-	}
+	testModelID := antigravityConnectionTestModel(modelID)
 
 	if s.antigravityGatewayService == nil {
 		return s.sendErrorAndEnd(c, "Antigravity gateway service not configured")
@@ -1005,6 +1000,13 @@ func (s *AccountTestService) testAntigravityAccountConnection(c *gin.Context, ac
 
 	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 	return nil
+}
+
+func antigravityConnectionTestModel(modelID string) string {
+	if modelID == "" {
+		return defaultAntigravityTestModel
+	}
+	return modelID
 }
 
 // buildGeminiAPIKeyRequest builds request for Gemini API Key accounts
@@ -1754,6 +1756,8 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	}
 	applyOpenAIImagesDefaults(parsed)
 
+	s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("Responses driver: %s; image model: %s\n", openAIImagesResponsesMainModelValue(), parsed.Model)})
+
 	responsesBody, err := buildOpenAIImagesResponsesRequest(parsed, parsed.Model)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to build image request: %s", err.Error()))
@@ -1810,6 +1814,12 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to parse image response: %s", err.Error()))
 	}
 	if len(results) == 0 {
+		if upstreamErr := extractOpenAIImagesUpstreamError(body); upstreamErr != nil {
+			return s.sendErrorAndEnd(c, upstreamErr.clientMessage())
+		}
+		if textErr := openAIImagesTextFallbackError(body); textErr != nil {
+			return s.sendErrorAndEnd(c, textErr.clientMessage())
+		}
 		return s.sendErrorAndEnd(c, "No images returned from responses API")
 	}
 
@@ -1830,6 +1840,9 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 }
 
 func (s *AccountTestService) sendEvent(c *gin.Context, event TestEvent) {
+	if event.Type == "test_start" {
+		setAccountTestLogModel(c, event.Model)
+	}
 	eventJSON, _ := json.Marshal(event)
 	if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", eventJSON); err != nil {
 		log.Printf("failed to write SSE event: %v", err)
@@ -1840,7 +1853,7 @@ func (s *AccountTestService) sendEvent(c *gin.Context, event TestEvent) {
 
 // sendErrorAndEnd sends an error event and ends the stream
 func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) error {
-	log.Printf("Account test error: %s", errorMsg)
+	accountTestFailureLogger(c).Error("account_test.failed")
 	s.sendEvent(c, TestEvent{Type: "error", Error: errorMsg})
 	return fmt.Errorf("%s", errorMsg)
 }
@@ -1852,7 +1865,8 @@ func (s *AccountTestService) RunTestBackground(ctx context.Context, accountID in
 
 	w := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(w)
-	ginCtx.Request = (&http.Request{}).WithContext(ctx)
+	ginCtx.Request = (&http.Request{}).WithContext(accountTestBackgroundContext(ctx))
+	ginCtx.Set(accountTestBackgroundKey, true)
 
 	testErr := s.TestAccountConnection(ginCtx, accountID, modelID, "", AccountTestModeDefault)
 

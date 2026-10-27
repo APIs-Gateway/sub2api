@@ -8,6 +8,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -41,17 +42,29 @@ type CreateProxyRequest struct {
 
 // UpdateProxyRequest represents update proxy request
 type UpdateProxyRequest struct {
-	Name           string `json:"name"`
-	Protocol       string `json:"protocol" binding:"omitempty,oneof=http https socks5 socks5h"`
-	Host           string `json:"host"`
-	Port           int    `json:"port" binding:"omitempty,min=1,max=65535"`
-	Username       string `json:"username"`
-	Password       string `json:"password"`
-	Status         string `json:"status" binding:"omitempty,oneof=active inactive"`
-	ExpiresAt      *int64 `json:"expires_at"`
-	FallbackMode   string `json:"fallback_mode" binding:"omitempty,oneof=none proxy direct"`
-	BackupProxyID  *int64 `json:"backup_proxy_id"`
-	ExpiryWarnDays int    `json:"expiry_warn_days" binding:"omitempty,min=0"`
+	Name           string                 `json:"name"`
+	Protocol       string                 `json:"protocol" binding:"omitempty,oneof=http https socks5 socks5h"`
+	Host           string                 `json:"host"`
+	Port           int                    `json:"port" binding:"omitempty,min=1,max=65535"`
+	Username       *string                `json:"username"`
+	Password       *string                `json:"password"`
+	Status         string                 `json:"status" binding:"omitempty,oneof=active inactive"`
+	ExpiresAt      dto.NullableInt64Field `json:"expires_at"`
+	FallbackMode   string                 `json:"fallback_mode" binding:"omitempty,oneof=none proxy direct"`
+	BackupProxyID  dto.NullableInt64Field `json:"backup_proxy_id"`
+	ExpiryWarnDays *int                   `json:"expiry_warn_days" binding:"omitempty,min=0"`
+}
+
+// proxyPasswordHidden reports whether proxy passwords must be blanked in
+// responses to this caller. Interactive administrators (JWT), the legacy admin
+// API key and danger-scope admin tokens see them, as before; an admin token
+// below danger scope (read, write) does not, so a read token cannot be used to
+// harvest the credentials of the proxies the accounts egress through.
+func proxyPasswordHidden(c *gin.Context) bool {
+	if middleware.AdminAuthKindFromContext(c) != service.AuditAuthKindAdminToken {
+		return false
+	}
+	return service.AdminTokenScopeRank(middleware.AdminScopeFromContext(c)) < service.AdminTokenScopeRank(service.AdminTokenScopeDanger)
 }
 
 // List handles listing all proxies with pagination
@@ -79,6 +92,11 @@ func (h *ProxyHandler) List(c *gin.Context) {
 	for i := range proxies {
 		out = append(out, *dto.ProxyWithAccountCountFromServiceAdmin(&proxies[i]))
 	}
+	if proxyPasswordHidden(c) {
+		for i := range out {
+			out[i].Password = ""
+		}
+	}
 	response.Paginated(c, out, total, page, pageSize)
 }
 
@@ -98,6 +116,11 @@ func (h *ProxyHandler) GetAll(c *gin.Context) {
 		for i := range proxies {
 			out = append(out, *dto.ProxyWithAccountCountFromServiceAdmin(&proxies[i]))
 		}
+		if proxyPasswordHidden(c) {
+			for i := range out {
+				out[i].Password = ""
+			}
+		}
 		response.Success(c, out)
 		return
 	}
@@ -111,6 +134,11 @@ func (h *ProxyHandler) GetAll(c *gin.Context) {
 	out := make([]dto.AdminProxy, 0, len(proxies))
 	for i := range proxies {
 		out = append(out, *dto.ProxyFromServiceAdmin(&proxies[i]))
+	}
+	if proxyPasswordHidden(c) {
+		for i := range out {
+			out[i].Password = ""
+		}
 	}
 	response.Success(c, out)
 }
@@ -130,7 +158,11 @@ func (h *ProxyHandler) GetByID(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, dto.ProxyFromServiceAdmin(proxy))
+	out := dto.ProxyFromServiceAdmin(proxy)
+	if out != nil && proxyPasswordHidden(c) {
+		out.Password = ""
+	}
+	response.Success(c, out)
 }
 
 // Create handles creating a new proxy
@@ -183,21 +215,29 @@ func (h *ProxyHandler) Update(c *gin.Context) {
 	}
 
 	var expiresAt *time.Time
-	if req.ExpiresAt != nil && *req.ExpiresAt > 0 {
-		t := time.Unix(*req.ExpiresAt, 0).UTC()
+	if req.ExpiresAt.Value != nil && *req.ExpiresAt.Value > 0 {
+		t := time.Unix(*req.ExpiresAt.Value, 0).UTC()
 		expiresAt = &t
+	}
+	if req.Username != nil {
+		*req.Username = strings.TrimSpace(*req.Username)
+	}
+	if req.Password != nil {
+		*req.Password = strings.TrimSpace(*req.Password)
 	}
 	proxy, err := h.adminService.UpdateProxy(c.Request.Context(), proxyID, &service.UpdateProxyInput{
 		Name:           strings.TrimSpace(req.Name),
 		Protocol:       strings.TrimSpace(req.Protocol),
 		Host:           strings.TrimSpace(req.Host),
 		Port:           req.Port,
-		Username:       strings.TrimSpace(req.Username),
-		Password:       strings.TrimSpace(req.Password),
+		Username:       req.Username,
+		Password:       req.Password,
 		Status:         strings.TrimSpace(req.Status),
 		ExpiresAt:      expiresAt,
+		ClearExpiresAt: req.ExpiresAt.Set && expiresAt == nil,
 		FallbackMode:   strings.TrimSpace(req.FallbackMode),
-		BackupProxyID:  req.BackupProxyID,
+		BackupProxyID:  req.BackupProxyID.Value,
+		ClearBackupID:  req.BackupProxyID.Set && req.BackupProxyID.Value == nil,
 		ExpiryWarnDays: req.ExpiryWarnDays,
 	})
 	if err != nil {

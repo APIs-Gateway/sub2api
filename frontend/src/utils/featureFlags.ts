@@ -130,9 +130,19 @@ export type RegisteredFeatureFlag = keyof typeof FeatureFlags
  */
 export function isFeatureFlagEnabled(flag: FeatureFlagDefinition): boolean {
   const appStore = useAppStore()
-  const raw = appStore.cachedPublicSettings?.[flag.key] as
-    | boolean
-    | undefined
+  return resolveFeatureFlag(flag, appStore.cachedPublicSettings)
+}
+
+/**
+ * Same resolution as `isFeatureFlagEnabled`, but reads from the settings object
+ * the caller already holds. Components that receive the app store through
+ * their own import (and must not touch a second store handle) use this form.
+ */
+export function resolveFeatureFlag(
+  flag: FeatureFlagDefinition,
+  settings: PublicSettings | null | undefined,
+): boolean {
+  const raw = settings?.[flag.key] as boolean | undefined
   if (typeof raw === 'boolean') return raw
   // Settings not yet loaded → fall back to the flag's declared mode:
   //   opt-out → visible by default, opt-in → hidden by default.

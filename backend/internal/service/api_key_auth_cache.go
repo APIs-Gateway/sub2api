@@ -29,6 +29,11 @@ type APIKeyAuthSnapshot struct {
 
 	// StablePriorityEnabled per-key 稳定优先开关；调度时与 User.StablePriorityEnabled 取或生效。
 	StablePriorityEnabled bool `json:"stable_priority_enabled"`
+
+	// HasGroupRoutes 该 Key 在 api_key_group_routes 里是否有任意回退链项（user 或 admin）。
+	// 只是一个标志位，链明细不进快照；由 GetByKeyForAuth 计算，保存链时靠 InvalidateAuthCacheByKey 失效。
+	// v17 新增：旧版本快照没有这个字段，由版本号比对整体丢弃，不会被误读成 false。
+	HasGroupRoutes bool `json:"has_group_routes"`
 }
 
 // APIKeyAuthUserSnapshot 用户快照
@@ -79,6 +84,7 @@ type APIKeyAuthGroupSnapshot struct {
 	WeeklyLimitUSD                  *float64 `json:"weekly_limit_usd,omitempty"`
 	MonthlyLimitUSD                 *float64 `json:"monthly_limit_usd,omitempty"`
 	AllowImageGeneration            bool     `json:"allow_image_generation"`
+	SimpleModeAutoImageEligible     bool     `json:"simple_mode_auto_image_eligible"`
 	ImageRateIndependent            bool     `json:"image_rate_independent"`
 	ImageRateMultiplier             float64  `json:"image_rate_multiplier"`
 	ImagePrice1K                    *float64 `json:"image_price_1k,omitempty"`
@@ -87,7 +93,6 @@ type APIKeyAuthGroupSnapshot struct {
 	ClaudeCodeOnly                  bool     `json:"claude_code_only"`
 	FallbackGroupID                 *int64   `json:"fallback_group_id,omitempty"`
 	FallbackGroupIDOnInvalidRequest *int64   `json:"fallback_group_id_on_invalid_request,omitempty"`
-	StablePriorityFallbackGroupID   *int64   `json:"stable_priority_fallback_group_id,omitempty"`
 
 	// Model routing is used by gateway account selection, so it must be part of auth cache snapshot.
 	// Only anthropic groups use these fields; others may leave them empty.

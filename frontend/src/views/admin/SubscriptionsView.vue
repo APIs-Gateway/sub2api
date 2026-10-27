@@ -28,7 +28,7 @@
                 v-if="selectedFilterUser"
                 @click="clearFilterUser"
                 type="button"
-                class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                 :title="t('common.clear')"
               >
                 <Icon name="x" size="sm" :stroke-width="2" />
@@ -345,9 +345,14 @@
               >
                 {{ formatDateTimeToMinute(value) }}
               </span>
-              <div v-if="getDaysRemaining(value) !== null" class="text-xs text-gray-500">
-                {{ getDaysRemaining(value) }} {{ t('admin.subscriptions.daysRemaining') }}
-              </div>
+              <template
+                v-for="remainingExpiry in [formatRemainingExpiry(value)]"
+                :key="remainingExpiry ?? 'expired'"
+              >
+                <div v-if="remainingExpiry" class="text-xs text-gray-500">
+                  {{ remainingExpiry }}
+                </div>
+              </template>
             </div>
             <span v-else class="text-sm text-gray-500">{{
               t('admin.subscriptions.noExpiration')
@@ -458,7 +463,7 @@
               v-if="selectedUser"
               @click="clearUserSelection"
               type="button"
-              class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
             >
               <Icon name="x" size="sm" :stroke-width="2" />
             </button>
@@ -652,7 +657,7 @@
         <div v-if="showGuideModal" class="fixed inset-0 z-50 flex items-center justify-center p-4" @mousedown.self="showGuideModal = false">
           <div class="fixed inset-0 bg-black/50" @click="showGuideModal = false"></div>
           <div class="relative max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-2xl dark:bg-dark-800">
-            <button type="button" class="absolute right-4 top-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" @click="showGuideModal = false">
+            <button type="button" class="absolute right-4 top-4 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" @click="showGuideModal = false">
               <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
 
@@ -724,7 +729,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 import { adminPaymentAPI } from '@/api/admin/payment'
-import type { UserSubscription } from '@/types'
+import type { AdminUser, UserSubscription } from '@/types'
 import type { PaymentOrder } from '@/types/payment'
 import type { SimpleUser } from '@/api/admin/usage'
 import type { Column } from '@/components/common/types'
@@ -741,7 +746,12 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import AdminRefundDialog from '@/components/admin/payment/AdminRefundDialog.vue'
-import { getRemainingDurationParts, isOneTimeDailyQuota, type RemainingDurationParts } from '@/utils/subscriptionQuota'
+import {
+  getRemainingDurationParts,
+  getRemainingExpiryDuration,
+  isOneTimeDailyQuota,
+  type RemainingDurationParts
+} from '@/utils/subscriptionQuota'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -884,10 +894,10 @@ let filterUserSearchTimeout: ReturnType<typeof setTimeout> | null = null
 
 // User search state
 const userSearchKeyword = ref('')
-const userSearchResults = ref<SimpleUser[]>([])
+const userSearchResults = ref<AdminUser[]>([])
 const userSearchLoading = ref(false)
 const showUserDropdown = ref(false)
-const selectedUser = ref<SimpleUser | null>(null)
+const selectedUser = ref<AdminUser | null>(null)
 let userSearchTimeout: ReturnType<typeof setTimeout> | null = null
 
 const filters = reactive({
@@ -1033,6 +1043,11 @@ const clearFilterUser = () => {
 
 // User search with debounce
 const debounceSearchUsers = () => {
+  // Invalidate the assignment target before the debounced search runs.
+  if (selectedUser.value && userSearchKeyword.value.trim() !== selectedUser.value.email) {
+    selectedUser.value = null
+    assignForm.user_id = null
+  }
   if (userSearchTimeout) {
     clearTimeout(userSearchTimeout)
   }
@@ -1042,12 +1057,6 @@ const debounceSearchUsers = () => {
 const searchUsers = async () => {
   const keyword = userSearchKeyword.value.trim()
 
-  // Clear selection if user modified the search keyword
-  if (selectedUser.value && keyword !== selectedUser.value.email) {
-    selectedUser.value = null
-    assignForm.user_id = null
-  }
-
   if (!keyword) {
     userSearchResults.value = []
     return
@@ -1055,7 +1064,10 @@ const searchUsers = async () => {
 
   userSearchLoading.value = true
   try {
-    userSearchResults.value = await adminAPI.usage.searchUsers(keyword)
+    const result = await adminAPI.users.list(1, 30, {
+      search: keyword, sort_by: 'email', sort_order: 'asc'
+    })
+    userSearchResults.value = result.items
   } catch (error) {
     console.error('Failed to search users:', error)
     userSearchResults.value = []
@@ -1064,7 +1076,7 @@ const searchUsers = async () => {
   }
 }
 
-const selectUser = (user: SimpleUser) => {
+const selectUser = (user: AdminUser) => {
   selectedUser.value = user
   userSearchKeyword.value = user.email
   showUserDropdown.value = false
@@ -1290,6 +1302,21 @@ const getDaysRemaining = (expiresAt: string): number | null => {
   const diff = expires.getTime() - now.getTime()
   if (diff < 0) return null
   return Math.ceil(diff / (1000 * 60 * 60 * 24))
+}
+
+const formatRemainingExpiry = (expiresAt: string): string | null => {
+  const duration = getRemainingExpiryDuration(expiresAt)
+  if (!duration) return null
+  if (duration.unit === 'days') {
+    return t('admin.subscriptions.daysRemaining', { days: duration.days })
+  }
+  if (duration.hours) {
+    return t('admin.subscriptions.hoursMinutesRemaining', {
+      hours: duration.hours,
+      minutes: duration.minutes
+    })
+  }
+  return t('admin.subscriptions.minutesRemaining', { minutes: duration.minutes })
 }
 
 const isExpiringSoon = (expiresAt: string): boolean => {

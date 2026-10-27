@@ -4,6 +4,7 @@ package service
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -65,6 +66,37 @@ func TestOpenAICompactKeepaliveAdjustedWrittenSize_CompactAndStreamKeepaliveBoth
 	require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c), "compact 心跳 + 流式心跳都扣掉后仍为未写")
 
 	_, err = c.Writer.WriteString("application-event")
+	require.NoError(t, err)
+	require.Equal(t, len("application-event"), OpenAICompactKeepaliveAdjustedWrittenSize(c))
+}
+
+// A pre-output failover creates another keepalive controller against the same
+// response writer. Comments from an earlier attempt must remain excluded after
+// the later controller replaces the context's active-controller pointer.
+func TestOpenAICompactKeepaliveAdjustedWrittenSize_ExcludesKeepalivesFromPriorFailoverAttempts(t *testing.T) {
+	c, _ := newCompactBridgeTestContext(t, false)
+
+	stopFirst := startOpenAISSEKeepalive(c, time.Hour)
+	value, ok := c.Get(openAICompactSSEKeepaliveKey)
+	require.True(t, ok)
+	first, ok := value.(*openAICompactSSEKeepalive)
+	require.True(t, ok)
+	require.True(t, first.beat())
+	stopFirst()
+
+	stopSecond := startOpenAISSEKeepalive(c, time.Hour)
+	t.Cleanup(stopSecond)
+	value, ok = c.Get(openAICompactSSEKeepaliveKey)
+	require.True(t, ok)
+	second, ok := value.(*openAICompactSSEKeepalive)
+	require.True(t, ok)
+	require.True(t, second.beat())
+
+	require.Equal(t, 2*len(": keepalive\n\n"), openAICompactSSEKeepaliveBytesWritten(c))
+	require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c),
+		"comments from both pre-output attempts must still be treated as unwritten")
+
+	_, err := c.Writer.WriteString("application-event")
 	require.NoError(t, err)
 	require.Equal(t, len("application-event"), OpenAICompactKeepaliveAdjustedWrittenSize(c))
 }

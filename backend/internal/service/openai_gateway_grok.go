@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/common"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -74,9 +77,11 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
+		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 		s.updateGrokUsageSnapshot(ctx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
 		upstreamMsg := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(respBody))
 		if upstreamMsg == "" {
@@ -116,7 +121,6 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		}
 		return s.handleErrorResponse(ctx, resp, c, account, patchedBody, upstreamModel)
 	}
-	defer func() { _ = resp.Body.Close() }()
 
 	s.updateGrokUsageSnapshot(ctx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
 
@@ -180,7 +184,7 @@ func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, unsupportedField := range []string{"prompt_cache_retention", "safety_identifier"} {
+	for _, unsupportedField := range []string{"prompt_cache_retention", "safety_identifier", "metadata"} {
 		if gjson.GetBytes(out, unsupportedField).Exists() {
 			out, err = sjson.DeleteBytes(out, unsupportedField)
 			if err != nil {
@@ -220,6 +224,41 @@ func sanitizeGrokUnsupportedFields(body []byte) ([]byte, error) {
 		return nil, err
 	}
 	if !deleteJSONFields(payload, grokUnsupportedRecursiveFields) {
+		return body, nil
+	}
+	return marshalOpenAIUpstreamJSON(payload)
+}
+
+// Opt in only at the raw Chat send. UseNumber preserves arbitrary numeric
+// parameters; decoding also applies the existing last-key-wins JSON policy to
+// repeated roles/fields, so no unsupported duplicate can survive the rewrite.
+func sanitizeGrokRawChatCompatFields(body []byte) ([]byte, error) {
+	var payload map[string]any
+	decoder := common.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
+	}
+	changed := false
+	for _, key := range []string{"presence_penalty", "presencePenalty"} {
+		if _, ok := payload[key]; ok {
+			delete(payload, key)
+			changed = true
+		}
+	}
+	if messages, ok := payload["messages"].([]any); ok {
+		for _, item := range messages {
+			message, ok := item.(map[string]any)
+			if !ok || message["role"] == "user" {
+				continue
+			}
+			if _, exists := message["name"]; exists {
+				delete(message, "name")
+				changed = true
+			}
+		}
+	}
+	if !changed {
 		return body, nil
 	}
 	return marshalOpenAIUpstreamJSON(payload)
@@ -430,18 +469,50 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 // with a generic, safe rejection instead of routing through the shared OpenAI
 // error handler. The upstream body/message is intentionally not echoed back:
 // it must not leak account-pool or subscription-to-API implementation details.
-func (s *OpenAIGatewayService) writeGrokContentPolicyRejection(c *gin.Context, statusCode int, upstreamMsg string) error {
-	MarkResponseCommitted(c)
-	c.JSON(statusCode, gin.H{
-		"error": gin.H{
-			"type":    "invalid_request_error",
-			"message": "Your request was rejected by the upstream content safety system. Please modify your input and try again.",
-		},
-	})
-	if upstreamMsg == "" {
-		return fmt.Errorf("grok content policy rejection: %d", statusCode)
+type GrokContentPolicyRejectionError struct{ message string }
+
+func (e *GrokContentPolicyRejectionError) Error() string { return e.message }
+
+// IsGrokContentPolicyRejectionError keeps request refusals out of account
+// health reporting as well as cooldown/failover. They are not account successes.
+func IsGrokContentPolicyRejectionError(err error) bool {
+	var refusal *GrokContentPolicyRejectionError
+	return errors.As(err, &refusal)
+}
+
+// ReportOpenAIAccountScheduleError reports account failures without treating a
+// request-scoped Grok refusal or local audio validation as failure or recovery.
+func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleError(accountID int64, err error) {
+	if !IsGrokContentPolicyRejectionError(err) && !errors.Is(err, apicompat.ErrUnsupportedInputAudio) && !errors.Is(err, apicompat.ErrInvalidInputAudio) {
+		s.ReportOpenAIAccountScheduleResult(accountID, false, nil)
 	}
-	return fmt.Errorf("grok content policy rejection: %d message=%s", statusCode, upstreamMsg)
+}
+
+func (s *OpenAIGatewayService) writeGrokContentPolicyRejection(c *gin.Context, statusCode int, upstreamMsg string) error {
+	const message = "Your request was rejected by the upstream content safety system. Please modify your input and try again."
+	StopOpenAICompactSSEKeepaliveCommitted(c)
+	MarkResponseCommitted(c)
+	if c.Writer.Written() {
+		if InboundIsResponses(c) {
+			writeOpenAICompactSSEFailureMessage(c, statusCode, "invalid_request", message)
+		} else {
+			MarkOpsStreamError(c, "invalid_request_error", message, statusCode)
+			payload, _ := json.Marshal(gin.H{"error": gin.H{"type": "invalid_request_error", "message": message}})
+			_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", payload)
+			c.Writer.Flush()
+		}
+	} else {
+		c.JSON(statusCode, gin.H{
+			"error": gin.H{
+				"type":    "invalid_request_error",
+				"message": message,
+			},
+		})
+	}
+	if upstreamMsg == "" {
+		return &GrokContentPolicyRejectionError{message: fmt.Sprintf("grok content policy rejection: %d", statusCode)}
+	}
+	return &GrokContentPolicyRejectionError{message: fmt.Sprintf("grok content policy rejection: %d message=%s", statusCode, upstreamMsg)}
 }
 
 func (s *OpenAIGatewayService) tempUnscheduleGrok(ctx context.Context, account *Account, cooldown time.Duration, reason string) {

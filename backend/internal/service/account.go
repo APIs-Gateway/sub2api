@@ -14,6 +14,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
@@ -148,22 +149,40 @@ func (a *Account) EffectiveLoadFactor() int {
 	return 1
 }
 
+// manualStateAllowsScheduling 判断人工可控的账号状态是否允许调度：status=active 且 schedulable=true。
+//
+// 唯一的例外是「不自动暂停调度」账号上的 status=error：该状态只由失败处理自动写入
+// （AccountRepository.SetError，同时把 schedulable 置 false；管理员手动停用用 status=disabled 或
+// 单独关 schedulable，且 status 保持 active），所以对带标记账号视为自动停调度而忽略，
+// 对 status=error 行里随之被置 false 的 schedulable 同样忽略。status=disabled、
+// status=active 下的 schedulable=false（人工停用）照常生效。
+func (a *Account) manualStateAllowsScheduling() bool {
+	if a.Status == StatusError && a.NoAutoUnsched() {
+		return true
+	}
+	return a.IsActive() && a.Schedulable
+}
+
 func (a *Account) IsSchedulable() bool {
-	if !a.IsActive() || !a.Schedulable {
+	if !a.manualStateAllowsScheduling() {
 		return false
 	}
 	now := time.Now()
 	if a.AutoPauseOnExpired && a.ExpiresAt != nil && !now.Before(*a.ExpiresAt) {
 		return false
 	}
-	if a.OverloadUntil != nil && now.Before(*a.OverloadUntil) {
-		return false
-	}
-	if a.RateLimitResetAt != nil && now.Before(*a.RateLimitResetAt) {
-		return false
-	}
-	if a.TempUnschedulableUntil != nil && now.Before(*a.TempUnschedulableUntil) {
-		return false
+	// 「不自动暂停调度」账号忽略因上游失败自动产生的三类时间窗口（529 过载 / 429 限流 / 临时不可调度）。
+	// 字段仍然保留在账号上（后台可见），只是不再影响选号。
+	if !a.NoAutoUnsched() {
+		if a.OverloadUntil != nil && now.Before(*a.OverloadUntil) {
+			return false
+		}
+		if a.RateLimitResetAt != nil && now.Before(*a.RateLimitResetAt) {
+			return false
+		}
+		if a.TempUnschedulableUntil != nil && now.Before(*a.TempUnschedulableUntil) {
+			return false
+		}
 	}
 	if a.IsAPIKeyOrBedrock() && a.IsQuotaExceeded() {
 		return false
@@ -245,6 +264,12 @@ func (a *Account) IsGeminiCodeAssist() bool {
 		return strings.TrimSpace(a.GetCredential("project_id")) != ""
 	}
 	return oauthType == "code_assist"
+}
+
+// IsGeminiGoogleOne reports whether this account uses the legacy consumer
+// Gemini CLI / Code Assist OAuth channel.
+func (a *Account) IsGeminiGoogleOne() bool {
+	return a.Platform == PlatformGemini && a.Type == AccountTypeOAuth && a.GeminiOAuthType() == "google_one"
 }
 
 func (a *Account) CanGetUsage() bool {
@@ -545,6 +570,9 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 		return nil
 	}
 	if len(rawMapping) == 0 {
+		if a.IsGeminiGoogleOne() {
+			return geminicli.GoogleOneModelMapping()
+		}
 		// Antigravity 平台使用默认映射
 		if a.Platform == domain.PlatformAntigravity {
 			return domain.DefaultAntigravityModelMapping
@@ -567,12 +595,20 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 				"gemini-3-flash",
 				"gemini-3.1-pro-high",
 				"gemini-3.1-pro-low",
+				"gemini-3.6-flash",
+				"gemini-3.6-flash-high",
+				"gemini-3.6-flash-low",
+				"gemini-3.6-flash-medium",
+				"gemini-3.6-flash-tiered",
 			})
 		}
 		return result
 	}
 
 	// Antigravity 平台使用默认映射
+	if a.IsGeminiGoogleOne() {
+		return geminicli.GoogleOneModelMapping()
+	}
 	if a.Platform == domain.PlatformAntigravity {
 		return domain.DefaultAntigravityModelMapping
 	}
@@ -675,9 +711,48 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 
 // IsModelSupported 检查模型是否在 model_mapping 中（支持通配符）。
 //
-// OpenAI OAuth 账号的空映射不能视为“允许所有”：未知第三方模型会被原样
-// 转发给 Codex 上游并得到不可重试的 400，阻断后续 failover。透传模式和
-// 其它账号类型仍保留空映射允许所有的既有语义。
+// 例外：OpenAI OAuth 账号（Codex 上游）的空映射会排除明确属于其他厂商
+// 家族的模型（deepseek-*/glm-* 等）——转发阶段 normalizeOpenAIModelForUpstream
+// 会把未知模型原样透传，Codex 上游对这类模型必然返回不可重试的 400，导致
+// 请求卡死在该账号上、无法 failover 到真正支持该模型的 API Key 账号（#3662）。
+// 未知/自定义别名仍保持允许（兼容渠道级映射），见 isOpenAIOAuthServableModel。
+const ModelMappingAllowUnlistedCredentialKey = "model_mapping_allow_unlisted"
+
+// ModelMappingAllowsUnlisted keeps a rename-only mapping from narrowing model
+// admission. The default is false to preserve existing account restrictions.
+func (a *Account) ModelMappingAllowsUnlisted() bool {
+	if a == nil || a.Credentials == nil {
+		return false
+	}
+	enabled, _ := a.Credentials[ModelMappingAllowUnlistedCredentialKey].(bool)
+	return enabled
+}
+
+// Identity mappings are the explicit whitelist entries written by the account
+// editor. They continue to restrict admission even when rename-only mappings
+// are configured to allow unlisted models.
+func (a *Account) modelMappingAdmitsUnlisted() bool {
+	if !a.ModelMappingAllowsUnlisted() {
+		return false
+	}
+	for from, to := range a.GetModelMapping() {
+		// API-imported or legacy wildcard identities are also restrictive.
+		// The editor disallows wildcard targets, but stored credentials may
+		// contain them, so fail closed instead of admitting unrelated models.
+		if from == to {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *Account) isUnmappedModelSupported(requestedModel string) bool {
+	if a.IsOpenAIOAuth() {
+		return isOpenAIOAuthServableModel(requestedModel)
+	}
+	return true
+}
+
 func (a *Account) IsModelSupported(requestedModel string) bool {
 	// 透传模式仅替换认证、模型语义完全交由上游决定，因此放行所有模型。
 	// 该短路必须在 model_mapping 判定之前：账号从"白名单模式"切换到透传后，
@@ -688,16 +763,16 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 	}
 	mapping := a.GetModelMapping()
 	if len(mapping) == 0 {
-		if a.IsOpenAIOAuth() {
-			return isOpenAIOAuthServableModel(requestedModel)
-		}
-		return true // 无映射 = 允许所有
+		return a.isUnmappedModelSupported(requestedModel)
 	}
 	if mappingSupportsRequestedModel(mapping, requestedModel) {
 		return true
 	}
 	normalized := normalizeRequestedModelForLookup(a.Platform, requestedModel)
-	return normalized != requestedModel && mappingSupportsRequestedModel(mapping, normalized)
+	if normalized != requestedModel && mappingSupportsRequestedModel(mapping, normalized) {
+		return true
+	}
+	return a.modelMappingAdmitsUnlisted() && a.isUnmappedModelSupported(requestedModel)
 }
 
 // GetMappedModel 获取映射后的模型名（支持通配符，最长优先匹配）
@@ -1139,6 +1214,13 @@ func (a *Account) IsOpenAIApiKey() bool {
 	return a.IsOpenAI() && a.Type == AccountTypeAPIKey
 }
 
+// UsesOpenAICodexProtocol reports whether the account speaks the ChatGPT Codex
+// protocol (OAuth / Setup Token) rather than a standard OpenAI-compatible API.
+// fork: upstream's IsOpenAIOAuthLike() corresponds to IsOpenAI() && IsOAuth().
+func (a *Account) UsesOpenAICodexProtocol() bool {
+	return a != nil && (a.Type == AccountTypeOAuth || (a.IsOpenAI() && a.IsOAuth()))
+}
+
 func (a *Account) GetOpenAIBaseURL() string {
 	if !a.IsOpenAI() {
 		return ""
@@ -1369,6 +1451,8 @@ func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapabilit
 		return false
 	}
 	switch capability {
+	case OpenAIImagesCapabilityAPIKey:
+		return a.Type == AccountTypeAPIKey
 	case OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityNative:
 		return a.Type == AccountTypeOAuth || a.Type == AccountTypeAPIKey
 	case OpenAIImagesCapabilityDirectBasic, OpenAIImagesCapabilityDirectNative:
@@ -1611,6 +1695,22 @@ func (a *Account) IsOpenAIWSForceHTTPEnabled() bool {
 		return false
 	}
 	enabled, ok := a.Extra["openai_ws_force_http"].(bool)
+	return ok && enabled
+}
+
+// IsOpenAIResponsesFlattenNamespacesEnabled 返回账号级"摊平 Codex namespace 工具"开关。
+// 字段：accounts.extra.openai_responses_flatten_namespaces，缺省 false（原样保留）。
+//
+// namespace 是 Codex 后端定义的私有扩展，OAuth 出口恒为 chatgpt.com/backend-api/codex
+// （buildUpstreamRequest 只对 API Key 账号取 base_url），即定义方本身，因此默认保留。
+// 该开关只为把流量转发到不认识 namespace 的兼容上游的部署保留退路：打开后恢复
+// 0.1.166 及更早版本的摊平行为。仅对 OpenAI OAuth 账号有效——API Key 走 chat
+// completions 回退桥时由桥自行摊平，Grok/Anthropic 出口有各自的适配链路。
+func (a *Account) IsOpenAIResponsesFlattenNamespacesEnabled() bool {
+	if a == nil || !a.IsOpenAI() || a.Extra == nil {
+		return false
+	}
+	enabled, ok := a.Extra["openai_responses_flatten_namespaces"].(bool)
 	return ok && enabled
 }
 

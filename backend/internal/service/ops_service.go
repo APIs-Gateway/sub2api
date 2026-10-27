@@ -300,6 +300,9 @@ func sanitizeOpsUpstreamErrors(entry *OpsInsertErrorLogInput) error {
 		if out.AccountID < 0 {
 			out.AccountID = 0
 		}
+		if out.ServedGroupID < 0 {
+			out.ServedGroupID = 0
+		}
 		if out.UpstreamStatusCode < 0 {
 			out.UpstreamStatusCode = 0
 		}
