@@ -46,3 +46,30 @@ func TestSanitizeGroupMessagesDispatchFields_ClearsNonOpenAIPlatform(t *testing.
 	require.Empty(t, group.DefaultMappedModel)
 	require.Equal(t, OpenAIMessagesDispatchModelConfig{}, group.MessagesDispatchModelConfig)
 }
+
+func TestGroupResolveMessagesDispatchModel_GrokDefaultsToCatalogModel(t *testing.T) {
+	t.Parallel()
+
+	group := &Group{Platform: PlatformGrok}
+
+	for _, requestedModel := range []string{"claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"} {
+		require.Equal(t, defaultGrokMessagesDispatchMappedModel, group.ResolveMessagesDispatchModel(requestedModel))
+	}
+}
+
+func TestSanitizeGroupMessagesDispatchFields_PreservesGrokPlatform(t *testing.T) {
+	t.Parallel()
+
+	group := &Group{
+		Platform:              PlatformGrok,
+		AllowMessagesDispatch: true,
+		MessagesDispatchModelConfig: OpenAIMessagesDispatchModelConfig{
+			SonnetMappedModel: "grok-4.3",
+		},
+	}
+
+	sanitizeGroupMessagesDispatchFields(group)
+
+	require.True(t, group.AllowMessagesDispatch)
+	require.Equal(t, "grok-4.3", group.MessagesDispatchModelConfig.SonnetMappedModel)
+}

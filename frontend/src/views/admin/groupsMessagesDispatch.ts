@@ -1,4 +1,4 @@
-import type { OpenAIMessagesDispatchModelConfig } from "@/types";
+import type { GroupPlatform, OpenAIMessagesDispatchModelConfig } from "@/types";
 
 export interface MessagesDispatchMappingRow {
   claude_model: string;
@@ -13,20 +13,24 @@ export interface MessagesDispatchFormState {
   exact_model_mappings: MessagesDispatchMappingRow[];
 }
 
-export function createDefaultMessagesDispatchFormState(): MessagesDispatchFormState {
+export function createDefaultMessagesDispatchFormState(
+  platform: GroupPlatform = "openai",
+): MessagesDispatchFormState {
+  const defaultModel = platform === "grok" ? "grok-4.3" : "";
   return {
     allow_messages_dispatch: false,
-    opus_mapped_model: "gpt-5.4",
-    sonnet_mapped_model: "gpt-5.3-codex",
-    haiku_mapped_model: "gpt-5.4-mini",
+    opus_mapped_model: defaultModel || "gpt-5.4",
+    sonnet_mapped_model: defaultModel || "gpt-5.3-codex",
+    haiku_mapped_model: defaultModel || "gpt-5.4-mini",
     exact_model_mappings: [],
   };
 }
 
 export function messagesDispatchConfigToFormState(
   config?: OpenAIMessagesDispatchModelConfig | null,
+  platform: GroupPlatform = "openai",
 ): MessagesDispatchFormState {
-  const defaults = createDefaultMessagesDispatchFormState();
+  const defaults = createDefaultMessagesDispatchFormState(platform);
   const exactMappings = Object.entries(config?.exact_model_mappings || {})
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([claude_model, target_model]) => ({ claude_model, target_model }));
@@ -62,8 +66,9 @@ export function messagesDispatchFormStateToConfig(
 
 export function resetMessagesDispatchFormState(
   target: MessagesDispatchFormState,
+  platform: GroupPlatform = "openai",
 ): void {
-  const defaults = createDefaultMessagesDispatchFormState();
+  const defaults = createDefaultMessagesDispatchFormState(platform);
   target.allow_messages_dispatch = defaults.allow_messages_dispatch;
   target.opus_mapped_model = defaults.opus_mapped_model;
   target.sonnet_mapped_model = defaults.sonnet_mapped_model;
