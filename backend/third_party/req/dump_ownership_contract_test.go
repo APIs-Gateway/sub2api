@@ -177,6 +177,10 @@ func TestReqDumpOwnershipCloneLeases(t *testing.T) {
 			t.Cleanup(clone.GetTransport().CloseIdleConnections)
 			t.Cleanup(func() { ownedDumpClose(t, clone) })
 			if mode == "transport_clone" {
+				// A bare snapshot has no owner Close entry point. Stopping its
+				// independent queue must not leave an unreachable file lease.
+				snapshot := client.GetTransport().Dump.Clone()
+				snapshot.Stop()
 				// Exercise the direct public Transport.Clone, rather than only
 				// inheriting the embedded call in Client.Clone.
 				ownedDumpClose(t, clone)
