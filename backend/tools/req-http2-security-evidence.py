@@ -257,19 +257,38 @@ def main():
         require(adaptations == {"internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
                                 "internal/dump/dump.go", "request.go", "response.go", "trace.go",
                                 "internal/http3/transport.go", "internal/http3/stream.go",
-                                "internal/compress/deflate_reader.go", "decode.go", "digest.go", "parallel_download.go"},
+                                "internal/compress/deflate_reader.go", "decode.go", "digest.go", "parallel_download.go",
+                                "client.go", "dump.go", "transport.go"},
                 "Unexpected or missing production adaptation")
-        require(len(manifest["adaptedCandidateFiles"]) == 13 and
+        require(len(manifest["adaptedCandidateFiles"]) == 16 and
                 {v["path"] for v in manifest["adaptedCandidateFiles"]} == adaptations,
                 "Incomplete adapted source hash inventory")
         production = {v["path"] for v in manifest["originalFiles"]
                       if v["path"].endswith(".go") and not v["path"].endswith("_test.go")}
         require(len(production) == 89 and adaptations <= production,
-                "Retain all89 original production Go files and exactly13 declared adaptations")
-        require(manifest["originalUnmodifiedFileCount"] == 119,
-                "Retain exactly119 unchanged originals after13 declared production adaptations")
+                "Retain all89 original production Go files and exactly16 declared adaptations")
+        test_adaptations = manifest.get("originalTestAdaptations", [])
+        require(isinstance(test_adaptations, list) and len(test_adaptations) == 2 and
+                {item.get("path") for item in test_adaptations} == {"request_test.go", "client_test.go"},
+                "Original test adaptation registration differs")
+        original_by_path = {item["path"]: item for item in manifest["originalFiles"]}
+        adapted_tests = {item["path"] for item in test_adaptations}
+        for item in test_adaptations:
+            path = item["path"]
+            original = original_by_path[path]
+            require(item["originalBytes"] == original["size"] and
+                    item["originalSHA256"] == original["sha256"],
+                    "Adapted original test archive anchor mismatch: " + path)
+            require(path in selected, "Adapted original test file not selected: " + path)
+            data = (controlled / path).read_bytes()
+            require(len(data) == item["candidateBytes"] and
+                    hashlib.sha256(data).hexdigest() == item["candidateSHA256"],
+                    "Adapted original test hash mismatch: " + path)
+        require(manifest["originalUnmodifiedFileCount"] == 114 and
+                len(original_by_path) - len(adaptations) - len(adapted_tests) == 114,
+                "Retain exactly114 unchanged originals after16 production and two declared test adaptations")
         for item in manifest["originalFiles"]:
-            if item["path"] not in adaptations:
+            if item["path"] not in adaptations | adapted_tests:
                 data = (controlled / item["path"]).read_bytes()
                 require(len(data) == item["size"] and hashlib.sha256(data).hexdigest() == item["sha256"], "Original source modified: " + item["path"])
         for item in manifest["adaptedCandidateFiles"]:
@@ -279,7 +298,7 @@ def main():
         omitted = {"internal/testdata/cert_test.go", "internal/testdata/testdata_suite_test.go"}
         require(len(originals) == 14 and originals - selected == omitted, "Original wildcard test selection changed")
         require(len(originals & selected) == 12, "Expected 12 selected original test files")
-        report(evidence, "package-selection-proof.json", {"module": req[0], "selectedTests": sorted(selected), "originalSelected": sorted(originals & selected), "originalOmitted": sorted(omitted), "omission": "Original testdata helper suite is excluded by Go wildcard; cert_test.go lacks io import. No PASS claimed."})
+        report(evidence, "package-selection-proof.json", {"module": req[0], "selectedTests": sorted(selected), "originalSelected": sorted(originals & selected), "originalOmitted": sorted(omitted), "originalTestAdaptations": test_adaptations, "omission": "Original testdata helper suite is excluded by Go wildcard; cert_test.go lacks io import. No PASS claimed."})
     elif operation == "named":
         verify_named(backend, evidence, "named.json")
     elif operation == "all":
