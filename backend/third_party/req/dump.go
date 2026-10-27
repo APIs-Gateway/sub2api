@@ -107,7 +107,9 @@ func (o dumpOptions) Async() bool {
 }
 
 func (o dumpOptions) Clone() dump.Options {
-	return dumpOptions{DumpOptions: o.DumpOptions.Clone(), scope: o.scope.clone()}
+	// A dumper snapshot borrows its configuration scope. Only an owner with a
+	// CloseDump entry point (Transport.Clone) may retain a separate file lease.
+	return dumpOptions{DumpOptions: o.DumpOptions.Clone(), scope: o.scope}
 }
 
 func newDefaultDumpOptions() *DumpOptions {

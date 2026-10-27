@@ -749,13 +749,16 @@ func (t *Transport) Clone() *Transport {
 		forceHttpVersion:      t.forceHttpVersion,
 		httpRoundTripWrappers: t.httpRoundTripWrappers,
 	}
-	if t.Dump != nil {
-		if options, ok := tt.Dump.Options.(dumpOptions); ok {
-			tt.dumpScope = options.scope
-		}
-	} else if t.dumpScope != nil {
-		// Disabled configurations still own their files and can be cloned.
+	if t.dumpScope != nil {
+		// Disabled configurations also retain their files. The owner, rather
+		// than an arbitrary Dumper.Clone snapshot, owns the additional lease.
 		tt.dumpScope = t.dumpScope.clone()
+		if tt.Dump != nil {
+			if options, ok := tt.Dump.Options.(dumpOptions); ok {
+				options.scope = tt.dumpScope
+				tt.Dump.SetOptions(options)
+			}
+		}
 	}
 	if len(tt.httpRoundTripWrappers) > 0 { // clone transport middleware
 		fn := func(req *http.Request) (*http.Response, error) {

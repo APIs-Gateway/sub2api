@@ -36,8 +36,10 @@ worker releases it. Close rejects later admission, drains accepted work, and
 releases this owner's file refs. Concurrent/repeated Close returns its stored
 close result. No scope lock is held during file Close or output I/O.
 
-Client/Transport clones retain the same open file identity but have independent
-scopes, queues and close state. Disabled clones also retain their configuration
+Client/Transport clones explicitly retain the same open file identity but have
+independent scopes, queues and close state. An arbitrary Dumper.Clone snapshot
+borrows its configuration scope; it cannot acquire an owner ref without a
+corresponding CloseDump entry point. Disabled clones also retain their configuration
 lease. The last owner closes the file. Request attempt snapshots share their
 configuration scope without taking a new file ref on every attempt or Do.
 The private full-download recovery clone releases its scope after body close,

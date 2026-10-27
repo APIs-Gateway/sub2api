@@ -909,16 +909,16 @@
     },
     {
       "path": "dump.go",
-      "sha256": "e287e92dd3205c4394e855edab124c60c1186e9e3c0e86ca260ba56181043298",
-      "bytes": 8611,
+      "sha256": "fbcc0b176056584563809d832bf0d72b4fa21d585e4e5af9ac34119f12aba4cc",
+      "bytes": 8757,
       "sources": [
         "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
       ]
     },
     {
       "path": "transport.go",
-      "sha256": "2eab6cc9803d23c23fcc5adb4287f31acc8de9cbbf1b6bb88cff7a388252ba25",
-      "bytes": 112018,
+      "sha256": "feb39c913a821b198bb931ddfb3f0e74746e91b657eaeebe964382c7e9b43178",
+      "bytes": 112127,
       "sources": [
         "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
       ]
