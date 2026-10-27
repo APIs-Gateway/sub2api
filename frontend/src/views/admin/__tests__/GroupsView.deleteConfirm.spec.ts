@@ -58,7 +58,8 @@ const group = (id: number, subscriptionType: 'standard' | 'subscription'): Admin
     rate_multiplier: 1,
     rpm_limit: 0,
     is_exclusive: subscriptionType === 'subscription',
-    status: 'active',
+    // Deletion requires an inactive group; these cases check the confirmation copy.
+    status: 'inactive',
     subscription_type: subscriptionType,
     daily_limit_usd: null,
     weekly_limit_usd: null,

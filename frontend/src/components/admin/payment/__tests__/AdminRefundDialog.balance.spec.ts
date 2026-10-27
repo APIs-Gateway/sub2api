@@ -3,7 +3,15 @@ import { enableAutoUnmount, mount } from '@vue/test-utils'
 import type { PaymentOrder } from '@/types/payment'
 import AdminRefundDialog from '../AdminRefundDialog.vue'
 
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async () => ({
+  ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')),
+  useI18n: () => ({ t: (key: string) => key })
+}))
+vi.mock('@/api/admin/settings', () => ({
+  settingsAPI: {
+    getSettings: vi.fn().mockResolvedValue({ payment_refund_fee_rate: 0 })
+  }
+}))
 enableAutoUnmount(afterEach)
 
 async function openRefund(overrides: Partial<PaymentOrder> = {}) {
