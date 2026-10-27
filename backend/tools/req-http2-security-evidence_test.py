@@ -223,8 +223,8 @@ class NamedInventoryRegression(unittest.TestCase):
     def test_complete_registered_events_are_accepted_as_verifier_control_only(self):
         self.verify(self.values)
         proof = json.loads(self.proof.read_text())
-        self.assertEqual(len(proof), 532)
-        self.assertEqual(len({(item["package"], item["test"]) for item in proof}), 532)
+        self.assertEqual(len(proof), 574)
+        self.assertEqual(len({(item["package"], item["test"]) for item in proof}), 574)
 
     def test_missing_original_default_output_leaf_is_rejected(self):
         name = self.inventory["parallelDownloadDefaultOutputLeaves"][0]
@@ -234,6 +234,17 @@ class NamedInventoryRegression(unittest.TestCase):
         for name in self.inventory["http2ReceiveFlowLeaves"]:
             with self.subTest(name=name):
                 self.rejected([value for value in self.values if value.get("Test") != name], "Missing/duplicate RUN")
+
+    def test_each_missing_dump_ownership_leaf_is_rejected(self):
+        for name in self.inventory["dumpOwnershipLeaves"]:
+            with self.subTest(name=name):
+                self.rejected([value for value in self.values if value.get("Test") != name], "Missing/duplicate RUN")
+
+    def test_unknown_dump_ownership_leaf_is_rejected(self):
+        unknown = {"Package": self.inventory["dumpOwnershipPackage"],
+                   "Test": "TestReqDumpOwnershipUnregistered"}
+        self.rejected(self.values + [dict(unknown, Action="run"), dict(unknown, Action="pass")],
+                      "Actual security leaf inventory differs")
 
     def test_duplicate_registered_run_is_rejected(self):
         name = self.inventory["http2ReceiveFlowLeaves"][0]
@@ -263,6 +274,44 @@ class NamedInventoryRegression(unittest.TestCase):
         # Go emits failure events and exits nonzero on a real race. A string
         # containing "race" alongside an all-PASS stream is not this control.
         self.rejected(values, "Failed/skipped test event")
+
+
+class AdaptedOriginalCompletionRegression(unittest.TestCase):
+    """Verifier-only controls; these do not execute original Go tests."""
+
+    def setUp(self):
+        self.backend = HERE.parent
+        self.names = ("TestSetFile", "TestTraceInfo", "TestEnableDumpToFIle", "TestEnableDumpAllToFile")
+        self.values = [{"Action": action, "Package": CHECKER.MODULE, "Test": name}
+                       for name in self.names for action in ("run", "pass")]
+
+    def test_all_four_original_top_level_completions_are_required(self):
+        proof = CHECKER.verify_adapted_original_tests(self.backend, self.values)
+        self.assertEqual({item["test"] for item in proof}, set(self.names))
+
+    def test_each_missing_original_is_rejected(self):
+        for name in self.names:
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(SystemExit, "Missing/duplicate original RUN"):
+                    CHECKER.verify_adapted_original_tests(
+                        self.backend, [value for value in self.values if value["Test"] != name])
+
+    def test_duplicate_original_run_is_rejected(self):
+        with self.assertRaisesRegex(SystemExit, "Missing/duplicate original RUN"):
+            CHECKER.verify_adapted_original_tests(self.backend, self.values + [self.values[0]])
+
+    def test_missing_duplicate_failed_or_skipped_original_pass_is_rejected(self):
+        for action in (None, "pass", "fail", "skip"):
+            with self.subTest(action=action):
+                values = copy.deepcopy(self.values)
+                if action is None:
+                    del values[1]
+                elif action == "pass":
+                    values.append(copy.deepcopy(values[1]))
+                else:
+                    values[1]["Action"] = action
+                with self.assertRaisesRegex(SystemExit, "Missing/duplicate or failed original PASS"):
+                    CHECKER.verify_adapted_original_tests(self.backend, values)
 
 
 if __name__ == "__main__":

@@ -105,9 +105,9 @@ def verify_named(backend, evidence, filename):
     require(expected["downloadContractCount"] == 32 and expected["parallelDownloadFallbackCount"] == 1 and
             expected["parallelDownloadHTTP3CleanupCount"] == 1 and expected["parallelDownloadInProcessCount"] == 23 and
             expected["parallelDownloadDefaultOutputCount"] == 1 and expected["http2ReceiveFlowCount"] == 6 and
-            expected["totalNamedLeaves"] == 532,
-            "Retain all526 original G leaves and require six reviewed HTTP2 receive-flow leaves")
-    kinds = baseline_kinds + ("clientBehavior", "digestOwnership", "downloadContract", "parallelDownloadFallback", "parallelDownloadHTTP3Cleanup", "parallelDownloadInProcess", "parallelDownloadDefaultOutput", "http2ReceiveFlow")
+            expected["dumpOwnershipCount"] == 42 and expected["totalNamedLeaves"] == 574,
+            "Retain all526 original G leaves, six HTTP2 receive-flow and42 dump ownership leaves")
+    kinds = baseline_kinds + ("clientBehavior", "digestOwnership", "downloadContract", "parallelDownloadFallback", "parallelDownloadHTTP3Cleanup", "parallelDownloadInProcess", "parallelDownloadDefaultOutput", "http2ReceiveFlow", "dumpOwnership")
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
     for kind in kinds:
@@ -136,12 +136,35 @@ def verify_named(backend, evidence, filename):
                 "TestReqClientCookie_", "TestReqClientResponse_", "TestReqDigestOwnership_",
                 "TestReqDownloadContract", "TestReqParallelDownloadContract", "TestReqParallelDownloadFallback",
                 "TestReqParallelDownloadHTTP3Cleanup", "TestReqParallelDownloadInProcessContract",
-                "TestReqParallelDownloadDefaultOutput", "TestReqHTTP2ReceiveFlowContract_")
+                "TestReqParallelDownloadDefaultOutput", "TestReqHTTP2ReceiveFlowContract_", "TestReqDumpOwnership")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")
     report(evidence, filename + ".inventory-proof.json", proof)
     return packages
+
+
+def verify_adapted_original_tests(backend, values):
+    """Require actual completion of every retained original adaptation contract."""
+    expected = {
+        "request_test.go": ["TestSetFile", "TestTraceInfo", "TestEnableDumpToFIle"],
+        "client_test.go": ["TestEnableDumpAllToFile"],
+    }
+    manifest = json.loads((backend / "third_party/req/UPSTREAM-MANIFEST.json").read_text())
+    declared = {item["path"]: item["requiredTests"] for item in manifest["originalTestAdaptations"]}
+    require(declared == expected, "Original adapted required test inventory changed")
+    proof = []
+    for path, tests in expected.items():
+        for test in tests:
+            actual = [value for value in values if value.get("Package") == MODULE and value.get("Test") == test]
+            require(sum(value.get("Action") == "run" for value in actual) == 1,
+                    "Missing/duplicate original RUN " + test)
+            require(sum(value.get("Action") == "pass" for value in actual) == 1 and
+                    not any(value.get("Action") in ("fail", "skip") for value in actual),
+                    "Missing/duplicate or failed original PASS " + test)
+            proof.append({"path": path, "package": MODULE, "test": test,
+                          "actions": [value["Action"] for value in actual]})
+    return proof
 
 
 
@@ -306,9 +329,11 @@ def main():
         packages = objects(evidence / "packages.json")
         expected = {v["ImportPath"] for v in packages if v.get("TestGoFiles") or v.get("XTestGoFiles")}
         require(expected <= passed, "Original package tests did not complete: " + repr(sorted(expected - passed)))
-        skips = {v["Package"] for v in events(evidence / "all.json") if v.get("Action") == "skip" and "Test" not in v}
+        actual_events = events(evidence / "all.json")
+        original_test_proof = verify_adapted_original_tests(backend, actual_events)
+        skips = {v["Package"] for v in actual_events if v.get("Action") == "skip" and "Test" not in v}
         require(not skips & expected, "Test-bearing package skipped")
-        report(evidence, "all-package-completion-proof.json", {"testPackagesPassed": sorted(expected), "noTestFilePackagesSkipped": sorted(skips)})
+        report(evidence, "all-package-completion-proof.json", {"testPackagesPassed": sorted(expected), "noTestFilePackagesSkipped": sorted(skips), "adaptedOriginalTestCompletions": original_test_proof})
     elif operation == "original":
         with urllib.request.urlopen("https://proxy.golang.org/github.com/imroc/req/v3/@v/v3.57.0.zip", timeout=60) as response:
             data = response.read()
