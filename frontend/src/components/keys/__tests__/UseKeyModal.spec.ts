@@ -115,7 +115,7 @@ describe('UseKeyModal', () => {
 
     let codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
     expect(codeBlocks.join('\n')).toContain('ANTHROPIC_BASE_URL="https://example.com"')
-    expect(codeBlocks.join('\n')).toContain("ANTHROPIC_AUTH_TOKEN='sk-grok-claude-test'")
+    expect(codeBlocks.join('\n')).toContain('ANTHROPIC_AUTH_TOKEN="sk-grok-claude-test"')
     const unixConfig = codeBlocks.find((content) => content.startsWith('export ANTHROPIC_BASE_URL'))
     expect(unixConfig).toBeDefined()
     for (const name of [
