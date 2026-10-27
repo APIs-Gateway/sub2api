@@ -314,5 +314,38 @@ class AdaptedOriginalCompletionRegression(unittest.TestCase):
                     CHECKER.verify_adapted_original_tests(self.backend, values)
 
 
+class ProductionAdaptationPartitionRegression(unittest.TestCase):
+    """Partition controls only; no synthetic profile or coverage PASS claims."""
+
+    def setUp(self):
+        self.manifest = json.loads((HERE.parent / "third_party/req/UPSTREAM-MANIFEST.json").read_text())
+
+    def test_original_thirteen_and_three_owned_dump_adaptations_are_required(self):
+        paths = CHECKER.production_adaptation_paths(self.manifest)
+        self.assertEqual(len(paths), 16)
+        self.assertEqual(set(paths[-3:]), {"client.go", "dump.go", "transport.go"})
+
+    def test_each_missing_declared_or_candidate_path_is_rejected(self):
+        for key in ("allowedProductionAdaptations", "adaptedCandidateFiles"):
+            for index in range(16):
+                with self.subTest(key=key, index=index):
+                    manifest = copy.deepcopy(self.manifest)
+                    del manifest[key][index]
+                    with self.assertRaisesRegex(SystemExit, "source/per-file85 partition"):
+                        CHECKER.production_adaptation_paths(manifest)
+
+    def test_replaced_or_duplicate_path_is_rejected(self):
+        for key in ("allowedProductionAdaptations", "adaptedCandidateFiles"):
+            for replacement in ("unregistered.go", "internal/http2/flow.go"):
+                with self.subTest(key=key, replacement=replacement):
+                    manifest = copy.deepcopy(self.manifest)
+                    if key == "allowedProductionAdaptations":
+                        manifest[key][-1] = replacement
+                    else:
+                        manifest[key][-1]["path"] = replacement
+                    with self.assertRaisesRegex(SystemExit, "source/per-file85 partition"):
+                        CHECKER.production_adaptation_paths(manifest)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

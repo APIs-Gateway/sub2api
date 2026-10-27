@@ -276,13 +276,7 @@ def main():
                 len(expected_paths) == 132 + len(manifest["newOwnedFiles"]) and
                 actual_paths == expected_paths,
                 "Controlled module must contain exactly132 originals+declared owned files")
-        adaptations = set(manifest["allowedProductionAdaptations"])
-        require(adaptations == {"internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
-                                "internal/dump/dump.go", "request.go", "response.go", "trace.go",
-                                "internal/http3/transport.go", "internal/http3/stream.go",
-                                "internal/compress/deflate_reader.go", "decode.go", "digest.go", "parallel_download.go",
-                                "client.go", "dump.go", "transport.go"},
-                "Unexpected or missing production adaptation")
+        adaptations = set(production_adaptation_paths(manifest))
         require(len(manifest["adaptedCandidateFiles"]) == 16 and
                 {v["path"] for v in manifest["adaptedCandidateFiles"]} == adaptations,
                 "Incomplete adapted source hash inventory")
@@ -392,6 +386,20 @@ def main():
         raise SystemExit("Unknown evidence operation")
 
 
+def production_adaptation_paths(manifest):
+    """Share the exact source partition between identity and per-file85 gates."""
+    expected = ("internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
+                "internal/dump/dump.go", "request.go", "response.go", "trace.go", "internal/http3/transport.go",
+                "internal/http3/stream.go", "internal/compress/deflate_reader.go", "decode.go", "digest.go",
+                "parallel_download.go", "client.go", "dump.go", "transport.go")
+    declared = manifest["allowedProductionAdaptations"]
+    candidates = [item["path"] for item in manifest["adaptedCandidateFiles"]]
+    require(len(declared) == len(candidates) == len(expected) == 16 and
+            set(declared) == set(candidates) == set(expected),
+            "Unexpected or missing production adaptation in source/per-file85 partition")
+    return expected
+
+
 def coverage(backend, evidence):
     proofs = []
     blocks = {}
@@ -419,9 +427,8 @@ def coverage(backend, evidence):
         (evidence / (kind + ".mapped.out")).write_text("\n".join(mapped) + "\n")
     report(evidence, "coverage-path-only-proof.json", proofs)
     result = []
-    adapted = ("internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
-               "internal/dump/dump.go", "request.go", "response.go", "trace.go", "internal/http3/transport.go",
-               "internal/http3/stream.go", "internal/compress/deflate_reader.go", "decode.go", "digest.go", "parallel_download.go")
+    manifest = json.loads((backend / "third_party/req/UPSTREAM-MANIFEST.json").read_text())
+    adapted = production_adaptation_paths(manifest)
     for relative in adapted:
         old = (evidence / "original" / relative).read_text().splitlines()
         new = (backend / "third_party/req" / relative).read_text().splitlines()
