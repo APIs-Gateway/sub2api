@@ -594,7 +594,9 @@ func TestPricingSnapshot_PollingConvergesWithoutNotification(t *testing.T) {
 	require.Eventually(t, func() bool { return pssInputCost(t, svc) == 0.000002 }, 3*time.Second, 5*time.Millisecond)
 
 	// 轮询里的失败只告警，当前快照照常服务。
+	store.mu.Lock()
 	store.getActiveErr = errors.New("db down")
+	store.mu.Unlock()
 	time.Sleep(50 * time.Millisecond)
 	require.InDelta(t, 0.000002, pssInputCost(t, svc), 1e-12)
 }

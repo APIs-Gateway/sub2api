@@ -535,6 +535,12 @@ type TokenRefreshConfig struct {
 	RetryBackoffSeconds int `mapstructure:"retry_backoff_seconds"`
 }
 
+// Default pricing sources identify the auto catalog whose internal SKU policy we own.
+const (
+	DefaultPricingRemoteURL    = "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.json"
+	DefaultPricingFallbackFile = "./resources/model-pricing/model_prices_and_context_window.json"
+)
+
 type PricingConfig struct {
 	// 价格数据远程URL（默认使用LiteLLM镜像）
 	RemoteURL string `mapstructure:"remote_url"`
@@ -2127,10 +2133,10 @@ func setDefaults() {
 	viper.SetDefault("rate_limit.oauth_401_cooldown_minutes", 10)
 
 	// Pricing - 从 model-price-repo 同步模型定价和上下文窗口数据（固定到 commit，避免分支漂移）
-	viper.SetDefault("pricing.remote_url", "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.json")
+	viper.SetDefault("pricing.remote_url", DefaultPricingRemoteURL)
 	viper.SetDefault("pricing.hash_url", "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.sha256")
 	viper.SetDefault("pricing.data_dir", "./data")
-	viper.SetDefault("pricing.fallback_file", "./resources/model-pricing/model_prices_and_context_window.json")
+	viper.SetDefault("pricing.fallback_file", DefaultPricingFallbackFile)
 	viper.SetDefault("pricing.update_interval_hours", 24)
 	viper.SetDefault("pricing.hash_check_interval_minutes", 10)
 	viper.SetDefault("pricing.gate_observation_hours", 72)

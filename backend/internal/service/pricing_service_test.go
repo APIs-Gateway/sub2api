@@ -365,7 +365,7 @@ func TestGetModelPricing_Gpt56CompactAliasWithDateUsesStaticFallback(t *testing.
 	require.InDelta(t, 2e-7, got.CacheReadInputTokenCost, 1e-12)
 }
 
-func TestDefaultPricingIncludesCodexAutoReview(t *testing.T) {
+func TestDefaultPricingUsesCurrentCodexAutoReviewBaseRates(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "resources", "model-pricing", "model_prices_and_context_window.json"))
 	require.NoError(t, err)
 
@@ -376,9 +376,41 @@ func TestDefaultPricingIncludesCodexAutoReview(t *testing.T) {
 
 	got := svc.GetModelPricing("codex-auto-review")
 	require.NotNil(t, got)
-	require.InDelta(t, 5e-6, got.InputCostPerToken, 1e-12)
-	require.InDelta(t, 3e-5, got.OutputCostPerToken, 1e-12)
-	require.InDelta(t, 5e-7, got.CacheReadInputTokenCost, 1e-12)
+	require.InDelta(t, 0.2e-6, got.InputCostPerToken, 1e-12)
+	require.InDelta(t, 1.2e-6, got.OutputCostPerToken, 1e-12)
+	require.InDelta(t, 0.02e-6, got.CacheReadInputTokenCost, 1e-12)
+
+	// Auto-review is an internal Codex model. Do not infer public GPT-5.6 API
+	// service-tier, cache-write, or long-context pricing without an upstream
+	// usage contract for this dedicated model.
+	require.Zero(t, got.InputCostPerTokenPriority)
+	require.Zero(t, got.OutputCostPerTokenPriority)
+	require.Zero(t, got.CacheReadInputTokenCostPriority)
+	require.Zero(t, got.CacheCreationInputTokenCost)
+	require.Zero(t, got.CacheCreationInputTokenCostPriority)
+	require.Zero(t, got.LongContextInputTokenThreshold)
+}
+
+func TestParsePricingDataPreservesCodexAutoReviewPayload(t *testing.T) {
+	data := []byte(`{"codex-auto-review":{"input_cost_per_token":0.000009,"output_cost_per_token":0.000031,"cache_read_input_token_cost":0.000003,"cache_creation_input_token_cost":0.000011,"input_cost_per_token_priority":0.000018,"long_context_input_token_threshold":1234,"long_context_input_cost_multiplier":3,"supports_service_tier":true}}`)
+	parsed, err := (&PricingService{}).parsePricingData(data)
+	require.NoError(t, err)
+	require.Len(t, parsed, 1)
+	var expected map[string]*LiteLLMModelPricing
+	require.NoError(t, json.Unmarshal(data, &expected))
+	require.Equal(t, expected, parsed)
+}
+
+func TestParsePricingDataDoesNotInjectCodexAutoReview(t *testing.T) {
+	parsed, err := (&PricingService{}).parsePricingData([]byte(`{"other":{"input_cost_per_token":0.000007}}`))
+	require.NoError(t, err)
+	require.Len(t, parsed, 1)
+	require.Contains(t, parsed, "other")
+	require.NotContains(t, parsed, "codex-auto-review")
+	for _, payload := range []string{`{`, `{}`, `{"codex-auto-review":{"mode":"chat"}}`, `{"codex-auto-review":"invalid"}`} {
+		_, err := (&PricingService{}).parsePricingData([]byte(payload))
+		require.Error(t, err, payload)
+	}
 }
 
 func TestDefaultPricingIncludesGPT56LongContextMetadata(t *testing.T) {
