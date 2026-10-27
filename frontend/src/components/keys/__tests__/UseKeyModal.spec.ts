@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { execFileSync } from 'node:child_process'
+import en from '@/i18n/locales/en'
+import zhCN from '@/i18n/locales/zh-CN'
+import zhHK from '@/i18n/locales/zh-HK'
 
 const { copyToClipboardMock } = vi.hoisted(() => ({ copyToClipboardMock: vi.fn().mockResolvedValue(true) }))
 
@@ -721,5 +724,22 @@ describe('Grok Claude shell literal values', () => {
     expect(codes(wrapper).join('\n')).toContain('[model."grok"]')
     expect(codes(wrapper).join('\n')).not.toContain('ANTHROPIC_AUTH_TOKEN')
     wrapper.unmount()
+  })
+})
+
+
+describe('key setup labels from actual locale data', () => {
+  it.each([
+    { locale: 'en', messages: en },
+    { locale: 'zh-CN', messages: zhCN },
+    { locale: 'zh-HK', messages: zhHK },
+  ])('defines readable persistent settings and Grok labels in $locale', ({ messages }) => {
+    // Read the actual dictionaries: the component fixture intentionally echoes
+    // translation keys and cannot establish that a user-facing label exists.
+    expect(messages.keys.useKeyModal.claudeSettingsHint).toContain('settings.json')
+    expect(messages.keys.useKeyModal.claudeSettingsHint).not.toContain('keys.useKeyModal.')
+    expect(messages.keys.useKeyModal.grok.cmdSettingsOnly).toContain('settings.json')
+    expect(messages.keys.useKeyModal.cliTabs.grokCli).toBe('Grok Build')
+    expect(messages.keys.grokSetupTemplates.trim().length).toBeGreaterThan(0)
   })
 })

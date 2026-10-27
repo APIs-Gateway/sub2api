@@ -1208,6 +1208,7 @@
       spentList: 'Used in the last 30 days by keys in the current list'
     },
     useKeyModal: {
+      claudeSettingsHint: 'Save settings.json for persistent Claude Code configuration.',
       title: 'Use API Key',
       description:
         'Add the following environment variables to your terminal profile or run directly in terminal to configure API access.',

@@ -1207,6 +1207,7 @@
       spentList: '目前列表金鑰近 30 天已用'
     },
     useKeyModal: {
+      claudeSettingsHint: '儲存 settings.json，持續使用 Claude Code 設定。',
       title: '使用 API 金鑰',
       description: '將以下環境變量添加到您的終端配置文件或直接在終端中運行。',
       copy: '複製',

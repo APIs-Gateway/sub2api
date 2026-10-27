@@ -1207,6 +1207,7 @@
       spentList: '当前列表密钥近 30 天已用'
     },
     useKeyModal: {
+      claudeSettingsHint: '保存 settings.json，持久使用 Claude Code 配置。',
       title: '使用 API 密钥',
       description: '将以下环境变量添加到您的终端配置文件或直接在终端中运行。',
       copy: '复制',
