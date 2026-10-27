@@ -264,10 +264,20 @@ func TestEnableDumpTo(t *testing.T) {
 
 func TestEnableDumpToFIle(t *testing.T) {
 	tmpFile := "tmp_dumpfile_req"
-	resp, err := tc().R().EnableDumpToFile(tests.GetTestFilePath(tmpFile)).Get("/")
+	r := tc().R().EnableDumpToFile(tests.GetTestFilePath(tmpFile))
+	resp, err := r.Get("/")
 	assertSuccess(t, resp, err)
 	tests.AssertEqual(t, true, len(getTestFileContent(t, tmpFile)) > 0)
-	os.Remove(tests.GetTestFilePath(tmpFile))
+	if closer, ok := any(r).(interface{ CloseDump() error }); ok {
+		if err := closer.CloseDump(); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		t.Log("CloseDump absent; retain actual same-process Remove oracle")
+	}
+	if err := os.Remove(tests.GetTestFilePath(tmpFile)); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestBadRequest(t *testing.T) {

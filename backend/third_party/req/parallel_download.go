@@ -208,6 +208,9 @@ func (pd *ParallelDownload) fetchTask(ctx context.Context, task downloadTask, to
 				// LIFO closes the body first. Never close the caller transport.
 				owned := client.Transport
 				defer func() {
+					if closeErr := client.CloseDump(); err == nil {
+						err = closeErr
+					}
 					owned.CloseIdleConnections()
 					if owned.t3 != nil {
 						if closeErr := owned.t3.Close(); err == nil {

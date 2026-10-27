@@ -107,6 +107,7 @@ const defaultMaxIdleConnsPerHost = 2
 type Transport struct {
 	Headers http.Header
 	Cookies []*http.Cookie
+	dumpScope *dumpScope
 
 	idleMu       sync.Mutex
 	closeIdle    bool                                // user has requested to close all idle conns
@@ -748,6 +749,14 @@ func (t *Transport) Clone() *Transport {
 		forceHttpVersion:      t.forceHttpVersion,
 		httpRoundTripWrappers: t.httpRoundTripWrappers,
 	}
+	if t.Dump != nil {
+		if options, ok := tt.Dump.Options.(dumpOptions); ok {
+			tt.dumpScope = options.scope
+		}
+	} else if t.dumpScope != nil {
+		// Disabled configurations still own their files and can be cloned.
+		tt.dumpScope = t.dumpScope.clone()
+	}
 	if len(tt.httpRoundTripWrappers) > 0 { // clone transport middleware
 		fn := func(req *http.Request) (*http.Response, error) {
 			return tt.roundTrip(req)
@@ -779,9 +788,32 @@ func (t *Transport) Clone() *Transport {
 
 // EnableDump enables the dump for all requests with specified dump options.
 func (t *Transport) EnableDump(opt *DumpOptions) {
-	dump := newDumper(opt)
-	t.Dump = dump
-	go dump.Start()
+	if opt == nil {
+		opt = newDefaultDumpOptions()
+	}
+	next, _ := replaceDump(t.dumpScope, opt, nil)
+	t.dumpScope = next
+	t.Dump = newDumper(opt, next)
+}
+
+// CloseDump drains this transport's dump writes and releases only internally
+// opened files. It does not close connections, response bodies or caller writers.
+// Repeated calls return the same close result; EnableDump configures a new scope.
+func (t *Transport) CloseDump() error {
+	dumpCloseInit.Lock()
+	if t.dumpScope == nil {
+		t.dumpScope = newDumpScope()
+	}
+	scope, current := t.dumpScope, t.Dump
+	dumpCloseInit.Unlock()
+	if current != nil {
+		if options, ok := current.Options.(dumpOptions); !ok || options.scope != scope {
+			// A caller may assign the exported dumper directly. Drain it, but
+			// never adopt its writer as an internally opened file.
+			current.Stop()
+		}
+	}
+	return scope.close()
 }
 
 // DisableDump disables the dump.
