@@ -19,10 +19,17 @@ import traceback
 import uuid
 
 BASE = "673c3fafa9ff9c4c32a6adbd8cd5f595c25f0c63"
-# Exact independently reviewed, remote-formatted application source; runtime still pending.
-SOURCE = "8eee8388f0b5a24d635908e7268736b4d1d8f44d"
-TREE = "253a542f986b2e90c138bf866057eea77c541ded"
-PRODUCTION = "bf4dfe25dac427186ff32c93a5c9d45d89530418"
+# Design pins only. Root must freeze reviewed formatted NEW plus the retained
+# eight-path observer infrastructure, and an immutable OLD test-only commit.
+# Never push/dispatch these RAW placeholders as runtime acceptance evidence.
+SOURCE_READY = False
+SOURCE = "e1b71933de5e6d0c1124576ce98d5594a5c3d050"
+TREE = "85144f1b7cf7a582943571b4e596cd4b54b4e211"
+PRODUCTION = "e1b71933de5e6d0c1124576ce98d5594a5c3d050"
+OLD_PRODUCTION = "bf4dfe25dac427186ff32c93a5c9d45d89530418"
+OLD_SOURCE = OLD_PRODUCTION  # Replace with reviewed test-only child after formatting.
+OLD_TREE = "a48e9dd347c0d7420525d7d36698d18653913119"
+OLD_FIXTURES = ("dump_ownership_contract_test.go", "dump_ownership_peer_test.go")
 INFRA_PATHS = {".github/g-download-observation/observe.py", ".github/g-download-observation/controls.py",
                ".github/g-download-observation/metadata_control_test.go.txt", ".github/workflows/g-download-observe.yml",
                "backend/tools/req-http2-security-evidence.py", "backend/third_party/req/download_wire_peer_test.go",
@@ -205,7 +212,7 @@ def exec_mode(argv, timeout=1000):
     directory.mkdir(parents=True, exist_ok=False)
     binary = Path(argv[0]).resolve()
     identity = {"binary": str(binary),
-                "argv": argv, "phase": phase, "source": SOURCE,
+                "argv": argv, "phase": phase, "source": os.environ.get("G_OBSERVATION_SOURCE_HEAD", SOURCE),
                 "sourceScope": "Owned synthetic metadata control module projected from exact source helper" if phase == "metadata-controls" else "Actual frozen application test binary",
                 "actualWorkingDirectory": str(Path.cwd()),
                 "environment": {key: os.environ.get(key) for key in
@@ -376,12 +383,12 @@ def compiler_preflight(actual_env):
 
 
 def windows_storage_preflight():
-    # Match Go1.26.9 os.tempDir's native API choice, then query actual volumes.
+    # Match pinned Go's native os.tempDir API choice, then query actual volumes.
     import ctypes
     from ctypes import wintypes
     report = {"tempEnvironment": {key: os.environ.get(key) for key in ("TMP", "TEMP", "TMPDIR")},
               "volumes": [], "errors": [],
-              "goTempAPIReference": "https://github.com/golang/go/blob/go1.26.9/src/os/file_windows.go#L264"}
+              "goTempAPIReference": "https://github.com/golang/go/blob/go1.26.10/src/os/file_windows.go"}
     try:
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
         try:
@@ -411,6 +418,8 @@ def windows_storage_preflight():
                  "goBuildTemp": Path(os.environ["GOTMPDIR"]),
                  "candidateCheckout": WORKSPACE / "source", "baselineCheckout": WORKSPACE / "baseline",
                  "controllerCheckout": WORKSPACE / "controller"}
+        if (WORKSPACE / "old").is_dir():
+            paths["oldCheckout"] = WORKSPACE / "old"
         for label, path in paths.items():
             record = {"role": label, "path": str(path)}
             try:
@@ -434,7 +443,7 @@ def windows_storage_preflight():
     except Exception:
         report["errors"].append(traceback.format_exc())
     save(E / "windows-storage-prerequisites.json", report)
-    assert not report["errors"] and len(report["volumes"]) == 6, "Actual Windows storage prerequisite failed"
+    assert not report["errors"] and len(report["volumes"]) == len(paths), "Actual Windows storage prerequisite failed"
 
 
 def exec_controls():
@@ -531,6 +540,16 @@ def actual_inventory(phase, source, windows):
     cleanup = selected_inventory["parallelDownloadHTTP3CleanupLeaves"]
     in_process = selected_inventory["parallelDownloadInProcessLeaves"]
     default_output = selected_inventory["parallelDownloadDefaultOutputLeaves"]
+    ownership = selected_inventory["dumpOwnershipLeaves"]
+    h2_receive = selected_inventory["http2ReceiveFlowLeaves"]
+    h2_package = MODULE + "/internal/http2"
+    assert selected_inventory["dumpOwnershipPackage"] == MODULE
+    assert len(ownership) == len(set(ownership)) == selected_inventory["dumpOwnershipCount"] == 42
+    assert selected_inventory["http2ReceiveFlowPackage"] == h2_package
+    assert len(h2_receive) == len(set(h2_receive)) == selected_inventory["http2ReceiveFlowCount"] == 6
+    manifest = json.loads((source / "backend/third_party/req/UPSTREAM-MANIFEST.json").read_text(encoding="utf-8"))
+    assert ownership == manifest["ownedDumpClose1752"]["requiredNewTestLeaves"]
+    assert h2_receive == manifest["http2ReceiveFlowContracts"]["leaves"]
     assert len(fallback) == len(cleanup) == 1
     assert selected_inventory["parallelDownloadInProcessPackage"] == MODULE
     assert len(in_process) == len(set(in_process)) == selected_inventory["parallelDownloadInProcessCount"] == 23
@@ -543,15 +562,23 @@ def actual_inventory(phase, source, windows):
     assert selected_inventory["parallelDownloadDefaultOutputCount"] == len(default_output) == 1
     assert default_output == ["TestReqParallelDownloadDefaultOutput/url_path_filename"]
     assert provenance["defaultOutputContract"]["leaves"] == default_output
-    expected = set(inventory["linux"] + fallback + cleanup + in_process + default_output + (inventory["windowsAdditional"] if windows else []))
-    assert len(expected) == (59 if windows else 58)
+    expected = set(inventory["linux"] + fallback + cleanup + in_process + default_output + ownership + (inventory["windowsAdditional"] if windows else []))
+    assert len(expected) == (101 if windows else 100)
     runs = collections.Counter((event.get("Package"), event.get("Test")) for event in events if event.get("Action") == "run")
     passes = collections.Counter((event.get("Package"), event.get("Test")) for event in events if event.get("Action") == "pass" and event.get("Test"))
     packages = objects((E / "commands/packages/stdout").read_bytes())
-    test_packages = {item["ImportPath"] for item in packages if item.get("TestGoFiles") or item.get("XTestGoFiles")} if phase == "full" else {MODULE}
+    test_packages = {item["ImportPath"] for item in packages if item.get("TestGoFiles") or item.get("XTestGoFiles")} if phase == "full" else {MODULE, h2_package}
     bad = [event for event in events if event.get("Action") == "fail" or (event.get("Action") == "skip" and (event.get("Test") or event.get("Package") in test_packages))]
     package_passes = collections.Counter(event.get("Package") for event in events if event.get("Action") == "pass" and not event.get("Test"))
     g_events = {name: {"run": runs[(MODULE, name)], "pass": passes[(MODULE, name)]} for name in sorted(expected)}
+    h2_events = {name: {"run": runs[(h2_package, name)], "pass": passes[(h2_package, name)]} for name in h2_receive}
+    # Two writer-drain controls deliberately own no file; every other ownership
+    # leaf must witness an actual successful Remove, not just absence of Fatal.
+    file_ownership = set(ownership) - {"TestReqDumpOwnershipCloseDrains/async_false", "TestReqDumpOwnershipCloseDrains/async_true"}
+    assert len(file_ownership) == 40
+    remove_successes = {name: sum(event.get("Output", "").count("DUMP1752_RESOURCE_REMOVE_OK operation=remove")
+                                 for event in events if event.get("Package") == MODULE and event.get("Test") == name)
+                        for name in sorted(file_ownership)}
     parent_execution = []
     for name in in_process:
         output = "".join(event.get("Output", "") for event in events if event.get("Package") == MODULE and event.get("Test") == name)
@@ -565,17 +592,20 @@ def actual_inventory(phase, source, windows):
         default_execution.append({"test": name,
                                   "completedMarkers": output.count("G1748_DEFAULT_OUTPUT_COMPLETE " + name + " "),
                                   "childDelegationMarkers": "G_CHILD_ACTUAL" in output or "G_CHILD_EXECUTED" in output})
-    unexpected = sorted(name for package, name in runs if package == MODULE and name and name.startswith(("TestReqDownload", "TestReqParallelDownload")) and name not in expected and not any(other.startswith(name + "/") for other in expected))
+    unexpected = sorted(name for package, name in runs if package == MODULE and name and name.startswith(("TestReqDownload", "TestReqParallelDownload", "TestReqDumpOwnership")) and name not in expected and not any(other.startswith(name + "/") for other in expected))
+    unexpected_h2 = sorted(name for package, name in runs if package == h2_package and name and name.startswith("TestReqHTTP2ReceiveFlowContract_") and name not in h2_receive and not any(other.startswith(name + "/") for other in h2_receive))
     old = selected_inventory
     original = {(old[key[:-6] + "Package"], leaf) for key, values in old.items() if key.endswith("Leaves") and isinstance(values, list) and key[:-6] + "Package" in old for leaf in values}
-    assert len(original) == old["totalNamedLeaves"] == 526
-    previous525 = original - {(MODULE, name) for name in default_output}
+    assert len(original) == old["totalNamedLeaves"] == 574
+    previous526 = original - {(MODULE, name) for name in ownership} - {(h2_package, name) for name in h2_receive}
+    assert len(previous526) == 526
+    previous525 = previous526 - {(MODULE, name) for name in default_output}
     assert len(previous525) == 525
     previous502 = previous525 - {(MODULE, name) for name in in_process}
     assert len(previous502) == 502
     baseline_inventory = json.loads((WORKSPACE / "baseline/backend/tools/req-http2-security-inventory.json").read_text(encoding="utf-8"))
     retained = {(baseline_inventory[key[:-6] + "Package"], leaf) for key, values in baseline_inventory.items() if key.endswith("Leaves") and isinstance(values, list) and key[:-6] + "Package" in baseline_inventory for leaf in values}
-    assert len(retained) == baseline_inventory["totalNamedLeaves"] == 468 and retained < previous502 < original
+    assert len(retained) == baseline_inventory["totalNamedLeaves"] == 468 and retained < previous502 < previous526 < original
     old_events = [{"package": package, "test": name, "run": runs[(package, name)], "pass": passes[(package, name)]} for package, name in sorted(original)] if phase == "full" else []
     previous_events = [item for item in old_events if (item["package"], item["test"]) in previous502]
     previous525_events = [item for item in old_events if (item["package"], item["test"]) in previous525]
@@ -583,20 +613,25 @@ def actual_inventory(phase, source, windows):
     trace_completions = []
     file_identity_markers = 0
     if phase == "full":
-        manifest = json.loads((source / "backend/third_party/req/UPSTREAM-MANIFEST.json").read_text(encoding="utf-8"))
-        assert len(manifest["originalTestAdaptations"]) == 1
-        assert manifest["originalTestAdaptations"][0]["requiredTests"] == ["TestSetFile", "TestTraceInfo"]
-        for name in ("TestSetFile", "TestTraceInfo"):
+        required_originals = {"request_test.go": ["TestSetFile", "TestTraceInfo", "TestEnableDumpToFIle"],
+                              "client_test.go": ["TestEnableDumpAllToFile"]}
+        assert len(manifest["originalTestAdaptations"]) == 2
+        assert {item["path"]: item["requiredTests"] for item in manifest["originalTestAdaptations"]} == required_originals
+        for name in ("TestSetFile", "TestTraceInfo", "TestEnableDumpToFIle", "TestEnableDumpAllToFile"):
             selected = [event for event in events if event.get("Package") == MODULE and event.get("Test") == name]
             output = "".join(event.get("Output", "") for event in selected)
             adapted_original.append({"test": name, "run": runs[(MODULE, name)], "pass": passes[(MODULE, name)],
                                      "failedOrSkipped": any(event.get("Action") in ("fail", "skip") for event in selected)})
             if name == "TestTraceInfo":
                 trace_completions = re.findall(r'TRACE_ACTUAL_COMPLETION enabled=(true|false) expectedHTTP=([12]) expectedReuse=(true|false) actualALPN="([^"]*)"', output)
-            else:
+            elif name == "TestSetFile":
                 file_identity_markers = output.count("FILE_ACTUAL_MISSING_IDENTITY isNotExist=true ")
     result = {"expectedGLeaves": len(expected), "gActual": g_events, "unexpectedGLeaves": unexpected,
-              "badEvents": bad, "mandatory526Actual": old_events, "mandatory525Actual": previous525_events,
+              "badEvents": bad, "mandatory574Actual": old_events,
+              "mandatory526Actual": [item for item in old_events if (item["package"], item["test"]) in previous526],
+              "mandatory525Actual": previous525_events,
+              "h2ReceiveActual": h2_events, "unexpectedH2Leaves": unexpected_h2,
+              "actualRemoveSuccesses": remove_successes,
               "mandatory502Actual": previous_events, "defaultOutputActual": default_execution,
               "inProcess23Actual": parent_execution, "retainedBaselineLeaves": 468,
               "adaptedOriginalTests": adapted_original, "actualTraceCompletions": trace_completions,
@@ -604,14 +639,16 @@ def actual_inventory(phase, source, windows):
               "packageTerminals": [event for event in events if "Test" not in event and event.get("Action") in ("pass", "fail", "skip")],
               "classification": "Actual results; every failure remains failed, no accepted-RED list"}
     save(directory / "actual-inventory.json", result)
-    assert not unexpected and all(value == {"run": 1, "pass": 1} for value in g_events.values())
+    assert not unexpected and not unexpected_h2 and all(value == {"run": 1, "pass": 1} for value in g_events.values())
+    assert all(value == {"run": 1, "pass": 1} for value in h2_events.values())
+    assert all(count >= 1 for count in remove_successes.values()), "Actual successful ownership Remove witness missing"
     assert all(item["executedMarkers"] == item["completedMarkers"] == 1 and not item["childDelegationMarkers"] for item in parent_execution), "Missing/duplicate parent execution markers or incorrect child delegation"
     assert all(item["completedMarkers"] == 1 and not item["childDelegationMarkers"] for item in default_execution), "Default output completion missing/duplicate or incorrectly delegated to child"
     assert not bad, "Actual failed or skipped test-bearing package/case"
     assert all(package_passes[package] == 1 for package in test_packages), "Test-bearing package completion missing/duplicate"
     if phase == "full":
         assert all(item["run"] == item["pass"] == 1 for item in old_events)
-        assert len(adapted_original) == 2 and all(item["run"] == item["pass"] == 1 and not item["failedOrSkipped"] for item in adapted_original)
+        assert len(adapted_original) == 4 and all(item["run"] == item["pass"] == 1 and not item["failedOrSkipped"] for item in adapted_original)
         expected_trace = collections.Counter((enabled, protocol, reuse) for protocol in ("1", "2")
                                              for enabled, reuse in (("true", "false"), ("false", "true"), ("true", "true")))
         assert collections.Counter(item[:3] for item in trace_completions) == expected_trace
@@ -683,6 +720,146 @@ def child_profiles(phase, source, windows):
     assert not errors and seen == expected and all(item["normalExitProfileCandidate"] for item in records)
 
 
+def old_test_only_inputs(old, source, frozen):
+    """OLD is an immutable Git child, never a runner rewrite of production."""
+    assert git(old, "rev-parse", "HEAD^{tree}").decode().strip() == OLD_TREE
+    parents = git(old, "show", "-s", "--format=%P", "HEAD").decode().split()
+    assert parents == [OLD_PRODUCTION], "OLD must be a direct test-only child of preserved bf4"
+    anchor = {}
+    for row in git(old, "ls-tree", "--full-tree", "-r", "-z", OLD_PRODUCTION).split(b"\0"):
+        if row:
+            header, name = row.split(b"\t", 1)
+            mode, kind, blob = header.decode().split()
+            assert kind == "blob"
+            anchor[os.fsdecode(name)] = (mode, blob)
+    current = {item["path"]: item for item in frozen["files"]}
+    paths = {"backend/third_party/req/" + name for name in OLD_FIXTURES}
+    manifest_path = "backend/third_party/req/UPSTREAM-MANIFEST.json"
+    assert not set(anchor) - set(current)
+    assert set(current) - set(anchor) == paths, "OLD may add only the two identical fixtures"
+    assert all((current[name]["mode"], current[name]["blob"]) == value
+               for name, value in anchor.items() if name != manifest_path), "OLD production/original tests changed"
+    seals = {}
+    for name in OLD_FIXTURES:
+        relative = "backend/third_party/req/" + name
+        raw = (old / relative).read_bytes()
+        assert raw == (source / relative).read_bytes(), "OLD/NEW ownership fixture bytes differ"
+        seals[name] = sha(raw)
+    peer = (source / "backend/third_party/req/dump_ownership_peer_test.go").read_bytes()
+    assert b"DUMP1752_RESOURCE_REMOVE_OK operation=remove" in peer
+    assert b"DUMP1752_RESOURCE_REMOVE_ERR type=%T operation=%s errno=%d" in peer
+    original = json.loads(git(old, "show", OLD_PRODUCTION + ":" + manifest_path))
+    actual = json.loads((old / manifest_path).read_text(encoding="utf-8"))
+    assert set(actual) == set(original) | {"ownedDumpWitnessControl"}
+    assert all(actual[name] == value for name, value in original.items() if name != "newOwnedFiles")
+    assert actual["newOwnedFiles"] == original["newOwnedFiles"] + list(OLD_FIXTURES)
+    assert actual["ownedDumpWitnessControl"] == {
+        "productionHead": OLD_PRODUCTION, "fixtureSHA256": seals,
+        "scope": "test-only Windows resource witness; no CloseDump implementation"}
+    save(E / "old-test-only-inputs.json", {"oldHead": OLD_SOURCE, "oldTree": OLD_TREE,
+         "productionHead": OLD_PRODUCTION, "fixtureSHA256": seals,
+         "policy": "All other tracked modes/blobs match bf4; original132 and13/1/118 partition unchanged"})
+
+
+def old_windows_witness():
+    report = {"kind": "old-windows-resource-witness", "source": OLD_SOURCE, "tree": OLD_TREE,
+              "production": OLD_PRODUCTION, "newSource": SOURCE, "controller": os.environ["GITHUB_SHA"],
+              "errors": [], "commands": [], "resourceRED": False,
+              "scope": "Separate negative observation; never a passing OLD suite or permission to waive NEW failures"}
+    roots = {"controller": (WORKSPACE / "controller", os.environ["GITHUB_SHA"]),
+             "baseline": (WORKSPACE / "baseline", BASE),
+             "candidate": (WORKSPACE / "source", SOURCE), "old": (WORKSPACE / "old", OLD_SOURCE)}
+    before = {}
+    try:
+        assert SOURCE_READY, "Design controller only: formatted NEW/OLD fixture pins and dual review are pending"
+        assert os.name == "nt", "OLD resource witness requires native Windows"
+        for label, (root, head) in roots.items():
+            before[label] = snapshot(root, head, label + "-before", archive=True)
+        assert before["candidate"]["tree"] == TREE
+        old, source = WORKSPACE / "old", WORKSPACE / "source"
+        old_test_only_inputs(old, source, before["old"])
+        require_success(capture(E / "commands/go-version", ["go", "version"], WORKSPACE))
+        assert (E / "commands/go-version/stdout").read_text().strip() == "go version go1.26.10 windows/amd64"
+        require_success(capture(E / "commands/go-env", ["go", "env", "-json", "GOOS", "GOARCH", "CGO_ENABLED", "CC", "GOTOOLCHAIN", "GOWORK", "GOFLAGS"], WORKSPACE))
+        actual_env = json.loads((E / "commands/go-env/stdout").read_text())
+        assert actual_env == {"GOOS": "windows", "GOARCH": "amd64", "CGO_ENABLED": "1", "CC": "gcc",
+                              "GOTOOLCHAIN": "local", "GOWORK": "off", "GOFLAGS": "-mod=readonly"}
+        compiler_preflight(actual_env)
+        windows_storage_preflight()
+        exec_controls()
+        module_graph(WORKSPACE / "baseline", old)
+        wrapper = Path(__file__).resolve()
+        assert '"' not in str(wrapper) and '"' not in sys.executable
+        exec_flag = '"' + sys.executable + '" "' + str(wrapper) + '" exec'
+        observed = {}
+        for phase, selector in (("old-calibration", "^TestReqDumpOwnershipWindowsCalibration$"),
+                                ("old-resource", "^TestReqDumpOwnershipFileLifecycle$/^(request_sync|client_sync)$")):
+            directory = E / "phases" / phase
+            directory.mkdir(parents=True)
+            env = dict(os.environ, G_OBSERVATION_PHASE=phase, G_OBSERVATION_SOURCE_HEAD=OLD_SOURCE)
+            argv = ["go", "test", "-p=1", "-parallel=1", "-race", "-count=1", "-timeout=3m", "-json",
+                    "-covermode=atomic", "-coverpkg=" + MODULE + "/...",
+                    "-coverprofile=" + str(directory / "parent.raw.out"), "-exec=" + exec_flag,
+                    "-run=" + selector, MODULE]
+            command = capture(directory / "command", argv, old / "backend", timeout=600, env=env)
+            report["commands"].append(command)
+            assert command["started"] and command["streamsComplete"] and not command["watchdog"]
+            raw = (directory / "command/stdout").read_bytes()
+            stderr = (directory / "command/stderr").read_bytes()
+            assert not any(marker in raw + stderr for marker in
+                           (b"WARNING: DATA RACE", b"panic:", b"fatal error:", b"test timed out", b"G_CHILD_WATCHDOG")), "Race/timeout/launch failure is not a resource RED"
+            events = [json.loads(line) for line in raw.decode("utf-8").splitlines()]
+            assert not any(event.get("Action") == "skip" for event in events)
+            package_failures = [event for event in events if event.get("Package") == MODULE and event.get("Action") == "fail" and not event.get("Test")]
+            if phase == "old-calibration":
+                require_success(command)
+                name = "TestReqDumpOwnershipWindowsCalibration"
+                selected = [event for event in events if event.get("Package") == MODULE and event.get("Test") == name]
+                assert sum(event.get("Action") == "run" for event in selected) == 1
+                assert sum(event.get("Action") == "pass" for event in selected) == 1
+                assert not any(event.get("Action") == "fail" for event in events)
+                output = "".join(event.get("Output", "") for event in selected)
+                assert re.search(r"DUMP1752_RESOURCE_DENIED open os.Create control: type=\*[^ ]*PathError operation=remove errno=(5|32)(?:\s|$)", output)
+                assert output.count("DUMP1752_RESOURCE_REMOVE_OK operation=remove") == 1
+                observed[phase] = {"actualExit": command["exitCode"], "calibratedWindowsDenialAndSuccessfulCloseRemove": True}
+            else:
+                # A known actual test failure is preserved, not converted into
+                # a passing OLD test. Only these exact resource failures count.
+                assert command["exitCode"] == 1 and len(package_failures) == 1
+                names = {"TestReqDumpOwnershipFileLifecycle/request_sync", "TestReqDumpOwnershipFileLifecycle/client_sync"}
+                allowed = names | {"TestReqDumpOwnershipFileLifecycle"}
+                assert all(event.get("Package") == MODULE and event.get("Test") in allowed
+                           for event in events if event.get("Action") in ("run", "fail") and event.get("Test"))
+                records = []
+                for name in sorted(names):
+                    selected = [event for event in events if event.get("Package") == MODULE and event.get("Test") == name]
+                    output = "".join(event.get("Output", "") for event in selected)
+                    assert sum(event.get("Action") == "run" for event in selected) == 1
+                    assert sum(event.get("Action") == "fail" for event in selected) == 1
+                    assert not any(event.get("Action") == "pass" for event in selected)
+                    assert re.search(r"DUMP1752_OUTPUT bytes=[1-9][0-9]* sha256=[0-9a-f]{64}", output)
+                    assert re.search(r"DUMP1752_RESOURCE_REMOVE_ERR type=\*[^ ]*PathError operation=remove errno=(5|32)(?:\s|$)", output)
+                    assert "DUMP1752_RESOURCE_REMOVE:" in output
+                    assert "DUMP1752_RESOURCE_REMOVE_OK" not in output
+                    records.append({"test": name, "actualRun": 1, "actualFail": 1,
+                                    "actualTypedRemoveDenial": True,
+                                    "prerequisites": "Identical frozen FileLifecycle source validates real peer/status/body/captured upload+response before this actual Remove; raw OUTPUT bytes/SHA recorded"})
+                observed[phase] = {"actualExit": command["exitCode"], "cases": records}
+        report["observed"] = observed
+        report["resourceRED"] = True
+    except Exception:
+        report["errors"].append(traceback.format_exc())
+    finally:
+        for label, (root, head) in roots.items():
+            try:
+                after = snapshot(root, head, label + "-after")
+                assert before[label] == after
+            except Exception:
+                report["errors"].append({"check": label + "-after-freeze", "error": traceback.format_exc()})
+        save(E / "actual-old-resource-witness.json", report)
+    return 0 if report["resourceRED"] and not report["errors"] else 1
+
+
 def observe(kind):
     report = {"kind": kind, "source": BASE if kind == "baseline" else SOURCE, "baseline": BASE,
               "controller": os.environ["GITHUB_SHA"], "errors": [], "commands": []}
@@ -692,6 +869,7 @@ def observe(kind):
     if kind == "candidate":
         roots["candidate"] = (WORKSPACE / "source", SOURCE)
     try:
+        assert SOURCE_READY, "Design controller only: formatted NEW/OLD fixture pins and dual review are pending; do not dispatch"
         for label, (root, head) in roots.items():
             before[label] = snapshot(root, head, label + "-before", archive=True)
         version = capture(E / "commands/go-version", ["go", "version"], WORKSPACE)
@@ -751,6 +929,7 @@ def observe(kind):
             selector = "^(TestReqDownloadContract|TestReqDownloadContractCancellation|TestReqParallelDownloadContract"
             selector += "|TestReqParallelDownloadFallback|TestReqParallelDownloadHTTP3Cleanup|TestReqParallelDownloadInProcessContract"
             selector += "|TestReqParallelDownloadDefaultOutput"
+            selector += "|TestReqDumpOwnership.*|TestReqHTTP2ReceiveFlowContract_.*"
             selector += "|TestReqParallelDownloadWindowsClose)$" if os.name == "nt" else ")$"
             wrapper = Path(__file__).resolve()
             # cmd/go's quoted.Split accepts quoted argv items; no shell expansion.
@@ -762,7 +941,7 @@ def observe(kind):
                 env = dict(os.environ, G_OBSERVATION_PHASE=phase, SUB2API_G_DOWNLOAD_PROFILE_DIR=str(phase_dir / "children"))
                 argv = ["go", "test", "-p=1", "-parallel=1", "-race", "-count=1", "-timeout=15m", "-json", "-covermode=atomic", "-coverpkg=" + MODULE + "/...", "-coverprofile=" + str(phase_dir / "parent.raw.out"), "-exec=" + exec_flag]
                 if phase == "named":
-                    argv += ["-run=" + selector, MODULE]
+                    argv += ["-run=" + selector, MODULE, MODULE + "/internal/http2"]
                 else:
                     argv += [MODULE + "/..."]
                 result = capture(phase_dir / "command", argv, source / "backend", timeout=2000 if phase == "named" else 3000, env=env)
@@ -775,6 +954,15 @@ def observe(kind):
                         check()
                     except Exception:
                         report["errors"].append({"phase": phase, "check": label, "error": traceback.format_exc()})
+            if os.name != "nt":
+                # The observer is not a replacement for the unchanged source
+                # script or its original16-file85/four-profile obligations.
+                env = dict(os.environ, REQ_SECURITY_EVIDENCE=str(E / "formal-new"),
+                           REQ_SECURITY_EXPECTED_HEAD=SOURCE)
+                actual = capture(E / "commands/formal-new", ["bash", "tools/req-http2-security-ci.sh"],
+                                 source / "backend", timeout=3000, env=env)
+                report["commands"].append(actual)
+                require_success(actual)
     except Exception:
         report["errors"].append({"check": "prerequisite-or-observation", "error": traceback.format_exc()})
     finally:
@@ -784,7 +972,7 @@ def observe(kind):
                 assert before[label] == after
             except Exception:
                 report["errors"].append({"check": label + "-after-freeze", "error": traceback.format_exc()})
-        report["policy"] = "Every actual failure fails this job; no accepted-RED list or profile counter merge. Exact673 retained468 baseline, original401 within it, and platform jobs remain independent obligations. Child profiles never contribute counters to the original four profiles or formal13-adapt coverage gates."
+        report["policy"] = "Every NEW actual failure fails this job; no accepted-RED list or profile counter merge. Exact673 retained468 baseline, original401 within it, retained526+H2six+dump42=574 and platform jobs remain independent obligations. Child profiles never contribute counters to the original four profiles or formal16-adapt coverage gates. OLD resource observations are separate and cannot waive NEW failures."
         save(E / "actual-observation.json", report)
     return 1 if report["errors"] else 0
 
@@ -794,4 +982,6 @@ if __name__ == "__main__":
         sys.exit(exec_mode(sys.argv[2:]))
     if sys.argv[1] == "control-exec":
         sys.exit(exec_mode(sys.argv[3:], timeout=float(sys.argv[2])))
+    if sys.argv[1] == "old-witness":
+        sys.exit(old_windows_witness())
     sys.exit(observe(sys.argv[1]))

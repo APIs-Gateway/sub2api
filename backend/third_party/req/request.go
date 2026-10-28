@@ -57,6 +57,7 @@ type Request struct {
 	unReplayableBody         io.ReadCloser
 	retryOption              *retryOption
 	bodyReadCloser           io.ReadCloser
+	dumpScope                *dumpScope
 	dumpOptions              *DumpOptions
 	marshalBody              any
 	ctx                      context.Context
@@ -81,6 +82,12 @@ type requestDumpContext struct {
 
 func (c *requestDumpContext) Value(key any) any {
 	if key == dump.DumperKey {
+		if c.dumper == nil {
+			return nil
+		}
+		if options, ok := c.dumper.Options.(dumpOptions); ok && options.scope.isClosed() {
+			return nil
+		}
 		return c.dumper
 	}
 	return c.Context.Value(key)
@@ -1082,18 +1089,21 @@ func (r *Request) getDumpOptions() *DumpOptions {
 
 // EnableDumpTo enables dump and save to the specified io.Writer.
 func (r *Request) EnableDumpTo(output io.Writer) *Request {
-	r.getDumpOptions().Output = output
+	opt := r.getDumpOptions().Clone()
+	opt.Output = output
+	r.SetDumpOptions(opt)
 	return r.EnableDump()
 }
 
 // EnableDumpToFile enables dump and save to the specified filename.
 func (r *Request) EnableDumpToFile(filename string) *Request {
-	file, err := os.Create(filename)
+	opt := r.getDumpOptions().Clone()
+	next, err := replaceDump(r.dumpScope, opt, &filename)
 	if err != nil {
 		r.appendError(err)
 		return r
 	}
-	r.getDumpOptions().Output = file
+	r.dumpOptions, r.dumpScope = opt, next
 	return r.EnableDump()
 }
 
@@ -1105,12 +1115,13 @@ func (r *Request) SetDumpOptions(opt *DumpOptions) *Request {
 	if opt.Output == nil {
 		opt.Output = r.getDumpBuffer()
 	}
-	if r.dumpOptions != nil {
-		*r.dumpOptions = *opt
-	} else {
-		r.dumpOptions = opt
+	enabled := false
+	if _, ok := r.Context().Value(dump.DumperKey).(*dump.Dumper); ok {
+		enabled = true
 	}
-	if _, enabled := r.Context().Value(dump.DumperKey).(*dump.Dumper); enabled {
+	next, _ := replaceDump(r.dumpScope, opt, nil)
+	r.dumpOptions, r.dumpScope = opt, next
+	if enabled {
 		r.EnableDump()
 	}
 	return r
@@ -1118,6 +1129,12 @@ func (r *Request) SetDumpOptions(opt *DumpOptions) *Request {
 
 // EnableDump enables dump, including all content for the request and response by default.
 func (r *Request) EnableDump() *Request {
+	if r.dumpScope.isClosed() {
+		return r
+	}
+	if r.dumpScope == nil {
+		r.dumpScope = newDumpScope()
+	}
 	opt := r.getDumpOptions().Clone()
 	if r.dumpBuffer != nil {
 		// Every attempt owns an immutable sink; old transport closures retain the
@@ -1133,7 +1150,24 @@ func (r *Request) EnableDump() *Request {
 	if previous, ok := base.(*requestDumpContext); ok {
 		base = previous.Context
 	}
-	return r.SetContext(&requestDumpContext{Context: base, dumper: newDumper(opt)})
+	return r.SetContext(&requestDumpContext{Context: base, dumper: newDumper(opt, r.dumpScope)})
+}
+
+// CloseDump drains all attempts of this request's current dump configuration.
+// It does not consume/close a manual response body or alter its context lifetime.
+func (r *Request) CloseDump() error {
+	dumpCloseInit.Lock()
+	if r.dumpScope == nil {
+		r.dumpScope = newDumpScope()
+	}
+	scope := r.dumpScope
+	// Existing wrappers are immutable for in-flight transport callbacks. Their
+	// Value method masks only the dump key once the scope closes.
+	if _, own := r.Context().(*requestDumpContext); !own {
+		r.SetContext(&requestDumpContext{Context: r.Context()})
+	}
+	dumpCloseInit.Unlock()
+	return scope.close()
 }
 
 // EnableDumpWithoutBody enables dump only header for the request and response.
