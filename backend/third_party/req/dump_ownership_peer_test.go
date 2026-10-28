@@ -47,8 +47,14 @@ func ownedDumpRead(t *testing.T, path string) []byte {
 func ownedDumpRemove(t *testing.T, path string) {
 	t.Helper()
 	if err := os.Remove(path); err != nil {
+		var pathErr *os.PathError
+		var errno syscall.Errno
+		if errors.As(err, &pathErr) && errors.As(err, &errno) {
+			t.Logf("DUMP1752_RESOURCE_REMOVE_ERR type=%T operation=%s errno=%d", err, pathErr.Op, errno)
+		}
 		t.Fatalf("DUMP1752_RESOURCE_REMOVE: %T %v", err, err)
 	}
+	t.Log("DUMP1752_RESOURCE_REMOVE_OK operation=remove")
 	if runtime.GOOS != "windows" {
 		t.Log("DUMP1752_RESOURCE: unlink success is not proof of descriptor close on this OS")
 	}

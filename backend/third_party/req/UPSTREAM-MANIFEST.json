@@ -1548,7 +1548,7 @@
         "TestEnableDumpAllToFile"
       ]
     },
-    "sourceStatus": "Remote Go1.26.10 formatter copies from exact e1 independently audited and imported verbatim (five changed Go files of eleven inputs); no local/87 execution. Exact-head runtime, OLD/NEW Windows resource witness, race/security/four profiles/all16x85 gates remain pending.",
+    "sourceStatus": "Remote formatter output imported at e728e3e78. Subsequent narrow peer-fixture resource witness logs require exact-head independent review and remote formatting/runtime evidence; no local/87 execution or new PASS. Original 42 leaves/assertions and all16x85 gates retained.",
     "closeErrorLimit": "Actual file close errors are joined/stored and returned idempotently; no portable deterministic filesystem close-error fixture and no fabricated PASS.",
     "windowsObservationLimit": "Original40182645563 passed526 leaves but left2dump files; ignored Remove results mean no original same-process sharing-violation witness. New same-fixture calibrated actual Remove OLD/NEW still required.",
     "formatEvidence": {
@@ -1564,6 +1564,12 @@
       "actualOperations": 44,
       "rootIndependentReceiptSHA256": "59e61cc806324b8a7e61c5899dc8759a7e1d8c98412c085e0922fa8d3f522e6c",
       "scope": "Full tracked4523/4524 inputs and archives unchanged; strict actual exits/bytes verified. Formatting only, no runtimePASS."
+    },
+    "resourceWitnessMarkers": {
+      "actualRemoveSuccess": "DUMP1752_RESOURCE_REMOVE_OK operation=remove",
+      "actualRemoveTypedError": "DUMP1752_RESOURCE_REMOVE_ERR type=%T operation=%s errno=%d",
+      "failureAssertionRetained": "DUMP1752_RESOURCE_REMOVE: %T %v",
+      "scope": "Log only after actual os.Remove result; errors.As reports real PathError/errno. OLD may claim resourceRED only for actual Windows5/32 after real wire/output and calibrated Create/Close/Remove. Linux unlink success is not descriptor-close evidence."
     }
   },
   "http2ReceiveFlowContracts": {
