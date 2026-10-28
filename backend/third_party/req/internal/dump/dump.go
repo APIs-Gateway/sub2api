@@ -223,8 +223,8 @@ type Dumper struct {
 }
 
 type dumpTask struct {
-	Data   []byte
-	Output io.Writer
+	Data    []byte
+	Output  io.Writer
 	Release func()
 }
 

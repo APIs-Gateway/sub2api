@@ -47,8 +47,14 @@ func ownedDumpRead(t *testing.T, path string) []byte {
 func ownedDumpRemove(t *testing.T, path string) {
 	t.Helper()
 	if err := os.Remove(path); err != nil {
+		var pathErr *os.PathError
+		var errno syscall.Errno
+		if errors.As(err, &pathErr) && errors.As(err, &errno) {
+			t.Logf("DUMP1752_RESOURCE_REMOVE_ERR type=%T operation=%s errno=%d", err, pathErr.Op, errno)
+		}
 		t.Fatalf("DUMP1752_RESOURCE_REMOVE: %T %v", err, err)
 	}
+	t.Log("DUMP1752_RESOURCE_REMOVE_OK operation=remove")
 	if runtime.GOOS != "windows" {
 		t.Log("DUMP1752_RESOURCE: unlink success is not proof of descriptor close on this OS")
 	}
@@ -118,12 +124,12 @@ func ownedDumpPost(t *testing.T, client *Client, endpoint, marker string) {
 // This is a caller writer even though it implements Close. CloseDump must drain
 // admitted writes, while never invoking this Close method.
 type ownedDumpGate struct {
-	mu sync.Mutex
-	body bytes.Buffer
+	mu      sync.Mutex
+	body    bytes.Buffer
 	entered chan struct{}
 	release chan struct{}
-	once sync.Once
-	closed bool
+	once    sync.Once
+	closed  bool
 }
 
 func (w *ownedDumpGate) Write(p []byte) (int, error) {
@@ -142,4 +148,3 @@ func (w *ownedDumpGate) Close() error {
 	w.closed = true
 	return errors.New("caller Close must not run")
 }
-

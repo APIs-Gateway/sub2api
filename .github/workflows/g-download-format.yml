@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      APP_HEAD: e1b71933de5e6d0c1124576ce98d5594a5c3d050
-      APP_TREE: 85144f1b7cf7a582943571b4e596cd4b54b4e211
+      APP_HEAD: fa10a71920863af15716f6f61a10d28d76a49180
+      APP_TREE: 2ca191dcdbc1e36f5280f0a7e9aab4dab08534f1
       GOTOOLCHAIN: local
       GOWORK: "off"
     steps:
@@ -80,7 +80,7 @@ jobs:
       - name: Checkout fixed complete application tree
         uses: actions/checkout@v6
         with:
-          ref: e1b71933de5e6d0c1124576ce98d5594a5c3d050
+          ref: fa10a71920863af15716f6f61a10d28d76a49180
           path: source
           fetch-depth: 0
           persist-credentials: false
@@ -228,8 +228,9 @@ jobs:
                       stderr = pathlib.Path(str(prefix) + '.stderr').read_bytes()
                       result['operations'][operation] = {'actualExit': status, 'stdoutBytes': len(stdout), 'stderrBytes': len(stderr)}
                       if operation == 'raw-diff':
-                          valid = not stderr and (status == 0 or (status == 1 and bool(stdout)))
-                          valid = valid and bool(stdout) == (raw != formatted)
+                          valid = not stderr and (
+                              (status == 0 and not stdout and raw == formatted) or
+                              (status == 1 and bool(stdout) and raw != formatted))
                       else:
                           valid = status == 0 and not stdout and not stderr
                       if not valid:

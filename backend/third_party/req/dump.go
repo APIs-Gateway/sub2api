@@ -141,15 +141,15 @@ func (o dumpOptions) AcquireDump() (func(), bool) {
 // dumpScope belongs to a configuration, not an HTTP attempt. Clones have their
 // own admission/drain state and retain only the files opened by ToFile.
 type dumpScope struct {
-	mu sync.Mutex
-	cond *sync.Cond
-	active int
-	paused bool
+	mu        sync.Mutex
+	cond      *sync.Cond
+	active    int
+	paused    bool
 	replacing bool
-	closed bool
-	finished bool
-	closeErr error
-	files []*dumpFile
+	closed    bool
+	finished  bool
+	closeErr  error
+	files     []*dumpFile
 }
 
 type dumpFile struct {

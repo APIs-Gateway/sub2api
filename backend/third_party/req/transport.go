@@ -105,8 +105,8 @@ const defaultMaxIdleConnsPerHost = 2
 // request is treated as idempotent but the header is not sent on the
 // wire.
 type Transport struct {
-	Headers http.Header
-	Cookies []*http.Cookie
+	Headers   http.Header
+	Cookies   []*http.Cookie
 	dumpScope *dumpScope
 
 	idleMu       sync.Mutex
