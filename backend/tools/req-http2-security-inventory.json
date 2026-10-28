@@ -103,7 +103,7 @@
     "TestReqDumpSecurity_ExportedOptions/before_request_hook"
   ],
   "dumpPublicCount": 15,
-  "totalNamedLeaves": 574,
+  "totalNamedLeaves": 605,
   "http1Package": "github.com/imroc/req/v3",
   "http1Leaves": [
     "TestReqHTTP1Lifecycle_ResponseBody/chunked_trailers_reuse",
@@ -683,5 +683,44 @@
     "TestReqDumpOwnershipCurrentFileIdentity",
     "TestReqDumpOwnershipBodyError",
     "TestReqDumpOwnershipRetargetKeepsOtherClone"
+  ],
+  "customTLSPackage": "github.com/imroc/req/v3",
+  "customTLSCount": 18,
+  "customTLSLeaves": [
+    "TestReqCustomTLS_PublicSuccessAndReuse/HTTP1",
+    "TestReqCustomTLS_PublicSuccessAndReuse/HTTP2",
+    "TestReqCustomTLS_LatePublicationRace/HTTP1",
+    "TestReqCustomTLS_LatePublicationRace/HTTP2",
+    "TestReqCustomTLS_LateDistinctConnection/HTTP1",
+    "TestReqCustomTLS_LateDistinctConnection/HTTP2",
+    "TestReqCustomTLS_Boundaries/NoTimeoutSuccess",
+    "TestReqCustomTLS_Boundaries/CallbackError",
+    "TestReqCustomTLS_Boundaries/ParentCanceled",
+    "TestReqCustomTLS_Boundaries/ParentDeadline",
+    "TestReqCustomTLS_Boundaries/HandshakeTimeout",
+    "TestReqCustomTLS_Boundaries/LateError",
+    "TestReqCustomTLS_Boundaries/SlowStart",
+    "TestReqCustomTLS_Boundaries/ExpiredBeforeStart",
+    "TestReqCustomTLS_Boundaries/SlowDoneSuccess",
+    "TestReqCustomTLS_Boundaries/NilConnection",
+    "TestReqCustomTLS_Boundaries/TypedNilConnection",
+    "TestReqCustomTLS_Boundaries/NilState"
+  ],
+  "customTLSHTTP2Package": "github.com/imroc/req/v3/internal/http2",
+  "customTLSHTTP2Count": 13,
+  "customTLSHTTP2Leaves": [
+    "TestReqCustomTLS_Boundaries/NoTimeoutSuccess",
+    "TestReqCustomTLS_Boundaries/CallbackError",
+    "TestReqCustomTLS_Boundaries/ParentCanceled",
+    "TestReqCustomTLS_Boundaries/ParentDeadline",
+    "TestReqCustomTLS_Boundaries/HandshakeTimeout",
+    "TestReqCustomTLS_Boundaries/LateError",
+    "TestReqCustomTLS_Boundaries/SlowStart",
+    "TestReqCustomTLS_Boundaries/ExpiredBeforeStart",
+    "TestReqCustomTLS_Boundaries/SlowDoneSuccess",
+    "TestReqCustomTLS_Boundaries/NilConnection",
+    "TestReqCustomTLS_Boundaries/TypedNilConnection",
+    "TestReqCustomTLS_Boundaries/NilState",
+    "TestReqCustomTLS_Boundaries/NonTLSConnection"
   ]
 }

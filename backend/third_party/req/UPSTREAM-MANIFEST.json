@@ -675,7 +675,8 @@
       "cc7d34fd2dd5864bcafe3e5e0a84919240be98c0",
       "28247830e9fb37184c6be718f483a0c7d0949022",
       "local-required-dump-terminal-ordering-after-verified-original-race",
-      "local-required-default-h2-tls-trace-after-verified-named-failure"
+      "local-required-default-h2-tls-trace-after-verified-named-failure",
+      "local-required-reachable-custom-tls-timeout-result-ownership-pr1712"
     ],
     "internal/http2/frame.go": [
       "57f4235f83712a299328015548240512213a3852"
@@ -720,7 +721,8 @@
       "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
     ],
     "transport.go": [
-      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue",
+      "local-required-reachable-custom-tls-timeout-result-ownership-pr1712"
     ]
   },
   "newOwnedFiles": [
@@ -785,11 +787,17 @@
     "dump_ownership_peer_test.go",
     "OWNED-DUMP-CLOSE-REPAIR.md",
     "internal/http2/receive_flow_contract_test.go",
-    "internal/http2/RECEIVE-FLOW-CONTRACTS.md"
+    "internal/http2/RECEIVE-FLOW-CONTRACTS.md",
+    "custom_tls_handshake_peer_test.go",
+    "custom_tls_handshake_test.go",
+    "custom_tls_handshake_boundary_test.go",
+    "internal/http2/custom_tls_handshake_peer_test.go",
+    "internal/http2/custom_tls_handshake_test.go",
+    "CUSTOM-TLS-OWNERSHIP-REPAIR.md"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "Child1752 RAW owned dump Close repair from preserved bf4. Original132 archive references/89production/14tests and12selected+2helpers remain intact. Current partition114unchanged+16production adaptations+2original test adaptations. Preserve prior526 mandatory leaves;42 additional source-declared ownership leaves require actual remote named/all execution, not an invented PASS count. Four atomic profiles remain separate; all16production per-file added-block85, original Codecov85 and supplementary complete-Git Go85 remain mandatory. No executable validation or approval claimed.",
+  "validation": "Child1752 RAW owned dump Close repair from preserved bf4. Original132 archive references/89production/14tests and12selected+2helpers remain intact. Current partition114unchanged+16production adaptations+2original test adaptations. Preserve prior526 mandatory leaves;42 additional source-declared ownership leaves require actual remote named/all execution, not an invented PASS count. Four atomic profiles remain separate; all16production per-file added-block85, original Codecov85 and supplementary complete-Git Go85 remain mandatory. No executable validation or approval claimed. Existing PR1712 custom TLS ownership candidate preserves prior574 leaves and declares31 new source leaves (605 after root registration). No runtime/formatting evidence is asserted; OLD exact race and NEW actual named/all remote evidence are still required.",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -801,13 +809,14 @@
     },
     {
       "path": "internal/http2/transport.go",
-      "sha256": "9a76375193314f3c6988501167d5304a6bda8ede9ab2cc1dcb0d6b7720900927",
-      "bytes": 92700,
+      "sha256": "074f9a87a963011ad5ae0ea486192e4ec8b22856b75fb66f279398babc89382e",
+      "bytes": 95229,
       "sources": [
         "cc7d34fd2dd5864bcafe3e5e0a84919240be98c0",
         "28247830e9fb37184c6be718f483a0c7d0949022",
         "local-required-dump-terminal-ordering-after-verified-original-race",
-        "local-required-default-h2-tls-trace-after-verified-named-failure"
+        "local-required-default-h2-tls-trace-after-verified-named-failure",
+        "local-required-reachable-custom-tls-timeout-result-ownership-pr1712"
       ]
     },
     {
@@ -919,14 +928,15 @@
     },
     {
       "path": "transport.go",
-      "sha256": "1679f70830a3fe48ea428e28b0f9a2175a7042ff6ee0824f0e2275f7c5438a27",
-      "bytes": 112131,
+      "sha256": "0332c0ed2c207ee4597d9c7e90e93c8cadd6dbc7a017a3715d67c242ba4a81cb",
+      "bytes": 114700,
       "sources": [
-        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue",
+        "local-required-reachable-custom-tls-timeout-result-ownership-pr1712"
       ]
     }
   ],
-  "adaptedCandidateStatus": "Child1752 RAW source bound to each exact adapted file; no local/87 formatter/build/test/checker executed. Current-head independent review, remote formatting, real Windows OLD/NEW witness, named/all race and all85 gates remain required.",
+  "adaptedCandidateStatus": "Child1752 RAW source bound to each exact adapted file; no local/87 formatter/build/test/checker executed. Current-head independent review, remote formatting, real Windows OLD/NEW witness, named/all race and all85 gates remain required. Custom TLS repair changes only two existing adapted function paths; original archive entries, other production and original test hashes are preserved. Local/87 execution prohibited; remote formatting/source freeze remains pending.",
   "originalUnmodifiedFileCount": 114,
   "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
   "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227",
@@ -1619,5 +1629,109 @@
       "status": "Actual one-Go formatter output independently verified and imported verbatim. No runtime/race/build/coverage PASS; six leaves still need exact-head remote evidence."
     },
     "executionDependency": "Official behavioral source and nested req/go.mod declare x/net v0.48.0; execution must use backend main MVS (declares v0.60.0), with actual go-list evidence for selected peer codec. Do not execute the nested module as a substitute."
+  },
+  "customTLSOwnershipContracts": {
+    "existingPR": "https://github.com/APIs-Gateway/sub2api/pull/1712",
+    "reviewFinding": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6446970791",
+    "upstreamPR": "https://github.com/imroc/req/pull/547",
+    "upstreamHead": "82b9729893406adca3911020a0a1213546446293",
+    "authorization": "User explicitly authorized only this reachable H1/H2 timeout/handshake shared-connection race reproduction and repair within existing PR1712 on 2026-10-28. No new issue/PR or unrelated req547 changes.",
+    "sourceHead": "5b1c1fa77eca2168c51dcdc4ad5178dada1a206e",
+    "sourceTree": "cd657ffdd3e6ade2a6bde5f9b204aec8243254a6",
+    "compositionBase": "b9f84ecacf4d8bfb4c84eabc2ce346807dd1c866",
+    "independentSourceReview": {
+      "receipt": "custom-tls-race-1712-oct28/INDEPENDENT-ROOT-5B1C1FA77-SOURCE-REVIEW.json",
+      "sha256": "3ad8e7b2bc2b26d3c1489e71909b6a51fd02fbe7d1a64af0fa6b71ee1e1736a7",
+      "scope": "Independent static source review only; no runtime/formatter PASS or whole-PR LGTM."
+    },
+    "sourceInventorySHA256": "2b3acb3539c6aa9e5a86856f21d6d3d99692fa81953a560a142fb0b65f05061a",
+    "newOwnedPaths": [
+      "custom_tls_handshake_peer_test.go",
+      "custom_tls_handshake_test.go",
+      "custom_tls_handshake_boundary_test.go",
+      "internal/http2/custom_tls_handshake_peer_test.go",
+      "internal/http2/custom_tls_handshake_test.go",
+      "CUSTOM-TLS-OWNERSHIP-REPAIR.md"
+    ],
+    "newFiles": {
+      "custom_tls_handshake_peer_test.go": {
+        "bytes": 4058,
+        "sha256": "928256488b579f8c8a787c7f0a62ebc74d543a1c0c6dc8d5a7160292351229da"
+      },
+      "custom_tls_handshake_test.go": {
+        "bytes": 7617,
+        "sha256": "4ce46f6b1edef1172ee3ede6cfe5735e8947545705705398f0602d635c00d999"
+      },
+      "custom_tls_handshake_boundary_test.go": {
+        "bytes": 9416,
+        "sha256": "62cec3f6f4fafd512fc6a5e4ae2fd3ed336b28196560b56a00ce10f9d9b130d9"
+      },
+      "internal/http2/custom_tls_handshake_peer_test.go": {
+        "bytes": 3688,
+        "sha256": "ec5fa20281f1322243cca74a53a9e7e1e6582c1b7c41327df7050a05eb44bcae"
+      },
+      "internal/http2/custom_tls_handshake_test.go": {
+        "bytes": 9376,
+        "sha256": "51ed07bdab46f6ebf56ab8a23dbe106d7f32e18132fb2a4f277a2fd1b5ff93a8"
+      },
+      "CUSTOM-TLS-OWNERSHIP-REPAIR.md": {
+        "bytes": 5339,
+        "sha256": "ee4f4e01358c150db1691cfbf7a4743093cae8ede56c6a7702c651731996f7c9"
+      }
+    },
+    "productionPaths": [
+      "transport.go",
+      "internal/http2/transport.go"
+    ],
+    "rootPackage": "github.com/imroc/req/v3",
+    "rootCount": 18,
+    "rootLeaves": [
+      "TestReqCustomTLS_PublicSuccessAndReuse/HTTP1",
+      "TestReqCustomTLS_PublicSuccessAndReuse/HTTP2",
+      "TestReqCustomTLS_LatePublicationRace/HTTP1",
+      "TestReqCustomTLS_LatePublicationRace/HTTP2",
+      "TestReqCustomTLS_LateDistinctConnection/HTTP1",
+      "TestReqCustomTLS_LateDistinctConnection/HTTP2",
+      "TestReqCustomTLS_Boundaries/NoTimeoutSuccess",
+      "TestReqCustomTLS_Boundaries/CallbackError",
+      "TestReqCustomTLS_Boundaries/ParentCanceled",
+      "TestReqCustomTLS_Boundaries/ParentDeadline",
+      "TestReqCustomTLS_Boundaries/HandshakeTimeout",
+      "TestReqCustomTLS_Boundaries/LateError",
+      "TestReqCustomTLS_Boundaries/SlowStart",
+      "TestReqCustomTLS_Boundaries/ExpiredBeforeStart",
+      "TestReqCustomTLS_Boundaries/SlowDoneSuccess",
+      "TestReqCustomTLS_Boundaries/NilConnection",
+      "TestReqCustomTLS_Boundaries/TypedNilConnection",
+      "TestReqCustomTLS_Boundaries/NilState"
+    ],
+    "privateHTTP2Package": "github.com/imroc/req/v3/internal/http2",
+    "privateHTTP2Count": 13,
+    "privateHTTP2Leaves": [
+      "TestReqCustomTLS_Boundaries/NoTimeoutSuccess",
+      "TestReqCustomTLS_Boundaries/CallbackError",
+      "TestReqCustomTLS_Boundaries/ParentCanceled",
+      "TestReqCustomTLS_Boundaries/ParentDeadline",
+      "TestReqCustomTLS_Boundaries/HandshakeTimeout",
+      "TestReqCustomTLS_Boundaries/LateError",
+      "TestReqCustomTLS_Boundaries/SlowStart",
+      "TestReqCustomTLS_Boundaries/ExpiredBeforeStart",
+      "TestReqCustomTLS_Boundaries/SlowDoneSuccess",
+      "TestReqCustomTLS_Boundaries/NilConnection",
+      "TestReqCustomTLS_Boundaries/TypedNilConnection",
+      "TestReqCustomTLS_Boundaries/NilState",
+      "TestReqCustomTLS_Boundaries/NonTLSConnection"
+    ],
+    "additionalSourceLeafCount": 31,
+    "priorMandatoryLeaves": 574,
+    "composedMandatoryLeaves": 605,
+    "sourceStatus": "Source identities only, NOTRUN. Registration requires exact-head independent review; actual remote JSON RUN/PASS and formatting remain unproven.",
+    "requiredRemoteEvidence": [
+      "Identical public LatePublicationRace HTTP1/HTTP2 fixture on OLD must show genuine handshake prerequisites and actual old shared-connection race frames; compiler/setup/watchdog failures are not race reproduction.",
+      "NEW exact-head605 named and full race suites, actual four adapted original test completions, late wrapper/distinct connection/trace cleanup.",
+      "Actual Windows calibrated Remove OLD/NEW resource evidence and no generated residue.",
+      "All four original atomic profiles, both original85 gates and all16 production per-file85 gates, without profile/count/denominator mixing."
+    ],
+    "scope": "Only reachable custom TLS terminal ownership, cancellation, timeout, late-result connection disposal and ordered trace hooks. Preserve default TLS paths, headers, transport pool/business policy, original132 rows and114/16/2 partition."
   }
 }

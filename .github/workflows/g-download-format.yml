@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      APP_HEAD: fa10a71920863af15716f6f61a10d28d76a49180
-      APP_TREE: 2ca191dcdbc1e36f5280f0a7e9aab4dab08534f1
+      APP_HEAD: c11eb4e1c01a66e91ca81b59901fa779dfadbf1a
+      APP_TREE: 6d7c0592a337d97e15949a25676e50aae4637caa
       GOTOOLCHAIN: local
       GOWORK: "off"
     steps:
@@ -80,7 +80,7 @@ jobs:
       - name: Checkout fixed complete application tree
         uses: actions/checkout@v6
         with:
-          ref: fa10a71920863af15716f6f61a10d28d76a49180
+          ref: c11eb4e1c01a66e91ca81b59901fa779dfadbf1a
           path: source
           fetch-depth: 0
           persist-credentials: false
@@ -125,7 +125,10 @@ jobs:
               'client.go', 'dump.go', 'transport.go', 'request.go', 'internal/dump/dump.go',
               'parallel_download.go', 'client_test.go', 'request_test.go',
               'dump_ownership_contract_test.go', 'dump_ownership_peer_test.go',
-              'internal/http2/receive_flow_contract_test.go')]
+              'internal/http2/receive_flow_contract_test.go', 'internal/http2/transport.go',
+              'custom_tls_handshake_peer_test.go', 'custom_tls_handshake_test.go',
+              'custom_tls_handshake_boundary_test.go', 'internal/http2/custom_tls_handshake_peer_test.go',
+              'internal/http2/custom_tls_handshake_test.go')]
           manifest = []
           for name in files:
               raw = (source / name).read_bytes()
@@ -161,7 +164,7 @@ jobs:
             set -e
             printf '%s\n' "$actual_status" > "$label.exit"
           }
-          for relative in backend/third_party/req/{client.go,dump.go,transport.go,request.go,internal/dump/dump.go,parallel_download.go,client_test.go,request_test.go,dump_ownership_contract_test.go,dump_ownership_peer_test.go,internal/http2/receive_flow_contract_test.go}; do
+          for relative in backend/third_party/req/{client.go,dump.go,transport.go,request.go,internal/dump/dump.go,parallel_download.go,client_test.go,request_test.go,dump_ownership_contract_test.go,dump_ownership_peer_test.go,internal/http2/receive_flow_contract_test.go,internal/http2/transport.go,custom_tls_handshake_peer_test.go,custom_tls_handshake_test.go,custom_tls_handshake_boundary_test.go,internal/http2/custom_tls_handshake_peer_test.go,internal/http2/custom_tls_handshake_test.go}; do
             result="$G_FORMAT_EVIDENCE/results/$relative"
             mkdir -p "$result"
             capture "$result/raw-diff" "$formatter" -d "$G_FORMAT_EVIDENCE/raw/$relative"
@@ -211,7 +214,7 @@ jobs:
                   errors.append(label + ' full frozen input changed or snapshot incomplete: ' + str(error))
           try:
               inputs = json.loads((evidence / 'formatter-inputs.json').read_text())
-              assert len(inputs) == 11
+              assert len(inputs) == 17
               for item in inputs:
                   name = item['path']
                   result = {'path': name, 'operations': {}}
@@ -240,9 +243,9 @@ jobs:
               errors.append('formatter evidence incomplete: ' + str(error))
           report = {'appHead': os.environ['APP_HEAD'], 'appTree': os.environ['APP_TREE'],
                     'controllerHead': os.environ['GITHUB_SHA'], 'fullInputArchives': archives, 'results': results, 'errors': errors,
-                    'scope': 'format external eleven-file copies only; no compilation or runtime approval'}
+                    'scope': 'format external seventeen-file copies only; no compilation or runtime approval'}
           (evidence / 'formatter-actual-receipt.json').write_text(json.dumps(report, indent=2) + '\n')
-          assert not errors and len(results) == 11, errors
+          assert not errors and len(results) == 17, errors
           PYDATA
       - name: Always retain complete frozen inputs, raw bytes and actual formatter evidence
         if: always()

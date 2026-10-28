@@ -78,6 +78,8 @@ func TestReqDumpOwnershipFileLifecycle(t *testing.T) {
 				t.Fatalf("actual complete exchange not captured: calls=%d output=%q", calls.Load(), data)
 			}
 			ownedDumpRemove(t, path)
+			// Keep OLD's request-owned file reachable through the resource oracle.
+			runtime.KeepAlive(owner)
 		})
 	}
 }
