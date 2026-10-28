@@ -94,10 +94,20 @@ def verify_named(backend, evidence, filename):
     require(sum(expected[kind + "Count"] for kind in retained_kinds) == 338,
             "Retain all338 reviewed baseline leaves")
     require(expected["http2FrameContractCount"] == 149 and expected["http1TransferContractCount"] == 30 and
-            expected["http2TransportContractCount"] == 25 and expected["metaCharsetCount"] == 8 and
-            expected["totalNamedLeaves"] == 401,
-            "Retain all393 reviewed leaves plus8 actual HTTP charset leaves,401 total")
-    kinds = retained_kinds + ("http1TransferContract", "http2TransportContract", "metaCharset")
+            expected["http2TransportContractCount"] == 25 and expected["metaCharsetCount"] == 8,
+            "Retain all393 reviewed leaves plus8 actual HTTP charset leaves")
+    baseline_kinds = retained_kinds + ("http1TransferContract", "http2TransportContract", "metaCharset")
+    require(sum(expected[kind + "Count"] for kind in baseline_kinds) == 401,
+            "Retain every original401 mandatory leaf")
+    require(expected["clientBehaviorCount"] == 44 and expected["digestOwnershipCount"] == 23 and
+            sum(expected[kind + "Count"] for kind in baseline_kinds + ("clientBehavior", "digestOwnership")) == 468,
+            "Retain reviewed F44 and all23 Digest ownership leaves with original401")
+    require(expected["downloadContractCount"] == 32 and expected["parallelDownloadFallbackCount"] == 1 and
+            expected["parallelDownloadHTTP3CleanupCount"] == 1 and expected["parallelDownloadInProcessCount"] == 23 and
+            expected["parallelDownloadDefaultOutputCount"] == 1 and expected["http2ReceiveFlowCount"] == 6 and
+            expected["dumpOwnershipCount"] == 42 and expected["totalNamedLeaves"] == 574,
+            "Retain all526 original G leaves, six HTTP2 receive-flow and42 dump ownership leaves")
+    kinds = baseline_kinds + ("clientBehavior", "digestOwnership", "downloadContract", "parallelDownloadFallback", "parallelDownloadHTTP3Cleanup", "parallelDownloadInProcess", "parallelDownloadDefaultOutput", "http2ReceiveFlow", "dumpOwnership")
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
     for kind in kinds:
@@ -109,18 +119,52 @@ def verify_named(backend, evidence, filename):
             actual = [v for v in values if v.get("Package") == package and v.get("Test") == test]
             require(sum(v.get("Action") == "run" for v in actual) == 1, f"Missing/duplicate RUN {test}")
             require(sum(v.get("Action") == "pass" for v in actual) == 1, f"Missing/duplicate PASS {test}")
+            if kind == "parallelDownloadInProcess":
+                output = "".join(v.get("Output", "") for v in actual)
+                require(output.count("G_IN_PROCESS_EXECUTED " + test + "\n") == 1 and
+                        output.count("G_IN_PROCESS_BODY_DONE " + test + "\n") == 1,
+                        f"Missing/duplicate actual parent execution markers: {test}")
+                require("G_CHILD_ACTUAL" not in output and "G_CHILD_EXECUTED" not in output,
+                        f"Parent contract incorrectly delegated to child: {test}")
             proof.append({"package": package, "test": test, "actions": [v["Action"] for v in actual]})
     # Detect new security leaves accidentally omitted from the frozen inventory.
     prefixes = ("TestReqHTTP2Security_", "TestDumper", "TestReqTraceSecurity_", "TestReqDumpSecurity_",
                 "TestReqHTTP1Lifecycle_", "TestReqProxyLifecycle_", "TestReqHTTP3Contract_", "TestReqHTTP3Wire_",
                 "TestReqHTTP3PublicTLS_", "TestReqHTTP3TLSControl_", "TestReqHTTP3Decompression_",
                 "TestReqHTTP3DeflateClose_", "TestReqDeflateClose_", "TestReqHTTP2FrameContract_", "TestReqHTTP1Transfer_",
-                "TestReqHTTP2TransportContract_", "TestReqMetaCharset_")
+                "TestReqHTTP2TransportContract_", "TestReqMetaCharset_", "TestReqClientDigest_", "TestReqClientRedirect_",
+                "TestReqClientCookie_", "TestReqClientResponse_", "TestReqDigestOwnership_",
+                "TestReqDownloadContract", "TestReqParallelDownloadContract", "TestReqParallelDownloadFallback",
+                "TestReqParallelDownloadHTTP3Cleanup", "TestReqParallelDownloadInProcessContract",
+                "TestReqParallelDownloadDefaultOutput", "TestReqHTTP2ReceiveFlowContract_", "TestReqDumpOwnership")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")
     report(evidence, filename + ".inventory-proof.json", proof)
     return packages
+
+
+def verify_adapted_original_tests(backend, values):
+    """Require actual completion of every retained original adaptation contract."""
+    expected = {
+        "request_test.go": ["TestSetFile", "TestTraceInfo", "TestEnableDumpToFIle"],
+        "client_test.go": ["TestEnableDumpAllToFile"],
+    }
+    manifest = json.loads((backend / "third_party/req/UPSTREAM-MANIFEST.json").read_text())
+    declared = {item["path"]: item["requiredTests"] for item in manifest["originalTestAdaptations"]}
+    require(declared == expected, "Original adapted required test inventory changed")
+    proof = []
+    for path, tests in expected.items():
+        for test in tests:
+            actual = [value for value in values if value.get("Package") == MODULE and value.get("Test") == test]
+            require(sum(value.get("Action") == "run" for value in actual) == 1,
+                    "Missing/duplicate original RUN " + test)
+            require(sum(value.get("Action") == "pass" for value in actual) == 1 and
+                    not any(value.get("Action") in ("fail", "skip") for value in actual),
+                    "Missing/duplicate or failed original PASS " + test)
+            proof.append({"path": path, "package": MODULE, "test": test,
+                          "actions": [value["Action"] for value in actual]})
+    return proof
 
 
 
@@ -220,7 +264,7 @@ def main():
             relative = package["ImportPath"].removeprefix(MODULE).lstrip("/")
             require(Path(package["Dir"]).resolve() == controlled / relative, "Wrong package directory")
             for name in package.get("TestGoFiles", []) + package.get("XTestGoFiles", []):
-                selected.add(str(Path(relative) / name))
+                selected.add((Path(relative) / name).as_posix())
         manifest = json.loads((controlled / "UPSTREAM-MANIFEST.json").read_text())
         expected_paths = {v["path"] for v in manifest["originalFiles"]} | set(manifest["newOwnedFiles"])
         actual_paths = set()
@@ -232,23 +276,36 @@ def main():
                 len(expected_paths) == 132 + len(manifest["newOwnedFiles"]) and
                 actual_paths == expected_paths,
                 "Controlled module must contain exactly132 originals+declared owned files")
-        adaptations = set(manifest["allowedProductionAdaptations"])
-        require(adaptations == {"internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
-                                "internal/dump/dump.go", "request.go", "response.go", "trace.go",
-                                "internal/http3/transport.go", "internal/http3/stream.go",
-                                "internal/compress/deflate_reader.go", "decode.go"},
-                "Unexpected or missing production adaptation")
-        require(len(manifest["adaptedCandidateFiles"]) == 11 and
+        adaptations = set(production_adaptation_paths(manifest))
+        require(len(manifest["adaptedCandidateFiles"]) == 16 and
                 {v["path"] for v in manifest["adaptedCandidateFiles"]} == adaptations,
                 "Incomplete adapted source hash inventory")
         production = {v["path"] for v in manifest["originalFiles"]
                       if v["path"].endswith(".go") and not v["path"].endswith("_test.go")}
         require(len(production) == 89 and adaptations <= production,
-                "Retain all89 original production Go files and exactly11 declared adaptations")
-        require(manifest["originalUnmodifiedFileCount"] == 121,
-                "Retain exactly121 unchanged originals after11 declared production adaptations")
+                "Retain all89 original production Go files and exactly16 declared adaptations")
+        test_adaptations = manifest.get("originalTestAdaptations", [])
+        require(isinstance(test_adaptations, list) and len(test_adaptations) == 2 and
+                {item.get("path") for item in test_adaptations} == {"request_test.go", "client_test.go"},
+                "Original test adaptation registration differs")
+        original_by_path = {item["path"]: item for item in manifest["originalFiles"]}
+        adapted_tests = {item["path"] for item in test_adaptations}
+        for item in test_adaptations:
+            path = item["path"]
+            original = original_by_path[path]
+            require(item["originalBytes"] == original["size"] and
+                    item["originalSHA256"] == original["sha256"],
+                    "Adapted original test archive anchor mismatch: " + path)
+            require(path in selected, "Adapted original test file not selected: " + path)
+            data = (controlled / path).read_bytes()
+            require(len(data) == item["candidateBytes"] and
+                    hashlib.sha256(data).hexdigest() == item["candidateSHA256"],
+                    "Adapted original test hash mismatch: " + path)
+        require(manifest["originalUnmodifiedFileCount"] == 114 and
+                len(original_by_path) - len(adaptations) - len(adapted_tests) == 114,
+                "Retain exactly114 unchanged originals after16 production and two declared test adaptations")
         for item in manifest["originalFiles"]:
-            if item["path"] not in adaptations:
+            if item["path"] not in adaptations | adapted_tests:
                 data = (controlled / item["path"]).read_bytes()
                 require(len(data) == item["size"] and hashlib.sha256(data).hexdigest() == item["sha256"], "Original source modified: " + item["path"])
         for item in manifest["adaptedCandidateFiles"]:
@@ -258,7 +315,7 @@ def main():
         omitted = {"internal/testdata/cert_test.go", "internal/testdata/testdata_suite_test.go"}
         require(len(originals) == 14 and originals - selected == omitted, "Original wildcard test selection changed")
         require(len(originals & selected) == 12, "Expected 12 selected original test files")
-        report(evidence, "package-selection-proof.json", {"module": req[0], "selectedTests": sorted(selected), "originalSelected": sorted(originals & selected), "originalOmitted": sorted(omitted), "omission": "Original testdata helper suite is excluded by Go wildcard; cert_test.go lacks io import. No PASS claimed."})
+        report(evidence, "package-selection-proof.json", {"module": req[0], "selectedTests": sorted(selected), "originalSelected": sorted(originals & selected), "originalOmitted": sorted(omitted), "originalTestAdaptations": test_adaptations, "omission": "Original testdata helper suite is excluded by Go wildcard; cert_test.go lacks io import. No PASS claimed."})
     elif operation == "named":
         verify_named(backend, evidence, "named.json")
     elif operation == "all":
@@ -266,9 +323,11 @@ def main():
         packages = objects(evidence / "packages.json")
         expected = {v["ImportPath"] for v in packages if v.get("TestGoFiles") or v.get("XTestGoFiles")}
         require(expected <= passed, "Original package tests did not complete: " + repr(sorted(expected - passed)))
-        skips = {v["Package"] for v in events(evidence / "all.json") if v.get("Action") == "skip" and "Test" not in v}
+        actual_events = events(evidence / "all.json")
+        original_test_proof = verify_adapted_original_tests(backend, actual_events)
+        skips = {v["Package"] for v in actual_events if v.get("Action") == "skip" and "Test" not in v}
         require(not skips & expected, "Test-bearing package skipped")
-        report(evidence, "all-package-completion-proof.json", {"testPackagesPassed": sorted(expected), "noTestFilePackagesSkipped": sorted(skips)})
+        report(evidence, "all-package-completion-proof.json", {"testPackagesPassed": sorted(expected), "noTestFilePackagesSkipped": sorted(skips), "adaptedOriginalTestCompletions": original_test_proof})
     elif operation == "original":
         with urllib.request.urlopen("https://proxy.golang.org/github.com/imroc/req/v3/@v/v3.57.0.zip", timeout=60) as response:
             data = response.read()
@@ -327,6 +386,20 @@ def main():
         raise SystemExit("Unknown evidence operation")
 
 
+def production_adaptation_paths(manifest):
+    """Share the exact source partition between identity and per-file85 gates."""
+    expected = ("internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
+                "internal/dump/dump.go", "request.go", "response.go", "trace.go", "internal/http3/transport.go",
+                "internal/http3/stream.go", "internal/compress/deflate_reader.go", "decode.go", "digest.go",
+                "parallel_download.go", "client.go", "dump.go", "transport.go")
+    declared = manifest["allowedProductionAdaptations"]
+    candidates = [item["path"] for item in manifest["adaptedCandidateFiles"]]
+    require(isinstance(declared, dict) and len(declared) == len(candidates) == len(expected) == 16 and
+            set(declared) == set(candidates) == set(expected),
+            "Unexpected or missing production adaptation in source/per-file85 partition")
+    return expected
+
+
 def coverage(backend, evidence):
     proofs = []
     blocks = {}
@@ -354,9 +427,8 @@ def coverage(backend, evidence):
         (evidence / (kind + ".mapped.out")).write_text("\n".join(mapped) + "\n")
     report(evidence, "coverage-path-only-proof.json", proofs)
     result = []
-    adapted = ("internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
-               "internal/dump/dump.go", "request.go", "response.go", "trace.go", "internal/http3/transport.go",
-               "internal/http3/stream.go", "internal/compress/deflate_reader.go", "decode.go")
+    manifest = json.loads((backend / "third_party/req/UPSTREAM-MANIFEST.json").read_text())
+    adapted = production_adaptation_paths(manifest)
     for relative in adapted:
         old = (evidence / "original" / relative).read_text().splitlines()
         new = (backend / "third_party/req" / relative).read_text().splitlines()

@@ -122,7 +122,7 @@ def freeze(repo, evidence, head, base):
         require(not (repo / 'backend' / profile).exists(), 'stale coverage profile: ' + profile)
     identity = identities(repo, head, base)
     version = command(repo, 'go', 'version').decode().strip()
-    require(re.fullmatch(r'go version go1\.26\.9 \S+', version), 'unexpected Go instrumenter version')
+    require(re.fullmatch(r'go version go1\.26\.10 \S+', version), 'unexpected Go instrumenter version')
     (evidence / 'go-version.txt').write_text(version + '\n')
     environment = command(repo, 'go', 'env', '-json', 'GOOS', 'GOARCH', 'CGO_ENABLED',
                           'GOTOOLCHAIN', 'GOWORK', 'GOFLAGS')

@@ -731,7 +731,7 @@ func (r *groupRepository) GetAccountCount(ctx context.Context, groupID int64) (t
 			COUNT(*) FILTER (WHERE %s),
 			COUNT(*) FILTER (WHERE %s)
 		FROM account_groups ag JOIN accounts a ON a.id = ag.account_id
-		WHERE ag.group_id = $1`, groupAccountAvailableSQL, groupAccountTemporarilyLimitedSQL),
+		WHERE ag.group_id = $1`, groupAccountAvailableSQL(), groupAccountTemporarilyLimitedSQL()),
 		[]any{groupID}, &total, &active, &rateLimited)
 	return
 }
@@ -931,27 +931,36 @@ type groupAccountCounts struct {
 	RateLimited int64
 }
 
-const (
-	// 分组页的"可用"账号数必须与账号仓储的 ListSchedulableByGroupID 过滤口径一致。
-	groupAccountAvailableSQL = `a.deleted_at IS NULL
-				AND a.status = 'active'
-				AND a.schedulable = true
+// 分组页的"可用"账号数必须与账号仓储的 ListSchedulableByGroupID 过滤口径一致
+// （含「不自动暂停调度」账号对三类自动冷却窗口的豁免，见 account_no_auto_unsched.go）。
+func groupAccountAvailableSQL() string {
+	return `a.deleted_at IS NULL
 				AND (a.expires_at IS NULL OR a.expires_at > NOW() OR a.auto_pause_on_expired = FALSE)
-				AND (a.rate_limit_reset_at IS NULL OR a.rate_limit_reset_at <= NOW())
-				AND (a.overload_until IS NULL OR a.overload_until <= NOW())
-				AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())`
+				AND (
+					(` + noAutoUnschedRawSQL("a") + ` AND (a.status = 'error' OR (a.status = 'active' AND a.schedulable = true)))
+					OR (
+						a.status = 'active'
+						AND a.schedulable = true
+						AND (a.rate_limit_reset_at IS NULL OR a.rate_limit_reset_at <= NOW())
+						AND (a.overload_until IS NULL OR a.overload_until <= NOW())
+						AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
+					)
+				)`
+}
 
-	// 这里沿用历史字段名 RateLimitedAccountCount，但统计的是会让账号暂时退出调度的时间窗口。
-	groupAccountTemporarilyLimitedSQL = `a.deleted_at IS NULL
+// 这里沿用历史字段名 RateLimitedAccountCount，但统计的是会让账号暂时退出调度的时间窗口。
+func groupAccountTemporarilyLimitedSQL() string {
+	return `a.deleted_at IS NULL
 				AND a.status = 'active'
 				AND a.schedulable = true
 				AND (a.expires_at IS NULL OR a.expires_at > NOW() OR a.auto_pause_on_expired = FALSE)
+				AND NOT (` + noAutoUnschedRawSQL("a") + `)
 				AND (
 					a.rate_limit_reset_at > NOW() OR
 					a.overload_until > NOW() OR
 					a.temp_unschedulable_until > NOW()
 				)`
-)
+}
 
 func (r *groupRepository) loadAccountCounts(ctx context.Context, groupIDs []int64) (counts map[int64]groupAccountCounts, err error) {
 	counts = make(map[int64]groupAccountCounts, len(groupIDs))
@@ -968,7 +977,7 @@ func (r *groupRepository) loadAccountCounts(ctx context.Context, groupIDs []int6
 		FROM account_groups ag
 		JOIN accounts a ON a.id = ag.account_id
 		WHERE ag.group_id = ANY($1)
-		GROUP BY ag.group_id`, groupAccountAvailableSQL, groupAccountTemporarilyLimitedSQL),
+		GROUP BY ag.group_id`, groupAccountAvailableSQL(), groupAccountTemporarilyLimitedSQL()),
 		pq.Array(groupIDs),
 	)
 	if err != nil {

@@ -3,20 +3,20 @@
   "component": "G public HTTP download and explicit caller-managed continuation contracts",
   "baseHead": "2d6bf53dc3231dc4ccfce48211c43942ed18d656",
   "createdAt": "2026-10-19T15:06:27.795084+00:00",
-  "authoringStatus": "RAW source only; no formatter/compiler/test/checker execution; no runtime PASS/RED claimed",
+  "authoringStatus": "Remote Go1.26.9 formatter-produced bytes imported after root plus independent actual-artifact review; no G compilation/test/runtime PASS claimed",
   "package": "req_test (external package; exported APIs only)",
   "files": {
     "download_wire_peer_test.go": {
-      "bytes": 20889,
-      "sha256": "f6760f89e9cf47b77134c8e624cd4fe3d67b8535b8634557ad9341ad8ff42194"
+      "bytes": 21839,
+      "sha256": "e79706300871f2bfc715036220d0831fe822ad70910507eb174e34125072e012"
     },
     "download_contract_test.go": {
-      "bytes": 7630,
-      "sha256": "81b985fc108ecdfa6806ceccfb1aed6c5168ef9e3a959fc57fbdb587fb09d6ce"
+      "bytes": 7628,
+      "sha256": "38939a5bf2694e9e7c401104736fa93cd967e3645b5010f096fdffb5598fef0a"
     },
     "parallel_download_contract_test.go": {
-      "bytes": 13653,
-      "sha256": "ab3018e138ca2ade784e4666cee255c7ec98ff9472ccc9394a6a9d7e333858e1"
+      "bytes": 13675,
+      "sha256": "f2d9a463295be9a3032aaa1a964a228b899d10063264d59ce7fa3ea70898a230"
     },
     "parallel_download_contract_windows_test.go": {
       "bytes": 3785,
@@ -25,6 +25,10 @@
     "DOWNLOAD-CONTRACTS-LICENSE": {
       "bytes": 1064,
       "sha256": "9629b9d5b0f233bb67619a30d56bf3e49d8cc5133c6f0e3509d4a952bc9beb39"
+    },
+    "parallel_download_inprocess_contract_test.go": {
+      "bytes": 455,
+      "sha256": "6c0a49fd9bf93aa0328b509e4c69d572b47c881e791c7045638437cef00a2e6b"
     }
   },
   "expectedParentCaseInventory": {
@@ -147,8 +151,8 @@
     "pending": "Root coordinates cross-links/integration after actual RED; refresh before publication/merge"
   },
   "remoteVerificationRequired": [
-    "Independent RAW source review before formatter or CI",
-    "Exact source remotely formatted; retain original/produced bytes and actual exits",
+    "Independent formatted-source review before new candidate publication or execution",
+    "Completed remote formatter39356244024 for RAW425e; exact artifact bytes imported, current formatted source still needs exact-head compiler/test evidence",
     "Linux real parent JSON32 cases and actual child stdout/exits under race; all preexisting req suites remain mandatory",
     "Windows real Close witness1 additional case on an approved isolated standard Windows runner",
     "Business RED requires an intended assertion after complete relevant peer evidence; compiler/race/fixture/timeout/watchdog failures are distinct",
@@ -207,5 +211,105 @@
     "failedPolicy": "Nonzero, interrupted, watchdog, runtime/race/fixture/timeout or invalid/missing profile is forensic material only, never passing coverage evidence",
     "preservation": "CombinedOutput/actual process error and watchdog state logged before evidence write failures; child process fully exited before profile read; parent cleans scratch only after exit",
     "pendingRemoteEvidence": true
+  },
+  "remoteFormatterHistory": [
+    {
+      "rawHead": "425e03baf1067487842eddab9030ba3e72c48999",
+      "rawTree": "0663fcb7fa29b9e676a599757b66fb180e042a2a",
+      "rawSeals": {
+        "backend/third_party/req/download_wire_peer_test.go": {
+          "bytes": 20889,
+          "sha256": "f6760f89e9cf47b77134c8e624cd4fe3d67b8535b8634557ad9341ad8ff42194"
+        },
+        "backend/third_party/req/download_contract_test.go": {
+          "bytes": 7630,
+          "sha256": "81b985fc108ecdfa6806ceccfb1aed6c5168ef9e3a959fc57fbdb587fb09d6ce"
+        },
+        "backend/third_party/req/parallel_download_contract_test.go": {
+          "bytes": 13653,
+          "sha256": "ab3018e138ca2ade784e4666cee255c7ec98ff9472ccc9394a6a9d7e333858e1"
+        },
+        "backend/third_party/req/parallel_download_contract_windows_test.go": {
+          "bytes": 3785,
+          "sha256": "a836799807639c5a422e1ddbf60cf9779ac0c3fadfa87a4f06c2231e22dbe2b2"
+        }
+      },
+      "controllerHead": "78db36b3c54e1fd5fab13c5e4deac7decabeb094",
+      "run": 39356244024,
+      "attempt": 1,
+      "artifactID": 12235142612,
+      "artifactName": "g-download-format-39356244024-1",
+      "artifactZipBytes": 30191882,
+      "artifactZipSHA256": "4adb4ddf148dfe84707c3ed3202c95d119191528b0e69e97a54366b6e1cba4a2",
+      "goVersion": "go version go1.26.9 linux/amd64",
+      "rawDiffActualExits": {
+        "download_wire_peer_test.go": 1,
+        "download_contract_test.go": 1,
+        "parallel_download_contract_test.go": 1,
+        "parallel_download_contract_windows_test.go": 0
+      },
+      "writeAndPostDiffListActual": "All4 -w/-d/-l exit0 with empty stdout/stderr;3 raw files differ,Windows byte-identical",
+      "authorActualReceiptSHA256": "880508fd18a368fd6f66a432f21223a7016a4356170a00df3381049c51334ea2",
+      "rootActualReviewReceiptSHA256": "3a7f2089783236b934b6986081f7a5738715065a1594237c19f6ce6a96c10c48",
+      "independentActualReviewReceiptSHA256": "dbc424b950ae44cf60e99f4f6f4f86b4a800309621561863d2efb7c909473f6d",
+      "diffScope": "Import ordering and whitespace only, all original RAW Git history retained",
+      "runtimeBoundary": "FormatterSUCCESS only. Inherited RAW CI39356243844FAIL at unchanged exact132+declaredowned preflight; G tests never ran; Security39356243763SUCCESS. No fail waived."
+    }
+  ],
+  "formattedImport": {
+    "createdAt": "2026-10-20T06:59:24.627696+00:00",
+    "parentRawHead": "425e03baf1067487842eddab9030ba3e72c48999",
+    "rootAuthorization": "Import exactly4 artifact formatted bytes and update provenance/review only, then freeze for dual review; no push or execution",
+    "originalCaseNamesUnchanged": true,
+    "sourceAndCoverageInvariantsUnchanged": true,
+    "currentSeals": "files map contains imported formatter output seals; raw historical seals retained in remoteFormatterHistory",
+    "pending": "Dual formatted-source review; explicit later CI/source integration authorization"
+  },
+  "historicalHelperInputs": [
+    {
+      "stage": "Before explicit parent525 registration",
+      "input": {
+        "bytes": 21337,
+        "sha256": "d2db5175252c1844778c0c2ca941f9bcbb22380407484777a08bb37ce881b11a"
+      },
+      "source": "8013f0a39e22eb023df0c352eabea6ccfaf97fb8"
+    }
+  ],
+  "inProcessContracts": {
+    "status": "RAW authoring; independent source review and remote formatting/runtime/profile evidence pending",
+    "leaves": [
+      "TestReqParallelDownloadInProcessContract/out_of_order",
+      "TestReqParallelDownloadInProcessContract/one_byte",
+      "TestReqParallelDownloadInProcessContract/exact_boundary",
+      "TestReqParallelDownloadInProcessContract/final_short_segment",
+      "TestReqParallelDownloadInProcessContract/segment_larger_than_entity",
+      "TestReqParallelDownloadInProcessContract/relative_existing_file",
+      "TestReqParallelDownloadInProcessContract/absolute_file",
+      "TestReqParallelDownloadInProcessContract/writer_error",
+      "TestReqParallelDownloadInProcessContract/head_zero_length",
+      "TestReqParallelDownloadInProcessContract/head_unknown_length",
+      "TestReqParallelDownloadInProcessContract/head_error_status",
+      "TestReqParallelDownloadInProcessContract/range_ignored_200",
+      "TestReqParallelDownloadInProcessContract/missing_content_range",
+      "TestReqParallelDownloadInProcessContract/wrong_range_start",
+      "TestReqParallelDownloadInProcessContract/reversed_range",
+      "TestReqParallelDownloadInProcessContract/invalid_range_total",
+      "TestReqParallelDownloadInProcessContract/unknown_range_unit",
+      "TestReqParallelDownloadInProcessContract/range_416",
+      "TestReqParallelDownloadInProcessContract/truncated_segment",
+      "TestReqParallelDownloadInProcessContract/empty_segment",
+      "TestReqParallelDownloadInProcessContract/cancel_head",
+      "TestReqParallelDownloadInProcessContract/cancel_segment",
+      "TestReqParallelDownloadInProcessContract/failure_during_dispatch"
+    ],
+    "count": 23,
+    "scope": "Original32/Windows33 and502 required remain; add23 exact named parent executions, total525. No environment mode and no child counter merge.",
+    "markers": [
+      "G_IN_PROCESS_EXECUTED",
+      "G_IN_PROCESS_BODY_DONE"
+    ],
+    "dispatch": "Only exact original top argument and exact new top/scenario testing identity execute directly; original top paths unchanged.",
+    "scratch": "New top uses own t.TempDir when no child scratch; child temp behavior unchanged.",
+    "currentActualCoverageBlocker": "29ee actual added parallel blocks142/222=63.963964% fails85; new source makes no PASS or85 claim."
   }
 }

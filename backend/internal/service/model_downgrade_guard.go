@@ -64,6 +64,11 @@ func (s *RateLimitService) HandleConfirmedModelDowngrade(ctx context.Context, ac
 	if !guard.Enabled {
 		return
 	}
+	// 「不自动暂停调度」账号：窗口内累计命中的模型降级隔离不触发，也不累计计数。
+	if accountNoAutoUnsched(s.cfg, account) {
+		LogNoAutoUnschedSkip(account.ID, "model_downgrade_guard", sentModel)
+		return
+	}
 	// Forced single-account routes have no alternate account even when their
 	// group has healthy peers. Keep their cross-request routing untouched.
 	if openAIForcedAccountRoutingID(ctx) == account.ID {

@@ -11,8 +11,8 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,28 +29,28 @@ import (
 // G fixtures exercise only exported req APIs against a real HTTP peer. They do
 // not share F's client fixtures or inspect private task/file/channel state.
 type downloadGExchange struct {
-	Method string
-	Range string
-	IfRange string
-	Status int
-	ContentRange string
+	Method        string
+	Range         string
+	IfRange       string
+	Status        int
+	ContentRange  string
 	ContentLength string
-	Body []byte
-	Written int
-	WriteError string
-	FlushError string
-	Closed bool
-	CloseError string
-	ContextError string
-	FixtureError string
+	Body          []byte
+	Written       int
+	WriteError    string
+	FlushError    string
+	Closed        bool
+	CloseError    string
+	ContextError  string
+	FixtureError  string
 }
 
 type downloadGPeer struct {
-	server *httptest.Server
-	mu sync.Mutex
-	started []downloadGExchange
-	finished []downloadGExchange
-	changed chan struct{}
+	server    *httptest.Server
+	mu        sync.Mutex
+	started   []downloadGExchange
+	finished  []downloadGExchange
+	changed   chan struct{}
 	closeOnce sync.Once
 }
 
@@ -244,6 +244,14 @@ func (downloadGFailedWriter) Write([]byte) (int, error) {
 // another case. The watchdog is a separate failure, never passing/RED evidence.
 func downloadGIsolated(t *testing.T, top, scenario string, body func(*testing.T)) {
 	t.Helper()
+	// The explicitly registered parent suite reuses these exact wire assertions.
+	// Original G scenarios still execute in isolated child processes below.
+	if top == "TestReqParallelDownloadContract" && t.Name() == "TestReqParallelDownloadInProcessContract/"+scenario {
+		t.Logf("G_IN_PROCESS_EXECUTED %s", t.Name())
+		body(t)
+		t.Logf("G_IN_PROCESS_BODY_DONE %s", t.Name())
+		return
+	}
 	const key = "SUB2API_G_DOWNLOAD_CHILD"
 	if os.Getenv(key) == top+"/"+scenario {
 		t.Logf("G_CHILD_EXECUTED %s/%s", top, scenario)
@@ -307,6 +315,9 @@ var _ io.Writer = downloadGFailedWriter{}
 func downloadGTempDir(t *testing.T) string {
 	t.Helper()
 	root := os.Getenv("SUB2API_G_DOWNLOAD_SCRATCH")
+	if root == "" && strings.HasPrefix(t.Name(), "TestReqParallelDownloadInProcessContract/") {
+		return t.TempDir()
+	}
 	if root == "" {
 		t.Fatal("G_FIXTURE_CHILD: no parent-owned scratch directory")
 	}
@@ -320,19 +331,19 @@ func downloadGTempDir(t *testing.T) string {
 // OnAfterResponse observes only exported response/request metadata. It does not
 // replace the transport, consume a body, change Err or implement range recovery.
 type downloadGReceived struct {
-	Method string
-	Range string
-	Status int
-	ContentRange string
+	Method        string
+	Range         string
+	Status        int
+	ContentRange  string
 	ContentLength string
-	HasResponse bool
-	Error string
-	ErrorType string
-	cause error
+	HasResponse   bool
+	Error         string
+	ErrorType     string
+	cause         error
 }
 
 type downloadGResponses struct {
-	mu sync.Mutex
+	mu    sync.Mutex
 	items []downloadGReceived
 }
 
@@ -514,30 +525,30 @@ func downloadGPrepareProfile(root string) (string, error) {
 }
 
 type downloadGProcessEvidence struct {
-	ParentTest string `json:"parentTest"`
-	Top string `json:"top"`
-	Scenario string `json:"scenario"`
-	Arguments []string `json:"arguments"`
-	CoverageMode string `json:"coverageMode"`
-	Started bool `json:"started"`
-	Exited bool `json:"exited"`
-	ExitCode *int `json:"exitCode"`
-	ProcessError string `json:"processError"`
-	Watchdog bool `json:"watchdog"`
-	ExecutedMarker bool `json:"executedMarker"`
-	CompletedMarker bool `json:"completedMarker"`
-	RuntimeFailureMarkers []string `json:"runtimeFailureMarkers"`
-	OutputBytes int `json:"outputBytes"`
-	OutputSHA256 string `json:"outputSHA256"`
-	ProfilePath string `json:"profilePath"`
-	ProfileExists bool `json:"profileExists"`
-	ProfileBytes int `json:"profileBytes"`
-	ProfileSHA256 string `json:"profileSHA256"`
-	ProfileReadError string `json:"profileReadError"`
-	ProfileStatError string `json:"profileStatError"`
-	AtomicHeaderAndRecords bool `json:"atomicHeaderAndRecords"`
-	Classification string `json:"classification"`
-	Limitation string `json:"limitation"`
+	ParentTest             string   `json:"parentTest"`
+	Top                    string   `json:"top"`
+	Scenario               string   `json:"scenario"`
+	Arguments              []string `json:"arguments"`
+	CoverageMode           string   `json:"coverageMode"`
+	Started                bool     `json:"started"`
+	Exited                 bool     `json:"exited"`
+	ExitCode               *int     `json:"exitCode"`
+	ProcessError           string   `json:"processError"`
+	Watchdog               bool     `json:"watchdog"`
+	ExecutedMarker         bool     `json:"executedMarker"`
+	CompletedMarker        bool     `json:"completedMarker"`
+	RuntimeFailureMarkers  []string `json:"runtimeFailureMarkers"`
+	OutputBytes            int      `json:"outputBytes"`
+	OutputSHA256           string   `json:"outputSHA256"`
+	ProfilePath            string   `json:"profilePath"`
+	ProfileExists          bool     `json:"profileExists"`
+	ProfileBytes           int      `json:"profileBytes"`
+	ProfileSHA256          string   `json:"profileSHA256"`
+	ProfileReadError       string   `json:"profileReadError"`
+	ProfileStatError       string   `json:"profileStatError"`
+	AtomicHeaderAndRecords bool     `json:"atomicHeaderAndRecords"`
+	Classification         string   `json:"classification"`
+	Limitation             string   `json:"limitation"`
 }
 
 // This records standard runtime-produced bytes only. It never rewrites profiles,
@@ -547,12 +558,12 @@ func downloadGSaveProfile(dir, parent, top, scenario string, cmd *exec.Cmd, outp
 		ParentTest: parent, Top: top, Scenario: scenario,
 		Arguments: append([]string(nil), cmd.Args...), CoverageMode: testing.CoverMode(),
 		Started: cmd.Process != nil, ProcessError: downloadGError(processErr), Watchdog: watchdog,
-		ExecutedMarker: bytes.Contains(output, []byte("G_CHILD_EXECUTED "+top+"/"+scenario)),
+		ExecutedMarker:  bytes.Contains(output, []byte("G_CHILD_EXECUTED "+top+"/"+scenario)),
 		CompletedMarker: bytes.Contains(output, []byte("G_CHILD_BODY_DONE "+top+"/"+scenario)),
-		OutputBytes: len(output), OutputSHA256: downloadGHash(output),
-		ProfilePath: filepath.Join(dir, "child.atomic.out"),
+		OutputBytes:     len(output), OutputSHA256: downloadGHash(output),
+		ProfilePath:    filepath.Join(dir, "child.atomic.out"),
 		Classification: "failed-test-forensics-only",
-		Limitation: "Not a coverage or test PASS attestation. Exact source/binary/MVS binding and full profile integrity remain independent CI review responsibilities; counters are not merged here.",
+		Limitation:     "Not a coverage or test PASS attestation. Exact source/binary/MVS binding and full profile integrity remain independent CI review responsibilities; counters are not merged here.",
 	}
 	if cmd.ProcessState != nil {
 		e.Exited = cmd.ProcessState.Exited()

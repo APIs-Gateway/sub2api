@@ -5022,6 +5022,9 @@
       interceptWarmupRequestsDesc: '啟用後，標題生成等預熱請求將返回 mock 回應，不消耗上游 token',
       autoPauseOnExpired: '過期自動暫停調度',
       autoPauseOnExpiredDesc: '啟用後，帳號過期將自動暫停調度',
+      noAutoUnsched: '不自動暫停調度',
+      noAutoUnschedDesc:
+        '開啟後，無論該帳號短時間內出現多少次上游錯誤，都不會被自動冷卻或暫停調度；手動停用仍然生效。',
 	  autoPause5hThreshold: '5h 用量閾值(%)',
 	  autoPause7dThreshold: '7d 用量閾值(%)',
 	  autoPauseThresholdHint: '留空或填 0 表示使用全局預設閾值（在運維設定中配置）；填具體值則覆蓋全局預設。達到閾值後僅在調度時跳過帳號，不修改 schedulable。',

@@ -681,10 +681,12 @@
       "57f4235f83712a299328015548240512213a3852"
     ],
     "internal/dump/dump.go": [
-      "local-required-dump-trace-race-repair-after-verified-original-race"
+      "local-required-dump-trace-race-repair-after-verified-original-race",
+      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
     ],
     "request.go": [
-      "local-required-dump-trace-race-repair-after-verified-original-race"
+      "local-required-dump-trace-race-repair-after-verified-original-race",
+      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
     ],
     "response.go": [
       "local-required-dump-trace-race-repair-after-verified-original-race"
@@ -703,6 +705,22 @@
     ],
     "decode.go": [
       "099387e5ee9ac4631611281e6413ebcc7d0871ea"
+    ],
+    "digest.go": [
+      "local-required-common-digest-ownership-after-ci39355019380-verified-five-reds-child1743"
+    ],
+    "parallel_download.go": [
+      "local-required-parallel-download-contract-repair-after-ci39529607848-and-upstream417-child1748",
+      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+    ],
+    "client.go": [
+      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+    ],
+    "dump.go": [
+      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+    ],
+    "transport.go": [
+      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
     ]
   },
   "newOwnedFiles": [
@@ -734,11 +752,44 @@
     "transfer_contract_test.go",
     "internal/http2/transport_contract_peer_test.go",
     "internal/http2/transport_contract_test.go",
-    "meta_charset_contract_test.go"
+    "meta_charset_contract_test.go",
+    "CLIENT-BEHAVIOR-LICENSE",
+    "CLIENT-BEHAVIOR-PROVENANCE.json",
+    "CLIENT-BEHAVIOR-REVIEW.md",
+    "client_behavior_contract_test.go",
+    "client_behavior_observer_test.go",
+    "client_behavior_peer_test.go",
+    "client_redirect_cookie_contract_test.go",
+    "client_response_contract_test.go",
+    "digest_ownership_peer_test.go",
+    "digest_ownership_contract_test.go",
+    "DIGEST-OWNERSHIP-PROVENANCE.json",
+    "DIGEST-OWNERSHIP-REVIEW.md",
+    "DOWNLOAD-CONTRACTS-LICENSE",
+    "DOWNLOAD-CONTRACTS-PROVENANCE.json",
+    "DOWNLOAD-CONTRACTS-REVIEW.md",
+    "download_contract_test.go",
+    "download_wire_peer_test.go",
+    "parallel_download_contract_test.go",
+    "parallel_download_contract_windows_test.go",
+    "parallel_download_fallback_test.go",
+    "PARALLEL-DOWNLOAD-REPAIR.md",
+    "parallel_download_http3_cleanup_test.go",
+    "parallel_download_inprocess_contract_test.go",
+    "parallel_download_http3_probe_windows_test.go",
+    "parallel_download_http3_probe_other_test.go",
+    "parallel_download_default_output_test.go",
+    "trace_elapsed_peer_test.go",
+    "WINDOWS-TRACE-TEST-ADAPTATION.md",
+    "dump_ownership_contract_test.go",
+    "dump_ownership_peer_test.go",
+    "OWNED-DUMP-CLOSE-REPAIR.md",
+    "internal/http2/receive_flow_contract_test.go",
+    "internal/http2/RECEIVE-FLOW-CONTRACTS.md"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "exact full Git source/main MVS; retain all393 reviewed mandatory leaves and add8 actual HTTP charset cases =401 named/all JSON leaves +12 original wildcard-selected test files; raw atomic path-only mapping +all11 explicitly adapted files added-block85; unchanged Codecov85 separately mandatory; no blanket exclusion",
+  "validation": "Child1752 RAW owned dump Close repair from preserved bf4. Original132 archive references/89production/14tests and12selected+2helpers remain intact. Current partition114unchanged+16production adaptations+2original test adaptations. Preserve prior526 mandatory leaves;42 additional source-declared ownership leaves require actual remote named/all execution, not an invented PASS count. Four atomic profiles remain separate; all16production per-file added-block85, original Codecov85 and supplementary complete-Git Go85 remain mandatory. No executable validation or approval claimed.",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -769,18 +820,20 @@
     },
     {
       "path": "internal/dump/dump.go",
-      "sha256": "49e1fb4153bb7a087c971cdd15c3ffffea32f4e8f8a6241da7365018ceeb2c9e",
-      "bytes": 7606,
+      "sha256": "94daadfb92befe887bc19dd8baeefb31e73e29b610e4022cfccf6afd5d405c2c",
+      "bytes": 8041,
       "sources": [
-        "local-required-dump-trace-race-repair-after-verified-original-race"
+        "local-required-dump-trace-race-repair-after-verified-original-race",
+        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
       ]
     },
     {
       "path": "request.go",
-      "sha256": "ce6f26a4e74f4ac3cbe7fdaa8fee91101ed0eaac279ca743af9e13a70d3eb4fb",
-      "bytes": 38521,
+      "sha256": "26df88a2481a72bb99b1ad6c8c0b9b14513bf411c91624356d8ae091547e739b",
+      "bytes": 39575,
       "sources": [
-        "local-required-dump-trace-race-repair-after-verified-original-race"
+        "local-required-dump-trace-race-repair-after-verified-original-race",
+        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
       ]
     },
     {
@@ -830,10 +883,51 @@
       "sources": [
         "099387e5ee9ac4631611281e6413ebcc7d0871ea"
       ]
+    },
+    {
+      "path": "digest.go",
+      "sha256": "265a58ec9ab21b8788575e7dcf40002dac773e29fc3fff06ac0ba6416b17e154",
+      "bytes": 6097,
+      "sources": [
+        "local-required-common-digest-ownership-after-ci39355019380-verified-five-reds-child1743"
+      ]
+    },
+    {
+      "path": "parallel_download.go",
+      "sha256": "12a1f6b0d737a8b9d4704738ac74b74726d961c94caf49a76939aacf04bc89ca",
+      "bytes": 14004,
+      "sources": [
+        "local-required-parallel-download-contract-repair-after-ci39529607848-and-upstream417-child1748",
+        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+      ]
+    },
+    {
+      "path": "client.go",
+      "sha256": "a7db0cc3329c062028c6178e74546fc498c34b76bbfe3390d3c97e207e0355e8",
+      "bytes": 56029,
+      "sources": [
+        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+      ]
+    },
+    {
+      "path": "dump.go",
+      "sha256": "fbcc0b176056584563809d832bf0d72b4fa21d585e4e5af9ac34119f12aba4cc",
+      "bytes": 8757,
+      "sources": [
+        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+      ]
+    },
+    {
+      "path": "transport.go",
+      "sha256": "feb39c913a821b198bb931ddfb3f0e74746e91b657eaeebe964382c7e9b43178",
+      "bytes": 112127,
+      "sources": [
+        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+      ]
     }
   ],
-  "adaptedCandidateStatus": "default H2 TLS trace source correction candidate after actual88 named failure; independent static review and new frozen-head remote evidence pending; no approval",
-  "originalUnmodifiedFileCount": 121,
+  "adaptedCandidateStatus": "Child1752 RAW source bound to each exact adapted file; no local/87 formatter/build/test/checker executed. Current-head independent review, remote formatting, real Windows OLD/NEW witness, named/all race and all85 gates remain required.",
+  "originalUnmodifiedFileCount": 114,
   "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
   "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227",
   "http3ContractTestProvenance": {
@@ -1065,5 +1159,445 @@
     "status": "Unchanged-source two-failure/five-control RED and full338 baseline independently verified; exact fixed source and eight-case fixture statically reviewed; remote formatting39104489677 verified unchanged output. Fixed346/full mutation evidence and final combined401 exact-head named/all race, all11 added-block85 and Codecov85 remain required. No PR approval.",
     "combinedRequiredLeafCount": 401,
     "independentRedReviewSHA256": "79ca03997abfc7ef3deeed75ee154ed4869c9eef54d4fecab6b4391c6c1d57ab"
+  },
+  "digestOwnership1743": {
+    "childIssue": "https://github.com/APIs-Gateway/sub2api/issues/1743",
+    "parentIssue": 1711,
+    "sharedPR": 1712,
+    "permanentTrackingIssue": 291,
+    "state": "NEW raw production source candidate; same OLD Go fixtures; all new remote OLD/NEW gates pending",
+    "retainedOriginalLeaves": 401,
+    "reviewedPublicClientLeaves": 44,
+    "newOwnershipLeaves": 23,
+    "totalRequiredLeaves": 468,
+    "adaptationsAtThisOldSource": 11,
+    "unchangedOriginalsAtThisOldSource": 121,
+    "originalDigestGitBlob": "0695d8c3063c448e29ab05d44f0f8fbbd9a1cf81",
+    "newOwnedPaths": [
+      "CLIENT-BEHAVIOR-LICENSE",
+      "CLIENT-BEHAVIOR-PROVENANCE.json",
+      "CLIENT-BEHAVIOR-REVIEW.md",
+      "client_behavior_contract_test.go",
+      "client_behavior_observer_test.go",
+      "client_behavior_peer_test.go",
+      "client_redirect_cookie_contract_test.go",
+      "client_response_contract_test.go",
+      "digest_ownership_peer_test.go",
+      "digest_ownership_contract_test.go",
+      "DIGEST-OWNERSHIP-PROVENANCE.json",
+      "DIGEST-OWNERSHIP-REVIEW.md"
+    ],
+    "completePriorGenuineRed": {
+      "run": 39355019380,
+      "controllerHead": "510095bfe25f5db976e9c1315d810e19d560f664",
+      "candidateHead": "9c0c0641aa6a90accd4c688c5bcad7eebc53e699",
+      "artifact": 12235400344,
+      "sha256": "1a2de84ed264e8fb718b591e18f0f42eadc6bed44da8e7cddb3a68c2aef73f4b",
+      "claim": "Diagnostic complete5RED39PASS plus401, not applicationPASS."
+    },
+    "oldTestSourceHead": "7b0d92fb4c6bd52a62218d505130944163b73464",
+    "adaptationsAtThisNewSource": 12,
+    "unchangedOriginalsAtThisNewSource": 120
+  },
+  "parallelDownload1748": {
+    "childIssue": "https://github.com/APIs-Gateway/sub2api/issues/1748",
+    "sharedPR": 1712,
+    "permanentTrackingIssue": 291,
+    "upstreamReports": [
+      "https://github.com/imroc/req/issues/417",
+      "https://github.com/imroc/req/issues/416"
+    ],
+    "officialUnfixedBlob": "cdff7288e9fdc71705fd9718d3f99819a547b58f",
+    "baseSourceHead": "673c3fafa9ff9c4c32a6adbd8cd5f595c25f0c63",
+    "frozenGSourceHead": "aa656edd6f2aed8c595368ee802516fa571e317d",
+    "compositionMerge": "544a265751fc6a4740b99e7aa0f3a5efc96148f8",
+    "actualObservation": {
+      "run": 39529607848,
+      "linuxNamed": {
+        "run": 32,
+        "pass": 23,
+        "fail": 9
+      },
+      "linuxFull": {
+        "run": 32,
+        "pass": 23,
+        "fail": 9
+      },
+      "baseline401": "PASS; independent immutable baseline evidence",
+      "windows": "inputs watchdog; G not executed",
+      "failureClassification": "Eight data/status assertions; ninth short-transfer/cancel completion timeout is separate"
+    },
+    "retainedPriorLeaves": 468,
+    "frozenLinuxGLeaves": 32,
+    "newFullGetControlLeaves": 1,
+    "totalRequiredLinuxLeaves": 502,
+    "windowsGLeaves": 33,
+    "productionAdaptations": 13,
+    "unchangedOriginalFiles": 118,
+    "newOwnedPaths": [
+      "parallel_download_fallback_test.go",
+      "PARALLEL-DOWNLOAD-REPAIR.md",
+      "parallel_download_http3_cleanup_test.go",
+      "parallel_download_http3_probe_windows_test.go",
+      "parallel_download_http3_probe_other_test.go"
+    ],
+    "repair": "Invocation-owned queues/temp directory; cancel dispatch and join workers; validate HEAD/206 metadata and exact body; real single header-absent full-GET200 fallback only after partial cleanup; close owned files/bodies, retain caller writer ownership.",
+    "status": "RAW source candidate; remote formatting/build/race/actual named/full/profile/Windows and all85 gates NOTRUN; no approval.",
+    "sourceReviewCorrections": [
+      {
+        "after": "24f00d4fd6ceb4b6fc3a1edf5e6bb73495e44147",
+        "withdrawnFinding": "Header is already deep-cloned through embedded Transport.Clone; no redundant clone added.",
+        "confirmedFinding": "Client.Clone overrides public http.Client.Transport, bypassing custom/nil caller transport only during common-Range recovery.",
+        "repair": "Preserve installed custom/nil transport using typed-pointer identity comparison, never interface equality; close only owned cloned req transport. Same existing full-GET leaf now uses an actual noncomparable delegating caller wrapper with peer-observed auth header and ownership/traversal assertions.",
+        "runtimeStatus": "RAW static source only; remote format/build/test/race evidence pending."
+      },
+      {
+        "after": "a79f937647c43e28ab940f25a5debbcc5f215b8b",
+        "confirmedFinding": "Private fallback Client.Clone owns a separately created forced HTTP3 transport/UDP socket; outer CloseIdleConnections only releases H1/H2 and dropping that clone leaks its HTTP3 resources.",
+        "repair": "Only fetchTask clone cleanup closes owned embedded transport idle connections and owned t3.Close, after body/file defers; all cleanup calls attempted and original nonnil error retained. Global CloseIdleConnections and caller/custom transports are unchanged.",
+        "testLeaf": "TestReqParallelDownloadHTTP3Cleanup/owned_fallback_socket_released",
+        "testOracle": "Real ForceHTTP3 peer public connection/address, verified h3/TLS and held full body; exact loopback UDP endpoint must reject bind with EADDRINUSE while active, then Do+fullbytes/EOF+normal remote QUIC close and exact endpoint rebind must succeed; caller connection must remain occupied and be genuinely reused.",
+        "platform": "No platform skip. POSIX syscall.EADDRINUSE or Windows actual WSAEADDRINUSE10048 only; permission/invalid address/bind precondition failures are never success. This test does not prove Windows file Close.",
+        "runtimeStatus": "RAW only; no local/87 formatting/build/test/checker; all actual execution pending remoteCI."
+      }
+    ],
+    "newHTTP3OwnedResourceLeaves": 1,
+    "remoteFormat": {
+      "run": 39742212554,
+      "workflowController": "2ea71e8926bb8ac7dbb970f5dffdb87352d101b4",
+      "workflowSource": "b9f7ec3298ef4536164a32c533f475045df0e310",
+      "workflowSourceTree": "a0835c8e5ee2c15da09eca01e2106897f91db418",
+      "GoVersion": "go version go1.26.10 linux/amd64",
+      "artifact": 12410185722,
+      "artifactBytes": 30519812,
+      "artifactSHA256": "96d3f7eaba5cb8b3209324ba3bf75fd369ac01fcdf5f5e65b93439e86ae086ce",
+      "actualOperationCount": 28,
+      "actualRawDiffExitCounts": {
+        "1": 3,
+        "0": 4
+      },
+      "other21ActualOperations": "All exit0, empty stdout/stderr",
+      "authorActualReviewSHA256": "7d3f0c814948fded9bbfb51199f7a9a21323dabf7085b11da5603a40b2d15f50",
+      "independentRootActualReviewSHA256": "76ba8861f5615a5d135b8022bd1fcb78ed9baa1801c74a48d4199123400bb37e",
+      "importedProductionBranchFiles": [
+        {
+          "path": "backend/third_party/req/parallel_download.go",
+          "rawBytes": 13911,
+          "rawSHA256": "98d462f933c7878caaa0c6ae3bcc5792209ab6cd055e8f49e2451f7a426459c4",
+          "formattedBytes": 13923,
+          "formattedSHA256": "100a432ad16b765f1d9b33090d61ec8eb13f4f9a0183b0313e8ec94313a4fe61",
+          "import": "Exact actual artifact output bytes; no local formatter run"
+        },
+        {
+          "path": "backend/third_party/req/parallel_download_http3_cleanup_test.go",
+          "rawBytes": 12558,
+          "rawSHA256": "66d637147b24a2664d0fe87c298ba623ee6db060e21043382b8d497d9fd473d7",
+          "formattedBytes": 12562,
+          "formattedSHA256": "4c667d0cd82ffc4c1a191bb8eceacc49fc41fad2e075118e2aa52ff6ec495cd6",
+          "import": "Exact actual artifact output bytes; no local formatter run"
+        }
+      ],
+      "helperOwnership": "download_wire_peer_test.go formatted output is imported separately by root on observer infrastructure branch; not changed in this production commit.",
+      "scope": "Actual whitespace-only formatting accepted; no compiler/test/race/profile/coverage/Windows runtime PASS or PR approval."
+    },
+    "windowsProbeCalibration": {
+      "parentProductionHead": "8013f0a39e22eb023df0c352eabea6ccfaf97fb8",
+      "actualObservationRun": 39744585493,
+      "actualWindowsArtifact": 12411476184,
+      "actualArtifactSHA256": "5a9835fed2cf0e9583a33f697332cb412ed8ffe9b42fa28ccaf37a3720aae9c0",
+      "actualAuditReceiptSHA256": "e4ee160716df57024386ba138308225e013163575704f87470d01c7f5b5176f2",
+      "actualFailure": "Named/full H3 leaf failed the occupied-endpoint calibration before body release/Do/cleanup assertions; no Windows resource PASS. Both G phases35RUN/34PASS/1FAIL; original full-suite/dirty dump failures remain blocking.",
+      "windowsOracle": "Public ListenConfig.Control sets and reads back SO_EXCLUSIVEADDRUSE before actual wildcard same-port bind; require bind WSAEADDRINUSE10048 only. Independent real default wildcard UDP control must block probe while live and permit it after Close. Actual QUIC held/full/normal remote close/rebind/caller reuse assertions remain.",
+      "nonWindowsOracle": "Existing exact IPv4 peer-endpoint ListenUDP/EADDRINUSE probe retained; same live/released real wildcard control added.",
+      "primarySources": [
+        "https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse",
+        "https://raw.githubusercontent.com/golang/go/go1.26.10/src/net/sock_posix.go",
+        "https://raw.githubusercontent.com/microsoft/win32metadata/main/generation/WinSDK/RecompiledIdlHeaders/um/WinSock2.h"
+      ],
+      "ownedPathsAfterThisSource": 53,
+      "testLeavesUnchanged": true,
+      "productionAndOriginalFixtureBytesUnchanged": true,
+      "currentProbeSources": [
+        {
+          "path": "parallel_download_http3_cleanup_test.go",
+          "bytes": 13868,
+          "sha256": "b0b634b3ff59fd8ae9d828815b2984df2bf55bc9d21a0d7292308ee6cccb0174"
+        },
+        {
+          "path": "parallel_download_http3_probe_windows_test.go",
+          "bytes": 2121,
+          "sha256": "8a791aa3117f19c1fcf82d6d6bcbf236b5354cbb0a025fe16b3a0e09f3a10695"
+        },
+        {
+          "path": "parallel_download_http3_probe_other_test.go",
+          "bytes": 465,
+          "sha256": "9baa88622a909792140006e2647d71f7831a87e7667b96809e64d5dac0cdf6cc"
+        }
+      ],
+      "status": "RAW static source only; no local/87 execution or formatting; exact-head remote CI and independent source review required. No skipped test, permitted failure or coverage threshold change."
+    }
+  },
+  "parentAndWindowsContractComposition": {
+    "parentContractsSource": "b29760194991dbc88c6d2ae985a117a1e28aa4db",
+    "windowsProbeSource": "e3e46f5544c74282d3c66717cd0e5fed8c203d92",
+    "base": "8013f0a39e22eb023df0c352eabea6ccfaf97fb8",
+    "ownedPaths": 54,
+    "mandatoryLinux": 525,
+    "original502Retained": true,
+    "original32Windows33Retained": true,
+    "status": "RAW normal composition only; independent merge review and remote formatting required before actual CI. No runtime/coverage approval."
+  },
+  "defaultParallelDownloadOutputContract": {
+    "sourceBase": "17cbf851d29807fd7bf48c5791790099bb3657cc",
+    "file": "parallel_download_default_output_test.go",
+    "bytes": 4417,
+    "sha256": "69a99b55e89dd70eb9ec5999e0a868663707dcb650063fc511c0c75ef67b0615",
+    "newMandatoryLeaf": "TestReqParallelDownloadDefaultOutput/url_path_filename",
+    "mandatoryTotal": 526,
+    "prior525Retained": true,
+    "ownedPaths": 55,
+    "productionChanges": false,
+    "scope": "Actual public HTTP default output naming, path/query, truncation, complete entity/hash, neighbor preservation and temporary-work cleanup. No explicit output filename/writer/segment size/concurrency.",
+    "status": "RAW source only; independent review, remote formatting and exact-head runtime/coverage required. Existing188/222 failure and all85 gates remain blocking."
+  },
+  "originalTestAdaptations": [
+    {
+      "path": "request_test.go",
+      "originalBytes": 28340,
+      "originalSHA256": "6e673154deec01ad15fb0980b00e47376c4e32aeae7ddaa394b98add9c218dd2",
+      "candidateBytes": 29402,
+      "candidateSHA256": "97ce4e027d244dde752f4400698f32bdae76b0130726005d28bd2b4865d1f4c3",
+      "requiredTests": [
+        "TestSetFile",
+        "TestTraceInfo",
+        "TestEnableDumpToFIle"
+      ],
+      "reason": "Retain real upload/trace behavior while replacing Unix error wording with actual OS error identity and establishing real peer/public-callback elapsed prerequisites. No production timing or timeout change. Child1752 retains TestEnableDumpToFIle real request/success/nonempty dump assertions and adds optional real CloseDump plus checked same-process Remove; no failure cleanup assertion is deleted.",
+      "originalWindowsRun": 39744585493,
+      "originalWindowsArtifact": 12411476184,
+      "originalWindowsArtifactSHA256": "5a9835fed2cf0e9583a33f697332cb412ed8ffe9b42fa28ccaf37a3720aae9c0",
+      "scopeDocument": "OWNED-DUMP-CLOSE-REPAIR.md; WINDOWS-TRACE-TEST-ADAPTATION.md",
+      "status": "Original trace/upload adaptations retained. Child1752 RAW dump Close/checked Remove addition; remote formatting and exact-head execution pending."
+    },
+    {
+      "path": "client_test.go",
+      "originalBytes": 21122,
+      "originalSHA256": "3688bc3c1b9ee3410927eec79baca4f247efd5514ea7dad3057455d08f24f195",
+      "requiredTests": [
+        "TestEnableDumpAllToFile"
+      ],
+      "reason": "Retain TestEnableDumpAllToFile real POST, success and all four content assertions. Add optional real CloseDump and checked same-process Remove; OLD remains compilable and API absence is diagnostic only.",
+      "scopeDocument": "OWNED-DUMP-CLOSE-REPAIR.md",
+      "status": "Child1752 RAW source; remote formatting and exact-head execution pending.",
+      "candidateBytes": 21376,
+      "candidateSHA256": "3cfa2a3783fade7d199fc3846be0d9d2addbbec744c6ecffe6c60e7b66a48cd5"
+    }
+  ],
+  "windowsTraceTestPortability": {
+    "baseHead": "17cbf851d29807fd7bf48c5791790099bb3657cc",
+    "actualOldWindowsRun": 39744585493,
+    "originalArchiveAnd132ReferenceEntriesUnchanged": true,
+    "originalTestFiles": 14,
+    "originalSelectedTestFiles": 12,
+    "originalRetainedHelperFiles": 2,
+    "unchangedOriginalFiles": 118,
+    "productionAdaptations": 13,
+    "originalTestAdaptations": 1,
+    "currentSourceFiles": {
+      "request_test.go": {
+        "bytes": 29140,
+        "sha256": "d0068e01bc27656e00a714ee4aae60349b113a4b4a8dce9bd58a18daedb75687"
+      },
+      "trace_concurrency_test.go": {
+        "bytes": 20188,
+        "sha256": "7a7417f8591fc3cf38318ff27ba094b48776e9402b4e032290bcb8e55720f521"
+      },
+      "trace_elapsed_peer_test.go": {
+        "bytes": 12245,
+        "sha256": "4661e3c1ba9f63984736e5b455f7d0c7856f93456e945ba46bd33b5a049d2eeb"
+      },
+      "WINDOWS-TRACE-TEST-ADAPTATION.md": {
+        "bytes": 9447,
+        "sha256": "fbde0b18dec41fecd5793fc557986c6229a3d29ed38a55b709a9ac0c51c864fb"
+      }
+    },
+    "ownedFilesAfterThisSource": 57,
+    "requiredSecurityLeavesUnchanged": 526,
+    "newTestLeaves": 0,
+    "businessTimeouts": "No client/request/deadline changes; original5s fixture guard and500ms deadline retained. Clock sampling does not fabricate timestamp values.",
+    "causalOracle": "Real TLS peer; actual first fragment Flush then public GotFirstResponseByte before measured elapsed body suffix release; actual connected addresses/callbacks and body EOF/ReceivedAt. All connect/TCP durations may be zero but never negative, absent reused phases stay zero.",
+    "remoteNegativeControls": [
+      "clean",
+      "unregistered",
+      "wrong-hash",
+      "missing-selected-identity"
+    ],
+    "remoteControlsSource": "backend/tools/req-original-test-adaptation-controls.py",
+    "status": "Remote formatted by actual run40075095188 at controller9893c89cdeb5865ba8c0be23fe5c32edc4ed719c; request_test.go unchanged, two owned outputs imported exactly. Exact-head runtime and independent review remain required; no runtime PASS or waiver.",
+    "ownedTraceCasesScope": [
+      "LateDNSAfterCompletion explicit Cancel only",
+      "NormalTLSAndReuse actual fresh/reused body prerequisite",
+      "RequestReuse actual fresh/reused body prerequisite",
+      "ManualBodyEOF actual public first byte/snapshot before suffix prerequisite"
+    ],
+    "protocolReuseOracleCorrection": {
+      "afterHead": "3d1b7ccf9095a1227693e17b256b977eb31725f8",
+      "finding": "Comparing only actual response/peer protocol and branching on actual reused did not enforce the expected two modes or later same-connection reuse.",
+      "expectedProtocols": [
+        2,
+        1
+      ],
+      "expectedReusePerMode": [
+        false,
+        true,
+        true
+      ],
+      "actualIdentity": "First actual public GotConn.Conn and public server ConnContext net.Conn identities retained; later requests must reuse both exact objects, with matching reversed endpoints and no new TCP/TLS callbacks. Comparable real identities are required before interface comparison.",
+      "alpn": "Default HTTP2 requires h2 on actual client/peer TLS state; forced HTTP1 permits legal empty or http/1.1, not hardcoded http/1.1 only.",
+      "status": "Remote formatted; actual Linux/Windows original test and owned suite execution still pending."
+    },
+    "remoteFormatting": {
+      "run": 40075095188,
+      "controllerHead": "9893c89cdeb5865ba8c0be23fe5c32edc4ed719c",
+      "applicationHead": "e34056a04ab6ade971effac629b96dbb92c58b25",
+      "artifact": 12552922309,
+      "artifactSHA256": "ae9db239dbc1d25723f102d1fe553c1ead04d4caa0dca61ef76bbdc2127b10d6",
+      "go": "go1.26.10",
+      "operations": 12,
+      "originalAdaptedTestOutputUnchanged": true,
+      "runtimeApproval": false
+    }
+  },
+  "ownedDumpClose1752": {
+    "issue": "https://github.com/APIs-Gateway/sub2api/issues/1752",
+    "parentPR": "https://github.com/APIs-Gateway/sub2api/pull/1712",
+    "baseHead": "bf4dfe25dac427186ff32c93a5c9d45d89530418",
+    "currentProductionAdaptations": 16,
+    "currentOriginalTestAdaptations": 2,
+    "currentUnchangedOriginals": 114,
+    "originalArchiveAnd132ReferenceEntriesUnchanged": true,
+    "priorMandatoryLeavesRetained": 526,
+    "sourceDeclaredAdditionalLeaves": 42,
+    "requiredNewTestLeaves": [
+      "TestReqDumpOwnershipFileLifecycle/request_sync",
+      "TestReqDumpOwnershipFileLifecycle/request_manual",
+      "TestReqDumpOwnershipFileLifecycle/client_sync",
+      "TestReqDumpOwnershipFileLifecycle/client_async",
+      "TestReqDumpOwnershipCloseAndReconfigure/request",
+      "TestReqDumpOwnershipCloseAndReconfigure/client",
+      "TestReqDumpOwnershipCloneLeases/original_first",
+      "TestReqDumpOwnershipCloneLeases/clone_first",
+      "TestReqDumpOwnershipCloneLeases/disabled_clone",
+      "TestReqDumpOwnershipCloneLeases/transport_clone",
+      "TestReqDumpOwnershipConfiguredNeverSent/request",
+      "TestReqDumpOwnershipConfiguredNeverSent/client",
+      "TestReqDumpOwnershipCloseDrains/async_false",
+      "TestReqDumpOwnershipCloseDrains/async_true",
+      "TestReqDumpOwnershipCallerFiles/request",
+      "TestReqDumpOwnershipCallerFiles/client",
+      "TestReqDumpOwnershipCallerFiles/transport",
+      "TestReqDumpOwnershipRetarget/file_to_file",
+      "TestReqDumpOwnershipRetarget/file_to_caller",
+      "TestReqDumpOwnershipRetarget/same_path",
+      "TestReqDumpOwnershipRetarget/hardlink_with_clone",
+      "TestReqDumpOwnershipRetarget/failed_client_open",
+      "TestReqDumpOwnershipRetarget/failed_request_open",
+      "TestReqDumpOwnershipOptionsRetarget/request",
+      "TestReqDumpOwnershipOptionsRetarget/client",
+      "TestReqDumpOwnershipOptionsRetarget/transport",
+      "TestReqDumpOwnershipRetargetRetiresCallbacks/request",
+      "TestReqDumpOwnershipRetargetRetiresCallbacks/client",
+      "TestReqDumpOwnershipConcurrentClose/request",
+      "TestReqDumpOwnershipConcurrentClose/client",
+      "TestReqDumpOwnershipConcurrentClose/transport",
+      "TestReqDumpOwnershipWindowsCalibration",
+      "TestReqDumpOwnershipCloseBeforeManualBody",
+      "TestReqDumpOwnershipDisableRetainsFile",
+      "TestReqDumpOwnershipRetryAndReuse",
+      "TestReqDumpOwnershipCancellation",
+      "TestReqDumpOwnershipParallelRecoveryClone",
+      "TestReqDumpOwnershipManualSuffixAfterDo",
+      "TestReqDumpOwnershipMultipleOutputs",
+      "TestReqDumpOwnershipCurrentFileIdentity",
+      "TestReqDumpOwnershipBodyError",
+      "TestReqDumpOwnershipRetargetKeepsOtherClone"
+    ],
+    "actualNewLeavesRun": null,
+    "newOwnedPaths": [
+      "dump_ownership_contract_test.go",
+      "dump_ownership_peer_test.go",
+      "OWNED-DUMP-CLOSE-REPAIR.md"
+    ],
+    "newlyAdaptedProductionPaths": [
+      "client.go",
+      "dump.go",
+      "transport.go"
+    ],
+    "updatedProductionPaths": [
+      "request.go",
+      "internal/dump/dump.go",
+      "parallel_download.go"
+    ],
+    "originalTestRequiredIdentities": {
+      "request_test.go": [
+        "TestSetFile",
+        "TestTraceInfo",
+        "TestEnableDumpToFIle"
+      ],
+      "client_test.go": [
+        "TestEnableDumpAllToFile"
+      ]
+    },
+    "sourceStatus": "RAW not remotely formatted; source-only expected identities are not RUN/PASS evidence. No local or87 execution; independent review, exact-head remote CI/OLD-NEW resource witness and all16x85 gates pending.",
+    "closeErrorLimit": "Actual file close errors are joined/stored and returned idempotently; no portable deterministic filesystem close-error fixture and no fabricated PASS.",
+    "windowsObservationLimit": "Original40182645563 passed526 leaves but left2dump files; ignored Remove results mean no original same-process sharing-violation witness. New same-fixture calibrated actual Remove OLD/NEW still required."
+  },
+  "http2ReceiveFlowContracts": {
+    "baseHead": "6cbaddae9795d6a46c752e20fffd68fac2b49aa2",
+    "officialSource": "https://github.com/golang/net/blob/v0.48.0/http2/transport_test.go",
+    "officialBytes": 164358,
+    "officialSHA256": "a7592ef60371241ef909b01f6c3887e5180210e5fac0ad177ef59a4e935978cb",
+    "license": "LICENSE-GO-BSD",
+    "newFiles": {
+      "internal/http2/receive_flow_contract_test.go": {
+        "bytes": 13697,
+        "sha256": "307939900113a97b360202b6d17e35a3b784d26019ffd2967d7dae1396007a70"
+      },
+      "internal/http2/RECEIVE-FLOW-CONTRACTS.md": {
+        "bytes": 10137,
+        "sha256": "d276b0fa098e7349a5acda9002d8778725073922ef8a85637b4766608bcd49d4"
+      }
+    },
+    "leaves": [
+      "TestReqHTTP2ReceiveFlowContract_UnreadRefund/single_frame",
+      "TestReqHTTP2ReceiveFlowContract_UnreadRefund/late_frame_after_cancel",
+      "TestReqHTTP2ReceiveFlowContract_PaddedData/read_to_eof",
+      "TestReqHTTP2ReceiveFlowContract_PaddedData/read_one_then_close",
+      "TestReqHTTP2ReceiveFlowContract_PaddedData/close_unread",
+      "TestReqHTTP2ReceiveFlowContract_DataBeforeHeaders"
+    ],
+    "scope": "Tests only, real private ClientConn byte-stream/body/frame contract; not TCP/TLS deployment proof. No production or counter/denominator/gate change. Original base468 mandatory inventory unchanged; separately register six actual leaves in reviewed remote composition before acceptance.",
+    "status": "Remote formatter output imported; no local/87 project/format/syntax/test/build execution. Independent source review and exact-head remote CI remain required; no protocol/race/85 PASS.",
+    "formatEvidence": {
+      "run": 40255136055,
+      "workflowHead": "63dcbd3aa4b2d033694aa8728dcfcfca0776b0f5",
+      "sourceCandidate": "cf6ccbb4389edf4bae86e81438c87abf607289bb",
+      "artifact": 12621803677,
+      "artifactBytes": 31077477,
+      "artifactSHA256": "297bbd3f7e9b7c9a1329ce253cf1a882b6f65cfc2d4b266693c7d83ee0a17664",
+      "toolchain": "go1.26.10 linux/amd64",
+      "actualOperationExits": {
+        "raw-diff": 1,
+        "write-copy": 0,
+        "formatted-diff": 0,
+        "formatted-list": 0
+      },
+      "rawTestBytes": 13355,
+      "rawTestSHA256": "f8014478e8f8dd86fc9e18691aab46db06aaea87644d63849362a5ef76d29234",
+      "authorActualReceiptSHA256": "3c7786e8d9809521928ed61043c3c32a297a3ef572ded87c5b07cd5a623e2548",
+      "independentRootActualReceiptSHA256": "ec380e8d45d02bfd1c760e6898f7ebd13e12c7f37210a2e15f85fff86a043cb0",
+      "status": "Actual one-Go formatter output independently verified and imported verbatim. No runtime/race/build/coverage PASS; six leaves still need exact-head remote evidence."
+    },
+    "executionDependency": "Official behavioral source and nested req/go.mod declare x/net v0.48.0; execution must use backend main MVS (declares v0.60.0), with actual go-list evidence for selected peer codec. Do not execute the nested module as a substitute."
   }
 }

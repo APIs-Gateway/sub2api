@@ -600,30 +600,36 @@ func (c *Client) getDumpOptions() *DumpOptions {
 // EnableDumpAll enable dump for requests fired from the client, including
 // all content for the request and response by default.
 func (c *Client) EnableDumpAll() *Client {
-	if c.Dump != nil { // dump already started
+	if c.Dump != nil || c.dumpScope.isClosed() { // active or explicitly closed
 		return c
 	}
-	c.EnableDump(c.getDumpOptions())
+	if c.dumpScope == nil {
+		c.dumpScope = newDumpScope()
+	}
+	c.Dump = newDumper(c.getDumpOptions(), c.dumpScope)
 	return c
 }
 
 // EnableDumpAllToFile enable dump for requests fired from the
 // client and output to the specified file.
 func (c *Client) EnableDumpAllToFile(filename string) *Client {
-	file, err := os.Create(filename)
+	opt := c.getDumpOptions().Clone()
+	next, err := replaceDump(c.dumpScope, opt, &filename)
 	if err != nil {
 		c.log.Errorf("create dump file error: %v", err)
 		return c
 	}
-	c.getDumpOptions().Output = file
-	c.EnableDumpAll()
+	c.dumpOptions, c.dumpScope = opt, next
+	c.Dump = newDumper(opt, next)
 	return c
 }
 
 // EnableDumpAllTo enable dump for requests fired from the
 // client and output to the specified io.Writer.
 func (c *Client) EnableDumpAllTo(output io.Writer) *Client {
-	c.getDumpOptions().Output = output
+	opt := c.getDumpOptions().Clone()
+	opt.Output = output
+	c.SetCommonDumpOptions(opt)
 	c.EnableDumpAll()
 	return c
 }
@@ -1003,6 +1009,12 @@ func (c *Client) DisableDumpAll() *Client {
 	return c
 }
 
+// CloseDump drains this client's dump scope and releases internally opened
+// dump files. Caller writers, bodies and transports remain caller-owned.
+func (c *Client) CloseDump() error {
+	return c.Transport.CloseDump()
+}
+
 // SetCommonDumpOptions configures the underlying Transport's DumpOptions
 // for requests fired from the client.
 func (c *Client) SetCommonDumpOptions(opt *DumpOptions) *Client {
@@ -1010,15 +1022,17 @@ func (c *Client) SetCommonDumpOptions(opt *DumpOptions) *Client {
 		return c
 	}
 	if opt.Output == nil {
-		if c.dumpOptions != nil {
+		if c.dumpOptions != nil && !c.dumpScope.isClosed() {
 			opt.Output = c.dumpOptions.Output
 		} else {
 			opt.Output = os.Stdout
 		}
 	}
-	c.dumpOptions = opt
-	if c.Dump != nil {
-		c.Dump.SetOptions(dumpOptions{opt})
+	enabled := c.Dump != nil
+	next, _ := replaceDump(c.dumpScope, opt, nil)
+	c.dumpOptions, c.dumpScope = opt, next
+	if enabled {
+		c.Dump = newDumper(opt, next)
 	}
 	return c
 }

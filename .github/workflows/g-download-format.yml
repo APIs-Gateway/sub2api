@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      APP_HEAD: 425e03baf1067487842eddab9030ba3e72c48999
-      APP_TREE: 0663fcb7fa29b9e676a599757b66fb180e042a2a
+      APP_HEAD: e1b71933de5e6d0c1124576ce98d5594a5c3d050
+      APP_TREE: 85144f1b7cf7a582943571b4e596cd4b54b4e211
       GOTOOLCHAIN: local
       GOWORK: "off"
     steps:
@@ -80,7 +80,7 @@ jobs:
       - name: Checkout fixed complete application tree
         uses: actions/checkout@v6
         with:
-          ref: 425e03baf1067487842eddab9030ba3e72c48999
+          ref: e1b71933de5e6d0c1124576ce98d5594a5c3d050
           path: source
           fetch-depth: 0
           persist-credentials: false
@@ -122,8 +122,10 @@ jobs:
               archives[label] = {'bytes': archive.stat().st_size, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(), 'trackedFiles': len(expected)}
           (evidence / 'complete-input-archives.json').write_text(json.dumps(archives, indent=2) + '\n')
           files = ['backend/third_party/req/' + name for name in (
-              'download_wire_peer_test.go', 'download_contract_test.go',
-              'parallel_download_contract_test.go', 'parallel_download_contract_windows_test.go')]
+              'client.go', 'dump.go', 'transport.go', 'request.go', 'internal/dump/dump.go',
+              'parallel_download.go', 'client_test.go', 'request_test.go',
+              'dump_ownership_contract_test.go', 'dump_ownership_peer_test.go',
+              'internal/http2/receive_flow_contract_test.go')]
           manifest = []
           for name in files:
               raw = (source / name).read_bytes()
@@ -133,12 +135,12 @@ jobs:
                   shutil.copyfile(source / name, target)
                   assert target.read_bytes() == raw
               manifest.append({'path': name, 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()})
-          (evidence / 'four-inputs.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          (evidence / 'formatter-inputs.json').write_text(json.dumps(manifest, indent=2) + '\n')
           PYDATA
       - name: Install pinned formatter without repository cache
         uses: actions/setup-go@v6
         with:
-          go-version: '1.26.9'
+          go-version: '1.26.10'
           check-latest: false
           cache: false
       - name: Capture raw diff, format copies, and capture post-format results
@@ -146,7 +148,7 @@ jobs:
         run: |
           set -euo pipefail
           go version > "$G_FORMAT_EVIDENCE/go-version.txt"
-          grep -Eq '^go version go1\.26\.9 linux/amd64$' "$G_FORMAT_EVIDENCE/go-version.txt"
+          grep -Eq '^go version go1\.26\.10 linux/amd64$' "$G_FORMAT_EVIDENCE/go-version.txt"
           formatter="$(go env GOROOT)/bin/gofmt"
           printf '%s\n' "$formatter" > "$G_FORMAT_EVIDENCE/formatter-path.txt"
           sha256sum "$formatter" > "$G_FORMAT_EVIDENCE/formatter.sha256"
@@ -159,9 +161,8 @@ jobs:
             set -e
             printf '%s\n' "$actual_status" > "$label.exit"
           }
-          for name in download_wire_peer_test.go download_contract_test.go parallel_download_contract_test.go parallel_download_contract_windows_test.go; do
-            relative="backend/third_party/req/$name"
-            result="$G_FORMAT_EVIDENCE/results/$name"
+          for relative in backend/third_party/req/{client.go,dump.go,transport.go,request.go,internal/dump/dump.go,parallel_download.go,client_test.go,request_test.go,dump_ownership_contract_test.go,dump_ownership_peer_test.go,internal/http2/receive_flow_contract_test.go}; do
+            result="$G_FORMAT_EVIDENCE/results/$relative"
             mkdir -p "$result"
             capture "$result/raw-diff" "$formatter" -d "$G_FORMAT_EVIDENCE/raw/$relative"
             capture "$result/write-copy" "$formatter" -w "$G_FORMAT_EVIDENCE/formatted/$relative"
@@ -209,8 +210,8 @@ jobs:
               except (OSError, AssertionError) as error:
                   errors.append(label + ' full frozen input changed or snapshot incomplete: ' + str(error))
           try:
-              inputs = json.loads((evidence / 'four-inputs.json').read_text())
-              assert len(inputs) == 4
+              inputs = json.loads((evidence / 'formatter-inputs.json').read_text())
+              assert len(inputs) == 11
               for item in inputs:
                   name = item['path']
                   result = {'path': name, 'operations': {}}
@@ -221,7 +222,7 @@ jobs:
                   result['formattedSha256'] = hashlib.sha256(formatted).hexdigest()
                   result['rawChangedByFormatter'] = raw != formatted
                   for operation in ('raw-diff', 'write-copy', 'formatted-diff', 'formatted-list'):
-                      prefix = evidence / 'results' / pathlib.Path(name).name / operation
+                      prefix = evidence / 'results' / name / operation
                       status = int(pathlib.Path(str(prefix) + '.exit').read_text().strip())
                       stdout = pathlib.Path(str(prefix) + '.stdout').read_bytes()
                       stderr = pathlib.Path(str(prefix) + '.stderr').read_bytes()
@@ -238,9 +239,9 @@ jobs:
               errors.append('formatter evidence incomplete: ' + str(error))
           report = {'appHead': os.environ['APP_HEAD'], 'appTree': os.environ['APP_TREE'],
                     'controllerHead': os.environ['GITHUB_SHA'], 'fullInputArchives': archives, 'results': results, 'errors': errors,
-                    'scope': 'format external four-file copies only; no compilation or runtime approval'}
+                    'scope': 'format external eleven-file copies only; no compilation or runtime approval'}
           (evidence / 'formatter-actual-receipt.json').write_text(json.dumps(report, indent=2) + '\n')
-          assert not errors and len(results) == 4, errors
+          assert not errors and len(results) == 11, errors
           PYDATA
       - name: Always retain complete frozen inputs, raw bytes and actual formatter evidence
         if: always()

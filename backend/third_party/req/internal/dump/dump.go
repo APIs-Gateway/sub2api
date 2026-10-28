@@ -225,6 +225,7 @@ type Dumper struct {
 type dumpTask struct {
 	Data   []byte
 	Output io.Writer
+	Release func()
 }
 
 // NewDumper creates a Dumper. Async workers start on demand and retire when
@@ -250,6 +251,16 @@ func (d *Dumper) DumpTo(p []byte, output io.Writer) {
 	if len(p) == 0 || output == nil {
 		return
 	}
+	// Acquire outside d.mu: Close waits on permits without taking dumper or
+	// writer locks, and queued writes retain their permits until actual I/O.
+	release := func() {}
+	if gate, ok := d.Options.(interface{ AcquireDump() (func(), bool) }); ok {
+		var admitted bool
+		release, admitted = gate.AcquireDump()
+		if !admitted {
+			return
+		}
+	}
 	d.mu.Lock()
 	if d.Async() {
 		for len(d.queue) >= 20 && !d.stopped {
@@ -257,20 +268,23 @@ func (d *Dumper) DumpTo(p []byte, output io.Writer) {
 		}
 		if d.stopped {
 			d.mu.Unlock()
+			release()
 			return
 		}
 		data := append([]byte(nil), p...)
-		d.queue = append(d.queue, &dumpTask{Data: data, Output: output})
+		d.queue = append(d.queue, &dumpTask{Data: data, Output: output, Release: release})
 		d.startLocked()
 		d.mu.Unlock()
 		return
 	}
 	if d.stopped {
 		d.mu.Unlock()
+		release()
 		return
 	}
 	d.writes++
 	d.mu.Unlock()
+	defer release()
 	defer func() {
 		d.mu.Lock()
 		d.writes--
@@ -304,6 +318,7 @@ func (d *Dumper) run() {
 		d.cond.Broadcast()
 		d.mu.Unlock()
 		writeOutput(task.Output, task.Data)
+		task.Release()
 	}
 }
 
