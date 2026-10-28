@@ -24,6 +24,7 @@ import (
 	"net/http/httptrace"
 	"net/textproto"
 	"os"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -619,40 +620,123 @@ func (t *Transport) dialTLSWithContext(ctx context.Context, network, addr string
 			return nil, err
 		}
 		trace := httptrace.ContextClientTrace(ctx)
-		errc := make(chan error, 2)
-		var timer *time.Timer // for canceling TLS handshake
+		// Keep rawConn immutable across the worker and timeout cleanup.
+		rawConn := conn
+		callback := t.TLSHandshakeContext
+		var handshakeCtx context.Context
+		var cancel context.CancelFunc
+		timeoutCause := fmt.Errorf("custom TLS deadline: %w", tlsHandshakeTimeoutError{})
 		if d := t.TLSHandshakeTimeout; d != 0 {
-			timer = time.AfterFunc(d, func() {
-				errc <- tlsHandshakeTimeoutError{}
-			})
+			handshakeCtx, cancel = context.WithTimeoutCause(ctx, d, timeoutCause)
+		} else {
+			handshakeCtx, cancel = context.WithCancel(ctx)
+		}
+		defer cancel()
+		isNilConn := func(conn net.Conn) bool {
+			if conn == nil {
+				return true
+			}
+			value := reflect.ValueOf(conn)
+			return value.Kind() == reflect.Pointer && value.IsNil()
+		}
+		type handshakeResult struct {
+			conn  net.Conn
+			state *tls.ConnectionState
+			err   error
+		}
+		contextError := func() error {
+			if context.Cause(handshakeCtx) == timeoutCause {
+				return tlsHandshakeTimeoutError{}
+			}
+			return handshakeCtx.Err()
+		}
+		// The first completed outcome owns the result, even if the owner is not
+		// scheduled until after the deadline. No worker writes the live connection.
+		var mu sync.Mutex
+		var terminal handshakeResult
+		decided, startFinished, doneSent := false, false, false
+		ready := make(chan struct{})
+		traceDone := func(result handshakeResult) {
+			mu.Lock()
+			if !startFinished || doneSent {
+				mu.Unlock()
+				return
+			}
+			doneSent = true
+			mu.Unlock()
+			if trace != nil && trace.TLSHandshakeDone != nil {
+				state := tls.ConnectionState{}
+				if result.err == nil && result.state != nil {
+					state = *result.state
+				}
+				trace.TLSHandshakeDone(state, result.err)
+			}
 		}
 		go func() {
+			// Start stays on the worker so a slow user hook cannot hold up a
+			// timeout. If the owner already returned, finish its trace in order.
 			if trace != nil && trace.TLSHandshakeStart != nil {
 				trace.TLSHandshakeStart()
 			}
-			tlsCn, tlsState, err := t.TLSHandshakeContext(ctx, firstTLSHost, conn)
-			if err != nil {
-				if timer != nil {
-					timer.Stop()
-				}
-				if trace != nil && trace.TLSHandshakeDone != nil {
-					trace.TLSHandshakeDone(tls.ConnectionState{}, err)
-				}
-			} else {
-				conn = tlsCn
-				if trace != nil && trace.TLSHandshakeDone != nil {
-					trace.TLSHandshakeDone(*tlsState, nil)
-				}
+			mu.Lock()
+			startFinished = true
+			alreadyDecided, prior := decided, terminal
+			mu.Unlock()
+			if alreadyDecided {
+				traceDone(prior)
 			}
-			errc <- err
+			conn, state, err := callback(handshakeCtx, firstTLSHost, rawConn)
+			result := handshakeResult{conn: conn, state: state, err: err}
+			mu.Lock()
+			late := decided
+			if !decided {
+				if handshakeCtx.Err() != nil {
+					terminal.err = contextError()
+					late = true
+				} else {
+					terminal = result
+				}
+				decided = true
+				close(ready)
+			}
+			mu.Unlock()
+			cancel()
+			// A result that lost ownership is never published, including a
+			// distinct connection returned after the raw connection was closed.
+			if late && !isNilConn(conn) {
+				conn.Close()
+			}
 		}()
-		if err := <-errc; err != nil {
-			conn.Close()
-			return nil, err
-		} else {
-			tlsCn := conn.(reqtls.Conn)
-			return tlsCn, nil
+		select {
+		case <-ready:
+		case <-handshakeCtx.Done():
 		}
+		mu.Lock()
+		if !decided {
+			terminal.err = contextError()
+			decided = true
+			close(ready)
+		}
+		selected := terminal
+		mu.Unlock()
+		cancel() // Stop the deadline before any slow Done hook.
+		if selected.err == nil && (isNilConn(selected.conn) || selected.state == nil) {
+			selected.err = errors.New("http2: custom TLS handshake returned nil connection or state")
+		}
+		tlsConn, valid := selected.conn.(reqtls.Conn)
+		if selected.err == nil && !valid {
+			selected.err = errors.New("http2: custom TLS handshake returned a non-TLS connection")
+		}
+		if selected.err != nil {
+			rawConn.Close()
+			if !isNilConn(selected.conn) {
+				selected.conn.Close()
+			}
+			traceDone(selected)
+			return nil, selected.err
+		}
+		traceDone(selected)
+		return tlsConn, nil
 	} else {
 		// Match tls.Dialer's nil NetDialer: a zero-value dialer uses the
 		// caller's context for both TCP connection and TLS handshake.

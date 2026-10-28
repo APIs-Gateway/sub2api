@@ -675,7 +675,8 @@
       "cc7d34fd2dd5864bcafe3e5e0a84919240be98c0",
       "28247830e9fb37184c6be718f483a0c7d0949022",
       "local-required-dump-terminal-ordering-after-verified-original-race",
-      "local-required-default-h2-tls-trace-after-verified-named-failure"
+      "local-required-default-h2-tls-trace-after-verified-named-failure",
+      "local-required-reachable-custom-tls-timeout-result-ownership-pr1712"
     ],
     "internal/http2/frame.go": [
       "57f4235f83712a299328015548240512213a3852"
@@ -720,7 +721,8 @@
       "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
     ],
     "transport.go": [
-      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+      "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue",
+      "local-required-reachable-custom-tls-timeout-result-ownership-pr1712"
     ]
   },
   "newOwnedFiles": [
@@ -785,11 +787,17 @@
     "dump_ownership_peer_test.go",
     "OWNED-DUMP-CLOSE-REPAIR.md",
     "internal/http2/receive_flow_contract_test.go",
-    "internal/http2/RECEIVE-FLOW-CONTRACTS.md"
+    "internal/http2/RECEIVE-FLOW-CONTRACTS.md",
+    "custom_tls_handshake_peer_test.go",
+    "custom_tls_handshake_test.go",
+    "custom_tls_handshake_boundary_test.go",
+    "internal/http2/custom_tls_handshake_peer_test.go",
+    "internal/http2/custom_tls_handshake_test.go",
+    "CUSTOM-TLS-OWNERSHIP-REPAIR.md"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "Child1752 RAW owned dump Close repair from preserved bf4. Original132 archive references/89production/14tests and12selected+2helpers remain intact. Current partition114unchanged+16production adaptations+2original test adaptations. Preserve prior526 mandatory leaves;42 additional source-declared ownership leaves require actual remote named/all execution, not an invented PASS count. Four atomic profiles remain separate; all16production per-file added-block85, original Codecov85 and supplementary complete-Git Go85 remain mandatory. No executable validation or approval claimed.",
+  "validation": "Child1752 RAW owned dump Close repair from preserved bf4. Original132 archive references/89production/14tests and12selected+2helpers remain intact. Current partition114unchanged+16production adaptations+2original test adaptations. Preserve prior526 mandatory leaves;42 additional source-declared ownership leaves require actual remote named/all execution, not an invented PASS count. Four atomic profiles remain separate; all16production per-file added-block85, original Codecov85 and supplementary complete-Git Go85 remain mandatory. No executable validation or approval claimed. Existing PR1712 custom TLS ownership candidate preserves prior574 leaves and declares31 new source leaves (605 after root registration). No runtime/formatting evidence is asserted; OLD exact race and NEW actual named/all remote evidence are still required.",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -801,13 +809,14 @@
     },
     {
       "path": "internal/http2/transport.go",
-      "sha256": "9a76375193314f3c6988501167d5304a6bda8ede9ab2cc1dcb0d6b7720900927",
-      "bytes": 92700,
+      "sha256": "074f9a87a963011ad5ae0ea486192e4ec8b22856b75fb66f279398babc89382e",
+      "bytes": 95229,
       "sources": [
         "cc7d34fd2dd5864bcafe3e5e0a84919240be98c0",
         "28247830e9fb37184c6be718f483a0c7d0949022",
         "local-required-dump-terminal-ordering-after-verified-original-race",
-        "local-required-default-h2-tls-trace-after-verified-named-failure"
+        "local-required-default-h2-tls-trace-after-verified-named-failure",
+        "local-required-reachable-custom-tls-timeout-result-ownership-pr1712"
       ]
     },
     {
@@ -919,14 +928,15 @@
     },
     {
       "path": "transport.go",
-      "sha256": "1679f70830a3fe48ea428e28b0f9a2175a7042ff6ee0824f0e2275f7c5438a27",
-      "bytes": 112131,
+      "sha256": "0332c0ed2c207ee4597d9c7e90e93c8cadd6dbc7a017a3715d67c242ba4a81cb",
+      "bytes": 114700,
       "sources": [
-        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
+        "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue",
+        "local-required-reachable-custom-tls-timeout-result-ownership-pr1712"
       ]
     }
   ],
-  "adaptedCandidateStatus": "Child1752 RAW source bound to each exact adapted file; no local/87 formatter/build/test/checker executed. Current-head independent review, remote formatting, real Windows OLD/NEW witness, named/all race and all85 gates remain required.",
+  "adaptedCandidateStatus": "Child1752 RAW source bound to each exact adapted file; no local/87 formatter/build/test/checker executed. Current-head independent review, remote formatting, real Windows OLD/NEW witness, named/all race and all85 gates remain required. Custom TLS repair changes only two existing adapted function paths; original archive entries, other production and original test hashes are preserved. Local/87 execution prohibited; remote formatting/source freeze remains pending.",
   "originalUnmodifiedFileCount": 114,
   "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
   "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227",
