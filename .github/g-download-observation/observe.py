@@ -821,7 +821,7 @@ def old_binary_evidence(directory, phase, selector, old, actual_exit):
     identity = json.loads((root / "identity.json").read_text(encoding="utf-8"))
     assert identity["phase"] == phase and identity["source"] == OLD_SOURCE
     assert identity["sourceGitBefore"] == identity["sourceGitAfter"] == [OLD_SOURCE, OLD_TREE]
-    assert Path(identity["actualWorkingDirectory"]).resolve() == (old / "backend").resolve()
+    assert Path(identity["actualWorkingDirectory"]).resolve() == (old / "backend/third_party/req").resolve()
     assert identity["metadataComplete"] is True
     assert not any(key.endswith("Error") for key in identity), "OLD binary metadata contains an error"
     assert re.fullmatch(r"[0-9a-f]{64}", identity["beforeSHA256"])
@@ -840,7 +840,7 @@ def old_binary_evidence(directory, phase, selector, old, actual_exit):
     actual = json.loads((actual_dir / "process.json").read_text(encoding="utf-8"))
     assert actual["started"] and actual["streamsComplete"] and not actual["watchdog"]
     assert actual["exitCode"] == actual_exit and actual["argv"] == argv
-    assert Path(actual["cwd"]).resolve() == (old / "backend").resolve()
+    assert Path(actual["cwd"]).resolve() == (old / "backend/third_party/req").resolve()
     for stream in ("stdout", "stderr"):
         raw = (actual_dir / stream).read_bytes()
         assert len(raw) == actual[stream + "Bytes"] and sha(raw) == actual[stream + "SHA256"]
