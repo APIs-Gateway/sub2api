@@ -768,7 +768,9 @@
     "parallel_download_http3_probe_other_test.go",
     "parallel_download_default_output_test.go",
     "trace_elapsed_peer_test.go",
-    "WINDOWS-TRACE-TEST-ADAPTATION.md"
+    "WINDOWS-TRACE-TEST-ADAPTATION.md",
+    "dump_ownership_contract_test.go",
+    "dump_ownership_peer_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
@@ -1409,5 +1411,13 @@
       "originalAdaptedTestOutputUnchanged": true,
       "runtimeApproval": false
     }
+  },
+  "ownedDumpWitnessControl": {
+    "productionHead": "bf4dfe25dac427186ff32c93a5c9d45d89530418",
+    "fixtureSHA256": {
+      "dump_ownership_contract_test.go": "d5bb80fd28f93e6cc357b6c93ff0109cefdde64b0c6ef60d16660bb806c67db1",
+      "dump_ownership_peer_test.go": "b4bc25cfed158317d932ca7ebd64cc1fbad0ce5fc8c25936519b82a50599a841"
+    },
+    "scope": "test-only Windows resource witness; no CloseDump implementation"
   }
 }
