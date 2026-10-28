@@ -19,9 +19,9 @@ import (
 )
 
 type customTLSBoundaryResult struct {
-	conn net.Conn
+	conn  net.Conn
 	state *tls.ConnectionState
-	err error
+	err   error
 }
 
 func TestReqCustomTLS_Boundaries(t *testing.T) {

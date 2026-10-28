@@ -17,18 +17,18 @@ import (
 )
 
 type customTLSWire struct {
-	method string
-	body string
+	method   string
+	body     string
 	protocol int
-	remote string
+	remote   string
 }
 
 type customTLSPeer struct {
-	server *httptest.Server
+	server   *httptest.Server
 	requests chan customTLSWire
-	mu sync.Mutex
-	closed map[string]bool
-	changed chan struct{}
+	mu       sync.Mutex
+	closed   map[string]bool
+	changed  chan struct{}
 }
 
 func newCustomTLSPeer(t *testing.T, protocol int) *customTLSPeer {
@@ -105,7 +105,7 @@ func newCustomTLSClient(t *testing.T, protocol int) *Client {
 
 type customTLSObservedConn struct {
 	reqtls.Conn
-	once sync.Once
+	once   sync.Once
 	closed chan struct{}
 }
 
@@ -116,11 +116,11 @@ func (c *customTLSObservedConn) Close() error {
 }
 
 type customTLSRecord struct {
-	mu sync.Mutex
+	mu     sync.Mutex
 	starts int
-	dones int
-	state tls.ConnectionState
-	err error
+	dones  int
+	state  tls.ConnectionState
+	err    error
 	events []string
 }
 
@@ -167,9 +167,8 @@ func (r *customTLSRecord) assertOrdered(t *testing.T) {
 }
 
 type customTLSLateResult struct {
-	conn *customTLSObservedConn
-	state tls.ConnectionState
+	conn    *customTLSObservedConn
+	state   tls.ConnectionState
 	rawAddr string
-	err error
+	err     error
 }
-
