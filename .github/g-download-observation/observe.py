@@ -1128,9 +1128,22 @@ def old_tls_witness():
             output = "".join(event.get("Output", "") for event in events if event.get("Test") == name)
             version, alpn = ("1", r'(?:|http/1\.1)') if protocol == "HTTP1" else ("2", "h2")
             assert re.search(r"CUSTOM_TLS_REAL_HANDSHAKE protocol=" + version + r' version=[0-9a-f]+ alpn="' + alpn + r'" raw=[^;\s]+; actual timeout=.+', output), "Missing genuine Firefox TLS and typed-timeout prerequisite marker"
-            assert "CUSTOM_TLS_PREREQUISITE:" not in output and "CUSTOM_TLS_TIMEOUT:" not in output
+            pairs = old_tls_race_frames(output, protocol)
+            # OLD closes only the raw socket before its racy late publication;
+            # the identical fixture can then Fatal waiting for observed.Close.
+            # This exact secondary acknowledgement failure is not race evidence.
+            # Genuine handshake/typed-timeout and both production access frames
+            # above remain mandatory, as do the actual FAIL/exit1/binary gates.
+            secondary = re.findall(r"CUSTOM_TLS_PREREQUISITE: ([^\r\n]*)", output)
+            allowed_secondary = "timed out waiting for late returned wrapper cleanup"
+            assert len(secondary) <= 1 and all(message == allowed_secondary for message in secondary), "Unexpected OLD TLS prerequisite failure"
+            assert "CUSTOM_TLS_TIMEOUT:" not in output, "OLD TLS typed-timeout prerequisite failed"
             records.append({"test": name, "actualRun": 1, "actualFail": 1,
-                            "actualTypedTimeoutAndRealTLS": True, "productionRacePairs": old_tls_race_frames(output, protocol)})
+                            "actualTypedTimeoutAndRealTLS": True, "productionRacePairs": pairs,
+                            "secondaryOldResourceAcknowledgementFailures": secondary})
+        all_output = "".join(event.get("Output", "") for event in events) + stderr.decode("utf-8")
+        assert "CUSTOM_TLS_TIMEOUT:" not in all_output
+        assert all_output.count("CUSTOM_TLS_PREREQUISITE:") == sum(len(item["secondaryOldResourceAcknowledgementFailures"]) for item in records), "OLD TLS prerequisite outside the two verified child witnesses"
         report.update({"observed": records, "ledger": ledger, "binaryEvidence": binary, "raceRED": True})
     except Exception:
         report["errors"].append(traceback.format_exc())
