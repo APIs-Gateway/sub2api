@@ -1629,5 +1629,109 @@
       "status": "Actual one-Go formatter output independently verified and imported verbatim. No runtime/race/build/coverage PASS; six leaves still need exact-head remote evidence."
     },
     "executionDependency": "Official behavioral source and nested req/go.mod declare x/net v0.48.0; execution must use backend main MVS (declares v0.60.0), with actual go-list evidence for selected peer codec. Do not execute the nested module as a substitute."
+  },
+  "customTLSOwnershipContracts": {
+    "existingPR": "https://github.com/APIs-Gateway/sub2api/pull/1712",
+    "reviewFinding": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6446970791",
+    "upstreamPR": "https://github.com/imroc/req/pull/547",
+    "upstreamHead": "82b9729893406adca3911020a0a1213546446293",
+    "authorization": "User explicitly authorized only this reachable H1/H2 timeout/handshake shared-connection race reproduction and repair within existing PR1712 on 2026-10-28. No new issue/PR or unrelated req547 changes.",
+    "sourceHead": "5b1c1fa77eca2168c51dcdc4ad5178dada1a206e",
+    "sourceTree": "cd657ffdd3e6ade2a6bde5f9b204aec8243254a6",
+    "compositionBase": "b9f84ecacf4d8bfb4c84eabc2ce346807dd1c866",
+    "independentSourceReview": {
+      "receipt": "custom-tls-race-1712-oct28/INDEPENDENT-ROOT-5B1C1FA77-SOURCE-REVIEW.json",
+      "sha256": "3ad8e7b2bc2b26d3c1489e71909b6a51fd02fbe7d1a64af0fa6b71ee1e1736a7",
+      "scope": "Independent static source review only; no runtime/formatter PASS or whole-PR LGTM."
+    },
+    "sourceInventorySHA256": "2b3acb3539c6aa9e5a86856f21d6d3d99692fa81953a560a142fb0b65f05061a",
+    "newOwnedPaths": [
+      "custom_tls_handshake_peer_test.go",
+      "custom_tls_handshake_test.go",
+      "custom_tls_handshake_boundary_test.go",
+      "internal/http2/custom_tls_handshake_peer_test.go",
+      "internal/http2/custom_tls_handshake_test.go",
+      "CUSTOM-TLS-OWNERSHIP-REPAIR.md"
+    ],
+    "newFiles": {
+      "custom_tls_handshake_peer_test.go": {
+        "bytes": 4058,
+        "sha256": "928256488b579f8c8a787c7f0a62ebc74d543a1c0c6dc8d5a7160292351229da"
+      },
+      "custom_tls_handshake_test.go": {
+        "bytes": 7617,
+        "sha256": "4ce46f6b1edef1172ee3ede6cfe5735e8947545705705398f0602d635c00d999"
+      },
+      "custom_tls_handshake_boundary_test.go": {
+        "bytes": 9416,
+        "sha256": "62cec3f6f4fafd512fc6a5e4ae2fd3ed336b28196560b56a00ce10f9d9b130d9"
+      },
+      "internal/http2/custom_tls_handshake_peer_test.go": {
+        "bytes": 3688,
+        "sha256": "ec5fa20281f1322243cca74a53a9e7e1e6582c1b7c41327df7050a05eb44bcae"
+      },
+      "internal/http2/custom_tls_handshake_test.go": {
+        "bytes": 9376,
+        "sha256": "51ed07bdab46f6ebf56ab8a23dbe106d7f32e18132fb2a4f277a2fd1b5ff93a8"
+      },
+      "CUSTOM-TLS-OWNERSHIP-REPAIR.md": {
+        "bytes": 5339,
+        "sha256": "ee4f4e01358c150db1691cfbf7a4743093cae8ede56c6a7702c651731996f7c9"
+      }
+    },
+    "productionPaths": [
+      "transport.go",
+      "internal/http2/transport.go"
+    ],
+    "rootPackage": "github.com/imroc/req/v3",
+    "rootCount": 18,
+    "rootLeaves": [
+      "TestReqCustomTLS_PublicSuccessAndReuse/HTTP1",
+      "TestReqCustomTLS_PublicSuccessAndReuse/HTTP2",
+      "TestReqCustomTLS_LatePublicationRace/HTTP1",
+      "TestReqCustomTLS_LatePublicationRace/HTTP2",
+      "TestReqCustomTLS_LateDistinctConnection/HTTP1",
+      "TestReqCustomTLS_LateDistinctConnection/HTTP2",
+      "TestReqCustomTLS_Boundaries/NoTimeoutSuccess",
+      "TestReqCustomTLS_Boundaries/CallbackError",
+      "TestReqCustomTLS_Boundaries/ParentCanceled",
+      "TestReqCustomTLS_Boundaries/ParentDeadline",
+      "TestReqCustomTLS_Boundaries/HandshakeTimeout",
+      "TestReqCustomTLS_Boundaries/LateError",
+      "TestReqCustomTLS_Boundaries/SlowStart",
+      "TestReqCustomTLS_Boundaries/ExpiredBeforeStart",
+      "TestReqCustomTLS_Boundaries/SlowDoneSuccess",
+      "TestReqCustomTLS_Boundaries/NilConnection",
+      "TestReqCustomTLS_Boundaries/TypedNilConnection",
+      "TestReqCustomTLS_Boundaries/NilState"
+    ],
+    "privateHTTP2Package": "github.com/imroc/req/v3/internal/http2",
+    "privateHTTP2Count": 13,
+    "privateHTTP2Leaves": [
+      "TestReqCustomTLS_Boundaries/NoTimeoutSuccess",
+      "TestReqCustomTLS_Boundaries/CallbackError",
+      "TestReqCustomTLS_Boundaries/ParentCanceled",
+      "TestReqCustomTLS_Boundaries/ParentDeadline",
+      "TestReqCustomTLS_Boundaries/HandshakeTimeout",
+      "TestReqCustomTLS_Boundaries/LateError",
+      "TestReqCustomTLS_Boundaries/SlowStart",
+      "TestReqCustomTLS_Boundaries/ExpiredBeforeStart",
+      "TestReqCustomTLS_Boundaries/SlowDoneSuccess",
+      "TestReqCustomTLS_Boundaries/NilConnection",
+      "TestReqCustomTLS_Boundaries/TypedNilConnection",
+      "TestReqCustomTLS_Boundaries/NilState",
+      "TestReqCustomTLS_Boundaries/NonTLSConnection"
+    ],
+    "additionalSourceLeafCount": 31,
+    "priorMandatoryLeaves": 574,
+    "composedMandatoryLeaves": 605,
+    "sourceStatus": "Source identities only, NOTRUN. Registration requires exact-head independent review; actual remote JSON RUN/PASS and formatting remain unproven.",
+    "requiredRemoteEvidence": [
+      "Identical public LatePublicationRace HTTP1/HTTP2 fixture on OLD must show genuine handshake prerequisites and actual old shared-connection race frames; compiler/setup/watchdog failures are not race reproduction.",
+      "NEW exact-head605 named and full race suites, actual four adapted original test completions, late wrapper/distinct connection/trace cleanup.",
+      "Actual Windows calibrated Remove OLD/NEW resource evidence and no generated residue.",
+      "All four original atomic profiles, both original85 gates and all16 production per-file85 gates, without profile/count/denominator mixing."
+    ],
+    "scope": "Only reachable custom TLS terminal ownership, cancellation, timeout, late-result connection disposal and ordered trace hooks. Preserve default TLS paths, headers, transport pool/business policy, original132 rows and114/16/2 partition."
   }
 }

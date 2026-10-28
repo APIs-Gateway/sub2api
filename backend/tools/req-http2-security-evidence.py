@@ -105,9 +105,14 @@ def verify_named(backend, evidence, filename):
     require(expected["downloadContractCount"] == 32 and expected["parallelDownloadFallbackCount"] == 1 and
             expected["parallelDownloadHTTP3CleanupCount"] == 1 and expected["parallelDownloadInProcessCount"] == 23 and
             expected["parallelDownloadDefaultOutputCount"] == 1 and expected["http2ReceiveFlowCount"] == 6 and
-            expected["dumpOwnershipCount"] == 42 and expected["totalNamedLeaves"] == 574,
+            expected["dumpOwnershipCount"] == 42,
             "Retain all526 original G leaves, six HTTP2 receive-flow and42 dump ownership leaves")
-    kinds = baseline_kinds + ("clientBehavior", "digestOwnership", "downloadContract", "parallelDownloadFallback", "parallelDownloadHTTP3Cleanup", "parallelDownloadInProcess", "parallelDownloadDefaultOutput", "http2ReceiveFlow", "dumpOwnership")
+    require(expected["customTLSCount"] == 18 and expected["customTLSHTTP2Count"] == 13 and
+            expected["customTLSPackage"] == MODULE and
+            expected["customTLSHTTP2Package"] == MODULE + "/internal/http2" and
+            expected["totalNamedLeaves"] == 605,
+            "Retain all574 prior leaves plus18 root and13 private HTTP2 custom TLS leaves")
+    kinds = baseline_kinds + ("clientBehavior", "digestOwnership", "downloadContract", "parallelDownloadFallback", "parallelDownloadHTTP3Cleanup", "parallelDownloadInProcess", "parallelDownloadDefaultOutput", "http2ReceiveFlow", "dumpOwnership", "customTLS", "customTLSHTTP2")
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
     for kind in kinds:
@@ -136,7 +141,7 @@ def verify_named(backend, evidence, filename):
                 "TestReqClientCookie_", "TestReqClientResponse_", "TestReqDigestOwnership_",
                 "TestReqDownloadContract", "TestReqParallelDownloadContract", "TestReqParallelDownloadFallback",
                 "TestReqParallelDownloadHTTP3Cleanup", "TestReqParallelDownloadInProcessContract",
-                "TestReqParallelDownloadDefaultOutput", "TestReqHTTP2ReceiveFlowContract_", "TestReqDumpOwnership")
+                "TestReqParallelDownloadDefaultOutput", "TestReqHTTP2ReceiveFlowContract_", "TestReqDumpOwnership", "TestReqCustomTLS_")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")

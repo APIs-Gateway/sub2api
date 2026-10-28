@@ -223,8 +223,8 @@ class NamedInventoryRegression(unittest.TestCase):
     def test_complete_registered_events_are_accepted_as_verifier_control_only(self):
         self.verify(self.values)
         proof = json.loads(self.proof.read_text())
-        self.assertEqual(len(proof), 574)
-        self.assertEqual(len({(item["package"], item["test"]) for item in proof}), 574)
+        self.assertEqual(len(proof), 605)
+        self.assertEqual(len({(item["package"], item["test"]) for item in proof}), 605)
 
     def test_missing_original_default_output_leaf_is_rejected(self):
         name = self.inventory["parallelDownloadDefaultOutputLeaves"][0]
@@ -239,6 +239,23 @@ class NamedInventoryRegression(unittest.TestCase):
         for name in self.inventory["dumpOwnershipLeaves"]:
             with self.subTest(name=name):
                 self.rejected([value for value in self.values if value.get("Test") != name], "Missing/duplicate RUN")
+
+    def test_each_missing_custom_tls_leaf_is_rejected_by_package(self):
+        for kind in ("customTLS", "customTLSHTTP2"):
+            package = self.inventory[kind + "Package"]
+            for name in self.inventory[kind + "Leaves"]:
+                with self.subTest(package=package, name=name):
+                    self.rejected([value for value in self.values
+                                   if (value.get("Package"), value.get("Test")) != (package, name)],
+                                  "Missing/duplicate RUN")
+
+    def test_unknown_custom_tls_leaf_in_each_package_is_rejected(self):
+        for kind in ("customTLS", "customTLSHTTP2"):
+            package = self.inventory[kind + "Package"]
+            with self.subTest(package=package):
+                unknown = {"Package": package, "Test": "TestReqCustomTLS_Unregistered"}
+                self.rejected(self.values + [dict(unknown, Action="run"), dict(unknown, Action="pass")],
+                              "Actual security leaf inventory differs")
 
     def test_unknown_dump_ownership_leaf_is_rejected(self):
         unknown = {"Package": self.inventory["dumpOwnershipPackage"],
