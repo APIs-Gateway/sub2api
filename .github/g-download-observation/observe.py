@@ -19,20 +19,20 @@ import traceback
 import uuid
 
 BASE = "673c3fafa9ff9c4c32a6adbd8cd5f595c25f0c63"
-# Design pins only. Root must freeze reviewed formatted NEW plus the retained
-# eight-path observer infrastructure, and an immutable OLD test-only commit.
-# Never push/dispatch these RAW placeholders as runtime acceptance evidence.
-SOURCE_READY = False
-SOURCE = "e1b71933de5e6d0c1124576ce98d5594a5c3d050"
-TREE = "85144f1b7cf7a582943571b4e596cd4b54b4e211"
-PRODUCTION = "e1b71933de5e6d0c1124576ce98d5594a5c3d050"
+# Frozen reviewed source plus the retained eight-path observation infrastructure.
+# OLD trees are direct test-only children with identical final NEW fixtures.
+# Runtime acceptance still requires actual evidence; these pins are not PASS.
+SOURCE_READY = True
+SOURCE = "6fd558ca0a80b6cc64bc6ec8d8a289ffe6707041"
+TREE = "dab6e5b0d3fb743704b806694f2b7a331a339dab"
+PRODUCTION = "29ea1fcb4c2366aee00d8f2a75c0b0edf3676880"
 OLD_PRODUCTION = "bf4dfe25dac427186ff32c93a5c9d45d89530418"
-OLD_SOURCE = OLD_PRODUCTION  # Replace with reviewed test-only child after formatting.
-OLD_TREE = "a48e9dd347c0d7420525d7d36698d18653913119"
+OLD_SOURCE = "79d98c871e16fc982a40b82f39755fd9439ac051"
+OLD_TREE = "a214bc81ba0511b1ac69a8c2d136ba82b829b84b"
 OLD_FIXTURES = ("dump_ownership_contract_test.go", "dump_ownership_peer_test.go")
 OLD_TLS_PRODUCTION = "e1b71933de5e6d0c1124576ce98d5594a5c3d050"
-OLD_TLS_SOURCE = OLD_TLS_PRODUCTION  # Immutable test-only child pin pending final formatted NEW.
-OLD_TLS_TREE = "85144f1b7cf7a582943571b4e596cd4b54b4e211"
+OLD_TLS_SOURCE = "2768a561c693ebcb194357317183aafdb5741b64"
+OLD_TLS_TREE = "bcfac4d7925e643f7296af24892c0ee6e0979792"
 OLD_TLS_FIXTURES = ("custom_tls_handshake_peer_test.go", "custom_tls_handshake_test.go",
                     "custom_tls_handshake_boundary_test.go", "internal/http2/custom_tls_handshake_peer_test.go",
                     "internal/http2/custom_tls_handshake_test.go")

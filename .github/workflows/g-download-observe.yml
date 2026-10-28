@@ -134,7 +134,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v6
         with:
-          ref: e1b71933de5e6d0c1124576ce98d5594a5c3d050
+          ref: 6fd558ca0a80b6cc64bc6ec8d8a289ffe6707041
           path: source
           fetch-depth: 0
           persist-credentials: false
@@ -161,7 +161,7 @@ jobs:
           retention-days: 14
 
   old-windows-resource:
-    name: OLD typed Windows Remove observation (test-only pins pending)
+    name: OLD typed Windows Remove observation (exact test-only child)
     runs-on: windows-2025
     timeout-minutes: 45
     steps:
@@ -206,14 +206,14 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v6
         with:
-          ref: e1b71933de5e6d0c1124576ce98d5594a5c3d050
+          ref: 6fd558ca0a80b6cc64bc6ec8d8a289ffe6707041
           path: source
           fetch-depth: 0
           persist-credentials: false
-      # Design placeholder: replace with immutable bf4 test-only child after NEW formatting.
+      # Exact bf4 production plus the same two final NEW ownership fixtures.
       - uses: actions/checkout@v6
         with:
-          ref: bf4dfe25dac427186ff32c93a5c9d45d89530418
+          ref: 79d98c871e16fc982a40b82f39755fd9439ac051
           path: old
           fetch-depth: 0
           persist-credentials: false
@@ -240,7 +240,7 @@ jobs:
           retention-days: 14
 
   old-custom-tls-race:
-    name: OLD H1 and H2 actual custom TLS race (test-only pins pending)
+    name: OLD H1 and H2 actual custom TLS race (exact test-only child)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -285,14 +285,14 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v6
         with:
-          ref: e1b71933de5e6d0c1124576ce98d5594a5c3d050
+          ref: 6fd558ca0a80b6cc64bc6ec8d8a289ffe6707041
           path: source
           fetch-depth: 0
           persist-credentials: false
-      # Design placeholder: replace with immutable e1 five-fixture test-only child after NEW formatting.
+      # Exact e1 production plus the same five final NEW TLS fixtures.
       - uses: actions/checkout@v6
         with:
-          ref: e1b71933de5e6d0c1124576ce98d5594a5c3d050
+          ref: 2768a561c693ebcb194357317183aafdb5741b64
           path: old-tls
           fetch-depth: 0
           persist-credentials: false
