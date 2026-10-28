@@ -25,6 +25,7 @@ import (
 	"net/http/httptrace"
 	"net/textproto"
 	"net/url"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -2059,38 +2060,122 @@ func newHttp2NotSupportedError(negotiatedProtocol string) error {
 }
 
 func (t *Transport) customTlsHandshake(ctx context.Context, trace *httptrace.ClientTrace, addr string, pconn *persistConn) error {
-	errc := make(chan error, 2)
-	var timer *time.Timer // for canceling TLS handshake
+	// The worker never publishes into pconn. Only a selected local result
+	// transfers ownership; a timeout cannot race a late connection replacement.
+	rawConn := pconn.conn
+	callback := t.TLSHandshakeContext
+	var handshakeCtx context.Context
+	var cancel context.CancelFunc
+	// A distinct wrapped cause distinguishes this deadline from an inherited
+	// caller deadline/cancellation, while retaining the public timeout error.
+	timeoutCause := fmt.Errorf("custom TLS deadline: %w", tlsHandshakeTimeoutError{})
 	if d := t.TLSHandshakeTimeout; d != 0 {
-		timer = time.AfterFunc(d, func() {
-			errc <- tlsHandshakeTimeoutError{}
-		})
+		handshakeCtx, cancel = context.WithTimeoutCause(ctx, d, timeoutCause)
+	} else {
+		handshakeCtx, cancel = context.WithCancel(ctx)
+	}
+	defer cancel()
+	isNilConn := func(conn net.Conn) bool {
+		if conn == nil {
+			return true
+		}
+		value := reflect.ValueOf(conn)
+		return value.Kind() == reflect.Pointer && value.IsNil()
+	}
+	type handshakeResult struct {
+		conn  net.Conn
+		state *tls.ConnectionState
+		err   error
+	}
+	contextError := func() error {
+		if context.Cause(handshakeCtx) == timeoutCause {
+			return tlsHandshakeTimeoutError{}
+		}
+		return handshakeCtx.Err()
+	}
+	// The first completed outcome owns the result, even if the owner is not
+	// scheduled until after the deadline. No worker writes the live connection.
+	var mu sync.Mutex
+	var terminal handshakeResult
+	decided, startFinished, doneSent := false, false, false
+	ready := make(chan struct{})
+	traceDone := func(result handshakeResult) {
+		mu.Lock()
+		if !startFinished || doneSent {
+			mu.Unlock()
+			return
+		}
+		doneSent = true
+		mu.Unlock()
+		if trace != nil && trace.TLSHandshakeDone != nil {
+			state := tls.ConnectionState{}
+			if result.err == nil && result.state != nil {
+				state = *result.state
+			}
+			trace.TLSHandshakeDone(state, result.err)
+		}
 	}
 	go func() {
+		// Start stays on the worker so a slow user hook cannot hold up a
+		// timeout. If the owner already returned, finish its trace in order.
 		if trace != nil && trace.TLSHandshakeStart != nil {
 			trace.TLSHandshakeStart()
 		}
-		conn, tlsState, err := t.TLSHandshakeContext(ctx, addr, pconn.conn)
-		if err != nil {
-			if timer != nil {
-				timer.Stop()
-			}
-			if trace != nil && trace.TLSHandshakeDone != nil {
-				trace.TLSHandshakeDone(tls.ConnectionState{}, err)
-			}
-		} else {
-			pconn.conn = conn
-			pconn.tlsState = tlsState
-			if trace != nil && trace.TLSHandshakeDone != nil {
-				trace.TLSHandshakeDone(*tlsState, nil)
-			}
+		mu.Lock()
+		startFinished = true
+		alreadyDecided, prior := decided, terminal
+		mu.Unlock()
+		if alreadyDecided {
+			traceDone(prior)
 		}
-		errc <- err
+		conn, state, err := callback(handshakeCtx, addr, rawConn)
+		result := handshakeResult{conn: conn, state: state, err: err}
+		mu.Lock()
+		late := decided
+		if !decided {
+			if handshakeCtx.Err() != nil {
+				terminal.err = contextError()
+				late = true
+			} else {
+				terminal = result
+			}
+			decided = true
+			close(ready)
+		}
+		mu.Unlock()
+		cancel()
+		// A result that lost ownership is never published, including a
+		// distinct connection returned after the raw connection was closed.
+		if late && !isNilConn(conn) {
+			conn.Close()
+		}
 	}()
-	if err := <-errc; err != nil {
-		pconn.conn.Close()
-		return err
+	select {
+	case <-ready:
+	case <-handshakeCtx.Done():
 	}
+	mu.Lock()
+	if !decided {
+		terminal.err = contextError()
+		decided = true
+		close(ready)
+	}
+	selected := terminal
+	mu.Unlock()
+	cancel() // Stop the deadline before any slow Done hook.
+	if selected.err == nil && (isNilConn(selected.conn) || selected.state == nil) {
+		selected.err = errors.New("net/http: custom TLS handshake returned nil connection or state")
+	}
+	if selected.err != nil {
+		rawConn.Close()
+		if !isNilConn(selected.conn) {
+			selected.conn.Close()
+		}
+		traceDone(selected)
+		return selected.err
+	}
+	pconn.conn, pconn.tlsState = selected.conn, selected.state
+	traceDone(selected)
 	return nil
 }
 
