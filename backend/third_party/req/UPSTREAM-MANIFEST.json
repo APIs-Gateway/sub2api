@@ -820,8 +820,8 @@
     },
     {
       "path": "internal/dump/dump.go",
-      "sha256": "94daadfb92befe887bc19dd8baeefb31e73e29b610e4022cfccf6afd5d405c2c",
-      "bytes": 8041,
+      "sha256": "94ec67e462133fa86624f44470c2e96f01b518ffbd1eb519b2ac9ea3a01e84f6",
+      "bytes": 8043,
       "sources": [
         "local-required-dump-trace-race-repair-after-verified-original-race",
         "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
@@ -911,16 +911,16 @@
     },
     {
       "path": "dump.go",
-      "sha256": "fbcc0b176056584563809d832bf0d72b4fa21d585e4e5af9ac34119f12aba4cc",
-      "bytes": 8757,
+      "sha256": "a86c9b287ac7148f4764f10e5f2cc2a33ddd9e8c323bc1844ad5590f8c1c33c6",
+      "bytes": 8784,
       "sources": [
         "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
       ]
     },
     {
       "path": "transport.go",
-      "sha256": "feb39c913a821b198bb931ddfb3f0e74746e91b657eaeebe964382c7e9b43178",
-      "bytes": 112127,
+      "sha256": "1679f70830a3fe48ea428e28b0f9a2175a7042ff6ee0824f0e2275f7c5438a27",
+      "bytes": 112131,
       "sources": [
         "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue"
       ]
@@ -1548,9 +1548,23 @@
         "TestEnableDumpAllToFile"
       ]
     },
-    "sourceStatus": "RAW not remotely formatted; source-only expected identities are not RUN/PASS evidence. No local or87 execution; independent review, exact-head remote CI/OLD-NEW resource witness and all16x85 gates pending.",
+    "sourceStatus": "Remote Go1.26.10 formatter copies from exact e1 independently audited and imported verbatim (five changed Go files of eleven inputs); no local/87 execution. Exact-head runtime, OLD/NEW Windows resource witness, race/security/four profiles/all16x85 gates remain pending.",
     "closeErrorLimit": "Actual file close errors are joined/stored and returned idempotently; no portable deterministic filesystem close-error fixture and no fabricated PASS.",
-    "windowsObservationLimit": "Original40182645563 passed526 leaves but left2dump files; ignored Remove results mean no original same-process sharing-violation witness. New same-fixture calibrated actual Remove OLD/NEW still required."
+    "windowsObservationLimit": "Original40182645563 passed526 leaves but left2dump files; ignored Remove results mean no original same-process sharing-violation witness. New same-fixture calibrated actual Remove OLD/NEW still required.",
+    "formatEvidence": {
+      "run": 40617280088,
+      "controller": "2a8948c926ad3db2fab459106411c1e4c12fc2ec",
+      "sourceHead": "e1b71933de5e6d0c1124576ce98d5594a5c3d050",
+      "sourceTree": "85144f1b7cf7a582943571b4e596cd4b54b4e211",
+      "artifact": 12786280636,
+      "artifactBytes": 30729347,
+      "artifactSHA256": "5098cd4e07caee874730bf6588c5921ff1a7551d87afeb7b6057c8b923b2f6b0",
+      "toolchain": "go1.26.10 linux/amd64",
+      "inputFiles": 11,
+      "actualOperations": 44,
+      "rootIndependentReceiptSHA256": "59e61cc806324b8a7e61c5899dc8759a7e1d8c98412c085e0922fa8d3f522e6c",
+      "scope": "Full tracked4523/4524 inputs and archives unchanged; strict actual exits/bytes verified. Formatting only, no runtimePASS."
+    }
   },
   "http2ReceiveFlowContracts": {
     "baseHead": "6cbaddae9795d6a46c752e20fffd68fac2b49aa2",

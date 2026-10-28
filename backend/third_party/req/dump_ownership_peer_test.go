@@ -118,12 +118,12 @@ func ownedDumpPost(t *testing.T, client *Client, endpoint, marker string) {
 // This is a caller writer even though it implements Close. CloseDump must drain
 // admitted writes, while never invoking this Close method.
 type ownedDumpGate struct {
-	mu sync.Mutex
-	body bytes.Buffer
+	mu      sync.Mutex
+	body    bytes.Buffer
 	entered chan struct{}
 	release chan struct{}
-	once sync.Once
-	closed bool
+	once    sync.Once
+	closed  bool
 }
 
 func (w *ownedDumpGate) Write(p []byte) (int, error) {
@@ -142,4 +142,3 @@ func (w *ownedDumpGate) Close() error {
 	w.closed = true
 	return errors.New("caller Close must not run")
 }
-
