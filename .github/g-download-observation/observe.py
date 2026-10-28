@@ -30,6 +30,12 @@ OLD_PRODUCTION = "bf4dfe25dac427186ff32c93a5c9d45d89530418"
 OLD_SOURCE = OLD_PRODUCTION  # Replace with reviewed test-only child after formatting.
 OLD_TREE = "a48e9dd347c0d7420525d7d36698d18653913119"
 OLD_FIXTURES = ("dump_ownership_contract_test.go", "dump_ownership_peer_test.go")
+OLD_TLS_PRODUCTION = "e1b71933de5e6d0c1124576ce98d5594a5c3d050"
+OLD_TLS_SOURCE = OLD_TLS_PRODUCTION  # Immutable test-only child pin pending final formatted NEW.
+OLD_TLS_TREE = "85144f1b7cf7a582943571b4e596cd4b54b4e211"
+OLD_TLS_FIXTURES = ("custom_tls_handshake_peer_test.go", "custom_tls_handshake_test.go",
+                    "custom_tls_handshake_boundary_test.go", "internal/http2/custom_tls_handshake_peer_test.go",
+                    "internal/http2/custom_tls_handshake_test.go")
 INFRA_PATHS = {".github/g-download-observation/observe.py", ".github/g-download-observation/controls.py",
                ".github/g-download-observation/metadata_control_test.go.txt", ".github/workflows/g-download-observe.yml",
                "backend/tools/req-http2-security-evidence.py", "backend/third_party/req/download_wire_peer_test.go",
@@ -222,11 +228,11 @@ def exec_mode(argv, timeout=1000):
                                 ("GOOS", "GOARCH", "CGO_ENABLED", "GOTOOLCHAIN", "GOWORK",
                                  "GOFLAGS", "GOMAXPROCS", "GORACE", "GOCOVERDIR", "SUB2API_G_DOWNLOAD_PROFILE_DIR", "TMP", "TEMP", "TMPDIR", "GOTMPDIR")}}
     try:
-        if phase in ("old-calibration", "old-resource"):
+        if phase in ("old-calibration", "old-resource", "old-tls-race"):
             identity["sourceGitBefore"] = git(Path.cwd(), "rev-parse", "HEAD", "HEAD^{tree}").decode().splitlines()
         before = binary.read_bytes()
         identity.update({"beforeSHA256": sha(before), "bytes": len(before)})
-        if phase in ("old-calibration", "old-resource"):
+        if phase in ("old-calibration", "old-resource", "old-tls-race"):
             (directory / "actual-binary.exe").write_bytes(before)
     except OSError as error:
         identity["binaryReadError"] = repr(error)
@@ -249,9 +255,9 @@ def exec_mode(argv, timeout=1000):
     try:
         identity["afterSHA256"] = sha(binary.read_bytes())
         assert identity["beforeSHA256"] == identity["afterSHA256"]
-        if phase in ("old-calibration", "old-resource"):
+        if phase in ("old-calibration", "old-resource", "old-tls-race"):
             identity["sourceGitAfter"] = git(Path.cwd(), "rev-parse", "HEAD", "HEAD^{tree}").decode().splitlines()
-            assert identity["sourceGitBefore"] == identity["sourceGitAfter"] == [OLD_SOURCE, OLD_TREE]
+            assert identity["sourceGitBefore"] == identity["sourceGitAfter"] == [os.environ["G_OBSERVATION_SOURCE_HEAD"], os.environ["G_OBSERVATION_SOURCE_TREE"]]
         for label, command in (("go-version-m", ["go", "version", "-m", str(binary)]),
                                ("go-buildid", ["go", "tool", "buildid", str(binary)])):
             require_success(capture(directory / label, command, Path.cwd()))
@@ -552,14 +558,24 @@ def actual_inventory(phase, source, windows):
     default_output = selected_inventory["parallelDownloadDefaultOutputLeaves"]
     ownership = selected_inventory["dumpOwnershipLeaves"]
     h2_receive = selected_inventory["http2ReceiveFlowLeaves"]
+    tls_root = selected_inventory["customTLSLeaves"]
+    tls_h2 = selected_inventory["customTLSHTTP2Leaves"]
     h2_package = MODULE + "/internal/http2"
     assert selected_inventory["dumpOwnershipPackage"] == MODULE
     assert len(ownership) == len(set(ownership)) == selected_inventory["dumpOwnershipCount"] == 42
     assert selected_inventory["http2ReceiveFlowPackage"] == h2_package
     assert len(h2_receive) == len(set(h2_receive)) == selected_inventory["http2ReceiveFlowCount"] == 6
+    assert selected_inventory["customTLSPackage"] == MODULE
+    assert len(tls_root) == len(set(tls_root)) == selected_inventory["customTLSCount"] == 18
+    assert selected_inventory["customTLSHTTP2Package"] == h2_package
+    assert len(tls_h2) == len(set(tls_h2)) == selected_inventory["customTLSHTTP2Count"] == 13
     manifest = json.loads((source / "backend/third_party/req/UPSTREAM-MANIFEST.json").read_text(encoding="utf-8"))
     assert ownership == manifest["ownedDumpClose1752"]["requiredNewTestLeaves"]
     assert h2_receive == manifest["http2ReceiveFlowContracts"]["leaves"]
+    tls_contract = manifest["customTLSOwnershipContracts"]
+    assert tls_root == tls_contract["rootLeaves"] and tls_contract["rootPackage"] == MODULE and tls_contract["rootCount"] == 18
+    assert tls_h2 == tls_contract["privateHTTP2Leaves"] and tls_contract["privateHTTP2Package"] == h2_package and tls_contract["privateHTTP2Count"] == 13
+    assert tls_contract["priorMandatoryLeaves"] == 574 and tls_contract["composedMandatoryLeaves"] == 605
     assert len(fallback) == len(cleanup) == 1
     assert selected_inventory["parallelDownloadInProcessPackage"] == MODULE
     assert len(in_process) == len(set(in_process)) == selected_inventory["parallelDownloadInProcessCount"] == 23
@@ -572,8 +588,8 @@ def actual_inventory(phase, source, windows):
     assert selected_inventory["parallelDownloadDefaultOutputCount"] == len(default_output) == 1
     assert default_output == ["TestReqParallelDownloadDefaultOutput/url_path_filename"]
     assert provenance["defaultOutputContract"]["leaves"] == default_output
-    expected = set(inventory["linux"] + fallback + cleanup + in_process + default_output + ownership + (inventory["windowsAdditional"] if windows else []))
-    assert len(expected) == (101 if windows else 100)
+    expected = set(inventory["linux"] + fallback + cleanup + in_process + default_output + ownership + tls_root + (inventory["windowsAdditional"] if windows else []))
+    assert len(expected) == (119 if windows else 118)
     runs = collections.Counter((event.get("Package"), event.get("Test")) for event in events if event.get("Action") == "run")
     passes = collections.Counter((event.get("Package"), event.get("Test")) for event in events if event.get("Action") == "pass" and event.get("Test"))
     packages = objects((E / "commands/packages/stdout").read_bytes())
@@ -581,7 +597,7 @@ def actual_inventory(phase, source, windows):
     bad = [event for event in events if event.get("Action") == "fail" or (event.get("Action") == "skip" and (event.get("Test") or event.get("Package") in test_packages))]
     package_passes = collections.Counter(event.get("Package") for event in events if event.get("Action") == "pass" and not event.get("Test"))
     g_events = {name: {"run": runs[(MODULE, name)], "pass": passes[(MODULE, name)]} for name in sorted(expected)}
-    h2_events = {name: {"run": runs[(h2_package, name)], "pass": passes[(h2_package, name)]} for name in h2_receive}
+    h2_events = {name: {"run": runs[(h2_package, name)], "pass": passes[(h2_package, name)]} for name in h2_receive + tls_h2}
     # Two writer-drain controls deliberately own no file; every other ownership
     # leaf must witness an actual successful Remove, not just absence of Fatal.
     file_ownership = set(ownership) - {"TestReqDumpOwnershipCloseDrains/async_false", "TestReqDumpOwnershipCloseDrains/async_true"}
@@ -602,12 +618,14 @@ def actual_inventory(phase, source, windows):
         default_execution.append({"test": name,
                                   "completedMarkers": output.count("G1748_DEFAULT_OUTPUT_COMPLETE " + name + " "),
                                   "childDelegationMarkers": "G_CHILD_ACTUAL" in output or "G_CHILD_EXECUTED" in output})
-    unexpected = sorted(name for package, name in runs if package == MODULE and name and name.startswith(("TestReqDownload", "TestReqParallelDownload", "TestReqDumpOwnership")) and name not in expected and not any(other.startswith(name + "/") for other in expected))
-    unexpected_h2 = sorted(name for package, name in runs if package == h2_package and name and name.startswith("TestReqHTTP2ReceiveFlowContract_") and name not in h2_receive and not any(other.startswith(name + "/") for other in h2_receive))
+    unexpected = sorted(name for package, name in runs if package == MODULE and name and name.startswith(("TestReqDownload", "TestReqParallelDownload", "TestReqDumpOwnership", "TestReqCustomTLS_")) and name not in expected and not any(other.startswith(name + "/") for other in expected))
+    unexpected_h2 = sorted(name for package, name in runs if package == h2_package and name and name.startswith(("TestReqHTTP2ReceiveFlowContract_", "TestReqCustomTLS_")) and name not in h2_receive + tls_h2 and not any(other.startswith(name + "/") for other in h2_receive + tls_h2))
     old = selected_inventory
     original = {(old[key[:-6] + "Package"], leaf) for key, values in old.items() if key.endswith("Leaves") and isinstance(values, list) and key[:-6] + "Package" in old for leaf in values}
-    assert len(original) == old["totalNamedLeaves"] == 574
-    previous526 = original - {(MODULE, name) for name in ownership} - {(h2_package, name) for name in h2_receive}
+    assert len(original) == old["totalNamedLeaves"] == 605
+    previous574 = original - {(MODULE, name) for name in tls_root} - {(h2_package, name) for name in tls_h2}
+    assert len(previous574) == 574
+    previous526 = previous574 - {(MODULE, name) for name in ownership} - {(h2_package, name) for name in h2_receive}
     assert len(previous526) == 526
     previous525 = previous526 - {(MODULE, name) for name in default_output}
     assert len(previous525) == 525
@@ -637,7 +655,10 @@ def actual_inventory(phase, source, windows):
             elif name == "TestSetFile":
                 file_identity_markers = output.count("FILE_ACTUAL_MISSING_IDENTITY isNotExist=true ")
     result = {"expectedGLeaves": len(expected), "gActual": g_events, "unexpectedGLeaves": unexpected,
-              "badEvents": bad, "mandatory574Actual": old_events,
+              "badEvents": bad, "mandatory605Actual": old_events,
+              "mandatory574Actual": [item for item in old_events if (item["package"], item["test"]) in previous574],
+              "customTLSRootActual": {name: g_events[name] for name in tls_root},
+              "customTLSHTTP2Actual": {name: h2_events[name] for name in tls_h2},
               "mandatory526Actual": [item for item in old_events if (item["package"], item["test"]) in previous526],
               "mandatory525Actual": previous525_events,
               "h2ReceiveActual": h2_events, "unexpectedH2Leaves": unexpected_h2,
@@ -774,10 +795,13 @@ def old_test_only_inputs(old, source, frozen):
 
 def old_event_ledger(events, phase):
     """Every actual OLD JSON event belongs to one complete, ordered ledger."""
-    assert phase in ("old-calibration", "old-resource")
+    assert phase in ("old-calibration", "old-resource", "old-tls-race")
     calibration = phase == "old-calibration"
     parent = "TestReqDumpOwnershipWindowsCalibration" if calibration else "TestReqDumpOwnershipFileLifecycle"
     expected = {parent} if calibration else {parent, parent + "/request_sync", parent + "/client_sync"}
+    if phase == "old-tls-race":
+        parent = "TestReqCustomTLS_LatePublicationRace"
+        expected = {parent, parent + "/HTTP1", parent + "/HTTP2"}
     terminal = "pass" if calibration else "fail"
     states = {name: "pending" for name in expected}
     package_state = "pending"
@@ -812,15 +836,15 @@ def old_event_ledger(events, phase):
     return {"package": MODULE, "terminal": terminal, "tests": sorted(expected), "orderedComplete": True}
 
 
-def old_binary_evidence(directory, phase, selector, old, actual_exit):
+def old_binary_evidence(directory, phase, selector, old, actual_exit, head=OLD_SOURCE, tree=OLD_TREE):
     """A real failing binary still needs complete immutable metadata/profile proof."""
     binaries = directory / "binaries"
     entries = list(binaries.iterdir())
     assert len(entries) == 1 and entries[0].is_dir() and not entries[0].is_symlink(), "OLD binary identity missing/duplicate"
     root = entries[0]
     identity = json.loads((root / "identity.json").read_text(encoding="utf-8"))
-    assert identity["phase"] == phase and identity["source"] == OLD_SOURCE
-    assert identity["sourceGitBefore"] == identity["sourceGitAfter"] == [OLD_SOURCE, OLD_TREE]
+    assert identity["phase"] == phase and identity["source"] == head
+    assert identity["sourceGitBefore"] == identity["sourceGitAfter"] == [head, tree]
     assert Path(identity["actualWorkingDirectory"]).resolve() == (old / "backend/third_party/req").resolve()
     assert identity["metadataComplete"] is True
     assert not any(key.endswith("Error") for key in identity), "OLD binary metadata contains an error"
@@ -876,7 +900,7 @@ def old_binary_evidence(directory, phase, selector, old, actual_exit):
     assert "-test.coverprofile=" + identity["parentProfile"]["originalPath"] in argv
     assert any(int(line.rsplit(" ", 1)[1]) > 0 for line in raw.decode().splitlines()[1:]), "OLD atomic profile has no executed blocks"
     assert profile_blocks(profile, old) == profile_blocks(directory / "parent.raw.out", old, aggregate=True)
-    proof = {"source": OLD_SOURCE, "tree": OLD_TREE, "binarySHA256": identity["beforeSHA256"],
+    proof = {"source": head, "tree": tree, "binarySHA256": identity["beforeSHA256"],
              "actualExit": actual_exit, "identity": str((root / "identity.json").relative_to(E)),
              "metadataComplete": True, "atomicProfileSHA256": sha(raw), "auxiliarySealsComplete": True}
     save(directory / "verified-binary-evidence.json", proof)
@@ -918,7 +942,7 @@ def old_windows_witness():
                                 ("old-resource", "^TestReqDumpOwnershipFileLifecycle$/^(request_sync|client_sync)$")):
             directory = E / "phases" / phase
             directory.mkdir(parents=True)
-            env = dict(os.environ, G_OBSERVATION_PHASE=phase, G_OBSERVATION_SOURCE_HEAD=OLD_SOURCE)
+            env = dict(os.environ, G_OBSERVATION_PHASE=phase, G_OBSERVATION_SOURCE_HEAD=OLD_SOURCE, G_OBSERVATION_SOURCE_TREE=OLD_TREE)
             argv = ["go", "test", "-p=1", "-parallel=1", "-race", "-count=1", "-timeout=3m", "-json",
                     "-covermode=atomic", "-coverpkg=" + MODULE + "/...",
                     "-coverprofile=" + str(directory / "parent.raw.out"), "-exec=" + exec_flag,
@@ -979,6 +1003,146 @@ def old_windows_witness():
                 report["errors"].append({"check": label + "-after-freeze", "error": traceback.format_exc()})
         save(E / "actual-old-resource-witness.json", report)
     return 0 if report["resourceRED"] and not report["errors"] else 1
+
+
+
+def old_tls_test_only_inputs(old, source, frozen):
+    """The race witness retains full e1 production and the five identical tests."""
+    assert git(old, "rev-parse", "HEAD^{tree}").decode().strip() == OLD_TLS_TREE
+    assert git(old, "show", "-s", "--format=%P", "HEAD").decode().split() == [OLD_TLS_PRODUCTION]
+    anchor = {}
+    for row in git(old, "ls-tree", "--full-tree", "-r", "-z", OLD_TLS_PRODUCTION).split(b"\0"):
+        if row:
+            header, name = row.split(b"\t", 1)
+            mode, kind, blob = header.decode().split()
+            assert kind == "blob"
+            anchor[os.fsdecode(name)] = (mode, blob)
+    current = {item["path"]: item for item in frozen["files"]}
+    paths = {"backend/third_party/req/" + name for name in OLD_TLS_FIXTURES}
+    manifest_path = "backend/third_party/req/UPSTREAM-MANIFEST.json"
+    assert not set(anchor) - set(current)
+    assert set(current) - set(anchor) == paths, "OLD TLS may add only five identical fixtures"
+    assert all((current[name]["mode"], current[name]["blob"]) == value
+               for name, value in anchor.items() if name != manifest_path), "OLD TLS production/original tests changed"
+    assert current[manifest_path]["mode"] == anchor[manifest_path][0]
+    seals = {}
+    for name in OLD_TLS_FIXTURES:
+        relative = "backend/third_party/req/" + name
+        raw = (old / relative).read_bytes()
+        assert raw == (source / relative).read_bytes(), "OLD/NEW TLS fixture bytes differ"
+        seals[name] = sha(raw)
+    original = json.loads(git(old, "show", OLD_TLS_PRODUCTION + ":" + manifest_path))
+    actual = json.loads((old / manifest_path).read_text(encoding="utf-8"))
+    assert set(actual) == set(original) | {"customTLSWitnessControl"}
+    assert all(actual[name] == value for name, value in original.items() if name != "newOwnedFiles")
+    assert actual["newOwnedFiles"] == original["newOwnedFiles"] + list(OLD_TLS_FIXTURES)
+    assert actual["customTLSWitnessControl"] == {
+        "productionHead": OLD_TLS_PRODUCTION, "fixtureSHA256": seals,
+        "scope": "test-only H1/H2 custom TLS race witness; no production correction"}
+    frames = {"HTTP1": ("transport.go", 2082, "pconn.conn = conn", 2091, "pconn.conn.Close()"),
+              "HTTP2": ("internal/http2/transport.go", 642, "conn = tlsCn", 650, "conn.Close()")}
+    for path, write_line, write_source, read_line, read_source in frames.values():
+        lines = (old / "backend/third_party/req" / path).read_text().splitlines()
+        assert lines[write_line - 1].strip() == write_source
+        assert lines[read_line - 1].strip() == read_source
+    save(E / "old-tls-test-only-inputs.json", {"oldHead": OLD_TLS_SOURCE, "oldTree": OLD_TLS_TREE,
+         "productionHead": OLD_TLS_PRODUCTION, "fixtureSHA256": seals, "actualFieldFrames": frames,
+         "policy": "Every other tracked mode/blob equals preserved e1; original production/tests/manifest declarations unchanged"})
+
+
+def old_tls_race_frames(output, protocol):
+    """Require a same-address production write/read pair in each actual race report."""
+    path, function, write_line, read_line = (
+        ("/third_party/req/transport.go", "customTlsHandshake", 2082, 2091) if protocol == "HTTP1" else
+        ("/third_party/req/internal/http2/transport.go", "dialTLSWithContext", 642, 650))
+    records = []
+    for block in output.split("WARNING: DATA RACE\n")[1:]:
+        block = block.split("==================", 1)[0]
+        accesses = list(re.finditer(r"(?i:(?:Previous )?(Read|Write)) at (0x[0-9a-f]+) by goroutine [0-9]+:\n", block))
+        actual = []
+        for index, match in enumerate(accesses):
+            end = accesses[index + 1].start() if index + 1 < len(accesses) else len(block)
+            stack = block[match.end():end].split("\nGoroutine ", 1)[0]
+            kind = match[1].capitalize()
+            line = write_line if kind == "Write" else read_line
+            module_function = MODULE + ("/internal/http2" if protocol == "HTTP2" else "") + ".(*Transport)." + function
+            if re.search(re.escape(module_function) + r"(?:\.func[0-9]+)?\(.*\)\n\s+[^\n]*" + re.escape(path) + ":" + str(line) + r"(?:\s|\+)", stack.replace("\\", "/")):
+                actual.append({"kind": kind, "address": match[2], "sourceLine": line})
+        if len(actual) == 2 and {item["kind"] for item in actual} == {"Read", "Write"} and len({item["address"] for item in actual}) == 1:
+            records.append({"protocol": protocol, "function": function, "sourcePath": path,
+                            "accesses": actual, "rawRaceReportSHA256": sha(block.encode())})
+    assert records, "No actual same-address OLD production read/write race pair for " + protocol
+    return records
+
+
+def old_tls_witness():
+    report = {"kind": "old-custom-tls-race-witness", "source": OLD_TLS_SOURCE, "tree": OLD_TLS_TREE,
+              "production": OLD_TLS_PRODUCTION, "newSource": SOURCE, "controller": os.environ["GITHUB_SHA"],
+              "errors": [], "commands": [], "raceRED": False,
+              "scope": "Separate actual OLD negative observation; never waives any NEW test/race/resource/85 failure"}
+    roots = {"controller": (WORKSPACE / "controller", os.environ["GITHUB_SHA"]),
+             "baseline": (WORKSPACE / "baseline", BASE), "candidate": (WORKSPACE / "source", SOURCE),
+             "old-tls": (WORKSPACE / "old-tls", OLD_TLS_SOURCE)}
+    before = {}
+    try:
+        assert SOURCE_READY, "Design controller only: formatted NEW/OLD TLS pins and dual review pending"
+        assert os.name != "nt", "OLD custom TLS witness uses the isolated Linux race job"
+        for label, (root, head) in roots.items():
+            before[label] = snapshot(root, head, label + "-before", archive=True)
+        assert before["candidate"]["tree"] == TREE
+        old, source = WORKSPACE / "old-tls", WORKSPACE / "source"
+        old_tls_test_only_inputs(old, source, before["old-tls"])
+        require_success(capture(E / "commands/go-version", ["go", "version"], WORKSPACE))
+        assert (E / "commands/go-version/stdout").read_text().strip() == "go version go1.26.10 linux/amd64"
+        require_success(capture(E / "commands/go-env", ["go", "env", "-json", "GOOS", "GOARCH", "CGO_ENABLED", "CC", "GOTOOLCHAIN", "GOWORK", "GOFLAGS"], WORKSPACE))
+        actual_env = json.loads((E / "commands/go-env/stdout").read_text())
+        assert actual_env == {"GOOS": "linux", "GOARCH": "amd64", "CGO_ENABLED": "1", "CC": "gcc",
+                              "GOTOOLCHAIN": "local", "GOWORK": "off", "GOFLAGS": "-mod=readonly"}
+        compiler_preflight(actual_env)
+        exec_controls()
+        module_graph(WORKSPACE / "baseline", old)
+        wrapper = Path(__file__).resolve()
+        assert '"' not in str(wrapper) and '"' not in sys.executable
+        exec_flag = '"' + sys.executable + '" "' + str(wrapper) + '" exec'
+        phase = "old-tls-race"
+        selector = "^TestReqCustomTLS_LatePublicationRace$/^(HTTP1|HTTP2)$"
+        directory = E / "phases" / phase
+        directory.mkdir(parents=True)
+        env = dict(os.environ, G_OBSERVATION_PHASE=phase, G_OBSERVATION_SOURCE_HEAD=OLD_TLS_SOURCE,
+                   G_OBSERVATION_SOURCE_TREE=OLD_TLS_TREE)
+        argv = ["go", "test", "-p=1", "-parallel=1", "-race", "-count=1", "-timeout=3m", "-json",
+                "-covermode=atomic", "-coverpkg=" + MODULE + "/...",
+                "-coverprofile=" + str(directory / "parent.raw.out"), "-exec=" + exec_flag,
+                "-run=" + selector, MODULE]
+        command = capture(directory / "command", argv, old / "backend", timeout=600, env=env)
+        report["commands"].append(command)
+        assert command["started"] and command["streamsComplete"] and not command["watchdog"] and command["exitCode"] == 1
+        raw, stderr = (directory / "command/stdout").read_bytes(), (directory / "command/stderr").read_bytes()
+        assert not any(marker in raw + stderr for marker in (b"panic:", b"fatal error:", b"test timed out", b"G_CHILD_WATCHDOG"))
+        events = [json.loads(line) for line in raw.decode("utf-8").splitlines()]
+        ledger = old_event_ledger(events, phase)
+        binary = old_binary_evidence(directory, phase, selector, old, 1, head=OLD_TLS_SOURCE, tree=OLD_TLS_TREE)
+        records = []
+        for protocol in ("HTTP1", "HTTP2"):
+            name = "TestReqCustomTLS_LatePublicationRace/" + protocol
+            output = "".join(event.get("Output", "") for event in events if event.get("Test") == name)
+            version, alpn = ("1", r'(?:|http/1\.1)') if protocol == "HTTP1" else ("2", "h2")
+            assert re.search(r"CUSTOM_TLS_REAL_HANDSHAKE protocol=" + version + r' version=[0-9a-f]+ alpn="' + alpn + r'" raw=[^;\s]+; actual timeout=.+', output), "Missing genuine Firefox TLS and typed-timeout prerequisite marker"
+            assert "CUSTOM_TLS_PREREQUISITE:" not in output and "CUSTOM_TLS_TIMEOUT:" not in output
+            records.append({"test": name, "actualRun": 1, "actualFail": 1,
+                            "actualTypedTimeoutAndRealTLS": True, "productionRacePairs": old_tls_race_frames(output, protocol)})
+        report.update({"observed": records, "ledger": ledger, "binaryEvidence": binary, "raceRED": True})
+    except Exception:
+        report["errors"].append(traceback.format_exc())
+    finally:
+        for label, (root, head) in roots.items():
+            try:
+                after = snapshot(root, head, label + "-after")
+                assert before[label] == after
+            except Exception:
+                report["errors"].append({"check": label + "-after-freeze", "error": traceback.format_exc()})
+        save(E / "actual-old-tls-race-witness.json", report)
+    return 0 if report["raceRED"] and not report["errors"] else 1
 
 
 def observe(kind):
@@ -1050,7 +1214,7 @@ def observe(kind):
             selector = "^(TestReqDownloadContract|TestReqDownloadContractCancellation|TestReqParallelDownloadContract"
             selector += "|TestReqParallelDownloadFallback|TestReqParallelDownloadHTTP3Cleanup|TestReqParallelDownloadInProcessContract"
             selector += "|TestReqParallelDownloadDefaultOutput"
-            selector += "|TestReqDumpOwnership.*|TestReqHTTP2ReceiveFlowContract_.*"
+            selector += "|TestReqDumpOwnership.*|TestReqHTTP2ReceiveFlowContract_.*|TestReqCustomTLS_.*"
             selector += "|TestReqParallelDownloadWindowsClose)$" if os.name == "nt" else ")$"
             wrapper = Path(__file__).resolve()
             # cmd/go's quoted.Split accepts quoted argv items; no shell expansion.
@@ -1109,7 +1273,7 @@ def observe(kind):
                 assert before[label] == after
             except Exception:
                 report["errors"].append({"check": label + "-after-freeze", "error": traceback.format_exc()})
-        report["policy"] = "Every NEW actual failure fails this job; no accepted-RED list or profile counter merge. Exact673 retained468 baseline, original401 within it, retained526+H2six+dump42=574 and platform jobs remain independent obligations. Child profiles never contribute counters to the original four profiles or formal16-adapt coverage gates. OLD resource observations are separate and cannot waive NEW failures."
+        report["policy"] = "Every NEW actual failure fails this job; no accepted-RED list or profile counter merge. Exact673 retained468 baseline, original401 within it, retained526+H2six+dump42=574 plus distinct rootTLS18/privateH2TLS13=605 and platform jobs remain independent obligations. Child profiles never contribute counters to the original four profiles or formal16-adapt coverage gates. OLD resource and OLD TLS race observations are separate and cannot waive NEW failures."
         save(E / "actual-observation.json", report)
     return 1 if report["errors"] else 0
 
@@ -1119,6 +1283,8 @@ if __name__ == "__main__":
         sys.exit(exec_mode(sys.argv[2:]))
     if sys.argv[1] == "control-exec":
         sys.exit(exec_mode(sys.argv[3:], timeout=float(sys.argv[2])))
+    if sys.argv[1] == "old-tls-witness":
+        sys.exit(old_tls_witness())
     if sys.argv[1] == "old-witness":
         sys.exit(old_windows_witness())
     sys.exit(observe(sys.argv[1]))

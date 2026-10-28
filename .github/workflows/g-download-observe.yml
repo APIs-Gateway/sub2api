@@ -238,3 +238,82 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
+
+  old-custom-tls-race:
+    name: OLD H1 and H2 actual custom TLS race (test-only pins pending)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Initialize isolated native evidence and raw checkout policy
+        shell: python {0}
+        run: |
+          import json, os, pathlib, platform, subprocess, sys
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          identity = '-'.join((os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT'], os.environ['GITHUB_JOB'], os.environ['RUNNER_OS']))
+          evidence = root / ('g-download-observe-' + identity)
+          evidence.mkdir(exist_ok=False)
+          assert platform.machine().lower() in ('amd64', 'x86_64')
+          values = {'G_OBSERVATION_EVIDENCE': str(evidence), 'GOOS': 'windows' if sys.platform == 'win32' else 'linux', 'GOARCH': 'amd64'}
+          for name in ('GOCACHE', 'GOMODCACHE', 'GOTMPDIR'):
+              path = root / ('g-download-' + name.lower() + '-' + identity)
+              path.mkdir(exist_ok=False)
+              values[name] = str(path)
+          scratch = root / ('g-download-test-scratch-' + identity)
+          scratch.mkdir(exist_ok=False)
+          for name in ('TMP', 'TEMP', 'TMPDIR'):
+              values[name] = str(scratch)
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8', newline='\n') as output:
+              for key, value in values.items():
+                  output.write(key + '=' + value + '\n')
+          (evidence / 'initial-runner.json').write_text(json.dumps({'controller': os.environ['GITHUB_SHA'], 'platform': platform.platform(), 'machine': platform.machine(), 'python': sys.version, 'taskScratch': str(scratch), 'tempEnvironment': {key: values[key] for key in ('TMP', 'TEMP', 'TMPDIR')}, 'image': {key: os.environ.get(key) for key in ('ImageOS', 'ImageVersion', 'RUNNER_OS', 'RUNNER_ARCH')}}, indent=2) + '\n')
+          subprocess.run(['git', 'config', '--global', 'core.autocrlf', 'false'], check=True)
+          subprocess.run(['git', 'config', '--global', 'core.eol', 'lf'], check=True)
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: 673c3fafa9ff9c4c32a6adbd8cd5f595c25f0c63
+          path: baseline
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: e1b71933de5e6d0c1124576ce98d5594a5c3d050
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      # Design placeholder: replace with immutable e1 five-fixture test-only child after NEW formatting.
+      - uses: actions/checkout@v6
+        with:
+          ref: e1b71933de5e6d0c1124576ce98d5594a5c3d050
+          path: old-tls
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.10'
+          check-latest: false
+          cache: false
+      - name: Observe both exact OLD production race pairs after real Firefox TLS and typed timeout
+        shell: python {0}
+        run: |
+          import os, pathlib, subprocess, sys
+          script = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'controller/.github/g-download-observation/observe.py'
+          result = subprocess.run([sys.executable, '-B', str(script), 'old-tls-witness'])
+          sys.exit(result.returncode)
+      - name: Always retain full OLD and NEW trees, actual H1/H2 race frames and exact binary metadata
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: g-download-observe-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ runner.os }}
+          path: ${{ runner.temp }}/g-download-observe-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ runner.os }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
