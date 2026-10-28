@@ -78,6 +78,8 @@ func TestReqDumpOwnershipFileLifecycle(t *testing.T) {
 				t.Fatalf("actual complete exchange not captured: calls=%d output=%q", calls.Load(), data)
 			}
 			ownedDumpRemove(t, path)
+			// Keep OLD's request-owned file reachable through the resource oracle.
+			runtime.KeepAlive(owner)
 		})
 	}
 }
@@ -503,8 +505,8 @@ func TestReqDumpOwnershipRetryAndReuse(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "retry.dump")
 	request := client.R().EnableDumpToFile(path).SetBodyString("retry-owned-upload").SetRetryCount(1).
 		SetRetryFixedInterval(0).SetRetryCondition(func(response *Response, err error) bool {
-			return err == nil && response.StatusCode == http.StatusServiceUnavailable
-		})
+		return err == nil && response.StatusCode == http.StatusServiceUnavailable
+	})
 	for invocation := 0; invocation < 2; invocation++ {
 		response, err := request.Post(server.URL)
 		if err != nil || response.StatusCode != http.StatusOK || response.String() != "retry-complete-response" {
