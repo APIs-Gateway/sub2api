@@ -163,6 +163,9 @@ def snapshot(root, head, label, archive=False):
     status = git(root, "status", "--porcelain=v1", "--untracked-files=all")
     (E / (label + ".status")).write_bytes(status)
     assert not status, "Dirty or incomplete full checkout: " + label
+    ignored = git(root, "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
+    (E / (label + ".ignored")).write_bytes(ignored)
+    assert not ignored, "Ignored generated/residual input outside frozen checkout: " + label
     index = git(root, "ls-files", "--stage", "-z")
     (E / (label + ".index")).write_bytes(index)
     files = []
@@ -219,8 +222,12 @@ def exec_mode(argv, timeout=1000):
                                 ("GOOS", "GOARCH", "CGO_ENABLED", "GOTOOLCHAIN", "GOWORK",
                                  "GOFLAGS", "GOMAXPROCS", "GORACE", "GOCOVERDIR", "SUB2API_G_DOWNLOAD_PROFILE_DIR", "TMP", "TEMP", "TMPDIR", "GOTMPDIR")}}
     try:
+        if phase in ("old-calibration", "old-resource"):
+            identity["sourceGitBefore"] = git(Path.cwd(), "rev-parse", "HEAD", "HEAD^{tree}").decode().splitlines()
         before = binary.read_bytes()
         identity.update({"beforeSHA256": sha(before), "bytes": len(before)})
+        if phase in ("old-calibration", "old-resource"):
+            (directory / "actual-binary.exe").write_bytes(before)
     except OSError as error:
         identity["binaryReadError"] = repr(error)
     save(directory / "identity.json", identity)
@@ -242,6 +249,9 @@ def exec_mode(argv, timeout=1000):
     try:
         identity["afterSHA256"] = sha(binary.read_bytes())
         assert identity["beforeSHA256"] == identity["afterSHA256"]
+        if phase in ("old-calibration", "old-resource"):
+            identity["sourceGitAfter"] = git(Path.cwd(), "rev-parse", "HEAD", "HEAD^{tree}").decode().splitlines()
+            assert identity["sourceGitBefore"] == identity["sourceGitAfter"] == [OLD_SOURCE, OLD_TREE]
         for label, command in (("go-version-m", ["go", "version", "-m", str(binary)]),
                                ("go-buildid", ["go", "tool", "buildid", str(binary)])):
             require_success(capture(directory / label, command, Path.cwd()))
@@ -739,6 +749,7 @@ def old_test_only_inputs(old, source, frozen):
     assert set(current) - set(anchor) == paths, "OLD may add only the two identical fixtures"
     assert all((current[name]["mode"], current[name]["blob"]) == value
                for name, value in anchor.items() if name != manifest_path), "OLD production/original tests changed"
+    assert current[manifest_path]["mode"] == anchor[manifest_path][0], "OLD manifest mode changed"
     seals = {}
     for name in OLD_FIXTURES:
         relative = "backend/third_party/req/" + name
@@ -759,6 +770,117 @@ def old_test_only_inputs(old, source, frozen):
     save(E / "old-test-only-inputs.json", {"oldHead": OLD_SOURCE, "oldTree": OLD_TREE,
          "productionHead": OLD_PRODUCTION, "fixtureSHA256": seals,
          "policy": "All other tracked modes/blobs match bf4; original132 and13/1/118 partition unchanged"})
+
+
+def old_event_ledger(events, phase):
+    """Every actual OLD JSON event belongs to one complete, ordered ledger."""
+    assert phase in ("old-calibration", "old-resource")
+    calibration = phase == "old-calibration"
+    parent = "TestReqDumpOwnershipWindowsCalibration" if calibration else "TestReqDumpOwnershipFileLifecycle"
+    expected = {parent} if calibration else {parent, parent + "/request_sync", parent + "/client_sync"}
+    terminal = "pass" if calibration else "fail"
+    states = {name: "pending" for name in expected}
+    package_state = "pending"
+    for event in events:
+        assert isinstance(event, dict) and event.get("Package") == MODULE, "Unexpected OLD event package"
+        action = event.get("Action")
+        assert package_state != "done", "OLD event after package terminal"
+        if "Test" not in event:
+            if action == "start":
+                assert package_state == "pending"
+                package_state = "running"
+            elif action == "output":
+                assert package_state == "running" and isinstance(event.get("Output"), str)
+            else:
+                assert action == terminal and package_state == "running"
+                assert all(state == "done" for state in states.values()), "Incomplete OLD test ledger"
+                package_state = "done"
+            continue
+        name = event["Test"]
+        assert name in states and package_state == "running", "Unexpected OLD test identity"
+        if action == "run":
+            assert states[name] == "pending", "Duplicate OLD test RUN"
+            assert name == parent or states[parent] == "running", "OLD child outside running parent"
+            states[name] = "running"
+        elif action == "output":
+            assert states[name] == "running" and isinstance(event.get("Output"), str), "OLD output outside RUN/terminal"
+        else:
+            assert action == terminal and states[name] == "running", "Illegal/duplicate OLD test terminal"
+            assert name != parent or all(states[child] == "done" for child in expected - {parent}), "OLD parent completed before children"
+            states[name] = "done"
+    assert package_state == "done" and all(state == "done" for state in states.values()), "OLD ledger incomplete"
+    return {"package": MODULE, "terminal": terminal, "tests": sorted(expected), "orderedComplete": True}
+
+
+def old_binary_evidence(directory, phase, selector, old, actual_exit):
+    """A real failing binary still needs complete immutable metadata/profile proof."""
+    binaries = directory / "binaries"
+    entries = list(binaries.iterdir())
+    assert len(entries) == 1 and entries[0].is_dir() and not entries[0].is_symlink(), "OLD binary identity missing/duplicate"
+    root = entries[0]
+    identity = json.loads((root / "identity.json").read_text(encoding="utf-8"))
+    assert identity["phase"] == phase and identity["source"] == OLD_SOURCE
+    assert identity["sourceGitBefore"] == identity["sourceGitAfter"] == [OLD_SOURCE, OLD_TREE]
+    assert Path(identity["actualWorkingDirectory"]).resolve() == (old / "backend").resolve()
+    assert identity["metadataComplete"] is True
+    assert not any(key.endswith("Error") for key in identity), "OLD binary metadata contains an error"
+    assert re.fullmatch(r"[0-9a-f]{64}", identity["beforeSHA256"])
+    assert identity["beforeSHA256"] == identity["afterSHA256"] and identity["bytes"] > 0
+    binary_raw = (root / "actual-binary.exe").read_bytes()
+    assert len(binary_raw) == identity["bytes"] and sha(binary_raw) == identity["beforeSHA256"]
+    argv = identity["argv"]
+    assert argv and Path(argv[0]).is_absolute() and str(Path(argv[0]).resolve()) == identity["binary"]
+    for flag in ("-test.run=" + selector, "-test.count=1", "-test.parallel=1", "-test.timeout=3m0s", "-test.v=test2json"):
+        assert argv.count(flag) == 1, "OLD binary argv differs"
+    for prefix in ("-test.run=", "-test.count=", "-test.parallel=", "-test.timeout=", "-test.v=", "-test.coverprofile=", "-test.gocoverdir="):
+        assert sum(arg.startswith(prefix) for arg in argv[1:]) == 1, "OLD binary argv missing/duplicate flag"
+    for key in ("GOOS", "GOARCH", "CGO_ENABLED", "GOTOOLCHAIN", "GOWORK", "GOFLAGS", "GOMAXPROCS", "GORACE", "TMP", "TEMP", "TMPDIR", "GOTMPDIR"):
+        assert identity["environment"][key] == os.environ.get(key), "OLD binary environment differs"
+    actual_dir = root / "actual"
+    actual = json.loads((actual_dir / "process.json").read_text(encoding="utf-8"))
+    assert actual["started"] and actual["streamsComplete"] and not actual["watchdog"]
+    assert actual["exitCode"] == actual_exit and actual["argv"] == argv
+    assert Path(actual["cwd"]).resolve() == (old / "backend").resolve()
+    for stream in ("stdout", "stderr"):
+        raw = (actual_dir / stream).read_bytes()
+        assert len(raw) == actual[stream + "Bytes"] and sha(raw) == actual[stream + "SHA256"]
+    for label in ("go-version-m", "go-buildid"):
+        command_dir = root / label
+        command = json.loads((command_dir / "process.json").read_text(encoding="utf-8"))
+        require_success(command)
+        assert command["argv"] == (["go", "version", "-m", identity["binary"]] if label == "go-version-m" else ["go", "tool", "buildid", identity["binary"]])
+        assert (command_dir / "stdout").read_bytes(), "OLD binary provenance output missing"
+        assert not (command_dir / "stderr").read_bytes()
+        for stream in ("stdout", "stderr"):
+            raw = (command_dir / stream).read_bytes()
+            assert len(raw) == command[stream + "Bytes"] and sha(raw) == command[stream + "SHA256"]
+    assert (root / "go-version-m/stdout").read_text().splitlines()[0] == identity["binary"] + ": go1.26.10"
+    assert identity["auxBefore"] == identity["auxAfter"]
+    for label, field in (("aux-before", "auxBefore"), ("aux-after", "auxAfter")):
+        seal_dir, seal = root / label, identity[field]
+        assert json.loads((seal_dir / "seal.json").read_text()) == seal
+        raw = (seal_dir / "metafiles.txt").read_bytes()
+        assert sha(raw) == seal["MetadataSHA256"]
+        collection = json.loads(raw, object_pairs_hook=unique_object)
+        assert set(collection) == {"ImportPaths", "MetaFileFragments"}
+        imports, paths = collection["ImportPaths"], collection["MetaFileFragments"]
+        assert len(imports) == len(paths) == len(seal["Fragments"]) > 0
+        assert len(set(imports)) == len(imports) and len(set(paths)) == len(paths)
+        for index, (package, path, fragment) in enumerate(zip(imports, paths, seal["Fragments"])):
+            raw = (seal_dir / (str(index) + ".covmeta")).read_bytes()
+            assert fragment == {"ImportPath": package, "Path": path, "Bytes": len(raw), "SHA256": sha(raw)} and raw
+    assert "-test.gocoverdir=" + identity["auxBefore"]["coverdir"] in argv
+    profile = root / "parent-binary.raw.out"
+    raw = profile.read_bytes()
+    assert len(raw) == identity["parentProfile"]["bytes"] and sha(raw) == identity["parentProfile"]["sha256"]
+    assert "-test.coverprofile=" + identity["parentProfile"]["originalPath"] in argv
+    assert any(int(line.rsplit(" ", 1)[1]) > 0 for line in raw.decode().splitlines()[1:]), "OLD atomic profile has no executed blocks"
+    assert profile_blocks(profile, old) == profile_blocks(directory / "parent.raw.out", old, aggregate=True)
+    proof = {"source": OLD_SOURCE, "tree": OLD_TREE, "binarySHA256": identity["beforeSHA256"],
+             "actualExit": actual_exit, "identity": str((root / "identity.json").relative_to(E)),
+             "metadataComplete": True, "atomicProfileSHA256": sha(raw), "auxiliarySealsComplete": True}
+    save(directory / "verified-binary-evidence.json", proof)
+    return proof
 
 
 def old_windows_witness():
@@ -809,7 +931,8 @@ def old_windows_witness():
             assert not any(marker in raw + stderr for marker in
                            (b"WARNING: DATA RACE", b"panic:", b"fatal error:", b"test timed out", b"G_CHILD_WATCHDOG")), "Race/timeout/launch failure is not a resource RED"
             events = [json.loads(line) for line in raw.decode("utf-8").splitlines()]
-            assert not any(event.get("Action") == "skip" for event in events)
+            ledger = old_event_ledger(events, phase)
+            binary = old_binary_evidence(directory, phase, selector, old, 0 if phase == "old-calibration" else 1)
             package_failures = [event for event in events if event.get("Package") == MODULE and event.get("Action") == "fail" and not event.get("Test")]
             if phase == "old-calibration":
                 require_success(command)
@@ -821,15 +944,13 @@ def old_windows_witness():
                 output = "".join(event.get("Output", "") for event in selected)
                 assert re.search(r"DUMP1752_RESOURCE_DENIED open os.Create control: type=\*[^ ]*PathError operation=remove errno=(5|32)(?:\s|$)", output)
                 assert output.count("DUMP1752_RESOURCE_REMOVE_OK operation=remove") == 1
-                observed[phase] = {"actualExit": command["exitCode"], "calibratedWindowsDenialAndSuccessfulCloseRemove": True}
+                observed[phase] = {"actualExit": command["exitCode"], "calibratedWindowsDenialAndSuccessfulCloseRemove": True,
+                                   "ledger": ledger, "binaryEvidence": binary}
             else:
                 # A known actual test failure is preserved, not converted into
                 # a passing OLD test. Only these exact resource failures count.
                 assert command["exitCode"] == 1 and len(package_failures) == 1
                 names = {"TestReqDumpOwnershipFileLifecycle/request_sync", "TestReqDumpOwnershipFileLifecycle/client_sync"}
-                allowed = names | {"TestReqDumpOwnershipFileLifecycle"}
-                assert all(event.get("Package") == MODULE and event.get("Test") in allowed
-                           for event in events if event.get("Action") in ("run", "fail") and event.get("Test"))
                 records = []
                 for name in sorted(names):
                     selected = [event for event in events if event.get("Package") == MODULE and event.get("Test") == name]
@@ -844,7 +965,7 @@ def old_windows_witness():
                     records.append({"test": name, "actualRun": 1, "actualFail": 1,
                                     "actualTypedRemoveDenial": True,
                                     "prerequisites": "Identical frozen FileLifecycle source validates real peer/status/body/captured upload+response before this actual Remove; raw OUTPUT bytes/SHA recorded"})
-                observed[phase] = {"actualExit": command["exitCode"], "cases": records}
+                observed[phase] = {"actualExit": command["exitCode"], "cases": records, "ledger": ledger, "binaryEvidence": binary}
         report["observed"] = observed
         report["resourceRED"] = True
     except Exception:
@@ -956,12 +1077,28 @@ def observe(kind):
                         report["errors"].append({"phase": phase, "check": label, "error": traceback.format_exc()})
             if os.name != "nt":
                 # The observer is not a replacement for the unchanged source
-                # script or its original16-file85/four-profile obligations.
+                # script and original16-file85 obligations. Its two req profiles
+                # do not supply the separate PR Unit/Integration profiles.
                 env = dict(os.environ, REQ_SECURITY_EVIDENCE=str(E / "formal-new"),
                            REQ_SECURITY_EXPECTED_HEAD=SOURCE)
                 actual = capture(E / "commands/formal-new", ["bash", "tools/req-http2-security-ci.sh"],
                                  source / "backend", timeout=3000, env=env)
                 report["commands"].append(actual)
+                generated = source / "backend/coverage-req-http2.out"
+                if successful(actual):
+                    assert generated.is_file() and not generated.is_symlink(), "Formal script coverage copy missing"
+                if generated.exists() or generated.is_symlink():
+                    assert generated.is_file() and not generated.is_symlink()
+                    raw = generated.read_bytes()
+                    mapped = E / "formal-new/all.mapped.out"
+                    assert raw == mapped.read_bytes(), "Unexpected ignored formal coverage output"
+                    archived = E / "formal-new/checkout-coverage-req-http2.out"
+                    archived.write_bytes(raw)
+                    assert archived.read_bytes() == raw
+                    save(E / "formal-new/generated-output.json", {"path": str(generated),
+                         "bytes": len(raw), "sha256": sha(raw), "archive": str(archived),
+                         "policy": "Only this verified script copy is removed; all other residual inputs fail final snapshots"})
+                    generated.unlink()
                 require_success(actual)
     except Exception:
         report["errors"].append({"check": "prerequisite-or-observation", "error": traceback.format_exc()})
