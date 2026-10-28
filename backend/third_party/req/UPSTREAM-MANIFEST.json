@@ -785,7 +785,12 @@
     "dump_ownership_peer_test.go",
     "OWNED-DUMP-CLOSE-REPAIR.md",
     "internal/http2/receive_flow_contract_test.go",
-    "internal/http2/RECEIVE-FLOW-CONTRACTS.md"
+    "internal/http2/RECEIVE-FLOW-CONTRACTS.md",
+    "custom_tls_handshake_peer_test.go",
+    "custom_tls_handshake_test.go",
+    "custom_tls_handshake_boundary_test.go",
+    "internal/http2/custom_tls_handshake_peer_test.go",
+    "internal/http2/custom_tls_handshake_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
@@ -1599,5 +1604,16 @@
       "status": "Actual one-Go formatter output independently verified and imported verbatim. No runtime/race/build/coverage PASS; six leaves still need exact-head remote evidence."
     },
     "executionDependency": "Official behavioral source and nested req/go.mod declare x/net v0.48.0; execution must use backend main MVS (declares v0.60.0), with actual go-list evidence for selected peer codec. Do not execute the nested module as a substitute."
+  },
+  "customTLSWitnessControl": {
+    "productionHead": "e1b71933de5e6d0c1124576ce98d5594a5c3d050",
+    "fixtureSHA256": {
+      "custom_tls_handshake_peer_test.go": "3bcec75f5164e0efcb0f86aa6e1e35857f2d8211d80ca95120d2c093af7d401b",
+      "custom_tls_handshake_test.go": "4ce46f6b1edef1172ee3ede6cfe5735e8947545705705398f0602d635c00d999",
+      "custom_tls_handshake_boundary_test.go": "159641ae9df4de70f0c39d4fa07934d88280165adaf79bce62cdda0e0ac62419",
+      "internal/http2/custom_tls_handshake_peer_test.go": "6121032f5593da00a43a65ae341aa1e405b8c46341c693faea209011756a7626",
+      "internal/http2/custom_tls_handshake_test.go": "c778bb6009f452e9251896396f2ce04b0a6c3516bc5b89d965dadbaa77438f63"
+    },
+    "scope": "test-only H1/H2 custom TLS race witness; no production correction"
   }
 }
