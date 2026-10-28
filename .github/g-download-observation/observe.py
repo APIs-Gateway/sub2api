@@ -1122,13 +1122,21 @@ def old_tls_witness():
         events = [json.loads(line) for line in raw.decode("utf-8").splitlines()]
         ledger = old_event_ledger(events, phase)
         binary = old_binary_evidence(directory, phase, selector, old, 1, head=OLD_TLS_SOURCE, tree=OLD_TLS_TREE)
+        # test2json emits the race detector's original stack records at package
+        # scope, without a Test field. Preserve all actual output records rather
+        # than guessing their child association; exact source frames identify H1/H2.
+        all_output = "".join(event.get("Output", "") for event in events) + stderr.decode("utf-8")
+        report["raceOutputProvenance"] = {"actualGoJSONSHA256": sha(raw),
+             "actualStderrSHA256": sha(stderr), "assembledOutputSHA256": sha(all_output.encode("utf-8")),
+             "packageOutputRecords": sum(event.get("Action") == "output" and not event.get("Test") for event in events),
+             "policy": "Unmodified actual Go JSON Output records in order plus actual stderr; no invented child assignment"}
         records = []
         for protocol in ("HTTP1", "HTTP2"):
             name = "TestReqCustomTLS_LatePublicationRace/" + protocol
             output = "".join(event.get("Output", "") for event in events if event.get("Test") == name)
             version, alpn = ("1", r'(?:|http/1\.1)') if protocol == "HTTP1" else ("2", "h2")
             assert re.search(r"CUSTOM_TLS_REAL_HANDSHAKE protocol=" + version + r' version=[0-9a-f]+ alpn="' + alpn + r'" raw=[^;\s]+; actual timeout=.+', output), "Missing genuine Firefox TLS and typed-timeout prerequisite marker"
-            pairs = old_tls_race_frames(output, protocol)
+            pairs = old_tls_race_frames(all_output, protocol)
             # OLD closes only the raw socket before its racy late publication;
             # the identical fixture can then Fatal waiting for observed.Close.
             # This exact secondary acknowledgement failure is not race evidence.
@@ -1141,7 +1149,8 @@ def old_tls_witness():
             records.append({"test": name, "actualRun": 1, "actualFail": 1,
                             "actualTypedTimeoutAndRealTLS": True, "productionRacePairs": pairs,
                             "secondaryOldResourceAcknowledgementFailures": secondary})
-        all_output = "".join(event.get("Output", "") for event in events) + stderr.decode("utf-8")
+        matched_blocks = [pair["rawRaceReportSHA256"] for item in records for pair in item["productionRacePairs"]]
+        assert len(matched_blocks) == len(set(matched_blocks)) == all_output.count("WARNING: DATA RACE\n"), "Unexpected, duplicate or unclassified OLD race report"
         assert "CUSTOM_TLS_TIMEOUT:" not in all_output
         assert all_output.count("CUSTOM_TLS_PREREQUISITE:") == sum(len(item["secondaryOldResourceAcknowledgementFailures"]) for item in records), "OLD TLS prerequisite outside the two verified child witnesses"
         report.update({"observed": records, "ledger": ledger, "binaryEvidence": binary, "raceRED": True})
@@ -1156,6 +1165,25 @@ def old_tls_witness():
                 report["errors"].append({"check": label + "-after-freeze", "error": traceback.format_exc()})
         save(E / "actual-old-tls-race-witness.json", report)
     return 0 if report["raceRED"] and not report["errors"] else 1
+
+
+def archive_script_coverage(root, directory, actual):
+    """Verify and archive only the unchanged script's owned coverage copy."""
+    generated = root / "backend/coverage-req-http2.out"
+    if successful(actual):
+        assert generated.is_file() and not generated.is_symlink(), "Formal script coverage copy missing"
+    if generated.exists() or generated.is_symlink():
+        assert generated.is_file() and not generated.is_symlink()
+        raw = generated.read_bytes()
+        mapped = directory / "all.mapped.out"
+        assert raw == mapped.read_bytes(), "Unexpected ignored formal coverage output"
+        archived = directory / "checkout-coverage-req-http2.out"
+        archived.write_bytes(raw)
+        assert archived.read_bytes() == raw
+        save(directory / "generated-output.json", {"path": str(generated),
+             "bytes": len(raw), "sha256": sha(raw), "archive": str(archived),
+             "policy": "Only this verified script copy is removed; all other residual inputs fail final snapshots"})
+        generated.unlink()
 
 
 def observe(kind):
@@ -1188,6 +1216,7 @@ def observe(kind):
             env = dict(os.environ, REQ_SECURITY_EVIDENCE=str(E / "original401"), REQ_SECURITY_EXPECTED_HEAD=BASE)
             result = capture(E / "commands/original401", ["bash", "tools/req-http2-security-ci.sh"], WORKSPACE / "baseline/backend", timeout=3000, env=env)
             report["commands"].append(result)
+            archive_script_coverage(WORKSPACE / "baseline", E / "original401", result)
             require_success(result)
         else:
             source, baseline = WORKSPACE / "source", WORKSPACE / "baseline"
@@ -1261,21 +1290,7 @@ def observe(kind):
                 actual = capture(E / "commands/formal-new", ["bash", "tools/req-http2-security-ci.sh"],
                                  source / "backend", timeout=3000, env=env)
                 report["commands"].append(actual)
-                generated = source / "backend/coverage-req-http2.out"
-                if successful(actual):
-                    assert generated.is_file() and not generated.is_symlink(), "Formal script coverage copy missing"
-                if generated.exists() or generated.is_symlink():
-                    assert generated.is_file() and not generated.is_symlink()
-                    raw = generated.read_bytes()
-                    mapped = E / "formal-new/all.mapped.out"
-                    assert raw == mapped.read_bytes(), "Unexpected ignored formal coverage output"
-                    archived = E / "formal-new/checkout-coverage-req-http2.out"
-                    archived.write_bytes(raw)
-                    assert archived.read_bytes() == raw
-                    save(E / "formal-new/generated-output.json", {"path": str(generated),
-                         "bytes": len(raw), "sha256": sha(raw), "archive": str(archived),
-                         "policy": "Only this verified script copy is removed; all other residual inputs fail final snapshots"})
-                    generated.unlink()
+                archive_script_coverage(source, E / "formal-new", actual)
                 require_success(actual)
     except Exception:
         report["errors"].append({"check": "prerequisite-or-observation", "error": traceback.format_exc()})
