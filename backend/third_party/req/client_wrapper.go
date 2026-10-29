@@ -507,10 +507,9 @@ func ImpersonateFirefox() *Client {
 	return defaultClient.ImpersonateFirefox()
 }
 
-// ImpersonateChrome is a global wrapper methods which delegated
-// to the default client's Client.ImpersonateChrome.
+// ImpersonateSafari delegates to the default client's Client.ImpersonateSafari.
 func ImpersonateSafari() *Client {
-	return defaultClient.ImpersonateFirefox()
+	return defaultClient.ImpersonateSafari()
 }
 
 // SetCommonContentType is a global wrapper methods which delegated
