@@ -373,6 +373,7 @@ func reqBisectStackMarkers(t *testing.T, output string, verbose bool) (int, int)
 	t.Helper()
 	const prefix = "[bisect-match 0x"
 	tails := make(map[uint64]int)
+	allIDs := make(map[uint64]bool)
 	for _, line := range strings.Split(output, "\n") {
 		if line == "" {
 			continue
@@ -385,6 +386,7 @@ func reqBisectStackMarkers(t *testing.T, output string, verbose bool) (int, int)
 		if err != nil || line[:end+1] != fmt.Sprintf("[bisect-match 0x%016x]", id) {
 			t.Fatalf("invalid marker in actual stack report %q: %v", line, err)
 		}
+		allIDs[id] = true
 		rest := line[end+1:]
 		if !verbose && rest != "" {
 			t.Fatalf("marker-only report disclosed extra text %q", rest)
@@ -397,7 +399,7 @@ func reqBisectStackMarkers(t *testing.T, output string, verbose bool) (int, int)
 	for _, count := range tails {
 		total += count
 	}
-	return total, len(tails)
+	return total, len(allIDs)
 }
 
 func reqBisectConcurrentStack(t *testing.T, m *bisect.Matcher, w bisect.Writer) {
