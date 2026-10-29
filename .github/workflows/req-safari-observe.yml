@@ -1,0 +1,226 @@
+name: Existing1712 Safari actual OLD NEW observation
+
+on:
+  push:
+    branches: [codex/req-safari-observe-1712]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safari-wire:
+    name: Safari real TLS multipart (${{ matrix.variant }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: OLD
+            head: 0059105db63ad491998bc4b55f24752c34820142
+            tree: cd735ba67d390da490330447db672669f17a98d7
+          - variant: NEW
+            head: e7f1933d71712fc44e99c2b27351cd27419a023a
+            tree: b8850241cbb23d3081c2bb5c9ed69c98b62995a1
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: -mod=readonly
+      CGO_ENABLED: '1'
+      GOMAXPROCS: '2'
+      SOURCE_HEAD: ${{ matrix.head }}
+      SOURCE_TREE: ${{ matrix.tree }}
+      VARIANT: ${{ matrix.variant }}
+    steps:
+      - name: Initialize owned evidence and caches outside all checkouts
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/safari-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${VARIANT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence"
+          printf 'SAFARI_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+          for name in GOCACHE GOMODCACHE GOTMPDIR; do
+            path="$evidence/cache-$name"
+            mkdir "$path"
+            printf '%s=%s\n' "$name" "$path" >> "$GITHUB_ENV"
+          done
+          cp "$GITHUB_EVENT_PATH" "$evidence/event.json"
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.head }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Freeze complete Git inputs and verify test-only OLD and minimal NEW
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$SAFARI_EVIDENCE/snapshot.py" <<'PY'
+          import hashlib, json, os, pathlib, stat, subprocess, sys
+          root, head, tree, output = sys.argv[1:]
+          root, output = pathlib.Path(root).resolve(), pathlib.Path(output)
+          def git(*args, data=None):
+              return subprocess.check_output(['git','-C',str(root),*args],input=data)
+          assert git('rev-parse','HEAD').decode().strip()==head
+          actual_tree=git('rev-parse','HEAD^{tree}').decode().strip()
+          assert not tree or actual_tree==tree
+          status=git('status','--porcelain=v1','--untracked-files=all','--ignored=matching')
+          output.with_suffix('.status').write_bytes(status)
+          assert not status, status
+          index=git('ls-files','--stage','-z')
+          output.with_suffix('.index').write_bytes(index)
+          files=[]
+          for row in index.split(b'\0'):
+              if not row: continue
+              header,name=row.split(b'\t',1)
+              mode,blob,stage=header.decode().split()
+              assert stage=='0' and mode in ('100644','100755','120000')
+              path=root/os.fsdecode(name); info=path.lstat()
+              if mode=='120000':
+                  assert stat.S_ISLNK(info.st_mode)
+                  raw=os.fsencode(os.readlink(path))
+              else:
+                  assert stat.S_ISREG(info.st_mode) and not path.is_symlink()
+                  assert bool(info.st_mode&0o111)==(mode=='100755')
+                  raw=path.read_bytes()
+              assert git('hash-object','--stdin',data=raw).decode().strip()==blob
+              files.append({'path':os.fsdecode(name),'mode':mode,'blob':blob,'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()})
+          output.write_text(json.dumps({'head':head,'tree':actual_tree,'files':files},indent=2)+'\n')
+          PY
+          python3 -B "$SAFARI_EVIDENCE/snapshot.py" "$GITHUB_WORKSPACE/source" "$SOURCE_HEAD" "$SOURCE_TREE" "$SAFARI_EVIDENCE/source-before.json"
+          python3 -B "$SAFARI_EVIDENCE/snapshot.py" "$GITHUB_WORKSPACE/controller" "$GITHUB_SHA" '' "$SAFARI_EVIDENCE/controller-before.json"
+          git -C source archive HEAD > "$SAFARI_EVIDENCE/source-full-input.tar"
+          git -C controller archive HEAD > "$SAFARI_EVIDENCE/controller-full-input.tar"
+          cp controller/.github/workflows/req-safari-observe.yml "$SAFARI_EVIDENCE/executed-controller.yml"
+          python3 -B - <<'PY'
+          import hashlib,json,os,pathlib,subprocess,tarfile
+          e=pathlib.Path(os.environ['SAFARI_EVIDENCE']); root=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'controller'
+          def git(*args): return subprocess.check_output(['git','-C',str(root),*args])
+          old='0059105db63ad491998bc4b55f24752c34820142'; new='e7f1933d71712fc44e99c2b27351cd27419a023a'; base='29ea1fcb4c2366aee00d8f2a75c0b0edf3676880'
+          fixture='backend/third_party/req/safari_wrapper_contract_test.go'; wrapper='backend/third_party/req/client_wrapper.go'; doc='backend/third_party/req/SAFARI-WRAPPER-CONTRACTS.md'
+          assert git('rev-parse',old+'^').decode().strip()==base
+          assert git('diff','--name-only',base,old).decode().splitlines()==[fixture]
+          assert git('diff','--name-only',old,new).decode().splitlines()==[doc,wrapper]
+          assert git('show',old+':'+fixture)==git('show',new+':'+fixture)
+          old_wrapper=git('show',old+':'+wrapper); new_wrapper=git('show',new+':'+wrapper)
+          needle=b'// ImpersonateChrome is a global wrapper methods which delegated\n// to the default client\'s Client.ImpersonateChrome.\nfunc ImpersonateSafari() *Client {\n\treturn defaultClient.ImpersonateFirefox()\n}'
+          replacement=b'// ImpersonateSafari delegates to the default client\'s Client.ImpersonateSafari.\nfunc ImpersonateSafari() *Client {\n\treturn defaultClient.ImpersonateSafari()\n}'
+          assert old_wrapper.count(needle)==1 and old_wrapper.replace(needle,replacement)==new_wrapper
+          changed=git('diff','--name-only',new,os.environ['GITHUB_SHA']).decode().splitlines()
+          assert changed==['.github/workflows/req-safari-observe.yml'],changed
+          archives={}
+          for label in ('source','controller'):
+              expected={r['path']:r for r in json.loads((e/(label+'-before.json')).read_text())['files']}
+              path=e/(label+'-full-input.tar')
+              with tarfile.open(path) as archive:
+                  actual={r.name:r for r in archive.getmembers() if not r.isdir()}
+                  assert set(actual)==set(expected)
+                  for name,member in actual.items():
+                      raw=os.fsencode(member.linkname) if member.issym() else archive.extractfile(member).read()
+                      assert hashlib.sha256(raw).hexdigest()==expected[name]['sha256'] and len(raw)==expected[name]['bytes']
+              archives[label]={'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'bytes':path.stat().st_size,'files':len(expected)}
+          (e/'source-policy.json').write_text(json.dumps({'old':old,'new':new,'originalProduction':base,'fixtureSHA256':hashlib.sha256(git('show',old+':'+fixture)).hexdigest(),'controller':os.environ['GITHUB_SHA'],'archives':archives},indent=2)+'\n')
+          PY
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.10'
+          check-latest: false
+          cache: false
+      - name: Capture real main-MVS and actual source Go race results
+        working-directory: source/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          go version > "$SAFARI_EVIDENCE/go-version.txt"
+          grep -Eq '^go version go1\.26\.10 linux/amd64$' "$SAFARI_EVIDENCE/go-version.txt"
+          go list -m -json all > "$SAFARI_EVIDENCE/modules.json"
+          go list -json github.com/imroc/req/v3 > "$SAFARI_EVIDENCE/package.json"
+          # Raw source is not rewritten. Formatting copies are diagnostic only;
+          # their output will be imported, reviewed and validated separately.
+          mkdir "$SAFARI_EVIDENCE/formatted"
+          cp third_party/req/safari_wrapper_contract_test.go "$SAFARI_EVIDENCE/formatted/"
+          gofmt -w "$SAFARI_EVIDENCE/formatted/safari_wrapper_contract_test.go"
+          gofmt -l "$SAFARI_EVIDENCE/formatted/safari_wrapper_contract_test.go" > "$SAFARI_EVIDENCE/formatted-gofmt.list"
+          test ! -s "$SAFARI_EVIDENCE/formatted-gofmt.list"
+          set +e
+          go test -p=1 -parallel=1 -race -count=1 -timeout=3m -json -run '^TestReqSafariWrapperContract$' github.com/imroc/req/v3 > "$SAFARI_EVIDENCE/tests.json" 2> "$SAFARI_EVIDENCE/tests.stderr"
+          actual=$?
+          set -e
+          printf '%s\n' "$actual" > "$SAFARI_EVIDENCE/tests.exit"
+          python3 -B - <<'PY'
+          import collections,json,os,pathlib
+          e=pathlib.Path(os.environ['SAFARI_EVIDENCE']); events=[json.loads(line) for line in (e/'tests.json').read_text().splitlines()]
+          module='github.com/imroc/req/v3'; parent='TestReqSafariWrapperContract'
+          leaves={parent+'/'+name for name in ('global_safari','instance_safari','global_firefox_control')}; required=leaves|{parent}
+          runs=collections.Counter(x['Test'] for x in events if x['Action']=='run' and 'Test' in x)
+          passes=collections.Counter(x['Test'] for x in events if x['Action']=='pass' and 'Test' in x)
+          fails=collections.Counter(x['Test'] for x in events if x['Action']=='fail' and 'Test' in x)
+          outputs=''.join(x.get('Output','') for x in events)+(e/'tests.stderr').read_text()
+          actual=int((e/'tests.exit').read_text()); old=os.environ['VARIANT']=='OLD'
+          assert all(x.get('Package')==module for x in events)
+          assert runs==collections.Counter({name:1 for name in required}),runs
+          assert not any(x['Action']=='skip' for x in events)
+          assert 'WARNING: DATA RACE' not in outputs and 'panic:' not in outputs and 'fatal error:' not in outputs
+          package_results=[x['Action'] for x in events if x['Action'] in ('pass','fail') and 'Test' not in x]
+          if old:
+              assert actual==1 and fails==collections.Counter({parent:1,parent+'/global_safari':1}), (actual,fails)
+              assert passes==collections.Counter({name:1 for name in leaves if name!=parent+'/global_safari'}), passes
+              assert package_results==['fail'],package_results
+              for marker in ('SAFARI_WRAPPER_HTTP_IDENTITY','SAFARI_WRAPPER_CLIENT_HELLO','SAFARI_WRAPPER_MULTIPART'):
+                  hits=[x for x in events if marker in x.get('Output','')]
+                  assert len(hits)==1 and hits[0].get('Test')==parent+'/global_safari',marker
+          else:
+              assert actual==0 and not fails and passes==collections.Counter({name:1 for name in required}), (actual,fails,passes)
+              assert package_results==['pass'],package_results
+          for name in leaves:
+              for marker in ('SAFARI_WRAPPER_WIRE_OBSERVED','SAFARI_WRAPPER_PEER_COMPLETE hellos=1 exchanges=1'):
+                  assert sum(marker in x.get('Output','') and x.get('Test')==name for x in events)==1,(name,marker)
+          decoder=json.JSONDecoder(); text=(e/'modules.json').read_text(); modules=[]
+          while text.strip():
+              value,end=decoder.raw_decode(text.lstrip()); modules.append(value); text=text.lstrip()[end:]
+          selected={x['Path']:x for x in modules}; main=[x for x in modules if x.get('Main')]
+          assert len(main)==1 and main[0]['Path']=='github.com/Wei-Shaw/sub2api'
+          assert selected['github.com/refraction-networking/utls']['Version']=='v1.8.2'
+          replacement=selected[module]['Replace']; expected=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'source/backend/third_party/req'
+          assert pathlib.Path(replacement['Dir']).resolve()==expected.resolve()
+          (e/'actual-result.json').write_text(json.dumps({'variant':os.environ['VARIANT'],'sourceHead':os.environ['SOURCE_HEAD'],'sourceTree':os.environ['SOURCE_TREE'],'actualGoExit':actual,'runs':dict(runs),'passes':dict(passes),'fails':dict(fails),'packageResults':package_results,'mainMVS':main[0],'reqReplacement':replacement,'utls':selected['github.com/refraction-networking/utls'],'scope':'Three preliminary real-TLS multipart contracts only. OLD SUCCESS means exact defect reproduced; original PR gates are not replaced.'},indent=2)+'\n')
+          PY
+      - name: Freeze inputs again, including after failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$SAFARI_EVIDENCE/snapshot.py" "$GITHUB_WORKSPACE/source" "$SOURCE_HEAD" "$SOURCE_TREE" "$SAFARI_EVIDENCE/source-after.json"
+          python3 -B "$SAFARI_EVIDENCE/snapshot.py" "$GITHUB_WORKSPACE/controller" "$GITHUB_SHA" '' "$SAFARI_EVIDENCE/controller-after.json"
+          cmp "$SAFARI_EVIDENCE/source-before.json" "$SAFARI_EVIDENCE/source-after.json"
+          cmp "$SAFARI_EVIDENCE/controller-before.json" "$SAFARI_EVIDENCE/controller-after.json"
+      - name: Upload all actual evidence, excluding owned Go caches
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: safari-actual-${{ matrix.variant }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.SAFARI_EVIDENCE }}/**
+            !${{ env.SAFARI_EVIDENCE }}/cache-*/**
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove only this job's owned disposable caches
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in GOCACHE GOMODCACHE GOTMPDIR; do
+            path="${!name}"
+            test "$path" = "$SAFARI_EVIDENCE/cache-$name"
+            chmod -R u+w "$path"
+            rm -rf -- "$path"
+          done
