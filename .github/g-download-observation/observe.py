@@ -22,7 +22,10 @@ BASE = "673c3fafa9ff9c4c32a6adbd8cd5f595c25f0c63"
 # Frozen reviewed source plus the retained eight-path observation infrastructure.
 # OLD trees are direct test-only children with identical final NEW fixtures.
 # Runtime acceptance still requires actual evidence; these pins are not PASS.
-SOURCE_READY = True
+# Registration/formatting composition is unfinished. Preserve the old pins for
+# historical evidence, but forbid dispatch until reviewed final880 pins replace
+# them. This controller revision has not executed the new contracts.
+SOURCE_READY = False
 SOURCE = "6fd558ca0a80b6cc64bc6ec8d8a289ffe6707041"
 TREE = "dab6e5b0d3fb743704b806694f2b7a331a339dab"
 PRODUCTION = "29ea1fcb4c2366aee00d8f2a75c0b0edf3676880"
@@ -41,6 +44,13 @@ INFRA_PATHS = {".github/g-download-observation/observe.py", ".github/g-download-
                "backend/tools/req-http2-security-evidence.py", "backend/third_party/req/download_wire_peer_test.go",
                "backend/third_party/req/DOWNLOAD-CONTRACTS-PROVENANCE.json", "backend/third_party/req/DOWNLOAD-CONTRACTS-REVIEW.md"}
 MODULE = "github.com/imroc/req/v3"
+EXPANSION_GROUPS = (("publicAPI", MODULE, 70), ("http1Boundary", MODULE, 33),
+                    ("publicDefault", MODULE, 6), ("bisectContract", MODULE + "/internal/bisect", 112),
+                    ("http2Coverage", MODULE + "/internal/http2", 51), ("safariWrapper", MODULE, 3))
+EXPANSION_PREFIXES = ("TestReqPublicAPI_", "TestReqH1Boundary_", "TestReqPublicDefaultContract",
+                      "TestReqBisectContract_", "TestReqHTTP2CoverageContract_",
+                      "TestReqHTTP2CoverageFrame_", "TestReqSafariWrapperContract")
+LEGACY605_IDENTITY_SHA256 = "d40da89d1c9592dea18a8457de03b430eb715f633f0aa6215bacb1b7c26be8c8"
 G_FILES = {
     "DOWNLOAD-CONTRACTS-LICENSE", "DOWNLOAD-CONTRACTS-PROVENANCE.json",
     "DOWNLOAD-CONTRACTS-REVIEW.md", "download_contract_test.go",
@@ -590,14 +600,35 @@ def actual_inventory(phase, source, windows):
     assert provenance["defaultOutputContract"]["leaves"] == default_output
     expected = set(inventory["linux"] + fallback + cleanup + in_process + default_output + ownership + tls_root + (inventory["windowsAdditional"] if windows else []))
     assert len(expected) == (119 if windows else 118)
+    expansion = set()
+    for kind, package, count in EXPANSION_GROUPS:
+        leaves = selected_inventory[kind + "Leaves"]
+        assert selected_inventory[kind + "Package"] == package
+        assert len(leaves) == len(set(leaves)) == selected_inventory[kind + "Count"] == count
+        pairs = {(package, name) for name in leaves}
+        assert not expansion & pairs
+        expansion.update(pairs)
+    assert len(expansion) == 275
+    expected.update(name for package, name in expansion if package == MODULE)
+    assert len(expected) == (231 if windows else 230)
+    h2_expected = set(h2_receive + tls_h2) | {name for package, name in expansion if package == h2_package}
+    assert len(h2_expected) == 70
+    bisect_package = MODULE + "/internal/bisect"
+    bisect_expected = {name for package, name in expansion if package == bisect_package}
+    assert len(bisect_expected) == 112
     runs = collections.Counter((event.get("Package"), event.get("Test")) for event in events if event.get("Action") == "run")
     passes = collections.Counter((event.get("Package"), event.get("Test")) for event in events if event.get("Action") == "pass" and event.get("Test"))
     packages = objects((E / "commands/packages/stdout").read_bytes())
-    test_packages = {item["ImportPath"] for item in packages if item.get("TestGoFiles") or item.get("XTestGoFiles")} if phase == "full" else {MODULE, h2_package}
+    test_packages = {item["ImportPath"] for item in packages if item.get("TestGoFiles") or item.get("XTestGoFiles")} if phase == "full" else {MODULE, h2_package, bisect_package}
     bad = [event for event in events if event.get("Action") == "fail" or (event.get("Action") == "skip" and (event.get("Test") or event.get("Package") in test_packages))]
     package_passes = collections.Counter(event.get("Package") for event in events if event.get("Action") == "pass" and not event.get("Test"))
     g_events = {name: {"run": runs[(MODULE, name)], "pass": passes[(MODULE, name)]} for name in sorted(expected)}
-    h2_events = {name: {"run": runs[(h2_package, name)], "pass": passes[(h2_package, name)]} for name in h2_receive + tls_h2}
+    h2_events = {name: {"run": runs[(h2_package, name)], "pass": passes[(h2_package, name)]} for name in sorted(h2_expected)}
+    bisect_events = {name: {"run": runs[(bisect_package, name)], "pass": passes[(bisect_package, name)]} for name in sorted(bisect_expected)}
+    expansion_events = [{"package": package, "test": name, "run": runs[(package, name)], "pass": passes[(package, name)]} for package, name in sorted(expansion)]
+    expansion_runs = {key for key in runs if key[1] and key[1].startswith(EXPANSION_PREFIXES)}
+    expansion_actual_leaves = {key for key in expansion_runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in expansion_runs)}
+    assert expansion_actual_leaves == expansion, "Unexpected/missing expansion leaf, including wrong-package execution"
     # Two writer-drain controls deliberately own no file; every other ownership
     # leaf must witness an actual successful Remove, not just absence of Fatal.
     file_ownership = set(ownership) - {"TestReqDumpOwnershipCloseDrains/async_false", "TestReqDumpOwnershipCloseDrains/async_true"}
@@ -619,10 +650,13 @@ def actual_inventory(phase, source, windows):
                                   "completedMarkers": output.count("G1748_DEFAULT_OUTPUT_COMPLETE " + name + " "),
                                   "childDelegationMarkers": "G_CHILD_ACTUAL" in output or "G_CHILD_EXECUTED" in output})
     unexpected = sorted(name for package, name in runs if package == MODULE and name and name.startswith(("TestReqDownload", "TestReqParallelDownload", "TestReqDumpOwnership", "TestReqCustomTLS_")) and name not in expected and not any(other.startswith(name + "/") for other in expected))
-    unexpected_h2 = sorted(name for package, name in runs if package == h2_package and name and name.startswith(("TestReqHTTP2ReceiveFlowContract_", "TestReqCustomTLS_")) and name not in h2_receive + tls_h2 and not any(other.startswith(name + "/") for other in h2_receive + tls_h2))
+    unexpected_h2 = sorted(name for package, name in runs if package == h2_package and name and name.startswith(("TestReqHTTP2ReceiveFlowContract_", "TestReqCustomTLS_")) and name not in h2_expected and not any(other.startswith(name + "/") for other in h2_expected))
     old = selected_inventory
-    original = {(old[key[:-6] + "Package"], leaf) for key, values in old.items() if key.endswith("Leaves") and isinstance(values, list) and key[:-6] + "Package" in old for leaf in values}
-    assert len(original) == old["totalNamedLeaves"] == 605
+    registered = {(old[key[:-6] + "Package"], leaf) for key, values in old.items() if key.endswith("Leaves") and isinstance(values, list) and key[:-6] + "Package" in old for leaf in values}
+    assert len(registered) == old["totalNamedLeaves"] == 880 and expansion < registered
+    original = registered - expansion
+    assert len(original) == 605
+    assert sha(json.dumps(sorted(original), separators=(",", ":")).encode()) == LEGACY605_IDENTITY_SHA256
     previous574 = original - {(MODULE, name) for name in tls_root} - {(h2_package, name) for name in tls_h2}
     assert len(previous574) == 574
     previous526 = previous574 - {(MODULE, name) for name in ownership} - {(h2_package, name) for name in h2_receive}
@@ -635,6 +669,7 @@ def actual_inventory(phase, source, windows):
     retained = {(baseline_inventory[key[:-6] + "Package"], leaf) for key, values in baseline_inventory.items() if key.endswith("Leaves") and isinstance(values, list) and key[:-6] + "Package" in baseline_inventory for leaf in values}
     assert len(retained) == baseline_inventory["totalNamedLeaves"] == 468 and retained < previous502 < previous526 < original
     old_events = [{"package": package, "test": name, "run": runs[(package, name)], "pass": passes[(package, name)]} for package, name in sorted(original)] if phase == "full" else []
+    registered_events = [{"package": package, "test": name, "run": runs[(package, name)], "pass": passes[(package, name)]} for package, name in sorted(registered)] if phase == "full" else []
     previous_events = [item for item in old_events if (item["package"], item["test"]) in previous502]
     previous525_events = [item for item in old_events if (item["package"], item["test"]) in previous525]
     adapted_original = []
@@ -656,6 +691,8 @@ def actual_inventory(phase, source, windows):
                 file_identity_markers = output.count("FILE_ACTUAL_MISSING_IDENTITY isNotExist=true ")
     result = {"expectedGLeaves": len(expected), "gActual": g_events, "unexpectedGLeaves": unexpected,
               "badEvents": bad, "mandatory605Actual": old_events,
+              "registered880Actual": registered_events, "expansion275Actual": expansion_events,
+              "bisectActual": bisect_events, "focusedNamedExpectedLeaves": len(expected) + len(h2_expected) + len(bisect_expected),
               "mandatory574Actual": [item for item in old_events if (item["package"], item["test"]) in previous574],
               "customTLSRootActual": {name: g_events[name] for name in tls_root},
               "customTLSHTTP2Actual": {name: h2_events[name] for name in tls_h2},
@@ -672,12 +709,20 @@ def actual_inventory(phase, source, windows):
     save(directory / "actual-inventory.json", result)
     assert not unexpected and not unexpected_h2 and all(value == {"run": 1, "pass": 1} for value in g_events.values())
     assert all(value == {"run": 1, "pass": 1} for value in h2_events.values())
+    assert all(value == {"run": 1, "pass": 1} for value in bisect_events.values())
+    assert all(item["run"] == item["pass"] == 1 for item in expansion_events)
+    for name in selected_inventory["safariWrapperLeaves"]:
+        output = "".join(event.get("Output", "") for event in events if event.get("Package") == MODULE and event.get("Test") == name)
+        assert output.count("SAFARI_WRAPPER_WIRE_OBSERVED ") == 1
+        assert output.count("SAFARI_WRAPPER_PEER_COMPLETE hellos=1 exchanges=1") == 1
+        assert "SAFARI_WRAPPER_FIXTURE_FAILURE:" not in output
     assert all(count >= 1 for count in remove_successes.values()), "Actual successful ownership Remove witness missing"
     assert all(item["executedMarkers"] == item["completedMarkers"] == 1 and not item["childDelegationMarkers"] for item in parent_execution), "Missing/duplicate parent execution markers or incorrect child delegation"
     assert all(item["completedMarkers"] == 1 and not item["childDelegationMarkers"] for item in default_execution), "Default output completion missing/duplicate or incorrectly delegated to child"
     assert not bad, "Actual failed or skipped test-bearing package/case"
     assert all(package_passes[package] == 1 for package in test_packages), "Test-bearing package completion missing/duplicate"
     if phase == "full":
+        assert len(registered_events) == 880 and all(item["run"] == item["pass"] == 1 for item in registered_events)
         assert all(item["run"] == item["pass"] == 1 for item in old_events)
         assert len(adapted_original) == 4 and all(item["run"] == item["pass"] == 1 and not item["failedOrSkipped"] for item in adapted_original)
         expected_trace = collections.Counter((enabled, protocol, reuse) for protocol in ("1", "2")
@@ -1257,6 +1302,8 @@ def observe(kind):
             selector += "|TestReqParallelDownloadFallback|TestReqParallelDownloadHTTP3Cleanup|TestReqParallelDownloadInProcessContract"
             selector += "|TestReqParallelDownloadDefaultOutput"
             selector += "|TestReqDumpOwnership.*|TestReqHTTP2ReceiveFlowContract_.*|TestReqCustomTLS_.*"
+            selector += "|TestReqPublicAPI_.*|TestReqH1Boundary_.*|TestReqPublicDefaultContract.*|TestReqBisectContract_.*"
+            selector += "|TestReqHTTP2CoverageContract_.*|TestReqHTTP2CoverageFrame_.*|TestReqSafariWrapperContract.*"
             selector += "|TestReqParallelDownloadWindowsClose)$" if os.name == "nt" else ")$"
             wrapper = Path(__file__).resolve()
             # cmd/go's quoted.Split accepts quoted argv items; no shell expansion.
@@ -1268,7 +1315,7 @@ def observe(kind):
                 env = dict(os.environ, G_OBSERVATION_PHASE=phase, SUB2API_G_DOWNLOAD_PROFILE_DIR=str(phase_dir / "children"))
                 argv = ["go", "test", "-p=1", "-parallel=1", "-race", "-count=1", "-timeout=15m", "-json", "-covermode=atomic", "-coverpkg=" + MODULE + "/...", "-coverprofile=" + str(phase_dir / "parent.raw.out"), "-exec=" + exec_flag]
                 if phase == "named":
-                    argv += ["-run=" + selector, MODULE, MODULE + "/internal/http2"]
+                    argv += ["-run=" + selector, MODULE, MODULE + "/internal/http2", MODULE + "/internal/bisect"]
                 else:
                     argv += [MODULE + "/..."]
                 result = capture(phase_dir / "command", argv, source / "backend", timeout=2000 if phase == "named" else 3000, env=env)
@@ -1283,7 +1330,7 @@ def observe(kind):
                         report["errors"].append({"phase": phase, "check": label, "error": traceback.format_exc()})
             if os.name != "nt":
                 # The observer is not a replacement for the unchanged source
-                # script and original16-file85 obligations. Its two req profiles
+                # script and original16 plus authorized wrapper per-file85 obligations. Its two req profiles
                 # do not supply the separate PR Unit/Integration profiles.
                 env = dict(os.environ, REQ_SECURITY_EVIDENCE=str(E / "formal-new"),
                            REQ_SECURITY_EXPECTED_HEAD=SOURCE)
@@ -1301,7 +1348,7 @@ def observe(kind):
                 assert before[label] == after
             except Exception:
                 report["errors"].append({"check": label + "-after-freeze", "error": traceback.format_exc()})
-        report["policy"] = "Every NEW actual failure fails this job; no accepted-RED list or profile counter merge. Exact673 retained468 baseline, original401 within it, retained526+H2six+dump42=574 plus distinct rootTLS18/privateH2TLS13=605 and platform jobs remain independent obligations. Child profiles never contribute counters to the original four profiles or formal16-adapt coverage gates. OLD resource and OLD TLS race observations are separate and cannot waive NEW failures."
+        report["policy"] = "Every NEW actual failure fails this job; no accepted-RED list or profile counter merge. Exact673 retained468 baseline, original401 within it, retained526+H2six+dump42=574 plus distinct rootTLS18/privateH2TLS13=605 are preserved as an exact separate subset of registered880. Expansion275 and focused412/413 are distinct obligations, never substitutes for full880 or legacy605. Child profiles never contribute counters to the original four profiles or original16 plus authorized Safari wrapper per-file85 gates. OLD resource and OLD TLS race observations are separate and cannot waive NEW failures."
         save(E / "actual-observation.json", report)
     return 1 if report["errors"] else 0
 
