@@ -22,13 +22,12 @@ BASE = "673c3fafa9ff9c4c32a6adbd8cd5f595c25f0c63"
 # Frozen reviewed source plus the retained eight-path observation infrastructure.
 # OLD trees are direct test-only children with identical final NEW fixtures.
 # Runtime acceptance still requires actual evidence; these pins are not PASS.
-# Registration/formatting composition is unfinished. Preserve the old pins for
-# historical evidence, but forbid dispatch until reviewed final880 pins replace
-# them. This controller revision has not executed the new contracts.
-SOURCE_READY = False
-SOURCE = "6fd558ca0a80b6cc64bc6ec8d8a289ffe6707041"
-TREE = "dab6e5b0d3fb743704b806694f2b7a331a339dab"
-PRODUCTION = "29ea1fcb4c2366aee00d8f2a75c0b0edf3676880"
+# Exact formatted880 production plus retained observer infrastructure. Ready
+# means frozen for remote execution, not that any new test or gate has passed.
+SOURCE_READY = True
+SOURCE = "e5027cc8004f5725d65ebb8be905709f1e8b978b"
+TREE = "2fa923c05d84c56c7b0bab5e5e22842f5649f7bb"
+PRODUCTION = "c82356c8115678ff669e088a3d44dc955482b3c4"
 OLD_PRODUCTION = "bf4dfe25dac427186ff32c93a5c9d45d89530418"
 OLD_SOURCE = "79d98c871e16fc982a40b82f39755fd9439ac051"
 OLD_TREE = "a214bc81ba0511b1ac69a8c2d136ba82b829b84b"
