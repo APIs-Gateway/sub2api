@@ -45,8 +45,10 @@ register restoration before creating later resources, install a fresh owned
 client per sequential subcase and never mutate/clone/close the saved client.
 No t.Parallel and no concurrent default/common-option mutation. Every real peer
 must read bounded complete bytes and publish its read/write errors back to the
-test; handler goroutines never call Fatal. Buffer channels or atomic counts must
-not hide unexpected attempts/overflow. ClearCookies explicitly does not clear an externally supplied SetCookieJar jar; test this documented ownership boundary. The download path currently closes outputs implementing io.Closer, so the download buffer is io.Writer-only; the distinct Dump CloseDump no-adoption guarantee uses an observable closer.
+test; handler goroutines never call Fatal. The unique peer cleanup first closes/joins the server, then reports every unconsumed
+exchange and retained overflow record (including read/write errors), checks final
+requests against explicit receive count, and emits PUBLIC_API_PEER_COMPLETE.
+Buffer channels or atomic counts must not hide unexpected attempts/overflow. ClearCookies explicitly does not clear an externally supplied SetCookieJar jar; test this documented ownership boundary. The download path currently closes outputs implementing io.Closer, so the download buffer is io.Writer-only; the distinct Dump CloseDump no-adoption guarantee uses an observable closer.
 Expected errors are separate from fixture
 errors. Join/cancel all workers and drain/close manual bodies and owned dump scopes
 before restoring the original default. CloseIdleConnections only on the owned

@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
-	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"strings"
@@ -88,11 +87,12 @@ func TestReqPublicAPI_MiddlewarePolicies(t *testing.T) {
 		if !strings.Contains(before.headers.Get("Cookie"),"common=configured") || !strings.Contains(before.headers.Get("Cookie"),"jar=manual") || after.headers.Get("Cookie")!="jar=manual" || cookieErr!=nil || len(cookies)!=1 || cookies[0].Name!="jar" {t.Fatalf("cookie ownership before=%v after=%v jar=%v error=%v",before.headers,after.headers,cookies,cookieErr)}
 	})
 	t.Run("redirect_denied",func(t *testing.T){
-		publicAPIInstall(t);destination:=publicAPIPlainPeer(t);var hits atomic.Int32
-		server:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){hits.Add(1);http.Redirect(w,r,destination.server.URL+"/must-not-arrive",http.StatusFound)}));t.Cleanup(server.Close)
-		req.SetRedirectPolicy(req.NoRedirectPolicy());response,err:=req.Get(server.URL+"/redirect")
-		if err!=nil || response==nil || response.StatusCode!=302 || response.Header.Get("Location")!=destination.server.URL+"/must-not-arrive" || hits.Load()!=1 || destination.requests.Load()!=0 {t.Fatalf("redirect policy response=%v error=%v source=%d destination=%d",response,err,hits.Load(),destination.requests.Load())}
-		if response.Body!=nil {if closeErr:=response.Body.Close();closeErr!=nil {t.Fatal(closeErr)}}
+		publicAPIInstall(t);destination:=publicAPIPlainPeer(t)
+		location:=destination.server.URL+"/must-not-arrive"
+		source:=publicAPINewPeer(t,func(int,publicAPIExchange)(int,string,string){return http.StatusFound,"text/plain","bounded-redirect-body"},http.Header{"Location":{location}})
+		req.SetRedirectPolicy(req.NoRedirectPolicy());response,err:=req.Get(source.server.URL+"/redirect")
+		publicAPIResponse(t,response,err,302,"bounded-redirect-body");exchange:=source.receive(t)
+		if response.Header.Get("Location")!=location || source.requests.Load()!=1 || destination.requests.Load()!=0 || exchange.uri!="/redirect" {t.Fatalf("redirect policy location=%q source=%d destination=%d exchange=%+v",response.Header.Get("Location"),source.requests.Load(),destination.requests.Load(),exchange)}
 	})
 	t.Run("manual_read_and_reenable",func(t *testing.T){
 		publicAPIInstall(t);peer:=publicAPIPlainPeer(t);req.DisableAutoReadResponse();response,err:=req.Get(peer.server.URL+"/manual")

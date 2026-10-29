@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,7 +26,10 @@ type publicAPIPeer struct {
 	server *httptest.Server
 	exchanges chan publicAPIExchange
 	requests atomic.Int32
+	received atomic.Int32
 	overflow atomic.Bool
+	mu sync.Mutex
+	overflowRecords []publicAPIExchange
 }
 
 func publicAPIInstall(t *testing.T) *req.Client {
@@ -41,7 +45,7 @@ func publicAPIInstall(t *testing.T) *req.Client {
 	return client
 }
 
-func publicAPINewPeer(t *testing.T, reply func(int, publicAPIExchange) (int, string, string)) *publicAPIPeer {
+func publicAPINewPeer(t *testing.T, reply func(int, publicAPIExchange) (int, string, string), responseHeaders ...http.Header) *publicAPIPeer {
 	t.Helper()
 	p := &publicAPIPeer{exchanges: make(chan publicAPIExchange, 16)}
 	p.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -52,11 +56,28 @@ func publicAPINewPeer(t *testing.T, reply func(int, publicAPIExchange) (int, str
 		status, contentType, response := reply(attempt,e)
 		w.Header().Set("Content-Type",contentType)
 		w.Header().Set("X-Public-Response","response-header-token")
+		for _,headers:=range responseHeaders { for name,values:=range headers { for _,value:=range values { w.Header().Add(name,value) } } }
 		w.WriteHeader(status)
 		if r.Method != http.MethodHead { _, e.writeError = io.WriteString(w,response) }
-		select { case p.exchanges <- e: default: p.overflow.Store(true) }
+		select { case p.exchanges <- e: default:
+			p.overflow.Store(true)
+			// Preserve every rejected exchange and its actual fixture errors;
+			// do not retain an unnecessary second copy of the bounded entity.
+			e.body=""
+			p.mu.Lock();p.overflowRecords=append(p.overflowRecords,e);p.mu.Unlock()
+		}
 	}))
-	t.Cleanup(p.server.Close)
+	t.Cleanup(func(){
+		// Close joins all handlers before inspecting the complete ledger.
+		p.server.Close()
+		close(p.exchanges)
+		for e:=range p.exchanges { t.Errorf("unconsumed peer exchange method=%s uri=%s read=%v write=%v",e.method,e.uri,e.readError,e.writeError) }
+		p.mu.Lock();overflowRecords:=append([]publicAPIExchange(nil),p.overflowRecords...);p.mu.Unlock()
+		for _,e:=range overflowRecords { t.Errorf("overflowed peer exchange method=%s uri=%s read=%v write=%v",e.method,e.uri,e.readError,e.writeError) }
+		if p.overflow.Load() { t.Errorf("public API peer overflowed; retained extra records=%d",len(overflowRecords)) }
+		if p.requests.Load()!=p.received.Load() { t.Errorf("peer final request ledger requests=%d consumed=%d",p.requests.Load(),p.received.Load()) }
+		t.Logf("PUBLIC_API_PEER_COMPLETE requests=%d consumed=%d overflow=%v",p.requests.Load(),p.received.Load(),p.overflow.Load())
+	})
 	return p
 }
 
@@ -69,6 +90,7 @@ func (p *publicAPIPeer) receive(t *testing.T) publicAPIExchange {
 	t.Helper()
 	select {
 	case e:= <-p.exchanges:
+		p.received.Add(1)
 		if p.overflow.Load() || e.readError != nil || e.writeError != nil { t.Fatalf("peer error overflow=%v read=%v write=%v",p.overflow.Load(),e.readError,e.writeError) }
 		return e
 	case <-time.After(6*time.Second):
