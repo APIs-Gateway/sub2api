@@ -46,6 +46,11 @@ def events(path):
 
 def successful_events(path):
     values = events(path)
+    require(all(isinstance(value, dict) and
+                isinstance(value.get("Package"), str) and value["Package"] and
+                ("Test" not in value or
+                 (isinstance(value["Test"], str) and value["Test"]))
+                for value in values), "Malformed package/test event identity")
     # Go emits a package-level skip for packages without test files. It is
     # never a PASS claim; actual test-level skips remain a blocking failure.
     require(not any(v.get("Action") == "fail" or
@@ -109,19 +114,37 @@ def verify_named(backend, evidence, filename):
             "Retain all526 original G leaves, six HTTP2 receive-flow and42 dump ownership leaves")
     require(expected["customTLSCount"] == 18 and expected["customTLSHTTP2Count"] == 13 and
             expected["customTLSPackage"] == MODULE and
-            expected["customTLSHTTP2Package"] == MODULE + "/internal/http2" and
-            expected["totalNamedLeaves"] == 605,
+            expected["customTLSHTTP2Package"] == MODULE + "/internal/http2",
             "Retain all574 prior leaves plus18 root and13 private HTTP2 custom TLS leaves")
-    kinds = baseline_kinds + ("clientBehavior", "digestOwnership", "downloadContract", "parallelDownloadFallback", "parallelDownloadHTTP3Cleanup", "parallelDownloadInProcess", "parallelDownloadDefaultOutput", "http2ReceiveFlow", "dumpOwnership", "customTLS", "customTLSHTTP2")
+    legacy_kinds = baseline_kinds + ("clientBehavior", "digestOwnership", "downloadContract", "parallelDownloadFallback", "parallelDownloadHTTP3Cleanup", "parallelDownloadInProcess", "parallelDownloadDefaultOutput", "http2ReceiveFlow", "dumpOwnership", "customTLS", "customTLSHTTP2")
+    require(sum(expected[kind + "Count"] for kind in legacy_kinds) == 605,
+            "Retain every original605 mandatory leaf")
+    expansion = (("publicAPI", MODULE, 70), ("http1Boundary", MODULE, 33),
+                 ("publicDefault", MODULE, 6), ("bisectContract", MODULE + "/internal/bisect", 112),
+                 ("http2Coverage", MODULE + "/internal/http2", 51), ("safariWrapper", MODULE, 3))
+    for kind, package, count in expansion:
+        require(expected[kind + "Package"] == package and expected[kind + "Count"] == count,
+                "Invalid expansion registry: " + kind)
+    kinds = legacy_kinds + tuple(kind for kind, _, _ in expansion)
+    require(expected["totalNamedLeaves"] == 880,
+            "Require original605 plus275 reviewed expansion leaves")
     require(expected["totalNamedLeaves"] == sum(expected[kind + "Count"] for kind in kinds),
             "Incomplete total named leaf inventory")
+    # Preserve event order within each actual identity while avoiding repeated
+    # full-stream scans by the CI-only missing/duplicate verifier controls.
+    by_identity = {}
+    for value in values:
+        if "Test" in value:
+            by_identity.setdefault((value["Package"], value["Test"]), []).append(value)
     for kind in kinds:
         package = expected[kind + "Package"]
         leaves = expected[kind + "Leaves"]
         require(len(leaves) == expected[kind + "Count"] and leaves and len(leaves) == len(set(leaves)), "Invalid inventory")
         require(package in packages, f"Missing package PASS: {package}")
+        require(sum(v.get("Action") == "pass" and v.get("Package") == package and "Test" not in v
+                    for v in values) == 1, f"Missing/duplicate package PASS: {package}")
         for test in leaves:
-            actual = [v for v in values if v.get("Package") == package and v.get("Test") == test]
+            actual = by_identity.get((package, test), [])
             require(sum(v.get("Action") == "run" for v in actual) == 1, f"Missing/duplicate RUN {test}")
             require(sum(v.get("Action") == "pass" for v in actual) == 1, f"Missing/duplicate PASS {test}")
             if kind == "parallelDownloadInProcess":
@@ -132,6 +155,8 @@ def verify_named(backend, evidence, filename):
                 require("G_CHILD_ACTUAL" not in output and "G_CHILD_EXECUTED" not in output,
                         f"Parent contract incorrectly delegated to child: {test}")
             proof.append({"package": package, "test": test, "actions": [v["Action"] for v in actual]})
+    require(len(proof) == len({(item["package"], item["test"]) for item in proof}) == expected["totalNamedLeaves"],
+            "Duplicate registered package/test identity")
     # Detect new security leaves accidentally omitted from the frozen inventory.
     prefixes = ("TestReqHTTP2Security_", "TestDumper", "TestReqTraceSecurity_", "TestReqDumpSecurity_",
                 "TestReqHTTP1Lifecycle_", "TestReqProxyLifecycle_", "TestReqHTTP3Contract_", "TestReqHTTP3Wire_",
@@ -141,7 +166,9 @@ def verify_named(backend, evidence, filename):
                 "TestReqClientCookie_", "TestReqClientResponse_", "TestReqDigestOwnership_",
                 "TestReqDownloadContract", "TestReqParallelDownloadContract", "TestReqParallelDownloadFallback",
                 "TestReqParallelDownloadHTTP3Cleanup", "TestReqParallelDownloadInProcessContract",
-                "TestReqParallelDownloadDefaultOutput", "TestReqHTTP2ReceiveFlowContract_", "TestReqDumpOwnership", "TestReqCustomTLS_")
+                "TestReqParallelDownloadDefaultOutput", "TestReqHTTP2ReceiveFlowContract_", "TestReqDumpOwnership", "TestReqCustomTLS_",
+                "TestReqPublicAPI_", "TestReqH1Boundary_", "TestReqPublicDefaultContract", "TestReqBisectContract_",
+                "TestReqHTTP2CoverageContract_", "TestReqHTTP2CoverageFrame_", "TestReqSafariWrapperContract")
     runs = {(v.get("Package"), v["Test"]) for v in values if v.get("Action") == "run" and v.get("Test", "").startswith(prefixes)}
     leaves = {key for key in runs if not any(other[0] == key[0] and other[1].startswith(key[1] + "/") for other in runs)}
     require(leaves == {(v["package"], v["test"]) for v in proof}, "Actual security leaf inventory differs")
@@ -282,13 +309,13 @@ def main():
                 actual_paths == expected_paths,
                 "Controlled module must contain exactly132 originals+declared owned files")
         adaptations = set(production_adaptation_paths(manifest))
-        require(len(manifest["adaptedCandidateFiles"]) == 16 and
+        require(len(manifest["adaptedCandidateFiles"]) == 17 and
                 {v["path"] for v in manifest["adaptedCandidateFiles"]} == adaptations,
                 "Incomplete adapted source hash inventory")
         production = {v["path"] for v in manifest["originalFiles"]
                       if v["path"].endswith(".go") and not v["path"].endswith("_test.go")}
         require(len(production) == 89 and adaptations <= production,
-                "Retain all89 original production Go files and exactly16 declared adaptations")
+                "Retain all89 original production Go files and exactly17 declared adaptations")
         test_adaptations = manifest.get("originalTestAdaptations", [])
         require(isinstance(test_adaptations, list) and len(test_adaptations) == 2 and
                 {item.get("path") for item in test_adaptations} == {"request_test.go", "client_test.go"},
@@ -306,9 +333,9 @@ def main():
             require(len(data) == item["candidateBytes"] and
                     hashlib.sha256(data).hexdigest() == item["candidateSHA256"],
                     "Adapted original test hash mismatch: " + path)
-        require(manifest["originalUnmodifiedFileCount"] == 114 and
-                len(original_by_path) - len(adaptations) - len(adapted_tests) == 114,
-                "Retain exactly114 unchanged originals after16 production and two declared test adaptations")
+        require(manifest["originalUnmodifiedFileCount"] == 113 and
+                len(original_by_path) - len(adaptations) - len(adapted_tests) == 113,
+                "Retain exactly113 unchanged originals after17 production and two declared test adaptations")
         for item in manifest["originalFiles"]:
             if item["path"] not in adaptations | adapted_tests:
                 data = (controlled / item["path"]).read_bytes()
@@ -396,10 +423,14 @@ def production_adaptation_paths(manifest):
     expected = ("internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
                 "internal/dump/dump.go", "request.go", "response.go", "trace.go", "internal/http3/transport.go",
                 "internal/http3/stream.go", "internal/compress/deflate_reader.go", "decode.go", "digest.go",
-                "parallel_download.go", "client.go", "dump.go", "transport.go")
+                "parallel_download.go", "client.go", "dump.go", "transport.go",
+                "client_wrapper.go")
+    # User authorized the specific global Safari wrapper correction in existing
+    # PR1712 on2026-10-29. Keep all132 archive rows and original16 adaptations;
+    # the appended wrapper uses the same actual fix-block85 gate below.
     declared = manifest["allowedProductionAdaptations"]
     candidates = [item["path"] for item in manifest["adaptedCandidateFiles"]]
-    require(isinstance(declared, dict) and len(declared) == len(candidates) == len(expected) == 16 and
+    require(isinstance(declared, dict) and len(declared) == len(candidates) == len(expected) == 17 and
             set(declared) == set(candidates) == set(expected),
             "Unexpected or missing production adaptation in source/per-file85 partition")
     return expected

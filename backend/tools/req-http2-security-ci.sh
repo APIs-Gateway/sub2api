@@ -53,6 +53,19 @@ test ! -s "$evidence/dump-ownership-gofmt.list"
 # Root transport.go remains in the owned Close formatter input above.
 gofmt -l third_party/req/custom_tls_handshake_peer_test.go third_party/req/custom_tls_handshake_test.go third_party/req/custom_tls_handshake_boundary_test.go third_party/req/internal/http2/custom_tls_handshake_peer_test.go third_party/req/internal/http2/custom_tls_handshake_test.go third_party/req/internal/http2/transport.go > "$evidence/custom-tls-gofmt.list"
 test ! -s "$evidence/custom-tls-gofmt.list"
+# Additional contracts and the user-authorized Safari wrapper: remote CI only.
+gofmt -l third_party/req/public_api_peer_test.go third_party/req/public_api_request_contract_test.go third_party/req/public_api_form_contract_test.go third_party/req/public_api_dump_contract_test.go third_party/req/public_api_policy_contract_test.go > "$evidence/public-api-contract-gofmt.list"
+test ! -s "$evidence/public-api-contract-gofmt.list"
+gofmt -l third_party/req/h1_boundary_contract_test.go > "$evidence/http1-boundary-gofmt.list"
+test ! -s "$evidence/http1-boundary-gofmt.list"
+gofmt -l third_party/req/public_default_contract_test.go > "$evidence/public-default-gofmt.list"
+test ! -s "$evidence/public-default-gofmt.list"
+gofmt -l third_party/req/internal/bisect/contracts_test.go > "$evidence/bisect-contract-gofmt.list"
+test ! -s "$evidence/bisect-contract-gofmt.list"
+gofmt -l third_party/req/internal/http2/coverage_transport_contract_test.go third_party/req/internal/http2/coverage_frame_contract_test.go third_party/req/internal/http2/coverage_contract_peer_test.go > "$evidence/http2-coverage-gofmt.list"
+test ! -s "$evidence/http2-coverage-gofmt.list"
+gofmt -l third_party/req/client_wrapper.go third_party/req/safari_wrapper_contract_test.go > "$evidence/safari-wrapper-gofmt.list"
+test ! -s "$evidence/safari-wrapper-gofmt.list"
 go list -m -json all > "$evidence/modules.json"
 go list -json "$module/..." > "$evidence/packages.json"
 python3 "$checker" packages "$backend" "$evidence"
@@ -60,7 +73,7 @@ python3 -B "$backend/tools/req-original-test-adaptation-controls.py" --backend "
 gofmt -d third_party/req/internal/http2/{flow,transport,frame}.go third_party/req/internal/http2/{flow,transport,frame}_security_test.go third_party/req/transport_security_test.go third_party/req/internal/dump/{dump.go,dump_concurrency_test.go} third_party/req/{request,response,trace,request_test,trace_elapsed_peer_test,dump_concurrency_test,trace_concurrency_test,http1_lifecycle_test,http1_upload_test,proxy_lifecycle_test}.go > "$evidence/gofmt.diff"
 test ! -s "$evidence/gofmt.diff"
 # -p bounds compiler parallelism; -parallel bounds tests within each package.
-go test -p=1 -parallel=1 -race -count=1 -timeout=10m -json -run '^(TestReqCustomTLS_|TestReqHTTP2Security_|TestReqHTTP2ReceiveFlowContract_|TestReqDumpOwnership|TestDumper|TestReqDumpSecurity_|TestReqTraceSecurity_|TestReqHTTP1Lifecycle_|TestReqProxyLifecycle_|TestReqHTTP3Contract_|TestReqHTTP3Wire_|TestReqHTTP3PublicTLS_|TestReqHTTP3TLSControl_|TestReqHTTP3Decompression_|TestReqHTTP3DeflateClose_|TestReqDeflateClose_|TestReqHTTP2FrameContract_|TestReqHTTP1Transfer_|TestReqHTTP2TransportContract_|TestReqMetaCharset_|TestReqClientDigest_|TestReqClientRedirect_|TestReqClientCookie_|TestReqClientResponse_|TestReqDigestOwnership_|TestReqDownloadContract|TestReqParallelDownloadContract|TestReqParallelDownloadFallback|TestReqParallelDownloadHTTP3Cleanup|TestReqParallelDownloadInProcessContract|TestReqParallelDownloadDefaultOutput)' -covermode=atomic -coverpkg="$module/..." -coverprofile="$evidence/named.raw.out" "$private" "$module/internal/dump" "$module" "$module/internal/http3" "$module/internal/compress" > "$evidence/named.json" 2> "$evidence/named.stderr"
+go test -p=1 -parallel=1 -race -count=1 -timeout=10m -json -run '^(TestReqPublicAPI_|TestReqH1Boundary_|TestReqPublicDefaultContract|TestReqBisectContract_|TestReqHTTP2CoverageContract_|TestReqHTTP2CoverageFrame_|TestReqSafariWrapperContract|TestReqCustomTLS_|TestReqHTTP2Security_|TestReqHTTP2ReceiveFlowContract_|TestReqDumpOwnership|TestDumper|TestReqDumpSecurity_|TestReqTraceSecurity_|TestReqHTTP1Lifecycle_|TestReqProxyLifecycle_|TestReqHTTP3Contract_|TestReqHTTP3Wire_|TestReqHTTP3PublicTLS_|TestReqHTTP3TLSControl_|TestReqHTTP3Decompression_|TestReqHTTP3DeflateClose_|TestReqDeflateClose_|TestReqHTTP2FrameContract_|TestReqHTTP1Transfer_|TestReqHTTP2TransportContract_|TestReqMetaCharset_|TestReqClientDigest_|TestReqClientRedirect_|TestReqClientCookie_|TestReqClientResponse_|TestReqDigestOwnership_|TestReqDownloadContract|TestReqParallelDownloadContract|TestReqParallelDownloadFallback|TestReqParallelDownloadHTTP3Cleanup|TestReqParallelDownloadInProcessContract|TestReqParallelDownloadDefaultOutput)' -covermode=atomic -coverpkg="$module/..." -coverprofile="$evidence/named.raw.out" "$private" "$module/internal/dump" "$module" "$module/internal/http3" "$module/internal/compress" "$module/internal/bisect" > "$evidence/named.json" 2> "$evidence/named.stderr"
 python3 "$checker" named "$backend" "$evidence"
 # Wildcard deliberately omits the original internal/testdata helper suite.
 # Its cert_test.go lacks an io import; retain both original files verbatim.
