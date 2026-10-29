@@ -251,7 +251,7 @@ jobs:
               errors.append('formatter evidence incomplete: ' + str(error))
           report = {'appHead': os.environ['APP_HEAD'], 'appTree': os.environ['APP_TREE'],
                     'controllerHead': os.environ['GITHUB_SHA'], 'fullInputArchives': archives, 'results': results, 'errors': errors,
-                    'scope': 'format external seventeen-file copies only; no compilation or runtime approval'}
+                    'scope': 'format external thirty-file copies only: seventeen retained plus thirteen coverage/Safari inputs; no compilation or runtime approval'}
           (evidence / 'formatter-actual-receipt.json').write_text(json.dumps(report, indent=2) + '\n')
           assert not errors and len(results) == 30, errors
           PYDATA
