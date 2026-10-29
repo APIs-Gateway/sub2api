@@ -797,7 +797,7 @@
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "Child1752 RAW owned dump Close repair from preserved bf4. Original132 archive references/89production/14tests and12selected+2helpers remain intact. Current partition114unchanged+16production adaptations+2original test adaptations. Preserve prior526 mandatory leaves;42 additional source-declared ownership leaves require actual remote named/all execution, not an invented PASS count. Four atomic profiles remain separate; all16production per-file added-block85, original Codecov85 and supplementary complete-Git Go85 remain mandatory. No executable validation or approval claimed. Existing PR1712 custom TLS ownership candidate preserves prior574 leaves and declares31 new source leaves (605 after root registration). No runtime/formatting evidence is asserted; OLD exact race and NEW actual named/all remote evidence are still required.",
+  "validation": "Child1752 RAW owned dump Close repair from preserved bf4. Original132 archive references/89production/14tests and12selected+2helpers remain intact. Current partition114unchanged+16production adaptations+2original test adaptations. Preserve prior526 mandatory leaves;42 additional source-declared ownership leaves require actual remote named/all execution, not an invented PASS count. Four atomic profiles remain separate; all16production per-file added-block85, original Codecov85 and supplementary complete-Git Go85 remain mandatory. No runtime test/build validation or approval claimed. Existing PR1712 custom TLS ownership candidate preserves prior574 leaves and registers31 new source leaves (605 mandatory). No runtime evidence is asserted; OLD exact race and NEW actual named/all remote evidence are still required. Remote formatter40726740668 actually checked17 frozen inputs/68 operations; four TLS fixture formatting outputs imported verbatim. This is formatting evidence only, not runtime/race/Windows/security/coverage acceptance.",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -936,7 +936,7 @@
       ]
     }
   ],
-  "adaptedCandidateStatus": "Child1752 RAW source bound to each exact adapted file; no local/87 formatter/build/test/checker executed. Current-head independent review, remote formatting, real Windows OLD/NEW witness, named/all race and all85 gates remain required. Custom TLS repair changes only two existing adapted function paths; original archive entries, other production and original test hashes are preserved. Local/87 execution prohibited; remote formatting/source freeze remains pending.",
+  "adaptedCandidateStatus": "Child1752 RAW source bound to each exact adapted file; no local/87 formatter/build/test/checker executed. Current-head independent review, real Windows OLD/NEW witness, named/all race and all85 gates remain required. Custom TLS repair changes only two existing adapted function paths; original archive entries, other production and original test hashes are preserved. Local/87 execution prohibited; remote formatter evidence below binds c11 and the imported source freeze still requires independent review. Remote17-input formatter40726740668 evidence imported four new TLS fixtures only; all16 adapted production hashes remain unchanged. Runtime evidence and exact-head independent review remain required.",
   "originalUnmodifiedFileCount": 114,
   "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
   "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227",
@@ -1655,24 +1655,24 @@
     ],
     "newFiles": {
       "custom_tls_handshake_peer_test.go": {
-        "bytes": 4058,
-        "sha256": "928256488b579f8c8a787c7f0a62ebc74d543a1c0c6dc8d5a7160292351229da"
+        "bytes": 4096,
+        "sha256": "3bcec75f5164e0efcb0f86aa6e1e35857f2d8211d80ca95120d2c093af7d401b"
       },
       "custom_tls_handshake_test.go": {
         "bytes": 7617,
         "sha256": "4ce46f6b1edef1172ee3ede6cfe5735e8947545705705398f0602d635c00d999"
       },
       "custom_tls_handshake_boundary_test.go": {
-        "bytes": 9416,
-        "sha256": "62cec3f6f4fafd512fc6a5e4ae2fd3ed336b28196560b56a00ce10f9d9b130d9"
+        "bytes": 9419,
+        "sha256": "159641ae9df4de70f0c39d4fa07934d88280165adaf79bce62cdda0e0ac62419"
       },
       "internal/http2/custom_tls_handshake_peer_test.go": {
-        "bytes": 3688,
-        "sha256": "ec5fa20281f1322243cca74a53a9e7e1e6582c1b7c41327df7050a05eb44bcae"
+        "bytes": 3726,
+        "sha256": "6121032f5593da00a43a65ae341aa1e405b8c46341c693faea209011756a7626"
       },
       "internal/http2/custom_tls_handshake_test.go": {
-        "bytes": 9376,
-        "sha256": "51ed07bdab46f6ebf56ab8a23dbe106d7f32e18132fb2a4f277a2fd1b5ff93a8"
+        "bytes": 9379,
+        "sha256": "c778bb6009f452e9251896396f2ce04b0a6c3516bc5b89d965dadbaa77438f63"
       },
       "CUSTOM-TLS-OWNERSHIP-REPAIR.md": {
         "bytes": 5339,
@@ -1725,13 +1725,68 @@
     "additionalSourceLeafCount": 31,
     "priorMandatoryLeaves": 574,
     "composedMandatoryLeaves": 605,
-    "sourceStatus": "Source identities only, NOTRUN. Registration requires exact-head independent review; actual remote JSON RUN/PASS and formatting remain unproven.",
+    "sourceStatus": "Source identities only, NOTRUN. Exact c11 source was formatted only on remote CI run40726740668, controller6866de3b; four changed fixture outputs imported verbatim. No compiler/test/race/Windows/coverage runtime evidence is asserted.",
     "requiredRemoteEvidence": [
       "Identical public LatePublicationRace HTTP1/HTTP2 fixture on OLD must show genuine handshake prerequisites and actual old shared-connection race frames; compiler/setup/watchdog failures are not race reproduction.",
       "NEW exact-head605 named and full race suites, actual four adapted original test completions, late wrapper/distinct connection/trace cleanup.",
       "Actual Windows calibrated Remove OLD/NEW resource evidence and no generated residue.",
       "All four original atomic profiles, both original85 gates and all16 production per-file85 gates, without profile/count/denominator mixing."
     ],
-    "scope": "Only reachable custom TLS terminal ownership, cancellation, timeout, late-result connection disposal and ordered trace hooks. Preserve default TLS paths, headers, transport pool/business policy, original132 rows and114/16/2 partition."
+    "scope": "Only reachable custom TLS terminal ownership, cancellation, timeout, late-result connection disposal and ordered trace hooks. Preserve default TLS paths, headers, transport pool/business policy, original132 rows and114/16/2 partition.",
+    "remoteFormatterEvidence": {
+      "run": "https://github.com/APIs-Gateway/sub2api/actions/runs/40726740668",
+      "runId": 40726740668,
+      "runAttempt": 1,
+      "jobId": 122951921850,
+      "artifactId": 12833411062,
+      "artifactZIPBytes": 30862362,
+      "artifactZIPSHA256": "ec354956a3070a48b8bc572d2ecb8f3cfc668f263b1a05b2e54e38f51c578616",
+      "sourceHead": "c11eb4e1c01a66e91ca81b59901fa779dfadbf1a",
+      "sourceTree": "6d7c0592a337d97e15949a25676e50aae4637caa",
+      "controllerHead": "6866de3bd7b18a5c85cf145b12d046835fe4c76e",
+      "controllerTree": "a2e32c69d98f35dee95dad4a1bb054f2e0592e82",
+      "goVersion": "go version go1.26.10 linux/amd64",
+      "actualInputFiles": 17,
+      "actualOperations": 68,
+      "rawUnchangedExit0Empty": 13,
+      "rawChangedExit1Diff": 4,
+      "otherOperationsExit0Empty": 51,
+      "sourceTrackedFiles": 4529,
+      "controllerTrackedFiles": 4530,
+      "fullInputSnapshotsAndArchives": "All tracked paths/modes/Git blobs/SHA256/bytes independently matched exact source/controller Git trees and complete tar archives; before/after snapshots identical.",
+      "auditReceipt": "custom-tls-race-1712-oct28/remote-formatter-6866de3b/SEALED-ACTUAL-FORMATTER17-AUDIT.json",
+      "auditSHA256": "dcc250967e9a5ba527cb586b0a5b197c3b4ff20663ea7f8d59ff79e1506999e2",
+      "importedFormattedFiles": [
+        {
+          "path": "custom_tls_handshake_peer_test.go",
+          "rawBytes": 4058,
+          "rawSHA256": "928256488b579f8c8a787c7f0a62ebc74d543a1c0c6dc8d5a7160292351229da",
+          "formattedBytes": 4096,
+          "formattedSHA256": "3bcec75f5164e0efcb0f86aa6e1e35857f2d8211d80ca95120d2c093af7d401b"
+        },
+        {
+          "path": "custom_tls_handshake_boundary_test.go",
+          "rawBytes": 9416,
+          "rawSHA256": "62cec3f6f4fafd512fc6a5e4ae2fd3ed336b28196560b56a00ce10f9d9b130d9",
+          "formattedBytes": 9419,
+          "formattedSHA256": "159641ae9df4de70f0c39d4fa07934d88280165adaf79bce62cdda0e0ac62419"
+        },
+        {
+          "path": "internal/http2/custom_tls_handshake_peer_test.go",
+          "rawBytes": 3688,
+          "rawSHA256": "ec5fa20281f1322243cca74a53a9e7e1e6582c1b7c41327df7050a05eb44bcae",
+          "formattedBytes": 3726,
+          "formattedSHA256": "6121032f5593da00a43a65ae341aa1e405b8c46341c693faea209011756a7626"
+        },
+        {
+          "path": "internal/http2/custom_tls_handshake_test.go",
+          "rawBytes": 9376,
+          "rawSHA256": "51ed07bdab46f6ebf56ab8a23dbe106d7f32e18132fb2a4f277a2fd1b5ff93a8",
+          "formattedBytes": 9379,
+          "formattedSHA256": "c778bb6009f452e9251896396f2ce04b0a6c3516bc5b89d965dadbaa77438f63"
+        }
+      ],
+      "status": "Actual remote formatting evidence only; no local/87 executable validation. Import changes only fixture alignment/trailing blank lines. All605 named identities, four original profiles, original four adapted tests, sixteen production per-file85 and both original85 gates remain required."
+    }
   }
 }
