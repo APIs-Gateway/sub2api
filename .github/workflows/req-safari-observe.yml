@@ -18,11 +18,11 @@ jobs:
       matrix:
         include:
           - variant: OLD
-            head: 0059105db63ad491998bc4b55f24752c34820142
-            tree: cd735ba67d390da490330447db672669f17a98d7
+            head: fadc6e482f47c2cb5ae65e62e190f7608b238177
+            tree: 5f120f5a618fc45db1097cac726835e386e47792
           - variant: NEW
-            head: e7f1933d71712fc44e99c2b27351cd27419a023a
-            tree: b8850241cbb23d3081c2bb5c9ed69c98b62995a1
+            head: 8283363c2bde327e410dbfae8ca5083b98c951bf
+            tree: 89631cc4f1b37a85980126ce10a01a4a850cc437
     env:
       GOTOOLCHAIN: local
       GOWORK: 'off'
@@ -104,9 +104,10 @@ jobs:
           import hashlib,json,os,pathlib,subprocess,tarfile
           e=pathlib.Path(os.environ['SAFARI_EVIDENCE']); root=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'controller'
           def git(*args): return subprocess.check_output(['git','-C',str(root),*args])
-          old='0059105db63ad491998bc4b55f24752c34820142'; new='e7f1933d71712fc44e99c2b27351cd27419a023a'; base='29ea1fcb4c2366aee00d8f2a75c0b0edf3676880'
+          old='fadc6e482f47c2cb5ae65e62e190f7608b238177'; new='8283363c2bde327e410dbfae8ca5083b98c951bf'; base='29ea1fcb4c2366aee00d8f2a75c0b0edf3676880'
           fixture='backend/third_party/req/safari_wrapper_contract_test.go'; wrapper='backend/third_party/req/client_wrapper.go'; doc='backend/third_party/req/SAFARI-WRAPPER-CONTRACTS.md'
-          assert git('rev-parse',old+'^').decode().strip()==base
+          subprocess.check_call(['git','-C',str(root),'merge-base','--is-ancestor',base,old])
+          subprocess.check_call(['git','-C',str(root),'merge-base','--is-ancestor',old,new])
           assert git('diff','--name-only',base,old).decode().splitlines()==[fixture]
           assert git('diff','--name-only',old,new).decode().splitlines()==[doc,wrapper]
           assert git('show',old+':'+fixture)==git('show',new+':'+fixture)
@@ -169,6 +170,9 @@ jobs:
           assert runs==collections.Counter({name:1 for name in required}),runs
           assert not any(x['Action']=='skip' for x in events)
           assert 'WARNING: DATA RACE' not in outputs and 'panic:' not in outputs and 'fatal error:' not in outputs
+          # Known OLD identity failures cannot hide a fixture, body, cleanup,
+          # ledger or other unexpected failure in that already-failed leaf.
+          assert 'SAFARI_WRAPPER_FIXTURE_FAILURE:' not in outputs, outputs
           package_results=[x['Action'] for x in events if x['Action'] in ('pass','fail') and 'Test' not in x]
           if old:
               assert actual==1 and fails==collections.Counter({parent:1,parent+'/global_safari':1}), (actual,fails)
