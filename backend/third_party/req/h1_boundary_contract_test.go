@@ -148,7 +148,7 @@ func TestReqH1Boundary_HeadlessStatusFraming(t *testing.T) {
 			got, readErr := io.ReadAll(response.Body)
 			closeErr := response.Body.Close()
 			if len(got) != 0 || readErr != nil || closeErr != nil || response.ContentLength != tc.length { t.Fatalf("body=%q length=%d read=%v close=%v", got, response.ContentLength, readErr, closeErr) }
-			if tc.chunked != reflect.DeepEqual(response.TransferEncoding, []string{"chunked"}) { t.Fatalf("encoding=%v", response.TransferEncoding) }
+			if (tc.chunked && !reflect.DeepEqual(response.TransferEncoding, []string{"chunked"})) || (!tc.chunked && len(response.TransferEncoding) != 0) { t.Fatalf("encoding=%v, want chunked=%v", response.TransferEncoding, tc.chunked) }
 			next, err := buffer.Peek(4)
 			if err != nil || string(next) != "NEXT" { t.Fatalf("bodyless status consumed following message: %q/%v", next, err) }
 		})
