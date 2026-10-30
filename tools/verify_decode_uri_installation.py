@@ -299,6 +299,11 @@ def main():
         child = json.loads((evidence / "probe/publisher-child.process.json").read_bytes())
         require(child["started"] and child["actualExit"] == 0 and child["signal"] is None
                 and child["streamsComplete"] and not child["watchdog"]
+                and not child["outputLimitExceeded"] and child["outputLimitBytes"] == 65536
+                and not child["stdoutTruncated"] and not child["stderrTruncated"]
+                and child["stdoutTotalBytes"] == child["stdoutBytes"]
+                and child["stderrTotalBytes"] == child["stderrBytes"]
+                and child["stdoutBytes"] + child["stderrBytes"] <= 65536
                 and child["elapsedMilliseconds"] < child["timeoutMilliseconds"] == 10000,
                 "Publisher payload did not naturally complete in its owned child")
         for stream in ("stdout", "stderr"):

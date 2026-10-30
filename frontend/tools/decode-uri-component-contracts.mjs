@@ -24,10 +24,15 @@ function externalDirectory(argument) {
   assert.equal(process.env.GITHUB_ACTIONS, 'true', 'Remote CI is required');
   assert.ok(!process.env.NODE_OPTIONS && !process.env.NODE_PATH, 'External Node preloads/search paths are forbidden');
   assert.ok(argument && path.isAbsolute(argument), 'An absolute external evidence directory is required');
-  fs.mkdirSync(argument, {recursive: false});
-  const directory = fs.realpathSync(argument);
-  const relative = path.relative(repo, directory);
+  const requested = path.resolve(argument);
+  const parent = fs.realpathSync(path.dirname(requested));
+  const destination = path.join(parent, path.basename(requested));
+  const relative = path.relative(repo, destination);
   assert.ok(relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative), 'Evidence must be outside the checkout');
+  fs.mkdirSync(destination, {recursive: false});
+  const directory = fs.realpathSync(destination);
+  const actualRelative = path.relative(repo, directory);
+  assert.ok(actualRelative === '..' || actualRelative.startsWith('..' + path.sep) || path.isAbsolute(actualRelative), 'Canonical evidence must remain outside the checkout');
   return directory;
 }
 
@@ -177,28 +182,46 @@ async function boundedChild(directory, discovery) {
   const childDirectory = path.join(directory, 'publisher-child');
   const argv = [script, '--long-child', childDirectory];
   const record = {argv: [process.execPath, ...argv], started: false, actualExit: null,
-    signal: null, watchdog: false, streamsComplete: false, timeoutMilliseconds: 10000};
+    signal: null, watchdog: false, streamsComplete: false, timeoutMilliseconds: 10000,
+    outputLimitBytes: 65536, outputLimitExceeded: false, stdoutTotalBytes: 0, stderrTotalBytes: 0,
+    stdoutTruncated: false, stderrTruncated: false};
   const stdout = [];
   const stderr = [];
+  let remaining = record.outputLimitBytes;
   const start = performance.now();
   await new Promise(resolve => {
     const child = spawn(process.execPath, argv, {stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32'});
     child.once('spawn', () => { record.started = true; record.pid = child.pid; });
-    child.stdout.on('data', value => stdout.push(value));
-    child.stderr.on('data', value => stderr.push(value));
-    child.once('error', error => { record.launchError = String(error); });
-    const timer = setTimeout(() => {
-      record.watchdog = true;
+    function killOwnedChild() {
       try {
         if (process.platform === 'win32') child.kill('SIGKILL');
         else process.kill(-child.pid, 'SIGKILL');
       } catch (error) { record.terminationError = String(error); }
+    }
+    function retain(stream, chunks, value) {
+      record[stream + 'TotalBytes'] += value.length;
+      const retained = Math.min(value.length, remaining);
+      if (retained > 0) chunks.push(Buffer.from(value.subarray(0, retained)));
+      remaining -= retained;
+      if (retained < value.length) record[stream + 'Truncated'] = true;
+      if (record.stdoutTotalBytes + record.stderrTotalBytes > record.outputLimitBytes && !record.outputLimitExceeded) {
+        record.outputLimitExceeded = true;
+        killOwnedChild();
+      }
+    }
+    child.stdout.on('data', value => retain('stdout', stdout, value));
+    child.stderr.on('data', value => retain('stderr', stderr, value));
+    child.once('error', error => { record.launchError = String(error); });
+    const timer = setTimeout(() => {
+      record.watchdog = true;
+      killOwnedChild();
     }, 10000);
     child.once('close', (code, signal) => {
       clearTimeout(timer);
       record.actualExit = code;
       record.signal = signal;
-      record.streamsComplete = true;
+      record.transportClosed = true;
+      record.streamsComplete = !record.outputLimitExceeded && !record.stdoutTruncated && !record.stderrTruncated;
       resolve();
     });
   });
@@ -209,7 +232,10 @@ async function boundedChild(directory, discovery) {
   Object.assign(record, {elapsedMilliseconds: performance.now() - start,
     stdoutBytes: out.length, stdoutSHA256: hash(out), stderrBytes: err.length, stderrSHA256: hash(err)});
   save(directory, 'publisher-child.process.json', record);
-  assert.ok(record.started && record.streamsComplete && !record.watchdog && !record.launchError && !record.terminationError);
+  assert.ok(record.started && record.streamsComplete && !record.watchdog && !record.outputLimitExceeded
+    && !record.launchError && !record.terminationError);
+  assert.equal(record.stdoutTotalBytes, out.length);
+  assert.equal(record.stderrTotalBytes, err.length);
   assert.equal(record.actualExit, 0);
   assert.equal(record.signal, null);
   assert.ok(record.elapsedMilliseconds < 10000, 'Natural completion exceeded the owned-child bound');

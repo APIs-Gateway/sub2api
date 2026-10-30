@@ -38,8 +38,11 @@ input to them. Eight exact names must each emit one RUN and one PASS:
 | decode.publisher-distinct-runs-32000 | Exact publisher input construction, restricted-domain complete output oracle, query parity and natural owned-child completion |
 
 The last group preserves its actual input/output, timings, child streams and
-exit/signal. A ten-second watchdog, launch failure, abnormal exit, missing group
-or stream, or incomplete cleanup is a failure. This is a bounded regression
+exit/signal. Combined stdout/stderr retention is bounded to 64 KiB; excess output
+records observed total bytes and truncation, kills only the owned child, and
+cannot claim complete streams or PASS. The external directory is checked before
+creation and again by canonical real path. A ten-second watchdog, launch failure,
+abnormal exit, missing group or stream, or incomplete cleanup is a failure. This is a bounded regression
 observation, not an asymptotic complexity proof or an OLD benchmark. Its lowercase
 hex payload preserves lowercase orphan bytes; the publisher's special uppercase
 `%C2` behavior is covered separately and is not silently generalized.
