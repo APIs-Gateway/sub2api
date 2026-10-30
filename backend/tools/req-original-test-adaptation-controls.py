@@ -118,7 +118,7 @@ def main():
             proof = evidence / ("proof-" + name)
             proof.mkdir()
             manifest_path = destination / "UPSTREAM-MANIFEST.json"
-            manifest = json.loads(manifest_path.read_text())
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             if name == "unregistered":
                 manifest["originalTestAdaptations"] = []
             elif name == "wrong-hash":
@@ -137,7 +137,7 @@ def main():
             stderr = (command_dir / "stderr").read_text(encoding="utf-8")
             if name == "clean":
                 require(command["actualExit"] == 0, "Actual clean copied source failed: " + stderr)
-                value = json.loads((proof / "package-selection-proof.json").read_text())
+                value = json.loads((proof / "package-selection-proof.json").read_text(encoding="utf-8"))
                 require(len(value["originalSelected"]) == 12 and len(value["originalOmitted"]) == 2 and
                         value["originalTestAdaptations"] == manifest["originalTestAdaptations"], "Clean original identity proof incomplete")
             else:
