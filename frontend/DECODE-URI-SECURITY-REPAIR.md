@@ -10,10 +10,17 @@ presence; an application route accepting hostile input has not been established.
 This repair uses the exact pnpm selector
 `query-string@9.3.1>decode-uri-component: 0.5.1`. It preserves the query-string,
 icons, UI and Vue parent versions, existing security exceptions and every
-original CI gate. It adds no advisory suppression. The lock must be generated
-on remote CI with Node 22 and pnpm 9.15.9 and reviewed against the frozen full
-source tree; this initial source commit deliberately retains the old lock and
-cannot pass a frozen installation by itself.
+original CI gate. It adds no advisory suppression. The lock was generated
+on [remote CI41071904900](https://github.com/APIs-Gateway/sub2api/actions/runs/41071904900)
+with Node 22 and pnpm 9.15.9 against the frozen full source tree. Raw generated
+lock SHA256 is `914f432895491c80f4043045c815a87cf423994ec3bb994915469060cdfd8574`.
+The reviewed derivative restores exactly fourteen unrelated original metadata
+blocks (eleven Rollup libc selectors and three deprecation fields); it is not
+the raw artifact. Imported SHA256 is
+`b7425fb0b2ff7e644732abba66aef5f7697704a191c8caebb0a03532cf80becc`.
+Every other package/snapshot block and importer remains byte identical; only
+the scoped override, decoder version/integrity and query-string decoder edge
+change. Frozen installation and runtime acceptance are still pending.
 
 Acceptance requires actual installed owner-context resolution, official 0.5.1
 package bytes, real valid/malformed decode and query option contracts, and a
