@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """CI-only regressions using the complete actual cold/warm module graph."""
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location("req_security_evidence", HERE / "req-http2-security-evidence.py")
@@ -210,21 +213,25 @@ class NamedInventoryRegression(unittest.TestCase):
         self.values.extend({"Action": "pass", "Package": package} for package in sorted(packages))
         self.proof = self.evidence / "synthetic.json.inventory-proof.json"
 
-    def verify(self, values):
-        (self.evidence / "synthetic.json").write_text("".join(json.dumps(value) + "\n" for value in values))
-        return CHECKER.verify_named(self.backend, self.evidence, "synthetic.json")
+    def verify(self, values, filename="synthetic.json", expected=None):
+        (self.evidence / filename).write_text("".join(json.dumps(value) + "\n" for value in values))
+        if expected is None:
+            return CHECKER.verify_named(self.backend, self.evidence, filename)
+        with mock.patch.object(CHECKER, "inventory", return_value=expected):
+            return CHECKER.verify_named(self.backend, self.evidence, filename)
 
-    def rejected(self, values, diagnostic):
-        self.proof.unlink(missing_ok=True)
+    def rejected(self, values, diagnostic, filename="synthetic.json", expected=None):
+        proof = self.evidence / (filename + ".inventory-proof.json")
+        proof.unlink(missing_ok=True)
         with self.assertRaisesRegex(SystemExit, diagnostic):
-            self.verify(values)
-        self.assertFalse(self.proof.exists(), "Rejected input must not publish a complete proof")
+            self.verify(values, filename, expected)
+        self.assertFalse(proof.exists(), "Rejected input must not publish a complete proof")
 
     def test_complete_registered_events_are_accepted_as_verifier_control_only(self):
         self.verify(self.values)
         proof = json.loads(self.proof.read_text())
-        self.assertEqual(len(proof), 605)
-        self.assertEqual(len({(item["package"], item["test"]) for item in proof}), 605)
+        self.assertEqual(len(proof), 880)
+        self.assertEqual(len({(item["package"], item["test"]) for item in proof}), 880)
 
     def test_missing_original_default_output_leaf_is_rejected(self):
         name = self.inventory["parallelDownloadDefaultOutputLeaves"][0]
@@ -292,6 +299,147 @@ class NamedInventoryRegression(unittest.TestCase):
         # containing "race" alongside an all-PASS stream is not this control.
         self.rejected(values, "Failed/skipped test event")
 
+    EXPANSION = (("publicAPI", CHECKER.MODULE, 70),
+                 ("http1Boundary", CHECKER.MODULE, 33),
+                 ("publicDefault", CHECKER.MODULE, 6),
+                 ("bisectContract", CHECKER.MODULE + "/internal/bisect", 112),
+                 ("http2Coverage", CHECKER.MODULE + "/internal/http2", 51),
+                 ("safariWrapper", CHECKER.MODULE, 3))
+    SYNTHETIC_FILENAMES = ("synthetic-named.json", "synthetic-full.json")
+
+    def test_original605_fields_order_and_lists_remain_and_expansion_is275(self):
+        # Canonical pretty JSON deliberately keeps original key and list order.
+        # This anchor was read from reviewed39dd605 source, not actual Go output.
+        expansion_keys = {kind + suffix for kind, _, _ in self.EXPANSION
+                          for suffix in ("Package", "Count", "Leaves")}
+        legacy = {key: value for key, value in self.inventory.items()
+                  if key not in expansion_keys}
+        legacy["totalNamedLeaves"] = 605
+        digest = hashlib.sha256((json.dumps(legacy, indent=2) + "\n").encode()).hexdigest()
+        self.assertEqual(digest, "c56238bf90a9dd220a5876b3335a77ec8c6366419df6699c70310ec29df5a438")
+        legacy_ids = sorted((legacy[key.removesuffix("Leaves") + "Package"], name)
+                            for key, leaves in legacy.items()
+                            if key.endswith("Leaves") and isinstance(leaves, list)
+                            for name in leaves)
+        self.assertEqual(len(legacy_ids), 605)
+        self.assertEqual(hashlib.sha256(json.dumps(legacy_ids, separators=(",", ":")).encode()).hexdigest(),
+                         "d40da89d1c9592dea18a8457de03b430eb715f633f0aa6215bacb1b7c26be8c8")
+        self.assertEqual(sum(count for _, _, count in self.EXPANSION), 275)
+        expected_key_suffix = [kind + suffix for kind, _, _ in self.EXPANSION
+                               for suffix in ("Package", "Count", "Leaves")]
+        self.assertEqual(list(self.inventory)[-len(expected_key_suffix):], expected_key_suffix)
+
+    def test_synthetic_named_and_full_complete880_are_verifier_controls_only(self):
+        for filename in self.SYNTHETIC_FILENAMES:
+            with self.subTest(filename=filename):
+                self.verify(self.values, filename)
+                proof = json.loads((self.evidence / (filename + ".inventory-proof.json")).read_text())
+                self.assertEqual(len(proof), 880)
+                self.assertEqual(len({(item["package"], item["test"]) for item in proof}), 880)
+                # The indexed implementation must retain exact original event order.
+                for item in proof:
+                    identity = (item["package"], item["test"])
+                    self.assertEqual(item["actions"], [value["Action"] for value in self.values
+                                     if (value.get("Package"), value.get("Test")) == identity])
+
+    def test_each275_missing_run_or_pass_rejects_in_both_synthetic_modes(self):
+        for kind, package, count in self.EXPANSION:
+            self.assertEqual(self.inventory[kind + "Package"], package)
+            self.assertEqual(len(self.inventory[kind + "Leaves"]), count)
+            for name in self.inventory[kind + "Leaves"]:
+                for action in ("run", "pass"):
+                    values = [value for value in self.values if not
+                              ((value.get("Package"), value.get("Test")) == (package, name)
+                               and value["Action"] == action)]
+                    for filename in self.SYNTHETIC_FILENAMES:
+                        with self.subTest(kind=kind, name=name, action=action, filename=filename):
+                            self.rejected(values, "Missing/duplicate " + action.upper(), filename)
+
+    def test_each_expansion_group_duplicate_failed_skipped_or_wrong_package_rejects(self):
+        for kind, package, _ in self.EXPANSION:
+            name = self.inventory[kind + "Leaves"][0]
+            wrong_package = (CHECKER.MODULE + "/internal/http2"
+                             if package == CHECKER.MODULE else CHECKER.MODULE)
+            for mutation in ("duplicate_run", "duplicate_pass", "fail", "skip", "wrong_package"):
+                values = copy.deepcopy(self.values)
+                selected = [value for value in values
+                            if (value.get("Package"), value.get("Test")) == (package, name)]
+                diagnostic = "Missing/duplicate RUN"
+                if mutation.startswith("duplicate_"):
+                    action = mutation.removeprefix("duplicate_")
+                    values.append(copy.deepcopy(next(value for value in selected if value["Action"] == action)))
+                    diagnostic = "Missing/duplicate " + action.upper()
+                elif mutation in ("fail", "skip"):
+                    next(value for value in selected if value["Action"] == "pass")["Action"] = mutation
+                    diagnostic = "Failed/skipped test event"
+                else:
+                    for value in selected:
+                        value["Package"] = wrong_package
+                for filename in self.SYNTHETIC_FILENAMES:
+                    with self.subTest(kind=kind, mutation=mutation, filename=filename):
+                        self.rejected(values, diagnostic, filename)
+
+    def test_each_required_package_missing_or_duplicate_terminal_pass_rejects(self):
+        for package in sorted({value["Package"] for value in self.values if "Test" not in value}):
+            terminal = next(value for value in self.values
+                            if value.get("Package") == package and "Test" not in value)
+            for duplicate in (False, True):
+                values = (self.values + [copy.deepcopy(terminal)] if duplicate else
+                          [value for value in self.values if value is not terminal])
+                for filename in self.SYNTHETIC_FILENAMES:
+                    with self.subTest(package=package, duplicate=duplicate, filename=filename):
+                        self.rejected(values, "Missing.*package PASS", filename)
+
+    def test_unknown_new_prefix_rejects_in_declared_and_other_existing_packages(self):
+        families = (("TestReqPublicAPI_", CHECKER.MODULE),
+                    ("TestReqH1Boundary_", CHECKER.MODULE),
+                    ("TestReqPublicDefaultContract", CHECKER.MODULE),
+                    ("TestReqBisectContract_", CHECKER.MODULE + "/internal/bisect"),
+                    ("TestReqHTTP2CoverageContract_", CHECKER.MODULE + "/internal/http2"),
+                    ("TestReqHTTP2CoverageFrame_", CHECKER.MODULE + "/internal/http2"),
+                    ("TestReqSafariWrapperContract", CHECKER.MODULE))
+        for prefix, declared_package in families:
+            other = (CHECKER.MODULE + "/internal/http2"
+                     if declared_package == CHECKER.MODULE else CHECKER.MODULE)
+            for package in (declared_package, other):
+                unknown = {"Package": package, "Test": prefix + "Unregistered"}
+                # Keep every mandatory pair intact, so only unknown identity can reject.
+                values = self.values + [dict(unknown, Action="run"), dict(unknown, Action="pass")]
+                for filename in self.SYNTHETIC_FILENAMES:
+                    with self.subTest(prefix=prefix, package=package, filename=filename):
+                        self.rejected(values, "Actual security leaf inventory differs", filename)
+
+    def test_same_count_cross_group_duplicate_identity_rejects(self):
+        expected = copy.deepcopy(self.inventory)
+        expected["publicAPILeaves"][0] = expected["publicDefaultLeaves"][0]
+        for filename in self.SYNTHETIC_FILENAMES:
+            with self.subTest(filename=filename):
+                self.rejected(self.values, "Duplicate registered package/test identity", filename, expected)
+
+    def test_expansion_wrong_count_package_or_total_rejects(self):
+        for kind, _, _ in self.EXPANSION:
+            for suffix, value in (("Count", -1), ("Package", "unregistered.invalid/module")):
+                expected = copy.deepcopy(self.inventory)
+                expected[kind + suffix] = value
+                for filename in self.SYNTHETIC_FILENAMES:
+                    with self.subTest(kind=kind, suffix=suffix, filename=filename):
+                        self.rejected(self.values, "Invalid expansion registry", filename, expected)
+        expected = copy.deepcopy(self.inventory)
+        expected["totalNamedLeaves"] = 879
+        for filename in self.SYNTHETIC_FILENAMES:
+            with self.subTest(filename=filename):
+                self.rejected(self.values, "Require original605 plus275", filename, expected)
+
+    def test_malformed_unhashable_package_or_test_identity_rejects_explicitly(self):
+        for field, invalid in (("Package", []), ("Package", {}), ("Package", None),
+                               ("Package", ""), ("Test", []), ("Test", {}),
+                               ("Test", None), ("Test", "")):
+            values = copy.deepcopy(self.values)
+            values[0][field] = invalid
+            for filename in self.SYNTHETIC_FILENAMES:
+                with self.subTest(field=field, invalid=invalid, filename=filename):
+                    self.rejected(values, "Malformed package/test event identity", filename)
+
 
 class AdaptedOriginalCompletionRegression(unittest.TestCase):
     """Verifier-only controls; these do not execute original Go tests."""
@@ -339,12 +487,16 @@ class ProductionAdaptationPartitionRegression(unittest.TestCase):
 
     def test_original_thirteen_and_three_owned_dump_adaptations_are_required(self):
         paths = CHECKER.production_adaptation_paths(self.manifest)
-        self.assertEqual(len(paths), 16)
-        self.assertEqual(set(paths[-3:]), {"client.go", "dump.go", "transport.go"})
+        self.assertEqual(len(paths), 17)
+        self.assertEqual(set(paths[13:16]), {"client.go", "dump.go", "transport.go"})
+        self.assertEqual(paths[16], "client_wrapper.go")
+        self.assertEqual(self.manifest["originalUnmodifiedFileCount"], 113)
+        self.assertEqual(len(self.manifest["originalFiles"]), 132)
+        self.assertEqual(len(self.manifest["originalTestAdaptations"]), 2)
 
     def test_each_missing_declared_or_candidate_path_is_rejected(self):
         for key in ("allowedProductionAdaptations", "adaptedCandidateFiles"):
-            for index in range(16):
+            for index in range(17):
                 with self.subTest(key=key, index=index):
                     manifest = copy.deepcopy(self.manifest)
                     if key == "allowedProductionAdaptations":
@@ -374,6 +526,112 @@ class ProductionAdaptationPartitionRegression(unittest.TestCase):
                 manifest["adaptedCandidateFiles"][-1]["path"] = replacement
                 with self.assertRaisesRegex(SystemExit, "source/per-file85 partition"):
                     CHECKER.production_adaptation_paths(manifest)
+
+    def test_wrapper_cannot_be_excluded_or_replaced_with_unadapted_original(self):
+        for replacement in (None, "header.go"):
+            for key in ("allowedProductionAdaptations", "adaptedCandidateFiles"):
+                with self.subTest(replacement=replacement, key=key):
+                    manifest = copy.deepcopy(self.manifest)
+                    if key == "allowedProductionAdaptations":
+                        sources = manifest[key].pop("client_wrapper.go")
+                        if replacement is not None:
+                            manifest[key][replacement] = sources
+                    else:
+                        item = manifest[key].pop()
+                        self.assertEqual(item["path"], "client_wrapper.go")
+                        if replacement is not None:
+                            item["path"] = replacement
+                            manifest[key].append(item)
+                    with self.assertRaisesRegex(SystemExit, "source/per-file85 partition"):
+                        CHECKER.production_adaptation_paths(manifest)
+
+    def test_original_wrapper_provenance_and_original16_order_remain(self):
+        paths = CHECKER.production_adaptation_paths(self.manifest)
+        self.assertEqual(paths[:16], (
+            "internal/http2/flow.go", "internal/http2/transport.go", "internal/http2/frame.go",
+            "internal/dump/dump.go", "request.go", "response.go", "trace.go", "internal/http3/transport.go",
+            "internal/http3/stream.go", "internal/compress/deflate_reader.go", "decode.go", "digest.go",
+            "parallel_download.go", "client.go", "dump.go", "transport.go"))
+        original = next(item for item in self.manifest["originalFiles"]
+                        if item["path"] == "client_wrapper.go")
+        self.assertEqual(original, {"path": "client_wrapper.go", "size": 30282,
+                         "sha256": "ca330cd036d9cc0936ad5f0170dff3be7e4ec814b9a8c53b9259c89f1a1be0dc"})
+        self.assertNotIn("client_wrapper.go", self.manifest["newOwnedFiles"])
+        self.assertEqual(132 - len(paths) - len(self.manifest["originalTestAdaptations"]), 113)
+
+
+class SourcePartitionRegistrationRegression(unittest.TestCase):
+    """CI-only isolated source/manifest controls; simulated go-list, never Go PASS."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="req-partition-verifier-")
+        self.addCleanup(self.temporary.cleanup)
+        root = Path(self.temporary.name)
+        self.backend = root / "backend"
+        self.controlled = self.backend / "third_party/req"
+        shutil.copytree(HERE.parent / "third_party/req", self.controlled)
+        self.evidence = root / "evidence"
+        self.evidence.mkdir()
+        self.manifest_path = self.controlled / "UPSTREAM-MANIFEST.json"
+        self.manifest = json.loads(self.manifest_path.read_text())
+        self.wrapper_bytes = (self.controlled / "client_wrapper.go").read_bytes()
+        self.modules = [{"Path": CHECKER.MODULE, "Version": "v3.57.0",
+                         "Replace": {"Dir": str(self.controlled)}}]
+        # This test only simulates source-selection metadata. The actual CI
+        # command still supplies independently captured real go-list output.
+        by_directory = {}
+        for path in self.controlled.rglob("*_test.go"):
+            relative = path.relative_to(self.controlled)
+            if relative.as_posix() in ("internal/testdata/cert_test.go",
+                                       "internal/testdata/testdata_suite_test.go"):
+                continue
+            by_directory.setdefault(relative.parent.as_posix(), []).append(relative.name)
+        self.packages = [{"ImportPath": CHECKER.MODULE + ("/" + name if name != "." else ""),
+                          "Dir": str(self.controlled / name), "TestGoFiles": sorted(names)}
+                         for name, names in sorted(by_directory.items())]
+
+    def verify(self):
+        def simulated_objects(path):
+            self.assertIn(path.name, ("modules.json", "packages.json"))
+            return copy.deepcopy(self.modules if path.name == "modules.json" else self.packages)
+        with mock.patch.object(CHECKER, "objects", side_effect=simulated_objects), \
+             mock.patch.object(CHECKER.sys, "argv", ["checker", "packages", str(self.backend), str(self.evidence)]):
+            CHECKER.main()
+
+    def test_actual_source_copy_satisfies_simulated_selection_shape_only(self):
+        self.verify()
+        proof = json.loads((self.evidence / "package-selection-proof.json").read_text())
+        self.assertEqual(len(proof["originalSelected"]), 12)
+        self.assertEqual(len(proof["originalOmitted"]), 2)
+        self.assertEqual(proof["originalTestAdaptations"], self.manifest["originalTestAdaptations"])
+
+    def test_wrong_partition_wrapper_hash_ownership_or_source_rejects(self):
+        for mutation, diagnostic in (
+                ("unmodified114", "Retain exactly113 unchanged originals"),
+                ("wrapper_hash", "Adapted source hash mismatch: client_wrapper.go"),
+                ("wrapper_bytes", "Adapted source hash mismatch: client_wrapper.go"),
+                ("wrapper_excluded", "source/per-file85 partition"),
+                ("wrapper_new_owned", "exactly132 originals")):
+            with self.subTest(mutation=mutation):
+                manifest = copy.deepcopy(self.manifest)
+                (self.controlled / "client_wrapper.go").write_bytes(self.wrapper_bytes)
+                if mutation == "unmodified114":
+                    manifest["originalUnmodifiedFileCount"] = 114
+                elif mutation == "wrapper_hash":
+                    manifest["adaptedCandidateFiles"][-1]["sha256"] = "0" * 64
+                elif mutation == "wrapper_bytes":
+                    (self.controlled / "client_wrapper.go").write_bytes(self.wrapper_bytes + b"\n")
+                elif mutation == "wrapper_excluded":
+                    del manifest["allowedProductionAdaptations"]["client_wrapper.go"]
+                    manifest["adaptedCandidateFiles"].pop()
+                else:
+                    manifest["newOwnedFiles"].append("client_wrapper.go")
+                self.manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+                proof = self.evidence / "package-selection-proof.json"
+                proof.unlink(missing_ok=True)
+                with self.assertRaisesRegex(SystemExit, diagnostic):
+                    self.verify()
+                self.assertFalse(proof.exists(), "Rejected partition must not publish complete proof")
 
 
 if __name__ == "__main__":

@@ -364,6 +364,7 @@ func (w *reqBisectConcurrentWriter) snapshot() string {
 
 // Keep the intended call context stable across repeated invocations without
 // replacing runtime.Callers, exposing private state, or assuming an absolute PC.
+//
 //go:noinline
 func reqBisectCallStack(m *bisect.Matcher, w bisect.Writer) bool {
 	return m.Stack(w)

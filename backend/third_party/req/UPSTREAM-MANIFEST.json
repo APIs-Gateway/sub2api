@@ -723,6 +723,9 @@
     "transport.go": [
       "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue",
       "local-required-reachable-custom-tls-timeout-result-ownership-pr1712"
+    ],
+    "client_wrapper.go": [
+      "local-user-authorized-global-safari-wrapper-repair-existing-pr1712-20261029"
     ]
   },
   "newOwnedFiles": [
@@ -793,11 +796,30 @@
     "custom_tls_handshake_boundary_test.go",
     "internal/http2/custom_tls_handshake_peer_test.go",
     "internal/http2/custom_tls_handshake_test.go",
-    "CUSTOM-TLS-OWNERSHIP-REPAIR.md"
+    "CUSTOM-TLS-OWNERSHIP-REPAIR.md",
+    "H1-BOUNDARY-CONTRACTS.md",
+    "PUBLIC-API-COVERAGE-CONTRACTS.md",
+    "PUBLIC-DEFAULT-CONTRACTS.md",
+    "SAFARI-WRAPPER-CONTRACTS.md",
+    "h1_boundary_contract_test.go",
+    "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json",
+    "internal/bisect/BISECT-CONTRACTS.md",
+    "internal/bisect/contracts_test.go",
+    "internal/http2/COVERAGE-CONTRACTS.md",
+    "internal/http2/coverage_contract_peer_test.go",
+    "internal/http2/coverage_frame_contract_test.go",
+    "internal/http2/coverage_transport_contract_test.go",
+    "public_api_dump_contract_test.go",
+    "public_api_form_contract_test.go",
+    "public_api_peer_test.go",
+    "public_api_policy_contract_test.go",
+    "public_api_request_contract_test.go",
+    "public_default_contract_test.go",
+    "safari_wrapper_contract_test.go"
   ],
   "goBsdLicenseSource": "https://raw.githubusercontent.com/golang/net/cc7d34fd2dd5864bcafe3e5e0a84919240be98c0/LICENSE",
   "goBsdLicenseSHA256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-  "validation": "Child1752 RAW owned dump Close repair from preserved bf4. Original132 archive references/89production/14tests and12selected+2helpers remain intact. Current partition114unchanged+16production adaptations+2original test adaptations. Preserve prior526 mandatory leaves;42 additional source-declared ownership leaves require actual remote named/all execution, not an invented PASS count. Four atomic profiles remain separate; all16production per-file added-block85, original Codecov85 and supplementary complete-Git Go85 remain mandatory. No runtime test/build validation or approval claimed. Existing PR1712 custom TLS ownership candidate preserves prior574 leaves and registers31 new source leaves (605 mandatory). No runtime evidence is asserted; OLD exact race and NEW actual named/all remote evidence are still required. Remote formatter40726740668 actually checked17 frozen inputs/68 operations; four TLS fixture formatting outputs imported verbatim. This is formatting evidence only, not runtime/race/Windows/security/coverage acceptance.",
+  "validation": "Current RAW880 registration:113 unchanged originals+17 production adaptations+2 original test adaptations=132; archive originalFiles and all original16 adaptation entries remain intact. The specifically user-authorized Safari wrapper is17th and receives the unchanged per-file85 gate. All880 actual named/full tests, originalfour adapted test completions, four original atomic profiles, Codecov85 and complete-Git Go85 remain required. No runtime/build/race/Windows/coverage acceptance is asserted. Historical component receipts below retain their exact former605/16/114 source context; additionalCoverageContracts880 records current expansion and source partition. Remote formatter outputs must be imported verbatim and RAW candidate/new-file hashes resealed before final execution/approval.",
   "adaptedCandidateFiles": [
     {
       "path": "internal/http2/flow.go",
@@ -934,10 +956,18 @@
         "local-required-owned-dump-explicit-close-child1752-after-windows40182645563-residue",
         "local-required-reachable-custom-tls-timeout-result-ownership-pr1712"
       ]
+    },
+    {
+      "path": "client_wrapper.go",
+      "sha256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
+      "bytes": 30244,
+      "sources": [
+        "local-user-authorized-global-safari-wrapper-repair-existing-pr1712-20261029"
+      ]
     }
   ],
-  "adaptedCandidateStatus": "Child1752 RAW source bound to each exact adapted file; no local/87 formatter/build/test/checker executed. Current-head independent review, real Windows OLD/NEW witness, named/all race and all85 gates remain required. Custom TLS repair changes only two existing adapted function paths; original archive entries, other production and original test hashes are preserved. Local/87 execution prohibited; remote formatter evidence below binds c11 and the imported source freeze still requires independent review. Remote17-input formatter40726740668 evidence imported four new TLS fixtures only; all16 adapted production hashes remain unchanged. Runtime evidence and exact-head independent review remain required.",
-  "originalUnmodifiedFileCount": 114,
+  "adaptedCandidateStatus": "RAW source-bound hashes for17 production adaptations. Preserve all16 prior entries byte-for-byte; appended client_wrapper.go is the user-authorized global Safari fix from independently reviewed source. Original132 archive rows and originaltwo test adaptations retained. No local/87 executable validation; remote formatting import/reseal, exact-head independent review, actual OLD/NEW tests/race/Windows/resource evidence and all85 gates remain required.",
+  "originalUnmodifiedFileCount": 113,
   "localRequiredRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6086271861",
   "localRequiredTLSRepairReview": "https://github.com/APIs-Gateway/sub2api/pull/1712#issuecomment-6087548227",
   "http3ContractTestProvenance": {
@@ -1787,6 +1817,697 @@
         }
       ],
       "status": "Actual remote formatting evidence only; no local/87 executable validation. Import changes only fixture alignment/trailing blank lines. All605 named identities, four original profiles, original four adapted tests, sixteen production per-file85 and both original85 gates remain required."
+    }
+  },
+  "additionalCoverageContracts880": {
+    "existingPR": "https://github.com/APIs-Gateway/sub2api/pull/1712",
+    "permanentTrackingIssue": "https://github.com/APIs-Gateway/sub2api/issues/291",
+    "sourceUnion": "ae7260bba43cc8ed07db94513a42b73e5b9d104b",
+    "legacyNamedLeaves": 605,
+    "additionalNamedLeaves": 275,
+    "totalNamedLeaves": 880,
+    "groups": [
+      {
+        "kind": "publicAPI",
+        "package": "github.com/imroc/req/v3",
+        "count": 70,
+        "leaves": [
+          "TestReqPublicAPI_QueryConstruction/common_multivalue",
+          "TestReqPublicAPI_QueryConstruction/common_struct",
+          "TestReqPublicAPI_QueryConstruction/request_multivalue",
+          "TestReqPublicAPI_QueryConstruction/request_struct",
+          "TestReqPublicAPI_QueryConstruction/invalid_common_preserves_valid",
+          "TestReqPublicAPI_QueryConstruction/independent_builders",
+          "TestReqPublicAPI_EntitySemantics/reader",
+          "TestReqPublicAPI_EntitySemantics/bytes",
+          "TestReqPublicAPI_EntitySemantics/string",
+          "TestReqPublicAPI_EntitySemantics/json_literal_string",
+          "TestReqPublicAPI_EntitySemantics/json_literal_bytes",
+          "TestReqPublicAPI_EntitySemantics/xml_literal_string",
+          "TestReqPublicAPI_EntitySemantics/xml_literal_bytes",
+          "TestReqPublicAPI_EntitySemantics/xml_object",
+          "TestReqPublicAPI_EntitySemantics/custom_content_type",
+          "TestReqPublicAPI_EntitySemantics/get_payload_disabled_then_enabled",
+          "TestReqPublicAPI_ResultCodecs/deprecated_success_alias",
+          "TestReqPublicAPI_ResultCodecs/deprecated_error_alias",
+          "TestReqPublicAPI_ResultCodecs/common_error_type",
+          "TestReqPublicAPI_ResultCodecs/custom_result_state",
+          "TestReqPublicAPI_ResultCodecs/json_marshal_error",
+          "TestReqPublicAPI_ResultCodecs/xml_marshal_error",
+          "TestReqPublicAPI_ResultCodecs/json_unmarshal_error",
+          "TestReqPublicAPI_ResultCodecs/xml_unmarshal_error",
+          "TestReqPublicAPI_ResultCodecs/body_transformer",
+          "TestReqPublicAPI_MiddlewarePolicies/wrapper_composition",
+          "TestReqPublicAPI_MiddlewarePolicies/before_error_blocks_wire",
+          "TestReqPublicAPI_MiddlewarePolicies/after_error_preserves_response",
+          "TestReqPublicAPI_MiddlewarePolicies/dial_error_identity",
+          "TestReqPublicAPI_MiddlewarePolicies/pre_canceled",
+          "TestReqPublicAPI_MiddlewarePolicies/jar_clear",
+          "TestReqPublicAPI_MiddlewarePolicies/redirect_denied",
+          "TestReqPublicAPI_MiddlewarePolicies/manual_read_and_reenable",
+          "TestReqPublicAPI_RetryReplay/common_fixed",
+          "TestReqPublicAPI_RetryReplay/request_custom_interval",
+          "TestReqPublicAPI_RetryReplay/request_backoff",
+          "TestReqPublicAPI_RetryReplay/request_zero_overrides_common",
+          "TestReqPublicAPI_FormsAndFiles/ordered_fields",
+          "TestReqPublicAPI_FormsAndFiles/typed_form_values",
+          "TestReqPublicAPI_FormsAndFiles/common_repeated_form",
+          "TestReqPublicAPI_FormsAndFiles/file_reader",
+          "TestReqPublicAPI_FormsAndFiles/file_bytes",
+          "TestReqPublicAPI_FormsAndFiles/file_path_map",
+          "TestReqPublicAPI_FormsAndFiles/file_upload",
+          "TestReqPublicAPI_FormsAndFiles/missing_file",
+          "TestReqPublicAPI_DownloadDestinations/caller_writer",
+          "TestReqPublicAPI_DownloadDestinations/relative_output_file",
+          "TestReqPublicAPI_DumpVisibility/client_all",
+          "TestReqPublicAPI_DumpVisibility/client_async",
+          "TestReqPublicAPI_DumpVisibility/client_headers",
+          "TestReqPublicAPI_DumpVisibility/client_bodies",
+          "TestReqPublicAPI_DumpVisibility/client_request_only",
+          "TestReqPublicAPI_DumpVisibility/client_response_only",
+          "TestReqPublicAPI_DumpVisibility/client_without_upload",
+          "TestReqPublicAPI_DumpVisibility/client_without_download",
+          "TestReqPublicAPI_DumpVisibility/each_all",
+          "TestReqPublicAPI_DumpVisibility/each_headers",
+          "TestReqPublicAPI_DumpVisibility/each_bodies",
+          "TestReqPublicAPI_DumpVisibility/each_request_only",
+          "TestReqPublicAPI_DumpVisibility/each_response_only",
+          "TestReqPublicAPI_DumpVisibility/each_without_upload",
+          "TestReqPublicAPI_DumpVisibility/each_without_download",
+          "TestReqPublicAPI_DumpVisibility/request_all",
+          "TestReqPublicAPI_DumpVisibility/request_headers",
+          "TestReqPublicAPI_DumpVisibility/request_bodies",
+          "TestReqPublicAPI_DumpVisibility/request_request_only",
+          "TestReqPublicAPI_DumpVisibility/request_response_only",
+          "TestReqPublicAPI_DumpVisibility/request_without_upload",
+          "TestReqPublicAPI_DumpVisibility/request_without_download",
+          "TestReqPublicAPI_DumpVisibility/request_options"
+        ]
+      },
+      {
+        "kind": "http1Boundary",
+        "package": "github.com/imroc/req/v3",
+        "count": 33,
+        "leaves": [
+          "TestReqH1Boundary_PreflightOwnership/nil_url",
+          "TestReqH1Boundary_PreflightOwnership/header_name",
+          "TestReqH1Boundary_PreflightOwnership/header_value_redacted",
+          "TestReqH1Boundary_PreflightOwnership/trailer_name",
+          "TestReqH1Boundary_PreflightOwnership/trailer_value_redacted",
+          "TestReqH1Boundary_PreflightOwnership/unsupported_scheme",
+          "TestReqH1Boundary_PreflightOwnership/invalid_method",
+          "TestReqH1Boundary_PreflightOwnership/missing_host",
+          "TestReqH1Boundary_PreflightOwnership/already_canceled",
+          "TestReqH1Boundary_PreflightOwnership/proxy_error",
+          "TestReqH1Boundary_PreflightOwnership/dial_error",
+          "TestReqH1Boundary_PreflightOwnership/nil_custom_tls",
+          "TestReqH1Boundary_HeaderParsing/fold_and_repeat",
+          "TestReqH1Boundary_HeaderParsing/trim_horizontal_space",
+          "TestReqH1Boundary_HeaderParsing/missing_colon",
+          "TestReqH1Boundary_HeaderParsing/leading_continuation",
+          "TestReqH1Boundary_HeaderParsing/nul_field_name",
+          "TestReqH1Boundary_HeaderParsing/nul_field_value",
+          "TestReqH1Boundary_HeaderParsing/header_count_bound",
+          "TestReqH1Boundary_HeaderParsing/memory_bound",
+          "TestReqH1Boundary_HeadlessStatusFraming/head_length_metadata",
+          "TestReqH1Boundary_HeadlessStatusFraming/head_chunked_metadata",
+          "TestReqH1Boundary_HeadlessStatusFraming/no_content",
+          "TestReqH1Boundary_HeadlessStatusFraming/not_modified",
+          "TestReqH1Boundary_HeadlessStatusFraming/informational",
+          "TestReqH1Boundary_HeadlessStatusFraming/zero_length",
+          "TestReqH1Boundary_ResponseBodySignals/sticky_error_and_one_notification",
+          "TestReqH1Boundary_ResponseBodySignals/early_close_owns_cleanup_once",
+          "TestReqH1Boundary_ResponseBodySignals/eof_completes_instead_of_early_close",
+          "TestReqH1Boundary_GzipReader/valid_and_closed",
+          "TestReqH1Boundary_GzipReader/invalid_header_sticky",
+          "TestReqH1Boundary_GzipReader/truncated_header",
+          "TestReqH1Boundary_GzipReader/corrupt_checksum"
+        ]
+      },
+      {
+        "kind": "publicDefault",
+        "package": "github.com/imroc/req/v3",
+        "count": 6,
+        "leaves": [
+          "TestReqPublicDefaultContract/replacement_binds_new_calls_only",
+          "TestReqPublicDefaultContract/escaped_path_query_and_header_precedence",
+          "TestReqPublicDefaultContract/form_auth_and_cookie_wire",
+          "TestReqPublicDefaultContract/json_request_and_success_result",
+          "TestReqPublicDefaultContract/http_error_result_preserves_body",
+          "TestReqPublicDefaultContract/context_cancellation_reaches_peer"
+        ]
+      },
+      {
+        "kind": "bisectContract",
+        "package": "github.com/imroc/req/v3/internal/bisect",
+        "count": 112,
+        "leaves": [
+          "TestReqBisectContract_Matcher/nil",
+          "TestReqBisectContract_Matcher/all",
+          "TestReqBisectContract_Matcher/none",
+          "TestReqBisectContract_Matcher/negate_all",
+          "TestReqBisectContract_Matcher/even",
+          "TestReqBisectContract_Matcher/odd",
+          "TestReqBisectContract_Matcher/union",
+          "TestReqBisectContract_Matcher/leading_plus",
+          "TestReqBisectContract_Matcher/subtract",
+          "TestReqBisectContract_Matcher/leading_minus",
+          "TestReqBisectContract_Matcher/universe_minus",
+          "TestReqBisectContract_Matcher/negated_union",
+          "TestReqBisectContract_Matcher/double_negation",
+          "TestReqBisectContract_Matcher/negated_none",
+          "TestReqBisectContract_Matcher/hex_lower",
+          "TestReqBisectContract_Matcher/hex_upper",
+          "TestReqBisectContract_Matcher/mixed_hex_binary",
+          "TestReqBisectContract_Matcher/hex_subtract",
+          "TestReqBisectContract_Matcher/hex_full_width",
+          "TestReqBisectContract_Matcher/binary_full_width",
+          "TestReqBisectContract_Matcher/quiet_all",
+          "TestReqBisectContract_Matcher/quiet_none",
+          "TestReqBisectContract_Matcher/verbose_all",
+          "TestReqBisectContract_Matcher/repeated_verbose",
+          "TestReqBisectContract_Matcher/quiet_then_verbose",
+          "TestReqBisectContract_Matcher/quiet_verbose_none",
+          "TestReqBisectContract_InvalidPattern/quiet_only",
+          "TestReqBisectContract_InvalidPattern/verbose_only",
+          "TestReqBisectContract_InvalidPattern/negation_only",
+          "TestReqBisectContract_InvalidPattern/repeated_verbose_only",
+          "TestReqBisectContract_InvalidPattern/double_negation_only",
+          "TestReqBisectContract_InvalidPattern/quiet_verbose_only",
+          "TestReqBisectContract_InvalidPattern/invalid_digit",
+          "TestReqBisectContract_InvalidPattern/invalid_letter",
+          "TestReqBisectContract_InvalidPattern/hex_missing",
+          "TestReqBisectContract_InvalidPattern/hex_invalid",
+          "TestReqBisectContract_InvalidPattern/plus_after_minus",
+          "TestReqBisectContract_InvalidPattern/empty_added_term",
+          "TestReqBisectContract_InvalidPattern/empty_subtracted_term",
+          "TestReqBisectContract_InvalidPattern/trailing_operator",
+          "TestReqBisectContract_InvalidPattern/y_followed_bit",
+          "TestReqBisectContract_InvalidPattern/whitespace",
+          "TestReqBisectContract_InvalidPattern/binary_too_long",
+          "TestReqBisectContract_InvalidPattern/hex_too_long",
+          "TestReqBisectContract_HashEncoding/empty",
+          "TestReqBisectContract_HashEncoding/empty_string",
+          "TestReqBisectContract_HashEncoding/empty_slices",
+          "TestReqBisectContract_HashEncoding/unicode_string",
+          "TestReqBisectContract_HashEncoding/byte",
+          "TestReqBisectContract_HashEncoding/signed_int",
+          "TestReqBisectContract_HashEncoding/unsigned_int",
+          "TestReqBisectContract_HashEncoding/signed_int32",
+          "TestReqBisectContract_HashEncoding/unsigned_int32",
+          "TestReqBisectContract_HashEncoding/signed_int64",
+          "TestReqBisectContract_HashEncoding/unsigned_int64",
+          "TestReqBisectContract_HashEncoding/uintptr",
+          "TestReqBisectContract_HashEncoding/strings_slice",
+          "TestReqBisectContract_HashEncoding/bytes_slice",
+          "TestReqBisectContract_HashEncoding/int_slice",
+          "TestReqBisectContract_HashEncoding/uint_slice",
+          "TestReqBisectContract_HashEncoding/int32_slice",
+          "TestReqBisectContract_HashEncoding/uint32_slice",
+          "TestReqBisectContract_HashEncoding/int64_slice",
+          "TestReqBisectContract_HashEncoding/uint64_slice",
+          "TestReqBisectContract_HashEncoding/uintptr_slice",
+          "TestReqBisectContract_HashEncoding/mixed",
+          "TestReqBisectContract_HashUnsupported/bool",
+          "TestReqBisectContract_HashUnsupported/float",
+          "TestReqBisectContract_HashUnsupported/struct",
+          "TestReqBisectContract_HashUnsupported/slice",
+          "TestReqBisectContract_HashUnsupported/nil",
+          "TestReqBisectContract_MarkerFormat/zero",
+          "TestReqBisectContract_MarkerFormat/one",
+          "TestReqBisectContract_MarkerFormat/mixed",
+          "TestReqBisectContract_MarkerFormat/max",
+          "TestReqBisectContract_MarkerWriterError",
+          "TestReqBisectContract_CutMarker/plain",
+          "TestReqBisectContract_CutMarker/prefix_fragment",
+          "TestReqBisectContract_CutMarker/missing_close",
+          "TestReqBisectContract_CutMarker/empty_binary",
+          "TestReqBisectContract_CutMarker/binary_zero",
+          "TestReqBisectContract_CutMarker/binary_one",
+          "TestReqBisectContract_CutMarker/binary_mixed",
+          "TestReqBisectContract_CutMarker/binary_upper_limit",
+          "TestReqBisectContract_CutMarker/binary_overflow",
+          "TestReqBisectContract_CutMarker/invalid_binary_digit",
+          "TestReqBisectContract_CutMarker/hex_zero",
+          "TestReqBisectContract_CutMarker/hex_mixed",
+          "TestReqBisectContract_CutMarker/hex_uppercase",
+          "TestReqBisectContract_CutMarker/hex_max",
+          "TestReqBisectContract_CutMarker/hex_overflow",
+          "TestReqBisectContract_CutMarker/space_before",
+          "TestReqBisectContract_CutMarker/space_after",
+          "TestReqBisectContract_CutMarker/spacing_both",
+          "TestReqBisectContract_CutMarker/first_of_two",
+          "TestReqBisectContract_CutMarker/unicode_surround",
+          "TestReqBisectContract_FileLine/nil",
+          "TestReqBisectContract_FileLine/marker_zero",
+          "TestReqBisectContract_FileLine/verbose_positive",
+          "TestReqBisectContract_FileLine/verbose_negative",
+          "TestReqBisectContract_FileLine/verbose_zero",
+          "TestReqBisectContract_FileLine/quiet",
+          "TestReqBisectContract_FileLine/excluded",
+          "TestReqBisectContract_FileLine/disabled_all",
+          "TestReqBisectContract_StackReports/nil",
+          "TestReqBisectContract_StackReports/quiet",
+          "TestReqBisectContract_StackReports/excluded",
+          "TestReqBisectContract_StackReports/marker_dedup_same_site",
+          "TestReqBisectContract_StackReports/verbose_dedup_same_site",
+          "TestReqBisectContract_StackReports/disabled_marker",
+          "TestReqBisectContract_StackReports/concurrent_verbose",
+          "TestReqBisectContract_StackReports/concurrent_marker_lossy"
+        ]
+      },
+      {
+        "kind": "http2Coverage",
+        "package": "github.com/imroc/req/v3/internal/http2",
+        "count": 51,
+        "leaves": [
+          "TestReqHTTP2CoverageContract_RequestAdmission/invalid_header_name",
+          "TestReqHTTP2CoverageContract_RequestAdmission/invalid_header_value",
+          "TestReqHTTP2CoverageContract_RequestAdmission/invalid_trailer_name",
+          "TestReqHTTP2CoverageContract_RequestAdmission/invalid_trailer_value",
+          "TestReqHTTP2CoverageContract_RequestAdmission/invalid_host",
+          "TestReqHTTP2CoverageContract_RequestAdmission/invalid_opaque_path",
+          "TestReqHTTP2CoverageContract_RequestAdmission/peer_header_list_limit",
+          "TestReqHTTP2CoverageContract_RequestAdmission/forbidden_connection_header",
+          "TestReqHTTP2CoverageContract_HeaderWire/pseudo_order",
+          "TestReqHTTP2CoverageContract_HeaderWire/ordinary_header_order",
+          "TestReqHTTP2CoverageContract_HeaderWire/cookie_split",
+          "TestReqHTTP2CoverageContract_HeaderWire/connect_authority_only",
+          "TestReqHTTP2CoverageContract_ExpectContinue/continue_releases_body",
+          "TestReqHTTP2CoverageContract_ExpectContinue/final_rejection_never_reads_body",
+          "TestReqHTTP2CoverageContract_ExpectContinue/cancel_before_continue",
+          "TestReqHTTP2CoverageContract_ExpectContinue/deadline_before_continue",
+          "TestReqHTTP2CoverageContract_ExpectContinue/continue_timeout_releases_body",
+          "TestReqHTTP2CoverageContract_Informational/early_hints_then_final",
+          "TestReqHTTP2CoverageContract_Informational/trace_error_is_stream_cause",
+          "TestReqHTTP2CoverageContract_Informational/end_stream_1xx_rejected",
+          "TestReqHTTP2CoverageContract_Informational/missing_status_rejected",
+          "TestReqHTTP2CoverageContract_Informational/nonnumeric_status_rejected",
+          "TestReqHTTP2CoverageContract_ResponseEntity/end_headers_missing_body",
+          "TestReqHTTP2CoverageContract_ResponseEntity/body_shorter_than_declared",
+          "TestReqHTTP2CoverageContract_ResponseEntity/body_longer_than_declared",
+          "TestReqHTTP2CoverageContract_ResponseEntity/head_rejects_data",
+          "TestReqHTTP2CoverageContract_AutoDecompression/implicit_gzip",
+          "TestReqHTTP2CoverageContract_AutoDecompression/disabled_gzip_passthrough",
+          "TestReqHTTP2CoverageContract_AutoDecompression/opted_in_deflate",
+          "TestReqHTTP2CoverageContract_StrictConcurrency/queued_request_waits_for_slot",
+          "TestReqHTTP2CoverageContract_StrictConcurrency/queued_cancel_releases_reservation",
+          "TestReqHTTP2CoverageContract_ReadErrorMetrics/peer_eof",
+          "TestReqHTTP2CoverageContract_ReadErrorMetrics/partial_frame_eof",
+          "TestReqHTTP2CoverageContract_ReadErrorMetrics/connection_protocol_error",
+          "TestReqHTTP2CoverageContract_RequestBodyFailure/reader_error_immediate",
+          "TestReqHTTP2CoverageContract_RequestBodyFailure/reader_error_after_prefix",
+          "TestReqHTTP2CoverageContract_RequestBodyFailure/body_larger_than_declared",
+          "TestReqHTTP2CoverageContract_HeaderDump/response_continuation_fields_once",
+          "TestReqHTTP2CoverageContract_HeaderDump/invalid_value_error_redacted_raw_dump_retained",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/settings",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/data_short",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/data_truncated",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/window_connection",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/window_stream",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/ping",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/goaway",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/rst_stream",
+          "TestReqHTTP2CoverageFrame_DiagnosticWire/unknown_type_and_flags",
+          "TestReqHTTP2CoverageFrame_DebugDecodeFailure",
+          "TestReqHTTP2CoverageFrame_MaxReadSizeClamp",
+          "TestReqHTTP2CoverageFrame_DiagnosticWriterErrorPreserved"
+        ]
+      },
+      {
+        "kind": "safariWrapper",
+        "package": "github.com/imroc/req/v3",
+        "count": 3,
+        "leaves": [
+          "TestReqSafariWrapperContract/global_safari",
+          "TestReqSafariWrapperContract/instance_safari",
+          "TestReqSafariWrapperContract/global_firefox_control"
+        ]
+      }
+    ],
+    "newOwnedFiles": [
+      "H1-BOUNDARY-CONTRACTS.md",
+      "PUBLIC-API-COVERAGE-CONTRACTS.md",
+      "PUBLIC-DEFAULT-CONTRACTS.md",
+      "SAFARI-WRAPPER-CONTRACTS.md",
+      "h1_boundary_contract_test.go",
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json",
+      "internal/bisect/BISECT-CONTRACTS.md",
+      "internal/bisect/contracts_test.go",
+      "internal/http2/COVERAGE-CONTRACTS.md",
+      "internal/http2/coverage_contract_peer_test.go",
+      "internal/http2/coverage_frame_contract_test.go",
+      "internal/http2/coverage_transport_contract_test.go",
+      "public_api_dump_contract_test.go",
+      "public_api_form_contract_test.go",
+      "public_api_peer_test.go",
+      "public_api_policy_contract_test.go",
+      "public_api_request_contract_test.go",
+      "public_default_contract_test.go",
+      "safari_wrapper_contract_test.go"
+    ],
+    "rawNewFiles": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 12672,
+        "sha256": "3c49bae413b492c305a5524620c91aaf5317f01977d323e9c2bfd2292665dddd"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 14104,
+        "sha256": "3434e3cddf466e251edc5780f71bd88fb52478c6135640ad0539f36909cee5d6"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 7795,
+        "sha256": "1c4790e11007620d35f9658bf88a122b3ee7064d69bb4af70ab4f8a18dd9a932"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17545,
+        "sha256": "c654bad6f9b66e40d5a837e4b893c7b690d0ed1555b6bf1320e4d95c0f974dc4"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 8544,
+        "sha256": "951089790a56b38dc1a776a6f41d10d74898f9f11976ef8835fa172098df1b79"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 7642,
+        "sha256": "20f1a7346ee7cea7bf5a78bc604198a09631bc738fdd72114a8c646e879976e2"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8149,
+        "sha256": "c31c9e2a746eeb31087b21ad82910f622b0a1e2fd974cf48de1f0884ba22c79b"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 24489,
+        "sha256": "66652c34870f37a02d77e104101d52f57c264dfc1c1ce063f95eb040028e1345"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 5837,
+        "sha256": "6fbcb8f3e3ec28b849bba4bc615beb071dca332b07d766f1b292900c9464f947"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 6432,
+        "sha256": "ec5a8418a2f72ef12303d95ab73027be6b642df630eebffcdfa94276df22b88d"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4284,
+        "sha256": "5d72efd18c41479663a769d0b5def3c8391322e8ee16b295ce64e02cd3f8fe94"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 12046,
+        "sha256": "75a14d013814e489f98a8d74b64014aba8b7475b5afd6055d24a93e221e26f64"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 5947,
+        "sha256": "073144d58abe4f028648fd84c602c0ed979782d1e78f9b284bd13a6887a8f070"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8323,
+        "sha256": "269cf1d768aa3143d7668d7c974e2a4882d20a5991635d8ae071efacff4a5d2c"
+      }
+    },
+    "safariAuthorization": "User explicitly authorized only global Safari wrapper reproduction/repair within existing1712 on2026-10-29; reviewed source8283363c2bde327e410dbfae8ca5083b98c951bf, root-unionae726. Independent source review receipt SHA6feade8997c09938acedfdad79c68ac6b5a9db7718e923cc1c70a9d34b3fb11b. No unrelated preset/transport change.",
+    "sourcePartition": "Original132 archive/provenance rows remain; original16 production adaptations and2 original test adaptations preserved. The specifically authorized original client_wrapper.go becomes17th production adaptation:113+17+2=132. Same actual per-file85 algorithm applies to all17, including wrapper.",
+    "status": "H2 TEST-API CORRECTION AWAITING REMOTE REFORMAT/EXECUTION. Prior formattedNewFilesBeforeH2StateCorrection and remoteFormatting are historical c823 evidence; candidateNewFilesBeforeRemoteReformat binds current raw candidates, not formatter PASS. Original880 cases, originalfour completions, all17 per-file85/fourprofiles/both85/race/security/Windows gates remain required. No final-head runtime PASS.",
+    "bisectBoundary": "Private library contracts only; no private godebug environment activation proven. Any actual original lossy-cache race remains blocking.",
+    "h2Boundary": "Returned-error redaction asserted separately while explicit raw dump retains original actual bytes; unreachable oversized-frame plan omitted rather than faked.",
+    "remoteFormatting": {
+      "controller": "76edf129ca97fc02b4768b2d4645bfca298ba6a4",
+      "source": "ae7260bba43cc8ed07db94513a42b73e5b9d104b",
+      "sourceTree": "490495c4230c87d3ffa8aa709956192fa4318f40",
+      "run": 40850936373,
+      "artifact": 12887291284,
+      "artifactBytes": 31139810,
+      "artifactSHA256": "d6722072133d5f509e67351352d990b49e38bd87209768add419ca968d6f2906",
+      "independentActualReceiptSHA256": "bb3abf540b4c4c67e64a36512dcc5a7bd1900a085dae6c02f8294808438bb1a0",
+      "actualInputs": 30,
+      "actualOperations": 120,
+      "retained17AllUnchanged": true,
+      "additional13Changed": 11,
+      "additional13Unchanged": 2,
+      "importedFiles": [
+        {
+          "path": "backend/third_party/req/public_api_peer_test.go",
+          "rawSHA256": "5d72efd18c41479663a769d0b5def3c8391322e8ee16b295ce64e02cd3f8fe94",
+          "formattedSHA256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9",
+          "changed": true
+        },
+        {
+          "path": "backend/third_party/req/public_api_request_contract_test.go",
+          "rawSHA256": "073144d58abe4f028648fd84c602c0ed979782d1e78f9b284bd13a6887a8f070",
+          "formattedSHA256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847",
+          "changed": true
+        },
+        {
+          "path": "backend/third_party/req/public_api_form_contract_test.go",
+          "rawSHA256": "ec5a8418a2f72ef12303d95ab73027be6b642df630eebffcdfa94276df22b88d",
+          "formattedSHA256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9",
+          "changed": true
+        },
+        {
+          "path": "backend/third_party/req/public_api_dump_contract_test.go",
+          "rawSHA256": "6fbcb8f3e3ec28b849bba4bc615beb071dca332b07d766f1b292900c9464f947",
+          "formattedSHA256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa",
+          "changed": true
+        },
+        {
+          "path": "backend/third_party/req/public_api_policy_contract_test.go",
+          "rawSHA256": "75a14d013814e489f98a8d74b64014aba8b7475b5afd6055d24a93e221e26f64",
+          "formattedSHA256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392",
+          "changed": true
+        },
+        {
+          "path": "backend/third_party/req/h1_boundary_contract_test.go",
+          "rawSHA256": "3c49bae413b492c305a5524620c91aaf5317f01977d323e9c2bfd2292665dddd",
+          "formattedSHA256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752",
+          "changed": true
+        },
+        {
+          "path": "backend/third_party/req/public_default_contract_test.go",
+          "rawSHA256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7",
+          "formattedSHA256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7",
+          "changed": false
+        },
+        {
+          "path": "backend/third_party/req/internal/bisect/contracts_test.go",
+          "rawSHA256": "c654bad6f9b66e40d5a837e4b893c7b690d0ed1555b6bf1320e4d95c0f974dc4",
+          "formattedSHA256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5",
+          "changed": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/coverage_contract_peer_test.go",
+          "rawSHA256": "20f1a7346ee7cea7bf5a78bc604198a09631bc738fdd72114a8c646e879976e2",
+          "formattedSHA256": "182a4d2ab724411aa1dd61d41adb7f05983fb442e6dd685c4ac480116820cc2f",
+          "changed": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/coverage_frame_contract_test.go",
+          "rawSHA256": "c31c9e2a746eeb31087b21ad82910f622b0a1e2fd974cf48de1f0884ba22c79b",
+          "formattedSHA256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb",
+          "changed": true
+        },
+        {
+          "path": "backend/third_party/req/internal/http2/coverage_transport_contract_test.go",
+          "rawSHA256": "66652c34870f37a02d77e104101d52f57c264dfc1c1ce063f95eb040028e1345",
+          "formattedSHA256": "44f94032c3f36024d3fb73bfdbed681a081ea52b19e16ba0c3e3cb6e845bc06b",
+          "changed": true
+        },
+        {
+          "path": "backend/third_party/req/client_wrapper.go",
+          "rawSHA256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
+          "formattedSHA256": "3079bee0be882199cf02e1d65d08b8d2ef41cf72da553b251b10a54b1201cb93",
+          "changed": false
+        },
+        {
+          "path": "backend/third_party/req/safari_wrapper_contract_test.go",
+          "rawSHA256": "269cf1d768aa3143d7668d7c974e2a4882d20a5991635d8ae071efacff4a5d2c",
+          "formattedSHA256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3",
+          "changed": true
+        }
+      ],
+      "policy": "Only exact remote-formatted copies were imported; original raw author/provenance records remain historical. Formatting evidence is not runtime, race, Windows, full source acceptance or coverage evidence."
+    },
+    "formattedNewFilesBeforeH2StateCorrection": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 14104,
+        "sha256": "3434e3cddf466e251edc5780f71bd88fb52478c6135640ad0539f36909cee5d6"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 7795,
+        "sha256": "1c4790e11007620d35f9658bf88a122b3ee7064d69bb4af70ab4f8a18dd9a932"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 8544,
+        "sha256": "951089790a56b38dc1a776a6f41d10d74898f9f11976ef8835fa172098df1b79"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 7891,
+        "sha256": "182a4d2ab724411aa1dd61d41adb7f05983fb442e6dd685c4ac480116820cc2f"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25701,
+        "sha256": "44f94032c3f36024d3fb73bfdbed681a081ea52b19e16ba0c3e3cb6e845bc06b"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    },
+    "candidateNewFilesBeforeRemoteReformat": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 14104,
+        "sha256": "3434e3cddf466e251edc5780f71bd88fb52478c6135640ad0539f36909cee5d6"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 7795,
+        "sha256": "1c4790e11007620d35f9658bf88a122b3ee7064d69bb4af70ab4f8a18dd9a932"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 9837,
+        "sha256": "2bf2de49f534b81d9b2be054839c21cdf64e6f2a864d788597114d2db1cb17b4"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 8697,
+        "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25748,
+        "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    },
+    "h2StateObservationCorrection": {
+      "rawSource": "530281903887998bd5a76cdf5250a0639eaed3cf",
+      "originalFailedHead": "c82356c8115678ff669e088a3d44dc955482b3c4",
+      "failedPRRun": 40853052089,
+      "independentSourceReviewSHA256": "d568e328df1481e00686312509d381f4bfb4a45271efdf39e8738ac3358b4084",
+      "scope": "Only test helpers observe actual connection fields under cc.mu because copied ClientConn has no State API. All51 H2 and880 total identities, real queued/cancel/closed assertions and production bytes unchanged.",
+      "status": "RAW correction, independently source-reviewed; not remotely formatted/compiled/executed yet. Prior c823 compile failure and real bisect race remain retained, no waiver."
     }
   }
 }
