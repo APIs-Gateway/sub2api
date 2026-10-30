@@ -18,7 +18,7 @@ SPEC.loader.exec_module(CHECKER)
 
 class OldGraphCacheRegression(unittest.TestCase):
     def setUp(self):
-        fixture = json.loads((HERE / "testdata/req-old-graph-cold-warm-ci.json").read_text())
+        fixture = json.loads((HERE / "testdata/req-old-graph-cold-warm-ci.json").read_text(encoding="utf-8"))
         self.current = fixture["current"]
         self.old = fixture["old"]
         self.backend = Path(fixture["backend"])
@@ -194,7 +194,7 @@ class NamedInventoryRegression(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.evidence = Path(self.temporary.name)
         self.backend = HERE.parent
-        self.inventory = json.loads((HERE / "req-http2-security-inventory.json").read_text())
+        self.inventory = json.loads((HERE / "req-http2-security-inventory.json").read_text(encoding="utf-8"))
         self.values = []
         packages = set()
         for key, leaves in self.inventory.items():
@@ -214,7 +214,7 @@ class NamedInventoryRegression(unittest.TestCase):
         self.proof = self.evidence / "synthetic.json.inventory-proof.json"
 
     def verify(self, values, filename="synthetic.json", expected=None):
-        (self.evidence / filename).write_text("".join(json.dumps(value) + "\n" for value in values))
+        (self.evidence / filename).write_text("".join(json.dumps(value) + "\n" for value in values), encoding="utf-8")
         if expected is None:
             return CHECKER.verify_named(self.backend, self.evidence, filename)
         with mock.patch.object(CHECKER, "inventory", return_value=expected):
@@ -229,7 +229,7 @@ class NamedInventoryRegression(unittest.TestCase):
 
     def test_complete_registered_events_are_accepted_as_verifier_control_only(self):
         self.verify(self.values)
-        proof = json.loads(self.proof.read_text())
+        proof = json.loads(self.proof.read_text(encoding="utf-8"))
         self.assertEqual(len(proof), 880)
         self.assertEqual(len({(item["package"], item["test"]) for item in proof}), 880)
 
@@ -333,7 +333,7 @@ class NamedInventoryRegression(unittest.TestCase):
         for filename in self.SYNTHETIC_FILENAMES:
             with self.subTest(filename=filename):
                 self.verify(self.values, filename)
-                proof = json.loads((self.evidence / (filename + ".inventory-proof.json")).read_text())
+                proof = json.loads((self.evidence / (filename + ".inventory-proof.json")).read_text(encoding="utf-8"))
                 self.assertEqual(len(proof), 880)
                 self.assertEqual(len({(item["package"], item["test"]) for item in proof}), 880)
                 # The indexed implementation must retain exact original event order.
@@ -483,7 +483,7 @@ class ProductionAdaptationPartitionRegression(unittest.TestCase):
     """Partition controls only; no synthetic profile or coverage PASS claims."""
 
     def setUp(self):
-        self.manifest = json.loads((HERE.parent / "third_party/req/UPSTREAM-MANIFEST.json").read_text())
+        self.manifest = json.loads((HERE.parent / "third_party/req/UPSTREAM-MANIFEST.json").read_text(encoding="utf-8"))
 
     def test_original_thirteen_and_three_owned_dump_adaptations_are_required(self):
         paths = CHECKER.production_adaptation_paths(self.manifest)
@@ -593,7 +593,7 @@ class SourcePartitionRegistrationRegression(unittest.TestCase):
         self.evidence = root / "evidence"
         self.evidence.mkdir()
         self.manifest_path = self.controlled / "UPSTREAM-MANIFEST.json"
-        self.manifest = json.loads(self.manifest_path.read_text())
+        self.manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         self.wrapper_bytes = (self.controlled / "client_wrapper.go").read_bytes()
         self.bisect_bytes = (self.controlled / "internal/bisect/bisect.go").read_bytes()
         self.modules = [{"Path": CHECKER.MODULE, "Version": "v3.57.0",
@@ -621,7 +621,7 @@ class SourcePartitionRegistrationRegression(unittest.TestCase):
 
     def test_actual_source_copy_satisfies_simulated_selection_shape_only(self):
         self.verify()
-        proof = json.loads((self.evidence / "package-selection-proof.json").read_text())
+        proof = json.loads((self.evidence / "package-selection-proof.json").read_text(encoding="utf-8"))
         self.assertEqual(len(proof["originalSelected"]), 12)
         self.assertEqual(len(proof["originalOmitted"]), 2)
         self.assertEqual(proof["originalTestAdaptations"], self.manifest["originalTestAdaptations"])
@@ -656,7 +656,7 @@ class SourcePartitionRegistrationRegression(unittest.TestCase):
                     manifest["adaptedCandidateFiles"].pop(index)
                 else:
                     manifest["newOwnedFiles"].append(path)
-                self.manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+                self.manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
                 proof = self.evidence / "package-selection-proof.json"
                 proof.unlink(missing_ok=True)
                 with self.assertRaisesRegex(SystemExit, diagnostic):

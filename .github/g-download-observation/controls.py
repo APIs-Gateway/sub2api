@@ -81,10 +81,10 @@ def input_controls(source, destination):
         stderr = (destination / ("command-" + name) / "stderr").read_text(encoding="utf-8")
         if name == "clean":
             observer.require_success(command)
-            values = json.loads((proof / "full-repository-inputs.json").read_text())
+            values = json.loads((proof / "full-repository-inputs.json").read_text(encoding="utf-8"))
             require({v["path"] for v in values} == set(inputs), "Input proof omitted real tracked file")
             require(all(v["sha256"] == hashlib.sha256(inputs[v["path"]]).hexdigest() for v in values), "Input proof bytes differ")
-            modes = json.loads((proof / "full-repository-input-modes.json").read_text())
+            modes = json.loads((proof / "full-repository-input-modes.json").read_text(encoding="utf-8"))
             require(modes["gitProcessCount"] == 10, "Input gate grew per-file Git commands")
         else:
             require(command["exitCode"] != 0 and diagnostics[name] in stderr, "Corrupt input escaped the original full Git gate")
@@ -131,7 +131,7 @@ def metadata_controls(source, destination):
     events = [json.loads(line) for line in (destination / "go-command/stdout").read_text(encoding="utf-8").splitlines()]
     require(not any(v["Action"] == "fail" or (v["Action"] == "skip" and v.get("Test")) for v in events), "Real metadata control Go event failed/skipped")
     require(sum(v["Action"] == "run" and v.get("Test") == "TestCoverageMetadataIsolation" for v in events) == sum(v["Action"] == "pass" and v.get("Test") == "TestCoverageMetadataIsolation" for v in events) == 1, "Real metadata control test missing/duplicate")
-    identities = [(p.parent, json.loads(p.read_text())) for p in (observer.E / "phases/metadata-controls/binaries").glob("*/identity.json")]
+    identities = [(p.parent, json.loads(p.read_text(encoding="utf-8"))) for p in (observer.E / "phases/metadata-controls/binaries").glob("*/identity.json")]
     require(len(identities) == 1, "Metadata control exact binary identity missing/duplicate")
     binary_dir, identity = identities[0]
     require(identity["metadataComplete"] and identity["auxBefore"] == identity["auxAfter"], "Metadata control original auxiliary input changed")
@@ -139,9 +139,9 @@ def metadata_controls(source, destination):
     parent = observer.profile_blocks(parent_profile, project, module=module, module_root=project)
     aggregate = observer.profile_blocks(destination / "aggregate.raw.out", project, aggregate=True, module=module, module_root=project)
     require(parent == aggregate, "Real aggregate lost metadata definitions")
-    require(len((destination / "aggregate.raw.out").read_text().splitlines()) - 1 > len(aggregate), "Real Go aggregate duplicate-row control missing")
+    require(len((destination / "aggregate.raw.out").read_text(encoding="utf-8").splitlines()) - 1 > len(aggregate), "Real Go aggregate duplicate-row control missing")
     parent_counts = row_counts(parent_profile)
-    records = json.loads((output / "results.json").read_text())
+    records = json.loads((output / "results.json").read_text(encoding="utf-8"))
     require([v["Name"] for v in records] == ["positive", "missing-aux", "changed-collection", "changed-fragment", "wrong-association", "preseed"], "Metadata control cases incomplete")
     for item in records:
         name = item["Name"]
@@ -180,7 +180,7 @@ def metadata_controls(source, destination):
 
 def row_counts(path):
     result = {}
-    for line in path.read_text().splitlines()[1:]:
+    for line in path.read_text(encoding="utf-8").splitlines()[1:]:
         match = observer.re.fullmatch(r"(.+):(\d+)\.(\d+),(\d+)\.(\d+) (\d+) (\d+)", line)
         require(match is not None, "Control profile record malformed")
         result[(match[1], *map(int, match.groups()[1:5]))] = int(match[7])
@@ -200,7 +200,7 @@ def profile_parser_controls(project, module, actual, destination):
     records = []
     for name, content in copies.items():
         path = destination / ("negative-" + name + ".control-only.out")
-        path.write_text("\n".join(content) + "\n")
+        path.write_text("\n".join(content) + "\n", encoding="utf-8")
         rejected = False
         try:
             values = observer.profile_blocks(path, project, aggregate=name == "conflicting-statement", module=module, module_root=project)

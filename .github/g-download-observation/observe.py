@@ -24,7 +24,7 @@ BASE = "673c3fafa9ff9c4c32a6adbd8cd5f595c25f0c63"
 # Runtime acceptance still requires actual evidence; these pins are not PASS.
 # Exact formatted880 production plus retained observer infrastructure. Ready
 # means frozen for remote execution, not that any new test or gate has passed.
-SOURCE_READY = True
+SOURCE_READY = False
 SOURCE = "b44e3163c53e19e1f3e9b46c734a341577c4046d"
 TREE = "56820e3a466c97f6fbc308dd26ac68e3b016a148"
 PRODUCTION = "a6b5efd158dfbd299a9a38b9ecd7707ec974a52a"
@@ -922,11 +922,11 @@ def old_binary_evidence(directory, phase, selector, old, actual_exit, head=OLD_S
         for stream in ("stdout", "stderr"):
             raw = (command_dir / stream).read_bytes()
             assert len(raw) == command[stream + "Bytes"] and sha(raw) == command[stream + "SHA256"]
-    assert (root / "go-version-m/stdout").read_text().splitlines()[0] == identity["binary"] + ": go1.26.10"
+    assert (root / "go-version-m/stdout").read_text(encoding="utf-8").splitlines()[0] == identity["binary"] + ": go1.26.10"
     assert identity["auxBefore"] == identity["auxAfter"]
     for label, field in (("aux-before", "auxBefore"), ("aux-after", "auxAfter")):
         seal_dir, seal = root / label, identity[field]
-        assert json.loads((seal_dir / "seal.json").read_text()) == seal
+        assert json.loads((seal_dir / "seal.json").read_text(encoding="utf-8")) == seal
         raw = (seal_dir / "metafiles.txt").read_bytes()
         assert sha(raw) == seal["MetadataSHA256"]
         collection = json.loads(raw, object_pairs_hook=unique_object)
@@ -969,9 +969,9 @@ def old_windows_witness():
         old, source = WORKSPACE / "old", WORKSPACE / "source"
         old_test_only_inputs(old, source, before["old"])
         require_success(capture(E / "commands/go-version", ["go", "version"], WORKSPACE))
-        assert (E / "commands/go-version/stdout").read_text().strip() == "go version go1.26.10 windows/amd64"
+        assert (E / "commands/go-version/stdout").read_text(encoding="utf-8").strip() == "go version go1.26.10 windows/amd64"
         require_success(capture(E / "commands/go-env", ["go", "env", "-json", "GOOS", "GOARCH", "CGO_ENABLED", "CC", "GOTOOLCHAIN", "GOWORK", "GOFLAGS"], WORKSPACE))
-        actual_env = json.loads((E / "commands/go-env/stdout").read_text())
+        actual_env = json.loads((E / "commands/go-env/stdout").read_text(encoding="utf-8"))
         assert actual_env == {"GOOS": "windows", "GOARCH": "amd64", "CGO_ENABLED": "1", "CC": "gcc",
                               "GOTOOLCHAIN": "local", "GOWORK": "off", "GOFLAGS": "-mod=readonly"}
         compiler_preflight(actual_env)
@@ -1086,7 +1086,7 @@ def old_tls_test_only_inputs(old, source, frozen):
     frames = {"HTTP1": ("transport.go", 2082, "pconn.conn = conn", 2091, "pconn.conn.Close()"),
               "HTTP2": ("internal/http2/transport.go", 642, "conn = tlsCn", 650, "conn.Close()")}
     for path, write_line, write_source, read_line, read_source in frames.values():
-        lines = (old / "backend/third_party/req" / path).read_text().splitlines()
+        lines = (old / "backend/third_party/req" / path).read_text(encoding="utf-8").splitlines()
         assert lines[write_line - 1].strip() == write_source
         assert lines[read_line - 1].strip() == read_source
     save(E / "old-tls-test-only-inputs.json", {"oldHead": OLD_TLS_SOURCE, "oldTree": OLD_TLS_TREE,
@@ -1137,9 +1137,9 @@ def old_tls_witness():
         old, source = WORKSPACE / "old-tls", WORKSPACE / "source"
         old_tls_test_only_inputs(old, source, before["old-tls"])
         require_success(capture(E / "commands/go-version", ["go", "version"], WORKSPACE))
-        assert (E / "commands/go-version/stdout").read_text().strip() == "go version go1.26.10 linux/amd64"
+        assert (E / "commands/go-version/stdout").read_text(encoding="utf-8").strip() == "go version go1.26.10 linux/amd64"
         require_success(capture(E / "commands/go-env", ["go", "env", "-json", "GOOS", "GOARCH", "CGO_ENABLED", "CC", "GOTOOLCHAIN", "GOWORK", "GOFLAGS"], WORKSPACE))
-        actual_env = json.loads((E / "commands/go-env/stdout").read_text())
+        actual_env = json.loads((E / "commands/go-env/stdout").read_text(encoding="utf-8"))
         assert actual_env == {"GOOS": "linux", "GOARCH": "amd64", "CGO_ENABLED": "1", "CC": "gcc",
                               "GOTOOLCHAIN": "local", "GOWORK": "off", "GOFLAGS": "-mod=readonly"}
         compiler_preflight(actual_env)
