@@ -1,5 +1,5 @@
-import { mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import AppHeader from '../AppHeader.vue'
 
@@ -34,16 +34,21 @@ vi.mock('@/stores', () => ({
   useOnboardingStore: () => stores.onboarding,
 }))
 
+vi.mock('@/stores/app', () => ({
+  useAppStore: () => stores.app,
+}))
+
 vi.mock('@/stores/adminSettings', () => ({
   useAdminSettingsStore: () => stores.adminSettings,
 }))
 
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ meta: {}, name: 'Dashboard', params: {} }),
+  useRoute: () => ({ meta: {}, name: 'Dashboard', params: {}, path: '/dashboard' }),
   useRouter: () => ({ push: vi.fn() }),
 }))
 
-vi.mock('vue-i18n', () => ({
+vi.mock('vue-i18n', async () => ({
+  ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')),
   useI18n: () => ({
     t: (key: string) =>
       ({
@@ -52,6 +57,8 @@ vi.mock('vue-i18n', () => ({
       })[key] ?? key,
   }),
 }))
+
+enableAutoUnmount(afterEach)
 
 describe('AppHeader accessibility labels', () => {
   it('renders localized labels for the mobile and user menu buttons', () => {
