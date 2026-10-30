@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      APP_HEAD: f6817b25ffa762025a4557284c71bb83f43260c8
-      APP_TREE: 6110d81880f6d93a297e8a04e63f2dc8117b6778
+      APP_HEAD: 1a8cac588077e3bed50c64a2a12a5704e9f9e806
+      APP_TREE: 9e0c3e0e725942bac686c63a9561ea60ee93da23
       GOTOOLCHAIN: local
       GOWORK: "off"
     steps:
@@ -80,7 +80,7 @@ jobs:
       - name: Checkout fixed complete application tree
         uses: actions/checkout@v6
         with:
-          ref: f6817b25ffa762025a4557284c71bb83f43260c8
+          ref: 1a8cac588077e3bed50c64a2a12a5704e9f9e806
           path: source
           fetch-depth: 0
           persist-credentials: false
@@ -136,7 +136,8 @@ jobs:
               'internal/http2/coverage_contract_peer_test.go',
               'internal/http2/coverage_frame_contract_test.go',
               'internal/http2/coverage_transport_contract_test.go',
-              'client_wrapper.go', 'safari_wrapper_contract_test.go')]
+              'client_wrapper.go', 'safari_wrapper_contract_test.go',
+              'internal/bisect/bisect.go')]
           manifest = []
           for name in files:
               raw = (source / name).read_bytes()
@@ -172,7 +173,7 @@ jobs:
             set -e
             printf '%s\n' "$actual_status" > "$label.exit"
           }
-          for relative in backend/third_party/req/{client.go,dump.go,transport.go,request.go,internal/dump/dump.go,parallel_download.go,client_test.go,request_test.go,dump_ownership_contract_test.go,dump_ownership_peer_test.go,internal/http2/receive_flow_contract_test.go,internal/http2/transport.go,custom_tls_handshake_peer_test.go,custom_tls_handshake_test.go,custom_tls_handshake_boundary_test.go,internal/http2/custom_tls_handshake_peer_test.go,internal/http2/custom_tls_handshake_test.go,public_api_peer_test.go,public_api_request_contract_test.go,public_api_form_contract_test.go,public_api_dump_contract_test.go,public_api_policy_contract_test.go,h1_boundary_contract_test.go,public_default_contract_test.go,internal/bisect/contracts_test.go,internal/http2/coverage_contract_peer_test.go,internal/http2/coverage_frame_contract_test.go,internal/http2/coverage_transport_contract_test.go,client_wrapper.go,safari_wrapper_contract_test.go}; do
+          for relative in backend/third_party/req/{client.go,dump.go,transport.go,request.go,internal/dump/dump.go,parallel_download.go,client_test.go,request_test.go,dump_ownership_contract_test.go,dump_ownership_peer_test.go,internal/http2/receive_flow_contract_test.go,internal/http2/transport.go,custom_tls_handshake_peer_test.go,custom_tls_handshake_test.go,custom_tls_handshake_boundary_test.go,internal/http2/custom_tls_handshake_peer_test.go,internal/http2/custom_tls_handshake_test.go,public_api_peer_test.go,public_api_request_contract_test.go,public_api_form_contract_test.go,public_api_dump_contract_test.go,public_api_policy_contract_test.go,h1_boundary_contract_test.go,public_default_contract_test.go,internal/bisect/contracts_test.go,internal/http2/coverage_contract_peer_test.go,internal/http2/coverage_frame_contract_test.go,internal/http2/coverage_transport_contract_test.go,client_wrapper.go,safari_wrapper_contract_test.go,internal/bisect/bisect.go}; do
             result="$G_FORMAT_EVIDENCE/results/$relative"
             mkdir -p "$result"
             capture "$result/raw-diff" "$formatter" -d "$G_FORMAT_EVIDENCE/raw/$relative"
@@ -222,7 +223,7 @@ jobs:
                   errors.append(label + ' full frozen input changed or snapshot incomplete: ' + str(error))
           try:
               inputs = json.loads((evidence / 'formatter-inputs.json').read_text())
-              assert len(inputs) == 30
+              assert len(inputs) == 31
               for item in inputs:
                   name = item['path']
                   result = {'path': name, 'operations': {}}
@@ -251,9 +252,9 @@ jobs:
               errors.append('formatter evidence incomplete: ' + str(error))
           report = {'appHead': os.environ['APP_HEAD'], 'appTree': os.environ['APP_TREE'],
                     'controllerHead': os.environ['GITHUB_SHA'], 'fullInputArchives': archives, 'results': results, 'errors': errors,
-                    'scope': 'format external thirty-file copies only: seventeen retained plus thirteen coverage/Safari inputs; no compilation or runtime approval'}
+                    'scope': 'format external thirty-one-file copies only: thirty retained plus the authorized bisect production repair; four operations each, 124 total; no compilation or runtime approval'}
           (evidence / 'formatter-actual-receipt.json').write_text(json.dumps(report, indent=2) + '\n')
-          assert not errors and len(results) == 30, errors
+          assert not errors and len(results) == 31, errors
           PYDATA
       - name: Always retain complete frozen inputs, raw bytes and actual formatter evidence
         if: always()
