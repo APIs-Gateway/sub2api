@@ -134,7 +134,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v6
         with:
-          ref: e5027cc8004f5725d65ebb8be905709f1e8b978b
+          ref: b44e3163c53e19e1f3e9b46c734a341577c4046d
           path: source
           fetch-depth: 0
           persist-credentials: false
@@ -206,7 +206,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v6
         with:
-          ref: e5027cc8004f5725d65ebb8be905709f1e8b978b
+          ref: b44e3163c53e19e1f3e9b46c734a341577c4046d
           path: source
           fetch-depth: 0
           persist-credentials: false
@@ -285,7 +285,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v6
         with:
-          ref: e5027cc8004f5725d65ebb8be905709f1e8b978b
+          ref: b44e3163c53e19e1f3e9b46c734a341577c4046d
           path: source
           fetch-depth: 0
           persist-credentials: false

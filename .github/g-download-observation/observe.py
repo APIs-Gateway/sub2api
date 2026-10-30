@@ -24,10 +24,10 @@ BASE = "673c3fafa9ff9c4c32a6adbd8cd5f595c25f0c63"
 # Runtime acceptance still requires actual evidence; these pins are not PASS.
 # Exact formatted880 production plus retained observer infrastructure. Ready
 # means frozen for remote execution, not that any new test or gate has passed.
-SOURCE_READY = False
-SOURCE = "e5027cc8004f5725d65ebb8be905709f1e8b978b"
-TREE = "2fa923c05d84c56c7b0bab5e5e22842f5649f7bb"
-PRODUCTION = "c82356c8115678ff669e088a3d44dc955482b3c4"
+SOURCE_READY = True
+SOURCE = "b44e3163c53e19e1f3e9b46c734a341577c4046d"
+TREE = "56820e3a466c97f6fbc308dd26ac68e3b016a148"
+PRODUCTION = "a6b5efd158dfbd299a9a38b9ecd7707ec974a52a"
 OLD_PRODUCTION = "bf4dfe25dac427186ff32c93a5c9d45d89530418"
 OLD_SOURCE = "79d98c871e16fc982a40b82f39755fd9439ac051"
 OLD_TREE = "a214bc81ba0511b1ac69a8c2d136ba82b829b84b"
