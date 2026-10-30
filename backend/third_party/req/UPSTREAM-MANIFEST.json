@@ -2246,87 +2246,9 @@
     },
     "safariAuthorization": "User explicitly authorized only global Safari wrapper reproduction/repair within existing1712 on2026-10-29; reviewed source8283363c2bde327e410dbfae8ca5083b98c951bf, root-unionae726. Independent source review receipt SHA6feade8997c09938acedfdad79c68ac6b5a9db7718e923cc1c70a9d34b3fb11b. No unrelated preset/transport change.",
     "sourcePartition": "Original132 archive/provenance rows remain; original16 production adaptations and2 original test adaptations preserved. The specifically authorized original client_wrapper.go becomes17th production adaptation:113+17+2=132. Same actual per-file85 algorithm applies to all17, including wrapper.",
-    "status": "REMOTE FORMATTING IMPORTED; original raw-source records retained as author history, formattedNewFiles binds current candidates. Final exact-head independent review and actual CI controls, all880 named/full-race Linux/Windows, originalfour adapted completions, all17 per-file85, four original profiles and both original85 gates remain required. Preliminary three Safari leaves passed only in separately frozen Linux OLD/NEW observation; no final-head runtime/coverage/security PASS is claimed.",
+    "status": "H2 TEST-API CORRECTION AWAITING REMOTE REFORMAT/EXECUTION. Prior formattedNewFilesBeforeH2StateCorrection and remoteFormatting are historical c823 evidence; candidateNewFilesBeforeRemoteReformat binds current raw candidates, not formatter PASS. Original880 cases, originalfour completions, all17 per-file85/fourprofiles/both85/race/security/Windows gates remain required. No final-head runtime PASS.",
     "bisectBoundary": "Private library contracts only; no private godebug environment activation proven. Any actual original lossy-cache race remains blocking.",
     "h2Boundary": "Returned-error redaction asserted separately while explicit raw dump retains original actual bytes; unreachable oversized-frame plan omitted rather than faked.",
-    "formattedNewFiles": {
-      "H1-BOUNDARY-CONTRACTS.md": {
-        "bytes": 2993,
-        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
-      },
-      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
-        "bytes": 8599,
-        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
-      },
-      "PUBLIC-DEFAULT-CONTRACTS.md": {
-        "bytes": 4040,
-        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
-      },
-      "SAFARI-WRAPPER-CONTRACTS.md": {
-        "bytes": 3181,
-        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
-      },
-      "h1_boundary_contract_test.go": {
-        "bytes": 13070,
-        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
-      },
-      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
-        "bytes": 14104,
-        "sha256": "3434e3cddf466e251edc5780f71bd88fb52478c6135640ad0539f36909cee5d6"
-      },
-      "internal/bisect/BISECT-CONTRACTS.md": {
-        "bytes": 7795,
-        "sha256": "1c4790e11007620d35f9658bf88a122b3ee7064d69bb4af70ab4f8a18dd9a932"
-      },
-      "internal/bisect/contracts_test.go": {
-        "bytes": 17548,
-        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
-      },
-      "internal/http2/COVERAGE-CONTRACTS.md": {
-        "bytes": 8544,
-        "sha256": "951089790a56b38dc1a776a6f41d10d74898f9f11976ef8835fa172098df1b79"
-      },
-      "internal/http2/coverage_contract_peer_test.go": {
-        "bytes": 7891,
-        "sha256": "182a4d2ab724411aa1dd61d41adb7f05983fb442e6dd685c4ac480116820cc2f"
-      },
-      "internal/http2/coverage_frame_contract_test.go": {
-        "bytes": 8358,
-        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
-      },
-      "internal/http2/coverage_transport_contract_test.go": {
-        "bytes": 25701,
-        "sha256": "44f94032c3f36024d3fb73bfdbed681a081ea52b19e16ba0c3e3cb6e845bc06b"
-      },
-      "public_api_dump_contract_test.go": {
-        "bytes": 6345,
-        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
-      },
-      "public_api_form_contract_test.go": {
-        "bytes": 7305,
-        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
-      },
-      "public_api_peer_test.go": {
-        "bytes": 4521,
-        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
-      },
-      "public_api_policy_contract_test.go": {
-        "bytes": 13542,
-        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
-      },
-      "public_api_request_contract_test.go": {
-        "bytes": 6404,
-        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
-      },
-      "public_default_contract_test.go": {
-        "bytes": 10615,
-        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
-      },
-      "safari_wrapper_contract_test.go": {
-        "bytes": 8687,
-        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
-      }
-    },
     "remoteFormatting": {
       "controller": "76edf129ca97fc02b4768b2d4645bfca298ba6a4",
       "source": "ae7260bba43cc8ed07db94513a42b73e5b9d104b",
@@ -2422,6 +2344,170 @@
         }
       ],
       "policy": "Only exact remote-formatted copies were imported; original raw author/provenance records remain historical. Formatting evidence is not runtime, race, Windows, full source acceptance or coverage evidence."
+    },
+    "formattedNewFilesBeforeH2StateCorrection": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 14104,
+        "sha256": "3434e3cddf466e251edc5780f71bd88fb52478c6135640ad0539f36909cee5d6"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 7795,
+        "sha256": "1c4790e11007620d35f9658bf88a122b3ee7064d69bb4af70ab4f8a18dd9a932"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 8544,
+        "sha256": "951089790a56b38dc1a776a6f41d10d74898f9f11976ef8835fa172098df1b79"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 7891,
+        "sha256": "182a4d2ab724411aa1dd61d41adb7f05983fb442e6dd685c4ac480116820cc2f"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25701,
+        "sha256": "44f94032c3f36024d3fb73bfdbed681a081ea52b19e16ba0c3e3cb6e845bc06b"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    },
+    "candidateNewFilesBeforeRemoteReformat": {
+      "H1-BOUNDARY-CONTRACTS.md": {
+        "bytes": 2993,
+        "sha256": "59c8a60ab3678a707884d55beb64bbb1cfe78a698642ff78ad3ebbf9462c63fc"
+      },
+      "PUBLIC-API-COVERAGE-CONTRACTS.md": {
+        "bytes": 8599,
+        "sha256": "21034f5a02d3b7d491d7b9e5935c276d722ee046f1b7ae6e3b2b4381d64ce5cd"
+      },
+      "PUBLIC-DEFAULT-CONTRACTS.md": {
+        "bytes": 4040,
+        "sha256": "03768c6f2bb45b2aa287920f6068e683c599c6cf098e82b825a0b9dfe9b85e17"
+      },
+      "SAFARI-WRAPPER-CONTRACTS.md": {
+        "bytes": 3181,
+        "sha256": "437a8054288f0116a818bb1d261af291062bd2f56aac924c40c6939a953fa861"
+      },
+      "h1_boundary_contract_test.go": {
+        "bytes": 13070,
+        "sha256": "a1760152255006f9ed8033896cf5c57d1a55c2b4289bc6260fad9aa12d7d5752"
+      },
+      "internal/bisect/BISECT-CONTRACTS-PROVENANCE.json": {
+        "bytes": 14104,
+        "sha256": "3434e3cddf466e251edc5780f71bd88fb52478c6135640ad0539f36909cee5d6"
+      },
+      "internal/bisect/BISECT-CONTRACTS.md": {
+        "bytes": 7795,
+        "sha256": "1c4790e11007620d35f9658bf88a122b3ee7064d69bb4af70ab4f8a18dd9a932"
+      },
+      "internal/bisect/contracts_test.go": {
+        "bytes": 17548,
+        "sha256": "bb0ab4a991d1c429442f3fc1cb48f86a0875ba69e9a0efb35f47115eb4fc24d5"
+      },
+      "internal/http2/COVERAGE-CONTRACTS.md": {
+        "bytes": 9837,
+        "sha256": "2bf2de49f534b81d9b2be054839c21cdf64e6f2a864d788597114d2db1cb17b4"
+      },
+      "internal/http2/coverage_contract_peer_test.go": {
+        "bytes": 8697,
+        "sha256": "1ae8ca52903099ef2a2f1df76919be591b369c7974c7b815c0920ef7577a9e47"
+      },
+      "internal/http2/coverage_frame_contract_test.go": {
+        "bytes": 8358,
+        "sha256": "b08396f3d4fb00ca40ff7b4feee24717158d14ccb142af1e755174dfcc0534bb"
+      },
+      "internal/http2/coverage_transport_contract_test.go": {
+        "bytes": 25748,
+        "sha256": "e8cd9d805f4752e11593c1266dd52b906992c95bfb1389be16aec74595f293d8"
+      },
+      "public_api_dump_contract_test.go": {
+        "bytes": 6345,
+        "sha256": "0e75445a0b8acbfbaa0d2ee2f059f435d127f1667ba0557e9b066902228ad8fa"
+      },
+      "public_api_form_contract_test.go": {
+        "bytes": 7305,
+        "sha256": "b1bdb4c6f9c51eec06e572b98095ab5868d254cc89ff79c633154e096923c9d9"
+      },
+      "public_api_peer_test.go": {
+        "bytes": 4521,
+        "sha256": "51a37734628b04bf70b74a48e5debb13668ef8830446f4f6fabe8870ea9ca5e9"
+      },
+      "public_api_policy_contract_test.go": {
+        "bytes": 13542,
+        "sha256": "da358b2f82cb156c2436925cfa5cafdd0dff4f8a1ee846bd295642fa1a8a6392"
+      },
+      "public_api_request_contract_test.go": {
+        "bytes": 6404,
+        "sha256": "393fe96c0a2f4e5ff9f95a49880c6cef8072d5d2997909297a239cb726abd847"
+      },
+      "public_default_contract_test.go": {
+        "bytes": 10615,
+        "sha256": "4fb3e4b8a455c89d44a25ffd11c7bf12635292774648629a01d50f19109e46c7"
+      },
+      "safari_wrapper_contract_test.go": {
+        "bytes": 8687,
+        "sha256": "5b69a292caad9472a45d869d139d47bc5b07dcd37a1651092f8df0f72b3030c3"
+      }
+    },
+    "h2StateObservationCorrection": {
+      "rawSource": "530281903887998bd5a76cdf5250a0639eaed3cf",
+      "originalFailedHead": "c82356c8115678ff669e088a3d44dc955482b3c4",
+      "failedPRRun": 40853052089,
+      "independentSourceReviewSHA256": "d568e328df1481e00686312509d381f4bfb4a45271efdf39e8738ac3358b4084",
+      "scope": "Only test helpers observe actual connection fields under cc.mu because copied ClientConn has no State API. All51 H2 and880 total identities, real queued/cancel/closed assertions and production bytes unchanged.",
+      "status": "RAW correction, independently source-reviewed; not remotely formatted/compiled/executed yet. Prior c823 compile failure and real bisect race remain retained, no waiver."
     }
   }
 }
