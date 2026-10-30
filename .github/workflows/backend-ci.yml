@@ -182,7 +182,7 @@ jobs:
           persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 9.15.9
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
@@ -202,12 +202,41 @@ jobs:
           git rev-parse HEAD > "$evidence/head.txt"
           git rev-parse HEAD^{tree} > "$evidence/tree.txt"
           git ls-files --stage > "$evidence/full-repository-index.txt"
+          git ls-files -z | xargs -0 sha256sum > "$evidence/full-repository-before.sha256"
           git ls-files frontend/src > "$evidence/full-frontend-source-files.txt"
-          sha256sum frontend/package.json frontend/pnpm-lock.yaml frontend/vitest.config.ts frontend/tools/fixture-ci-inventory.json > "$evidence/inputs-before.sha256"
+          sha256sum frontend/package.json frontend/pnpm-lock.yaml frontend/vitest.config.ts frontend/tools/fixture-ci-inventory.json frontend/tools/vue-i18n-security-inventory.json frontend/src/i18n/__tests__/vueI18nSecurity.spec.ts > "$evidence/inputs-before.sha256"
           cp frontend/tools/fixture-ci-inventory.json "$evidence/inventory.json"
-      - name: Install frozen frontend dependencies
+          cp frontend/tools/vue-i18n-security-inventory.json "$evidence/vue-inventory.json"
+          cp frontend/pnpm-lock.yaml "$evidence/pnpm-lock-before.yaml"
+      - name: Install frozen frontend dependencies and retain actual lock evidence
         working-directory: frontend
-        run: pnpm install --frozen-lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version > "$FIXTURE_EVIDENCE/node-version.txt"
+          pnpm --version > "$FIXTURE_EVIDENCE/pnpm-version.txt"
+          grep -Eq '^v22\.[0-9]+\.[0-9]+$' "$FIXTURE_EVIDENCE/node-version.txt"
+          test "$(cat "$FIXTURE_EVIDENCE/pnpm-version.txt")" = 9.15.9
+          set +e
+          pnpm install --frozen-lockfile > "$FIXTURE_EVIDENCE/install.stdout" 2> "$FIXTURE_EVIDENCE/install.stderr"
+          actual_status=$?
+          set -e
+          printf '%s\n' "$actual_status" > "$FIXTURE_EVIDENCE/install.exit"
+          cp pnpm-lock.yaml "$FIXTURE_EVIDENCE/pnpm-lock-after-install.yaml"
+          sha256sum pnpm-lock.yaml > "$FIXTURE_EVIDENCE/pnpm-lock-after-install.sha256"
+          cmp "$FIXTURE_EVIDENCE/pnpm-lock-before.yaml" "$FIXTURE_EVIDENCE/pnpm-lock-after-install.yaml"
+          test "$actual_status" = 0
+      - name: Typecheck the exact frontend source and preserve the actual result
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          pnpm run typecheck > "$FIXTURE_EVIDENCE/typecheck.stdout" 2> "$FIXTURE_EVIDENCE/typecheck.stderr"
+          actual_status=$?
+          set -e
+          printf '%s\n' "$actual_status" > "$FIXTURE_EVIDENCE/typecheck.exit"
+          test "$actual_status" = 0
       - name: Run repaired fixtures and the complete Vitest suite with strict JSON proof
         working-directory: frontend
         shell: bash
@@ -224,7 +253,7 @@ jobs:
             printf '%s\n' "$actual_status" > "$FIXTURE_EVIDENCE/$phase.exit"
           }
           mapfile -t fixtures < <(python3 -c 'import json,os; print("\n".join(json.load(open(os.environ["FIXTURE_EVIDENCE"]+"/inventory.json"))["requiredPassedNamesByFile"]))')
-          test "${#fixtures[@]}" = 10
+          test "${#fixtures[@]}" = 11
           run_phase named "${fixtures[@]}"
           run_phase full
           python3 - <<'PYPROOF'
@@ -233,6 +262,12 @@ jobs:
           frontend = pathlib.Path(os.environ['FRONTEND_SOURCE_ROOT'])
           inventory = json.loads((root / 'inventory.json').read_text())
           required = inventory['requiredPassedNamesByFile']
+          vue = json.loads((root / 'vue-inventory.json').read_text())
+          vue_file = vue['requiredFile']
+          vue_names = vue['requiredPassedNames']
+          assert vue['requiredCaseCount'] == len(vue_names) == len(set(vue_names)) == 10, 'Vue inventory must define exactly ten unique cases'
+          assert required[vue_file] == vue_names, 'Vue registration differs from its exact case inventory'
+          vue_expected = collections.Counter({vue['requiredSuiteName'] + ' ' + name: 1 for name in vue_names})
           todo = inventory['preexistingTodo']
           all_source = (root / 'full-frontend-source-files.txt').read_text().splitlines()
           expected_full = {p.removeprefix('frontend/') for p in all_source if re.fullmatch(r'frontend/src/.*\.(?:test|spec)\.(?:js|ts|jsx|tsx)', p)}
@@ -255,21 +290,29 @@ jobs:
                       hits = [case for case in actual[path] if case.get('fullName', '').endswith(name) and case.get('status') == 'passed']
                       if len(hits) != 1:
                           mandatory_missing.append([path, name, len(hits)])
+              vue_cases = actual[vue_file]
+              vue_actual = collections.Counter(case.get('fullName', '') for case in vue_cases)
+              vue_exact = suites[vue_file] == 1 and vue_actual == vue_expected and len(vue_cases) == 10 and all(case.get('status') == 'passed' for case in vue_cases)
               problems = []
+              if not vue_exact: problems.append('Vue exact ten fullName identities must each occur once and pass')
               if (root / (phase + '.exit')).read_text().strip() != '0': problems.append('actual exit is nonzero')
               if result.get('success') is not True or result.get('numFailedTests') != 0 or result.get('numFailedTestSuites') != 0: problems.append('summary records actual failure')
               if set(suites) != expected or any(count != 1 for count in suites.values()): problems.append('complete source file inventory differs')
               if not legal_pending: problems.append('unexpected nonpassed assertion')
               if mandatory_missing: problems.append('mandatory fixture case missing or duplicated')
               if phase == 'full' and result.get('numPassedTests', 0) < inventory['minimumFullPassedTests']: problems.append('full passing test count is incomplete')
-              proofs[phase] = {'exit': (root / (phase + '.exit')).read_text().strip(), 'actualFiles': len(suites), 'expectedFiles': len(expected), 'passedTests': result.get('numPassedTests'), 'nonpassed': nonpassed, 'mandatoryMissing': mandatory_missing, 'problems': problems}
+              proofs[phase] = {'exit': (root / (phase + '.exit')).read_text().strip(), 'actualFiles': len(suites), 'expectedFiles': len(expected), 'passedTests': result.get('numPassedTests'), 'pendingTests': result.get('numPendingTests'), 'todoTests': result.get('numTodoTests'), 'nonpassed': nonpassed, 'mandatoryMissing': mandatory_missing, 'vueExactTenPassed': vue_exact, 'vueExpectedFullNames': dict(vue_expected), 'vueActualFullNames': dict(vue_actual), 'problems': problems}
               failures.extend([phase + ': ' + problem for problem in problems])
           (root / 'actual-proof.json').write_text(json.dumps(proofs, ensure_ascii=False, indent=2) + '\n')
           assert (root / 'head.txt').read_text().strip() == os.environ['EXPECTED_HEAD'], 'source head differs'
           assert not failures, failures
           PYPROOF
-          (cd .. && sha256sum frontend/package.json frontend/pnpm-lock.yaml frontend/vitest.config.ts frontend/tools/fixture-ci-inventory.json) > "$FIXTURE_EVIDENCE/inputs-after.sha256"
+          (cd .. && sha256sum frontend/package.json frontend/pnpm-lock.yaml frontend/vitest.config.ts frontend/tools/fixture-ci-inventory.json frontend/tools/vue-i18n-security-inventory.json frontend/src/i18n/__tests__/vueI18nSecurity.spec.ts) > "$FIXTURE_EVIDENCE/inputs-after.sha256"
           cmp "$FIXTURE_EVIDENCE/inputs-before.sha256" "$FIXTURE_EVIDENCE/inputs-after.sha256"
+          (cd .. && git ls-files -z | xargs -0 sha256sum) > "$FIXTURE_EVIDENCE/full-repository-after.sha256"
+          cmp "$FIXTURE_EVIDENCE/full-repository-before.sha256" "$FIXTURE_EVIDENCE/full-repository-after.sha256"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$(cat "$FIXTURE_EVIDENCE/tree.txt")"
           git diff --exit-code HEAD --
           test -z "$(git status --porcelain)"
           printf '%s\n' complete > "$FIXTURE_EVIDENCE/complete.txt"
