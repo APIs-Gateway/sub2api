@@ -21,7 +21,7 @@ def require(value, message):
 
 
 def save(path, value):
-    path.write_text(json.dumps(value, indent=2) + "\n")
+    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
 def seal(data):
@@ -129,7 +129,11 @@ def main():
         controller_before = snapshot(controller, evidence, "controller-before", archive=True)
         package = source / "frontend/package.json"
         lock = source / "frontend/pnpm-lock.yaml"
-        require(json.loads(package.read_text())["dependencies"]["vue-i18n"] == "11.4.14", "Wrong target dependency")
+        package_data = json.loads(package.read_text(encoding="utf-8"))
+        require(package_data["dependencies"]["vue-i18n"] == "11.4.14", "Vue parent changed")
+        require(package_data["dependencies"]["@lobehub/icons"] == "^4.0.2", "Icons parent changed")
+        require(package_data["pnpm"]["overrides"]["query-string@9.3.1>decode-uri-component"] == "0.5.1",
+                "Wrong narrowly scoped decode-uri-component override")
         (evidence / "package.json").write_bytes(package.read_bytes())
         (evidence / "original-pnpm-lock.yaml").write_bytes(lock.read_bytes())
         for name, argv, expected in (("node-version", ["node", "--version"], "v22."),
@@ -138,7 +142,7 @@ def main():
             result["records"].append({"name": name, **record})
             require(record["exit"] == 0 and record["streamsComplete"] and not record["timeout"] and
                     "captureError" not in record, "Version command failed: " + name)
-            output = (evidence / (name + ".stdout")).read_text().strip()
+            output = (evidence / (name + ".stdout")).read_text(encoding="utf-8").strip()
             require(output.startswith(expected) if name == "node-version" else output == expected,
                     "Unexpected tool version: " + output)
         record = capture(evidence, "lock-generation", ["pnpm", "install", "--lockfile-only", "--ignore-scripts",

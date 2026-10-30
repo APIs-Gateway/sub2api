@@ -1,4 +1,4 @@
-name: Existing1712 exact-source Vue I18n lock generation
+name: Existing1712 exact-source dependency lock generation
 
 on:
   push:
@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      SOURCE_HEAD: 88aac98317b0192b3e05204af009d89a3dc2bb3a
-      SOURCE_TREE: ed7047c3240d6f0dd7938f61696b845ac01e3990
+      SOURCE_HEAD: 2e094eb936022951ab4259b6601689c5e4811211
+      SOURCE_TREE: 8007f8d567dab369f1dffab698a4062b8d1c5a0d
       npm_config_ignore_scripts: 'true'
     steps:
       - name: Fetch the exact reviewed controller
@@ -27,7 +27,7 @@ jobs:
       - name: Fetch the complete exact source tree
         uses: actions/checkout@v6
         with:
-          ref: 88aac98317b0192b3e05204af009d89a3dc2bb3a
+          ref: 2e094eb936022951ab4259b6601689c5e4811211
           path: source
           persist-credentials: false
       - uses: pnpm/action-setup@v4
